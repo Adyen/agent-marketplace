@@ -29,10 +29,11 @@ var (
 	ErrManagedSuperseded = errors.New("marketplace/worker: managed work superseded")
 	ErrManagedProfile    = errors.New("marketplace/worker: managed credential profile unavailable")
 	ErrManagedRefresh    = errors.New("marketplace/worker: managed refresh failed")
+	ErrManagedAcquire    = fmt.Errorf("marketplace/worker: managed acquisition failed: %w", ErrManagedRefresh)
 )
 
 type managedAttemptRecorder interface {
-	RecordManagedRefreshAttempt(context.Context, store.ManagedFence, string, store.PublicationID) error
+	RecordManagedRefreshAttempt(context.Context, store.ManagedFence, string, store.PublicationID, ...store.ManagedRefreshFailure) error
 }
 
 type managedReconcilePayload struct {
@@ -288,7 +289,7 @@ func processManagedRefresh(ctx context.Context, deps Deps, j store.Job, worker s
 	fence := store.ManagedFence{Marketplace: p.Marketplace, RegistryGeneration: p.RegistryGeneration, PolicyRevision: p.PolicyRevision, JobID: j.ID, WorkerID: worker, Attempt: j.Attempt}
 	view, r, err := managedPreflight(ctx, deps, j, worker, p)
 	if err != nil {
-		return recordManagedFailure(ctx, deps, j, worker, fence, err)
+		return recordManagedFailure(ctx, deps, j, worker, fence, p, err)
 	}
 	recorder, ok := deps.MetadataStore.(managedAttemptRecorder)
 	if !ok {
@@ -302,19 +303,46 @@ func processManagedRefresh(ctx context.Context, deps Deps, j store.Job, worker s
 	if err == nil {
 		fence.ExpectedPublicationID = current.ID
 	} else if !errors.Is(err, store.ErrNotFound) {
-		return recordManagedFailure(ctx, deps, j, worker, fence, err)
+		return recordManagedFailure(ctx, deps, j, worker, fence, p, err)
 	}
 	if err := recorder.RecordManagedRefreshAttempt(ctx, fence, "started", ""); err != nil {
-		return recordManagedFailure(ctx, deps, j, worker, fence, err)
+		return recordManagedFailure(ctx, deps, j, worker, fence, p, err)
 	}
 	err = refreshManaged(ctx, deps, j, worker, p, view, r, fence, clone)
 	if err == nil {
 		return nil
 	}
-	return recordManagedFailure(ctx, deps, j, worker, fence, err)
+	return recordManagedFailure(ctx, deps, j, worker, fence, p, err)
 }
 
-func recordManagedFailure(ctx context.Context, deps Deps, j store.Job, worker string, fence store.ManagedFence, cause error) error {
+func managedFailure(cause error, operation string) store.ManagedRefreshFailure {
+	op := "refresh"
+	if operation != "" && len(operation) <= 64 && !strings.ContainsAny(operation, "/\\ \t\r\n\x00") {
+		op = operation
+	}
+	switch {
+	case errors.Is(cause, ErrManagedSuperseded):
+		return store.ManagedRefreshFailure{Code: "superseded", Cause: "managed work superseded by a newer configuration"}
+	case errors.Is(cause, store.ErrPublicationFence):
+		return store.ManagedRefreshFailure{Code: "publication_fence", Cause: "publication fence rejected the staged revision"}
+	case errors.Is(cause, store.ErrLeaseExpired):
+		return store.ManagedRefreshFailure{Code: "lease_lost", Cause: "the job lease was lost before completion"}
+	case errors.Is(cause, ErrManagedProfile):
+		return store.ManagedRefreshFailure{Code: "egress_policy/" + op, Cause: "registry origin or credentials are not permitted by the management profile"}
+	case errors.Is(cause, store.ErrConflict):
+		return store.ManagedRefreshFailure{Code: "publication_conflict/" + op, Cause: "publication returned a conflict"}
+	case errors.Is(cause, ErrManagedAcquire):
+		return store.ManagedRefreshFailure{Code: "acquisition/" + op, Cause: "registry acquisition failed"}
+	case errors.Is(cause, ErrManagedRefresh):
+		return store.ManagedRefreshFailure{Code: "artifact_verification/" + op, Cause: "registry revision build or artifact verification failed"}
+	default:
+		return store.ManagedRefreshFailure{Code: "internal/" + op, Cause: "managed refresh failed"}
+	}
+}
+
+func recordManagedFailure(ctx context.Context, deps Deps, j store.Job, worker string, fence store.ManagedFence, p managedRefreshPayload, cause error) error {
+	failure := managedFailure(cause, p.Operation)
+	outcome := outcomeFor(cause)
 	err := deps.MetadataStore.WithTx(ctx, func(ctx context.Context, tx store.MetadataStore) error {
 		if err := managedLease(ctx, tx, j, worker); err != nil {
 			return err
@@ -323,11 +351,7 @@ func recordManagedFailure(ctx context.Context, deps Deps, j store.Job, worker st
 		if !ok {
 			return store.ErrTopology
 		}
-		outcome := "failed"
-		if errors.Is(cause, ErrManagedSuperseded) || errors.Is(cause, store.ErrPublicationFence) {
-			outcome = "superseded"
-		}
-		if err := recorder.RecordManagedRefreshAttempt(ctx, fence, outcome, ""); err != nil {
+		if err := recorder.RecordManagedRefreshAttempt(ctx, fence, outcome, "", failure); err != nil {
 			return err
 		}
 		return tx.FailJob(ctx, j.ID, worker, 0)
@@ -335,7 +359,15 @@ func recordManagedFailure(ctx context.Context, deps Deps, j store.Job, worker st
 	if err != nil {
 		return finishManaged(ctx, deps, j, worker, err)
 	}
+	slog.WarnContext(ctx, "managed refresh attempt failed", "job", j.ID, "registry", p.RegistryID, "outcome", outcome, "failure_code", failure.Code, "cause", failure.Cause)
 	return cause
+}
+
+func outcomeFor(cause error) string {
+	if errors.Is(cause, ErrManagedSuperseded) || errors.Is(cause, store.ErrPublicationFence) {
+		return "superseded"
+	}
+	return "failed"
 }
 
 func refreshManaged(ctx context.Context, deps Deps, j store.Job, worker string, p managedRefreshPayload, view admin.View, r admin.Registry, fence store.ManagedFence, clone managedCloneFunc) error {
@@ -372,16 +404,16 @@ func refreshManaged(ctx context.Context, deps Deps, j store.Job, worker string, 
 	}
 	result, err := clone(workCtx, r.Origin, r.Ref, creds, limits, cfg.Policy.Limits.CloneDuration.Duration(), roots...)
 	if err != nil {
-		return managedWorkFailure(workCtx)
+		return managedWorkFailure(workCtx, ErrManagedAcquire)
 	}
 	defer func() { _ = result.Release() }()
 	revision, err := ingest.BuildRegistryRevision(workCtx, cfg, p.Marketplace, registry, result.Dir, result.Commit)
 	if err != nil {
-		return managedWorkFailure(workCtx)
+		return managedWorkFailure(workCtx, ErrManagedRefresh)
 	}
 	if _, _, err := managedPreflight(workCtx, deps, j, worker, p); err != nil {
 		if workCtx.Err() != nil {
-			return managedWorkFailure(workCtx)
+			return managedWorkFailure(workCtx, ErrManagedRefresh)
 		}
 		return err
 	}
@@ -389,7 +421,7 @@ func refreshManaged(ctx context.Context, deps Deps, j store.Job, worker string, 
 	metadata := managedPublicationCompletion{MetadataStore: deps.MetadataStore, fence: fence, publication: publication.PublicationID}
 	if err := store.PublishRegistryRevision(workCtx, metadata, deps.BlobStore, publication); err != nil {
 		if workCtx.Err() != nil {
-			return managedWorkFailure(workCtx)
+			return managedWorkFailure(workCtx, ErrManagedRefresh)
 		}
 		return err
 	}
@@ -397,7 +429,7 @@ func refreshManaged(ctx context.Context, deps Deps, j store.Job, worker string, 
 	return nil
 }
 
-func managedWorkFailure(ctx context.Context) error {
+func managedWorkFailure(ctx context.Context, fallback error) error {
 	cause := context.Cause(ctx)
 	if errors.Is(cause, ErrManagedSuperseded) {
 		return ErrManagedSuperseded
@@ -405,7 +437,7 @@ func managedWorkFailure(ctx context.Context) error {
 	if errors.Is(cause, store.ErrLeaseExpired) {
 		return store.ErrLeaseExpired
 	}
-	return ErrManagedRefresh
+	return fallback
 }
 
 type managedPublicationCompletion struct {
