@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -24,7 +25,7 @@ func TestFilesystemPortableSourceCheckRefusesForeignSupport(t *testing.T) {
 			foreign := filepath.Join(env.home, "foreign-support.txt")
 			env.WriteFile(foreign, "foreign inert data")
 			foreignBefore := captureDest(t, foreign)
-			if err := os.Rename(filepath.Join(source, "reference.txt"), filepath.Join(source, "retained.txt")); err != nil {
+			if err := os.Rename(filepath.Join(source, "reference.txt"), filepath.Join(env.workspace, "retained.txt")); err != nil {
 				t.Fatal(err)
 			}
 			if err := os.Symlink(foreign, filepath.Join(source, "reference.txt")); err != nil {
@@ -32,6 +33,9 @@ func TestFilesystemPortableSourceCheckRefusesForeignSupport(t *testing.T) {
 			}
 			result := env.RunAM("sync", "--check")
 			env.AssertExitCode(result, 1)
+			if !strings.Contains(result.Combined, "materialize.write.error") {
+				t.Fatalf("expected source refusal, not ordinary drift: %s", result.Combined)
+			}
 			requireDestUntouched(t, before, captureDest(t, installed))
 			requireDestUntouched(t, foreignBefore, captureDest(t, foreign))
 			if data, err := os.ReadFile(installed); err != nil || !bytes.Equal(data, []byte("contained inert data")) {
