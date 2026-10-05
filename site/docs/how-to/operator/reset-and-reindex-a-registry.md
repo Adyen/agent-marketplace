@@ -19,7 +19,7 @@ Run a reindex of the registry:
 agent-marketplace serve reindex shared-agents --config /app/marketplace.yaml
 ```
 
-- If it exits `0`, stop here. A reindex repairs a resource whose content is unchanged but whose archive encoding changed, keeps the previous archive downloadable, and logs `resource revision archive digest repaired`. A reset would make that previous archive return `404`.
+- If it exits `0`, the server side is done. A reindex repairs a resource whose content is unchanged but whose archive encoding changed, keeps the previous archive downloadable, and logs `resource revision archive digest repaired`. A reset would make that previous archive return `404`. The repair changed the served `archive_digest` without changing the content, so consumers whose locks still name the old digest fail `sync --locked` / `sync --check`. Tell each affected lock owner to run a writing `agent-marketplace sync` (which reports `marketplace.archive-evidence-refreshed` and updates one `archive_digest` line per resource) and commit the lock file; no reset or forced lock edit is needed.
 - If it fails with a cause that a reset clears, continue. For example, `conflict: resource revision "sha256:…" already has different immutable metadata` means the stored revision's license or description no longer matches the source for the same content.
 - If it fails for any other reason, such as a clone, credential, or policy error, fix that cause instead. A reset does not help and leaves the registry empty until a reindex succeeds.
 
