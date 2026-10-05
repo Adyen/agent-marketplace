@@ -3,9 +3,11 @@ package materialize
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -21,6 +23,12 @@ import (
 
 // sharedSourceCommand is the literal hook command both selections share.
 const sharedSourceCommand = "echo shared-proof"
+
+const (
+	nativeHookContributorAlphaFP          = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	nativeHookContributorAlphaAlternateFP = "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+	nativeHookContributorBetaFP           = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+)
 
 // namedHookFixture builds an independent local-directory source carrying one
 // PreToolUse command hook that runs the shared literal command and returns
@@ -434,4 +442,215 @@ func TestNativeSharedSourceEvidenceInvalidState(t *testing.T) {
 	if data, readErr := os.ReadFile(filepath.Join(repoRoot, ".cursor", "hooks", "hooks.json")); readErr != nil || !strings.Contains(string(data), sharedSourceCommand) {
 		t.Fatalf("independent target did not reconcile: %v", readErr)
 	}
+}
+
+func nativeHookContributorFactory(t *testing.T) (string, outputKey, string, ownedJSONFileSpec) {
+	t.Helper()
+	repoRoot, _, _ := nativeHookJSONTestEnvironment(t)
+	tc := nativeHookJSONCaseByName(t, "factory_repo")
+	key := outputKey{target: tc.target, machineScope: tc.machineScope}
+	destination, spec, err := nativeHookJSONLayout(key, repoRoot)
+	if err != nil {
+		t.Fatal("Factory hook layout did not resolve")
+	}
+	return repoRoot, key, destination.Root, spec
+}
+
+func TestNativeHookContributorEvidencePersists(t *testing.T) {
+	tc := nativeHookJSONCaseByName(t, "factory_repo")
+	makeWork := func(t *testing.T, reverse bool, command string) (*ownedJSONAggregateWork, ownership.EntryID) {
+		t.Helper()
+		alpha := nativeHookJSONWork(t, tc, "alpha", command).entries[0]
+		alpha.sourceDigest = nativeHookContributorAlphaFP
+		alpha.sourceEvidence = []ownership.HookSourceEvidence{{Resource: "alpha", SourceDigest: nativeHookContributorAlphaAlternateFP}}
+		beta := nativeHookJSONWork(t, tc, "beta", command).entries[0]
+		beta.sourceDigest = nativeHookContributorBetaFP
+		beta.sourceEvidence = []ownership.HookSourceEvidence{
+			{Resource: "alpha", SourceDigest: nativeHookContributorAlphaFP},
+			{Resource: "alpha", SourceDigest: nativeHookContributorAlphaAlternateFP},
+			{Resource: "beta", SourceDigest: nativeHookContributorBetaFP},
+		}
+		alphaInput := append([]ownership.HookSourceEvidence(nil), alpha.sourceEvidence...)
+		betaInput := append([]ownership.HookSourceEvidence(nil), beta.sourceEvidence...)
+		work := &ownedJSONAggregateWork{}
+		if reverse {
+			work.add(beta)
+			work.add(alpha)
+		} else {
+			work.add(alpha)
+			work.add(beta)
+		}
+		if !reflect.DeepEqual(alpha.sourceEvidence, alphaInput) || !reflect.DeepEqual(beta.sourceEvidence, betaInput) {
+			t.Fatal("aggregate work mutated a contributor's source-evidence input")
+		}
+		return work, alpha.id()
+	}
+	orders := []struct {
+		name    string
+		reverse bool
+	}{{name: "forward"}, {name: "reverse", reverse: true}}
+	var firstNative string
+	for _, order := range orders {
+		t.Run(order.name, func(t *testing.T) {
+			repoRoot, key, root, spec := nativeHookContributorFactory(t)
+			work, alphaID := makeWork(t, order.reverse, nativeHookJSONSelectedCommand)
+			view := work.entries[0].ownershipEntry()
+			storedSources := append([]ownership.HookSourceEvidence(nil), work.entries[0].sourceEvidence...)
+			view.SourceEvidence[0].Resource = "mutated"
+			if !reflect.DeepEqual(work.entries[0].sourceEvidence, storedSources) {
+				t.Fatal("ownership entry source evidence aliases aggregate work")
+			}
+			report := reconcileNativeHookJSON(context.Background(), nativeHookJSONReport(), key, repoRoot, work, nativeHookJSONOptions(), false)
+			if report == nil || diag.HasErrors(report.Diags) {
+				t.Fatalf("native hook reconciliation failed: %+v", report)
+			}
+			path := filepath.Join(root, filepath.FromSlash(spec.rel))
+			nativeBytes, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal("reconciled Factory hook file is missing")
+			}
+			commands := nativeHookJSONCommands(t, nativeBytes, spec.rel, spec.container, tc.event, tc.shape)
+			if len(commands) != 1 || commands[0] != nativeHookJSONSelectedCommand || strings.Contains(string(nativeBytes), "_managed_by") {
+				t.Fatalf("native Factory hook = %s, want one unmarked shared command", nativeBytes)
+			}
+			store, err := ownership.Open(root)
+			if err != nil {
+				t.Fatal("open Factory ownership store")
+			}
+			proof, err := store.Proof(spec.rel)
+			if err != nil {
+				t.Fatalf("ownership proof: %v", err)
+			}
+			ids := proof.OwnedIDs()
+			if proof.OwnedCount() != 1 || len(ids) != 1 || ids[0] != alphaID {
+				t.Fatalf("owned hook identities = %v, want one shared identity", ids)
+			}
+			got, ok := proof.Entry(ids[0])
+			wantSources := []ownership.HookSourceEvidence{
+				{Resource: "alpha", SourceDigest: nativeHookContributorAlphaAlternateFP},
+				{Resource: "beta", SourceDigest: nativeHookContributorBetaFP},
+			}
+			if !ok || got.Resource != "alpha" || got.SourceDigest != nativeHookContributorAlphaFP || !reflect.DeepEqual(got.SourceEvidence, wantSources) {
+				t.Fatalf("recorded contributor evidence = %+v, want alpha scalar and sorted remaining pairs", got)
+			}
+			if !proof.HasHookSource(ids[0], "alpha", nativeHookContributorAlphaFP) || !proof.HasHookSource(ids[0], "alpha", nativeHookContributorAlphaAlternateFP) ||
+				!proof.HasHookSource(ids[0], "beta", nativeHookContributorBetaFP) || proof.HasHookSource(ids[0], "alpha", nativeHookContributorBetaFP) ||
+				proof.HasHookSource(ids[0], "gamma", nativeHookContributorAlphaFP) {
+				t.Fatal("recorded source evidence did not preserve exact contributor pairs")
+			}
+			if firstNative == "" {
+				firstNative = string(nativeBytes)
+			} else if string(nativeBytes) != firstNative {
+				t.Fatalf("contributor insertion order changed native hook bytes: %s", nativeBytes)
+			}
+			if !order.reverse {
+				t.Run("changed_beta_command_replaces_source_proof", func(t *testing.T) {
+					before := append([]byte(nil), nativeBytes...)
+					updatedCommand := "echo d9-updated-command"
+					beta := nativeHookJSONWork(t, tc, "beta", updatedCommand).entries[0]
+					beta.sourceDigest = nativeHookContributorBetaFP
+					onlyBeta := &ownedJSONAggregateWork{}
+					onlyBeta.add(beta)
+					updated := reconcileNativeHookJSON(context.Background(), nativeHookJSONReport(), key, repoRoot, onlyBeta, nativeHookJSONOptions(), false)
+					if updated == nil || diag.HasErrors(updated.Diags) {
+						t.Fatalf("changed-command reconciliation failed: %+v", updated)
+					}
+					after, err := os.ReadFile(path)
+					if err != nil || string(after) == string(before) {
+						t.Fatalf("changed command did not rewrite native bytes: %v", err)
+					}
+					commands := nativeHookJSONCommands(t, after, spec.rel, spec.container, tc.event, tc.shape)
+					if len(commands) != 1 || commands[0] != updatedCommand || strings.Contains(string(after), nativeHookJSONSelectedCommand) {
+						t.Fatalf("rewritten Factory hooks = %v, want only %q", commands, updatedCommand)
+					}
+					proof, err := store.Proof(spec.rel)
+					if err != nil {
+						t.Fatalf("ownership proof: %v", err)
+					}
+					ids := proof.OwnedIDs()
+					if proof.OwnedCount() != 1 || len(ids) != 1 || ids[0] == alphaID {
+						t.Fatalf("rewritten owned identities = %v, want only the changed hook", ids)
+					}
+					got, ok := proof.Entry(ids[0])
+					if !ok || got.Resource != "beta" || got.SourceDigest != nativeHookContributorBetaFP || len(got.SourceEvidence) != 0 {
+						t.Fatalf("rewritten proof adopted stale contributors: %+v", got)
+					}
+				})
+			}
+		})
+	}
+}
+
+func TestNativeHookContributorEvidenceCompatibility(t *testing.T) {
+	tc := nativeHookJSONCaseByName(t, "factory_repo")
+
+	first := nativeHookJSONWork(t, tc, "alpha", nativeHookJSONSelectedCommand).entries[0]
+	second := nativeHookJSONWork(t, tc, "beta", nativeHookJSONSelectedCommand).entries[0]
+	firstRaw := string(first.raw)
+	legacy := &ownedJSONAggregateWork{}
+	legacy.add(first)
+	legacy.add(second)
+	got := legacy.entries[0].ownershipEntry()
+	if len(legacy.entries) != 1 || legacy.entries[0].resource != "alpha" || string(legacy.entries[0].raw) != firstRaw ||
+		got.Resource != "alpha" || got.SourceDigest != "" || len(got.SourceEvidence) != 0 {
+		t.Fatalf("empty-proof hook duplicate changed first winner or gained proof: %+v / %+v", legacy.entries, got)
+	}
+
+	mcp := ownedJSONEntry{
+		rel: "mcp_config.json", kind: ownership.KindMcpServer, container: "mcpServers", key: "server",
+		raw: []byte(`{"command":"first","type":"stdio"}`), identity: ownership.McpIdentityDigest("server"), resource: "first-resource",
+		sourceDigest: nativeHookContributorAlphaFP, sourceEvidence: []ownership.HookSourceEvidence{{Resource: "alpha", SourceDigest: nativeHookContributorAlphaFP}},
+	}
+	secondMCP := mcp
+	secondMCP.raw = []byte(`{"command":"second","type":"stdio"}`)
+	secondMCP.resource = "second-resource"
+	secondMCP.sourceDigest = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	work := &ownedJSONAggregateWork{}
+	work.add(mcp)
+	work.add(secondMCP)
+	got = work.entries[0].ownershipEntry()
+	if len(work.entries) != 1 || work.entries[0].resource != "first-resource" || string(work.entries[0].raw) != string(mcp.raw) ||
+		got.Resource != "first-resource" || got.SourceDigest != "" || len(got.SourceEvidence) != 0 {
+		t.Fatalf("keyed MCP duplicate changed first winner or carried hook metadata: %+v / %+v", work.entries, got)
+	}
+}
+
+func TestNativeHookContributorEvidenceMalformedTupleUsesOwnershipValidation(t *testing.T) {
+	tc := nativeHookJSONCaseByName(t, "factory_repo")
+	_, _, root, spec := nativeHookContributorFactory(t)
+	work := nativeHookJSONWork(t, tc, "alpha", nativeHookJSONSelectedCommand)
+	body := []byte(`{"PreToolUse":[` + string(work.entries[0].raw) + `]}` + "\n")
+	path := filepath.Join(root, filepath.FromSlash(spec.rel))
+	entry := nativeHookProofEntry(t, tc.event, string(work.entries[0].raw), "alpha", nativeHookContributorAlphaFP)
+	layout := nativeHookLayout{rel: spec.rel}
+	seedNativeProof(t, root, layout, body, entry)
+	store, err := ownership.Open(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	proof, err := store.Proof(spec.rel)
+	if err != nil {
+		t.Fatal(err)
+	}
+	nativeBefore, nativeMode, nativeMtime := fileSnapshot(t, path)
+	stateBefore, stateMode, stateMtime := fileSnapshot(t, store.StateFile())
+	invalid := work.entries[0]
+	invalid.sourceDigest = nativeHookContributorAlphaFP
+	invalid.sourceEvidence = []ownership.HookSourceEvidence{{Resource: "", SourceDigest: nativeHookContributorBetaFP}}
+	invalidWork := &ownedJSONAggregateWork{}
+	invalidWork.add(invalid)
+	invalidEntry := invalidWork.entries[0].ownershipEntry()
+	if len(invalidEntry.SourceEvidence) != 1 || invalidEntry.SourceEvidence[0].Resource != "" {
+		t.Fatalf("invalid tuple was dropped before state validation: %+v", invalidEntry.SourceEvidence)
+	}
+	_, err = store.Apply(ownership.Mutation{
+		Rel: spec.rel, AbsFile: path, NextBytes: []byte(`{"PreToolUse":[]}` + "\n"),
+		Entries: []ownership.Entry{invalidEntry}, Reason: ownership.ReasonSync,
+		ExpectPriorGeneration: proof.Generation(), ExpectPriorDigest: ownership.Digest(body),
+	})
+	if !errors.Is(err, ownership.ErrUnsafeStateValue) {
+		t.Fatalf("invalid source tuple error = %v, want ErrUnsafeStateValue", err)
+	}
+	assertFileUnchanged(t, path, nativeBefore, nativeMode, nativeMtime)
+	assertFileUnchanged(t, store.StateFile(), stateBefore, stateMode, stateMtime)
 }

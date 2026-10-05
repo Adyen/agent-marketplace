@@ -28,13 +28,15 @@ const ownedJSONEmptyDocument = "{}\n"
 // ownedJSONEntry is one desired JSON aggregate entry with its ownership
 // identity and canonical value bytes.
 type ownedJSONEntry struct {
-	rel       string
-	kind      ownership.EntryKind
-	container string
-	key       string
-	raw       []byte
-	identity  string
-	resource  string
+	rel            string
+	kind           ownership.EntryKind
+	container      string
+	key            string
+	raw            []byte
+	identity       string
+	resource       string
+	sourceDigest   string
+	sourceEvidence []ownership.HookSourceEvidence
 }
 
 func (e ownedJSONEntry) id() ownership.EntryID {
@@ -44,7 +46,7 @@ func (e ownedJSONEntry) id() ownership.EntryID {
 func (e ownedJSONEntry) valueDigest() string { return ownership.Digest(e.raw) }
 
 func (e ownedJSONEntry) ownershipEntry() ownership.Entry {
-	return ownership.Entry{
+	entry := ownership.Entry{
 		Kind:           e.kind,
 		Container:      e.container,
 		Key:            e.key,
@@ -52,6 +54,11 @@ func (e ownedJSONEntry) ownershipEntry() ownership.Entry {
 		ValueDigest:    e.valueDigest(),
 		Resource:       e.resource,
 	}
+	if e.kind == ownership.KindHook {
+		entry.SourceDigest = e.sourceDigest
+		entry.SourceEvidence = append([]ownership.HookSourceEvidence(nil), e.sourceEvidence...)
+	}
+	return entry
 }
 
 // ownedJSONAggregateWork is the desired JSON aggregate state for one output
@@ -60,22 +67,78 @@ func (e ownedJSONEntry) ownershipEntry() ownership.Entry {
 type ownedJSONAggregateWork struct {
 	entries    []ownedJSONEntry
 	incomplete map[string]bool
-	seen       map[string]bool
+	seen       map[string]int
 }
 
 func (w *ownedJSONAggregateWork) add(entry ownedJSONEntry) {
 	if w.seen == nil {
-		w.seen = make(map[string]bool)
+		w.seen = make(map[string]int)
 	}
 	id := entry.rel + "\x00" + ownedAggregateIDKey(entry.id())
-	if w.seen[id] {
+	if index, ok := w.seen[id]; ok {
+		if entry.kind == ownership.KindHook {
+			normalizeOwnedJSONHookSources(&w.entries[index], entry)
+		}
 		slog.Debug("owned JSON aggregate desired entry collapsed as a duplicate identity",
 			"file", entry.rel, "kind", string(entry.kind), "container", entry.container,
 			"key", entry.key, "resource", entry.resource)
 		return
 	}
-	w.seen[id] = true
+	if entry.kind == ownership.KindHook {
+		normalizeOwnedJSONHookSources(&entry)
+	}
+	w.seen[id] = len(w.entries)
 	w.entries = append(w.entries, entry)
+}
+
+func normalizeOwnedJSONHookSources(entry *ownedJSONEntry, contributors ...ownedJSONEntry) {
+	hasEvidence := entry.sourceDigest != "" || len(entry.sourceEvidence) > 0
+	for _, contributor := range contributors {
+		if contributor.sourceDigest != "" || len(contributor.sourceEvidence) > 0 {
+			hasEvidence = true
+		}
+	}
+	if !hasEvidence {
+		return
+	}
+	pairs := make([]ownership.HookSourceEvidence, 0, len(entry.sourceEvidence)+1)
+	collect := func(candidate ownedJSONEntry) {
+		if candidate.sourceDigest != "" {
+			pairs = append(pairs, ownership.HookSourceEvidence{Resource: candidate.resource, SourceDigest: candidate.sourceDigest})
+		}
+		pairs = append(pairs, candidate.sourceEvidence...)
+	}
+	collect(*entry)
+	for _, contributor := range contributors {
+		collect(contributor)
+	}
+	sort.Slice(pairs, func(i, j int) bool {
+		if pairs[i].Resource != pairs[j].Resource {
+			return pairs[i].Resource < pairs[j].Resource
+		}
+		return pairs[i].SourceDigest < pairs[j].SourceDigest
+	})
+	unique := pairs[:0]
+	for _, pair := range pairs {
+		if len(unique) == 0 || unique[len(unique)-1] != pair {
+			unique = append(unique, pair)
+		}
+	}
+	primary := -1
+	for i, pair := range unique {
+		if pair.Resource != "" && pair.SourceDigest != "" {
+			primary = i
+			break
+		}
+	}
+	if primary < 0 {
+		entry.sourceDigest = ""
+		entry.sourceEvidence = unique
+		return
+	}
+	entry.resource = unique[primary].Resource
+	entry.sourceDigest = unique[primary].SourceDigest
+	entry.sourceEvidence = append(unique[:primary], unique[primary+1:]...)
 }
 
 func (w *ownedJSONAggregateWork) markIncomplete(rel string) {
