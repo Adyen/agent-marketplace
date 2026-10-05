@@ -652,21 +652,20 @@ func Materialize(r *Result, outDir string, opts ...WriteOption) (report *WriteRe
 
 	// Determine which artifacts to write vs skip.
 	existingModes := make(map[string]fs.FileMode)
+	originalFiles := make(map[string]*fsboundary.Identity, len(artifacts))
 	for _, a := range artifacts {
 		destPath := filepath.Join(outDir, filepath.FromSlash(a.Path))
 
-		matches, exists, err := fileMatchesBytes(destPath, a.Bytes)
+		var original fsboundary.Identity
+		matches, exists, err := fileMatchesBytes(destPath, a.Bytes, &original)
+		if exists {
+			originalFiles[a.Path] = &original
+		}
 		if err != nil {
 			return nil, fmt.Errorf("harnesscompile.Materialize: stat %s: %w", a.Path, err)
 		}
 		if exists && a.MergeWithExisting {
-			info, err := os.Lstat(destPath)
-			if err != nil {
-				return nil, fmt.Errorf("harnesscompile.Materialize: stat %s: %w", a.Path, err)
-			}
-			if info.Mode().IsRegular() {
-				existingModes[a.Path] = info.Mode().Perm()
-			}
+			existingModes[a.Path] = original.Mode.Perm()
 		}
 
 		if exists && matches {
@@ -858,6 +857,24 @@ func Materialize(r *Result, outDir string, opts ...WriteOption) (report *WriteRe
 		}
 		if closeErr := parent.Close(); closeErr != nil {
 			return nil, closeErr
+		}
+		currentFile, inspectErr := native.Lstat(filepath.FromSlash(a.Path))
+		original := originalFiles[a.Path]
+		if original == nil {
+			if !errors.Is(inspectErr, fs.ErrNotExist) {
+				return nil, errors.Join(fsboundary.ErrGenerationConflict, inspectErr)
+			}
+		} else {
+			if inspectErr != nil {
+				return nil, errors.Join(fsboundary.ErrGenerationConflict, inspectErr)
+			}
+			identity, identityErr := fsboundary.FileInfoIdentity(currentFile)
+			if identityErr != nil {
+				return nil, identityErr
+			}
+			if !identity.SameState(*original) {
+				return nil, fsboundary.ErrGenerationConflict
+			}
 		}
 		if err := native.Rename(src, filepath.FromSlash(a.Path)); err != nil {
 			return nil, fmt.Errorf("harnesscompile.Materialize: rename %s: %w", a.Path, err)
@@ -1091,7 +1108,7 @@ func validateArtifactPath(p, outDir string) error {
 
 // fileMatchesBytes reports whether path exists and has identical contents to
 // expected.
-func fileMatchesBytes(path string, expected []byte) (matches, exists bool, err error) {
+func fileMatchesBytes(path string, expected []byte, observed *fsboundary.Identity) (matches, exists bool, err error) {
 	absolute, err := filepath.Abs(path)
 	if err != nil {
 		return false, false, err
@@ -1127,6 +1144,7 @@ func fileMatchesBytes(path string, expected []byte) (matches, exists bool, err e
 	if !identity.SameState(original) {
 		return false, false, fsboundary.ErrGenerationConflict
 	}
+	*observed = identity
 	return bytes.Equal(data, expected), true, nil
 }
 
