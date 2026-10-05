@@ -15,7 +15,11 @@ func writeCapturedBackupSource(writer io.Writer, root *fsboundary.Dir, name stri
 	}
 	defer func() {
 		if closeErr := file.Close(); closeErr != nil {
-			err = errors.Join(err, closeErr)
+			if err != nil {
+				err = errors.Join(err, closeErr)
+			} else {
+				err = closeErr
+			}
 		}
 	}()
 	if file.Link() != nil {

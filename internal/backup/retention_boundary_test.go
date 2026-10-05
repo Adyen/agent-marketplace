@@ -24,7 +24,7 @@ func TestRetentionMemberRefusesReplacementGeneration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Rename(path, filepath.Join(t.TempDir(), "retained-archive")); err != nil {
+	if err := os.Rename(path, filepath.Join(dir, "retained-archive")); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(path, []byte("inert replacement archive"), 0o600); err != nil {
@@ -53,7 +53,7 @@ func TestRotateRefusesHardlinkedArchive(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	foreign := filepath.Join(t.TempDir(), "foreign-archive")
+	foreign := filepath.Join(home, "foreign-archive")
 	if err := os.Link(old, foreign); err != nil {
 		t.Fatal(err)
 	}

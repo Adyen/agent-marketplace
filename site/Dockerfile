@@ -11,7 +11,7 @@ RUN mkdir -p /site /design && chown -R 1000:1000 /site /design
 WORKDIR /site
 USER 1000
 
-COPY --chown=1000:1000 package.json pnpm-lock.yaml ./
+COPY --chown=1000:1000 package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 RUN pnpm install --frozen-lockfile
 
 COPY --chown=1000:1000 . .
