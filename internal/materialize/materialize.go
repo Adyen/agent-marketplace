@@ -3505,6 +3505,95 @@ func prepareSkillLinkCaches(links []skillLink, dryRun bool) error {
 	return nil
 }
 
+// supportStageCleanupHook runs after the support stage name is matched to
+// the admitted stage and before removal. It is nil in production and set only
+// by serial tests in this package.
+var supportStageCleanupHook func(stage string)
+
+// removeAdmittedSupportStage removes the attempt-created support stage only
+// while its name still refers to the admitted directory. Contents are removed
+// through the admitted descriptor, and the name itself only by an
+// empty-directory removal, so a replacement swapped in during cleanup is never
+// recursively deleted; a replaced name is left untouched as a generation
+// conflict.
+func removeAdmittedSupportStage(parent *fsboundary.Dir, native *os.Root, name string, stage *fsboundary.Dir, created fsboundary.Identity) error {
+	sameStage := func() error {
+		current, err := native.Lstat(name)
+		if err != nil {
+			return fmt.Errorf("%w: support stage unavailable for cleanup: %w", fsboundary.ErrGenerationConflict, err)
+		}
+		identity, err := fsboundary.FileInfoIdentity(current)
+		if err != nil {
+			return err
+		}
+		if !identity.SameObject(created) {
+			return fmt.Errorf("%w: support stage replaced before cleanup", fsboundary.ErrGenerationConflict)
+		}
+		return nil
+	}
+	if err := sameStage(); err != nil {
+		return err
+	}
+	if supportStageCleanupHook != nil {
+		supportStageCleanupHook(filepath.Join(parent.Path(), name))
+	}
+	if err := removeCapturedDirectoryContents(stage); err != nil {
+		return err
+	}
+	if err := sameStage(); err != nil {
+		return err
+	}
+	if err := parent.Rmdir(name); err != nil {
+		return fmt.Errorf("%w: support stage changed during cleanup: %w", fsboundary.ErrGenerationConflict, err)
+	}
+	return nil
+}
+
+// removeCapturedDirectoryContents empties a captured directory through
+// descriptor-relative operations without following links.
+func removeCapturedDirectoryContents(dir *fsboundary.Dir) (err error) {
+	native, err := dir.NativeRoot()
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if closeErr := native.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
+	entries, err := fs.ReadDir(native.FS(), ".")
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		info, err := native.Lstat(entry.Name())
+		if err != nil {
+			return err
+		}
+		if !info.IsDir() {
+			if err := dir.Unlink(entry.Name()); err != nil {
+				return err
+			}
+			continue
+		}
+		child, err := dir.OpenPath(entry.Name())
+		if err != nil {
+			return err
+		}
+		removeErr := removeCapturedDirectoryContents(child)
+		if closeErr := child.Close(); closeErr != nil {
+			removeErr = errors.Join(removeErr, closeErr)
+		}
+		if removeErr != nil {
+			return removeErr
+		}
+		if err := dir.Rmdir(entry.Name()); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func prepareSkillLinkCache(link skillLink) (err error) {
 	if len(link.artifacts) == 0 {
 		return nil
@@ -3545,24 +3634,19 @@ func prepareSkillLinkCache(link skillLink) (err error) {
 			}
 		}()
 		name := filepath.Base(supportStage)
-		created, statErr := native.Lstat(name)
-		if statErr != nil {
-			return statErr
+		// Capture the admitted stage directory itself: cleanup removes its
+		// contents through this descriptor, never through the name.
+		stage, stageErr := parent.OpenPath(name)
+		if stageErr != nil {
+			return stageErr
 		}
-		if !created.IsDir() {
-			return fsboundary.ErrUnsafeFile
-		}
+		created := stage.Identity()
 		defer func() {
-			current, inspectErr := native.Lstat(name)
-			if inspectErr != nil || !os.SameFile(created, current) {
-				err = errors.Join(err, fsboundary.ErrGenerationConflict)
-				if inspectErr != nil {
-					err = errors.Join(err, inspectErr)
-				}
-				return
+			if cleanupErr := removeAdmittedSupportStage(parent, native, name, stage, created); cleanupErr != nil {
+				err = errors.Join(err, cleanupErr)
 			}
-			if removeErr := native.RemoveAll(name); removeErr != nil {
-				err = errors.Join(err, removeErr)
+			if closeErr := stage.Close(); closeErr != nil {
+				err = errors.Join(err, closeErr)
 			}
 		}()
 		if err := copyScopedSupport(link.sourceDir, supportStage, compiled, "", len(link.declaredSupport) == 0, writeSupportStage); err != nil {
