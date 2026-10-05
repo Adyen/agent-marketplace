@@ -389,7 +389,8 @@ func (b RetainedBackup) RawBytes() (data []byte, err error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := b.source.verifyStateDirectory(parent, b.relative); err != nil {
+	err = b.source.verifyStateDirectory(parent, b.relative)
+	if err != nil {
 		return nil, err
 	}
 	return data, nil
@@ -411,7 +412,8 @@ func captureSafetyPayload(parent *fsboundary.Dir, name string) (pin metadataPin,
 	if !file.Exists() {
 		return pin, false, nil
 	}
-	if err := file.ReadTargetWith(func(io.Reader) error { return nil }); err != nil {
+	err = file.ReadTargetWith(func(io.Reader) error { return nil })
+	if err != nil {
 		return pin, false, err
 	}
 	identity := parent.Identity()
