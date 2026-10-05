@@ -103,6 +103,12 @@ func TestRecoverRefusesAliasedStateBeforeRollback(t *testing.T) {
 	if got, _ := f.readAggregate(); got != nextContent {
 		t.Fatalf("refused recovery changed native bytes: %q", got)
 	}
+	if info, err := os.Lstat(store.StateFile()); err != nil || info.Mode()&os.ModeSymlink == 0 {
+		t.Fatalf("refusal changed state alias type: %v", err)
+	}
+	if target, err := os.Readlink(store.StateFile()); err != nil || target != foreign {
+		t.Fatalf("refusal changed state alias target: %q %v", target, err)
+	}
 	if err := os.Remove(store.StateFile()); err != nil {
 		t.Fatal(err)
 	}
