@@ -134,3 +134,43 @@ func TestSupportStageCleanupNeverRemovesReplacementSwappedDuringCleanup(t *testi
 		t.Fatalf("admitted stage contents were not removed through its descriptor: %v %v", entries, readErr)
 	}
 }
+
+func TestSupportOutputStaysWithinAdmittedCacheParent(t *testing.T) {
+	home, repo, source, external := t.TempDir(), t.TempDir(), t.TempDir(), t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("CODEX_HOME", filepath.Join(home, ".codex"))
+	t.Setenv("XDG_STATE_HOME", filepath.Join(home, "state"))
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, "cache"))
+	if err := os.WriteFile(filepath.Join(source, "reference.txt"), []byte("inert support payload"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	resolved := []resolver.ResolvedArtifact{{Entry: catalog.Entry{Name: "scope-probe", Path: source, Resource: ir.NewSkill("scope-probe", "Support control", "compiled inert body", nil, nil, ir.SourceRef{})}, Source: config.RepoCommitted, Harnesses: []hcc.Target{hcc.TargetFactory}}}
+	retained := filepath.Join(t.TempDir(), "retained-cache-parent")
+	swapped := ""
+	supportStageCopyHook = func(parent string) {
+		if swapped != "" {
+			return
+		}
+		swapped = parent
+		if err := os.Rename(parent, retained); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(external, parent); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Cleanup(func() { supportStageCopyHook = nil })
+	report, err := Run(t.Context(), repo, resolved)
+	if swapped == "" {
+		t.Fatal("support stage copy seam not reached")
+	}
+	if entries, readErr := os.ReadDir(external); readErr != nil || len(entries) != 0 {
+		t.Fatalf("support output followed a swapped cache parent: %v %v", entries, readErr)
+	}
+	if err != nil || !hasDiagCode(report.Diags, "materialize.write.error") {
+		t.Fatalf("swapped cache parent did not refuse: report=%+v err=%v", report, err)
+	}
+	if _, statErr := os.Lstat(filepath.Join(repo, ".factory", "skills", "scope-probe")); !os.IsNotExist(statErr) {
+		t.Fatalf("refused support output installed a native link: %v", statErr)
+	}
+}
