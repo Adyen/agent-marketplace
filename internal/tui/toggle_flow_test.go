@@ -271,7 +271,7 @@ skills:
 // TestReadSnapshotReflectsProjectToggle exercises the project-scope toggle:
 // add a skill to the project config's registry entry skills list and verify
 // the rows reflect the project enablement.
-// spec: tui-startup/provisional-rows-retain-single-view-position-and-guarded-actions
+// spec: session-startup/provisional-rows-retain-single-view-position-and-guarded-actions
 func TestReadSnapshotReflectsProjectToggle(t *testing.T) {
 	repoRoot := t.TempDir()
 	homeDir := t.TempDir()

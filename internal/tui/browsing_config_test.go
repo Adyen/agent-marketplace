@@ -20,7 +20,8 @@ import (
 	mpapi "github.com/Adyen/agent-marketplace/pkg/marketplace/api"
 )
 
-// spec: tui-startup/cached-marketplace-rows-render-while-acquisition-is-blocked
+// spec: session-startup/cached-marketplace-rows-render-while-acquisition-is-blocked
+// spec: session-startup/browse-safe-config-publishes-the-verified-endpoint-before-acquisition
 func TestBrowsingConfigStageRendersCachedRowsBeforeBlockedAcquisition(t *testing.T) {
 	repoRoot, homeDir := progressiveFixture(t)
 
@@ -181,5 +182,59 @@ func TestBrowsingConfigStageRendersCachedRowsBeforeBlockedAcquisition(t *testing
 	}
 	if strings.Contains(view, "Loading resources") {
 		t.Fatalf("view still shows the loading placeholder with rows present:\n%s", view)
+	}
+}
+
+// spec: session-startup/browse-safe-config-is-never-published-for-unsafe-configurations
+func TestDeniedOrganizationMarketplaceNeverPublishesBrowsingConfig(t *testing.T) {
+	repoRoot, homeDir := progressiveFixture(t)
+
+	fixture := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/.well-known/agent-marketplace.json" {
+			_ = json.NewEncoder(w).Encode(mpapi.DefaultWellKnown("mp", "http://"+r.Host))
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	t.Cleanup(fixture.Close)
+
+	orgDir := t.TempDir()
+	orgPath := filepath.Join(orgDir, "config.yaml")
+	orgConfig := "apiVersion: agent-marketplace/v4\nharnesses: [devin]\n" +
+		"allowed_marketplaces: [\"^https://blocked\\\\.example$\"]\n" +
+		"sources:\n  mp: {marketplace: " + fixture.URL + "}\n" +
+		"resources:\n  mp: {include: [tools/skill/remote]}\n"
+	if err := os.WriteFile(orgPath, []byte(orgConfig), 0o600); err != nil {
+		t.Fatalf("write organization config: %v", err)
+	}
+	config.SetTestOrganizationConfigPath(t, orgPath)
+	t.Cleanup(swapLoadOrgConfig(func() (*config.Config, error) {
+		return config.LoadOrganizationConfig()
+	}))
+
+	m := newProvisionalStageModel()
+	generation := m.beginRequest(requestSnapshot)
+	msgs := collectSnapshotStages(readSnapshotStages(context.Background(), repoRoot, homeDir, catalogLoadCached, generation))
+	if len(msgs) == 0 {
+		t.Fatal("snapshot produced no stages")
+	}
+	sawErr := false
+	for _, msg := range msgs {
+		for _, published := range []*config.Config{msg.mergedCfg, msg.provisionalCfg} {
+			if published == nil {
+				continue
+			}
+			for _, entry := range published.Marketplaces {
+				if len(entry.Resources) != 0 {
+					t.Fatalf("unsafe configuration published marketplace pins: %#v", entry)
+				}
+			}
+		}
+		if len(msg.errs) != 0 {
+			sawErr = true
+		}
+	}
+	if !sawErr {
+		t.Fatalf("denied endpoint produced no error in stages: %#v", msgs)
 	}
 }

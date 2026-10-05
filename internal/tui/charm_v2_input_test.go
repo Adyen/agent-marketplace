@@ -103,6 +103,7 @@ func TestV2BracketedPasteReachesFocusedSearch(t *testing.T) {
 	}
 }
 
+// spec: session-navigation/remote-marketplace-search-is-debounced
 // spec: tui-navigation/paste-in-search
 func TestV2BracketedPasteSchedulesRemoteSearchDebounce(t *testing.T) {
 	m := newTestModel()

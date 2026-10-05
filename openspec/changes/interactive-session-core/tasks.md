@@ -1,8 +1,8 @@
 ## 1. Surface-neutral specification split
 
-- [ ] 1.1 Add the five `session-*` capability deltas and split the requirements in the design mapping; verify every neutral requirement retains at least one scenario and each moved-whole scenario retains its title.
-- [ ] 1.2 Remove the mixed `tui-interactions` multi-harness requirement and add its key-only residual without generic save/empty scenarios; change `tui-startup` to retain TUI-only residual requirements and remove only requirements moved whole; add TUI residuals for repository/personal-local migration isolation; verify no lower-layer or terminal-only assertion remains in a `session-*` scenario.
-- [ ] 1.3 Move annotations for whole-moved scenarios and bind every `session-*` scenario to a TUI-surface test under `internal/tui/` or `tools/tui-qa/`; add or annotate TUI tests for each neutral counterpart to a split scenario. Review the affected annotations found by `rg 'spec: tui-(startup|navigation|feedback|interactions|rendering)/'` in:
+- [x] 1.1 Add the five `session-*` capability deltas and split the requirements in the design mapping; verify every neutral requirement retains at least one scenario and each moved-whole scenario retains its title.
+- [x] 1.2 Remove the mixed `tui-interactions` multi-harness requirement and add its key-only residual without generic save/empty scenarios; change `tui-startup` to retain TUI-only residual requirements and remove only requirements moved whole; add TUI residuals for repository/personal-local migration isolation; verify no lower-layer or terminal-only assertion remains in a `session-*` scenario.
+- [x] 1.3 Move annotations for whole-moved scenarios and bind every `session-*` scenario to a TUI-surface test under `internal/tui/` or `tools/tui-qa/`; add or annotate TUI tests for each neutral counterpart to a split scenario. Review the affected annotations found by `rg 'spec: tui-(startup|navigation|feedback|interactions|rendering)/'` in:
   - `internal/marketplace/cached_collection_test.go`
   - `internal/pipeline/marketplace_browsing_config_test.go`
   - `internal/tui/browsing_config_test.go`
@@ -24,7 +24,7 @@
   - `internal/tui/theme_native_test.go`
   - `internal/tui/toggle_flow_test.go`
   - `internal/tui/tree_test.go`
-- [ ] 1.4 Add annotated TUI tests for user-only legacy migration and hostile text inertness; verify declined migration does not write the user root and TUI residual tests cover repository/personal-local roots.
+- [x] 1.4 Add annotated TUI tests for user-only legacy migration and hostile text inertness; verify declined migration does not write the user root and TUI residual tests cover repository/personal-local roots.
 
 ## 2. Shared interactive-session core
 
