@@ -1,10 +1,10 @@
 package tui
 
 import (
-	"fmt"
 	"strings"
 
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/lipgloss/v2"
+	ltree "charm.land/lipgloss/v2/tree"
 	"github.com/charmbracelet/x/ansi"
 )
 
@@ -13,40 +13,66 @@ func renderBundleTree(m Model, width, height int) string {
 		return ""
 	}
 	if m.bundle == nil {
-		return fitTerminalRows("bundle\nNo bundle tree available", width, height)
+		return lipgloss.NewStyle().Width(width).Render(fitTerminalRows("bundle\nNo bundle tree available", width, height))
 	}
-	lines := make([]string, 0, height)
-	lines = append(lines, styleDetailLabel.Render(bundleTreeRootLabel(m.bundle)))
+
+	// The native tree renders the same depth-first order as m.bundle.entries():
+	// line i+1 below the root corresponds to visible entry i, so the cursor,
+	// the scroll offset and the per-entry styling all keep their meaning.
+	tr := ltree.Root(bundleTreeRootLabel(m.bundle))
+	tr.RootStyle(styleDetailLabel)
+	expandedDirs := map[*ltree.Tree]bool{}
+	var build func(parent *ltree.Tree, node *bundleNode)
+	build = func(parent *ltree.Tree, node *bundleNode) {
+		value := sanitizeTerminalData(node.name, terminalSingleLine)
+		if node.err != nil {
+			value += " [error]"
+		}
+		child := ltree.Root(value)
+		parent.Child(child)
+		if !node.isDir {
+			return
+		}
+		expandedDirs[child] = node.expanded
+		if !node.expanded {
+			return
+		}
+		for _, grandchild := range node.children {
+			build(child, grandchild)
+		}
+	}
+	for _, child := range m.bundle.rootNode.children {
+		build(tr, child)
+	}
+	tr.Enumerator(func(children ltree.Children, index int) string {
+		if dir, ok := children.At(index).(*ltree.Tree); ok {
+			if expandedDirs[dir] {
+				return "▾ "
+			}
+			return "▸ "
+		}
+		return "• "
+	})
+
+	lines := strings.Split(tr.String(), "\n")
+	out := make([]string, 0, height)
+	out = append(out, lines[0])
 	if m.bundle.rootErr != nil {
-		lines = append(lines, "  Error: "+sanitizeTerminalData(m.bundle.rootErr.Error(), terminalSingleLine))
+		out = append(out, "  Error: "+sanitizeTerminalData(m.bundle.rootErr.Error(), terminalSingleLine))
 	} else if len(m.bundle.entries()) == 0 {
-		lines = append(lines, "  (empty bundle)")
+		out = append(out, "  (empty bundle)")
 	}
 	entries := m.bundle.entries()
 	start := m.bundleOffset
 	if start > len(entries) {
 		start = len(entries)
 	}
-	for i := start; i < len(entries) && len(lines) < height; i++ {
-		entry := entries[i]
-		indent := strings.Repeat("  ", entry.Depth)
-		glyph := "• "
-		if entry.IsDir {
-			glyph = "▸ "
-			if entry.Expanded {
-				glyph = "▾ "
-			}
-		}
-		name := sanitizeTerminalData(entry.Name, terminalSingleLine)
-		line := fmt.Sprintf("%s%s%s", indent, glyph, name)
-		if entry.Err != nil {
-			line += " [error]"
-		}
-		line = ansi.Truncate(line, width, "")
+	for i := start; i < len(entries) && len(out) < height && i+1 < len(lines); i++ {
+		line := ansi.Truncate(lines[i+1], width, "")
 		if i == m.bundle.cursor {
 			line = styleSelected.Render(line)
 		}
-		lines = append(lines, line)
+		out = append(out, line)
 	}
-	return lipgloss.NewStyle().Width(width).Height(height).Render(strings.Join(lines, "\n"))
+	return lipgloss.NewStyle().Width(width).Height(height).Render(strings.Join(out, "\n"))
 }

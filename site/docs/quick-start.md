@@ -100,7 +100,7 @@ Open the TUI again:
 agent-marketplace
 ```
 
-Press `2` to open the **Registry** tab. It lists every resource the source offers, and the right pane describes the highlighted one.
+The single list groups every resource by status; the source's resources appear under **Available**, and the right pane describes the highlighted one.
 
 You can read a skill before you install it. Highlight a row and press `enter` to open its files. `SKILL.md` opens first, and `j` and `k` move through the other files. Press `esc` to go back to the list.
 

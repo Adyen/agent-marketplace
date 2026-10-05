@@ -131,22 +131,28 @@ func adminAuthorized(options AdminAuthOptions, subject string, groups []string) 
 // the administration request header, JSON-only mutation content type, and the
 // one-megabyte mutation body limit. It writes the rejection and returns false.
 func adminRequestProtections(w http.ResponseWriter, r *http.Request, options AdminAuthOptions) bool {
+	return adminRequestProtectionsWithError(w, r, options, func(status int, code, message string) {
+		writeAdminError(w, status, code, message)
+	})
+}
+
+func adminRequestProtectionsWithError(w http.ResponseWriter, r *http.Request, options AdminAuthOptions, reject func(int, string, string)) bool {
 	origin, originOK := singleAdminHeader(r, "Origin")
 	mutation := r.Method != http.MethodGet && r.Method != http.MethodHead
 	if (mutation || len(r.Header.Values("Origin")) > 0) && (!originOK || origin != options.Origin) {
-		writeAdminError(w, http.StatusForbidden, "origin_rejected", "Use the configured same-origin administration interface.")
+		reject(http.StatusForbidden, "origin_rejected", "Use the configured same-origin administration interface.")
 		return false
 	}
 	if mutation {
 		custom, ok := singleAdminHeader(r, "X-Marketplace-Admin")
 		if !ok || custom != "1" {
-			writeAdminError(w, http.StatusForbidden, "request_header_required", "The administration request header is required.")
+			reject(http.StatusForbidden, "request_header_required", "The administration request header is required.")
 			return false
 		}
 		contentType, ok := singleAdminHeader(r, "Content-Type")
 		mediaType, _, err := mime.ParseMediaType(contentType)
 		if !ok || err != nil || mediaType != "application/json" {
-			writeAdminError(w, http.StatusUnsupportedMediaType, "json_required", "Administration mutations require JSON.")
+			reject(http.StatusUnsupportedMediaType, "json_required", "Administration mutations require JSON.")
 			return false
 		}
 		r.Body = http.MaxBytesReader(w, r.Body, 1<<20)

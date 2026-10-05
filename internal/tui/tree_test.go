@@ -92,194 +92,18 @@ func isDescendantPath(child, parent string) bool {
 		child[len(parent)] == ':'
 }
 
-func TestBuildTreeScopeGroupsByEnablementScope(t *testing.T) {
-	rows := []row{
-		mkRow("audit-logging", withGlobal, withRegistry("sec.git", "security")),
-		mkRow("code-review", withProject, withRegistry("team.git", "team")),
-		mkRow("my-personal", withLocal, withRegistry("team.git", "team")),
-		mkRow("deploy-checklist", withAvailable, withRegistry("team.git", "team")),
-	}
-
-	items := buildTree(rows, tabScope, nil)
-	paths := sectionPaths(items)
-
-	wantOrder := []string{"scope:global", "scope:project", "scope:local", "scope:available"}
-	for i, want := range wantOrder {
-		found := false
-		for _, p := range paths {
-			if p == want {
-				found = true
-				if i > 0 {
-					break
-				}
-			}
-		}
-		if !found {
-			t.Fatalf("expected section %q in tree, got paths: %v", want, paths)
-		}
-	}
-
-	if got := skillNamesUnder(items, "scope:global"); len(got) != 1 || got[0] != "audit-logging" {
-		t.Fatalf("scope:global should contain audit-logging, got %v", got)
-	}
-	if got := skillNamesUnder(items, "scope:project"); len(got) != 1 || got[0] != "code-review" {
-		t.Fatalf("scope:project should contain code-review, got %v", got)
-	}
-	if got := skillNamesUnder(items, "scope:local"); len(got) != 1 || got[0] != "my-personal" {
-		t.Fatalf("scope:local should contain my-personal, got %v", got)
-	}
-	if got := skillNamesUnder(items, "scope:available"); len(got) != 1 || got[0] != "deploy-checklist" {
-		t.Fatalf("scope:available should contain deploy-checklist, got %v", got)
-	}
-}
-
-func TestBuildTreeScopePlacesMultiScopeUnderMostSpecific(t *testing.T) {
-	// Artifact enabled in all three scopes → appears only under Local.
-	r1 := mkRow("code-review", withGlobal, withProject, withLocal, withRegistry("t.git", "t"))
-	// Artifact enabled global+project (no local) → appears only under Project.
-	r2 := mkRow("audit-logging", withGlobal, withProject, withRegistry("s.git", "s"))
-
-	items := buildTree([]row{r1, r2}, tabScope, nil)
-
-	if got := skillNamesUnder(items, "scope:local"); len(got) != 1 || got[0] != "code-review" {
-		t.Fatalf("scope:local should contain code-review once, got %v", got)
-	}
-	if got := skillNamesUnder(items, "scope:global"); len(got) != 0 {
-		t.Fatalf("scope:global should be empty (code-review goes to local, audit-logging goes to project), got %v", got)
-	}
-	if got := skillNamesUnder(items, "scope:project"); len(got) != 1 || got[0] != "audit-logging" {
-		t.Fatalf("scope:project should contain audit-logging only, got %v", got)
-	}
-}
-
-func TestBuildTreeScopeLocalExcludedGoesToLocalOnly(t *testing.T) {
-	// Excluded-locally skill: even if project-enabled, show only under Local.
-	r := mkRow("deploy-checklist", withProject, withExcluded, withRegistry("t.git", "t"))
-
-	items := buildTree([]row{r}, tabScope, nil)
-
-	if got := skillNamesUnder(items, "scope:local"); len(got) != 1 || got[0] != "deploy-checklist" {
-		t.Fatalf("scope:local should contain deploy-checklist (excluded), got %v", got)
-	}
-	if got := skillNamesUnder(items, "scope:project"); len(got) != 0 {
-		t.Fatalf("scope:project should not duplicate excluded skill, got %v", got)
-	}
-}
-
-func TestBuildTreeScopeHasRegistrySubsections(t *testing.T) {
-	rows := []row{
-		mkRow("audit", withGlobal, withRegistry("sec.git", "security")),
-		mkRow("redact", withGlobal, withRegistry("sec.git", "security")),
-		mkRow("ci-check", withGlobal, withRegistry("infra.git", "infra")),
-	}
-
-	items := buildTree(rows, tabScope, nil)
-
-	if got := skillNamesUnder(items, "scope:global:skills:security"); len(got) != 2 {
-		t.Fatalf("scope:global:skills:security should have 2 skills, got %v", got)
-	}
-	if got := skillNamesUnder(items, "scope:global:skills:infra"); len(got) != 1 {
-		t.Fatalf("scope:global:skills:infra should have 1 skill, got %v", got)
-	}
-}
-
-func TestBuildTreeScopeGroupsAvailableByResourceKindThenRegistry(t *testing.T) {
-	rows := []row{
-		mkRow("remember", withAvailable, withKind(ir.KindCommand), withRegistry("configs.git", "ai-configs")),
-		mkRow("worker", withAvailable, withKind(ir.KindSubagent), withRegistry("configs.git", "ai-configs")),
-		mkRow("memory", withAvailable, withKind(ir.KindMcpServer), withRegistry("configs.git", "ai-configs")),
-	}
-
-	items := buildTree(rows, tabScope, nil)
-
-	for path, want := range map[string]string{
-		"scope:available:commands:ai-configs":    "remember",
-		"scope:available:subagents:ai-configs":   "worker",
-		"scope:available:mcp-servers:ai-configs": "memory",
-	} {
-		got := skillNamesUnder(items, path)
-		if len(got) != 1 || got[0] != want {
-			t.Fatalf("%s should contain %s, got %v", path, want, got)
-		}
-	}
-}
-
-func TestBuildTreeRegistryTabGroupsSkillsByRegistry(t *testing.T) {
-	rows := []row{
-		mkRow("audit", withGlobal, withRegistry("sec.git", "security")),
-		mkRow("deploy", withProject, withRegistry("infra.git", "infra")),
-		mkRow("loose", withAvailable, withRegistry("infra.git", "infra")),
-	}
-
-	items := buildTree(rows, tabRegistry, nil)
-
-	if got := skillNamesUnder(items, "registry:skills:security"); len(got) != 1 || got[0] != "audit" {
-		t.Fatalf("registry:skills:security should contain audit, got %v", got)
-	}
-	got := skillNamesUnder(items, "registry:skills:infra")
-	if len(got) != 2 {
-		t.Fatalf("registry:skills:infra should contain 2 skills, got %v", got)
-	}
-}
-
-func TestBuildTreeRegistryTabSeparatesSameURLByPath(t *testing.T) {
-	// Entries with the same URL but different paths should group separately.
-	rows := []row{
-		mkRow("pm-data", withGlobal, withRegistry("awesome-ai.git", "awesome-ai"), withRegistryMeta("main", "teams/pm/data")),
-		mkRow("pm-exec", withGlobal, withRegistry("awesome-ai.git", "awesome-ai"), withRegistryMeta("main", "teams/pm/exec")),
-		mkRow("audit", withGlobal, withRegistry("awesome-ai.git", "awesome-ai"), withRegistryMeta("main", "")),
-	}
-
-	items := buildTree(rows, tabRegistry, nil)
-
-	// The three entries should be in different registry groups:
-	// "awesome-ai / teams/pm/data", "awesome-ai / teams/pm/exec", and "awesome-ai".
-	if got := skillNamesUnder(items, "registry:skills:awesome-ai / teams/pm/data"); len(got) != 1 || got[0] != "pm-data" {
-		t.Fatalf("registry:skills:awesome-ai / teams/pm/data should contain pm-data, got %v", got)
-	}
-	if got := skillNamesUnder(items, "registry:skills:awesome-ai / teams/pm/exec"); len(got) != 1 || got[0] != "pm-exec" {
-		t.Fatalf("registry:skills:awesome-ai / teams/pm/exec should contain pm-exec, got %v", got)
-	}
-	if got := skillNamesUnder(items, "registry:skills:awesome-ai"); len(got) != 1 || got[0] != "audit" {
-		t.Fatalf("registry:skills:awesome-ai should contain audit, got %v", got)
-	}
-}
-
-func TestBuildTreeRegistryTabGroupsByResourceKindThenRegistry(t *testing.T) {
-	rows := []row{
-		mkRow("audit", withGlobal, withKind(ir.KindSkill), withRegistry("resources.git", "resources")),
-		mkRow("continue", withGlobal, withKind(ir.KindCommand), withRegistry("resources.git", "resources")),
-		mkRow("worker", withGlobal, withKind(ir.KindSubagent), withRegistry("resources.git", "resources")),
-		mkRow("pre-tool-use", withGlobal, withKind(ir.KindHook), withRegistry("resources.git", "resources")),
-		mkRow("memory", withGlobal, withKind(ir.KindMcpServer), withRegistry("resources.git", "resources")),
-	}
-
-	items := buildTree(rows, tabRegistry, nil)
-
-	for path, want := range map[string]string{
-		"registry:skills:resources":      "audit",
-		"registry:commands:resources":    "continue",
-		"registry:subagents:resources":   "worker",
-		"registry:hooks:resources":       "pre-tool-use",
-		"registry:mcp-servers:resources": "memory",
-	} {
-		got := skillNamesUnder(items, path)
-		if len(got) != 1 || got[0] != want {
-			t.Fatalf("%s should contain %s, got %v", path, want, got)
-		}
-	}
-}
-
-func TestBuildTreeStatusTabGroupsByStatus(t *testing.T) {
+// spec: tui-navigation/single-status-list-at-minimum-size
+func TestBuildStatusTreeGroupsByStatus(t *testing.T) {
 	rows := []row{
 		mkRow("req-skill", withRequired, withProject),
 		mkRow("enabled-skill", withProject),
 		mkRow("pending-skill", withProject, withDrift(materialize.DriftMissing)),
 		mkRow("broken-skill", withProject, withDrift(materialize.DriftBroken)),
 		mkRow("available-skill", withAvailable),
+		mkRow("bad-skill", withMalformed("yaml parse error")),
 	}
 
-	items := buildTree(rows, tabStatus, nil)
+	items := buildStatusTree(rows, nil)
 
 	for path, wantName := range map[string]string{
 		"status:required":  "req-skill",
@@ -287,6 +111,7 @@ func TestBuildTreeStatusTabGroupsByStatus(t *testing.T) {
 		"status:pending":   "pending-skill",
 		"status:broken":    "broken-skill",
 		"status:available": "available-skill",
+		"status:malformed": "bad-skill",
 	} {
 		got := skillNamesUnder(items, path)
 		if len(got) != 1 || got[0] != wantName {
@@ -295,76 +120,87 @@ func TestBuildTreeStatusTabGroupsByStatus(t *testing.T) {
 	}
 }
 
-func TestBuildTreeFoldStateHidesChildren(t *testing.T) {
+// spec: tui-navigation/single-status-list-at-minimum-size
+func TestBuildStatusTreeKeepsFixedSectionOrder(t *testing.T) {
+	// Inserted in reverse order; the tree must emit the fixed bucket order.
+	rows := []row{
+		mkRow("bad", withMalformed("parse")),
+		mkRow("avail", withAvailable),
+		mkRow("req", withRequired),
+		mkRow("on", withGlobal),
+	}
+	items := buildStatusTree(rows, nil)
+	want := []string{"status:required", "status:enabled", "status:available", "status:malformed"}
+	got := sectionPaths(items)
+	if len(got) != len(want) {
+		t.Fatalf("sections = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("sections = %v, want %v", got, want)
+		}
+	}
+}
+
+func TestBuildStatusTreeFoldStateHidesChildren(t *testing.T) {
 	rows := []row{
 		mkRow("audit", withGlobal, withRegistry("sec.git", "security")),
-		mkRow("deploy", withProject, withRegistry("team.git", "team")),
+		mkRow("deploy", withAvailable, withRegistry("team.git", "team")),
 	}
-	foldState := map[string]bool{"scope:global": true}
+	foldState := map[string]bool{"status:enabled": true}
 
-	items := buildTree(rows, tabScope, foldState)
+	items := buildStatusTree(rows, foldState)
 
-	// When scope:global is collapsed, its sub-sections and skills must not appear.
 	for _, it := range items {
-		if it.Kind == flatSection && it.SectionPath == "scope:global:skills:security" {
-			t.Fatalf("collapsed scope:global should not emit child section scope:global:skills:security")
-		}
 		if it.Kind == flatArtifact && it.Row.Artifact.Name == "audit" {
-			t.Fatalf("collapsed scope:global should hide audit skill")
+			t.Fatalf("collapsed status:enabled should hide audit skill")
 		}
 	}
 
 	// Other top-level sections remain visible.
-	if got := skillNamesUnder(items, "scope:project"); len(got) != 1 || got[0] != "deploy" {
-		t.Fatalf("scope:project must stay visible, got %v", got)
+	if got := skillNamesUnder(items, "status:available"); len(got) != 1 || got[0] != "deploy" {
+		t.Fatalf("status:available must stay visible, got %v", got)
 	}
 
 	// The collapsed section header itself is still emitted, with Collapsed=true.
-	var globalHeader *flatItem
+	var header *flatItem
 	for i := range items {
-		if items[i].Kind == flatSection && items[i].SectionPath == "scope:global" {
-			globalHeader = &items[i]
+		if items[i].Kind == flatSection && items[i].SectionPath == "status:enabled" {
+			header = &items[i]
 			break
 		}
 	}
-	if globalHeader == nil {
-		t.Fatalf("collapsed scope:global header should still be present")
+	if header == nil {
+		t.Fatalf("collapsed status:enabled header should still be present")
 	}
-	if !globalHeader.Collapsed {
-		t.Fatalf("scope:global header should report Collapsed=true")
+	if !header.Collapsed {
+		t.Fatalf("status:enabled header should report Collapsed=true")
 	}
 }
 
-func TestBuildTreeSectionCountsMatchChildren(t *testing.T) {
+func TestBuildStatusTreeSectionCountsMatchChildren(t *testing.T) {
 	rows := []row{
 		mkRow("a", withGlobal, withRegistry("sec.git", "security")),
 		mkRow("b", withGlobal, withRegistry("sec.git", "security")),
 		mkRow("c", withGlobal, withRegistry("sec.git", "security")),
 	}
 
-	items := buildTree(rows, tabScope, nil)
+	items := buildStatusTree(rows, nil)
 
 	for _, it := range items {
 		if it.Kind != flatSection {
 			continue
 		}
-		switch it.SectionPath {
-		case "scope:global":
-			if it.SectionCount != 3 {
-				t.Fatalf("scope:global count = %d, want 3", it.SectionCount)
-			}
-		case "scope:global:skills", "scope:global:skills:security":
-			if it.SectionCount != 3 {
-				t.Fatalf("%s count = %d, want 3", it.SectionPath, it.SectionCount)
-			}
+		if it.SectionPath == "status:enabled" && it.SectionCount != 3 {
+			t.Fatalf("status:enabled count = %d, want 3", it.SectionCount)
 		}
 	}
 }
 
-func TestBuildTreeEmptyInputYieldsNoItems(t *testing.T) {
-	items := buildTree(nil, tabScope, nil)
+func TestBuildStatusTreeEmptyInputYieldsNoItems(t *testing.T) {
+	items := buildStatusTree(nil, nil)
 	if len(items) != 0 {
-		t.Fatalf("buildTree(nil) should return empty slice, got %d items", len(items))
+		t.Fatalf("buildStatusTree(nil) should return empty slice, got %d items", len(items))
 	}
 }
 
@@ -415,20 +251,20 @@ func TestBuildRowsIncludesMalformedFromCatalog(t *testing.T) {
 	}
 
 	// Verify the malformed entry appears in the rendered tree.
-	items := buildTree(rows, tabScope, nil)
+	items := buildStatusTree(rows, nil)
 	malformedPaths := sectionPaths(items)
 	foundMalformedSection := false
 	for _, p := range malformedPaths {
-		if p == "scope:malformed" {
+		if p == "status:malformed" {
 			foundMalformedSection = true
 		}
 	}
 	if !foundMalformedSection {
-		t.Fatalf("expected scope:malformed section in tree; got paths: %v", malformedPaths)
+		t.Fatalf("expected status:malformed section in tree; got paths: %v", malformedPaths)
 	}
 
-	got := skillNamesUnder(items, "scope:malformed")
+	got := skillNamesUnder(items, "status:malformed")
 	if len(got) != 1 || got[0] != "broken-skill" {
-		t.Fatalf("scope:malformed should contain 'broken-skill', got %v", got)
+		t.Fatalf("status:malformed should contain 'broken-skill', got %v", got)
 	}
 }
