@@ -67,11 +67,17 @@ func (s *Store) writeMetadata(name string, data []byte) (err error) {
 	}
 	info, err := staged.Stat()
 	if err != nil {
-		return errors.Join(err, staged.Close())
+		if closeErr := staged.Close(); closeErr != nil {
+			return errors.Join(err, closeErr)
+		}
+		return err
 	}
 	created, err := fsboundary.FileInfoIdentity(info)
 	if err != nil {
-		return errors.Join(err, staged.Close())
+		if closeErr := staged.Close(); closeErr != nil {
+			return errors.Join(err, closeErr)
+		}
+		return err
 	}
 	defer func() {
 		if staged != nil {
@@ -122,8 +128,8 @@ func (s *Store) writeMetadata(name string, data []byte) (err error) {
 		return err
 	}
 	unchanged := fresh.Identity().SameObject(parent.Identity())
-	if err := fresh.Close(); err != nil {
-		return err
+	if closeErr := fresh.Close(); closeErr != nil {
+		return closeErr
 	}
 	if !unchanged {
 		return fsboundary.ErrGenerationConflict
