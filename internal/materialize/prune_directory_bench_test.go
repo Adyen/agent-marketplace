@@ -21,15 +21,19 @@ func BenchmarkPruneDirectoryReadDisk(b *testing.B) {
 		b.Run(name, func(b *testing.B) {
 			b.ReportAllocs()
 			for b.Loop() {
-				var entries []os.DirEntry
+				var count int
 				var err error
 				if captured {
-					entries, err = readPruneDirectory(dir, nil)
+					var entries []pruneDirectoryEntry
+					entries, err = readPruneDirectory(dir, nil, nil, true)
+					count = len(entries)
 				} else {
+					var entries []os.DirEntry
 					entries, err = os.ReadDir(dir)
+					count = len(entries)
 				}
-				if err != nil || len(entries) != 3 {
-					b.Fatalf("directory control: %v %v", entries, err)
+				if err != nil || count != 3 {
+					b.Fatalf("directory control: count=%d %v", count, err)
 				}
 			}
 		})
