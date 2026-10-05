@@ -22,7 +22,7 @@ func TestDetailSourcePreviewFIFORefusesWithoutBlocking(t *testing.T) {
 		if !errors.Is(err, fsboundary.ErrUnsafeFile) || content != "" || truncated {
 			t.Fatalf("FIFO supplied source preview bytes: %q %v %v", content, truncated, err)
 		}
-		if content := renderBundleFile(root, "source.txt", 80); !strings.Contains(content, "Error reading file") {
+		if content := renderBundleFile(true, root, "source.txt", 80); !strings.Contains(content, "Error reading file") {
 			t.Fatalf("FIFO bundle preview did not refuse: %q", content)
 		}
 		return
