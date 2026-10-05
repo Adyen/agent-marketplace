@@ -81,6 +81,7 @@ func TestRunSupportCachePruneRefusesRetargetedGeneration(t *testing.T) {
 	retained := filepath.Join(t.TempDir(), "original-cache")
 	changed := false
 	cacheDir := ""
+	var mutateErr error
 	logger := slog.Default()
 	t.Cleanup(func() { slog.SetDefault(logger) })
 	slog.SetDefault(slog.New(supportPruneObserver{Handler: slog.NewTextHandler(io.Discard, &slog.HandlerOptions{Level: slog.LevelDebug}), mutate: func(path string) {
@@ -89,14 +90,15 @@ func TestRunSupportCachePruneRefusesRetargetedGeneration(t *testing.T) {
 		}
 		changed = true
 		cacheDir = path
-		if err := os.Rename(path, retained); err != nil {
-			t.Fatal(err)
+		if mutateErr = os.Rename(path, retained); mutateErr != nil {
+			return
 		}
-		if err := os.Symlink(foreign, path); err != nil {
-			t.Fatal(err)
-		}
+		mutateErr = os.Symlink(foreign, path)
 	}}))
 	report, err := Run(t.Context(), repo, resolved)
+	if mutateErr != nil {
+		t.Fatal(mutateErr)
+	}
 	if err != nil || !changed || !hasDiagCode(report.Diags, "materialize.write.error") {
 		t.Fatalf("cache retarget did not refuse: changed=%t report=%+v err=%v", changed, report, err)
 	}
