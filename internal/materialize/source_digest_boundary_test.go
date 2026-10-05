@@ -1,6 +1,8 @@
 package materialize
 
 import (
+	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -8,6 +10,7 @@ import (
 
 	"github.com/Adyen/agent-marketplace/internal/catalog"
 	"github.com/Adyen/agent-marketplace/internal/config"
+	"github.com/Adyen/agent-marketplace/internal/fsboundary"
 	"github.com/Adyen/agent-marketplace/internal/resolver"
 	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
@@ -369,5 +372,35 @@ func TestRunPortableSourceHashContainedAliasRetainsNativeOwnership(t *testing.T)
 	}
 	if after, err := os.Stat(manifest); err != nil || !os.SameFile(before, after) || before.Mode() != after.Mode() || !before.ModTime().Equal(after.ModTime()) {
 		t.Fatalf("read-only source hash changed manifest: %v", err)
+	}
+}
+
+func TestSupportDirectoryAliasKeepsOperationalErrors(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("permission denial is not observable as root")
+	}
+	source := t.TempDir()
+	scripts := filepath.Join(source, "scripts")
+	if err := os.Mkdir(scripts, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(scripts, "helper.txt"), []byte("inert support"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("scripts", filepath.Join(source, "references")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(scripts, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(scripts, 0o755) })
+	link := skillLink{name: "alias-probe", sourceDir: source}
+	for name, walk := range map[string]func(skillLink) error{
+		"structural": validatePortableSkillSupportStructure,
+		"digest":     func(l skillLink) error { _, err := portableSkillVirtualDigest(l); return err },
+	} {
+		if err := walk(link); !errors.Is(err, fs.ErrPermission) || errors.Is(err, fsboundary.ErrUnsafeFile) {
+			t.Fatalf("%s: unreadable directory alias misreported as unsafe payload: %v", name, err)
+		}
 	}
 }

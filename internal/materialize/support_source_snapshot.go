@@ -99,7 +99,14 @@ func supportSourceChild(root *fsboundary.Dir, parent string, entry os.DirEntry) 
 	}
 	directory, err := root.OpenContainedRoot(rel)
 	if err != nil {
-		return rel, false, nil
+		// Only an alias to a non-directory continues as a payload, where the
+		// captured file rules apply. A failed directory alias keeps its own
+		// error, so an operational failure is not misreported as an unsafe
+		// payload and an unsafe alias keeps its typed refusal.
+		if supportAliasTargetsNonDirectory(root, rel) {
+			return rel, false, nil
+		}
+		return "", false, err
 	}
 	targetRel, err := filepath.Rel(root.Path(), directory.Path())
 	if err := errors.Join(err, directory.Close()); err != nil {
@@ -111,6 +118,21 @@ func supportSourceChild(root *fsboundary.Dir, parent string, entry os.DirEntry) 
 		}
 	}
 	return targetRel, true, nil
+}
+
+// supportAliasTargetsNonDirectory reports whether rel is an alias that the
+// captured repository link policy resolves to an existing non-directory.
+func supportAliasTargetsNonDirectory(root *fsboundary.Dir, rel string) bool {
+	target, err := fsboundary.CaptureDestination(root, rel, fsboundary.LinkPolicyRepository)
+	if err != nil {
+		return false
+	}
+	identity := target.Identity()
+	exists := target.Exists()
+	if closeErr := target.Close(); closeErr != nil {
+		return false
+	}
+	return exists && !identity.Mode.IsDir()
 }
 
 // supportPayloadReadHook observes support payload reads. It is nil in
