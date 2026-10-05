@@ -332,6 +332,25 @@ func rotateCodexSets(root *fsboundary.Dir, name, targetDir string, maxDays, maxP
 			remove = append(remove, byDay[day]...)
 		}
 	}
+	// Two complete manifests can claim the same archive. Deleting it for the
+	// first set would strand every other claimant (or abort its removal), so
+	// refuse overlapping claims before anything is removed.
+	claimed := make(map[string]string)
+	for _, set := range remove {
+		for _, partition := range set.Partitions {
+			if owner, ok := claimed[partition.Archive]; ok {
+				return fmt.Errorf("backup: archive %s claimed by multiple Codex sets (%s and %s): %w", partition.Archive, owner, set.Operation, fsboundary.ErrGenerationConflict)
+			}
+			claimed[partition.Archive] = set.Operation
+		}
+	}
+	for _, set := range sets {
+		for _, partition := range set.Partitions {
+			if owner, ok := claimed[partition.Archive]; ok && owner != set.Operation {
+				return fmt.Errorf("backup: archive %s claimed by multiple Codex sets (retained %s and %s): %w", partition.Archive, set.Operation, owner, fsboundary.ErrGenerationConflict)
+			}
+		}
+	}
 	var names []string
 	var identities []fsboundary.Identity
 	for _, set := range remove {
