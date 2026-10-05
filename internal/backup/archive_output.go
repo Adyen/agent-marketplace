@@ -47,7 +47,7 @@ func withArchiveOutput(path string, write func(*os.File) error) (err error) {
 		}
 		if err != nil {
 			current, statErr := native.Lstat(name)
-			if statErr == nil && (created == nil || os.SameFile(created, current)) {
+			if statErr == nil && created != nil && os.SameFile(created, current) {
 				if removeErr := native.Remove(name); removeErr != nil {
 					err = errors.Join(err, removeErr)
 				}
