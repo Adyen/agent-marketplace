@@ -533,9 +533,10 @@ func scanSubBundlesWalk(source *fsboundary.SourceFS, dir, sourceHarness string, 
 			continue
 		}
 		func() {
+			recorded := -1
 			defer func() {
 				if err := subSource.Close(); err != nil {
-					*bundles = append(*bundles, subBundle{path: subDir, err: err})
+					recordSubBundleCloseError(bundles, recorded, subDir, err)
 				}
 			}()
 			if hasBundleRootFS(subSource) || subSource.Refusal() != nil {
@@ -546,10 +547,12 @@ func scanSubBundlesWalk(source *fsboundary.SourceFS, dir, sourceHarness string, 
 					cat.sourceRefusal = subSource.Refusal()
 				}
 				if candidate.err != nil || candidate.catalog.SourceRefusal() != nil || len(candidate.catalog.Entries) > 0 || hasDiscoveryBoundaryDiagnostics(candidate.catalog.Diagnostics) {
+					recorded = len(*bundles)
 					*bundles = append(*bundles, candidate)
 					return
 				}
 				if hasWarningOrHigher(candidate.catalog.Diagnostics) {
+					recorded = len(*bundles)
 					*bundles = append(*bundles, candidate)
 					slog.Debug("traversing diagnostic-only bundle container", "path", subDir)
 				} else {
@@ -561,6 +564,19 @@ func scanSubBundlesWalk(source *fsboundary.SourceFS, dir, sourceHarness string, 
 			scanSubBundlesWalk(subSource, subDir, sourceHarness, bundles, opts)
 		}()
 	}
+}
+
+// recordSubBundleCloseError attaches a sub-source close failure to the
+// candidate already recorded for subDir, so one path never appears both as a
+// loaded sub-bundle and as a separate error; without a candidate it records a
+// failed one.
+func recordSubBundleCloseError(bundles *[]subBundle, recorded int, subDir string, err error) {
+	if recorded >= 0 && recorded < len(*bundles) && (*bundles)[recorded].path == subDir {
+		candidate := &(*bundles)[recorded]
+		candidate.err = errors.Join(candidate.err, err)
+		return
+	}
+	*bundles = append(*bundles, subBundle{path: subDir, err: err})
 }
 
 // skippedScanDirs identifies directory names that should never be treated as
@@ -627,7 +643,12 @@ func hasBundleRoot(dir string) (bool, error) {
 		if errors.Is(err, fsboundary.ErrUnsafePath) || errors.Is(err, fsboundary.ErrUnsafeFile) {
 			return false, fmt.Errorf("catalog source refused: %w", err)
 		}
-		return false, nil
+		// Only a vanished candidate is "no bundle here"; an unreadable one
+		// is a failed candidate that discovery must report.
+		if errors.Is(err, fs.ErrNotExist) {
+			return false, nil
+		}
+		return false, fmt.Errorf("probe sub-bundle %s: %w", dir, err)
 	}
 	defer func() { _ = srcFS.Close() }()
 	matched := hasBundleRootFS(srcFS)
