@@ -112,21 +112,6 @@ type exactLockSet struct {
 	catalogs   map[string]map[string]*catalog.Catalog
 }
 
-func (set *exactLockSet) discover(path, sourceHarness string) (catalog.LoadedCatalog, error) {
-	catalogs := set.catalogs[filepath.Clean(path)]
-	loaded := catalogs[sourceHarness]
-	if loaded == nil && sourceHarness == "" && len(catalogs) == 1 {
-		for _, candidate := range catalogs {
-			loaded = candidate
-		}
-	}
-	if loaded != nil {
-		slog.Debug("reusing verified source catalog", "path", path, "source_harness", loaded.SourceHarness)
-		return loaded.Discover(path, sourceHarness)
-	}
-	return catalog.Discover(path, sourceHarness)
-}
-
 type lockedGit struct {
 	canonical string
 	fetchURL  string
@@ -1124,7 +1109,7 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 		return nil
 	}
 
-	option := catalog.WithExactSnapshots(func(entry config.RegistryEntry) (string, string, error) {
+	option := catalog.WithVerifiedExactSnapshots(func(entry config.RegistryEntry) (string, string, error) {
 		if err := validateExactLocks(); err != nil {
 			return "", "", err
 		}
@@ -1146,7 +1131,7 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 		}
 		catalogKey := canonical + "@" + locked.commit.String() + ":" + entry.Path
 		return locked.snapshot, catalogKey, nil
-	}, set.discover)
+	}, set.catalogs)
 	hasExactConsumers := len(set.byIdentity) > 0
 	resultLease = func(ctx context.Context) (func(), error) {
 		if !hasExactConsumers {
