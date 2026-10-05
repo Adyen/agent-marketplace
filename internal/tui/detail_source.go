@@ -10,7 +10,9 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/fsboundary"
 )
 
-func readPreviewSource(rootPath, filePath string, limit int) (data []byte, err error) {
+type previewTargetRead func(*fsboundary.Destination, func(io.Reader) error) error
+
+func readPreviewSource(rootPath, filePath string, limit int, readTargetWith ...previewTargetRead) (data []byte, err error) {
 	if limit < 0 || int64(limit) == math.MaxInt64 {
 		return nil, fsboundary.ErrTooLarge
 	}
@@ -47,7 +49,11 @@ func readPreviewSource(rootPath, filePath string, limit int) (data []byte, err e
 	if source.Link() != nil {
 		return nil, fmt.Errorf("%w: source preview is a symlink", fsboundary.ErrUnsafePath)
 	}
-	err = source.ReadTargetWith(func(reader io.Reader) error {
+	readTarget := (*fsboundary.Destination).ReadTargetWith
+	if len(readTargetWith) > 0 && readTargetWith[0] != nil {
+		readTarget = readTargetWith[0]
+	}
+	err = readTarget(source, func(reader io.Reader) error {
 		var readErr error
 		data, readErr = io.ReadAll(io.LimitReader(reader, int64(limit)+1))
 		return readErr
