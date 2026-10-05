@@ -148,6 +148,27 @@ func WithExactSnapshots(fn ExactSnapshotFunc, discover ...DiscoverFunc) LoadOpti
 	}
 }
 
+func WithVerifiedExactSnapshots(fn ExactSnapshotFunc, verified map[string]map[string]*Catalog) LoadOption {
+	return func(c *loadConfig) {
+		c.exactSnapshot = fn
+		fallback := c.discover
+		c.discover = func(path, sourceHarness string) (LoadedCatalog, error) {
+			catalogs := verified[filepath.Clean(path)]
+			loaded := catalogs[sourceHarness]
+			if loaded == nil && sourceHarness == "" && len(catalogs) == 1 {
+				for _, candidate := range catalogs {
+					loaded = candidate
+				}
+			}
+			if loaded != nil {
+				slog.Debug("reusing verified source catalog", "path", path, "source_harness", loaded.SourceHarness)
+				return loaded.Discover(path, sourceHarness)
+			}
+			return fallback(path, sourceHarness)
+		}
+	}
+}
+
 func WithDiscoverFunc(fn DiscoverFunc) LoadOption {
 	return func(c *loadConfig) { c.discover = fn }
 }
@@ -166,14 +187,26 @@ func Discover(dir, sourceHarness string) (LoadedCatalog, error) {
 	return DiscoverWithOptions(dir, sourceHarness, IngestOptions{})
 }
 
-func DiscoverWithOptions(dir, sourceHarness string, opts IngestOptions) (LoadedCatalog, error) {
-	cat, err := LoadWithOptions(dir, sourceHarness, opts)
+func DiscoverWithOptions(dir, sourceHarness string, opts IngestOptions) (loaded LoadedCatalog, err error) {
+	source, err := fsboundary.OpenSourceFS(dir)
+	if err != nil {
+		return LoadedCatalog{}, err
+	}
+	defer func() { err = errors.Join(err, source.Close()) }()
+	return DiscoverSourceWithOptions(source, dir, sourceHarness, opts)
+}
+
+func DiscoverSourceWithOptions(source *fsboundary.SourceFS, dir, sourceHarness string, opts IngestOptions) (LoadedCatalog, error) {
+	cat, err := LoadSourceWithOptions(source, dir, sourceHarness, opts)
+	if fsboundary.IsSourceRefusal(err) {
+		return LoadedCatalog{}, fmt.Errorf("catalog source refused: %w", err)
+	}
 	if err != nil {
 		// Load failed — likely no recognizable layout at this directory.
 		// Before falling back to DiscoverSkills, check for sub-bundles.
 		// If subdirectories contain bundle roots, load them recursively
 		// instead of relying on the legacy skill-only discovery.
-		subBundles := scanForSubBundles(dir, sourceHarness, opts)
+		subBundles := scanSourceSubBundles(source, dir, sourceHarness, opts)
 		if len(subBundles) > 0 {
 			return discoverSubBundles(subBundles)
 		}
@@ -182,14 +215,19 @@ func DiscoverWithOptions(dir, sourceHarness string, opts IngestOptions) (LoadedC
 		// original load error so the caller knows discovery failed.
 		return LoadedCatalog{}, err
 	}
-	return cat.discoverWithOptions(dir, sourceHarness, opts)
+	return cat.discoverSourceWithOptions(source, dir, sourceHarness, opts)
 }
 
-func (cat *Catalog) Discover(dir, sourceHarness string) (LoadedCatalog, error) {
-	return cat.discoverWithOptions(dir, sourceHarness, IngestOptions{})
+func (cat *Catalog) Discover(dir, sourceHarness string) (loaded LoadedCatalog, err error) {
+	source, err := fsboundary.OpenSourceFS(dir)
+	if err != nil {
+		return LoadedCatalog{}, err
+	}
+	defer func() { err = errors.Join(err, source.Close()) }()
+	return cat.discoverSourceWithOptions(source, dir, sourceHarness, IngestOptions{})
 }
 
-func (cat *Catalog) discoverWithOptions(dir, sourceHarness string, opts IngestOptions) (LoadedCatalog, error) {
+func (cat *Catalog) discoverSourceWithOptions(source *fsboundary.SourceFS, dir, sourceHarness string, opts IngestOptions) (LoadedCatalog, error) {
 	if cat.sourceRefusal != nil {
 		return LoadedCatalog{}, fmt.Errorf("catalog source refused: %w", cat.sourceRefusal)
 	}
@@ -199,10 +237,10 @@ func (cat *Catalog) discoverWithOptions(dir, sourceHarness string, opts IngestOp
 	// multiple independent bundle subdirectories. Scan for sub-bundles and
 	// recurse into them.
 	if len(cat.Entries) == 0 && !hasDiscoveryBoundaryDiagnostics(cat.Diagnostics) {
-		subBundles := scanForSubBundles(dir, sourceHarness, opts)
+		subBundles := scanSourceSubBundles(source, dir, sourceHarness, opts)
 		if len(subBundles) > 0 {
 			if hasWarningOrHigher(cat.Diagnostics) {
-				subBundles = append([]subBundle{{path: dir, catalog: cat}}, subBundles...)
+				subBundles = append([]subBundle{{path: dir, catalog: cat, malformed: normalizeMalformedPaths(source, dir, malformedFromDiagnostics(cat.Diagnostics))}}, subBundles...)
 			}
 			return discoverSubBundles(subBundles)
 		}
@@ -220,9 +258,8 @@ func (cat *Catalog) discoverWithOptions(dir, sourceHarness string, opts IngestOp
 	if err != nil {
 		return LoadedCatalog{}, fmt.Errorf("resolve discovery root %q: %w", dir, err)
 	}
-	rootReal, err := filepath.EvalSymlinks(rootAbs)
-	if err != nil {
-		return LoadedCatalog{}, fmt.Errorf("canonicalize discovery root %q: %w", rootAbs, err)
+	if _, err := source.Stat("."); err != nil {
+		return LoadedCatalog{}, fmt.Errorf("inspect discovery root %q: %w", rootAbs, err)
 	}
 	for i := range malformed {
 		if malformed[i].Path == "" {
@@ -243,8 +280,7 @@ func (cat *Catalog) discoverWithOptions(dir, sourceHarness string, opts IngestOp
 
 		// Resolve symlinks and verify the real path stays inside the real root.
 		// This catches symlinks that lexical cleaning cannot see.
-		pReal, ok := resolveMalformedPath(rootReal, p)
-		if !ok {
+		if _, ok := resolveMalformedPath(source, rootAbs, p); !ok {
 			malformed[i].Path = ""
 			continue
 		}
@@ -260,7 +296,7 @@ func (cat *Catalog) discoverWithOptions(dir, sourceHarness string, opts IngestOp
 		// frontmatter `name:`, so a config selecting the authored name can only
 		// be correlated with this failure through the recovered name. Without
 		// it, a name/directory mismatch looks exactly like an upstream rename.
-		if declared := skill.DeclaredNameFromSource(rootReal, pReal); declared != "" && declared != malformed[i].DirName {
+		if declared := skill.DeclaredNameFromFS(source, filepath.ToSlash(relAbs)); declared != "" && declared != malformed[i].DirName {
 			malformed[i].DeclaredName = declared
 		}
 	}
@@ -280,7 +316,7 @@ func (cat *Catalog) discoverWithOptions(dir, sourceHarness string, opts IngestOp
 	// contain any missed resources — the warning would be a false positive.
 	if len(cat.Entries) > 0 {
 		var ignored []string
-		for _, subBundle := range scanForSubBundles(dir, sourceHarness, opts) {
+		for _, subBundle := range scanSourceSubBundles(source, dir, sourceHarness, opts) {
 			if !subBundle.coveredBy(cat.Entries, dir) {
 				ignored = append(ignored, subBundle.path)
 			}
@@ -294,6 +330,9 @@ func (cat *Catalog) discoverWithOptions(dir, sourceHarness string, opts IngestOp
 		}
 	}
 
+	if refusal := source.Refusal(); refusal != nil {
+		return LoadedCatalog{}, fmt.Errorf("catalog source refused: %w", refusal)
+	}
 	return LoadedCatalog{
 		Entries:     slices.Clone(cat.Entries),
 		Malformed:   malformed,
@@ -428,16 +467,30 @@ func subPathRel(path, prefix string) bool {
 // Retained candidates own their children; empty candidates are traversed.
 // Results retain the load outcome and are sorted deterministically by path.
 func scanForSubBundles(dir, sourceHarness string, options ...IngestOptions) []subBundle {
+	source, err := fsboundary.OpenSourceFS(dir)
+	if err != nil {
+		return nil
+	}
+	defer func() { _ = source.Close() }()
+	return scanSourceSubBundles(source, dir, sourceHarness, options...)
+}
+
+func scanSourceSubBundles(source *fsboundary.SourceFS, dir, sourceHarness string, options ...IngestOptions) []subBundle {
 	var bundles []subBundle
-	scanSubBundlesWalk(dir, sourceHarness, &bundles, options...)
+	var opts IngestOptions
+	if len(options) > 0 {
+		opts = options[0]
+	}
+	scanSubBundlesWalk(source, dir, sourceHarness, &bundles, opts)
 	sort.Slice(bundles, func(i, j int) bool { return bundles[i].path < bundles[j].path })
 	return bundles
 }
 
 type subBundle struct {
-	path    string
-	catalog *Catalog
-	err     error
+	path      string
+	catalog   *Catalog
+	err       error
+	malformed []skill.MalformedSkill
 }
 
 func loadSubBundle(path, sourceHarness string, options ...IngestOptions) subBundle {
@@ -450,7 +503,7 @@ func loadSubBundle(path, sourceHarness string, options ...IngestOptions) subBund
 }
 
 func (b subBundle) coveredBy(entries []Entry, dir string) bool {
-	if b.err != nil || hasDiscoveryBoundaryDiagnostics(b.catalog.Diagnostics) {
+	if b.err != nil || b.catalog.SourceRefusal() != nil || hasDiscoveryBoundaryDiagnostics(b.catalog.Diagnostics) {
 		return false
 	}
 	paths := make([]string, 0, len(b.catalog.Entries))
@@ -463,36 +516,50 @@ func (b subBundle) coveredBy(entries []Entry, dir string) bool {
 	return catalogCoversSubBundles(entries, dir, paths)
 }
 
-func scanSubBundlesWalk(dir, sourceHarness string, bundles *[]subBundle, options ...IngestOptions) {
-	entries, err := os.ReadDir(dir)
+func scanSubBundlesWalk(source *fsboundary.SourceFS, dir, sourceHarness string, bundles *[]subBundle, opts IngestOptions) {
+	entries, err := source.ReadDir(".")
 	if err != nil {
+		*bundles = append(*bundles, subBundle{path: dir, err: err})
 		return
 	}
 	for _, entry := range entries {
-		if !entry.IsDir() {
+		if !entry.IsDir() || skippedScanDirs(entry.Name()) {
 			continue
 		}
-		name := entry.Name()
-		if skippedScanDirs(name) {
+		subDir := filepath.Join(dir, entry.Name())
+		subSource, err := source.Sub(entry.Name())
+		if err != nil {
+			*bundles = append(*bundles, subBundle{path: subDir, err: err})
 			continue
 		}
-		subDir := filepath.Join(dir, name)
-		if hasBundleRoot(subDir) {
-			candidate := loadSubBundle(subDir, sourceHarness, options...)
-			if candidate.err != nil || len(candidate.catalog.Entries) > 0 || hasDiscoveryBoundaryDiagnostics(candidate.catalog.Diagnostics) {
-				*bundles = append(*bundles, candidate)
-				continue
+		func() {
+			defer func() {
+				if err := subSource.Close(); err != nil {
+					*bundles = append(*bundles, subBundle{path: subDir, err: err})
+				}
+			}()
+			if hasBundleRootFS(subSource) || subSource.Refusal() != nil {
+				cat, err := LoadSourceWithOptions(subSource, subDir, sourceHarness, opts)
+				candidate := subBundle{path: subDir, catalog: cat, err: err}
+				if cat != nil {
+					candidate.malformed = normalizeMalformedPaths(subSource, subDir, malformedFromDiagnostics(cat.Diagnostics))
+					cat.sourceRefusal = subSource.Refusal()
+				}
+				if candidate.err != nil || candidate.catalog.SourceRefusal() != nil || len(candidate.catalog.Entries) > 0 || hasDiscoveryBoundaryDiagnostics(candidate.catalog.Diagnostics) {
+					*bundles = append(*bundles, candidate)
+					return
+				}
+				if hasWarningOrHigher(candidate.catalog.Diagnostics) {
+					*bundles = append(*bundles, candidate)
+					slog.Debug("traversing diagnostic-only bundle container", "path", subDir)
+				} else {
+					slog.Debug("ignoring empty bundle candidate", "path", subDir)
+				}
+			} else if hasRootSkill(subSource) {
+				return
 			}
-			if hasWarningOrHigher(candidate.catalog.Diagnostics) {
-				*bundles = append(*bundles, candidate)
-				slog.Debug("traversing diagnostic-only bundle container", "path", subDir)
-			} else {
-				slog.Debug("ignoring empty bundle candidate", "path", subDir)
-			}
-		} else if hasDiskRootSkill(subDir) {
-			continue
-		}
-		scanSubBundlesWalk(subDir, sourceHarness, bundles, options...)
+			scanSubBundlesWalk(subSource, subDir, sourceHarness, bundles, opts)
+		}()
 	}
 }
 
@@ -541,15 +608,6 @@ var bundleLayoutDirs = map[string]struct{}{
 	"hooks":            {},
 }
 
-func hasDiskRootSkill(dir string) bool {
-	source, err := fsboundary.OpenSourceFS(dir)
-	if err != nil {
-		return false
-	}
-	defer func() { _ = source.Close() }()
-	return hasRootSkill(source)
-}
-
 func hasRootSkill(src fs.FS) bool {
 	info, err := fs.Stat(src, "SKILL.md")
 	return err == nil && !info.IsDir()
@@ -569,6 +627,10 @@ func hasBundleRoot(dir string) bool {
 		return false
 	}
 	defer func() { _ = srcFS.Close() }()
+	return hasBundleRootFS(srcFS)
+}
+
+func hasBundleRootFS(srcFS fs.FS) bool {
 	_, strictMatch := ingest.AutodetectStrict(srcFS)
 
 	// A root-level SKILL.md identifies a skill directory. Preserve an explicit
@@ -653,16 +715,15 @@ func hasMultiSkillSubdirs(src fs.FS) bool {
 // resolveMalformedPath checks whether p resolves to a path inside rootReal and
 // returns the resolved absolute path. It returns "" and false if p escapes the
 // discovery root, does not exist, or cannot be resolved.
-func resolveMalformedPath(rootReal, p string) (string, bool) {
-	pReal, err := filepath.EvalSymlinks(p)
-	if err != nil {
-		return "", false
-	}
-	rel, err := filepath.Rel(rootReal, pReal)
+func resolveMalformedPath(source *fsboundary.SourceFS, rootReal, p string) (string, bool) {
+	rel, err := filepath.Rel(rootReal, p)
 	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 		return "", false
 	}
-	return pReal, true
+	if _, err := source.Stat(filepath.ToSlash(rel)); err != nil {
+		return "", false
+	}
+	return p, true
 }
 
 // normalizeMalformedPaths makes malformed skill paths absolute relative to
@@ -670,13 +731,12 @@ func resolveMalformedPath(rootReal, p string) (string, bool) {
 // non-sub-bundle path. Without this, recursively discovered broken skills
 // keep relative paths (e.g. "skills/bad-skill") while the non-recursive
 // path normalizes them for the TUI.
-func normalizeMalformedPaths(root string, malformed []skill.MalformedSkill) []skill.MalformedSkill {
+func normalizeMalformedPaths(source *fsboundary.SourceFS, root string, malformed []skill.MalformedSkill) []skill.MalformedSkill {
 	rootAbs, err := filepath.Abs(root)
 	if err != nil {
 		return malformed
 	}
-	rootReal, err := filepath.EvalSymlinks(rootAbs)
-	if err != nil {
+	if _, err := source.Stat("."); err != nil {
 		return malformed
 	}
 	for i := range malformed {
@@ -695,7 +755,7 @@ func normalizeMalformedPaths(root string, malformed []skill.MalformedSkill) []sk
 			continue
 		}
 
-		if _, ok := resolveMalformedPath(rootReal, p); !ok {
+		if _, ok := resolveMalformedPath(source, rootAbs, p); !ok {
 			malformed[i].Path = ""
 			continue
 		}
@@ -719,6 +779,9 @@ func discoverSubBundles(subBundles []subBundle) (LoadedCatalog, error) {
 
 	for _, candidate := range subBundles {
 		subDir, subCat, subErr := candidate.path, candidate.catalog, candidate.err
+		if subCat != nil {
+			subErr = errors.Join(subErr, subCat.SourceRefusal())
+		}
 		if subErr != nil {
 			errs = append(errs, fmt.Errorf("sub-bundle %q: %w", subDir, subErr))
 			continue
@@ -726,7 +789,7 @@ func discoverSubBundles(subBundles []subBundle) (LoadedCatalog, error) {
 
 		subLoaded := LoadedCatalog{
 			Entries:     subCat.Entries,
-			Malformed:   normalizeMalformedPaths(subDir, malformedFromDiagnostics(subCat.Diagnostics)),
+			Malformed:   candidate.malformed,
 			Resources:   Resources(subCat),
 			Diagnostics: subCat.Diagnostics,
 		}

@@ -8,9 +8,9 @@ import (
 
 var _ store.ManagedRefreshAttemptStore = (*Store)(nil)
 
-func (s *Store) RecordManagedRefreshAttempt(ctx context.Context, fence store.ManagedFence, outcome string, publication store.PublicationID) error {
+func (s *Store) RecordManagedRefreshAttempt(ctx context.Context, fence store.ManagedFence, outcome string, publication store.PublicationID, failures ...store.ManagedRefreshFailure) error {
 	return s.withTx(ctx, func(tx *Store) error {
-		return store.CommitManagedRefreshAttempt(ctx, tx.q, tx, fence, outcome, publication)
+		return store.CommitManagedRefreshAttempt(ctx, tx.q, tx, fence, outcome, publication, failures...)
 	})
 }
 

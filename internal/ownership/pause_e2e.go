@@ -31,5 +31,8 @@ func (p *ownershipPause) Crash(point CrashPoint) error {
 	}
 	var signal [1]byte
 	_, err = io.ReadFull(file, signal[:])
-	return errors.Join(err, file.Close())
+	if closeErr := file.Close(); closeErr != nil {
+		return errors.Join(err, closeErr)
+	}
+	return err
 }

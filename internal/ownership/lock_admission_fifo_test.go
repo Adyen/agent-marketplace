@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
@@ -32,6 +33,9 @@ func TestLockContextFIFORefusesWithoutBlocking(t *testing.T) {
 		}
 		if !errors.Is(err, fsboundary.ErrUnsafeFile) {
 			t.Fatalf("FIFO admitted as ownership lock: %v", err)
+		}
+		if !strings.Contains(err.Error(), store.LockPath()) {
+			t.Fatalf("FIFO lock refusal does not identify the lock path: %v", err)
 		}
 		if after, err := os.Lstat(store.LockPath()); err != nil || !os.SameFile(before, after) || before.Mode() != after.Mode() {
 			t.Fatalf("FIFO lock changed: %v", err)
