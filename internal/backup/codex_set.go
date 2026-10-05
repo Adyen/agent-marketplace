@@ -24,6 +24,12 @@ import (
 
 const codexTargetName = string(targetmeta.TargetCodex)
 
+// maxCodexManifestBytes bounds one set manifest read. A two-partition Codex
+// manifest stays in a few KiB, so a manifest past 10 MiB is a hostile copy
+// rather than a legitimate one. refusals retain fsboundary.ErrTooLarge so
+// restore callers treat this as an unsafe manifest rather than absence.
+const maxCodexManifestBytes = 10 << 20
+
 // CodexPartition is one independently rooted half of a machine Codex backup.
 type CodexPartition struct {
 	ID       string
@@ -84,7 +90,9 @@ func CreateCodexSet(partitions []CodexPartition) (operation string, err error) {
 	output := codexSetOutput{parent: parent, native: native, path: targetDir, owned: make(map[string]fsboundary.Identity)}
 	defer func() {
 		if err != nil {
-			err = errors.Join(err, output.cleanup())
+			if cleanupErr := output.cleanup(); cleanupErr != nil {
+				err = errors.Join(err, cleanupErr)
+			}
 		}
 	}()
 	operation, err = nextCodexOperation(native, time.Now().Format("2006-01-02-150405"))
@@ -286,6 +294,9 @@ func readCodexManifest(root *fsboundary.Dir, name string) (data []byte, err erro
 	}()
 	if file.Link() != nil {
 		return nil, fsboundary.ErrUnsafeFile
+	}
+	if size := file.Identity().Size; size > maxCodexManifestBytes {
+		return nil, fmt.Errorf("%w: Codex set manifest %s is %d bytes, limit %d", fsboundary.ErrTooLarge, name, size, maxCodexManifestBytes)
 	}
 	data, _, err = file.ReadTarget(file.Identity().Size)
 	return data, err
