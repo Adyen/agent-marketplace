@@ -6,7 +6,29 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/Adyen/agent-marketplace/internal/fsboundary"
 )
+
+func TestStoreOpenRefusesNonDirectoryRoot(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	path := filepath.Join(t.TempDir(), "not-a-directory")
+	if err := os.WriteFile(path, []byte("inert root refusal control"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	stateRoot := filepath.Join(t.TempDir(), "absent-state")
+	store, err := Open(path, WithStateRoot(stateRoot))
+	if store != nil || !errors.Is(err, fsboundary.ErrUnsafePath) {
+		t.Fatalf("failed admission was treated as optional absence: store_present=%t err=%v", store != nil, err)
+	}
+	if raw, err := os.ReadFile(path); err != nil || string(raw) != "inert root refusal control" {
+		t.Fatalf("root admission changed fixture bytes: %q %v", raw, err)
+	}
+	if _, err := os.Lstat(stateRoot); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("root admission created state: %v", err)
+	}
+}
 
 // spec: owned-entry-reconciliation/existing-admitted-root-replaced-with-an-ordinary-directory
 func TestStoreReadAggregateRefusesOrdinaryRootReplacement(t *testing.T) {

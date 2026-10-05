@@ -209,14 +209,19 @@ func Open(targetRoot string, opts ...Option) (*Store, error) {
 	// descriptor-relative open, then close the descriptor immediately. Store
 	// has no lifecycle Close API, so retaining descriptors for every preview
 	// or status Store would leak. A genuinely absent root records absence and
-	// remains compatible with later authorized creation. Any capture failure
-	// (absence, permission, non-directory) simply leaves admittedRootExist
-	// false; the actual error surfaces later when ReadAggregate reopens the
-	// root. This adds no filesystem mutation and no persisted inode ownership.
-	if dir, openErr := fsboundary.OpenDir(canonical); openErr == nil {
-		s.admittedRootID = dir.Identity()
-		s.admittedRootExist = true
-		_ = dir.Close()
+	// remains compatible with later authorized creation. Other capture and
+	// cleanup errors fail admission rather than disabling its identity check.
+	dir, err := fsboundary.OpenDir(canonical)
+	if errors.Is(err, os.ErrNotExist) {
+		return s, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("ownership: capture target root %s: %w", canonical, err)
+	}
+	s.admittedRootID = dir.Identity()
+	s.admittedRootExist = true
+	if err := dir.Close(); err != nil {
+		return nil, fmt.Errorf("ownership: close admitted target root %s: %w", canonical, err)
 	}
 	return s, nil
 }
