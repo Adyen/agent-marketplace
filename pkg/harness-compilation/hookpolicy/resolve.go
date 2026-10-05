@@ -186,8 +186,12 @@ func Resolve(h *ir.Hook, dst target.Target, scope Scope, supportBase string) Res
 		// handler-type, plugin-root, and timeout-refusal rules.
 		res.Event = h.Event
 		res.Matcher = h.Matcher
-		dstEvent := dstCat.Events[h.Event]
-		if _, declared := dstCat.Events[h.Event]; declared && !slices.Contains(dstEvent.Types, h.Type) {
+		dstEvent, declared := dstCat.Events[h.Event]
+		if !declared {
+			fail(eventUnmappableCode(dst), "The event has no exact catalog equivalent on the target; hook suppressed", "Use an event the target documents")
+			return res
+		}
+		if !slices.Contains(dstEvent.Types, h.Type) {
 			fail(typeUnsupportedCode(dst, h.Type), "The target catalog does not declare this handler type for the event; hook suppressed", "Use a documented handler type")
 			return res
 		}

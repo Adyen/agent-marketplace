@@ -98,6 +98,58 @@ func hasResolveCode(res hookpolicy.Resolved, code string) bool {
 	return diag.HasCode(res.Diagnostics, code)
 }
 
+// spec: hook-resources/unknown-handler-types-are-refused-on-claude-code
+func TestResolveDeclaredNativeEventHandlerTypes(t *testing.T) {
+	mcpHook := func(source, event string, timeout *int) *ir.Hook {
+		return ir.NewHookWithMatcherOptions("fixture", event, "", "", "mcp_tool",
+			map[string]any{"server": "docs", "tool": "lookup"}, ir.SourceRef{},
+			ir.WithHookSource(source), ir.WithHookTimeoutPtr(timeout))
+	}
+	commandHook := func(source, event string, timeout *int) *ir.Hook {
+		return ir.NewHookWithMatcherOptions("fixture", event, "", "echo fixture-native-type-control", "command",
+			nil, ir.SourceRef{}, ir.WithHookSource(source), ir.WithHookTimeoutPtr(timeout))
+	}
+	three := 3
+	cases := []struct {
+		name        string
+		hook        *ir.Hook
+		target      target.Target
+		wantError   string
+		wantEvent   string
+		wantTimeout *int
+	}{
+		{name: "claude Setup refuses mcp_tool", hook: mcpHook("claude", "Setup", nil), target: target.TargetClaude, wantError: "hook.type-unsupported"},
+		{name: "codex SessionEnd refuses mcp_tool", hook: mcpHook("codex", "SessionEnd", nil), target: target.TargetCodex, wantError: "hook.codex.unsupported"},
+		{name: "claude Setup command resolves", hook: commandHook("claude", "Setup", nil), target: target.TargetClaude, wantEvent: "Setup"},
+		{name: "codex SessionEnd command resolves", hook: commandHook("codex", "SessionEnd", nil), target: target.TargetCodex, wantEvent: "SessionEnd"},
+		{name: "codex SessionEnd command keeps timeout 3", hook: commandHook("codex", "SessionEnd", &three), target: target.TargetCodex, wantEvent: "SessionEnd", wantTimeout: &three},
+		{name: "claude PreToolUse mcp_tool resolves", hook: mcpHook("claude", "PreToolUse", nil), target: target.TargetClaude, wantEvent: "PreToolUse"},
+		{name: "codex PreToolUse mcp_tool resolves", hook: mcpHook("codex", "PreToolUse", nil), target: target.TargetCodex, wantEvent: "PreToolUse"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			res := hookpolicy.Resolve(c.hook, c.target, hookpolicy.ScopeRepository, "")
+			if c.wantError != "" {
+				if !res.Failed() || !hasResolveCode(res, c.wantError) {
+					t.Fatalf("want error %q, diagnostics = %v", c.wantError, resolveCodes(res))
+				}
+				return
+			}
+			if res.Failed() {
+				t.Fatalf("resolution suppressed: %+v", res.Diagnostics)
+			}
+			if res.Event != c.wantEvent {
+				t.Fatalf("event = %q, want %q", res.Event, c.wantEvent)
+			}
+			if c.wantTimeout != nil {
+				if res.Timeout == nil || *res.Timeout != *c.wantTimeout {
+					t.Fatalf("timeout = %v, want %d", res.Timeout, *c.wantTimeout)
+				}
+			}
+		})
+	}
+}
+
 func TestMachineSupportBaseIsQuotedAsLiteral(t *testing.T) {
 	hook := ir.NewHookWithMatcherOptions("guard", "PreToolUse", "Bash", "${CLAUDE_PLUGIN_ROOT}/scripts/check.sh", "command", nil, ir.SourceRef{}, ir.WithHookSource("claude"))
 	cases := []struct {

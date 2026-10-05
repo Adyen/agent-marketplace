@@ -219,7 +219,7 @@ Timeout unit: `seconds`. Matcher syntax: `exact-or-regex` (exact `|`/`,` lists).
 | `PreToolUse` | PreToolUse | tool | command, http, mcp_tool, prompt, agent | - |
 | `SessionEnd` | SessionEnd | lifecycle | command, http, mcp_tool | - |
 | `SessionStart` | SessionStart | lifecycle | command, mcp_tool | - |
-| `Setup` | (native only) | lifecycle | command, mcp_tool | - |
+| `Setup` | (native only) | lifecycle | command | - |
 | `Stop` | Stop | none | command, http, mcp_tool, prompt, agent | - |
 | `StopFailure` | (native only) | lifecycle | command, http, mcp_tool | - |
 | `SubagentStart` | SubagentStart | lifecycle | command, http, mcp_tool | - |
@@ -249,7 +249,7 @@ Timeout unit: `seconds`. Matcher syntax: `regex` (output anchored). Repository b
 | `PostToolUse` | PostToolUse | tool | command, mcp_tool | - |
 | `PreCompact` | (native only) | lifecycle | command, mcp_tool | - |
 | `PreToolUse` | PreToolUse | tool | command, mcp_tool | - |
-| `SessionEnd` | (native only) | lifecycle | command, mcp_tool | 1-3 |
+| `SessionEnd` | (native only) | lifecycle | command | 1-3 |
 | `SessionStart` | SessionStart | lifecycle | command, mcp_tool | - |
 | `Stop` | Stop | none | command, mcp_tool | - |
 | `SubagentStart` | (native only) | lifecycle | command, mcp_tool | - |

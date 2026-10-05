@@ -2,7 +2,7 @@
 schema: 1
 harness: claude
 evidence:
-  checked: "2026-09-29"
+  checked: "2026-10-05"
   refs:
     - https://code.claude.com/docs/en/hooks.md
 
@@ -50,7 +50,7 @@ events:
   PreCompact: {canonical: PreCompact, matcher: lifecycle, types: [command, http, mcp_tool]}
   PostCompact: {canonical: PostCompact, matcher: lifecycle, types: [command, http, mcp_tool]}
   Notification: {canonical: Notification, matcher: lifecycle, types: [command, http, mcp_tool]}
-  Setup: {matcher: lifecycle, types: [command, mcp_tool]}
+  Setup: {matcher: lifecycle, types: [command]}
   UserPromptExpansion: {matcher: lifecycle, types: [command, http, mcp_tool, prompt, agent]}
   PermissionDenied: {matcher: tool, types: [command, http, mcp_tool, prompt, agent]}
   PostToolBatch: {matcher: none, types: [command, http, mcp_tool, prompt, agent]}

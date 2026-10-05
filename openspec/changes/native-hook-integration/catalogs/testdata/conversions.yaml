@@ -32,6 +32,15 @@ events:
   - {name: Devin PostCompaction to Factory, source: devin, target: factory, event: PostCompaction, want_error: hook.event-unmappable}
   - {name: Codex Interrupt is native only, source: codex, target: claude, event: Interrupt, want_error: hook.event-unmappable}
   - {name: Claude-only event to Cursor, source: claude, target: cursor, event: PostToolBatch, want_error: hook.event-unmappable}
+  - {name: Unknown native event to Claude, source: claude, target: claude, event: UnknownNativeEventForProbe, want_error: hook.event-unmappable}
+  - {name: Unknown native event to Factory, source: factory, target: factory, event: UnknownNativeEventForProbe, want_error: hook.event-unmappable}
+  - {name: Unknown native event to Cursor, source: cursor, target: cursor, event: UnknownNativeEventForProbe, want_error: hook.event-unmappable}
+  - {name: Unknown native event to Gemini, source: gemini, target: gemini, event: UnknownNativeEventForProbe, want_error: hook.gemini.event-unmappable}
+  - {name: Unknown native event to Windsurf, source: windsurf, target: windsurf, event: UnknownNativeEventForProbe, want_error: hook.windsurf.event-unmappable}
+  - {name: Unknown native event to Devin, source: devin, target: devin, event: UnknownNativeEventForProbe, want_error: hook.devin.event-unmappable}
+  - {name: Unknown native event to Codex, source: codex, target: codex, event: UnknownNativeEventForProbe, want_error: hook.codex.unsupported}
+  - {name: Claude native-only Setup stays native, source: claude, target: claude, event: Setup, want_event: Setup}
+  - {name: Codex native-only SessionEnd stays native, source: codex, target: codex, event: SessionEnd, want_event: SessionEnd}
 
 env:
   - {name: Project dir to Factory, source: claude, target: factory, command: '"$CLAUDE_PROJECT_DIR"/bin/x', want_command: '"$FACTORY_PROJECT_DIR"/bin/x'}

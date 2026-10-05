@@ -394,6 +394,96 @@ func TestCatalogCrossVariablesWithoutTargetEquivalentRefuseTheHook(t *testing.T)
 	refuseHook(t, TargetFactory, hook, "hook.env-unrepresentable")
 }
 
+// spec: hook-resources/unmappable-events-are-errors-on-every-target
+// spec: hook-resources/claude-code-refuses-unknown-events
+func TestCatalogNativeSameHarnessUndeclaredEventsRefuse(t *testing.T) {
+	const command = "echo native-catalog-control"
+	cases := []struct {
+		target Target
+		event  string
+		code   string
+	}{
+		{TargetClaude, "PreToolUse", "hook.event-unmappable"},
+		{TargetFactory, "PreToolUse", "hook.event-unmappable"},
+		{TargetCursor, "preToolUse", "hook.event-unmappable"},
+		{TargetGemini, "BeforeTool", "hook.gemini.event-unmappable"},
+		{TargetWindsurf, "pre_run_command", "hook.windsurf.event-unmappable"},
+		{TargetDevin, "PreToolUse", "hook.devin.event-unmappable"},
+		{TargetCodex, "PreToolUse", "hook.codex.unsupported"},
+	}
+	for _, tc := range cases {
+		t.Run(string(tc.target), func(t *testing.T) {
+			hook := commandHook("guard", tc.event, "", command)
+			hook.HookSource = string(tc.target)
+			emission := compileHook(t, tc.target, hook)
+			if emission.event != tc.event {
+				t.Fatalf("event = %q, want the authored native event %q", emission.event, tc.event)
+			}
+			if emission.command != command {
+				t.Fatalf("command = %q, want %q", emission.command, command)
+			}
+			bad := commandHook("guard", "UnknownNativeEventForProbe", "", command)
+			bad.HookSource = string(tc.target)
+			refuseHook(t, tc.target, bad, tc.code)
+		})
+	}
+}
+
+// spec: hook-resources/claude-code-refuses-unknown-events
+func TestCatalogNativeDeclaredNativeOnlyEventsEmit(t *testing.T) {
+	const command = "echo native-catalog-control"
+	cases := []struct {
+		target Target
+		event  string
+	}{
+		{TargetClaude, "Setup"},
+		{TargetCodex, "SessionEnd"},
+	}
+	for _, tc := range cases {
+		t.Run(string(tc.target)+"/"+tc.event, func(t *testing.T) {
+			hook := commandHook("guard", tc.event, "", command)
+			hook.HookSource = string(tc.target)
+			emission := compileHook(t, tc.target, hook)
+			if emission.event != tc.event {
+				t.Fatalf("event = %q, want the authored native event %q", emission.event, tc.event)
+			}
+			if emission.command != command {
+				t.Fatalf("command = %q, want %q", emission.command, command)
+			}
+		})
+	}
+}
+
+// spec: hook-resources/unknown-handler-types-are-refused-on-claude-code
+func TestCatalogNativeDeclaredEventHandlerTypesEnforced(t *testing.T) {
+	const command = "echo native-catalog-type-control"
+	cases := []struct {
+		target Target
+		event  string
+		code   string
+	}{
+		{TargetClaude, "Setup", "hook.type-unsupported"},
+		{TargetCodex, "SessionEnd", "hook.codex.unsupported"},
+	}
+	for _, tc := range cases {
+		t.Run(string(tc.target)+"/"+tc.event, func(t *testing.T) {
+			mcp := ir.NewHookWithMatcherOptions("guard", tc.event, "", "", "mcp_tool",
+				map[string]any{"server": "docs", "tool": "lookup"}, ir.SourceRef{},
+				ir.WithHookSource(string(tc.target)))
+			refuseHook(t, tc.target, mcp, tc.code)
+			positive := commandHook("guard", tc.event, "", command)
+			positive.HookSource = string(tc.target)
+			emission := compileHook(t, tc.target, positive)
+			if emission.event != tc.event {
+				t.Fatalf("event = %q, want %q", emission.event, tc.event)
+			}
+			if emission.command != command {
+				t.Fatalf("command = %q, want %q", emission.command, command)
+			}
+		})
+	}
+}
+
 // spec: hook-resources/unknown-variables-are-left-unchanged
 func TestCatalogCrossUnknownVariablesAreLeftUnchanged(t *testing.T) {
 	for _, target := range []Target{TargetClaude, TargetFactory, TargetCursor, TargetGemini, TargetWindsurf, TargetDevin, TargetCodex} {

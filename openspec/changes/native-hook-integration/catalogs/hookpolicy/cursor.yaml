@@ -2,10 +2,10 @@
 schema: 1
 harness: cursor
 evidence:
-  checked: "2026-09-29"
+  checked: "2026-10-05"
   refs:
-    - https://cursor.com/docs/hooks.md
-    - https://cursor.com/docs/reference/third-party-hooks.md
+    - https://cursor.com/docs/hooks
+    - https://cursor.com/docs/reference/third-party-hooks
   notes: >-
     Project hooks run from the project root and only in trusted workspaces;
     user hooks run from ~/.cursor. Canonical links follow Cursor's own Claude
