@@ -7,9 +7,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/charmbracelet/bubbles/key"
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/bubbles/v2/key"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/huh/v2"
 
 	"github.com/Adyen/agent-marketplace/internal/config"
 	targetmeta "github.com/Adyen/agent-marketplace/pkg/harness-compilation/target"
@@ -28,9 +28,13 @@ type harnessOption struct {
 }
 
 type harnessModalState struct {
-	scope    harnessScope
-	cursor   int
-	selected map[string]bool
+	scope      harnessScope
+	cursor     int
+	selected   map[string]bool
+	form       *huh.Form
+	multi      *huh.MultiSelect[string]
+	multiValue *[]string
+	optionIDs  []string
 }
 
 type harnessWrittenMsg struct {
@@ -53,19 +57,13 @@ var knownHarnessOptions = func() []harnessOption {
 	return options
 }()
 
-var styleHarnessModal = lipgloss.NewStyle().
-	Border(lipgloss.RoundedBorder()).
-	BorderForeground(lipgloss.AdaptiveColor{Light: "#1A8AAF", Dark: "#66D9EF"}).
-	Background(lipgloss.AdaptiveColor{Light: "#FFFFFF", Dark: "#1A1A1A"}).
-	Foreground(lipgloss.AdaptiveColor{Light: "#1A1A1A", Dark: "#F8F8F2"}).
-	Padding(1, 2)
-
 func (m *Model) openHarnessModal() {
 	m.pane = paneHarnessModal
 	m.harnessModal = harnessModalState{
 		scope:    harnessScopeGlobal,
 		selected: harnessSelection(m.globalHarnesses),
 	}
+	m.buildHarnessForm()
 }
 
 func harnessSelection(harnesses []string) map[string]bool {
@@ -116,91 +114,47 @@ func (m *Model) setHarnessScope(scope harnessScope) {
 	m.harnessModal.scope = scope
 	if scope == harnessScopeGlobal {
 		m.harnessModal.selected = harnessSelection(m.globalHarnesses)
-		return
+	} else {
+		m.harnessModal.selected = harnessSelection(m.projectHarnesses)
 	}
-	m.harnessModal.selected = harnessSelection(m.projectHarnesses)
+	m.buildHarnessForm()
 }
 
 func renderHarnessModal(m Model) string {
+	m.ensureHarnessForm()
 	modal := m.harnessModal
 	if modal.selected == nil {
 		modal.selected = harnessSelection(m.globalHarnesses)
 	}
 
-	title := lipgloss.NewStyle().
-		Bold(true).
-		Foreground(lipgloss.AdaptiveColor{Light: "#1A8AAF", Dark: "#66D9EF"}).
-		Render("Target harnesses")
-	keyStyle := lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#A6A000", Dark: "#A6E22E"}).Bold(true)
-	activeStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.AdaptiveColor{Light: "#5C8A1E", Dark: "#A6E22E"})
-	cursorStyle := lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#1A8AAF", Dark: "#66D9EF"})
+	t := m.currentTheme()
+	title := titleStyle(t).Render("Target harnesses")
+	activeStyle := okBoldStyle(t)
+	hints := []footerHint{{"space", "toggle"}, {"enter", "save"}, {"esc", "cancel"}, {"g", "global"}, {"p", "project"}}
+	setHarnessMultiSelectHeight(m, modal.multi, modal.optionIDs)
 
-	compact := compactTerminalLayout(m)
-	modalStyle := compactModalStyle(styleHarnessModal, m)
-	optionStart, optionEnd := 0, len(knownHarnessOptions)
-	var b strings.Builder
-	if compact {
-		contentRows := max(1, m.height-modalStyle.GetVerticalFrameSize())
-		visibleOptions := max(1, contentRows-4)
-		optionStart, optionEnd = harnessOptionWindow(len(knownHarnessOptions), modal.cursor, visibleOptions)
-		b.WriteString(title + "\n")
-		fmt.Fprintf(&b, "%s · %s\n", activeStyle.Render(modal.scope.label()), harnessListLabel(effectiveHarnesses(m), ", "))
-	} else {
-		b.WriteString(title + "\n\n")
-		fmt.Fprintf(&b, "  Editing:   %s\n", activeStyle.Render(modal.scope.label()))
-		fmt.Fprintf(&b, "  Effective: %s\n", harnessListLabel(effectiveHarnesses(m), ", "))
-		fmt.Fprintf(&b, "  Global:    %s\n", harnessListLabel(m.globalHarnesses, ", "))
-		fmt.Fprintf(&b, "  Project:   %s\n\n", harnessListLabel(m.projectHarnesses, ", "))
-	}
-
-	for i := optionStart; i < optionEnd; i++ {
-		opt := knownHarnessOptions[i]
-		cursor := "  "
-		if i == modal.cursor {
-			cursor = cursorStyle.Render("> ")
+	var body []string
+	if compactTerminalLayout(m) {
+		body = append(body, fmt.Sprintf("%s · %s", activeStyle.Render(modal.scope.label()), harnessListLabel(effectiveHarnesses(m), ", ")))
+		if modal.form != nil {
+			body = append(body, modal.form.View())
 		}
-		box := "[ ]"
-		if modal.selected[opt.ID] {
-			box = "[x]"
-		}
-		fmt.Fprintf(&b, "%s%s %-14s %s\n", cursor, box, opt.Label, styleDim.Render(opt.ID))
+		return modalFrame(m, t.accent, title, body, hints)
 	}
 
-	unknown := unknownSelectedHarnesses(modal.selected)
-	if len(unknown) > 0 && !compact {
-		b.WriteString("\n")
-		fmt.Fprintf(&b, "  Other selected: %s\n", sanitizeTerminalData(strings.Join(unknown, ", "), terminalSingleLine))
+	body = append(body,
+		"Editing:   "+activeStyle.Render(modal.scope.label()),
+		"Effective: "+harnessListLabel(effectiveHarnesses(m), ", "),
+		"Global:    "+harnessListLabel(m.globalHarnesses, ", "),
+		"Project:   "+harnessListLabel(m.projectHarnesses, ", "),
+		"")
+	if modal.form != nil {
+		body = append(body, modal.form.View())
 	}
-
-	if !compact {
-		b.WriteString("\n  ")
+	if unknown := unknownSelectedHarnesses(modal.selected); len(unknown) > 0 {
+		body = append(body, "", "Other selected: "+sanitizeTerminalData(strings.Join(unknown, ", "), terminalSingleLine))
 	}
-	b.WriteString(keyStyle.Render("[g]") + " global  ")
-	b.WriteString(keyStyle.Render("[p]") + " project\n")
-	if !compact {
-		b.WriteString("  ")
-	}
-	b.WriteString(keyStyle.Render("[space]") + " toggle  ")
-	b.WriteString(keyStyle.Render("[enter]") + " save  ")
-	b.WriteString(keyStyle.Render("[esc]") + " cancel")
-
-	return modalStyle.Render(b.String())
-}
-
-func harnessOptionWindow(total, cursor, limit int) (int, int) {
-	if total <= 0 {
-		return 0, 0
-	}
-	limit = min(max(1, limit), total)
-	cursor = min(max(0, cursor), total-1)
-	start := 0
-	if cursor >= limit {
-		start = cursor - limit + 1
-	}
-	if start+limit > total {
-		start = total - limit
-	}
-	return start, start + limit
+	return modalFrame(m, t.accent, title, body, hints)
 }
 
 func unknownSelectedHarnesses(selected map[string]bool) []string {
@@ -237,7 +191,8 @@ func harnessListLabel(harnesses []string, separator string) string {
 	return sanitizeTerminalData(strings.Join(labels, separator), terminalSingleLine)
 }
 
-func (m Model) handleHarnessModalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m Model) handleHarnessModalKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	m.ensureHarnessForm()
 	switch {
 	case key.Matches(msg, m.keys.HarnessCancel):
 		m.pane = paneList
@@ -248,26 +203,16 @@ func (m Model) handleHarnessModalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case key.Matches(msg, m.keys.HarnessGlobal):
 		m.setHarnessScope(harnessScopeGlobal)
 		return m, nil
-	case key.Matches(msg, m.keys.Up):
-		if m.harnessModal.cursor > 0 {
-			m.harnessModal.cursor--
-		}
-		return m, nil
-	case key.Matches(msg, m.keys.Down):
-		if m.harnessModal.cursor < len(knownHarnessOptions)-1 {
-			m.harnessModal.cursor++
-		}
-		return m, nil
-	case key.Matches(msg, m.keys.Space):
-		opt := knownHarnessOptions[m.harnessModal.cursor]
-		if m.harnessModal.selected == nil {
-			m.harnessModal.selected = map[string]bool{}
-		}
-		m.harnessModal.selected[opt.ID] = !m.harnessModal.selected[opt.ID]
-		return m, nil
 	case key.Matches(msg, m.keys.HarnessSave):
+		m.delegateHarnessForm(msg)
+		if m.harnessModal.form == nil || m.harnessModal.form.State != huh.StateCompleted {
+			return m, nil
+		}
 		harnesses := selectedHarnessIDs(m.harnessModal.selected)
 		if len(harnesses) == 0 {
+			// Rebuild so the completed form resets and the user can
+			// keep toggling options after the rejected save.
+			m.buildHarnessForm()
 			return m, func() tea.Msg {
 				return toastMsg{text: "select at least one harness", duration: 2 * time.Second}
 			}
@@ -279,8 +224,22 @@ func (m Model) handleHarnessModalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		scope := m.harnessModal.scope
 		m.pane = paneList
 		return m, correlateOperation(runHarnessSaveCmd(m.repoRoot, scope, harnesses), operation, false)
+	default:
+		m.delegateHarnessForm(msg)
+		return m, nil
 	}
-	return m, nil
+}
+
+// delegateHarnessForm forwards a message to the modal's Huh multiselect
+// and syncs the resulting selection and cursor back to the modal state.
+func (m *Model) delegateHarnessForm(msg tea.Msg) {
+	var selected map[string]bool
+	m.harnessModal.form, selected, m.harnessModal.cursor = updateHarnessMulti(
+		m.harnessModal.form, m.harnessModal.multi, m.harnessModal.multiValue,
+		m.harnessModal.optionIDs, m.harnessModal.cursor, msg)
+	if selected != nil {
+		m.harnessModal.selected = selected
+	}
 }
 
 func runHarnessSaveCmd(repoRoot string, scope harnessScope, harnesses []string) tea.Cmd {

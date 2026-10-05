@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/store"
@@ -112,7 +113,24 @@ func (s *Store) putRegistryOccurrence(ctx context.Context, occ store.RegistryOcc
 	core := existing
 	core.SourceOrigin = occ.SourceOrigin
 	if !occ.Equal(core) {
-		return fmt.Errorf("%w: registry occurrence %q already has different immutable fields", store.ErrConflict, occ.Commit)
+		repaired := core
+		repaired.MirroredArtifactDigest = occ.MirroredArtifactDigest
+		repaired.RegistryRevisionManifestDigest = occ.RegistryRevisionManifestDigest
+		if !occ.Equal(repaired) {
+			return fmt.Errorf("%w: registry occurrence %q already has different immutable fields", store.ErrConflict, occ.Commit)
+		}
+		if _, err := s.q.ExecContext(ctx, `UPDATE registry_occurrences SET manifest_digest=?, mirrored_artifact_digest=NULLIF(?, '')
+			WHERE registry_id=? AND revision_commit=?`,
+			occ.RegistryRevisionManifestDigest, mirrored, occ.RegistryID, occ.Commit); err != nil {
+			return err
+		}
+		slog.WarnContext(ctx, "registry occurrence archive evidence repaired",
+			"registry", occ.RegistryID, "commit", occ.Commit,
+			"old_archive_digest", existing.MirroredArtifactDigest, "new_archive_digest", occ.MirroredArtifactDigest,
+			"old_manifest_digest", existing.RegistryRevisionManifestDigest, "new_manifest_digest", occ.RegistryRevisionManifestDigest)
+		existing.MirroredArtifactDigest = occ.MirroredArtifactDigest
+		existing.RegistryRevisionManifestDigest = occ.RegistryRevisionManifestDigest
+		changed = true
 	}
 	if existing.SourceOrigin != "" && occ.SourceOrigin != "" && existing.SourceOrigin != occ.SourceOrigin {
 		return fmt.Errorf("%w: registry occurrence %q already has different source origin", store.ErrConflict, occ.Commit)
