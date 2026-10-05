@@ -65,7 +65,7 @@ func materializeNativeAggregates(ctx context.Context, report *Report, key output
 			var tr TargetReport
 			if key.target == hcc.TargetGemini {
 				var diagnostics []diag.Diagnostic
-				tr, diagnostics, routeErr = syncGeminiNativeAggregate(ctx, key, destination, desired, dryRun, !componentBlocked(blocked, ""))
+				tr, diagnostics, routeErr = syncGeminiNativeAggregate(ctx, key, destination, desired, dryRun, !componentBlocked(blocked, ""), boundaries...)
 				report.Diags = append(report.Diags, diagnostics...)
 			} else {
 				pruneStale := !componentBlocked(blocked, "")
@@ -93,8 +93,17 @@ func syncNativeAggregate(key outputKey, destination harness.Destination, rel str
 		boundary = boundaries[0]
 	}
 	tr := TargetReport{Target: key.target, MachineScope: key.machineScope, RootID: destination.ID, OutDir: destination.Root}
-	if !hasNativeDesiredEntries(desired) && (!pruneStaleEntries || !nativeAggregateHasManagedEntries(key.target, destination)) {
-		return tr, nil
+	if !hasNativeDesiredEntries(desired) {
+		if !pruneStaleEntries {
+			return tr, nil
+		}
+		hasEntries, err := nativeAggregateHasManagedEntries(key.target, destination, boundary)
+		if err != nil {
+			return tr, err
+		}
+		if !hasEntries {
+			return tr, nil
+		}
 	}
 	if err := harness.ValidateRelPath(rel); err != nil {
 		return tr, err
@@ -114,7 +123,7 @@ func syncNativeAggregate(key outputKey, destination harness.Destination, rel str
 		return tr, err
 	}
 	existing, err := readNativeCommandFile(file, info, boundary)
-	absent := errors.Is(err, fs.ErrNotExist) && !errors.Is(err, fsboundary.ErrUnsafePath) && !errors.Is(err, fsboundary.ErrGenerationConflict)
+	absent := nativeAggregateInventoryAbsent(err)
 	if err != nil && !absent {
 		return tr, err
 	}
@@ -320,40 +329,64 @@ func retainNativeManagedEntries(doc *jsonc.Document, desired map[string]json.Raw
 	return merged[0].Bytes, nil
 }
 
-func nativeAggregateHasManagedEntries(target hcc.Target, destination harness.Destination) bool {
+func nativeAggregateInventoryAbsent(err error) bool {
+	return errors.Is(err, fs.ErrNotExist) &&
+		!errors.Is(err, fsboundary.ErrUnsafePath) &&
+		!errors.Is(err, fsboundary.ErrUnsafeFile) &&
+		!errors.Is(err, fsboundary.ErrGenerationConflict)
+}
+
+func nativeAggregateHasManagedEntries(target hcc.Target, destination harness.Destination, boundary *destinationBoundary) (bool, error) {
 	if target == hcc.TargetGemini && geminiNativeHasOwnedMCP(destination) {
-		return true
+		return true, nil
 	}
 	rel := destination.AggregateFile
-	if rel == "" || harness.ValidateRelPath(rel) != nil {
-		return false
+	if rel == "" {
+		return false, nil
+	}
+	if err := harness.ValidateRelPath(rel); err != nil {
+		return false, err
+	}
+	if boundary == nil {
+		if _, err := validatePortableOutputDir(destination.Root, filepath.Dir(rel)); err != nil {
+			return false, err
+		}
 	}
 	file := filepath.Join(destination.Root, rel)
 	info, err := os.Lstat(file)
-	if err != nil || !info.Mode().IsRegular() {
-		return false
+	if err != nil && !nativeAggregateInventoryAbsent(err) {
+		return false, err
 	}
-	if _, err := validatePortableOutputDir(destination.Root, filepath.Dir(rel)); err != nil {
-		return false
+	if info != nil && !info.Mode().IsRegular() {
+		return false, fsboundary.ErrUnsafeFile
 	}
-	raw, err := readNativeCommandFile(file, info, nil)
-	if err != nil || !bytes.Contains(raw, []byte(managedByField)) {
-		return false
+	raw, err := readNativeCommandFile(file, info, boundary)
+	if err != nil {
+		if nativeAggregateInventoryAbsent(err) && info == nil {
+			return false, nil
+		}
+		return false, err
+	}
+	if !bytes.Contains(raw, []byte(managedByField)) {
+		return false, nil
 	}
 	doc, err := jsonc.Parse("", raw)
 	if err != nil {
-		return false
+		return false, nil
 	}
 	for _, route := range destination.AggregateRoutes {
 		if target == hcc.TargetGemini && route.Container == "mcpServers" {
 			continue
 		}
 		entries, err := nativeManagedMembers(doc.Root(), route.Container)
-		if err == nil && len(entries) > 0 {
-			return true
+		if err != nil {
+			return false, err
+		}
+		if len(entries) > 0 {
+			return true, nil
 		}
 	}
-	return false
+	return false, nil
 }
 
 func nativeAggregatePruneFence(target hcc.Target, machineScope bool) map[string]bool {
@@ -403,20 +436,26 @@ func addExistingNativeAggregateKeys(repoRoot string, outputs map[outputKey]bool)
 			}
 			destinations, err := harness.ResolveDestinations(target, machine, repoRoot)
 			if err != nil {
+				outputs[key] = true
 				continue
 			}
 			for _, destination := range destinations {
 				if len(destination.AggregateRoutes) == 0 {
 					continue
 				}
-				if !machine {
-					home, _ := os.UserHomeDir()
-					if sameOutputDir(repoRoot, home) && target == hcc.TargetGemini {
-						continue
-					}
-				}
-				if nativeAggregateHasManagedEntries(key.target, destination) {
+				home, err := os.UserHomeDir()
+				if err != nil {
 					outputs[key] = true
+					break
+				}
+				if !machine && sameOutputDir(repoRoot, home) && target == hcc.TargetGemini {
+					continue
+				}
+				boundary := destinationBoundary{machineScope: machine, repoRoot: repoRoot, homeDir: home, roots: []string{destination.Root}}
+				hasEntries, err := nativeAggregateHasManagedEntries(key.target, destination, &boundary)
+				if hasEntries || err != nil {
+					outputs[key] = true
+					break
 				}
 			}
 		}

@@ -7,9 +7,9 @@ import (
 	"sync"
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/glamour"
-	"github.com/charmbracelet/lipgloss"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/glamour/v2"
+	"charm.land/lipgloss/v2/compat"
 	"github.com/charmbracelet/x/ansi"
 )
 
@@ -61,7 +61,7 @@ func TestDetailResizeRendersAtCurrentWidth(t *testing.T) {
 	m.height = 24
 	generation := m.beginRequest(requestDetail)
 	m.enterDetailPane()
-	initial := loadDetailContent(r, generation, 80, false)().(detailContentMsg)
+	initial := loadDetailContent(newTheme(true), r, generation, 80, false)().(detailContentMsg)
 	updated, _ := m.Update(initial)
 	m = updated.(Model)
 	if m.detailRenderWidth != 80 {
@@ -82,7 +82,7 @@ func TestDetailResizeRendersAtCurrentWidth(t *testing.T) {
 	if m.detailRenderWidth != 50 {
 		t.Fatalf("accepted render width = %d, want 50", m.detailRenderWidth)
 	}
-	assertTerminalBounds(t, m.View(), 50, 12)
+	assertTerminalBounds(t, m.View().Content, 50, 12)
 }
 
 func TestWidthMismatchWithoutSourceAppliesDeliveredContent(t *testing.T) {
@@ -110,14 +110,14 @@ func TestWidthMismatchWithoutSourceAppliesDeliveredContent(t *testing.T) {
 }
 
 func TestMarkdownRendererCacheIsBoundedAndConcurrentSafe(t *testing.T) {
-	cache := &markdownRendererCache{renderers: make(map[int]*glamour.TermRenderer)}
+	cache := &markdownRendererCache{renderers: make(map[rendererKey]*glamour.TermRenderer)}
 	cache.init()
 	var wait sync.WaitGroup
 	for width := 20; width < 40; width++ {
 		wait.Add(1)
 		go func() {
 			defer wait.Done()
-			if _, err := cache.render("# title\n\nbody", width); err != nil {
+			if _, err := cache.render("# title\n\nbody", true, width); err != nil {
 				t.Errorf("render width %d: %v", width, err)
 			}
 		}()
@@ -129,16 +129,16 @@ func TestMarkdownRendererCacheIsBoundedAndConcurrentSafe(t *testing.T) {
 }
 
 func TestMarkdownRendererCacheUsesCachedNativeThemeForEveryWidth(t *testing.T) {
-	previous := lipgloss.HasDarkBackground()
-	t.Cleanup(func() { lipgloss.SetHasDarkBackground(previous) })
+	previous := compat.HasDarkBackground
+	t.Cleanup(func() { compat.HasDarkBackground = previous })
 
 	outputs := make(map[bool]string)
 	for _, dark := range []bool{false, true} {
-		lipgloss.SetHasDarkBackground(dark)
-		cache := &markdownRendererCache{renderers: make(map[int]*glamour.TermRenderer)}
+		compat.HasDarkBackground = dark
+		cache := &markdownRendererCache{renderers: make(map[rendererKey]*glamour.TermRenderer)}
 		cache.init()
 		for _, width := range []int{0, 40} {
-			rendered, err := cache.render("# title", width)
+			rendered, err := cache.render("# title", dark, width)
 			if err != nil {
 				t.Fatalf("render dark=%t width=%d: %v", dark, width, err)
 			}

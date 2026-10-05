@@ -5,10 +5,11 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/charmbracelet/glamour"
+	"charm.land/glamour/v2"
 	"github.com/charmbracelet/x/ansi"
 )
 
+// spec: tui-rendering/hostile-input-at-minimum-size
 func TestUntrustedFieldsCannotCreateTerminalStructure(t *testing.T) {
 	r := mkRow("safe\nConfirm\ny = yes\x1b[2J\u202e", withProject, withRegistry("registry\x1b]0;owned\x07.git", "registry\rname"))
 	r.Artifact.RegistryURL = "registry\x1b]0;owned\x07.git"
@@ -19,7 +20,7 @@ func TestUntrustedFieldsCannotCreateTerminalStructure(t *testing.T) {
 	m.width = 100
 	m.height = 24
 
-	output := m.View()
+	output := m.View().Content
 	for _, unsafe := range []string{"\x1b]0;owned", "\x1b[2J", "\x1b[10;10H", "\x1b[31m", "\x1b[?1049l", "\u202e", "\r"} {
 		if strings.Contains(output, unsafe) {
 			t.Fatalf("rendered unsafe terminal structure %q: %q", unsafe, output)
@@ -32,13 +33,36 @@ func TestUntrustedFieldsCannotCreateTerminalStructure(t *testing.T) {
 	}
 }
 
+func TestHarnessFormUnknownIDLabelCannotEmitTerminalControls(t *testing.T) {
+	hostile := "evil\x1b]0;owned\x07\nid"
+	m := NewModel("/repo", "/home")
+	m.globalHarnesses = []string{hostile}
+	m.openHarnessModal()
+	if m.harnessModal.form == nil {
+		t.Fatal("harness modal must own a Huh form")
+	}
+	view := m.harnessModal.form.View()
+	for _, unsafe := range []string{"\x1b]0;owned", "\x07", "\nid"} {
+		if strings.Contains(view, unsafe) {
+			t.Fatalf("harness form emitted unsafe terminal content %q: %q", unsafe, view)
+		}
+	}
+	stripped := ansi.Strip(view)
+	if !strings.Contains(stripped, `evil\x1B]0;owned\x07\x0Aid`) {
+		t.Fatalf("harness form omitted the readable escaped label: %s", stripped)
+	}
+	if got := m.harnessModal.optionIDs[len(m.harnessModal.optionIDs)-1]; got != hostile {
+		t.Fatalf("option value = %q, want the exact unknown ID %q", got, hostile)
+	}
+}
+
 func TestDiagnosticBoundaryNeutralizesControls(t *testing.T) {
 	m := NewModel(t.TempDir(), t.TempDir())
 	m.width = 100
 	m.height = 30
 	m.errs = []error{errors.New("failure\nErrors (99)\x1b]2;owned\x07\u202e")}
 	m.pane = paneErrors
-	output := m.View()
+	output := m.View().Content
 	for _, unsafe := range []string{"\x1b]2;owned", "\u202e", "\nErrors (99)"} {
 		if strings.Contains(output, unsafe) {
 			t.Fatalf("diagnostic boundary emitted %q: %q", unsafe, output)

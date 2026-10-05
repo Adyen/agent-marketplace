@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 
 	"github.com/Adyen/agent-marketplace/internal/fsboundary"
 )
@@ -39,13 +40,21 @@ func copyScopedSupport(srcDir, dstDir string, compiled map[string]bool, prefix s
 	var output *fsboundary.Dir
 	defer func() {
 		if output != nil {
-			err = errors.Join(err, output.Close())
+			if closeErr := output.Close(); closeErr != nil {
+				err = errors.Join(err, closeErr)
+			}
 		}
 	}()
 	var boundary *destinationBoundary
-	var walk func(string) error
-	walk = func(rel string) error {
-		entries, err := readSupportSourceDirectory(root, rel)
+	active := make(map[string]bool)
+	var walk func(string, string) error
+	walk = func(sourceRel, rel string) error {
+		if active[sourceRel] {
+			return fmt.Errorf("%w: cyclic support directory alias", fsboundary.ErrUnsafePath)
+		}
+		active[sourceRel] = true
+		defer delete(active, sourceRel)
+		entries, err := readSupportSourceDirectory(root, sourceRel)
 		if err != nil {
 			return err
 		}
@@ -63,6 +72,13 @@ func copyScopedSupport(srcDir, dstDir string, compiled map[string]bool, prefix s
 			if entry.Name() == ".git" {
 				continue
 			}
+			sourceChild, isDir, err := supportSourceChild(root, sourceRel, entry)
+			if errors.Is(err, fs.SkipDir) {
+				continue
+			}
+			if err != nil {
+				return err
+			}
 			if boundary == nil {
 				var captureErr error
 				output, captureErr = capturePortableParent(filepath.Join(dstDir, ".placeholder"), nil, true)
@@ -73,7 +89,7 @@ func copyScopedSupport(srcDir, dstDir string, compiled map[string]bool, prefix s
 				slog.Debug("support output admitted", "path", dstDir, "phase", "support-output")
 			}
 			destinationPath := filepath.Join(dstDir, child)
-			if entry.IsDir() {
+			if isDir {
 				// A root skill's source dir is a whole registry checkout, so
 				// VCS internals must never become harness-visible support
 				// files. Git cannot track a .git directory, so regular skills
@@ -81,12 +97,12 @@ func copyScopedSupport(srcDir, dstDir string, compiled map[string]bool, prefix s
 				if err := boundary.directory(destinationPath, true); err != nil {
 					return err
 				}
-				if err := walk(child); err != nil {
+				if err := walk(sourceChild, child); err != nil {
 					return err
 				}
 				continue
 			}
-			data, identity, err := readSupportSourceSnapshot(root, child)
+			data, identity, err := readSupportSourceSnapshot(root, sourceChild)
 			if err != nil {
 				return err
 			}
@@ -96,16 +112,102 @@ func copyScopedSupport(srcDir, dstDir string, compiled map[string]bool, prefix s
 		}
 		return nil
 	}
-	return walk(".")
+	return walk(".", ".")
 }
 
+func supportSourceChild(root *fsboundary.Dir, parent string, entry os.DirEntry) (string, bool, error) {
+	rel := filepath.Join(parent, entry.Name())
+	if entry.Type()&os.ModeSymlink == 0 {
+		return rel, entry.IsDir(), nil
+	}
+	directory, err := root.OpenContainedRoot(rel)
+	if err != nil {
+		// Only an alias to a non-directory continues as a payload, where the
+		// captured file rules apply. A failed directory alias keeps its own
+		// error, so an operational failure is not misreported as an unsafe
+		// payload and an unsafe alias keeps its typed refusal.
+		if supportAliasTargetsNonDirectory(root, rel) {
+			return rel, false, nil
+		}
+		return "", false, err
+	}
+	targetRel, err := filepath.Rel(root.Path(), directory.Path())
+	if err := errors.Join(err, directory.Close()); err != nil {
+		return "", false, err
+	}
+	for _, component := range strings.Split(targetRel, string(filepath.Separator)) {
+		if component == ".git" {
+			return "", false, fs.SkipDir
+		}
+	}
+	return targetRel, true, nil
+}
+
+// supportAliasTargetsNonDirectory reports whether rel is an alias that the
+// captured repository link policy resolves to an existing non-directory.
+func supportAliasTargetsNonDirectory(root *fsboundary.Dir, rel string) bool {
+	target, err := fsboundary.CaptureDestination(root, rel, fsboundary.LinkPolicyRepository)
+	if err != nil {
+		return false
+	}
+	identity := target.Identity()
+	exists := target.Exists()
+	if closeErr := target.Close(); closeErr != nil {
+		return false
+	}
+	return exists && !identity.Mode.IsDir()
+}
+
+// supportPayloadReadHook observes support payload reads. It is nil in
+// production and set only by serial tests in this package.
+var supportPayloadReadHook func(rel string)
+
 func readSupportSourceSnapshot(root *fsboundary.Dir, rel string) ([]byte, fsboundary.Identity, error) {
+	if supportPayloadReadHook != nil {
+		supportPayloadReadHook(rel)
+	}
 	source, err := fsboundary.CaptureDestination(root, rel, fsboundary.LinkPolicyRepository)
 	if err != nil {
 		return nil, fsboundary.Identity{}, err
 	}
 	data, identity, err := source.ReadTarget(source.Identity().Size)
 	return data, identity, errors.Join(err, source.Close())
+}
+
+// inspectSupportSourceLeaf applies the payload-shape rules of
+// readSupportSourceSnapshot without opening or reading the payload: the leaf
+// (following a contained file alias) must be a single-link regular file.
+// Names the captured root cannot stat directly fall back to the full captured
+// classification so escaping and dangling aliases keep their typed refusal.
+func inspectSupportSourceLeaf(root *fsboundary.Dir, rel, _ string) (err error) {
+	native, err := root.NativeRoot()
+	if err != nil {
+		return err
+	}
+	info, statErr := native.Stat(rel)
+	if closeErr := native.Close(); closeErr != nil {
+		return closeErr
+	}
+	var identity fsboundary.Identity
+	if statErr == nil {
+		identity, err = fsboundary.FileInfoIdentity(info)
+		if err != nil {
+			return err
+		}
+	} else {
+		source, captureErr := fsboundary.CaptureDestination(root, rel, fsboundary.LinkPolicyRepository)
+		if captureErr != nil {
+			return captureErr
+		}
+		identity = source.Identity()
+		if closeErr := source.Close(); closeErr != nil {
+			return closeErr
+		}
+	}
+	if !identity.Mode.IsRegular() || identity.Links != 1 {
+		return fmt.Errorf("%w: support payload %s must be a single-link regular file", fsboundary.ErrUnsafeFile, rel)
+	}
+	return nil
 }
 
 func readSupportSourceDirectory(root *fsboundary.Dir, rel string) ([]os.DirEntry, error) {
