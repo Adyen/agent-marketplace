@@ -471,7 +471,7 @@ func loadSubBundle(path, sourceHarness string, options ...IngestOptions) subBund
 }
 
 func (b subBundle) coveredBy(entries []Entry, dir string) bool {
-	if b.err != nil || hasDiscoveryBoundaryDiagnostics(b.catalog.Diagnostics) {
+	if b.err != nil || b.catalog.sourceRefusal != nil || hasDiscoveryBoundaryDiagnostics(b.catalog.Diagnostics) {
 		return false
 	}
 	paths := make([]string, 0, len(b.catalog.Entries))
@@ -498,7 +498,14 @@ func scanSubBundlesWalk(dir, sourceHarness string, bundles *[]subBundle, options
 			continue
 		}
 		subDir := filepath.Join(dir, name)
-		if hasBundleRoot(subDir) {
+		isBundle, probeErr := hasBundleRoot(subDir)
+		if probeErr != nil {
+			// A refused marker probe is not "no bundle here": report it as a
+			// failed candidate instead of descending past it.
+			*bundles = append(*bundles, subBundle{path: subDir, err: probeErr})
+			continue
+		}
+		if isBundle {
 			candidate := loadSubBundle(subDir, sourceHarness, options...)
 			if candidate.err != nil || len(candidate.catalog.Entries) > 0 || hasDiscoveryBoundaryDiagnostics(candidate.catalog.Diagnostics) {
 				*bundles = append(*bundles, candidate)
@@ -584,12 +591,24 @@ func hasRootSkill(src fs.FS) bool {
 // from being treated as sub-bundles, but we re-enable the multi-skill subdir
 // case (dir/*/SKILL.md) so container directories with multiple skills are
 // still recognized.
-func hasBundleRoot(dir string) bool {
+func hasBundleRoot(dir string) (bool, error) {
 	srcFS, err := fsboundary.OpenSourceFS(dir)
 	if err != nil {
-		return false
+		if errors.Is(err, fsboundary.ErrUnsafePath) || errors.Is(err, fsboundary.ErrUnsafeFile) {
+			return false, fmt.Errorf("catalog source refused: %w", err)
+		}
+		return false, nil
 	}
 	defer func() { _ = srcFS.Close() }()
+	matched := bundleRootMatch(srcFS)
+	// Marker probes that the captured source refused are not absent markers.
+	if refusal := srcFS.Refusal(); refusal != nil {
+		return false, fmt.Errorf("catalog source refused: %w", refusal)
+	}
+	return matched, nil
+}
+
+func bundleRootMatch(srcFS fs.FS) bool {
 	_, strictMatch := ingest.AutodetectStrict(srcFS)
 
 	// A root-level SKILL.md identifies a skill directory. Preserve an explicit
@@ -740,6 +759,11 @@ func discoverSubBundles(subBundles []subBundle) (LoadedCatalog, error) {
 
 	for _, candidate := range subBundles {
 		subDir, subCat, subErr := candidate.path, candidate.catalog, candidate.err
+		// A partially loaded sub-bundle whose source refused a read must not
+		// merge silently: its missing resources would otherwise read as removed.
+		if subErr == nil && subCat != nil && subCat.sourceRefusal != nil {
+			subErr = fmt.Errorf("catalog source refused: %w", subCat.sourceRefusal)
+		}
 		if subErr != nil {
 			errs = append(errs, fmt.Errorf("sub-bundle %q: %w", subDir, subErr))
 			continue
