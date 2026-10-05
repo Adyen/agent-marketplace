@@ -87,3 +87,27 @@ func TestApplyMetadataPublicationRefusesRetargetedRecordParent(t *testing.T) {
 		t.Fatalf("admitted prepared journal lost: %v", err)
 	}
 }
+
+func TestPublishedMetadataPinRejectsInPlaceEdits(t *testing.T) {
+	produced := fsboundary.Identity{Device: 1, Inode: 2, Size: 64, ModTimeNS: 100, ChangeTimeNS: 100, Links: 1, Mode: 0o600, UID: 501}
+	renamed := produced
+	renamed.ChangeTimeNS = 200
+	if !publishedMetadataMatches(produced, renamed) {
+		t.Fatal("rename-only change time update refused")
+	}
+	for name, mutate := range map[string]func(*fsboundary.Identity){
+		"size":     func(id *fsboundary.Identity) { id.Size++ },
+		"mtime":    func(id *fsboundary.Identity) { id.ModTimeNS++ },
+		"mode":     func(id *fsboundary.Identity) { id.Mode = 0o644 },
+		"links":    func(id *fsboundary.Identity) { id.Links = 2 },
+		"inode":    func(id *fsboundary.Identity) { id.Inode++ },
+		"owner":    func(id *fsboundary.Identity) { id.UID++ },
+		"non-file": func(id *fsboundary.Identity) { id.Mode = os.ModeNamedPipe | 0o600 },
+	} {
+		edited := renamed
+		mutate(&edited)
+		if publishedMetadataMatches(produced, edited) {
+			t.Fatalf("published metadata pin accepted a %s change", name)
+		}
+	}
+}

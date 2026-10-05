@@ -556,7 +556,9 @@ func archiveDir(tw *tar.Writer, source *fsboundary.Dir, rel string) (err error) 
 			err = errors.Join(err, closeErr)
 		}
 	}()
-	return fs.WalkDir(native.FS(), filepath.ToSlash(rel), func(name string, d fs.DirEntry, walkErr error) error {
+	// fs.FS paths must be clean and unrooted; a caller-supplied "./dir" was
+	// admitted after cleaning by the metadata read, so walk the same name.
+	return fs.WalkDir(native.FS(), filepath.ToSlash(filepath.Clean(rel)), func(name string, d fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
 		}
