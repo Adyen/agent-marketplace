@@ -3574,7 +3574,11 @@ func pruneSkillCacheSupportFiles(cacheDir string, compiled map[string]bool) (err
 	if err != nil {
 		return err
 	}
-	defer func() { err = errors.Join(err, root.Close()) }()
+	defer func() {
+		if closeErr := root.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
 	slog.Debug("skill cache support pruning starting", "cache_dir", cacheDir, "phase", "support-prune")
 	verify := func() error {
 		info, err := os.Stat(cacheDir)
@@ -3597,7 +3601,11 @@ func pruneSkillCacheSupportFiles(cacheDir string, compiled map[string]bool) (err
 	if err != nil {
 		return err
 	}
-	defer func() { err = errors.Join(err, native.Close()) }()
+	defer func() {
+		if closeErr := native.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
 	var prune func(string) error
 	prune = func(rel string) error {
 		entries, err := readSupportSourceDirectory(root, rel)
