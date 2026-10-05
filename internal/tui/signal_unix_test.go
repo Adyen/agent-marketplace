@@ -13,8 +13,8 @@ import (
 	"testing"
 	"time"
 
+	tea "charm.land/bubbletea/v2"
 	"github.com/Adyen/agent-marketplace/internal/config"
-	tea "github.com/charmbracelet/bubbletea"
 )
 
 type signalContractModel struct {
@@ -39,14 +39,18 @@ func (m signalContractModel) Init() tea.Cmd {
 
 func (m signalContractModel) Update(tea.Msg) (tea.Model, tea.Cmd) { return m, nil }
 
-func (m signalContractModel) View() string { return "active filesystem work" }
+func (m signalContractModel) View() tea.View {
+	v := tea.NewView("active filesystem work")
+	v.AltScreen = true
+	return v
+}
 
 func TestTUISignalHelper(t *testing.T) {
 	if os.Getenv("TUI_SIGNAL_HELPER") != "1" {
 		return
 	}
 	marker := os.Getenv("TUI_SIGNAL_MARKER")
-	if err := runTUIModel(signalContractModel{marker: marker}, tea.WithAltScreen(), tea.WithInput(os.Stdin), tea.WithOutput(os.Stdout)); err != nil {
+	if err := runTUIModel(signalContractModel{marker: marker}, tea.WithInput(os.Stdin), tea.WithOutput(os.Stdout)); err != nil {
 		_, _ = fmt.Fprintln(os.Stderr, err)
 		os.Exit(2)
 	}
@@ -86,6 +90,16 @@ func TestHandledSignalsRestoreTerminalAndExposePartialFilesystemState(t *testing
 				if time.Now().After(deadline) {
 					_ = cmd.Process.Kill()
 					t.Fatalf("active operation did not start; stderr: %s", stderr.String())
+				}
+				time.Sleep(10 * time.Millisecond)
+			}
+			// The alternate screen is entered with the first rendered
+			// frame, so wait for that frame before delivering the signal.
+			frameDeadline := time.Now().Add(5 * time.Second)
+			for !strings.Contains(stdout.String(), "\x1b[?1049h") {
+				if time.Now().After(frameDeadline) {
+					_ = cmd.Process.Kill()
+					t.Fatalf("%s never rendered its first alt-screen frame; stdout: %q stderr: %s", tc.name, stdout.String(), stderr.String())
 				}
 				time.Sleep(10 * time.Millisecond)
 			}

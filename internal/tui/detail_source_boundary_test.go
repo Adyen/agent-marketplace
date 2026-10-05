@@ -109,7 +109,7 @@ func TestDetailSourcePreviewConsumersDiscardGenerationConflict(t *testing.T) {
 				}
 				healthy = control.content
 			} else {
-				healthy = ansi.Strip(renderBundleFile(root, "SKILL.md", 80))
+				healthy = ansi.Strip(renderBundleFile(true, root, "SKILL.md", 80))
 				if !strings.Contains(healthy, detailTruncationMarker) {
 					t.Fatal("healthy selected preview did not exercise truncation")
 				}
@@ -136,10 +136,10 @@ func TestDetailSourcePreviewConsumersDiscardGenerationConflict(t *testing.T) {
 				if !errors.Is(snapshot.err, fsboundary.ErrGenerationConflict) || snapshot.content != "" || snapshot.truncationMarker != "" || snapshot.omitted {
 					t.Fatalf("refused snapshot retained content or markers: err=%v bytes=%d marker=%q omitted=%v", snapshot.err, len(snapshot.content), snapshot.truncationMarker, snapshot.omitted)
 				}
-				output = renderDetailFullContent(row{DetailSource: snapshot}, 80)
+				output = renderDetailFullContent(newTheme(true), row{DetailSource: snapshot}, 80)
 				prefix = "Error reading resource: "
 			} else {
-				output = renderBundleFile(root, "SKILL.md", 80, readTarget)
+				output = renderBundleFile(true, root, "SKILL.md", 80, readTarget)
 				prefix = "Error reading file: "
 			}
 			if calls != 1 || !bytes.Equal(observed.Bytes(), []byte(payload[:maxDetailSourceBytes+1])) {
@@ -189,13 +189,13 @@ func TestDetailSourcePreviewBundleRefusesHardLink(t *testing.T) {
 	if err := os.WriteFile(path, []byte("native preview control"), 0o640); err != nil {
 		t.Fatal(err)
 	}
-	if content := renderBundleFile(root, "source.txt", 80); strings.Contains(content, "Error reading file") || !strings.Contains(content, "native preview") {
+	if content := renderBundleFile(true, root, "source.txt", 80); strings.Contains(content, "Error reading file") || !strings.Contains(content, "native preview") {
 		t.Fatalf("selected native bundle preview positive control failed: %q", content)
 	}
 	if err := os.Link(path, filepath.Join(t.TempDir(), "retained.txt")); err != nil {
 		t.Fatal(err)
 	}
-	if content := renderBundleFile(root, "source.txt", 80); !strings.Contains(content, "Error reading file") || strings.Contains(content, "native preview") {
+	if content := renderBundleFile(true, root, "source.txt", 80); !strings.Contains(content, "Error reading file") || strings.Contains(content, "native preview") {
 		t.Fatalf("selected bundle hardlink supplied preview bytes: %q", content)
 	}
 }
