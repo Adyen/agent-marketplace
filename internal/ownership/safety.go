@@ -367,14 +367,14 @@ func (s *Store) pruneSafetyBackups(dir string) (err error) {
 		for _, member := range []string{name, filepath.Base(metaPathFor(name))} {
 			pin, exists, err := captureSafetyPayload(parent, member)
 			if err != nil {
-				return err
+				return fmt.Errorf("ownership: capture safety backup member %q: %w", member, err)
 			}
 			removals = append(removals, safetyLeafRemoval{name: member, identity: pin.file, exists: exists})
 		}
 	}
 	for _, removal := range removals {
 		if err := s.removeSafetyLeaf(parent, relative, removal); err != nil {
-			return err
+			return fmt.Errorf("ownership: remove safety backup member %q: %w", removal.name, err)
 		}
 	}
 	return nil
