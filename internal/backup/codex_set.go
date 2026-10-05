@@ -502,9 +502,11 @@ func validateCodexArchive(archivePath, root string, managed []string) error {
 }
 
 func validateCodexArchivePayload(payload io.Reader, root string, managed []string) error {
-	if info, err := os.Lstat(root); err == nil && (info.Mode()&os.ModeSymlink != 0 || !info.IsDir()) {
+	info, err := os.Lstat(root)
+	if err == nil && (info.Mode()&os.ModeSymlink != 0 || !info.IsDir()) {
 		return fmt.Errorf("destination root %s is not a real directory", root)
-	} else if err != nil && !os.IsNotExist(err) {
+	}
+	if err != nil && !os.IsNotExist(err) {
 		return err
 	}
 	gz, err := gzip.NewReader(payload)
