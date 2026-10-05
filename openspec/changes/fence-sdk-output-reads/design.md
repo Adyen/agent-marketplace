@@ -1,0 +1,11 @@
+## Context
+
+fileMatchesBytes is shared SDK Materialize artifact comparison. os.ReadFile can accept hardlinks or block on FIFO even though wrappers have their own boundary checks. A native sync test initially passed on the parent because an earlier ownership guard refused, so public SDK Materialize is the actual reproducing consumer.
+
+## Decision
+
+Capture the comparison parent, classify the leaf through its NativeRoot, read through existing Dir.ReadFile with captured-size limit, and require returned opened identity to match original full state. The reader admits only singly linked regular files and uses nonblocking admission for special files. One payload descriptor supplies bytes; no new limit. Missing safe parents/leaves remain ordinary absence. Named result joins close failures without hiding primary refusals. Embedded SDK reuses internal/fsboundary rather than a second filesystem implementation. Publication/discovery authority remains a separate audit.
+
+## Verification
+
+Public SDK Materialize first creates exact inert640 artifact, then a second invocation with an extra hardlink formerly reports skipped/success red. Refusal is ErrUnsafeFile, preserves foreign bytes/inode/mode/mtime and output membership, and creates no staging. Removing the extra link permits unchanged no-op identity/mode/mtime and an actual independently authored payload update with640 mode. FIFO public SDK refusal is bounded in a child process and preserves its generation/membership. Linux/macOS full materialize/SDK translation suites, repeated races, validate/spec/shellcheck, full RunSupportFiles disk lifecycle costs and complete all-file review required. No new public schema/deps/limits/source comments or whole-tree transaction. Linux/macOS full materialization/SDK translation, count20 race/API/FIFO/source/cache controls, validate/lint/build/spec/shellcheck passed. Full disk RunSupportFiles serial11.427634→22.161766ms (+93.93%,p=.008),472842→486238B/op (+2.83%),5328→5464alloc/op (+2.55%),2sx5/no95CI. Earlier baseline8.991031ms and8–32ms sample spread retained/disclosed; lifecycle cost is not an isolated comparator microbenchmark. Source/staging/cache/prune/copy/native I/O timed,no network/logdiscard/setup excluded. Frozen #540 combined E2E/config471.045s plus shellcheck passed; SDK writer/discovery audit remains separate.

@@ -17,6 +17,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/Adyen/agent-marketplace/internal/fsboundary"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/compile"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
@@ -1000,13 +1001,41 @@ func validateArtifactPath(p, outDir string) error {
 
 // fileMatchesBytes reports whether path exists and has identical contents to
 // expected.
-func fileMatchesBytes(path string, expected []byte) (bool, bool, error) {
-	data, err := os.ReadFile(path)
+func fileMatchesBytes(path string, expected []byte) (matches, exists bool, err error) {
+	absolute, err := filepath.Abs(path)
 	if err != nil {
-		if os.IsNotExist(err) {
+		return false, false, err
+	}
+	root, err := fsboundary.OpenDir(filepath.Dir(absolute))
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) && !errors.Is(err, fsboundary.ErrUnsafePath) {
 			return false, false, nil
 		}
 		return false, false, err
+	}
+	defer func() { err = errors.Join(err, root.Close()) }()
+	native, err := root.NativeRoot()
+	if err != nil {
+		return false, false, err
+	}
+	defer func() { err = errors.Join(err, native.Close()) }()
+	info, err := native.Lstat(filepath.Base(absolute))
+	if errors.Is(err, fs.ErrNotExist) {
+		return false, false, nil
+	}
+	if err != nil {
+		return false, false, err
+	}
+	original, err := fsboundary.FileInfoIdentity(info)
+	if err != nil {
+		return false, false, err
+	}
+	data, identity, err := root.ReadFile(filepath.Base(absolute), info.Size())
+	if err != nil {
+		return false, false, err
+	}
+	if !identity.SameState(original) {
+		return false, false, fsboundary.ErrGenerationConflict
 	}
 	return bytes.Equal(data, expected), true, nil
 }
