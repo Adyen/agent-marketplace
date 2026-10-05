@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 )
 
 func TestTerminalGuardRestoreEmitsTrustedSequencesOnce(t *testing.T) {
@@ -55,8 +55,14 @@ type guardProbeModel struct{}
 
 func (m guardProbeModel) Init() tea.Cmd                       { return tea.Quit }
 func (m guardProbeModel) Update(tea.Msg) (tea.Model, tea.Cmd) { return m, nil }
-func (m guardProbeModel) View() string                        { return "" }
+func (m guardProbeModel) View() tea.View {
+	v := tea.NewView("guard probe")
+	v.AltScreen = true
+	v.MouseMode = tea.MouseModeCellMotion
+	return v
+}
 
+// spec: tui-rendering/error-after-entering-alternate-screen
 // spec: tui-mouse-navigation/exiting-restores-terminal-mouse-modes
 func TestRunWithTerminalGuardRestoresAroundEveryRunOutcome(t *testing.T) {
 	sentinel := errors.New("cancel reader initialization failed")

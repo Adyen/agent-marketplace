@@ -14,7 +14,7 @@ test("Ctrl+C exits cleanly from the minimum terminal", async ({ terminal }) => {
   await step("ready minimum-size list", () => {}, async () => {
     await expect(terminal.getByText("beta-skill", { strict: false })).toBeVisible();
     await expect(terminal.getByText("~ in sync")).toBeVisible();
-    await expect(terminal.getByText("?:help · s:sync · q:quit")).toBeVisible();
+    await expect(terminal.getByText(/: (commands|cmds) · \? help · q quit/g)).toBeVisible();
   });
 
   await step("hard exit with Ctrl+C", () => terminal.write("\u0003"), async () => {
