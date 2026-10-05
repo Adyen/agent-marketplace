@@ -154,7 +154,7 @@ func TestRenderMarkdownWithStyleProducesStyledOutput(t *testing.T) {
 func TestRenderMarkdownWithStyleFallsBackOnError(t *testing.T) {
 	// Using an invalid style path should error, but the caller
 	// (renderDetailFull) falls back to raw content.
-	_, err := renderMarkdownWithStyle("# test", glamour.WithStylePath("/nonexistent/style.json"))
+	_, err := renderMarkdownWithStyle("# test", glamour.WithStylePath("/nonexistent/style.JSON"))
 	if err == nil {
 		t.Fatal("expected error from invalid style path")
 	}
@@ -557,17 +557,17 @@ func TestDetailCaptureBudgetBoundsManyMaximumEntries(t *testing.T) {
 	var budget detailCaptureBudget
 	var snapshots []*detailSourceSnapshot
 	for i := 0; i < maxDetailCaptureEntries+16; i++ {
-		snapshots = append(snapshots, budget.capture(path))
+		snapshots = append(snapshots, budget.Capture(path))
 	}
-	if budget.bytes > maxDetailCaptureBytes || budget.entries > maxDetailCaptureEntries {
-		t.Fatalf("aggregate capture exceeded budget: bytes=%d entries=%d", budget.bytes, budget.entries)
+	if budget.Bytes > maxDetailCaptureBytes || budget.Entries > maxDetailCaptureEntries {
+		t.Fatalf("aggregate capture exceeded budget: bytes=%d entries=%d", budget.Bytes, budget.Entries)
 	}
 	var truncated, omitted int
 	for _, snapshot := range snapshots {
-		if snapshot.truncationMarker != "" {
+		if snapshot.TruncationMarker != "" {
 			truncated++
 		}
-		if snapshot.omitted {
+		if snapshot.Omitted {
 			omitted++
 			if got := renderDetailFullContent(newTheme(true), row{DetailSource: snapshot}, 80); got != detailCaptureOmittedMarker {
 				t.Fatalf("omitted detail marker = %q, want %q", got, detailCaptureOmittedMarker)
@@ -584,11 +584,11 @@ func TestDetailCaptureBudgetBoundsManyMaximumEntries(t *testing.T) {
 		t.Fatal(err)
 	}
 	for i := 0; i < maxDetailCaptureEntries; i++ {
-		if snapshot := entryBudget.capture(small); snapshot.omitted {
+		if snapshot := entryBudget.Capture(small); snapshot.Omitted {
 			t.Fatalf("entry %d omitted before entry budget", i)
 		}
 	}
-	if snapshot := entryBudget.capture(small); !snapshot.omitted {
+	if snapshot := entryBudget.Capture(small); !snapshot.Omitted {
 		t.Fatal("entry beyond entry budget was captured")
 	}
 }

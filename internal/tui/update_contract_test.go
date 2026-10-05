@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/Adyen/agent-marketplace/internal/pipeline"
+	"github.com/Adyen/agent-marketplace/internal/session"
 )
 
 func TestRunUpdateCmdClassifiesPipelineAndReloadFailures(t *testing.T) {
@@ -50,16 +51,16 @@ func TestRunUpdateCmdClassifiesPipelineAndReloadFailures(t *testing.T) {
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			previousSync := runPipelineSync
+			previousSync := session.RunPipelineSync
 			previousSnapshot := readSnapshotForUpdate
-			runPipelineSync = func(context.Context, pipeline.ResolveOptions) pipeline.SyncResult {
+			session.RunPipelineSync = func(context.Context, pipeline.ResolveOptions) pipeline.SyncResult {
 				return test.result
 			}
 			readSnapshotForUpdate = func(context.Context, pipeline.Workspace, string, catalogLoadMode) snapshotLoadedMsg {
 				return test.snapshot
 			}
 			t.Cleanup(func() {
-				runPipelineSync = previousSync
+				session.RunPipelineSync = previousSync
 				readSnapshotForUpdate = previousSnapshot
 			})
 
@@ -84,7 +85,7 @@ func TestRunUpdateCmdClassifiesPipelineAndReloadFailures(t *testing.T) {
 func TestUpdateDoneAppliesAuthoritativeSnapshotBeforeReportingFailure(t *testing.T) {
 	m := NewModel(t.TempDir(), t.TempDir())
 	m.syncing = true
-	generation := m.requests.active(requestSnapshot)
+	generation := m.requests.Active(requestSnapshot)
 	failure := errors.New("materialization failed")
 
 	updated, _ := m.Update(updateDoneMsg{

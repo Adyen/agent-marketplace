@@ -40,7 +40,7 @@ func TestToggleModalCarriesHuhForm(t *testing.T) {
 func TestMigrationModalCarriesHuhForm(t *testing.T) {
 	m := NewModel("/repo", "/home")
 	m.pane = paneMigrationModal
-	m.migrationPrompt = migrationPrompt{configs: []migrationConfig{{label: "Project", path: "/repo/.agents/config.yaml"}}}
+	m.migrationPrompt = migrationPrompt{Configs: []migrationConfig{{Label: "Project", Path: "/repo/.agents/config.yaml"}}}
 	m.ensureMigrationForm()
 	if m.migrationForm == nil {
 		t.Fatal("migration modal must own a Huh form")

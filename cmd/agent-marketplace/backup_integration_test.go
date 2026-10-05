@@ -10,6 +10,7 @@ import (
 
 	"github.com/Adyen/agent-marketplace/internal/backup"
 	"github.com/Adyen/agent-marketplace/internal/catalog"
+	"github.com/Adyen/agent-marketplace/internal/lifecycle"
 	"github.com/Adyen/agent-marketplace/internal/pipeline"
 	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
 )
@@ -465,7 +466,7 @@ registries:
 	if err := errors.Join(mutable.Errors...); err != nil {
 		t.Fatalf("resolve mutable catalog: %v", err)
 	}
-	exactOption, _, err := prepareExactLocks(context.Background(), repoRoot, "", lockMode{})
+	exactOption, _, err := lifecycle.PrepareExactLocks(context.Background(), repoRoot, "", lifecycle.LockMode{})
 	if err != nil {
 		t.Fatalf("prepare exact lock: %v", err)
 	}

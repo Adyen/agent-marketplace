@@ -20,9 +20,9 @@ func BenchmarkCaptureAggregateDetailDiskIO(b *testing.B) {
 	for b.Loop() {
 		var budget detailCaptureBudget
 		for i := 0; i < maxDetailCaptureEntries+16; i++ {
-			_ = budget.capture(path)
+			_ = budget.Capture(path)
 		}
-		if budget.bytes > maxDetailCaptureBytes || budget.entries > maxDetailCaptureEntries {
+		if budget.Bytes > maxDetailCaptureBytes || budget.Entries > maxDetailCaptureEntries {
 			b.Fatal("capture exceeded aggregate budget")
 		}
 	}

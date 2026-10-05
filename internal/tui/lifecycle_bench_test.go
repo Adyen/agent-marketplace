@@ -16,6 +16,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/cache"
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/lockfile"
+	"github.com/Adyen/agent-marketplace/internal/session"
 	"github.com/Adyen/agent-marketplace/internal/sourcerevision"
 	mpapi "github.com/Adyen/agent-marketplace/pkg/marketplace/api"
 )
@@ -66,16 +67,16 @@ func benchmarkSnapshotFixture(b *testing.B, git bool) (string, string) {
 	}
 	body += "resources:\n  fixture:\n    all: true\n"
 	write(config.ProjectConfigPath(repo), body)
-	oldOrg, oldGlobal, oldRepo, oldLocal := loadOrgConfig, loadGlobalConfig, loadRepoConfig, loadLocalConfig
+	oldOrg, oldGlobal, oldRepo, oldLocal := session.LoadOrgConfig, session.LoadGlobalConfig, session.LoadRepoConfig, session.LoadLocalConfig
 	b.Cleanup(func() {
-		loadOrgConfig, loadGlobalConfig, loadRepoConfig, loadLocalConfig = oldOrg, oldGlobal, oldRepo, oldLocal
+		session.LoadOrgConfig, session.LoadGlobalConfig, session.LoadRepoConfig, session.LoadLocalConfig = oldOrg, oldGlobal, oldRepo, oldLocal
 	})
-	loadOrgConfig = func() (*config.Config, error) { return nil, nil }
-	loadGlobalConfig = func() (*config.Config, error) {
+	session.LoadOrgConfig = func() (*config.Config, error) { return nil, nil }
+	session.LoadGlobalConfig = func() (*config.Config, error) {
 		return config.LoadConfigFromPath(filepath.Join(home, ".agents", "config.yaml"))
 	}
-	loadRepoConfig = func() (*config.Config, error) { return config.LoadConfigFromPath(config.ProjectConfigPath(repo)) }
-	loadLocalConfig = func(string) (*config.LocalConfig, error) { return nil, nil }
+	session.LoadRepoConfig = func() (*config.Config, error) { return config.LoadConfigFromPath(config.ProjectConfigPath(repo)) }
+	session.LoadLocalConfig = func(string) (*config.LocalConfig, error) { return nil, nil }
 	if git {
 		oid, err := cache.ResolveExactGitRef(source, source, "main")
 		if err != nil {
@@ -157,7 +158,7 @@ func BenchmarkTUIStartupStages(b *testing.B) {
 			if err := os.WriteFile(localPath, []byte("marketplaces:\n  - url: "+endpoint.URL+"\n    instance_id: "+endpoint.InstanceID+"\n    alias: "+endpoint.Alias+"\n"), 0o600); err != nil {
 				b.Fatal(err)
 			}
-			loadLocalConfig = func(string) (*config.LocalConfig, error) {
+			session.LoadLocalConfig = func(string) (*config.LocalConfig, error) {
 				return config.LoadLocalConfigFromPath(localPath)
 			}
 			benchmarkReadSnapshot(b, repo, home)
@@ -264,16 +265,16 @@ func BenchmarkTUIStartupStages(b *testing.B) {
 			b.Fatal(err)
 		}
 		config.SetTestOrganizationConfigPath(b, orgPath)
-		oldOrg, oldGlobal, oldRepo, oldLocal := loadOrgConfig, loadGlobalConfig, loadRepoConfig, loadLocalConfig
+		oldOrg, oldGlobal, oldRepo, oldLocal := session.LoadOrgConfig, session.LoadGlobalConfig, session.LoadRepoConfig, session.LoadLocalConfig
 		b.Cleanup(func() {
-			loadOrgConfig, loadGlobalConfig, loadRepoConfig, loadLocalConfig = oldOrg, oldGlobal, oldRepo, oldLocal
+			session.LoadOrgConfig, session.LoadGlobalConfig, session.LoadRepoConfig, session.LoadLocalConfig = oldOrg, oldGlobal, oldRepo, oldLocal
 		})
-		loadOrgConfig = func() (*config.Config, error) { return config.LoadOrganizationConfig() }
-		loadGlobalConfig = func() (*config.Config, error) {
+		session.LoadOrgConfig = func() (*config.Config, error) { return config.LoadOrganizationConfig() }
+		session.LoadGlobalConfig = func() (*config.Config, error) {
 			return config.LoadConfigFromPath(filepath.Join(home, ".agents", "config.yaml"))
 		}
-		loadRepoConfig = func() (*config.Config, error) { return nil, nil }
-		loadLocalConfig = func(string) (*config.LocalConfig, error) { return nil, nil }
+		session.LoadRepoConfig = func() (*config.Config, error) { return nil, nil }
+		session.LoadLocalConfig = func(string) (*config.LocalConfig, error) { return nil, nil }
 		b.ReportAllocs()
 		b.ResetTimer()
 		for range b.N {

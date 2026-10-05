@@ -101,7 +101,7 @@ func TestOptionalEntryBeforeRequiredEntryKeepsMissAsHard(t *testing.T) {
 	m := beginSyncOperation(t)
 	next, _ := m.Update(syncDoneMsg{warnings: snapshot.warnings})
 	m = next.(Model)
-	snapshot.generation = m.requests.active(requestSnapshot)
+	snapshot.generation = m.requests.Active(requestSnapshot)
 	next, _ = m.Update(snapshot)
 	m = next.(Model)
 	if strings.Contains(m.toast, "Sync complete") {
@@ -145,7 +145,7 @@ func TestOptionalMissingSelectionKeepsAssessment(t *testing.T) {
 	m := beginSyncOperation(t)
 	next, _ := m.Update(syncDoneMsg{warnings: snapshot.warnings})
 	m = next.(Model)
-	snapshot.generation = m.requests.active(requestSnapshot)
+	snapshot.generation = m.requests.Active(requestSnapshot)
 	next, _ = m.Update(snapshot)
 	m = next.(Model)
 	if m.syncing || m.progress != nil {
@@ -154,8 +154,8 @@ func TestOptionalMissingSelectionKeepsAssessment(t *testing.T) {
 	if !strings.Contains(m.toast, "Sync complete with 1 warning(s)") {
 		t.Fatalf("sync reload toast = %q, want success with one warning", m.toast)
 	}
-	for _, d := range m.diagnostics.operations {
-		if d.operation == operationSync && d.severity == diagnosticError {
+	for _, d := range m.diagnostics.Operations {
+		if d.Operation == operationSync && d.Severity == diagnosticError {
 			t.Fatalf("sync reload recorded a failure: %+v", d)
 		}
 	}
@@ -179,7 +179,7 @@ func TestUnverifiableSelectionsStillFailAssessment(t *testing.T) {
 	m := beginSyncOperation(t)
 	next, _ := m.Update(syncDoneMsg{})
 	m = next.(Model)
-	snapshot.generation = m.requests.active(requestSnapshot)
+	snapshot.generation = m.requests.Active(requestSnapshot)
 	next, _ = m.Update(snapshot)
 	m = next.(Model)
 	if strings.Contains(m.toast, "Sync complete") {

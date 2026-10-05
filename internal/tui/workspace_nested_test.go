@@ -13,6 +13,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/materialize"
 	"github.com/Adyen/agent-marketplace/internal/pipeline"
 	"github.com/Adyen/agent-marketplace/internal/resolver"
+	"github.com/Adyen/agent-marketplace/internal/session"
 )
 
 func canonicalWorkspacePath(t *testing.T, path string) string {
@@ -138,27 +139,27 @@ func TestReadSnapshotDryRunUsesWorkspaceMaterializeRoot(t *testing.T) {
 	t.Chdir(nested)
 
 	var gotRoot string
-	previous := runMaterialize
-	runMaterialize = func(ctx context.Context, root string, artifacts []resolver.ResolvedArtifact, opts ...materialize.RunOption) (*materialize.Report, error) {
+	previous := session.RunMaterialize
+	session.RunMaterialize = func(ctx context.Context, root string, artifacts []resolver.ResolvedArtifact, opts ...materialize.RunOption) (*materialize.Report, error) {
 		gotRoot = root
 		return &materialize.Report{}, nil
 	}
-	t.Cleanup(func() { runMaterialize = previous })
+	t.Cleanup(func() { session.RunMaterialize = previous })
 
 	ws, err := pipeline.NewWorkspace(repoRoot, nested)
 	if err != nil {
 		t.Fatalf("NewWorkspace: %v", err)
 	}
 	config.SetTestOrganizationConfigPath(t, filepath.Join(t.TempDir(), "missing-org.yaml"))
-	previousOrg, previousGlobal, previousRepo, previousLocal := loadOrgConfig, loadGlobalConfig, loadRepoConfig, loadLocalConfig
-	loadOrgConfig = func() (*config.Config, error) { return nil, nil }
-	loadGlobalConfig = func() (*config.Config, error) { return nil, nil }
-	loadRepoConfig = func() (*config.Config, error) {
+	previousOrg, previousGlobal, previousRepo, previousLocal := session.LoadOrgConfig, session.LoadGlobalConfig, session.LoadRepoConfig, session.LoadLocalConfig
+	session.LoadOrgConfig = func() (*config.Config, error) { return nil, nil }
+	session.LoadGlobalConfig = func() (*config.Config, error) { return nil, nil }
+	session.LoadRepoConfig = func() (*config.Config, error) {
 		return config.LoadConfigFromPath(config.ProjectConfigPath(repoRoot))
 	}
-	loadLocalConfig = func(string) (*config.LocalConfig, error) { return nil, nil }
+	session.LoadLocalConfig = func(string) (*config.LocalConfig, error) { return nil, nil }
 	t.Cleanup(func() {
-		loadOrgConfig, loadGlobalConfig, loadRepoConfig, loadLocalConfig = previousOrg, previousGlobal, previousRepo, previousLocal
+		session.LoadOrgConfig, session.LoadGlobalConfig, session.LoadRepoConfig, session.LoadLocalConfig = previousOrg, previousGlobal, previousRepo, previousLocal
 	})
 
 	snapshot := readSnapshotForWorkspace(context.Background(), ws, t.TempDir(), catalogLoadCached)
@@ -172,25 +173,25 @@ func TestReadSnapshotDryRunUsesWorkspaceMaterializeRoot(t *testing.T) {
 
 func TestReadSnapshotRejectsInvalidWorkspaceBeforeLoaders(t *testing.T) {
 	var loaderCalls int
-	previousOrg, previousGlobal, previousRepo, previousLocal := loadOrgConfig, loadGlobalConfig, loadRepoConfig, loadLocalConfig
-	loadOrgConfig = func() (*config.Config, error) {
+	previousOrg, previousGlobal, previousRepo, previousLocal := session.LoadOrgConfig, session.LoadGlobalConfig, session.LoadRepoConfig, session.LoadLocalConfig
+	session.LoadOrgConfig = func() (*config.Config, error) {
 		loaderCalls++
 		return nil, nil
 	}
-	loadGlobalConfig = func() (*config.Config, error) {
+	session.LoadGlobalConfig = func() (*config.Config, error) {
 		loaderCalls++
 		return nil, nil
 	}
-	loadRepoConfig = func() (*config.Config, error) {
+	session.LoadRepoConfig = func() (*config.Config, error) {
 		loaderCalls++
 		return nil, nil
 	}
-	loadLocalConfig = func(string) (*config.LocalConfig, error) {
+	session.LoadLocalConfig = func(string) (*config.LocalConfig, error) {
 		loaderCalls++
 		return nil, nil
 	}
 	t.Cleanup(func() {
-		loadOrgConfig, loadGlobalConfig, loadRepoConfig, loadLocalConfig = previousOrg, previousGlobal, previousRepo, previousLocal
+		session.LoadOrgConfig, session.LoadGlobalConfig, session.LoadRepoConfig, session.LoadLocalConfig = previousOrg, previousGlobal, previousRepo, previousLocal
 	})
 
 	snapshot := readSnapshotForWorkspace(context.Background(), pipeline.Workspace{}, t.TempDir(), catalogLoadCached)

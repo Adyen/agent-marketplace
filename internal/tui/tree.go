@@ -6,7 +6,6 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/materialize"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 )
@@ -175,23 +174,6 @@ func sourceIdentity(r row) string {
 		return "local"
 	}
 	return registryIdentityKey(r.RegistryURL, r.RegistryRef, r.RegistryPath)
-}
-
-// sourceLabel is the display label for a source section: the registry display
-// name (or URL-derived repository name) with the full normalized subpath, or
-// "(local)" without registry metadata.
-func sourceLabel(r row) string {
-	base := strings.TrimSpace(r.RegistryName)
-	if base == "" {
-		base = registryDisplayName(r.RegistryURL)
-	}
-	if base == "" {
-		base = "(local)"
-	}
-	if p := config.NormalizeRegistryPath(r.RegistryPath); p != "" {
-		base = base + " / " + p
-	}
-	return base
 }
 
 // groupedSection is one section produced by grouping rows along one axis.
@@ -467,7 +449,7 @@ func buildStatusTree(rows []row, foldState map[string]bool) []flatItem {
 func sortLeafRows(rows []row) {
 	sort.SliceStable(rows, func(i, j int) bool {
 		ri, rj := rows[i], rows[j]
-		if ri.searchRanked || rj.searchRanked {
+		if ri.SearchRanked || rj.SearchRanked {
 			if searchRankLess(ri, rj) || searchRankLess(rj, ri) {
 				return searchRankLess(ri, rj)
 			}

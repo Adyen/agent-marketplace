@@ -23,7 +23,7 @@ func beginSyncOperation(t *testing.T) Model {
 	t.Helper()
 	m := progressTestModel(t)
 	m.syncing = true
-	m.beginOperationProgress("sync", m.requests.active(requestSnapshot))
+	m.beginOperationProgress("sync", m.requests.Active(requestSnapshot))
 	return m
 }
 
@@ -46,7 +46,7 @@ func TestSyncDoneKeepsOperationActiveThroughAuthoritativeReload(t *testing.T) {
 	if m.operationPhase != string(pipeline.PhaseReload) {
 		t.Fatalf("active sync phase = %q, want %q during reload", m.operationPhase, pipeline.PhaseReload)
 	}
-	reload := m.requests.active(requestSnapshot)
+	reload := m.requests.Active(requestSnapshot)
 	if reload == 0 {
 		t.Fatal("pipeline completion did not schedule an authoritative reload")
 	}
@@ -79,7 +79,7 @@ func TestSyncReloadFailureEndsSyncAsFailure(t *testing.T) {
 
 	next, _ := m.Update(syncDoneMsg{err: nil})
 	m = next.(Model)
-	reload := m.requests.active(requestSnapshot)
+	reload := m.requests.Active(requestSnapshot)
 	if reload == 0 {
 		t.Fatal("pipeline completion did not schedule an authoritative reload")
 	}
@@ -94,13 +94,13 @@ func TestSyncReloadFailureEndsSyncAsFailure(t *testing.T) {
 		t.Fatal("failed reload dropped the diagnostic record")
 	}
 	failed := false
-	for _, d := range m.diagnostics.operations {
-		if d.operation == operationSync && d.severity == diagnosticError {
+	for _, d := range m.diagnostics.Operations {
+		if d.Operation == operationSync && d.Severity == diagnosticError {
 			failed = true
 		}
 	}
 	if !failed {
-		t.Fatalf("failed reload did not record an operationSync failure: %+v", m.diagnostics.operations)
+		t.Fatalf("failed reload did not record an operationSync failure: %+v", m.diagnostics.Operations)
 	}
 	if strings.Contains(m.toast, "Sync complete") {
 		t.Fatalf("failed reload claimed success: %q", m.toast)
@@ -116,7 +116,7 @@ func TestSyncReloadSupersededKeepsOperationActiveThroughLatestSnapshot(t *testin
 
 	next, _ := m.Update(syncDoneMsg{err: nil})
 	m = next.(Model)
-	staleReload := m.requests.active(requestSnapshot)
+	staleReload := m.requests.Active(requestSnapshot)
 	if staleReload == 0 {
 		t.Fatal("pipeline completion did not schedule an authoritative reload")
 	}
@@ -154,7 +154,7 @@ func TestSyncPipelineErrorPreservedThroughReload(t *testing.T) {
 	if !m.syncing || m.progress == nil {
 		t.Fatal("pipeline failure finished the sync before its authoritative reload")
 	}
-	reload := m.requests.active(requestSnapshot)
+	reload := m.requests.Active(requestSnapshot)
 	if reload == 0 {
 		t.Fatal("pipeline failure did not schedule an authoritative reload")
 	}
@@ -209,7 +209,7 @@ func TestSyncQuitConfirmedDuringReloadQuitsAtAuthority(t *testing.T) {
 
 	next, _ := m.Update(syncDoneMsg{err: nil})
 	m = next.(Model)
-	reload := m.requests.active(requestSnapshot)
+	reload := m.requests.Active(requestSnapshot)
 	if reload == 0 {
 		t.Fatal("pipeline completion did not schedule an authoritative reload")
 	}

@@ -11,6 +11,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/Adyen/agent-marketplace/internal/dependencytxn"
+	"github.com/Adyen/agent-marketplace/internal/lifecycle"
 )
 
 func TestRepoInstallStagesMissingConfigSkeletonAndSelection(t *testing.T) {
@@ -31,13 +32,13 @@ func TestRepoInstallStagesMissingConfigSkeletonAndSelection(t *testing.T) {
 	}
 	withWorkingDir(t, repo)
 	repoConfig := filepath.Join(repo, ".agents", "config.yaml")
-	canonicalRepoConfig, err := canonicalizeFuturePath(repoConfig)
+	canonicalRepoConfig, err := lifecycle.CanonicalizeFuturePath(repoConfig)
 	if err != nil {
 		t.Fatal(err)
 	}
 	stop := errors.New("stop before dependency commit")
-	originalCommit := commitDependencyTransaction
-	commitDependencyTransaction = func(_ context.Context, _ string, desired []dependencytxn.DesiredFile, _ ...dependencytxn.Option) (dependencytxn.Result, error) {
+	originalCommit := lifecycle.CommitDependencyTransaction
+	lifecycle.CommitDependencyTransaction = func(_ context.Context, _ string, desired []dependencytxn.DesiredFile, _ ...dependencytxn.Option) (dependencytxn.Result, error) {
 		if _, err := os.Stat(repoConfig); !os.IsNotExist(err) {
 			t.Fatalf("real repo config exists when dependency reconcile starts: %v", err)
 		}
@@ -84,7 +85,7 @@ func TestRepoInstallStagesMissingConfigSkeletonAndSelection(t *testing.T) {
 		t.Fatalf("staged repo config missing from desired transaction: %#v", desired)
 		return dependencytxn.Result{}, stop
 	}
-	t.Cleanup(func() { commitDependencyTransaction = originalCommit })
+	t.Cleanup(func() { lifecycle.CommitDependencyTransaction = originalCommit })
 
 	_, err = executeCommand("install", "review")
 	if !errors.Is(err, stop) {

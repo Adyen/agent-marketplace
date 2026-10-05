@@ -15,6 +15,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/cache"
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/dependencytxn"
+	"github.com/Adyen/agent-marketplace/internal/lifecycle"
 	"github.com/Adyen/agent-marketplace/internal/lockfile"
 	"github.com/Adyen/agent-marketplace/internal/pipeline"
 )
@@ -32,10 +33,10 @@ func dependencyReadOnlyEntrypoints() map[string]func() error {
 	for _, args := range [][]string{{"sync", "--locked"}, {"sync", "--offline"}, {"sync", "--locked", "--offline"}, {"sync", "--check"}, {"lock", "--check"}, {"list"}, {"status"}} {
 		entries[strings.Join(args, " ")] = func() error { _, err := executeCommand(args...); return err }
 	}
-	for name, mode := range map[string]lockMode{"locked": {locked: true}, "offline": {offline: true}, "check": {check: true}} {
+	for name, mode := range map[string]lifecycle.LockMode{"locked": {Locked: true}, "offline": {Offline: true}, "check": {Check: true}} {
 		entries["direct-"+name+"-locks"] = func() error {
 			root := config.FindRepoRoot()
-			_, _, _, err := prepareRuntimeLocks(context.Background(), root, root, mode)
+			_, _, _, err := lifecycle.PrepareRuntimeLocks(context.Background(), root, root, mode)
 			return err
 		}
 	}
@@ -77,7 +78,7 @@ func setupDependencyInspection(t *testing.T) (string, string, string) {
 	withWorkingDir(t, repo)
 	config.ResetRepoRootCache()
 	t.Cleanup(config.ResetRepoRootCache)
-	state, err := dependencyStateDir()
+	state, err := lifecycle.DependencyStateDir()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -178,8 +179,8 @@ func TestLockPublicationHoldsExactLeaseFromSnapshotThroughCommit(t *testing.T) {
 	withWorkingDir(t, repo)
 
 	gcDone := make(chan error, 1)
-	originalHook := lockSnapshotAcquiredHook
-	lockSnapshotAcquiredHook = func() {
+	originalHook := lifecycle.LockSnapshotAcquiredHook
+	lifecycle.LockSnapshotAcquiredHook = func() {
 		go func() {
 			gcDone <- runGC(context.Background(), io.Discard, false)
 		}()
@@ -189,7 +190,7 @@ func TestLockPublicationHoldsExactLeaseFromSnapshotThroughCommit(t *testing.T) {
 		case <-time.After(100 * time.Millisecond):
 		}
 	}
-	t.Cleanup(func() { lockSnapshotAcquiredHook = originalHook })
+	t.Cleanup(func() { lifecycle.LockSnapshotAcquiredHook = originalHook })
 
 	if output, err := executeCommand("lock", "--scope", "repo"); err != nil {
 		t.Fatalf("lock publication: %v\n%s", err, output)
@@ -219,7 +220,7 @@ func TestDependencyRecoveryWaitsForExactGCNamespace(t *testing.T) {
 	t.Setenv("HOME", home)
 	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, "cache"))
 	t.Setenv("XDG_STATE_HOME", filepath.Join(home, "state"))
-	stateDir, err := dependencyStateDir()
+	stateDir, err := lifecycle.DependencyStateDir()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -329,7 +330,7 @@ registries:
 		t.Fatalf("seed exact lock: %v\n%s", err, output)
 	}
 
-	_, _, checkLease, err := prepareRuntimeLocks(context.Background(), repo, "", lockMode{locked: true, check: true})
+	_, _, checkLease, err := lifecycle.PrepareRuntimeLocks(context.Background(), repo, "", lifecycle.LockMode{Locked: true, Check: true})
 	if err != nil {
 		t.Fatalf("prepare sync check: %v", err)
 	}
@@ -487,7 +488,7 @@ func TestRuntimeRecoversDependencyTransactionBeforeLoadingConfig(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	stateDir, err := dependencyStateDir()
+	stateDir, err := lifecycle.DependencyStateDir()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -533,7 +534,7 @@ func TestConfiguredCommandsHandlePendingRecoveryBeforeLoadingConfig(t *testing.T
 			t.Setenv("HOME", home)
 			t.Setenv("XDG_STATE_HOME", filepath.Join(home, "state"))
 			writeConfig(t, filepath.Join(home, ".agents", "config.yaml"), "\nregistries: []\n")
-			stateDir, err := dependencyStateDir()
+			stateDir, err := lifecycle.DependencyStateDir()
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -559,7 +560,7 @@ func TestConfiguredListDoesNotCreateDependencyState(t *testing.T) {
 	if output, err := executeCommand("list"); err != nil {
 		t.Fatalf("list: %v\n%s", err, output)
 	}
-	stateDir, err := dependencyStateDir()
+	stateDir, err := lifecycle.DependencyStateDir()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -584,12 +585,12 @@ func TestLockCommitRejectsConcurrentConfigEdit(t *testing.T) {
 	writeConfig(t, configPath, "\nregistries:\n  - url: "+origin+"\n    ref: main\n")
 	withWorkingDir(t, repo)
 
-	originalCommit := commitDependencyTransaction
-	commitDependencyTransaction = func(ctx context.Context, stateDir string, desired []dependencytxn.DesiredFile, opts ...dependencytxn.Option) (dependencytxn.Result, error) {
+	originalCommit := lifecycle.CommitDependencyTransaction
+	lifecycle.CommitDependencyTransaction = func(ctx context.Context, stateDir string, desired []dependencytxn.DesiredFile, opts ...dependencytxn.Option) (dependencytxn.Result, error) {
 		writeConfig(t, configPath, "\nregistries: []\n")
 		return dependencytxn.Commit(ctx, stateDir, desired, opts...)
 	}
-	t.Cleanup(func() { commitDependencyTransaction = originalCommit })
+	t.Cleanup(func() { lifecycle.CommitDependencyTransaction = originalCommit })
 
 	output, err := executeCommand("lock", "--scope", "repo")
 	if !errors.Is(err, dependencytxn.ErrGenerationConflict) {

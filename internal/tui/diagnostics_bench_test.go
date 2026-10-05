@@ -13,6 +13,6 @@ func BenchmarkDiagnosticSnapshotReplace(b *testing.B) {
 	var store diagnosticStore
 	b.ReportAllocs()
 	for b.Loop() {
-		store.replaceSnapshot(diagnostics)
+		store.ReplaceSnapshot(diagnostics)
 	}
 }

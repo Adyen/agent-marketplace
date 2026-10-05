@@ -8,6 +8,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/Adyen/agent-marketplace/internal/config"
+	"github.com/Adyen/agent-marketplace/internal/lifecycle"
 	"github.com/Adyen/agent-marketplace/internal/lockfile"
 	"github.com/Adyen/agent-marketplace/internal/marketplace"
 	"github.com/Adyen/agent-marketplace/internal/pipeline"
@@ -24,7 +25,7 @@ func newUpdateCmd() *cobra.Command {
 		Use:   "update [resource ...]",
 		Short: "Refresh pinned registries and sync enabled skills",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			selected, explicitOrg, err := parseLockSelection(scope, false)
+			selected, explicitOrg, err := lifecycle.ParseLockSelection(scope, false)
 			if err != nil {
 				return err
 			}
@@ -57,26 +58,26 @@ func newUpdateCmd() *cobra.Command {
 // It recovers pending dependency transactions and creates missing Marketplace
 // locks before updating. Recovery, lock preparation, update, and output errors
 // are propagated; an output error can occur after changes have been applied.
-func runUpdate(ctx context.Context, out io.Writer, bump, verbose bool, selected map[lockfile.Scope]bool, targets *upgradeTargetSpec) error {
+func runUpdate(ctx context.Context, out io.Writer, bump, verbose bool, selected map[lockfile.Scope]bool, targets *lifecycle.UpgradeTargetSpec) error {
 	repoRoot := config.FindRepoRoot()
 	localDir := config.FindLocalConfigDir()
 	ws, err := pipeline.WorkspaceForRoots(repoRoot, localDir)
 	if err != nil {
 		return err
 	}
-	if err := prepareDependencyTransactions(ctx, false); err != nil {
+	if err := lifecycle.PrepareDependencyTransactions(ctx, false); err != nil {
 		return err
 	}
-	if _, err := bootstrapMissingMarketplaceLocks(ctx, ws.RepoRoot(), ws.LocalConfigDir(), selected, nil); err != nil {
+	if _, err := lifecycle.BootstrapMissingMarketplaceLocks(ctx, ws.RepoRoot(), ws.LocalConfigDir(), selected, nil); err != nil {
 		return err
 	}
-	targetResult := &upgradeTargetResult{}
+	targetResult := &lifecycle.UpgradeTargetResult{}
 	var warnings []error
 	opts := pipeline.UpdateOptions{
 		RepoRoot: repoRoot, Bump: bump, BumpScopes: selected, BumpTarget: updateBumpTarget(targets),
 		DependencyReconcile: func(ctx context.Context, repoRoot, localDir string, bumps []pipeline.RefBump, edits []pipeline.StagedConfigEdit, lockEdits []pipeline.StagedLockEdit) (pipeline.DependencyLockView, error) {
 			advanceUpgradeTargetRefs(targets, bumps)
-			option, _, lease, err := prepareRuntimeLocks(ctx, repoRoot, localDir, lockMode{upgrade: true, selects: selected, upgradeTargets: targets, upgradeResult: targetResult, reconcileUnselected: true, stagedConfigEdits: edits, stagedLockEdits: lockEdits, warningSink: &warnings})
+			option, _, lease, err := lifecycle.PrepareRuntimeLocks(ctx, repoRoot, localDir, lifecycle.LockMode{Upgrade: true, Selects: selected, UpgradeTargets: targets, UpgradeResult: targetResult, ReconcileUnselected: true, StagedConfigEdits: edits, StagedLockEdits: lockEdits, WarningSink: &warnings})
 			return pipeline.DependencyLockView{CatalogOption: option, ExactLockLease: lease, Warnings: warnings}, err
 		},
 	}
@@ -90,7 +91,7 @@ func runUpdate(ctx context.Context, out io.Writer, bump, verbose bool, selected 
 	if err := writeGroupedWarnings(out, warnings, false); err != nil {
 		return err
 	}
-	for _, notice := range targetResult.notices {
+	for _, notice := range targetResult.Notices {
 		if _, err := fmt.Fprintln(out, notice); err != nil {
 			return err
 		}
@@ -98,28 +99,28 @@ func runUpdate(ctx context.Context, out io.Writer, bump, verbose bool, selected 
 	return writeUpdateOutput(out, result, bump, verbose)
 }
 
-func updateBumpTarget(targets *upgradeTargetSpec) *pipeline.UpdateTarget {
-	if targets == nil || targets.registry == "" {
+func updateBumpTarget(targets *lifecycle.UpgradeTargetSpec) *pipeline.UpdateTarget {
+	if targets == nil || targets.Registry == "" {
 		return nil
 	}
-	return &pipeline.UpdateTarget{Registry: targets.registry, Ref: targets.ref, Path: targets.path, Kind: targets.kind, Names: append([]string(nil), targets.names...)}
+	return &pipeline.UpdateTarget{Registry: targets.Registry, Ref: targets.Ref, Path: targets.Path, Kind: targets.Kind, Names: append([]string(nil), targets.Names...)}
 }
 
-func advanceUpgradeTargetRefs(targets *upgradeTargetSpec, bumps []pipeline.RefBump) {
-	if targets == nil || targets.registry == "" || targets.ref == "" {
+func advanceUpgradeTargetRefs(targets *lifecycle.UpgradeTargetSpec, bumps []pipeline.RefBump) {
+	if targets == nil || targets.Registry == "" || targets.Ref == "" {
 		return
 	}
-	wanted, err := canonicalRegistryURL(targets.registry)
+	wanted, err := lifecycle.CanonicalRegistryURL(targets.Registry)
 	if err != nil {
 		return
 	}
 	for _, bump := range bumps {
-		if bump.OldRef != targets.ref {
+		if bump.OldRef != targets.Ref {
 			continue
 		}
-		bumpURL, err := canonicalRegistryURL(bump.URL)
+		bumpURL, err := lifecycle.CanonicalRegistryURL(bump.URL)
 		if err == nil && bumpURL == wanted {
-			targets.ref = bump.NewRef
+			targets.Ref = bump.NewRef
 			return
 		}
 	}

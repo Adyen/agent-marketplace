@@ -1,4 +1,4 @@
-package main
+package lifecycle
 
 import (
 	"context"
@@ -17,7 +17,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/resolver"
 )
 
-func bootstrapMissingMarketplaceLocks(ctx context.Context, repoRoot, localDir string, selected map[lockfile.Scope]bool, policy resolver.MarketplaceRevocationPolicy) (int, error) {
+func BootstrapMissingMarketplaceLocks(ctx context.Context, repoRoot, localDir string, selected map[lockfile.Scope]bool, policy resolver.MarketplaceRevocationPolicy) (int, error) {
 	ws, err := pipeline.WorkspaceForRoots(repoRoot, localDir)
 	if err != nil {
 		return 0, err
@@ -92,11 +92,11 @@ func bootstrapMissingMarketplaceLocks(ctx context.Context, repoRoot, localDir st
 	if err != nil {
 		return 0, err
 	}
-	stateDir, err := dependencyStateDir()
+	stateDir, err := DependencyStateDir()
 	if err != nil {
 		return 0, err
 	}
-	if _, err := commitDependencyTransaction(ctx, stateDir, desired, dependencytxn.WithReadAssertions(reads)); err != nil {
+	if _, err := CommitDependencyTransaction(ctx, stateDir, desired, dependencytxn.WithReadAssertions(reads)); err != nil {
 		return 0, fmt.Errorf("commit missing Marketplace locks: %w", err)
 	}
 	slog.Info("missing Marketplace locks created", "count", len(desired))
@@ -112,21 +112,34 @@ func encodeWithGitRegistries(doc lockfile.Document, registries []lockfile.GitReg
 	return lockfile.Encode(normalized)
 }
 
-type archiveRefreshKey struct{ endpoint, instance, registryID, kind, name string }
-
-func archiveRefreshWarningKey(w *resolver.ArchiveEvidenceRefreshedWarning) archiveRefreshKey {
-	return archiveRefreshKey{w.MarketplaceURL, w.InstanceID, w.RegistryID, w.Kind, w.Name}
+// ArchiveRefreshKey identifies one Marketplace archive-evidence refresh a
+// sync warning reported.
+type ArchiveRefreshKey struct {
+	Endpoint   string
+	InstanceID string
+	RegistryID string
+	Kind       string
+	Name       string
 }
 
-func archiveRefreshPinKey(entry config.MarketplaceEntry, pin config.MarketplaceResourcePin) archiveRefreshKey {
-	return archiveRefreshKey{entry.URL, entry.InstanceID, pin.RegistryID, pin.Kind, pin.Name}
+// ArchiveRefreshWarningKey projects an archive-evidence refresh warning onto
+// its persistence key.
+func ArchiveRefreshWarningKey(w *resolver.ArchiveEvidenceRefreshedWarning) ArchiveRefreshKey {
+	return ArchiveRefreshKey{Endpoint: w.MarketplaceURL, InstanceID: w.InstanceID, RegistryID: w.RegistryID, Kind: w.Kind, Name: w.Name}
 }
 
-func stripUnpersistedRefreshWarnings(warnings []error, persisted map[archiveRefreshKey]bool) []error {
+// ArchiveRefreshPinKey projects one configured pin onto its refresh key.
+func ArchiveRefreshPinKey(entry config.MarketplaceEntry, pin config.MarketplaceResourcePin) ArchiveRefreshKey {
+	return ArchiveRefreshKey{Endpoint: entry.URL, InstanceID: entry.InstanceID, RegistryID: pin.RegistryID, Kind: pin.Kind, Name: pin.Name}
+}
+
+// StripUnpersistedRefreshWarnings drops archive-evidence refresh warnings for
+// keys that were not persisted into Marketplace locks.
+func StripUnpersistedRefreshWarnings(warnings []error, persisted map[ArchiveRefreshKey]bool) []error {
 	kept := make([]error, 0, len(warnings))
 	for _, w := range warnings {
 		var refresh *resolver.ArchiveEvidenceRefreshedWarning
-		if errors.As(w, &refresh) && !persisted[archiveRefreshWarningKey(refresh)] {
+		if errors.As(w, &refresh) && !persisted[ArchiveRefreshWarningKey(refresh)] {
 			continue
 		}
 		kept = append(kept, w)
@@ -134,15 +147,15 @@ func stripUnpersistedRefreshWarnings(warnings []error, persisted map[archiveRefr
 	return kept
 }
 
-func refreshDriftedMarketplaceLocks(ctx context.Context, repoRoot, localDir string, mergedCfg *config.Config, warnings []error) (map[archiveRefreshKey]bool, error) {
+func RefreshDriftedMarketplaceLocks(ctx context.Context, repoRoot, localDir string, mergedCfg *config.Config, warnings []error) (map[ArchiveRefreshKey]bool, error) {
 	if mergedCfg == nil {
 		return nil, nil
 	}
-	refreshed := make(map[archiveRefreshKey]bool)
+	refreshed := make(map[ArchiveRefreshKey]bool)
 	for _, w := range warnings {
 		var refresh *resolver.ArchiveEvidenceRefreshedWarning
 		if errors.As(w, &refresh) {
-			refreshed[archiveRefreshWarningKey(refresh)] = true
+			refreshed[ArchiveRefreshWarningKey(refresh)] = true
 		}
 	}
 	if len(refreshed) == 0 {
@@ -167,7 +180,7 @@ func refreshDriftedMarketplaceLocks(ctx context.Context, repoRoot, localDir stri
 	for _, entry := range mergedCfg.Marketplaces {
 		var pins []config.MarketplaceResourcePin
 		for _, pin := range entry.Resources {
-			if refreshed[archiveRefreshPinKey(entry, pin)] {
+			if refreshed[ArchiveRefreshPinKey(entry, pin)] {
 				pins = append(pins, pin)
 			}
 		}
@@ -216,7 +229,7 @@ func refreshDriftedMarketplaceLocks(ctx context.Context, repoRoot, localDir stri
 		work.merges = append(work.merges, pendingMerge{entry: entry, pins: pins})
 	}
 	var desired []dependencytxn.DesiredFile
-	stagedKeysByPath := make(map[string][]archiveRefreshKey)
+	stagedKeysByPath := make(map[string][]ArchiveRefreshKey)
 	for _, source := range order {
 		work := layers[source]
 		doc := *work.current
@@ -245,7 +258,7 @@ func refreshDriftedMarketplaceLocks(ctx context.Context, repoRoot, localDir stri
 		desired = append(desired, dependencytxn.DesiredFile{Path: work.path, Expected: work.expected, ExpectedMode: work.expectedMode, Bytes: data, Mode: work.expectedMode})
 		for _, merge := range work.merges {
 			for _, pin := range merge.pins {
-				key := archiveRefreshPinKey(merge.entry, pin)
+				key := ArchiveRefreshPinKey(merge.entry, pin)
 				stagedKeysByPath[work.path] = append(stagedKeysByPath[work.path], key)
 			}
 		}
@@ -257,16 +270,16 @@ func refreshDriftedMarketplaceLocks(ctx context.Context, repoRoot, localDir stri
 	if err != nil {
 		return nil, err
 	}
-	stateDir, err := dependencyStateDir()
+	stateDir, err := DependencyStateDir()
 	if err != nil {
 		return nil, err
 	}
-	committed, err := commitDependencyTransaction(ctx, stateDir, desired, dependencytxn.WithReadAssertions(reads))
+	committed, err := CommitDependencyTransaction(ctx, stateDir, desired, dependencytxn.WithReadAssertions(reads))
 	if err != nil {
 		return nil, fmt.Errorf("commit refreshed Marketplace lock evidence: %w", err)
 	}
 	slog.Info("marketplace lock evidence refreshed", "count", len(committed.Changed))
-	persisted := make(map[archiveRefreshKey]bool)
+	persisted := make(map[ArchiveRefreshKey]bool)
 	for _, path := range committed.Changed {
 		for _, key := range stagedKeysByPath[path] {
 			persisted[key] = true

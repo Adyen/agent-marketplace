@@ -104,7 +104,7 @@ func TestCaptureSnapshotDetailSourcesDeterministicBudgets(t *testing.T) {
 				var bytes int
 				for path, source := range got {
 					name := strings.TrimSuffix(filepath.Base(path), ".md")
-					if source.omitted {
+					if source.Omitted {
 						omitted = append(omitted, name)
 						if rendered := renderDetailFullContent(newTheme(true), row{DetailSource: source}, 80); rendered != detailCaptureOmittedMarker {
 							t.Fatalf("%s: omitted marker = %q", name, rendered)
@@ -112,8 +112,8 @@ func TestCaptureSnapshotDetailSourcesDeterministicBudgets(t *testing.T) {
 						continue
 					}
 					captured = append(captured, name)
-					bytes += len(source.content)
-					if source.err != nil || !strings.HasPrefix(source.content, name) {
+					bytes += len(source.Content)
+					if source.Err != nil || !strings.HasPrefix(source.Content, name) {
 						t.Fatalf("%s: missing captured source: %#v", name, source)
 					}
 					wantLength, wantMarker := tc.size, ""
@@ -124,8 +124,8 @@ func TestCaptureSnapshotDetailSourcesDeterministicBudgets(t *testing.T) {
 						wantLength = 7
 						wantMarker = detailBudgetTruncationMarker
 					}
-					if len(source.content) != wantLength || source.truncationMarker != wantMarker {
-						t.Errorf("%s: length/marker = %d/%q, want %d/%q", name, len(source.content), source.truncationMarker, wantLength, wantMarker)
+					if len(source.Content) != wantLength || source.TruncationMarker != wantMarker {
+						t.Errorf("%s: length/marker = %d/%q, want %d/%q", name, len(source.Content), source.TruncationMarker, wantLength, wantMarker)
 					}
 				}
 				slices.Sort(captured)
@@ -177,7 +177,7 @@ func TestCaptureSnapshotDetailSourcesTieBreaks(t *testing.T) {
 			}
 			for _, name := range []string{"a", "b", "c", "d"} {
 				source := got[filepath.Join(root, name+".md")]
-				if source == nil || source.omitted != (name != want) {
+				if source == nil || source.Omitted != (name != want) {
 					t.Errorf("%s: capture = %#v, want only %s captured", name, source, want)
 				}
 			}

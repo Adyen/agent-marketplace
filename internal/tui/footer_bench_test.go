@@ -2,6 +2,7 @@ package tui
 
 import (
 	"errors"
+	"github.com/Adyen/agent-marketplace/internal/session"
 	"strings"
 	"testing"
 )
@@ -25,7 +26,7 @@ func BenchmarkRenderOperationFooter(b *testing.B) {
 	m.syncing = true
 	m.progressLabel = "sync"
 	m.operationPhase = "materializing"
-	m.progress = &operationProgressSource{operation: 1, updates: make(chan operationProgressMsg, 1)}
+	m.progress = session.NewOperationProgressSource(1, 0)
 	m.warnings = []error{errors.New("warning")}
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {

@@ -229,10 +229,10 @@ func TestLocalRegistryDetailBrowsingIsSourceAnchored(t *testing.T) {
 					[]resolver.ResolvedArtifact{{Entry: entry}}, loaded.Catalogs,
 				)
 				snapshot := snapshots[entry.Path]
-				if snapshot == nil || snapshot.err != nil || !strings.Contains(snapshot.content, marker) {
+				if snapshot == nil || snapshot.Err != nil || !strings.Contains(snapshot.Content, marker) {
 					t.Fatalf("%s snapshot = %+v, want marker %q", kind, snapshot, marker)
 				}
-				if strings.Contains(snapshot.content, fx.markers["decoy"]) {
+				if strings.Contains(snapshot.Content, fx.markers["decoy"]) {
 					t.Fatalf("%s snapshot captured consumer decoy", kind)
 				}
 			}
@@ -320,13 +320,13 @@ func TestLocalRegistryDetailFailsReadOnlyAfterDiscovery(t *testing.T) {
 				[]resolver.ResolvedArtifact{{Entry: entry}}, loaded.Catalogs,
 			)
 			snapshot := snapshots[entry.Path]
-			if snapshot == nil || !errors.Is(snapshot.err, wantErr) {
+			if snapshot == nil || !errors.Is(snapshot.Err, wantErr) {
 				t.Fatalf("snapshot error = %+v, want %v", snapshot, wantErr)
 			}
-			if snapshot.content != "" && strings.Contains(snapshot.content, fx.markers["decoy"]) {
+			if snapshot.Content != "" && strings.Contains(snapshot.Content, fx.markers["decoy"]) {
 				t.Fatal("snapshot captured substituted decoy bytes")
 			}
-			if len(payload) > 0 && strings.Contains(snapshot.content, string(payload)) {
+			if len(payload) > 0 && strings.Contains(snapshot.Content, string(payload)) {
 				t.Fatal("snapshot captured unsafe payload bytes")
 			}
 

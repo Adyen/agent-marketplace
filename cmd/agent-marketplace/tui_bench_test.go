@@ -10,6 +10,7 @@ import (
 
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/pipeline"
+	"github.com/Adyen/agent-marketplace/internal/session"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 )
 
@@ -30,7 +31,7 @@ func BenchmarkTUIConfigTransactionDiskIONoNetwork(b *testing.B) {
 			}
 			mutate := func(enable bool) {
 				b.Helper()
-				err := runTUIConfigMutation(context.Background(), workspace, func(mapper pipeline.ConfigPathMapper) error {
+				err := session.RuntimeConfigMutation(context.Background(), workspace, func(mapper pipeline.ConfigPathMapper) error {
 					staged, err := mapper(path)
 					if err != nil {
 						return err

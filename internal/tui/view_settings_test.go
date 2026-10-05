@@ -471,7 +471,7 @@ func TestViewPreferencesWarningSurfacesAtStartup(t *testing.T) {
 	mi, _ := m.Update(toast)
 	m = mi.(Model)
 	mi, _ = m.Update(snapshotLoadedMsg{
-		generation:      m.requests.active(requestSnapshot),
+		generation:      m.requests.Active(requestSnapshot),
 		mergedCfg:       &config.Config{},
 		driftAssessment: driftReady,
 	})
