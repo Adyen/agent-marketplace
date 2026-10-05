@@ -9,6 +9,9 @@ import (
 )
 
 func TestStoreReadAggregateAbsenceAndRootAlias(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
 	root := t.TempDir()
 	alias := filepath.Join(t.TempDir(), "root")
 	if err := os.Symlink(root, alias); err != nil {
@@ -38,6 +41,9 @@ func TestStoreReadAggregateAbsenceAndRootAlias(t *testing.T) {
 
 // spec: owned-entry-reconciliation/scoped-aggregate-reader-refuses-intermediate-alias
 func TestStoreReadAggregateRefusesIntermediateAlias(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
 	root, foreign := t.TempDir(), t.TempDir()
 	store, err := Open(root, WithStateRoot(t.TempDir()))
 	if err != nil {
