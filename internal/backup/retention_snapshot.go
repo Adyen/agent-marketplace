@@ -2,6 +2,7 @@ package backup
 
 import (
 	"errors"
+	"fmt"
 	"io"
 
 	"github.com/Adyen/agent-marketplace/internal/fsboundary"
@@ -25,7 +26,7 @@ func removeObservedBackups(parent *fsboundary.Dir, path string, names []string, 
 			return err
 		}
 		if _, err := inspectRetentionMember(parent, name, &identities[i]); err != nil {
-			return err
+			return fmt.Errorf("backup: retention member %s in %s: %w", name, path, err)
 		}
 		if err := parent.Unlink(name); err != nil {
 			return err
