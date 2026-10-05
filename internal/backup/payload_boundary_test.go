@@ -33,7 +33,7 @@ func TestRestoreRefusesHardlinkedArchivePayload(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	foreign := filepath.Join(t.TempDir(), "foreign.tar.gz")
+	foreign := filepath.Join(home, "foreign.tar.gz")
 	if err := os.Link(archives[0], foreign); err != nil {
 		t.Fatal(err)
 	}
