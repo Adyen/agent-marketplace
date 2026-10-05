@@ -506,11 +506,11 @@ func (s *Store) cleanupAfterCASFailure(journal *Journal, backupPath string) {
 				"root_key", s.rootKey, "backup_path", backupPath, "err", err)
 			return
 		}
-	}
-	// best-effort: remove empty backup directories
-	if err := s.removeEmptySafetyDirectory(journal.safety); err != nil {
-		slog.Warn("could not remove an empty safety backup directory after a CAS failure",
-			"root_key", s.rootKey, "dir", s.SafetyBackupDir(journal.File), "err", err)
+		// best-effort: remove empty backup directories
+		if err := s.removeEmptySafetyDirectory(journal.safety); err != nil {
+			slog.Warn("could not remove an empty safety backup directory after a CAS failure",
+				"root_key", s.rootKey, "dir", s.SafetyBackupDir(journal.File), "err", err)
+		}
 	}
 }
 

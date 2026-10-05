@@ -245,9 +245,11 @@ func (s *Store) writeSafetyBackup(rel, absFile string, generation uint64, reason
 			err = errors.Join(err, parent.Unlink(name))
 		}
 	}()
-	if n, writeErr := backupFile.Write(raw); writeErr != nil {
+	n, writeErr := backupFile.Write(raw)
+	if writeErr != nil {
 		return "", "", false, nil, fmt.Errorf("ownership: write safety backup: %w", writeErr)
-	} else if n != len(raw) {
+	}
+	if n != len(raw) {
 		return "", "", false, nil, fmt.Errorf("ownership: write safety backup: short write (%d/%d bytes)", n, len(raw))
 	}
 	if err := backupFile.Sync(); err != nil {
