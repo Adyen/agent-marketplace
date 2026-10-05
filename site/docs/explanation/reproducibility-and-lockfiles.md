@@ -29,7 +29,7 @@ A normal `sync` downloads the commit recorded in the lock, checks the downloaded
 
 If the lock is missing, or no longer matches the configuration (for example after you add a source or change a `ref`), `sync` first updates the lock, changing only the records that need it. It does this only for lockfiles the CLI is allowed to write. Two stricter variants are available:
 
-- `sync --locked` refuses to write any configuration or lock file and fails when a lock is out of date. Use it in CI.
+- `sync --locked` refuses to write any configuration or lock file and fails when a lock is out of date. Use it in CI. It also fails when a Marketplace serves a repaired archive for unchanged content, because refreshing the recorded `archive_digest` is a lock write; run a writing `sync` or `update` to pick up the new archive evidence.
 - `sync --check` changes nothing and exits with status 1 when a lock or the installed files are out of date.
 
 ## One lock per configuration file

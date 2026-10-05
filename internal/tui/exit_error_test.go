@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 )
 
 // The sync-and-quit error (and any program error) is returned to Cobra,
@@ -106,6 +106,7 @@ func TestFinishTUIRunSanitizesSyncAndQuitErrorAfterRestoration(t *testing.T) {
 	}
 }
 
+// spec: tui-rendering/error-after-entering-alternate-screen
 func TestFinishTUIRunSanitizesReturnedProgramError(t *testing.T) {
 	renderer := errors.New("cancel reader /dev/tty\x1b[2J failed")
 	err := finishTUIRun(nil, renderer)
