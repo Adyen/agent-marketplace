@@ -395,6 +395,12 @@ func (s *Store) applyLocked(m Mutation) (result Result, err error) {
 		return Result{}, err
 	}
 	if err := destination.Publish(parent, filepath.Base(journal.StagedPath)); err != nil {
+		// A durability-uncertain publication may already hold the renamed byte;
+		// retain the journal so recovery can roll this generation forward or
+		// roll it back against recorded evidence.
+		if errors.Is(err, fsboundary.ErrDurabilityUncertain) {
+			published = true
+		}
 		return Result{}, fmt.Errorf("ownership: publish %s: %w", m.AbsFile, err)
 	}
 	published = true
