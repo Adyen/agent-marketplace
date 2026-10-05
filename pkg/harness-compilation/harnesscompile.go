@@ -901,6 +901,10 @@ func Materialize(r *Result, outDir string, opts ...WriteOption) (report *WriteRe
 		currentFile, inspectErr := native.Lstat(filepath.FromSlash(a.Path))
 		original := originalFiles[a.Path]
 		if original == nil {
+			if inspectErr == nil {
+				// A leaf appeared where the admitted generation had none.
+				return nil, fsboundary.ErrGenerationConflict
+			}
 			if !errors.Is(inspectErr, fs.ErrNotExist) {
 				return nil, errors.Join(fsboundary.ErrGenerationConflict, inspectErr)
 			}
