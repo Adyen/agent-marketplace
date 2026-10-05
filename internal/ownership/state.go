@@ -361,7 +361,7 @@ func (s *Store) commitRecordWithValidation(rec *Record, validate func() error) (
 			err = errors.Join(err, closeErr)
 		}
 	}()
-	_, err = writeObservedMetadataFile(parent, stateFileName, data, func() error {
+	_, _, err = writeObservedMetadataFile(parent, stateFileName, data, func() error {
 		if err := s.verifyMetadataParent(parent); err != nil {
 			return err
 		}

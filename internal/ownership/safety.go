@@ -202,11 +202,17 @@ func (s *Store) writeSafetyBackup(rel, absFile string, generation uint64, reason
 	backupPath = filepath.Join(dir, name)
 	info, err := backupFile.Stat()
 	if err != nil {
-		return "", "", false, nil, errors.Join(err, backupFile.Close())
+		if closeErr := backupFile.Close(); closeErr != nil {
+			return "", "", false, nil, errors.Join(err, closeErr)
+		}
+		return "", "", false, nil, err
 	}
 	created, err := fsboundary.FileInfoIdentity(info)
 	if err != nil {
-		return "", "", false, nil, errors.Join(err, backupFile.Close())
+		if closeErr := backupFile.Close(); closeErr != nil {
+			return "", "", false, nil, errors.Join(err, closeErr)
+		}
+		return "", "", false, nil, err
 	}
 	published := false
 	defer func() {
@@ -242,12 +248,16 @@ func (s *Store) writeSafetyBackup(rel, absFile string, generation uint64, reason
 			return
 		}
 		if identity.SameObject(created) {
-			err = errors.Join(err, parent.Unlink(name))
+			if unlinkErr := parent.Unlink(name); unlinkErr != nil {
+				err = errors.Join(err, unlinkErr)
+			}
 		}
 	}()
-	if n, writeErr := backupFile.Write(raw); writeErr != nil {
+	n, writeErr := backupFile.Write(raw)
+	if writeErr != nil {
 		return "", "", false, nil, fmt.Errorf("ownership: write safety backup: %w", writeErr)
-	} else if n != len(raw) {
+	}
+	if n != len(raw) {
 		return "", "", false, nil, fmt.Errorf("ownership: write safety backup: short write (%d/%d bytes)", n, len(raw))
 	}
 	if err := backupFile.Sync(); err != nil {
@@ -305,8 +315,11 @@ func (s *Store) writeSafetyBackup(rel, absFile string, generation uint64, reason
 		return "", "", false, nil, err
 	}
 	metadataName := filepath.Base(metaPathFor(backupPath))
-	metadata, err := writeObservedMetadataFile(parent, metadataName, append(metaBytes, '\n'), validate)
+	metadata, crossed, err := writeObservedMetadataFile(parent, metadataName, append(metaBytes, '\n'), validate)
 	if err != nil {
+		// If the manifest may already reference the payload, keep the payload:
+		// the renamed manifest is evidence of a completed generation.
+		published = crossed
 		return "", "", false, nil, err
 	}
 	attempt = &safetyAttempt{relative: relative, parent: parent.Identity(), members: []safetyLeafRemoval{{name: name, identity: produced, exists: true}, {name: metadataName, identity: metadata.file, exists: true}}}
@@ -370,14 +383,14 @@ func (s *Store) pruneSafetyBackups(dir string) (err error) {
 		for _, member := range []string{name, filepath.Base(metaPathFor(name))} {
 			pin, exists, err := captureSafetyPayload(parent, member)
 			if err != nil {
-				return err
+				return fmt.Errorf("ownership: capture safety backup member %q: %w", member, err)
 			}
 			removals = append(removals, safetyLeafRemoval{name: member, identity: pin.file, exists: exists})
 		}
 	}
 	for _, removal := range removals {
 		if err := s.removeSafetyLeaf(parent, relative, removal); err != nil {
-			return err
+			return fmt.Errorf("ownership: remove safety backup member %q: %w", removal.name, err)
 		}
 	}
 	return nil
@@ -425,7 +438,8 @@ func (s *Store) SafetyBackups(rel string) (out []RetainedBackup, err error) {
 	out = make([]RetainedBackup, 0, len(names))
 	for _, name := range names {
 		path := filepath.Join(dir, name)
-		metaBytes, exists, manifestPin, err := readObservedMetadataFile(parent, filepath.Base(metaPathFor(path)))
+		metaName := strings.TrimSuffix(name, backupSuffix) + metaSuffix
+		metaBytes, exists, manifestPin, err := readObservedMetadataFile(parent, metaName)
 		if err != nil {
 			if errors.Is(err, fsboundary.ErrUnsafePath) || errors.Is(err, fsboundary.ErrUnsafeFile) || errors.Is(err, fsboundary.ErrGenerationConflict) || errors.Is(err, fsboundary.ErrTooLarge) || errors.Is(err, errMetadataCleanup) {
 				return nil, err
@@ -504,7 +518,8 @@ func (b RetainedBackup) RawBytes() (data []byte, err error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := b.source.verifyStateDirectory(parent, b.relative); err != nil {
+	err = b.source.verifyStateDirectory(parent, b.relative)
+	if err != nil {
 		return nil, err
 	}
 	return data, nil
@@ -526,7 +541,8 @@ func captureSafetyPayload(parent *fsboundary.Dir, name string) (pin metadataPin,
 	if !file.Exists() {
 		return pin, false, nil
 	}
-	if err := file.ReadTargetWith(func(io.Reader) error { return nil }); err != nil {
+	err = file.ReadTargetWith(func(io.Reader) error { return nil })
+	if err != nil {
 		return pin, false, err
 	}
 	identity := parent.Identity()

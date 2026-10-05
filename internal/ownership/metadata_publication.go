@@ -102,8 +102,8 @@ func (s *Store) verifyStateDirectory(parent *fsboundary.Dir, relative string) er
 		return err
 	}
 	unchanged := fresh.Identity().SameObject(parent.Identity())
-	if err := fresh.Close(); err != nil {
-		return err
+	if closeErr := fresh.Close(); closeErr != nil {
+		return closeErr
 	}
 	if !unchanged {
 		return fsboundary.ErrGenerationConflict
@@ -126,13 +126,14 @@ func (s *Store) writeObservedMetadata(name string, data []byte) (pin metadataPin
 			err = errors.Join(err, closeErr)
 		}
 	}()
-	return writeObservedMetadataFile(parent, name, data, func() error { return s.verifyMetadataParent(parent) })
+	pin, _, err = writeObservedMetadataFile(parent, name, data, func() error { return s.verifyMetadataParent(parent) })
+	return pin, err
 }
 
-func writeObservedMetadataFile(parent *fsboundary.Dir, name string, data []byte, validate func() error) (pin metadataPin, err error) {
+func writeObservedMetadataFile(parent *fsboundary.Dir, name string, data []byte, validate func() error) (pin metadataPin, crossed bool, err error) {
 	destination, err := fsboundary.CaptureDestination(parent, name, fsboundary.LinkPolicyRepository)
 	if err != nil {
-		return pin, err
+		return pin, false, err
 	}
 	defer func() {
 		if closeErr := destination.Close(); closeErr != nil {
@@ -140,11 +141,11 @@ func writeObservedMetadataFile(parent *fsboundary.Dir, name string, data []byte,
 		}
 	}()
 	if destination.Link() != nil {
-		return pin, fsboundary.ErrUnsafeFile
+		return pin, false, fsboundary.ErrUnsafeFile
 	}
 	native, err := parent.NativeRoot()
 	if err != nil {
-		return pin, err
+		return pin, false, err
 	}
 	defer func() {
 		if closeErr := native.Close(); closeErr != nil {
@@ -153,15 +154,21 @@ func writeObservedMetadataFile(parent *fsboundary.Dir, name string, data []byte,
 	}()
 	staged, stagedName, err := parent.CreateTemp(".tmp-" + name + "-*")
 	if err != nil {
-		return pin, err
+		return pin, false, err
 	}
 	info, err := staged.Stat()
 	if err != nil {
-		return pin, errors.Join(err, staged.Close())
+		if closeErr := staged.Close(); closeErr != nil {
+			return pin, false, errors.Join(err, closeErr)
+		}
+		return pin, false, err
 	}
 	created, err := fsboundary.FileInfoIdentity(info)
 	if err != nil {
-		return pin, errors.Join(err, staged.Close())
+		if closeErr := staged.Close(); closeErr != nil {
+			return pin, false, errors.Join(err, closeErr)
+		}
+		return pin, false, err
 	}
 	defer func() {
 		if staged != nil {
@@ -189,30 +196,30 @@ func writeObservedMetadataFile(parent *fsboundary.Dir, name string, data []byte,
 		}
 	}()
 	if _, err := staged.Write(data); err != nil {
-		return pin, err
+		return pin, false, err
 	}
 	if err := staged.Chmod(0o600); err != nil {
-		return pin, err
+		return pin, false, err
 	}
 	info, err = staged.Stat()
 	if err != nil {
-		return pin, err
+		return pin, false, err
 	}
 	produced, err := fsboundary.FileInfoIdentity(info)
 	if err != nil {
-		return pin, err
+		return pin, false, err
 	}
 	closeErr := staged.Close()
 	staged = nil
 	if closeErr != nil {
-		return pin, closeErr
+		return pin, false, closeErr
 	}
 	if err := validate(); err != nil {
-		return pin, err
+		return pin, false, err
 	}
 	output, err := fsboundary.CaptureDestination(parent, stagedName, fsboundary.LinkPolicyRepository)
 	if err != nil {
-		return pin, err
+		return pin, false, err
 	}
 	defer func() {
 		if closeErr := output.Close(); closeErr != nil {
@@ -220,25 +227,25 @@ func writeObservedMetadataFile(parent *fsboundary.Dir, name string, data []byte,
 		}
 	}()
 	if output.Link() != nil || !output.Identity().SameState(produced) {
-		return pin, fsboundary.ErrGenerationConflict
+		return pin, false, fsboundary.ErrGenerationConflict
 	}
 	if err := output.ReadTargetWith(func(io.Reader) error { return nil }); err != nil {
-		return pin, err
+		return pin, false, err
 	}
 	if err := destination.Publish(parent, stagedName); err != nil {
-		return pin, err
+		return pin, false, err
 	}
 	info, err = native.Lstat(name)
 	if err != nil {
-		return pin, err
+		return pin, true, err
 	}
 	pin.file, err = fsboundary.FileInfoIdentity(info)
 	if err != nil {
-		return pin, err
+		return pin, true, err
 	}
 	if !pin.file.SameObject(produced) || !pin.file.Mode.IsRegular() || pin.file.Links != 1 {
-		return pin, fsboundary.ErrGenerationConflict
+		return pin, true, fsboundary.ErrGenerationConflict
 	}
 	pin.parent = parent.Identity()
-	return pin, nil
+	return pin, true, nil
 }

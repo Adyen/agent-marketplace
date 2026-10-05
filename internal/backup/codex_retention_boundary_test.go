@@ -43,6 +43,65 @@ func TestCodexRetentionClaimsRefuseReplacedManifest(t *testing.T) {
 	}
 }
 
+func TestRotateCodexSetRefusesSharedArchiveClaims(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	partitions := []CodexPartition{{ID: "machine-agents", Root: filepath.Join(home, ".agents")}, {ID: "machine-codex", Root: filepath.Join(home, ".codex")}}
+	first, err := CreateCodexSet(partitions)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(home, ".agent-marketplace", "backups", "codex")
+	forged := first + "-1"
+	raw, err := os.ReadFile(filepath.Join(dir, first+".set.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var manifest codexSetManifest
+	if err := json.Unmarshal(raw, &manifest); err != nil {
+		t.Fatal(err)
+	}
+	manifest.Operation = forged
+	raw, err = json.Marshal(manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, forged+".set.json"), raw, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	before := make(map[string][]byte)
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range entries {
+		path := filepath.Join(dir, entry.Name())
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		before[path] = data
+	}
+	if err := Rotate(Config{MaxDays: 1, MaxPerDay: 1}); !errors.Is(err, fsboundary.ErrGenerationConflict) {
+		t.Fatalf("overlapping set claims removed archives: %v", err)
+	}
+	for path, data := range before {
+		got, err := os.ReadFile(path)
+		if err != nil || string(got) != string(data) {
+			t.Fatalf("set overlap refusal changed %s: %v", path, err)
+		}
+	}
+	if err := os.Remove(filepath.Join(dir, forged+".set.json")); err != nil {
+		t.Fatal(err)
+	}
+	if err := Rotate(Config{MaxDays: 1, MaxPerDay: 1}); err != nil {
+		t.Fatal(err)
+	}
+	if restored, err := RestoreCodexSet(partitions); err != nil || restored != first {
+		t.Fatalf("healthy complete set lost after overlap was removed: %q %v", restored, err)
+	}
+}
+
 // spec: backup-recovery/codex-retention-refuses-hardlinked-member-before-set-removal
 func TestRotateCodexSetRefusesHardlinkedMember(t *testing.T) {
 	home := t.TempDir()
