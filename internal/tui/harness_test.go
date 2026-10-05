@@ -144,7 +144,8 @@ func TestHarnessModalTogglesDevinIntoTheSavedList(t *testing.T) {
 	}
 }
 
-// spec: tui-interactions/save-selected-harnesses
+// spec: session-interactions/save-selected-harnesses
+// spec: tui-interactions/enter-saves-selected-harness-targets
 func TestHarnessModalSwitchScopeToggleAndSaveProject(t *testing.T) {
 	repoRoot := t.TempDir()
 	configPath := filepath.Join(repoRoot, ".agents", "config.yaml")
@@ -196,7 +197,7 @@ func TestHarnessModalSwitchScopeToggleAndSaveProject(t *testing.T) {
 	}
 }
 
-// spec: tui-interactions/empty-selection
+// spec: session-interactions/empty-selection
 func TestHarnessModalRejectsEmptySelection(t *testing.T) {
 	m := NewModel("/repo", "/home")
 	m.openHarnessModal()

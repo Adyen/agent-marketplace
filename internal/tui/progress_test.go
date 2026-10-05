@@ -54,7 +54,7 @@ func runCmdsAsync(cmds []tea.Cmd) chan tea.Msg {
 // the real pipeline reaches the model while the sync command is still
 // blocked — progress is visible BEFORE operation completion on the direct
 // TUI sync path.
-// spec: tui-feedback/phase-observed-before-completion
+// spec: session-feedback/phase-observed-before-completion
 func TestSyncPhaseVisibleBeforeCompletion(t *testing.T) {
 	gate := make(chan struct{})
 	workspace := defaultTUIWorkspace(t.TempDir())
@@ -156,7 +156,7 @@ func TestSyncPhaseVisibleBeforeCompletion(t *testing.T) {
 // observation flows through the WithDependencyLifecycle adapter: the injected
 // callback receives an observed context and its real pipeline calls report
 // phases while the callback is still blocked.
-// spec: tui-feedback/phase-observed-before-completion
+// spec: session-feedback/phase-observed-before-completion
 func TestInjectedLifecyclePhaseVisibleBeforeCompletion(t *testing.T) {
 	gate := make(chan struct{})
 	m := progressTestModel(t)
@@ -209,7 +209,7 @@ func TestInjectedLifecyclePhaseVisibleBeforeCompletion(t *testing.T) {
 // TestUnobservedOperationShowsGenericRunning covers lifecycle paths that
 // emit no phase observations: the status bar falls back to a generic running
 // label rather than inventing phases.
-// spec: tui-feedback/no-observer
+// spec: session-feedback/no-observer
 func TestUnobservedOperationShowsGenericRunning(t *testing.T) {
 	m := progressTestModel(t)
 	m.beginOperationProgress("sync", 0)
@@ -227,7 +227,7 @@ func TestUnobservedOperationShowsGenericRunning(t *testing.T) {
 // active operation identity, applicable request generation, and a monotonic
 // sequence: out-of-order, duplicate, foreign and post-finish observations
 // must not alter phase, diagnostics, success, or serialization.
-// spec: tui-feedback/late-progress
+// spec: session-feedback/late-progress
 func TestProgressRejectsStaleDuplicateAndFinishedEvents(t *testing.T) {
 	m := progressTestModel(t)
 	m.beginOperationProgress("sync", 7)
@@ -328,7 +328,7 @@ func TestMarketplaceInstallConsentAndReloadPhases(t *testing.T) {
 // TestToastQueueBoundedAndExpires covers the bounded toast stack: at most
 // three toasts are retained, expiry drops only the elapsed entries, and a
 // replaced timer cannot clear a newer toast.
-// spec: tui-feedback/notification-overflow
+// spec: session-feedback/notification-overflow
 func TestToastQueueBoundedAndExpires(t *testing.T) {
 	m := progressTestModel(t)
 	for i := 0; i < 5; i++ {

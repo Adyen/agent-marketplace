@@ -131,6 +131,8 @@ func TestMigrationModalLeaveKeepsConfigUnchanged(t *testing.T) {
 	}
 }
 
+// spec: session-interactions/accepting-the-offer-migrates-the-user-personal-root
+// spec: tui-interactions/accepting-the-offer-migrates-only-the-user-personal-root
 func TestMigrationModalRunMigratesConfig(t *testing.T) {
 	repoRoot := t.TempDir()
 	homeDir := t.TempDir()
@@ -266,6 +268,7 @@ func TestMigrationModalRunMigratesMarketplaceConfig(t *testing.T) {
 	}
 }
 
+// spec: session-interactions/confirmation-retains-all-user-choices
 func TestRenderMigrationModalIncludesActions(t *testing.T) {
 	m := NewModel("/repo", "/home")
 	m.pane = paneMigrationModal
@@ -285,6 +288,106 @@ func TestRenderMigrationModalIncludesActions(t *testing.T) {
 			t.Fatalf("migration modal missing %q in output:\n%s", want, out)
 		}
 	}
+}
+
+// spec: session-interactions/legacy-user-configuration-is-offered-for-migration
+func TestPendingMigrationOffersOnlyTheUserPersonalRoot(t *testing.T) {
+	repoRoot := t.TempDir()
+	homeDir := t.TempDir()
+	userPath := filepath.Join(homeDir, ".agents", "config.yaml")
+	repoPath := filepath.Join(repoRoot, ".agents", "config.yaml")
+	localPath := filepath.Join(repoRoot, ".agents", "config.local.yaml")
+	writeV2Config(t, userPath)
+	writeV2Config(t, repoPath)
+	writeV2Config(t, localPath)
+
+	prompt := pendingMigrationFor(repoRoot, repoRoot, homeDir)
+	if len(prompt.configs) != 1 {
+		t.Fatalf("pending migration = %#v, want exactly the user-personal root", prompt.configs)
+	}
+	if prompt.configs[0].scope != config.V4MigrationUser || prompt.configs[0].path != userPath {
+		t.Fatalf("offered migration = %#v, want user-personal root %q", prompt.configs[0], userPath)
+	}
+}
+
+// spec: session-interactions/declining-the-offer-continues-through-the-legacy-reader
+// spec: tui-interactions/declining-the-offer-continues-through-the-legacy-reader
+func TestMigrationDeclineLeavesAllRootsUnchanged(t *testing.T) {
+	repoRoot := t.TempDir()
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+	userPath := filepath.Join(homeDir, ".agents", "config.yaml")
+	repoPath := filepath.Join(repoRoot, ".agents", "config.yaml")
+	localPath := filepath.Join(repoRoot, ".agents", "config.local.yaml")
+	writeV2Config(t, userPath)
+	writeV2Config(t, repoPath)
+	writeV2Config(t, localPath)
+
+	before := map[string][]byte{}
+	for _, path := range []string{userPath, repoPath, localPath} {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("read %s: %v", path, err)
+		}
+		before[path] = data
+	}
+
+	m := NewModel(repoRoot, homeDir)
+	m.migrationPrompt = pendingMigrationFor(repoRoot, repoRoot, homeDir)
+	if len(m.migrationPrompt.configs) != 1 || m.migrationPrompt.configs[0].scope != config.V4MigrationUser {
+		t.Fatalf("pending migration = %#v, want only the user-personal root", m.migrationPrompt.configs)
+	}
+	m.pane = paneMigrationModal
+
+	mi, cmd := m.Update(tea.KeyPressMsg{Code: 'l', Text: string('l')})
+	m = mi.(Model)
+	if m.pane == paneMigrationModal {
+		t.Fatal("declining kept the migration modal open")
+	}
+	if done, ran := cmdRunsMigration(cmd); ran {
+		t.Fatalf("declining dispatched a migration: %+v", done)
+	}
+
+	for path, want := range before {
+		got, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("declining migration removed %s: %v", path, err)
+		}
+		if string(got) != string(want) {
+			t.Fatalf("declining migration changed %s:\nbefore:\n%s\nafter:\n%s", path, want, got)
+		}
+	}
+
+	// The client continues through the legacy reader: a later snapshot does
+	// not reopen the offer or fail closed on the unchanged legacy roots.
+	mi, _ = m.Update(snapshotLoadedMsg{
+		generation:       m.requests.active(requestSnapshot),
+		mergedCfg:        &config.Config{},
+		pendingMigration: m.migrationPrompt,
+	})
+	m = mi.(Model)
+	if m.pane == paneMigrationModal {
+		t.Fatal("migration modal reopened after the user declined")
+	}
+}
+
+// cmdRunsMigration executes a command tree and reports any migration it ran.
+func cmdRunsMigration(cmd tea.Cmd) (migrationDoneMsg, bool) {
+	if cmd == nil {
+		return migrationDoneMsg{}, false
+	}
+	msg := cmd()
+	if done, ok := msg.(migrationDoneMsg); ok {
+		return done, true
+	}
+	if batch, ok := msg.(tea.BatchMsg); ok {
+		for _, inner := range batch {
+			if done, ok := cmdRunsMigration(inner); ok {
+				return done, true
+			}
+		}
+	}
+	return migrationDoneMsg{}, false
 }
 
 func writeV1Config(t *testing.T, path string) {

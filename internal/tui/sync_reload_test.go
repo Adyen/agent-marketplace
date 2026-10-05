@@ -31,7 +31,7 @@ func beginSyncOperation(t *testing.T) Model {
 // completion alone cannot claim success: syncing, phase observation, and the
 // reload phase stay active and no "Sync complete" toast appears until the
 // accepted healthy snapshot ends the operation.
-// spec: tui-feedback/phase-observed-before-completion
+// spec: session-feedback/phase-observed-before-completion
 func TestSyncDoneKeepsOperationActiveThroughAuthoritativeReload(t *testing.T) {
 	m := beginSyncOperation(t)
 

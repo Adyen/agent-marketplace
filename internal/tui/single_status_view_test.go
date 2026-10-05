@@ -11,6 +11,7 @@ import (
 )
 
 // spec: tui-navigation/single-status-list-at-minimum-size
+// spec: session-navigation/status-grouped-resource-order-and-filtering
 func TestSingleStatusGroupingWithoutTabBar(t *testing.T) {
 	m := NewModel("/repo", "/home")
 	m.rows = []row{
@@ -323,6 +324,8 @@ func TestSingleStatusDetailBrowseSpanHasNoTabAttr(t *testing.T) {
 }
 
 // spec: tui-navigation/browse-inspect-search-fold-and-scroll-in-one-view
+// spec: session-navigation/status-grouped-resource-order-and-filtering
+// spec: session-navigation/local-search-applies-immediately
 func TestSingleStatusBrowseSearchFoldScroll(t *testing.T) {
 	m := NewModel("/repo", "/home")
 	var rows []row
@@ -372,7 +375,7 @@ func TestSingleStatusBrowseSearchFoldScroll(t *testing.T) {
 	}
 }
 
-// spec: tui-startup/provisional-rows-retain-single-view-position-and-guarded-actions
+// spec: session-startup/provisional-rows-retain-single-view-position-and-guarded-actions
 func TestSingleStatusReloadAnchorsSelection(t *testing.T) {
 	m := NewModel("/repo", "/home")
 	m.rows = []row{
