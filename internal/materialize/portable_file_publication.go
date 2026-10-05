@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"log/slog"
 	"os"
 	"path/filepath"
 
@@ -130,6 +131,7 @@ func publishPortableBytes(dst string, data []byte, mode os.FileMode, observed os
 	if err != nil {
 		return err
 	}
+	slog.Debug("file publication staged", "path", dst, "staged", filepath.Join(parent.Path(), stagedName), "phase", "file-publication")
 	if boundary != nil && boundary.linkPublicationHook != nil {
 		boundary.linkPublicationHook(dst)
 	}

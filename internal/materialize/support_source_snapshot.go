@@ -144,5 +144,5 @@ func writeSupportSnapshot(path string, data []byte, mode os.FileMode) error {
 	} else if !os.IsNotExist(err) {
 		return err
 	}
-	return atomicWriteFile(path, data, mode)
+	return publishPortableBytes(path, data, mode, info, nil)
 }
