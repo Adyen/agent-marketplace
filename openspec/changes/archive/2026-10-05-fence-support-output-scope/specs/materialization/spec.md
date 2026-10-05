@@ -2,7 +2,7 @@
 
 ### Requirement: Support preparation and writes share captured output authority
 
-Agent Marketplace MUST retain one captured output directory for eligible support traversal. Descendant directory preparation, producer exclusive file writes and snapshot publication MUST remain relative to that authority, and directory capture MUST refuse a named-root generation change before mutation. Refusal MUST preserve foreign bytes/metadata/members and report materialize.write.error without native installation. Existing source modes and contained input aliases remain compatible; empty or excluded-only support MUST NOT create a missing output. This requirement does not establish an atomic cache/native transaction or producer namespace creation authority before copy admission.
+Agent Marketplace MUST retain one captured output directory for eligible support traversal. Descendant directory preparation, staged support file writes (created with exclusive create, never overwriting an existing name) and snapshot publication MUST remain relative to that authority, and directory capture MUST refuse a named-root generation change before mutation. Refusal MUST preserve foreign bytes/metadata/members and report materialize.write.error without native installation. Existing source modes and contained input aliases remain compatible; empty or excluded-only support MUST NOT create a missing output. This requirement does not establish an atomic cache/native transaction or producer namespace creation authority before copy admission.
 
 #### Scenario: Support output refuses retarget before directory and file writes
 

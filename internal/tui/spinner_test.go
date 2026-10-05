@@ -1,23 +1,56 @@
 package tui
 
 import (
+	"errors"
 	"strings"
 	"testing"
 	"time"
 
+	"charm.land/bubbles/v2/spinner"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/Adyen/agent-marketplace/internal/materialize"
-	"github.com/charmbracelet/bubbles/spinner"
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 )
 
 // newSpinnerTestModel returns a minimal Model with the spinner initialised,
 // suitable for unit-testing the footer and spinner Update logic.
 func newSpinnerTestModel() Model {
 	m := NewModel("/repo", "/home")
+	m.loading = false
 	m.pane = paneList
-	m.tabStates = newTabStates()
 	return m
+}
+
+func TestStartupProgressSurvivesFooterCrowding(t *testing.T) {
+	for _, width := range []int{50, 60, 80, 100, 120} {
+		for _, assessment := range []bool{false, true} {
+			for _, withError := range []bool{false, true} {
+				m := newSpinnerTestModel()
+				m.width, m.height = width, 24
+				m.loading = !assessment
+				m.assessmentPending = assessment
+				m.provisionalRows = []row{{}}
+				m.warnings = []error{errors.New("warning")}
+				m.discoveryErrs = []error{errors.New("discovery failed")}
+				m.toast, m.toastExp = "saved", time.Now().Add(time.Minute)
+				if withError {
+					m.errs = []error{errors.New("catalog failed")}
+				}
+				view := m.View().Content
+				if !strings.Contains(view, "verifying resources...") {
+					t.Errorf("width=%d assessment=%t error=%t hides progress:\n%s", width, assessment, withError, view)
+				}
+				footer := renderFooter(m)
+				if !strings.Contains(footer, m.spinner.View()) || !strings.Contains(footer, "quit") {
+					t.Errorf("footer lost spinner or quit hint: %q", footer)
+				}
+				if withError && !strings.Contains(footer, "! 1 errors") {
+					t.Errorf("footer lost error count: %q", footer)
+				}
+				assertTerminalBounds(t, view, width, m.height)
+			}
+		}
+	}
 }
 
 func TestFooterShowsSpinnerWhenLoading(t *testing.T) {
@@ -27,7 +60,7 @@ func TestFooterShowsSpinnerWhenLoading(t *testing.T) {
 	footer := renderFooter(m)
 	spinnerView := m.spinner.View()
 	if spinnerView == "" {
-		t.Fatalf("spinner.View() should produce output; got empty string")
+		t.Fatalf("spinner.View().Content should produce output; got empty string")
 	}
 	if !strings.Contains(footer, spinnerView) {
 		t.Fatalf("footer should contain spinner view %q when loading; got %q", spinnerView, footer)
@@ -146,6 +179,39 @@ func TestUpdateStopsSpinnerTickWhenIdle(t *testing.T) {
 	_ = um
 }
 
+func TestSpinnerContinuesDuringStartupAssessment(t *testing.T) {
+	m := newSpinnerTestModel()
+	generation := m.requests.active(requestSnapshot)
+	updated, _ := m.Update(snapshotLoadedMsg{stage: snapshotStageInventory, generation: generation})
+	m = updated.(Model)
+	if m.loading {
+		t.Fatal("inventory must remain usable during assessment")
+	}
+	updated, cmd := m.Update(spinner.TickMsg{Time: time.Now(), ID: m.spinner.ID()})
+	m = updated.(Model)
+	if cmd == nil {
+		t.Fatal("spinner stopped before startup assessment finished")
+	}
+	m.errs = []error{errors.New("catalog failed")}
+	if footer := renderFooter(m); !strings.Contains(footer, "verifying resources...") || !strings.Contains(footer, "! 1 errors") {
+		t.Fatalf("error footer hid startup progress or error: %q", footer)
+	}
+	updated, _ = m.Update(snapshotLoadedMsg{generation: generation - 1, driftAssessment: driftReady})
+	m = updated.(Model)
+	if footer := renderFooter(m); !strings.Contains(footer, "verifying resources...") {
+		t.Fatalf("stale completion stopped startup progress: %q", footer)
+	}
+	updated, _ = m.Update(snapshotLoadedMsg{generation: generation, driftAssessment: driftFailed})
+	m = updated.(Model)
+	if footer := renderFooter(m); strings.Contains(footer, "verifying resources...") {
+		t.Fatalf("failed assessment still shows startup progress: %q", footer)
+	}
+	_, cmd = m.Update(spinner.TickMsg{Time: time.Now(), ID: m.spinner.ID()})
+	if cmd != nil {
+		t.Fatal("spinner kept ticking after failed assessment")
+	}
+}
+
 func TestInitBatchesSpinnerTick(t *testing.T) {
 	m := newSpinnerTestModel()
 	m.loading = true
@@ -163,7 +229,7 @@ func TestSpinnerStartsWhenSyncBegins(t *testing.T) {
 	m.resolved = nil // sync will fail quickly but that's fine for testing the cmd
 
 	// Simulate pressing 's'
-	updatedModel, cmd := m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
+	updatedModel, cmd := m.handleKey(tea.KeyPressMsg{Code: 's', Text: string('s')})
 	if cmd == nil {
 		t.Fatalf("expected sync keypress to return a command")
 	}

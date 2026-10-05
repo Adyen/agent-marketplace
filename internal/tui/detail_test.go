@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/glamour"
+	"charm.land/bubbletea/v2"
+	"charm.land/glamour/v2"
 	ansi "github.com/charmbracelet/x/ansi"
 
 	"github.com/Adyen/agent-marketplace/internal/catalog"
@@ -227,7 +227,7 @@ func TestRenderDetailFullRendersCapturedNonSkillSource(t *testing.T) {
 		Artifact:     resolver.ResolvedArtifact{Entry: catalog.Entry{Kind: ir.KindCommand, Name: "continue", Path: commandPath}},
 		DetailSource: captureDetailSource(commandPath),
 	}
-	out := renderDetailFullContent(r, 80)
+	out := renderDetailFullContent(newTheme(true), r, 80)
 	stripped := ansi.Strip(out)
 	if !contains(stripped, "Continue") {
 		t.Fatalf("full view should contain command source content, got:\n%s", stripped)
@@ -249,7 +249,7 @@ func TestRenderDetailFullShowsAllSkillBundleFiles(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	out := renderDetailFullContent(row{
+	out := renderDetailFullContent(newTheme(true), row{
 		Artifact: resolver.ResolvedArtifact{Entry: catalog.Entry{Kind: ir.KindSkill, Name: "review", Path: filepath.Join(dir, "SKILL.md")}},
 	}, 80)
 	stripped := ansi.Strip(out)
@@ -276,7 +276,7 @@ func TestDetailBundleSkipsSymlinkedFiles(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	out := renderDetailFullContent(row{
+	out := renderDetailFullContent(newTheme(true), row{
 		Artifact: resolver.ResolvedArtifact{Entry: catalog.Entry{Kind: ir.KindSkill, Name: "safe", Path: dir}},
 	}, 80)
 	if contains(ansi.Strip(out), "must not be shown") {
@@ -318,7 +318,7 @@ func TestDetailViewportScrollsDownWithJ(t *testing.T) {
 	}
 
 	// Simulate pressing "j" (down) — the viewport should handle it.
-	updatedModel, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
+	updatedModel, _ := m.Update(tea.KeyPressMsg{Code: 'j', Text: string('j')})
 	m2 := updatedModel.(Model)
 
 	// After scrolling down, we should no longer be at the top.
@@ -354,12 +354,12 @@ func TestDetailViewportScrollsUpWithK(t *testing.T) {
 	// Scroll down several times, chaining model updates.
 	model := tea.Model(&m)
 	for i := 0; i < 5; i++ {
-		updatedModel, _ := model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
+		updatedModel, _ := model.Update(tea.KeyPressMsg{Code: 'j', Text: string('j')})
 		model = updatedModel
 	}
 
 	// Now scroll up.
-	updatedModel, _ := model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'k'}})
+	updatedModel, _ := model.Update(tea.KeyPressMsg{Code: 'k', Text: string('k')})
 	m2 := updatedModel.(Model)
 
 	// We scrolled down 5 and up 1, so we should not be at the top.
@@ -393,15 +393,15 @@ func TestDetailViewportPageDownAndEnd(t *testing.T) {
 	m.detailViewport.SetContent(longContent)
 
 	// pgdown should advance the scroll position.
-	prevY := m.detailViewport.YOffset
-	updatedModel, _ := m.Update(tea.KeyMsg{Type: tea.KeyPgDown})
+	prevY := m.detailViewport.YOffset()
+	updatedModel, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyPgDown})
 	m2 := updatedModel.(Model)
-	if m2.detailViewport.YOffset <= prevY {
-		t.Fatalf("pgdown should advance scroll position: was %d, now %d", prevY, m2.detailViewport.YOffset)
+	if m2.detailViewport.YOffset() <= prevY {
+		t.Fatalf("pgdown should advance scroll position: was %d, now %d", prevY, m2.detailViewport.YOffset())
 	}
 
 	// "G" (vim-style end) should jump to the bottom.
-	updatedModel2, _ := m2.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'G'}})
+	updatedModel2, _ := m2.Update(tea.KeyPressMsg{Code: 'G', Text: string('G')})
 	m3 := updatedModel2.(Model)
 	if !m3.detailViewport.AtBottom() {
 		t.Fatalf("G should scroll to bottom of content")
@@ -436,7 +436,7 @@ func TestDetailViewportHomeJumpsToTop(t *testing.T) {
 	m.detailViewport.GotoBottom()
 
 	// "g" (home) should jump to the top.
-	updatedModel, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'g'}})
+	updatedModel, _ := m.Update(tea.KeyPressMsg{Code: 'g', Text: string('g')})
 	m2 := updatedModel.(Model)
 	if !m2.detailViewport.AtTop() {
 		t.Fatalf("g should scroll to top of content")
@@ -469,7 +469,7 @@ func TestDetailViewportEscReturnsToList(t *testing.T) {
 	}
 
 	// Esc should return to list pane.
-	updatedModel, _ := m.Update(tea.KeyMsg{Type: tea.KeyEscape})
+	updatedModel, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
 	m2 := updatedModel.(Model)
 	if m2.pane != paneList {
 		t.Fatalf("esc should return to list pane, got %v", m2.pane)
@@ -501,11 +501,11 @@ func TestDetailViewportResizesOnWindowResize(t *testing.T) {
 	updatedModel, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
 	m2 := updatedModel.(Model)
 
-	if m2.detailViewport.Width != 120 {
-		t.Fatalf("viewport width should be 120 after resize, got %d", m2.detailViewport.Width)
+	if m2.detailViewport.Width() != 120 {
+		t.Fatalf("viewport width should be 120 after resize, got %d", m2.detailViewport.Width())
 	}
-	if m2.detailViewport.Height != 39 {
-		t.Fatalf("viewport height should reserve the footer row: got %d, want 39", m2.detailViewport.Height)
+	if m2.detailViewport.Height() != 39 {
+		t.Fatalf("viewport height should reserve the footer row: got %d, want 39", m2.detailViewport.Height())
 	}
 }
 
@@ -569,7 +569,7 @@ func TestDetailCaptureBudgetBoundsManyMaximumEntries(t *testing.T) {
 		}
 		if snapshot.omitted {
 			omitted++
-			if got := renderDetailFullContent(row{DetailSource: snapshot}, 80); got != detailCaptureOmittedMarker {
+			if got := renderDetailFullContent(newTheme(true), row{DetailSource: snapshot}, 80); got != detailCaptureOmittedMarker {
 				t.Fatalf("omitted detail marker = %q, want %q", got, detailCaptureOmittedMarker)
 			}
 		}
