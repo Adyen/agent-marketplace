@@ -10,6 +10,30 @@ import (
 	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
 )
 
+func TestCreateAcceptsDotPrefixedManagedDirectory(t *testing.T) {
+	home, root := t.TempDir(), t.TempDir()
+	t.Setenv("HOME", home)
+	file := filepath.Join(root, "skills", "demo", "SKILL.md")
+	if err := os.MkdirAll(filepath.Dir(file), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(file, []byte("inert archived generation"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	if err := Create(map[hcc.Target]ManagedPaths{hcc.TargetFactory: {Root: root, RelPaths: []string{"./skills"}}}); err != nil {
+		t.Fatalf("dot-prefixed managed directory refused: %v", err)
+	}
+	if err := os.WriteFile(file, []byte("inert current generation"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	if restored, err := Restore(hcc.TargetFactory, root); err != nil || restored == "" {
+		t.Fatalf("restore of dot-prefixed backup failed: %q %v", restored, err)
+	}
+	if data, err := os.ReadFile(file); err != nil || string(data) != "inert archived generation" {
+		t.Fatalf("dot-prefixed backup missed directory content: %q %v", data, err)
+	}
+}
+
 // spec: backup-recovery/backup-metadata-ancestor-alias-refuses-before-import
 func TestCreateRefusesAliasedMetadataAncestor(t *testing.T) {
 	home, root, foreign := t.TempDir(), t.TempDir(), t.TempDir()
