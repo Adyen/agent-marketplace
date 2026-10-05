@@ -436,9 +436,12 @@ func (d *Destination) Publish(stagedParent *Dir, stagedName string) error {
 		return fmt.Errorf("publish %s: %w", d.Path(), err)
 	}
 	if err := fsyncMutation(targetParent); err != nil {
-		return err
+		return fmt.Errorf("%w: publish %s: %w", ErrDurabilityUncertain, d.Path(), err)
 	}
-	return fsyncMutation(stagedParent.file)
+	if err := fsyncMutation(stagedParent.file); err != nil {
+		return fmt.Errorf("%w: publish %s: %w", ErrDurabilityUncertain, d.Path(), err)
+	}
+	return nil
 }
 
 // RemoveLeaf removes the captured logical leaf. For an honored user or

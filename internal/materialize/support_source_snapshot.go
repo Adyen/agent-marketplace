@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 
 	"github.com/Adyen/agent-marketplace/internal/fsboundary"
 )
@@ -31,9 +32,15 @@ func copyScopedSupport(srcDir, dstDir string, compiled map[string]bool, prefix s
 		return err
 	}
 	defer func() { _ = root.Close() }()
-	var walk func(string) error
-	walk = func(rel string) error {
-		entries, err := readSupportSourceDirectory(root, rel)
+	active := make(map[string]bool)
+	var walk func(string, string) error
+	walk = func(sourceRel, rel string) error {
+		if active[sourceRel] {
+			return fmt.Errorf("%w: cyclic support directory alias", fsboundary.ErrUnsafePath)
+		}
+		active[sourceRel] = true
+		defer delete(active, sourceRel)
+		entries, err := readSupportSourceDirectory(root, sourceRel)
 		if err != nil {
 			return err
 		}
@@ -51,8 +58,15 @@ func copyScopedSupport(srcDir, dstDir string, compiled map[string]bool, prefix s
 			if entry.Name() == ".git" {
 				continue
 			}
+			sourceChild, isDir, err := supportSourceChild(root, sourceRel, entry)
+			if errors.Is(err, fs.SkipDir) {
+				continue
+			}
+			if err != nil {
+				return err
+			}
 			destinationPath := filepath.Join(dstDir, child)
-			if entry.IsDir() {
+			if isDir {
 				// A root skill's source dir is a whole registry checkout, so
 				// VCS internals must never become harness-visible support
 				// files. Git cannot track a .git directory, so regular skills
@@ -60,12 +74,12 @@ func copyScopedSupport(srcDir, dstDir string, compiled map[string]bool, prefix s
 				if err := os.MkdirAll(destinationPath, 0o755); err != nil {
 					return err
 				}
-				if err := walk(child); err != nil {
+				if err := walk(sourceChild, child); err != nil {
 					return err
 				}
 				continue
 			}
-			data, identity, err := readSupportSourceSnapshot(root, child)
+			data, identity, err := readSupportSourceSnapshot(root, sourceChild)
 			if err != nil {
 				return err
 			}
@@ -75,7 +89,28 @@ func copyScopedSupport(srcDir, dstDir string, compiled map[string]bool, prefix s
 		}
 		return nil
 	}
-	return walk(".")
+	return walk(".", ".")
+}
+
+func supportSourceChild(root *fsboundary.Dir, parent string, entry os.DirEntry) (string, bool, error) {
+	rel := filepath.Join(parent, entry.Name())
+	if entry.Type()&os.ModeSymlink == 0 {
+		return rel, entry.IsDir(), nil
+	}
+	directory, err := root.OpenContainedRoot(rel)
+	if err != nil {
+		return rel, false, nil
+	}
+	targetRel, err := filepath.Rel(root.Path(), directory.Path())
+	if err := errors.Join(err, directory.Close()); err != nil {
+		return "", false, err
+	}
+	for _, component := range strings.Split(targetRel, string(filepath.Separator)) {
+		if component == ".git" {
+			return "", false, fs.SkipDir
+		}
+	}
+	return targetRel, true, nil
 }
 
 func readSupportSourceSnapshot(root *fsboundary.Dir, rel string) ([]byte, fsboundary.Identity, error) {

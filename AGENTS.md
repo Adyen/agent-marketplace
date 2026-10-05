@@ -51,6 +51,8 @@ Run direct real-terminal test typechecking with `make tui-qa-check` and all twel
 
 Local toolchain notes: on macOS hosts where the system linker rejects the SDK, run Go tests with `CGO_ENABLED=0` (as the Makefile does). In `web/`, `pnpm run` may refuse to start when `node_modules` is stale; `node scripts/generate-api.mjs` and `./node_modules/.bin/{vitest,eslint,nuxt}` run the same checks directly.
 
+Temporary worktrees should use sibling paths rather than paths nested in the repository: `specaudit trace` scans ignored directories, so nested worktrees can contribute unrelated scenario annotations. Remove only task-created worktrees before final gates; leave existing worktrees untouched.
+
 ### Session completion
 
 **When ending a work session**, you MUST complete ALL steps below. Work is NOT complete until `git push` succeeds.

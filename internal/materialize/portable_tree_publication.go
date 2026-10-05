@@ -42,7 +42,7 @@ func capturePortableParent(dst string, boundary *destinationBoundary, create boo
 	return root.OpenPath(filepath.Base(absolute))
 }
 
-func publishPortableTree(src, dst string, observed os.FileInfo, ownershipDigest string, boundary *destinationBoundary) (err error) {
+func publishPortableTree(src, dst string, observed os.FileInfo, ownershipDigest string, boundary *destinationBoundary, inspection ...func(string) (os.FileInfo, error)) (err error) {
 	parent, err := capturePortableParent(dst, boundary, true)
 	if err != nil {
 		return err
@@ -117,57 +117,57 @@ func publishPortableTree(src, dst string, observed os.FileInfo, ownershipDigest 
 	if err != nil {
 		return err
 	}
-	reservation, stagedName, err := parent.CreateTemp(".agent-marketplace-portable-tree-*")
+	staged, stagedName, err := captureNewPortableTreeStage(parent, native)
 	if err != nil {
 		return err
 	}
-	if err := reservation.Close(); err != nil {
-		_ = parent.Unlink(stagedName)
-		return err
-	}
-	if err := parent.Unlink(stagedName); err != nil {
-		return err
-	}
-	if err := parent.Mkdir(stagedName, info.Mode().Perm()); err != nil {
-		return err
-	}
-	created, err := native.Lstat(stagedName)
-	if err != nil {
-		return err
-	}
-	createdID, err := fsboundary.FileInfoIdentity(created)
-	if err != nil {
-		return err
-	}
+	createdID := staged.Identity()
+	directories := []portableStageDirectory{{parent: parent, name: stagedName, directory: staged}}
 	defer func() {
-		current, inspectErr := native.Lstat(stagedName)
-		if inspectErr == nil {
-			identity, identityErr := fsboundary.FileInfoIdentity(current)
-			if identityErr == nil && identity.SameObject(createdID) {
-				_ = native.RemoveAll(stagedName)
+		if cleanupErr := cleanupPortableTreeStage(native, stagedName, createdID, directories...); cleanupErr != nil {
+			err = errors.Join(err, cleanupErr)
+		}
+		for i := len(directories) - 1; i >= 0; i-- {
+			if closeErr := directories[i].directory.Close(); closeErr != nil {
+				err = errors.Join(err, closeErr)
 			}
 		}
 	}()
-	staged, err := native.OpenRoot(stagedName)
+	openedStage, err := staged.Stat()
 	if err != nil {
 		return err
 	}
-	openedStage, stageStatErr := staged.Stat(".")
-	if stageStatErr != nil {
-		return errors.Join(stageStatErr, staged.Close())
+	openedStageID, err := fsboundary.FileInfoIdentity(openedStage)
+	if err != nil {
+		return err
 	}
-	openedStageID, stageStatErr := fsboundary.FileInfoIdentity(openedStage)
-	if stageStatErr != nil {
-		return errors.Join(stageStatErr, staged.Close())
+	inspect := native.Lstat
+	if len(inspection) > 0 {
+		inspect = inspection[0]
 	}
-	if !openedStageID.SameState(createdID) {
-		return errors.Join(fsboundary.ErrGenerationConflict, staged.Close())
+	created, err := inspect(stagedName)
+	if err != nil {
+		return err
 	}
-	copyErr := copyPortableTreeContents(source, staged, ".")
-	stagedInfo, statErr := staged.Stat(".")
-	closeErr := staged.Close()
-	if copyErr != nil || statErr != nil || closeErr != nil {
-		return errors.Join(copyErr, statErr, closeErr)
+	namedID, err := fsboundary.FileInfoIdentity(created)
+	if err != nil {
+		return fmt.Errorf("%w: staged tree identity unavailable: %w", fsboundary.ErrGenerationConflict, err)
+	}
+	if !openedStageID.SameState(namedID) {
+		return fsboundary.ErrGenerationConflict
+	}
+	if err := staged.Chmod(0o700); err != nil {
+		return err
+	}
+	if err := copyPortableTreeContents(source, staged, ".", &directories); err != nil {
+		return err
+	}
+	if err := staged.Chmod(info.Mode().Perm()); err != nil {
+		return err
+	}
+	stagedInfo, err := staged.Stat()
+	if err != nil {
+		return err
 	}
 	stagedID, err := fsboundary.FileInfoIdentity(stagedInfo)
 	if err != nil {
@@ -204,14 +204,166 @@ func publishPortableTree(src, dst string, observed os.FileInfo, ownershipDigest 
 		return fmt.Errorf("%w: portable staged tree replaced", fsboundary.ErrGenerationConflict)
 	}
 	if observed != nil {
-		if err := native.RemoveAll(name); err != nil {
+		if err := removeVerifiedPortableOutput(parent, native, name, observed, ownershipDigest); err != nil {
 			return err
 		}
 	}
 	return native.Rename(stagedName, name)
 }
 
-func copyPortableTreeContents(source fs.FS, destination *os.Root, dir string) error {
+type portableStageDirectory struct {
+	parent    *fsboundary.Dir
+	name      string
+	directory *fsboundary.Dir
+}
+
+func captureNewPortableTreeStage(parent *fsboundary.Dir, native *os.Root) (*fsboundary.Dir, string, error) {
+	reservation, name, err := parent.CreateTemp(".agent-marketplace-portable-tree-*")
+	if err != nil {
+		return nil, "", err
+	}
+	reserved, statErr := reservation.Stat()
+	closeErr := reservation.Close()
+	if statErr != nil || closeErr != nil {
+		return nil, name, errors.Join(statErr, closeErr)
+	}
+	current, err := native.Lstat(name)
+	if err != nil {
+		return nil, name, err
+	}
+	if !os.SameFile(reserved, current) {
+		return nil, name, fsboundary.ErrGenerationConflict
+	}
+	if err := parent.Unlink(name); err != nil {
+		return nil, name, err
+	}
+	if err := parent.Mkdir(name, 0o700); err != nil {
+		return nil, name, err
+	}
+	stage, err := parent.OpenPath(name)
+	if err != nil {
+		return nil, name, err
+	}
+	if stage.Identity().UID != uint32(os.Geteuid()) || stage.Identity().Mode.Perm()&0o077 != 0 {
+		return nil, name, errors.Join(fsboundary.ErrGenerationConflict, stage.Close())
+	}
+	return stage, name, nil
+}
+
+func cleanupPortableTreeStage(native interface {
+	Lstat(string) (os.FileInfo, error)
+	RemoveAll(string) error
+}, stagedName string, createdID fsboundary.Identity, directories ...portableStageDirectory) error {
+	current, err := native.Lstat(stagedName)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("inspect portable staged tree %s: %w", stagedName, err)
+	}
+	identity, err := fsboundary.FileInfoIdentity(current)
+	if err != nil {
+		return fmt.Errorf("identify portable staged tree %s: %w", stagedName, err)
+	}
+	if !identity.SameObject(createdID) {
+		return nil
+	}
+	if len(directories) > 0 {
+		root := directories[0].directory
+		if !root.Identity().SameObject(createdID) {
+			return fsboundary.ErrGenerationConflict
+		}
+		if err := restorePortableStageDirectories(directories); err != nil {
+			return err
+		}
+		current, err := native.Lstat(stagedName)
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil
+		}
+		if err != nil {
+			return fmt.Errorf("reinspect portable staged tree %s: %w", stagedName, err)
+		}
+		identity, err := fsboundary.FileInfoIdentity(current)
+		if err != nil {
+			return err
+		}
+		if !identity.SameObject(createdID) {
+			return nil
+		}
+	}
+	if err := native.RemoveAll(stagedName); err != nil {
+		return fmt.Errorf("remove portable staged tree %s: %w", stagedName, err)
+	}
+	return nil
+}
+
+func restorePortableStageDirectories(directories []portableStageDirectory) error {
+	owned := make(map[*fsboundary.Dir]map[string]*fsboundary.Dir)
+	for _, directory := range directories {
+		if owned[directory.parent] == nil {
+			owned[directory.parent] = make(map[string]*fsboundary.Dir)
+		}
+		owned[directory.parent][directory.name] = directory.directory
+	}
+	var restore func(*fsboundary.Dir) error
+	restore = func(directory *fsboundary.Dir) (err error) {
+		if err := directory.Chmod(0o700); err != nil {
+			return err
+		}
+		native, err := directory.NativeRoot()
+		if err != nil {
+			return err
+		}
+		defer func() {
+			if closeErr := native.Close(); closeErr != nil {
+				err = errors.Join(err, closeErr)
+			}
+		}()
+		entries, err := fs.ReadDir(native.FS(), ".")
+		if err != nil {
+			return err
+		}
+		for _, entry := range entries {
+			current, err := native.Lstat(entry.Name())
+			if errors.Is(err, fs.ErrNotExist) {
+				continue
+			}
+			if err != nil {
+				return err
+			}
+			if !current.IsDir() {
+				continue
+			}
+			child := owned[directory][entry.Name()]
+			if child == nil {
+				return fsboundary.ErrGenerationConflict
+			}
+			identity, err := fsboundary.FileInfoIdentity(current)
+			if err != nil {
+				return err
+			}
+			if !identity.SameObject(child.Identity()) {
+				return fsboundary.ErrGenerationConflict
+			}
+			if err := restore(child); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	return restore(directories[0].directory)
+}
+
+func copyPortableTreeContents(source fs.FS, destination *fsboundary.Dir, dir string, directories *[]portableStageDirectory) (err error) {
+	native, err := destination.NativeRoot()
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if closeErr := native.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
 	entries, err := fs.ReadDir(source, dir)
 	if err != nil {
 		return err
@@ -230,10 +382,24 @@ func copyPortableTreeContents(source fs.FS, destination *os.Root, dir string) er
 			if err := file.Close(); err != nil {
 				return err
 			}
-			if err := destination.Mkdir(filepath.FromSlash(name), info.Mode().Perm()); err != nil {
+			if err := destination.Mkdir(entry.Name(), 0o700); err != nil {
 				return err
 			}
-			if err := copyPortableTreeContents(source, destination, name); err != nil {
+			child, err := destination.OpenPath(entry.Name())
+			if err != nil {
+				return err
+			}
+			if child.Identity().UID != uint32(os.Geteuid()) || child.Identity().Mode.Perm()&0o077 != 0 {
+				return errors.Join(fsboundary.ErrGenerationConflict, child.Close())
+			}
+			*directories = append(*directories, portableStageDirectory{parent: destination, name: entry.Name(), directory: child})
+			if err := child.Chmod(0o700); err != nil {
+				return err
+			}
+			if err := copyPortableTreeContents(source, child, name, directories); err != nil {
+				return err
+			}
+			if err := child.Chmod(info.Mode().Perm()); err != nil {
 				return err
 			}
 			continue
@@ -241,14 +407,14 @@ func copyPortableTreeContents(source fs.FS, destination *os.Root, dir string) er
 		if !info.Mode().IsRegular() {
 			return errors.Join(fsboundary.ErrUnsafeFile, file.Close())
 		}
-		output, err := destination.OpenFile(filepath.FromSlash(name), os.O_WRONLY|os.O_CREATE|os.O_EXCL, info.Mode().Perm())
+		output, err := native.OpenFile(entry.Name(), os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 		if err != nil {
 			return errors.Join(err, file.Close())
 		}
-		if err := output.Chmod(info.Mode().Perm()); err != nil {
-			return errors.Join(err, output.Close(), file.Close())
-		}
 		_, copyErr := io.Copy(output, file)
+		if copyErr == nil {
+			copyErr = output.Chmod(info.Mode().Perm())
+		}
 		closeErr := errors.Join(output.Close(), file.Close())
 		if copyErr != nil || closeErr != nil {
 			return errors.Join(copyErr, closeErr)
