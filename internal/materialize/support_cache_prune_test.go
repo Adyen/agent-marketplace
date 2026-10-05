@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/Adyen/agent-marketplace/internal/catalog"
@@ -58,6 +59,10 @@ func TestRunSupportCachePruneRefusesRetargetedGeneration(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(source, "reference.txt"), []byte("inert current support"), 0o640); err != nil {
 		t.Fatal(err)
 	}
+	// Pin the source mode so the healthy-mode assertion does not depend on umask.
+	if err := os.Chmod(filepath.Join(source, "reference.txt"), 0o640); err != nil {
+		t.Fatal(err)
+	}
 	foreignPayload := filepath.Join(foreign, "stale.txt")
 	if err := os.WriteFile(foreignPayload, []byte("foreign inert support"), 0o640); err != nil {
 		t.Fatal(err)
@@ -66,6 +71,11 @@ func TestRunSupportCachePruneRefusesRetargetedGeneration(t *testing.T) {
 		t.Fatal(err)
 	}
 	before, err := os.Lstat(foreignPayload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	foreignSkill := filepath.Join(foreign, "SKILL.md")
+	skillBefore, err := os.Lstat(foreignSkill)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -92,14 +102,27 @@ func TestRunSupportCachePruneRefusesRetargetedGeneration(t *testing.T) {
 	if err != nil || !changed || !hasDiagCode(report.Diags, "materialize.write.error") {
 		t.Fatalf("cache retarget did not refuse: changed=%t report=%+v err=%v", changed, report, err)
 	}
+	identified := false
+	for _, d := range report.Diags {
+		identified = identified || (d.Code == "materialize.write.error" && strings.Contains(d.Message, "support-prune cache "+cacheDir))
+	}
+	if !identified {
+		t.Fatalf("cache refusal does not name the support-prune cache %s: %+v", cacheDir, report.Diags)
+	}
 	if raw, err := os.ReadFile(foreignPayload); err != nil || string(raw) != "foreign inert support" {
 		t.Fatalf("prune consumed foreign support: %q %v", raw, err)
 	}
 	if after, err := os.Lstat(foreignPayload); err != nil || !os.SameFile(before, after) || before.Mode() != after.Mode() || !before.ModTime().Equal(after.ModTime()) {
 		t.Fatalf("prune changed foreign generation: %v", err)
 	}
-	if entries, err := os.ReadDir(foreign); err != nil || len(entries) != 2 {
+	if entries, err := os.ReadDir(foreign); err != nil || len(entries) != 2 || entries[0].Name() != "SKILL.md" || entries[1].Name() != "stale.txt" {
 		t.Fatalf("refusal wrote/staged foreign cache members: %v %v", entries, err)
+	}
+	if raw, err := os.ReadFile(foreignSkill); err != nil || string(raw) != "foreign inert compiled" {
+		t.Fatalf("refusal overwrote foreign SKILL.md: %q %v", raw, err)
+	}
+	if after, err := os.Lstat(foreignSkill); err != nil || !os.SameFile(skillBefore, after) || skillBefore.Mode() != after.Mode() || !skillBefore.ModTime().Equal(after.ModTime()) {
+		t.Fatalf("refusal changed foreign SKILL.md generation: %v", err)
 	}
 	if _, err := os.Lstat(filepath.Join(repo, ".factory", "skills", "cache-probe")); !os.IsNotExist(err) {
 		t.Fatalf("refused cache was installed: %v", err)
