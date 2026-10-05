@@ -312,7 +312,8 @@ func (s *Store) SafetyBackups(rel string) (out []RetainedBackup, err error) {
 	out = make([]RetainedBackup, 0, len(names))
 	for _, name := range names {
 		path := filepath.Join(dir, name)
-		metaBytes, exists, _, err := readObservedMetadataFile(parent, filepath.Base(metaPathFor(path)))
+		metaName := strings.TrimSuffix(name, backupSuffix) + metaSuffix
+		metaBytes, exists, _, err := readObservedMetadataFile(parent, metaName)
 		if err != nil {
 			if errors.Is(err, fsboundary.ErrUnsafePath) || errors.Is(err, fsboundary.ErrUnsafeFile) || errors.Is(err, fsboundary.ErrGenerationConflict) || errors.Is(err, fsboundary.ErrTooLarge) || errors.Is(err, errMetadataCleanup) {
 				return nil, err
