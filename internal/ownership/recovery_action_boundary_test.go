@@ -44,8 +44,8 @@ func TestRecoverRefusesPreparedJournalReplacementBeforeCleanup(t *testing.T) {
 	if staged, err := os.ReadFile(journal.StagedPath); err != nil || string(staged) != nextContent {
 		t.Fatalf("stale journal already consumed staged evidence: %v", err)
 	}
-	if native, _ := f.readAggregate(); native != priorContent {
-		t.Fatalf("refusal changed prior native aggregate: %q", native)
+	if native, exists := f.readAggregate(); !exists || native != priorContent {
+		t.Fatalf("refusal changed prior native aggregate: %q exists=%v", native, exists)
 	}
 	if err := os.Remove(store.JournalFile()); err != nil {
 		t.Fatal(err)
@@ -153,8 +153,8 @@ func TestRecoverRefusesOriginalJournalReplacementBeforeAction(t *testing.T) {
 	if raw, err := os.ReadFile(retained); err != nil || !bytes.Equal(raw, original) {
 		t.Fatalf("retained original changed: %v", err)
 	}
-	if native, _ := f.readAggregate(); native != nextContent {
-		t.Fatalf("refused recovery changed already-renamed aggregate: %q", native)
+	if native, exists := f.readAggregate(); !exists || native != nextContent {
+		t.Fatalf("refused recovery changed already-renamed aggregate: %q exists=%v", native, exists)
 	}
 	if err := os.Remove(store.JournalFile()); err != nil {
 		t.Fatal(err)

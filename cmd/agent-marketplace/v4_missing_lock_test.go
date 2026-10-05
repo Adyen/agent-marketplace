@@ -621,7 +621,7 @@ resources:
 	repo := t.TempDir()
 	withWorkingDir(t, repo)
 
-	if err := runTUIDependencyLifecycle(context.Background(), mustWorkspace(t, repo), false); err != nil {
+	if _, err := runTUIDependencyLifecycle(context.Background(), mustWorkspace(t, repo), false); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(filepath.Join(home, ".factory", "skills", "review", "SKILL.md")); err != nil {

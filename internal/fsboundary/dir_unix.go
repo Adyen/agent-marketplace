@@ -83,6 +83,15 @@ func (d *Dir) Close() error { return d.file.Close() }
 // Sync flushes the captured directory's metadata to stable storage.
 func (d *Dir) Sync() error { return d.file.Sync() }
 
+func (d *Dir) Stat() (os.FileInfo, error) { return d.file.Stat() }
+
+func (d *Dir) Chmod(mode os.FileMode) error {
+	if err := d.file.Chmod(mode); err != nil {
+		return fmt.Errorf("chmod captured directory %s: %w", d.path, err)
+	}
+	return nil
+}
+
 // errLeafSymlink marks a no-follow leaf open that stopped at a symlink. It
 // is always wrapped together with a stable public refusal; destination
 // capture uses it to apply the caller's link policy instead of refusing.

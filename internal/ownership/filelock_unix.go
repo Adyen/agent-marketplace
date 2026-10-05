@@ -35,6 +35,19 @@ func validateLockFile(file *os.File) error {
 	if !identity.Mode.IsRegular() || identity.Links != 1 {
 		return fsboundary.ErrUnsafeFile
 	}
+	// O_NONBLOCK only guards opening a non-regular leaf; once the descriptor is
+	// proven regular, restore blocking I/O for the metadata rewrite.
+	raw, err := file.SyscallConn()
+	if err != nil {
+		return fmt.Errorf("ownership: raw lock file handle: %w", err)
+	}
+	var blockErr error
+	if ctlErr := raw.Control(func(fd uintptr) { blockErr = syscall.SetNonblock(int(fd), false) }); ctlErr != nil {
+		return fmt.Errorf("ownership: raw lock file control: %w", ctlErr)
+	}
+	if blockErr != nil {
+		return fmt.Errorf("ownership: restore blocking lock file I/O: %w", blockErr)
+	}
 	return nil
 }
 

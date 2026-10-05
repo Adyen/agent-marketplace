@@ -3,37 +3,37 @@ package tui
 import (
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 )
 
-func keyPress(r rune) tea.KeyMsg {
-	return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}}
+func keyPress(r rune) tea.KeyPressMsg {
+	return tea.KeyPressMsg{Code: r, Text: string(r)}
 }
 
-func keyNamed(name string) tea.KeyMsg {
+func keyNamed(name string) tea.KeyPressMsg {
 	switch name {
 	case "tab":
-		return tea.KeyMsg{Type: tea.KeyTab}
+		return tea.KeyPressMsg{Code: tea.KeyTab}
 	case "shift+tab":
-		return tea.KeyMsg{Type: tea.KeyShiftTab}
+		return tea.KeyPressMsg{Code: tea.KeyTab, Mod: tea.ModShift}
 	case "esc":
-		return tea.KeyMsg{Type: tea.KeyEsc}
+		return tea.KeyPressMsg{Code: tea.KeyEsc}
 	case "enter":
-		return tea.KeyMsg{Type: tea.KeyEnter}
+		return tea.KeyPressMsg{Code: tea.KeyEnter}
 	case "left":
-		return tea.KeyMsg{Type: tea.KeyLeft}
+		return tea.KeyPressMsg{Code: tea.KeyLeft}
 	case "right":
-		return tea.KeyMsg{Type: tea.KeyRight}
+		return tea.KeyPressMsg{Code: tea.KeyRight}
 	case " ", "space":
-		return tea.KeyMsg{Type: tea.KeySpace}
+		return tea.KeyPressMsg{Code: tea.KeySpace}
 	case "up":
-		return tea.KeyMsg{Type: tea.KeyUp}
+		return tea.KeyPressMsg{Code: tea.KeyUp}
 	case "down":
-		return tea.KeyMsg{Type: tea.KeyDown}
+		return tea.KeyPressMsg{Code: tea.KeyDown}
 	case "backspace":
-		return tea.KeyMsg{Type: tea.KeyBackspace}
+		return tea.KeyPressMsg{Code: tea.KeyBackspace}
 	}
-	return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(name)}
+	return tea.KeyPressMsg{Code: rune((name)[0]), Text: string(name)}
 }
 
 func newTestModel() Model {
@@ -49,7 +49,7 @@ func newTestModel() Model {
 
 func TestZAprefixTogglesFoldOnCurrentSection(t *testing.T) {
 	m := newTestModel()
-	m.cursor = 0 // scope:global section header
+	m.cursor = 0 // status:enabled section header
 
 	// Press 'z' then 'a' → toggle current section fold.
 	mi, _ := m.Update(keyPress('z'))
@@ -63,8 +63,8 @@ func TestZAprefixTogglesFoldOnCurrentSection(t *testing.T) {
 	if m.zPending {
 		t.Fatalf("expected zPending cleared after completing za")
 	}
-	if !m.currentFoldState()["scope:global"] {
-		t.Fatalf("za on scope:global should collapse it")
+	if !m.currentFoldState()["status:enabled"] {
+		t.Fatalf("za on status:enabled should collapse it")
 	}
 }
 
@@ -76,7 +76,7 @@ func TestZMprefixCollapsesAll(t *testing.T) {
 	m = mi.(Model)
 
 	fs := m.currentFoldState()
-	if !fs["scope:global"] || !fs["scope:project"] {
+	if !fs["status:enabled"] {
 		t.Fatalf("zM should collapse all top-level sections, got %v", fs)
 	}
 }
@@ -102,28 +102,28 @@ func TestZRprefixExpandsAll(t *testing.T) {
 
 func TestHandLCollapseAndExpandCurrentSection(t *testing.T) {
 	m := newTestModel()
-	m.cursor = 0 // scope:global
+	m.cursor = 0 // status:enabled
 
 	mi, _ := m.Update(keyPress('h'))
 	m = mi.(Model)
-	if !m.currentFoldState()["scope:global"] {
-		t.Fatalf("h should collapse scope:global")
+	if !m.currentFoldState()["status:enabled"] {
+		t.Fatalf("h should collapse status:enabled")
 	}
 
 	mi, _ = m.Update(keyPress('l'))
 	m = mi.(Model)
-	if m.currentFoldState()["scope:global"] {
-		t.Fatalf("l should expand scope:global")
+	if m.currentFoldState()["status:enabled"] {
+		t.Fatalf("l should expand status:enabled")
 	}
 }
 
 func TestEnterOnSectionHeaderTogglesFold(t *testing.T) {
 	m := newTestModel()
-	m.cursor = 0 // scope:global
+	m.cursor = 0 // status:enabled
 
 	mi, _ := m.Update(keyNamed("enter"))
 	m = mi.(Model)
-	if !m.currentFoldState()["scope:global"] {
+	if !m.currentFoldState()["status:enabled"] {
 		t.Fatalf("enter on section header should collapse it")
 	}
 	if m.pane != paneList {
@@ -137,7 +137,7 @@ func TestSpaceOnSectionHeaderTogglesFold(t *testing.T) {
 
 	mi, _ := m.Update(keyNamed("space"))
 	m = mi.(Model)
-	if !m.currentFoldState()["scope:global"] {
+	if !m.currentFoldState()["status:enabled"] {
 		t.Fatalf("space on section header should toggle fold")
 	}
 }
