@@ -1061,14 +1061,15 @@ func stagesBeforeBlockedAcquisition(t *testing.T, stages <-chan snapshotLoadedMs
 		}
 		browseSafe = append(browseSafe, msg)
 	}
-	timeout := time.After(30 * time.Second)
+	timer := time.NewTimer(30 * time.Second)
+	defer timer.Stop()
 	for held := false; !held; {
 		select {
 		case msg, ok := <-stages:
 			accept(msg, ok)
 		case <-acquisitionHeld:
 			held = true
-		case <-timeout:
+		case <-timer.C:
 			t.Fatal("transient organization Marketplace acquisition never reached the blocked fixture")
 		}
 	}
