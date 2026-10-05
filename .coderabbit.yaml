@@ -25,6 +25,12 @@ reviews:
     - "!.idea/**"
     - "!.agents/skills/**"
   path_instructions:
+    - path: "**/*"
+      instructions: |
+        Compatibility: prioritize every user-facing change, including changes behind internal helpers. Trace affected consumer paths and compare the before/after contract against openspec/specs/; where no spec covers it, use existing code and tests. Check public HTTP and Go APIs, CLI commands/flags/defaults, machine-readable output/exit codes/diagnostic codes, config and lock formats, generated harness artifacts, and supported CLI/TUI/web workflows.
+        For each suspected break, identify the affected interface, a concrete previously supported input or workflow, the changed outcome, and impacted users or clients. Distinguish confirmed incompatibilities from compatible additions and contract-preserving refactors; state missing evidence as a review gap.
+        For every confirmed break, raise a prominent review finding and state: "This breaking user-facing contract change requires a new major version release." Include each break and its release impact in the high-level summary. Treat an unintended break as a regression to fix; an intentional break needs an explicit major-release plan, updated spec, migration guidance, and release notes.
+        Thoroughly review each affected consumer path, failure behavior, and persisted-data compatibility. Require regression tests through the actual consumer, including existing configs/locks and mixed-version clients where relevant. Report missing coverage, migration risks, and any patch/minor release plan that conflicts with a confirmed break. A version bump alone is insufficient evidence of a safe migration.
     - path: "**/*.go"
       instructions: |
         This repository is a Go CLI. Review for deterministic behavior, explicit errors with context, safe filesystem operations, and idiomatic Go 1.26 code. Prefer simple standard-library solutions. Do not suggest comments unless the code is genuinely unclear or documenting an exported API.
