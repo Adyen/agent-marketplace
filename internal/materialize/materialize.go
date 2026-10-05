@@ -3819,6 +3819,11 @@ func filesEqual(src, dst string) (_ bool, err error) {
 	}
 }
 
+// skillPruneObservedHook runs after a skill-directory prune entry is
+// enumerated. It is nil in production and set only by serial tests in this
+// package.
+var skillPruneObservedHook func(path string)
+
 func syncSkillLinks(skillsDir string, links []skillLink, dryRun bool, pruneStaleEntries bool, portable ...portableSyncContext) (TargetReport, error) {
 	var state *portableState
 	var target hcc.Target
@@ -3942,6 +3947,9 @@ func syncSkillLinks(skillsDir string, links []skillLink, dryRun bool, pruneStale
 		if err != nil {
 			return report, err
 		}
+		if skillPruneObservedHook != nil {
+			skillPruneObservedHook(path)
+		}
 		if snapshot.observed.Mode()&os.ModeSymlink == 0 {
 			// Non-symlink directories are user-owned skill directories
 			// and must be preserved. Mirror the principle from
@@ -3965,14 +3973,16 @@ func syncSkillLinks(skillsDir string, links []skillLink, dryRun bool, pruneStale
 			// must be preserved — managed resources in this directory are
 			// materialized as symlinks, so an unmarked regular file is always
 			// user-owned.
-			observed, err := os.Lstat(path)
-			if os.IsNotExist(err) {
-				continue
-			}
-			if err != nil {
-				return report, err
-			}
-			if !observed.Mode().IsRegular() || !isManagedCommandFile(path) {
+			//
+			// Classification and removal stay bound to the enumerated
+			// generation: a replacement after enumeration fails removal's
+			// identity check instead of becoming the observed authority.
+			observed := snapshot.observed
+			managed := observed.Mode().IsRegular() && isManagedCommandFile(path)
+			if !managed {
+				if _, err := os.Lstat(path); os.IsNotExist(err) {
+					continue
+				}
 				report.Diags = append(report.Diags, diag.Diagnostic{
 					Code:     "materialize.collision.user-owned",
 					Severity: diag.SeverityInfo,
