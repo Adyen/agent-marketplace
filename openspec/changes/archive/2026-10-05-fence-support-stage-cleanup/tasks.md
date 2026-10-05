@@ -4,4 +4,4 @@
 - [x] Reuse captured parent/native removal and admitted leaf identity; propagate cleanup refusal.
 - [x] Linux/macOS, repeated races, validation/spec and disk lifecycle cost.
 - [x] Complete intended-diff adversarial review.
-- [ ] Archive as final commit.
+- [x] Archive as final commit.
