@@ -396,7 +396,11 @@ func writeBackupSourceArchive(writer io.Writer, root string, relPaths []string, 
 		}
 		defer func() {
 			if closeErr := source.Close(); closeErr != nil {
-				err = errors.Join(err, closeErr)
+				if err != nil {
+					err = errors.Join(err, closeErr)
+				} else {
+					err = closeErr
+				}
 			}
 		}()
 	}
@@ -452,8 +456,14 @@ func writeArchivePayload(writer io.Writer, source *fsboundary.Dir, relPaths []st
 				return err
 			}
 			writeErr := writeTarEntry(tw, parent, filepath.Base(files[key]), key, info, "")
-			if closeErr := parent.Close(); writeErr != nil || closeErr != nil {
+			closeErr := parent.Close()
+			switch {
+			case writeErr != nil && closeErr != nil:
 				return errors.Join(writeErr, closeErr)
+			case writeErr != nil:
+				return writeErr
+			case closeErr != nil:
+				return closeErr
 			}
 		}
 	}
@@ -571,7 +581,11 @@ func extractArchivePayload(reader io.Reader, dstDir string, mapped ...map[string
 	}
 	defer func() {
 		if closeErr := root.Close(); closeErr != nil {
-			err = errors.Join(err, closeErr)
+			if err != nil {
+				err = errors.Join(err, closeErr)
+			} else {
+				err = closeErr
+			}
 		}
 	}()
 	gr, err := gzip.NewReader(reader)
@@ -650,8 +664,14 @@ func extractArchivePayload(reader io.Reader, dstDir string, mapped ...map[string
 				return err
 			}
 			publishErr := restoreCapturedSymlink(parent, filepath.Base(target), hdr.Linkname)
-			if closeErr := parent.Close(); publishErr != nil || closeErr != nil {
+			closeErr := parent.Close()
+			switch {
+			case publishErr != nil && closeErr != nil:
 				return errors.Join(publishErr, closeErr)
+			case publishErr != nil:
+				return publishErr
+			case closeErr != nil:
+				return closeErr
 			}
 		case tar.TypeReg:
 			if err := rejectSymlinkAncestors(dstDir, filepath.Dir(target)); err != nil {
@@ -671,8 +691,14 @@ func extractArchivePayload(reader io.Reader, dstDir string, mapped ...map[string
 				return err
 			}
 			publishErr := publishRestoredFile(parent, filepath.Base(target), tr, hdr.FileInfo().Mode())
-			if closeErr := parent.Close(); publishErr != nil || closeErr != nil {
+			closeErr := parent.Close()
+			switch {
+			case publishErr != nil && closeErr != nil:
 				return errors.Join(publishErr, closeErr)
+			case publishErr != nil:
+				return publishErr
+			case closeErr != nil:
+				return closeErr
 			}
 		}
 	}
