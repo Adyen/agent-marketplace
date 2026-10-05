@@ -1,12 +1,42 @@
 package backup
 
 import (
+	"archive/tar"
+	"io"
 	"os"
 	"path/filepath"
 	"testing"
 
 	"github.com/Adyen/agent-marketplace/internal/fsboundary"
 )
+
+// BenchmarkArchiveSelectedDirectoryWalk includes captured disk metadata and
+// payload reads and tar encoding, but not compression or archive publication.
+// Fixtures are reused and tar output is discarded; there is no network I/O.
+func BenchmarkArchiveSelectedDirectoryWalk(b *testing.B) {
+	dir := b.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "skills", "nested"), 0o755); err != nil {
+		b.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "skills", "nested", "reference.txt"), []byte("inert support"), 0o640); err != nil {
+		b.Fatal(err)
+	}
+	root, err := fsboundary.OpenDir(dir)
+	if err != nil {
+		b.Fatal(err)
+	}
+	b.Cleanup(func() { _ = root.Close() })
+	b.ReportAllocs()
+	for b.Loop() {
+		writer := tar.NewWriter(io.Discard)
+		if err := archiveDir(writer, root, "skills/nested"); err != nil {
+			b.Fatal(err)
+		}
+		if err := writer.Close(); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
 
 func BenchmarkBackupSymbolicMetadataDisk(b *testing.B) {
 	dir := b.TempDir()

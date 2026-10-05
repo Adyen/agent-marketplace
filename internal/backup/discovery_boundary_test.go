@@ -10,6 +10,39 @@ import (
 	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
 )
 
+func TestCreateNormalizesSelectedDirectoryPaths(t *testing.T) {
+	for _, rel := range []string{"./skills/nested", "skills/nested/", "skills//nested", "skills/./nested"} {
+		t.Run(rel, func(t *testing.T) {
+			home, root := t.TempDir(), t.TempDir()
+			t.Setenv("HOME", home)
+			dir := filepath.Join(root, "skills", "nested")
+			if err := os.MkdirAll(dir, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			payload := filepath.Join(dir, "reference.txt")
+			if err := os.WriteFile(payload, []byte("inert archived support"), 0o640); err != nil {
+				t.Fatal(err)
+			}
+			paths := map[hcc.Target]ManagedPaths{hcc.TargetFactory: {Root: root, RelPaths: []string{rel}}}
+			if err := Create(paths); err != nil {
+				t.Fatalf("selected directory spelling was refused: %v", err)
+			}
+			if archives, err := filepath.Glob(filepath.Join(home, ".agent-marketplace", "backups", "factory", "*.tar.gz")); err != nil || len(archives) != 1 {
+				t.Fatalf("real selected-directory archive absent: %v %v", archives, err)
+			}
+			if err := os.Remove(payload); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := Restore(hcc.TargetFactory, root); err != nil {
+				t.Fatal(err)
+			}
+			if raw, err := os.ReadFile(payload); err != nil || string(raw) != "inert archived support" {
+				t.Fatalf("normalized archive did not restore actual support: %q %v", raw, err)
+			}
+		})
+	}
+}
+
 // spec: backup-recovery/backup-metadata-ancestor-alias-refuses-before-import
 func TestCreateRefusesAliasedMetadataAncestor(t *testing.T) {
 	home, root, foreign := t.TempDir(), t.TempDir(), t.TempDir()
