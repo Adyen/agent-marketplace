@@ -24,9 +24,14 @@ paths:
           required: false
           description: Post-sign-in destination. Only /marketplace/admin and descendant paths are accepted.
           schema: { type: string }
+        - name: Accept
+          in: header
+          required: false
+          description: When the request explicitly prefers text/html over JSON, failures respond 303 to the fixed same-origin /marketplace/auth/error page with an allowlisted code and a validated destination instead of a JSON error body.
+          schema: { type: string }
       responses:
         '303':
-          description: Redirect to the identity provider authorization endpoint; sets a signed host-only login transaction cookie. HTTPS origins use the browser-enforced __Host-marketplace_admin_login name with Secure, Path=/, and no Domain; explicit loopback HTTP uses the unprefixed name confined to /api/v1/admin/auth.
+          description: Redirect to the identity provider authorization endpoint; sets a signed host-only login transaction cookie. HTTPS origins use the browser-enforced __Host-marketplace_admin_login name with Secure, Path=/, and no Domain; explicit loopback HTTP uses the unprefixed name confined to /api/v1/admin/auth. For HTML-preferring requests this response also carries browser failures to /marketplace/auth/error?code=...&next=...; the JSON error statuses below apply to all other clients.
         '400':
           description: Invalid sign-in destination; code authentication_request_invalid
           content:
@@ -70,9 +75,14 @@ paths:
           in: query
           required: true
           schema: { type: string }
+        - name: Accept
+          in: header
+          required: false
+          description: When the request explicitly prefers text/html over JSON, failures respond 303 to the fixed same-origin /marketplace/auth/error page with an allowlisted code and the validated transaction destination instead of a JSON error body.
+          schema: { type: string }
       responses:
         '303':
-          description: Sign-in completed; sets the signed host-only admin session cookie and redirects to the validated destination. HTTPS origins use the browser-enforced __Host-marketplace_admin_session name with Secure, Path=/, and no Domain; explicit loopback HTTP uses the unprefixed name confined to /api/v1/admin.
+          description: Sign-in completed; sets the signed host-only admin session cookie and redirects to the validated destination. HTTPS origins use the browser-enforced __Host-marketplace_admin_session name with Secure, Path=/, and no Domain; explicit loopback HTTP uses the unprefixed name confined to /api/v1/admin. For HTML-preferring requests this response also carries browser failures to /marketplace/auth/error?code=...&next=...; the JSON error statuses below apply to all other clients.
         '400':
           description: Malformed provider response; code authentication_request_invalid
           content:
@@ -104,7 +114,7 @@ paths:
                   code: { type: string }
                   message: { type: string }
         '503':
-          description: Identity provider unavailable; code authentication_unavailable
+          description: Identity provider unavailable or administration trust configuration unavailable; code authentication_unavailable or admin_unavailable
           content:
             application/json:
               schema:
