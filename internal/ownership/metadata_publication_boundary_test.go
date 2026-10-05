@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/Adyen/agent-marketplace/internal/fsboundary"
@@ -126,5 +127,34 @@ func TestPublishCrossedRenameClassifiesPostRenameFailures(t *testing.T) {
 		if publishCrossedRename(preRename) {
 			t.Fatalf("pre-rename refusal reported as crossed: %v", preRename)
 		}
+	}
+}
+
+func TestBackupOnlyKeepsPayloadWhenManifestRenameIsDurabilityUncertain(t *testing.T) {
+	f := newFixture(t)
+	f.writeAggregate("{\"servers\":{\"inert\":{}}}\n")
+	store := f.store()
+	injected := false
+	publishMetadataHook = func(destination *fsboundary.Destination, stagedParent *fsboundary.Dir, stagedName string) error {
+		if err := destination.Publish(stagedParent, stagedName); err != nil {
+			return err
+		}
+		if !strings.HasSuffix(destination.Path(), metaSuffix) {
+			return nil
+		}
+		injected = true
+		return fmt.Errorf("%w: publish %s: injected directory sync failure", fsboundary.ErrDurabilityUncertain, destination.Path())
+	}
+	t.Cleanup(func() { publishMetadataHook = nil })
+	if _, err := store.BackupOnly(f.rel, f.absFile, ReasonSync); !injected || !errors.Is(err, fsboundary.ErrDurabilityUncertain) {
+		t.Fatalf("post-rename manifest failure not surfaced: injected=%t err=%v", injected, err)
+	}
+	manifests, err := filepath.Glob(filepath.Join(store.SafetyBackupDir(f.rel), "*"+metaSuffix))
+	if err != nil || len(manifests) != 1 {
+		t.Fatalf("renamed manifest not retained: %v %v", manifests, err)
+	}
+	payload := strings.TrimSuffix(manifests[0], metaSuffix) + backupSuffix
+	if data, err := os.ReadFile(payload); err != nil || string(data) != "{\"servers\":{\"inert\":{}}}\n" {
+		t.Fatalf("payload referenced by the renamed manifest was removed: %q %v", data, err)
 	}
 }
