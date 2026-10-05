@@ -42,6 +42,12 @@ type marketplaceResourceEvidence struct {
 	SourcePath               string
 }
 
+func sameEvidenceModuloArchiveDigest(a, b marketplaceResourceEvidence) bool {
+	a.ArchiveDigest = ""
+	b.ArchiveDigest = ""
+	return a == b
+}
+
 func evidenceOf(record lockfile.MarketplaceResourceLock) marketplaceResourceEvidence {
 	return marketplaceResourceEvidence{
 		RegistryName:             record.RegistryName,
@@ -131,7 +137,7 @@ func ReplacePinsToV4(v4 *config.V4Config, current lockfile.Document, entry confi
 	if err != nil {
 		return lockfile.Document{}, fmt.Errorf("verify expected %s/%s/%s lock evidence: %w", expectedRoot.RegistryID, expectedRoot.Kind, expectedRoot.Name, err)
 	}
-	if evidenceOf(existing.Resources[root]) != evidenceOf(verified) {
+	if !sameEvidenceModuloArchiveDigest(evidenceOf(existing.Resources[root]), evidenceOf(verified)) {
 		return lockfile.Document{}, lockMismatch("marketplaces", "resource %s/%s/%s lock evidence no longer matches the expected pin", expectedRoot.RegistryID, expectedRoot.Kind, expectedRoot.Name)
 	}
 	existing.Resources = append(existing.Resources[:root], existing.Resources[root+1:]...)
@@ -242,7 +248,7 @@ func finishV4MarketplaceMerge(v4 *config.V4Config, doc lockfile.Document, canoni
 		}
 		key := record.RegistryID + "\x00" + record.Kind + "\x00" + record.Name
 		if previous, ok := resources[key]; ok {
-			if evidenceOf(previous) != evidenceOf(record) {
+			if !sameEvidenceModuloArchiveDigest(evidenceOf(previous), evidenceOf(record)) {
 				return lockfile.Document{}, lockMismatch("marketplaces", "resource %s/%s/%s evidence conflicts with existing lock record", pin.RegistryID, pin.Kind, pin.Name)
 			}
 			record.SelectedBy = mergeSelectedBy(previous.SelectedBy, record.SelectedBy)

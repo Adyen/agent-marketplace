@@ -7,9 +7,9 @@ import (
 	"strings"
 	"testing"
 
+	tea "charm.land/bubbletea/v2"
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/pipeline"
-	tea "github.com/charmbracelet/bubbletea"
 )
 
 func seedMarketplaceConsent(t *testing.T, m *Model) {
@@ -42,8 +42,8 @@ func assertConsentCleared(t *testing.T, m Model) {
 	if view := m.marketplaceConsentViewport.View(); strings.TrimSpace(view) != "" {
 		t.Fatalf("consent viewport retained content: %q", view)
 	}
-	if m.marketplaceConsentViewport.YOffset != 0 {
-		t.Fatalf("consent viewport offset = %d, want reset to top", m.marketplaceConsentViewport.YOffset)
+	if m.marketplaceConsentViewport.YOffset() != 0 {
+		t.Fatalf("consent viewport offset = %d, want reset to top", m.marketplaceConsentViewport.YOffset())
 	}
 }
 
@@ -112,16 +112,16 @@ func TestInvalidConfigKeyDismissesStaleMutationPanes(t *testing.T) {
 	cases := []struct {
 		name    string
 		pane    pane
-		key     tea.KeyMsg
+		key     tea.KeyPressMsg
 		consent bool
 		confirm bool
 	}{
-		{name: "toggle", pane: paneToggleModal, key: tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'g'}}},
-		{name: "harness", pane: paneHarnessModal, key: tea.KeyMsg{Type: tea.KeyEnter}},
-		{name: "marketplace consent", pane: paneMarketplaceConsent, key: tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}}, consent: true},
-		{name: "migration", pane: paneMigrationModal, key: tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'m'}}},
-		{name: "init", pane: paneInitModal, key: tea.KeyMsg{Type: tea.KeyEnter}},
-		{name: "confirm", pane: paneConfirm, key: tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}}, confirm: true},
+		{name: "toggle", pane: paneToggleModal, key: tea.KeyPressMsg{Code: 'g', Text: string('g')}},
+		{name: "harness", pane: paneHarnessModal, key: tea.KeyPressMsg{Code: tea.KeyEnter}},
+		{name: "marketplace consent", pane: paneMarketplaceConsent, key: tea.KeyPressMsg{Code: 'y', Text: string('y')}, consent: true},
+		{name: "migration", pane: paneMigrationModal, key: tea.KeyPressMsg{Code: 'm', Text: string('m')}},
+		{name: "init", pane: paneInitModal, key: tea.KeyPressMsg{Code: tea.KeyEnter}},
+		{name: "confirm", pane: paneConfirm, key: tea.KeyPressMsg{Code: 'y', Text: string('y')}, confirm: true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -169,10 +169,10 @@ func TestInvalidConfigKeyDismissesStaleMutationPanes(t *testing.T) {
 func TestInvalidConfigBlocksSyncAndUpdate(t *testing.T) {
 	for _, tc := range []struct {
 		name string
-		key  tea.KeyMsg
+		key  tea.KeyPressMsg
 	}{
-		{name: "sync", key: tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}}},
-		{name: "update", key: tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'u'}}},
+		{name: "sync", key: tea.KeyPressMsg{Code: 's', Text: string('s')}},
+		{name: "update", key: tea.KeyPressMsg{Code: 'u', Text: string('u')}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			m := modelWithSelectedRow(t, mkRow("unsafe", withProject))
@@ -202,7 +202,7 @@ func TestInvalidConfigPreservesNonMutationPanes(t *testing.T) {
 	m := modelWithSelectedRow(t, mkRow("unsafe", withProject))
 	m.configInvalid = true
 	m.pane = paneEditConfigModal
-	updated, cmd := m.handleKey(tea.KeyMsg{Type: tea.KeyDown})
+	updated, cmd := m.handleKey(tea.KeyPressMsg{Code: tea.KeyDown})
 	m = updated.(Model)
 	if m.pane != paneEditConfigModal {
 		t.Fatalf("configInvalid closed the recovery editor: pane %v", m.pane)
@@ -225,7 +225,7 @@ func TestInvalidConfigPreservesNonMutationPanes(t *testing.T) {
 	if m.pane != paneDetail {
 		t.Fatalf("verified row did not open the detail pane: pane %v", m.pane)
 	}
-	updated, _ = m.handleKey(tea.KeyMsg{Type: tea.KeyDown})
+	updated, _ = m.handleKey(tea.KeyPressMsg{Code: tea.KeyDown})
 	m = updated.(Model)
 	if m.pane != paneDetail {
 		t.Fatalf("configInvalid closed the detail pane: pane %v", m.pane)
