@@ -10,6 +10,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/ownership"
 	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 )
 
 // spec: materialization/durable-aggregate-reader-retains-canonical-root
@@ -83,23 +84,33 @@ func TestRunDurableAggregateReadRefusesOrdinaryRootReplacement(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(foreign, "settings.json"), before, 0o600); err != nil {
 		t.Fatal(err)
 	}
+	originalInfo, err := os.Lstat(filepath.Join(root, "settings.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	foreignInfo, err := os.Lstat(filepath.Join(foreign, "settings.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
 	retained := filepath.Join(repo, "retained-gemini")
 	hit := false
+	var replaceErr error
 	ownedAggregateLockAcquisitionHook = func(event ownership.LockEvent) {
 		if hit || event.Kind != ownership.LockAcquired {
 			return
 		}
 		hit = true
-		if err := os.Rename(root, retained); err != nil {
-			t.Fatal(err)
+		if replaceErr = os.Rename(root, retained); replaceErr != nil {
+			return
 		}
 		// Ordinary directory replacement, not a symlink.
-		if err := os.Rename(foreign, root); err != nil {
-			t.Fatal(err)
-		}
+		replaceErr = os.Rename(foreign, root)
 	}
 	t.Cleanup(func() { ownedAggregateLockAcquisitionHook = nil })
 	report, err := Run(t.Context(), repo, desired)
+	if replaceErr != nil {
+		t.Fatal(replaceErr)
+	}
 	if !hit {
 		t.Fatal("actual Gemini root-session fixture did not run")
 	}
@@ -107,12 +118,22 @@ func TestRunDurableAggregateReadRefusesOrdinaryRootReplacement(t *testing.T) {
 		t.Fatalf("ordinary replacement root was accepted: %+v %v", report, err)
 	}
 	// Both directory generations are preserved with their payload bytes.
-	for _, path := range []string{
-		filepath.Join(root, "settings.json"),
-		filepath.Join(retained, "settings.json"),
+	for _, item := range []struct {
+		root string
+		info os.FileInfo
+	}{
+		{root, foreignInfo},
+		{retained, originalInfo},
 	} {
+		path := filepath.Join(item.root, "settings.json")
 		if after, readErr := os.ReadFile(path); readErr != nil || !bytes.Equal(after, before) {
 			t.Fatalf("durable reader changed %s: %q %v", path, after, readErr)
+		}
+		if after, err := os.Lstat(path); err != nil || !os.SameFile(item.info, after) || item.info.Mode() != after.Mode() || !item.info.ModTime().Equal(after.ModTime()) {
+			t.Fatalf("durable reader changed aggregate metadata: %s %v", path, err)
+		}
+		if entries, err := os.ReadDir(item.root); err != nil || len(entries) != 1 || entries[0].Name() != "settings.json" {
+			t.Fatalf("durable reader changed root membership: %v %v", entries, err)
 		}
 	}
 	// Positive control: restoring the original root allows actual materialization.
@@ -122,9 +143,13 @@ func TestRunDurableAggregateReadRefusesOrdinaryRootReplacement(t *testing.T) {
 	if err := os.Rename(retained, root); err != nil {
 		t.Fatal(err)
 	}
+	desired[0].Entry.Resource = ir.NewMcpServer("first", "echo", []string{"updated-root-control"}, nil, nil, ir.SourceRef{})
 	restored, err := Run(t.Context(), repo, desired)
 	if err != nil || diag.HasErrors(restored.Diags) {
 		t.Fatalf("restored original root sync failed: %+v %v", restored, err)
+	}
+	if after, err := os.ReadFile(filepath.Join(root, "settings.json")); err != nil || !bytes.Contains(after, []byte("updated-root-control")) {
+		t.Fatalf("restored original root did not publish the changed desired aggregate: %q %v", after, err)
 	}
 }
 
