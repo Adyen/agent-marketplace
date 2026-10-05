@@ -69,9 +69,11 @@ type ResolveOptions struct {
 	MarketplaceRevocationPolicy resolver.MarketplaceRevocationPolicy
 	// MarketplaceMode overrides the mode derived from CatalogMode when set,
 	// except that Offline always forces CachedNoFetch.
-	MarketplaceMode          *resolver.MarketplaceResolveMode
-	marketplaceInstall       *marketplace.PreparedInstall
-	marketplaceInstallSource config.Source
+	MarketplaceMode                       *resolver.MarketplaceResolveMode
+	marketplaceInstall                    *marketplace.PreparedInstall
+	marketplaceInstallSource              config.Source
+	MarketplaceLockEvidenceStrict         bool
+	MarketplaceReportArchiveEvidenceDrift bool
 	// ConfigLoadMode selects organization-lock loading semantics; the default
 	// is online. Offline and cached-only catalog operations always force strict
 	// loading, preserving their existing requirement for on-disk evidence.
@@ -80,6 +82,9 @@ type ResolveOptions struct {
 	// the selected sources. It is applied only to the resolver's view and does
 	// not change the effective configuration returned to callers.
 	MarketplaceSourceFilter func(config.Source) bool
+	BrowsingConfigReady     func(*config.Config)
+	ProvisionalConfigReady  func(*config.Config, *config.LocalConfig)
+	ConfigReady             func(*config.Config)
 	// MarketplaceArtifactsFromCache resolves Marketplace selections into
 	// materializable artifacts from verified local cache evidence during
 	// inspect-mode resolution — exactly the semantics offline sync uses. No
@@ -351,6 +356,8 @@ func resolve(ctx context.Context, opts ResolveOptions) (ResolveResult, func()) {
 	var ec config.EffectiveConfig
 	var transientOrganizationMarketplaceLock transientOrganizationMarketplaceLockUse
 
+	ObservePhase(ctx, PhaseConfigure)
+
 	var configLoadSpan telemetry.Span
 	if tel != nil {
 		_, configLoadSpan = tel.StartSpan(ctx, "agent_marketplace.pipeline.config_load", nil)
@@ -372,6 +379,14 @@ func resolve(ctx context.Context, opts ResolveOptions) (ResolveResult, func()) {
 	loadMode := opts.ConfigLoadMode
 	if opts.Offline || opts.CatalogMode == catalog.LoadModeCachedNoFetch {
 		loadMode = ConfigLoadStrict
+	}
+	provisionalEmitted := false
+	provisionalReady := opts.ProvisionalConfigReady
+	if provisionalReady != nil {
+		provisionalReady = func(merged *config.Config, local *config.LocalConfig) {
+			provisionalEmitted = true
+			opts.ProvisionalConfigReady(merged, local)
+		}
 	}
 	useLoaders := opts.Loaders.Org != nil || opts.Loaders.Global != nil || opts.Loaders.Repo != nil || opts.Loaders.Local != nil
 	if useLoaders {
@@ -414,10 +429,10 @@ func resolve(ctx context.Context, opts ResolveOptions) (ResolveResult, func()) {
 			Errors:       errs,
 		}
 		if loadMode != ConfigLoadStrict && NeedsLockBootstrap(ec.Errors) {
-			ec, transientOrganizationMarketplaceLock = loadEffective(ctx, loadMode, effectiveOpts, opts.MarketplaceRevocationPolicy)
+			ec, transientOrganizationMarketplaceLock = loadEffective(ctx, loadMode, effectiveOpts, opts.MarketplaceRevocationPolicy, opts.BrowsingConfigReady, provisionalReady)
 		}
 	} else {
-		ec, transientOrganizationMarketplaceLock = loadEffective(ctx, loadMode, effectiveOpts, opts.MarketplaceRevocationPolicy)
+		ec, transientOrganizationMarketplaceLock = loadEffective(ctx, loadMode, effectiveOpts, opts.MarketplaceRevocationPolicy, opts.BrowsingConfigReady, provisionalReady)
 	}
 
 	result.Diagnostics = ec.Diagnostics
@@ -517,6 +532,12 @@ func resolve(ctx context.Context, opts ResolveOptions) (ResolveResult, func()) {
 		return result, releaseExactLease
 	}
 	result.MaterializationModes = materializationModes
+	if provisionalReady != nil && mergedCfg != nil && !provisionalEmitted {
+		provisionalReady(mergedCfg, ec.Local)
+	}
+	if opts.ConfigReady != nil && mergedCfg != nil {
+		opts.ConfigReady(mergedCfg)
+	}
 	registryCount := 0
 	if mergedCfg != nil {
 		registryCount = len(mergedCfg.Registries)
@@ -550,6 +571,7 @@ func resolve(ctx context.Context, opts ResolveOptions) (ResolveResult, func()) {
 	if opts.Workspace.LocalConfigDir() != opts.Workspace.RepoRoot() {
 		catalogOpts = append(catalogOpts, catalog.WithLocalConfigDir(opts.Workspace.LocalConfigDir()))
 	}
+	ObservePhase(ctx, PhaseResolve)
 	loadResult := catalog.LoadRegistriesWithContext(ctx, mergedCfg, opts.Workspace.RepoRoot(), opts.CatalogMode, catalogOpts...)
 	result.CatalogLoad = loadResult
 	result.CatalogErrors = loadResult.Errors
@@ -578,6 +600,8 @@ func resolve(ctx context.Context, opts ResolveOptions) (ResolveResult, func()) {
 		mpMode = resolver.MarketplaceResolveModeCachedNoFetch
 	}
 	marketplaceResolver := marketplace.NewResolver()
+	marketplaceResolver.LockEvidenceStrict = opts.MarketplaceLockEvidenceStrict
+	marketplaceResolver.ReportArchiveEvidenceDrift = opts.MarketplaceReportArchiveEvidenceDrift
 	// Keep the effective registry origin policy on the Marketplace resolver as
 	// well as on the loaded config. PrepareLocator uses the resolver directly,
 	// while normal sync passes the loaded config through the generic resolver.
@@ -875,6 +899,8 @@ func Sync(ctx context.Context, opts ResolveOptions) SyncResult {
 			}
 		}
 	}
+
+	ObservePhase(ctx, PhaseMaterialize)
 
 	if hook, ok := ctx.Value(syncPhaseHookContextKey{}).(func(string)); ok {
 		hook("before-materialization")
