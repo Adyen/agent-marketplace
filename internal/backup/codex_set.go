@@ -84,7 +84,9 @@ func CreateCodexSet(partitions []CodexPartition) (operation string, err error) {
 	output := codexSetOutput{parent: parent, native: native, path: targetDir, owned: make(map[string]fsboundary.Identity)}
 	defer func() {
 		if err != nil {
-			err = errors.Join(err, output.cleanup())
+			if cleanupErr := output.cleanup(); cleanupErr != nil {
+				err = errors.Join(err, cleanupErr)
+			}
 		}
 	}()
 	operation, err = nextCodexOperation(native, time.Now().Format("2006-01-02-150405"))
