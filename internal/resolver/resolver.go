@@ -44,17 +44,18 @@ type ResolvedArtifact struct {
 	Harnesses []hcc.Target
 
 	// Marketplace-specific fields.
-	IsMarketplace           bool
-	MarketplaceURL          string
-	MarketplaceInstanceID   string
-	MarketplaceAlias        string
-	MarketplaceRegistryID   string
-	MarketplaceResourceName string
-	InstalledName           string // overrides Name for materialization while preserving canonical digest
-	Unresolved              bool   // true when only metadata was fetched (status inspect mode)
-	Revoked                 bool   // true when the resolved revision is revoked
-	UpdateAvailable         bool   // true when a newer revision exists (status/update)
-	Stale                   bool   // true when the registry refresh is stale/unavailable
+	IsMarketplace            bool
+	MarketplaceURL           string
+	MarketplaceInstanceID    string
+	MarketplaceAlias         string
+	MarketplaceRegistryID    string
+	MarketplaceResourceName  string
+	InstalledName            string // overrides Name for materialization while preserving canonical digest
+	Unresolved               bool   // true when only metadata was fetched (status inspect mode)
+	Revoked                  bool   // true when the resolved revision is revoked
+	MarketplaceArchiveDigest string
+	UpdateAvailable          bool // true when a newer revision exists (status/update)
+	Stale                    bool // true when the registry refresh is stale/unavailable
 }
 
 func HasAdditiveSources(kind ir.ResourceKind) bool {
@@ -405,6 +406,23 @@ func IsNameCollision(err error) bool {
 	return errors.As(err, &collisionErr) || errors.As(err, &collisionWarn)
 }
 
+type ArchiveEvidenceRefreshedWarning struct {
+	MarketplaceURL   string
+	InstanceID       string
+	RegistryID       string
+	Kind             string
+	Name             string
+	OldArchiveDigest string
+	NewArchiveDigest string
+}
+
+const ArchiveEvidenceRefreshedCode = "marketplace.archive-evidence-refreshed"
+
+func (w *ArchiveEvidenceRefreshedWarning) Error() string {
+	return fmt.Sprintf("%s: %s/%s/%s locked archive digest %s refreshed to %s for the unchanged content digest",
+		ArchiveEvidenceRefreshedCode, w.RegistryID, w.Kind, w.Name, w.OldArchiveDigest, w.NewArchiveDigest)
+}
+
 // IncompatibleOrganizationRequirement is a hard error emitted when an
 // Organization registry entry marked required:true has no harnesses remaining
 // after intersecting with the machine-wide target harness set.
@@ -450,10 +468,12 @@ func IsWarning(err error) bool {
 	var collision *NameCollisionWarning
 	var requirement *UnmetRequirementWarning
 	var incompatibleDefault *IncompatibleOrganizationDefault
+	var evidenceRefresh *ArchiveEvidenceRefreshedWarning
 	return errors.As(err, &warning) ||
 		errors.As(err, &collision) ||
 		errors.As(err, &requirement) ||
 		errors.As(err, &incompatibleDefault) ||
+		errors.As(err, &evidenceRefresh) ||
 		IsCollectionMemberAmbiguity(err)
 }
 
