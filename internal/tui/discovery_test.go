@@ -424,7 +424,7 @@ func TestMarketplaceInstallReloadHardDiagnosticFailsWithUsableConfig(t *testing.
 		generation:      m.marketplaceInstallReload,
 		mergedCfg:       &config.Config{},
 		driftAssessment: driftFailed,
-		diagnostics:     []tuiDiagnostic{snapshotDiagnostic(diagnosticError, diagnosticCatalog, failure)},
+		diagnostics:     []tuiDiagnostic{snapshotDiagnostic(diagnosticError, session.DiagnosticCatalog, failure)},
 	})
 	m = updated.(Model)
 	if m.operations.Active != nil || m.marketplaceInstallReload != 0 {

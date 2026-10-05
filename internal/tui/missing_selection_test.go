@@ -12,6 +12,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/catalog"
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/resolver"
+	"github.com/Adyen/agent-marketplace/internal/session"
 	"github.com/Adyen/agent-marketplace/internal/skill"
 )
 
@@ -188,7 +189,7 @@ func TestUnverifiableSelectionsStillFailAssessment(t *testing.T) {
 }
 
 func TestCatalogUnavailableRowsStillBlockDriftFooter(t *testing.T) {
-	catalogRow := row{UnavailableReason: unavailableCatalogReason}
+	catalogRow := row{UnavailableReason: session.UnavailableCatalogReason}
 	if !rowsHaveUnavailable([]row{catalogRow}) {
 		t.Fatal("catalog-unavailable row does not count as unavailable")
 	}

@@ -50,7 +50,7 @@ func TestTUIPipelineOptionsPreservesNestedLocalDiscovery(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewWorkspace: %v", err)
 	}
-	opts := tuiPipelineOptionsForWorkspace(ws)
+	opts := session.PipelineOptionsForWorkspace(ws)
 	if got, want := canonicalWorkspacePath(t, opts.Workspace.RepoRoot()), canonicalWorkspacePath(t, repoRoot); got != want {
 		t.Fatalf("workspace repository root = %q; want %q", got, want)
 	}
@@ -89,7 +89,7 @@ func TestTUIPipelineOptionsBindsLocalLoaderToWorkspace(t *testing.T) {
 	}
 	t.Chdir(outside)
 
-	localCfg, err := tuiPipelineOptionsForWorkspace(ws).Loaders.Local()
+	localCfg, err := session.PipelineOptionsForWorkspace(ws).Loaders.Local()
 	if err != nil {
 		t.Fatalf("workspace local loader: %v", err)
 	}

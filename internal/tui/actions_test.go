@@ -268,7 +268,7 @@ func TestBuildRowsPopulatesPerScopeEnablement(t *testing.T) {
 			},
 		},
 	}
-	catalogs := map[string]catalogInfo{
+	catalogs := map[string]session.CatalogInfo{
 		"sec-key": {Entries: []pkgcatalog.Entry{
 			{Name: "audit-logging", Path: "/cache/sec/audit-logging"},
 			{Name: "extra-security", Path: "/cache/sec/extra-security"},
@@ -377,7 +377,7 @@ func TestBuildRowsRegistryScopedLocalSelections(t *testing.T) {
 			},
 		},
 	}
-	catalogs := map[string]catalogInfo{
+	catalogs := map[string]session.CatalogInfo{
 		"local-key": {Entries: []pkgcatalog.Entry{{Name: "keep-skill"}, {Name: "shared"}}},
 		"proj-key":  {Entries: []pkgcatalog.Entry{{Name: "drop-skill"}, {Name: "shared"}}},
 	}
@@ -446,7 +446,7 @@ func TestBuildRowsLocalCollectionMembersEnabled(t *testing.T) {
 			},
 		},
 	}
-	catalogs := map[string]catalogInfo{
+	catalogs := map[string]session.CatalogInfo{
 		"local-key": {Entries: []pkgcatalog.Entry{
 			{Kind: ir.KindCollection, Name: "mycoll"},
 			{Kind: ir.KindSkill, Name: "member-skill"},
@@ -495,11 +495,11 @@ func TestBuildRowsUsesResolverCatalogWinners(t *testing.T) {
 		{Kind: ir.KindMcpServer, Name: "genai-airflow"},
 		{Kind: ir.KindMcpServer, Name: "genai-atlassian"},
 	}
-	catalogs := map[string]catalogInfo{
+	catalogs := map[string]session.CatalogInfo{
 		"parent": {Entries: entries},
 		"child":  {Entries: entries},
 	}
-	catalogEntries := entriesFromCatalogs(catalogs)
+	catalogEntries := session.EntriesFromCatalogs(catalogs)
 	resolved, errs := resolver.Resolve(cfg, catalogEntries, nil)
 	if len(errs) != 0 {
 		t.Fatalf("Resolve() errors = %v, want none", errs)
@@ -542,7 +542,7 @@ func TestBuildRowsIncludesAllResourceKinds(t *testing.T) {
 			},
 		},
 	}
-	catalogs := map[string]catalogInfo{
+	catalogs := map[string]session.CatalogInfo{
 		"resources-key": {Entries: []pkgcatalog.Entry{
 			{Kind: ir.KindSkill, Name: "audit-skill"},
 			{Kind: ir.KindCommand, Name: "continue"},
@@ -600,12 +600,12 @@ func swapCloneOrPull(fn func(url, ref string) (string, error)) func() {
 
 func swapDiscoverSkills(fn func(dir string) ([]pkgcatalog.Entry, []skill.MalformedSkill, error)) func() {
 	prev := session.DiscoverCatalog
-	session.DiscoverCatalog = func(dir, sourceHarness string) (catalogInfo, error) {
+	session.DiscoverCatalog = func(dir, sourceHarness string) (session.CatalogInfo, error) {
 		entries, malformed, err := fn(dir)
 		if err != nil {
-			return catalogInfo{}, err
+			return session.CatalogInfo{}, err
 		}
-		return catalogInfo{
+		return session.CatalogInfo{
 			Entries:   entries,
 			Malformed: malformed,
 			Resources: pkgcatalog.EntriesResources(entries),
@@ -858,7 +858,7 @@ func TestBuildRowsPopulatesHarnessesForResolvedAndAvailableSkills(t *testing.T) 
 			},
 		},
 	}
-	catalogs := map[string]catalogInfo{
+	catalogs := map[string]session.CatalogInfo{
 		"sec-key": {Entries: []pkgcatalog.Entry{
 			{Name: "audit-logging", Path: "/cache/sec/audit-logging"},
 			{Name: "extra-security", Path: "/cache/sec/extra-security"},
@@ -903,7 +903,7 @@ func TestBuildRowsLabelsInheritedAndRegistryOverrideHarnesses(t *testing.T) {
 			},
 		},
 	}
-	catalogs := map[string]catalogInfo{
+	catalogs := map[string]session.CatalogInfo{
 		"default-key":  {Entries: []pkgcatalog.Entry{{Name: "default-skill"}}},
 		"override-key": {Entries: []pkgcatalog.Entry{{Name: "override-skill"}}},
 	}
@@ -1034,7 +1034,7 @@ func TestBuildRowsKeepsMarketplaceKindsSeparate(t *testing.T) {
 	}
 	for _, row := range rows {
 		selection := row.MarketplaceSelections[config.RepoCommitted]
-		if selection.Pin.Kind != marketplaceProtocolKind(row.Artifact.Kind) {
+		if selection.Pin.Kind != session.MarketplaceProtocolKind(row.Artifact.Kind) {
 			t.Fatalf("%s row attributed to %s pin", row.Artifact.Kind, selection.Pin.Kind)
 		}
 	}
@@ -1099,7 +1099,7 @@ func TestBuildRowsUsesSelectedResolverWinnerAcrossRegistries(t *testing.T) {
 			},
 		},
 	}
-	catalogs := map[string]catalogInfo{
+	catalogs := map[string]session.CatalogInfo{
 		"primary-key": {Entries: []pkgcatalog.Entry{
 			{Name: "smith", Path: "/cache/primary/smith"},
 		}},
@@ -1153,7 +1153,7 @@ func TestBuildRowsEnablementFlagsScopedByRegistry(t *testing.T) {
 			},
 		},
 	}
-	catalogs := map[string]catalogInfo{
+	catalogs := map[string]session.CatalogInfo{
 		"global-key": {Entries: []pkgcatalog.Entry{
 			{Name: "smith", Path: "/cache/global/smith"},
 		}},
