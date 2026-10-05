@@ -3525,20 +3525,49 @@ func prepareSkillLinkCache(link skillLink) error {
 // retaining current compiled artifacts and the directories required to contain
 // them. The cache is fully managed; this makes its support subtree exactly
 // reflect the current source tree on every real sync.
-func pruneSkillCacheSupportFiles(cacheDir string, compiled map[string]bool) error {
-	var prune func(string, string) error
-	prune = func(dir, rel string) error {
-		entries, err := os.ReadDir(dir)
-		if os.IsNotExist(err) {
-			return nil
+func pruneSkillCacheSupportFiles(cacheDir string, compiled map[string]bool) (err error) {
+	root, err := fsboundary.OpenDir(cacheDir)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	defer func() { err = errors.Join(err, root.Close()) }()
+	slog.Debug("skill cache support pruning starting", "cache_dir", cacheDir, "phase", "support-prune")
+	verify := func() error {
+		info, err := os.Stat(cacheDir)
+		if err != nil {
+			return errors.Join(fsboundary.ErrGenerationConflict, err)
 		}
+		identity, err := fsboundary.FileInfoIdentity(info)
+		if err != nil {
+			return err
+		}
+		if !identity.SameObject(root.Identity()) {
+			return fsboundary.ErrGenerationConflict
+		}
+		return nil
+	}
+	if err := verify(); err != nil {
+		return err
+	}
+	native, err := root.NativeRoot()
+	if err != nil {
+		return err
+	}
+	defer func() { err = errors.Join(err, native.Close()) }()
+	var prune func(string) error
+	prune = func(rel string) error {
+		entries, err := readSupportSourceDirectory(root, rel)
 		if err != nil {
 			return err
 		}
 		for _, entry := range entries {
 			childRel := filepath.ToSlash(filepath.Join(rel, entry.Name()))
-			childPath := filepath.Join(dir, entry.Name())
-			keep := compiled[childRel]
+			if compiled[childRel] {
+				continue
+			}
 			containsCompiled := false
 			for artifactPath := range compiled {
 				if strings.HasPrefix(artifactPath, childRel+"/") {
@@ -3546,22 +3575,22 @@ func pruneSkillCacheSupportFiles(cacheDir string, compiled map[string]bool) erro
 					break
 				}
 			}
-			if keep {
-				continue
-			}
 			if containsCompiled && entry.IsDir() {
-				if err := prune(childPath, childRel); err != nil {
+				if err := prune(childRel); err != nil {
 					return err
 				}
 				continue
 			}
-			if err := os.RemoveAll(childPath); err != nil {
+			if err := verify(); err != nil {
+				return err
+			}
+			if err := native.RemoveAll(childRel); err != nil {
 				return err
 			}
 		}
 		return nil
 	}
-	return prune(cacheDir, "")
+	return prune(".")
 }
 
 // copySupportFiles copies all files from srcDir to dstDir except the compiled
