@@ -1013,12 +1013,20 @@ func fileMatchesBytes(path string, expected []byte) (matches, exists bool, err e
 		}
 		return false, false, err
 	}
-	defer func() { err = errors.Join(err, root.Close()) }()
+	defer func() {
+		if closeErr := root.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
 	native, err := root.NativeRoot()
 	if err != nil {
 		return false, false, err
 	}
-	defer func() { err = errors.Join(err, native.Close()) }()
+	defer func() {
+		if closeErr := native.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
 	info, err := native.Lstat(filepath.Base(absolute))
 	if errors.Is(err, fs.ErrNotExist) {
 		return false, false, nil
