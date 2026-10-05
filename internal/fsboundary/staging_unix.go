@@ -32,15 +32,26 @@ func (d *Dir) OpenPersistentFile(name string, mode fs.FileMode) (*os.File, error
 	if err != nil {
 		return nil, err
 	}
-	file := os.NewFile(uintptr(fd), filepath.Join(d.path, name))
-	identity, err := identityOf(file)
-	if err == nil && (!identity.Mode.IsRegular() || identity.Links != 1) {
+	// Validate and restore blocking I/O on the raw descriptor before wrapping
+	// it, so a refused leaf never reaches os.NewFile and an admitted one is
+	// not registered as a nonblocking descriptor.
+	var st unix.Stat_t
+	err = unix.Fstat(fd, &st)
+	if err == nil && (st.Mode&unix.S_IFMT != unix.S_IFREG || st.Nlink != 1) {
 		err = ErrUnsafeFile
 	}
-	if err != nil {
-		return nil, errors.Join(err, file.Close())
+	if err == nil {
+		if blockErr := unix.SetNonblock(fd, false); blockErr != nil {
+			err = fmt.Errorf("restore blocking I/O on %s: %w", name, blockErr)
+		}
 	}
-	return file, nil
+	if err != nil {
+		if closeErr := unix.Close(fd); closeErr != nil {
+			return nil, errors.Join(err, closeErr)
+		}
+		return nil, err
+	}
+	return os.NewFile(uintptr(fd), filepath.Join(d.path, name)), nil
 }
 
 // CreateTemp creates a new regular file directly below the captured
@@ -153,7 +164,7 @@ func (d *Destination) StagingDir() (*Dir, error) {
 // bounded-read contract, so the returned bytes and identity describe one
 // unchanged object. An absent destination reports fs.ErrNotExist.
 func (d *Destination) ReadTarget(limit int64) ([]byte, Identity, error) {
-	return d.readTarget(limit, nil)
+	return d.readTarget(limit, nil, nil)
 }
 
 func (d *Destination) ReadTargetWith(read func(io.Reader) error) (err error) {
@@ -205,12 +216,19 @@ func (d *Destination) ReadTargetWith(read func(io.Reader) error) (err error) {
 	return err
 }
 
-func (d *Destination) readTarget(limit int64, beforeOpen func()) ([]byte, Identity, error) {
+func (d *Destination) readTarget(limit int64, beforeOpen func(), beforeClose func(parent, leaf *os.File)) (data []byte, id Identity, err error) {
 	parent, err := d.verifyTarget()
 	if err != nil {
 		return nil, Identity{}, err
 	}
-	defer func() { _ = parent.Close() }()
+	defer func() {
+		if closeErr := parent.Close(); closeErr != nil {
+			err = errors.Join(err, fmt.Errorf("close read target parent: %w", closeErr))
+		}
+		if err != nil {
+			data, id = nil, Identity{}
+		}
+	}()
 	if err := d.verifyLeaf(parent); err != nil {
 		return nil, Identity{}, err
 	}
@@ -224,8 +242,15 @@ func (d *Destination) readTarget(limit int64, beforeOpen func()) ([]byte, Identi
 	if err != nil {
 		return nil, Identity{}, err
 	}
-	defer func() { _ = file.Close() }()
-	data, id, err := ReadFile(file, limit)
+	defer func() {
+		if closeErr := file.Close(); closeErr != nil {
+			err = errors.Join(err, fmt.Errorf("close read target leaf: %w", closeErr))
+		}
+	}()
+	if beforeClose != nil {
+		defer func() { beforeClose(parent, file) }()
+	}
+	data, id, err = ReadFile(file, limit)
 	if err != nil {
 		return nil, Identity{}, err
 	}

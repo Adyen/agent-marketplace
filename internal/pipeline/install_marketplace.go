@@ -219,6 +219,7 @@ func (p *PreparedMarketplaceInstall) RequiresRiskAcceptance() bool {
 // without mutating configuration. The returned plan is the only value accepted
 // by CommitPreparedMarketplaceInstall.
 func PrepareMarketplaceInstall(ctx context.Context, opts InstallOptions) (*PreparedMarketplaceInstall, error) {
+	ObservePhase(ctx, PhasePrepare)
 	if !isMarketplaceInstall(opts) || isMarketplaceEndpointRegistration(opts) {
 		return nil, errors.New("marketplace resource install is required")
 	}
