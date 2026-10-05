@@ -32,7 +32,7 @@ func TestSafetyRemovalRefusesReplacedGeneration(t *testing.T) {
 	if err != nil || !exists {
 		t.Fatalf("selected real payload: %v", err)
 	}
-	if err := os.Rename(path, filepath.Join(t.TempDir(), "retained-generation")); err != nil {
+	if err := os.Rename(path, filepath.Join(filepath.Dir(path), "retained-generation")); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(path, []byte("inert replacement generation"), 0o600); err != nil {
@@ -61,7 +61,7 @@ func TestBackupOnlyRetentionRefusesHardlinkedMember(t *testing.T) {
 			old = path
 		}
 	}
-	foreign := filepath.Join(t.TempDir(), "foreign-hardlink")
+	foreign := filepath.Join(filepath.Dir(old), "foreign-hardlink")
 	if err := os.Link(old, foreign); err != nil {
 		t.Fatal(err)
 	}

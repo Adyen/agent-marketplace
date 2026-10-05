@@ -89,7 +89,9 @@ func (out *codexSetOutput) cleanup() (err error) {
 			continue
 		}
 		if identity.SameObject(expected) {
-			err = errors.Join(err, out.parent.Unlink(name))
+			if unlinkErr := out.parent.Unlink(name); unlinkErr != nil {
+				err = errors.Join(err, unlinkErr)
+			}
 		}
 	}
 	return err
