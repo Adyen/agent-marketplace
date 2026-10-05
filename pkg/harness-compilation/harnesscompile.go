@@ -735,12 +735,20 @@ func Materialize(r *Result, outDir string, opts ...WriteOption) (report *WriteRe
 	if err != nil {
 		return nil, err
 	}
-	defer func() { err = errors.Join(err, root.Close()) }()
+	defer func() {
+		if closeErr := root.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
 	native, err := root.NativeRoot()
 	if err != nil {
 		return nil, err
 	}
-	defer func() { err = errors.Join(err, native.Close()) }()
+	defer func() {
+		if closeErr := native.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
 	rootInfo, err := native.Lstat(".")
 	if err != nil {
 		return nil, err
@@ -762,12 +770,19 @@ func Materialize(r *Result, outDir string, opts ...WriteOption) (report *WriteRe
 		if errors.Is(inspectErr, fs.ErrNotExist) {
 			return nil
 		}
-		if inspectErr != nil || !os.SameFile(created, current) {
+		if inspectErr != nil {
 			return errors.Join(fsboundary.ErrGenerationConflict, inspectErr)
+		}
+		if !os.SameFile(created, current) {
+			return fsboundary.ErrGenerationConflict
 		}
 		return native.RemoveAll(stageName)
 	}
-	defer func() { err = errors.Join(err, cleanupStage()) }()
+	defer func() {
+		if cleanupErr := cleanupStage(); cleanupErr != nil {
+			err = errors.Join(err, cleanupErr)
+		}
+	}()
 
 	// Write artifacts to staging directory.
 	for _, a := range artifacts {
@@ -805,8 +820,11 @@ func Materialize(r *Result, outDir string, opts ...WriteOption) (report *WriteRe
 			return nil, errors.Join(fsboundary.ErrGenerationConflict, rootErr)
 		}
 		currentStage, stageErr := native.Lstat(stageName)
-		if stageErr != nil || !os.SameFile(created, currentStage) {
+		if stageErr != nil {
 			return nil, errors.Join(fsboundary.ErrGenerationConflict, stageErr)
+		}
+		if !os.SameFile(created, currentStage) {
+			return nil, fsboundary.ErrGenerationConflict
 		}
 		src := filepath.Join(stageName, filepath.FromSlash(a.Path))
 		dst := filepath.Join(outDir, filepath.FromSlash(a.Path))
