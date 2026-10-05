@@ -1235,42 +1235,117 @@ func isMaterializeTransactionFile(name string) bool {
 
 // findStaleFiles walks outDir and returns no-follow identity snapshots for
 // paths not in the artifactPaths set.
-func findStaleFiles(outDir string, artifactPaths map[string]struct{}) ([]StaleFileCandidate, error) {
-	var stale []StaleFileCandidate
-	err := filepath.WalkDir(outDir, func(path string, d fs.DirEntry, err error) error {
+func findStaleFiles(outDir string, artifactPaths map[string]struct{}) (stale []StaleFileCandidate, err error) {
+	snapshot, err := snapshotMaterializeRoot(outDir)
+	if err != nil || !snapshot.exists {
+		return nil, err
+	}
+	absolute, err := filepath.Abs(outDir)
+	if err != nil {
+		return nil, err
+	}
+	root, err := fsboundary.OpenDir(absolute)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		if closeErr := root.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
+	var walk func(*fsboundary.Dir, string, fs.FileInfo, []staleParentSnapshot) error
+	walk = func(directory *fsboundary.Dir, rel string, expected fs.FileInfo, ancestors []staleParentSnapshot) (err error) {
+		native, err := directory.NativeRoot()
 		if err != nil {
 			return err
 		}
-		if d.IsDir() {
-			if path != outDir && isMaterializeTransactionDir(d.Name()) {
-				return filepath.SkipDir
+		defer func() {
+			if closeErr := native.Close(); closeErr != nil {
+				err = errors.Join(err, closeErr)
 			}
-			return nil
-		}
-		rel, err := filepath.Rel(outDir, path)
+		}()
+		file, err := native.Open(".")
 		if err != nil {
 			return err
 		}
-		if isMaterializeTransactionFile(filepath.Base(rel)) {
-			return nil
+		defer func() {
+			if closeErr := file.Close(); closeErr != nil {
+				err = errors.Join(err, closeErr)
+			}
+		}()
+		info, err := file.Stat()
+		if err != nil {
+			return err
 		}
-		relSlash := filepath.ToSlash(rel)
-		if _, ok := artifactPaths[relSlash]; !ok {
-			candidate, snapshotErr := snapshotStaleFileCandidate(path, relSlash)
-			if snapshotErr != nil {
-				if os.IsNotExist(snapshotErr) {
-					return nil
+		if !os.SameFile(expected, info) {
+			return fsboundary.ErrGenerationConflict
+		}
+		dirPath := filepath.Join(outDir, rel)
+		parents := append(append([]staleParentSnapshot(nil), ancestors...), staleParentSnapshot{path: dirPath, info: info})
+		slog.Debug("SDK stale directory admitted", "path", dirPath, "phase", "sdk-stale-directory")
+		unchanged, err := staleParentsUnchanged(parents)
+		if err != nil {
+			return err
+		}
+		if !unchanged {
+			return fsboundary.ErrGenerationConflict
+		}
+		entries, err := file.ReadDir(-1)
+		if err != nil {
+			return err
+		}
+		for _, entry := range entries {
+			childRel := filepath.Join(rel, entry.Name())
+			childInfo, statErr := native.Lstat(entry.Name())
+			if errors.Is(statErr, fs.ErrNotExist) {
+				continue
+			}
+			if statErr != nil {
+				return statErr
+			}
+			if childInfo.IsDir() {
+				if isMaterializeTransactionDir(entry.Name()) {
+					continue
 				}
-				return snapshotErr
+				child, openErr := directory.OpenPath(entry.Name())
+				if openErr != nil {
+					return openErr
+				}
+				walkErr := walk(child, childRel, childInfo, parents)
+				if walkErr = errors.Join(walkErr, child.Close()); walkErr != nil {
+					return walkErr
+				}
+				continue
+			}
+			if isMaterializeTransactionFile(entry.Name()) {
+				continue
+			}
+			relSlash := filepath.ToSlash(childRel)
+			if _, ok := artifactPaths[relSlash]; ok {
+				continue
+			}
+			candidate := StaleFileCandidate{Path: relSlash, Info: childInfo, parents: parents}
+			if childInfo.Mode().IsRegular() {
+				candidate.Digest, err = digestNoFollow(filepath.Join(outDir, childRel), childInfo)
+				if errors.Is(err, fs.ErrNotExist) {
+					continue
+				}
+				if err != nil {
+					return err
+				}
 			}
 			stale = append(stale, candidate)
 		}
-		return nil
-	})
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, nil
+		unchanged, err = staleParentsUnchanged(parents)
+		if err != nil {
+			return err
 		}
+		if !unchanged {
+			return fsboundary.ErrGenerationConflict
+		}
+		return nil
+	}
+	if err := walk(root, ".", snapshot.info, nil); err != nil {
 		return nil, err
 	}
 	sort.Slice(stale, func(i, j int) bool { return stale[i].Path < stale[j].Path })
