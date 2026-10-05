@@ -61,12 +61,16 @@ func (r InspectionResult) Healthy() bool {
 
 type InspectOptions struct {
 	Resolve                        ResolveOptions
+	Resolved                       func(InspectionResult)
 	DryRun                         func(ctx context.Context, root string, artifacts []resolver.ResolvedArtifact, opts ...materialize.RunOption) (*materialize.Report, error)
 	SkipMaterializeOnResolveErrors bool
 }
 
 func Inspect(ctx context.Context, opts InspectOptions) (InspectionResult, func()) {
 	resolved, release := resolve(ctx, opts.Resolve)
+	if opts.Resolved != nil && len(resolved.ConfigErrors) == 0 && (len(resolved.Errors) == 0 || len(resolved.CatalogErrors)+len(resolved.ResolveErrors) > 0) {
+		opts.Resolved(buildInspection(resolved, nil, nil))
+	}
 	var report *materialize.Report
 	var matErr error
 	if !skipInspectionDryRun(resolved, opts.SkipMaterializeOnResolveErrors) {

@@ -9,26 +9,35 @@ test.use(journey.options);
 test.beforeAll(journey.setup);
 test.afterAll(journey.cleanup);
 
-test("bare launch browses tabs and inspects alpha-skill", async ({ terminal }) => {
+test("bare launch browses the single status view and inspects alpha-skill", async ({ terminal }) => {
   await declineLegacyMigration(terminal);
   await step("settled fixture baseline", () => {}, async () => {
     await expect(terminal.getByText("beta-skill", { strict: false })).toBeVisible();
     await expect(terminal.getByText("alpha-skill", { strict: false })).toBeVisible();
     await expect(terminal.getByText("~ in sync")).toBeVisible();
-  });
-
-  await step("open Registry tab", () => terminal.write("2"), async () => {
-    await expect(terminal.getByText(/fixture \/ skills\s+\(2\)/g)).toBeVisible();
-  });
-
-  await step("open Status tab", () => terminal.write("3"), async () => {
     await expect(terminal.getByText(/Enabled\s+\(1\)/g)).toBeVisible();
     await expect(terminal.getByText(/Available\s+\(1\)/g)).toBeVisible();
   });
 
-  await step("return to Scope tab", () => terminal.write("1"), async () => {
-    await expect(terminal.getByText(/Project\s+\(1\)/g)).toBeVisible();
+  await step("former tab keys leave the list unchanged", () => terminal.write("123"), async () => {
+    await expect(terminal.getByText(/Enabled\s+\(1\)/g)).toBeVisible();
     await expect(terminal.getByText(/Available\s+\(1\)/g)).toBeVisible();
+    await expect(terminal.getByText(/1 Scope\s+2 Registry\s+3 Status/g)).not.toBeVisible();
+  });
+
+  await step("search narrows the single list", () => terminal.write("/alpha\r"), async () => {
+    await expect(terminal.getByText(/Name:\s+alpha-skill/g)).toBeVisible();
+  });
+
+  await step("clear the search", () => terminal.write("\u001b"), async () => {
+    await expect(terminal.getByText(/Enabled\s+\(1\)/g)).toBeVisible();
+    await expect(terminal.getByText(/Available\s+\(1\)/g)).toBeVisible();
+  });
+
+  await step("fold and expand the Enabled section", () => terminal.write("gh"), async () => {
+    await expect(terminal.getByText(/▶ Enabled\s+\(1\)/g)).toBeVisible();
+    await terminal.write("l");
+    await expect(terminal.getByText(/▼ Enabled\s+\(1\)/g)).toBeVisible();
   });
 
   await step("select available alpha-skill", () => terminal.write("G"), async () => {
@@ -42,7 +51,8 @@ test("bare launch browses tabs and inspects alpha-skill", async ({ terminal }) =
   });
 
   await step("return to selected alpha-skill", () => terminal.write("\u001b"), async () => {
-    await expect(terminal.getByText(/1 Scope\s+2 Registry\s+3 Status/g)).toBeVisible();
+    await expect(terminal.getByText(/Enabled\s+\(1\)/g)).toBeVisible();
+    await expect(terminal.getByText(/1 Scope\s+2 Registry\s+3 Status/g)).not.toBeVisible();
     await expect(terminal.getByText(/Name:\s+alpha-skill/g)).toBeVisible();
   });
 
