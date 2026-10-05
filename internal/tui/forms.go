@@ -62,6 +62,12 @@ func modalFormKeyMap() *huh.KeyMap {
 	return km
 }
 
+func fixedChoiceFormKeyMap() *huh.KeyMap {
+	km := modalFormKeyMap()
+	km.Select.Filter.Unbind()
+	return km
+}
+
 // migrationFormKeyMap keeps 'm' as the migrate accelerator and 'l' as the
 // leave accelerator by moving the confirm toggle off 'l'.
 func migrationFormKeyMap() *huh.KeyMap {
@@ -117,6 +123,17 @@ func newHarnessSelectForm(selected map[string]bool, t theme, width int) (*huh.Fo
 		Height(len(options)).
 		Filterable(false)
 	return newModalForm(multi, modalFormKeyMap(), t, width), multi, &value
+}
+
+func setHarnessMultiSelectHeight(model Model, multi *huh.MultiSelect[string], optionIDs []string) {
+	if multi == nil {
+		return
+	}
+	height := len(optionIDs)
+	if compactTerminalLayout(model) {
+		height = max(1, model.height-modalFrameRows-2)
+	}
+	multi.Height(height)
 }
 
 // reconcileMultiCursor drives a Huh multiselect cursor to the model's
@@ -234,7 +251,7 @@ func (m *Model) buildToggleForm() {
 	sel := huh.NewSelect[string]().
 		Options(options...).
 		Value(&choice)
-	m.toggleForm = newModalForm(sel, modalFormKeyMap(), m.currentTheme(), modalInnerWidth(*m))
+	m.toggleForm = newModalForm(sel, fixedChoiceFormKeyMap(), m.currentTheme(), modalInnerWidth(*m))
 	m.toggleChoice = &choice
 	m.toggleFormFor = rowKey(m.modalSkill)
 }
@@ -271,7 +288,7 @@ func (m *Model) buildEditConfigForm() {
 			huh.NewOption("[l]  edit local config", "l"),
 		).
 		Value(&choice)
-	m.editConfigForm = newModalForm(sel, modalFormKeyMap(), m.currentTheme(), modalInnerWidth(*m))
+	m.editConfigForm = newModalForm(sel, fixedChoiceFormKeyMap(), m.currentTheme(), modalInnerWidth(*m))
 	m.editConfigChoice = &choice
 }
 

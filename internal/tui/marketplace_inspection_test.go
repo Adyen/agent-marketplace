@@ -207,13 +207,13 @@ func TestMarketplaceSkillInspectionLoadsExactRevision(t *testing.T) {
 	}
 	var mutations []string
 	lifecycle := DependencyLifecycle{
-		Sync: func(context.Context, pipeline.Workspace) error {
+		Sync: func(context.Context, pipeline.Workspace) ([]error, error) {
 			mutations = append(mutations, "sync")
-			return errors.New("sync must not run")
+			return nil, errors.New("sync must not run")
 		},
-		Update: func(context.Context, pipeline.Workspace) error {
+		Update: func(context.Context, pipeline.Workspace) ([]error, error) {
 			mutations = append(mutations, "update")
-			return errors.New("update must not run")
+			return nil, errors.New("update must not run")
 		},
 		Mutate: func(context.Context, pipeline.Workspace, func(pipeline.ConfigPathMapper) error) error {
 			mutations = append(mutations, "mutate")

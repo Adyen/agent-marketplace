@@ -53,8 +53,9 @@ func TestModelBackgroundThemesAreIsolated(t *testing.T) {
 		t.Fatalf("dark model key style = %q, want %q", keyHint(dark), want)
 	}
 	// A second model adopting the opposite background must not move the first.
+	before := keyHint(dark)
 	_ = modelFor(false)
-	if before := keyHint(dark); keyHint(dark) != before {
+	if keyHint(dark) != before {
 		t.Fatalf("dark model key style changed after another model's message")
 	}
 	if after := keyHint(dark); after != lipgloss.NewStyle().Foreground(newTheme(true).mark).Width(13).Render("g") {

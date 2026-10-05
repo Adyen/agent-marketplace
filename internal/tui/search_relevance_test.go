@@ -90,15 +90,27 @@ func TestSearchNameMatchOutranksMetadataAndIsSelected(t *testing.T) {
 func TestSearchHidesSectionsWithoutMatches(t *testing.T) {
 	m := NewModel("/repo", "/home")
 	m.rows = []row{
-		mkRow("audit", withGlobal, withRegistry("sec.git", "security")),
+		mkRow("audit", withAvailable, withRegistry("sec.git", "security")),
 		mkRow("deploy", withProject, withRegistry("sec.git", "security")),
 	}
+	m.recomputeView()
+	before := sectionPaths(m.flatItems)
+	hasAvailable, hasEnabled := false, false
+	for _, section := range before {
+		hasAvailable = hasAvailable || section == "status:available"
+		hasEnabled = hasEnabled || section == "status:enabled"
+	}
+	if !hasAvailable || !hasEnabled {
+		t.Fatalf("fixture sections = %v, want available and enabled rows before filtering", before)
+	}
+
 	m.filter = "deploy"
 	m.recomputeView()
-	for _, p := range sectionPaths(m.flatItems) {
-		if strings.HasPrefix(p, "scope:global") {
-			t.Fatalf("a section without matches must be hidden, got %v", sectionPaths(m.flatItems))
-		}
+	if sections := sectionPaths(m.flatItems); len(sections) != 1 || sections[0] != "status:enabled" {
+		t.Fatalf("sections without matches must be hidden, got %v", sections)
+	}
+	if got := artifactNames(m.flatItems); !namesEqual(got, []string{"deploy"}) {
+		t.Fatalf("deploy filter rows = %v, want only the enabled deploy row", got)
 	}
 }
 

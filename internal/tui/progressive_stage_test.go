@@ -12,6 +12,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -130,6 +131,169 @@ func TestReadSnapshotStagesDeliversConfigInventoryThenAssessed(t *testing.T) {
 	}
 	if len(final.rows) != 2 {
 		t.Fatalf("final stage published %d rows, want 2", len(final.rows))
+	}
+}
+
+type snapshotReadCounters struct {
+	global      atomic.Int64
+	repo        atomic.Int64
+	discoveries atomic.Int64
+	dryRuns     atomic.Int64
+}
+
+type snapshotReadTotals struct {
+	global, repo, discoveries, dryRuns int64
+}
+
+func (c *snapshotReadCounters) totals() snapshotReadTotals {
+	return snapshotReadTotals{
+		global:      c.global.Load(),
+		repo:        c.repo.Load(),
+		discoveries: c.discoveries.Load(),
+		dryRuns:     c.dryRuns.Load(),
+	}
+}
+
+func snapshotRowIdentities(rows []row) []string {
+	identities := make([]string, 0, len(rows))
+	for _, r := range rows {
+		identities = append(identities, fmt.Sprintf("%s|%s|%s|%s", r.Artifact.Kind, r.Artifact.Name, r.Artifact.RegistryURL, r.RegistryURL))
+	}
+	slices.Sort(identities)
+	return identities
+}
+
+func snapshotRowNames(rows []row) []string {
+	names := make([]string, 0, len(rows))
+	for _, r := range rows {
+		names = append(names, r.Artifact.Name)
+	}
+	slices.Sort(names)
+	return names
+}
+
+func snapshotDriftIdentities(report materialize.DriftReport) []string {
+	var identities []string
+	appendItems := func(category string, items []materialize.DriftItem) {
+		for _, item := range items {
+			identities = append(identities, fmt.Sprintf("%s|%s|%s", category, item.Name, item.Reason))
+		}
+	}
+	appendItems("missing", report.Missing)
+	appendItems("orphaned", report.Orphaned)
+	appendItems("broken", report.Broken)
+	appendItems("synced", report.Synced)
+	slices.Sort(identities)
+	return identities
+}
+
+// spec: tui-startup/ordinary-reload-keeps-the-current-view-until-final-assessment
+func TestOrdinaryReloadAvoidsProgressiveSnapshotWork(t *testing.T) {
+	repoRoot, homeDir := progressiveFixture(t)
+	globalPath := filepath.Join(homeDir, ".agents", "config.yaml")
+	repoPath := config.ProjectConfigPath(repoRoot)
+	globalBefore, err := os.ReadFile(globalPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	repoBefore, err := os.ReadFile(repoPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	counts := &snapshotReadCounters{}
+	originalGlobal, originalRepo := loadGlobalConfig, loadRepoConfig
+	originalDiscover, originalMaterialize := discoverCatalog, runMaterialize
+	loadGlobalConfig = func() (*config.Config, error) {
+		counts.global.Add(1)
+		return originalGlobal()
+	}
+	loadRepoConfig = func() (*config.Config, error) {
+		counts.repo.Add(1)
+		return originalRepo()
+	}
+	discoverCatalog = func(dir, sourceHarness string) (catalog.LoadedCatalog, error) {
+		counts.discoveries.Add(1)
+		return originalDiscover(dir, sourceHarness)
+	}
+	runMaterialize = func(context.Context, string, []resolver.ResolvedArtifact, ...materialize.RunOption) (*materialize.Report, error) {
+		counts.dryRuns.Add(1)
+		return &materialize.Report{}, nil
+	}
+	t.Cleanup(func() {
+		loadGlobalConfig, loadRepoConfig = originalGlobal, originalRepo
+		discoverCatalog, runMaterialize = originalDiscover, originalMaterialize
+	})
+
+	m := NewModel(repoRoot, homeDir)
+	m.loading = false
+	m.rows = []row{mkRow("previous", withGlobal, withRegistry("previous.git", "previous"))}
+	m.authoritativeRows = slices.Clone(m.rows)
+	m.recomputeView()
+	generation := m.requests.active(requestSnapshot)
+	beforeView := ansi.Strip(m.viewContent())
+	if !strings.Contains(beforeView, "previous") {
+		t.Fatalf("ordinary reload fixture has no prior visible row:\n%s", beforeView)
+	}
+	cmd := loadSnapshot(context.Background(), m.workspace, homeDir, generation)
+	ordinary, ok := cmd().(snapshotLoadedMsg)
+	if !ok || ordinary.stage != snapshotStageFinal {
+		t.Fatalf("ordinary reload result = %#v, want one final snapshot", ordinary)
+	}
+	if afterCommand := ansi.Strip(m.viewContent()); !strings.Contains(afterCommand, "previous") {
+		t.Fatalf("ordinary reload changed the view before final acceptance:\n%s", afterCommand)
+	}
+	normalWork := counts.totals()
+	if normalWork.discoveries != 1 {
+		t.Fatalf("ordinary reload catalog discovery calls = %d, want only the authoritative discovery", normalWork.discoveries)
+	}
+	if normalWork.dryRuns != 1 {
+		t.Fatalf("ordinary reload dry-run calls = %d, want 1", normalWork.dryRuns)
+	}
+
+	updated, _ := m.Update(ordinary)
+	m = updated.(Model)
+	if strings.Contains(ansi.Strip(m.viewContent()), "previous") {
+		t.Fatal("accepted ordinary reload retained its previous rows")
+	}
+
+	progressive := collectSnapshotStages(readSnapshotStagesForWorkspace(context.Background(), m.workspace, homeDir, catalogLoadCached, generation+1))
+	progressiveWork := counts.totals()
+	if progressiveWork.discoveries-normalWork.discoveries < 1 || progressiveWork.global-normalWork.global < 1 || progressiveWork.repo-normalWork.repo < 1 {
+		t.Fatalf("progressive-only callbacks did not run: ordinary=%+v progressive=%+v", normalWork, progressiveWork)
+	}
+	if progressiveWork.dryRuns-normalWork.dryRuns != 1 {
+		t.Fatalf("progressive final dry-run delta = %d, want 1", progressiveWork.dryRuns-normalWork.dryRuns)
+	}
+	if len(progressive) != 4 || progressive[0].stage != snapshotStageConfig || progressive[0].provisionalCfg == nil || progressive[1].mergedCfg == nil || progressive[2].stage != snapshotStageInventory || progressive[3].stage != snapshotStageFinal {
+		t.Fatalf("progressive startup stages = %+v, want provisional/config/inventory/final", progressive)
+	}
+	if names := snapshotRowNames(progressive[0].provisionalRows); !slices.Equal(names, []string{"audit", "review"}) {
+		t.Fatalf("progressive pending names = %v, want audit and review", names)
+	}
+	for _, pending := range progressive[0].provisionalRows {
+		if !pending.PendingVerification {
+			t.Fatalf("progressive pending row is not marked pending: %#v", pending.Artifact)
+		}
+	}
+	final := progressive[len(progressive)-1]
+	if names := snapshotRowNames(final.rows); !slices.Equal(names, []string{"audit", "review"}) {
+		t.Fatalf("progressive final names = %v, want audit and review", names)
+	}
+	if !slices.Equal(snapshotRowIdentities(ordinary.rows), snapshotRowIdentities(final.rows)) {
+		t.Fatalf("ordinary and progressive final rows differ: ordinary=%v progressive=%v", snapshotRowIdentities(ordinary.rows), snapshotRowIdentities(final.rows))
+	}
+	if ordinary.driftAssessment != final.driftAssessment || !slices.Equal(snapshotDriftIdentities(ordinary.driftReport), snapshotDriftIdentities(final.driftReport)) {
+		t.Fatalf("ordinary and progressive final drift differ: ordinary=%+v/%d progressive=%+v/%d", ordinary.driftReport, ordinary.driftAssessment, final.driftReport, final.driftAssessment)
+	}
+	if after, err := os.ReadFile(globalPath); err != nil || string(after) != string(globalBefore) {
+		t.Fatalf("global config changed during snapshot reads: %v", err)
+	}
+	if after, err := os.ReadFile(repoPath); err != nil || string(after) != string(repoBefore) {
+		t.Fatalf("project config changed during snapshot reads: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(repoRoot, ".factory", "skills", "audit")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("snapshot read materialized a resource or failed to stat it: %v", err)
 	}
 }
 

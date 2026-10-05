@@ -1,9 +1,12 @@
 package tui
 
 import (
+	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 
@@ -205,5 +208,84 @@ func TestSyncQuitFormResetsAfterCompletion(t *testing.T) {
 	}
 	if !cmdProducesQuitMsg(cmd) {
 		t.Fatal("'n' on a re-presented confirm should quit without syncing")
+	}
+}
+
+const fixedChoiceSlashChildEnv = "AGENT_MARKETPLACE_TUI_FIXED_CHOICE_SLASH_CHILD"
+
+// spec: tui-interactions/slash-leaves-fixed-choice-dialogs-unchanged
+func TestFixedChoiceSlashIsIgnoredAtModelBoundary(t *testing.T) {
+	if os.Getenv(fixedChoiceSlashChildEnv) == "1" {
+		runFixedChoiceSlashScenarios(t)
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	proc := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestFixedChoiceSlashIsIgnoredAtModelBoundary$")
+	proc.Env = append(os.Environ(), fixedChoiceSlashChildEnv+"=1")
+	output, err := proc.CombinedOutput()
+	if ctx.Err() != nil {
+		t.Fatalf("fixed-choice slash handling exceeded its bound: %v\n%s", ctx.Err(), output)
+	}
+	if err != nil {
+		t.Fatalf("fixed-choice child failed: %v\n%s", err, output)
+	}
+}
+
+func runFixedChoiceSlashScenarios(t *testing.T) {
+	t.Helper()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	toggle := NewModel(t.TempDir(), home)
+	toggle.loading = false
+	toggle.pane = paneToggleModal
+	toggle.modalSkill = mkRow("review", withProject)
+	toggle.ensureToggleForm()
+	if toggle.toggleForm == nil || toggle.toggleChoice == nil {
+		t.Fatal("toggle modal did not initialize its fixed-choice form")
+	}
+	toggleChoice := *toggle.toggleChoice
+	toggleView := toggle.toggleForm.View()
+	updated, cmd := toggle.Update(tea.KeyPressMsg{Code: '/', Text: "/"})
+	toggle = updated.(Model)
+	if cmd != nil || toggle.pane != paneToggleModal || *toggle.toggleChoice != toggleChoice || toggle.toggleForm.View() != toggleView {
+		t.Fatalf("slash changed toggle choice state or form: pane=%v choice=%q", toggle.pane, *toggle.toggleChoice)
+	}
+	updated, cmd = toggle.Update(tea.KeyPressMsg{Code: tea.KeyDown})
+	toggle = updated.(Model)
+	if cmd != nil || toggle.pane != paneToggleModal {
+		t.Fatalf("toggle arrow navigation after slash = pane %v command %v", toggle.pane, cmd)
+	}
+	updated, cmd = toggle.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
+	toggle = updated.(Model)
+	if cmd != nil || toggle.pane != paneList {
+		t.Fatalf("toggle Escape after slash = pane %v command %v", toggle.pane, cmd)
+	}
+
+	picker := NewModel(t.TempDir(), home)
+	picker.loading = false
+	picker.pane = paneEditConfigModal
+	picker.ensureEditConfigForm()
+	if picker.editConfigForm == nil || picker.editConfigChoice == nil {
+		t.Fatal("config-editor modal did not initialize its fixed-choice form")
+	}
+	pickerChoice := *picker.editConfigChoice
+	pickerView := picker.editConfigForm.View()
+	updated, cmd = picker.Update(tea.KeyPressMsg{Code: '/', Text: "/"})
+	picker = updated.(Model)
+	if cmd != nil || picker.pane != paneEditConfigModal || *picker.editConfigChoice != pickerChoice || picker.editConfigForm.View() != pickerView {
+		t.Fatalf("slash changed config-editor choice state or form: pane=%v choice=%q", picker.pane, *picker.editConfigChoice)
+	}
+	updated, cmd = picker.Update(tea.KeyPressMsg{Code: tea.KeyDown})
+	picker = updated.(Model)
+	if cmd != nil || picker.pane != paneEditConfigModal {
+		t.Fatalf("config-editor arrow navigation after slash = pane %v command %v", picker.pane, cmd)
+	}
+	updated, cmd = picker.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
+	picker = updated.(Model)
+	if cmd != nil || picker.pane != paneList || picker.operations.active != nil {
+		t.Fatalf("config-editor Escape after slash = pane %v command %v operation %v", picker.pane, cmd, picker.operations.active)
 	}
 }

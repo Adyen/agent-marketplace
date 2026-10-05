@@ -42,12 +42,10 @@ func renderInitModal(m Model) string {
 	t := m.currentTheme()
 	title := titleStyle(t).Render("Initialize target harnesses")
 	hints := []footerHint{{"space", "toggle"}, {"enter", "save"}, {"esc", "cancel"}}
+	setHarnessMultiSelectHeight(m, modal.multi, modal.optionIDs)
 
 	var body []string
 	if compactTerminalLayout(m) {
-		if modal.multi != nil {
-			modal.multi.Height(max(1, m.height-modalFrameRows-2))
-		}
 		if modal.detected {
 			body = append(body, "Detected targets are pre-selected.")
 		} else {

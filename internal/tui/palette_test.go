@@ -2,11 +2,14 @@ package tui
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/Adyen/agent-marketplace/internal/materialize"
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
+	"github.com/charmbracelet/x/ansi"
 )
 
 func ctrlKKey() tea.KeyPressMsg {
@@ -336,12 +339,51 @@ func TestPaletteDownNavigatesMatches(t *testing.T) {
 	}
 }
 
+// spec: tui-navigation/j-and-k-remain-query-text
+func TestPaletteJKRemainQueryText(t *testing.T) {
+	for _, character := range []rune{'j', 'k'} {
+		t.Run(string(character), func(t *testing.T) {
+			m := openPaletteFor(t, readyPaletteModel())
+			m = typePaletteQuery(t, m, "a")
+			if len(m.palette.matches) < 2 {
+				t.Fatalf("query fixture has %d matches, want several", len(m.palette.matches))
+			}
+			m.palette.cursor = 1
+
+			updated, _ := m.Update(keyPress(character))
+			m = updated.(Model)
+			if got, want := m.palette.input.Value(), "a"+string(character); got != want {
+				t.Fatalf("typed %q palette query = %q, want %q", character, got, want)
+			}
+			if !m.palette.open || m.pane != paneList || m.syncing || m.operations.active != nil {
+				t.Fatalf("typed %q dispatched an action: pane=%v syncing=%t active=%v", character, m.pane, m.syncing, m.operations.active)
+			}
+		})
+	}
+}
+
 func TestPaletteRendersAsLayerOverList(t *testing.T) {
 	m := readyPaletteModel()
-	m.width = 80
-	m.height = 24
+	m.width = 120
+	m.height = 40
+	for i := 0; i < 24; i++ {
+		name := fmt.Sprintf("underlay-%02d", i)
+		m.rows = append(m.rows, mkRow(name, withGlobal, withKind(ir.KindSkill), withRegistry("sec.git", "security")))
+	}
+	m.recomputeView()
+	target := "underlay-23"
+	foundTarget := false
+	for i, item := range m.flatItems {
+		if item.Kind == flatArtifact && item.Row.Artifact.Name == target {
+			m.cursor = i
+			foundTarget = true
+		}
+	}
+	if !foundTarget {
+		t.Fatalf("underlay fixture did not contain %q", target)
+	}
 	m = openPaletteFor(t, m)
-	view := m.viewContent()
+	view := ansi.Strip(m.viewContent())
 	if !strings.Contains(view, "Command palette") {
 		t.Fatalf("palette overlay should render its title, got:\n%s", view)
 	}
@@ -349,8 +391,8 @@ func TestPaletteRendersAsLayerOverList(t *testing.T) {
 		t.Fatalf("palette overlay should list actions, got:\n%s", view)
 	}
 	// The list and footer controls stay visible behind the layer.
-	if !strings.Contains(view, "alpha") && !strings.Contains(view, "a") {
-		t.Fatalf("palette overlay should not hide the list underneath")
+	if !strings.Contains(view, "skill security/"+target) {
+		t.Fatalf("palette overlay should leave the complete qualified row visible behind it:\n%s", view)
 	}
 }
 

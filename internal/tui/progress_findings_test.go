@@ -18,19 +18,26 @@ import (
 func TestStaleProgressPollDoesNotSpawnPump(t *testing.T) {
 	m := progressTestModel(t)
 	m.beginOperationProgress("sync", 1)
+	sourceA := m.progress
+	if sourceA == nil {
+		t.Fatal("sync progress source was not created")
+	}
 
 	// Operation A ends and B begins before A's idle pump wakes; the wake
-	// arrives unbound to any live source.
+	// arrives with A's source identity after it has been superseded.
 	m.beginOperationProgress("update", 2)
-	stale := operationProgressPollMsg{}
+	sourceB := m.progress
+	if sourceB == nil {
+		t.Fatal("update progress source was not created")
+	}
 
-	next, cmd := m.Update(stale)
+	next, cmd := m.Update(operationProgressPollMsg{source: sourceA})
 	m = next.(Model)
 	if cmd != nil {
 		t.Fatal("stale pump event spawned a second pump for the active operation")
 	}
-	if m.progress != nil && m.progressLabel != "update" {
-		t.Fatalf("stale pump event relabeled the active operation: %q", m.progressLabel)
+	if m.progress != sourceB || m.progressLabel != "update" {
+		t.Fatalf("stale pump event changed active source=%p label=%q, want source=%p label=update", m.progress, m.progressLabel, sourceB)
 	}
 }
 

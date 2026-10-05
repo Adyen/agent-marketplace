@@ -9,11 +9,22 @@ package pipeline
 
 import (
 	"context"
+	"path/filepath"
 	"slices"
 	"testing"
 
 	"github.com/Adyen/agent-marketplace/internal/config"
 )
+
+func isolatePhaseObserverTestRoots(t *testing.T) {
+	t.Helper()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, ".cache"))
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+	t.Setenv("XDG_STATE_HOME", filepath.Join(home, ".local", "state"))
+	t.Setenv("CODEX_HOME", filepath.Join(home, ".codex"))
+}
 
 func phaseObserverTestLoaders() Loaders {
 	return Loaders{
@@ -25,6 +36,7 @@ func phaseObserverTestLoaders() Loaders {
 }
 
 func TestSyncReportsPhaseBoundariesInOrder(t *testing.T) {
+	isolatePhaseObserverTestRoots(t)
 	var observed []Phase
 	ctx := WithPhaseObserver(context.Background(), func(phase Phase) {
 		observed = append(observed, phase)
@@ -65,6 +77,7 @@ func TestPrepareMarketplaceInstallReportsPreparePhase(t *testing.T) {
 func TestPhaseObserverIsOptional(t *testing.T) {
 	// Callers that attach no observer must run the same pipeline without
 	// panicking or changing results.
+	isolatePhaseObserverTestRoots(t)
 	result := Sync(context.Background(), ResolveOptions{Workspace: mustWorkspace(t, t.TempDir()), Loaders: phaseObserverTestLoaders()})
 	if len(result.Errors) > 0 {
 		t.Fatalf("unobserved sync changed behavior: %v", result.Errors)

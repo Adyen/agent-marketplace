@@ -330,3 +330,126 @@ func TestHarnessModalSavesGlobalHarnessesToV4Config(t *testing.T) {
 		t.Fatalf("expected v4 sources preserved after harness save, got %#v", cfg.Registries)
 	}
 }
+
+// spec: tui-interactions/harness-options-return-after-compact-resize
+func TestHarnessDialogsRestoreAllOptionsAfterCompactResize(t *testing.T) {
+	type dialog struct {
+		name     string
+		pane     pane
+		open     func(*Model)
+		ids      func(Model) []string
+		selected func(Model) map[string]bool
+		cursor   func(Model) int
+		hovered  func(Model) string
+	}
+	selectedIDs := []string{"factory", "mystery-00", "mystery-01", "mystery-02", "mystery-03", "mystery-04", "mystery-05", "mystery-06", "mystery-07"}
+	selected := make(map[string]bool, len(selectedIDs))
+	for _, id := range selectedIDs {
+		selected[id] = true
+	}
+	dialogs := []dialog{
+		{
+			name: "targets",
+			pane: paneHarnessModal,
+			open: func(m *Model) {
+				m.globalHarnesses = append([]string(nil), selectedIDs...)
+				m.openHarnessModal()
+			},
+			ids: func(m Model) []string { return m.harnessModal.optionIDs },
+			selected: func(m Model) map[string]bool {
+				return m.harnessModal.selected
+			},
+			cursor: func(m Model) int { return m.harnessModal.cursor },
+			hovered: func(m Model) string {
+				id, _ := m.harnessModal.multi.Hovered()
+				return id
+			},
+		},
+		{
+			name: "initialization",
+			pane: paneInitModal,
+			open: func(m *Model) {
+				m.initModal = initModalState{selected: harnessSelection(selectedIDs), detected: true}
+				m.ensureInitForm()
+			},
+			ids: func(m Model) []string { return m.initModal.optionIDs },
+			selected: func(m Model) map[string]bool {
+				return m.initModal.selected
+			},
+			cursor: func(m Model) int { return m.initModal.cursor },
+			hovered: func(m Model) string {
+				id, _ := m.initModal.multi.Hovered()
+				return id
+			},
+		},
+	}
+
+	for _, dialog := range dialogs {
+		t.Run(dialog.name, func(t *testing.T) {
+			m := NewModel(t.TempDir(), t.TempDir())
+			m.loading = false
+			m.width, m.height = 80, 30
+			m.pane = dialog.pane
+			dialog.open(&m)
+			ids := dialog.ids(m)
+			if len(ids) < 2 {
+				t.Fatalf("option fixture = %v, want multiple choices", ids)
+			}
+			for range len(ids) - 1 {
+				updated, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyDown})
+				m = updated.(Model)
+			}
+			lastSelected := selectedIDs[len(selectedIDs)-1]
+			if got := dialog.cursor(m); got != len(ids)-1 || dialog.hovered(m) != lastSelected {
+				t.Fatalf("initial cursor=%d hovered=%q, want selected unknown option %q at %d", got, dialog.hovered(m), lastSelected, len(ids)-1)
+			}
+			if !reflect.DeepEqual(dialog.selected(m), selected) {
+				t.Fatalf("initial selected IDs = %#v, want %#v", dialog.selected(m), selected)
+			}
+
+			fullView := ansi.Strip(m.viewContent())
+			assertHarnessOptionsVisible(t, fullView, ids)
+			cursorBefore, hoveredBefore := dialog.cursor(m), dialog.hovered(m)
+			updated, _ := m.Update(tea.WindowSizeMsg{Width: 50, Height: 12})
+			m = updated.(Model)
+			compactView := ansi.Strip(m.viewContent())
+			if visible := visibleHarnessOptionCount(compactView, ids); visible >= len(ids) {
+				t.Fatalf("compact layout displayed all %d choices in 50x12", visible)
+			}
+			updated, _ = m.Update(tea.WindowSizeMsg{Width: 80, Height: 30})
+			m = updated.(Model)
+			_ = m.viewContent()
+			updated, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyDown})
+			m = updated.(Model)
+			if cmd != nil {
+				t.Fatalf("no-op navigation at the last choice emitted a command: %v", cmd)
+			}
+			fullView = ansi.Strip(m.viewContent())
+			assertHarnessOptionsVisible(t, fullView, ids)
+			if !reflect.DeepEqual(dialog.selected(m), selected) || dialog.cursor(m) != cursorBefore || dialog.hovered(m) != hoveredBefore {
+				t.Fatalf("resize changed selected IDs=%#v cursor=%d hovered=%q", dialog.selected(m), dialog.cursor(m), dialog.hovered(m))
+			}
+		})
+	}
+}
+
+func assertHarnessOptionsVisible(t *testing.T, view string, ids []string) {
+	t.Helper()
+	if visible := visibleHarnessOptionCount(view, ids); visible != len(ids) {
+		t.Fatalf("visible harness choices = %d, want %d:\n%s", visible, len(ids), view)
+	}
+}
+
+func visibleHarnessOptionCount(view string, ids []string) int {
+	lines := strings.Split(view, "\n")
+	visible := 0
+	for _, id := range ids {
+		for _, line := range lines {
+			if strings.Contains(line, id) && (strings.Contains(line, "[ ]") || strings.Contains(line, "[x]") || strings.Contains(line, "[•]")) {
+				visible++
+				break
+			}
+		}
+	}
+	return visible
+}

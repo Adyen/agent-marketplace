@@ -213,12 +213,12 @@ func (m Model) handlePaletteKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 		m.closePalette()
 		return m.dispatchAction(action.id)
-	case key.Matches(msg, m.keys.Up):
+	case msg.String() == "up":
 		if m.palette.cursor > 0 {
 			m.palette.cursor--
 		}
 		return m, nil
-	case key.Matches(msg, m.keys.Down):
+	case msg.String() == "down":
 		if m.palette.cursor < len(m.palette.matches)-1 {
 			m.palette.cursor++
 		}

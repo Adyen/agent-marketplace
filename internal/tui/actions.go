@@ -281,7 +281,7 @@ func readSnapshotStagesForWorkspace(ctx context.Context, ws pipeline.Workspace, 
 			msg.stages = stages
 			stages <- msg
 		}
-		readSnapshotStaged(ctx, ws, homeDir, mode, emit)
+		readSnapshotStaged(ctx, ws, homeDir, mode, true, emit)
 	}()
 	return stages
 }
@@ -320,11 +320,11 @@ func invalidWorkspaceSnapshot(err error) snapshotLoadedMsg {
 
 func readSnapshotForWorkspace(ctx context.Context, ws pipeline.Workspace, homeDir string, mode catalogLoadMode) snapshotLoadedMsg {
 	var snapshot snapshotLoadedMsg
-	readSnapshotStaged(ctx, ws, homeDir, mode, func(msg snapshotLoadedMsg) { snapshot = msg })
+	readSnapshotStaged(ctx, ws, homeDir, mode, false, func(msg snapshotLoadedMsg) { snapshot = msg })
 	return snapshot
 }
 
-func readSnapshotStaged(ctx context.Context, ws pipeline.Workspace, homeDir string, mode catalogLoadMode, emit func(snapshotLoadedMsg)) {
+func readSnapshotStaged(ctx context.Context, ws pipeline.Workspace, homeDir string, mode catalogLoadMode, progressive bool, emit func(snapshotLoadedMsg)) {
 	ws, err := validatedTUIWorkspace(ws)
 	if err != nil {
 		emit(invalidWorkspaceSnapshot(err))
@@ -365,7 +365,7 @@ func readSnapshotStaged(ctx context.Context, ws pipeline.Workspace, homeDir stri
 	}
 	var inventoryRows []row
 	var unavailable bool
-	inspection, releaseExactLease := pipeline.Inspect(ctx, pipeline.InspectOptions{
+	inspectOptions := pipeline.InspectOptions{
 		Resolve: pipeline.ResolveOptions{
 			Workspace:     ws,
 			CatalogMode:   tuiCatalogLoadMode(mode),
@@ -390,15 +390,6 @@ func readSnapshotStaged(ctx context.Context, ws pipeline.Workspace, homeDir stri
 			},
 			ReadOnlyExactLocks:        true,
 			AllowMissingReadOnlyLocks: true,
-			BrowsingConfigReady: func(merged *config.Config) {
-				emit(snapshotLoadedMsg{stage: snapshotStageConfig, mergedCfg: merged})
-			},
-			ProvisionalConfigReady: func(merged *config.Config, local *config.LocalConfig) {
-				emit(snapshotLoadedMsg{stage: snapshotStageConfig, provisionalCfg: merged, provisionalRows: buildProvisionalRows(withCachedCollectionLeaves(merged, marketplace.DefaultCache()), local, provisionalLocalCatalogs(merged, ws), provisionalHarnessDefaults())})
-			},
-			ConfigReady: func(merged *config.Config) {
-				emit(snapshotLoadedMsg{stage: snapshotStageConfig, mergedCfg: merged})
-			},
 		},
 		Resolved: func(result pipeline.InspectionResult) {
 			resolved := result.ResolveResult
@@ -426,7 +417,19 @@ func readSnapshotStaged(ctx context.Context, ws pipeline.Workspace, homeDir stri
 			emit(inventory)
 		},
 		DryRun: runMaterialize,
-	})
+	}
+	if progressive {
+		inspectOptions.Resolve.BrowsingConfigReady = func(merged *config.Config) {
+			emit(snapshotLoadedMsg{stage: snapshotStageConfig, mergedCfg: merged})
+		}
+		inspectOptions.Resolve.ProvisionalConfigReady = func(merged *config.Config, local *config.LocalConfig) {
+			emit(snapshotLoadedMsg{stage: snapshotStageConfig, provisionalCfg: merged, provisionalRows: buildProvisionalRows(withCachedCollectionLeaves(merged, marketplace.DefaultCache()), local, provisionalLocalCatalogs(merged, ws), provisionalHarnessDefaults())})
+		}
+		inspectOptions.Resolve.ConfigReady = func(merged *config.Config) {
+			emit(snapshotLoadedMsg{stage: snapshotStageConfig, mergedCfg: merged})
+		}
+	}
+	inspection, releaseExactLease := pipeline.Inspect(ctx, inspectOptions)
 	defer releaseExactLease()
 	resolvedResult := inspection.ResolveResult
 

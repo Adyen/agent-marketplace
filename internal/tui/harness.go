@@ -131,12 +131,10 @@ func renderHarnessModal(m Model) string {
 	title := titleStyle(t).Render("Target harnesses")
 	activeStyle := okBoldStyle(t)
 	hints := []footerHint{{"space", "toggle"}, {"enter", "save"}, {"esc", "cancel"}, {"g", "global"}, {"p", "project"}}
+	setHarnessMultiSelectHeight(m, modal.multi, modal.optionIDs)
 
 	var body []string
 	if compactTerminalLayout(m) {
-		if modal.multi != nil {
-			modal.multi.Height(max(1, m.height-modalFrameRows-2))
-		}
 		body = append(body, fmt.Sprintf("%s · %s", activeStyle.Render(modal.scope.label()), harnessListLabel(effectiveHarnesses(m), ", ")))
 		if modal.form != nil {
 			body = append(body, modal.form.View())

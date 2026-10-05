@@ -348,8 +348,8 @@ type Model struct {
 	// updateReload is the superseding snapshot generation that must be
 	// accepted (or fail) before a stale updateDoneMsg's operation ends;
 	// updatePendingErr retains that update's own error for the verdict.
-	updateReload         requestGeneration
-	updatePendingErr     error
+	updateReload          requestGeneration
+	updatePendingErr      error
 	updatePendingWarnings []error
 	// syncReload is the snapshot generation scheduled by syncDoneMsg that
 	// must be accepted (or fail) before the sync operation ends;

@@ -14,6 +14,12 @@ const wheelUp = (count: number): string => "\x1b[<64;4;6M".repeat(count);
 
 // spec: tui-mouse-navigation/terminal-wheel-burst-reaches-the-expected-resource
 test("an encoded wheel burst with reversals reaches the expected resource without extra navigation keys", async ({ terminal }) => {
+  const assertSelectedSkillDetails = async (name: string): Promise<void> => {
+    await expect(terminal.getByText(new RegExp(`Name:\\s+${name}`, "g"))).toBeVisible();
+    await expect(terminal.getByText(/Kind:\s+skill/g)).toBeVisible();
+    await expect(terminal.getByText(new RegExp(`skill fixture/${name}`, "g"))).toBeVisible();
+    await expect(terminal.getByText("Status overflow fixture", { strict: false })).toBeVisible();
+  };
   await declineLegacyMigration(terminal);
 
   await step("settled overflowing catalog", () => {}, async () => {
@@ -21,13 +27,9 @@ test("an encoded wheel burst with reversals reaches the expected resource withou
     await expect(terminal.getByText(/Enabled\s+\(31\)/g)).toBeVisible();
   });
 
-  await step("wheel burst down then reversal", () => terminal.write(wheelDown(10) + wheelUp(3)), async () => {
-    await expect(terminal.getByText(/Name:\s+skill-05/g)).toBeVisible();
-  });
+  await step("wheel burst down then reversal", () => terminal.write(wheelDown(10) + wheelUp(3)), async () => assertSelectedSkillDetails("skill-05"));
 
-  await step("first-boundary reversal burst", () => terminal.write(wheelUp(20) + wheelDown(4)), async () => {
-    await expect(terminal.getByText(/Name:\s+skill-02/g)).toBeVisible();
-  });
+  await step("first-boundary reversal burst", () => terminal.write(wheelUp(20) + wheelDown(4)), async () => assertSelectedSkillDetails("skill-02"));
 
   await step("quit without further input", () => terminal.write("q"), async () => {
     assert.equal((await waitForExit(terminal)).exitCode, 0);
