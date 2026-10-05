@@ -36,17 +36,18 @@ func withArchiveOutput(path string, write func(*os.File) error) (err error) {
 	if err != nil {
 		return err
 	}
-	created, err := file.Stat()
-	if err != nil {
-		return errors.Join(err, file.Close())
-	}
+	var created os.FileInfo
 	defer func() {
 		if closeErr := file.Close(); closeErr != nil {
-			err = errors.Join(err, closeErr)
+			if err != nil {
+				err = errors.Join(err, closeErr)
+			} else {
+				err = closeErr
+			}
 		}
 		if err != nil {
 			current, statErr := native.Lstat(name)
-			if statErr == nil && os.SameFile(created, current) {
+			if statErr == nil && (created == nil || os.SameFile(created, current)) {
 				if removeErr := native.Remove(name); removeErr != nil {
 					err = errors.Join(err, removeErr)
 				}
@@ -55,6 +56,10 @@ func withArchiveOutput(path string, write func(*os.File) error) (err error) {
 			}
 		}
 	}()
+	created, err = file.Stat()
+	if err != nil {
+		return err
+	}
 	if err := write(file); err != nil {
 		return err
 	}
