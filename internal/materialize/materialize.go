@@ -3444,6 +3444,14 @@ func staleArtifactLinks(outDir string, desired map[string]string, snapshots map[
 	if err != nil {
 		return nil, diags, err
 	}
+	if boundary != nil && boundary.pruneEnumerationHook != nil {
+		boundary.pruneEnumerationHook(outDir)
+	}
+	// The walk read the retained directory; a replaced name must not turn an
+	// obsolete enumeration into a successful discovery result.
+	if err := verifyPruneDirectory(outDir, boundary, root); err != nil {
+		return nil, diags, err
+	}
 	sort.Strings(stale)
 	return stale, diags, nil
 }
