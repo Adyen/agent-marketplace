@@ -67,6 +67,9 @@ func TestLockContextRefusesHardlinkedMetadata(t *testing.T) {
 	if !errors.Is(err, fsboundary.ErrUnsafeFile) {
 		t.Fatalf("multiply linked metadata admitted to kernel lock/write: %v", err)
 	}
+	if !strings.Contains(err.Error(), store.LockPath()) {
+		t.Fatalf("lock validation error omitted its path: %v", err)
+	}
 	if data, err := os.ReadFile(foreign); err != nil || string(data) != "inert foreign bytes" {
 		t.Fatalf("lock acquisition changed foreign bytes: %q %v", data, err)
 	}

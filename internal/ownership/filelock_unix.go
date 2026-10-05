@@ -35,7 +35,17 @@ func validateLockFile(file *os.File) error {
 	if !identity.Mode.IsRegular() || identity.Links != 1 {
 		return fsboundary.ErrUnsafeFile
 	}
-	return nil
+	raw, err := file.SyscallConn()
+	if err != nil {
+		return err
+	}
+	var nonblockErr error
+	if ctlErr := raw.Control(func(fd uintptr) {
+		nonblockErr = syscall.SetNonblock(int(fd), false)
+	}); ctlErr != nil {
+		return ctlErr
+	}
+	return nonblockErr
 }
 
 // tryLockFile takes an exclusive advisory lock on f WITHOUT blocking.
