@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/Adyen/agent-marketplace/internal/catalog"
@@ -13,6 +14,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/fsboundary"
 	"github.com/Adyen/agent-marketplace/internal/resolver"
 	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 )
@@ -290,6 +292,43 @@ func TestRunPruneDirectoryMarkerRefusalHasNativeDiagnostic(t *testing.T) {
 			assertNativePruneFileSnapshot(t, leaf, data, info)
 			assertNativePruneFileSnapshot(t, externalPath, data, info)
 			assertNativePruneFileSnapshot(t, selectedPath, selectedBytes, selectedInfo)
+		})
+	}
+}
+
+func TestCommandMarkerReadRefusesVanishedDirectory(t *testing.T) {
+	for _, dryRun := range []bool{false, true} {
+		t.Run(fmt.Sprintf("dry-run=%v", dryRun), func(t *testing.T) {
+			root := t.TempDir()
+			dir := filepath.Join(root, "commands")
+			links := []skillLink{{name: "probe.md", artifacts: []artifact.Artifact{{Path: "probe.md", Bytes: []byte("---\ndescription: inert\n---\n\nfirst inert body"), Mode: 0o644}}}}
+			boundary := &destinationBoundary{repoRoot: root, roots: []string{dir}}
+			if _, err := syncCommandFiles(dir, links, false, false, boundary); err != nil {
+				t.Fatal(err)
+			}
+			retained := filepath.Join(root, "retained-commands")
+			moved := false
+			commandMarkerReadHook = func(path string) {
+				if moved || filepath.Dir(path) != dir {
+					return
+				}
+				moved = true
+				if err := os.Rename(dir, retained); err != nil {
+					t.Fatal(err)
+				}
+			}
+			t.Cleanup(func() { commandMarkerReadHook = nil })
+			links[0].artifacts[0].Bytes = []byte("---\ndescription: inert\n---\n\nsecond inert body")
+			report, err := syncCommandFiles(dir, links, dryRun, false, boundary)
+			if !moved {
+				t.Fatal("marker read seam not reached")
+			}
+			if err == nil || hasDiagCode(report.Diags, "materialize.collision.user-owned") {
+				t.Fatalf("vanished command directory reported as a user-owned collision: %+v %v", report, err)
+			}
+			if data, readErr := os.ReadFile(filepath.Join(retained, "probe.md")); readErr != nil || !strings.Contains(string(data), "first inert body") {
+				t.Fatalf("retained command changed: %q %v", data, readErr)
+			}
 		})
 	}
 }
