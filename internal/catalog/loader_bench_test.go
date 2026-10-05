@@ -159,7 +159,7 @@ func BenchmarkHasBundleRoot(b *testing.B) {
 		b.ResetTimer()
 		b.ReportAllocs()
 		for i := 0; i < b.N; i++ {
-			hasBundleRoot(dir)
+			_, _ = hasBundleRoot(dir)
 		}
 	})
 	b.Run("multi_skill_subdirs", func(b *testing.B) {
@@ -176,7 +176,7 @@ func BenchmarkHasBundleRoot(b *testing.B) {
 		b.ResetTimer()
 		b.ReportAllocs()
 		for i := 0; i < b.N; i++ {
-			hasBundleRoot(dir)
+			_, _ = hasBundleRoot(dir)
 		}
 	})
 	b.Run("non_bundle_dir", func(b *testing.B) {
@@ -187,7 +187,7 @@ func BenchmarkHasBundleRoot(b *testing.B) {
 		b.ResetTimer()
 		b.ReportAllocs()
 		for i := 0; i < b.N; i++ {
-			hasBundleRoot(dir)
+			_, _ = hasBundleRoot(dir)
 		}
 	})
 }
