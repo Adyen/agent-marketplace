@@ -142,3 +142,47 @@ func assertNativePruneFileSnapshot(t *testing.T, path string, want []byte, obser
 		t.Fatalf("file generation changed: %s %q %v %v", path, data, err, statErr)
 	}
 }
+
+func TestNativeSkillMarkedFilePruneKeepsEnumeratedGeneration(t *testing.T) {
+	root := t.TempDir()
+	out := filepath.Join(root, "skills")
+	if err := os.Mkdir(out, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	leaf := filepath.Join(out, "a-marked.md")
+	original := []byte("---\n_managed_by: agent-marketplace\n---\n\noriginal marked file\n")
+	if err := os.WriteFile(leaf, original, 0o640); err != nil {
+		t.Fatal(err)
+	}
+	retained := filepath.Join(root, "retained.md")
+	replacementBytes := []byte("---\n_managed_by: agent-marketplace\n---\n\nreplacement marked file\n")
+	var replacement os.FileInfo
+	skillPruneObservedHook = func(path string) {
+		if path != leaf || replacement != nil {
+			return
+		}
+		if err := os.Rename(leaf, retained); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(leaf, replacementBytes, 0o640); err != nil {
+			t.Fatal(err)
+		}
+		var err error
+		if replacement, err = os.Lstat(leaf); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Cleanup(func() { skillPruneObservedHook = nil })
+	boundary := &destinationBoundary{repoRoot: root, roots: []string{out}}
+	report, err := syncSkillLinks(out, nil, false, true, portableSyncContext{boundary: boundary})
+	if replacement == nil {
+		t.Fatal("enumeration seam not reached")
+	}
+	if !errors.Is(err, fsboundary.ErrGenerationConflict) || slices.Contains(report.Removed, "a-marked.md") {
+		t.Fatalf("marked replacement after enumeration was pruned: %+v %v", report, err)
+	}
+	assertNativePruneFileSnapshot(t, leaf, replacementBytes, replacement)
+	if data, err := os.ReadFile(retained); err != nil || !bytes.Equal(data, original) {
+		t.Fatalf("enumerated generation changed: %q %v", data, err)
+	}
+}
