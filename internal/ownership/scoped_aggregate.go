@@ -22,6 +22,22 @@ func (s *Store) readAbsoluteAggregate(path string) ([]byte, error) {
 	return s.ReadAggregate(filepath.ToSlash(rel))
 }
 
+// bindRootIdentity requires a captured canonical root to be the directory
+// object admitted for this Store. A root that did not exist at Open is bound
+// on its first capture; any later replacement refuses as a generation conflict.
+func (s *Store) bindRootIdentity(captured fsboundary.Identity) error {
+	s.rootMu.Lock()
+	defer s.rootMu.Unlock()
+	if !s.rootBound {
+		s.rootIdentity, s.rootBound = captured, true
+		return nil
+	}
+	if !s.rootIdentity.SameObject(captured) {
+		return fmt.Errorf("%w: canonical root %s replaced since admission", fsboundary.ErrGenerationConflict, s.canonicalRoot)
+	}
+	return nil
+}
+
 func (s *Store) ReadAggregate(rel string) (data []byte, err error) {
 	defer func() {
 		if err == nil {
@@ -63,6 +79,9 @@ func (s *Store) ReadAggregate(rel string) (data []byte, err error) {
 			err = errors.Join(err, closeErr)
 		}
 	}()
+	if err := s.bindRootIdentity(root.Identity()); err != nil {
+		return nil, err
+	}
 	file, err := fsboundary.CaptureDestination(root, filepath.FromSlash(rel), fsboundary.LinkPolicyRepository)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) && !errors.Is(err, fsboundary.ErrUnsafePath) && !errors.Is(err, fsboundary.ErrUnsafeFile) && !errors.Is(err, fsboundary.ErrGenerationConflict) {
