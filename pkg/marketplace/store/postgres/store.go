@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/url"
 	"regexp"
 	"strings"
@@ -568,7 +569,35 @@ func (s *Store) putResourceRevision(ctx context.Context, rev store.ResourceRevis
 		return err
 	}
 	if existing != rev {
-		return fmt.Errorf("%w: resource revision %s@%s already has different immutable fields", store.ErrConflict, rev.Coordinate, rev.ContentDigest)
+		repaired := existing
+		repaired.ArchiveDigest = rev.ArchiveDigest
+		if repaired != rev {
+			return fmt.Errorf("%w: resource revision %s@%s already has different immutable fields", store.ErrConflict, rev.Coordinate, rev.ContentDigest)
+		}
+		if _, err := s.q.ExecContext(ctx, `UPDATE resource_revisions SET archive_digest=NULLIF($1, '')
+			WHERE marketplace_id=$2 AND registry_id=$3 AND kind=$4 AND name=$5 AND content_digest=$6`,
+			string(rev.ArchiveDigest), rev.Coordinate.Marketplace, rev.Coordinate.Registry, rev.Coordinate.Kind,
+			rev.Coordinate.Name, rev.ContentDigest); err != nil {
+			return err
+		}
+		for _, digest := range []store.ArchiveDigest{existing.ArchiveDigest, rev.ArchiveDigest} {
+			if digest == "" {
+				continue
+			}
+			if _, err := s.q.ExecContext(ctx, `INSERT INTO blob_resource_owners
+				(blob_kind,blob_digest,marketplace_id,registry_id,resource_kind,name,content_digest)
+				VALUES ('archive',$1,$2,$3,$4,$5,$6) ON CONFLICT DO NOTHING`,
+				string(digest), rev.Coordinate.Marketplace, rev.Coordinate.Registry, rev.Coordinate.Kind,
+				rev.Coordinate.Name, rev.ContentDigest); err != nil {
+				return err
+			}
+		}
+		slog.WarnContext(ctx, "resource revision archive digest repaired",
+			"marketplace", rev.Coordinate.Marketplace, "registry", rev.Coordinate.Registry,
+			"kind", rev.Coordinate.Kind, "name", rev.Coordinate.Name,
+			"content_digest", rev.ContentDigest,
+			"old_archive_digest", existing.ArchiveDigest, "new_archive_digest", rev.ArchiveDigest)
+		return s.advanceCatalogVersion(ctx)
 	}
 	// An intrinsic revision is not catalog-visible until both a current
 	// occurrence and assessment point at it.
@@ -616,7 +645,19 @@ func (s *Store) putResourceOccurrence(ctx context.Context, occurrence store.Reso
 	core := existing
 	core.SourcePath = occurrence.SourcePath
 	if !occurrence.Equal(core) {
-		return fmt.Errorf("%w: resource occurrence %s@%s already has different immutable fields", store.ErrConflict, occurrence.Coordinate, occurrence.Commit)
+		repaired := core
+		repaired.ManifestDigest = occurrence.ManifestDigest
+		if !occurrence.Equal(repaired) {
+			return fmt.Errorf("%w: resource occurrence %s@%s already has different immutable fields", store.ErrConflict, occurrence.Coordinate, occurrence.Commit)
+		}
+		if _, err := s.q.ExecContext(ctx, `UPDATE resource_occurrences SET manifest_digest=$1
+			WHERE marketplace_id=$2 AND registry_id=$3 AND kind=$4 AND name=$5 AND content_digest=$6 AND revision_commit=$7`,
+			occurrence.ManifestDigest, occurrence.Coordinate.Marketplace, occurrence.Coordinate.Registry,
+			occurrence.Coordinate.Kind, occurrence.Coordinate.Name, occurrence.ContentDigest, occurrence.Commit); err != nil {
+			return err
+		}
+		existing.ManifestDigest = occurrence.ManifestDigest
+		changed = true
 	}
 	if existing.SourcePath != "" && occurrence.SourcePath != "" && existing.SourcePath != occurrence.SourcePath {
 		return fmt.Errorf("%w: resource occurrence %s@%s already has a different source path", store.ErrConflict, occurrence.Coordinate, occurrence.Commit)
@@ -756,8 +797,12 @@ func (s *Store) ListResourceRevisions(ctx context.Context, coord store.ResourceC
 func (s *Store) ListResourceRevisionsByArchiveDigest(ctx context.Context, marketplace store.MarketplaceID, digest store.ArchiveDigest) ([]store.AssessedResourceRevision, error) {
 	return s.queryAssessedResourceRevisions(ctx, `SELECT `+assessedResourceColumns+`
 		FROM resource_revisions rr`+assessedResourceJoins+`
-		WHERE rr.marketplace_id=$1 AND rr.archive_digest=$2
-		ORDER BY rr.registry_id, rr.kind, rr.name, ro.occurred_at DESC NULLS LAST, rr.content_digest DESC`, marketplace, digest)
+		WHERE rr.marketplace_id=$1 AND (rr.archive_digest=$2 OR EXISTS (
+			SELECT 1 FROM blob_resource_owners bo
+			WHERE bo.blob_kind='archive' AND bo.blob_digest=$3
+			  AND bo.marketplace_id=rr.marketplace_id AND bo.registry_id=rr.registry_id
+			  AND bo.resource_kind=rr.kind AND bo.name=rr.name AND bo.content_digest=rr.content_digest))
+		ORDER BY rr.registry_id, rr.kind, rr.name, ro.occurred_at DESC NULLS LAST, rr.content_digest DESC`, marketplace, digest, digest)
 }
 
 func (s *Store) ListResourceRevisionsByContentDigest(ctx context.Context, marketplace store.MarketplaceID, digest store.RevisionDigest) ([]store.AssessedResourceRevision, error) {

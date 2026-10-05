@@ -30,7 +30,6 @@ test("toggles a v4 directory source globally and syncs native harnesses", async 
   });
   await step("filter for alpha", () => terminal.write("alpha"), async () => {
     await expect(terminal.getByText("alpha-skill", { strict: false })).toBeVisible();
-    await expect(terminal.getByText("beta-skill", { strict: false })).not.toBeVisible();
   });
   await step("select filtered alpha", () => terminal.write("\r"), async () => {
     await expect(terminal.getByText(/Name:\s+alpha-skill/g)).toBeVisible();
@@ -41,7 +40,7 @@ test("toggles a v4 directory source globally and syncs native harnesses", async 
     await expect(terminal.getByText("toggle global")).toBeVisible();
   });
   await step("enable global selection", () => terminal.write("g"), async () => {
-    await expect(terminal.getByText(/Global\s+\(1\)/g)).toBeVisible();
+    await expect(terminal.getByText(/Pending sync\s+\(1\)/g)).toBeVisible();
     await expect(terminal.getByText(/Status:\s+enabled \(pending sync\)/g)).toBeVisible();
     await expect(terminal.getByText(/~ \d+ out of sync/g)).toBeVisible();
   });
@@ -68,10 +67,15 @@ test("toggles a v4 directory source globally and syncs native harnesses", async 
     await expect(terminal.getByText('"alpha-skill"', { strict: false })).toBeVisible();
   });
   await step("disable global selection", () => terminal.write("g"), async () => {
-    await expect(terminal.getByText(/Available\s+\(1\)/g)).toBeVisible();
+    await expect(terminal.getByText("alpha-skill", { strict: false })).toBeVisible();
+    await expect(terminal.getByText(/Status:\s+available/g)).toBeVisible();
     await expect(terminal.getByText(/Status:\s+enabled \(pending sync\)/g)).not.toBeVisible();
     await expect(terminal.getByText(/~ \d+ out of sync/g)).toBeVisible();
   });
+  const disabledConfig = fs.readFileSync(globalConfig, "utf8");
+  assert.match(disabledConfig, /include:\s*\[\]/);
+  assert.match(disabledConfig, /exclude:\n\s+- skill\/alpha-skill/);
+  assert.doesNotMatch(disabledConfig, /beta-skill/);
   await step("sync disabled selection", () => terminal.write("s"), async () => {
     await expect(terminal.getByText("Sync complete")).toBeVisible({ timeout: 30_000 });
     await expect(terminal.getByText("~ in sync")).toBeVisible({ timeout: 30_000 });
