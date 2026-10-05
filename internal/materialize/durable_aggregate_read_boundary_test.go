@@ -143,7 +143,7 @@ func TestRunDurableAggregateReadRefusesOrdinaryRootReplacement(t *testing.T) {
 	if err := os.Rename(retained, root); err != nil {
 		t.Fatal(err)
 	}
-	desired[0].Entry.Resource = ir.NewMcpServer("first", "echo", []string{"updated-root-control"}, nil, nil, ir.SourceRef{})
+	desired[0].Resource = ir.NewMcpServer("first", "echo", []string{"updated-root-control"}, nil, nil, ir.SourceRef{})
 	restored, err := Run(t.Context(), repo, desired)
 	if err != nil || diag.HasErrors(restored.Diags) {
 		t.Fatalf("restored original root sync failed: %+v %v", restored, err)

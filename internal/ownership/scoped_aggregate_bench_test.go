@@ -42,8 +42,9 @@ func BenchmarkScopedAggregateReadDisk(b *testing.B) {
 
 // BenchmarkStoreOpenWithRootAdmission measures the cost of capturing the
 // admitted root identity at Open time. The root exists and contains a small
-// aggregate. Disk work: one EvalSymlinks + open + fstat + close on the
-// canonical root directory. Timing scope: Open only, not ReadAggregate.
+// aggregate. Disk work includes canonicalization, descriptor-relative root
+// capture, and descriptor cleanup. Timing scope: Open only, not payload reads,
+// filesystem writes, or network access.
 func BenchmarkStoreOpenWithRootAdmission(b *testing.B) {
 	b.Setenv("HOME", b.TempDir())
 	b.Setenv("XDG_STATE_HOME", b.TempDir())
@@ -64,7 +65,8 @@ func BenchmarkStoreOpenWithRootAdmission(b *testing.B) {
 }
 
 // BenchmarkStoreOpenAbsentRoot measures the cost of Open when the root is
-// genuinely absent (no identity capture, EvalSymlinks fails fast).
+// genuinely absent. It includes canonicalization and the failed root-capture
+// attempt, without filesystem writes or network access.
 func BenchmarkStoreOpenAbsentRoot(b *testing.B) {
 	b.Setenv("HOME", b.TempDir())
 	b.Setenv("XDG_STATE_HOME", b.TempDir())
@@ -83,10 +85,10 @@ func BenchmarkStoreOpenAbsentRoot(b *testing.B) {
 }
 
 // BenchmarkScopedAggregateReadWithAdmission measures the full Open + ReadAggregate
-// path with the admitted root identity check active. Disk work: Open (EvalSymlinks
-// + open + fstat + close on root) + ReadAggregate (open root via anchor, identity
-// compare, capture destination, read 4 KiB). Timing scope: one Open and one
-// ReadAggregate per iteration.
+// path with the admitted root identity check active. Disk work includes
+// canonicalization, descriptor-relative root capture and cleanup, destination
+// capture, and a 4 KiB read. Timing scope: one Open and one ReadAggregate per
+// iteration, without filesystem writes or network access.
 func BenchmarkScopedAggregateReadWithAdmission(b *testing.B) {
 	b.Setenv("HOME", b.TempDir())
 	b.Setenv("XDG_STATE_HOME", b.TempDir())
