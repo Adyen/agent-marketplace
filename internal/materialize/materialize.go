@@ -3591,14 +3591,14 @@ func pruneSkillCacheSupportFiles(cacheDir string, compiled map[string]bool) (err
 	verify := func() error {
 		info, err := os.Stat(cacheDir)
 		if err != nil {
-			return errors.Join(fsboundary.ErrGenerationConflict, err)
+			return fmt.Errorf("%w: support-prune cache %s unavailable: %w", fsboundary.ErrGenerationConflict, cacheDir, err)
 		}
 		identity, err := fsboundary.FileInfoIdentity(info)
 		if err != nil {
-			return err
+			return fmt.Errorf("support-prune cache %s identity: %w", cacheDir, err)
 		}
 		if !identity.SameObject(root.Identity()) {
-			return fsboundary.ErrGenerationConflict
+			return fmt.Errorf("%w: support-prune cache %s replaced since capture", fsboundary.ErrGenerationConflict, cacheDir)
 		}
 		return nil
 	}

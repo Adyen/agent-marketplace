@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/Adyen/agent-marketplace/internal/catalog"
@@ -100,6 +101,13 @@ func TestRunSupportCachePruneRefusesRetargetedGeneration(t *testing.T) {
 	report, err := Run(t.Context(), repo, resolved)
 	if err != nil || !changed || !hasDiagCode(report.Diags, "materialize.write.error") {
 		t.Fatalf("cache retarget did not refuse: changed=%t report=%+v err=%v", changed, report, err)
+	}
+	identified := false
+	for _, d := range report.Diags {
+		identified = identified || (d.Code == "materialize.write.error" && strings.Contains(d.Message, "support-prune cache "+cacheDir))
+	}
+	if !identified {
+		t.Fatalf("cache refusal does not name the support-prune cache %s: %+v", cacheDir, report.Diags)
 	}
 	if raw, err := os.ReadFile(foreignPayload); err != nil || string(raw) != "foreign inert support" {
 		t.Fatalf("prune consumed foreign support: %q %v", raw, err)
