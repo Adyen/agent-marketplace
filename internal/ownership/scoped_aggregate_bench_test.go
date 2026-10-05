@@ -8,6 +8,9 @@ import (
 )
 
 func BenchmarkScopedAggregateReadDisk(b *testing.B) {
+	b.Setenv("HOME", b.TempDir())
+	b.Setenv("XDG_STATE_HOME", b.TempDir())
+	b.Setenv("XDG_CACHE_HOME", b.TempDir())
 	root := b.TempDir()
 	path := filepath.Join(root, "aggregate.json")
 	if err := os.WriteFile(path, bytes.Repeat([]byte("x"), 4096), 0o600); err != nil {

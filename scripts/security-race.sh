@@ -81,11 +81,11 @@ run_race ./internal/materialize \
     -count=20
 
 run_race ./internal/catalog ./internal/fsboundary \
-    -run '^Test(LoadPrimarySource.*|SourceFSKeepsCapturedRootAndDirectoryInfo)$' \
+    -run '^Test(LoadPrimarySource.*|LoadFactoryContainedDirectoryAliases|LoadFactoryUnsafeDirectoryAliases|DiscoverSourceRefusalPreservesIndependentSiblingPolicy|SourceFS.*)$' \
     -count=20
 
 run_race ./internal/sourcerevision \
-    -run '^TestBuildSourceHash.*$' \
+    -run '^Test(BuildSourceHash.*|BuildRefusesIngestionBoundaryWithValidSibling|Cursor.*|ResourceSourceBytesPreservesLegacyFallbackBoundary)$' \
     -count=20
 
 run_race ./internal/collection \
@@ -105,17 +105,17 @@ run_race ./internal/tui \
     -count=20
 
 run_race ./internal/materialize \
-    -run '^Test(RunPortableOutputDigest.*|RunPortableFilePublication.*|RunPortableTreePublication.*|RunPortablePrune.*|RunNativeManagedLinkPrune.*|RunNativeOwnershipMarker.*|RunNativeCommandPublication.*|RunNativeCommandPrune.*|RunPruneDirectory.*|RunNativeMarkerAggregate.*|RunDurableAggregateRead.*|PortableRegularDigest.*|PortableTreeDigest.*)$' \
+    -run '^Test(RunPortableOutputDigest.*|RunPortableFilePublication.*|RunPortableTreePublication.*|RunPortablePrune.*|RunNativeManagedLinkPrune.*|RunNativeOwnershipMarker.*|RunNativeCommandPublication.*|RunNativeCommandPrune.*|RunPruneDirectory.*|PruneDirectory.*|RunNativeMarkerAggregate.*|RunDurableAggregateRead.*|RunNativeAggregate.*|NativeAggregate.*|NativePruneClassificationSnapshot|NativeSkillMarkedFilePruning|NativeCommandFilePruneMissingParity|NativeCommandSymlinkPruneClassification|RunNativeCommandSymlinkPruneRefusesReplacement|PortableRegularDigest.*|PortableTreeDigest.*|PortableTreeReadOnly.*|PortableTreeInitialInspectionCleanup|PortableTreeCleanupPreservesNestedForeignMetadata|PortableReadOnlyOwned.*|OwnedPortableRemoval.*|ReadOnlyPortablePrune.*)$' \
     -count=20
 
 run_race ./internal/fsboundary \
-    -run '^TestRmdir.*$' \
+    -run '^Test(Rmdir.*|ReadTargetPropagatesOwnedDescriptorCloseFailures)$' \
     -count=20
 
 run_race ./internal/ownership \
-    -run '^Test(StoreReadAggregate.*|ApplyRetargetedParentDoesNotStageOutsideRoot|ApplyRefuses.*Generation|ApplyCapturedPublicationPreservesSharedMode|ProofRefusesAliasedOwnershipState|RecoverRefusesAliasedJournal|OwnershipMetadata.*|ApplyMetadataPublication.*|ApplyJournalCleanupPreservesReplacementGeneration|RecoverStagedCleanup.*|OrphanCandidatesRefuseAliasedSafetyManifest|SafetyEvidence.*|RetainedSafetyPayload.*|SafetyPayload.*|BackupOnlyRefusesRetargetedSafetyDirectory|BackupOnlyPreservesReplacedProducer|BackupOnlyRetention.*|SafetyRemoval.*|ApplyCASCleanup.*|ApplyRefusesSameJSONOriginalRecordReplacement|ApplyRefusesOriginalRecordReplacementBeforeCommit|LockContextRefusesHardlinkedMetadata|LockContextFIFORefusesWithoutBlocking|LockMetadataPreservesLinkAddedAfterAcquisition|LockRefusesDirectoryRetargetAfterStoreAdmission|LockNamespaceRefusesLeafReplacedWhileWaiting|RecoverRefusesAliasedStateBeforeRollback)$' \
+    -run '^Test(StoreReadAggregate.*|ApplyRetargetedParentDoesNotStageOutsideRoot|ApplyRefuses.*Generation|ApplyCapturedPublicationPreservesSharedMode|ApplyStagedRefusalDisarmsJournalForRecovery|ProofRefusesAliasedOwnershipState|RecoverRefusesAliasedJournal|OwnershipMetadata.*|ApplyMetadataPublication.*|ApplyJournalCleanupPreservesReplacementGeneration|RecoverStagedCleanup.*|OrphanCandidatesRefuseAliasedSafetyManifest|SafetyEvidence.*|RetainedSafetyPayload.*|SafetyPayload.*|BackupOnlyRefusesRetargetedSafetyDirectory|BackupOnlyPreservesReplacedProducer|BackupOnlyRetention.*|SafetyRemoval.*|ApplyCASCleanup.*|ApplyRefusesSameJSONOriginalRecordReplacement|ApplyRefusesOriginalRecordReplacementBeforeCommit|LockContextRefusesHardlinkedMetadata|LockContextFIFORefusesWithoutBlocking|LockMetadataPreservesLinkAddedAfterAcquisition|LockRefusesDirectoryRetargetAfterStoreAdmission|LockNamespaceRefusesLeafReplacedWhileWaiting|RecoverRefusesAliasedStateBeforeRollback)$' \
     -count=20
 
 run_race ./internal/backup \
-    -run '^Test(RestoreCodexSetRefusesAliasedManifest|RestoreRefusesHardlinkedArchivePayload|RestoreRegularFileRefusesHardlinkedDestination|MappedRestoreRefusesReplacedGeneration|RestoreTreeRefusesRetargetedRoot|RestoreSymlinkRefusesHardlinkedDestination|CreateRefusesHardlinkedSourcePayload|CreateRefusesAliasedMetadataAncestor|ArchiveOutputRefusalKeepsForeignReplacement|ArchiveOutputRefusesRetargetedParentGeneration|CreateCodexSetPreservesAliasedPartialManifest|CodexSetOutputPreservesChangedGenerations|RotateRefusesHardlinkedArchive|RetentionMemberRefusesReplacementGeneration|RotateCodexSetRefusesHardlinkedMember)$' \
+    -run '^Test(RestoreCodexSetRefusesAliasedManifest|RestoreRefusesHardlinkedArchivePayload|RestoreRegularFileRefusesHardlinkedDestination|MappedRestoreRefusesReplacedGeneration|MappedRestoreRefusesRetargetedParentGeneration|RestoreKeepsUnreadableArchivedModes|RestoreTreeRefusesRetargetedRoot|CreateRefusesHardlinkedSourcePayload|CreateRefusesAliasedMetadataAncestor|ArchiveOutputRefusalKeepsForeignReplacement|ArchiveOutputRefusalKeepsReplacementLeaf|ArchiveOutputRefusesRetargetedParentGeneration|CreateCodexSetPreservesAliasedPartialManifest|CodexSetOutputPreservesChangedGenerations|RotateRefusesHardlinkedArchive|RetentionMemberRefusesReplacementGeneration|RotateCodexSetRefusesHardlinkedMember|RestoreSymlinkRefusesHardlinkedDestination)$' \
     -count=20
