@@ -846,7 +846,7 @@ func (s *Store) removeStaged(j *Journal) (err error) {
 		return nil
 	}
 	prefix := fmt.Sprintf("%s.am-staged-%d-", j.AbsFile, j.Generation)
-	if !filepath.IsAbs(j.StagedPath) || !strings.HasPrefix(j.StagedPath, prefix) || filepath.Dir(j.StagedPath) != filepath.Dir(j.AbsFile) {
+	if filepath.Clean(j.StagedPath) != j.StagedPath || !filepath.IsAbs(j.StagedPath) || !strings.HasPrefix(j.StagedPath, prefix) || filepath.Dir(j.StagedPath) != filepath.Dir(j.AbsFile) {
 		return fsboundary.ErrUnsafePath
 	}
 	if err := s.ensureUnderRoot(j.AbsFile); err != nil {
@@ -881,7 +881,7 @@ func (s *Store) removeStaged(j *Journal) (err error) {
 		return err
 	}
 	if Digest(data) != j.NextDigest {
-		return fsboundary.ErrGenerationConflict
+		return fmt.Errorf("ownership: staged file %s does not match journal digest: %w", j.StagedPath, fsboundary.ErrGenerationConflict)
 	}
 	fresh, err := s.captureAggregateParent(j.StagedPath)
 	if err != nil {
