@@ -27,7 +27,8 @@ func restoreCapturedSymlink(parent *fsboundary.Dir, name, target string) (err er
 		if identityErr != nil {
 			return identityErr
 		}
-		if info.Mode().IsRegular() {
+		switch {
+		case info.Mode().IsRegular():
 			opened, observed, openErr := parent.OpenFile(name)
 			if openErr != nil {
 				return openErr
@@ -40,7 +41,9 @@ func restoreCapturedSymlink(parent *fsboundary.Dir, name, target string) (err er
 			if !observed.SameState(identity) {
 				return fsboundary.ErrGenerationConflict
 			}
-		} else if !info.IsDir() && info.Mode()&os.ModeSymlink == 0 {
+		case info.IsDir(), info.Mode()&os.ModeSymlink != 0:
+			// Directories and links at the leaf are replaced by the restored link.
+		default:
 			return fsboundary.ErrUnsafeFile
 		}
 	}
