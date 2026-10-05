@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"sync"
 	"time"
+
+	"github.com/Adyen/agent-marketplace/internal/fsboundary"
 )
 
 // CrashPoint names one boundary at which a real process can die mid-mutation.
@@ -81,6 +83,15 @@ type Store struct {
 	lockRootErr        error
 	canonicalRoot      string
 	rootKey            string
+
+	// admittedRootID is the object identity (device/inode) of the canonical
+	// root captured at Open when the root already existed. admittedRootExist
+	// is false when the root was absent at admission, so a later authorized
+	// creation remains valid. The identity is invocation-local, never
+	// persisted, and compared by SameObject (device/inode only) so legitimate
+	// directory metadata changes within the same root remain valid.
+	admittedRootID    fsboundary.Identity
+	admittedRootExist bool
 
 	crasher Crasher
 	now     func() time.Time
@@ -193,6 +204,19 @@ func Open(targetRoot string, opts ...Option) (*Store, error) {
 		return nil, err
 	} else if ok {
 		s.lockTimeout = d
+	}
+	// Capture the identity of an existing canonical root through a strict
+	// descriptor-relative open, then close the descriptor immediately. Store
+	// has no lifecycle Close API, so retaining descriptors for every preview
+	// or status Store would leak. A genuinely absent root records absence and
+	// remains compatible with later authorized creation. Any capture failure
+	// (absence, permission, non-directory) simply leaves admittedRootExist
+	// false; the actual error surfaces later when ReadAggregate reopens the
+	// root. This adds no filesystem mutation and no persisted inode ownership.
+	if dir, openErr := fsboundary.OpenDir(canonical); openErr == nil {
+		s.admittedRootID = dir.Identity()
+		s.admittedRootExist = true
+		_ = dir.Close()
 	}
 	return s, nil
 }

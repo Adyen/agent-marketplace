@@ -54,6 +54,9 @@ func (s *Store) ReadAggregate(rel string) (data []byte, err error) {
 	root, err := anchor.OpenPath(rootRel)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) && !errors.Is(err, fsboundary.ErrUnsafePath) {
+			if s.admittedRootExist {
+				return nil, fmt.Errorf("%w: admitted root disappeared before payload read", fsboundary.ErrGenerationConflict)
+			}
 			return nil, &os.PathError{Op: "read aggregate", Path: filepath.Join(s.canonicalRoot, rel), Err: fs.ErrNotExist}
 		}
 		return nil, err
@@ -63,6 +66,9 @@ func (s *Store) ReadAggregate(rel string) (data []byte, err error) {
 			err = errors.Join(err, closeErr)
 		}
 	}()
+	if s.admittedRootExist && !s.admittedRootID.SameObject(root.Identity()) {
+		return nil, fmt.Errorf("%w: admitted root replaced before payload read", fsboundary.ErrGenerationConflict)
+	}
 	file, err := fsboundary.CaptureDestination(root, filepath.FromSlash(rel), fsboundary.LinkPolicyRepository)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) && !errors.Is(err, fsboundary.ErrUnsafePath) && !errors.Is(err, fsboundary.ErrUnsafeFile) && !errors.Is(err, fsboundary.ErrGenerationConflict) {

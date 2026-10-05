@@ -39,3 +39,72 @@ func BenchmarkScopedAggregateReadDisk(b *testing.B) {
 		})
 	}
 }
+
+// BenchmarkStoreOpenWithRootAdmission measures the cost of capturing the
+// admitted root identity at Open time. The root exists and contains a small
+// aggregate. Disk work: one EvalSymlinks + open + fstat + close on the
+// canonical root directory. Timing scope: Open only, not ReadAggregate.
+func BenchmarkStoreOpenWithRootAdmission(b *testing.B) {
+	b.Setenv("HOME", b.TempDir())
+	b.Setenv("XDG_STATE_HOME", b.TempDir())
+	b.Setenv("XDG_CACHE_HOME", b.TempDir())
+	root := b.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "aggregate.json"), bytes.Repeat([]byte("x"), 4096), 0o600); err != nil {
+		b.Fatal(err)
+	}
+	stateRoot := b.TempDir()
+	b.ReportAllocs()
+	for b.Loop() {
+		store, err := Open(root, WithStateRoot(stateRoot))
+		if err != nil {
+			b.Fatal(err)
+		}
+		_ = store
+	}
+}
+
+// BenchmarkStoreOpenAbsentRoot measures the cost of Open when the root is
+// genuinely absent (no identity capture, EvalSymlinks fails fast).
+func BenchmarkStoreOpenAbsentRoot(b *testing.B) {
+	b.Setenv("HOME", b.TempDir())
+	b.Setenv("XDG_STATE_HOME", b.TempDir())
+	b.Setenv("XDG_CACHE_HOME", b.TempDir())
+	parent := b.TempDir()
+	root := filepath.Join(parent, "absent-root")
+	stateRoot := b.TempDir()
+	b.ReportAllocs()
+	for b.Loop() {
+		store, err := Open(root, WithStateRoot(stateRoot))
+		if err != nil {
+			b.Fatal(err)
+		}
+		_ = store
+	}
+}
+
+// BenchmarkScopedAggregateReadWithAdmission measures the full Open + ReadAggregate
+// path with the admitted root identity check active. Disk work: Open (EvalSymlinks
+// + open + fstat + close on root) + ReadAggregate (open root via anchor, identity
+// compare, capture destination, read 4 KiB). Timing scope: one Open and one
+// ReadAggregate per iteration.
+func BenchmarkScopedAggregateReadWithAdmission(b *testing.B) {
+	b.Setenv("HOME", b.TempDir())
+	b.Setenv("XDG_STATE_HOME", b.TempDir())
+	b.Setenv("XDG_CACHE_HOME", b.TempDir())
+	root := b.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "aggregate.json"), bytes.Repeat([]byte("x"), 4096), 0o600); err != nil {
+		b.Fatal(err)
+	}
+	stateRoot := b.TempDir()
+	b.ReportAllocs()
+	for b.Loop() {
+		store, err := Open(root, WithStateRoot(stateRoot))
+		if err != nil {
+			b.Fatal(err)
+		}
+		data, err := store.ReadAggregate("aggregate.json")
+		if err != nil || len(data) != 4096 {
+			b.Fatalf("aggregate read failed: %d %v", len(data), err)
+		}
+	}
+}
