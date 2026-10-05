@@ -4,4 +4,4 @@
 - [x] Retain existing private observation through shared metadata pre-preparation/pre-publication validation.
 - [x] All three journal publication consumers and initial/state compatibility retained.
 - [x] Final Linux/macOS/count20 phase-crash-recovery/validate/spec/lifecycle cost/all-file review.
-- [ ] Archive as final commit.
+- [x] Archive as final commit.
