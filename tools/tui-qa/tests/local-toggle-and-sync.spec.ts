@@ -37,7 +37,7 @@ test("local toggle reaches pending state before sync", async ({ terminal }) => {
   });
 
   await step("toggle local", () => terminal.write("l"), async () => {
-    await expect(terminal.getByText(/Local\s+\(1\)/g)).toBeVisible();
+    await expect(terminal.getByText(/Pending sync\s+\(1\)/g)).toBeVisible();
     await expect(terminal.getByText(/Status:\s+enabled \(pending sync\)/g)).toBeVisible();
     await expect(terminal.getByText("~ 1 out of sync")).toBeVisible();
   });

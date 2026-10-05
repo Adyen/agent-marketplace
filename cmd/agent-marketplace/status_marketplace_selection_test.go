@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -66,6 +67,12 @@ func newCountingV4MarketplaceServer(t *testing.T, instanceID, resourceName strin
 // distributes a collection without shipping an organization lock.
 func newV4MarketplaceCollectionServer(t *testing.T, instanceID, collectionName, memberName string) *httptest.Server {
 	t.Helper()
+	server, _ := newDriftableV4MarketplaceCollectionServer(t, instanceID, collectionName, memberName)
+	return server
+}
+
+func newDriftableV4MarketplaceCollectionServer(t *testing.T, instanceID, collectionName, memberName string) (*httptest.Server, func() string) {
+	t.Helper()
 	canonical, err := hccartifact.FromIR(ir.NewSkill(memberName, "Review", "Review carefully.", nil, nil, ir.SourceRef{}))
 	if err != nil {
 		t.Fatal(err)
@@ -73,10 +80,24 @@ func newV4MarketplaceCollectionServer(t *testing.T, instanceID, collectionName, 
 	canonical.Manifest.RegistryID = "src"
 	canonical.Manifest.RegistrySlug = "tools"
 	leafDigest := canonical.Manifest.ContentDigest
-	artifactRaw, archiveDigest, err := hccartifact.Encode(canonical)
-	if err != nil {
-		t.Fatal(err)
+	type leafState struct {
+		raw      []byte
+		revision store.AssessedResourceRevision
 	}
+	var leaf atomic.Pointer[leafState]
+	encodeLeaf := func() string {
+		raw, archiveDigest, err := hccartifact.Encode(canonical)
+		if err != nil {
+			t.Fatal(err)
+		}
+		leaf.Store(&leafState{raw: raw, revision: testAssessedMarketplaceRevision(t, store.ResourceRevision{
+			Coordinate:    store.ResourceCoordinate{Marketplace: store.MarketplaceID(instanceID), Registry: "src", Kind: "skill", Name: memberName},
+			ContentDigest: store.RevisionDigest(leafDigest),
+			ArchiveDigest: store.ArchiveDigest(archiveDigest),
+		})})
+		return archiveDigest
+	}
+	encodeLeaf()
 	manifestRaw, rootDigest, err := hccartifact.EncodeCollectionManifest(hccartifact.CollectionManifest{
 		SchemaVersion:    hccartifact.CollectionSchemaV1,
 		Name:             collectionName,
@@ -90,13 +111,18 @@ func newV4MarketplaceCollectionServer(t *testing.T, instanceID, collectionName, 
 		Coordinate:    store.ResourceCoordinate{Marketplace: store.MarketplaceID(instanceID), Registry: "src", Kind: "collection", Name: collectionName},
 		ContentDigest: store.RevisionDigest(rootDigest),
 	})
-	leafRevision := testAssessedMarketplaceRevision(t, store.ResourceRevision{
-		Coordinate:    store.ResourceCoordinate{Marketplace: store.MarketplaceID(instanceID), Registry: "src", Kind: "skill", Name: memberName},
-		ContentDigest: store.RevisionDigest(leafDigest),
-		ArchiveDigest: store.ArchiveDigest(archiveDigest),
-	})
 	registry := mpapi.PublicRegistry{ID: "src", Slug: "tools", Origins: []string{"https://example.com/tools.git"}, Ref: "main", Roots: []store.RegistryRoot{{Path: ".agents"}}, Acquisition: store.AcquisitionMirror, Listed: true}
+	var drifts atomic.Int64
+	drift := func() string {
+		n := drifts.Add(1)
+		if canonical.Assets == nil {
+			canonical.Assets = map[string][]byte{}
+		}
+		canonical.Assets[fmt.Sprintf("drift-%d.txt", n)] = []byte(fmt.Sprintf("drift %d", n))
+		return encodeLeaf()
+	}
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		current := leaf.Load()
 		switch {
 		case r.URL.Path == "/.well-known/agent-marketplace.json":
 			_ = json.NewEncoder(w).Encode(mpapi.DefaultWellKnown(instanceID, "https://example.com"))
@@ -107,14 +133,14 @@ func newV4MarketplaceCollectionServer(t *testing.T, instanceID, collectionName, 
 		case strings.HasPrefix(r.URL.Path, "/api/v1/manifests/"):
 			_, _ = w.Write(manifestRaw)
 		case strings.HasPrefix(r.URL.Path, "/api/v1/resources/tools/skill/"+memberName) || strings.HasPrefix(r.URL.Path, "/api/v1/resources/src/skill/"+memberName):
-			_ = json.NewEncoder(w).Encode(leafRevision)
+			_ = json.NewEncoder(w).Encode(current.revision)
 		case strings.HasPrefix(r.URL.Path, "/api/v1/artifacts/"):
 			w.Header().Set("Content-Type", "application/vnd.agent-marketplace.artifact.v1.tar+gzip")
-			_, _ = w.Write(artifactRaw)
+			_, _ = w.Write(current.raw)
 		default:
 			http.NotFound(w, r)
 		}
-	}))
+	})), drift
 }
 
 // statusSection returns the body of one status section, so a test asserts
