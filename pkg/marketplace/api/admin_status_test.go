@@ -18,7 +18,7 @@ type adminAttemptStore struct {
 
 func (s *adminAttemptStore) ListManagedRefreshAttempts(_ context.Context, query store.ManagedRefreshAttemptQuery) ([]store.ManagedRefreshAttempt, error) {
 	s.query = query
-	return []store.ManagedRefreshAttempt{{Sequence: 7, Marketplace: query.Marketplace, Registry: "registry", JobID: "job", Outcome: "failed", Attempt: 2}}, nil
+	return []store.ManagedRefreshAttempt{{Sequence: 7, Marketplace: query.Marketplace, Registry: "registry", JobID: "job", Outcome: "failed", Attempt: 2, FailureCode: "publication_conflict/scheduled", FailureCause: "publication returned a conflict"}}, nil
 }
 
 func TestAdminAttemptHistoryPassesScopeAndCursor(t *testing.T) {
@@ -46,6 +46,18 @@ func TestAdminAttemptHistoryPassesScopeAndCursor(t *testing.T) {
 	}
 	if len(body.Attempts) != 1 || body.Attempts[0].Outcome != "failed" || body.NextBefore != 7 {
 		t.Fatalf("attempt response: %+v", body)
+	}
+	if body.Attempts[0].FailureCode != "publication_conflict/scheduled" || body.Attempts[0].FailureCause != "publication returned a conflict" {
+		t.Fatalf("attempt failure fields not exposed: %+v", body.Attempts[0])
+	}
+	var raw struct {
+		Attempts []map[string]any `json:"attempts"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &raw); err != nil {
+		t.Fatal(err)
+	}
+	if raw.Attempts[0]["failure_code"] != "publication_conflict/scheduled" || raw.Attempts[0]["failure_cause"] != "publication returned a conflict" {
+		t.Fatalf("serialized attempt missing failure fields: %v", raw.Attempts[0])
 	}
 }
 
