@@ -32,15 +32,26 @@ func (d *Dir) OpenPersistentFile(name string, mode fs.FileMode) (*os.File, error
 	if err != nil {
 		return nil, err
 	}
-	file := os.NewFile(uintptr(fd), filepath.Join(d.path, name))
-	identity, err := identityOf(file)
-	if err == nil && (!identity.Mode.IsRegular() || identity.Links != 1) {
+	// Validate and restore blocking I/O on the raw descriptor before wrapping
+	// it, so a refused leaf never reaches os.NewFile and an admitted one is
+	// not registered as a nonblocking descriptor.
+	var st unix.Stat_t
+	err = unix.Fstat(fd, &st)
+	if err == nil && (st.Mode&unix.S_IFMT != unix.S_IFREG || st.Nlink != 1) {
 		err = ErrUnsafeFile
 	}
-	if err != nil {
-		return nil, errors.Join(err, file.Close())
+	if err == nil {
+		if blockErr := unix.SetNonblock(fd, false); blockErr != nil {
+			err = fmt.Errorf("restore blocking I/O on %s: %w", name, blockErr)
+		}
 	}
-	return file, nil
+	if err != nil {
+		if closeErr := unix.Close(fd); closeErr != nil {
+			return nil, errors.Join(err, closeErr)
+		}
+		return nil, err
+	}
+	return os.NewFile(uintptr(fd), filepath.Join(d.path, name)), nil
 }
 
 // CreateTemp creates a new regular file directly below the captured
