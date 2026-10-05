@@ -3620,12 +3620,20 @@ func prepareSkillLinkCache(link skillLink) (err error) {
 	if err != nil {
 		return err
 	}
-	defer func() { err = errors.Join(err, parent.Close()) }()
+	defer func() {
+		if closeErr := parent.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
 	native, err := parent.NativeRoot()
 	if err != nil {
 		return err
 	}
-	defer func() { err = errors.Join(err, native.Close()) }()
+	defer func() {
+		if closeErr := native.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
 	namespace := &destinationBoundary{capturedRoot: parent, capturedRootPath: parentPath}
 	slog.Debug("cache namespace admitted", "path", parentPath, "phase", "cache-namespace")
 	if err := namespace.directory(parentPath, false); err != nil {
