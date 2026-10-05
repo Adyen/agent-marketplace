@@ -12,7 +12,7 @@ import (
 func TestSanitizeTerminalDataFixtures(t *testing.T) {
 	for _, test := range []struct {
 		name  string
-		mode  terminalDataMode
+		mode  session.TerminalDataMode
 		input string
 		want  string
 	}{
@@ -36,7 +36,7 @@ func TestSanitizeTerminalDataFixtures(t *testing.T) {
 func TestNeedsSanitizingAgreesWithTransform(t *testing.T) {
 	for _, test := range []struct {
 		value string
-		mode  terminalDataMode
+		mode  session.TerminalDataMode
 	}{
 		{value: "ordinary printable text", mode: terminalSingleLine},
 		{value: "line one\nline two", mode: terminalMarkdownBody},

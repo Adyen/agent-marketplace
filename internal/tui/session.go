@@ -1,9 +1,9 @@
 package tui
 
 // This file adapts the surface-neutral session core (internal/session) to
-// the TUI: type aliases keep existing identifiers compiling, thin function
-// wrappers preserve the historical package-local call sites, and the
-// message converters translate the core event stream into tea messages.
+// the TUI: type aliases and var wrappers keep the package-local call sites
+// short, and the converters translate the core snapshot stream into tea
+// messages.
 
 import (
 	"context"
@@ -35,12 +35,7 @@ type (
 	diagnosticCategory      = session.DiagnosticCategory
 	snapshotStage           = session.SnapshotStage
 	migrationPrompt         = session.MigrationPrompt
-	migrationConfig         = session.MigrationConfig
-	detailSourceSnapshot    = session.DetailSourceSnapshot
-	detailCaptureBudget     = session.DetailCaptureBudget
 	catalogLoadMode         = session.CatalogLoadMode
-	catalogInfo             = session.CatalogInfo
-	terminalDataMode        = session.TerminalDataMode
 
 	DependencyLifecycleFunc = session.DependencyLifecycleFunc
 	DependencyMutationFunc  = session.DependencyMutationFunc
@@ -66,15 +61,12 @@ const (
 	diagnosticError   = session.DiagnosticError
 	diagnosticWarning = session.DiagnosticWarning
 
-	diagnosticConfig          = session.DiagnosticConfig
-	diagnosticCatalog         = session.DiagnosticCatalog
-	diagnosticResolution      = session.DiagnosticResolution
-	diagnosticMaterialization = session.DiagnosticMaterialization
-	diagnosticMutation        = session.DiagnosticMutation
-	diagnosticSync            = session.DiagnosticSync
-	diagnosticUpdate          = session.DiagnosticUpdate
-	diagnosticMigration       = session.DiagnosticMigration
-	diagnosticEditor          = session.DiagnosticEditor
+	diagnosticConfig    = session.DiagnosticConfig
+	diagnosticMutation  = session.DiagnosticMutation
+	diagnosticSync      = session.DiagnosticSync
+	diagnosticUpdate    = session.DiagnosticUpdate
+	diagnosticMigration = session.DiagnosticMigration
+	diagnosticEditor    = session.DiagnosticEditor
 
 	snapshotStageFinal     = session.SnapshotStageFinal
 	snapshotStageConfig    = session.SnapshotStageConfig
@@ -86,25 +78,15 @@ const (
 	terminalSingleLine   = session.TerminalSingleLine
 	terminalMarkdownBody = session.TerminalMarkdownBody
 
-	maxDetailSourceBytes    = session.MaxDetailSourceBytes
-	maxDetailCaptureBytes   = session.MaxDetailCaptureBytes
-	maxDetailCaptureEntries = session.MaxDetailCaptureEntries
+	maxDetailSourceBytes = session.MaxDetailSourceBytes
 
-	unavailableCatalogReason = session.UnavailableCatalogReason
-	progressPollInterval     = session.ProgressPollInterval
-	operationPhaseConsent    = session.OperationPhaseConsent
-
-	updateStageRefresh         = session.UpdateStageRefresh
-	updateStageMaterialization = session.UpdateStageMaterialization
-	updateStageReload          = session.UpdateStageReload
+	progressPollInterval  = session.ProgressPollInterval
+	operationPhaseConsent = session.OperationPhaseConsent
 )
 
-var (
-	detailTruncationMarker       = session.DetailTruncationMarker
-	detailBudgetTruncationMarker = session.DetailBudgetTruncationMarker
-)
+var detailTruncationMarker = session.DetailTruncationMarker
 
-// Pure-function wrappers preserving historical package-local names.
+// Pure-function aliases under the package-local names.
 var (
 	sanitizeTerminalData            = session.SanitizeTerminalData
 	sanitizeMarkdownForTerminal     = session.SanitizeMarkdownForTerminal
@@ -113,24 +95,14 @@ var (
 	registryDisplayName             = session.RegistryDisplayName
 	registryIdentityKey             = session.RegistryIdentityKey
 	marketplaceEndpointDisplay      = session.MarketplaceEndpointDisplay
-	marketplaceProtocolKind         = session.MarketplaceProtocolKind
 	marketplaceCatalogKey           = session.MarketplaceCatalogKey
-	marketplaceSelectionKey         = session.MarketplaceSelectionKey
-	indexMarketplaceSelections      = session.IndexMarketplaceSelections
 	marketplaceDiscoveryInstallable = session.MarketplaceDiscoveryInstallable
-	entriesFromCatalogs             = session.EntriesFromCatalogs
 	rowsHaveUnavailable             = session.RowsHaveUnavailable
 	buildRows                       = session.BuildRows
-	buildProvisionalRows            = session.BuildProvisionalRows
 	appendUnavailableSelectionRows  = session.AppendUnavailableSelectionRows
-	withCachedCollectionLeaves      = session.WithCachedCollectionLeaves
-	applyDriftItems                 = session.ApplyDriftItems
-	captureSnapshotDetailSources    = session.CaptureSnapshotDetailSources
-	captureDetailSource             = session.CaptureDetailSource
 	loadCatalogsForTUI              = session.LoadCatalogs
 	validatedTUIWorkspace           = session.ValidatedWorkspace
 	defaultTUIWorkspace             = session.DefaultWorkspace
-	tuiPipelineOptionsForWorkspace  = session.PipelineOptionsForWorkspace
 	promoteReportErrors             = session.PromoteReportErrors
 	pendingMigrationFor             = session.PendingMigrationFor
 	shouldShowInitModal             = session.NeedsFirstConfiguration
@@ -141,14 +113,13 @@ var (
 	diagnosticValues                = session.DiagnosticValues
 )
 
-// discoveryInstallOptionsForScope keeps the historical call signature: the
-// tui scope is translated to a pipeline scope before consulting the core.
+// discoveryInstallOptionsForScope translates the tui scope to a pipeline
+// scope before consulting the core.
 func discoveryInstallOptionsForScope(repoRoot string, r row, s scope) (pipeline.InstallOptions, error) {
 	return session.DiscoveryInstallOptions(repoRoot, r, pipelineScope(s))
 }
 
-// snapshotLoadedMsg stays a TUI message carrying the core snapshot fields so
-// the Update surface — including every existing test fixture — is unchanged.
+// snapshotLoadedMsg is the TUI message carrying the core snapshot fields.
 // stages carries the remainder of the session stage stream this message was
 // delivered on, already bridged to TUI message values.
 type snapshotLoadedMsg struct {
@@ -265,8 +236,8 @@ func refreshSnapshot(ctx context.Context, workspace pipeline.Workspace, homeDir 
 	}
 }
 
-// readSnapshotStagesForWorkspace bridges the core staged reader for tests
-// and internal callers that consume TUI messages.
+// readSnapshotStagesForWorkspace bridges the core staged reader into the
+// TUI message channel.
 func readSnapshotStagesForWorkspace(ctx context.Context, ws pipeline.Workspace, homeDir string, mode catalogLoadMode, generation requestGeneration) <-chan snapshotLoadedMsg {
 	return bridgeSnapshotStages(session.ReadSnapshotStagesForWorkspace(ctx, ws, homeDir, mode, generation))
 }

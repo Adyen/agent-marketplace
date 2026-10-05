@@ -574,7 +574,7 @@ func TestApplyDriftItemsMarksOnlySelectedRows(t *testing.T) {
 	}
 	report := materialize.DriftReport{Missing: []materialize.DriftItem{{Name: key, Reason: materialize.DriftMissing}}}
 
-	out := applyDriftItems([]row{selected, available, recovery}, report)
+	out := session.ApplyDriftItems([]row{selected, available, recovery}, report)
 	if out[0].DriftItem == nil || out[0].DriftItem.Reason != materialize.DriftMissing {
 		t.Fatalf("selected row missing assessed drift: %#v", out[0].DriftItem)
 	}
@@ -682,7 +682,7 @@ func TestProvisionalConfigStagePublishesPendingRows(t *testing.T) {
 		}},
 	}}}
 
-	updated, cmd := m.Update(snapshotLoadedMsg{stage: snapshotStageConfig, generation: generation, provisionalCfg: provisional, provisionalRows: buildProvisionalRows(provisional, nil, nil), stages: stages})
+	updated, cmd := m.Update(snapshotLoadedMsg{stage: snapshotStageConfig, generation: generation, provisionalCfg: provisional, provisionalRows: session.BuildProvisionalRows(provisional, nil, nil), stages: stages})
 	m = updated.(Model)
 	if cmd == nil {
 		t.Fatal("provisional stage did not schedule the next stage")
@@ -739,7 +739,7 @@ func TestProvisionalStageDoesNotCheckExcludedMarketplacePin(t *testing.T) {
 		}},
 		MarketplaceExclusions: []config.MarketplaceExclusion{{URL: "https://market.example", Locator: "tools/skill/review", Source: config.UserPersonal}},
 	}
-	updated, _ := m.Update(snapshotLoadedMsg{stage: snapshotStageConfig, generation: m.requests.Active(requestSnapshot), provisionalCfg: cfg, provisionalRows: buildProvisionalRows(cfg, nil, nil)})
+	updated, _ := m.Update(snapshotLoadedMsg{stage: snapshotStageConfig, generation: m.requests.Active(requestSnapshot), provisionalCfg: cfg, provisionalRows: session.BuildProvisionalRows(cfg, nil, nil)})
 	m = updated.(Model)
 	if len(m.rows) != 2 || m.rows[0].Artifact.Name != "audit" || m.rows[0].Glyph() != "[x]" || originBadge(m.rows[0]) != "G" {
 		t.Fatalf("early enabled state should check only the effective configured pin: %#v", m.rows)
@@ -788,7 +788,7 @@ func TestProvisionalLayoutMatchesVerifiedInventory(t *testing.T) {
 	}}
 
 	verified := statusLayout(buildRows(cfg, catalogs, resolved, nil, materialize.DriftReport{}))
-	provisional := statusLayout(buildProvisionalRows(cfg, nil, nil))
+	provisional := statusLayout(session.BuildProvisionalRows(cfg, nil, nil))
 	if !slices.Equal(provisional, verified) {
 		t.Fatalf("verified inventory reshuffles the provisional layout:\nprovisional: %q\nverified:    %q", provisional, verified)
 	}
@@ -853,7 +853,7 @@ func TestProvisionalStageExpandsOrganizationCollectionFromVerifiedCache(t *testi
 		})
 	}
 
-	rows := buildProvisionalRows(withCachedCollectionLeaves(preAcquisition, cache), nil, nil)
+	rows := session.BuildProvisionalRows(session.WithCachedCollectionLeaves(preAcquisition, cache), nil, nil)
 	verified := statusLayout(buildRows(verifiedCfg, nil, resolved, nil, materialize.DriftReport{}))
 	if provisional := statusLayout(rows); !slices.Equal(provisional, verified) {
 		t.Fatalf("cached collection members do not hold their verified positions:\nprovisional: %q\nverified:    %q", provisional, verified)
@@ -964,7 +964,7 @@ func TestProvisionalCollectionMemberYieldsToConfiguredSelectionOfSameName(t *tes
 		Registries:   []config.RegistryEntry{{URL: "https://git.example/resources.git", Source: config.UserPersonal, CatalogKey: "resources", Skills: config.KindSelector{Include: []string{"audit"}}}},
 		Marketplaces: []config.MarketplaceEntry{{URL: "https://market.example", Source: config.Organization, Resources: []config.MarketplaceResourcePin{member}}},
 	}
-	rows := buildProvisionalRows(cfg, nil, nil)
+	rows := session.BuildProvisionalRows(cfg, nil, nil)
 	if len(rows) != 1 || rows[0].Artifact.IsMarketplace {
 		t.Fatalf("collection member should yield to the configured selection that verified inventory keeps: %#v", rows)
 	}
@@ -977,7 +977,7 @@ func TestProvisionalRowsCarryRegistryOverrideHarnessBadge(t *testing.T) {
 		URL: "https://git.example/skills.git", Source: config.RepoCommitted, CatalogKey: "skills", Harnesses: []string{"codex"},
 		Skills: config.KindSelector{Include: []string{"audit"}},
 	}}}
-	rows := buildProvisionalRows(cfg, nil, nil, map[config.Source][]string{config.RepoCommitted: {"claude"}})
+	rows := session.BuildProvisionalRows(cfg, nil, nil, map[config.Source][]string{config.RepoCommitted: {"claude"}})
 	if len(rows) != 1 || harnessBadge(rows[0]) != "{Codex}" {
 		t.Fatalf("pending row lacks the harness badge verified inventory renders: %#v", rows)
 	}
@@ -997,7 +997,7 @@ func TestStaleProvisionalStageCannotPublishRows(t *testing.T) {
 		Resources: []config.MarketplaceResourcePin{{RegistryID: "tools", Kind: "skill", Name: "remote"}},
 	}}}
 
-	updated, _ := m.Update(snapshotLoadedMsg{stage: snapshotStageConfig, generation: stale, provisionalCfg: provisional, provisionalRows: buildProvisionalRows(provisional, nil, nil)})
+	updated, _ := m.Update(snapshotLoadedMsg{stage: snapshotStageConfig, generation: stale, provisionalCfg: provisional, provisionalRows: session.BuildProvisionalRows(provisional, nil, nil)})
 	m = updated.(Model)
 	for _, r := range m.rows {
 		if r.PendingVerification {
@@ -1474,7 +1474,7 @@ func TestAuthoritativeFailureClearsProvisionalRows(t *testing.T) {
 		}},
 	}}}
 
-	updated, _ := m.Update(snapshotLoadedMsg{stage: snapshotStageConfig, generation: generation, provisionalCfg: provisional, provisionalRows: buildProvisionalRows(provisional, nil, nil), stages: stages})
+	updated, _ := m.Update(snapshotLoadedMsg{stage: snapshotStageConfig, generation: generation, provisionalCfg: provisional, provisionalRows: session.BuildProvisionalRows(provisional, nil, nil), stages: stages})
 	m = updated.(Model)
 	if len(m.rows) != 1 || !m.rows[0].PendingVerification {
 		t.Fatalf("provisional stage did not publish pending rows: %#v", m.rows)
@@ -1510,7 +1510,7 @@ func TestPendingDetailFollowsVerifiedRow(t *testing.T) {
 		}},
 	}}}
 
-	updated, _ := m.Update(snapshotLoadedMsg{stage: snapshotStageConfig, generation: generation, provisionalCfg: provisional, provisionalRows: buildProvisionalRows(provisional, nil, nil), stages: stages})
+	updated, _ := m.Update(snapshotLoadedMsg{stage: snapshotStageConfig, generation: generation, provisionalCfg: provisional, provisionalRows: session.BuildProvisionalRows(provisional, nil, nil), stages: stages})
 	m = updated.(Model)
 	if len(m.rows) != 1 || !m.rows[0].PendingVerification {
 		t.Fatalf("provisional stage did not publish pending rows: %#v", m.rows)

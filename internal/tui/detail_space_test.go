@@ -6,6 +6,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/Adyen/agent-marketplace/internal/config"
+	"github.com/Adyen/agent-marketplace/internal/session"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 	mpapi "github.com/Adyen/agent-marketplace/pkg/marketplace/api"
 )
@@ -27,7 +28,7 @@ func enterMetadataDetail(t *testing.T, r row) Model {
 
 func TestUnavailableRecoveryDetailSpaceOpensToggleModal(t *testing.T) {
 	r := mkRow("missing", withProject, withRegistry("https://example.com/reg.git", "reg"))
-	r.UnavailableReason = unavailableCatalogReason
+	r.UnavailableReason = session.UnavailableCatalogReason
 	m := enterMetadataDetail(t, r)
 
 	updated, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeySpace})
@@ -85,7 +86,7 @@ func TestDetailSpaceEligibilityRestrictions(t *testing.T) {
 
 	t.Run("required recovery row keeps required restriction", func(t *testing.T) {
 		r := mkRow("missing", withProject, withRequired)
-		r.UnavailableReason = unavailableCatalogReason
+		r.UnavailableReason = session.UnavailableCatalogReason
 		m := enterMetadataDetail(t, r)
 
 		updated, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeySpace})
@@ -103,7 +104,7 @@ func TestDetailSpaceEligibilityRestrictions(t *testing.T) {
 
 	t.Run("collection-only recovery row keeps collection restriction", func(t *testing.T) {
 		r := mkRow("missing", withGlobal)
-		r.UnavailableReason = unavailableCatalogReason
+		r.UnavailableReason = session.UnavailableCatalogReason
 		r.Artifact.IsMarketplace = true
 		r.MarketplaceCollectionOnly = true
 		m := enterMetadataDetail(t, r)
@@ -123,7 +124,7 @@ func TestDetailSpaceEligibilityRestrictions(t *testing.T) {
 
 	t.Run("syncing blocks the detail recovery action", func(t *testing.T) {
 		r := mkRow("missing", withProject)
-		r.UnavailableReason = unavailableCatalogReason
+		r.UnavailableReason = session.UnavailableCatalogReason
 		m := enterMetadataDetail(t, r)
 		m.syncing = true
 
@@ -221,7 +222,7 @@ func TestListSpaceDiscoveryEligibility(t *testing.T) {
 
 	t.Run("unavailable row control", func(t *testing.T) {
 		r := mkRow("missing", withProject)
-		r.UnavailableReason = unavailableCatalogReason
+		r.UnavailableReason = session.UnavailableCatalogReason
 		m := modelWithSelectedRow(t, r)
 		m.pane = paneList
 
@@ -252,7 +253,7 @@ func TestListSpaceDiscoveryEligibility(t *testing.T) {
 
 	t.Run("kind preserved for non-skill recovery row", func(t *testing.T) {
 		r := mkRow("missing-cmd", withProject, withKind(ir.KindCommand))
-		r.UnavailableReason = unavailableCatalogReason
+		r.UnavailableReason = session.UnavailableCatalogReason
 		m := modelWithSelectedRow(t, r)
 		m.pane = paneList
 

@@ -110,7 +110,6 @@ func TestHostileControlSequencesRenderInertThroughTheView(t *testing.T) {
 	m.width, m.height = 100, 24
 	m.errs = []error{errors.New("diag" + hostile)}
 	m.pane = paneErrors
-	defer func() { m.pane = paneErrors }()
 
 	output := m.View().Content
 	for _, unsafe := range []string{

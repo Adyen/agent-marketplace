@@ -31,7 +31,7 @@ func TestHardSnapshotFailureNeverRendersInSync(t *testing.T) {
 		driftAssessment: driftFailed,
 		mergedCfg:       &config.Config{},
 		diagnostics: []tuiDiagnostic{
-			snapshotDiagnostic(diagnosticError, diagnosticMaterialization, errors.New("dry run failed")),
+			snapshotDiagnostic(diagnosticError, session.DiagnosticMaterialization, errors.New("dry run failed")),
 		},
 	})
 	m = updated.(Model)
@@ -91,11 +91,11 @@ func TestReadSnapshotClassifiesMalformedResourceAsWarning(t *testing.T) {
 	restoreLocal := swapLoadLocalConfig(func() (*config.LocalConfig, error) { return nil, nil })
 	t.Cleanup(restoreLocal)
 	previousDiscover := session.DiscoverCatalog
-	session.DiscoverCatalog = func(dir, sourceHarness string) (catalogInfo, error) {
+	session.DiscoverCatalog = func(dir, sourceHarness string) (session.CatalogInfo, error) {
 		if dir != registryRoot {
-			return catalogInfo{}, errors.New("unexpected discovery for " + dir)
+			return session.CatalogInfo{}, errors.New("unexpected discovery for " + dir)
 		}
-		return catalogInfo{
+		return session.CatalogInfo{
 			Entries: []catalog.Entry{{Name: "healthy", Path: filepath.Join(dir, "healthy")}},
 			Malformed: []skill.MalformedSkill{{
 				DirName: "broken-skill",
@@ -160,7 +160,7 @@ func TestOperationFailureSurvivesSnapshotUntilSameOperationRecovers(t *testing.T
 		driftAssessment: driftReady,
 		mergedCfg:       &config.Config{},
 		diagnostics: []tuiDiagnostic{
-			snapshotDiagnostic(diagnosticWarning, diagnosticCatalog, warning),
+			snapshotDiagnostic(diagnosticWarning, session.DiagnosticCatalog, warning),
 		},
 	})
 	m = updated.(Model)
@@ -287,11 +287,11 @@ func TestReadSnapshotRetainsPartialRowsAfterCatalogFailure(t *testing.T) {
 	}
 	t.Cleanup(func() { session.CloneOrPull = previousClone })
 	previousDiscover := session.DiscoverCatalog
-	session.DiscoverCatalog = func(dir, sourceHarness string) (catalogInfo, error) {
+	session.DiscoverCatalog = func(dir, sourceHarness string) (session.CatalogInfo, error) {
 		if dir != healthyRoot {
-			return catalogInfo{}, errors.New("unexpected discovery for " + dir)
+			return session.CatalogInfo{}, errors.New("unexpected discovery for " + dir)
 		}
-		return catalogInfo{Entries: []catalog.Entry{{Name: "healthy", Path: filepath.Join(dir, "healthy")}}}, nil
+		return session.CatalogInfo{Entries: []catalog.Entry{{Name: "healthy", Path: filepath.Join(dir, "healthy")}}}, nil
 	}
 	t.Cleanup(func() { session.DiscoverCatalog = previousDiscover })
 
@@ -336,8 +336,8 @@ func TestReadSnapshotRetainsPartialRowsAfterCatalogFailure(t *testing.T) {
 	if missing.Artifact.Source != config.UserPersonal || missing.Artifact.V4Kind != "" {
 		t.Fatalf("missing row lost source/v4 identity: source=%v v4kind=%v", missing.Artifact.Source, missing.Artifact.V4Kind)
 	}
-	if missing.UnavailableReason != unavailableCatalogReason {
-		t.Fatalf("missing row unavailable reason = %q, want %q", missing.UnavailableReason, unavailableCatalogReason)
+	if missing.UnavailableReason != session.UnavailableCatalogReason {
+		t.Fatalf("missing row unavailable reason = %q, want %q", missing.UnavailableReason, session.UnavailableCatalogReason)
 	}
 	if missing.Glyph() != "[!]" {
 		t.Fatalf("missing row glyph = %q, want [!]", missing.Glyph())
@@ -376,7 +376,7 @@ func TestReadSnapshotRetainsPartialRowsAfterCatalogFailure(t *testing.T) {
 }
 
 func TestAppendUnavailableSelectionRows(t *testing.T) {
-	loadedCatalogs := map[string]catalogInfo{"k1": {}}
+	loadedCatalogs := map[string]session.CatalogInfo{"k1": {}}
 	cfg := &config.Config{Registries: []config.RegistryEntry{{
 		URL:        "/reg",
 		Source:     config.UserPersonal,
@@ -498,11 +498,11 @@ func TestReadSnapshotUnavailableSelectionNeverReportsInSync(t *testing.T) {
 	}
 	t.Cleanup(func() { session.RunMaterialize = previousMaterialize })
 	previousDiscover := session.DiscoverCatalog
-	session.DiscoverCatalog = func(dir, sourceHarness string) (catalogInfo, error) {
+	session.DiscoverCatalog = func(dir, sourceHarness string) (session.CatalogInfo, error) {
 		if dir != registryRoot {
-			return catalogInfo{}, errors.New("unexpected discovery for " + dir)
+			return session.CatalogInfo{}, errors.New("unexpected discovery for " + dir)
 		}
-		return catalogInfo{Entries: []catalog.Entry{{Name: "other", Path: filepath.Join(dir, "other")}}}, nil
+		return session.CatalogInfo{Entries: []catalog.Entry{{Name: "other", Path: filepath.Join(dir, "other")}}}, nil
 	}
 	t.Cleanup(func() { session.DiscoverCatalog = previousDiscover })
 
@@ -569,7 +569,7 @@ func TestUnavailableSnapshotReplacesOpenVerifiedDetail(t *testing.T) {
 	verified := mkRow("gone", withKind(ir.KindSkill), withRegistry("https://example.com/reg.git", "reg"), withRegistryMeta("v1", "sub"))
 	verified.Artifact.Path = dir
 	replacement := mkRow("gone", withKind(ir.KindSkill), withRegistry("https://example.com/reg.git", "reg"), withRegistryMeta("v1", "sub"))
-	replacement.UnavailableReason = unavailableCatalogReason
+	replacement.UnavailableReason = session.UnavailableCatalogReason
 
 	m := modelWithSelectedRow(t, verified)
 	m.width = 120
@@ -715,7 +715,7 @@ func TestInvalidConfigSnapshotKeepsEditorOnlyRecovery(t *testing.T) {
 		mergedCfg:       &config.Config{},
 		rows:            []row{r},
 		diagnostics: []tuiDiagnostic{
-			snapshotDiagnostic(diagnosticError, diagnosticCatalog, errors.New("catalog fetch failed")),
+			snapshotDiagnostic(diagnosticError, session.DiagnosticCatalog, errors.New("catalog fetch failed")),
 		},
 	})
 	m = updated.(Model)

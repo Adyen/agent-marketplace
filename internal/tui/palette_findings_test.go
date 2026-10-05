@@ -7,6 +7,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/Adyen/agent-marketplace/internal/config"
+	"github.com/Adyen/agent-marketplace/internal/session"
 	mpapi "github.com/Adyen/agent-marketplace/pkg/marketplace/api"
 	"github.com/charmbracelet/x/ansi"
 )
@@ -322,7 +323,7 @@ func TestPaletteClosesOnAsyncPaneTransition(t *testing.T) {
 	generation := m.beginRequest(requestSnapshot)
 	mi, _ := m.Update(snapshotLoadedMsg{
 		generation:       generation,
-		pendingMigration: migrationPrompt{Configs: []migrationConfig{{Label: "Project", Path: "/repo/.agents/config.yaml"}}},
+		pendingMigration: migrationPrompt{Configs: []session.MigrationConfig{{Label: "Project", Path: "/repo/.agents/config.yaml"}}},
 	})
 	m = mi.(Model)
 	if m.pane != paneMigrationModal {
