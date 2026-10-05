@@ -405,7 +405,8 @@ func (s *Store) SafetyBackups(rel string) (out []RetainedBackup, err error) {
 	out = make([]RetainedBackup, 0, len(names))
 	for _, name := range names {
 		path := filepath.Join(dir, name)
-		metaBytes, exists, _, err := readObservedMetadataFile(parent, filepath.Base(metaPathFor(path)))
+		metaName := strings.TrimSuffix(name, backupSuffix) + metaSuffix
+		metaBytes, exists, _, err := readObservedMetadataFile(parent, metaName)
 		if err != nil {
 			if errors.Is(err, fsboundary.ErrUnsafePath) || errors.Is(err, fsboundary.ErrUnsafeFile) || errors.Is(err, fsboundary.ErrGenerationConflict) || errors.Is(err, fsboundary.ErrTooLarge) || errors.Is(err, errMetadataCleanup) {
 				return nil, err
@@ -482,7 +483,8 @@ func (b RetainedBackup) RawBytes() (data []byte, err error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := b.source.verifyStateDirectory(parent, b.relative); err != nil {
+	err = b.source.verifyStateDirectory(parent, b.relative)
+	if err != nil {
 		return nil, err
 	}
 	return data, nil
@@ -504,7 +506,8 @@ func captureSafetyPayload(parent *fsboundary.Dir, name string) (pin metadataPin,
 	if !file.Exists() {
 		return pin, false, nil
 	}
-	if err := file.ReadTargetWith(func(io.Reader) error { return nil }); err != nil {
+	err = file.ReadTargetWith(func(io.Reader) error { return nil })
+	if err != nil {
 		return pin, false, err
 	}
 	identity := parent.Identity()
