@@ -234,12 +234,20 @@ func writeSupportStage(path string, data []byte, mode os.FileMode, boundary *des
 	if err != nil {
 		return err
 	}
-	defer func() { err = errors.Join(err, parent.Close()) }()
+	defer func() {
+		if closeErr := parent.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
 	native, err := parent.NativeRoot()
 	if err != nil {
 		return err
 	}
-	defer func() { err = errors.Join(err, native.Close()) }()
+	defer func() {
+		if closeErr := native.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
 	file, err := native.OpenFile(filepath.Base(path), os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if err != nil {
 		return err
@@ -256,12 +264,20 @@ func writeSupportSnapshot(path string, data []byte, mode os.FileMode, boundary *
 	if err != nil {
 		return err
 	}
-	defer func() { err = errors.Join(err, parent.Close()) }()
+	defer func() {
+		if closeErr := parent.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
 	native, err := parent.NativeRoot()
 	if err != nil {
 		return err
 	}
-	defer func() { err = errors.Join(err, native.Close()) }()
+	defer func() {
+		if closeErr := native.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
 	info, err := native.Lstat(filepath.Base(path))
 	if err == nil {
 		if info.Mode()&os.ModeSymlink != 0 {
