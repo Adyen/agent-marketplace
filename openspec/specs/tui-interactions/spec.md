@@ -5,24 +5,9 @@ Defines modal keyboard interactions and guarded configuration writes so selectio
 
 ## Requirements
 
-### Requirement: Multi-harness selection
-Harness editing and initial configuration SHALL support selecting multiple harnesses. Switching global and project scopes SHALL load that scope's selection without writing; Space SHALL toggle the focused selection without writing; only explicit Enter SHALL save after non-empty validation. Saving an existing configuration SHALL preserve unknown selected harness IDs.
-
-#### Scenario: Scope and selection without write
-- **WHEN** a user switches scopes with g or p, toggles a harness with Space, and cancels
-- **THEN** each scope's selections remain available and all configuration bytes stay unchanged
-
-#### Scenario: Save selected harnesses
-- **WHEN** a user explicitly submits a non-empty multi-selection that includes an unknown existing ID
-- **THEN** the guarded write preserves that ID and updates only the intended scope
-
-#### Scenario: Empty selection
-- **WHEN** a user attempts to save an empty harness selection
-- **THEN** the form refuses the save without modifying configuration bytes
-
 ### Requirement: Explicit modal intent
 
-Toggle and config-editor accelerators SHALL retain their documented actions; sync-and-quit and quit modals SHALL retain affirmative, negative and cancel paths. The TUI SHALL NOT offer a consumer migration modal or an automatic conversion action. Unsupported consumer configuration SHALL surface the path-specific diagnostic defined by `consumer-config-format` and block configuration-dependent actions rather than enter legacy operation. q, Esc and Ctrl+C SHALL be routed before a form may submit. Modal submission SHALL use the existing serialized guarded operation and authoritative post-write reload; no form completion alone SHALL claim a write succeeded.
+q, Esc, and Ctrl+C SHALL be routed before a form may submit. Toggle and config-editor accelerators SHALL retain their documented TUI actions. The TUI SHALL NOT offer a consumer migration modal or an automatic conversion action. Unsupported consumer configuration SHALL surface the path-specific diagnostic defined by `consumer-config-format` and block configuration-dependent actions rather than enter legacy operation. Modal submission SHALL use the `session-interactions` guarded mutation contract.
 
 #### Scenario: Cancel or stale completion
 
@@ -88,3 +73,17 @@ A confirmed bulk toggle SHALL apply the existing per-resource selection semantic
 
 - **WHEN** rows or eligibility change after opening, another operation is active at submit, or a superseded completion arrives
 - **THEN** submit SHALL use current guarded targets or refuse the write, busy submission SHALL NOT start a second mutation, and stale completion SHALL NOT overwrite newer state or claim success
+
+### Requirement: Multi-harness key bindings
+
+The TUI SHALL use g and p to select the edited scope without writing, Space to toggle the focused Harness target without writing, and Enter to submit the focused multi-selection through the guarded save. Surface-neutral selection and validation rules follow `session-interactions`.
+
+#### Scenario: Scope and selection without write
+
+- **WHEN** a user switches scopes with g or p, toggles a Harness target with Space, and cancels
+- **THEN** each scope's selections remain available and all configuration bytes stay unchanged
+
+#### Scenario: Enter saves selected Harness targets
+
+- **WHEN** a user has a non-empty Harness target selection in the focused form and presses Enter
+- **THEN** the TUI SHALL submit that selection through the guarded write

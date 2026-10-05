@@ -10,17 +10,17 @@
 
 ### Requirement: Explicit modal intent
 
-q, Esc, and Ctrl+C SHALL be routed before a form may submit. Toggle and config-editor accelerators SHALL retain their documented TUI actions. Modal submission SHALL use the `session-interactions` guarded mutation contract.
+q, Esc, and Ctrl+C SHALL be routed before a form may submit. Toggle and config-editor accelerators SHALL retain their documented TUI actions. The TUI SHALL NOT offer a consumer migration modal or an automatic conversion action. Unsupported consumer configuration SHALL surface the path-specific diagnostic defined by `consumer-config-format` and block configuration-dependent actions rather than enter legacy operation. Modal submission SHALL use the `session-interactions` guarded mutation contract.
 
 #### Scenario: Cancel or stale completion
 
-- **WHEN** a user cancels a modal or a late write completion arrives for an inactive operation
+- **WHEN** a user cancels a supported modal or a late write completion arrives for an inactive operation
 - **THEN** no unintended write occurs and the active operation and diagnostics remain unchanged
 
 #### Scenario: Guarded submission
 
-- **WHEN** a user submits a mutation while another operation is active or prerequisites are invalid
-- **THEN** the same guard used by the keyboard path blocks the new write without claiming success
+- **WHEN** a user submits a mutation while another operation is active or prerequisites are invalid, including unsupported consumer configuration
+- **THEN** the same guard used by the keyboard path blocks the new write without claiming success or offering conversion
 
 ## ADDED Requirements
 
@@ -37,19 +37,3 @@ The TUI SHALL use g and p to select the edited scope without writing, Space to t
 
 - **WHEN** a user has a non-empty Harness target selection in the focused form and presses Enter
 - **THEN** the TUI SHALL submit that selection through the guarded write
-
-### Requirement: Legacy user configuration migration offer excludes non-user roots
-
-The TUI SHALL offer startup migration only for the legacy user-personal root and SHALL never migrate a repository or personal-local root through that offer.
-
-#### Scenario: Accepting the offer migrates only the user-personal root
-
-- **WHEN** startup finds legacy user-personal, repository, and personal-local roots and the user accepts migration
-- **THEN** only the user-personal root SHALL be migrated to v4
-- **AND** the repository and personal-local roots SHALL remain unchanged
-
-#### Scenario: Declining the offer continues through the legacy reader
-
-- **WHEN** startup finds legacy user-personal, repository, and personal-local roots and the user declines migration
-- **THEN** the TUI SHALL continue through the legacy reader
-- **AND** no user-personal, repository, or personal-local configuration SHALL be written

@@ -1,6 +1,6 @@
 ## Purpose
 
-An interactive client is the TUI or the desktop GUI acting on the user's behalf. This capability defines surface-neutral Harness target selection, guarded configuration writes, and the legacy user configuration migration offer.
+An interactive client is the TUI or the desktop GUI acting on the user's behalf. This capability defines surface-neutral Harness target selection, and guarded configuration writes.
 
 ## ADDED Requirements
 
@@ -25,7 +25,7 @@ Harness editing and initial configuration SHALL support selecting multiple Harne
 
 ### Requirement: Guarded mutations
 
-Every configuration-writing confirmation SHALL use the serialized guarded operation and an authoritative post-write reload. Completing a form alone SHALL NOT claim that a write succeeded. Migration, sync-and-quit, and quit confirmations SHALL keep affirmative, negative, and cancel paths.
+Every configuration-writing confirmation SHALL use the serialized guarded operation and an authoritative post-write reload. Completing a form alone SHALL NOT claim that a write succeeded. Sync-and-quit and quit confirmations SHALL keep affirmative, negative, and cancel paths. An interactive client SHALL NOT offer a consumer migration or automatic conversion action; unsupported consumer configuration SHALL block configuration-writing confirmations.
 
 #### Scenario: Cancel or stale completion
 
@@ -40,26 +40,6 @@ Every configuration-writing confirmation SHALL use the serialized guarded operat
 
 #### Scenario: Confirmation retains all user choices
 
-- **WHEN** a user responds to migration, sync-and-quit, or quit confirmation
+- **WHEN** a user responds to sync-and-quit or quit confirmation
 - **THEN** affirmative, negative, and cancel paths SHALL remain available
 - **AND** only the applicable affirmative guarded action SHALL perform its operation
-
-### Requirement: Legacy user configuration migration offer
-
-At startup, when the user-personal root uses a legacy schema, an interactive client SHALL offer to migrate that root to v4. Accepting SHALL migrate the user-personal root; declining SHALL continue through the legacy reader without writing.
-
-#### Scenario: Legacy user configuration is offered for migration
-
-- **WHEN** startup finds a legacy user-personal root
-- **THEN** the interactive client SHALL offer to migrate that root to v4
-
-#### Scenario: Accepting the offer migrates the user-personal root
-
-- **WHEN** the user accepts migration of the legacy user-personal root
-- **THEN** only that user-personal root SHALL be migrated to v4
-
-#### Scenario: Declining the offer continues through the legacy reader
-
-- **WHEN** startup finds a legacy user-personal root and the user declines migration
-- **THEN** the client SHALL continue through the legacy reader
-- **AND** the user-personal configuration SHALL remain unchanged
