@@ -9,6 +9,7 @@ package materialize
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -3472,30 +3473,37 @@ func prepareSkillLinkCache(link skillLink) (err error) {
 	if cacheDir == "" {
 		cacheDir = link.target
 	}
+	cacheDir, err = filepath.Abs(cacheDir)
+	if err != nil {
+		return err
+	}
+	parentPath := filepath.Dir(cacheDir)
+	parent, err := harness.CaptureDestinationPath(true, "", parentPath, parentPath, ".", true)
+	if err != nil {
+		return err
+	}
+	defer func() { err = errors.Join(err, parent.Close()) }()
+	native, err := parent.NativeRoot()
+	if err != nil {
+		return err
+	}
+	defer func() { err = errors.Join(err, native.Close()) }()
+	namespace := &destinationBoundary{capturedRoot: parent, capturedRootPath: parentPath}
+	slog.Debug("cache namespace admitted", "path", parentPath, "phase", "cache-namespace")
+	if err := namespace.directory(parentPath, false); err != nil {
+		return err
+	}
 	compiled := make(map[string]bool, len(link.artifacts))
 	for _, a := range link.artifacts {
 		compiled[filepath.ToSlash(filepath.Clean(a.Path))] = true
 	}
 	supportStage := ""
 	if link.sourceDir != "" {
-		if err := os.MkdirAll(filepath.Dir(cacheDir), 0o755); err != nil {
+		name := ".support-staging-" + rand.Text()
+		if err := parent.Mkdir(name, 0o700); err != nil {
 			return err
 		}
-		supportStage, err = os.MkdirTemp(filepath.Dir(cacheDir), ".support-staging-")
-		if err != nil {
-			return err
-		}
-		parent, captureErr := fsboundary.OpenDir(filepath.Dir(supportStage))
-		if captureErr != nil {
-			return captureErr
-		}
-		defer func() { err = errors.Join(err, parent.Close()) }()
-		native, rootErr := parent.NativeRoot()
-		if rootErr != nil {
-			return rootErr
-		}
-		defer func() { err = errors.Join(err, native.Close()) }()
-		name := filepath.Base(supportStage)
+		supportStage = filepath.Join(parentPath, name)
 		created, statErr := native.Lstat(name)
 		if statErr != nil {
 			return statErr
@@ -3511,6 +3519,9 @@ func prepareSkillLinkCache(link skillLink) (err error) {
 			}
 			err = errors.Join(err, native.RemoveAll(name))
 		}()
+		if err := namespace.directory(parentPath, false); err != nil {
+			return err
+		}
 		if err := copyScopedSupport(link.sourceDir, supportStage, compiled, "", len(link.declaredSupport) == 0, writeSupportStage); err != nil {
 			return err
 		}
@@ -3518,7 +3529,7 @@ func prepareSkillLinkCache(link skillLink) (err error) {
 			return err
 		}
 	}
-	if err := os.MkdirAll(cacheDir, 0o755); err != nil {
+	if err := namespace.directory(cacheDir, true); err != nil {
 		return err
 	}
 	// Write compiled artifacts (SKILL.md) without pruning, because
