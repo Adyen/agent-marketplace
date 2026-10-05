@@ -2,6 +2,7 @@ package ownership
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -108,6 +109,22 @@ func TestPublishedMetadataPinRejectsInPlaceEdits(t *testing.T) {
 		mutate(&edited)
 		if publishedMetadataMatches(produced, edited) {
 			t.Fatalf("published metadata pin accepted a %s change", name)
+		}
+	}
+}
+
+func TestPublishCrossedRenameClassifiesPostRenameFailures(t *testing.T) {
+	postRename := fmt.Errorf("%w: publish manifest: %w", fsboundary.ErrDurabilityUncertain, errors.New("injected directory sync failure"))
+	if !publishCrossedRename(postRename) {
+		t.Fatal("durability-uncertain publication not reported as crossed; its payload could be removed under a renamed manifest")
+	}
+	for _, preRename := range []error{
+		fmt.Errorf("publish manifest: %w", errors.New("injected rename failure")),
+		fsboundary.ErrGenerationConflict,
+		fsboundary.ErrUnsafeFile,
+	} {
+		if publishCrossedRename(preRename) {
+			t.Fatalf("pre-rename refusal reported as crossed: %v", preRename)
 		}
 	}
 }
