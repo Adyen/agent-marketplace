@@ -3,6 +3,7 @@ package catalog
 import (
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -2416,5 +2417,28 @@ func TestRecordSubBundleCloseErrorJoinsExistingCandidate(t *testing.T) {
 	loaded, err := discoverSubBundles(bundles[1:2])
 	if err == nil && len(loaded.SubBundles) != 0 {
 		t.Fatalf("candidate with a close error both loaded and failed: %+v %v", loaded, err)
+	}
+}
+
+func TestDiscoverReportsUnreadableSubBundleCandidate(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("permission denial is not observable as root")
+	}
+	dir := t.TempDir()
+	candidate := filepath.Join(dir, "locked-plugin")
+	if err := os.MkdirAll(filepath.Join(candidate, "skills", "locked"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(candidate, "skills", "locked", "SKILL.md"), "---\nname: locked\ndescription: inert skill\n---\nBody\n")
+	if err := os.Chmod(candidate, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(candidate, 0o755) })
+	result, err := Discover(dir, "claude")
+	if err == nil && len(result.Errors) == 0 {
+		t.Fatalf("unreadable sub-bundle candidate became an empty catalog: %+v", result)
+	}
+	if err != nil && !errors.Is(err, fs.ErrPermission) {
+		t.Fatalf("unreadable candidate lost its permission error: %v", err)
 	}
 }
