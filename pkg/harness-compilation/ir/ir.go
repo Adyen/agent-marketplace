@@ -346,6 +346,8 @@ type Hook struct {
 	// source-revision digest projections that must replay the historical
 	// handler-level Extra view; it never serializes into lock payloads.
 	GroupExtraKeys map[string]bool `json:"-"`
+
+	sourceDefinitionDigest string
 }
 
 // HookOption customizes the additive hook fields.
@@ -408,6 +410,10 @@ func (h *Hook) Name() string { return h.name }
 
 // SetName sets the hook name.
 func (h *Hook) SetName(name string) { h.name = name }
+
+func (h *Hook) SourceDefinitionDigest() string { return h.sourceDefinitionDigest }
+
+func (h *Hook) SetSourceDefinitionDigest(digest string) { h.sourceDefinitionDigest = digest }
 
 // McpServer represents a compilable MCP server resource.
 type McpServer struct {

@@ -9,6 +9,9 @@ package harnesscompile
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
+	"io/fs"
 	"slices"
 	"testing"
 	"testing/fstest"
@@ -17,7 +20,7 @@ import (
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 )
 
-func ingestedHooks(t *testing.T, src fstest.MapFS, from Harness) []*ir.Hook {
+func ingestedHooks(t *testing.T, src fs.FS, from Harness) []*ir.Hook {
 	t.Helper()
 	b, err := IngestBundle(src, from)
 	if err != nil {
@@ -32,7 +35,7 @@ func ingestedHooks(t *testing.T, src fstest.MapFS, from Harness) []*ir.Hook {
 	return hooks
 }
 
-func ingestedOneHook(t *testing.T, src fstest.MapFS, from Harness) *ir.Hook {
+func ingestedOneHook(t *testing.T, src fs.FS, from Harness) *ir.Hook {
 	t.Helper()
 	hooks := ingestedHooks(t, src, from)
 	if len(hooks) != 1 {
@@ -207,6 +210,15 @@ func TestNativeHookIngestSameHarnessRoundTrips(t *testing.T) {
 				if got := h.Extra[tc.wantExtraKey]; got != tc.wantExtraVal {
 					t.Fatalf("ingested extra %q = %v, want %v", tc.wantExtraKey, got, tc.wantExtraVal)
 				}
+			}
+			raw, ok := tc.src[h.Source.File]
+			if !ok || raw == nil {
+				t.Fatalf("fixture has no source file %q", h.Source.File)
+			}
+			sum := sha256.Sum256(raw.Data)
+			wantDigest := "sha256:" + hex.EncodeToString(sum[:])
+			if got := h.SourceDefinitionDigest(); got != wantDigest {
+				t.Fatalf("SourceDefinitionDigest = %q, want %q for %s", got, wantDigest, h.Source.File)
 			}
 			res, err := Compile(h, tc.target)
 			if err != nil {

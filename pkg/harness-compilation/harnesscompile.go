@@ -254,10 +254,16 @@ func IngestBundle(srcFS fs.FS, from Harness) (*ingest.Bundle, error) {
 	if !ok {
 		return nil, fmt.Errorf("harnesscompile.IngestBundle: source %q: %w", from, errSourceNotImplemented)
 	}
-	bundle, err := ing.LoadBundle(srcFS)
+	observed := newSourceDigestFS(srcFS)
+	bundle, err := ing.LoadBundle(observed)
 	if err != nil {
 		slog.Error("harness ingest failed", "from", from, "error", err)
 		return nil, err
+	}
+	for _, r := range bundle.Resources {
+		if h, ok := r.(*ir.Hook); ok {
+			h.SetSourceDefinitionDigest(observed.digestFor(h.Source.File))
+		}
 	}
 	slog.Info("harness ingest end", "from", from, "resources", len(bundle.Resources), "diagnostics", len(bundle.Diagnostics))
 	return bundle, nil
