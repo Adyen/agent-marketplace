@@ -15,6 +15,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/skill"
 	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
+	"github.com/charmbracelet/x/ansi"
 )
 
 // ks is a shorthand for constructing KindSelector with includes only.
@@ -583,7 +584,7 @@ func TestBuildRowsIncludesAllResourceKinds(t *testing.T) {
 func TestRenderListShowsLoadingStateBeforeSnapshotHydrates(t *testing.T) {
 	m := Model{loading: true}
 
-	if got := renderList(m, 24); got != "Loading resources..." {
+	if got := ansi.Strip(renderList(m, 24)); got != "Loading resources..." {
 		t.Fatalf("expected loading state, got %q", got)
 	}
 }

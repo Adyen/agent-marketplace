@@ -66,6 +66,8 @@ The operator decides, for each registry or as a default for the instance, where 
 
 Both modes use the same locators and produce the same files in your harness. Only the recorded fields and the download path differ.
 
+A Marketplace can repair a mirrored archive without changing the resource: the content digest stays pinned, but the served archive digest moves. A writing `sync` or `update` refreshes the lockfile's `archive_digest` to match, reports `marketplace.archive-evidence-refreshed`, and re-downloads the artifact; `sync --locked` refuses the drifted evidence and tells you to run one of those commands. The previously served archive remains downloadable by its old digest.
+
 ## Choosing between them
 
 | Question | Git registry | Hosted Marketplace |

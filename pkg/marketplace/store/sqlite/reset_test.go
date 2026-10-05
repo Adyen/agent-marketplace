@@ -44,7 +44,7 @@ func TestRegistryCatalogResetRollsBackLateStorageFailure(t *testing.T) {
 	if _, err := meta.GetCollectionRevision(ctx, collection.ID); err != nil {
 		t.Fatalf("rollback lost collection: %v", err)
 	}
-	revision.ArchiveDigest = "sha256:replacement"
+	revision.License = "Apache-2.0"
 	if err := meta.PutResourceRevision(ctx, revision); !errors.Is(err, store.ErrConflict) {
 		t.Fatalf("rollback lost original immutable resource: %v", err)
 	}
