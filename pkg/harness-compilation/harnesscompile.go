@@ -551,6 +551,11 @@ var ErrPartialResult = errors.New("result contains error diagnostics; only resou
 // asked to write a shared file whose ownership must be reconciled externally.
 var ErrExternalReconciliationRequired = errors.New("artifact requires external ownership reconciliation")
 
+// materializeRootCaptureHook runs immediately before Materialize captures the
+// output root for publication. It is nil in production and set only by serial
+// tests in this package.
+var materializeRootCaptureHook func(outDir string)
+
 // Materialize writes a Result to disk using staged-then-rename for individual
 // artifacts. It merges fragment artifacts before writing, validates paths, detects
 // identical files via sha256, and supports dry-run and prune-stale modes.
@@ -719,9 +724,14 @@ func Materialize(r *Result, outDir string, opts ...WriteOption) (report *WriteRe
 		return nil, fmt.Errorf("harnesscompile.Materialize: output root changed before publication: %w", err)
 	}
 	// Ensure outDir exists.
+	if materializeRootCaptureHook != nil {
+		materializeRootCaptureHook(outDir)
+	}
+	// Capture and validate the output root before creating the stage, so a
+	// root setup failure never leaves an unregistered staging directory.
 	absolute, err := filepath.Abs(outDir)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("harnesscompile.Materialize: resolve outDir: %w", err)
 	}
 	ancestor := absolute
 	base, err := fsboundary.OpenDir(ancestor)
@@ -730,7 +740,7 @@ func Materialize(r *Result, outDir string, opts ...WriteOption) (report *WriteRe
 		base, err = fsboundary.OpenDir(ancestor)
 	}
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("harnesscompile.Materialize: capture outDir: %w", err)
 	}
 	defer func() {
 		if closeErr := base.Close(); closeErr != nil {
@@ -752,7 +762,7 @@ func Materialize(r *Result, outDir string, opts ...WriteOption) (report *WriteRe
 	}()
 	native, err := root.NativeRoot()
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("harnesscompile.Materialize: capture outDir: %w", err)
 	}
 	defer func() {
 		if closeErr := native.Close(); closeErr != nil {
@@ -761,10 +771,10 @@ func Materialize(r *Result, outDir string, opts ...WriteOption) (report *WriteRe
 	}()
 	rootInfo, err := native.Lstat(".")
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("harnesscompile.Materialize: inspect outDir: %w", err)
 	}
 	if rootSnapshot.exists && !os.SameFile(rootSnapshot.info, rootInfo) {
-		return nil, fsboundary.ErrGenerationConflict
+		return nil, fmt.Errorf("%w: harnesscompile.Materialize: outDir replaced since it was checked", fsboundary.ErrGenerationConflict)
 	}
 	rootSnapshot = materializeRootSnapshot{exists: true, info: rootInfo}
 	slog.Debug("SDK root admitted", "out_dir", outDir, "phase", "sdk-root-admitted")
