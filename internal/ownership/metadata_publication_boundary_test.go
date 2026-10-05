@@ -4,10 +4,45 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/Adyen/agent-marketplace/internal/fsboundary"
 )
+
+func TestJournalPublicationRefusalIdentifiesOperation(t *testing.T) {
+	store := newFixture(t).store()
+	if err := os.MkdirAll(store.recordDir(), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	foreign := filepath.Join(t.TempDir(), "inert-foreign-journal")
+	if err := os.WriteFile(foreign, []byte("foreign journal"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(foreign, store.JournalFile()); err != nil {
+		t.Fatal(err)
+	}
+	journal := &Journal{Version: journalVersion, RootKey: store.rootKey, CanonicalRoot: store.canonicalRoot, Phase: PhasePrepared}
+	err := store.writeJournal(journal)
+	if !errors.Is(err, fsboundary.ErrUnsafePath) {
+		t.Fatalf("journal alias was not refused: %v", err)
+	}
+	if !strings.Contains(err.Error(), "ownership: write journal") {
+		t.Fatalf("journal publication refusal omitted its operation: %v", err)
+	}
+	if raw, err := os.ReadFile(foreign); err != nil || string(raw) != "foreign journal" {
+		t.Fatalf("journal refusal changed foreign bytes: %q %v", raw, err)
+	}
+	if err := os.Remove(store.JournalFile()); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.writeJournal(journal); err != nil {
+		t.Fatal(err)
+	}
+	if actual, err := store.ReadJournal(); err != nil || actual == nil || actual.Phase != PhasePrepared {
+		t.Fatalf("real journal publication failed: %+v %v", actual, err)
+	}
+}
 
 func TestApplyMetadataPublicationKeepsPrivateModes(t *testing.T) {
 	f := newFixture(t)
