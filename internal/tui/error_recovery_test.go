@@ -359,7 +359,7 @@ func TestErrorRecoveryUnverifiedSyncReloadShowsDiagnosticCommand(t *testing.T) {
 
 	next, _ := m.Update(syncDoneMsg{err: nil})
 	m = next.(Model)
-	reload := m.requests.active(requestSnapshot)
+	reload := m.requests.Active(requestSnapshot)
 	if reload == 0 {
 		t.Fatal("pipeline completion did not schedule an authoritative reload")
 	}
@@ -415,7 +415,7 @@ func TestErrorRecoveryToggleReloadKeepsSharedKeyCategories(t *testing.T) {
 	}
 	updated, _ := m.Update(configWrittenMsg{operation: operation, skillName: "demo", enabled: true})
 	m = updated.(Model)
-	generation := m.requests.active(requestSnapshot)
+	generation := m.requests.Active(requestSnapshot)
 	promoted := pipeline.PromoteDiagnostic(diag.Diagnostic{
 		Code:     "skill.test.materialization",
 		Resource: "demo",
@@ -429,8 +429,8 @@ func TestErrorRecoveryToggleReloadKeepsSharedKeyCategories(t *testing.T) {
 		diagnostics:     []tuiDiagnostic{snapshotDiagnostic(diagnosticError, diagnosticMaterialization, promoted)},
 	})
 	m = updated.(Model)
-	if m.operations.active != nil || !m.rowsStale {
-		t.Fatalf("failed toggle reload did not complete the operation as stale: active=%v stale=%t", m.operations.active, m.rowsStale)
+	if m.operations.Active != nil || !m.rowsStale {
+		t.Fatalf("failed toggle reload did not complete the operation as stale: active=%v stale=%t", m.operations.Active, m.rowsStale)
 	}
 	if len(m.errs) != 2 {
 		t.Fatalf("errors = %d, want snapshot cause and operation cause", len(m.errs))

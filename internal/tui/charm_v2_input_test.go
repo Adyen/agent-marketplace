@@ -111,7 +111,7 @@ func TestV2BracketedPasteSchedulesRemoteSearchDebounce(t *testing.T) {
 	m = asModel(t, mustUpdate(m.Update(v2KeyPress('/'))))
 
 	m = asModel(t, mustUpdate(m.Update(tea.PasteMsg{Content: "audit"})))
-	if m.requests.active(requestDiscovery) == 0 {
+	if m.requests.Active(requestDiscovery) == 0 {
 		t.Fatalf("pasted query must begin a debounced remote discovery request")
 	}
 	if !m.discoveryLoading {

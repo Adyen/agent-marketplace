@@ -3,7 +3,6 @@ package tui
 import (
 	"cmp"
 	"context"
-	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -16,8 +15,8 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/marketplace"
 	"github.com/Adyen/agent-marketplace/internal/pipeline"
 	"github.com/Adyen/agent-marketplace/internal/resolver"
+	"github.com/Adyen/agent-marketplace/internal/session"
 	"github.com/Adyen/agent-marketplace/internal/skill"
-	mpapi "github.com/Adyen/agent-marketplace/pkg/marketplace/api"
 	"github.com/charmbracelet/x/ansi"
 )
 
@@ -58,57 +57,17 @@ func pipelineScope(s scope) pipeline.Scope {
 	}
 }
 
-func marketplaceDiscoveryInstallable(r row) bool {
-	d := r.MarketplaceDiscovery
-	return d != nil && (d.Item.Availability == mpapi.AvailabilityAvailable || d.Item.Availability == mpapi.AvailabilityOperatorExposed)
-}
-
-func discoveryInstallOptions(repoRoot string, r row, s scope) (pipeline.InstallOptions, error) {
-	d := r.MarketplaceDiscovery
-	if !marketplaceDiscoveryInstallable(r) {
-		return pipeline.InstallOptions{}, errors.New("marketplace resource is not installable")
-	}
-	if d.Item.Revision == "" || d.Item.ContentDigest == "" {
-		return pipeline.InstallOptions{}, errors.New("marketplace discovery did not provide an exact revision and digest")
-	}
-	registry := d.Item.RegistryID
-	if registry == "" {
-		registry = d.Item.RegistrySlug
-	}
-	locator := d.Endpoint.Alias + ":" + registry + "/" + d.Item.Kind + "/" + d.Item.Name + "@" + d.Item.ContentDigest
-	selector := d.Endpoint.Alias
-	if d.Endpoint.Alias == "" {
-		locator = strings.TrimSuffix(d.Endpoint.URL, "/") + "/r/" + registry + "/" + d.Item.Kind + "/" + d.Item.Name + "/revisions/" + d.Item.ContentDigest
-		selector = d.Endpoint.URL
-	}
-	kind, ok := skill.ParseKind(d.Item.Kind)
-	if !ok {
-		return pipeline.InstallOptions{}, fmt.Errorf("unsupported Marketplace resource kind %q", d.Item.Kind)
-	}
-	exact := &marketplace.MarketplaceLocator{Marketplace: selector, Alias: d.Endpoint.Alias, URL: d.Endpoint.URL, Registry: registry, Kind: d.Item.Kind, Name: d.Item.Name, Revision: d.Item.Revision, Digest: d.Item.ContentDigest}
-	return pipeline.InstallOptions{RepoRoot: repoRoot, Args: []string{locator}, Kind: kind, HasKind: true, Scope: pipelineScope(s), ScopeSpecified: true, Marketplace: selector, ExactMarketplaceLocator: exact}, nil
-}
-
-var (
-	prepareDiscoveryMarketplaceInstall = pipeline.PrepareMarketplaceInstall
-	commitPreparedMarketplaceInstall   = pipeline.CommitPreparedMarketplaceInstall
-)
-
 func prepareDiscoveryInstall(ctx context.Context, operation operationID, options pipeline.InstallOptions) tea.Cmd {
 	return func() tea.Msg {
-		prepared, err := prepareDiscoveryMarketplaceInstall(ctx, options)
-		preview := ""
-		if prepared != nil {
-			preview = prepared.Preview()
-		}
-		return discoveryInstallMsg{operation: operation, options: options, prepared: prepared, preview: preview, err: err}
+		result := session.PrepareDiscoveryInstall(ctx, options)
+		return discoveryInstallMsg{operation: operation, options: result.Options, prepared: result.Prepared, preview: result.Preview, err: result.Err}
 	}
 }
 
 func commitDiscoveryInstall(ctx context.Context, operation operationID, options pipeline.InstallOptions, prepared *pipeline.PreparedMarketplaceInstall) tea.Cmd {
 	return func() tea.Msg {
-		result, err := commitPreparedMarketplaceInstall(ctx, prepared)
-		return discoveryInstallMsg{operation: operation, options: options, result: result, err: err}
+		result := session.CommitDiscoveryInstall(ctx, options, prepared)
+		return discoveryInstallMsg{operation: operation, options: result.Options, result: result.Result, err: result.Err}
 	}
 }
 
@@ -124,7 +83,7 @@ func (m Model) startDiscoveryInstall(r row, s scope) (tea.Model, tea.Cmd) {
 	m.pane = paneList
 	m.marketplaceInstallOptions = options
 	m.marketplaceInstallOperation = operation
-	m.beginOperationProgressFor(operation, "install", m.requests.active(requestSnapshot))
+	m.beginOperationProgressFor(operation, "install", m.requests.Active(requestSnapshot))
 	return m, tea.Batch(
 		prepareDiscoveryInstall(m.observedContext(ctxOrBackground(m.ctx)), operation, options),
 		m.operationProgressCmd(),
@@ -198,16 +157,6 @@ func (m Model) handleMarketplaceConsentKey(msg tea.KeyPressMsg) (tea.Model, tea.
 	var cmd tea.Cmd
 	m.marketplaceConsentViewport, cmd = m.marketplaceConsentViewport.Update(msg)
 	return m, cmd
-}
-
-func marketplaceEndpointDisplay(endpoint config.MarketplaceEntry) string {
-	if endpoint.Alias != "" {
-		return endpoint.Alias
-	}
-	if normalized, err := marketplace.NormalizeMarketplaceURL(endpoint.URL); err == nil {
-		return normalized
-	}
-	return endpoint.URL
 }
 
 func effectiveMarketplaceConfig(cfg *config.Config) config.EffectiveConfig {

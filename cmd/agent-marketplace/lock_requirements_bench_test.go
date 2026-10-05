@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/Adyen/agent-marketplace/internal/config"
+	"github.com/Adyen/agent-marketplace/internal/lifecycle"
 	"github.com/Adyen/agent-marketplace/internal/lockfile"
 )
 
@@ -52,7 +53,7 @@ func BenchmarkAcquireRepeatedGitRequirementsLocalDiskNoNetwork(b *testing.B) {
 			for i := range entries {
 				entries[i] = config.RegistryEntry{URL: seeded.URL, Ref: seeded.Ref, SourceHarness: tc.policies[i%len(tc.policies)]}
 			}
-			first, err := acquireLockedRegistry(context.Background(), seeded.URL, seeded.URL, seeded.Ref, entries)
+			first, err := lifecycle.AcquireLockedRegistry(context.Background(), seeded.URL, seeded.URL, seeded.Ref, entries)
 			if err != nil || len(first.Roots) != tc.roots || first.Commit != seeded.Commit {
 				b.Fatalf("preflight acquisition: %v, registry=%+v", err, first)
 			}
@@ -61,7 +62,7 @@ func BenchmarkAcquireRepeatedGitRequirementsLocalDiskNoNetwork(b *testing.B) {
 			}
 			b.ReportAllocs()
 			for b.Loop() {
-				registry, err := acquireLockedRegistry(context.Background(), seeded.URL, seeded.URL, seeded.Ref, entries)
+				registry, err := lifecycle.AcquireLockedRegistry(context.Background(), seeded.URL, seeded.URL, seeded.Ref, entries)
 				if err != nil || len(registry.Roots) != tc.roots || registry.Commit != seeded.Commit {
 					b.Fatalf("acquisition: %v, registry=%+v", err, registry)
 				}

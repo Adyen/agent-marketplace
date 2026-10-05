@@ -1,4 +1,4 @@
-package main
+package lifecycle
 
 import (
 	"context"
@@ -8,6 +8,7 @@ import (
 
 	"github.com/Adyen/agent-marketplace/internal/catalog"
 	"github.com/Adyen/agent-marketplace/internal/config"
+	"github.com/Adyen/agent-marketplace/internal/marketplace"
 	"github.com/Adyen/agent-marketplace/internal/pipeline"
 	"github.com/Adyen/agent-marketplace/internal/resolver"
 	"github.com/Adyen/agent-marketplace/internal/skill"
@@ -17,17 +18,17 @@ import (
 // printed after its SelectedNotFoundError line.
 const updateSelectionRemoveLine = "  → run 'agent-marketplace remove --kind %s %s' before rerunning update; install a renamed resource afterwards with 'agent-marketplace install <new-name>'"
 
-// updateSelectionRequiredLine is the remediation line for a required miss,
+// UpdateSelectionRequiredLine is the remediation line for a required miss,
 // which remove cannot drop.
-const updateSelectionRequiredLine = "  → required selection: 'agent-marketplace remove' cannot drop it; change the configuration entry that marks it required, or ask that configuration's owner"
+const UpdateSelectionRequiredLine = "  → required selection: 'agent-marketplace remove' cannot drop it; change the configuration entry that marks it required, or ask that configuration's owner"
 
 // updateSelectionLoadNote reports a prior lock revision that could not be
 // loaded, so its selections were compared as newly missing.
 const updateSelectionLoadNote = "note: could not load the previously locked revision for %s (%v); its selections were compared as newly missing"
 
-// updateSelectionRefusalHint is the fixed trailing line of every update
+// UpdateSelectionRefusalHint is the fixed trailing line of every update
 // selection refusal.
-const updateSelectionRefusalHint = "update left the lock and harness outputs unchanged; rerun 'agent-marketplace update' after resolving the selections above, or update other registries with 'agent-marketplace update --registry <url>'"
+const UpdateSelectionRefusalHint = "update left the lock and harness outputs unchanged; rerun 'agent-marketplace update' after resolving the selections above, or update other registries with 'agent-marketplace update --registry <url>'"
 
 // selectionPriorLoadError is a prior lock revision that could not be loaded.
 type selectionPriorLoadError struct {
@@ -35,17 +36,17 @@ type selectionPriorLoadError struct {
 	err      error
 }
 
-// updateSelectionRefusedError is the typed pre-publication refusal returned
+// UpdateSelectionRefusedError is the typed pre-publication refusal returned
 // when a selection that resolved at the previously locked revision no longer
 // resolves at the new one. Its text is header-free: for each miss the existing
 // SelectedNotFoundError line and its remediation line, then one note per prior
 // revision that could not be loaded, then the fixed closing line.
-type updateSelectionRefusedError struct {
+type UpdateSelectionRefusedError struct {
 	misses     []*resolver.SelectedNotFoundError
 	loadErrors []selectionPriorLoadError
 }
 
-func (e *updateSelectionRefusedError) Error() string {
+func (e *UpdateSelectionRefusedError) Error() string {
 	var b strings.Builder
 	for _, miss := range e.misses {
 		b.WriteString(miss.Error())
@@ -56,15 +57,24 @@ func (e *updateSelectionRefusedError) Error() string {
 	for _, loadErr := range e.loadErrors {
 		fmt.Fprintf(&b, updateSelectionLoadNote+"\n", loadErr.lockPath, loadErr.err)
 	}
-	b.WriteString(updateSelectionRefusalHint)
+	b.WriteString(UpdateSelectionRefusalHint)
 	return b.String()
+}
+
+var terminalPrintableSyntax = strings.NewReplacer(`\\`, `\`, `\"`, `"`)
+
+// TerminalSafeText quotes value for terminal output without the surrounding
+// quotes and with printable escapes undone.
+func TerminalSafeText(value string) string {
+	escaped := strings.TrimSuffix(strings.TrimPrefix(marketplace.QuoteTerminal(value), `"`), `"`)
+	return terminalPrintableSyntax.Replace(escaped)
 }
 
 func missRemediationLine(miss *resolver.SelectedNotFoundError) string {
 	if miss.Required {
-		return updateSelectionRequiredLine
+		return UpdateSelectionRequiredLine
 	}
-	return fmt.Sprintf(updateSelectionRemoveLine, skill.KindLabel(miss.Kind), terminalSafeText(miss.Name))
+	return fmt.Sprintf(updateSelectionRemoveLine, skill.KindLabel(miss.Kind), TerminalSafeText(miss.Name))
 }
 
 // selectionMissIdentity identifies a selected-not-found diagnostic across the
@@ -80,7 +90,7 @@ type selectionMissIdentity struct {
 }
 
 func missIdentityOf(miss *resolver.SelectedNotFoundError) selectionMissIdentity {
-	canonical, err := canonicalRegistryURL(miss.URL)
+	canonical, err := CanonicalRegistryURL(miss.URL)
 	if err != nil {
 		canonical = miss.URL
 	}
@@ -170,5 +180,5 @@ func guardNewlyMissingSelections(ctx context.Context, ws pipeline.Workspace, off
 	if len(misses) == 0 {
 		return nil
 	}
-	return &updateSelectionRefusedError{misses: misses, loadErrors: loadErrors}
+	return &UpdateSelectionRefusedError{misses: misses, loadErrors: loadErrors}
 }

@@ -56,10 +56,10 @@ func TestRowStatusDecision(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			st := tc.row.status()
-			if st.glyph != tc.glyph || st.symbol != tc.symbol || st.label != tc.label {
+			st := tc.row.Status()
+			if st.Glyph != tc.glyph || st.Symbol != tc.symbol || st.Label != tc.label {
 				t.Fatalf("status() = {%q %q %q}, want {%q %q %q}",
-					st.glyph, st.symbol, st.label, tc.glyph, tc.symbol, tc.label)
+					st.Glyph, st.Symbol, st.Label, tc.glyph, tc.symbol, tc.label)
 			}
 			if got := tc.row.Glyph(); got != tc.glyph {
 				t.Fatalf("Glyph() = %q, want %q", got, tc.glyph)

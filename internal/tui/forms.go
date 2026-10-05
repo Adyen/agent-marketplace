@@ -216,7 +216,7 @@ func updateHarnessMulti(form *huh.Form, multi *huh.MultiSelect[string], value *[
 // offers for a row, keyed by the same letters the modal accelerators use.
 func toggleModalActionOptions(r row) []huh.Option[string] {
 	kindLabel := skill.KindLabel(r.Artifact.Kind)
-	if r.canOverrideMarketplace() {
+	if r.CanOverrideMarketplace() {
 		return []huh.Option[string]{huh.NewOption("[e]  toggle user override", "e")}
 	}
 	excludeLabel := fmt.Sprintf("toggle %s exclude", kindLabel)

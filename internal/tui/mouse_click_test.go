@@ -302,7 +302,7 @@ func TestMouseClickSelectsBundleTreeEntry(t *testing.T) {
 				if inner.detailSelectedPath != tt.target || cmd == nil {
 					t.Fatalf("click selected preview %q (request=%t), want %q with a request", inner.detailSelectedPath, cmd != nil, tt.target)
 				}
-				generation := inner.requests.active(requestDetail)
+				generation := inner.requests.Active(requestDetail)
 				loaded, ok := cmd().(detailContentMsg)
 				if !ok {
 					t.Fatalf("preview command returned %T, want detailContentMsg", loaded)

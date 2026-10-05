@@ -26,7 +26,7 @@ func TestDetailSourcePreviewRefusesHardLink(t *testing.T) {
 	if err != nil || !truncated || content != "inert so" {
 		t.Fatalf("bounded source preview positive control failed: %q %v %v", content, truncated, err)
 	}
-	if snapshot := captureDetailSource(path); snapshot.err != nil || snapshot.content != string(payload) {
+	if snapshot := captureDetailSource(path); snapshot.Err != nil || snapshot.Content != string(payload) {
 		t.Fatalf("native snapshot positive control failed: %+v", snapshot)
 	}
 	before, err := os.Stat(path)
@@ -40,7 +40,7 @@ func TestDetailSourcePreviewRefusesHardLink(t *testing.T) {
 	if !errors.Is(err, fsboundary.ErrUnsafeFile) || content != "" || truncated {
 		t.Fatalf("hard link supplied preview data: %q %v %v", content, truncated, err)
 	}
-	if snapshot := captureDetailSource(path); !errors.Is(snapshot.err, fsboundary.ErrUnsafeFile) || snapshot.content != "" || snapshot.truncationMarker != "" {
+	if snapshot := captureDetailSource(path); !errors.Is(snapshot.Err, fsboundary.ErrUnsafeFile) || snapshot.Content != "" || snapshot.TruncationMarker != "" {
 		t.Fatalf("native snapshot imported hardlink payload: %+v", snapshot)
 	}
 	if after, err := os.Stat(path); err != nil || !os.SameFile(before, after) || before.Mode() != after.Mode() || !before.ModTime().Equal(after.ModTime()) {
@@ -104,10 +104,10 @@ func TestDetailSourcePreviewConsumersDiscardGenerationConflict(t *testing.T) {
 			var healthy string
 			if test.snapshot {
 				control := captureDetailSource(root)
-				if control.err != nil || control.truncationMarker != detailTruncationMarker {
+				if control.Err != nil || control.TruncationMarker != detailTruncationMarker {
 					t.Fatalf("healthy snapshot did not exercise truncation: %+v", control)
 				}
-				healthy = control.content
+				healthy = control.Content
 			} else {
 				healthy = ansi.Strip(renderBundleFile(true, root, "SKILL.md", 80))
 				if !strings.Contains(healthy, detailTruncationMarker) {
@@ -133,8 +133,8 @@ func TestDetailSourcePreviewConsumersDiscardGenerationConflict(t *testing.T) {
 			var output, prefix string
 			if test.snapshot {
 				snapshot := captureDetailSource(root, readTarget)
-				if !errors.Is(snapshot.err, fsboundary.ErrGenerationConflict) || snapshot.content != "" || snapshot.truncationMarker != "" || snapshot.omitted {
-					t.Fatalf("refused snapshot retained content or markers: err=%v bytes=%d marker=%q omitted=%v", snapshot.err, len(snapshot.content), snapshot.truncationMarker, snapshot.omitted)
+				if !errors.Is(snapshot.Err, fsboundary.ErrGenerationConflict) || snapshot.Content != "" || snapshot.TruncationMarker != "" || snapshot.Omitted {
+					t.Fatalf("refused snapshot retained content or markers: err=%v bytes=%d marker=%q omitted=%v", snapshot.Err, len(snapshot.Content), snapshot.TruncationMarker, snapshot.Omitted)
 				}
 				output = renderDetailFullContent(newTheme(true), row{DetailSource: snapshot}, 80)
 				prefix = "Error reading resource: "

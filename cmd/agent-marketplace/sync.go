@@ -20,12 +20,13 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/cache"
 	pkgcatalog "github.com/Adyen/agent-marketplace/internal/catalog"
 	"github.com/Adyen/agent-marketplace/internal/config"
+	"github.com/Adyen/agent-marketplace/internal/lifecycle"
 	"github.com/Adyen/agent-marketplace/internal/marketplace"
 	"github.com/Adyen/agent-marketplace/internal/materialize"
 	"github.com/Adyen/agent-marketplace/internal/pipeline"
 	"github.com/Adyen/agent-marketplace/internal/resolver"
+	"github.com/Adyen/agent-marketplace/internal/session"
 	"github.com/Adyen/agent-marketplace/internal/skill"
-	"github.com/Adyen/agent-marketplace/internal/tui"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 )
@@ -110,7 +111,7 @@ func runSyncWithLocks(ctx context.Context, out io.Writer, noBackup bool, strict 
 	if err != nil {
 		return err
 	}
-	if err := prepareDependencyTransactions(ctx, (lockMode{locked: locked, offline: offline}).readOnlyDependencies()); err != nil {
+	if err := lifecycle.PrepareDependencyTransactions(ctx, (lifecycle.LockMode{Locked: locked, Offline: offline}).ReadOnlyDependencies()); err != nil {
 		return err
 	}
 	if err := pipeline.ValidateConsumerIntent(ctx, ws.RepoRoot(), ws.LocalConfigDir()); err != nil {
@@ -125,7 +126,7 @@ func runSyncWithLocks(ctx context.Context, out io.Writer, noBackup bool, strict 
 	repoRoot := ws.RepoRoot()
 	localDir := ws.LocalConfigDir()
 	var lockWarnings []error
-	exactOption, _, exactLease, err := prepareRuntimeLocks(ctx, repoRoot, localDir, lockMode{locked: locked || offline, offline: offline, warningSink: &lockWarnings, marketplacePolicy: marketplacePolicy})
+	exactOption, _, exactLease, err := lifecycle.PrepareRuntimeLocks(ctx, repoRoot, localDir, lifecycle.LockMode{Locked: locked || offline, Offline: offline, WarningSink: &lockWarnings, MarketplacePolicy: marketplacePolicy})
 	if err != nil {
 		style := newSyncOutputStyle(out)
 		if summaryErr := writeSyncSummary(out, style, 0, 0, 0, 1); summaryErr != nil {
@@ -152,15 +153,15 @@ func runSyncWithLocks(ctx context.Context, out io.Writer, noBackup bool, strict 
 	resolvedCount := len(syncResult.Resolved)
 	report := syncResult.Report
 
-	var persistedRefreshes map[archiveRefreshKey]bool
+	var persistedRefreshes map[lifecycle.ArchiveRefreshKey]bool
 	if !locked && !offline && len(errs) == 0 {
 		var refreshErr error
-		persistedRefreshes, refreshErr = refreshDriftedMarketplaceLocks(ctx, repoRoot, localDir, mergedCfg, syncResult.Warnings)
+		persistedRefreshes, refreshErr = lifecycle.RefreshDriftedMarketplaceLocks(ctx, repoRoot, localDir, mergedCfg, syncResult.Warnings)
 		if refreshErr != nil {
 			errs = append(errs, fmt.Errorf("refresh Marketplace lock evidence: %w", refreshErr))
 		}
 	}
-	syncResult.Warnings = stripUnpersistedRefreshWarnings(syncResult.Warnings, persistedRefreshes)
+	syncResult.Warnings = lifecycle.StripUnpersistedRefreshWarnings(syncResult.Warnings, persistedRefreshes)
 
 	// Collect stale selections before strict mode reclassifies them.
 	// Only collect direct selections (not collection-sourced) for pruning.
@@ -459,10 +460,10 @@ func runSyncCheck(ctx context.Context, out io.Writer, strict bool, offline ...bo
 	if !isOffline {
 		configLoadMode = pipeline.ConfigLoadCached
 	}
-	exactOption, _, exactLease, err := prepareRuntimeLocks(ctx, repoRoot, localDir, lockMode{
-		locked: true, offline: isOffline, check: true,
-		allowTransientOrganization: !isOffline,
-		warningSink:                &lockWarnings,
+	exactOption, _, exactLease, err := lifecycle.PrepareRuntimeLocks(ctx, repoRoot, localDir, lifecycle.LockMode{
+		Locked: true, Offline: isOffline, Check: true,
+		AllowTransientOrganization: !isOffline,
+		WarningSink:                &lockWarnings,
 	})
 	if err != nil {
 		return err
@@ -861,7 +862,7 @@ func printMalformedDetail(out io.Writer, malformed []skill.MalformedSkill) error
 		return err
 	}
 	for _, m := range malformed {
-		if _, err := fmt.Fprintf(out, "  - %s (%s): %s\n", tui.TerminalSafeLine(m.DirName), tui.TerminalSafeLine(m.Path), tui.TerminalSafeLine(fmt.Sprint(m.Error))); err != nil {
+		if _, err := fmt.Fprintf(out, "  - %s (%s): %s\n", session.TerminalSafeLine(m.DirName), session.TerminalSafeLine(m.Path), session.TerminalSafeLine(fmt.Sprint(m.Error))); err != nil {
 			return err
 		}
 	}
@@ -1045,7 +1046,7 @@ func pruneStaleSelections(ctx context.Context, repoRoot string, stale []*resolve
 		LocalConfigDir: config.FindLocalConfigDir(),
 		ConfigPath:     configPath,
 		Source:         config.RepoCommitted,
-		Reconcile:      reconcileCommandDependencies,
+		Reconcile:      lifecycle.ReconcileCommandDependencies,
 	}, func(m *pipeline.LayerMutation) error {
 		for _, snf := range dedupStaleSelections(stale) {
 			label := skill.KindLabel(snf.Kind)

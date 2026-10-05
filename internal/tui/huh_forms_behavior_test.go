@@ -254,7 +254,7 @@ func runFixedChoiceSlashScenarios(t *testing.T) {
 	}
 	updated, cmd = picker.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
 	picker = updated.(Model)
-	if cmd != nil || picker.pane != paneList || picker.operations.active != nil {
-		t.Fatalf("config-editor Escape after slash = pane %v command %v operation %v", picker.pane, cmd, picker.operations.active)
+	if cmd != nil || picker.pane != paneList || picker.operations.Active != nil {
+		t.Fatalf("config-editor Escape after slash = pane %v command %v operation %v", picker.pane, cmd, picker.operations.Active)
 	}
 }

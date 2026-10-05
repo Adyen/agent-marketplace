@@ -12,6 +12,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/cache"
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/dependencytxn"
+	"github.com/Adyen/agent-marketplace/internal/lifecycle"
 )
 
 func setupMultiNameInstall(t *testing.T) string {
@@ -34,15 +35,15 @@ func multiNameRepo(t *testing.T, configBody string) string {
 func stubDependencyCommit(t *testing.T, inspect func(desired []dependencytxn.DesiredFile)) *int {
 	t.Helper()
 	calls := new(int)
-	originalCommit := commitDependencyTransaction
-	commitDependencyTransaction = func(ctx context.Context, stateDir string, desired []dependencytxn.DesiredFile, options ...dependencytxn.Option) (dependencytxn.Result, error) {
+	originalCommit := lifecycle.CommitDependencyTransaction
+	lifecycle.CommitDependencyTransaction = func(ctx context.Context, stateDir string, desired []dependencytxn.DesiredFile, options ...dependencytxn.Option) (dependencytxn.Result, error) {
 		*calls++
 		if inspect != nil {
 			inspect(desired)
 		}
 		return originalCommit(ctx, stateDir, desired, options...)
 	}
-	t.Cleanup(func() { commitDependencyTransaction = originalCommit })
+	t.Cleanup(func() { lifecycle.CommitDependencyTransaction = originalCommit })
 	return calls
 }
 
@@ -555,7 +556,7 @@ func TestInstallMultipleStagesOnePublication(t *testing.T) {
 	}
 	withWorkingDir(t, repo)
 	repoConfig := filepath.Join(repo, ".agents", "config.yaml")
-	canonicalRepoConfig, err := canonicalizeFuturePath(repoConfig)
+	canonicalRepoConfig, err := lifecycle.CanonicalizeFuturePath(repoConfig)
 	if err != nil {
 		t.Fatal(err)
 	}

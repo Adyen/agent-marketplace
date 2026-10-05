@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"path/filepath"
 	"slices"
 	"sort"
 	"strconv"
@@ -28,15 +27,6 @@ import (
 	"github.com/charmbracelet/x/ansi"
 	"github.com/sahilm/fuzzy"
 )
-
-type DependencyLifecycleFunc func(context.Context, pipeline.Workspace) ([]error, error)
-type DependencyMutationFunc func(context.Context, pipeline.Workspace, func(pipeline.ConfigPathMapper) error) error
-
-type DependencyLifecycle struct {
-	Sync   DependencyLifecycleFunc
-	Update DependencyLifecycleFunc
-	Mutate DependencyMutationFunc
-}
 
 type Option func(*Model)
 
@@ -133,21 +123,6 @@ func newTUIViewport(width, height int) viewport.Model {
 // code never touches it; see init_test.go's TestMain for the setter.
 var testSkipInitModal bool
 
-// shouldShowInitModal returns true when the home directory exists but the
-// user personal config file does not. We require the home directory itself to
-// be present so test sandboxes with synthetic paths don't accidentally trigger
-// the first-run dialog.
-func shouldShowInitModal(homeDir string) bool {
-	if homeDir == "" {
-		return false
-	}
-	if info, err := os.Stat(homeDir); err != nil || !info.IsDir() {
-		return false
-	}
-	_, err := os.Stat(filepath.Join(homeDir, ".agents", "config.yaml"))
-	return os.IsNotExist(err)
-}
-
 func (m Model) Init() tea.Cmd {
 	var warningCmd tea.Cmd
 	if m.viewPrefsWarning != "" {
@@ -156,7 +131,7 @@ func (m Model) Init() tea.Cmd {
 			return toastMsg{text: text, duration: 5 * time.Second}
 		}
 	}
-	return tea.Batch(loadSnapshotProgressive(ctxOrBackground(m.ctx), m.workspace, m.homeDir, m.requests.active(requestSnapshot)), m.spinner.Tick, warningCmd, m.upgradeNotice)
+	return tea.Batch(loadSnapshotProgressive(ctxOrBackground(m.ctx), m.workspace, m.homeDir, m.requests.Active(requestSnapshot)), m.spinner.Tick, warningCmd, m.upgradeNotice)
 }
 
 func (m *Model) applySnapshotStatus(msg snapshotLoadedMsg) {
@@ -164,7 +139,7 @@ func (m *Model) applySnapshotStatus(msg snapshotLoadedMsg) {
 	if msg.stage != snapshotStageFinal {
 		m.driftAssessment = assessment
 		m.replaceSnapshotDiagnostics(msg.diagnostics, msg.errs, msg.warnings)
-		m.rowsStale = len(diagnosticValues(m.diagnostics.snapshot, diagnosticError)) > 0
+		m.rowsStale = len(diagnosticValues(m.diagnostics.Snapshot, diagnosticError)) > 0
 		return
 	}
 	if assessment == driftUnknown {
@@ -176,10 +151,10 @@ func (m *Model) applySnapshotStatus(msg snapshotLoadedMsg) {
 	}
 	m.driftAssessment = assessment
 	m.replaceSnapshotDiagnostics(msg.diagnostics, msg.errs, msg.warnings)
-	m.rowsStale = assessment == driftFailed || len(diagnosticValues(m.diagnostics.snapshot, diagnosticError)) > 0
+	m.rowsStale = assessment == driftFailed || len(diagnosticValues(m.diagnostics.Snapshot, diagnosticError)) > 0
 	m.configInvalid = false
-	for _, d := range m.diagnostics.snapshot {
-		if d.severity == diagnosticError && d.category == diagnosticConfig {
+	for _, d := range m.diagnostics.Snapshot {
+		if d.Severity == diagnosticError && d.Category == diagnosticConfig {
 			m.configInvalid = true
 			break
 		}
@@ -483,7 +458,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case snapshotLoadedMsg:
 		if msg.stage == snapshotStageConfig {
-			if m.requests.active(requestSnapshot) != msg.generation {
+			if m.requests.Active(requestSnapshot) != msg.generation {
 				return m, nil
 			}
 			if msg.provisionalCfg != nil {
@@ -496,7 +471,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Batch(m.beginMarketplaceDiscovery(m.filter, false), waitSnapshotStages(msg.stages))
 		}
 		if msg.stage == snapshotStageInventory {
-			if m.requests.active(requestSnapshot) != msg.generation {
+			if m.requests.Active(requestSnapshot) != msg.generation {
 				return m, nil
 			}
 			m.loading = false
@@ -578,7 +553,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(toastExpiryCmd(2*time.Second), m.beginMarketplaceDiscovery(m.filter, false), m.finishMarketplaceInstallReload(snapshot.generation, snapshotAcceptanceError(snapshot)), updateCmd, syncCmd)
 
 	case discoveryDebounceMsg:
-		if m.requests.active(requestDiscovery) != msg.generation {
+		if m.requests.Active(requestDiscovery) != msg.generation {
 			return m, nil
 		}
 		ctx, cancel := context.WithCancel(ctxOrBackground(m.ctx))
@@ -604,7 +579,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		}
-		if m.requests.active(requestDiscovery) != msg.generation || msg.sequence == 0 || msg.sequence <= m.discoverySequence {
+		if m.requests.Active(requestDiscovery) != msg.generation || msg.sequence == 0 || msg.sequence <= m.discoverySequence {
 			return m, nil
 		}
 		m.discoverySequence = msg.sequence
@@ -1352,7 +1327,7 @@ func (m Model) dispatchAction(id paletteActionID) (tea.Model, tea.Cmd) {
 		// Sync does not allocate a snapshot generation until syncDoneMsg
 		// actually schedules the authoritative post-sync reload.
 		m.syncing = true
-		m.beginOperationProgress("sync", m.requests.active(requestSnapshot))
+		m.beginOperationProgress("sync", m.requests.Active(requestSnapshot))
 		recordActionSpan(m.ctx, "sync", nil)
 		return m, tea.Batch(m.dependencySyncCmd(), m.operationProgressCmd(), m.spinner.Tick)
 
@@ -1498,7 +1473,7 @@ func (m *Model) rebuildOpenBundle(previous row, hadPrevious bool) {
 			m.ensureBundleCursorVisible()
 			return
 		}
-		if marketplaceInspectableSkill(current) && m.requests.active(requestDetail) != 0 {
+		if marketplaceInspectableSkill(current) && m.requests.Active(requestDetail) != 0 {
 			return
 		}
 		m.bundle = nil
@@ -1566,7 +1541,7 @@ func (m Model) rowToggleEligibility(r row) toggleDenial {
 		return toggleMarketplaceBlocked
 	case r.Artifact.Required:
 		return toggleRequired
-	case r.MarketplaceCollectionOnly && !r.canOverrideMarketplace():
+	case r.MarketplaceCollectionOnly && !r.CanOverrideMarketplace():
 		return toggleCollectionOnly
 	}
 	return toggleEligible
@@ -1840,7 +1815,7 @@ func (m Model) confirmSyncQuitYes() (tea.Model, tea.Cmd) {
 	m.pane = paneList
 	m.syncing = true
 	m.quitAfterSync = true
-	m.beginOperationProgress("sync", m.requests.active(requestSnapshot))
+	m.beginOperationProgress("sync", m.requests.Active(requestSnapshot))
 	slog.Debug("sync+quit confirmed, deferring quit until sync completes")
 	return m, tea.Batch(m.dependencySyncCmd(), m.operationProgressCmd(), m.spinner.Tick)
 }
@@ -2050,9 +2025,9 @@ func filepathBase(path string) string {
 
 func (m *Model) applyFilter() []row {
 	for i := range m.rows {
-		m.rows[i].ensureLabelMemo()
+		ensureLabelMemo(&m.rows[i])
 		if m.filter != "" {
-			m.rows[i].ensureSearchable()
+			m.rows[i].EnsureSearchable()
 		}
 	}
 	if m.filter == "" {
@@ -2073,16 +2048,16 @@ func (m *Model) applyFilter() []row {
 	next := 0
 	for i := range m.rows {
 		r := m.rows[i]
-		r.searchRanked = true
+		r.SearchRanked = true
 		if next < len(nameMatches) && nameMatches[next].Index == i {
-			r.searchNameMatch = true
-			r.searchScore = nameMatches[next].Score
-			r.searchMatchRunes = runeIndexes(r.searchName, nameMatches[next].MatchedIndexes)
+			r.SearchNameMatch = true
+			r.SearchScore = nameMatches[next].Score
+			r.SearchMatchRunes = runeIndexes(r.SearchName, nameMatches[next].MatchedIndexes)
 			next++
 		} else if rowHasAllWordPrefixes(&r, terms) {
-			r.searchNameMatch = false
-			r.searchScore = 0
-			r.searchMatchRunes = nil
+			r.SearchNameMatch = false
+			r.SearchScore = 0
+			r.SearchMatchRunes = nil
 		} else {
 			continue
 		}
@@ -2094,7 +2069,7 @@ func (m *Model) applyFilter() []row {
 
 func rowHasAllWordPrefixes(r *row, terms []string) bool {
 	for _, term := range terms {
-		if !r.hasWordWithPrefix(term) {
+		if !r.HasWordWithPrefix(term) {
 			return false
 		}
 	}
@@ -2104,15 +2079,15 @@ func rowHasAllWordPrefixes(r *row, terms []string) bool {
 // searchRankLess reports whether a ranks strictly above b: name matches
 // before metadata-only matches, then by descending fuzzy score.
 func searchRankLess(a, b row) bool {
-	if a.searchNameMatch != b.searchNameMatch {
-		return a.searchNameMatch
+	if a.SearchNameMatch != b.SearchNameMatch {
+		return a.SearchNameMatch
 	}
-	return a.searchScore > b.searchScore
+	return a.SearchScore > b.SearchScore
 }
 
 type searchNameSource []row
 
-func (s searchNameSource) String(i int) string { return s[i].searchName }
+func (s searchNameSource) String(i int) string { return s[i].SearchName }
 func (s searchNameSource) Len() int            { return len(s) }
 
 func fuzzyMatch(pattern, text string) (fuzzy.Match, bool) {
