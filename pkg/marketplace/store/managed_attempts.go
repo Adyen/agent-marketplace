@@ -29,7 +29,14 @@ type ManagedRefreshAttempt struct {
 	Outcome               string        `json:"outcome"`
 	PublicationID         PublicationID `json:"publication_id,omitempty"`
 	ExpectedPublicationID PublicationID `json:"expected_publication_id,omitempty"`
+	FailureCode           string        `json:"failure_code,omitempty"`
+	FailureCause          string        `json:"failure_cause,omitempty"`
 	RecordedAt            time.Time     `json:"recorded_at"`
+}
+
+type ManagedRefreshFailure struct {
+	Code  string
+	Cause string
 }
 
 type ManagedRefreshAttemptQuery struct {
@@ -64,7 +71,7 @@ type ManagedRefreshJobView struct {
 }
 
 type ManagedRefreshAttemptStore interface {
-	RecordManagedRefreshAttempt(context.Context, ManagedFence, string, PublicationID) error
+	RecordManagedRefreshAttempt(context.Context, ManagedFence, string, PublicationID, ...ManagedRefreshFailure) error
 	ListManagedRefreshAttempts(context.Context, ManagedRefreshAttemptQuery) ([]ManagedRefreshAttempt, error)
 	GetManagedRegistryRefreshState(context.Context, MarketplaceID, RegistryID) (ManagedRegistryRefreshState, error)
 	GetManagedRefreshJob(context.Context, MarketplaceID, JobID) (ManagedRefreshJobView, error)
