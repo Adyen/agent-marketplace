@@ -32,7 +32,7 @@ func BenchmarkNativeManagedLinkPruneDisk(b *testing.B) {
 				}
 				b.StartTimer()
 				if guarded {
-					err = removePortableOutput(leaf, info, "", nil)
+					err = pruneManagedLink(leaf, managedLinkSnapshot{observed: info, text: target}, nil, false)
 				} else {
 					err = os.Remove(leaf)
 				}
