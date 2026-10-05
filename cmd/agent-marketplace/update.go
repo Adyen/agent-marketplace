@@ -11,6 +11,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/lockfile"
 	"github.com/Adyen/agent-marketplace/internal/marketplace"
 	"github.com/Adyen/agent-marketplace/internal/pipeline"
+	"github.com/Adyen/agent-marketplace/internal/resolver"
 )
 
 func newUpdateCmd() *cobra.Command {
@@ -126,6 +127,23 @@ func writeUpdateOutput(out io.Writer, result *pipeline.UpdateResult, bump bool) 
 	for _, pin := range result.MarketplacePins {
 		identity := fmt.Sprintf("%s/%s/%s", marketplace.QuoteTerminal(pin.OldPin.RegistryID), marketplace.QuoteTerminal(pin.OldPin.Kind), marketplace.QuoteTerminal(pin.OldPin.Name))
 		if pin.Updated {
+			if pin.NewPin.Digest == pin.OldPin.Digest && pin.OldPin.LockArchiveDigest != "" && pin.ArchiveDigest != "" && pin.ArchiveDigest != pin.OldPin.LockArchiveDigest {
+				if err := writeGroupedWarnings(out, []error{&resolver.ArchiveEvidenceRefreshedWarning{
+					MarketplaceURL:   pin.Entry.URL,
+					InstanceID:       pin.Entry.InstanceID,
+					RegistryID:       pin.OldPin.RegistryID,
+					Kind:             pin.OldPin.Kind,
+					Name:             pin.OldPin.Name,
+					OldArchiveDigest: pin.OldPin.LockArchiveDigest,
+					NewArchiveDigest: pin.ArchiveDigest,
+				}}, false); err != nil {
+					return err
+				}
+				if _, err := fmt.Fprintf(out, "Marketplace %s %s: %s\n", marketplace.QuoteTerminal(pin.Entry.URL), identity, terminalSafeText(pin.Reason)); err != nil {
+					return err
+				}
+				continue
+			}
 			if _, err := fmt.Fprintf(out, "Marketplace %s %s: updated %s -> %s\n", marketplace.QuoteTerminal(pin.Entry.URL), identity, marketplace.QuoteTerminal(pin.OldPin.Digest), marketplace.QuoteTerminal(pin.NewPin.Digest)); err != nil {
 				return err
 			}
