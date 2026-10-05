@@ -19,7 +19,7 @@ test("disabling an overflowing Status row keeps its section visible and selects 
     await expect(terminal.getByText("beta-skill", { strict: false })).toBeVisible();
     await expect(terminal.getByText("~ in sync")).toBeVisible();
   });
-  await step("show Status buckets", () => terminal.write("3"), async () => {
+  await step("status buckets are the single view", () => {}, async () => {
     await expect(terminal.getByText(/Enabled\s+\(31\)/g)).toBeVisible();
   });
   await step("select the first enabled skill", () => terminal.write("j"), async () => {

@@ -148,11 +148,15 @@ editor, `e` shows errors and warnings, `?` lists every binding, and `q` quits.
 The [TUI reference](https://github.com/Adyen/agent-marketplace/blob/main/site/docs/reference/tui.md)
 has the full list.
 
-The TUI shows configured and enabled resources before it contacts a
-Marketplace. It then loads up to 50 results from each configured Marketplace.
-`/` filters the loaded rows as you type, and after 250 ms without input it also
-searches the configured Marketplaces. Discovery has no pagination, so narrow
-your search or use the `search` command for large result sets.
+Once configuration validates, the TUI shows locally configured selections as
+verification-pending rows, including local-directory `all:true` selections
+with configured excludes applied. These rows do not claim installation or sync
+status until exact-lock and catalog verification replaces them. Cached
+Marketplace results (up to 50 per configured Marketplace) may appear while
+verification runs; drift is assessed afterward. `/` filters loaded rows as you
+type and, after 250 ms without input, searches the configured Marketplaces.
+Discovery has no pagination, so narrow your search or use the `search` command
+for large result sets.
 
 The TUI caches discovery results per endpoint. Results stay fresh for five
 minutes and can remain visible as stale for up to 24 hours while a refresh

@@ -128,7 +128,8 @@ export default defineConfig({
                 { text: 'Back up and restore a Marketplace', link: `${DOCS_PATH}how-to/operator/back-up-and-restore` },
                 { text: 'Manage ingestion policy', link: `${DOCS_PATH}how-to/operator/manage-ingestion-policy` },
                 { text: 'Revoke a resource', link: `${DOCS_PATH}how-to/operator/revoke-a-resource` },
-                { text: 'Reindex and monitor', link: `${DOCS_PATH}how-to/operator/reindex-and-monitor` }
+                { text: 'Reindex and monitor', link: `${DOCS_PATH}how-to/operator/reindex-and-monitor` },
+                { text: 'Reset and reindex a registry', link: `${DOCS_PATH}how-to/operator/reset-and-reindex-a-registry` }
               ]
             }
           ]

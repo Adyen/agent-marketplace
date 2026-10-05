@@ -72,7 +72,7 @@ func TestTUIDependencyLifecycleRejectsInvalidWorkspaceBeforeLocks(t *testing.T) 
 		runTUIExactSync = previousSync
 	})
 
-	err := runTUIDependencyLifecycle(context.Background(), pipeline.Workspace{}, false)
+	_, err := runTUIDependencyLifecycle(context.Background(), pipeline.Workspace{}, false)
 	if !errors.Is(err, pipeline.ErrInvalidWorkspace) {
 		t.Fatalf("runTUIDependencyLifecycle error = %v; want ErrInvalidWorkspace", err)
 	}
