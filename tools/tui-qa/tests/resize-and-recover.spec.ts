@@ -9,6 +9,7 @@ test.use(journey.options);
 test.beforeAll(journey.setup);
 test.afterAll(journey.cleanup);
 
+// spec: tui-rendering/undersized-terminal
 test("minimum-size gate preserves selection and blocks toggles", async ({ terminal }) => {
   await declineLegacyMigration(terminal);
   await step("settled fixture baseline", () => {}, async () => {
@@ -46,7 +47,7 @@ test("minimum-size gate preserves selection and blocks toggles", async ({ termin
     await expect(terminal.getByText("Resize required")).not.toBeVisible();
     await expect(terminal.getByText(/Available\s+\(1\)/g)).toBeVisible();
     await expect(terminal.getByText(/Name:\s+alpha-skill/g)).toBeVisible();
-    await expect(terminal.getByText("?:help · s:sync · q:quit")).toBeVisible();
+    await expect(terminal.getByText(/: (commands|cmds) · \? help · q quit/g)).toBeVisible();
   });
 
   await step("quit", () => terminal.write("q"), async () => {
