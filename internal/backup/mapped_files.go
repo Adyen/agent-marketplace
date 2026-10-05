@@ -86,9 +86,9 @@ func restoreMappedFile(reader io.Reader, header *tar.Header, mappings []map[stri
 		}
 	}()
 	validateParent := func() error {
-		fresh, err := anchor.OpenPath(filepath.Base(parent))
+		fresh, err := fsboundary.OpenDir(parent)
 		if err != nil {
-			return err
+			return fmt.Errorf("%w: mapped parent %s no longer resolves: %w", fsboundary.ErrGenerationConflict, parent, err)
 		}
 		unchanged := fresh.Identity().SameObject(captured.Identity())
 		if closeErr := fresh.Close(); closeErr != nil {
