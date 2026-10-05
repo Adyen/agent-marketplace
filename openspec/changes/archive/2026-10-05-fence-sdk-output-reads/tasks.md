@@ -5,4 +5,4 @@
 - [x] Bounded public SDK FIFO refusal and preserved generation/membership.
 - [x] Linux/macOS materialize/SDK translation suites/repeated races/validate/spec/shellcheck.
 - [x] Full disk lifecycle cost and complete intended-file adversarial review.
-- [ ] Archive as final commit.
+- [x] Archive as final commit.
