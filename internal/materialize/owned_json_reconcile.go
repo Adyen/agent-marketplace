@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"sort"
 
+	"github.com/Adyen/agent-marketplace/internal/dependencytxn"
 	"github.com/Adyen/agent-marketplace/internal/ownership"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/jsonc"
@@ -91,19 +92,18 @@ func reconcileOwnedJSONAggregates(ctx context.Context, report *Report, key outpu
 	// Nothing desired and no file present means there is no aggregate work at
 	// all; do not open a store or create empty files for it.
 	anyWork := len(desiredByRel) > 0
+	hasNative := false
 	for _, file := range files {
+		if file.hookShape != "" {
+			hasNative = true
+		}
 		if _, err := os.Lstat(filepath.Join(outDir, file.rel)); err == nil {
 			anyWork = true
 		}
 	}
-	if !anyWork {
+	needsRoot := anyWork
+	if !anyWork && !hasNative {
 		return report
-	}
-	if !dryRun {
-		if err := os.MkdirAll(outDir, 0o755); err != nil {
-			report.Diags = append(report.Diags, ownedAggregateDiag(options.writeCode, key, "", fmt.Sprintf("create aggregate root %s: %v", outDir, err)))
-			return report
-		}
 	}
 
 	// The observer is how a WAIT reaches the report. A contended acquisition that
@@ -118,9 +118,55 @@ func reconcileOwnedJSONAggregates(ctx context.Context, report *Report, key outpu
 		return report
 	}
 
+	if !anyWork {
+		for _, file := range files {
+			if file.hookShape == "" {
+				continue
+			}
+			proof, proofErr := store.Proof(file.rel)
+			if proofErr != nil {
+				continue
+			}
+			if proof.OwnedCount() > 0 || len(proof.HookSatisfactions()) > 0 {
+				anyWork = true
+			}
+		}
+		if !anyWork && hasNative {
+			stateDir, depErr := dependencytxn.StateDir()
+			if depErr == nil {
+				depErr = dependencytxn.CheckPending(stateDir)
+			}
+			switch {
+			case errors.Is(depErr, dependencytxn.ErrRecoveryRequired):
+				anyWork = true
+			case depErr != nil:
+				report.Diags = append(report.Diags, ownedAggregateCodedDiag(key, outDir, "", depErr, options.writeCode))
+				return report
+			}
+		}
+		if !anyWork {
+			return report
+		}
+	}
+	if !dryRun && needsRoot {
+		if err := os.MkdirAll(outDir, 0o755); err != nil {
+			report.Diags = append(report.Diags, ownedAggregateDiag(options.writeCode, key, "", fmt.Sprintf("create aggregate root %s: %v", outDir, err)))
+			return report
+		}
+	}
+
 	// Dry run: no session, no lock, no state-root writes. See the doc comment.
 	if dryRun {
-		return appendOwnedJSONAggregateReports(report, store, key, outDir, files, desiredByRel, work, options, true)
+		if hasNative {
+			stateDir, depErr := dependencytxn.StateDir()
+			if depErr == nil {
+				depErr = dependencytxn.CheckPending(stateDir)
+			}
+			if depErr != nil {
+				report.Diags = append(report.Diags, ownedAggregateCodedDiag(key, outDir, "", depErr, options.writeCode))
+			}
+		}
+		return appendOwnedJSONAggregateReports(ctx, report, store, key, outDir, files, desiredByRel, work, options, true)
 	}
 
 	sessionErr := store.WithWriteSessionContext(ctx, options.sessionName, func() error {
@@ -137,7 +183,19 @@ func reconcileOwnedJSONAggregates(ctx context.Context, report *Report, key outpu
 			report.Diags = append(report.Diags, ownedAggregateCodedDiag(key, outDir, "", recoverErr, options.writeCode))
 			return nil
 		}
-		report = appendOwnedJSONAggregateReports(report, store, key, outDir, files, desiredByRel, work, options, false)
+		if hasNative {
+			stateDir, depErr := dependencytxn.StateDir()
+			if _, statErr := os.Stat(stateDir); statErr == nil {
+				depErr = dependencytxn.Recover(ctx, stateDir)
+			} else if !os.IsNotExist(statErr) {
+				depErr = statErr
+			}
+			if depErr != nil {
+				report.Diags = append(report.Diags, ownedAggregateCodedDiag(key, outDir, "", depErr, options.writeCode))
+				return nil
+			}
+		}
+		report = appendOwnedJSONAggregateReports(ctx, report, store, key, outDir, files, desiredByRel, work, options, false)
 		return nil
 	})
 	// The body never returns an error — every per-file failure is already a
@@ -155,10 +213,10 @@ func reconcileOwnedJSONAggregates(ctx context.Context, report *Report, key outpu
 // appendOwnedJSONAggregateReports runs the per-file loop and folds each file's outcome
 // into the report. It is a function rather than an inline loop only so the dry-run
 // path can reuse it verbatim without a session around it.
-func appendOwnedJSONAggregateReports(report *Report, store *ownership.Store, key outputKey, outDir string, files []ownedJSONFileSpec,
+func appendOwnedJSONAggregateReports(ctx context.Context, report *Report, store *ownership.Store, key outputKey, outDir string, files []ownedJSONFileSpec,
 	desiredByRel map[string][]ownedJSONEntry, work *ownedJSONAggregateWork, options ownedJSONReconcileOptions, dryRun bool) *Report {
 	for _, file := range files {
-		fileReport := reconcileOwnedJSONAggregateFile(store, key, outDir, file, desiredByRel[file.rel], work != nil && work.incomplete[file.rel], options, dryRun)
+		fileReport := reconcileOwnedJSONAggregateFile(ctx, store, key, outDir, file, desiredByRel[file.rel], work != nil && work.incomplete[file.rel], options, dryRun)
 		report.Diags = append(report.Diags, fileReport.diags...)
 		if !fileReport.written {
 			continue
@@ -171,7 +229,7 @@ func appendOwnedJSONAggregateReports(report *Report, store *ownership.Store, key
 	return report
 }
 
-func reconcileOwnedJSONAggregateFile(store *ownership.Store, key outputKey, outDir string, file ownedJSONFileSpec, desired []ownedJSONEntry, incomplete bool, options ownedJSONReconcileOptions, dryRun bool) ownedJSONAggregateReport {
+func reconcileOwnedJSONAggregateFile(ctx context.Context, store *ownership.Store, key outputKey, outDir string, file ownedJSONFileSpec, desired []ownedJSONEntry, incomplete bool, options ownedJSONReconcileOptions, dryRun bool) ownedJSONAggregateReport {
 	var out ownedJSONAggregateReport
 	rel := file.rel
 	abs := filepath.Join(outDir, rel)
@@ -187,6 +245,9 @@ func reconcileOwnedJSONAggregateFile(store *ownership.Store, key outputKey, outD
 	case readErr == nil:
 	case os.IsNotExist(readErr):
 		if len(desired) == 0 {
+			if file.hookShape != "" {
+				return reconcileAbsentNativeHookMetadata(ctx, out, store, key, outDir, file, abs, options, dryRun)
+			}
 			return out
 		}
 		raw = []byte(ownedJSONEmptyDocument)
@@ -239,10 +300,22 @@ func reconcileOwnedJSONAggregateFile(store *ownership.Store, key outputKey, outD
 		out.diags = append(out.diags, ownedJSONShapeDiag(options.shapeCode, key, outDir, rel, shapeErr))
 		return out
 	}
+
+	var proof ownership.Proof
+	var proofErr error
+	proofReady := false
 	if container == nil && len(desired) == 0 {
-		// The container does not exist and nothing is desired, so there is
-		// neither anything to write nor anything that could be stale.
-		return out
+		if file.hookShape == "" {
+			// The container does not exist and nothing is desired, so there is
+			// neither anything to write nor anything that could be stale.
+			return out
+		}
+		proof, proofErr = store.Proof(rel)
+		proofReady = true
+		out.diags = append(out.diags, ownedAggregateProofDiags(key, outDir, rel, proofErr)...)
+		if proof.OwnedCount() == 0 && len(proof.HookSatisfactions()) == 0 {
+			return out
+		}
 	}
 
 	var existing []ownedJSONExistingEntry
@@ -254,11 +327,13 @@ func reconcileOwnedJSONAggregateFile(store *ownership.Store, key outputKey, outD
 		}
 	}
 
-	proof, proofErr := store.Proof(rel)
-	// Advisory: the zero Proof already classifies everything as unmanaged, so
-	// reconciliation continues safely (preserve, refuse, never prune) whether or
-	// not the situation is worth reporting.
-	out.diags = append(out.diags, ownedAggregateProofDiags(key, outDir, rel, proofErr)...)
+	if !proofReady {
+		proof, proofErr = store.Proof(rel)
+		// Advisory: the zero Proof already classifies everything as unmanaged, so
+		// reconciliation continues safely (preserve, refuse, never prune) whether or
+		// not the situation is worth reporting.
+		out.diags = append(out.diags, ownedAggregateProofDiags(key, outDir, rel, proofErr)...)
+	}
 
 	desiredValues := make([]ownership.EntryValue, 0, len(desired))
 	for _, entry := range desired {
@@ -277,22 +352,18 @@ func reconcileOwnedJSONAggregateFile(store *ownership.Store, key outputKey, outD
 		out.diags = append(out.diags, ownedJSONShapeDiag(options.shapeCode, key, outDir, rel, applyErr))
 		return out
 	}
+	next := doc.Bytes()
+	if file.hookShape != "" {
+		return finishNativeOwnedJSONFile(ctx, out, store, key, outDir, file, abs, raw, readErr, next, doc.Changed(), plan, proof, options, dryRun)
+	}
 	if !doc.Changed() {
 		slog.Debug("owned JSON aggregate already in sync", "target", key.target, "machine_scope", key.machineScope,
 			"file", rel, "owned_entries", len(plan.owned))
 		return out
 	}
-	next := doc.Bytes()
 	if dryRun {
 		out.written = true
 		return out
-	}
-	if file.hookShape != "" {
-		if err := ensureOwnedJSONHookParent(outDir, rel); err != nil {
-			out.diags = append(out.diags, ownedAggregateDiag(options.writeCode, key, rel,
-				fmt.Sprintf("prepare aggregate parent for %q: %v", ownedAggregateLabel(outDir, rel), err)))
-			return out
-		}
 	}
 
 	priorGen, priorDigest := ownedAggregatePriorForApply(raw, readErr, proof)
@@ -314,6 +385,164 @@ func reconcileOwnedJSONAggregateFile(store *ownership.Store, key outputKey, outD
 		"pruned", len(plan.prune), "collisions", len(plan.collisions), "replaced_drifted", len(plan.drifted))
 	out.written = true
 	return out
+}
+
+func finishNativeOwnedJSONFile(ctx context.Context, out ownedJSONAggregateReport, store *ownership.Store, key outputKey, outDir string, file ownedJSONFileSpec, abs string, raw []byte, readErr error, next []byte, changed bool, plan ownedJSONPatch, proof ownership.Proof, options ownedJSONReconcileOptions, dryRun bool) ownedJSONAggregateReport {
+	rel := file.rel
+	if dryRun {
+		out.written = changed
+		return out
+	}
+	desired, err := nativeOwnedJSONTxnPlan(store, rel, abs, raw, readErr, next, changed, plan, proof)
+	if err != nil {
+		out.diags = append(out.diags, ownedAggregateCodedDiag(key, outDir, rel, err, options.writeCode))
+		return out
+	}
+	if len(desired) == 0 {
+		slog.Debug("native hook aggregate already in sync", "target", key.target, "machine_scope", key.machineScope,
+			"file", rel, "owned_entries", len(plan.owned), "satisfactions", len(plan.satisfactions))
+		return out
+	}
+	if changed {
+		if err := ensureOwnedJSONHookParent(outDir, rel); err != nil {
+			out.diags = append(out.diags, ownedAggregateDiag(options.writeCode, key, rel,
+				fmt.Sprintf("prepare aggregate parent for %q: %v", ownedAggregateLabel(outDir, rel), err)))
+			return out
+		}
+		if _, err := store.BackupOnly(rel, abs, ownership.ReasonSync); err != nil {
+			out.diags = append(out.diags, ownedAggregateCodedDiag(key, outDir, rel,
+				fmt.Errorf("safety backup for %q failed: %w", ownedAggregateLabel(outDir, rel), err),
+				diag.CodeOwnershipSafetyBackup))
+			return out
+		}
+	}
+	for _, f := range desired {
+		if f.Path == abs {
+			continue
+		}
+		if err := os.MkdirAll(filepath.Dir(f.Path), 0o700); err != nil {
+			out.diags = append(out.diags, ownedAggregateDiag(options.writeCode, key, rel,
+				fmt.Sprintf("prepare state directory for %q: %v", ownedAggregateLabel(outDir, rel), err)))
+			return out
+		}
+	}
+	if _, err := commitNativeHookFiles(ctx, desired); err != nil {
+		out.diags = append(out.diags, ownedAggregateCodedDiag(key, outDir, rel, err, options.writeCode))
+		return out
+	}
+	slog.Info("native hook aggregate reconciled", "target", key.target, "machine_scope", key.machineScope,
+		"file", rel, "owned_entries", len(plan.owned), "satisfactions", len(plan.satisfactions),
+		"aggregate_changed", changed)
+	out.written = changed
+	return out
+}
+
+func reconcileAbsentNativeHookMetadata(ctx context.Context, out ownedJSONAggregateReport, store *ownership.Store, key outputKey, outDir string, file ownedJSONFileSpec, abs string, options ownedJSONReconcileOptions, dryRun bool) ownedJSONAggregateReport {
+	rel := file.rel
+	proof, proofErr := store.Proof(rel)
+	out.diags = append(out.diags, ownedAggregateProofDiags(key, outDir, rel, proofErr)...)
+	if proof.OwnedCount() == 0 && len(proof.HookSatisfactions()) == 0 {
+		return out
+	}
+	if dryRun {
+		return out
+	}
+	satisfactions := []ownership.HookSatisfaction{}
+	stateFile, err := store.Prepare(ownership.Mutation{
+		Rel:                   rel,
+		AbsFile:               abs,
+		Entries:               nativeRetainedNonHookEntries(nil, proof),
+		Reason:                ownership.ReasonSync,
+		ExpectPriorGeneration: proof.Generation(),
+	}, &satisfactions)
+	if err != nil {
+		out.diags = append(out.diags, ownedAggregateCodedDiag(key, outDir, rel, err, options.writeCode))
+		return out
+	}
+	if stateFile.Path == "" {
+		return out
+	}
+	desired := []dependencytxn.DesiredFile{
+		{Path: abs, Delete: true},
+		stateFile,
+	}
+	if _, err := commitNativeHookFiles(ctx, desired); err != nil {
+		out.diags = append(out.diags, ownedAggregateCodedDiag(key, outDir, rel, err, options.writeCode))
+	}
+	return out
+}
+
+func nativeRetainedNonHookEntries(claimed []ownership.Entry, proof ownership.Proof) []ownership.Entry {
+	claimedIDs := make(map[string]bool, len(claimed))
+	for _, entry := range claimed {
+		claimedIDs[ownedAggregateIDKey(entry.ID())] = true
+	}
+	var retained []ownership.Entry
+	for _, id := range proof.OwnedIDs() {
+		if id.Kind == ownership.KindHook || claimedIDs[ownedAggregateIDKey(id)] {
+			continue
+		}
+		if entry, ok := proof.Entry(id); ok {
+			retained = append(retained, entry)
+		}
+	}
+	return retained
+}
+
+func nativeOwnedJSONTxnPlan(store *ownership.Store, rel, abs string, raw []byte, readErr error, next []byte, changed bool, plan ownedJSONPatch, proof ownership.Proof) ([]dependencytxn.DesiredFile, error) {
+	priorGen, priorDigest := ownedAggregatePriorForApply(raw, readErr, proof)
+	satisfactions := plan.satisfactions
+	stateFile, err := store.Prepare(ownership.Mutation{
+		Rel:                   rel,
+		AbsFile:               abs,
+		NextBytes:             next,
+		Entries:               append(append([]ownership.Entry(nil), plan.owned...), nativeRetainedNonHookEntries(plan.owned, proof)...),
+		Reason:                ownership.ReasonSync,
+		ExpectPriorGeneration: priorGen,
+		ExpectPriorDigest:     priorDigest,
+	}, &satisfactions)
+	if err != nil {
+		return nil, err
+	}
+	if !changed && stateFile.Path == "" {
+		return nil, nil
+	}
+	live, liveGen, liveMode, snapErr := dependencytxn.ReadSnapshot(abs)
+	if snapErr != nil {
+		return nil, fmt.Errorf("snapshot aggregate %q for commit: %w", rel, snapErr)
+	}
+	if readErr == nil {
+		if !liveGen.Exists || !bytes.Equal(live, raw) {
+			return nil, fmt.Errorf("%w: %s", dependencytxn.ErrGenerationConflict, abs)
+		}
+	} else if liveGen.Exists {
+		return nil, fmt.Errorf("%w: %s", dependencytxn.ErrGenerationConflict, abs)
+	}
+	mode := fs.FileMode(0o600)
+	var expectedMode fs.FileMode
+	if liveGen.Exists {
+		mode = liveMode
+		expectedMode = liveMode
+	}
+	desired := []dependencytxn.DesiredFile{{
+		Path:         abs,
+		Expected:     liveGen,
+		ExpectedMode: expectedMode,
+		Bytes:        next,
+		Mode:         mode,
+	}}
+	if stateFile.Path != "" {
+		desired = append(desired, stateFile)
+	}
+	return desired, nil
+}
+
+func commitNativeHookFiles(ctx context.Context, desired []dependencytxn.DesiredFile, opts ...dependencytxn.Option) (dependencytxn.Result, error) {
+	stateDir, err := dependencytxn.StateDir()
+	if err != nil {
+		return dependencytxn.Result{}, fmt.Errorf("resolve dependency transaction state: %w", err)
+	}
+	return dependencytxn.Commit(ctx, stateDir, desired, opts...)
 }
 
 // ownedJSONContainerNode returns the object node whose members are the aggregate's
@@ -590,6 +819,7 @@ type ownedJSONPatch struct {
 	drifted         []ownership.EntryID
 	prune           []ownership.EntryID
 	satisfied       []ownedJSONEntry
+	satisfactions   []ownership.HookSatisfaction
 	prunePostponed  []ownership.EntryID
 	pruneSuppressed bool
 }
@@ -718,8 +948,95 @@ func ownedJSONPatchPlan(outDir string, file ownedJSONFileSpec, desired []ownedJS
 		}
 		patch.hookElements[event] = elements
 	}
+	patch.satisfactions = desiredHookSatisfactions(patch.satisfied)
+	if incomplete {
+		patch.satisfactions = mergeRetainedHookSatisfactions(patch.satisfactions, proof.HookSatisfactions(), existing, proof)
+	}
+	sort.Slice(patch.satisfactions, func(i, j int) bool {
+		a, b := patch.satisfactions[i], patch.satisfactions[j]
+		return a.Container < b.Container || a.Container == b.Container && a.IdentityDigest < b.IdentityDigest
+	})
 	retainPostponedOwnership(&patch, existing, drift.Stale, proof, incomplete)
 	return patch
+}
+
+func exactSourcePairs(entry ownedJSONEntry) []ownership.HookSourceEvidence {
+	var pairs []ownership.HookSourceEvidence
+	if entry.sourceDigest != "" {
+		pairs = append(pairs, ownership.HookSourceEvidence{Resource: entry.resource, SourceDigest: entry.sourceDigest})
+	}
+	pairs = append(pairs, entry.sourceEvidence...)
+	return mergeSourcePairs(pairs, nil)
+}
+
+func mergeSourcePairs(a, b []ownership.HookSourceEvidence) []ownership.HookSourceEvidence {
+	pairs := make([]ownership.HookSourceEvidence, 0, len(a)+len(b))
+	pairs = append(pairs, a...)
+	pairs = append(pairs, b...)
+	sort.Slice(pairs, func(i, j int) bool {
+		if pairs[i].Resource != pairs[j].Resource {
+			return pairs[i].Resource < pairs[j].Resource
+		}
+		return pairs[i].SourceDigest < pairs[j].SourceDigest
+	})
+	unique := pairs[:0]
+	for _, pair := range pairs {
+		if len(unique) == 0 || unique[len(unique)-1] != pair {
+			unique = append(unique, pair)
+		}
+	}
+	return unique
+}
+
+func desiredHookSatisfactions(satisfied []ownedJSONEntry) []ownership.HookSatisfaction {
+	var out []ownership.HookSatisfaction
+	for _, entry := range satisfied {
+		sources := exactSourcePairs(entry)
+		if len(sources) == 0 {
+			continue
+		}
+		out = append(out, ownership.HookSatisfaction{
+			Container:      entry.container,
+			IdentityDigest: entry.identity,
+			ValueDigest:    entry.valueDigest(),
+			Sources:        sources,
+		})
+	}
+	return out
+}
+
+func mergeRetainedHookSatisfactions(current, prior []ownership.HookSatisfaction, existing []ownedJSONExistingEntry, proof ownership.Proof) []ownership.HookSatisfaction {
+	out := append([]ownership.HookSatisfaction(nil), current...)
+	index := make(map[string]int, len(out))
+	for i, satisfaction := range out {
+		index[ownedAggregateIDKey(satisfaction.ID())] = i
+	}
+	for _, record := range prior {
+		retained := false
+		for _, entry := range existing {
+			if ownedAggregateIDKey(entry.value.ID) != ownedAggregateIDKey(record.ID()) ||
+				entry.value.ValueDigest != record.ValueDigest {
+				continue
+			}
+			if proof.Classify(entry.value.ID, entry.value.ValueDigest) == ownership.StatusUnmanaged {
+				retained = true
+			}
+			break
+		}
+		if !retained {
+			continue
+		}
+		key := ownedAggregateIDKey(record.ID())
+		if i, ok := index[key]; ok {
+			out[i].Sources = mergeSourcePairs(out[i].Sources, record.Sources)
+			continue
+		}
+		merged := record
+		merged.Sources = append([]ownership.HookSourceEvidence(nil), record.Sources...)
+		index[key] = len(out)
+		out = append(out, merged)
+	}
+	return out
 }
 
 func retainPostponedOwnership(patch *ownedJSONPatch, existing []ownedJSONExistingEntry, stale []ownership.EntryID, proof ownership.Proof, incomplete bool) {

@@ -271,7 +271,7 @@ func reconcileDevinAggregateFile(store *ownership.Store, key outputKey, outDir, 
 		out.diags = append(out.diags, ownedJSONShapeDiag(diag.CodeMaterializeDevinAggregateShape, key, outDir, rel, err))
 		return out
 	}
-	return reconcileOwnedJSONAggregateFile(store, key, outDir, file, desired, incomplete, devinOwnedJSONOptions(), dryRun)
+	return reconcileOwnedJSONAggregateFile(context.Background(), store, key, outDir, file, desired, incomplete, devinOwnedJSONOptions(), dryRun)
 }
 
 // isDevinAggregatePath reports whether an artifact path is one of the Devin
