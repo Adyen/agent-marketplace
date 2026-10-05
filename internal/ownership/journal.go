@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -312,11 +313,25 @@ func (s *Store) applyLocked(m Mutation) (result Result, err error) {
 			if journalErr := s.writeJournal(&failed); journalErr != nil {
 				return Result{}, errors.Join(err, fmt.Errorf("ownership: disarm collided staged path: %w", journalErr))
 			}
-			s.cleanupAfterCASFailure(&failed, backupPath)
+			s.cleanupAfterCASFailure(parent, &failed, backupPath, nil)
 		}
 		return Result{}, err
 	}
 
+	// A post-staging refusal can find an object at the journal's staged path
+	// that is no longer this attempt's bytes. Disarm the durable attempt before
+	// any such refusal can return so a later recovery cannot unlink it;
+	// guarded in-attempt cleanup below removes only the inode this attempt
+	// wrote.
+	published := false
+	defer func() {
+		if err == nil || errors.Is(err, ErrInjectedCrash) || journal.Phase != PhasePrepared || published {
+			return
+		}
+		if disarmErr := s.disarmRefusedStaged(journal, parent, backupPath); disarmErr != nil {
+			err = errors.Join(err, fmt.Errorf("ownership: disarm refused staged path: %w", disarmErr))
+		}
+	}()
 	staged, err := fsboundary.CaptureDestination(parent, filepath.Base(journal.StagedPath), fsboundary.LinkPolicyRepository)
 	if err != nil {
 		return Result{}, err
@@ -365,7 +380,9 @@ func (s *Store) applyLocked(m Mutation) (result Result, err error) {
 	// read them. With locking this should never fire; without locking it is the
 	// only thing that prevents lost updates.
 	if err := s.assertPrecondition(m); err != nil {
-		s.cleanupAfterCASFailure(journal, backupPath)
+		// Disarming, guarded staged removal, journal clearing, and backup
+		// removal are all owned by the deferred refusal cleanup registered
+		// after staging; this branch only reports and maps the conflict.
 		s.observeLock(LockEvent{Kind: LockCASConflict, Path: m.AbsFile, Err: err})
 		if errors.Is(err, ErrGenerationConflict) {
 			return Result{}, coded(diag.CodeOwnershipGenerationConflict, m.Rel, err)
@@ -379,8 +396,15 @@ func (s *Store) applyLocked(m Mutation) (result Result, err error) {
 		return Result{}, err
 	}
 	if err := destination.Publish(parent, filepath.Base(journal.StagedPath)); err != nil {
+		// A durability-uncertain publication may already hold the renamed byte;
+		// retain the journal so recovery can roll this generation forward or
+		// roll it back against recorded evidence.
+		if errors.Is(err, fsboundary.ErrDurabilityUncertain) {
+			published = true
+		}
 		return Result{}, fmt.Errorf("ownership: publish %s: %w", m.AbsFile, err)
 	}
+	published = true
 
 	// Prune retained backups now that publication succeeded. Retention is not
 	// part of the atomicity contract, so a failure here is best-effort.
@@ -487,10 +511,61 @@ func (s *Store) assertPrecondition(m Mutation) error {
 	return nil
 }
 
-// cleanupAfterCASFailure removes the staged file, the journal, and the safety
-// backup just written, so a failed compare-and-swap leaves no durable trace.
-func (s *Store) cleanupAfterCASFailure(journal *Journal, backupPath string) {
-	if err := s.removeStaged(journal); err != nil {
+// removeStagedAttempt unlinks this attempt's staged file when the named entry
+// still identifies the exact inode the attempt wrote. A foreign replacement
+// survives; a disarmed staged path is a no-op.
+func (s *Store) removeStagedAttempt(parent *fsboundary.Dir, journal *Journal, captured *fsboundary.Identity) (err error) {
+	if journal.StagedPath == "" || captured == nil || parent == nil {
+		return nil
+	}
+	native, err := parent.NativeRoot()
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if closeErr := native.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
+	info, statErr := native.Lstat(filepath.Base(journal.StagedPath))
+	if errors.Is(statErr, fs.ErrNotExist) {
+		return nil
+	}
+	if statErr != nil {
+		return statErr
+	}
+	identity, idErr := fsboundary.FileInfoIdentity(info)
+	if idErr != nil {
+		return idErr
+	}
+	if identity.SameObject(*captured) {
+		return parent.Unlink(filepath.Base(journal.StagedPath))
+	}
+	return nil
+}
+
+// disarmRefusedStaged durably clears this attempt's staged path from the
+// journal before a post-staging refusal returns, then clears the journal and
+// backup. The path named by the recorded staged identity no longer holds this
+// attempt's bytes, so regardless of what they are, removal must not unlink it
+// later.
+func (s *Store) disarmRefusedStaged(journal *Journal, parent *fsboundary.Dir, backupPath string) error {
+	failed := *journal
+	failed.StagedPath = ""
+	if err := s.writeJournal(&failed); err != nil {
+		return err
+	}
+	s.cleanupAfterCASFailure(parent, &failed, backupPath, nil)
+	return nil
+}
+
+// cleanupAfterCASFailure removes this attempt's staged inode, the journal,
+// and the safety backup just written, so a failed compare-and-swap leaves no
+// durable trace. The staged path is unlinked only when it still names the
+// exact inode this attempt wrote; a staged path emptied by disarmRefusedStaged
+// or replaced by an uncooperative writer is left untouched.
+func (s *Store) cleanupAfterCASFailure(parent *fsboundary.Dir, journal *Journal, backupPath string, captured *fsboundary.Identity) {
+	if err := s.removeStagedAttempt(parent, journal, captured); err != nil {
 		slog.Warn("could not remove the staged file after a CAS failure",
 			"root_key", s.rootKey, "staged_path", journal.StagedPath, "err", err)
 	}
