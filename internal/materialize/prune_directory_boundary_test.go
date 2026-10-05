@@ -16,12 +16,20 @@ import (
 
 // spec: materialization/prune-directory-refusal-precedes-foreign-discovery
 func TestRunPruneDirectoryRefusesRetargetBeforeDiscovery(t *testing.T) {
-	testPruneDirectoryRefusal(t, false)
+	testPruneDirectoryRefusal(t, false, false)
 }
 
-func TestRunPruneDirectoryDryRunRefusesRetarget(t *testing.T) { testPruneDirectoryRefusal(t, true) }
+func TestRunPruneDirectoryDryRunRefusesRetarget(t *testing.T) {
+	testPruneDirectoryRefusal(t, true, false)
+}
 
-func testPruneDirectoryRefusal(t *testing.T, dryRun bool) {
+// spec: materialization/prune-directory-refusal-precedes-foreign-discovery
+func TestRunPruneDirectoryRefusesRetargetAfterEnumeration(t *testing.T) {
+	t.Run("write", func(t *testing.T) { testPruneDirectoryRefusal(t, false, true) })
+	t.Run("dry-run", func(t *testing.T) { testPruneDirectoryRefusal(t, true, true) })
+}
+
+func testPruneDirectoryRefusal(t *testing.T, dryRun, afterEnumeration bool) {
 	home, repo, foreign := t.TempDir(), t.TempDir(), t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("CODEX_HOME", filepath.Join(home, ".codex"))
@@ -48,7 +56,7 @@ func testPruneDirectoryRefusal(t *testing.T, dryRun bool) {
 	}
 	report, err := Run(t.Context(), repo, resolved, func(cfg *runConfig) {
 		cfg.dryRun = dryRun
-		cfg.linkPublicationHook = func(path string) {
+		hook := func(path string) {
 			if path != dir {
 				return
 			}
@@ -59,6 +67,11 @@ func testPruneDirectoryRefusal(t *testing.T, dryRun bool) {
 			if err := os.Symlink(foreign, dir); err != nil {
 				t.Fatal(err)
 			}
+		}
+		if afterEnumeration {
+			cfg.pruneEnumerationHook = hook
+		} else {
+			cfg.linkPublicationHook = hook
 		}
 	})
 	if !hit {

@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/Adyen/agent-marketplace/internal/config"
@@ -384,6 +385,7 @@ type marketplaceUpdateFixture struct {
 	archiveDigest    string
 	artifact         []byte
 	artifactRequests int
+	latestHook       func()
 }
 
 func newMarketplaceUpdateFixture(t *testing.T, failArtifact bool) *marketplaceUpdateFixture {
@@ -414,8 +416,14 @@ func newMarketplaceUpdateFixture(t *testing.T, failArtifact bool) *marketplaceUp
 	mux.HandleFunc("/api/v1/registries/", func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(mpapi.RegistryDTO{ID: "src", Slug: "renamed-source", Origins: []string{"https://git.example/repo.git"}, Ref: "main", Roots: []store.RegistryRoot{{Path: ".agents"}}, Acquisition: store.AcquisitionMirror, Listed: true})
 	})
-	mux.HandleFunc("/api/v1/resources/renamed-source/skill/review", func(w http.ResponseWriter, r *http.Request) { _ = json.NewEncoder(w).Encode(fixture.latest) })
-	mux.HandleFunc("/api/v1/resources/src/skill/review/revisions/", func(w http.ResponseWriter, r *http.Request) { _ = json.NewEncoder(w).Encode(fixture.latest) })
+	serveLatest := func(w http.ResponseWriter, r *http.Request) {
+		if fixture.latestHook != nil {
+			fixture.latestHook()
+		}
+		_ = json.NewEncoder(w).Encode(fixture.latest)
+	}
+	mux.HandleFunc("/api/v1/resources/renamed-source/skill/review", serveLatest)
+	mux.HandleFunc("/api/v1/resources/src/skill/review/revisions/", serveLatest)
 	mux.HandleFunc("/api/v1/artifacts/", func(w http.ResponseWriter, r *http.Request) {
 		fixture.artifactRequests++
 		if failArtifact {
@@ -431,4 +439,52 @@ func newMarketplaceUpdateFixture(t *testing.T, failArtifact bool) *marketplaceUp
 		t.Fatal(err)
 	}
 	return fixture
+}
+
+// spec: marketplace-api/locked-archive-evidence-refreshes-on-identical-content
+func TestPlanMarketplaceUpdateRefreshesDriftedArchiveEvidence(t *testing.T) {
+	fixture := newMarketplaceUpdateFixture(t, false)
+	fixture.pin.Digest = fixture.latestDigest
+	fixture.pin.LockArchiveDigest = "sha256:" + strings.Repeat("0", 64)
+	fixture.artifactRequests = 0
+	entry := config.MarketplaceEntry{URL: fixture.server.URL, InstanceID: "mp", Source: config.RepoCommitted, Resources: []config.MarketplaceResourcePin{fixture.pin}}
+	ec := &config.EffectiveConfig{Merged: &config.Config{Marketplaces: []config.MarketplaceEntry{entry}}, TargetHarnesses: []string{"factory"}}
+
+	plans, err := planMarketplaceUpdates(context.Background(), UpdateOptions{RepoRoot: fixture.repoRoot}, ec)
+	if err != nil {
+		t.Fatalf("plan Marketplace update: %v", err)
+	}
+	if len(plans) != 1 || plans[0].Skipped || plans[0].ArchiveDigest != fixture.archiveDigest {
+		t.Fatalf("plans = %#v, want evidence-refresh update to %q", plans, fixture.archiveDigest)
+	}
+	if fixture.artifactRequests != 1 {
+		t.Fatalf("artifact requests = %d, want one verification fetch", fixture.artifactRequests)
+	}
+}
+
+// spec: marketplace-api/locked-archive-evidence-refreshes-on-identical-content
+func TestPlanMarketplaceUpdateStagesVerifiedDigestNotAdvertised(t *testing.T) {
+	fixture := newMarketplaceUpdateFixture(t, false)
+	fixture.pin.Digest = fixture.latestDigest
+	fixture.pin.LockArchiveDigest = "sha256:" + strings.Repeat("0", 64)
+	fixture.artifactRequests = 0
+	var metadataReads atomic.Int64
+	stale := fixture.latest
+	stale.ArchiveDigest = store.ArchiveDigest("sha256:" + strings.Repeat("9", 64))
+	fixture.latest = stale
+	fixture.latestHook = func() {
+		if metadataReads.Add(1) > 1 {
+			fixture.latest.ArchiveDigest = store.ArchiveDigest(fixture.archiveDigest)
+		}
+	}
+	entry := config.MarketplaceEntry{URL: fixture.server.URL, InstanceID: "mp", Source: config.RepoCommitted, Resources: []config.MarketplaceResourcePin{fixture.pin}}
+	ec := &config.EffectiveConfig{Merged: &config.Config{Marketplaces: []config.MarketplaceEntry{entry}}, TargetHarnesses: []string{"factory"}}
+
+	plans, err := planMarketplaceUpdates(context.Background(), UpdateOptions{RepoRoot: fixture.repoRoot}, ec)
+	if err != nil {
+		t.Fatalf("plan Marketplace update: %v", err)
+	}
+	if len(plans) != 1 || plans[0].Skipped || plans[0].ArchiveDigest != fixture.archiveDigest {
+		t.Fatalf("plans = %#v, want verified digest %q", plans, fixture.archiveDigest)
+	}
 }

@@ -4,10 +4,10 @@ import (
 	"strings"
 	"testing"
 
+	tea "charm.land/bubbletea/v2"
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 	mpapi "github.com/Adyen/agent-marketplace/pkg/marketplace/api"
-	tea "github.com/charmbracelet/bubbletea"
 )
 
 func enterMetadataDetail(t *testing.T, r row) Model {
@@ -30,7 +30,7 @@ func TestUnavailableRecoveryDetailSpaceOpensToggleModal(t *testing.T) {
 	r.UnavailableReason = unavailableCatalogReason
 	m := enterMetadataDetail(t, r)
 
-	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeySpace})
+	updated, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeySpace})
 	m = updated.(Model)
 	if m.pane != paneToggleModal {
 		t.Fatalf("unavailable detail Space did not open the toggle modal: pane %v", m.pane)
@@ -49,7 +49,7 @@ func TestMarketplaceDiscoveryDetailSpaceOpensScopeModal(t *testing.T) {
 			r := marketplaceDiscoveryRow("skill", "review", availability)
 			m := enterMetadataDetail(t, r)
 
-			updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeySpace})
+			updated, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeySpace})
 			m = updated.(Model)
 			if m.pane != paneToggleModal {
 				t.Fatalf("%s detail Space did not open the scope modal: pane %v", availability, m.pane)
@@ -70,7 +70,7 @@ func TestDetailSpaceEligibilityRestrictions(t *testing.T) {
 		m := enterMetadataDetail(t, r)
 		m.configInvalid = true
 
-		updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeySpace})
+		updated, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeySpace})
 		m = updated.(Model)
 		if m.pane != paneDetail {
 			t.Fatalf("config-invalid detail Space moved the pane: %v", m.pane)
@@ -88,7 +88,7 @@ func TestDetailSpaceEligibilityRestrictions(t *testing.T) {
 		r.UnavailableReason = unavailableCatalogReason
 		m := enterMetadataDetail(t, r)
 
-		updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeySpace})
+		updated, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeySpace})
 		m = updated.(Model)
 		if m.pane != paneDetail {
 			t.Fatalf("required detail Space opened mutation UI: pane %v", m.pane)
@@ -108,7 +108,7 @@ func TestDetailSpaceEligibilityRestrictions(t *testing.T) {
 		r.MarketplaceCollectionOnly = true
 		m := enterMetadataDetail(t, r)
 
-		updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeySpace})
+		updated, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeySpace})
 		m = updated.(Model)
 		if m.pane != paneDetail {
 			t.Fatalf("collection-only detail Space opened mutation UI: pane %v", m.pane)
@@ -127,7 +127,7 @@ func TestDetailSpaceEligibilityRestrictions(t *testing.T) {
 		m := enterMetadataDetail(t, r)
 		m.syncing = true
 
-		updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeySpace})
+		updated, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeySpace})
 		m = updated.(Model)
 		if m.pane != paneDetail {
 			t.Fatalf("syncing detail Space opened mutation UI: pane %v", m.pane)
@@ -142,7 +142,7 @@ func TestDetailSpaceEligibilityRestrictions(t *testing.T) {
 			r := marketplaceDiscoveryRow("skill", "review", availability)
 			m := enterMetadataDetail(t, r)
 
-			updated, _ := m.Update(tea.KeyMsg{Type: tea.KeySpace})
+			updated, _ := m.Update(tea.KeyPressMsg{Code: tea.KeySpace})
 			m = updated.(Model)
 			if m.pane != paneDetail {
 				t.Fatalf("%s detail Space opened mutation UI: pane %v", availability, m.pane)
@@ -162,7 +162,7 @@ func TestDetailSpaceEligibilityRestrictions(t *testing.T) {
 			t.Fatalf("ordinary row did not open the detail pane: pane %v", m.pane)
 		}
 
-		updated, _ := m.Update(tea.KeyMsg{Type: tea.KeySpace})
+		updated, _ := m.Update(tea.KeyPressMsg{Code: tea.KeySpace})
 		m = updated.(Model)
 		if m.pane != paneDetail {
 			t.Fatalf("ordinary detail Space opened mutation UI: pane %v", m.pane)
@@ -176,7 +176,7 @@ func TestListSpaceDiscoveryEligibility(t *testing.T) {
 			m := modelWithSelectedRow(t, marketplaceDiscoveryRow("skill", "review", availability))
 			m.pane = paneList
 
-			updated, cmd := m.handleKey(tea.KeyMsg{Type: tea.KeySpace})
+			updated, cmd := m.handleKey(tea.KeyPressMsg{Code: tea.KeySpace})
 			m = updated.(Model)
 			if m.pane != paneToggleModal {
 				t.Fatalf("list Space on %s discovery did not open the scope modal: pane %v", availability, m.pane)
@@ -191,7 +191,7 @@ func TestListSpaceDiscoveryEligibility(t *testing.T) {
 			m := modelWithSelectedRow(t, marketplaceDiscoveryRow("skill", "review", availability))
 			m.pane = paneList
 
-			updated, cmd := m.handleKey(tea.KeyMsg{Type: tea.KeySpace})
+			updated, cmd := m.handleKey(tea.KeyPressMsg{Code: tea.KeySpace})
 			m = updated.(Model)
 			if m.pane != paneList {
 				t.Fatalf("list Space on %s discovery opened mutation UI: pane %v", availability, m.pane)
@@ -209,7 +209,7 @@ func TestListSpaceDiscoveryEligibility(t *testing.T) {
 		m := modelWithSelectedRow(t, mkRow("unsafe", withProject))
 		m.pane = paneList
 
-		updated, cmd := m.handleKey(tea.KeyMsg{Type: tea.KeySpace})
+		updated, cmd := m.handleKey(tea.KeyPressMsg{Code: tea.KeySpace})
 		m = updated.(Model)
 		if m.pane != paneToggleModal {
 			t.Fatalf("list Space on an ordinary row did not open the toggle modal: pane %v", m.pane)
@@ -225,7 +225,7 @@ func TestListSpaceDiscoveryEligibility(t *testing.T) {
 		m := modelWithSelectedRow(t, r)
 		m.pane = paneList
 
-		updated, cmd := m.handleKey(tea.KeyMsg{Type: tea.KeySpace})
+		updated, cmd := m.handleKey(tea.KeyPressMsg{Code: tea.KeySpace})
 		m = updated.(Model)
 		if m.pane != paneToggleModal {
 			t.Fatalf("list Space on an unavailable row did not open the toggle modal: pane %v", m.pane)
@@ -243,7 +243,7 @@ func TestListSpaceDiscoveryEligibility(t *testing.T) {
 		m := modelWithSelectedRow(t, r)
 		m.pane = paneList
 
-		updated, _ := m.handleKey(tea.KeyMsg{Type: tea.KeySpace})
+		updated, _ := m.handleKey(tea.KeyPressMsg{Code: tea.KeySpace})
 		m = updated.(Model)
 		if m.pane != paneToggleModal {
 			t.Fatalf("list Space on an org-overridable collection row did not open the toggle modal: pane %v", m.pane)
@@ -256,7 +256,7 @@ func TestListSpaceDiscoveryEligibility(t *testing.T) {
 		m := modelWithSelectedRow(t, r)
 		m.pane = paneList
 
-		updated, _ := m.handleKey(tea.KeyMsg{Type: tea.KeySpace})
+		updated, _ := m.handleKey(tea.KeyPressMsg{Code: tea.KeySpace})
 		m = updated.(Model)
 		if m.pane != paneToggleModal || m.modalSkill.Artifact.Kind != ir.KindCommand {
 			t.Fatalf("command recovery row modal = pane %v kind %v", m.pane, m.modalSkill.Artifact.Kind)

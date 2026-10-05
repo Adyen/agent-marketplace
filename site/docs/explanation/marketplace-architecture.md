@@ -19,7 +19,7 @@ The worker and the API are the same `agent-marketplace serve` program. The `--ro
 1. The operator lists the approved registries. With `management.mode: file` they are in the operator configuration file; with `database` mode an administrator manages them in the admin panel.
 2. The worker clones each registry at its configured ref, on a schedule (every 30 minutes by default) or when an operator runs `serve reindex`.
 3. The worker reads the resources, runs the analyzers and policy checks, computes a content digest for each resource, and records the result as an assessment. In `mirror` mode it also stores an artifact, a compressed archive of the resource, under its digest.
-4. The API publishes the catalog. Each revision is identified by its content digest and never changes after it is published.
+4. The API publishes the catalog. Each revision is identified by its content digest, and its content stays unchanged after publication. A repaired archive can update the served archive digest without changing that identity; the previous artifact remains downloadable.
 5. You run `agent-marketplace search` and `install`. The CLI verifies the revision, records its exact digest so later syncs install the same content, and writes the files into your [harness](../glossary.md#harness) folders.
 
 ## Storage

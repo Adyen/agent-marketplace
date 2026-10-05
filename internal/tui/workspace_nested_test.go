@@ -111,9 +111,10 @@ func TestEditConfigLocalPathUsesWorkspaceRoot(t *testing.T) {
 		t.Fatalf("NewWorkspace: %v", err)
 	}
 	m := NewModel(repoRoot, t.TempDir(), WithWorkspace(ws))
+	m.homeDir = repoRoot
 	m.pane = paneEditConfigModal
-	if got := renderEditConfigModal(m); !strings.Contains(got, config.LocalConfigPath(nested)) {
-		t.Fatalf("edit config modal does not contain workspace local path %q: %s", config.LocalConfigPath(nested), got)
+	if got := renderEditConfigModal(m); !strings.Contains(got, filepath.Join("~", "nested", ".agents", "config.local.yaml")) {
+		t.Fatalf("edit config modal does not identify nested workspace local path: %s", got)
 	}
 }
 
