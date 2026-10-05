@@ -4,4 +4,4 @@
 - [x] Reuse captured directory reads and removal with original named-root checks.
 - [x] Linux/macOS, repeated races, validation/spec and lifecycle cost.
 - [x] Complete intended-diff adversarial review.
-- [ ] Archive as final commit.
+- [x] Archive as final commit.
