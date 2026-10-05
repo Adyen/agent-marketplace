@@ -86,6 +86,23 @@ describe('admin sign-in and sign-out', () => {
     }
   })
 
+  it('rejects control characters and byte-overlong destinations', () => {
+    const parse = (href: string) => new URL(href, 'http://marketplace.test').searchParams.get('next')
+    for (const next of [
+      `/marketplace/admin/x${'\x00'}y`,
+      `/marketplace/admin/x${'\x07'}y`,
+      `/marketplace/admin/x${'\x1f'}y`,
+      `/marketplace/admin/x${'\x7f'}y`,
+      `/marketplace/admin/${'a'.repeat(2030)}`,
+      `/marketplace/admin/${'é'.repeat(1015)}`,
+    ]) {
+      expect(parse(adminLoginHref(next)), JSON.stringify(next.slice(0, 40))).toBe('/marketplace/admin')
+    }
+    for (const next of [`/marketplace/admin/${'a'.repeat(2029)}`, `/marketplace/admin/${'é'.repeat(1014)}x`]) {
+      expect(parse(adminLoginHref(next))).toBe(next)
+    }
+  })
+
   it('sends logout as a protected same-origin POST without If-Match or idempotency key', async () => {
     const fetcher = vi.fn<typeof fetch>().mockResolvedValue(json({ code: 'signed_out' }))
     await createAdminApi(fetcher).logout()

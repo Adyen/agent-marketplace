@@ -91,3 +91,46 @@ func TestRunSupportProducerCleanupPreservesReplacementDirectory(t *testing.T) {
 		t.Fatalf("healthy cleanup removed previous foreign replacement: %q %v", raw, err)
 	}
 }
+
+func TestSupportStageCleanupNeverRemovesReplacementSwappedDuringCleanup(t *testing.T) {
+	home, repo, source := t.TempDir(), t.TempDir(), t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("CODEX_HOME", filepath.Join(home, ".codex"))
+	t.Setenv("XDG_STATE_HOME", filepath.Join(home, "state"))
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, "cache"))
+	if err := os.WriteFile(filepath.Join(source, "reference.txt"), []byte("inert support payload"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	resolved := []resolver.ResolvedArtifact{{Entry: catalog.Entry{Name: "cleanup-probe", Path: source, Resource: ir.NewSkill("cleanup-probe", "Support control", "compiled inert body", nil, nil, ir.SourceRef{})}, Source: config.RepoCommitted, Harnesses: []hcc.Target{hcc.TargetFactory}}}
+	retained := filepath.Join(t.TempDir(), "retained-producer")
+	stagePath := ""
+	supportStageCleanupHook = func(stage string) {
+		if stagePath != "" {
+			return
+		}
+		stagePath = stage
+		if err := os.Rename(stage, retained); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Mkdir(stage, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(stage, "foreign.txt"), []byte("foreign inert replacement"), 0o640); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Cleanup(func() { supportStageCleanupHook = nil })
+	report, err := Run(t.Context(), repo, resolved)
+	if stagePath == "" {
+		t.Fatal("support stage cleanup seam not reached")
+	}
+	if raw, readErr := os.ReadFile(filepath.Join(stagePath, "foreign.txt")); readErr != nil || string(raw) != "foreign inert replacement" {
+		t.Fatalf("cleanup removed a replacement swapped in after its identity check: %q %v", raw, readErr)
+	}
+	if err != nil || !hasDiagCode(report.Diags, "materialize.write.error") {
+		t.Fatalf("replaced stage did not refuse: report=%+v err=%v", report, err)
+	}
+	if entries, readErr := os.ReadDir(retained); readErr != nil || len(entries) != 0 {
+		t.Fatalf("admitted stage contents were not removed through its descriptor: %v %v", entries, readErr)
+	}
+}
