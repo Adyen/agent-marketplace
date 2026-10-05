@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"fmt"
+	"io"
+	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"os"
@@ -74,8 +76,12 @@ func testServeResetRecovery(t *testing.T, mode string) {
 		t.Fatal("fixture did not discover its collection")
 	}
 	stripLegacySupport(t, &rev)
+	var publicationID store.PublicationID
+	if mode == "database" {
+		publicationID = "legacy-publication"
+	}
 	if err := store.PublishRegistryRevision(t.Context(), meta, blobs, store.RegistryRevisionPublication{
-		PublicationID: "legacy-publication", Occurrence: rev.Occurrence, Resources: rev.Resources,
+		PublicationID: publicationID, Occurrence: rev.Occurrence, Resources: rev.Resources,
 		ResourceOccurrences: rev.ResourceOccurrences, Assessments: rev.Assessments, Collections: rev.Collections,
 		ManifestPayload: rev.ManifestPayload, ExtraBlobs: rev.ExtraBlobs, InspectionBlobs: rev.InspectionBlobs,
 	}); err != nil {
@@ -104,32 +110,76 @@ func testServeResetRecovery(t *testing.T, mode string) {
 			t.Fatal(err)
 		}
 	}
-	if result := env.RunAM("serve", "reindex", "serve-source", "--config", "marketplace.yaml"); result.ExitCode == 0 || !strings.Contains(result.Combined, "immutable") {
-		t.Fatalf("expected old revision to prevent republishing: exit %d\n%s", result.ExitCode, result.Combined)
-	}
-	preview := env.RunAM("serve", "reset", "serve-source", "--config", "marketplace.yaml", "--dry-run")
-	if preview.ExitCode != 0 || !strings.Contains(preview.Combined, "resource_revisions: 2") {
-		t.Fatalf("reset preview: exit %d\n%s", preview.ExitCode, preview.Combined)
-	}
-	if current, err := meta.GetLatestResourceRevision(t.Context(), coordinate); err != nil || current.ArchiveDigest != legacy.ArchiveDigest {
-		t.Fatalf("preview changed published revision: %+v %v", current, err)
-	}
-	if result := env.RunAM("serve", "reset", "src-serve", "--config", "marketplace.yaml", "--confirm-maintenance"); result.ExitCode != 0 {
-		t.Fatalf("reset: exit %d\n%s", result.ExitCode, result.Combined)
-	}
 	env.MustRunAM("serve", "reindex", "serve-source", "--config", "marketplace.yaml")
 	repaired, err := meta.GetLatestResourceRevision(t.Context(), coordinate)
 	if err != nil || repaired.ContentDigest != legacy.ContentDigest || repaired.ArchiveDigest == legacy.ArchiveDigest || repaired.Occurrence.Commit != commit {
 		t.Fatalf("repair must preserve content/source and replace archive: %+v %v", repaired, err)
 	}
 	if retained, err := blobs.Get(t.Context(), legacy.ArchiveDigest); err != nil || !bytes.Equal(retained, legacyBytes) {
-		t.Fatalf("reset modified old blob: %v", err)
+		t.Fatalf("republication lost old blob: %v", err)
 	}
 	if err := meta.CheckIntegrity(t.Context(), blobs); err != nil {
 		t.Fatal(err)
 	}
+	lintSkill := "---\nname: lint\ndescription: Run the linter\nlicense: MIT\n---\nRun the linter.\n"
+	if err := os.MkdirAll(filepath.Join(source, ".agents", "skills", "lint"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(source, ".agents", "skills", "lint", "SKILL.md"), []byte(lintSkill), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	env.MustRun(fmt.Sprintf("git -C %q add .agents/skills/lint && git -C %q -c user.name='E2E Test' -c user.email='e2e@test.local' commit -q -m 'add lint skill' && git -C %q push -q origin main", source, source, source))
+	commit2 := strings.TrimSpace(env.MustRun(fmt.Sprintf("git -C %q rev-parse HEAD", source)).Stdout)
+	env.MustRunAM("serve", "reindex", "serve-source", "--config", "marketplace.yaml")
+	lintCoordinate := store.ResourceCoordinate{Marketplace: deps.Marketplace.ID, Registry: registry.ID, Kind: "skill", Name: "lint"}
+	lint, err := meta.GetLatestResourceRevision(t.Context(), lintCoordinate)
+	if err != nil || lint.Occurrence.Commit != commit2 {
+		t.Fatalf("new resource not published by the second reindex: %+v %v", lint, err)
+	}
 	server := httptest.NewServer(mpapi.NewServer(cfg, meta, blobs).PublicHandler())
 	defer server.Close()
+	lintResp, err := http.Get(server.URL + "/api/v1/resources/serve-source/skill/lint")
+	if err != nil {
+		t.Fatal(err)
+	}
+	lintBody, _ := io.ReadAll(lintResp.Body)
+	_ = lintResp.Body.Close()
+	if lintResp.StatusCode != http.StatusOK || !strings.Contains(string(lintBody), `"name":"lint"`) {
+		t.Fatalf("previously absent resource not served: %d %s", lintResp.StatusCode, lintBody)
+	}
+	historyResp, err := http.Get(server.URL + "/api/v1/registries/serve-source/history")
+	if err != nil {
+		t.Fatal(err)
+	}
+	historyBody, _ := io.ReadAll(historyResp.Body)
+	_ = historyResp.Body.Close()
+	if historyResp.StatusCode != http.StatusOK || !strings.Contains(string(historyBody), commit) || !strings.Contains(string(historyBody), commit2) {
+		t.Fatalf("occurrence history did not retain both commits: %d %s", historyResp.StatusCode, historyBody)
+	}
+	if _, err := meta.GetRegistryOccurrence(t.Context(), registry.ID, commit); err != nil {
+		t.Fatalf("first occurrence lost: %v", err)
+	}
+	if _, err := meta.GetRegistryOccurrence(t.Context(), registry.ID, commit2); err != nil {
+		t.Fatalf("second occurrence missing: %v", err)
+	}
+	preview := env.RunAM("serve", "reset", "serve-source", "--config", "marketplace.yaml", "--dry-run")
+	if preview.ExitCode != 0 || !strings.Contains(preview.Combined, "resource_revisions: 3") {
+		t.Fatalf("reset preview: exit %d\n%s", preview.ExitCode, preview.Combined)
+	}
+	if current, err := meta.GetLatestResourceRevision(t.Context(), coordinate); err != nil || current.ArchiveDigest != repaired.ArchiveDigest {
+		t.Fatalf("preview changed published revision: %+v %v", current, err)
+	}
+	if result := env.RunAM("serve", "reset", "src-serve", "--config", "marketplace.yaml", "--confirm-maintenance"); result.ExitCode != 0 {
+		t.Fatalf("reset: exit %d\n%s", result.ExitCode, result.Combined)
+	}
+	env.MustRunAM("serve", "reindex", "serve-source", "--config", "marketplace.yaml")
+	republished, err := meta.GetLatestResourceRevision(t.Context(), coordinate)
+	if err != nil || republished.ContentDigest != legacy.ContentDigest || republished.ArchiveDigest != repaired.ArchiveDigest || republished.Occurrence.Commit != commit2 {
+		t.Fatalf("republication after reset: %+v %v", republished, err)
+	}
+	if err := meta.CheckIntegrity(t.Context(), blobs); err != nil {
+		t.Fatal(err)
+	}
 	consumer := newEnv(t)
 	consumer.InitGitRepo()
 	consumer.WriteGlobalConfig("apiVersion: agent-marketplace/v4\nharnesses: [factory]\n")

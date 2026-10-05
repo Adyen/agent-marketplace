@@ -102,8 +102,8 @@ func (s *Store) verifyStateDirectory(parent *fsboundary.Dir, relative string) er
 		return err
 	}
 	unchanged := fresh.Identity().SameObject(parent.Identity())
-	if err := fresh.Close(); err != nil {
-		return err
+	if closeErr := fresh.Close(); closeErr != nil {
+		return closeErr
 	}
 	if !unchanged {
 		return fsboundary.ErrGenerationConflict
@@ -135,18 +135,19 @@ func (s *Store) writeObservedMetadata(name string, data []byte, expected *metada
 			err = errors.Join(err, closeErr)
 		}
 	}()
-	return writeObservedMetadataFile(parent, name, data, func() error {
+	pin, _, err = writeObservedMetadataFile(parent, name, data, func() error {
 		if err := s.verifyMetadataParent(parent); err != nil {
 			return err
 		}
 		return validate()
 	})
+	return pin, err
 }
 
-func writeObservedMetadataFile(parent *fsboundary.Dir, name string, data []byte, validate func() error) (pin metadataPin, err error) {
+func writeObservedMetadataFile(parent *fsboundary.Dir, name string, data []byte, validate func() error) (pin metadataPin, crossed bool, err error) {
 	destination, err := fsboundary.CaptureDestination(parent, name, fsboundary.LinkPolicyRepository)
 	if err != nil {
-		return pin, err
+		return pin, false, err
 	}
 	defer func() {
 		if closeErr := destination.Close(); closeErr != nil {
@@ -154,11 +155,11 @@ func writeObservedMetadataFile(parent *fsboundary.Dir, name string, data []byte,
 		}
 	}()
 	if destination.Link() != nil {
-		return pin, fsboundary.ErrUnsafeFile
+		return pin, false, fsboundary.ErrUnsafeFile
 	}
 	native, err := parent.NativeRoot()
 	if err != nil {
-		return pin, err
+		return pin, false, err
 	}
 	defer func() {
 		if closeErr := native.Close(); closeErr != nil {
@@ -167,15 +168,21 @@ func writeObservedMetadataFile(parent *fsboundary.Dir, name string, data []byte,
 	}()
 	staged, stagedName, err := parent.CreateTemp(".tmp-" + name + "-*")
 	if err != nil {
-		return pin, err
+		return pin, false, err
 	}
 	info, err := staged.Stat()
 	if err != nil {
-		return pin, errors.Join(err, staged.Close())
+		if closeErr := staged.Close(); closeErr != nil {
+			return pin, false, errors.Join(err, closeErr)
+		}
+		return pin, false, err
 	}
 	created, err := fsboundary.FileInfoIdentity(info)
 	if err != nil {
-		return pin, errors.Join(err, staged.Close())
+		if closeErr := staged.Close(); closeErr != nil {
+			return pin, false, errors.Join(err, closeErr)
+		}
+		return pin, false, err
 	}
 	defer func() {
 		if staged != nil {
@@ -203,30 +210,30 @@ func writeObservedMetadataFile(parent *fsboundary.Dir, name string, data []byte,
 		}
 	}()
 	if _, err := staged.Write(data); err != nil {
-		return pin, err
+		return pin, false, err
 	}
 	if err := staged.Chmod(0o600); err != nil {
-		return pin, err
+		return pin, false, err
 	}
 	info, err = staged.Stat()
 	if err != nil {
-		return pin, err
+		return pin, false, err
 	}
 	produced, err := fsboundary.FileInfoIdentity(info)
 	if err != nil {
-		return pin, err
+		return pin, false, err
 	}
 	closeErr := staged.Close()
 	staged = nil
 	if closeErr != nil {
-		return pin, closeErr
+		return pin, false, closeErr
 	}
 	if err := validate(); err != nil {
-		return pin, err
+		return pin, false, err
 	}
 	output, err := fsboundary.CaptureDestination(parent, stagedName, fsboundary.LinkPolicyRepository)
 	if err != nil {
-		return pin, err
+		return pin, false, err
 	}
 	defer func() {
 		if closeErr := output.Close(); closeErr != nil {
@@ -234,25 +241,58 @@ func writeObservedMetadataFile(parent *fsboundary.Dir, name string, data []byte,
 		}
 	}()
 	if output.Link() != nil || !output.Identity().SameState(produced) {
-		return pin, fsboundary.ErrGenerationConflict
+		return pin, false, fsboundary.ErrGenerationConflict
 	}
 	if err := output.ReadTargetWith(func(io.Reader) error { return nil }); err != nil {
-		return pin, err
+		return pin, false, err
 	}
-	if err := destination.Publish(parent, stagedName); err != nil {
-		return pin, err
+	publish := destination.Publish
+	if publishMetadataHook != nil {
+		publish = func(stagedParent *fsboundary.Dir, staged string) error {
+			return publishMetadataHook(destination, stagedParent, staged)
+		}
+	}
+	if err := publish(parent, stagedName); err != nil {
+		return pin, publishCrossedRename(err), err
 	}
 	info, err = native.Lstat(name)
 	if err != nil {
-		return pin, err
+		return pin, true, err
 	}
 	pin.file, err = fsboundary.FileInfoIdentity(info)
 	if err != nil {
-		return pin, err
+		return pin, true, err
 	}
-	if !pin.file.SameObject(produced) || !pin.file.Mode.IsRegular() || pin.file.Links != 1 {
-		return pin, fsboundary.ErrGenerationConflict
+	if !publishedMetadataMatches(produced, pin.file) {
+		return pin, true, fsboundary.ErrGenerationConflict
 	}
 	pin.parent = parent.Identity()
-	return pin, nil
+	return pin, true, nil
+}
+
+// publishedMetadataMatches reports whether the leaf observed after rename is
+// still the staged object with its staged content state. Change time is
+// excluded because a rename may update it; an in-place edit after publication
+// changes size or modification time and must not become the recorded pin.
+func publishedMetadataMatches(produced, published fsboundary.Identity) bool {
+	return published.SameObject(produced) &&
+		published.Mode.IsRegular() &&
+		published.Links == 1 &&
+		published.Size == produced.Size &&
+		published.ModTimeNS == produced.ModTimeNS &&
+		published.Mode == produced.Mode &&
+		published.UID == produced.UID
+}
+
+// publishMetadataHook wraps metadata publication. It is nil in production and
+// set only by serial tests in this package to inject failures around the real
+// Destination.Publish.
+var publishMetadataHook func(destination *fsboundary.Destination, stagedParent *fsboundary.Dir, stagedName string) error
+
+// publishCrossedRename reports whether a failed Publish had already renamed
+// the staged file into place: Publish marks post-rename directory-sync
+// failures as durability-uncertain, while earlier refusals leave the name
+// untouched.
+func publishCrossedRename(err error) bool {
+	return errors.Is(err, fsboundary.ErrDurabilityUncertain)
 }
