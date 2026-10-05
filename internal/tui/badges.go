@@ -3,7 +3,7 @@ package tui
 import (
 	"strings"
 
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/lipgloss/v2"
 )
 
 // originBadge returns the short letter badge that summarizes which
@@ -45,9 +45,9 @@ func originBadge(r row) string {
 	return b.String()
 }
 
-// badgeStyle returns the style used to render a badge. Single-letter scope
-// badges get a dim accent color; multi-scope and the ineffective-project
-// variant get a brighter color to draw attention.
+// badgeStyle returns the style used to render a badge or chip. Single-scope
+// marks get a dim accent color; multi-scope, the ineffective-project
+// variant, and local-excluded get a brighter color to draw attention.
 func badgeStyle(badge string) lipgloss.Style {
 	switch badge {
 	case "":
@@ -55,18 +55,14 @@ func badgeStyle(badge string) lipgloss.Style {
 	case "R":
 		return styleGlyphRequired
 	case "P-":
-		return lipgloss.NewStyle().
-			Foreground(lipgloss.AdaptiveColor{Light: "#C47000", Dark: "#FD971F"})
+		return styleBadgeWarn
 	}
 	if len(badge) > 1 {
 		// Multi-scope: use a brighter accent.
-		return lipgloss.NewStyle().
-			Bold(true).
-			Foreground(lipgloss.AdaptiveColor{Light: "#1A8AAF", Dark: "#66D9EF"})
+		return styleBadgeMulti
 	}
-	// Single-letter scope badge (G/P/L): dim.
-	return lipgloss.NewStyle().
-		Foreground(lipgloss.AdaptiveColor{Light: "#888888", Dark: "#888888"})
+	// Single-scope badge (G/P/L): dim.
+	return styleDim
 }
 
 func harnessBadge(r row) string {
@@ -77,6 +73,5 @@ func harnessBadge(r row) string {
 }
 
 func harnessBadgeStyle() lipgloss.Style {
-	return lipgloss.NewStyle().
-		Foreground(lipgloss.AdaptiveColor{Light: "#666666", Dark: "#888888"})
+	return styleDim
 }

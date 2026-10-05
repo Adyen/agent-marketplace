@@ -26,7 +26,11 @@ export type AdminPreviewState = { preview: AdminPreview, registry: string }
 // reflected into the login redirect.
 export function adminLoginHref(next: string, baseURL = '/marketplace/'): string {
   const root = `${baseURL.replace(/\/+$/, '')}/admin`
-  const target = next === root || next.startsWith(`${root}/`) && !/[\s\\?#%]|\.\./.test(next) ? next : root
+  const safeDestination = new TextEncoder().encode(next).byteLength <= 2048 && Array.from(next).every(char => {
+    const code = char.charCodeAt(0)
+    return code >= 0x21 && code !== 0x7f
+  })
+  const target = safeDestination && (next === root || next.startsWith(`${root}/`) && !/[\s\\?#%]|\.\./.test(next)) ? next : root
   return `/api/v1/admin/auth/login?next=${encodeURIComponent(target)}`
 }
 

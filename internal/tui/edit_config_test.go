@@ -2,13 +2,14 @@ package tui
 
 import (
 	"errors"
+	"github.com/charmbracelet/x/ansi"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 )
 
 func TestEditConfigKeyOpensModal(t *testing.T) {
@@ -16,7 +17,7 @@ func TestEditConfigKeyOpensModal(t *testing.T) {
 	m := NewModel(repoDir, homeDir)
 	m.pane = paneList
 
-	mi, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'E'}})
+	mi, _ := m.Update(tea.KeyPressMsg{Code: 'E', Text: string('E')})
 	m = mi.(Model)
 
 	if m.pane != paneEditConfigModal {
@@ -29,7 +30,7 @@ func TestEditConfigModalCancelReturnsToList(t *testing.T) {
 	m := NewModel(repoDir, homeDir)
 	m.pane = paneEditConfigModal
 
-	mi, _ := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	mi, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyEsc})
 	m = mi.(Model)
 
 	if m.pane != paneList {
@@ -52,7 +53,7 @@ func TestEditConfigModalScopeLaunchesEditor(t *testing.T) {
 			m := NewModel(repoDir, homeDir)
 			m.pane = paneEditConfigModal
 
-			mi, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{tc.key}})
+			mi, cmd := m.Update(tea.KeyPressMsg{Code: tc.key, Text: string(tc.key)})
 			m = mi.(Model)
 
 			if m.pane != paneList {
@@ -75,8 +76,8 @@ func TestRenderEditConfigModalContainsAllScopes(t *testing.T) {
 	m := NewModel(repoDir, homeDir)
 	m.pane = paneEditConfigModal
 
-	out := renderEditConfigModal(m)
-	for _, want := range []string{"Edit Config", "[g]", "[p]", "[l]", "[esc]"} {
+	out := ansi.Strip(renderEditConfigModal(m))
+	for _, want := range []string{"Edit Config", "[g]", "[p]", "[l]", "esc cancel"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("renderEditConfigModal missing %q", want)
 		}
