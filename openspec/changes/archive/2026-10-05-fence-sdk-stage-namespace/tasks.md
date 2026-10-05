@@ -5,4 +5,4 @@
 - [x] Supplementary moved-stage descriptor control and healthy retry; preserve modes/umask/dry/partial behavior.
 - [x] Linux/macOS full SDK/materialization suites/repeated races/validate/spec/shellcheck.
 - [x] Full disk lifecycle costs and complete intended-file adversarial review.
-- [ ] Archive as final commit.
+- [x] Archive as final commit.
