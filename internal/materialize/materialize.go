@@ -4135,7 +4135,11 @@ func syncCommandFiles(dir string, links []skillLink, dryRun, pruneStaleEntries b
 			continue
 		default:
 			// Regular file — only overwrite if it carries our marker.
-			if !isManagedCommandFile(filePath, boundary) {
+			managed, markerErr := managedCommandFileState(filePath, info, boundary)
+			if markerErr != nil {
+				return report, markerErr
+			}
+			if !managed {
 				report.Skipped = append(report.Skipped, name)
 				report.Diags = append(report.Diags, userOwnedCommandDiag(filePath, name, linkMeta[name]))
 				continue
@@ -4283,6 +4287,37 @@ func injectManagedByFrontmatter(content []byte) []byte {
 // isManagedCommandFile reports whether the file at path is a command markdown
 // file carrying the `_managed_by: agent-marketplace` ownership marker in its
 // leading frontmatter block.
+// commandMarkerReadHook runs before a desired command's marker is read. It is
+// nil in production and set only by serial tests in this package.
+var commandMarkerReadHook func(path string)
+
+// managedCommandFileState classifies an observed command leaf. A non-regular
+// or multiply linked leaf cannot be output this tool wrote and stays on the
+// user-owned collision path, as do ordinary unreadable payloads. A leaf or
+// command directory that vanished, was retargeted, or changed generation
+// since it was observed is a refusal rather than a user-owned collision.
+func managedCommandFileState(path string, observed os.FileInfo, boundary *destinationBoundary) (bool, error) {
+	identity, err := fsboundary.FileInfoIdentity(observed)
+	if err != nil {
+		return false, err
+	}
+	if !identity.Mode.IsRegular() || identity.Links != 1 {
+		return false, nil
+	}
+	if commandMarkerReadHook != nil {
+		commandMarkerReadHook(path)
+	}
+	data, err := readNativeCommandFile(path, observed, boundary)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) || errors.Is(err, fsboundary.ErrUnsafePath) || errors.Is(err, fsboundary.ErrUnsafeFile) ||
+			errors.Is(err, fsboundary.ErrGenerationConflict) || errors.Is(err, fsboundary.ErrTooLarge) {
+			return false, fmt.Errorf("read command marker %s: %w", path, err)
+		}
+		return false, nil
+	}
+	return isManagedCommandContent(data), nil
+}
+
 func isManagedCommandFile(path string, boundaries ...*destinationBoundary) bool {
 	var boundary *destinationBoundary
 	if len(boundaries) > 0 {
