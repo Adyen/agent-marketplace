@@ -8,6 +8,7 @@ package harnesscompile
 
 import (
 	"bytes"
+	"crypto/rand"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -718,22 +719,27 @@ func Materialize(r *Result, outDir string, opts ...WriteOption) (report *WriteRe
 		return nil, fmt.Errorf("harnesscompile.Materialize: output root changed before publication: %w", err)
 	}
 	// Ensure outDir exists.
-	if err := os.MkdirAll(outDir, 0o755); err != nil {
-		return nil, fmt.Errorf("harnesscompile.Materialize: create outDir: %w", err)
-	}
-
-	// Create staging directory.
-	stagingDir, err := os.MkdirTemp(outDir, ".tmp-")
-	if err != nil {
-		return nil, fmt.Errorf("harnesscompile.Materialize: create staging dir: %w", err)
-	}
 	absolute, err := filepath.Abs(outDir)
 	if err != nil {
 		return nil, err
 	}
-	root, err := fsboundary.OpenDir(absolute)
+	ancestor := absolute
+	base, err := fsboundary.OpenDir(ancestor)
+	for errors.Is(err, fs.ErrNotExist) && !errors.Is(err, fsboundary.ErrUnsafePath) && filepath.Dir(ancestor) != ancestor {
+		ancestor = filepath.Dir(ancestor)
+		base, err = fsboundary.OpenDir(ancestor)
+	}
 	if err != nil {
 		return nil, err
+	}
+	defer func() { err = errors.Join(err, base.Close()) }()
+	rel, err := filepath.Rel(ancestor, absolute)
+	if err != nil {
+		return nil, err
+	}
+	root, err := base.EnsurePath(rel)
+	if err != nil {
+		return nil, fmt.Errorf("harnesscompile.Materialize: create outDir: %w", err)
 	}
 	defer func() { err = errors.Join(err, root.Close()) }()
 	native, err := root.NativeRoot()
@@ -749,7 +755,16 @@ func Materialize(r *Result, outDir string, opts ...WriteOption) (report *WriteRe
 		return nil, fsboundary.ErrGenerationConflict
 	}
 	rootSnapshot = materializeRootSnapshot{exists: true, info: rootInfo}
-	stageName := filepath.Base(stagingDir)
+	slog.Debug("SDK root admitted", "out_dir", outDir, "phase", "sdk-root-admitted")
+	if rootErr := revalidateMaterializeRoot(outDir, rootSnapshot); rootErr != nil {
+		return nil, errors.Join(fsboundary.ErrGenerationConflict, rootErr)
+	}
+	// Create staging directory.
+	stageName := ".tmp-" + rand.Text()
+	if err := root.Mkdir(stageName, 0o700); err != nil {
+		return nil, fmt.Errorf("harnesscompile.Materialize: create staging dir: %w", err)
+	}
+	stagingDir := filepath.Join(outDir, stageName)
 	created, err := native.Lstat(stageName)
 	if err != nil {
 		return nil, err
@@ -768,15 +783,36 @@ func Materialize(r *Result, outDir string, opts ...WriteOption) (report *WriteRe
 		return native.RemoveAll(stageName)
 	}
 	defer func() { err = errors.Join(err, cleanupStage()) }()
+	staged, err := root.OpenPath(stageName)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { err = errors.Join(err, staged.Close()) }()
+	createdID, err := fsboundary.FileInfoIdentity(created)
+	if err != nil {
+		return nil, err
+	}
+	if !staged.Identity().SameObject(createdID) {
+		return nil, fsboundary.ErrGenerationConflict
+	}
+	stagedNative, err := staged.NativeRoot()
+	if err != nil {
+		return nil, err
+	}
+	defer func() { err = errors.Join(err, stagedNative.Close()) }()
+	slog.Debug("SDK stage admitted", "out_dir", stagingDir, "phase", "sdk-stage-admitted")
 
 	// Write artifacts to staging directory.
 	for _, a := range artifacts {
 		if sliceContains(report.Skipped, a.Path) {
 			continue
 		}
-		destPath := filepath.Join(stagingDir, filepath.FromSlash(a.Path))
-		if err := os.MkdirAll(filepath.Dir(destPath), 0o755); err != nil {
-			return nil, fmt.Errorf("harnesscompile.Materialize: mkdir %s: %w", filepath.Dir(a.Path), err)
+		parent, dirErr := staged.EnsurePath(filepath.Dir(filepath.FromSlash(a.Path)))
+		if dirErr != nil {
+			return nil, fmt.Errorf("harnesscompile.Materialize: mkdir %s: %w", filepath.Dir(a.Path), dirErr)
+		}
+		if closeErr := parent.Close(); closeErr != nil {
+			return nil, closeErr
 		}
 		mode, existingMode := existingModes[a.Path]
 		if !existingMode {
@@ -785,13 +821,16 @@ func Materialize(r *Result, outDir string, opts ...WriteOption) (report *WriteRe
 				mode = 0o644
 			}
 		}
-		if err := os.WriteFile(destPath, a.Bytes, mode); err != nil {
-			return nil, fmt.Errorf("harnesscompile.Materialize: write %s: %w", a.Path, err)
+		file, writeErr := stagedNative.OpenFile(filepath.FromSlash(a.Path), os.O_WRONLY|os.O_CREATE|os.O_EXCL, mode)
+		if writeErr != nil {
+			return nil, fmt.Errorf("harnesscompile.Materialize: write %s: %w", a.Path, writeErr)
 		}
-		if existingMode {
-			if err := os.Chmod(destPath, mode); err != nil {
-				return nil, fmt.Errorf("harnesscompile.Materialize: chmod %s: %w", a.Path, err)
-			}
+		_, writeErr = file.Write(a.Bytes)
+		if writeErr == nil && existingMode {
+			writeErr = file.Chmod(mode)
+		}
+		if writeErr = errors.Join(writeErr, file.Close()); writeErr != nil {
+			return nil, fmt.Errorf("harnesscompile.Materialize: write %s: %w", a.Path, writeErr)
 		}
 	}
 
