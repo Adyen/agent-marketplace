@@ -20,6 +20,9 @@ import (
 // is never a symlink, and it starts owner-only until the caller chmods it.
 const stagedCreateFlags = unix.O_RDWR | unix.O_CREAT | unix.O_EXCL | unix.O_NOFOLLOW | unix.O_CLOEXEC
 
+// OpenPersistentFile opens or creates a singly linked regular file below the
+// captured directory, refusing aliases and special files before restoring
+// blocking I/O and transferring the descriptor to os.File.
 func (d *Dir) OpenPersistentFile(name string, mode fs.FileMode) (*os.File, error) {
 	if err := validLeafName(name); err != nil {
 		return nil, err
@@ -32,15 +35,21 @@ func (d *Dir) OpenPersistentFile(name string, mode fs.FileMode) (*os.File, error
 	if err != nil {
 		return nil, err
 	}
-	file := os.NewFile(uintptr(fd), filepath.Join(d.path, name))
-	identity, err := identityOf(file)
-	if err == nil && (!identity.Mode.IsRegular() || identity.Links != 1) {
+	var stat unix.Stat_t
+	err = unix.Fstat(fd, &stat)
+	if err == nil && (stat.Mode&unix.S_IFMT != unix.S_IFREG || stat.Nlink != 1) {
 		err = ErrUnsafeFile
 	}
-	if err != nil {
-		return nil, errors.Join(err, file.Close())
+	if err == nil {
+		err = unix.SetNonblock(fd, false)
 	}
-	return file, nil
+	if err != nil {
+		if closeErr := unix.Close(fd); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+		return nil, err
+	}
+	return os.NewFile(uintptr(fd), filepath.Join(d.path, name)), nil
 }
 
 // CreateTemp creates a new regular file directly below the captured

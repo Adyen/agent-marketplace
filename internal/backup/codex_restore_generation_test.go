@@ -77,6 +77,7 @@ func testCodexRestorePreflightGeneration(t *testing.T, member string) {
 	}
 	retained := filepath.Join(t.TempDir(), "original-archive")
 	changed := false
+	var replaceErr error
 	logger := slog.Default()
 	t.Cleanup(func() { slog.SetDefault(logger) })
 	slog.SetDefault(slog.New(codexRestoreObserver{Handler: slog.NewTextHandler(io.Discard, &slog.HandlerOptions{Level: slog.LevelDebug}), onPreflight: func() {
@@ -84,14 +85,16 @@ func testCodexRestorePreflightGeneration(t *testing.T, member string) {
 			return
 		}
 		changed = true
-		if err := os.Rename(archive, retained); err != nil {
-			t.Fatal(err)
+		if replaceErr = os.Rename(archive, retained); replaceErr != nil {
+			return
 		}
-		if err := os.WriteFile(archive, original, originalInfo.Mode().Perm()); err != nil {
-			t.Fatal(err)
-		}
+		replaceErr = os.WriteFile(archive, original, originalInfo.Mode().Perm())
 	}}))
-	if _, err := RestoreCodexSet(partitions); !changed || !errors.Is(err, fsboundary.ErrGenerationConflict) {
+	_, err = RestoreCodexSet(partitions)
+	if replaceErr != nil {
+		t.Fatal(replaceErr)
+	}
+	if !changed || !errors.Is(err, fsboundary.ErrGenerationConflict) {
 		t.Fatalf("replaced preflight generation authorized extraction: changed=%t err=%v", changed, err)
 	}
 	if data, err := os.ReadFile(native); err != nil || string(data) != "inert current payload" {
