@@ -4,4 +4,4 @@
 - [x] Descriptor-relative directory traversal with original root/directory/ancestry metadata, candidate identity retention and compatibility.
 - [x] Linux/macOS full SDK/materialization/CLI conversion suites/repeated races/validate/spec/shellcheck.
 - [x] Timed disk prune costs and complete intended-file adversarial review.
-- [ ] Archive as final commit.
+- [x] Archive as final commit.
