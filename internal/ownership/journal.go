@@ -685,7 +685,7 @@ func (s *Store) writeJournal(j *Journal) error {
 	}
 	pin, err := s.writeObservedMetadata(journalFileName, append(data, '\n'))
 	if err != nil {
-		return err
+		return fmt.Errorf("ownership: write journal: %w", err)
 	}
 	j.observed = pin
 	slog.Debug("ownership journal written",
