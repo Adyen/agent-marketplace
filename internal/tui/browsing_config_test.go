@@ -28,6 +28,11 @@ func TestBrowsingConfigStageRendersCachedRowsBeforeBlockedAcquisition(t *testing
 	release := make(chan struct{})
 	var releaseOnce sync.Once
 	unblock := func() { releaseOnce.Do(func() { close(release) }) }
+	// Model commands, including discovery (which uses only the search route),
+	// run after the held check below, so the first held request comes from
+	// transient acquisition.
+	acquisitionHeld := make(chan struct{})
+	var heldOnce sync.Once
 	fixture := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.URL.Path == "/.well-known/agent-marketplace.json":
@@ -36,6 +41,7 @@ func TestBrowsingConfigStageRendersCachedRowsBeforeBlockedAcquisition(t *testing
 			searchRequests.Add(1)
 			http.NotFound(w, r)
 		case strings.HasPrefix(r.URL.Path, "/api/v1/"):
+			heldOnce.Do(func() { close(acquisitionHeld) })
 			select {
 			case <-release:
 			case <-r.Context().Done():
@@ -121,6 +127,12 @@ func TestBrowsingConfigStageRendersCachedRowsBeforeBlockedAcquisition(t *testing
 	if len(entry.Resources) != 0 {
 		t.Fatalf("browsing endpoint carried %d provisional pins", len(entry.Resources))
 	}
+	// Prove resolution is parked in acquisition before any model command can
+	// consume the stream; until unblock nothing later can be published, so the
+	// cached rows below render while acquisition is genuinely blocked.
+	if extra := stagesBeforeBlockedAcquisition(t, stages, acquisitionHeld); len(extra) != 0 {
+		t.Fatalf("resolution published %d more browse-safe config stages before blocked acquisition: %+v", len(extra), extra)
+	}
 
 	produced := make(chan tea.Msg, 32)
 	var run func(cmd tea.Cmd)
@@ -162,11 +174,6 @@ func TestBrowsingConfigStageRendersCachedRowsBeforeBlockedAcquisition(t *testing
 	}
 	if searchRequests.Load() != 0 {
 		t.Fatalf("browse hit the remote search route %d times despite a fresh cache", searchRequests.Load())
-	}
-	select {
-	case extra, ok := <-stages:
-		t.Fatalf("resolve advanced past acquisition while blocked: %+v closed=%t", extra, !ok)
-	default:
 	}
 	view := m.View().Content
 	if !strings.Contains(view, "remote") {
