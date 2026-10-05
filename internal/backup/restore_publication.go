@@ -9,7 +9,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/fsboundary"
 )
 
-func publishRestoredFile(parent *fsboundary.Dir, name string, reader io.Reader, mode os.FileMode) (err error) {
+func publishRestoredFile(parent *fsboundary.Dir, name string, reader io.Reader, mode os.FileMode, validators ...func() error) (err error) {
 	file, err := fsboundary.CaptureDestination(parent, name, fsboundary.LinkPolicyRepository)
 	if err != nil {
 		return err
@@ -144,6 +144,11 @@ func publishRestoredFile(parent *fsboundary.Dir, name string, reader io.Reader, 
 				return statErr
 			}
 			return fsboundary.ErrGenerationConflict
+		}
+	}
+	for _, validate := range validators {
+		if err := validate(); err != nil {
+			return err
 		}
 	}
 	return native.Rename(stageName, name)

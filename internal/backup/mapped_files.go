@@ -85,5 +85,19 @@ func restoreMappedFile(reader io.Reader, header *tar.Header, mappings []map[stri
 			}
 		}
 	}()
-	return publishRestoredFile(captured, filepath.Base(destination), reader, header.FileInfo().Mode().Perm())
+	validateParent := func() error {
+		fresh, err := anchor.OpenPath(filepath.Base(parent))
+		if err != nil {
+			return err
+		}
+		unchanged := fresh.Identity().SameObject(captured.Identity())
+		if closeErr := fresh.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+		if err == nil && !unchanged {
+			return fsboundary.ErrGenerationConflict
+		}
+		return err
+	}
+	return publishRestoredFile(captured, filepath.Base(destination), reader, header.FileInfo().Mode().Perm(), validateParent)
 }

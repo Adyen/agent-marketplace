@@ -56,6 +56,43 @@ func TestMappedRestoreRefusesReplacedGeneration(t *testing.T) {
 }
 
 // spec: backup-recovery/restore-file-hardlink-refuses-without-foreign-write
+func TestMappedRestoreRefusesRetargetedParentGeneration(t *testing.T) {
+	root := t.TempDir()
+	destination := filepath.Join(root, "native.json")
+	if err := os.WriteFile(destination, []byte("original inert user bytes"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	retainedParent := filepath.Join(t.TempDir(), "native-parent")
+	reader := &restorePublicationReader{Reader: strings.NewReader("inert archive bytes"), before: func() {
+		if err := os.Rename(root, retainedParent); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Mkdir(root, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(destination, []byte("replacement inert user bytes"), 0o640); err != nil {
+			t.Fatal(err)
+		}
+	}}
+	const name = ".agent-marketplace-native/machine-mcp/.claude.json"
+	header := &tar.Header{Name: name, Typeflag: tar.TypeReg, Mode: 0o640, Size: int64(len("inert archive bytes"))}
+	if err := restoreMappedFile(reader, header, []map[string]string{{name: destination}}); !errors.Is(err, fsboundary.ErrGenerationConflict) {
+		t.Fatalf("retargeted mapped parent promoted: %v", err)
+	}
+	if data, err := os.ReadFile(destination); err != nil || string(data) != "replacement inert user bytes" {
+		t.Fatalf("retargeted destination changed: %q %v", data, err)
+	}
+	if entries, err := os.ReadDir(root); err != nil || len(entries) != 1 || entries[0].Name() != "native.json" {
+		t.Fatalf("retargeted root residue: %v %v", entries, err)
+	}
+	if data, err := os.ReadFile(filepath.Join(retainedParent, "native.json")); err != nil || string(data) != "original inert user bytes" {
+		t.Fatalf("retained original destination changed: %q %v", data, err)
+	}
+	if entries, err := os.ReadDir(retainedParent); err != nil || len(entries) != 1 {
+		t.Fatalf("retained parent residue: %v %v", entries, err)
+	}
+}
+
 func TestRestoreKeepsUnreadableArchivedModes(t *testing.T) {
 	for _, mode := range []os.FileMode{0o0600, 0o0640, 0o0400, 0o0200, 0o0000} {
 		t.Run(fmt.Sprintf("mode=%#o", mode), func(t *testing.T) {
