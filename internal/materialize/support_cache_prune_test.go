@@ -58,14 +58,22 @@ func TestRunSupportCachePruneRefusesRetargetedGeneration(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(source, "reference.txt"), []byte("inert current support"), 0o640); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.Chmod(filepath.Join(source, "reference.txt"), 0o640); err != nil {
+		t.Fatal(err)
+	}
 	foreignPayload := filepath.Join(foreign, "stale.txt")
 	if err := os.WriteFile(foreignPayload, []byte("foreign inert support"), 0o640); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(foreign, "SKILL.md"), []byte("foreign inert compiled"), 0o644); err != nil {
+	foreignCompiled := filepath.Join(foreign, "SKILL.md")
+	if err := os.WriteFile(foreignCompiled, []byte("foreign inert compiled"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	before, err := os.Lstat(foreignPayload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	compiledBefore, err := os.Lstat(foreignCompiled)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -98,7 +106,13 @@ func TestRunSupportCachePruneRefusesRetargetedGeneration(t *testing.T) {
 	if after, err := os.Lstat(foreignPayload); err != nil || !os.SameFile(before, after) || before.Mode() != after.Mode() || !before.ModTime().Equal(after.ModTime()) {
 		t.Fatalf("prune changed foreign generation: %v", err)
 	}
-	if entries, err := os.ReadDir(foreign); err != nil || len(entries) != 2 {
+	if raw, err := os.ReadFile(foreignCompiled); err != nil || string(raw) != "foreign inert compiled" {
+		t.Fatalf("prune changed foreign compiled artifact: %q %v", raw, err)
+	}
+	if after, err := os.Lstat(foreignCompiled); err != nil || !os.SameFile(compiledBefore, after) || compiledBefore.Mode() != after.Mode() || !compiledBefore.ModTime().Equal(after.ModTime()) {
+		t.Fatalf("prune changed foreign compiled artifact identity: %v", err)
+	}
+	if entries, err := os.ReadDir(foreign); err != nil || len(entries) != 2 || entries[0].Name() != "SKILL.md" || entries[1].Name() != "stale.txt" {
 		t.Fatalf("refusal wrote/staged foreign cache members: %v %v", entries, err)
 	}
 	if _, err := os.Lstat(filepath.Join(repo, ".factory", "skills", "cache-probe")); !os.IsNotExist(err) {
