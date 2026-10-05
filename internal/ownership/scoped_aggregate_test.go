@@ -39,6 +39,52 @@ func TestStoreReadAggregateAbsenceAndRootAlias(t *testing.T) {
 	}
 }
 
+func TestStoreReadAggregateRefusesReplacedRoot(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	payload := []byte("{\"native\":true}\n")
+	for _, admitted := range []string{"existing", "created-later"} {
+		t.Run(admitted, func(t *testing.T) {
+			root := filepath.Join(t.TempDir(), "root")
+			if admitted == "existing" {
+				if err := os.Mkdir(root, 0o755); err != nil {
+					t.Fatal(err)
+				}
+			}
+			store, err := Open(root, WithStateRoot(t.TempDir()))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.MkdirAll(root, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(root, "native.json"), payload, 0o640); err != nil {
+				t.Fatal(err)
+			}
+			if data, err := store.ReadAggregate("native.json"); err != nil || !bytes.Equal(data, payload) {
+				t.Fatalf("admitted root read control failed: %q %v", data, err)
+			}
+			retained := filepath.Join(t.TempDir(), "retained-root")
+			if err := os.Rename(root, retained); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Mkdir(root, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(root, "native.json"), payload, 0o640); err != nil {
+				t.Fatal(err)
+			}
+			if data, err := store.ReadAggregate("native.json"); data != nil || !errors.Is(err, ErrGenerationConflict) || os.IsNotExist(err) {
+				t.Fatalf("replaced root accepted for aggregate read: %q %v", data, err)
+			}
+			if data, err := os.ReadFile(filepath.Join(retained, "native.json")); err != nil || !bytes.Equal(data, payload) {
+				t.Fatalf("retained admitted root changed: %q %v", data, err)
+			}
+		})
+	}
+}
+
 // spec: owned-entry-reconciliation/scoped-aggregate-reader-refuses-intermediate-alias
 func TestStoreReadAggregateRefusesIntermediateAlias(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
