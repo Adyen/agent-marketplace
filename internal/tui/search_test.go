@@ -5,8 +5,9 @@ import (
 	"strings"
 	"testing"
 
+	tea "charm.land/bubbletea/v2"
 	"github.com/Adyen/agent-marketplace/internal/config"
-	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/x/ansi"
 )
 
 func TestFilteredOutSectionsHidden(t *testing.T) {
@@ -19,20 +20,8 @@ func TestFilteredOutSectionsHidden(t *testing.T) {
 	m.recomputeView()
 
 	paths := sectionPaths(m.flatItems)
-	for _, p := range paths {
-		if p == "scope:project" || p == "scope:project:infra" {
-			t.Fatalf("section %q should be hidden (no match), got paths: %v", p, paths)
-		}
-	}
-
-	var found bool
-	for _, p := range paths {
-		if p == "scope:global" {
-			found = true
-		}
-	}
-	if !found {
-		t.Fatalf("scope:global should remain visible with matches, got %v", paths)
+	if !slices.Equal(paths, []string{"status:enabled"}) {
+		t.Fatalf("only the status:enabled section should remain visible with matches, got %v", paths)
 	}
 }
 
@@ -42,12 +31,12 @@ func TestActiveFilterOverridesCollapsedFoldState(t *testing.T) {
 	m.filteredRows = m.rows
 	m.rebuildFlatItems()
 
-	// User collapses scope:global.
+	// User collapses status:enabled.
 	m.cursor = 0
 	m.toggleFoldAtCursor()
 	m.rebuildFlatItems()
-	if !m.currentFoldState()["scope:global"] {
-		t.Fatalf("precondition: scope:global should be collapsed")
+	if !m.currentFoldState()["status:enabled"] {
+		t.Fatalf("precondition: status:enabled should be collapsed")
 	}
 
 	// Now filter for 'audit': the collapsed fold should be overridden so
@@ -184,27 +173,27 @@ func TestSearchInputShowsSpinnerWhileMarketplaceResultsLoad(t *testing.T) {
 	m.searchInput.SetValue("audit")
 
 	lines := strings.Split(m.renderBaseScreen(), "\n")
-	if len(lines) < 3 {
+	if len(lines) < 2 {
 		t.Fatalf("rendered screen has no search line: %q", lines)
 	}
-	searchLine := lines[2]
-	spinnerPosition := strings.Index(searchLine, m.spinner.View())
+	searchLine := ansi.Strip(lines[1])
+	spinnerPosition := strings.Index(searchLine, ansi.Strip(m.spinner.View()))
 	queryPosition := strings.Index(searchLine, "audit")
 	if spinnerPosition < 0 || queryPosition < 0 || spinnerPosition > queryPosition || strings.Contains(searchLine, "/") {
 		t.Fatalf("search spinner should replace the slash before the query: %q", searchLine)
 	}
-	if strings.Contains(lines[len(lines)-1], "Marketplace...") {
+	if strings.Contains(ansi.Strip(lines[len(lines)-1]), "Marketplace...") {
 		t.Fatalf("footer should not duplicate the search loading indicator: %q", lines[len(lines)-1])
 	}
 
 	m.discoveryLoading = false
 	lines = strings.Split(m.renderBaseScreen(), "\n")
-	if strings.Contains(lines[2], m.spinner.View()) || !strings.Contains(lines[2], "/ audit") {
-		t.Fatalf("idle search line should restore the slash prompt: %q", lines[2])
+	if strings.Contains(lines[1], m.spinner.View()) || !strings.Contains(ansi.Strip(lines[1]), "/ audit") {
+		t.Fatalf("idle search line should restore the slash prompt: %q", lines[1])
 	}
 }
 
-func TestSearchReopenRestoresBrowseDiscoveryBeforeEmptyQuery(t *testing.T) {
+func TestSearchClearFromListRestoresBrowseDiscoveryBeforeEmptyQuery(t *testing.T) {
 	t.Setenv("XDG_CACHE_HOME", t.TempDir())
 	m := searchModel()
 	endpoint := config.MarketplaceEntry{URL: "https://market.example", InstanceID: "market"}
@@ -220,10 +209,19 @@ func TestSearchReopenRestoresBrowseDiscoveryBeforeEmptyQuery(t *testing.T) {
 	m.searchInput.SetValue("remote")
 	m.mergeDiscoveryRows()
 
-	updated, cmd := m.Update(keyPress('/'))
+	m = asModel(t, mustUpdate(m.Update(keyPress('/'))))
+	if !m.filterActive || m.filter != "remote" || m.searchInput.Value() != "remote" {
+		t.Fatalf("reopened search must resume the query: active=%t filter=%q input=%q", m.filterActive, m.filter, m.searchInput.Value())
+	}
+	if got := rowNames(m.discoveryRows); !slices.Equal(got, []string{"remote-result"}) {
+		t.Fatalf("resuming search must keep the query's discovery rows, got %v", got)
+	}
+	m = asModel(t, mustUpdate(m.Update(v2Enter())))
+
+	updated, cmd := m.Update(escKey())
 	m = updated.(Model)
-	if !m.filterActive || m.filter != "" || m.searchInput.Value() != "" {
-		t.Fatalf("reopened search state: active=%t filter=%q input=%q", m.filterActive, m.filter, m.searchInput.Value())
+	if m.filterActive || m.filter != "" || m.searchInput.Value() != "" {
+		t.Fatalf("cleared search state: active=%t filter=%q input=%q", m.filterActive, m.filter, m.searchInput.Value())
 	}
 	if got := rowNames(m.discoveryRows); !slices.Equal(got, []string{"browse-result"}) {
 		t.Fatalf("visible discovery rows = %v, want browse results", got)
@@ -292,7 +290,7 @@ func TestSearchInputEscapeClearsFilter(t *testing.T) {
 	}
 
 	// Escape should clear and close
-	mi, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	mi, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEsc})
 	m = mi.(Model)
 	if m.filterActive {
 		t.Fatalf("expected filterActive false after Escape")
@@ -314,7 +312,7 @@ func TestSearchInputEnterCommitsFilter(t *testing.T) {
 	m = mi.(Model)
 
 	// Enter should close the input but keep the filter
-	mi, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	mi, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = mi.(Model)
 	if m.filterActive {
 		t.Fatalf("expected filterActive false after Enter")
@@ -338,7 +336,7 @@ func TestSearchInputBackspace(t *testing.T) {
 	}
 
 	// Backspace deletes the character before the cursor
-	mi, _ = m.Update(tea.KeyMsg{Type: tea.KeyBackspace})
+	mi, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyBackspace})
 	m = mi.(Model)
 	if m.filter != "a" {
 		t.Fatalf("expected filter 'a' after backspace, got %q", m.filter)
@@ -361,21 +359,21 @@ func TestSearchInputCursorMovement(t *testing.T) {
 	}
 
 	// Move cursor left
-	mi, _ = m.Update(tea.KeyMsg{Type: tea.KeyLeft})
+	mi, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyLeft})
 	m = mi.(Model)
 	if m.searchInput.Position() != 1 {
 		t.Fatalf("expected cursor at position 1 after left, got %d", m.searchInput.Position())
 	}
 
 	// Backspace now deletes 'a' (before cursor), not 'b'
-	mi, _ = m.Update(tea.KeyMsg{Type: tea.KeyBackspace})
+	mi, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyBackspace})
 	m = mi.(Model)
 	if m.filter != "b" {
 		t.Fatalf("expected filter 'b' after backspace at mid-cursor, got %q", m.filter)
 	}
 
 	// Move cursor right to end
-	mi, _ = m.Update(tea.KeyMsg{Type: tea.KeyRight})
+	mi, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyRight})
 	m = mi.(Model)
 	if m.searchInput.Position() != 1 {
 		t.Fatalf("expected cursor at position 1 after right, got %d", m.searchInput.Position())
@@ -388,10 +386,9 @@ func TestSearchInputPaste(t *testing.T) {
 	mi, _ := m.Update(keyPress('/'))
 	m = mi.(Model)
 
-	// Simulate a paste event: multiple runes delivered in one KeyMsg
-	// with Paste=true. The textinput handles this via insertRunesFromUserInput.
-	pasteKey := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("audit"), Paste: true}
-	mi, _ = m.Update(pasteKey)
+	// Simulate a bracketed paste event: the whole payload arrives as one
+	// PasteMsg. The textinput inserts it via insertRunesFromUserInput.
+	mi, _ = m.Update(tea.PasteMsg{Content: "audit"})
 	m = mi.(Model)
 
 	if m.filter != "audit" {
@@ -415,7 +412,7 @@ func TestSearchInputFocusState(t *testing.T) {
 	}
 
 	// Escape blurs it
-	mi, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	mi, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEsc})
 	m = mi.(Model)
 	if m.searchInput.Focused() {
 		t.Fatalf("searchInput should not be focused after Escape")
@@ -424,7 +421,7 @@ func TestSearchInputFocusState(t *testing.T) {
 	// Open again and Enter blurs it
 	mi, _ = m.Update(keyPress('/'))
 	m = mi.(Model)
-	mi, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	mi, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = mi.(Model)
 	if m.searchInput.Focused() {
 		t.Fatalf("searchInput should not be focused after Enter")

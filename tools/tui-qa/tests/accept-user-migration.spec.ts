@@ -48,7 +48,7 @@ test("accepting startup migration converts only the user root and keeps editing"
     await expect(terminal.getByText("toggle global")).toBeVisible();
   });
   await step("select globally in the migrated user root", () => terminal.write("g"), async () => {
-    await expect(terminal.getByText(/Global\s+\(1\)/g)).toBeVisible();
+    await expect(terminal.getByText(/Pending sync\s+\(1\)/g)).toBeVisible();
     await expect(terminal.getByText(/Status:\s+enabled \(pending sync\)/g)).toBeVisible();
   });
   const migratedUser = fs.readFileSync(userConfig, "utf8");
