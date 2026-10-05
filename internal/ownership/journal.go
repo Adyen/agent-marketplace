@@ -559,7 +559,15 @@ func (s *Store) disarmRefusedStaged(journal *Journal, parent *fsboundary.Dir, ba
 	failed := *journal
 	failed.StagedPath = ""
 	if err := s.writeJournal(&failed); err != nil {
-		return err
+		if !errors.Is(err, fsboundary.ErrGenerationConflict) {
+			return err
+		}
+		// The journal is no longer this attempt's: another writer replaced or
+		// cleared it, so no recovery can act on this attempt's staged path and
+		// the journal is not ours to clear. Only attempt-owned backup residue
+		// remains to remove.
+		s.removeAttemptBackup(&failed, backupPath)
+		return nil
 	}
 	s.cleanupAfterCASFailure(parent, &failed, backupPath, nil)
 	return nil
@@ -579,17 +587,24 @@ func (s *Store) cleanupAfterCASFailure(parent *fsboundary.Dir, journal *Journal,
 		slog.Warn("could not clear the journal after a CAS failure",
 			"root_key", s.rootKey, "journal", s.JournalFile(), "err", err)
 	}
-	if backupPath != "" {
-		if err := s.removeSafetyAttempt(journal.safety); err != nil {
-			slog.Warn("could not remove the safety backup after a CAS failure",
-				"root_key", s.rootKey, "backup_path", backupPath, "err", err)
-			return
-		}
-		// best-effort: remove empty backup directories
-		if err := s.removeEmptySafetyDirectory(journal.safety); err != nil {
-			slog.Warn("could not remove an empty safety backup directory after a CAS failure",
-				"root_key", s.rootKey, "dir", s.SafetyBackupDir(journal.File), "err", err)
-		}
+	s.removeAttemptBackup(journal, backupPath)
+}
+
+// removeAttemptBackup removes the safety backup this attempt wrote, bound to
+// its captured identities, plus a then-empty backup directory.
+func (s *Store) removeAttemptBackup(journal *Journal, backupPath string) {
+	if backupPath == "" {
+		return
+	}
+	if err := s.removeSafetyAttempt(journal.safety); err != nil {
+		slog.Warn("could not remove the safety backup after a CAS failure",
+			"root_key", s.rootKey, "backup_path", backupPath, "err", err)
+		return
+	}
+	// best-effort: remove empty backup directories
+	if err := s.removeEmptySafetyDirectory(journal.safety); err != nil {
+		slog.Warn("could not remove an empty safety backup directory after a CAS failure",
+			"root_key", s.rootKey, "dir", s.SafetyBackupDir(journal.File), "err", err)
 	}
 }
 
