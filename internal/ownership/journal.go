@@ -687,7 +687,7 @@ func (s *Store) writeJournal(j *Journal) error {
 		return fmt.Errorf("ownership: marshal journal: %w", err)
 	}
 	if err := s.writeMetadata(journalFileName, append(data, '\n')); err != nil {
-		return err
+		return fmt.Errorf("ownership: write journal: %w", err)
 	}
 	slog.Debug("ownership journal written",
 		"root_key", s.rootKey, "file", j.File, "generation", j.Generation, "phase", string(j.Phase))
