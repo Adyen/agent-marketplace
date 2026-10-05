@@ -917,7 +917,7 @@ func TestStaleProvisionalStageCannotPublishRows(t *testing.T) {
 // spec: tui-startup/provisional-rows-render-while-transient-acquisition-is-blocked
 func TestProvisionalConfiguredRowsRenderBeforeBlockedAcquisition(t *testing.T) {
 	repoRoot, homeDir := progressiveFixture(t)
-	unblock := blockedOrganizationMarketplace(t)
+	unblock, acquisitionHeld := blockedOrganizationMarketplace(t)
 
 	m := newTestModel()
 	m.rows = nil
@@ -952,6 +952,7 @@ func TestProvisionalConfiguredRowsRenderBeforeBlockedAcquisition(t *testing.T) {
 
 	updated, _ := m.Update(first)
 	m = updated.(Model)
+	m = applyBrowseSafeStageWhileBlocked(t, m, stages, acquisitionHeld)
 	pendingRow := -1
 	for i, r := range m.rows {
 		if !r.PendingVerification {
@@ -963,11 +964,6 @@ func TestProvisionalConfiguredRowsRenderBeforeBlockedAcquisition(t *testing.T) {
 	}
 	if pendingRow < 0 {
 		t.Fatalf("configured Marketplace selection did not render pending verification while blocked: %#v", m.rows)
-	}
-	select {
-	case extra, ok := <-stages:
-		t.Fatalf("resolve advanced past acquisition while blocked: %+v closed=%t", extra, !ok)
-	default:
 	}
 	view := ansi.Strip(m.View().Content)
 	if !strings.Contains(view, "remote") {
@@ -1004,16 +1000,25 @@ func writeProvisionalSkill(t *testing.T, root, name string) {
 	}
 }
 
-func blockedOrganizationMarketplace(t *testing.T) (unblock func()) {
+// blockedOrganizationMarketplace configures an organization Marketplace with no
+// deployed lock, so startup must acquire it transiently, and holds every
+// /api/v1/ request until unblock is called. Only transient acquisition issues
+// such requests in these fixtures (the browse-safe stage fetches the
+// well-known document, and tests never run discovery commands), so
+// acquisitionHeld is closed once acquisition has started and is parked.
+func blockedOrganizationMarketplace(t *testing.T) (unblock func(), acquisitionHeld <-chan struct{}) {
 	t.Helper()
 	release := make(chan struct{})
 	var releaseOnce sync.Once
 	unblock = func() { releaseOnce.Do(func() { close(release) }) }
+	held := make(chan struct{})
+	var heldOnce sync.Once
 	fixture := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.URL.Path == "/.well-known/agent-marketplace.json":
 			_ = json.NewEncoder(w).Encode(mpapi.DefaultWellKnown("mp", "http://"+r.Host))
 		case strings.HasPrefix(r.URL.Path, "/api/v1/"):
+			heldOnce.Do(func() { close(held) })
 			select {
 			case <-release:
 			case <-r.Context().Done():
@@ -1035,7 +1040,75 @@ func blockedOrganizationMarketplace(t *testing.T) (unblock func()) {
 	t.Cleanup(swapLoadOrgConfig(func() (*config.Config, error) {
 		return config.LoadOrganizationConfig()
 	}))
-	return unblock
+	return unblock, held
+}
+
+// stagesBeforeBlockedAcquisition waits until transient acquisition is held by
+// the fixture and returns every stage delivered before it, failing unless each
+// one is a browse-safe config stage. Stages are sent synchronously on a
+// buffered channel and acquisition starts only after the browse-safe callback
+// returns, so once acquisitionHeld is closed every pre-acquisition stage is
+// already buffered and the producer cannot send another until unblock. The
+// result therefore does not depend on scheduling: an inventory, final, or
+// authoritative (pinned) config stage, or a closed stream, always fails.
+func stagesBeforeBlockedAcquisition(t *testing.T, stages <-chan snapshotLoadedMsg, acquisitionHeld <-chan struct{}) []snapshotLoadedMsg {
+	t.Helper()
+	var browseSafe []snapshotLoadedMsg
+	accept := func(msg snapshotLoadedMsg, ok bool) {
+		t.Helper()
+		if !ok || !isBrowseSafeConfigStage(msg) {
+			t.Fatalf("resolve advanced past acquisition while blocked: %+v closed=%t", msg, !ok)
+		}
+		browseSafe = append(browseSafe, msg)
+	}
+	timeout := time.After(30 * time.Second)
+	for held := false; !held; {
+		select {
+		case msg, ok := <-stages:
+			accept(msg, ok)
+		case <-acquisitionHeld:
+			held = true
+		case <-timeout:
+			t.Fatal("transient organization Marketplace acquisition never reached the blocked fixture")
+		}
+	}
+	for {
+		select {
+		case msg, ok := <-stages:
+			accept(msg, ok)
+		default:
+			return browseSafe
+		}
+	}
+}
+
+// isBrowseSafeConfigStage reports whether msg is the configuration published
+// for browsing while acquisition is pending: a config stage with a merged
+// configuration, no provisional selections or rows, and no Marketplace pins.
+func isBrowseSafeConfigStage(msg snapshotLoadedMsg) bool {
+	if msg.stage != snapshotStageConfig || msg.mergedCfg == nil || msg.provisionalCfg != nil || len(msg.provisionalRows) != 0 || len(msg.rows) != 0 {
+		return false
+	}
+	for _, entry := range msg.mergedCfg.Marketplaces {
+		if len(entry.Resources) != 0 {
+			return false
+		}
+	}
+	return true
+}
+
+// applyBrowseSafeStageWhileBlocked proves that resolution has published
+// exactly one browse-safe config stage and nothing later while acquisition is
+// held, and applies that stage as the running TUI would, so the assertions
+// that follow observe the view shown while acquisition is still blocked.
+func applyBrowseSafeStageWhileBlocked(t *testing.T, m Model, stages <-chan snapshotLoadedMsg, acquisitionHeld <-chan struct{}) Model {
+	t.Helper()
+	browseSafe := stagesBeforeBlockedAcquisition(t, stages, acquisitionHeld)
+	if len(browseSafe) != 1 {
+		t.Fatalf("resolution published %d browse-safe config stages before blocked acquisition, want 1: %+v", len(browseSafe), browseSafe)
+	}
+	updated, _ := m.Update(browseSafe[0])
+	return updated.(Model)
 }
 
 func drainStagesAfterRelease(t *testing.T, unblock func(), cancel context.CancelFunc, stages <-chan snapshotLoadedMsg) {
@@ -1127,7 +1200,7 @@ func pendingRowNames(rows []row) map[string]ir.ResourceKind {
 // spec: tui-startup/provisional-rows-render-while-transient-acquisition-is-blocked
 func TestProvisionalLocalAllTrueRowsRenderBeforeBlockedAcquisition(t *testing.T) {
 	repoRoot, homeDir, _, _ := provisionalLocalAllTrueFixture(t)
-	unblock := blockedOrganizationMarketplace(t)
+	unblock, acquisitionHeld := blockedOrganizationMarketplace(t)
 
 	m := newProvisionalStageModel()
 	generation := m.beginRequest(requestSnapshot)
@@ -1151,6 +1224,7 @@ func TestProvisionalLocalAllTrueRowsRenderBeforeBlockedAcquisition(t *testing.T)
 
 	updated, _ := m.Update(first)
 	m = updated.(Model)
+	m = applyBrowseSafeStageWhileBlocked(t, m, stages, acquisitionHeld)
 	want := map[string]ir.ResourceKind{
 		"alpha":  ir.KindSkill,
 		"beta":   ir.KindSkill,
@@ -1177,11 +1251,6 @@ func TestProvisionalLocalAllTrueRowsRenderBeforeBlockedAcquisition(t *testing.T)
 		if _, present := got[excluded]; present {
 			t.Fatalf("excluded resource %q rendered a provisional row", excluded)
 		}
-	}
-	select {
-	case extra, ok := <-stages:
-		t.Fatalf("resolve advanced past acquisition while blocked: %+v closed=%t", extra, !ok)
-	default:
 	}
 }
 
@@ -1313,7 +1382,7 @@ func TestProvisionalRegistryScopedLocalExcludesApply(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(repoRoot, ".agents", "config.local.yaml"), []byte(localConfig), 0o644); err != nil {
 		t.Fatalf("write local config: %v", err)
 	}
-	unblock := blockedOrganizationMarketplace(t)
+	unblock, _ := blockedOrganizationMarketplace(t)
 
 	m := newProvisionalStageModel()
 	generation := m.beginRequest(requestSnapshot)
