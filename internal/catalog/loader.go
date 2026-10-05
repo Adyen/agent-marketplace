@@ -597,7 +597,12 @@ func hasBundleRoot(dir string) (bool, error) {
 		if errors.Is(err, fsboundary.ErrUnsafePath) || errors.Is(err, fsboundary.ErrUnsafeFile) {
 			return false, fmt.Errorf("catalog source refused: %w", err)
 		}
-		return false, nil
+		// Only a vanished candidate is "no bundle here"; an unreadable one
+		// is a failed candidate that discovery must report.
+		if errors.Is(err, fs.ErrNotExist) {
+			return false, nil
+		}
+		return false, fmt.Errorf("probe sub-bundle %s: %w", dir, err)
 	}
 	defer func() { _ = srcFS.Close() }()
 	matched := bundleRootMatch(srcFS)
