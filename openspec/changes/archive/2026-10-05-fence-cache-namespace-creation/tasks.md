@@ -4,4 +4,4 @@
 - [x] Reuse captured parent/directory creator/named-root boundary and direct random private-directory creation.
 - [x] Linux/macOS full consumer suites/repeated races/validate/spec/shellcheck.
 - [x] Full disk lifecycle costs and complete intended-file adversarial review.
-- [ ] Archive as final commit.
+- [x] Archive as final commit.
