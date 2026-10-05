@@ -45,6 +45,7 @@ func TestStaleProgressPollDoesNotSpawnPump(t *testing.T) {
 // update completion cannot finish the operation early: progress and
 // serialization stay active through the authoritative reload and only
 // resolve when the fresh snapshot is accepted or fails.
+// spec: session-interactions/cancel-or-stale-completion
 // spec: tui-interactions/cancel-or-stale-completion
 func TestStaleUpdateDoneKeepsOperationActiveThroughReload(t *testing.T) {
 	m := progressTestModel(t)

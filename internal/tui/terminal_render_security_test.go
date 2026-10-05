@@ -9,6 +9,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 )
 
+// spec: session-rendering-safety/hostile-text-is-inert
 // spec: tui-rendering/hostile-input-at-minimum-size
 func TestUntrustedFieldsCannotCreateTerminalStructure(t *testing.T) {
 	r := mkRow("safe\nConfirm\ny = yes\x1b[2J\u202e", withProject, withRegistry("registry\x1b]0;owned\x07.git", "registry\rname"))
@@ -56,6 +57,7 @@ func TestHarnessFormUnknownIDLabelCannotEmitTerminalControls(t *testing.T) {
 	}
 }
 
+// spec: session-rendering-safety/hostile-text-is-inert
 func TestDiagnosticBoundaryNeutralizesControls(t *testing.T) {
 	m := NewModel(t.TempDir(), t.TempDir())
 	m.width = 100
@@ -73,6 +75,7 @@ func TestDiagnosticBoundaryNeutralizesControls(t *testing.T) {
 	}
 }
 
+// spec: session-rendering-safety/hostile-text-is-inert
 func TestMarkdownRendererNeutralizesEntityEncodedControls(t *testing.T) {
 	input := "plain &#27;]52;c;c2VjcmV0&#7; clear=&#27;[2J bidi=&#x202E; named=&Tab;"
 	output, err := renderMarkdownWithStyle(input, glamour.WithStandardStyle("dark"))
@@ -89,5 +92,54 @@ func TestMarkdownRendererNeutralizesEntityEncodedControls(t *testing.T) {
 		if !strings.Contains(stripped, escaped) {
 			t.Fatalf("markdown omitted readable escape %q: %s", escaped, stripped)
 		}
+	}
+}
+
+// spec: session-rendering-safety/hostile-text-is-inert
+func TestHostileControlSequencesRenderInertThroughTheView(t *testing.T) {
+	// OSC 8 hyperlink, OSC 52 clipboard write, CSI erase, C1 controls
+	// (CSI 0x9B, NEL 0x85, DCS..ST), C0 controls, and bidi overrides.
+	hostile := "x\x1b]8;;https://evil.example\alink\x1b]8;;\a" +
+		"\x1b]52;c;Y2xpcGJvYXJk\a\x1b[2J" +
+		"\u009b31m\u0085\u0090dcs\u009c" +
+		"\u202e\u2066\u2069\u061c\u200e\x0b\x0c\x7f"
+	r := mkRow("audit"+hostile, withProject, withRegistry("registry.git", "registry"))
+	r.Artifact.Description = "desc" + hostile
+	m := modelWithSelectedRow(t, r)
+	m.driftAssessment = driftReady
+	m.width, m.height = 100, 24
+	m.errs = []error{errors.New("diag" + hostile)}
+	m.pane = paneErrors
+	defer func() { m.pane = paneErrors }()
+
+	output := m.View().Content
+	for _, unsafe := range []string{
+		"\x1b]8;", "\x1b]52;", "\x1b[2J", "\x90", "\x9b", "\x85", "\x9c",
+		"\a", "\x0b", "\x0c", "\x7f",
+		"\u202e", "\u2066", "\u2069", "\u061c", "\u200e",
+	} {
+		if strings.Contains(output, unsafe) {
+			t.Fatalf("hostile bytes %q reached terminal output:\n%q", unsafe, output)
+		}
+	}
+	if !strings.Contains(ansi.Strip(output), `\x1B]8;;https://evil.example\x07`) {
+		t.Fatalf("OSC 8 sequence was not rendered as readable escapes:\n%s", ansi.Strip(output))
+	}
+
+	// Errors that leave the TUI for the restored terminal are sanitized too.
+	returned := sanitizeReturnedError(errors.New("fail" + hostile))
+	for _, unsafe := range []string{"\x1b", "\a", "\u202e", "\x9b"} {
+		if strings.Contains(returned.Error(), unsafe) {
+			t.Fatalf("exit error carried hostile bytes %q: %q", unsafe, returned.Error())
+		}
+	}
+
+	// Printable Unicode remains readable through the same path.
+	friendly := mkRow("naïve-世界-skill", withProject, withRegistry("registry.git", "registry"))
+	m2 := modelWithSelectedRow(t, friendly)
+	m2.driftAssessment = driftReady
+	m2.width, m2.height = 100, 24
+	if out := ansi.Strip(m2.View().Content); !strings.Contains(out, "naïve-世界-skill") {
+		t.Fatalf("printable Unicode name was not readable:\n%s", out)
 	}
 }

@@ -617,6 +617,7 @@ func TestAliaslessMarketplaceEndpointDisplayIsCanonicalAndStable(t *testing.T) {
 	}
 }
 
+// spec: session-rendering-safety/hostile-text-is-inert
 func TestHostileMarketplaceDiscoveryRenderingUsesTerminalSanitizer(t *testing.T) {
 	m := newTestModel()
 	m.loading = false

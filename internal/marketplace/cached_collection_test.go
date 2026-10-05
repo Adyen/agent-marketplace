@@ -48,7 +48,7 @@ func leafNames(leaves []hccartifact.CollectionMemberEntry) []string {
 	return names
 }
 
-// spec: tui-startup/cached-collection-leaves-prefer-the-exact-then-newest-verified-revision
+// spec: session-startup/cached-collection-leaves-prefer-the-exact-then-newest-verified-revision
 func TestCachedCollectionLeavesPrefersExactThenNewestVerifiedRevision(t *testing.T) {
 	cache := NewCache(t.TempDir())
 	const url = "https://market.example"
@@ -69,7 +69,7 @@ func TestCachedCollectionLeavesPrefersExactThenNewestVerifiedRevision(t *testing
 	}
 }
 
-// spec: tui-startup/tampered-cached-manifests-are-rejected
+// spec: session-startup/tampered-cached-manifests-are-rejected
 func TestCachedCollectionLeavesRejectsTamperedManifest(t *testing.T) {
 	cache := NewCache(t.TempDir())
 	const url = "https://market.example"

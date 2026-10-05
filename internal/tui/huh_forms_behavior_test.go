@@ -15,6 +15,7 @@ import (
 // multiselect never write config; only Enter submits a non-empty
 // selection through the guarded save.
 
+// spec: session-interactions/toggling-harness-targets-does-not-write
 // spec: tui-interactions/scope-and-selection-without-write
 func TestHarnessFormSpaceSelectsWithoutWriting(t *testing.T) {
 	tmpHome := t.TempDir()
@@ -67,7 +68,7 @@ func TestHarnessFormSpaceSelectsWithoutWriting(t *testing.T) {
 	}
 }
 
-// spec: tui-interactions/save-selected-harnesses
+// spec: session-interactions/save-selected-harnesses
 func TestHarnessFormPreservesUnknownIDs(t *testing.T) {
 	m := NewModel("/repo", "/home")
 	m.globalHarnesses = []string{"factory", "mystery-harness"}
@@ -87,6 +88,7 @@ func TestHarnessFormPreservesUnknownIDs(t *testing.T) {
 	}
 }
 
+// spec: session-interactions/cancel-or-stale-completion
 // spec: tui-interactions/cancel-or-stale-completion
 func TestHarnessFormEscCancelsWithoutWrite(t *testing.T) {
 	m := NewModel("/repo", "/home")
@@ -149,6 +151,7 @@ func TestSyncQuitFormConfirmAndDecline(t *testing.T) {
 	}
 }
 
+// spec: session-interactions/cancel-or-stale-completion
 // spec: tui-interactions/cancel-or-stale-completion
 func TestSyncQuitFormResetsAfterCompletion(t *testing.T) {
 	origRunSyncCmd := runSyncCmd
