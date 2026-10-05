@@ -34,6 +34,20 @@ import (
 type editorProcess struct {
 	cmd   *exec.Cmd
 	grace time.Duration
+	// waiting is drawn on the alternate screen while the editor runs, so
+	// the terminal never falls back to the pre-launch primary screen while
+	// Bubble Tea has released it. Empty draws nothing.
+	waiting string
+}
+
+const enterAltScreenAndClear = "\x1b[?1049h\x1b[2J\x1b[H"
+
+// withWaitingScreen sets the screen shown while the editor runs: the file
+// being edited and the editor that must exit before the TUI resumes.
+func (e *editorProcess) withWaitingScreen(path, editor string) *editorProcess {
+	e.waiting = fmt.Sprintf("agent-marketplace\r\n\r\nEditing %s\r\nWaiting for %s to exit…\r\n",
+		sanitizeTerminalData(path, terminalSingleLine), sanitizeTerminalData(editor, terminalSingleLine))
+	return e
 }
 
 // defaultEditorSignalGrace bounds how long the editor may keep the TUI
@@ -74,6 +88,14 @@ func (e *editorProcess) Run() error {
 	signals := make(chan os.Signal, 2)
 	signal.Notify(signals, editorForwardedSignals()...)
 	defer signal.Stop(signals)
+
+	if e.waiting != "" && e.cmd.Stdout != nil {
+		// A full-screen editor leaves the alternate screen on exit, which
+		// would reveal the primary screen until Bubble Tea redraws; enter
+		// and clear it again so the TUI resumes without that flash.
+		_, _ = io.WriteString(e.cmd.Stdout, enterAltScreenAndClear+e.waiting)
+		defer func() { _, _ = io.WriteString(e.cmd.Stdout, enterAltScreenAndClear) }()
+	}
 
 	if err := e.cmd.Start(); err != nil {
 		return err

@@ -63,11 +63,13 @@ func TestServeResetMaintenance(t *testing.T) {
 	}
 	changed := revision
 	changed.ArchiveDigest = store.ArchiveDigest("sha256:" + strings.Repeat("c", 64))
+	immutable := revision
+	immutable.License = "Apache-2.0"
 	for _, confirmed := range []string{"false", "true"} {
 		if output, err := run("reset", "source", "--config", path, "--dry-run", "--confirm-maintenance="+confirmed); err != nil || !strings.Contains(output, "resource_revisions: 1") {
 			t.Fatalf("preview: %v; %s", err, output)
 		}
-		if err := meta.PutResourceRevision(t.Context(), changed); !errors.Is(err, store.ErrConflict) {
+		if err := meta.PutResourceRevision(t.Context(), immutable); !errors.Is(err, store.ErrConflict) {
 			t.Fatalf("preview did not retain immutable revision: %v", err)
 		}
 	}
