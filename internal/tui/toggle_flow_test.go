@@ -271,6 +271,7 @@ skills:
 // TestReadSnapshotReflectsProjectToggle exercises the project-scope toggle:
 // add a skill to the project config's registry entry skills list and verify
 // the rows reflect the project enablement.
+// spec: tui-startup/provisional-rows-retain-single-view-position-and-guarded-actions
 func TestReadSnapshotReflectsProjectToggle(t *testing.T) {
 	repoRoot := t.TempDir()
 	homeDir := t.TempDir()
@@ -683,7 +684,8 @@ func TestDisableInStatusTabKeepsListScrollPosition(t *testing.T) {
 	m.width, m.height = 120, 20
 	m.rows = enabled
 	m.authoritativeRows = enabled
-	m.switchTab(tabStatus)
+	m.filteredRows = enabled
+	m.rebuildFlatItems()
 	if m.listVisibleHeight() >= len(m.flatItems) {
 		t.Fatalf("fixture must overflow the list: visible=%d items=%d", m.listVisibleHeight(), len(m.flatItems))
 	}

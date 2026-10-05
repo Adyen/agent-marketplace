@@ -15,6 +15,8 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"charm.land/bubbles/v2/spinner"
+	tea "charm.land/bubbletea/v2"
 	"github.com/Adyen/agent-marketplace/internal/cache"
 	"github.com/Adyen/agent-marketplace/internal/dependencytxn"
 	"github.com/Adyen/agent-marketplace/internal/lockfile"
@@ -24,8 +26,6 @@ import (
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 	mpapi "github.com/Adyen/agent-marketplace/pkg/marketplace/api"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/store"
-	"github.com/charmbracelet/bubbles/spinner"
-	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/x/ansi"
 )
 
@@ -1119,12 +1119,12 @@ func TestTUISnapshotDoesNotClaimArchiveRefreshWithStaleLock(t *testing.T) {
 		return m
 	}
 	press := func(m tui.Model, r rune) tui.Model {
-		next, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+		next, cmd := m.Update(tea.KeyPressMsg{Code: r, Text: string(r)})
 		return drive(next.(tui.Model), cmd)
 	}
 	assertNoRefreshClaim := func(m tui.Model, phase string) tui.Model {
 		m = press(m, 'e')
-		if out := ansi.Strip(m.View()); strings.Contains(out, "marketplace.archive-evidence-refreshed") {
+		if out := ansi.Strip(m.View().Content); strings.Contains(out, "marketplace.archive-evidence-refreshed") {
 			t.Fatalf("%s snapshot claimed a lock refresh it never wrote:\n%s", phase, out)
 		}
 		return press(m, 'e')
@@ -1134,12 +1134,12 @@ func TestTUISnapshotDoesNotClaimArchiveRefreshWithStaleLock(t *testing.T) {
 	next, cmd := m.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
 	m = drive(next.(tui.Model), cmd)
 	m = drive(m, m.Init())
-	if out := ansi.Strip(m.View()); !strings.Contains(out, "review") {
+	if out := ansi.Strip(m.View().Content); !strings.Contains(out, "review") {
 		t.Fatalf("initial snapshot did not resolve the cached resource:\n%s", out)
 	}
 	m = assertNoRefreshClaim(m, "initial")
 	m = press(m, 'r')
-	if out := ansi.Strip(m.View()); !strings.Contains(out, "review") {
+	if out := ansi.Strip(m.View().Content); !strings.Contains(out, "review") {
 		t.Fatalf("refresh snapshot did not resolve the cached resource:\n%s", out)
 	}
 	assertNoRefreshClaim(m, "refresh")

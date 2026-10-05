@@ -1,6 +1,6 @@
 # Terminal UI reference
 
-This page lists the keys, tabs, dialogs, and states of the interactive terminal UI (the [TUI](../glossary.md#tui)). Use it to look up a key or to understand what the TUI saves and when. For a guided first run, see the [quick start](../quick-start.md).
+This page lists the keys, dialogs, and states of the interactive terminal UI (the [TUI](../glossary.md#tui)). Use it to look up a key or to understand what the TUI saves and when. For a guided first run, see the [quick start](../quick-start.md).
 
 ## Launch
 
@@ -15,17 +15,17 @@ Resource toggles can edit v4 configs for configured Git and directory sources, a
 
 ## Browse, inspect, select, sync
 
-1. Open **Registry** (`2`) to browse sources, or **Scope** (`1`) to see where resources are selected. Press `/` to search and `esc` to clear the search.
-2. Press `enter` on a resource to inspect it. Local resources open a file browser. For a Marketplace resource you have not installed, the TUI shows its metadata without downloading anything. Installed Marketplace resources show files from their verified cached bundle. If those cached files are missing, a sync can restore them.
+1. The resource list groups everything by status — **Required**, **Enabled**, **Pending sync**, **Stale**, **Broken**, **Available**, and **Malformed** — with empty groups hidden. Each row shows a fixed-width scope letter column (`G` user, `P` project, `L` local, their combinations, `R` required, `P-` a project selection overridden by a local exclusion, blank for available or malformed rows), the resource kind, and `registry/name` (the source's repository name, or `(local)` when it has none). Press `/` to search and `esc` to clear the search.
+2. Press `enter` on a resource to inspect it. Local resources open a file browser. An installable Marketplace skill loads its exact revision's verified inspection in the background, showing `SKILL.md` first and fetching supporting text files when selected. Browsing does not install anything or change configuration or locks. Binary files show identity details; unavailable, corrupt, or mismatched content shows an error. Other uninstalled Marketplace rows show metadata without downloading content. Installed resources show their verified cached files, including a synthesized `SKILL.md` when supporting files are cached separately from the definition. Sync can restore missing cached files.
 3. Press `space` to open the scope dialog. Check the current selection before you toggle it for user, project, or local scope. Required resources cannot be excluded.
 4. Selecting a new Marketplace resource verifies its exact revision before installing it. If the revision has security findings, the TUI shows the verified preview and asks you to confirm. Without findings, it installs the prepared revision with no extra prompt. Capability metadata alone never asks for consent. You can inspect blocked and revoked rows, but you cannot install them.
-5. Press `s` to sync pending changes, then check **Status** (`3`) and the diagnostics view (`e`). Fix any errors before you rely on the generated files.
+5. Press `s` to sync pending changes, then check the **Pending sync** group and the diagnostics view (`e`). Fix any errors before you rely on the generated files.
 
 The TUI saves a selection change to config as soon as you accept it. The change stays saved even if you quit without syncing. "Pending" means the harness folders still need a sync to match your config.
 
 ## Hosted Marketplace discovery
 
-Configured resources appear first. Results from each Marketplace then arrive in the **Available** group, labeled with their Marketplace and registry. As you type a search, the TUI filters the rows it already has. About 250 milliseconds after you stop typing, it also searches the remote endpoints. Clearing the search brings back the default results.
+Configured resources appear first. Results from each Marketplace then arrive in the **Available** group, labeled with their Marketplace and registry. As you type a search, the TUI filters the rows it already has: resource names match fuzzily, and other details such as tags, registry, and description match when each query word starts one of their words. Name matches sort first within each group and the best match is selected. After `enter`, the query and its match count stay above the list; `esc` clears it, and `/` resumes editing it. About 250 milliseconds after you stop typing, it also searches the remote endpoints. Clearing the search brings back the default results.
 
 The TUI shows at most 50 results per endpoint and query, with no pagination. Narrow the query, or use [`agent-marketplace search`](./cli.md#search) for more results. Cached results stay fresh for five minutes. If discovery fails, the TUI can keep showing stale results for up to 24 hours. Discovery errors and sync state are separate: an endpoint error alone does not mean your local files are out of sync.
 
@@ -41,6 +41,8 @@ A Marketplace can republish a resource's archive without changing its content (a
 
 A configuration load error blocks selection changes until you fix the file with `E`. Catalog, resolution, and materialization failures keep the loaded rows visible. Rows that can normally be toggled still open the scope dialog, including selections shown as unavailable, and drift stays marked as failed.
 
+The status bar reports sync drift, Marketplace endpoint health, the active operation, and error or warning counts when space permits. It shows `running` until an operation reports a phase it has entered. Progress alone never reports success; the operation and its on-disk reload must finish. Up to three short result notices appear as toasts and expire after a few seconds. The footer always shows the command palette (`:`), help (`?`), and quit (`q`) keys; other key hints drop one at a time as the terminal narrows. While errors are present, the error, reload, and quit keys come first.
+
 ## Keys
 
 | Action | Key |
@@ -49,14 +51,13 @@ A configuration load error blocks selection changes until you fix the file with 
 | Half page down / up | `ctrl+d` / `ctrl+u` |
 | Page down / up | `f`, `ctrl+f`, or `pgdown` / `b`, `ctrl+b`, or `pgup` |
 | Jump to top / bottom | `g` or `home` / `G` or `end` |
-| Switch tab: Scope, Registry, Status | `1` / `2` / `3` |
-| Next / previous tab | `tab` / `shift+tab` |
 | Fuzzy search | `/` |
-| Confirm / clear search | `enter` / `esc` |
+| Apply / clear search | `enter` / `esc` |
 | Open the scope dialog, or fold a section header | `space` |
 | View resource details or cached files | `enter` |
 | Collapse / expand a section | `h` / `l` or left / right |
 | Toggle the current fold / collapse all / expand all | `za` / `zM` / `zR` |
+| Open the command palette | `ctrl+k` or `:` |
 | Sync pending changes | `s` |
 | Reload from disk | `r` |
 | Upgrade Git locks and sync | `u` |
@@ -68,11 +69,13 @@ A configuration load error blocks selection changes until you fix the file with 
 
 In the file browser that `enter` opens, `j` / `k` and the arrow keys move through entries, `h` / left folds a directory, `l` / right expands it, and `enter` toggles a directory. `esc` or `q` returns to the resource list.
 
+The command palette (`ctrl+k` or `:`) lists the resource-list actions — search, clear search (while a filter is applied), details, toggle, reload, sync, update, harnesses, config editor, help, diagnostics, fold commands, and quit — as a fuzzy-filtered overlay, with each action's key shown beside it. It opens only over the resource list at a supported size: not while a search, dialog, or overlay is active, not while a `z` fold prefix is pending, and not below the minimum terminal size. Type to filter the action labels (`q` and other letters are filter text, not list keys), move with `up` / `down`, run the highlighted action with `enter`, and close the palette with `esc`; `ctrl+c` still exits immediately. Actions that are not currently allowed are hidden, eligibility is checked again when you confirm, and the same guards and confirmations apply as for the key itself.
+
 ## Dialogs
 
 - `space` opens the resource's scope dialog. Press `g` for user (global) selection, `p` for project, `l` for local, or `e` for a local exclusion. Press `esc` to cancel. A local exclusion cannot hide a machine-wide or required resource. For an optional organization Marketplace resource, `e` instead edits an exact exclusion in your v4 user config; required resources stay protected.
 - `H` opens harness selection. Choose user (global) with `g` or project with `p`, toggle harnesses with `space`, then save with `enter` or cancel with `esc`. The project list overrides the user list. Local scope has no harness list.
-- `E` opens the config picker: `g` for user (global), `p` for project, or `l` for local; `esc` cancels. The TUI opens the file in the editor named by `$EDITOR`, or `vi` if it is not set, and reloads when the editor exits.
+- `E` opens the config picker: `g` for user (global), `p` for project, or `l` for local; `esc` cancels. The TUI opens the file in the editor named by `$EDITOR`, or `vi` if it is not set, and reloads when the editor exits. While the editor runs, the terminal shows which file is open instead of the shell.
 
 Inside a dialog, these letters have dialog meanings. In the resource list, `g` jumps to the top and `e` opens diagnostics.
 
@@ -82,7 +85,7 @@ The TUI needs at least 50 columns by 12 rows. In a smaller window it shows only 
 
 ## Mouse
 
-The TUI does not capture the mouse. You can select rendered text with the mouse and copy it as usual in your terminal.
+The TUI enables cell-motion mouse reporting to receive scroll-wheel input. A vertical wheel event moves the resource-list selection by one entry, the bundle-tree selection by one entry, or scrolls the file preview, help, errors, and Marketplace consent views by one line. Dragging with the left button inside the right-hand details or file-preview pane highlights the covered text and copies it on release. Copying uses the terminal's OSC52 clipboard mechanism; the terminal or multiplexer must support OSC52 for the text to reach the system clipboard. A click without a drag, or a drag starting anywhere else, selects nothing. Scrolling, resizing, or switching resource or file clears the highlight, and `esc` dismisses it first. Other clicks, releases, and horizontal wheel events do nothing; Shift+vertical-wheel still scrolls vertically. Resource-list rendering is paced at up to 60 frames per second during wheel bursts, so rapid scrolling always settles on the final selection without extra input. Because mouse events go to the application while the TUI runs, native click-and-drag text selection may require a terminal-specific modifier (often Option or Shift).
 
 ## Logging while the TUI runs
 
