@@ -14,7 +14,11 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/fsboundary"
 )
 
-func copyScopedSupport(srcDir, dstDir string, compiled map[string]bool, prefix string, missingOK bool, write func(string, []byte, os.FileMode, *destinationBoundary) error) (err error) {
+// copyScopedSupport copies eligible support from srcDir into dstDir. When
+// admitted is set, dstDir is captured relative to that already-admitted
+// directory instead of being re-resolved by path, so a namespace swapped after
+// admission cannot redirect support output.
+func copyScopedSupport(srcDir, dstDir string, compiled map[string]bool, prefix string, missingOK bool, write func(string, []byte, os.FileMode, *destinationBoundary) error, admitted ...*destinationBoundary) (err error) {
 	if srcDir == "" {
 		if missingOK {
 			return nil
@@ -81,7 +85,11 @@ func copyScopedSupport(srcDir, dstDir string, compiled map[string]bool, prefix s
 			}
 			if boundary == nil {
 				var captureErr error
-				output, captureErr = capturePortableParent(filepath.Join(dstDir, ".placeholder"), nil, true)
+				if len(admitted) > 0 && admitted[0] != nil {
+					output, captureErr = admitted[0].captureDirectory(dstDir, true)
+				} else {
+					output, captureErr = capturePortableParent(filepath.Join(dstDir, ".placeholder"), nil, true)
+				}
 				if captureErr != nil {
 					return captureErr
 				}

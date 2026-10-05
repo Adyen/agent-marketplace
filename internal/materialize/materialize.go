@@ -3514,6 +3514,11 @@ func prepareSkillLinkCaches(links []skillLink, dryRun bool) error {
 	return nil
 }
 
+// supportStageCopyHook runs after the support stage is admitted and before
+// support is copied into it. It is nil in production and set only by serial
+// tests in this package.
+var supportStageCopyHook func(parent string)
+
 // supportStageCleanupHook runs after the support stage name is matched to
 // the admitted stage and before removal. It is nil in production and set only
 // by serial tests in this package.
@@ -3665,10 +3670,15 @@ func prepareSkillLinkCache(link skillLink) (err error) {
 				err = errors.Join(err, closeErr)
 			}
 		}()
+		if supportStageCopyHook != nil {
+			supportStageCopyHook(parentPath)
+		}
 		if err := namespace.directory(parentPath, false); err != nil {
 			return err
 		}
-		if err := copyScopedSupport(link.sourceDir, supportStage, compiled, "", len(link.declaredSupport) == 0, writeSupportStage); err != nil {
+		// Stage and cache outputs are captured relative to the admitted
+		// namespace descriptor, never re-resolved through its path.
+		if err := copyScopedSupport(link.sourceDir, supportStage, compiled, "", len(link.declaredSupport) == 0, writeSupportStage, namespace); err != nil {
 			return err
 		}
 		if err := verifyDeclaredSupportFiles(supportStage, link.declaredSupport); err != nil {
@@ -3695,7 +3705,7 @@ func prepareSkillLinkCache(link skillLink) (err error) {
 		if err := pruneSkillCacheSupportFiles(cacheDir, compiled); err != nil {
 			return err
 		}
-		if err := copySupportFilesExcluding(supportStage, cacheDir, compiled, "", false); err != nil {
+		if err := copyScopedSupport(supportStage, cacheDir, compiled, "", false, writeSupportSnapshot, namespace); err != nil {
 			return err
 		}
 	}
