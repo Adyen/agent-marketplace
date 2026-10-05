@@ -62,7 +62,7 @@ func BenchmarkRenderBoundedDetail(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for b.Loop() {
-		if output := renderDetailFullContent(r, 80); output == "" {
+		if output := renderDetailFullContent(newTheme(true), r, 80); output == "" {
 			b.Fatal("empty detail")
 		}
 	}
