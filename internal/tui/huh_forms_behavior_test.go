@@ -11,6 +11,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/Adyen/agent-marketplace/internal/config"
+	"github.com/Adyen/agent-marketplace/internal/session"
 )
 
 // AC4: scope switching and Space selection inside the harness Huh
@@ -159,7 +160,7 @@ func TestMigrationFormResetsAfterCompletion(t *testing.T) {
 	home := t.TempDir()
 	m := NewModel(t.TempDir(), home)
 	m.pane = paneMigrationModal
-	m.migrationPrompt = migrationPrompt{Configs: []migrationConfig{{
+	m.migrationPrompt = migrationPrompt{Configs: []session.MigrationConfig{{
 		Label: "User",
 		Path:  filepath.Join(home, ".agents", "config.yaml"),
 		Scope: config.V4MigrationUser,

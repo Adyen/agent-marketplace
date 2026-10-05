@@ -2071,7 +2071,7 @@ func filepathBase(path string) string {
 
 func (m *Model) applyFilter() []row {
 	for i := range m.rows {
-		ensureLabelMemo(&m.rows[i])
+		rowLabelMemoFor(&m.rows[i])
 		if m.filter != "" {
 			m.rows[i].EnsureSearchable()
 		}

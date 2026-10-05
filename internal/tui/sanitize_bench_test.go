@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"github.com/Adyen/agent-marketplace/internal/session"
 	"strings"
 	"testing"
 )
@@ -9,7 +10,7 @@ func BenchmarkSanitizeTerminalData(b *testing.B) {
 	for _, test := range []struct {
 		name  string
 		value string
-		mode  terminalDataMode
+		mode  session.TerminalDataMode
 	}{
 		{name: "benign", value: "ordinary printable registry metadata", mode: terminalSingleLine},
 		{name: "hostile", value: strings.Repeat("safe\x1b]52;c;c2VjcmV0\x07\u202e\n", 32), mode: terminalSingleLine},

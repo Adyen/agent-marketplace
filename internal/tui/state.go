@@ -47,8 +47,7 @@ type rowLabelMemo struct {
 }
 
 // rowLabelMemoFor returns the row's TUI label memo, creating it on first
-// use. The memo pointer is shared by every copy of the row, exactly as
-// before the slot moved into the session row type.
+// use. The memo pointer is shared by every copy of the row.
 func rowLabelMemoFor(r *row) *rowLabelMemo {
 	memo, _ := r.LabelMemo.(*rowLabelMemo)
 	if memo == nil {
@@ -56,10 +55,6 @@ func rowLabelMemoFor(r *row) *rowLabelMemo {
 		r.LabelMemo = memo
 	}
 	return memo
-}
-
-func ensureLabelMemo(r *row) {
-	rowLabelMemoFor(r)
 }
 
 type Model struct {

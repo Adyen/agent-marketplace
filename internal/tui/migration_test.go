@@ -11,6 +11,7 @@ import (
 
 	"github.com/Adyen/agent-marketplace/internal/cache"
 	"github.com/Adyen/agent-marketplace/internal/config"
+	"github.com/Adyen/agent-marketplace/internal/session"
 	mptestutil "github.com/Adyen/agent-marketplace/internal/testutil/marketplace"
 )
 
@@ -272,7 +273,7 @@ func TestMigrationModalRunMigratesMarketplaceConfig(t *testing.T) {
 func TestRenderMigrationModalIncludesActions(t *testing.T) {
 	m := NewModel("/repo", "/home")
 	m.pane = paneMigrationModal
-	m.migrationPrompt = migrationPrompt{Configs: []migrationConfig{{Label: "Project", Path: "/repo/.agents/config.yaml"}}}
+	m.migrationPrompt = migrationPrompt{Configs: []session.MigrationConfig{{Label: "Project", Path: "/repo/.agents/config.yaml"}}}
 
 	out := ansi.Strip(renderMigrationModal(m))
 	for _, want := range []string{

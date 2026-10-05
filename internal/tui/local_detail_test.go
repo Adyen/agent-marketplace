@@ -12,6 +12,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/fsboundary"
 	"github.com/Adyen/agent-marketplace/internal/resolver"
+	"github.com/Adyen/agent-marketplace/internal/session"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 )
 
@@ -225,7 +226,7 @@ func TestLocalRegistryDetailBrowsingIsSourceAnchored(t *testing.T) {
 					}
 				}
 
-				snapshots := captureSnapshotDetailSources(
+				snapshots := session.CaptureSnapshotDetailSources(
 					[]resolver.ResolvedArtifact{{Entry: entry}}, loaded.Catalogs,
 				)
 				snapshot := snapshots[entry.Path]
@@ -316,7 +317,7 @@ func TestLocalRegistryDetailFailsReadOnlyAfterDiscovery(t *testing.T) {
 				}
 			}
 
-			snapshots := captureSnapshotDetailSources(
+			snapshots := session.CaptureSnapshotDetailSources(
 				[]resolver.ResolvedArtifact{{Entry: entry}}, loaded.Catalogs,
 			)
 			snapshot := snapshots[entry.Path]

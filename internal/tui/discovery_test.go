@@ -315,7 +315,7 @@ func TestSnapshotPolicyFailureClearsDiscoveryAndRejectsLateCompletions(t *testin
 			name: "migration required",
 			snapshot: snapshotLoadedMsg{
 				mergedCfg:        &config.Config{Marketplaces: []config.MarketplaceEntry{{URL: "https://new.example", InstanceID: "new"}}},
-				pendingMigration: migrationPrompt{Configs: []migrationConfig{{Label: "Project", Path: "/repo/.agents/config.yaml"}}},
+				pendingMigration: migrationPrompt{Configs: []session.MigrationConfig{{Label: "Project", Path: "/repo/.agents/config.yaml"}}},
 			},
 			wantPane: paneMigrationModal,
 		},
@@ -440,7 +440,7 @@ func TestMarketplaceInstallReloadHardDiagnosticFailsWithUsableConfig(t *testing.
 		generation:      m.marketplaceInstallReload,
 		mergedCfg:       &config.Config{},
 		driftAssessment: driftFailed,
-		diagnostics:     []tuiDiagnostic{snapshotDiagnostic(diagnosticError, diagnosticCatalog, failure)},
+		diagnostics:     []tuiDiagnostic{snapshotDiagnostic(diagnosticError, session.DiagnosticCatalog, failure)},
 	})
 	m = updated.(Model)
 	if m.operations.Active != nil || m.marketplaceInstallReload != 0 {
