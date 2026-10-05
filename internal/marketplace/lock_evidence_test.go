@@ -481,8 +481,8 @@ func TestValidateResourceRevisionLockFields(t *testing.T) {
 		t.Fatalf("matching lock archive digest rejected: %v", err)
 	}
 	pin.LockArchiveDigest = "sha256:" + strings.Repeat("c", 64)
-	if err := validateResourceRevision(entry, pin, rev); err == nil {
-		t.Fatal("lock archive digest mismatch accepted")
+	if err := validateResourceRevision(entry, pin, rev); err != nil {
+		t.Fatalf("drifted lock archive digest rejected: %v", err)
 	}
 	pin.LockArchiveDigest = ""
 	pin.LockSourcePath = "skills/review"

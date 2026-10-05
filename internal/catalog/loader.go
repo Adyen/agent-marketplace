@@ -147,6 +147,27 @@ func WithExactSnapshots(fn ExactSnapshotFunc, discover ...DiscoverFunc) LoadOpti
 	}
 }
 
+func WithVerifiedExactSnapshots(fn ExactSnapshotFunc, verified map[string]map[string]*Catalog) LoadOption {
+	return func(c *loadConfig) {
+		c.exactSnapshot = fn
+		fallback := c.discover
+		c.discover = func(path, sourceHarness string) (LoadedCatalog, error) {
+			catalogs := verified[filepath.Clean(path)]
+			loaded := catalogs[sourceHarness]
+			if loaded == nil && sourceHarness == "" && len(catalogs) == 1 {
+				for _, candidate := range catalogs {
+					loaded = candidate
+				}
+			}
+			if loaded != nil {
+				slog.Debug("reusing verified source catalog", "path", path, "source_harness", loaded.SourceHarness)
+				return loaded.Discover(path, sourceHarness)
+			}
+			return fallback(path, sourceHarness)
+		}
+	}
+}
+
 func WithDiscoverFunc(fn DiscoverFunc) LoadOption {
 	return func(c *loadConfig) { c.discover = fn }
 }

@@ -1154,6 +1154,8 @@ components:
         outcome: { type: string, enum: [started, failed, superseded, succeeded] }
         publication_id: { type: string }
         expected_publication_id: { type: string }
+        failure_code: { type: string, description: "Stable machine-readable failure classification; set on failed and superseded attempts, empty on started and succeeded outcomes." }
+        failure_cause: { type: string, description: "Sanitized failure cause; never contains raw command output or credentials. Set alongside failure_code on failed and superseded attempts." }
         recorded_at: { type: string, format: date-time }
     AdminPreview:
       type: object
