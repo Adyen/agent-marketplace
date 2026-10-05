@@ -1,10 +1,13 @@
 package materialize
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 
+	"github.com/Adyen/agent-marketplace/internal/cache"
 	"github.com/Adyen/agent-marketplace/internal/catalog"
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/resolver"
@@ -65,5 +68,60 @@ func TestRunNativeManagedLinkPruneRefusesReplacedLeaf(t *testing.T) {
 	}
 	if _, err := os.Lstat(filepath.Join(controlRepo, ".factory", "skills", "native-prune")); !os.IsNotExist(err) {
 		t.Fatalf("healthy stale native link was not pruned: %v", err)
+	}
+}
+
+// spec: materialization/native-managed-link-pruning-refuses-replacement-generation
+func TestRunNativeManagedLinkPruneClassifiedReplacement(t *testing.T) {
+	for _, dryRun := range []bool{false, true} {
+		t.Run(fmt.Sprint("dry-run=", dryRun), func(t *testing.T) {
+			home, repo := t.TempDir(), t.TempDir()
+			t.Setenv("HOME", home)
+			t.Setenv("XDG_STATE_HOME", filepath.Join(home, "state"))
+			t.Setenv("XDG_CACHE_HOME", filepath.Join(home, "cache"))
+			resolved := []resolver.ResolvedArtifact{{Entry: catalog.Entry{Name: "stale", Resource: ir.NewSkill("stale", "native", "inert body", nil, nil, ir.SourceRef{})}, Source: config.RepoCommitted, Harnesses: []hcc.Target{hcc.TargetFactory}}}
+			initial, err := Run(t.Context(), repo, resolved)
+			if err != nil || diag.HasErrors(initial.Diags) {
+				t.Fatalf("install: %+v %v", initial, err)
+			}
+			leaf := filepath.Join(repo, ".factory", "skills", "stale")
+			text := filepath.Join(cache.CacheDir(), "another-sync-generation")
+			var replacement os.FileInfo
+			opts := []RunOption{func(cfg *runConfig) {
+				cfg.pruneClassificationHook = func(path string) {
+					if path != leaf {
+						return
+					}
+					if err := os.Rename(leaf, filepath.Join(repo, "retained-original")); err != nil {
+						t.Fatal(err)
+					}
+					if err := os.Symlink(text, leaf); err != nil {
+						t.Fatal(err)
+					}
+					var err error
+					replacement, err = os.Lstat(leaf)
+					if err != nil {
+						t.Fatal(err)
+					}
+				}
+			}}
+			if dryRun {
+				opts = append(opts, WithDryRun())
+			}
+			report, err := Run(t.Context(), repo, nil, opts...)
+			if err != nil || replacement == nil || !hasDiagCode(report.Diags, "materialize.write.error") {
+				t.Fatalf("native coded refusal missing: %+v %v", report, err)
+			}
+			for _, tr := range report.PerRoot {
+				if slices.Contains(tr.Removed, "stale") || slices.Contains(tr.Removed, "skills/stale") {
+					t.Fatalf("refused object reported removed: %+v", tr)
+				}
+			}
+			current, statErr := os.Lstat(leaf)
+			got, linkErr := os.Readlink(leaf)
+			if statErr != nil || linkErr != nil || got != text || !os.SameFile(current, replacement) || current.Mode() != replacement.Mode() || !current.ModTime().Equal(replacement.ModTime()) {
+				t.Fatalf("native replacement changed: %q %v %v", got, statErr, linkErr)
+			}
+		})
 	}
 }
