@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"sync"
 	"time"
+
+	"github.com/Adyen/agent-marketplace/internal/fsboundary"
 )
 
 // CrashPoint names one boundary at which a real process can die mid-mutation.
@@ -80,6 +82,12 @@ type Store struct {
 	lockRootErr        error
 	canonicalRoot      string
 	rootKey            string
+	// rootMu guards rootIdentity/rootBound: the directory object admitted as
+	// canonicalRoot, bound at Open when it already exists or on the first
+	// captured read otherwise. A later read through a replaced root refuses.
+	rootMu       sync.Mutex
+	rootIdentity fsboundary.Identity
+	rootBound    bool
 
 	crasher Crasher
 	now     func() time.Time
@@ -171,6 +179,11 @@ func Open(targetRoot string, opts ...Option) (*Store, error) {
 		now:           time.Now,
 		retain:        SafetyBackupRetention,
 		lockTimeout:   DefaultLockTimeout,
+	}
+	if info, statErr := os.Lstat(canonical); statErr == nil && info.IsDir() {
+		if identity, idErr := fsboundary.FileInfoIdentity(info); idErr == nil {
+			s.rootIdentity, s.rootBound = identity, true
+		}
 	}
 	for _, opt := range opts {
 		opt(s)
