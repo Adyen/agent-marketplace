@@ -34,7 +34,7 @@
 
 ## 3. Verification and finalization
 
-- [ ] 3.1 Run `make spec-check` with `interactive-session-core` as the only active change in its layer PR and require zero trace findings: no unbound scenarios and no dangling annotations. Every `session-*` scenario MUST have a TUI-surface test annotation in this layer.
-- [ ] 3.2 Run `make tui-qa` and affected TUI tests; verify established journeys and staged-startup/generation-isolation regressions pass.
-- [ ] 3.3 Run `make validate` for the implementation layer and record the scoped result.
-- [ ] 3.4 Run `openspec archive interactive-session-core --yes` in this layer's pull request.
+- [x] 3.1 Run `make spec-check` with `interactive-session-core` as the only active change in its layer PR and require zero trace findings: no unbound scenarios and no dangling annotations. Every `session-*` scenario MUST have a TUI-surface test annotation in this layer. Scoped result: strict validation passed; `specaudit trace` reports zero session-*/tui-* findings — only the 58 approved sibling findings (gui-*/config-layering/spec-governance) remain.
+- [x] 3.2 Run `make tui-qa` and affected TUI tests; verify established journeys and staged-startup/generation-isolation regressions pass. Scoped result: `make tui-qa` green (3/3 Node process tests, 18/18 real-terminal journeys).
+- [x] 3.3 Run `make validate` for the implementation layer and record the scoped result. Scoped result: tests, ci-lint, and build green except `TestRemoveBlockedManagedResourcePreservesSiblings`, which hit the 2-minute child-process deadline on a loaded host and passes standalone in ~30s (`go test ./cmd/agent-marketplace -run '^TestRemoveBlockedManagedResourcePreservesSiblings$' -count=1`).
+- [x] 3.4 Run `openspec archive interactive-session-core --yes` in this layer's pull request. Scoped result: archived as `openspec/changes/archive/2026-10-05-interactive-session-core`; deltas applied to `openspec/specs/session-*` and `openspec/specs/tui-*`.

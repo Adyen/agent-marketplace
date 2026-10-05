@@ -39,7 +39,7 @@ An interactive client SHALL highlight only matched name characters after sanitiz
 
 ### Requirement: Single status-grouped resource list
 
-An interactive client SHALL show one resource list grouped by status, with sections in the order Required, Enabled, Pending sync, Stale, Broken, Available, Malformed, omitting empty sections and retaining alphabetical resource-name ordering when unfiltered. Folding, search ranking, and accepted-reload selection anchoring SHALL remain available.
+An interactive client SHALL show one resource list grouped by status by default, with sections in the order Required, Enabled, Pending sync, Stale, Broken, Available, Malformed, omitting empty sections and retaining alphabetical resource-name ordering when unfiltered. Folding, search ranking, and accepted-reload selection anchoring SHALL remain available.
 
 #### Scenario: Status-grouped resource order and filtering
 

@@ -56,9 +56,9 @@ The TUI SHALL clear an applied filter when Esc is pressed in the resource list. 
 
 ### Requirement: Single status-grouped resource list
 
-The TUI SHALL open directly into one resource list with no top-level tab bar or alternative scope or registry view. Removing the tab bar SHALL give its line to resource content without exceeding supported terminal dimensions. Surface-neutral grouping and list behavior SHALL follow `session-navigation`.
+The TUI SHALL open directly into one resource list with no top-level tab bar or alternative scope or registry view. It SHALL support selectable Source and Kind grouping without reserving a tab line. Removing the tab bar SHALL give its line to resource content without exceeding supported terminal dimensions. Surface-neutral grouping and list behavior SHALL follow `session-navigation`.
 
 #### Scenario: Single status list at minimum size
 
-- **WHEN** the TUI displays configured and available resources at 50 columns by 12 rows, folds a status section, applies and clears a search, and accepts a reload
+- **WHEN** the TUI displays configured and available resources with default preferences at 50 columns by 12 rows, folds a status section, applies and clears a search, and accepts a reload
 - **THEN** only status sections are displayed without a tab bar, the list has one more content line than a layout reserving a tab line, and folding, search ranking, and stable selection remain usable within the terminal bounds
