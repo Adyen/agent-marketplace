@@ -3,14 +3,15 @@ package tui
 import (
 	"errors"
 	"fmt"
+	"github.com/charmbracelet/x/ansi"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	tea "charm.land/bubbletea/v2"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
-	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/Adyen/agent-marketplace/internal/catalog"
 	"github.com/Adyen/agent-marketplace/internal/config"
@@ -21,6 +22,7 @@ import (
 func helperFlatCursorOnSkill(t *testing.T, r row) Model {
 	t.Helper()
 	m := NewModel("/repo", "/home")
+	m.loading = false
 	m.rows = []row{r}
 	m.filteredRows = m.rows
 	m.rebuildFlatItems()
@@ -38,7 +40,7 @@ func TestSpaceOnSkillRowOpensToggleModal(t *testing.T) {
 	r := mkRow("code-review", withProject, withRegistry("t.git", "t"))
 	m := helperFlatCursorOnSkill(t, r)
 
-	mi, _ := m.Update(tea.KeyMsg{Type: tea.KeySpace})
+	mi, _ := m.Update(tea.KeyPressMsg{Code: tea.KeySpace})
 	m = mi.(Model)
 
 	if m.pane != paneToggleModal {
@@ -60,7 +62,7 @@ func TestSpaceOnOptionalOrganizationMarketplaceCollectionLeafOpensModal(t *testi
 	}}
 	m := helperFlatCursorOnSkill(t, r)
 
-	mi, _ := m.Update(tea.KeyMsg{Type: tea.KeySpace})
+	mi, _ := m.Update(tea.KeyPressMsg{Code: tea.KeySpace})
 	if mi.(Model).pane != paneToggleModal {
 		t.Fatal("optional organization collection leaf must offer a user override")
 	}
@@ -72,7 +74,7 @@ func TestSpaceOnMarketplaceCollectionLeafShowsToastNotModal(t *testing.T) {
 	r.MarketplaceCollectionOnly = true
 	m := helperFlatCursorOnSkill(t, r)
 
-	mi, cmd := m.Update(tea.KeyMsg{Type: tea.KeySpace})
+	mi, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeySpace})
 	m = mi.(Model)
 
 	if m.pane == paneToggleModal {
@@ -97,7 +99,7 @@ func TestSpaceOnRequiredMarketplaceCollectionLeafShowsRequiredToast(t *testing.T
 	r.Artifact.Source = config.Organization
 	r.MarketplaceCollectionOnly = true
 	m := helperFlatCursorOnSkill(t, r)
-	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeySpace})
+	_, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeySpace})
 	if cmd == nil || cmd().(toastMsg).text != "required items cannot be toggled" {
 		t.Fatal("required collection leaf must report required policy")
 	}
@@ -107,7 +109,7 @@ func TestSpaceOnRequiredSkillShowsToastNotModal(t *testing.T) {
 	r := mkRow("req-skill", withRequired, withProject)
 	m := helperFlatCursorOnSkill(t, r)
 
-	mi, cmd := m.Update(tea.KeyMsg{Type: tea.KeySpace})
+	mi, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeySpace})
 	m = mi.(Model)
 	if m.pane == paneToggleModal {
 		t.Fatalf("required skill must bypass modal, got pane=paneToggleModal")
@@ -132,7 +134,7 @@ func TestRenderToggleModalShowsPerScopeState(t *testing.T) {
 	m.pane = paneToggleModal
 	m.modalSkill = r
 
-	out := renderToggleModal(m)
+	out := ansi.Strip(renderToggleModal(m))
 	for _, want := range []string{
 		"audit",
 		"Global",
@@ -143,7 +145,7 @@ func TestRenderToggleModalShowsPerScopeState(t *testing.T) {
 		"[p]",
 		"[l]",
 		"[e]",
-		"[esc]",
+		"esc cancel",
 	} {
 		if !contains(out, want) {
 			t.Fatalf("modal missing %q in output:\n%s", want, out)
@@ -157,7 +159,7 @@ func TestModalGkeyTogglesGlobalByCurrentState(t *testing.T) {
 	m.pane = paneToggleModal
 	m.modalSkill = mkRow("audit", withProject)
 
-	mi, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'g'}})
+	mi, cmd := m.Update(tea.KeyPressMsg{Code: 'g', Text: string('g')})
 	m = mi.(Model)
 	if cmd == nil {
 		t.Fatalf("expected a cmd for modal 'g'")
@@ -181,7 +183,7 @@ func TestModalGlobalRepoRelativeSelectionFailsBeforeWrite(t *testing.T) {
 	m.rows = []row{selected, competitor}
 	m.errs = []error{fmt.Errorf(`skill "audit" is provided by multiple registries`)}
 
-	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'g'}})
+	updated, cmd := m.Update(tea.KeyPressMsg{Code: 'g', Text: string('g')})
 	m = updated.(Model)
 	if cmd == nil {
 		t.Fatal("expected global toggle command")
@@ -214,7 +216,7 @@ func TestModalLocalCollisionDoesNotScheduleUnsupportedFollowUp(t *testing.T) {
 			m.rows = []row{selected, competitor}
 			m.errs = []error{fmt.Errorf(`skill "audit" is provided by multiple registries`)}
 
-			updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{key}})
+			updated, cmd := m.Update(tea.KeyPressMsg{Code: key, Text: string(key)})
 			m = updated.(Model)
 			if cmd == nil {
 				t.Fatal("expected local toggle command")
@@ -234,7 +236,7 @@ func TestModalMarketplaceEnableDoesNotScheduleRegistryCollisionExcludes(t *testi
 	m.modalSkill.Artifact.IsMarketplace = true
 	m.errs = []error{fmt.Errorf(`skill "audit" is provided by multiple registries: marketplace, registry`)}
 
-	mi, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'p'}})
+	mi, cmd := m.Update(tea.KeyPressMsg{Code: 'p', Text: string('p')})
 	m = mi.(Model)
 
 	if cmd == nil {
@@ -250,7 +252,7 @@ func TestModalPkeyTogglesProject(t *testing.T) {
 	m.pane = paneToggleModal
 	m.modalSkill = mkRow("audit")
 
-	mi, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'p'}})
+	mi, cmd := m.Update(tea.KeyPressMsg{Code: 'p', Text: string('p')})
 	m = mi.(Model)
 	if cmd == nil {
 		t.Fatalf("expected a cmd for modal 'p'")
@@ -265,7 +267,7 @@ func TestModalLkeyTogglesLocal(t *testing.T) {
 	m.pane = paneToggleModal
 	m.modalSkill = mkRow("audit")
 
-	mi, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'l'}})
+	mi, cmd := m.Update(tea.KeyPressMsg{Code: 'l', Text: string('l')})
 	m = mi.(Model)
 	if cmd == nil {
 		t.Fatalf("expected a cmd for modal 'l'")
@@ -280,7 +282,7 @@ func TestModalEkeyTogglesLocalExclude(t *testing.T) {
 	m.pane = paneToggleModal
 	m.modalSkill = mkRow("audit")
 
-	mi, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'e'}})
+	mi, cmd := m.Update(tea.KeyPressMsg{Code: 'e', Text: string('e')})
 	m = mi.(Model)
 	if cmd == nil {
 		t.Fatalf("expected a cmd for modal 'e'")
@@ -311,7 +313,7 @@ func TestOptionalOrganizationMarketplaceCollectionLeafDoesNotOfferDirectInstall(
 	m.modalSkill.Artifact.IsMarketplace = true
 	m.modalSkill.Artifact.Source = config.Organization
 	m.modalSkill.MarketplaceCollectionOnly = true
-	mi, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'g'}})
+	mi, cmd := m.Update(tea.KeyPressMsg{Code: 'g', Text: string('g')})
 	if mi.(Model).pane != paneToggleModal || cmd == nil {
 		t.Fatal("collection leaf must not offer direct installation")
 	}
@@ -340,7 +342,7 @@ func TestModalEkeyExcludesOptionalOrganizationMarketplaceLeaf(t *testing.T) {
 	m.modalSkill.Artifact.Source = config.Organization
 	m.modalSkill.MarketplaceCollectionOnly = true
 
-	mi, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'e'}})
+	mi, cmd := m.Update(tea.KeyPressMsg{Code: 'e', Text: string('e')})
 	if mi.(Model).pane != paneList || cmd == nil {
 		t.Fatal("optional organization Marketplace leaf must offer an exclude operation")
 	}
@@ -352,7 +354,7 @@ func TestModalEkeyShowsToastForMarketplaceItem(t *testing.T) {
 	m.modalSkill = mkRow("audit", withProject)
 	m.modalSkill.Artifact.IsMarketplace = true
 
-	mi, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'e'}})
+	mi, cmd := m.Update(tea.KeyPressMsg{Code: 'e', Text: string('e')})
 	m = mi.(Model)
 
 	if m.pane != paneToggleModal {
@@ -373,7 +375,7 @@ func TestModalEkeyShowsToastForMachineScopeSkill(t *testing.T) {
 	m.modalSkill = mkRow("audit", withGlobal)
 	m.modalSkill.Artifact.Source = config.UserPersonal
 
-	mi, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'e'}})
+	mi, cmd := m.Update(tea.KeyPressMsg{Code: 'e', Text: string('e')})
 	m = mi.(Model)
 	if cmd == nil {
 		t.Fatalf("expected toast cmd for blocked local exclude")
@@ -399,7 +401,7 @@ func TestModalEscCancelsWithoutWrite(t *testing.T) {
 	m.pane = paneToggleModal
 	m.modalSkill = mkRow("audit")
 
-	mi, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	mi, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEsc})
 	m = mi.(Model)
 	if m.pane != paneList {
 		t.Fatalf("esc should close modal")

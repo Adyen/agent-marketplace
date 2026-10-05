@@ -113,13 +113,56 @@ func supportSourceChild(root *fsboundary.Dir, parent string, entry os.DirEntry) 
 	return targetRel, true, nil
 }
 
+// supportPayloadReadHook observes support payload reads. It is nil in
+// production and set only by serial tests in this package.
+var supportPayloadReadHook func(rel string)
+
 func readSupportSourceSnapshot(root *fsboundary.Dir, rel string) ([]byte, fsboundary.Identity, error) {
+	if supportPayloadReadHook != nil {
+		supportPayloadReadHook(rel)
+	}
 	source, err := fsboundary.CaptureDestination(root, rel, fsboundary.LinkPolicyRepository)
 	if err != nil {
 		return nil, fsboundary.Identity{}, err
 	}
 	data, identity, err := source.ReadTarget(source.Identity().Size)
 	return data, identity, errors.Join(err, source.Close())
+}
+
+// inspectSupportSourceLeaf applies the payload-shape rules of
+// readSupportSourceSnapshot without opening or reading the payload: the leaf
+// (following a contained file alias) must be a single-link regular file.
+// Names the captured root cannot stat directly fall back to the full captured
+// classification so escaping and dangling aliases keep their typed refusal.
+func inspectSupportSourceLeaf(root *fsboundary.Dir, rel, _ string) (err error) {
+	native, err := root.NativeRoot()
+	if err != nil {
+		return err
+	}
+	info, statErr := native.Stat(rel)
+	if closeErr := native.Close(); closeErr != nil {
+		return closeErr
+	}
+	var identity fsboundary.Identity
+	if statErr == nil {
+		identity, err = fsboundary.FileInfoIdentity(info)
+		if err != nil {
+			return err
+		}
+	} else {
+		source, captureErr := fsboundary.CaptureDestination(root, rel, fsboundary.LinkPolicyRepository)
+		if captureErr != nil {
+			return captureErr
+		}
+		identity = source.Identity()
+		if closeErr := source.Close(); closeErr != nil {
+			return closeErr
+		}
+	}
+	if !identity.Mode.IsRegular() || identity.Links != 1 {
+		return fmt.Errorf("%w: support payload %s must be a single-link regular file", fsboundary.ErrUnsafeFile, rel)
+	}
+	return nil
 }
 
 func readSupportSourceDirectory(root *fsboundary.Dir, rel string) ([]os.DirEntry, error) {
