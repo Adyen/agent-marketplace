@@ -233,7 +233,7 @@ func writeObservedMetadataFile(parent *fsboundary.Dir, name string, data []byte,
 		return pin, false, err
 	}
 	if err := destination.Publish(parent, stagedName); err != nil {
-		return pin, false, err
+		return pin, publishCrossedRename(err), err
 	}
 	info, err = native.Lstat(name)
 	if err != nil {
@@ -262,4 +262,12 @@ func publishedMetadataMatches(produced, published fsboundary.Identity) bool {
 		published.ModTimeNS == produced.ModTimeNS &&
 		published.Mode == produced.Mode &&
 		published.UID == produced.UID
+}
+
+// publishCrossedRename reports whether a failed Publish had already renamed
+// the staged file into place: Publish marks post-rename directory-sync
+// failures as durability-uncertain, while earlier refusals leave the name
+// untouched.
+func publishCrossedRename(err error) bool {
+	return errors.Is(err, fsboundary.ErrDurabilityUncertain)
 }
