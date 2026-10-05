@@ -19,6 +19,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/Adyen/agent-marketplace/internal/cache"
 	"github.com/Adyen/agent-marketplace/internal/dependencytxn"
+	"github.com/Adyen/agent-marketplace/internal/lifecycle"
 	"github.com/Adyen/agent-marketplace/internal/lockfile"
 	"github.com/Adyen/agent-marketplace/internal/marketplace"
 	"github.com/Adyen/agent-marketplace/internal/tui"
@@ -753,9 +754,9 @@ func TestSyncDriftedLockRefreshFailsWhenLockModeChanged(t *testing.T) {
 		t.Fatalf("advertised artifact %s not fetchable: %d", newDigest, artifactResp.StatusCode)
 	}
 
-	commit := commitDependencyTransaction
+	commit := lifecycle.CommitDependencyTransaction
 	var mutated bool
-	commitDependencyTransaction = func(ctx context.Context, stateDir string, desired []dependencytxn.DesiredFile, opts ...dependencytxn.Option) (dependencytxn.Result, error) {
+	lifecycle.CommitDependencyTransaction = func(ctx context.Context, stateDir string, desired []dependencytxn.DesiredFile, opts ...dependencytxn.Option) (dependencytxn.Result, error) {
 		for _, file := range desired {
 			if file.Path == lockPath && !file.Delete {
 				if err := os.Chmod(lockPath, 0o600); err != nil {
@@ -766,7 +767,7 @@ func TestSyncDriftedLockRefreshFailsWhenLockModeChanged(t *testing.T) {
 		}
 		return commit(ctx, stateDir, desired, opts...)
 	}
-	t.Cleanup(func() { commitDependencyTransaction = commit })
+	t.Cleanup(func() { lifecycle.CommitDependencyTransaction = commit })
 
 	output, err = executeCommand("sync")
 	if err == nil {

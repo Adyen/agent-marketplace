@@ -16,8 +16,10 @@ import (
 
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/dependencytxn"
+	"github.com/Adyen/agent-marketplace/internal/lifecycle"
 	"github.com/Adyen/agent-marketplace/internal/lockfile"
 	"github.com/Adyen/agent-marketplace/internal/pipeline"
+	"github.com/Adyen/agent-marketplace/internal/session"
 	hccartifact "github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 	mpapi "github.com/Adyen/agent-marketplace/pkg/marketplace/api"
@@ -263,12 +265,12 @@ resources:
 	config.SetTestOrganizationConfigPath(t, orgPath)
 	writeConfig(t, filepath.Join(home, ".agents", "config.yaml"), "apiVersion: agent-marketplace/v4\nharnesses: [factory]\n")
 
-	reuse := &preparedInstallLocks{
-		documents: make(map[string]lockfile.Document),
-		lockPaths: make(map[config.Source]string),
-		bindings:  make(map[string][]lockfile.GitRegistry),
+	reuse := &lifecycle.PreparedInstallLocks{
+		Documents: make(map[string]lockfile.Document),
+		LockPaths: make(map[config.Source]string),
+		Bindings:  make(map[string][]lockfile.GitRegistry),
 	}
-	_, _, _, err := prepareRuntimeLocks(context.Background(), t.TempDir(), "", lockMode{reuseInstall: reuse})
+	_, _, _, err := lifecycle.PrepareRuntimeLocks(context.Background(), t.TempDir(), "", lifecycle.LockMode{ReuseInstall: reuse})
 	if err == nil || !pipeline.NeedsLockBootstrap([]error{err}) {
 		t.Fatalf("install commit without prepared transient state error = %v, want v4 Marketplace lock requirement", err)
 	}
@@ -287,12 +289,12 @@ func TestInstallCommitReuseKeepsUnrelatedMissingLockError(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", filepath.Join(home, "state"))
 
 	writeConfig(t, filepath.Join(home, ".agents", "config.yaml"), "apiVersion: agent-marketplace/v2\nharnesses: [factory]\nregistries:\n  - url: https://example.test/a.git\n    ref: main\n")
-	reuse := &preparedInstallLocks{
-		documents: make(map[string]lockfile.Document),
-		lockPaths: map[config.Source]string{config.RepoCommitted: filepath.Join(t.TempDir(), "lock.yaml")},
-		bindings:  make(map[string][]lockfile.GitRegistry),
+	reuse := &lifecycle.PreparedInstallLocks{
+		Documents: make(map[string]lockfile.Document),
+		LockPaths: map[config.Source]string{config.RepoCommitted: filepath.Join(t.TempDir(), "lock.yaml")},
+		Bindings:  make(map[string][]lockfile.GitRegistry),
 	}
-	_, _, _, err := prepareRuntimeLocks(context.Background(), t.TempDir(), "", lockMode{reuseInstall: reuse})
+	_, _, _, err := lifecycle.PrepareRuntimeLocks(context.Background(), t.TempDir(), "", lifecycle.LockMode{ReuseInstall: reuse})
 	var lockErr *pipeline.LockViewError
 	if !errors.As(err, &lockErr) || lockErr.Code != "lock.missing" {
 		t.Fatalf("install commit with an unrelated missing lock error = %v, want lock.missing", err)
@@ -621,7 +623,7 @@ resources:
 	repo := t.TempDir()
 	withWorkingDir(t, repo)
 
-	if _, err := runTUIDependencyLifecycle(context.Background(), mustWorkspace(t, repo), false); err != nil {
+	if _, err := session.RuntimeDependencyLifecycle(context.Background(), mustWorkspace(t, repo), false); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(filepath.Join(home, ".factory", "skills", "review", "SKILL.md")); err != nil {

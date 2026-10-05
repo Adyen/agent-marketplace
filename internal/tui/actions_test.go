@@ -12,6 +12,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/materialize"
 	"github.com/Adyen/agent-marketplace/internal/resolver"
+	"github.com/Adyen/agent-marketplace/internal/session"
 	"github.com/Adyen/agent-marketplace/internal/skill"
 	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
@@ -590,16 +591,16 @@ func TestRenderListShowsLoadingStateBeforeSnapshotHydrates(t *testing.T) {
 }
 
 func swapCloneOrPull(fn func(url, ref string) (string, error)) func() {
-	prev := cloneOrPull
-	cloneOrPull = fn
+	prev := session.CloneOrPull
+	session.CloneOrPull = fn
 	return func() {
-		cloneOrPull = prev
+		session.CloneOrPull = prev
 	}
 }
 
 func swapDiscoverSkills(fn func(dir string) ([]pkgcatalog.Entry, []skill.MalformedSkill, error)) func() {
-	prev := discoverCatalog
-	discoverCatalog = func(dir, sourceHarness string) (catalogInfo, error) {
+	prev := session.DiscoverCatalog
+	session.DiscoverCatalog = func(dir, sourceHarness string) (catalogInfo, error) {
 		entries, malformed, err := fn(dir)
 		if err != nil {
 			return catalogInfo{}, err
@@ -611,7 +612,7 @@ func swapDiscoverSkills(fn func(dir string) ([]pkgcatalog.Entry, []skill.Malform
 		}, nil
 	}
 	return func() {
-		discoverCatalog = prev
+		session.DiscoverCatalog = prev
 	}
 }
 
@@ -1053,7 +1054,7 @@ func TestBuildRowsKeepsExcludedOptionalOrganizationMarketplaceLeafToggleable(t *
 	cfg := &config.Config{Marketplaces: []config.MarketplaceEntry{{URL: "https://market.example", InstanceID: "market-id", Source: config.Organization, Resources: []config.MarketplaceResourcePin{pin}}},
 		MarketplaceExclusions: []config.MarketplaceExclusion{{URL: "https://market.example", Locator: "source-id/skill/review", Source: config.UserPersonal}}}
 	rows := buildRows(cfg, nil, nil, nil, materialize.DriftReport{})
-	if len(rows) != 1 || !rows[0].IsExcluded || !rows[0].canOverrideMarketplace() || !rows[0].ExcludedByUser || !rows[0].MarketplaceCollectionOnly {
+	if len(rows) != 1 || !rows[0].IsExcluded || !rows[0].CanOverrideMarketplace() || !rows[0].ExcludedByUser || !rows[0].MarketplaceCollectionOnly {
 		t.Fatalf("excluded organization Marketplace leaf = %#v", rows)
 	}
 }

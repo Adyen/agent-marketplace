@@ -10,6 +10,7 @@ import (
 
 	"github.com/Adyen/agent-marketplace/internal/cache"
 	"github.com/Adyen/agent-marketplace/internal/config"
+	"github.com/Adyen/agent-marketplace/internal/lifecycle"
 	"github.com/Adyen/agent-marketplace/internal/lockfile"
 	"github.com/Adyen/agent-marketplace/internal/pipeline"
 )
@@ -37,7 +38,7 @@ func BenchmarkMergeInstallBindingsInMemory(b *testing.B) {
 			bindings := append([]lockfile.GitRegistry(nil), base.Registries...)
 			b.ReportAllocs()
 			for b.Loop() {
-				merged, err := mergeInstallBindings(base, lockfile.ScopeRepo, bindings)
+				merged, err := lifecycle.MergeInstallBindings(base, lockfile.ScopeRepo, bindings)
 				if err != nil || len(merged.Registries) != count {
 					b.Fatalf("merge: registries=%d error=%v", len(merged.Registries), err)
 				}
@@ -57,7 +58,7 @@ func BenchmarkProjectLockedRoots(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for b.Loop() {
-		projected, ok := projectLockedRoots(roots, entries)
+		projected, ok := lifecycle.ProjectLockedRoots(roots, entries)
 		if !ok || len(projected) != 32 {
 			b.Fatal("matching roots rejected")
 		}
@@ -94,7 +95,7 @@ func BenchmarkLoadStableEffectiveIncludes(b *testing.B) {
 		b.Run(test.name, func(b *testing.B) {
 			b.ReportAllocs()
 			for b.Loop() {
-				if _, _, err := loadStableEffectiveWith(context.Background(), opts, test.load); err != nil {
+				if _, _, err := lifecycle.LoadStableEffectiveWith(context.Background(), opts, test.load); err != nil {
 					b.Fatal(err)
 				}
 			}

@@ -79,7 +79,7 @@ func TestStaleUpdateDoneKeepsOperationActiveThroughReload(t *testing.T) {
 	}
 
 	next, _ = m.Update(snapshotLoadedMsg{
-		generation:      m.requests.active(requestSnapshot),
+		generation:      m.requests.Active(requestSnapshot),
 		mergedCfg:       &config.Config{},
 		driftAssessment: driftReady,
 	})
@@ -111,7 +111,7 @@ func TestStaleUpdateReloadFailureEndsOperation(t *testing.T) {
 
 	m.errs = []error{errors.New("reload failed")}
 	next, _ = m.Update(snapshotLoadedMsg{
-		generation: m.requests.active(requestSnapshot),
+		generation: m.requests.Active(requestSnapshot),
 		// mergedCfg nil + errs → failed authoritative reload.
 	})
 	m = next.(Model)

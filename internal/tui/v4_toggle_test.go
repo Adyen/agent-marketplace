@@ -9,6 +9,7 @@ import (
 
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/pipeline"
+	"github.com/Adyen/agent-marketplace/internal/session"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 )
 
@@ -37,16 +38,16 @@ func TestV4DirectoryGlobalToggleUsesStagedMutationAndRealDiscovery(t *testing.T)
 	if err := os.WriteFile(globalPath, []byte(global), 0o640); err != nil {
 		t.Fatal(err)
 	}
-	originalOrg, originalGlobal := loadOrgConfig, loadGlobalConfig
-	originalRepo, originalLocal := loadRepoConfig, loadLocalConfig
+	originalOrg, originalGlobal := session.LoadOrgConfig, session.LoadGlobalConfig
+	originalRepo, originalLocal := session.LoadRepoConfig, session.LoadLocalConfig
 	t.Cleanup(func() {
-		loadOrgConfig, loadGlobalConfig = originalOrg, originalGlobal
-		loadRepoConfig, loadLocalConfig = originalRepo, originalLocal
+		session.LoadOrgConfig, session.LoadGlobalConfig = originalOrg, originalGlobal
+		session.LoadRepoConfig, session.LoadLocalConfig = originalRepo, originalLocal
 	})
-	loadOrgConfig = func() (*config.Config, error) { return nil, nil }
-	loadGlobalConfig = func() (*config.Config, error) { return config.LoadConfigFromPath(globalPath) }
-	loadRepoConfig = func() (*config.Config, error) { return nil, nil }
-	loadLocalConfig = func(string) (*config.LocalConfig, error) { return nil, nil }
+	session.LoadOrgConfig = func() (*config.Config, error) { return nil, nil }
+	session.LoadGlobalConfig = func() (*config.Config, error) { return config.LoadConfigFromPath(globalPath) }
+	session.LoadRepoConfig = func() (*config.Config, error) { return nil, nil }
+	session.LoadLocalConfig = func(string) (*config.LocalConfig, error) { return nil, nil }
 
 	workspace, err := pipeline.NewWorkspace(repo, "")
 	if err != nil {

@@ -5,6 +5,7 @@ import (
 	"testing"
 	"unicode/utf8"
 
+	"github.com/Adyen/agent-marketplace/internal/session"
 	"github.com/charmbracelet/x/ansi"
 )
 
@@ -47,7 +48,7 @@ func TestNeedsSanitizingAgreesWithTransform(t *testing.T) {
 		{value: "benign &amp; entity", mode: terminalMarkdownBody},
 	} {
 		changed := sanitizeTerminalData(test.value, test.mode) != test.value
-		if got := terminalDataNeedsSanitizing(test.value, test.mode); got != changed {
+		if got := session.TerminalDataNeedsSanitizing(test.value, test.mode); got != changed {
 			t.Fatalf("needsSanitizing(%q, %v) = %v, transform changed=%v", test.value, test.mode, got, changed)
 		}
 	}

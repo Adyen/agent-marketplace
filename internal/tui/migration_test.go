@@ -41,14 +41,14 @@ func TestSnapshotRepoV2ConfigDoesNotOpenMigrationModal(t *testing.T) {
 
 	m := NewModel(repoRoot, homeDir)
 	snapshot := readSnapshot(context.Background(), repoRoot, homeDir, catalogLoadCached)
-	snapshot.generation = m.requests.active(requestSnapshot)
+	snapshot.generation = m.requests.Active(requestSnapshot)
 	mi, _ := m.Update(snapshot)
 	m = mi.(Model)
 
 	if m.pane == paneMigrationModal {
 		t.Fatalf("unexpected migration modal for repo v2 config, got pane=%v", m.pane)
 	}
-	if m.migrationPrompt.hasConfigs() {
+	if m.migrationPrompt.HasConfigs() {
 		t.Fatal("unexpected pending repo migration")
 	}
 }
@@ -85,8 +85,8 @@ func TestSnapshotV1ConfigDoesNotOpenMigrationModal(t *testing.T) {
 	if m.pane == paneMigrationModal {
 		t.Fatalf("did not expect migration modal for v1 config, got pane=%v", m.pane)
 	}
-	if len(m.migrationPrompt.configs) != 0 {
-		t.Fatalf("expected no pending migration, got %d", len(m.migrationPrompt.configs))
+	if len(m.migrationPrompt.Configs) != 0 {
+		t.Fatalf("expected no pending migration, got %d", len(m.migrationPrompt.Configs))
 	}
 }
 
@@ -121,7 +121,7 @@ func TestMigrationModalLeaveKeepsConfigUnchanged(t *testing.T) {
 	}
 
 	mi, _ = m.Update(snapshotLoadedMsg{
-		generation:       m.requests.active(requestSnapshot),
+		generation:       m.requests.Active(requestSnapshot),
 		mergedCfg:        &config.Config{},
 		pendingMigration: m.migrationPrompt,
 	})
@@ -272,7 +272,7 @@ func TestMigrationModalRunMigratesMarketplaceConfig(t *testing.T) {
 func TestRenderMigrationModalIncludesActions(t *testing.T) {
 	m := NewModel("/repo", "/home")
 	m.pane = paneMigrationModal
-	m.migrationPrompt = migrationPrompt{configs: []migrationConfig{{label: "Project", path: "/repo/.agents/config.yaml"}}}
+	m.migrationPrompt = migrationPrompt{Configs: []migrationConfig{{Label: "Project", Path: "/repo/.agents/config.yaml"}}}
 
 	out := ansi.Strip(renderMigrationModal(m))
 	for _, want := range []string{
@@ -302,11 +302,11 @@ func TestPendingMigrationOffersOnlyTheUserPersonalRoot(t *testing.T) {
 	writeV2Config(t, localPath)
 
 	prompt := pendingMigrationFor(repoRoot, repoRoot, homeDir)
-	if len(prompt.configs) != 1 {
-		t.Fatalf("pending migration = %#v, want exactly the user-personal root", prompt.configs)
+	if len(prompt.Configs) != 1 {
+		t.Fatalf("pending migration = %#v, want exactly the user-personal root", prompt.Configs)
 	}
-	if prompt.configs[0].scope != config.V4MigrationUser || prompt.configs[0].path != userPath {
-		t.Fatalf("offered migration = %#v, want user-personal root %q", prompt.configs[0], userPath)
+	if prompt.Configs[0].Scope != config.V4MigrationUser || prompt.Configs[0].Path != userPath {
+		t.Fatalf("offered migration = %#v, want user-personal root %q", prompt.Configs[0], userPath)
 	}
 }
 
@@ -334,8 +334,8 @@ func TestMigrationDeclineLeavesAllRootsUnchanged(t *testing.T) {
 
 	m := NewModel(repoRoot, homeDir)
 	m.migrationPrompt = pendingMigrationFor(repoRoot, repoRoot, homeDir)
-	if len(m.migrationPrompt.configs) != 1 || m.migrationPrompt.configs[0].scope != config.V4MigrationUser {
-		t.Fatalf("pending migration = %#v, want only the user-personal root", m.migrationPrompt.configs)
+	if len(m.migrationPrompt.Configs) != 1 || m.migrationPrompt.Configs[0].Scope != config.V4MigrationUser {
+		t.Fatalf("pending migration = %#v, want only the user-personal root", m.migrationPrompt.Configs)
 	}
 	m.pane = paneMigrationModal
 
@@ -361,7 +361,7 @@ func TestMigrationDeclineLeavesAllRootsUnchanged(t *testing.T) {
 	// The client continues through the legacy reader: a later snapshot does
 	// not reopen the offer or fail closed on the unchanged legacy roots.
 	mi, _ = m.Update(snapshotLoadedMsg{
-		generation:       m.requests.active(requestSnapshot),
+		generation:       m.requests.Active(requestSnapshot),
 		mergedCfg:        &config.Config{},
 		pendingMigration: m.migrationPrompt,
 	})

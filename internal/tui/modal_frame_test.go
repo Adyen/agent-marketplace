@@ -55,7 +55,7 @@ func TestEveryModalRendersOneBoundedFrame(t *testing.T) {
 		},
 		"edit config": renderEditConfigModal,
 		"migration": func(m Model) string {
-			m.migrationPrompt = migrationPrompt{configs: []migrationConfig{{label: "Project", path: repo + "/.agents/config.yaml"}}}
+			m.migrationPrompt = migrationPrompt{Configs: []migrationConfig{{Label: "Project", Path: repo + "/.agents/config.yaml"}}}
 			return renderMigrationModal(m)
 		},
 	}

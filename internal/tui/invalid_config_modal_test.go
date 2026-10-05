@@ -30,8 +30,8 @@ func assertConsentCleared(t *testing.T, m Model) {
 	if m.marketplaceInstallOperation != 0 {
 		t.Fatalf("marketplace install operation = %d, want 0", m.marketplaceInstallOperation)
 	}
-	if m.operations.active != nil {
-		t.Fatalf("operation still active: %+v", m.operations.active)
+	if m.operations.Active != nil {
+		t.Fatalf("operation still active: %+v", m.operations.Active)
 	}
 	if m.marketplacePreparedInstall != nil {
 		t.Fatal("prepared install survived dismissal")
@@ -49,7 +49,7 @@ func assertConsentCleared(t *testing.T, m Model) {
 
 func invalidConfigSnapshot(m Model) snapshotLoadedMsg {
 	return snapshotLoadedMsg{
-		generation:      m.requests.active(requestSnapshot),
+		generation:      m.requests.Active(requestSnapshot),
 		driftAssessment: driftFailed,
 		mergedCfg:       &config.Config{},
 		diagnostics: []tuiDiagnostic{
@@ -148,8 +148,8 @@ func TestInvalidConfigKeyDismissesStaleMutationPanes(t *testing.T) {
 			if msg, ok := cmd().(toastMsg); !ok || !strings.Contains(msg.text, "edit config") {
 				t.Fatalf("dismissal guidance = %#v, want an edit-config toast", cmd())
 			}
-			if m.operations.active != nil {
-				t.Fatalf("write key began or retained an operation: %+v", m.operations.active)
+			if m.operations.Active != nil {
+				t.Fatalf("write key began or retained an operation: %+v", m.operations.Active)
 			}
 			if tc.consent {
 				assertConsentCleared(t, m)
@@ -191,8 +191,8 @@ func TestInvalidConfigBlocksSyncAndUpdate(t *testing.T) {
 			if msg, ok := cmd().(toastMsg); !ok || !strings.Contains(msg.text, "edit config") {
 				t.Fatalf("mutation guidance = %#v, want an edit-config toast", cmd())
 			}
-			if m.operations.active != nil {
-				t.Fatalf("config-invalid key began an operation: %+v", m.operations.active)
+			if m.operations.Active != nil {
+				t.Fatalf("config-invalid key began an operation: %+v", m.operations.Active)
 			}
 		})
 	}

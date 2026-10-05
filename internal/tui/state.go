@@ -2,11 +2,7 @@ package tui
 
 import (
 	"context"
-	"slices"
-	"sort"
-	"strings"
 	"time"
-	"unicode"
 
 	"charm.land/bubbles/v2/help"
 	"charm.land/bubbles/v2/spinner"
@@ -19,15 +15,6 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/pipeline"
 	"github.com/Adyen/agent-marketplace/internal/resolver"
 	"github.com/Adyen/agent-marketplace/internal/telemetry"
-	mpapi "github.com/Adyen/agent-marketplace/pkg/marketplace/api"
-)
-
-type driftAssessment uint8
-
-const (
-	driftUnknown driftAssessment = iota
-	driftReady
-	driftFailed
 )
 
 type pane int
@@ -46,68 +33,8 @@ const (
 	paneMarketplaceConsent
 )
 
-type marketplaceSelection struct {
-	Entry config.MarketplaceEntry
-	Pin   config.MarketplaceResourcePin
-}
-
-type marketplaceDiscovery struct {
-	Endpoint   config.MarketplaceEntry
-	Item       mpapi.ResourceListItem
-	CacheState marketplace.DiscoveryCacheState
-	ObservedAt time.Time
-}
-
-type row struct {
-	Artifact          resolver.ResolvedArtifact
-	DetailSource      *detailSourceSnapshot // immutable bounded copy captured while the exact snapshot lease is held
-	IsAvailable       bool                  // not in resolved (available but not enabled)
-	IsExcluded        bool                  // legacy: skill is in localCfg.Exclude (mirrors ExcludedLocally)
-	IsMalformed       bool
-	MalformedMsg      string
-	UnavailableReason string
-	DriftItem         *materialize.DriftItem // nil if in sync or available-only
-
-	// Per-scope enablement: which config file(s) enable this skill.
-	// A skill may be enabled in multiple scopes simultaneously.
-	EnabledGlobal   bool
-	EnabledProject  bool
-	EnabledLocal    bool
-	ExcludedLocally bool
-	ExcludedByUser  bool
-
-	// Source registry of the skill. For available (non-enabled) skills, set
-	// to the first registry whose catalog contained the skill, in cfg order.
-	RegistryURL   string
-	RegistryName  string // display-friendly form: last path segment, .git stripped
-	RegistryPath  string // path subdirectory from the registry entry (for config writes)
-	RegistryRef   string // ref from the registry entry (for config writes)
-	Harnesses     []string
-	HarnessSource string
-
-	MarketplaceSelections     map[config.Source]marketplaceSelection
-	MarketplaceCollectionOnly bool
-	MarketplaceDiscovery      *marketplaceDiscovery
-
-	PendingVerification bool
-
-	// searchWords is the cached, sorted and deduplicated set of lowercased
-	// words from the name and metadata that query terms prefix-match.
-	// Populated lazily by ensureSearchable so applyFilter does not rebuild
-	// it on every keystroke while the user is typing in the search input.
-	searchWords     []string
-	searchReady     bool
-	searchName      string
-	searchRanked    bool
-	searchNameMatch bool
-	searchScore     int
-	// searchMatchRunes holds rune indexes into the sanitized name that the
-	// query genuinely matched; it is empty for metadata-only matches.
-	searchMatchRunes []int
-
-	labelMemo *rowLabelMemo
-}
-
+// rowLabelMemo is TUI view state cached on a row's opaque LabelMemo slot.
+// The session core owns the slot but never interprets it.
 type rowLabelMemo struct {
 	depth   int
 	width   int
@@ -117,150 +44,21 @@ type rowLabelMemo struct {
 	valid   bool
 }
 
-func (r *row) ensureLabelMemo() {
-	if r.labelMemo == nil {
-		r.labelMemo = &rowLabelMemo{}
+// rowLabelMemoFor returns the row's TUI label memo, creating it on first
+// use. The memo pointer is shared by every copy of the row, exactly as
+// before the slot moved into the session row type.
+func rowLabelMemoFor(r *row) *rowLabelMemo {
+	memo, _ := r.LabelMemo.(*rowLabelMemo)
+	if memo == nil {
+		memo = &rowLabelMemo{}
+		r.LabelMemo = memo
 	}
+	return memo
 }
 
-// ensureSearchable populates the search index on first use and
-// short-circuits on subsequent calls. Safe to call from any code path that
-// is about to filter the row; buildRows and test helpers can skip the call
-// because the first applyFilter invocation will fill it in.
-func (r *row) ensureSearchable() {
-	if r.searchReady {
-		return
-	}
-	size := len(r.Artifact.Name) + len(r.Artifact.RegistryURL) + 2
-	for _, t := range r.Artifact.Tags {
-		size += len(t) + 1
-	}
-	var b strings.Builder
-	b.Grow(size)
-	b.WriteString(r.Artifact.Name)
-	b.WriteByte(' ')
-	for i, t := range r.Artifact.Tags {
-		if i > 0 {
-			b.WriteByte(' ')
-		}
-		b.WriteString(t)
-	}
-	b.WriteByte(' ')
-	b.WriteString(r.Artifact.RegistryURL)
-	b.WriteByte(' ')
-	b.WriteString(r.Artifact.Description)
-	if r.MarketplaceDiscovery != nil {
-		b.WriteByte(' ')
-		b.WriteString(marketplaceEndpointDisplay(r.MarketplaceDiscovery.Endpoint))
-		b.WriteByte(' ')
-		b.WriteString(r.MarketplaceDiscovery.Item.RegistrySlug)
-		b.WriteByte(' ')
-		b.WriteString(string(r.MarketplaceDiscovery.Item.Availability))
-		metadataKeys := make([]string, 0, len(r.MarketplaceDiscovery.Item.Metadata))
-		for key := range r.MarketplaceDiscovery.Item.Metadata {
-			metadataKeys = append(metadataKeys, key)
-		}
-		sort.Strings(metadataKeys)
-		for _, key := range metadataKeys {
-			b.WriteByte(' ')
-			b.WriteString(key)
-			b.WriteByte(' ')
-			b.WriteString(r.MarketplaceDiscovery.Item.Metadata[key])
-		}
-	}
-	r.searchName = strings.ToLower(sanitizeTerminalData(r.Artifact.Name, terminalSingleLine))
-	words := searchTerms(b.String())
-	slices.Sort(words)
-	r.searchWords = slices.Compact(words)
-	r.searchReady = true
+func ensureLabelMemo(r *row) {
+	rowLabelMemoFor(r)
 }
-
-// searchTerms splits text into lowercased words at every character that is
-// neither a letter nor a digit. Queries and searchable metadata share it so
-// "platform.git" matches the words of a registry URL.
-func searchTerms(text string) []string {
-	return strings.FieldsFunc(strings.ToLower(text), func(c rune) bool {
-		return !unicode.IsLetter(c) && !unicode.IsDigit(c)
-	})
-}
-
-// hasWordWithPrefix reports whether any of the row's search words begins
-// with term.
-func (r *row) hasWordWithPrefix(term string) bool {
-	i, _ := slices.BinarySearch(r.searchWords, term)
-	return i < len(r.searchWords) && strings.HasPrefix(r.searchWords[i], term)
-}
-
-func (r row) canOverrideMarketplace() bool {
-	return r.Artifact.IsMarketplace && r.Artifact.Source == config.Organization && !r.Artifact.Required
-}
-
-// rowStatus is the authoritative result of a row's status precedence: one
-// decision derives the ASCII glyph, the color-profile symbol, and the status
-// label so the three can never diverge.
-type rowStatus struct {
-	glyph  string
-	symbol string
-	label  string
-}
-
-func (r row) status() rowStatus {
-	if r.PendingVerification {
-		label := "enabled in config; verification pending"
-		if r.IsExcluded {
-			label = "excluded; verification pending"
-		} else if r.IsAvailable {
-			label = "available; verification pending"
-		}
-		if r.IsAvailable {
-			return rowStatus{"[ ]", "○", label}
-		}
-		return rowStatus{"[x]", "●", label}
-	}
-	if r.IsMalformed {
-		return rowStatus{"[!]", "✗", "malformed: " + r.MalformedMsg}
-	}
-	if r.UnavailableReason != "" {
-		return rowStatus{"[!]", "✗", "unavailable: " + r.UnavailableReason}
-	}
-	if r.IsAvailable {
-		if r.IsExcluded {
-			return rowStatus{"[ ]", "○", "excluded"}
-		}
-		if r.MarketplaceDiscovery != nil {
-			label := string(r.MarketplaceDiscovery.Item.Availability)
-			if label == "" {
-				label = "unknown"
-			}
-			if r.MarketplaceDiscovery.CacheState == marketplace.DiscoveryCacheStale {
-				label += ", stale"
-			}
-			return rowStatus{"[ ]", "○", label + " via Marketplace"}
-		}
-		return rowStatus{"[ ]", "○", "available"}
-	}
-	if r.Artifact.Required {
-		if r.Artifact.Source == config.Organization {
-			return rowStatus{"[R]", "■", "required (org)"}
-		}
-		return rowStatus{"[R]", "■", "required"}
-	}
-	if r.DriftItem != nil {
-		switch r.DriftItem.Reason {
-		case materialize.DriftMissing:
-			return rowStatus{"[*]", "◐", "enabled (pending sync)"}
-		case materialize.DriftOrphaned:
-			return rowStatus{"[-]", "◌", "orphaned"}
-		case materialize.DriftBroken:
-			return rowStatus{"[!]", "✗", "broken"}
-		}
-	}
-	return rowStatus{"[x]", "●", "enabled"}
-}
-
-func (r row) Glyph() string { return r.status().glyph }
-
-func (r row) StatusText() string { return r.status().label }
 
 type Model struct {
 	repoRoot            string

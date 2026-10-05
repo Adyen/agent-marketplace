@@ -141,7 +141,7 @@ func (m Model) footerStatus() (string, []string) {
 			status = " " + m.progressLabel + ": " + phase + "..."
 		}
 		leftParts = append(leftParts, m.spinner.View()+styleFooterPending.Render(status))
-	} else if m.progress != nil && m.operations.active != nil {
+	} else if m.progress != nil && m.operations.Active != nil {
 		phase := m.operationPhase
 		if phase == "" {
 			phase = "running"
@@ -157,7 +157,7 @@ func (m Model) footerStatus() (string, []string) {
 	// An active operation replaces the leading status but drift remains a
 	// separate segment, so the status bar still shows drift, Marketplace
 	// health, the operation, and diagnostic counts at once.
-	if m.syncing || (m.progress != nil && m.operations.active != nil) {
+	if m.syncing || (m.progress != nil && m.operations.Active != nil) {
 		leftParts = append(leftParts, m.driftStatusSegment())
 	}
 
@@ -302,15 +302,6 @@ func joinFooter(items []footerItem, chosen []string) string {
 		prev = i
 	}
 	return b.String()
-}
-
-func rowsHaveUnavailable(rows []row) bool {
-	for _, r := range rows {
-		if r.UnavailableReason != "" {
-			return true
-		}
-	}
-	return false
 }
 
 func (m Model) hasUnavailableRows() bool {

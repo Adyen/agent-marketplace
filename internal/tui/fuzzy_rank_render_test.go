@@ -62,8 +62,8 @@ func TestFuzzySearchMetadataUsesSortedKeyOrder(t *testing.T) {
 				},
 			},
 		}
-		r.ensureSearchable()
-		return strings.Join(r.searchWords, " ")
+		r.EnsureSearchable()
+		return strings.Join(r.SearchWords, " ")
 	}
 	first, second := build(), build()
 	if first != second {

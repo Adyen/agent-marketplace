@@ -28,9 +28,9 @@
 
 ## 2. Shared interactive-session core
 
-- [ ] 2.1 Extract staged snapshot state, progress observations, generation isolation, mutation gating, discovery, and guarded actions behind a UI-agnostic event stream and command API; verify the core package has no Bubble Tea types.
-- [ ] 2.2 Move runtime lock/lifecycle reconciliation and `init` Harness-target detection/first-configuration logic out of package main; verify TUI startup and initialization preserve their existing outcomes.
-- [ ] 2.3 Adapt the TUI to the shared core while retaining terminal view state and input mechanics; verify existing focused TUI tests and annotations pass without user-visible changes.
+- [x] 2.1 Extract staged snapshot state, progress observations, generation isolation, mutation gating, discovery, and guarded actions behind a UI-agnostic event stream and command API; verify the core package has no Bubble Tea types.
+- [x] 2.2 Move runtime lock/lifecycle reconciliation and `init` Harness-target detection/first-configuration logic out of package main; verify TUI startup and initialization preserve their existing outcomes.
+- [x] 2.3 Adapt the TUI to the shared core while retaining terminal view state and input mechanics; verify existing focused TUI tests and annotations pass without user-visible changes.
 
 ## 3. Verification and finalization
 

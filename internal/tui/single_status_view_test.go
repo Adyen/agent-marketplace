@@ -165,7 +165,7 @@ func TestSingleStatusHostileAndUnicodeLabels(t *testing.T) {
 
 	hostileMatch := mkRow("déploy", withGlobal)
 	hostileMatch.RegistryName = "evil\x1b[31m\x07name"
-	hostileMatch.searchMatchRunes = []int{0, 1, 2, 3}
+	hostileMatch.SearchMatchRunes = []int{0, 1, 2, 3}
 	wantEsc := "skill evil\\x1B[31m\\x07name/" + styleSearchMatch.Render("dépl") + "oy"
 	if got := highlightNameMatches(hostileMatch, "skill evil\\x1B[31m\\x07name/déploy"); got != wantEsc {
 		t.Fatalf("escaped-prefix highlighted label = %q, want %q", got, wantEsc)
@@ -274,7 +274,7 @@ func TestSingleStatusModalTabKeepsNativeFieldFocus(t *testing.T) {
 		if m.toggleForm == nil || m.toggleForm.State != huh.StateNormal {
 			t.Fatalf("key %v must stay inside the running native form", key.Code)
 		}
-		if m.operations.active != nil {
+		if m.operations.Active != nil {
 			t.Fatalf("key %v dispatched a mutation without an explicit submit", key.Code)
 		}
 	}

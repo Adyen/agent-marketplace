@@ -322,7 +322,7 @@ func TestPaletteClosesOnAsyncPaneTransition(t *testing.T) {
 	generation := m.beginRequest(requestSnapshot)
 	mi, _ := m.Update(snapshotLoadedMsg{
 		generation:       generation,
-		pendingMigration: migrationPrompt{configs: []migrationConfig{{label: "Project", path: "/repo/.agents/config.yaml"}}},
+		pendingMigration: migrationPrompt{Configs: []migrationConfig{{Label: "Project", Path: "/repo/.agents/config.yaml"}}},
 	})
 	m = mi.(Model)
 	if m.pane != paneMigrationModal {

@@ -24,6 +24,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/fsboundary"
 	"github.com/Adyen/agent-marketplace/internal/harness"
+	"github.com/Adyen/agent-marketplace/internal/lifecycle"
 	"github.com/Adyen/agent-marketplace/internal/marketplace"
 	"github.com/Adyen/agent-marketplace/internal/materialize"
 	"github.com/Adyen/agent-marketplace/internal/pipeline"
@@ -106,7 +107,7 @@ func newStatusCmd() *cobra.Command {
 var runStatusMaterialize = materialize.Run
 
 func runStatus(ctx context.Context, out io.Writer, now time.Time) error {
-	if err := prepareDependencyTransactions(ctx, true); err != nil {
+	if err := lifecycle.PrepareDependencyTransactions(ctx, true); err != nil {
 		return err
 	}
 	repoRoot := config.FindRepoRoot()
@@ -355,9 +356,9 @@ const staleCacheThreshold = 24 * time.Hour
 
 func applyExactLockFreshness(rows []statusRow, metadata []pipeline.LockMetadata) {
 	for i := range rows {
-		rowURL, rowErr := canonicalRegistryURL(rows[i].Registry)
+		rowURL, rowErr := lifecycle.CanonicalRegistryURL(rows[i].Registry)
 		for _, locked := range metadata {
-			lockedURL, lockedErr := canonicalRegistryURL(locked.URL)
+			lockedURL, lockedErr := lifecycle.CanonicalRegistryURL(locked.URL)
 			if rows[i].Source == locked.Source && rows[i].Ref == locked.Ref && rowErr == nil && lockedErr == nil && rowURL == lockedURL {
 				rows[i].Cache = "locked: " + locked.Commit
 				break

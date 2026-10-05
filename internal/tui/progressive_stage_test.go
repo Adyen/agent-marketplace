@@ -22,6 +22,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/materialize"
 	"github.com/Adyen/agent-marketplace/internal/pipeline"
 	"github.com/Adyen/agent-marketplace/internal/resolver"
+	"github.com/Adyen/agent-marketplace/internal/session"
 	"github.com/Adyen/agent-marketplace/internal/skill"
 	hccartifact "github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
@@ -202,27 +203,27 @@ func TestOrdinaryReloadAvoidsProgressiveSnapshotWork(t *testing.T) {
 	}
 
 	counts := &snapshotReadCounters{}
-	originalGlobal, originalRepo := loadGlobalConfig, loadRepoConfig
-	originalDiscover, originalMaterialize := discoverCatalog, runMaterialize
-	loadGlobalConfig = func() (*config.Config, error) {
+	originalGlobal, originalRepo := session.LoadGlobalConfig, session.LoadRepoConfig
+	originalDiscover, originalMaterialize := session.DiscoverCatalog, session.RunMaterialize
+	session.LoadGlobalConfig = func() (*config.Config, error) {
 		counts.global.Add(1)
 		return originalGlobal()
 	}
-	loadRepoConfig = func() (*config.Config, error) {
+	session.LoadRepoConfig = func() (*config.Config, error) {
 		counts.repo.Add(1)
 		return originalRepo()
 	}
-	discoverCatalog = func(dir, sourceHarness string) (catalog.LoadedCatalog, error) {
+	session.DiscoverCatalog = func(dir, sourceHarness string) (catalog.LoadedCatalog, error) {
 		counts.discoveries.Add(1)
 		return originalDiscover(dir, sourceHarness)
 	}
-	runMaterialize = func(context.Context, string, []resolver.ResolvedArtifact, ...materialize.RunOption) (*materialize.Report, error) {
+	session.RunMaterialize = func(context.Context, string, []resolver.ResolvedArtifact, ...materialize.RunOption) (*materialize.Report, error) {
 		counts.dryRuns.Add(1)
 		return &materialize.Report{}, nil
 	}
 	t.Cleanup(func() {
-		loadGlobalConfig, loadRepoConfig = originalGlobal, originalRepo
-		discoverCatalog, runMaterialize = originalDiscover, originalMaterialize
+		session.LoadGlobalConfig, session.LoadRepoConfig = originalGlobal, originalRepo
+		session.DiscoverCatalog, session.RunMaterialize = originalDiscover, originalMaterialize
 	})
 
 	m := NewModel(repoRoot, homeDir)
@@ -230,7 +231,7 @@ func TestOrdinaryReloadAvoidsProgressiveSnapshotWork(t *testing.T) {
 	m.rows = []row{mkRow("previous", withGlobal, withRegistry("previous.git", "previous"))}
 	m.authoritativeRows = slices.Clone(m.rows)
 	m.recomputeView()
-	generation := m.requests.active(requestSnapshot)
+	generation := m.requests.Active(requestSnapshot)
 	beforeView := ansi.Strip(m.viewContent())
 	if !strings.Contains(beforeView, "previous") {
 		t.Fatalf("ordinary reload fixture has no prior visible row:\n%s", beforeView)
@@ -336,13 +337,13 @@ func TestReadSnapshotStagesUsesNestedLocalWorkspace(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	originalLocal := loadLocalConfig
-	t.Cleanup(func() { loadLocalConfig = originalLocal })
-	loadLocalConfig = loadLocalConfigAt
-	original := runMaterialize
-	t.Cleanup(func() { runMaterialize = original })
+	originalLocal := session.LoadLocalConfig
+	t.Cleanup(func() { session.LoadLocalConfig = originalLocal })
+	session.LoadLocalConfig = session.LoadLocalConfigAt
+	original := session.RunMaterialize
+	t.Cleanup(func() { session.RunMaterialize = original })
 	var materializeRoot string
-	runMaterialize = func(_ context.Context, root string, _ []resolver.ResolvedArtifact, _ ...materialize.RunOption) (*materialize.Report, error) {
+	session.RunMaterialize = func(_ context.Context, root string, _ []resolver.ResolvedArtifact, _ ...materialize.RunOption) (*materialize.Report, error) {
 		materializeRoot = root
 		return &materialize.Report{}, nil
 	}
@@ -411,7 +412,7 @@ func TestConfigStageStartsDiscoveryBeforeLocalVerification(t *testing.T) {
 	m.authoritativeRows = nil
 	m.flatItems = nil
 	m.loading = true
-	generation := m.requests.active(requestSnapshot)
+	generation := m.requests.Active(requestSnapshot)
 	endpoint := config.MarketplaceEntry{URL: "https://market.example", InstanceID: "market", Alias: "public"}
 	stages := make(chan snapshotLoadedMsg)
 	close(stages)
@@ -429,16 +430,16 @@ func TestConfigStageStartsDiscoveryBeforeLocalVerification(t *testing.T) {
 	if m.mergedCfg == nil || len(m.mergedCfg.Marketplaces) != 1 {
 		t.Fatalf("config stage did not publish merged config: %#v", m.mergedCfg)
 	}
-	if !m.discoveryLoading || m.requests.active(requestDiscovery) == 0 {
-		t.Fatalf("config stage did not start Marketplace discovery: loading=%t generation=%d", m.discoveryLoading, m.requests.active(requestDiscovery))
+	if !m.discoveryLoading || m.requests.Active(requestDiscovery) == 0 {
+		t.Fatalf("config stage did not start Marketplace discovery: loading=%t generation=%d", m.discoveryLoading, m.requests.Active(requestDiscovery))
 	}
 
 	item := mpapi.ResourceListItem{RegistryID: "registry-id", RegistrySlug: "tools", Kind: "skill", Name: "remote", Revision: "sha256:" + strings.Repeat("a", 64), ContentDigest: "sha256:" + strings.Repeat("b", 64), Availability: mpapi.AvailabilityAvailable}
 	outcome := marketplace.DiscoveryOutcome{Endpoint: endpoint, Items: []mpapi.ResourceListItem{item}, Total: 1, CacheState: marketplace.DiscoveryCacheFresh, ObservedAt: time.Now()}
-	updated, _ = m.Update(discoveryLoadedMsg{generation: m.requests.active(requestDiscovery), sequence: 1, outcomes: []marketplace.DiscoveryOutcome{outcome}})
+	updated, _ = m.Update(discoveryLoadedMsg{generation: m.requests.Active(requestDiscovery), sequence: 1, outcomes: []marketplace.DiscoveryOutcome{outcome}})
 	m = updated.(Model)
-	if m.requests.active(requestSnapshot) != generation {
-		t.Fatalf("snapshot generation advanced before assessment: %d", m.requests.active(requestSnapshot))
+	if m.requests.Active(requestSnapshot) != generation {
+		t.Fatalf("snapshot generation advanced before assessment: %d", m.requests.Active(requestSnapshot))
 	}
 	if len(m.rows) != 1 || m.rows[0].Artifact.Name != "remote" {
 		t.Fatalf("cached Marketplace row not visible during local verification: %#v", m.rows)
@@ -449,7 +450,7 @@ func TestConfigStageStartsDiscoveryBeforeLocalVerification(t *testing.T) {
 // spec: tui-startup/verified-rows-inserted-above-a-selection-keep-it-on-the-same-screen-line
 func TestVerifiedRowsInsertedAboveSelectionKeepItOnTheSameScreenLine(t *testing.T) {
 	m := newProvisionalStageModel()
-	generation := m.requests.active(requestSnapshot)
+	generation := m.requests.Active(requestSnapshot)
 	stages := make(chan snapshotLoadedMsg)
 	close(stages)
 	var provisional []row
@@ -487,7 +488,7 @@ func TestUntouchedCursorStaysOnTopWhenInstalledRowsArrive(t *testing.T) {
 	m.authoritativeRows = nil
 	m.flatItems = nil
 	m.loading = true
-	generation := m.requests.active(requestSnapshot)
+	generation := m.requests.Active(requestSnapshot)
 	endpoint := config.MarketplaceEntry{URL: "https://market.example", InstanceID: "market", Alias: "public"}
 	stages := make(chan snapshotLoadedMsg)
 	close(stages)
@@ -499,7 +500,7 @@ func TestUntouchedCursorStaysOnTopWhenInstalledRowsArrive(t *testing.T) {
 		items = append(items, mpapi.ResourceListItem{RegistryID: "registry-id", RegistrySlug: "tools", Kind: "skill", Name: fmt.Sprintf("remote-%02d", i), Revision: "sha256:" + strings.Repeat("a", 64), ContentDigest: "sha256:" + strings.Repeat("b", 64), Availability: mpapi.AvailabilityAvailable})
 	}
 	outcome := marketplace.DiscoveryOutcome{Endpoint: endpoint, Items: items, Total: len(items), CacheState: marketplace.DiscoveryCacheFresh, ObservedAt: time.Now()}
-	updated, _ = m.Update(discoveryLoadedMsg{generation: m.requests.active(requestDiscovery), sequence: 1, outcomes: []marketplace.DiscoveryOutcome{outcome}, done: true})
+	updated, _ = m.Update(discoveryLoadedMsg{generation: m.requests.Active(requestDiscovery), sequence: 1, outcomes: []marketplace.DiscoveryOutcome{outcome}, done: true})
 	m = updated.(Model)
 	if m.cursor != 0 {
 		t.Fatalf("cursor = %d before installed rows, want 0", m.cursor)
@@ -529,7 +530,7 @@ func TestInventoryStageIsNavigableAndToggleReadyWithDriftPending(t *testing.T) {
 	m.authoritativeRows = nil
 	m.flatItems = nil
 	m.loading = true
-	generation := m.requests.active(requestSnapshot)
+	generation := m.requests.Active(requestSnapshot)
 	stages := make(chan snapshotLoadedMsg)
 	close(stages)
 	inventory := []row{mkRow("audit", withGlobal, withRegistry("sec.git", "security"))}
@@ -589,7 +590,7 @@ func TestApplyDriftItemsMarksOnlySelectedRows(t *testing.T) {
 func TestFinalStageReplacesPendingInventoryWithAssessment(t *testing.T) {
 	m := newTestModel()
 	m.loading = true
-	generation := m.requests.active(requestSnapshot)
+	generation := m.requests.Active(requestSnapshot)
 	stages := make(chan snapshotLoadedMsg)
 	close(stages)
 	updated, _ := m.Update(snapshotLoadedMsg{stage: snapshotStageInventory, generation: generation, mergedCfg: &config.Config{}, rows: []row{mkRow("audit")}, driftAssessment: driftUnknown, stages: stages})
@@ -608,7 +609,7 @@ func TestFinalStageReplacesPendingInventoryWithAssessment(t *testing.T) {
 // spec: session-startup/superseded-stage-delivery-cannot-overwrite-newer-state
 func TestSupersededStageDeliveryCannotOverwriteNewerState(t *testing.T) {
 	m := newTestModel()
-	stale := m.requests.active(requestSnapshot)
+	stale := m.requests.Active(requestSnapshot)
 	current := m.beginRequest(requestSnapshot)
 	kept := m.rows
 	stages := make(chan snapshotLoadedMsg)
@@ -621,8 +622,8 @@ func TestSupersededStageDeliveryCannotOverwriteNewerState(t *testing.T) {
 		stages:     stages,
 	})
 	m = updated.(Model)
-	if m.mergedCfg != nil || m.requests.active(requestDiscovery) != 0 {
-		t.Fatalf("stale config stage changed config or started discovery: cfg=%#v discovery=%d", m.mergedCfg, m.requests.active(requestDiscovery))
+	if m.mergedCfg != nil || m.requests.Active(requestDiscovery) != 0 {
+		t.Fatalf("stale config stage changed config or started discovery: cfg=%#v discovery=%d", m.mergedCfg, m.requests.Active(requestDiscovery))
 	}
 
 	updated, _ = m.Update(snapshotLoadedMsg{stage: snapshotStageInventory, generation: stale, mergedCfg: &config.Config{}, rows: []row{mkRow("stale")}, stages: stages})
@@ -630,8 +631,8 @@ func TestSupersededStageDeliveryCannotOverwriteNewerState(t *testing.T) {
 	if len(m.rows) != len(kept) || m.rows[0].Artifact.Name != "a" {
 		t.Fatalf("stale inventory stage replaced rows: %#v", m.rows)
 	}
-	if m.requests.active(requestSnapshot) != current {
-		t.Fatalf("stale stage consumed the active generation: %d", m.requests.active(requestSnapshot))
+	if m.requests.Active(requestSnapshot) != current {
+		t.Fatalf("stale stage consumed the active generation: %d", m.requests.Active(requestSnapshot))
 	}
 }
 
@@ -643,21 +644,21 @@ func TestInventoryStageDoesNotCompletePendingToggleReload(t *testing.T) {
 		t.Fatal("failed to start mutation operation")
 	}
 	m.pendingToggleOperation = operation
-	generation := m.requests.active(requestSnapshot)
+	generation := m.requests.Active(requestSnapshot)
 	m.pendingToggleReload = generation
 	stages := make(chan snapshotLoadedMsg)
 	close(stages)
 
 	updated, _ := m.Update(snapshotLoadedMsg{stage: snapshotStageInventory, generation: generation, mergedCfg: &config.Config{}, rows: []row{mkRow("audit")}, stages: stages})
 	m = updated.(Model)
-	if m.operations.active == nil || m.pendingToggleOperation != operation {
+	if m.operations.Active == nil || m.pendingToggleOperation != operation {
 		t.Fatal("inventory stage released the pending mutation operation")
 	}
 
 	updated, _ = m.Update(snapshotLoadedMsg{generation: generation, mergedCfg: &config.Config{}, rows: []row{mkRow("audit")}, driftAssessment: driftReady})
 	m = updated.(Model)
-	if m.operations.active != nil || m.pendingToggleOperation != 0 {
-		t.Fatalf("final stage did not finish the pending reload: active=%#v pending=%d", m.operations.active, m.pendingToggleOperation)
+	if m.operations.Active != nil || m.pendingToggleOperation != 0 {
+		t.Fatalf("final stage did not finish the pending reload: active=%#v pending=%d", m.operations.Active, m.pendingToggleOperation)
 	}
 }
 
@@ -669,7 +670,7 @@ func TestProvisionalConfigStagePublishesPendingRows(t *testing.T) {
 	m.authoritativeRows = nil
 	m.flatItems = nil
 	m.loading = true
-	generation := m.requests.active(requestSnapshot)
+	generation := m.requests.Active(requestSnapshot)
 	stages := make(chan snapshotLoadedMsg)
 	close(stages)
 	provisional := &config.Config{Marketplaces: []config.MarketplaceEntry{{
@@ -738,7 +739,7 @@ func TestProvisionalStageDoesNotCheckExcludedMarketplacePin(t *testing.T) {
 		}},
 		MarketplaceExclusions: []config.MarketplaceExclusion{{URL: "https://market.example", Locator: "tools/skill/review", Source: config.UserPersonal}},
 	}
-	updated, _ := m.Update(snapshotLoadedMsg{stage: snapshotStageConfig, generation: m.requests.active(requestSnapshot), provisionalCfg: cfg, provisionalRows: buildProvisionalRows(cfg, nil, nil)})
+	updated, _ := m.Update(snapshotLoadedMsg{stage: snapshotStageConfig, generation: m.requests.Active(requestSnapshot), provisionalCfg: cfg, provisionalRows: buildProvisionalRows(cfg, nil, nil)})
 	m = updated.(Model)
 	if len(m.rows) != 2 || m.rows[0].Artifact.Name != "audit" || m.rows[0].Glyph() != "[x]" || originBadge(m.rows[0]) != "G" {
 		t.Fatalf("early enabled state should check only the effective configured pin: %#v", m.rows)
@@ -989,7 +990,7 @@ func TestProvisionalRowsCarryRegistryOverrideHarnessBadge(t *testing.T) {
 // spec: session-startup/a-stale-provisional-stage-cannot-publish-rows
 func TestStaleProvisionalStageCannotPublishRows(t *testing.T) {
 	m := newTestModel()
-	stale := m.requests.active(requestSnapshot)
+	stale := m.requests.Active(requestSnapshot)
 	m.beginRequest(requestSnapshot)
 	provisional := &config.Config{Marketplaces: []config.MarketplaceEntry{{
 		URL:       "https://market.example",
@@ -1462,7 +1463,7 @@ func TestAuthoritativeFailureClearsProvisionalRows(t *testing.T) {
 	m.authoritativeRows = nil
 	m.flatItems = nil
 	m.loading = true
-	generation := m.requests.active(requestSnapshot)
+	generation := m.requests.Active(requestSnapshot)
 	stages := make(chan snapshotLoadedMsg)
 	close(stages)
 	provisional := &config.Config{Marketplaces: []config.MarketplaceEntry{{
@@ -1497,7 +1498,7 @@ func TestPendingDetailFollowsVerifiedRow(t *testing.T) {
 	m.rows = nil
 	m.authoritativeRows = nil
 	m.flatItems = nil
-	generation := m.requests.active(requestSnapshot)
+	generation := m.requests.Active(requestSnapshot)
 	stages := make(chan snapshotLoadedMsg)
 	close(stages)
 	revision := "sha256:" + strings.Repeat("a", 64)
@@ -1542,7 +1543,7 @@ func TestFinalStageMergesDiscoveryPublishedDuringConfigStage(t *testing.T) {
 	m.authoritativeRows = nil
 	m.flatItems = nil
 	m.loading = true
-	generation := m.requests.active(requestSnapshot)
+	generation := m.requests.Active(requestSnapshot)
 	endpoint := config.MarketplaceEntry{URL: "https://market.example", InstanceID: "market", Alias: "public"}
 	stages := make(chan snapshotLoadedMsg)
 	close(stages)
@@ -1551,7 +1552,7 @@ func TestFinalStageMergesDiscoveryPublishedDuringConfigStage(t *testing.T) {
 	m = updated.(Model)
 	item := mpapi.ResourceListItem{RegistryID: "registry-id", RegistrySlug: "tools", Kind: "skill", Name: "remote", Revision: "sha256:" + strings.Repeat("a", 64), ContentDigest: "sha256:" + strings.Repeat("b", 64), Availability: mpapi.AvailabilityAvailable}
 	outcome := marketplace.DiscoveryOutcome{Endpoint: endpoint, Items: []mpapi.ResourceListItem{item}, Total: 1, CacheState: marketplace.DiscoveryCacheFresh, ObservedAt: time.Now()}
-	updated, _ = m.Update(discoveryLoadedMsg{generation: m.requests.active(requestDiscovery), sequence: 1, outcomes: []marketplace.DiscoveryOutcome{outcome}, done: true})
+	updated, _ = m.Update(discoveryLoadedMsg{generation: m.requests.Active(requestDiscovery), sequence: 1, outcomes: []marketplace.DiscoveryOutcome{outcome}, done: true})
 	m = updated.(Model)
 
 	enabled := row{Artifact: resolver.ResolvedArtifact{Entry: catalog.Entry{Kind: ir.KindSkill, Name: "audit"}}, EnabledGlobal: true}
@@ -1577,7 +1578,7 @@ func TestSyncKeyBlockedBeforeVerifiedInventory(t *testing.T) {
 	m.authoritativeRows = nil
 	m.flatItems = nil
 	m.loading = true
-	generation := m.requests.active(requestSnapshot)
+	generation := m.requests.Active(requestSnapshot)
 	stages := make(chan snapshotLoadedMsg)
 	close(stages)
 
@@ -1612,7 +1613,7 @@ func TestDiscoveryRowCannotInstallBeforeVerifiedInventory(t *testing.T) {
 	m.authoritativeRows = nil
 	m.flatItems = nil
 	m.loading = true
-	generation := m.requests.active(requestSnapshot)
+	generation := m.requests.Active(requestSnapshot)
 	endpoint := config.MarketplaceEntry{URL: "https://market.example", InstanceID: "market", Alias: "public"}
 	stages := make(chan snapshotLoadedMsg)
 	close(stages)
@@ -1621,7 +1622,7 @@ func TestDiscoveryRowCannotInstallBeforeVerifiedInventory(t *testing.T) {
 	m = updated.(Model)
 	item := mpapi.ResourceListItem{RegistryID: "registry-id", RegistrySlug: "tools", Kind: "skill", Name: "remote", Revision: "sha256:" + strings.Repeat("a", 64), ContentDigest: "sha256:" + strings.Repeat("b", 64), Availability: mpapi.AvailabilityAvailable}
 	outcome := marketplace.DiscoveryOutcome{Endpoint: endpoint, Items: []mpapi.ResourceListItem{item}, Total: 1, CacheState: marketplace.DiscoveryCacheFresh, ObservedAt: time.Now()}
-	updated, _ = m.Update(discoveryLoadedMsg{generation: m.requests.active(requestDiscovery), sequence: 1, outcomes: []marketplace.DiscoveryOutcome{outcome}, done: true})
+	updated, _ = m.Update(discoveryLoadedMsg{generation: m.requests.Active(requestDiscovery), sequence: 1, outcomes: []marketplace.DiscoveryOutcome{outcome}, done: true})
 	m = updated.(Model)
 
 	target := -1
