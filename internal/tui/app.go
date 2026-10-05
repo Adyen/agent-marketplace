@@ -230,6 +230,8 @@ func (m *Model) finishUpdateReload(generation requestGeneration, reloadErr error
 	m.updatePendingWarnings = nil
 	m.syncing = false
 	m.clearOperationProgress()
+	// Match the direct updateDoneMsg path: an update never satisfies sync+quit.
+	m.quitAfterSync = false
 	switch {
 	case pendingErr != nil:
 		m.recordOperationFailure(operationUpdate, diagnosticUpdate, pendingErr)
