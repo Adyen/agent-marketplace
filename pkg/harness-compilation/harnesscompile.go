@@ -771,6 +771,7 @@ func Materialize(r *Result, outDir string, opts ...WriteOption) (report *WriteRe
 	if !created.IsDir() {
 		return nil, fsboundary.ErrUnsafeFile
 	}
+	stagedFiles := make(map[string]fsboundary.Identity, len(artifacts))
 	cleanupStage := func() error {
 		current, inspectErr := native.Lstat(stageName)
 		if errors.Is(inspectErr, fs.ErrNotExist) {
@@ -778,6 +779,22 @@ func Materialize(r *Result, outDir string, opts ...WriteOption) (report *WriteRe
 		}
 		if inspectErr != nil || !os.SameFile(created, current) {
 			return errors.Join(fsboundary.ErrGenerationConflict, inspectErr)
+		}
+		for rel, observed := range stagedFiles {
+			info, leafErr := native.Lstat(filepath.Join(stageName, filepath.FromSlash(rel)))
+			if errors.Is(leafErr, fs.ErrNotExist) {
+				continue
+			}
+			if leafErr != nil {
+				return leafErr
+			}
+			identity, idErr := fsboundary.FileInfoIdentity(info)
+			if idErr != nil {
+				return idErr
+			}
+			if !identity.SameState(observed) {
+				return fsboundary.ErrGenerationConflict
+			}
 		}
 		return native.RemoveAll(stageName)
 	}
@@ -820,6 +837,7 @@ func Materialize(r *Result, outDir string, opts ...WriteOption) (report *WriteRe
 				mode = 0o644
 			}
 		}
+		stagedFiles[a.Path] = fsboundary.Identity{}
 		file, writeErr := stagedNative.OpenFile(filepath.FromSlash(a.Path), os.O_WRONLY|os.O_CREATE|os.O_EXCL, mode)
 		if writeErr != nil {
 			return nil, fmt.Errorf("harnesscompile.Materialize: write %s: %w", a.Path, writeErr)
@@ -828,7 +846,11 @@ func Materialize(r *Result, outDir string, opts ...WriteOption) (report *WriteRe
 		if writeErr == nil && existingMode {
 			writeErr = file.Chmod(mode)
 		}
-		if writeErr = errors.Join(writeErr, file.Close()); writeErr != nil {
+		info, statErr := file.Stat()
+		if statErr == nil {
+			stagedFiles[a.Path], statErr = fsboundary.FileInfoIdentity(info)
+		}
+		if writeErr = errors.Join(writeErr, statErr, file.Close()); writeErr != nil {
 			return nil, fmt.Errorf("harnesscompile.Materialize: write %s: %w", a.Path, writeErr)
 		}
 	}
@@ -847,6 +869,17 @@ func Materialize(r *Result, outDir string, opts ...WriteOption) (report *WriteRe
 			return nil, errors.Join(fsboundary.ErrGenerationConflict, stageErr)
 		}
 		src := filepath.Join(stageName, filepath.FromSlash(a.Path))
+		stagedInfo, stagedErr := native.Lstat(src)
+		if stagedErr != nil {
+			return nil, errors.Join(fsboundary.ErrGenerationConflict, stagedErr)
+		}
+		stagedID, stagedErr := fsboundary.FileInfoIdentity(stagedInfo)
+		if stagedErr != nil {
+			return nil, stagedErr
+		}
+		if !stagedID.SameState(stagedFiles[a.Path]) {
+			return nil, fsboundary.ErrGenerationConflict
+		}
 		dst := filepath.Join(outDir, filepath.FromSlash(a.Path))
 		if err := rejectSymlinkedParentComponents(outDir, dst); err != nil {
 			return nil, fmt.Errorf("harnesscompile.Materialize: artifact %q: %w", a.Path, err)
