@@ -705,7 +705,7 @@ func (s *Store) acquireLock(ctx context.Context) (*os.File, time.Duration, int, 
 		if closeErr := f.Close(); closeErr != nil {
 			err = errors.Join(err, closeErr)
 		}
-		return nil, 0, 0, err
+		return nil, 0, 0, fmt.Errorf("ownership: validate lock file %s: %w", path, err)
 	}
 
 	start := time.Now()
@@ -726,7 +726,7 @@ func (s *Store) acquireLock(ctx context.Context) (*os.File, time.Duration, int, 
 				if closeErr := f.Close(); closeErr != nil {
 					err = errors.Join(err, closeErr)
 				}
-				return nil, time.Since(start), attempts, err
+				return nil, time.Since(start), attempts, fmt.Errorf("ownership: validate lock file %s: %w", path, err)
 			}
 			waited := time.Since(start)
 			if waited >= LockContendedReportThreshold {
