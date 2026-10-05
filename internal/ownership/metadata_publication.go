@@ -112,11 +112,20 @@ func (s *Store) verifyStateDirectory(parent *fsboundary.Dir, relative string) er
 }
 
 func (s *Store) writeMetadata(name string, data []byte) error {
-	_, err := s.writeObservedMetadata(name, data)
+	_, err := s.writeObservedMetadata(name, data, nil)
 	return err
 }
 
-func (s *Store) writeObservedMetadata(name string, data []byte) (pin metadataPin, err error) {
+func (s *Store) writeObservedMetadata(name string, data []byte, expected *metadataPin) (pin metadataPin, err error) {
+	validate := func() error {
+		if expected != nil && expected.file.Inode != 0 {
+			return s.verifyOriginalMetadata(name, *expected, true)
+		}
+		return nil
+	}
+	if err := validate(); err != nil {
+		return pin, err
+	}
 	parent, err := s.captureMetadataParent()
 	if err != nil {
 		return pin, err
@@ -126,7 +135,12 @@ func (s *Store) writeObservedMetadata(name string, data []byte) (pin metadataPin
 			err = errors.Join(err, closeErr)
 		}
 	}()
-	return writeObservedMetadataFile(parent, name, data, func() error { return s.verifyMetadataParent(parent) })
+	return writeObservedMetadataFile(parent, name, data, func() error {
+		if err := s.verifyMetadataParent(parent); err != nil {
+			return err
+		}
+		return validate()
+	})
 }
 
 func writeObservedMetadataFile(parent *fsboundary.Dir, name string, data []byte, validate func() error) (pin metadataPin, err error) {

@@ -612,7 +612,7 @@ func (s *Store) writeJournal(j *Journal) error {
 	if err != nil {
 		return fmt.Errorf("ownership: marshal journal: %w", err)
 	}
-	pin, err := s.writeObservedMetadata(journalFileName, append(data, '\n'))
+	pin, err := s.writeObservedMetadata(journalFileName, append(data, '\n'), &j.observed)
 	if err != nil {
 		return err
 	}
