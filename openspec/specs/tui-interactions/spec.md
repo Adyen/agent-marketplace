@@ -5,29 +5,17 @@ Defines modal keyboard interactions and guarded configuration writes so selectio
 
 ## Requirements
 
-### Requirement: Multi-harness selection
-Harness editing and initial configuration SHALL support selecting multiple harnesses. Switching global and project scopes SHALL load that scope's selection without writing; Space SHALL toggle the focused selection without writing; only explicit Enter SHALL save after non-empty validation. Saving an existing configuration SHALL preserve unknown selected harness IDs.
-
-#### Scenario: Scope and selection without write
-- **WHEN** a user switches scopes with g or p, toggles a harness with Space, and cancels
-- **THEN** each scope's selections remain available and all configuration bytes stay unchanged
-
-#### Scenario: Save selected harnesses
-- **WHEN** a user explicitly submits a non-empty multi-selection that includes an unknown existing ID
-- **THEN** the guarded write preserves that ID and updates only the intended scope
-
-#### Scenario: Empty selection
-- **WHEN** a user attempts to save an empty harness selection
-- **THEN** the form refuses the save without modifying configuration bytes
-
 ### Requirement: Explicit modal intent
-Toggle and config-editor accelerators SHALL retain their documented actions; migration, sync-and-quit, and quit modals SHALL retain affirmative, negative and cancel paths. q, Esc and Ctrl+C SHALL be routed before a form may submit. Modal submission SHALL use the existing serialized guarded operation and authoritative post-write reload; no form completion alone SHALL claim a write succeeded.
+
+q, Esc, and Ctrl+C SHALL be routed before a form may submit. Toggle and config-editor accelerators SHALL retain their documented TUI actions. Modal submission SHALL use the `session-interactions` guarded mutation contract.
 
 #### Scenario: Cancel or stale completion
+
 - **WHEN** a user cancels a modal or a late write completion arrives for an inactive operation
 - **THEN** no unintended write occurs and the active operation and diagnostics remain unchanged
 
 #### Scenario: Guarded submission
+
 - **WHEN** a user submits a mutation while another operation is active or prerequisites are invalid
 - **THEN** the same guard used by the keyboard path blocks the new write without claiming success
 
@@ -48,3 +36,33 @@ The initial harness-selection and target-harness dialogs SHALL restore the compl
 
 - **WHEN** a user opens either harness dialog at a supported full size, selects an unknown existing harness ID, shrinks the terminal to a compact size, then expands it to the original size
 - **THEN** all harness choices, including the selected unknown ID, SHALL be visible with the same cursor and selected IDs
+
+### Requirement: Multi-harness key bindings
+
+The TUI SHALL use g and p to select the edited scope without writing, Space to toggle the focused Harness target without writing, and Enter to submit the focused multi-selection through the guarded save. Surface-neutral selection and validation rules follow `session-interactions`.
+
+#### Scenario: Scope and selection without write
+
+- **WHEN** a user switches scopes with g or p, toggles a Harness target with Space, and cancels
+- **THEN** each scope's selections remain available and all configuration bytes stay unchanged
+
+#### Scenario: Enter saves selected Harness targets
+
+- **WHEN** a user has a non-empty Harness target selection in the focused form and presses Enter
+- **THEN** the TUI SHALL submit that selection through the guarded write
+
+### Requirement: Legacy user configuration migration offer excludes non-user roots
+
+The TUI SHALL offer startup migration only for the legacy user-personal root and SHALL never migrate a repository or personal-local root through that offer.
+
+#### Scenario: Accepting the offer migrates only the user-personal root
+
+- **WHEN** startup finds legacy user-personal, repository, and personal-local roots and the user accepts migration
+- **THEN** only the user-personal root SHALL be migrated to v4
+- **AND** the repository and personal-local roots SHALL remain unchanged
+
+#### Scenario: Declining the offer continues through the legacy reader
+
+- **WHEN** startup finds legacy user-personal, repository, and personal-local roots and the user declines migration
+- **THEN** the TUI SHALL continue through the legacy reader
+- **AND** no user-personal, repository, or personal-local configuration SHALL be written

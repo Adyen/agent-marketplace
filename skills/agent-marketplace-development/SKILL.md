@@ -53,7 +53,17 @@ Then skim:
 - `internal/harness/roots.go`, `registry.go`, `destinations.go` —
   `TargetInfo` metadata, the Devin/Codex installation adapters, and
   single-root vs. Codex-partitioned destinations.
-- `internal/tui/state.go` — `Model` and `row` shape used by the TUI.
+- `internal/session/` — the surface-neutral interactive-session core:
+  staged snapshots, rows (`Row`, `BuildRows`), generation isolation,
+  mutation gating, progress observation, diagnostics, guarded actions,
+  and `init` harness-target/first-configuration detection. No Bubble Tea
+  or other charm.land/charmbracelet imports.
+- `internal/lifecycle/` — runtime lock/lifecycle wiring shared by CLI and
+  TUI: `PrepareRuntimeLocks`, `RefreshDriftedMarketplaceLocks`,
+  `ReconcileCommandDependencies`.
+- `internal/tui/state.go` — `Model` fields used by the TUI; `row` is a
+  `session.Row` alias declared in `internal/tui/session.go`, which adapts
+  the session core into `tea.Cmd`/`tea.Msg`.
 
 ## Build and smoke test
 
@@ -97,8 +107,10 @@ pipeline.LoadEffective -> config.EffectiveConfig    [four layers + includes + lo
   exits. Mutating commands (`install`, `remove`, `update`) go through
   `pipeline.Install`/`Remove`/`Update`, which publish config and the layer
   lock in one dependency transaction (`internal/dependencytxn`).
-- **TUI** (`internal/tui/`) runs it on startup and after every config
-  write, keeping a `Model` in memory and re-rendering.
+- **TUI** (`internal/tui/`) is a Bubble Tea adapter over the
+  `internal/session` core: the core runs the pipeline as staged
+  snapshots on startup and after every config write, and the TUI keeps a
+  `Model` of terminal/view state and re-renders from the core's events.
 
 Everything below this line — resource selection rules, symlink targets,
 name collision behavior — is shared. Fixes at the `internal/*` layer
@@ -258,8 +270,11 @@ func resolveInheritedList(defaults, overrides []string) []string {
 **Consequence for editors**: when writing a resource into a config, if
 the matching registry entry has its own list for that kind, write into
 *that* list, not the top-level. The TUI toggle modal
-(`internal/tui/modal.go` → `runScopedToggle`) runs inside the TUI's
-`MutateConfigWithDependencies` hook (`cmd/agent-marketplace/tui.go`) and
+(`internal/tui/modal.go` → `runScopedToggle`) runs inside the injected
+`DependencyLifecycle.Mutate` hook — `cmd/agent-marketplace/tui.go` wires
+`session.RuntimeLifecycle()`, which routes through
+`pipeline.MutateConfigWithDependencies` and
+`lifecycle.ReconcileCommandDependencies` — and
 edits the staged path through `pipeline.EditLayerAtPath` with a
 `pipeline.LayerMutation`, so every kind and both schemas share one editor.
 
@@ -317,8 +332,9 @@ The TUI is a standard [Elm-style][elm] Bubble Tea app:
 |---|---|
 | `app.go` | `NewModel`, `Update`, `View`, `handleKey` |
 | `keys.go` | `keyMap`: every binding and its help text |
-| `state.go` | `Model` fields, `row`, `pane`, glyph/status logic |
-| `actions.go` | Snapshot loading (`loadSnapshot`/`readSnapshot`), `buildRows`, tea.Cmd factories |
+| `state.go` | `Model` fields, `pane`, glyph/status logic |
+| `session.go` | Adapter to the `internal/session` core: type aliases, snapshot loading (`loadSnapshot`/`readSnapshot*` wrappers), core-event → `tea.Msg` bridging |
+| `actions.go` | tea.Cmd factories for dependency lifecycle calls (sync/update via the injected `DependencyLifecycle`) |
 | `requests.go` | `requestGeneration` bookkeeping for async results |
 | `modal.go` | Per-scope toggle modal (`paneToggleModal`) |
 | `harness.go` / `init.go` | `H` harness modal and first-run harness selection |
@@ -331,12 +347,19 @@ The TUI is a standard [Elm-style][elm] Bubble Tea app:
 | `list.go` / `detail.go` | Left and right panes |
 | `badges.go` | `G`/`P`/`L`/`R`/`P-` origin badges next to each row |
 | `footer.go` / `help.go` | Footer hint line and `?` overlay, rendered from `keyMap` |
-| `overlay.go` | Centers modals on top of the base screen |
-| `sanitize.go` / `terminal*.go` | Untrusted-text sanitizing, terminal size and restore guard |
-| `theme.go` | lipgloss styles |
+| `composition.go` / `modal_frame.go` | Overlay compositing: modals and toasts on top of the base screen |
+| `terminal*.go` | Terminal size and restore guard |
+| `theme.go` / `palette.go` | lipgloss styles and the command palette |
+
+Untrusted-text sanitizing (`SanitizeTerminalData`,
+`SanitizeMarkdownForTerminal`) lives in `internal/session/sanitize.go`
+and is re-exported through `session.go` aliases; `row`, `BuildRows`, the
+request/diagnostic/operation state types, and staged-snapshot logic all
+live in the `internal/session` core.
 
 `docs/tui-product-contract.md` describes the intended TUI behavior; the
-`tui-*` capabilities under `openspec/specs/` are normative once they exist.
+`tui-*` (terminal surface) and `session-*` (surface-neutral core)
+capabilities under `openspec/specs/` are normative.
 
 ### Message flow for a config-writing toggle
 
@@ -379,7 +402,7 @@ them independently. When designing new flows:
 - The toggle always targets the specific registry entry that contains
   the skill (`row.RegistryURL`). A skill available from multiple
   registry entries is disambiguated by using the first entry in config
-  order that exposes it (`buildRows` in `actions.go`).
+  order that exposes it (`session.BuildRows`, aliased in `session.go`).
 - `required: true` skills refuse toggling via a `toastMsg`. Keep that
   guard — silently no-op'ing is confusing.
 - `Available` rows (skill in a catalog but not resolved) are
@@ -621,7 +644,7 @@ Check the data flow at three levels:
 2. **Resolver output** — is the skill in `resolved` with the right
    `IsGlobal`? Add a `TestXxx` that calls `resolver.Resolve` with the
    edited config directly.
-3. **Row construction** — does `buildRows` produce a row with the
+3. **Row construction** — does `session.BuildRows` produce a row with the
    expected `EnabledGlobal/Project/Local`?
 
 The bug is almost always at layer 1 or 2. The TUI render is a pure
