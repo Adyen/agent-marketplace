@@ -37,7 +37,9 @@ func (s *Store) openLockFile() (file *os.File, err error) {
 		if closeErr := parent.Close(); closeErr != nil {
 			err = errors.Join(err, closeErr)
 			if file != nil {
-				err = errors.Join(err, file.Close())
+				if fileCloseErr := file.Close(); fileCloseErr != nil {
+					err = errors.Join(err, fileCloseErr)
+				}
 				file = nil
 			}
 		}
