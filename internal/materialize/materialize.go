@@ -3530,12 +3530,20 @@ func prepareSkillLinkCache(link skillLink) (err error) {
 		if captureErr != nil {
 			return captureErr
 		}
-		defer func() { err = errors.Join(err, parent.Close()) }()
+		defer func() {
+			if closeErr := parent.Close(); closeErr != nil {
+				err = errors.Join(err, closeErr)
+			}
+		}()
 		native, rootErr := parent.NativeRoot()
 		if rootErr != nil {
 			return rootErr
 		}
-		defer func() { err = errors.Join(err, native.Close()) }()
+		defer func() {
+			if closeErr := native.Close(); closeErr != nil {
+				err = errors.Join(err, closeErr)
+			}
+		}()
 		name := filepath.Base(supportStage)
 		created, statErr := native.Lstat(name)
 		if statErr != nil {
@@ -3547,10 +3555,15 @@ func prepareSkillLinkCache(link skillLink) (err error) {
 		defer func() {
 			current, inspectErr := native.Lstat(name)
 			if inspectErr != nil || !os.SameFile(created, current) {
-				err = errors.Join(err, fsboundary.ErrGenerationConflict, inspectErr)
+				err = errors.Join(err, fsboundary.ErrGenerationConflict)
+				if inspectErr != nil {
+					err = errors.Join(err, inspectErr)
+				}
 				return
 			}
-			err = errors.Join(err, native.RemoveAll(name))
+			if removeErr := native.RemoveAll(name); removeErr != nil {
+				err = errors.Join(err, removeErr)
+			}
 		}()
 		if err := copyScopedSupport(link.sourceDir, supportStage, compiled, "", len(link.declaredSupport) == 0, writeSupportStage); err != nil {
 			return err
