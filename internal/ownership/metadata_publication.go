@@ -214,7 +214,13 @@ func writeObservedMetadataFile(parent *fsboundary.Dir, name string, data []byte,
 	if err := output.ReadTargetWith(func(io.Reader) error { return nil }); err != nil {
 		return pin, false, err
 	}
-	if err := destination.Publish(parent, stagedName); err != nil {
+	publish := destination.Publish
+	if publishMetadataHook != nil {
+		publish = func(stagedParent *fsboundary.Dir, staged string) error {
+			return publishMetadataHook(destination, stagedParent, staged)
+		}
+	}
+	if err := publish(parent, stagedName); err != nil {
 		return pin, publishCrossedRename(err), err
 	}
 	info, err = native.Lstat(name)
@@ -245,6 +251,11 @@ func publishedMetadataMatches(produced, published fsboundary.Identity) bool {
 		published.Mode == produced.Mode &&
 		published.UID == produced.UID
 }
+
+// publishMetadataHook wraps metadata publication. It is nil in production and
+// set only by serial tests in this package to inject failures around the real
+// Destination.Publish.
+var publishMetadataHook func(destination *fsboundary.Destination, stagedParent *fsboundary.Dir, stagedName string) error
 
 // publishCrossedRename reports whether a failed Publish had already renamed
 // the staged file into place: Publish marks post-rename directory-sync
