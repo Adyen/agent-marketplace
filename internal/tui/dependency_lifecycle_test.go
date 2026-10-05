@@ -10,7 +10,7 @@ import (
 	"sync/atomic"
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/lockfile"
@@ -22,13 +22,13 @@ import (
 func TestDependencyLifecycleCallbacksAreInvoked(t *testing.T) {
 	var syncCalls, updateCalls atomic.Int64
 	model := NewModel("/repo", "/home", WithDependencyLifecycle(DependencyLifecycle{
-		Sync: func(context.Context, pipeline.Workspace) error {
+		Sync: func(context.Context, pipeline.Workspace) ([]error, error) {
 			syncCalls.Add(1)
-			return nil
+			return nil, nil
 		},
-		Update: func(context.Context, pipeline.Workspace) error {
+		Update: func(context.Context, pipeline.Workspace) ([]error, error) {
 			updateCalls.Add(1)
-			return nil
+			return nil, nil
 		},
 	}))
 
@@ -60,9 +60,9 @@ func TestDependencyLifecycleReceivesModelWorkspace(t *testing.T) {
 	}
 	var gotRepo, gotLocal string
 	model := NewModel(repo, t.TempDir(), WithWorkspace(workspace), WithDependencyLifecycle(DependencyLifecycle{
-		Sync: func(_ context.Context, ws pipeline.Workspace) error {
+		Sync: func(_ context.Context, ws pipeline.Workspace) ([]error, error) {
 			gotRepo, gotLocal = ws.RepoRoot(), ws.LocalConfigDir()
-			return nil
+			return nil, nil
 		},
 	}))
 
@@ -77,9 +77,9 @@ func TestDependencyLifecycleReceivesModelWorkspace(t *testing.T) {
 func TestConfigMutationInvalidatesCleanDriftBeforeReload(t *testing.T) {
 	var syncCalls atomic.Int64
 	model := NewModel("/repo", "/home", WithDependencyLifecycle(DependencyLifecycle{
-		Sync: func(context.Context, pipeline.Workspace) error {
+		Sync: func(context.Context, pipeline.Workspace) ([]error, error) {
 			syncCalls.Add(1)
-			return nil
+			return nil, nil
 		},
 	}))
 	model.loading = false
@@ -91,7 +91,7 @@ func TestConfigMutationInvalidatesCleanDriftBeforeReload(t *testing.T) {
 
 	updated, _ := model.Update(configWrittenMsg{operation: operation, skillName: "review", enabled: true})
 	model = updated.(Model)
-	updated, command := model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
+	updated, command := model.Update(tea.KeyPressMsg{Code: 's', Text: string('s')})
 	model = updated.(Model)
 	for _, command := range batchCmds(command) {
 		if _, ok := command().(syncDoneMsg); ok {
@@ -103,7 +103,7 @@ func TestConfigMutationInvalidatesCleanDriftBeforeReload(t *testing.T) {
 	}
 }
 
-func TestSuccessfulSyncClearsPendingDriftBeforeReload(t *testing.T) {
+func TestSuccessfulSyncClearsPendingDriftAfterReload(t *testing.T) {
 	model := NewModel("/repo", "/home")
 	model.loading = false
 	model.syncing = true
@@ -112,7 +112,13 @@ func TestSuccessfulSyncClearsPendingDriftBeforeReload(t *testing.T) {
 
 	updated, _ := model.Update(syncDoneMsg{})
 	model = updated.(Model)
-	_, command := model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'q'}})
+	updated, _ = model.Update(snapshotLoadedMsg{
+		generation:      model.requests.active(requestSnapshot),
+		mergedCfg:       &config.Config{},
+		driftAssessment: driftReady,
+	})
+	model = updated.(Model)
+	_, command := model.Update(tea.KeyPressMsg{Code: 'q', Text: string('q')})
 	if !cmdProducesQuitMsg(command) {
 		t.Fatal("successful sync retained stale pending drift and blocked quit")
 	}
@@ -128,11 +134,19 @@ func TestDependencyLifecycleFailuresAreShownWithoutFallback(t *testing.T) {
 	t.Cleanup(func() { runPipelineSync = previousSync })
 
 	model := NewModel("/repo", "/home", WithDependencyLifecycle(DependencyLifecycle{
-		Sync:   func(context.Context, pipeline.Workspace) error { return failure },
-		Update: func(context.Context, pipeline.Workspace) error { return failure },
+		Sync:   func(context.Context, pipeline.Workspace) ([]error, error) { return nil, failure },
+		Update: func(context.Context, pipeline.Workspace) ([]error, error) { return nil, failure },
 	}))
 	model.syncing = true
 	updated, _ := model.Update(model.dependencySyncCmd()())
+	model = updated.(Model)
+	// The pipeline failure is the verdict; it surfaces once the authoritative
+	// reload the completion scheduled is accepted.
+	updated, _ = model.Update(snapshotLoadedMsg{
+		generation:      model.requests.active(requestSnapshot),
+		mergedCfg:       &config.Config{},
+		driftAssessment: driftReady,
+	})
 	model = updated.(Model)
 	if !strings.Contains(model.toast, failure.Error()) || len(model.errs) == 0 || !errors.Is(model.errs[0], failure) {
 		t.Fatalf("sync lock failure not shown: toast %q, errors %v", model.toast, model.errs)
@@ -154,9 +168,9 @@ func TestDependencyLifecycleFailuresAreShownWithoutFallback(t *testing.T) {
 
 func TestInitDoesNotInvokeDependencyLifecycle(t *testing.T) {
 	var calls atomic.Int64
-	callback := func(context.Context, pipeline.Workspace) error {
+	callback := func(context.Context, pipeline.Workspace) ([]error, error) {
 		calls.Add(1)
-		return nil
+		return nil, nil
 	}
 	model := NewModel(t.TempDir(), t.TempDir(), WithDependencyLifecycle(DependencyLifecycle{Sync: callback, Update: callback}))
 	for _, cmd := range batchCmds(model.Init()) {
@@ -164,6 +178,112 @@ func TestInitDoesNotInvokeDependencyLifecycle(t *testing.T) {
 	}
 	if calls.Load() != 0 {
 		t.Fatalf("startup invoked mutable dependency lifecycle %d times", calls.Load())
+	}
+}
+
+// spec: marketplace-api/tui-sync-and-update-report-the-refresh-non-fatally
+func TestDependencyLifecycleWarningsSurfaceWithoutFailure(t *testing.T) {
+	warning := errors.New("marketplace.archive-evidence-refreshed: src/skill/review locked archive digest sha256:aaaa refreshed to sha256:bbbb for the unchanged content digest")
+	second := errors.New("marketplace.archive-evidence-refreshed: src/skill/audit locked archive digest sha256:cccc refreshed to sha256:dddd for the unchanged content digest")
+	failureWarning := errors.New("marketplace.archive-evidence-refreshed: failed update retained the old archive digest")
+	failure := errors.New("materialization failed")
+	failed := false
+	model := NewModel("/repo", "/home", WithDependencyLifecycle(DependencyLifecycle{
+		Sync: func(context.Context, pipeline.Workspace) ([]error, error) {
+			if failed {
+				return []error{failureWarning}, failure
+			}
+			return []error{warning, second}, nil
+		},
+		Update: func(context.Context, pipeline.Workspace) ([]error, error) {
+			return []error{warning}, nil
+		},
+	}))
+	model.loading = false
+	model.syncing = true
+	done, ok := model.dependencySyncCmd()().(syncDoneMsg)
+	if !ok || done.err != nil {
+		t.Fatalf("sync done = %#v", done)
+	}
+	updated, _ := model.Update(done)
+	model = updated.(Model)
+	if !model.syncing {
+		t.Fatal("sync completion ended before its authoritative reload")
+	}
+	if len(model.warnings) != 0 || strings.Contains(model.toast, "Sync complete") {
+		t.Fatalf("sync warnings or success surfaced before reload: warnings %v, toast %q", model.warnings, model.toast)
+	}
+	generation := model.requests.active(requestSnapshot)
+	if generation == 0 {
+		t.Fatal("sync completion did not schedule an authoritative reload")
+	}
+	updated, _ = model.Update(snapshotLoadedMsg{
+		generation:      generation,
+		mergedCfg:       &config.Config{},
+		driftAssessment: driftReady,
+	})
+	model = updated.(Model)
+	if model.syncing {
+		t.Fatal("accepted reload left sync active")
+	}
+	if len(model.errs) != 0 {
+		t.Fatalf("non-fatal warnings recorded as errors: %v", model.errs)
+	}
+	for _, want := range []error{warning, second} {
+		if !slices.Contains(model.warnings, want) {
+			t.Fatalf("warnings %v missing %v", model.warnings, want)
+		}
+	}
+	if model.toast != "Sync complete with 2 warning(s)" {
+		t.Fatalf("warning sync toast = %q; want completion after reload", model.toast)
+	}
+
+	previousSnapshot := readSnapshotForUpdate
+	readSnapshotForUpdate = func(context.Context, pipeline.Workspace, string, catalogLoadMode) snapshotLoadedMsg {
+		return snapshotLoadedMsg{driftAssessment: driftReady}
+	}
+	t.Cleanup(func() { readSnapshotForUpdate = previousSnapshot })
+	generation = model.beginRequest(requestSnapshot)
+	model.syncing = true
+	update, ok := model.dependencyUpdateCmd(generation)().(updateDoneMsg)
+	if !ok || update.err != nil {
+		t.Fatalf("update done = %#v", update)
+	}
+	updated, _ = model.Update(update)
+	model = updated.(Model)
+	if len(model.errs) != 0 {
+		t.Fatalf("update warning recorded as an error: %v", model.errs)
+	}
+	if !slices.Contains(model.warnings, warning) {
+		t.Fatalf("update warnings %v missing %v", model.warnings, warning)
+	}
+	if model.toast != "Update complete with 1 warning(s)" {
+		t.Fatalf("warning update toast = %q; want a non-fatal completion notice", model.toast)
+	}
+
+	failed = true
+	model.syncing = true
+	done, ok = model.dependencySyncCmd()().(syncDoneMsg)
+	if !ok || !errors.Is(done.err, failure) {
+		t.Fatalf("failed sync done = %#v; want the hard error", done)
+	}
+	updated, _ = model.Update(done)
+	model = updated.(Model)
+	if !model.syncing || len(model.errs) != 0 || strings.Contains(model.toast, "sync error") {
+		t.Fatalf("failed sync surfaced before its reload: syncing %t, errors %v, toast %q", model.syncing, model.errs, model.toast)
+	}
+	generation = model.requests.active(requestSnapshot)
+	updated, _ = model.Update(snapshotLoadedMsg{
+		generation:      generation,
+		mergedCfg:       &config.Config{},
+		driftAssessment: driftReady,
+	})
+	model = updated.(Model)
+	if !slices.ContainsFunc(model.errs, func(err error) bool { return errors.Is(err, failure) }) || !strings.Contains(model.toast, "sync error") {
+		t.Fatalf("hard error masked by accompanying warning: errs %v, toast %q", model.errs, model.toast)
+	}
+	if len(model.warnings) != 0 {
+		t.Fatalf("warnings from failed sync were recorded: %v", model.warnings)
 	}
 }
 

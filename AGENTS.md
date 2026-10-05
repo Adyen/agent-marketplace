@@ -45,7 +45,7 @@ E2E_PARALLEL=8 make e2e  # control concurrency (default 4, set to 1 for serial)
 
 ### TUI QA
 
-Run direct real-terminal test typechecking with `make tui-qa-check` and all twelve deterministic user journeys with `make tui-qa`. TUI QA requires no organization-specific infrastructure; do not place machine-specific values in tracked commands, reports, or fixtures.
+Run direct real-terminal test typechecking with `make tui-qa-check` and all deterministic user journeys with `make tui-qa`. TUI QA requires no organization-specific infrastructure; do not place machine-specific values in tracked commands, reports, or fixtures.
 
 ### Local toolchain
 
