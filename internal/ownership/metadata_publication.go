@@ -225,9 +225,23 @@ func writeObservedMetadataFile(parent *fsboundary.Dir, name string, data []byte,
 	if err != nil {
 		return pin, true, err
 	}
-	if !pin.file.SameObject(produced) || !pin.file.Mode.IsRegular() || pin.file.Links != 1 {
+	if !publishedMetadataMatches(produced, pin.file) {
 		return pin, true, fsboundary.ErrGenerationConflict
 	}
 	pin.parent = parent.Identity()
 	return pin, true, nil
+}
+
+// publishedMetadataMatches reports whether the leaf observed after rename is
+// still the staged object with its staged content state. Change time is
+// excluded because a rename may update it; an in-place edit after publication
+// changes size or modification time and must not become the recorded pin.
+func publishedMetadataMatches(produced, published fsboundary.Identity) bool {
+	return published.SameObject(produced) &&
+		published.Mode.IsRegular() &&
+		published.Links == 1 &&
+		published.Size == produced.Size &&
+		published.ModTimeNS == produced.ModTimeNS &&
+		published.Mode == produced.Mode &&
+		published.UID == produced.UID
 }
