@@ -44,7 +44,13 @@ onBeforeUnmount(() => { disposed = true })
             <h4 class="font-medium text-highlighted">{{ attempt.operation }} <span class="font-normal text-muted">· attempt {{ attempt.attempt }}</span></h4>
             <p class="text-xs text-muted">Configuration r{{ attempt.configuration_revision }} · generation {{ attempt.registry_generation }} · policy r{{ attempt.policy_revision }}</p>
             <div class="flex flex-wrap gap-1.5"><AdminIdChip label="Job" :value="attempt.job_id" /><AdminIdChip label="Parent" :value="attempt.parent_job_id" /><AdminIdChip label="Publication" :value="attempt.publication_id" /></div>
-            <p v-if="attempt.outcome === 'failed'" class="flex items-center gap-1 text-xs text-muted">Indexing failed.<AdminHint text="Detailed failure diagnostics are not returned by this endpoint yet. Check the worker logs for this job ID." /></p>
+            <div v-if="attempt.outcome === 'failed' || attempt.outcome === 'superseded'" role="group" aria-label="Attempt diagnostics" class="space-y-1 text-xs text-muted">
+              <template v-if="attempt.failure_code || attempt.failure_cause">
+                <code v-if="attempt.failure_code" class="block break-words">{{ attempt.failure_code }}</code>
+                <p v-if="attempt.failure_cause" class="break-words">{{ attempt.failure_cause }}</p>
+              </template>
+              <p v-else class="flex items-center gap-1">No failure details were recorded for this attempt.<AdminHint text="Check the worker logs for this job ID." /></p>
+            </div>
           </div>
           <AdminTime :value="attempt.recorded_at" class="text-xs text-muted" />
         </article>
