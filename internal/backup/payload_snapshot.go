@@ -2,6 +2,7 @@ package backup
 
 import (
 	"errors"
+	"fmt"
 	"io"
 	"path/filepath"
 
@@ -32,7 +33,7 @@ func withBackupPayload(path string, read func(io.Reader) error) (err error) {
 		}
 	}()
 	if file.Link() != nil {
-		return fsboundary.ErrUnsafeFile
+		return fmt.Errorf("%w: backup archive %s is linked", fsboundary.ErrUnsafeFile, absolute)
 	}
 	return file.ReadTargetWith(read)
 }
