@@ -7,7 +7,10 @@ export default defineEventHandler(event => {
   const config = useRuntimeConfig(event)
   const browserBase = String(config.app.baseURL || '/').replace(/\/$/, '')
   const adminPath = `${browserBase}/admin`
-  if (event.path.split('?')[0] === adminPath || event.path.startsWith(`${adminPath}/`)) {
+  const authErrorPath = `${browserBase}/auth/error`
+  const requestPath = event.path.split('?')[0] ?? ''
+  const authErrorRequest = requestPath === authErrorPath || requestPath === '/auth/error'
+  if (requestPath === adminPath || requestPath.startsWith(`${adminPath}/`) || authErrorRequest) {
     setResponseHeader(event, 'Cache-Control', 'no-store')
     setResponseHeader(event, 'X-Robots-Tag', 'noindex, nofollow, noarchive')
   }
@@ -31,7 +34,7 @@ export default defineEventHandler(event => {
   }
 
   setResponseHeader(event, 'Content-Security-Policy', [...basePolicy, imagePolicy(imageSources), scriptPolicy(nonce), `connect-src ${connectSources.join(' ')}`].join('; '))
-  setResponseHeader(event, 'Referrer-Policy', 'strict-origin-when-cross-origin')
+  setResponseHeader(event, 'Referrer-Policy', authErrorRequest ? 'no-referrer' : 'strict-origin-when-cross-origin')
   setResponseHeader(event, 'X-Content-Type-Options', 'nosniff')
   setResponseHeader(event, 'X-Frame-Options', 'DENY')
   setResponseHeader(event, 'Permissions-Policy', 'camera=(), geolocation=(), microphone=()')
