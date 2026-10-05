@@ -47,8 +47,8 @@ func (s *Store) verifyStateDirectory(parent *fsboundary.Dir, relative string) er
 		return err
 	}
 	unchanged := fresh.Identity().SameObject(parent.Identity())
-	if err := fresh.Close(); err != nil {
-		return err
+	if closeErr := fresh.Close(); closeErr != nil {
+		return closeErr
 	}
 	if !unchanged {
 		return fsboundary.ErrGenerationConflict
@@ -98,11 +98,17 @@ func (s *Store) writeObservedMetadata(name string, data []byte) (pin metadataPin
 	}
 	info, err := staged.Stat()
 	if err != nil {
-		return pin, errors.Join(err, staged.Close())
+		if closeErr := staged.Close(); closeErr != nil {
+			return pin, errors.Join(err, closeErr)
+		}
+		return pin, err
 	}
 	created, err := fsboundary.FileInfoIdentity(info)
 	if err != nil {
-		return pin, errors.Join(err, staged.Close())
+		if closeErr := staged.Close(); closeErr != nil {
+			return pin, errors.Join(err, closeErr)
+		}
+		return pin, err
 	}
 	defer func() {
 		if staged != nil {

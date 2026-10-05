@@ -63,6 +63,59 @@ func TestConvertSourceRefusesForeignPayloadBeforePublication(t *testing.T) {
 	}
 }
 
+func TestConvertSourceCapturedAuthorityMatchesGuard(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	for _, tt := range []struct {
+		name    string
+		replace bool
+	}{
+		{name: "different-root"},
+		{name: "replaced-root", replace: true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			parent := t.TempDir()
+			sourcePath := filepath.Join(parent, "source")
+			writeClaudePluginSkill(t, sourcePath, "captured-probe")
+			source, err := fsboundary.OpenSourceFS(sourcePath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() {
+				if err := source.Close(); err != nil {
+					t.Error(err)
+				}
+			})
+			root, err := snapshotConversionRoot(sourcePath, true)
+			if err != nil {
+				t.Fatal(err)
+			}
+			control, err := convertCapturedSource(source, root, "claude", "factory")
+			if err != nil || control == nil || control.HasErrors() || len(control.Artifacts) == 0 {
+				t.Fatalf("healthy captured source did not convert: %+v %v", control, err)
+			}
+			guardPath := filepath.Join(parent, "other")
+			if tt.replace {
+				if err := os.Rename(sourcePath, filepath.Join(parent, "retained")); err != nil {
+					t.Fatal(err)
+				}
+				guardPath = sourcePath
+			}
+			writeClaudePluginSkill(t, guardPath, "guard-probe")
+			guard, err := snapshotConversionRoot(guardPath, true)
+			if err != nil {
+				t.Fatal(err)
+			}
+			result, err := convertCapturedSource(source, guard, "claude", "factory")
+			if !errors.Is(err, fsboundary.ErrGenerationConflict) || result != nil {
+				t.Fatalf("divergent source authority produced a conversion: %+v %v", result, err)
+			}
+			assertFileContents(t, filepath.Join(guardPath, "skills", "guard-probe", "SKILL.md"), "---\nname: guard-probe\ndescription: Demo skill\nmetadata:\n  tags:\n    - demo\n---\n\n# Demo skill\n")
+		})
+	}
+}
+
 func TestConvertSourceContainedAliasAndHardLink(t *testing.T) {
 	if isolateCommandTest(t) {
 		return
@@ -85,7 +138,7 @@ func TestConvertSourceContainedAliasAndHardLink(t *testing.T) {
 	if out, err := executeCommand("convert", "--from", "claude", "--to", "factory", "--out", output, source); err != nil {
 		t.Fatalf("contained conversion file alias failed: %s %v", out, err)
 	}
-	assertFileExists(t, filepath.Join(output, "skills", "alias-probe", "SKILL.md"))
+	assertFileContents(t, filepath.Join(output, "skills", "alias-probe", "SKILL.md"), "---\nname: alias-probe\ndescription: Demo skill\nmetadata:\n  tags:\n      - demo\n---\n\n# Demo skill\n")
 	if err := os.Link(authored, filepath.Join(source, "retained.txt")); err != nil {
 		t.Fatal(err)
 	}
