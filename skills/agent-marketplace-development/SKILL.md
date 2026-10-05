@@ -327,7 +327,6 @@ The TUI is a standard [Elm-style][elm] Bubble Tea app:
 | `discovery.go` | Hosted Marketplace discovery rows |
 | `diagnostics.go` | `e` errors/warnings view |
 | `bundle_tree*.go` | `enter` file browser for cached resource files |
-| `tabs.go` | Scope / Registry / Status tab switching + per-tab state |
 | `tree.go` / `flatitems.go` | Section tree and its flattened rendered list |
 | `list.go` / `detail.go` | Left and right panes |
 | `badges.go` | `G`/`P`/`L`/`R`/`P-` origin badges next to each row |
@@ -356,13 +355,6 @@ truth is the config file, and the snapshot reload is what produces new
 rows. Mutating in place hides bugs where the write path didn't land in
 the right config location.
 
-### Tab state isolation
-
-Each tab keeps its own cursor/offset/filter/fold state in
-`tabStates[tab]` (`tabs.go`). `switchTab` saves outgoing state and
-restores incoming state. Any new per-tab concern goes into
-`tabViewState`, not the top-level `Model`.
-
 ### Request generation pattern
 
 Async results (`snapshotLoadedMsg`, `refreshLoadedMsg`, detail and
@@ -381,8 +373,8 @@ Global / Project / Local / LocalExclude and lets the user flip any of
 them independently. When designing new flows:
 
 - A skill can be enabled in multiple scopes simultaneously (e.g. both
-  global and local). The rendered badge on the row (`badges.go`) shows
-  the highest-precedence active scope; don't collapse the modal to a
+  global and local). The letter badge on the row (`badges.go`) shows
+  every active scope (`GPL`, `P-`, ...); don't collapse the modal to a
   single-choice picker.
 - The toggle always targets the specific registry entry that contains
   the skill (`row.RegistryURL`). A skill available from multiple

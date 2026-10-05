@@ -106,7 +106,7 @@ func TestCaptureSnapshotDetailSourcesDeterministicBudgets(t *testing.T) {
 					name := strings.TrimSuffix(filepath.Base(path), ".md")
 					if source.omitted {
 						omitted = append(omitted, name)
-						if rendered := renderDetailFullContent(row{DetailSource: source}, 80); rendered != detailCaptureOmittedMarker {
+						if rendered := renderDetailFullContent(newTheme(true), row{DetailSource: source}, 80); rendered != detailCaptureOmittedMarker {
 							t.Fatalf("%s: omitted marker = %q", name, rendered)
 						}
 						continue
