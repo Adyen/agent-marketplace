@@ -621,13 +621,21 @@ func hasRootSkill(src fs.FS) bool {
 // from being treated as sub-bundles, but we re-enable the multi-skill subdir
 // case (dir/*/SKILL.md) so container directories with multiple skills are
 // still recognized.
-func hasBundleRoot(dir string) bool {
+func hasBundleRoot(dir string) (bool, error) {
 	srcFS, err := fsboundary.OpenSourceFS(dir)
 	if err != nil {
-		return false
+		if errors.Is(err, fsboundary.ErrUnsafePath) || errors.Is(err, fsboundary.ErrUnsafeFile) {
+			return false, fmt.Errorf("catalog source refused: %w", err)
+		}
+		return false, nil
 	}
 	defer func() { _ = srcFS.Close() }()
-	return hasBundleRootFS(srcFS)
+	matched := hasBundleRootFS(srcFS)
+	// Marker probes that the captured source refused are not absent markers.
+	if refusal := srcFS.Refusal(); refusal != nil {
+		return false, fmt.Errorf("catalog source refused: %w", refusal)
+	}
+	return matched, nil
 }
 
 func hasBundleRootFS(srcFS fs.FS) bool {
