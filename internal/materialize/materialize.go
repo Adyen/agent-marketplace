@@ -3464,7 +3464,7 @@ func prepareSkillLinkCaches(links []skillLink, dryRun bool) error {
 	return nil
 }
 
-func prepareSkillLinkCache(link skillLink) error {
+func prepareSkillLinkCache(link skillLink) (err error) {
 	if len(link.artifacts) == 0 {
 		return nil
 	}
@@ -3481,12 +3481,36 @@ func prepareSkillLinkCache(link skillLink) error {
 		if err := os.MkdirAll(filepath.Dir(cacheDir), 0o755); err != nil {
 			return err
 		}
-		var err error
 		supportStage, err = os.MkdirTemp(filepath.Dir(cacheDir), ".support-staging-")
 		if err != nil {
 			return err
 		}
-		defer func() { _ = os.RemoveAll(supportStage) }()
+		parent, captureErr := fsboundary.OpenDir(filepath.Dir(supportStage))
+		if captureErr != nil {
+			return captureErr
+		}
+		defer func() { err = errors.Join(err, parent.Close()) }()
+		native, rootErr := parent.NativeRoot()
+		if rootErr != nil {
+			return rootErr
+		}
+		defer func() { err = errors.Join(err, native.Close()) }()
+		name := filepath.Base(supportStage)
+		created, statErr := native.Lstat(name)
+		if statErr != nil {
+			return statErr
+		}
+		if !created.IsDir() {
+			return fsboundary.ErrUnsafeFile
+		}
+		defer func() {
+			current, inspectErr := native.Lstat(name)
+			if inspectErr != nil || !os.SameFile(created, current) {
+				err = errors.Join(err, fsboundary.ErrGenerationConflict, inspectErr)
+				return
+			}
+			err = errors.Join(err, native.RemoveAll(name))
+		}()
 		if err := copyScopedSupport(link.sourceDir, supportStage, compiled, "", len(link.declaredSupport) == 0, writeSupportStage); err != nil {
 			return err
 		}
@@ -3501,7 +3525,7 @@ func prepareSkillLinkCache(link skillLink) error {
 	// support files copied below are not in the artifact list and
 	// would be incorrectly pruned.
 	result := &hcc.Result{Artifacts: link.artifacts}
-	_, err := hcc.Materialize(result, cacheDir, hcc.WithWriteMode(hcc.WriteModeOverwrite))
+	_, err = hcc.Materialize(result, cacheDir, hcc.WithWriteMode(hcc.WriteModeOverwrite))
 	if err != nil {
 		return err
 	}
