@@ -3444,6 +3444,14 @@ func staleArtifactLinks(outDir string, desired map[string]string, snapshots map[
 	if err != nil {
 		return nil, diags, err
 	}
+	if boundary != nil && boundary.pruneEnumerationHook != nil {
+		boundary.pruneEnumerationHook(outDir)
+	}
+	// The walk read the retained directory; a replaced name must not turn an
+	// obsolete enumeration into a successful discovery result.
+	if err := verifyPruneDirectory(outDir, boundary, root); err != nil {
+		return nil, diags, err
+	}
 	sort.Strings(stale)
 	return stale, diags, nil
 }
@@ -3887,6 +3895,11 @@ func filesEqual(src, dst string) (_ bool, err error) {
 	}
 }
 
+// skillPruneObservedHook runs after a skill-directory prune entry is
+// enumerated. It is nil in production and set only by serial tests in this
+// package.
+var skillPruneObservedHook func(path string)
+
 func syncSkillLinks(skillsDir string, links []skillLink, dryRun bool, pruneStaleEntries bool, portable ...portableSyncContext) (TargetReport, error) {
 	var state *portableState
 	var target hcc.Target
@@ -4009,6 +4022,9 @@ func syncSkillLinks(skillsDir string, links []skillLink, dryRun bool, pruneStale
 		path := filepath.Join(skillsDir, name)
 		observed := entry.observed
 		snapshot := managedLinkSnapshot{observed: observed, text: entry.linkText}
+		if skillPruneObservedHook != nil {
+			skillPruneObservedHook(path)
+		}
 		if observed.Mode()&os.ModeSymlink == 0 {
 			// Non-symlink directories are user-owned skill directories
 			// and must be preserved. Mirror the principle from
