@@ -1333,7 +1333,9 @@ func findStaleFiles(outDir string, artifactPaths map[string]struct{}) (stale []S
 			return fsboundary.ErrGenerationConflict
 		}
 		dirPath := filepath.Join(outDir, rel)
-		parents := append(append([]staleParentSnapshot(nil), ancestors...), staleParentSnapshot{path: dirPath, info: info})
+		parents := make([]staleParentSnapshot, len(ancestors)+1)
+		copy(parents, ancestors)
+		parents[len(ancestors)] = staleParentSnapshot{path: dirPath, info: info}
 		slog.Debug("SDK stale directory admitted", "path", dirPath, "phase", "sdk-stale-directory")
 		unchanged, err := staleParentsUnchanged(parents)
 		if err != nil {
@@ -1364,7 +1366,10 @@ func findStaleFiles(outDir string, artifactPaths map[string]struct{}) (stale []S
 					return openErr
 				}
 				walkErr := walk(child, childRel, childInfo, parents)
-				if walkErr = errors.Join(walkErr, child.Close()); walkErr != nil {
+				if closeErr := child.Close(); closeErr != nil {
+					walkErr = errors.Join(walkErr, closeErr)
+				}
+				if walkErr != nil {
 					return walkErr
 				}
 				continue
