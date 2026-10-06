@@ -135,6 +135,31 @@ func searchNames(result adoptionSearchResult) []string {
 	return names
 }
 
+// spec: marketplace-api/rule-observations-preserve-selectable-resource-adoption
+func TestSearchInstallationsRuleObservationPreservesSkillAdoption(t *testing.T) {
+	public, fixture := adoptionSearchFixture(t, installationRuleAdoptionSamples())
+	result, _ := getSearch(t, public.URL, "?sort=installations")
+	if hits := fixture.hits.Load(); hits != 1 {
+		t.Fatalf("metrics backend hits = %d, want one real reader request", hits)
+	}
+
+	foundSkill := false
+	for _, item := range result.Items {
+		if item.Kind == "rule" {
+			t.Fatalf("search returned a rule resource: %+v", item)
+		}
+		if item.RegistryID == "rA" && item.Name == "alpha" {
+			foundSkill = true
+			if item.InstallationCount == nil || *item.InstallationCount != 1 {
+				t.Fatalf("skill installation_count = %v, want 1", item.InstallationCount)
+			}
+		}
+	}
+	if !foundSkill {
+		t.Fatal("search response omitted the skill control")
+	}
+}
+
 // spec: marketplace-api/popularity-applies-before-pagination-with-relevant-search-matches
 func TestSearchInstallationsOrdersBeforePagination(t *testing.T) {
 	public, _ := adoptionSearchFixture(t, adoptionSearchSamples())

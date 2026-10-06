@@ -8,12 +8,14 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/config"
+	"gopkg.in/yaml.v3"
 )
 
 type metricsRequest struct {
@@ -82,6 +84,80 @@ func newTestReader(t *testing.T, fixture *metricsFixture) *installationMetricsRe
 		URL:    fixture.server.URL,
 		Labels: map[string]string{"namespace": "ops"},
 	})
+}
+
+// spec: marketplace-api/superseded-inventory-history-does-not-exhaust-the-response-budget
+func TestInstallationMetricsQueryLatestInventoryProjection(t *testing.T) {
+	const wantNamespace = `label_replace((max by (installation_id, config_fingerprint) (last_over_time(agent_marketplace_config_snapshot{namespace="ops"}[30d])) == on (installation_id) group_left max by (installation_id) (max by (installation_id, config_fingerprint) (last_over_time(agent_marketplace_config_snapshot{namespace="ops"}[30d])))), "inventory_type", "snapshot", "", "") or label_replace((max by (installation_id, config_fingerprint, registry_id, resource_kind, resource_name) (last_over_time(agent_marketplace_config_resource{namespace="ops",resource_kind!="rule"}[30d])) and on (installation_id, config_fingerprint) (max by (installation_id, config_fingerprint) (last_over_time(agent_marketplace_config_snapshot{namespace="ops"}[30d])) == on (installation_id) group_left max by (installation_id) (max by (installation_id, config_fingerprint) (last_over_time(agent_marketplace_config_snapshot{namespace="ops"}[30d]))))), "inventory_type", "resource", "", "")`
+	const wantEmpty = `label_replace((max by (installation_id, config_fingerprint) (last_over_time(agent_marketplace_config_snapshot{}[30d])) == on (installation_id) group_left max by (installation_id) (max by (installation_id, config_fingerprint) (last_over_time(agent_marketplace_config_snapshot{}[30d])))), "inventory_type", "snapshot", "", "") or label_replace((max by (installation_id, config_fingerprint, registry_id, resource_kind, resource_name) (last_over_time(agent_marketplace_config_resource{resource_kind!="rule"}[30d])) and on (installation_id, config_fingerprint) (max by (installation_id, config_fingerprint) (last_over_time(agent_marketplace_config_snapshot{}[30d])) == on (installation_id) group_left max by (installation_id) (max by (installation_id, config_fingerprint) (last_over_time(agent_marketplace_config_snapshot{}[30d]))))), "inventory_type", "resource", "", "")`
+	const escapedLabels = `alpha="first",zeta="quote\n\"line\""`
+
+	tests := []struct {
+		name   string
+		labels map[string]string
+		want   string
+	}{
+		{name: "namespace", labels: map[string]string{"namespace": "ops"}, want: wantNamespace},
+		{name: "empty labels", labels: map[string]string{}, want: wantEmpty},
+		{
+			name:   "sorted and escaped labels",
+			labels: map[string]string{"zeta": "quote\n\"line\"", "alpha": "first"},
+			want:   strings.ReplaceAll(wantNamespace, `namespace="ops"`, escapedLabels),
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := installationMetricsQuery(test.labels); got != test.want {
+				t.Errorf("installationMetricsQuery() = %q, want %q", got, test.want)
+			}
+		})
+	}
+
+	data, err := os.ReadFile("installation_query_test.yaml")
+	if err != nil {
+		t.Fatalf("read query evaluator fixture: %v", err)
+	}
+	var fixture struct {
+		Tests []struct {
+			PromQLExprTest []struct {
+				Expr string `yaml:"expr"`
+			} `yaml:"promql_expr_test"`
+		} `yaml:"tests"`
+	}
+	if err := yaml.Unmarshal(data, &fixture); err != nil {
+		t.Fatalf("unmarshal query evaluator fixture: %v", err)
+	}
+	if len(fixture.Tests) == 0 || len(fixture.Tests[0].PromQLExprTest) == 0 {
+		t.Fatal("query evaluator fixture has no PromQL expression test")
+	}
+	if got := fixture.Tests[0].PromQLExprTest[0].Expr; got != wantNamespace {
+		t.Errorf("query evaluator expression = %q, want %q", got, wantNamespace)
+	}
+	if got := installationMetricsQuery(map[string]string{"namespace": "ops"}); got != wantNamespace {
+		t.Errorf("installationMetricsQuery(namespace=ops) = %q, want %q", got, wantNamespace)
+	}
+}
+
+// spec: marketplace-api/superseded-inventory-history-does-not-exhaust-the-response-budget
+func TestInstallationMetricsProjectedInventoryReaderCounts(t *testing.T) {
+	body, err := os.ReadFile("installation_query_result_test.json")
+	if err != nil {
+		t.Fatalf("read frozen evaluator result: %v", err)
+	}
+	fixture := newMetricsFixture(t, func() string { return string(body) })
+	reader := newTestReader(t, fixture)
+	reader.now = func() time.Time { return time.Unix(3456000, 0) }
+
+	counts, err := reader.counts(context.Background(), adoptionTestRegistries())
+	if err != nil {
+		t.Fatalf("reader counts() error = %v", err)
+	}
+	assertAdoptionCounts(t, counts, map[installationResourceKey]int64{
+		adoptionKey("rA", "skill", "alpha"): 1,
+	}, nil)
+	if hits := fixture.hits.Load(); hits != 1 {
+		t.Fatalf("metrics reader hits = %d, want 1", hits)
+	}
 }
 
 // spec: marketplace-api/metrics-configuration-and-requests-preserve-the-server-boundary
@@ -235,6 +311,7 @@ func TestInstallationMetricsReaderOriginChangeInvalidatesCache(t *testing.T) {
 	}
 }
 
+// spec: marketplace-api/superseded-inventory-history-does-not-exhaust-the-response-budget
 // spec: marketplace-api/metrics-unavailable-does-not-break-resource-discovery
 func TestInstallationMetricsReaderRejectsUnusableResponses(t *testing.T) {
 	good := prometheusVector(adoptionSamples(), adoptionFixedNow)
