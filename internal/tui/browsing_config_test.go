@@ -220,6 +220,13 @@ func TestDeniedOrganizationMarketplaceNeverPublishesBrowsingConfig(t *testing.T)
 	}
 	sawErr := false
 	for _, msg := range msgs {
+		if msg.stage == snapshotStageConfig && msg.mergedCfg != nil {
+			for _, entry := range msg.mergedCfg.Marketplaces {
+				if entry.URL == fixture.URL {
+					t.Fatalf("denied marketplace config published: %#v", entry)
+				}
+			}
+		}
 		for _, published := range []*config.Config{msg.mergedCfg, msg.provisionalCfg} {
 			if published == nil {
 				continue

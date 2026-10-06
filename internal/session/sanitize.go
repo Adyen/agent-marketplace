@@ -119,8 +119,8 @@ var unsafeNamedMarkdownEntities = [...]struct {
 }{
 	{name: "&Tab;", rune: '\t'},
 	{name: "&NewLine;", rune: '\n'},
-	{name: "&lrm;", rune: '‎'},
-	{name: "&rlm;", rune: '‏'},
+	{name: "&lrm;", rune: '\u200e'},
+	{name: "&rlm;", rune: '\u200f'},
 }
 
 func unsafeMarkdownEntity(value string) (consumed int, decoded rune, ok bool) {

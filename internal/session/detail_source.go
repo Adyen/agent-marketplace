@@ -51,7 +51,7 @@ func CaptureDetailSource(path string, readTargetWith ...PreviewTargetRead) *Deta
 
 func (b *DetailCaptureBudget) Capture(path string) *DetailSourceSnapshot {
 	if b.Entries >= MaxDetailCaptureEntries || b.Bytes >= MaxDetailCaptureBytes {
-		return &DetailSourceSnapshot{JSON: isJSONPath(path), Omitted: true}
+		return &DetailSourceSnapshot{JSON: IsJSONPath(path), Omitted: true}
 	}
 	remaining := MaxDetailCaptureBytes - b.Bytes
 	limit := min(MaxDetailSourceBytes, remaining)
@@ -70,7 +70,7 @@ func captureDetailSourceLimit(path string, limit int, marker string, readTargetW
 	if !truncated {
 		marker = ""
 	}
-	return &DetailSourceSnapshot{Content: content, TruncationMarker: marker, JSON: isJSONPath(path), Err: err}
+	return &DetailSourceSnapshot{Content: content, TruncationMarker: marker, JSON: IsJSONPath(path), Err: err}
 }
 
 // attachDetailSources binds each row to its captured detail source copy.
@@ -80,8 +80,11 @@ func attachDetailSources(rows []Row, byPath map[string]*DetailSourceSnapshot) {
 	}
 }
 
-// ReadDetailSourceLimit reads a resource source file, cut at limit bytes;
-// truncated reports whether the file exceeded it.
+// ReadDetailSourceLimit reads a resource source file (SKILL.md inside a
+// directory, or the file itself for non-skill kinds) with a hard byte cap.
+// truncated is true when the file exceeds limit; content is cut at limit so a
+// hostile or corrupted multi-gigabyte source cannot exhaust surface memory or
+// render time.
 func ReadDetailSourceLimit(path string, limit int, readTargetWith ...PreviewTargetRead) (content string, truncated bool, err error) {
 	target := path
 	if info, statErr := os.Lstat(path); statErr == nil && info.IsDir() {
@@ -151,9 +154,9 @@ func ReadPreviewSource(rootPath, filePath string, limit int, readTargetWith ...P
 	return data, nil
 }
 
-// isJSONPath returns true when the file extension suggests JSON content
+// IsJSONPath returns true when the file extension suggests JSON content
 // (e.g. hooks.json, mcp.json). This covers hooks and MCP server resources
 // whose source files are fully JSON.
-func isJSONPath(path string) bool {
+func IsJSONPath(path string) bool {
 	return strings.EqualFold(filepath.Ext(path), ".json")
 }
