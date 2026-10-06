@@ -52,6 +52,17 @@ func restoreCapturedSymlink(parent *fsboundary.Dir, name, target string) (err er
 		}
 	}
 	slog.Debug("Backup symbolic destination admitted for replacement", "path", filepath.Join(parent.Path(), name), "phase", "restore-symbolic-replace")
+	fresh, captureErr := fsboundary.OpenDir(parent.Path())
+	if captureErr != nil {
+		return errors.Join(fsboundary.ErrGenerationConflict, captureErr)
+	}
+	unchanged := fresh.Identity().SameObject(parent.Identity())
+	if closeErr := fresh.Close(); closeErr != nil {
+		return closeErr
+	}
+	if !unchanged {
+		return fsboundary.ErrGenerationConflict
+	}
 	current, statErr := native.Lstat(name)
 	if info == nil {
 		if !errors.Is(statErr, fs.ErrNotExist) {
