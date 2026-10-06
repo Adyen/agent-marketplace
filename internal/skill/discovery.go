@@ -50,7 +50,7 @@ func DiscoverSkills(registryDir string) ([]Skill, []MalformedSkill, error) {
 	// each containing UseCases.md) must not block discovery.
 	seen := make(map[string]string)
 	for _, entry := range entries {
-		skillName, description, tags, err := parseFrontmatter(entry.markdownPath)
+		skillName, description, tags, err := parseFrontmatterSource(registryDir, entry.markdownPath)
 		if err != nil {
 			// Standalone .md files without valid frontmatter are silently skipped
 			// (e.g. README.md, CHANGELOG.md). Only SKILL.md directories report as malformed.

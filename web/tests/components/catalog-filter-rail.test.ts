@@ -11,6 +11,7 @@ const registries = [
   { id: 'six', slug: 'six' },
   { id: 'seven', slug: 'seven' },
   { id: 'eight', slug: 'eight' },
+  { id: 'nine', slug: 'nine' },
 ]
 
 describe('CatalogFilterRail', () => {
@@ -36,22 +37,25 @@ describe('CatalogFilterRail', () => {
     expect(wrapper.emitted('update:registry')).toEqual([[['one']]])
   })
 
+  // spec: marketplace-browser/expansion-action-follows-seven-initial-registries
   it('keeps selected registries visible and expands long registry lists', async () => {
     const wrapper = mount(CatalogFilterRail, {
       props: {
         kind: '',
-        registry: ['eight'],
+        registry: ['nine'],
         registries,
       },
     })
 
-    expect(wrapper.get('input[type="checkbox"][value="eight"]').element).toHaveProperty('checked', true)
-    expect(wrapper.findAll('input[type="checkbox"]')).toHaveLength(7)
+    expect(wrapper.get('input[type="checkbox"][value="nine"]').element).toHaveProperty('checked', true)
+    expect(wrapper.findAll('input[type="checkbox"]')).toHaveLength(8)
+    expect(wrapper.attributes('data-expanded')).toBe('false')
 
     const showAll = wrapper.get('button')
-    expect(showAll.text()).toBe('Show all (8)')
+    expect(showAll.text()).toBe('Show all (9)')
     await showAll.trigger('click')
     expect(showAll.text()).toBe('Show fewer')
-    expect(wrapper.findAll('input[type="checkbox"]')).toHaveLength(8)
+    expect(wrapper.attributes('data-expanded')).toBe('true')
+    expect(wrapper.findAll('input[type="checkbox"]')).toHaveLength(9)
   })
 })

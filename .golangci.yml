@@ -1,0 +1,12 @@
+version: "2"
+linters:
+  # "standard" keeps the default set (errcheck, govet, ineffassign,
+  # staticcheck, unused) that CI ran before this file existed.
+  default: standard
+  enable:
+    # Catches typed-nil errors returned after an error check (the producer
+    # side of the wrapped typed-nil panics fixed in PR #450 review).
+    # golangci-lint v2 dropped the nilness analyzer, so consumer-side guards
+    # (a nil check inside the successful errors.As branch) stay a review
+    # concern; this file can adopt a replacement analyzer if one ships.
+    - nilnesserr

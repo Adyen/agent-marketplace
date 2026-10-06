@@ -44,17 +44,18 @@ type ResolvedArtifact struct {
 	Harnesses []hcc.Target
 
 	// Marketplace-specific fields.
-	IsMarketplace           bool
-	MarketplaceURL          string
-	MarketplaceInstanceID   string
-	MarketplaceAlias        string
-	MarketplaceRegistryID   string
-	MarketplaceResourceName string
-	InstalledName           string // overrides Name for materialization while preserving canonical digest
-	Unresolved              bool   // true when only metadata was fetched (status inspect mode)
-	Revoked                 bool   // true when the resolved revision is revoked
-	UpdateAvailable         bool   // true when a newer revision exists (status/update)
-	Stale                   bool   // true when the registry refresh is stale/unavailable
+	IsMarketplace            bool
+	MarketplaceURL           string
+	MarketplaceInstanceID    string
+	MarketplaceAlias         string
+	MarketplaceRegistryID    string
+	MarketplaceResourceName  string
+	InstalledName            string // overrides Name for materialization while preserving canonical digest
+	Unresolved               bool   // true when only metadata was fetched (status inspect mode)
+	Revoked                  bool   // true when the resolved revision is revoked
+	MarketplaceArchiveDigest string
+	UpdateAvailable          bool // true when a newer revision exists (status/update)
+	Stale                    bool // true when the registry refresh is stale/unavailable
 }
 
 func HasAdditiveSources(kind ir.ResourceKind) bool {
@@ -77,12 +78,12 @@ func (w *UnmetRequirementWarning) Error() string {
 }
 
 func (w *UnmetRequirementWarning) Remediation() string {
-	command := fmt.Sprintf("agent-marketplace install %q --kind %s", w.Requirement.Name, skill.KindLabel(w.Requirement.Kind))
+	command := fmt.Sprintf("agent-marketplace install %s --kind %s", shellQuote(w.Requirement.Name), skill.KindLabel(w.Requirement.Kind))
 	if w.Requirement.Registry != "" {
-		command += fmt.Sprintf(" --from %q", redact.URL(w.Requirement.Registry))
+		command += fmt.Sprintf(" --from %s", shellQuote(redact.URL(w.Requirement.Registry)))
 	}
 	if w.Requirement.Path != "" {
-		command += fmt.Sprintf(" --path %q", redact.URL(w.Requirement.Path))
+		command += fmt.Sprintf(" --path %s", shellQuote(redact.URL(w.Requirement.Path)))
 	}
 	return command
 }
@@ -405,6 +406,23 @@ func IsNameCollision(err error) bool {
 	return errors.As(err, &collisionErr) || errors.As(err, &collisionWarn)
 }
 
+type ArchiveEvidenceRefreshedWarning struct {
+	MarketplaceURL   string
+	InstanceID       string
+	RegistryID       string
+	Kind             string
+	Name             string
+	OldArchiveDigest string
+	NewArchiveDigest string
+}
+
+const ArchiveEvidenceRefreshedCode = "marketplace.archive-evidence-refreshed"
+
+func (w *ArchiveEvidenceRefreshedWarning) Error() string {
+	return fmt.Sprintf("%s: %s/%s/%s locked archive digest %s refreshed to %s for the unchanged content digest",
+		ArchiveEvidenceRefreshedCode, w.RegistryID, w.Kind, w.Name, w.OldArchiveDigest, w.NewArchiveDigest)
+}
+
 // IncompatibleOrganizationRequirement is a hard error emitted when an
 // Organization registry entry marked required:true has no harnesses remaining
 // after intersecting with the machine-wide target harness set.
@@ -450,10 +468,12 @@ func IsWarning(err error) bool {
 	var collision *NameCollisionWarning
 	var requirement *UnmetRequirementWarning
 	var incompatibleDefault *IncompatibleOrganizationDefault
+	var evidenceRefresh *ArchiveEvidenceRefreshedWarning
 	return errors.As(err, &warning) ||
 		errors.As(err, &collision) ||
 		errors.As(err, &requirement) ||
 		errors.As(err, &incompatibleDefault) ||
+		errors.As(err, &evidenceRefresh) ||
 		IsCollectionMemberAmbiguity(err)
 }
 
@@ -1162,6 +1182,9 @@ func cloneConfigForResolve(cfg *config.Config) *config.Config {
 // collection from their source layer.
 func propagateTopLevelCollections(cfg *config.Config) {
 	for i := range cfg.Registries {
+		if cfg.Registries[i].Required && !hasExplicitSelection(cfg.Registries[i]) {
+			continue
+		}
 		sel := cfg.Registries[i].SelectorForKindPtr(ir.KindCollection)
 		if sel == nil {
 			continue
@@ -2241,6 +2264,13 @@ func buildOccurrences(cfg *config.Config, catalogs map[string][]catalog.Entry, r
 		harnessTargets := resolveEntryHarnesses(entry, targetSet)
 		byName := indexCatalog(catalog)
 		selectedResources := resolveSelectedResources(entry, catalog)
+		if entry.Required && !hasExplicitSelection(entry) {
+			for _, selected := range appendSelections(nil, ir.KindCollection, cfg.Collections.Include) {
+				if !slices.Contains(selectedResources, selected) {
+					selectedResources = append(selectedResources, selected)
+				}
+			}
+		}
 
 		for _, selected := range selectedResources {
 			if artifactShadowedByEntries(unresolvedSelectionArtifact(entry, selected), cfg.Registries) {

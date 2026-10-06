@@ -1,0 +1,11 @@
+## Context
+
+Actual native Factory subagent file-mode update classifies ownership then RemoveAll/copyFile reopens the destination pathname. An existing private publication fixture reproduces replacement after classification: the previous implementation overwrites the handwritten generation and reports success.
+
+## Decisions
+
+Reuse the captured destination boundary, scoped native root and attempt-owned staging. Compare full observed leaf state before and after staging and require the named parent to retain its captured object. Strict captured source reads provide payload/mode, and rename/cleanup remain relative to the captured parent. Managed links migrate by replacing only the revalidated link object through rename; never read its target. Caller digest-adopt/no-op semantics remain authoritative. No new directory sync/durability policy, work budgets or atomic output/manifest transaction. Directory destinations are not recursively removed by this regular-file lane; directory-source publication/removal/pruning remain next layers. Checks do not exclude uncooperative writers between namespace verification and rename.
+
+## Verification
+
+Native valid initial install and real content update precede deterministic staged leaf/foreign-parent replacements. Both refuse with materialize.write.error and retain original/foreign/manifest bytes without staging residue. Existing portable no-op/mode/migration/prune controls and full short materialize, Linux/macOS/race20/scoped validate/lint/build and strict specs pass. All ten implementation entries reviewed including test/benchmark/script/spec exclusions with no skips; observed/named/actually opened regular destination identity, captured parent, source payload/mode, no-op and managed-link migration, cleanup/failure/caller preservation checked. Review fixed needless separate link unlink and a shadowed deferred-close error scope. Real fresh regular-file copy local disk/no network,2s ×5 arm64 retained legacy copyFile baseline187.885→512.549µs(+172.80%),3520→17261B(+390.37%),26→208alloc(+700%),p=.008n5/no95%interval; validated replacement descriptors not exercised by fresh-leaf microbenchmark. Added checks cost, not lifecycle speedup. Full R2 integrated/comment gates and directory publication/removal/prune remain queued.
