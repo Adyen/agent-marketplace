@@ -1,0 +1,11 @@
+## Context
+
+Ordinary archive Restore and Codex preflight use independently reopened archive descriptors. Actual Factory Create/Restore after a hardlink alias restores an unsafe archive payload into the selected live resource; regular archive control performs real restoration.
+
+## Decisions
+
+One captured payload callback opens admitted archive parent, refuses final aliases/non-regular/multiply linked files using shared Destination capture, then supplies the shared captured-size streaming reader with opened/named state checks. Gzip/tar consumers operate on that reader, not another pathname open. Keep compressed streaming rather than buffering whole archives or inventing expanded-work limits. The existing shared snapshot already limits at captured size, so do not duplicate limiting wrappers. Code paths retain original extraction/mapping/validation semantics; output mutation and source archive creation are not closed here. Mid-stream refusal is not an all-output transaction; uncooperative writers are not excluded.
+
+## Verification
+
+Actual Create then hardlinked selected archive/current resource: parent restores/overwrites current(red); guarded reader typed UnsafeFile before decoding/extraction keeps current/foreign archive bytes(green). Removing only the test-created extra link restores the regular archive and changes payload to archived generation. Linux/macOS/full backup and count20 actual restore plus bounded-child FIFO refusal probes pass, with validate/lint/build and strict specs. Real FIFO payload refuses promptly, FIFO identity/mode unchanged and no target outputs. All twelve implementation entries reviewed including restore/FIFO tests/benchmark/script/spec exclusions without skips; both consumers/streaming/shape/size/state/close and actual positive restore checked. Removed redundant limiting wrapper after verifying shared bounded reader; original comments retained. Narrow opaque compressed-byte-standin streaming/local disk/no network2s×5 arm64 legacy23.762→219.367µs(+823.18%),216→6205B(+2772.69%),3→76alloc(+2433.33%),p=.008n5/no95%interval; after200–414µs varied under build/lint load, before FIFO test-only addition. Does not time gzip/tar/extraction or archive lifecycle; safety cost, not speedup.

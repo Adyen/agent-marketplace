@@ -13,12 +13,18 @@ import (
 )
 
 type destinationBoundary struct {
-	machineScope        bool
-	repoRoot            string
-	homeDir             string
-	roots               []string
-	legacySkillsDir     string
-	linkPublicationHook func(string)
+	capturedRoot            *fsboundary.Dir
+	capturedRootPath        string
+	machineScope            bool
+	repoRoot                string
+	homeDir                 string
+	roots                   []string
+	legacySkillsDir         string
+	linkPublicationHook     func(string)
+	pruneClassificationHook func(string)
+	pruneEnumerationHook    func(string)
+	pruneMarkerReadHook     func(string)
+	manifestPublicationHook func(string)
 }
 
 func (b destinationBoundary) directory(dir string, create bool) error {
@@ -30,6 +36,27 @@ func (b destinationBoundary) directory(dir string, create bool) error {
 }
 
 func (b destinationBoundary) captureDirectory(dir string, create bool) (*fsboundary.Dir, error) {
+	if b.capturedRoot != nil {
+		info, err := os.Stat(b.capturedRootPath)
+		if err != nil {
+			return nil, errors.Join(fsboundary.ErrGenerationConflict, err)
+		}
+		identity, err := fsboundary.FileInfoIdentity(info)
+		if err != nil {
+			return nil, err
+		}
+		if !identity.SameObject(b.capturedRoot.Identity()) {
+			return nil, fsboundary.ErrGenerationConflict
+		}
+		rel, err := filepath.Rel(b.capturedRootPath, dir)
+		if err != nil {
+			return nil, err
+		}
+		if create {
+			return b.capturedRoot.EnsurePath(rel)
+		}
+		return b.capturedRoot.OpenPath(rel)
+	}
 	originalDir := dir
 	scope := b.repoRoot
 	if b.machineScope {

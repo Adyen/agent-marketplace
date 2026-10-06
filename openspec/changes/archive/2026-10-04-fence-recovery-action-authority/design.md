@@ -1,0 +1,11 @@
+## Context
+
+ReadJournal has an observed pin and Load already has an observed-record primitive, but recovery discards the latter and only clearJournal validates the former after an action. Identical JSON at a different inode can therefore authorize stale state publication or staged cleanup.
+
+## Decisions
+
+Extract existing verifyOriginalRecord name-param behavior into shared original metadata validation for the two actual state/journal callers. Recovery keeps loadObservedRecord pin/absence with existing missing/ordinary malformed-state behavior; after existing optional Crasher read checkpoint, validate original journal and record before phase dispatch. Roll-forward's validated commit callback checks them again before state rename. Existing journal cleanup and staged-namespace payload checks remain; no persisted inode/format/budget change, whole native-metadata transaction or uncooperative-writer guarantee. One new existing-Crasher checkpoint serves public deterministic recovery tests, nil in production/no environment input or global test callback. Source comments preserved.
+
+## Verification
+
+Public Apply interrupted after journal-renamed followed by public Recover: replacing journal with identical JSON after admitted reads formerly committed state then refused late/red; replacing original state with identical JSON formerly overwrote it/reported roll-forward/red. Guard keeps replacement journal/record and no stale state publication/green; restoring original metadata yields genuine roll-forward committing generations1/2 and clearing journal. Actual prepared crash plus journal replacement preserves real stage/native prior, then restored authority genuinely rolls back/deletes stage+journal. Positive first control uses entries-empty mutation and asserts generation/native rather than inventing a file-ownership claim. Linux/macOS full ownership/materialize/count20 recovery-crash/validate/spec; existing full Apply-prepared/Recover-rollback disk benchmark includes staging/safety/journal/native/state/root I/O, logs discarded/no network. Baseline71.691902→51.634005ms (-27.98%),310097→328146B(+5.82%),3948→4181alloc(+5.90%),2sx5p=.008/no95CI; baseline56–296ms ran under frozen528 E2E load, so not a speedup/wall-budget claim.
