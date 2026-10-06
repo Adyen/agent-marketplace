@@ -341,7 +341,14 @@ func digestNoFollow(path string, expected fs.FileInfo) (digest [sha256.Size]byte
 			err = errors.Join(err, closeErr)
 		}
 	}()
-	file, opened, err := root.OpenFile(filepath.Base(absolute))
+	return digestCapturedNoFollow(root, filepath.Base(absolute), path, expected)
+}
+
+func digestCapturedNoFollow(parent *fsboundary.Dir, name, path string, expected fs.FileInfo) (digest [sha256.Size]byte, err error) {
+	if expected == nil {
+		return digest, fsboundary.ErrGenerationConflict
+	}
+	file, opened, err := parent.OpenFile(name)
 	if err != nil {
 		return digest, err
 	}
