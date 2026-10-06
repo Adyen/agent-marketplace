@@ -93,3 +93,48 @@ func TestSDKEmptyParentReplacementPreservesDirectoryGeneration(t *testing.T) {
 		t.Fatalf("healthy SDK changed foreign retained directory: %v %v", entries, err)
 	}
 }
+
+func TestSDKEmptyParentRefusalReportsOnlyReachedRemovals(t *testing.T) {
+	output := t.TempDir()
+	parent := filepath.Join(output, "nested")
+	retained := filepath.Join(t.TempDir(), "original-parent")
+	foreign := filepath.Join(t.TempDir(), "foreign-parent")
+	if err := os.Mkdir(parent, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(parent, "stale.txt"), []byte("inert selected stale payload"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	later := filepath.Join(output, "zz-later.txt")
+	if err := os.WriteFile(later, []byte("inert later stale payload"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(foreign, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	changed := false
+	logger := slog.Default()
+	t.Cleanup(func() { slog.SetDefault(logger) })
+	slog.SetDefault(slog.New(sdkStaleReadObserver{Handler: slog.NewTextHandler(io.Discard, &slog.HandlerOptions{Level: slog.LevelDebug}), mutate: func(phase, path string) {
+		if changed || phase != "sdk-stale-empty-parent" || path != parent {
+			return
+		}
+		changed = true
+		if err := os.Rename(parent, retained); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Rename(foreign, parent); err != nil {
+			t.Fatal(err)
+		}
+	}}))
+	report, err := hcc.Materialize(&hcc.Result{}, output, hcc.WithWriteMode(hcc.WriteModeSync), hcc.WithPruneStale(true))
+	if !changed || !errors.Is(err, fsboundary.ErrGenerationConflict) {
+		t.Fatalf("empty-parent replacement did not refuse: hit=%t %+v %v", changed, report, err)
+	}
+	if report == nil || len(report.Removed) != 1 || report.Removed[0] != "nested/stale.txt" {
+		t.Fatalf("refused prune reported unreached candidates as removed: %+v", report)
+	}
+	if data, readErr := os.ReadFile(later); readErr != nil || string(data) != "inert later stale payload" {
+		t.Fatalf("unreached stale candidate changed: %q %v", data, readErr)
+	}
+}
