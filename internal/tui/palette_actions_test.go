@@ -32,7 +32,7 @@ func TestPaletteActionsExposeStableUniqueIdentities(t *testing.T) {
 // spec: tui-feedback/prefix-action-and-excluded-controls
 func TestPaletteExcludesModalOnlyActions(t *testing.T) {
 	want := map[string]bool{
-		"search": true, "clear-search": true, "detail": true, "toggle": true,
+		"search": true, "clear-search": true, "detail": true, "toggle": true, "source-toggle": true,
 		"reload": true, "sync": true, "update": true,
 		"harness": true, "edit-config": true,
 		"help": true, "diagnostics": true,

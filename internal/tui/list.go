@@ -154,16 +154,24 @@ func wrapFlatItemLine(line string, width int) string {
 	return strings.Join(lines, "\n")
 }
 
-// fitSectionTitle truncates a section title so indent + fold glyph + title
-// + "  (count)" fit on one line, keeping the count attached to its header.
-func fitSectionTitle(title string, depth, count, width int) string {
+// fitSectionTitleWithSuffix truncates a section title so indent + fold glyph
+// + title + suffix fit on one line, keeping the count suffix attached to its
+// header.
+func fitSectionTitleWithSuffix(title string, depth int, suffix string, width int) string {
 	title = sanitizeTerminalData(title, terminalSingleLine)
-	fixed := depth*2 + 2 + ansi.StringWidth(fmt.Sprintf("  (%d)", count))
+	fixed := depth*2 + 2 + ansi.StringWidth(suffix)
 	budget := width - fixed
 	if budget < 1 {
 		return ""
 	}
 	return ansi.Truncate(title, budget, "…")
+}
+
+func sectionCountSuffix(it flatItem) string {
+	if it.SectionExcluded {
+		return fmt.Sprintf("  (%d excluded)", it.SectionCount)
+	}
+	return fmt.Sprintf("  (%d)", it.SectionCount)
 }
 
 // formatFlatItem returns the unstyled text for a flat item, used for the
@@ -173,11 +181,12 @@ func formatFlatItem(it flatItem, width int, compact bool) string {
 	switch it.Kind {
 	case flatSection:
 		indent := strings.Repeat("  ", it.SectionDepth)
+		suffix := sectionCountSuffix(it)
 		glyph := "▼"
 		if it.Collapsed {
 			glyph = "▶"
 		}
-		return fmt.Sprintf("%s%s %s  (%d)", indent, glyph, fitSectionTitle(it.SectionTitle, it.SectionDepth, it.SectionCount, width), it.SectionCount)
+		return fmt.Sprintf("%s%s %s%s", indent, glyph, fitSectionTitleWithSuffix(it.SectionTitle, it.SectionDepth, suffix, width), suffix)
 	case flatArtifact:
 		indent := strings.Repeat("  ", it.Depth)
 		r := it.Row
@@ -198,12 +207,13 @@ func stylizeFlatItem(it flatItem, width int, compact bool) string {
 	switch it.Kind {
 	case flatSection:
 		indent := strings.Repeat("  ", it.SectionDepth)
+		suffix := sectionCountSuffix(it)
 		glyph := "▼"
 		if it.Collapsed {
 			glyph = "▶"
 		}
-		title := styleSectionHeader.Render(fmt.Sprintf("%s %s", glyph, fitSectionTitle(it.SectionTitle, it.SectionDepth, it.SectionCount, width)))
-		count := styleSectionCount.Render(fmt.Sprintf("  (%d)", it.SectionCount))
+		title := styleSectionHeader.Render(fmt.Sprintf("%s %s", glyph, fitSectionTitleWithSuffix(it.SectionTitle, it.SectionDepth, suffix, width)))
+		count := styleSectionCount.Render(suffix)
 		return indent + title + count
 	case flatArtifact:
 		indent := strings.Repeat("  ", it.Depth)

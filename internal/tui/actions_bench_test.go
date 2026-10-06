@@ -131,19 +131,21 @@ func BenchmarkAppendUnavailableSelectionRows(b *testing.B) {
 }
 
 // BenchmarkBuildRowsLargeMixed covers hundreds to thousands of resources
-// across registries, kinds, drift states, local excludes, and same-name
-// resources.
+// across registries, kinds, drift states, local excludes, same-name
+// resources, and local whole-source exclusions of every other registry.
 func BenchmarkBuildRowsLargeMixed(b *testing.B) {
 	cases := []struct {
-		name      string
-		regs      int
-		perReg    int
-		sameNames bool
+		name           string
+		regs           int
+		perReg         int
+		sameNames      bool
+		excludeSources bool
 	}{
-		{"500_resources_5regs", 5, 100, false},
-		{"1000_resources_10regs", 10, 100, false},
-		{"2000_resources_20regs", 20, 100, false},
-		{"500_same_name", 5, 100, true},
+		{"500_resources_5regs", 5, 100, false, false},
+		{"1000_resources_10regs", 10, 100, false, false},
+		{"2000_resources_20regs", 20, 100, false, false},
+		{"500_same_name", 5, 100, true, false},
+		{"1000_resources_source_excluded", 10, 100, false, true},
 	}
 
 	for _, c := range cases {
@@ -175,6 +177,14 @@ func BenchmarkBuildRowsLargeMixed(b *testing.B) {
 					Default: true,
 					Source:  config.RepoCommitted, CatalogKey: key,
 				})
+				sourceExcluded := c.excludeSources && r%2 == 1
+				if sourceExcluded {
+					local := config.RegistryEntry{URL: url, Ref: "main", Source: config.RepoPersonal, CatalogKey: key}
+					for _, kind := range config.AllKinds {
+						local.SelectorForKindPtr(kind).ExcludeAll = true
+					}
+					cfg.Registries = append(cfg.Registries, local)
+				}
 				entries := make([]catalog.Entry, c.perReg)
 				for s := 0; s < c.perReg; s++ {
 					name := fmt.Sprintf("resource-%04d", r*c.perReg+s)
@@ -195,6 +205,9 @@ func BenchmarkBuildRowsLargeMixed(b *testing.B) {
 						Name: name,
 						Tags: []string{fmt.Sprintf("tag-%d", s%10)},
 						Path: fmt.Sprintf("/cache/reg-%02d/%s", r, name),
+					}
+					if sourceExcluded {
+						continue
 					}
 					resolved = append(resolved, resolver.ResolvedArtifact{
 						Entry:       entries[s],

@@ -2044,7 +2044,8 @@ func candidatesNotScopedAway(candidates []memberEntryCandidate, kind ir.Resource
 		for _, shadow := range entries {
 			if entryCanShadow(shadow, candidate.entry.Source, candidate.entry.FilePrecedence) &&
 				shadow.SelectorForKind(kind).ExcludeAll &&
-				registryIdentityMatches(shadow.URL, shadow.Path, shadow.Ref, candidate.entry.URL, candidate.entry.Path, candidate.entry.Ref) {
+				registryIdentityMatches(shadow.URL, shadow.Path, shadow.Ref, candidate.entry.URL, candidate.entry.Path, candidate.entry.Ref) &&
+				config.SourceLayoutCompatible(shadow.SourceHarness, candidate.entry.SourceHarness) {
 				return false
 			}
 		}
@@ -3190,8 +3191,12 @@ func validateCrossLayerExcludes(resolved []ResolvedArtifact, entries []config.Re
 			if _, alreadyWarned := warnedRepo[excluded]; alreadyWarned {
 				continue
 			}
+			scope := "repo"
+			if entry.Source == config.RepoPersonal {
+				scope = "local"
+			}
 			warns = append(warns, &IneffectiveExcludeWarning{
-				Scope:  "repo",
+				Scope:  scope,
 				Name:   excluded.name,
 				Source: source,
 			})
@@ -3237,8 +3242,7 @@ func artifactShadowedByEntries(s ResolvedArtifact, entries []config.RegistryEntr
 				return true
 			}
 		}
-		if entry.SelectorForKind(s.Kind).ExcludeAll &&
-			registryIdentityMatches(entry.URL, entry.Path, entry.Ref, s.RegistryURL, s.RegistryPath, s.Ref) {
+		if entry.SelectorForKind(s.Kind).ExcludeAll && WholeSourceExclusionMatches(entry, s) {
 			return true
 		}
 	}
@@ -3258,7 +3262,7 @@ func collectionMemberShadowedByEntries(member ResolvedArtifact, entries []config
 			continue
 		}
 		selector := entry.SelectorForKind(member.Kind)
-		if selector.ExcludeAll {
+		if selector.ExcludeAll && config.SourceLayoutCompatible(entry.SourceHarness, member.SourceHarness) {
 			return true
 		}
 		for _, name := range selector.Exclude {
@@ -4057,6 +4061,14 @@ func registryIdentityMatches(entryURL, entryPath, entryRef, targetURL, targetPat
 	return normalizedRegistryURL(entryURL) == normalizedRegistryURL(targetURL) &&
 		pathScopeCovers(entryPath, targetPath) &&
 		(strings.TrimSpace(entryRef) == "" || strings.TrimSpace(targetRef) == "" || strings.TrimSpace(entryRef) == strings.TrimSpace(targetRef))
+}
+
+// WholeSourceExclusionMatches reports whether a whole-source exclusion
+// declared by entry applies to s. An exclusion that names a source layout
+// does not suppress another layout ingested from the same registry location.
+func WholeSourceExclusionMatches(entry config.RegistryEntry, s ResolvedArtifact) bool {
+	return registryIdentityMatches(entry.URL, entry.Path, entry.Ref, s.RegistryURL, s.RegistryPath, s.Ref) &&
+		config.SourceLayoutCompatible(entry.SourceHarness, s.SourceHarness)
 }
 
 // pathsDiffer reports whether any two occurrences in the set have different

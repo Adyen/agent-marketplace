@@ -258,6 +258,8 @@ For a Marketplace group with `all: true` or non-empty `tags`, `registries` must 
 
 "Rejected at run time" means the file loads, but `sync` and other commands that resolve Marketplace resources fail with `v4.marketplace-runtime-unsupported`. Marketplace groups select through explicit `include` requests.
 
+For Git and directory sources, `exclude: ["*"]` excludes every non-required resource from that source. When the excluding source declares `source_harness`, the exclusion covers only that source layout, so another layout of the same repository, ref, and path stays selected. A higher-precedence personal-local group can use it to turn off a source selected by the repository without editing the committed file. In the TUI, press `x`, then `e` to toggle this whole-source exclusion. The same menu uses `g`, `p`, or `l` to select or deselect the whole source in a scope.
+
 ## Resource locators and options
 
 A locator names one resource. Git and directory sources use `<kind>/<name>`. Marketplace sources use `<registry-slug>/<kind>/<name>`, because one endpoint serves many registries. The kinds are `skill`, `command`, `subagent`, `hook`, `mcp`, and `collection`. A locator in the wrong shape for its source fails with `v4.locator`.

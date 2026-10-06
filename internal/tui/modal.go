@@ -477,7 +477,7 @@ func renderToggleModal(m Model) string {
 		}
 		body = append(body,
 			fmt.Sprintf("Global %s  Project %s  Local %s", check(r.EnabledGlobal), check(r.EnabledProject), check(r.EnabledLocal)),
-			fmt.Sprintf("Excluded %s", yesno(r.ExcludedLocally || r.ExcludedByUser)))
+			fmt.Sprintf("Excluded %s", yesno(r.ExcludedLocally || r.ExcludedByUser || r.SourceExcludedLocally)))
 		switch {
 		case r.canOverrideMarketplace():
 			body = append(body, keyStyle.Render("[e]")+" user override")
@@ -499,7 +499,10 @@ func renderToggleModal(m Model) string {
 	if r.canOverrideMarketplace() {
 		body = append(body, fmt.Sprintf("User override: %s  (%s)", yesno(r.ExcludedByUser), skill.KindLabel(r.Artifact.Kind)))
 	} else {
-		body = append(body, fmt.Sprintf("Local exclude: %s  (%s)", yesno(r.ExcludedLocally), skill.KindLabel(r.Artifact.Kind)))
+		body = append(body, fmt.Sprintf("Local exclude: %s  (%s)", yesno(r.ExcludedLocally || r.SourceExcludedLocally), skill.KindLabel(r.Artifact.Kind)))
+		if r.SourceExcludedLocally {
+			body = append(body, "Whole source excluded locally; press x in the list to undo")
+		}
 	}
 	m.ensureToggleForm()
 	if m.toggleForm != nil {

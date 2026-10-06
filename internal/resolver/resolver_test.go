@@ -3684,8 +3684,8 @@ func TestLocalExcludeSuppressesRepoPersonalResource(t *testing.T) {
 // TestLocalCrossLayerExcludeValidationForRepoPersonal verifies that
 // validateCrossLayerExcludes correctly handles RepoPersonal-sourced registry
 // entries. A RepoPersonal entry that tries to exclude a machine-scope
-// (UserPersonal) skill produces an IneffectiveExcludeWarning with Scope="repo",
-// because repo-scope entries cannot suppress machine-scope resources.
+// (UserPersonal) skill produces an IneffectiveExcludeWarning with Scope="local",
+// because local-scope entries cannot suppress machine-scope resources.
 func TestLocalCrossLayerExcludeValidationForRepoPersonal(t *testing.T) {
 	cfg := &config.Config{
 		Registries: []config.RegistryEntry{
@@ -3723,13 +3723,13 @@ func TestLocalCrossLayerExcludeValidationForRepoPersonal(t *testing.T) {
 		t.Fatal("expected machine-scope skill to survive RepoPersonal exclude")
 	}
 
-	// An IneffectiveExcludeWarning must be produced for the repo-scope exclude
+	// An IneffectiveExcludeWarning must be produced for the local-scope exclude
 	// targeting a machine-scope resource.
 	var foundIneffective bool
 	for _, err := range errs {
 		var warn *IneffectiveExcludeWarning
 		if errors.As(err, &warn) {
-			if warn.Name == "mandatory-security-skill" && warn.Scope == "repo" {
+			if warn.Name == "mandatory-security-skill" && warn.Scope == "local" {
 				foundIneffective = true
 				break
 			}
@@ -4113,6 +4113,37 @@ func TestResolveExcludeAllAtRefDoesNotBleedAcrossRefs(t *testing.T) {
 	got := applyCrossLayerExcludes([]ResolvedArtifact{main, release}, []config.RegistryEntry{shadow})
 	if len(got) != 1 || got[0].Ref != "main" {
 		t.Fatalf("resolved = %#v, want main ref preserved and release excluded", got)
+	}
+}
+
+// spec: tui-source-toggle/source-layouts-retain-separate-menu-identities
+func TestResolveExcludeAllDoesNotBleedAcrossSourceLayouts(t *testing.T) {
+	factory := ResolvedArtifact{Entry: catalog.Entry{Kind: ir.KindSkill, Name: "shared", SourceHarness: "factory"}, RegistryURL: "git@example.com:shared.git", Ref: "main", Source: config.RepoCommitted, FilePrecedence: 1}
+	claude := factory
+	claude.SourceHarness = "claude"
+	shadow := config.RegistryEntry{
+		URL: "git@example.com:shared.git", Ref: "main", SourceHarness: "factory",
+		Source: config.RepoPersonal, FilePrecedence: 1,
+		Skills: config.KindSelector{ExcludeAll: true},
+	}
+	got := applyCrossLayerExcludes([]ResolvedArtifact{factory, claude}, []config.RegistryEntry{shadow})
+	if len(got) != 1 || got[0].SourceHarness != "claude" {
+		t.Fatalf("resolved = %#v, want claude layout preserved and factory excluded", got)
+	}
+	if !collectionMemberShadowedByEntries(factory, []config.RegistryEntry{shadow}) || collectionMemberShadowedByEntries(claude, []config.RegistryEntry{shadow}) {
+		t.Fatal("collection member exclusion crossed source layouts")
+	}
+	candidates := []memberEntryCandidate{
+		{entry: config.RegistryEntry{URL: shadow.URL, Ref: "main", SourceHarness: "factory", Source: config.RepoCommitted, FilePrecedence: 1}, catalogKey: "factory"},
+		{entry: config.RegistryEntry{URL: shadow.URL, Ref: "main", SourceHarness: "claude", Source: config.RepoCommitted, FilePrecedence: 1}, catalogKey: "claude"},
+	}
+	if eligible := candidatesNotScopedAway(candidates, ir.KindSkill, []config.RegistryEntry{shadow}); len(eligible) != 1 || eligible[0].catalogKey != "claude" {
+		t.Fatalf("eligible = %#v, want only the claude layout", eligible)
+	}
+
+	shadow.SourceHarness = ""
+	if got := applyCrossLayerExcludes([]ResolvedArtifact{factory, claude}, []config.RegistryEntry{shadow}); len(got) != 0 {
+		t.Fatalf("exclusion without source_harness kept layouts: %#v", got)
 	}
 }
 

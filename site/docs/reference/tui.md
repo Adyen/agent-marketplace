@@ -17,7 +17,7 @@ Resource toggles can edit v4 configs for configured Git and directory sources, a
 
 1. The resource list groups everything by status — **Required**, **Enabled**, **Pending sync**, **Stale**, **Broken**, **Available**, and **Malformed** — with empty groups hidden. Each row shows a fixed-width scope letter column (`G` user, `P` project, `L` local, their combinations, `R` required, `P-` a project selection overridden by a local exclusion, blank for available or malformed rows), the resource kind, and `registry/name` (the source's repository name, or `(local)` when it has none). Press `/` to search and `esc` to clear the search.
 2. Press `enter` on a resource to inspect it. Local resources open a file browser. An installable Marketplace skill loads its exact revision's verified inspection in the background, showing `SKILL.md` first and fetching supporting text files when selected. Browsing does not install anything or change configuration or locks. Binary files show identity details; unavailable, corrupt, or mismatched content shows an error. Other uninstalled Marketplace rows show metadata without downloading content. Installed resources show their verified cached files, including a synthesized `SKILL.md` when supporting files are cached separately from the definition. Sync can restore missing cached files.
-3. Press `space` to open the scope dialog. Check the current selection before you toggle it for user, project, or local scope. Required resources cannot be excluded.
+3. Press `space` to open the resource scope dialog. Press `x` to open the whole-source menu, where `g`, `p`, and `l` select or deselect every non-required resource from that source in one scope, and `e` toggles whole-source exclusion. Required resources cannot be excluded.
 4. Selecting a new Marketplace resource verifies its exact revision before installing it. If the revision has security findings, the TUI shows the verified preview and asks you to confirm. Without findings, it installs the prepared revision with no extra prompt. Capability metadata alone never asks for consent. You can inspect blocked and revoked rows, but you cannot install them.
 5. Press `s` to sync pending changes, then check the **Pending sync** group and the diagnostics view (`e`). Fix any errors before you rely on the generated files.
 
@@ -54,6 +54,7 @@ The status bar reports sync drift, Marketplace endpoint health, the active opera
 | Fuzzy search | `/` |
 | Apply / clear search | `enter` / `esc` |
 | Open the scope dialog, or fold a section header | `space` |
+| Open the whole-source menu | `x` |
 | View resource details or cached files | `enter` |
 | Collapse / expand a section | `h` / `l` or left / right |
 | Toggle the current fold / collapse all / expand all | `za` / `zM` / `zR` |

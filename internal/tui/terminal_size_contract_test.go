@@ -137,6 +137,12 @@ func TestCoreViewsFitSupportedMinimumWithRecoveryActions(t *testing.T) {
 		{name: "confirm", prepare: func(m Model) Model { m.pane = paneConfirm; m.confirmMsg = "Sync before quitting?"; return m }, required: []string{"y sync+quit", "n quit", "esc cancel"}},
 		{name: "detail", prepare: func(m Model) Model { m.pane = paneDetail; return m }, required: []string{"esc/q back", "Ctrl+C quit"}},
 		{name: "toggle", prepare: func(m Model) Model { m.pane = paneToggleModal; m.modalSkill = mkRow("resource", withProject); return m }, required: []string{"[g]", "[p]", "[l]", "[e]", "esc cancel"}},
+		{name: "whole source", prepare: func(m Model) Model {
+			m.pane = paneGroupToggleModal
+			m.modalSource = mkRow("resource", withProject, withRegistry("https://example.test/tools.git", "tools"))
+			m.rows = []row{m.modalSource}
+			return m
+		}, required: []string{"[e]", "esc cancel"}},
 		{name: "harness", prepare: func(m Model) Model { m.pane = paneHarnessModal; m.openHarnessModal(); return m }, required: []string{"space toggle", "enter save", "esc cancel"}},
 		{name: "first run", prepare: func(m Model) Model {
 			m.pane = paneInitModal

@@ -176,7 +176,9 @@ type configWrittenMsg struct {
 	skillName  string
 	enabled    bool
 	selectNext bool
-	err        error
+	// summary replaces the default "Enabled/Disabled <name>" success toast.
+	summary string
+	err     error
 }
 
 type syncDoneMsg struct {
@@ -973,6 +975,8 @@ func buildRows(cfg *config.Config, catalogs map[string]catalogInfo, resolved []r
 		rows = append(rows, excluded)
 	})
 
+	localExcludeAll := localExcludeAllEntries(cfg)
+
 	// Add available skills not in resolved, using the resolver's collision
 	// winners so the catalog view matches materialization selection.
 	for _, available := range resolver.ResolveCatalogView(cfg, entriesFromCatalogs(catalogs), resolved) {
@@ -997,16 +1001,17 @@ func buildRows(cfg *config.Config, catalogs map[string]catalogInfo, resolved []r
 		}
 
 		rows = append(rows, row{
-			Artifact:        s,
-			IsAvailable:     true,
-			IsExcluded:      excludedLocally,
-			ExcludedLocally: excludedLocally,
-			RegistryURL:     s.RegistryURL,
-			RegistryName:    registryDisplayName(s.RegistryURL),
-			RegistryPath:    s.RegistryPath,
-			RegistryRef:     s.Ref,
-			Harnesses:       targetsToHarnesses(s.Harnesses),
-			HarnessSource:   harnessSource,
+			Artifact:              s,
+			IsAvailable:           true,
+			IsExcluded:            excludedLocally,
+			ExcludedLocally:       excludedLocally,
+			SourceExcludedLocally: len(localExcludeAll) > 0 && sourceExcludedBy(s, localExcludeAll),
+			RegistryURL:           s.RegistryURL,
+			RegistryName:          registryDisplayName(s.RegistryURL),
+			RegistryPath:          s.RegistryPath,
+			RegistryRef:           s.Ref,
+			Harnesses:             targetsToHarnesses(s.Harnesses),
+			HarnessSource:         harnessSource,
 		})
 	}
 

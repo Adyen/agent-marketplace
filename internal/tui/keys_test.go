@@ -34,6 +34,7 @@ func TestKeyMapNavigationBindingsMatch(t *testing.T) {
 		{"home matches Top", tea.KeyPressMsg{Code: tea.KeyHome}, k.Top, true},
 		{"G matches Bottom", keyPress('G'), k.Bottom, true},
 		{"end matches Bottom", tea.KeyPressMsg{Code: tea.KeyEnd}, k.Bottom, true},
+		{"x matches ToggleSource", keyPress('x'), k.ToggleSource, true},
 		{"x does not match Up", keyPress('x'), k.Up, false},
 	}
 	for _, tt := range tests {

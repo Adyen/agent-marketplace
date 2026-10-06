@@ -22,11 +22,13 @@ type flatItem struct {
 	Kind flatItemKind
 
 	// For section headers.
-	SectionPath  string // stable key for fold state, e.g. "status:enabled"
-	SectionTitle string // display label
-	SectionCount int    // number of skill rows under this section (pre-fold)
-	SectionDepth int    // 0 = top-level, 1+ = sub-section
-	Collapsed    bool   // true when the fold state hides this section's children
+	SectionPath     string // stable key for fold state, e.g. "status:enabled"
+	SectionTitle    string // display label
+	SectionCount    int    // number of skill rows under this section (pre-fold)
+	SectionDepth    int    // 0 = top-level, 1+ = sub-section
+	Collapsed       bool   // true when the fold state hides this section's children
+	SectionRows     []row  // rows retained for whole-source actions while collapsed
+	SectionExcluded bool   // every non-required row is excluded
 
 	// For skill rows.
 	Row   row
@@ -131,13 +133,27 @@ func buildStatusTree(rows []row, foldState map[string]bool) []flatItem {
 		sortLeafRows(rowsIn)
 		path := s.path()
 		collapsed := foldState[path]
+		excluded := true
+		optional := false
+		for i := range rowsIn {
+			if rowsIn[i].Artifact.Required {
+				continue
+			}
+			optional = true
+			if !rowsIn[i].ExcludedLocally && !rowsIn[i].SourceExcludedLocally && !rowsIn[i].ExcludedByUser {
+				excluded = false
+				break
+			}
+		}
 		out = append(out, flatItem{
-			Kind:         flatSection,
-			SectionPath:  path,
-			SectionTitle: s.title(),
-			SectionCount: len(rowsIn),
-			SectionDepth: 0,
-			Collapsed:    collapsed,
+			Kind:            flatSection,
+			SectionPath:     path,
+			SectionTitle:    s.title(),
+			SectionCount:    len(rowsIn),
+			SectionDepth:    0,
+			Collapsed:       collapsed,
+			SectionRows:     rowsIn,
+			SectionExcluded: optional && excluded,
 		})
 		if collapsed {
 			continue

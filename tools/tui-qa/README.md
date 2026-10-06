@@ -32,6 +32,7 @@ Each interaction contract has its own file. The `*.spec.ts` files are PTY journe
 18. `tests/wheel-burst.spec.ts` writes complete encoded wheel bursts to the PTY, including a direction reversal and a burst that reverses at the first list boundary on the overflowing status list, and verifies the terminal shows the independently expected selected resource and its details after each burst.
 19. `tests/preview-selection.spec.ts` drags across the right-hand details pane, checks inverse cells and the exact OSC52 payload, and verifies that scrolling clears the highlight while clicks and list-side drags copy nothing.
 20. `tests/marketplace-full-view.spec.ts` searches for an uninstalled Marketplace skill answered only by the stub's query-matched search, opens its full view, and verifies the verified inspection loads the primary `SKILL.md` and a lazily fetched support file. It then drags across the preview text, checks the inverse cells and the exact OSC52 payload, and verifies that wheel input still routes and clears the highlight.
+21. `tests/local-source-toggle.spec.ts` excludes the fixture registry as a whole source with `x`, then `e`, syncs the removal, restores it, and verifies the config, materialization, and drift state.
 
 `tests/target-pid.test.ts` is a helper test. It checks that the PID lookup used by the SIGTERM journey waits for the launcher to publish the PID.
 

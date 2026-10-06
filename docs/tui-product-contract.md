@@ -66,7 +66,9 @@ Opening a Marketplace row's detail never resolves a registry-relative path again
 
 ## Mutation operations
 
-Config-changing TUI interactions are serialized. Resource toggles, target saves, and editor sessions carry operation identity in their completion messages. A second mutation is blocked while one is active, and late or duplicated completions cannot clear or overwrite the active operation. Collision follow-up writes keep the primary toggle's operation identity.
+Config-changing TUI interactions are serialized. Resource toggles, whole-source toggles, target saves, and editor sessions carry operation identity in their completion messages. A second mutation is blocked while one is active, and late or duplicated completions cannot clear or overwrite the active operation. Collision follow-up writes keep the primary toggle's operation identity.
+
+Pressing `x` on a resource opens its whole-source menu. Pressing it on a status section opens the same menu only when every resource in that section belongs to one source; mixed-source sections are refused. The menu shows non-required resource counts and offers `g`, `p`, and `l` to select or deselect the entire Git or directory source in the user, repository, or personal-local layer. `e` toggles a personal-local `exclude: ["*"]` for Git and directory sources, or a user-wide override for optional organization Marketplace resources. Required resources never change. Writes use the same serialized dependency-aware mutation and authoritative reload path as individual resource toggles.
 
 A successful resource-toggle write stays active until an authoritative post-write snapshot is accepted, including when a later snapshot supersedes the first reload. An accepted failed snapshot reports an operation failure and releases the operation without presenting the write as a verified success.
 

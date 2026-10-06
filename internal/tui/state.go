@@ -44,6 +44,7 @@ const (
 	paneHarnessModal
 	paneEditConfigModal
 	paneMarketplaceConsent
+	paneGroupToggleModal
 )
 
 type marketplaceSelection struct {
@@ -75,6 +76,9 @@ type row struct {
 	EnabledLocal    bool
 	ExcludedLocally bool
 	ExcludedByUser  bool
+	// SourceExcludedLocally marks an unselected row whose whole source is
+	// excluded by the local config (exclude_all, or "*" in v4).
+	SourceExcludedLocally bool
 
 	// Source registry of the skill. For available (non-enabled) skills, set
 	// to the first registry whose catalog contained the skill, in cfg order.
@@ -227,6 +231,9 @@ func (r row) status() rowStatus {
 		if r.IsExcluded {
 			return rowStatus{"[ ]", "○", "excluded"}
 		}
+		if r.SourceExcludedLocally {
+			return rowStatus{"[ ]", "○", "excluded (whole source, local)"}
+		}
 		if r.MarketplaceDiscovery != nil {
 			label := string(r.MarketplaceDiscovery.Item.Availability)
 			if label == "" {
@@ -332,7 +339,10 @@ type Model struct {
 	// modalSkill is the row whose state is displayed in paneToggleModal.
 	// Captured at modal-open time so rapid reloads can't change what the
 	// user is acting on mid-interaction.
-	modalSkill                  row
+	modalSkill row
+	// modalSource is a row of the source paneGroupToggleModal acts on; the
+	// source's other rows are looked up again when a key is pressed.
+	modalSource                 row
 	marketplaceInstallOptions   pipeline.InstallOptions
 	marketplacePreparedInstall  *pipeline.PreparedMarketplaceInstall
 	marketplaceInstallOperation operationID

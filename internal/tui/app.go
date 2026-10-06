@@ -197,7 +197,7 @@ func (m *Model) dismissInvalidConfigMutationPane() bool {
 		return false
 	}
 	switch m.pane {
-	case paneToggleModal, paneHarnessModal, paneMigrationModal, paneInitModal:
+	case paneToggleModal, paneGroupToggleModal, paneHarnessModal, paneMigrationModal, paneInitModal:
 		m.pane = paneList
 		return true
 	case paneMarketplaceConsent:
@@ -718,7 +718,11 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if !msg.enabled {
 			action = "Disabled"
 		}
-		m.pushToast(fmt.Sprintf("%s %s", action, msg.skillName), 2*time.Second)
+		summary := fmt.Sprintf("%s %s", action, msg.skillName)
+		if msg.summary != "" {
+			summary = msg.summary
+		}
+		m.pushToast(summary, 2*time.Second)
 		m.refreshing = false
 		m.driftAssessment = driftUnknown
 		if msg.selectNext {
@@ -1094,6 +1098,8 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 
 	case paneToggleModal:
 		return m.handleToggleModalKey(msg)
+	case paneGroupToggleModal:
+		return m.handleGroupToggleModalKey(msg)
 
 	case paneInitModal:
 		return m.handleInitModalKey(msg)
@@ -1201,6 +1207,9 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case key.Matches(msg, m.keys.EditConfig):
 		return m.dispatchAction(actionEditConfig)
 
+	case key.Matches(msg, m.keys.ToggleSource):
+		return m.dispatchAction(actionSourceToggle)
+
 	case key.Matches(msg, m.keys.Enter):
 		return m.dispatchAction(actionDetail)
 
@@ -1301,6 +1310,18 @@ func (m Model) dispatchAction(id paletteActionID) (tea.Model, tea.Cmd) {
 				return m, loadMarketplaceSkillDetail(m.observedContext(ctxOrBackground(m.ctx)), m.currentTheme(), r, generation, m.previewWidth())
 			}
 			return m, nil
+		}
+		return m, nil
+
+	case actionSourceToggle:
+		if m.loading || m.syncing {
+			return m, nil
+		}
+		if m.operations.active != nil {
+			return m, operationBlockedCmd()
+		}
+		if refusal := m.openGroupToggleModal(); refusal != "" {
+			return m, groupRefusalCmd(refusal)
 		}
 		return m, nil
 
@@ -1923,6 +1944,8 @@ func (m Model) viewContent() string {
 	switch m.pane {
 	case paneToggleModal:
 		modal = renderToggleModal(m)
+	case paneGroupToggleModal:
+		modal = renderGroupToggleModal(m)
 	case paneInitModal:
 		modal = renderInitModal(m)
 	case paneMigrationModal:
