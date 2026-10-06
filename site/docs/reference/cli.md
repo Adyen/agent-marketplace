@@ -280,20 +280,23 @@ agent-marketplace update [resource ...] [flags]
 
 | Flag | Type | Required | Default | Description |
 |---|---|:---:|---|---|
-| `--bump` | boolean | no | `false` | Rewrites eligible registry refs to newer matching tags before updating locks. Only legacy v2/v3 `registries:` entries are rewritten. For v4 `sources:` the count is reported but the ref is not changed. |
+| `--bump` | boolean | no | `false` | Rewrites eligible refs to newer matching tags before updating locks, in legacy `registries:` entries and in v4 `sources:`. A ref that an included config file declares is reported and left unchanged. |
 | `--scope` | string | no | `all` | Update scope: `user`, `repo`, `local`, or `all`. `organization` is refused. |
 | `--registry` | string | no | none | Targets one configured Git registry. |
 | `--ref` | string | no | none | Narrows `--registry` to a declared ref. |
 | `--path` | string | no | none | Narrows `--registry` to a locked source root. |
 | `--kind` | string | conditionally | none | Resource kind for named registry targets. |
+| `-v`, `--verbose` | boolean | no | `false` | Lists individual organization-managed Marketplace pins. |
 
 Resource names, `--ref`, `--path`, and `--kind` require `--registry`, and names require `--kind`.
 
-The output reports how many Git registries were refreshed and, with `--bump`, how many refs were rewritten. The command also checks Marketplace mirror pins for newer usable revisions. It reports index-only pins and organization-required pins as skipped, because it cannot rewrite them. Marketplace values are printed quoted:
+The first line counts the configured registry entries, Git or local directory, whether or not their revision changed. With `--bump`, it also reports how many refs were rewritten and names any ref it left alone because an included config file declares it. The command checks writable Marketplace mirror pins for newer usable revisions. It does not check or rewrite organization-managed pins. By default the output counts those pins on one line, and `--verbose` lists each one. Other skipped pins still show their reason. Marketplace values are printed quoted:
 
 ```text
-Updated 2 registries, bumped 1 refs
-Marketplace pins: updated 1, skipped 1
+Configured registry entries: 2, refs bumped: 1
+Marketplace pins updated: 1
+Organization-managed Marketplace pins: 15 (not checked for newer revisions; pins unchanged)
+Use `agent-marketplace update --verbose` to list organization-managed pins.
 Marketplace "https://marketplace.example.com" "source"/"skill"/"review": updated "sha256:..." -> "sha256:..."
 ```
 
