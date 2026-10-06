@@ -19,6 +19,7 @@ import (
 	"charm.land/lipgloss/v2"
 	"charm.land/lipgloss/v2/compat"
 	ltable "charm.land/lipgloss/v2/table"
+	"github.com/Adyen/agent-marketplace/internal/session"
 	"github.com/Adyen/agent-marketplace/internal/skill"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 	mpapi "github.com/Adyen/agent-marketplace/pkg/marketplace/api"
@@ -326,7 +327,7 @@ func renderDetailFullContent(t theme, r row, width int) string {
 
 		var bundle strings.Builder
 		for i, source := range sources {
-			content, truncated, readErr := readDetailSource(source.path)
+			content, truncated, readErr := session.ReadDetailSourceLimit(source.path, session.MaxDetailSourceBytes)
 			if i > 0 {
 				bundle.WriteString("\n\n---\n\n")
 			}
@@ -354,7 +355,7 @@ func renderDetailFullContent(t theme, r row, width int) string {
 		content := bundle.String()
 		rendered, err := renderMarkdownAtWidth(content, t.dark, width)
 		if err != nil {
-			if len(sources) == 1 && isJSONPath(sources[0].name) {
+			if len(sources) == 1 && session.IsJSONPath(sources[0].name) {
 				// If glamour fails on the code block, return the pretty-printed
 				// JSON directly — it's still more readable than the minified form.
 				return boundRenderedDetail(strings.TrimPrefix(strings.TrimSuffix(content, "```"), "```json\n"))
@@ -464,7 +465,7 @@ func detailFileName(name string) string {
 func prepareDetailSource(name, content string) string {
 	content = sanitizeMarkdownForTerminal(content)
 	content = splitLongDetailLines(content, maxDetailLineChars)
-	if !isJSONPath(name) {
+	if !session.IsJSONPath(name) {
 		return content
 	}
 	formatted, err := formatJSONContent(content)
@@ -476,46 +477,10 @@ func prepareDetailSource(name, content string) string {
 
 func prepareBundleSource(name, content string) string {
 	prepared := prepareDetailSource(name, content)
-	if name == "SKILL.md" || strings.EqualFold(filepath.Ext(name), ".md") || isJSONPath(name) {
+	if name == "SKILL.md" || strings.EqualFold(filepath.Ext(name), ".md") || session.IsJSONPath(name) {
 		return prepared
 	}
 	return "```text\n" + prepared + "\n```"
-}
-
-// readDetailSource reads a resource source file (SKILL.md inside a directory,
-// or the file itself for non-skill kinds) with a hard byte cap. truncated is
-// true when the file exceeds maxDetailSourceBytes; the returned content is
-// cut at the cap so a hostile or corrupted multi-gigabyte source cannot
-// exhaust TUI memory or render time.
-func readDetailSource(path string) (content string, truncated bool, err error) {
-	return readDetailSourceLimit(path, maxDetailSourceBytes)
-}
-
-func readDetailSourceLimit(path string, limit int) (content string, truncated bool, err error) {
-	target := path
-	if info, statErr := os.Lstat(path); statErr == nil && info.IsDir() {
-		target = filepath.Join(path, "SKILL.md")
-	}
-	f, err := os.OpenFile(target, os.O_RDONLY|syscall.O_NOFOLLOW, 0)
-	if err != nil {
-		return "", false, err
-	}
-	defer func() { _ = f.Close() }()
-	info, err := f.Stat()
-	if err != nil {
-		return "", false, err
-	}
-	if !info.Mode().IsRegular() {
-		return "", false, fmt.Errorf("source is not a regular file")
-	}
-	data, err := io.ReadAll(io.LimitReader(f, int64(limit)+1))
-	if err != nil {
-		return "", false, err
-	}
-	if len(data) > limit {
-		return string(data[:limit]), true, nil
-	}
-	return string(data), false, nil
 }
 
 // splitLongDetailLines hard-splits unbroken lines longer than maxLine at
@@ -575,13 +540,6 @@ func boundRenderedDetail(rendered string) string {
 	lines = lines[:maxDetailRenderedLines]
 	lines = append(lines, "\x1b[0m"+styleDim.Render(detailRenderLimitMarker))
 	return strings.Join(lines, "\n")
-}
-
-// isJSONPath returns true when the file extension suggests JSON content
-// (e.g. hooks.json, mcp.json). This covers hooks and MCP server resources
-// whose source files are fully JSON.
-func isJSONPath(path string) bool {
-	return strings.EqualFold(filepath.Ext(path), ".json")
 }
 
 // renderMarketplaceDetailContent renders the bounded metadata view for

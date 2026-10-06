@@ -2,6 +2,8 @@ package session_test
 
 import (
 	"go/build"
+	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -14,51 +16,37 @@ import (
 // import graph.
 func TestSessionCoreHasNoCharmDependency(t *testing.T) {
 	_, thisFile, _, _ := runtime.Caller(0)
-	pkgDir := filepath.Dir(thisFile)
-
-	ctx := build.Default
-	pkg, err := ctx.ImportDir(pkgDir, 0)
+	cmd := exec.Command("go", "list", "-mod=readonly", "-deps", "github.com/Adyen/agent-marketplace/internal/session")
+	cmd.Dir = filepath.Dir(thisFile)
+	modcache := os.Getenv("GOMODCACHE")
+	if modcache == "" && build.Default.GOPATH != "" {
+		modcache = filepath.Join(filepath.SplitList(build.Default.GOPATH)[0], "pkg", "mod")
+	}
+	if modcache != "" {
+		cmd.Env = append(os.Environ(), "GOMODCACHE="+modcache)
+	}
+	output, err := cmd.CombinedOutput()
 	if err != nil {
-		t.Fatalf("import session package dir: %v", err)
+		t.Fatalf("go list -mod=readonly -deps: %v\n%s", err, output)
 	}
 
-	visited := map[string]bool{}
-	var stack []string
-	var visit func(importPath string) error
-	visit = func(importPath string) error {
-		if visited[importPath] || importPath == "C" {
-			return nil
+	var charmPackages []string
+	foundSession, foundPipeline := false, false
+	for _, dep := range strings.Fields(string(output)) {
+		if dep == "github.com/Adyen/agent-marketplace/internal/session" {
+			foundSession = true
 		}
-		visited[importPath] = true
-		p, err := ctx.Import(importPath, pkgDir, 0)
-		if err != nil {
-			// Test-only and unresolved imports are irrelevant here.
-			return nil
+		if dep == "github.com/Adyen/agent-marketplace/internal/pipeline" {
+			foundPipeline = true
 		}
-		for _, dep := range p.Imports {
-			if dep == "C" {
-				continue
-			}
-			if strings.HasPrefix(dep, "charm.land/") || strings.HasPrefix(dep, "github.com/charmbracelet/") {
-				stack = append(stack, dep)
-				continue
-			}
-			if err := visit(dep); err != nil {
-				return err
-			}
-		}
-		return nil
-	}
-	for _, imp := range pkg.Imports {
-		if strings.HasPrefix(imp, "charm.land/") || strings.HasPrefix(imp, "github.com/charmbracelet/") {
-			stack = append(stack, imp)
-			continue
-		}
-		if err := visit(imp); err != nil {
-			t.Fatalf("walk imports: %v", err)
+		if strings.HasPrefix(dep, "charm.land/") || strings.HasPrefix(dep, "github.com/charmbracelet/") {
+			charmPackages = append(charmPackages, dep)
 		}
 	}
-	if len(stack) > 0 {
-		t.Fatalf("internal/session transitively imports Charm packages: %v", stack)
+	if !foundSession || !foundPipeline {
+		t.Fatalf("non-vacuity controls missing from session dependency graph: session=%t pipeline=%t\n%s", foundSession, foundPipeline, output)
+	}
+	if len(charmPackages) > 0 {
+		t.Fatalf("internal/session transitively imports Charm packages: %v", charmPackages)
 	}
 }
