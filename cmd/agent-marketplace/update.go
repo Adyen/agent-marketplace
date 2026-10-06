@@ -14,6 +14,9 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/resolver"
 )
 
+// newUpdateCmd builds the update command with scope, Git target, ref bump, and
+// verbose output flags. Execution rejects organization scope and invalid target
+// combinations, then returns any error from runUpdate.
 func newUpdateCmd() *cobra.Command {
 	var bump, verbose bool
 	var scope, registry, ref, registryPath, kind string
@@ -45,6 +48,15 @@ func newUpdateCmd() *cobra.Command {
 	return cmd
 }
 
+// runUpdate refreshes dependency locks and Marketplace pins, syncs enabled
+// resources, and writes the update report. selected controls Git upgrade and ref
+// bump scopes; nil upgrades all writable scopes but bumps only repository refs.
+// targets narrows Git updates and may have its ref advanced when bump rewrites a
+// matching ref. verbose lists individual organization-managed pins in the report.
+//
+// It recovers pending dependency transactions and creates missing Marketplace
+// locks before updating. Recovery, lock preparation, update, and output errors
+// are propagated; an output error can occur after changes have been applied.
 func runUpdate(ctx context.Context, out io.Writer, bump, verbose bool, selected map[lockfile.Scope]bool, targets *upgradeTargetSpec) error {
 	repoRoot := config.FindRepoRoot()
 	localDir := config.FindLocalConfigDir()
@@ -109,6 +121,11 @@ func advanceUpgradeTargetRefs(targets *upgradeTargetSpec, bumps []pipeline.RefBu
 	}
 }
 
+// writeUpdateOutput writes registry counts and Marketplace pin decisions from a
+// non-nil result. bump includes the ref bump count; verbose lists unchanged
+// organization-managed pins, which otherwise appear only in the summary.
+// Archive evidence refreshes are reported separately from content digest changes.
+// It returns the first output error, possibly after writing a partial report.
 func writeUpdateOutput(out io.Writer, result *pipeline.UpdateResult, bump, verbose bool) error {
 	if bump {
 		if _, err := fmt.Fprintf(out, "Configured registry entries: %d, refs bumped: %d\n", result.UpdatedRegistries, len(result.Bumps)); err != nil {
