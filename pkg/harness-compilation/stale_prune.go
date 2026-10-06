@@ -98,7 +98,7 @@ func RemoveStaleFileCandidate(path string, candidate StaleFileCandidate) error {
 	return removeStaleFileCandidate(path, candidate, nil)
 }
 
-func removeStaleFileCandidate(path string, candidate StaleFileCandidate, beforeRename func() error) error {
+func removeStaleFileCandidate(path string, candidate StaleFileCandidate, beforeRename func() error) (err error) {
 	unchanged, err := RevalidateStaleFileCandidate(path, candidate)
 	if err != nil {
 		return err
@@ -112,27 +112,50 @@ func removeStaleFileCandidate(path string, candidate StaleFileCandidate, beforeR
 	if err != nil {
 		return fmt.Errorf("open stale candidate parent: %w", err)
 	}
-	defer func() { _ = unix.Close(parentFD) }()
+	defer func() {
+		if closeErr := unix.Close(parentFD); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
 	if err := verifyStaleParentFD(parentFD, candidate, parentPath); err != nil {
 		return err
 	}
 
-	quarantine, err := createStaleQuarantine(parentFD)
+	quarantine, reservation, err := createStaleQuarantine(parentFD)
+	if quarantine == "" {
+		return err
+	}
+	reserved := StaleFileCandidate{Info: reservation, Digest: sha256.Sum256(nil)}
+	quarantineActive := true
+	defer func() {
+		if !quarantineActive {
+			return
+		}
+		matches, inspectErr := staleCandidateFileMatches(parentFD, quarantine, reserved)
+		if errors.Is(inspectErr, fs.ErrNotExist) {
+			return
+		}
+		if inspectErr != nil || !matches {
+			err = errors.Join(err, ErrStalePruneConflict, inspectErr)
+			return
+		}
+		if removeErr := unix.Unlinkat(parentFD, quarantine, 0); removeErr != nil {
+			err = errors.Join(err, removeErr)
+		}
+	}()
 	if err != nil {
 		return err
 	}
-	quarantineActive := true
-	defer func() {
-		if quarantineActive {
-			_ = unix.Unlinkat(parentFD, quarantine, 0)
-		}
-	}()
 	if beforeRename != nil {
 		if err := beforeRename(); err != nil {
 			return err
 		}
 	}
 	slog.Debug("SDK stale payload ready for quarantine", "path", path, "phase", "sdk-stale-quarantine")
+	matchesReservation, inspectErr := staleCandidateFileMatches(parentFD, quarantine, reserved)
+	if inspectErr != nil || !matchesReservation {
+		return errors.Join(ErrStalePruneConflict, inspectErr)
+	}
 	if err := unix.Renameat(parentFD, filepath.Base(path), parentFD, quarantine); err != nil {
 		if err == unix.ENOENT {
 			return nil
@@ -186,26 +209,30 @@ func verifyStaleParentFD(parentFD int, candidate StaleFileCandidate, parentPath 
 	return nil
 }
 
-func createStaleQuarantine(parentFD int) (string, error) {
+func createStaleQuarantine(parentFD int) (string, fs.FileInfo, error) {
 	for range 32 {
 		var token [12]byte
 		if _, err := rand.Read(token[:]); err != nil {
-			return "", fmt.Errorf("generate stale quarantine name: %w", err)
+			return "", nil, fmt.Errorf("generate stale quarantine name: %w", err)
 		}
 		name := ".agent-marketplace-stale-" + hex.EncodeToString(token[:])
 		fd, err := unix.Openat(parentFD, name, unix.O_CREAT|unix.O_EXCL|unix.O_RDWR|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0o600)
 		if err == nil {
-			if closeErr := unix.Close(fd); closeErr != nil {
-				_ = unix.Unlinkat(parentFD, name, 0)
-				return "", fmt.Errorf("close stale quarantine: %w", closeErr)
+			file := os.NewFile(uintptr(fd), name)
+			info, inspectErr := file.Stat()
+			if closeErr := file.Close(); closeErr != nil {
+				inspectErr = errors.Join(inspectErr, closeErr)
 			}
-			return name, nil
+			if inspectErr != nil {
+				return name, info, inspectErr
+			}
+			return name, info, nil
 		}
 		if err != unix.EEXIST {
-			return "", fmt.Errorf("create stale quarantine: %w", err)
+			return "", nil, fmt.Errorf("create stale quarantine: %w", err)
 		}
 	}
-	return "", errors.New("create stale quarantine: exhausted unique names")
+	return "", nil, errors.New("create stale quarantine: exhausted unique names")
 }
 
 func staleCandidateFileMatches(parentFD int, name string, candidate StaleFileCandidate) (matches bool, err error) {
