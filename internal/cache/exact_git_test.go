@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 	"testing/iotest"
@@ -156,27 +157,28 @@ func TestExactGitSubprocessHonorsCancellation(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	binDir := t.TempDir()
 	pids := filepath.Join(binDir, "pids")
+	if err := os.Mkdir(pids, 0o700); err != nil {
+		t.Fatal(err)
+	}
 	gitPath := filepath.Join(binDir, "git")
-	// Every fake git invocation records its PID and then blocks far longer
-	// than the hang bound; exec keeps the recorded PID for the sleep.
-	script := "#!/bin/sh\necho $$ >> '" + pids + "'\nexec sleep 600\n"
+	// Every fake git invocation records its PID as the name of an empty file
+	// (created atomically, so the test never reads a partial PID) and then
+	// blocks far longer than the hang bound; exec keeps that PID for the sleep.
+	script := "#!/bin/sh\n: > '" + pids + "'/$$\nexec sleep 600\n"
 	if err := os.WriteFile(gitPath, []byte(script), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 	recorded := func() []int {
-		data, err := os.ReadFile(pids)
-		if errors.Is(err, os.ErrNotExist) {
-			return nil
-		}
+		entries, err := os.ReadDir(pids)
 		if err != nil {
 			t.Fatal(err)
 		}
-		var out []int
-		for _, field := range strings.Fields(string(data)) {
-			var pid int
-			if _, err := fmt.Sscan(field, &pid); err != nil {
-				t.Fatalf("fake git pid %q: %v", field, err)
+		out := make([]int, 0, len(entries))
+		for _, entry := range entries {
+			pid, err := strconv.Atoi(entry.Name())
+			if err != nil || pid <= 0 {
+				t.Fatalf("fake git pid record %q: %v", entry.Name(), err)
 			}
 			out = append(out, pid)
 		}
