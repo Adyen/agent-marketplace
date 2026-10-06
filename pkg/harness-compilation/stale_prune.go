@@ -165,6 +165,12 @@ func removeStaleFileCandidate(path string, candidate StaleFileCandidate, beforeR
 
 	matches, verifyErr := staleCandidateFileMatches(parentFD, quarantine, candidate)
 	if verifyErr == nil && matches {
+		slog.Debug("SDK stale quarantine payload verified for removal", "path", filepath.Join(parentPath, quarantine), "phase", "sdk-stale-quarantine-remove")
+		matches, verifyErr = staleCandidateFileMatches(parentFD, quarantine, candidate)
+		if verifyErr != nil || !matches {
+			quarantineActive = false
+			return errors.Join(ErrStalePruneConflict, verifyErr)
+		}
 		if err := unix.Unlinkat(parentFD, quarantine, 0); err != nil {
 			quarantineActive = false
 			return fmt.Errorf("remove quarantined stale candidate %q: %w", candidate.Path, err)
