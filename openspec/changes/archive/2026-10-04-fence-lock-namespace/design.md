@@ -1,0 +1,13 @@
+## Context
+
+State preparation already walks captured strict directories with private creation. Lock acquisition still uses public MkdirAll/OpenFile and follows mutable ancestors, including intentionally supported shared lock-root aliases.
+
+## Decisions
+
+Record selected canonical lock-root string at Store.Open, retaining admission errors privately until an actual lock is requested so read-only load diagnostics stay unchanged. Supported existing selected aliases canonicalize once. Extract existing absolute private prep/capture for the two real state/lock callers. Strict captured lock parent creates/reuses regular singly-linked nonblocking/no-follow persistent fd with native openat; check public selected root and named fd identity before admission/postwait/premetadata. Late diagnostic refusal remains best effort; no lock inode is removed or recreated.
+
+Concurrent Darwin creation can return ENOENT while the other contender creates the leaf; one noncreating open under the same captured parent recovers that real collision, never authorizes extra creation. Standard Root and direct native creation reproduced this; unchanged many-waiter/stress/mutual exclusion gates prove fallback. Existing four-line leaf-check comment updated accurately without adding/removing comments. No new dependency, processing limit, stale-lock policy, whole transaction or uncooperative-writer exclusion.
+
+## Verification
+
+Public Store.Open then locks directory retarget to foreign alias: parent rewrites actual foreign diagnostic/red; guarded refuses typed unsafe/generation before writes/green. Restore original namespace, real kernel acquisition/diagnostics/release positive. Waiting real held lock then leaf replacement refuses stale session and preserves replacement. Existing selected state/shared-dir alias exclusion and hostile-state-root read-only Open behavior preserved. Linux/macOS fsboundary/ownership/materialize, count20 locks/partial-run lost-update races, count50 many waiters, stress and validate/spec before push. Count20 combined cross-process matrix hit Go's total ten-minute alarm (not an assertion failure); exact full cross-process race test passes alone35.674s, separate count20 in-process lost-update races439.479s. Full validate/lint/build/native suites/spec pass. Reviewed13/13 implementation files incl test/script/spec exclusions none skipped. Cost full acquire/diagnostic/release disk lifecycle, captured namespace checks/no network:59.836µs→1.815794ms (+2934.62%),1769→69029B(+3802.15%),19→864alloc(+4447.37%),2sx5 p=.008/no95CI. Earlier loaded after3.6–25ms observations not an isolated wall budget. Significant safety cost, not speedup.

@@ -8,10 +8,11 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"log/slog"
 	"os"
 	"path/filepath"
-	"syscall"
 
+	"github.com/Adyen/agent-marketplace/internal/fsboundary"
 	"golang.org/x/sys/unix"
 )
 
@@ -127,7 +128,7 @@ func RevalidateStaleFileCandidate(path string, candidate StaleFileCandidate) (bo
 	}
 	digest, err := digestNoFollow(path, candidate.Info)
 	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
+		if errors.Is(err, os.ErrNotExist) || errors.Is(err, fsboundary.ErrGenerationConflict) {
 			return false, nil
 		}
 		return false, err
@@ -187,6 +188,7 @@ func removeStaleFileCandidate(path string, candidate StaleFileCandidate, beforeR
 			return err
 		}
 	}
+	slog.Debug("SDK stale payload ready for quarantine", "path", path, "phase", "sdk-stale-quarantine")
 	if err := unix.Renameat(parentFD, filepath.Base(path), parentFD, quarantine); err != nil {
 		if err == unix.ENOENT {
 			return nil
@@ -262,13 +264,17 @@ func createStaleQuarantine(parentFD int) (string, error) {
 	return "", errors.New("create stale quarantine: exhausted unique names")
 }
 
-func staleCandidateFileMatches(parentFD int, name string, candidate StaleFileCandidate) (bool, error) {
-	fd, err := unix.Openat(parentFD, name, unix.O_RDONLY|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0)
+func staleCandidateFileMatches(parentFD int, name string, candidate StaleFileCandidate) (matches bool, err error) {
+	fd, err := unix.Openat(parentFD, name, unix.O_RDONLY|unix.O_CLOEXEC|unix.O_NOFOLLOW|unix.O_NONBLOCK, 0)
 	if err != nil {
 		return false, err
 	}
 	file := os.NewFile(uintptr(fd), name)
-	defer func() { _ = file.Close() }()
+	defer func() {
+		if closeErr := file.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
 	info, err := file.Stat()
 	if err != nil {
 		return false, err
@@ -276,24 +282,39 @@ func staleCandidateFileMatches(parentFD int, name string, candidate StaleFileCan
 	if candidate.Info == nil || !info.Mode().IsRegular() || !os.SameFile(candidate.Info, info) {
 		return false, nil
 	}
-	digest, err := digestOpenFile(file)
+	expected, err := fsboundary.FileInfoIdentity(info)
+	if err != nil {
+		return false, err
+	}
+	digest, err := digestOpenFile(file, expected)
 	if err != nil {
 		return false, err
 	}
 	return digest == candidate.Digest, nil
 }
 
-func digestOpenFile(file *os.File) ([sha256.Size]byte, error) {
+func digestOpenFile(file *os.File, expected fsboundary.Identity) ([sha256.Size]byte, error) {
 	if _, err := file.Seek(0, io.SeekStart); err != nil {
 		return [sha256.Size]byte{}, err
 	}
-	hash := sha256.New()
-	if _, err := io.Copy(hash, file); err != nil {
+	before, err := fsboundary.FileIdentity(file)
+	if err != nil {
 		return [sha256.Size]byte{}, err
 	}
-	var digest [sha256.Size]byte
-	copy(digest[:], hash.Sum(nil))
-	return digest, nil
+	if !before.Mode.IsRegular() || before.Links != 1 {
+		return [sha256.Size]byte{}, fsboundary.ErrUnsafeFile
+	}
+	if !before.SameState(expected) {
+		return [sha256.Size]byte{}, fsboundary.ErrGenerationConflict
+	}
+	data, identity, err := fsboundary.ReadFile(file, expected.Size)
+	if err != nil {
+		return [sha256.Size]byte{}, err
+	}
+	if !identity.SameState(before) {
+		return [sha256.Size]byte{}, fsboundary.ErrGenerationConflict
+	}
+	return sha256.Sum256(data), nil
 }
 
 func restoreStaleQuarantine(parentFD int, quarantine, destination string) error {
@@ -303,25 +324,39 @@ func restoreStaleQuarantine(parentFD int, quarantine, destination string) error 
 	return unix.Unlinkat(parentFD, quarantine, 0)
 }
 
-func digestNoFollow(path string, expected fs.FileInfo) ([sha256.Size]byte, error) {
-	file, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW, 0)
+func digestNoFollow(path string, expected fs.FileInfo) (digest [sha256.Size]byte, err error) {
+	if expected == nil {
+		return digest, fsboundary.ErrGenerationConflict
+	}
+	absolute, err := filepath.Abs(path)
 	if err != nil {
-		return [sha256.Size]byte{}, err
+		return digest, err
 	}
-	opened, err := file.Stat()
+	root, err := fsboundary.OpenDir(filepath.Dir(absolute))
 	if err != nil {
-		return [sha256.Size]byte{}, errors.Join(err, file.Close())
+		return digest, err
 	}
-	if expected == nil || !opened.Mode().IsRegular() || !os.SameFile(expected, opened) {
-		return [sha256.Size]byte{}, errors.Join(fmt.Errorf("stale candidate identity changed while reading"), file.Close())
+	defer func() {
+		if closeErr := root.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
+	file, opened, err := root.OpenFile(filepath.Base(absolute))
+	if err != nil {
+		return digest, err
 	}
-	hash := sha256.New()
-	_, copyErr := io.Copy(hash, file)
-	closeErr := file.Close()
-	if copyErr != nil || closeErr != nil {
-		return [sha256.Size]byte{}, errors.Join(copyErr, closeErr)
+	defer func() {
+		if closeErr := file.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
+	original, err := fsboundary.FileInfoIdentity(expected)
+	if err != nil {
+		return digest, err
 	}
-	var digest [sha256.Size]byte
-	copy(digest[:], hash.Sum(nil))
-	return digest, nil
+	if !opened.SameState(original) {
+		return digest, fsboundary.ErrGenerationConflict
+	}
+	slog.Debug("SDK stale payload admitted", "path", path, "phase", "sdk-stale-read")
+	return digestOpenFile(file, original)
 }

@@ -73,6 +73,7 @@ func TestPlanCategories(t *testing.T) {
 		{"docs-only", []string{"README.md", "docs/architecture.md"}, false, want()},
 		{"product Go", []string{"internal/resolver/source.go"}, false, want("go_build", "go_test", "benchmark", "harness_compatibility", "marketplace_e2e", "tui_qa", "container_marketplace")},
 		{"unbenchmarked tool Go", []string{"tools/harness-compat/main.go"}, false, want("go_test", "harness_compatibility")},
+		{"benchmark report", []string{"tools/benchmark-report/main.go"}, false, want("go_test", "benchmark")},
 		{"E2E", []string{"e2e/marketplace_test.go"}, false, want("marketplace_e2e")},
 		{"harness compatibility E2E", []string{"e2e/harness_compatibility_native_test.go"}, false, want("marketplace_e2e", "harness_compatibility")},
 		{"harness script", []string{"tools/harness-compat/install.sh"}, false, want("harness_compatibility")},

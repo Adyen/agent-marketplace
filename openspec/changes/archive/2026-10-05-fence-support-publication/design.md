@@ -1,0 +1,11 @@
+## Context
+
+All published support snapshots flow through writeSupportSnapshot from copyScopedSupport. The admitted source bytes/mode were safe, but atomicWriteFile reopens the parent and temp names. The existing publishPortableBytes already captures the parent/destination, stages relatively, checks original parent/leaf/stage generations and cleans only its attempt inode.
+
+## Decision
+
+Replace one call in the shared snapshot writer with publishPortableBytes(path,data,mode,info,nil). Add a meaningful staged-publication debug boundary to the reused publisher; no new fault callback/API/framework. Initial snapshot classification and no-op source-mode checks remain unchanged. Parent/leaf/stage refusal and cleanup share the existing portable publisher. Temporary baseline instrumentation in the old writer reproduced the consumer failure and is not part of the final change.
+
+## Verification
+
+Public Factory Run reaches support publication after actual source staging/cache compilation/prune. At the staged-file boundary, move its parent, replace it with a foreign alias and create an independently authored foreign staged file at the same basename. Parent reports successful native install/red. Captured publication refuses with materialize.write.error, preserves foreign stage bytes/inode/mode/mtime/membership, removes only its original stage and leaves native skill absent. Restoring original parent permits real native support publication with exact bytes/mode. Native Linux/macOS full materialize, repeated race controls, validation/spec, complete all-file review and existing full disk RunSupportFiles before/after cost required. Directory-copy preparation and producer-directory cleanup remain open; no whole-tree transaction or uncooperative-writer exclusion claimed. Full Linux/macOS materialization suites, repeated races/source/publication controls, validate/lint/build/spec/shellcheck passed. Disk RunSupportFiles medians19.205559→17.742993ms (-7.61%,p=.690,not significant),433236→465499B/op (+7.45%),4864→5200alloc/op (+6.91%),2sx5/no95CI. Source/staging/cache prune/copy/native disk I/O timed, no network/logs discarded/fixture outside timer. Samples ran alongside verification with12–28ms variance; no speedup or isolated guard wall-cost claim. #533 frozen combined E2E/config checkpoint passed461.211s plus shellcheck.

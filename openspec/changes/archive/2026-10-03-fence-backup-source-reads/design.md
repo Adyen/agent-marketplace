@@ -1,0 +1,11 @@
+## Context
+
+Ordinary root-backed source files and explicit native aggregate mappings converge on writeTarEntry, whose regular payload copy opens fullPath independently of its earlier Lstat/WALK metadata. A real backup with a hardlinked source succeeds; invalid source refusal must not leave partial archives. Regular controls subsequently restore the actual archived payload.
+
+## Decisions
+
+Capture ordinary source root only when selected relPaths exist, retaining mapped-only backups with absent ordinary root. Carry that root into archive traversal and strict regular payload reads. Explicit mappings admit their existing parent per file. Shared Destination capture refuses final aliases/non-regular/multiple links/nonblocking unsafe shapes, matches classified FileInfo identity/state and supplies captured-size streaming with opened/named validation. No whole-source buffering or new policy thresholds. Metadata walk/link-text reads and archive output publication/cleanup remain separate follow-ups. Retain symbolic archive entries and format/mode compatibility; no transaction or writer-exclusion claim.
+
+## Verification
+
+Actual public Create ordinary-tree/mapped-native hardlinked source payload parent succeeds(red); guarded typed UnsafeFile refusal keeps foreign source and no archive residue(green). Unlink only test-created extra link permits Create; real Restore after changing the live source proves archived original bytes were included. Linux/macOS/full backup/count20 real Create/Restore races and validate/lint/build/strict specs pass. All ten implementation entries reviewed including consumer test/benchmark/script/spec exclusions without skips; shared ordinary/mapped reachability, observed state/shape, captured-size streaming, optional missing ordinary-root compatibility and close/error semantics reviewed. Removed redundant archiveFile wrapper; original comments retained. Narrow source streaming/local disk/no network2s×5 arm64 legacy23.277→195.861µs(+741.44%),217→2340B(+978.34%),3→33alloc(+1000%),p=.008n5/no95%interval; root capture and tar/gzip publication excluded, after165–259µs varied under build/lint load. Before final test-only missing-root refinement; not full backup lifecycle/speedup.

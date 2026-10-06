@@ -1,0 +1,11 @@
+## Context
+
+Safe SDK artifact comparison returned only matching/existence booleans. Publication then renamed over whatever now occupies the destination. Root and staging-directory identity cannot establish the originally observed file authority.
+
+## Decision
+
+Extend private comparator to return its stable opened identity through a caller-owned output, keeping absence empty. Per-artifact private map retains identity pointers only for admitted existing files; nil records absence. Original fstat mode supplies preserved merge mode without a path reopen. Before native rename, inspect destination below captured root: expected absence must remain absence, otherwise require full SameState. Captured root/parent/stage-directory checks and cleanup retain their established roles. No new framework/helper or public schema/API.
+
+## Verification
+
+Public SDK existing output is read, then after staging move it to retained path and author a distinct regular replacement. Parent overwrites its foreign bytes/red; guard reports generation conflict, preserves replacement bytes/inode/mode/mtime/member and retained original, removes own staging. Originally absent destination appearing has the same refusal/preservation control. Removing replacement/restoring original or original absence permits real exact source640 update. Linux/macOS full materialization/SDK suites, repeated20 API/races/no-op/mode/partial/golden controls, validate/spec/shellcheck, full RunSupportFiles costs and complete all-file review required. Staged-file generation and stale discovery/removal remain separate; no atomic uncooperative-writer exclusion or whole transaction. Linux/macOS full materialization/all SDK translation suites, repeated20 API/FIFO/pub/source/golden/races, validate/lint/build/spec/shellcheck passed. Full RunSupportFiles disk serial11.262982→8.681909ms (-22.92%,p=.095,not significant/no speedup claim),504734→505157B/op (+0.08%,p=.056),5685→5690alloc/op (+0.09%),2sx5/no95CI. Earlier baseline9.289454ms and9–14ms host variance retained/disclosed; no isolated lease-cost claim. Source/staging/cache/prune/copy/native I/O timed,no network/logdiscard/setup excluded. #544 frozen combined461.739s/shellcheck/exact CI green; #543 same-head race retry passed after proxy setup failure with no code/dependency/policy edits.

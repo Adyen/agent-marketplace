@@ -9,6 +9,7 @@ package materialize
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -157,10 +158,12 @@ type portableManifestEntry struct {
 }
 
 type portableState struct {
-	path         string
-	repoRoot     string
-	machineScope bool
-	entries      map[string]portableManifestEntry
+	path            string
+	repoRoot        string
+	machineScope    bool
+	entries         map[string]portableManifestEntry
+	pin             portableManifestSnapshot
+	publicationHook func(string)
 }
 
 type portableSyncContext struct {
@@ -192,15 +195,15 @@ func loadPortableState(repoRoot string, machineScope bool) (*portableState, erro
 		return nil, err
 	}
 	state := &portableState{path: path, repoRoot: repoRoot, machineScope: machineScope, entries: make(map[string]portableManifestEntry)}
-	data, err := os.ReadFile(path)
-	if errors.Is(err, os.ErrNotExist) {
-		return state, nil
-	}
+	state.pin, err = readPortableManifestSnapshot(path)
 	if err != nil {
 		return nil, err
 	}
+	if state.pin.data == nil {
+		return state, nil
+	}
 	var manifest portableManifest
-	if err := yaml.Unmarshal(data, &manifest); err != nil {
+	if err := yaml.Unmarshal(state.pin.data, &manifest); err != nil {
 		return nil, fmt.Errorf("parse materialization manifest %s: %w", path, err)
 	}
 	if manifest.Version != 0 && manifest.Version != 1 {
@@ -353,10 +356,7 @@ func (s *portableState) save(dryRun bool) error {
 		return nil
 	}
 	if len(s.entries) == 0 {
-		if err := os.Remove(s.path); err != nil && !os.IsNotExist(err) {
-			return err
-		}
-		return nil
+		return s.removeManifest()
 	}
 	entries := make([]portableManifestEntry, 0, len(s.entries))
 	for _, entry := range s.entries {
@@ -372,38 +372,20 @@ func (s *portableState) save(dryRun bool) error {
 	if err != nil {
 		return err
 	}
-	dir := filepath.Dir(s.path)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return err
-	}
-	tmp, err := os.CreateTemp(dir, ".materialization-manifest-*")
-	if err != nil {
-		return err
-	}
-	tmpPath := tmp.Name()
-	defer func() { _ = os.Remove(tmpPath) }()
-	if err := tmp.Chmod(0o644); err != nil {
-		_ = tmp.Close()
-		return err
-	}
-	if _, err := tmp.Write(data); err != nil {
-		_ = tmp.Close()
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		return err
-	}
-	return os.Rename(tmpPath, s.path)
+	return s.publishManifest(data)
 }
 
 // RunOption configures optional behavior for Run.
 type RunOption func(*runConfig)
 
 type runConfig struct {
-	dryRun              bool
-	scopeFilter         *bool // nil = all scopes; true = machine only; false = repo only
-	modes               config.MaterializationModes
-	linkPublicationHook func(string)
+	dryRun                  bool
+	scopeFilter             *bool // nil = all scopes; true = machine only; false = repo only
+	modes                   config.MaterializationModes
+	linkPublicationHook     func(string)
+	pruneClassificationHook func(string)
+	pruneEnumerationHook    func(string)
+	manifestPublicationHook func(string)
 }
 
 // WithMaterializationModes supplies the already-resolved scope policy. Keeping
@@ -446,14 +428,17 @@ type targetWork struct {
 
 // compilePhaseResult holds the output of the compile phase.
 type compilePhaseResult struct {
-	linkPublicationHook func(string)
-	scopeFilter         *bool
-	allDiags            []diag.Diagnostic
-	byTarget            map[outputKey]*targetWork
-	skillLinks          map[outputKey]map[string]*skillLinkGroup
-	allOutputs          map[outputKey]bool
-	blocked             blockedOutputs
-	blockedResources    []BlockedResource
+	linkPublicationHook     func(string)
+	pruneClassificationHook func(string)
+	pruneEnumerationHook    func(string)
+	manifestPublicationHook func(string)
+	scopeFilter             *bool
+	allDiags                []diag.Diagnostic
+	byTarget                map[outputKey]*targetWork
+	skillLinks              map[outputKey]map[string]*skillLinkGroup
+	allOutputs              map[outputKey]bool
+	blocked                 blockedOutputs
+	blockedResources        []BlockedResource
 	// artifactMeta maps (outputKey → artifact relative path → skillLink metadata)
 	// for artifacts that remain in result.Artifacts (not extracted into skillLinks).
 	// Used to generate rich collision hints in syncArtifactLinks.
@@ -521,6 +506,9 @@ func Run(ctx context.Context, repoRoot string, resolved []resolver.ResolvedArtif
 
 	// Phase 3: Materialize per target — write artifacts and sync skill links.
 	compileResult.linkPublicationHook = rc.linkPublicationHook
+	compileResult.pruneClassificationHook = rc.pruneClassificationHook
+	compileResult.pruneEnumerationHook = rc.pruneEnumerationHook
+	compileResult.manifestPublicationHook = rc.manifestPublicationHook
 	report := executeMaterializePlans(ctx, compileResult, rc.dryRun, repoRoot, rc.modes)
 	slog.Info("materialize end",
 		"duration_ms", time.Since(start).Milliseconds(),
@@ -1186,7 +1174,7 @@ func executeMaterializePlans(ctx context.Context, compileResult compilePhaseResu
 				continue
 			}
 		}
-		boundary := destinationBoundary{machineScope: key.machineScope, repoRoot: repoRoot, homeDir: boundaryHome, linkPublicationHook: compileResult.linkPublicationHook}
+		boundary := destinationBoundary{machineScope: key.machineScope, repoRoot: repoRoot, homeDir: boundaryHome, linkPublicationHook: compileResult.linkPublicationHook, pruneClassificationHook: compileResult.pruneClassificationHook, pruneEnumerationHook: compileResult.pruneEnumerationHook, manifestPublicationHook: compileResult.manifestPublicationHook}
 		if key.target == hcc.TargetFactory {
 			boundary.legacySkillsDir = filepath.Join(outDir, "skills")
 		}
@@ -1228,7 +1216,7 @@ func executeMaterializePlans(ctx context.Context, compileResult compilePhaseResu
 		// shared aggregates retain their separate ownership reconciliation.
 		slog.Debug("materialize target", "target", key.target, "machine_scope", key.machineScope, "mode", mode, "out_dir", outDir)
 		if !coalescedGemini || key.target != hcc.TargetGemini || key.machineScope {
-			artifacts = materializeNativeAggregates(ctx, report, key, repoRoot, artifacts, compileResult.blocked.componentsFor(key), dryRun)
+			artifacts = materializeNativeAggregates(ctx, report, key, repoRoot, artifacts, compileResult.blocked.componentsFor(key), dryRun, &boundary)
 		}
 		if tw != nil && tw.nativeOnly {
 			slog.Debug("native-only aggregate work complete", "target", key.target, "machine_scope", key.machineScope)
@@ -1251,6 +1239,7 @@ func executeTargetPlans(report *Report, key outputKey, outDir string, artifacts 
 		report.Diags = append(report.Diags, diag.Diagnostic{Code: "materialize.manifest.error", Severity: diag.SeverityError, Target: string(key.target), Message: stateErr.Error()})
 		return report
 	}
+	state.publicationHook = boundary.manifestPublicationHook
 	fileDesired := make(map[string]bool)
 	// Track which plan output directories had merge artifacts, so we can
 	// prune managed merge entries from directories NOT covered by any plan.
@@ -1334,7 +1323,7 @@ func executeTargetPlans(report *Report, key outputKey, outDir string, artifacts 
 		var writeDiags []diag.Diagnostic
 		var matErr error
 		if mode == config.MaterializationModeFile {
-			writeReport, writeDiags, matErr = syncPortableArtifactFiles(plan.outDir, regularArtifacts, cacheDir, dryRun, wantPrune, planCollisionMeta, state, key.target, plan.reportPrefix, fileDesired)
+			writeReport, writeDiags, matErr = syncPortableArtifactFiles(plan.outDir, regularArtifacts, cacheDir, dryRun, wantPrune, planCollisionMeta, state, key.target, plan.reportPrefix, fileDesired, &boundary)
 		} else {
 			writeReport, writeDiags, matErr = syncArtifactLinks(plan.outDir, regularArtifacts, cacheDir, dryRun, wantPrune, planCollisionMeta, portableSyncContext{state: state, target: key.target, reportPrefix: plan.reportPrefix, desired: fileDesired, boundary: &boundary})
 		}
@@ -1483,6 +1472,9 @@ func executeTargetPlans(report *Report, key outputKey, outDir string, artifacts 
 		symlinkLinks, copyLinks := partitionFileCopyLinks(key.target, group.links)
 
 		if len(symlinkLinks) > 0 {
+			for _, link := range symlinkLinks {
+				fileDesired[filepath.ToSlash(filepath.Join(group.reportPrefix, link.name))] = true
+			}
 			if err := prepareSkillLinkCaches(symlinkLinks, dryRun); err != nil {
 				report.Diags = append(report.Diags, diag.Diagnostic{
 					Code:     "materialize.write.error",
@@ -1495,7 +1487,7 @@ func executeTargetPlans(report *Report, key outputKey, outDir string, artifacts 
 			var tr TargetReport
 			var err error
 			if mode == config.MaterializationModeFile {
-				tr, err = syncPortableSkillTrees(groupDir, symlinkLinks, dryRun, state, key.target, group.reportPrefix, fileDesired)
+				tr, err = syncPortableSkillTrees(groupDir, symlinkLinks, dryRun, state, key.target, group.reportPrefix, fileDesired, &boundary)
 			} else {
 				tr, err = syncSkillLinks(groupDir, symlinkLinks, dryRun, !componentBlocked(blocked, group.installDirRel), portableSyncContext{state: state, target: key.target, reportPrefix: group.reportPrefix, desired: fileDesired, boundary: &boundary})
 			}
@@ -1507,7 +1499,7 @@ func executeTargetPlans(report *Report, key outputKey, outDir string, artifacts 
 
 		if len(copyLinks) > 0 {
 			copyDirsCovered[groupDir] = true
-			tr, err := syncCommandFiles(groupDir, copyLinks, dryRun, !componentBlocked(blocked, group.installDirRel))
+			tr, err := syncCommandFiles(groupDir, copyLinks, dryRun, !componentBlocked(blocked, group.installDirRel), &boundary)
 			report = appendGroupReport(report, key, outDir, group.reportPrefix, tr, err, "copy command files for target %s to %s")
 		}
 	}
@@ -1517,20 +1509,20 @@ func executeTargetPlans(report *Report, key outputKey, outDir string, artifacts 
 	// removal case where the resolved set no longer contains the resource.
 	// Regular files are never pruned by the symlink-oriented artifact plan,
 	// so they must be cleaned up here.
-	report = pruneUncoveredFileCopyDirs(report, key, outDir, copyDirsCovered, blocked, dryRun)
+	report = pruneUncoveredFileCopyDirs(report, key, outDir, copyDirsCovered, blocked, dryRun, &boundary)
 
 	// The two manifest-driven prune passes below walk the target's whole
 	// recorded state rather than one component directory, so they cannot be
 	// narrowed per component and stay suppressed by any skip.
 	if mode == config.MaterializationModeFile && !anyBlocked(blocked) {
-		report = prunePortableStaleSymlinks(report, key, outDir, portableCleanupDirs, fileDesired, dryRun)
+		report = prunePortableStaleSymlinks(report, key, outDir, portableCleanupDirs, fileDesired, dryRun, &boundary)
 	}
 
 	var portableReports []TargetReport
 	var portableDiags []diag.Diagnostic
 	var portableErr error
 	if !anyBlocked(blocked) {
-		portableReports, portableDiags, portableErr = prunePortableEntries(state, key, outDir, repoRoot, fileDesired, dryRun)
+		portableReports, portableDiags, portableErr = prunePortableEntries(state, key, outDir, repoRoot, fileDesired, dryRun, &boundary)
 	}
 	if portableErr != nil {
 		slog.Error("materialize manifest prune failed", "target", key.target, "machine_scope", key.machineScope, "error", portableErr)
@@ -1557,7 +1549,7 @@ func executeTargetPlans(report *Report, key outputKey, outDir string, artifacts 
 
 // pruneUncoveredFileCopyDirs removes orphaned managed file-copy resources from
 // the target's file-copy install dirs that were not handled by any copy group.
-func pruneUncoveredFileCopyDirs(report *Report, key outputKey, outDir string, covered map[string]bool, blocked map[string]bool, dryRun bool) *Report {
+func pruneUncoveredFileCopyDirs(report *Report, key outputKey, outDir string, covered map[string]bool, blocked map[string]bool, dryRun bool, boundaries ...*destinationBoundary) *Report {
 	info, ok := harness.TargetInfoFor(key.target)
 	if !ok || len(info.FileCopyKinds) == 0 {
 		return report
@@ -1577,7 +1569,7 @@ func pruneUncoveredFileCopyDirs(report *Report, key outputKey, outDir string, co
 		}
 		seen[dir] = true
 		tr := TargetReport{OutDir: dir}
-		if err := pruneStaleCommandFiles(dir, nil, dryRun, &tr); err != nil {
+		if err := pruneStaleCommandFiles(dir, nil, dryRun, &tr, boundaries...); err != nil {
 			report.Diags = append(report.Diags, diag.Diagnostic{
 				Code:     "materialize.write.error",
 				Severity: diag.SeverityError,
@@ -2767,7 +2759,7 @@ func portableOwnershipDecision(entry portableManifestEntry, currentDigest, desir
 // files cannot be recognized as managed by inspecting the filesystem, so
 // removal is driven exclusively by manifest entries (see prunePortableEntries).
 // Plan-level pruning here would delete user-authored files.
-func syncPortableArtifactFiles(outDir string, artifacts []artifact.Artifact, cacheDir string, dryRun bool, _ bool, collisionMeta map[string]skillLink, state *portableState, target hcc.Target, reportPrefix string, desired map[string]bool) (*hcc.WriteReport, []diag.Diagnostic, error) {
+func syncPortableArtifactFiles(outDir string, artifacts []artifact.Artifact, cacheDir string, dryRun bool, _ bool, collisionMeta map[string]skillLink, state *portableState, target hcc.Target, reportPrefix string, desired map[string]bool, boundaries ...*destinationBoundary) (*hcc.WriteReport, []diag.Diagnostic, error) {
 	report := &hcc.WriteReport{OutDir: outDir}
 	var diags []diag.Diagnostic
 	for _, a := range artifacts {
@@ -2815,15 +2807,11 @@ func syncPortableArtifactFiles(outDir string, artifacts []artifact.Artifact, cac
 			}
 		}
 		if !dryRun {
-			if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
-				return report, diags, err
+			var boundary *destinationBoundary
+			if len(boundaries) > 0 {
+				boundary = boundaries[0]
 			}
-			if info != nil && (info.Mode()&os.ModeSymlink != 0 || info.IsDir()) {
-				if err := os.RemoveAll(dst); err != nil {
-					return report, diags, err
-				}
-			}
-			if err := copyFile(src, dst); err != nil {
+			if err := publishPortableFile(src, dst, info, boundary); err != nil {
 				return report, diags, err
 			}
 			state.add(target, path, desiredDigest)
@@ -2849,10 +2837,16 @@ func portableLinkedDesiredDigest(link skillLink, dryRun bool) (string, error) {
 	if !dryRun {
 		return portablePathDigest(link.target)
 	}
-	if link.cacheDir != "" && len(link.artifacts) == 1 && link.target == filepath.Join(link.cacheDir, filepath.FromSlash(link.artifacts[0].Path)) {
+	if portableLinkIsSingleArtifact(link) {
 		return portableArtifactDigest(link.artifacts[0]), nil
 	}
 	return portableSkillVirtualDigest(link)
+}
+
+// portableLinkIsSingleArtifact reports a link to one compiled cache file, whose
+// desired content comes from the artifact alone rather than a source tree.
+func portableLinkIsSingleArtifact(link skillLink) bool {
+	return link.cacheDir != "" && len(link.artifacts) == 1 && link.target == filepath.Join(link.cacheDir, filepath.FromSlash(link.artifacts[0].Path))
 }
 
 type portableVirtualNode struct {
@@ -2878,67 +2872,24 @@ func portableSkillVirtualDigest(link skillLink) (string, error) {
 		ensureParents(path)
 		nodes[path] = portableVirtualNode{mode: portableArtifactMode(a.Mode), content: a.Bytes}
 	}
-	var addSupport func(string, string) error
-	addSupport = func(root, rel string) error {
-		entries, err := os.ReadDir(root)
+	err := walkPortableSkillSupport(link, func(childRel string) {
+		ensureParents(childRel)
+		// copyDir does not chmod an already-created directory, so an
+		// artifact-created parent keeps its existing 0755 mode.
+		if _, exists := nodes[childRel]; !exists {
+			nodes[childRel] = portableVirtualNode{dir: true, mode: 0o755}
+		}
+	}, func(root *fsboundary.Dir, sourceChild, childRel string) error {
+		data, identity, err := readSupportSourceSnapshot(root, sourceChild)
 		if err != nil {
-			if os.IsNotExist(err) {
-				return nil
-			}
 			return err
 		}
-		for _, entry := range entries {
-			childRel := filepath.ToSlash(filepath.Join(rel, entry.Name()))
-			if childRel == "SKILL.md" {
-				continue
-			}
-			// Mirror copySupportFilesExcluding: VCS internals are never
-			// part of the support tree, so the dry-run digest must
-			// exclude them exactly like the real cache copy does.
-			if entry.Name() == ".git" {
-				continue
-			}
-			childPath := filepath.Join(root, entry.Name())
-			info, err := os.Stat(childPath) // copyFile/copyDir follows source links.
-			if err != nil {
-				return err
-			}
-			if info.IsDir() {
-				// Mirror copySupportFilesExcluding: VCS internals are never
-				// part of the support tree, so the dry-run digest must
-				// exclude them exactly like the real cache copy does.
-				if entry.Name() == ".git" {
-					continue
-				}
-				ensureParents(childRel)
-				// copyDir does not chmod an already-created directory, so an
-				// artifact-created parent keeps its existing 0755 mode.
-				if _, exists := nodes[childRel]; !exists {
-					nodes[childRel] = portableVirtualNode{dir: true, mode: info.Mode().Perm()}
-				}
-				if err := addSupport(childPath, childRel); err != nil {
-					return err
-				}
-				continue
-			}
-			data, err := os.ReadFile(childPath)
-			if err != nil {
-				return err
-			}
-			ensureParents(childRel)
-			nodes[childRel] = portableVirtualNode{mode: info.Mode().Perm(), content: data}
-		}
+		ensureParents(childRel)
+		nodes[childRel] = portableVirtualNode{mode: identity.Mode.Perm(), content: data}
 		return nil
-	}
-	if link.sourceDir != "" {
-		if len(link.declaredSupport) > 0 {
-			if err := verifyDeclaredSupportFiles(link.sourceDir, link.declaredSupport); err != nil {
-				return "", err
-			}
-		}
-		if err := addSupport(link.sourceDir, ""); err != nil {
-			return "", err
-		}
+	})
+	if err != nil {
+		return "", err
 	}
 	paths := make([]string, 0, len(nodes))
 	for path := range nodes {
@@ -2958,7 +2909,86 @@ func portableSkillVirtualDigest(link skillLink) (string, error) {
 	return "sha256:" + hex.EncodeToString(h.Sum(nil)), nil
 }
 
-func syncPortableSkillTrees(skillsDir string, links []skillLink, dryRun bool, state *portableState, target hcc.Target, reportPrefix string, desired map[string]bool) (TargetReport, error) {
+// walkPortableSkillSupport visits the support tree prepareSkillLinkCache would
+// copy from link.sourceDir: contained directory aliases are expanded through
+// the captured source root, escaping/dangling/cyclic aliases refuse, and VCS
+// internals and the compiled primary are skipped. visitFile receives the
+// captured root and the root-relative source path of each support file.
+func walkPortableSkillSupport(link skillLink, visitDir func(childRel string), visitFile func(root *fsboundary.Dir, sourceChild, childRel string) error) error {
+	if link.sourceDir == "" {
+		return nil
+	}
+	if len(link.declaredSupport) > 0 {
+		if err := verifyDeclaredSupportFiles(link.sourceDir, link.declaredSupport); err != nil {
+			return err
+		}
+	}
+	active := make(map[string]bool)
+	var addSupport func(*fsboundary.Dir, string, string) error
+	addSupport = func(root *fsboundary.Dir, sourceRel, rel string) error {
+		if active[sourceRel] {
+			return fmt.Errorf("%w: cyclic support directory alias", fsboundary.ErrUnsafePath)
+		}
+		active[sourceRel] = true
+		defer delete(active, sourceRel)
+		entries, err := readSupportSourceDirectory(root, sourceRel)
+		if err != nil {
+			return err
+		}
+		for _, entry := range entries {
+			childRel := filepath.ToSlash(filepath.Join(rel, entry.Name()))
+			// Mirror copySupportFilesExcluding: VCS internals are never part
+			// of the support tree, exactly like the real cache copy.
+			if childRel == "SKILL.md" || entry.Name() == ".git" {
+				continue
+			}
+			sourceChild, isDir, err := supportSourceChild(root, sourceRel, entry)
+			if errors.Is(err, fs.SkipDir) {
+				continue
+			}
+			if err != nil {
+				return err
+			}
+			if isDir { // copyFile/copyDir follows source links.
+				visitDir(childRel)
+				if err := addSupport(root, sourceChild, childRel); err != nil {
+					return err
+				}
+				continue
+			}
+			if err := visitFile(root, sourceChild, childRel); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	absolute, err := filepath.Abs(link.sourceDir)
+	if err != nil {
+		return err
+	}
+	root, err := fsboundary.OpenDir(absolute)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil
+		}
+		return err
+	}
+	err = addSupport(root, ".", ".")
+	if closeErr := root.Close(); closeErr != nil {
+		return errors.Join(err, closeErr)
+	}
+	return err
+}
+
+// validatePortableSkillSupportStructure applies the support-tree authority
+// rules of the dry-run digest without reading payload bytes: aliases must stay
+// contained and every support payload must be a single-link regular file. A
+// read-only check uses it for symlinks whose desired content is not needed.
+func validatePortableSkillSupportStructure(link skillLink) error {
+	return walkPortableSkillSupport(link, func(string) {}, inspectSupportSourceLeaf)
+}
+
+func syncPortableSkillTrees(skillsDir string, links []skillLink, dryRun bool, state *portableState, target hcc.Target, reportPrefix string, desired map[string]bool, boundaries ...*destinationBoundary) (TargetReport, error) {
 	report := TargetReport{OutDir: skillsDir}
 	if !dryRun {
 		if err := ensureDirectoryReplacingSymlink(skillsDir); err != nil {
@@ -3009,21 +3039,30 @@ func syncPortableSkillTrees(skillsDir string, links []skillLink, dryRun bool, st
 			}
 		}
 		if !dryRun {
-			if info != nil {
-				if err := os.RemoveAll(dst); err != nil {
-					return report, err
-				}
-			}
 			sourceInfo, err := os.Stat(link.target)
 			if err != nil {
 				return report, err
 			}
 			if sourceInfo.IsDir() {
-				if err := copyDir(link.target, dst); err != nil {
+				var boundary *destinationBoundary
+				if len(boundaries) > 0 {
+					boundary = boundaries[0]
+				}
+				ownedDigest := ""
+				if owned && info != nil && info.Mode()&os.ModeSymlink == 0 {
+					ownedDigest = entry.Digest
+				}
+				if err := publishPortableTree(link.target, dst, info, ownedDigest, boundary); err != nil {
 					return report, err
 				}
-			} else if err := copyFile(link.target, dst); err != nil {
-				return report, err
+			} else {
+				var boundary *destinationBoundary
+				if len(boundaries) > 0 {
+					boundary = boundaries[0]
+				}
+				if err := publishPortableFile(link.target, dst, info, boundary); err != nil {
+					return report, err
+				}
 			}
 			state.add(target, path, desiredDigest)
 		}
@@ -3038,7 +3077,7 @@ func portableSkillCollision(dst string, link skillLink) diag.Diagnostic {
 	return diag.Diagnostic{Code: "materialize.collision.user-owned", Severity: diag.SeverityWarning, Resource: link.resourceName, Message: collisionRemoveHint(dst, link.name, link)}
 }
 
-func prunePortableEntries(state *portableState, key outputKey, outDir, repoRoot string, desired map[string]bool, dryRun bool) ([]TargetReport, []diag.Diagnostic, error) {
+func prunePortableEntries(state *portableState, key outputKey, outDir, repoRoot string, desired map[string]bool, dryRun bool, boundaries ...*destinationBoundary) ([]TargetReport, []diag.Diagnostic, error) {
 	reports := make(map[string]*TargetReport)
 	var diags []diag.Diagnostic
 	keys := make([]string, 0, len(state.entries))
@@ -3065,7 +3104,8 @@ func prunePortableEntries(state *portableState, key outputKey, outDir, repoRoot 
 		if err != nil {
 			return nil, diags, err
 		}
-		_, err = os.Lstat(path)
+		observed, statErr := os.Lstat(path)
+		err = statErr
 		if err != nil && !os.IsNotExist(err) {
 			return nil, diags, err
 		}
@@ -3084,10 +3124,14 @@ func prunePortableEntries(state *portableState, key outputKey, outDir, repoRoot 
 			}
 		}
 		if !dryRun {
-			if err := os.RemoveAll(path); err != nil && !os.IsNotExist(err) {
+			var boundary *destinationBoundary
+			if len(boundaries) > 0 {
+				boundary = boundaries[0]
+			}
+			if err := removePortableOutput(path, observed, entry.Digest, boundary); err != nil {
 				return nil, diags, err
 			}
-			cleanEmptyPortableArtifactDirs(root, filepath.Dir(filepath.FromSlash(rel)))
+			cleanEmptyPortableArtifactDirs(root, filepath.Dir(filepath.FromSlash(rel)), boundary)
 			delete(state.entries, stateKey)
 		}
 		report := reports[root]
@@ -3133,7 +3177,7 @@ func portableEntryDestination(key outputKey, outDir, repoRoot, entryPath string)
 // links are not represented in its portable manifest. Restricting the scan to
 // known harness component and resource directories keeps project and target
 // scopes isolated while preserving user-owned symlinks.
-func prunePortableStaleSymlinks(report *Report, key outputKey, outDir string, cleanupDirs map[string]string, desired map[string]bool, dryRun bool) *Report {
+func prunePortableStaleSymlinks(report *Report, key outputKey, outDir string, cleanupDirs map[string]string, desired map[string]bool, dryRun bool, boundaries ...*destinationBoundary) *Report {
 	dirs := make([]string, 0, len(cleanupDirs))
 	for dir := range cleanupDirs {
 		dirs = append(dirs, dir)
@@ -3153,24 +3197,32 @@ func prunePortableStaleSymlinks(report *Report, key outputKey, outDir string, cl
 				desiredInDir[rel] = ""
 			}
 		}
-		stale, diags, err := staleArtifactLinks(dir, desiredInDir)
+		snapshots := make(map[string]managedLinkSnapshot)
+		stale, diags, err := staleArtifactLinks(dir, desiredInDir, snapshots, boundaries...)
 		if err != nil {
 			report.Diags = append(report.Diags, diag.Diagnostic{Code: "materialize.write.error", Severity: diag.SeverityError, Target: string(key.target), Message: fmt.Sprintf("prune stale portable symlinks in %s: %v", dir, err)})
 			continue
 		}
-		tr := TargetReport{OutDir: dir, Removed: stale, Diags: diags}
-		if !dryRun {
-			for _, rel := range stale {
-				path, pathErr := portableOutputPath(dir, rel)
-				if pathErr != nil {
-					report.Diags = append(report.Diags, diag.Diagnostic{Code: "materialize.write.error", Severity: diag.SeverityError, Target: string(key.target), Message: pathErr.Error()})
-					continue
-				}
-				if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		tr := TargetReport{OutDir: dir, Diags: diags}
+		for _, rel := range stale {
+			path, pathErr := portableOutputPath(dir, rel)
+			if pathErr != nil {
+				report.Diags = append(report.Diags, diag.Diagnostic{Code: "materialize.write.error", Severity: diag.SeverityError, Target: string(key.target), Message: pathErr.Error()})
+				continue
+			}
+			var boundary *destinationBoundary
+			if len(boundaries) > 0 {
+				boundary = boundaries[0]
+			}
+			if err := pruneManagedLink(path, snapshots[rel], boundary, dryRun); err != nil {
+				if !missingPruneEntry(err) {
 					report.Diags = append(report.Diags, diag.Diagnostic{Code: "materialize.write.error", Severity: diag.SeverityError, Target: string(key.target), Message: fmt.Sprintf("remove stale portable symlink %s: %v", path, err)})
-					continue
 				}
-				cleanEmptyPortableArtifactDirs(dir, filepath.Dir(filepath.FromSlash(rel)))
+				continue
+			}
+			tr.Removed = append(tr.Removed, rel)
+			if !dryRun {
+				cleanEmptyPortableArtifactDirs(dir, filepath.Dir(filepath.FromSlash(rel)), boundary)
 			}
 		}
 		report = appendGroupReport(report, key, outDir, prefix, tr, nil, "")
@@ -3280,18 +3332,31 @@ func syncArtifactLinks(outDir string, artifacts []artifact.Artifact, cacheDir st
 	}
 
 	if pruneStaleEntries {
-		stale, staleDiags, err := staleArtifactLinks(outDir, desired)
+		var readBoundary *destinationBoundary
+		if len(portable) > 0 {
+			readBoundary = portable[0].boundary
+		}
+		snapshots := make(map[string]managedLinkSnapshot)
+		stale, staleDiags, err := staleArtifactLinks(outDir, desired, snapshots, readBoundary)
 		if err != nil {
 			return report, diags, err
 		}
 		diags = append(diags, staleDiags...)
-		report.Removed = stale
-		if !dryRun {
-			for _, path := range stale {
-				if err := os.RemoveAll(filepath.Join(outDir, filepath.FromSlash(path))); err != nil && !os.IsNotExist(err) {
-					return report, diags, err
+		for _, path := range stale {
+			leaf := filepath.Join(outDir, filepath.FromSlash(path))
+			var boundary *destinationBoundary
+			if len(portable) > 0 {
+				boundary = portable[0].boundary
+			}
+			if err := pruneManagedLink(leaf, snapshots[path], boundary, dryRun); err != nil {
+				if missingPruneEntry(err) {
+					continue
 				}
-				cleanEmptyArtifactDirs(outDir, filepath.Dir(filepath.FromSlash(path)))
+				return report, diags, err
+			}
+			report.Removed = append(report.Removed, path)
+			if !dryRun {
+				cleanEmptyPortableArtifactDirs(outDir, filepath.Dir(filepath.FromSlash(path)), boundary)
 			}
 		}
 	}
@@ -3302,10 +3367,37 @@ func syncArtifactLinks(outDir string, artifacts []artifact.Artifact, cacheDir st
 	return report, diags, nil
 }
 
-func staleArtifactLinks(outDir string, desired map[string]string) ([]string, []diag.Diagnostic, error) {
-	var stale []string
-	var diags []diag.Diagnostic
-	err := filepath.WalkDir(outDir, func(path string, d fs.DirEntry, err error) error {
+func staleArtifactLinks(outDir string, desired map[string]string, snapshots map[string]managedLinkSnapshot, boundaries ...*destinationBoundary) (stale []string, diags []diag.Diagnostic, err error) {
+	var boundary *destinationBoundary
+	if len(boundaries) > 0 {
+		boundary = boundaries[0]
+	}
+	root, err := capturePruneDirectory(outDir, boundary)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) && !errors.Is(err, fsboundary.ErrUnsafePath) && !errors.Is(err, fsboundary.ErrGenerationConflict) {
+			return nil, nil, nil
+		}
+		return nil, nil, err
+	}
+	defer func() {
+		if closeErr := root.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
+	native, err := root.NativeRoot()
+	if err != nil {
+		return nil, nil, err
+	}
+	defer func() {
+		if closeErr := native.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
+	err = fs.WalkDir(native.FS(), ".", func(relPath string, d fs.DirEntry, err error) error {
+		path := filepath.Join(outDir, filepath.FromSlash(relPath))
+		if missingPruneEntry(err) {
+			return nil
+		}
 		if err != nil {
 			return err
 		}
@@ -3324,9 +3416,19 @@ func staleArtifactLinks(outDir string, desired map[string]string) ([]string, []d
 		if _, ok := desired[relSlash]; ok {
 			return nil
 		}
+		snapshot, err := observeManagedLink(filepath.FromSlash(relPath), native)
+		if missingPruneEntry(err) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if snapshot.observed.Mode()&os.ModeSymlink == 0 {
+			return fsboundary.ErrGenerationConflict
+		}
 		// Only mark managed symlinks as stale. User symlinks
 		// (pointing outside the cache dir) are preserved.
-		if !isManagedSymlink(path) {
+		if !strings.HasPrefix(snapshot.text, cache.CacheDir()+string(os.PathSeparator)) {
 			diags = append(diags, diag.Diagnostic{
 				Code:     "materialize.collision.user-owned",
 				Severity: diag.SeverityInfo,
@@ -3335,12 +3437,20 @@ func staleArtifactLinks(outDir string, desired map[string]string) ([]string, []d
 			return nil
 		}
 		stale = append(stale, relSlash)
+		if snapshots != nil {
+			snapshots[relSlash] = snapshot
+		}
 		return nil
 	})
 	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, diags, nil
-		}
+		return nil, diags, err
+	}
+	if boundary != nil && boundary.pruneEnumerationHook != nil {
+		boundary.pruneEnumerationHook(outDir)
+	}
+	// The walk read the retained directory; a replaced name must not turn an
+	// obsolete enumeration into a successful discovery result.
+	if err := verifyPruneDirectory(outDir, boundary, root); err != nil {
 		return nil, diags, err
 	}
 	sort.Strings(stale)
@@ -3368,7 +3478,7 @@ func cleanEmptyArtifactDirs(outDir, relPath string) {
 // cleanEmptyPortableArtifactDirs is the portable counterpart of
 // cleanEmptyArtifactDirs. Each directory is validated before reading or
 // removing it so cleanup never traverses an intermediate symlink.
-func cleanEmptyPortableArtifactDirs(outDir, relPath string) {
+func cleanEmptyPortableArtifactDirs(outDir, relPath string, boundaries ...*destinationBoundary) {
 	if relPath == "." || relPath == "" {
 		return
 	}
@@ -3382,15 +3492,13 @@ func cleanEmptyPortableArtifactDirs(outDir, relPath string) {
 			return
 		}
 		dirPath := filepath.Dir(child)
-		info, err := os.Lstat(dirPath)
-		if err != nil || info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+		var boundary *destinationBoundary
+		if len(boundaries) > 0 {
+			boundary = boundaries[0]
+		}
+		if err := removeEmptyPortableDirectory(outDir, dirPath, boundary); err != nil {
 			return
 		}
-		entries, err := os.ReadDir(dirPath)
-		if err != nil || len(entries) > 0 {
-			return
-		}
-		_ = os.Remove(dirPath)
 	}
 }
 
@@ -3406,7 +3514,101 @@ func prepareSkillLinkCaches(links []skillLink, dryRun bool) error {
 	return nil
 }
 
-func prepareSkillLinkCache(link skillLink) error {
+// supportStageCopyHook runs after the support stage is admitted and before
+// support is copied into it. It is nil in production and set only by serial
+// tests in this package.
+var supportStageCopyHook func(parent string)
+
+// supportStageCleanupHook runs after the support stage name is matched to
+// the admitted stage and before removal. It is nil in production and set only
+// by serial tests in this package.
+var supportStageCleanupHook func(stage string)
+
+// removeAdmittedSupportStage removes the attempt-created support stage only
+// while its name still refers to the admitted directory. Contents are removed
+// through the admitted descriptor, and the name itself only by an
+// empty-directory removal, so a replacement swapped in during cleanup is never
+// recursively deleted; a replaced name is left untouched as a generation
+// conflict.
+func removeAdmittedSupportStage(parent *fsboundary.Dir, native *os.Root, name string, stage *fsboundary.Dir, created fsboundary.Identity) error {
+	sameStage := func() error {
+		current, err := native.Lstat(name)
+		if err != nil {
+			return fmt.Errorf("%w: support stage unavailable for cleanup: %w", fsboundary.ErrGenerationConflict, err)
+		}
+		identity, err := fsboundary.FileInfoIdentity(current)
+		if err != nil {
+			return err
+		}
+		if !identity.SameObject(created) {
+			return fmt.Errorf("%w: support stage replaced before cleanup", fsboundary.ErrGenerationConflict)
+		}
+		return nil
+	}
+	if err := sameStage(); err != nil {
+		return err
+	}
+	if supportStageCleanupHook != nil {
+		supportStageCleanupHook(filepath.Join(parent.Path(), name))
+	}
+	if err := removeCapturedDirectoryContents(stage); err != nil {
+		return err
+	}
+	if err := sameStage(); err != nil {
+		return err
+	}
+	if err := parent.Rmdir(name); err != nil {
+		return fmt.Errorf("%w: support stage changed during cleanup: %w", fsboundary.ErrGenerationConflict, err)
+	}
+	return nil
+}
+
+// removeCapturedDirectoryContents empties a captured directory through
+// descriptor-relative operations without following links.
+func removeCapturedDirectoryContents(dir *fsboundary.Dir) (err error) {
+	native, err := dir.NativeRoot()
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if closeErr := native.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
+	entries, err := fs.ReadDir(native.FS(), ".")
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		info, err := native.Lstat(entry.Name())
+		if err != nil {
+			return err
+		}
+		if !info.IsDir() {
+			if err := dir.Unlink(entry.Name()); err != nil {
+				return err
+			}
+			continue
+		}
+		child, err := dir.OpenPath(entry.Name())
+		if err != nil {
+			return err
+		}
+		removeErr := removeCapturedDirectoryContents(child)
+		if closeErr := child.Close(); closeErr != nil {
+			removeErr = errors.Join(removeErr, closeErr)
+		}
+		if removeErr != nil {
+			return removeErr
+		}
+		if err := dir.Rmdir(entry.Name()); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func prepareSkillLinkCache(link skillLink) (err error) {
 	if len(link.artifacts) == 0 {
 		return nil
 	}
@@ -3414,36 +3616,83 @@ func prepareSkillLinkCache(link skillLink) error {
 	if cacheDir == "" {
 		cacheDir = link.target
 	}
+	cacheDir, err = filepath.Abs(cacheDir)
+	if err != nil {
+		return err
+	}
+	parentPath := filepath.Dir(cacheDir)
+	parent, err := harness.CaptureDestinationPath(true, "", parentPath, parentPath, ".", true)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if closeErr := parent.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
+	native, err := parent.NativeRoot()
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if closeErr := native.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
+	namespace := &destinationBoundary{capturedRoot: parent, capturedRootPath: parentPath}
+	slog.Debug("cache namespace admitted", "path", parentPath, "phase", "cache-namespace")
+	if err := namespace.directory(parentPath, false); err != nil {
+		return err
+	}
 	compiled := make(map[string]bool, len(link.artifacts))
 	for _, a := range link.artifacts {
 		compiled[filepath.ToSlash(filepath.Clean(a.Path))] = true
 	}
 	supportStage := ""
 	if link.sourceDir != "" {
-		if err := os.MkdirAll(filepath.Dir(cacheDir), 0o755); err != nil {
+		name := ".support-staging-" + rand.Text()
+		if err := parent.Mkdir(name, 0o700); err != nil {
 			return err
 		}
-		var err error
-		supportStage, err = os.MkdirTemp(filepath.Dir(cacheDir), ".support-staging-")
-		if err != nil {
+		supportStage = filepath.Join(parentPath, name)
+		// Capture the admitted stage directory itself: cleanup removes its
+		// contents through this descriptor, never through the name.
+		stage, stageErr := parent.OpenPath(name)
+		if stageErr != nil {
+			return stageErr
+		}
+		created := stage.Identity()
+		defer func() {
+			if cleanupErr := removeAdmittedSupportStage(parent, native, name, stage, created); cleanupErr != nil {
+				err = errors.Join(err, cleanupErr)
+			}
+			if closeErr := stage.Close(); closeErr != nil {
+				err = errors.Join(err, closeErr)
+			}
+		}()
+		if supportStageCopyHook != nil {
+			supportStageCopyHook(parentPath)
+		}
+		if err := namespace.directory(parentPath, false); err != nil {
 			return err
 		}
-		defer func() { _ = os.RemoveAll(supportStage) }()
-		if err := copyScopedSupport(link.sourceDir, supportStage, compiled, "", len(link.declaredSupport) == 0, writeSupportStage); err != nil {
+		// Stage and cache outputs are captured relative to the admitted
+		// namespace descriptor, never re-resolved through its path.
+		if err := copyScopedSupport(link.sourceDir, supportStage, compiled, "", len(link.declaredSupport) == 0, writeSupportStage, namespace); err != nil {
 			return err
 		}
 		if err := verifyDeclaredSupportFiles(supportStage, link.declaredSupport); err != nil {
 			return err
 		}
 	}
-	if err := os.MkdirAll(cacheDir, 0o755); err != nil {
+	if err := namespace.directory(cacheDir, true); err != nil {
 		return err
 	}
 	// Write compiled artifacts (SKILL.md) without pruning, because
 	// support files copied below are not in the artifact list and
 	// would be incorrectly pruned.
 	result := &hcc.Result{Artifacts: link.artifacts}
-	_, err := hcc.Materialize(result, cacheDir, hcc.WithWriteMode(hcc.WriteModeOverwrite))
+	_, err = hcc.Materialize(result, cacheDir, hcc.WithWriteMode(hcc.WriteModeOverwrite))
 	if err != nil {
 		return err
 	}
@@ -3456,7 +3705,7 @@ func prepareSkillLinkCache(link skillLink) error {
 		if err := pruneSkillCacheSupportFiles(cacheDir, compiled); err != nil {
 			return err
 		}
-		if err := copySupportFilesExcluding(supportStage, cacheDir, compiled, "", false); err != nil {
+		if err := copyScopedSupport(supportStage, cacheDir, compiled, "", false, writeSupportSnapshot, namespace); err != nil {
 			return err
 		}
 	}
@@ -3467,20 +3716,57 @@ func prepareSkillLinkCache(link skillLink) error {
 // retaining current compiled artifacts and the directories required to contain
 // them. The cache is fully managed; this makes its support subtree exactly
 // reflect the current source tree on every real sync.
-func pruneSkillCacheSupportFiles(cacheDir string, compiled map[string]bool) error {
-	var prune func(string, string) error
-	prune = func(dir, rel string) error {
-		entries, err := os.ReadDir(dir)
-		if os.IsNotExist(err) {
-			return nil
+func pruneSkillCacheSupportFiles(cacheDir string, compiled map[string]bool) (err error) {
+	root, err := fsboundary.OpenDir(cacheDir)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if closeErr := root.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
 		}
+	}()
+	slog.Debug("skill cache support pruning starting", "cache_dir", cacheDir, "phase", "support-prune")
+	verify := func() error {
+		info, err := os.Stat(cacheDir)
+		if err != nil {
+			return fmt.Errorf("%w: support-prune cache %s unavailable: %w", fsboundary.ErrGenerationConflict, cacheDir, err)
+		}
+		identity, err := fsboundary.FileInfoIdentity(info)
+		if err != nil {
+			return fmt.Errorf("support-prune cache %s identity: %w", cacheDir, err)
+		}
+		if !identity.SameObject(root.Identity()) {
+			return fmt.Errorf("%w: support-prune cache %s replaced since capture", fsboundary.ErrGenerationConflict, cacheDir)
+		}
+		return nil
+	}
+	if err := verify(); err != nil {
+		return err
+	}
+	native, err := root.NativeRoot()
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if closeErr := native.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
+	var prune func(string) error
+	prune = func(rel string) error {
+		entries, err := readSupportSourceDirectory(root, rel)
 		if err != nil {
 			return err
 		}
 		for _, entry := range entries {
 			childRel := filepath.ToSlash(filepath.Join(rel, entry.Name()))
-			childPath := filepath.Join(dir, entry.Name())
-			keep := compiled[childRel]
+			if compiled[childRel] {
+				continue
+			}
 			containsCompiled := false
 			for artifactPath := range compiled {
 				if strings.HasPrefix(artifactPath, childRel+"/") {
@@ -3488,22 +3774,22 @@ func pruneSkillCacheSupportFiles(cacheDir string, compiled map[string]bool) erro
 					break
 				}
 			}
-			if keep {
-				continue
-			}
 			if containsCompiled && entry.IsDir() {
-				if err := prune(childPath, childRel); err != nil {
+				if err := prune(childRel); err != nil {
 					return err
 				}
 				continue
 			}
-			if err := os.RemoveAll(childPath); err != nil {
+			if err := verify(); err != nil {
+				return err
+			}
+			if err := native.RemoveAll(childRel); err != nil {
 				return err
 			}
 		}
 		return nil
 	}
-	return prune(cacheDir, "")
+	return prune(".")
 }
 
 // copySupportFiles copies all files from srcDir to dstDir except the compiled
@@ -3633,49 +3919,64 @@ func portablePathDigest(path string) (string, error) {
 	return "sha256:" + hex.EncodeToString(h.Sum(nil)), nil
 }
 
-func writePortableDigestPath(h io.Writer, path, rel string) error {
-	info, err := os.Lstat(path)
+func writePortableDigestPath(h io.Writer, path, rel string) (err error) {
+	path, err = filepath.Abs(path)
 	if err != nil {
 		return err
 	}
-	mode := info.Mode()
-	writeHeader := func(kind string) {
-		_, _ = fmt.Fprintf(h, "%s\x00%s\x00%#o\x00", kind, filepath.ToSlash(rel), mode.Perm())
+	root, err := fsboundary.OpenDir(filepath.Dir(path))
+	if err != nil {
+		return err
 	}
-	switch {
-	case mode.IsRegular():
-		writeHeader("file")
-		data, err := os.ReadFile(path)
-		if err != nil {
-			return err
+	defer func() {
+		if closeErr := root.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
 		}
-		_, _ = fmt.Fprintf(h, "%d\x00", len(data))
-		_, _ = h.Write(data)
-		return nil
-	case mode.IsDir():
-		writeHeader("dir")
-		entries, err := os.ReadDir(path)
-		if err != nil {
-			return err
-		}
-		for _, entry := range entries {
-			if err := writePortableDigestPath(h, filepath.Join(path, entry.Name()), filepath.Join(rel, entry.Name())); err != nil {
-				return err
-			}
-		}
-		return nil
-	case mode&os.ModeSymlink != 0:
-		writeHeader("symlink")
-		target, err := os.Readlink(path)
-		if err != nil {
-			return err
-		}
-		_, _ = fmt.Fprintf(h, "%d\x00%s", len(target), target)
-		return nil
-	default:
-		writeHeader("other")
-		return nil
+	}()
+	return writePortableDigestEntry(h, root, filepath.Base(path), rel)
+}
+
+func writePortableRegularDigest(h io.Writer, path, rel string, info os.FileInfo) (err error) {
+	path, err = filepath.Abs(path)
+	if err != nil {
+		return err
 	}
+	root, err := fsboundary.OpenDir(filepath.Dir(path))
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if closeErr := root.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
+	return writePortableRegularDigestAt(h, root, filepath.Base(path), rel, info)
+}
+
+func writePortableRegularDigestAt(h io.Writer, root *fsboundary.Dir, name, rel string, info os.FileInfo) (err error) {
+	before, err := fsboundary.FileInfoIdentity(info)
+	if err != nil {
+		return err
+	}
+	file, err := fsboundary.CaptureDestination(root, name, fsboundary.LinkPolicyRepository)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if closeErr := file.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
+	if file.Link() != nil || !file.Identity().SameState(before) {
+		return fmt.Errorf("%w: portable output changed before digest read", fsboundary.ErrGenerationConflict)
+	}
+	return file.ReadTargetWith(func(reader io.Reader) error {
+		if _, err := fmt.Fprintf(h, "file\x00%s\x00%#o\x00%d\x00", filepath.ToSlash(rel), before.Mode.Perm(), before.Size); err != nil {
+			return err
+		}
+		_, err := io.Copy(h, reader)
+		return err
+	})
 }
 
 func portableArtifactMode(mode fs.FileMode) fs.FileMode {
@@ -3736,33 +4037,10 @@ func filesEqual(src, dst string) (_ bool, err error) {
 	}
 }
 
-func copyDir(src, dst string) error {
-	srcInfo, err := os.Stat(src)
-	if err != nil {
-		return err
-	}
-	if err := os.MkdirAll(dst, srcInfo.Mode()); err != nil {
-		return err
-	}
-	entries, err := os.ReadDir(src)
-	if err != nil {
-		return err
-	}
-	for _, entry := range entries {
-		srcPath := filepath.Join(src, entry.Name())
-		dstPath := filepath.Join(dst, entry.Name())
-		if entry.IsDir() {
-			if err := copyDir(srcPath, dstPath); err != nil {
-				return err
-			}
-		} else {
-			if err := copyFile(srcPath, dstPath); err != nil {
-				return err
-			}
-		}
-	}
-	return nil
-}
+// skillPruneObservedHook runs after a skill-directory prune entry is
+// enumerated. It is nil in production and set only by serial tests in this
+// package.
+var skillPruneObservedHook func(path string)
 
 func syncSkillLinks(skillsDir string, links []skillLink, dryRun bool, pruneStaleEntries bool, portable ...portableSyncContext) (TargetReport, error) {
 	var state *portableState
@@ -3774,7 +4052,6 @@ func syncSkillLinks(skillsDir string, links []skillLink, dryRun bool, pruneStale
 	}
 	report := TargetReport{OutDir: skillsDir}
 	desired := make(map[string]string, len(links))
-	desiredDigests := make(map[string]string, len(links))
 	linkMeta := make(map[string]skillLink, len(links))
 	orderedLinks := append([]skillLink(nil), links...)
 	slices.SortFunc(orderedLinks, func(a, b skillLink) int {
@@ -3784,15 +4061,17 @@ func syncSkillLinks(skillsDir string, links []skillLink, dryRun bool, pruneStale
 		return strings.Compare(a.target, b.target)
 	})
 	for _, link := range orderedLinks {
-		if state != nil {
-			digest, err := portableLinkedDesiredDigest(link, dryRun)
-			if err != nil {
-				return report, err
-			}
-			desiredDigests[link.name] = digest
-		}
 		desired[link.name] = link.target
 		linkMeta[link.name] = link
+		// A real sync revalidates the source support tree while preparing the
+		// link cache. A read-only check skips that and hashes desired content
+		// only for legacy migration, so apply the same support-tree authority
+		// structurally, without reading payload bytes, to every linked source.
+		if state != nil && dryRun && !portableLinkIsSingleArtifact(link) {
+			if err := validatePortableSkillSupportStructure(link); err != nil {
+				return report, err
+			}
+		}
 	}
 
 	if !dryRun {
@@ -3818,8 +4097,14 @@ func syncSkillLinks(skillsDir string, links []skillLink, dryRun bool, pruneStale
 				if digestErr != nil {
 					return report, digestErr
 				}
-				migrationAllowed = (entry.Digest != "" && currentDigest == entry.Digest) ||
-					(entry.Digest == "" && currentDigest == desiredDigests[name])
+				ownedDigest := entry.Digest
+				if ownedDigest == "" {
+					ownedDigest, digestErr = portableLinkedDesiredDigest(linkMeta[name], dryRun)
+					if digestErr != nil {
+						return report, digestErr
+					}
+				}
+				migrationAllowed = currentDigest == ownedDigest
 			} else {
 				migrationAllowed = true
 			}
@@ -3860,9 +4145,13 @@ func syncSkillLinks(skillsDir string, links []skillLink, dryRun bool, pruneStale
 		}
 	}
 
-	entries, err := os.ReadDir(skillsDir)
+	var readBoundary *destinationBoundary
+	if len(portable) > 0 {
+		readBoundary = portable[0].boundary
+	}
+	entries, err := readPruneDirectory(skillsDir, readBoundary, func(name string) bool { _, keep := desired[name]; return keep }, pruneStaleEntries)
 	if err != nil {
-		if os.IsNotExist(err) || dryRun {
+		if errors.Is(err, fs.ErrNotExist) && !errors.Is(err, fsboundary.ErrUnsafePath) && !errors.Is(err, fsboundary.ErrGenerationConflict) {
 			return report, nil
 		}
 		return report, err
@@ -3873,11 +4162,16 @@ func syncSkillLinks(skillsDir string, links []skillLink, dryRun bool, pruneStale
 			continue
 		}
 		path := filepath.Join(skillsDir, name)
-		if _, ok := existingSymlinkTarget(path); !ok {
+		observed := entry.observed
+		snapshot := managedLinkSnapshot{observed: observed, text: entry.linkText}
+		if skillPruneObservedHook != nil {
+			skillPruneObservedHook(path)
+		}
+		if observed.Mode()&os.ModeSymlink == 0 {
 			// Non-symlink directories are user-owned skill directories
 			// and must be preserved. Mirror the principle from
 			// staleArtifactLinks which also preserves user-owned content.
-			if entry.IsDir() {
+			if observed.IsDir() {
 				if pruneStaleEntries {
 					report.Diags = append(report.Diags, diag.Diagnostic{
 						Code:     "materialize.skill.user-owned-preserved",
@@ -3896,7 +4190,7 @@ func syncSkillLinks(skillsDir string, links []skillLink, dryRun bool, pruneStale
 			// must be preserved — managed resources in this directory are
 			// materialized as symlinks, so an unmarked regular file is always
 			// user-owned.
-			if !isManagedCommandFile(path) {
+			if !entry.managedCommand {
 				report.Diags = append(report.Diags, diag.Diagnostic{
 					Code:     "materialize.collision.user-owned",
 					Severity: diag.SeverityInfo,
@@ -3904,18 +4198,26 @@ func syncSkillLinks(skillsDir string, links []skillLink, dryRun bool, pruneStale
 				})
 				continue
 			}
-			report.Removed = append(report.Removed, staleSkillEntryReportPath(path, name))
-			if dryRun {
-				continue
+			var boundary *destinationBoundary
+			if len(portable) > 0 {
+				boundary = portable[0].boundary
 			}
-			if err := os.RemoveAll(path); err != nil && !os.IsNotExist(err) {
+			if boundary != nil && boundary.pruneClassificationHook != nil {
+				boundary.pruneClassificationHook(path)
+			}
+			err = pruneNativeCommandFile(path, observed, boundary, dryRun)
+			if err != nil {
+				if missingPruneEntry(err) {
+					continue
+				}
 				return report, err
 			}
+			report.Removed = append(report.Removed, name)
 			continue
 		}
 		// Symlink — only prune if it points to our cache (managed).
 		// User symlinks (pointing outside the cache) are preserved.
-		if !isManagedSymlink(path) {
+		if !strings.HasPrefix(snapshot.text, cache.CacheDir()+string(os.PathSeparator)) {
 			if pruneStaleEntries {
 				report.Diags = append(report.Diags, diag.Diagnostic{
 					Code:     "materialize.collision.user-owned",
@@ -3925,13 +4227,17 @@ func syncSkillLinks(skillsDir string, links []skillLink, dryRun bool, pruneStale
 			}
 			continue
 		}
-		report.Removed = append(report.Removed, name)
-		if dryRun {
-			continue
+		var boundary *destinationBoundary
+		if len(portable) > 0 {
+			boundary = portable[0].boundary
 		}
-		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		if err := pruneManagedLink(path, snapshot, boundary, dryRun); err != nil {
+			if missingPruneEntry(err) {
+				continue
+			}
 			return report, err
 		}
+		report.Removed = append(report.Removed, name)
 	}
 
 	return report, nil
@@ -3954,7 +4260,11 @@ func ensureDirectoryReplacingSymlink(path string) error {
 // TEMPORARY WORKAROUND: this path exists only because Factory's droid CLI does
 // not follow symlinked command files. Remove it (and TargetInfo.FileCopyKinds)
 // once Factory resolves symlink loading for commands.
-func syncCommandFiles(dir string, links []skillLink, dryRun, pruneStaleEntries bool) (TargetReport, error) {
+func syncCommandFiles(dir string, links []skillLink, dryRun, pruneStaleEntries bool, boundaries ...*destinationBoundary) (TargetReport, error) {
+	var boundary *destinationBoundary
+	if len(boundaries) > 0 {
+		boundary = boundaries[0]
+	}
 	report := TargetReport{OutDir: dir}
 	desired := make(map[string][]byte, len(links))
 	linkMeta := make(map[string]skillLink, len(links))
@@ -4000,33 +4310,41 @@ func syncCommandFiles(dir string, links []skillLink, dryRun, pruneStaleEntries b
 			continue
 		default:
 			// Regular file — only overwrite if it carries our marker.
-			if !isManagedCommandFile(filePath) {
+			managed, markerErr := managedCommandFileState(filePath, info, boundary)
+			if markerErr != nil {
+				return report, markerErr
+			}
+			if !managed {
 				report.Skipped = append(report.Skipped, name)
 				report.Diags = append(report.Diags, userOwnedCommandDiag(filePath, name, linkMeta[name]))
 				continue
 			}
-			if existing, readErr := os.ReadFile(filePath); readErr == nil && bytes.Equal(existing, content) {
+			existing, readErr := readNativeCommandFile(filePath, info, boundary)
+			if readErr != nil {
+				return report, readErr
+			}
+			if bytes.Equal(existing, content) {
 				report.Skipped = append(report.Skipped, name)
 				continue
 			}
 		}
 
-		report.Written = append(report.Written, name)
 		if dryRun {
+			report.Written = append(report.Written, name)
 			continue
 		}
-		if info != nil && info.Mode()&os.ModeSymlink != 0 {
-			if err := os.Remove(filePath); err != nil && !os.IsNotExist(err) {
-				return report, err
-			}
+		mode := os.FileMode(0o644)
+		if info != nil && info.Mode().IsRegular() {
+			mode = info.Mode().Perm()
 		}
-		if err := atomicWriteFile(filePath, content, 0o644); err != nil {
+		if err := publishPortableBytes(filePath, content, mode, info, boundary); err != nil {
 			return report, err
 		}
+		report.Written = append(report.Written, name)
 	}
 
 	if pruneStaleEntries {
-		if err := pruneStaleCommandFiles(dir, desired, dryRun, &report); err != nil {
+		if err := pruneStaleCommandFiles(dir, desired, dryRun, &report, boundary); err != nil {
 			return report, err
 		}
 	}
@@ -4039,10 +4357,14 @@ func syncCommandFiles(dir string, links []skillLink, dryRun, pruneStaleEntries b
 
 // pruneStaleCommandFiles removes managed command files and stale managed
 // symlinks in dir that are no longer desired. User-owned entries are preserved.
-func pruneStaleCommandFiles(dir string, desired map[string][]byte, dryRun bool, report *TargetReport) error {
-	entries, err := os.ReadDir(dir)
+func pruneStaleCommandFiles(dir string, desired map[string][]byte, dryRun bool, report *TargetReport, boundaries ...*destinationBoundary) error {
+	var readBoundary *destinationBoundary
+	if len(boundaries) > 0 {
+		readBoundary = boundaries[0]
+	}
+	entries, err := readPruneDirectory(dir, readBoundary, func(name string) bool { _, keep := desired[name]; return keep }, true)
 	if err != nil {
-		if os.IsNotExist(err) {
+		if errors.Is(err, fs.ErrNotExist) && !errors.Is(err, fsboundary.ErrUnsafePath) && !errors.Is(err, fsboundary.ErrGenerationConflict) {
 			return nil
 		}
 		return err
@@ -4053,13 +4375,11 @@ func pruneStaleCommandFiles(dir string, desired map[string][]byte, dryRun bool, 
 			continue
 		}
 		path := filepath.Join(dir, name)
-		info, lerr := os.Lstat(path)
-		if lerr != nil {
-			continue
-		}
+		info := entry.observed
+		snapshot := managedLinkSnapshot{observed: info, text: entry.linkText}
 		switch {
 		case info.Mode()&os.ModeSymlink != 0:
-			if !isManagedSymlink(path) {
+			if !strings.HasPrefix(snapshot.text, cache.CacheDir()+string(os.PathSeparator)) {
 				report.Diags = append(report.Diags, diag.Diagnostic{
 					Code:     "materialize.collision.user-owned",
 					Severity: diag.SeverityInfo,
@@ -4070,17 +4390,30 @@ func pruneStaleCommandFiles(dir string, desired map[string][]byte, dryRun bool, 
 		case info.IsDir():
 			continue
 		default:
-			if !isManagedCommandFile(path) {
+			if !entry.managedCommand {
 				continue
 			}
 		}
+		var boundary *destinationBoundary
+		if len(boundaries) > 0 {
+			boundary = boundaries[0]
+		}
+		var cleanupErr error
+		if info.Mode()&os.ModeSymlink != 0 {
+			cleanupErr = pruneManagedLink(path, snapshot, boundary, dryRun)
+		} else {
+			if boundary != nil && boundary.pruneClassificationHook != nil {
+				boundary.pruneClassificationHook(path)
+			}
+			cleanupErr = pruneNativeCommandFile(path, info, boundary, dryRun)
+		}
+		if cleanupErr != nil {
+			if missingPruneEntry(cleanupErr) {
+				continue
+			}
+			return cleanupErr
+		}
 		report.Removed = append(report.Removed, name)
-		if dryRun {
-			continue
-		}
-		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
-			return err
-		}
 	}
 	return nil
 }
@@ -4125,12 +4458,44 @@ func injectManagedByFrontmatter(content []byte) []byte {
 // isManagedCommandFile reports whether the file at path is a command markdown
 // file carrying the `_managed_by: agent-marketplace` ownership marker in its
 // leading frontmatter block.
-func isManagedCommandFile(path string) bool {
-	data, err := os.ReadFile(path)
+// commandMarkerReadHook runs before a desired command's marker is read. It is
+// nil in production and set only by serial tests in this package.
+var commandMarkerReadHook func(path string)
+
+// managedCommandFileState classifies an observed command leaf. A non-regular
+// or multiply linked leaf cannot be output this tool wrote and stays on the
+// user-owned collision path, as do ordinary unreadable payloads. A leaf or
+// command directory that vanished, was retargeted, or changed generation
+// since it was observed is a refusal rather than a user-owned collision.
+func managedCommandFileState(path string, observed os.FileInfo, boundary *destinationBoundary) (bool, error) {
+	identity, err := fsboundary.FileInfoIdentity(observed)
 	if err != nil {
-		return false
+		return false, err
 	}
-	return isManagedCommandContent(data)
+	if !identity.Mode.IsRegular() || identity.Links != 1 {
+		return false, nil
+	}
+	if commandMarkerReadHook != nil {
+		commandMarkerReadHook(path)
+	}
+	data, err := readNativeCommandFile(path, observed, boundary)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) || errors.Is(err, fsboundary.ErrUnsafePath) || errors.Is(err, fsboundary.ErrUnsafeFile) ||
+			errors.Is(err, fsboundary.ErrGenerationConflict) || errors.Is(err, fsboundary.ErrTooLarge) {
+			return false, fmt.Errorf("read command marker %s: %w", path, err)
+		}
+		return false, nil
+	}
+	return isManagedCommandContent(data), nil
+}
+
+func isManagedCommandFile(path string, boundaries ...*destinationBoundary) bool {
+	var boundary *destinationBoundary
+	if len(boundaries) > 0 {
+		boundary = boundaries[0]
+	}
+	data, err := readNativeCommandFile(path, nil, boundary)
+	return err == nil && isManagedCommandContent(data)
 }
 
 func isManagedCommandContent(data []byte) bool {
@@ -4149,13 +4514,6 @@ func isManagedCommandContent(data []byte) bool {
 		}
 	}
 	return false
-}
-
-func staleSkillEntryReportPath(path, name string) string {
-	if _, err := os.Stat(filepath.Join(path, "SKILL.md")); err == nil {
-		return filepath.Join(name, "SKILL.md")
-	}
-	return name
 }
 
 func existingSymlinkTarget(path string) (string, bool) {

@@ -5,12 +5,15 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"io/fs"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
+	"github.com/Adyen/agent-marketplace/internal/fsboundary"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
 )
 
@@ -62,6 +65,8 @@ type Journal struct {
 	// to have happened.
 	NextRecord *Record `json:"next_record"`
 	UpdatedAt  string  `json:"updated_at"`
+	observed   metadataPin
+	safety     *safetyAttempt
 }
 
 // Mutation is one aggregate write plus the ownership it claims.
@@ -169,7 +174,14 @@ func (s *Store) Apply(m Mutation) (Result, error) {
 // The write ordering below is the plan's, and every gap between two steps is a
 // crash point with a defined recovery. The invariant that makes each gap safe is
 // stated at the step that establishes it.
-func (s *Store) applyLocked(m Mutation) (Result, error) {
+func (s *Store) applyLocked(m Mutation) (result Result, err error) {
+	defer func() {
+		if errors.Is(err, fsboundary.ErrGenerationConflict) {
+			err = coded(diag.CodeOwnershipGenerationConflict, m.Rel, errors.Join(ErrGenerationConflict, err))
+		} else if errors.Is(err, fsboundary.ErrUnsafeFile) || errors.Is(err, fsboundary.ErrUnsafePath) {
+			err = errors.Join(ErrUnsafeAggregateFile, err)
+		}
+	}()
 	if err := validateMutation(m); err != nil {
 		return Result{}, err
 	}
@@ -187,7 +199,7 @@ func (s *Store) applyLocked(m Mutation) (Result, error) {
 			return Result{}, err
 		}
 	}
-	current, loadErr := s.Load()
+	current, originalRecord, loadErr := s.loadObservedRecord()
 	if loadErr != nil && !errors.Is(loadErr, ErrStateMissing) {
 		// A key collision must never be resolved by overwriting the other root's
 		// record, and corrupt state must not be silently re-based at generation 1.
@@ -202,6 +214,27 @@ func (s *Store) applyLocked(m Mutation) (Result, error) {
 	if err != nil {
 		return Result{}, coded(diag.CodeOwnershipStateUnsafeValue, m.Rel, err)
 	}
+	parent, err := s.captureAggregateParent(m.AbsFile)
+	if err != nil {
+		return Result{}, err
+	}
+	defer func() {
+		if closeErr := parent.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
+	destination, err := fsboundary.CaptureDestination(parent, filepath.Base(m.AbsFile), fsboundary.LinkPolicyRepository)
+	if err != nil {
+		return Result{}, err
+	}
+	defer func() {
+		if closeErr := destination.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
+	if destination.Link() != nil {
+		return Result{}, ErrUnsafeAggregateFile
+	}
 
 	// CRASH POINT 1 (before-backup): nothing has been written. Recovery has
 	// nothing to do; the aggregate is exactly as the user left it.
@@ -212,10 +245,10 @@ func (s *Store) applyLocked(m Mutation) (Result, error) {
 	// STEP 1: mandatory raw-byte safety backup, BEFORE anything is prepared.
 	// Invariant established: the user's exact bytes are recoverable from the XDG
 	// state root for every later crash point.
-	if err := os.MkdirAll(s.recordDir(), 0o700); err != nil {
+	if err := s.prepareStateDirectory(filepath.Join(ownershipDirName, s.rootKey)); err != nil {
 		return Result{}, coded(diag.CodeOwnershipSafetyBackup, m.Rel, err)
 	}
-	backupPath, priorDigest, priorAbsent, err := s.writeSafetyBackup(m.Rel, m.AbsFile, generation, m.Reason, m.Entries)
+	backupPath, priorDigest, priorAbsent, safety, err := s.writeSafetyBackup(m.Rel, m.AbsFile, generation, m.Reason, m.Entries)
 	if err != nil {
 		// A failed mandatory backup REFUSES the mutation. Writing without a
 		// backup would be exactly the failure mode the plan forbids.
@@ -241,6 +274,7 @@ func (s *Store) applyLocked(m Mutation) (Result, error) {
 		AbsFile:       m.AbsFile,
 		StagedPath:    stagedPathFor(m.AbsFile, generation),
 		BackupPath:    backupPath,
+		safety:        safety,
 		PriorDigest:   priorDigest,
 		PriorAbsent:   priorAbsent,
 		NextDigest:    nextDigest,
@@ -266,10 +300,11 @@ func (s *Store) applyLocked(m Mutation) (Result, error) {
 	// Invariant established: the patched bytes are durable, so the rename in step
 	// 4 cannot produce a truncated aggregate.
 	mode := os.FileMode(0o600)
-	if fi, statErr := os.Stat(m.AbsFile); statErr == nil {
-		mode = fi.Mode().Perm()
+	if destination.Exists() {
+		mode = destination.Identity().Mode.Perm()
 	}
-	if err := writeStaged(journal.StagedPath, m.NextBytes, mode); err != nil {
+	var stagedIdentity fsboundary.Identity
+	if err := writeStaged(journal.StagedPath, m.NextBytes, mode, parent, &stagedIdentity); err != nil {
 		if errors.Is(err, os.ErrExist) {
 			// O_EXCL proves this attempt did not create the collided path. First
 			// durably disarm recovery, then clear only this attempt's journal and
@@ -280,10 +315,57 @@ func (s *Store) applyLocked(m Mutation) (Result, error) {
 			if journalErr := s.writeJournal(&failed); journalErr != nil {
 				return Result{}, errors.Join(err, fmt.Errorf("ownership: disarm collided staged path: %w", journalErr))
 			}
-			s.cleanupAfterCASFailure(&failed, backupPath)
+			s.cleanupAfterCASFailure(parent, &failed, backupPath, nil)
 		}
 		return Result{}, err
 	}
+
+	// A post-staging refusal can find an object at the journal's staged path
+	// that is no longer this attempt's bytes. Disarm the durable attempt before
+	// any such refusal can return so a later recovery cannot unlink it;
+	// guarded in-attempt cleanup below removes only the inode this attempt
+	// wrote.
+	published := false
+	defer func() {
+		if err == nil || errors.Is(err, ErrInjectedCrash) || journal.Phase != PhasePrepared || published {
+			return
+		}
+		if disarmErr := s.disarmRefusedStaged(journal, parent, backupPath); disarmErr != nil {
+			err = errors.Join(err, fmt.Errorf("ownership: disarm refused staged path: %w", disarmErr))
+		}
+	}()
+	staged, err := fsboundary.CaptureDestination(parent, filepath.Base(journal.StagedPath), fsboundary.LinkPolicyRepository)
+	if err != nil {
+		return Result{}, err
+	}
+	defer func() {
+		if closeErr := staged.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
+	if staged.Link() != nil || !staged.Identity().SameState(stagedIdentity) {
+		return Result{}, fsboundary.ErrGenerationConflict
+	}
+	defer func() {
+		if err == nil || errors.Is(err, ErrInjectedCrash) {
+			return
+		}
+		native, openErr := parent.NativeRoot()
+		if openErr != nil {
+			err = errors.Join(err, openErr)
+			return
+		}
+		info, statErr := native.Lstat(filepath.Base(journal.StagedPath))
+		if statErr == nil {
+			identity, idErr := fsboundary.FileInfoIdentity(info)
+			if idErr == nil && identity.SameObject(staged.Identity()) {
+				err = errors.Join(err, parent.Unlink(filepath.Base(journal.StagedPath)))
+			}
+		}
+		if closeErr := native.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
 
 	// CRASH POINT 4 (after-staged-write): journal says prepared and a complete
 	// staged file exists, but the aggregate is untouched. Recovery sees the live
@@ -299,8 +381,14 @@ func (s *Store) applyLocked(m Mutation) (Result, error) {
 	// CAS PRECONDITION: refuse if the record or aggregate changed since the caller
 	// read them. With locking this should never fire; without locking it is the
 	// only thing that prevents lost updates.
-	if err := s.assertPrecondition(m); err != nil {
-		s.cleanupAfterCASFailure(journal, backupPath)
+	preconditionErr := s.assertPrecondition(m)
+	if preconditionErr == nil {
+		preconditionErr = s.verifyOriginalRecord(originalRecord, current != nil)
+	}
+	if err := preconditionErr; err != nil {
+		// Disarming, guarded staged removal, journal clearing, and backup
+		// removal are all owned by the deferred refusal cleanup registered
+		// after staging; this branch only reports and maps the conflict.
 		s.observeLock(LockEvent{Kind: LockCASConflict, Path: m.AbsFile, Err: err})
 		if errors.Is(err, ErrGenerationConflict) {
 			return Result{}, coded(diag.CodeOwnershipGenerationConflict, m.Rel, err)
@@ -310,12 +398,19 @@ func (s *Store) applyLocked(m Mutation) (Result, error) {
 
 	// STEP 4: atomically rename the patched aggregate. Invariant established:
 	// readers see either the whole old file or the whole new file, never a mix.
-	if err := os.Rename(journal.StagedPath, m.AbsFile); err != nil {
-		return Result{}, fmt.Errorf("ownership: publish %s: %w", m.AbsFile, err)
-	}
-	if err := fsyncDir(filepath.Dir(m.AbsFile)); err != nil {
+	if err := staged.ReadTargetWith(func(io.Reader) error { return nil }); err != nil {
 		return Result{}, err
 	}
+	if err := destination.Publish(parent, filepath.Base(journal.StagedPath)); err != nil {
+		// A durability-uncertain publication may already hold the renamed byte;
+		// retain the journal so recovery can roll this generation forward or
+		// roll it back against recorded evidence.
+		if errors.Is(err, fsboundary.ErrDurabilityUncertain) {
+			published = true
+		}
+		return Result{}, fmt.Errorf("ownership: publish %s: %w", m.AbsFile, err)
+	}
+	published = true
 
 	// Prune retained backups now that publication succeeded. Retention is not
 	// part of the atomicity contract, so a failure here is best-effort.
@@ -350,7 +445,7 @@ func (s *Store) applyLocked(m Mutation) (Result, error) {
 	}
 
 	// STEP 6: atomically commit the matching ownership generation.
-	if err := s.commitRecord(next); err != nil {
+	if err := s.commitRecordWithValidation(next, func() error { return s.verifyOriginalRecord(originalRecord, current != nil) }); err != nil {
 		return Result{}, coded(diag.CodeOwnershipStateCorrupt, s.StateFile(), err)
 	}
 
@@ -363,7 +458,7 @@ func (s *Store) applyLocked(m Mutation) (Result, error) {
 	}
 
 	// STEP 7: clear the journal.
-	if err := s.clearJournal(); err != nil {
+	if err := s.clearJournal(journal); err != nil {
 		return Result{}, err
 	}
 
@@ -404,7 +499,7 @@ func (s *Store) assertPrecondition(m Mutation) error {
 			ErrGenerationConflict, m.ExpectPriorGeneration, currentGen)
 	}
 
-	raw, readErr := ReadAggregateFile(m.AbsFile)
+	raw, readErr := s.readAbsoluteAggregate(m.AbsFile)
 	if readErr != nil && !os.IsNotExist(readErr) {
 		return fmt.Errorf("ownership: read %s for CAS precondition: %w", m.AbsFile, readErr)
 	}
@@ -422,34 +517,94 @@ func (s *Store) assertPrecondition(m Mutation) error {
 	return nil
 }
 
-// cleanupAfterCASFailure removes the staged file, the journal, and the safety
-// backup just written, so a failed compare-and-swap leaves no durable trace.
-func (s *Store) cleanupAfterCASFailure(journal *Journal, backupPath string) {
-	if err := s.removeStaged(journal); err != nil {
+// removeStagedAttempt unlinks this attempt's staged file when the named entry
+// still identifies the exact inode the attempt wrote. A foreign replacement
+// survives; a disarmed staged path is a no-op.
+func (s *Store) removeStagedAttempt(parent *fsboundary.Dir, journal *Journal, captured *fsboundary.Identity) (err error) {
+	if journal.StagedPath == "" || captured == nil || parent == nil {
+		return nil
+	}
+	native, err := parent.NativeRoot()
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if closeErr := native.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
+	info, statErr := native.Lstat(filepath.Base(journal.StagedPath))
+	if errors.Is(statErr, fs.ErrNotExist) {
+		return nil
+	}
+	if statErr != nil {
+		return statErr
+	}
+	identity, idErr := fsboundary.FileInfoIdentity(info)
+	if idErr != nil {
+		return idErr
+	}
+	if identity.SameObject(*captured) {
+		return parent.Unlink(filepath.Base(journal.StagedPath))
+	}
+	return nil
+}
+
+// disarmRefusedStaged durably clears this attempt's staged path from the
+// journal before a post-staging refusal returns, then clears the journal and
+// backup. The path named by the recorded staged identity no longer holds this
+// attempt's bytes, so regardless of what they are, removal must not unlink it
+// later.
+func (s *Store) disarmRefusedStaged(journal *Journal, parent *fsboundary.Dir, backupPath string) error {
+	failed := *journal
+	failed.StagedPath = ""
+	if err := s.writeJournal(&failed); err != nil {
+		if !errors.Is(err, fsboundary.ErrGenerationConflict) {
+			return err
+		}
+		// The journal is no longer this attempt's: another writer replaced or
+		// cleared it, so no recovery can act on this attempt's staged path and
+		// the journal is not ours to clear. Only attempt-owned backup residue
+		// remains to remove.
+		s.removeAttemptBackup(&failed, backupPath)
+		return nil
+	}
+	s.cleanupAfterCASFailure(parent, &failed, backupPath, nil)
+	return nil
+}
+
+// cleanupAfterCASFailure removes this attempt's staged inode, the journal,
+// and the safety backup just written, so a failed compare-and-swap leaves no
+// durable trace. The staged path is unlinked only when it still names the
+// exact inode this attempt wrote; a staged path emptied by disarmRefusedStaged
+// or replaced by an uncooperative writer is left untouched.
+func (s *Store) cleanupAfterCASFailure(parent *fsboundary.Dir, journal *Journal, backupPath string, captured *fsboundary.Identity) {
+	if err := s.removeStagedAttempt(parent, journal, captured); err != nil {
 		slog.Warn("could not remove the staged file after a CAS failure",
 			"root_key", s.rootKey, "staged_path", journal.StagedPath, "err", err)
 	}
-	if err := s.clearJournal(); err != nil {
+	if err := s.clearJournal(journal); err != nil {
 		slog.Warn("could not clear the journal after a CAS failure",
 			"root_key", s.rootKey, "journal", s.JournalFile(), "err", err)
 	}
-	if backupPath != "" {
-		if err := os.Remove(backupPath); err != nil {
-			slog.Warn("could not remove the safety backup after a CAS failure",
-				"root_key", s.rootKey, "backup_path", backupPath, "err", err)
-		}
-		if err := os.Remove(metaPathFor(backupPath)); err != nil {
-			slog.Warn("could not remove the safety backup manifest after a CAS failure",
-				"root_key", s.rootKey, "meta_path", metaPathFor(backupPath), "err", err)
-		}
+	s.removeAttemptBackup(journal, backupPath)
+}
+
+// removeAttemptBackup removes the safety backup this attempt wrote, bound to
+// its captured identities, plus a then-empty backup directory.
+func (s *Store) removeAttemptBackup(journal *Journal, backupPath string) {
+	if backupPath == "" {
+		return
+	}
+	if err := s.removeSafetyAttempt(journal.safety); err != nil {
+		slog.Warn("could not remove the safety backup after a CAS failure",
+			"root_key", s.rootKey, "backup_path", backupPath, "err", err)
+		return
 	}
 	// best-effort: remove empty backup directories
-	dir := s.SafetyBackupDir(journal.File)
-	if entries, err := os.ReadDir(dir); err == nil && len(entries) == 0 {
-		if err := os.Remove(dir); err != nil {
-			slog.Warn("could not remove an empty safety backup directory after a CAS failure",
-				"root_key", s.rootKey, "dir", dir, "err", err)
-		}
+	if err := s.removeEmptySafetyDirectory(journal.safety); err != nil {
+		slog.Warn("could not remove an empty safety backup directory after a CAS failure",
+			"root_key", s.rootKey, "dir", s.SafetyBackupDir(journal.File), "err", err)
 	}
 }
 
@@ -501,8 +656,17 @@ func stagedPathFor(absFile string, generation uint64) string {
 // writeStaged writes and fsyncs the replacement content. It is not atomicWrite:
 // the staging file IS the temp file, and it must survive a crash under a name the
 // journal recorded so recovery can find and delete it.
-func writeStaged(path string, data []byte, mode os.FileMode) error {
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, mode)
+func writeStaged(path string, data []byte, mode os.FileMode, parent *fsboundary.Dir, identity *fsboundary.Identity) (err error) {
+	native, err := parent.NativeRoot()
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if closeErr := native.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
+	f, err := native.OpenFile(filepath.Base(path), os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if err != nil {
 		return fmt.Errorf("ownership: create staged file %s: %w", path, err)
 	}
@@ -519,10 +683,18 @@ func writeStaged(path string, data []byte, mode os.FileMode) error {
 		_ = f.Close()
 		return fmt.Errorf("ownership: fsync staged file %s: %w", path, err)
 	}
+	info, statErr := f.Stat()
+	if statErr != nil {
+		return errors.Join(statErr, f.Close())
+	}
+	*identity, err = fsboundary.FileInfoIdentity(info)
+	if err != nil {
+		return errors.Join(err, f.Close())
+	}
 	if err := f.Close(); err != nil {
 		return fmt.Errorf("ownership: close staged file %s: %w", path, err)
 	}
-	return fsyncDir(filepath.Dir(path))
+	return parent.Sync()
 }
 
 func (s *Store) writeJournal(j *Journal) error {
@@ -530,33 +702,58 @@ func (s *Store) writeJournal(j *Journal) error {
 	if err != nil {
 		return fmt.Errorf("ownership: marshal journal: %w", err)
 	}
-	if err := atomicWrite(s.JournalFile(), append(data, '\n'), 0o600); err != nil {
-		return err
+	pin, err := s.writeObservedMetadata(journalFileName, append(data, '\n'), &j.observed)
+	if err != nil {
+		return fmt.Errorf("ownership: write journal: %w", err)
 	}
+	j.observed = pin
 	slog.Debug("ownership journal written",
 		"root_key", s.rootKey, "file", j.File, "generation", j.Generation, "phase", string(j.Phase))
 	return nil
 }
 
-func (s *Store) clearJournal() error {
-	remove := os.Remove
+func (s *Store) clearJournal(j *Journal) (err error) {
+	parent, err := s.captureMetadataParent()
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if closeErr := parent.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
+	if !parent.Identity().SameObject(j.observed.parent) {
+		return fsboundary.ErrGenerationConflict
+	}
+	file, err := fsboundary.CaptureDestination(parent, journalFileName, fsboundary.LinkPolicyRepository)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if closeErr := file.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
+	if file.Link() != nil || !file.Exists() || !file.Identity().SameState(j.observed.file) {
+		return fsboundary.ErrGenerationConflict
+	}
 	if s.removeJournalFile != nil {
-		remove = s.removeJournalFile
+		if err := s.removeJournalFile(s.JournalFile()); err != nil {
+			return fmt.Errorf("ownership: clear journal: %w", err)
+		}
+		return parent.Sync()
 	}
-	if err := remove(s.JournalFile()); err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("ownership: clear journal: %w", err)
-	}
-	return fsyncDir(s.recordDir())
+	return file.RemoveLeaf()
 }
 
 // ReadJournal returns the in-flight journal, or nil when there is none.
 func (s *Store) ReadJournal() (*Journal, error) {
-	data, err := os.ReadFile(s.JournalFile())
+	data, exists, observed, err := s.readObservedMetadata(journalFileName)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, nil
-		}
 		return nil, fmt.Errorf("ownership: read journal: %w", err)
+	}
+	if !exists {
+		return nil, nil
 	}
 	var j Journal
 	if err := json.Unmarshal(data, &j); err != nil {
@@ -565,6 +762,7 @@ func (s *Store) ReadJournal() (*Journal, error) {
 	if j.Version != journalVersion {
 		return nil, coded(diag.CodeOwnershipStateCorrupt, s.JournalFile(), fmt.Errorf("%w: unsupported journal version %d", ErrStateCorrupt, j.Version))
 	}
+	j.observed = observed
 	if j.RootKey != s.rootKey || j.CanonicalRoot != s.canonicalRoot {
 		return nil, coded(diag.CodeOwnershipStateRootMismatch, s.JournalFile(), ErrStateRootMismatch)
 	}
@@ -649,16 +847,28 @@ func (s *Store) recoverLocked() ([]RecoveryOutcome, error) {
 		return nil, nil
 	}
 
-	current, loadErr := s.Load()
-	if loadErr != nil && errors.Is(loadErr, ErrStateRootMismatch) {
+	current, original, loadErr := s.loadObservedRecord()
+	if loadErr != nil && (errors.Is(loadErr, ErrStateRootMismatch) || errors.Is(loadErr, errMetadataRead)) {
 		return nil, loadErr
+	}
+	if err := s.crash(CrashAfterRecoveryRead); err != nil {
+		return nil, err
+	}
+	validate := func() error {
+		if err := s.verifyOriginalMetadata(journalFileName, j.observed, true); err != nil {
+			return err
+		}
+		return s.verifyOriginalRecord(original, original.file.Inode != 0)
+	}
+	if err := validate(); err != nil {
+		return nil, err
 	}
 
 	switch j.Phase {
 	case PhaseAggregateRenamed:
-		return s.rollForward(j, current)
+		return s.rollForward(j, current, validate)
 	case PhasePrepared:
-		live, liveErr := ReadAggregateFile(j.AbsFile)
+		live, liveErr := s.readAbsoluteAggregate(j.AbsFile)
 		absent := liveErr != nil && os.IsNotExist(liveErr)
 		if liveErr != nil && !absent {
 			return nil, fmt.Errorf("ownership: read %s during recovery: %w", j.AbsFile, liveErr)
@@ -666,7 +876,7 @@ func (s *Store) recoverLocked() ([]RecoveryOutcome, error) {
 		switch {
 		case !absent && Digest(live) == j.NextDigest:
 			// The rename happened in the window before the phase update.
-			return s.rollForward(j, current)
+			return s.rollForward(j, current, validate)
 		case absent && j.PriorAbsent, !absent && Digest(live) == j.PriorDigest:
 			return s.rollBack(j)
 		default:
@@ -678,7 +888,7 @@ func (s *Store) recoverLocked() ([]RecoveryOutcome, error) {
 	}
 }
 
-func (s *Store) rollForward(j *Journal, current *Record) ([]RecoveryOutcome, error) {
+func (s *Store) rollForward(j *Journal, current *Record, validate func() error) ([]RecoveryOutcome, error) {
 	action := ActionRolledForward
 	if current != nil && current.Generation >= j.Generation {
 		action = ActionAlreadyCommitted
@@ -687,14 +897,14 @@ func (s *Store) rollForward(j *Journal, current *Record) ([]RecoveryOutcome, err
 			return nil, coded(diag.CodeOwnershipStateCorrupt, s.JournalFile(),
 				fmt.Errorf("%w: journal has no ownership generation to commit", ErrStateCorrupt))
 		}
-		if err := s.commitRecord(j.NextRecord); err != nil {
+		if err := s.commitRecordWithValidation(j.NextRecord, validate); err != nil {
 			return nil, coded(diag.CodeOwnershipStateCorrupt, s.StateFile(), err)
 		}
 	}
 	if err := s.removeStaged(j); err != nil {
 		return nil, err
 	}
-	if err := s.clearJournal(); err != nil {
+	if err := s.clearJournal(j); err != nil {
 		return nil, err
 	}
 	slog.Warn("recovered an incomplete ownership generation",
@@ -707,7 +917,7 @@ func (s *Store) rollBack(j *Journal) ([]RecoveryOutcome, error) {
 	if err := s.removeStaged(j); err != nil {
 		return nil, err
 	}
-	if err := s.clearJournal(); err != nil {
+	if err := s.clearJournal(j); err != nil {
 		return nil, err
 	}
 	slog.Warn("rolled back an incomplete ownership generation",
@@ -723,7 +933,7 @@ func (s *Store) abandon(j *Journal) ([]RecoveryOutcome, error) {
 	if err := s.removeStaged(j); err != nil {
 		return nil, err
 	}
-	if err := s.clearJournal(); err != nil {
+	if err := s.clearJournal(j); err != nil {
 		return nil, err
 	}
 	slog.Error("abandoned a staged ownership generation: the aggregate changed underneath it",
@@ -733,12 +943,58 @@ func (s *Store) abandon(j *Journal) ([]RecoveryOutcome, error) {
 	return outcomes, coded(diag.CodeOwnershipForeignChange, j.File, ErrForeignChange)
 }
 
-func (s *Store) removeStaged(j *Journal) error {
+func (s *Store) removeStaged(j *Journal) (err error) {
 	if j.StagedPath == "" {
 		return nil
 	}
-	if err := os.Remove(j.StagedPath); err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("ownership: remove staged file: %w", err)
+	prefix := fmt.Sprintf("%s.am-staged-%d-", j.AbsFile, j.Generation)
+	if filepath.Clean(j.StagedPath) != j.StagedPath || !filepath.IsAbs(j.StagedPath) || !strings.HasPrefix(j.StagedPath, prefix) || filepath.Dir(j.StagedPath) != filepath.Dir(j.AbsFile) {
+		return fsboundary.ErrUnsafePath
 	}
-	return nil
+	if err := s.ensureUnderRoot(j.AbsFile); err != nil {
+		return errors.Join(fsboundary.ErrUnsafePath, err)
+	}
+	parent, err := s.captureAggregateParent(j.StagedPath)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if closeErr := parent.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
+	file, err := fsboundary.CaptureDestination(parent, filepath.Base(j.StagedPath), fsboundary.LinkPolicyRepository)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if closeErr := file.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
+	if file.Link() != nil {
+		return fsboundary.ErrUnsafeFile
+	}
+	if !file.Exists() {
+		return nil
+	}
+	data, _, err := file.ReadTarget(file.Identity().Size)
+	if err != nil {
+		return err
+	}
+	if Digest(data) != j.NextDigest {
+		return fmt.Errorf("ownership: staged file %s does not match journal digest: %w", j.StagedPath, fsboundary.ErrGenerationConflict)
+	}
+	fresh, err := s.captureAggregateParent(j.StagedPath)
+	if err != nil {
+		return err
+	}
+	unchanged := fresh.Identity().SameObject(parent.Identity())
+	if err := fresh.Close(); err != nil {
+		return err
+	}
+	if !unchanged {
+		return fsboundary.ErrGenerationConflict
+	}
+	return file.RemoveLeaf()
 }

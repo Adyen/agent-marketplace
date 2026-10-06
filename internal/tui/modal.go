@@ -8,10 +8,10 @@ import (
 	"strings"
 	"time"
 
+	"charm.land/bubbles/v2/key"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/huh/v2"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
-	"github.com/charmbracelet/bubbles/key"
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/pipeline"
@@ -447,34 +447,18 @@ func excludeCompetingRegistriesCmd(repoRoot string, rows []row, act toggleAction
 	}
 }
 
-// styleToggleModal is the bordered floating-box style for paneToggleModal.
-// Uses a rounded border + padding + opaque background so it reads clearly
-// on top of the main two-pane layout.
-var styleToggleModal = lipgloss.NewStyle().
-	Border(lipgloss.RoundedBorder()).
-	BorderForeground(lipgloss.AdaptiveColor{Light: "#1A8AAF", Dark: "#66D9EF"}).
-	Background(lipgloss.AdaptiveColor{Light: "#FFFFFF", Dark: "#1A1A1A"}).
-	Foreground(lipgloss.AdaptiveColor{Light: "#1A1A1A", Dark: "#F8F8F2"}).
-	Padding(1, 2)
-
 // renderToggleModal renders the toggle modal overlay for the currently
 // selected skill. Shows per-scope state plus the available key actions.
 func renderToggleModal(m Model) string {
 	r := m.modalSkill
-	title := lipgloss.NewStyle().
-		Bold(true).
-		Foreground(lipgloss.AdaptiveColor{Light: "#1A8AAF", Dark: "#66D9EF"}).
+	title := titleStyle(m.currentTheme()).
 		Render(fmt.Sprintf(`"%s"`, sanitizeTerminalData(r.Artifact.Name, terminalSingleLine)))
 
 	check := func(on bool) string {
 		if on {
-			return lipgloss.NewStyle().
-				Foreground(lipgloss.AdaptiveColor{Light: "#5C8A1E", Dark: "#A6E22E"}).
-				Render("✓")
+			return okStyle(m.currentTheme()).Render("✓")
 		}
-		return lipgloss.NewStyle().
-			Foreground(lipgloss.AdaptiveColor{Light: "#888888", Dark: "#666666"}).
-			Render("✗")
+		return dimTextStyle(m.currentTheme()).Render("✗")
 	}
 	yesno := func(b bool) string {
 		if b {
@@ -483,82 +467,45 @@ func renderToggleModal(m Model) string {
 		return "no"
 	}
 
+	t := m.currentTheme()
+	collision := hasCollisionError(m.errs, r.Artifact.Kind, r.Artifact.Name)
 	if compactTerminalLayout(m) {
-		keyStyle := lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#A6A000", Dark: "#A6E22E"}).Bold(true)
-		var b strings.Builder
-		b.WriteString(title + "\n")
-		if hasCollisionError(m.errs, r.Artifact.Kind, r.Artifact.Name) {
-			b.WriteString("Name collision: choose one source.\n")
+		keyStyle := markKeyStyle(t)
+		var body []string
+		if collision {
+			body = append(body, warnBoldStyle(t).Render("Name collision: choose one source."))
 		}
-		fmt.Fprintf(&b, "Global %s  Project %s\n", check(r.EnabledGlobal), check(r.EnabledProject))
-		fmt.Fprintf(&b, "Local %s  Excluded %s\n", check(r.EnabledLocal), yesno(r.ExcludedLocally || r.ExcludedByUser))
-		if r.canOverrideMarketplace() {
-			b.WriteString(keyStyle.Render("[e]") + " user override\n")
-		} else {
-			b.WriteString(keyStyle.Render("[g]") + " global  " + keyStyle.Render("[p]") + " project\n")
-			b.WriteString(keyStyle.Render("[l]") + " local   ")
-			if r.Artifact.Source.IsMachineScope() {
-				b.WriteString(styleDim.Render("[e] unavailable") + "\n")
-			} else {
-				b.WriteString(keyStyle.Render("[e]") + " exclude\n")
-			}
+		body = append(body,
+			fmt.Sprintf("Global %s  Project %s  Local %s", check(r.EnabledGlobal), check(r.EnabledProject), check(r.EnabledLocal)),
+			fmt.Sprintf("Excluded %s", yesno(r.ExcludedLocally || r.ExcludedByUser)))
+		switch {
+		case r.canOverrideMarketplace():
+			body = append(body, keyStyle.Render("[e]")+" user override")
+		case r.Artifact.Source.IsMachineScope():
+			body = append(body, keyStyle.Render("[g]")+" global  "+keyStyle.Render("[p]")+" project  "+keyStyle.Render("[l]")+" local",
+				styleDim.Render("[e] unavailable"))
+		default:
+			body = append(body, keyStyle.Render("[g]")+" global  "+keyStyle.Render("[p]")+" project  "+keyStyle.Render("[l]")+" local",
+				keyStyle.Render("[e]")+" exclude")
 		}
-		b.WriteString(keyStyle.Render("[esc]") + " cancel")
-		return compactModalStyle(styleToggleModal, m).Render(b.String())
+		return modalFrame(m, t.accent, title, body, []footerHint{{"esc", "cancel"}})
 	}
 
-	var b strings.Builder
-	b.WriteString(title + "\n\n")
-
-	// Check for name collision errors affecting this resource.
-	if hasCollisionError(m.errs, r.Artifact.Kind, r.Artifact.Name) {
-		warnStyle := lipgloss.NewStyle().
-			Foreground(lipgloss.AdaptiveColor{Light: "#CC7A00", Dark: "#FD971F"}).
-			Bold(true)
-		b.WriteString("  " + warnStyle.Render("⚠ Name collision — toggle may not take effect until you exclude the other source") + "\n\n")
+	var body []string
+	if collision {
+		body = append(body, warnBoldStyle(t).Render("⚠ Name collision — toggle may not take effect until you exclude the other source"), "")
 	}
-
-	fmt.Fprintf(&b, "  Global:        %s\n", check(r.EnabledGlobal))
-	fmt.Fprintf(&b, "  Project:       %s\n", check(r.EnabledProject))
-	fmt.Fprintf(&b, "  Local:         %s\n", check(r.EnabledLocal))
+	body = append(body, fmt.Sprintf("Global %s   Project %s   Local %s", check(r.EnabledGlobal), check(r.EnabledProject), check(r.EnabledLocal)))
 	if r.canOverrideMarketplace() {
-		fmt.Fprintf(&b, "  User override: %s  (%s)\n\n", yesno(r.ExcludedByUser), skill.KindLabel(r.Artifact.Kind))
+		body = append(body, fmt.Sprintf("User override: %s  (%s)", yesno(r.ExcludedByUser), skill.KindLabel(r.Artifact.Kind)))
 	} else {
-		fmt.Fprintf(&b, "  Local exclude: %s  (%s)\n\n", yesno(r.ExcludedLocally), skill.KindLabel(r.Artifact.Kind))
+		body = append(body, fmt.Sprintf("Local exclude: %s  (%s)", yesno(r.ExcludedLocally), skill.KindLabel(r.Artifact.Kind)))
 	}
-
-	keyStyle := lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#A6A000", Dark: "#A6E22E"}).Bold(true)
-	disabledKeyStyle := lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#999999", Dark: "#777777"})
-	disabledLabelStyle := lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#888888", Dark: "#666666"})
-
-	kindLabel := skill.KindLabel(r.Artifact.Kind)
-	actions := []struct{ key, label string }{
-		{"[g]", "toggle global"},
-		{"[p]", "toggle project"},
-		{"[l]", "toggle local"},
-		{"[e]", fmt.Sprintf("toggle %s exclude", kindLabel)},
-		{"[esc]", "cancel"},
+	m.ensureToggleForm()
+	if m.toggleForm != nil {
+		body = append(body, "", m.toggleForm.View())
 	}
-	if r.canOverrideMarketplace() {
-		actions[3].label = "toggle user override"
-		actions = actions[3:]
-	}
-	for i, a := range actions {
-		if i > 0 {
-			b.WriteString("\n")
-		}
-		if a.key == "[e]" && (r.Artifact.Source.IsMachineScope() || r.Artifact.IsMarketplace) && !r.canOverrideMarketplace() {
-			hint := " (use [g] to toggle at user level)"
-			if r.Artifact.IsMarketplace {
-				hint = " (use installation scopes)"
-			}
-			b.WriteString("  " + disabledKeyStyle.Render(a.key) + "  " + disabledLabelStyle.Render(a.label+hint))
-			continue
-		}
-		b.WriteString("  " + keyStyle.Render(a.key) + "  " + a.label)
-	}
-
-	return styleToggleModal.Render(b.String())
+	return modalFrame(m, t.accent, title, body, []footerHint{{"↑↓", "move"}, {"enter", "apply"}, {"esc", "cancel"}})
 }
 
 // hasCollisionError returns true if any error in errs is a name collision
@@ -628,13 +575,11 @@ func (m Model) startToggleOperation(act toggleAction) (tea.Model, tea.Cmd) {
 	return m, correlateOperation(runDependencyScopedToggle(ctxOrBackground(m.ctx), m.workspace, act, m.dependencyLifecycle.Mutate), operation, false)
 }
 
-// handleToggleModalKey routes modal key presses. Returns (newModel, cmd).
-func (m Model) handleToggleModalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	if m.modalSkill.canOverrideMarketplace() && (key.Matches(msg, m.keys.ToggleGlobal) || key.Matches(msg, m.keys.ToggleProject) || key.Matches(msg, m.keys.ToggleLocal)) {
-		return m, func() tea.Msg {
-			return toastMsg{text: "organization Marketplace items can be disabled with [e] user override", duration: 2 * time.Second}
-		}
-	}
+// handleToggleModalKey routes modal key presses. Letter accelerators
+// (g/p/l/e/esc) dispatch directly; remaining keys drive the modal's Huh
+// action-select form, whose completion dispatches the same action.
+func (m Model) handleToggleModalKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	m.ensureToggleForm()
 	switch {
 	case key.Matches(msg, m.keys.ToggleCancel):
 		m.pane = paneList
@@ -645,21 +590,49 @@ func (m Model) handleToggleModalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		})
 		return m, nil
 	case key.Matches(msg, m.keys.ToggleGlobal):
+		return m.runToggleModalAction("g")
+	case key.Matches(msg, m.keys.ToggleProject):
+		return m.runToggleModalAction("p")
+	case key.Matches(msg, m.keys.ToggleLocal):
+		return m.runToggleModalAction("l")
+	case key.Matches(msg, m.keys.ToggleExclude):
+		return m.runToggleModalAction("e")
+	default:
+		m.toggleForm = updateModalForm(m.toggleForm, msg)
+		if m.toggleForm != nil && m.toggleForm.State == huh.StateCompleted && m.toggleChoice != nil && *m.toggleChoice != "" {
+			choice := *m.toggleChoice
+			m.toggleForm = nil
+			return m.runToggleModalAction(choice)
+		}
+		return m, nil
+	}
+}
+
+// runToggleModalAction performs one per-scope toggle action identified by
+// its accelerator letter (g/p/l/e).
+func (m Model) runToggleModalAction(letter string) (tea.Model, tea.Cmd) {
+	if m.modalSkill.canOverrideMarketplace() && (letter == "g" || letter == "p" || letter == "l") {
+		return m, func() tea.Msg {
+			return toastMsg{text: "organization Marketplace items can be disabled with [e] user override", duration: 2 * time.Second}
+		}
+	}
+	switch letter {
+	case "g":
 		if m.modalSkill.MarketplaceDiscovery != nil {
 			return m.startDiscoveryInstall(m.modalSkill, scopeGlobal)
 		}
 		return m.startToggleOperation(scopedToggleAction(m.modalSkill, scopeGlobal))
-	case key.Matches(msg, m.keys.ToggleProject):
+	case "p":
 		if m.modalSkill.MarketplaceDiscovery != nil {
 			return m.startDiscoveryInstall(m.modalSkill, scopeProject)
 		}
 		return m.startToggleOperation(scopedToggleAction(m.modalSkill, scopeProject))
-	case key.Matches(msg, m.keys.ToggleLocal):
+	case "l":
 		if m.modalSkill.MarketplaceDiscovery != nil {
 			return m.startDiscoveryInstall(m.modalSkill, scopeLocal)
 		}
 		return m.startToggleOperation(scopedToggleAction(m.modalSkill, scopeLocal))
-	case key.Matches(msg, m.keys.ToggleExclude):
+	case "e":
 		if m.modalSkill.Artifact.IsMarketplace && !m.modalSkill.canOverrideMarketplace() {
 			return m, func() tea.Msg {
 				return toastMsg{text: "Marketplace items must be toggled by installation scope", duration: 2 * time.Second}

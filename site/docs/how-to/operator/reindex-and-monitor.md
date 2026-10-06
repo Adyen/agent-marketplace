@@ -50,6 +50,8 @@ Look for these values of the `code` attribute:
 Also watch for these messages:
 
 - `serve failed` with reason `open stores`: the process could not open storage, which includes a failed database migration.
+- `resource revision archive digest repaired`: a refresh staged unchanged content under a different archive digest. The stored digest was repaired and the previous artifact is still downloadable. No server-side action is needed. However, consumers whose locks reference the old digest will fail `sync --locked` or `sync --check`. Owners of client-managed locks must run `agent-marketplace sync` and commit the updated lock file; when the artifact can be re-acquired, that run reports `marketplace.archive-evidence-refreshed` and updates one `archive_digest` line per resource, otherwise it leaves the lock unchanged and reports the failure. Locks managed by another layer, such as a deployed organization lock, must be refreshed through that layer.
+- `managed refresh attempt failed`: a managed indexing attempt failed. The line carries `failure_code` (a stable classification) and `cause` (sanitized, without raw command output or credentials); the same pair appears on the attempt in `/api/v1/admin/attempts`.
 - `process refresh job failed` and `reindex failed`: a registry refresh failed. The worker message puts the cause in the `err` attribute, and `serve reindex` puts it in `error`.
 
 ## Alert on metrics
@@ -64,4 +66,5 @@ The `route` label holds the registered route pattern, or `unmatched`, never the 
 
 ## Related documentation
 
+- [How to reset and reindex a registry](./reset-and-reindex-a-registry.md)
 - [Marketplace health and metrics reference](../../reference/marketplace-health-and-metrics.md)

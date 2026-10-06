@@ -3,6 +3,7 @@ package catalog
 import (
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/Adyen/agent-marketplace/internal/cache"
 	"github.com/Adyen/agent-marketplace/internal/config"
+	"github.com/Adyen/agent-marketplace/internal/fsboundary"
 	"github.com/Adyen/agent-marketplace/internal/skill"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ingest"
@@ -557,6 +559,7 @@ func TestDiscover_DoesNotRecurseWhenWarningDiagnostics(t *testing.T) {
 // that are also bundles, a warning is emitted telling the user to restructure
 // so the parent is a pure container. Sub-bundles are NOT discovered in this
 // case — only root-level resources are returned.
+// spec: catalog-discovery/mixed-root-warning-identifies-resources-and-remediation
 func TestDiscover_MixedRootEmitsSubBundlesIgnoredWarning(t *testing.T) {
 	dir := t.TempDir()
 
@@ -633,7 +636,9 @@ metadata:
 	}
 }
 
+// spec: catalog-discovery/ignored-bundle-warning-identifies-its-registry-entry
 func TestLoadRegistriesAddsRegistryToIgnoredSubBundleWarning(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
 	snapshot := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(snapshot, "catalog"), 0o755); err != nil {
 		t.Fatal(err)
@@ -667,6 +672,48 @@ func TestLoadRegistriesAddsRegistryToIgnoredSubBundleWarning(t *testing.T) {
 	}
 }
 
+// spec: catalog-discovery/ignored-bundle-warning-retains-captured-source-authority
+func TestIgnoredSubBundleWarningUsesCapturedSourceRoot(t *testing.T) {
+	t.Parallel()
+	root := filepath.Join(t.TempDir(), "registry")
+	writeDiscoveryFiles(t, root, map[string]string{
+		"commands/root.md":                  "---\nname: root\ndescription: Root\n---\nRoot",
+		"guides/original/skills/a/SKILL.md": "---\nname: original\ndescription: Original\n---\nOriginal",
+	})
+	source, err := fsboundary.OpenSourceFS(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = source.Close() })
+	if err := os.Rename(root, root+".captured"); err != nil {
+		t.Fatal(err)
+	}
+	writeDiscoveryFiles(t, root, map[string]string{
+		"commands/replacement.md":             "---\nname: replacement-root\ndescription: Replacement\n---\nReplacement",
+		"foreign/skills/replacement/SKILL.md": "---\nname: replacement\ndescription: Replacement\n---\nReplacement",
+	})
+
+	result, err := DiscoverSourceWithOptions(source, root, "claude", IngestOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Entries) != 1 || result.Entries[0].Name != "root" {
+		t.Fatalf("discovery lost the captured root resource: %+v", result.Entries)
+	}
+	for _, malformed := range result.Malformed {
+		if malformed.DirName != ignoredSubBundlesDiagnostic {
+			continue
+		}
+		message := malformed.Error.Error()
+		if !strings.Contains(message, `"guides/original" (affected: skill "original")`) || strings.Contains(message, "replacement") || strings.Contains(message, "foreign") {
+			t.Fatalf("ignored-bundle warning used the replacement root: %s", message)
+		}
+		return
+	}
+	t.Fatal("captured root's ignored bundle was not reported")
+}
+
+// spec: catalog-discovery/ignored-bundle-details-are-sorted-and-bounded
 func TestIgnoredSubBundlesMessageIsDeterministicAndBounded(t *testing.T) {
 	root := filepath.Join(string(filepath.Separator), "registry")
 	bundles := make([]subBundle, 0, 6)
@@ -690,6 +737,7 @@ func TestIgnoredSubBundlesMessageIsDeterministicAndBounded(t *testing.T) {
 		`root resource example: command "root" at "commands/root.md"`,
 		`"bundle-00" (affected: skill "skill-00", skill "skill-01", skill "skill-02", skill "skill-03", skill "skill-04", and 1 more)`,
 		`"bundle-04"`,
+		"nested bundles are ignored (6 total)",
 		"and 1 more nested bundles",
 	} {
 		if !strings.Contains(message, want) {
@@ -853,8 +901,8 @@ func TestHasBundleRoot_RootSkillPreservesExplicitMarkers(t *testing.T) {
 			dir := t.TempDir()
 			writeFile(t, filepath.Join(dir, "SKILL.md"), "---\nname: root-skill\n---\nBody\n")
 			test.setup(t, dir)
-			if got := hasBundleRoot(dir); got != test.wantBundle {
-				t.Fatalf("hasBundleRoot() = %v, want %v", got, test.wantBundle)
+			if got, err := hasBundleRoot(dir); err != nil || got != test.wantBundle {
+				t.Fatalf("hasBundleRoot() = %v, %v, want %v", got, err, test.wantBundle)
 			}
 		})
 	}
@@ -2410,5 +2458,113 @@ func BenchmarkDiscoverMalformedPathNormalization(b *testing.B) {
 		if _, err := Discover(dir, "factory"); err != nil {
 			b.Fatal(err)
 		}
+	}
+}
+
+// TestDiscoverSubBundleSourceRefusalsAreErrors proves source refusals inside
+// recursively discovered sub-bundles fail discovery instead of reading as
+// absent resources: a refused marker probe of the only candidate, and a
+// sub-bundle that loaded partially beside a healthy sibling.
+func TestDiscoverSubBundleSourceRefusalsAreErrors(t *testing.T) {
+	outside := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(outside, "plugin"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(outside, "plugin", "plugin.json"), `{"name":"foreign"}`)
+	writeFile(t, filepath.Join(outside, "SKILL.md"), "---\nname: foreign\ndescription: foreign inert skill\n---\nBody\n")
+	skill := func(t *testing.T, dir, name string) {
+		t.Helper()
+		if err := os.MkdirAll(filepath.Join(dir, "skills", name), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		writeFile(t, filepath.Join(dir, "skills", name, "SKILL.md"), "---\nname: "+name+"\ndescription: inert skill\n---\nBody\n")
+	}
+
+	t.Run("refused marker probe", func(t *testing.T) {
+		dir := t.TempDir()
+		candidate := filepath.Join(dir, "aliased-plugin")
+		if err := os.Mkdir(candidate, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(filepath.Join(outside, "plugin"), filepath.Join(candidate, ".claude-plugin")); err != nil {
+			t.Fatal(err)
+		}
+		if result, err := Discover(dir, "claude"); err == nil && len(result.Errors) == 0 {
+			t.Fatalf("refused sub-bundle marker became an empty catalog: %+v", result)
+		} else if err != nil && !errors.Is(err, fsboundary.ErrUnsafePath) {
+			t.Fatalf("sub-bundle probe refusal lost its identity: %v", err)
+		}
+	})
+
+	t.Run("partially loaded sub-bundle", func(t *testing.T) {
+		dir := t.TempDir()
+		skill(t, filepath.Join(dir, "alpha-plugin"), "alpha")
+		beta := filepath.Join(dir, "beta-plugin")
+		skill(t, beta, "beta")
+		if err := os.MkdirAll(filepath.Join(beta, "skills", "foreign"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(filepath.Join(outside, "SKILL.md"), filepath.Join(beta, "skills", "foreign", "SKILL.md")); err != nil {
+			t.Fatal(err)
+		}
+		result, err := Discover(dir, "claude")
+		if err != nil {
+			if !errors.Is(err, fsboundary.ErrUnsafePath) {
+				t.Fatalf("partial sub-bundle refusal lost its identity: %v", err)
+			}
+			return
+		}
+		refused := false
+		for _, subErr := range result.Errors {
+			refused = refused || errors.Is(subErr, fsboundary.ErrUnsafePath)
+		}
+		if !refused {
+			t.Fatalf("partially refused sub-bundle merged without an error: entries=%v errors=%v", result.Entries, result.Errors)
+		}
+		for _, entry := range result.Entries {
+			if entry.Name == "foreign" {
+				t.Fatalf("foreign aliased skill imported: %+v", entry)
+			}
+		}
+	})
+}
+
+func TestRecordSubBundleCloseErrorJoinsExistingCandidate(t *testing.T) {
+	closeErr := errors.New("injected sub-source close failure")
+	bundles := []subBundle{{path: "/registry/other"}, {path: "/registry/alpha", catalog: &Catalog{}}}
+	recordSubBundleCloseError(&bundles, 1, "/registry/alpha", closeErr)
+	if len(bundles) != 2 || !errors.Is(bundles[1].err, closeErr) || bundles[1].catalog == nil {
+		t.Fatalf("close error not joined into the recorded candidate: %+v", bundles)
+	}
+	recordSubBundleCloseError(&bundles, -1, "/registry/beta", closeErr)
+	if len(bundles) != 3 || bundles[2].path != "/registry/beta" || !errors.Is(bundles[2].err, closeErr) {
+		t.Fatalf("unrecorded close error not reported as a failed candidate: %+v", bundles)
+	}
+	loaded, err := discoverSubBundles(bundles[1:2])
+	if err == nil && len(loaded.SubBundles) != 0 {
+		t.Fatalf("candidate with a close error both loaded and failed: %+v %v", loaded, err)
+	}
+}
+
+func TestDiscoverReportsUnreadableSubBundleCandidate(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("permission denial is not observable as root")
+	}
+	dir := t.TempDir()
+	candidate := filepath.Join(dir, "locked-plugin")
+	if err := os.MkdirAll(filepath.Join(candidate, "skills", "locked"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(candidate, "skills", "locked", "SKILL.md"), "---\nname: locked\ndescription: inert skill\n---\nBody\n")
+	if err := os.Chmod(candidate, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(candidate, 0o755) })
+	result, err := Discover(dir, "claude")
+	if err == nil && len(result.Errors) == 0 {
+		t.Fatalf("unreadable sub-bundle candidate became an empty catalog: %+v", result)
+	}
+	if err != nil && !errors.Is(err, fs.ErrPermission) {
+		t.Fatalf("unreadable candidate lost its permission error: %v", err)
 	}
 }
