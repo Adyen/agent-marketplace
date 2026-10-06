@@ -72,6 +72,10 @@ registries:
 	}
 }
 
+// TestUpdateSupportsV4GitSourcesWithTransientOrganizationMarketplace verifies
+// that verbose update refreshes v4 Git sources while preserving configuration
+// and organization pins, listing those pins without config-owner guidance.
+//
 // spec: update-output/verbose-organization-pin-output-omits-owner-guidance
 func TestUpdateSupportsV4GitSourcesWithTransientOrganizationMarketplace(t *testing.T) {
 	if isolateCommandTest(t) {
@@ -823,6 +827,10 @@ registries:
 	}
 }
 
+// TestUpdateCommandOutputIncludesMarketplaceDecisions verifies that default
+// output reports pin updates and skip reasons, groups organization-managed pins
+// without listing them or config-owner guidance, and sanitizes terminal data.
+//
 // spec: update-output/default-organization-pin-output-omits-owner-guidance
 func TestUpdateCommandOutputIncludesMarketplaceDecisions(t *testing.T) {
 	if isolateCommandTest(t) {

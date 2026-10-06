@@ -173,6 +173,8 @@ func TestDocsContract(t *testing.T) {
 	})
 }
 
+// TestPublicCommandPathsHaveBehaviorTests requires behavioral test witnesses for
+// every public command and flag and rejects witnesses for removed command paths.
 func TestPublicCommandPathsHaveBehaviorTests(t *testing.T) {
 	witnesses := map[string]func(*testing.T){
 		"init":                  TestInitCreatesV4UserPersonalConfig,

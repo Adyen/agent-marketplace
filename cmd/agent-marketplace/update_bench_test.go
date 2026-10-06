@@ -8,6 +8,9 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/pipeline"
 )
 
+// BenchmarkWriteUpdateOutputOrganizationPins measures default summary formatting
+// for 15 skipped organization-managed pins, with output discarded and no disk or
+// network I/O in the timed loop.
 func BenchmarkWriteUpdateOutputOrganizationPins(b *testing.B) {
 	pins := make([]pipeline.MarketplacePinUpdate, 15)
 	for i := range pins {

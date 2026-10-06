@@ -14,6 +14,8 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/resolver"
 )
 
+// newUpdateCmd builds the update command with scope, target, ref-bump, and
+// verbose output flags. Organization scope is rejected before running an update.
 func newUpdateCmd() *cobra.Command {
 	var bump, verbose bool
 	var scope, registry, ref, registryPath, kind string
@@ -45,6 +47,10 @@ func newUpdateCmd() *cobra.Command {
 	return cmd
 }
 
+// runUpdate prepares dependency transactions and missing Marketplace locks, then
+// refreshes registries and reconciles selected dependency locks through the update
+// pipeline. It writes warnings, target notices, and the update summary to out,
+// returning the first preparation, update, or output error.
 func runUpdate(ctx context.Context, out io.Writer, bump, verbose bool, selected map[lockfile.Scope]bool, targets *upgradeTargetSpec) error {
 	repoRoot := config.FindRepoRoot()
 	localDir := config.FindLocalConfigDir()
@@ -82,6 +88,9 @@ func runUpdate(ctx context.Context, out io.Writer, bump, verbose bool, selected 
 	return writeUpdateOutput(out, result, bump, verbose)
 }
 
+// updateBumpTarget copies an explicit registry selection into a pipeline target,
+// or returns nil when no registry was selected. Resource names are copied so the
+// pipeline target does not share the caller's slice.
 func updateBumpTarget(targets *upgradeTargetSpec) *pipeline.UpdateTarget {
 	if targets == nil || targets.registry == "" {
 		return nil
@@ -89,6 +98,9 @@ func updateBumpTarget(targets *upgradeTargetSpec) *pipeline.UpdateTarget {
 	return &pipeline.UpdateTarget{Registry: targets.registry, Ref: targets.ref, Path: targets.path, Kind: targets.kind, Names: append([]string(nil), targets.names...)}
 }
 
+// advanceUpgradeTargetRefs replaces the selected ref with the first bump matching
+// its old ref and canonical registry URL. Missing selections and invalid registry
+// URLs leave the target unchanged.
 func advanceUpgradeTargetRefs(targets *upgradeTargetSpec, bumps []pipeline.RefBump) {
 	if targets == nil || targets.registry == "" || targets.ref == "" {
 		return
@@ -109,6 +121,10 @@ func advanceUpgradeTargetRefs(targets *upgradeTargetSpec, bumps []pipeline.RefBu
 	}
 }
 
+// writeUpdateOutput reports configured registries, optional ref bumps, and
+// Marketplace pin decisions. Organization-managed pins are summarized as
+// unchanged and unchecked; verbose also lists their individual identities.
+// It returns the first error writing to out.
 func writeUpdateOutput(out io.Writer, result *pipeline.UpdateResult, bump, verbose bool) error {
 	if bump {
 		if _, err := fmt.Fprintf(out, "Configured registry entries: %d, refs bumped: %d\n", result.UpdatedRegistries, len(result.Bumps)); err != nil {
