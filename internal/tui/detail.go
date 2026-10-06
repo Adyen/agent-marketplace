@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"io/fs"
 	"log/slog"
 	"os"
@@ -12,7 +11,6 @@ import (
 	"sort"
 	"strings"
 	"sync"
-	"syscall"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/glamour/v2"
@@ -307,8 +305,8 @@ type detailCaptureBudget struct {
 	entries int
 }
 
-func captureDetailSource(path string) *detailSourceSnapshot {
-	return captureDetailSourceLimit(path, maxDetailSourceBytes, detailTruncationMarker)
+func captureDetailSource(path string, readTargetWith ...previewTargetRead) *detailSourceSnapshot {
+	return captureDetailSourceLimit(path, maxDetailSourceBytes, detailTruncationMarker, readTargetWith...)
 }
 
 func (b *detailCaptureBudget) capture(path string) *detailSourceSnapshot {
@@ -327,8 +325,8 @@ func (b *detailCaptureBudget) capture(path string) *detailSourceSnapshot {
 	return snapshot
 }
 
-func captureDetailSourceLimit(path string, limit int, marker string) *detailSourceSnapshot {
-	content, truncated, err := readDetailSourceLimit(path, limit)
+func captureDetailSourceLimit(path string, limit int, marker string, readTargetWith ...previewTargetRead) *detailSourceSnapshot {
+	content, truncated, err := readDetailSourceLimit(path, limit, readTargetWith...)
 	if !truncated {
 		marker = ""
 	}
@@ -546,24 +544,12 @@ func readDetailSource(path string) (content string, truncated bool, err error) {
 	return readDetailSourceLimit(path, maxDetailSourceBytes)
 }
 
-func readDetailSourceLimit(path string, limit int) (content string, truncated bool, err error) {
+func readDetailSourceLimit(path string, limit int, readTargetWith ...previewTargetRead) (content string, truncated bool, err error) {
 	target := path
 	if info, statErr := os.Lstat(path); statErr == nil && info.IsDir() {
 		target = filepath.Join(path, "SKILL.md")
 	}
-	f, err := os.OpenFile(target, os.O_RDONLY|syscall.O_NOFOLLOW, 0)
-	if err != nil {
-		return "", false, err
-	}
-	defer func() { _ = f.Close() }()
-	info, err := f.Stat()
-	if err != nil {
-		return "", false, err
-	}
-	if !info.Mode().IsRegular() {
-		return "", false, fmt.Errorf("source is not a regular file")
-	}
-	data, err := io.ReadAll(io.LimitReader(f, int64(limit)+1))
+	data, err := readPreviewSource(filepath.Dir(target), target, limit, readTargetWith...)
 	if err != nil {
 		return "", false, err
 	}
@@ -717,24 +703,12 @@ func renderBundleEntry(ctx context.Context, t theme, tr *bundleTree, relative st
 // is validated before joining and the final descriptor is opened without
 // following symlinks, keeping an enumeration/read race inside the resource
 // root and the regular-file-only preview contract.
-func renderBundleFile(dark bool, root, relative string, width int) string {
+func renderBundleFile(dark bool, root, relative string, width int, readTargetWith ...previewTargetRead) string {
 	path, err := safeBundlePath(root, relative)
 	if err != nil {
 		return "Error reading file: " + sanitizeTerminalData(err.Error(), terminalSingleLine)
 	}
-	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW, 0)
-	if err != nil {
-		return "Error reading file: " + sanitizeTerminalData(err.Error(), terminalSingleLine)
-	}
-	defer func() { _ = f.Close() }()
-	info, err := f.Stat()
-	if err != nil {
-		return "Error reading file: " + sanitizeTerminalData(err.Error(), terminalSingleLine)
-	}
-	if !info.Mode().IsRegular() {
-		return "Error reading file: source is not a regular file"
-	}
-	data, err := io.ReadAll(io.LimitReader(f, maxDetailSourceBytes+1))
+	data, err := readPreviewSource(root, path, maxDetailSourceBytes, readTargetWith...)
 	if err != nil {
 		return "Error reading file: " + sanitizeTerminalData(err.Error(), terminalSingleLine)
 	}

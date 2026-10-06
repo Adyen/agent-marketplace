@@ -480,6 +480,18 @@ paths:
           schema:
             type: integer
             default: 0
+        - in: query
+          name: sort
+          schema:
+            type: string
+            enum:
+              - installations
+          description: >-
+            Optional result ordering. `installations` orders the full filtered
+            result by descending reported installation count before
+            pagination; text relevance still precedes adoption for text
+            searches. Omitted requests keep the existing ordering and never
+            require a metrics backend. Other values return HTTP 400.
       responses:
         "200":
           description: Paginated resource search results
@@ -1589,6 +1601,18 @@ components:
         score:
           type: number
           description: Server-assigned relevance score for the query.
+        installation_count:
+          type: integer
+          minimum: 0
+          maximum: 9007199254740991
+          description: >-
+            Optional. How many distinct reporting installations enabled this
+            resource in their latest reported configuration within the last 30
+            days, derived from existing inventory telemetry. Counts describe
+            enabled configuration, not verified installation events or unique
+            users, and can undercount non-reporting installations. Present
+            only when the instance reports adoption for this registry; absent
+            means unknown rather than zero.
 
     ResourceRevision:
       type: object

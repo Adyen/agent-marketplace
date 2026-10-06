@@ -1,0 +1,11 @@
+## Context
+
+Actual native Factory command original install and valid update are followed by a private staged-publication replacement. The old publisher overwrites handwritten bytes and then prunes the retained original command as stale. The native command writer must bind authorization to the entry it changes.
+
+## Decisions
+
+Share captured file staging/rename with the portable source-file publisher, passing compiled bytes and faithful existing permissions. Capture expected leaf generation and named parent; fully stage before rechecking and rename over an admitted old link without unlink. Shared staged identity checks refuse changed staging and cleanup removes only the created inode. Reuse a strict captured command snapshot for both marker and equality checks, retaining opened-state/size/cleanup semantics; equality read failures remain errors, not permission to overwrite. Keep native diagnostics, dry-run and unchanged-repeat identity/mode/mtime. No arbitrary limits, fsync additions, whole-output transaction or uncooperative-writer exclusion.
+
+## Verification
+
+Actual native installed/updated command followed by deterministic replacement must refuse with materialize.write.error and preserve replacement/original bytes without staging residue. Valid update must preserve 0640 permissions; unchanged repeat must retain identity/mode/mtime. Linux/macOS native/portable/marker/migration controls, full short materialize, count20 native/portable publication races, scoped validate/lint/build and strict specs pass. Actual staged replacement also refuses, retains admitted output and foreign staging while verifying staged desired payload existed. Review all eleven implementation entries including tests/benchmark/script/spec exclusions without skips; corrected equality-path bypass, staged identity/created-inode cleanup and premature Written reporting. Shared snapshot has two real callers and shared byte publisher serves native and portable consumers. Final native command update local disk/no network2s×5 arm64 median393.870→952.128µs(+141.74%),11455→29362B(+156.32%),110→345alloc(+213.64%),p=.008n5/no95%interval. Benchmark preceded final reporting/variable-deduplication-only edits; security validation cost, not speedup. Native regular-file pruning and remaining R2 families stay tracked.

@@ -19,6 +19,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/publicurl"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/store"
@@ -116,20 +117,84 @@ func (d Duration) Duration() time.Duration { return time.Duration(d) }
 
 // Config is the top-level Marketplace operator configuration.
 type Config struct {
-	Admin              Administration    `yaml:"admin"`
-	Management         Management        `yaml:"management"`
-	APIVersion         string            `yaml:"apiVersion"`
-	Instance           Instance          `yaml:"instance"`
-	Listen             string            `yaml:"listen"`
-	OperationsListen   string            `yaml:"operations_listen"`
-	Storage            Storage           `yaml:"storage"`
-	AcquisitionDefault string            `yaml:"acquisition_default"`
-	Refresh            Refresh           `yaml:"refresh"`
-	RefreshConcurrency int               `yaml:"refresh_concurrency,omitempty"`
-	Policy             Policy            `yaml:"policy"`
-	Registries         []Registry        `yaml:"registries"`
-	Revocations        Revocations       `yaml:"revocations"`
-	CatalogProjection  CatalogProjection `yaml:"catalog_projection"`
+	Admin               Administration      `yaml:"admin"`
+	Management          Management          `yaml:"management"`
+	APIVersion          string              `yaml:"apiVersion"`
+	Instance            Instance            `yaml:"instance"`
+	Listen              string              `yaml:"listen"`
+	OperationsListen    string              `yaml:"operations_listen"`
+	Storage             Storage             `yaml:"storage"`
+	AcquisitionDefault  string              `yaml:"acquisition_default"`
+	Refresh             Refresh             `yaml:"refresh"`
+	RefreshConcurrency  int                 `yaml:"refresh_concurrency,omitempty"`
+	Policy              Policy              `yaml:"policy"`
+	Registries          []Registry          `yaml:"registries"`
+	Revocations         Revocations         `yaml:"revocations"`
+	CatalogProjection   CatalogProjection   `yaml:"catalog_projection"`
+	InstallationMetrics InstallationMetrics `yaml:"installation_metrics"`
+}
+
+type InstallationMetrics struct {
+	URL            string            `yaml:"url"`
+	BearerTokenEnv string            `yaml:"bearer_token_env"`
+	Labels         map[string]string `yaml:"labels"`
+}
+
+var installationMetricsLabelKeys = map[string]bool{
+	"namespace": true, "endpoint": true, "service": true, "job": true, "cluster": true,
+}
+
+const installationMetricsLabelBound = 256
+
+var installationMetricsEnvName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+
+func (m InstallationMetrics) Validate() []error {
+	var errs []error
+	urlText := strings.TrimSpace(m.URL)
+	env := strings.TrimSpace(m.BearerTokenEnv)
+	if urlText == "" {
+		if env != "" || len(m.Labels) != 0 {
+			errs = append(errs, errors.New("installation_metrics.url is required when bearer_token_env or labels are set"))
+		}
+		return errs
+	}
+	u, err := url.Parse(urlText)
+	if err != nil || u.Hostname() == "" || (u.Scheme != "http" && u.Scheme != "https") {
+		return append(errs, errors.New("installation_metrics.url must be an HTTP or HTTPS URL with a hostname"))
+	}
+	if u.User != nil {
+		errs = append(errs, errors.New("installation_metrics.url must not contain userinfo"))
+	}
+	if u.RawQuery != "" || u.ForceQuery || u.Fragment != "" {
+		errs = append(errs, errors.New("installation_metrics.url must not contain a query or fragment"))
+	}
+	if env != "" {
+		if !installationMetricsEnvName.MatchString(env) {
+			errs = append(errs, errors.New("installation_metrics.bearer_token_env must be a conventional environment variable name"))
+		}
+		loopback := strings.EqualFold(u.Hostname(), "localhost")
+		if ip := net.ParseIP(u.Hostname()); ip != nil {
+			loopback = loopback || ip.IsLoopback()
+		}
+		if u.Scheme != "https" && !loopback {
+			errs = append(errs, errors.New("installation_metrics bearer authentication requires HTTPS except for a loopback endpoint"))
+		}
+	}
+	labelKeys := make([]string, 0, len(m.Labels))
+	for key := range m.Labels {
+		labelKeys = append(labelKeys, key)
+	}
+	slices.Sort(labelKeys)
+	for _, key := range labelKeys {
+		value := m.Labels[key]
+		if !installationMetricsLabelKeys[key] {
+			errs = append(errs, fmt.Errorf("installation_metrics.labels key %q is not a supported deployment selector", key))
+		}
+		if len(value) > installationMetricsLabelBound || strings.ContainsFunc(value, unicode.IsControl) {
+			errs = append(errs, fmt.Errorf("installation_metrics.labels[%q] must be a bounded string without control characters", key))
+		}
+	}
+	return errs
 }
 
 // CatalogProjection controls the optional catalog projection API. It is
@@ -463,6 +528,7 @@ func (cfg Config) validateWithoutAdministration() error {
 		seenSlugs[src.Slug] = true
 	}
 	errs = append(errs, cfg.Revocations.ValidateForMarketplace(cfg.Instance.ID)...)
+	errs = append(errs, cfg.InstallationMetrics.Validate()...)
 	return errors.Join(errs...)
 }
 
