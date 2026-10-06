@@ -163,6 +163,11 @@ func removeStaleFileCandidate(path string, candidate StaleFileCandidate, beforeR
 		return fmt.Errorf("quarantine stale candidate %q: %w", candidate.Path, err)
 	}
 
+	var quarantined unix.Stat_t
+	if statErr := unix.Fstatat(parentFD, quarantine, &quarantined, unix.AT_SYMLINK_NOFOLLOW); statErr != nil {
+		quarantineActive = false
+		return errors.Join(ErrStalePruneConflict, statErr)
+	}
 	matches, verifyErr := staleCandidateFileMatches(parentFD, quarantine, candidate)
 	if verifyErr == nil && matches {
 		slog.Debug("SDK stale quarantine payload verified for removal", "path", filepath.Join(parentPath, quarantine), "phase", "sdk-stale-quarantine-remove")
@@ -183,7 +188,8 @@ func removeStaleFileCandidate(path string, candidate StaleFileCandidate, beforeR
 	if verifyErr != nil {
 		conflict = errors.Join(conflict, verifyErr)
 	}
-	if restoreErr := restoreStaleQuarantine(parentFD, quarantine, filepath.Base(path)); restoreErr != nil {
+	slog.Debug("SDK stale quarantine payload refused before restoration", "path", filepath.Join(parentPath, quarantine), "phase", "sdk-stale-quarantine-restore")
+	if restoreErr := restoreStaleQuarantine(parentFD, quarantine, filepath.Base(path), quarantined); restoreErr != nil {
 		quarantineActive = false
 		return errors.Join(conflict, fmt.Errorf("stale candidate %q preserved in quarantine %q: %w", candidate.Path, quarantine, restoreErr))
 	}
@@ -294,11 +300,25 @@ func digestOpenFile(file *os.File, expected fsboundary.Identity) ([sha256.Size]b
 	return sha256.Sum256(data), nil
 }
 
-func restoreStaleQuarantine(parentFD int, quarantine, destination string) error {
-	if err := unix.Linkat(parentFD, quarantine, parentFD, destination, 0); err != nil {
-		return err
+func restoreStaleQuarantine(parentFD int, quarantine, destination string, expected unix.Stat_t) error {
+	for step := range 2 {
+		var current unix.Stat_t
+		if err := unix.Fstatat(parentFD, quarantine, &current, unix.AT_SYMLINK_NOFOLLOW); err != nil {
+			return err
+		}
+		if current.Dev != expected.Dev || current.Ino != expected.Ino || current.Mode != expected.Mode || current.Size != expected.Size || current.Nlink != expected.Nlink {
+			return fsboundary.ErrGenerationConflict
+		}
+		if step == 1 {
+			return unix.Unlinkat(parentFD, quarantine, 0)
+		}
+		if err := unix.Linkat(parentFD, quarantine, parentFD, destination, 0); err != nil {
+			return err
+		}
+		expected.Nlink++
+		slog.Debug("SDK observed quarantine generation restored", "path", quarantine, "phase", "sdk-stale-quarantine-restore-linked")
 	}
-	return unix.Unlinkat(parentFD, quarantine, 0)
+	return nil
 }
 
 func digestNoFollow(path string, expected fs.FileInfo) (digest [sha256.Size]byte, err error) {
