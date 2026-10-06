@@ -25,7 +25,7 @@ export function selectMarketplaceFetcher(isServer: boolean, apiBase: string | un
 }
 
 export function serializeSearchQuery(params: SearchParams): Record<string, string | number | string[]> {
-  const query: Record<string, string | number | string[]> = {}
+  const query: Record<string, string | number | string[]> = { sort: 'installations' }
   if (params.q.trim()) query.q = params.q.trim()
   if (params.kind) query.kind = params.kind
   const registries = params.registry.map(registry => registry.trim()).filter(Boolean)

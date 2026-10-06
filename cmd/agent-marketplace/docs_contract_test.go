@@ -314,6 +314,7 @@ func TestPublicCommandPathsHaveBehaviorTests(t *testing.T) {
 		"update --ref":                            TestUpdateBumpHonorsScopeAndDirectTarget,
 		"update --registry":                       TestUpdateBumpHonorsScopeAndDirectTarget,
 		"update --scope":                          TestUpdateBumpHonorsScopeAndDirectTarget,
+		"update --verbose":                        TestUpdateSupportsV4GitSourcesWithTransientOrganizationMarketplace,
 	}
 	missingFlags, staleFlags := missingFlagWitnesses(newRootCmd(), flagWitnesses)
 	for _, path := range missingFlags {
