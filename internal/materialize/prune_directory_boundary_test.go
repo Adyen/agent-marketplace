@@ -1,6 +1,7 @@
 package materialize
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -8,6 +9,7 @@ import (
 
 	"github.com/Adyen/agent-marketplace/internal/catalog"
 	"github.com/Adyen/agent-marketplace/internal/config"
+	"github.com/Adyen/agent-marketplace/internal/fsboundary"
 	"github.com/Adyen/agent-marketplace/internal/resolver"
 	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
@@ -16,12 +18,20 @@ import (
 
 // spec: materialization/prune-directory-refusal-precedes-foreign-discovery
 func TestRunPruneDirectoryRefusesRetargetBeforeDiscovery(t *testing.T) {
-	testPruneDirectoryRefusal(t, false)
+	testPruneDirectoryRefusal(t, false, false)
 }
 
-func TestRunPruneDirectoryDryRunRefusesRetarget(t *testing.T) { testPruneDirectoryRefusal(t, true) }
+func TestRunPruneDirectoryDryRunRefusesRetarget(t *testing.T) {
+	testPruneDirectoryRefusal(t, true, false)
+}
 
-func testPruneDirectoryRefusal(t *testing.T, dryRun bool) {
+// spec: materialization/prune-directory-refusal-precedes-foreign-discovery
+func TestRunPruneDirectoryRefusesRetargetAfterEnumeration(t *testing.T) {
+	t.Run("write", func(t *testing.T) { testPruneDirectoryRefusal(t, false, true) })
+	t.Run("dry-run", func(t *testing.T) { testPruneDirectoryRefusal(t, true, true) })
+}
+
+func testPruneDirectoryRefusal(t *testing.T, dryRun, afterEnumeration bool) {
 	home, repo, foreign := t.TempDir(), t.TempDir(), t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("CODEX_HOME", filepath.Join(home, ".codex"))
@@ -48,7 +58,7 @@ func testPruneDirectoryRefusal(t *testing.T, dryRun bool) {
 	}
 	report, err := Run(t.Context(), repo, resolved, func(cfg *runConfig) {
 		cfg.dryRun = dryRun
-		cfg.linkPublicationHook = func(path string) {
+		hook := func(path string) {
 			if path != dir {
 				return
 			}
@@ -59,6 +69,11 @@ func testPruneDirectoryRefusal(t *testing.T, dryRun bool) {
 			if err := os.Symlink(foreign, dir); err != nil {
 				t.Fatal(err)
 			}
+		}
+		if afterEnumeration {
+			cfg.pruneEnumerationHook = hook
+		} else {
+			cfg.linkPublicationHook = hook
 		}
 	})
 	if !hit {
@@ -77,5 +92,41 @@ func testPruneDirectoryRefusal(t *testing.T, dryRun bool) {
 	}
 	if _, err := os.Readlink(filepath.Join(retained, "directory-probe")); err != nil {
 		t.Fatalf("admitted native link changed: %v", err)
+	}
+}
+
+func TestStaleArtifactLinksRefusesRetargetAfterWalk(t *testing.T) {
+	root := t.TempDir()
+	outDir := filepath.Join(root, "rules")
+	if err := os.Mkdir(outDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(outDir, "user-rule.md"), []byte("inert user rule\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	retained := filepath.Join(root, "retained-rules")
+	boundary := &destinationBoundary{repoRoot: root, roots: []string{outDir}}
+	walked := false
+	boundary.pruneEnumerationHook = func(path string) {
+		if path != outDir || walked {
+			return
+		}
+		walked = true
+		if err := os.Rename(outDir, retained); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Mkdir(outDir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	stale, _, err := staleArtifactLinks(outDir, map[string]string{}, nil, boundary)
+	if !walked {
+		t.Fatal("artifact walk seam not reached")
+	}
+	if !errors.Is(err, fsboundary.ErrGenerationConflict) || len(stale) != 0 {
+		t.Fatalf("replaced artifact directory reported an obsolete discovery: stale=%v err=%v", stale, err)
+	}
+	if data, err := os.ReadFile(filepath.Join(retained, "user-rule.md")); err != nil || string(data) != "inert user rule\n" {
+		t.Fatalf("retained admitted directory changed: %q %v", data, err)
 	}
 }

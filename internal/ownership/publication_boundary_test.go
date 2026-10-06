@@ -99,6 +99,62 @@ func TestApplyRefusesReplacementStagedGeneration(t *testing.T) {
 	}
 }
 
+// spec: owned-entry-reconciliation/durable-staging-refusal-preserves-authority
+func TestApplyStagedRefusalDisarmsJournalForRecovery(t *testing.T) {
+	for _, shape := range []string{"replacement", "escaping-alias"} {
+		t.Run(shape, func(t *testing.T) {
+			f := newFixture(t)
+			prior := []byte("{\"prior\":true}\n")
+			f.writeAggregate(string(prior))
+			external := filepath.Join(t.TempDir(), "staged-external")
+			retained := filepath.Join(t.TempDir(), "retained-stage")
+			var stagePath string
+			store := f.store(WithCrasher(publicationBoundaryCrasher(func(point CrashPoint) error {
+				if point != CrashAfterStagedWrite {
+					return nil
+				}
+				journal, err := f.store().ReadJournal()
+				if err != nil || journal == nil {
+					t.Fatalf("prepared journal missing: %v", err)
+				}
+				stagePath = journal.StagedPath
+				if err := os.Rename(stagePath, retained); err != nil {
+					t.Fatal(err)
+				}
+				if shape == "replacement" {
+					return os.WriteFile(stagePath, []byte("foreign inert staged bytes"), 0o640)
+				}
+				if err := os.WriteFile(external, []byte("external inert bytes"), 0o640); err != nil {
+					t.Fatal(err)
+				}
+				return os.Symlink(external, stagePath)
+			})))
+			_, err := store.Apply(Mutation{Rel: f.rel, AbsFile: f.absFile, NextBytes: []byte("{\"next\":true}\n"), Reason: ReasonSync, ExpectPriorDigest: Digest(prior)})
+			if stagePath == "" || !errors.Is(err, ErrGenerationConflict) {
+				t.Fatalf("staged refusal lost generation-conflict identity: %s %v", stagePath, err)
+			}
+			journal, err := store.ReadJournal()
+			if err != nil || journal != nil {
+				t.Fatalf("refusal left a durable armed journal: %+v %v", journal, err)
+			}
+			outcomes, err := store.Recover()
+			if err != nil || len(outcomes) != 0 {
+				t.Fatalf("disarmed refusal must not be recovered as an in-flight generation: %+v %v", outcomes, err)
+			}
+			if shape == "replacement" {
+				if data, err := os.ReadFile(stagePath); err != nil || string(data) != "foreign inert staged bytes" {
+					t.Fatalf("foreign staged replacement changed: %q %v", data, err)
+				}
+			} else if text, linkErr := os.Readlink(stagePath); linkErr != nil || text != external {
+				t.Fatalf("recovery or resolution removed the foreign staged alias: %q %v", text, linkErr)
+			}
+			if data, err := os.ReadFile(f.absFile); err != nil || !bytes.Equal(data, prior) {
+				t.Fatalf("target bytes changed: %q %v", data, err)
+			}
+		})
+	}
+}
+
 func TestApplyCapturedPublicationPreservesSharedMode(t *testing.T) {
 	f := newFixture(t)
 	prior, next := []byte("{\"prior\":true}\n"), []byte("{\"next\":true}\n")

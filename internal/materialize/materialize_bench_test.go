@@ -89,6 +89,9 @@ func BenchmarkRunSupportFiles(b *testing.B) {
 	if err := os.WriteFile(filepath.Join(sourceSkillDir, "scripts", "run.py"), []byte("print('hello')"), 0o644); err != nil {
 		b.Fatal(err)
 	}
+	if err := os.Symlink("scripts", filepath.Join(sourceSkillDir, "references")); err != nil {
+		b.Fatal(err)
+	}
 
 	irSkill := ir.NewSkill("bench-skill", "benchmark", "Body text", nil, nil, ir.SourceRef{File: filepath.Join(sourceSkillDir, "SKILL.md"), Line: 1})
 	resolved := []resolver.ResolvedArtifact{
