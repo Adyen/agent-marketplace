@@ -3,7 +3,9 @@ package backup
 import (
 	"errors"
 	"io/fs"
+	"log/slog"
 	"os"
+	"path/filepath"
 
 	"github.com/Adyen/agent-marketplace/internal/fsboundary"
 )
@@ -22,8 +24,10 @@ func restoreCapturedSymlink(parent *fsboundary.Dir, name, target string) (err er
 	if err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return err
 	}
+	var identity fsboundary.Identity
 	if err == nil {
-		identity, identityErr := fsboundary.FileInfoIdentity(info)
+		var identityErr error
+		identity, identityErr = fsboundary.FileInfoIdentity(info)
 		if identityErr != nil {
 			return identityErr
 		}
@@ -45,6 +49,24 @@ func restoreCapturedSymlink(parent *fsboundary.Dir, name, target string) (err er
 			// Directories and links at the leaf are replaced by the restored link.
 		default:
 			return fsboundary.ErrUnsafeFile
+		}
+	}
+	slog.Debug("Backup symbolic destination admitted for replacement", "path", filepath.Join(parent.Path(), name), "phase", "restore-symbolic-replace")
+	current, statErr := native.Lstat(name)
+	if info == nil {
+		if !errors.Is(statErr, fs.ErrNotExist) {
+			return errors.Join(fsboundary.ErrGenerationConflict, statErr)
+		}
+	} else {
+		if statErr != nil {
+			return errors.Join(fsboundary.ErrGenerationConflict, statErr)
+		}
+		named, identityErr := fsboundary.FileInfoIdentity(current)
+		if identityErr != nil {
+			return identityErr
+		}
+		if !named.SameState(identity) {
+			return fsboundary.ErrGenerationConflict
 		}
 	}
 	if err := native.RemoveAll(name); err != nil {
