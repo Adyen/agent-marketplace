@@ -11,7 +11,7 @@
 
 ## 3. Archive
 
-- [ ] 3.1 `openspec archive actionable-ignored-sub-bundle-warnings --yes`
+- [x] 3.1 `openspec archive actionable-ignored-sub-bundle-warnings --yes`
 
 ## Evidence
 
