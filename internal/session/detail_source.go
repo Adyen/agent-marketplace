@@ -16,11 +16,9 @@ const (
 	MaxDetailSourceBytes    = 256 << 10 // per entry
 	MaxDetailCaptureBytes   = 2 << 20   // across one snapshot refresh
 	MaxDetailCaptureEntries = 64        // across one snapshot refresh
-)
 
-var (
-	DetailTruncationMarker       = fmt.Sprintf("[truncated: source exceeds %d KiB; showing the first part only]", MaxDetailSourceBytes/1024)
-	DetailBudgetTruncationMarker = fmt.Sprintf("[truncated: snapshot detail capture exceeds %d KiB or %d entries]", MaxDetailCaptureBytes/1024, MaxDetailCaptureEntries)
+	DetailTruncationMarker       = "[truncated: source exceeds 256 KiB; showing the first part only]"
+	DetailBudgetTruncationMarker = "[truncated: snapshot detail capture exceeds 2048 KiB or 64 entries]"
 )
 
 // DetailSourceSnapshot is an immutable bounded copy of a resource source
