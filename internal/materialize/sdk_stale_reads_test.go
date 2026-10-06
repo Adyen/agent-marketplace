@@ -71,8 +71,8 @@ func TestSDKStaleReadsRefuseRetargetedParent(t *testing.T) {
 		}
 	}}))
 	report, err := hcc.Materialize(&hcc.Result{}, output, hcc.WithWriteMode(hcc.WriteModeSync), hcc.WithPruneStale(true))
-	if !changed || !errors.Is(err, hcc.ErrStalePruneConflict) {
-		t.Fatalf("SDK stale action did not preserve retargeted parent: %+v %v", report, err)
+	if !changed || !errors.Is(err, fsboundary.ErrGenerationConflict) {
+		t.Fatalf("SDK stale discovery did not preserve retargeted parent: %+v %v", report, err)
 	}
 	if raw, err := os.ReadFile(foreignFile); err != nil || string(raw) != "foreign inert bytes" {
 		t.Fatalf("foreign stale bytes changed: %q %v", raw, err)
