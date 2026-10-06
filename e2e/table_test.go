@@ -5074,6 +5074,27 @@ harnesses:
 			{Args: []string{"sync", "--check"}, MustPass: true},
 		},
 	},
+	{
+		Name:       "update/verbose_registry_summary",
+		Desc:       "Given an unchanged Git registry, When updating with verbose output, Then the CLI reports the configured entry without claiming its revision changed",
+		Registries: []RegistryDef{{Name: "update-output", Skills: []Skill{{Name: "review"}}}},
+		RepoCfg:    "apiVersion: agent-marketplace/v2\nharnesses: [factory]\nregistries:\n  - url: {{REG:update-output}}\n    ref: main\n    skills: [review]\n",
+		Steps: []Step{
+			{Args: []string{"sync"}, MustPass: true, Symlinks: []string{"/workspace/.factory/skills/review"}},
+			{Args: []string{"update", "--verbose"}, MustPass: true, OutContains: []string{"Configured registry entries: 1", "Marketplace pins updated: 0"}, OutNotContains: []string{"Organization-managed Marketplace pins:"}, Symlinks: []string{"/workspace/.factory/skills/review"}},
+		},
+	},
+	{
+		Name:       "update/verbose_registry_summary_v4",
+		Desc:       "Given an unchanged Git source in v4 user and repository configs, When updating with verbose output, Then the CLI reports the configured entry without claiming its revision changed",
+		Registries: []RegistryDef{{Name: "update-output-v4", Skills: []Skill{{Name: "review"}}}},
+		GlobalCfg:  "apiVersion: agent-marketplace/v4\nharnesses: [factory]\n",
+		RepoCfg:    "apiVersion: agent-marketplace/v4\nsources:\n  tools: {git: '{{REG:update-output-v4}}', ref: main}\nresources:\n  tools: {include: [skill/review]}\n",
+		Steps: []Step{
+			{Args: []string{"sync"}, MustPass: true, Symlinks: []string{"/workspace/.factory/skills/review"}},
+			{Args: []string{"update", "--verbose"}, MustPass: true, OutContains: []string{"Configured registry entries: 1", "Marketplace pins updated: 0"}, OutNotContains: []string{"Organization-managed Marketplace pins:"}, Symlinks: []string{"/workspace/.factory/skills/review"}},
+		},
+	},
 }
 
 // ---------- parallelism configuration ----------
