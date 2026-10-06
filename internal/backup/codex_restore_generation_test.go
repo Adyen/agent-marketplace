@@ -21,6 +21,7 @@ type codexRestoreObserver struct {
 	onDirectory        func(string)
 	onDirectoryOpened  func(string)
 	onDirectoryDescend func(string)
+	onListingTarget    func(string)
 }
 
 func (h codexRestoreObserver) Handle(ctx context.Context, record slog.Record) error {
@@ -51,6 +52,9 @@ func (h codexRestoreObserver) Handle(ctx context.Context, record slog.Record) er
 	}
 	if phase == "backup-source-directory-descend" && h.onDirectoryDescend != nil {
 		h.onDirectoryDescend(path)
+	}
+	if phase == "backup-listing-target" && h.onListingTarget != nil {
+		h.onListingTarget(path)
 	}
 	return h.Handler.Handle(ctx, record)
 }

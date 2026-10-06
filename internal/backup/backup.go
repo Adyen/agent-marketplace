@@ -321,49 +321,110 @@ func Restore(target hcc.Target, dstDir string, mapped ...map[string]string) (str
 }
 
 // ListBackups returns available backups grouped by target.
-func ListBackups() (map[hcc.Target][]string, error) {
-	result := make(map[hcc.Target][]string)
+func ListBackups() (result map[hcc.Target][]string, err error) {
+	result = make(map[hcc.Target][]string)
 	dir, err := Dir()
 	if err != nil {
 		return nil, err
 	}
-	entries, err := os.ReadDir(dir)
+	root, err := fsboundary.OpenDir(dir)
 	if err != nil {
-		if os.IsNotExist(err) {
+		if errors.Is(err, fs.ErrNotExist) {
 			return result, nil
 		}
+		return nil, err
+	}
+	defer func() {
+		if closeErr := root.Close(); closeErr != nil {
+			result = nil
+			err = errors.Join(err, closeErr)
+		}
+	}()
+	native, err := root.NativeRoot()
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		if closeErr := native.Close(); closeErr != nil {
+			result = nil
+			err = errors.Join(err, closeErr)
+		}
+	}()
+	entries, err := fs.ReadDir(native.FS(), ".")
+	if err != nil {
 		return nil, err
 	}
 	for _, entry := range entries {
 		if !entry.IsDir() {
 			continue
 		}
-		target := hcc.Target(entry.Name())
+		observed, _, readErr := readBackupSourceMetadata(root, entry.Name())
+		if readErr != nil {
+			return nil, readErr
+		}
+		if observed == nil || !observed.IsDir() {
+			return nil, fsboundary.ErrGenerationConflict
+		}
+		identity, identityErr := fsboundary.FileInfoIdentity(observed)
+		if identityErr != nil {
+			return nil, identityErr
+		}
 		targetDir := filepath.Join(dir, entry.Name())
-		if entry.Name() == codexTargetName {
-			sets, err := loadCompleteCodexSets(targetDir)
+		slog.Debug("Backup listing target directory admitted", "path", targetDir, "phase", "backup-listing-target")
+		timestamps, listErr := func() (timestamps []string, err error) {
+			parent, err := root.OpenPath(entry.Name())
 			if err != nil {
-				return nil, fmt.Errorf("backup: list Codex sets: %w", err)
+				return nil, errors.Join(fsboundary.ErrGenerationConflict, err)
 			}
-			if len(sets) > 0 {
-				operations := make([]string, 0, len(sets))
-				for _, set := range sets {
-					operations = append(operations, set.Operation)
+			defer func() {
+				if closeErr := parent.Close(); closeErr != nil {
+					err = errors.Join(err, closeErr)
 				}
-				result[target] = operations
+			}()
+			if !identity.SameObject(parent.Identity()) {
+				return nil, fsboundary.ErrGenerationConflict
 			}
-			continue
+			defer func() {
+				if verifyErr := verifyArchiveParent(parent, targetDir); verifyErr != nil {
+					err = errors.Join(err, verifyErr)
+				}
+			}()
+			if entry.Name() == codexTargetName {
+				sets, err := loadCompleteCodexSetsAt(parent)
+				if err != nil {
+					return nil, err
+				}
+				for _, set := range sets {
+					timestamps = append(timestamps, set.Operation)
+				}
+				return timestamps, nil
+			}
+			native, err := parent.NativeRoot()
+			if err != nil {
+				return nil, err
+			}
+			defer func() {
+				if closeErr := native.Close(); closeErr != nil {
+					err = errors.Join(err, closeErr)
+				}
+			}()
+			archives, err := fs.Glob(native.FS(), "*.tar.gz")
+			if err != nil {
+				return nil, err
+			}
+			sortBackupArchives(archives)
+			timestamps = make([]string, len(archives))
+			for i, archive := range archives {
+				timestamps[i] = strings.TrimSuffix(archive, ".tar.gz")
+			}
+			return timestamps, nil
+		}()
+		if listErr != nil {
+			return nil, fmt.Errorf("backup: list %s: %w", entry.Name(), listErr)
 		}
-		archives, err := filepath.Glob(filepath.Join(targetDir, "*.tar.gz"))
-		if err != nil {
-			return nil, fmt.Errorf("backup: list archives in %s: %w", targetDir, err)
+		if entry.Name() != codexTargetName || len(timestamps) > 0 {
+			result[hcc.Target(entry.Name())] = timestamps
 		}
-		sortBackupArchives(archives)
-		timestamps := make([]string, len(archives))
-		for i, a := range archives {
-			timestamps[i] = strings.TrimSuffix(filepath.Base(a), ".tar.gz")
-		}
-		result[target] = timestamps
 	}
 	return result, nil
 }
