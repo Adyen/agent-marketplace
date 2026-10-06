@@ -6,6 +6,8 @@ Use the hosted [Marketplace](../glossary.md#marketplace) browser to find a resou
 
 Open your Marketplace's resource browser and search by text. You can narrow the results to one resource kind or to one or more registries. To widen the search again, remove a filter chip or clear all filters. The page URL contains your search and filters, so you can bookmark it or share it.
 
+When the operator connects an inventory metrics endpoint, browsing orders resources by current reported adoption, while a text search still puts the most relevant matches first. Rows may show a "reported installations" count: the number of distinct installations whose latest enabled configuration within the last 30 days reports the resource. The count covers only telemetry-reporting installations matched by Git identity, so it can undercount, and a row without a count means no reported data rather than zero use.
+
 Scroll down to load more results. If a request fails, retry it; the results already on the page stay visible. Check the registry and the kind as well as the name, because the same name can appear in different kinds and sources.
 
 ## 2. Inspect before installing

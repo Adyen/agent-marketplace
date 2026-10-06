@@ -70,6 +70,7 @@ function streamingItems(count: number) {
 async function routeStreamingSearch(page: Page, failNextPageOnce = false) {
   const items = streamingItems(30)
   const offsets: number[] = []
+  const sorts: (string | null)[] = []
   let shouldFail = failNextPageOnce
   await page.route('**/api/v1/search**', async (route) => {
     const url = new URL(route.request().url())
@@ -77,6 +78,7 @@ async function routeStreamingSearch(page: Page, failNextPageOnce = false) {
     const offset = Number(url.searchParams.get('offset') || 0)
     const limit = Number(url.searchParams.get('limit') || 25)
     offsets.push(offset)
+    sorts.push(url.searchParams.get('sort'))
     if (offset > 0 && shouldFail) {
       shouldFail = false
       return route.fulfill({ status: 400, contentType: 'application/json', body: '{}' })
@@ -87,7 +89,7 @@ async function routeStreamingSearch(page: Page, failNextPageOnce = false) {
       body: JSON.stringify({ items: items.slice(offset, offset + limit), total: items.length, offset, limit }),
     })
   })
-  return offsets
+  return { offsets, sorts }
 }
 
 test.describe('Marketplace browser discovery', () => {
@@ -106,7 +108,7 @@ test.describe('Marketplace browser discovery', () => {
   })
 
   test('streams additional search results while scrolling', async ({ page }) => {
-    const offsets = await routeStreamingSearch(page)
+    const { offsets } = await routeStreamingSearch(page)
     await page.goto('/')
     await page.getByLabel('Search', { exact: true }).fill('stream')
     await expect(page.locator('article')).toHaveCount(25)
@@ -125,7 +127,7 @@ test.describe('Marketplace browser discovery', () => {
         disconnect() {}
       } as unknown as typeof IntersectionObserver
     })
-    const offsets = await routeStreamingSearch(page, true)
+    const { offsets } = await routeStreamingSearch(page, true)
     await page.goto('/')
     await page.getByLabel('Search', { exact: true }).fill('stream')
     await expect(page.locator('article')).toHaveCount(25)
@@ -545,6 +547,56 @@ test.describe('Marketplace browser discovery', () => {
     await expect(page.locator('[data-slot="content"]')).toContainText('Installation is disabled because this revision is revoked.')
     await expect(lastResource.getByText('review', { exact: true })).toHaveCount(0)
     await expect(page.getByText(/on this page cannot be installed/)).toHaveCount(0)
+  })
+
+  // spec: marketplace-browser/browser-displays-counts-while-preserving-filtered-pagination
+  test('requests installation ordering and displays reported counts', async ({ page }) => {
+    const searchRequests: URL[] = []
+    page.on('request', request => {
+      if (new URL(request.url()).pathname === '/api/v1/search') searchRequests.push(new URL(request.url()))
+    })
+
+    await page.goto('/')
+    const rows = page.locator('article')
+    await expect(rows).toHaveCount(2)
+    await expect(rows.nth(0).getByRole('link', { name: 'team-tools/secure-review', exact: true })).toBeVisible()
+    const countText = rows.nth(0).getByText('7 reported installations', { exact: true })
+    await expect(countText).toBeVisible()
+    await expect(countText).toHaveAttribute('title', /latest configuration within the last 30 days/)
+    await expect(rows.nth(1)).not.toContainText('reported installation')
+
+    await page.getByLabel('Search', { exact: true }).fill('secure')
+    await expectResourceCount(page, 1)
+    await expect(rows).toHaveCount(1)
+    await expect(rows.nth(0)).toContainText('7 reported installations')
+
+    await page.getByLabel('Search', { exact: true }).fill('')
+    await page.getByRole('radio', { name: 'Command', exact: true }).check()
+    await expectResourceCount(page, 1)
+    await expect(rows.nth(0).getByRole('link', { name: 'team-tools/deploy-preview', exact: true })).toBeVisible()
+    await expect(rows.nth(0)).not.toContainText('reported installation')
+
+    await page.getByRole('button', { name: 'Clear', exact: true }).click()
+    await page.getByRole('checkbox', { name: 'team-tools', exact: true }).check()
+    await expectResourceCount(page, 2)
+    await expect(rows.nth(0)).toContainText('7 reported installations')
+
+    expect(searchRequests.length).toBeGreaterThan(0)
+    for (const request of searchRequests) {
+      expect(request.searchParams.get('sort')).toBe('installations')
+    }
+  })
+
+  // spec: marketplace-browser/browser-displays-counts-while-preserving-filtered-pagination
+  test('keeps installation ordering while loading more results', async ({ page }) => {
+    const { offsets, sorts } = await routeStreamingSearch(page)
+    await page.goto('/')
+    await page.getByLabel('Search', { exact: true }).fill('stream')
+    await expect(page.locator('article')).toHaveCount(25)
+    await page.getByTestId('load-more-trigger').scrollIntoViewIfNeeded()
+    await expect(page.locator('article')).toHaveCount(30)
+    expect(offsets).toEqual([0, 25])
+    expect(sorts).toEqual(['installations', 'installations'])
   })
 
   test('searches from the homepage and persists URL-backed filters', async ({ page }) => {

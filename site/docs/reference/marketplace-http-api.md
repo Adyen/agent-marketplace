@@ -21,7 +21,7 @@ Errors that public and operations route handlers return are JSON objects with on
 
 | Status | When |
 |---|---|
-| `400` | A malformed parameter: an unknown `kind`, a digest or commit in the wrong form, a bad `limit` or `offset`, or a search query longer than 256 characters. |
+| `400` | A malformed parameter: an unknown `kind` or `sort`, a digest or commit in the wrong form, a bad `limit` or `offset`, or a search query longer than 256 characters. |
 | `403` | The content is withheld because its current assessment rejects it. |
 | `404` | The registry, resource, revision, or object does not exist or is not available. |
 | `405` | The method is not `GET` or `HEAD`. |
@@ -56,8 +56,11 @@ The response has `instance_id`, `version`, `canonical_url`, `api_base` (always `
   - `registry`: registry filter; repeat it to filter by several registries.
   - `limit`: default `100`. Values above `1000` are reduced to `1000`. Negative or non-numeric values return `400`.
   - `offset`: default `0`. Negative or non-numeric values return `400`.
+  - `sort`: optional; the only accepted value is `installations`. Any other value returns `400`. Requests that omit `sort` keep the existing relevance and coordinate ordering.
 
   The response is `{"items": [...], "total": <n>, "offset": <n>, "limit": <n>}`. Each item has `registry_id`, `registry_slug`, `kind`, `name`, `revision`, `content_digest`, and, when present, `description`, `availability`, `metadata` (for example `license`), and `score`.
+
+  With `sort=installations` and a configured `installation_metrics` endpoint, text searches keep relevance ordering first and then rank ties by reported adoption; browse (no `q`) orders by adoption. Items then carry an optional `installation_count`: the number of distinct installations whose latest enabled configuration within the last 30 days reports the resource. Counts reflect only telemetry-reporting installations matched by existing Git-identity rules, so hosted Marketplace observations and installed-name aliases may undercount; the aggregate is cached for up to five minutes (an origin change or the 30-day inventory horizon can refresh it earlier). Metrics requests are POSTs to `/api/v1/query` with a 2-second timeout, an 8 MiB response bound, and no redirect following, so credentials never leave the configured endpoint. When metrics are disabled, fail, or are expired, ordering falls back to the existing behavior and `installation_count` is omitted rather than reported as zero.
 - `GET /api/v1/registries`: registry identifiers as an array of `{"id": ..., "slug": ...}`, sorted by slug, at most 1000 entries.
 - `GET /api/v1/registries/{registry}`: public registry metadata. `{registry}` is a slug or an ID. Credentials and refresh diagnostics are never included.
 - `GET /api/v1/registries/{registry}/history`: registry occurrence history, newest first, at most 1000 entries. Returns `[]` when there is no history.

@@ -212,9 +212,10 @@ type ResourceListItem struct {
 	// Availability is always populated by this server. It stays omitempty so
 	// the field remains optional in the contract and a peer implementation
 	// that cannot determine availability may leave it out.
-	Availability Availability      `json:"availability,omitempty"`
-	Metadata     map[string]string `json:"metadata,omitempty"`
-	Score        float64           `json:"score,omitempty"`
+	Availability      Availability      `json:"availability,omitempty"`
+	InstallationCount *int64            `json:"installation_count,omitempty"`
+	Metadata          map[string]string `json:"metadata,omitempty"`
+	Score             float64           `json:"score,omitempty"`
 }
 
 // ArtifactRequest is the body of `POST /api/v1/artifacts/{kind}/{name}` when

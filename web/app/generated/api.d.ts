@@ -1080,6 +1080,8 @@ export interface components {
             content_digest: string;
             /** @description Author-written one-line summary from the upstream registry. Untrusted content: control characters are stripped, whitespace is collapsed, and the value is truncated to at most 1024 bytes on a UTF-8 boundary before it is stored or served. Omitted when the resource kind declares no description (hooks and MCP servers) or the author left it empty. */
             description?: string;
+            /** @description Optional. How many distinct reporting installations enabled this resource in their latest reported configuration within the last 30 days, derived from existing inventory telemetry. Counts describe enabled configuration, not verified installation events or unique users, and can undercount non-reporting installations. Present only when the instance reports adoption for this registry; absent means unknown rather than zero. */
+            installation_count?: number;
             /** @enum {string} */
             kind: "skill" | "command" | "subagent" | "hook" | "mcpserver" | "collection";
             metadata?: {
@@ -2120,6 +2122,8 @@ export interface operations {
                 offset?: number;
                 q?: string;
                 registry?: string[];
+                /** @description Optional result ordering. `installations` orders the full filtered result by descending reported installation count before pagination; text relevance still precedes adoption for text searches. Omitted requests keep the existing ordering and never require a metrics backend. Other values return HTTP 400. */
+                sort?: "installations";
             };
             header?: never;
             path?: never;

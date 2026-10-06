@@ -23,6 +23,7 @@ const items = [
     content_digest: digest,
     description: hostileDescription,
     metadata: { owner: 'platform' },
+    installation_count: 7,
   },
   {
     registry_id: 'team-tools',
@@ -129,7 +130,10 @@ function search(url) {
     const matchesQuery = !q || `${item.name} ${item.description}`.toLowerCase().includes(q)
     return matchesQuery && (!kind || item.kind === kind) && (!registryIDs.length || registryIDs.includes(item.registry_id))
   })
-  return { items: filtered.slice(offset, offset + limit), total: filtered.length, offset, limit }
+  const sorted = url.searchParams.get('sort') === 'installations'
+    ? [...filtered].sort((a, b) => (b.installation_count ?? 0) - (a.installation_count ?? 0))
+    : filtered
+  return { items: sorted.slice(offset, offset + limit), total: filtered.length, offset, limit }
 }
 
 const server = createServer((request, response) => {
