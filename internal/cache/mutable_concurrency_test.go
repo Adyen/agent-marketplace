@@ -52,15 +52,46 @@ func isolateMutableGit(t testing.TB) {
 	t.Setenv("GIT_CONFIG_COUNT", "0")
 }
 
+// leaseConflictWindow is how long a conflicting acquisition is attempted while
+// the holder keeps its lease. The holder releases only after that attempt
+// returns, so a correct implementation can never admit it however slowly the
+// host runs; scheduling delay only shortens the observation.
+const leaseConflictWindow = 100 * time.Millisecond
+
+// mutableProgressBound bounds every wait for an operation that must complete,
+// such as an independent lease acquisition. It is a hang detector, not a speed
+// requirement: it only turns an operation that never completes (for example a
+// lease wrongly excluded by an unrelated one) into a test failure, so it sits
+// far above any scheduling delay on a loaded host.
+const mutableProgressBound = 30 * time.Second
+
 func awaitMutable[T any](t *testing.T, ch <-chan T) T {
 	t.Helper()
+	timer := time.NewTimer(mutableProgressBound)
+	defer timer.Stop()
 	select {
 	case value := <-ch:
 		return value
-	case <-time.After(5 * time.Second):
+	case <-timer.C:
 		t.Fatal("timed out waiting for cache operation")
 		var zero T
 		return zero
+	}
+}
+
+// awaitMutableFile reports whether path exists before ctx is done.
+func awaitMutableFile(ctx context.Context, path string) bool {
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		if _, err := os.Stat(path); err == nil {
+			return true
+		}
+		select {
+		case <-ctx.Done():
+			return false
+		case <-ticker.C:
+		}
 	}
 }
 
@@ -87,7 +118,12 @@ func holdMutableLease(t *testing.T, subprocess bool, urls []string, operation in
 	t.Helper()
 	var release func()
 	if subprocess {
-		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		// The holder outlives a contender's mutableProgressBound, which starts
+		// only once the holder is ready, so a contender that wrongly blocks
+		// fails at that bound while the lease is still held instead of being
+		// admitted when the holder is killed. The holder exits cleanly only
+		// after release closes its stdin, which release checks.
+		ctx, cancel := context.WithTimeout(context.Background(), 2*mutableProgressBound)
 		cmd := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestMutableLeaseSubprocess$")
 		cmd.Env = append(os.Environ(), "MUTABLE_TEST_HOME="+os.Getenv("HOME"), "MUTABLE_TEST_OPERATION="+strconv.Itoa(operation), "MUTABLE_TEST_URLS="+strings.Join(urls, "\n"))
 		stdin, err := cmd.StdinPipe()
@@ -165,7 +201,15 @@ func TestMutableRegistryLeaseExclusion(t *testing.T) {
 					second = first
 				}
 				release := holdMutableLease(t, subprocess, []string{first}, tc.holder)
-				ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+				// Both attempts run while the holder keeps its lease. A
+				// conflicting one is observed for leaseConflictWindow; one that
+				// must succeed has to succeed while the lease is held, but not
+				// within any particular time.
+				bound := mutableProgressBound
+				if tc.blocked {
+					bound = leaseConflictWindow
+				}
+				ctx, cancel := context.WithTimeout(context.Background(), bound)
 				defer cancel()
 				called := false
 				consume := func() (struct{}, error) { called = true; return struct{}{}, nil }
@@ -178,7 +222,7 @@ func TestMutableRegistryLeaseExclusion(t *testing.T) {
 					t.Fatalf("independent lease: called=%t err=%v", called, err)
 				}
 				release()
-				ctx, cancelRetry := context.WithTimeout(context.Background(), time.Second)
+				ctx, cancelRetry := context.WithTimeout(context.Background(), mutableProgressBound)
 				defer cancelRetry()
 				if _, err := withRegistryLocks(ctx, []string{second}, tc.contender, consume); err != nil {
 					t.Fatalf("lease leaked after release/cancellation: %v", err)
@@ -203,7 +247,7 @@ func TestMutableRegistryLeaseBlocksGCAndPersists(t *testing.T) {
 					t.Fatal(err)
 				}
 				reader := staticReachability(nil)
-				ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+				ctx, cancel := context.WithTimeout(context.Background(), leaseConflictWindow)
 				defer cancel()
 				if _, err := GarbageCollect(ctx, false, reader); !errors.Is(err, context.DeadlineExceeded) {
 					t.Fatalf("GC during lease: %v", err)
@@ -232,18 +276,22 @@ func TestMutableRegistryLeaseCancellationReleasesEarlierKeys(t *testing.T) {
 		first, second = second, first
 	}
 	release := holdMutableLease(t, false, []string{second}, lockfileExclusive)
-	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	ctx, cancel := context.WithTimeout(context.Background(), leaseConflictWindow)
 	defer cancel()
 	consume := func() (struct{}, error) { return struct{}{}, nil }
 	if _, err := WithRegistryReadLockWithContext(ctx, []string{second, first, first}, consume); !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("partial acquisition: %v", err)
 	}
-	ctx, cancelRetry := context.WithTimeout(context.Background(), time.Second)
+	// A leaked lease on first is never released, so this attempt fails at the
+	// bound; a correct implementation succeeds however slowly the host runs.
+	ctx, cancelRetry := context.WithTimeout(context.Background(), mutableProgressBound)
 	defer cancelRetry()
 	if _, err := withRegistryLocks(ctx, []string{first}, lockfileExclusive, consume); err != nil {
 		t.Fatalf("earlier key leaked: %v", err)
 	}
 	release()
+	ctx, cancelReleased := context.WithTimeout(context.Background(), mutableProgressBound)
+	defer cancelReleased()
 	if _, err := withRegistryLocks(ctx, []string{second, first, first}, lockfileExclusive, consume); err != nil {
 		t.Fatalf("duplicate/unsorted key acquisition: %v", err)
 	}
@@ -256,7 +304,7 @@ func TestMutableRegistryLeaseNamespaceCancellation(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer release()
-	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	ctx, cancel := context.WithTimeout(context.Background(), leaseConflictWindow)
 	defer cancel()
 	_, err = WithRegistryReadLockWithContext(ctx, []string{"https://example.invalid/a.git"}, func() (struct{}, error) {
 		t.Fatal("namespace exclusion bypassed")
@@ -334,34 +382,22 @@ func TestMutableIndependentRegistryJobsOverlap(t *testing.T) {
 					t.Error(err)
 				}
 			}()
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			ctx, cancel := context.WithTimeout(context.Background(), mutableProgressBound)
 			defer cancel()
-			for {
-				if _, err := os.Stat(filepath.Join(barrier, "entered")); err == nil {
-					break
-				}
-				select {
-				case <-ctx.Done():
-					t.Fatal("first Git operation never reached barrier")
-				case <-time.After(10 * time.Millisecond):
-				}
+			if !awaitMutableFile(ctx, filepath.Join(barrier, "entered")) {
+				t.Fatal("first Git operation never reached barrier")
 			}
 			go func() { _, err := CloneOrPull(second, "main"); secondDone <- err }()
-			overlapCtx, overlapCancel := context.WithTimeout(context.Background(), 5*time.Second)
+			// The first operation stays parked at the barrier until release, so
+			// the second must reach Git while it is still blocked.
+			overlapCtx, overlapCancel := context.WithTimeout(context.Background(), mutableProgressBound)
 			defer overlapCancel()
-			for {
-				if _, err := os.Stat(filepath.Join(barrier, "observed")); err == nil {
-					break
+			if !awaitMutableFile(overlapCtx, filepath.Join(barrier, "observed")) {
+				writeFile(t, filepath.Join(barrier, "release"), "")
+				if err := awaitMutable(t, secondDone); err != nil {
+					t.Fatal(err)
 				}
-				select {
-				case <-overlapCtx.Done():
-					writeFile(t, filepath.Join(barrier, "release"), "")
-					if err := awaitMutable(t, secondDone); err != nil {
-						t.Fatal(err)
-					}
-					t.Fatal("independent registry blocked behind unrelated Git operation")
-				case <-time.After(10 * time.Millisecond):
-				}
+				t.Fatal("independent registry blocked behind unrelated Git operation")
 			}
 			writeFile(t, filepath.Join(barrier, "release"), "")
 			if err := awaitMutable(t, secondDone); err != nil {
