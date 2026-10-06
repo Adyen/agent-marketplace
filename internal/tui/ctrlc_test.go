@@ -4,13 +4,13 @@ import (
 	"errors"
 	"testing"
 
+	tea "charm.land/bubbletea/v2"
 	"github.com/Adyen/agent-marketplace/internal/materialize"
-	tea "github.com/charmbracelet/bubbletea"
 )
 
-// ctrlCKey returns a tea.KeyMsg representing Ctrl+C.
-func ctrlCKey() tea.KeyMsg {
-	return tea.KeyMsg{Type: tea.KeyCtrlC}
+// ctrlCKey returns a tea.KeyPressMsg representing Ctrl+C.
+func ctrlCKey() tea.KeyPressMsg {
+	return tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl}
 }
 
 func TestCtrlCQuitsFromListPane(t *testing.T) {

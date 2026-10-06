@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"charm.land/bubbletea/v2"
 	"github.com/Adyen/agent-marketplace/internal/catalog"
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/materialize"
@@ -20,7 +21,6 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/telemetry"
 	tmcfg "github.com/Adyen/agent-marketplace/internal/telemetry/config"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
-	tea "github.com/charmbracelet/bubbletea"
 )
 
 // BenchmarkBuildRows measures the hot-path cost of buildRows under two
@@ -216,29 +216,23 @@ func BenchmarkBuildRowsLargeMixed(b *testing.B) {
 	}
 }
 
-// BenchmarkRecomputeView covers scope, registry, and status tabs with empty
+// BenchmarkRecomputeView covers the single status-grouped view with empty
 // and active filters.
 func BenchmarkRecomputeView(b *testing.B) {
 	rows := buildBenchRows(500)
 
 	cases := []struct {
 		name   string
-		tab    tab
 		filter string
 	}{
-		{"scope_empty_filter", tabScope, ""},
-		{"scope_active_filter", tabScope, "security"},
-		{"registry_empty_filter", tabRegistry, ""},
-		{"registry_active_filter", tabRegistry, "helm"},
-		{"status_empty_filter", tabStatus, ""},
-		{"status_active_filter", tabStatus, "go"},
+		{"status_empty_filter", ""},
+		{"status_active_filter", "go"},
 	}
 
 	for _, c := range cases {
 		b.Run(c.name, func(b *testing.B) {
 			m := NewModel("/repo", "/home")
 			m.rows = append([]row(nil), rows...)
-			m.activeTab = c.tab
 			m.filter = c.filter
 
 			b.ReportAllocs()
@@ -344,7 +338,7 @@ func BenchmarkMoveCursorByPage(b *testing.B) {
 func BenchmarkMouseWheelListUpdate(b *testing.B) {
 	m := benchmarkClampModel()
 	m.loading = false
-	msg := tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonWheelDown}
+	msg := tea.MouseWheelMsg{Button: tea.MouseWheelDown}
 	listWidth, _ := paneWidths(m.width)
 	m.listHeightOffsets(listWidth)
 	b.ReportAllocs()

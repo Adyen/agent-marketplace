@@ -1263,13 +1263,16 @@ export interface operations {
                 code: string;
                 state: string;
             };
-            header?: never;
+            header?: {
+                /** @description When the request explicitly prefers text/html over JSON, failures respond 303 to the fixed same-origin /marketplace/auth/error page with an allowlisted code and the validated transaction destination instead of a JSON error body. */
+                Accept?: string;
+            };
             path?: never;
             cookie?: never;
         };
         requestBody?: never;
         responses: {
-            /** @description Sign-in completed; sets the signed host-only admin session cookie and redirects to the validated destination. HTTPS origins use the browser-enforced __Host-marketplace_admin_session name with Secure, Path=/, and no Domain; explicit loopback HTTP uses the unprefixed name confined to /api/v1/admin. */
+            /** @description Sign-in completed; sets the signed host-only admin session cookie and redirects to the validated destination. HTTPS origins use the browser-enforced __Host-marketplace_admin_session name with Secure, Path=/, and no Domain; explicit loopback HTTP uses the unprefixed name confined to /api/v1/admin. For HTML-preferring requests this response also carries browser failures to /marketplace/auth/error?code=...&next=...; the JSON error statuses below apply to all other clients. */
             303: {
                 headers: {
                     [name: string]: unknown;
@@ -1312,7 +1315,7 @@ export interface operations {
                     };
                 };
             };
-            /** @description Identity provider unavailable; code authentication_unavailable */
+            /** @description Identity provider unavailable or administration trust configuration unavailable; code authentication_unavailable or admin_unavailable */
             503: {
                 headers: {
                     [name: string]: unknown;
@@ -1332,13 +1335,16 @@ export interface operations {
                 /** @description Post-sign-in destination. Only /marketplace/admin and descendant paths are accepted. */
                 next?: string;
             };
-            header?: never;
+            header?: {
+                /** @description When the request explicitly prefers text/html over JSON, failures respond 303 to the fixed same-origin /marketplace/auth/error page with an allowlisted code and a validated destination instead of a JSON error body. */
+                Accept?: string;
+            };
             path?: never;
             cookie?: never;
         };
         requestBody?: never;
         responses: {
-            /** @description Redirect to the identity provider authorization endpoint; sets a signed host-only login transaction cookie. HTTPS origins use the browser-enforced __Host-marketplace_admin_login name with Secure, Path=/, and no Domain; explicit loopback HTTP uses the unprefixed name confined to /api/v1/admin/auth. */
+            /** @description Redirect to the identity provider authorization endpoint; sets a signed host-only login transaction cookie. HTTPS origins use the browser-enforced __Host-marketplace_admin_login name with Secure, Path=/, and no Domain; explicit loopback HTTP uses the unprefixed name confined to /api/v1/admin/auth. For HTML-preferring requests this response also carries browser failures to /marketplace/auth/error?code=...&next=...; the JSON error statuses below apply to all other clients. */
             303: {
                 headers: {
                     [name: string]: unknown;

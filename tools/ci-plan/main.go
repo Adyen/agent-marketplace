@@ -204,6 +204,10 @@ func classifyPath(p string) (map[string]bool, error) {
 		enableBackend(p, c)
 	}
 
+	if strings.HasPrefix(p, "tools/benchmark-report/") {
+		c["benchmark"] = true
+	}
+
 	if strings.HasPrefix(p, "tools/harness-compat/") {
 		c["harness_compatibility"] = true
 	}
