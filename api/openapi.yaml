@@ -27,11 +27,11 @@ paths:
         - name: Accept
           in: header
           required: false
-          description: When the request explicitly prefers text/html over JSON, failures respond 303 to the fixed same-origin /marketplace/auth/error page with an allowlisted code and a validated destination instead of a JSON error body.
+          description: When the request explicitly prefers text/html over JSON, failures respond 303 to the same-origin auth/error page beneath the path in instance.browser_base, with an allowlisted code and a validated destination instead of a JSON error body. A root browser base uses /auth/error; an omitted browser base retains /marketplace/auth/error.
           schema: { type: string }
       responses:
         '303':
-          description: Redirect to the identity provider authorization endpoint; sets a signed host-only login transaction cookie. HTTPS origins use the browser-enforced __Host-marketplace_admin_login name with Secure, Path=/, and no Domain; explicit loopback HTTP uses the unprefixed name confined to /api/v1/admin/auth. For HTML-preferring requests this response also carries browser failures to /marketplace/auth/error?code=...&next=...; the JSON error statuses below apply to all other clients.
+          description: Redirect to the identity provider authorization endpoint; sets a signed host-only login transaction cookie. HTTPS origins use the browser-enforced __Host-marketplace_admin_login name with Secure, Path=/, and no Domain; explicit loopback HTTP uses the unprefixed name confined to /api/v1/admin/auth. For HTML-preferring requests this response also carries browser failures to the same-origin auth/error route derived from the path in instance.browser_base; the JSON error statuses below apply to all other clients.
         '400':
           description: Invalid sign-in destination; code authentication_request_invalid
           content:
@@ -78,11 +78,11 @@ paths:
         - name: Accept
           in: header
           required: false
-          description: When the request explicitly prefers text/html over JSON, failures respond 303 to the fixed same-origin /marketplace/auth/error page with an allowlisted code and the validated transaction destination instead of a JSON error body.
+          description: When the request explicitly prefers text/html over JSON, failures respond 303 to the same-origin auth/error page beneath the path in instance.browser_base, with an allowlisted code and the validated transaction destination instead of a JSON error body. A root browser base uses /auth/error; an omitted browser base retains /marketplace/auth/error.
           schema: { type: string }
       responses:
         '303':
-          description: Sign-in completed; sets the signed host-only admin session cookie and redirects to the validated destination. HTTPS origins use the browser-enforced __Host-marketplace_admin_session name with Secure, Path=/, and no Domain; explicit loopback HTTP uses the unprefixed name confined to /api/v1/admin. For HTML-preferring requests this response also carries browser failures to /marketplace/auth/error?code=...&next=...; the JSON error statuses below apply to all other clients.
+          description: Sign-in completed; sets the signed host-only admin session cookie and redirects to the validated destination. HTTPS origins use the browser-enforced __Host-marketplace_admin_session name with Secure, Path=/, and no Domain; explicit loopback HTTP uses the unprefixed name confined to /api/v1/admin. For HTML-preferring requests this response also carries browser failures to the same-origin auth/error route derived from the path in instance.browser_base; the JSON error statuses below apply to all other clients.
         '400':
           description: Malformed provider response; code authentication_request_invalid
           content:

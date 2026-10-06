@@ -110,8 +110,8 @@ func TestOpenAPIAdminAuthDocumentsBrowserAndJSONErrors(t *testing.T) {
 		operation := paths[path].(map[string]any)["get"].(map[string]any)
 		responses := operation["responses"].(map[string]any)
 		redirect := responses["303"].(map[string]any)["description"].(string)
-		if !strings.Contains(redirect, "/marketplace/auth/error") {
-			t.Errorf("%s 303 description omits the browser error page: %q", path, redirect)
+		if !strings.Contains(redirect, "instance.browser_base") || strings.Contains(redirect, "fixed same-origin /marketplace/auth/error") {
+			t.Errorf("%s 303 description does not derive the browser error page from instance.browser_base: %q", path, redirect)
 		}
 		var acceptFound bool
 		for _, parameter := range operation["parameters"].([]any) {

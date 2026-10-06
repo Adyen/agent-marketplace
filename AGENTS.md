@@ -209,7 +209,7 @@ agent-marketplace/
 │   ├── adoption-guide.md         ← v3 onboarding guide
 │   └── plans/                    ← phased implementation plans
 ├── site/              ← VitePress landing page (/) and public docs (site/docs → /docs/)
-├── web/               ← Nuxt Marketplace UI (/marketplace/)
+├── web/               ← Nuxt Marketplace UI (self-hosted at /)
 ├── e2e/              ← declarative E2E test suite (required Ubuntu CI; Docker locally)
 ├── internal/
 │   ├── config/        ← config model, loader, merge, editor, migration

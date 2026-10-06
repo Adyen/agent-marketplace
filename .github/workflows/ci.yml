@@ -169,6 +169,7 @@ jobs:
                 id: ci-marketplace
                 name: CI Agent Marketplace
                 canonical_url: https://marketplace.example.invalid
+                browser_base: https://marketplace.example.invalid
               listen: 0.0.0.0:8080
               operations_listen: 0.0.0.0:9090
               marker: checksum-marker-one
@@ -202,7 +203,7 @@ jobs:
             podSecurityContext:
               runAsUser: 1000
               runAsGroup: 1000
-          site:
+          docs:
             enabled: true
           ingress:
             enabled: true
@@ -210,10 +211,22 @@ jobs:
             hosts:
               - host: marketplace.example.invalid
                 paths:
-                  - path: /
+                  - path: /api/
                     pathType: Prefix
                     service: api
                     port: 8080
+                  - path: /.well-known/
+                    pathType: Prefix
+                    service: api
+                    port: 8080
+                  - path: /docs/
+                    pathType: Prefix
+                    service: docs
+                    port: 8080
+                  - path: /
+                    pathType: Prefix
+                    service: web
+                    port: 3000
           networkPolicy:
             enabled: true
           serviceMonitor:
@@ -296,8 +309,10 @@ jobs:
           api_doc="$(extract_doc Deployment agent-marketplace-api "$rendered")"
           worker_doc="$(extract_doc Deployment agent-marketplace-worker "$rendered")"
           web_doc="$(extract_doc Deployment agent-marketplace-web "$rendered")"
-          site_doc="$(extract_doc Deployment agent-marketplace-site "$rendered")"
+          docs_doc="$(extract_doc Deployment agent-marketplace-docs "$rendered")"
           api_service_doc="$(extract_doc Service agent-marketplace-api "$rendered")"
+          docs_service_doc="$(extract_doc Service agent-marketplace-docs "$rendered")"
+          ingress_doc="$(extract_doc Ingress agent-marketplace "$rendered")"
           monitor_doc="$(extract_doc ServiceMonitor agent-marketplace-api "$rendered")"
 
           require "chart-managed ConfigMap carries the configured key" "$configmap_doc" "marketplace.yaml: |"
@@ -320,6 +335,13 @@ jobs:
 
           require "web pod runs as UID 1000" "$web_doc" "runAsUser: 1000"
           require "web pod runs as GID 1000" "$web_doc" "runAsGroup: 1000"
+          require "web defaults to the origin root" "$web_doc" "value: \"/\""
+          require "docs liveness probe uses its owned route" "$docs_doc" "path: /docs/"
+          require "docs Service exposes HTTP" "$docs_service_doc" "port: 8080"
+          require "ingress routes documentation" "$ingress_doc" "path: /docs/"
+          require "ingress routes documentation to docs" "$ingress_doc" "name: agent-marketplace-docs"
+          require "ingress routes the fallback to web" "$ingress_doc" "name: agent-marketplace-web"
+          require "ingress routes API paths" "$ingress_doc" "path: /api/"
           reject "web pod UID must not leak into API" "$api_doc" "runAsUser: 1000"
 
           require "API mounts the custom CA volume" "$api_doc" "mountPath: /etc/ssl/custom-ca"
@@ -327,7 +349,7 @@ jobs:
           require "worker mounts the custom CA volume" "$worker_doc" "mountPath: /etc/ssl/custom-ca"
           require "worker declares the custom CA secret volume" "$worker_doc" "secretName: custom-ca"
           reject "web must not mount the custom CA volume" "$web_doc" "custom-ca"
-          reject "site must not mount the custom CA volume" "$site_doc" "custom-ca"
+          reject "docs must not mount the custom CA volume" "$docs_doc" "custom-ca"
 
           require "API Service exposes the operations port" "$api_service_doc" "port: 9090"
           require "API Service targets the operations port" "$api_service_doc" "targetPort: operations"
@@ -417,9 +439,11 @@ jobs:
         if: needs.changes.outputs.container_web == 'true'
         run: make WEB_CONTAINER_IMAGE=agent-marketplace-web:ci container-web
 
-      - name: Build site image
+      - name: Build site images
         if: needs.changes.outputs.container_site == 'true'
-        run: make SITE_CONTAINER_IMAGE=agent-marketplace-site:ci container-site
+        run: |
+          make SITE_CONTAINER_IMAGE=agent-marketplace-site:ci container-site
+          make DOCS_CONTAINER_IMAGE=agent-marketplace-docs:ci container-docs
 
   test:
     name: Test

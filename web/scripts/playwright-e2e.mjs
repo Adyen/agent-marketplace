@@ -47,7 +47,7 @@ const siteInstall = spawnSync('pnpm', ['install', '--frozen-lockfile', '--ignore
 })
 if (siteInstall.error || siteInstall.status !== 0) process.exit(siteInstall.status || 1)
 
-const siteBuild = spawnSync('pnpm', ['run', 'build'], {
+const siteBuild = spawnSync('pnpm', ['run', 'build:docs'], {
   cwd: resolve('..', 'site'),
   stdio: 'inherit',
 })

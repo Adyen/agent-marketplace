@@ -189,7 +189,7 @@ web:
     tag: latest
     digest: ""
     pullPolicy: IfNotPresent
-  basePath: /marketplace/
+  basePath: /
   publicApiBase: /
   env: []
   envFrom: []
@@ -216,11 +216,11 @@ web:
       timeoutSeconds: 5
       failureThreshold: 3
 
-site:
+docs:
   enabled: false
   replicas: 1
   image:
-    repository: agent-marketplace-site
+    repository: agent-marketplace-docs
     tag: latest
     digest: ""
     pullPolicy: IfNotPresent
@@ -234,7 +234,7 @@ site:
   probes:
     liveness:
       enabled: true
-      path: /
+      path: /docs/
       port: http
       initialDelaySeconds: 10
       periodSeconds: 30
@@ -242,7 +242,7 @@ site:
       failureThreshold: 3
     readiness:
       enabled: true
-      path: /
+      path: /docs/
       port: http
       initialDelaySeconds: 10
       periodSeconds: 10
@@ -257,7 +257,7 @@ service:
   web:
     type: ClusterIP
     port: 3000
-  site:
+  docs:
     type: ClusterIP
     port: 8080
 

@@ -1,9 +1,9 @@
 # Website
 
-This directory contains the VitePress website for `agent-marketplace`. The
-landing page is served at `/` and the public documentation at `/docs/`. The
-separate Nuxt application in `web/` is served at `/marketplace/` by the
-combined Docker proxy.
+This directory contains the VitePress landing page and documentation for
+`agent-marketplace`. The public-site profile serves the landing page at `/` and
+documentation at `/docs/`. The documentation-only profile serves the same
+pages below `/docs/` beside a self-hosted Nuxt Marketplace at `/`.
 
 ## Prerequisites
 
@@ -46,11 +46,27 @@ To build for a project-path deployment, set `SITE_BASE`:
 SITE_BASE=/agent-marketplace/ make site-build
 ```
 
-To preview a completed build:
+Build the documentation-only profile for a self-hosted Marketplace:
+
+```bash
+make site-docs-build
+```
+
+This target writes the generated files to `site/.vitepress/dist-docs/` with
+all owned routes and assets below `/docs/`.
+
+To preview the public-site profile:
 
 ```bash
 cd site
 pnpm run preview
+```
+
+To preview the documentation-only profile:
+
+```bash
+cd site
+SITE_PROFILE=docs pnpm run preview
 ```
 
 ## Structure
@@ -119,7 +135,6 @@ When adding a page:
 - If a `pnpm-workspace.yaml` exists in a parent directory (for example your
   home directory), pass `--ignore-workspace` to `pnpm` so the site resolves its
   own lockfile.
-- Keep links to the Nuxt UI rooted at `/marketplace/`, because the shared
-  reverse proxy owns that path in local and production-like deployments. Do not
-  pass those links through VitePress `withBase`, which would nest them below
-  `SITE_BASE`.
+- The public-site profile must not link to a local Marketplace application.
+  The documentation-only profile links to the self-hosted Marketplace at `/`.
+  Keep its documentation links below `/docs/`.

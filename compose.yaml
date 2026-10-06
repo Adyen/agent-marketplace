@@ -49,7 +49,7 @@ services:
       args:
         NODE_IMAGE: ${NODE_IMAGE:-node:24-alpine}
     environment:
-      NUXT_APP_BASE_URL: /marketplace/
+      NUXT_APP_BASE_URL: /
       NUXT_PUBLIC_API_BASE: /
       NUXT_API_BASE_INTERNAL: http://app:8080
     read_only: true
@@ -66,7 +66,7 @@ services:
       app:
         condition: service_healthy
 
-  site:
+  docs:
     platform: *marketplace-platform
     build:
       context: ./site
@@ -76,6 +76,8 @@ services:
       args:
         NODE_IMAGE: ${NODE_IMAGE:-node:24-alpine}
         NGINX_IMAGE: ${SITE_NGINX_IMAGE:-${NGINX_IMAGE:-nginxinc/nginx-unprivileged:1.29-alpine}}
+        SITE_PROFILE: docs
+        SITE_BASE: /docs/
     read_only: true
     tmpfs:
       - /var/cache/nginx
@@ -122,7 +124,7 @@ services:
         condition: service_healthy
       web:
         condition: service_healthy
-      site:
+      docs:
         condition: service_healthy
 
 volumes:

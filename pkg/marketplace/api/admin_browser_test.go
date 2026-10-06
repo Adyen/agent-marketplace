@@ -393,6 +393,49 @@ func TestAdminOIDCBrowserErrorHandoff(t *testing.T) {
 }
 
 // spec: marketplace-admin-auth/browser-and-machine-clients-receive-appropriate-failure-responses
+// spec: marketplace-admin-auth/recovery-starts-a-new-login-with-a-safe-destination
+func TestAdminOIDCBrowserRoutesFollowBrowserBase(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		browserBase string
+		errorPath   string
+		adminPath   string
+	}{
+		{name: "legacy fallback", errorPath: "/marketplace/auth/error", adminPath: "/marketplace/admin"},
+		{name: "root", browserBase: "https://marketplace.test", errorPath: "/auth/error", adminPath: "/admin"},
+		{name: "trimmed root", browserBase: " https://marketplace.test ", errorPath: "/auth/error", adminPath: "/admin"},
+		{name: "subpath", browserBase: "https://marketplace.test/tools/", errorPath: "/tools/auth/error", adminPath: "/tools/admin"},
+		{name: "unsafe path falls back", browserBase: "https://marketplace.test//evil", errorPath: "/marketplace/auth/error", adminPath: "/marketplace/admin"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			issuer := newTestOIDCIssuer(t)
+			issuer.discoveryCode = http.StatusServiceUnavailable
+			_, handler := adminOIDCFixtureWithBrowserBase(t, issuer, tc.browserBase, nil)
+			next := tc.adminPath + "/registries/team"
+			target := "/api/v1/admin/auth/login?next=" + url.QueryEscape(next)
+			machine := httptest.NewRecorder()
+			handler.ServeHTTP(machine, browserAdminRequest(http.MethodGet, target, "", map[string]string{"Accept": "application/json"}))
+			assertAdminJSONError(t, machine, http.StatusServiceUnavailable, "authentication_unavailable", "The identity provider is unavailable.")
+
+			request := browserAdminRequest(http.MethodGet, target, "", map[string]string{"Accept": "text/html"})
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, request)
+
+			if response.Code != http.StatusSeeOther {
+				t.Fatalf("status = %d, want 303: %s", response.Code, response.Body.String())
+			}
+			location, err := url.Parse(response.Header().Get("Location"))
+			if err != nil || location.IsAbs() || location.Path != tc.errorPath {
+				t.Fatalf("location = %q, want same-origin %q", response.Header().Get("Location"), tc.errorPath)
+			}
+			if location.Query().Get("code") != "authentication_unavailable" || location.Query().Get("next") != next {
+				t.Fatalf("location query = %q", location.RawQuery)
+			}
+		})
+	}
+}
+
+// spec: marketplace-admin-auth/browser-and-machine-clients-receive-appropriate-failure-responses
 func TestAdminOIDCBrowserAcceptNegotiation(t *testing.T) {
 	issuer := newTestOIDCIssuer(t)
 	_, handler := adminOIDCFixture(t, issuer, nil)

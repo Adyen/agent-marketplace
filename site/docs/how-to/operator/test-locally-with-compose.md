@@ -23,7 +23,7 @@ instance:
   id: example-marketplace
   name: Local Marketplace
   canonical_url: http://localhost:8080
-  browser_base: http://localhost:8080/marketplace
+  browser_base: http://localhost:8080
 management:
   mode: database
   allowed_origins:
@@ -129,9 +129,9 @@ docker compose logs --tail=50 app proxy
 curl -fsS http://localhost:8080/api/v1/admin/session
 ```
 
-`app`, `web`, `site`, and `proxy` are running, and `app`, `web`, and `site` report healthy (the proxy has no health check). The proxy's published address is `127.0.0.1:8080`, not `0.0.0.0:8080`. The session response contains the `local-operator` actor and the administration capabilities.
+`app`, `web`, `docs`, and `proxy` are running, and `app`, `web`, and `docs` report healthy (the proxy has no health check). The proxy's published address is `127.0.0.1:8080`, not `0.0.0.0:8080`. The session response contains the `local-operator` actor and the administration capabilities.
 
-Open `http://localhost:8080/marketplace/admin`. There is no SSO sign-in and no certificate prompt. Use exactly `http://localhost:8080`: `http://127.0.0.1:8080` is a different origin, and the API rejects admin changes from it unless you also change `admin.origin`.
+Open `http://localhost:8080/admin`. There is no SSO sign-in and no certificate prompt. Use exactly `http://localhost:8080`: `http://127.0.0.1:8080` is a different origin, and the API rejects admin changes from it unless you also change `admin.origin`.
 
 ## 5. Exercise registry discovery and lifecycle
 

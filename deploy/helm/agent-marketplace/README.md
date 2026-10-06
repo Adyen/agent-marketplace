@@ -41,6 +41,7 @@ config:
       id: example-marketplace
       name: Example Agent Marketplace
       canonical_url: https://marketplace.example.invalid
+      browser_base: https://marketplace.example.invalid
     listen: 0.0.0.0:8080
     operations_listen: 0.0.0.0:9090
     storage:
@@ -71,14 +72,16 @@ image:
 
 web:
   enabled: true
+  basePath: /
+  publicApiBase: /
   image:
     repository: agent-marketplace-web
     tag: "1.0.0"
 
-site:
+docs:
   enabled: true
   image:
-    repository: agent-marketplace-site
+    repository: agent-marketplace-docs
     tag: "1.0.0"
 ```
 
@@ -111,25 +114,25 @@ ingress:
           pathType: Exact
           service: api
           port: 8080
-        - path: /marketplace/
+        - path: /docs/
+          pathType: Prefix
+          service: docs
+          port: 8080
+        - path: /
           pathType: Prefix
           service: web
           port: 3000
-        - path: /
-          pathType: Prefix
-          service: site
-          port: 8080
 ```
 
-With these paths, a request for exactly `/marketplace` (no trailing slash) falls through to the site service. The [reverse proxy contract](../../../docs/marketplace-reverse-proxy.md) requires a redirect from `/marketplace` to `/marketplace/`. An Ingress path cannot redirect by itself, so add that redirect with your ingress controller's or gateway's own mechanism.
+Add an ingress-controller or gateway redirect from the exact `/docs` path to `/docs/`. [Configure a reverse proxy](../../../site/docs/how-to/operator/configure-a-reverse-proxy.md) describes the route ownership.
 
 Do not route `/readyz` or `/metrics` through the public ingress. If a monitoring system needs `/metrics`, enable `serviceMonitor` or configure an equivalent private monitoring path. The rendered ServiceMonitor is named after the API component (for example `agent-marketplace-api` when `fullnameOverride: agent-marketplace` is set). It selects the API Service and scrapes its named `operations` port, so it covers the all-in-one pods in `mode: all` and the API pods in split mode. Worker pods have no metrics listener.
 
-To limit which pods can reach the API, all-in-one, web, and site pods, set `networkPolicy.enabled: true`. The policy allows traffic from the same namespace (`networkPolicy.allowSameNamespace`, default `true`) and from each namespace in `networkPolicy.ingressNamespaces`.
+To limit which pods can reach the API, all-in-one, web, and docs pods, set `networkPolicy.enabled: true`. The policy allows traffic from the same namespace (`networkPolicy.allowSameNamespace`, default `true`) and from each namespace in `networkPolicy.ingressNamespaces`.
 
 ## 4. Tune workload behavior per component
 
-Each workload block (`api`, `worker`, `all`, `web`, `site`) accepts the same optional keys:
+Each workload block (`api`, `worker`, `all`, `web`, `docs`) accepts the same optional keys:
 
 - `strategy`: the Deployment `spec.strategy`. For example, give the API a rolling update with zero unavailable pods while the single worker uses `Recreate`:
   ```yaml
@@ -200,7 +203,7 @@ kubectl describe deployment marketplace-agent-marketplace-api -n marketplace
 
 The Deployment name ends in the role: `-api` and `-worker` in split mode, and `-all` in the default `mode: all` (for example `marketplace-agent-marketplace-all`).
 
-The API readiness and startup probes should use `/readyz` on the operations port. The API Service should expose the application HTTP port plus the named `operations` port for private monitoring, and the Ingress should expose only the intended public routes. Worker pods have no HTTP listener, so check their process state and logs instead of adding an HTTP probe.
+The API readiness and startup probes use `/readyz` on the operations port. The docs probes use `/docs/` on their HTTP port. The API Service exposes the application HTTP port plus the named `operations` port for private monitoring, and the Ingress exposes only the intended public routes. Worker pods have no HTTP listener, so check their process state and logs instead of adding an HTTP probe.
 
 ## Troubleshooting
 

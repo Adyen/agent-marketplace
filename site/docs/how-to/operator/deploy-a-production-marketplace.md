@@ -7,7 +7,7 @@ Run the hosted Marketplace with separate API and worker processes, external stor
 - PostgreSQL and an S3-compatible bucket. SQLite and filesystem storage suit only a single all-in-one replica.
 - A TLS-terminating reverse proxy or ingress that enforces authentication. The application has none.
 - A secret store for the database DSN and any registry credentials.
-- Container images at an immutable tag or digest: the API and worker images built from `Dockerfile.marketplace`, plus the optional Nuxt UI and VitePress site. Only the worker image contains Git, which acquisition needs.
+- Container images at an immutable tag or digest: the API and worker images built from `Dockerfile.marketplace`, the Nuxt UI image, and the documentation-only VitePress image. Only the worker image contains Git, which acquisition needs.
 
 ## 1. Pick a packaging
 
@@ -26,7 +26,7 @@ instance:
   id: team-marketplace
   name: Team Agent Marketplace
   canonical_url: https://marketplace.example.com
-  browser_base: https://marketplace.example.com/marketplace
+  browser_base: https://marketplace.example.com
 listen: 0.0.0.0:8080
 operations_listen: 0.0.0.0:9090   # private network only; never routed by the proxy
 storage:
@@ -63,13 +63,13 @@ registries:
 
 - Mount the DSN file and any registry credential files read-only, readable by the container's non-root user (UID 1000). If a registry sets `ca_file`, mount it in every API and worker container, because every role validates the configuration at startup.
 - Limit worker egress to the registry origins and the object store.
-- Expose only `/.well-known/agent-marketplace.json`, `/api/`, `/healthz`, and the UI paths through the proxy. See [How to configure a reverse proxy](./configure-a-reverse-proxy.md).
+- Route `/.well-known/agent-marketplace.json`, `/api/`, and `/healthz` to the API; `/docs/` to the documentation image; and the remaining `/` traffic to the UI. See [How to configure a reverse proxy](./configure-a-reverse-proxy.md).
 
 ## 4. Roll out
 
 1. Start the API replicas. Each process applies pending database migrations when it opens the stores, so when you upgrade across versions, start one API replica first and scale up after it is ready.
 2. Start the worker. One replica is enough for most deployments. Workers lease refresh jobs through the metadata store, so extra replicas do not process the same job twice, but each one needs its own egress to the registry origins.
-3. Point the proxy at the API and UI.
+3. Point the proxy at the API, UI, and documentation services.
 
 For upgrades, use a rolling update for the API and `Recreate` for the worker. The Helm chart README shows the values.
 

@@ -1,6 +1,6 @@
 # PostgreSQL/S3 example
 
-This example runs PostgreSQL, separate API and worker containers, the static VitePress site, the Nuxt Marketplace UI, and an internal Nginx reverse proxy. Only the proxy publishes a port. It serves VitePress at `/`, Nuxt at `/marketplace/` (and `/_fonts/`), and routes `/.well-known/agent-marketplace.json`, `/api/`, and `/healthz` to the API. PostgreSQL, the API, and the worker are internal services. The operations endpoints are not routed or published, and public requests to `/readyz` and `/metrics` get an explicit 404. The API container's healthcheck runs `/app/marketplace-healthcheck`, which calls `/readyz` on `127.0.0.1:9090` inside the container.
+This example runs PostgreSQL, separate API and worker containers, the documentation-only VitePress service, the Nuxt Marketplace UI, and an internal Nginx reverse proxy. Only the proxy publishes a port. It serves Nuxt at `/`, VitePress at `/docs/`, and routes `/.well-known/agent-marketplace.json`, `/api/`, and `/healthz` to the API. PostgreSQL, the API, and the worker are internal services. The operations endpoints are not routed or published, and public requests to `/readyz` and `/metrics` get an explicit 404. The API container's healthcheck runs `/app/marketplace-healthcheck`, which calls `/readyz` on `127.0.0.1:9090` inside the container.
 
 The API and worker are built from different targets of `Dockerfile.marketplace`. Only the `worker` image contains Git, because acquisition runs there.
 
@@ -51,7 +51,7 @@ docker compose --env-file .env -f compose.yaml -f compose.development.yaml up --
 
 If your image mirror provides only `linux/amd64` images, add `MARKETPLACE_PLATFORM=linux/amd64` to `.env` or export it before starting. Apple Silicon then uses emulation. Use `MARKETPLACE_PLATFORM=linux/arm64` when ARM64 images are available.
 `NGINX_IMAGE` overrides both Nginx services for mirrors that expose one image;
-set `SITE_NGINX_IMAGE` separately to keep an unprivileged site runtime.
+set `SITE_NGINX_IMAGE` separately to keep an unprivileged documentation runtime.
 
 The development override switches both application services to `config.yaml`, which uses `storage.metadata.dsn_env`, and supplies `MARKETPLACE_POSTGRES_DSN` from `.env`. It also supplies AWS credentials from `.env` for local testing only. Never use `compose.development.yaml` or static AWS environment credentials for production.
 

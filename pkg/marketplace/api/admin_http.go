@@ -21,6 +21,7 @@ func (s *Server) registerAdmin(mux *http.ServeMux) {
 }
 
 func (s *Server) adminHandler() http.Handler {
+	browser := resolveAdminBrowserRoutes(s.cfg.Instance.BrowserBase)
 	if !s.cfg.Admin.Enabled {
 		return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			writeAdminError(w, http.StatusNotFound, "not_found", "Administration is not enabled.")
@@ -29,7 +30,7 @@ func (s *Server) adminHandler() http.Handler {
 	unavailable := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if s.cfg.Admin.AuthMode() == config.AdminAuthOIDC && r.Method == http.MethodGet &&
 			(r.URL.Path == adminAuthBase+"/login" || r.URL.Path == adminAuthBase+"/callback") {
-			writeAdminOIDCError(w, r, http.StatusServiceUnavailable, "admin_unavailable", "Administration trust configuration is unavailable.", "")
+			writeAdminOIDCError(w, r, browser, http.StatusServiceUnavailable, "admin_unavailable", "Administration trust configuration is unavailable.", "")
 			return
 		}
 		writeAdminError(w, http.StatusServiceUnavailable, "admin_unavailable", "Administration trust configuration is unavailable.")
@@ -37,7 +38,7 @@ func (s *Server) adminHandler() http.Handler {
 	var oidc *adminOIDCAuthenticator
 	if s.cfg.Admin.AuthMode() == config.AdminAuthOIDC {
 		var err error
-		if oidc, err = newAdminOIDCAuthenticator(s.cfg.Admin); err != nil {
+		if oidc, err = newAdminOIDCAuthenticatorWithBrowserBase(s.cfg.Admin, s.cfg.Instance.BrowserBase); err != nil {
 			return unavailable
 		}
 	}
