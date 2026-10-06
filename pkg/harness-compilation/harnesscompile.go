@@ -8,6 +8,7 @@ package harnesscompile
 
 import (
 	"bytes"
+	"crypto/rand"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -17,6 +18,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/Adyen/agent-marketplace/internal/fsboundary"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/compile"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
@@ -549,6 +551,11 @@ var ErrPartialResult = errors.New("result contains error diagnostics; only resou
 // asked to write a shared file whose ownership must be reconciled externally.
 var ErrExternalReconciliationRequired = errors.New("artifact requires external ownership reconciliation")
 
+// materializeRootCaptureHook runs immediately before Materialize captures the
+// output root for publication. It is nil in production and set only by serial
+// tests in this package.
+var materializeRootCaptureHook func(outDir string)
+
 // Materialize writes a Result to disk using staged-then-rename for individual
 // artifacts. It merges fragment artifacts before writing, validates paths, detects
 // identical files via sha256, and supports dry-run and prune-stale modes.
@@ -573,7 +580,7 @@ var ErrExternalReconciliationRequired = errors.New("artifact requires external o
 //     scan, so pruning a partial result would delete the still-good output of
 //     the previous clean run. internal/materialize already disables pruning for
 //     the same reason when a resource is blocked.
-func Materialize(r *Result, outDir string, opts ...WriteOption) (*WriteReport, error) {
+func Materialize(r *Result, outDir string, opts ...WriteOption) (report *WriteReport, err error) {
 	if r == nil {
 		return nil, fmt.Errorf("harnesscompile.Materialize: result must not be nil")
 	}
@@ -638,7 +645,7 @@ func Materialize(r *Result, outDir string, opts ...WriteOption) (*WriteReport, e
 		artifactPaths[a.Path] = struct{}{}
 	}
 
-	report := &WriteReport{OutDir: outDir, Partial: partial, SkippedResources: r.Skipped}
+	report = &WriteReport{OutDir: outDir, Partial: partial, SkippedResources: r.Skipped}
 	regularArtifacts, mergeArtifacts, err := prepareMergeArtifacts(artifacts, outDir, report)
 	if err != nil {
 		return nil, err
@@ -650,21 +657,20 @@ func Materialize(r *Result, outDir string, opts ...WriteOption) (*WriteReport, e
 
 	// Determine which artifacts to write vs skip.
 	existingModes := make(map[string]fs.FileMode)
+	originalFiles := make(map[string]*fsboundary.Identity, len(artifacts))
 	for _, a := range artifacts {
 		destPath := filepath.Join(outDir, filepath.FromSlash(a.Path))
 
-		matches, exists, err := fileMatchesBytes(destPath, a.Bytes)
+		var original fsboundary.Identity
+		matches, exists, err := fileMatchesBytes(destPath, a.Bytes, &original)
+		if exists {
+			originalFiles[a.Path] = &original
+		}
 		if err != nil {
 			return nil, fmt.Errorf("harnesscompile.Materialize: stat %s: %w", a.Path, err)
 		}
 		if exists && a.MergeWithExisting {
-			info, err := os.Lstat(destPath)
-			if err != nil {
-				return nil, fmt.Errorf("harnesscompile.Materialize: stat %s: %w", a.Path, err)
-			}
-			if info.Mode().IsRegular() {
-				existingModes[a.Path] = info.Mode().Perm()
-			}
+			existingModes[a.Path] = original.Mode.Perm()
 		}
 
 		if exists && matches {
@@ -717,26 +723,149 @@ func Materialize(r *Result, outDir string, opts ...WriteOption) (*WriteReport, e
 		return nil, fmt.Errorf("harnesscompile.Materialize: output root changed before publication: %w", err)
 	}
 	// Ensure outDir exists.
-	if err := os.MkdirAll(outDir, 0o755); err != nil {
+	if materializeRootCaptureHook != nil {
+		materializeRootCaptureHook(outDir)
+	}
+	// Capture and validate the output root before creating the stage, so a
+	// root setup failure never leaves an unregistered staging directory.
+	absolute, err := filepath.Abs(outDir)
+	if err != nil {
+		return nil, fmt.Errorf("harnesscompile.Materialize: resolve outDir: %w", err)
+	}
+	ancestor := absolute
+	base, err := fsboundary.OpenDir(ancestor)
+	for errors.Is(err, fs.ErrNotExist) && !errors.Is(err, fsboundary.ErrUnsafePath) && filepath.Dir(ancestor) != ancestor {
+		ancestor = filepath.Dir(ancestor)
+		base, err = fsboundary.OpenDir(ancestor)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("harnesscompile.Materialize: capture outDir: %w", err)
+	}
+	defer func() {
+		if closeErr := base.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
+	rel, err := filepath.Rel(ancestor, absolute)
+	if err != nil {
+		return nil, err
+	}
+	root, err := base.EnsurePath(rel)
+	if err != nil {
 		return nil, fmt.Errorf("harnesscompile.Materialize: create outDir: %w", err)
 	}
-
-	// Create staging directory.
-	stagingDir, err := os.MkdirTemp(outDir, ".tmp-")
+	defer func() {
+		if closeErr := root.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
+	native, err := root.NativeRoot()
 	if err != nil {
+		return nil, fmt.Errorf("harnesscompile.Materialize: capture outDir: %w", err)
+	}
+	defer func() {
+		if closeErr := native.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
+	rootInfo, err := native.Lstat(".")
+	if err != nil {
+		return nil, fmt.Errorf("harnesscompile.Materialize: inspect outDir: %w", err)
+	}
+	if rootSnapshot.exists && !os.SameFile(rootSnapshot.info, rootInfo) {
+		return nil, fmt.Errorf("%w: harnesscompile.Materialize: outDir replaced since it was checked", fsboundary.ErrGenerationConflict)
+	}
+	rootSnapshot = materializeRootSnapshot{exists: true, info: rootInfo}
+	slog.Debug("SDK root admitted", "out_dir", outDir, "phase", "sdk-root-admitted")
+	if rootErr := revalidateMaterializeRoot(outDir, rootSnapshot); rootErr != nil {
+		return nil, errors.Join(fsboundary.ErrGenerationConflict, rootErr)
+	}
+	// Create staging directory.
+	stageName := ".tmp-" + rand.Text()
+	if err := root.Mkdir(stageName, 0o700); err != nil {
 		return nil, fmt.Errorf("harnesscompile.Materialize: create staging dir: %w", err)
 	}
-	defer func() { _ = os.RemoveAll(stagingDir) }()
+	stagingDir := filepath.Join(outDir, stageName)
+	created, err := native.Lstat(stageName)
+	if err != nil {
+		return nil, err
+	}
+	if !created.IsDir() {
+		return nil, fsboundary.ErrUnsafeFile
+	}
+	stagedFiles := make(map[string]fsboundary.Identity, len(artifacts))
+	cleanupStage := func() error {
+		current, inspectErr := native.Lstat(stageName)
+		if errors.Is(inspectErr, fs.ErrNotExist) {
+			return nil
+		}
+		if inspectErr != nil {
+			return errors.Join(fsboundary.ErrGenerationConflict, inspectErr)
+		}
+		if !os.SameFile(created, current) {
+			return fsboundary.ErrGenerationConflict
+		}
+		for rel, observed := range stagedFiles {
+			info, leafErr := native.Lstat(filepath.Join(stageName, filepath.FromSlash(rel)))
+			if errors.Is(leafErr, fs.ErrNotExist) {
+				continue
+			}
+			if leafErr != nil {
+				return leafErr
+			}
+			identity, idErr := fsboundary.FileInfoIdentity(info)
+			if idErr != nil {
+				return idErr
+			}
+			if !identity.SameState(observed) {
+				return fsboundary.ErrGenerationConflict
+			}
+		}
+		return native.RemoveAll(stageName)
+	}
+	defer func() {
+		if cleanupErr := cleanupStage(); cleanupErr != nil {
+			err = errors.Join(err, cleanupErr)
+		}
+	}()
+	staged, err := root.OpenPath(stageName)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		if closeErr := staged.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
+	createdID, err := fsboundary.FileInfoIdentity(created)
+	if err != nil {
+		return nil, err
+	}
+	if !staged.Identity().SameObject(createdID) {
+		return nil, fsboundary.ErrGenerationConflict
+	}
+	stagedNative, err := staged.NativeRoot()
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		if closeErr := stagedNative.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
+	slog.Debug("SDK stage admitted", "out_dir", stagingDir, "phase", "sdk-stage-admitted")
 
 	// Write artifacts to staging directory.
 	for _, a := range artifacts {
 		if sliceContains(report.Skipped, a.Path) {
 			continue
 		}
-		destPath := filepath.Join(stagingDir, filepath.FromSlash(a.Path))
-		if err := os.MkdirAll(filepath.Dir(destPath), 0o755); err != nil {
-			_ = os.RemoveAll(stagingDir)
-			return nil, fmt.Errorf("harnesscompile.Materialize: mkdir %s: %w", filepath.Dir(a.Path), err)
+		parent, dirErr := staged.EnsurePath(filepath.Dir(filepath.FromSlash(a.Path)))
+		if dirErr != nil {
+			return nil, fmt.Errorf("harnesscompile.Materialize: mkdir %s: %w", filepath.Dir(a.Path), dirErr)
+		}
+		if closeErr := parent.Close(); closeErr != nil {
+			return nil, closeErr
 		}
 		mode, existingMode := existingModes[a.Path]
 		if !existingMode {
@@ -745,35 +874,86 @@ func Materialize(r *Result, outDir string, opts ...WriteOption) (*WriteReport, e
 				mode = 0o644
 			}
 		}
-		if err := os.WriteFile(destPath, a.Bytes, mode); err != nil {
-			_ = os.RemoveAll(stagingDir)
-			return nil, fmt.Errorf("harnesscompile.Materialize: write %s: %w", a.Path, err)
+		stagedFiles[a.Path] = fsboundary.Identity{}
+		file, writeErr := stagedNative.OpenFile(filepath.FromSlash(a.Path), os.O_WRONLY|os.O_CREATE|os.O_EXCL, mode)
+		if writeErr != nil {
+			return nil, fmt.Errorf("harnesscompile.Materialize: write %s: %w", a.Path, writeErr)
 		}
-		if existingMode {
-			if err := os.Chmod(destPath, mode); err != nil {
-				_ = os.RemoveAll(stagingDir)
-				return nil, fmt.Errorf("harnesscompile.Materialize: chmod %s: %w", a.Path, err)
-			}
+		_, writeErr = file.Write(a.Bytes)
+		if writeErr == nil && existingMode {
+			writeErr = file.Chmod(mode)
+		}
+		info, statErr := file.Stat()
+		if statErr == nil {
+			stagedFiles[a.Path], statErr = fsboundary.FileInfoIdentity(info)
+		}
+		if writeErr = errors.Join(writeErr, statErr, file.Close()); writeErr != nil {
+			return nil, fmt.Errorf("harnesscompile.Materialize: write %s: %w", a.Path, writeErr)
 		}
 	}
 
+	slog.Debug("SDK artifacts staged", "out_dir", outDir, "staged", stagingDir, "phase", "sdk-staged")
 	// Move staged files onto outDir.
 	for _, a := range artifacts {
 		if sliceContains(report.Skipped, a.Path) {
 			continue
 		}
-		src := filepath.Join(stagingDir, filepath.FromSlash(a.Path))
+		if rootErr := revalidateMaterializeRoot(outDir, rootSnapshot); rootErr != nil {
+			return nil, errors.Join(fsboundary.ErrGenerationConflict, rootErr)
+		}
+		currentStage, stageErr := native.Lstat(stageName)
+		if stageErr != nil {
+			return nil, errors.Join(fsboundary.ErrGenerationConflict, stageErr)
+		}
+		if !os.SameFile(created, currentStage) {
+			return nil, fsboundary.ErrGenerationConflict
+		}
+		src := filepath.Join(stageName, filepath.FromSlash(a.Path))
+		stagedInfo, stagedErr := native.Lstat(src)
+		if stagedErr != nil {
+			return nil, errors.Join(fsboundary.ErrGenerationConflict, stagedErr)
+		}
+		stagedID, stagedErr := fsboundary.FileInfoIdentity(stagedInfo)
+		if stagedErr != nil {
+			return nil, stagedErr
+		}
+		if !stagedID.SameState(stagedFiles[a.Path]) {
+			return nil, fsboundary.ErrGenerationConflict
+		}
 		dst := filepath.Join(outDir, filepath.FromSlash(a.Path))
 		if err := rejectSymlinkedParentComponents(outDir, dst); err != nil {
-			_ = os.RemoveAll(stagingDir)
 			return nil, fmt.Errorf("harnesscompile.Materialize: artifact %q: %w", a.Path, err)
 		}
-		if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
-			_ = os.RemoveAll(stagingDir)
-			return nil, fmt.Errorf("harnesscompile.Materialize: mkdir %s: %w", filepath.Dir(a.Path), err)
+		parent, dirErr := root.EnsurePath(filepath.Dir(filepath.FromSlash(a.Path)))
+		if dirErr != nil {
+			return nil, fmt.Errorf("harnesscompile.Materialize: mkdir %s: %w", filepath.Dir(a.Path), dirErr)
 		}
-		if err := os.Rename(src, dst); err != nil {
-			_ = os.RemoveAll(stagingDir)
+		if closeErr := parent.Close(); closeErr != nil {
+			return nil, closeErr
+		}
+		currentFile, inspectErr := native.Lstat(filepath.FromSlash(a.Path))
+		original := originalFiles[a.Path]
+		if original == nil {
+			if inspectErr == nil {
+				// A leaf appeared where the admitted generation had none.
+				return nil, fsboundary.ErrGenerationConflict
+			}
+			if !errors.Is(inspectErr, fs.ErrNotExist) {
+				return nil, errors.Join(fsboundary.ErrGenerationConflict, inspectErr)
+			}
+		} else {
+			if inspectErr != nil {
+				return nil, errors.Join(fsboundary.ErrGenerationConflict, inspectErr)
+			}
+			identity, identityErr := fsboundary.FileInfoIdentity(currentFile)
+			if identityErr != nil {
+				return nil, identityErr
+			}
+			if !identity.SameState(*original) {
+				return nil, fsboundary.ErrGenerationConflict
+			}
+		}
+		if err := native.Rename(src, filepath.FromSlash(a.Path)); err != nil {
 			return nil, fmt.Errorf("harnesscompile.Materialize: rename %s: %w", a.Path, err)
 		}
 	}
@@ -784,6 +964,9 @@ func Materialize(r *Result, outDir string, opts ...WriteOption) (*WriteReport, e
 	if prune {
 		var pruneConflicts []string
 		for _, candidate := range report.StaleCandidates {
+			if rootErr := revalidateMaterializeRoot(outDir, rootSnapshot); rootErr != nil {
+				return report, errors.Join(fsboundary.ErrGenerationConflict, rootErr)
+			}
 			stalePath := filepath.Join(outDir, filepath.FromSlash(candidate.Path))
 			if err := rejectSymlinkedParentComponents(outDir, stalePath); err != nil {
 				report.PruneConflicts = append(report.PruneConflicts, candidate.Path)
@@ -809,7 +992,9 @@ func Materialize(r *Result, outDir string, opts ...WriteOption) (*WriteReport, e
 	}
 
 	// Remove staging directory.
-	_ = os.RemoveAll(stagingDir)
+	if cleanupErr := cleanupStage(); cleanupErr != nil {
+		return report, cleanupErr
+	}
 
 	return report, partialError(report)
 }
@@ -1000,14 +1185,51 @@ func validateArtifactPath(p, outDir string) error {
 
 // fileMatchesBytes reports whether path exists and has identical contents to
 // expected.
-func fileMatchesBytes(path string, expected []byte) (bool, bool, error) {
-	data, err := os.ReadFile(path)
+func fileMatchesBytes(path string, expected []byte, observed *fsboundary.Identity) (matches, exists bool, err error) {
+	absolute, err := filepath.Abs(path)
 	if err != nil {
-		if os.IsNotExist(err) {
+		return false, false, err
+	}
+	root, err := fsboundary.OpenDir(filepath.Dir(absolute))
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) && !errors.Is(err, fsboundary.ErrUnsafePath) {
 			return false, false, nil
 		}
 		return false, false, err
 	}
+	defer func() {
+		if closeErr := root.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
+	native, err := root.NativeRoot()
+	if err != nil {
+		return false, false, err
+	}
+	defer func() {
+		if closeErr := native.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
+	info, err := native.Lstat(filepath.Base(absolute))
+	if errors.Is(err, fs.ErrNotExist) {
+		return false, false, nil
+	}
+	if err != nil {
+		return false, false, err
+	}
+	original, err := fsboundary.FileInfoIdentity(info)
+	if err != nil {
+		return false, false, err
+	}
+	data, identity, err := root.ReadFile(filepath.Base(absolute), info.Size())
+	if err != nil {
+		return false, false, err
+	}
+	if !identity.SameState(original) {
+		return false, false, fsboundary.ErrGenerationConflict
+	}
+	*observed = identity
 	return bytes.Equal(data, expected), true, nil
 }
 

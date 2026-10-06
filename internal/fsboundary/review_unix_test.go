@@ -112,7 +112,7 @@ func TestReadTargetRejectsReplacementAfterPrecheck(t *testing.T) {
 		if err := os.Rename(filepath.Join(path, "replacement"), file); err != nil {
 			t.Fatal(err)
 		}
-	})
+	}, nil)
 	if !errors.Is(err, ErrGenerationConflict) || data != nil {
 		t.Fatalf("replacement bytes escaped capture: %q %v", data, err)
 	}

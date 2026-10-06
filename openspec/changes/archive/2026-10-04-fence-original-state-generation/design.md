@@ -1,0 +1,11 @@
+## Context
+
+Load already captures opened metadata but drops private filesystem identity. CAS reload can accept a different record object with identical generation JSON; state publisher captures only the current pathname at staging, not the original admission.
+
+## Decisions
+
+Factor private observed loading returning metadataPin beside the public unchanged Record. Pin opened full file state, parent object and genuine absence; preserve original missing/corrupt diagnostics. Apply verifies that original admission after final policy check and before native rename. State commit uses existing shared captured metadata writer with validation before staging and just before publication. When initially absent parent is created by the attempt, allow that creation but require state remains absent; existing admitted parents remain object-bound. No private fields on public Record, no JSON changes. Remove now-unused no-comment reader wrapper. Late refusal leaves already-published native aggregate and recovery journal; restart admission/leases remain separate, no atomic whole mutation or uncooperative writer exclusion.
+
+## Verification
+
+Actual first Apply commits generation1; next Apply's after-staged callback replaces state with same generation1 JSON. Parent authorizes stale native/state overwrite/red; original identity refusal preserves native generation1/replacement/original bytes/green. Restoring original then real Apply generation2 changes native bytes positive. After-journal-renamed replacement refuses state commit, preserves replacement and durable journal while actual native bytes are already new. Linux/macOS full ownership/count20 original-state/CAS/crash races/validate/lint/build/strict specs pass. All ten implementation files reviewed incl test/script/spec exclusions, none skipped; original data/identity loading is one opened read, shared private publisher uses actual validation callback, public JSON/Record/absence preserved, source comments unchanged. Existing one-entry Apply disk lifecycle, payload/metadata/journal/stage/retention/cleanup sync timed, logdiscard/no network:77.365786→337.787896ms,225996→256477B,2947→3347alloc,five2s/no95%CI before test-only late control/unused-wrapper deletion. After94.5–372ms under heavy load with low loop counts; not reliable wall budget or isolated lease cost.

@@ -4,11 +4,12 @@ import (
 	"bufio"
 	"errors"
 	"fmt"
+	"go/build"
 	"io"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -857,11 +858,9 @@ func TestLockMetadataIsDiagnosticsOnly(t *testing.T) {
 // Platform
 // ---------------------------------------------------------------------------
 
-// TestNonUnixBuildCompiles pins that `GOOS=windows go build ./...` keeps working
-// for anyone whose editor runs cross-platform analysis. Windows is explicitly
-// NOT a supported platform: the stub provides no serialization and reports
-// ErrLockUnsupported, which is a documented degradation rather than an accident.
-func TestNonUnixBuildCompiles(t *testing.T) {
+// TestSupportedUnixBuildsCompile verifies ownership compilation for the
+// supported macOS and Linux platforms, including descriptor-based boundaries.
+func TestSupportedUnixBuildsCompile(t *testing.T) {
 	if testing.Short() {
 		t.Skip("cross-compilation is slower than a unit test")
 	}
@@ -870,13 +869,16 @@ func TestNonUnixBuildCompiles(t *testing.T) {
 		t.Skip("no go toolchain on PATH")
 	}
 	root := moduleRoot(t)
-	for _, goos := range []string{"windows", "linux", "darwin"} {
-		if goos == runtime.GOOS {
-			continue
-		}
+	moduleCache := os.Getenv("GOMODCACHE")
+	if moduleCache == "" {
+		moduleCache = filepath.Join(filepath.SplitList(build.Default.GOPATH)[0], "pkg", "mod")
+	}
+	proxy := url.URL{Scheme: "file", Path: filepath.ToSlash(filepath.Join(moduleCache, "cache", "download"))}
+	buildCache, isolatedModules := t.TempDir(), t.TempDir()
+	for _, goos := range []string{"linux", "darwin"} {
 		cmd := exec.Command(goBin, "build", "./internal/ownership/...")
 		cmd.Dir = root
-		cmd.Env = append(os.Environ(), "GOOS="+goos, "GOARCH=amd64", "CGO_ENABLED=0")
+		cmd.Env = append(os.Environ(), "GOOS="+goos, "GOARCH=amd64", "CGO_ENABLED=0", "GOFLAGS="+os.Getenv("GOFLAGS")+" -modcacherw", "GOCACHE="+buildCache, "GOMODCACHE="+isolatedModules, "GOPROXY="+proxy.String())
 		if out, err := cmd.CombinedOutput(); err != nil {
 			t.Fatalf("GOOS=%s build failed: %v\n%s", goos, err, out)
 		}
