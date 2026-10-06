@@ -80,6 +80,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"sort"
@@ -313,6 +314,7 @@ func Restore(target hcc.Target, dstDir string, mapped ...map[string]string) (str
 	timestamp := strings.TrimSuffix(filepath.Base(latest), ".tar.gz")
 
 	if err := extractArchive(latest, dstDir, mapped...); err != nil {
+		slog.Error("Backup restore failed", "target", string(target), "archive", latest, "error", err)
 		return "", fmt.Errorf("backup: restore %s: %w", string(target), err)
 	}
 	return timestamp, nil
