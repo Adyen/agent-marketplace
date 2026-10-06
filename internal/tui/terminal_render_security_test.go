@@ -104,25 +104,76 @@ func TestHostileControlSequencesRenderInertThroughTheView(t *testing.T) {
 		"\u009b31m\u0085\u0090dcs\u009c" +
 		"\u202e\u2066\u2069\u061c\u200e\x0b\x0c\x7f"
 	r := mkRow("audit"+hostile, withProject, withRegistry("registry.git", "registry"))
+	r.Artifact.Path = "/cache/safe/SKILL.md"
 	r.Artifact.Description = "desc" + hostile
 	m := modelWithSelectedRow(t, r)
 	m.driftAssessment = driftReady
-	m.width, m.height = 100, 24
-	m.errs = []error{errors.New("diag" + hostile)}
-	m.pane = paneErrors
-
-	output := m.View().Content
-	for _, unsafe := range []string{
-		"\x1b]8;", "\x1b]52;", "\x1b[2J", "\x90", "\x9b", "\x85", "\x9c",
-		"\a", "\x0b", "\x0c", "\x7f",
-		"\u202e", "\u2066", "\u2069", "\u061c", "\u200e",
-	} {
-		if strings.Contains(output, unsafe) {
-			t.Fatalf("hostile bytes %q reached terminal output:\n%q", unsafe, output)
-		}
+	m.width, m.height = 1000, 40
+	listWidth, detailWidth := paneWidths(m.width)
+	checks := []struct {
+		name    string
+		pane    pane
+		present []string
+		absent  []string
+	}{
+		{
+			name:    "list",
+			pane:    paneList,
+			present: []string{`auditx\x1B]8;;https://evil.example\x07`, `descx\x1B]8;;https://evil.example\x07`},
+			absent:  []string{`diagx\x1B]8;;https://evil.example\x07`},
+		},
+		{
+			name:    "errors",
+			pane:    paneErrors,
+			present: []string{`diagx\x1B]8;;https://evil.example\x07`},
+			absent:  []string{`auditx\x1B]8;;https://evil.example\x07`, `descx\x1B]8;;https://evil.example\x07`},
+		},
 	}
-	if !strings.Contains(ansi.Strip(output), `\x1B]8;;https://evil.example\x07`) {
-		t.Fatalf("OSC 8 sequence was not rendered as readable escapes:\n%s", ansi.Strip(output))
+	for _, check := range checks {
+		t.Run(check.name, func(t *testing.T) {
+			m.pane = check.pane
+			if check.pane == paneErrors {
+				m.errs = []error{errors.New("diag" + hostile)}
+			} else {
+				m.errs = nil
+			}
+			output := m.View().Content
+			for _, unsafe := range []string{
+				"\x1b]8;", "\x1b]52;", "\x1b[2J", "\x90", "\x9b", "\x85", "\x9c",
+				"\a", "\x0b", "\x0c", "\x7f",
+				"\u202e", "\u2066", "\u2069", "\u061c", "\u200e",
+			} {
+				if strings.Contains(output, unsafe) {
+					t.Fatalf("hostile bytes %q reached terminal output:\n%q", unsafe, output)
+				}
+			}
+			stripped := ansi.Strip(output)
+			for _, witness := range check.present {
+				if !strings.Contains(stripped, witness) {
+					t.Fatalf("view omitted readable witness %q:\n%s", witness, stripped)
+				}
+			}
+			for _, witness := range check.absent {
+				if strings.Contains(stripped, witness) {
+					t.Fatalf("view unexpectedly contained witness %q:\n%s", witness, stripped)
+				}
+			}
+			if check.pane == paneList {
+				var left, right strings.Builder
+				for _, line := range strings.Split(stripped, "\n") {
+					left.WriteString(ansi.Cut(line, 0, listWidth))
+					left.WriteByte('\n')
+					right.WriteString(ansi.Cut(line, listWidth, listWidth+detailWidth))
+					right.WriteByte('\n')
+				}
+				if !strings.Contains(left.String(), check.present[0]) {
+					t.Fatalf("left list pane omitted audit name:\n%s", left.String())
+				}
+				if !strings.Contains(right.String(), check.present[1]) {
+					t.Fatalf("right preview pane omitted description:\n%s", right.String())
+				}
+			}
+		})
 	}
 
 	// Errors that leave the TUI for the restored terminal are sanitized too.
