@@ -60,6 +60,8 @@ type Server struct {
 	ops           *http.Server
 
 	metrics *serverMetrics
+
+	installations *installationMetricsReader
 }
 
 // PublicHandler returns the public API handler, useful for tests.
@@ -86,6 +88,9 @@ func NewServer(cfg config.Config, meta store.MetadataStore, blobs store.BlobStor
 	}
 
 	s.metrics = newServerMetrics()
+	if strings.TrimSpace(cfg.InstallationMetrics.URL) != "" {
+		s.installations = newInstallationMetricsReader(cfg.InstallationMetrics)
+	}
 
 	publicMux := http.NewServeMux()
 	s.registerAdmin(publicMux)
@@ -663,6 +668,11 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid kind")
 		return
 	}
+	if sortParam := q.Get("sort"); sortParam != "" && sortParam != "installations" {
+		writeError(w, http.StatusBadRequest, "invalid sort")
+		return
+	}
+	sortByInstallations := q.Get("sort") == "installations"
 
 	registryFilters := q["registry"]
 	searchQ := q.Get("q")
@@ -715,11 +725,29 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 	}
 	revs = latestEffectiveRevisions(revs, s.revocations)
 	total := len(revs)
+
+	var adoption *installationCounts
+	if sortByInstallations && s.installations != nil {
+		counts, err := s.installations.counts(r.Context(), registries)
+		if err != nil {
+			slog.Warn("installation metrics refresh failed; search continues in existing order", "reason", installationCountsErrorLogValue(err))
+		} else {
+			adoption = &counts
+		}
+	}
+
 	sort.Slice(revs, func(i, j int) bool {
 		si := relevanceScore(revs[i].Coordinate.Name, searchQ)
 		sj := relevanceScore(revs[j].Coordinate.Name, searchQ)
 		if si != sj {
 			return si > sj
+		}
+		if adoption != nil {
+			ci := adoption.Counts[installationResourceKey{Registry: revs[i].Coordinate.Registry, Kind: revs[i].Coordinate.Kind, Name: revs[i].Coordinate.Name}]
+			cj := adoption.Counts[installationResourceKey{Registry: revs[j].Coordinate.Registry, Kind: revs[j].Coordinate.Kind, Name: revs[j].Coordinate.Name}]
+			if ci != cj {
+				return ci > cj
+			}
 		}
 		if revs[i].Coordinate.Registry != revs[j].Coordinate.Registry {
 			return revs[i].Coordinate.Registry < revs[j].Coordinate.Registry
@@ -734,6 +762,10 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 	items := make([]ResourceListItem, 0, len(revs))
 	for _, rev := range revs {
 		item := s.resourceToListItem(rev, registries, relevanceScore(rev.Coordinate.Name, searchQ))
+		if adoption != nil && adoption.KnownRegistries[rev.Coordinate.Registry] {
+			count := adoption.Counts[installationResourceKey{Registry: rev.Coordinate.Registry, Kind: rev.Coordinate.Kind, Name: rev.Coordinate.Name}]
+			item.InstallationCount = &count
+		}
 		if s.cfg.Management.Mode == "database" {
 			decision := s.evaluateAvailability(availabilityFromContext(r.Context()), rev)
 			if decision.Availability != AvailabilityAvailable {
