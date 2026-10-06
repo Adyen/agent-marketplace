@@ -1,6 +1,7 @@
 package api
 
 import (
+	"database/sql"
 	"net/http"
 	"strconv"
 	"time"
@@ -8,6 +9,8 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/collectors"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+
+	"github.com/Adyen/agent-marketplace/pkg/marketplace/store"
 )
 
 const (
@@ -17,23 +20,68 @@ const (
 	unknownLabel       = "unknown"
 )
 
+const (
+	phaseAuthority           = "authority"
+	phaseAvailability        = "availability"
+	phaseCatalogRead         = "catalog_read"
+	phaseCatalogAvailability = "catalog_availability"
+	phaseCatalogResponse     = "catalog_response"
+)
+
+var requestPhaseBuckets = []float64{0.001, 0.0025, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10}
+
 type serverMetrics struct {
-	requests *prometheus.CounterVec
-	duration *prometheus.HistogramVec
-	active   *prometheus.GaugeVec
-	scrape   http.Handler
+	requests       *prometheus.CounterVec
+	duration       *prometheus.HistogramVec
+	active         *prometheus.GaugeVec
+	publicDuration *prometheus.HistogramVec
+	phases         *prometheus.HistogramVec
+	scrape         http.Handler
 }
 
-func newServerMetrics() *serverMetrics {
+func newServerMetrics(meta store.MetadataStore) *serverMetrics {
 	metrics := &serverMetrics{
 		requests: prometheus.NewCounterVec(prometheus.CounterOpts{Name: "agent_marketplace_requests_total", Help: "Total HTTP requests."}, []string{"listener", "method", "route", "code"}),
 		duration: prometheus.NewHistogramVec(prometheus.HistogramOpts{Name: "agent_marketplace_request_duration_seconds", Help: "HTTP request duration in seconds.", Buckets: prometheus.DefBuckets}, []string{"listener", "method", "route"}),
 		active:   prometheus.NewGaugeVec(prometheus.GaugeOpts{Name: "agent_marketplace_active_requests", Help: "Active HTTP requests."}, []string{"listener"}),
+		publicDuration: prometheus.NewHistogramVec(prometheus.HistogramOpts{
+			Name: "agent_marketplace_public_request_duration_seconds", Help: "Full public request stack duration in seconds.", Buckets: requestPhaseBuckets,
+		}, []string{"method", "route", "code"}),
+		phases: prometheus.NewHistogramVec(prometheus.HistogramOpts{
+			Name: "agent_marketplace_request_phase_duration_seconds", Help: "Public request phase duration in seconds.", Buckets: requestPhaseBuckets,
+		}, []string{"phase"}),
 	}
 	registry := prometheus.NewRegistry()
-	registry.MustRegister(metrics.requests, metrics.duration, metrics.active, collectors.NewGoCollector(), collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}))
+	registry.MustRegister(metrics.requests, metrics.duration, metrics.active, metrics.publicDuration, metrics.phases, collectors.NewGoCollector(), collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}))
+	if pool, ok := meta.(interface{ PoolStats() sql.DBStats }); ok {
+		registry.MustRegister(
+			prometheus.NewCounterFunc(prometheus.CounterOpts{Name: "agent_marketplace_metadata_pool_waits_total", Help: "Total metadata connection pool waits."}, func() float64 {
+				return float64(pool.PoolStats().WaitCount)
+			}),
+			prometheus.NewCounterFunc(prometheus.CounterOpts{Name: "agent_marketplace_metadata_pool_wait_seconds_total", Help: "Total metadata connection pool wait seconds."}, func() float64 {
+				return pool.PoolStats().WaitDuration.Seconds()
+			}),
+		)
+	}
 	metrics.scrape = promhttp.HandlerFor(registry, promhttp.HandlerOpts{EnableOpenMetrics: true})
 	return metrics
+}
+
+func (m *serverMetrics) observePhase(phase string, start time.Time) {
+	m.phases.WithLabelValues(phase).Observe(time.Since(start).Seconds())
+}
+
+func (m *serverMetrics) publicStack(mux *http.ServeMux, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		start := time.Now()
+		_, route := mux.Handler(r)
+		if route == "" {
+			route = unmatchedRoute
+		}
+		capture := &statusCapture{ResponseWriter: w, status: http.StatusOK}
+		next.ServeHTTP(capture, r)
+		m.publicDuration.WithLabelValues(methodLabel(r.Method), route, codeLabel(capture.status)).Observe(time.Since(start).Seconds())
+	})
 }
 
 // handler wraps one listener's mux so every response the server produces is
