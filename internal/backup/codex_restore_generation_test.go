@@ -15,9 +15,11 @@ import (
 
 type codexRestoreObserver struct {
 	slog.Handler
-	onPreflight   func()
-	onPublication func(string)
-	onSymbolic    func(string)
+	onPreflight       func()
+	onPublication     func(string)
+	onSymbolic        func(string)
+	onDirectory       func(string)
+	onDirectoryOpened func(string)
 }
 
 func (h codexRestoreObserver) Handle(ctx context.Context, record slog.Record) error {
@@ -39,6 +41,12 @@ func (h codexRestoreObserver) Handle(ctx context.Context, record slog.Record) er
 	}
 	if phase == "restore-symbolic-replace" && h.onSymbolic != nil {
 		h.onSymbolic(path)
+	}
+	if phase == "backup-source-directory" && h.onDirectory != nil {
+		h.onDirectory(path)
+	}
+	if phase == "backup-source-directory-opened" && h.onDirectoryOpened != nil {
+		h.onDirectoryOpened(path)
 	}
 	return h.Handler.Handle(ctx, record)
 }

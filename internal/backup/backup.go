@@ -449,7 +449,8 @@ func writeArchivePayload(writer io.Writer, source *fsboundary.Dir, relPaths []st
 		}
 
 		if info.IsDir() {
-			if err := archiveDir(tw, source, rel); err != nil {
+			slog.Debug("Backup source directory admitted for traversal", "path", filepath.Join(source.Path(), filepath.Clean(rel)), "phase", "backup-source-directory")
+			if err := archiveDir(tw, source, rel, info); err != nil {
 				return err
 			}
 		} else {
@@ -539,8 +540,38 @@ func backupArchiveKey(path string) (string, int) {
 	return prefix, seq
 }
 
-func archiveDir(tw *tar.Writer, source *fsboundary.Dir, rel string) (err error) {
-	native, err := source.NativeRoot()
+func archiveDir(tw *tar.Writer, source *fsboundary.Dir, rel string, expected fs.FileInfo) (err error) {
+	identity, err := fsboundary.FileInfoIdentity(expected)
+	if err != nil {
+		return err
+	}
+	directory, err := source.OpenPath(filepath.Clean(rel))
+	if err != nil {
+		return errors.Join(fsboundary.ErrGenerationConflict, err)
+	}
+	defer func() {
+		if closeErr := directory.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
+	if !identity.SameObject(directory.Identity()) {
+		return fsboundary.ErrGenerationConflict
+	}
+	slog.Debug("Backup source directory opened for traversal", "path", directory.Path(), "phase", "backup-source-directory-opened")
+	defer func() {
+		fresh, captureErr := source.OpenPath(filepath.Clean(rel))
+		if captureErr != nil {
+			err = errors.Join(err, fsboundary.ErrGenerationConflict, captureErr)
+			return
+		}
+		if !fresh.Identity().SameObject(directory.Identity()) {
+			err = errors.Join(err, fsboundary.ErrGenerationConflict)
+		}
+		if closeErr := fresh.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
+	native, err := directory.NativeRoot()
 	if err != nil {
 		return err
 	}
@@ -551,22 +582,23 @@ func archiveDir(tw *tar.Writer, source *fsboundary.Dir, rel string) (err error) 
 	}()
 	// fs.FS paths must be clean and unrooted; a caller-supplied "./dir" was
 	// admitted after cleaning by the metadata read, so walk the same name.
-	return fs.WalkDir(native.FS(), filepath.ToSlash(filepath.Clean(rel)), func(name string, d fs.DirEntry, walkErr error) error {
+	return fs.WalkDir(native.FS(), ".", func(name string, d fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
 		}
 		entryRel := filepath.FromSlash(name)
-		if entryRel == "." {
+		archiveRel := filepath.Join(filepath.Clean(rel), entryRel)
+		if archiveRel == "." {
 			return nil
 		}
-		info, link, readErr := readBackupSourceMetadata(source, entryRel)
+		info, link, readErr := readBackupSourceMetadata(directory, entryRel)
 		if readErr != nil {
 			return readErr
 		}
 		if info == nil {
 			return fsboundary.ErrGenerationConflict
 		}
-		return writeTarEntry(tw, source, entryRel, entryRel, info, link)
+		return writeTarEntry(tw, directory, entryRel, archiveRel, info, link)
 	})
 }
 
