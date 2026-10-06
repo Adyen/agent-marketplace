@@ -16,15 +16,19 @@ import (
 )
 
 // spec: backup-recovery/backup-directory-generation-refuses-foreign-member-import
+// spec: backup-recovery/nested-backup-directory-generation-refuses-foreign-descent
 func TestCreateDirectoryGenerationRefusesForeignMemberImport(t *testing.T) {
 	for _, lane := range []string{"ordinary", "codex-set"} {
-		for _, boundary := range []string{"admitted", "opened"} {
+		for _, boundary := range []string{"admitted", "opened", "descend", "nested-opened"} {
 			t.Run(lane+"/"+boundary, func(t *testing.T) {
 				home, root := t.TempDir(), t.TempDir()
 				t.Setenv("HOME", home)
 				directory := filepath.Join(root, "skills")
+				if boundary == "descend" || boundary == "nested-opened" {
+					directory = filepath.Join(directory, "nested")
+				}
 				originalFile := filepath.Join(directory, "original.txt")
-				if err := os.Mkdir(directory, 0o750); err != nil {
+				if err := os.MkdirAll(directory, 0o750); err != nil {
 					t.Fatal(err)
 				}
 				if err := os.WriteFile(originalFile, []byte("inert original backup generation"), 0o640); err != nil {
@@ -85,10 +89,19 @@ func TestCreateDirectoryGenerationRefusesForeignMemberImport(t *testing.T) {
 					}
 				}
 				observer := codexRestoreObserver{Handler: slog.NewTextHandler(io.Discard, &slog.HandlerOptions{Level: slog.LevelDebug})}
-				if boundary == "admitted" {
+				switch boundary {
+				case "admitted":
 					observer.onDirectory = mutate
-				} else {
+				case "opened":
 					observer.onDirectoryOpened = mutate
+				case "descend":
+					observer.onDirectoryDescend = mutate
+				case "nested-opened":
+					observer.onDirectoryOpened = func(path string) {
+						if observed, err := os.Stat(path); err == nil && os.SameFile(original, observed) {
+							mutate(path)
+						}
+					}
 				}
 				slog.SetDefault(slog.New(observer))
 				err = create()
@@ -100,7 +113,11 @@ func TestCreateDirectoryGenerationRefusesForeignMemberImport(t *testing.T) {
 					if _, restoreErr := restore(destination); restoreErr != nil {
 						t.Fatalf("unsafe archive actual recovery failed: %v", restoreErr)
 					}
-					raw, readErr := os.ReadFile(filepath.Join(destination, "skills", "foreign.txt"))
+					member := filepath.Join(destination, "skills", "foreign.txt")
+					if boundary == "descend" || boundary == "nested-opened" {
+						member = filepath.Join(destination, "skills", "nested", "foreign.txt")
+					}
+					raw, readErr := os.ReadFile(member)
 					t.Fatalf("backup accepted replaced directory and imported foreign members: hit=%t raw=%q read=%v", changed, raw, readErr)
 				}
 				if !changed || !errors.Is(err, fsboundary.ErrGenerationConflict) {

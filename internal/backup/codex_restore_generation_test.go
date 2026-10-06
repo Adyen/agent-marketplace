@@ -15,11 +15,12 @@ import (
 
 type codexRestoreObserver struct {
 	slog.Handler
-	onPreflight       func()
-	onPublication     func(string)
-	onSymbolic        func(string)
-	onDirectory       func(string)
-	onDirectoryOpened func(string)
+	onPreflight        func()
+	onPublication      func(string)
+	onSymbolic         func(string)
+	onDirectory        func(string)
+	onDirectoryOpened  func(string)
+	onDirectoryDescend func(string)
 }
 
 func (h codexRestoreObserver) Handle(ctx context.Context, record slog.Record) error {
@@ -47,6 +48,9 @@ func (h codexRestoreObserver) Handle(ctx context.Context, record slog.Record) er
 	}
 	if phase == "backup-source-directory-opened" && h.onDirectoryOpened != nil {
 		h.onDirectoryOpened(path)
+	}
+	if phase == "backup-source-directory-descend" && h.onDirectoryDescend != nil {
+		h.onDirectoryDescend(path)
 	}
 	return h.Handler.Handle(ctx, record)
 }

@@ -450,7 +450,7 @@ func writeArchivePayload(writer io.Writer, source *fsboundary.Dir, relPaths []st
 
 		if info.IsDir() {
 			slog.Debug("Backup source directory admitted for traversal", "path", filepath.Join(source.Path(), filepath.Clean(rel)), "phase", "backup-source-directory")
-			if err := archiveDir(tw, source, rel, info); err != nil {
+			if err := archiveDir(tw, source, rel, filepath.Clean(rel), info); err != nil {
 				return err
 			}
 		} else {
@@ -540,7 +540,7 @@ func backupArchiveKey(path string) (string, int) {
 	return prefix, seq
 }
 
-func archiveDir(tw *tar.Writer, source *fsboundary.Dir, rel string, expected fs.FileInfo) (err error) {
+func archiveDir(tw *tar.Writer, source *fsboundary.Dir, rel, archiveRel string, expected fs.FileInfo) (err error) {
 	identity, err := fsboundary.FileInfoIdentity(expected)
 	if err != nil {
 		return err
@@ -582,24 +582,35 @@ func archiveDir(tw *tar.Writer, source *fsboundary.Dir, rel string, expected fs.
 	}()
 	// fs.FS paths must be clean and unrooted; a caller-supplied "./dir" was
 	// admitted after cleaning by the metadata read, so walk the same name.
-	return fs.WalkDir(native.FS(), ".", func(name string, d fs.DirEntry, walkErr error) error {
-		if walkErr != nil {
-			return walkErr
+	if archiveRel != "." {
+		if err := writeTarEntry(tw, directory, ".", archiveRel, expected, ""); err != nil {
+			return err
 		}
-		entryRel := filepath.FromSlash(name)
-		archiveRel := filepath.Join(filepath.Clean(rel), entryRel)
-		if archiveRel == "." {
-			return nil
-		}
-		info, link, readErr := readBackupSourceMetadata(directory, entryRel)
+	}
+	entries, err := fs.ReadDir(native.FS(), ".")
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		name := entry.Name()
+		info, link, readErr := readBackupSourceMetadata(directory, name)
 		if readErr != nil {
 			return readErr
 		}
 		if info == nil {
 			return fsboundary.ErrGenerationConflict
 		}
-		return writeTarEntry(tw, directory, entryRel, archiveRel, info, link)
-	})
+		childArchive := filepath.Join(archiveRel, name)
+		if info.IsDir() {
+			slog.Debug("Backup nested source directory admitted for descent", "path", filepath.Join(directory.Path(), name), "phase", "backup-source-directory-descend")
+			if err := archiveDir(tw, directory, name, childArchive, info); err != nil {
+				return err
+			}
+		} else if err := writeTarEntry(tw, directory, name, childArchive, info, link); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func writeTarEntry(tw *tar.Writer, source *fsboundary.Dir, sourceRel, rel string, info fs.FileInfo, link string) error {
