@@ -148,23 +148,85 @@ func TestResolveExactGitRefReturnsConciseSSHTransportFailure(t *testing.T) {
 	}
 }
 
+// exactGitHangBound only detects a subprocess that cancellation failed to
+// stop; it is not a speed requirement.
+const exactGitHangBound = 30 * time.Second
+
 func TestExactGitSubprocessHonorsCancellation(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	binDir := t.TempDir()
+	pids := filepath.Join(binDir, "pids")
 	gitPath := filepath.Join(binDir, "git")
-	if err := os.WriteFile(gitPath, []byte("#!/bin/sh\nexec sleep 60\n"), 0o700); err != nil {
+	// Every fake git invocation records its PID and then blocks far longer
+	// than the hang bound; exec keeps the recorded PID for the sleep.
+	script := "#!/bin/sh\necho $$ >> '" + pids + "'\nexec sleep 600\n"
+	if err := os.WriteFile(gitPath, []byte(script), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
-	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
-	defer cancel()
-	started := time.Now()
-	_, err := exactGitBytesWithContext(ctx, "", "fetch")
-	if !errors.Is(err, context.DeadlineExceeded) {
-		t.Fatalf("exact git error = %v, want context deadline", err)
+	recorded := func() []int {
+		data, err := os.ReadFile(pids)
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		var out []int
+		for _, field := range strings.Fields(string(data)) {
+			var pid int
+			if _, err := fmt.Sscan(field, &pid); err != nil {
+				t.Fatalf("fake git pid %q: %v", field, err)
+			}
+			out = append(out, pid)
+		}
+		return out
 	}
-	if elapsed := time.Since(started); elapsed > time.Second {
-		t.Fatalf("cancelled exact git took %s", elapsed)
+	t.Cleanup(func() {
+		for _, pid := range recorded() {
+			_ = unix.Kill(pid, unix.SIGKILL)
+		}
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	result := make(chan error, 1)
+	go func() {
+		_, err := exactGitBytesWithContext(ctx, "", "fetch")
+		result <- err
+	}()
+
+	// Cancel only once the subprocess is running, so the test proves that a
+	// live git process is stopped rather than racing process start.
+	bound := time.NewTimer(exactGitHangBound)
+	defer bound.Stop()
+	poll := time.NewTicker(5 * time.Millisecond)
+	defer poll.Stop()
+	for len(recorded()) == 0 {
+		select {
+		case err := <-result:
+			t.Fatalf("exact git returned before its subprocess started: %v", err)
+		case <-poll.C:
+		case <-bound.C:
+			t.Fatal("fake git subprocess never started")
+		}
+	}
+	cancel()
+	var err error
+	select {
+	case err = <-result:
+	case <-bound.C:
+		t.Fatal("cancelled exact git did not stop its subprocess")
+	}
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("exact git error = %v, want context cancellation", err)
+	}
+	// The call reaps its child before returning, so every recorded fake git
+	// process must already be gone; no elapsed-time threshold is involved.
+	for _, pid := range recorded() {
+		if killErr := unix.Kill(pid, 0); !errors.Is(killErr, unix.ESRCH) {
+			t.Fatalf("cancelled exact git left subprocess %d running: %v", pid, killErr)
+		}
 	}
 	if _, err := os.Lstat(CacheDir()); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("cancelled exact git left cache residue: %v", err)
