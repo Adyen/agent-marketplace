@@ -80,13 +80,12 @@ const (
 	terminalSingleLine   = session.TerminalSingleLine
 	terminalMarkdownBody = session.TerminalMarkdownBody
 
-	maxDetailSourceBytes = session.MaxDetailSourceBytes
+	maxDetailSourceBytes   = session.MaxDetailSourceBytes
+	detailTruncationMarker = session.DetailTruncationMarker
 
 	progressPollInterval  = session.ProgressPollInterval
 	operationPhaseConsent = session.OperationPhaseConsent
 )
-
-var detailTruncationMarker = session.DetailTruncationMarker
 
 // Pure-function aliases under the package-local names.
 var (

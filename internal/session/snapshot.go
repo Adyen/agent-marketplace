@@ -62,15 +62,14 @@ type Snapshot struct {
 // Injectable seams: tests substitute fakes for real config/catalog/pipeline
 // I/O through these variables.
 var (
-	LoadOrgConfig         = config.LoadOrganizationConfig
-	LoadGlobalConfig      = config.LoadGlobalConfig
-	LoadRepoConfig        = config.LoadRepoConfig
-	LoadLocalConfig       = LoadLocalConfigAt
-	CloneOrPull           = cache.CloneOrPull
-	DiscoverCatalog       = catalog.Discover
-	RunMaterialize        = materialize.Run
-	RunPipelineSync       = pipeline.Sync
-	ReadSnapshotForUpdate = ReadSnapshotForWorkspace
+	LoadOrgConfig    = config.LoadOrganizationConfig
+	LoadGlobalConfig = config.LoadGlobalConfig
+	LoadRepoConfig   = config.LoadRepoConfig
+	LoadLocalConfig  = LoadLocalConfigAt
+	CloneOrPull      = cache.CloneOrPull
+	DiscoverCatalog  = catalog.Discover
+	RunMaterialize   = materialize.Run
+	RunPipelineSync  = pipeline.Sync
 )
 
 func LoadLocalConfigAt(localDir string) (*config.LocalConfig, error) {
