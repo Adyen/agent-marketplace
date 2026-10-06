@@ -115,22 +115,6 @@ func publishRestoredFile(parent *fsboundary.Dir, name string, reader io.Reader, 
 	if closeErr := staged.Close(); closeErr != nil {
 		return closeErr
 	}
-	if file.Exists() {
-		if err := file.ReadTargetWith(func(io.Reader) error { return nil }); err != nil {
-			return err
-		}
-	}
-	fresh, err := file.StagingDir()
-	if err != nil {
-		return err
-	}
-	unchanged := fresh.Identity().SameObject(parent.Identity())
-	if closeErr := fresh.Close(); closeErr != nil {
-		return closeErr
-	}
-	if !unchanged {
-		return fsboundary.ErrGenerationConflict
-	}
 	native, err := parent.NativeRoot()
 	if err != nil {
 		return err
@@ -140,14 +124,6 @@ func publishRestoredFile(parent *fsboundary.Dir, name string, reader io.Reader, 
 			err = errors.Join(err, closeErr)
 		}
 	}()
-	if !file.Exists() {
-		if _, statErr := native.Lstat(name); !errors.Is(statErr, fs.ErrNotExist) {
-			if statErr != nil {
-				return statErr
-			}
-			return fsboundary.ErrGenerationConflict
-		}
-	}
 	for _, validate := range validators {
 		if err := validate(); err != nil {
 			return err
@@ -164,6 +140,41 @@ func publishRestoredFile(parent *fsboundary.Dir, name string, reader io.Reader, 
 	}
 	if !named.SameState(identity) {
 		return fsboundary.ErrGenerationConflict
+	}
+	if file.Exists() {
+		if err := file.ReadTargetWith(func(io.Reader) error { return nil }); err != nil {
+			return err
+		}
+	}
+	fresh, err := file.StagingDir()
+	if err != nil {
+		return err
+	}
+	unchanged := fresh.Identity().SameObject(parent.Identity())
+	if closeErr := fresh.Close(); closeErr != nil {
+		return closeErr
+	}
+	if !unchanged {
+		return fsboundary.ErrGenerationConflict
+	}
+	fresh, err = fsboundary.OpenDir(parent.Path())
+	if err != nil {
+		return errors.Join(fsboundary.ErrGenerationConflict, err)
+	}
+	unchanged = fresh.Identity().SameObject(parent.Identity())
+	if closeErr := fresh.Close(); closeErr != nil {
+		return closeErr
+	}
+	if !unchanged {
+		return fsboundary.ErrGenerationConflict
+	}
+	if !file.Exists() {
+		if _, statErr := native.Lstat(name); !errors.Is(statErr, fs.ErrNotExist) {
+			if statErr != nil {
+				return statErr
+			}
+			return fsboundary.ErrGenerationConflict
+		}
 	}
 	return native.Rename(stageName, name)
 }
