@@ -214,7 +214,9 @@ agent-marketplace/
 │   ├── harness/       ← install roots, per-target aggregate files and capabilities
 │   ├── devincli/      ← non-blocking Devin CLI version detection for doctor
 │   ├── collection/    ← collection discovery and expansion
-│   ├── tui/           ← Bubble Tea interactive UI
+│   ├── session/       ← surface-neutral interactive-session core (staged snapshots, gating, discovery)
+│   ├── lifecycle/     ← runtime lock/dependency reconciliation shared by CLI and TUI
+│   ├── tui/           ← Bubble Tea interactive UI (adapter over internal/session)
 │   └── cache/         ← registry clone/pull cache management
 ├── cmd/agent-marketplace/  ← Cobra CLI subcommands
 └── skills/            ← self-hosted skills for this repo

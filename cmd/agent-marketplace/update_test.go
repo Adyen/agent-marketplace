@@ -11,6 +11,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/cache"
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/dependencytxn"
+	"github.com/Adyen/agent-marketplace/internal/lifecycle"
 	"github.com/Adyen/agent-marketplace/internal/lockfile"
 	"github.com/Adyen/agent-marketplace/internal/pipeline"
 )
@@ -205,9 +206,9 @@ registries:
 	if err != nil {
 		t.Fatal(err)
 	}
-	originalCommit := commitDependencyTransaction
+	originalCommit := lifecycle.CommitDependencyTransaction
 	transactionObserved := false
-	commitDependencyTransaction = func(ctx context.Context, stateDir string, desired []dependencytxn.DesiredFile, opts ...dependencytxn.Option) (dependencytxn.Result, error) {
+	lifecycle.CommitDependencyTransaction = func(ctx context.Context, stateDir string, desired []dependencytxn.DesiredFile, opts ...dependencytxn.Option) (dependencytxn.Result, error) {
 		current, readErr := os.ReadFile(configPath)
 		if readErr != nil || !bytes.Equal(current, originalConfig) {
 			t.Fatalf("repo config changed before dependency transaction: %q, %v", current, readErr)
@@ -220,7 +221,7 @@ registries:
 		transactionObserved = foundConfig && foundLock
 		return originalCommit(ctx, stateDir, desired, opts...)
 	}
-	t.Cleanup(func() { commitDependencyTransaction = originalCommit })
+	t.Cleanup(func() { lifecycle.CommitDependencyTransaction = originalCommit })
 
 	output, err := executeCommand("update", "--bump")
 	if err != nil {
@@ -277,11 +278,11 @@ registries:
 		t.Fatalf("initial sync: %v\n%s", err, output)
 	}
 	before := readLockDocument(t, filepath.Join(repoRoot, ".agents", "lock.yaml"))
-	canonicalTarget, err := canonicalRegistryURL(targetOrigin)
+	canonicalTarget, err := lifecycle.CanonicalRegistryURL(targetOrigin)
 	if err != nil {
 		t.Fatal(err)
 	}
-	canonicalUnrelated, err := canonicalRegistryURL(unrelatedOrigin)
+	canonicalUnrelated, err := lifecycle.CanonicalRegistryURL(unrelatedOrigin)
 	if err != nil {
 		t.Fatal(err)
 	}

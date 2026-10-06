@@ -15,6 +15,7 @@ import (
 
 	"github.com/Adyen/agent-marketplace/internal/cache"
 	"github.com/Adyen/agent-marketplace/internal/config"
+	"github.com/Adyen/agent-marketplace/internal/lifecycle"
 	"github.com/Adyen/agent-marketplace/internal/lockfile"
 )
 
@@ -976,11 +977,11 @@ func TestRemoveBlockedRegistryRefusesNewAcquisition(t *testing.T) {
 		t.Fatal(err)
 	}
 	var acquisitions atomic.Int32
-	originalHook := lockSnapshotAcquiredHook
-	lockSnapshotAcquiredHook = func() { acquisitions.Add(1) }
-	t.Cleanup(func() { lockSnapshotAcquiredHook = originalHook })
+	originalHook := lifecycle.LockSnapshotAcquiredHook
+	lifecycle.LockSnapshotAcquiredHook = func() { acquisitions.Add(1) }
+	t.Cleanup(func() { lifecycle.LockSnapshotAcquiredHook = originalHook })
 	out, err := executeCommand("remove", "--from", fixture.originA)
-	var lifecycle *lockLifecycleError
+	var lifecycle *lifecycle.LockLifecycleError
 	if !errors.As(err, &lifecycle) || lifecycle.Code != "lock.offline-resolution" {
 		t.Fatalf("remove error = %v, want lock.offline-resolution\n%s", err, out)
 	}
@@ -1039,7 +1040,7 @@ func TestRemoveBlockedRegistryMissingExactSnapshot(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	canonicalB, err := canonicalRegistryURL(fixture.originB)
+	canonicalB, err := lifecycle.CanonicalRegistryURL(fixture.originB)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1065,11 +1066,11 @@ func TestRemoveBlockedRegistryMissingExactSnapshot(t *testing.T) {
 		t.Fatal(err)
 	}
 	var acquisitions atomic.Int32
-	originalHook := lockSnapshotAcquiredHook
-	lockSnapshotAcquiredHook = func() { acquisitions.Add(1) }
-	t.Cleanup(func() { lockSnapshotAcquiredHook = originalHook })
+	originalHook := lifecycle.LockSnapshotAcquiredHook
+	lifecycle.LockSnapshotAcquiredHook = func() { acquisitions.Add(1) }
+	t.Cleanup(func() { lifecycle.LockSnapshotAcquiredHook = originalHook })
 	out, err := executeCommand("remove", "--from", fixture.originA)
-	var lifecycle *lockLifecycleError
+	var lifecycle *lifecycle.LockLifecycleError
 	if !errors.As(err, &lifecycle) || lifecycle.Code != "lock.offline-snapshot-missing" {
 		t.Fatalf("remove error = %v, want lock.offline-snapshot-missing\n%s", err, out)
 	}
@@ -1116,9 +1117,9 @@ func TestRemoveFromBlockedWarmLockedRegistry(t *testing.T) {
 		t.Fatal(err)
 	}
 	var acquisitions atomic.Int32
-	originalHook := lockSnapshotAcquiredHook
-	lockSnapshotAcquiredHook = func() { acquisitions.Add(1) }
-	t.Cleanup(func() { lockSnapshotAcquiredHook = originalHook })
+	originalHook := lifecycle.LockSnapshotAcquiredHook
+	lifecycle.LockSnapshotAcquiredHook = func() { acquisitions.Add(1) }
+	t.Cleanup(func() { lifecycle.LockSnapshotAcquiredHook = originalHook })
 	if out, err := executeCommand("remove", "--from", fixture.originA); err != nil {
 		t.Fatalf("remove blocked warm registry: %v\n%s", err, out)
 	}
@@ -1141,9 +1142,9 @@ func TestRemoveFromAllowedRegistryMayAcquireNewDependency(t *testing.T) {
 	fixture := setupBlockedRemovalAcquisitionFixture(t)
 	addBlockedRemovalThirdRegistry(t, fixture)
 	var acquisitions atomic.Int32
-	originalHook := lockSnapshotAcquiredHook
-	lockSnapshotAcquiredHook = func() { acquisitions.Add(1) }
-	t.Cleanup(func() { lockSnapshotAcquiredHook = originalHook })
+	originalHook := lifecycle.LockSnapshotAcquiredHook
+	lifecycle.LockSnapshotAcquiredHook = func() { acquisitions.Add(1) }
+	t.Cleanup(func() { lifecycle.LockSnapshotAcquiredHook = originalHook })
 	if out, err := executeCommand("remove", "--from", fixture.originA); err != nil {
 		t.Fatalf("remove allowed registry: %v\n%s", err, out)
 	}

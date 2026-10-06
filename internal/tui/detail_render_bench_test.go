@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"github.com/Adyen/agent-marketplace/internal/session"
 	"os"
 	"path/filepath"
 	"strings"
@@ -15,14 +16,14 @@ func BenchmarkCaptureAggregateDetailDiskIO(b *testing.B) {
 		b.Fatal(err)
 	}
 	b.ReportAllocs()
-	b.SetBytes(maxDetailCaptureBytes)
+	b.SetBytes(session.MaxDetailCaptureBytes)
 	b.ResetTimer()
 	for b.Loop() {
-		var budget detailCaptureBudget
-		for i := 0; i < maxDetailCaptureEntries+16; i++ {
-			_ = budget.capture(path)
+		var budget session.DetailCaptureBudget
+		for i := 0; i < session.MaxDetailCaptureEntries+16; i++ {
+			_ = budget.Capture(path)
 		}
-		if budget.bytes > maxDetailCaptureBytes || budget.entries > maxDetailCaptureEntries {
+		if budget.Bytes > session.MaxDetailCaptureBytes || budget.Entries > session.MaxDetailCaptureEntries {
 			b.Fatal("capture exceeded aggregate budget")
 		}
 	}
@@ -42,7 +43,7 @@ func BenchmarkCaptureSnapshotTraversalDiskIO(b *testing.B) {
 			b.ReportAllocs()
 			b.ResetTimer()
 			for b.Loop() {
-				if sources := captureSnapshotDetailSources(resolved, catalogs); len(sources) != 2*tc.count+5 {
+				if sources := session.CaptureSnapshotDetailSources(resolved, catalogs); len(sources) != 2*tc.count+5 {
 					b.Fatalf("captured %d source identities", len(sources))
 				}
 			}
@@ -58,7 +59,7 @@ func BenchmarkRenderBoundedDetail(b *testing.B) {
 	}
 	r := mkRow("detail", withProject)
 	r.Artifact.Path = path
-	r.DetailSource = captureDetailSource(path)
+	r.DetailSource = session.CaptureDetailSource(path)
 	b.ReportAllocs()
 	b.ResetTimer()
 	for b.Loop() {

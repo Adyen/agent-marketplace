@@ -3,98 +3,25 @@ package tui
 import (
 	"context"
 	"fmt"
-	"path/filepath"
 	"time"
 
 	"charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/huh/v2"
 
-	"github.com/Adyen/agent-marketplace/internal/config"
-	"github.com/Adyen/agent-marketplace/internal/marketplace"
+	"github.com/Adyen/agent-marketplace/internal/session"
 )
-
-type migrationConfig struct {
-	label string
-	path  string
-	scope config.V4MigrationScope
-}
-
-type migrationPrompt struct {
-	configs []migrationConfig
-}
 
 type migrationDoneMsg struct {
 	count int
 	err   error
 }
 
-func (p migrationPrompt) hasConfigs() bool {
-	return len(p.configs) > 0
-}
-
-// pendingMigrationFor reports legacy configs the startup migration modal may
-// offer. Startup migration only migrates the user config; repository and local
-// configs are left unchanged until migrated deliberately. The repoRoot and
-// localDir parameters keep the validated Workspace roots available at this seam.
-func pendingMigrationFor(repoRoot, localDir, homeDir string) migrationPrompt {
-	paths := config.MigratePaths{}
-	if homeDir != "" {
-		paths.User = filepath.Join(homeDir, ".agents", "config.yaml")
-	}
-	candidates, err := config.FindV4MigrationCandidates(paths)
-	if err != nil {
-		return migrationPrompt{}
-	}
-	labels := map[config.V4MigrationScope]string{
-		config.V4MigrationUser:  "Global",
-		config.V4MigrationRepo:  "Project",
-		config.V4MigrationLocal: "Local",
-	}
-	configs := make([]migrationConfig, 0, len(candidates))
-	for _, candidate := range candidates {
-		configs = append(configs, migrationConfig{
-			label: labels[candidate.Scope],
-			path:  candidate.Path,
-			scope: candidate.Scope,
-		})
-	}
-	return migrationPrompt{configs: configs}
-}
-
 func (m Model) runMigrationCmd() tea.Cmd {
 	return func() tea.Msg {
-		paths := migrationPathsForPrompt(m.migrationPrompt)
-		result, err := config.MigrateConfigFilesToV4WithEvidence(context.Background(), paths, config.V4MigrationAll, false, marketplace.DefaultCache())
-		count := 0
-		if result != nil {
-			if result.UserMigrated {
-				count++
-			}
-			if result.RepoMigrated {
-				count++
-			}
-			if result.LocalMigrated {
-				count++
-			}
-		}
+		count, err := session.RunMigration(context.Background(), m.migrationPrompt)
 		return migrationDoneMsg{count: count, err: err}
 	}
-}
-
-func migrationPathsForPrompt(prompt migrationPrompt) config.MigratePaths {
-	paths := config.MigratePaths{}
-	for _, cfg := range prompt.configs {
-		switch cfg.scope {
-		case config.V4MigrationUser:
-			paths.User = cfg.path
-		case config.V4MigrationRepo:
-			paths.Repo = cfg.path
-		case config.V4MigrationLocal:
-			paths.Local = cfg.path
-		}
-	}
-	return paths
 }
 
 // renderMigrationModal leads with what was found and the decision, so the
@@ -103,8 +30,8 @@ func renderMigrationModal(m Model) string {
 	t := m.currentTheme()
 	title := warnTitleStyle(t).Render("Configuration migration required")
 	body := []string{"Legacy configuration found:"}
-	for _, cfg := range m.migrationPrompt.configs {
-		body = append(body, fmt.Sprintf("  • %s: %s", cfg.label, shortenPath(cfg.path, m.homeDir, modalInnerWidth(m)-6-len(cfg.label))))
+	for _, cfg := range m.migrationPrompt.Configs {
+		body = append(body, fmt.Sprintf("  • %s: %s", cfg.Label, shortenPath(cfg.Path, m.homeDir, modalInnerWidth(m)-6-len(cfg.Label))))
 	}
 	body = append(body, "", "Migrate it to agent-marketplace/v4? Existing v2 and v3 configurations remain readable if you leave them unchanged.")
 	m.ensureMigrationForm()

@@ -17,6 +17,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/cache"
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/dependencytxn"
+	"github.com/Adyen/agent-marketplace/internal/lifecycle"
 	"github.com/Adyen/agent-marketplace/internal/lockfile"
 	"github.com/Adyen/agent-marketplace/internal/pipeline"
 )
@@ -54,7 +55,7 @@ func newInstallBindingFixture(t *testing.T) installBindingFixture {
 }
 
 func (f installBindingFixture) options() pipeline.InstallOptions {
-	return pipeline.InstallOptions{RepoRoot: f.repo, Args: []string{"review"}, FromURL: f.origin, FromRef: "main", Scope: pipeline.ScopeRepo, DependencyReconcile: reconcileCommandDependencies, PrepareDependencies: prepareInstallDependencies}
+	return pipeline.InstallOptions{RepoRoot: f.repo, Args: []string{"review"}, FromURL: f.origin, FromRef: "main", Scope: pipeline.ScopeRepo, DependencyReconcile: lifecycle.ReconcileCommandDependencies, PrepareDependencies: lifecycle.PrepareInstallDependencies}
 }
 
 func (f installBindingFixture) advance(t *testing.T) {
@@ -102,9 +103,9 @@ func TestConfiguredInstallFreezesDiscoveryBeforePublication(t *testing.T) {
 					return original(ctx, root, local, blocked, edits)
 				}
 			}
-			opts.DependencyReconcile = wrap(reconcileCommandDependencies)
+			opts.DependencyReconcile = wrap(lifecycle.ReconcileCommandDependencies)
 			opts.PrepareDependencies = func(ctx context.Context, root, local string, edits []pipeline.StagedConfigEdit) (pipeline.PreparedInstallDependencies, error) {
-				p, err := prepareInstallDependencies(ctx, root, local, edits)
+				p, err := lifecycle.PrepareInstallDependencies(ctx, root, local, edits)
 				if err == nil {
 					p.Reconcile = wrap(p.Reconcile)
 				}
@@ -167,7 +168,7 @@ func TestConfiguredInstallSelectorsAndScopesKeepPreparedPins(t *testing.T) {
 			beforeSource := ownedCommandRead(t, sourcePath)
 			calls := 0
 			opts.PrepareDependencies = func(ctx context.Context, root, local string, edits []pipeline.StagedConfigEdit) (pipeline.PreparedInstallDependencies, error) {
-				p, err := prepareInstallDependencies(ctx, root, local, edits)
+				p, err := lifecycle.PrepareInstallDependencies(ctx, root, local, edits)
 				if err != nil {
 					return p, err
 				}
@@ -281,7 +282,7 @@ func TestConfiguredInstallPinsDiscoveredSubBundle(t *testing.T) {
 	opts.FromURL, opts.FromRef, opts.Args = "", "", []string{"nested"}
 	calls := 0
 	opts.PrepareDependencies = func(ctx context.Context, root, local string, edits []pipeline.StagedConfigEdit) (pipeline.PreparedInstallDependencies, error) {
-		p, err := prepareInstallDependencies(ctx, root, local, edits)
+		p, err := lifecycle.PrepareInstallDependencies(ctx, root, local, edits)
 		if err != nil {
 			return p, err
 		}
@@ -355,7 +356,7 @@ func TestAdHocInstallPreparationPinsOriginalMutableRef(t *testing.T) {
 			}
 			calls := 0
 			opts.PrepareDependencies = func(ctx context.Context, root, local string, edits []pipeline.StagedConfigEdit) (pipeline.PreparedInstallDependencies, error) {
-				p, err := prepareInstallDependencies(ctx, root, local, edits)
+				p, err := lifecycle.PrepareInstallDependencies(ctx, root, local, edits)
 				if err != nil {
 					return p, err
 				}
@@ -474,11 +475,11 @@ func testInstallPreparedReadsRejectConcurrentChanges(t *testing.T, configured bo
 					}
 				}
 			}
-			originalCommit := commitDependencyTransaction
-			t.Cleanup(func() { commitDependencyTransaction = originalCommit })
+			originalCommit := lifecycle.CommitDependencyTransaction
+			t.Cleanup(func() { lifecycle.CommitDependencyTransaction = originalCommit })
 			calls := 0
 			opts.PrepareDependencies = func(ctx context.Context, root, local string, edits []pipeline.StagedConfigEdit) (pipeline.PreparedInstallDependencies, error) {
-				p, err := prepareInstallDependencies(ctx, root, local, edits)
+				p, err := lifecycle.PrepareInstallDependencies(ctx, root, local, edits)
 				if err != nil {
 					return p, err
 				}
@@ -489,7 +490,7 @@ func testInstallPreparedReadsRejectConcurrentChanges(t *testing.T, configured bo
 					case "include":
 						writeFile(t, fragment, "tags: [after]\n")
 					case "late include":
-						commitDependencyTransaction = func(ctx context.Context, state string, desired []dependencytxn.DesiredFile, options ...dependencytxn.Option) (dependencytxn.Result, error) {
+						lifecycle.CommitDependencyTransaction = func(ctx context.Context, state string, desired []dependencytxn.DesiredFile, options ...dependencytxn.Option) (dependencytxn.Result, error) {
 							writeFile(t, fragment, "tags: [after]\n")
 							capture()
 							return originalCommit(ctx, state, desired, options...)
@@ -560,7 +561,7 @@ func testInstallMissingSelectionDoesNotPublishOrLeakLease(t *testing.T, configur
 	var retained pipeline.PreparedInstallDependencies
 	prepares := 0
 	opts.PrepareDependencies = func(ctx context.Context, root, local string, edits []pipeline.StagedConfigEdit) (pipeline.PreparedInstallDependencies, error) {
-		p, err := prepareInstallDependencies(ctx, root, local, edits)
+		p, err := lifecycle.PrepareInstallDependencies(ctx, root, local, edits)
 		if err == nil {
 			prepares++
 			retained = p
@@ -610,21 +611,21 @@ func TestInstallBindingSourceLookup(t *testing.T) {
 	userPath := filepath.Join(t.TempDir(), "user-lock.yaml")
 	repoPath := filepath.Join(t.TempDir(), "repo-lock.yaml")
 	registry := reviewBindingRegistry(t)
-	plan := &preparedInstallLocks{documents: map[string]lockfile.Document{userPath: {APIVersion: lockfile.APIVersionV1, Scope: lockfile.ScopeUser, Registries: []lockfile.GitRegistry{registry}}}, lockPaths: map[config.Source]string{config.UserPersonal: userPath, config.RepoCommitted: repoPath}, bindings: map[string][]lockfile.GitRegistry{}}
+	plan := &lifecycle.PreparedInstallLocks{Documents: map[string]lockfile.Document{userPath: {APIVersion: lockfile.APIVersionV1, Scope: lockfile.ScopeUser, Registries: []lockfile.GitRegistry{registry}}}, LockPaths: map[config.Source]string{config.UserPersonal: userPath, config.RepoCommitted: repoPath}, Bindings: map[string][]lockfile.GitRegistry{}}
 	entry := config.RegistryEntry{URL: registry.URL, Ref: registry.Ref, Source: config.Organization}
-	if err := plan.bindRegistry(config.RepoCommitted, entry); !errors.Is(err, dependencytxn.ErrGenerationConflict) {
+	if err := plan.BindRegistry(config.RepoCommitted, entry); !errors.Is(err, dependencytxn.ErrGenerationConflict) {
 		t.Fatalf("source mismatch error = %v", err)
 	}
-	if len(plan.bindings) != 0 {
-		t.Fatalf("bindings after mismatch = %#v", plan.bindings)
+	if len(plan.Bindings) != 0 {
+		t.Fatalf("bindings after mismatch = %#v", plan.Bindings)
 	}
 	entry.Source = config.UserPersonal
-	if err := plan.bindRegistry(config.RepoCommitted, entry); err != nil {
+	if err := plan.BindRegistry(config.RepoCommitted, entry); err != nil {
 		t.Fatal(err)
 	}
 	want := []lockfile.GitRegistry{registry}
-	if !reflect.DeepEqual(plan.bindings[repoPath], want) {
-		t.Fatalf("bindings = %#v, want %#v", plan.bindings[repoPath], want)
+	if !reflect.DeepEqual(plan.Bindings[repoPath], want) {
+		t.Fatalf("bindings = %#v, want %#v", plan.Bindings[repoPath], want)
 	}
 }
 
@@ -641,7 +642,7 @@ func TestMergeInstallBindingsPreservesInputs(t *testing.T) {
 	bindingRoot := root
 	bindingRoot.Path = "extra"
 	binding := []lockfile.GitRegistry{{URL: base.Registries[0].URL, Ref: base.Registries[0].Ref, Commit: base.Registries[0].Commit, Roots: []lockfile.GitRoot{bindingRoot}}}
-	merged, err := mergeInstallBindings(base, lockfile.ScopeRepo, binding)
+	merged, err := lifecycle.MergeInstallBindings(base, lockfile.ScopeRepo, binding)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -656,7 +657,7 @@ func TestMergeInstallBindingsPreservesInputs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := mergeInstallBindings(base, lockfile.ScopeRepo, []lockfile.GitRegistry{conflicting}); !errors.Is(err, dependencytxn.ErrGenerationConflict) {
+	if _, err := lifecycle.MergeInstallBindings(base, lockfile.ScopeRepo, []lockfile.GitRegistry{conflicting}); !errors.Is(err, dependencytxn.ErrGenerationConflict) {
 		t.Fatalf("commit conflict error = %v", err)
 	}
 	if !reflect.DeepEqual(backing, []lockfile.GitRoot{root, lockfile.GitRoot{}}) || !reflect.DeepEqual(base.Registries[0].Roots, inputRoots) || !reflect.DeepEqual(binding[0].Roots, []lockfile.GitRoot{bindingRoot}) {
@@ -664,7 +665,7 @@ func TestMergeInstallBindingsPreservesInputs(t *testing.T) {
 	}
 	digestConflict := binding[0]
 	digestConflict.Roots = []lockfile.GitRoot{{Path: ".", SourceHarness: "claude", RevisionSchema: "v3", RevisionDigest: lockfile.Digest("sha256:" + strings.Repeat("c", 64)), Resources: root.Resources}}
-	if _, err := mergeInstallBindings(base, lockfile.ScopeRepo, []lockfile.GitRegistry{digestConflict}); !errors.Is(err, dependencytxn.ErrGenerationConflict) {
+	if _, err := lifecycle.MergeInstallBindings(base, lockfile.ScopeRepo, []lockfile.GitRegistry{digestConflict}); !errors.Is(err, dependencytxn.ErrGenerationConflict) {
 		t.Fatalf("digest conflict error = %v", err)
 	}
 	if !reflect.DeepEqual(backing, []lockfile.GitRoot{root, lockfile.GitRoot{}}) || !reflect.DeepEqual(base.Registries[0].Roots, inputRoots) || !reflect.DeepEqual(binding[0].Roots, []lockfile.GitRoot{bindingRoot}) {

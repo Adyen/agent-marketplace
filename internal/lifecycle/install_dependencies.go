@@ -1,4 +1,4 @@
-package main
+package lifecycle
 
 import (
 	"bytes"
@@ -13,20 +13,20 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/pipeline"
 )
 
-type preparedInstallLocks struct {
-	documents       map[string]lockfile.Document
-	lockPaths       map[config.Source]string
-	bindings        map[string][]lockfile.GitRegistry
+type PreparedInstallLocks struct {
+	Documents       map[string]lockfile.Document
+	LockPaths       map[config.Source]string
+	Bindings        map[string][]lockfile.GitRegistry
 	discoveryConfig *config.Config
 	reads           []dependencytxn.ReadAssertion
 	ctx             context.Context
 	release         func()
 }
 
-func prepareInstallDependencies(ctx context.Context, root, local string, edits []pipeline.StagedConfigEdit) (pipeline.PreparedInstallDependencies, error) {
-	state := &preparedInstallLocks{documents: make(map[string]lockfile.Document), lockPaths: make(map[config.Source]string), bindings: make(map[string][]lockfile.GitRegistry)}
+func PrepareInstallDependencies(ctx context.Context, root, local string, edits []pipeline.StagedConfigEdit) (pipeline.PreparedInstallDependencies, error) {
+	state := &PreparedInstallLocks{Documents: make(map[string]lockfile.Document), LockPaths: make(map[config.Source]string), Bindings: make(map[string][]lockfile.GitRegistry)}
 	var warnings []error
-	option, _, lease, err := prepareRuntimeLocks(ctx, root, local, lockMode{stagedConfigEdits: edits, prepareInstall: state, warningSink: &warnings})
+	option, _, lease, err := PrepareRuntimeLocks(ctx, root, local, LockMode{StagedConfigEdits: edits, PrepareInstall: state, WarningSink: &warnings})
 	if err != nil {
 		return pipeline.PreparedInstallDependencies{}, err
 	}
@@ -50,7 +50,7 @@ func prepareInstallDependencies(ctx context.Context, root, local string, edits [
 		}
 		used = true
 		var warnings []error
-		option, _, lease, err := prepareRuntimeLocks(ctx, root, local, lockMode{offline: true, stagedConfigEdits: finalEdits, commitReads: state.reads, reuseInstall: state, warningSink: &warnings})
+		option, _, lease, err := PrepareRuntimeLocks(ctx, root, local, LockMode{Offline: true, StagedConfigEdits: finalEdits, CommitReads: state.reads, ReuseInstall: state, WarningSink: &warnings})
 		if err != nil {
 			return pipeline.DependencyLockView{}, err
 		}
@@ -62,12 +62,12 @@ func prepareInstallDependencies(ctx context.Context, root, local string, edits [
 		if !active || used {
 			return fmt.Errorf("%w: prepared install scope ended", dependencytxn.ErrGenerationConflict)
 		}
-		return state.bindRegistry(target, entry)
+		return state.BindRegistry(target, entry)
 	}
 	return pipeline.PreparedInstallDependencies{Context: state.ctx, DiscoveryConfig: state.discoveryConfig, View: pipeline.DependencyLockView{CatalogOption: option, ExactLockLease: lease, Warnings: warnings}, Reconcile: reconcile, BindRegistry: bind, Release: release}, nil
 }
 
-func installPreparationReads(ec config.EffectiveConfig, staged map[string]pipeline.StagedConfigEdit, plan *preparedInstallLocks) ([]dependencytxn.ReadAssertion, error) {
+func installPreparationReads(ec config.EffectiveConfig, staged map[string]pipeline.StagedConfigEdit, plan *PreparedInstallLocks) ([]dependencytxn.ReadAssertion, error) {
 	reads, err := effectiveReadAssertions(ec, staged, nil)
 	if err != nil {
 		return nil, err
@@ -101,7 +101,7 @@ func installPreparationReads(ec config.EffectiveConfig, staged map[string]pipeli
 		if err != nil {
 			return nil, err
 		}
-		plan.lockPaths[scoped.source] = lockPath
+		plan.LockPaths[scoped.source] = lockPath
 		reads = append(reads, dependencytxn.ReadAssertion{Path: lockPath, RequestedPath: lockPath, Expected: generation})
 		if len(layer.Reads) == 0 && !represented[path] {
 			reads = append(reads, dependencytxn.ReadAssertion{Path: path, RequestedPath: layer.Path})
@@ -111,24 +111,24 @@ func installPreparationReads(ec config.EffectiveConfig, staged map[string]pipeli
 	return reads, dependencytxn.ValidateReadAssertions(reads)
 }
 
-func (p *preparedInstallLocks) bindRegistry(target config.Source, entry config.RegistryEntry) error {
-	destination, ok := p.lockPaths[target]
+func (p *PreparedInstallLocks) BindRegistry(target config.Source, entry config.RegistryEntry) error {
+	destination, ok := p.LockPaths[target]
 	if !ok || !target.IsWritable() {
 		return fmt.Errorf("%w: unprepared install destination", dependencytxn.ErrGenerationConflict)
 	}
-	canonical, err := canonicalRegistryURL(entry.URL)
+	canonical, err := CanonicalRegistryURL(entry.URL)
 	if err != nil {
 		return err
 	}
-	sourcePath, ok := p.lockPaths[entry.Source]
+	sourcePath, ok := p.LockPaths[entry.Source]
 	if !ok {
 		return fmt.Errorf("%w: selected registry source has no prepared lock path", dependencytxn.ErrGenerationConflict)
 	}
-	for _, registry := range p.documents[sourcePath].Registries {
+	for _, registry := range p.Documents[sourcePath].Registries {
 		if registry.URL != canonical || registry.Ref != entry.Ref {
 			continue
 		}
-		roots, matches := projectLockedRoots(registry.Roots, []config.RegistryEntry{entry})
+		roots, matches := ProjectLockedRoots(registry.Roots, []config.RegistryEntry{entry})
 		if !matches {
 			return fmt.Errorf("%w: registry root was not discovered from a prepared source", dependencytxn.ErrGenerationConflict)
 		}
@@ -136,17 +136,17 @@ func (p *preparedInstallLocks) bindRegistry(target config.Source, entry config.R
 			return nil
 		}
 		registry.Roots = roots
-		p.bindings[destination] = append(p.bindings[destination], registry)
+		p.Bindings[destination] = append(p.Bindings[destination], registry)
 		return nil
 	}
 	return fmt.Errorf("%w: selected registry has no prepared pin", dependencytxn.ErrGenerationConflict)
 }
 
-func reuseInstallDocument(plan *preparedInstallLocks, path string, scope lockfile.Scope, entries []config.RegistryEntry, current *lockfile.Document) (reconciledDocument, bool) {
-	doc, ok := plan.documents[path]
-	if bindings := plan.bindings[path]; len(bindings) > 0 {
+func reuseInstallDocument(plan *PreparedInstallLocks, path string, scope lockfile.Scope, entries []config.RegistryEntry, current *lockfile.Document) (reconciledDocument, bool) {
+	doc, ok := plan.Documents[path]
+	if bindings := plan.Bindings[path]; len(bindings) > 0 {
 		var err error
-		doc, err = mergeInstallBindings(doc, scope, bindings)
+		doc, err = MergeInstallBindings(doc, scope, bindings)
 		if err != nil {
 			return reconciledDocument{err: err}, false
 		}
@@ -166,7 +166,7 @@ func reuseInstallDocument(plan *preparedInstallLocks, path string, scope lockfil
 	return reconciledDocument{doc: doc, err: err}, err == nil && bytes.Equal(before, after)
 }
 
-func mergeInstallBindings(base lockfile.Document, scope lockfile.Scope, bindings []lockfile.GitRegistry) (lockfile.Document, error) {
+func MergeInstallBindings(base lockfile.Document, scope lockfile.Scope, bindings []lockfile.GitRegistry) (lockfile.Document, error) {
 	byIdentity := make(map[string]lockfile.GitRegistry)
 	for _, registries := range [][]lockfile.GitRegistry{base.Registries, bindings} {
 		for _, registry := range registries {

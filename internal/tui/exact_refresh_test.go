@@ -15,6 +15,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/lockfile"
 	"github.com/Adyen/agent-marketplace/internal/materialize"
 	"github.com/Adyen/agent-marketplace/internal/resolver"
+	"github.com/Adyen/agent-marketplace/internal/session"
 	"github.com/Adyen/agent-marketplace/internal/sourcerevision"
 )
 
@@ -36,22 +37,22 @@ func TestTUISnapshotDiscoversUnlockedOrganizationRegistry(t *testing.T) {
 	registry := t.TempDir()
 	writeExactRefreshSkill(t, registry, "unlocked-org")
 
-	originalOrg, originalGlobal := loadOrgConfig, loadGlobalConfig
-	originalRepo, originalLocal := loadRepoConfig, loadLocalConfig
-	originalClone := cloneOrPull
-	loadOrgConfig = func() (*config.Config, error) {
+	originalOrg, originalGlobal := session.LoadOrgConfig, session.LoadGlobalConfig
+	originalRepo, originalLocal := session.LoadRepoConfig, session.LoadLocalConfig
+	originalClone := session.CloneOrPull
+	session.LoadOrgConfig = func() (*config.Config, error) {
 		return &config.Config{APIVersion: config.APIVersionV2, Registries: []config.RegistryEntry{{URL: "https://example.invalid/unlocked-org.git", Ref: "main", Required: true, SourceHarness: "factory"}}}, nil
 	}
-	loadGlobalConfig = func() (*config.Config, error) {
+	session.LoadGlobalConfig = func() (*config.Config, error) {
 		return &config.Config{APIVersion: config.APIVersionV2, Harnesses: []string{"factory"}}, nil
 	}
-	loadRepoConfig = func() (*config.Config, error) { return nil, nil }
-	loadLocalConfig = func(string) (*config.LocalConfig, error) { return nil, nil }
-	cloneOrPull = func(_, _ string) (string, error) { return registry, nil }
+	session.LoadRepoConfig = func() (*config.Config, error) { return nil, nil }
+	session.LoadLocalConfig = func(string) (*config.LocalConfig, error) { return nil, nil }
+	session.CloneOrPull = func(_, _ string) (string, error) { return registry, nil }
 	t.Cleanup(func() {
-		loadOrgConfig, loadGlobalConfig = originalOrg, originalGlobal
-		loadRepoConfig, loadLocalConfig = originalRepo, originalLocal
-		cloneOrPull = originalClone
+		session.LoadOrgConfig, session.LoadGlobalConfig = originalOrg, originalGlobal
+		session.LoadRepoConfig, session.LoadLocalConfig = originalRepo, originalLocal
+		session.CloneOrPull = originalClone
 	})
 
 	snapshot := readSnapshot(context.Background(), repo, home, catalogLoadRefresh)
@@ -94,22 +95,22 @@ func TestTUISnapshotFallsBackToUnlockedRepoRegistry(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	originalOrg, originalGlobal := loadOrgConfig, loadGlobalConfig
-	originalRepo, originalLocal := loadRepoConfig, loadLocalConfig
-	originalClone := cloneOrPull
-	loadOrgConfig = func() (*config.Config, error) { return nil, nil }
-	loadGlobalConfig = func() (*config.Config, error) {
+	originalOrg, originalGlobal := session.LoadOrgConfig, session.LoadGlobalConfig
+	originalRepo, originalLocal := session.LoadRepoConfig, session.LoadLocalConfig
+	originalClone := session.CloneOrPull
+	session.LoadOrgConfig = func() (*config.Config, error) { return nil, nil }
+	session.LoadGlobalConfig = func() (*config.Config, error) {
 		return config.LoadConfigFromPath(filepath.Join(home, ".agents", "config.yaml"))
 	}
-	loadRepoConfig = func() (*config.Config, error) {
+	session.LoadRepoConfig = func() (*config.Config, error) {
 		return config.LoadConfigFromPath(filepath.Join(agentsDir, "config.yaml"))
 	}
-	loadLocalConfig = func(string) (*config.LocalConfig, error) { return nil, nil }
-	cloneOrPull = func(_, _ string) (string, error) { return registry, nil }
+	session.LoadLocalConfig = func(string) (*config.LocalConfig, error) { return nil, nil }
+	session.CloneOrPull = func(_, _ string) (string, error) { return registry, nil }
 	t.Cleanup(func() {
-		loadOrgConfig, loadGlobalConfig = originalOrg, originalGlobal
-		loadRepoConfig, loadLocalConfig = originalRepo, originalLocal
-		cloneOrPull = originalClone
+		session.LoadOrgConfig, session.LoadGlobalConfig = originalOrg, originalGlobal
+		session.LoadRepoConfig, session.LoadLocalConfig = originalRepo, originalLocal
+		session.CloneOrPull = originalClone
 	})
 
 	snapshot := readSnapshot(context.Background(), repo, home, catalogLoadRefresh)
@@ -202,26 +203,26 @@ func TestAutomaticRefreshRemainsPinnedWhenRefMoves(t *testing.T) {
 		t.Fatalf("locked snapshot disappeared before refresh: %v", err)
 	}
 
-	previousOrg, previousGlobal, previousRepo, previousLocal := loadOrgConfig, loadGlobalConfig, loadRepoConfig, loadLocalConfig
-	loadOrgConfig = func() (*config.Config, error) { return nil, nil }
-	loadGlobalConfig = func() (*config.Config, error) { return nil, nil }
-	loadRepoConfig = func() (*config.Config, error) {
+	previousOrg, previousGlobal, previousRepo, previousLocal := session.LoadOrgConfig, session.LoadGlobalConfig, session.LoadRepoConfig, session.LoadLocalConfig
+	session.LoadOrgConfig = func() (*config.Config, error) { return nil, nil }
+	session.LoadGlobalConfig = func() (*config.Config, error) { return nil, nil }
+	session.LoadRepoConfig = func() (*config.Config, error) {
 		return config.LoadConfigFromPath(filepath.Join(agentsDir, "config.yaml"))
 	}
-	loadLocalConfig = func(string) (*config.LocalConfig, error) { return nil, nil }
+	session.LoadLocalConfig = func(string) (*config.LocalConfig, error) { return nil, nil }
 	t.Cleanup(func() {
-		loadOrgConfig, loadGlobalConfig, loadRepoConfig, loadLocalConfig = previousOrg, previousGlobal, previousRepo, previousLocal
+		session.LoadOrgConfig, session.LoadGlobalConfig, session.LoadRepoConfig, session.LoadLocalConfig = previousOrg, previousGlobal, previousRepo, previousLocal
 	})
 
 	materializeEntered := make(chan struct{})
 	resumeMaterialize := make(chan struct{})
-	previousMaterialize := runMaterialize
-	runMaterialize = func(ctx context.Context, root string, artifacts []resolver.ResolvedArtifact, opts ...materialize.RunOption) (*materialize.Report, error) {
+	previousMaterialize := session.RunMaterialize
+	session.RunMaterialize = func(ctx context.Context, root string, artifacts []resolver.ResolvedArtifact, opts ...materialize.RunOption) (*materialize.Report, error) {
 		close(materializeEntered)
 		<-resumeMaterialize
 		return previousMaterialize(ctx, root, artifacts, opts...)
 	}
-	t.Cleanup(func() { runMaterialize = previousMaterialize })
+	t.Cleanup(func() { session.RunMaterialize = previousMaterialize })
 
 	resultDone := make(chan snapshotLoadedMsg, 1)
 	go func() { resultDone <- readSnapshot(context.Background(), repoRoot, home, catalogLoadRefresh) }()

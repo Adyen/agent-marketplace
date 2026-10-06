@@ -156,7 +156,7 @@ func buildStatusTree(rows []row, foldState map[string]bool) []flatItem {
 func sortLeafRows(rows []row) {
 	sort.SliceStable(rows, func(i, j int) bool {
 		ri, rj := rows[i], rows[j]
-		if ri.searchRanked || rj.searchRanked {
+		if ri.SearchRanked || rj.SearchRanked {
 			if searchRankLess(ri, rj) || searchRankLess(rj, ri) {
 				return searchRankLess(ri, rj)
 			}

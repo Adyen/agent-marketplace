@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/Adyen/agent-marketplace/internal/dependencytxn"
+	"github.com/Adyen/agent-marketplace/internal/lifecycle"
 	"github.com/Adyen/agent-marketplace/internal/pipeline"
 )
 
@@ -25,9 +26,9 @@ func TestStagedLockDestinationValidation(t *testing.T) {
 	writeConfig(t, configPath, "apiVersion: agent-marketplace/v2\nregistries: []\n")
 	withWorkingDir(t, repo)
 
-	_, _, _, err := prepareRuntimeLocks(context.Background(), repo, repo, lockMode{
-		stagedConfigEdits: []pipeline.StagedConfigEdit{{RequestedPath: configPath, Path: configPath, Bytes: []byte("apiVersion: agent-marketplace/v2\nregistries: []\n")}},
-		stagedLockEdits:   []pipeline.StagedLockEdit{{Path: configPath, Bytes: []byte("apiVersion: 2\n")}},
+	_, _, _, err := lifecycle.PrepareRuntimeLocks(context.Background(), repo, repo, lifecycle.LockMode{
+		StagedConfigEdits: []pipeline.StagedConfigEdit{{RequestedPath: configPath, Path: configPath, Bytes: []byte("apiVersion: agent-marketplace/v2\nregistries: []\n")}},
+		StagedLockEdits:   []pipeline.StagedLockEdit{{Path: configPath, Bytes: []byte("apiVersion: 2\n")}},
 	})
 	if !errors.Is(err, dependencytxn.ErrGenerationConflict) {
 		t.Fatalf("colliding staged lock error = %v", err)
@@ -63,8 +64,8 @@ func TestUpdateMarketplaceV4RejectsStaleStagedLock(t *testing.T) {
 	}
 	upgrade()
 
-	originalCommit := commitDependencyTransaction
-	commitDependencyTransaction = func(ctx context.Context, stateDir string, desired []dependencytxn.DesiredFile, opts ...dependencytxn.Option) (dependencytxn.Result, error) {
+	originalCommit := lifecycle.CommitDependencyTransaction
+	lifecycle.CommitDependencyTransaction = func(ctx context.Context, stateDir string, desired []dependencytxn.DesiredFile, opts ...dependencytxn.Option) (dependencytxn.Result, error) {
 		for _, file := range desired {
 			if !strings.HasSuffix(file.Path, "lock.yaml") {
 				continue
@@ -79,7 +80,7 @@ func TestUpdateMarketplaceV4RejectsStaleStagedLock(t *testing.T) {
 		}
 		return dependencytxn.Commit(ctx, stateDir, desired, opts...)
 	}
-	t.Cleanup(func() { commitDependencyTransaction = originalCommit })
+	t.Cleanup(func() { lifecycle.CommitDependencyTransaction = originalCommit })
 
 	output, err = executeCommand("update")
 	if !errors.Is(err, dependencytxn.ErrGenerationConflict) {

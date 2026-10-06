@@ -11,12 +11,14 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/Adyen/agent-marketplace/internal/config"
+	"github.com/Adyen/agent-marketplace/internal/session"
 )
 
 // AC4: scope switching and Space selection inside the harness Huh
 // multiselect never write config; only Enter submits a non-empty
 // selection through the guarded save.
 
+// spec: session-interactions/toggling-harness-targets-does-not-write
 // spec: tui-interactions/scope-and-selection-without-write
 func TestHarnessFormSpaceSelectsWithoutWriting(t *testing.T) {
 	tmpHome := t.TempDir()
@@ -69,7 +71,7 @@ func TestHarnessFormSpaceSelectsWithoutWriting(t *testing.T) {
 	}
 }
 
-// spec: tui-interactions/save-selected-harnesses
+// spec: session-interactions/save-selected-harnesses
 func TestHarnessFormPreservesUnknownIDs(t *testing.T) {
 	m := NewModel("/repo", "/home")
 	m.globalHarnesses = []string{"factory", "mystery-harness"}
@@ -89,6 +91,7 @@ func TestHarnessFormPreservesUnknownIDs(t *testing.T) {
 	}
 }
 
+// spec: session-interactions/cancel-or-stale-completion
 // spec: tui-interactions/cancel-or-stale-completion
 func TestHarnessFormEscCancelsWithoutWrite(t *testing.T) {
 	m := NewModel("/repo", "/home")
@@ -151,15 +154,16 @@ func TestSyncQuitFormConfirmAndDecline(t *testing.T) {
 	}
 }
 
+// spec: session-interactions/cancel-or-stale-completion
 // spec: tui-interactions/cancel-or-stale-completion
 func TestMigrationFormResetsAfterCompletion(t *testing.T) {
 	home := t.TempDir()
 	m := NewModel(t.TempDir(), home)
 	m.pane = paneMigrationModal
-	m.migrationPrompt = migrationPrompt{configs: []migrationConfig{{
-		label: "User",
-		path:  filepath.Join(home, ".agents", "config.yaml"),
-		scope: config.V4MigrationUser,
+	m.migrationPrompt = migrationPrompt{Configs: []session.MigrationConfig{{
+		Label: "User",
+		Path:  filepath.Join(home, ".agents", "config.yaml"),
+		Scope: config.V4MigrationUser,
 	}}}
 	mi, cmd := m.Update(tea.KeyPressMsg{Code: 'm', Text: "m"})
 	m = mi.(Model)
@@ -183,6 +187,7 @@ func TestMigrationFormResetsAfterCompletion(t *testing.T) {
 	}
 }
 
+// spec: session-interactions/cancel-or-stale-completion
 // spec: tui-interactions/cancel-or-stale-completion
 func TestSyncQuitFormResetsAfterCompletion(t *testing.T) {
 	origRunSyncCmd := runSyncCmd
@@ -285,7 +290,7 @@ func runFixedChoiceSlashScenarios(t *testing.T) {
 	}
 	updated, cmd = picker.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
 	picker = updated.(Model)
-	if cmd != nil || picker.pane != paneList || picker.operations.active != nil {
-		t.Fatalf("config-editor Escape after slash = pane %v command %v operation %v", picker.pane, cmd, picker.operations.active)
+	if cmd != nil || picker.pane != paneList || picker.operations.Active != nil {
+		t.Fatalf("config-editor Escape after slash = pane %v command %v operation %v", picker.pane, cmd, picker.operations.Active)
 	}
 }

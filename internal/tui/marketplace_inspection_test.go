@@ -184,7 +184,7 @@ func inspectionModelDirs(t *testing.T, r row, repoRoot, homeDir string, opts ...
 	return m
 }
 
-// spec: tui-navigation/inspect-an-exact-skill-before-installation-without-writes
+// spec: session-navigation/inspect-an-exact-skill-before-installation-without-writes
 func TestMarketplaceSkillInspectionLoadsExactRevision(t *testing.T) {
 	f := newInspectionFixture(t, nil)
 	repoRoot := t.TempDir()
@@ -329,7 +329,7 @@ func TestMarketplaceSkillInspectionLoadsExactRevision(t *testing.T) {
 	}
 }
 
-// spec: tui-navigation/inspect-an-exact-skill-before-installation-without-writes
+// spec: session-navigation/inspect-an-exact-skill-before-installation-without-writes
 func TestMarketplaceSkillInspectionFailsVisibly(t *testing.T) {
 	cases := []struct {
 		name   string
@@ -413,7 +413,7 @@ func TestMarketplaceSkillInspectionFailsVisibly(t *testing.T) {
 	})
 }
 
-// spec: tui-navigation/inspect-an-exact-skill-before-installation-without-writes
+// spec: session-navigation/inspect-an-exact-skill-before-installation-without-writes
 func TestMarketplaceSkillInspectionTruncatesOversizeBodies(t *testing.T) {
 	oversize := func(sentinel string) []byte {
 		data := make([]byte, maxDetailSourceBytes+64)
@@ -481,7 +481,7 @@ func TestMarketplaceSkillInspectionTruncatesOversizeBodies(t *testing.T) {
 	})
 }
 
-// spec: tui-navigation/inspect-an-exact-skill-before-installation-without-writes
+// spec: session-navigation/inspect-an-exact-skill-before-installation-without-writes
 func TestMarketplaceSkillInspectionRejectsCorruptSupportFile(t *testing.T) {
 	f := newInspectionFixture(t, func(f *inspectionFixture, _ *mpapi.WellKnown, _ *store.AssessedResourceRevision, _ *[]byte, bodies map[string][]byte) {
 		bodies[inspection.Digest(f.support["notes.md"])] = []byte("corrupted notes body")
@@ -503,7 +503,7 @@ func TestMarketplaceSkillInspectionRejectsCorruptSupportFile(t *testing.T) {
 	}
 }
 
-// spec: tui-navigation/inspect-an-exact-skill-before-installation-without-writes
+// spec: session-navigation/inspect-an-exact-skill-before-installation-without-writes
 func TestMarketplaceSkillInspectionStaleResponses(t *testing.T) {
 	t.Run("result after escape is ignored", func(t *testing.T) {
 		f := newInspectionFixture(t, nil)

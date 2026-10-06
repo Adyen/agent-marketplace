@@ -15,6 +15,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/materialize"
 	"github.com/Adyen/agent-marketplace/internal/pipeline"
 	"github.com/Adyen/agent-marketplace/internal/resolver"
+	"github.com/Adyen/agent-marketplace/internal/session"
 	"github.com/Adyen/agent-marketplace/internal/skill"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 	"github.com/charmbracelet/x/ansi"
@@ -26,11 +27,11 @@ func TestHardSnapshotFailureNeverRendersInSync(t *testing.T) {
 	m.width = 80
 	m.height = 24
 	updated, _ := m.Update(snapshotLoadedMsg{
-		generation:      m.requests.active(requestSnapshot),
+		generation:      m.requests.Active(requestSnapshot),
 		driftAssessment: driftFailed,
 		mergedCfg:       &config.Config{},
 		diagnostics: []tuiDiagnostic{
-			snapshotDiagnostic(diagnosticError, diagnosticMaterialization, errors.New("dry run failed")),
+			snapshotDiagnostic(diagnosticError, session.DiagnosticMaterialization, errors.New("dry run failed")),
 		},
 	})
 	m = updated.(Model)
@@ -43,11 +44,11 @@ func TestHardSnapshotFailureNeverRendersInSync(t *testing.T) {
 // spec: inspection-outcomes/materialization-dry-run-failure
 func TestReadSnapshotPropagatesMaterializationDryRunError(t *testing.T) {
 	induced := errors.New("induced dry-run failure")
-	previousMaterialize := runMaterialize
-	runMaterialize = func(context.Context, string, []resolver.ResolvedArtifact, ...materialize.RunOption) (*materialize.Report, error) {
+	previousMaterialize := session.RunMaterialize
+	session.RunMaterialize = func(context.Context, string, []resolver.ResolvedArtifact, ...materialize.RunOption) (*materialize.Report, error) {
 		return nil, induced
 	}
-	t.Cleanup(func() { runMaterialize = previousMaterialize })
+	t.Cleanup(func() { session.RunMaterialize = previousMaterialize })
 
 	restoreOrg := swapLoadOrgConfig(func() (*config.Config, error) { return nil, nil })
 	t.Cleanup(restoreOrg)
@@ -89,12 +90,12 @@ func TestReadSnapshotClassifiesMalformedResourceAsWarning(t *testing.T) {
 	t.Cleanup(restoreRepo)
 	restoreLocal := swapLoadLocalConfig(func() (*config.LocalConfig, error) { return nil, nil })
 	t.Cleanup(restoreLocal)
-	previousDiscover := discoverCatalog
-	discoverCatalog = func(dir, sourceHarness string) (catalogInfo, error) {
+	previousDiscover := session.DiscoverCatalog
+	session.DiscoverCatalog = func(dir, sourceHarness string) (session.CatalogInfo, error) {
 		if dir != registryRoot {
-			return catalogInfo{}, errors.New("unexpected discovery for " + dir)
+			return session.CatalogInfo{}, errors.New("unexpected discovery for " + dir)
 		}
-		return catalogInfo{
+		return session.CatalogInfo{
 			Entries: []catalog.Entry{{Name: "healthy", Path: filepath.Join(dir, "healthy")}},
 			Malformed: []skill.MalformedSkill{{
 				DirName: "broken-skill",
@@ -104,7 +105,7 @@ func TestReadSnapshotClassifiesMalformedResourceAsWarning(t *testing.T) {
 			}},
 		}, nil
 	}
-	t.Cleanup(func() { discoverCatalog = previousDiscover })
+	t.Cleanup(func() { session.DiscoverCatalog = previousDiscover })
 
 	snapshot := readSnapshot(context.Background(), repoRoot, homeDir, catalogLoadCached)
 	if errs := diagnosticErrors(snapshot.diagnostics); len(errs) != 0 {
@@ -112,8 +113,8 @@ func TestReadSnapshotClassifiesMalformedResourceAsWarning(t *testing.T) {
 	}
 	var malformedWarning error
 	for _, d := range snapshot.diagnostics {
-		if d.severity == diagnosticWarning && strings.Contains(d.err.Error(), "broken-skill") {
-			malformedWarning = d.err
+		if d.Severity == diagnosticWarning && strings.Contains(d.Err.Error(), "broken-skill") {
+			malformedWarning = d.Err
 		}
 	}
 	if malformedWarning == nil {
@@ -129,18 +130,18 @@ func TestReadSnapshotClassifiesMalformedResourceAsWarning(t *testing.T) {
 
 func TestReadSnapshotReturnsBeforeMaterializeOnResolveFailure(t *testing.T) {
 	materializeRan := false
-	previousMaterialize := runMaterialize
-	runMaterialize = func(context.Context, string, []resolver.ResolvedArtifact, ...materialize.RunOption) (*materialize.Report, error) {
+	previousMaterialize := session.RunMaterialize
+	session.RunMaterialize = func(context.Context, string, []resolver.ResolvedArtifact, ...materialize.RunOption) (*materialize.Report, error) {
 		materializeRan = true
 		return nil, nil
 	}
-	t.Cleanup(func() { runMaterialize = previousMaterialize })
+	t.Cleanup(func() { session.RunMaterialize = previousMaterialize })
 
 	// An empty repository root yields the zero Workspace, so Resolve fails
 	// with a generic ErrInvalidWorkspace before any loader runs.
 	snapshot := readSnapshot(context.Background(), "", t.TempDir(), catalogLoadCached)
 	if materializeRan {
-		t.Fatal("runMaterialize ran after Resolve returned a generic error")
+		t.Fatal("session.RunMaterialize ran after Resolve returned a generic error")
 	}
 	if errs := diagnosticErrors(snapshot.diagnostics); !errors.Is(errors.Join(errs...), pipeline.ErrInvalidWorkspace) {
 		t.Fatalf("resolve failure not exposed as diagnostics: %v", errs)
@@ -155,11 +156,11 @@ func TestOperationFailureSurvivesSnapshotUntilSameOperationRecovers(t *testing.T
 	syncFailure := errors.New("sync failure")
 	m := NewModel(t.TempDir(), t.TempDir())
 	updated, _ := m.Update(snapshotLoadedMsg{
-		generation:      m.requests.active(requestSnapshot),
+		generation:      m.requests.Active(requestSnapshot),
 		driftAssessment: driftReady,
 		mergedCfg:       &config.Config{},
 		diagnostics: []tuiDiagnostic{
-			snapshotDiagnostic(diagnosticWarning, diagnosticCatalog, warning),
+			snapshotDiagnostic(diagnosticWarning, session.DiagnosticCatalog, warning),
 		},
 	})
 	m = updated.(Model)
@@ -168,7 +169,7 @@ func TestOperationFailureSurvivesSnapshotUntilSameOperationRecovers(t *testing.T
 	m = updated.(Model)
 	// The failed sync ends when the authoritative reload it scheduled is
 	// accepted; only then is its own error recorded as the verdict.
-	generation := m.requests.active(requestSnapshot)
+	generation := m.requests.Active(requestSnapshot)
 	updated, _ = m.Update(snapshotLoadedMsg{
 		generation:      generation,
 		driftAssessment: driftReady,
@@ -184,7 +185,7 @@ func TestOperationFailureSurvivesSnapshotUntilSameOperationRecovers(t *testing.T
 
 	updated, _ = m.Update(syncDoneMsg{})
 	m = updated.(Model)
-	generation = m.requests.active(requestSnapshot)
+	generation = m.requests.Active(requestSnapshot)
 	updated, _ = m.Update(snapshotLoadedMsg{
 		generation:      generation,
 		driftAssessment: driftReady,
@@ -200,10 +201,10 @@ func TestLatestFailureReplacesPreviousFailureForSameOperation(t *testing.T) {
 	first := errors.New("first failure")
 	latest := errors.New("latest failure")
 	var diagnostics diagnosticStore
-	diagnostics.recordOperationFailure(operationSync, diagnosticSync, first)
-	diagnostics.recordOperationFailure(operationSync, diagnosticSync, latest)
-	if len(diagnostics.operations) != 1 || !errors.Is(diagnostics.operations[0].err, latest) {
-		t.Fatalf("retained operation diagnostics = %+v", diagnostics.operations)
+	diagnostics.RecordOperationFailure(operationSync, diagnosticSync, first)
+	diagnostics.RecordOperationFailure(operationSync, diagnosticSync, latest)
+	if len(diagnostics.Operations) != 1 || !errors.Is(diagnostics.Operations[0].Err, latest) {
+		t.Fatalf("retained operation diagnostics = %+v", diagnostics.Operations)
 	}
 }
 
@@ -211,7 +212,7 @@ func TestSnapshotDiagnosticsDeduplicateStableIdentity(t *testing.T) {
 	duplicate := errors.New("same failure")
 	m := NewModel(t.TempDir(), t.TempDir())
 	updated, _ := m.Update(snapshotLoadedMsg{
-		generation:      m.requests.active(requestSnapshot),
+		generation:      m.requests.Active(requestSnapshot),
 		driftAssessment: driftFailed,
 		diagnostics: []tuiDiagnostic{
 			snapshotDiagnostic(diagnosticError, diagnosticConfig, duplicate),
@@ -272,27 +273,27 @@ func TestReadSnapshotRetainsPartialRowsAfterCatalogFailure(t *testing.T) {
 	t.Cleanup(restoreRepo)
 	restoreLocal := swapLoadLocalConfig(func() (*config.LocalConfig, error) { return nil, nil })
 	t.Cleanup(restoreLocal)
-	previousMaterialize := runMaterialize
-	runMaterialize = func(context.Context, string, []resolver.ResolvedArtifact, ...materialize.RunOption) (*materialize.Report, error) {
+	previousMaterialize := session.RunMaterialize
+	session.RunMaterialize = func(context.Context, string, []resolver.ResolvedArtifact, ...materialize.RunOption) (*materialize.Report, error) {
 		return &materialize.Report{}, nil
 	}
-	t.Cleanup(func() { runMaterialize = previousMaterialize })
-	previousClone := cloneOrPull
-	cloneOrPull = func(url, ref string) (string, error) {
+	t.Cleanup(func() { session.RunMaterialize = previousMaterialize })
+	previousClone := session.CloneOrPull
+	session.CloneOrPull = func(url, ref string) (string, error) {
 		if url == failedURL {
 			return "", induced
 		}
 		return "", errors.New("unexpected fetch for " + url)
 	}
-	t.Cleanup(func() { cloneOrPull = previousClone })
-	previousDiscover := discoverCatalog
-	discoverCatalog = func(dir, sourceHarness string) (catalogInfo, error) {
+	t.Cleanup(func() { session.CloneOrPull = previousClone })
+	previousDiscover := session.DiscoverCatalog
+	session.DiscoverCatalog = func(dir, sourceHarness string) (session.CatalogInfo, error) {
 		if dir != healthyRoot {
-			return catalogInfo{}, errors.New("unexpected discovery for " + dir)
+			return session.CatalogInfo{}, errors.New("unexpected discovery for " + dir)
 		}
-		return catalogInfo{Entries: []catalog.Entry{{Name: "healthy", Path: filepath.Join(dir, "healthy")}}}, nil
+		return session.CatalogInfo{Entries: []catalog.Entry{{Name: "healthy", Path: filepath.Join(dir, "healthy")}}}, nil
 	}
-	t.Cleanup(func() { discoverCatalog = previousDiscover })
+	t.Cleanup(func() { session.DiscoverCatalog = previousDiscover })
 
 	snapshot := readSnapshot(context.Background(), repoRoot, homeDir, catalogLoadRefresh)
 	if snapshot.driftAssessment != driftFailed {
@@ -335,8 +336,8 @@ func TestReadSnapshotRetainsPartialRowsAfterCatalogFailure(t *testing.T) {
 	if missing.Artifact.Source != config.UserPersonal || missing.Artifact.V4Kind != "" {
 		t.Fatalf("missing row lost source/v4 identity: source=%v v4kind=%v", missing.Artifact.Source, missing.Artifact.V4Kind)
 	}
-	if missing.UnavailableReason != unavailableCatalogReason {
-		t.Fatalf("missing row unavailable reason = %q, want %q", missing.UnavailableReason, unavailableCatalogReason)
+	if missing.UnavailableReason != session.UnavailableCatalogReason {
+		t.Fatalf("missing row unavailable reason = %q, want %q", missing.UnavailableReason, session.UnavailableCatalogReason)
 	}
 	if missing.Glyph() != "[!]" {
 		t.Fatalf("missing row glyph = %q, want [!]", missing.Glyph())
@@ -375,7 +376,7 @@ func TestReadSnapshotRetainsPartialRowsAfterCatalogFailure(t *testing.T) {
 }
 
 func TestAppendUnavailableSelectionRows(t *testing.T) {
-	loadedCatalogs := map[string]catalogInfo{"k1": {}}
+	loadedCatalogs := map[string]session.CatalogInfo{"k1": {}}
 	cfg := &config.Config{Registries: []config.RegistryEntry{{
 		URL:        "/reg",
 		Source:     config.UserPersonal,
@@ -491,19 +492,19 @@ func TestReadSnapshotUnavailableSelectionNeverReportsInSync(t *testing.T) {
 	t.Cleanup(restoreRepo)
 	restoreLocal := swapLoadLocalConfig(func() (*config.LocalConfig, error) { return nil, nil })
 	t.Cleanup(restoreLocal)
-	previousMaterialize := runMaterialize
-	runMaterialize = func(context.Context, string, []resolver.ResolvedArtifact, ...materialize.RunOption) (*materialize.Report, error) {
+	previousMaterialize := session.RunMaterialize
+	session.RunMaterialize = func(context.Context, string, []resolver.ResolvedArtifact, ...materialize.RunOption) (*materialize.Report, error) {
 		return &materialize.Report{}, nil
 	}
-	t.Cleanup(func() { runMaterialize = previousMaterialize })
-	previousDiscover := discoverCatalog
-	discoverCatalog = func(dir, sourceHarness string) (catalogInfo, error) {
+	t.Cleanup(func() { session.RunMaterialize = previousMaterialize })
+	previousDiscover := session.DiscoverCatalog
+	session.DiscoverCatalog = func(dir, sourceHarness string) (session.CatalogInfo, error) {
 		if dir != registryRoot {
-			return catalogInfo{}, errors.New("unexpected discovery for " + dir)
+			return session.CatalogInfo{}, errors.New("unexpected discovery for " + dir)
 		}
-		return catalogInfo{Entries: []catalog.Entry{{Name: "other", Path: filepath.Join(dir, "other")}}}, nil
+		return session.CatalogInfo{Entries: []catalog.Entry{{Name: "other", Path: filepath.Join(dir, "other")}}}, nil
 	}
-	t.Cleanup(func() { discoverCatalog = previousDiscover })
+	t.Cleanup(func() { session.DiscoverCatalog = previousDiscover })
 
 	snapshot := readSnapshot(context.Background(), repoRoot, homeDir, catalogLoadCached)
 	if snapshot.driftAssessment != driftFailed {
@@ -527,7 +528,7 @@ func TestReadSnapshotUnavailableSelectionNeverReportsInSync(t *testing.T) {
 	m.loading = false
 	m.width = 120
 	m.height = 30
-	snapshot.generation = m.requests.active(requestSnapshot)
+	snapshot.generation = m.requests.Active(requestSnapshot)
 	updated, _ := m.Update(snapshot)
 	m = updated.(Model)
 	footer := ansi.Strip(renderFooter(m))
@@ -568,7 +569,7 @@ func TestUnavailableSnapshotReplacesOpenVerifiedDetail(t *testing.T) {
 	verified := mkRow("gone", withKind(ir.KindSkill), withRegistry("https://example.com/reg.git", "reg"), withRegistryMeta("v1", "sub"))
 	verified.Artifact.Path = dir
 	replacement := mkRow("gone", withKind(ir.KindSkill), withRegistry("https://example.com/reg.git", "reg"), withRegistryMeta("v1", "sub"))
-	replacement.UnavailableReason = unavailableCatalogReason
+	replacement.UnavailableReason = session.UnavailableCatalogReason
 
 	m := modelWithSelectedRow(t, verified)
 	m.width = 120
@@ -580,7 +581,7 @@ func TestUnavailableSnapshotReplacesOpenVerifiedDetail(t *testing.T) {
 	m.detailViewport.SetContent("VERIFIED STALE CONTENT")
 
 	updated, _ := m.Update(snapshotLoadedMsg{
-		generation:      m.requests.active(requestSnapshot),
+		generation:      m.requests.Active(requestSnapshot),
 		driftAssessment: driftFailed,
 		mergedCfg:       &config.Config{},
 		rows:            []row{replacement},
@@ -626,7 +627,7 @@ func TestInvalidConfigSnapshotKeepsEditorOnlyRecovery(t *testing.T) {
 	m.pane = paneList
 
 	updated, _ := m.Update(snapshotLoadedMsg{
-		generation:      m.requests.active(requestSnapshot),
+		generation:      m.requests.Active(requestSnapshot),
 		driftAssessment: driftFailed,
 		diagnostics: []tuiDiagnostic{
 			snapshotDiagnostic(diagnosticError, diagnosticConfig, errors.New("config parse failed")),
@@ -714,7 +715,7 @@ func TestInvalidConfigSnapshotKeepsEditorOnlyRecovery(t *testing.T) {
 		mergedCfg:       &config.Config{},
 		rows:            []row{r},
 		diagnostics: []tuiDiagnostic{
-			snapshotDiagnostic(diagnosticError, diagnosticCatalog, errors.New("catalog fetch failed")),
+			snapshotDiagnostic(diagnosticError, session.DiagnosticCatalog, errors.New("catalog fetch failed")),
 		},
 	})
 	m = updated.(Model)

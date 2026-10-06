@@ -18,6 +18,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/marketplace"
 	"github.com/Adyen/agent-marketplace/internal/pipeline"
 	"github.com/Adyen/agent-marketplace/internal/resolver"
+	"github.com/Adyen/agent-marketplace/internal/session"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 	mpapi "github.com/Adyen/agent-marketplace/pkg/marketplace/api"
 )
@@ -40,7 +41,7 @@ func TestToggleSnapshotReloadPreservesNonEmptyMarketplaceQuery(t *testing.T) {
 
 	m := newTestModel()
 	m.filter = "remote query"
-	generation := m.requests.active(requestSnapshot)
+	generation := m.requests.Active(requestSnapshot)
 	updated, cmd := m.Update(snapshotLoadedMsg{
 		generation:      generation,
 		mergedCfg:       &config.Config{Marketplaces: []config.MarketplaceEntry{{URL: server.URL, InstanceID: "market-id"}}},
@@ -144,8 +145,8 @@ func TestMarketplaceDiscoveryCommandPublishesFastEndpointBeforeSlowEndpointCompl
 	}
 	updated, _ = m.Update(finalCmd().(discoveryLoadedMsg))
 	m = updated.(Model)
-	if m.discoveryLoading || m.requests.active(requestDiscovery) != 0 {
-		t.Fatalf("completed discovery remained active: loading=%t generation=%d", m.discoveryLoading, m.requests.active(requestDiscovery))
+	if m.discoveryLoading || m.requests.Active(requestDiscovery) != 0 {
+		t.Fatalf("completed discovery remained active: loading=%t generation=%d", m.discoveryLoading, m.requests.Active(requestDiscovery))
 	}
 }
 
@@ -239,8 +240,8 @@ func TestMarketplaceDiscoveryRemovalCancelsAndRejectsLateCompletion(t *testing.T
 	if cmd := m.beginMarketplaceDiscovery("", false); cmd != nil {
 		t.Fatal("zero Marketplace config scheduled discovery")
 	}
-	if !cancelled || m.discoveryCancel != nil || m.requests.active(requestDiscovery) != 0 || m.discoverySequence != 0 {
-		t.Fatalf("discovery was not invalidated: cancelled=%t cancel=%v generation=%d sequence=%d", cancelled, m.discoveryCancel, m.requests.active(requestDiscovery), m.discoverySequence)
+	if !cancelled || m.discoveryCancel != nil || m.requests.Active(requestDiscovery) != 0 || m.discoverySequence != 0 {
+		t.Fatalf("discovery was not invalidated: cancelled=%t cancel=%v generation=%d sequence=%d", cancelled, m.discoveryCancel, m.requests.Active(requestDiscovery), m.discoverySequence)
 	}
 	if m.discoveryLoading || len(m.discoveryRows) != 0 || len(m.browseDiscoveryRows) != 0 || len(m.discoveryOutcomes) != 0 || len(m.discoveryErrs) != 0 {
 		t.Fatalf("removed Marketplace state retained: loading=%t rows=%#v browse=%#v outcomes=%#v errs=%#v", m.discoveryLoading, m.discoveryRows, m.browseDiscoveryRows, m.discoveryOutcomes, m.discoveryErrs)
@@ -278,8 +279,8 @@ func TestMarketplaceDiscoveryAllowlistTighteningClearsPriorStateAndRejectsLateCo
 	if cmd := m.beginMarketplaceDiscovery("", false); cmd != nil {
 		t.Fatal("invalid Marketplace config scheduled discovery")
 	}
-	if !cancelled || m.discoveryCancel != nil || m.requests.active(requestDiscovery) != 0 || m.discoverySequence != 0 || m.discoveryLoading {
-		t.Fatalf("prior discovery remained active: cancelled=%t cancel=%v generation=%d sequence=%d loading=%t", cancelled, m.discoveryCancel, m.requests.active(requestDiscovery), m.discoverySequence, m.discoveryLoading)
+	if !cancelled || m.discoveryCancel != nil || m.requests.Active(requestDiscovery) != 0 || m.discoverySequence != 0 || m.discoveryLoading {
+		t.Fatalf("prior discovery remained active: cancelled=%t cancel=%v generation=%d sequence=%d loading=%t", cancelled, m.discoveryCancel, m.requests.Active(requestDiscovery), m.discoverySequence, m.discoveryLoading)
 	}
 	if len(m.discoveryRows) != 0 || len(m.browseDiscoveryRows) != 0 || len(m.discoveryOutcomes) != 0 {
 		t.Fatalf("blocked endpoint metadata remained: rows=%#v browse=%#v outcomes=%#v", m.discoveryRows, m.browseDiscoveryRows, m.discoveryOutcomes)
@@ -314,7 +315,7 @@ func TestSnapshotPolicyFailureClearsDiscoveryAndRejectsLateCompletions(t *testin
 			name: "migration required",
 			snapshot: snapshotLoadedMsg{
 				mergedCfg:        &config.Config{Marketplaces: []config.MarketplaceEntry{{URL: "https://new.example", InstanceID: "new"}}},
-				pendingMigration: migrationPrompt{configs: []migrationConfig{{label: "Project", path: "/repo/.agents/config.yaml"}}},
+				pendingMigration: migrationPrompt{Configs: []session.MigrationConfig{{Label: "Project", Path: "/repo/.agents/config.yaml"}}},
 			},
 			wantPane: paneMigrationModal,
 		},
@@ -340,12 +341,12 @@ func TestSnapshotPolicyFailureClearsDiscoveryAndRejectsLateCompletions(t *testin
 			m.discoveryLoading = true
 			cancelled := false
 			m.discoveryCancel = func() { cancelled = true }
-			test.snapshot.generation = m.requests.active(requestSnapshot)
+			test.snapshot.generation = m.requests.Active(requestSnapshot)
 
 			updated, _ := m.Update(test.snapshot)
 			m = updated.(Model)
-			if !cancelled || m.requests.active(requestDiscovery) != 0 || m.discoverySequence != 0 || m.discoveryLoading {
-				t.Fatalf("active discovery was not invalidated: cancelled=%t generation=%d sequence=%d loading=%t", cancelled, m.requests.active(requestDiscovery), m.discoverySequence, m.discoveryLoading)
+			if !cancelled || m.requests.Active(requestDiscovery) != 0 || m.discoverySequence != 0 || m.discoveryLoading {
+				t.Fatalf("active discovery was not invalidated: cancelled=%t generation=%d sequence=%d loading=%t", cancelled, m.requests.Active(requestDiscovery), m.discoverySequence, m.discoveryLoading)
 			}
 			if len(m.discoveryRows) != 0 || len(m.browseDiscoveryRows) != 0 || len(m.discoveryOutcomes) != 0 || len(m.discoveryErrs) != 0 {
 				t.Fatalf("prior discovery state remained: rows=%#v browse=%#v outcomes=%#v errs=%v", m.discoveryRows, m.browseDiscoveryRows, m.discoveryOutcomes, m.discoveryErrs)
@@ -439,11 +440,11 @@ func TestMarketplaceInstallReloadHardDiagnosticFailsWithUsableConfig(t *testing.
 		generation:      m.marketplaceInstallReload,
 		mergedCfg:       &config.Config{},
 		driftAssessment: driftFailed,
-		diagnostics:     []tuiDiagnostic{snapshotDiagnostic(diagnosticError, diagnosticCatalog, failure)},
+		diagnostics:     []tuiDiagnostic{snapshotDiagnostic(diagnosticError, session.DiagnosticCatalog, failure)},
 	})
 	m = updated.(Model)
-	if m.operations.active != nil || m.marketplaceInstallReload != 0 {
-		t.Fatalf("failed reload did not unblock operation: active=%#v reload=%d", m.operations.active, m.marketplaceInstallReload)
+	if m.operations.Active != nil || m.marketplaceInstallReload != 0 {
+		t.Fatalf("failed reload did not unblock operation: active=%#v reload=%d", m.operations.Active, m.marketplaceInstallReload)
 	}
 	if !strings.HasPrefix(m.toast, "Marketplace install reload failed:") || strings.Contains(m.toast, "resource installed") {
 		t.Fatalf("hard snapshot diagnostic reported success: %q", m.toast)
@@ -461,16 +462,16 @@ func TestLowRiskMarketplaceDiscoveryCommitsPreparedPlanWithoutConsent(t *testing
 		t.Fatal(err)
 	}
 	prepared := &pipeline.PreparedMarketplaceInstall{}
-	oldPrepare, oldCommit := prepareDiscoveryMarketplaceInstall, commitPreparedMarketplaceInstall
+	oldPrepare, oldCommit := session.PrepareDiscoveryMarketplaceInstall, session.CommitPreparedMarketplaceInstall
 	t.Cleanup(func() {
-		prepareDiscoveryMarketplaceInstall = oldPrepare
-		commitPreparedMarketplaceInstall = oldCommit
+		session.PrepareDiscoveryMarketplaceInstall = oldPrepare
+		session.CommitPreparedMarketplaceInstall = oldCommit
 	})
-	prepareDiscoveryMarketplaceInstall = func(context.Context, pipeline.InstallOptions) (*pipeline.PreparedMarketplaceInstall, error) {
+	session.PrepareDiscoveryMarketplaceInstall = func(context.Context, pipeline.InstallOptions) (*pipeline.PreparedMarketplaceInstall, error) {
 		return prepared, nil // low-risk plan: no findings or capabilities requiring CLI consent
 	}
 	var committed *pipeline.PreparedMarketplaceInstall
-	commitPreparedMarketplaceInstall = func(_ context.Context, got *pipeline.PreparedMarketplaceInstall) (*pipeline.InstallResult, error) {
+	session.CommitPreparedMarketplaceInstall = func(_ context.Context, got *pipeline.PreparedMarketplaceInstall) (*pipeline.InstallResult, error) {
 		committed = got
 		return &pipeline.InstallResult{Installed: []string{"review"}}, nil
 	}
@@ -560,8 +561,8 @@ func TestMarketplaceInstallOperationRemainsSerializedThroughReload(t *testing.T)
 	generation := m.marketplaceInstallReload
 	updated, _ = m.Update(snapshotLoadedMsg{generation: generation, mergedCfg: &config.Config{}, driftAssessment: driftReady})
 	m = updated.(Model)
-	if m.operations.active != nil || m.marketplaceInstallReload != 0 {
-		t.Fatalf("install operation remained active after reload: %#v", m.operations.active)
+	if m.operations.Active != nil || m.marketplaceInstallReload != 0 {
+		t.Fatalf("install operation remained active after reload: %#v", m.operations.Active)
 	}
 }
 
@@ -579,13 +580,13 @@ func TestMarketplaceInstallReloadFinishesOnceFromSupersedingUpdateSnapshot(t *te
 
 	updated, _ = m.Update(snapshotLoadedMsg{generation: installGeneration, mergedCfg: &config.Config{}, driftAssessment: driftReady})
 	m = updated.(Model)
-	if m.operations.active == nil {
+	if m.operations.Active == nil {
 		t.Fatal("stale install snapshot finished the operation")
 	}
 	updated, _ = m.Update(updateDoneMsg{generation: updateGeneration, snapshot: snapshotLoadedMsg{generation: updateGeneration, mergedCfg: &config.Config{}, driftAssessment: driftReady}})
 	m = updated.(Model)
-	if m.operations.active != nil || m.marketplaceInstallReload != 0 {
-		t.Fatalf("superseding update snapshot did not finish install: active=%#v reload=%d", m.operations.active, m.marketplaceInstallReload)
+	if m.operations.Active != nil || m.marketplaceInstallReload != 0 {
+		t.Fatalf("superseding update snapshot did not finish install: active=%#v reload=%d", m.operations.Active, m.marketplaceInstallReload)
 	}
 	if m.toast != "Marketplace resource installed" {
 		t.Fatalf("install outcome = %q", m.toast)
@@ -596,7 +597,7 @@ func TestMarketplaceInstallReloadFinishesOnceFromSupersedingUpdateSnapshot(t *te
 	}
 	updated, _ = m.Update(snapshotLoadedMsg{generation: installGeneration, mergedCfg: &config.Config{}, driftAssessment: driftReady})
 	m = updated.(Model)
-	if !m.operations.accepts(later) {
+	if !m.operations.Accepts(later) {
 		t.Fatal("stale original snapshot finished the later operation")
 	}
 }
@@ -633,6 +634,7 @@ func TestAliaslessMarketplaceEndpointDisplayIsCanonicalAndStable(t *testing.T) {
 	}
 }
 
+// spec: session-rendering-safety/hostile-text-is-inert
 func TestHostileMarketplaceDiscoveryRenderingUsesTerminalSanitizer(t *testing.T) {
 	m := newTestModel()
 	m.loading = false

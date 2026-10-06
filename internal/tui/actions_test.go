@@ -12,6 +12,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/materialize"
 	"github.com/Adyen/agent-marketplace/internal/resolver"
+	"github.com/Adyen/agent-marketplace/internal/session"
 	"github.com/Adyen/agent-marketplace/internal/skill"
 	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
@@ -267,7 +268,7 @@ func TestBuildRowsPopulatesPerScopeEnablement(t *testing.T) {
 			},
 		},
 	}
-	catalogs := map[string]catalogInfo{
+	catalogs := map[string]session.CatalogInfo{
 		"sec-key": {Entries: []pkgcatalog.Entry{
 			{Name: "audit-logging", Path: "/cache/sec/audit-logging"},
 			{Name: "extra-security", Path: "/cache/sec/extra-security"},
@@ -376,7 +377,7 @@ func TestBuildRowsRegistryScopedLocalSelections(t *testing.T) {
 			},
 		},
 	}
-	catalogs := map[string]catalogInfo{
+	catalogs := map[string]session.CatalogInfo{
 		"local-key": {Entries: []pkgcatalog.Entry{{Name: "keep-skill"}, {Name: "shared"}}},
 		"proj-key":  {Entries: []pkgcatalog.Entry{{Name: "drop-skill"}, {Name: "shared"}}},
 	}
@@ -445,7 +446,7 @@ func TestBuildRowsLocalCollectionMembersEnabled(t *testing.T) {
 			},
 		},
 	}
-	catalogs := map[string]catalogInfo{
+	catalogs := map[string]session.CatalogInfo{
 		"local-key": {Entries: []pkgcatalog.Entry{
 			{Kind: ir.KindCollection, Name: "mycoll"},
 			{Kind: ir.KindSkill, Name: "member-skill"},
@@ -494,11 +495,11 @@ func TestBuildRowsUsesResolverCatalogWinners(t *testing.T) {
 		{Kind: ir.KindMcpServer, Name: "genai-airflow"},
 		{Kind: ir.KindMcpServer, Name: "genai-atlassian"},
 	}
-	catalogs := map[string]catalogInfo{
+	catalogs := map[string]session.CatalogInfo{
 		"parent": {Entries: entries},
 		"child":  {Entries: entries},
 	}
-	catalogEntries := entriesFromCatalogs(catalogs)
+	catalogEntries := session.EntriesFromCatalogs(catalogs)
 	resolved, errs := resolver.Resolve(cfg, catalogEntries, nil)
 	if len(errs) != 0 {
 		t.Fatalf("Resolve() errors = %v, want none", errs)
@@ -541,7 +542,7 @@ func TestBuildRowsIncludesAllResourceKinds(t *testing.T) {
 			},
 		},
 	}
-	catalogs := map[string]catalogInfo{
+	catalogs := map[string]session.CatalogInfo{
 		"resources-key": {Entries: []pkgcatalog.Entry{
 			{Kind: ir.KindSkill, Name: "audit-skill"},
 			{Kind: ir.KindCommand, Name: "continue"},
@@ -590,28 +591,28 @@ func TestRenderListShowsLoadingStateBeforeSnapshotHydrates(t *testing.T) {
 }
 
 func swapCloneOrPull(fn func(url, ref string) (string, error)) func() {
-	prev := cloneOrPull
-	cloneOrPull = fn
+	prev := session.CloneOrPull
+	session.CloneOrPull = fn
 	return func() {
-		cloneOrPull = prev
+		session.CloneOrPull = prev
 	}
 }
 
 func swapDiscoverSkills(fn func(dir string) ([]pkgcatalog.Entry, []skill.MalformedSkill, error)) func() {
-	prev := discoverCatalog
-	discoverCatalog = func(dir, sourceHarness string) (catalogInfo, error) {
+	prev := session.DiscoverCatalog
+	session.DiscoverCatalog = func(dir, sourceHarness string) (session.CatalogInfo, error) {
 		entries, malformed, err := fn(dir)
 		if err != nil {
-			return catalogInfo{}, err
+			return session.CatalogInfo{}, err
 		}
-		return catalogInfo{
+		return session.CatalogInfo{
 			Entries:   entries,
 			Malformed: malformed,
 			Resources: pkgcatalog.EntriesResources(entries),
 		}, nil
 	}
 	return func() {
-		discoverCatalog = prev
+		session.DiscoverCatalog = prev
 	}
 }
 
@@ -865,7 +866,7 @@ func TestBuildRowsPopulatesHarnessesForResolvedAndAvailableSkills(t *testing.T) 
 			},
 		},
 	}
-	catalogs := map[string]catalogInfo{
+	catalogs := map[string]session.CatalogInfo{
 		"sec-key": {Entries: []pkgcatalog.Entry{
 			{Name: "audit-logging", Path: "/cache/sec/audit-logging"},
 			{Name: "extra-security", Path: "/cache/sec/extra-security"},
@@ -910,7 +911,7 @@ func TestBuildRowsLabelsInheritedAndRegistryOverrideHarnesses(t *testing.T) {
 			},
 		},
 	}
-	catalogs := map[string]catalogInfo{
+	catalogs := map[string]session.CatalogInfo{
 		"default-key":  {Entries: []pkgcatalog.Entry{{Name: "default-skill"}}},
 		"override-key": {Entries: []pkgcatalog.Entry{{Name: "override-skill"}}},
 	}
@@ -1041,7 +1042,7 @@ func TestBuildRowsKeepsMarketplaceKindsSeparate(t *testing.T) {
 	}
 	for _, row := range rows {
 		selection := row.MarketplaceSelections[config.RepoCommitted]
-		if selection.Pin.Kind != marketplaceProtocolKind(row.Artifact.Kind) {
+		if selection.Pin.Kind != session.MarketplaceProtocolKind(row.Artifact.Kind) {
 			t.Fatalf("%s row attributed to %s pin", row.Artifact.Kind, selection.Pin.Kind)
 		}
 	}
@@ -1053,7 +1054,7 @@ func TestBuildRowsKeepsExcludedOptionalOrganizationMarketplaceLeafToggleable(t *
 	cfg := &config.Config{Marketplaces: []config.MarketplaceEntry{{URL: "https://market.example", InstanceID: "market-id", Source: config.Organization, Resources: []config.MarketplaceResourcePin{pin}}},
 		MarketplaceExclusions: []config.MarketplaceExclusion{{URL: "https://market.example", Locator: "source-id/skill/review", Source: config.UserPersonal}}}
 	rows := buildRows(cfg, nil, nil, nil, materialize.DriftReport{})
-	if len(rows) != 1 || !rows[0].IsExcluded || !rows[0].canOverrideMarketplace() || !rows[0].ExcludedByUser || !rows[0].MarketplaceCollectionOnly {
+	if len(rows) != 1 || !rows[0].IsExcluded || !rows[0].CanOverrideMarketplace() || !rows[0].ExcludedByUser || !rows[0].MarketplaceCollectionOnly {
 		t.Fatalf("excluded organization Marketplace leaf = %#v", rows)
 	}
 }
@@ -1106,7 +1107,7 @@ func TestBuildRowsUsesSelectedResolverWinnerAcrossRegistries(t *testing.T) {
 			},
 		},
 	}
-	catalogs := map[string]catalogInfo{
+	catalogs := map[string]session.CatalogInfo{
 		"primary-key": {Entries: []pkgcatalog.Entry{
 			{Name: "smith", Path: "/cache/primary/smith"},
 		}},
@@ -1160,7 +1161,7 @@ func TestBuildRowsEnablementFlagsScopedByRegistry(t *testing.T) {
 			},
 		},
 	}
-	catalogs := map[string]catalogInfo{
+	catalogs := map[string]session.CatalogInfo{
 		"global-key": {Entries: []pkgcatalog.Entry{
 			{Name: "smith", Path: "/cache/global/smith"},
 		}},
