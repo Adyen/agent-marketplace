@@ -703,8 +703,10 @@ func Materialize(r *Result, outDir string, opts ...WriteOption) (report *WriteRe
 			return nil, fmt.Errorf("harnesscompile.Materialize: find stale: %w", err)
 		}
 		report.StaleCandidates = stale
-		for _, candidate := range stale {
-			report.Removed = append(report.Removed, candidate.Path)
+		if cfg.dryRun {
+			for _, candidate := range stale {
+				report.Removed = append(report.Removed, candidate.Path)
+			}
 		}
 	}
 	rootSnapshot, err := snapshotMaterializeRoot(outDir)
@@ -976,7 +978,11 @@ func Materialize(r *Result, outDir string, opts ...WriteOption) (report *WriteRe
 				report.Removed = removed
 				return report, fmt.Errorf("harnesscompile.Materialize: stale file %q: %w: %v", candidate.Path, ErrStalePruneConflict, err)
 			}
-			if err := RemoveStaleFileCandidate(stalePath, candidate); err != nil {
+			removed, removeErr := removeStaleFileCandidate(stalePath, candidate, nil)
+			if removed {
+				report.Removed = append(report.Removed, candidate.Path)
+			}
+			if err := removeErr; err != nil {
 				if errors.Is(err, ErrStalePruneConflict) {
 					pruneConflicts = append(pruneConflicts, candidate.Path)
 					slog.Warn("materialize stale prune preserved changed output", "out_dir", outDir, "path", candidate.Path)
@@ -985,7 +991,7 @@ func Materialize(r *Result, outDir string, opts ...WriteOption) (report *WriteRe
 				if os.IsNotExist(err) {
 					continue
 				}
-				return nil, fmt.Errorf("harnesscompile.Materialize: remove stale file %q: %w", candidate.Path, err)
+				return report, fmt.Errorf("harnesscompile.Materialize: remove stale file %q: %w", candidate.Path, err)
 			}
 			removed = append(removed, candidate.Path)
 			if cleanupErr := cleanEmptyDirs(root, native, outDir, filepath.Dir(filepath.FromSlash(candidate.Path)), candidate.parents); cleanupErr != nil {

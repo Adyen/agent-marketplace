@@ -95,22 +95,23 @@ func RevalidateStaleFileCandidate(path string, candidate StaleFileCandidate) (bo
 }
 
 func RemoveStaleFileCandidate(path string, candidate StaleFileCandidate) error {
-	return removeStaleFileCandidate(path, candidate, nil)
+	_, err := removeStaleFileCandidate(path, candidate, nil)
+	return err
 }
 
-func removeStaleFileCandidate(path string, candidate StaleFileCandidate, beforeRename func() error) (err error) {
+func removeStaleFileCandidate(path string, candidate StaleFileCandidate, beforeRename func() error) (removed bool, err error) {
 	unchanged, err := RevalidateStaleFileCandidate(path, candidate)
 	if err != nil {
-		return err
+		return false, err
 	}
 	if !unchanged {
-		return fmt.Errorf("%w: %s", ErrStalePruneConflict, candidate.Path)
+		return false, fmt.Errorf("%w: %s", ErrStalePruneConflict, candidate.Path)
 	}
 
 	parentPath := filepath.Dir(path)
 	parentFD, err := unix.Open(parentPath, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0)
 	if err != nil {
-		return fmt.Errorf("open stale candidate parent: %w", err)
+		return false, fmt.Errorf("open stale candidate parent: %w", err)
 	}
 	defer func() {
 		if closeErr := unix.Close(parentFD); closeErr != nil {
@@ -118,12 +119,12 @@ func removeStaleFileCandidate(path string, candidate StaleFileCandidate, beforeR
 		}
 	}()
 	if err := verifyStaleParentFD(parentFD, candidate, parentPath); err != nil {
-		return err
+		return false, err
 	}
 
 	quarantine, reservation, err := createStaleQuarantine(parentFD)
 	if quarantine == "" {
-		return err
+		return false, err
 	}
 	reserved := StaleFileCandidate{Info: reservation, Digest: sha256.Sum256(nil)}
 	quarantineActive := true
@@ -144,29 +145,29 @@ func removeStaleFileCandidate(path string, candidate StaleFileCandidate, beforeR
 		}
 	}()
 	if err != nil {
-		return err
+		return false, err
 	}
 	if beforeRename != nil {
 		if err := beforeRename(); err != nil {
-			return err
+			return false, err
 		}
 	}
 	slog.Debug("SDK stale payload ready for quarantine", "path", path, "phase", "sdk-stale-quarantine")
 	matchesReservation, inspectErr := staleCandidateFileMatches(parentFD, quarantine, reserved)
 	if inspectErr != nil || !matchesReservation {
-		return errors.Join(ErrStalePruneConflict, inspectErr)
+		return false, errors.Join(ErrStalePruneConflict, inspectErr)
 	}
 	if err := unix.Renameat(parentFD, filepath.Base(path), parentFD, quarantine); err != nil {
 		if err == unix.ENOENT {
-			return nil
+			return false, nil
 		}
-		return fmt.Errorf("quarantine stale candidate %q: %w", candidate.Path, err)
+		return false, fmt.Errorf("quarantine stale candidate %q: %w", candidate.Path, err)
 	}
 
 	var quarantined unix.Stat_t
 	if statErr := unix.Fstatat(parentFD, quarantine, &quarantined, unix.AT_SYMLINK_NOFOLLOW); statErr != nil {
 		quarantineActive = false
-		return errors.Join(ErrStalePruneConflict, statErr)
+		return false, errors.Join(ErrStalePruneConflict, statErr)
 	}
 	matches, verifyErr := staleCandidateFileMatches(parentFD, quarantine, candidate)
 	if verifyErr == nil && matches {
@@ -174,14 +175,14 @@ func removeStaleFileCandidate(path string, candidate StaleFileCandidate, beforeR
 		matches, verifyErr = staleCandidateFileMatches(parentFD, quarantine, candidate)
 		if verifyErr != nil || !matches {
 			quarantineActive = false
-			return errors.Join(ErrStalePruneConflict, verifyErr)
+			return false, errors.Join(ErrStalePruneConflict, verifyErr)
 		}
 		if err := unix.Unlinkat(parentFD, quarantine, 0); err != nil {
 			quarantineActive = false
-			return fmt.Errorf("remove quarantined stale candidate %q: %w", candidate.Path, err)
+			return false, fmt.Errorf("remove quarantined stale candidate %q: %w", candidate.Path, err)
 		}
 		quarantineActive = false
-		return nil
+		return true, nil
 	}
 
 	conflict := fmt.Errorf("%w: %s", ErrStalePruneConflict, candidate.Path)
@@ -191,10 +192,10 @@ func removeStaleFileCandidate(path string, candidate StaleFileCandidate, beforeR
 	slog.Debug("SDK stale quarantine payload refused before restoration", "path", filepath.Join(parentPath, quarantine), "phase", "sdk-stale-quarantine-restore")
 	if restoreErr := restoreStaleQuarantine(parentFD, quarantine, filepath.Base(path), quarantined); restoreErr != nil {
 		quarantineActive = false
-		return errors.Join(conflict, fmt.Errorf("stale candidate %q preserved in quarantine %q: %w", candidate.Path, quarantine, restoreErr))
+		return false, errors.Join(conflict, fmt.Errorf("stale candidate %q preserved in quarantine %q: %w", candidate.Path, quarantine, restoreErr))
 	}
 	quarantineActive = false
-	return conflict
+	return false, conflict
 }
 
 func verifyStaleParentFD(parentFD int, candidate StaleFileCandidate, parentPath string) error {
