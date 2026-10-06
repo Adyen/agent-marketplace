@@ -16,6 +16,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/resolver"
 	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
 	hccartifact "github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact"
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/store"
 )
@@ -28,6 +29,11 @@ func serveCanonicalMirrorHook(t *testing.T, canonical hccartifact.CanonicalArtif
 	if err != nil {
 		t.Fatalf("Encode: %v", err)
 	}
+	return serveCanonicalMirrorHookArchive(t, canonical, hookName, raw, archiveDigest)
+}
+
+func serveCanonicalMirrorHookArchive(t *testing.T, canonical hccartifact.CanonicalArtifact, hookName string, raw []byte, archiveDigest string) (*httptest.Server, string) {
+	t.Helper()
 	rev := assessedRevision(store.ResourceRevision{
 		Coordinate: store.ResourceCoordinate{
 			Marketplace: store.MarketplaceID("mp"),
@@ -53,6 +59,17 @@ func serveCanonicalMirrorHook(t *testing.T, canonical hccartifact.CanonicalArtif
 	server := httptest.NewServer(mux)
 	t.Cleanup(server.Close)
 	return server, canonical.Manifest.ContentDigest
+}
+
+func mirrorHookConfig(url, name, contentDigest string) *config.Config {
+	return &config.Config{Marketplaces: []config.MarketplaceEntry{{
+		URL:        url,
+		InstanceID: "mp",
+		Resources: []config.MarketplaceResourcePin{{
+			RegistryID: "src", Kind: "hook", Name: name, Revision: "v1", Digest: contentDigest,
+			Acquisition: config.MarketplaceAcquisitionMirror,
+		}},
+	}}}
 }
 
 // mirrorHookNativeProof writes the Factory native hook file plus the durable
@@ -138,24 +155,7 @@ func TestMirrorHookNativeProofSuppressesLegacyOutput(t *testing.T) {
 		t.Fatalf("FromIR: %v", err)
 	}
 	server, contentDigest := serveCanonicalMirrorHook(t, canonical, "deploy-hook")
-	cfg := &config.Config{
-		Marketplaces: []config.MarketplaceEntry{
-			{
-				URL:        server.URL,
-				InstanceID: "mp",
-				Resources: []config.MarketplaceResourcePin{
-					{
-						RegistryID:  "src",
-						Kind:        "hook",
-						Name:        "deploy-hook",
-						Revision:    "v1",
-						Digest:      contentDigest,
-						Acquisition: config.MarketplaceAcquisitionMirror,
-					},
-				},
-			},
-		},
-	}
+	cfg := mirrorHookConfig(server.URL, "deploy-hook", contentDigest)
 	r := &Resolver{Cache: cache}
 	resolved, errs := r.Resolve(context.Background(), cfg, []hcc.Target{hcc.TargetFactory}, resolver.MarketplaceResolveModeRefresh)
 	if len(errs) > 0 {
@@ -212,4 +212,118 @@ func TestMirrorHookNativeProofSuppressesLegacyOutput(t *testing.T) {
 			t.Fatalf("changed mirror digest suppressed legacy output: %v %q", err, data)
 		}
 	})
+}
+
+func TestMirrorHookResolverCarriesSupportToRun(t *testing.T) {
+	isolateHarnessState(t)
+	cache := NewCache(t.TempDir())
+	script := []byte{0x00, 0x23, 0xff, 0x0a}
+	payload := []byte{0x7f, 0x00, 0x55}
+	hook := ir.NewHookWithMatcher("deploy-hook", "PreToolUse", "Bash", "${CLAUDE_PLUGIN_ROOT}/scripts/check.sh", "command", nil, ir.SourceRef{File: "hooks/hooks.json"})
+	canonical, err := hccartifact.FromIR(hook)
+	if err != nil {
+		t.Fatalf("FromIR: %v", err)
+	}
+	canonical.Support = map[string]hccartifact.SupportFile{
+		"scripts/check.sh": {Data: script, Executable: true},
+		"data/payload.bin": {Data: payload},
+	}
+	server, contentDigest := serveCanonicalMirrorHook(t, canonical, "deploy-hook")
+	resolved, errs := (&Resolver{Cache: cache}).Resolve(context.Background(), mirrorHookConfig(server.URL, "deploy-hook", contentDigest), []hcc.Target{hcc.TargetFactory}, resolver.MarketplaceResolveModeRefresh)
+	if len(errs) != 0 || len(resolved) != 1 {
+		t.Fatalf("Resolve: artifacts=%#v errors=%v", resolved, errs)
+	}
+	res := resolved[0]
+	wantSupport := []struct {
+		path string
+		data []byte
+		mode os.FileMode
+	}{{path: "data/payload.bin", data: payload, mode: 0o644}, {path: "scripts/check.sh", data: script, mode: 0o755}}
+	if len(res.MarketplaceHookSupport) != len(wantSupport) {
+		t.Fatalf("MarketplaceHookSupport has %d records, want %d", len(res.MarketplaceHookSupport), len(wantSupport))
+	}
+	for i, want := range wantSupport {
+		got := res.MarketplaceHookSupport[i]
+		if got.Path != want.path || string(got.Bytes) != string(want.data) || got.Mode.Perm() != want.mode {
+			t.Fatalf("MarketplaceHookSupport[%d] = {%q %v %v}, want {%q %v %v}", i, got.Path, got.Bytes, got.Mode.Perm(), want.path, want.data, want.mode)
+		}
+	}
+	if filepath.Base(res.Path) != "artifact.tar.gz" || res.StagedSourceDir != "" {
+		t.Fatalf("mirror source path changed: Path=%q StagedSourceDir=%q", res.Path, res.StagedSourceDir)
+	}
+	archivePath := res.Path
+	if err := os.WriteFile(archivePath, []byte("changed after verified resolution"), 0o600); err != nil {
+		t.Fatalf("mutate cached archive after Resolve: %v", err)
+	}
+	if res.Path != archivePath {
+		t.Fatalf("mirror archive path changed after Resolve: %q, want %q", res.Path, archivePath)
+	}
+
+	repoRoot := t.TempDir()
+	report, err := materialize.Run(context.Background(), repoRoot, []resolver.ResolvedArtifact{res})
+	if err != nil || report == nil || diag.HasErrors(report.Diags) {
+		t.Fatalf("Run: %v report=%+v", err, report)
+	}
+	for rel, want := range map[string]struct {
+		bytes []byte
+		mode  os.FileMode
+	}{
+		"scripts/check.sh": {bytes: script, mode: 0o755},
+		"data/payload.bin": {bytes: payload, mode: 0o644},
+	} {
+		matches, err := filepath.Glob(filepath.Join(repoRoot, ".factory", "hook-support", "*", "deploy-hook", filepath.FromSlash(rel)))
+		if err != nil || len(matches) != 1 {
+			t.Fatalf("support file %s matches=%v err=%v", rel, matches, err)
+		}
+		data, err := os.ReadFile(matches[0])
+		if err != nil || string(data) != string(want.bytes) {
+			t.Fatalf("support file %s bytes=%v err=%v, want %v", rel, data, err, want.bytes)
+		}
+		info, err := os.Stat(matches[0])
+		if err != nil || info.Mode().Perm() != want.mode {
+			t.Fatalf("support file %s mode=%v err=%v, want %v", rel, info.Mode().Perm(), err, want.mode)
+		}
+	}
+}
+
+func TestMirrorHookResolverSupportlessControl(t *testing.T) {
+	isolateHarnessState(t)
+	canonical, err := hccartifact.FromIR(ir.NewHookWithMatcher("plain-hook", "PreToolUse", "Bash", "echo plain", "command", nil, ir.SourceRef{File: "hooks/hooks.json"}))
+	if err != nil {
+		t.Fatalf("FromIR: %v", err)
+	}
+	server, contentDigest := serveCanonicalMirrorHook(t, canonical, "plain-hook")
+	resolved, errs := (&Resolver{Cache: NewCache(t.TempDir())}).Resolve(context.Background(), mirrorHookConfig(server.URL, "plain-hook", contentDigest), []hcc.Target{hcc.TargetFactory}, resolver.MarketplaceResolveModeRefresh)
+	if len(errs) != 0 || len(resolved) != 1 {
+		t.Fatalf("Resolve: artifacts=%#v errors=%v", resolved, errs)
+	}
+	repoRoot := t.TempDir()
+	report, err := materialize.Run(context.Background(), repoRoot, resolved)
+	if err != nil || report == nil || diag.HasErrors(report.Diags) {
+		t.Fatalf("Run: %v report=%+v", err, report)
+	}
+	matches, err := filepath.Glob(filepath.Join(repoRoot, ".factory", "hook-support", "*", "*"))
+	if err != nil || len(matches) != 0 {
+		t.Fatalf("support-less mirror installed files: %v err=%v", matches, err)
+	}
+}
+
+func TestMirrorHookInvalidArchiveDoesNotLeakSupport(t *testing.T) {
+	isolateHarnessState(t)
+	canonical, err := hccartifact.FromIR(ir.NewHook("broken-hook", "SessionStart", "echo plain", "command", nil, ir.SourceRef{File: "hooks/hooks.json"}))
+	if err != nil {
+		t.Fatalf("FromIR: %v", err)
+	}
+	canonical.Support = map[string]hccartifact.SupportFile{"secret.bin": {Data: []byte{0x00, 0xff}}}
+	raw, archiveDigest, err := hccartifact.Encode(canonical)
+	if err != nil {
+		t.Fatalf("Encode: %v", err)
+	}
+	tampered := append([]byte(nil), raw...)
+	tampered[len(tampered)/2] ^= 0x01
+	server, contentDigest := serveCanonicalMirrorHookArchive(t, canonical, "broken-hook", tampered, archiveDigest)
+	resolved, errs := (&Resolver{Cache: NewCache(t.TempDir())}).Resolve(context.Background(), mirrorHookConfig(server.URL, "broken-hook", contentDigest), []hcc.Target{hcc.TargetFactory}, resolver.MarketplaceResolveModeRefresh)
+	if len(errs) == 0 || len(resolved) != 0 {
+		t.Fatalf("invalid archive resolution leaked artifacts=%#v errors=%v", resolved, errs)
+	}
 }

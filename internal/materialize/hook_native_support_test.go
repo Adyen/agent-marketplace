@@ -17,6 +17,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/resolver"
 	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
+	hccartifact "github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 )
@@ -915,6 +916,10 @@ func TestNativeHookSupportMirrorAndIndexOnly(t *testing.T) {
 	}
 	t.Run("mirror directory", func(t *testing.T) {
 		repo, _ := additiveSafetyEnv(t)
+		plans, _ := prepareHookSupport([]skillTarget{{skill: mirror, target: hcc.TargetFactory}})
+		if plans[0].sourceDigest != "" {
+			t.Fatal("manual mirror directory acquired source proof without resolver-verified support")
+		}
 		report, err := Run(context.Background(), repo, []resolver.ResolvedArtifact{mirror})
 		if err != nil || hasErrorDiagnostics(report.Diags) {
 			t.Fatalf("mirror support run: %v %v", err, report.Diags)
@@ -929,22 +934,53 @@ func TestNativeHookSupportMirrorAndIndexOnly(t *testing.T) {
 	})
 
 	t.Run("index-only definition file", func(t *testing.T) {
+		sourceRoot := t.TempDir()
+		sourceDefinition := []byte(`{"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"${CLAUDE_PLUGIN_ROOT}/scripts/check.sh"}]}]}}`)
+		additiveSafetyWrite(t, filepath.Join(sourceRoot, ".claude", "settings.json"), string(sourceDefinition))
+		additiveSafetyWrite(t, filepath.Join(sourceRoot, ".claude", "scripts", "check.sh"), "echo staged source\n")
+		sourceCatalog, err := catalog.Load(sourceRoot, "claude")
+		if err != nil || len(sourceCatalog.Entries) != 1 {
+			t.Fatalf("source catalog: %v entries=%#v", err, sourceCatalog.Entries)
+		}
+		originalHook, ok := sourceCatalog.Entries[0].Resource.(*ir.Hook)
+		if !ok || originalHook.Source.File != ".claude/settings.json" || originalHook.HookSource != "claude" {
+			t.Fatalf("actual Claude source hook = %#v", sourceCatalog.Entries[0].Resource)
+		}
+		canonical, err := hccartifact.FromIR(originalHook)
+		if err != nil {
+			t.Fatalf("FromIR: %v", err)
+		}
+		archive, _, err := hccartifact.Encode(canonical)
+		if err != nil {
+			t.Fatalf("Encode: %v", err)
+		}
+		decodedArchive, _, err := hccartifact.Decode(bytes.NewReader(archive))
+		if err != nil {
+			t.Fatalf("Decode: %v", err)
+		}
+		decodedResource, err := hccartifact.DecodeResource(decodedArchive.Manifest.Kind, decodedArchive.Payload)
+		if err != nil {
+			t.Fatalf("DecodeResource: %v", err)
+		}
+		indexHook, ok := decodedResource.(*ir.Hook)
+		if !ok || indexHook.SourceDefinitionDigest() != "" {
+			t.Fatalf("decoded Marketplace hook = %#v", decodedResource)
+		}
 		staged := t.TempDir()
 		definition := filepath.Join(staged, "bundle", "hooks.json")
-		additiveSafetyWrite(t, definition, `{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"${CLAUDE_PLUGIN_ROOT}/scripts/check.sh"}]}]}`)
+		additiveSafetyWrite(t, definition, string(sourceDefinition))
 		additiveSafetyWrite(t, filepath.Join(staged, "bundle", "scripts", "check.sh"), "echo staged source\n")
 		additiveSafetyWrite(t, filepath.Join(staged, "bundle", "bundle", "hooks.json"), "nested support payload\n")
 		additiveSafetyWrite(t, filepath.Join(staged, "bundle", "bundle", "scripts", "check.sh"), "echo nested payload\n")
 		additiveSafetyWrite(t, filepath.Join(staged, "verified.marker"), "staging metadata\n")
 		additiveSafetyWrite(t, filepath.Join(staged, "sibling", "other.sh"), "not hook support\n")
-		indexHook := ir.NewHookWithMatcher("guard", "PreToolUse", "Bash", "${CLAUDE_PLUGIN_ROOT}/scripts/check.sh", "command", nil, ir.SourceRef{File: "bundle/hooks.json"})
 		indexOnly := resolver.ResolvedArtifact{
-			Entry:                   catalog.Entry{Kind: ir.KindHook, Name: "guard", Path: definition, Resource: indexHook, SourceHarness: "claude"},
+			Entry:                   catalog.Entry{Kind: ir.KindHook, Name: indexHook.Name(), Path: definition, Resource: indexHook},
 			Source:                  config.RepoCommitted,
 			IsMarketplace:           true,
 			MarketplaceAcquisition:  config.MarketplaceAcquisitionIndexOnly,
 			MarketplaceRegistryID:   "registry",
-			MarketplaceResourceName: "guard",
+			MarketplaceResourceName: indexHook.Name(),
 			MarketplaceDigest:       "sha256:" + strings.Repeat("b", 64),
 			InstalledName:           "installed-guard",
 			StagedSourceDir:         staged,
@@ -1436,6 +1472,31 @@ func TestNativeHookSupportFIFOChild(t *testing.T) {
 	}
 	requireNativeSupportCompileError(t, report, protected)
 	assertNativeSupportSnapshot(t, before, nativeSupportPersistentSnapshot(t, repo, home))
+
+	peerProvider := nativeSupportSource(t, "devin", ".devin/hooks.v1.json", map[string]string{
+		".devin/hooks.v1.json":   `{"PreToolUse":[{"matcher":"exec","hooks":[{"type":"command","command":"./run.sh"}]}]}`,
+		".devin/config.json":     `{"hooks":{"PreToolUse":[]}}`,
+		".devin/mcp_config.json": `{"mcpServers":{}}`,
+		".devin/run.sh":          "peer fifo control\n",
+	})
+	peerResolved := nativeSupportResolve(t, hcc.TargetDevin, false, []resolver.ResolvedArtifact{peerProvider})
+	if _, err := Run(context.Background(), repo, peerResolved); err != nil {
+		t.Fatalf("seed peer FIFO installation: %v", err)
+	}
+	peerBefore := nativeSupportPersistentSnapshot(t, repo, home)
+	peer := filepath.Join(peerProvider.RegistryURL, ".devin", "config.json")
+	if err := os.Remove(peer); err != nil {
+		t.Fatal(err)
+	}
+	if err := syscall.Mkfifo(peer, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	peerReport, err := Run(context.Background(), repo, peerResolved)
+	if err != nil {
+		t.Fatalf("excluded peer FIFO run: %v", err)
+	}
+	requireNativeSupportCompileError(t, peerReport, "")
+	assertNativeSupportSnapshot(t, peerBefore, nativeSupportPersistentSnapshot(t, repo, home))
 }
 
 func TestNativeHookSupportFIFOIsBounded(t *testing.T) {

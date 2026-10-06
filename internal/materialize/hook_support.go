@@ -29,9 +29,10 @@ import (
 )
 
 type hookSupportPlan struct {
-	relBase   string
-	artifacts []artifact.Artifact
-	err       error
+	relBase      string
+	artifacts    []artifact.Artifact
+	sourceDigest string
+	err          error
 }
 
 type hookSupportClaim struct {
@@ -42,50 +43,113 @@ type hookSupportClaim struct {
 
 func prepareHookSupport(work []skillTarget) (map[int]hookSupportPlan, map[int][]string) {
 	plans := make(map[int]hookSupportPlan)
-	type collectKey struct{ root, definition, definitionDir, harness string }
-	cached := make(map[collectKey][]artifact.Artifact)
-	collectErrs := make(map[collectKey]error)
+	type captureKey struct {
+		sourceKey, root, definition, definitionDir, harness string
+	}
+	snapshots := make(map[captureKey]*hookSourceSnapshot)
+	snapshotErrs := make(map[captureKey]error)
 	claims := make(map[string]*hookSupportClaim)
 	var keys []string
 	for i, w := range work {
 		if w.skill.Resource == nil || w.skill.Resource.Kind() != ir.KindHook {
 			continue
 		}
-		root, definition, definitionDir, ok, err := hookSupportSource(w.skill)
-		if err != nil {
-			plans[i] = hookSupportPlan{err: err}
-			continue
+		plan := hookSupportPlan{}
+		var files []artifact.Artifact
+		if w.skill.IsMarketplace && w.skill.MarketplaceAcquisition == config.MarketplaceAcquisitionMirror && w.skill.MarketplaceHookSupport != nil {
+			sourceKey, err := hookSupportSourceKey(w.skill)
+			if err != nil {
+				plan.err = err
+				plans[i] = plan
+				continue
+			}
+			plan.relBase, err = hookSupportRelBase(w, sourceKey)
+			if err != nil {
+				plan.err = err
+				plans[i] = plan
+				continue
+			}
+			files, err = marketplaceHookSupportArtifacts(w.skill.MarketplaceHookSupport)
+			if err != nil {
+				plan.err = err
+				plans[i] = plan
+				continue
+			}
+			plan.sourceDigest, plan.err = nativeHookFingerprint(w.skill, w.target, w.machineScope)
+			if plan.err != nil {
+				plans[i] = plan
+				continue
+			}
+		} else {
+			root, definition, definitionDir, ok, err := hookSupportSource(w.skill)
+			if err != nil {
+				plan.err = err
+				plans[i] = plan
+				continue
+			}
+			if !ok {
+				if hook, ok := w.skill.Resource.(*ir.Hook); ok && hook.SourceDefinitionDigest() != "" {
+					plan.err = errors.New("hook source definition is unavailable")
+				}
+				plans[i] = plan
+				continue
+			}
+			sourceKey, err := hookSupportSourceKey(w.skill)
+			if err != nil {
+				plan.err = err
+				plans[i] = plan
+				continue
+			}
+			plan.relBase, err = hookSupportRelBase(w, sourceKey)
+			if err != nil {
+				plan.err = err
+				plans[i] = plan
+				continue
+			}
+			projection, excludedPeers, err := hookSupportProjection(w.skill, definition, definitionDir)
+			if err != nil {
+				plan.err = err
+				plans[i] = plan
+				continue
+			}
+			key := captureKey{sourceKey: sourceKey, root: root, definition: definition, definitionDir: definitionDir, harness: projection.SourceHarness}
+			snapshot, exists := snapshots[key]
+			if !exists {
+				snapshot, err = captureHookSourceSnapshot(root, definition, definitionDir, excludedPeers...)
+				snapshots[key] = snapshot
+				snapshotErrs[key] = err
+			}
+			if err := snapshotErrs[key]; err != nil {
+				plan.err = err
+				plans[i] = plan
+				continue
+			}
+			files, err = hookSupportArtifactsFromSnapshot(projection, snapshot)
+			if err != nil {
+				plan.err = err
+				plans[i] = plan
+				continue
+			}
+			plan.sourceDigest, plan.err = preparedHookSourceDigest(w.skill, w.target, w.machineScope, snapshot)
+			if plan.err != nil {
+				plans[i] = plan
+				continue
+			}
 		}
-		if !ok {
-			plans[i] = hookSupportPlan{}
-			continue
+		for _, file := range files {
+			staged := artifact.Artifact{Path: path.Join(plan.relBase, file.Path), Bytes: bytes.Clone(file.Bytes), Mode: file.Mode.Perm()}
+			if err := staged.Validate(); err != nil {
+				plan.err = err
+				plan.artifacts = nil
+				break
+			}
+			plan.artifacts = append(plan.artifacts, staged)
 		}
-		sourceKey, err := hookSupportSourceKey(w.skill)
-		if err != nil {
-			plans[i] = hookSupportPlan{err: err}
-			continue
-		}
-		relBase, err := hookSupportRelBase(w, sourceKey)
-		if err != nil {
-			plans[i] = hookSupportPlan{err: err}
-			continue
-		}
-		plan := hookSupportPlan{relBase: relBase}
-		key := collectKey{root: root, definition: definition, definitionDir: definitionDir, harness: w.skill.SourceHarness}
-		files, exists := cached[key]
-		if !exists {
-			files, err = collectHookSupportFiles(w.skill, root, definition, definitionDir)
-			cached[key] = files
-			collectErrs[key] = err
-		}
-		if err := collectErrs[key]; err != nil {
-			plan.err = err
+		if plan.err != nil {
 			plans[i] = plan
 			continue
 		}
-		for _, file := range files {
-			staged := artifact.Artifact{Path: path.Join(relBase, file.Path), Bytes: file.Bytes, Mode: file.Mode}
-			plan.artifacts = append(plan.artifacts, staged)
+		for _, staged := range plan.artifacts {
 			claimKey := fmt.Sprintf("%s\x00%t\x00%s", w.target, w.machineScope, staged.Path)
 			claim := claims[claimKey]
 			if claim == nil {
@@ -429,107 +493,47 @@ func openHookSupportFileAt(dirFD int, relative string, total int64) (*os.File, f
 	return file, fs.FileMode(stat.Mode & 0o777), stat.Size, nil
 }
 
-func validateHookSupportPeer(dirFD int, name string) error {
-	file, _, _, err := openHookSupportFileAt(dirFD, name, 0)
-	if errors.Is(err, unix.ENOENT) {
-		return nil
+func hookSupportProjection(res resolver.ResolvedArtifact, definition, definitionDir string) (resolver.ResolvedArtifact, []string, error) {
+	projection := res
+	if res.IsMarketplace && res.MarketplaceAcquisition == config.MarketplaceAcquisitionIndexOnly {
+		hook, ok := res.Resource.(*ir.Hook)
+		if !ok {
+			return resolver.ResolvedArtifact{}, nil, errors.New("index-only source resource is not a hook")
+		}
+		sourceHarness, err := indexOnlyHookSourceHarness(res, hook)
+		if err != nil {
+			return resolver.ResolvedArtifact{}, nil, err
+		}
+		projection.SourceHarness = string(sourceHarness)
 	}
-	if err != nil {
-		return err
-	}
-	return file.Close()
-}
-
-func collectHookSupportFiles(res resolver.ResolvedArtifact, sourceRoot, definition, definitionDir string) ([]artifact.Artifact, error) {
-	if !filepath.IsAbs(sourceRoot) {
-		return nil, fmt.Errorf("hook source root is not absolute")
-	}
-	if definition != "" && (!fs.ValidPath(definition) || path.IsAbs(definition) || path.Dir(definition) != definitionDir) {
-		return nil, fmt.Errorf("hook definition path is invalid")
-	}
-	rootFD, err := unix.Open(sourceRoot, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0)
-	if err != nil {
-		return nil, fmt.Errorf("open hook source root: %w", err)
-	}
-	defer func() { _ = unix.Close(rootFD) }()
-	dirFD, err := openHookSupportDirAt(rootFD, definitionDir)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = unix.Close(dirFD) }()
-
-	excluded, inventoryDir := hookSupportExclusions(res, definitionDir)
+	excluded, _ := hookSupportExclusions(projection, definitionDir)
 	definitionName := ""
-	var total int64
 	if definition != "" {
 		definitionName = path.Base(definition)
-		file, _, size, err := openHookSupportFileAt(dirFD, definitionName, total)
-		if err != nil {
-			return nil, err
-		}
-		if err := file.Close(); err != nil {
-			return nil, err
-		}
-		total += size
 	}
+	peers := make([]string, 0, len(excluded))
 	for peer := range excluded {
 		if peer != definitionName {
-			if err := validateHookSupportPeer(dirFD, peer); err != nil {
-				return nil, err
-			}
+			peers = append(peers, peer)
 		}
 	}
+	slices.Sort(peers)
+	return projection, peers, nil
+}
 
-	var files []artifact.Artifact
-	if err := walkFingerprintDir(dirFD, func(relative string) error {
-		if relative == definitionName || excluded[relative] {
-			return nil
+func marketplaceHookSupportArtifacts(support []artifact.Artifact) ([]artifact.Artifact, error) {
+	files := make([]artifact.Artifact, 0, len(support))
+	seen := make(map[string]struct{}, len(support))
+	for _, source := range support {
+		file := artifact.Artifact{Path: source.Path, Bytes: bytes.Clone(source.Bytes), Mode: source.Mode.Perm()}
+		if err := file.Validate(); err != nil {
+			return nil, err
 		}
-		for peer := range excluded {
-			if strings.HasPrefix(relative, peer+"/") {
-				return fmt.Errorf("native hook aggregate peer is not a regular file")
-			}
+		if _, ok := seen[file.Path]; ok {
+			return nil, errors.New("mirror hook support contains a duplicate path")
 		}
-		if inventoryDir && !strings.Contains(relative, "/") && strings.HasSuffix(relative, ".json") {
-			file, _, size, err := openHookSupportFileAt(dirFD, relative, total)
-			if errors.Is(err, unix.ENOENT) {
-				return nil
-			}
-			if err != nil {
-				return err
-			}
-			if err := file.Close(); err != nil {
-				return err
-			}
-			total += size
-			return nil
-		}
-		file, mode, size, err := openHookSupportFileAt(dirFD, relative, total)
-		if err != nil {
-			return err
-		}
-		data, readErr := readFingerprintFD(file, relative, &total)
-		closeErr := file.Close()
-		if readErr != nil {
-			return readErr
-		}
-		if closeErr != nil {
-			return closeErr
-		}
-		if int64(len(data)) != size {
-			return fmt.Errorf("hook support file changed while reading")
-		}
-		files = append(files, artifact.Artifact{Path: relative, Bytes: data, Mode: mode})
-		return nil
-	}); err != nil {
-		return nil, err
-	}
-	for peer := range excluded {
-		if peer != definitionName {
-			if err := validateHookSupportPeer(dirFD, peer); err != nil {
-				return nil, err
-			}
-		}
+		seen[file.Path] = struct{}{}
+		files = append(files, file)
 	}
 	slices.SortFunc(files, func(a, b artifact.Artifact) int { return strings.Compare(a.Path, b.Path) })
 	return files, nil

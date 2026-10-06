@@ -10,6 +10,7 @@ import (
 	"time"
 
 	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 
 	"github.com/Adyen/agent-marketplace/internal/catalog"
@@ -61,12 +62,13 @@ type ResolvedArtifact struct {
 	// StagedSourceDir, when set, is the absolute root of a staged copy of the
 	// resolved resource's source directory (the index-only reconstructed
 	// resource staging area). Path is the definition file inside it.
-	StagedSourceDir string
-	InstalledName   string // overrides Name for materialization while preserving canonical digest
-	Unresolved      bool   // true when only metadata was fetched (status inspect mode)
-	Revoked         bool   // true when the resolved revision is revoked
-	UpdateAvailable bool   // true when a newer revision exists (status/update)
-	Stale           bool   // true when the registry refresh is stale/unavailable
+	StagedSourceDir        string
+	MarketplaceHookSupport []artifact.Artifact `json:"-"`
+	InstalledName          string              // overrides Name for materialization while preserving canonical digest
+	Unresolved             bool                // true when only metadata was fetched (status inspect mode)
+	Revoked                bool                // true when the resolved revision is revoked
+	UpdateAvailable        bool                // true when a newer revision exists (status/update)
+	Stale                  bool                // true when the registry refresh is stale/unavailable
 }
 
 func HasAdditiveSources(kind ir.ResourceKind) bool {

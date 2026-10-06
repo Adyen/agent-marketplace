@@ -241,7 +241,7 @@ hook matrix goldens deliberately.
 
 ## 8. Maintainer documentation and drift audit
 
-- [ ] 8.1 Add an "Update a shipped hook or tool catalog" recipe to
+- [x] 8.1 Add an "Update a shipped hook or tool catalog" recipe to
   `pkg/harness-compilation/README.md`, next to the model recipe, following
   design D3 step by step. Verify that a dry run of the recipe works: rename
   a tool in a scratch branch, and confirm that only the YAML, one fixture

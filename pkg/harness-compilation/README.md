@@ -48,6 +48,17 @@ Do not update `compile/mapping/models.go` for new releases: that table is frozen
 
 Unresolved models produce warnings and omit the model field, never the whole resource. Source-native model strings retain `ModelSource` provenance through ingestion and canonical archives; same-harness preservation does not certify account availability. See the [catalog design reference](../../docs/plans/2026-09-21-harness-model-catalogs-design.md) for the schema and the Devin CLI-inventory evidence policy.
 
+## Update a shipped hook or tool catalog
+
+For a vendor update, change the embedded catalog and prove it with an independently written conversion fixture.
+
+1. **Rename a tool.** In `toolpolicy/catalogs/<harness>.yaml`, move it to the new native spelling, keep the old spelling in `aliases`, and update `evidence.checked`. Verify the first-party refs support the emitted name and concept set. For a new tool, add its concept mapping; if no concept fits, review other harnesses for an equivalent before adding a concept to `toolpolicy/concepts.yaml`.
+2. **Update hook environment names or events.** In `hookpolicy/catalogs/<harness>.yaml`, put the name emitted by the harness first and retain names it still sets. Add events as native-only unless the vendor documents the same timing and blocking role as an existing canonical event.
+3. **Add one independent fixture.** Put a cross-harness case in `hookpolicy/testdata/conversions.yaml` under `matchers`, `events`, `env`, `timeouts`, or `allow_lists`. Write the expected output or diagnostic by hand rather than deriving it from the resolver or catalog.
+4. **Run local checks.** From the repository root, run `make catalog-docs`, then `make catalog-check`. Both run offline. The check validates catalogs, fixtures, compiler matrix goldens, and freshness of `site/docs/reference/hook-and-tool-names.md`.
+5. **Review evidence drift.** When an audit reports `source.evidence-changed`, re-read the first-party source before updating its SHA baseline. The nightly audit does not yet include hook/tool sources; task 8.2 adds them, so verify those refs manually until then.
+6. **Review output changes.** Changing an actively tested native spelling may require deliberate compiler-matrix and golden updates. Real changes are not limited to a YAML entry, one fixture line, and the generated reference.
+
 ## Investigate nightly model drift
 
 The daily **Harness Images** workflow runs a separate, read-only model audit. It fails on inventory differences, changed model-related documentation, or unavailable/unparseable sources. It publishes a job summary and a `model-catalog-audit-<run-id>` JSON/log artifact even when the audit fails. It never edits catalogs, opens PRs, or makes authenticated model calls. Normal PR tests and `make model-catalog-check` remain offline.

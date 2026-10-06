@@ -4,6 +4,9 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"io/fs"
+
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ingest"
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 )
 
 type sourceDigestFS struct {
@@ -39,4 +42,18 @@ func (w *sourceDigestFS) digestFor(name string) string {
 		return ""
 	}
 	return w.digests[name]
+}
+
+func IngestBundleWithLoader(srcFS fs.FS, load func(fs.FS) (*ingest.Bundle, error)) (*ingest.Bundle, error) {
+	observed := newSourceDigestFS(srcFS)
+	bundle, err := load(observed)
+	if err != nil {
+		return nil, err
+	}
+	for _, resource := range bundle.Resources {
+		if hook, ok := resource.(*ir.Hook); ok {
+			hook.SetSourceDefinitionDigest(observed.digestFor(hook.Source.File))
+		}
+	}
+	return bundle, nil
 }

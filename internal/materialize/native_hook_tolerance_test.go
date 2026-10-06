@@ -9,6 +9,7 @@ import (
 	"strings"
 	"syscall"
 	"testing"
+	"testing/fstest"
 	"time"
 
 	"github.com/Adyen/agent-marketplace/internal/catalog"
@@ -79,24 +80,67 @@ func marketplaceHookFixture(t *testing.T, target hcc.Target, digest string) (res
 	t.Helper()
 	staged := t.TempDir()
 	def := `{"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"./run.sh"}]}]}}`
+	bundle, err := hcc.IngestBundle(fstest.MapFS{
+		"hooks/hooks.json": &fstest.MapFile{Data: []byte(def)},
+	}, hcc.HarnessClaude)
+	if err != nil {
+		t.Fatalf("Claude hook ingest: %v", err)
+	}
+	if diag.HasErrors(bundle.Diagnostics) {
+		t.Fatalf("Claude hook ingest diagnostics: %#v", bundle.Diagnostics)
+	}
+	var sourceHook *ir.Hook
+	var hookCount int
+	for _, resource := range bundle.Resources {
+		if hook, ok := resource.(*ir.Hook); ok {
+			sourceHook = hook
+			hookCount++
+		}
+	}
+	if hookCount != 1 || sourceHook == nil {
+		t.Fatalf("Claude hook resources = %d, want one: %#v", hookCount, bundle.Resources)
+	}
+	if sourceHook.Name() != "PreToolUse-command" || sourceHook.Source.File != "hooks/hooks.json" || sourceHook.HookSource != "" || sourceHook.Event != "PreToolUse" || sourceHook.Matcher != "Bash" || sourceHook.Type != "command" || sourceHook.Command != "./run.sh" {
+		t.Fatalf("Claude source hook = %#v", sourceHook)
+	}
+	canonical, err := artifact.FromIR(sourceHook)
+	if err != nil {
+		t.Fatalf("FromIR: %v", err)
+	}
+	archive, _, err := artifact.Encode(canonical)
+	if err != nil {
+		t.Fatalf("Encode: %v", err)
+	}
+	decodedArchive, _, err := artifact.Decode(bytes.NewReader(archive))
+	if err != nil {
+		t.Fatalf("Decode: %v", err)
+	}
+	resource, err := artifact.DecodeResource(decodedArchive.Manifest.Kind, decodedArchive.Payload)
+	if err != nil {
+		t.Fatalf("DecodeResource: %v", err)
+	}
+	hook, ok := resource.(*ir.Hook)
+	if !ok || hook.SourceDefinitionDigest() != "" || hook.Name() != "PreToolUse-command" || hook.Source.File != "hooks/hooks.json" {
+		t.Fatalf("decoded Marketplace hook = %#v", resource)
+	}
 	if err := os.WriteFile(filepath.Join(staged, "hooks.json"), []byte(def), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(staged, "run.sh"), []byte("#!/bin/sh\necho deploy\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	hook := ir.NewHookWithMatcher("deploy", "PreToolUse", "Bash", "./run.sh", "command", nil, ir.SourceRef{File: "deploy-hook/hooks.json"})
 	return resolver.ResolvedArtifact{
-		Entry:                   catalog.Entry{Name: "deploy", Resource: hook, Path: filepath.Join(staged, "hooks.json")},
+		Entry:                   catalog.Entry{Kind: ir.KindHook, Name: "deploy", Resource: hook, Path: filepath.Join(staged, "hooks.json")},
 		Source:                  config.RepoCommitted,
 		RegistryURL:             "https://marketplace.example",
 		Harnesses:               []hcc.Target{target},
 		IsMarketplace:           true,
 		MarketplaceInstanceID:   "mp",
 		MarketplaceRegistryID:   "src",
-		MarketplaceResourceName: "deploy",
+		MarketplaceResourceName: hook.Name(),
 		MarketplaceDigest:       digest,
 		MarketplaceAcquisition:  config.MarketplaceAcquisitionIndexOnly,
+		InstalledName:           "deploy",
 		StagedSourceDir:         staged,
 	}, staged
 }
@@ -199,8 +243,12 @@ func TestMarketplaceHookNativeProofSuppressesLegacyOutput(t *testing.T) {
 		nativeBody := seedNativeOwnedHook(t, nativeRoot, layout, seed,
 			marketplaceFingerprint(t, resolved, staged, "factory", HookScopeRepository))
 
-		if _, err := Run(context.Background(), repoRoot, []resolver.ResolvedArtifact{resolved}); err != nil {
+		report, err := Run(context.Background(), repoRoot, []resolver.ResolvedArtifact{resolved})
+		if err != nil {
 			t.Fatalf("sync: %v", err)
+		}
+		if diag.HasErrors(report.Diags) {
+			t.Fatalf("exact revision was refused: %#v", report.Diags)
 		}
 		if data, err := os.ReadFile(legacyHookFileFor(hcc.TargetFactory, false, repoRoot, "")); err == nil {
 			t.Fatalf("marketplace hook legacy output recreated: %s", data)
