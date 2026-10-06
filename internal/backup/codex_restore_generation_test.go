@@ -15,16 +15,27 @@ import (
 
 type codexRestoreObserver struct {
 	slog.Handler
-	onPreflight func()
+	onPreflight   func()
+	onPublication func(string)
 }
 
 func (h codexRestoreObserver) Handle(ctx context.Context, record slog.Record) error {
+	phase, path := "", ""
 	record.Attrs(func(attr slog.Attr) bool {
-		if attr.Key == "phase" && attr.Value.String() == "preflight-complete" {
-			h.onPreflight()
+		if attr.Key == "phase" {
+			phase = attr.Value.String()
+		}
+		if attr.Key == "path" {
+			path = attr.Value.String()
 		}
 		return true
 	})
+	if phase == "preflight-complete" && h.onPreflight != nil {
+		h.onPreflight()
+	}
+	if phase == "restore-file-publication" && h.onPublication != nil {
+		h.onPublication(path)
+	}
 	return h.Handler.Handle(ctx, record)
 }
 

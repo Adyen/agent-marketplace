@@ -4,7 +4,9 @@ import (
 	"errors"
 	"io"
 	"io/fs"
+	"log/slog"
 	"os"
+	"path/filepath"
 
 	"github.com/Adyen/agent-marketplace/internal/fsboundary"
 )
@@ -150,6 +152,18 @@ func publishRestoredFile(parent *fsboundary.Dir, name string, reader io.Reader, 
 		if err := validate(); err != nil {
 			return err
 		}
+	}
+	slog.Debug("Backup restored payload ready for publication", "path", filepath.Join(parent.Path(), stageName), "destination", name, "phase", "restore-file-publication")
+	current, statErr := native.Lstat(stageName)
+	if statErr != nil {
+		return errors.Join(fsboundary.ErrGenerationConflict, statErr)
+	}
+	named, identityErr := fsboundary.FileInfoIdentity(current)
+	if identityErr != nil {
+		return identityErr
+	}
+	if !named.SameState(identity) {
+		return fsboundary.ErrGenerationConflict
 	}
 	return native.Rename(stageName, name)
 }
