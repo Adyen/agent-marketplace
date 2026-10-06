@@ -12,6 +12,6 @@
 
 ## 3. Verify and publish claims
 
-- [ ] 3.1 Bind every added scenario to an observable test and reconcile operator/API documentation with reported-adoption limitations; verify spec trace and documentation review.
+- [x] 3.1 Bind every added scenario to an observable test and reconcile operator/API documentation with reported-adoption limitations; verify spec trace and documentation review.
 - [ ] 3.2 Run affected Go checks, frontend checks/build/browser tests, native validation and relevant E2E checks; capture search benchmark comparison and verify all required gates pass.
-- [ ] 3.3 Run `openspec archive marketplace-installation-ranking --yes` in the same pull request and verify strict archived/main-spec validation.
+- [x] 3.3 Run `openspec archive marketplace-installation-ranking --yes` in the same pull request and verify strict archived/main-spec validation.
