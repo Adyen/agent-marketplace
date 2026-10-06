@@ -17,6 +17,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"syscall"
 
 	"github.com/Adyen/agent-marketplace/internal/fsboundary"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact"
@@ -983,7 +984,9 @@ func Materialize(r *Result, outDir string, opts ...WriteOption) (report *WriteRe
 				}
 				return nil, fmt.Errorf("harnesscompile.Materialize: remove stale file %q: %w", candidate.Path, err)
 			}
-			cleanEmptyDirs(outDir, filepath.Dir(filepath.FromSlash(candidate.Path)), candidate.parents)
+			if cleanupErr := cleanEmptyDirs(root, native, outDir, filepath.Dir(filepath.FromSlash(candidate.Path)), candidate.parents); cleanupErr != nil {
+				return report, cleanupErr
+			}
 		}
 		if len(pruneConflicts) > 0 {
 			report.PruneConflicts = pruneConflicts
@@ -1421,35 +1424,67 @@ func findStaleFiles(outDir string, artifactPaths map[string]struct{}) (stale []S
 // upward, but only while each directory still has the inode captured during
 // stale discovery. This prevents a root or parent replacement from turning
 // post-prune cleanup into a deletion of a user's replacement tree.
-func cleanEmptyDirs(outDir, relPath string, parents []staleParentSnapshot) {
-	parts := strings.Split(relPath, "/")
-	for i := len(parts); i >= 1; i-- {
-		dirPath := filepath.Join(outDir, filepath.FromSlash(strings.Join(parts[:i], "/")))
-		if dirPath == outDir {
-			break
-		}
-		current, err := os.Lstat(dirPath)
-		if err != nil {
-			break
-		}
-		var expected fs.FileInfo
-		for _, parent := range parents {
+func cleanEmptyDirs(root *fsboundary.Dir, native *os.Root, outDir, relPath string, parents []staleParentSnapshot) error {
+	for rel := filepath.Clean(relPath); rel != "."; rel = filepath.Dir(rel) {
+		dirPath := filepath.Join(outDir, rel)
+		index := -1
+		for i, parent := range parents {
 			if parent.path == dirPath {
-				expected = parent.info
+				index = i
 				break
 			}
 		}
-		if expected == nil || !current.IsDir() || current.Mode()&os.ModeSymlink != 0 || !os.SameFile(expected, current) {
-			break
+		if index < 1 {
+			return fsboundary.ErrGenerationConflict
 		}
-		entries, err := os.ReadDir(dirPath)
-		if err != nil || len(entries) > 0 {
-			break
+		nonempty, err := func() (nonempty bool, err error) {
+			parent, err := root.OpenPath(filepath.Dir(rel))
+			if err != nil {
+				return false, errors.Join(fsboundary.ErrGenerationConflict, err)
+			}
+			defer func() {
+				if closeErr := parent.Close(); closeErr != nil {
+					err = errors.Join(err, closeErr)
+				}
+			}()
+			info, err := parent.Stat()
+			if err != nil {
+				return false, err
+			}
+			if !os.SameFile(parents[index-1].info, info) {
+				return false, fsboundary.ErrGenerationConflict
+			}
+			current, err := native.Lstat(rel)
+			if err != nil {
+				return false, errors.Join(fsboundary.ErrGenerationConflict, err)
+			}
+			if !current.IsDir() || !os.SameFile(parents[index].info, current) {
+				return false, fsboundary.ErrGenerationConflict
+			}
+			slog.Debug("SDK stale empty parent admitted", "path", dirPath, "phase", "sdk-stale-empty-parent")
+			unchanged, err := staleParentsUnchanged(parents[:index+1])
+			if err != nil {
+				return false, errors.Join(fsboundary.ErrGenerationConflict, err)
+			}
+			if !unchanged {
+				return false, fsboundary.ErrGenerationConflict
+			}
+			if removeErr := parent.Rmdir(filepath.Base(rel)); removeErr != nil {
+				if errors.Is(removeErr, syscall.ENOTEMPTY) || errors.Is(removeErr, syscall.EEXIST) {
+					return true, nil
+				}
+				return false, removeErr
+			}
+			return false, nil
+		}()
+		if err != nil {
+			return err
 		}
-		if err := os.Remove(dirPath); err != nil {
-			break
+		if nonempty {
+			return nil
 		}
 	}
+	return nil
 }
 
 // sliceContains reports whether ss contains s.
