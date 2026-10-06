@@ -27,6 +27,8 @@ import (
 
 type LoadMode int
 
+const ignoredSubBundlesDiagnostic = "catalog.discover.sub-bundles-ignored"
+
 const (
 	LoadModeRefresh LoadMode = iota
 	LoadModeCached
@@ -315,17 +317,18 @@ func (cat *Catalog) discoverSourceWithOptions(source *fsboundary.SourceFS, dir, 
 	// discovers all skills within the workspace, so the sub-bundles don't
 	// contain any missed resources — the warning would be a false positive.
 	if len(cat.Entries) > 0 {
-		var ignored []string
-		for _, subBundle := range scanSourceSubBundles(source, dir, sourceHarness, opts) {
+		subBundles := scanSourceSubBundles(source, dir, sourceHarness, opts)
+		ignored := make([]subBundle, 0, len(subBundles))
+		for _, subBundle := range subBundles {
 			if !subBundle.coveredBy(cat.Entries, dir) {
-				ignored = append(ignored, subBundle.path)
+				ignored = append(ignored, subBundle)
 			}
 		}
 		if len(ignored) > 0 {
 			malformed = append(malformed, skill.MalformedSkill{
-				DirName: "catalog.discover.sub-bundles-ignored",
+				DirName: ignoredSubBundlesDiagnostic,
 				Path:    dir,
-				Error:   fmt.Errorf("directory has both root-level resources and %d sub-bundle(s) (e.g. %s); sub-bundles are ignored. Move root resources into a sub-bundle (e.g. common/) so the parent is a pure container for recursive discovery", len(ignored), filepath.Base(ignored[0])),
+				Error:   errors.New(ignoredSubBundlesMessage(dir, cat.Entries, subBundles, ignored)),
 			})
 		}
 	}
@@ -491,6 +494,91 @@ type subBundle struct {
 	catalog   *Catalog
 	err       error
 	malformed []skill.MalformedSkill
+}
+
+func ignoredSubBundlesMessage(root string, rootEntries []Entry, allBundles, ignoredBundles []subBundle) string {
+	const maxBundles = 5
+	const maxResources = 5
+
+	summaries := make([]string, 0, min(len(ignoredBundles), maxBundles)+1)
+	firstPath := ""
+	for _, bundle := range ignoredBundles[:min(len(ignoredBundles), maxBundles)] {
+		rel, err := filepath.Rel(root, bundle.path)
+		if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			rel = filepath.Base(bundle.path)
+		}
+		rel = filepath.ToSlash(rel)
+		if firstPath == "" {
+			firstPath = rel
+		}
+
+		details := make([]string, 0, maxResources+1)
+		if bundle.catalog != nil {
+			entries := sortedCatalogEntries(bundle.catalog.Entries)
+			for _, entry := range entries[:min(len(entries), maxResources)] {
+				details = append(details, fmt.Sprintf("%s %q", entry.Kind, entry.Name))
+			}
+			if remaining := len(entries) - maxResources; remaining > 0 {
+				details = append(details, fmt.Sprintf("and %d more", remaining))
+			}
+			if hasWarningOrHigher(bundle.catalog.Diagnostics) {
+				details = append(details, "additional resources have diagnostics")
+			}
+		}
+		if bundle.err != nil {
+			details = append(details, "resources could not be loaded")
+		}
+		if len(details) == 0 {
+			details = append(details, "no loadable resources")
+		}
+		summaries = append(summaries, fmt.Sprintf("%q (affected: %s)", rel, strings.Join(details, ", ")))
+	}
+	if remaining := len(ignoredBundles) - maxBundles; remaining > 0 {
+		summaries = append(summaries, fmt.Sprintf("and %d more nested bundles", remaining))
+	}
+
+	// Wording constraint: the harness-compatibility e2e scans successful CLI
+	// output for error signatures such as /(parse|invalid|malformed).*(config|json|toml)/i
+	// (per line). List/status renderers prefix this message with "malformed: ",
+	// so the message must not contain "config", "json", or "toml" substrings;
+	// say "entry path" rather than "configured path".
+	return fmt.Sprintf("directory has root-level resources (root resource example: %s), so nested bundles are ignored (%d total): %s. Move that resource and the other root resources into a sub-bundle (e.g. common/) so the parent is a pure container for recursive discovery. To consume an ignored bundle directly, append its relative path to the registry entry path (for example, path: %q)", rootResourceExample(root, rootEntries, allBundles), len(ignoredBundles), strings.Join(summaries, "; "), "<entry-path>/"+firstPath)
+}
+
+func sortedCatalogEntries(entries []Entry) []Entry {
+	sorted := slices.Clone(entries)
+	slices.SortFunc(sorted, func(a, b Entry) int {
+		if a.Kind != b.Kind {
+			return int(a.Kind - b.Kind)
+		}
+		return strings.Compare(a.Name, b.Name)
+	})
+	return sorted
+}
+
+func rootResourceExample(root string, entries []Entry, bundles []subBundle) string {
+	for _, entry := range sortedCatalogEntries(entries) {
+		entryPath, ok := normalizeCatalogPath(root, entry.Path)
+		if !ok {
+			continue
+		}
+		insideBundle := false
+		for _, bundle := range bundles {
+			if catalogPathWithin(bundle.path, entryPath) {
+				insideBundle = true
+				break
+			}
+		}
+		if insideBundle {
+			continue
+		}
+		rel, err := filepath.Rel(root, entryPath)
+		if err == nil && rel != "." {
+			return fmt.Sprintf("%s %q at %q", entry.Kind, entry.Name, filepath.ToSlash(rel))
+		}
+		return fmt.Sprintf("%s %q", entry.Kind, entry.Name)
+	}
+	return "unavailable; inspect the registry entry path"
 }
 
 func loadSubBundle(path, sourceHarness string, options ...IngestOptions) subBundle {
@@ -1227,6 +1315,26 @@ func IsOverlapWarning(err error) bool {
 	return errors.As(err, &w)
 }
 
+func addRegistryContextToIgnoredSubBundleWarnings(discovered *LoadedCatalog, entry config.RegistryEntry) {
+	entryPath := entry.Path
+	if entryPath == "" {
+		entryPath = "."
+	}
+	for i := range discovered.Malformed {
+		malformed := &discovered.Malformed[i]
+		if malformed.DirName != ignoredSubBundlesDiagnostic {
+			continue
+		}
+		if malformed.Error == nil {
+			malformed.Error = errors.New("nested bundles are ignored")
+		}
+		// Say "entry path", not "configured path": the harness-compatibility
+		// e2e flags successful CLI output matching /(parse|invalid|malformed).*(config|json|toml)/i
+		// per line, and list/status renderers prefix this with "malformed: ".
+		malformed.Error = fmt.Errorf("registry %q (ref %q, entry path %q): %w", redact.URL(entry.URL), entry.Ref, entryPath, malformed.Error)
+	}
+}
+
 // discoverAll runs skill discovery on all loaded requests and populates the result.
 func discoverAll(result *LoadResult, requests []loadRequest, discover DiscoverFunc) {
 	discoveredByKey := make(map[string]LoadedCatalog)
@@ -1293,6 +1401,7 @@ func discoverAll(result *LoadResult, requests []loadRequest, discover DiscoverFu
 			result.Errors = append(result.Errors, fmt.Errorf("registry %q (ref %q, path %q): %w", entry.URL, entry.Ref, entry.Path, err))
 			continue
 		}
+		addRegistryContextToIgnoredSubBundleWarnings(&discovered, entry)
 		if req.catalogBasePath != "" {
 			rebaseCatalogEntryPaths(&discovered, basePath, req.catalogBasePath)
 		}

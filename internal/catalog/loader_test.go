@@ -559,6 +559,7 @@ func TestDiscover_DoesNotRecurseWhenWarningDiagnostics(t *testing.T) {
 // that are also bundles, a warning is emitted telling the user to restructure
 // so the parent is a pure container. Sub-bundles are NOT discovered in this
 // case — only root-level resources are returned.
+// spec: catalog-discovery/mixed-root-warning-identifies-resources-and-remediation
 func TestDiscover_MixedRootEmitsSubBundlesIgnoredWarning(t *testing.T) {
 	dir := t.TempDir()
 
@@ -576,7 +577,7 @@ description: Root command
 
 	// Sub-directory that is also a bundle — should NOT be discovered,
 	// but the user should be warned.
-	pluginA := filepath.Join(dir, "alpha-plugin")
+	pluginA := filepath.Join(dir, "guides", "alpha-plugin")
 	if err := os.MkdirAll(filepath.Join(pluginA, "skills", "skill-a"), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -611,17 +612,142 @@ metadata:
 	for _, m := range result.Malformed {
 		if m.DirName == "catalog.discover.sub-bundles-ignored" {
 			found = true
-			if !strings.Contains(m.Error.Error(), "sub-bundle") {
-				t.Errorf("warning message should mention sub-bundles, got: %v", m.Error)
+			message := m.Error.Error()
+			if !strings.Contains(message, `root resource example: command "root-cmd" at "commands/root-cmd.md"`) {
+				t.Errorf("warning message should identify a root resource to move, got: %v", m.Error)
 			}
-			if !strings.Contains(m.Error.Error(), "common/") {
+			if !strings.Contains(message, `"guides/alpha-plugin" (affected: skill "skill-a")`) {
+				t.Errorf("warning message should identify the ignored bundle and affected resource, got: %v", m.Error)
+			}
+			if !strings.Contains(message, "common/") {
 				t.Errorf("warning message should suggest common/ sub-bundle, got: %v", m.Error)
+			}
+			if !strings.Contains(message, `path: "<entry-path>/guides/alpha-plugin"`) {
+				t.Errorf("warning message should explain how to target the ignored bundle, got: %v", m.Error)
+			}
+			if strings.Contains(message, dir) {
+				t.Errorf("warning message should use registry-relative paths, got: %v", m.Error)
 			}
 			break
 		}
 	}
 	if !found {
 		t.Errorf("expected MalformedSkill with DirName %q, got: %#v", "catalog.discover.sub-bundles-ignored", result.Malformed)
+	}
+}
+
+// spec: catalog-discovery/ignored-bundle-warning-identifies-its-registry-entry
+func TestLoadRegistriesAddsRegistryToIgnoredSubBundleWarning(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	snapshot := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(snapshot, "catalog"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cfg := &config.Config{Registries: []config.RegistryEntry{{
+		URL:  "https://example.invalid/team/resources.git",
+		Ref:  "main",
+		Path: "catalog",
+	}}}
+	cause := errors.New("nested bundles are ignored")
+	result := LoadRegistries(cfg, "", LoadModeRefresh,
+		WithCloneOrPull(func(_, _ string) (string, error) { return snapshot, nil }),
+		WithDiscoverFunc(func(dir, _ string) (LoadedCatalog, error) {
+			return LoadedCatalog{Malformed: []skill.MalformedSkill{{
+				DirName: "catalog.discover.sub-bundles-ignored",
+				Path:    dir,
+				Error:   cause,
+			}}}, nil
+		}),
+	)
+
+	if len(result.Malformed) != 1 {
+		t.Fatalf("malformed diagnostics = %#v, want one ignored-sub-bundle warning", result.Malformed)
+	}
+	if !errors.Is(result.Malformed[0].Error, cause) {
+		t.Fatalf("registry context did not preserve the diagnostic cause: %v", result.Malformed[0].Error)
+	}
+	message := result.Malformed[0].Error.Error()
+	if want := `registry "https://example.invalid/team/resources.git" (ref "main", entry path "catalog")`; !strings.Contains(message, want) {
+		t.Fatalf("warning message should identify the configured registry; missing %q in %q", want, message)
+	}
+}
+
+// spec: catalog-discovery/ignored-bundle-warning-retains-captured-source-authority
+func TestIgnoredSubBundleWarningUsesCapturedSourceRoot(t *testing.T) {
+	t.Parallel()
+	root := filepath.Join(t.TempDir(), "registry")
+	writeDiscoveryFiles(t, root, map[string]string{
+		"commands/root.md":                  "---\nname: root\ndescription: Root\n---\nRoot",
+		"guides/original/skills/a/SKILL.md": "---\nname: original\ndescription: Original\n---\nOriginal",
+	})
+	source, err := fsboundary.OpenSourceFS(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = source.Close() })
+	if err := os.Rename(root, root+".captured"); err != nil {
+		t.Fatal(err)
+	}
+	writeDiscoveryFiles(t, root, map[string]string{
+		"commands/replacement.md":             "---\nname: replacement-root\ndescription: Replacement\n---\nReplacement",
+		"foreign/skills/replacement/SKILL.md": "---\nname: replacement\ndescription: Replacement\n---\nReplacement",
+	})
+
+	result, err := DiscoverSourceWithOptions(source, root, "claude", IngestOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Entries) != 1 || result.Entries[0].Name != "root" {
+		t.Fatalf("discovery lost the captured root resource: %+v", result.Entries)
+	}
+	for _, malformed := range result.Malformed {
+		if malformed.DirName != ignoredSubBundlesDiagnostic {
+			continue
+		}
+		message := malformed.Error.Error()
+		if !strings.Contains(message, `"guides/original" (affected: skill "original")`) || strings.Contains(message, "replacement") || strings.Contains(message, "foreign") {
+			t.Fatalf("ignored-bundle warning used the replacement root: %s", message)
+		}
+		return
+	}
+	t.Fatal("captured root's ignored bundle was not reported")
+}
+
+// spec: catalog-discovery/ignored-bundle-details-are-sorted-and-bounded
+func TestIgnoredSubBundlesMessageIsDeterministicAndBounded(t *testing.T) {
+	root := filepath.Join(string(filepath.Separator), "registry")
+	bundles := make([]subBundle, 0, 6)
+	for bundleIndex := 0; bundleIndex < 6; bundleIndex++ {
+		entries := make([]Entry, 0, 6)
+		for resourceIndex := 5; resourceIndex >= 0; resourceIndex-- {
+			entries = append(entries, Entry{Kind: ir.KindSkill, Name: fmt.Sprintf("skill-%02d", resourceIndex)})
+		}
+		bundles = append(bundles, subBundle{
+			path:    filepath.Join(root, fmt.Sprintf("bundle-%02d", bundleIndex)),
+			catalog: &Catalog{Entries: entries},
+		})
+	}
+
+	rootEntries := []Entry{
+		{Kind: ir.KindSkill, Name: "nested", Path: filepath.Join(root, "bundle-00", "skills", "nested", "SKILL.md")},
+		{Kind: ir.KindCommand, Name: "root", Path: filepath.Join(root, "commands", "root.md")},
+	}
+	message := ignoredSubBundlesMessage(root, rootEntries, bundles, bundles)
+	for _, want := range []string{
+		`root resource example: command "root" at "commands/root.md"`,
+		`"bundle-00" (affected: skill "skill-00", skill "skill-01", skill "skill-02", skill "skill-03", skill "skill-04", and 1 more)`,
+		`"bundle-04"`,
+		"nested bundles are ignored (6 total)",
+		"and 1 more nested bundles",
+	} {
+		if !strings.Contains(message, want) {
+			t.Errorf("warning message missing %q: %s", want, message)
+		}
+	}
+	for _, unwanted := range []string{`"bundle-05"`, `skill "skill-05"`} {
+		if strings.Contains(message, unwanted) {
+			t.Errorf("warning message should bound detailed output and omit %q: %s", unwanted, message)
+		}
 	}
 }
 
