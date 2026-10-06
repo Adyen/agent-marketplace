@@ -72,6 +72,7 @@ registries:
 	}
 }
 
+// spec: update-output/verbose-organization-pin-output-omits-owner-guidance
 func TestUpdateSupportsV4GitSourcesWithTransientOrganizationMarketplace(t *testing.T) {
 	if isolateCommandTest(t) {
 		return
@@ -152,6 +153,9 @@ harnesses: [factory, windsurf]
 	}
 	if !strings.Contains(output, "Organization-managed Marketplace pins: 1") || !strings.Contains(output, `"skill"/"review": not checked (organization-managed)`) {
 		t.Fatalf("verbose update did not explain and list the organization pin:\n%s", output)
+	}
+	if strings.Contains(output, "Ask your organization config owner") {
+		t.Fatalf("verbose update includes organization config owner guidance:\n%s", output)
 	}
 	afterConfig, err := os.ReadFile(configPath)
 	if err != nil {
@@ -819,6 +823,7 @@ registries:
 	}
 }
 
+// spec: update-output/default-organization-pin-output-omits-owner-guidance
 func TestUpdateCommandOutputIncludesMarketplaceDecisions(t *testing.T) {
 	if isolateCommandTest(t) {
 		return
@@ -845,7 +850,6 @@ func TestUpdateCommandOutputIncludesMarketplaceDecisions(t *testing.T) {
 		"Marketplace pins updated: 1\n",
 		"Other Marketplace pins skipped: 1\n",
 		"Organization-managed Marketplace pins: 2 (not checked for newer revisions; pins unchanged)\n",
-		"Ask your organization config owner to update these pins, then run `agent-marketplace sync`.\n",
 		"Use `agent-marketplace update --verbose` to list organization-managed pins.\n",
 		"updated \"" + oldDigest + "\" -> \"" + newDigest + "\"",
 		"\"unchanged\": skipped (\"content digest unchanged\")",
@@ -853,6 +857,9 @@ func TestUpdateCommandOutputIncludesMarketplaceDecisions(t *testing.T) {
 		if !strings.Contains(text, want) {
 			t.Fatalf("output missing %q: %s", want, text)
 		}
+	}
+	if strings.Contains(text, "Ask your organization config owner") {
+		t.Fatalf("default update includes organization config owner guidance: %q", text)
 	}
 	if strings.Contains(text, "\"required\"") || strings.Contains(text, "\"onboarding\"") || strings.Contains(text, "skipped (required)") {
 		t.Fatalf("default output repeats organization pins: %q", text)

@@ -139,9 +139,6 @@ func writeUpdateOutput(out io.Writer, result *pipeline.UpdateResult, bump, verbo
 		if _, err := fmt.Fprintf(out, "Organization-managed Marketplace pins: %d (not checked for newer revisions; pins unchanged)\n", organizationPins); err != nil {
 			return err
 		}
-		if _, err := fmt.Fprintln(out, "Ask your organization config owner to update these pins, then run `agent-marketplace sync`."); err != nil {
-			return err
-		}
 		if !verbose {
 			if _, err := fmt.Fprintln(out, "Use `agent-marketplace update --verbose` to list organization-managed pins."); err != nil {
 				return err
