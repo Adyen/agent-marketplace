@@ -9,7 +9,7 @@
 
 ## 3. Archive
 
-- [ ] 3.1 `openspec archive remove-update-config-owner-guidance --yes`
+- [x] 3.1 `openspec archive remove-update-config-owner-guidance --yes`
 
 ## Validation evidence
 
