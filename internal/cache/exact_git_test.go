@@ -164,7 +164,9 @@ func TestExactGitSubprocessHonorsCancellation(t *testing.T) {
 	// Every fake git invocation records its PID as the name of an empty file
 	// (created atomically, so the test never reads a partial PID) and then
 	// blocks far longer than the hang bound; exec keeps that PID for the sleep.
-	script := "#!/bin/sh\n: > '" + pids + "'/$$\nexec sleep 600\n"
+	// The script locates the record directory from its own path, so no test
+	// path is interpolated into shell source.
+	script := "#!/bin/sh\n: > \"$(dirname -- \"$0\")/pids/$$\"\nexec sleep 600\n"
 	if err := os.WriteFile(gitPath, []byte(script), 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -184,7 +186,14 @@ func TestExactGitSubprocessHonorsCancellation(t *testing.T) {
 		}
 		return out
 	}
+	// Until the call returns, its child is unreaped, so a recorded PID still
+	// names that fake git process and is safe to signal. After the call
+	// returns the PID may be reused, so cleanup never signals it then.
+	returned := false
 	t.Cleanup(func() {
+		if returned {
+			return
+		}
 		for _, pid := range recorded() {
 			_ = unix.Kill(pid, unix.SIGKILL)
 		}
@@ -207,6 +216,7 @@ func TestExactGitSubprocessHonorsCancellation(t *testing.T) {
 	for len(recorded()) == 0 {
 		select {
 		case err := <-result:
+			returned = true
 			t.Fatalf("exact git returned before its subprocess started: %v", err)
 		case <-poll.C:
 		case <-bound.C:
@@ -217,6 +227,7 @@ func TestExactGitSubprocessHonorsCancellation(t *testing.T) {
 	var err error
 	select {
 	case err = <-result:
+		returned = true
 	case <-bound.C:
 		t.Fatal("cancelled exact git did not stop its subprocess")
 	}
