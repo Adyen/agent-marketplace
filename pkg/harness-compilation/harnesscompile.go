@@ -1285,6 +1285,8 @@ func isMaterializeTransactionFile(name string) bool {
 	return isMaterializeTransactionDir(name) || strings.HasPrefix(name, ".agent-marketplace-stale-")
 }
 
+var staleDigestHook func(rel, phase string)
+
 // findStaleFiles walks outDir and returns no-follow identity snapshots for
 // paths not in the artifactPaths set.
 func findStaleFiles(outDir string, artifactPaths map[string]struct{}) (stale []StaleFileCandidate, err error) {
@@ -1383,7 +1385,13 @@ func findStaleFiles(outDir string, artifactPaths map[string]struct{}) (stale []S
 			}
 			candidate := StaleFileCandidate{Path: relSlash, Info: childInfo, parents: parents}
 			if childInfo.Mode().IsRegular() {
-				candidate.Digest, err = digestNoFollow(filepath.Join(outDir, childRel), childInfo)
+				if staleDigestHook != nil {
+					staleDigestHook(childRel, "before")
+				}
+				candidate.Digest, err = digestCapturedNoFollow(directory, entry.Name(), filepath.Join(outDir, childRel), childInfo)
+				if staleDigestHook != nil {
+					staleDigestHook(childRel, "after")
+				}
 				if errors.Is(err, fs.ErrNotExist) {
 					continue
 				}
