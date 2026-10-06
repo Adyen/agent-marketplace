@@ -1,10 +1,8 @@
 package materialize
 
 import (
-	"errors"
 	"os"
 	"path/filepath"
-	"syscall"
 	"testing"
 
 	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
@@ -21,11 +19,17 @@ func TestSymlinkCheckOnlyReadsDesiredContentForLegacyMigration(t *testing.T) {
 			if err := os.MkdirAll(target, 0o755); err != nil {
 				t.Fatal(err)
 			}
-			unreadableTree := filepath.Join(source, "not-a-directory")
-			if err := os.WriteFile(unreadableTree, []byte("not a support tree"), 0o600); err != nil {
+			supportTree := filepath.Join(source, "skill")
+			if err := os.MkdirAll(filepath.Join(supportTree, "references"), 0o755); err != nil {
 				t.Fatal(err)
 			}
-			link := skillLink{name: "demo", target: target, sourceDir: unreadableTree, artifacts: []artifact.Artifact{{Path: "SKILL.md", Bytes: []byte("body")}}}
+			if err := os.WriteFile(filepath.Join(supportTree, "references", "guide.md"), []byte("support"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			var payloadReads []string
+			supportPayloadReadHook = func(rel string) { payloadReads = append(payloadReads, rel) }
+			t.Cleanup(func() { supportPayloadReadHook = nil })
+			link := skillLink{name: "demo", target: target, sourceDir: supportTree, artifacts: []artifact.Artifact{{Path: "SKILL.md", Bytes: []byte("body")}}}
 			installed := filepath.Join(output, "demo")
 			state := &portableState{entries: make(map[string]portableManifestEntry)}
 			if legacy {
@@ -40,20 +44,23 @@ func TestSymlinkCheckOnlyReadsDesiredContentForLegacyMigration(t *testing.T) {
 				t.Fatal(err)
 			}
 			report, err := syncSkillLinks(output, []skillLink{link}, true, false, portableSyncContext{state: state, target: hcc.TargetFactory, reportPrefix: "skills"})
+			if err != nil {
+				t.Fatalf("check failed: %v", err)
+			}
 			if legacy {
-				if !errors.Is(err, syscall.ENOTDIR) {
-					t.Fatalf("legacy migration must validate desired content: %v", err)
+				if len(payloadReads) == 0 {
+					t.Fatal("legacy migration must read desired support content to compare ownership")
 				}
 				if data, readErr := os.ReadFile(filepath.Join(installed, "SKILL.md")); readErr != nil || string(data) != "body" {
 					t.Fatalf("legacy content changed: %q, %v", data, readErr)
 				}
-			} else {
-				if err != nil || len(report.Skipped) != 1 || len(report.Written) != 0 {
-					t.Fatalf("unchanged symlink must not read unused desired tree: report=%+v err=%v", report, err)
-				}
-				if got, err := os.Readlink(installed); err != nil || got != target {
-					t.Fatalf("symlink changed: %q, %v", got, err)
-				}
+				return
+			}
+			if len(payloadReads) != 0 || len(report.Skipped) != 1 || len(report.Written) != 0 {
+				t.Fatalf("unchanged symlink must not read unused desired payloads: reads=%v report=%+v", payloadReads, report)
+			}
+			if got, err := os.Readlink(installed); err != nil || got != target {
+				t.Fatalf("symlink changed: %q, %v", got, err)
 			}
 		})
 	}

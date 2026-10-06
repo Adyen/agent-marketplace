@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -18,6 +19,40 @@ import (
 // stagedCreateFlags creates a brand-new staged file: it must not exist, it
 // is never a symlink, and it starts owner-only until the caller chmods it.
 const stagedCreateFlags = unix.O_RDWR | unix.O_CREAT | unix.O_EXCL | unix.O_NOFOLLOW | unix.O_CLOEXEC
+
+func (d *Dir) OpenPersistentFile(name string, mode fs.FileMode) (*os.File, error) {
+	if err := validLeafName(name); err != nil {
+		return nil, err
+	}
+	flags := unix.O_RDWR | unix.O_NOFOLLOW | unix.O_NONBLOCK | unix.O_CLOEXEC
+	fd, err := unix.Openat(int(d.file.Fd()), name, flags|unix.O_CREAT, uint32(mode.Perm()))
+	if errors.Is(err, unix.ENOENT) {
+		fd, err = unix.Openat(int(d.file.Fd()), name, flags, 0)
+	}
+	if err != nil {
+		return nil, err
+	}
+	// Validate and restore blocking I/O on the raw descriptor before wrapping
+	// it, so a refused leaf never reaches os.NewFile and an admitted one is
+	// not registered as a nonblocking descriptor.
+	var st unix.Stat_t
+	err = unix.Fstat(fd, &st)
+	if err == nil && (st.Mode&unix.S_IFMT != unix.S_IFREG || st.Nlink != 1) {
+		err = ErrUnsafeFile
+	}
+	if err == nil {
+		if blockErr := unix.SetNonblock(fd, false); blockErr != nil {
+			err = fmt.Errorf("restore blocking I/O on %s: %w", name, blockErr)
+		}
+	}
+	if err != nil {
+		if closeErr := unix.Close(fd); closeErr != nil {
+			return nil, errors.Join(err, closeErr)
+		}
+		return nil, err
+	}
+	return os.NewFile(uintptr(fd), filepath.Join(d.path, name)), nil
+}
 
 // CreateTemp creates a new regular file directly below the captured
 // directory and returns it open for writing together with its leaf name.
@@ -65,6 +100,16 @@ func (d *Dir) Mkdir(name string, mode os.FileMode) error {
 			return fmt.Errorf("create directory %s below %s: %w", name, d.path, fs.ErrExist)
 		}
 		return fmt.Errorf("create directory %s below %s: %w", name, d.path, err)
+	}
+	return nil
+}
+
+func (d *Dir) Rmdir(name string) error {
+	if err := validLeafName(name); err != nil {
+		return err
+	}
+	if err := unix.Unlinkat(int(d.file.Fd()), name, unix.AT_REMOVEDIR); err != nil {
+		return fmt.Errorf("remove empty captured directory %s: %w", name, err)
 	}
 	return nil
 }
@@ -119,15 +164,71 @@ func (d *Destination) StagingDir() (*Dir, error) {
 // bounded-read contract, so the returned bytes and identity describe one
 // unchanged object. An absent destination reports fs.ErrNotExist.
 func (d *Destination) ReadTarget(limit int64) ([]byte, Identity, error) {
-	return d.readTarget(limit, nil)
+	return d.readTarget(limit, nil, nil)
 }
 
-func (d *Destination) readTarget(limit int64, beforeOpen func()) ([]byte, Identity, error) {
+func (d *Destination) ReadTargetWith(read func(io.Reader) error) (err error) {
+	parent, err := d.verifyTarget()
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if closeErr := parent.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
+	if err := d.verifyLeaf(parent); err != nil {
+		return err
+	}
+	if !d.exists {
+		return fmt.Errorf("read target %s: %w", d.leafName, fs.ErrNotExist)
+	}
+	file, before, err := openLeaf(parent, d.effectiveName())
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if closeErr := file.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
+	if !before.SameState(d.targetID) {
+		return fmt.Errorf("%w: read target changed since capture", ErrGenerationConflict)
+	}
+	err = read(io.LimitReader(file, before.Size))
+	after, statErr := identityOf(file)
+	if statErr != nil {
+		return errors.Join(err, statErr)
+	}
+	if !after.SameState(before) {
+		return errors.Join(err, fmt.Errorf("%w: target changed during prefix read", ErrGenerationConflict))
+	}
+	checkedParent, checkErr := d.verifyTarget()
+	if checkErr != nil {
+		return errors.Join(err, checkErr)
+	}
+	if leafErr := d.verifyLeaf(checkedParent); leafErr != nil {
+		err = errors.Join(err, leafErr)
+	}
+	if closeErr := checkedParent.Close(); closeErr != nil {
+		err = errors.Join(err, closeErr)
+	}
+	return err
+}
+
+func (d *Destination) readTarget(limit int64, beforeOpen func(), beforeClose func(parent, leaf *os.File)) (data []byte, id Identity, err error) {
 	parent, err := d.verifyTarget()
 	if err != nil {
 		return nil, Identity{}, err
 	}
-	defer func() { _ = parent.Close() }()
+	defer func() {
+		if closeErr := parent.Close(); closeErr != nil {
+			err = errors.Join(err, fmt.Errorf("close read target parent: %w", closeErr))
+		}
+		if err != nil {
+			data, id = nil, Identity{}
+		}
+	}()
 	if err := d.verifyLeaf(parent); err != nil {
 		return nil, Identity{}, err
 	}
@@ -141,8 +242,15 @@ func (d *Destination) readTarget(limit int64, beforeOpen func()) ([]byte, Identi
 	if err != nil {
 		return nil, Identity{}, err
 	}
-	defer func() { _ = file.Close() }()
-	data, id, err := ReadFile(file, limit)
+	defer func() {
+		if closeErr := file.Close(); closeErr != nil {
+			err = errors.Join(err, fmt.Errorf("close read target leaf: %w", closeErr))
+		}
+	}()
+	if beforeClose != nil {
+		defer func() { beforeClose(parent, file) }()
+	}
+	data, id, err = ReadFile(file, limit)
 	if err != nil {
 		return nil, Identity{}, err
 	}

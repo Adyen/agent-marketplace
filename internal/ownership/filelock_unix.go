@@ -9,6 +9,8 @@ import (
 	"log/slog"
 	"os"
 	"syscall"
+
+	"github.com/Adyen/agent-marketplace/internal/fsboundary"
 )
 
 // The unix half of the advisory lock. It is deliberately written against the
@@ -17,11 +19,37 @@ import (
 // x/sys/unix.Flock would still buy nothing here beyond a nicer errno type.
 // syscall.Flock is also a pure syscall, so CGO_ENABLED=0 is unaffected.
 
-// lockOpenFlags is how the lock file is opened. O_NOFOLLOW refuses a symlink in
-// the final component: acquisition truncates this file to write its metadata,
-// and a symlink would aim that truncation at a file this package does not own.
-// A real lock file is always a regular file this package created.
-const lockOpenFlags = os.O_CREATE | os.O_RDWR | syscall.O_NOFOLLOW
+// validateLockFile checks the opened lock descriptor rather than its path.
+// Captured creation uses no-follow and nonblocking opens; validate again
+// after contention and before diagnostics truncate the held descriptor.
+// A real lock file must remain regular and singly linked.
+func validateLockFile(file *os.File) error {
+	info, err := file.Stat()
+	if err != nil {
+		return err
+	}
+	identity, err := fsboundary.FileInfoIdentity(info)
+	if err != nil {
+		return err
+	}
+	if !identity.Mode.IsRegular() || identity.Links != 1 {
+		return fsboundary.ErrUnsafeFile
+	}
+	// O_NONBLOCK only guards opening a non-regular leaf; once the descriptor is
+	// proven regular, restore blocking I/O for the metadata rewrite.
+	raw, err := file.SyscallConn()
+	if err != nil {
+		return fmt.Errorf("ownership: raw lock file handle: %w", err)
+	}
+	var blockErr error
+	if ctlErr := raw.Control(func(fd uintptr) { blockErr = syscall.SetNonblock(int(fd), false) }); ctlErr != nil {
+		return fmt.Errorf("ownership: raw lock file control: %w", ctlErr)
+	}
+	if blockErr != nil {
+		return fmt.Errorf("ownership: restore blocking lock file I/O: %w", blockErr)
+	}
+	return nil
+}
 
 // tryLockFile takes an exclusive advisory lock on f WITHOUT blocking.
 //
