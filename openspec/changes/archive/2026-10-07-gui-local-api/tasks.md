@@ -19,4 +19,4 @@
 
 - [x] 4.1 Add annotated Go handler/security/event tests and a Playwright E2E harness that runs the real core through the loopback handler started by a Go test helper; verify no public CLI flag is added.
 - [x] 4.2 Run API generation/drift checks and `make spec-check`; require zero trace findings for this layer, with no unbound scenarios or dangling annotations, and verify the generated client is clean.
-Completion gate: Run `openspec archive gui-local-api --yes` in this layer's pull request.
+- [x] 4.3 Run `openspec archive gui-local-api --yes` in this layer's pull request.

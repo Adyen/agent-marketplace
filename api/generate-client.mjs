@@ -2,11 +2,6 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { dirname } from 'node:path'
 import { pathToFileURL } from 'node:url'
 
-
-
-
-
-
 export async function generateClient({ inputPath, outputPath, check, openapiTS, astToString, header }) {
   const generated = `${header}${astToString(await openapiTS(pathToFileURL(inputPath), {
     alphabetize: true,
