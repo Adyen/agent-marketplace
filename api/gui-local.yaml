@@ -1,0 +1,341 @@
+openapi: 3.1.0
+info:
+  title: agent-marketplace GUI local API
+  version: 1.0.0
+  description: |
+    Authenticated local boundary between the desktop GUI (or its test
+    harness) and one interactive session. Production access is in-process
+    through the host's native request dispatcher; development and tests use
+    an authenticated loopback socket selected per launch.
+
+    Every operation is a POST so browser clients always send an Origin
+    header, and credentials travel in the X-Agent-Marketplace-Token header,
+    never in URLs. The per-launch credential is compared in constant time;
+    a credential from an earlier launch is invalid.
+
+servers:
+  - url: /
+    description: In-process GUI dispatcher or per-launch loopback origin
+
+paths:
+  /api/snapshot:
+    post:
+      operationId: readSnapshot
+      summary: Read or refresh the authoritative session snapshot
+      description: |
+        Starts a new snapshot read generation that supersedes any earlier
+        read and returns the newest delivered snapshot state. The first
+        read of a launch is progressive: subscribers observe provisional,
+        config, inventory, and final snapshot events in order under the
+        accepted generation. Every later refresh emits exactly one final
+        snapshot under a newer accepted generation. While a guarded
+        operation holds the serializer, or when a superseded read is
+        overtaken, a read returns the latest accepted snapshot state
+        without delivering a new snapshot event.
+      security:
+        - launchToken: []
+      responses:
+        '200':
+          description: Newest snapshot state for the session
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Snapshot'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/OriginRejected'
+        '405':
+          $ref: '#/components/responses/MethodNotAllowed'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /api/events:
+    post:
+      operationId: streamEvents
+      summary: Subscribe to the ordered session event stream
+      description: |
+        Opens a text/event-stream delivering ordered snapshot, progress,
+        and notification events. When an accepted snapshot already exists,
+        an atomic current-state snapshot envelope precedes any live event;
+        an idle stream before the first read carries no synthetic stage.
+        Slow subscribers are disconnected rather than allowed to block
+        session work; reconnecting re-delivers the current snapshot.
+      security:
+        - launchToken: []
+      responses:
+        '200':
+          description: Session event stream
+          content:
+            text/event-stream:
+              schema:
+                $ref: '#/components/schemas/SessionEvent'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/OriginRejected'
+        '405':
+          $ref: '#/components/responses/MethodNotAllowed'
+        '503':
+          $ref: '#/components/responses/Closed'
+  /api/actions:
+    post:
+      operationId: runAction
+      summary: Run a guarded session action (sync or update)
+      description: |
+        Mutating actions hold the same guarded operation serializer as the
+        TUI. A request arriving while another guarded operation is active is
+        rejected as busy before any side effect.
+      security:
+        - launchToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ActionRequest'
+      responses:
+        '202':
+          description: Action accepted; progress and the outcome arrive as events
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ActionAccepted'
+        '400':
+          description: Unknown action, malformed body, or session state not ready for mutation; code localapi.invalid_request or localapi.not_ready
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/OriginRejected'
+        '405':
+          $ref: '#/components/responses/MethodNotAllowed'
+        '409':
+          description: Another guarded operation is active; code localapi.busy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '503':
+          $ref: '#/components/responses/Closed'
+
+components:
+  securitySchemes:
+    launchToken:
+      type: apiKey
+      in: header
+      name: X-Agent-Marketplace-Token
+      description: Random 256-bit per-launch credential issued to the GUI host.
+  responses:
+    Unauthorized:
+      description: Missing, duplicated, or invalid launch credential; code localapi.unauthorized
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    OriginRejected:
+      description: Host or Origin outside the GUI's own origin; code localapi.forbidden
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    MethodNotAllowed:
+      description: Non-POST method; code localapi.invalid_request
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    ServiceUnavailable:
+      description: API lifetime ended (code localapi.closed) or no accepted snapshot state exists yet (code localapi.not_ready)
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Closed:
+      description: API lifetime ended; code localapi.closed
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+  schemas:
+    Error:
+      type: object
+      required: [code, message]
+      properties:
+        code:
+          type: string
+          enum: [localapi.unauthorized, localapi.forbidden, localapi.invalid_request, localapi.not_ready, localapi.busy, localapi.closed]
+        message:
+          type: string
+          description: Static, non-reflective failure description.
+    SnapshotStage:
+      type: string
+      enum: [provisional, config, inventory, final]
+    DriftAssessment:
+      type: string
+      enum: [pending, ready, failed]
+    OperationKind:
+      type: string
+      enum: [mutation, targets, sync, update, migration, editor]
+    OperationRef:
+      type: object
+      required: [id, kind]
+      properties:
+        id:
+          type: integer
+          format: uint64
+        kind:
+          $ref: '#/components/schemas/OperationKind'
+    SnapshotRow:
+      type: object
+      required: [id, name, kind, description, registry, scope, required, pendingVerification, harnesses, status]
+      properties:
+        id:
+          type: string
+          description: Stable identity bound to the source registry identity and scope (kind/name plus a SHA256 digest of the registry-identity/scope tuple), not kind/name alone.
+        name: { type: string }
+        kind: { type: string }
+        description: { type: string }
+        registry: { type: string }
+        scope:
+          type: string
+          enum: [organization, user, project, local, available]
+        required: { type: boolean }
+        pendingVerification: { type: boolean }
+        harnesses:
+          type: array
+          items: { type: string }
+          description: Target harness IDs this row materializes into.
+        status: { type: string }
+    Diagnostic:
+      type: object
+      required: [severity, category, code, message]
+      properties:
+        severity:
+          type: string
+          enum: [error, warning]
+        category: { type: string }
+        code:
+          type: string
+          description: Stable deduplication/identity key of the diagnostic.
+        message: { type: string }
+    Snapshot:
+      type: object
+      required: [stage, drift, rows, diagnostics, harnesses, operation]
+      properties:
+        stage:
+          $ref: '#/components/schemas/SnapshotStage'
+        drift:
+          $ref: '#/components/schemas/DriftAssessment'
+        rows:
+          type: array
+          items:
+            $ref: '#/components/schemas/SnapshotRow'
+        diagnostics:
+          type: array
+          items:
+            $ref: '#/components/schemas/Diagnostic'
+        harnesses:
+          type: array
+          items: { type: string }
+          description: Effective target harness IDs for the session.
+        operation:
+          anyOf:
+            - $ref: '#/components/schemas/OperationRef'
+            - type: 'null'
+          description: Active guarded operation, or null.
+    ActionRequest:
+      type: object
+      required: [action]
+      additionalProperties: false
+      properties:
+        action:
+          type: string
+          enum: [sync, update]
+    ActionAccepted:
+      type: object
+      required: [operation]
+      properties:
+        operation:
+          $ref: '#/components/schemas/OperationRef'
+    SessionEvent:
+      description: |
+        One delivered event. sequence is the monotonic stream identity;
+        generation is the applicable core request generation; operation
+        carries the active operation identity where applicable; payload is
+        typed by type.
+      oneOf:
+        - $ref: '#/components/schemas/SnapshotEvent'
+        - $ref: '#/components/schemas/ProgressEvent'
+        - $ref: '#/components/schemas/NotificationEvent'
+      discriminator:
+        propertyName: type
+        mapping:
+          snapshot: '#/components/schemas/SnapshotEvent'
+          progress: '#/components/schemas/ProgressEvent'
+          notification: '#/components/schemas/NotificationEvent'
+    EventBase:
+      type: object
+      required: [type, sequence, generation, operation]
+      properties:
+        type: { type: string }
+        sequence:
+          type: integer
+          format: uint64
+          description: Monotonic stream identity assigned by the server.
+        generation:
+          type: integer
+          format: uint64
+          description: Applicable core request generation.
+        operation:
+          anyOf:
+            - $ref: '#/components/schemas/OperationRef'
+            - type: 'null'
+    SnapshotEvent:
+      allOf:
+        - $ref: '#/components/schemas/EventBase'
+        - type: object
+          required: [payload]
+          properties:
+            type:
+              type: string
+              enum: [snapshot]
+            payload:
+              $ref: '#/components/schemas/Snapshot'
+    ProgressEvent:
+      allOf:
+        - $ref: '#/components/schemas/EventBase'
+        - type: object
+          required: [payload]
+          properties:
+            type:
+              type: string
+              enum: [progress]
+            payload:
+              type: object
+              required: [progressSequence, phase]
+              properties:
+                progressSequence:
+                  type: integer
+                  format: uint64
+                  description: Core progress.Sequence, distinct from the stream sequence.
+                phase: { type: string }
+    NotificationEvent:
+      allOf:
+        - $ref: '#/components/schemas/EventBase'
+        - type: object
+          required: [payload]
+          properties:
+            type:
+              type: string
+              enum: [notification]
+            payload:
+              type: object
+              required: [severity, message]
+              properties:
+                severity:
+                  type: string
+                  enum: [info, warning, error]
+                message: { type: string }

@@ -14,6 +14,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/materialize"
 	"github.com/Adyen/agent-marketplace/internal/pipeline"
 	"github.com/Adyen/agent-marketplace/internal/resolver"
+	"github.com/Adyen/agent-marketplace/internal/session"
 	"github.com/Adyen/agent-marketplace/internal/telemetry"
 )
 
@@ -136,6 +137,9 @@ type Model struct {
 	migrationPrompt             migrationPrompt
 	migrationDismissed          bool
 	operations                  operationState
+	operationGate               *session.OperationGate
+	externalOperation           operationID
+	dependencyOperation         operationID
 	pendingToggleOperation      operationID
 	pendingToggleReload         requestGeneration
 	// updateReload is the superseding snapshot generation that must be

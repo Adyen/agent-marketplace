@@ -1,0 +1,200 @@
+import type { components, paths } from '../generated/api'
+
+export type Snapshot = components['schemas']['Snapshot']
+export type OperationRef = components['schemas']['OperationRef']
+export type SessionEvent =
+  | components['schemas']['SnapshotEvent']
+  | components['schemas']['ProgressEvent']
+  | components['schemas']['NotificationEvent']
+export type Action = components['schemas']['ActionRequest']['action']
+export type ApiError = components['schemas']['Error']
+
+export class RequestError extends Error {
+  constructor(
+    public readonly status: number,
+    public readonly code: string,
+  ) {
+    super(`request failed: ${status} ${code}`)
+    this.name = 'RequestError'
+  }
+}
+
+const stageRank: Record<string, number> = {
+  provisional: 1,
+  config: 2,
+  inventory: 3,
+  final: 4,
+}
+
+export class EventCursor {
+  private sequence = 0
+  private generation = 0
+  private stage = 0
+  private operation = 0
+  private progressSequence = 0
+
+  accept(event: SessionEvent): boolean {
+    if (typeof event.sequence !== 'number' || event.sequence <= this.sequence) {
+      return false
+    }
+    this.sequence = event.sequence
+    switch (event.type) {
+      case 'snapshot': {
+        const generation = event.generation ?? 0
+        if (generation < this.generation) {
+          return false
+        }
+        const rank = stageRank[event.payload.stage] ?? 0
+        if (generation === this.generation && rank < this.stage) {
+          return false
+        }
+        if (generation > this.generation) {
+          this.generation = generation
+          this.stage = 0
+          this.operation = 0
+          this.progressSequence = 0
+        }
+        this.stage = rank
+        const nextOperation = event.operation?.id ?? 0
+        if (nextOperation !== this.operation) {
+          this.progressSequence = 0
+        }
+        this.operation = nextOperation
+        return true
+      }
+      case 'progress': {
+        const operation = event.operation
+        const next = event.payload.progressSequence
+        if (
+          operation == null ||
+          event.generation !== this.generation ||
+          this.operation === 0 ||
+          operation.id !== this.operation ||
+          typeof next !== 'number' ||
+          next <= this.progressSequence
+        ) {
+          return false
+        }
+        this.progressSequence = next
+        return true
+      }
+      case 'notification': {
+        const generation = event.generation ?? 0
+        if (generation < this.generation) {
+          return false
+        }
+        if (event.operation != null && event.operation.id === this.operation) {
+          this.operation = 0
+          this.progressSequence = 0
+        }
+        return true
+      }
+      default:
+        return false
+    }
+  }
+}
+
+function parseEvents(buffer: string): { events: SessionEvent[]; rest: string } {
+  const events: SessionEvent[] = []
+  let rest = buffer
+  for (;;) {
+    const boundary = rest.indexOf('\n\n')
+    const boundaryCR = rest.indexOf('\r\n\r\n')
+    let end = -1
+    let skip = 0
+    if (boundary !== -1 && (boundaryCR === -1 || boundary < boundaryCR)) {
+      end = boundary
+      skip = 2
+    } else if (boundaryCR !== -1) {
+      end = boundaryCR
+      skip = 4
+    }
+    if (end === -1) {
+      break
+    }
+    const block = rest.slice(0, end)
+    rest = rest.slice(end + skip)
+    const data = block
+      .split(/\r?\n/)
+      .filter((line) => line.startsWith('data:'))
+      .map((line) => line.slice(5).replace(/^ /, ''))
+      .join('\n')
+    if (data !== '') {
+      events.push(JSON.parse(data) as SessionEvent)
+    }
+  }
+  return { events, rest }
+}
+
+export interface Client {
+  snapshot(): Promise<Snapshot>
+  events(cursor?: EventCursor): AsyncIterable<SessionEvent>
+  action(action: Action): Promise<OperationRef>
+}
+
+export function createClient(baseURL: string, credential: string, fetchImpl: typeof fetch = fetch): Client {
+  const root = baseURL.replace(/\/+$/, '')
+  const headers = { 'X-Agent-Marketplace-Token': credential }
+
+  async function post(path: string, body?: unknown): Promise<Response> {
+    const response = await fetchImpl(`${root}${path}`, {
+      method: 'POST',
+      headers:
+        body === undefined
+          ? headers
+          : { ...headers, 'Content-Type': 'application/json' },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    })
+    if (!response.ok) {
+      let code = ''
+      try {
+        code = ((await response.json()) as ApiError).code ?? ''
+      } catch {
+
+      }
+      throw new RequestError(response.status, code)
+    }
+    return response
+  }
+
+  return {
+    async snapshot() {
+      const response = await post('/api/snapshot')
+      return (await response.json()) as Snapshot
+    },
+
+    async *events(cursor: EventCursor = new EventCursor()) {
+      const response = await post('/api/events')
+      if (response.body == null) {
+        throw new RequestError(response.status, 'localapi.no_stream')
+      }
+      const reader = response.body.getReader()
+      const decoder = new TextDecoder()
+      let buffer = ''
+      try {
+        for (;;) {
+          const { done, value } = await reader.read()
+          if (done) {
+            break
+          }
+          buffer += decoder.decode(value, { stream: true })
+          const parsed = parseEvents(buffer)
+          buffer = parsed.rest
+          for (const event of parsed.events) {
+            if (cursor.accept(event)) {
+              yield event
+            }
+          }
+        }
+      } finally {
+        reader.cancel().catch(() => undefined)
+      }
+    },
+
+    async action(action: Action) {
+      const response = await post('/api/actions', { action } satisfies NonNullable<paths['/api/actions']['post']['requestBody']>['content']['application/json'])
+      return ((await response.json()) as components['schemas']['ActionAccepted']).operation
+    },
+  }
+}

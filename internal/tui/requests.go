@@ -35,11 +35,25 @@ func (m *Model) acceptsRequest(kind requestKind, generation requestGeneration) b
 }
 
 func (m *Model) beginOperation(kind operationKind) (operationID, bool) {
-	id, ok := m.operations.Begin(kind)
-	if ok {
-		slog.Debug("tui operation started", "operation", kind, "operation_id", id)
+	var external operationID
+	if m.operationGate != nil {
+		reserved, ok := m.operationGate.Begin(kind)
+		if !ok {
+			slog.Debug("tui operation blocked by shared gate", "operation", kind)
+			return 0, false
+		}
+		external = reserved
 	}
-	return id, ok
+	id, ok := m.operations.Begin(kind)
+	if !ok {
+		if m.operationGate != nil {
+			m.operationGate.Finish(external)
+		}
+		return 0, false
+	}
+	m.externalOperation = external
+	slog.Debug("tui operation started", "operation", kind, "operation_id", id)
+	return id, true
 }
 
 func (m Model) acceptsOperation(id operationID) bool {
@@ -55,7 +69,37 @@ func (m Model) acceptsOperation(id operationID) bool {
 }
 
 func (m *Model) finishOperation(id operationID) {
+	if m.operationGate == nil {
+		m.operations.Finish(id)
+		return
+	}
+	if !m.operations.Accepts(id) {
+		return
+	}
 	m.operations.Finish(id)
+	m.operationGate.Finish(m.externalOperation)
+	m.externalOperation = 0
+}
+
+func (m *Model) beginDependencyOperation(kind operationKind) bool {
+	if m.operationGate == nil {
+		return true
+	}
+	id, ok := m.operationGate.Begin(kind)
+	if !ok {
+		slog.Debug("tui dependency operation blocked by shared gate", "operation", kind)
+		return false
+	}
+	m.dependencyOperation = id
+	return true
+}
+
+func (m *Model) finishDependencyOperation() {
+	if m.operationGate == nil {
+		return
+	}
+	m.operationGate.Finish(m.dependencyOperation)
+	m.dependencyOperation = 0
 }
 
 func operationBlockedCmd() tea.Cmd {
