@@ -296,13 +296,42 @@ func archiveDay(name string) string {
 // The destination directory must exist. Files created after the backup are
 // left in place. Returns the timestamp of the restored backup, or an error if
 // no backup exists.
-func Restore(target hcc.Target, dstDir string, mapped ...map[string]string) (string, error) {
+func Restore(target hcc.Target, dstDir string, mapped ...map[string]string) (timestamp string, err error) {
+	var latest string
+	defer func() {
+		if err != nil && latest != "" {
+			slog.Error("Backup restore failed", "target", string(target), "archive", latest, "error", err)
+		}
+	}()
 	dir, err := Dir()
 	if err != nil {
 		return "", err
 	}
 	targetDir := filepath.Join(dir, string(target))
-	archives, err := filepath.Glob(filepath.Join(targetDir, "*.tar.gz"))
+	parent, err := fsboundary.OpenDir(targetDir)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) && !errors.Is(err, fsboundary.ErrUnsafePath) {
+			return "", fmt.Errorf("backup: no backups found for target %q", target)
+		}
+		return "", err
+	}
+	defer func() {
+		if closeErr := parent.Close(); closeErr != nil {
+			timestamp = ""
+			err = errors.Join(err, closeErr)
+		}
+	}()
+	native, err := parent.NativeRoot()
+	if err != nil {
+		return "", err
+	}
+	defer func() {
+		if closeErr := native.Close(); closeErr != nil {
+			timestamp = ""
+			err = errors.Join(err, closeErr)
+		}
+	}()
+	archives, err := fs.Glob(native.FS(), "*.tar.gz")
 	if err != nil {
 		return "", fmt.Errorf("backup: list archives in %s: %w", targetDir, err)
 	}
@@ -310,14 +339,32 @@ func Restore(target hcc.Target, dstDir string, mapped ...map[string]string) (str
 		return "", fmt.Errorf("backup: no backups found for target %q", target)
 	}
 	sortBackupArchives(archives)
-	latest := archives[len(archives)-1]
-	timestamp := strings.TrimSuffix(filepath.Base(latest), ".tar.gz")
-
-	if err := extractArchive(latest, dstDir, mapped...); err != nil {
-		slog.Error("Backup restore failed", "target", string(target), "archive", latest, "error", err)
+	name := archives[len(archives)-1]
+	latest = filepath.Join(targetDir, name)
+	file, err := fsboundary.CaptureDestination(parent, name, fsboundary.LinkPolicyRepository)
+	if err != nil {
+		return "", err
+	}
+	defer func() {
+		if closeErr := file.Close(); closeErr != nil {
+			timestamp = ""
+			err = errors.Join(err, closeErr)
+		}
+	}()
+	if file.Link() != nil {
+		return "", fmt.Errorf("%w: backup archive %s is linked", fsboundary.ErrUnsafeFile, latest)
+	}
+	if !file.Exists() {
+		return "", fsboundary.ErrGenerationConflict
+	}
+	slog.Debug("Ordinary backup archive selected for restore", "path", latest, "phase", "ordinary-restore-selected")
+	if err := verifyArchiveParent(parent, targetDir); err != nil {
+		return "", err
+	}
+	if err := file.ReadTargetWith(func(reader io.Reader) error { return extractArchivePayload(reader, dstDir, mapped...) }); err != nil {
 		return "", fmt.Errorf("backup: restore %s: %w", string(target), err)
 	}
-	return timestamp, nil
+	return strings.TrimSuffix(name, ".tar.gz"), nil
 }
 
 // ListBackups returns available backups grouped by target.
@@ -695,10 +742,6 @@ func writeTarEntry(tw *tar.Writer, source *fsboundary.Dir, sourceRel, rel string
 	}
 
 	return writeCapturedBackupSource(tw, source, sourceRel, info)
-}
-
-func extractArchive(archivePath, dstDir string, mapped ...map[string]string) error {
-	return withBackupPayload(archivePath, func(reader io.Reader) error { return extractArchivePayload(reader, dstDir, mapped...) })
 }
 
 func extractArchivePayload(reader io.Reader, dstDir string, mapped ...map[string]string) (err error) {
