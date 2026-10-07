@@ -21,12 +21,12 @@ func (s *Server) registerAdmin(mux *http.ServeMux) {
 }
 
 func (s *Server) adminHandler() http.Handler {
-	browser := resolveAdminBrowserRoutes(s.cfg.Instance.BrowserBase)
 	if !s.cfg.Admin.Enabled {
 		return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			writeAdminError(w, http.StatusNotFound, "not_found", "Administration is not enabled.")
 		})
 	}
+	browser := resolveAdminBrowserRoutes(s.cfg.Instance.BrowserBase)
 	unavailable := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if s.cfg.Admin.AuthMode() == config.AdminAuthOIDC && r.Method == http.MethodGet &&
 			(r.URL.Path == adminAuthBase+"/login" || r.URL.Path == adminAuthBase+"/callback") {

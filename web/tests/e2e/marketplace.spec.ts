@@ -163,12 +163,16 @@ test.describe('Marketplace browser discovery', () => {
     await expect(rootNavigation.getByRole('link', { name: 'Docs', exact: true })).toHaveAttribute('href', '/docs/')
 
     const relativePage = await browser.newPage()
-    await relativePage.goto(relativeAppBaseURL)
-    const relativeNavigation = relativePage.getByRole('navigation', { name: 'Product navigation' })
-    await expect(relativeNavigation.getByRole('link', { name: 'agent-marketplace', exact: true })).toHaveAttribute('href', '/marketplace/')
-    await expect(relativeNavigation.getByRole('link', { name: 'Marketplace', exact: true })).toHaveAttribute('href', '/marketplace/')
-    await expect(relativeNavigation.getByRole('link', { name: 'Docs', exact: true })).toHaveAttribute('href', '/docs/')
-    await relativePage.close()
+    try {
+      await relativePage.goto(relativeAppBaseURL)
+      const relativeNavigation = relativePage.getByRole('navigation', { name: 'Product navigation' })
+      await expect(relativeNavigation.getByRole('link', { name: 'agent-marketplace', exact: true })).toHaveAttribute('href', '/marketplace/')
+      await expect(relativeNavigation.getByRole('link', { name: 'Marketplace', exact: true })).toHaveAttribute('href', '/marketplace/')
+      await expect(relativeNavigation.getByRole('link', { name: 'Docs', exact: true })).toHaveAttribute('href', '/docs/')
+    }
+    finally {
+      await relativePage.close()
+    }
   })
 
   test('keeps the public landing profile and its palette independent', async ({ page }) => {

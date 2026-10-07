@@ -6,9 +6,11 @@ import test from 'node:test'
 
 const publicDocsDist = new URL('../.vitepress/dist/docs/', import.meta.url)
 const docsDist = new URL('../.vitepress/dist-docs/', import.meta.url)
-const publicBase = (process.env.SITE_BASE ?? '/').replace(/\/?$/, '/')
+const publicBase = process.env.SITE_BASE ?? '/'
 const marketplaceBase = process.env.MARKETPLACE_BASE ?? '/'
 const marketplaceBasePattern = marketplaceBase.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+const docsOrigin = new URL('https://docs-profile.invalid/docs/')
+const marketplaceURL = new URL(marketplaceBase, docsOrigin)
 
 async function filesBelow(directory: URL): Promise<URL[]> {
   const entries = await readdir(directory, { withFileTypes: true })
@@ -33,9 +35,11 @@ test('documentation-only build is contained below /docs/', async () => {
 
   for (const file of htmlFiles) {
     const html = await readFile(file, 'utf8')
+    const pageURL = new URL(relative(fileURLToPath(docsDist), fileURLToPath(file)), docsOrigin)
     for (const [, target] of html.matchAll(/(?:href|src)="([^"]+)"/g)) {
-      if (!target.startsWith('/') || target === marketplaceBase) continue
-      assert.ok(target.startsWith('/docs/'), `${file.pathname} escapes /docs/: ${target}`)
+      const resolved = new URL(target, pageURL)
+      if (resolved.origin !== docsOrigin.origin || resolved.pathname === marketplaceURL.pathname) continue
+      assert.ok(resolved.pathname.startsWith('/docs/'), `${file.pathname} escapes /docs/: ${target}`)
     }
   }
 })

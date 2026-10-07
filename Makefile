@@ -340,11 +340,11 @@ tui-qa: tui-qa-check
 
 # Website.
 #
-# The site is the landing page only. Its harness table and TUI frame
-# (site/.vitepress/data/) are checked-in fixtures: no target in this build
-# regenerates or verifies them, so they are kept in step with
-# pkg/harness-compilation/target by hand. Generation, and the drift check that
-# makes it trustworthy, land with the documentation work.
+# The site builds public landing/documentation and documentation-only profiles.
+# Its harness table and TUI frame (site/.vitepress/data/) are checked-in fixtures:
+# No target in this build regenerates or verifies them, so they are kept in
+# step with pkg/harness-compilation/target by hand. Generation, and the drift
+# check that makes it trustworthy, land with the documentation work.
 SITE_DIR := site
 
 # Requires Node (see $(SITE_DIR)/package.json); no Go toolchain needed.
