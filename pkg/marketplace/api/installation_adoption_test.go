@@ -3,6 +3,7 @@ package api
 import (
 	"errors"
 	"math"
+	"strings"
 	"testing"
 	"time"
 
@@ -57,13 +58,20 @@ func inventoryResourceSample(installationID, fingerprint, registryID, kind, name
 	}
 }
 
+func hostedInventoryResourceSample(installationID, fingerprint, marketplaceID, registryID, kind, name string) inventoryMetricSample {
+	sample := inventoryResourceSample(installationID, fingerprint, registryID, kind, name)
+	sample.Metric["source_kind"] = "marketplace"
+	sample.Metric["marketplace_id"] = marketplaceID
+	return sample
+}
+
 func adoptionKey(registry store.RegistryID, kind, name string) installationResourceKey {
 	return installationResourceKey{Registry: registry, Kind: kind, Name: name}
 }
 
 func aggregateAdoptionOrFail(t *testing.T, samples []inventoryMetricSample, registries map[store.RegistryID]store.Registry) installationCounts {
 	t.Helper()
-	counts, err := aggregateInstallationMetrics(samples, registries, adoptionFixedNow)
+	counts, err := aggregateInstallationMetrics(samples, registries, "mp", adoptionFixedNow)
 	if err != nil {
 		t.Fatalf("aggregateInstallationMetrics() error = %v, want nil", err)
 	}
@@ -102,7 +110,7 @@ func installationRuleAdoptionSamples() []inventoryMetricSample {
 // spec: marketplace-api/rule-observations-preserve-selectable-resource-adoption
 func TestInstallationAdoptionRuleObservationsPreserveSelectableResourceAdoption(t *testing.T) {
 	samples := installationRuleAdoptionSamples()
-	counts, err := aggregateInstallationMetrics(samples, adoptionTestRegistries(), adoptionFixedNow)
+	counts, err := aggregateInstallationMetrics(samples, adoptionTestRegistries(), "mp", adoptionFixedNow)
 	if err != nil {
 		t.Fatalf("aggregateInstallationMetrics() error = %v, want valid rule telemetry to preserve skill adoption", err)
 	}
@@ -132,7 +140,77 @@ func TestInstallationAdoptionRuleObservationsPreserveSelectableResourceAdoption(
 	for _, test := range invalidRules {
 		t.Run(test.name, func(t *testing.T) {
 			invalidSamples := append(installationRuleAdoptionSamples(), test.sample)
-			if _, err := aggregateInstallationMetrics(invalidSamples, adoptionTestRegistries(), adoptionFixedNow); !errors.Is(err, errInvalidInstallationMetrics) {
+			if _, err := aggregateInstallationMetrics(invalidSamples, adoptionTestRegistries(), "mp", adoptionFixedNow); !errors.Is(err, errInvalidInstallationMetrics) {
+				t.Fatalf("aggregateInstallationMetrics() error = %v, want %v", err, errInvalidInstallationMetrics)
+			}
+		})
+	}
+}
+
+// spec: marketplace-api/hosted-adoption-is-isolated-and-deduplicated
+func TestInstallationAdoptionHostedCoordinatesAreScopedAndDeduplicated(t *testing.T) {
+	fresh := adoptionFixedNow.Add(-time.Hour)
+	older := adoptionFixedNow.Add(-2 * time.Hour)
+	samples := []inventoryMetricSample{
+		inventorySnapshotSample("install-git-and-hosted", "gen-1", fresh),
+		inventoryResourceSample("install-git-and-hosted", "gen-1", telemetryAlpha, "skill", "shared"),
+		hostedInventoryResourceSample("install-git-and-hosted", "gen-1", "mp", "rA", "skill", "shared"),
+		inventorySnapshotSample("install-hosted-again", "gen-2", fresh),
+		hostedInventoryResourceSample("install-hosted-again", "gen-2", "mp", "rA", "skill", "shared"),
+		inventorySnapshotSample("install-foreign", "gen-3", fresh),
+		hostedInventoryResourceSample("install-foreign", "gen-3", "other-marketplace", "rA", "skill", "shared"),
+		inventorySnapshotSample("install-other-registry", "gen-4", fresh),
+		hostedInventoryResourceSample("install-other-registry", "gen-4", "mp", "rB", "skill", "shared"),
+		inventorySnapshotSample("install-unicode", "gen-5", fresh),
+		hostedInventoryResourceSample("install-unicode", "gen-5", "mp", "rA", "skill", "café"),
+		inventorySnapshotSample("install-removed", "gen-old", older),
+		hostedInventoryResourceSample("install-removed", "gen-old", "mp", "rA", "skill", "removed"),
+		inventorySnapshotSample("install-removed", "gen-new", fresh),
+	}
+
+	counts := aggregateAdoptionOrFail(t, samples, adoptionTestRegistries())
+	assertAdoptionCounts(t, counts, map[installationResourceKey]int64{
+		adoptionKey("rA", "skill", "shared"): 2,
+		adoptionKey("rB", "skill", "shared"): 1,
+		adoptionKey("rA", "skill", "café"):   1,
+	}, map[store.RegistryID]bool{"rA": true, "rB": true})
+}
+
+func TestInstallationAdoptionRejectsInvalidHostedIdentity(t *testing.T) {
+	tests := []struct {
+		name          string
+		sourceKind    string
+		marketplaceID string
+		registryID    string
+		resourceName  string
+	}{
+		{name: "unknown source kind", sourceKind: "future", registryID: telemetryAlpha, resourceName: "bad"},
+		{name: "legacy source with Marketplace ID", marketplaceID: "mp", registryID: telemetryAlpha, resourceName: "bad"},
+		{name: "hosted source without Marketplace ID", sourceKind: "marketplace", registryID: "rA", resourceName: "bad"},
+		{name: "unsafe registry ID", sourceKind: "marketplace", marketplaceID: "mp", registryID: "../private", resourceName: "bad"},
+		{name: "dot resource name", sourceKind: "marketplace", marketplaceID: "mp", registryID: "rA", resourceName: ".."},
+		{name: "invalid UTF-8 Marketplace ID", sourceKind: "marketplace", marketplaceID: string([]byte{0xff}), registryID: "rA", resourceName: "bad"},
+		{name: "oversized Marketplace ID", sourceKind: "marketplace", marketplaceID: strings.Repeat("m", 513), registryID: "rA", resourceName: "bad"},
+		{name: "oversized registry ID", sourceKind: "marketplace", marketplaceID: "mp", registryID: strings.Repeat("r", 513), resourceName: "bad"},
+		{name: "oversized resource name", sourceKind: "marketplace", marketplaceID: "mp", registryID: "rA", resourceName: strings.Repeat("n", 513)},
+	}
+	fresh := adoptionFixedNow.Add(-time.Hour)
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			samples := []inventoryMetricSample{
+				inventorySnapshotSample("install-control", "gen-control", fresh),
+				inventoryResourceSample("install-control", "gen-control", telemetryAlpha, "skill", "control"),
+				inventorySnapshotSample("install-invalid", "gen-invalid", fresh),
+				inventoryResourceSample("install-invalid", "gen-invalid", test.registryID, "skill", test.resourceName),
+			}
+			invalid := &samples[len(samples)-1]
+			if test.sourceKind != "" {
+				invalid.Metric["source_kind"] = test.sourceKind
+			}
+			if test.marketplaceID != "" {
+				invalid.Metric["marketplace_id"] = test.marketplaceID
+			}
+			if _, err := aggregateInstallationMetrics(samples, adoptionTestRegistries(), "mp", adoptionFixedNow); !errors.Is(err, errInvalidInstallationMetrics) {
 				t.Fatalf("aggregateInstallationMetrics() error = %v, want %v", err, errInvalidInstallationMetrics)
 			}
 		})
@@ -220,7 +298,7 @@ func TestInstallationAdoptionNoFreshSnapshotsReturnsError(t *testing.T) {
 		inventoryResourceSample("install-stale", "gen-stale", telemetryAlpha, "skill", "old-resource"),
 	}
 
-	counts, err := aggregateInstallationMetrics(samples, adoptionTestRegistries(), adoptionFixedNow)
+	counts, err := aggregateInstallationMetrics(samples, adoptionTestRegistries(), "mp", adoptionFixedNow)
 	if err == nil {
 		t.Fatalf("aggregateInstallationMetrics() error = nil with counts %v; want an unavailable error, not measured zeros", counts.Counts)
 	}
@@ -258,7 +336,7 @@ func TestInstallationAdoptionMalformedSnapshotValueReturnsError(t *testing.T) {
 		inventoryResourceSample("install-ok", "gen-ok", telemetryBeta, "skill", "current"),
 	}
 
-	counts, err := aggregateInstallationMetrics(samples, adoptionTestRegistries(), adoptionFixedNow)
+	counts, err := aggregateInstallationMetrics(samples, adoptionTestRegistries(), "mp", adoptionFixedNow)
 	if err == nil {
 		t.Fatalf("aggregateInstallationMetrics() error = nil with counts %v; want an error for a malformed snapshot value", counts.Counts)
 	}
@@ -348,6 +426,43 @@ func TestInstallationAdoptionAmbiguousOriginContributesNothing(t *testing.T) {
 	}
 }
 
+// spec: marketplace-api/hosted-adoption-is-isolated-and-deduplicated
+func TestInstallationAdoptionHostedIdentityDoesNotResolveAmbiguousGitOrigins(t *testing.T) {
+	fresh := adoptionFixedNow.Add(-time.Hour)
+	samples := []inventoryMetricSample{
+		inventorySnapshotSample("install-mixed", "gen-mixed", fresh),
+		hostedInventoryResourceSample("install-mixed", "gen-mixed", "mp", "rC", "skill", "shared-hosted"),
+		inventoryResourceSample("install-mixed", "gen-mixed", telemetryShared, "skill", "shared-hosted"),
+		inventoryResourceSample("install-mixed", "gen-mixed", telemetryShared, "skill", "git-only-ambiguous"),
+		inventorySnapshotSample("install-hosted-separate", "gen-hosted", fresh),
+		hostedInventoryResourceSample("install-hosted-separate", "gen-hosted", "mp", "rC", "skill", "shared-hosted"),
+		inventorySnapshotSample("install-unknown-registry", "gen-unknown", fresh),
+		hostedInventoryResourceSample("install-unknown-registry", "gen-unknown", "mp", "unknown-registry", "skill", "unknown"),
+		inventorySnapshotSample("install-tied-hosted", "gen-tied-a", fresh),
+		inventorySnapshotSample("install-tied-hosted", "gen-tied-b", fresh),
+		hostedInventoryResourceSample("install-tied-hosted", "gen-tied-a", "mp", "rC", "skill", "tied"),
+		hostedInventoryResourceSample("install-tied-hosted", "gen-tied-b", "mp", "rC", "skill", "tied"),
+	}
+
+	counts := aggregateAdoptionOrFail(t, samples, adoptionTestRegistries())
+	assertAdoptionCounts(t, counts, map[installationResourceKey]int64{
+		adoptionKey("rC", "skill", "shared-hosted"): 2,
+	}, map[store.RegistryID]bool{"rC": true, "rD": false})
+	for _, absent := range []installationResourceKey{
+		adoptionKey("rC", "skill", "git-only-ambiguous"),
+		adoptionKey("rC", "skill", "tied"),
+		adoptionKey("rD", "skill", "shared-hosted"),
+		adoptionKey("unknown-registry", "skill", "unknown"),
+	} {
+		if _, ok := counts.Counts[absent]; ok {
+			t.Errorf("excluded coordinate %v contributed to adoption: %v", absent, counts.Counts)
+		}
+	}
+	if counts.KnownRegistries["unknown-registry"] {
+		t.Fatalf("unknown hosted registry became known: %v", counts.KnownRegistries)
+	}
+}
+
 // spec: marketplace-api/registry-identity-matching-does-not-conflate-resources
 func TestInstallationAdoptionDuplicateOriginSpellingsAreNotAmbiguous(t *testing.T) {
 	fresh := adoptionFixedNow.Add(-time.Hour)
@@ -371,12 +486,12 @@ func TestInstallationAdoptionDuplicateOriginSpellingsAreNotAmbiguous(t *testing.
 
 // spec: marketplace-api/latest-inventory-excludes-removed-and-stale-resources
 func TestInstallationAdoptionQuery(t *testing.T) {
-	wantSelected := `label_replace((max by (installation_id, config_fingerprint) (last_over_time(agent_marketplace_config_snapshot{endpoint="metrics",namespace="inventory-test"}[30d])) == on (installation_id) group_left max by (installation_id) (max by (installation_id, config_fingerprint) (last_over_time(agent_marketplace_config_snapshot{endpoint="metrics",namespace="inventory-test"}[30d])))), "inventory_type", "snapshot", "", "") or label_replace((max by (installation_id, config_fingerprint, registry_id, resource_kind, resource_name) (last_over_time(agent_marketplace_config_resource{endpoint="metrics",namespace="inventory-test",resource_kind!="rule"}[30d])) and on (installation_id, config_fingerprint) (max by (installation_id, config_fingerprint) (last_over_time(agent_marketplace_config_snapshot{endpoint="metrics",namespace="inventory-test"}[30d])) == on (installation_id) group_left max by (installation_id) (max by (installation_id, config_fingerprint) (last_over_time(agent_marketplace_config_snapshot{endpoint="metrics",namespace="inventory-test"}[30d]))))), "inventory_type", "resource", "", "")`
+	wantSelected := `label_replace((max by (installation_id, config_fingerprint) (last_over_time(agent_marketplace_config_snapshot{endpoint="metrics",namespace="inventory-test"}[30d])) == on (installation_id) group_left max by (installation_id) (max by (installation_id, config_fingerprint) (last_over_time(agent_marketplace_config_snapshot{endpoint="metrics",namespace="inventory-test"}[30d])))), "inventory_type", "snapshot", "", "") or label_replace((max by (installation_id, config_fingerprint, source_kind, marketplace_id, registry_id, resource_kind, resource_name) (last_over_time(agent_marketplace_config_resource{endpoint="metrics",namespace="inventory-test",resource_kind!="rule"}[30d])) and on (installation_id, config_fingerprint) (max by (installation_id, config_fingerprint) (last_over_time(agent_marketplace_config_snapshot{endpoint="metrics",namespace="inventory-test"}[30d])) == on (installation_id) group_left max by (installation_id) (max by (installation_id, config_fingerprint) (last_over_time(agent_marketplace_config_snapshot{endpoint="metrics",namespace="inventory-test"}[30d]))))), "inventory_type", "resource", "", "")`
 	if got := installationMetricsQuery(map[string]string{"endpoint": "metrics", "namespace": "inventory-test"}); got != wantSelected {
 		t.Errorf("installationMetricsQuery() = %q, want %q", got, wantSelected)
 	}
 
-	wantEmpty := `label_replace((max by (installation_id, config_fingerprint) (last_over_time(agent_marketplace_config_snapshot{}[30d])) == on (installation_id) group_left max by (installation_id) (max by (installation_id, config_fingerprint) (last_over_time(agent_marketplace_config_snapshot{}[30d])))), "inventory_type", "snapshot", "", "") or label_replace((max by (installation_id, config_fingerprint, registry_id, resource_kind, resource_name) (last_over_time(agent_marketplace_config_resource{resource_kind!="rule"}[30d])) and on (installation_id, config_fingerprint) (max by (installation_id, config_fingerprint) (last_over_time(agent_marketplace_config_snapshot{}[30d])) == on (installation_id) group_left max by (installation_id) (max by (installation_id, config_fingerprint) (last_over_time(agent_marketplace_config_snapshot{}[30d]))))), "inventory_type", "resource", "", "")`
+	wantEmpty := `label_replace((max by (installation_id, config_fingerprint) (last_over_time(agent_marketplace_config_snapshot{}[30d])) == on (installation_id) group_left max by (installation_id) (max by (installation_id, config_fingerprint) (last_over_time(agent_marketplace_config_snapshot{}[30d])))), "inventory_type", "snapshot", "", "") or label_replace((max by (installation_id, config_fingerprint, source_kind, marketplace_id, registry_id, resource_kind, resource_name) (last_over_time(agent_marketplace_config_resource{resource_kind!="rule"}[30d])) and on (installation_id, config_fingerprint) (max by (installation_id, config_fingerprint) (last_over_time(agent_marketplace_config_snapshot{}[30d])) == on (installation_id) group_left max by (installation_id) (max by (installation_id, config_fingerprint) (last_over_time(agent_marketplace_config_snapshot{}[30d]))))), "inventory_type", "resource", "", "")`
 	if got := installationMetricsQuery(map[string]string{}); got != wantEmpty {
 		t.Errorf("installationMetricsQuery(empty) = %q, want %q", got, wantEmpty)
 	}

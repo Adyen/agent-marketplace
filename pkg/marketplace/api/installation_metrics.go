@@ -29,11 +29,12 @@ const (
 )
 
 type installationMetricsReader struct {
-	url      string
-	labels   map[string]string
-	tokenEnv string
-	client   *http.Client
-	now      func() time.Time
+	url           string
+	labels        map[string]string
+	tokenEnv      string
+	marketplaceID store.MarketplaceID
+	client        *http.Client
+	now           func() time.Time
 
 	mu               sync.Mutex
 	cached           installationCounts
@@ -45,11 +46,12 @@ type installationMetricsReader struct {
 	hasFailure       bool
 }
 
-func newInstallationMetricsReader(metrics config.InstallationMetrics) *installationMetricsReader {
+func newInstallationMetricsReader(metrics config.InstallationMetrics, marketplaceID store.MarketplaceID) *installationMetricsReader {
 	return &installationMetricsReader{
-		url:      strings.TrimRight(strings.TrimSpace(metrics.URL), "/"),
-		labels:   metrics.Labels,
-		tokenEnv: strings.TrimSpace(metrics.BearerTokenEnv),
+		url:           strings.TrimRight(strings.TrimSpace(metrics.URL), "/"),
+		labels:        metrics.Labels,
+		tokenEnv:      strings.TrimSpace(metrics.BearerTokenEnv),
+		marketplaceID: marketplaceID,
 		client: &http.Client{
 			Timeout: installationMetricsTimeout,
 			CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
@@ -139,7 +141,7 @@ func (r *installationMetricsReader) fetch(ctx context.Context, registries map[st
 	if err != nil {
 		return installationCounts{}, err
 	}
-	return aggregateInstallationMetrics(samples, registries, evalTime)
+	return aggregateInstallationMetrics(samples, registries, r.marketplaceID, evalTime)
 }
 
 type prometheusVectorResponse struct {

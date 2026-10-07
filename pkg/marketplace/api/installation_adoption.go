@@ -7,12 +7,17 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/Adyen/agent-marketplace/internal/registryid"
+	"github.com/Adyen/agent-marketplace/pkg/marketplace/nameutil"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/store"
 )
 
-const installationInventoryWindow = 30 * 24 * time.Hour
+const (
+	installationInventoryWindow      = 30 * 24 * time.Hour
+	maxHostedInventoryAttributeBytes = 512
+)
 
 var (
 	errInstallationMetricsUnavailable = errors.New("installation metrics unavailable")
@@ -49,11 +54,11 @@ func installationMetricsQuery(labels map[string]string) string {
 	snapshots := `max by (installation_id, config_fingerprint) (last_over_time(agent_marketplace_config_snapshot` + selector + `))`
 	latest := `(` + snapshots + ` == on (installation_id) group_left max by (installation_id) (` + snapshots + `))`
 	resourceSelector := "{" + strings.Join(append(selectors, `resource_kind!="rule"`), ",") + "}[30d]"
-	resources := `max by (installation_id, config_fingerprint, registry_id, resource_kind, resource_name) (last_over_time(agent_marketplace_config_resource` + resourceSelector + `))`
+	resources := `max by (installation_id, config_fingerprint, source_kind, marketplace_id, registry_id, resource_kind, resource_name) (last_over_time(agent_marketplace_config_resource` + resourceSelector + `))`
 	return `label_replace(` + latest + `, "inventory_type", "snapshot", "", "") or label_replace((` + resources + ` and on (installation_id, config_fingerprint) ` + latest + `), "inventory_type", "resource", "", "")`
 }
 
-func aggregateInstallationMetrics(samples []inventoryMetricSample, registries map[store.RegistryID]store.Registry, now time.Time) (installationCounts, error) {
+func aggregateInstallationMetrics(samples []inventoryMetricSample, registries map[store.RegistryID]store.Registry, marketplaceID store.MarketplaceID, now time.Time) (installationCounts, error) {
 	type generation struct {
 		fingerprint string
 		observedAt  int64
@@ -83,6 +88,20 @@ func aggregateInstallationMetrics(samples []inventoryMetricSample, registries ma
 			kind := sample.Metric["resource_kind"]
 			validKind := IsMarketplaceKind(kind) || kind == "rule"
 			if sample.Value != 1 || sample.Metric["registry_id"] == "" || sample.Metric["resource_name"] == "" || !validKind {
+				return installationCounts{}, errInvalidInstallationMetrics
+			}
+			sourceKind := sample.Metric["source_kind"]
+			marketplaceID := sample.Metric["marketplace_id"]
+			switch sourceKind {
+			case "":
+				if marketplaceID != "" {
+					return installationCounts{}, errInvalidInstallationMetrics
+				}
+			case "marketplace":
+				if !validHostedInventoryIdentity(marketplaceID, sample.Metric["registry_id"], sample.Metric["resource_name"]) {
+					return installationCounts{}, errInvalidInstallationMetrics
+				}
+			default:
 				return installationCounts{}, errInvalidInstallationMetrics
 			}
 		default:
@@ -151,9 +170,25 @@ func aggregateInstallationMetrics(samples []inventoryMetricSample, registries ma
 		}
 		installation := sample.Metric["installation_id"]
 		selected, fresh := latest[installation]
-		registry, known := identityIndex[sample.Metric["registry_id"]]
-		if !fresh || selected.fingerprint != sample.Metric["config_fingerprint"] || !known {
+		if !fresh || selected.fingerprint != sample.Metric["config_fingerprint"] {
 			continue
+		}
+		var registry store.RegistryID
+		if sample.Metric["source_kind"] == "marketplace" {
+			if store.MarketplaceID(sample.Metric["marketplace_id"]) != marketplaceID {
+				continue
+			}
+			registry = store.RegistryID(sample.Metric["registry_id"])
+			if _, known := registries[registry]; !known {
+				continue
+			}
+			counts.KnownRegistries[registry] = true
+		} else {
+			var known bool
+			registry, known = identityIndex[sample.Metric["registry_id"]]
+			if !known {
+				continue
+			}
 		}
 		key := installationResourceKey{Registry: registry, Kind: sample.Metric["resource_kind"], Name: sample.Metric["resource_name"]}
 		observed := observation{installation: installation, resource: key}
@@ -163,4 +198,13 @@ func aggregateInstallationMetrics(samples []inventoryMetricSample, registries ma
 		}
 	}
 	return counts, nil
+}
+
+func validHostedInventoryIdentity(marketplaceID, registryID, resourceName string) bool {
+	for _, value := range []string{marketplaceID, registryID, resourceName} {
+		if value == "" || !utf8.ValidString(value) || len(value) > maxHostedInventoryAttributeBytes || nameutil.ValidateSegment(value) != nil {
+			return false
+		}
+	}
+	return true
 }
