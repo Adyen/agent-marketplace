@@ -4,6 +4,7 @@ import (
 	"errors"
 	"io"
 	"io/fs"
+	"log/slog"
 	"path/filepath"
 	"strings"
 
@@ -228,9 +229,6 @@ func writeObservedMetadataFile(parent *fsboundary.Dir, name string, data []byte,
 	if closeErr != nil {
 		return pin, false, closeErr
 	}
-	if err := validate(); err != nil {
-		return pin, false, err
-	}
 	output, err := fsboundary.CaptureDestination(parent, stagedName, fsboundary.LinkPolicyRepository)
 	if err != nil {
 		return pin, false, err
@@ -242,6 +240,10 @@ func writeObservedMetadataFile(parent *fsboundary.Dir, name string, data []byte,
 	}()
 	if output.Link() != nil || !output.Identity().SameState(produced) {
 		return pin, false, fsboundary.ErrGenerationConflict
+	}
+	slog.Debug("Ownership metadata staged for publication", "path", filepath.Join(parent.Path(), stagedName), "destination", name, "phase", "ownership-metadata-publication")
+	if err := validate(); err != nil {
+		return pin, false, err
 	}
 	if err := output.ReadTargetWith(func(io.Reader) error { return nil }); err != nil {
 		return pin, false, err
