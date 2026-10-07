@@ -20,3 +20,20 @@ A top-level `gui` mapping with boolean `version_check` SHALL affect GUI release 
 - **THEN** that value SHALL be ignored
 - **AND** a warning diagnostic SHALL be reported
 - **AND** the configuration SHALL NOT be rejected
+
+### Requirement: Existing unsupported top-level Harness targets remain inspectable
+
+Configuration readers SHALL retain non-empty string identifiers already present in a root's top-level Harness target set when the running client does not support them, and SHALL report a warning identifying the unsupported setting. Unsupported identifiers SHALL NOT become materialization targets or basic telemetry Harness target attributes. Other malformed configuration and unsupported per-entry Harness target narrowing SHALL retain their existing validation behavior. Initialization and explicit Harness target edits SHALL enforce the supported-target and existing-identifier rules in `session-interactions`.
+
+#### Scenario: Existing unsupported identifier is retained without materialization authority
+
+- **WHEN** a root's top-level Harness target set contains a supported target and an identifier unsupported by the running client
+- **THEN** the reader SHALL retain both identifiers and report an unsupported-target warning
+- **AND** resolution and materialization SHALL use only supported targets
+- **AND** basic telemetry SHALL contain only supported Harness target attributes
+
+#### Scenario: Unsupported-only target set grants no materialization authority
+
+- **WHEN** a root's top-level Harness target set contains no supported target
+- **THEN** reading the configuration SHALL retain its identifiers with unsupported-target warnings
+- **AND** a target-dependent operation SHALL fail for the missing supported target set without materializing Resource files

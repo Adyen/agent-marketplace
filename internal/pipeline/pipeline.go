@@ -169,11 +169,12 @@ type SyncResult struct {
 
 // hccTargetsFromStrings converts a []string harness list into []hcc.Target.
 func hccTargetsFromStrings(targets []string) []hcc.Target {
-	if len(targets) == 0 {
+	known := config.KnownHarnessTargets(targets)
+	if len(known) == 0 {
 		return nil
 	}
-	out := make([]hcc.Target, len(targets))
-	for i, t := range targets {
+	out := make([]hcc.Target, len(known))
+	for i, t := range known {
 		out[i] = hcc.Target(t)
 	}
 	return out

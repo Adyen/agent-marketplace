@@ -14,11 +14,13 @@
 - [ ] 2.3 Add the optional source step after Harness and consent selection, skip it when Consumer organization configuration provides sources, and route edits through the `gui-configuration` mutation path; test cancellation before completion for zero writes.
 - [ ] 2.4 Compare equivalent GUI Harness/source edits byte-for-byte with existing CLI operations from identical starting roots. For source-only Git/directory additions and Marketplace endpoint removal, test that only the effective entry changes and included fragments remain byte-identical; verify no CLI commands are added.
 - [ ] 2.5 Show organization Harness targets and sources read-only; compare unmodeled includes, per-entry narrowing, and other fields with the equivalent CLI result or the specified effective-config delta, and identify them as “managed outside the GUI”.
+- [ ] 2.6 Repair shared configuration reading and explicit Harness target saving to retain already-present unknown top-level identifiers, warn about unsupported targets, reject newly introduced unsupported identifiers without writes, and retain strict validation of other fields and per-entry narrowing. Prove real TUI and GUI writes and initialization refusals, not unsaved form-state retention alone.
+- [x] 2.7 Filter unsupported identifiers from shared resolution/materialization targets and basic telemetry Harness attributes; test a mixed supported/unsupported root and an unsupported-only root through target-dependent operations without unintended output.
 
 ## 3. Organization version-check policy
 
-- [ ] 3.1 Add CLI read support for the top-level `gui.version_check` setting in v4 and legacy config decoding; verify the organization value defaults to enabled when absent and an organization false value disables the GUI check.
-- [ ] 3.2 Ignore `gui.version_check` from user-personal, repository-committed, and personal-local layers and report a warning without rejecting those roots; add annotated tests for each layer.
+- [x] 3.1 Add CLI read support for the top-level `gui.version_check` setting in v4 and legacy config decoding; verify the organization value defaults to enabled when absent and an organization false value disables the GUI check.
+- [x] 3.2 Ignore `gui.version_check` from user-personal, repository-committed, and personal-local layers and report a warning without rejecting those roots; add annotated tests for each layer.
 - [ ] 3.3 Add the `config-layering` scenario witnesses and the GUI no-network/no-notice witness; verify the setting is honored only from Consumer organization configuration.
 - [ ] 3.4 Add administrator documentation and release notes stating that the key may be deployed only after every managed client runs a release that reads it; verify no user-facing instruction recommends early deployment.
 
