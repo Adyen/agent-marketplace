@@ -68,6 +68,7 @@ type Options struct {
 	pluginRoot              string
 	managedByField          string
 	managedByValue          string
+	nativeHookOutput        bool
 	scope                   Scope
 	mcpCredentialKeyTokens  []string
 	mcpInterpolationPattern *regexp.Regexp
@@ -84,6 +85,8 @@ func (o Options) ToolOverride() map[string]string { return o.toolOverride }
 func (o Options) PluginRoot() string { return o.pluginRoot }
 
 func (o Options) ManagedBy() (string, string) { return o.managedByField, o.managedByValue }
+
+func (o Options) NativeHookOutput() bool { return o.nativeHookOutput }
 
 // Scope returns the configured installation scope. The zero value is
 // ScopeProject: a caller that never thought about scope keeps compiling
@@ -242,6 +245,10 @@ func WithManagedBy(field, value string) Option {
 	}
 }
 
+func WithNativeHookOutput() Option {
+	return func(o *Options) { o.nativeHookOutput = true }
+}
+
 // WithScope selects the installation scope the caller is compiling for. An
 // unrecognized value is ignored so an unknown scope can never quietly land
 // output in an unexpected file; Options.Scope then reports ScopeProject.
@@ -333,6 +340,12 @@ func Compile(r ir.Resource, t Target, opts ...Option) (*Result, error) {
 	if err != nil {
 		slog.Error("compile failed", "target", t, "kind", kind, "resource", name, "error", err)
 		return nil, err
+	}
+	if kind == ir.KindHook && cfg.NativeHookOutput() {
+		arts, err = nativeHookOutputArtifacts(t, cfg.Scope(), arts)
+		if err != nil {
+			return nil, fmt.Errorf("compile: native hook output: %w", err)
+		}
 	}
 	if kind == ir.KindMcpServer {
 		for i := range arts {

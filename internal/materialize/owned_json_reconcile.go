@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 
 	"github.com/Adyen/agent-marketplace/internal/dependencytxn"
 	"github.com/Adyen/agent-marketplace/internal/ownership"
@@ -96,6 +97,9 @@ func reconcileOwnedJSONAggregates(ctx context.Context, report *Report, key outpu
 	for _, file := range files {
 		if file.hookShape != "" {
 			hasNative = true
+			if options.nativeHookFinalize != nil {
+				anyWork = true
+			}
 		}
 		if _, err := os.Lstat(filepath.Join(outDir, file.rel)); err == nil {
 			anyWork = true
@@ -110,12 +114,31 @@ func reconcileOwnedJSONAggregates(ctx context.Context, report *Report, key outpu
 	// eventually succeeds returns no error, so without it the user is never told
 	// why their sync paused; and a degradation is a property of the root that must
 	// be reported once, not once per file.
-	lockReport := newOwnedAggregateLockReporter(key, outDir)
-	store, err := ownership.Open(outDir, ownership.WithLockObserver(lockReport.observe))
-	if err != nil {
-		report.Diags = append(report.Diags, ownedAggregateDiag(options.writeCode, key, "",
-			fmt.Sprintf("open ownership store for %s: %v", outDir, err)))
-		return report
+	lockReport := options.lockReport
+	if lockReport == nil {
+		lockReport = newOwnedAggregateLockReporter(key, outDir)
+	}
+	store := options.store
+	var err error
+	if store == nil {
+		store, err = ownership.Open(outDir, ownership.WithLockObserver(lockReport.observe))
+		if err != nil {
+			report.Diags = append(report.Diags, ownedAggregateDiag(options.writeCode, key, "",
+				fmt.Sprintf("open ownership store for %s: %v", outDir, err)))
+			return report
+		}
+	} else {
+		canonical, err := ownership.CanonicalRoot(outDir)
+		if err != nil {
+			report.Diags = append(report.Diags, ownedAggregateDiag(options.writeCode, key, "",
+				fmt.Sprintf("resolve aggregate root %s: %v", outDir, err)))
+			return report
+		}
+		if store.RootKey() != ownership.RootKey(canonical) {
+			report.Diags = append(report.Diags, ownedAggregateDiag(options.writeCode, key, "",
+				fmt.Sprintf("shared ownership store does not match aggregate root %s", outDir)))
+			return report
+		}
 	}
 
 	if !anyWork {
@@ -168,6 +191,15 @@ func reconcileOwnedJSONAggregates(ctx context.Context, report *Report, key outpu
 		}
 		return appendOwnedJSONAggregateReports(ctx, report, store, key, outDir, files, desiredByRel, work, options, true)
 	}
+	if options.storeSessionHeld {
+		if hasNative {
+			if depErr := recoverNativeDependencyTxn(ctx); depErr != nil {
+				report.Diags = append(report.Diags, ownedAggregateCodedDiag(key, outDir, "", depErr, options.writeCode))
+				return report
+			}
+		}
+		return appendOwnedJSONAggregateReports(ctx, report, store, key, outDir, files, desiredByRel, work, options, false)
+	}
 
 	sessionErr := store.WithWriteSessionContext(ctx, options.sessionName, func() error {
 		// "On startup, incomplete generations are replayed or rolled back
@@ -184,13 +216,7 @@ func reconcileOwnedJSONAggregates(ctx context.Context, report *Report, key outpu
 			return nil
 		}
 		if hasNative {
-			stateDir, depErr := dependencytxn.StateDir()
-			if _, statErr := os.Stat(stateDir); statErr == nil {
-				depErr = dependencytxn.Recover(ctx, stateDir)
-			} else if !os.IsNotExist(statErr) {
-				depErr = statErr
-			}
-			if depErr != nil {
+			if depErr := recoverNativeDependencyTxn(ctx); depErr != nil {
 				report.Diags = append(report.Diags, ownedAggregateCodedDiag(key, outDir, "", depErr, options.writeCode))
 				return nil
 			}
@@ -206,7 +232,9 @@ func reconcileOwnedJSONAggregates(ctx context.Context, report *Report, key outpu
 		report.Diags = append(report.Diags, ownedAggregateLockSessionDiag(key, outDir, sessionErr, options.writeCode))
 		return report
 	}
-	report.Diags = append(report.Diags, lockReport.diags()...)
+	if !options.deferLockDiagnostics {
+		report.Diags = append(report.Diags, lockReport.diags()...)
+	}
 	return report
 }
 
@@ -229,6 +257,19 @@ func appendOwnedJSONAggregateReports(ctx context.Context, report *Report, store 
 	return report
 }
 
+func recoverNativeDependencyTxn(ctx context.Context) error {
+	stateDir, err := dependencytxn.StateDir()
+	if err != nil {
+		return err
+	}
+	if _, err := os.Stat(stateDir); err == nil {
+		return dependencytxn.Recover(ctx, stateDir)
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+	return nil
+}
+
 func reconcileOwnedJSONAggregateFile(ctx context.Context, store *ownership.Store, key outputKey, outDir string, file ownedJSONFileSpec, desired []ownedJSONEntry, incomplete bool, options ownedJSONReconcileOptions, dryRun bool) ownedJSONAggregateReport {
 	var out ownedJSONAggregateReport
 	rel := file.rel
@@ -245,10 +286,12 @@ func reconcileOwnedJSONAggregateFile(ctx context.Context, store *ownership.Store
 	case readErr == nil:
 	case os.IsNotExist(readErr):
 		if len(desired) == 0 {
-			if file.hookShape != "" {
+			if file.hookShape == "" {
+				return out
+			}
+			if options.nativeHookFinalize == nil {
 				return reconcileAbsentNativeHookMetadata(ctx, out, store, key, outDir, file, abs, options, dryRun)
 			}
-			return out
 		}
 		raw = []byte(ownedJSONEmptyDocument)
 	default:
@@ -304,6 +347,7 @@ func reconcileOwnedJSONAggregateFile(ctx context.Context, store *ownership.Store
 	var proof ownership.Proof
 	var proofErr error
 	proofReady := false
+	proofReported := false
 	if container == nil && len(desired) == 0 {
 		if file.hookShape == "" {
 			// The container does not exist and nothing is desired, so there is
@@ -313,14 +357,23 @@ func reconcileOwnedJSONAggregateFile(ctx context.Context, store *ownership.Store
 		proof, proofErr = store.Proof(rel)
 		proofReady = true
 		out.diags = append(out.diags, ownedAggregateProofDiags(key, outDir, rel, proofErr)...)
-		if proof.OwnedCount() == 0 && len(proof.HookSatisfactions()) == 0 {
+		proofReported = true
+		if proof.OwnedCount() == 0 && len(proof.HookSatisfactions()) == 0 && options.nativeHookFinalize == nil {
 			return out
 		}
+	}
+	if container != nil && !proofReady {
+		proof, proofErr = store.Proof(rel)
+		proofReady = true
 	}
 
 	var existing []ownedJSONExistingEntry
 	if container != nil {
-		existing, shapeErr = ownedJSONExistingEntries(file, container)
+		var legacyProofs []ownership.Proof
+		if options.allowOwnedLegacyFlatHooks && proofErr == nil {
+			legacyProofs = append(legacyProofs, proof)
+		}
+		existing, shapeErr = ownedJSONExistingEntries(file, container, legacyProofs...)
 		if shapeErr != nil {
 			out.diags = append(out.diags, ownedJSONShapeDiag(options.shapeCode, key, outDir, rel, shapeErr))
 			return out
@@ -329,12 +382,24 @@ func reconcileOwnedJSONAggregateFile(ctx context.Context, store *ownership.Store
 
 	if !proofReady {
 		proof, proofErr = store.Proof(rel)
-		// Advisory: the zero Proof already classifies everything as unmanaged, so
-		// reconciliation continues safely (preserve, refuse, never prune) whether or
-		// not the situation is worth reporting.
+	}
+	if !proofReported {
 		out.diags = append(out.diags, ownedAggregateProofDiags(key, outDir, rel, proofErr)...)
 	}
+	if file.hookShape != "" && proofErr != nil && !errors.Is(proofErr, ownership.ErrStateMissing) {
+		out.diags = append(out.diags, diag.Diagnostic{
+			Code:     diag.CodeHookNativeToleranceRefused,
+			Severity: diag.SeverityError,
+			Target:   string(key.target),
+			Source:   diag.SourceRef{File: rel},
+			Message:  "Native Hook ownership evidence is unavailable; Native and legacy locations were left unchanged",
+		})
+		return out
+	}
 
+	// Advisory: the zero Proof already classifies everything as unmanaged, so
+	// reconciliation continues safely (preserve, refuse, never prune) whether or
+	// not the situation is worth reporting.
 	desiredValues := make([]ownership.EntryValue, 0, len(desired))
 	for _, entry := range desired {
 		desiredValues = append(desiredValues, ownership.EntryValue{ID: entry.id(), ValueDigest: entry.valueDigest()})
@@ -353,8 +418,33 @@ func reconcileOwnedJSONAggregateFile(ctx context.Context, store *ownership.Store
 		return out
 	}
 	next := doc.Bytes()
+	changed := doc.Changed()
+	var extras nativeHookTransactionExtras
+	if file.hookShape != "" && options.nativeHookFinalize != nil {
+		var finalizeErr error
+		extras, finalizeErr = options.nativeHookFinalize(ctx, store, key, outDir, file, abs, raw, readErr, doc, plan, proof, proofErr, incomplete, dryRun)
+		out.diags = append(out.diags, extras.diagnostics...)
+		if finalizeErr != nil {
+			out.diags = append(out.diags, ownedAggregateCodedDiag(key, outDir, rel, finalizeErr, options.writeCode))
+			return out
+		}
+		if extras.refused {
+			return out
+		}
+		if extras.planSet {
+			plan = extras.plan
+		}
+		if extras.nextSet {
+			if !bytes.Equal(next, extras.nextBytes) {
+				changed = true
+			}
+			next = extras.nextBytes
+		} else {
+			next = doc.Bytes()
+		}
+	}
 	if file.hookShape != "" {
-		return finishNativeOwnedJSONFile(ctx, out, store, key, outDir, file, abs, raw, readErr, next, doc.Changed(), plan, proof, options, dryRun)
+		return finishNativeOwnedJSONFile(ctx, out, store, key, outDir, file, abs, raw, readErr, next, changed, plan, proof, options, dryRun, extras)
 	}
 	if !doc.Changed() {
 		slog.Debug("owned JSON aggregate already in sync", "target", key.target, "machine_scope", key.machineScope,
@@ -387,21 +477,62 @@ func reconcileOwnedJSONAggregateFile(ctx context.Context, store *ownership.Store
 	return out
 }
 
-func finishNativeOwnedJSONFile(ctx context.Context, out ownedJSONAggregateReport, store *ownership.Store, key outputKey, outDir string, file ownedJSONFileSpec, abs string, raw []byte, readErr error, next []byte, changed bool, plan ownedJSONPatch, proof ownership.Proof, options ownedJSONReconcileOptions, dryRun bool) ownedJSONAggregateReport {
+func finishNativeOwnedJSONFile(ctx context.Context, out ownedJSONAggregateReport, store *ownership.Store, key outputKey, outDir string, file ownedJSONFileSpec, abs string, raw []byte, readErr error, next []byte, changed bool, plan ownedJSONPatch, proof ownership.Proof, options ownedJSONReconcileOptions, dryRun bool, extras nativeHookTransactionExtras) ownedJSONAggregateReport {
 	rel := file.rel
 	if dryRun {
-		out.written = changed
+		out.written = changed || extras.pending
 		return out
 	}
-	desired, err := nativeOwnedJSONTxnPlan(store, rel, abs, raw, readErr, next, changed, plan, proof)
-	if err != nil {
-		out.diags = append(out.diags, ownedAggregateCodedDiag(key, outDir, rel, err, options.writeCode))
-		return out
+	var desired []dependencytxn.DesiredFile
+	if !changed && errors.Is(readErr, os.ErrNotExist) {
+		if len(plan.owned) > 0 || len(plan.satisfactions) > 0 || proof.OwnedCount() > 0 || len(proof.HookSatisfactions()) > 0 {
+			stateFile, err := store.Prepare(ownership.Mutation{
+				Rel:                   rel,
+				AbsFile:               abs,
+				Entries:               append(append([]ownership.Entry(nil), plan.owned...), nativeRetainedNonHookEntries(plan.owned, proof, plan.reconciledKinds)...),
+				Reason:                ownership.ReasonSync,
+				ExpectPriorGeneration: proof.Generation(),
+			}, &plan.satisfactions)
+			if err != nil {
+				out.diags = append(out.diags, ownedAggregateCodedDiag(key, outDir, rel, err, options.writeCode))
+				return out
+			}
+			if stateFile.Path != "" {
+				desired = append(desired, stateFile)
+			}
+		}
+		if len(desired) > 0 || extras.pending {
+			desired = append(desired, dependencytxn.DesiredFile{Path: abs, Expected: dependencytxn.Generation{}, Delete: true})
+		}
+	} else {
+		var err error
+		desired, err = nativeOwnedJSONTxnPlan(store, rel, abs, raw, readErr, next, changed, plan, proof, extras.originalNative)
+		if err != nil {
+			out.diags = append(out.diags, ownedAggregateCodedDiag(key, outDir, rel, err, options.writeCode))
+			return out
+		}
 	}
-	if len(desired) == 0 {
+	if len(desired) == 0 && !extras.pending {
 		slog.Debug("native hook aggregate already in sync", "target", key.target, "machine_scope", key.machineScope,
 			"file", rel, "owned_entries", len(plan.owned), "satisfactions", len(plan.satisfactions))
 		return out
+	}
+	if extras.pending && !hasDependencyParticipant(desired, abs) {
+		if extras.beforeNativeAssertion != nil {
+			if err := extras.beforeNativeAssertion(); err != nil {
+				out.diags = append(out.diags, ownedAggregateCodedDiag(key, outDir, rel, err, options.writeCode))
+				return out
+			}
+		}
+		assertion, err := unchangedNativeAggregateAssertion(abs, raw, readErr, extras.originalNative)
+		if err != nil {
+			if errors.Is(err, dependencytxn.ErrGenerationConflict) {
+				err = diag.NewCodedError(diag.CodeOwnershipGenerationConflict, diag.SourceRef{File: rel}, err)
+			}
+			out.diags = append(out.diags, ownedAggregateCodedDiag(key, outDir, rel, err, options.writeCode))
+			return out
+		}
+		desired = append(desired, assertion)
 	}
 	if changed {
 		if err := ensureOwnedJSONHookParent(outDir, rel); err != nil {
@@ -409,32 +540,89 @@ func finishNativeOwnedJSONFile(ctx context.Context, out ownedJSONAggregateReport
 				fmt.Sprintf("prepare aggregate parent for %q: %v", ownedAggregateLabel(outDir, rel), err)))
 			return out
 		}
-		if _, err := store.BackupOnly(rel, abs, ownership.ReasonSync); err != nil {
+		mutation := nativeOwnedJSONMutation(rel, abs, raw, readErr, next, plan, proof)
+		if _, err := store.BackupPreparedMutation(mutation); err != nil {
 			out.diags = append(out.diags, ownedAggregateCodedDiag(key, outDir, rel,
 				fmt.Errorf("safety backup for %q failed: %w", ownedAggregateLabel(outDir, rel), err),
 				diag.CodeOwnershipSafetyBackup))
 			return out
 		}
 	}
-	for _, f := range desired {
-		if f.Path == abs {
+	for _, backup := range extras.backups {
+		if changed && backup.rel == rel && backup.abs == abs {
 			continue
 		}
-		if err := os.MkdirAll(filepath.Dir(f.Path), 0o700); err != nil {
-			out.diags = append(out.diags, ownedAggregateDiag(options.writeCode, key, rel,
-				fmt.Sprintf("prepare state directory for %q: %v", ownedAggregateLabel(outDir, rel), err)))
+		if _, err := store.BackupOnly(backup.rel, backup.abs, ownership.ReasonSync); err != nil {
+			out.diags = append(out.diags, ownedAggregateCodedDiag(key, outDir, backup.rel,
+				fmt.Errorf("safety backup for %q failed: %w", ownedAggregateLabel(outDir, backup.rel), err),
+				diag.CodeOwnershipSafetyBackup))
 			return out
 		}
 	}
-	if _, err := commitNativeHookFiles(ctx, desired); err != nil {
+	if len(desired) > 0 || extras.pending {
+		desired = append(desired, extras.participants...)
+		desired = append(desired, extras.assertions...)
+	}
+	if len(desired) == 0 {
+		return out
+	}
+	for _, participant := range desired {
+		if participant.Path == abs || participant.Delete {
+			continue
+		}
+		if err := os.MkdirAll(filepath.Dir(participant.Path), 0o700); err != nil {
+			out.diags = append(out.diags, ownedAggregateDiag(options.writeCode, key, rel,
+				fmt.Sprintf("prepare transaction directory for %q: %v", ownedAggregateLabel(outDir, rel), err)))
+			return out
+		}
+	}
+	if _, err := commitNativeHookFiles(ctx, desired, extras.commitOptions...); err != nil {
 		out.diags = append(out.diags, ownedAggregateCodedDiag(key, outDir, rel, err, options.writeCode))
 		return out
 	}
 	slog.Info("native hook aggregate reconciled", "target", key.target, "machine_scope", key.machineScope,
 		"file", rel, "owned_entries", len(plan.owned), "satisfactions", len(plan.satisfactions),
-		"aggregate_changed", changed)
-	out.written = changed
+		"aggregate_changed", changed, "additional_participants", len(extras.participants))
+	out.written = changed || extras.pending
 	return out
+}
+
+func unchangedNativeAggregateAssertion(abs string, raw []byte, readErr error, originalSnapshots ...*nativeHookAggregateSnapshot) (dependencytxn.DesiredFile, error) {
+	live, generation, mode, err := dependencytxn.ReadSnapshot(abs)
+	if err != nil {
+		return dependencytxn.DesiredFile{}, err
+	}
+	if len(originalSnapshots) > 0 && !nativeHookAggregateSnapshotMatches(originalSnapshots[0], live, generation, mode) {
+		return dependencytxn.DesiredFile{}, fmt.Errorf("%w: %s", dependencytxn.ErrGenerationConflict, abs)
+	}
+	if errors.Is(readErr, os.ErrNotExist) {
+		if generation.Exists {
+			return dependencytxn.DesiredFile{}, fmt.Errorf("%w: %s", dependencytxn.ErrGenerationConflict, abs)
+		}
+		return dependencytxn.DesiredFile{Path: abs, Expected: generation, Delete: true}, nil
+	}
+	if readErr != nil {
+		return dependencytxn.DesiredFile{}, readErr
+	}
+	if !generation.Exists || !bytes.Equal(live, raw) {
+		return dependencytxn.DesiredFile{}, fmt.Errorf("%w: %s", dependencytxn.ErrGenerationConflict, abs)
+	}
+	return dependencytxn.DesiredFile{
+		Path:         abs,
+		Expected:     generation,
+		ExpectedMode: mode,
+		Bytes:        append([]byte(nil), raw...),
+		Mode:         mode,
+	}, nil
+}
+
+func hasDependencyParticipant(files []dependencytxn.DesiredFile, path string) bool {
+	for _, file := range files {
+		if file.Path == path {
+			return true
+		}
+	}
+	return false
 }
 
 func reconcileAbsentNativeHookMetadata(ctx context.Context, out ownedJSONAggregateReport, store *ownership.Store, key outputKey, outDir string, file ownedJSONFileSpec, abs string, options ownedJSONReconcileOptions, dryRun bool) ownedJSONAggregateReport {
@@ -472,14 +660,18 @@ func reconcileAbsentNativeHookMetadata(ctx context.Context, out ownedJSONAggrega
 	return out
 }
 
-func nativeRetainedNonHookEntries(claimed []ownership.Entry, proof ownership.Proof) []ownership.Entry {
+func nativeRetainedNonHookEntries(claimed []ownership.Entry, proof ownership.Proof, reconciledKinds ...map[ownership.EntryKind]bool) []ownership.Entry {
+	var reconciled map[ownership.EntryKind]bool
+	if len(reconciledKinds) > 0 {
+		reconciled = reconciledKinds[0]
+	}
 	claimedIDs := make(map[string]bool, len(claimed))
 	for _, entry := range claimed {
 		claimedIDs[ownedAggregateIDKey(entry.ID())] = true
 	}
 	var retained []ownership.Entry
 	for _, id := range proof.OwnedIDs() {
-		if id.Kind == ownership.KindHook || claimedIDs[ownedAggregateIDKey(id)] {
+		if id.Kind == ownership.KindHook || reconciled[id.Kind] || claimedIDs[ownedAggregateIDKey(id)] {
 			continue
 		}
 		if entry, ok := proof.Entry(id); ok {
@@ -489,34 +681,47 @@ func nativeRetainedNonHookEntries(claimed []ownership.Entry, proof ownership.Pro
 	return retained
 }
 
-func nativeOwnedJSONTxnPlan(store *ownership.Store, rel, abs string, raw []byte, readErr error, next []byte, changed bool, plan ownedJSONPatch, proof ownership.Proof) ([]dependencytxn.DesiredFile, error) {
+func nativeOwnedJSONMutation(rel, abs string, raw []byte, readErr error, next []byte, plan ownedJSONPatch, proof ownership.Proof) ownership.Mutation {
 	priorGen, priorDigest := ownedAggregatePriorForApply(raw, readErr, proof)
+	entries := append(append([]ownership.Entry(nil), plan.owned...), nativeRetainedNonHookEntries(plan.owned, proof, plan.reconciledKinds)...)
+	return ownership.Mutation{
+		Rel: rel, AbsFile: abs, NextBytes: next, Entries: entries, Reason: ownership.ReasonSync,
+		ExpectPriorGeneration: priorGen, ExpectPriorDigest: priorDigest,
+	}
+}
+
+func nativeOwnedJSONTxnPlan(store *ownership.Store, rel, abs string, raw []byte, readErr error, next []byte, changed bool, plan ownedJSONPatch, proof ownership.Proof, originalSnapshots ...*nativeHookAggregateSnapshot) ([]dependencytxn.DesiredFile, error) {
+	live, liveGen, liveMode, snapErr := dependencytxn.ReadSnapshot(abs)
+	if snapErr != nil {
+		return nil, fmt.Errorf("snapshot aggregate %q for commit: %w", rel, snapErr)
+	}
+	var original *nativeHookAggregateSnapshot
+	if len(originalSnapshots) > 0 {
+		original = originalSnapshots[0]
+	}
+	if original != nil {
+		if !nativeHookAggregateSnapshotMatches(original, live, liveGen, liveMode) {
+			return nil, fmt.Errorf("%w: %s", dependencytxn.ErrGenerationConflict, abs)
+		}
+	} else if readErr == nil {
+		if !liveGen.Exists || !bytes.Equal(live, raw) {
+			return nil, fmt.Errorf("%w: %s", dependencytxn.ErrGenerationConflict, abs)
+		}
+	} else if errors.Is(readErr, os.ErrNotExist) {
+		if liveGen.Exists {
+			return nil, fmt.Errorf("%w: %s", dependencytxn.ErrGenerationConflict, abs)
+		}
+	} else if readErr != nil {
+		return nil, readErr
+	}
+	mutation := nativeOwnedJSONMutation(rel, abs, raw, readErr, next, plan, proof)
 	satisfactions := plan.satisfactions
-	stateFile, err := store.Prepare(ownership.Mutation{
-		Rel:                   rel,
-		AbsFile:               abs,
-		NextBytes:             next,
-		Entries:               append(append([]ownership.Entry(nil), plan.owned...), nativeRetainedNonHookEntries(plan.owned, proof)...),
-		Reason:                ownership.ReasonSync,
-		ExpectPriorGeneration: priorGen,
-		ExpectPriorDigest:     priorDigest,
-	}, &satisfactions)
+	stateFile, err := store.Prepare(mutation, &satisfactions)
 	if err != nil {
 		return nil, err
 	}
 	if !changed && stateFile.Path == "" {
 		return nil, nil
-	}
-	live, liveGen, liveMode, snapErr := dependencytxn.ReadSnapshot(abs)
-	if snapErr != nil {
-		return nil, fmt.Errorf("snapshot aggregate %q for commit: %w", rel, snapErr)
-	}
-	if readErr == nil {
-		if !liveGen.Exists || !bytes.Equal(live, raw) {
-			return nil, fmt.Errorf("%w: %s", dependencytxn.ErrGenerationConflict, abs)
-		}
-	} else if liveGen.Exists {
-		return nil, fmt.Errorf("%w: %s", dependencytxn.ErrGenerationConflict, abs)
 	}
 	mode := fs.FileMode(0o600)
 	var expectedMode fs.FileMode
@@ -717,8 +922,15 @@ type ownedJSONExistingEntry struct {
 }
 
 // ownedJSONExistingEntries reads the current entries out of the container node.
-func ownedJSONExistingEntries(file ownedJSONFileSpec, container *jsonc.Node) ([]ownedJSONExistingEntry, error) {
+func ownedJSONExistingEntries(file ownedJSONFileSpec, container *jsonc.Node, legacyProofs ...ownership.Proof) ([]ownedJSONExistingEntry, error) {
 	rel := file.rel
+	if len(legacyProofs) > 1 {
+		return nil, fmt.Errorf("aggregate %q accepts at most one legacy ownership proof", rel)
+	}
+	var legacyProof ownership.Proof
+	if len(legacyProofs) == 1 {
+		legacyProof = legacyProofs[0]
+	}
 	if file.keyed {
 		var out []ownedJSONExistingEntry
 		for _, key := range container.Keys() {
@@ -758,11 +970,6 @@ func ownedJSONExistingEntries(file ownedJSONFileSpec, container *jsonc.Node) ([]
 		}
 		for i := 0; i < node.Len(); i++ {
 			element, _ := node.Element(i)
-			if file.hookShape != "" {
-				if err := validateOwnedJSONHookRule(file.hookShape, element); err != nil {
-					return nil, fmt.Errorf("aggregate %q event %q entry %d does not match its declared hook shape; it was left unchanged", rel, event, i)
-				}
-			}
 			canonical, err := jsonc.Canonicalize(rel, element.Raw())
 			if err != nil {
 				return nil, fmt.Errorf("aggregate %q event %q entry %d is not valid JSON; it was left unchanged", rel, event, i)
@@ -779,17 +986,36 @@ func ownedJSONExistingEntries(file ownedJSONFileSpec, container *jsonc.Node) ([]
 			if file.rawValueDigest {
 				valueDigest = ownership.Digest(element.Raw())
 			}
+			value := ownership.EntryValue{
+				ID:          ownership.EntryID{Kind: ownership.KindHook, Container: event, IdentityDigest: identity},
+				ValueDigest: valueDigest,
+			}
+			if file.hookShape != "" {
+				if err := validateOwnedJSONHookRule(file.hookShape, element); err != nil &&
+					!ownedJSONLegacyFlatHookRuleIsOwned(file, element, value, legacyProof) {
+					return nil, fmt.Errorf("aggregate %q event %q entry %d does not match its declared hook shape; it was left unchanged", rel, event, i)
+				}
+			}
 			out = append(out, ownedJSONExistingEntry{
-				value: ownership.EntryValue{
-					ID:          ownership.EntryID{Kind: ownership.KindHook, Container: event, IdentityDigest: identity},
-					ValueDigest: valueDigest,
-				},
+				value:     value,
 				container: event,
 				raw:       element.Raw(),
 			})
 		}
 	}
 	return out, nil
+}
+
+func ownedJSONLegacyFlatHookRuleIsOwned(file ownedJSONFileSpec, rule *jsonc.Node, value ownership.EntryValue, proof ownership.Proof) bool {
+	if file.hookShape != targetmeta.HookShapeMatcherGroups || rule == nil || rule.Kind() != jsonc.KindObject {
+		return false
+	}
+	for _, key := range rule.Keys() {
+		if strings.EqualFold(key, "hooks") {
+			return false
+		}
+	}
+	return proof.Classify(value.ID, value.ValueDigest) == ownership.StatusOwnedClean
 }
 
 // ownedJSONPatch is the fully decided set of edits for one aggregate file. It is
@@ -822,6 +1048,7 @@ type ownedJSONPatch struct {
 	satisfactions   []ownership.HookSatisfaction
 	prunePostponed  []ownership.EntryID
 	pruneSuppressed bool
+	reconciledKinds map[ownership.EntryKind]bool
 }
 
 // ownedJSONPatchPlan decides every edit for one file.
@@ -908,6 +1135,29 @@ func ownedJSONPatchPlan(outDir string, file ownedJSONFileSpec, desired []ownedJS
 			patch.satisfied = append(patch.satisfied, entry)
 			continue
 		}
+		satisfied := false
+		for _, existingEntry := range existing {
+			if existingEntry.container != entry.container || !unmanagedIdentities[ownedAggregateIDKey(existingEntry.value.ID)] {
+				continue
+			}
+			existingRaw, err := canonicalOwnedJSON(existingEntry.raw)
+			if err != nil {
+				continue
+			}
+			existingValue, ok := nativeHookValueWithoutOwnershipMarker(existingRaw)
+			if !ok || !bytes.Equal(existingValue, entry.raw) {
+				continue
+			}
+			satisfiedEntry := entry
+			satisfiedEntry.raw = existingRaw
+			satisfiedEntry.identity = existingEntry.value.ID.IdentityDigest
+			patch.satisfied = append(patch.satisfied, satisfiedEntry)
+			satisfied = true
+			break
+		}
+		if satisfied {
+			continue
+		}
 		desiredByEvent[entry.container] = append(desiredByEvent[entry.container], entry)
 		events[entry.container] = true
 	}
@@ -958,6 +1208,32 @@ func ownedJSONPatchPlan(outDir string, file ownedJSONFileSpec, desired []ownedJS
 	})
 	retainPostponedOwnership(&patch, existing, drift.Stale, proof, incomplete)
 	return patch
+}
+
+func nativeHookValueWithoutOwnershipMarker(raw []byte) ([]byte, bool) {
+	var fields map[string]json.RawMessage
+	if err := ownedJSONDecode(raw, &fields); err != nil || fields == nil {
+		return nil, false
+	}
+	removedMarker := false
+	for key := range fields {
+		if strings.EqualFold(key, "_managed_by") {
+			delete(fields, key)
+			removedMarker = true
+		}
+	}
+	if !removedMarker {
+		return nil, false
+	}
+	withoutMarker, err := json.Marshal(fields)
+	if err != nil {
+		return nil, false
+	}
+	canonical, err := canonicalOwnedJSON(withoutMarker)
+	if err != nil {
+		return nil, false
+	}
+	return canonical, true
 }
 
 func exactSourcePairs(entry ownedJSONEntry) []ownership.HookSourceEvidence {

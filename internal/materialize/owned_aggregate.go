@@ -148,6 +148,22 @@ func (w *ownedJSONAggregateWork) markIncomplete(rel string) {
 	w.incomplete[rel] = true
 }
 
+func mergeOwnedJSONAggregateWork(dst, src *ownedJSONAggregateWork) *ownedJSONAggregateWork {
+	if src == nil {
+		return dst
+	}
+	if dst == nil {
+		dst = &ownedJSONAggregateWork{}
+	}
+	for _, entry := range src.entries {
+		dst.add(entry)
+	}
+	for rel := range src.incomplete {
+		dst.markIncomplete(rel)
+	}
+	return dst
+}
+
 // ownedJSONFileSpec describes the structural policy needed by the common JSON
 // reconciler. Target adapters supply it; the reconciler does not infer target
 // semantics from path strings.
@@ -208,10 +224,59 @@ func ownedAggregateIDKey(id ownership.EntryID) string {
 	return string(id.Kind) + "\x00" + id.Container + "\x00" + id.Key + "\x00" + id.IdentityDigest
 }
 
+type ownedAggregateSessionSnapshot struct {
+	stateMissing bool
+	files        map[string]bool
+}
+
+type ownedAggregateWriteSession struct {
+	root       string
+	store      *ownership.Store
+	lockReport *ownedAggregateLockReporter
+	initial    *ownedAggregateSessionSnapshot
+}
+
 // ownedAggregateState stores adapter-specific desired state outside generic
 // orchestration. JSON hooks and TOML MCP entries retain their native patch models.
 type ownedAggregateState struct {
-	values map[outputKey]any
+	values        map[outputKey]any
+	nativeHooks   map[outputKey]bool
+	writeSessions map[string]ownedAggregateWriteSession
+}
+
+func (s ownedAggregateState) reconcilesNativeHooks(key outputKey) bool {
+	return s.nativeHooks[key]
+}
+
+func (s ownedAggregateState) writeSession(root string) (ownedAggregateWriteSession, bool) {
+	canonical, err := ownership.CanonicalRoot(root)
+	if err != nil {
+		return ownedAggregateWriteSession{}, false
+	}
+	session, ok := s.writeSessions[ownership.RootKey(canonical)]
+	return session, ok
+}
+
+func (s *ownedAggregateState) setWriteSession(session ownedAggregateWriteSession) {
+	if s.writeSessions == nil {
+		s.writeSessions = make(map[string]ownedAggregateWriteSession)
+	}
+	s.writeSessions[ownership.RootKey(session.root)] = session
+}
+
+func (s *ownedAggregateState) deleteWriteSession(session ownedAggregateWriteSession) {
+	key := ownership.RootKey(session.root)
+	if current, ok := s.writeSessions[key]; ok && current == session {
+		delete(s.writeSessions, key)
+	}
+}
+
+func withOwnedAggregateWriteSession(ctx context.Context, state *ownedAggregateState, session ownedAggregateWriteSession, operation string, fn func() error) error {
+	return session.store.WithWriteSessionContext(ctx, operation, func() error {
+		state.setWriteSession(session)
+		defer state.deleteWriteSession(session)
+		return fn()
+	})
 }
 
 func (s ownedAggregateState) get(key outputKey) any {
@@ -300,14 +365,25 @@ func ownedAggregateHandlerFor(target hcc.Target) ownedAggregateHandler {
 }
 
 type ownedJSONReconcileOptions struct {
-	rootID             string
-	sessionName        string
-	writeCode          string
-	malformedCode      string
-	shapeCode          string
-	satisfiedCode      string
-	prunePostponedCode string
-	onWrite            func(*Report, outputKey, string, bool)
+	rootID                    string
+	sessionName               string
+	writeCode                 string
+	store                     *ownership.Store
+	lockReport                *ownedAggregateLockReporter
+	deferLockDiagnostics      bool
+	storeSessionHeld          bool
+	malformedCode             string
+	shapeCode                 string
+	satisfiedCode             string
+	prunePostponedCode        string
+	rawValueDigest            bool
+	allowOwnedLegacyFlatHooks bool
+	onWrite                   func(*Report, outputKey, string, bool)
+	nativeHookFinalize        nativeHookFinalizer
+}
+
+type nativeHookReconcileOptionsProvider interface {
+	nativeHookReconcileOptions() ownedJSONReconcileOptions
 }
 
 func ownedJSONShapeDiag(code string, key outputKey, outDir, rel string, err error) diag.Diagnostic {

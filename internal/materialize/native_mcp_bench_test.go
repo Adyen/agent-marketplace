@@ -18,7 +18,7 @@ func BenchmarkNativeMCPSyncDisk(b *testing.B) {
 			b.Setenv("XDG_STATE_HOME", b.TempDir())
 			b.Setenv("XDG_CACHE_HOME", b.TempDir())
 			b.Setenv("CODEX_HOME", filepath.Join(home, ".codex"))
-			resources := nativeMCPResources(target, config.UserPersonal)
+			resources := nativeMCPResources(b, target, config.UserPersonal)
 			if _, err := Run(context.Background(), repo, resources); err != nil {
 				b.Fatal(err)
 			}

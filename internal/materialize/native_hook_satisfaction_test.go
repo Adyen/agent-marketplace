@@ -36,6 +36,19 @@ func nativeHookSatisfaction(t *testing.T, event, rule string, sources []ownershi
 	}
 }
 
+func assertNativeHookSatisfactionRecord(t *testing.T, proof ownership.Proof, id ownership.EntryID, valueDigest, resource, sourceDigest string) {
+	t.Helper()
+	satisfactions := proof.HookSatisfactions()
+	if len(satisfactions) != 1 {
+		t.Fatalf("native hook satisfactions = %+v, want one record", satisfactions)
+	}
+	got := satisfactions[0]
+	wantSources := []ownership.HookSourceEvidence{{Resource: resource, SourceDigest: sourceDigest}}
+	if got.ID() != id || got.ValueDigest != valueDigest || !reflect.DeepEqual(got.Sources, wantSources) {
+		t.Fatalf("native hook satisfaction = %+v, want id=%+v value=%q sources=%+v", got, id, valueDigest, wantSources)
+	}
+}
+
 func writeNativeSatisfactionState(t *testing.T, nativeRoot string, layout nativeHookLayout, recordedNative []byte, entries []ownership.Entry, satisfactions []ownership.HookSatisfaction) *ownership.Store {
 	t.Helper()
 	store, err := ownership.Open(nativeRoot)
@@ -78,13 +91,24 @@ func writeNativeSatisfactionState(t *testing.T, nativeRoot string, layout native
 
 func namedHookPairFixture(t *testing.T, source config.Source, target hcc.Target, name string) ([]resolver.ResolvedArtifact, string) {
 	t.Helper()
-	pre, sourceRoot := namedHookFixture(t, source, target, name)
 	definition := `{"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"` + sharedSourceCommand + `"}]}],"PostToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"` + sharedSourceCommand + `"}]}]}}`
-	if err := os.WriteFile(pre.Path, []byte(definition), 0o644); err != nil {
-		t.Fatalf("write paired hook definition: %v", err)
+	resolved, sourceRoot := namedHookFixtures(t, source, target, name, definition)
+	var pre, post resolver.ResolvedArtifact
+	for _, candidate := range resolved {
+		hook, ok := candidate.Resource.(*ir.Hook)
+		if !ok {
+			t.Fatal("Claude catalog entry is not a hook")
+		}
+		switch hook.Event {
+		case "PreToolUse":
+			pre = candidate
+		case "PostToolUse":
+			post = candidate
+		}
 	}
-	post := pre
-	post.Resource = ir.NewHookWithMatcher(name, "PostToolUse", "Bash", sharedSourceCommand, "command", nil, ir.SourceRef{File: "hooks/hooks.json"})
+	if pre.Resource == nil || post.Resource == nil {
+		t.Fatalf("Claude catalog ingest returned incomplete pair: %#v", resolved)
+	}
 	return []resolver.ResolvedArtifact{pre, post}, sourceRoot
 }
 
@@ -325,7 +349,7 @@ func TestNativeSatisfactionPreventsLegacyRecreation(t *testing.T) {
 		seed := sharedNativeSeed(t, hcc.TargetFactory, false)
 		nativeBytes := []byte(seed.doc)
 		nativePath := writeNativeFile(t, nativeRoot, layout, nativeBytes)
-		if _, err := Run(context.Background(), repoRoot, []resolver.ResolvedArtifact{resolved}); err != nil {
+		if _, err := runLegacyToleranceFixture(context.Background(), repoRoot, []resolver.ResolvedArtifact{resolved}); err != nil {
 			t.Fatalf("seed legacy twin with normal sync: %v", err)
 		}
 		legacyPath := legacyHookFileFor(hcc.TargetFactory, false, repoRoot, home)
@@ -337,7 +361,7 @@ func TestNativeSatisfactionPreventsLegacyRecreation(t *testing.T) {
 		store := writeNativeSatisfactionState(t, nativeRoot, layout, nativeBytes, []ownership.Entry{}, []ownership.HookSatisfaction{satisfaction})
 		nativeBefore, nativeMode, nativeMtime := fileSnapshot(t, nativePath)
 		stateBefore, stateMode, stateMtime := fileSnapshot(t, store.StateFile())
-		report, err := Run(context.Background(), repoRoot, []resolver.ResolvedArtifact{resolved})
+		report, err := runLegacyToleranceFixture(context.Background(), repoRoot, []resolver.ResolvedArtifact{resolved})
 		if err != nil {
 			t.Fatalf("sync with complete native satisfaction: %v", err)
 		}
@@ -364,24 +388,92 @@ func runNativeSatisfactionNoEvidence(t *testing.T, source config.Source, target 
 	nativePath := writeNativeFile(t, nativeRoot, layout, nativeBytes)
 	store := writeNativeSatisfactionState(t, nativeRoot, layout, nativeBytes, []ownership.Entry{}, []ownership.HookSatisfaction{})
 	nativeBefore, nativeMode, nativeMtime := fileSnapshot(t, nativePath)
-	stateBefore, stateMode, stateMtime := fileSnapshot(t, store.StateFile())
 
 	report, err := Run(context.Background(), repoRoot, []resolver.ResolvedArtifact{resolved})
 	if err != nil {
 		t.Fatalf("sync without satisfaction evidence: %v", err)
 	}
 	assertNoMaterializeErrors(t, report)
-	legacyPath := legacyHookFileFor(target, machine, repoRoot, home)
-	if target == hcc.TargetWindsurf && machine {
-		assertWindsurfMachineHooks(t, legacyPath, true)
-	} else {
-		assertFactoryLegacyHooks(t, legacyPath, sharedSourceCommand, map[string]int{"PreToolUse": 1})
-		assertFileUnchanged(t, nativePath, nativeBefore, nativeMode, nativeMtime)
+	if !diag.HasCode(report.Diags, diag.CodeMaterializeHookSatisfiedByUnmanaged) {
+		t.Fatalf("missing handwritten-satisfaction diagnostic: %+v", report.Diags)
 	}
-	assertFileUnchanged(t, store.StateFile(), stateBefore, stateMode, stateMtime)
+	legacyPath := legacyHookFileFor(target, machine, repoRoot, home)
+	if target != hcc.TargetWindsurf || !machine {
+		assertPathAbsent(t, legacyPath)
+	}
+	assertNoMaterializeChanges(t, report)
+	assertFileUnchanged(t, nativePath, nativeBefore, nativeMode, nativeMtime)
 	fingerprint := namedFingerprint(t, sourceRoot, resolved.Name, string(target), scope)
 	entry := nativeHookProofEntry(t, seed.event, seed.rule, resolved.Name, fingerprint)
 	assertNativeSatisfactionUnmanaged(t, store, nativeRoot, target, machine, entry.ID())
+	proof, err := store.Proof(layout.rel)
+	if err != nil {
+		t.Fatalf("Proof: %v", err)
+	}
+	if proof.OwnedCount() != 0 || len(proof.OwnedIDs()) != 0 {
+		t.Fatalf("handwritten satisfaction was adopted: %+v", proof.OwnedIDs())
+	}
+	assertNativeHookSatisfactionRecord(t, proof, entry.ID(), entry.ValueDigest, resolved.Name, fingerprint)
+	inspection, err := inspectNativeHookFile(store, nativeRoot, target, machine)
+	if err != nil {
+		t.Fatalf("inspect handwritten native Hook: %v", err)
+	}
+	if !inspection.hookSatisfied(fingerprint, resolved.Name) {
+		t.Fatal("native reader did not recognize the exact handwritten satisfaction")
+	}
+}
+
+// spec: hook-native-location-tolerance/handwritten-hook-does-not-become-owned
+func TestFrozenLegacyReaderDoesNotSuppressHandwrittenClaudeHookWithoutProof(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	repo, home, codexHome := nativeHookJSONTestEnvironment(t)
+	resolved, sourceRoot := namedHookFixture(t, config.RepoCommitted, hcc.TargetClaude, "alpha")
+	layoutCase := nativeHookJSONCaseByName(t, "claude_repo")
+	_, root, _, nativePath := nativeHookMetadataTarget(t, layoutCase, repo, home, codexHome)
+	layout, ok := nativeHookLayoutFor(hcc.TargetClaude, false)
+	if !ok {
+		t.Fatal("Claude native hook layout is unavailable")
+	}
+	seed := sharedNativeSeed(t, hcc.TargetClaude, false)
+	writeNativeFile(t, root, layout, []byte(seed.doc))
+	if err := os.Chmod(nativePath, 0o640); err != nil {
+		t.Fatal(err)
+	}
+	nativeBefore, nativeMode, nativeMtime := fileSnapshot(t, nativePath)
+	store := nativeHookMetadataStore(t, root)
+	if _, err := os.Lstat(store.StateFile()); !os.IsNotExist(err) {
+		t.Fatalf("unproven native fixture unexpectedly has ownership state: %v", err)
+	}
+	fingerprint := namedFingerprint(t, sourceRoot, resolved.Name, string(hcc.TargetClaude), HookScopeRepository)
+	inspection := nativeHookInspectionFor(map[outputKey]*nativeHookInspection{}, outputKey{target: hcc.TargetClaude}, repo)
+	if inspection.err != nil || inspection.hookSatisfied(fingerprint, resolved.Name) {
+		t.Fatalf("handwritten native rule has false satisfaction proof: %v", inspection.err)
+	}
+
+	report, err := runLegacyToleranceFixture(context.Background(), repo, []resolver.ResolvedArtifact{resolved})
+	if err != nil || report == nil || diag.HasErrors(report.Diags) {
+		t.Fatalf("frozen legacy reader run: %v / %v", err, report)
+	}
+	assertFileUnchanged(t, nativePath, nativeBefore, nativeMode, nativeMtime)
+	legacy := legacyHookRules(t, legacyHookFileFor(hcc.TargetClaude, false, repo, home))
+	if len(legacy["PreToolUse"]) != 1 {
+		t.Fatalf("unproven handwritten native rule suppressed legacy output: %+v", legacy)
+	}
+	rule := legacy["PreToolUse"][0]
+	if rule["matcher"] != "Bash" || rule["_managed_by"] != "agent-marketplace" {
+		t.Fatalf("frozen legacy rule = %+v, want explicit Bash/agent-marketplace shape", rule)
+	}
+	handlers, ok := rule["hooks"].([]any)
+	if !ok || len(handlers) != 1 {
+		t.Fatalf("frozen legacy handlers = %#v", rule["hooks"])
+	}
+	handler, ok := handlers[0].(map[string]any)
+	if !ok || handler["type"] != "command" || handler["command"] != sharedSourceCommand {
+		t.Fatalf("frozen legacy handler = %#v", handlers[0])
+	}
+	if _, err := os.Lstat(store.StateFile()); !os.IsNotExist(err) {
+		t.Fatalf("frozen reader adopted handwritten native rule: %v", err)
+	}
 }
 
 // spec: hook-native-location-tolerance/satisfaction-proof-matches-every-contributor-exactly
@@ -409,7 +501,7 @@ func TestNativeSatisfactionMatchesEveryContributorExactly(t *testing.T) {
 		store := writeNativeSatisfactionState(t, nativeRoot, layout, nativeBytes, []ownership.Entry{}, []ownership.HookSatisfaction{satisfaction})
 		nativeBefore, nativeMode, nativeMtime := fileSnapshot(t, nativePath)
 		stateBefore, stateMode, stateMtime := fileSnapshot(t, store.StateFile())
-		report, err := Run(context.Background(), repoRoot, []resolver.ResolvedArtifact{alpha, beta})
+		report, err := runLegacyToleranceFixture(context.Background(), repoRoot, []resolver.ResolvedArtifact{alpha, beta})
 		if err != nil {
 			t.Fatalf("sync: %v", err)
 		}
@@ -493,7 +585,7 @@ func TestNativeSatisfactionMatchesEveryContributorExactly(t *testing.T) {
 			store := writeNativeSatisfactionState(t, nativeRoot, layout, nativeBytes, []ownership.Entry{}, []ownership.HookSatisfaction{satisfaction})
 			nativeBefore, nativeMode, nativeMtime := fileSnapshot(t, nativePath)
 			stateBefore, stateMode, stateMtime := fileSnapshot(t, store.StateFile())
-			report, err := Run(context.Background(), repoRoot, tc.selected)
+			report, err := runLegacyToleranceFixture(context.Background(), repoRoot, tc.selected)
 			if err != nil {
 				t.Fatalf("sync: %v", err)
 			}
@@ -532,7 +624,7 @@ func TestNativeSatisfactionPartialMixedEvidenceSuppressesNothing(t *testing.T) {
 		store := writeNativeSatisfactionState(t, nativeRoot, layout, fullNative, []ownership.Entry{}, []ownership.HookSatisfaction{preSatisfaction, postSatisfaction})
 		nativeBefore, nativeMode, nativeMtime := fileSnapshot(t, nativePath)
 		stateBefore, stateMode, stateMtime := fileSnapshot(t, store.StateFile())
-		report, err := Run(context.Background(), repoRoot, resolved)
+		report, err := runLegacyToleranceFixture(context.Background(), repoRoot, resolved)
 		if err != nil {
 			t.Fatalf("sync complete proof control: %v", err)
 		}
@@ -562,7 +654,7 @@ func TestNativeSatisfactionPartialMixedEvidenceSuppressesNothing(t *testing.T) {
 			store := writeNativeSatisfactionState(t, nativeRoot, layout, fullNative, tc.entries, tc.satisfactions)
 			nativeBefore, nativeMode, nativeMtime := fileSnapshot(t, nativePath)
 			stateBefore, stateMode, stateMtime := fileSnapshot(t, store.StateFile())
-			report, err := Run(context.Background(), repoRoot, resolved)
+			report, err := runLegacyToleranceFixture(context.Background(), repoRoot, resolved)
 			if err != nil {
 				t.Fatalf("sync partial proof: %v", err)
 			}
@@ -619,7 +711,7 @@ func TestNativeSatisfactionInvalidEvidenceRefusesWithoutMutation(t *testing.T) {
 	assertPathAbsent(t, cursorLegacy)
 	logs := captureNativeSatisfactionLogs(t)
 
-	dryReport, err := Run(context.Background(), repoRoot, []resolver.ResolvedArtifact{resolved}, WithDryRun())
+	dryReport, err := runLegacyToleranceFixture(context.Background(), repoRoot, []resolver.ResolvedArtifact{resolved}, WithDryRun())
 	if err != nil {
 		t.Fatalf("sync --check with invalid satisfaction: %v", err)
 	}
@@ -639,7 +731,7 @@ func TestNativeSatisfactionInvalidEvidenceRefusesWithoutMutation(t *testing.T) {
 		t.Fatal("dry run created filesystem or state-root residue")
 	}
 
-	report, err := Run(context.Background(), repoRoot, []resolver.ResolvedArtifact{resolved})
+	report, err := runLegacyToleranceFixture(context.Background(), repoRoot, []resolver.ResolvedArtifact{resolved})
 	if err != nil {
 		t.Fatalf("sync with invalid satisfaction: %v", err)
 	}
@@ -677,7 +769,7 @@ func TestNativeSatisfactionInvalidEvidenceRefusesWithoutMutation(t *testing.T) {
 		nativeBefore, nativeMode, nativeMtime := fileSnapshot(t, nativePath)
 		legacyPath := legacyHookFileFor(hcc.TargetFactory, false, root, home)
 		assertPathAbsent(t, store.StateFile())
-		dry, err := Run(context.Background(), root, []resolver.ResolvedArtifact{selection}, WithDryRun())
+		dry, err := runLegacyToleranceFixture(context.Background(), root, []resolver.ResolvedArtifact{selection}, WithDryRun())
 		if err != nil {
 			t.Fatalf("sync --check without prior state: %v", err)
 		}
@@ -727,7 +819,7 @@ func TestNativeSatisfactionMirrorFingerprint(t *testing.T) {
 			stateBefore, stateMode, stateMtime := fileSnapshot(t, store.StateFile())
 			selection := resolved
 			selection.MarketplaceDigest = tc.selectionFP
-			report, err := Run(context.Background(), repoRoot, []resolver.ResolvedArtifact{selection})
+			report, err := runLegacyToleranceFixture(context.Background(), repoRoot, []resolver.ResolvedArtifact{selection})
 			if err != nil {
 				t.Fatalf("sync: %v", err)
 			}
@@ -809,7 +901,7 @@ func TestNativeSatisfactionSurvivesOwnedMutation(t *testing.T) {
 			nativeSnap, nativeMode, nativeMtime := fileSnapshot(t, nativePath)
 			stateSnap, stateMode, stateMtime := fileSnapshot(t, store.StateFile())
 
-			report, err := Run(context.Background(), repoRoot, []resolver.ResolvedArtifact{resolved})
+			report, err := runLegacyToleranceFixture(context.Background(), repoRoot, []resolver.ResolvedArtifact{resolved})
 			if err != nil {
 				t.Fatalf("sync after owned mutation: %v", err)
 			}

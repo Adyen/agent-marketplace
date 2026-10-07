@@ -464,28 +464,10 @@ func (s *Store) nextRecordMeta(current *Record, rel string, contentDigest string
 	}
 	next.UpdatedAt = s.now().UTC().Format(time.RFC3339Nano)
 
-	sorted := append([]Entry(nil), entries...)
-	seen := make(map[string]struct{}, len(sorted))
-	for _, e := range sorted {
-		if err := validateEntry(e); err != nil {
-			return nil, err
-		}
-		key := e.ID().mapKey()
-		if _, dup := seen[key]; dup {
-			return nil, fmt.Errorf("%w: duplicate entry identity", ErrUnsafeStateValue)
-		}
-		seen[key] = struct{}{}
+	sorted, seen, err := sortedOwnedEntries(entries)
+	if err != nil {
+		return nil, err
 	}
-	sort.Slice(sorted, func(i, j int) bool {
-		a, b := sorted[i], sorted[j]
-		if a.Container != b.Container {
-			return a.Container < b.Container
-		}
-		if a.Key != b.Key {
-			return a.Key < b.Key
-		}
-		return a.IdentityDigest < b.IdentityDigest
-	})
 	fileState := next.Files[rel]
 	fileState.ContentDigest = contentDigest
 	fileState.Entries = sorted
@@ -507,6 +489,32 @@ func (s *Store) nextRecordMeta(current *Record, rel string, contentDigest string
 		next.Files[rel] = fileState
 	}
 	return next, nil
+}
+
+func sortedOwnedEntries(entries []Entry) ([]Entry, map[string]struct{}, error) {
+	sorted := append([]Entry(nil), entries...)
+	seen := make(map[string]struct{}, len(sorted))
+	for _, entry := range sorted {
+		if err := validateEntry(entry); err != nil {
+			return nil, nil, err
+		}
+		key := entry.ID().mapKey()
+		if _, dup := seen[key]; dup {
+			return nil, nil, fmt.Errorf("%w: duplicate entry identity", ErrUnsafeStateValue)
+		}
+		seen[key] = struct{}{}
+	}
+	sort.Slice(sorted, func(i, j int) bool {
+		a, b := sorted[i], sorted[j]
+		if a.Container != b.Container {
+			return a.Container < b.Container
+		}
+		if a.Key != b.Key {
+			return a.Key < b.Key
+		}
+		return a.IdentityDigest < b.IdentityDigest
+	})
+	return sorted, seen, nil
 }
 
 func sortedHookSatisfactions(in []HookSatisfaction) ([]HookSatisfaction, error) {

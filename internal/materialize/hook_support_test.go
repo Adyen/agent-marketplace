@@ -18,8 +18,8 @@ func TestPrepareHookSupportNamespacesSupportFiles(t *testing.T) {
 	first := makeHookSupportSource(t, "echo first", 0o644)
 	second := makeHookSupportSource(t, "echo second", 0o644)
 	work := []skillTarget{
-		{skill: resolverHook(first, "first"), target: hcc.TargetFactory},
-		{skill: resolverHook(second, "second"), target: hcc.TargetFactory},
+		{skill: resolverHook(t, first, "first"), target: hcc.TargetFactory},
+		{skill: resolverHook(t, second, "second"), target: hcc.TargetFactory},
 	}
 	plans, conflicts := prepareHookSupport(work)
 	if len(conflicts) != 0 {
@@ -48,24 +48,35 @@ func TestPrepareHookSupportNamespacesSupportFiles(t *testing.T) {
 func makeHookSupportSource(t *testing.T, script string, mode os.FileMode) string {
 	t.Helper()
 	dir := t.TempDir()
-	hooks := filepath.Join(dir, "hooks.json")
+	hooks := filepath.Join(dir, "hooks", "hooks.json")
+	if err := os.MkdirAll(filepath.Dir(hooks), 0o755); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(hooks, []byte(`{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"${CLAUDE_PLUGIN_ROOT}/shared.sh"}]}]}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "shared.sh"), []byte(script), mode); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "hooks", "shared.sh"), []byte(script), mode); err != nil {
 		t.Fatal(err)
 	}
 	return hooks
 }
 
-func resolverHook(path, name string) resolver.ResolvedArtifact {
-	root := filepath.Dir(path)
-	hook := ir.NewHookWithMatcher(name, "PreToolUse", "Bash", "${CLAUDE_PLUGIN_ROOT}/shared.sh", "command", nil, ir.SourceRef{File: path})
+func resolverHook(t *testing.T, path, name string) resolver.ResolvedArtifact {
+	t.Helper()
+	root := filepath.Dir(filepath.Dir(path))
+	loaded, err := catalog.Load(root, "claude")
+	if err != nil || len(loaded.Entries) != 1 || loaded.Entries[0].Kind != ir.KindHook {
+		t.Fatalf("Claude support source ingest = %+v / %v", loaded.Entries, err)
+	}
+	entry := loaded.Entries[0]
+	entry.Name = name
 	return resolver.ResolvedArtifact{
-		Entry:       catalog.Entry{Name: name, Kind: ir.KindHook, Path: path, Resource: hook},
+		Entry:       entry,
 		RegistryURL: root,
 		CatalogKey:  root,
+		V4Kind:      config.V4SourceDirectory,
 		Source:      config.RepoCommitted,
+		Harnesses:   []hcc.Target{hcc.TargetFactory},
 	}
 }
 

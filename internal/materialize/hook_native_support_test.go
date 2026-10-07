@@ -13,11 +13,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Adyen/agent-marketplace/internal/cache"
 	"github.com/Adyen/agent-marketplace/internal/catalog"
 	"github.com/Adyen/agent-marketplace/internal/config"
+	"github.com/Adyen/agent-marketplace/internal/ownership"
 	"github.com/Adyen/agent-marketplace/internal/resolver"
 	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
-	hccartifact "github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 )
@@ -28,7 +29,7 @@ const nativeSupportScriptBody = "#!/bin/sh\nexec \"$CLAUDE_PROJECT_DIR\"/bin/too
 // harness layout, catalogs it, and returns the provider-shaped artifact the
 // additive tests consume. files maps slash-relative paths to contents; the
 // hook definition must be one of them.
-func nativeSupportSource(t *testing.T, sourceHarness, defRel string, files map[string]string) resolver.ResolvedArtifact {
+func nativeSupportSource(t *testing.T, sourceHarness, defRel string, files map[string]string, selectedName ...string) resolver.ResolvedArtifact {
 	t.Helper()
 	root := t.TempDir()
 	for rel, body := range files {
@@ -38,9 +39,16 @@ func nativeSupportSource(t *testing.T, sourceHarness, defRel string, files map[s
 	if err != nil {
 		t.Fatalf("catalog %s: %v", sourceHarness, err)
 	}
+	if len(selectedName) > 1 {
+		t.Fatalf("nativeSupportSource selected names = %v, want at most one", selectedName)
+	}
 	for i := range cat.Entries {
 		if cat.Entries[i].Kind == ir.KindHook && strings.HasSuffix(filepath.ToSlash(cat.Entries[i].Path), defRel) {
-			return resolver.ResolvedArtifact{Entry: cat.Entries[i], RegistryURL: root, CatalogKey: root}
+			entry := cat.Entries[i]
+			if len(selectedName) == 1 {
+				entry.Name = selectedName[0]
+			}
+			return resolver.ResolvedArtifact{Entry: entry, RegistryURL: root, CatalogKey: root}
 		}
 	}
 	t.Fatalf("catalog %s produced no hook for %s: %#v", sourceHarness, defRel, cat.Entries)
@@ -96,13 +104,13 @@ type nativeSupportLocation struct {
 
 func nativeSupportLocations() []nativeSupportLocation {
 	return []nativeSupportLocation{
-		{target: hcc.TargetClaude, repoFile: ".claude/hooks/hooks.json", userFile: ".claude/hooks/hooks.json", container: "hooks", event: "PreToolUse", userContainer: "hooks", repoBase: `"$CLAUDE_PROJECT_DIR"/`, repoSupportRoot: ".claude/hook-support", userSupportRoot: ".claude/hook-support", matcher: "Bash", handlerType: "command", hasMatcher: true},
-		{target: hcc.TargetFactory, repoFile: ".factory/hooks/hooks.json", userFile: ".factory/hooks/hooks.json", event: "PreToolUse", repoBase: `"$FACTORY_PROJECT_DIR"/`, repoSupportRoot: ".factory/hook-support", userSupportRoot: ".factory/hook-support", matcher: "Execute", handlerType: "command", grouped: true, hasMatcher: true},
-		{target: hcc.TargetCursor, repoFile: ".cursor/hooks/hooks.json", userFile: ".cursor/hooks/hooks.json", container: "hooks", event: "preToolUse", userContainer: "hooks", repoBase: `"$CURSOR_PROJECT_DIR"/`, repoSupportRoot: ".cursor/hook-support", userSupportRoot: ".cursor/hook-support", matcher: "^Shell$", handlerType: "command", hasMatcher: true},
+		{target: hcc.TargetClaude, repoFile: ".claude/settings.json", userFile: ".claude/settings.json", container: "hooks", event: "PreToolUse", userContainer: "hooks", repoBase: `"$CLAUDE_PROJECT_DIR"/`, repoSupportRoot: ".claude/hook-support", userSupportRoot: ".claude/hook-support", matcher: "Bash", handlerType: "command", grouped: true, hasMatcher: true},
+		{target: hcc.TargetFactory, repoFile: ".factory/hooks.json", userFile: ".factory/hooks.json", event: "PreToolUse", repoBase: `"$FACTORY_PROJECT_DIR"/`, repoSupportRoot: ".factory/hook-support", userSupportRoot: ".factory/hook-support", matcher: "Execute", handlerType: "command", grouped: true, hasMatcher: true},
+		{target: hcc.TargetCursor, repoFile: ".cursor/hooks.json", userFile: ".cursor/hooks.json", container: "hooks", event: "preToolUse", userContainer: "hooks", repoBase: `"$CURSOR_PROJECT_DIR"/`, repoSupportRoot: ".cursor/hook-support", userSupportRoot: ".cursor/hook-support", matcher: "^Shell$", handlerType: "command", hasMatcher: true},
 		{target: hcc.TargetGemini, repoFile: ".gemini/settings.json", userFile: ".gemini/settings.json", container: "hooks", event: "BeforeTool", userContainer: "hooks", repoBase: `"$GEMINI_PROJECT_DIR"/`, repoSupportRoot: ".gemini/hook-support", userSupportRoot: ".gemini/hook-support", matcher: "^run_shell_command$", handlerType: "command", grouped: true, hasMatcher: true},
 		{target: hcc.TargetDevin, repoFile: ".devin/hooks.v1.json", userFile: ".config/devin/config.json", event: "PreToolUse", userContainer: "hooks", repoBase: `"$DEVIN_PROJECT_DIR"/`, repoSupportRoot: ".devin/hook-support", userSupportRoot: ".config/devin/hook-support", matcher: "^exec$", handlerType: "command", grouped: true, hasMatcher: true},
 		{target: hcc.Target("codex"), repoFile: ".codex/hooks.json", userFile: ".codex/hooks.json", container: "hooks", event: "PreToolUse", userContainer: "hooks", repoBase: `"$(git rev-parse --show-toplevel)"/`, repoSupportRoot: ".codex/hook-support", userSupportRoot: ".codex/hook-support", matcher: "^Bash$", handlerType: "command", grouped: true, hasMatcher: true},
-		{target: hcc.TargetWindsurf, repoFile: ".windsurf/hooks.json", userFile: ".codeium/windsurf/hooks.json", container: "hooks", event: "pre_run_command", userContainer: "hooks", repoSupportRoot: "hook-support", userSupportRoot: ".codeium/windsurf/hook-support"},
+		{target: hcc.TargetWindsurf, repoFile: ".devin/hooks.json", userFile: ".codeium/windsurf/hooks.json", container: "hooks", event: "pre_run_command", userContainer: "hooks", repoSupportRoot: "hook-support", userSupportRoot: ".codeium/windsurf/hook-support"},
 	}
 }
 
@@ -287,7 +295,7 @@ func assertNativeSupportSnapshot(t *testing.T, before, after map[string]nativeSu
 	for name, want := range before {
 		got := after[name]
 		if want.mode != got.mode || want.isDir != got.isDir || want.size != got.size || want.modified != got.modified || want.linkTarget != got.linkTarget || !bytes.Equal(want.data, got.data) {
-			t.Fatalf("filesystem entry %s changed", name)
+			t.Fatalf("filesystem entry %s changed: before=%+v after=%+v", name, want, got)
 		}
 	}
 }
@@ -681,7 +689,8 @@ func TestNativeHookSupportSameIdentityConflictBlocksBoth(t *testing.T) {
 			repo, home := additiveSafetyEnv(t)
 			root := t.TempDir()
 			makeProvider := func(dir, body string, mode os.FileMode) resolver.ResolvedArtifact {
-				hooksDir := filepath.Join(root, dir, "hooks")
+				sourceRoot := filepath.Join(root, dir)
+				hooksDir := filepath.Join(sourceRoot, "hooks")
 				definition := filepath.Join(hooksDir, "hooks.json")
 				additiveSafetyWrite(t, definition, `{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"${CLAUDE_PLUGIN_ROOT}/check.sh"}]}]}`)
 				check := filepath.Join(hooksDir, "check.sh")
@@ -689,15 +698,18 @@ func TestNativeHookSupportSameIdentityConflictBlocksBoth(t *testing.T) {
 				if err := os.Chmod(check, mode); err != nil {
 					t.Fatal(err)
 				}
-				rel, err := filepath.Rel(root, definition)
-				if err != nil {
-					t.Fatal(err)
+				loaded, err := catalog.Load(sourceRoot, "claude")
+				if err != nil || len(loaded.Entries) != 1 || loaded.Entries[0].Kind != ir.KindHook {
+					t.Fatalf("Claude catalog ingest = %+v / %v", loaded.Entries, err)
 				}
-				hook := ir.NewHookWithMatcher("guard", "PreToolUse", "Bash", "${CLAUDE_PLUGIN_ROOT}/check.sh", "command", nil, ir.SourceRef{File: filepath.ToSlash(rel)})
+				entry := loaded.Entries[0]
+				entry.Name = "guard"
 				return resolver.ResolvedArtifact{
-					Entry:       catalog.Entry{Kind: ir.KindHook, Name: "guard", Path: definition, Resource: hook, SourceHarness: "claude"},
-					RegistryURL: root,
-					CatalogKey:  root,
+					Entry:       entry,
+					RegistryURL: "https://github.com/Adyen/agent-marketplace.git",
+					Ref:         "main",
+					V4Kind:      config.V4SourceGit,
+					CatalogKey:  sourceRoot,
 					Source:      config.RepoCommitted,
 					Harnesses:   []hcc.Target{hcc.TargetFactory},
 				}
@@ -707,7 +719,7 @@ func TestNativeHookSupportSameIdentityConflictBlocksBoth(t *testing.T) {
 				t.Fatalf("seed prior installation: %v", err)
 			}
 			factoryRoot := filepath.Join(repo, ".factory")
-			hookFile := filepath.Join(factoryRoot, "hooks", "hooks.json")
+			hookFile := filepath.Join(factoryRoot, "hooks.json")
 			supportRoot := filepath.Join(factoryRoot, "hook-support")
 			matches, err := filepath.Glob(filepath.Join(supportRoot, "*", "guard", "check.sh"))
 			if err != nil || len(matches) != 1 {
@@ -900,136 +912,60 @@ func TestNativeHookSupportExcludesSourceAggregates(t *testing.T) {
 	}
 }
 
-func TestNativeHookSupportMirrorAndIndexOnly(t *testing.T) {
-	hook := ir.NewHookWithMatcher("guard", "PreToolUse", "Bash", "${CLAUDE_PLUGIN_ROOT}/scripts/check.sh", "command", nil, ir.SourceRef{})
+func TestNativeHookSupportUnverifiedMirrorDirectoryRefuses(t *testing.T) {
 	mirrorDir := t.TempDir()
+	mirrorDefinition := `{"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"${CLAUDE_PLUGIN_ROOT}/scripts/check.sh"}]}]}}`
+	additiveSafetyWrite(t, filepath.Join(mirrorDir, "hooks", "hooks.json"), mirrorDefinition)
 	additiveSafetyWrite(t, filepath.Join(mirrorDir, "scripts", "check.sh"), "echo mirror\n")
+	mirrorCatalog, err := catalog.Load(mirrorDir, "claude")
+	if err != nil || len(mirrorCatalog.Entries) != 1 || mirrorCatalog.Entries[0].Kind != ir.KindHook {
+		t.Fatalf("Mirror source ingest = %+v / %v", mirrorCatalog.Entries, err)
+	}
+	mirrorEntry := mirrorCatalog.Entries[0]
+	mirrorEntry.Path = mirrorDir
 	mirror := resolver.ResolvedArtifact{
-		Entry:                   catalog.Entry{Kind: ir.KindHook, Name: "guard", Path: mirrorDir, Resource: hook, SourceHarness: "claude"},
+		Entry:                   mirrorEntry,
+		RegistryURL:             "https://example.invalid/registry.git",
+		RegistryPath:            "hooks",
+		Ref:                     "main",
 		Source:                  config.RepoCommitted,
 		IsMarketplace:           true,
 		MarketplaceAcquisition:  config.MarketplaceAcquisitionMirror,
 		MarketplaceRegistryID:   "registry",
-		MarketplaceResourceName: "guard",
-		MarketplaceDigest:       "sha256:" + strings.Repeat("a", 64),
+		MarketplaceResourceName: mirrorEntry.Name,
+		InstalledName:           "guard",
 		Harnesses:               []hcc.Target{hcc.TargetFactory},
 	}
-	t.Run("mirror directory", func(t *testing.T) {
+	t.Run("unverified mirror directory", func(t *testing.T) {
 		repo, _ := additiveSafetyEnv(t)
 		plans, _ := prepareHookSupport([]skillTarget{{skill: mirror, target: hcc.TargetFactory}})
-		if plans[0].sourceDigest != "" {
-			t.Fatal("manual mirror directory acquired source proof without resolver-verified support")
+		if len(plans) != 1 || plans[0].sourceDigest != "" {
+			t.Fatalf("unverified mirror directory plans = %+v, want no source proof", plans)
 		}
 		report, err := Run(context.Background(), repo, []resolver.ResolvedArtifact{mirror})
-		if err != nil || hasErrorDiagnostics(report.Diags) {
-			t.Fatalf("mirror support run: %v %v", err, report.Diags)
+		if err != nil {
+			t.Fatalf("unverified mirror support run: %v", err)
 		}
-		matches, err := filepath.Glob(filepath.Join(repo, ".factory", "hook-support", "*", "guard", "scripts", "check.sh"))
-		if err != nil || len(matches) != 1 {
-			t.Fatalf("mirror support file not installed: %v (%v)", matches, err)
+		refused := false
+		for _, diagnostic := range report.Diags {
+			if diagnostic.Code == "materialize.compile.error" && diagnostic.Severity == diag.SeverityError && diagnostic.Target == string(hcc.TargetFactory) {
+				refused = true
+			}
 		}
-		if data, err := os.ReadFile(matches[0]); err != nil || string(data) != "echo mirror\n" {
-			t.Fatalf("mirror support bytes = %q (%v)", data, err)
+		if !refused {
+			t.Fatalf("unverified mirror hook was not refused: %+v", report.Diags)
+		}
+		for _, path := range []string{
+			filepath.Join(repo, ".factory", "hooks.json"),
+			filepath.Join(repo, ".factory", "hooks", "hooks.json"),
+			filepath.Join(repo, ".factory", "hook-support"),
+		} {
+			if _, err := os.Lstat(path); !os.IsNotExist(err) {
+				t.Fatalf("unverified mirror input produced %s: %v", path, err)
+			}
 		}
 	})
 
-	t.Run("index-only definition file", func(t *testing.T) {
-		sourceRoot := t.TempDir()
-		sourceDefinition := []byte(`{"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"${CLAUDE_PLUGIN_ROOT}/scripts/check.sh"}]}]}}`)
-		additiveSafetyWrite(t, filepath.Join(sourceRoot, ".claude", "settings.json"), string(sourceDefinition))
-		additiveSafetyWrite(t, filepath.Join(sourceRoot, ".claude", "scripts", "check.sh"), "echo staged source\n")
-		sourceCatalog, err := catalog.Load(sourceRoot, "claude")
-		if err != nil || len(sourceCatalog.Entries) != 1 {
-			t.Fatalf("source catalog: %v entries=%#v", err, sourceCatalog.Entries)
-		}
-		originalHook, ok := sourceCatalog.Entries[0].Resource.(*ir.Hook)
-		if !ok || originalHook.Source.File != ".claude/settings.json" || originalHook.HookSource != "claude" {
-			t.Fatalf("actual Claude source hook = %#v", sourceCatalog.Entries[0].Resource)
-		}
-		canonical, err := hccartifact.FromIR(originalHook)
-		if err != nil {
-			t.Fatalf("FromIR: %v", err)
-		}
-		archive, _, err := hccartifact.Encode(canonical)
-		if err != nil {
-			t.Fatalf("Encode: %v", err)
-		}
-		decodedArchive, _, err := hccartifact.Decode(bytes.NewReader(archive))
-		if err != nil {
-			t.Fatalf("Decode: %v", err)
-		}
-		decodedResource, err := hccartifact.DecodeResource(decodedArchive.Manifest.Kind, decodedArchive.Payload)
-		if err != nil {
-			t.Fatalf("DecodeResource: %v", err)
-		}
-		indexHook, ok := decodedResource.(*ir.Hook)
-		if !ok || indexHook.SourceDefinitionDigest() != "" {
-			t.Fatalf("decoded Marketplace hook = %#v", decodedResource)
-		}
-		staged := t.TempDir()
-		definition := filepath.Join(staged, "bundle", "hooks.json")
-		additiveSafetyWrite(t, definition, string(sourceDefinition))
-		additiveSafetyWrite(t, filepath.Join(staged, "bundle", "scripts", "check.sh"), "echo staged source\n")
-		additiveSafetyWrite(t, filepath.Join(staged, "bundle", "bundle", "hooks.json"), "nested support payload\n")
-		additiveSafetyWrite(t, filepath.Join(staged, "bundle", "bundle", "scripts", "check.sh"), "echo nested payload\n")
-		additiveSafetyWrite(t, filepath.Join(staged, "verified.marker"), "staging metadata\n")
-		additiveSafetyWrite(t, filepath.Join(staged, "sibling", "other.sh"), "not hook support\n")
-		indexOnly := resolver.ResolvedArtifact{
-			Entry:                   catalog.Entry{Kind: ir.KindHook, Name: indexHook.Name(), Path: definition, Resource: indexHook},
-			Source:                  config.RepoCommitted,
-			IsMarketplace:           true,
-			MarketplaceAcquisition:  config.MarketplaceAcquisitionIndexOnly,
-			MarketplaceRegistryID:   "registry",
-			MarketplaceResourceName: indexHook.Name(),
-			MarketplaceDigest:       "sha256:" + strings.Repeat("b", 64),
-			InstalledName:           "installed-guard",
-			StagedSourceDir:         staged,
-			Harnesses:               []hcc.Target{hcc.TargetFactory},
-		}
-		repo, _ := additiveSafetyEnv(t)
-		report, err := Run(context.Background(), repo, []resolver.ResolvedArtifact{indexOnly})
-		if err != nil || hasErrorDiagnostics(report.Diags) {
-			t.Fatalf("index-only support run: %v %v", err, report.Diags)
-		}
-		indexMatches, err := filepath.Glob(filepath.Join(repo, ".factory", "hook-support", "*", "installed-guard", "scripts", "check.sh"))
-		if err != nil || len(indexMatches) != 1 {
-			t.Fatalf("index-only support file not installed under its installed name: %v (%v)", indexMatches, err)
-		}
-		if data, err := os.ReadFile(indexMatches[0]); err != nil || string(data) != "echo staged source\n" {
-			t.Fatalf("index-only support bytes = %q (%v)", data, err)
-		}
-		markerMatches, err := filepath.Glob(filepath.Join(repo, ".factory", "hook-support", "*", "installed-guard", "verified.marker"))
-		if err != nil || len(markerMatches) != 0 {
-			t.Fatalf("staging metadata was installed as hook support: %v (%v)", markerMatches, err)
-		}
-		siblingMatches, err := filepath.Glob(filepath.Join(repo, ".factory", "hook-support", "*", "installed-guard", "sibling", "other.sh"))
-		if err != nil || len(siblingMatches) != 0 {
-			t.Fatalf("staged sibling was installed as hook support: %v (%v)", siblingMatches, err)
-		}
-	})
-
-	t.Run("mirror archive without support", func(t *testing.T) {
-		archiveDir := t.TempDir()
-		archive := filepath.Join(archiveDir, "artifact.tar.gz")
-		additiveSafetyWrite(t, archive, "archive bytes")
-		additiveSafetyWrite(t, filepath.Join(archiveDir, "verified.marker"), "metadata")
-		additiveSafetyWrite(t, filepath.Join(archiveDir, "secret.sh"), "echo never\n")
-		noSupportHook := ir.NewHookWithMatcher("guard", "PreToolUse", "Bash", "echo no support", "command", nil, ir.SourceRef{})
-		mirrorNone := mirror
-		mirrorNone.Entry = catalog.Entry{Kind: ir.KindHook, Name: "guard", Path: archive, Resource: noSupportHook, SourceHarness: "claude"}
-		repo, _ := additiveSafetyEnv(t)
-		report, err := Run(context.Background(), repo, []resolver.ResolvedArtifact{mirrorNone})
-		if err != nil || hasErrorDiagnostics(report.Diags) {
-			t.Fatalf("mirror without support run: %v %v", err, report.Diags)
-		}
-		if _, err := os.Lstat(filepath.Join(repo, ".factory", "hook-support")); !os.IsNotExist(err) {
-			t.Fatalf("mirror archive parent was crawled for support: %v", err)
-		}
-		commands := nativeSupportCommands(t, nativeSupportLocationFor(t, hcc.TargetFactory), filepath.Join(repo, ".factory", "hooks", "hooks.json"), 1)
-		if commands[0] != "echo no support" {
-			t.Fatalf("plain mirror hook command = %q, want unchanged command", commands[0])
-		}
-	})
 }
 
 func TestNativeHookSupportPinnedGitSnapshot(t *testing.T) {
@@ -1068,32 +1004,57 @@ func TestNativeHookSupportPinnedGitSnapshot(t *testing.T) {
 			writeSource(readableRoot, "echo WRONG unpinned\n", 0o644)
 			writeSource(snapshotRoot, "echo pinned\n", 0o755)
 
-			cacheDefinition := filepath.Join(readableRoot, filepath.FromSlash(relativeDefinition))
-			sourceDefinition := cacheDefinition
 			wantScript, wantMode := "echo WRONG unpinned\n", os.FileMode(0o644)
 			if tc.pinned {
-				sourceDefinition = filepath.Join(snapshotRoot, filepath.FromSlash(relativeDefinition))
 				wantScript, wantMode = "echo pinned\n", 0o755
 			}
-			hook := ir.NewHookWithMatcherOptions(
-				"pinned-check", "PreToolUse", "Execute", command, "command", nil,
-				ir.SourceRef{File: sourceDefinition}, ir.WithHookSource("factory"),
-			)
+			ingestedRoot := readableRoot
+			if tc.pinned {
+				ingestedRoot = snapshotRoot
+			}
+			definitionPath := filepath.Join(ingestedRoot, filepath.FromSlash(relativeDefinition))
+			catalogRoot := ingestedRoot
+			if tc.registryPath != "" {
+				catalogRoot = filepath.Join(ingestedRoot, filepath.FromSlash(tc.registryPath))
+			}
+			loaded, err := catalog.Load(catalogRoot, "factory")
+			if err != nil {
+				t.Fatalf("Factory source ingest: %v", err)
+			}
+			if len(loaded.Entries) == 0 {
+				t.Fatal("Factory source ingest produced no entries")
+			}
+			catalogDefinition, err := filepath.Rel(catalogRoot, definitionPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			catalogDefinition = filepath.ToSlash(catalogDefinition)
+			var entry catalog.Entry
+			var hooks int
+			for _, candidate := range loaded.Entries {
+				if candidate.Kind == ir.KindHook && strings.HasSuffix(filepath.ToSlash(candidate.Path), catalogDefinition) {
+					entry = candidate
+					hooks++
+				}
+			}
+			if hooks != 1 {
+				t.Fatalf("Factory source hook count = %d, want one: %+v", hooks, loaded.Entries)
+			}
+			ingestedHook, ok := entry.Resource.(*ir.Hook)
+			if !ok || ingestedHook.SourceDefinitionDigest() == "" {
+				t.Fatalf("Factory source hook is not bound to its written definition: %#v", entry.Resource)
+			}
+			entry.Path = definitionPath
 			provider := resolver.ResolvedArtifact{
-				Entry: catalog.Entry{
-					Kind:          ir.KindHook,
-					Name:          "pinned-check",
-					Path:          cacheDefinition,
-					Resource:      hook,
-					SourceHarness: "factory",
-				},
-				RegistryURL:  "https://github.com/Adyen/agent-marketplace.git",
-				RegistryPath: tc.registryPath,
-				Ref:          "main",
-				V4Kind:       config.V4SourceGit,
-				Source:       config.RepoCommitted,
-				CatalogKey:   readableRoot,
-				Harnesses:    []hcc.Target{hcc.TargetFactory},
+				Entry:         entry,
+				RegistryURL:   "https://github.com/Adyen/agent-marketplace.git",
+				RegistryPath:  tc.registryPath,
+				Ref:           "main",
+				V4Kind:        config.V4SourceGit,
+				Source:        config.RepoCommitted,
+				CatalogKey:    ingestedRoot,
+				InstalledName: "pinned-check",
+				Harnesses:     []hcc.Target{hcc.TargetFactory},
 			}
 			before := nativeSupportSnapshot(t, readableRoot, snapshotRoot)
 			report, err := Run(context.Background(), repo, []resolver.ResolvedArtifact{provider})
@@ -1153,7 +1114,7 @@ func TestNativeHookSupportWindsurfUsesGenericRootAndKeepsLegacyComponent(t *test
 	if err != nil || len(matches) != 1 {
 		t.Fatalf("Windsurf support file not installed under repository root: %v (%v)", matches, err)
 	}
-	commands := nativeSupportCommands(t, nativeSupportLocationFor(t, hcc.TargetWindsurf), filepath.Join(repo, ".windsurf", "hooks.json"), 1)
+	commands := nativeSupportCommands(t, nativeSupportLocationFor(t, hcc.TargetWindsurf), filepath.Join(repo, ".devin", "hooks.json"), 1)
 	if !strings.HasPrefix(commands[0], "hook-support/") {
 		t.Fatalf("Windsurf repository command = %q, want repository-relative support path", commands[0])
 	}
@@ -1164,53 +1125,45 @@ func TestNativeHookSupportWindsurfUsesGenericRootAndKeepsLegacyComponent(t *test
 }
 
 func TestNativeHookSupportRequiresConfiguredIdentity(t *testing.T) {
-	t.Run("plain source-less commands and token refusal", func(t *testing.T) {
+	t.Run("plain command and token without identity", func(t *testing.T) {
 		repo, home := additiveSafetyEnv(t)
-		plain := resolver.ResolvedArtifact{
-			Entry: catalog.Entry{
-				Kind:     ir.KindHook,
-				Name:     "plain",
-				Resource: ir.NewHookWithMatcher("plain", "PreToolUse", "Bash", "echo plain", "command", nil, ir.SourceRef{}),
-			},
-			Source:    config.RepoCommitted,
-			Harnesses: []hcc.Target{hcc.TargetFactory},
-		}
-		report, err := Run(context.Background(), repo, []resolver.ResolvedArtifact{plain})
+		plainProvider := nativeSupportSource(t, "claude", "hooks/hooks.json", map[string]string{
+			"hooks/hooks.json": `{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"echo plain"}]}]}`,
+		}, "plain")
+		plain := nativeSupportResolve(t, hcc.TargetFactory, false, []resolver.ResolvedArtifact{plainProvider})
+		report, err := Run(context.Background(), repo, plain)
 		if err != nil || hasErrorDiagnostics(report.Diags) {
-			t.Fatalf("plain source-less hook: %v %v", err, report.Diags)
+			t.Fatalf("plain source-backed hook: %v %v", err, report.Diags)
 		}
 		loc := nativeSupportLocationFor(t, hcc.TargetFactory)
 		hookFile := filepath.Join(repo, filepath.FromSlash(loc.repoFile))
 		commands := nativeSupportCommands(t, loc, hookFile, 1)
 		if commands[0] != "echo plain" {
-			t.Fatalf("plain source-less command = %q, want unchanged", commands[0])
+			t.Fatalf("plain command = %q, want unchanged", commands[0])
 		}
 		if _, err := os.Lstat(filepath.Join(repo, filepath.FromSlash(loc.repoSupportRoot))); !os.IsNotExist(err) {
-			t.Fatalf("source-less plain hook created support directory: %v", err)
+			t.Fatalf("plain hook created support directory: %v", err)
 		}
 
 		before := nativeSupportPersistentSnapshot(t, repo, home)
-		token := resolver.ResolvedArtifact{
-			Entry: catalog.Entry{
-				Kind:     ir.KindHook,
-				Name:     "token",
-				Resource: ir.NewHookWithMatcher("token", "PreToolUse", "Bash", "${CLAUDE_PLUGIN_ROOT}/check.sh", "command", nil, ir.SourceRef{}),
-			},
-			Source:    config.RepoCommitted,
-			Harnesses: []hcc.Target{hcc.TargetFactory},
-		}
+		token := nativeSupportSource(t, "claude", "hooks/hooks.json", nativeSupportClaudeFiles("${CLAUDE_PLUGIN_ROOT}/scripts/check.sh"), "token")
+		token.Path = ""
+		token.RegistryURL = ""
+		token.CatalogKey = ""
+		token.Source = config.RepoCommitted
+		token.Harnesses = []hcc.Target{hcc.TargetFactory}
 		report, err = Run(context.Background(), repo, []resolver.ResolvedArtifact{token})
 		if err != nil {
-			t.Fatalf("source-less token hook: %v", err)
+			t.Fatalf("identityless token hook: %v", err)
 		}
 		var supportPathRefused bool
 		for _, d := range report.Diags {
-			if d.Code == diag.CodeHookSupportPathUnrepresentable && d.Severity == diag.SeverityError {
+			if d.Code == "materialize.compile.error" && d.Resource == "token" && d.Severity == diag.SeverityError {
 				supportPathRefused = true
 			}
 		}
 		if !supportPathRefused {
-			t.Fatalf("source-less token hook did not fail closed: %v", report.Diags)
+			t.Fatalf("identityless token hook did not fail closed: %v", report.Diags)
 		}
 		assertNativeSupportSnapshot(t, before, nativeSupportPersistentSnapshot(t, repo, home))
 	})
@@ -1546,6 +1499,703 @@ func TestNativeHookSupportRefusesUnsafeExcludedNativePeer(t *testing.T) {
 	assertNativeSupportSnapshot(t, externalBefore, nativeSupportSnapshot(t, outside))
 }
 
+func nativeHookSupportCollisionInputs(t *testing.T) (string, resolver.ResolvedArtifact, resolver.ResolvedArtifact, hookSupportPlan, string) {
+	t.Helper()
+	repo, _ := additiveSafetyEnv(t)
+	provider := nativeSupportSource(t, "claude", "hooks/hooks.json", map[string]string{
+		"hooks/hooks.json":       `{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"${CLAUDE_PLUGIN_ROOT}/scripts/check.sh"}]}]}`,
+		"hooks/scripts/check.sh": "#!/bin/sh\necho source support\n",
+	}, "affected")
+	if err := os.Chmod(filepath.Join(provider.RegistryURL, "hooks", "scripts", "check.sh"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	factoryHook := nativeSupportResolve(t, hcc.TargetFactory, false, []resolver.ResolvedArtifact{provider})[0]
+	supportPlan, supportPath := nativeHookActivationSupportPath(t, factoryHook, hcc.TargetFactory, false, filepath.Join(repo, ".factory"))
+	sibling, _ := namedHookFixture(t, config.RepoCommitted, hcc.TargetClaude, "sibling")
+	return repo, factoryHook, sibling, supportPlan, supportPath
+}
+
+func TestNativeHookSupportDestinationPreflightRefusesBeforePublication(t *testing.T) {
+	for _, mode := range []config.MaterializationMode{config.MaterializationModeSymlink, config.MaterializationModeFile} {
+		t.Run(string(mode), func(t *testing.T) {
+			runNativeHookSupportDestinationPreflightCase(t, mode, false)
+		})
+	}
+	t.Run("unsafe ancestor", func(t *testing.T) {
+		runNativeHookSupportDestinationPreflightCase(t, config.MaterializationModeSymlink, true)
+	})
+}
+
+func runNativeHookSupportDestinationPreflightCase(t *testing.T, mode config.MaterializationMode, unsafeAncestor bool) {
+	t.Helper()
+	repo, factoryHook, sibling, plan, supportPath := nativeHookSupportCollisionInputs(t)
+	factoryRoot := filepath.Join(repo, ".factory")
+	nativePath := filepath.Join(factoryRoot, "hooks.json")
+	legacyPath := filepath.Join(factoryRoot, "hooks", "hooks.json")
+	legacyBytes := []byte(`{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"${CLAUDE_PLUGIN_ROOT}/scripts/check.sh"}],"_managed_by":"agent-marketplace"}]}` + "\n")
+	if err := os.MkdirAll(filepath.Dir(legacyPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(legacyPath, legacyBytes, 0o640); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(legacyPath, 0o640); err != nil {
+		t.Fatal(err)
+	}
+	legacyBefore, legacyMode, legacyMtime := fileSnapshot(t, legacyPath)
+	factoryStore, err := ownership.Open(factoryRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Lstat(factoryStore.StateFile()); !os.IsNotExist(err) {
+		t.Fatalf("Factory ownership state unexpectedly exists: %v", err)
+	}
+	assertPathAbsent(t, nativePath)
+
+	var supportBefore []byte
+	var supportMode os.FileMode
+	var supportMtime time.Time
+	var supportRoot, outside string
+	var unsafeBefore map[string]nativeSupportState
+	if unsafeAncestor {
+		supportRoot = filepath.Join(factoryRoot, "hook-support")
+		outside = t.TempDir()
+		if err := os.WriteFile(filepath.Join(outside, "sentinel"), []byte("outside unchanged\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(outside, supportRoot); err != nil {
+			t.Fatal(err)
+		}
+		unsafeBefore = nativeSupportSnapshot(t, supportRoot, outside)
+	} else {
+		if err := os.MkdirAll(filepath.Dir(supportPath), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		supportBefore = []byte("unowned support collision\n")
+		if err := os.WriteFile(supportPath, supportBefore, 0o640); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chmod(supportPath, 0o640); err != nil {
+			t.Fatal(err)
+		}
+		supportBefore, supportMode, supportMtime = fileSnapshot(t, supportPath)
+	}
+	cacheBefore := nativeSupportSnapshot(t, cache.CacheDir())
+	modes := config.MaterializationModes{Project: mode, Machine: mode}
+	report, err := Run(context.Background(), repo, []resolver.ResolvedArtifact{factoryHook, sibling}, WithMaterializationModes(modes))
+	if err != nil || report == nil {
+		t.Fatalf("Run: %v / %v", err, report)
+	}
+	assertFileUnchanged(t, legacyPath, legacyBefore, legacyMode, legacyMtime)
+	assertPathAbsent(t, nativePath)
+	if _, err := os.Lstat(factoryStore.StateFile()); !os.IsNotExist(err) {
+		t.Fatalf("Factory support refusal created ownership state: %v", err)
+	}
+	if unsafeAncestor {
+		assertNativeSupportSnapshot(t, unsafeBefore, nativeSupportSnapshot(t, supportRoot, outside))
+	} else {
+		assertFileUnchanged(t, supportPath, supportBefore, supportMode, supportMtime)
+	}
+	assertNativeSupportSnapshot(t, cacheBefore, nativeSupportSnapshot(t, cache.CacheDir()))
+	wantCode := diag.CodeMaterializeHookSupportConflict
+	refused := false
+	for _, diagnostic := range report.Diags {
+		if diagnostic.Code == wantCode && diagnostic.Severity == diag.SeverityError && diagnostic.Target == string(hcc.TargetFactory) && diagnostic.Resource == factoryHook.Name {
+			refused = true
+		}
+	}
+	if !refused {
+		t.Fatalf("Factory support destination refusal = %+v, want %s for %q", report.Diags, wantCode, factoryHook.Name)
+	}
+	var factoryBlocked, siblingBlocked bool
+	for _, resource := range report.BlockedResources {
+		factoryBlocked = factoryBlocked || resource.Target == hcc.TargetFactory && resource.Name == factoryHook.Name
+		siblingBlocked = siblingBlocked || resource.Target == hcc.TargetClaude && resource.Name == sibling.Name
+	}
+	if !factoryBlocked || siblingBlocked {
+		t.Fatalf("blocked resources = %+v, want only Factory %q", report.BlockedResources, factoryHook.Name)
+	}
+	claudeFile := filepath.Join(repo, ".claude", "settings.json")
+	commands := nativeSupportCommands(t, nativeSupportLocationFor(t, hcc.TargetClaude), claudeFile, 1)
+	if len(commands) != 1 || commands[0] != sharedSourceCommand {
+		t.Fatalf("independent Claude sibling commands = %v", commands)
+	}
+	if len(plan.artifacts) != 1 || plan.artifacts[0].Mode.Perm() != 0o755 {
+		t.Fatalf("support preflight fixture changed: %+v", plan.artifacts)
+	}
+}
+
+type nativeHookSupportPublicationFixture struct {
+	repo           string
+	factoryRoot    string
+	nativePath     string
+	statePath      string
+	legacyPath     string
+	oldSupportPath string
+	manifestPath   string
+	supportPath    string
+	hook           resolver.ResolvedArtifact
+	supportPlan    hookSupportPlan
+	mode           config.MaterializationMode
+}
+
+type nativeHookSupportPublicationSnapshot struct {
+	legacyBytes      []byte
+	legacyMode       os.FileMode
+	legacyMtime      time.Time
+	manifestBytes    []byte
+	manifestMode     os.FileMode
+	manifestMtime    time.Time
+	oldSupportBytes  []byte
+	oldSupportMode   os.FileMode
+	oldSupportMtime  time.Time
+	oldSupportLink   nativeHookSymlinkSnapshot
+	oldSupportIsLink bool
+}
+
+func newNativeHookSupportPublicationFixture(t *testing.T, mode config.MaterializationMode) nativeHookSupportPublicationFixture {
+	t.Helper()
+	repo, hook, _, supportPlan, supportPath := nativeHookSupportCollisionInputs(t)
+	factoryRoot := filepath.Join(repo, ".factory")
+	nativePath := filepath.Join(factoryRoot, "hooks.json")
+	legacyPath := filepath.Join(factoryRoot, "hooks", "hooks.json")
+	oldSupportPath := filepath.Join(factoryRoot, "hooks", "scripts", "old.sh")
+	oldCachePath := filepath.Join(cache.CacheDir(), "native-hook-manifest-fixture", "old.sh")
+	if err := os.MkdirAll(filepath.Dir(legacyPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	legacy, _ := nativeHookLegacyDocument(hcc.TargetFactory, "", "PreToolUse", "Execute", "${CLAUDE_PLUGIN_ROOT}/scripts/old.sh", false, false)
+	if err := os.WriteFile(legacyPath, legacy, 0o640); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(legacyPath, 0o640); err != nil {
+		t.Fatal(err)
+	}
+	oldSupportBytes := []byte("old legacy support bytes\n")
+	var oldSupportDigest string
+	if mode == config.MaterializationModeSymlink {
+		if err := os.MkdirAll(filepath.Dir(oldCachePath), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(oldCachePath, oldSupportBytes, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chmod(oldCachePath, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.MkdirAll(filepath.Dir(oldSupportPath), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(oldCachePath, oldSupportPath); err != nil {
+			t.Fatal(err)
+		}
+		info, err := os.Lstat(oldSupportPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		linkTarget, err := os.Readlink(oldSupportPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		oldSupportDigest = nativeHookSymlinkSnapshotDigest(info.Mode(), linkTarget)
+	} else {
+		if err := os.MkdirAll(filepath.Dir(oldSupportPath), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(oldSupportPath, oldSupportBytes, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chmod(oldSupportPath, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		info, err := os.Lstat(oldSupportPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		oldSupportDigest = nativeHookRegularSnapshotDigest(oldSupportBytes, info.Mode())
+	}
+	manifest, err := loadPortableState(repo, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifest.add(hcc.TargetFactory, "hooks/scripts/old.sh", oldSupportDigest)
+	if err := manifest.save(false); err != nil {
+		t.Fatal(err)
+	}
+	store, err := ownership.Open(factoryRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return nativeHookSupportPublicationFixture{
+		repo: repo, factoryRoot: factoryRoot, nativePath: nativePath, statePath: store.StateFile(),
+		legacyPath: legacyPath, oldSupportPath: oldSupportPath,
+		manifestPath: manifest.path, supportPath: supportPath, hook: hook, supportPlan: supportPlan, mode: mode,
+	}
+}
+
+func snapshotNativeHookSupportPublication(t *testing.T, fixture nativeHookSupportPublicationFixture) nativeHookSupportPublicationSnapshot {
+	t.Helper()
+	legacyBytes, legacyMode, legacyMtime := fileSnapshot(t, fixture.legacyPath)
+	manifestBytes, manifestMode, manifestMtime := fileSnapshot(t, fixture.manifestPath)
+	snapshot := nativeHookSupportPublicationSnapshot{
+		legacyBytes: legacyBytes, legacyMode: legacyMode, legacyMtime: legacyMtime,
+		manifestBytes: manifestBytes, manifestMode: manifestMode, manifestMtime: manifestMtime,
+	}
+	if fixture.mode == config.MaterializationModeSymlink {
+		snapshot.oldSupportIsLink = true
+		snapshot.oldSupportLink = snapshotNativeHookLegacyCacheLink(t, fixture.oldSupportPath)
+	} else {
+		snapshot.oldSupportBytes, snapshot.oldSupportMode, snapshot.oldSupportMtime = fileSnapshot(t, fixture.oldSupportPath)
+	}
+	return snapshot
+}
+
+func nativeHookSupportPublicationFileUnchanged(path string, data []byte, mode os.FileMode, mtime time.Time) bool {
+	got, err := os.ReadFile(path)
+	if err != nil || !bytes.Equal(got, data) {
+		return false
+	}
+	info, err := os.Lstat(path)
+	return err == nil && info.Mode() == mode && info.ModTime().Equal(mtime)
+}
+
+func nativeHookSupportPublicationOldSupportUnchanged(fixture nativeHookSupportPublicationFixture, before nativeHookSupportPublicationSnapshot) bool {
+	if !before.oldSupportIsLink {
+		return nativeHookSupportPublicationFileUnchanged(fixture.oldSupportPath, before.oldSupportBytes, before.oldSupportMode, before.oldSupportMtime)
+	}
+	data, err := os.ReadFile(fixture.oldSupportPath)
+	if err != nil || !bytes.Equal(data, before.oldSupportLink.bytes) {
+		return false
+	}
+	linkTarget, err := os.Readlink(fixture.oldSupportPath)
+	if err != nil || linkTarget != before.oldSupportLink.target {
+		return false
+	}
+	linkInfo, err := os.Lstat(fixture.oldSupportPath)
+	if err != nil || linkInfo.Mode() != before.oldSupportLink.linkInfo.Mode() || !linkInfo.ModTime().Equal(before.oldSupportLink.linkInfo.ModTime()) {
+		return false
+	}
+	targetInfo, err := os.Stat(fixture.oldSupportPath)
+	return err == nil && targetInfo.Mode() == before.oldSupportLink.targetInfo.Mode() && targetInfo.ModTime().Equal(before.oldSupportLink.targetInfo.ModTime())
+}
+
+func nativeHookSupportPublicationNativeLegacyOldSupportUnchanged(fixture nativeHookSupportPublicationFixture, before nativeHookSupportPublicationSnapshot) bool {
+	for _, path := range []string{fixture.nativePath, fixture.statePath} {
+		if _, err := os.Lstat(path); !os.IsNotExist(err) {
+			return false
+		}
+	}
+	return nativeHookSupportPublicationFileUnchanged(fixture.legacyPath, before.legacyBytes, before.legacyMode, before.legacyMtime) &&
+		nativeHookSupportPublicationOldSupportUnchanged(fixture, before)
+}
+
+func nativeHookSupportPublicationInputsUnchanged(fixture nativeHookSupportPublicationFixture, before nativeHookSupportPublicationSnapshot) bool {
+	return nativeHookSupportPublicationNativeLegacyOldSupportUnchanged(fixture, before) &&
+		nativeHookSupportPublicationFileUnchanged(fixture.manifestPath, before.manifestBytes, before.manifestMode, before.manifestMtime)
+}
+
+func nativeHookSupportPublicationBeforeNativeCommit(t *testing.T, fixture nativeHookSupportPublicationFixture, before nativeHookSupportPublicationSnapshot, supportPath string) bool {
+	t.Helper()
+	if !nativeHookSupportPublicationNativeLegacyOldSupportUnchanged(fixture, before) {
+		return false
+	}
+	data, err := os.ReadFile(supportPath)
+	if err != nil || !bytes.Equal(data, []byte("#!/bin/sh\necho source support\n")) {
+		return false
+	}
+	info, err := os.Stat(supportPath)
+	if err != nil || info.Mode().Perm() != 0o755 {
+		return false
+	}
+	manifest, err := loadPortableState(fixture.repo, false)
+	if err != nil {
+		return false
+	}
+	if _, ok := manifest.entries[portableManifestKey(hcc.TargetFactory, "hooks/scripts/old.sh")]; !ok {
+		return false
+	}
+	if fixture.mode == config.MaterializationModeFile {
+		rel, err := filepath.Rel(fixture.factoryRoot, supportPath)
+		if err != nil {
+			return false
+		}
+		if _, ok := manifest.entries[portableManifestKey(hcc.TargetFactory, filepath.ToSlash(rel))]; !ok {
+			return false
+		}
+	}
+	return true
+}
+
+func assertNativeHookSupportPublicationFailureState(t *testing.T, fixture nativeHookSupportPublicationFixture, before nativeHookSupportPublicationSnapshot) {
+	t.Helper()
+	if _, err := os.Lstat(fixture.nativePath); !os.IsNotExist(err) {
+		t.Fatalf("failed support publication created Native output: %v", err)
+	}
+	if _, err := os.Lstat(fixture.statePath); !os.IsNotExist(err) {
+		t.Fatalf("failed support publication created ownership state: %v", err)
+	}
+	assertFileUnchanged(t, fixture.legacyPath, before.legacyBytes, before.legacyMode, before.legacyMtime)
+	assertFileUnchanged(t, fixture.manifestPath, before.manifestBytes, before.manifestMode, before.manifestMtime)
+	if before.oldSupportIsLink {
+		assertNativeHookLegacyCacheLinkUnchanged(t, fixture.oldSupportPath, before.oldSupportLink)
+	} else {
+		assertFileUnchanged(t, fixture.oldSupportPath, before.oldSupportBytes, before.oldSupportMode, before.oldSupportMtime)
+	}
+}
+
+func requireNativeHookSupportWriteError(t *testing.T, report *Report) {
+	t.Helper()
+	for _, diagnostic := range report.Diags {
+		if diagnostic.Code == "materialize.write.error" && diagnostic.Severity == diag.SeverityError && diagnostic.Target == string(hcc.TargetFactory) {
+			return
+		}
+	}
+	t.Fatalf("missing Factory materialize.write.error: %+v", report.Diags)
+}
+
+// spec: hook-resources/owned-factory-entries-move-to-the-native-file
+func TestNativeHookSupportPublicationFailurePreventsNativeCommit(t *testing.T) {
+	const childEnv = "AGENT_MARKETPLACE_NATIVE_HOOK_SUPPORT_FIFO_CHILD"
+	const modeEnv = "AGENT_MARKETPLACE_NATIVE_HOOK_SUPPORT_FIFO_MODE"
+	if os.Getenv(childEnv) == "1" {
+		mode := config.MaterializationMode(os.Getenv(modeEnv))
+		runNativeHookSupportLateFIFOSwapCase(t, mode)
+		return
+	}
+	for _, mode := range []config.MaterializationMode{config.MaterializationModeSymlink, config.MaterializationModeFile} {
+		t.Run(string(mode)+"/cache preparation", func(t *testing.T) {
+			fixture := newNativeHookSupportPublicationFixture(t, mode)
+			before := snapshotNativeHookSupportPublication(t, fixture)
+			cacheRoot := cache.CacheDir()
+			if err := os.MkdirAll(cacheRoot, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			compiled := filepath.Join(cacheRoot, "compiled")
+			if err := os.WriteFile(compiled, []byte("not a cache directory\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			compiledBefore, compiledMode, compiledMtime := fileSnapshot(t, compiled)
+			report, err := Run(context.Background(), fixture.repo, []resolver.ResolvedArtifact{fixture.hook}, WithMaterializationModes(config.MaterializationModes{Project: mode, Machine: mode}))
+			if err != nil || report == nil {
+				t.Fatalf("Run: %v / %v", err, report)
+			}
+			requireNativeHookSupportWriteError(t, report)
+			assertNativeHookSupportPublicationFailureState(t, fixture, before)
+			assertPathAbsent(t, fixture.supportPath)
+			assertFileUnchanged(t, compiled, compiledBefore, compiledMode, compiledMtime)
+		})
+		t.Run(string(mode)+"/late output collision", func(t *testing.T) {
+			fixture := newNativeHookSupportPublicationFixture(t, mode)
+			before := snapshotNativeHookSupportPublication(t, fixture)
+			var callbackCalled, prepublicationState bool
+			var foreignBytes []byte
+			var foreignMode os.FileMode
+			var foreignMtime time.Time
+			fault := func(stage, destination string) error {
+				if stage != "output" || filepath.Clean(destination) != filepath.Clean(fixture.supportPath) {
+					return nil
+				}
+				callbackCalled = true
+				prepublicationState = nativeHookSupportPublicationInputsUnchanged(fixture, before)
+				if err := os.MkdirAll(filepath.Dir(destination), 0o755); err != nil {
+					return err
+				}
+				foreignBytes = []byte("late competing support bytes\n")
+				if err := os.WriteFile(destination, foreignBytes, 0o640); err != nil {
+					return err
+				}
+				if err := os.Chmod(destination, 0o640); err != nil {
+					return err
+				}
+				foreignBytes, foreignMode, foreignMtime = fileSnapshot(t, destination)
+				return nil
+			}
+			report, err := Run(context.Background(), fixture.repo, []resolver.ResolvedArtifact{fixture.hook}, WithMaterializationModes(config.MaterializationModes{Project: mode, Machine: mode}), withNativeHookSupportWriteFault(fault))
+			if err != nil || report == nil {
+				t.Fatalf("Run: %v / %v", err, report)
+			}
+			if !callbackCalled {
+				t.Fatal("support output fault callback was not reached after preflight")
+			}
+			if !prepublicationState {
+				t.Fatal("support output stage ran after Native, legacy, old-support, or manifest mutation")
+			}
+			requireNativeHookSupportWriteError(t, report)
+			assertNativeHookSupportPublicationFailureState(t, fixture, before)
+			assertFileUnchanged(t, fixture.supportPath, foreignBytes, foreignMode, foreignMtime)
+			blocked := false
+			for _, resource := range report.BlockedResources {
+				blocked = blocked || resource.Target == hcc.TargetFactory && resource.Name == fixture.hook.Name
+			}
+			if !blocked {
+				t.Fatalf("failed support hook was not blocked: %+v", report.BlockedResources)
+			}
+		})
+		t.Run(string(mode)+"/successful publication", func(t *testing.T) {
+			fixture := newNativeHookSupportPublicationFixture(t, mode)
+			before := snapshotNativeHookSupportPublication(t, fixture)
+			var callbackCalled, prepublicationState, supportVerifiedBeforeProof bool
+			fault := func(stage, destination string) error {
+				if filepath.Clean(destination) != filepath.Clean(fixture.supportPath) {
+					return nil
+				}
+				switch stage {
+				case "output":
+					callbackCalled = true
+					prepublicationState = nativeHookSupportPublicationInputsUnchanged(fixture, before)
+				case "before-native-commit":
+					supportVerifiedBeforeProof = nativeHookSupportPublicationBeforeNativeCommit(t, fixture, before, destination)
+				}
+				return nil
+			}
+			report, err := Run(context.Background(), fixture.repo, []resolver.ResolvedArtifact{fixture.hook}, WithMaterializationModes(config.MaterializationModes{Project: mode, Machine: mode}), withNativeHookSupportWriteFault(fault))
+			if err != nil || hasErrorDiagnostics(report.Diags) {
+				t.Fatalf("Run: %v / %v", err, report)
+			}
+			if !callbackCalled || !prepublicationState || !supportVerifiedBeforeProof {
+				t.Fatalf("support was not verified before Native publication: called=%v prepublication=%v verified=%v", callbackCalled, prepublicationState, supportVerifiedBeforeProof)
+			}
+			supportBytes, err := os.ReadFile(fixture.supportPath)
+			if err != nil || !bytes.Equal(supportBytes, []byte("#!/bin/sh\necho source support\n")) {
+				t.Fatalf("installed support bytes = %q / %v", supportBytes, err)
+			}
+			supportInfo, err := os.Stat(fixture.supportPath)
+			if err != nil || supportInfo.Mode().Perm() != 0o755 {
+				t.Fatalf("installed support mode = %v / %v", supportInfo, err)
+			}
+			if _, err := os.Lstat(fixture.nativePath); err != nil {
+				t.Fatalf("Native Hook output was not published: %v", err)
+			}
+			commands := nativeSupportCommands(t, nativeSupportLocationFor(t, hcc.TargetFactory), fixture.nativePath, 1)
+			if len(commands) != 1 || !strings.HasSuffix(commands[0], "/scripts/check.sh") {
+				t.Fatalf("Native Hook command = %v, want the installed check.sh support path", commands)
+			}
+			store, err := ownership.Open(fixture.factoryRoot)
+			if err != nil {
+				t.Fatal(err)
+			}
+			proof, err := store.Proof("hooks.json")
+			if err != nil || proof.OwnedCount() != 1 {
+				t.Fatalf("published Native proof = %v / %+v", err, proof.OwnedIDs())
+			}
+			entry, ok := proof.Entry(proof.OwnedIDs()[0])
+			if !ok || entry.Resource != fixture.hook.Name || entry.SourceDigest != fixture.supportPlan.sourceDigest {
+				t.Fatalf("published Native proof entry = %+v", entry)
+			}
+			assertPathAbsent(t, fixture.legacyPath)
+			assertPathAbsent(t, fixture.oldSupportPath)
+			manifest, err := loadPortableState(fixture.repo, false)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, ok := manifest.entries[portableManifestKey(hcc.TargetFactory, "hooks/scripts/old.sh")]; ok {
+				t.Fatal("legacy support manifest entry survived successful cleanup")
+			}
+			if mode == config.MaterializationModeFile {
+				rel, err := filepath.Rel(fixture.factoryRoot, fixture.supportPath)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if _, ok := manifest.entries[portableManifestKey(hcc.TargetFactory, filepath.ToSlash(rel))]; !ok {
+					t.Fatal("new file-mode support was not recorded in the portable manifest")
+				}
+			}
+		})
+	}
+	for _, mode := range []config.MaterializationMode{config.MaterializationModeSymlink, config.MaterializationModeFile} {
+		t.Run(string(mode)+"/late_fifo_verification", func(t *testing.T) {
+			childTempRoot := t.TempDir()
+			t.Setenv("TMPDIR", childTempRoot)
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			cmd := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestNativeHookSupportPublicationFailurePreventsNativeCommit$", "-test.v")
+			cmd.Env = append(os.Environ(), childEnv+"=1", modeEnv+"="+string(mode))
+			output, err := cmd.CombinedOutput()
+			if ctx.Err() == context.DeadlineExceeded {
+				t.Fatalf("bounded %s verifier child timed out on FIFO: %v\n%s", mode, err, output)
+			}
+			if err != nil {
+				t.Fatalf("bounded %s verifier child: %v\n%s", mode, err, output)
+			}
+		})
+	}
+}
+
+func runNativeHookSupportLateFIFOSwapCase(t *testing.T, mode config.MaterializationMode) {
+	t.Helper()
+	if mode != config.MaterializationModeFile && mode != config.MaterializationModeSymlink {
+		t.Fatalf("unsupported materialization mode %q", mode)
+	}
+	fixture := newNativeHookSupportPublicationFixture(t, mode)
+	before := snapshotNativeHookSupportPublication(t, fixture)
+	manifestBefore, err := loadPortableState(fixture.repo, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldManifestKey := portableManifestKey(hcc.TargetFactory, "hooks/scripts/old.sh")
+	oldManifestEntry, ok := manifestBefore.entries[oldManifestKey]
+	if !ok {
+		t.Fatal("fixture is missing the old support manifest entry")
+	}
+	var callbackCalled, supportVerified bool
+	var outputBefore map[string]nativeSupportState
+	var foreignRoot, foreignFIFO string
+	var foreignBefore map[string]nativeSupportState
+	var foreignLinkTarget string
+	fault := func(stage, destination string) error {
+		if stage != "before-native-commit" {
+			return nil
+		}
+		callbackCalled = true
+		if filepath.Clean(destination) != filepath.Clean(fixture.supportPath) {
+			return fmt.Errorf("support verification path differs from fixture")
+		}
+		supportVerified = nativeHookSupportPublicationBeforeNativeCommit(t, fixture, before, destination)
+		if !supportVerified {
+			return fmt.Errorf("captured support was not installed before verification")
+		}
+		if mode == config.MaterializationModeFile {
+			if err := os.Remove(destination); err != nil {
+				return err
+			}
+			if err := syscall.Mkfifo(destination, 0o600); err != nil {
+				return err
+			}
+		} else {
+			foreignRoot = t.TempDir()
+			foreignFIFO = filepath.Join(foreignRoot, "foreign.fifo")
+			if err := syscall.Mkfifo(foreignFIFO, 0o600); err != nil {
+				return err
+			}
+			if err := os.Remove(destination); err != nil {
+				return err
+			}
+			if err := os.Symlink(foreignFIFO, destination); err != nil {
+				return err
+			}
+			foreignLinkTarget, err = os.Readlink(destination)
+			if err != nil {
+				return err
+			}
+			foreignBefore = nativeSupportSnapshot(t, foreignRoot)
+		}
+		outputBefore = nativeSupportSnapshot(t, destination)
+		return nil
+	}
+	report, err := Run(context.Background(), fixture.repo, []resolver.ResolvedArtifact{fixture.hook}, WithMaterializationModes(config.MaterializationModes{Project: mode, Machine: mode}), withNativeHookSupportWriteFault(fault))
+	if err != nil || report == nil {
+		t.Fatalf("Run: %v / %v", err, report)
+	}
+	if !callbackCalled || !supportVerified {
+		t.Fatalf("late support swap was not reached after successful install: callback=%v verified=%v", callbackCalled, supportVerified)
+	}
+	requireNativeHookSupportWriteError(t, report)
+	if !nativeHookSupportPublicationNativeLegacyOldSupportUnchanged(fixture, before) {
+		t.Fatal("late support verification failure published Native/state or removed legacy/old support")
+	}
+	assertNativeSupportSnapshot(t, outputBefore, nativeSupportSnapshot(t, fixture.supportPath))
+	manifestAfter, err := loadPortableState(fixture.repo, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, ok := manifestAfter.entries[oldManifestKey]; !ok || got != oldManifestEntry {
+		t.Fatalf("old support manifest entry changed or disappeared: %+v", got)
+	}
+	if mode == config.MaterializationModeFile {
+		info, err := os.Lstat(fixture.supportPath)
+		if err != nil || info.Mode()&os.ModeNamedPipe == 0 || info.Mode().Perm() != 0o600 {
+			t.Fatalf("file-mode FIFO was not preserved: %v / %v", info, err)
+		}
+	} else {
+		target, err := os.Readlink(fixture.supportPath)
+		if err != nil || target != foreignFIFO || target != foreignLinkTarget {
+			t.Fatalf("foreign symlink text changed: %q / %v", target, err)
+		}
+		info, err := os.Lstat(foreignFIFO)
+		if err != nil || info.Mode()&os.ModeNamedPipe == 0 {
+			t.Fatalf("foreign FIFO was not preserved: %v / %v", info, err)
+		}
+		assertNativeSupportSnapshot(t, foreignBefore, nativeSupportSnapshot(t, foreignRoot))
+	}
+	blocked := false
+	for _, resource := range report.BlockedResources {
+		blocked = blocked || resource.Target == hcc.TargetFactory && resource.Name == fixture.hook.Name
+	}
+	if !blocked {
+		t.Fatalf("failed support hook was not blocked: %+v", report.BlockedResources)
+	}
+}
+
+// spec: materialization/machine-scope-hook-command-uses-the-absolute-machine-root
+func TestNativeHookRepoRootAliasPreservesMachineFactorySupport(t *testing.T) {
+	_, home := additiveSafetyEnv(t)
+	provider := nativeSupportSource(t, "claude", "hooks/hooks.json", nativeSupportClaudeFiles("${CLAUDE_PLUGIN_ROOT}/scripts/check.sh"), "user-factory-hook")
+	selection := nativeSupportResolve(t, hcc.TargetFactory, true, []resolver.ResolvedArtifact{provider})
+	if len(selection) != 1 || selection[0].Source != config.UserPersonal {
+		t.Fatalf("user Factory selection = %+v", selection)
+	}
+	modes := config.MaterializationModes{Project: config.MaterializationModeSymlink, Machine: config.MaterializationModeSymlink}
+	report, err := Run(context.Background(), home, selection, WithMaterializationModes(modes))
+	if err != nil || hasErrorDiagnostics(report.Diags) {
+		t.Fatalf("first machine sync: %v / %v", err, report)
+	}
+	factoryRoot := filepath.Join(home, ".factory")
+	nativePath := filepath.Join(factoryRoot, "hooks.json")
+	commands := nativeSupportCommands(t, nativeSupportLocationFor(t, hcc.TargetFactory), nativePath, 1)
+	if len(commands) != 1 || !strings.Contains(commands[0], "check.sh") {
+		t.Fatalf("machine Native hook commands = %v, want the source-backed support script", commands)
+	}
+	supportPlan, supportPath := nativeHookActivationSupportPath(t, selection[0], hcc.TargetFactory, true, factoryRoot)
+	if len(supportPlan.artifacts) == 0 {
+		t.Fatal("source-backed user Factory hook produced no support artifacts")
+	}
+	if _, err := os.Lstat(supportPath); err != nil {
+		t.Fatalf("machine support output is missing: %v", err)
+	}
+	snapshotRoots := []string{factoryRoot}
+	for _, support := range supportPlan.artifacts {
+		outputPath := filepath.Join(factoryRoot, filepath.FromSlash(support.Path))
+		info, err := os.Lstat(outputPath)
+		if err != nil {
+			t.Fatalf("machine support artifact %s: %v", support.Path, err)
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			target, err := os.Readlink(outputPath)
+			if err != nil {
+				t.Fatalf("machine support link %s: %v", support.Path, err)
+			}
+			snapshotRoots = append(snapshotRoots, target)
+		}
+	}
+	before := nativeSupportSnapshot(t, snapshotRoots...)
+	store, err := ownership.Open(factoryRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stateBefore, stateMode, stateMtime := fileSnapshot(t, store.StateFile())
+
+	_, autoOutputs, _, _ := buildWorkItems(selection, home)
+	repoKey := outputKey{target: hcc.TargetFactory, machineScope: false}
+	machineKey := outputKey{target: hcc.TargetFactory, machineScope: true}
+	if autoOutputs[repoKey] || !autoOutputs[machineKey] {
+		t.Fatalf("automatic Native output keys = repo %v / machine %v, want repo absent and machine present", autoOutputs[repoKey], autoOutputs[machineKey])
+	}
+	repoSelection := nativeSupportResolve(t, hcc.TargetFactory, false, []resolver.ResolvedArtifact{provider})
+	_, explicitOutputs, _, _ := buildWorkItems(repoSelection, home)
+	if !explicitOutputs[repoKey] {
+		t.Fatal("explicit repo selection was dropped for its machine-root alias")
+	}
+
+	report, err = Run(context.Background(), home, selection, WithMaterializationModes(modes), WithDryRun())
+	if err != nil || hasErrorDiagnostics(report.Diags) {
+		t.Fatalf("second machine dry run: %v / %v", err, report)
+	}
+	assertNoMaterializeChanges(t, report)
+	assertNativeSupportSnapshot(t, before, nativeSupportSnapshot(t, snapshotRoots...))
+	assertFileUnchanged(t, store.StateFile(), stateBefore, stateMode, stateMtime)
+	assertPathAbsent(t, filepath.Join(factoryRoot, "hooks", "hooks.json"))
+}
+
 func TestNativeHookSupportDryRunWritesNothing(t *testing.T) {
 	t.Run("initial", func(t *testing.T) {
 		repo, home := additiveSafetyEnv(t)
@@ -1567,7 +2217,7 @@ func TestNativeHookSupportDryRunWritesNothing(t *testing.T) {
 		if _, err := Run(context.Background(), repo, resolved); err != nil {
 			t.Fatalf("seed installed hook: %v", err)
 		}
-		hookFile := filepath.Join(repo, ".factory", "hooks", "hooks.json")
+		hookFile := filepath.Join(repo, ".factory", "hooks.json")
 		beforeCommands := nativeSupportCommands(t, nativeSupportLocationFor(t, hcc.TargetFactory), hookFile, 1)
 		if !strings.HasSuffix(beforeCommands[0], "/scripts/check.sh") {
 			t.Fatalf("installed command = %q, want check.sh path", beforeCommands[0])

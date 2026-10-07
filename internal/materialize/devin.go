@@ -169,6 +169,12 @@ func devinOwnedJSONOptions() ownedJSONReconcileOptions {
 	}
 }
 
+func (devinOwnedAggregateHandler) nativeHookReconcileOptions() ownedJSONReconcileOptions {
+	options := devinOwnedJSONOptions()
+	options.allowOwnedLegacyFlatHooks = true
+	return options
+}
+
 type devinOwnedAggregateHandler struct{}
 
 func (devinOwnedAggregateHandler) extract(state ownedAggregateState, key outputKey, artifacts []artifact.Artifact, resource string) ([]artifact.Artifact, error) {
@@ -249,7 +255,18 @@ func (devinOwnedAggregateHandler) reconcile(ctx context.Context, report *Report,
 	for _, destination := range destinations {
 		info := destination.Info
 		rels := append([]string(nil), info.AggregateFilesForScope(key.machineScope)...)
+		if state.reconcilesNativeHooks(key) {
+			if hookFile, ok := targetmeta.NativeAggregateFileForScope(targetmeta.TargetDevin, ir.KindHook, key.machineScope); ok {
+				rels = slices.DeleteFunc(rels, func(rel string) bool { return rel == hookFile.Path })
+			}
+		}
 		options := devinOwnedJSONOptions()
+		if session, ok := state.writeSession(destination.Root); ok {
+			options.store = session.store
+			options.lockReport = session.lockReport
+			options.deferLockDiagnostics = true
+			options.storeSessionHeld = true
+		}
 		files := make([]ownedJSONFileSpec, 0, len(rels))
 		for _, rel := range rels {
 			file, err := devinOwnedJSONFile(rel, key.machineScope)

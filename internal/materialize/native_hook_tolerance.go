@@ -268,6 +268,10 @@ func (ins *nativeHookInspection) hookSatisfied(fingerprint, resource string) boo
 // per output key. Targets without a documented native hook file get an empty
 // inspection (nothing can satisfy them); a failed inspection is cached so
 // every hook of the same (target, scope) sees the identical refusal.
+// Read-only native hook inspections are shared per output key: one
+// cached refusal must fail every hook of the same target closed before
+// any legacy mutation, and one cached entry set keeps classification
+// consistent within the run.
 func nativeHookInspectionFor(cache map[outputKey]*nativeHookInspection, key outputKey, repoRoot string) *nativeHookInspection {
 	if ins, ok := cache[key]; ok {
 		return ins

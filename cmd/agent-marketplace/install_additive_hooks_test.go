@@ -36,15 +36,27 @@ registries:
     ref: main
 `)
 	withWorkingDir(t, repoRoot)
+	nativePath := filepath.Join(repoRoot, ".factory", "hooks.json")
+	legacyPath := filepath.Join(repoRoot, ".factory", "hooks", "hooks.json")
+	assertNativeOutput := func(phase string, data []byte) {
+		t.Helper()
+		if strings.Contains(string(data), "_managed_by") {
+			t.Fatalf("%s injected an ownership marker: %s", phase, data)
+		}
+		if _, err := os.Lstat(legacyPath); !os.IsNotExist(err) {
+			t.Fatalf("%s created the legacy hook file: %v", phase, err)
+		}
+	}
 
 	output, err := executeCommand("install", "PreToolUse-command", "--kind", "hook", "--from", firstOrigin, "--ref", "main")
 	if err != nil {
 		t.Fatalf("named install first hook provider: %v\n%s", err, output)
 	}
-	namedData, err := os.ReadFile(filepath.Join(repoRoot, ".factory", "hooks", "hooks.json"))
+	namedData, err := os.ReadFile(nativePath)
 	if err != nil {
 		t.Fatalf("read named-install hooks: %v", err)
 	}
+	assertNativeOutput("named install", namedData)
 	var namedDocument map[string][]struct {
 		Matcher string `json:"matcher"`
 		Hooks   []struct {
@@ -81,10 +93,11 @@ registries:
 		}
 	}
 
-	data, err := os.ReadFile(filepath.Join(repoRoot, ".factory", "hooks", "hooks.json"))
+	data, err := os.ReadFile(nativePath)
 	if err != nil {
 		t.Fatalf("read materialized hooks: %v", err)
 	}
+	assertNativeOutput("install --all", data)
 	var document map[string]any
 	if err := json.Unmarshal(data, &document); err != nil {
 		t.Fatalf("decode materialized hooks: %v\n%s", err, data)
@@ -92,6 +105,12 @@ registries:
 	groups, ok := document["PreToolUse"].([]any)
 	if !ok || len(groups) != 2 {
 		t.Fatalf("PreToolUse groups = %#v, want two registry-specific groups", document["PreToolUse"])
+	}
+	for _, rawGroup := range groups {
+		group, ok := rawGroup.(map[string]any)
+		if !ok || group["matcher"] != "Bash" {
+			t.Fatalf("Native matcher group = %#v, want Bash", rawGroup)
+		}
 	}
 	if !strings.Contains(string(data), "echo first") || !strings.Contains(string(data), "echo second") {
 		t.Fatalf("materialized hooks lost a registry contribution: %s", data)
@@ -122,10 +141,11 @@ registries:
 		t.Fatalf("lock registries after remove = %#v, want both registry pins retained", lock.Registries)
 	}
 
-	data, err = os.ReadFile(filepath.Join(repoRoot, ".factory", "hooks", "hooks.json"))
+	data, err = os.ReadFile(nativePath)
 	if err != nil {
 		t.Fatalf("read materialized hooks after remove: %v", err)
 	}
+	assertNativeOutput("remove first provider", data)
 	var remaining map[string][]struct {
 		Matcher string `json:"matcher"`
 		Hooks   []struct {

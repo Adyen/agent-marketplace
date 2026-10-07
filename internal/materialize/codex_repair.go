@@ -63,6 +63,7 @@ func CodexRepairPreview(ctx context.Context, repoRoot string, resolved []resolve
 			if state == nil {
 				state = &codexOwnedAggregateState{}
 			}
+			state.hooks = mergeOwnedJSONAggregateWork(state.hooks, compiled.nativeHooks[key])
 			previewCodexRoot(preview, key, destination.Root, state.hooks, state.mcps)
 		}
 	}

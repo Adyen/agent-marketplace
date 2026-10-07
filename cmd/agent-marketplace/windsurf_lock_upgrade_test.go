@@ -66,12 +66,12 @@ func TestWindsurfLegacyHookLockRetainedUntilUpgrade(t *testing.T) {
 	if out, err := executeCommand("sync", "--locked"); err != nil {
 		t.Fatalf("upgraded sync: %v\n%s", err, out)
 	}
-	assertWindsurfLockCommands(t, repo, []string{"echo second", "echo first"})
+	assertWindsurfLockCommands(t, repo, []string{"echo first", "echo second"})
 }
 
 func assertWindsurfLockCommands(t *testing.T, repo string, want []string) {
 	t.Helper()
-	data, err := os.ReadFile(filepath.Join(repo, ".windsurf", "hooks.json"))
+	data, err := os.ReadFile(filepath.Join(repo, ".devin", "hooks.json"))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -90,10 +90,11 @@ type DesiredFile struct {
 	// destination's permission bits. Zero preserves compatibility with callers
 	// that predate mode-aware transactions; transaction participants that read
 	// an existing destination should provide its mode.
-	ExpectedMode fs.FileMode
-	Bytes        []byte
-	Mode         fs.FileMode
-	Delete       bool
+	ExpectedMode       fs.FileMode
+	ExpectedLinkTarget string
+	Bytes              []byte
+	Mode               fs.FileMode
+	Delete             bool
 }
 
 type ReadAssertion struct {
@@ -191,13 +192,14 @@ type journalAssertion struct {
 }
 
 type journalFile struct {
-	Path      string      `json:"path"`
-	Temp      string      `json:"temp"`
-	Old       Generation  `json:"old"`
-	OldMode   fs.FileMode `json:"old_mode"`
-	NewDigest string      `json:"new_digest"`
-	NewMode   fs.FileMode `json:"new_mode"`
-	Delete    bool        `json:"delete,omitempty"`
+	Path          string      `json:"path"`
+	Temp          string      `json:"temp"`
+	Old           Generation  `json:"old"`
+	OldMode       fs.FileMode `json:"old_mode"`
+	OldLinkTarget string      `json:"old_link_target,omitempty"`
+	NewDigest     string      `json:"new_digest"`
+	NewMode       fs.FileMode `json:"new_mode"`
+	Delete        bool        `json:"delete,omitempty"`
 }
 
 type preparedFile struct {
@@ -417,9 +419,23 @@ func commitLocked(ctx context.Context, stateDir string, files []DesiredFile, cfg
 	changed := make([]preparedFile, 0, len(files))
 	assertions := make([]journalAssertion, 0, len(files))
 	for _, file := range files {
-		current, mode, err := inspectDestination(file.Path)
-		if err != nil {
-			return Result{}, err
+		var current Generation
+		var mode fs.FileMode
+		if file.ExpectedLinkTarget != "" {
+			snapshot, err := inspectLinkDestination(file.Path)
+			if err != nil {
+				return Result{}, err
+			}
+			if !snapshot.exists || !snapshot.symlink || snapshot.target != file.ExpectedLinkTarget {
+				return Result{}, fmt.Errorf("%w: %s", ErrGenerationConflict, file.Path)
+			}
+			current = snapshot.generation
+		} else {
+			var err error
+			current, mode, err = inspectDestination(file.Path)
+			if err != nil {
+				return Result{}, err
+			}
 		}
 		if current != file.Expected || file.ExpectedMode != 0 && mode != file.ExpectedMode {
 			return Result{}, fmt.Errorf("%w: %s", ErrGenerationConflict, file.Path)
@@ -473,7 +489,7 @@ func commitLocked(ctx context.Context, stateDir string, files []DesiredFile, cfg
 	}
 	j := journal{Version: journalVersion, ID: id, Files: make([]journalFile, len(changed)), Assertions: assertions, Reads: cfg.reads}
 	for i, file := range changed {
-		j.Files[i] = journalFile{Path: file.desired.Path, Temp: file.temp, Old: file.desired.Expected, OldMode: file.oldMode, Delete: file.desired.Delete, NewMode: file.desired.Mode}
+		j.Files[i] = journalFile{Path: file.desired.Path, Temp: file.temp, Old: file.desired.Expected, OldMode: file.oldMode, OldLinkTarget: file.desired.ExpectedLinkTarget, Delete: file.desired.Delete, NewMode: file.desired.Mode}
 		if !file.desired.Delete {
 			j.Files[i].NewDigest = Digest(file.desired.Bytes)
 		}
@@ -715,7 +731,16 @@ func normalizeDesired(desired []DesiredFile) ([]DesiredFile, error) {
 		if int64(len(files[i].Bytes)) > maxDependencyFileSize {
 			return nil, fmt.Errorf("%w: desired file %s exceeds %d bytes", ErrRecoveryBlocked, files[i].Path, maxDependencyFileSize)
 		}
-		path, err := canonicalDestination(files[i].Path)
+		var path string
+		var err error
+		if files[i].ExpectedLinkTarget != "" {
+			if !files[i].Delete || !files[i].Expected.Exists || files[i].Expected.Digest != Digest([]byte(files[i].ExpectedLinkTarget)) || files[i].ExpectedMode != 0 || len(files[i].Bytes) != 0 || files[i].Mode != 0 {
+				return nil, fmt.Errorf("%w: invalid link deletion participant: %s", ErrUnsafePath, files[i].Path)
+			}
+			path, err = normalizeDestinationPath(files[i].Path)
+		} else {
+			path, err = canonicalDestination(files[i].Path)
+		}
 		if err != nil {
 			return nil, err
 		}
@@ -1074,7 +1099,11 @@ func publish(file journalFile, syncDir func(string) error) error {
 		return fmt.Errorf("%w: third-party bytes at %s", ErrRecoveryBlocked, file.Path)
 	}
 	if file.Delete {
-		if err := os.Remove(file.Path); err != nil {
+		if file.OldLinkTarget != "" {
+			if err := unlinkSymlinkAt(file.Path, file.OldLinkTarget); err != nil {
+				return err
+			}
+		} else if err := os.Remove(file.Path); err != nil {
 			return fmt.Errorf("dependency transaction: delete %s: %w", file.Path, err)
 		}
 	} else {
@@ -1089,6 +1118,19 @@ func publish(file journalFile, syncDir func(string) error) error {
 }
 
 func classify(file journalFile) (string, error) {
+	if file.OldLinkTarget != "" {
+		snapshot, err := inspectLinkDestination(file.Path)
+		if err != nil {
+			return "", err
+		}
+		if !snapshot.exists {
+			return "new", nil
+		}
+		if snapshot.symlink && snapshot.target == file.OldLinkTarget && snapshot.generation == file.Old {
+			return "old", nil
+		}
+		return "foreign", nil
+	}
 	generation, mode, err := inspectDestination(file.Path)
 	if err != nil {
 		return "", err
@@ -1128,7 +1170,13 @@ func validateJournal(j *journal) error {
 	destinations := make(map[string]struct{}, len(j.Files)+len(j.Assertions))
 	previous := ""
 	for _, file := range j.Files {
-		canonical, err := canonicalDestination(file.Path)
+		canonical := ""
+		var err error
+		if file.OldLinkTarget != "" {
+			canonical, err = normalizeDestinationPath(file.Path)
+		} else {
+			canonical, err = canonicalDestination(file.Path)
+		}
 		if err != nil || canonical != file.Path || file.Path <= previous {
 			return fmt.Errorf("%w: unsafe or unordered journal destination %s", ErrRecoveryBlocked, file.Path)
 		}
@@ -1141,7 +1189,11 @@ func validateJournal(j *journal) error {
 		if file.NewMode != file.NewMode.Perm() || file.OldMode != file.OldMode.Perm() {
 			return fmt.Errorf("%w: invalid journal mode for %s", ErrRecoveryBlocked, file.Path)
 		}
-		if file.Delete {
+		if file.OldLinkTarget != "" {
+			if !file.Delete || !file.Old.Exists || file.Old.Digest != Digest([]byte(file.OldLinkTarget)) || file.OldMode != 0 || file.Temp != "" || file.NewDigest != "" || file.NewMode != 0 {
+				return fmt.Errorf("%w: invalid link deletion for %s", ErrRecoveryBlocked, file.Path)
+			}
+		} else if file.Delete {
 			if !file.Old.Exists || file.Temp != "" || file.NewMode != 0 {
 				return fmt.Errorf("%w: invalid journal deletion for %s", ErrRecoveryBlocked, file.Path)
 			}

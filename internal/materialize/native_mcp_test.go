@@ -14,22 +14,111 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/ownership"
 	"github.com/Adyen/agent-marketplace/internal/resolver"
 	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
-	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir/ext"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/jsonc"
 )
 
-func nativeMCPResources(target hcc.Target, source config.Source) []resolver.ResolvedArtifact {
-	var result []resolver.ResolvedArtifact
-	for _, name := range []string{"first", "second"} {
-		resource := ir.NewMcpServer(name, "echo", []string{name}, nil, nil, ir.SourceRef{})
-		result = append(result, resolver.ResolvedArtifact{Entry: catalog.Entry{Name: name, Kind: ir.KindMcpServer, Resource: resource}, Source: source, Harnesses: []hcc.Target{target}})
+func nativeMCPServerResources(t testing.TB, target hcc.Target, source config.Source) []resolver.ResolvedArtifact {
+	t.Helper()
+	sourceRoot := t.TempDir()
+	definitionPath := filepath.Join(sourceRoot, ".mcp.json")
+	definition := []byte(`{"mcpServers":{"first":{"command":"echo","args":["first"]},"second":{"command":"echo","args":["second"]}}}`)
+	if err := os.WriteFile(definitionPath, definition, 0o644); err != nil {
+		t.Fatal(err)
 	}
+	loaded, err := catalog.LoadWithOptions(sourceRoot, "claude", catalog.IngestOptions{LegacyBareMCP: true})
+	if err != nil {
+		t.Fatalf("Claude MCP catalog: %v", err)
+	}
+	resources := make([]resolver.ResolvedArtifact, 0, 2)
+	for _, entry := range loaded.Entries {
+		if entry.Kind != ir.KindMcpServer {
+			continue
+		}
+		entry.Path = definitionPath
+		resources = append(resources, resolver.ResolvedArtifact{
+			Entry:       entry,
+			Source:      source,
+			RegistryURL: sourceRoot,
+			CatalogKey:  sourceRoot,
+			V4Kind:      config.V4SourceDirectory,
+			Harnesses:   []hcc.Target{target},
+		})
+	}
+	if len(resources) != 2 {
+		t.Fatalf("Claude MCP resources = %d, want two: %+v", len(resources), loaded.Entries)
+	}
+	return resources
+}
+
+func nativeMCPResources(t testing.TB, target hcc.Target, source config.Source) []resolver.ResolvedArtifact {
+	resources := nativeMCPServerResources(t, target, source)
 	if target == hcc.TargetGemini {
-		resource := ir.NewHook("audit", "PostToolUse", "echo audit", "command", nil, ir.SourceRef{})
-		result = append(result, resolver.ResolvedArtifact{Entry: catalog.Entry{Name: "audit", Kind: ir.KindHook, Resource: resource}, Source: source, Harnesses: []hcc.Target{target}})
+		hook := ir.NewHook("audit", "PostToolUse", "echo audit", "command", nil, ir.SourceRef{})
+		resources = append(resources, ingestedHookFixture(t, source, target, "audit", hook, nil))
 	}
-	return result
+	return resources
+}
+
+func nativeCodexMCPResources(t testing.TB, target hcc.Target, source config.Source) []resolver.ResolvedArtifact {
+	t.Helper()
+	sourceRoot := t.TempDir()
+	definitionPath := filepath.Join(sourceRoot, ".codex", "config.toml")
+	definition := []byte(`[mcp_servers.first]
+command = "echo"
+args = ["updated"]
+
+[mcp_servers.second]
+command = "echo"
+args = ["second"]
+experimental_environment = "remote"
+env_vars = [{ name = "REMOTE_SETTING", source = "remote" }]
+
+[mcp_servers.third]
+command = "echo"
+args = ["third"]
+`)
+	if err := os.MkdirAll(filepath.Dir(definitionPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(definitionPath, definition, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := catalog.Load(sourceRoot, "codex")
+	if err != nil {
+		t.Fatalf("Codex MCP catalog: %v", err)
+	}
+	entries := make(map[string]catalog.Entry, 3)
+	for _, entry := range loaded.Entries {
+		if entry.Kind == ir.KindMcpServer {
+			entries[entry.Name] = entry
+		}
+	}
+	resources := make([]resolver.ResolvedArtifact, 0, 3)
+	for _, name := range []string{"third", "first", "second"} {
+		entry, ok := entries[name]
+		if !ok {
+			t.Fatalf("Codex MCP catalog missing %q: %+v", name, loaded.Entries)
+		}
+		entry.Path = definitionPath
+		resource, ok := entry.Resource.(*ir.McpServer)
+		if !ok {
+			t.Fatalf("Codex MCP %q has unexpected type %T", name, entry.Resource)
+		}
+		if name == "second" && (resource.Ext.Codex == nil || resource.Ext.Codex.MCP == nil || resource.Ext.Codex.MCP.ExperimentalEnvironment != "remote" || len(resource.Ext.Codex.MCP.RemoteEnvVars) != 1 || resource.Ext.Codex.MCP.RemoteEnvVars[0] != "REMOTE_SETTING") {
+			t.Fatalf("Codex MCP %q lost its remote execution declaration: %#v", name, resource.Ext.Codex)
+		}
+		resources = append(resources, resolver.ResolvedArtifact{
+			Entry:       entry,
+			Source:      source,
+			RegistryURL: sourceRoot,
+			CatalogKey:  sourceRoot,
+			V4Kind:      config.V4SourceDirectory,
+			Harnesses:   []hcc.Target{target},
+		})
+	}
+	return resources
 }
 
 func TestGeminiMixedPrivateAggregateMode(t *testing.T) {
@@ -40,7 +129,7 @@ func TestGeminiMixedPrivateAggregateMode(t *testing.T) {
 			t.Setenv("XDG_STATE_HOME", t.TempDir())
 			t.Setenv("XDG_CACHE_HOME", t.TempDir())
 			t.Setenv("CODEX_HOME", filepath.Join(home, ".codex"))
-			desired := nativeMCPResources(hcc.TargetGemini, config.RepoCommitted)
+			desired := nativeMCPResources(t, hcc.TargetGemini, config.RepoCommitted)
 			if reversed {
 				desired[0], desired[1] = desired[1], desired[0]
 			}
@@ -79,7 +168,7 @@ func TestGeminiNativeMCPUsesStrictFieldsAndDurableOwnership(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	t.Setenv("XDG_CACHE_HOME", t.TempDir())
 	t.Setenv("CODEX_HOME", filepath.Join(home, ".codex"))
-	desired := nativeMCPResources(hcc.TargetGemini, config.RepoCommitted)
+	desired := nativeMCPResources(t, hcc.TargetGemini, config.RepoCommitted)
 	report, err := Run(context.Background(), repo, desired)
 	if err != nil || hasErrorDiagnostics(report.Diags) {
 		t.Fatalf("sync: %v %+v", err, report)
@@ -111,8 +200,24 @@ func TestGeminiNativeMCPUsesStrictFieldsAndDurableOwnership(t *testing.T) {
 		t.Fatal(err)
 	}
 	proof, err := store.Proof("settings.json")
-	if err != nil || len(proof.OwnedIDs()) != 2 {
-		t.Fatalf("MCP ownership missing: %v %+v", err, proof)
+	if err != nil {
+		t.Fatalf("MCP ownership missing: %v", err)
+	}
+	var ownedMCP, ownedHooks int
+	for _, id := range proof.OwnedIDs() {
+		entry, ok := proof.Entry(id)
+		if !ok {
+			continue
+		}
+		switch entry.Kind {
+		case ownership.KindMcpServer:
+			ownedMCP++
+		case ownership.KindHook:
+			ownedHooks++
+		}
+	}
+	if ownedMCP != 2 || ownedHooks != 1 {
+		t.Fatalf("shared Gemini settings ownership = %d MCP entries, %d Hook entries; want 2 and 1", ownedMCP, ownedHooks)
 	}
 	if _, err := Run(context.Background(), repo, nil); err != nil {
 		t.Fatal(err)
@@ -136,7 +241,7 @@ func TestGeminiNativeMCPOwnershipLossAndLegacyMarkersFailClosed(t *testing.T) {
 			t.Setenv("CODEX_HOME", filepath.Join(home, ".codex"))
 			root := filepath.Join(home, ".gemini")
 			file := filepath.Join(root, "settings.json")
-			desired := nativeMCPResources(hcc.TargetGemini, config.UserPersonal)
+			desired := nativeMCPServerResources(t, hcc.TargetGemini, config.UserPersonal)
 			if mode == "legacy" {
 				if err := os.MkdirAll(root, 0o755); err != nil {
 					t.Fatal(err)
@@ -201,7 +306,7 @@ func TestGeminiNativeMCPResumesAfterMalformedFileIsFixed(t *testing.T) {
 	if err := os.WriteFile(file, original, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	desired := nativeMCPResources(hcc.TargetGemini, config.RepoCommitted)
+	desired := nativeMCPResources(t, hcc.TargetGemini, config.RepoCommitted)
 	report, err := Run(context.Background(), repo, desired)
 	if err != nil || !hasDiagCode(report.Diags, "json.malformed") {
 		t.Fatalf("malformed file not refused: %v %+v", err, report)
@@ -280,7 +385,7 @@ func TestNativeMCPLifecycle(t *testing.T) {
 					}
 					modes := config.MaterializationModes{Machine: mode, Project: mode}
 					opts := []RunOption{WithMaterializationModes(modes)}
-					desired := nativeMCPResources(target, source)
+					desired := nativeMCPResources(t, target, source)
 					report, err := Run(context.Background(), repo, desired, opts...)
 					if err != nil || hasErrorDiagnostics(report.Diags) {
 						t.Fatalf("sync: %v, %+v", err, report)
@@ -381,7 +486,7 @@ func TestNativeMCPSymlinksAndLegacyFiles(t *testing.T) {
 				if dry {
 					opts = append(opts, WithDryRun())
 				}
-				report, err := Run(context.Background(), repo, nativeMCPResources(target, config.RepoCommitted), opts...)
+				report, err := Run(context.Background(), repo, nativeMCPResources(t, target, config.RepoCommitted), opts...)
 				if err != nil || !hasDiagCode(report.Diags, "materialize.write.error") {
 					t.Fatalf("symlink not refused: %v %+v", err, report)
 				}
@@ -400,7 +505,7 @@ func TestNativeMCPSymlinksAndLegacyFiles(t *testing.T) {
 			if err := os.Remove(native); err != nil {
 				t.Fatal(err)
 			}
-			report, err := Run(context.Background(), repo, nativeMCPResources(target, config.RepoCommitted))
+			report, err := Run(context.Background(), repo, nativeMCPResources(t, target, config.RepoCommitted))
 			if err != nil || hasErrorDiagnostics(report.Diags) {
 				t.Fatalf("safe native install failed: %v %+v", err, report)
 			}
@@ -436,7 +541,7 @@ func TestNativeMCPCompileFailureWritesValidSiblingsWithoutPruning(t *testing.T) 
 					rel = ".gemini/settings.json"
 				}
 				destination := filepath.Join(base, rel)
-				prior := nativeMCPResources(target, source)
+				prior := nativeMCPResources(t, target, source)
 				report, err := Run(context.Background(), repo, prior)
 				if err != nil || hasErrorDiagnostics(report.Diags) {
 					t.Fatalf("initial sync: %v %+v", err, report)
@@ -445,18 +550,10 @@ func TestNativeMCPCompileFailureWritesValidSiblingsWithoutPruning(t *testing.T) 
 				if err != nil {
 					t.Fatal(err)
 				}
-				valid := ir.NewMcpServer("third", "echo", []string{"third"}, nil, nil, ir.SourceRef{})
-				updated := ir.NewMcpServer("first", "echo", []string{"updated"}, nil, nil, ir.SourceRef{})
-				restricted := ir.NewMcpServer("second", "echo", nil, nil, nil, ir.SourceRef{})
-				restricted.Ext.Codex = &ext.Codex{MCP: &ext.CodexMCP{Command: "echo", RemoteEnvVars: []string{"REMOTE_SETTING"}}}
-				wanted := []resolver.ResolvedArtifact{
-					{Entry: catalog.Entry{Name: "third", Kind: ir.KindMcpServer, Resource: valid}, Source: source, Harnesses: []hcc.Target{target}},
-					{Entry: catalog.Entry{Name: "first", Kind: ir.KindMcpServer, Resource: updated}, Source: source, Harnesses: []hcc.Target{target}},
-					{Entry: catalog.Entry{Name: "second", Kind: ir.KindMcpServer, Resource: restricted}, Source: source, Harnesses: []hcc.Target{target}},
-				}
+				wanted := nativeCodexMCPResources(t, target, source)
 				if target == hcc.TargetGemini {
 					hook := ir.NewHook("new-audit", "PostToolUse", "echo new-audit", "command", nil, ir.SourceRef{})
-					wanted = append(wanted, resolver.ResolvedArtifact{Entry: catalog.Entry{Name: "new-audit", Kind: ir.KindHook, Resource: hook}, Source: source, Harnesses: []hcc.Target{target}})
+					wanted = append(wanted, ingestedHookFixture(t, source, target, "new-audit", hook, nil))
 				}
 				report, err = Run(context.Background(), repo, wanted, WithDryRun())
 				if err != nil || !hasDiagCode(report.Diags, "mcp.security-restriction-unsupported") {
@@ -537,7 +634,7 @@ func TestNativeMCPUnmanagedFilesDoNotAffectOtherTargets(t *testing.T) {
 					if err := os.WriteFile(native, []byte(original), 0o600); err != nil {
 						t.Fatal(err)
 					}
-					wanted := nativeMCPResources(hcc.TargetFactory, source)
+					wanted := nativeMCPResources(t, hcc.TargetFactory, source)
 					for _, dry := range []bool{true, false, true} {
 						var opts []RunOption
 						if dry {
@@ -597,7 +694,7 @@ func TestNativeMCPManagedFilesPruneDuringOtherTargetSync(t *testing.T) {
 			t.Setenv("XDG_STATE_HOME", t.TempDir())
 			t.Setenv("XDG_CACHE_HOME", t.TempDir())
 			t.Setenv("CODEX_HOME", filepath.Join(home, ".codex"))
-			report, err := Run(context.Background(), repo, nativeMCPResources(target, config.UserPersonal))
+			report, err := Run(context.Background(), repo, nativeMCPResources(t, target, config.UserPersonal))
 			if err != nil || hasErrorDiagnostics(report.Diags) {
 				t.Fatalf("initial sync: %v %+v", err, report)
 			}
@@ -607,7 +704,7 @@ func TestNativeMCPManagedFilesPruneDuringOtherTargetSync(t *testing.T) {
 			} else if err := os.Remove(filepath.Join(home, ".claude")); err != nil {
 				t.Fatal(err)
 			}
-			report, err = Run(context.Background(), repo, nativeMCPResources(hcc.TargetFactory, config.UserPersonal))
+			report, err = Run(context.Background(), repo, nativeMCPResources(t, hcc.TargetFactory, config.UserPersonal))
 			if err != nil || hasErrorDiagnostics(report.Diags) {
 				t.Fatalf("unrelated sync: %v %+v", err, report)
 			}
@@ -663,12 +760,16 @@ func TestNativeMCPRefusalsPreserveBytes(t *testing.T) {
 				if err := os.WriteFile(destination, []byte(original), 0o600); err != nil {
 					t.Fatal(err)
 				}
-				report, err := Run(context.Background(), repo, nativeMCPResources(target, config.UserPersonal))
+				report, err := Run(context.Background(), repo, nativeMCPServerResources(t, target, config.UserPersonal))
 				if err != nil {
 					t.Fatal(err)
 				}
-				if !hasErrorDiagnostics(report.Diags) || !hasDiagCode(report.Diags, test.code) || report.InSync() {
-					t.Fatalf("unsafe native file not refused: %+v", report)
+				wantCode := test.code
+				if target == hcc.TargetGemini && original == `null` {
+					wantCode = diag.CodeHookNativeToleranceRefused
+				}
+				if !hasErrorDiagnostics(report.Diags) || !hasDiagCode(report.Diags, wantCode) || report.InSync() {
+					t.Fatalf("unsafe native file not refused with %s: %+v", wantCode, report)
 				}
 				got, _ := os.ReadFile(destination)
 				if !bytes.Equal(got, []byte(original)) {

@@ -152,17 +152,20 @@ func (s *Store) backupOnlyLocked(rel, absFile string, reason Reason) (string, er
 // the only version of a backup worth having for a file a user hand-wrote.
 func (s *Store) writeSafetyBackup(rel, absFile string, generation uint64, reason Reason, entries []Entry) (backupPath, priorDigest string, priorAbsent bool, err error) {
 	raw, readErr := ReadAggregateFile(absFile)
-	if readErr != nil {
-		if !os.IsNotExist(readErr) {
-			return "", "", false, fmt.Errorf("ownership: read %s for safety backup: %w", absFile, readErr)
-		}
-		priorAbsent = true
-		raw = nil
+	if readErr != nil && !os.IsNotExist(readErr) {
+		return "", "", false, fmt.Errorf("ownership: read %s for safety backup: %w", absFile, readErr)
 	}
-	if !priorAbsent {
+	priorAbsent = os.IsNotExist(readErr)
+	return s.writeSafetyBackupSnapshot(rel, absFile, generation, reason, entries, raw, priorAbsent)
+}
+
+func (s *Store) writeSafetyBackupSnapshot(rel, absFile string, generation uint64, reason Reason, entries []Entry, raw []byte, priorAbsent bool) (backupPath, priorDigest string, recordedAbsent bool, err error) {
+	if priorAbsent {
+		raw = nil
+	} else {
 		priorDigest = Digest(raw)
 	}
-
+	recordedAbsent = priorAbsent
 	dir := s.SafetyBackupDir(rel)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return "", "", false, fmt.Errorf("ownership: create safety backup directory: %w", err)
@@ -209,7 +212,7 @@ func (s *Store) writeSafetyBackup(rel, absFile string, generation uint64, reason
 		Generation:     generation,
 		Reason:         reason,
 		PriorDigest:    priorDigest,
-		PriorAbsent:    priorAbsent,
+		PriorAbsent:    recordedAbsent,
 		PriorSize:      int64(len(raw)),
 		ManagedEntries: append([]Entry(nil), entries...),
 		CreatedAt:      s.now().UTC().Format(time.RFC3339Nano),
@@ -223,8 +226,8 @@ func (s *Store) writeSafetyBackup(rel, absFile string, generation uint64, reason
 	}
 	slog.Info("safety backup written",
 		"root_key", s.rootKey, "file", rel, "generation", generation, "reason", string(reason),
-		"prior_digest", priorDigest, "prior_absent", priorAbsent, "prior_size", len(raw), "retain", s.retain)
-	return backupPath, priorDigest, priorAbsent, nil
+		"prior_digest", priorDigest, "prior_absent", recordedAbsent, "prior_size", len(raw), "retain", s.retain)
+	return backupPath, priorDigest, recordedAbsent, nil
 }
 
 func metaPathFor(backupPath string) string {

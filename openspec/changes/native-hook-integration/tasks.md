@@ -170,7 +170,7 @@ hook matrix goldens deliberately.
   - `deselected-hooks-remove-their-support-directory`
 
   Verify `go test ./internal/materialize -count=1` passes
-- [ ] 5.2 Generalize the Devin and Codex ownership-state hook reconciler to
+- [x] 5.2 Generalize the Devin and Codex ownership-state hook reconciler to
   every target, driven by `NativeLayout` shape and member. Stop emitting
   `_managed_by` for hooks. Annotate:
   - `handwritten-claude-hooks-satisfy-identical-entries`
@@ -200,7 +200,7 @@ hook matrix goldens deliberately.
 
 ## 6. Legacy migration (merge only after 0.2 holds)
 
-- [ ] 6.1 Implement the one-transaction move of `_managed_by` entries from the
+- [x] 6.1 Implement the one-transaction move of `_managed_by` entries from the
   legacy files to native files: Claude Code, Cursor, and Factory Droid
   `hooks/hooks.json` in both scopes, and Windsurf's repository-scope
   `.windsurf/hooks.json`. Delete legacy files that become empty, prune owned

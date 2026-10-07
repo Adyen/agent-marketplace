@@ -125,7 +125,7 @@ func TestAdditiveHooksIngestResolveMaterialize(t *testing.T) {
 			if len(report.Diags) != 0 {
 				t.Fatalf("first Run diagnostics = %v, want none", report.Diags)
 			}
-			hooksPath := filepath.Join(repoRoot, ".factory", "hooks", "hooks.json")
+			hooksPath := filepath.Join(repoRoot, ".factory", "hooks.json")
 			firstBytes, err := os.ReadFile(hooksPath)
 			if err != nil {
 				t.Fatalf("read materialized hooks: %v", err)

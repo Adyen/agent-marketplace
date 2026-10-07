@@ -108,12 +108,16 @@ func compatibilityPaths(e *Env, target, scope string, f compatibilityFixture) ma
 	}
 	switch target {
 	case "claude":
+		paths["hook"] = []string{root + "/settings.json"}
 		paths["mcp"] = []string{".mcp.json"}
 		if scope == "user" {
 			paths["mcp"] = []string{".claude.json"}
 		}
 	case "factory":
+		paths["hook"] = []string{root + "/hooks.json"}
 		paths["subagent"] = []string{root + "/droids/" + f.name("subagent") + ".md"}
+	case "cursor":
+		paths["hook"] = []string{root + "/hooks.json"}
 	case "gemini":
 		paths["command"] = []string{root + "/commands/" + f.name("command") + ".toml"}
 		paths["hook"] = []string{root + "/settings.json"}
@@ -125,7 +129,11 @@ func compatibilityPaths(e *Env, target, scope string, f compatibilityFixture) ma
 		}
 		paths["command"] = []string{root + "/" + workflow + "/" + f.name("command") + ".md"}
 		paths["subagent"] = nil
-		paths["hook"] = []string{root + "/hooks.json"}
+		if scope == "user" {
+			paths["hook"] = []string{root + "/hooks.json"}
+		} else {
+			paths["hook"] = []string{".devin/hooks.json"}
+		}
 		paths["mcp"] = []string{root + "/mcp_config.json"}
 	case "devin":
 		paths["command"] = []string{root + "/skills/" + f.name("command") + "/SKILL.md"}

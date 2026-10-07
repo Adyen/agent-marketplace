@@ -2,6 +2,7 @@ package materialize
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path"
@@ -9,8 +10,10 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/harness"
 	"github.com/Adyen/agent-marketplace/internal/ownership"
 	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/jsonc"
 	targetmeta "github.com/Adyen/agent-marketplace/pkg/harness-compilation/target"
 )
 
@@ -52,6 +55,118 @@ func nativeHookAggregateForScope(target targetmeta.Target, machineScope bool) (n
 	return declaration, nil
 }
 
+func addExistingNativeHookOutputKeys(repoRoot string, outputs map[outputKey]bool) {
+	for _, target := range hcc.Targets() {
+		for _, machineScope := range []bool{false, true} {
+			key := outputKey{target: target, machineScope: machineScope}
+			if outputs[key] || !nativeHookOutputPresent(key, repoRoot) {
+				continue
+			}
+			if !machineScope {
+				machineKey := outputKey{target: target, machineScope: true}
+				repoDestination, repoFile, repoErr := nativeHookJSONLayout(key, repoRoot)
+				machineDestination, machineFile, machineErr := nativeHookJSONLayout(machineKey, repoRoot)
+				if repoErr == nil && machineErr == nil &&
+					sameOutputDir(repoDestination.Root, machineDestination.Root) && repoFile.rel == machineFile.rel {
+					continue
+				}
+			}
+			outputs[key] = true
+		}
+	}
+}
+
+func nativeHookOutputPresent(key outputKey, repoRoot string) bool {
+	destination, file, err := nativeHookJSONLayout(key, repoRoot)
+	if err != nil {
+		return false
+	}
+	store, err := ownership.Open(destination.Root)
+	if err != nil {
+		return false
+	}
+	proof, err := store.Proof(file.rel)
+	if err != nil {
+		return false
+	}
+	if len(proof.HookSatisfactions()) > 0 {
+		return true
+	}
+	for _, id := range proof.OwnedIDs() {
+		if id.Kind == ownership.KindHook || (id.Kind == ownership.KindMcpServer && id.Container == "mcpServers" && nativeHookSharesMCPRoute(key, repoRoot)) {
+			return true
+		}
+	}
+	return false
+}
+
+func nativeHookEvents(data []byte, file ownedJSONFileSpec) (map[string][]json.RawMessage, error) {
+	doc, err := jsonc.Parse(file.rel, data)
+	if err != nil {
+		return nil, fmt.Errorf("parse compiled native hook fragment")
+	}
+	if err := validateOwnedJSONEnvelope(doc, file, false); err != nil {
+		return nil, fmt.Errorf("compiled native hook envelope differs from its declaration")
+	}
+	container, _, err := ownedJSONContainerNode(doc, file)
+	if err != nil || container == nil {
+		return nil, fmt.Errorf("compiled native hook container is invalid")
+	}
+	events := make(map[string][]json.RawMessage, len(container.Keys()))
+	for _, event := range container.Keys() {
+		array, ok := container.Member(event)
+		if !ok || array.Kind() != jsonc.KindArray {
+			return nil, fmt.Errorf("compiled native hook event is not an array")
+		}
+		for i := 0; i < array.Len(); i++ {
+			rule, _ := array.Element(i)
+			if err := validateOwnedJSONHookRule(file.hookShape, rule); err != nil {
+				return nil, fmt.Errorf("compiled native hook entry has an invalid declared shape")
+			}
+			events[event] = append(events[event], json.RawMessage(rule.Raw()))
+		}
+	}
+	return events, nil
+}
+
+func nativeHookEntriesForArtifacts(key outputKey, repoRoot, resource, sourceDigest string, artifacts []artifact.Artifact) ([]ownedJSONEntry, error) {
+	if sourceDigest == "" {
+		return nil, fmt.Errorf("captured hook source proof is unavailable")
+	}
+	_, file, err := nativeHookJSONLayout(key, repoRoot)
+	if err != nil {
+		return nil, err
+	}
+	expected, ok := targetmeta.NativeAggregateFileForScope(targetmeta.Target(key.target), ir.KindHook, key.machineScope)
+	if !ok || expected.Path == "" {
+		return nil, fmt.Errorf("target %s has no native hook aggregate for this scope", key.target)
+	}
+	var entries []ownedJSONEntry
+	for _, compiled := range artifacts {
+		policy, policyErr := compiled.Policy()
+		if policyErr != nil || compiled.Path != expected.Path || !compiled.Fragment || !compiled.ExternalReconciliationRequired || !policy.IsExternal() ||
+			compiled.ManagedByField != "" || compiled.ManagedByValue != "" || compiled.MergeWithExisting || compiled.Mode.Perm() != 0o600 {
+			return nil, fmt.Errorf("compiled native hook fragment does not match its descriptor policy")
+		}
+		events, err := nativeHookEvents(compiled.Bytes, file)
+		if err != nil {
+			return nil, err
+		}
+		contributions, err := ownedJSONHookEntries(file.rel, events, resource)
+		if err != nil {
+			return nil, err
+		}
+		for i := range contributions {
+			contributions[i].sourceDigest = sourceDigest
+		}
+		entries = append(entries, contributions...)
+	}
+	if len(entries) == 0 {
+		return nil, fmt.Errorf("compiled native hook output contains no event entries")
+	}
+	return entries, nil
+}
+
 func nativeHookJSONLayout(key outputKey, repoRoot string) (harness.Destination, ownedJSONFileSpec, error) {
 	declaration, err := nativeHookAggregateForScope(targetmeta.Target(key.target), key.machineScope)
 	if err != nil {
@@ -88,6 +203,24 @@ func nativeHookJSONLayout(key outputKey, repoRoot string) (harness.Destination, 
 	}, nil
 }
 
+func defaultNativeHookReconcileOptions() ownedJSONReconcileOptions {
+	return ownedJSONReconcileOptions{
+		sessionName:        "reconcile-native-hooks",
+		writeCode:          "materialize.write.error",
+		malformedCode:      diag.CodeHookNativeToleranceRefused,
+		shapeCode:          diag.CodeHookNativeToleranceRefused,
+		satisfiedCode:      diag.CodeMaterializeHookSatisfiedByUnmanaged,
+		prunePostponedCode: "materialize.write.error",
+	}
+}
+
+func nativeHookReconcileOptionsFor(handler ownedAggregateHandler) ownedJSONReconcileOptions {
+	if adapter, ok := handler.(nativeHookReconcileOptionsProvider); ok {
+		return adapter.nativeHookReconcileOptions()
+	}
+	return defaultNativeHookReconcileOptions()
+}
+
 func reconcileNativeHookJSON(ctx context.Context, report *Report, key outputKey, repoRoot string, work *ownedJSONAggregateWork, options ownedJSONReconcileOptions, dryRun bool) *Report {
 	if report == nil {
 		report = &Report{}
@@ -108,7 +241,51 @@ func reconcileNativeHookJSON(ctx context.Context, report *Report, key outputKey,
 	}
 	destination.Root = root
 	options.rootID = destination.ID
+	file.rawValueDigest = options.rawValueDigest
 	return reconcileOwnedJSONAggregates(ctx, report, key, destination.Root, []ownedJSONFileSpec{file}, work, options, dryRun)
+}
+
+func nativeHookSharesAggregateRoute(key outputKey, repoRoot string) ([]harness.AggregateRoute, bool) {
+	hookDestination, hookFile, err := nativeHookJSONLayout(key, repoRoot)
+	if err != nil {
+		return nil, false
+	}
+	declaration, err := nativeHookAggregateForScope(targetmeta.Target(key.target), key.machineScope)
+	if err != nil {
+		return nil, false
+	}
+	declaredFiles := map[string]bool{hookFile.rel: true}
+	for _, legacyRel := range declaration.file.Legacy {
+		declaredFiles[path.Join(declaration.partition.Prefix, legacyRel)] = true
+	}
+	destinations, err := harness.ResolveDestinations(key.target, key.machineScope, repoRoot)
+	if err != nil {
+		return nil, false
+	}
+	for _, destination := range destinations {
+		if len(destination.AggregateRoutes) > 0 && sameOutputDir(destination.Root, hookDestination.Root) && declaredFiles[destination.AggregateFile] {
+			return destination.AggregateRoutes, true
+		}
+	}
+	return nil, false
+}
+
+func nativeHookCanSkipGenericAggregateRoute(key outputKey, repoRoot string) bool {
+	_, shared := nativeHookSharesAggregateRoute(key, repoRoot)
+	return shared
+}
+
+func nativeHookSharesMCPRoute(key outputKey, repoRoot string) bool {
+	routes, shared := nativeHookSharesAggregateRoute(key, repoRoot)
+	if !shared {
+		return false
+	}
+	for _, route := range routes {
+		if route.Container == "mcpServers" {
+			return true
+		}
+	}
+	return false
 }
 
 func nativeHookDestinationError(report *Report, key outputKey) *Report {

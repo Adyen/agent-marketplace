@@ -15,6 +15,19 @@ import (
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 )
 
+func nativeSupportPersistentSnapshotWithStableArtifactDirectoryTimes(t *testing.T, repo, home string) map[string]nativeSupportState {
+	t.Helper()
+	states := nativeSupportPersistentSnapshot(t, repo, home)
+	for name, state := range states {
+		if state.isDir && filepath.Base(name) == "artifacts" && strings.Contains(filepath.ToSlash(name), "/agent-marketplace/compiled/") {
+			state.size = 0
+			state.modified = 0
+			states[name] = state
+		}
+	}
+	return states
+}
+
 func TestRunRejectsStaleIngestedFactoryHookDefinition(t *testing.T) {
 	repo, home := additiveSafetyEnv(t)
 	factoryFiles := func(event, matcher, scriptName, script string) map[string]string {
@@ -42,12 +55,12 @@ func TestRunRejectsStaleIngestedFactoryHookDefinition(t *testing.T) {
 	if _, err := Run(context.Background(), repo, resolved); err != nil {
 		t.Fatalf("initial Run: %v", err)
 	}
-	factoryOutput := filepath.Join(repo, ".factory", "hooks", "hooks.json")
+	factoryOutput := filepath.Join(repo, ".factory", "hooks.json")
 	initialOutput, err := os.ReadFile(factoryOutput)
 	if err != nil || !strings.Contains(string(initialOutput), "stale.sh") || !strings.Contains(string(initialOutput), "sibling.sh") {
 		t.Fatalf("initial Factory output does not contain both hooks: %v %s", err, initialOutput)
 	}
-	before := nativeSupportStableSnapshot(t, filepath.Join(repo, ".factory"), filepath.Join(home, "state", "agent-marketplace"))
+	before := nativeSupportPersistentSnapshotWithStableArtifactDirectoryTimes(t, filepath.Join(repo, ".factory"), home)
 	originalCommand := staleHook.Command
 	originalDigest := staleHook.SourceDefinitionDigest()
 	updated := factoryFiles("PreToolUse", "Execute", "changed.sh", "echo changed\n")
@@ -88,7 +101,7 @@ func TestRunRejectsStaleIngestedFactoryHookDefinition(t *testing.T) {
 	if staleHook.Command != originalCommand || staleHook.SourceDefinitionDigest() != originalDigest {
 		t.Fatal("Run mutated the retained ingested hook")
 	}
-	assertNativeSupportSnapshot(t, before, nativeSupportStableSnapshot(t, filepath.Join(repo, ".factory"), filepath.Join(home, "state", "agent-marketplace")))
+	assertNativeSupportSnapshot(t, before, nativeSupportPersistentSnapshotWithStableArtifactDirectoryTimes(t, filepath.Join(repo, ".factory"), home))
 
 	freshCatalog, err := catalog.Load(stale.RegistryURL, "factory")
 	if err != nil {

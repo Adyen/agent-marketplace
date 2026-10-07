@@ -1,6 +1,7 @@
 package marketplace
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"net/http"
@@ -72,52 +73,6 @@ func mirrorHookConfig(url, name, contentDigest string) *config.Config {
 	}}}
 }
 
-// mirrorHookNativeProof writes the Factory native hook file plus the durable
-// ownership record the future native writer leaves for it: the hook/v2
-// identity over the native event and canonical rule bytes, the ownership
-// resource name, and the supplied source-hook fingerprint.
-func mirrorHookNativeProof(t *testing.T, repoRoot, rule, resourceName, sourceDigest string) string {
-	t.Helper()
-	var value any
-	decoder := json.NewDecoder(strings.NewReader(rule))
-	decoder.UseNumber()
-	if err := decoder.Decode(&value); err != nil {
-		t.Fatal(err)
-	}
-	canonical, err := json.Marshal(value)
-	if err != nil {
-		t.Fatal(err)
-	}
-	valueDigest := ownership.Digest(canonical)
-
-	nativeRoot := filepath.Join(repoRoot, ".factory")
-	if err := os.MkdirAll(nativeRoot, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	body := `{"PreToolUse":[` + rule + `]}` + "\n"
-	st, err := ownership.Open(nativeRoot)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := st.Apply(ownership.Mutation{
-		Rel:       "hooks.json",
-		AbsFile:   filepath.Join(nativeRoot, "hooks.json"),
-		NextBytes: []byte(body),
-		Entries: []ownership.Entry{{
-			Kind:           ownership.KindHook,
-			Container:      "PreToolUse",
-			IdentityDigest: ownership.HookIdentityDigest("PreToolUse", valueDigest),
-			ValueDigest:    valueDigest,
-			Resource:       resourceName,
-			SourceDigest:   sourceDigest,
-		}},
-		Reason: ownership.ReasonSync,
-	}); err != nil {
-		t.Fatal(err)
-	}
-	return body
-}
-
 // mirrorFingerprintFor computes the hook-source/mirror/v1 fingerprint the
 // future native writer records for this exact resolved mirror artifact.
 func mirrorFingerprintFor(t *testing.T, res resolver.ResolvedArtifact, target, scope string) string {
@@ -138,13 +93,9 @@ func mirrorFingerprintFor(t *testing.T, res resolver.ResolvedArtifact, target, s
 	return digest
 }
 
-// A hook selected through REAL verified Marketplace mirror resolution carries
-// no original source tree: Path is the verified artifact archive. Its
-// domain-separated mirror fingerprint still satisfies an ownership-proven
-// native entry, so the legacy-writing client does not recreate legacy output;
-// proof recorded for a different revision does not.
+// spec: hook-resources/every-harness-target-receives-hooks-in-its-native-file
+// spec: hook-resources/repeat-sync-is-byte-identical
 // spec: hook-native-location-tolerance/verified-mirror-revision-uses-its-own-fingerprint
-// spec: hook-native-location-tolerance/unverified-or-changed-mirror-revision-never-satisfies
 func TestMirrorHookNativeProofSuppressesLegacyOutput(t *testing.T) {
 	isolateHarnessState(t)
 	cache := NewCache(t.TempDir())
@@ -171,46 +122,74 @@ func TestMirrorHookNativeProofSuppressesLegacyOutput(t *testing.T) {
 	if res.StagedSourceDir != "" || filepath.Base(res.Path) != "artifact.tar.gz" {
 		t.Fatalf("mirror hook must carry no staged source tree: StagedSourceDir=%q Path=%q", res.StagedSourceDir, res.Path)
 	}
+	legacyFile := filepath.Join(".factory", "hooks", "hooks.json")
+	nativeFile := filepath.Join(".factory", "hooks.json")
+	expectedDigest := mirrorFingerprintFor(t, res, "factory", materialize.HookScopeRepository)
 
-	nativeRule := `{"hooks":[{"command":".factory/am-hooks/deploy-hook/run.sh","type":"command"}],"matcher":"Bash"}`
-	legacyFile := func(repoRoot string) string {
-		return filepath.Join(repoRoot, ".factory", "hooks", "hooks.json")
+	assertNativeRun := func(t *testing.T, repoRoot string, selected resolver.ResolvedArtifact) ([]byte, os.FileInfo) {
+		t.Helper()
+		report, err := materialize.Run(context.Background(), repoRoot, []resolver.ResolvedArtifact{selected})
+		if err != nil || report == nil || diag.HasErrors(report.Diags) {
+			t.Fatalf("materialize.Run: %v / %v", err, report)
+		}
+		nativePath := filepath.Join(repoRoot, nativeFile)
+		data, err := os.ReadFile(nativePath)
+		if err != nil || !strings.Contains(string(data), "run.sh") || strings.Contains(string(data), "_managed_by") {
+			t.Fatalf("native mirror hook output = %q / %v", data, err)
+		}
+		if _, err := os.Lstat(filepath.Join(repoRoot, legacyFile)); !os.IsNotExist(err) {
+			t.Fatalf("mirror hook legacy output was written: %v", err)
+		}
+		info, err := os.Stat(nativePath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return data, info
+	}
+	assertSourceProof := func(t *testing.T, repoRoot string, selected resolver.ResolvedArtifact, wantDigest string) {
+		t.Helper()
+		store, err := ownership.Open(filepath.Join(repoRoot, ".factory"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		proof, err := store.Proof("hooks.json")
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, id := range proof.OwnedIDs() {
+			if id.Kind != ownership.KindHook {
+				continue
+			}
+			entry, ok := proof.Entry(id)
+			if ok && entry.Resource == selected.Name && entry.SourceDigest == wantDigest && proof.HasHookSource(id, selected.Name, wantDigest) {
+				return
+			}
+		}
+		t.Fatalf("native mirror source proof for %q/%q was not recorded: %+v", selected.Name, wantDigest, proof.OwnedIDs())
 	}
 
-	// Exact revision: clean native proof suppresses the legacy write.
 	t.Run("exact_revision", func(t *testing.T) {
 		repoRoot := t.TempDir()
-		nativeBody := mirrorHookNativeProof(t, repoRoot, nativeRule, res.Name,
-			mirrorFingerprintFor(t, res, "factory", materialize.HookScopeRepository))
-
-		if _, err := materialize.Run(context.Background(), repoRoot, []resolver.ResolvedArtifact{res}); err != nil {
-			t.Fatalf("materialize.Run: %v", err)
-		}
-		if data, err := os.ReadFile(legacyFile(repoRoot)); err == nil {
-			t.Fatalf("mirror hook legacy output recreated: %s", data)
-		}
-		nativeAfter, err := os.ReadFile(filepath.Join(repoRoot, ".factory", "hooks.json"))
-		if err != nil || string(nativeAfter) != nativeBody {
-			t.Fatalf("native file changed: %v", err)
+		before, beforeInfo := assertNativeRun(t, repoRoot, res)
+		assertSourceProof(t, repoRoot, res, expectedDigest)
+		after, afterInfo := assertNativeRun(t, repoRoot, res)
+		if !bytes.Equal(before, after) || beforeInfo.Mode() != afterInfo.Mode() || !beforeInfo.ModTime().Equal(afterInfo.ModTime()) {
+			t.Fatal("repeated exact mirror sync rewrote the native aggregate")
 		}
 	})
 
-	// Proof recorded for a different verified content digest is proof of a
-	// different revision: legacy output proceeds untouched.
-	t.Run("changed_digest", func(t *testing.T) {
+	t.Run("changed_digest_updates_native_proof_without_legacy_output", func(t *testing.T) {
 		repoRoot := t.TempDir()
+		before, beforeInfo := assertNativeRun(t, repoRoot, res)
+		assertSourceProof(t, repoRoot, res, expectedDigest)
 		other := res
 		other.MarketplaceDigest = "sha256:cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd"
-		mirrorHookNativeProof(t, repoRoot, nativeRule, res.Name,
-			mirrorFingerprintFor(t, other, "factory", materialize.HookScopeRepository))
-
-		if _, err := materialize.Run(context.Background(), repoRoot, []resolver.ResolvedArtifact{res}); err != nil {
-			t.Fatalf("materialize.Run: %v", err)
+		otherDigest := mirrorFingerprintFor(t, other, "factory", materialize.HookScopeRepository)
+		after, afterInfo := assertNativeRun(t, repoRoot, other)
+		if !bytes.Equal(before, after) || beforeInfo.Mode() != afterInfo.Mode() || !beforeInfo.ModTime().Equal(afterInfo.ModTime()) {
+			t.Fatal("source-proof-only mirror update rewrote the native aggregate")
 		}
-		data, err := os.ReadFile(legacyFile(repoRoot))
-		if err != nil || !strings.Contains(string(data), "run.sh") {
-			t.Fatalf("changed mirror digest suppressed legacy output: %v %q", err, data)
-		}
+		assertSourceProof(t, repoRoot, other, otherDigest)
 	})
 }
 

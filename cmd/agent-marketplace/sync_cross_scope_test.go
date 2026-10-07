@@ -46,7 +46,7 @@ func TestSyncCrossScopeSkillAndHookStayInSync(t *testing.T) {
 		}
 		hookCommand := func(base, file string) string {
 			t.Helper()
-			data, err := os.ReadFile(filepath.Join(base, ".factory", "hooks", "hooks.json"))
+			data, err := os.ReadFile(filepath.Join(base, ".factory", "hooks.json"))
 			if err != nil {
 				t.Fatalf("read %s hook file: %v", file, err)
 			}

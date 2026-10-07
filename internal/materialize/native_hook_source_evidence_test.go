@@ -35,23 +35,107 @@ const (
 // the resolved artifact under the given resource name.
 func namedHookFixture(t *testing.T, source config.Source, target hcc.Target, name string) (resolver.ResolvedArtifact, string) {
 	t.Helper()
+	definition := `{"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"` + sharedSourceCommand + `"}]}]}}`
+	resolved, sourceRoot := namedHookFixtures(t, source, target, name, definition)
+	if len(resolved) != 1 {
+		t.Fatalf("expected one ingested hook, got %d", len(resolved))
+	}
+	return resolved[0], sourceRoot
+}
+
+func namedHookFixtures(t *testing.T, source config.Source, target hcc.Target, name, definition string) ([]resolver.ResolvedArtifact, string) {
+	t.Helper()
+	return sourceBackedHookFixtures(t, "claude", source, target, name, []byte(definition), nil)
+}
+
+func sourceBackedHookFixtures(t testing.TB, sourceHarness string, source config.Source, target hcc.Target, name string, definition []byte, supportFiles map[string][]byte) ([]resolver.ResolvedArtifact, string) {
+	t.Helper()
 	src := t.TempDir()
-	def := `{"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"` + sharedSourceCommand + `"}]}]}}`
 	hooksDir := filepath.Join(src, "hooks")
 	if err := os.MkdirAll(hooksDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(hooksDir, "hooks.json"), []byte(def), 0o644); err != nil {
+	definitionPath := filepath.Join(hooksDir, "hooks.json")
+	if err := os.WriteFile(definitionPath, definition, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	hook := ir.NewHookWithMatcher(name, "PreToolUse", "Bash", sharedSourceCommand, "command", nil, ir.SourceRef{File: "hooks/hooks.json"})
-	return resolver.ResolvedArtifact{
-		Entry:       catalog.Entry{Name: name, Resource: hook, Path: filepath.Join(hooksDir, "hooks.json")},
-		Source:      source,
-		RegistryURL: src,
-		V4Kind:      config.V4SourceDirectory,
-		Harnesses:   []hcc.Target{target},
-	}, src
+	for rel, data := range supportFiles {
+		clean := filepath.Clean(filepath.FromSlash(rel))
+		if clean == "." || clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) || filepath.IsAbs(clean) {
+			t.Fatalf("unsafe source support path %q", rel)
+		}
+		path := filepath.Join(src, clean)
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, data, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	loaded, err := catalog.Load(src, sourceHarness)
+	if err != nil {
+		t.Fatalf("%s catalog ingest: %v", sourceHarness, err)
+	}
+	var resolved []resolver.ResolvedArtifact
+	for _, entry := range loaded.Entries {
+		if entry.Kind != ir.KindHook {
+			continue
+		}
+		entry.Name = name
+		resolved = append(resolved, resolver.ResolvedArtifact{
+			Entry:       entry,
+			Source:      source,
+			RegistryURL: src,
+			CatalogKey:  src,
+			V4Kind:      config.V4SourceDirectory,
+			Harnesses:   []hcc.Target{target},
+		})
+	}
+	if len(resolved) == 0 {
+		t.Fatalf("%s catalog ingest produced no hooks", sourceHarness)
+	}
+	return resolved, src
+}
+
+func ingestedHookFixture(t testing.TB, source config.Source, target hcc.Target, name string, hook *ir.Hook, supportFiles map[string][]byte) resolver.ResolvedArtifact {
+	t.Helper()
+	if !reflect.DeepEqual(hook.Ext, (ir.Hook{}).Ext) {
+		t.Fatal("hook extensions require a source-format fixture")
+	}
+	sourceHarness := hook.HookSource
+	if sourceHarness == "" {
+		sourceHarness = "claude"
+	}
+	handler := map[string]any{"type": hook.Type}
+	if hook.Command != "" {
+		handler["command"] = hook.Command
+	}
+	if hook.Prompt != "" {
+		handler["prompt"] = hook.Prompt
+	}
+	if hook.Timeout != nil {
+		handler["timeout"] = *hook.Timeout
+	}
+	group := map[string]any{"hooks": []any{handler}}
+	if hook.Matcher != "" {
+		group["matcher"] = hook.Matcher
+	}
+	for key, value := range hook.Extra {
+		if hook.GroupExtraKeys[key] {
+			group[key] = value
+		} else {
+			handler[key] = value
+		}
+	}
+	definition, err := json.Marshal(map[string]any{hook.Event: []any{group}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolved, _ := sourceBackedHookFixtures(t, sourceHarness, source, target, name, definition, supportFiles)
+	if len(resolved) != 1 {
+		t.Fatalf("expected one ingested hook, got %d", len(resolved))
+	}
+	return resolved[0]
 }
 
 // namedFingerprint computes the version-1 source-hook fingerprint for a
@@ -159,13 +243,12 @@ func legacyHookRules(t *testing.T, path string) map[string][]map[string]any {
 // spec: hook-native-location-tolerance/several-selected-sources-share-one-clean-native-entry
 // spec: hook-native-location-tolerance/scalar-source-evidence-remains-compatible
 func TestNativeSharedSourceEvidence(t *testing.T) {
-	t.Setenv("XDG_STATE_HOME", t.TempDir())
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-
 	for _, tc := range allNativeHookLayouts() {
 		name := fmt.Sprintf("%s_machine=%v", tc.target, tc.machineScope)
 		t.Run(name, func(t *testing.T) {
+			t.Setenv("XDG_STATE_HOME", t.TempDir())
+			home := t.TempDir()
+			t.Setenv("HOME", home)
 			repoRoot := t.TempDir()
 			source := config.RepoCommitted
 			scope := HookScopeRepository
@@ -288,7 +371,7 @@ func TestNativeSharedSourceEvidenceUnprovenContributor(t *testing.T) {
 			}
 			stateBefore, stateMode, stateMtime := fileSnapshot(t, store.StateFile())
 
-			if _, err := Run(context.Background(), root, []resolver.ResolvedArtifact{alpha, beta}); err != nil {
+			if _, err := runLegacyToleranceFixture(context.Background(), root, []resolver.ResolvedArtifact{alpha, beta}); err != nil {
 				t.Fatalf("sync: %v", err)
 			}
 			// Exactly one unproven hook handler lands in legacy output: the
@@ -314,6 +397,11 @@ func TestNativeSharedSourceEvidenceUnprovenContributor(t *testing.T) {
 	}
 }
 
+// Partial or invalid shared proof can never suppress a selection: --check
+// first proves the unproven contributor is pending without writing anything,
+// then a mutating sync writes exactly that contributor's legacy handler while
+// native, state, config, and lock stay untouched. Corrupt evidence fails
+// closed with the stable tolerance code under all three commands.
 // A clean matching tuple cannot suppress a selection while ANOTHER recorded
 // entry matching that selection is missing or drifted: the proof is
 // incomplete, so legacy output proceeds and nothing is adopted.
@@ -363,7 +451,8 @@ func TestNativeSharedSourceEvidencePartialProof(t *testing.T) {
 			}
 			stateBefore, stateMode, stateMtime := fileSnapshot(t, store.StateFile())
 
-			if _, err := Run(context.Background(), repoRoot, []resolver.ResolvedArtifact{beta}); err != nil {
+			// The mutating command writes ONLY the unproven contributor's handler.
+			if _, err := runLegacyToleranceFixture(context.Background(), repoRoot, []resolver.ResolvedArtifact{beta}); err != nil {
 				t.Fatalf("sync: %v", err)
 			}
 			rules := legacyHookRules(t, filepath.Join(nativeRoot, "hooks", "hooks.json"))
@@ -439,8 +528,44 @@ func TestNativeSharedSourceEvidenceInvalidState(t *testing.T) {
 		t.Fatalf("corrupt proof still suppressed legacy output: %s", data)
 	}
 	// Cursor has no native file and no corrupt state: it reconciles.
-	if data, readErr := os.ReadFile(filepath.Join(repoRoot, ".cursor", "hooks", "hooks.json")); readErr != nil || !strings.Contains(string(data), sharedSourceCommand) {
-		t.Fatalf("independent target did not reconcile: %v", readErr)
+	cursorNativePath := filepath.Join(repoRoot, ".cursor", "hooks.json")
+	cursorBytes, err := os.ReadFile(cursorNativePath)
+	if err != nil {
+		t.Fatalf("independent native target did not reconcile: %v", err)
+	}
+	var cursorDocument map[string]any
+	if err := json.Unmarshal(cursorBytes, &cursorDocument); err != nil {
+		t.Fatalf("decode independent Cursor hooks: %v", err)
+	}
+	if cursorDocument["version"] != float64(1) {
+		t.Fatalf("Cursor hook version = %v, want 1", cursorDocument["version"])
+	}
+	cursorHooks, ok := cursorDocument["hooks"].(map[string]any)
+	if !ok {
+		t.Fatalf("Cursor hooks member = %T, want object", cursorDocument["hooks"])
+	}
+	cursorEntries, ok := cursorHooks["preToolUse"].([]any)
+	if !ok || len(cursorEntries) != 1 {
+		t.Fatalf("Cursor preToolUse entries = %#v, want one", cursorHooks["preToolUse"])
+	}
+	cursorEntry, ok := cursorEntries[0].(map[string]any)
+	if !ok || cursorEntry["command"] != sharedSourceCommand || cursorEntry["matcher"] != "^Shell$" || cursorEntry["type"] != "command" {
+		t.Fatalf("Cursor Native hook = %#v", cursorEntries[0])
+	}
+	cursorStore, err := ownership.Open(filepath.Join(repoRoot, ".cursor"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cursorProof, err := cursorStore.Proof("hooks.json")
+	if err != nil || cursorProof.OwnedCount() != 1 || len(cursorProof.HookSatisfactions()) != 0 {
+		t.Fatalf("independent Cursor ownership proof = %+v / %v", cursorProof, err)
+	}
+	cursorOwned, ok := cursorProof.Entry(cursorProof.OwnedIDs()[0])
+	if !ok || cursorOwned.Resource != "alpha" || cursorOwned.SourceDigest != namedFingerprint(t, src, "alpha", string(hcc.TargetCursor), HookScopeRepository) {
+		t.Fatalf("independent Cursor proof entry = %+v", cursorOwned)
+	}
+	if _, err := os.Lstat(filepath.Join(repoRoot, ".cursor", "hooks", "hooks.json")); !os.IsNotExist(err) {
+		t.Fatalf("independent target wrote a legacy Cursor file: %v", err)
 	}
 }
 

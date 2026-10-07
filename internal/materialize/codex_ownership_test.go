@@ -60,7 +60,7 @@ func TestCodexHooksReconcileWithDurableOwnership(t *testing.T) {
 		t.Fatal(err)
 	}
 	hook := ir.NewHookWithMatcher("managed", "PreToolUse", "Bash", "./managed", "command", nil, ir.SourceRef{})
-	selection := []resolver.ResolvedArtifact{{Entry: catalog.Entry{Name: "managed", Resource: hook}, Source: config.RepoCommitted, Harnesses: []targetmeta.Target{targetmeta.TargetCodex}}}
+	selection := []resolver.ResolvedArtifact{codexHookResolved(t, "managed", hook, config.RepoCommitted)}
 
 	report, err := Run(context.Background(), repo, selection)
 	if err != nil {
@@ -106,7 +106,7 @@ func TestCodexHookDiagnosticsDoNotUseDevinCodes(t *testing.T) {
 		t.Fatal(err)
 	}
 	hook := ir.NewHookWithMatcher("managed", "PreToolUse", "Bash", "./managed", "command", nil, ir.SourceRef{})
-	selection := []resolver.ResolvedArtifact{{Entry: catalog.Entry{Name: "managed", Resource: hook}, Source: config.RepoCommitted, Harnesses: []targetmeta.Target{targetmeta.TargetCodex}}}
+	selection := []resolver.ResolvedArtifact{codexHookResolved(t, "managed", hook, config.RepoCommitted)}
 
 	report, err := Run(context.Background(), repo, selection)
 	if err != nil {
@@ -125,7 +125,7 @@ func TestCodexHooksReplaceReformattedOwnedEntryAsDrift(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	hook := ir.NewHookWithMatcher("managed", "PreToolUse", "Bash", "./managed", "command", nil, ir.SourceRef{})
-	selection := []resolver.ResolvedArtifact{{Entry: catalog.Entry{Name: "managed", Resource: hook}, Source: config.RepoCommitted, Harnesses: []targetmeta.Target{targetmeta.TargetCodex}}}
+	selection := []resolver.ResolvedArtifact{codexHookResolved(t, "managed", hook, config.RepoCommitted)}
 	if report, err := Run(context.Background(), repo, selection); err != nil || report == nil || hasErrorDiagnostics(report.Diags) {
 		t.Fatalf("seed hook: report=%#v err=%v", report, err)
 	}

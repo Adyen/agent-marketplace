@@ -18,6 +18,7 @@ import (
 
 	"github.com/Adyen/agent-marketplace/internal/cache"
 	"github.com/Adyen/agent-marketplace/internal/config"
+	"github.com/Adyen/agent-marketplace/internal/dependencytxn"
 	"github.com/Adyen/agent-marketplace/internal/harness"
 	"github.com/Adyen/agent-marketplace/internal/ownership"
 	"github.com/Adyen/agent-marketplace/internal/resolver"
@@ -33,6 +34,17 @@ type hookSupportPlan struct {
 	artifacts    []artifact.Artifact
 	sourceDigest string
 	err          error
+}
+
+type nativeHookInstalledSupport struct {
+	outputRoot            string
+	relativePath          string
+	outputPath            string
+	cacheRoot             string
+	expectedSymlinkTarget string
+	mode                  config.MaterializationMode
+	capturedBytes         []byte
+	capturedMode          fs.FileMode
 }
 
 type hookSupportClaim struct {
@@ -493,8 +505,64 @@ func openHookSupportFileAt(dirFD int, relative string, total int64) (*os.File, f
 	return file, fs.FileMode(stat.Mode & 0o777), stat.Size, nil
 }
 
+func verifyNativeHookSupportOutput(output nativeHookInstalledSupport) error {
+	readRoot := output.outputRoot
+	var beforeTarget string
+	var beforeGeneration dependencytxn.Generation
+	if output.mode == config.MaterializationModeSymlink {
+		if output.expectedSymlinkTarget != filepath.Join(output.cacheRoot, filepath.FromSlash(output.relativePath)) {
+			return fmt.Errorf("captured hook support symlink target is inconsistent")
+		}
+		var err error
+		beforeTarget, beforeGeneration, err = dependencytxn.ReadSymlinkSnapshot(output.outputPath)
+		if err != nil {
+			return fmt.Errorf("snapshot installed hook support symlink: %w", err)
+		}
+		if beforeTarget != output.expectedSymlinkTarget {
+			return fmt.Errorf("%w: installed hook support symlink target changed: %s", dependencytxn.ErrGenerationConflict, output.outputPath)
+		}
+		readRoot = output.cacheRoot
+	} else if output.mode != config.MaterializationModeFile {
+		return fmt.Errorf("unsupported hook support materialization mode")
+	}
+
+	rootFD, err := unix.Open(readRoot, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+	if err != nil {
+		return fmt.Errorf("open authorized hook support root: %w", err)
+	}
+	var total int64
+	data, mode, readErr := readHookSourceSnapshotFile(rootFD, output.relativePath, &total)
+	closeErr := unix.Close(rootFD)
+	if readErr != nil {
+		if closeErr != nil {
+			readErr = errors.Join(readErr, closeErr)
+		}
+		return fmt.Errorf("read installed hook support: %w", readErr)
+	}
+	if closeErr != nil {
+		return fmt.Errorf("close authorized hook support root: %w", closeErr)
+	}
+	if !bytes.Equal(data, output.capturedBytes) {
+		return fmt.Errorf("installed hook support bytes changed: %s", output.outputPath)
+	}
+	if mode.Perm() != output.capturedMode.Perm() {
+		return fmt.Errorf("installed hook support permissions changed: %s", output.outputPath)
+	}
+	if output.mode == config.MaterializationModeSymlink {
+		afterTarget, afterGeneration, err := dependencytxn.ReadSymlinkSnapshot(output.outputPath)
+		if err != nil {
+			return fmt.Errorf("recheck installed hook support symlink: %w", err)
+		}
+		if afterTarget != beforeTarget || afterTarget != output.expectedSymlinkTarget || afterGeneration != beforeGeneration {
+			return fmt.Errorf("%w: installed hook support symlink changed: %s", dependencytxn.ErrGenerationConflict, output.outputPath)
+		}
+	}
+	return nil
+}
+
 func hookSupportProjection(res resolver.ResolvedArtifact, definition, definitionDir string) (resolver.ResolvedArtifact, []string, error) {
 	projection := res
+	exclusionDir := definitionDir
 	if res.IsMarketplace && res.MarketplaceAcquisition == config.MarketplaceAcquisitionIndexOnly {
 		hook, ok := res.Resource.(*ir.Hook)
 		if !ok {
@@ -504,9 +572,14 @@ func hookSupportProjection(res resolver.ResolvedArtifact, definition, definition
 		if err != nil {
 			return resolver.ResolvedArtifact{}, nil, err
 		}
+		sourceFile := filepath.ToSlash(filepath.Clean(filepath.FromSlash(hook.Source.File)))
+		if sourceFile == "." || filepath.IsAbs(sourceFile) || sourceFile == ".." || strings.HasPrefix(sourceFile, "../") || !fs.ValidPath(sourceFile) {
+			return resolver.ResolvedArtifact{}, nil, fmt.Errorf("index-only hook source definition path is invalid")
+		}
 		projection.SourceHarness = string(sourceHarness)
+		exclusionDir = path.Dir(sourceFile)
 	}
-	excluded, _ := hookSupportExclusions(projection, definitionDir)
+	excluded, _ := hookSupportExclusions(projection, exclusionDir)
 	definitionName := ""
 	if definition != "" {
 		definitionName = path.Base(definition)
@@ -551,7 +624,13 @@ func hookSupportExclusions(res resolver.ResolvedArtifact, definitionDir string) 
 	sourceFile := filepath.Clean(filepath.FromSlash(compilepkg.SourceOf(res.Resource).File))
 	rawRegistryPath := filepath.ToSlash(filepath.FromSlash(res.RegistryPath))
 	registryPath := filepath.ToSlash(filepath.Clean(filepath.FromSlash(res.RegistryPath)))
-	if !res.IsLocal() && filepath.IsAbs(sourceFile) && sourceFile != filepath.Clean(res.Path) &&
+	if res.IsMarketplace && res.MarketplaceAcquisition == config.MarketplaceAcquisitionIndexOnly {
+		sourceFileRel := filepath.ToSlash(sourceFile)
+		if sourceFileRel != "." && !filepath.IsAbs(sourceFile) && sourceFile != ".." &&
+			!strings.HasPrefix(sourceFileRel, "../") && fs.ValidPath(sourceFileRel) {
+			lookupDir = path.Dir(sourceFileRel)
+		}
+	} else if !res.IsLocal() && filepath.IsAbs(sourceFile) && sourceFile != filepath.Clean(res.Path) &&
 		rawRegistryPath == registryPath && registryPath != "." && fs.ValidPath(registryPath) {
 		if lookupDir == registryPath {
 			lookupDir = "."

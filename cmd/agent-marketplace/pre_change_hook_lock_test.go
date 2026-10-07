@@ -111,7 +111,7 @@ registries:
 	}
 	assertMaterializedHook := func(step, wantCommand string) {
 		t.Helper()
-		data, readErr := os.ReadFile(filepath.Join(repoRoot, ".factory", "hooks", "hooks.json"))
+		data, readErr := os.ReadFile(filepath.Join(repoRoot, ".factory", "hooks.json"))
 		if readErr != nil {
 			t.Fatalf("%s: read materialized hooks: %v", step, readErr)
 		}

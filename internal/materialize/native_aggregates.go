@@ -389,6 +389,13 @@ func nativeAggregatePruneFence(target hcc.Target, machineScope bool) map[string]
 		rel = trimArtifactRootPrefix(rel, info.ArtifactRootPrefix)
 		protected[strings.TrimSuffix(rel, "/")+"/"] = true
 	}
+	for _, rel := range nativeHookPruneFencePaths(target, machineScope) {
+		if protected == nil {
+			protected = make(map[string]bool)
+		}
+		rel = trimArtifactRootPrefix(rel, info.ArtifactRootPrefix)
+		protected[rel] = true
+	}
 	if info.PlanStrategy == harness.PlanWindsurf && len(protected) > 0 {
 		normalized := make(map[string]bool, len(protected))
 		for rel := range protected {

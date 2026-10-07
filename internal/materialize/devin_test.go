@@ -33,14 +33,28 @@ func devinEnv(t *testing.T) (repoRoot, home string) {
 	return repoRoot, home
 }
 
-func devinResolved(name string, resource ir.Resource, machineScope bool) resolver.ResolvedArtifact {
-	source := config.RepoCommitted
-	if machineScope {
-		source = config.UserPersonal
+func devinResolved(t *testing.T, name string, resource ir.Resource, machineScope bool) resolver.ResolvedArtifact {
+	t.Helper()
+	if hook, ok := resource.(*ir.Hook); ok {
+		if strings.Contains(hook.Command, "${CLAUDE_PLUGIN_ROOT}") {
+			t.Fatal("Hook support commands require an explicit source-backed support fixture")
+		}
+		return ingestedHookFixture(t, devinSource(machineScope), hcc.TargetDevin, name, hook, nil)
 	}
+	return devinResolvedResource(name, resource, machineScope)
+}
+
+func devinSource(machineScope bool) config.Source {
+	if machineScope {
+		return config.UserPersonal
+	}
+	return config.RepoCommitted
+}
+
+func devinResolvedResource(name string, resource ir.Resource, machineScope bool) resolver.ResolvedArtifact {
 	return resolver.ResolvedArtifact{
 		Entry:     catalog.Entry{Name: name, Resource: resource},
-		Source:    source,
+		Source:    devinSource(machineScope),
 		Harnesses: []hcc.Target{hcc.TargetDevin},
 	}
 }
@@ -89,11 +103,11 @@ func TestDevinAllFiveKindsMaterializeAtCanonicalPaths(t *testing.T) {
 				repoRoot, home := devinEnv(t)
 
 				resolved := []resolver.ResolvedArtifact{
-					devinResolved("my-skill", ir.NewSkill("my-skill", "A skill", "Skill body", nil, nil, ir.SourceRef{}), machineScope),
-					devinResolved("my-command", ir.NewCommand("my-command", "A command", "Command body", nil, ir.SourceRef{}), machineScope),
-					devinResolved("my-agent", ir.NewSubagent("my-agent", "An agent", "Agent body", "sonnet", nil, "", nil, "", nil, ir.SourceRef{}), machineScope),
-					devinResolved("my-hook", ir.NewHook("my-hook", "PostToolUse", "echo hi", "command", nil, ir.SourceRef{}), machineScope),
-					devinResolved("my-mcp", ir.NewMcpServer("my-mcp", "server-bin", []string{"--stdio"}, nil, nil, ir.SourceRef{}), machineScope),
+					devinResolved(t, "my-skill", ir.NewSkill("my-skill", "A skill", "Skill body", nil, nil, ir.SourceRef{}), machineScope),
+					devinResolved(t, "my-command", ir.NewCommand("my-command", "A command", "Command body", nil, ir.SourceRef{}), machineScope),
+					devinResolved(t, "my-agent", ir.NewSubagent("my-agent", "An agent", "Agent body", "sonnet", nil, "", nil, "", nil, ir.SourceRef{}), machineScope),
+					devinResolved(t, "my-hook", ir.NewHook("my-hook", "PostToolUse", "echo hi", "command", nil, ir.SourceRef{}), machineScope),
+					devinResolved(t, "my-mcp", ir.NewMcpServer("my-mcp", "server-bin", []string{"--stdio"}, nil, nil, ir.SourceRef{}), machineScope),
 				}
 
 				report, err := Run(context.Background(), repoRoot, resolved, WithMaterializationModes(config.MaterializationModes{Project: mode, Machine: mode}))
@@ -189,7 +203,7 @@ func TestDevinUserHooksPatchConfigWithoutTouchingUnrelatedSettings(t *testing.T)
 	}
 
 	resolved := []resolver.ResolvedArtifact{
-		devinResolved("user-hook", ir.NewHook("user-hook", "SessionStart", "echo start", "command", nil, ir.SourceRef{}), true),
+		devinResolved(t, "user-hook", ir.NewHook("user-hook", "SessionStart", "echo start", "command", nil, ir.SourceRef{}), true),
 	}
 	report, err := Run(context.Background(), repoRoot, resolved)
 	if err != nil {
@@ -269,8 +283,8 @@ func TestDevinUnmanagedMcpCollisionIsPreserved(t *testing.T) {
 	}
 
 	resolved := []resolver.ResolvedArtifact{
-		devinResolved("collide", ir.NewMcpServer("collide", "generated-binary", nil, nil, nil, ir.SourceRef{}), false),
-		devinResolved("fine", ir.NewMcpServer("fine", "other-binary", nil, nil, nil, ir.SourceRef{}), false),
+		devinResolved(t, "collide", ir.NewMcpServer("collide", "generated-binary", nil, nil, nil, ir.SourceRef{}), false),
+		devinResolved(t, "fine", ir.NewMcpServer("fine", "other-binary", nil, nil, nil, ir.SourceRef{}), false),
 	}
 	report, err := Run(context.Background(), repoRoot, resolved)
 	if err != nil {
@@ -317,7 +331,7 @@ func TestDevinStaleProvenEntryPrunesAndUnmanagedNeverDoes(t *testing.T) {
 	}
 
 	withEntry := []resolver.ResolvedArtifact{
-		devinResolved("managed", ir.NewMcpServer("managed", "managed-binary", nil, nil, nil, ir.SourceRef{}), false),
+		devinResolved(t, "managed", ir.NewMcpServer("managed", "managed-binary", nil, nil, nil, ir.SourceRef{}), false),
 	}
 	if report, err := Run(context.Background(), repoRoot, withEntry); err != nil {
 		t.Fatalf("first Run: %v", err)
@@ -354,7 +368,7 @@ func TestDevinMissingOwnershipStateNeverPrunes(t *testing.T) {
 	mcpPath := filepath.Join(root, harness.DevinMcpConfigFile)
 
 	withEntry := []resolver.ResolvedArtifact{
-		devinResolved("managed", ir.NewMcpServer("managed", "managed-binary", nil, nil, nil, ir.SourceRef{}), false),
+		devinResolved(t, "managed", ir.NewMcpServer("managed", "managed-binary", nil, nil, nil, ir.SourceRef{}), false),
 	}
 	if _, err := Run(context.Background(), repoRoot, withEntry); err != nil {
 		t.Fatalf("first Run: %v", err)
@@ -383,7 +397,7 @@ func TestDevinDriftedOwnedEntryIsReplaced(t *testing.T) {
 	mcpPath := filepath.Join(root, harness.DevinMcpConfigFile)
 
 	resolved := []resolver.ResolvedArtifact{
-		devinResolved("drifter", ir.NewMcpServer("drifter", "correct-binary", nil, nil, nil, ir.SourceRef{}), false),
+		devinResolved(t, "drifter", ir.NewMcpServer("drifter", "correct-binary", nil, nil, nil, ir.SourceRef{}), false),
 	}
 	if _, err := Run(context.Background(), repoRoot, resolved); err != nil {
 		t.Fatalf("first Run: %v", err)
@@ -435,9 +449,9 @@ func TestDevinHandwrittenHooksKeepOrderAndSatisfyIdenticalDesiredEntries(t *test
 	}
 
 	resolved := []resolver.ResolvedArtifact{
-		devinResolved("gen", ir.NewHook("gen", "PostToolUse", "generated", "command", nil, ir.SourceRef{}), false),
+		devinResolved(t, "gen", ir.NewHook("gen", "PostToolUse", "generated", "command", nil, ir.SourceRef{}), false),
 		// Semantically identical to the first handwritten entry.
-		devinResolved("dup", ir.NewHook("dup", "PostToolUse", "first-handwritten", "command", nil, ir.SourceRef{}), false),
+		devinResolved(t, "dup", ir.NewHook("dup", "PostToolUse", "first-handwritten", "command", nil, ir.SourceRef{}), false),
 	}
 	report, err := Run(context.Background(), repoRoot, resolved)
 	if err != nil {
@@ -479,9 +493,9 @@ func TestDevinMalformedAggregateBlocksOnlyThatFile(t *testing.T) {
 	}
 
 	resolved := []resolver.ResolvedArtifact{
-		devinResolved("mcp", ir.NewMcpServer("mcp", "bin", nil, nil, nil, ir.SourceRef{}), false),
-		devinResolved("hook", ir.NewHook("hook", "PostToolUse", "echo", "command", nil, ir.SourceRef{}), false),
-		devinResolved("skill", ir.NewSkill("skill", "d", "b", nil, nil, ir.SourceRef{}), false),
+		devinResolved(t, "mcp", ir.NewMcpServer("mcp", "bin", nil, nil, nil, ir.SourceRef{}), false),
+		devinResolved(t, "hook", ir.NewHook("hook", "PostToolUse", "echo", "command", nil, ir.SourceRef{}), false),
+		devinResolved(t, "skill", ir.NewSkill("skill", "d", "b", nil, nil, ir.SourceRef{}), false),
 	}
 	report, err := Run(context.Background(), repoRoot, resolved)
 	if err != nil {
@@ -529,9 +543,9 @@ func TestDevinPartialFailureCommitsSiblingsAndPostponesPrune(t *testing.T) {
 	repoRoot, _ := devinEnv(t)
 	root := devinProjectRoot(repoRoot)
 
-	good := devinResolved("keep", ir.NewHook("keep", "PostToolUse", "echo keep", "command", nil, ir.SourceRef{}), false)
-	staleHook := devinResolved("drop", ir.NewHook("drop", "PostToolUse", "echo drop", "command", nil, ir.SourceRef{}), false)
-	staleMcp := devinResolved("mcp-drop", ir.NewMcpServer("mcp-drop", "bin", nil, nil, nil, ir.SourceRef{}), false)
+	good := devinResolved(t, "keep", ir.NewHook("keep", "PostToolUse", "echo keep", "command", nil, ir.SourceRef{}), false)
+	staleHook := devinResolved(t, "drop", ir.NewHook("drop", "PostToolUse", "echo drop", "command", nil, ir.SourceRef{}), false)
+	staleMcp := devinResolved(t, "mcp-drop", ir.NewMcpServer("mcp-drop", "bin", nil, nil, nil, ir.SourceRef{}), false)
 
 	if _, err := Run(context.Background(), repoRoot, []resolver.ResolvedArtifact{good, staleHook, staleMcp}); err != nil {
 		t.Fatalf("first Run: %v", err)
@@ -608,8 +622,8 @@ func TestDevinRuleWarnsWithoutFailingTheRun(t *testing.T) {
 	repoRoot, _ := devinEnv(t)
 	root := devinProjectRoot(repoRoot)
 
-	keep := devinResolved("keep", ir.NewHook("keep", "PostToolUse", "echo keep", "command", nil, ir.SourceRef{}), false)
-	staleMcp := devinResolved("mcp-drop", ir.NewMcpServer("mcp-drop", "bin", nil, nil, nil, ir.SourceRef{}), false)
+	keep := devinResolved(t, "keep", ir.NewHook("keep", "PostToolUse", "echo keep", "command", nil, ir.SourceRef{}), false)
+	staleMcp := devinResolved(t, "mcp-drop", ir.NewMcpServer("mcp-drop", "bin", nil, nil, nil, ir.SourceRef{}), false)
 	if _, err := Run(context.Background(), repoRoot, []resolver.ResolvedArtifact{keep, staleMcp}); err != nil {
 		t.Fatalf("first Run: %v", err)
 	}
@@ -657,9 +671,9 @@ func TestDevinErroringHookPostponesPruneForThatFileOnly(t *testing.T) {
 	repoRoot, _ := devinEnv(t)
 	root := devinProjectRoot(repoRoot)
 
-	keepHook := devinResolved("keep", ir.NewHook("keep", "PostToolUse", "echo keep", "command", nil, ir.SourceRef{}), false)
-	dropHook := devinResolved("drop", ir.NewHook("drop", "PostToolUse", "echo drop", "command", nil, ir.SourceRef{}), false)
-	dropMcp := devinResolved("mcp-drop", ir.NewMcpServer("mcp-drop", "bin", nil, nil, nil, ir.SourceRef{}), false)
+	keepHook := devinResolved(t, "keep", ir.NewHook("keep", "PostToolUse", "echo keep", "command", nil, ir.SourceRef{}), false)
+	dropHook := devinResolved(t, "drop", ir.NewHook("drop", "PostToolUse", "echo drop", "command", nil, ir.SourceRef{}), false)
+	dropMcp := devinResolved(t, "mcp-drop", ir.NewMcpServer("mcp-drop", "bin", nil, nil, nil, ir.SourceRef{}), false)
 	if _, err := Run(context.Background(), repoRoot, []resolver.ResolvedArtifact{keepHook, dropHook, dropMcp}); err != nil {
 		t.Fatalf("first Run: %v", err)
 	}
@@ -704,8 +718,8 @@ func TestDevinResourceModeMigration(t *testing.T) {
 				root = devinUserRoot(home)
 			}
 			resolved := []resolver.ResolvedArtifact{
-				devinResolved("command", ir.NewCommand("command", "d", "command body", nil, ir.SourceRef{}), machine),
-				devinResolved("agent", ir.NewSubagent("agent", "d", "agent body", "sonnet", nil, "", nil, "", nil, ir.SourceRef{}), machine),
+				devinResolved(t, "command", ir.NewCommand("command", "d", "command body", nil, ir.SourceRef{}), machine),
+				devinResolved(t, "agent", ir.NewSubagent("agent", "d", "agent body", "sonnet", nil, "", nil, "", nil, ir.SourceRef{}), machine),
 			}
 			paths := []string{"skills/command", "agents/agent.md"}
 			for _, mode := range []config.MaterializationMode{config.MaterializationModeFile, config.MaterializationModeSymlink, config.MaterializationModeFile} {
@@ -759,7 +773,7 @@ func TestDevinSymlinkLifecycle(t *testing.T) {
 		repoRoot, _ := devinEnv(t)
 		link := filepath.Join(devinProjectRoot(repoRoot), "skills", "life")
 
-		resolved := []resolver.ResolvedArtifact{devinResolved("life", skill("life", "v1"), false)}
+		resolved := []resolver.ResolvedArtifact{devinResolved(t, "life", skill("life", "v1"), false)}
 		if _, err := Run(context.Background(), repoRoot, resolved); err != nil {
 			t.Fatalf("create: %v", err)
 		}
@@ -857,7 +871,7 @@ func TestDevinSymlinkLifecycle(t *testing.T) {
 			tc.setup(t, dst)
 			before, _ := os.Readlink(dst)
 
-			report, err := Run(context.Background(), repoRoot, []resolver.ResolvedArtifact{devinResolved("life", skill("life", "v1"), false)})
+			report, err := Run(context.Background(), repoRoot, []resolver.ResolvedArtifact{devinResolved(t, "life", skill("life", "v1"), false)})
 			if err != nil {
 				t.Fatalf("Run: %v", err)
 			}
@@ -900,7 +914,7 @@ func TestDevinSymlinkLifecycle(t *testing.T) {
 		if err := os.WriteFile(filepath.Join(other, "SKILL.md"), []byte("hand-written"), 0o644); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := Run(context.Background(), repoRoot, []resolver.ResolvedArtifact{devinResolved("life", skill("life", "v1"), false)}); err != nil {
+		if _, err := Run(context.Background(), repoRoot, []resolver.ResolvedArtifact{devinResolved(t, "life", skill("life", "v1"), false)}); err != nil {
 			t.Fatalf("Run: %v", err)
 		}
 		if got := readFileString(t, filepath.Join(other, "SKILL.md")); got != "hand-written" {
@@ -986,7 +1000,7 @@ func TestDevinCommandPrunesFromSkillsDirectory(t *testing.T) {
 	link := filepath.Join(devinProjectRoot(repoRoot), "skills", "cmd")
 
 	resolved := []resolver.ResolvedArtifact{
-		devinResolved("cmd", ir.NewCommand("cmd", "desc", "body", nil, ir.SourceRef{}), false),
+		devinResolved(t, "cmd", ir.NewCommand("cmd", "desc", "body", nil, ir.SourceRef{}), false),
 	}
 	if _, err := Run(context.Background(), repoRoot, resolved); err != nil {
 		t.Fatalf("first Run: %v", err)
@@ -1050,7 +1064,7 @@ func TestDevinAggregateProtectionPreservesCommentsUnderMarkerWalk(t *testing.T) 
 		t.Fatal(err)
 	}
 	if _, err := Run(context.Background(), repoRoot, []resolver.ResolvedArtifact{
-		devinResolved("skill", ir.NewSkill("skill", "d", "b", nil, nil, ir.SourceRef{}), true),
+		devinResolved(t, "skill", ir.NewSkill("skill", "d", "b", nil, nil, ir.SourceRef{}), true),
 	}); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -1078,7 +1092,7 @@ func TestDevinSymlinkFailureIsAnErrorNotAFileWrite(t *testing.T) {
 	t.Cleanup(func() { _ = os.Chmod(skillsDir, 0o755) })
 
 	report, err := Run(context.Background(), repoRoot, []resolver.ResolvedArtifact{
-		devinResolved("nolink", ir.NewSkill("nolink", "d", "b", nil, nil, ir.SourceRef{}), false),
+		devinResolved(t, "nolink", ir.NewSkill("nolink", "d", "b", nil, nil, ir.SourceRef{}), false),
 	})
 	if err != nil {
 		t.Fatalf("Run: %v", err)

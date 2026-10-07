@@ -307,6 +307,8 @@ func compatibilityHookEvents(target string) []string {
 		return []string{"BeforeTool", "BeforeAgent"}
 	case "windsurf":
 		return []string{"pre_run_command", "pre_user_prompt"}
+	case "cursor":
+		return []string{"preToolUse", "beforeSubmitPrompt"}
 	default:
 		return []string{"PreToolUse", "UserPromptSubmit"}
 	}

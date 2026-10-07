@@ -14,6 +14,7 @@ import (
 
 	"github.com/Adyen/agent-marketplace/internal/catalog"
 	"github.com/Adyen/agent-marketplace/internal/config"
+	"github.com/Adyen/agent-marketplace/internal/ownership"
 	"github.com/Adyen/agent-marketplace/internal/resolver"
 	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
@@ -143,7 +144,7 @@ func TestNativeHookDefinitionsDoNotConflict(t *testing.T) {
 					if err != nil || hasErrorDiagnostics(report.Diags) {
 						t.Fatalf("materialize: %v %v", err, report.Diags)
 					}
-					got := additiveSafetyCommands(t, filepath.Join(repo, ".windsurf", "hooks.json"), "hooks", "pre_run_command")
+					got := additiveSafetyCommands(t, filepath.Join(repo, ".devin", "hooks.json"), "hooks", "pre_run_command")
 					if !reflect.DeepEqual(got, []string{"echo first", "echo second"}) {
 						t.Fatalf("commands = %v", got)
 					}
@@ -243,7 +244,7 @@ func TestWindsurfNativeHandlerOrder(t *testing.T) {
 			if len(errs) != 0 || len(resolved) != tt.count {
 				t.Fatalf("resolution: %v, %v", resolved, errs)
 			}
-			path := filepath.Join(repo, ".windsurf", "hooks.json")
+			path := filepath.Join(repo, ".devin", "hooks.json")
 			if tt.seeded {
 				additiveSafetyWrite(t, path, fmt.Sprintf(`{"hooks":{"pre_run_command":[// keep handwritten
 {"command":"echo handwritten"},{"command":"echo %d","_managed_by":"agent-marketplace"}]}}`, tt.count-1))
@@ -267,6 +268,21 @@ func TestWindsurfNativeHandlerOrder(t *testing.T) {
 				wantCommands = append([]string{"echo handwritten", "echo " + strconv.Itoa(tt.count-1)}, want[:tt.count-1]...)
 				if !strings.Contains(string(first), "// keep handwritten") {
 					t.Fatal("handwritten hook comment was lost")
+				}
+				store, err := ownership.Open(repo)
+				if err != nil {
+					t.Fatal(err)
+				}
+				proof, err := store.Proof(filepath.Join(".devin", "hooks.json"))
+				if err != nil {
+					t.Fatal(err)
+				}
+				if proof.OwnedCount() != tt.count-1 || len(proof.HookSatisfactions()) != 1 {
+					t.Fatalf("handwritten marker satisfaction became owned: %d owned, %d satisfactions", proof.OwnedCount(), len(proof.HookSatisfactions()))
+				}
+				sources := proof.HookSatisfactions()[0].Sources
+				if len(sources) != 1 || sources[0].Resource != "hooks" || sources[0].SourceDigest == "" {
+					t.Fatalf("handwritten marker satisfaction sources = %+v", sources)
 				}
 			}
 			if !reflect.DeepEqual(got, wantCommands) {

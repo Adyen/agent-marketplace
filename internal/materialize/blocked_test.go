@@ -33,7 +33,7 @@ func TestBlockedComponentsForMapsResourcesToTheirOwnedOutput(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			key := outputKey{target: tt.target, machineScope: tt.machineScope}
 			work := skillTarget{
-				skill:        devinResolved("res", tt.resource, tt.machineScope),
+				skill:        devinResolved(t, "res", tt.resource, tt.machineScope),
 				target:       tt.target,
 				machineScope: tt.machineScope,
 			}

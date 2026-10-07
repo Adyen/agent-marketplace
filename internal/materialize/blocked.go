@@ -174,6 +174,7 @@ func hookBlockedComponents(target hcc.Target, info harness.TargetInfo, machineSc
 				if aggregate.Kind != ir.KindHook {
 					continue
 				}
+				add(path.Join(partition.Prefix, aggregate.SupportDir))
 				file := aggregate.Project
 				if machineScope {
 					file = aggregate.User

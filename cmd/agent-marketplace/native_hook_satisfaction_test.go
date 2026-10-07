@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -107,6 +108,18 @@ func cliSatisfactionFixture(t *testing.T, d cliNativeDoc) (homeDir, repoRoot, na
 	return
 }
 
+func seedCliOwnershipLock(t *testing.T, root string) string {
+	t.Helper()
+	store, err := ownership.Open(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.WithWriteSessionContext(context.Background(), "seed-cli-ownership-lock", func() error { return nil }); err != nil {
+		t.Fatal(err)
+	}
+	return store.LockPath()
+}
+
 func assertCliSatisfactionUnmanaged(t *testing.T, phase, nativeRoot string, d cliNativeDoc, fps map[string]string) {
 	t.Helper()
 	store, err := ownership.Open(nativeRoot)
@@ -139,6 +152,38 @@ func assertCliSatisfactionUnmanaged(t *testing.T, phase, nativeRoot string, d cl
 	t.Fatalf("%s: native inspector did not return %v", phase, entry.ID())
 }
 
+func assertCliCompleteHookSatisfaction(t *testing.T, nativeRoot string, d cliNativeDoc, fps map[string]string) {
+	t.Helper()
+	store, err := ownership.Open(nativeRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	proof, err := store.Proof(d.rel)
+	if err != nil {
+		t.Fatal(err)
+	}
+	records := proof.HookSatisfactions()
+	if proof.OwnedCount() != 0 || len(proof.OwnedIDs()) != 0 || len(records) != 1 || records[0].Container != d.event || records[0].IdentityDigest == "" || records[0].ValueDigest == "" {
+		t.Fatalf("satisfaction proof = owned %v / records %+v", proof.OwnedIDs(), records)
+	}
+	want := make(map[ownership.HookSourceEvidence]bool, len(cliHookNames))
+	for _, name := range cliHookNames {
+		want[ownership.HookSourceEvidence{Resource: name, SourceDigest: fps[name]}] = true
+	}
+	got := make(map[ownership.HookSourceEvidence]bool, len(records[0].Sources))
+	for _, source := range records[0].Sources {
+		got[source] = true
+	}
+	if len(records[0].Sources) != len(want) || len(got) != len(want) {
+		t.Fatalf("satisfaction sources = %+v, want exactly both contributors", records[0].Sources)
+	}
+	for source := range want {
+		if !got[source] {
+			t.Fatalf("satisfaction sources = %+v, missing %+v", records[0].Sources, source)
+		}
+	}
+}
+
 func cliTwinAndSiblingDoc(d cliNativeDoc) string {
 	sibling := `{"command":"./handwritten.sh","matcher":"Bash","type":"command"}`
 	twin := `{"_managed_by":"agent-marketplace","command":"` + cliSharedHookCommand + `","matcher":"Bash","type":"command"}`
@@ -156,6 +201,29 @@ func cliTwinAndSiblingDoc(d cliNativeDoc) string {
 	default:
 		return `{"hooks":{"pre_run_command":[{"command":"./handwritten.sh"},{"_managed_by":"agent-marketplace","command":"` + cliSharedHookCommand + `"}]}}` + "\n"
 	}
+}
+
+func cliLegacyHookRules(t *testing.T, d cliNativeDoc, data []byte) []json.RawMessage {
+	t.Helper()
+	var root map[string]json.RawMessage
+	if err := json.Unmarshal(data, &root); err != nil {
+		t.Fatalf("legacy document: %v", err)
+	}
+	container := root
+	if d.target != "factory" {
+		if err := json.Unmarshal(root["hooks"], &container); err != nil {
+			t.Fatalf("legacy hooks member: %v", err)
+		}
+	}
+	event := "PreToolUse"
+	if d.target == "windsurf" {
+		event = "pre_run_command"
+	}
+	var rules []json.RawMessage
+	if err := json.Unmarshal(container[event], &rules); err != nil {
+		t.Fatalf("legacy event %s: %v", event, err)
+	}
+	return rules
 }
 
 func cliTree(t *testing.T, root string) []string {
@@ -196,62 +264,233 @@ func assertCliTreeUnchanged(t *testing.T, phase, root string, before []string) {
 	}
 }
 
-func assertCliSingleLegacyHandler(t *testing.T, d cliNativeDoc, legacyPath string) {
+type cliFilesystemEntry struct {
+	mode       os.FileMode
+	size       int64
+	modified   int64
+	data       []byte
+	linkTarget string
+}
+
+func cliFilesystemSnapshot(t *testing.T, root string) map[string]cliFilesystemEntry {
 	t.Helper()
-	data, err := os.ReadFile(legacyPath)
-	if err != nil {
-		t.Fatalf("legacy file: %v", err)
+	paths := cliTree(t, root)
+	if len(paths) == 0 {
+		return nil
 	}
-	var doc map[string]any
-	if err := json.Unmarshal(data, &doc); err != nil {
-		t.Fatalf("legacy file is not JSON: %v", err)
-	}
-	container := doc
-	if d.target != "factory" {
-		nested, ok := doc["hooks"].(map[string]any)
-		if !ok {
-			t.Fatalf("legacy file missing hooks member: %s", data)
+	entries := make(map[string]cliFilesystemEntry, len(paths))
+	for _, rel := range paths {
+		path := root
+		if rel != "." {
+			path = filepath.Join(root, rel)
 		}
-		container = nested
+		info, err := os.Lstat(path)
+		if err != nil {
+			t.Fatalf("lstat %s: %v", path, err)
+		}
+		entry := cliFilesystemEntry{mode: info.Mode(), size: info.Size(), modified: info.ModTime().UnixNano()}
+		if info.Mode().IsRegular() {
+			entry.data, err = os.ReadFile(path)
+			if err != nil {
+				t.Fatalf("read %s: %v", path, err)
+			}
+		} else if info.Mode()&os.ModeSymlink != 0 {
+			entry.linkTarget, err = os.Readlink(path)
+			if err != nil {
+				t.Fatalf("read link %s: %v", path, err)
+			}
+		}
+		entries[rel] = entry
 	}
-	event := "PreToolUse"
-	switch d.target {
-	case "windsurf":
-		event = "pre_run_command"
-	case "cursor":
-		event = "preToolUse"
+	return entries
+}
+
+func assertCliFilesystemSnapshot(t *testing.T, phase, root string, before map[string]cliFilesystemEntry) {
+	t.Helper()
+	if !reflect.DeepEqual(before, cliFilesystemSnapshot(t, root)) {
+		t.Fatalf("%s: filesystem snapshot under %s changed", phase, root)
 	}
-	if len(container) != 1 {
-		t.Fatalf("legacy file carries %d events, want only %s: %s", len(container), event, data)
+}
+
+func cliRelativeStatePath(t *testing.T, root, path string) string {
+	t.Helper()
+	rel, err := filepath.Rel(root, path)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
+		t.Fatalf("state path %s is outside root %s", path, root)
 	}
-	raws, ok := container[event].([]any)
-	if !ok || len(raws) != 1 {
-		t.Fatalf("legacy event %s = %#v, want exactly one handler", event, container[event])
+	return filepath.ToSlash(filepath.Clean(rel))
+}
+
+func assertCliFilesystemSnapshotExceptLock(t *testing.T, phase, root, lockPath string, before map[string]cliFilesystemEntry) map[string]cliFilesystemEntry {
+	t.Helper()
+	lockRel := cliRelativeStatePath(t, root, lockPath)
+	after := cliFilesystemSnapshot(t, root)
+	beforeLock, beforeOK := before[lockRel]
+	afterLock, afterOK := after[lockRel]
+	if !beforeOK || !afterOK || beforeLock.mode != afterLock.mode {
+		t.Fatalf("ownership lock entry changed unexpectedly during %s", phase)
 	}
-	rule, ok := raws[0].(map[string]any)
-	if !ok {
-		t.Fatalf("legacy handler is not an object: %#v", raws[0])
+	normalize := func(entries map[string]cliFilesystemEntry) map[string]cliFilesystemEntry {
+		copy := make(map[string]cliFilesystemEntry, len(entries))
+		for rel, entry := range entries {
+			if rel == lockRel {
+				entry.size = 0
+				entry.modified = 0
+				entry.data = nil
+				entry.linkTarget = ""
+			}
+			copy[rel] = entry
+		}
+		return copy
 	}
-	want := map[string]any{"_managed_by": "agent-marketplace"}
-	switch d.target {
-	case "claude":
-		want["command"] = cliSharedHookCommand
-		want["matcher"] = "Bash"
-		want["type"] = "command"
-	case "cursor":
-		want["command"] = cliSharedHookCommand
-		want["event"] = "preToolUse"
-		want["matcher"] = "^Shell$"
-		want["type"] = "command"
-	case "factory":
-		want["matcher"] = "Execute"
-		want["hooks"] = []any{map[string]any{"command": cliSharedHookCommand, "type": "command"}}
-	default:
-		want["command"] = cliSharedHookCommand
+	if !reflect.DeepEqual(normalize(before), normalize(after)) {
+		t.Fatalf("%s: state filesystem under %s changed outside its ownership lock metadata", phase, root)
 	}
-	if !reflect.DeepEqual(rule, want) {
-		t.Fatalf("legacy handler = %#v, want exactly %#v", rule, want)
+	return after
+}
+
+func cliPathIsAncestorOf(parent, child string) bool {
+	if parent == "." {
+		return true
 	}
+	return strings.HasPrefix(child, strings.TrimSuffix(parent, "/")+"/")
+}
+
+func assertCliStateOnlyRecordChanged(t *testing.T, phase, root, lockPath, statePath string, before, after map[string]cliFilesystemEntry) {
+	t.Helper()
+	lockRel := cliRelativeStatePath(t, root, lockPath)
+	stateRel := cliRelativeStatePath(t, root, statePath)
+	if lockRel == stateRel {
+		t.Fatal("ownership lock and state record paths unexpectedly match")
+	}
+	beforeLock, beforeLockOK := before[lockRel]
+	afterLock, afterLockOK := after[lockRel]
+	beforeState, beforeStateOK := before[stateRel]
+	afterState, afterStateOK := after[stateRel]
+	if !beforeLockOK || !afterLockOK || beforeLock.mode != afterLock.mode || !beforeStateOK || !afterStateOK || beforeState.mode != afterState.mode {
+		t.Fatalf("%s changed the ownership lock or state record mode", phase)
+	}
+	if reflect.DeepEqual(beforeState.data, afterState.data) {
+		t.Fatalf("%s did not change state record bytes", phase)
+	}
+	for rel, oldEntry := range before {
+		newEntry, ok := after[rel]
+		if !ok {
+			t.Fatalf("%s removed prior state entry %s", phase, rel)
+		}
+		if rel == lockRel || rel == stateRel {
+			continue
+		}
+		if oldEntry.mode.IsDir() && (cliPathIsAncestorOf(rel, stateRel) || rel == filepath.ToSlash(filepath.Join("agent-marketplace", "dependencies"))) {
+			if newEntry.mode != oldEntry.mode {
+				t.Fatalf("%s changed state directory mode at %s", phase, rel)
+			}
+			continue
+		}
+		if !reflect.DeepEqual(oldEntry, newEntry) {
+			t.Fatalf("%s changed unrelated state entry %s", phase, rel)
+		}
+	}
+	for rel := range after {
+		if _, existed := before[rel]; !existed {
+			t.Fatalf("%s added unexpected state entry %s", phase, rel)
+		}
+	}
+}
+
+func assertCliStateSnapshotAfterLegacyBackup(t *testing.T, phase, root, lockPath string, before map[string]cliFilesystemEntry, backup ownership.RetainedBackup) map[string]cliFilesystemEntry {
+	t.Helper()
+	lockRel := cliRelativeStatePath(t, root, lockPath)
+	expected := cliSafetyBackupTreeEntries(t, root, backup)
+	after := cliFilesystemSnapshot(t, root)
+	beforeLock, beforeOK := before[lockRel]
+	afterLock, afterOK := after[lockRel]
+	if !beforeOK || !afterOK || beforeLock.mode != afterLock.mode {
+		t.Fatalf("ownership lock entry changed unexpectedly during %s", phase)
+	}
+	for rel, oldEntry := range before {
+		newEntry, ok := after[rel]
+		if !ok {
+			t.Fatalf("%s removed prior state entry %s", phase, rel)
+		}
+		if rel == lockRel {
+			continue
+		}
+		if oldEntry.mode.IsDir() && cliStateDirectoryMetadataMayChange(rel, expected) {
+			if newEntry.mode != oldEntry.mode {
+				t.Fatalf("%s changed state directory mode at %s", phase, rel)
+			}
+			continue
+		}
+		if !reflect.DeepEqual(oldEntry, newEntry) {
+			t.Fatalf("%s changed prior state entry %s", phase, rel)
+		}
+	}
+	for rel := range after {
+		if _, existed := before[rel]; !existed && !expected[rel] {
+			t.Fatalf("%s added unexpected state entry %s", phase, rel)
+		}
+	}
+	for rel := range expected {
+		if _, exists := after[rel]; !exists {
+			t.Fatalf("%s did not retain expected safety-backup path %s", phase, rel)
+		}
+	}
+	return after
+}
+
+func cliSafetyBackupTreeEntries(t *testing.T, stateRoot string, backup ownership.RetainedBackup) map[string]bool {
+	t.Helper()
+	if !strings.HasSuffix(backup.Path, ".bak") {
+		t.Fatalf("safety backup path %q has no .bak suffix", backup.Path)
+	}
+	metaPath := strings.TrimSuffix(backup.Path, ".bak") + ".meta.json"
+	expected := make(map[string]bool)
+	for _, file := range []string{backup.Path, metaPath} {
+		for current := cliRelativeStatePath(t, stateRoot, file); current != "."; {
+			expected[current] = true
+			parent := filepath.ToSlash(filepath.Dir(filepath.FromSlash(current)))
+			if parent == current {
+				break
+			}
+			current = parent
+		}
+	}
+	return expected
+}
+
+func cliStateDirectoryMetadataMayChange(rel string, backupPaths map[string]bool) bool {
+	if rel == "." || rel == filepath.ToSlash(filepath.Join("agent-marketplace", "dependencies")) {
+		return true
+	}
+	prefix := strings.TrimSuffix(rel, "/") + "/"
+	for candidate := range backupPaths {
+		if strings.HasPrefix(candidate, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+func assertCliLegacySafetyBackup(t *testing.T, store *ownership.Store, rel string, original []byte) ownership.RetainedBackup {
+	t.Helper()
+	backups, err := store.SafetyBackups(rel)
+	if err != nil || len(backups) != 1 {
+		t.Fatalf("SafetyBackups(%q) = %d / %v, want the one migration backup", rel, len(backups), err)
+	}
+	backup := backups[0]
+	data, err := backup.RawBytes()
+	if err != nil || string(data) != string(original) {
+		t.Fatalf("safety backup for %s does not contain the exact original Legacy bytes: %v", rel, err)
+	}
+	info, err := os.Stat(backup.Path)
+	if err != nil || info.Mode().Perm() != 0o600 {
+		t.Fatalf("safety backup for %s mode = %v / %v, want 0600", rel, info, err)
+	}
+	if backup.Manifest.File != rel || backup.Manifest.PriorAbsent || backup.Manifest.PriorDigest != ownership.Digest(original) || backup.Manifest.PriorSize != int64(len(original)) {
+		t.Fatalf("safety backup manifest for %s = %+v", rel, backup.Manifest)
+	}
+	return backup
 }
 
 // spec: hook-native-location-tolerance/handwritten-native-satisfaction-prevents-legacy-recreation
@@ -261,57 +500,119 @@ func TestSyncRecognizesUnownedNativeSatisfaction(t *testing.T) {
 		return
 	}
 	for _, d := range cliNativeDocs() {
-		for _, twin := range []bool{false, true} {
+		sharedFile := d.target == "windsurf" && d.machineScope
+		twins := []bool{false, true}
+		if sharedFile {
+			twins = []bool{false}
+		}
+		for _, twin := range twins {
 			t.Run(fmt.Sprintf("%s_machine=%v_twin=%v", d.target, d.machineScope, twin), func(t *testing.T) {
-				_, _, nativeRoot, nativePath, legacyPath, lockPath, configPath, fps := cliSatisfactionFixture(t, d)
-				doc := d.doc
-				sharedFile := d.target == "windsurf" && d.machineScope
-				var legacyBefore []byte
-				var legacyInfo os.FileInfo
+				home, _, nativeRoot, nativePath, legacyPath, lockPath, configPath, fps := cliSatisfactionFixture(t, d)
+				var legacySeed []byte
+				var siblingRaw string
+				var legacyRel string
 				if twin {
-					writeFile(t, nativePath, doc)
-					out, err := executeCommand("sync")
-					if err != nil {
-						t.Fatalf("twin-seeding sync: %v\n%s", err, out)
+					legacySeed = []byte(cliTwinAndSiblingDoc(d))
+					legacyRules := cliLegacyHookRules(t, d, legacySeed)
+					if len(legacyRules) != 2 || strings.Contains(string(legacyRules[0]), "_managed_by") || !strings.Contains(string(legacyRules[1]), "_managed_by") {
+						t.Fatalf("legacy twin fixture does not contain handwritten sibling then marked twin: %q", legacySeed)
 					}
-					if sharedFile {
-						current, readErr := os.ReadFile(nativePath)
-						if readErr != nil {
-							t.Fatal(readErr)
-						}
-						doc = string(current)
-					} else {
-						legacyBefore, legacyInfo = statSnapshot(t, legacyPath)
+					siblingRaw = string(legacyRules[0])
+					rel, err := filepath.Rel(nativeRoot, legacyPath)
+					if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
+						t.Fatalf("legacy path %s is outside Native root %s", legacyPath, nativeRoot)
 					}
+					legacyRel = filepath.ToSlash(rel)
+					writeFile(t, legacyPath, string(legacySeed))
 				}
-				statePath := cliSeedHookSatisfaction(t, nativeRoot, d, doc, fps, cliSatisfactionComplete)
+				statePath := cliSeedHookSatisfaction(t, nativeRoot, d, d.doc, fps, cliSatisfactionComplete)
+				ownerLockPath := seedCliOwnershipLock(t, nativeRoot)
 				nativeBefore, nativeInfo := statSnapshot(t, nativePath)
 				stateBefore, stateInfo := statSnapshot(t, statePath)
 				lockBefore, lockInfo := statSnapshot(t, lockPath)
 				configBefore, configInfo := statSnapshot(t, configPath)
 				stateRoot := os.Getenv("XDG_STATE_HOME")
-				stateTree := cliTree(t, stateRoot)
-				nativeTree := cliTree(t, nativeRoot)
+				stateSnapshotBefore := cliFilesystemSnapshot(t, stateRoot)
+				nativeTreeBefore := cliTree(t, nativeRoot)
+				nativeSnapshotBefore := cliFilesystemSnapshot(t, nativeRoot)
+				cacheTree := cliFilesystemSnapshot(t, filepath.Join(home, "cache"))
+				var stateSnapshotAfterFirst map[string]cliFilesystemEntry
+				var nativeSnapshotAfterFirst map[string]cliFilesystemEntry
+				firstSyncCompleted := false
+				var legacyAfter []byte
+				var legacyAfterInfo os.FileInfo
+				legacyAfterFirstSync := false
 
-				checkAll := func(phase string) {
+				checkAll := func(phase string, commandIndex int) {
 					t.Helper()
 					assertStatUnchanged(t, phase+" native", nativePath, nativeBefore, nativeInfo)
 					assertStatUnchanged(t, phase+" state", statePath, stateBefore, stateInfo)
 					assertStatUnchanged(t, phase+" lock", lockPath, lockBefore, lockInfo)
 					assertStatUnchanged(t, phase+" config", configPath, configBefore, configInfo)
-					assertCliTreeUnchanged(t, phase+" state root", stateRoot, stateTree)
-					assertCliTreeUnchanged(t, phase+" native root", nativeRoot, nativeTree)
+					assertCliFilesystemSnapshot(t, phase+" cache", filepath.Join(home, "cache"), cacheTree)
 					if twin && !sharedFile {
-						assertStatUnchanged(t, phase+" legacy twin", legacyPath, legacyBefore, legacyInfo)
+						data, readErr := os.ReadFile(legacyPath)
+						if readErr != nil {
+							t.Fatalf("%s removed the legacy file containing the handwritten sibling: %v", phase, readErr)
+						}
+						rules := cliLegacyHookRules(t, d, data)
+						if len(rules) != 1 || string(rules[0]) != siblingRaw || strings.Contains(string(rules[0]), "_managed_by") {
+							t.Fatalf("%s legacy file did not keep only the exact handwritten sibling: %s", phase, data)
+						}
+						if commandIndex == 0 {
+							legacyAfter, legacyAfterInfo = statSnapshot(t, legacyPath)
+							legacyAfterFirstSync = true
+							store, err := ownership.Open(nativeRoot)
+							if err != nil {
+								t.Fatal(err)
+							}
+							backup := assertCliLegacySafetyBackup(t, store, legacyRel, legacySeed)
+							stateSnapshotAfterFirst = assertCliStateSnapshotAfterLegacyBackup(t, phase, stateRoot, ownerLockPath, stateSnapshotBefore, backup)
+							assertCliTreeUnchanged(t, phase+" Native paths", nativeRoot, nativeTreeBefore)
+							nativeSnapshotAfterFirst = cliFilesystemSnapshot(t, nativeRoot)
+							firstSyncCompleted = true
+						} else {
+							if !legacyAfterFirstSync || !firstSyncCompleted {
+								t.Fatal("Legacy sibling and state trees were not snapshotted after the first sync")
+							}
+							assertStatUnchanged(t, phase+" legacy sibling", legacyPath, legacyAfter, legacyAfterInfo)
+							assertCliFilesystemSnapshotExceptLock(t, phase+" state root", stateRoot, ownerLockPath, stateSnapshotAfterFirst)
+							assertCliFilesystemSnapshot(t, phase+" Native root", nativeRoot, nativeSnapshotAfterFirst)
+						}
 					} else if !sharedFile {
 						if _, statErr := os.Lstat(legacyPath); !os.IsNotExist(statErr) {
 							t.Fatalf("%s created legacy hook output at %s (err=%v)", phase, legacyPath, statErr)
+						}
+						if commandIndex == 0 {
+							stateSnapshotAfterFirst = assertCliFilesystemSnapshotExceptLock(t, phase+" state root", stateRoot, ownerLockPath, stateSnapshotBefore)
+							assertCliFilesystemSnapshot(t, phase+" Native root", nativeRoot, nativeSnapshotBefore)
+							nativeSnapshotAfterFirst = cliFilesystemSnapshot(t, nativeRoot)
+							firstSyncCompleted = true
+						} else {
+							if !firstSyncCompleted {
+								t.Fatal("state trees were not snapshotted after the first sync")
+							}
+							assertCliFilesystemSnapshotExceptLock(t, phase+" state root", stateRoot, ownerLockPath, stateSnapshotAfterFirst)
+							assertCliFilesystemSnapshot(t, phase+" Native root", nativeRoot, nativeSnapshotAfterFirst)
+						}
+					} else {
+						if commandIndex == 0 {
+							stateSnapshotAfterFirst = assertCliFilesystemSnapshotExceptLock(t, phase+" state root", stateRoot, ownerLockPath, stateSnapshotBefore)
+							assertCliFilesystemSnapshot(t, phase+" Native root", nativeRoot, nativeSnapshotBefore)
+							nativeSnapshotAfterFirst = cliFilesystemSnapshot(t, nativeRoot)
+							firstSyncCompleted = true
+						} else {
+							if !firstSyncCompleted {
+								t.Fatal("state trees were not snapshotted after the first sync")
+							}
+							assertCliFilesystemSnapshotExceptLock(t, phase+" state root", stateRoot, ownerLockPath, stateSnapshotAfterFirst)
+							assertCliFilesystemSnapshot(t, phase+" Native root", nativeRoot, nativeSnapshotAfterFirst)
 						}
 					}
 					assertCliSatisfactionUnmanaged(t, phase, nativeRoot, d, fps)
 				}
 
-				for _, args := range [][]string{{"sync"}, {"sync", "--locked"}, {"sync", "--check"}} {
+				for i, args := range [][]string{{"sync"}, {"sync", "--locked"}, {"sync", "--check"}} {
 					label := strings.Join(args, " ")
 					out, err := executeCommand(args...)
 					t.Logf("%s output:\n%s", label, out)
@@ -321,7 +622,7 @@ func TestSyncRecognizesUnownedNativeSatisfaction(t *testing.T) {
 					if strings.Contains(out, "out of sync") || strings.Contains(out, "error") {
 						t.Fatalf("%s reports pending or error work under complete satisfaction:\n%s", label, out)
 					}
-					checkAll(label)
+					checkAll(label, i)
 				}
 			})
 		}
@@ -337,113 +638,78 @@ func TestSyncIncompleteSatisfactionKeepsLegacyBehavior(t *testing.T) {
 		for _, mutating := range [][]string{{"sync"}, {"sync", "--locked"}} {
 			label := strings.Join(mutating, " ")
 			t.Run(fmt.Sprintf("%s_machine=%v/%s", d.target, d.machineScope, label), func(t *testing.T) {
-				_, _, nativeRoot, nativePath, legacyPath, lockPath, configPath, fps := cliSatisfactionFixture(t, d)
+				home, _, nativeRoot, nativePath, legacyPath, lockPath, configPath, fps := cliSatisfactionFixture(t, d)
 				statePath := cliSeedHookSatisfaction(t, nativeRoot, d, d.doc, fps, cliSatisfactionIncomplete)
+				ownerLockPath := seedCliOwnershipLock(t, nativeRoot)
 				sharedFile := d.target == "windsurf" && d.machineScope
 				nativeBefore, nativeInfo := statSnapshot(t, nativePath)
 				stateBefore, stateInfo := statSnapshot(t, statePath)
 				lockBefore, lockInfo := statSnapshot(t, lockPath)
 				configBefore, configInfo := statSnapshot(t, configPath)
 				stateRoot := os.Getenv("XDG_STATE_HOME")
-				stateTree := cliTree(t, stateRoot)
+				stateSnapshot := cliFilesystemSnapshot(t, stateRoot)
 				nativeTree := cliTree(t, nativeRoot)
+				cacheRoot := filepath.Join(home, "cache")
+				cacheSnapshot := cliFilesystemSnapshot(t, cacheRoot)
 
 				out, err := executeCommand("sync", "--check")
 				t.Logf("sync --check output:\n%s", out)
-				if err == nil {
-					t.Fatalf("sync --check succeeded despite the unproven hook:\n%s", out)
-				}
-				if !strings.Contains(out, "out of sync") && !strings.Contains(out, "missing") {
-					t.Fatalf("sync --check does not report the pending legacy write:\n%s", out)
+				if err != nil {
+					t.Fatalf("sync --check on incomplete satisfaction: %v\n%s", err, out)
 				}
 				if !sharedFile {
 					if _, statErr := os.Lstat(legacyPath); !os.IsNotExist(statErr) {
-						t.Fatalf("sync --check created the legacy file (err=%v)", statErr)
+						t.Fatalf("sync --check created the legacy file: %v", statErr)
 					}
 				}
 				assertStatUnchanged(t, "--check native", nativePath, nativeBefore, nativeInfo)
 				assertStatUnchanged(t, "--check state", statePath, stateBefore, stateInfo)
 				assertStatUnchanged(t, "--check lock", lockPath, lockBefore, lockInfo)
 				assertStatUnchanged(t, "--check config", configPath, configBefore, configInfo)
-				assertCliTreeUnchanged(t, "--check state root", stateRoot, stateTree)
+				assertCliFilesystemSnapshot(t, "--check state root", stateRoot, stateSnapshot)
 				assertCliTreeUnchanged(t, "--check native root", nativeRoot, nativeTree)
-
-				var handwrittenRaw json.RawMessage
-				if sharedFile {
-					var beforeDoc struct {
-						Hooks map[string][]json.RawMessage `json:"hooks"`
-					}
-					if err := json.Unmarshal(nativeBefore, &beforeDoc); err != nil {
-						t.Fatalf("seeded shared file: %v", err)
-					}
-					for _, raw := range beforeDoc.Hooks["pre_run_command"] {
-						var obj map[string]any
-						if err := json.Unmarshal(raw, &obj); err != nil {
-							t.Fatalf("seeded shared handler: %v", err)
-						}
-						if _, marked := obj["_managed_by"]; !marked {
-							handwrittenRaw = raw
-						}
-					}
-					if len(handwrittenRaw) == 0 {
-						t.Fatal("seeded shared file has no unmarked pre_run_command entry")
-					}
-				}
+				assertCliFilesystemSnapshot(t, "--check cache", cacheRoot, cacheSnapshot)
 
 				out, err = executeCommand(mutating...)
 				t.Logf("%s output:\n%s", label, out)
 				if err != nil {
-					t.Fatalf("%s: %v\n%s", label, err, out)
+					t.Fatalf("%s satisfaction refresh: %v\n%s", label, err, out)
 				}
-				if sharedFile {
-					data, readErr := os.ReadFile(nativePath)
-					if readErr != nil {
-						t.Fatal(readErr)
+				if !sharedFile {
+					if _, statErr := os.Lstat(legacyPath); !os.IsNotExist(statErr) {
+						t.Fatalf("%s created legacy output: %v", label, statErr)
 					}
-					var shared struct {
-						Hooks map[string][]json.RawMessage `json:"hooks"`
-					}
-					if err := json.Unmarshal(data, &shared); err != nil {
-						t.Fatalf("shared file: %v", err)
-					}
-					pre := shared.Hooks["pre_run_command"]
-					if len(pre) != 2 {
-						t.Fatalf("shared pre_run_command = %s, want handwritten rule then one managed twin", pre)
-					}
-					var first, second, post map[string]any
-					if err := json.Unmarshal(pre[0], &first); err != nil {
-						t.Fatalf("shared first handler: %v", err)
-					}
-					if err := json.Unmarshal(pre[1], &second); err != nil {
-						t.Fatalf("shared second handler: %v", err)
-					}
-					if !reflect.DeepEqual(first, map[string]any{"command": cliSharedHookCommand}) {
-						t.Fatalf("shared handwritten handler = %#v, want exactly {command:%q}", first, cliSharedHookCommand)
-					}
-					if !reflect.DeepEqual(second, map[string]any{"_managed_by": "agent-marketplace", "command": cliSharedHookCommand}) {
-						t.Fatalf("shared managed twin = %#v, want exactly {_managed_by:agent-marketplace,command:%q}", second, cliSharedHookCommand)
-					}
-					if string(pre[0]) != string(handwrittenRaw) {
-						t.Fatalf("shared handwritten bytes changed: %s -> %s", handwrittenRaw, pre[0])
-					}
-					posts := shared.Hooks["post_cascade_response"]
-					if len(posts) != 1 {
-						t.Fatalf("shared post_cascade_response = %s, want the single unrelated sibling", posts)
-					}
-					if err := json.Unmarshal(posts[0], &post); err != nil {
-						t.Fatalf("shared sibling handler: %v", err)
-					}
-					if !reflect.DeepEqual(post, map[string]any{"command": "./hand.sh", "show_output": true}) {
-						t.Fatalf("unrelated shared handler = %#v, want exactly {command:./hand.sh,show_output:true}", post)
-					}
-				} else {
-					assertCliSingleLegacyHandler(t, d, legacyPath)
-					assertStatUnchanged(t, label+" native", nativePath, nativeBefore, nativeInfo)
 				}
-				assertStatUnchanged(t, label+" state", statePath, stateBefore, stateInfo)
+				assertStatUnchanged(t, label+" native", nativePath, nativeBefore, nativeInfo)
 				assertStatUnchanged(t, label+" lock", lockPath, lockBefore, lockInfo)
 				assertStatUnchanged(t, label+" config", configPath, configBefore, configInfo)
-				assertCliSatisfactionUnmanaged(t, label, nativeRoot, d, fps)
+				stateAfter, stateInfoAfter := statSnapshot(t, statePath)
+				if reflect.DeepEqual(stateBefore, stateAfter) || stateInfoAfter.Mode().Perm() != stateInfo.Mode().Perm() {
+					t.Fatalf("%s did not refresh the existing satisfaction metadata", label)
+				}
+				assertCliStateOnlyRecordChanged(t, label, stateRoot, ownerLockPath, statePath, stateSnapshot, cliFilesystemSnapshot(t, stateRoot))
+				assertCliTreeUnchanged(t, label+" native root", nativeRoot, nativeTree)
+				assertCliFilesystemSnapshot(t, label+" cache", cacheRoot, cacheSnapshot)
+				assertCliCompleteHookSatisfaction(t, nativeRoot, d, fps)
+
+				stateSnapshotAfter := cliFilesystemSnapshot(t, stateRoot)
+				out, err = executeCommand("sync", "--check")
+				if err != nil {
+					t.Fatalf("post-refresh sync --check: %v\n%s", err, out)
+				}
+				if !sharedFile {
+					if _, statErr := os.Lstat(legacyPath); !os.IsNotExist(statErr) {
+						t.Fatalf("post-refresh sync --check created legacy output: %v", statErr)
+					}
+				}
+				assertStatUnchanged(t, "post-refresh check native", nativePath, nativeBefore, nativeInfo)
+				assertStatUnchanged(t, "post-refresh check state", statePath, stateAfter, stateInfoAfter)
+				assertStatUnchanged(t, "post-refresh check lock", lockPath, lockBefore, lockInfo)
+				assertStatUnchanged(t, "post-refresh check config", configPath, configBefore, configInfo)
+				assertCliFilesystemSnapshot(t, "post-refresh check state root", stateRoot, stateSnapshotAfter)
+				assertCliTreeUnchanged(t, "post-refresh check native root", nativeRoot, nativeTree)
+				assertCliFilesystemSnapshot(t, "post-refresh check cache", cacheRoot, cacheSnapshot)
+				assertCliCompleteHookSatisfaction(t, nativeRoot, d, fps)
 			})
 		}
 	}
@@ -458,6 +724,7 @@ func TestSyncCorruptSatisfactionRefusesWithoutMutation(t *testing.T) {
 		t.Run(fmt.Sprintf("%s_machine=%v", d.target, d.machineScope), func(t *testing.T) {
 			_, _, nativeRoot, nativePath, legacyPath, lockPath, configPath, fps := cliSatisfactionFixture(t, d)
 			statePath := cliSeedHookSatisfaction(t, nativeRoot, d, d.doc, fps, cliSatisfactionCorrupt)
+			seedCliOwnershipLock(t, nativeRoot)
 			sharedFile := d.target == "windsurf" && d.machineScope
 			var legacyBefore []byte
 			var legacyInfo os.FileInfo
@@ -511,7 +778,7 @@ func TestSyncSatisfactionCheckDoesNotCreateStateRoot(t *testing.T) {
 	}
 	for _, d := range cliNativeDocs() {
 		t.Run(fmt.Sprintf("%s_machine=%v", d.target, d.machineScope), func(t *testing.T) {
-			homeDir, _, nativeRoot, nativePath, legacyPath, lockPath, configPath, _ := cliSatisfactionFixture(t, d)
+			homeDir, _, nativeRoot, nativePath, legacyPath, lockPath, configPath, fps := cliSatisfactionFixture(t, d)
 			stateHome := filepath.Join(homeDir, "no-state-root")
 			t.Setenv("XDG_STATE_HOME", stateHome)
 			writeFile(t, nativePath, d.doc)
@@ -526,15 +793,15 @@ func TestSyncSatisfactionCheckDoesNotCreateStateRoot(t *testing.T) {
 			lockBefore, lockInfo := statSnapshot(t, lockPath)
 			configBefore, configInfo := statSnapshot(t, configPath)
 			nativeTree := cliTree(t, nativeRoot)
+			stateSnapshot := cliFilesystemSnapshot(t, stateHome)
+			cacheRoot := filepath.Join(homeDir, "cache")
+			cacheSnapshot := cliFilesystemSnapshot(t, cacheRoot)
 			sharedFile := d.target == "windsurf" && d.machineScope
 
 			out, err := executeCommand("sync", "--check")
 			t.Logf("sync --check output:\n%s", out)
-			if err == nil {
-				t.Fatalf("sync --check succeeded without evidence for two selected hooks:\n%s", out)
-			}
-			if !strings.Contains(out, "out of sync") && !strings.Contains(out, "missing") {
-				t.Fatalf("sync --check does not report the pending legacy write:\n%s", out)
+			if err != nil || strings.Contains(out, "out of sync") {
+				t.Fatalf("sync --check did not recognize handwritten Native satisfaction: %v\n%s", err, out)
 			}
 			if _, statErr := os.Lstat(stateHome); !os.IsNotExist(statErr) {
 				t.Fatalf("sync --check created the state root %s (err=%v)", stateHome, statErr)
@@ -548,6 +815,32 @@ func TestSyncSatisfactionCheckDoesNotCreateStateRoot(t *testing.T) {
 			assertStatUnchanged(t, "--check lock", lockPath, lockBefore, lockInfo)
 			assertStatUnchanged(t, "--check config", configPath, configBefore, configInfo)
 			assertCliTreeUnchanged(t, "--check native root", nativeRoot, nativeTree)
+			assertCliFilesystemSnapshot(t, "--check state root", stateHome, stateSnapshot)
+			assertCliFilesystemSnapshot(t, "--check cache", cacheRoot, cacheSnapshot)
+
+			out, err = executeCommand("sync")
+			if err != nil {
+				t.Fatalf("sync satisfaction control: %v\n%s", err, out)
+			}
+			if !sharedFile {
+				if _, statErr := os.Lstat(legacyPath); !os.IsNotExist(statErr) {
+					t.Fatalf("sync created legacy output: %v", statErr)
+				}
+			}
+			assertStatUnchanged(t, "sync native", nativePath, nativeBefore, nativeInfo)
+			assertStatUnchanged(t, "sync lock", lockPath, lockBefore, lockInfo)
+			assertStatUnchanged(t, "sync config", configPath, configBefore, configInfo)
+			assertCliTreeUnchanged(t, "sync native root", nativeRoot, nativeTree)
+			store, err = ownership.Open(nativeRoot)
+			if err != nil {
+				t.Fatal(err)
+			}
+			proof, err := store.Proof(d.rel)
+			if err != nil || proof.ContentDigest() != ownership.Digest(nativeBefore) {
+				t.Fatalf("sync satisfaction proof = %v / %q", err, proof.ContentDigest())
+			}
+			assertCliCompleteHookSatisfaction(t, nativeRoot, d, fps)
+			assertCliSatisfactionUnmanaged(t, "sync", nativeRoot, d, fps)
 		})
 	}
 }
