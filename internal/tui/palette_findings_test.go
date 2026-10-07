@@ -228,12 +228,15 @@ func TestToggleEligibilityParityMatrix(t *testing.T) {
 		})
 	}
 
-	t.Run("section header folds by keyboard and hides palette toggle", func(t *testing.T) {
+	t.Run("section header opens bulk modal and swaps the palette toggle", func(t *testing.T) {
 		m := modelWithRows(mkRow("tool", withGlobal))
 		m.cursor = 0 // section header
 		m.pane = paneList
 		if m.actionEligible(actionToggle) {
-			t.Fatal("palette must hide the toggle on a section header")
+			t.Fatal("palette must hide the single-row toggle on a section header")
+		}
+		if !m.actionEligible(actionToggleSection) {
+			t.Fatal("palette must offer the section bulk toggle on a section header")
 		}
 		path, ok := m.selectedSectionPath()
 		if !ok {
@@ -241,8 +244,11 @@ func TestToggleEligibilityParityMatrix(t *testing.T) {
 		}
 		mi, _ := m.handleKey(tea.KeyPressMsg{Code: tea.KeySpace})
 		m = mi.(Model)
-		if !m.currentFoldState()[path] {
-			t.Fatal("keyboard Space on a section header must still toggle the fold")
+		if m.pane != paneBulkToggle {
+			t.Fatalf("keyboard Space on a section header must open the bulk toggle modal, got pane %v", m.pane)
+		}
+		if m.currentFoldState()[path] {
+			t.Fatal("keyboard Space on a section header must not fold it")
 		}
 	})
 }

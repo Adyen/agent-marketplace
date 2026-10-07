@@ -16,10 +16,22 @@ import (
 func TestMain(m *testing.M) {
 	testSkipInitModal = true
 	compat.HasDarkBackground = true
+	// Keep view-preference reads off the developer's real XDG state tree even
+	// for tests that never think about preferences.
+	xdg, err := os.MkdirTemp("", "am-tui-test-state")
+	if err != nil {
+		panic(err)
+	}
+	if err := os.Setenv("XDG_STATE_HOME", xdg); err != nil {
+		panic(err)
+	}
 	// The runtime allowlist is now derived from effective configuration
 	// layers. TUI tests use example.com URLs with no allowlist configured
 	// (permitting all) unless they explicitly declare one.
 	code := m.Run()
+	// os.Exit skips deferred cleanup, so remove the task-created state root
+	// explicitly.
+	_ = os.RemoveAll(xdg)
 	os.Exit(code)
 }
 

@@ -1,6 +1,10 @@
 package tui
 
-import "github.com/Adyen/agent-marketplace/internal/materialize"
+import (
+	"strings"
+
+	"github.com/Adyen/agent-marketplace/internal/materialize"
+)
 
 // flat-items helpers on Model: the cursor indexes into m.flatItems, which is
 // computed from filteredRows + the status-grouped foldState. These helpers
@@ -9,9 +13,13 @@ import "github.com/Adyen/agent-marketplace/internal/materialize"
 // currentFoldState returns the model's fold-state map, creating it lazily.
 func (m *Model) currentFoldState() map[string]bool {
 	if m.foldedSections == nil {
-		m.foldedSections = make(map[string]bool)
+		m.foldedSections = make(map[viewSettings]map[string]bool)
 	}
-	return m.foldedSections
+	key := m.viewSettings.normalized()
+	if m.foldedSections[key] == nil {
+		m.foldedSections[key] = make(map[string]bool)
+	}
+	return m.foldedSections[key]
 }
 
 // rebuildFlatItems recomputes m.flatItems from m.filteredRows and the fold
@@ -23,8 +31,64 @@ func (m *Model) rebuildFlatItems() {
 	if m.filter != "" {
 		fold = map[string]bool{}
 	}
-	m.flatItems = buildStatusTree(m.filteredRows, fold)
+	m.flatItems = buildGroupedTree(m.filteredRows, m.viewSettings, fold)
 	m.listHeightPrefix = m.listHeightPrefix[:0]
+}
+
+func (m *Model) applyViewSettings(s viewSettings) {
+	s = s.normalized()
+	if s == m.viewSettings.normalized() {
+		m.viewSettings = s
+		return
+	}
+	anchor := m.selectionKey()
+	m.viewSettings = s
+	m.filteredRows = m.applyFilter()
+	m.rebuildFlatItems()
+	if anchor != "" && m.restoreSelectionKey(anchor) {
+		return
+	}
+	if rowAnchor := strings.TrimPrefix(anchor, "row\x00"); rowAnchor != anchor {
+		if sectionPath := m.containingSectionPath(rowAnchor); sectionPath != "" {
+			if m.restoreSelectionKey("section\x00" + sectionPath) {
+				return
+			}
+		}
+	}
+	m.cursor = 0
+	m.listOffset = 0
+}
+
+func (m *Model) containingSectionPath(key string) string {
+	unfolded := buildGroupedTree(m.filteredRows, m.viewSettings, nil)
+	stack := []string{}
+	ancestors := []string{}
+	for _, it := range unfolded {
+		if it.Kind == flatSection {
+			for len(stack) > it.SectionDepth {
+				stack = stack[:len(stack)-1]
+			}
+			if len(stack) == it.SectionDepth {
+				stack = append(stack, it.SectionPath)
+			} else {
+				stack[it.SectionDepth] = it.SectionPath
+			}
+			continue
+		}
+		if rowKey(it.Row) == key {
+			ancestors = append([]string(nil), stack...)
+			break
+		}
+	}
+	for i := len(ancestors) - 1; i >= 0; i-- {
+		want := "section\x00" + ancestors[i]
+		for _, it := range m.flatItems {
+			if flatItemKey(it) == want {
+				return ancestors[i]
+			}
+		}
+	}
+	return ""
 }
 
 // selectedRow returns the skill row the cursor currently points to, if any.
@@ -110,7 +174,7 @@ func (m *Model) collapseAllSections() {
 
 // expandAllSections clears the fold-state map, expanding every section.
 func (m *Model) expandAllSections() {
-	m.foldedSections = make(map[string]bool)
+	m.foldedSections[m.viewSettings.normalized()] = make(map[string]bool)
 }
 
 // rowKey is the stable identity of a resource row across snapshot rebuilds.

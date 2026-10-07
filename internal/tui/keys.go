@@ -32,6 +32,7 @@ type keyMap struct {
 	Harness    key.Binding
 	EditConfig key.Binding
 	Palette    key.Binding
+	View       key.Binding
 
 	// Fold (vim-style z-prefix)
 	FoldPrefix key.Binding
@@ -96,7 +97,7 @@ var defaultKeyMap = keyMap{
 	Search:     key.NewBinding(key.WithKeys("/"), key.WithHelp("/", "fuzzy search")),
 	Clear:      key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "clear search / close")),
 	Enter:      key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "view details / toggle fold")),
-	Space:      key.NewBinding(key.WithKeys("space"), key.WithHelp("space", "toggle modal / fold section")),
+	Space:      key.NewBinding(key.WithKeys("space"), key.WithHelp("space", "toggle resource / all in section")),
 	Collapse:   key.NewBinding(key.WithKeys("h", "left"), key.WithHelp("h/←", "collapse section")),
 	Expand:     key.NewBinding(key.WithKeys("l", "right"), key.WithHelp("l/→", "expand section")),
 	Reload:     key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "reload from disk")),
@@ -105,6 +106,7 @@ var defaultKeyMap = keyMap{
 	Harness:    key.NewBinding(key.WithKeys("H"), key.WithHelp("H", "harness defaults")),
 	EditConfig: key.NewBinding(key.WithKeys("E"), key.WithHelp("E", "edit config")),
 	Palette:    key.NewBinding(key.WithKeys("ctrl+k", ":"), key.WithHelp("ctrl+k/:", "command palette")),
+	View:       key.NewBinding(key.WithKeys("v"), key.WithHelp("v", "view settings")),
 
 	// Fold (vim-style z-prefix)
 	FoldPrefix: key.NewBinding(key.WithKeys("z"), key.WithHelp("z", "fold prefix")),
@@ -180,7 +182,7 @@ func (k keyMap) navigationBindings() []key.Binding {
 
 // actionBindings returns the action-related key bindings.
 func (k keyMap) actionBindings() []key.Binding {
-	return []key.Binding{k.Search, k.Clear, k.Enter, k.Space, k.Collapse, k.Expand, k.FoldToggle, k.FoldAll, k.ExpandAll, k.Harness, k.EditConfig, k.Sync, k.Update, k.Palette}
+	return []key.Binding{k.Search, k.Clear, k.Enter, k.Space, k.Collapse, k.Expand, k.FoldToggle, k.FoldAll, k.ExpandAll, k.View, k.Harness, k.EditConfig, k.Sync, k.Update, k.Palette}
 }
 
 // toggleModalBindings returns the toggle-modal key bindings.
