@@ -369,16 +369,7 @@ func readCodexManifest(root *fsboundary.Dir, name string) (data []byte, identity
 	return file.ReadTarget(file.Identity().Size)
 }
 
-func rotateCodexSets(root *fsboundary.Dir, name, targetDir string, maxDays, maxPerDay int) (err error) {
-	parent, err := root.OpenPath(name)
-	if err != nil {
-		return err
-	}
-	defer func() {
-		if closeErr := parent.Close(); closeErr != nil {
-			err = errors.Join(err, closeErr)
-		}
-	}()
+func rotateCodexSets(parent *fsboundary.Dir, targetDir string, maxDays, maxPerDay int) (err error) {
 	sets, err := loadCompleteCodexSetsAt(parent)
 	if err != nil {
 		return err

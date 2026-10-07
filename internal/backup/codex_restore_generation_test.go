@@ -23,6 +23,7 @@ type codexRestoreObserver struct {
 	onDirectoryDescend func(string)
 	onListingTarget    func(string)
 	onRestoreSelected  func(string)
+	onRetentionTarget  func(string)
 }
 
 func (h codexRestoreObserver) Handle(ctx context.Context, record slog.Record) error {
@@ -59,6 +60,9 @@ func (h codexRestoreObserver) Handle(ctx context.Context, record slog.Record) er
 	}
 	if phase == "ordinary-restore-selected" && h.onRestoreSelected != nil {
 		h.onRestoreSelected(path)
+	}
+	if phase == "backup-retention-target" && h.onRetentionTarget != nil {
+		h.onRetentionTarget(path)
 	}
 	return h.Handler.Handle(ctx, record)
 }

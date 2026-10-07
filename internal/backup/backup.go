@@ -208,30 +208,52 @@ func Rotate(cfg Config) (err error) {
 			continue
 		}
 		targetDir := filepath.Join(dir, entry.Name())
-		if entry.Name() == codexTargetName {
-			if err := rotateCodexSets(root, entry.Name(), targetDir, maxDays, maxPerDay); err != nil {
+		observed, _, readErr := readBackupSourceMetadata(root, entry.Name())
+		if readErr != nil {
+			return fmt.Errorf("backup: rotate %s: %w", targetDir, readErr)
+		}
+		if observed == nil || !observed.IsDir() {
+			return fmt.Errorf("backup: rotate %s: %w", targetDir, fsboundary.ErrGenerationConflict)
+		}
+		identity, identityErr := fsboundary.FileInfoIdentity(observed)
+		if identityErr != nil {
+			return fmt.Errorf("backup: rotate %s: %w", targetDir, identityErr)
+		}
+		slog.Debug("Backup retention target directory selected", "path", targetDir, "phase", "backup-retention-target")
+		if rotateErr := func() (err error) {
+			parent, err := root.OpenPath(entry.Name())
+			if err != nil {
+				if errors.Is(err, fs.ErrNotExist) || errors.Is(err, fsboundary.ErrUnsafePath) {
+					return errors.Join(fsboundary.ErrGenerationConflict, err)
+				}
 				return err
 			}
-			continue
-		}
-		if err := rotateTarget(root, entry.Name(), targetDir, maxDays, maxPerDay); err != nil {
-			return err
+			defer func() {
+				if closeErr := parent.Close(); closeErr != nil {
+					err = errors.Join(err, closeErr)
+				}
+			}()
+			if !identity.SameObject(parent.Identity()) {
+				return fsboundary.ErrGenerationConflict
+			}
+			defer func() {
+				if verifyErr := verifyArchiveParent(parent, targetDir); verifyErr != nil {
+					err = errors.Join(err, verifyErr)
+				}
+			}()
+			if entry.Name() == codexTargetName {
+				return rotateCodexSets(parent, targetDir, maxDays, maxPerDay)
+			}
+			return rotateTarget(parent, targetDir, maxDays, maxPerDay)
+		}(); rotateErr != nil {
+			return fmt.Errorf("backup: rotate %s: %w", targetDir, rotateErr)
 		}
 	}
 	return nil
 }
 
 // rotateTarget applies the two-axis retention policy to a single target directory.
-func rotateTarget(root *fsboundary.Dir, name, targetDir string, maxDays, maxPerDay int) (err error) {
-	parent, err := root.OpenPath(name)
-	if err != nil {
-		return err
-	}
-	defer func() {
-		if closeErr := parent.Close(); closeErr != nil {
-			err = errors.Join(err, closeErr)
-		}
-	}()
+func rotateTarget(parent *fsboundary.Dir, targetDir string, maxDays, maxPerDay int) (err error) {
 	native, err := parent.NativeRoot()
 	if err != nil {
 		return err
