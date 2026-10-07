@@ -112,6 +112,9 @@ func MergeLayers(layers []Layer) *Config {
 				merged.Logging.Compress = layer.Config.Logging.Compress
 			}
 		}
+		if layer.Config.GUI != nil && layer.Source == Organization {
+			merged.GUI = mergeGUIConfig(merged.GUI, layer.Config.GUI)
+		}
 	}
 
 	// Backfill Harnesses on entries that don't have their own, using the

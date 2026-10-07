@@ -593,6 +593,9 @@ func mergeLocalIncludeLayers(layers []Layer) *Config {
 		if cfg.Materialization != nil {
 			merged.Materialization = mergeMaterializationConfig(merged.Materialization, cfg.Materialization)
 		}
+		if cfg.GUI != nil {
+			merged.GUI = mergeGUIConfig(merged.GUI, cfg.GUI)
+		}
 	}
 	return merged
 }
@@ -682,6 +685,9 @@ func loadCollectedConfigTree(path string, loader *configIncludeLoader) (*Config,
 				telemetry := *cfg.Telemetry
 				merged.Telemetry = &telemetry
 			}
+			if kind != organizationLayer && cfg.GUI != nil {
+				merged.GUI = mergeGUIConfig(merged.GUI, cfg.GUI)
+			}
 		}
 	}
 	merged.Include = append(IncludePaths(nil), root.Include...)
@@ -712,6 +718,7 @@ func configAsLocal(cfg *Config) *LocalConfig {
 		MCP:             cfg.MCP,
 		Collections:     cfg.Collections,
 		Materialization: cfg.Materialization,
+		GUI:             cfg.GUI,
 	}
 }
 

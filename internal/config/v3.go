@@ -7,6 +7,7 @@ package config
 import (
 	"bytes"
 	"fmt"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -59,6 +60,7 @@ var topLevelAllowed = map[layerKind]map[string]bool{
 		"backup":               true,
 		"logging":              true,
 		"telemetry":            true,
+		"gui":                  true,
 	},
 	userLayer: {
 		"include":              true,
@@ -79,6 +81,7 @@ var topLevelAllowed = map[layerKind]map[string]bool{
 		"logging":              true,
 		"telemetry":            true,
 		"materialization":      true,
+		"gui":                  true,
 	},
 	repoLayer: {
 		"include":              true,
@@ -96,6 +99,7 @@ var topLevelAllowed = map[layerKind]map[string]bool{
 		"mcp":                  true,
 		"tags":                 true,
 		"materialization":      true,
+		"gui":                  true,
 	},
 	localLayer: {
 		"include":         true,
@@ -109,6 +113,7 @@ var topLevelAllowed = map[layerKind]map[string]bool{
 		"hooks":           true,
 		"mcp":             true,
 		"materialization": true,
+		"gui":             true,
 	},
 }
 
@@ -286,6 +291,15 @@ func validateV3ConfigNode(node *yaml.Node, kind layerKind) []error {
 		}
 		valNode := resolveAlias(root.Content[i+1])
 		switch key {
+		case "harnesses":
+			if valNode.Kind == yaml.SequenceNode {
+				for j, rawItem := range valNode.Content {
+					item := resolveAlias(rawItem)
+					if item.Kind != yaml.ScalarNode || item.Tag != "!!str" || strings.TrimSpace(item.Value) == "" {
+						errs = append(errs, fmt.Errorf("line %d: harnesses[%d] must be a non-empty string", item.Line, j))
+					}
+				}
+			}
 		case "registries":
 			if valNode.Kind == yaml.SequenceNode {
 				for _, rawItem := range valNode.Content {
@@ -297,6 +311,8 @@ func validateV3ConfigNode(node *yaml.Node, kind layerKind) []error {
 			}
 		case "marketplaces":
 			errs = append(errs, validateV3MarketplaceNodes(valNode)...)
+		case "gui":
+			errs = append(errs, validateGUIConfigNode(valNode, kind)...)
 		}
 	}
 

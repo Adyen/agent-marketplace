@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"testing"
 	"time"
 
@@ -73,21 +74,68 @@ func TestHarnessFormSpaceSelectsWithoutWriting(t *testing.T) {
 
 // spec: session-interactions/save-selected-harnesses
 func TestHarnessFormPreservesUnknownIDs(t *testing.T) {
-	m := NewModel("/repo", "/home")
+	tmpHome := t.TempDir()
+	t.Setenv("HOME", tmpHome)
+	configPath := filepath.Join(tmpHome, ".agents", "config.yaml")
+	original := []byte("apiVersion: agent-marketplace/v4\nharnesses:\n  - factory\n  - mystery-harness\nsources:\n  agents:\n    git: https://example.test/agents.git\n    ref: main\nresources:\n  agents:\n    include:\n      - skill/review\n")
+	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(configPath, original, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	m := NewModel("/repo", tmpHome)
 	m.globalHarnesses = []string{"factory", "mystery-harness"}
 	m.openHarnessModal()
-	// Toggle factory off through the form; the unknown ID must survive.
-	mi, _ := m.Update(tea.KeyPressMsg{Code: tea.KeySpace})
-	m = mi.(Model)
-	saved := selectedHarnessIDs(m.harnessModal.selected)
-	found := false
-	for _, id := range saved {
-		if id == "mystery-harness" {
-			found = true
-		}
+	if m.harnessModal.form == nil {
+		t.Fatal("harness modal must own a Huh form")
 	}
-	if !found {
-		t.Fatalf("unknown harness ID lost through form editing: %#v", saved)
+
+	// Toggle factory off through the form; the unknown ID must survive.
+	mi, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeySpace})
+	m = mi.(Model)
+	if cmd != nil {
+		t.Fatal("space deselect must not emit a write command")
+	}
+	mi, cmd = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	m = mi.(Model)
+	if cmd == nil {
+		t.Fatal("enter on a non-empty selection must emit the save command")
+	}
+	msg := cmd()
+	hw, ok := msg.(harnessWrittenMsg)
+	if !ok {
+		t.Fatalf("expected harnessWrittenMsg, got %T", msg)
+	}
+	if hw.err != nil {
+		t.Fatalf("harness save rejected an already-present identifier: %v", hw.err)
+	}
+
+	parityPath := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(parityPath, original, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := config.SetHarnessesInConfig(parityPath, []string{"mystery-harness"}); err != nil {
+		t.Fatalf("shared writer rejected the same selection: %v", err)
+	}
+	want, err := os.ReadFile(parityPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != string(want) {
+		t.Fatalf("TUI save diverged from the shared writer:\nTUI:\n%s\nshared:\n%s", got, want)
+	}
+	cfg, err := config.LoadConfigFromPath(configPath)
+	if err != nil {
+		t.Fatalf("reload after save: %v", err)
+	}
+	if !slices.Equal(cfg.Harnesses, []string{"mystery-harness"}) {
+		t.Fatalf("harnesses after save = %v, want [mystery-harness]", cfg.Harnesses)
 	}
 }
 

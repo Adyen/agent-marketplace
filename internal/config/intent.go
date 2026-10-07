@@ -31,6 +31,7 @@ type LayerIntent struct {
 	legacy   *Config
 	v4       *V4Config
 	errors   []error
+	warnings []error
 	rootRead bool
 }
 
@@ -42,6 +43,7 @@ type Settings struct {
 	Logging             *LoggingConfig
 	Telemetry           *telemetryconfig.TelemetryConfig
 	Materialization     *MaterializationConfig
+	GUI                 *GUIConfig
 }
 
 type SourceKind = V4SourceKind
@@ -105,6 +107,9 @@ func (l LayerIntent) Settings() Settings {
 			Telemetry:       l.v4.Telemetry,
 			Materialization: l.v4.Materialization,
 		}
+		if l.Source == Organization {
+			settings.GUI = l.v4.GUI
+		}
 		if l.v4.AllowedRegistries != nil {
 			values := cloneV4StringList(*l.v4.AllowedRegistries)
 			settings.AllowedRegistries = &values
@@ -124,6 +129,9 @@ func (l LayerIntent) Settings() Settings {
 		Logging:         l.legacy.Logging,
 		Telemetry:       l.legacy.Telemetry,
 		Materialization: l.legacy.Materialization,
+	}
+	if l.Source == Organization {
+		settings.GUI = l.legacy.GUI
 	}
 	if l.legacy.AllowedRegistries != nil {
 		values := cloneV4StringList(*l.legacy.AllowedRegistries)
@@ -146,6 +154,7 @@ func (s Settings) config() *Config {
 		Logging:             s.Logging,
 		Telemetry:           s.Telemetry,
 		Materialization:     s.Materialization,
+		GUI:                 s.GUI,
 	}
 }
 
@@ -395,6 +404,8 @@ func readLayerIntent(path, canonical string, data []byte, kind layerKind, overla
 		}
 		li.v4 = v4
 		li.Reads = append([]ConfigRead(nil), v4.reads...)
+		li.warnLowerLayerGUI(v4.GUI)
+		li.warnUnsupportedHarnesses(v4.Harnesses)
 		return li, nil
 	}
 	loader := newConfigIncludeLoader(kind)
@@ -405,6 +416,10 @@ func readLayerIntent(path, canonical string, data []byte, kind layerKind, overla
 	cfg, err := loadCollectedConfigTree(path, loader)
 	li.legacy = cfg
 	li.Reads = loader.reads
+	if cfg != nil {
+		li.warnLowerLayerGUI(cfg.GUI)
+		li.warnUnsupportedHarnesses(cfg.Harnesses)
+	}
 	return li, err
 }
 
@@ -416,6 +431,8 @@ func readRootLayerIntent(path string, data []byte, kind layerKind) (LayerIntent,
 			return li, err
 		}
 		li.v4 = v4
+		li.warnLowerLayerGUI(v4.GUI)
+		li.warnUnsupportedHarnesses(v4.Harnesses)
 		return li, nil
 	}
 	cfg, errs := loadV3ConfigWithAPIVersion(data, kind, false, kind != localLayer)
@@ -426,6 +443,8 @@ func readRootLayerIntent(path string, data []byte, kind layerKind) (LayerIntent,
 		return li, fmt.Errorf("validate logging config %q: %w", path, errors.Join(logErrs...))
 	}
 	li.legacy = cfg
+	li.warnLowerLayerGUI(cfg.GUI)
+	li.warnUnsupportedHarnesses(cfg.Harnesses)
 	return li, nil
 }
 
@@ -607,6 +626,7 @@ func ReadIntent(ctx context.Context, opts LoadEffectiveOptions) Intent {
 
 	for _, source := range intentLayerOrder {
 		intent.Errors = append(intent.Errors, intent.Layers[source].errors...)
+		intent.Warnings = append(intent.Warnings, intent.Layers[source].warnings...)
 	}
 	return intent
 }
