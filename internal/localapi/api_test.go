@@ -767,6 +767,71 @@ func TestSnapshotReturnsCurrentWhileOperationHoldsGate(t *testing.T) {
 }
 
 // spec: gui-local-api/concurrent-mutation-is-rejected-as-busy
+func TestBusySnapshotReportsSharedGateWithoutMutatingCache(t *testing.T) {
+	for _, kind := range []session.OperationKind{session.OperationSync, session.OperationMutation} {
+		t.Run(string(kind), func(t *testing.T) {
+			gate := session.NewOperationGate()
+			api := newAPI(t, session.DependencyLifecycle{}, gate)
+			handler := api.Handler()
+
+			seed := httptest.NewRecorder()
+			handler.ServeHTTP(seed, authedRequest(t, api, "/api/snapshot", ""))
+			if seed.Code != http.StatusOK {
+				t.Fatalf("initial snapshot status = %d, want 200", seed.Code)
+			}
+
+			api.mu.Lock()
+			cached := api.current
+			if cached == nil {
+				api.mu.Unlock()
+				t.Fatal("initial snapshot was not cached")
+			}
+			if cached.Operation != nil {
+				api.mu.Unlock()
+				t.Fatalf("initial operation = %+v, want nil", cached.Operation)
+			}
+			cachedJSON, err := json.Marshal(cached)
+			if err != nil {
+				api.mu.Unlock()
+				t.Fatal(err)
+			}
+			cachedGeneration, cachedSequence := api.currentG, api.sequence
+			api.mu.Unlock()
+
+			id, ok := gate.Begin(kind)
+			if !ok {
+				t.Fatal("could not hold shared operation gate")
+			}
+			defer gate.Finish(id)
+
+			recorder := httptest.NewRecorder()
+			handler.ServeHTTP(recorder, authedRequest(t, api, "/api/snapshot", ""))
+			if recorder.Code != http.StatusOK {
+				t.Fatalf("busy snapshot status = %d, want 200", recorder.Code)
+			}
+			var got snapshotDTO
+			if err := json.Unmarshal(recorder.Body.Bytes(), &got); err != nil {
+				t.Fatal(err)
+			}
+			if got.Operation == nil || got.Operation.ID != uint64(id) || got.Operation.Kind != string(kind) {
+				t.Fatalf("busy snapshot operation = %+v, want id %d kind %q", got.Operation, id, kind)
+			}
+
+			api.mu.Lock()
+			afterJSON, err := json.Marshal(api.current)
+			unchanged := api.current == cached && api.currentG == cachedGeneration && api.sequence == cachedSequence && bytes.Equal(cachedJSON, afterJSON)
+			api.mu.Unlock()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !unchanged {
+				t.Fatal("busy snapshot changed cached DTO, generation, or event sequence")
+			}
+		})
+	}
+}
+
+// spec: gui-local-api/concurrent-mutation-is-rejected-as-busy
 func TestConcurrentMutationRejectedAsBusy(t *testing.T) {
 	blocked := newBlockingLifecycle(t)
 	ws, home := newFixture(t)
@@ -897,6 +962,9 @@ func TestActionValidationBeforeGuard(t *testing.T) {
 	handler.ServeHTTP(recorder, req)
 	if recorder.Code != http.StatusMethodNotAllowed {
 		t.Fatalf("GET status = %d, want 405", recorder.Code)
+	}
+	if allow := recorder.Header().Get("Allow"); allow != http.MethodPost {
+		t.Fatalf("GET Allow = %q, want %q", allow, http.MethodPost)
 	}
 	if calls.Load() != 0 {
 		t.Fatalf("invalid requests ran %d lifecycle callbacks", calls.Load())

@@ -210,6 +210,7 @@ func (m *Model) finishUpdateReload(generation requestGeneration, reloadErr error
 	m.updatePendingWarnings = nil
 	m.syncing = false
 	m.clearOperationProgress()
+	m.finishDependencyOperation()
 	// Match the direct updateDoneMsg path: an update never satisfies sync+quit.
 	m.quitAfterSync = false
 	switch {
@@ -248,6 +249,7 @@ func (m *Model) finishSyncReload(generation requestGeneration, reloadErr error) 
 	m.syncPendingWarnings = nil
 	m.syncing = false
 	m.clearOperationProgress()
+	m.finishDependencyOperation()
 	// A sync+quit confirmed while the reload was already in flight still
 	// quits once the authoritative reload lands; the verdict is carried to
 	// Run() rather than toasted.
@@ -748,6 +750,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.syncing = false
 			m.quitAfterSync = false
 			m.clearOperationProgress()
+			m.finishDependencyOperation()
 			slog.Debug("sync complete, quitting as requested", "err", msg.err)
 			m.syncQuitErr = msg.err
 			return m, tea.Quit
@@ -782,6 +785,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.syncing = false
 		m.clearOperationProgress()
+		m.finishDependencyOperation()
 		var installCmd tea.Cmd
 		if msg.snapshot.generation != 0 {
 			m.applySnapshotStatus(msg.snapshot)
@@ -1340,6 +1344,9 @@ func (m Model) dispatchAction(id paletteActionID) (tea.Model, tea.Cmd) {
 				return toastMsg{text: "already in sync", duration: 2 * time.Second}
 			}
 		}
+		if !m.beginDependencyOperation(operationSync) {
+			return m, operationBlockedCmd()
+		}
 		m.refreshing = false
 		// Sync does not allocate a snapshot generation until syncDoneMsg
 		// actually schedules the authoritative post-sync reload.
@@ -1354,6 +1361,9 @@ func (m Model) dispatchAction(id paletteActionID) (tea.Model, tea.Cmd) {
 		}
 		if m.loading || m.syncing {
 			return m, nil
+		}
+		if !m.beginDependencyOperation(operationUpdate) {
+			return m, operationBlockedCmd()
 		}
 		m.refreshing = false
 		generation := m.beginRequest(requestSnapshot)
@@ -1824,6 +1834,9 @@ func (m Model) confirmSyncQuitYes() (tea.Model, tea.Cmd) {
 		m.pane = paneList
 		m.quitAfterSync = true
 		return m, nil
+	}
+	if !m.beginDependencyOperation(operationSync) {
+		return m, operationBlockedCmd()
 	}
 	// Sync then quit — start the sync and defer tea.Quit to the
 	// syncDoneMsg handler. Including tea.Quit in the batch here

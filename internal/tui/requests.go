@@ -81,6 +81,27 @@ func (m *Model) finishOperation(id operationID) {
 	m.externalOperation = 0
 }
 
+func (m *Model) beginDependencyOperation(kind operationKind) bool {
+	if m.operationGate == nil {
+		return true
+	}
+	id, ok := m.operationGate.Begin(kind)
+	if !ok {
+		slog.Debug("tui dependency operation blocked by shared gate", "operation", kind)
+		return false
+	}
+	m.dependencyOperation = id
+	return true
+}
+
+func (m *Model) finishDependencyOperation() {
+	if m.operationGate == nil {
+		return
+	}
+	m.operationGate.Finish(m.dependencyOperation)
+	m.dependencyOperation = 0
+}
+
 func operationBlockedCmd() tea.Cmd {
 	return func() tea.Msg {
 		return toastMsg{text: "another operation is in progress", duration: 2 * time.Second}
