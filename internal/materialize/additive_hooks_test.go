@@ -122,8 +122,8 @@ func TestAdditiveHooksIngestResolveMaterialize(t *testing.T) {
 			if err != nil {
 				t.Fatalf("first Run: %v", err)
 			}
-			if len(report.Diags) != 0 {
-				t.Fatalf("first Run diagnostics = %v, want none", report.Diags)
+			if diags := nonReviewDiags(report); len(diags) != 0 {
+				t.Fatalf("first Run diagnostics = %v, want none", diags)
 			}
 			hooksPath := filepath.Join(repoRoot, ".factory", "hooks.json")
 			firstBytes, err := os.ReadFile(hooksPath)
@@ -148,7 +148,7 @@ func TestAdditiveHooksIngestResolveMaterialize(t *testing.T) {
 				t.Fatal("test requires at least two resolved hook occurrences")
 			}
 			report, err = Run(context.Background(), repoRoot, resolved[1:])
-			if err != nil || len(report.Diags) != 0 {
+			if err != nil || len(nonReviewDiags(report)) != 0 {
 				t.Fatalf("removal Run = %v, diagnostics %v", err, report.Diags)
 			}
 			remainingBytes, err := os.ReadFile(hooksPath)

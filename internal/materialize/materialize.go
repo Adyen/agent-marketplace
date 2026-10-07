@@ -136,6 +136,7 @@ type Report struct {
 	PerRoot          []TargetReport
 	Diags            []diag.Diagnostic
 	BlockedResources []BlockedResource
+	HookChanges      []HookChange `json:"-"`
 }
 
 // BlockedResource identifies a resource omitted during compilation for one

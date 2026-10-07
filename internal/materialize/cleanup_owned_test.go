@@ -610,7 +610,7 @@ func TestRemoveOwnedSequentialHooksAndDuplicate(t *testing.T) {
 			devinResolved(t, "second", ir.NewHook("second", "PostToolUse", "echo second", "command", nil, ir.SourceRef{}), false),
 		}
 		report, err := Run(context.Background(), repoRoot, selection)
-		if err != nil || report == nil || len(report.Diags) != 0 {
+		if err != nil || report == nil || len(nonReviewDiags(report)) != 0 {
 			t.Fatalf("seed Run = %#v err=%v", report, err)
 		}
 		preview, err := DevinRepairPreview(context.Background(), repoRoot, nil)
@@ -647,7 +647,7 @@ func TestRemoveOwnedSequentialHooksAndDuplicate(t *testing.T) {
 		t.Setenv("CODEX_HOME", filepath.Join(home, ".codex"))
 		selection := []resolver.ResolvedArtifact{devinResolved(t, "hook", ir.NewHook("hook", "PostToolUse", "echo duplicate", "command", nil, ir.SourceRef{}), false)}
 		report, err := Run(context.Background(), repoRoot, selection)
-		if err != nil || report == nil || len(report.Diags) != 0 {
+		if err != nil || report == nil || len(nonReviewDiags(report)) != 0 {
 			t.Fatalf("seed Run = %#v err=%v", report, err)
 		}
 		path := filepath.Join(devinProjectRoot(repoRoot), harness.DevinProjectHooksFile)
@@ -779,7 +779,7 @@ func TestRemoveOwnedCodexRawHooks(t *testing.T) {
 		t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
 		t.Setenv("CODEX_HOME", filepath.Join(home, ".codex"))
 		report, err := Run(context.Background(), repoRoot, cleanupCodexHookSelection(t, "./first", "./second"))
-		if err != nil || report == nil || len(report.Diags) != 0 {
+		if err != nil || report == nil || len(nonReviewDiags(report)) != 0 {
 			t.Fatalf("seed Run = %#v err=%v", report, err)
 		}
 		preview, err := CodexRepairPreview(context.Background(), repoRoot, nil)
@@ -822,7 +822,7 @@ func TestRemoveOwnedCodexRawHooks(t *testing.T) {
 		t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
 		t.Setenv("CODEX_HOME", filepath.Join(home, ".codex"))
 		report, err := Run(context.Background(), repoRoot, cleanupCodexHookSelection(t, "./duplicate"))
-		if err != nil || report == nil || len(report.Diags) != 0 {
+		if err != nil || report == nil || len(nonReviewDiags(report)) != 0 {
 			t.Fatalf("seed Run = %#v err=%v", report, err)
 		}
 		root, err := filepath.EvalSymlinks(filepath.Join(home, ".codex"))
@@ -906,7 +906,7 @@ func TestRemoveOwnedCodexRawHooks(t *testing.T) {
 		t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
 		t.Setenv("CODEX_HOME", filepath.Join(home, ".codex"))
 		report, err := Run(context.Background(), repoRoot, cleanupCodexHookSelection(t, "./duplicate"))
-		if err != nil || report == nil || len(report.Diags) != 0 {
+		if err != nil || report == nil || len(nonReviewDiags(report)) != 0 {
 			t.Fatalf("seed Run = %#v err=%v", report, err)
 		}
 		root, err := filepath.EvalSymlinks(filepath.Join(home, ".codex"))

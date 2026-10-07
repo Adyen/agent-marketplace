@@ -1,7 +1,9 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -10,6 +12,7 @@ import (
 	"path/filepath"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -220,6 +223,10 @@ func runSyncWithLocks(ctx context.Context, out io.Writer, noBackup bool, strict 
 				return err
 			}
 		}
+	}
+
+	if err := writeHookChanges(out, report, false); err != nil {
+		return err
 	}
 
 	// Under verbose, list malformed resources with their path and parse error
@@ -509,6 +516,10 @@ func runSyncCheck(ctx context.Context, out io.Writer, strict bool, offline ...bo
 	}
 	errorRows := buildErrorRows(checkErrs)
 
+	if err := writeHookChanges(out, report, true); err != nil {
+		return err
+	}
+
 	summaryErr := writeSyncCheckSummary(out, report, errorRows, checkErrs)
 	if strict && len(requirementWarnings) > 0 {
 		return errors.Join(summaryErr, errStrictUnmetPrerequisites)
@@ -603,6 +614,111 @@ func writeSyncCheckSummary(out io.Writer, report *materialize.Report, errorRows 
 	default:
 		return fmt.Errorf("%d configuration error(s)", len(errorRows))
 	}
+}
+
+func writeHookChanges(out io.Writer, report *materialize.Report, pending bool) error {
+	if report == nil || len(report.HookChanges) == 0 {
+		return nil
+	}
+	changes := slices.Clone(report.HookChanges)
+	sort.SliceStable(changes, func(i, j int) bool {
+		if changes[i].Target != changes[j].Target {
+			return changes[i].Target < changes[j].Target
+		}
+		if changes[i].MachineScope != changes[j].MachineScope {
+			return !changes[i].MachineScope
+		}
+		if changes[i].File != changes[j].File {
+			return changes[i].File < changes[j].File
+		}
+		if changes[i].Event != changes[j].Event {
+			return changes[i].Event < changes[j].Event
+		}
+		if changes[i].Matcher != changes[j].Matcher {
+			return changes[i].Matcher < changes[j].Matcher
+		}
+		if !bytes.Equal(changes[i].Before, changes[j].Before) {
+			return bytes.Compare(changes[i].Before, changes[j].Before) < 0
+		}
+		return bytes.Compare(changes[i].After, changes[j].After) < 0
+	})
+	header := "Hook changes:"
+	if pending {
+		header = "Hook changes (pending, not written):"
+	}
+	if _, err := fmt.Fprintln(out, header); err != nil {
+		return err
+	}
+	homeDir, _ := os.UserHomeDir()
+	for _, change := range changes {
+		scope := "repository"
+		if change.MachineScope {
+			scope = "machine"
+		}
+		if _, err := fmt.Fprintf(out, "  %s (%s) %s: %s", change.Target, scope, abbreviateHome(change.File, homeDir), change.Event); err != nil {
+			return err
+		}
+		if change.Matcher != "" {
+			if _, err := fmt.Fprintf(out, " matcher %s", strconv.Quote(change.Matcher)); err != nil {
+				return err
+			}
+		}
+		if _, err := fmt.Fprintln(out); err != nil {
+			return err
+		}
+		for _, side := range []struct {
+			label string
+			raw   json.RawMessage
+		}{{"-", change.Before}, {"+", change.After}} {
+			for _, line := range hookChangePayloadLines(side.raw) {
+				if _, err := fmt.Fprintf(out, "    %s %s\n", side.label, line); err != nil {
+					return err
+				}
+			}
+		}
+	}
+	return nil
+}
+
+func hookChangePayloadLines(raw json.RawMessage) []string {
+	if len(raw) == 0 {
+		return nil
+	}
+	var entry map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &entry); err != nil {
+		return nil
+	}
+	handlers := []map[string]json.RawMessage{entry}
+	if group, ok := entry["hooks"]; ok {
+		var inner []map[string]json.RawMessage
+		if err := json.Unmarshal(group, &inner); err == nil && len(inner) > 0 {
+			handlers = inner
+		}
+	}
+	var lines []string
+	for _, handler := range handlers {
+		matched := false
+		for _, field := range []string{"command", "prompt"} {
+			value, ok := handler[field]
+			if !ok {
+				continue
+			}
+			var s string
+			if err := json.Unmarshal(value, &s); err != nil {
+				continue
+			}
+			matched = true
+			lines = append(lines, fmt.Sprintf("%s: %s", field, strconv.Quote(s)))
+		}
+		if !matched {
+			compact, err := json.Marshal(handler)
+			if err != nil {
+				continue
+			}
+			lines = append(lines, string(compact))
+		}
+	}
+	return lines
 }
 
 // activeOutputDirs returns a deduplicated, sorted list of output directories

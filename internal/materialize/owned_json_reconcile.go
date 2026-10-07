@@ -36,8 +36,9 @@ func ownedJSONHookIdentity(event string, rule []byte) (string, error) {
 
 // ownedJSONAggregateReport is the per-file outcome, folded into the run Report.
 type ownedJSONAggregateReport struct {
-	written bool
-	diags   []diag.Diagnostic
+	written     bool
+	diags       []diag.Diagnostic
+	hookChanges []HookChange
 }
 
 // reconcileOwnedJSONAggregates reconciles every aggregate file for one output
@@ -246,10 +247,19 @@ func appendOwnedJSONAggregateReports(ctx context.Context, report *Report, store 
 	for _, file := range files {
 		fileReport := reconcileOwnedJSONAggregateFile(ctx, store, key, outDir, file, desiredByRel[file.rel], work != nil && work.incomplete[file.rel], options, dryRun)
 		report.Diags = append(report.Diags, fileReport.diags...)
+		report.HookChanges = append(report.HookChanges, fileReport.hookChanges...)
 		if !fileReport.written {
 			continue
 		}
-		if options.onWrite != nil {
+		if file.hookShape != "" {
+			if len(fileReport.hookChanges) > 0 {
+				if options.onWrite != nil {
+					options.onWrite(report, key, file.rel, dryRun)
+				} else {
+					report.Diags = append(report.Diags, nativeHookReviewDiagnostic(key, file.rel, dryRun))
+				}
+			}
+		} else if options.onWrite != nil {
 			options.onWrite(report, key, file.rel, dryRun)
 		}
 		recordOwnedAggregateWrite(report, key, options.rootID, outDir, file.rel)
@@ -444,7 +454,12 @@ func reconcileOwnedJSONAggregateFile(ctx context.Context, store *ownership.Store
 		}
 	}
 	if file.hookShape != "" {
-		return finishNativeOwnedJSONFile(ctx, out, store, key, outDir, file, abs, raw, readErr, next, changed, plan, proof, options, dryRun, extras)
+		var changes []HookChange
+		if changed {
+			changes = nativeHookReviewDelta(key, file, abs, existing, proof, plan)
+		}
+		changes = append(changes, extras.hookChanges...)
+		return finishNativeOwnedJSONFile(ctx, out, store, key, outDir, file, abs, raw, readErr, next, changed, plan, proof, options, dryRun, extras, changes)
 	}
 	if !doc.Changed() {
 		slog.Debug("owned JSON aggregate already in sync", "target", key.target, "machine_scope", key.machineScope,
@@ -477,10 +492,11 @@ func reconcileOwnedJSONAggregateFile(ctx context.Context, store *ownership.Store
 	return out
 }
 
-func finishNativeOwnedJSONFile(ctx context.Context, out ownedJSONAggregateReport, store *ownership.Store, key outputKey, outDir string, file ownedJSONFileSpec, abs string, raw []byte, readErr error, next []byte, changed bool, plan ownedJSONPatch, proof ownership.Proof, options ownedJSONReconcileOptions, dryRun bool, extras nativeHookTransactionExtras) ownedJSONAggregateReport {
+func finishNativeOwnedJSONFile(ctx context.Context, out ownedJSONAggregateReport, store *ownership.Store, key outputKey, outDir string, file ownedJSONFileSpec, abs string, raw []byte, readErr error, next []byte, changed bool, plan ownedJSONPatch, proof ownership.Proof, options ownedJSONReconcileOptions, dryRun bool, extras nativeHookTransactionExtras, changes []HookChange) ownedJSONAggregateReport {
 	rel := file.rel
 	if dryRun {
 		out.written = changed || extras.pending
+		out.hookChanges = changes
 		return out
 	}
 	var desired []dependencytxn.DesiredFile
@@ -584,6 +600,7 @@ func finishNativeOwnedJSONFile(ctx context.Context, out ownedJSONAggregateReport
 		"file", rel, "owned_entries", len(plan.owned), "satisfactions", len(plan.satisfactions),
 		"aggregate_changed", changed, "additional_participants", len(extras.participants))
 	out.written = changed || extras.pending
+	out.hookChanges = changes
 	return out
 }
 

@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -51,6 +52,7 @@ type nativeHookTransactionExtras struct {
 	commitOptions         []dependencytxn.Option
 	beforeNativeAssertion func() error
 	diagnostics           []diag.Diagnostic
+	hookChanges           []HookChange
 	pending               bool
 	refused               bool
 }
@@ -206,7 +208,7 @@ func nativeHookActivationFinalizer(key outputKey, repoRoot string, mcpEntries []
 				extras.diagnostics = append(extras.diagnostics, nativeHookLegacyRefusal(key))
 				return extras, nil
 			}
-			next, changed, deleteFile, patchErr := nativeHookLegacyPatch(legacyDoc, declaration.file.Member, expectedEvents)
+			next, changed, deleteFile, removals, patchErr := nativeHookLegacyPatch(legacyDoc, declaration.file.Member, expectedEvents)
 			if patchErr != nil {
 				extras.refused = true
 				extras.diagnostics = append(extras.diagnostics, nativeHookLegacyRefusal(key))
@@ -228,6 +230,16 @@ func nativeHookActivationFinalizer(key outputKey, repoRoot string, mcpEntries []
 				}
 				extras.participants = append(extras.participants, participant)
 				extras.backups = append(extras.backups, nativeHookBackup{rel: legacyRel, abs: legacyAbs})
+				for _, removal := range removals {
+					extras.hookChanges = append(extras.hookChanges, HookChange{
+						Target:       key.target,
+						MachineScope: key.machineScope,
+						File:         legacyAbs,
+						Event:        removal.event,
+						Matcher:      removal.matcher,
+						Before:       removal.before,
+					})
+				}
 				extras.pending = true
 			} else {
 				extras.assertions = append(extras.assertions, dependencytxn.DesiredFile{
@@ -447,23 +459,30 @@ func nativeHookExcludedSupportFiles(key outputKey) map[string]bool {
 	return excluded
 }
 
-func nativeHookLegacyPatch(doc *jsonc.Document, member string, expectedEvents map[string]bool) ([]byte, bool, bool, error) {
+type nativeHookLegacyRemoval struct {
+	event   string
+	matcher string
+	before  json.RawMessage
+}
+
+func nativeHookLegacyPatch(doc *jsonc.Document, member string, expectedEvents map[string]bool) ([]byte, bool, bool, []nativeHookLegacyRemoval, error) {
 	root := doc.Root()
 	if root.Kind() != jsonc.KindObject {
-		return nil, false, false, fmt.Errorf("legacy hook root is not an object")
+		return nil, false, false, nil, fmt.Errorf("legacy hook root is not an object")
 	}
 	container := root
 	if member != "" {
 		var ok bool
 		container, ok = root.Member(member)
 		if !ok {
-			return doc.Bytes(), false, false, nil
+			return doc.Bytes(), false, false, nil, nil
 		}
 		if container.Kind() != jsonc.KindObject {
-			return nil, false, false, fmt.Errorf("legacy hook envelope is not an object")
+			return nil, false, false, nil, fmt.Errorf("legacy hook envelope is not an object")
 		}
 	}
 	changed := false
+	var removals []nativeHookLegacyRemoval
 	for _, event := range container.Keys() {
 		eventNode, ok := container.Member(event)
 		if !ok {
@@ -473,38 +492,66 @@ func nativeHookLegacyPatch(doc *jsonc.Document, member string, expectedEvents ma
 			if member == "" && !expectedEvents[event] {
 				continue
 			}
-			return nil, false, false, fmt.Errorf("legacy hook event is not an array")
+			return nil, false, false, nil, fmt.Errorf("legacy hook event is not an array")
 		}
 		var elements [][]byte
 		eventChanged := false
 		for i := 0; i < eventNode.Len(); i++ {
 			entry, _ := eventNode.Element(i)
 			if entry.Kind() != jsonc.KindObject {
-				return nil, false, false, fmt.Errorf("legacy hook entry is not an object")
+				return nil, false, false, nil, fmt.Errorf("legacy hook entry is not an object")
 			}
 			if isManagedNode(entry) {
+				canonical, err := canonicalOwnedJSON(entry.Raw())
+				if err != nil {
+					return nil, false, false, nil, fmt.Errorf("legacy hook entry cannot be canonicalized")
+				}
+				removals = append(removals, nativeHookLegacyRemoval{event: event, matcher: hookReviewMatcher(canonical), before: canonical})
 				eventChanged = true
 				changed = true
 				continue
 			}
 			if handlers, hasHandlers := entry.Member("hooks"); hasHandlers {
 				if handlers.Kind() != jsonc.KindArray {
-					return nil, false, false, fmt.Errorf("legacy hook group handlers are not an array")
+					return nil, false, false, nil, fmt.Errorf("legacy hook group handlers are not an array")
 				}
 				var retained [][]byte
+				var removed []json.RawMessage
 				handlersChanged := false
 				for j := 0; j < handlers.Len(); j++ {
 					handler, _ := handlers.Element(j)
 					if handler.Kind() != jsonc.KindObject {
-						return nil, false, false, fmt.Errorf("legacy hook handler is not an object")
+						return nil, false, false, nil, fmt.Errorf("legacy hook handler is not an object")
 					}
 					if isManagedNode(handler) {
+						canonical, err := canonicalOwnedJSON(handler.Raw())
+						if err != nil {
+							return nil, false, false, nil, fmt.Errorf("legacy hook handler cannot be canonicalized")
+						}
+						removed = append(removed, canonical)
 						handlersChanged = true
 						continue
 					}
 					retained = append(retained, handler.Raw())
 				}
 				if handlersChanged {
+					removedRaw, err := json.Marshal(removed)
+					if err != nil {
+						return nil, false, false, nil, fmt.Errorf("legacy hook removal cannot be encoded")
+					}
+					parts := map[string]json.RawMessage{"hooks": removedRaw}
+					if matcherNode, hasMatcher := entry.Member("matcher"); hasMatcher {
+						parts["matcher"] = matcherNode.Raw()
+					}
+					groupRaw, err := json.Marshal(parts)
+					if err != nil {
+						return nil, false, false, nil, fmt.Errorf("legacy hook removal cannot be encoded")
+					}
+					canonical, err := canonicalOwnedJSON(groupRaw)
+					if err != nil {
+						return nil, false, false, nil, fmt.Errorf("legacy hook removal cannot be canonicalized")
+					}
+					removals = append(removals, nativeHookLegacyRemoval{event: event, matcher: hookReviewMatcher(canonical), before: canonical})
 					doc.SetElements(handlers, retained)
 					eventChanged = true
 					changed = true
@@ -524,9 +571,9 @@ func nativeHookLegacyPatch(doc *jsonc.Document, member string, expectedEvents ma
 		doc.DeleteMember(root, member)
 	}
 	if changed && len(root.Keys()) == 0 {
-		return nil, true, true, nil
+		return nil, true, true, removals, nil
 	}
-	return doc.Bytes(), doc.Changed(), false, nil
+	return doc.Bytes(), doc.Changed(), false, removals, nil
 }
 
 func nativeHookPortableManifestPath(repoRoot string, machineScope bool) (string, error) {

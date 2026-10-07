@@ -600,7 +600,13 @@ func reconcileCodexMCPWithSession(ctx context.Context, report *Report, key outpu
 }
 
 func appendCodexTrustReviewDiagnostic(report *Report, key outputKey, rel string, dryRun bool) {
-	if report == nil || key.target != targetmeta.TargetCodex || key.machineScope {
+	if report == nil || key.target != targetmeta.TargetCodex {
+		return
+	}
+	if key.machineScope {
+		if rel == codexHooksFile {
+			report.Diags = append(report.Diags, nativeHookReviewDiagnostic(key, rel, dryRun))
+		}
 		return
 	}
 	nativePath := path.Join(path.Dir(codexHooksArtifactPath), filepath.ToSlash(rel))

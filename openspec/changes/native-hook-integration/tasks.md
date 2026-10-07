@@ -223,7 +223,7 @@ hook matrix goldens deliberately.
 
 ## 7. Review report and value-free diagnostics
 
-- [ ] 7.1 Add hook entry changes to the materialization report, and render a
+- [x] 7.1 Add hook entry changes to the materialization report, and render a
   "Hook changes" section for `sync` and `sync --check`. Emit
   `materialize.hook.review` and `materialize.hook.review-pending`, keeping the
   Codex codes. Annotate:
@@ -233,7 +233,7 @@ hook matrix goldens deliberately.
   - `codex-keeps-its-trust-review-codes`
 
   Verify the command tests pass through `isolateCommandTest`
-- [ ] 7.2 Add a cross-target test proving that no hook diagnostic or log
+- [x] 7.2 Add a cross-target test proving that no hook diagnostic or log
   record contains payload values, and that a sync printing a review writes no
   command to the log file or telemetry. Annotate
   `diagnostics-never-quote-payloads-on-any-target` and
