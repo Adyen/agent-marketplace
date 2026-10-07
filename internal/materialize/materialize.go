@@ -338,19 +338,6 @@ func validatePortableOutputDir(outDir, rel string) (string, error) {
 	return dir, nil
 }
 
-// ensurePortableOutputDir creates a portable output directory only after
-// validatePortableOutputDir has confirmed no existing component is a symlink.
-func ensurePortableOutputDir(outDir, rel string) (string, error) {
-	dir, err := validatePortableOutputDir(outDir, rel)
-	if err != nil {
-		return "", err
-	}
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return "", err
-	}
-	return dir, nil
-}
-
 func (s *portableState) save(dryRun bool) error {
 	if dryRun {
 		return nil
@@ -3455,24 +3442,6 @@ func staleArtifactLinks(outDir string, desired map[string]string, snapshots map[
 	}
 	sort.Strings(stale)
 	return stale, diags, nil
-}
-
-func cleanEmptyArtifactDirs(outDir, relPath string) {
-	if relPath == "." || relPath == "" {
-		return
-	}
-	parts := strings.Split(filepath.ToSlash(relPath), "/")
-	for i := len(parts); i >= 1; i-- {
-		dirPath := filepath.Join(outDir, filepath.FromSlash(strings.Join(parts[:i], "/")))
-		if dirPath == outDir {
-			break
-		}
-		entries, err := os.ReadDir(dirPath)
-		if err != nil || len(entries) > 0 {
-			break
-		}
-		_ = os.Remove(dirPath)
-	}
 }
 
 // cleanEmptyPortableArtifactDirs is the portable counterpart of

@@ -527,10 +527,6 @@ func validCodexManagedPath(rel string) bool {
 	return rel != "" && clean != "." && clean != ".." && !filepath.IsAbs(rel) && !strings.HasPrefix(clean, ".."+string(filepath.Separator))
 }
 
-func validateCodexArchive(archivePath, root string, managed []string) error {
-	return withBackupPayload(archivePath, func(reader io.Reader) error { return validateCodexArchivePayload(reader, root, managed) })
-}
-
 func validateCodexArchivePayload(payload io.Reader, root string, managed []string) error {
 	info, err := os.Lstat(root)
 	if err == nil && (info.Mode()&os.ModeSymlink != 0 || !info.IsDir()) {
