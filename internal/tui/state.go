@@ -159,6 +159,7 @@ type Model struct {
 	operations                  operationState
 	operationGate               *session.OperationGate
 	externalOperation           operationID
+	dependencyOperation         operationID
 	pendingToggleOperation      operationID
 	pendingToggleReload         requestGeneration
 	// updateReload is the superseding snapshot generation that must be
