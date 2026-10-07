@@ -31,6 +31,7 @@ import (
 	compilepkg "github.com/Adyen/agent-marketplace/pkg/harness-compilation/compile"
 	_ "github.com/Adyen/agent-marketplace/pkg/harness-compilation/compile/codex"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/hookpolicy"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/jsonc"
 	targetmeta "github.com/Adyen/agent-marketplace/pkg/harness-compilation/target"
@@ -808,9 +809,63 @@ func marketplaceResourceForInstallName(resource ir.Resource, name string) (ir.Re
 	}
 }
 
+func hookDuplicateExecutionDiagnostics(work []skillTarget) []diag.Diagnostic {
+	selectedByScope := [2]map[targetmeta.Target]struct{}{
+		make(map[targetmeta.Target]struct{}),
+		make(map[targetmeta.Target]struct{}),
+	}
+	for _, item := range work {
+		if item.skill.Resource == nil || item.skill.Resource.Kind() != ir.KindHook {
+			continue
+		}
+		scope := 0
+		if item.machineScope {
+			scope = 1
+		}
+		selectedByScope[scope][targetmeta.Target(item.target)] = struct{}{}
+	}
+
+	var diagnostics []diag.Diagnostic
+	for scope, machineScope := range []bool{false, true} {
+		selectedSet := selectedByScope[scope]
+		if len(selectedSet) == 0 {
+			continue
+		}
+		selected := make([]targetmeta.Target, 0, len(selectedSet))
+		for target := range selectedSet {
+			selected = append(selected, target)
+		}
+		risks, err := hookpolicy.DuplicateExecutionRisks(selected)
+		if err != nil {
+			diagnostics = append(diagnostics, diag.Diagnostic{
+				Code:     "materialize.compile.error",
+				Severity: diag.SeverityError,
+				Message:  "Hook duplicate-execution risk could not be evaluated",
+			})
+			continue
+		}
+		scopeName := "repository"
+		if machineScope {
+			scopeName = "machine"
+		}
+		for _, risk := range risks {
+			loader := string(risk.Loader)
+			loaded := string(risk.Loaded)
+			diagnostics = append(diagnostics, diag.Diagnostic{
+				Code:     diag.CodeHookDuplicateExecutionRisk,
+				Severity: diag.SeverityWarning,
+				Target:   loader,
+				Message:  fmt.Sprintf("Selected harness targets %s and %s may execute the same hooks in %s scope; %s also loads %s hook files", loader, loaded, scopeName, loader, loaded),
+			})
+		}
+	}
+	return diagnostics
+}
+
 // compileWorkItems compiles each skill-target pair, splits artifacts by kind,
 // and groups results by output key.
 func compileWorkItems(work []skillTarget, allDiags []diag.Diagnostic, allOutputs map[outputKey]bool, blocked blockedOutputs, repoRoot string) compilePhaseResult {
+	allDiags = append(allDiags, hookDuplicateExecutionDiagnostics(work)...)
 	byTarget := make(map[outputKey]*targetWork)
 	skillLinks := make(map[outputKey]map[string]*skillLinkGroup)
 	artifactMeta := make(map[outputKey]map[string]skillLink)

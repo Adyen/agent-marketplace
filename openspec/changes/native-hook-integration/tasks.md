@@ -189,11 +189,11 @@ hook matrix goldens deliberately.
   drift test, and a test that Devin CLI and Windsurf cleanup never touch each
   other's `.devin/` files. Verify
   `go test ./internal/materialize ./internal/ownership -count=1` passes
-- [ ] 5.3 Emit `hook.duplicate-execution-risk` from catalog `loads_hooks_of`
+- [x] 5.3 Emit `hook.duplicate-execution-risk` from catalog `loads_hooks_of`
   data. Annotate `claude-code-and-cursor-selected-together`,
   `claude-code-and-devin-cli-selected-together`, and
   `a-single-target-produces-no-duplicate-warning`. Verify the tests pass
-- [ ] 5.4 Add the architecture guard test (design D14). Verify it fails when a
+- [x] 5.4 Add the architecture guard test (design D14). Verify it fails when a
   hook code path in `internal/materialize` compares against a harness
   constant or embeds a plugin-root or project-directory literal, and passes
   on the finished tree
@@ -213,7 +213,7 @@ hook matrix goldens deliberately.
   - `check-reports-a-pending-migration`
 
   Verify the tests pass
-- [ ] 6.2 Add an interrupted-migration test using
+- [x] 6.2 Add an interrupted-migration test using
   `AGENT_MARKETPLACE_E2E_CRASH_AT`. Verify a half-published migration is
   refused by read-only commands and completed by the next mutating command
 - [ ] 6.3 Extend `upgrade-gate` with a v3.1.1 hook fixture for all seven
