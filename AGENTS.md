@@ -74,6 +74,8 @@ Temporary worktrees should use sibling paths rather than paths nested in the rep
 
 **Pre-push adversarial review:** Before every GitHub push, run an adversarial review of the intended changes, including consumer-path reachability, failure behavior, unintended writes, ownership/scope boundaries, and regression-test validity. Validate reported findings against the code; fix actionable issues and rerun affected checks before pushing. Record the reviewed revision or diff and the outcome. Do not treat a passing test suite or a clean review as proof that no defects remain.
 
+**Lint cache verification:** If golangci-lint reports cached source paths from missing or unrelated worktrees, rerun with `GOLANGCI_LINT_CACHE="$(mktemp -d)" make ci-lint`. A cached `0 issues` result with source-mapping warnings can hide real findings; verify with a fresh cache rather than changing lint rules or CI policy.
+
 **CRITICAL RULES:**
 - Work is NOT complete until `git push` succeeds
 - NEVER stop before pushing - that leaves work stranded locally
