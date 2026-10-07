@@ -15,3 +15,17 @@ The latest stable release is v4.1.1. Its Linux assets have GitHub-published SHA-
 ## Validation
 
 Demonstrate the nightly budget regression and strengthened interoperability test fail before the configuration fixes. Then run scoped workflow/witness tests, the verified released-client Docker gate, the required local validation gates, and pre-push adversarial review. Merge and issue closure require successful PR checks; a full scheduled/manual 20-iteration run provides nightly completion evidence.
+
+### Executed checks
+
+- Both negative controls failed at their intended assertions before the fixes.
+- Workflow/planner/witness tests and all three post-migration lifecycles passed.
+- Checksum-verified v4.1.1 released-client Docker gates passed for arm64 and amd64; all five pinned v3.1.1 upgrade scenarios ran and passed.
+- `make validate` and fresh-cache lint passed with zero issues.
+- The combined host E2E/configuration suite and shellcheck passed. All three Node process tests and all 18 real-terminal journeys passed.
+- The first concurrent `make validate-full` run hit the existing 120-second command-test deadline in `TestRemoveBlockedManagedResourcePreservesSiblings`. Its isolated rerun passed in 28 seconds. A standalone fresh witnessed root-suite rerun with four child slots then passed, with all 70 behavior witnesses executed. The initial aggregate failure is not counted as a pass.
+- Strict OpenSpec validation and traceability passed before archive; final archived-spec checks run in the archive commit.
+- The adversarial delegate reviewed all 11 intended entries at staged diff SHA-256 `dbe55c81ae2e11c09b99d528487ab3e3fcda08ddf0ea0b947910fd3eefcf6749` (implementation commit `4994990c`). No critical, high, or medium finding remained; the stale task-checkbox documentation finding is corrected.
+- The approved default-branch ruleset update was read back and compared after removing the added context: all prior rules, check bindings, bypass settings, and conditions were unchanged.
+
+No production hot path changed. The newly provisioned 60-minute nightly deadline has not yet been exercised by a full 20-iteration run in this branch.
