@@ -23,6 +23,7 @@ import (
 	"charm.land/lipgloss/v2/compat"
 	"github.com/Adyen/agent-marketplace/internal/logging"
 	"github.com/Adyen/agent-marketplace/internal/pipeline"
+	"github.com/Adyen/agent-marketplace/internal/session"
 	"github.com/Adyen/agent-marketplace/internal/telemetry"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/sahilm/fuzzy"
@@ -32,6 +33,10 @@ type Option func(*Model)
 
 func WithDependencyLifecycle(lifecycle DependencyLifecycle) Option {
 	return func(model *Model) { model.dependencyLifecycle = lifecycle }
+}
+
+func WithOperationGate(gate *session.OperationGate) Option {
+	return func(model *Model) { model.operationGate = gate }
 }
 
 // WithWorkspace supplies the already validated roots shared by every TUI
