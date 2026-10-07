@@ -266,6 +266,7 @@ func (a *API) authorize(r *http.Request) bool {
 
 func (a *API) dispatch(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
+		w.Header().Set("Allow", http.MethodPost)
 		writeError(w, http.StatusMethodNotAllowed, codeInvalidRequest)
 		return
 	}
@@ -343,11 +344,12 @@ func (a *API) deliverSnapshot(generation session.RequestGeneration, snapshot ses
 
 func (a *API) handleSnapshot(w http.ResponseWriter, r *http.Request) {
 	a.mu.Lock()
-	if _, _, active := a.gate.Active(); active && a.current != nil {
-		dto := a.current
+	if operation := activeOperation(a.gate); operation != nil && a.current != nil {
+		dto := *a.current
+		dto.Operation = operation
 		a.mu.Unlock()
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(dto)
+		_ = json.NewEncoder(w).Encode(&dto)
 		return
 	}
 	staged := !a.started
