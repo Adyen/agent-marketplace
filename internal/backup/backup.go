@@ -146,9 +146,6 @@ func Create(managed map[hcc.Target]ManagedPaths) error {
 			continue
 		}
 		targetBackupDir := filepath.Join(dir, string(target))
-		if err := os.MkdirAll(targetBackupDir, 0o755); err != nil {
-			return fmt.Errorf("backup: create target dir %s: %w", targetBackupDir, err)
-		}
 		archivePath, err := nextArchivePath(targetBackupDir, timestamp)
 		if err != nil {
 			return err

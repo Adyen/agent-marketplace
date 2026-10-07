@@ -24,6 +24,7 @@ type codexRestoreObserver struct {
 	onListingTarget    func(string)
 	onRestoreSelected  func(string)
 	onRetentionTarget  func(string)
+	onNamespaceParent  func(string)
 }
 
 func (h codexRestoreObserver) Handle(ctx context.Context, record slog.Record) error {
@@ -63,6 +64,9 @@ func (h codexRestoreObserver) Handle(ctx context.Context, record slog.Record) er
 	}
 	if phase == "backup-retention-target" && h.onRetentionTarget != nil {
 		h.onRetentionTarget(path)
+	}
+	if phase == "backup-namespace-parent" && h.onNamespaceParent != nil {
+		h.onNamespaceParent(path)
 	}
 	return h.Handler.Handle(ctx, record)
 }
