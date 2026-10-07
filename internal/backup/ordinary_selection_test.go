@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/Adyen/agent-marketplace/internal/fsboundary"
@@ -147,6 +148,9 @@ func TestOrdinaryRestoreRetainsSelectedArchiveAndDirectoryGenerations(t *testing
 				}
 				if !changed || restored != "" || !errors.Is(err, fsboundary.ErrGenerationConflict) {
 					t.Fatalf("ordinary selection substitution did not generation-refuse: %q %v", restored, err)
+				}
+				if !strings.Contains(err.Error(), "backup: restore factory: ") {
+					t.Fatalf("selection refusal does not name the restored target: %v", err)
 				}
 				if info, err := os.Stat(native); err != nil || !os.SameFile(current, info) || current.Mode() != info.Mode() || !current.ModTime().Equal(info.ModTime()) {
 					t.Fatalf("current native metadata changed: %v", err)

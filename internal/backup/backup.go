@@ -343,7 +343,7 @@ func Restore(target hcc.Target, dstDir string, mapped ...map[string]string) (tim
 	latest = filepath.Join(targetDir, name)
 	file, err := fsboundary.CaptureDestination(parent, name, fsboundary.LinkPolicyRepository)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("backup: restore %s: select %s: %w", string(target), latest, err)
 	}
 	defer func() {
 		if closeErr := file.Close(); closeErr != nil {
@@ -355,11 +355,11 @@ func Restore(target hcc.Target, dstDir string, mapped ...map[string]string) (tim
 		return "", fmt.Errorf("%w: backup archive %s is linked", fsboundary.ErrUnsafeFile, latest)
 	}
 	if !file.Exists() {
-		return "", fsboundary.ErrGenerationConflict
+		return "", fmt.Errorf("backup: restore %s: selected archive %s vanished: %w", string(target), latest, fsboundary.ErrGenerationConflict)
 	}
 	slog.Debug("Ordinary backup archive selected for restore", "path", latest, "phase", "ordinary-restore-selected")
 	if err := verifyArchiveParent(parent, targetDir); err != nil {
-		return "", err
+		return "", fmt.Errorf("backup: restore %s: select %s: %w", string(target), latest, err)
 	}
 	if err := file.ReadTargetWith(func(reader io.Reader) error { return extractArchivePayload(reader, dstDir, mapped...) }); err != nil {
 		return "", fmt.Errorf("backup: restore %s: %w", string(target), err)
