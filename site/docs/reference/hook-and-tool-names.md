@@ -271,24 +271,24 @@ Timeout unit: `seconds`. Matcher syntax: `regex`. Repository base: env `project_
 
 | Event | Canonical | Matcher | Types | Timeout bounds |
 | --- | --- | --- | --- | --- |
-| `afterAgentResponse` | (native only) | none | command, prompt | - |
-| `afterAgentThought` | (native only) | none | command, prompt | - |
-| `afterFileEdit` | (native only) | none | command, prompt | - |
+| `afterAgentResponse` | (native only) | lifecycle | command, prompt | - |
+| `afterAgentThought` | (native only) | lifecycle | command, prompt | - |
+| `afterFileEdit` | (native only) | tool | command, prompt | - |
 | `afterMCPExecution` | (native only) | none | command, prompt | - |
 | `afterShellExecution` | (native only) | command_text | command, prompt | - |
-| `afterTabFileEdit` | (native only) | none | command, prompt | - |
+| `afterTabFileEdit` | (native only) | lifecycle | command, prompt | - |
 | `beforeMCPExecution` | (native only) | none | command, prompt | - |
-| `beforeReadFile` | (native only) | none | command, prompt | - |
+| `beforeReadFile` | (native only) | tool | command, prompt | - |
 | `beforeShellExecution` | (native only) | command_text | command, prompt | - |
-| `beforeSubmitPrompt` | UserPromptSubmit | none | command, prompt | - |
-| `beforeTabFileRead` | (native only) | none | command, prompt | - |
+| `beforeSubmitPrompt` | UserPromptSubmit | lifecycle | command, prompt | - |
+| `beforeTabFileRead` | (native only) | lifecycle | command, prompt | - |
 | `postToolUse` | PostToolUse | tool | command, prompt | - |
 | `postToolUseFailure` | (native only) | tool | command, prompt | - |
 | `preCompact` | PreCompact | none | command, prompt | - |
 | `preToolUse` | PreToolUse | tool | command, prompt | - |
 | `sessionEnd` | SessionEnd | none | command, prompt | - |
 | `sessionStart` | SessionStart | none | command, prompt | - |
-| `stop` | Stop | none | command, prompt | - |
+| `stop` | Stop | lifecycle | command, prompt | - |
 | `subagentStart` | (native only) | lifecycle | command, prompt | - |
 | `subagentStop` | SubagentStop | lifecycle | command, prompt | - |
 | `workspaceOpen` | (native only) | none | command, prompt | - |

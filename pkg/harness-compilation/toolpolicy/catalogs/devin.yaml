@@ -2,14 +2,19 @@
 schema: 1
 harness: devin
 evidence:
-  checked: "2026-09-29"
+  checked: "2026-10-07"
   refs:
     - https://docs.devin.ai/cli/extensibility/hooks/lifecycle-hooks
-    - internal/devinprobe/probe_test.go (TestProbeAllowedToolVocabulary)
+    - https://docs.devin.ai/cli/extensibility/skills/creating-skills.md
+    - https://docs.devin.ai/cli/subagents.md
   notes: >-
-    Hook matchers see the full tool list below. Skill and subagent
-    allowed-tools accept only read, edit, grep, glob, and exec; other names are
-    silently dropped by Devin (probe evidence), hence the surface narrowing.
+    Hook matchers see the full tool list below. The skills documentation
+    explicitly lists read, edit, grep, glob, and exec for auto-approval.
+    Subagent documentation establishes allowed-tools frontmatter but does
+    not exhaustively enumerate its accepted vocabulary. The internal probe
+    additionally observes other names being dropped for skill and subagent
+    definitions, so the existing conservative surface narrowing is
+    retained.
 
 mcp:
   pattern: "mcp__{server}__{tool}"

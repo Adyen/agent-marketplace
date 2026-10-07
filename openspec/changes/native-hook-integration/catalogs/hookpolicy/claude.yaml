@@ -2,7 +2,7 @@
 schema: 1
 harness: claude
 evidence:
-  checked: "2026-10-05"
+  checked: "2026-10-07"
   refs:
     - https://code.claude.com/docs/en/hooks.md
 

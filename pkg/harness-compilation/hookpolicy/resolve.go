@@ -212,6 +212,10 @@ func Resolve(h *ir.Hook, dst target.Target, scope Scope, supportBase string) Res
 			fail(eventUnmappableCode(dst), "The event has no exact catalog equivalent on the target; hook suppressed", "Use an event the target documents")
 			return res
 		}
+		if h.Matcher != "" && (srcEvent.Matcher == "" || srcEvent.Matcher == MatcherKindNone) {
+			fail(diag.CodeHookMatcherUntranslatable, "The source event has no documented matcher; hook suppressed", "Remove the matcher or use a source event that supports it")
+			return res
+		}
 		name, ev, found := selectEvent(dstCat, srcEvent.Canonical, h, srcCat, srcEvent)
 		if !found {
 			fail(eventUnmappableCode(dst), "The event has no exact catalog equivalent on the target; hook suppressed", "Use an event the target documents")

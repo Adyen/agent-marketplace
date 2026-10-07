@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -17,53 +16,6 @@ import (
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/jsonc"
 )
-
-type hookReviewFsEntry struct {
-	mode     fs.FileMode
-	modified int64
-	data     []byte
-	link     string
-}
-
-func hookReviewTreeSnapshot(t *testing.T, root string) map[string]hookReviewFsEntry {
-	t.Helper()
-	entries := map[string]hookReviewFsEntry{}
-	if _, err := os.Lstat(root); os.IsNotExist(err) {
-		return entries
-	}
-	err := filepath.WalkDir(root, func(p string, d os.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		rel, relErr := filepath.Rel(root, p)
-		if relErr != nil {
-			return relErr
-		}
-		info, lerr := os.Lstat(p)
-		if lerr != nil {
-			return lerr
-		}
-		entry := hookReviewFsEntry{mode: info.Mode(), modified: info.ModTime().UnixNano()}
-		if info.Mode().IsRegular() {
-			entry.data, err = os.ReadFile(p)
-			if err != nil {
-				return err
-			}
-			entry.mode = info.Mode()
-		} else if info.Mode()&os.ModeSymlink != 0 {
-			entry.link, err = os.Readlink(p)
-			if err != nil {
-				return err
-			}
-		}
-		entries[rel] = entry
-		return nil
-	})
-	if err != nil {
-		t.Fatalf("snapshot %s: %v", root, err)
-	}
-	return entries
-}
 
 // spec: hook-resources/changed-hook-commands-are-listed-with-exact-values
 // spec: hook-resources/check-reports-pending-hook-changes-without-writing
@@ -90,8 +42,7 @@ func TestNativeHookLegacyRemovalReportsReview(t *testing.T) {
 			}
 			legacyBefore, legacyMode, legacyMtime := fileSnapshot(t, legacyPath)
 			nativeBefore, nativeMode, nativeMtime := fileSnapshot(t, nativePath)
-			repoSnap := hookReviewTreeSnapshot(t, repo)
-			homeSnap := hookReviewTreeSnapshot(t, home)
+			fsBefore := nativeSupportSnapshot(t, repo, home)
 			wantMatcher := layout.matcher
 			if layout.target == hcc.TargetWindsurf {
 				wantMatcher = ""
@@ -121,9 +72,7 @@ func TestNativeHookLegacyRemovalReportsReview(t *testing.T) {
 			requireHookReviewCodes(t, dry, nativeHookReviewCodesFor(layout.target, layout.machineScope, true))
 			assertFileUnchanged(t, legacyPath, legacyBefore, legacyMode, legacyMtime)
 			assertFileUnchanged(t, nativePath, nativeBefore, nativeMode, nativeMtime)
-			if !fsSnapshotsEqual(repoSnap, hookReviewTreeSnapshot(t, repo)) || !fsSnapshotsEqual(homeSnap, hookReviewTreeSnapshot(t, home)) {
-				t.Fatal("dry-run mutated the filesystem despite pending review")
-			}
+			assertNativeSupportSnapshot(t, fsBefore, nativeSupportSnapshot(t, repo, home))
 
 			report = runHookReview(t, repo, layout.target, layout.machineScope, false, provider)
 			if len(report.HookChanges) != 1 {
@@ -150,19 +99,6 @@ func TestNativeHookLegacyRemovalReportsReview(t *testing.T) {
 			requireHookReviewCodes(t, report)
 		})
 	}
-}
-
-func fsSnapshotsEqual(before, after map[string]hookReviewFsEntry) bool {
-	if len(before) != len(after) {
-		return false
-	}
-	for rel, want := range before {
-		got, ok := after[rel]
-		if !ok || got.mode != want.mode || got.modified != want.modified || got.link != want.link || !bytes.Equal(got.data, want.data) {
-			return false
-		}
-	}
-	return true
 }
 
 // spec: hook-resources/changed-hook-commands-are-listed-with-exact-values

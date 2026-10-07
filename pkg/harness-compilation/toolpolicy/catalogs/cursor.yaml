@@ -2,7 +2,7 @@
 schema: 1
 harness: cursor
 evidence:
-  checked: "2026-09-29"
+  checked: "2026-10-07"
   refs:
     - https://cursor.com/docs/hooks
     - https://cursor.com/docs/reference/third-party-hooks

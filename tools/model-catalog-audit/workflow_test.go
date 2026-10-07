@@ -44,7 +44,7 @@ func TestEveryHarnessHasExplicitAuditCoverage(t *testing.T) {
 		}
 		found := false
 		for _, s := range sources {
-			found = found || s.Harness == harness
+			found = found || (s.Domain == "" && s.Harness == harness)
 		}
 		if found != (len(c.Surfaces) > 0) {
 			t.Fatalf("catalog surface and audit coverage disagree for %s", harness)

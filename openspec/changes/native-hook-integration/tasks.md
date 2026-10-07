@@ -16,7 +16,7 @@
 
 ## 1. Catalogs (pkg/harness-compilation)
 
-- [ ] 1.1 Re-verify every entry in the draft catalogs in
+- [x] 1.1 Re-verify every entry in the draft catalogs in
   `openspec/changes/native-hook-integration/catalogs/` against its evidence
   refs, and update `evidence.checked` where a page changed. Copy them to
   `toolpolicy/concepts.yaml`, `toolpolicy/catalogs/<harness>.yaml`, and
@@ -247,7 +247,7 @@ hook matrix goldens deliberately.
   a tool in a scratch branch, and confirm that only the YAML, one fixture
   line, and the regenerated doc change, and that `make catalog-check`
   passes
-- [ ] 8.2 Add the hook and tool documentation sources from the catalog
+- [x] 8.2 Add the hook and tool documentation sources from the catalog
   `evidence.refs` to PR #276's catalog audit tool, with sha256 baselines.
   Verify `go test` for the audit tool passes offline
 - [ ] 8.3 Update the hook rows in

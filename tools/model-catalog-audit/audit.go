@@ -39,6 +39,7 @@ type finding struct {
 type sourceReport struct {
 	Name           string            `json:"name"`
 	Harness        string            `json:"harness"`
+	CatalogDomain  string            `json:"catalog_domain,omitempty"`
 	URL            string            `json:"url"`
 	ResolvedURL    string            `json:"resolved_url,omitempty"`
 	Status         string            `json:"status"`
@@ -113,7 +114,13 @@ func readLimited(reader io.Reader) ([]byte, error) {
 func audit(ctx context.Context, files fs.FS, sources []source, baselines map[string]baseline, fetch fetchFunc, now time.Time) report {
 	result := report{Schema: 1, CheckedAt: now.UTC().Format(time.RFC3339), Coverage: coverage, Sources: []sourceReport{}}
 	for _, s := range sources {
-		r := sourceReport{Name: s.Name, Harness: s.Harness, URL: s.URL, Status: "no-drift", Baseline: baselines[s.Name], Findings: []finding{}}
+		r := sourceReport{Name: s.Name, Harness: s.Harness, CatalogDomain: s.Domain, URL: s.URL, Status: "no-drift", Baseline: baselines[s.Name], Findings: []finding{}}
+		if s.Domain != "" {
+			auditDocumentSource(ctx, files, s, &r, fetch)
+			result.Failed = result.Failed || r.Status != "no-drift"
+			result.Sources = append(result.Sources, r)
+			continue
+		}
 		body, err := readBounded(files, catalogPath(s.Harness))
 		var c catalog
 		if err != nil || yaml.Unmarshal(body, &c) != nil || c.Schema != 1 || c.Harness != s.Harness || len(c.Surfaces) == 0 {
@@ -152,7 +159,7 @@ func auditSource(ctx context.Context, s source, c catalog, r *sourceReport, fetc
 	r.ResolvedURL, r.BodySHA256 = response.URL, digest(response.Body)
 	observed, err := extract(s, response.Body)
 	if err != nil {
-		r.add("unknown", "source.parse-failed", "", "Expected model inventory or documentation section was not found; review the source adapter.")
+		r.add("unknown", "source.parse-failed", "", "Expected inventory or documentation content was not found; review the source adapter.")
 		return
 	}
 	r.Observed = observed
@@ -165,7 +172,7 @@ func auditSource(ctx context.Context, s source, c catalog, r *sourceReport, fetc
 	if observed.Text != "" && r.Baseline.SHA256 == "" {
 		r.add("unknown", "source.baseline-missing", "", "Documentation monitoring requires a reviewed baseline.")
 	} else if r.Baseline.SHA256 != "" && r.Baseline.SHA256 != r.ObservedSHA256 {
-		r.add("drift", "source.evidence-changed", "", "Model inventory, reasoning metadata, or resource documentation changed; review observed evidence before updating the baseline.")
+		r.add("drift", "source.evidence-changed", "", "Inventory or resource documentation changed; review observed evidence before updating the baseline.")
 	}
 	if len(observed.Models) > 0 {
 		compareInventory(c, observed.Models, r)

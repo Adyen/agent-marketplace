@@ -10,7 +10,7 @@ var coverage = map[string]string{
 	"windsurf": "Not applicable: the shipped catalog declares no model-bearing resource surface. No model inventory is claimed.",
 }
 
-var sources = []source{
+var sources = append([]source{
 	{Name: "claude-models", Harness: "claude", URL: "https://platform.claude.com/docs/en/about-claude/models/overview.md", Kind: "claude"},
 	{Name: "claude-subagents", Harness: "claude", URL: "https://code.claude.com/docs/en/sub-agents.md", Kind: "watch", Fields: []string{"model", "effort"}},
 	{Name: "claude-skills", Harness: "claude", URL: "https://code.claude.com/docs/en/skills.md", Kind: "watch", Fields: []string{"model"}},
@@ -25,4 +25,4 @@ var sources = []source{
 	{Name: "factory-subagents", Harness: "factory", URL: "https://docs.factory.ai/harness/subagents.md", Kind: "watch", Fields: []string{"model", "reasoningEffort"}},
 	{Name: "gemini-models", Harness: "gemini", URL: "https://raw.githubusercontent.com/google-gemini/gemini-cli/main/packages/core/src/config/models.ts", Kind: "gemini"},
 	{Name: "gemini-subagents", Harness: "gemini", URL: "https://raw.githubusercontent.com/google-gemini/gemini-cli/main/docs/core/subagents.md", Kind: "watch", Fields: []string{"model"}},
-}
+}, hookToolSources...)

@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path"
 	"slices"
 	"strings"
 	"time"
@@ -26,8 +27,10 @@ func trustedURL(raw string) bool {
 		return false
 	}
 	switch u.Host {
-	case "platform.claude.com", "code.claude.com", "developers.openai.com", "learn.chatgpt.com", "cursor.com", "docs.devin.ai", "docs.factory.ai", "raw.githubusercontent.com":
+	case "platform.claude.com", "code.claude.com", "developers.openai.com", "learn.chatgpt.com", "cursor.com", "docs.devin.ai", "docs.factory.ai", "docs.factory.com", "geminicli.com", "raw.githubusercontent.com":
 		return true
+	case "github.com":
+		return strings.HasPrefix(u.Path, "/google-gemini/gemini-cli/") && u.Path == path.Clean(u.Path)
 	}
 	return false
 }
@@ -135,13 +138,16 @@ func summarize(out io.Writer, result report) error {
 		status = "FAIL (drift or unknown evidence)"
 	}
 	fmt.Fprintf(&text, "## Model catalog audit: %s\n\nChecked: %s\n\n", status, html.EscapeString(result.CheckedAt))
-	text.WriteString("Read-only review findings, not proof of native acceptance or account availability. No catalog edits or PRs are made. An ID absent from an inventory is not automatically retired.\n\n")
+	text.WriteString("Read-only review findings, not proof of native acceptance or account availability. No catalog edits or PRs are made. An ID absent from an inventory is not automatically retired. The per-harness coverage statements below describe existing model inventory monitoring; sources listing a catalog domain monitor hook or tool documentation drift only.\n\n")
 	for _, harness := range slices.Sorted(maps.Keys(result.Coverage)) {
 		fmt.Fprintf(&text, "- **%s**: %s\n", harness, html.EscapeString(result.Coverage[harness]))
 	}
 	for _, s := range result.Sources {
 		fmt.Fprintf(&text, "\n### %s: %s\n\n", html.EscapeString(s.Name), html.EscapeString(s.Status))
 		fmt.Fprintf(&text, "Source: %s\n\n", html.EscapeString(s.URL))
+		if s.CatalogDomain != "" {
+			fmt.Fprintf(&text, "Catalog domain: %s\n\n", html.EscapeString(s.CatalogDomain))
+		}
 		for i, f := range s.Findings {
 			if i == 20 {
 				fmt.Fprintf(&text, "- %d additional findings in the JSON artifact.\n", len(s.Findings)-i)

@@ -2,7 +2,7 @@
 schema: 1
 harness: gemini
 evidence:
-  checked: "2026-09-29"
+  checked: "2026-10-07"
   refs:
     - https://geminicli.com/docs/hooks/
     - https://geminicli.com/docs/hooks/reference/

@@ -2,7 +2,7 @@
 schema: 1
 harness: codex
 evidence:
-  checked: "2026-10-05"
+  checked: "2026-10-07"
   refs:
     - https://developers.openai.com/codex/hooks
   notes: >-

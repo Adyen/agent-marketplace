@@ -2,7 +2,7 @@
 schema: 1
 harness: cursor
 evidence:
-  checked: "2026-10-05"
+  checked: "2026-10-07"
   refs:
     - https://cursor.com/docs/hooks
     - https://cursor.com/docs/reference/third-party-hooks
@@ -33,8 +33,8 @@ loads_hooks_of: [claude]
 events:
   preToolUse: {canonical: PreToolUse, matcher: tool, types: [command, prompt]}
   postToolUse: {canonical: PostToolUse, matcher: tool, types: [command, prompt]}
-  beforeSubmitPrompt: {canonical: UserPromptSubmit, matcher: none, types: [command, prompt]}
-  stop: {canonical: Stop, matcher: none, types: [command, prompt]}
+  beforeSubmitPrompt: {canonical: UserPromptSubmit, matcher: lifecycle, types: [command, prompt]}
+  stop: {canonical: Stop, matcher: lifecycle, types: [command, prompt]}
   subagentStop: {canonical: SubagentStop, matcher: lifecycle, types: [command, prompt]}
   sessionStart: {canonical: SessionStart, matcher: none, types: [command, prompt]}
   sessionEnd: {canonical: SessionEnd, matcher: none, types: [command, prompt]}
@@ -45,10 +45,10 @@ events:
   afterShellExecution: {matcher: command_text, types: [command, prompt]}
   beforeMCPExecution: {matcher: none, types: [command, prompt]}
   afterMCPExecution: {matcher: none, types: [command, prompt]}
-  beforeReadFile: {matcher: none, types: [command, prompt]}
-  afterFileEdit: {matcher: none, types: [command, prompt]}
-  afterAgentResponse: {matcher: none, types: [command, prompt]}
-  afterAgentThought: {matcher: none, types: [command, prompt]}
-  beforeTabFileRead: {matcher: none, types: [command, prompt]}
-  afterTabFileEdit: {matcher: none, types: [command, prompt]}
+  beforeReadFile: {matcher: tool, types: [command, prompt]}
+  afterFileEdit: {matcher: tool, types: [command, prompt]}
+  afterAgentResponse: {matcher: lifecycle, types: [command, prompt]}
+  afterAgentThought: {matcher: lifecycle, types: [command, prompt]}
+  beforeTabFileRead: {matcher: lifecycle, types: [command, prompt]}
+  afterTabFileEdit: {matcher: lifecycle, types: [command, prompt]}
   workspaceOpen: {matcher: none, types: [command, prompt]}
