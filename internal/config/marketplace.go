@@ -311,9 +311,3 @@ func validateMarketplaceOccurrenceFields(acquisition, registryCommit, registryMa
 	}
 	return nil
 }
-
-// IsMarketplaceKind reports whether kind is a selectable Marketplace resource kind.
-// Kept in config as a thin wrapper so consumers do not need to import api.
-func IsMarketplaceKind(kind string) bool {
-	return api.IsMarketplaceKind(kind)
-}

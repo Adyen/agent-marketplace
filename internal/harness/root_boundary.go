@@ -19,10 +19,6 @@ func ValidateDestinationPath(machineScope bool, repoRoot, homeDir, root, sub str
 	return destinationPath(machineScope, repoRoot, homeDir, root, sub, false)
 }
 
-func EnsureDestinationPath(machineScope bool, repoRoot, homeDir, root, sub string) error {
-	return destinationPath(machineScope, repoRoot, homeDir, root, sub, true)
-}
-
 func destinationPath(machineScope bool, repoRoot, homeDir, root, sub string, create bool) error {
 	directory, err := CaptureDestinationPath(machineScope, repoRoot, homeDir, root, sub, create)
 	if err != nil || directory == nil {

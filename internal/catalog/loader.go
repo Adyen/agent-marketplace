@@ -253,7 +253,7 @@ func (cat *Catalog) discoverSourceWithOptions(source *fsboundary.SourceFS, dir, 
 	// Make malformed paths absolute so the TUI can read the SKILL.md
 	// file when the user opens the detail pane. Diagnostics use paths
 	// relative to the bundle root (e.g. "skills/broken-skill"), but the
-	// TUI's ReadSkillMarkdown needs an absolute path to stat/read.
+	// TUI detail pane needs an absolute path to stat/read.
 	// Resolve dir to an absolute, canonical root and verify each
 	// malformed path stays within that root to prevent ../ escapes.
 	rootAbs, err := filepath.Abs(dir)

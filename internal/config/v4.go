@@ -285,28 +285,8 @@ func v4LayerForSource(source Source, path string) (layerKind, string, error) {
 	}
 }
 
-// LoadV4RootConfigFromPath is an explicit name for callers loading a committed,
-// user, or organization root. Unlike legacy loaders, apiVersion is required.
-func LoadV4RootConfigFromPath(file string) (*V4Config, error) {
-	return LoadV4ConfigFromPath(file)
-}
-
-// LoadV4LocalConfigFromPath loads a local root. v4 local roots also carry the
-// version explicitly; this keeps a v4 include tree unambiguous.
-func LoadV4LocalConfigFromPath(file string) (*V4Config, error) {
-	return LoadV4ConfigFromPath(file)
-}
-
 // ParseV4 is a short alias useful to in-package consumers and tests.
 func ParseV4(data []byte) (*V4Config, error) { return ParseV4Config(data, "", true) }
-
-// LoadConfigV4FromPath is retained as a discoverable alias for integrations
-// that name loaders by schema version.
-func LoadConfigV4FromPath(file string) (*V4Config, error) { return LoadV4ConfigFromPath(file) }
-
-// LoadV4Config parses a standalone v4 document from bytes. Use
-// LoadV4ConfigFromPath when explicit includes must be composed.
-func LoadV4Config(data []byte) (*V4Config, error) { return ParseV4Config(data, "", true) }
 
 type v4Document struct {
 	path                string
