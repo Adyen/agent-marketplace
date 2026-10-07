@@ -333,3 +333,12 @@ Agent Marketplace journal phase and staged-collision disarm publication MUST rem
 
 - **WHEN** public Apply publishes native next bytes and the existing after-aggregate-rename boundary replaces its original prepared journal with identical JSON/private mode
 - **THEN** phase publication MUST refuse typed generation before overwriting replacement or committing state, preserve original/replacement/no metadata staging, and restoring original prepared evidence MUST allow real public recovery roll-forward/commit/cleanup
+
+### Requirement: Ownership metadata publication retains produced staging authority
+
+Ownership state, journal and safety-manifest publication MUST retain produced staged identity through final parent/original-generation and staged-reader validation before rename. A replacement stage MUST generation-refuse without overwriting original destination metadata/absence or deleting the replacement. Refusal MUST preserve original/foreign bytes/inodes/modes/mtimes, valid durable recovery evidence and established native publication phases. Healthy recovery and retries MUST genuinely commit matching state/journal generations and raw-byte safety manifests with existing private modes. Post-rename pin mismatch MUST NOT substitute for pre-action validation. No new processing budget, content/durability policy, whole transaction rollback, complete snapshot or atomic uncooperative-writer exclusion is established.
+
+#### Scenario: Metadata publication retains produced staged generation
+
+- **WHEN** actual Apply or BackupOnly replaces the produced metadata stage before state, prepared-journal, journal-phase or safety-manifest publication
+- **THEN** publication MUST generation-refuse preserving original destination/absence, both staging generations and recovery evidence, and genuine recovery/retry MUST commit the intended ownership generation or produce the real native safety bytes and matching manifest without owned residue
