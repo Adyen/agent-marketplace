@@ -409,6 +409,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.KeyPressMsg:
+		m.pendingClick = pendingClick{}
 		next, cmd := m.handleKey(msg)
 		if m.previewSel.active {
 			if nm, ok := next.(Model); ok {
@@ -451,6 +452,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.previewSel = previewSelection{}
+		m.pendingClick = pendingClick{}
 		// Bubble's viewport treats Shift+vertical-wheel as horizontal
 		// scrolling, but this TUI intentionally supports only vertical scroll.
 		msg.Mod &^= tea.ModShift
