@@ -92,7 +92,7 @@ func restoreMappedFile(reader io.Reader, header *tar.Header, mappings []map[stri
 		}
 		unchanged := fresh.Identity().SameObject(captured.Identity())
 		if closeErr := fresh.Close(); closeErr != nil {
-			err = errors.Join(err, closeErr)
+			err = closeErr
 		}
 		if err == nil && !unchanged {
 			return fsboundary.ErrGenerationConflict

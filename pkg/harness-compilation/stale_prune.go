@@ -36,62 +36,6 @@ type staleParentSnapshot struct {
 	info fs.FileInfo
 }
 
-func snapshotStaleFileCandidate(path, rel string) (StaleFileCandidate, error) {
-	info, err := os.Lstat(path)
-	if err != nil {
-		return StaleFileCandidate{}, err
-	}
-	candidate := StaleFileCandidate{Path: rel, Info: info}
-	parents, err := snapshotStaleParents(path, rel)
-	if err != nil {
-		return StaleFileCandidate{}, err
-	}
-	candidate.parents = parents
-	if !info.Mode().IsRegular() {
-		// Symlinks and special files are never candidates for destructive
-		// pruning. Keeping their identity lets revalidation report and preserve
-		// them without following a user-controlled path.
-		return candidate, nil
-	}
-	digest, err := digestNoFollow(path, info)
-	if err != nil {
-		return StaleFileCandidate{}, err
-	}
-	candidate.Digest = digest
-	return candidate, nil
-}
-
-func snapshotStaleParents(path, rel string) ([]staleParentSnapshot, error) {
-	root := path
-	for current := filepath.FromSlash(rel); current != "."; current = filepath.Dir(current) {
-		root = filepath.Dir(root)
-	}
-	rootInfo, err := os.Lstat(root)
-	if err != nil {
-		return nil, err
-	}
-	if !rootInfo.IsDir() || rootInfo.Mode()&os.ModeSymlink != 0 {
-		return nil, fmt.Errorf("stale candidate output root is not a real directory")
-	}
-	// Include the output root itself. Conversion publication discovers stale
-	// files before it publishes and removes them afterward, so substituting the
-	// root in that interval must preserve the replacement tree rather than
-	// redirecting a stale removal into it.
-	parents := []staleParentSnapshot{{path: root, info: rootInfo}}
-	for current := filepath.Dir(filepath.FromSlash(rel)); current != "."; current = filepath.Dir(current) {
-		parentPath := filepath.Join(root, current)
-		info, err := os.Lstat(parentPath)
-		if err != nil {
-			return nil, err
-		}
-		if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
-			return nil, fmt.Errorf("stale candidate parent %q is not a real directory", current)
-		}
-		parents = append(parents, staleParentSnapshot{path: parentPath, info: info})
-	}
-	return parents, nil
-}
-
 func staleParentsUnchanged(parents []staleParentSnapshot) (bool, error) {
 	for _, parent := range parents {
 		current, err := os.Lstat(parent.path)
