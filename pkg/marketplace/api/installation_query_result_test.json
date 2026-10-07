@@ -1,0 +1,144 @@
+{
+  "data": {
+    "result": [
+      {
+        "metric": {
+          "config_fingerprint": "new",
+          "installation_id": "kept",
+          "inventory_type": "snapshot"
+        },
+        "value": [
+          3456000,
+          "3455999000000"
+        ]
+      },
+      {
+        "metric": {
+          "config_fingerprint": "new",
+          "installation_id": "empty",
+          "inventory_type": "snapshot"
+        },
+        "value": [
+          3456000,
+          "3455999000000"
+        ]
+      },
+      {
+        "metric": {
+          "config_fingerprint": "a",
+          "installation_id": "tied",
+          "inventory_type": "snapshot"
+        },
+        "value": [
+          3456000,
+          "3455999000000"
+        ]
+      },
+      {
+        "metric": {
+          "config_fingerprint": "b",
+          "installation_id": "tied",
+          "inventory_type": "snapshot"
+        },
+        "value": [
+          3456000,
+          "3455999000000"
+        ]
+      },
+      {
+        "metric": {
+          "config_fingerprint": "old-value",
+          "installation_id": "stale",
+          "inventory_type": "snapshot"
+        },
+        "value": [
+          3456000,
+          "1"
+        ]
+      },
+      {
+        "metric": {
+          "config_fingerprint": "future-value",
+          "installation_id": "future",
+          "inventory_type": "snapshot"
+        },
+        "value": [
+          3456000,
+          "3456001000000"
+        ]
+      },
+      {
+        "metric": {
+          "config_fingerprint": "new",
+          "installation_id": "kept",
+          "inventory_type": "resource",
+          "registry_id": "example.test/team/alpha",
+          "resource_kind": "skill",
+          "resource_name": "alpha"
+        },
+        "value": [
+          3456000,
+          "1"
+        ]
+      },
+      {
+        "metric": {
+          "config_fingerprint": "a",
+          "installation_id": "tied",
+          "inventory_type": "resource",
+          "registry_id": "example.test/team/alpha",
+          "resource_kind": "skill",
+          "resource_name": "ambiguous-a"
+        },
+        "value": [
+          3456000,
+          "1"
+        ]
+      },
+      {
+        "metric": {
+          "config_fingerprint": "b",
+          "installation_id": "tied",
+          "inventory_type": "resource",
+          "registry_id": "example.test/team/alpha",
+          "resource_kind": "skill",
+          "resource_name": "ambiguous-b"
+        },
+        "value": [
+          3456000,
+          "1"
+        ]
+      },
+      {
+        "metric": {
+          "config_fingerprint": "old-value",
+          "installation_id": "stale",
+          "inventory_type": "resource",
+          "registry_id": "example.test/team/alpha",
+          "resource_kind": "skill",
+          "resource_name": "stale"
+        },
+        "value": [
+          3456000,
+          "1"
+        ]
+      },
+      {
+        "metric": {
+          "config_fingerprint": "future-value",
+          "installation_id": "future",
+          "inventory_type": "resource",
+          "registry_id": "example.test/team/alpha",
+          "resource_kind": "skill",
+          "resource_name": "future"
+        },
+        "value": [
+          3456000,
+          "1"
+        ]
+      }
+    ],
+    "resultType": "vector"
+  },
+  "status": "success"
+}

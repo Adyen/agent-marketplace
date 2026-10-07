@@ -1,6 +1,7 @@
 package api
 
 import (
+	"errors"
 	"math"
 	"testing"
 	"time"
@@ -86,6 +87,55 @@ func assertAdoptionCounts(t *testing.T, got installationCounts, want map[install
 		if got.KnownRegistries[id] != wantKnown {
 			t.Errorf("knownRegistries[%q] = %v, want %v", id, got.KnownRegistries[id], wantKnown)
 		}
+	}
+}
+
+func installationRuleAdoptionSamples() []inventoryMetricSample {
+	fresh := adoptionFixedNow.Add(-time.Hour)
+	return []inventoryMetricSample{
+		inventorySnapshotSample("install-rules", "gen-rules", fresh),
+		inventoryResourceSample("install-rules", "gen-rules", telemetryAlpha, "skill", "alpha"),
+		inventoryResourceSample("install-rules", "gen-rules", telemetryAlpha, "rule", "deploy-policy"),
+	}
+}
+
+// spec: marketplace-api/rule-observations-preserve-selectable-resource-adoption
+func TestInstallationAdoptionRuleObservationsPreserveSelectableResourceAdoption(t *testing.T) {
+	samples := installationRuleAdoptionSamples()
+	counts, err := aggregateInstallationMetrics(samples, adoptionTestRegistries(), adoptionFixedNow)
+	if err != nil {
+		t.Fatalf("aggregateInstallationMetrics() error = %v, want valid rule telemetry to preserve skill adoption", err)
+	}
+	assertAdoptionCounts(t, counts, map[installationResourceKey]int64{
+		adoptionKey("rA", "skill", "alpha"): 1,
+	}, nil)
+	if _, ok := counts.Counts[adoptionKey("rA", "rule", "deploy-policy")]; ok {
+		t.Fatalf("rule observation produced an adoption count: %v", counts.Counts)
+	}
+
+	invalidGauge := inventoryResourceSample("install-rules", "gen-rules", telemetryAlpha, "rule", "bad-gauge")
+	invalidGauge.Value = 2
+	missingName := inventoryResourceSample("install-rules", "gen-rules", telemetryAlpha, "rule", "missing-name")
+	delete(missingName.Metric, "resource_name")
+	missingRegistry := inventoryResourceSample("install-rules", "gen-rules", telemetryAlpha, "rule", "missing-registry")
+	delete(missingRegistry.Metric, "registry_id")
+	unknownKind := inventoryResourceSample("install-rules", "gen-rules", telemetryAlpha, "unknown", "unknown-kind")
+	invalidRules := []struct {
+		name   string
+		sample inventoryMetricSample
+	}{
+		{name: "invalid gauge value", sample: invalidGauge},
+		{name: "missing name", sample: missingName},
+		{name: "missing registry", sample: missingRegistry},
+		{name: "unknown kind", sample: unknownKind},
+	}
+	for _, test := range invalidRules {
+		t.Run(test.name, func(t *testing.T) {
+			invalidSamples := append(installationRuleAdoptionSamples(), test.sample)
+			if _, err := aggregateInstallationMetrics(invalidSamples, adoptionTestRegistries(), adoptionFixedNow); !errors.Is(err, errInvalidInstallationMetrics) {
+				t.Fatalf("aggregateInstallationMetrics() error = %v, want %v", err, errInvalidInstallationMetrics)
+			}
+		})
 	}
 }
 
@@ -321,12 +371,12 @@ func TestInstallationAdoptionDuplicateOriginSpellingsAreNotAmbiguous(t *testing.
 
 // spec: marketplace-api/latest-inventory-excludes-removed-and-stale-resources
 func TestInstallationAdoptionQuery(t *testing.T) {
-	wantSelected := `label_replace(max by (installation_id, config_fingerprint) (last_over_time(agent_marketplace_config_snapshot{endpoint="metrics",namespace="inventory-test"}[30d])), "inventory_type", "snapshot", "", "") or label_replace(max by (installation_id, config_fingerprint, registry_id, resource_kind, resource_name) (last_over_time(agent_marketplace_config_resource{endpoint="metrics",namespace="inventory-test"}[30d])), "inventory_type", "resource", "", "")`
+	wantSelected := `label_replace((max by (installation_id, config_fingerprint) (last_over_time(agent_marketplace_config_snapshot{endpoint="metrics",namespace="inventory-test"}[30d])) == on (installation_id) group_left max by (installation_id) (max by (installation_id, config_fingerprint) (last_over_time(agent_marketplace_config_snapshot{endpoint="metrics",namespace="inventory-test"}[30d])))), "inventory_type", "snapshot", "", "") or label_replace((max by (installation_id, config_fingerprint, registry_id, resource_kind, resource_name) (last_over_time(agent_marketplace_config_resource{endpoint="metrics",namespace="inventory-test",resource_kind!="rule"}[30d])) and on (installation_id, config_fingerprint) (max by (installation_id, config_fingerprint) (last_over_time(agent_marketplace_config_snapshot{endpoint="metrics",namespace="inventory-test"}[30d])) == on (installation_id) group_left max by (installation_id) (max by (installation_id, config_fingerprint) (last_over_time(agent_marketplace_config_snapshot{endpoint="metrics",namespace="inventory-test"}[30d]))))), "inventory_type", "resource", "", "")`
 	if got := installationMetricsQuery(map[string]string{"endpoint": "metrics", "namespace": "inventory-test"}); got != wantSelected {
 		t.Errorf("installationMetricsQuery() = %q, want %q", got, wantSelected)
 	}
 
-	wantEmpty := `label_replace(max by (installation_id, config_fingerprint) (last_over_time(agent_marketplace_config_snapshot{}[30d])), "inventory_type", "snapshot", "", "") or label_replace(max by (installation_id, config_fingerprint, registry_id, resource_kind, resource_name) (last_over_time(agent_marketplace_config_resource{}[30d])), "inventory_type", "resource", "", "")`
+	wantEmpty := `label_replace((max by (installation_id, config_fingerprint) (last_over_time(agent_marketplace_config_snapshot{}[30d])) == on (installation_id) group_left max by (installation_id) (max by (installation_id, config_fingerprint) (last_over_time(agent_marketplace_config_snapshot{}[30d])))), "inventory_type", "snapshot", "", "") or label_replace((max by (installation_id, config_fingerprint, registry_id, resource_kind, resource_name) (last_over_time(agent_marketplace_config_resource{resource_kind!="rule"}[30d])) and on (installation_id, config_fingerprint) (max by (installation_id, config_fingerprint) (last_over_time(agent_marketplace_config_snapshot{}[30d])) == on (installation_id) group_left max by (installation_id) (max by (installation_id, config_fingerprint) (last_over_time(agent_marketplace_config_snapshot{}[30d]))))), "inventory_type", "resource", "", "")`
 	if got := installationMetricsQuery(map[string]string{}); got != wantEmpty {
 		t.Errorf("installationMetricsQuery(empty) = %q, want %q", got, wantEmpty)
 	}

@@ -46,7 +46,11 @@ func installationMetricsQuery(labels map[string]string) string {
 		selectors = append(selectors, key+"="+strconv.Quote(labels[key]))
 	}
 	selector := "{" + strings.Join(selectors, ",") + "}[30d]"
-	return `label_replace(max by (installation_id, config_fingerprint) (last_over_time(agent_marketplace_config_snapshot` + selector + `)), "inventory_type", "snapshot", "", "") or label_replace(max by (installation_id, config_fingerprint, registry_id, resource_kind, resource_name) (last_over_time(agent_marketplace_config_resource` + selector + `)), "inventory_type", "resource", "", "")`
+	snapshots := `max by (installation_id, config_fingerprint) (last_over_time(agent_marketplace_config_snapshot` + selector + `))`
+	latest := `(` + snapshots + ` == on (installation_id) group_left max by (installation_id) (` + snapshots + `))`
+	resourceSelector := "{" + strings.Join(append(selectors, `resource_kind!="rule"`), ",") + "}[30d]"
+	resources := `max by (installation_id, config_fingerprint, registry_id, resource_kind, resource_name) (last_over_time(agent_marketplace_config_resource` + resourceSelector + `))`
+	return `label_replace(` + latest + `, "inventory_type", "snapshot", "", "") or label_replace((` + resources + ` and on (installation_id, config_fingerprint) ` + latest + `), "inventory_type", "resource", "", "")`
 }
 
 func aggregateInstallationMetrics(samples []inventoryMetricSample, registries map[store.RegistryID]store.Registry, now time.Time) (installationCounts, error) {
@@ -76,7 +80,9 @@ func aggregateInstallationMetrics(samples []inventoryMetricSample, registries ma
 				latest[installation] = previous
 			}
 		case "resource":
-			if sample.Value != 1 || sample.Metric["registry_id"] == "" || sample.Metric["resource_name"] == "" || !IsMarketplaceKind(sample.Metric["resource_kind"]) {
+			kind := sample.Metric["resource_kind"]
+			validKind := IsMarketplaceKind(kind) || kind == "rule"
+			if sample.Value != 1 || sample.Metric["registry_id"] == "" || sample.Metric["resource_name"] == "" || !validKind {
 				return installationCounts{}, errInvalidInstallationMetrics
 			}
 		default:
@@ -140,7 +146,7 @@ func aggregateInstallationMetrics(samples []inventoryMetricSample, registries ma
 	}
 	seen := make(map[observation]struct{})
 	for _, sample := range samples {
-		if sample.Metric["inventory_type"] != "resource" {
+		if sample.Metric["inventory_type"] != "resource" || sample.Metric["resource_kind"] == "rule" {
 			continue
 		}
 		installation := sample.Metric["installation_id"]
