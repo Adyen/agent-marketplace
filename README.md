@@ -141,7 +141,10 @@ is a full-screen terminal interface over the commands described below.
 
 The keys you will use most in the TUI are `j`/`k` to move, `/` to search,
 `enter` to view details, and `space` to open the scope picker, where `g`, `p`,
-and `l` toggle a resource for your user, project, or local configuration. `s`
+and `l` toggle a resource for your user, project, or local configuration —
+on a section header, `space` instead opens a bulk toggle for every eligible
+row in that section. `v` opens View settings to regroup the list by status,
+source, or kind. `s`
 syncs pending changes, `u` updates Git locks and syncs, `r` reloads from disk,
 `H` picks the harnesses to target, `E` opens a configuration file in your
 editor, `e` shows errors and warnings, `?` lists every binding, and `q` quits.

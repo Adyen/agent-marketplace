@@ -1,8 +1,8 @@
 # Selectable TUI Groupings and Section Bulk Toggle
 
 **Date:** 2026-10-07
-**Status:** Approved design; implementation not started
-**Worktree branch:** `toggle-view`
+**Status:** Implemented; the OpenSpec change `tui-view-groupings` is archived under `openspec/changes/archive/2026-10-07-tui-view-groupings` and its deltas now live in the `tui-*` main specs. The optional footer indicator mentioned in §2 was omitted; no permanent indicator line was added.
+**Worktree branch:** `feature/tui-view-groupings` (designed on `toggle-view`)
 **Design base:** `690ee9d05f6460fd7c99a9b7830a2ac3ac55b122`
 
 ## 1. Decisions and objective
