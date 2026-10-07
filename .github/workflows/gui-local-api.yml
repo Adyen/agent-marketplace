@@ -1,0 +1,65 @@
+name: GUI Local API
+
+on:
+  push:
+    branches:
+      - main
+      - interactive-session-core
+  pull_request:
+    branches:
+      - main
+      - interactive-session-core
+
+concurrency:
+  group: gui-local-api-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions: {}
+
+jobs:
+  check:
+    name: GUI local API checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: gui
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+        with:
+          go-version-file: go.mod
+
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: 24
+
+      - name: Enable pnpm
+        run: corepack enable
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile --ignore-scripts
+
+      - name: API contract drift
+        run: pnpm run api:drift
+
+      - name: Typecheck and unit tests
+        run: pnpm run check
+
+      - name: Local API Go tests
+        working-directory: .
+        run: CGO_ENABLED=0 go test ./internal/localapi ./internal/session -count=1
+
+      - name: Install Chromium
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: Real-core browser E2E
+        run: pnpm run test:e2e
