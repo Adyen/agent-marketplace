@@ -1608,8 +1608,9 @@ components:
           description: >-
             Optional. How many distinct reporting installations enabled this
             resource in their latest reported configuration within the last 30
-            days, derived from existing inventory telemetry. Counts describe
-            enabled configuration, not verified installation events or unique
+            days, derived from inventory telemetry matched by Git identity or
+            explicit coordinates from this Marketplace. Counts describe enabled
+            configuration, not verified installation events or unique
             users, and can undercount non-reporting installations. Present
             only when the instance reports adoption for this registry; absent
             means unknown rather than zero.

@@ -89,7 +89,7 @@ func NewServer(cfg config.Config, meta store.MetadataStore, blobs store.BlobStor
 
 	s.metrics = newServerMetrics(meta)
 	if strings.TrimSpace(cfg.InstallationMetrics.URL) != "" {
-		s.installations = newInstallationMetricsReader(cfg.InstallationMetrics)
+		s.installations = newInstallationMetricsReader(cfg.InstallationMetrics, s.mpID)
 	}
 
 	publicMux := http.NewServeMux()
