@@ -67,10 +67,12 @@ func CreateCodexSet(partitions []CodexPartition) (operation string, err error) {
 		return "", err
 	}
 	targetDir := filepath.Join(dir, codexTargetName)
-	if err := os.MkdirAll(targetDir, 0o755); err != nil {
-		return "", fmt.Errorf("backup: create Codex set directory: %w", err)
+	selected := targetDir
+	parent, err := fsboundary.OpenDir(selected)
+	for errors.Is(err, fs.ErrNotExist) && !errors.Is(err, fsboundary.ErrUnsafePath) && selected != filepath.Dir(selected) {
+		selected = filepath.Dir(selected)
+		parent, err = fsboundary.OpenDir(selected)
 	}
-	parent, err := fsboundary.OpenDir(targetDir)
 	if err != nil {
 		return "", err
 	}
@@ -79,6 +81,25 @@ func CreateCodexSet(partitions []CodexPartition) (operation string, err error) {
 			err = errors.Join(err, closeErr)
 		}
 	}()
+	slog.Debug("Codex backup namespace parent selected", "path", selected, "phase", "backup-namespace-parent")
+	if err := verifyArchiveParent(parent, selected); err != nil {
+		return "", err
+	}
+	if selected != targetDir {
+		relative, err := filepath.Rel(selected, targetDir)
+		if err != nil {
+			return "", err
+		}
+		prepared, err := parent.EnsurePath(relative)
+		if err != nil {
+			return "", err
+		}
+		previous := parent
+		parent = prepared
+		if closeErr := previous.Close(); closeErr != nil {
+			return "", closeErr
+		}
+	}
 	native, err := parent.NativeRoot()
 	if err != nil {
 		return "", err
