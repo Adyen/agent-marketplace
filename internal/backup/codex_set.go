@@ -97,7 +97,7 @@ func CreateCodexSet(partitions []CodexPartition) (operation string, err error) {
 		previous := parent
 		parent = prepared
 		if closeErr := previous.Close(); closeErr != nil {
-			return "", closeErr
+			return "", fmt.Errorf("backup: close Codex backup namespace parent %s: %w", selected, closeErr)
 		}
 	}
 	native, err := parent.NativeRoot()
