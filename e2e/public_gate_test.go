@@ -674,6 +674,20 @@ func TestMarketplaceProxyRoutingContract(t *testing.T) {
 			}
 		}
 	}
+	operatorRelative := "deploy/compose/sqlite-filesystem/nginx-operator.local.conf"
+	operatorData, err := os.ReadFile(filepath.Join(root, operatorRelative))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, fragment := range []string{
+		"location = /marketplace { return 308 /$is_args$args; }",
+		"location = /marketplace/ { return 308 /$is_args$args; }",
+		"location ~ ^/marketplace/([^/].*)$ { return 308 /$1$is_args$args; }",
+	} {
+		if !strings.Contains(string(operatorData), fragment) {
+			t.Errorf("%s missing routing contract fragment %q", operatorRelative, fragment)
+		}
+	}
 }
 
 // spec: site-deployment-profiles/legacy-documentation-values-fail-with-migration-guidance

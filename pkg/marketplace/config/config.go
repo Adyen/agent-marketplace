@@ -644,12 +644,15 @@ func validateBrowserBase(raw string) error {
 	if err != nil || parsed.RawQuery != "" || parsed.ForceQuery {
 		return errors.New("instance.browser_base must not contain a query")
 	}
+	if strings.Contains(strings.ToLower(parsed.EscapedPath()), "%2f") {
+		return errors.New("instance.browser_base must use a canonical path")
+	}
 	decoded, err := url.PathUnescape(parsed.EscapedPath())
 	if err != nil {
 		return errors.New("instance.browser_base must use a canonical path")
 	}
 	for _, char := range decoded {
-		if char < 0x20 || char == 0x7f || char == '\\' {
+		if unicode.IsControl(char) || char == '\\' {
 			return errors.New("instance.browser_base must use a canonical path")
 		}
 	}

@@ -286,6 +286,8 @@ func TestLoadConfigRejectsUnsafeBrowserBase(t *testing.T) {
 		"https://marketplace.example/tools/%2e%2e/admin",
 		"https://marketplace.example/%5cadmin",
 		"https://marketplace.example/%0aadmin",
+		"https://marketplace.example/%C2%85admin",
+		"https://marketplace.example/tools%2F",
 	} {
 		t.Run(raw, func(t *testing.T) {
 			yaml := strings.Replace(validConfigYAML(), "canonical_url: https://marketplace.test", "canonical_url: https://marketplace.test\n  browser_base: "+raw, 1)
