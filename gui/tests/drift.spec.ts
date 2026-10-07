@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { mkdtemp, cp, readFile, rm } from 'node:fs/promises'
+import { mkdtemp, cp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -46,7 +46,6 @@ describe('generated client drift', () => {
       if (mutated === original) {
         throw new Error('contract mutation did not apply')
       }
-      const { writeFile } = await import('node:fs/promises')
       await writeFile(join(temp, 'gui-local-mutated.yaml'), mutated)
       const previous = process.exitCode
       process.exitCode = 0

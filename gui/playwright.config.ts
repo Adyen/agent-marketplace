@@ -8,7 +8,6 @@ export default defineConfig({
   workers: 1,
   reporter: [['line']],
   use: {
-
     trace: 'off',
     screenshot: 'off',
     video: 'off',

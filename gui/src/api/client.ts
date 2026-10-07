@@ -26,14 +26,6 @@ const stageRank: Record<string, number> = {
   final: 4,
 }
 
-
-
-
-
-
-
-
-
 export class EventCursor {
   private sequence = 0
   private generation = 0

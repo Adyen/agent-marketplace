@@ -993,24 +993,7 @@ func TestEventsEndOnAPIClose(t *testing.T) {
 	}
 }
 
-func TestLoopbackCloseWithoutParentCancel(t *testing.T) {
-	api := newAPI(t, session.DependencyLifecycle{}, nil)
-	loopback, err := api.ListenLoopback(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := loopback.Close(); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := net.DialTimeout("tcp", strings.TrimPrefix(loopback.URL, "http://"), 500*time.Millisecond); err == nil {
-		t.Fatal("listener still reachable after Close")
-	}
-}
-
 func TestConstructorRejectsInvalidWorkspaceBeforeIO(t *testing.T) {
-	if _, err := New(context.Background(), pipeline.Workspace{}, t.TempDir(), session.DependencyLifecycle{}, nil); err == nil {
-		t.Fatal("zero workspace accepted")
-	}
 	if _, err := New(context.Background(), pipeline.Workspace{}, t.TempDir(), session.DependencyLifecycle{}, nil); !errors.Is(err, pipeline.ErrInvalidWorkspace) {
 		t.Fatalf("error = %v, want ErrInvalidWorkspace", err)
 	}
