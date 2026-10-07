@@ -554,6 +554,9 @@ func TestCloneRejectsAuthenticatedHTTPRedirects(t *testing.T) {
 }
 
 func TestCloneHTTPSWithTokenUsesPreemptiveAuthorization(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("GIT_CONFIG_GLOBAL", os.DevNull)
+	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
 	sourceRepo := createGitRepo(t, map[string]string{
 		"README.md": "hello",
 	})

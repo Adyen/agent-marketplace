@@ -91,14 +91,14 @@ func aggregateInstallationMetrics(samples []inventoryMetricSample, registries ma
 				return installationCounts{}, errInvalidInstallationMetrics
 			}
 			sourceKind := sample.Metric["source_kind"]
-			marketplaceID := sample.Metric["marketplace_id"]
+			metricMarketplaceID := sample.Metric["marketplace_id"]
 			switch sourceKind {
 			case "":
-				if marketplaceID != "" {
+				if metricMarketplaceID != "" {
 					return installationCounts{}, errInvalidInstallationMetrics
 				}
 			case "marketplace":
-				if !validHostedInventoryIdentity(marketplaceID, sample.Metric["registry_id"], sample.Metric["resource_name"]) {
+				if !validHostedInventoryIdentity(metricMarketplaceID, sample.Metric["registry_id"], sample.Metric["resource_name"]) {
 					return installationCounts{}, errInvalidInstallationMetrics
 				}
 			default:
