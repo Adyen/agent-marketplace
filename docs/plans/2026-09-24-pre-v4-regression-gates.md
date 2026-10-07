@@ -1,7 +1,7 @@
 # Pre-v4 to v4 Regression Gates
 
 **Date:** 2026-09-24
-**Status:** Approved design; implementation not started
+**Status:** Implemented; final regression-gate verification tracked in #326
 **Worktree branch:** `docs/pre-v4-regression-gates`
 **Implementation base:** `67b9eb87c4d739b75e2b3d4551c9bbce78392c20` (main, including PR #302)
 
@@ -140,22 +140,22 @@ A refusal test must prove a useful legacy operation still succeeds. A preservati
 
 | ID | Evidence | Remaining gap |
 |---|---|---|
-| B01 | upgrade-gate `TestPreV4ReleaseUpgrade` (list/sync/install/remove before migration); `TestPreV4GitLockUpgrade` (v3.1.1 lock kept through `sync --locked`, plain `sync`, `sync --check`) | — |
+| B01 | upgrade-gate `TestPreV4ReleaseUpgrade` (list/sync/install/remove before migration); `TestPreV4GitLockUpgrade` (v3.1.1 exact revision retained; `sync --locked` preserves v1 bytes, plain `sync` upgrades only the lock version to v2, subsequent sync/check preserve that lock) | — |
 | B02 | cmd `TestPromptForV4MigrationNonInteractiveWarnsAndLeavesBytes`; tui-qa `non-tty.test.ts` | — |
 | B03 | cmd `TestPendingV4MigrationPathsOnlyOffersUserConfig`, `TestInteractiveStartupPromptMigratesLegacyConfig`; tui-qa `accept-user-migration.spec.ts` | — |
 | B04 | tui-qa `accept-user-migration.spec.ts` (global selection from a legacy repository source); e2e `TestV4UserLayerOptsOutOfLegacyOrganizationResource`, `TestV4UserLayerExcludesLegacyOrganizationCollectionMember`; upgrade-gate repository-first migration; `TestPreV4LocalLayerUpgrade` (v3.1.1-written local root keeps working beside a migrated user root) | — |
-| B05 | upgrade-gate repo then user migration with install/remove; `TestPreV4LocalLayerUpgrade` (`migrate --scope all`, local and repository install/remove, idempotent repeat); config `TestMigrateLocalConfig`, `TestMigrateConfigFilesToV4AllScopePublishesNothingWhenOneLayerIsUnsupported` | — |
+| B05 | upgrade-gate repo then user migration with install/remove; `TestPreV4LocalLayerUpgrade` (`migrate --scope all`, local and repository install/remove, idempotent repeat); config `TestMigrateLocalConfig`, `TestMigrateConfigFilesToV4AllScopePublishesNothingWhenOneLayerIsUnsupported`; declarative E2E `migrate/v4_{bulk,tag,ad_hoc}_selection_lifecycle` (populated legacy installation, actual migration, install/remove, preserved sibling, resync and drift check) | — |
 | B06 | upgrade-gate include-owned refusal leaves bytes and legacy install usable; cmd `TestPromptForV4MigrationDeclineLeavesBytesUnchanged`, `TestMigrateCommandToV4IsExplicitAndSupportsDryRun`; tui-qa decline path in every other journey | — |
-| B07 | config `TestMigrateConfigFilesToV4PreservesLegacySelectorsAndPolicies`, `TestMigrateConfigFilesToV4RefusesIncludeWithoutWrites`, `TestV4VersionBoundaryRejectsExplicitNonV4Include`, `TestMigrateSkipsDuplicatePaths`; upgrade-gate `TestPreV4LocalLayerUpgrade` (relative in-repository directory and v3.1.1-written local selector), `TestPreV4DuplicateRefUpgrade` (same registry at two refs: collision winner, both locked refs, and lock bytes kept; migration keeps both refs or refuses unchanged); e2e `TestAdHocRelativeDirectoryParityAcrossSchemas` | — |
+| B07 | config `TestMigrateConfigFilesToV4PreservesLegacySelectorsAndPolicies`, `TestMigrateConfigFilesToV4RefusesIncludeWithoutWrites`, `TestV4VersionBoundaryRejectsExplicitNonV4Include`, `TestMigrateSkipsDuplicatePaths`; upgrade-gate `TestPreV4LocalLayerUpgrade` (relative in-repository directory and v3.1.1-written local selector), `TestPreV4DuplicateRefUpgrade` (same registry at two refs: collision winner and both locked refs retained through the v1-to-v2 lock-version upgrade; migration keeps both refs or refuses unchanged); e2e `TestAdHocRelativeDirectoryParityAcrossSchemas` | — |
 | B08 | upgrade-gate `TestPreV4GitLockUpgrade` (exact revision until `update`), `TestPreV4AggregateOwnershipUpgrade` (handwritten entries, Devin/Codex durable ownership, plugin-style output untouched) | — |
 | B09 | config `TestMigrateConfigFilesToV4Marketplace*` (evidence required, existing lock, dry run, commit failure); e2e `TestMigrateV4MarketplaceExactPin`; cmd `TestMigrateCommandMarketplaceEndToEndUsesVerifiedCache` | — |
-| B10 | tui-qa `org-marketplace-lock-failure.spec.ts`; cmd `TestSyncAcquiresMissingV4OrganizationMarketplaceLockTransiently`, `TestSyncOfflineDoesNotAcquireMissingOrganizationMarketplaceLock`, `TestSyncCheckDoesNotAcquireMissingOrganizationMarketplaceLock` | — |
+| B10 | tui-qa `org-marketplace-lock-failure.spec.ts`; cmd `TestSyncAcquiresMissingV4OrganizationMarketplaceLockTransiently`, `TestSyncOfflineDoesNotAcquireMissingOrganizationMarketplaceLock`, `TestSyncCheckAcquiresMissingOrganizationMarketplaceLockTransiently` | — |
 | B11 | tui-qa `org-marketplace-lock-recovery.spec.ts` (valid lock); cmd `TestSyncNeverReplacesPresentOrganizationMarketplaceLockTransiently` (malformed/mismatched: fails closed, zero requests, bytes unchanged), `TestGcCommandRejectsPresentOrganizationLockWhenMalformedUntrustedOrStale`, `TestDeinitBlocksOnPresentInvalidOrganizationLock` | — |
 | B12 | tui-qa `reinstall-recovery.test.ts` and the lock-failure journey's user-side wipe | — |
 | B13 | dependencytxn `TestRecoveryAtEveryPublicationInterruption`, `TestPreJournalInterruptionsLeaveNoTransactionResidue`, `TestCommitRejectsConcurrentChangeWithoutResidue`; config `TestMigrateConfigFilesToV4*RejectsConcurrent*`, `TestV4MigrationDoesNotOverwriteConcurrentBackup`; e2e `TestInterruptedMigrationRecoversOnNextMutation` (the process is killed after publishing the first of three roots; `sync --check` refuses the half-published state and the next `sync` completes it) | — |
 | B14 | upgrade-gate repeated `migrate --scope repo` is byte-identical; `sync --check` after every step | — |
 
-Committed-state compatibility in the other direction, where the candidate's writes must stay readable by teammates on the latest release, is `released-client-gate` (`TestReleasedClientReadsCandidateCommittedState`).
+Committed-state compatibility in the other direction, where the candidate's writes must stay readable by teammates on the latest release, is `released-client-gate` (`TestReleasedClientReadsCandidateCommittedState`). The gate pins checksum-verified v4.1.1 Linux assets. Each teammate has a separate HOME and checkout; actual Git commits carry configuration and acquisition locks between them, never generated output or cache-backed symlinks. The released client must pass `sync --locked` and `sync --check` after candidate sync/install/update/remove. Plain candidate sync and released-client locked/check reads preserve healthy committed lock bytes; update and removal also assert the intended materialized changes.
 
 Execute applicable lifecycle actions: `list`/`status`, install/remove, lock/sync/check, update, and TUI selection workflows. Use fresh branches for actions that intentionally alter the expected starting state; do not let an early destructive action make later assertions vacuous.
 
@@ -236,6 +236,10 @@ Use a stable required-check aggregation pattern that fails on unexpected skipped
 Failure evidence should include standard test output, scenario and executable identities, command arguments/exit status, synthetic state differences, server logs/request paths and counts, current terminal output, and measured operation durations. Use standard runner results and CI artifact uploads, not a custom TUI report engine. Retain evidence before fixture cleanup; include only synthetic fixture data and redact credential-shaped values. Both standalone and table tests must be represented in execution evidence.
 
 ## 9. Implementation sequence and acceptance
+
+The slices below describe the original implementation sequence. The as-built B01–B14 matrix above, behavioral witness enforcement, CI drivers, and nightly workflow are the current evidence. Final rollout corrections add the required `E2E Gates` context to the existing default-branch ruleset, restore successful released-client interoperability, and allow the unchanged 20-iteration nightly suite to finish.
+
+The October 7 nightly run completed 15 iterations at about 113 seconds each, then hit its 30-minute job deadline during iteration 16. Twenty iterations require about 38 minutes plus setup. The nightly job now has a bounded 60-minute deadline; individual journey ceilings, fail-fast behavior, and the iteration count remain unchanged. `TestTUIQAStressBudget` verifies the configured budget and executes the actual workflow loop with deterministic controls proving 20 successful invocations and immediate failure propagation.
 
 Implement vertical slices: one meaningful failing consumer test, the necessary fixture/support change, then green verification. Production defects exposed by the new gate receive separately reviewable fixes; do not bulk-write imagined tests or build a general-purpose framework first.
 
