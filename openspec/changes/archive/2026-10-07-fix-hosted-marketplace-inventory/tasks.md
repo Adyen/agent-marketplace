@@ -12,4 +12,4 @@
 
 - [x] 3.1 Deliver the lead-authored additive collector filter/allowlist in the separate k8s-multitenant branch; validate the cached collector configuration, valid legacy/hosted and malformed OTLP inputs, and rendered Kustomize overlay. No production rollout.
 - [x] 3.2 Review the complete diffs and run one final scoped make validate and make spec-check; retain evidence and report rollout ordering and any blockers.
-- [ ] 3.3 Run openspec archive fix-hosted-marketplace-inventory --yes as the final implementation artifact update and verify make spec-check against the archived delta.
+- [x] 3.3 Run openspec archive fix-hosted-marketplace-inventory --yes as the final implementation artifact update and verify make spec-check against the archived delta.
