@@ -4,6 +4,7 @@ import (
 	"mime"
 	"net/http"
 	"net/url"
+	"path"
 	"regexp"
 	"strconv"
 	"strings"
@@ -18,7 +19,9 @@ func resolveAdminBrowserRoutes(browserBase string) adminBrowserRoutes {
 	root := "/marketplace"
 	if parsed, err := url.Parse(strings.TrimSpace(browserBase)); err == nil && parsed.IsAbs() && parsed.Host != "" {
 		candidate := strings.TrimRight(parsed.EscapedPath(), "/")
-		if !strings.HasPrefix(candidate, "//") && !strings.ContainsAny(candidate, "\\\r\n") {
+		decoded, decodeErr := url.PathUnescape(candidate)
+		if decodeErr == nil && !strings.HasPrefix(decoded, "//") && !strings.ContainsAny(decoded, "\\\r\n") &&
+			(decoded == "" || path.Clean(decoded) == decoded) {
 			root = candidate
 		}
 	}

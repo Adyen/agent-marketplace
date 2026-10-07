@@ -7,6 +7,8 @@ import test from 'node:test'
 const publicDocsDist = new URL('../.vitepress/dist/docs/', import.meta.url)
 const docsDist = new URL('../.vitepress/dist-docs/', import.meta.url)
 const publicBase = (process.env.SITE_BASE ?? '/').replace(/\/?$/, '/')
+const marketplaceBase = process.env.MARKETPLACE_BASE ?? '/'
+const marketplaceBasePattern = marketplaceBase.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 
 async function filesBelow(directory: URL): Promise<URL[]> {
   const entries = await readdir(directory, { withFileTypes: true })
@@ -32,7 +34,7 @@ test('documentation-only build is contained below /docs/', async () => {
   for (const file of htmlFiles) {
     const html = await readFile(file, 'utf8')
     for (const [, target] of html.matchAll(/(?:href|src)="([^"]+)"/g)) {
-      if (!target.startsWith('/') || target === '/') continue
+      if (!target.startsWith('/') || target === marketplaceBase) continue
       assert.ok(target.startsWith('/docs/'), `${file.pathname} escapes /docs/: ${target}`)
     }
   }
@@ -64,7 +66,7 @@ test('documentation navigation follows its deployment profile', async () => {
 
   assert.ok(publicDocs.includes(`class="title" href="${publicBase}"`))
   assert.doesNotMatch(publicDocs, />Marketplace<\/a>/)
-  assert.match(marketplaceDocs, /<a[^>]+href="\/"[^>]+target="_self"[^>]*>Marketplace<\/a>/)
+  assert.match(marketplaceDocs, new RegExp(`<a[^>]+href="${marketplaceBasePattern}"[^>]+target="_self"[^>]*>Marketplace</a>`))
   assert.match(marketplaceDocs, /<a[^>]+href="\/docs\/"[^>]+target="_self"[^>]*>Docs<\/a>/)
 })
 

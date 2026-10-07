@@ -47,11 +47,17 @@ const siteInstall = spawnSync('pnpm', ['install', '--frozen-lockfile', '--ignore
 })
 if (siteInstall.error || siteInstall.status !== 0) process.exit(siteInstall.status || 1)
 
-const siteBuild = spawnSync('pnpm', ['run', 'build:docs'], {
+const publicSiteBuild = spawnSync('pnpm', ['run', 'build'], {
   cwd: resolve('..', 'site'),
   stdio: 'inherit',
 })
-if (siteBuild.error || siteBuild.status !== 0) process.exit(siteBuild.status || 1)
+if (publicSiteBuild.error || publicSiteBuild.status !== 0) process.exit(publicSiteBuild.status || 1)
+
+const docsSiteBuild = spawnSync('pnpm', ['run', 'build:docs'], {
+  cwd: resolve('..', 'site'),
+  stdio: 'inherit',
+})
+if (docsSiteBuild.error || docsSiteBuild.status !== 0) process.exit(docsSiteBuild.status || 1)
 
 const result = spawnSync('pnpm', ['exec', 'playwright', 'test', '--config=tests/e2e/playwright.config.ts', ...process.argv.slice(3)], {
   stdio: 'inherit',

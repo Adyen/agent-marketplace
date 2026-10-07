@@ -78,6 +78,7 @@ services:
         NGINX_IMAGE: ${SITE_NGINX_IMAGE:-${NGINX_IMAGE:-nginxinc/nginx-unprivileged:1.29-alpine}}
         SITE_PROFILE: docs
         SITE_BASE: /docs/
+        MARKETPLACE_BASE: /
     read_only: true
     tmpfs:
       - /var/cache/nginx

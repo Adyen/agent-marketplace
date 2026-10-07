@@ -1334,7 +1334,7 @@ export interface operations {
     adminAuthLogin: {
         parameters: {
             query?: {
-                /** @description Post-sign-in destination. Only /marketplace/admin and descendant paths are accepted. */
+                /** @description Post-sign-in destination. Only the administration path beneath instance.browser_base (/admin for a root base, or the base path followed by /admin) and its descendants are accepted. When instance.browser_base is omitted, the legacy /marketplace/admin path and its descendants are accepted. */
                 next?: string;
             };
             header?: {

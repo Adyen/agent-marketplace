@@ -19,9 +19,13 @@ COPY --from=design --chown=1000:1000 semantic-colors.css /design/semantic-colors
 
 ARG SITE_BASE=/
 ARG SITE_PROFILE=public
+ARG MARKETPLACE_BASE=/
 ENV SITE_BASE=${SITE_BASE} \
-    SITE_PROFILE=${SITE_PROFILE}
-RUN if [ "${SITE_PROFILE}" = "docs" ]; then \
+    SITE_PROFILE=${SITE_PROFILE} \
+    MARKETPLACE_BASE=${MARKETPLACE_BASE}
+RUN if [ "${SITE_PROFILE}" = "docs" ] && [ "${SITE_BASE}" != "/docs/" ]; then \
+        echo "docs profile requires SITE_BASE=/docs/" >&2; exit 1; \
+    elif [ "${SITE_PROFILE}" = "docs" ]; then \
         pnpm run build:docs && output=.vitepress/dist-docs; \
     elif [ "${SITE_PROFILE}" = "public" ]; then \
         pnpm run build && output=.vitepress/dist; \

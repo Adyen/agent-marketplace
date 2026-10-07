@@ -71,6 +71,12 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end }}
 
 {{- define "agent-marketplace.validate" -}}
+{{- if hasKey .Values "site" }}
+{{- fail "values.site was renamed to values.docs; update the values file before upgrading" }}
+{{- end }}
+{{- if and (hasKey .Values "service") (hasKey .Values.service "site") }}
+{{- fail "values.service.site was renamed to values.service.docs; update the values file before upgrading" }}
+{{- end }}
 {{- if not (has .Values.mode (list "split" "all")) }}
 {{- fail "mode must be either split or all" }}
 {{- end }}

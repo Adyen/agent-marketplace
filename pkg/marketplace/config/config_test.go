@@ -253,25 +253,44 @@ func TestLoadConfigRejectsUnsafeCanonicalURL(t *testing.T) {
 }
 
 func TestLoadConfigAcceptsOptionalBrowserBase(t *testing.T) {
-	cfg, err := LoadConfig(writeConfig(t, strings.Replace(validConfigYAML(), "canonical_url: https://marketplace.test", "canonical_url: https://api.marketplace.test\n  browser_base: https://marketplace.test", 1)))
-	if err != nil {
-		t.Fatalf("LoadConfig with browser base: %v", err)
-	}
-	if cfg.Instance.BrowserBase != "https://marketplace.test" {
-		t.Fatalf("browser base = %q", cfg.Instance.BrowserBase)
+	for _, raw := range []string{
+		"https://marketplace.test",
+		"https://marketplace.test/",
+		"https://marketplace.test/tools",
+		"https://marketplace.test/tools/",
+	} {
+		t.Run(raw, func(t *testing.T) {
+			cfg, err := LoadConfig(writeConfig(t, strings.Replace(validConfigYAML(), "canonical_url: https://marketplace.test", "canonical_url: https://api.marketplace.test\n  browser_base: "+raw, 1)))
+			if err != nil {
+				t.Fatalf("LoadConfig with browser base: %v", err)
+			}
+			if cfg.Instance.BrowserBase != raw {
+				t.Fatalf("browser base = %q", cfg.Instance.BrowserBase)
+			}
+		})
 	}
 }
 
+// spec: marketplace-admin-auth/unsafe-browser-bases-fail-during-configuration-loading
 func TestLoadConfigRejectsUnsafeBrowserBase(t *testing.T) {
 	for _, raw := range []string{
 		"https://user:browser-secret@example.com",
 		"https://marketplace.example/browser#fragment",
 		"https://marketplace.example/browser?oauth_token=browser-secret",
+		"https://marketplace.example/browser?view=compact",
+		"https://marketplace.example//",
+		"https://marketplace.example//admin",
+		"https://marketplace.example/tools//admin",
+		"https://marketplace.example/./admin",
+		"https://marketplace.example/%2e/admin",
+		"https://marketplace.example/tools/%2e%2e/admin",
+		"https://marketplace.example/%5cadmin",
+		"https://marketplace.example/%0aadmin",
 	} {
 		t.Run(raw, func(t *testing.T) {
 			yaml := strings.Replace(validConfigYAML(), "canonical_url: https://marketplace.test", "canonical_url: https://marketplace.test\n  browser_base: "+raw, 1)
 			_, err := LoadConfig(writeConfig(t, yaml))
-			if err == nil || strings.Contains(err.Error(), "browser-secret") {
+			if err == nil || !strings.Contains(err.Error(), "instance.browser_base") || strings.Contains(err.Error(), "browser-secret") {
 				t.Fatalf("LoadConfig browser base %q error = %v", raw, err)
 			}
 		})

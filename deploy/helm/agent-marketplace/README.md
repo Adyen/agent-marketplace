@@ -205,6 +205,18 @@ The Deployment name ends in the role: `-api` and `-worker` in split mode, and `-
 
 The API readiness and startup probes use `/readyz` on the operations port. The docs probes use `/docs/` on their HTTP port. The API Service exposes the application HTTP port plus the named `operations` port for private monitoring, and the Ingress exposes only the intended public routes. Worker pods have no HTTP listener, so check their process state and logs instead of adding an HTTP probe.
 
+## Upgrade from the combined site profile
+
+Chart version 0.2.0 separates the documentation image from the Marketplace web interface and mounts the web interface at `/` by default. Before upgrading:
+
+1. Rename `site` to `docs` and `service.site` to `service.docs` in every values file. The chart rejects the old keys rather than silently omitting the documentation workload.
+2. Change the documentation image repository to `agent-marketplace-docs` and keep `docs.enabled: true` wherever the documentation service is routed.
+3. Change `web.basePath` from `/marketplace/` to `/`, or set it explicitly to the non-root path the deployment will continue to use.
+4. Set `instance.browser_base` in `config.content` to the externally visible Marketplace web base. For a root deployment, use the bare origin. OIDC administration destinations and error routes derive from this value.
+5. Update Ingress or gateway rules so `/docs/` reaches the docs service, reserved API paths reach the API service, and the remaining `/` traffic reaches the web service. Move any administration protection from `/marketplace/admin/**` to `/admin/**` for a root deployment.
+
+Render the upgraded values before applying them. Login transactions started against the old base may need to be restarted after the route switch.
+
 ## Troubleshooting
 
 - If API pods fail before becoming ready, inspect the mounted operator configuration and confirm that the configured database and blob drivers match the Secret references.

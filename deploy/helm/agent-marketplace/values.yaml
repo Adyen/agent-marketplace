@@ -49,6 +49,7 @@ config:
       id: example-marketplace
       name: Example Agent Marketplace
       canonical_url: https://marketplace.example.invalid
+      browser_base: https://marketplace.example.invalid
     listen: 0.0.0.0:8080
     operations_listen: 0.0.0.0:9090
     storage:

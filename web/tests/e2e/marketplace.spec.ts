@@ -9,6 +9,7 @@ const appURL = `http://127.0.0.1:${process.env.E2E_APP_PORT || '4321'}`
 const relativeAppURL = `http://127.0.0.1:${process.env.E2E_RELATIVE_APP_PORT || '4322'}`
 const relativeAppBaseURL = `${relativeAppURL}/marketplace/`
 const sharedOriginURL = `http://127.0.0.1:${process.env.E2E_SHARED_ORIGIN_PORT || '4323'}`
+const publicSiteURL = `http://127.0.0.1:${process.env.E2E_PUBLIC_SITE_PORT || '4326'}`
 const sharedAppearanceKey = 'vitepress-theme-appearance'
 
 function colorChannels(color: string): number[] {
@@ -168,6 +169,19 @@ test.describe('Marketplace browser discovery', () => {
     await expect(relativeNavigation.getByRole('link', { name: 'Marketplace', exact: true })).toHaveAttribute('href', '/marketplace/')
     await expect(relativeNavigation.getByRole('link', { name: 'Docs', exact: true })).toHaveAttribute('href', '/docs/')
     await relativePage.close()
+  })
+
+  test('keeps the public landing profile and its palette independent', async ({ page }) => {
+    await page.goto(publicSiteURL)
+    await expect(page.getByRole('heading', { name: /Manage AI agent tooling once/ })).toBeVisible()
+    await expect(page.getByRole('link', { name: 'Docs', exact: true }).first()).toHaveAttribute('href', '/docs/')
+    await expect(page.getByRole('link', { name: 'Marketplace', exact: true })).toHaveCount(0)
+
+    const lightHero = await page.locator('.hero').evaluate(element => getComputedStyle(element).getPropertyValue('--am-hero-bg').trim())
+    await page.evaluate(() => document.documentElement.classList.add('dark'))
+    const darkHero = await page.locator('.hero').evaluate(element => getComputedStyle(element).getPropertyValue('--am-hero-bg').trim())
+    expect(lightHero).not.toBe('')
+    expect(darkHero).not.toBe(lightHero)
   })
 
   // spec: site-deployment-profiles/marketplace-deployment-uses-root-ui-with-same-origin-services

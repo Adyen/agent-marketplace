@@ -61,6 +61,15 @@ registries:
 
 ## 3. Wire secrets and network
 
+For the Helm chart, enable both browser-facing workloads before configuring routes:
+
+```yaml
+web:
+  enabled: true
+docs:
+  enabled: true
+```
+
 - Mount the DSN file and any registry credential files read-only, readable by the container's non-root user (UID 1000). If a registry sets `ca_file`, mount it in every API and worker container, because every role validates the configuration at startup.
 - Limit worker egress to the registry origins and the object store.
 - Route `/.well-known/agent-marketplace.json`, `/api/`, and `/healthz` to the API; `/docs/` to the documentation image; and the remaining `/` traffic to the UI. See [How to configure a reverse proxy](./configure-a-reverse-proxy.md).

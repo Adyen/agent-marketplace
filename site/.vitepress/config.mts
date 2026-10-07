@@ -3,10 +3,18 @@ import { DOCS_PATH as PUBLIC_DOCS_PATH, GITHUB_REPOSITORY_URL } from '../src/sha
 
 const docsOnly = process.env.SITE_PROFILE === 'docs'
 
+function deploymentBase(name: string, value: string): string {
+  if (!value.startsWith('/') || !value.endsWith('/') || value.startsWith('//') || value.includes('\\') || /[?#\r\n]/.test(value) || value.split('/').some(part => part === '.' || part === '..')) {
+    throw new Error(`${name} must be a canonical absolute path ending in /`)
+  }
+  return value
+}
+
 // The hosting target is deliberately undecided. SITE_BASE lets a project-path
 // deployment (e.g. GitHub Pages at /agent-marketplace/) be selected at build
 // time without touching any link in the content.
 const base = docsOnly ? '/docs/' : process.env.SITE_BASE ?? '/'
+const marketplaceBase = docsOnly ? deploymentBase('MARKETPLACE_BASE', process.env.MARKETPLACE_BASE ?? '/') : '/'
 const DOCS_PATH = docsOnly ? '/' : PUBLIC_DOCS_PATH
 
 const repo = GITHUB_REPOSITORY_URL
@@ -41,10 +49,11 @@ export default defineConfig({
 
   themeConfig: {
     siteTitle: 'agent-marketplace',
+    siteProfile: docsOnly ? 'docs' : 'public',
 
     nav: docsOnly
       ? [
-          { component: 'SiteNavLink', props: { label: 'Marketplace', href: '/' } },
+          { component: 'SiteNavLink', props: { label: 'Marketplace', href: marketplaceBase } },
           { component: 'SiteNavLink', props: { label: 'Docs', href: '/docs/' } }
         ]
       : [{ text: 'Docs', link: DOCS_PATH, activeMatch: `^${DOCS_PATH}` }],
