@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"errors"
 	"io"
+	"io/fs"
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/Adyen/agent-marketplace/internal/fsboundary"
@@ -242,5 +244,35 @@ func TestListBackupsInitialRootAliasAndOptionalAbsenceRetainRecovery(t *testing.
 	}
 	if target, err := os.Readlink(backups); err != nil || target != retained {
 		t.Fatalf("initial backup-root alias changed: %q %v", target, err)
+	}
+}
+
+func TestListBackupsKeepsTargetInspectionErrorCause(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("permission denial is not observable as root")
+	}
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	dir, err := Dir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(dir, "factory")
+	if err := os.MkdirAll(target, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(target, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(target, 0o755) })
+	listed, err := ListBackups()
+	if listed != nil || !errors.Is(err, fs.ErrPermission) {
+		t.Fatalf("unreadable target listing lost its cause: %v %v", listed, err)
+	}
+	if errors.Is(err, fsboundary.ErrGenerationConflict) {
+		t.Fatalf("unreadable target misreported as a generation conflict: %v", err)
+	}
+	if !strings.Contains(err.Error(), "backup: list factory") {
+		t.Fatalf("listing refusal does not name the target: %v", err)
 	}
 }

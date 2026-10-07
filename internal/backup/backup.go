@@ -342,7 +342,7 @@ func ListBackups() (result map[hcc.Target][]string, err error) {
 	}()
 	native, err := root.NativeRoot()
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("backup: list %s: %w", dir, err)
 	}
 	defer func() {
 		if closeErr := native.Close(); closeErr != nil {
@@ -352,29 +352,32 @@ func ListBackups() (result map[hcc.Target][]string, err error) {
 	}()
 	entries, err := fs.ReadDir(native.FS(), ".")
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("backup: list %s: %w", dir, err)
 	}
 	for _, entry := range entries {
 		if !entry.IsDir() {
 			continue
 		}
+		targetDir := filepath.Join(dir, entry.Name())
 		observed, _, readErr := readBackupSourceMetadata(root, entry.Name())
 		if readErr != nil {
-			return nil, readErr
+			return nil, fmt.Errorf("backup: list %s: %w", targetDir, readErr)
 		}
 		if observed == nil || !observed.IsDir() {
-			return nil, fsboundary.ErrGenerationConflict
+			return nil, fmt.Errorf("backup: list %s: %w", targetDir, fsboundary.ErrGenerationConflict)
 		}
 		identity, identityErr := fsboundary.FileInfoIdentity(observed)
 		if identityErr != nil {
-			return nil, identityErr
+			return nil, fmt.Errorf("backup: list %s: %w", targetDir, identityErr)
 		}
-		targetDir := filepath.Join(dir, entry.Name())
 		slog.Debug("Backup listing target directory admitted", "path", targetDir, "phase", "backup-listing-target")
 		timestamps, listErr := func() (timestamps []string, err error) {
 			parent, err := root.OpenPath(entry.Name())
 			if err != nil {
-				return nil, errors.Join(fsboundary.ErrGenerationConflict, err)
+				if errors.Is(err, fs.ErrNotExist) || errors.Is(err, fsboundary.ErrUnsafePath) {
+					return nil, errors.Join(fsboundary.ErrGenerationConflict, err)
+				}
+				return nil, err
 			}
 			defer func() {
 				if closeErr := parent.Close(); closeErr != nil {
