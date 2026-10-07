@@ -271,11 +271,48 @@ func RestoreCodexSet(partitions []CodexPartition) (operation string, err error) 
 		if err := verify(); err != nil {
 			return "", codexLateRestoreError(err, completed, selected.Partitions[i:])
 		}
-		if err := sources[i].ReadTargetWith(func(reader io.Reader) error {
-			if err := os.MkdirAll(partition.Root, 0o755); err != nil {
+		if err := sources[i].ReadTargetWith(func(reader io.Reader) (err error) {
+			absolute, err := filepath.Abs(partition.Root)
+			if err != nil {
 				return err
 			}
-			return extractArchivePayload(reader, partition.Root)
+			selected := absolute
+			namespace, err := fsboundary.OpenDir(selected)
+			for errors.Is(err, fs.ErrNotExist) && !errors.Is(err, fsboundary.ErrUnsafePath) && selected != filepath.Dir(selected) {
+				selected = filepath.Dir(selected)
+				namespace, err = fsboundary.OpenDir(selected)
+			}
+			if err != nil {
+				return err
+			}
+			defer func() {
+				if closeErr := namespace.Close(); closeErr != nil {
+					err = errors.Join(err, closeErr)
+				}
+			}()
+			slog.Debug("Codex restore namespace parent selected", "path", selected, "phase", "codex-restore-namespace")
+			if err := verifyArchiveParent(namespace, selected); err != nil {
+				return err
+			}
+			if selected != absolute {
+				relative, err := filepath.Rel(selected, absolute)
+				if err != nil {
+					return err
+				}
+				prepared, err := namespace.EnsurePath(relative)
+				if err != nil {
+					return err
+				}
+				previous := namespace
+				namespace = prepared
+				if closeErr := previous.Close(); closeErr != nil {
+					return closeErr
+				}
+			}
+			if err := verifyArchiveParent(namespace, absolute); err != nil {
+				return err
+			}
+			return extractArchivePayload(reader, partition.Root, namespace)
 		}); err != nil {
 			return "", codexLateRestoreError(err, completed, selected.Partitions[i:])
 		}

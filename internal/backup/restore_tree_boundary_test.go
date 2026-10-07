@@ -39,13 +39,13 @@ func TestRestoreTreeRefusesRetargetedRoot(t *testing.T) {
 					t.Fatal(err)
 				}
 			}}
-			if err := extractArchivePayload(reader, root); !errors.Is(err, fsboundary.ErrGenerationConflict) {
+			if err := extractArchivePayload(reader, root, nil); !errors.Is(err, fsboundary.ErrGenerationConflict) {
 				t.Fatalf("retargeted tree root accepted: %v", err)
 			}
 			if entries, err := os.ReadDir(foreign); err != nil || len(entries) != 0 {
 				t.Fatalf("restore mutated foreign tree: %v %v", entries, err)
 			}
-			if err := extractArchivePayload(bytes.NewReader(data.Bytes()), retained); err != nil {
+			if err := extractArchivePayload(bytes.NewReader(data.Bytes()), retained, nil); err != nil {
 				t.Fatalf("valid tree restore refused: %v", err)
 			}
 			if info, err := os.Lstat(filepath.Join(retained, "child")); err != nil || kind == tar.TypeDir && !info.IsDir() || kind == tar.TypeSymlink && info.Mode()&os.ModeSymlink == 0 {

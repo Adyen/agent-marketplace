@@ -380,7 +380,7 @@ func Restore(target hcc.Target, dstDir string, mapped ...map[string]string) (tim
 	if err := verifyArchiveParent(parent, targetDir); err != nil {
 		return "", fmt.Errorf("backup: restore %s: select %s: %w", string(target), latest, err)
 	}
-	if err := file.ReadTargetWith(func(reader io.Reader) error { return extractArchivePayload(reader, dstDir, mapped...) }); err != nil {
+	if err := file.ReadTargetWith(func(reader io.Reader) error { return extractArchivePayload(reader, dstDir, nil, mapped...) }); err != nil {
 		return "", fmt.Errorf("backup: restore %s: %w", string(target), err)
 	}
 	return strings.TrimSuffix(name, ".tar.gz"), nil
@@ -763,24 +763,22 @@ func writeTarEntry(tw *tar.Writer, source *fsboundary.Dir, sourceRel, rel string
 	return writeCapturedBackupSource(tw, source, sourceRel, info)
 }
 
-func extractArchivePayload(reader io.Reader, dstDir string, mapped ...map[string]string) (err error) {
+func extractArchivePayload(reader io.Reader, dstDir string, root *fsboundary.Dir, mapped ...map[string]string) (err error) {
 	absolute, err := filepath.Abs(dstDir)
 	if err != nil {
 		return err
 	}
-	root, err := fsboundary.OpenDir(absolute)
-	if err != nil {
-		return err
-	}
-	defer func() {
-		if closeErr := root.Close(); closeErr != nil {
-			if err != nil {
-				err = errors.Join(err, closeErr)
-			} else {
-				err = closeErr
-			}
+	if root == nil {
+		root, err = fsboundary.OpenDir(absolute)
+		if err != nil {
+			return err
 		}
-	}()
+		defer func() {
+			if closeErr := root.Close(); closeErr != nil {
+				err = errors.Join(err, closeErr)
+			}
+		}()
+	}
 	gr, err := gzip.NewReader(reader)
 	if err != nil {
 		return err
