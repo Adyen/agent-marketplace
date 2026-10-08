@@ -60,7 +60,7 @@ describe('Harness settings dialog', () => {
     await tick()
 
     await openSettings(wrapper)
-    expect(client.configuration).toHaveBeenCalledTimes(1)
+    expect(client.configuration).toHaveBeenCalledTimes(2)
 
     const dialog = document.body.querySelector('[role="dialog"]')
     expect(dialog).not.toBeNull()
@@ -323,6 +323,9 @@ describe('Harness settings dialog', () => {
     push(event({ sequence: 1 }))
     await tick()
 
+    resolvers[0](settingsConfiguration())
+    await tick()
+
     const button = wrapper.find('button[aria-label="Settings"]')
     await button.trigger('click')
     await tick()
@@ -334,13 +337,13 @@ describe('Harness settings dialog', () => {
     await tick()
     expect(document.body.querySelector('[role="dialog"]')).toBeNull()
 
-    resolvers[0](settingsConfiguration({ userTargets: ['windsurf'] }))
+    resolvers[1](settingsConfiguration({ userTargets: ['windsurf'] }))
     await tick()
     expect(document.body.querySelector('[role="dialog"]')).toBeNull()
 
     await button.trigger('click')
     await tick()
-    resolvers[1](settingsConfiguration())
+    resolvers[2](settingsConfiguration())
     await tick()
     expect(isChecked(checkboxByLabel('devin'))).toBe(true)
     expect(isChecked(checkboxByLabel('future-harness'))).toBe(true)

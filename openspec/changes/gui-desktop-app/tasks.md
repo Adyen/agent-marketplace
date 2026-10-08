@@ -9,8 +9,8 @@
 
 ## 2. Guided first run and configuration
 
-- [ ] 2.1 Show first run only when the user-personal root is absent; preselect detected Harness targets, allow changes, require a non-empty selection, and test the exact entry condition.
-- [ ] 2.2 Mirror interactive `agent-marketplace init`'s Community telemetry consent condition without a preselected GUI answer; test explicit organization-level skip, endpoint-only organization telemetry (still asks), explicit affirmative, and decline. Compare configuration bytes for identical Harness targets and consent answers, excluding sources.
+- [x] 2.1 Show first run only when the user-personal root is absent; preselect detected Harness targets, allow changes, require a non-empty selection, and test the exact entry condition.
+- [x] 2.2 Mirror interactive `agent-marketplace init`'s Community telemetry consent condition without a preselected GUI answer; test explicit organization-level skip, endpoint-only organization telemetry (still asks), explicit affirmative, and decline. Compare configuration bytes for identical Harness targets and consent answers, excluding sources.
 - [ ] 2.3 Add the optional source step after Harness and consent selection, skip it when Consumer organization configuration provides sources, and route edits through the `gui-configuration` mutation path; test cancellation before completion for zero writes.
 - [ ] 2.4 Compare equivalent GUI Harness/source edits byte-for-byte with existing CLI operations from identical starting roots. For source-only Git/directory additions and Marketplace endpoint removal, test that only the effective entry changes and included fragments remain byte-identical; verify no CLI commands are added.
 - [ ] 2.5 Show organization Harness targets and sources read-only; compare unmodeled includes, per-entry narrowing, and other fields with the equivalent CLI result or the specified effective-config delta, and identify them as “managed outside the GUI”.

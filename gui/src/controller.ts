@@ -163,6 +163,16 @@ export class WorkspaceController {
     return this.requestOperation(() => this.client.configure({ action: 'save-targets', targets }))
   }
 
+  async initialize(targets: string[], consent?: boolean): Promise<boolean> {
+    return this.requestOperation(() =>
+      this.client.configure(
+        consent === undefined
+          ? { action: 'initialize', targets }
+          : { action: 'initialize', targets, consent },
+      ),
+    )
+  }
+
   private async requestOperation(start: () => Promise<OperationRef>): Promise<boolean> {
     if (this.state.operation != null || this.state.requesting) {
       return false
@@ -218,7 +228,7 @@ export class WorkspaceController {
         this.lastSettledOperationId = settled.id
         this.state.operation = null
         this.state.phase = null
-        if (settled.kind === 'targets') {
+        if (settled.kind === 'targets' || settled.kind === 'mutation') {
           void this.loadConfiguration()
         }
       } else {

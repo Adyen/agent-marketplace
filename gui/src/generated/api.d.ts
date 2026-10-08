@@ -64,13 +64,17 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Run a guarded configuration action (save user Harness targets)
+         * Run a guarded configuration action (save user Harness targets or initialize the absent root)
          * @description Configuration mutations hold the same guarded operation serializer
-         *     as every other session operation. The only supported action is
-         *     save-targets, which writes the user-personal Harness target set with
-         *     the shared configuration writer; unknown identifiers already present
-         *     in the root may be retained, newly introduced unsupported
-         *     identifiers are rejected before any write. Available only in
+         *     as every other session operation. save-targets writes the
+         *     user-personal Harness target set with the shared configuration
+         *     writer; unknown identifiers already present in the root may be
+         *     retained, newly introduced unsupported identifiers are rejected
+         *     before any write. initialize creates an absent user-personal root
+         *     through the same initializer as `agent-marketplace init` and records
+         *     the telemetry consent answer exactly as interactive init does; the
+         *     consent field is required when the projection reports
+         *     consentRequired and rejected otherwise. Available only in
          *     user-scope mode.
          *
          */
@@ -148,25 +152,35 @@ export interface components {
             action: "sync" | "update";
         };
         Configuration: {
+            /** @description Whether initialization is currently permitted (absent root, readable home, no configuration errors). */
+            canInitialize: boolean;
+            /** @description Whether first-run setup must ask the init-equivalent telemetry consent question; false only when the organization sets an explicit telemetry level. */
+            consentRequired: boolean;
+            /** @description Detected installed Harness targets in canonical supported order; empty when detection is unavailable or the root exists. */
+            detectedTargets: string[];
+            /** @description Whether installed-Harness detection failed; detectedTargets is then empty and targets must be chosen manually. */
+            detectionUnavailable: boolean;
             /** @description Whether the user-personal root is present and readable without intent errors. */
             editable: boolean;
+            /** @description Whether the user-personal root is absent, which is the only first-run entry condition. */
+            firstRun: boolean;
             /** @description Labels of configuration values managed outside the GUI. */
             managedOutsideGUI: string[];
             /** @description Declared organization target identifiers; always read-only. */
             organizationTargets: string[];
+            /** @description Resolved telemetry retention policy URL for disclosure, or 'not configured'. */
+            retentionPolicyURL: string;
             /** @description Whether a user-personal root entry exists (any file type, including a broken or dangling one). */
             rootPresent: boolean;
             /** @description Canonical compiler target IDs this client supports. */
             supportedTargets: string[];
+            /** @description Resolved primary telemetry destination hostname for disclosure, or 'not configured'. */
+            telemetryDestination: string;
             /** @description Declared raw identifiers in the user-personal target set, including identifiers unsupported by this client. */
             userTargets: string[];
         };
-        ConfigurationActionRequest: {
-            /** @enum {string} */
-            action: "save-targets";
-            /** @description The complete replacement user-personal Harness target selection. */
-            targets: string[];
-        };
+        /** @description Tagged configuration action; the action field selects the strictly closed variant. */
+        ConfigurationActionRequest: components["schemas"]["SaveTargetsActionRequest"] | components["schemas"]["InitializeActionRequest"];
         Diagnostic: {
             category: string;
             /** @description Stable deduplication/identity key of the diagnostic. */
@@ -196,6 +210,17 @@ export interface components {
              */
             sequence: number;
             type: string;
+        };
+        InitializeActionRequest: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            action: "initialize";
+            /** @description The explicit telemetry consent answer; required when the projection reports consentRequired, rejected otherwise. */
+            consent?: boolean;
+            /** @description The user-personal Harness target selection for the new root; canonical supported IDs only. */
+            targets: string[];
         };
         NotificationEvent: components["schemas"]["EventBase"] & {
             payload: {
@@ -236,6 +261,15 @@ export interface components {
              * @enum {string}
              */
             type: "progress";
+        };
+        SaveTargetsActionRequest: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            action: "save-targets";
+            /** @description The complete replacement user-personal Harness target selection. */
+            targets: string[];
         };
         /** @description One delivered event. sequence is the monotonic stream identity;
          *     generation is the applicable core request generation; operation

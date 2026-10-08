@@ -70,8 +70,14 @@ func TestLocalAPIUserHarness(t *testing.T) {
 	if os.Getenv("AM_LOCALAPI_USER_E2E") != "1" {
 		t.Skip("user-scope harness; enabled only by the Playwright E2E driver")
 	}
-	home, _ := newUserAPIFixture(t, true)
-	if os.Getenv("AM_LOCALAPI_USER_FIXTURE") == "harnesses" {
+	fixture := os.Getenv("AM_LOCALAPI_USER_FIXTURE")
+	home, repo := newUserAPIFixture(t, fixture != "first-run")
+	if fixture == "first-run" {
+		if err := os.MkdirAll(filepath.Join(home, ".factory"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if fixture == "harnesses" {
 		userConfig := filepath.Join(home, ".agents", "config.yaml")
 		source := filepath.Join(home, "fixture-source")
 		writeFile(t, filepath.Join(source, "solo", "SKILL.md"), fixtureSkillBody)
@@ -86,5 +92,11 @@ func TestLocalAPIUserHarness(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer api.Close()
-	serveHarness(t, api, map[string]string{"home": home})
+	serveHarness(t, api, map[string]string{
+		"home":      home,
+		"repo":      repo,
+		"xdgConfig": os.Getenv("XDG_CONFIG_HOME"),
+		"xdgState":  os.Getenv("XDG_STATE_HOME"),
+		"xdgCache":  os.Getenv("XDG_CACHE_HOME"),
+	})
 }
