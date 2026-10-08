@@ -122,8 +122,8 @@ func BenchmarkCloneOrPullWarmLocalRepo(b *testing.B) {
 	if err := runGit("", "init", "--bare", remoteDir); err != nil {
 		b.Fatal(err)
 	}
-	for _, setting := range [][2]string{{"receive.autogc", "false"}, {"maintenance.auto", "false"}} {
-		if err := runGit(remoteDir, "config", setting[0], setting[1]); err != nil {
+	for _, setting := range []string{"receive.autogc", "maintenance.auto"} {
+		if err := runGit(remoteDir, "config", setting, "false"); err != nil {
 			b.Fatal(err)
 		}
 	}
