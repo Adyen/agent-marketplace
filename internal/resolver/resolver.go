@@ -3369,20 +3369,6 @@ func kindMismatchHint(byName map[resourceSelection]catalog.Entry, selected resou
 	return ""
 }
 
-// NamesSelected returns the set of skill names that the given registry entry
-// selects from its catalog. Uses the same selection logic as Resolve but
-// without cross-registry deduplication, collision detection, or error
-// reporting. Callers use this to compute per-scope enablement (e.g., which
-// skills are enabled via a specific registry vs. another).
-func NamesSelected(entry config.RegistryEntry, catalog []catalog.Entry) []string {
-	selected := resolveSelectedResources(entry, catalog)
-	names := make([]string, 0, len(selected))
-	for _, s := range selected {
-		names = append(names, s.name)
-	}
-	return names
-}
-
 func ResourcesSelected(entry config.RegistryEntry, catalog []catalog.Entry) []SelectedResource {
 	selected := resolveSelectedResources(entry, catalog)
 	resources := make([]SelectedResource, 0, len(selected))

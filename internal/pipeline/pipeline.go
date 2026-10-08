@@ -251,10 +251,6 @@ func SoftWarnings(resolved ResolveResult) []error {
 	return warnings
 }
 
-func DefaultLoaders() Loaders {
-	return Loaders{Org: config.LoadOrganizationConfig, Global: config.LoadGlobalConfig, Repo: config.LoadRepoConfig, Local: config.LoadLocalConfig}
-}
-
 // filterBlockedRegistryErrors removes RegistryURLBlockedError values from errs,
 // logging each ignored error as a warning. It returns the remaining errors.
 func filterBlockedRegistryErrors(errs []error) ([]error, bool) {

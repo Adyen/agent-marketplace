@@ -477,8 +477,8 @@ func runSyncCheck(ctx context.Context, out io.Writer, strict bool, offline ...bo
 	matErr := inspection.MaterializeErr
 
 	// Surface every warning the run produced, not just the ineffective-subdir
-	// ones. --check used to recompute AncestorMaterializedExcludeWarnings and
-	// print only those, which was both a duplicate (Resolve already puts them
+	// ones. --check used to recompute the ancestor-materialized exclude warnings
+	// and print only those, which was both a duplicate (Resolve already puts them
 	// in Warnings) and a silent drop of everything else: catalog overlaps, soft
 	// selected-not-found, soft malformed selections and materialize warning
 	// diagnostics never reached the user. A drift check that hides why output is

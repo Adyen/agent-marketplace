@@ -31,7 +31,6 @@ type InstallationAdapter struct {
 	resolve      func(bool, string, string) ([]Destination, error)
 }
 
-func (a InstallationAdapter) Target() hcc.Target              { return a.target }
 func (a InstallationAdapter) Layout() targetmeta.NativeLayout { return a.layout }
 func (a InstallationAdapter) Info() TargetInfo                { return a.info }
 func (a InstallationAdapter) AggregateHandlerKey() string     { return a.aggregateKey }

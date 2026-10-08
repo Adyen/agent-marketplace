@@ -9,23 +9,6 @@ import (
 	"strings"
 )
 
-const GitURLCanonicalizerV1 = "v1"
-
-type GitURLIdentity struct {
-	Version string
-	URL     string
-}
-
-func NewGitURLIdentity(raw string) (GitURLIdentity, error) {
-	canonical, err := CanonicalGitURLV1(raw)
-	if err != nil {
-		return GitURLIdentity{}, err
-	}
-	return GitURLIdentity{Version: GitURLCanonicalizerV1, URL: canonical}, nil
-}
-
-func (i GitURLIdentity) String() string { return i.Version + ":" + i.URL }
-
 var scpOrigin = regexp.MustCompile(`^([^/@:[:space:]]+)@([^/:[:space:]]+):(.+)$`)
 
 func CanonicalGitConfigURL(raw string) (string, error) {
