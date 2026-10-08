@@ -368,6 +368,23 @@ Materialized output is mixed-version state, like a committed format, so the
 rule "ship read support before switching writes" applies. See the Migration
 Plan.
 
+Gemini is a scoped exception inside the same transaction. v3.1.1 wrote flat
+`_managed_by` command entries directly into the native `settings.json` hooks
+container, before native matcher groups existed, so there is no separate
+legacy file to move. Aggregates declare `LegacyMarkedFlatHooks`; only Gemini's
+hook aggregate sets it. When the flag is set and ownership proof is valid or
+missing, the reconciler removes recognized marked flat entries from the parsed
+document in memory before strict native validation and planning, recording
+each removal as a review row. The recognized v3.1.1 shape is fixed:
+exact-case `_managed_by: agent-marketplace`, `type: "command"`, a non-empty
+string `command`, an optional string `matcher`, an optional non-negative
+integer `timeout`, and no other keys. Any other flat shape — unmarked,
+other-owner, case-aliased, malformed — is left in place for strict native
+validation, which refuses the file unchanged. Removal is never adoption: the
+old marker is not written into new entries, no legacy proof is forged, and an
+identical handwritten native group still wins through the non-adopting
+satisfaction path.
+
 ### D11: Duplicate-execution warning
 
 If harness B lists harness A in `loads_hooks_of` and both are selected for

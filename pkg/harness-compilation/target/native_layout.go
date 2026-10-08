@@ -152,7 +152,8 @@ type NativeAggregate struct {
 	// below which a hook's support files install
 	// (<support dir>/<source>/<hook>/). It is required exactly when Kind is
 	// ir.KindHook.
-	SupportDir string
+	SupportDir            string
+	LegacyMarkedFlatHooks bool
 }
 
 var nativeLayouts = map[Target]NativeLayout{
@@ -295,11 +296,12 @@ var nativeLayouts = map[Target]NativeLayout{
 			Aggregates: []NativeAggregate{
 				// Hooks merge into the scope's settings.json under `hooks`.
 				{
-					Kind:       ir.KindHook,
-					Shape:      HookShapeMatcherGroups,
-					SupportDir: "hook-support",
-					Project:    NativeAggregateFile{Path: "settings.json", Member: "hooks"},
-					User:       NativeAggregateFile{Path: "settings.json", Member: "hooks"},
+					Kind:                  ir.KindHook,
+					Shape:                 HookShapeMatcherGroups,
+					SupportDir:            "hook-support",
+					LegacyMarkedFlatHooks: true,
+					Project:               NativeAggregateFile{Path: "settings.json", Member: "hooks"},
+					User:                  NativeAggregateFile{Path: "settings.json", Member: "hooks"},
 				},
 				{
 					Kind:    ir.KindMcpServer,
@@ -756,6 +758,9 @@ func validatePartitionContent(t Target, partition NativePartition, resourceKinds
 			errs = append(errs, fmt.Errorf("target %q partition %q hook aggregate has invalid support directory %q", t, partition.ID, aggregate.SupportDir))
 		case aggregate.Kind != ir.KindHook && aggregate.SupportDir != "":
 			errs = append(errs, fmt.Errorf("target %q partition %q aggregate for %s declares support directory %q; support directories belong to hooks", t, partition.ID, aggregate.Kind, aggregate.SupportDir))
+		}
+		if aggregate.LegacyMarkedFlatHooks && (aggregate.Kind != ir.KindHook || aggregate.Shape != HookShapeMatcherGroups) {
+			errs = append(errs, fmt.Errorf("target %q partition %q aggregate for %s declares legacy marked flat hooks; the transition applies only to hook matcher-groups aggregates", t, partition.ID, aggregate.Kind))
 		}
 		for _, scope := range []struct {
 			name string

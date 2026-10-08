@@ -573,6 +573,8 @@ func TestCloneHTTPSWithTokenUsesPreemptiveAuthorization(t *testing.T) {
 		Env: []string{
 			"GIT_PROJECT_ROOT=" + projectRoot,
 			"GIT_HTTP_EXPORT_ALL=1",
+			"GIT_CONFIG_NOSYSTEM=1",
+			"GIT_CONFIG_GLOBAL=/dev/null",
 		},
 	}
 

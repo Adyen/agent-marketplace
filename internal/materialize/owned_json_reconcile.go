@@ -267,6 +267,16 @@ func appendOwnedJSONAggregateReports(ctx context.Context, report *Report, store 
 	return report
 }
 
+func nativeHookProofUnavailableDiagnostic(key outputKey, rel string) diag.Diagnostic {
+	return diag.Diagnostic{
+		Code:     diag.CodeHookNativeToleranceRefused,
+		Severity: diag.SeverityError,
+		Target:   string(key.target),
+		Source:   diag.SourceRef{File: rel},
+		Message:  "Native Hook ownership evidence is unavailable; Native and legacy locations were left unchanged",
+	}
+}
+
 func recoverNativeDependencyTxn(ctx context.Context) error {
 	stateDir, err := dependencytxn.StateDir()
 	if err != nil {
@@ -378,7 +388,20 @@ func reconcileOwnedJSONAggregateFile(ctx context.Context, store *ownership.Store
 	}
 
 	var existing []ownedJSONExistingEntry
+	var legacyRemovals []nativeHookLegacyRemoval
 	if container != nil {
+		if file.legacyMarkedFlatHooks && !incomplete {
+			if proofErr != nil && !errors.Is(proofErr, ownership.ErrStateMissing) {
+				out.diags = append(out.diags, ownedAggregateProofDiags(key, outDir, rel, proofErr)...)
+				out.diags = append(out.diags, nativeHookProofUnavailableDiagnostic(key, rel))
+				return out
+			}
+			legacyRemovals, shapeErr = nativeHookLegacyMarkedFlatPatch(doc, file)
+			if shapeErr != nil {
+				out.diags = append(out.diags, ownedJSONShapeDiag(options.shapeCode, key, outDir, rel, shapeErr))
+				return out
+			}
+		}
 		var legacyProofs []ownership.Proof
 		if options.allowOwnedLegacyFlatHooks && proofErr == nil {
 			legacyProofs = append(legacyProofs, proof)
@@ -397,13 +420,7 @@ func reconcileOwnedJSONAggregateFile(ctx context.Context, store *ownership.Store
 		out.diags = append(out.diags, ownedAggregateProofDiags(key, outDir, rel, proofErr)...)
 	}
 	if file.hookShape != "" && proofErr != nil && !errors.Is(proofErr, ownership.ErrStateMissing) {
-		out.diags = append(out.diags, diag.Diagnostic{
-			Code:     diag.CodeHookNativeToleranceRefused,
-			Severity: diag.SeverityError,
-			Target:   string(key.target),
-			Source:   diag.SourceRef{File: rel},
-			Message:  "Native Hook ownership evidence is unavailable; Native and legacy locations were left unchanged",
-		})
+		out.diags = append(out.diags, nativeHookProofUnavailableDiagnostic(key, rel))
 		return out
 	}
 
@@ -457,6 +474,16 @@ func reconcileOwnedJSONAggregateFile(ctx context.Context, store *ownership.Store
 		var changes []HookChange
 		if changed {
 			changes = nativeHookReviewDelta(key, file, abs, existing, proof, plan)
+		}
+		for _, removal := range legacyRemovals {
+			changes = append(changes, HookChange{
+				Target:       key.target,
+				MachineScope: key.machineScope,
+				File:         abs,
+				Event:        removal.event,
+				Matcher:      removal.matcher,
+				Before:       removal.before,
+			})
 		}
 		changes = append(changes, extras.hookChanges...)
 		return finishNativeOwnedJSONFile(ctx, out, store, key, outDir, file, abs, raw, readErr, next, changed, plan, proof, options, dryRun, extras, changes)

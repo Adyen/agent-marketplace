@@ -168,12 +168,13 @@ func mergeOwnedJSONAggregateWork(dst, src *ownedJSONAggregateWork) *ownedJSONAgg
 // reconciler. Target adapters supply it; the reconciler does not infer target
 // semantics from path strings.
 type ownedJSONFileSpec struct {
-	rel            string
-	container      string
-	envelope       map[string]any
-	hookShape      targetmeta.HookShape
-	keyed          bool
-	rawValueDigest bool
+	rel                   string
+	container             string
+	envelope              map[string]any
+	hookShape             targetmeta.HookShape
+	keyed                 bool
+	rawValueDigest        bool
+	legacyMarkedFlatHooks bool
 }
 
 func ownedJSONDecode(data []byte, value any) error {

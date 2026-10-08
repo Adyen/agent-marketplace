@@ -196,10 +196,11 @@ func nativeHookJSONLayout(key outputKey, repoRoot string) (harness.Destination, 
 		return harness.Destination{}, ownedJSONFileSpec{}, fmt.Errorf("target %s has no unique native hook destination", key.target)
 	}
 	return destination, ownedJSONFileSpec{
-		rel:       rel,
-		container: declaration.file.Member,
-		envelope:  declaration.file.Envelope,
-		hookShape: declaration.aggregate.Shape,
+		rel:                   rel,
+		container:             declaration.file.Member,
+		envelope:              declaration.file.Envelope,
+		hookShape:             declaration.aggregate.Shape,
+		legacyMarkedFlatHooks: declaration.aggregate.LegacyMarkedFlatHooks,
 	}, nil
 }
 

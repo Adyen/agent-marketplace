@@ -736,3 +736,27 @@ version from `v1` through `v4`.
   bytes
 - **AND** an explicit `update` MAY refresh the selected source revision but
   MUST use an already supported generator version from `v1` through `v4`
+
+### Requirement: Legacy marked Gemini hooks transition in place
+
+When Gemini settings contain flat command hooks written by v3.1.1, Agent Marketplace SHALL transition only entries with exact legacy `_managed_by: agent-marketplace` evidence into currently selected native matcher groups. This applies at repository and machine scope. Legacy evidence authorizes removal of the recognized old entry, not adoption of an unmarked entry. New native entries SHALL contain no ownership marker and SHALL use current captured source proof. Native bytes and ownership state SHALL publish in the existing transaction. Handwritten native groups, comments, relative order, modes and unrelated settings SHALL remain intact. Invalid, ambiguous or unmarked flat shapes SHALL be preserved and refused safely. Incomplete preparation SHALL not remove legacy entries. Read-only commands SHALL report pending changes without writing configuration or state.
+
+#### Scenario: Marked Gemini flat hooks transition at both scopes
+
+- **WHEN** v3.1.1 flat marked command hooks exist in Gemini settings alongside valid handwritten native groups and unrelated settings, and a mutating sync runs
+- **THEN** the recognized marked entries MUST be replaced by the selected native matcher groups with no in-file marker
+- **AND** handwritten groups and unrelated settings MUST remain intact
+- **AND** updated native bytes and source-bound ownership evidence MUST publish together
+
+#### Scenario: Unmarked Gemini flat hooks are refused without adoption
+
+- **WHEN** Gemini settings contain an unmarked, other-owner or malformed flat hook entry
+- **THEN** sync MUST refuse that target and scope and preserve its configuration and ownership state
+- **AND** no entry MUST be adopted solely because its payload resembles a desired hook
+
+#### Scenario: Gemini legacy preview and failed preparation preserve bytes
+
+- **WHEN** a marked Gemini transition is pending and check mode runs, or preparation is incomplete or publication fails
+- **THEN** check mode MUST report pending exact hook changes without configuration or state writes
+- **AND** incomplete or unsuccessful publication MUST not report a completed legacy removal
+- **AND** configuration and ownership state MUST remain safe under the existing CAS and recovery rules

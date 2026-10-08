@@ -1009,6 +1009,17 @@ func TestHookAggregateTopologyIsDeclaredForEveryTarget(t *testing.T) {
 		if aggregate == nil {
 			t.Fatalf("%s declares no hook aggregate", tt.target)
 		}
+		if aggregate.LegacyMarkedFlatHooks != (tt.target == TargetGemini) {
+			t.Errorf("%s hook aggregate LegacyMarkedFlatHooks = %v; only Gemini declares the marked legacy flat transition", tt.target, aggregate.LegacyMarkedFlatHooks)
+		}
+		for i := range layout.Partitions {
+			for j := range layout.Partitions[i].Aggregates {
+				other := layout.Partitions[i].Aggregates[j]
+				if other.Kind != ir.KindHook && other.LegacyMarkedFlatHooks {
+					t.Errorf("%s non-hook aggregate for %s declares LegacyMarkedFlatHooks", tt.target, other.Kind)
+				}
+			}
+		}
 		if aggregate.Shape != tt.shape {
 			t.Errorf("%s hook aggregate shape = %q, want %q", tt.target, aggregate.Shape, tt.shape)
 		}
@@ -1133,6 +1144,26 @@ func TestValidateNativeLayoutRejectsInvalidHookDeclarations(t *testing.T) {
 				a.User.Envelope = map[string]any{"version": 1}
 				a.Project.Legacy = []string{"hooks/hooks.json"}
 			},
+		},
+		{
+			name:   "legacy marked flat hooks on matcher-groups hook",
+			mutate: func(a *NativeAggregate) { a.LegacyMarkedFlatHooks = true },
+		},
+		{
+			name: "legacy marked flat hooks on event-handlers hook",
+			mutate: func(a *NativeAggregate) {
+				a.Shape = HookShapeEventHandlers
+				a.LegacyMarkedFlatHooks = true
+			},
+			wantErrContains: "legacy marked flat",
+		},
+		{
+			name: "legacy marked flat hooks on non-hook aggregate",
+			mutate: func(a *NativeAggregate) {
+				a.Kind, a.Shape, a.SupportDir = ir.KindMcpServer, "", ""
+				a.LegacyMarkedFlatHooks = true
+			},
+			wantErrContains: "legacy marked flat",
 		},
 	}
 	for _, tt := range tests {
