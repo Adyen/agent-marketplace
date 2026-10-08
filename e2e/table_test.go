@@ -4474,6 +4474,24 @@ registries:
 
 	// ===== deinit command =====
 	{
+		Name:       "deinit/windsurf_manifest_cannot_nominate_repo_files",
+		Desc:       "Given actual portable Windsurf output and a manifest nominating an unrelated repository file, When sync checking or config-purging deinit runs, Then refusal preserves repository bytes and metadata until the manifest is repaired and real native teardown succeeds",
+		Registries: []RegistryDef{{Name: "windsurf-manifest-scope", Skills: []Skill{{Name: "teardown-skill", Description: "Scoped native control"}}}},
+		GlobalCfg:  "apiVersion: agent-marketplace/v4\nharnesses: [windsurf]\n",
+		RepoCfg:    "apiVersion: agent-marketplace/v4\nharnesses: [windsurf]\nsources:\n  fixture:\n    git: {{REG:windsurf-manifest-scope}}\n    ref: main\nresources:\n  fixture: [skill/teardown-skill]\nmaterialization:\n  mode: file\n",
+		Steps: []Step{
+			{Args: []string{"sync"}, MustPass: true, RegularFiles: []string{"/workspace/.windsurf/skills/teardown-skill/SKILL.md"}},
+			{Args: []string{"deinit", "--scope", "repo"}, MustPass: true, FilesAbsent: []string{"/workspace/.windsurf/skills/teardown-skill/SKILL.md"}},
+			{Action: ActionWriteFile, Path: "/workspace/README.md", Body: "body"},
+			{Action: ActionWriteFile, Path: "/workspace/.agents/materialization-manifest.yaml", Body: fmt.Sprintf("version: 1\nentries:\n  - target: windsurf\n    path: README.md\n    digest: sha256:%x\n", sha256.Sum256([]byte("file\x00\x000644\x004\x00body")))},
+			{Args: []string{"sync", "--check"}, AssertExitCode: intPtr(1), OutContains: []string{"materialize.manifest.error"}, FilesAbsent: []string{"/workspace/.windsurf"}, PathsUnchanged: []string{"/workspace/README.md", "/workspace/.agents/materialization-manifest.yaml", "/workspace/.agents/config.yaml", "/workspace/.agents/lock.yaml"}},
+			{Args: []string{"deinit", "--scope", "repo", "--purge-config", "--dry-run"}, AssertExitCode: intPtr(1), OutContains: []string{"materialize.manifest.error"}, OutNotContains: []string{"Would remove config", "Would remove lock", "No managed artifacts to remove"}, FilesAbsent: []string{"/workspace/.windsurf"}, PathsUnchanged: []string{"/workspace/README.md", "/workspace/.agents/materialization-manifest.yaml", "/workspace/.agents/config.yaml", "/workspace/.agents/lock.yaml"}},
+			{Args: []string{"deinit", "--scope", "repo", "--purge-config"}, AssertExitCode: intPtr(1), OutContains: []string{"materialize.manifest.error"}, OutNotContains: []string{"Removed config", "Removed lock", "No managed artifacts to remove"}, FilesAbsent: []string{"/workspace/.windsurf"}, PathsUnchanged: []string{"/workspace/README.md", "/workspace/.agents/materialization-manifest.yaml", "/workspace/.agents/config.yaml", "/workspace/.agents/lock.yaml"}},
+			{Action: ActionWriteFile, Path: "/workspace/.agents/materialization-manifest.yaml", Body: "version: 1\nentries: []\n", Args: []string{"sync"}, MustPass: true, RegularFiles: []string{"/workspace/.windsurf/skills/teardown-skill/SKILL.md"}, PathsUnchanged: []string{"/workspace/README.md"}},
+			{Args: []string{"deinit", "--scope", "repo", "--purge-config"}, MustPass: true, FilesAbsent: []string{"/workspace/.agents/config.yaml", "/workspace/.agents/lock.yaml", "/workspace/.windsurf/skills/teardown-skill/SKILL.md"}, PathsUnchanged: []string{"/workspace/README.md"}},
+		},
+	},
+	{
 		Name:       "deinit/manifest_failure_preserves_config_and_output",
 		Desc:       "Given installed output and an invalid manifest, When deinit attempts config purge, Then it reports failure and preserves state until the manifest is repaired",
 		Registries: []RegistryDef{{Name: "deinit-invalid-manifest", Skills: []Skill{{Name: "teardown-skill", Description: "Deinit preservation"}}}},
