@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -126,6 +127,115 @@ func TestUserConfigurationProjection(t *testing.T) {
 		if bytes.Contains(body, []byte(forbidden)) {
 			t.Fatalf("configuration response leaks %q: %s", forbidden, body)
 		}
+	}
+}
+
+type configurationSourceView struct {
+	Kind          string `json:"kind"`
+	Location      string `json:"location"`
+	Ref           string `json:"ref"`
+	Path          string `json:"path"`
+	SourceHarness string `json:"sourceHarness"`
+}
+
+func configurationSources(t *testing.T, decoded map[string]any, key string) []configurationSourceView {
+	t.Helper()
+	data, err := json.Marshal(decoded[key])
+	if err != nil {
+		t.Fatal(err)
+	}
+	var views []configurationSourceView
+	if err := json.Unmarshal(data, &views); err != nil {
+		t.Fatalf("configuration.%s is not a source array: %v", key, err)
+	}
+	return views
+}
+
+// spec: gui-configuration/organization-sources-are-read-only
+func TestUserConfigurationSourceProjection(t *testing.T) {
+	home, repo := newUserAPIFixture(t, false)
+	userDir := t.TempDir()
+	fragDir := t.TempDir()
+	userConfig := filepath.Join(home, ".agents", "config.yaml")
+	userBytes := []byte("apiVersion: agent-marketplace/v4\ninclude: fragment.yaml\nharnesses: [devin]\nsources:\n  ddir: {directory: " + userDir + ", source_harness: windsurf}\n  zgit: {git: https://example.com/repo.git, ref: main, path: sub/dir, source_harness: claude}\n  mmp: {marketplace: https://market.example}\nresources:\n  ddir: {all: true}\n  zgit: {all: true}\n  mmp: {include: [main/collection/onboarding]}\n")
+	fragBytes := []byte("sources:\n  ffrag: {directory: " + fragDir + "}\nresources:\n  ffrag: {all: true}\n")
+	writeFile(t, userConfig, string(userBytes))
+	writeFile(t, filepath.Join(home, ".agents", "fragment.yaml"), string(fragBytes))
+	orgDir := t.TempDir()
+	orgPath := filepath.Join(t.TempDir(), "org.yaml")
+	orgBytes := []byte("apiVersion: agent-marketplace/v3\nharnesses: [claude]\nregistries:\n  - url: https://YOUR_USER_HERE:YOUR_TOKEN_HERE@example.com/org.git?token=hint#frag\n    ref: main\n    path: nested\n    source_harness: devin\n  - path: " + orgDir + "\nmarketplaces:\n  - url: https://org-mp.example\n    instance_id: main\n")
+	writeFile(t, orgPath, string(orgBytes))
+	config.SetTestOrganizationConfigPath(t, orgPath)
+	repoConfig := filepath.Join(repo, ".agents", "config.yaml")
+	repoLocal := filepath.Join(repo, ".agents", "config.local.yaml")
+	repoBefore, _ := os.ReadFile(repoConfig)
+	localBefore, _ := os.ReadFile(repoLocal)
+
+	api, err := NewUser(context.Background(), home, session.DependencyLifecycle{}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(api.Close)
+
+	status, decoded := postRaw(t, api, "/api/configuration", "")
+	if status != http.StatusOK {
+		t.Fatalf("configuration status = %d, body = %v", status, decoded)
+	}
+	wantUser := []configurationSourceView{
+		{Kind: "directory", Location: userDir, SourceHarness: "windsurf"},
+		{Kind: "directory", Location: fragDir},
+		{Kind: "marketplace", Location: "https://market.example"},
+		{Kind: "git", Location: "https://example.com/repo.git", Ref: "main", Path: "sub/dir", SourceHarness: "claude"},
+	}
+	if got := configurationSources(t, decoded, "userSources"); !reflect.DeepEqual(got, wantUser) {
+		t.Fatalf("userSources = %#v, want %#v", got, wantUser)
+	}
+	wantOrg := []configurationSourceView{
+		{Kind: "git", Location: "https://***@example.com/org.git?***", Ref: "main", Path: "nested", SourceHarness: "devin"},
+		{Kind: "directory", Location: orgDir},
+		{Kind: "marketplace", Location: "https://org-mp.example"},
+	}
+	if got := configurationSources(t, decoded, "organizationSources"); !reflect.DeepEqual(got, wantOrg) {
+		t.Fatalf("organizationSources = %#v, want %#v", got, wantOrg)
+	}
+	body, _ := json.Marshal(decoded)
+	for _, secret := range []string{"YOUR_USER_HERE", "YOUR_TOKEN_HERE", "token=hint"} {
+		if bytes.Contains(body, []byte(secret)) {
+			t.Fatalf("configuration response leaks %q: %s", secret, body)
+		}
+	}
+
+	status, again := postRaw(t, api, "/api/configuration", "")
+	if status != http.StatusOK || !reflect.DeepEqual(again, decoded) {
+		t.Fatalf("repeat metadata status = %d equal=%v", status, reflect.DeepEqual(again, decoded))
+	}
+
+	if after, _ := os.ReadFile(userConfig); !bytes.Equal(after, userBytes) {
+		t.Fatal("user config changed")
+	}
+	if after, _ := os.ReadFile(filepath.Join(home, ".agents", "fragment.yaml")); !bytes.Equal(after, fragBytes) {
+		t.Fatal("included fragment changed")
+	}
+	if after, _ := os.ReadFile(orgPath); !bytes.Equal(after, orgBytes) {
+		t.Fatal("organization config changed")
+	}
+	if after, _ := os.ReadFile(repoConfig); !bytes.Equal(after, repoBefore) {
+		t.Fatal("repo-committed config changed")
+	}
+	if after, _ := os.ReadFile(repoLocal); !bytes.Equal(after, localBefore) {
+		t.Fatal("personal-local config changed")
+	}
+	entries, err := os.ReadDir(filepath.Join(home, ".agents"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range entries {
+		if entry.Name() != "config.yaml" && entry.Name() != "fragment.yaml" {
+			t.Fatalf("unexpected state file %q under .agents", entry.Name())
+		}
+	}
+	if _, err := os.Stat(filepath.Join(home, ".devin")); !os.IsNotExist(err) {
+		t.Fatal("metadata read materialized native output")
 	}
 }
 

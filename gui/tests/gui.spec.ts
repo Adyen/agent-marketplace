@@ -92,6 +92,7 @@ test('built GUI drives the real user-scope core', async ({ page }) => {
 
 // spec: gui-configuration/save-user-harness-targets-without-losing-unknown-identifiers
 // spec: gui-configuration/organization-harness-targets-are-read-only
+// spec: gui-configuration/organization-sources-are-read-only
 // spec: gui-configuration/harness-target-edit-matches-the-cli-mutation
 // spec: session-interactions/toggling-harness-targets-does-not-write
 // spec: session-interactions/save-selected-harnesses
@@ -134,6 +135,11 @@ test('built GUI saves Harness targets through the real user-scope core', async (
     await expect(dialog.getByText('Unsupported by this version')).toBeVisible()
     await expect(dialog.getByLabel('Organization targets')).toContainText('claude')
     await expect(dialog.getByLabel('Organization targets').getByRole('checkbox')).toHaveCount(0)
+    const orgSources = dialog.getByLabel('Organization sources')
+    await expect(orgSources).toContainText('Directory registry')
+    await expect(orgSources).toContainText('Managed by your organization; read-only.')
+    await expect(orgSources.getByRole('button')).toHaveCount(0)
+    await expect(dialog.getByLabel('User sources')).toContainText('Directory registry')
     await expect(dialog).toContainText('managed outside the GUI')
 
     await devin.focus()

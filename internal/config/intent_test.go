@@ -117,6 +117,90 @@ resources:
 	}
 }
 
+func TestLayerIntentDescribeSources(t *testing.T) {
+	dir := t.TempDir()
+	includePath := filepath.Join(dir, "fragment.yaml")
+	rootPath := filepath.Join(dir, "config.yaml")
+	if err := os.WriteFile(includePath, []byte(`apiVersion: agent-marketplace/v4
+sources:
+  frag: {directory: ./frag-regs}
+resources:
+  frag: {all: true}
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	rootBytes := []byte(`apiVersion: agent-marketplace/v4
+include: [fragment.yaml]
+harnesses: [devin]
+sources:
+  zgit: {git: https://example.com/repo.git, ref: main, path: sub/dir, source_harness: claude}
+  adir: {directory: ./regs, source_harness: windsurf}
+  mmp: {marketplace: https://market.example}
+resources:
+  zgit: {all: true}
+  adir: {all: true}
+  mmp: {include: [main/collection/onboarding]}
+`)
+	if err := os.WriteFile(rootPath, rootBytes, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	canonical, err := canonicalConfigPath(rootPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	li, err := readLayerIntent(rootPath, canonical, rootBytes, userLayer, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !li.NeedsLock() {
+		t.Fatal("fixture must include git and acquiring marketplace sources")
+	}
+	base := filepath.Dir(canonical)
+	want := []SourceDescription{
+		{Kind: V4SourceDirectory, Location: filepath.Join(base, "regs"), SourceHarness: "windsurf"},
+		{Kind: V4SourceDirectory, Location: filepath.Join(base, "frag-regs")},
+		{Kind: V4SourceMarketplace, Location: "https://market.example"},
+		{Kind: V4SourceGit, Location: "https://example.com/repo.git", Ref: "main", Path: "sub/dir", SourceHarness: "claude"},
+	}
+	if got := li.DescribeSources(); !reflect.DeepEqual(got, want) {
+		t.Fatalf("v4 described sources = %#v, want %#v", got, want)
+	}
+
+	legacyPath := filepath.Join(dir, "legacy.yaml")
+	legacyBytes := []byte(`apiVersion: agent-marketplace/v3
+harnesses: [devin]
+registries:
+  - url: https://example.com/legacy.git
+    ref: v1
+    path: sub/dir
+    source_harness: claude
+  - path: ` + filepath.Join(dir, "local-regs") + `
+    source_harness: windsurf
+marketplaces:
+  - url: https://mp.example
+    instance_id: main
+`)
+	if err := os.WriteFile(legacyPath, legacyBytes, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	ll := loadLayerIntent(UserPersonal, legacyPath, userLayer, nil)
+	if err := ll.Err(); err != nil {
+		t.Fatal(err)
+	}
+	wantLegacy := []SourceDescription{
+		{Kind: V4SourceGit, Location: "https://example.com/legacy.git", Ref: "v1", Path: "sub/dir", SourceHarness: "claude"},
+		{Kind: V4SourceDirectory, Location: filepath.Join(dir, "local-regs"), SourceHarness: "windsurf"},
+		{Kind: V4SourceMarketplace, Location: "https://mp.example"},
+	}
+	if got := ll.DescribeSources(); !reflect.DeepEqual(got, wantLegacy) {
+		t.Fatalf("legacy described sources = %#v, want %#v", got, wantLegacy)
+	}
+
+	if got := (LayerIntent{Source: UserPersonal}).DescribeSources(); got != nil {
+		t.Fatalf("absent layer described sources = %#v, want nil", got)
+	}
+}
+
 func TestLayerIntentExplicitSelections(t *testing.T) {
 	v4, err := ParseV4Config([]byte(`apiVersion: agent-marketplace/v4
 sources:

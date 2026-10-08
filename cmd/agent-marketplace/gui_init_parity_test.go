@@ -86,7 +86,7 @@ func runInteractiveInit(t *testing.T, home, answers string) []byte {
 	}()
 
 	var out bytes.Buffer
-	if err := runInit(&out, r, nil); err != nil {
+	if err := runInit(context.Background(), &out, r, nil); err != nil {
 		t.Fatalf("runInit failed: %v\noutput: %s", err, out.String())
 	}
 	data, err := os.ReadFile(filepath.Join(home, ".agents", "config.yaml"))

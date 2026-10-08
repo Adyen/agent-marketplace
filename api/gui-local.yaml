@@ -129,9 +129,12 @@ paths:
         allowed to show: the declared raw user-personal and organization
         target identifiers, the canonical supported target list, user-root
         presence and editability, and the labels of values managed outside
-        the GUI. Available only in user-scope mode; other session modes are
-        rejected. The request carries no body and never exposes
-        credentials, raw YAML, or filesystem paths.
+        the GUI, plus the declared user-personal and organization source
+        descriptions. Available only in user-scope mode; other session modes
+        are rejected. The request carries no body and never exposes
+        credentials, raw YAML, or configuration-root or fragment filesystem
+        paths; declared source locations are returned and directory source
+        locations may be filesystem paths.
       security:
         - launchToken: []
       responses:
@@ -352,9 +355,29 @@ components:
       properties:
         operation:
           $ref: '#/components/schemas/OperationRef'
+    SourceDescription:
+      type: object
+      required: [kind, location, ref, path, sourceHarness]
+      properties:
+        kind:
+          type: string
+          enum: [git, directory, marketplace]
+          description: How the source is acquired.
+        location:
+          type: string
+          description: Declared Git URL, directory declaration, or normalized Marketplace URL with embedded credentials and URL query/fragment redacted; directory locations are resolved source locations, not raw configuration paths.
+        ref:
+          type: string
+          description: Declared Git ref, or empty.
+        path:
+          type: string
+          description: Declared sub-path within a source, or empty.
+        sourceHarness:
+          type: string
+          description: Declared source layout, or empty.
     Configuration:
       type: object
-      required: [userTargets, organizationTargets, supportedTargets, rootPresent, editable, managedOutsideGUI, firstRun, canInitialize, detectedTargets, detectionUnavailable, consentRequired, telemetryDestination, retentionPolicyURL]
+      required: [userTargets, organizationTargets, userSources, organizationSources, supportedTargets, rootPresent, editable, managedOutsideGUI, firstRun, canInitialize, detectedTargets, detectionUnavailable, consentRequired, telemetryDestination, retentionPolicyURL]
       properties:
         userTargets:
           type: array
@@ -364,6 +387,16 @@ components:
           type: array
           items: { type: string }
           description: Declared organization target identifiers; always read-only.
+        userSources:
+          type: array
+          items:
+            $ref: '#/components/schemas/SourceDescription'
+          description: Declared user-personal source descriptions in deterministic declaration order.
+        organizationSources:
+          type: array
+          items:
+            $ref: '#/components/schemas/SourceDescription'
+          description: Declared organization source descriptions; always read-only.
         supportedTargets:
           type: array
           items: { type: string }

@@ -79,6 +79,83 @@ describe('Harness settings dialog', () => {
     expect(orgList!.textContent).toContain('claude')
   })
 
+  // spec: gui-configuration/organization-sources-are-read-only
+  it('lists declared user and organization sources as read-only text', async () => {
+    const { client, push } = settingsClient({
+      userSources: [
+        {
+          kind: 'git',
+          location: 'https://example.com/repo.git',
+          ref: 'main',
+          path: 'sub/dir',
+          sourceHarness: 'claude',
+        },
+        { kind: 'directory', location: '/var/regs', ref: '', path: '', sourceHarness: '' },
+        { kind: 'marketplace', location: 'https://market.example', ref: '', path: '', sourceHarness: '' },
+      ],
+      organizationSources: [
+        { kind: 'directory', location: '/opt/org-regs', ref: '', path: '', sourceHarness: '' },
+      ],
+    })
+    const { wrapper } = mountWorkspace(client)
+    push(event({ sequence: 1 }))
+    await tick()
+
+    await openSettings(wrapper)
+    const dialog = document.body.querySelector('[role="dialog"]')!
+
+    const userSection = dialog.querySelector('[aria-label="User sources"]')
+    expect(userSection).not.toBeNull()
+    expect(userSection!.textContent).toContain('Git registry')
+    expect(userSection!.textContent).toContain('Directory registry')
+    expect(userSection!.textContent).toContain('Marketplace endpoint')
+    expect(userSection!.textContent).toContain('https://example.com/repo.git')
+    expect(userSection!.textContent).toContain('main')
+    expect(userSection!.textContent).toContain('sub/dir')
+    expect(userSection!.textContent).toContain('claude')
+    expect(userSection!.textContent).toContain('/var/regs')
+    expect(userSection!.textContent).toContain('https://market.example')
+    expect(userSection!.querySelectorAll('button, input, [role="checkbox"]')).toHaveLength(0)
+
+    const orgSection = dialog.querySelector('[aria-label="Organization sources"]')
+    expect(orgSection).not.toBeNull()
+    expect(orgSection!.textContent).toContain('Managed by your organization; read-only.')
+    expect(orgSection!.textContent).toContain('Directory registry')
+    expect(orgSection!.textContent).toContain('/opt/org-regs')
+    expect(orgSection!.querySelectorAll('button, input, [role="checkbox"], a')).toHaveLength(0)
+
+    const cancel = Array.from(dialog.querySelectorAll<HTMLElement>('button')).find(
+      (b) => b.textContent === 'Cancel',
+    )!
+    cancel.click()
+    await tick()
+    expect(client.configure).not.toHaveBeenCalled()
+    expect(client.action).not.toHaveBeenCalled()
+  })
+
+  // spec: gui-configuration/organization-sources-are-read-only
+  it('renders hostile source declarations as inert text', async () => {
+    const hostile = '<img src=x onerror=alert(1)>'
+    const hostileLayout = '<script>alert(1)</script>'
+    const { client, push } = settingsClient({
+      organizationSources: [
+        { kind: 'directory', location: hostile, ref: '', path: '', sourceHarness: hostileLayout },
+      ],
+    })
+    const { wrapper } = mountWorkspace(client)
+    push(event({ sequence: 1 }))
+    await tick()
+
+    await openSettings(wrapper)
+    const dialog = document.body.querySelector('[role="dialog"]')!
+    const orgSection = dialog.querySelector('[aria-label="Organization sources"]')!
+    expect(orgSection.querySelector('img')).toBeNull()
+    expect(orgSection.querySelector('script')).toBeNull()
+    expect(orgSection.textContent).toContain(hostile)
+    expect(orgSection.textContent).toContain(hostileLayout)
+    expect(client.configure).not.toHaveBeenCalled()
+  })
+
   // spec: session-interactions/toggling-harness-targets-does-not-write
   it('toggles a draft without any RPC until Save and discards it on cancel', async () => {
     const { client, push } = settingsClient()

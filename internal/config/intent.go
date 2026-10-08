@@ -56,6 +56,14 @@ type SourceDecl struct {
 	SourceHarness string
 }
 
+type SourceDescription struct {
+	Kind          SourceKind
+	Location      string
+	Ref           string
+	Path          string
+	SourceHarness string
+}
+
 type MarketplaceSource struct {
 	Name     string
 	URL      string
@@ -138,31 +146,47 @@ func (s Settings) config() *Config {
 	}
 }
 
-func (l LayerIntent) Sources() []SourceDecl {
+func (l LayerIntent) DescribeSources() []SourceDescription {
 	if l.v4 != nil {
 		names := make([]string, 0, len(l.v4.Sources))
 		for name := range l.v4.Sources {
 			names = append(names, name)
 		}
 		sort.Strings(names)
-		decls := make([]SourceDecl, 0, len(names))
+		descs := make([]SourceDescription, 0, len(names))
 		for _, name := range names {
 			src := l.v4.Sources[name]
-			decl := SourceDecl{Kind: src.Kind}
-			if src.Kind == V4SourceGit {
-				decl.URL = src.URL
-				decl.Ref = src.Ref
-				decl.Path = src.Path
-				decl.SourceHarness = src.SourceHarness
-			}
+			desc := SourceDescription{Kind: src.Kind, Location: src.URL, Ref: src.Ref, Path: src.Path, SourceHarness: src.SourceHarness}
 			if src.Kind == V4SourceMarketplace {
-				decl.URL = src.CanonicalURL
+				desc.Location = src.CanonicalURL
 			}
-			decls = append(decls, decl)
+			descs = append(descs, desc)
 		}
-		return decls
+		return descs
 	}
 	return nil
+}
+
+func (l LayerIntent) Sources() []SourceDecl {
+	descs := l.DescribeSources()
+	if descs == nil {
+		return nil
+	}
+	decls := make([]SourceDecl, 0, len(descs))
+	for _, desc := range descs {
+		decl := SourceDecl{Kind: desc.Kind}
+		switch desc.Kind {
+		case V4SourceGit:
+			decl.URL = desc.Location
+			decl.Ref = desc.Ref
+			decl.Path = desc.Path
+			decl.SourceHarness = desc.SourceHarness
+		case V4SourceMarketplace:
+			decl.URL = desc.Location
+		}
+		decls = append(decls, decl)
+	}
+	return decls
 }
 
 func (l LayerIntent) acquisitionConfig() *V4Config {
