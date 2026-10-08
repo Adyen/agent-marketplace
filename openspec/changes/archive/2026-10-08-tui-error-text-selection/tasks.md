@@ -10,8 +10,8 @@
 ## 3. Native Terminal Verification
 
 - [x] 3.1 Verify encoded terminal drag/release input through the existing frame-paced path produces the expected highlight and exact displayed-text clipboard write, with no write for ignored gestures; run `CGO_ENABLED=0 go test ./internal/tui -run '^TestErrorSelection' -count=1`.
-- [ ] 3.2 Run `CGO_ENABLED=0 go test ./internal/tui -count=1`, `make validate TEST_PACKAGES=./internal/tui`, `make spec-check`, and `make tui-qa`; verify existing preview selection, wheel routing, frame pacing, and terminal restoration remain passing.
+- [x] 3.2 Run `CGO_ENABLED=0 go test ./internal/tui -count=1`, `make validate TEST_PACKAGES=./internal/tui`, `make spec-check`, and `make tui-qa`; verify existing preview selection, wheel routing, frame pacing, and terminal restoration remain passing.
 
 ## 4. Archive
 
-- [ ] 4.1 After implementation and verification are complete, run `openspec archive tui-error-text-selection --yes` in the implementation pull request and verify `openspec validate --all --strict` passes.
+- [x] 4.1 After implementation and verification are complete, run `openspec archive tui-error-text-selection --yes` in the implementation pull request and verify `openspec validate --all --strict` passes.
