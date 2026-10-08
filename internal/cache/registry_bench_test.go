@@ -69,6 +69,8 @@ func createBareRepoForBenchmark(b *testing.B) (origin, working string) {
 	runGitForBenchmark(b, source, "commit", "-m", "seed")
 
 	runGitForBenchmark(b, "", "clone", "--bare", source, origin)
+	runGitForBenchmark(b, "", "-C", origin, "config", "receive.autogc", "false")
+	runGitForBenchmark(b, "", "-C", origin, "config", "maintenance.auto", "false")
 	runGitForBenchmark(b, "", "clone", origin, working)
 
 	return origin, working

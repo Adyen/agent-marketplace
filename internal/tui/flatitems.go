@@ -12,10 +12,22 @@ import (
 
 // currentFoldState returns the model's fold-state map, creating it lazily.
 func (m *Model) currentFoldState() map[string]bool {
+	key := m.viewSettings.normalized()
+	if m.filter != "" {
+		if m.queryFoldSections == nil || m.queryFoldQuery != m.filter {
+			m.queryFoldSections = make(map[viewSettings]map[string]bool)
+			m.queryFoldQuery = m.filter
+		}
+		if m.queryFoldSections[key] == nil {
+			m.queryFoldSections[key] = make(map[string]bool)
+		}
+		return m.queryFoldSections[key]
+	}
+	m.queryFoldSections = nil
+	m.queryFoldQuery = ""
 	if m.foldedSections == nil {
 		m.foldedSections = make(map[viewSettings]map[string]bool)
 	}
-	key := m.viewSettings.normalized()
 	if m.foldedSections[key] == nil {
 		m.foldedSections[key] = make(map[string]bool)
 	}
@@ -23,15 +35,10 @@ func (m *Model) currentFoldState() map[string]bool {
 }
 
 // rebuildFlatItems recomputes m.flatItems from m.filteredRows and the fold
-// state. When a filter is active, fold state is overridden so that sections
-// containing matches render expanded. The user's persisted fold state is
-// untouched and restored as soon as the filter clears.
+// state. Search folds live in a per-query map, so the user's persisted fold
+// state is untouched and restored as soon as the filter clears.
 func (m *Model) rebuildFlatItems() {
-	fold := m.currentFoldState()
-	if m.filter != "" {
-		fold = map[string]bool{}
-	}
-	m.flatItems = buildGroupedTree(m.filteredRows, m.viewSettings, fold)
+	m.flatItems = buildGroupedTree(m.filteredRows, m.viewSettings, m.currentFoldState())
 	m.listHeightPrefix = m.listHeightPrefix[:0]
 }
 
@@ -174,7 +181,7 @@ func (m *Model) collapseAllSections() {
 
 // expandAllSections clears the fold-state map, expanding every section.
 func (m *Model) expandAllSections() {
-	m.foldedSections[m.viewSettings.normalized()] = make(map[string]bool)
+	clear(m.currentFoldState())
 }
 
 // rowKey is the stable identity of a resource row across snapshot rebuilds.
@@ -247,7 +254,7 @@ func (m Model) selectionKeyForRebuild() string {
 	if m.pane == paneDetail && m.detailKey != "" {
 		return "row\x00" + m.detailKey
 	}
-	if m.cursor == 0 {
+	if m.cursor == 0 && m.filter == "" {
 		return ""
 	}
 	return m.selectionKey()

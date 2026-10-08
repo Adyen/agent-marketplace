@@ -339,6 +339,9 @@ type Model struct {
 	// bulkModal is the section bulk-toggle modal state; see bulk.go.
 	bulkModal bulkModalState
 
+	queryFoldSections map[viewSettings]map[string]bool
+	queryFoldQuery    string
+
 	// flatItems is the render-ready list computed from filteredRows +
 	// foldState. Cursor indexes into this slice. Call rebuildFlatItems
 	// whenever rows, filter, or fold state change.
