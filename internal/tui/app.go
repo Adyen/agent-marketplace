@@ -399,14 +399,10 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.KeyPressMsg:
-		prevOffset := -1
-		if m.previewSel.active && m.pane == paneDetail {
-			prevOffset = m.detailViewport.YOffset()
-		}
 		next, cmd := m.handleKey(msg)
-		if prevOffset >= 0 {
-			if nm, ok := next.(Model); ok && nm.detailViewport.YOffset() != prevOffset {
-				nm.previewSel = previewSelection{}
+		if m.previewSel.active {
+			if nm, ok := next.(Model); ok {
+				nm.invalidateStaleSelection()
 				return nm, cmd
 			}
 		}
@@ -1887,7 +1883,7 @@ func (m Model) viewContent() string {
 		m.errorsViewport.SetWidth(m.width)
 		m.errorsViewport.SetHeight(max(1, m.height-1))
 		m.errorsViewport.SetContent(renderErrors(m))
-		return fitTerminalWithFooter(m.errorsViewport.View(), "↑/↓ or ctrl-d/u scroll · esc/e close · Ctrl+C quit", m.width, m.height)
+		return m.applyPreviewSelection(fitTerminalWithFooter(m.errorsViewport.View(), "↑/↓ or ctrl-d/u scroll · esc/e close · Ctrl+C quit", m.width, m.height))
 	case paneConfirm:
 		return fitTerminalWithFooter(renderConfirm(m), "y sync+quit · n quit · esc cancel", m.width, m.height)
 	case paneMarketplaceConsent:
