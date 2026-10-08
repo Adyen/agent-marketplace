@@ -29,3 +29,5 @@ Five two-second benchmark samples per side on one macOS/arm64 host exclude disk 
 Adversarial review covered the full diff against `4fcbb096`: sidecar provenance and cross-target leakage, nil/empty preservation through ingestion and JSON-tagged sidecars, aliasing of ingested slices, override application, consumer reachability through `sync` and `convert`, and the existing fail-closed regressions for foreign identifiers. No correctness or security findings were confirmed.
 
 `make validate`, `make validate-e2e`, focused consumer packages (`internal/materialize`, `catalog`, `pipeline`, `sourcerevision`, `marketplace`, `resolver`), and pre-archive `make spec-check` passed.
+
+The verified implementation is committed as `5b137a66`. Post-archive `make spec-check` passed: strict spec validation, scenario/test traceability, and the archive-before-merge guard.
