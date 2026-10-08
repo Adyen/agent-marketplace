@@ -873,6 +873,10 @@ func (s *Store) recoverLocked() ([]RecoveryOutcome, error) {
 		if liveErr != nil && !absent {
 			return nil, fmt.Errorf("ownership: read %s during recovery: %w", j.AbsFile, liveErr)
 		}
+		slog.Debug("Ownership recovery aggregate observed", "path", j.AbsFile, "phase", "ownership-recovery-aggregate-observed")
+		if err := validate(); err != nil {
+			return nil, err
+		}
 		switch {
 		case !absent && Digest(live) == j.NextDigest:
 			// The rename happened in the window before the phase update.

@@ -17,7 +17,8 @@ import (
 
 type metadataPublicationObserver struct {
 	slog.Handler
-	before func(string, string)
+	before   func(string, string)
+	recovery func()
 }
 
 func (h metadataPublicationObserver) Handle(ctx context.Context, record slog.Record) error {
@@ -33,8 +34,11 @@ func (h metadataPublicationObserver) Handle(ctx context.Context, record slog.Rec
 		}
 		return true
 	})
-	if phase == "ownership-metadata-publication" {
+	if phase == "ownership-metadata-publication" && h.before != nil {
 		h.before(path, destination)
+	}
+	if phase == "ownership-recovery-aggregate-observed" && h.recovery != nil {
+		h.recovery()
 	}
 	return h.Handler.Handle(ctx, record)
 }
