@@ -52,6 +52,8 @@ func (m Model) previewSelectionRegion() (x0, y0, w, h int, ok bool) {
 		return listWidth + 1, y0, rightWidth - 1, layout.mainHeight, true
 	case paneDetail:
 		return listWidth, 0, rightWidth - 1, max(1, m.height-1), true
+	case paneErrors:
+		return 0, 0, m.width, m.height - 1, true
 	}
 	return 0, 0, 0, 0, false
 }
@@ -70,6 +72,9 @@ func (m Model) previewSelectionIdentity() string {
 	case paneDetail:
 		return "detail\x00" + strconv.Itoa(m.width) + "\x00" + strconv.Itoa(m.height) + "\x00" +
 			m.detailKey + "\x00" + m.detailSelectedPath + "\x00" + strconv.Itoa(m.detailViewport.YOffset())
+	case paneErrors:
+		return "errors\x00" + strconv.Itoa(m.width) + "\x00" + strconv.Itoa(m.height) + "\x00" +
+			strconv.Itoa(m.errorsViewport.YOffset())
 	}
 	return ""
 }
@@ -99,6 +104,15 @@ func (s previewSelectionView) contains(x, y int) bool {
 
 func (s previewSelectionView) masked(x, y int) bool {
 	return s.maskX >= 0 && x >= s.maskX && y >= 1 && y < s.maskY1
+}
+
+func (s previewSelectionView) onErrorsText(x, y int) bool {
+	local := y - s.y0
+	if local < 0 || local >= len(s.lines) {
+		return false
+	}
+	text := strings.TrimRight(ansi.Strip(s.lines[local]), " ")
+	return x >= s.x0 && x-s.x0 < ansi.StringWidth(text)
 }
 
 func (s previewSelectionView) clamp(x, y int) selectionCell {
@@ -258,6 +272,9 @@ func (m Model) handlePreviewSelection(msg previewSelectionMouseMsg) (tea.Model, 
 			m.previewSel = previewSelection{}
 		}
 		if ev.Mod != 0 || !snap.contains(ev.X, ev.Y) || snap.masked(ev.X, ev.Y) {
+			return m, nil
+		}
+		if m.pane == paneErrors && !snap.onErrorsText(ev.X, ev.Y) {
 			return m, nil
 		}
 		m.previewSel = previewSelection{snap: snap, anchor: selectionCell{ev.X, ev.Y}, end: selectionCell{ev.X, ev.Y}, active: true}
