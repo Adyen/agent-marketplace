@@ -30,11 +30,11 @@ type adoptionSearchResult struct {
 
 func adoptionSearchFixture(t *testing.T, samples []inventoryMetricSample) (*httptest.Server, *metricsFixture) {
 	t.Helper()
-	public, fixture, _, _ := adoptionSearchSetup(t, samples)
+	public, fixture, _, _ := adoptionSearchSetup(t, samples, true)
 	return public, fixture
 }
 
-func adoptionSearchSetup(t *testing.T, samples []inventoryMetricSample) (*httptest.Server, *metricsFixture, *Server, *sqlite.Store) {
+func adoptionSearchSetup(t *testing.T, samples []inventoryMetricSample, seed ...bool) (*httptest.Server, *metricsFixture, *Server, *sqlite.Store) {
 	t.Helper()
 	ctx := context.Background()
 
@@ -76,10 +76,19 @@ func adoptionSearchSetup(t *testing.T, samples []inventoryMetricSample) (*httpte
 	fixture := newMetricsFixture(t, func() string { return prometheusVector(samples, adoptionFixedNow) })
 	cfg := config.Config{
 		Instance:            config.Instance{ID: "mp", Name: "Marketplace", CanonicalURL: "https://example.com"},
+		Listen:              "127.0.0.1:0",
+		OperationsListen:    "127.0.0.1:0",
 		InstallationMetrics: config.InstallationMetrics{URL: fixture.server.URL},
 	}
 	server := NewServer(cfg, meta, fsblob.New(t.TempDir()))
 	server.installations.now = func() time.Time { return adoptionFixedNow }
+	if len(seed) > 0 && seed[0] {
+		registries, err := server.registryIndex(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, _ = server.installations.refresh(ctx, registries)
+	}
 	public := httptest.NewServer(server.PublicHandler())
 	t.Cleanup(public.Close)
 	return public, fixture, server, meta
@@ -218,7 +227,7 @@ func TestSearchInstallationsTextRelevancePrecedesAdoption(t *testing.T) {
 
 // spec: marketplace-api/popularity-applies-before-pagination-with-relevant-search-matches
 func TestSearchInstallationsKeepsKindAndRegistryFilters(t *testing.T) {
-	public, _, _, meta := adoptionSearchSetup(t, adoptionSearchSamples())
+	public, _, _, meta := adoptionSearchSetup(t, adoptionSearchSamples(), true)
 	publishAssessedTestRevision(context.Background(), t, meta, store.ResourceRevision{
 		Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Registry: "rA", Kind: KindCommand, Name: "deploy-preview"},
 		ContentDigest: store.RevisionDigest(digestOf("c")),
@@ -244,9 +253,16 @@ func TestSearchInstallationsKeepsKindAndRegistryFilters(t *testing.T) {
 
 // spec: marketplace-api/metrics-configuration-and-requests-preserve-the-server-boundary
 func TestSearchInstallationsResponseExcludesCredentialAndIDs(t *testing.T) {
-	public, fixture, server, _ := adoptionSearchSetup(t, adoptionSearchSamples())
+	public, fixture, server, _ := adoptionSearchSetup(t, adoptionSearchSamples(), false)
 	server.installations.tokenEnv = "MARKETPLACE_METRICS_TEST_SEARCH"
 	t.Setenv("MARKETPLACE_METRICS_TEST_SEARCH", "search-secret-token")
+	registries, err := server.registryIndex(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := server.installations.refresh(context.Background(), registries); err != nil {
+		t.Fatalf("refresh() error = %v", err)
+	}
 
 	result, body := getSearch(t, public.URL, "?sort=installations")
 	if len(result.Items) == 0 {
@@ -264,7 +280,7 @@ func TestSearchInstallationsResponseExcludesCredentialAndIDs(t *testing.T) {
 
 // spec: marketplace-api/existing-clients-and-invalid-sorting-remain-predictable
 func TestSearchWithoutSortKeepsLegacyOrderAndSkipsMetrics(t *testing.T) {
-	public, fixture := adoptionSearchFixture(t, adoptionSearchSamples())
+	public, fixture, _, _ := adoptionSearchSetup(t, adoptionSearchSamples())
 
 	result, body := getSearch(t, public.URL, "")
 	want := []string{"alpha", "preview", "beta", "preview-extra", "zulu", "local-only"}
@@ -281,7 +297,7 @@ func TestSearchWithoutSortKeepsLegacyOrderAndSkipsMetrics(t *testing.T) {
 
 // spec: marketplace-api/existing-clients-and-invalid-sorting-remain-predictable
 func TestSearchRejectsUnsupportedSort(t *testing.T) {
-	public, fixture := adoptionSearchFixture(t, adoptionSearchSamples())
+	public, fixture, _, _ := adoptionSearchSetup(t, adoptionSearchSamples())
 
 	resp, err := http.Get(public.URL + "/api/v1/search?sort=popularity")
 	if err != nil {
@@ -298,7 +314,7 @@ func TestSearchRejectsUnsupportedSort(t *testing.T) {
 
 // spec: marketplace-api/metrics-unavailable-does-not-break-resource-discovery
 func TestSearchInstallationsFallsBackWithoutCounts(t *testing.T) {
-	public, fixture := adoptionSearchFixture(t, adoptionSearchSamples())
+	public, fixture, _, _ := adoptionSearchSetup(t, adoptionSearchSamples())
 	fixture.handler.Store(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusBadGateway)
 	})
@@ -310,6 +326,9 @@ func TestSearchInstallationsFallsBackWithoutCounts(t *testing.T) {
 	}
 	if strings.Contains(body, "installation_count") {
 		t.Fatalf("failed metrics still emitted counts: %s", body)
+	}
+	if hits := fixture.hits.Load(); hits != 0 {
+		t.Fatalf("search issued telemetry I/O for missing counts: hits = %d", hits)
 	}
 }
 
@@ -333,7 +352,7 @@ func TestSearchInstallationsCountsHostedCoordinatesForServingMarketplace(t *test
 		hostedInventoryResourceSample("install-removed", "gen-old", "mp", "rA", "skill", "alpha"),
 		inventorySnapshotSample("install-removed", "gen-new", fresh),
 	}
-	public, _, _, meta := adoptionSearchSetup(t, samples)
+	public, _, _, meta := adoptionSearchSetup(t, samples, true)
 	publishAssessedTestRevision(context.Background(), t, meta, store.ResourceRevision{
 		Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Registry: "rB", Kind: KindSkill, Name: "alpha"},
 		ContentDigest: store.RevisionDigest(digestOf("c")),
