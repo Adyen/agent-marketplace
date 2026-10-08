@@ -8,6 +8,6 @@
 ## 2. Integration and published behavior
 
 - [x] 2.1 Add a declarative Git-source multi-name E2E case and verify exact ref/path selection, materialization, unrelated-resource preservation, and subsequent sync check.
-- [ ] 2.2 Update install usage in the CLI reference and reconcile it against the implemented command and spec.
-- [ ] 2.3 Run focused install regressions, make validate, make spec-check, openspec validate --all --strict, and make validate-e2e; retain passing output.
-- [ ] 2.4 Run openspec archive install-multiple-resources --yes in the same pull request and verify the archived change and main capability with make spec-check.
+- [x] 2.2 Update install usage in the CLI reference and reconcile it against the implemented command and spec.
+- [x] 2.3 Run focused install regressions, make validate, make spec-check, openspec validate --all --strict, and make validate-e2e; retain passing output.
+- [x] 2.4 Run openspec archive install-multiple-resources --yes in the same pull request and verify the archived change and main capability with make spec-check.
