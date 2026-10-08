@@ -96,9 +96,11 @@ func buildRepoScript(reposDir, name string, files map[string]string) string {
 	script := fmt.Sprintf(`set -e
 mkdir -p %q
 git init --bare --initial-branch=main %q
+git -C %q config receive.autogc false
+git -C %q config maintenance.auto false
 git -c init.defaultBranch=main clone %q %q
 cd %q
-`, reposDir, barePath, barePath, workPath, workPath)
+`, reposDir, barePath, barePath, barePath, barePath, workPath, workPath)
 
 	for path, content := range files {
 		dir := filepath.Dir(path)
