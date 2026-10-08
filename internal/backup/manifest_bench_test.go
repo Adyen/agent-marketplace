@@ -5,6 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/Adyen/agent-marketplace/internal/fsboundary"
 )
 
 func BenchmarkLoadCodexBackupManifestDisk(b *testing.B) {
@@ -26,9 +28,14 @@ func BenchmarkLoadCodexBackupManifestDisk(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for b.Loop() {
-		sets, err := loadCompleteCodexSets(dir)
-		if err != nil || len(sets) != 1 {
-			b.Fatalf("manifest control absent: %v %v", sets, err)
+		root, err := fsboundary.OpenDir(dir)
+		if err != nil {
+			b.Fatal(err)
+		}
+		sets, err := loadCompleteCodexSetsAt(root)
+		closeErr := root.Close()
+		if err != nil || closeErr != nil || len(sets) != 1 {
+			b.Fatalf("manifest control absent: %v %v %v", sets, err, closeErr)
 		}
 	}
 }

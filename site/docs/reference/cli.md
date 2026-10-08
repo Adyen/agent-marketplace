@@ -124,15 +124,24 @@ Adds selections to one writable config layer, then syncs harness output.
 You can select a named resource from a configured Git or directory source, or from `--from <registry>` with optional `--ref` and `--path`. In a v4 destination, an ad hoc registry becomes a named v4 `git` or `directory` source. A relative directory stays relative in repository and personal-local configs, so committed sources keep working on other machines. Installing every resource from an ad hoc registry into a v4 destination declares the source with an `all: true` resource group. `install` edits both v4 and legacy (v2 or v3) destinations. A change to a legacy destination prints a `config.legacy-deprecated` warning. If an edit is refused, your configuration stays unchanged. See [configuration compatibility](../explanation/user-journeys.md#before-following-a-journey).
 
 ```text
-agent-marketplace install <resource-name> [flags]
+agent-marketplace install <resource-name>... [flags]
 agent-marketplace install <collection-name> [flags]
 agent-marketplace install <marketplace-endpoint> [--scope user|repo|local]
 agent-marketplace install <marketplace-locator> [flags]
 agent-marketplace install --marketplace <alias-or-url> <resource-locator> [flags]
 agent-marketplace install --tag <tag> [flags]
 agent-marketplace install --all [flags]
-agent-marketplace install --from <registry> [<resource-name>] [flags]
+agent-marketplace install --from <registry> [<resource-name>...] [flags]
 ```
+
+`install` accepts several resource names in one command, resolved from the configured registries or from a single `--from` source:
+
+```text
+agent-marketplace install frontend-design review
+agent-marketplace install --from https://github.com/example/resources.git frontend-design review
+```
+
+The shared `--scope`, `--kind`, `--ref`, and `--path` options apply to every name. A repeated name is installed once, in the order you first gave it. If a requested name is missing, malformed, ambiguous, or not allowed in the target scope, the command fails before writing configuration, acquisition lock, or materialization changes. Marketplace endpoint registration and locators remain single-resource operations and cannot be combined with other names.
 
 Marketplace [locators](../glossary.md#locator) have one of these forms:
 
