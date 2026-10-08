@@ -6,5 +6,5 @@
 
 ## 2. Integration
 
-- [ ] 2.1 Verify the integrated change with make validate, make spec-check, strict OpenSpec validation, make tui-qa-check, and make tui-qa.
-- [ ] 2.2 Run openspec archive fix-tui-search-folding --yes in the same pull request and verify the synced tui-navigation specification and archived artifacts.
+- [x] 2.1 Verify the integrated change with make validate, make spec-check, strict OpenSpec validation, make tui-qa-check, and make tui-qa.
+- [x] 2.2 Run openspec archive fix-tui-search-folding --yes in the same pull request and verify the synced tui-navigation specification and archived artifacts.
