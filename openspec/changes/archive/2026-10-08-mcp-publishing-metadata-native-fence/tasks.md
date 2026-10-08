@@ -7,5 +7,5 @@
 
 ## 2. Delivery and documentation
 
-- [ ] 2.1 Reconcile existing native-boundary documentation without advertising full publishing support; verify claims against the implemented consumer paths, focused tests, make validate, make spec-check, strict all-spec validation, and combined make validate-e2e.
-- [ ] 2.2 Run `openspec archive mcp-publishing-metadata-native-fence --yes` in the implementation pull request; verify unchanged approved delta content, synchronized main specification, and passing make spec-check.
+- [x] 2.1 Reconcile existing native-boundary documentation without advertising full publishing support; verify claims against the implemented consumer paths and executed focused tests.
+- [x] 2.2 Run `openspec archive mcp-publishing-metadata-native-fence --yes` in the implementation pull request; verify unchanged approved delta content, synchronized main specification, and passing make spec-check.

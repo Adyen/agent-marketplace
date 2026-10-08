@@ -74,6 +74,8 @@ This marker belongs to Devin and Codex converted-command layouts. Other command 
 
 Subagent, hook, and MCP files use source-harness-specific native formats. The [registry layout reference](./registry-layout.md) lists the supported source paths.
 
+In MCP server entries, `_agent-marketplace` is reserved for MCP publishing metadata and is not emitted to native MCP settings, including case variants. Other fields retain their established target-specific behavior. This reservation does not add description/README authoring or rendering support.
+
 ## Related documentation
 
 - [Registry layout reference](./registry-layout.md)
