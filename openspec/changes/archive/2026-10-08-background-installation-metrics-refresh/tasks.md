@@ -15,5 +15,5 @@
 - [x] 3.1 Adapt existing reader/search fixtures without weakening parser, identity, ranking, pagination or credential-boundary coverage; run the affected API/config packages and race tests.
 - [x] 3.2 Capture candidate benchmark samples with unchanged inputs and commands, retain benchstat comparison and before/after blocked-backend evidence.
 - [x] 3.3 Reconcile operator and HTTP reference documentation with defaults, background behavior, last-good retention and expiry; verify all relevant published claims against implementation.
-- [ ] 3.4 Run native validation, strict OpenSpec/specaudit checks and relevant Marketplace process E2E; retain commands, outcomes and scope/criterion coverage.
-- [ ] 3.5 Run `openspec archive background-installation-metrics-refresh --yes` in the same pull request and verify archived source content and synced main capability.
+- [x] 3.4 Run native validation, strict OpenSpec/specaudit checks and relevant Marketplace process E2E; retain commands, outcomes and scope/criterion coverage.
+- [x] 3.5 Run `openspec archive background-installation-metrics-refresh --yes` in the same pull request and verify archived source content and synced main capability.
