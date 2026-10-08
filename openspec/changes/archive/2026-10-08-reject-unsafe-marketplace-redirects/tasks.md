@@ -13,4 +13,4 @@
 
 ## 3. Archive
 
-- [ ] 3.1 Run `openspec archive reject-unsafe-marketplace-redirects --yes` as the final commit of the change.
+- [x] 3.1 Run `openspec archive reject-unsafe-marketplace-redirects --yes` as the final commit of the change.
