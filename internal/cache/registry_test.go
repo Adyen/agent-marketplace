@@ -423,6 +423,8 @@ func createBareRepoWithWorkingClone(t *testing.T) (string, string) {
 	runGitCommand(t, source, "commit", "-m", "seed")
 
 	runGitCommand(t, "", "clone", "--bare", source, origin)
+	runGitCommand(t, "", "-C", origin, "config", "receive.autogc", "false")
+	runGitCommand(t, "", "-C", origin, "config", "maintenance.auto", "false")
 	runGitCommand(t, "", "clone", origin, working)
 
 	return origin, working

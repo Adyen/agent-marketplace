@@ -324,6 +324,7 @@ func createBareRepoWithWorkingCloneOnBranch(t *testing.T, bareName, branch strin
 
 	runGit(t, "", "init", "--initial-branch="+branch, working)
 	runGit(t, "", "init", "--bare", "--initial-branch="+branch, origin)
+	disableBareRemoteMaintenance(t, origin)
 
 	gitConfig := filepath.Join(working, ".git", "config")
 	config, err := os.OpenFile(gitConfig, os.O_APPEND|os.O_WRONLY, 0)
@@ -339,6 +340,12 @@ func createBareRepoWithWorkingCloneOnBranch(t *testing.T, bareName, branch strin
 	}
 
 	return origin, working
+}
+
+func disableBareRemoteMaintenance(t *testing.T, bare string) {
+	t.Helper()
+	runGit(t, "", "-C", bare, "config", "receive.autogc", "false")
+	runGit(t, "", "-C", bare, "config", "maintenance.auto", "false")
 }
 
 func commitAndPushAll(t *testing.T, repoDir, message string) {
