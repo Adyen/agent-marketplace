@@ -104,8 +104,17 @@ func TestPortableRegularDigestRefusesReplacementAfterObservation(t *testing.T) {
 	if err := os.WriteFile(path, []byte("replacement"), 0o640); err != nil {
 		t.Fatal(err)
 	}
+	dir, err := fsboundary.OpenDir(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := dir.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
 	var digestBytes bytes.Buffer
-	if err := writePortableRegularDigest(&digestBytes, path, "", before); !errors.Is(err, fsboundary.ErrGenerationConflict) || digestBytes.Len() != 0 {
+	if err := writePortableRegularDigestAt(&digestBytes, dir, "output.md", "", before); !errors.Is(err, fsboundary.ErrGenerationConflict) || digestBytes.Len() != 0 {
 		t.Fatalf("replacement regular payload reached ownership digest: %q %v", digestBytes.Bytes(), err)
 	}
 	if data, err := os.ReadFile(path); err != nil || string(data) != "replacement" {

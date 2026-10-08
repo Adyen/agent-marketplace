@@ -1580,6 +1580,45 @@ registries: []
 		},
 	},
 	{
+		Name: "install/multiple_names_from_git_source",
+		// spec: resource-installation/install-several-names-from-one-explicit-source
+		Desc: "Given a git registry with a bundle path and an unrelated configured selection, When install names two resources with shared --from/--ref/--path, Then both materialize, unrelated state is retained, and sync --check passes",
+		Registries: []RegistryDef{
+			{Name: "multi-src", Files: map[string]string{
+				"bundles/skills/first/SKILL.md":  (Skill{Name: "first", Description: "First"}).SkillFile(),
+				"bundles/skills/second/SKILL.md": (Skill{Name: "second", Description: "Second"}).SkillFile(),
+				"skills/root-only/SKILL.md":      (Skill{Name: "root-only", Description: "Root only"}).SkillFile(),
+			}},
+			{Name: "multi-other", Skills: []Skill{{Name: "keep"}}},
+		},
+		GlobalCfg: `
+harnesses: [factory]
+`,
+		RepoCfg: `
+registries:
+  - url: {{REG:multi-other}}
+    ref: main
+    skills:
+      - keep
+`,
+		Steps: []Step{
+			{Args: []string{"sync"}, MustPass: true,
+				FilesExist: []string{"/workspace/.factory/skills/keep/SKILL.md"}},
+			{Args: []string{"install", "first", "second", "--from", "{{REG:multi-src}}", "--ref", "main", "--path", "bundles"}, MustPass: true,
+				OutContains: []string{"first", "second"},
+				FilesExist: []string{
+					"/workspace/.factory/skills/first/SKILL.md",
+					"/workspace/.factory/skills/second/SKILL.md",
+					"/workspace/.factory/skills/keep/SKILL.md",
+				},
+				FilesAbsent: []string{"/workspace/.factory/skills/root-only"},
+				FileContains: map[string]string{
+					"/workspace/.agents/config.yaml": "bundles",
+				}},
+			{Args: []string{"sync", "--check"}, MustPass: true},
+		},
+	},
+	{
 		Name: "install/missing_skill_exits_nonzero",
 		Desc: "Given a registry that does not contain the requested skill, When install nonexistent-skill is run, Then it exits 1 with an error",
 		Registries: []RegistryDef{

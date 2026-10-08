@@ -190,14 +190,6 @@ func LevelOrder(level string) int {
 	}
 }
 
-// MaxLevel returns the higher of two levels.
-func MaxLevel(a, b string) string {
-	if LevelOrder(a) >= LevelOrder(b) {
-		return a
-	}
-	return b
-}
-
 // LookupIP resolves a hostname to IP addresses. It defaults to net.LookupIP and
 // may be overridden in tests to avoid real DNS lookups.
 var LookupIP = net.LookupIP

@@ -40,16 +40,6 @@ type InspectionResult struct {
 	Issues         []InspectionIssue
 }
 
-func (r InspectionResult) IssuesOf(severity IssueSeverity, category IssueCategory) []InspectionIssue {
-	var out []InspectionIssue
-	for _, issue := range r.Issues {
-		if issue.Severity == severity && issue.Category == category {
-			out = append(out, issue)
-		}
-	}
-	return out
-}
-
 func (r InspectionResult) Healthy() bool {
 	for _, issue := range r.Issues {
 		if issue.Severity == IssueError {

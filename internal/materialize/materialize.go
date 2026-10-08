@@ -4010,23 +4010,6 @@ func writePortableDigestPath(h io.Writer, path, rel string) (err error) {
 	return writePortableDigestEntry(h, root, filepath.Base(path), rel)
 }
 
-func writePortableRegularDigest(h io.Writer, path, rel string, info os.FileInfo) (err error) {
-	path, err = filepath.Abs(path)
-	if err != nil {
-		return err
-	}
-	root, err := fsboundary.OpenDir(filepath.Dir(path))
-	if err != nil {
-		return err
-	}
-	defer func() {
-		if closeErr := root.Close(); closeErr != nil {
-			err = errors.Join(err, closeErr)
-		}
-	}()
-	return writePortableRegularDigestAt(h, root, filepath.Base(path), rel, info)
-}
-
 func writePortableRegularDigestAt(h io.Writer, root *fsboundary.Dir, name, rel string, info os.FileInfo) (err error) {
 	before, err := fsboundary.FileInfoIdentity(info)
 	if err != nil {
