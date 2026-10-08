@@ -1080,7 +1080,7 @@ export interface components {
             content_digest: string;
             /** @description Author-written one-line summary from the upstream registry. Untrusted content: control characters are stripped, whitespace is collapsed, and the value is truncated to at most 1024 bytes on a UTF-8 boundary before it is stored or served. Omitted when the resource kind declares no description (hooks and MCP servers) or the author left it empty. */
             description?: string;
-            /** @description Optional. How many distinct reporting installations enabled this resource in their latest reported configuration within the last 30 days, derived from existing inventory telemetry. Counts describe enabled configuration, not verified installation events or unique users, and can undercount non-reporting installations. Present only when the instance reports adoption for this registry; absent means unknown rather than zero. */
+            /** @description Optional. How many distinct reporting installations enabled this resource in their latest reported configuration within the last 30 days, derived from inventory telemetry matched by Git identity or explicit coordinates from this Marketplace. Counts describe enabled configuration, not verified installation events or unique users, and can undercount non-reporting installations. Present only when the instance reports adoption for this registry; absent means unknown rather than zero. */
             installation_count?: number;
             /** @enum {string} */
             kind: "skill" | "command" | "subagent" | "hook" | "mcpserver" | "collection";

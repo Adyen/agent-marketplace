@@ -83,13 +83,13 @@ func newTestReader(t *testing.T, fixture *metricsFixture) *installationMetricsRe
 	return newInstallationMetricsReader(config.InstallationMetrics{
 		URL:    fixture.server.URL,
 		Labels: map[string]string{"namespace": "ops"},
-	})
+	}, "mp")
 }
 
 // spec: marketplace-api/superseded-inventory-history-does-not-exhaust-the-response-budget
 func TestInstallationMetricsQueryLatestInventoryProjection(t *testing.T) {
-	const wantNamespace = `label_replace((max by (installation_id, config_fingerprint) (last_over_time(agent_marketplace_config_snapshot{namespace="ops"}[30d])) == on (installation_id) group_left max by (installation_id) (max by (installation_id, config_fingerprint) (last_over_time(agent_marketplace_config_snapshot{namespace="ops"}[30d])))), "inventory_type", "snapshot", "", "") or label_replace((max by (installation_id, config_fingerprint, registry_id, resource_kind, resource_name) (last_over_time(agent_marketplace_config_resource{namespace="ops",resource_kind!="rule"}[30d])) and on (installation_id, config_fingerprint) (max by (installation_id, config_fingerprint) (last_over_time(agent_marketplace_config_snapshot{namespace="ops"}[30d])) == on (installation_id) group_left max by (installation_id) (max by (installation_id, config_fingerprint) (last_over_time(agent_marketplace_config_snapshot{namespace="ops"}[30d]))))), "inventory_type", "resource", "", "")`
-	const wantEmpty = `label_replace((max by (installation_id, config_fingerprint) (last_over_time(agent_marketplace_config_snapshot{}[30d])) == on (installation_id) group_left max by (installation_id) (max by (installation_id, config_fingerprint) (last_over_time(agent_marketplace_config_snapshot{}[30d])))), "inventory_type", "snapshot", "", "") or label_replace((max by (installation_id, config_fingerprint, registry_id, resource_kind, resource_name) (last_over_time(agent_marketplace_config_resource{resource_kind!="rule"}[30d])) and on (installation_id, config_fingerprint) (max by (installation_id, config_fingerprint) (last_over_time(agent_marketplace_config_snapshot{}[30d])) == on (installation_id) group_left max by (installation_id) (max by (installation_id, config_fingerprint) (last_over_time(agent_marketplace_config_snapshot{}[30d]))))), "inventory_type", "resource", "", "")`
+	const wantNamespace = `label_replace((max by (installation_id, config_fingerprint) (last_over_time(agent_marketplace_config_snapshot{namespace="ops"}[30d])) == on (installation_id) group_left max by (installation_id) (max by (installation_id, config_fingerprint) (last_over_time(agent_marketplace_config_snapshot{namespace="ops"}[30d])))), "inventory_type", "snapshot", "", "") or label_replace((max by (installation_id, config_fingerprint, source_kind, marketplace_id, registry_id, resource_kind, resource_name) (last_over_time(agent_marketplace_config_resource{namespace="ops",resource_kind!="rule"}[30d])) and on (installation_id, config_fingerprint) (max by (installation_id, config_fingerprint) (last_over_time(agent_marketplace_config_snapshot{namespace="ops"}[30d])) == on (installation_id) group_left max by (installation_id) (max by (installation_id, config_fingerprint) (last_over_time(agent_marketplace_config_snapshot{namespace="ops"}[30d]))))), "inventory_type", "resource", "", "")`
+	const wantEmpty = `label_replace((max by (installation_id, config_fingerprint) (last_over_time(agent_marketplace_config_snapshot{}[30d])) == on (installation_id) group_left max by (installation_id) (max by (installation_id, config_fingerprint) (last_over_time(agent_marketplace_config_snapshot{}[30d])))), "inventory_type", "snapshot", "", "") or label_replace((max by (installation_id, config_fingerprint, source_kind, marketplace_id, registry_id, resource_kind, resource_name) (last_over_time(agent_marketplace_config_resource{resource_kind!="rule"}[30d])) and on (installation_id, config_fingerprint) (max by (installation_id, config_fingerprint) (last_over_time(agent_marketplace_config_snapshot{}[30d])) == on (installation_id) group_left max by (installation_id) (max by (installation_id, config_fingerprint) (last_over_time(agent_marketplace_config_snapshot{}[30d]))))), "inventory_type", "resource", "", "")`
 	const escapedLabels = `alpha="first",zeta="quote\n\"line\""`
 
 	tests := []struct {
@@ -480,7 +480,7 @@ func TestInstallationMetricsReaderUnsetTokenAndTimeout(t *testing.T) {
 		time.Sleep(3 * time.Second)
 		w.WriteHeader(http.StatusOK)
 	})
-	slowReader := newInstallationMetricsReader(config.InstallationMetrics{URL: slow.server.URL})
+	slowReader := newInstallationMetricsReader(config.InstallationMetrics{URL: slow.server.URL}, "mp")
 	slowReader.now = func() time.Time { return adoptionFixedNow }
 	start := time.Now()
 	if _, err := slowReader.counts(context.Background(), adoptionTestRegistries()); err == nil {

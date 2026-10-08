@@ -371,8 +371,8 @@ func TestSchemaVersionAndAllowlist(t *testing.T) {
 	if SchemaVersion != "1" {
 		t.Fatalf("SchemaVersion = %q, want 1", SchemaVersion)
 	}
-	if SchemaMajor != 1 || SchemaMinor != 1 {
-		t.Fatalf("SchemaMajor/Minor = %d/%d, want 1/1", SchemaMajor, SchemaMinor)
+	if SchemaMajor != 1 || SchemaMinor != 2 {
+		t.Fatalf("SchemaMajor/Minor = %d/%d, want 1/2", SchemaMajor, SchemaMinor)
 	}
 	want := []ResourceAttribute{
 		ResourceAttrCommandName,
@@ -403,7 +403,18 @@ func TestSchemaVersionAndAllowlist(t *testing.T) {
 		InventoryOmissionsName != MetricNamespace+".config.inventory_omissions" {
 		t.Fatalf("inventory instrument names = %q, %q, %q, %q", InventorySnapshotName, InventoryRegistryName, InventoryResourceName, InventoryOmissionsName)
 	}
-	if len(InventorySnapshotAttributes) != 5 || len(InventoryRegistryAttributes) != 8 || len(InventoryResourceAttributes) != 9 || len(InventoryOmissionAttributes) != 1 {
+	if len(InventorySnapshotAttributes) != 5 || len(InventoryRegistryAttributes) != 10 || len(InventoryResourceAttributes) != 11 || len(InventoryOmissionAttributes) != 1 {
 		t.Fatalf("inventory allowlist lengths = %d/%d/%d/%d", len(InventorySnapshotAttributes), len(InventoryRegistryAttributes), len(InventoryResourceAttributes), len(InventoryOmissionAttributes))
+	}
+	for _, attr := range []MetricAttribute{MetricAttribute("source.kind"), MetricAttribute("marketplace.id")} {
+		if !slices.Contains(InventoryRegistryAttributes, attr) || !slices.Contains(InventoryResourceAttributes, attr) {
+			t.Fatalf("hosted identity attribute %q missing from registry/resource allowlists", attr)
+		}
+		if slices.Contains(InventorySnapshotAttributes, attr) {
+			t.Fatalf("hosted identity attribute %q was added to snapshot allowlist", attr)
+		}
+		if slices.Contains(MetricSchemaAttributes, ResourceAttribute(attr)) {
+			t.Fatalf("hosted identity attribute %q was added to command metric allowlist", attr)
+		}
 	}
 }

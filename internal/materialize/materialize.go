@@ -3444,8 +3444,8 @@ func staleArtifactLinks(outDir string, desired map[string]string, snapshots map[
 	return stale, diags, nil
 }
 
-// cleanEmptyPortableArtifactDirs is the portable counterpart of
-// cleanEmptyArtifactDirs. Each directory is validated before reading or
+// cleanEmptyPortableArtifactDirs removes empty portable artifact directories.
+// Each directory is validated before reading or
 // removing it so cleanup never traverses an intermediate symlink.
 func cleanEmptyPortableArtifactDirs(outDir, relPath string, boundaries ...*destinationBoundary) {
 	if relPath == "." || relPath == "" {

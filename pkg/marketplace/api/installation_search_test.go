@@ -312,3 +312,93 @@ func TestSearchInstallationsFallsBackWithoutCounts(t *testing.T) {
 		t.Fatalf("failed metrics still emitted counts: %s", body)
 	}
 }
+
+// spec: marketplace-api/hosted-adoption-is-isolated-and-deduplicated
+func TestSearchInstallationsCountsHostedCoordinatesForServingMarketplace(t *testing.T) {
+	fresh := adoptionFixedNow.Add(-time.Hour)
+	older := adoptionFixedNow.Add(-2 * time.Hour)
+	samples := []inventoryMetricSample{
+		inventorySnapshotSample("install-git-and-hosted", "gen-1", fresh),
+		inventoryResourceSample("install-git-and-hosted", "gen-1", telemetryAlpha, "skill", "alpha"),
+		hostedInventoryResourceSample("install-git-and-hosted", "gen-1", "mp", "rA", "skill", "alpha"),
+		inventorySnapshotSample("install-hosted-again", "gen-2", fresh),
+		hostedInventoryResourceSample("install-hosted-again", "gen-2", "mp", "rA", "skill", "alpha"),
+		inventorySnapshotSample("install-foreign", "gen-3", fresh),
+		hostedInventoryResourceSample("install-foreign", "gen-3", "other-marketplace", "rA", "skill", "alpha"),
+		inventorySnapshotSample("install-other-registry", "gen-4", fresh),
+		hostedInventoryResourceSample("install-other-registry", "gen-4", "mp", "rB", "skill", "alpha"),
+		inventorySnapshotSample("install-local-registry", "gen-5", fresh),
+		hostedInventoryResourceSample("install-local-registry", "gen-5", "mp", "rL", "skill", "local-only"),
+		inventorySnapshotSample("install-removed", "gen-old", older),
+		hostedInventoryResourceSample("install-removed", "gen-old", "mp", "rA", "skill", "alpha"),
+		inventorySnapshotSample("install-removed", "gen-new", fresh),
+	}
+	public, _, _, meta := adoptionSearchSetup(t, samples)
+	publishAssessedTestRevision(context.Background(), t, meta, store.ResourceRevision{
+		Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Registry: "rB", Kind: KindSkill, Name: "alpha"},
+		ContentDigest: store.RevisionDigest(digestOf("c")),
+		ArchiveDigest: store.ArchiveDigest(digestOf("d")),
+	}, store.AssessmentDecisionAllow, store.RevisionDigest(digestOf("f")), strings.Repeat("e", 40))
+
+	result, body := getSearch(t, public.URL, "?sort=installations")
+	wantCounts := map[string]int64{"rA/alpha": 2, "rB/alpha": 1, "rL/local-only": 1}
+	for _, item := range result.Items {
+		key := item.RegistryID + "/" + item.Name
+		if want, ok := wantCounts[key]; ok {
+			if item.InstallationCount == nil {
+				t.Errorf("hosted installation_count[%s] is missing, want %d", key, want)
+			} else if got := *item.InstallationCount; got != want {
+				t.Errorf("hosted installation_count[%s] = %d, want %d", key, got, want)
+			}
+			delete(wantCounts, key)
+		}
+	}
+	if len(wantCounts) != 0 {
+		t.Fatalf("search omitted hosted coordinates: %v", wantCounts)
+	}
+	if strings.Contains(body, "source_kind") || strings.Contains(body, "marketplace_id") {
+		t.Fatalf("public search changed response shape with telemetry labels: %s", body)
+	}
+}
+
+// spec: marketplace-api/invalid-hosted-identity-preserves-safe-omission
+func TestSearchInstallationsFallsBackForInvalidSourceIdentity(t *testing.T) {
+	fresh := adoptionFixedNow.Add(-time.Hour)
+	tests := []struct {
+		name          string
+		sourceKind    string
+		marketplaceID string
+	}{
+		{name: "unknown source kind", sourceKind: "future"},
+		{name: "incoherent legacy pair", marketplaceID: "mp"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			invalid := inventoryResourceSample("install-invalid", "gen-invalid", telemetryAlpha, "skill", "alpha")
+			if test.sourceKind != "" {
+				invalid.Metric["source_kind"] = test.sourceKind
+			}
+			if test.marketplaceID != "" {
+				invalid.Metric["marketplace_id"] = test.marketplaceID
+			}
+			samples := []inventoryMetricSample{
+				inventorySnapshotSample("install-control", "gen-control", fresh),
+				inventoryResourceSample("install-control", "gen-control", telemetryAlpha, "skill", "alpha"),
+				inventorySnapshotSample("install-invalid", "gen-invalid", fresh),
+				invalid,
+			}
+			public, fixture := adoptionSearchFixture(t, samples)
+			result, body := getSearch(t, public.URL, "?sort=installations")
+			want := []string{"alpha", "preview", "beta", "preview-extra", "zulu", "local-only"}
+			if !slices.Equal(searchNames(result), want) {
+				t.Fatalf("fallback order = %v, want legacy %v", searchNames(result), want)
+			}
+			if strings.Contains(body, "installation_count") {
+				t.Fatalf("invalid metrics still emitted counts: %s", body)
+			}
+			if hits := fixture.hits.Load(); hits != 1 {
+				t.Fatalf("metrics backend hits = %d, want 1", hits)
+			}
+		})
+	}
+}
