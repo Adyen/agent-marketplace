@@ -8,10 +8,13 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net"
 	"net/http"
+	"os"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -47,6 +50,8 @@ type rowDTO struct {
 	Scope               string   `json:"scope"`
 	Required            bool     `json:"required"`
 	PendingVerification bool     `json:"pendingVerification"`
+	Checked             bool     `json:"checked"`
+	HarnessOverride     bool     `json:"harnessOverride"`
 	Harnesses           []string `json:"harnesses"`
 	Status              string   `json:"status"`
 }
@@ -100,6 +105,7 @@ type API struct {
 
 	mu       sync.Mutex
 	closed   bool
+	userOnly bool
 	requests session.RequestState
 	sequence uint64
 	current  *snapshotDTO
@@ -116,6 +122,21 @@ func New(ctx context.Context, workspace pipeline.Workspace, homeDir string, life
 	if err != nil {
 		return nil, err
 	}
+	return commonNew(ctx, ws, homeDir, lifecycle, gate, false)
+}
+
+func NewUser(ctx context.Context, homeDir string, lifecycle session.DependencyLifecycle, gate *session.OperationGate) (*API, error) {
+	if !config.IsHomeDir(homeDir) {
+		return nil, fmt.Errorf("localapi: %s is not the user home directory", homeDir)
+	}
+	ws, err := pipeline.NewWorkspace(homeDir, homeDir)
+	if err != nil {
+		return nil, err
+	}
+	return commonNew(ctx, ws, homeDir, lifecycle, gate, true)
+}
+
+func commonNew(ctx context.Context, ws pipeline.Workspace, homeDir string, lifecycle session.DependencyLifecycle, gate *session.OperationGate, userOnly bool) (*API, error) {
 	var token [32]byte
 	if _, err := rand.Read(token[:]); err != nil {
 		return nil, err
@@ -139,6 +160,7 @@ func New(ctx context.Context, workspace pipeline.Workspace, homeDir string, life
 		lifecycle: lifecycle,
 		gate:      gate,
 		token:     hex.EncodeToString(token[:]),
+		userOnly:  userOnly,
 		subs:      map[*subscriber]struct{}{},
 	}, nil
 }
@@ -301,6 +323,25 @@ func writeError(w http.ResponseWriter, status int, code string) {
 	_ = json.NewEncoder(w).Encode(map[string]string{"code": code, "message": message})
 }
 
+func (a *API) readSnapshotStages(ctx context.Context, mode session.CatalogLoadMode, generation session.RequestGeneration) <-chan session.Snapshot {
+	if a.userOnly {
+		return session.ReadUserSnapshotStages(ctx, a.homeDir, mode, generation)
+	}
+	return session.ReadSnapshotStagesForWorkspace(ctx, a.workspace, a.homeDir, mode, generation)
+}
+
+func (a *API) readSnapshot(ctx context.Context, mode session.CatalogLoadMode) session.Snapshot {
+	if a.userOnly {
+		return session.ReadUserSnapshot(ctx, a.homeDir, mode)
+	}
+	return session.ReadSnapshotForWorkspace(ctx, a.workspace, a.homeDir, mode)
+}
+
+func (a *API) userRootPresent() bool {
+	info, err := os.Stat(filepath.Join(a.homeDir, ".agents", "config.yaml"))
+	return err == nil && !info.IsDir()
+}
+
 func (a *API) beginSnapshotLocked() session.RequestGeneration {
 	return a.requests.Begin(session.RequestSnapshot)
 }
@@ -364,13 +405,13 @@ func (a *API) handleSnapshot(w http.ResponseWriter, r *http.Request) {
 
 	var delivered *snapshotDTO
 	if staged {
-		for snapshot := range session.ReadSnapshotStagesForWorkspace(ctx, a.workspace, a.homeDir, session.CatalogLoadRefresh, generation) {
+		for snapshot := range a.readSnapshotStages(ctx, session.CatalogLoadRefresh, generation) {
 			if dto := a.deliverSnapshot(generation, snapshot); dto != nil {
 				delivered = dto
 			}
 		}
 	} else {
-		snapshot := session.ReadSnapshotForWorkspace(ctx, a.workspace, a.homeDir, session.CatalogLoadRefresh)
+		snapshot := a.readSnapshot(ctx, session.CatalogLoadRefresh)
 		snapshot.Generation = generation
 		delivered = a.deliverSnapshot(generation, snapshot)
 	}
@@ -482,6 +523,8 @@ func rowPresentation(row session.Row) rowDTO {
 		Scope:               scope,
 		Required:            row.Artifact.Required,
 		PendingVerification: row.PendingVerification,
+		Checked:             row.EnabledGlobal || row.EnabledProject || row.EnabledLocal || row.Artifact.Required,
+		HarnessOverride:     row.HarnessSource == "registry override",
 		Harnesses:           harnesses,
 		Status:              row.StatusText(),
 	}
@@ -499,7 +542,21 @@ func (a *API) handleEvents(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	a.subs[sub] = struct{}{}
+	var startInitial session.RequestGeneration
+	if a.userOnly && !a.started {
+		a.started = true
+		startInitial = a.beginSnapshotLocked()
+	}
 	a.mu.Unlock()
+	if startInitial != 0 {
+		a.wg.Add(1)
+		go func() {
+			defer a.wg.Done()
+			for snapshot := range a.readSnapshotStages(a.ctx, session.CatalogLoadRefresh, startInitial) {
+				a.deliverSnapshot(startInitial, snapshot)
+			}
+		}()
+	}
 	defer func() {
 		a.mu.Lock()
 		delete(a.subs, sub)
@@ -606,6 +663,9 @@ func (a *API) handleAction(w http.ResponseWriter, r *http.Request) {
 	}
 	current := a.current
 	ready := current != nil && current.Stage != "provisional" && current.Stage != "config" && current.Drift != "failed"
+	if ready && a.userOnly {
+		ready = a.userRootPresent() && len(current.Harnesses) > 0
+	}
 	if ready {
 		for _, d := range a.diag.Snapshot {
 			if d.Severity == session.DiagnosticError {
@@ -665,10 +725,10 @@ func (a *API) runOperation(operation session.OperationID, kind session.Operation
 	case session.OperationSync:
 		warnings, failed = session.RunDependencySync(ctx, a.workspace, a.lifecycle.Sync)
 		pipeline.ObservePhase(ctx, pipeline.PhaseReload)
-		final = session.ReadSnapshotForWorkspace(ctx, a.workspace, a.homeDir, session.CatalogLoadCached)
+		final = a.readSnapshot(ctx, session.CatalogLoadCached)
 	case session.OperationUpdate:
 		result := session.RunDependencyUpdateWithLoader(ctx, a.workspace, a.homeDir, generation, a.lifecycle.Update, func(ctx context.Context, ws pipeline.Workspace, homeDir string, mode session.CatalogLoadMode) session.Snapshot {
-			return session.ReadSnapshotForWorkspace(ctx, ws, homeDir, mode)
+			return a.readSnapshot(ctx, mode)
 		})
 		warnings, failed = result.Warnings, result.Err
 		final = result.Snapshot

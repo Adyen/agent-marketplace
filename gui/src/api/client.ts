@@ -129,7 +129,7 @@ function parseEvents(buffer: string): { events: SessionEvent[]; rest: string } {
 
 export interface Client {
   snapshot(): Promise<Snapshot>
-  events(cursor?: EventCursor): AsyncIterable<SessionEvent>
+  events(cursor?: EventCursor, signal?: AbortSignal): AsyncIterable<SessionEvent>
   action(action: Action): Promise<OperationRef>
 }
 
@@ -137,9 +137,10 @@ export function createClient(baseURL: string, credential: string, fetchImpl: typ
   const root = baseURL.replace(/\/+$/, '')
   const headers = { 'X-Agent-Marketplace-Token': credential }
 
-  async function post(path: string, body?: unknown): Promise<Response> {
+  async function post(path: string, body?: unknown, signal?: AbortSignal): Promise<Response> {
     const response = await fetchImpl(`${root}${path}`, {
       method: 'POST',
+      signal,
       headers:
         body === undefined
           ? headers
@@ -164,8 +165,8 @@ export function createClient(baseURL: string, credential: string, fetchImpl: typ
       return (await response.json()) as Snapshot
     },
 
-    async *events(cursor: EventCursor = new EventCursor()) {
-      const response = await post('/api/events')
+    async *events(cursor: EventCursor = new EventCursor(), signal?: AbortSignal) {
+      const response = await post('/api/events', undefined, signal)
       if (response.body == null) {
         throw new RequestError(response.status, 'localapi.no_stream')
       }

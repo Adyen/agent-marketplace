@@ -190,7 +190,7 @@ components:
           $ref: '#/components/schemas/OperationKind'
     SnapshotRow:
       type: object
-      required: [id, name, kind, description, registry, scope, required, pendingVerification, harnesses, status]
+      required: [id, name, kind, description, registry, scope, required, pendingVerification, checked, harnessOverride, harnesses, status]
       properties:
         id:
           type: string
@@ -204,6 +204,12 @@ components:
           enum: [organization, user, project, local, available]
         required: { type: boolean }
         pendingVerification: { type: boolean }
+        checked:
+          type: boolean
+          description: Whether the resource is enabled by any configuration scope, derived from row enablement metadata.
+        harnessOverride:
+          type: boolean
+          description: Whether the row carries a registry-level harness narrowing that differs from its layer default.
         harnesses:
           type: array
           items: { type: string }

@@ -382,6 +382,10 @@ site-build:
 site-docs-build:
 	@command -v pnpm >/dev/null || { echo "ERROR: pnpm is required for documentation builds" >&2; exit 1; }
 	cd $(SITE_DIR) && pnpm install --frozen-lockfile && pnpm run build:docs
+GUI_DIR := gui
+gui-build:
+	@command -v pnpm >/dev/null || { echo "ERROR: pnpm is required for GUI builds" >&2; exit 1; }
+	cd $(GUI_DIR) && pnpm install --frozen-lockfile --ignore-scripts && pnpm run build
 
 # E2E test suite.
 # Runs inside a Docker container for local isolation (doesn't touch host env).

@@ -7,7 +7,20 @@
     "strict": true,
     "noEmit": true,
     "skipLibCheck": true,
-    "types": ["node"]
+    "types": ["node"],
+    "paths": {
+      "#build/ui": ["./node_modules/.nuxt-ui/ui"],
+      "#build/ui/*": ["./node_modules/.nuxt-ui/ui/*"]
+    }
   },
-  "include": ["src/**/*.ts", "tests/**/*.ts", "playwright.config.ts", "vitest.config.ts"]
+  "include": [
+    "src/**/*.ts",
+    "src/**/*.vue",
+    "tests/**/*.ts",
+    "auto-imports.d.ts",
+    "components.d.ts",
+    "playwright.config.ts",
+    "vitest.config.ts",
+    "vite.config.ts"
+  ]
 }

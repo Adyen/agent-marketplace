@@ -6,16 +6,28 @@
   "scripts": {
     "api:generate": "node scripts/generate-api.mjs",
     "api:drift": "node scripts/generate-api.mjs --check",
-    "typecheck": "tsc --noEmit",
+    "build": "vite build",
+    "typecheck": "vue-tsc --noEmit",
     "test": "vitest run",
-    "check": "pnpm run api:drift && pnpm run typecheck && vitest run",
-    "test:e2e": "playwright test"
+    "check": "pnpm run api:drift && pnpm run build && pnpm run typecheck && vitest run",
+    "test:e2e": "pnpm run build && playwright test"
+  },
+  "dependencies": {
+    "@nuxt/ui": "4.10.0",
+    "vue": "3.5.22",
+    "vue-router": "4.6.3"
   },
   "devDependencies": {
     "@playwright/test": "1.55.1",
     "@types/node": "24.10.1",
+    "@vitejs/plugin-vue": "6.0.8",
+    "@vue/test-utils": "2.4.11",
+    "happy-dom": "20.11.1",
     "openapi-typescript": "7.9.1",
+    "tailwindcss": "4.3.3",
     "typescript": "5.9.3",
-    "vitest": "4.1.10"
+    "vite": "8.2.2",
+    "vitest": "4.1.10",
+    "vue-tsc": "3.0.0"
   }
 }
