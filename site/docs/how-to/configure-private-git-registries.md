@@ -66,7 +66,13 @@ resources:
     all: true
 ```
 
-`agent-marketplace` only copies a credential setting from a Git configuration file that you or `root` own and that other users cannot write to. It refuses to use HTTPS credentials at all when those files contain `[include]` or `[includeIf]` sections.
+`agent-marketplace` copies credential settings only from regular, singly linked Git configuration files that you or `root` own and that group and other users cannot write to. Symlinks to such files are supported.
+
+Ordinary `[include]` sections work, including nested includes. Every included file must meet the same trust rules. Absolute include paths work; `~/` resolves against your home directory, and relative paths resolve beside the file declaring the include. For a symlinked config, that means beside the symlink, as in Git. Missing optional files and `/dev/null` includes contribute no settings.
+
+Includes expand in declaration order, preserving credential-helper resets and URL-specific settings. The reader allows ten include levels, at most 128 expanded file visits, 4 MiB per file, and 16 MiB of expanded content. Cycles and malformed files are rejected before the fetch runs. Only credential and TLS settings are copied; other settings in included files are not applied.
+
+Conditional `[includeIf]` sections remain unsupported, even when their condition does not match. Repository-local authentication settings, including worktree-specific settings in the registry cache, are still rejected. Your caller worktree's local credentials do not supply registry authentication.
 
 Do not run `git config credential.helper store` or change other global Git settings just for `agent-marketplace`.
 
@@ -92,5 +98,5 @@ Each line should show only a host and a repository path, such as `https://github
 
 - `git.auth-transport-failed: Git SSH connection failed. Verify your SSH agent and repository access`: check that `ssh-add -l` lists your key, that the key has read access to the repository, and that the host is in `~/.ssh/known_hosts`.
 - `git.auth-transport-failed: transport diagnostics withheld to protect authentication data`: an HTTPS fetch failed. `agent-marketplace` hides Git's message because it can contain credentials. Run the `git ls-remote` command above to see the real error, then check that your credential helper is current and has read access.
-- `git.auth-config-untrusted`: one of your Git configuration files uses `[include]` or `[includeIf]`, can be written by other users, or is owned by someone else. Move the credential settings into a plain `~/.gitconfig` that only you can write.
+- `git.auth-config-untrusted`: check the system/global files and their ordinary include chains for conditional includes, unsafe ownership or write permissions, non-regular or hard-linked files, malformed configuration, cycles, or the limits above. Repository-local authentication settings are also refused. Do not remove company-managed includes or disable TLS verification to work around a trust failure.
 - The registry works in your shell but not in `agent-marketplace`: your setup may depend on a setting that is not applied, such as a global `url.<base>.insteadOf` rewrite or `core.sshCommand`. Put the real URL in the configuration, or set `GIT_SSH_COMMAND` in the environment instead of `core.sshCommand`.
