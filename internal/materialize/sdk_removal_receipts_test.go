@@ -67,8 +67,12 @@ func TestSDKRemovalReceiptsDistinguishActualDeletion(t *testing.T) {
 			if !reflect.DeepEqual(report.Removed, expected) {
 				t.Fatalf("SDK removal receipt claimed refused/absent deletion: reached=%t mode=%s removed=%v expected=%v err=%v", changed, mode, report.Removed, expected, err)
 			}
-			if len(report.StaleCandidates) != 2 || changed != (mode != "dry-run") {
-				t.Fatalf("SDK planning/consumer not exercised: changed=%t %+v", changed, report)
+			plan := make([]string, 0, len(report.StaleCandidates))
+			for _, candidate := range report.StaleCandidates {
+				plan = append(plan, candidate.Path)
+			}
+			if !reflect.DeepEqual(plan, []string{"a-safe.txt", "b-unsafe.txt"}) || changed != (mode != "dry-run") {
+				t.Fatalf("SDK planning/consumer not exercised: changed=%t plan=%v %+v", changed, plan, report)
 			}
 			if mode == "conflict" {
 				if !errors.Is(err, hcc.ErrStalePruneConflict) || !reflect.DeepEqual(report.PruneConflicts, []string{"b-unsafe.txt"}) {
