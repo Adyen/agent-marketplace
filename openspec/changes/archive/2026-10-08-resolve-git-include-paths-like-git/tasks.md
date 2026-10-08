@@ -12,4 +12,4 @@
 
 - [x] 3.1 Run focused authentication tests, race checks, scoped validation, and strict spec validation.
 - [x] 3.2 Review the intended changes adversarially and address actionable findings.
-- [ ] 3.3 Run `openspec archive resolve-git-include-paths-like-git --yes`.
+- [x] 3.3 Run `openspec archive resolve-git-include-paths-like-git --yes`.

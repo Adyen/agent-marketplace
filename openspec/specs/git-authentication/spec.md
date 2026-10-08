@@ -57,3 +57,12 @@ Only the existing credential and TLS allowlist SHALL reach HTTP(S) acquisition s
 - **WHEN** acquisition runs from a caller worktree with repository-local authentication settings
 - **THEN** those caller settings MUST NOT supply acquisition authentication
 - **AND** authentication settings in the registry cache's repository-local or worktree configuration MUST remain refused
+
+### Requirement: Include paths resolve to the files Git reads
+
+The reader MUST resolve each ordinary `include.path` value to the same file Git reads. Relative and `~/` paths MUST NOT be cleaned lexically, so `..` after a symlinked directory MUST resolve through its physical parent. `%(prefix)/` paths MUST resolve against the installed Git's runtime prefix. Every resolved path remains subject to the same trust checks and limits.
+
+#### Scenario: Include paths resolve as Git resolves them
+
+- **WHEN** a trusted chain declares relative and `~/` includes whose `..` follows a symlinked directory, and a `%(prefix)/` include
+- **THEN** the reader MUST copy authentication settings from the same files native Git reads, in declaration order
