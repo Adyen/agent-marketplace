@@ -348,12 +348,12 @@ func CommitPreparedMarketplaceInstall(ctx context.Context, prepared *PreparedMar
 	if err := evaluateMarketplaceConsent(prepared.plan, true); err != nil {
 		return nil, err
 	}
-	pins := marketplaceInstallPins(prepared.plan)
-	lockOverlay, err := preparedMarketplaceLockOverlay(prepared.configPath, installScopeSource(prepared.options.Scope), prepared.plan.Entry, pins)
+	ws, err := workspaceForRoots(prepared.options.RepoRoot, prepared.options.LocalConfigDir)
 	if err != nil {
 		return nil, err
 	}
-	ws, err := workspaceForRoots(prepared.options.RepoRoot, prepared.options.LocalConfigDir)
+	pins := marketplaceInstallPins(prepared.plan)
+	lockOverlay, err := preparedMarketplaceLockOverlay(prepared.configPath, installScopeSource(prepared.options.Scope), prepared.plan.Entry, pins)
 	if err != nil {
 		return nil, err
 	}
