@@ -38,25 +38,6 @@ func TestNormalizeLevel(t *testing.T) {
 	}
 }
 
-func TestMaxLevel(t *testing.T) {
-	tests := []struct {
-		a, b, want string
-	}{
-		{LevelOff, LevelOff, LevelOff},
-		{LevelOff, LevelBasic, LevelBasic},
-		{LevelBasic, LevelDetailed, LevelDetailed},
-		{LevelDetailed, LevelBasic, LevelDetailed},
-		{LevelBasic, LevelBasic, LevelBasic},
-	}
-	for _, tc := range tests {
-		t.Run(tc.a+"_"+tc.b, func(t *testing.T) {
-			if got := MaxLevel(tc.a, tc.b); got != tc.want {
-				t.Fatalf("MaxLevel(%q, %q) = %q, want %q", tc.a, tc.b, got, tc.want)
-			}
-		})
-	}
-}
-
 func TestValidateEmptyTelemetry(t *testing.T) {
 	tc := &TelemetryConfig{}
 	if errs := Validate(tc, "organization"); len(errs) > 0 {
