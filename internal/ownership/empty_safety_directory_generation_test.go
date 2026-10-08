@@ -104,7 +104,11 @@ func TestApplyEmptySafetyDirectoryCleanupPreservesReplacementGeneration(t *testi
 					t.Fatalf("foreign member metadata changed: %v", err)
 				}
 			}
-			if native, _ := f.readAggregate(); native != priorContent {
+			native, exists := f.readAggregate()
+			if !exists {
+				t.Fatal("native aggregate missing")
+			}
+			if native != priorContent {
 				t.Fatalf("policy refusal changed real native bytes: %q", native)
 			}
 			if info, err := os.Stat(f.absFile); err != nil || !os.SameFile(nativeInfo, info) || nativeInfo.Mode() != info.Mode() || !nativeInfo.ModTime().Equal(info.ModTime()) {
@@ -147,7 +151,11 @@ func TestApplyEmptySafetyDirectoryCleanupPreservesReplacementGeneration(t *testi
 			if result, err := store.Apply(Mutation{Rel: f.rel, AbsFile: f.absFile, NextBytes: []byte(nextContent), Reason: ReasonSync, ExpectPriorDigest: Digest([]byte(priorContent))}); err != nil || result.Generation != 1 {
 				t.Fatalf("genuine healthy Apply after cleanup did not commit: %+v %v", result, err)
 			}
-			if native, _ := f.readAggregate(); native != nextContent {
+			native, exists = f.readAggregate()
+			if !exists {
+				t.Fatal("native aggregate missing")
+			}
+			if native != nextContent {
 				t.Fatalf("healthy Apply missed desired native bytes: %q", native)
 			}
 		})
