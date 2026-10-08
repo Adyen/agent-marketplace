@@ -14,4 +14,4 @@
 - [x] 3.1 Run focused authentication tests and race checks; record performance results.
 - [x] 3.2 Run local validation, combined E2E/configuration gates, and strict spec validation.
 - [x] 3.3 Review intended changes adversarially and address actionable findings.
-- [ ] 3.4 Archive the completed change after verification.
+- [x] 3.4 Archive the completed change after verification.
