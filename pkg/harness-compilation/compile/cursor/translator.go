@@ -188,26 +188,20 @@ func (c *cursorCompiler) translateSubagent(sub *ir.Subagent, opts compile.Option
 	}
 
 	// Map tools via mapping table.
-	var mappedTools []string
-	if sub.Tools != nil {
-		mappedTools = make([]string, 0, len(sub.Tools))
+	var nativeTools []string
+	if sub.Ext.Cursor != nil {
+		nativeTools = sub.Ext.Cursor.Tools
 	}
-	for _, toolID := range sub.Tools {
-		mapped, toolOk := mapping.ToolWithOverride(toolID, mapping.TargetCursor, opts.ToolOverride())
-		if !toolOk {
-			dgs = append(dgs, diag.Diagnostic{
-				Code:     diag.CodeSubagentCursorToolUnknown,
-				Severity: diag.SeverityError,
-				Target:   string(mapping.TargetCursor),
-				Resource: sub.Name(),
-				Message:  "Cursor cannot map an explicit subagent tool; artifact suppressed",
-				Hint:     "Add the tool to the mapping table or remove the explicit tool",
-				Source:   diag.SourceRef(sub.Source),
-			})
-		} else {
-			mappedTools = append(mappedTools, mapped...)
-		}
-	}
+	mappedTools, toolDiags := compile.SubagentTools(sub.Tools, nativeTools, mapping.TargetCursor, opts, diag.Diagnostic{
+		Code:     diag.CodeSubagentCursorToolUnknown,
+		Severity: diag.SeverityError,
+		Target:   string(mapping.TargetCursor),
+		Resource: sub.Name(),
+		Message:  "Cursor cannot map an explicit subagent tool; artifact suppressed",
+		Hint:     "Add the tool to the mapping table or remove the explicit tool",
+		Source:   diag.SourceRef(sub.Source),
+	})
+	dgs = append(dgs, toolDiags...)
 	if diag.HasErrors(dgs) {
 		return nil, dgs, nil
 	}
@@ -216,9 +210,6 @@ func (c *cursorCompiler) translateSubagent(sub *ir.Subagent, opts compile.Option
 	if sidecar := sub.Ext.Cursor; sidecar != nil {
 		if sidecar.Model != "" {
 			mappedModel = sidecar.Model
-		}
-		if sidecar.Tools != nil {
-			mappedTools = sidecar.Tools
 		}
 		if sidecar.Effort != "" {
 			effort = sidecar.Effort

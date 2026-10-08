@@ -173,6 +173,7 @@ func (f *factoryCompiler) translateSubagent(s *ir.Subagent, opts compile.Options
 	var diags []diag.Diagnostic
 	reasoningEffort := s.Effort
 	isolation := ""
+	var nativeTools []string
 	if sidecar := s.Ext.Factory; sidecar != nil {
 		if sidecar.ReasoningEffort != "" {
 			reasoningEffort = sidecar.ReasoningEffort
@@ -180,6 +181,7 @@ func (f *factoryCompiler) translateSubagent(s *ir.Subagent, opts compile.Options
 		if sidecar.Isolation != "" {
 			isolation = sidecar.Isolation
 		}
+		nativeTools = sidecar.Tools
 	}
 
 	// Map model
@@ -196,31 +198,19 @@ func (f *factoryCompiler) translateSubagent(s *ir.Subagent, opts compile.Options
 	// Map tools. Factory's droid frontmatter rejects unknown tool identifiers,
 	// and omitting the tools key allows Factory's default tool set. An unmapped
 	// tool therefore suppresses the droid instead of broadening its permissions.
-	var mappedTools []string
-	if s.Tools != nil {
-		mappedTools = make([]string, 0, len(s.Tools))
-	}
-	toolsUnknown := false
-	for _, t := range s.Tools {
-		mapped, ok := mapping.ToolWithOverride(t, mapping.TargetFactory, opts.ToolOverride())
-		if ok {
-			mappedTools = append(mappedTools, mapped...)
-		} else {
-			toolsUnknown = true
-			diags = append(diags, diag.Diagnostic{
-				Code:     diag.CodeSubagentFactoryToolUnknown,
-				Severity: diag.SeverityError,
-				Target:   string(mapping.TargetFactory),
-				Resource: s.Name(),
-				Message:  "Factory cannot map an explicit subagent tool; subagent artifact suppressed",
-				Hint:     "Use a supported tool mapping or remove the restriction explicitly",
-				Source:   compile.DiagSource(s.Source),
-			})
-		}
-	}
-	if toolsUnknown {
+	mappedTools, toolDiags := compile.SubagentTools(s.Tools, nativeTools, mapping.TargetFactory, opts, diag.Diagnostic{
+		Code:     diag.CodeSubagentFactoryToolUnknown,
+		Severity: diag.SeverityError,
+		Target:   string(mapping.TargetFactory),
+		Resource: s.Name(),
+		Message:  "Factory cannot map an explicit subagent tool; subagent artifact suppressed",
+		Hint:     "Use a supported tool mapping or remove the restriction explicitly",
+		Source:   compile.DiagSource(s.Source),
+	})
+	if len(toolDiags) > 0 {
 		slog.Warn("factory subagent tool unrepresentable", "target", mapping.TargetFactory, "resource", s.Name(), "outcome", "artifact suppressed")
 	}
+	diags = append(diags, toolDiags...)
 
 	// Factory cannot represent these security restrictions. Fail closed rather
 	// than emitting a broader-permission droid artifact.

@@ -44,8 +44,10 @@ func translateSubagent(sub *ir.Subagent, opts compile.Options) ([]artifact.Artif
 	var maxTurns *int
 	var timeoutMinutes *int
 	var inlineMCPServers map[string]extMCPServer
+	var nativeTools []string
 
 	if sidecar := sub.Ext.Gemini; sidecar != nil {
+		nativeTools = sidecar.Tools
 		if sidecar.KindSet || sidecar.Kind != "" {
 			kind = sidecar.Kind
 		}
@@ -87,26 +89,16 @@ func translateSubagent(sub *ir.Subagent, opts compile.Options) ([]artifact.Artif
 	}
 
 	// Map tools via mapping table.
-	var mappedTools []string
-	if sub.Tools != nil {
-		mappedTools = make([]string, 0, len(sub.Tools))
-	}
-	for _, toolID := range sub.Tools {
-		mapped, ok := mapping.ToolWithOverride(toolID, mapping.TargetGemini, opts.ToolOverride())
-		if !ok {
-			diags = append(diags, diag.Diagnostic{
-				Code:     diag.CodeSubagentGeminiToolUnknown,
-				Severity: diag.SeverityError,
-				Target:   string(mapping.TargetGemini),
-				Resource: sub.Name(),
-				Message:  "Gemini cannot map an explicit subagent tool; artifact suppressed",
-				Hint:     "Add the tool to the mapping table or remove the explicit tool",
-				Source:   compile.DiagSource(sub.Source),
-			})
-		} else {
-			mappedTools = append(mappedTools, mapped...)
-		}
-	}
+	mappedTools, toolDiags := compile.SubagentTools(sub.Tools, nativeTools, mapping.TargetGemini, opts, diag.Diagnostic{
+		Code:     diag.CodeSubagentGeminiToolUnknown,
+		Severity: diag.SeverityError,
+		Target:   string(mapping.TargetGemini),
+		Resource: sub.Name(),
+		Message:  "Gemini cannot map an explicit subagent tool; artifact suppressed",
+		Hint:     "Add the tool to the mapping table or remove the explicit tool",
+		Source:   compile.DiagSource(sub.Source),
+	})
+	diags = append(diags, toolDiags...)
 	if diag.HasErrors(diags) {
 		return nil, diags, nil
 	}

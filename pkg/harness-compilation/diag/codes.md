@@ -299,6 +299,13 @@ default tool set. Valid native `Create` restrictions and explicit empty lists
 remain representable. `disallowedTools` and `isolation` also remain fail-closed.
 The Devin-specific omission policy above is unchanged.
 
+**Same-harness native subagent tool lists are not re-mapped.** A subagent
+ingested from the Factory, Cursor, or Gemini layout keeps its exact native
+`tools` list, in order, when compiled back to that harness, including built-ins
+and MCP identifiers absent from the mapping table. `subagent.factory.tool-unknown`,
+`subagent.cursor.tool-unknown`, and `subagent.gemini.tool-unknown` therefore
+fire only for tool lists that did not come from that harness's own layout.
+
 **The ingest direction is deliberately not reversed.**
 `ingest.devin.tool-unreversible` stays an error that skips the resource, because
 ingestion writes the harness-neutral IR that all seven compilers read, so a

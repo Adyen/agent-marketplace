@@ -476,6 +476,7 @@ func LoadSubagent(src fs.FS, path string) (*ir.Subagent, []diag.Diagnostic, erro
 		ir.SourceRef{File: path, Line: 1}, options...,
 	)
 	subagent.Ext.Gemini = &extpkg.Gemini{
+		Tools:            tools,
 		Kind:             kind,
 		KindSet:          kindSet,
 		Temperature:      temperature,

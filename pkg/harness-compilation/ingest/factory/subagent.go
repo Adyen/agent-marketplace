@@ -6,6 +6,7 @@ import (
 
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
+	extpkg "github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir/ext"
 )
 
 // LoadSubagent reads a Factory droid markdown file.
@@ -35,12 +36,14 @@ func LoadSubagent(src fs.FS, path string) (*ir.Subagent, []diag.Diagnostic, erro
 		}
 	}
 	var tools []string
+	var nativeTools []string
 	if value, ok := fm["tools"]; ok {
 		parsed, err := toStringSlice(value)
 		if err != nil {
 			return nil, nil, fmt.Errorf("ingest/factory: invalid tools in %s: %w", path, err)
 		}
 		tools = normalizeFactoryTools(parsed)
+		nativeTools = parsed
 	}
 	var disallowedTools []string
 	if value, ok := fm["disallowedTools"]; ok {
@@ -81,7 +84,11 @@ func LoadSubagent(src fs.FS, path string) (*ir.Subagent, []diag.Diagnostic, erro
 	} else if maxNesting != nil {
 		options = append(options, ir.WithSubagentMaxNestingPtr(maxNesting))
 	}
-	return ir.NewSubagentWithOptions(name, description, body, canonicalModel, tools, reasoningEffort, disallowedTools, isolation, extraFields(fm, subagentKnownKeys), sourceRef(path), options...), diags, nil
+	subagent := ir.NewSubagentWithOptions(name, description, body, canonicalModel, tools, reasoningEffort, disallowedTools, isolation, extraFields(fm, subagentKnownKeys), sourceRef(path), options...)
+	if nativeTools != nil {
+		subagent.Ext.Factory = &extpkg.Factory{Tools: nativeTools}
+	}
+	return subagent, diags, nil
 }
 
 func reverseFactoryModel(model string) string {

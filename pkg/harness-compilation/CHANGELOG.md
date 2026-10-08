@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Same-harness subagent tool allowlists are preserved exactly
+
+Factory, Cursor, and Gemini subagents now keep their native `tools` list when compiled back to the harness they were authored for. Ingestion retains the source list in the typed `ext.Factory.Tools`, `ext.Cursor.Tools`, and `ext.Gemini.Tools` sidecars, and the compiler emits it exactly and in order instead of re-translating it through the curated mapping table, which cannot list every runtime built-in (such as Factory's `LS`, `FetchUrl`, and `ToolSearch`) or dynamically registered MCP tool. Previously such a droid failed with `subagent.factory.tool-unknown` and was not installed, and removing its `tools` key to get past the error granted Factory's default tool set. Cross-harness conversion is unchanged: a native list is read only by its own harness's compiler, and every other tool still needs a mapping or an explicit `WithToolOverride` entry. `compile.SubagentTools` is the shared resolver.
+
 ### The Claude plugin form no longer drops a root-level SKILL.md
 
 `LoadBundleWithOptions` selects the plugin form for both `.claude-plugin/plugin.json` manifests and bare plugin layouts, and that form only scanned `skills/` subdirectories. A repository that IS a single skill (root `SKILL.md`, no `skills/` tree) therefore ingested zero resources with no diagnostic — the layout Claude Code documents for manifest `"skills": ["./"]` and that `github.com/blader/humanizer` ships. The plugin form now loads a root `SKILL.md` through `bundle.LoadRootSkill` when one exists. A root skill whose frontmatter name duplicates a `skills/` entry is dropped with the new warning `ingest.claude.duplicate-root-skill`; the `skills/` entry wins deterministically because it loads first in sorted order. Skill support files no longer include `.git` directories at any depth: a root skill's directory is the whole checkout, a marketplace clone keeps `.git` on disk, and VCS internals were being published into installable archives and fed to bounded support reads.

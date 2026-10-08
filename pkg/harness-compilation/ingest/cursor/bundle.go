@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io/fs"
 	"log/slog"
+	"slices"
 	"sort"
 	"strings"
 
@@ -13,6 +14,7 @@ import (
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ingest"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
+	extpkg "github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir/ext"
 )
 
 const (
@@ -118,6 +120,9 @@ func LoadSubagent(src fs.FS, path string) (*ir.Subagent, error) {
 		return nil, err
 	}
 	sub.Source.File = normalizeSourcePath(sub.Source.File)
+	if sub.Tools != nil {
+		sub.Ext.Cursor = &extpkg.Cursor{Tools: slices.Clone(sub.Tools)}
+	}
 	if reversed, ok := mapping.ReverseModel(sub.Model, mapping.TargetCursor); ok {
 		sub.Model = reversed
 	}

@@ -45,8 +45,9 @@ type CodexMCP struct {
 // Factory preserves Factory Droid-specific fields that do not belong in the
 // canonical IR.
 type Factory struct {
-	ReasoningEffort string `json:"reasoningEffort,omitempty"`
-	Isolation       string `json:"isolation,omitempty"`
+	ReasoningEffort string   `json:"reasoningEffort,omitempty"`
+	Isolation       string   `json:"isolation,omitempty"`
+	Tools           []string `json:"tools,omitempty"`
 }
 
 // Cursor preserves Cursor-native values when they should be emitted verbatim
@@ -71,6 +72,7 @@ type Windsurf struct {
 // Gemini preserves Gemini CLI-specific fields for commands, hooks, and
 // subagents.
 type Gemini struct {
+	Tools            []string                   `json:"tools,omitempty"`
 	Temperature      *float64                   `json:"temperature,omitempty"`
 	MaxTurns         *int                       `json:"maxTurns,omitempty"`
 	TimeoutMinutes   *int                       `json:"timeoutMinutes,omitempty"`
