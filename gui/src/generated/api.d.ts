@@ -42,9 +42,12 @@ export interface paths {
          *     allowed to show: the declared raw user-personal and organization
          *     target identifiers, the canonical supported target list, user-root
          *     presence and editability, and the labels of values managed outside
-         *     the GUI. Available only in user-scope mode; other session modes are
-         *     rejected. The request carries no body and never exposes
-         *     credentials, raw YAML, or filesystem paths.
+         *     the GUI, plus the declared user-personal and organization source
+         *     descriptions. Available only in user-scope mode; other session modes
+         *     are rejected. The request carries no body and never exposes
+         *     credentials, raw YAML, or configuration-root or fragment filesystem
+         *     paths; declared source locations are returned and directory source
+         *     locations may be filesystem paths.
          *
          */
         post: operations["readConfiguration"];
@@ -166,6 +169,8 @@ export interface components {
             firstRun: boolean;
             /** @description Labels of configuration values managed outside the GUI. */
             managedOutsideGUI: string[];
+            /** @description Declared organization source descriptions; always read-only. */
+            organizationSources: components["schemas"]["SourceDescription"][];
             /** @description Declared organization target identifiers; always read-only. */
             organizationTargets: string[];
             /** @description Resolved telemetry retention policy URL for disclosure, or 'not configured'. */
@@ -176,6 +181,8 @@ export interface components {
             supportedTargets: string[];
             /** @description Resolved primary telemetry destination hostname for disclosure, or 'not configured'. */
             telemetryDestination: string;
+            /** @description Declared user-personal source descriptions in deterministic declaration order. */
+            userSources: components["schemas"]["SourceDescription"][];
             /** @description Declared raw identifiers in the user-personal target set, including identifiers unsupported by this client. */
             userTargets: string[];
         };
@@ -319,6 +326,21 @@ export interface components {
         };
         /** @enum {string} */
         SnapshotStage: "provisional" | "config" | "inventory" | "final";
+        SourceDescription: {
+            /**
+             * @description How the source is acquired.
+             * @enum {string}
+             */
+            kind: "git" | "directory" | "marketplace";
+            /** @description Declared Git URL, directory declaration, or normalized Marketplace URL with embedded credentials and URL query/fragment redacted; directory locations are resolved source locations, not raw configuration paths. */
+            location: string;
+            /** @description Declared sub-path within a source, or empty. */
+            path: string;
+            /** @description Declared Git ref, or empty. */
+            ref: string;
+            /** @description Declared source layout, or empty. */
+            sourceHarness: string;
+        };
     };
     responses: {
         /** @description API lifetime ended; code localapi.closed */

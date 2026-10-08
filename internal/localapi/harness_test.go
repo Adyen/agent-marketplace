@@ -84,7 +84,8 @@ func TestLocalAPIUserHarness(t *testing.T) {
 		writeFile(t, userConfig,
 			"apiVersion: agent-marketplace/v4\nharnesses: [devin, e2e-future-harness]\nsources:\n  local: {directory: "+source+"}\nresources:\n  local: {all: true}\n")
 		orgPath := filepath.Join(t.TempDir(), "org.yaml")
-		writeFile(t, orgPath, "apiVersion: agent-marketplace/v4\nharnesses: [claude]\n")
+		orgSource := filepath.Join(t.TempDir(), "org-regs")
+		writeFile(t, orgPath, "apiVersion: agent-marketplace/v4\nharnesses: [claude]\nsources:\n  orgdir: {directory: "+orgSource+"}\n")
 		config.SetTestOrganizationConfigPath(t, orgPath)
 	}
 	api, err := NewUser(context.Background(), home, session.RuntimeLifecycle(), nil)

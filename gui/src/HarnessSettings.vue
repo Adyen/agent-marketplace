@@ -2,6 +2,7 @@
 import { computed, ref, watch } from 'vue'
 import type { Configuration } from './api/client'
 import type { WorkspaceController } from './controller'
+import SourceList from './SourceList.vue'
 
 const props = defineProps<{ controller: WorkspaceController }>()
 const open = defineModel<boolean>('open', { default: false })
@@ -124,6 +125,9 @@ async function save() {
               <li v-for="id in configuration.organizationTargets" :key="id" class="mono">{{ id }}</li>
             </ul>
           </section>
+
+          <SourceList title="User sources" :sources="configuration.userSources" :organization="false" />
+          <SourceList title="Organization sources" :sources="configuration.organizationSources" :organization="true" />
 
           <section v-if="configuration.managedOutsideGUI.length > 0" class="settings__group" aria-label="Managed outside the GUI">
             <h3>Managed outside the GUI</h3>

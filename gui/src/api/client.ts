@@ -8,6 +8,7 @@ export type SessionEvent =
   | components['schemas']['NotificationEvent']
 export type Action = components['schemas']['ActionRequest']['action']
 export type Configuration = components['schemas']['Configuration']
+export type SourceDescription = components['schemas']['SourceDescription']
 export type ConfigureRequest = components['schemas']['ConfigurationActionRequest']
 export type ApiError = components['schemas']['Error']
 

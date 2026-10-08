@@ -11,25 +11,50 @@ import (
 	"strings"
 
 	"github.com/Adyen/agent-marketplace/internal/config"
+	"github.com/Adyen/agent-marketplace/internal/redact"
 	"github.com/Adyen/agent-marketplace/internal/session"
 	"github.com/Adyen/agent-marketplace/internal/telemetry"
 	tmcfg "github.com/Adyen/agent-marketplace/internal/telemetry/config"
 )
 
+type sourceDescriptionDTO struct {
+	Kind          string `json:"kind"`
+	Location      string `json:"location"`
+	Ref           string `json:"ref"`
+	Path          string `json:"path"`
+	SourceHarness string `json:"sourceHarness"`
+}
+
+func projectSources(descs []config.SourceDescription) []sourceDescriptionDTO {
+	out := make([]sourceDescriptionDTO, 0, len(descs))
+	for _, desc := range descs {
+		out = append(out, sourceDescriptionDTO{
+			Kind:          string(desc.Kind),
+			Location:      redact.URL(desc.Location),
+			Ref:           desc.Ref,
+			Path:          desc.Path,
+			SourceHarness: desc.SourceHarness,
+		})
+	}
+	return out
+}
+
 type configurationDTO struct {
-	UserTargets          []string `json:"userTargets"`
-	OrganizationTargets  []string `json:"organizationTargets"`
-	SupportedTargets     []string `json:"supportedTargets"`
-	RootPresent          bool     `json:"rootPresent"`
-	Editable             bool     `json:"editable"`
-	ManagedOutsideGUI    []string `json:"managedOutsideGUI"`
-	FirstRun             bool     `json:"firstRun"`
-	CanInitialize        bool     `json:"canInitialize"`
-	DetectedTargets      []string `json:"detectedTargets"`
-	DetectionUnavailable bool     `json:"detectionUnavailable"`
-	ConsentRequired      bool     `json:"consentRequired"`
-	TelemetryDestination string   `json:"telemetryDestination"`
-	RetentionPolicyURL   string   `json:"retentionPolicyURL"`
+	UserTargets          []string               `json:"userTargets"`
+	OrganizationTargets  []string               `json:"organizationTargets"`
+	UserSources          []sourceDescriptionDTO `json:"userSources"`
+	OrganizationSources  []sourceDescriptionDTO `json:"organizationSources"`
+	SupportedTargets     []string               `json:"supportedTargets"`
+	RootPresent          bool                   `json:"rootPresent"`
+	Editable             bool                   `json:"editable"`
+	ManagedOutsideGUI    []string               `json:"managedOutsideGUI"`
+	FirstRun             bool                   `json:"firstRun"`
+	CanInitialize        bool                   `json:"canInitialize"`
+	DetectedTargets      []string               `json:"detectedTargets"`
+	DetectionUnavailable bool                   `json:"detectionUnavailable"`
+	ConsentRequired      bool                   `json:"consentRequired"`
+	TelemetryDestination string                 `json:"telemetryDestination"`
+	RetentionPolicyURL   string                 `json:"retentionPolicyURL"`
 }
 
 func (a *API) userConfigPath() string {
@@ -64,6 +89,8 @@ func (a *API) configurationMetadata(ctx context.Context) configurationDTO {
 	dto.UserTargets = append(dto.UserTargets, user.Settings().Harnesses...)
 	org := intent.Layers[config.Organization]
 	dto.OrganizationTargets = append(dto.OrganizationTargets, org.Settings().Harnesses...)
+	dto.UserSources = projectSources(user.DescribeSources())
+	dto.OrganizationSources = projectSources(org.DescribeSources())
 
 	if len(user.Reads) > 1 {
 		dto.ManagedOutsideGUI = append(dto.ManagedOutsideGUI, "included files")

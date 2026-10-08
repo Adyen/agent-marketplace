@@ -33,6 +33,8 @@ export function configuration(overrides: Partial<Configuration> = {}): Configura
   return {
     userTargets: ['devin'],
     organizationTargets: [],
+    userSources: [],
+    organizationSources: [],
     supportedTargets: ['devin'],
     rootPresent: true,
     editable: true,
