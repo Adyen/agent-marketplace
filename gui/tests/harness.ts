@@ -11,6 +11,9 @@ export interface Bootstrap {
   credential: string
   repo?: string
   home?: string
+  xdgConfig?: string
+  xdgState?: string
+  xdgCache?: string
 }
 
 export interface Harness {

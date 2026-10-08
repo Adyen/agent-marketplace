@@ -3,6 +3,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch 
 import { createClient } from './api/client'
 import { launchRequestEvent, resolveBootstrap } from './bootstrap'
 import { eligible, GROUP_ORDER, WorkspaceController, groupKey, groupLabel, type Row } from './controller'
+import FirstRun from './FirstRun.vue'
 import HarnessSettings from './HarnessSettings.vue'
 
 const props = defineProps<{ controller?: WorkspaceController }>()
@@ -12,6 +13,12 @@ const selectedId = ref<string | null>(null)
 const error = ref<string | null>(null)
 const settingsOpen = ref(false)
 const settingsButton = ref<HTMLButtonElement | null>(null)
+const setupOpen = ref(false)
+const setupDismissed = ref(false)
+const setupOpened = ref(false)
+const setupButton = ref<HTMLButtonElement | null>(null)
+
+const configuration = computed(() => state.value?.state.configuration ?? null)
 
 watch(settingsOpen, (isOpen, wasOpen) => {
   if (!isOpen && wasOpen) {
@@ -19,20 +26,53 @@ watch(settingsOpen, (isOpen, wasOpen) => {
   }
 })
 
+watch(setupOpen, (isOpen, wasOpen) => {
+  if (isOpen) {
+    setupOpened.value = true
+    return
+  }
+  if (wasOpen) {
+    void nextTick(() => (setupButton.value ?? settingsButton.value)?.focus())
+  }
+})
+
+watch(
+  () => configuration.value?.firstRun,
+  (firstRun) => {
+    if (firstRun === true) {
+      if (!setupDismissed.value && !setupOpen.value) {
+        setupOpen.value = true
+      }
+    } else if (firstRun === false) {
+      setupDismissed.value = false
+      if (setupOpened.value) {
+        setupOpened.value = false
+        void nextTick(() => settingsButton.value?.focus())
+      }
+    }
+  },
+)
+
 function onFocus() {
   void state.value?.refresh()
+}
+
+function onSetupCancel() {
+  setupDismissed.value = true
 }
 
 onMounted(async () => {
   window.addEventListener('focus', onFocus)
   window.runtime?.EventsOn?.(launchRequestEvent, onFocus)
   if (state.value) {
+    void state.value.loadConfiguration()
     return
   }
   try {
     const bootstrap = await resolveBootstrap()
     const c = new WorkspaceController(createClient(bootstrap.url, bootstrap.credential))
     state.value = c
+    void c.loadConfiguration()
     c.connect().catch(() => {
       error.value = 'Could not connect to the session'
     })
@@ -104,6 +144,13 @@ async function run(action: 'sync' | 'update') {
         <button type="button" aria-label="Refresh" :disabled="busy" @click="refresh">Refresh</button>
         <button type="button" aria-label="Sync" :disabled="!ready" @click="run('sync')">Sync</button>
         <button type="button" aria-label="Update" :disabled="!ready" @click="run('update')">Update</button>
+        <button
+          v-if="configuration?.firstRun === true || setupOpen"
+          ref="setupButton"
+          type="button"
+          aria-label="Set up"
+          @click="setupOpen = true"
+        >Set up</button>
         <button
           ref="settingsButton"
           type="button"
@@ -186,6 +233,7 @@ async function run(action: 'sync' | 'update') {
     </div>
 
     <HarnessSettings v-if="state" v-model:open="settingsOpen" :controller="state" />
+    <FirstRun v-if="state" v-model:open="setupOpen" :controller="state" @cancel="onSetupCancel" />
 
     <ul class="workspace__notifications" aria-live="polite" aria-label="Notifications">
       <li v-for="n in view?.notifications" :key="n.id" :class="`notification--${n.severity}`">

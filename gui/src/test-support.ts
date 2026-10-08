@@ -37,6 +37,13 @@ export function configuration(overrides: Partial<Configuration> = {}): Configura
     rootPresent: true,
     editable: true,
     managedOutsideGUI: [],
+    firstRun: false,
+    canInitialize: false,
+    detectedTargets: [],
+    detectionUnavailable: false,
+    consentRequired: false,
+    telemetryDestination: 'not configured',
+    retentionPolicyURL: 'not configured',
     ...overrides,
   }
 }

@@ -723,12 +723,16 @@ func (a *API) runOperation(operation session.OperationID, kind session.Operation
 	op := &operationRef{ID: uint64(operation), Kind: string(kind)}
 
 	a.mu.Lock()
+	a.started = true
 	generation := a.beginSnapshotLocked()
+	var announcing snapshotDTO
 	if a.current != nil {
-		announcing := *a.current
-		announcing.Operation = op
-		a.emitLocked("snapshot", generation, op, &announcing)
+		announcing = *a.current
+	} else {
+		announcing = a.snapshotPresentationLocked(session.Snapshot{Stage: session.SnapshotStageConfig}, op)
 	}
+	announcing.Operation = op
+	a.emitLocked("snapshot", generation, op, &announcing)
 	a.mu.Unlock()
 
 	source := session.NewOperationProgressSource(operation, generation)
@@ -755,7 +759,7 @@ func (a *API) runOperation(operation session.OperationID, kind session.Operation
 	switch kind {
 	case session.OperationUpdate:
 		category = session.DiagnosticUpdate
-	case session.OperationTargets:
+	case session.OperationTargets, session.OperationMutation:
 		category = session.DiagnosticMutation
 	}
 	a.mu.Lock()
@@ -775,7 +779,7 @@ func (a *API) runOperation(operation session.OperationID, kind session.Operation
 	severity, message := severityFor(warnings), string(kind)+" complete"
 	if failed != nil {
 		severity, message = "error", string(kind)+" failed"
-	} else if kind != session.OperationTargets && (dto.Drift == "failed" || hasErrorDiagnostic(dto.Diagnostics)) {
+	} else if kind != session.OperationTargets && kind != session.OperationMutation && (dto.Drift == "failed" || hasErrorDiagnostic(dto.Diagnostics)) {
 		severity, message = "error", string(kind)+" failed"
 	}
 	a.emitLocked("notification", generation, op, notificationPayload{Severity: severity, Message: message})

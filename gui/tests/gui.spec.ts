@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test'
-import { existsSync } from 'node:fs'
+import { existsSync, readdirSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { startHarness, repoRoot } from './harness'
@@ -162,6 +162,116 @@ test('built GUI saves Harness targets through the real user-scope core', async (
     await expect(page.getByRole('button', { name: 'Sync' })).toBeDisabled()
     expect(await readFile(userConfigPath, 'utf8')).toBe(saved)
     expect(existsSync(join(home, '.e2e-future-harness'))).toBe(false)
+  } finally {
+    await harness.stop()
+  }
+})
+
+// spec: gui-first-run/absent-user-personal-root-starts-first-run
+// spec: gui-first-run/detected-harness-targets-are-preselected-and-editable
+// spec: gui-first-run/unmanaged-first-run-presents-init-equivalent-consent
+// spec: gui-first-run/cancel-first-run-before-completion
+// spec: gui-first-run/harness-targets-and-consent-match-init-output
+test('built GUI guided first-run setup initializes the absent root by keyboard', async ({ page }) => {
+  if (!existsSync(join(dist, 'index.html'))) {
+    throw new Error('built GUI assets missing: run `make gui-build` or `pnpm run build` in gui/ first')
+  }
+
+  const harness = await startHarness('user', { AM_LOCALAPI_USER_FIXTURE: 'first-run' })
+  const { bootstrap } = harness
+  const home = bootstrap.home!
+  const repo = bootstrap.repo!
+  const userConfigPath = join(home, '.agents', 'config.yaml')
+  const repoConfigPath = join(repo, '.agents', 'config.yaml')
+  const repoLocalPath = join(repo, '.agents', 'config.local.yaml')
+  const repoConfigBefore = await readFile(repoConfigPath)
+  const repoLocalBefore = await readFile(repoLocalPath)
+  const xdgDirs = [bootstrap.xdgConfig!, bootstrap.xdgState!, bootstrap.xdgCache!]
+
+  const xdgEntries = () =>
+    xdgDirs.map((dir) => (existsSync(dir) ? readdirSync(dir).sort().join(',') : '<absent>'))
+
+  try {
+    expect(existsSync(userConfigPath)).toBe(false)
+
+    await serveBuiltApp(page, bootstrap.url)
+    await page.addInitScript(
+      ([credential]) => {
+        ;(window as unknown as Record<string, unknown>).__AM_GUI_BOOTSTRAP__ = { credential }
+      },
+      [bootstrap.credential] as const,
+    )
+    await page.goto(bootstrap.url, { waitUntil: 'domcontentloaded' })
+
+    const dialog = page.getByRole('dialog', { name: 'Set up Agent Marketplace' })
+    await expect(dialog).toBeVisible({ timeout: 60_000 })
+
+    const factory = dialog.getByRole('checkbox', { name: 'Target factory' })
+    const devin = dialog.getByRole('checkbox', { name: 'Target devin' })
+    await expect(factory).toBeChecked()
+    await expect(devin).not.toBeChecked()
+
+    await factory.focus()
+    await page.keyboard.press('Space')
+    await expect(factory).not.toBeChecked()
+    await expect(dialog.getByRole('button', { name: 'Next' })).toBeDisabled()
+    await page.keyboard.press('Space')
+    await expect(factory).toBeChecked()
+    await devin.focus()
+    await page.keyboard.press('Space')
+    await expect(devin).toBeChecked()
+
+    await page.keyboard.press('Escape')
+    await expect(dialog).not.toBeVisible()
+    expect(existsSync(userConfigPath)).toBe(false)
+    await page.waitForTimeout(300)
+    await expect(dialog).not.toBeVisible()
+    expect(existsSync(userConfigPath)).toBe(false)
+    expect((await readFile(repoConfigPath)).equals(repoConfigBefore)).toBe(true)
+    expect((await readFile(repoLocalPath)).equals(repoLocalBefore)).toBe(true)
+    expect(xdgEntries()).toEqual(['<absent>', '<absent>', '<absent>'])
+
+    const setupButton = page.getByRole('button', { name: 'Set up' })
+    await expect(setupButton).toBeVisible()
+    await setupButton.focus()
+    await page.keyboard.press('Enter')
+    await expect(dialog).toBeVisible()
+    await expect(factory).toBeChecked()
+    await expect(devin).not.toBeChecked()
+
+    await dialog.getByRole('button', { name: 'Next' }).focus()
+    await page.keyboard.press('Enter')
+
+    const finish = dialog.getByRole('button', { name: 'Finish setup' })
+    await expect(finish).toBeDisabled()
+    await expect(dialog).toContainText('basic telemetry')
+    const no = dialog.getByRole('radio', { name: /no/i })
+    const yes = dialog.getByRole('radio', { name: /yes/i })
+    await expect(no).not.toBeChecked()
+    await expect(yes).not.toBeChecked()
+
+    await dialog.getByRole('button', { name: 'Back' }).press('Enter')
+    await expect(factory).toBeChecked()
+    await dialog.getByRole('button', { name: 'Next' }).press('Enter')
+    await yes.focus()
+    await page.keyboard.press('Space')
+    await expect(yes).toBeChecked()
+    await expect(finish).toBeEnabled()
+    expect(existsSync(userConfigPath)).toBe(false)
+
+    await finish.press('Enter')
+    await expect(page.getByText('mutation complete')).toBeVisible({ timeout: 60_000 })
+    await expect(dialog).not.toBeVisible()
+
+    const written = await readFile(userConfigPath, 'utf8')
+    expect(written).toBe(
+      'apiVersion: agent-marketplace/v4\nharnesses:\n  - factory\ntelemetry:\n  level: basic\n',
+    )
+    expect(existsSync(join(home, '.factory', 'skills'))).toBe(false)
+    expect(existsSync(join(home, '.devin'))).toBe(false)
+    expect((await readFile(repoConfigPath)).equals(repoConfigBefore)).toBe(true)
+    expect((await readFile(repoLocalPath)).equals(repoLocalBefore)).toBe(true)
+    expect(xdgEntries()).toEqual(['<absent>', '<absent>', '<absent>'])
   } finally {
     await harness.stop()
   }
