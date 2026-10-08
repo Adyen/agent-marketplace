@@ -760,3 +760,15 @@ When Gemini settings contain flat command hooks written by v3.1.1, Agent Marketp
 - **THEN** check mode MUST report pending exact hook changes without configuration or state writes
 - **AND** incomplete or unsuccessful publication MUST not report a completed legacy removal
 - **AND** configuration and ownership state MUST remain safe under the existing CAS and recovery rules
+
+### Requirement: Superseded hook resource directories remain preserved
+
+Native hook aggregation SHALL preserve target- and scope-declared superseded per-hook resource directories in every materialization mode. Existing cache-backed symlinks and handwritten files inside those directories SHALL NOT be pruned, adopted, or rewritten by generic artifact reconciliation. This preservation SHALL NOT suppress valid native hook publication or pruning of managed stale artifacts outside the preserved directories.
+
+#### Scenario: Legacy Windsurf cache links remain preserved
+
+- **WHEN** a repository or machine scope contains cache-backed per-event Windsurf hooks in its declared preserved legacy directory and a selected hook is synced in symlink or file mode
+- **THEN** the existing directory's paths, bytes, modes, modification times and link targets MUST remain unchanged
+- **AND** the selected hook MUST appear once in the scope's native hook aggregate without an in-file ownership marker
+- **AND** managed stale artifacts outside the preserved directory MUST still be pruned
+- **AND** check mode, repeat sync and deselection MUST preserve the legacy resources

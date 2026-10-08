@@ -371,6 +371,9 @@ func nativeHookLegacySupportDirs(key outputKey, declaration nativeHookAggregateD
 			selected = []string{parent}
 		}
 		for _, dir := range selected {
+			if info.PreservesLegacyPath(dir, key.machineScope) {
+				continue
+			}
 			if !seen[dir] {
 				seen[dir] = true
 				dirs = append(dirs, dir)

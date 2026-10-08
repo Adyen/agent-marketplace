@@ -11,12 +11,14 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Adyen/agent-marketplace/internal/cache"
 	"github.com/Adyen/agent-marketplace/internal/catalog"
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/resolver"
 	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
+	targetmeta "github.com/Adyen/agent-marketplace/pkg/harness-compilation/target"
 )
 
 func additiveSafetyEnv(t *testing.T) (string, string) {
@@ -483,6 +485,133 @@ func TestWindsurfIncompleteHooksRetainManagedSiblings(t *testing.T) {
 	}
 	if data, err := os.ReadFile(nativeFile); err != nil || bytes.Contains(data, []byte("_managed_by")) {
 		t.Fatalf("native hook marker/output error: %v / %s", err, data)
+	}
+}
+
+// spec: hook-resources/legacy-windsurf-cache-links-remain-preserved
+func TestWindsurfLegacyCacheLinksArePreserved(t *testing.T) {
+	for _, machine := range []bool{false, true} {
+		for _, mode := range []config.MaterializationMode{config.MaterializationModeSymlink, config.MaterializationModeFile} {
+			t.Run(fmt.Sprintf("machine=%t/%s", machine, mode), func(t *testing.T) {
+				repo, home := additiveSafetyEnv(t)
+				cacheTarget := filepath.Join(cache.CacheDir(), "registry", "pre_run_command.json")
+				additiveSafetyWrite(t, cacheTarget, `{"command":"echo old-cached"}`)
+				oldDir := filepath.Join(repo, ".windsurf", "hooks")
+				staleDir := filepath.Join(repo, ".windsurf", "workflows")
+				native := filepath.Join(repo, ".devin", "hooks.json")
+				if machine {
+					oldDir = filepath.Join(home, ".codeium", "windsurf", "hooks")
+					staleDir = filepath.Join(home, ".codeium", "windsurf", "global_workflows")
+					native = filepath.Join(home, ".codeium", "windsurf", "hooks.json")
+				}
+				for _, dir := range []string{oldDir, staleDir} {
+					if err := os.MkdirAll(dir, 0o755); err != nil {
+						t.Fatal(err)
+					}
+				}
+				for _, event := range []string{"pre_run_command", "pre_user_prompt"} {
+					if err := os.Symlink(cacheTarget, filepath.Join(oldDir, event+".json")); err != nil {
+						t.Fatal(err)
+					}
+				}
+				additiveSafetyWrite(t, filepath.Join(oldDir, "handwritten.txt"), "handwritten old hook notes")
+				stale := filepath.Join(staleDir, "stale.json")
+				if err := os.Symlink(cacheTarget, stale); err != nil {
+					t.Fatal(err)
+				}
+				provider := additiveSafetyProvider(t, hcc.TargetWindsurf, machine, "echo wanted", "")
+				opts := []RunOption{WithMaterializationModes(config.MaterializationModes{Project: mode, Machine: mode})}
+				seedNativeHookJSONLock(t, filepath.Dir(native))
+				before := nativeSupportSnapshot(t, oldDir)
+				stateBefore := nativeSupportPersistentSnapshot(t, repo, home)
+				preview, err := Run(context.Background(), repo, []resolver.ResolvedArtifact{provider}, append(opts, WithDryRun())...)
+				if err != nil || hasErrorDiagnostics(preview.Diags) {
+					t.Fatalf("dry run: %v / %v", err, preview)
+				}
+				if !diag.HasCode(preview.Diags, diag.CodeMaterializeHookReviewPending) {
+					t.Fatalf("dry-run diagnostics = %v, want %s", preview.Diags, diag.CodeMaterializeHookReviewPending)
+				}
+				base := repo
+				if machine {
+					base = home
+				}
+				nativeRel, err := filepath.Rel(base, native)
+				if err != nil {
+					t.Fatal(err)
+				}
+				wantFile := filepath.Join(evalPath(t, base), nativeRel)
+				additions := 0
+				for _, change := range preview.HookChanges {
+					if change.Target == hcc.TargetWindsurf && change.File == wantFile && change.After != nil &&
+						bytes.Contains(change.After, []byte(`"command":"echo wanted"`)) {
+						additions++
+					}
+				}
+				if additions != 1 {
+					t.Fatalf("dry-run pending native additions = %d, want 1: %+v", additions, preview.HookChanges)
+				}
+				assertNativeSupportSnapshot(t, before, nativeSupportSnapshot(t, oldDir))
+				assertPathAbsent(t, native)
+				if _, err := os.Lstat(stale); err != nil {
+					t.Fatalf("dry run touched stale control: %v", err)
+				}
+				assertNativeSupportSnapshot(t, stateBefore, nativeSupportPersistentSnapshot(t, repo, home))
+				report, err := Run(context.Background(), repo, []resolver.ResolvedArtifact{provider}, opts...)
+				if err != nil || hasErrorDiagnostics(report.Diags) {
+					t.Fatalf("sync: %v / %v", err, report)
+				}
+				assertNativeSupportSnapshot(t, before, nativeSupportSnapshot(t, oldDir))
+				if _, err := os.Lstat(stale); !os.IsNotExist(err) {
+					t.Fatalf("stale cache link outside preserved dirs survived: %v", err)
+				}
+				if got := additiveSafetyCommands(t, native, "hooks", "pre_run_command"); !reflect.DeepEqual(got, []string{"echo wanted"}) {
+					t.Fatalf("native commands = %v", got)
+				}
+				if data, err := os.ReadFile(native); err != nil || bytes.Contains(data, []byte("_managed_by")) {
+					t.Fatalf("native hook marker/output error: %v / %s", err, data)
+				}
+				nativeBefore, nativeMode, nativeMtime := fileSnapshot(t, native)
+				report, err = Run(context.Background(), repo, []resolver.ResolvedArtifact{provider}, opts...)
+				if err != nil || hasErrorDiagnostics(report.Diags) {
+					t.Fatalf("repeat sync: %v / %v", err, report)
+				}
+				if len(report.HookChanges) != 0 {
+					t.Fatalf("repeat sync reported hook changes: %+v", report.HookChanges)
+				}
+				assertFileUnchanged(t, native, nativeBefore, nativeMode, nativeMtime)
+				assertNativeSupportSnapshot(t, before, nativeSupportSnapshot(t, oldDir))
+				if report, err := Run(context.Background(), repo, nil, opts...); err != nil || hasErrorDiagnostics(report.Diags) {
+					t.Fatalf("deselect sync: %v / %v", err, report)
+				}
+				assertNativeSupportSnapshot(t, before, nativeSupportSnapshot(t, oldDir))
+			})
+		}
+	}
+}
+
+func TestNativeHookLegacySupportDirsExcludePreservedDirs(t *testing.T) {
+	for _, tc := range []struct {
+		target  hcc.Target
+		machine bool
+		want    []string
+	}{
+		{hcc.TargetWindsurf, false, nil},
+		{hcc.TargetWindsurf, true, nil},
+		{hcc.TargetClaude, false, []string{"hooks"}},
+		{hcc.TargetClaude, true, []string{"hooks"}},
+		{hcc.TargetFactory, false, []string{"hooks"}},
+		{hcc.TargetFactory, true, []string{"hooks"}},
+	} {
+		t.Run(fmt.Sprintf("%s/machine=%t", tc.target, tc.machine), func(t *testing.T) {
+			key := outputKey{target: tc.target, machineScope: tc.machine}
+			declaration, err := nativeHookAggregateForScope(targetmeta.Target(tc.target), tc.machine)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := nativeHookLegacySupportDirs(key, declaration); !reflect.DeepEqual(got, tc.want) {
+				t.Fatalf("legacy support dirs = %v, want %v", got, tc.want)
+			}
+		})
 	}
 }
 

@@ -1956,6 +1956,11 @@ func executeTargetPlans(report *Report, key outputKey, outDir string, artifacts 
 	portableCleanupDirs := make(map[string]string)
 
 	plans := materializePlans(key.target, outDir, artifacts, linkedComponents(skillLinks[key]), key.machineScope)
+	if info, ok := harness.TargetInfoFor(key.target); ok {
+		plans = slices.DeleteFunc(plans, func(plan materializePlan) bool {
+			return info.PreservesLegacyPath(plan.reportPrefix, key.machineScope)
+		})
+	}
 	for _, publication := range supportPublication.plans {
 		for path := range publication.manifestPaths {
 			fileDesired[path] = true
