@@ -2,6 +2,7 @@ package ownership
 
 import (
 	"errors"
+	"log/slog"
 	"path/filepath"
 	"syscall"
 
@@ -60,18 +61,25 @@ func (s *Store) removeEmptySafetyDirectory(attempt *safetyAttempt) (err error) {
 			err = errors.Join(err, closeErr)
 		}
 	}()
-	child, err := parent.OpenPath(filepath.Base(attempt.relative))
-	if err != nil {
+	verify := func() error {
+		child, err := parent.OpenPath(filepath.Base(attempt.relative))
+		if err != nil {
+			return err
+		}
+		unchanged := child.Identity().SameObject(attempt.parent)
+		if closeErr := child.Close(); closeErr != nil {
+			return closeErr
+		}
+		if !unchanged {
+			return fsboundary.ErrGenerationConflict
+		}
+		return s.verifyStateDirectory(parent, filepath.Dir(attempt.relative))
+	}
+	if err := verify(); err != nil {
 		return err
 	}
-	unchanged := child.Identity().SameObject(attempt.parent)
-	if closeErr := child.Close(); closeErr != nil {
-		return closeErr
-	}
-	if !unchanged {
-		return fsboundary.ErrGenerationConflict
-	}
-	if err := s.verifyStateDirectory(parent, filepath.Dir(attempt.relative)); err != nil {
+	slog.Debug("Empty ownership safety directory selected for cleanup", "path", filepath.Join(parent.Path(), filepath.Base(attempt.relative)), "phase", "ownership-empty-safety-cleanup")
+	if err := verify(); err != nil {
 		return err
 	}
 	if err := parent.Rmdir(filepath.Base(attempt.relative)); err != nil && !errors.Is(err, syscall.ENOTEMPTY) && !errors.Is(err, syscall.EEXIST) {

@@ -2,6 +2,8 @@ package backup
 
 import (
 	"errors"
+	"io/fs"
+	"log/slog"
 	"os"
 	"path/filepath"
 
@@ -13,7 +15,12 @@ func withArchiveOutput(path string, write func(*os.File) error) (err error) {
 	if err != nil {
 		return err
 	}
-	parent, err := fsboundary.OpenDir(filepath.Dir(absolute))
+	selected := filepath.Dir(absolute)
+	parent, err := fsboundary.OpenDir(selected)
+	for errors.Is(err, fs.ErrNotExist) && !errors.Is(err, fsboundary.ErrUnsafePath) && selected != filepath.Dir(selected) {
+		selected = filepath.Dir(selected)
+		parent, err = fsboundary.OpenDir(selected)
+	}
 	if err != nil {
 		return err
 	}
@@ -22,6 +29,25 @@ func withArchiveOutput(path string, write func(*os.File) error) (err error) {
 			err = errors.Join(err, closeErr)
 		}
 	}()
+	slog.Debug("Backup namespace parent selected", "path", selected, "phase", "backup-namespace-parent")
+	if err := verifyArchiveParent(parent, selected); err != nil {
+		return err
+	}
+	if selected != filepath.Dir(absolute) {
+		relative, err := filepath.Rel(selected, filepath.Dir(absolute))
+		if err != nil {
+			return err
+		}
+		prepared, err := parent.EnsurePath(relative)
+		if err != nil {
+			return err
+		}
+		previous := parent
+		parent = prepared
+		if closeErr := previous.Close(); closeErr != nil {
+			return closeErr
+		}
+	}
 	return writeCapturedArchiveOutput(parent, absolute, write)
 }
 
