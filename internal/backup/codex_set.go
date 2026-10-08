@@ -349,26 +349,6 @@ func validateCodexPartitions(partitions []CodexPartition) error {
 	return nil
 }
 
-func loadCompleteCodexSets(targetDir string) (sets []codexSetManifest, err error) {
-	absolute, err := filepath.Abs(targetDir)
-	if err != nil {
-		return nil, err
-	}
-	root, err := fsboundary.OpenDir(absolute)
-	if err != nil {
-		if errors.Is(err, fs.ErrNotExist) {
-			return nil, nil
-		}
-		return nil, err
-	}
-	defer func() {
-		if closeErr := root.Close(); closeErr != nil {
-			err = errors.Join(err, closeErr)
-		}
-	}()
-	return loadCompleteCodexSetsAt(root)
-}
-
 func loadCompleteCodexSetsAt(root *fsboundary.Dir) (sets []codexSetManifest, err error) {
 	native, err := root.NativeRoot()
 	if err != nil {
