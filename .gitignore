@@ -25,6 +25,9 @@
 # Dev artifacts
 .DS_Store
 /dist/
+/cmd/agent-marketplace-gui/frontend/dist/
+/gui/auto-imports.d.ts
+/gui/components.d.ts
 /.tmp/
 /.local/
 /.windsurf/

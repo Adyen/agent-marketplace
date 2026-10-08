@@ -116,18 +116,54 @@ func ReadSnapshotStagesForWorkspace(ctx context.Context, ws pipeline.Workspace, 
 			msg.Stages = stages
 			stages <- msg
 		}
-		readSnapshotStaged(ctx, ws, homeDir, mode, true, emit)
+		readSnapshotStaged(ctx, ws, homeDir, mode, true, false, emit)
 	}()
 	return stages
 }
 
 func ReadSnapshotForWorkspace(ctx context.Context, ws pipeline.Workspace, homeDir string, mode CatalogLoadMode) Snapshot {
 	var snapshot Snapshot
-	readSnapshotStaged(ctx, ws, homeDir, mode, false, func(msg Snapshot) { snapshot = msg })
+	readSnapshotStaged(ctx, ws, homeDir, mode, false, false, func(msg Snapshot) { snapshot = msg })
 	return snapshot
 }
 
-func readSnapshotStaged(ctx context.Context, ws pipeline.Workspace, homeDir string, mode CatalogLoadMode, progressive bool, emit func(Snapshot)) {
+func userWorkspace(homeDir string) (pipeline.Workspace, error) {
+	if !config.IsHomeDir(homeDir) {
+		return pipeline.Workspace{}, fmt.Errorf("session: %s is not the user home directory", homeDir)
+	}
+	return pipeline.NewWorkspace(homeDir, homeDir)
+}
+
+func ReadUserSnapshotStages(ctx context.Context, homeDir string, mode CatalogLoadMode, generation RequestGeneration) <-chan Snapshot {
+	stages := make(chan Snapshot, 5)
+	go func() {
+		defer close(stages)
+		emit := func(msg Snapshot) {
+			msg.Generation = generation
+			msg.Stages = stages
+			stages <- msg
+		}
+		ws, err := userWorkspace(homeDir)
+		if err != nil {
+			emit(invalidWorkspaceSnapshot(err))
+			return
+		}
+		readSnapshotStaged(ctx, ws, homeDir, mode, true, true, emit)
+	}()
+	return stages
+}
+
+func ReadUserSnapshot(ctx context.Context, homeDir string, mode CatalogLoadMode) Snapshot {
+	ws, err := userWorkspace(homeDir)
+	if err != nil {
+		return invalidWorkspaceSnapshot(err)
+	}
+	var snapshot Snapshot
+	readSnapshotStaged(ctx, ws, homeDir, mode, false, true, func(msg Snapshot) { snapshot = msg })
+	return snapshot
+}
+
+func readSnapshotStaged(ctx context.Context, ws pipeline.Workspace, homeDir string, mode CatalogLoadMode, progressive bool, userOnly bool, emit func(Snapshot)) {
 	ctx = cache.WithFreshExactGitVerificationScope(ctx)
 	ws, err := ValidatedWorkspace(ws)
 	if err != nil {
@@ -172,6 +208,17 @@ func readSnapshotStaged(ctx context.Context, ws pipeline.Workspace, homeDir stri
 		base.Warnings = DiagnosticValues(base.Diagnostics, DiagnosticWarning)
 		return base
 	}
+	loaders := pipeline.Loaders{
+		Org:    LoadOrgConfig,
+		Global: LoadGlobalConfig,
+		Repo:   LoadRepoConfig,
+		Local: func() (*config.LocalConfig, error) {
+			return LoadLocalConfig(ws.LocalConfigDir())
+		},
+	}
+	if userOnly {
+		loaders = pipeline.Loaders{}
+	}
 	var inventoryRows []Row
 	var unavailable bool
 	inspectOptions := pipeline.InspectOptions{
@@ -185,14 +232,7 @@ func readSnapshotStaged(ctx context.Context, ws pipeline.Workspace, homeDir stri
 				RepoPath:         config.ProjectConfigPath(repoRoot),
 				LocalPath:        config.LocalConfigPath(ws.LocalConfigDir()),
 			},
-			Loaders: pipeline.Loaders{
-				Org:    LoadOrgConfig,
-				Global: LoadGlobalConfig,
-				Repo:   LoadRepoConfig,
-				Local: func() (*config.LocalConfig, error) {
-					return LoadLocalConfig(ws.LocalConfigDir())
-				},
-			},
+			Loaders: loaders,
 			CatalogOption: []catalog.LoadOption{
 				catalog.WithCloneOrPull(CloneOrPull),
 				catalog.WithDiscoverFunc(DiscoverCatalog),
@@ -232,7 +272,14 @@ func readSnapshotStaged(ctx context.Context, ws pipeline.Workspace, homeDir stri
 			emit(Snapshot{Stage: SnapshotStageConfig, MergedCfg: merged})
 		}
 		inspectOptions.Resolve.ProvisionalConfigReady = func(merged *config.Config, local *config.LocalConfig) {
-			emit(Snapshot{Stage: SnapshotStageConfig, ProvisionalCfg: merged, ProvisionalRows: BuildProvisionalRows(WithCachedCollectionLeaves(merged, marketplace.DefaultCache()), local, provisionalLocalCatalogs(merged, ws), provisionalHarnessDefaults())})
+			var defaults map[config.Source][]string
+			if userOnly {
+				globalCfg, _ := LoadGlobalConfig()
+				defaults = harnessDefaultsBySource(globalCfg, nil)
+			} else {
+				defaults = provisionalHarnessDefaults()
+			}
+			emit(Snapshot{Stage: SnapshotStageConfig, ProvisionalCfg: merged, ProvisionalRows: BuildProvisionalRows(WithCachedCollectionLeaves(merged, marketplace.DefaultCache()), local, provisionalLocalCatalogs(merged, ws), defaults)})
 		}
 		inspectOptions.Resolve.ConfigReady = func(merged *config.Config) {
 			emit(Snapshot{Stage: SnapshotStageConfig, MergedCfg: merged})

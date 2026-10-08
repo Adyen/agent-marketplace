@@ -22,6 +22,8 @@ function snapshotEvent(sequence: number, generation: number, stage = 'final', op
           scope: 'project',
           required: false,
           pendingVerification: false,
+          checked: true,
+          harnessOverride: false,
           harnesses: ['devin'],
           status: 'enabled',
         },
@@ -185,6 +187,38 @@ describe('createClient', () => {
     }
     expect(received).toHaveLength(1)
     expect(received[0].sequence).toBe(1)
+  })
+
+  it('issues root-relative /api requests for an empty native base URL', async () => {
+    const calls: string[] = []
+    const event = snapshotEvent(1, 1)
+    const fetcher: typeof fetch = async (input) => {
+      calls.push(String(input))
+      return new Response(
+        new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode(`data: ${JSON.stringify(event)}\n\n`))
+            controller.close()
+          },
+        }),
+        { status: 200 },
+      )
+    }
+    const client = createClient('', 'secret-token', fetcher)
+    const received: SessionEvent[] = []
+    for await (const event of client.events()) {
+      received.push(event)
+    }
+    expect(calls).toEqual(['/api/events'])
+    expect(received).toHaveLength(1)
+
+    calls.length = 0
+    const jsonFetcher: typeof fetch = async (input) => {
+      calls.push(String(input))
+      return new Response(JSON.stringify(event.type === 'snapshot' ? event.payload : {}), { status: 200 })
+    }
+    await createClient('', 'secret-token', jsonFetcher).snapshot()
+    expect(calls).toEqual(['/api/snapshot'])
   })
 
   it('raises RequestError with the server code on rejection', async () => {

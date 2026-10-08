@@ -1,91 +1,10 @@
 import { test, expect } from '@playwright/test'
-import { spawn, type ChildProcess } from 'node:child_process'
-import { createInterface } from 'node:readline'
 import { readFile } from 'node:fs/promises'
-import { resolve, dirname, join } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { resolve, join } from 'node:path'
 import ts from 'typescript'
+import { guiRoot, startHarness } from './harness'
 
-const guiRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
-const repoRoot = resolve(guiRoot, '..')
 const fixtureSkillBody = '---\nname: solo\ndescription: Solo skill\n---\n# Solo\n'
-
-interface Bootstrap {
-  url: string
-  credential: string
-  repo: string
-}
-
-interface Harness {
-  bootstrap: Bootstrap
-  stop: () => Promise<void>
-}
-
-async function startHarness(): Promise<Harness> {
-  const child: ChildProcess = spawn(
-    'go',
-    ['test', './internal/localapi', '-run', '^TestLocalAPIHarness$', '-count=1'],
-    {
-      cwd: repoRoot,
-      env: { ...process.env, AM_LOCALAPI_E2E: '1', CGO_ENABLED: '0' },
-      stdio: ['ignore', 'ignore', 'pipe', 'pipe'],
-      detached: true,
-    },
-  )
-  const stderrChunks: Buffer[] = []
-  child.stderr?.on('data', (chunk: Buffer) => stderrChunks.push(chunk))
-  const pipe = child.stdio[3]
-  if (pipe == null) {
-    try {
-      process.kill(-child.pid!, 'SIGKILL')
-    } catch {
-      child.kill('SIGKILL')
-    }
-    throw new Error('bootstrap fd 3 pipe missing')
-  }
-  const lines = createInterface({ input: pipe as NodeJS.ReadableStream })
-  let exited = false
-  const exitPromise = new Promise<void>((resolvePromise) =>
-    child.once('exit', () => {
-      exited = true
-      resolvePromise()
-    }),
-  )
-  const stderrText = () => Buffer.concat(stderrChunks).toString('utf8')
-  const stop = async () => {
-    lines.close()
-    pipe.destroy()
-    if (!exited) {
-      const done = await Promise.race([exitPromise.then(() => true), new Promise<boolean>((r) => setTimeout(() => r(false), 10_000))])
-      if (!done) {
-        try {
-          process.kill(-child.pid!, 'SIGKILL')
-        } catch {
-          child.kill('SIGKILL')
-        }
-        await exitPromise
-      }
-    }
-  }
-  const bootstrap = await new Promise<Bootstrap>((resolvePromise, reject) => {
-    const timer = setTimeout(() => {
-      void stop().then(() => reject(new Error(`bootstrap timeout: ${stderrText()}`)))
-    }, 60_000)
-    lines.once('line', (line) => {
-      clearTimeout(timer)
-      try {
-        resolvePromise(JSON.parse(line) as Bootstrap)
-      } catch (error) {
-        void stop().then(() => reject(error))
-      }
-    })
-    exitPromise.then(() => {
-      clearTimeout(timer)
-      void stop().then(() => reject(new Error(`harness exited: ${stderrText()}`)))
-    })
-  })
-  return { bootstrap, stop }
-}
 
 async function clientModule(): Promise<string> {
   const source = await readFile(resolve(guiRoot, 'src', 'api', 'client.ts'), 'utf8')
@@ -96,11 +15,12 @@ async function clientModule(): Promise<string> {
 }
 
 test('real core over authenticated loopback', async ({ page, request }) => {
-  const harness = await startHarness()
+  const harness = await startHarness('workspace')
   const { bootstrap } = harness
-  const configPath = join(bootstrap.repo, '.agents', 'config.yaml')
+  const repo = bootstrap.repo!
+  const configPath = join(repo, '.agents', 'config.yaml')
   const configBefore = await readFile(configPath)
-  const targetPath = join(bootstrap.repo, '.devin', 'skills', 'solo', 'SKILL.md')
+  const targetPath = join(repo, '.devin', 'skills', 'solo', 'SKILL.md')
   try {
     await page.goto(`${bootstrap.url}/does-not-exist`, { waitUntil: 'domcontentloaded' }).catch(() => undefined)
 

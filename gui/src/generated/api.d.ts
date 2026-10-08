@@ -191,9 +191,13 @@ export interface components {
             type: "snapshot";
         };
         SnapshotRow: {
+            /** @description Whether the resource is enabled by any configuration scope, derived from row enablement metadata. */
+            checked: boolean;
             description: string;
             /** @description Target harness IDs this row materializes into. */
             harnesses: string[];
+            /** @description Whether the row carries a registry-level harness narrowing that differs from its layer default. */
+            harnessOverride: boolean;
             /** @description Stable identity bound to the source registry identity and scope (kind/name plus a SHA256 digest of the registry-identity/scope tuple), not kind/name alone. */
             id: string;
             kind: string;
