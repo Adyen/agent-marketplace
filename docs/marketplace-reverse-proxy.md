@@ -16,7 +16,11 @@ The catalog projection route under `/api/v1/catalog` is an endpoint for internal
 
 Do not route or publish `/readyz` or `/metrics`. The public listener answers requests to those exact paths with 404; the real endpoints are served on the operations listener, which only a private monitoring or admin network should reach. If monitoring needs a proxy, use a separate private listener with an explicit allowlist or authentication policy.
 
-The examples in `deploy/compose/sqlite-filesystem` and `deploy/compose/postgres-s3` implement this contract with Nginx. Set `instance.browser_base` to the public origin plus `/marketplace` so the browser route templates in the well-known document match the proxy path. The published port in those examples is only an example binding; replace it with the organization's TLS and identity-aware edge. Do not add a public launch URL to initialization or to committed example configuration.
+The examples in `deploy/compose/sqlite-filesystem` and `deploy/compose/postgres-s3` implement this contract with Nginx. Set `instance.browser_base` to the public origin, without a `/marketplace` suffix, for these root-mounted profiles. The legacy `/marketplace` redirects do not change the application's base. For a custom subpath deployment, configure Nuxt's `NUXT_APP_BASE_URL`, the browser proxy routes, and the path in `instance.browser_base` to match; keep the API paths above unchanged.
+
+Choose a plain ASCII browser-base path that does not require percent encoding. Configuration loading rejects percent-encoded paths, spaces, and non-ASCII path characters because the web runtime and administration sign-in routes cannot use those bases consistently.
+
+The published port in those examples is only an example binding; replace it with the organization's TLS and identity-aware edge. Do not add a public launch URL to initialization or to committed example configuration.
 
 ## Admin routes
 

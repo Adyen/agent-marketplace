@@ -654,7 +654,8 @@ func TestMarketplaceProxyRoutingContract(t *testing.T) {
 			"location /docs/ {\n        proxy_pass http://marketplace_docs;",
 			"location = /marketplace {\n        return 308 /$is_args$args;",
 			"location = /marketplace/ {\n        return 308 /$is_args$args;",
-			"location ~ ^/marketplace/([^/].*)$ {\n        return 308 /$1$is_args$args;",
+			"location ~ (?s)^/marketplace/(?<legacy_browser_path>[^/].*)$ {",
+			"return 308 /$legacy_browser_path$is_args$args;",
 			"location / {\n        proxy_pass http://marketplace_web;",
 			"absolute_redirect off;",
 			"location = /readyz { return 404; }",
@@ -682,7 +683,8 @@ func TestMarketplaceProxyRoutingContract(t *testing.T) {
 	for _, fragment := range []string{
 		"location = /marketplace { return 308 /$is_args$args; }",
 		"location = /marketplace/ { return 308 /$is_args$args; }",
-		"location ~ ^/marketplace/([^/].*)$ { return 308 /$1$is_args$args; }",
+		"location ~ (?s)^/marketplace/(?<legacy_browser_path>[^/].*)$ {",
+		"return 308 /$legacy_browser_path$is_args$args;",
 	} {
 		if !strings.Contains(string(operatorData), fragment) {
 			t.Errorf("%s missing routing contract fragment %q", operatorRelative, fragment)

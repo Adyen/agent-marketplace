@@ -272,6 +272,7 @@ func TestLoadConfigAcceptsOptionalBrowserBase(t *testing.T) {
 }
 
 // spec: marketplace-admin-auth/unsafe-browser-bases-fail-during-configuration-loading
+// spec: marketplace-admin-auth/unsupported-encoded-browser-bases-fail-during-configuration-loading
 func TestLoadConfigRejectsUnsafeBrowserBase(t *testing.T) {
 	for _, raw := range []string{
 		"https://user:browser-secret@example.com",
@@ -288,6 +289,12 @@ func TestLoadConfigRejectsUnsafeBrowserBase(t *testing.T) {
 		"https://marketplace.example/%0aadmin",
 		"https://marketplace.example/%C2%85admin",
 		"https://marketplace.example/tools%2F",
+		"https://marketplace.example/my%20market",
+		"https://marketplace.example/t%C3%A9st",
+		"https://marketplace.example/%61dmin",
+		"https://marketplace.example/my%25market",
+		"https://marketplace.example/my market",
+		"https://marketplace.example/tést",
 	} {
 		t.Run(raw, func(t *testing.T) {
 			yaml := strings.Replace(validConfigYAML(), "canonical_url: https://marketplace.test", "canonical_url: https://marketplace.test\n  browser_base: "+raw, 1)

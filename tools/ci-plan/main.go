@@ -222,6 +222,7 @@ func classifyPath(p string) (map[string]bool, error) {
 		c["container_marketplace"] = true
 	case p == "compose.yaml" ||
 		strings.HasPrefix(p, "deploy/compose/") ||
+		strings.HasPrefix(p, "tools/marketplace-proxy/") ||
 		p == "web/Dockerfile" || p == "site/Dockerfile":
 		c["container_config"] = true
 	}

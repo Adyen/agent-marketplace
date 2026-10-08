@@ -32,7 +32,7 @@ export GO_BUILD_IMAGE RUNTIME_IMAGE NODE_IMAGE POSTGRES_IMAGE NGINX_IMAGE SITE_N
 PLATFORMS := darwin-arm64 darwin-amd64 linux-amd64 linux-arm64
 DIST_DIR := dist
 
-.PHONY: build test test-full lint ci-lint lint-common tidy version release clean e2e marketplace-gate upgrade-gate released-client-gate devin-probe tui-qa-check tui-qa tui-qa-contained site-dev site-build site-docs-build secrets-check container container-marketplace container-web container-site container-docs container-check compose-config $(PLATFORMS)
+.PHONY: build test test-full lint ci-lint lint-common tidy version release clean e2e marketplace-gate marketplace-proxy-check upgrade-gate released-client-gate devin-probe tui-qa-check tui-qa tui-qa-contained site-dev site-build site-docs-build secrets-check container container-marketplace container-web container-site container-docs container-check compose-config $(PLATFORMS)
 LINT_BASE ?= origin/main
 
 define run_golangci_lint
@@ -236,6 +236,9 @@ compose-config:
 
 marketplace-gate:
 	@E2E_SKIP_DOCKER=1 $(MAKE) e2e
+
+marketplace-proxy-check:
+	AM_MARKETPLACE_PROXY_IMAGE="$(NGINX_IMAGE)" CGO_ENABLED=0 $(GO) test -json -count=1 -timeout 2m -run '^TestMarketplaceNginxRedirects$$' ./tools/marketplace-proxy | CGO_ENABLED=0 $(GO) run ./tools/witness-check -require TestMarketplaceNginxRedirects
 
 # Dedicated gates name their scenarios once; witness-check fails the gate when
 # any of them skipped, failed, or never ran (for example after a rename).

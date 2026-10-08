@@ -112,7 +112,7 @@ jobs:
           persist-credentials: false
 
       - name: Set up Go
-        if: needs.changes.outputs.go_build == 'true'
+        if: needs.changes.outputs.go_build == 'true' || needs.changes.outputs.container_config == 'true'
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
@@ -124,7 +124,7 @@ jobs:
 
       - name: Validate container packaging and Compose files
         if: needs.changes.outputs.container_config == 'true'
-        run: make container-check compose-config
+        run: make container-check compose-config marketplace-proxy-check
 
   helm:
     name: Helm chart

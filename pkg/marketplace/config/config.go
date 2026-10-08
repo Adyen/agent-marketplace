@@ -644,8 +644,8 @@ func validateBrowserBase(raw string) error {
 	if err != nil || parsed.RawQuery != "" || parsed.ForceQuery {
 		return errors.New("instance.browser_base must not contain a query")
 	}
-	if strings.Contains(strings.ToLower(parsed.EscapedPath()), "%2f") {
-		return errors.New("instance.browser_base must use a canonical path")
+	if strings.Contains(parsed.EscapedPath(), "%") {
+		return errors.New("instance.browser_base must use an unescaped canonical path")
 	}
 	decoded, err := url.PathUnescape(parsed.EscapedPath())
 	if err != nil {
