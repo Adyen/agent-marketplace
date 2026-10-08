@@ -7,6 +7,8 @@ export type SessionEvent =
   | components['schemas']['ProgressEvent']
   | components['schemas']['NotificationEvent']
 export type Action = components['schemas']['ActionRequest']['action']
+export type Configuration = components['schemas']['Configuration']
+export type ConfigureRequest = components['schemas']['ConfigurationActionRequest']
 export type ApiError = components['schemas']['Error']
 
 export class RequestError extends Error {
@@ -131,6 +133,8 @@ export interface Client {
   snapshot(): Promise<Snapshot>
   events(cursor?: EventCursor, signal?: AbortSignal): AsyncIterable<SessionEvent>
   action(action: Action): Promise<OperationRef>
+  configuration(): Promise<Configuration>
+  configure(request: ConfigureRequest): Promise<OperationRef>
 }
 
 export function createClient(baseURL: string, credential: string, fetchImpl: typeof fetch = fetch): Client {
@@ -195,6 +199,16 @@ export function createClient(baseURL: string, credential: string, fetchImpl: typ
 
     async action(action: Action) {
       const response = await post('/api/actions', { action } satisfies NonNullable<paths['/api/actions']['post']['requestBody']>['content']['application/json'])
+      return ((await response.json()) as components['schemas']['ActionAccepted']).operation
+    },
+
+    async configuration() {
+      const response = await post('/api/configuration')
+      return (await response.json()) as Configuration
+    },
+
+    async configure(request: ConfigureRequest) {
+      const response = await post('/api/configuration/actions', request satisfies NonNullable<paths['/api/configuration/actions']['post']['requestBody']>['content']['application/json'])
       return ((await response.json()) as components['schemas']['ActionAccepted']).operation
     },
   }

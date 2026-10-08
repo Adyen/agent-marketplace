@@ -1,14 +1,23 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
 import { createClient } from './api/client'
 import { launchRequestEvent, resolveBootstrap } from './bootstrap'
 import { eligible, GROUP_ORDER, WorkspaceController, groupKey, groupLabel, type Row } from './controller'
+import HarnessSettings from './HarnessSettings.vue'
 
 const props = defineProps<{ controller?: WorkspaceController }>()
 
-const state = ref<WorkspaceController | null>(props.controller ?? null)
+const state = shallowRef<WorkspaceController | null>(props.controller ?? null)
 const selectedId = ref<string | null>(null)
 const error = ref<string | null>(null)
+const settingsOpen = ref(false)
+const settingsButton = ref<HTMLButtonElement | null>(null)
+
+watch(settingsOpen, (isOpen, wasOpen) => {
+  if (!isOpen && wasOpen) {
+    void nextTick(() => settingsButton.value?.focus())
+  }
+})
 
 function onFocus() {
   void state.value?.refresh()
@@ -95,6 +104,12 @@ async function run(action: 'sync' | 'update') {
         <button type="button" aria-label="Refresh" :disabled="busy" @click="refresh">Refresh</button>
         <button type="button" aria-label="Sync" :disabled="!ready" @click="run('sync')">Sync</button>
         <button type="button" aria-label="Update" :disabled="!ready" @click="run('update')">Update</button>
+        <button
+          ref="settingsButton"
+          type="button"
+          aria-label="Settings"
+          @click="settingsOpen = true"
+        >Settings</button>
       </div>
     </header>
 
@@ -169,6 +184,8 @@ async function run(action: 'sync' | 'update') {
         <p v-else>None</p>
       </aside>
     </div>
+
+    <HarnessSettings v-if="state" v-model:open="settingsOpen" :controller="state" />
 
     <ul class="workspace__notifications" aria-live="polite" aria-label="Notifications">
       <li v-for="n in view?.notifications" :key="n.id" :class="`notification--${n.severity}`">

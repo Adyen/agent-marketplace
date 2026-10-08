@@ -4,9 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
+	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/session"
 )
 
@@ -69,6 +71,16 @@ func TestLocalAPIUserHarness(t *testing.T) {
 		t.Skip("user-scope harness; enabled only by the Playwright E2E driver")
 	}
 	home, _ := newUserAPIFixture(t, true)
+	if os.Getenv("AM_LOCALAPI_USER_FIXTURE") == "harnesses" {
+		userConfig := filepath.Join(home, ".agents", "config.yaml")
+		source := filepath.Join(home, "fixture-source")
+		writeFile(t, filepath.Join(source, "solo", "SKILL.md"), fixtureSkillBody)
+		writeFile(t, userConfig,
+			"apiVersion: agent-marketplace/v4\nharnesses: [devin, e2e-future-harness]\nsources:\n  local: {directory: "+source+"}\nresources:\n  local: {all: true}\n")
+		orgPath := filepath.Join(t.TempDir(), "org.yaml")
+		writeFile(t, orgPath, "apiVersion: agent-marketplace/v4\nharnesses: [claude]\n")
+		config.SetTestOrganizationConfigPath(t, orgPath)
+	}
 	api, err := NewUser(context.Background(), home, session.RuntimeLifecycle(), nil)
 	if err != nil {
 		t.Fatal(err)

@@ -165,3 +165,60 @@ body {
   margin: 0;
   padding: 0.375rem 1rem;
 }
+
+.settings {
+  padding: 0.75rem 1rem;
+}
+
+.settings__error {
+  color: var(--am-color-status-danger);
+  margin: 0 0 0.5rem;
+}
+
+.settings__heading {
+  font-size: var(--text-sm, 0.9375rem);
+  margin: 0 0 0.5rem;
+}
+
+.settings__group {
+  border: none;
+  margin: 0 0 0.75rem;
+  padding: 0;
+}
+
+.settings__group legend,
+.settings__group h3 {
+  color: var(--am-color-text-secondary);
+  font-size: var(--text-xs, 0.8125rem);
+  letter-spacing: 0.04em;
+  margin: 0 0 0.25rem;
+  padding: 0;
+  text-transform: uppercase;
+}
+
+.settings__group ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.settings__option {
+  align-items: center;
+  display: flex;
+  gap: 0.5rem;
+  padding: 0.125rem 0;
+}
+
+.settings__badge {
+  border: 1px solid var(--am-color-border-strong);
+  border-radius: 3px;
+  color: var(--am-color-text-secondary);
+  font-size: var(--text-xs, 0.8125rem);
+  padding: 0 0.25rem;
+}
+
+.settings__actions {
+  display: flex;
+  gap: 0.5rem;
+  justify-content: flex-end;
+}
