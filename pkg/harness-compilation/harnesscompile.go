@@ -966,16 +966,13 @@ func Materialize(r *Result, outDir string, opts ...WriteOption) (report *WriteRe
 	// and reported instead of being silently deleted.
 	if prune {
 		var pruneConflicts []string
-		removed := make([]string, 0, len(report.StaleCandidates))
 		for _, candidate := range report.StaleCandidates {
 			if rootErr := revalidateMaterializeRoot(outDir, rootSnapshot); rootErr != nil {
-				report.Removed = removed
 				return report, errors.Join(fsboundary.ErrGenerationConflict, rootErr)
 			}
 			stalePath := filepath.Join(outDir, filepath.FromSlash(candidate.Path))
 			if err := rejectSymlinkedParentComponents(outDir, stalePath); err != nil {
 				report.PruneConflicts = append(report.PruneConflicts, candidate.Path)
-				report.Removed = removed
 				return report, fmt.Errorf("harnesscompile.Materialize: stale file %q: %w: %v", candidate.Path, ErrStalePruneConflict, err)
 			}
 			removed, removeErr := removeStaleFileCandidate(stalePath, candidate, nil)
@@ -993,9 +990,7 @@ func Materialize(r *Result, outDir string, opts ...WriteOption) (report *WriteRe
 				}
 				return report, fmt.Errorf("harnesscompile.Materialize: remove stale file %q: %w", candidate.Path, err)
 			}
-			removed = append(removed, candidate.Path)
 			if cleanupErr := cleanEmptyDirs(root, native, outDir, filepath.Dir(filepath.FromSlash(candidate.Path)), candidate.parents); cleanupErr != nil {
-				report.Removed = removed
 				return report, cleanupErr
 			}
 		}
