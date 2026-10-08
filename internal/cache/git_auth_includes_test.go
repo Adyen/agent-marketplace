@@ -171,6 +171,43 @@ func TestGitAuthIncludeOrderAndPaths(t *testing.T) {
 	}
 }
 
+// spec: git-authentication/include-paths-resolve-as-git-resolves-them
+func TestGitAuthIncludePathsResolveLikeGit(t *testing.T) {
+	isolatedGitAuth(t)
+	home := os.Getenv("HOME")
+	writeGitAuthConfig(t, filepath.Join(home, "real", "etc", "gitconfig"), fmt.Sprintf("[include]\n\tpath = ../share/relative\n\tpath = ~/etc/../share/home\n\tpath = %%(prefix)/%s\n", filepath.Join(home, "prefixed")))
+	for _, name := range []string{"relative", "home"} {
+		writeGitAuthConfig(t, filepath.Join(home, "real", "share", name), "[credential]\n\thelper = physical-"+name+"\n")
+		writeGitAuthConfig(t, filepath.Join(home, "share", name), "[credential]\n\thelper = lexical-"+name+"\n")
+	}
+	writeGitAuthConfig(t, filepath.Join(home, "prefixed"), "[credential]\n\thelper = prefixed\n")
+	// Git joins include paths without lexical cleaning, so ".." leaves the
+	// symlinked directory through its physical parent.
+	if err := os.Symlink(filepath.Join(home, "real", "etc"), filepath.Join(home, "etc")); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(home, "etc", "gitconfig"))
+	env, _, err := gitAuthEnvironment(context.Background(), "", gitEnv(), "https://example.invalid/fixture")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for _, entry := range env {
+		if value, ok := strings.CutPrefix(entry, "GIT_CONFIG_VALUE_"); ok {
+			_, value, _ = strings.Cut(value, "=")
+			got = append(got, value)
+		}
+	}
+	native, err := exec.Command("git", "config", "--global", "--includes", "--get-all", "credential.helper").Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"physical-relative", "physical-home", "prefixed"}
+	if !reflect.DeepEqual(strings.Fields(string(native)), want) || !reflect.DeepEqual(got, want) {
+		t.Fatalf("helpers = %q, Git = %q, want %q", got, strings.Fields(string(native)), want)
+	}
+}
+
 // spec: git-authentication/unsafe-include-chains-fail-before-transport
 // spec: git-authentication/conditional-includes-remain-explicitly-refused
 func TestGitAuthUnsafeIncludeChains(t *testing.T) {

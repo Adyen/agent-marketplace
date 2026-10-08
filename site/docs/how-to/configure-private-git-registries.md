@@ -68,7 +68,7 @@ resources:
 
 `agent-marketplace` copies credential settings only from regular, singly linked Git configuration files that you or `root` own and that group and other users cannot write to. Symlinks to such files are supported.
 
-Ordinary `[include]` sections work, including nested includes. Every included file must meet the same trust rules. Absolute include paths work; `~/` resolves against your home directory, and relative paths resolve beside the file declaring the include. For a symlinked config, that means beside the symlink, as in Git. Missing optional files and `/dev/null` includes contribute no settings.
+Ordinary `[include]` sections work, including nested includes. Every included file must meet the same trust rules. Absolute include paths work; `~/` resolves against your home directory, `%(prefix)/` resolves against Git's installation prefix, and relative paths resolve beside the file declaring the include. For a symlinked config, that means beside the symlink, as in Git. Missing optional files and `/dev/null` includes contribute no settings.
 
 Includes expand in declaration order, preserving credential-helper resets and URL-specific settings. The reader allows ten include levels, at most 128 expanded file visits, 4 MiB per file, and 16 MiB of expanded content. Cycles and malformed files are rejected before the fetch runs. Only credential and TLS settings are copied; other settings in included files are not applied.
 

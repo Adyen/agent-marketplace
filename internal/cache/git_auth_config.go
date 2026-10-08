@@ -72,6 +72,25 @@ func gitSystemAuthConfigPath(ctx context.Context, env []string) (string, error) 
 	return path, nil
 }
 
+// gitPrefixIncludePath lets Git expand its relocatable runtime prefix, which
+// only the installed Git knows. The value travels through the environment so
+// it needs no config quoting and is never itself treated as an include.
+func gitPrefixIncludePath(ctx context.Context, env []string, value string) (string, error) {
+	cmd := exec.CommandContext(ctx, "git", "config", "--null", "--type=path", "--get", "agent-marketplace.include")
+	cmd.Env = append(append([]string(nil), env...), "GIT_DIR=/dev/null", "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL=/dev/null",
+		"GIT_CONFIG_COUNT=1", "GIT_CONFIG_KEY_0=agent-marketplace.include", "GIT_CONFIG_VALUE_0="+value)
+	output := &gitAuthOutput{}
+	cmd.Stdout = output
+	if err := cmd.Run(); err != nil {
+		return "", ErrGitAuthConfigUntrusted
+	}
+	path, ok := strings.CutSuffix(output.String(), "\x00")
+	if !ok || path == "" || strings.Contains(path, "\x00") {
+		return "", ErrGitAuthConfigUntrusted
+	}
+	return path, nil
+}
+
 // gitAuthOutput bounds native parser output as well as file input. Never
 // retain stderr: Git's parser diagnostics may include configuration values.
 type gitAuthOutput struct {
@@ -159,16 +178,25 @@ func (r *gitAuthConfigReader) read(path string, depth int) error {
 				return ErrGitAuthConfigUntrusted
 			}
 			include := value
-			if strings.HasPrefix(include, "~/") {
+			switch {
+			case strings.HasPrefix(include, "%(prefix)/"):
+				var err error
+				if include, err = gitPrefixIncludePath(r.ctx, r.env, include); err != nil {
+					return err
+				}
+			case strings.HasPrefix(include, "~/"):
 				home, err := os.UserHomeDir()
 				if err != nil || !filepath.IsAbs(home) {
 					return ErrGitAuthConfigUntrusted
 				}
-				include = filepath.Join(home, include[2:])
-			} else if strings.HasPrefix(include, "~") {
+				include = home + include[1:]
+			case strings.HasPrefix(include, "~"):
 				return ErrGitAuthConfigUntrusted
-			} else if !filepath.IsAbs(include) {
-				include = filepath.Join(filepath.Dir(path), include)
+			}
+			// Join without lexical cleaning, as Git does, so ".." after a
+			// symlinked directory resolves through its physical parent.
+			if !filepath.IsAbs(include) {
+				include = path[:strings.LastIndexByte(path, '/')+1] + include
 			}
 			if err := r.read(include, depth+1); err != nil {
 				return err
