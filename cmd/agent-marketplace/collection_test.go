@@ -18,6 +18,7 @@ func writeCollection(t *testing.T, repoDir, dirName, content string) {
 // TestCollectionInstallAndSync verifies the Phase 5 acceptance criterion:
 // install a local collection, opt out of one member via exclude, and confirm
 // the skills directory reflects the right state.
+// spec: resource-installation/singleton-and-no-name-install-behavior-is-retained
 func TestCollectionInstallAndSync(t *testing.T) {
 	if isolateCommandTest(t) {
 		return

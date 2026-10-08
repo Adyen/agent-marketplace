@@ -150,18 +150,6 @@ func withContextCacheMutationLock[T any](ctx context.Context, fn func() (T, erro
 	return fn()
 }
 
-// WithCacheReadLock keeps a cache-backed discovery operation alive while
-// garbage collection is excluded across processes.
-func WithCacheReadLock[T any](fn func() (T, error)) (T, error) {
-	release, err := acquireCacheFileLock(lockfileShared)
-	if err != nil {
-		var zero T
-		return zero, err
-	}
-	defer release()
-	return fn()
-}
-
 func WithRegistryReadLockWithContext[T any](ctx context.Context, urls []string, fn func() (T, error)) (T, error) {
 	return withRegistryLocks(ctx, urls, lockfileShared, fn)
 }

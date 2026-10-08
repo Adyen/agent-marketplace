@@ -858,6 +858,8 @@ func newExactGitRepository(t testing.TB, algorithm string) string {
 	bare := filepath.Join(root, "remote.git")
 	work := filepath.Join(root, "work")
 	gitTest(t, "", "init", "--bare", "--object-format="+algorithm, bare)
+	gitTest(t, "", "-C", bare, "config", "receive.autogc", "false")
+	gitTest(t, "", "-C", bare, "config", "maintenance.auto", "false")
 	gitTest(t, "", "init", "--object-format="+algorithm, work)
 	gitTest(t, work, "config", "user.email", "test@example.invalid")
 	gitTest(t, work, "config", "user.name", "Test")
