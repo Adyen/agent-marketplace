@@ -221,6 +221,44 @@ describe('createClient', () => {
     expect(calls).toEqual(['/api/snapshot'])
   })
 
+  it('reads configuration metadata with no body', async () => {
+    const calls: { url: string; body: string | null }[] = []
+    const metadata = {
+      userTargets: ['devin', 'future-harness'],
+      organizationTargets: ['claude'],
+      supportedTargets: ['claude', 'devin'],
+      rootPresent: true,
+      editable: true,
+      managedOutsideGUI: ['other settings'],
+    }
+    const fetcher: typeof fetch = async (input, init) => {
+      calls.push({ url: String(input), body: init?.body == null ? null : String(init.body) })
+      return new Response(JSON.stringify(metadata), { status: 200 })
+    }
+    const client = createClient('http://127.0.0.1:9999', 'secret-token', fetcher)
+    const result = await client.configuration()
+    expect(result.userTargets).toEqual(['devin', 'future-harness'])
+    expect(result.supportedTargets).toEqual(['claude', 'devin'])
+    expect(calls).toEqual([{ url: 'http://127.0.0.1:9999/api/configuration', body: null }])
+  })
+
+  it('posts the typed save-targets action and returns the operation ref', async () => {
+    const calls: { url: string; body: string | null }[] = []
+    const fetcher: typeof fetch = async (input, init) => {
+      calls.push({ url: String(input), body: init?.body == null ? null : String(init.body) })
+      return new Response(JSON.stringify({ operation: { id: 4, kind: 'targets' } }), { status: 202 })
+    }
+    const client = createClient('http://127.0.0.1:9999', 'secret-token', fetcher)
+    const operation = await client.configure({ action: 'save-targets', targets: ['devin', 'future-harness'] })
+    expect(operation).toEqual({ id: 4, kind: 'targets' })
+    expect(calls).toEqual([
+      {
+        url: 'http://127.0.0.1:9999/api/configuration/actions',
+        body: '{"action":"save-targets","targets":["devin","future-harness"]}',
+      },
+    ])
+  })
+
   it('raises RequestError with the server code on rejection', async () => {
     const fetcher: typeof fetch = async () =>
       new Response(JSON.stringify({ code: 'localapi.busy', message: 'busy' }), { status: 409 })

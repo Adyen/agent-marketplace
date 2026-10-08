@@ -14,7 +14,6 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"path/filepath"
 	"sync"
 	"time"
 
@@ -32,6 +31,7 @@ const (
 	codeForbidden      = "localapi.forbidden"
 	codeInvalidRequest = "localapi.invalid_request"
 	codeNotReady       = "localapi.not_ready"
+	codeNotSupported   = "localapi.not_supported"
 	codeBusy           = "localapi.busy"
 	codeClosed         = "localapi.closed"
 )
@@ -304,6 +304,10 @@ func (a *API) dispatch(w http.ResponseWriter, r *http.Request) {
 		a.handleEvents(w, r)
 	case "/api/actions":
 		a.handleAction(w, r)
+	case "/api/configuration":
+		a.handleConfiguration(w, r)
+	case "/api/configuration/actions":
+		a.handleConfigurationAction(w, r)
 	default:
 		writeError(w, http.StatusNotFound, codeInvalidRequest)
 	}
@@ -317,6 +321,7 @@ func writeError(w http.ResponseWriter, status int, code string) {
 		codeForbidden:      "origin rejected",
 		codeInvalidRequest: "invalid request",
 		codeNotReady:       "session is not ready for mutation",
+		codeNotSupported:   "operation not supported by this session mode",
 		codeBusy:           "another operation is in progress",
 		codeClosed:         "api is closed",
 	}[code]
@@ -338,7 +343,7 @@ func (a *API) readSnapshot(ctx context.Context, mode session.CatalogLoadMode) se
 }
 
 func (a *API) userRootPresent() bool {
-	info, err := os.Stat(filepath.Join(a.homeDir, ".agents", "config.yaml"))
+	info, err := os.Lstat(a.userConfigPath())
 	return err == nil && !info.IsDir()
 }
 
@@ -597,38 +602,47 @@ func (a *API) handleEvents(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func parseAction(r *http.Request) (session.OperationKind, bool) {
+func decodeStrictObject(r *http.Request, field func(decoder *json.Decoder, key string) bool) bool {
 	r.Body = http.MaxBytesReader(nil, r.Body, 1<<20)
 	decoder := json.NewDecoder(r.Body)
 	token, err := decoder.Token()
 	if err != nil {
-		return "", false
+		return false
 	}
 	if delim, ok := token.(json.Delim); !ok || delim != '{' {
-		return "", false
+		return false
 	}
-	var action string
 	for decoder.More() {
 		keyToken, err := decoder.Token()
 		if err != nil {
-			return "", false
+			return false
 		}
 		key, ok := keyToken.(string)
-		if !ok || key != "action" || action != "" {
-			return "", false
-		}
-		if err := decoder.Decode(&action); err != nil || action == "" {
-			return "", false
+		if !ok || !field(decoder, key) {
+			return false
 		}
 	}
 	token, err = decoder.Token()
 	if err != nil {
-		return "", false
+		return false
 	}
 	if delim, ok := token.(json.Delim); !ok || delim != '}' {
-		return "", false
+		return false
 	}
 	if _, err := decoder.Token(); !errors.Is(err, io.EOF) {
+		return false
+	}
+	return true
+}
+
+func parseAction(r *http.Request) (session.OperationKind, bool) {
+	var action string
+	if !decodeStrictObject(r, func(decoder *json.Decoder, key string) bool {
+		if key != "action" || action != "" {
+			return false
+		}
+		return decoder.Decode(&action) == nil && action != ""
+	}) {
 		return "", false
 	}
 	switch action {
@@ -687,10 +701,24 @@ func (a *API) handleAction(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusAccepted)
 	_ = json.NewEncoder(w).Encode(map[string]any{"operation": operationRef{ID: uint64(operation), Kind: string(kind)}})
 
-	go a.runOperation(operation, kind)
+	go a.runOperation(operation, kind, func(ctx context.Context, generation session.RequestGeneration) (warnings []error, final session.Snapshot, failed error) {
+		switch kind {
+		case session.OperationSync:
+			warnings, failed = session.RunDependencySync(ctx, a.workspace, a.lifecycle.Sync)
+			pipeline.ObservePhase(ctx, pipeline.PhaseReload)
+			final = a.readSnapshot(ctx, session.CatalogLoadCached)
+		case session.OperationUpdate:
+			result := session.RunDependencyUpdateWithLoader(ctx, a.workspace, a.homeDir, generation, a.lifecycle.Update, func(ctx context.Context, ws pipeline.Workspace, homeDir string, mode session.CatalogLoadMode) session.Snapshot {
+				return a.readSnapshot(ctx, mode)
+			})
+			warnings, failed = result.Warnings, result.Err
+			final = result.Snapshot
+		}
+		return warnings, final, failed
+	})
 }
 
-func (a *API) runOperation(operation session.OperationID, kind session.OperationKind) {
+func (a *API) runOperation(operation session.OperationID, kind session.OperationKind, run func(ctx context.Context, generation session.RequestGeneration) (warnings []error, final session.Snapshot, failed error)) {
 	defer a.wg.Done()
 	op := &operationRef{ID: uint64(operation), Kind: string(kind)}
 
@@ -718,28 +746,17 @@ func (a *API) runOperation(operation session.OperationID, kind session.Operation
 	}()
 
 	ctx := pipeline.WithPhaseObserver(a.ctx, source.Observer())
-	var warnings []error
-	var failed error
-	var final session.Snapshot
-	switch kind {
-	case session.OperationSync:
-		warnings, failed = session.RunDependencySync(ctx, a.workspace, a.lifecycle.Sync)
-		pipeline.ObservePhase(ctx, pipeline.PhaseReload)
-		final = a.readSnapshot(ctx, session.CatalogLoadCached)
-	case session.OperationUpdate:
-		result := session.RunDependencyUpdateWithLoader(ctx, a.workspace, a.homeDir, generation, a.lifecycle.Update, func(ctx context.Context, ws pipeline.Workspace, homeDir string, mode session.CatalogLoadMode) session.Snapshot {
-			return a.readSnapshot(ctx, mode)
-		})
-		warnings, failed = result.Warnings, result.Err
-		final = result.Snapshot
-	}
+	warnings, final, failed := run(ctx, generation)
 	source.Close()
 	<-done
 	final.Generation = generation
 
 	category := session.DiagnosticSync
-	if kind == session.OperationUpdate {
+	switch kind {
+	case session.OperationUpdate:
 		category = session.DiagnosticUpdate
+	case session.OperationTargets:
+		category = session.DiagnosticMutation
 	}
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -758,7 +775,7 @@ func (a *API) runOperation(operation session.OperationID, kind session.Operation
 	severity, message := severityFor(warnings), string(kind)+" complete"
 	if failed != nil {
 		severity, message = "error", string(kind)+" failed"
-	} else if dto.Drift == "failed" || hasErrorDiagnostic(dto.Diagnostics) {
+	} else if kind != session.OperationTargets && (dto.Drift == "failed" || hasErrorDiagnostic(dto.Diagnostics)) {
 		severity, message = "error", string(kind)+" failed"
 	}
 	a.emitLocked("notification", generation, op, notificationPayload{Severity: severity, Message: message})

@@ -63,7 +63,6 @@ test('built GUI drives the real user-scope core', async ({ page }) => {
       [bootstrap.credential] as const,
     )
     await page.goto(bootstrap.url, { waitUntil: 'domcontentloaded' })
-
     await expect(page.getByText('skill/solo')).toBeVisible({ timeout: 60_000 })
     await expect(page.getByRole('button', { name: 'Refresh' })).toBeEnabled()
     await expect(page.getByRole('button', { name: 'Sync' })).toBeEnabled()
@@ -86,6 +85,83 @@ test('built GUI drives the real user-scope core', async ({ page }) => {
     await page.getByRole('button', { name: 'Update' }).focus()
     await page.keyboard.press('Enter')
     await expect(page.getByText('update complete')).toBeVisible({ timeout: 60_000 })
+  } finally {
+    await harness.stop()
+  }
+})
+
+// spec: gui-configuration/save-user-harness-targets-without-losing-unknown-identifiers
+// spec: gui-configuration/organization-harness-targets-are-read-only
+// spec: gui-configuration/harness-target-edit-matches-the-cli-mutation
+// spec: session-interactions/toggling-harness-targets-does-not-write
+// spec: session-interactions/save-selected-harnesses
+// spec: session-interactions/empty-selection
+test('built GUI saves Harness targets through the real user-scope core', async ({ page }) => {
+  if (!existsSync(join(dist, 'index.html'))) {
+    throw new Error('built GUI assets missing: run `make gui-build` or `pnpm run build` in gui/ first')
+  }
+
+  const harness = await startHarness('user', { AM_LOCALAPI_USER_FIXTURE: 'harnesses' })
+  const { bootstrap } = harness
+  const home = bootstrap.home!
+  const userConfigPath = join(home, '.agents', 'config.yaml')
+  const fixtureConfig = (targets: string) =>
+    `apiVersion: agent-marketplace/v4\nharnesses: ${targets}\nsources:\n  local: {directory: ${join(home, 'fixture-source')}}\nresources:\n  local: {all: true}\n`
+
+  try {
+    await serveBuiltApp(page, bootstrap.url)
+    await page.addInitScript(
+      ([credential]) => {
+        ;(window as unknown as Record<string, unknown>).__AM_GUI_BOOTSTRAP__ = { credential }
+      },
+      [bootstrap.credential] as const,
+    )
+    await page.goto(bootstrap.url, { waitUntil: 'domcontentloaded' })
+    await expect(page.getByText('skill/solo')).toBeVisible({ timeout: 60_000 })
+
+    const before = await readFile(userConfigPath, 'utf8')
+    expect(before).toBe(fixtureConfig('[devin, e2e-future-harness]'))
+
+    const settingsButton = page.getByRole('button', { name: 'Settings' })
+    await settingsButton.focus()
+    await page.keyboard.press('Enter')
+    const dialog = page.getByRole('dialog', { name: 'Harness targets' })
+    await expect(dialog).toBeVisible()
+
+    const devin = page.getByRole('checkbox', { name: 'Target devin' })
+    const future = page.getByRole('checkbox', { name: 'Target e2e-future-harness' })
+    await expect(future).toBeChecked()
+    await expect(dialog.getByText('Unsupported by this version')).toBeVisible()
+    await expect(dialog.getByLabel('Organization targets')).toContainText('claude')
+    await expect(dialog.getByLabel('Organization targets').getByRole('checkbox')).toHaveCount(0)
+    await expect(dialog).toContainText('managed outside the GUI')
+
+    await devin.focus()
+    await page.keyboard.press('Space')
+    await expect(devin).not.toBeChecked()
+    await page.keyboard.press('Escape')
+    await expect(dialog).not.toBeVisible()
+    await expect(settingsButton).toBeFocused()
+    expect(await readFile(userConfigPath, 'utf8')).toBe(before)
+
+    await settingsButton.press('Enter')
+    await expect(dialog).toBeVisible()
+    await expect(devin).toBeChecked()
+    await devin.press('Space')
+    await expect(devin).not.toBeChecked()
+    await expect(future).toBeChecked()
+
+    await page.getByRole('button', { name: 'Save targets' }).press('Enter')
+    await expect(page.getByText('targets complete')).toBeVisible({ timeout: 60_000 })
+    await expect(dialog).not.toBeVisible()
+    await expect(settingsButton).toBeFocused()
+
+    const saved = await readFile(userConfigPath, 'utf8')
+    expect(saved).toBe(fixtureConfig('[e2e-future-harness]'))
+
+    await expect(page.getByRole('button', { name: 'Sync' })).toBeDisabled()
+    expect(await readFile(userConfigPath, 'utf8')).toBe(saved)
+    expect(existsSync(join(home, '.e2e-future-harness'))).toBe(false)
   } finally {
     await harness.stop()
   }

@@ -4,6 +4,7 @@ import {
   RequestError,
   type Action,
   type Client,
+  type Configuration,
   type OperationRef,
   type SessionEvent,
   type Snapshot,
@@ -26,6 +27,7 @@ export interface WorkspaceState {
   notifications: { id: number; severity: string; message: string }[]
   requesting: boolean
   error: string | null
+  configuration: Configuration | null
 }
 
 export function groupKey(row: Row): string {
@@ -88,11 +90,13 @@ export class WorkspaceController {
     notifications: [],
     requesting: false,
     error: null,
+    configuration: null,
   })
 
   private readonly cursor = new EventCursor()
   private readonly timers = new Set<ReturnType<typeof setTimeout>>()
   private lastSettledOperationId = 0
+  private configurationSeq = 0
   private accepted = false
   private nextNotificationId = 1
   private abort: AbortController | null = null
@@ -136,28 +140,51 @@ export class WorkspaceController {
     }
   }
 
-  async runAction(action: Action): Promise<void> {
+  async loadConfiguration(): Promise<void> {
+    const seq = ++this.configurationSeq
+    try {
+      const configuration = await this.client.configuration()
+      if (seq !== this.configurationSeq) {
+        return
+      }
+      this.state.configuration = configuration
+    } catch {
+      if (seq === this.configurationSeq && this.state.configuration == null) {
+        this.state.error ??= 'Settings could not be loaded'
+      }
+    }
+  }
+
+  async runAction(action: Action): Promise<boolean> {
+    return this.requestOperation(() => this.client.action(action))
+  }
+
+  async saveTargets(targets: string[]): Promise<boolean> {
+    return this.requestOperation(() => this.client.configure({ action: 'save-targets', targets }))
+  }
+
+  private async requestOperation(start: () => Promise<OperationRef>): Promise<boolean> {
     if (this.state.operation != null || this.state.requesting) {
-      return
+      return false
     }
     this.state.requesting = true
     let operation: OperationRef
     try {
-      operation = await this.client.action(action)
+      operation = await start()
     } catch (error) {
       this.state.requesting = false
       if (error instanceof RequestError && (error.status === 409 || error.code === 'localapi.busy')) {
-        return
+        return false
       }
       this.state.error = 'The action could not be started'
-      return
+      return false
     }
     this.state.requesting = false
-    if (operation.id <= this.lastSettledOperationId || this.state.operation != null) {
-      return
+    if (operation.id > this.lastSettledOperationId && this.state.operation == null) {
+      this.state.operation = operation
+      this.state.phase = null
     }
-    this.state.operation = operation
-    this.state.phase = null
+    return true
   }
 
   private apply(event: SessionEvent): void {
@@ -187,10 +214,17 @@ export class WorkspaceController {
       this.state.operation = operation
     } else if (snapshot.stage === 'final') {
       if (this.state.operation != null) {
-        this.lastSettledOperationId = this.state.operation.id
+        const settled = this.state.operation
+        this.lastSettledOperationId = settled.id
+        this.state.operation = null
+        this.state.phase = null
+        if (settled.kind === 'targets') {
+          void this.loadConfiguration()
+        }
+      } else {
+        this.state.operation = null
+        this.state.phase = null
       }
-      this.state.operation = null
-      this.state.phase = null
     }
     this.state.stage = snapshot.stage
     this.state.drift = snapshot.drift

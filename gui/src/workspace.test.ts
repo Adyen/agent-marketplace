@@ -1,17 +1,12 @@
 // @vitest-environment happy-dom
-import { afterEach, describe, expect, it, vi } from 'vitest'
-import { flushPromises, mount } from '@vue/test-utils'
-import { nextTick } from 'vue'
-import WorkspaceView from './WorkspaceView.vue'
+import { describe, expect, it, vi } from 'vitest'
 import {
-  EventCursor,
   RequestError,
-  type Client,
   type OperationRef,
-  type SessionEvent,
   type Snapshot,
 } from './api/client'
-import { WorkspaceController, type Row } from './controller'
+import { type Row } from './controller'
+import { event, fakeClient, mountWorkspace, snapshot, tick } from './test-support'
 
 type RowOverrides = Partial<Row>
 
@@ -31,85 +26,6 @@ function row(name: string, overrides: RowOverrides = {}): Row {
     status: 'enabled',
     ...overrides,
   }
-}
-
-function snapshot(rows: Row[], overrides: Partial<Snapshot> = {}): Snapshot {
-  return {
-    stage: 'final',
-    drift: 'ready',
-    rows,
-    diagnostics: [],
-    harnesses: ['devin'],
-    operation: null,
-    ...overrides,
-  }
-}
-
-function event(overrides: Partial<SessionEvent>): SessionEvent {
-  return { type: 'snapshot', sequence: 0, generation: 1, operation: null, payload: snapshot([]), ...overrides } as SessionEvent
-}
-
-function fakeClient() {
-  const queue: SessionEvent[] = []
-  let pending: ((value: IteratorResult<SessionEvent>) => void) | null = null
-  const client: Client = {
-    snapshot: vi.fn(async () => snapshot([])),
-    events: (cursor: EventCursor = new EventCursor()) => ({
-      async *[Symbol.asyncIterator]() {
-        for (;;) {
-          let next: IteratorResult<SessionEvent>
-          if (queue.length > 0) {
-            next = { done: false, value: queue.shift()! }
-          } else {
-            next = await new Promise<IteratorResult<SessionEvent>>((resolve) => {
-              pending = resolve
-            })
-          }
-          if (next.done) {
-            return
-          }
-          if (cursor.accept(next.value)) {
-            yield next.value
-          }
-        }
-      },
-    }),
-    action: vi.fn(async () => ({ id: 7, kind: 'sync' }) as OperationRef),
-  }
-  const push = (e: SessionEvent) => {
-    if (pending) {
-      const resolve = pending
-      pending = null
-      resolve({ done: false, value: e })
-    } else {
-      queue.push(e)
-    }
-  }
-  return { client, push }
-}
-
-const cleanups: (() => void)[] = []
-afterEach(() => {
-  while (cleanups.length > 0) {
-    cleanups.pop()!()
-  }
-  vi.useRealTimers()
-})
-
-function mountWorkspace(client: Client, notifyTtl = 60_000) {
-  const controller = new WorkspaceController(client, notifyTtl)
-  const wrapper = mount(WorkspaceView, { attachTo: document.body, props: { controller } })
-  void controller.connect()
-  cleanups.push(() => {
-    controller.dispose()
-    wrapper.unmount()
-  })
-  return { controller, wrapper }
-}
-
-async function tick() {
-  await flushPromises()
-  await nextTick()
 }
 
 describe('WorkspaceView', () => {
@@ -293,7 +209,7 @@ describe('WorkspaceView', () => {
     expect(controller.state.phase).toBeNull()
   })
 
-  it('does not resurrect a settled operation from a late action response', async () => {
+  it('reports acceptance of a settled operation without resurrecting its state', async () => {
     const { client, push } = fakeClient()
     const { controller } = mountWorkspace(client)
     const operation: OperationRef = { id: 11, kind: 'sync' }
@@ -305,8 +221,9 @@ describe('WorkspaceView', () => {
     })
     push(event({ sequence: 1, payload: snapshot([row('a')]) }))
     await tick()
-    await controller.runAction('sync')
+    const accepted = await controller.runAction('sync')
     await tick()
+    expect(accepted).toBe(true)
     expect(controller.state.operation).toBeNull()
     expect(controller.state.phase).toBeNull()
   })

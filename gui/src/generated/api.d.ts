@@ -27,6 +27,60 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/configuration": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Read the structured Harness settings projection
+         * @description Returns the typed settings metadata the GUI Harness target form is
+         *     allowed to show: the declared raw user-personal and organization
+         *     target identifiers, the canonical supported target list, user-root
+         *     presence and editability, and the labels of values managed outside
+         *     the GUI. Available only in user-scope mode; other session modes are
+         *     rejected. The request carries no body and never exposes
+         *     credentials, raw YAML, or filesystem paths.
+         *
+         */
+        post: operations["readConfiguration"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/configuration/actions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Run a guarded configuration action (save user Harness targets)
+         * @description Configuration mutations hold the same guarded operation serializer
+         *     as every other session operation. The only supported action is
+         *     save-targets, which writes the user-personal Harness target set with
+         *     the shared configuration writer; unknown identifiers already present
+         *     in the root may be retained, newly introduced unsupported
+         *     identifiers are rejected before any write. Available only in
+         *     user-scope mode.
+         *
+         */
+        post: operations["runConfigurationAction"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/events": {
         parameters: {
             query?: never;
@@ -93,6 +147,26 @@ export interface components {
             /** @enum {string} */
             action: "sync" | "update";
         };
+        Configuration: {
+            /** @description Whether the user-personal root is present and readable without intent errors. */
+            editable: boolean;
+            /** @description Labels of configuration values managed outside the GUI. */
+            managedOutsideGUI: string[];
+            /** @description Declared organization target identifiers; always read-only. */
+            organizationTargets: string[];
+            /** @description Whether a user-personal root entry exists (any file type, including a broken or dangling one). */
+            rootPresent: boolean;
+            /** @description Canonical compiler target IDs this client supports. */
+            supportedTargets: string[];
+            /** @description Declared raw identifiers in the user-personal target set, including identifiers unsupported by this client. */
+            userTargets: string[];
+        };
+        ConfigurationActionRequest: {
+            /** @enum {string} */
+            action: "save-targets";
+            /** @description The complete replacement user-personal Harness target selection. */
+            targets: string[];
+        };
         Diagnostic: {
             category: string;
             /** @description Stable deduplication/identity key of the diagnostic. */
@@ -105,7 +179,7 @@ export interface components {
         DriftAssessment: "pending" | "ready" | "failed";
         Error: {
             /** @enum {string} */
-            code: "localapi.unauthorized" | "localapi.forbidden" | "localapi.invalid_request" | "localapi.not_ready" | "localapi.busy" | "localapi.closed";
+            code: "localapi.unauthorized" | "localapi.forbidden" | "localapi.invalid_request" | "localapi.not_ready" | "localapi.not_supported" | "localapi.busy" | "localapi.closed";
             /** @description Static, non-reflective failure description. */
             message: string;
         };
@@ -289,6 +363,85 @@ export interface operations {
                 };
             };
             /** @description Unknown action, malformed body, or session state not ready for mutation; code localapi.invalid_request or localapi.not_ready */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["OriginRejected"];
+            405: components["responses"]["MethodNotAllowed"];
+            /** @description Another guarded operation is active; code localapi.busy */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            503: components["responses"]["Closed"];
+        };
+    };
+    readConfiguration: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Settings metadata projection */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Configuration"];
+                };
+            };
+            /** @description Session mode does not support configuration access or the request carried a body; code localapi.not_supported or localapi.invalid_request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["OriginRejected"];
+            405: components["responses"]["MethodNotAllowed"];
+            503: components["responses"]["Closed"];
+        };
+    };
+    runConfigurationAction: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ConfigurationActionRequest"];
+            };
+        };
+        responses: {
+            /** @description Action accepted; the outcome arrives as events */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ActionAccepted"];
+                };
+            };
+            /** @description Unknown action, malformed or empty selection, newly introduced unsupported target, unsupported session mode, or uneditable root; code localapi.invalid_request, localapi.not_ready, or localapi.not_supported */
             400: {
                 headers: {
                     [name: string]: unknown;

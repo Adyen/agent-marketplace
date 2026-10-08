@@ -74,6 +74,10 @@ func TestReadSnapshotPropagatesMaterializationDryRunError(t *testing.T) {
 func TestReadSnapshotClassifiesMalformedResourceAsWarning(t *testing.T) {
 	repoRoot := t.TempDir()
 	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(homeDir, ".config"))
+	t.Setenv("XDG_STATE_HOME", filepath.Join(homeDir, ".local", "state"))
+	t.Setenv("CODEX_HOME", filepath.Join(homeDir, ".codex"))
 	registryRoot := t.TempDir()
 	globalCfg := &config.Config{
 		APIVersion: config.APIVersionV4,

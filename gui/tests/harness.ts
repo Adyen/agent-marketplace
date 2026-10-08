@@ -20,7 +20,7 @@ export interface Harness {
 
 export type HarnessMode = 'workspace' | 'user'
 
-export async function startHarness(mode: HarnessMode): Promise<Harness> {
+export async function startHarness(mode: HarnessMode, extraEnv: Record<string, string> = {}): Promise<Harness> {
   const child: ChildProcess = spawn(
     'go',
     [
@@ -36,6 +36,7 @@ export async function startHarness(mode: HarnessMode): Promise<Harness> {
         ...process.env,
         AM_LOCALAPI_E2E: mode === 'user' ? '' : '1',
         AM_LOCALAPI_USER_E2E: mode === 'user' ? '1' : '',
+        ...extraEnv,
         CGO_ENABLED: '0',
       },
       stdio: ['ignore', 'ignore', 'pipe', 'pipe'],
