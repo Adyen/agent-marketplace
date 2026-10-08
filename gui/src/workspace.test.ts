@@ -1,11 +1,19 @@
 // @vitest-environment happy-dom
 import { describe, expect, it, vi } from 'vitest'
 import {
+  EventCursor,
   RequestError,
+  type Client,
   type OperationRef,
+  type SessionEvent,
   type Snapshot,
 } from './api/client'
-import { type Row } from './controller'
+import {
+  EVENT_OUTAGE_MESSAGE,
+  EVENT_RETRY_DELAY_MS,
+  WorkspaceController,
+  type Row,
+} from './controller'
 import { event, fakeClient, mountWorkspace, snapshot, tick } from './test-support'
 
 type RowOverrides = Partial<Row>
@@ -376,5 +384,264 @@ describe('WorkspaceView', () => {
     expect(option.exists()).toBe(true)
     await option.trigger('keydown', { key: 'Enter' })
     expect(option.attributes('aria-selected')).toBe('true')
+  })
+})
+
+interface StreamChannel {
+  push(e: SessionEvent): void
+  end(): void
+  fail(err: unknown): void
+}
+
+function streamClient(): { client: Client; channels: StreamChannel[] } {
+  const { client } = fakeClient()
+  const channels: StreamChannel[] = []
+  client.events = (cursor: EventCursor = new EventCursor(), signal?: AbortSignal) => {
+    const results: IteratorResult<SessionEvent>[] = []
+    let pending: ((r: IteratorResult<SessionEvent>) => void) | null = null
+    let failure: unknown = null
+    const deliver = (r: IteratorResult<SessionEvent>) => {
+      if (pending != null) {
+        const resolve = pending
+        pending = null
+        resolve(r)
+      } else {
+        results.push(r)
+      }
+    }
+    channels.push({
+      push: (e) => deliver({ done: false, value: e }),
+      end: () => deliver({ done: true, value: undefined }),
+      fail: (err) => {
+        failure = err
+        deliver({ done: true, value: undefined })
+      },
+    })
+    signal?.addEventListener('abort', () => deliver({ done: true, value: undefined }), { once: true })
+    return {
+      async *[Symbol.asyncIterator]() {
+        for (;;) {
+          const next =
+            results.length > 0
+              ? results.shift()!
+              : await new Promise<IteratorResult<SessionEvent>>((resolve) => {
+                  pending = resolve
+                })
+          if (failure != null) {
+            throw failure
+          }
+          if (next.done) {
+            return
+          }
+          if (cursor.accept(next.value)) {
+            yield next.value
+          }
+        }
+      },
+    }
+  }
+  return { client, channels }
+}
+
+describe('Event stream reconnect', () => {
+  it('resubscribes after a clean end and clears the outage only on an accepted final', async () => {
+    vi.useFakeTimers()
+    const { client, channels } = streamClient()
+    const controller = new WorkspaceController(client)
+    const connect = controller.connect()
+
+    channels[0].push(event({ sequence: 1, payload: snapshot([row('on')]) }))
+    await tick()
+    expect(controller.state.rows).toHaveLength(1)
+    expect(controller.state.drift).toBe('ready')
+
+    channels[0].end()
+    await tick()
+    expect(controller.state.error).toBe(EVENT_OUTAGE_MESSAGE)
+    expect(controller.state.rows).toHaveLength(1)
+    expect(controller.state.drift).toBe('ready')
+    expect(channels).toHaveLength(1)
+
+    await vi.advanceTimersByTimeAsync(EVENT_RETRY_DELAY_MS)
+    await tick()
+    expect(channels).toHaveLength(2)
+    expect(controller.state.error).toBe(EVENT_OUTAGE_MESSAGE)
+
+    channels[1].push(event({ sequence: 1, payload: snapshot([], { drift: 'failed' }) }))
+    await tick()
+    expect(controller.state.error).toBe(EVENT_OUTAGE_MESSAGE)
+    expect(controller.state.rows).toHaveLength(1)
+    expect(controller.state.drift).toBe('ready')
+
+    channels[1].push(event({ sequence: 2, payload: snapshot([row('on'), row('extra')]) }))
+    await tick()
+    expect(controller.state.error).toBeNull()
+    expect(controller.state.rows).toHaveLength(2)
+    controller.dispose()
+    await connect
+  })
+
+  it('resubscribes after a stream error and holds the outage across failed attempts', async () => {
+    vi.useFakeTimers()
+    const { client, channels } = streamClient()
+    const controller = new WorkspaceController(client)
+    const connect = controller.connect()
+
+    channels[0].push(event({ sequence: 1 }))
+    await tick()
+    channels[0].fail(new Error('stream reset'))
+    await tick()
+    expect(controller.state.error).toBe(EVENT_OUTAGE_MESSAGE)
+
+    await vi.advanceTimersByTimeAsync(EVENT_RETRY_DELAY_MS)
+    await tick()
+    expect(channels).toHaveLength(2)
+    channels[1].fail(new Error('still down'))
+    await tick()
+    expect(controller.state.error).toBe(EVENT_OUTAGE_MESSAGE)
+
+    await vi.advanceTimersByTimeAsync(EVENT_RETRY_DELAY_MS)
+    await tick()
+    expect(channels).toHaveLength(3)
+    channels[2].push(event({ sequence: 2 }))
+    await tick()
+    expect(controller.state.error).toBeNull()
+    controller.dispose()
+    await connect
+  })
+
+  it('never clears an unrelated action error on recovery', async () => {
+    vi.useFakeTimers()
+    const { client, channels } = streamClient()
+    const controller = new WorkspaceController(client)
+    const connect = controller.connect()
+
+    channels[0].push(event({ sequence: 1 }))
+    await tick()
+    channels[0].end()
+    await tick()
+    expect(controller.state.error).toBe(EVENT_OUTAGE_MESSAGE)
+    controller.state.error = 'The action could not be started'
+
+    await vi.advanceTimersByTimeAsync(EVENT_RETRY_DELAY_MS)
+    await tick()
+    channels[1].push(event({ sequence: 2 }))
+    await tick()
+    expect(controller.state.error).toBe('The action could not be started')
+    controller.dispose()
+    await connect
+  })
+
+  it('stops resubscribing and cancels the pending retry after dispose', async () => {
+    vi.useFakeTimers()
+    const { client, channels } = streamClient()
+    const controller = new WorkspaceController(client)
+    const connect = controller.connect()
+
+    channels[0].push(event({ sequence: 1 }))
+    await tick()
+    channels[0].end()
+    await tick()
+    expect(controller.state.error).toBe(EVENT_OUTAGE_MESSAGE)
+
+    controller.dispose()
+    await vi.advanceTimersByTimeAsync(EVENT_RETRY_DELAY_MS * 4)
+    await tick()
+    expect(channels).toHaveLength(1)
+    await connect
+  })
+
+  it.each([400, 401, 403, 405])('does not retry a fatal %d stream rejection', async (status) => {
+    vi.useFakeTimers()
+    const { client, channels } = streamClient()
+    const controller = new WorkspaceController(client)
+    const connect = controller.connect()
+
+    const failure = new RequestError(status, 'localapi.unauthorized')
+    channels[0].fail(failure)
+    await expect(connect).rejects.toBe(failure)
+    await vi.advanceTimersByTimeAsync(EVENT_RETRY_DELAY_MS * 4)
+    expect(channels).toHaveLength(1)
+    expect(controller.state.error).not.toBe(EVENT_OUTAGE_MESSAGE)
+    controller.dispose()
+  })
+
+  it('settles a missed operation from the replayed marker and ignores its late acceptance', async () => {
+    vi.useFakeTimers()
+    const { client, channels } = streamClient()
+    const controller = new WorkspaceController(client)
+    const connect = controller.connect()
+
+    channels[0].push(event({ sequence: 1 }))
+    await tick()
+    channels[0].end()
+    await tick()
+    await vi.advanceTimersByTimeAsync(EVENT_RETRY_DELAY_MS)
+    await tick()
+
+    channels[1].push(
+      event({
+        sequence: 2,
+        generation: 2,
+        operation: null,
+        payload: snapshot([], { settledOperation: { id: 9, kind: 'mutation' } }),
+      }),
+    )
+    await tick()
+    expect(controller.state.operation).toBeNull()
+    expect(client.configuration).toHaveBeenCalled()
+
+    const configurationCalls = (client.configuration as ReturnType<typeof vi.fn>).mock.calls.length
+    channels[1].push(
+      event({
+        sequence: 3,
+        generation: 3,
+        operation: null,
+        payload: snapshot([], { settledOperation: { id: 9, kind: 'mutation' } }),
+      }),
+    )
+    await tick()
+    expect((client.configuration as ReturnType<typeof vi.fn>).mock.calls.length).toBe(
+      configurationCalls,
+    )
+
+    ;(client.configure as ReturnType<typeof vi.fn>).mockResolvedValue({
+      id: 9,
+      kind: 'mutation',
+    } as OperationRef)
+    const accepted = await controller.removeSource('user-dir-id')
+    expect(accepted).toBe(true)
+    await tick()
+    expect(controller.state.operation).toBeNull()
+    expect(controller.state.phase).toBeNull()
+    controller.dispose()
+    await connect
+  })
+
+  it('preserves an active operation newer than a replayed settlement', async () => {
+    const { client, channels } = streamClient()
+    const controller = new WorkspaceController(client)
+    const connect = controller.connect()
+
+    channels[0].push(event({ sequence: 1 }))
+    await tick()
+    channels[0].push(
+      event({ sequence: 2, generation: 2, operation: { id: 10, kind: 'mutation' } }),
+    )
+    await tick()
+    expect(controller.state.operation).toEqual({ id: 10, kind: 'mutation' })
+
+    channels[0].push(
+      event({
+        sequence: 3,
+        generation: 2,
+        operation: null,
+        payload: snapshot([], { settledOperation: { id: 9, kind: 'mutation' } }),
+      }),
+    )
+    await tick()
+    expect(controller.state.operation).toEqual({ id: 10, kind: 'mutation' })
+    controller.dispose()
+    await connect
   })
 })

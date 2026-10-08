@@ -3,14 +3,23 @@ package localapi
 import (
 	"bytes"
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
 
 	"github.com/Adyen/agent-marketplace/internal/config"
+	"github.com/Adyen/agent-marketplace/internal/dependencytxn"
+	"github.com/Adyen/agent-marketplace/internal/giturl"
+	"github.com/Adyen/agent-marketplace/internal/pipeline"
 	"github.com/Adyen/agent-marketplace/internal/redact"
 	"github.com/Adyen/agent-marketplace/internal/session"
 	"github.com/Adyen/agent-marketplace/internal/telemetry"
@@ -18,6 +27,7 @@ import (
 )
 
 type sourceDescriptionDTO struct {
+	ID            string `json:"id"`
 	Kind          string `json:"kind"`
 	Location      string `json:"location"`
 	Ref           string `json:"ref"`
@@ -25,10 +35,18 @@ type sourceDescriptionDTO struct {
 	SourceHarness string `json:"sourceHarness"`
 }
 
-func projectSources(descs []config.SourceDescription) []sourceDescriptionDTO {
+func (a *API) sourceID(scope string, desc config.SourceDescription) string {
+	mac := hmac.New(sha256.New, []byte(a.token))
+	data, _ := json.Marshal([6]string{scope, string(desc.Kind), desc.Location, desc.Ref, desc.Path, desc.SourceHarness})
+	_, _ = mac.Write(data)
+	return hex.EncodeToString(mac.Sum(nil))
+}
+
+func (a *API) projectSources(scope string, descs []config.SourceDescription) []sourceDescriptionDTO {
 	out := make([]sourceDescriptionDTO, 0, len(descs))
 	for _, desc := range descs {
 		out = append(out, sourceDescriptionDTO{
+			ID:            a.sourceID(scope, desc),
 			Kind:          string(desc.Kind),
 			Location:      redact.URL(desc.Location),
 			Ref:           desc.Ref,
@@ -61,6 +79,17 @@ func (a *API) userConfigPath() string {
 	return filepath.Join(a.homeDir, ".agents", "config.yaml")
 }
 
+func (a *API) configurationIntent(ctx context.Context, overlays map[string][]byte) config.Intent {
+	return config.ReadIntent(ctx, config.LoadEffectiveOptions{
+		RepoRoot:       a.homeDir,
+		LocalConfigDir: a.homeDir,
+		GlobalPath:     a.userConfigPath(),
+		RepoPath:       config.ProjectConfigPath(a.homeDir),
+		LocalPath:      config.LocalConfigPath(a.homeDir),
+		FileOverlays:   overlays,
+	})
+}
+
 func (a *API) configurationMetadata(ctx context.Context) configurationDTO {
 	dto := configurationDTO{
 		UserTargets:          []string{},
@@ -76,21 +105,15 @@ func (a *API) configurationMetadata(ctx context.Context) configurationDTO {
 	} else {
 		dto.FirstRun = os.IsNotExist(err)
 	}
-	intent := config.ReadIntent(ctx, config.LoadEffectiveOptions{
-		RepoRoot:       a.homeDir,
-		LocalConfigDir: a.homeDir,
-		GlobalPath:     a.userConfigPath(),
-		RepoPath:       config.ProjectConfigPath(a.homeDir),
-		LocalPath:      config.LocalConfigPath(a.homeDir),
-	})
+	intent := a.configurationIntent(ctx, nil)
 	user := intent.Layers[config.UserPersonal]
 	dto.Editable = dto.RootPresent && user.Present() && user.Err() == nil && len(intent.Errors) == 0
 
 	dto.UserTargets = append(dto.UserTargets, user.Settings().Harnesses...)
 	org := intent.Layers[config.Organization]
 	dto.OrganizationTargets = append(dto.OrganizationTargets, org.Settings().Harnesses...)
-	dto.UserSources = projectSources(user.DescribeSources())
-	dto.OrganizationSources = projectSources(org.DescribeSources())
+	dto.UserSources = a.projectSources("user", user.DescribeSources())
+	dto.OrganizationSources = a.projectSources("organization", org.DescribeSources())
 
 	if len(user.Reads) > 1 {
 		dto.ManagedOutsideGUI = append(dto.ManagedOutsideGUI, "included files")
@@ -166,16 +189,72 @@ func (a *API) handleConfiguration(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(dto)
 }
 
+type configurationActionSource struct {
+	Kind     string
+	Location string
+	Ref      string
+	Path     string
+	refSeen  bool
+	pathSeen bool
+}
+
 type configurationAction struct {
 	action      string
 	targets     []string
 	consent     bool
 	consentSeen bool
+	source      *configurationActionSource
+	id          string
+	idSeen      bool
+}
+
+func decodeStrictString(decoder *json.Decoder, dst *string) bool {
+	token, err := decoder.Token()
+	if err != nil {
+		return false
+	}
+	s, ok := token.(string)
+	if !ok {
+		return false
+	}
+	*dst = s
+	return true
+}
+
+func decodeActionSource(decoder *json.Decoder) (*configurationActionSource, bool) {
+	source := &configurationActionSource{}
+	seen := map[string]bool{}
+	ok := decodeObject(decoder, func(decoder *json.Decoder, key string) bool {
+		if seen[key] {
+			return false
+		}
+		seen[key] = true
+		var dst *string
+		switch key {
+		case "kind":
+			dst = &source.Kind
+		case "location":
+			dst = &source.Location
+		case "ref":
+			source.refSeen = true
+			dst = &source.Ref
+		case "path":
+			source.pathSeen = true
+			dst = &source.Path
+		default:
+			return false
+		}
+		return decodeStrictString(decoder, dst)
+	})
+	if !ok {
+		return nil, false
+	}
+	return source, true
 }
 
 func parseConfigurationAction(r *http.Request) (configurationAction, bool) {
 	var req configurationAction
-	seenAction, seenTargets := false, false
+	seenAction, seenTargets, seenSource := false, false, false
 	if !decodeStrictObject(r, func(decoder *json.Decoder, key string) bool {
 		switch key {
 		case "action":
@@ -208,6 +287,23 @@ func parseConfigurationAction(r *http.Request) (configurationAction, bool) {
 			default:
 				return false
 			}
+		case "source":
+			if seenSource {
+				return false
+			}
+			seenSource = true
+			source, ok := decodeActionSource(decoder)
+			if !ok {
+				return false
+			}
+			req.source = source
+			return true
+		case "id":
+			if req.idSeen {
+				return false
+			}
+			req.idSeen = true
+			return decodeStrictString(decoder, &req.id)
 		default:
 			return false
 		}
@@ -216,12 +312,27 @@ func parseConfigurationAction(r *http.Request) (configurationAction, bool) {
 	}
 	switch req.action {
 	case "save-targets":
-		if req.consentSeen {
+		if req.consentSeen || req.source != nil || req.idSeen {
 			return configurationAction{}, false
 		}
 	case "initialize":
+		if req.source != nil || req.idSeen {
+			return configurationAction{}, false
+		}
+	case "add-source":
+		if req.source == nil || req.idSeen || seenTargets || req.consentSeen {
+			return configurationAction{}, false
+		}
+	case "remove-source":
+		if !req.idSeen || req.id == "" || req.source != nil || seenTargets || req.consentSeen {
+			return configurationAction{}, false
+		}
 	default:
 		return configurationAction{}, false
+	}
+	switch req.action {
+	case "add-source", "remove-source":
+		return req, true
 	}
 	if len(req.targets) == 0 {
 		return configurationAction{}, false
@@ -253,7 +364,213 @@ func (a *API) handleConfigurationAction(w http.ResponseWriter, r *http.Request) 
 		a.handleInitialize(w, r, req)
 		return
 	}
+	if req.action == "add-source" || req.action == "remove-source" {
+		a.handleSourceMutation(w, r, req)
+		return
+	}
 	a.handleSaveTargets(w, r, req.targets)
+}
+
+func sourceEntry(desc config.SourceDescription) config.RegistryEntry {
+	return config.RegistryEntry{
+		URL:           desc.Location,
+		Ref:           desc.Ref,
+		Path:          desc.Path,
+		SourceHarness: desc.SourceHarness,
+		V4Kind:        desc.Kind,
+	}
+}
+
+func validGitLocation(location string) bool {
+	if err := giturl.ValidateURL(location); err != nil {
+		return false
+	}
+	if strings.Contains(location, "://") {
+		u, err := url.Parse(location)
+		if err != nil || u.RawQuery != "" || u.Fragment != "" {
+			return false
+		}
+		if u.User != nil {
+			if _, hasPassword := u.User.Password(); hasPassword {
+				return false
+			}
+			if u.Scheme != "ssh" {
+				return false
+			}
+		}
+		return true
+	}
+	if at := strings.IndexByte(location, '@'); at >= 0 && strings.Contains(location[:at], ":") {
+		return false
+	}
+	return true
+}
+
+func validateAddSource(source *configurationActionSource, allowed []string) (config.RegistryEntry, bool) {
+	kind := config.V4SourceKind(source.Kind)
+	entry := config.RegistryEntry{
+		V4Kind: kind,
+		URL:    strings.TrimSpace(source.Location),
+		Ref:    strings.TrimSpace(source.Ref),
+		Path:   strings.TrimSpace(source.Path),
+	}
+	switch kind {
+	case config.V4SourceDirectory:
+		if entry.URL == "" || source.refSeen || source.pathSeen {
+			return config.RegistryEntry{}, false
+		}
+		if !validDirectoryLocation(entry.URL) {
+			return config.RegistryEntry{}, false
+		}
+	case config.V4SourceGit:
+		if entry.URL == "" || entry.Ref == "" {
+			return config.RegistryEntry{}, false
+		}
+		if err := giturl.ValidateRef(entry.Ref); err != nil {
+			return config.RegistryEntry{}, false
+		}
+		if !validGitLocation(entry.URL) {
+			return config.RegistryEntry{}, false
+		}
+		if err := config.ValidateRegistryPath(entry.Path); err != nil {
+			return config.RegistryEntry{}, false
+		}
+	default:
+		return config.RegistryEntry{}, false
+	}
+	if err := config.ValidateGlobalRegistryWrite(entry); err != nil {
+		return config.RegistryEntry{}, false
+	}
+	if err := config.ValidateRegistryURLs([]config.RegistryEntry{entry}, allowed); err != nil {
+		return config.RegistryEntry{}, false
+	}
+	return entry, true
+}
+
+func validDirectoryLocation(location string) bool {
+	if filepath.IsAbs(location) || location == "~" || strings.HasPrefix(location, "~/") {
+		return true
+	}
+	if !strings.HasPrefix(location, "file://") {
+		return false
+	}
+	u, err := url.Parse(location)
+	return err == nil && u.User == nil && u.Host == "" && filepath.IsAbs(u.Path) && u.RawQuery == "" && u.Fragment == ""
+}
+
+func (a *API) handleSourceMutation(w http.ResponseWriter, r *http.Request, req configurationAction) {
+	home, err := os.UserHomeDir()
+	if err != nil || home != a.homeDir {
+		writeError(w, http.StatusBadRequest, codeInvalidRequest)
+		return
+	}
+	intent := a.configurationIntent(r.Context(), nil)
+	user := intent.Layers[config.UserPersonal]
+	if _, statErr := os.Lstat(a.userConfigPath()); statErr != nil ||
+		!user.Present() || user.Err() != nil || len(intent.Errors) != 0 {
+		writeError(w, http.StatusBadRequest, codeNotReady)
+		return
+	}
+
+	switch req.action {
+	case "add-source":
+		if _, ok := validateAddSource(req.source, intent.AllowedRegistries()); !ok {
+			writeError(w, http.StatusBadRequest, codeInvalidRequest)
+			return
+		}
+	case "remove-source":
+		matches := 0
+		for _, desc := range user.DescribeSources() {
+			if a.sourceID("user", desc) == req.id {
+				matches++
+				if desc.Kind != config.V4SourceGit && desc.Kind != config.V4SourceDirectory {
+					matches++
+				}
+			}
+		}
+		if matches != 1 {
+			writeError(w, http.StatusBadRequest, codeInvalidRequest)
+			return
+		}
+	}
+
+	operation, ok := a.gate.Begin(session.OperationMutation)
+	if !ok {
+		writeError(w, http.StatusConflict, codeBusy)
+		return
+	}
+	a.mu.Lock()
+	if a.closed {
+		a.mu.Unlock()
+		a.gate.Finish(operation)
+		writeError(w, http.StatusServiceUnavailable, codeClosed)
+		return
+	}
+	a.wg.Add(1)
+	a.mu.Unlock()
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusAccepted)
+	_ = json.NewEncoder(w).Encode(map[string]any{"operation": operationRef{ID: uint64(operation), Kind: string(session.OperationMutation)}})
+
+	go a.runOperation(operation, session.OperationMutation, func(ctx context.Context, _ session.RequestGeneration) (warnings []error, final session.Snapshot, failed error) {
+		failed = a.lifecycle.Mutate(ctx, a.workspace, func(mapper pipeline.ConfigPathMapper) error {
+			staged, err := mapper(a.userConfigPath())
+			if err != nil {
+				return err
+			}
+			stagedBytes, err := os.ReadFile(staged)
+			if err != nil {
+				return err
+			}
+			stagedIntent := a.configurationIntent(ctx, map[string][]byte{a.userConfigPath(): stagedBytes})
+			stagedUser := stagedIntent.Layers[config.UserPersonal]
+			if !stagedUser.Present() || stagedUser.Err() != nil || len(stagedIntent.Errors) != 0 {
+				return fmt.Errorf("%w: user configuration changed while staging", dependencytxn.ErrGenerationConflict)
+			}
+			var entry config.RegistryEntry
+			switch req.action {
+			case "add-source":
+				var valid bool
+				entry, valid = validateAddSource(req.source, stagedIntent.AllowedRegistries())
+				if !valid {
+					return fmt.Errorf("%w: source request is no longer valid under the staged configuration", dependencytxn.ErrGenerationConflict)
+				}
+			case "remove-source":
+				var matches []config.SourceDescription
+				for _, desc := range stagedUser.DescribeSources() {
+					if a.sourceID("user", desc) == req.id {
+						matches = append(matches, desc)
+					}
+				}
+				if len(matches) != 1 ||
+					(matches[0].Kind != config.V4SourceGit && matches[0].Kind != config.V4SourceDirectory) {
+					return fmt.Errorf("%w: source descriptor changed while staging", dependencytxn.ErrGenerationConflict)
+				}
+				entry = sourceEntry(matches[0])
+			}
+			return pipeline.EditLayerAtPath(config.LayerTarget{
+				Source:        config.UserPersonal,
+				StagedPath:    staged,
+				DeclaringPath: a.userConfigPath(),
+			}, func(m *pipeline.LayerMutation) error {
+				if req.action == "add-source" {
+					_, err := m.EnsureRegistry(entry)
+					return err
+				}
+				binding, found, err := m.LookupRegistry(entry)
+				if err != nil {
+					return err
+				}
+				if !found {
+					return errors.New("source is no longer present in the user configuration")
+				}
+				return m.RemoveSource(binding)
+			})
+		})
+		final = a.readSnapshot(ctx, session.CatalogLoadCached)
+		return nil, final, failed
+	})
 }
 
 func (a *API) handleSaveTargets(w http.ResponseWriter, r *http.Request, targets []string) {

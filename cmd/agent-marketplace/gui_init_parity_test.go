@@ -17,27 +17,32 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/session"
 )
 
+func guiPost(t *testing.T, server *httptest.Server, credential, path, body string) (int, map[string]any) {
+	t.Helper()
+	req, err := http.NewRequest(http.MethodPost, server.URL+path, strings.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("X-Agent-Marketplace-Token", credential)
+	resp, err := server.Client().Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	var decoded map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&decoded); err != nil {
+		t.Fatalf("%s returned invalid JSON: %v", path, err)
+	}
+	return resp.StatusCode, decoded
+}
+
 func guiInitialize(t *testing.T, api *localapi.API, body string) int {
 	t.Helper()
 	server := httptest.NewServer(api.Handler())
 	t.Cleanup(server.Close)
 
 	post := func(path, payload string) (int, map[string]any) {
-		req, err := http.NewRequest(http.MethodPost, server.URL+path, strings.NewReader(payload))
-		if err != nil {
-			t.Fatal(err)
-		}
-		req.Header.Set("X-Agent-Marketplace-Token", api.Credential())
-		resp, err := server.Client().Do(req)
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer func() { _ = resp.Body.Close() }()
-		var decoded map[string]any
-		if err := json.NewDecoder(resp.Body).Decode(&decoded); err != nil {
-			t.Fatalf("%s returned invalid JSON: %v", path, err)
-		}
-		return resp.StatusCode, decoded
+		return guiPost(t, server, api.Credential(), path, payload)
 	}
 
 	status, decoded := post("/api/configuration/actions", body)

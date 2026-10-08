@@ -77,8 +77,12 @@ export interface paths {
          *     through the same initializer as `agent-marketplace init` and records
          *     the telemetry consent answer exactly as interactive init does; the
          *     consent field is required when the projection reports
-         *     consentRequired and rejected otherwise. Available only in
-         *     user-scope mode.
+         *     consentRequired and rejected otherwise. add-source ensures one git
+         *     or directory source entry in the user-personal root, and
+         *     remove-source removes the single user-personal source entry whose
+         *     opaque id matches; both flow through the shared staged
+         *     configuration-layer editor and change nothing else. Available only
+         *     in user-scope mode.
          *
          */
         post: operations["runConfigurationAction"];
@@ -154,6 +158,14 @@ export interface components {
             /** @enum {string} */
             action: "sync" | "update";
         };
+        AddSourceActionRequest: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            action: "add-source";
+            source: components["schemas"]["SourceInput"];
+        };
         Configuration: {
             /** @description Whether initialization is currently permitted (absent root, readable home, no configuration errors). */
             canInitialize: boolean;
@@ -187,7 +199,7 @@ export interface components {
             userTargets: string[];
         };
         /** @description Tagged configuration action; the action field selects the strictly closed variant. */
-        ConfigurationActionRequest: components["schemas"]["SaveTargetsActionRequest"] | components["schemas"]["InitializeActionRequest"];
+        ConfigurationActionRequest: components["schemas"]["SaveTargetsActionRequest"] | components["schemas"]["InitializeActionRequest"] | components["schemas"]["AddSourceActionRequest"] | components["schemas"]["RemoveSourceActionRequest"];
         Diagnostic: {
             category: string;
             /** @description Stable deduplication/identity key of the diagnostic. */
@@ -269,6 +281,15 @@ export interface components {
              */
             type: "progress";
         };
+        RemoveSourceActionRequest: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            action: "remove-source";
+            /** @description Opaque id of one user-personal source from the configuration projection; unknown, ambiguous, or non-user ids are rejected. */
+            id: string;
+        };
         SaveTargetsActionRequest: {
             /**
              * @description discriminator enum property added by openapi-typescript
@@ -292,6 +313,8 @@ export interface components {
             /** @description Active guarded operation, or null. */
             operation: components["schemas"]["OperationRef"] | null;
             rows: components["schemas"]["SnapshotRow"][];
+            /** @description Last completed guarded operation, when any has settled; authoritative completion identity independent of the active operation. */
+            settledOperation?: components["schemas"]["OperationRef"] | null;
             stage: components["schemas"]["SnapshotStage"];
         };
         SnapshotEvent: components["schemas"]["EventBase"] & {
@@ -327,6 +350,8 @@ export interface components {
         /** @enum {string} */
         SnapshotStage: "provisional" | "config" | "inventory" | "final";
         SourceDescription: {
+            /** @description Opaque stable identity derived from the typed source descriptor tuple under its scope; usable only with remove-source while the descriptor is unchanged. */
+            id: string;
             /**
              * @description How the source is acquired.
              * @enum {string}
@@ -340,6 +365,20 @@ export interface components {
             ref: string;
             /** @description Declared source layout, or empty. */
             sourceHarness: string;
+        };
+        /** @description Closed typed source form input; unknown, duplicate, or mistyped keys are rejected. */
+        SourceInput: {
+            /**
+             * @description Source kind; directory accepts only a location, git requires an explicit ref and accepts an optional path.
+             * @enum {string}
+             */
+            kind: "git" | "directory";
+            /** @description Directory accepts an absolute filesystem path, ~ or ~/ home-relative path, or an absolute file:// URL; git accepts an https, file, or ssh URL or an SCP-like [user@]host:path origin. Usernames are allowed only for ssh/SCP forms; passwords, userinfo on non-ssh schemes, query, and fragment are rejected. */
+            location: string;
+            /** @description Optional sub-path within a git source; rejected for directory. */
+            path?: string;
+            /** @description Explicit git ref; required for git, rejected for directory. */
+            ref?: string;
         };
     };
     responses: {
