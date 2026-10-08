@@ -5,7 +5,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
 	"io/fs"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -97,6 +100,91 @@ func TestRunNativeMarkerAggregateRefusesReplacedLeaf(t *testing.T) {
 				t.Fatalf("admitted aggregate changed: %q %v", data, err)
 			}
 		})
+	}
+}
+
+// spec: materialization/native-marker-merge-preserves-a-concurrent-input-generation
+func TestRunMarkerAggregateMergeRetainsReadGeneration(t *testing.T) {
+	for _, tc := range []rootBoundaryCase{
+		{name: "factory", target: hcc.TargetFactory, repoRoot: ".factory", userRoot: ".factory", artifact: "mcp.json"},
+		{name: "cursor", target: hcc.TargetCursor, repoRoot: ".cursor", userRoot: ".cursor", artifact: "mcp.json"},
+		{name: "windsurf", target: hcc.TargetWindsurf, repoRoot: ".windsurf", userRoot: ".codeium/windsurf", artifact: "mcp_config.json"},
+	} {
+		for _, machine := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/machine=%v", tc.name, machine), func(t *testing.T) { testNativeMergeReadGeneration(t, tc, machine) })
+		}
+	}
+}
+
+func testNativeMergeReadGeneration(t *testing.T, tc rootBoundaryCase, machine bool) {
+	home, repo := t.TempDir(), t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("CODEX_HOME", filepath.Join(home, ".codex"))
+	t.Setenv("XDG_STATE_HOME", filepath.Join(home, "state"))
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, "cache"))
+	root, source := filepath.Join(repo, tc.repoRoot), config.RepoCommitted
+	if machine {
+		root, source = filepath.Join(home, tc.userRoot), config.UserPersonal
+	}
+	desired := nativeMCPResources(tc.target, source)
+	installed, err := Run(t.Context(), repo, desired)
+	if err != nil || diag.HasErrors(installed.Diags) {
+		t.Fatalf("native marker install control failed: %+v %v", installed, err)
+	}
+	path := filepath.Join(root, tc.artifact)
+	original, err := os.ReadFile(path)
+	if err != nil || !bytes.Contains(original, []byte("first")) {
+		t.Fatalf("native marker control did not publish: %q %v", original, err)
+	}
+	retained := filepath.Join(t.TempDir(), "original.json")
+	const concurrent = "{\n // concurrent handwritten edit\n \"mcpServers\": {\"manual\": {\"command\": \"inert concurrent value\"}},\n \"theme\": \"concurrent\"\n}\n"
+	var replacement os.FileInfo
+	changed := false
+	logger := slog.Default()
+	t.Cleanup(func() { slog.SetDefault(logger) })
+	slog.SetDefault(slog.New(sdkStaleReadObserver{Handler: slog.NewTextHandler(io.Discard, &slog.HandlerOptions{Level: slog.LevelDebug}), mutate: func(phase, observed string) {
+		if changed || phase != "sdk-merge-input" || observed != path {
+			return
+		}
+		changed = true
+		if err := os.Rename(path, retained); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(concurrent), 0o640); err != nil {
+			t.Fatal(err)
+		}
+		var err error
+		replacement, err = os.Stat(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}}))
+	desired[0].Resource = ir.NewMcpServer("first", "inert updated command", nil, nil, nil, ir.SourceRef{})
+	report, err := Run(t.Context(), repo, desired)
+	if !changed {
+		t.Fatalf("actual native merge input boundary did not run: %+v %v", report, err)
+	}
+	if data, err := os.ReadFile(path); err != nil || string(data) != concurrent {
+		t.Fatalf("native merge lost the concurrent generation: %q %v; report=%+v", data, err, report)
+	}
+	if err != nil || !hasDiagCode(report.Diags, "materialize.write.error") {
+		t.Fatalf("native merge did not report generation refusal: %+v %v", report, err)
+	}
+	if after, err := os.Stat(path); err != nil || !os.SameFile(replacement, after) || replacement.Mode() != after.Mode() || !replacement.ModTime().Equal(after.ModTime()) {
+		t.Fatalf("native merge changed concurrent metadata: %v", err)
+	}
+	if data, err := os.ReadFile(retained); err != nil || !bytes.Equal(data, original) {
+		t.Fatalf("native merge changed retained original bytes: %q %v", data, err)
+	}
+	if stages, err := filepath.Glob(filepath.Join(root, ".tmp-*")); err != nil || len(stages) != 0 {
+		t.Fatalf("native merge refusal left staging: %v %v", stages, err)
+	}
+	retry, err := Run(t.Context(), repo, desired)
+	if err != nil || diag.HasErrors(retry.Diags) {
+		t.Fatalf("healthy native merge retry failed: %+v %v", retry, err)
+	}
+	if data, err := os.ReadFile(path); err != nil || !bytes.Contains(data, []byte("inert updated command")) || !bytes.Contains(data, []byte("concurrent handwritten edit")) || !bytes.Contains(data, []byte("inert concurrent value")) {
+		t.Fatalf("native retry did not preserve edits and publish update: %q %v", data, err)
 	}
 }
 
