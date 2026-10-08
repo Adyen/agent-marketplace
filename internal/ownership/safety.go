@@ -2,13 +2,18 @@ package ownership
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
+	"io/fs"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/Adyen/agent-marketplace/internal/fsboundary"
 )
 
 const (
@@ -124,14 +129,14 @@ func (s *Store) backupOnlyLocked(rel, absFile string, reason Reason) (string, er
 	if err := s.ensureUnderRoot(absFile); err != nil {
 		return "", err
 	}
-	if err := os.MkdirAll(s.recordDir(), 0o700); err != nil {
+	if err := s.prepareStateDirectory(filepath.Join(ownershipDirName, s.rootKey)); err != nil {
 		return "", fmt.Errorf("ownership: create state directory: %w", err)
 	}
 	generation := uint64(0)
 	if current, err := s.Load(); err == nil && current != nil {
 		generation = current.Generation
 	}
-	path, _, _, err := s.writeSafetyBackup(rel, absFile, generation, reason, nil)
+	path, _, _, _, err := s.writeSafetyBackup(rel, absFile, generation, reason, nil)
 	if err != nil {
 		return "", err
 	}
@@ -150,11 +155,11 @@ func (s *Store) backupOnlyLocked(rel, absFile string, reason Reason) (string, er
 // written are the bytes read — there is no decode/encode round trip anywhere on
 // this path, so a malformed or comment-laden file is preserved exactly, which is
 // the only version of a backup worth having for a file a user hand-wrote.
-func (s *Store) writeSafetyBackup(rel, absFile string, generation uint64, reason Reason, entries []Entry) (backupPath, priorDigest string, priorAbsent bool, err error) {
-	raw, readErr := ReadAggregateFile(absFile)
+func (s *Store) writeSafetyBackup(rel, absFile string, generation uint64, reason Reason, entries []Entry) (backupPath, priorDigest string, priorAbsent bool, attempt *safetyAttempt, err error) {
+	raw, readErr := s.readAbsoluteAggregate(absFile)
 	if readErr != nil {
 		if !os.IsNotExist(readErr) {
-			return "", "", false, fmt.Errorf("ownership: read %s for safety backup: %w", absFile, readErr)
+			return "", "", false, nil, fmt.Errorf("ownership: read %s for safety backup: %w", absFile, readErr)
 		}
 		priorAbsent = true
 		raw = nil
@@ -164,42 +169,112 @@ func (s *Store) writeSafetyBackup(rel, absFile string, generation uint64, reason
 	}
 
 	dir := s.SafetyBackupDir(rel)
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return "", "", false, fmt.Errorf("ownership: create safety backup directory: %w", err)
+	relative := filepath.Join(safetyDirName, s.rootKey, fileSlug(rel))
+	if err := s.prepareStateDirectory(relative); err != nil {
+		return "", "", false, nil, fmt.Errorf("ownership: create safety backup directory: %w", err)
 	}
+	parent, err := s.captureStateDirectory(relative)
+	if err != nil {
+		return "", "", false, nil, err
+	}
+	defer func() {
+		if closeErr := parent.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
 	stamp := s.now().UTC().Format("20060102T150405.000000000Z")
 
 	// Validate the entries before writing any bytes: invalid entries must not
 	// consume a retention slot or leave a backup file with no manifest beside it.
 	for _, e := range entries {
 		if err := validateEntry(e); err != nil {
-			return "", "", false, err
+			return "", "", false, nil, err
 		}
 	}
 
-	backupFile, err := os.CreateTemp(dir, stamp+"-*"+backupSuffix)
+	if err := s.verifyStateDirectory(parent, relative); err != nil {
+		return "", "", false, nil, err
+	}
+	backupFile, name, err := parent.CreateTemp(stamp + "-*" + backupSuffix)
 	if err != nil {
-		return "", "", false, fmt.Errorf("ownership: create safety backup: %w", err)
+		return "", "", false, nil, fmt.Errorf("ownership: create safety backup: %w", err)
 	}
-	backupPath = backupFile.Name()
-	removeBackup := func() {
-		_ = backupFile.Close()
-		_ = os.Remove(backupPath)
+	backupPath = filepath.Join(dir, name)
+	info, err := backupFile.Stat()
+	if err != nil {
+		if closeErr := backupFile.Close(); closeErr != nil {
+			return "", "", false, nil, errors.Join(err, closeErr)
+		}
+		return "", "", false, nil, err
 	}
-	if n, writeErr := backupFile.Write(raw); writeErr != nil {
-		removeBackup()
-		return "", "", false, fmt.Errorf("ownership: write safety backup: %w", writeErr)
-	} else if n != len(raw) {
-		removeBackup()
-		return "", "", false, fmt.Errorf("ownership: write safety backup: short write (%d/%d bytes)", n, len(raw))
+	created, err := fsboundary.FileInfoIdentity(info)
+	if err != nil {
+		if closeErr := backupFile.Close(); closeErr != nil {
+			return "", "", false, nil, errors.Join(err, closeErr)
+		}
+		return "", "", false, nil, err
+	}
+	published := false
+	defer func() {
+		if backupFile != nil {
+			if closeErr := backupFile.Close(); closeErr != nil {
+				err = errors.Join(err, closeErr)
+			}
+		}
+		if published {
+			return
+		}
+		native, openErr := parent.NativeRoot()
+		if openErr != nil {
+			err = errors.Join(err, openErr)
+			return
+		}
+		defer func() {
+			if closeErr := native.Close(); closeErr != nil {
+				err = errors.Join(err, closeErr)
+			}
+		}()
+		info, inspectErr := native.Lstat(name)
+		if errors.Is(inspectErr, fs.ErrNotExist) {
+			return
+		}
+		if inspectErr != nil {
+			err = errors.Join(err, inspectErr)
+			return
+		}
+		identity, inspectErr := fsboundary.FileInfoIdentity(info)
+		if inspectErr != nil {
+			err = errors.Join(err, inspectErr)
+			return
+		}
+		if identity.SameObject(created) {
+			if unlinkErr := parent.Unlink(name); unlinkErr != nil {
+				err = errors.Join(err, unlinkErr)
+			}
+		}
+	}()
+	n, writeErr := backupFile.Write(raw)
+	if writeErr != nil {
+		return "", "", false, nil, fmt.Errorf("ownership: write safety backup: %w", writeErr)
+	}
+	if n != len(raw) {
+		return "", "", false, nil, fmt.Errorf("ownership: write safety backup: short write (%d/%d bytes)", n, len(raw))
 	}
 	if err := backupFile.Sync(); err != nil {
-		removeBackup()
-		return "", "", false, fmt.Errorf("ownership: sync safety backup: %w", err)
+		return "", "", false, nil, fmt.Errorf("ownership: sync safety backup: %w", err)
 	}
-	if err := backupFile.Close(); err != nil {
-		_ = os.Remove(backupPath)
-		return "", "", false, fmt.Errorf("ownership: close safety backup: %w", err)
+	info, err = backupFile.Stat()
+	if err != nil {
+		return "", "", false, nil, err
+	}
+	produced, err := fsboundary.FileInfoIdentity(info)
+	if err != nil {
+		return "", "", false, nil, err
+	}
+	closeErr := backupFile.Close()
+	backupFile = nil
+	if closeErr != nil {
+		return "", "", false, nil, fmt.Errorf("ownership: close safety backup: %w", closeErr)
 	}
 	manifest := BackupManifest{
 		Version:        1,
@@ -216,15 +291,43 @@ func (s *Store) writeSafetyBackup(rel, absFile string, generation uint64, reason
 	}
 	metaBytes, err := json.MarshalIndent(manifest, "", "  ")
 	if err != nil {
-		return "", "", false, fmt.Errorf("ownership: marshal backup manifest: %w", err)
+		return "", "", false, nil, fmt.Errorf("ownership: marshal backup manifest: %w", err)
 	}
-	if err := atomicWrite(metaPathFor(backupPath), append(metaBytes, '\n'), 0o600); err != nil {
-		return "", "", false, err
+	payload, err := fsboundary.CaptureDestination(parent, name, fsboundary.LinkPolicyRepository)
+	if err != nil {
+		return "", "", false, nil, err
 	}
+	defer func() {
+		if closeErr := payload.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
+	if payload.Link() != nil || !payload.Identity().SameState(produced) {
+		return "", "", false, nil, fsboundary.ErrGenerationConflict
+	}
+	validate := func() error {
+		if err := s.verifyStateDirectory(parent, relative); err != nil {
+			return err
+		}
+		return payload.ReadTargetWith(func(io.Reader) error { return nil })
+	}
+	if err := validate(); err != nil {
+		return "", "", false, nil, err
+	}
+	metadataName := filepath.Base(metaPathFor(backupPath))
+	metadata, crossed, err := writeObservedMetadataFile(parent, metadataName, append(metaBytes, '\n'), validate)
+	if err != nil {
+		// If the manifest may already reference the payload, keep the payload:
+		// the renamed manifest is evidence of a completed generation.
+		published = crossed
+		return "", "", false, nil, err
+	}
+	attempt = &safetyAttempt{relative: relative, parent: parent.Identity(), members: []safetyLeafRemoval{{name: name, identity: produced, exists: true}, {name: metadataName, identity: metadata.file, exists: true}}}
+	published = true
 	slog.Info("safety backup written",
 		"root_key", s.rootKey, "file", rel, "generation", generation, "reason", string(reason),
 		"prior_digest", priorDigest, "prior_absent", priorAbsent, "prior_size", len(raw), "retain", s.retain)
-	return backupPath, priorDigest, priorAbsent, nil
+	return backupPath, priorDigest, priorAbsent, attempt, nil
 }
 
 func metaPathFor(backupPath string) string {
@@ -232,14 +335,36 @@ func metaPathFor(backupPath string) string {
 }
 
 // pruneSafetyBackups keeps the newest s.retain backups for one canonical output
-// file and deletes each older backup together with its manifest, so evidence and
-// bytes are always retained or dropped as a pair.
+// file and selects each older backup together with its manifest. Both members
+// are validated before deletion; the pair is not one atomic removal.
 //
 // Retention is by NAME, and names are UTC timestamps with nanosecond precision
 // plus a collision sequence, so lexical order is chronological order and the
 // policy does not depend on mtimes that a restore or a copy could rewrite.
-func (s *Store) pruneSafetyBackups(dir string) error {
-	entries, err := os.ReadDir(dir)
+func (s *Store) pruneSafetyBackups(dir string) (err error) {
+	relative, err := filepath.Rel(s.stateRoot, dir)
+	if err != nil {
+		return err
+	}
+	parent, err := s.captureStateDirectory(relative)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if closeErr := parent.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
+	native, err := parent.NativeRoot()
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if closeErr := native.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
+	entries, err := fs.ReadDir(native.FS(), ".")
 	if err != nil {
 		return fmt.Errorf("ownership: list safety backups: %w", err)
 	}
@@ -253,29 +378,54 @@ func (s *Store) pruneSafetyBackups(dir string) error {
 		return nil
 	}
 	sort.Strings(backups)
+	var removals []safetyLeafRemoval
 	for _, name := range backups[:len(backups)-s.retain] {
-		path := filepath.Join(dir, name)
-		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
-			return fmt.Errorf("ownership: prune safety backup: %w", err)
-		}
-		if err := os.Remove(metaPathFor(path)); err != nil && !os.IsNotExist(err) {
-			return fmt.Errorf("ownership: prune safety backup manifest: %w", err)
+		for _, member := range []string{name, filepath.Base(metaPathFor(name))} {
+			pin, exists, err := captureSafetyPayload(parent, member)
+			if err != nil {
+				return fmt.Errorf("ownership: capture safety backup member %q: %w", member, err)
+			}
+			removals = append(removals, safetyLeafRemoval{name: member, identity: pin.file, exists: exists})
 		}
 	}
-	return fsyncDir(dir)
+	for _, removal := range removals {
+		if err := s.removeSafetyLeaf(parent, relative, removal); err != nil {
+			return fmt.Errorf("ownership: remove safety backup member %q: %w", removal.name, err)
+		}
+	}
+	return nil
 }
 
 // SafetyBackups returns the retained backups for one canonical output file,
 // oldest first, each paired with its manifest. A backup whose manifest is
-// missing or unreadable is skipped: bytes without recorded provenance are not
-// evidence.
-func (s *Store) SafetyBackups(rel string) ([]RetainedBackup, error) {
+// missing or ordinarily unreadable is skipped; unsafe shapes and cleanup
+// failures refuse. Bytes without recorded provenance are not evidence.
+func (s *Store) SafetyBackups(rel string) (out []RetainedBackup, err error) {
 	dir := s.SafetyBackupDir(rel)
-	entries, err := os.ReadDir(dir)
+	relative := filepath.Join(safetyDirName, s.rootKey, fileSlug(rel))
+	parent, err := s.captureStateDirectory(relative)
 	if err != nil {
-		if os.IsNotExist(err) {
+		if errors.Is(err, fs.ErrNotExist) && !errors.Is(err, fsboundary.ErrUnsafePath) {
 			return nil, nil
 		}
+		return nil, fmt.Errorf("ownership: list safety backups: %w", err)
+	}
+	defer func() {
+		if closeErr := parent.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
+	native, err := parent.NativeRoot()
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		if closeErr := native.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
+	entries, err := fs.ReadDir(native.FS(), ".")
+	if err != nil {
 		return nil, fmt.Errorf("ownership: list safety backups: %w", err)
 	}
 	var names []string
@@ -285,11 +435,18 @@ func (s *Store) SafetyBackups(rel string) ([]RetainedBackup, error) {
 		}
 	}
 	sort.Strings(names)
-	out := make([]RetainedBackup, 0, len(names))
+	out = make([]RetainedBackup, 0, len(names))
 	for _, name := range names {
 		path := filepath.Join(dir, name)
-		metaBytes, err := os.ReadFile(metaPathFor(path))
+		metaName := strings.TrimSuffix(name, backupSuffix) + metaSuffix
+		metaBytes, exists, manifestPin, err := readObservedMetadataFile(parent, metaName)
 		if err != nil {
+			if errors.Is(err, fsboundary.ErrUnsafePath) || errors.Is(err, fsboundary.ErrUnsafeFile) || errors.Is(err, fsboundary.ErrGenerationConflict) || errors.Is(err, fsboundary.ErrTooLarge) || errors.Is(err, errMetadataCleanup) {
+				return nil, err
+			}
+			continue
+		}
+		if !exists {
 			continue
 		}
 		var manifest BackupManifest
@@ -299,18 +456,96 @@ func (s *Store) SafetyBackups(rel string) ([]RetainedBackup, error) {
 		if manifest.Version != 1 || manifest.RootKey != s.rootKey || manifest.File != rel {
 			continue
 		}
-		out = append(out, RetainedBackup{Path: path, Manifest: manifest})
+		pin, exists, err := captureSafetyPayload(parent, name)
+		if err != nil {
+			return nil, err
+		}
+		if !exists {
+			continue
+		}
+		manifestPin.parent = pin.parent
+		out = append(out, RetainedBackup{Path: path, Manifest: manifest, source: s, relative: relative, name: name, observed: pin, manifestObserved: manifestPin})
+	}
+	if err := s.verifyStateDirectory(parent, relative); err != nil {
+		return nil, err
 	}
 	return out, nil
 }
 
 // RetainedBackup is one retained safety backup and its manifest.
 type RetainedBackup struct {
-	Path     string
-	Manifest BackupManifest
+	Path             string
+	Manifest         BackupManifest
+	source           *Store
+	relative         string
+	name             string
+	observed         metadataPin
+	manifestObserved metadataPin
 }
 
 // RawBytes returns the exact retained pre-mutation bytes.
-func (b RetainedBackup) RawBytes() ([]byte, error) {
-	return os.ReadFile(b.Path)
+func (b RetainedBackup) RawBytes() (data []byte, err error) {
+	if b.source == nil {
+		return nil, fsboundary.ErrUnsafePath
+	}
+	parent, err := b.source.captureStateDirectory(b.relative)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		if closeErr := parent.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+			data = nil
+		}
+	}()
+	if !parent.Identity().SameObject(b.observed.parent) {
+		return nil, fsboundary.ErrGenerationConflict
+	}
+	file, err := fsboundary.CaptureDestination(parent, b.name, fsboundary.LinkPolicyRepository)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		if closeErr := file.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+			data = nil
+		}
+	}()
+	if file.Link() != nil || !file.Exists() || !file.Identity().SameState(b.observed.file) {
+		return nil, fsboundary.ErrGenerationConflict
+	}
+	data, _, err = file.ReadTarget(b.observed.file.Size)
+	if err != nil {
+		return nil, err
+	}
+	err = b.source.verifyStateDirectory(parent, b.relative)
+	if err != nil {
+		return nil, err
+	}
+	return data, nil
+}
+
+func captureSafetyPayload(parent *fsboundary.Dir, name string) (pin metadataPin, exists bool, err error) {
+	file, err := fsboundary.CaptureDestination(parent, name, fsboundary.LinkPolicyRepository)
+	if err != nil {
+		return pin, false, err
+	}
+	defer func() {
+		if closeErr := file.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
+	if file.Link() != nil {
+		return pin, false, fsboundary.ErrUnsafeFile
+	}
+	if !file.Exists() {
+		return pin, false, nil
+	}
+	err = file.ReadTargetWith(func(io.Reader) error { return nil })
+	if err != nil {
+		return pin, false, err
+	}
+	identity := parent.Identity()
+	pin = metadataPin{parent: fsboundary.Identity{Device: identity.Device, Inode: identity.Inode}, file: file.Identity()}
+	return pin, true, nil
 }

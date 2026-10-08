@@ -21,17 +21,36 @@ import (
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 )
 
+// spec: marketplace-api/mixed-hosted-and-git-inventory-remains-complete
 func TestResolveEmitsInventoryAtSharedBoundary(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, ".cache"))
 	exporter := newPipelineSpanExporter(t)
 	ctx, tel := setupPipelineTelemetry(t, exporter)
 	registryRoot := t.TempDir()
 	writeSkill(t, registryRoot, "shared-inventory", "test", nil)
-	repoCfg := &config.Config{Registries: []config.RegistryEntry{{
-		URL: registryRoot, SourceHarness: "claude", Skills: config.KindSelector{Include: []string{"shared-inventory"}},
-	}}}
+	marketplace := newLayerMarketplaceServer(t)
+	hostedRegistry := marketplace.addRegistry(t, "awesome-ai")
+	marketplace.addSkill(t, hostedRegistry, "canonical-review")
+	resolvedRevision := string(marketplace.resources["awesome-ai/skill/canonical-review"].revision.ContentDigest)
+	repoCfg := &config.Config{
+		Registries: []config.RegistryEntry{{
+			URL: registryRoot, SourceHarness: "claude", Skills: config.KindSelector{Include: []string{"shared-inventory"}},
+		}},
+		Marketplaces: []config.MarketplaceEntry{{
+			URL: marketplace.URL, InstanceID: marketplace.instanceID, Source: config.RepoCommitted,
+			Resources: []config.MarketplaceResourcePin{{
+				RegistryID: string(hostedRegistry.ID), RegistrySlug: hostedRegistry.Slug, Kind: "skill", Name: "canonical-review",
+				Revision: resolvedRevision, Digest: resolvedRevision, InstalledName: "local-alias", Direct: true,
+			}},
+		}},
+	}
+	marketplaceMode := resolver.MarketplaceResolveModeRefresh
 	result := Resolve(ctx, ResolveOptions{
-		Workspace:   mustWorkspace(t, t.TempDir()),
-		CatalogMode: catalog.LoadModeInspect,
+		Workspace:       mustWorkspace(t, t.TempDir()),
+		CatalogMode:     catalog.LoadModeInspect,
+		MarketplaceMode: &marketplaceMode,
 		Loaders: Loaders{
 			Org:    func() (*config.Config, error) { return nil, nil },
 			Global: func() (*config.Config, error) { return &config.Config{Harnesses: []string{"factory"}}, nil },
@@ -42,8 +61,18 @@ func TestResolveEmitsInventoryAtSharedBoundary(t *testing.T) {
 	if len(result.Errors) != 0 {
 		t.Fatalf("Resolve errors: %v", result.Errors)
 	}
-	if len(result.Resolved) != 1 || result.Resolved[0].Name != "shared-inventory" {
+	if len(result.Resolved) != 2 {
 		t.Fatalf("representative non-TUI Resolve result = %#v", result.Resolved)
+	}
+	var hostedFound bool
+	for _, artifact := range result.Resolved {
+		if artifact.IsMarketplace {
+			hostedFound = artifact.Name == "local-alias" && artifact.MarketplaceResourceName == "canonical-review" &&
+				artifact.MarketplaceInstanceID == marketplace.instanceID && artifact.MarketplaceRegistryID == string(hostedRegistry.ID)
+		}
+	}
+	if !hostedFound {
+		t.Fatalf("shared Resolve did not retain hosted coordinate separately from installed alias: %#v", result.Resolved)
 	}
 	if err := tel.Shutdown(context.Background()); err != nil {
 		t.Fatalf("shutdown telemetry: %v", err)
@@ -52,6 +81,9 @@ func TestResolveEmitsInventoryAtSharedBoundary(t *testing.T) {
 		if !exporter.hasMetric(name) {
 			t.Errorf("shared Resolve did not emit %q", name)
 		}
+	}
+	if exporter.hasMetric(string(tmcfg.InventoryOmissionsName)) {
+		t.Fatal("shared Resolve omitted the mixed inventory")
 	}
 }
 

@@ -33,9 +33,15 @@ type hookSupportClaim struct {
 	conflict  bool
 }
 
-func prepareHookSupport(work []skillTarget) (map[int][]artifact.Artifact, map[int][]string) {
+type hookSupportRead struct {
+	artifacts []artifact.Artifact
+	err       error
+}
+
+func prepareHookSupport(work []skillTarget) (map[int][]artifact.Artifact, map[int][]string, map[int]error) {
 	support := make(map[int][]artifact.Artifact)
-	cached := make(map[hookSupportSource][]artifact.Artifact)
+	refused := make(map[int]error)
+	cached := make(map[hookSupportSource]hookSupportRead)
 	claims := make(map[hookSupportOutput]*hookSupportClaim)
 	var keys []hookSupportOutput
 	for i, w := range work {
@@ -43,13 +49,17 @@ func prepareHookSupport(work []skillTarget) (map[int][]artifact.Artifact, map[in
 			continue
 		}
 		source := hookSupportSource{path: materializationSourcePath(w.skill), target: w.target, harness: w.skill.SourceHarness}
-		files, exists := cached[source]
+		read, exists := cached[source]
 		if !exists {
-			files = collectHookSupportFiles(source.path, w.target, source.harness)
-			cached[source] = files
+			read.artifacts, read.err = collectHookSupportFiles(source.path, w.target, source.harness)
+			cached[source] = read
 		}
-		support[i] = files
-		for _, file := range files {
+		if read.err != nil {
+			refused[i] = read.err
+			continue
+		}
+		support[i] = read.artifacts
+		for _, file := range read.artifacts {
 			key := hookSupportOutput{output: outputKey{target: w.target, machineScope: w.machineScope}, path: file.Path}
 			claim := claims[key]
 			if claim == nil {
@@ -73,7 +83,7 @@ func prepareHookSupport(work []skillTarget) (map[int][]artifact.Artifact, map[in
 			conflicts[i] = append(conflicts[i], key.path)
 		}
 	}
-	return support, conflicts
+	return support, conflicts, refused
 }
 
 func hookSupportExclusions(sourcePath, sourceHarness string) map[string]bool {

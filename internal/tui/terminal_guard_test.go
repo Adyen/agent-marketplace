@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 )
 
 func TestTerminalGuardRestoreEmitsTrustedSequencesOnce(t *testing.T) {
@@ -55,8 +55,15 @@ type guardProbeModel struct{}
 
 func (m guardProbeModel) Init() tea.Cmd                       { return tea.Quit }
 func (m guardProbeModel) Update(tea.Msg) (tea.Model, tea.Cmd) { return m, nil }
-func (m guardProbeModel) View() string                        { return "" }
+func (m guardProbeModel) View() tea.View {
+	v := tea.NewView("guard probe")
+	v.AltScreen = true
+	v.MouseMode = tea.MouseModeCellMotion
+	return v
+}
 
+// spec: tui-rendering/error-after-entering-alternate-screen
+// spec: tui-mouse-navigation/exiting-restores-terminal-mouse-modes
 func TestRunWithTerminalGuardRestoresAroundEveryRunOutcome(t *testing.T) {
 	sentinel := errors.New("cancel reader initialization failed")
 	for _, tc := range []struct {
@@ -67,7 +74,8 @@ func TestRunWithTerminalGuardRestoresAroundEveryRunOutcome(t *testing.T) {
 		{
 			name: "clean quit",
 			run: func(t *testing.T, renderBuf *bytes.Buffer) (tea.Model, error) {
-				return tea.NewProgram(guardProbeModel{}, tea.WithInput(nil), tea.WithOutput(renderBuf)).Run()
+				options := append(defaultTUIProgramOptions(), tea.WithInput(nil), tea.WithOutput(renderBuf))
+				return tea.NewProgram(guardProbeModel{}, options...).Run()
 			},
 		},
 		{
@@ -96,8 +104,16 @@ func TestRunWithTerminalGuardRestoresAroundEveryRunOutcome(t *testing.T) {
 			if tc.wantErr != nil && !errors.Is(err, tc.wantErr) {
 				t.Fatalf("run returned %v, want identity %v", err, tc.wantErr)
 			}
+			if got, want := sequenceOut.String(), trustedTerminalRestoreSequence; got != want {
+				t.Fatalf("terminal setup and cleanup wrote %q, want %q", got, want)
+			}
 			if !strings.Contains(sequenceOut.String(), "\x1b[?1049l") || !strings.Contains(sequenceOut.String(), "\x1b[?25h") {
 				t.Fatalf("guard did not restore cursor/alternate screen after run: %q", sequenceOut.String())
+			}
+			for _, sequence := range []string{"\x1b[?1000h", "\x1b[?1003h"} {
+				if strings.Contains(renderBuf.String()+sequenceOut.String(), sequence) {
+					t.Fatalf("TUI enabled an unexpected mouse tracking mode with %q", sequence)
+				}
 			}
 		})
 	}

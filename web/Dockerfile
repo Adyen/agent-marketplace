@@ -11,7 +11,6 @@ RUN if [ -n "${NPM_CONFIG_REGISTRY}" ]; then \
     pnpm install --frozen-lockfile --ignore-scripts
 COPY --chown=1000:1000 . .
 COPY --from=design --chown=1000:1000 semantic-colors.css /src/design/semantic-colors.css
-COPY --from=design --chown=1000:1000 marketplace-navigation.css /src/design/marketplace-navigation.css
 RUN pnpm build
 
 FROM ${NODE_IMAGE} AS runtime

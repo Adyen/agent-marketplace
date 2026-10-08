@@ -31,7 +31,6 @@ type InstallationAdapter struct {
 	resolve      func(bool, string, string) ([]Destination, error)
 }
 
-func (a InstallationAdapter) Target() hcc.Target              { return a.target }
 func (a InstallationAdapter) Layout() targetmeta.NativeLayout { return a.layout }
 func (a InstallationAdapter) Info() TargetInfo                { return a.info }
 func (a InstallationAdapter) AggregateHandlerKey() string     { return a.aggregateKey }
@@ -231,6 +230,9 @@ func resolveSingleRootAdapterDestinations(adapter InstallationAdapter, machineSc
 				return nil, fmt.Errorf("%s repository destination symlink cannot be verified: %w: %w", adapter.target, os.ErrPermission, err)
 			}
 		}
+	}
+	if err := ValidateDestinationRoot(machineScope, repoRoot, homeDir, canonical); err != nil {
+		return nil, fmt.Errorf("harness adapter destination root: %w", err)
 	}
 	return nativeAggregateDestinations(adapter.target, machineScope, repoRoot, homeDir,
 		Destination{ID: "default", Root: canonical, InstallationEvidence: true, Info: adapter.info})

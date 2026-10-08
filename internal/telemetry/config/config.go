@@ -24,7 +24,7 @@ const (
 
 	SchemaVersion = "1"
 	SchemaMajor   = 1
-	SchemaMinor   = 1
+	SchemaMinor   = 2
 )
 
 // ResourceAttribute names a telemetry resource attribute that is allowed in the
@@ -75,6 +75,8 @@ const (
 	MetricAttrResourceKind      MetricAttribute = "resource.kind"
 	MetricAttrResourceName      MetricAttribute = "resource.name"
 	MetricAttrResourceRequired  MetricAttribute = "resource.required"
+	MetricAttrSourceKind        MetricAttribute = "source.kind"
+	MetricAttrMarketplaceID     MetricAttribute = "marketplace.id"
 	MetricAttrOmissionReason    MetricAttribute = "reason"
 )
 
@@ -95,6 +97,8 @@ var InventoryRegistryAttributes = []MetricAttribute{
 	MetricAttrConfigScope,
 	MetricAttrRegistryRequired,
 	MetricAttrRegistryDefault,
+	MetricAttrSourceKind,
+	MetricAttrMarketplaceID,
 }
 
 var InventoryOmissionAttributes = []MetricAttribute{
@@ -111,6 +115,8 @@ var InventoryResourceAttributes = []MetricAttribute{
 	MetricAttrResourceName,
 	MetricAttrConfigScope,
 	MetricAttrResourceRequired,
+	MetricAttrSourceKind,
+	MetricAttrMarketplaceID,
 }
 
 // MetricSchemaAttributes is the v1 metric attribute allowlist. These are the
@@ -182,14 +188,6 @@ func LevelOrder(level string) int {
 	default:
 		return 0
 	}
-}
-
-// MaxLevel returns the higher of two levels.
-func MaxLevel(a, b string) string {
-	if LevelOrder(a) >= LevelOrder(b) {
-		return a
-	}
-	return b
 }
 
 // LookupIP resolves a hostname to IP addresses. It defaults to net.LookupIP and

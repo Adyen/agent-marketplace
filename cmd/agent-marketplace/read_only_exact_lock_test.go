@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"strings"
@@ -8,6 +9,7 @@ import (
 
 	"github.com/Adyen/agent-marketplace/internal/cache"
 	"github.com/Adyen/agent-marketplace/internal/config"
+	"github.com/Adyen/agent-marketplace/internal/devincli"
 )
 
 func setupReadOnlyExactRegistry(t *testing.T) (repo, origin, working, lockPath string) {
@@ -60,6 +62,118 @@ func TestConfiguredListUsesExactLockWithoutReconciliation(t *testing.T) {
 	}
 	if string(after) != string(before) {
 		t.Fatalf("list reconciled lock:\nbefore:\n%s\nafter:\n%s", before, after)
+	}
+}
+
+func TestDoctorRepairUsesExactGitLockWithoutRefreshingMutableCache(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	_, origin, working, lockPath := setupReadOnlyExactRegistry(t)
+	before, err := os.ReadFile(lockPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeSkill(t, working, "mutable-new-skill", "Mutable", nil)
+	commitAndPushAll(t, working, "move mutable ref")
+	mutableSkill := filepath.Join(cache.RegistryCachePath(origin, "main"), "skills", "mutable-new-skill", "SKILL.md")
+	if _, err := os.Lstat(mutableSkill); !os.IsNotExist(err) {
+		t.Fatalf("mutable cache already contains advanced ref: %v", err)
+	}
+
+	output, err := executeCommand("doctor", "--repair")
+	if err != nil || !strings.Contains(output, "nothing to repair") {
+		t.Fatalf("doctor --repair did not use the locked snapshot: %v\n%s", err, output)
+	}
+	if _, err := os.Lstat(mutableSkill); !os.IsNotExist(err) {
+		t.Fatalf("doctor --repair refreshed mutable Git cache despite an exact lock: %v", err)
+	}
+	if after, err := os.ReadFile(lockPath); err != nil || string(after) != string(before) {
+		t.Fatalf("doctor --repair rewrote the exact lock: %v\n%s", err, after)
+	}
+}
+
+func TestDoctorRepairReplacesConflictFromLockedGitRevision(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, "cache"))
+	t.Setenv("XDG_STATE_HOME", filepath.Join(home, "state"))
+	origin, working := createBareRepoWithWorkingClone(t, "repair-exact.git")
+	writeFile(t, filepath.Join(working, ".mcp.json"), `{"mcpServers":{"managed":{"command":"locked-binary"}}}`)
+	commitAndPushAll(t, working, "locked MCP")
+	repo := t.TempDir()
+	writeConfig(t, filepath.Join(repo, ".agents", "config.yaml"), `apiVersion: agent-marketplace/v2
+harnesses: [devin]
+registries:
+  - url: `+origin+`
+    ref: main
+    mcp:
+      include: [managed]
+`)
+	withWorkingDir(t, repo)
+	if output, err := executeCommand("lock", "--scope", "repo"); err != nil {
+		t.Fatalf("create exact lock: %v\n%s", err, output)
+	}
+	lockPath := filepath.Join(repo, ".agents", "lock.yaml")
+	locked, err := os.ReadFile(lockPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mcpPath := filepath.Join(repo, ".devin", "mcp_config.json")
+	writeFile(t, mcpPath, `{"mcpServers":{"managed":{"command":"handwritten"}}}`)
+	writeFile(t, filepath.Join(working, ".mcp.json"), `{"mcpServers":{"managed":{"command":"mutable-binary"}}}`)
+	commitAndPushAll(t, working, "move mutable ref")
+
+	var out bytes.Buffer
+	if err := runDoctor(doctorOptions{
+		out: &out, in: strings.NewReader("y\n"), isTTY: true, repair: true,
+		probe: staticProbe(devincli.Probe{Status: devincli.StatusNotInstalled}),
+	}); err != nil || !strings.Contains(out.String(), "replaced mcp-server \"managed\"") {
+		t.Fatalf("doctor did not repair the locked MCP conflict: %v\n%s", err, out.String())
+	}
+	if after, err := os.ReadFile(mcpPath); err != nil || !bytes.Contains(after, []byte("locked-binary")) || bytes.Contains(after, []byte("mutable-binary")) || bytes.Contains(after, []byte("handwritten")) {
+		t.Fatalf("repair installed content outside locked revision: %v\n%s", err, after)
+	}
+	if after, err := os.ReadFile(lockPath); err != nil || !bytes.Equal(after, locked) {
+		t.Fatalf("repair changed the pinned Git lock: %v\n%s", err, after)
+	}
+}
+
+func TestDoctorRepairRejectsMissingGitLock(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	_, _, _, lockPath := setupReadOnlyExactRegistry(t)
+	if err := os.Remove(lockPath); err != nil {
+		t.Fatal(err)
+	}
+	output, err := executeCommand("doctor", "--repair")
+	if err == nil || !strings.Contains(err.Error(), "lock.missing") {
+		t.Fatalf("doctor --repair accepted a missing repo Git lock: %v\n%s", err, output)
+	}
+	if _, err := os.Lstat(lockPath); !os.IsNotExist(err) {
+		t.Fatalf("doctor --repair recreated a missing repo lock: %v", err)
+	}
+}
+
+func TestDoctorRepairRejectsMalformedGitLock(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	_, _, _, lockPath := setupReadOnlyExactRegistry(t)
+	malformed := []byte("not: [valid\n")
+	if err := os.WriteFile(lockPath, malformed, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	output, err := executeCommand("doctor", "--repair")
+	if err == nil || !strings.Contains(err.Error(), "lock.invalid") {
+		t.Fatalf("doctor --repair accepted a malformed repo Git lock: %v\n%s", err, output)
+	}
+	if after, err := os.ReadFile(lockPath); err != nil || string(after) != string(malformed) {
+		t.Fatalf("doctor --repair changed the malformed lock: %v\n%s", err, after)
 	}
 }
 

@@ -26,7 +26,12 @@ func (s *Server) adminHandler() http.Handler {
 			writeAdminError(w, http.StatusNotFound, "not_found", "Administration is not enabled.")
 		})
 	}
-	unavailable := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	unavailable := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if s.cfg.Admin.AuthMode() == config.AdminAuthOIDC && r.Method == http.MethodGet &&
+			(r.URL.Path == adminAuthBase+"/login" || r.URL.Path == adminAuthBase+"/callback") {
+			writeAdminOIDCError(w, r, http.StatusServiceUnavailable, "admin_unavailable", "Administration trust configuration is unavailable.", "")
+			return
+		}
 		writeAdminError(w, http.StatusServiceUnavailable, "admin_unavailable", "Administration trust configuration is unavailable.")
 	})
 	var oidc *adminOIDCAuthenticator

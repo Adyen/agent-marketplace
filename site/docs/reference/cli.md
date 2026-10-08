@@ -124,15 +124,24 @@ Adds selections to one writable config layer, then syncs harness output.
 You can select a named resource from a configured Git or directory source, or from `--from <registry>` with optional `--ref` and `--path`. In a v4 destination, an ad hoc registry becomes a named v4 `git` or `directory` source. A relative directory stays relative in repository and personal-local configs, so committed sources keep working on other machines. Installing every resource from an ad hoc registry into a v4 destination declares the source with an `all: true` resource group. `install` edits both v4 and legacy (v2 or v3) destinations. A change to a legacy destination prints a `config.legacy-deprecated` warning. If an edit is refused, your configuration stays unchanged. See [configuration compatibility](../explanation/user-journeys.md#before-following-a-journey).
 
 ```text
-agent-marketplace install <resource-name> [flags]
+agent-marketplace install <resource-name>... [flags]
 agent-marketplace install <collection-name> [flags]
 agent-marketplace install <marketplace-endpoint> [--scope user|repo|local]
 agent-marketplace install <marketplace-locator> [flags]
 agent-marketplace install --marketplace <alias-or-url> <resource-locator> [flags]
 agent-marketplace install --tag <tag> [flags]
 agent-marketplace install --all [flags]
-agent-marketplace install --from <registry> [<resource-name>] [flags]
+agent-marketplace install --from <registry> [<resource-name>...] [flags]
 ```
+
+`install` accepts several resource names in one command, resolved from the configured registries or from a single `--from` source:
+
+```text
+agent-marketplace install frontend-design review
+agent-marketplace install --from https://github.com/example/resources.git frontend-design review
+```
+
+The shared `--scope`, `--kind`, `--ref`, and `--path` options apply to every name. A repeated name is installed once, in the order you first gave it. If a requested name is missing, malformed, ambiguous, or not allowed in the target scope, the command fails before writing configuration, acquisition lock, or materialization changes. Marketplace endpoint registration and locators remain single-resource operations and cannot be combined with other names.
 
 Marketplace [locators](../glossary.md#locator) have one of these forms:
 
@@ -280,20 +289,23 @@ agent-marketplace update [resource ...] [flags]
 
 | Flag | Type | Required | Default | Description |
 |---|---|:---:|---|---|
-| `--bump` | boolean | no | `false` | Rewrites eligible registry refs to newer matching tags before updating locks. Only legacy v2/v3 `registries:` entries are rewritten. For v4 `sources:` the count is reported but the ref is not changed. |
+| `--bump` | boolean | no | `false` | Rewrites eligible refs to newer matching tags before updating locks, in legacy `registries:` entries and in v4 `sources:`. A ref that an included config file declares is reported and left unchanged. |
 | `--scope` | string | no | `all` | Update scope: `user`, `repo`, `local`, or `all`. `organization` is refused. |
 | `--registry` | string | no | none | Targets one configured Git registry. |
 | `--ref` | string | no | none | Narrows `--registry` to a declared ref. |
 | `--path` | string | no | none | Narrows `--registry` to a locked source root. |
 | `--kind` | string | conditionally | none | Resource kind for named registry targets. |
+| `-v`, `--verbose` | boolean | no | `false` | Lists individual organization-managed Marketplace pins. |
 
 Resource names, `--ref`, `--path`, and `--kind` require `--registry`, and names require `--kind`.
 
-The output reports how many Git registries were refreshed and, with `--bump`, how many refs were rewritten. The command also checks Marketplace mirror pins for newer usable revisions. It reports index-only pins and organization-required pins as skipped, because it cannot rewrite them. Marketplace values are printed quoted:
+The first line counts the configured registry entries, Git or local directory, whether or not their revision changed. With `--bump`, it also reports how many refs were rewritten and names any ref it left alone because an included config file declares it. The command checks writable Marketplace mirror pins for newer usable revisions. It does not check or rewrite organization-managed pins. By default the output counts those pins on one line, and `--verbose` lists each one. Other skipped pins still show their reason. Marketplace values are printed quoted:
 
 ```text
-Updated 2 registries, bumped 1 refs
-Marketplace pins: updated 1, skipped 1
+Configured registry entries: 2, refs bumped: 1
+Marketplace pins updated: 1
+Organization-managed Marketplace pins: 15 (not checked for newer revisions; pins unchanged)
+Use `agent-marketplace update --verbose` to list organization-managed pins.
 Marketplace "https://marketplace.example.com" "source"/"skill"/"review": updated "sha256:..." -> "sha256:..."
 ```
 

@@ -76,4 +76,23 @@ describe('ResourceRow', () => {
     expect(wrapper.get('article').attributes('data-interactive')).toBe('true')
     expect(wrapper.get('button[aria-label^="Copy install command"]').attributes('disabled')).toBeUndefined()
   })
+
+  // spec: marketplace-browser/browser-displays-counts-while-preserving-filtered-pagination
+  it('renders reported installation counts including zero with their meaning', () => {
+    const positive = mount(ResourceRow, { props: { ...listed(), item: { ...listed().item, installation_count: 12 } }, global: { stubs } })
+    expect(positive.text()).toContain('12 reported installations')
+    const explanation = positive.find('[title]')
+    expect(explanation.attributes('title')).toMatch(/latest configuration.*30 days/i)
+    expect(explanation.attributes('aria-label')).toMatch(/12 reported installations.*latest configuration.*30 days/i)
+
+    const one = mount(ResourceRow, { props: { ...listed(), item: { ...listed().item, installation_count: 1 } }, global: { stubs } })
+    expect(one.text()).toContain('1 reported installation')
+    expect(one.text()).not.toContain('1 reported installations')
+
+    const zero = mount(ResourceRow, { props: { ...listed(), item: { ...listed().item, installation_count: 0 } }, global: { stubs } })
+    expect(zero.text()).toContain('0 reported installations')
+
+    const absent = mount(ResourceRow, { props: listed(), global: { stubs } })
+    expect(absent.text()).not.toContain('reported installation')
+  })
 })

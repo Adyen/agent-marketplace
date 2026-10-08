@@ -181,7 +181,7 @@ func TestRemoveStaleFileCandidatePreservesReplacementAfterCompare(t *testing.T) 
 		t.Fatalf("stale candidates = %+v, want one candidate", planned.StaleCandidates)
 	}
 
-	err = removeStaleFileCandidate(stale, planned.StaleCandidates[0], func() error {
+	_, err = removeStaleFileCandidate(stale, planned.StaleCandidates[0], func() error {
 		if err := os.Remove(stale); err != nil {
 			return err
 		}

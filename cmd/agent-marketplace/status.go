@@ -22,6 +22,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/cache"
 	"github.com/Adyen/agent-marketplace/internal/catalog"
 	"github.com/Adyen/agent-marketplace/internal/config"
+	"github.com/Adyen/agent-marketplace/internal/fsboundary"
 	"github.com/Adyen/agent-marketplace/internal/harness"
 	"github.com/Adyen/agent-marketplace/internal/marketplace"
 	"github.com/Adyen/agent-marketplace/internal/materialize"
@@ -124,6 +125,10 @@ func runStatus(ctx context.Context, out io.Writer, now time.Time) error {
 			Workspace:          ws,
 			CatalogMode:        catalog.LoadModeInspect,
 			ReadOnlyExactLocks: true,
+			// Marketplace selections resolve into artifacts from the verified
+			// local cache, so the desired set matches sync --check without
+			// downloading artifacts or writing files.
+			MarketplaceArtifactsFromCache: true,
 		},
 		DryRun:                         runStatusMaterialize,
 		SkipMaterializeOnResolveErrors: true,
@@ -182,12 +187,20 @@ func runStatus(ctx context.Context, out io.Writer, now time.Time) error {
 				resolver.WithMalformed(catalog.MalformedByKey(result.CatalogLoad.Catalogs)),
 				resolver.WithTargetHarnesses(result.TargetHarnesses),
 			}
-			if result.MarketplaceInspection != nil {
+			// The second resolve keeps the Marketplace view consistent with the
+			// primary one: when the pipeline resolved Marketplace artifacts
+			// from cache, the excluded diff must see the same artifacts. The
+			// metadata-only inspection remains the fallback for callers that
+			// did not opt in.
+			if result.MarketplaceArtifactResolver != nil {
+				secondResolveOpts = append(secondResolveOpts, resolver.WithMarketplaceResolver(result.MarketplaceArtifactResolver))
+			} else if result.MarketplaceInspection != nil {
 				secondResolveOpts = append(secondResolveOpts, resolver.WithMarketplaceResolver(*result.MarketplaceInspection))
 			}
 			resolvedWithoutExcludes, secondResolveErrs := resolver.Resolve(result.LoadedCfg, catalogEntries, localNoExclude, secondResolveOpts...)
 			for _, e := range secondResolveErrs {
-				if !resolver.IsWarning(e) && !resolver.IsSoftSelectedNotFound(e) && !resolver.IsSoftSelectedMalformed(e) {
+				if !resolver.IsWarning(e) && !resolver.IsSoftSelectedNotFound(e) && !resolver.IsSoftSelectedMalformed(e) &&
+					!pipeline.IsMarketplaceCacheMetadataMissingWarning(e) {
 					secondResolveRealErrs = append(secondResolveRealErrs, e)
 				}
 			}
@@ -217,7 +230,12 @@ func runStatus(ctx context.Context, out io.Writer, now time.Time) error {
 
 	statusRows := buildStatusRows(repoRoot, result.Resolved, cacheFreshness, dryRunReport)
 	applyExactLockFreshness(statusRows, result.LockMetadata)
-	requirementRows, resolveErrs := splitRequirementWarnings(result.ResolveErrors)
+	// A Marketplace pin that failed to resolve is already reported as a hard
+	// error naming the pin. Its dependents must not also be told to select a
+	// resource that is selected; the resolution failure is the actionable fact.
+	pendingMarketplacePins := pipeline.MarketplacePendingPins(result.ResolveErrors)
+	requirementRows, resolveErrs := splitRequirementWarnings(
+		pipeline.SuppressUnmetMarketplaceRequirements(result.ResolveErrors, pendingMarketplacePins))
 	collisionRows := splitResolveErrors(resolveErrs)
 
 	// Convert overlap warnings to collision rows so they appear in the
@@ -661,15 +679,19 @@ func buildHarnessTargetRows(repoRoot string, harnesses []string) ([]harnessTarge
 }
 
 func harnessRootSummaries(target hcc.Target, repoRoot string) (string, string, error) {
-	repo, err := harness.ResolveDestinations(target, false, repoRoot)
-	if err != nil {
-		return "", "", err
+	summaries := make([]string, 0, 2)
+	for _, machine := range []bool{false, true} {
+		destinations, err := harness.ResolveDestinations(target, machine, repoRoot)
+		if err != nil {
+			if !errors.Is(err, fsboundary.ErrUnsafePath) && !errors.Is(err, fsboundary.ErrUnsafeFile) {
+				return "", "", err
+			}
+			summaries = append(summaries, fmt.Sprintf("unresolvable: %v", err))
+		} else {
+			summaries = append(summaries, destinationSummary(destinations))
+		}
 	}
-	machine, err := harness.ResolveDestinations(target, true, repoRoot)
-	if err != nil {
-		return "", "", err
-	}
-	return destinationSummary(repo), destinationSummary(machine), nil
+	return summaries[0], summaries[1], nil
 }
 
 func destinationSummary(destinations []harness.Destination) string {

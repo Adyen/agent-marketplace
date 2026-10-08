@@ -52,7 +52,8 @@ func validManagedOutcome(outcome string) bool {
 
 func decodeManagedRefreshEvent(record string, marketplace MarketplaceID) (ManagedRefreshAttempt, error) {
 	var event ManagedRefreshAttempt
-	if len(record) > 65536 || json.Unmarshal([]byte(record), &event) != nil || event.Marketplace != marketplace || event.Sequence < 1 || event.Attempt < 1 || event.RegistryGeneration < 1 || event.PolicyRevision < 1 || event.ConfigurationRevision < 1 || !managedToken(string(event.Registry)) || event.JobID == "" || event.WorkerID == "" || !validManagedOutcome(event.Outcome) || (event.PublicationID != "") != (event.Outcome == "succeeded") {
+	if len(record) > 65536 || json.Unmarshal([]byte(record), &event) != nil || event.Marketplace != marketplace || event.Sequence < 1 || event.Attempt < 1 || event.RegistryGeneration < 1 || event.PolicyRevision < 1 || event.ConfigurationRevision < 1 || !managedToken(string(event.Registry)) || event.JobID == "" || event.WorkerID == "" || !validManagedOutcome(event.Outcome) || (event.PublicationID != "") != (event.Outcome == "succeeded") ||
+		(event.Outcome == "succeeded" || event.Outcome == "started") && (event.FailureCode != "" || event.FailureCause != "") || len(event.FailureCode) > 128 || len(event.FailureCause) > 2048 {
 		return event, ErrManagedStateCorrupt
 	}
 	return event, nil
@@ -181,11 +182,19 @@ func ReadManagedRegistryRefreshState(ctx context.Context, q ManagedSQLQueries, m
 	return result, nil
 }
 
-func CommitManagedRefreshAttempt(ctx context.Context, q ManagedSQLQueries, meta MetadataStore, fence ManagedFence, outcome string, publication PublicationID) error {
+func CommitManagedRefreshAttempt(ctx context.Context, q ManagedSQLQueries, meta MetadataStore, fence ManagedFence, outcome string, publication PublicationID, failures ...ManagedRefreshFailure) error {
 	if len(publication) > 256 || len(fence.ExpectedPublicationID) > 256 || strings.ContainsAny(string(publication)+string(fence.ExpectedPublicationID), "\x00\r\n") {
 		return ErrManagedAttemptInvalid
 	}
 	if !validManagedOutcome(outcome) || (publication != "") != (outcome == "succeeded") || !managedToken(string(fence.Marketplace)) || !managedToken(string(fence.JobID)) || fence.Attempt < 1 || fence.RegistryGeneration < 1 || fence.PolicyRevision < 1 || fence.WorkerID == "" || len(fence.WorkerID) > 256 || strings.ContainsAny(fence.WorkerID, "\x00\r\n") {
+		return ErrManagedAttemptInvalid
+	}
+	var failure ManagedRefreshFailure
+	if len(failures) > 0 {
+		failure = failures[0]
+	}
+	if len(failures) > 1 || outcome == "started" && (failure.Code != "" || failure.Cause != "") || outcome == "succeeded" && (failure.Code != "" || failure.Cause != "") ||
+		len(failure.Code) > 128 || len(failure.Cause) > 2048 || strings.ContainsAny(failure.Code+failure.Cause, "\x00\r\n") {
 		return ErrManagedAttemptInvalid
 	}
 	result, err := q.ExecContext(ctx, `UPDATE managed_configuration_heads SET revision=revision WHERE marketplace_id=$1`, fence.Marketplace)
@@ -225,7 +234,7 @@ func CommitManagedRefreshAttempt(ctx context.Context, q ManagedSQLQueries, meta 
 	if err != nil {
 		return err
 	}
-	event := ManagedRefreshAttempt{Marketplace: payload.Marketplace, Registry: payload.RegistryID, JobID: job.ID, ParentJobID: payload.ParentJobID, Attempt: job.Attempt, WorkerID: fence.WorkerID, RegistryGeneration: payload.RegistryGeneration, PolicyRevision: payload.PolicyRevision, ConfigurationRevision: payload.Revision, Operation: payload.Operation, Outcome: outcome, PublicationID: publication, ExpectedPublicationID: fence.ExpectedPublicationID}
+	event := ManagedRefreshAttempt{Marketplace: payload.Marketplace, Registry: payload.RegistryID, JobID: job.ID, ParentJobID: payload.ParentJobID, Attempt: job.Attempt, WorkerID: fence.WorkerID, RegistryGeneration: payload.RegistryGeneration, PolicyRevision: payload.PolicyRevision, ConfigurationRevision: payload.Revision, Operation: payload.Operation, Outcome: outcome, PublicationID: publication, ExpectedPublicationID: fence.ExpectedPublicationID, FailureCode: failure.Code, FailureCause: failure.Cause}
 	if payload.ParentJobID != "" {
 		parent, err := meta.GetJob(ctx, payload.ParentJobID)
 		if errors.Is(err, ErrNotFound) {
