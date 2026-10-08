@@ -1,8 +1,8 @@
 ## 1. Regression and implementation
 
-- [ ] 1.1 Add annotated keyboard and refresh regressions for every query-local folding scenario and observe the fold regression fail before implementation.
-- [ ] 1.2 Capture the existing fuzzy-ranked view benchmark before the fix, add query-local fold state and first-header refresh anchoring, and verify the focused regression passes.
-- [ ] 1.3 Run the full TUI package tests and capture the same benchmark after the fix to check fold, ranking, and query lifecycle compatibility.
+- [x] 1.1 Add annotated keyboard and refresh regressions for every query-local folding scenario and observe the fold regression fail before implementation.
+- [x] 1.2 Capture the existing fuzzy-ranked view benchmark before the fix, add query-local fold state and first-header refresh anchoring, and verify the focused regression passes.
+- [x] 1.3 Run the full TUI package tests and capture the same benchmark after the fix to check fold, ranking, and query lifecycle compatibility.
 
 ## 2. Integration
 
