@@ -17,9 +17,10 @@ import (
 
 type metadataPublicationObserver struct {
 	slog.Handler
-	before         func(string, string)
-	recovery       func()
-	journalCleanup func(string)
+	before             func(string, string)
+	recovery           func()
+	journalCleanup     func(string)
+	emptySafetyCleanup func(string)
 }
 
 func (h metadataPublicationObserver) Handle(ctx context.Context, record slog.Record) error {
@@ -43,6 +44,9 @@ func (h metadataPublicationObserver) Handle(ctx context.Context, record slog.Rec
 	}
 	if phase == "ownership-journal-cleanup" && h.journalCleanup != nil {
 		h.journalCleanup(path)
+	}
+	if phase == "ownership-empty-safety-cleanup" && h.emptySafetyCleanup != nil {
+		h.emptySafetyCleanup(path)
 	}
 	return h.Handler.Handle(ctx, record)
 }
