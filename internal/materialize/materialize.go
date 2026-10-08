@@ -214,6 +214,9 @@ func loadPortableState(repoRoot string, machineScope bool) (*portableState, erro
 		if entry.Target == "" || clean == "." || clean == ".." || strings.HasPrefix(clean, "../") || filepath.IsAbs(entry.Path) {
 			return nil, fmt.Errorf("invalid materialization manifest entry %q", entry.Path)
 		}
+		if entry.Target == string(hcc.TargetWindsurf) && !machineScope && !strings.HasPrefix(clean, windsurfDir+"/") {
+			return nil, fmt.Errorf("%w: portable Windsurf path %q is outside native output", fsboundary.ErrUnsafePath, entry.Path)
+		}
 		entry.Path = clean
 		state.entries[portableManifestKey(hcc.Target(entry.Target), clean)] = entry
 	}
