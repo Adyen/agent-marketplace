@@ -88,16 +88,37 @@ func TestLocalAPIUserHarness(t *testing.T) {
 		writeFile(t, orgPath, "apiVersion: agent-marketplace/v4\nharnesses: [claude]\nsources:\n  orgdir: {directory: "+orgSource+"}\n")
 		config.SetTestOrganizationConfigPath(t, orgPath)
 	}
-	api, err := NewUser(context.Background(), home, session.RuntimeLifecycle(), nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer api.Close()
-	serveHarness(t, api, map[string]string{
+	bootstrap := map[string]string{
 		"home":      home,
 		"repo":      repo,
 		"xdgConfig": os.Getenv("XDG_CONFIG_HOME"),
 		"xdgState":  os.Getenv("XDG_STATE_HOME"),
 		"xdgCache":  os.Getenv("XDG_CACHE_HOME"),
-	})
+	}
+	if fixture == "sources" {
+		userDir := filepath.Join(home, ".agents")
+		keepDir := filepath.Join(home, "keep-source")
+		fragDir := filepath.Join(home, "frag-source")
+		addDir := filepath.Join(home, "added-source")
+		writeFile(t, filepath.Join(keepDir, "solo", "SKILL.md"), fixtureSkillBody)
+		writeFile(t, filepath.Join(fragDir, "frag", "SKILL.md"), fixtureSkillBody)
+		writeFile(t, filepath.Join(addDir, "added", "SKILL.md"), fixtureSkillBody)
+		writeFile(t, filepath.Join(userDir, "fragment.yaml"),
+			"sources:\n  frag: {directory: "+fragDir+"}\nresources:\n  frag: {all: true}\n")
+		writeFile(t, filepath.Join(userDir, "config.yaml"),
+			"apiVersion: agent-marketplace/v4\ninclude: fragment.yaml\nharnesses: [devin]\nsources:\n  keep: {directory: "+keepDir+"}\nresources:\n  keep: {all: true}\n")
+		orgPath := filepath.Join(t.TempDir(), "org.yaml")
+		orgSource := filepath.Join(t.TempDir(), "org-regs")
+		writeFile(t, filepath.Join(orgSource, "orgskill", "SKILL.md"), fixtureSkillBody)
+		writeFile(t, orgPath, "apiVersion: agent-marketplace/v4\nharnesses: [claude]\nsources:\n  orgdir: {directory: "+orgSource+"}\n")
+		config.SetTestOrganizationConfigPath(t, orgPath)
+		bootstrap["addSourceDir"] = addDir
+		bootstrap["orgConfig"] = orgPath
+	}
+	api, err := NewUser(context.Background(), home, session.RuntimeLifecycle(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer api.Close()
+	serveHarness(t, api, bootstrap)
 }

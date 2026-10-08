@@ -64,12 +64,13 @@ type diagnosticDTO struct {
 }
 
 type snapshotDTO struct {
-	Stage       string          `json:"stage"`
-	Drift       string          `json:"drift"`
-	Rows        []rowDTO        `json:"rows"`
-	Diagnostics []diagnosticDTO `json:"diagnostics"`
-	Harnesses   []string        `json:"harnesses"`
-	Operation   *operationRef   `json:"operation"`
+	Stage            string          `json:"stage"`
+	Drift            string          `json:"drift"`
+	Rows             []rowDTO        `json:"rows"`
+	Diagnostics      []diagnosticDTO `json:"diagnostics"`
+	Harnesses        []string        `json:"harnesses"`
+	Operation        *operationRef   `json:"operation"`
+	SettledOperation *operationRef   `json:"settledOperation,omitempty"`
 }
 
 type sessionEvent struct {
@@ -110,9 +111,11 @@ type API struct {
 	sequence uint64
 	current  *snapshotDTO
 	currentG session.RequestGeneration
-	started  bool
-	diag     session.DiagnosticStore
-	subs     map[*subscriber]struct{}
+
+	lastSettledOperation *operationRef
+	started              bool
+	diag                 session.DiagnosticStore
+	subs                 map[*subscriber]struct{}
 
 	wg sync.WaitGroup
 }
@@ -147,6 +150,9 @@ func commonNew(ctx context.Context, ws pipeline.Workspace, homeDir string, lifec
 	}
 	if lifecycle.Update == nil {
 		lifecycle.Update = runtime.Update
+	}
+	if lifecycle.Mutate == nil {
+		lifecycle.Mutate = runtime.Mutate
 	}
 	if gate == nil {
 		gate = session.NewOperationGate()
@@ -452,7 +458,7 @@ func (a *API) snapshotPresentationLocked(snapshot session.Snapshot, op *operatio
 	case session.DriftFailed:
 		drift = "failed"
 	}
-	dto := snapshotDTO{Stage: stage, Drift: drift, Rows: []rowDTO{}, Diagnostics: []diagnosticDTO{}, Harnesses: []string{}, Operation: op}
+	dto := snapshotDTO{Stage: stage, Drift: drift, Rows: []rowDTO{}, Diagnostics: []diagnosticDTO{}, Harnesses: []string{}, Operation: op, SettledOperation: a.lastSettledOperation}
 	var rows []session.Row
 	switch {
 	case stage == "provisional":
@@ -602,9 +608,7 @@ func (a *API) handleEvents(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func decodeStrictObject(r *http.Request, field func(decoder *json.Decoder, key string) bool) bool {
-	r.Body = http.MaxBytesReader(nil, r.Body, 1<<20)
-	decoder := json.NewDecoder(r.Body)
+func decodeObject(decoder *json.Decoder, field func(decoder *json.Decoder, key string) bool) bool {
 	token, err := decoder.Token()
 	if err != nil {
 		return false
@@ -627,6 +631,15 @@ func decodeStrictObject(r *http.Request, field func(decoder *json.Decoder, key s
 		return false
 	}
 	if delim, ok := token.(json.Delim); !ok || delim != '}' {
+		return false
+	}
+	return true
+}
+
+func decodeStrictObject(r *http.Request, field func(decoder *json.Decoder, key string) bool) bool {
+	r.Body = http.MaxBytesReader(nil, r.Body, 1<<20)
+	decoder := json.NewDecoder(r.Body)
+	if !decodeObject(decoder, field) {
 		return false
 	}
 	if _, err := decoder.Token(); !errors.Is(err, io.EOF) {
@@ -773,6 +786,7 @@ func (a *API) runOperation(operation session.OperationID, kind session.Operation
 	default:
 		a.diag.RecordOperationSuccess(kind)
 	}
+	a.lastSettledOperation = op
 	dto := a.snapshotPresentationLocked(final, nil)
 	a.gate.Finish(operation)
 	a.emitLocked("snapshot", generation, nil, &dto)

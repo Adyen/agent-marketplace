@@ -2,48 +2,11 @@ import { test, expect } from '@playwright/test'
 import { existsSync, readdirSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { startHarness, repoRoot } from './harness'
-
-const dist = join(repoRoot, 'cmd', 'agent-marketplace-gui', 'frontend', 'dist')
-
-const contentTypes: Record<string, string> = {
-  '.html': 'text/html',
-  '.js': 'text/javascript',
-  '.css': 'text/css',
-  '.svg': 'image/svg+xml',
-  '.png': 'image/png',
-  '.woff2': 'font/woff2',
-}
-
-function ext(path: string): string {
-  const index = path.lastIndexOf('.')
-  return index === -1 ? '' : path.slice(index)
-}
-
-async function serveBuiltApp(page: import('@playwright/test').Page, url: string) {
-  await page.route(`${url}/**`, async (route) => {
-    const request = route.request()
-    const path = new URL(request.url()).pathname
-    if (path.startsWith('/api/')) {
-      await route.continue()
-      return
-    }
-    const relative = path === '/' ? 'index.html' : path.replace(/^\/+/, '')
-    const file = join(dist, relative)
-    if (!existsSync(file)) {
-      await route.fulfill({ status: 404, body: 'not found' })
-      return
-    }
-    await route.fulfill({
-      status: 200,
-      contentType: contentTypes[ext(file)] ?? 'application/octet-stream',
-      body: await readFile(file),
-    })
-  })
-}
+import { startHarness } from './harness'
+import { distIndexExists, serveBuiltApp } from './app'
 
 test('built GUI drives the real user-scope core', async ({ page }) => {
-  if (!existsSync(join(dist, 'index.html'))) {
+  if (!distIndexExists()) {
     throw new Error('built GUI assets missing: run `make gui-build` or `pnpm run build` in gui/ first')
   }
 
@@ -98,7 +61,7 @@ test('built GUI drives the real user-scope core', async ({ page }) => {
 // spec: session-interactions/save-selected-harnesses
 // spec: session-interactions/empty-selection
 test('built GUI saves Harness targets through the real user-scope core', async ({ page }) => {
-  if (!existsSync(join(dist, 'index.html'))) {
+  if (!distIndexExists()) {
     throw new Error('built GUI assets missing: run `make gui-build` or `pnpm run build` in gui/ first')
   }
 
@@ -179,7 +142,7 @@ test('built GUI saves Harness targets through the real user-scope core', async (
 // spec: gui-first-run/cancel-first-run-before-completion
 // spec: gui-first-run/harness-targets-and-consent-match-init-output
 test('built GUI guided first-run setup initializes the absent root by keyboard', async ({ page }) => {
-  if (!existsSync(join(dist, 'index.html'))) {
+  if (!distIndexExists()) {
     throw new Error('built GUI assets missing: run `make gui-build` or `pnpm run build` in gui/ first')
   }
 

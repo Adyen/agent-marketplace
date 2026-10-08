@@ -1,7 +1,8 @@
 import { spawn, type ChildProcess } from 'node:child_process'
 import { createInterface } from 'node:readline'
-import { resolve, dirname } from 'node:path'
+import { resolve, dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { writeFileSync } from 'node:fs'
 
 export const guiRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 export const repoRoot = resolve(guiRoot, '..')
@@ -14,6 +15,8 @@ export interface Bootstrap {
   xdgConfig?: string
   xdgState?: string
   xdgCache?: string
+  addSourceDir?: string
+  orgConfig?: string
 }
 
 export interface Harness {
@@ -42,12 +45,13 @@ export async function startHarness(mode: HarnessMode, extraEnv: Record<string, s
         ...extraEnv,
         CGO_ENABLED: '0',
       },
-      stdio: ['ignore', 'ignore', 'pipe', 'pipe'],
+      stdio: ['ignore', 'pipe', 'pipe', 'pipe'],
       detached: true,
     },
   )
   const stderrChunks: Buffer[] = []
   child.stderr?.on('data', (chunk: Buffer) => stderrChunks.push(chunk))
+  child.stdout?.on('data', (chunk: Buffer) => stderrChunks.push(chunk))
   const pipe = child.stdio[3]
   if (pipe == null) {
     try {
@@ -66,6 +70,15 @@ export async function startHarness(mode: HarnessMode, extraEnv: Record<string, s
     }),
   )
   const stderrText = () => Buffer.concat(stderrChunks).toString('utf8')
+  const dumpStderr = () => {
+    const text = stderrText()
+    if (text.trim() !== '') {
+      try {
+        writeFileSync(join(guiRoot, 'test-results', `harness-stderr-${child.pid}.log`), text)
+      } catch {
+      }
+    }
+  }
   const stop = async () => {
     lines.close()
     pipe.destroy()
@@ -80,6 +93,7 @@ export async function startHarness(mode: HarnessMode, extraEnv: Record<string, s
         await exitPromise
       }
     }
+    dumpStderr()
   }
   const bootstrap = await new Promise<Bootstrap>((resolvePromise, reject) => {
     const timer = setTimeout(() => {

@@ -8,6 +8,7 @@ import {
   type OperationRef,
   type SessionEvent,
   type Snapshot,
+  type SourceInput,
 } from './api/client'
 
 export type Row = Snapshot['rows'][number]
@@ -15,6 +16,10 @@ export type Diagnostic = Snapshot['diagnostics'][number]
 
 export const MAX_NOTIFICATIONS = 3
 export const NOTIFICATION_TTL_MS = 6000
+export const EVENT_RETRY_DELAY_MS = 250
+export const EVENT_OUTAGE_MESSAGE = 'Session updates are unavailable'
+
+const FATAL_EVENT_STATUSES = new Set([400, 401, 403, 405])
 
 export interface WorkspaceState {
   stage: string
@@ -107,17 +112,42 @@ export class WorkspaceController {
   ) {}
 
   async connect(): Promise<void> {
-    this.abort = new AbortController()
-    try {
-      for await (const event of this.client.events(this.cursor, this.abort.signal)) {
-        this.apply(event)
+    if (this.abort != null && !this.abort.signal.aborted) {
+      return
+    }
+    const abort = new AbortController()
+    this.abort = abort
+    for (;;) {
+      try {
+        for await (const event of this.client.events(this.cursor, abort.signal)) {
+          this.apply(event)
+        }
+      } catch (error) {
+        if (abort.signal.aborted) {
+          return
+        }
+        if (error instanceof RequestError && FATAL_EVENT_STATUSES.has(error.status)) {
+          throw error
+        }
       }
-    } catch (error) {
-      if (this.abort.signal.aborted) {
+      if (abort.signal.aborted) {
         return
       }
-      this.state.error = 'Session updates are unavailable'
-      throw error
+      this.state.error = EVENT_OUTAGE_MESSAGE
+      await new Promise<void>((resolve) => {
+        const timer = setTimeout(() => {
+          abort.signal.removeEventListener('abort', onAbort)
+          resolve()
+        }, EVENT_RETRY_DELAY_MS)
+        const onAbort = () => {
+          clearTimeout(timer)
+          resolve()
+        }
+        abort.signal.addEventListener('abort', onAbort, { once: true })
+      })
+      if (abort.signal.aborted) {
+        return
+      }
     }
   }
 
@@ -161,6 +191,14 @@ export class WorkspaceController {
 
   async saveTargets(targets: string[]): Promise<boolean> {
     return this.requestOperation(() => this.client.configure({ action: 'save-targets', targets }))
+  }
+
+  async addSource(source: SourceInput): Promise<boolean> {
+    return this.requestOperation(() => this.client.configure({ action: 'add-source', source }))
+  }
+
+  async removeSource(id: string): Promise<boolean> {
+    return this.requestOperation(() => this.client.configure({ action: 'remove-source', id }))
   }
 
   async initialize(targets: string[], consent?: boolean): Promise<boolean> {
@@ -223,18 +261,20 @@ export class WorkspaceController {
       }
       this.state.operation = operation
     } else if (snapshot.stage === 'final') {
-      if (this.state.operation != null) {
-        const settled = this.state.operation
-        this.lastSettledOperationId = settled.id
-        this.state.operation = null
-        this.state.phase = null
-        if (settled.kind === 'targets' || settled.kind === 'mutation') {
-          void this.loadConfiguration()
-        }
-      } else {
+      const settledRef = snapshot.settledOperation ?? this.state.operation
+      const settledId = Math.max(this.lastSettledOperationId, settledRef?.id ?? 0)
+      const current = this.state.operation
+      if (current == null || current.id <= settledId) {
         this.state.operation = null
         this.state.phase = null
       }
+      if (
+        settledId > this.lastSettledOperationId &&
+        (settledRef?.kind === 'targets' || settledRef?.kind === 'mutation')
+      ) {
+        void this.loadConfiguration()
+      }
+      this.lastSettledOperationId = settledId
     }
     this.state.stage = snapshot.stage
     this.state.drift = snapshot.drift
@@ -245,6 +285,9 @@ export class WorkspaceController {
     }
     if (snapshot.stage === 'final') {
       this.accepted = true
+      if (this.state.error === EVENT_OUTAGE_MESSAGE) {
+        this.state.error = null
+      }
     }
   }
 

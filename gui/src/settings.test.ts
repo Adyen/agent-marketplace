@@ -84,17 +84,18 @@ describe('Harness settings dialog', () => {
     const { client, push } = settingsClient({
       userSources: [
         {
+          id: 'user-git',
           kind: 'git',
           location: 'https://example.com/repo.git',
           ref: 'main',
           path: 'sub/dir',
           sourceHarness: 'claude',
         },
-        { kind: 'directory', location: '/var/regs', ref: '', path: '', sourceHarness: '' },
-        { kind: 'marketplace', location: 'https://market.example', ref: '', path: '', sourceHarness: '' },
+        { id: 'user-dir', kind: 'directory', location: '/var/regs', ref: '', path: '', sourceHarness: '' },
+        { id: 'user-mp', kind: 'marketplace', location: 'https://market.example', ref: '', path: '', sourceHarness: '' },
       ],
       organizationSources: [
-        { kind: 'directory', location: '/opt/org-regs', ref: '', path: '', sourceHarness: '' },
+        { id: 'org-dir', kind: 'directory', location: '/opt/org-regs', ref: '', path: '', sourceHarness: '' },
       ],
     })
     const { wrapper } = mountWorkspace(client)
@@ -115,7 +116,7 @@ describe('Harness settings dialog', () => {
     expect(userSection!.textContent).toContain('claude')
     expect(userSection!.textContent).toContain('/var/regs')
     expect(userSection!.textContent).toContain('https://market.example')
-    expect(userSection!.querySelectorAll('button, input, [role="checkbox"]')).toHaveLength(0)
+    expect(userSection!.querySelectorAll('button, input, select, [role="checkbox"]')).toHaveLength(0)
 
     const orgSection = dialog.querySelector('[aria-label="Organization sources"]')
     expect(orgSection).not.toBeNull()
@@ -139,7 +140,7 @@ describe('Harness settings dialog', () => {
     const hostileLayout = '<script>alert(1)</script>'
     const { client, push } = settingsClient({
       organizationSources: [
-        { kind: 'directory', location: hostile, ref: '', path: '', sourceHarness: hostileLayout },
+        { id: 'org-hostile', kind: 'directory', location: hostile, ref: '', path: '', sourceHarness: hostileLayout },
       ],
     })
     const { wrapper } = mountWorkspace(client)

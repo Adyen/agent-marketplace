@@ -5,6 +5,7 @@ import { launchRequestEvent, resolveBootstrap } from './bootstrap'
 import { eligible, GROUP_ORDER, WorkspaceController, groupKey, groupLabel, type Row } from './controller'
 import FirstRun from './FirstRun.vue'
 import HarnessSettings from './HarnessSettings.vue'
+import SourcesSettings from './SourcesSettings.vue'
 
 const props = defineProps<{ controller?: WorkspaceController }>()
 
@@ -13,6 +14,8 @@ const selectedId = ref<string | null>(null)
 const error = ref<string | null>(null)
 const settingsOpen = ref(false)
 const settingsButton = ref<HTMLButtonElement | null>(null)
+const sourcesOpen = ref(false)
+const sourcesButton = ref<HTMLButtonElement | null>(null)
 const setupOpen = ref(false)
 const setupDismissed = ref(false)
 const setupOpened = ref(false)
@@ -23,6 +26,12 @@ const configuration = computed(() => state.value?.state.configuration ?? null)
 watch(settingsOpen, (isOpen, wasOpen) => {
   if (!isOpen && wasOpen) {
     void nextTick(() => settingsButton.value?.focus())
+  }
+})
+
+watch(sourcesOpen, (isOpen, wasOpen) => {
+  if (!isOpen && wasOpen) {
+    void nextTick(() => sourcesButton.value?.focus())
   }
 })
 
@@ -152,6 +161,12 @@ async function run(action: 'sync' | 'update') {
           @click="setupOpen = true"
         >Set up</button>
         <button
+          ref="sourcesButton"
+          type="button"
+          aria-label="Sources"
+          @click="sourcesOpen = true"
+        >Sources</button>
+        <button
           ref="settingsButton"
           type="button"
           aria-label="Settings"
@@ -233,6 +248,7 @@ async function run(action: 'sync' | 'update') {
     </div>
 
     <HarnessSettings v-if="state" v-model:open="settingsOpen" :controller="state" />
+    <SourcesSettings v-if="state" v-model:open="sourcesOpen" :controller="state" />
     <FirstRun v-if="state" v-model:open="setupOpen" :controller="state" @cancel="onSetupCancel" />
 
     <ul class="workspace__notifications" aria-live="polite" aria-label="Notifications">

@@ -172,8 +172,12 @@ paths:
         through the same initializer as `agent-marketplace init` and records
         the telemetry consent answer exactly as interactive init does; the
         consent field is required when the projection reports
-        consentRequired and rejected otherwise. Available only in
-        user-scope mode.
+        consentRequired and rejected otherwise. add-source ensures one git
+        or directory source entry in the user-personal root, and
+        remove-source removes the single user-personal source entry whose
+        opaque id matches; both flow through the shared staged
+        configuration-layer editor and change nothing else. Available only
+        in user-scope mode.
       security:
         - launchToken: []
       requestBody:
@@ -341,6 +345,11 @@ components:
             - $ref: '#/components/schemas/OperationRef'
             - type: 'null'
           description: Active guarded operation, or null.
+        settledOperation:
+          anyOf:
+            - $ref: '#/components/schemas/OperationRef'
+            - type: 'null'
+          description: Last completed guarded operation, when any has settled; authoritative completion identity independent of the active operation.
     ActionRequest:
       type: object
       required: [action]
@@ -357,8 +366,11 @@ components:
           $ref: '#/components/schemas/OperationRef'
     SourceDescription:
       type: object
-      required: [kind, location, ref, path, sourceHarness]
+      required: [id, kind, location, ref, path, sourceHarness]
       properties:
+        id:
+          type: string
+          description: Opaque stable identity derived from the typed source descriptor tuple under its scope; usable only with remove-source while the descriptor is unchanged.
         kind:
           type: string
           enum: [git, directory, marketplace]
@@ -438,11 +450,55 @@ components:
       oneOf:
         - $ref: '#/components/schemas/SaveTargetsActionRequest'
         - $ref: '#/components/schemas/InitializeActionRequest'
+        - $ref: '#/components/schemas/AddSourceActionRequest'
+        - $ref: '#/components/schemas/RemoveSourceActionRequest'
       discriminator:
         propertyName: action
         mapping:
           save-targets: '#/components/schemas/SaveTargetsActionRequest'
           initialize: '#/components/schemas/InitializeActionRequest'
+          add-source: '#/components/schemas/AddSourceActionRequest'
+          remove-source: '#/components/schemas/RemoveSourceActionRequest'
+    SourceInput:
+      type: object
+      required: [kind, location]
+      additionalProperties: false
+      description: Closed typed source form input; unknown, duplicate, or mistyped keys are rejected.
+      properties:
+        kind:
+          type: string
+          enum: [git, directory]
+          description: Source kind; directory accepts only a location, git requires an explicit ref and accepts an optional path.
+        location:
+          type: string
+          description: Directory accepts an absolute filesystem path, ~ or ~/ home-relative path, or an absolute file:// URL; git accepts an https, file, or ssh URL or an SCP-like [user@]host:path origin. Usernames are allowed only for ssh/SCP forms; passwords, userinfo on non-ssh schemes, query, and fragment are rejected.
+        ref:
+          type: string
+          description: Explicit git ref; required for git, rejected for directory.
+        path:
+          type: string
+          description: Optional sub-path within a git source; rejected for directory.
+    AddSourceActionRequest:
+      type: object
+      required: [action, source]
+      additionalProperties: false
+      properties:
+        action:
+          type: string
+          enum: [add-source]
+        source:
+          $ref: '#/components/schemas/SourceInput'
+    RemoveSourceActionRequest:
+      type: object
+      required: [action, id]
+      additionalProperties: false
+      properties:
+        action:
+          type: string
+          enum: [remove-source]
+        id:
+          type: string
+          description: Opaque id of one user-personal source from the configuration projection; unknown, ambiguous, or non-user ids are rejected.
     SaveTargetsActionRequest:
       type: object
       required: [action, targets]
