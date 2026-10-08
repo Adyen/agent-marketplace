@@ -357,7 +357,7 @@ func mcp(m *ir.McpServer, opts compile.Options) ([]artifact.Artifact, []diag.Dia
 	}
 	var unmodeledExtra bool
 	for key := range m.Extra {
-		unmodeledExtra = unmodeledExtra || key != "cwd"
+		unmodeledExtra = unmodeledExtra || (key != "cwd" && !strings.EqualFold(key, compile.McpPublishingNamespace))
 	}
 	if unmodeledExtra {
 		diagnostics = append(diagnostics, diagnostic(diag.CodeCodexFieldDropped, diag.SeverityWarning, m.Name(), m.Source, "Codex MCP output omitted unmodeled extension fields"))

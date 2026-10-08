@@ -344,7 +344,7 @@ func (c *cursorCompiler) translateHook(h *ir.Hook, opts compile.Options) ([]arti
 // translateMcpServer emits an mcp.json fragment.
 func (c *cursorCompiler) translateMcpServer(m *ir.McpServer, opts compile.Options) ([]artifact.Artifact, []diag.Diagnostic, error) {
 	serverEntry, canonical := compile.McpServerEntry(m, func(s string) string { return s }, true)
-	extraKeys, diags := compile.ExtraKeys(m.Extra, canonical, mapping.TargetCursor, m.Name(), diag.SourceRef(m.Source))
+	extraKeys, diags := compile.McpExtraKeys(m.Extra, canonical, mapping.TargetCursor, m.Name(), diag.SourceRef(m.Source))
 	diags = append(compile.McpCredentialDiagnostics(m, mapping.TargetCursor, compile.WithMcpOptions(opts)), diags...)
 	for _, k := range extraKeys {
 		serverEntry[k] = m.Extra[k]

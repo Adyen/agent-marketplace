@@ -314,7 +314,7 @@ func (c *claudeCompiler) translateHook(h *ir.Hook, opts compile.Options) ([]arti
 func (c *claudeCompiler) translateMcpServer(m *ir.McpServer, opts compile.Options) ([]artifact.Artifact, []diag.Diagnostic, error) {
 	// Build .mcp.json fragment: { "mcpServers": { "<name>": { "command": ..., "args": [...], "env": {...} } } }
 	serverEntry, canonical := compile.McpServerEntry(m, func(s string) string { return s }, true)
-	extraKeys, diags := compile.ExtraKeys(m.Extra, canonical, mapping.TargetClaude, m.Name(), diag.SourceRef(m.Source))
+	extraKeys, diags := compile.McpExtraKeys(m.Extra, canonical, mapping.TargetClaude, m.Name(), diag.SourceRef(m.Source))
 	diags = append(compile.McpCredentialDiagnostics(m, mapping.TargetClaude, compile.WithMcpOptions(opts)), diags...)
 	for _, k := range extraKeys {
 		serverEntry[k] = m.Extra[k]

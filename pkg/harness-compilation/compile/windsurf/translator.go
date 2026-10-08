@@ -368,7 +368,7 @@ func translateMcpServer(server *ir.McpServer, opts compilepkg.Options) ([]artifa
 			present[k] = true
 		}
 	}
-	extraKeys, diags := compilepkg.ExtraKeys(server.Extra, compilepkg.PresentFields(present), compilepkg.TargetWindsurf, server.Name(), compilepkg.DiagSource(server.Source))
+	extraKeys, diags := compilepkg.McpExtraKeys(server.Extra, compilepkg.PresentFields(present), compilepkg.TargetWindsurf, server.Name(), compilepkg.DiagSource(server.Source))
 	diags = append(compilepkg.McpCredentialDiagnostics(server, compilepkg.TargetWindsurf, compilepkg.WithMcpOptions(opts)), diags...)
 	for _, k := range extraKeys {
 		serverEntry[k] = translateMcpExtraValue(server.Extra[k])
