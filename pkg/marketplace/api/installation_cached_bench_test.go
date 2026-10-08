@@ -26,12 +26,15 @@ func BenchmarkSearchHandlerInstallationsCached(b *testing.B) {
 		counts.Counts[installationResourceKey{Registry: "bench-source", Kind: "skill", Name: fmt.Sprintf("skill-%04d", i)}] = int64(i%10 + 1)
 	}
 	server.installations = &installationMetricsReader{
-		cached:          counts,
-		cachedSignature: registryOriginsSignature(registries),
-		cachedAt:        time.Now(),
-		hasCached:       true,
-		now:             time.Now,
+		now:   time.Now,
+		hints: make(chan struct{}, 1),
 	}
+	server.installations.snapshot.Store(&installationSnapshot{
+		counts:      counts,
+		signature:   registryOriginsSignature(registries),
+		evaluatedAt: time.Now(),
+		expiresAt:   time.Now().Add(time.Hour),
+	})
 	handler := server.PublicHandler()
 	request := httptest.NewRequest(http.MethodGet, "/api/v1/search?sort=installations", nil)
 	control := httptest.NewRecorder()
