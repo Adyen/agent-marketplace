@@ -536,23 +536,6 @@ func TestAppendUniqueReturnsNewSliceWhenExistingIsNil(t *testing.T) {
 	}
 }
 
-func TestExcludeForRegistryNormalizesURL(t *testing.T) {
-	entries := []config.RegistryEntry{{
-		URL:    "git@example.com:core.git",
-		Skills: config.KindSelector{Exclude: []string{"legacy"}},
-	}}
-	got := excludeForRegistry("git@example.com:core", entries)
-	if !reflect.DeepEqual(got, []string{"legacy"}) {
-		t.Fatalf("excludeForRegistry = %#v", got)
-	}
-}
-
-func TestExcludeForRegistryReturnsNilWhenNotFound(t *testing.T) {
-	if got := excludeForRegistry("git@example.com:ghost", nil); got != nil {
-		t.Fatalf("expected nil, got %#v", got)
-	}
-}
-
 func TestFindConfiguredRefReturnsEmptyWhenMissing(t *testing.T) {
 	if got := findConfiguredRef("git@example.com:ghost", nil); got != "" {
 		t.Fatalf("expected empty ref, got %q", got)

@@ -634,6 +634,7 @@ func TestInstallValidationRejectsMarketplaceSelectorCombinations(t *testing.T) {
 	}
 }
 
+// spec: resource-installation/singleton-and-no-name-install-behavior-is-retained
 func TestInstallCommandAddsSkillToRepoConfigAndSyncsIt(t *testing.T) {
 	if isolateCommandTest(t) {
 		return
@@ -1188,6 +1189,7 @@ registries: []
 	assertSymlinkTarget(t, filepath.Join(repoRoot, ".agents", "skills", "vm-lifecycle"), filepath.Join(cache.RegistryCachePath(origin, "main"), "vm-lifecycle"))
 }
 
+// spec: resource-installation/singleton-and-no-name-install-behavior-is-retained
 func TestInstallFromFlagWithoutNameInstallsAllResources(t *testing.T) {
 	if isolateCommandTest(t) {
 		return

@@ -468,11 +468,11 @@ SDK post-prune empty-parent cleanup MUST use captured output and parent descript
 
 ### Requirement: SDK quarantined-payload removal retains admitted payload authority
 
-SDK MUST revalidate the discovery-admitted quarantined payload generation at final deletion, using captured parent authority and the existing bounded no-follow/nonblocking single-link reader. Changed or unknown payloads MUST return the existing stale-prune conflict, remain untouched by deletion/attempt cleanup and MUST NOT be restored as the admitted original stale file. Genuine stale pruning MUST remain functional. This rule does not independently fence the earlier conflict-restoration path or redefine removal reporting.
+SDK MUST revalidate the discovery-admitted quarantined payload generation immediately before deletion, using captured parent authority and the existing bounded no-follow/nonblocking single-link reader. Changed or unknown payloads observed by final verification MUST return the existing stale-prune conflict, remain untouched by deletion/attempt cleanup and MUST NOT be restored as the admitted original stale file. Genuine stale pruning MUST remain functional. Verification and name-based deletion are separate operations, not an atomic identity-conditional deletion. Deliberate interference by another process running with the same OS user ID and write access to the quarantine directory during that final verification/deletion window is outside the supported threat model; private naming and repeated verification MUST NOT be represented as atomic hostile same-user exclusion or guaranteed preservation in that window. This narrow exclusion does not relax other generation, containment, ownership, restoration, cleanup/recovery or removal-reporting requirements. This rule does not independently fence the earlier conflict-restoration path or redefine removal reporting.
 
 #### Scenario: SDK quarantined-payload replacement preserves removal generation
 
-- **WHEN** public SDK sync verifies a genuinely quarantined stale payload and that name is replaced before deletion with independently authored foreign regular bytes
+- **WHEN** public SDK sync verifies a genuinely quarantined stale payload and that name is replaced after initial verification but before final verification with independently authored foreign regular bytes
 - **THEN** sync MUST stale-conflict and preserve foreign and retained original bytes/inodes/modes/mtimes, avoid unauthorized stale-name restoration, preserve output membership and clean only owned staging, and restoring valid authority MUST permit actual stale deletion while earlier transaction-prefixed foreign replacement stays unchanged
 
 ### Requirement: SDK quarantine restoration retains observed namespace authority
@@ -515,3 +515,17 @@ SDK marker-based aggregate merging MUST read existing payloads through captured 
 
 - **WHEN** public SDK marker merging observes an input generation or absence and that state changes before comparison in a mutating or read-only operation
 - **THEN** it MUST refuse with generation-conflict identity without consuming or changing the new generation or producing staging, while valid existing and absent input controls MUST still perform the intended merge or nonmutating plan
+
+### Requirement: Portable manifest nominations name one resource inside a native component
+
+Every portable manifest nomination for a harness target, in repository and machine scope, MUST name one resource below a component directory of that harness target's native output: relative to the harness target root, the repository Windsurf `.windsurf/` namespace, or the Codex partition, the path MUST consist of a component directory followed by at least one further element, and MUST NOT be or contain a shared aggregate file that the harness target declares for that scope. A Codex nomination MUST additionally use a component that its partition declares. Nominations of a harness target root, a component directory itself, a root-level file such as a shared harness configuration file, a shared aggregate file inside a component directory such as `hooks/hooks.json`, or Codex partition content outside its declared components, including Agent Marketplace configuration and lockfiles in the `.agents` partition, MUST NOT authorize payload reads, replacement, or pruning through a matching ownership digest or partition root identity. Refused nominations MUST report `materialize.manifest.error`, preserve nominated bytes, identity, permissions, modification time and manifest evidence, and MUST NOT report the refused entry as removed. Genuine portable installation and pruning for every harness target in both scopes MUST remain usable. This requirement does not authenticate manifest provenance, change ownership semantics for other resources inside component directories, or change SDK explicit-output pruning.
+
+#### Scenario: Portable manifest cannot nominate root files or component directories
+
+- **WHEN** file-mode materialization in repository or machine scope encounters an independently authored portable manifest nomination, with a matching ownership digest, of a harness target's root-level file such as a shared harness configuration file, of a shared aggregate file inside a component directory, or of a whole component directory, in a mutating or read-only run
+- **THEN** it MUST refuse with `materialize.manifest.error`, preserve the nominated bytes, identity, permissions, modification time and manifest evidence, report no removal for that entry, and continue to support actual installation and pruning of that harness target's portable output
+
+#### Scenario: Codex manifest cannot nominate shared partition content
+
+- **WHEN** file-mode materialization in repository or machine scope encounters an independently authored Codex portable manifest nomination, with a matching ownership digest and partition root identity, of Agent Marketplace configuration or a lockfile in the `.agents` partition, or of content outside a partition's declared components, in a mutating or read-only run
+- **THEN** it MUST refuse with `materialize.manifest.error`, preserve the nominated bytes, identity, permissions, modification time and manifest evidence, report no removal for that entry, and continue to support actual installation and pruning of Codex skills and subagents

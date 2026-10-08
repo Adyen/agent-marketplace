@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"slices"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -34,8 +35,8 @@ func newInstallCmd() *cobra.Command {
 	var verbose bool
 
 	cmd := &cobra.Command{
-		Use:   "install [resource-name|marketplace-endpoint]",
-		Short: "Install a resource or configure a Marketplace endpoint",
+		Use:   "install [resource-name... | marketplace-endpoint]",
+		Short: "Install resources or configure a Marketplace endpoint",
 		Args: func(cmd *cobra.Command, args []string) error {
 			tag = strings.TrimSpace(tag)
 			registry = strings.TrimSpace(registry)
@@ -48,6 +49,9 @@ func newInstallCmd() *cobra.Command {
 			marketplaceFlags := acceptRisk || assumeYes || installedName != ""
 			marketplaceLocatorArg := len(args) == 1 && looksLikeMarketplaceLocator(args[0])
 			marketplaceCoordinate := marketplace != "" || marketplaceLocatorArg
+			batchSpecialArg := len(args) > 1 && slices.ContainsFunc(args, func(arg string) bool {
+				return strings.Contains(arg, ":") || looksLikeMarketplaceLocator(arg)
+			})
 
 			switch {
 			case marketplace != "" && (fromURL != "" || installAll || tag != ""):
@@ -74,17 +78,17 @@ func newInstallCmd() *cobra.Command {
 				return fmt.Errorf("--path requires --from")
 			case installAll:
 				return nil
-			case fromURL != "" && len(args) > 1:
-				return fmt.Errorf("--from accepts at most one resource name argument")
+			case batchSpecialArg:
+				return fmt.Errorf("marketplace locators and endpoint URLs cannot be combined with other resource names")
 			case fromURL != "":
-				// --from with name installs one resource; without name installs all from that URL
+				// --from with names installs those resources; without names installs all from that URL
 				return nil
 			case tag != "" && len(args) > 0:
 				return fmt.Errorf("cannot specify both a skill name and --tag")
 			case marketplace != "" && len(args) != 1:
 				return fmt.Errorf("--marketplace accepts exactly one Marketplace resource locator")
-			case tag == "" && len(args) != 1 && marketplace == "":
-				return fmt.Errorf("accepts exactly one resource name or Marketplace endpoint, --tag, --all, or --from")
+			case tag == "" && len(args) == 0 && marketplace == "":
+				return fmt.Errorf("accepts one or more resource names or a Marketplace endpoint, --tag, --all, or --from")
 			case len(args) == 1 && looksLikeMarketplaceLocator(args[0]):
 				return nil
 			case marketplace != "" && len(args) == 1:

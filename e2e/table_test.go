@@ -178,6 +178,8 @@ func TestPathFingerprintDetectsSameByteRewrite(t *testing.T) {
 
 // ---------- test table ----------
 
+const handwrittenFactoryHooks = `{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"echo handwritten"}]}]}}`
+
 var testTable = []TestCase{
 	// spec: regression-gates/migrated-selection-workflows-remain-usable
 	{
@@ -1575,6 +1577,45 @@ registries: []
 			// Verify the ad-hoc entry was written to repo config.
 			{Args: []string{"list"}, MustPass: true,
 				OutContains: []string{"adhoc-skill"}},
+		},
+	},
+	{
+		Name: "install/multiple_names_from_git_source",
+		// spec: resource-installation/install-several-names-from-one-explicit-source
+		Desc: "Given a git registry with a bundle path and an unrelated configured selection, When install names two resources with shared --from/--ref/--path, Then both materialize, unrelated state is retained, and sync --check passes",
+		Registries: []RegistryDef{
+			{Name: "multi-src", Files: map[string]string{
+				"bundles/skills/first/SKILL.md":  (Skill{Name: "first", Description: "First"}).SkillFile(),
+				"bundles/skills/second/SKILL.md": (Skill{Name: "second", Description: "Second"}).SkillFile(),
+				"skills/root-only/SKILL.md":      (Skill{Name: "root-only", Description: "Root only"}).SkillFile(),
+			}},
+			{Name: "multi-other", Skills: []Skill{{Name: "keep"}}},
+		},
+		GlobalCfg: `
+harnesses: [factory]
+`,
+		RepoCfg: `
+registries:
+  - url: {{REG:multi-other}}
+    ref: main
+    skills:
+      - keep
+`,
+		Steps: []Step{
+			{Args: []string{"sync"}, MustPass: true,
+				FilesExist: []string{"/workspace/.factory/skills/keep/SKILL.md"}},
+			{Args: []string{"install", "first", "second", "--from", "{{REG:multi-src}}", "--ref", "main", "--path", "bundles"}, MustPass: true,
+				OutContains: []string{"first", "second"},
+				FilesExist: []string{
+					"/workspace/.factory/skills/first/SKILL.md",
+					"/workspace/.factory/skills/second/SKILL.md",
+					"/workspace/.factory/skills/keep/SKILL.md",
+				},
+				FilesAbsent: []string{"/workspace/.factory/skills/root-only"},
+				FileContains: map[string]string{
+					"/workspace/.agents/config.yaml": "bundles",
+				}},
+			{Args: []string{"sync", "--check"}, MustPass: true},
 		},
 	},
 	{
@@ -4441,6 +4482,24 @@ registries:
 			{Args: []string{"deinit", "--scope", "repo", "--purge-config"}, AssertExitCode: intPtr(1), OutContains: []string{"materialize.manifest.error"}, OutNotContains: []string{"Removed config", "Removed lock", "No managed artifacts to remove"}, FilesAbsent: []string{"/workspace/.windsurf"}, PathsUnchanged: []string{"/workspace/README.md", "/workspace/.agents/materialization-manifest.yaml", "/workspace/.agents/config.yaml", "/workspace/.agents/lock.yaml"}},
 			{Action: ActionWriteFile, Path: "/workspace/.agents/materialization-manifest.yaml", Body: "version: 1\nentries: []\n", Args: []string{"sync"}, MustPass: true, RegularFiles: []string{"/workspace/.windsurf/skills/teardown-skill/SKILL.md"}, PathsUnchanged: []string{"/workspace/README.md"}},
 			{Args: []string{"deinit", "--scope", "repo", "--purge-config"}, MustPass: true, FilesAbsent: []string{"/workspace/.agents/config.yaml", "/workspace/.agents/lock.yaml", "/workspace/.windsurf/skills/teardown-skill/SKILL.md"}, PathsUnchanged: []string{"/workspace/README.md"}},
+		},
+	},
+	{
+		Name:       "deinit/portable_manifest_cannot_nominate_shared_hooks_file",
+		Desc:       "Given actual portable Factory output and a manifest nominating the handwritten shared hooks file inside the hooks component, When sync checking or config-purging deinit runs, Then refusal preserves the hooks file bytes and metadata until the manifest is repaired and real native teardown succeeds",
+		Registries: []RegistryDef{{Name: "factory-manifest-scope", Skills: []Skill{{Name: "teardown-skill", Description: "Scoped native control"}}}},
+		GlobalCfg:  "apiVersion: agent-marketplace/v4\nharnesses: [factory]\n",
+		RepoCfg:    "apiVersion: agent-marketplace/v4\nharnesses: [factory]\nsources:\n  fixture:\n    git: {{REG:factory-manifest-scope}}\n    ref: main\nresources:\n  fixture: [skill/teardown-skill]\nmaterialization:\n  mode: file\n",
+		Steps: []Step{
+			{Args: []string{"sync"}, MustPass: true, RegularFiles: []string{"/workspace/.factory/skills/teardown-skill/SKILL.md"}},
+			{Args: []string{"deinit", "--scope", "repo"}, MustPass: true, FilesAbsent: []string{"/workspace/.factory/skills/teardown-skill/SKILL.md"}},
+			{Action: ActionWriteFile, Path: "/workspace/.factory/hooks/hooks.json", Body: handwrittenFactoryHooks},
+			{Action: ActionWriteFile, Path: "/workspace/.agents/materialization-manifest.yaml", Body: fmt.Sprintf("version: 1\nentries:\n  - target: factory\n    path: hooks/hooks.json\n    digest: sha256:%x\n", sha256.Sum256(fmt.Appendf(nil, "file\x00\x000644\x00%d\x00%s", len(handwrittenFactoryHooks), handwrittenFactoryHooks)))},
+			{Args: []string{"sync", "--check"}, AssertExitCode: intPtr(1), OutContains: []string{"materialize.manifest.error"}, FilesAbsent: []string{"/workspace/.factory/skills/teardown-skill"}, PathsUnchanged: []string{"/workspace/.factory/hooks/hooks.json", "/workspace/.agents/materialization-manifest.yaml", "/workspace/.agents/config.yaml", "/workspace/.agents/lock.yaml"}},
+			{Args: []string{"deinit", "--scope", "repo", "--purge-config", "--dry-run"}, AssertExitCode: intPtr(1), OutContains: []string{"materialize.manifest.error"}, OutNotContains: []string{"Would remove config", "Would remove lock", "No managed artifacts to remove"}, PathsUnchanged: []string{"/workspace/.factory/hooks/hooks.json", "/workspace/.agents/materialization-manifest.yaml", "/workspace/.agents/config.yaml", "/workspace/.agents/lock.yaml"}},
+			{Args: []string{"deinit", "--scope", "repo", "--purge-config"}, AssertExitCode: intPtr(1), OutContains: []string{"materialize.manifest.error"}, OutNotContains: []string{"Removed config", "Removed lock", "No managed artifacts to remove"}, PathsUnchanged: []string{"/workspace/.factory/hooks/hooks.json", "/workspace/.agents/materialization-manifest.yaml", "/workspace/.agents/config.yaml", "/workspace/.agents/lock.yaml"}},
+			{Action: ActionWriteFile, Path: "/workspace/.agents/materialization-manifest.yaml", Body: "version: 1\nentries: []\n", Args: []string{"sync"}, MustPass: true, RegularFiles: []string{"/workspace/.factory/skills/teardown-skill/SKILL.md"}, PathsUnchanged: []string{"/workspace/.factory/hooks/hooks.json"}},
+			{Args: []string{"deinit", "--scope", "repo", "--purge-config"}, MustPass: true, FilesAbsent: []string{"/workspace/.agents/config.yaml", "/workspace/.agents/lock.yaml", "/workspace/.factory/skills/teardown-skill/SKILL.md"}, PathsUnchanged: []string{"/workspace/.factory/hooks/hooks.json"}},
 		},
 	},
 	{
