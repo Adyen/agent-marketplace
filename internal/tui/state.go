@@ -315,6 +315,9 @@ type Model struct {
 	// section path ("status:enabled", ...).
 	foldedSections map[string]bool
 
+	queryFoldSections map[string]bool
+	queryFoldQuery    string
+
 	// flatItems is the render-ready list computed from filteredRows +
 	// foldState. Cursor indexes into this slice. Call rebuildFlatItems
 	// whenever rows, filter, or fold state change.
