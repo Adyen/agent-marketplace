@@ -4,7 +4,9 @@ import (
 	"errors"
 	"io"
 	"io/fs"
+	"log/slog"
 	"os"
+	"path/filepath"
 
 	"github.com/Adyen/agent-marketplace/internal/fsboundary"
 )
@@ -113,6 +115,32 @@ func publishRestoredFile(parent *fsboundary.Dir, name string, reader io.Reader, 
 	if closeErr := staged.Close(); closeErr != nil {
 		return closeErr
 	}
+	native, err := parent.NativeRoot()
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if closeErr := native.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
+	for _, validate := range validators {
+		if err := validate(); err != nil {
+			return err
+		}
+	}
+	slog.Debug("Backup restored payload ready for publication", "path", filepath.Join(parent.Path(), stageName), "destination", name, "phase", "restore-file-publication")
+	current, statErr := native.Lstat(stageName)
+	if statErr != nil {
+		return errors.Join(fsboundary.ErrGenerationConflict, statErr)
+	}
+	named, identityErr := fsboundary.FileInfoIdentity(current)
+	if identityErr != nil {
+		return identityErr
+	}
+	if !named.SameState(identity) {
+		return fsboundary.ErrGenerationConflict
+	}
 	if file.Exists() {
 		if err := file.ReadTargetWith(func(io.Reader) error { return nil }); err != nil {
 			return err
@@ -129,26 +157,23 @@ func publishRestoredFile(parent *fsboundary.Dir, name string, reader io.Reader, 
 	if !unchanged {
 		return fsboundary.ErrGenerationConflict
 	}
-	native, err := parent.NativeRoot()
+	fresh, err = fsboundary.OpenDir(parent.Path())
 	if err != nil {
-		return err
+		return errors.Join(fsboundary.ErrGenerationConflict, err)
 	}
-	defer func() {
-		if closeErr := native.Close(); closeErr != nil {
-			err = errors.Join(err, closeErr)
-		}
-	}()
+	unchanged = fresh.Identity().SameObject(parent.Identity())
+	if closeErr := fresh.Close(); closeErr != nil {
+		return closeErr
+	}
+	if !unchanged {
+		return fsboundary.ErrGenerationConflict
+	}
 	if !file.Exists() {
 		if _, statErr := native.Lstat(name); !errors.Is(statErr, fs.ErrNotExist) {
 			if statErr != nil {
 				return statErr
 			}
 			return fsboundary.ErrGenerationConflict
-		}
-	}
-	for _, validate := range validators {
-		if err := validate(); err != nil {
-			return err
 		}
 	}
 	return native.Rename(stageName, name)

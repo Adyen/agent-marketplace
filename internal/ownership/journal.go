@@ -737,6 +737,10 @@ func (s *Store) clearJournal(j *Journal) (err error) {
 	if file.Link() != nil || !file.Exists() || !file.Identity().SameState(j.observed.file) {
 		return fsboundary.ErrGenerationConflict
 	}
+	slog.Debug("Ownership journal selected for cleanup", "path", parent.Path(), "phase", "ownership-journal-cleanup")
+	if err := s.verifyMetadataParent(parent); err != nil {
+		return err
+	}
 	if s.removeJournalFile != nil {
 		if err := s.removeJournalFile(s.JournalFile()); err != nil {
 			return fmt.Errorf("ownership: clear journal: %w", err)
@@ -872,6 +876,10 @@ func (s *Store) recoverLocked() ([]RecoveryOutcome, error) {
 		absent := liveErr != nil && os.IsNotExist(liveErr)
 		if liveErr != nil && !absent {
 			return nil, fmt.Errorf("ownership: read %s during recovery: %w", j.AbsFile, liveErr)
+		}
+		slog.Debug("Ownership recovery aggregate observed", "path", j.AbsFile, "phase", "ownership-recovery-aggregate-observed")
+		if err := validate(); err != nil {
+			return nil, err
 		}
 		switch {
 		case !absent && Digest(live) == j.NextDigest:

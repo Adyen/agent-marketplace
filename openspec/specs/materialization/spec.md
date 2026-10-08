@@ -447,3 +447,48 @@ SDK stale traversal MUST remain below captured original output and directory aut
 
 - **WHEN** public SDK sync or dry-run replaces an admitted nested real directory before member discovery
 - **THEN** it MUST generation-refuse before importing foreign member claims, preserve foreign bytes/inode/mode/mtime/output membership and original retained payload, create no stage, and restoring original directory MUST permit actual regular prune or nonmutating dry-run candidate discovery
+
+### Requirement: SDK quarantine publication and reservation cleanup retain creator authority
+
+SDK stale pruning MUST retain the descriptor identity of each exclusively created private quarantine reservation, require original regular singly linked empty reservation before rename, and remove only matching attempt-created reservations during refusal cleanup. Unknown or replacement authority MUST be preserved with the existing stale-prune conflict; meaningful reader/close failures MUST not become success. Existing regular pruning and restoration behavior MUST remain functional. This requirement does not independently fence later quarantined-payload deletion/restoration, removal reporting or empty-parent cleanup.
+
+#### Scenario: SDK quarantine reservation replacement preserves foreign payload
+
+- **WHEN** public SDK sync replaces its actual private quarantine reservation before rename with an independently authored foreign regular payload
+- **THEN** it MUST stale-conflict without consuming/deleting foreign bytes/inode/mode/mtime, preserve original retained empty reservation and selected stale bytes/output membership, clean only owned staging, and a healthy retry MUST actually prune selected stale payload while preserving the earlier transaction-prefixed replacement
+
+### Requirement: SDK empty-parent cleanup retains admitted directory authority
+
+SDK post-prune empty-parent cleanup MUST use captured output and parent descriptors, require the discovery-admitted parent/directory generations before directory-only removal, and propagate meaningful generation/inspection/close refusal instead of reporting successful cleanup. Unknown or replacement directories MUST be preserved. Nonempty directories MUST stop normal cleanup, and valid nested stale/empty-parent pruning MUST remain functional; the output root MUST never be removed.
+
+#### Scenario: SDK empty-parent replacement preserves directory generation
+
+- **WHEN** public SDK sync prunes a real nested stale payload and its admitted empty parent is replaced after initial inspection with an independently created foreign empty directory
+- **THEN** SDK MUST generation-refuse without deleting/changing the foreign directory inode/mode/mtime or output membership, preserve the original retained now-empty parent, clean only owned staging, and restoring valid authority with a real stale payload MUST permit actual stale-file and empty-parent removal while foreign data stays unchanged
+
+### Requirement: SDK quarantined-payload removal retains admitted payload authority
+
+SDK MUST revalidate the discovery-admitted quarantined payload generation at final deletion, using captured parent authority and the existing bounded no-follow/nonblocking single-link reader. Changed or unknown payloads MUST return the existing stale-prune conflict, remain untouched by deletion/attempt cleanup and MUST NOT be restored as the admitted original stale file. Genuine stale pruning MUST remain functional. This rule does not independently fence the earlier conflict-restoration path or redefine removal reporting.
+
+#### Scenario: SDK quarantined-payload replacement preserves removal generation
+
+- **WHEN** public SDK sync verifies a genuinely quarantined stale payload and that name is replaced before deletion with independently authored foreign regular bytes
+- **THEN** sync MUST stale-conflict and preserve foreign and retained original bytes/inodes/modes/mtimes, avoid unauthorized stale-name restoration, preserve output membership and clean only owned staging, and restoring valid authority MUST permit actual stale deletion while earlier transaction-prefixed foreign replacement stays unchanged
+
+### Requirement: SDK quarantine restoration retains observed namespace authority
+
+SDK MUST capture no-follow descriptor-relative identity of the actual quarantined entry before verification and retain that observed device/inode/mode/size/link shape through mismatch restoration and quarantine cleanup. Link creation MUST account only for its own link-count change. Unknown/later generations MUST remain untouched while the original stale-prune conflict remains visible; they MUST NOT be restored as the observed entry. Existing legitimate regular/FIFO/changed-leaf restoration and actual stale pruning MUST remain functional. This is not an atomic uncooperative-writer compare-and-act policy or a change to removal reporting.
+
+#### Scenario: SDK quarantine restoration preserves observed generation
+
+- **WHEN** public SDK sync observes a genuine quarantined mismatch B after discovery of A and B is replaced at the restore boundary with independently authored foreign C
+- **THEN** sync MUST retain the original stale conflict and preserve foreign C and retained A/B bytes/inodes/modes/mtimes, avoid unauthorized stale-name restoration, retain output members and only owned-stage cleanup, and restoring valid authority MUST permit real healthy pruning while foreign quarantine C stays unchanged
+
+### Requirement: SDK live removal reporting reflects actual deletion receipts
+
+SDK live Removed entries MUST be backed by successful validated stale-payload unlink outcomes, not discovery/planning, conflict refusal, restored replacement, or candidate disappearance before mutation. Physical removal receipts MUST remain independent of later cleanup/close error. Public removal API, original conflict/error identities and complete sorted StaleCandidates plan MUST remain compatible. Dry-run Removed MUST retain prospective plan semantics without filesystem mutation.
+
+#### Scenario: SDK removal receipts distinguish refusal absence and dry-run
+
+- **WHEN** public SDK sync discovers sorted safe A and unsafe B and A is genuinely pruned while B is replaced/refused or disappears before rename
+- **THEN** live Removed MUST contain only actual A while the complete A+B candidate plan remains, conflict/original/foreign bytes and metadata/output members/staging guarantees remain intact, dry-run MUST prospectively report A+B without mutation, and healthy controls MUST perform the exact deletion(s) their receipts claim

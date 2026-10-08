@@ -15,16 +15,63 @@ import (
 
 type codexRestoreObserver struct {
 	slog.Handler
-	onPreflight func()
+	onPreflight        func()
+	onPublication      func(string)
+	onSymbolic         func(string)
+	onDirectory        func(string)
+	onDirectoryOpened  func(string)
+	onDirectoryDescend func(string)
+	onListingTarget    func(string)
+	onRestoreSelected  func(string)
+	onRetentionTarget  func(string)
+	onNamespaceParent  func(string)
+	onRestoreNamespace func(string)
 }
 
 func (h codexRestoreObserver) Handle(ctx context.Context, record slog.Record) error {
+	phase, path := "", ""
 	record.Attrs(func(attr slog.Attr) bool {
-		if attr.Key == "phase" && attr.Value.String() == "preflight-complete" {
-			h.onPreflight()
+		if attr.Key == "phase" {
+			phase = attr.Value.String()
+		}
+		if attr.Key == "path" {
+			path = attr.Value.String()
 		}
 		return true
 	})
+	if phase == "preflight-complete" && h.onPreflight != nil {
+		h.onPreflight()
+	}
+	if phase == "restore-file-publication" && h.onPublication != nil {
+		h.onPublication(path)
+	}
+	if phase == "restore-symbolic-replace" && h.onSymbolic != nil {
+		h.onSymbolic(path)
+	}
+	if phase == "backup-source-directory" && h.onDirectory != nil {
+		h.onDirectory(path)
+	}
+	if phase == "backup-source-directory-opened" && h.onDirectoryOpened != nil {
+		h.onDirectoryOpened(path)
+	}
+	if phase == "backup-source-directory-descend" && h.onDirectoryDescend != nil {
+		h.onDirectoryDescend(path)
+	}
+	if phase == "backup-listing-target" && h.onListingTarget != nil {
+		h.onListingTarget(path)
+	}
+	if phase == "ordinary-restore-selected" && h.onRestoreSelected != nil {
+		h.onRestoreSelected(path)
+	}
+	if phase == "backup-retention-target" && h.onRetentionTarget != nil {
+		h.onRetentionTarget(path)
+	}
+	if phase == "backup-namespace-parent" && h.onNamespaceParent != nil {
+		h.onNamespaceParent(path)
+	}
+	if phase == "codex-restore-namespace" && h.onRestoreNamespace != nil {
+		h.onRestoreNamespace(path)
+	}
 	return h.Handler.Handle(ctx, record)
 }
 

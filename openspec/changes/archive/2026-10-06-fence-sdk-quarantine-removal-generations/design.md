@@ -1,0 +1,7 @@
+## Decision
+
+Keep the genuine post-rename quarantine verification and its established restoration behavior. Add the meaningful final-removal boundary and reuse the same captured-parent bounded regular/single-link no-follow/nonblocking candidate matcher immediately before unlink. A changed/unknown quarantine payload returns the existing stale-prune conflict and disarms attempt cleanup; it is not restored into the original stale pathname. The foreign quarantine name and retained original payload survive. No new publisher/helper/type or alternate file reader introduced. This is a sampled generation check, not an atomic compare-and-unlink primitive against an uncooperative writer.
+
+## Consumer verification
+
+Public SDK sync quarantines and verifies an independently authored actual stale payload. At its final removal boundary, retain original inode elsewhere and create foreign replacement at the real quarantine name. Old code deletes foreign payload and reports success/red. New code stale-conflicts, preserving foreign bytes/inode/mode/mtime, retained original bytes/inode/mode/mtime, no unauthorized stale-name restoration, exact output membership and only owned-stage cleanup. Restore valid original at stale path: real healthy retry removes it and preserves earlier transaction-prefixed foreign replacement. Linux/macOS complete SDK/materialization, macCLI/conversion,20-run SDK races, strict specs/shellcheck and disk-cost review required. Restoration generation binding and removal reporting are separate follow-ons; R2 not closed.

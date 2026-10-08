@@ -67,10 +67,12 @@ func CreateCodexSet(partitions []CodexPartition) (operation string, err error) {
 		return "", err
 	}
 	targetDir := filepath.Join(dir, codexTargetName)
-	if err := os.MkdirAll(targetDir, 0o755); err != nil {
-		return "", fmt.Errorf("backup: create Codex set directory: %w", err)
+	selected := targetDir
+	parent, err := fsboundary.OpenDir(selected)
+	for errors.Is(err, fs.ErrNotExist) && !errors.Is(err, fsboundary.ErrUnsafePath) && selected != filepath.Dir(selected) {
+		selected = filepath.Dir(selected)
+		parent, err = fsboundary.OpenDir(selected)
 	}
-	parent, err := fsboundary.OpenDir(targetDir)
 	if err != nil {
 		return "", err
 	}
@@ -79,6 +81,25 @@ func CreateCodexSet(partitions []CodexPartition) (operation string, err error) {
 			err = errors.Join(err, closeErr)
 		}
 	}()
+	slog.Debug("Codex backup namespace parent selected", "path", selected, "phase", "backup-namespace-parent")
+	if err := verifyArchiveParent(parent, selected); err != nil {
+		return "", err
+	}
+	if selected != targetDir {
+		relative, err := filepath.Rel(selected, targetDir)
+		if err != nil {
+			return "", err
+		}
+		prepared, err := parent.EnsurePath(relative)
+		if err != nil {
+			return "", err
+		}
+		previous := parent
+		parent = prepared
+		if closeErr := previous.Close(); closeErr != nil {
+			return "", fmt.Errorf("backup: close Codex backup namespace parent %s: %w", selected, closeErr)
+		}
+	}
 	native, err := parent.NativeRoot()
 	if err != nil {
 		return "", err
@@ -250,11 +271,48 @@ func RestoreCodexSet(partitions []CodexPartition) (operation string, err error) 
 		if err := verify(); err != nil {
 			return "", codexLateRestoreError(err, completed, selected.Partitions[i:])
 		}
-		if err := sources[i].ReadTargetWith(func(reader io.Reader) error {
-			if err := os.MkdirAll(partition.Root, 0o755); err != nil {
+		if err := sources[i].ReadTargetWith(func(reader io.Reader) (err error) {
+			absolute, err := filepath.Abs(partition.Root)
+			if err != nil {
 				return err
 			}
-			return extractArchivePayload(reader, partition.Root)
+			selected := absolute
+			namespace, err := fsboundary.OpenDir(selected)
+			for errors.Is(err, fs.ErrNotExist) && !errors.Is(err, fsboundary.ErrUnsafePath) && selected != filepath.Dir(selected) {
+				selected = filepath.Dir(selected)
+				namespace, err = fsboundary.OpenDir(selected)
+			}
+			if err != nil {
+				return err
+			}
+			defer func() {
+				if closeErr := namespace.Close(); closeErr != nil {
+					err = errors.Join(err, closeErr)
+				}
+			}()
+			slog.Debug("Codex restore namespace parent selected", "path", selected, "phase", "codex-restore-namespace")
+			if err := verifyArchiveParent(namespace, selected); err != nil {
+				return err
+			}
+			if selected != absolute {
+				relative, err := filepath.Rel(selected, absolute)
+				if err != nil {
+					return err
+				}
+				prepared, err := namespace.EnsurePath(relative)
+				if err != nil {
+					return err
+				}
+				previous := namespace
+				namespace = prepared
+				if closeErr := previous.Close(); closeErr != nil {
+					return closeErr
+				}
+			}
+			if err := verifyArchiveParent(namespace, absolute); err != nil {
+				return err
+			}
+			return extractArchivePayload(reader, partition.Root, namespace)
 		}); err != nil {
 			return "", codexLateRestoreError(err, completed, selected.Partitions[i:])
 		}
@@ -369,16 +427,7 @@ func readCodexManifest(root *fsboundary.Dir, name string) (data []byte, identity
 	return file.ReadTarget(file.Identity().Size)
 }
 
-func rotateCodexSets(root *fsboundary.Dir, name, targetDir string, maxDays, maxPerDay int) (err error) {
-	parent, err := root.OpenPath(name)
-	if err != nil {
-		return err
-	}
-	defer func() {
-		if closeErr := parent.Close(); closeErr != nil {
-			err = errors.Join(err, closeErr)
-		}
-	}()
+func rotateCodexSets(parent *fsboundary.Dir, targetDir string, maxDays, maxPerDay int) (err error) {
 	sets, err := loadCompleteCodexSetsAt(parent)
 	if err != nil {
 		return err

@@ -112,3 +112,111 @@ Agent Marketplace Codex set restore MUST retain captured set-parent and source a
 
 - **WHEN** public CreateCodexSet archives real inert native bytes and public RestoreCodexSet encounters an identical-byte/mode archive or manifest replacement after preflight
 - **THEN** it MUST refuse before native mutation, preserve current native inode/mode/mtime/bytes and replacement member bytes, and restoring the original member MUST allow genuine two-partition extraction of archived content
+
+### Requirement: Completed restore staged payload authority survives final publication
+
+Regular restore MUST compare the final staged name below captured parent authority with the completed written/chmodded descriptor's full identity/state immediately before relative publication. Missing, aliased or replaced stages MUST generation-refuse without publishing foreign bytes; cleanup MUST preserve unknown replacements and current native output. Ordinary archives, explicitly mapped native files and Codex sets MUST retain genuine byte/mode restoration, including unreadable archived modes without reopening payload after chmod. This control does not independently bind later destination/parent actions or supply transactional extraction or uncooperative-writer exclusion.
+
+#### Scenario: Restore staged payload replacement refuses publication
+
+- **WHEN** public ordinary, explicitly mapped or Codex set restore replaces its actual completed staged file at the final publication boundary with independently authored foreign bytes
+- **THEN** restore MUST generation-refuse and preserve current/foreign/retained-stage bytes/inodes/modes/mtimes and output membership, and a healthy retry MUST actually restore archived bytes/mode while preserving the earlier foreign stage
+
+### Requirement: Regular restore retains original output action generations
+
+Ordinary, mapped-native and Codex regular restore MUST revalidate the original destination state or absence, captured ancestry and currently named output parent identity at final publication after later validators. Detached original descriptors MUST NOT authorize a successful restore under a replaced named parent. Unknown destination/parent generations MUST remain untouched with typed generation refusal and only creator-stage cleanup. Supported initial aliases, regular/single-link shape policy, unreadable archived stage modes, existing error causes and genuine byte/mode restoration MUST remain valid. This rule does not establish extraction transactions or atomic uncooperative-writer namespace exclusion.
+
+#### Scenario: Restore final destination replacement preserves original authority
+
+- **WHEN** real public ordinary, mapped-native or two-partition Codex restore replaces an admitted destination, creates a foreign entry at admitted absence or replaces the named parent at final publication
+- **THEN** restore MUST generation-refuse, preserve original/foreign bytes/inodes/modes/mtimes, foreign parent metadata and output members while cleaning only creator staging, and restored original file/absence/parent authority MUST actually publish archive bytes/mode without changing retained foreign generations
+
+### Requirement: Symbolic restore retains admitted destination leaf generations
+
+Ordinary and Codex symbolic restore MUST compare current no-follow leaf state or absence with the admitted generation immediately before replacement removal below captured parent authority. Later/unknown leaf generations MUST generation-refuse and remain untouched with foreign subtree members and retained original bytes/metadata preserved. Existing regular/single-link structural admission, directory/link/absence replacement behavior and exact archived target creation MUST remain functional. Codex's earlier existing-symlink preflight refusal MUST remain intact. This rule does not bind late named-parent authority, recursively snapshot descendant generations or establish transactional/atomic uncooperative-writer exclusion.
+
+#### Scenario: Symbolic restore preserves late foreign destination generation
+
+- **WHEN** real public ordinary or Codex restore replaces an admitted symbolic-destination leaf or absence at its replacement boundary with a foreign directory containing an inert member
+- **THEN** restore MUST generation-refuse without changing foreign tree/member and original bytes/inodes/modes/mtimes/root membership, and restoring admitted authority MUST genuinely recover exact archived symbolic target while earlier foreign tree stays unchanged
+
+### Requirement: Symbolic restore requires original named parent authority
+
+Ordinary and Codex symbolic restoration MUST verify that the currently named parent still resolves to the captured directory object at the replacement action boundary before leaf removal and link creation. Detached original descriptors MUST NOT authorize mutation/success after named-parent replacement. Typed refusal MUST preserve original and foreign parent/leaf bytes, identities, modes, mtimes and membership. Supported initial parent aliases and genuine exact symbolic target recovery MUST remain functional. No recursive descendant snapshot, atomic uncooperative-writer exclusion or whole-operation transaction is established by this rule.
+
+#### Scenario: Symbolic restore refuses detached named parent generation
+
+- **WHEN** real public ordinary or Codex symbolic restore replaces the named parent at the mutation boundary while the admitted leaf remains valid under its detached original descriptor
+- **THEN** restore MUST generation-refuse before original deletion, preserving original/foreign parent and leaf metadata/bytes/members, and restoring original parent authority MUST genuinely recover exact archived symbolic target without changing retained foreign parent
+
+### Requirement: Selected archive directories retain admitted generation authority
+
+Ordinary and Codex backup creation MUST match an opened selected directory with its classified original object before walking members, traverse metadata/payloads below that captured selected descriptor and revalidate the named selected directory generation before success. Unknown/replaced selected generations MUST typed-refuse rather than import foreign members into successful archives. Refusal MUST preserve original/foreign bytes and metadata and clean only creator archive output. Existing cleaned tar paths, dot-prefixed selections, root-dot omission, contained symbolic entries, private archive modes and genuine recovery MUST remain valid. This rule does not promise original top-level selection leases, complete recursive-member snapshots, transactional archives or atomic exclusion of uncooperative writers.
+
+#### Scenario: Backup directory generation refuses foreign member import
+
+- **WHEN** public ordinary or Codex backup substitutes a selected source directory after its metadata admission or descriptor opening with a foreign directory containing inert member bytes
+- **THEN** creation MUST generation-refuse without published archive/reservation residue, preserve original/foreign directories and payload bytes/inodes/modes/mtimes, and restoring original selected authority MUST create an archive whose actual recovery restores original bytes without foreign members
+
+### Requirement: Nested archive directory descent retains admitted child authority
+
+Ordinary and Codex backup MUST match each classified child directory to a descriptor opened below its captured admitted parent before reading members, use that child descriptor for descendant metadata/payload reads, and validate original named child object before success. Replaced child or captured-ancestor generations MUST refuse rather than authorize foreign payload import. Refusal MUST preserve original/foreign nested directory/payload bytes/inodes/modes/mtimes and leave no archive/reservation residue. Sorted original tar hierarchy, root-dot omission, symbolic text/modes, initial source aliases and actual valid recovery MUST remain supported. Active directory descriptors remain held by recursion; OS resource exhaustion MUST propagate rather than authorize success. No new arbitrary depth/work limit, complete-tree content freeze, archive transaction or atomic exclusion is established.
+
+#### Scenario: Nested backup directory generation refuses foreign descent
+
+- **WHEN** real public ordinary or Codex creation substitutes a classified nested child directory at descent or after opening with a foreign directory/member while the selected root remains original
+- **THEN** creation MUST generation-refuse preserving original/foreign bytes/metadata with no archive/reservation residue, and restoring original child authority MUST genuinely create an archive whose recovery restores original bytes without foreign payloads
+
+### Requirement: Backup listing claims retain admitted target directory generations
+
+ListBackups MUST enumerate beneath captured backup-root authority, match each target directory descriptor to its admitted no-follow object identity and revalidate named target generation before returning ordinary archive names or complete Codex set claims. Replacements MUST generation-refuse with no partial listing claims and no mutation of original/foreign alias/directory/member bytes/inodes/modes/mtimes/membership. Genuine absent backup roots, existing ordinary empty targets, initial backup-root aliases, Codex malformed/incomplete filtering and exact listing order MUST remain supported. Per-target descriptors MUST close within their iteration with causal errors propagated. This rule adds no archive validity/content policy, work budget, later restore/rotation action lease, complete directory snapshot or atomic uncooperative-writer exclusion.
+
+#### Scenario: Backup listing refuses replaced target directory generation
+
+- **WHEN** actual public ordinary or Codex backup listing substitutes an enumerated target with a foreign alias or directory containing archive names or genuine complete foreign Codex sets
+- **THEN** listing MUST generation-refuse with nil claims preserving all original/foreign bytes/metadata/members, and restoring original target MUST produce exact healthy listing whose actual restore recovers original archived bytes after live modification
+
+### Requirement: Ordinary restore retains selected archive generation authority
+
+Ordinary and mapped Restore MUST retain captured target-directory enumeration and selected archive Destination generation through extraction, verify named selected parent before payload streaming and use existing strict singly linked/nonblocking bounded opened/named payload controls. Post-selection directory aliases/replacements and archive-leaf replacements MUST generation-refuse before native bytes change rather than recapture foreign archive authority. Refusal MUST preserve current native bytes/inodes/modes/mtimes, original/foreign archive and parent metadata/bytes, and leave no output staging residue. Supported initial backup-root/target aliases, missing-backup behavior, archive/mapped modes and real recovery MUST remain valid. Descriptor close failures MUST preserve causes and not report a successful timestamp; selected restore failures MUST retain boundary logging. No new processing budget, archive format/content policy, atomic uncooperative-writer exclusion or all-output transaction is established.
+
+#### Scenario: Ordinary restore retains selected archive and directory generations
+
+- **WHEN** actual ordinary or mapped Create/Restore substitutes an already selected archive leaf, real parent directory or parent alias with an independently created valid foreign tar/gzip generation
+- **THEN** Restore MUST generation-refuse preserving current native and original/foreign archive/parent bytes/metadata without output staging residue, and restoring original authority MUST genuinely recover archived original bytes/modes while initial selected aliases remain supported
+
+### Requirement: Backup retention retains admitted target directory generations
+
+Rotate MUST retain actual no-follow target directory object identity beneath captured backup-root enumeration and match the opened target descriptor before ordinary archive or complete Codex set discovery/import. Post-admission target replacement or alias MUST generation-refuse before removal, preserving original/foreign archive/manifest bytes/inodes/modes/mtimes, directory metadata/membership and current native bytes/metadata. Existing member generation, strict bounded reader, deletion/overlap and retention count/day/order/default policies MUST remain. Per-target descriptor lifetimes MUST close within their iteration, retain close/inspection causes and revalidate named parent before successful return. Supported initial backup-root aliases and absent-root no-op MUST remain; no new work budget, content policy, atomic uncooperative-writer exclusion or whole-retention transaction is established.
+
+#### Scenario: Retention refuses replaced target directory generations
+
+- **WHEN** actual ordinary or Codex Rotate replaces an admitted original backup target with a foreign real directory or alias containing two independently public-created valid archives/complete sets
+- **THEN** Rotate MUST generation-refuse preserving original/foreign/native bytes/metadata/membership, and restoring original target MUST really retain exactly newest original restorable backup while genuine initial backup-root aliases keep working
+
+### Requirement: Ordinary backup namespace preparation retains captured parent authority
+
+Ordinary and mapped Create MUST prepare missing backup directories relative to the nearest admitted existing directory descriptor, verify that selected parent's named generation before mutation, and retain prepared parent authority through existing private archive publication. Late selected parent aliases or real-directory replacements MUST generation-refuse without creating directories/archives or changing original/foreign/native bytes/inodes/modes/mtimes/membership/aliases. Cold and warm creation, supported initial external HOME/data/backups/target aliases, private archive modes, missing mapped-only source roots and empty-source no-op MUST remain. Existing target-alias listing skip policy MUST not change. Descriptor Close failures MUST propagate causes. This adds no arbitrary budget, content/durability policy, atomic uncooperative-writer exclusion or all-directory rollback.
+
+#### Scenario: Ordinary backup namespace refuses retargeted parent
+
+- **WHEN** public ordinary or mapped-only Create retargets an admitted closest existing HOME/data/backups/target parent to a foreign alias or real directory before namespace preparation
+- **THEN** creation MUST generation-refuse preserving all original/foreign/native state without directory/archive residue, and restoring original authority MUST create a real private archive whose Restore recovers original bytes while initial aliases and empty-source no-op remain valid
+
+### Requirement: Codex backup namespace retains captured parent generation
+
+CreateCodexSet MUST prepare missing set-directory segments relative to the nearest admitted existing directory descriptor, verify that selected named parent's generation before mutation and retain the prepared authority through existing partition/archive/manifest publication and owned cleanup. Late selected HOME/data/backups/target aliases or real-directory replacements MUST generation-refuse with empty operation and no directory/archive/manifest residue or mutation of original/foreign/native bytes/inodes/modes/mtimes/membership/aliases. Cold/warm creation, supported initial external aliases, private archive and manifest modes and valid empty two-partition set behavior MUST remain. Descriptor Close failures MUST retain causes. No new global budget, content/durability policy, atomic uncooperative-writer exclusion or all-directory rollback is established.
+
+#### Scenario: Codex backup namespace refuses retargeted parent
+
+- **WHEN** public CreateCodexSet with actual content in both native partitions retargets its admitted closest existing HOME/data/backups/target parent to a foreign alias or real directory before preparation
+- **THEN** creation MUST generation-refuse preserving all original/foreign/native state without namespace/archive/manifest residue, and restoring original authority MUST publish a genuine complete set whose real RestoreCodexSet recovers both partitions while initial aliases and empty sets remain supported
+
+### Requirement: Codex restore root preparation retains captured namespace authority
+
+RestoreCodexSet MUST retain captured existing partition root or nearest admitted existing parent through missing-root preparation and extraction, verify named generations before mutation and prepare missing segments by descriptor. Extraction MUST reuse prepared root authority instead of recapturing a substituted pathname. Late root/parent aliases or real-directory replacements MUST generation-refuse before changing original/foreign native trees, namespace membership/metadata or later partitions and preserve archive/manifest evidence without stage residue. Genuine absent/nested roots, supported initial parent aliases, unsafe-root refusal, native modes and actual both-partition recovery MUST remain. Borrowed root descriptors MUST stay caller-owned and Close errors preserve causes; ordinary extraction retains its existing owned-root lane. No new budget, content/durability policy, full output transaction/rollback or atomic uncooperative-writer exclusion is established.
+
+#### Scenario: Codex restore namespace retains original root authority
+
+- **WHEN** actual public two-partition Codex restore substitutes a verified existing root or absent/nested-root parent with a foreign alias or real directory before preparation/extraction
+- **THEN** restore MUST generation-refuse preserving original/foreign/later-partition bytes/inodes/modes/mtimes/membership and evidence without namespace/stage residue, and restoring original authority MUST genuinely prepare roots and recover both archived partitions while supported initial parent aliases and unsafe-root refusal remain

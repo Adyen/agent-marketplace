@@ -1,0 +1,7 @@
+## Decision
+
+Existing StaleCandidates remains the no-follow sorted plan and dry-run Removed remains prospective/nonmutating. The existing private mutation function gains an independently returned actual-unlink receipt, true only after its validated quarantine unlink succeeds. All pre-publication refusal, restored mismatches, final generation refusal and genuine rename absence return false. Deferred close failure preserves a true physical receipt independently of error; public error-only wrapper stays unchanged. Public Materialize records live Removed immediately from the boolean, then handles existing errors/conflicts and empty-parent cleanup. No extra read/write or safety guard changes introduced.
+
+## Consumer verification
+
+Public SDK sync with independently authored sorted safe A and unsafe B: A genuinely deletes; at B's quarantine boundary replace B (real mismatch restore preserves foreign bytes) or move B away (valid rename absence, no removal). Parent reports A+B removed/red for both. Fixed live report retains only actual A, original candidate plan remains A+B, preserved conflict/foreign/original inode-mode-mtime, output members and owned-stage cleanup unchanged. Independent dry-run plans A+B without a mutation callback or changed data and healthy subsequent runs genuinely remove the selected file(s) with matching receipts. Full Linux/macOS SDK/materialize/macCLI/conversion/repeated races/lint/build/spec/shellcheck and timed disk costs required. Final R2 admitted-case audit cannot infer closure from report or PR counts.

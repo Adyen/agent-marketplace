@@ -333,3 +333,39 @@ Agent Marketplace journal phase and staged-collision disarm publication MUST rem
 
 - **WHEN** public Apply publishes native next bytes and the existing after-aggregate-rename boundary replaces its original prepared journal with identical JSON/private mode
 - **THEN** phase publication MUST refuse typed generation before overwriting replacement or committing state, preserve original/replacement/no metadata staging, and restoring original prepared evidence MUST allow real public recovery roll-forward/commit/cleanup
+
+### Requirement: Ownership metadata publication retains produced staging authority
+
+Ownership state, journal and safety-manifest publication MUST retain produced staged identity through final parent/original-generation and staged-reader validation before rename. A replacement stage MUST generation-refuse without overwriting original destination metadata/absence or deleting the replacement. Refusal MUST preserve original/foreign bytes/inodes/modes/mtimes, valid durable recovery evidence and established native publication phases. Healthy recovery and retries MUST genuinely commit matching state/journal generations and raw-byte safety manifests with existing private modes. Post-rename pin mismatch MUST NOT substitute for pre-action validation. No new processing budget, content/durability policy, whole transaction rollback, complete snapshot or atomic uncooperative-writer exclusion is established.
+
+#### Scenario: Metadata publication retains produced staged generation
+
+- **WHEN** actual Apply or BackupOnly replaces the produced metadata stage before state, prepared-journal, journal-phase or safety-manifest publication
+- **THEN** publication MUST generation-refuse preserving original destination/absence, both staging generations and recovery evidence, and genuine recovery/retry MUST commit the intended ownership generation or produce the real native safety bytes and matching manifest without owned residue
+
+### Requirement: Prepared recovery cleanup retains original metadata after native observation
+
+Prepared ownership recovery MUST revalidate original state/journal generations after bounded live aggregate observation and before decisions consume staging/journal evidence. Late same-JSON state replacements or aliases MUST typed-refuse with no successful outcomes and preserve original/foreign bytes/inodes/modes/mtimes/links, valid journal/stage evidence and native prior/handwritten bytes or absence. Restored original authority MUST still perform genuine present/absent rollback or abandonment, retain committed generation and preserve the established foreign-change reporting contract. Ordinary malformed state recovery compatibility MUST remain. No new processing budget, content/durability policy, full transaction rollback, complete snapshot or atomic uncooperative-writer exclusion is established.
+
+#### Scenario: Recovery cleanup rechecks original state after aggregate read
+
+- **WHEN** real prepared recovery replaces original state with a same-JSON regular file or external alias after live aggregate observation before rollback/abandon decisions
+- **THEN** recovery MUST refuse preserving original/replacement metadata, stage/journal evidence and native bytes/absence, and restoring original authority MUST genuinely roll back or abandon only the owned prepared generation with the established outcome and diagnostic
+
+### Requirement: Journal cleanup retains named metadata-parent generation
+
+Ownership journal deletion MUST verify that its admitted captured parent is still the named canonical metadata parent immediately before removal. Real-directory replacements or late parent aliases MUST typed-refuse without a successful Apply result/Recover outcome and preserve original/foreign state+journal bytes/inodes/modes/mtimes, directory identity/membership/metadata/alias and already-committed native state. Restored original authority MUST still complete genuine already-committed recovery, preserve state/native generations and remove only the original journal without owned staging residue. Existing captured journal-leaf checks, error causes and durability semantics MUST remain. No new budget, content/durability policy, full snapshot, whole transaction rollback or atomic uncooperative-writer exclusion is established.
+
+#### Scenario: Journal cleanup refuses detached original parent
+
+- **WHEN** real Apply or restart Recover substitutes the admitted named journal parent with a foreign real directory or external alias immediately before cleanup
+- **THEN** cleanup MUST typed-refuse preserving both metadata-directory generations and committed native state, and restoring original authority MUST genuinely complete already-committed journal recovery without altering foreign metadata
+
+### Requirement: Empty safety-directory cleanup retains original attempt generation
+
+CAS-refusal safety cleanup MUST revalidate original attempt child identity and named state-parent generation immediately before descriptor-relative Rmdir. Replaced empty/nonempty directories or aliases MUST remain unchanged, preserving original/foreign identity/modes/mtimes/membership/member bytes and native prior state. Original policy/CAS refusal and unsuccessful generation receipt semantics MUST remain, with empty-directory cleanup retaining its existing best-effort warning boundary. Healthy retries MUST genuinely remove original owned empty attempt directories and permit real subsequent generation/native publication. Existing journal/stage/member cleanup, Close errors and ENOTEMPTY/EEXIST behavior MUST remain. No new budget, content/durability policy, complete snapshot, atomic uncooperative-writer exclusion or whole transaction rollback is established.
+
+#### Scenario: Empty safety directory cleanup preserves replacement generation
+
+- **WHEN** actual Apply with a real late policy refusal replaces its admitted emptied safety attempt directory before final Rmdir
+- **THEN** cleanup MUST preserve original/foreign directory and member generations/native state with the primary refusal intact, and restoring original authority MUST genuinely remove the owned empty directory and allow an actual native generation commit
