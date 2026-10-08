@@ -299,7 +299,7 @@ func TestMutableRegistryLeaseCancellationReleasesEarlierKeys(t *testing.T) {
 
 func TestMutableRegistryLeaseNamespaceCancellation(t *testing.T) {
 	isolateMutableGit(t)
-	release, err := acquireCacheFileLock(lockfileExclusive)
+	release, err := acquireCacheFileLockWithContext(context.Background(), lockfileExclusive)
 	if err != nil {
 		t.Fatal(err)
 	}
