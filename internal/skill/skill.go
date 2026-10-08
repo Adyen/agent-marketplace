@@ -39,10 +39,6 @@ type MalformedSkill struct {
 
 type catalog map[string]Skill
 
-func KindOf(s Skill) ir.ResourceKind {
-	return s.Kind
-}
-
 func KindLabel(kind ir.ResourceKind) string {
 	switch kind {
 	case ir.KindSkill:

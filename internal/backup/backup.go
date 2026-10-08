@@ -104,15 +104,6 @@ type Config struct {
 	MaxPerDay int
 }
 
-// DefaultConfig returns the default backup configuration.
-func DefaultConfig() Config {
-	return Config{
-		Enabled:   true,
-		MaxDays:   defaultMaxDays,
-		MaxPerDay: defaultMaxPerDay,
-	}
-}
-
 // Dir returns the backups root directory under the agent-marketplace data dir.
 func Dir() (string, error) {
 	home, err := os.UserHomeDir()

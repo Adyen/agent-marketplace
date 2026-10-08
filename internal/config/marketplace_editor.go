@@ -363,25 +363,6 @@ func ensureMarketplacePinsInConfig(configPath, marketplaceURL, instanceID, alias
 	return writeConfigDocument(configPath, mode, doc)
 }
 
-// AddMarketplacePinToConfig is a descriptive alias for
-// EnsureMarketplacePinInConfig.
-func AddMarketplacePinToConfig(configPath, marketplaceURL, instanceID, alias string, pin MarketplaceResourcePin) error {
-	return EnsureMarketplacePinInConfig(configPath, marketplaceURL, instanceID, alias, pin)
-}
-
-// EnsureMarketplaceEntryAndPinInConfig accepts the entry-shaped API used by
-// callers that already have a resolved MarketplaceEntry. Resources on entry
-// are ignored; pin is the only resource mutation performed.
-func EnsureMarketplaceEntryAndPinInConfig(configPath string, entry MarketplaceEntry, pin MarketplaceResourcePin) error {
-	return EnsureMarketplacePinInConfig(configPath, entry.URL, entry.InstanceID, entry.Alias, pin)
-}
-
-// AddMarketplaceResourcePin is the entry-shaped spelling used by install
-// callers. It targets exactly the config path supplied by the caller.
-func AddMarketplaceResourcePin(configPath string, entry MarketplaceEntry, pin MarketplaceResourcePin) error {
-	return EnsureMarketplaceEntryAndPinInConfig(configPath, entry, pin)
-}
-
 // EnsureMarketplaceEntryInConfig creates an entry without adding a resource.
 // It is useful for callers that need to stage endpoint identity separately.
 func EnsureMarketplaceEntryInConfig(configPath string, entry MarketplaceEntry) error {
