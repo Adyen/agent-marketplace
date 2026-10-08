@@ -179,6 +179,64 @@ func TestPathFingerprintDetectsSameByteRewrite(t *testing.T) {
 // ---------- test table ----------
 
 var testTable = []TestCase{
+	// spec: regression-gates/migrated-selection-workflows-remain-usable
+	{
+		Name: "migrate/v4_bulk_selection_lifecycle",
+		Desc: "Given a legacy registry selection, When migrating and installing all resources, Then removal persists and unrelated selected output remains",
+		Registries: []RegistryDef{{Name: "migrated-bulk", Skills: []Skill{
+			{Name: "review", Description: "Review fixture"},
+			{Name: "deploy", Description: "Deploy fixture"},
+		}}},
+		GlobalCfg: "apiVersion: agent-marketplace/v2\nharnesses: [factory]\n",
+		RepoCfg:   "apiVersion: agent-marketplace/v2\nregistries:\n  - url: {{REG:migrated-bulk}}\n    ref: main\n    skills: {include: [review]}\n",
+		Steps: []Step{
+			{Args: []string{"sync"}, MustPass: true, FilesExist: []string{"/workspace/.factory/skills/review/SKILL.md"}, FilesAbsent: []string{"/workspace/.factory/skills/deploy"}},
+			{Args: []string{"migrate", "--scope", "all"}, MustPass: true, FileContains: map[string]string{"/workspace/.agents/config.yaml": "apiVersion: agent-marketplace/v4", "/root/.agents/config.yaml": "apiVersion: agent-marketplace/v4"}},
+			{Args: []string{"install", "--all"}, MustPass: true, FileContains: map[string]string{"/workspace/.factory/skills/review/SKILL.md": "Review fixture", "/workspace/.factory/skills/deploy/SKILL.md": "Deploy fixture"}},
+			{Args: []string{"remove", "deploy"}, MustPass: true, FilesAbsent: []string{"/workspace/.factory/skills/deploy"}, FilesExist: []string{"/workspace/.factory/skills/review/SKILL.md"}},
+			{Args: []string{"sync"}, MustPass: true, FilesAbsent: []string{"/workspace/.factory/skills/deploy"}, FilesExist: []string{"/workspace/.factory/skills/review/SKILL.md"}},
+			{Args: []string{"sync", "--check"}, MustPass: true},
+		},
+	},
+	// spec: regression-gates/migrated-selection-workflows-remain-usable
+	{
+		Name: "migrate/v4_tag_selection_lifecycle",
+		Desc: "Given a legacy explicit selection, When migrating and installing by tag, Then only matching additional resources install and removal persists",
+		Registries: []RegistryDef{{Name: "migrated-tag", Skills: []Skill{
+			{Name: "review", Description: "Review fixture"},
+			{Name: "deploy", Description: "Deploy fixture", Tags: []string{"ops"}},
+			{Name: "unselected", Description: "Unselected fixture"},
+		}}},
+		GlobalCfg: "apiVersion: agent-marketplace/v2\nharnesses: [factory]\n",
+		RepoCfg:   "apiVersion: agent-marketplace/v2\nregistries:\n  - url: {{REG:migrated-tag}}\n    ref: main\n    skills: {include: [review]}\n",
+		Steps: []Step{
+			{Args: []string{"sync"}, MustPass: true, FilesExist: []string{"/workspace/.factory/skills/review/SKILL.md"}, FilesAbsent: []string{"/workspace/.factory/skills/deploy", "/workspace/.factory/skills/unselected"}},
+			{Args: []string{"migrate", "--scope", "all"}, MustPass: true, FileContains: map[string]string{"/workspace/.agents/config.yaml": "apiVersion: agent-marketplace/v4", "/root/.agents/config.yaml": "apiVersion: agent-marketplace/v4"}},
+			{Args: []string{"install", "--tag", "ops"}, MustPass: true, FileContains: map[string]string{"/workspace/.factory/skills/review/SKILL.md": "Review fixture", "/workspace/.factory/skills/deploy/SKILL.md": "Deploy fixture"}, FilesAbsent: []string{"/workspace/.factory/skills/unselected"}},
+			{Args: []string{"remove", "deploy"}, MustPass: true, FilesAbsent: []string{"/workspace/.factory/skills/deploy"}, FilesExist: []string{"/workspace/.factory/skills/review/SKILL.md"}},
+			{Args: []string{"sync"}, MustPass: true, FilesAbsent: []string{"/workspace/.factory/skills/deploy", "/workspace/.factory/skills/unselected"}, FilesExist: []string{"/workspace/.factory/skills/review/SKILL.md"}},
+			{Args: []string{"sync", "--check"}, MustPass: true},
+		},
+	},
+	// spec: regression-gates/migrated-selection-workflows-remain-usable
+	{
+		Name: "migrate/v4_ad_hoc_selection_lifecycle",
+		Desc: "Given a legacy explicit selection, When migrating and installing from another registry, Then coordinate-based removal preserves the original resource",
+		Registries: []RegistryDef{
+			{Name: "migrated-original", Skills: []Skill{{Name: "review", Description: "Review fixture"}}},
+			{Name: "migrated-ad-hoc", Skills: []Skill{{Name: "deploy", Description: "Deploy fixture"}}},
+		},
+		GlobalCfg: "apiVersion: agent-marketplace/v2\nharnesses: [factory]\n",
+		RepoCfg:   "apiVersion: agent-marketplace/v2\nregistries:\n  - url: {{REG:migrated-original}}\n    ref: main\n    skills: {include: [review]}\n",
+		Steps: []Step{
+			{Args: []string{"sync"}, MustPass: true, FilesExist: []string{"/workspace/.factory/skills/review/SKILL.md"}, FilesAbsent: []string{"/workspace/.factory/skills/deploy"}},
+			{Args: []string{"migrate", "--scope", "all"}, MustPass: true, FileContains: map[string]string{"/workspace/.agents/config.yaml": "apiVersion: agent-marketplace/v4", "/root/.agents/config.yaml": "apiVersion: agent-marketplace/v4"}},
+			{Args: []string{"install", "deploy", "--from", "{{REG:migrated-ad-hoc}}", "--ref", "main", "--scope", "repo"}, MustPass: true, FileContains: map[string]string{"/workspace/.factory/skills/review/SKILL.md": "Review fixture", "/workspace/.factory/skills/deploy/SKILL.md": "Deploy fixture"}},
+			{Args: []string{"remove", "deploy", "--from", "{{REG:migrated-ad-hoc}}", "--ref", "main", "--scope", "repo"}, MustPass: true, FilesAbsent: []string{"/workspace/.factory/skills/deploy"}, FilesExist: []string{"/workspace/.factory/skills/review/SKILL.md"}},
+			{Args: []string{"sync"}, MustPass: true, FilesAbsent: []string{"/workspace/.factory/skills/deploy"}, FilesExist: []string{"/workspace/.factory/skills/review/SKILL.md"}},
+			{Args: []string{"sync", "--check"}, MustPass: true},
+		},
+	},
 	{
 		Name:       "install/missing_repo_config_is_v4",
 		Desc:       "Given a v4 user registry and no repo config, When installing a skill to repo scope, Then the newly created repo root uses v4 and selects the skill",
@@ -186,7 +244,7 @@ var testTable = []TestCase{
 		GlobalCfg:  "apiVersion: agent-marketplace/v4\nharnesses: [factory]\nsources: {shared: {git: '{{REG:new-repo-config}}', ref: main}}\n",
 		Steps: []Step{
 			{Args: []string{"install", "new-skill", "--scope", "repo"}, MustPass: true,
-				FileContains: map[string]string{"/workspace/.agents/config.yaml": "apiVersion: agent-marketplace/v4", "/workspace/.factory/skills/new-skill/SKILL.md": "name: new-skill"},
+				FileContains:    map[string]string{"/workspace/.agents/config.yaml": "apiVersion: agent-marketplace/v4", "/workspace/.factory/skills/new-skill/SKILL.md": "name: new-skill"},
 				FileNotContains: map[string]string{"/workspace/.agents/config.yaml": "apiVersion: agent-marketplace/v2"}},
 			{Args: []string{"sync", "--check"}, MustPass: true, FileContains: map[string]string{"/workspace/.agents/config.yaml": "skill/new-skill"}},
 		},
@@ -657,8 +715,8 @@ registries:
 		Steps: []Step{
 			{Action: ActionWriteFile, Path: "/workspace/resources/skills/shared/SKILL.md", Body: (Skill{Name: "shared", Description: "Unreviewed repository selection"}).SkillFile()},
 			{Args: []string{"sync"}, MustPass: true, OutContains: []string{"multiple registries"},
-				Symlinks: []string{"/root/.factory/skills/shared"},
-				FilesAbsent: []string{"/workspace/.factory/skills/shared"},
+				Symlinks:     []string{"/root/.factory/skills/shared"},
+				FilesAbsent:  []string{"/workspace/.factory/skills/shared"},
 				FileContains: map[string]string{"/root/.factory/skills/shared/SKILL.md": "Mandatory user selection"}},
 			{Args: []string{"sync"}, MustPass: true, PathsUnchanged: []string{"/root/.factory/skills/shared"}, FilesAbsent: []string{"/workspace/.factory/skills/shared"}},
 			{Args: []string{"sync", "--check"}, MustPass: true, PathsUnchanged: []string{"/root/.factory/skills/shared"}},
