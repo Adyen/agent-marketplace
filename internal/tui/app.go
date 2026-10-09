@@ -447,12 +447,12 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.MouseWheelMsg:
+		m.pendingClick = pendingClick{}
 		if m.belowMinimumTerminal() ||
 			(msg.Button != tea.MouseWheelUp && msg.Button != tea.MouseWheelDown) {
 			return m, nil
 		}
 		m.previewSel = previewSelection{}
-		m.pendingClick = pendingClick{}
 		// Bubble's viewport treats Shift+vertical-wheel as horizontal
 		// scrolling, but this TUI intentionally supports only vertical scroll.
 		msg.Mod &^= tea.ModShift

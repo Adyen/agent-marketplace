@@ -134,13 +134,12 @@ func (m Model) clickBundleTree(y int) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	m.previewSel = previewSelection{}
-	before := m.bundle.selectedPath()
 	m.bundle.move(i - m.bundle.cursor)
 	if entries[i].IsDir {
 		m.bundle.toggle()
 	}
 	m.ensureBundleCursorVisible()
-	if selected := m.bundle.selectedPath(); selected != "" && selected != before {
+	if selected := m.bundle.selectedPath(); !entries[i].IsDir && selected != "" && selected != m.detailSelectedPath {
 		m.detailSelectedPath = selected
 		return m.queueBundlePreview(false)
 	}
