@@ -256,7 +256,7 @@ hook matrix goldens deliberately.
   loaders and the Windsurf `.devin/hooks.json` path), the hook and tool rows
   of `pkg/harness-compilation/diag/codes.md`, and the `registry-authoring`
   skill's hook guidance. Verify the site build and `make spec-check` pass
-- [ ] 8.4 Update the harness compatibility fixtures to seed hooks in native
+- [x] 8.4 Update the harness compatibility fixtures to seed hooks in native
   locations. Verify `make validate-e2e` passes
 
 ## 9. Validate and archive
@@ -264,7 +264,7 @@ hook matrix goldens deliberately.
 - [x] 9.1 Run `go run ./tools/specaudit trace`. Verify there are no unbound
   `hook-resources` or `harness-tool-catalogs` scenarios and no dangling
   annotations
-- [ ] 9.2 Run `make validate`, `make spec-check`, `make validate-e2e`,
+- [x] 9.2 Run `make validate`, `make spec-check`, `make validate-e2e`,
   `make catalog-check`, and `make tui-qa` if TUI hook views changed. Verify
   all pass
 - [ ] 9.3 Run `openspec archive native-hook-integration --yes` in this pull
