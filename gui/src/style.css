@@ -209,6 +209,20 @@ body {
   padding: 0.125rem 0;
 }
 
+.settings__source-item {
+  align-items: flex-start;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  min-width: 0;
+}
+
+.settings__source-location {
+  max-width: 100%;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
 .settings__badge {
   border: 1px solid var(--am-color-border-strong);
   border-radius: 3px;

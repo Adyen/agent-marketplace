@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 import { describe, expect, it, vi } from 'vitest'
 import type { mount } from '@vue/test-utils'
-import { RequestError, type Configuration, type OperationRef } from './api/client'
+import { RequestError, type Configuration, type OperationRef, type SourceInput } from './api/client'
 import { configuration, event, fakeClient, mountWorkspace, snapshot, tick } from './test-support'
 
 const dirSource = {
@@ -50,8 +50,8 @@ function dialog(): HTMLElement {
   return el
 }
 
-function field(label: string): HTMLElement {
-  const el = dialog().querySelector<HTMLElement>(`input[aria-label="${label}"], select[aria-label="${label}"]`)
+function field(label: string): HTMLInputElement {
+  const el = dialog().querySelector<HTMLInputElement>(`input[aria-label="${label}"]`)
   if (el == null) {
     throw new Error(`field ${label} not found`)
   }
@@ -69,9 +69,28 @@ function button(name: string): HTMLElement {
 }
 
 async function setInput(label: string, value: string) {
-  const input = field(label) as HTMLInputElement
+  const input = field(label)
   input.value = value
   input.dispatchEvent(new Event('input'))
+  await tick()
+}
+
+function sourceKindRadio(value: SourceInput['kind'], label: string): HTMLInputElement {
+  const group = dialog().querySelector<HTMLFieldSetElement>('fieldset[aria-label="Source kind"]')
+  if (group == null) {
+    throw new Error('source kind group not found')
+  }
+  expect(group.querySelector('legend')?.textContent?.trim()).toBe('Source kind')
+  const radio = group.querySelector<HTMLInputElement>(`input[type="radio"][name="source-kind"][value="${value}"]`)
+  if (radio == null) {
+    throw new Error(`source kind radio ${value} not found`)
+  }
+  expect(radio.closest('label')?.textContent?.trim()).toBe(label)
+  return radio
+}
+
+async function chooseSourceKind(value: SourceInput['kind'], label: string) {
+  sourceKindRadio(value, label).click()
   await tick()
 }
 
@@ -182,10 +201,7 @@ describe('Source settings', () => {
     await tick()
 
     await openSources(wrapper)
-    const kindSelect = field('Source kind') as HTMLSelectElement
-    kindSelect.value = 'git'
-    kindSelect.dispatchEvent(new Event('change'))
-    await tick()
+    await chooseSourceKind('git', 'Git registry')
     await setInput('Source location', 'https://example.com/reg.git')
     await setInput('Source ref', 'main')
     await setInput('Source subpath', 'sub/dir')
@@ -209,10 +225,7 @@ describe('Source settings', () => {
     await setInput('Source location', '/x')
     expect((button('Add source') as HTMLButtonElement).disabled).toBe(false)
 
-    const kindSelect = field('Source kind') as HTMLSelectElement
-    kindSelect.value = 'git'
-    kindSelect.dispatchEvent(new Event('change'))
-    await tick()
+    await chooseSourceKind('git', 'Git registry')
     expect((button('Add source') as HTMLButtonElement).disabled).toBe(true)
     await setInput('Source ref', 'main')
     expect((button('Add source') as HTMLButtonElement).disabled).toBe(false)
@@ -255,10 +268,7 @@ describe('Source settings', () => {
     await tick()
 
     await openSources(wrapper)
-    const kindSelect = field('Source kind') as HTMLSelectElement
-    kindSelect.value = 'git'
-    kindSelect.dispatchEvent(new Event('change'))
-    await tick()
+    await chooseSourceKind('git', 'Git registry')
     await setInput('Source location', 'https://example.com/reg.git')
     await setInput('Source ref', 'main')
     button(`Remove source ${dirSource.location}`).click()
@@ -269,8 +279,8 @@ describe('Source settings', () => {
     await tick()
     await openSources(wrapper)
 
-    expect((field('Source kind') as HTMLSelectElement).value).toBe('directory')
-    expect((field('Source location') as HTMLInputElement).value).toBe('')
+    expect(sourceKindRadio('directory', 'Directory registry').checked).toBe(true)
+    expect(field('Source location').value).toBe('')
     expect(dialog().querySelector('input[aria-label="Source ref"]')).toBeNull()
     expect(dialog().querySelector('[aria-label="Confirm removal"]')).toBeNull()
     expect(client.configure).not.toHaveBeenCalled()
@@ -321,7 +331,7 @@ describe('Source settings', () => {
     expect(controller.state.operation).toBeNull()
     const alerts = Array.from(dialog().querySelectorAll('[role="alert"]')).map((el) => el.textContent)
     expect(alerts).toContain('config.edit.include-owned: source "x" is declared in an included fragment')
-    expect((field('Source location') as HTMLInputElement).value).toBe('/opt/new-regs')
+    expect(field('Source location').value).toBe('/opt/new-regs')
     expect(dialog().textContent).not.toContain('complete')
   })
 
@@ -396,9 +406,140 @@ describe('Source settings', () => {
     await tick()
 
     expect(dialog().textContent).toContain('The action could not be started')
-    expect((field('Source location') as HTMLInputElement).value).toBe('/x')
+    expect(field('Source location').value).toBe('/x')
     button('Add source').click()
     await tick()
     expect(client.configure).toHaveBeenCalledTimes(2)
+  })
+
+  it('submits a Marketplace endpoint with only kind and location', async () => {
+    const { client, push } = sourcesClient({ userSources: [] })
+    const { wrapper } = mountWorkspace(client)
+    push(event({ sequence: 1 }))
+    await tick()
+
+    await openSources(wrapper)
+    await chooseSourceKind('marketplace', 'Marketplace endpoint')
+    const endpoint = 'https://marketplace.example/services/catalog'
+    await setInput('Source location', endpoint)
+    button('Add source').click()
+    await tick()
+
+    expect(client.configure).toHaveBeenCalledWith({
+      action: 'add-source',
+      source: { kind: 'marketplace', location: endpoint },
+    })
+    expect(dialog().querySelector('input[aria-label="Source ref"]')).toBeNull()
+    expect(dialog().querySelector('input[aria-label="Source subpath"]')).toBeNull()
+  })
+
+  it('keeps a Marketplace draft after preflight rejection', async () => {
+    const { client, push } = sourcesClient({ userSources: [] })
+    const { wrapper } = mountWorkspace(client)
+    push(event({ sequence: 1 }))
+    await tick()
+    ;(client.configure as ReturnType<typeof vi.fn>).mockRejectedValue(
+      new RequestError(400, 'localapi.invalid_request'),
+    )
+
+    await openSources(wrapper)
+    await chooseSourceKind('marketplace', 'Marketplace endpoint')
+    const endpoint = 'https://marketplace.example/services/catalog'
+    await setInput('Source location', endpoint)
+    button('Add source').click()
+    await tick()
+
+    expect(client.configure).toHaveBeenCalledWith({
+      action: 'add-source',
+      source: { kind: 'marketplace', location: endpoint },
+    })
+    expect(dialog().textContent).toContain('The action could not be started')
+    expect(sourceKindRadio('marketplace', 'Marketplace endpoint').checked).toBe(true)
+    expect(field('Source location').value).toBe(endpoint)
+    expect(dialog().querySelector('[aria-label="Sources"]')).not.toBeNull()
+  })
+
+  it('keeps a Marketplace draft after an accepted operation fails', async () => {
+    const { client, push } = sourcesClient({ userSources: [] })
+    const { controller, wrapper } = mountWorkspace(client)
+    push(event({ sequence: 1 }))
+    await tick()
+    const operation: OperationRef = { id: 9, kind: 'mutation' }
+    ;(client.configure as ReturnType<typeof vi.fn>).mockResolvedValue(operation)
+
+    await openSources(wrapper)
+    await chooseSourceKind('marketplace', 'Marketplace endpoint')
+    const endpoint = 'https://marketplace.example/services/catalog'
+    await setInput('Source location', endpoint)
+    button('Add source').click()
+    await tick()
+    expect(client.configure).toHaveBeenCalledWith({
+      action: 'add-source',
+      source: { kind: 'marketplace', location: endpoint },
+    })
+
+    push(event({ sequence: 2, generation: 2, operation }))
+    push(
+      event({
+        sequence: 3,
+        generation: 2,
+        operation: null,
+        payload: snapshot([], {
+          diagnostics: [
+            {
+              severity: 'error',
+              category: 'mutation',
+              code: 'marketplace.registration-failed',
+              message: 'Marketplace registration failed',
+            },
+          ],
+        }),
+      }),
+    )
+    push(
+      event({
+        sequence: 4,
+        generation: 2,
+        operation,
+        type: 'notification',
+        payload: { severity: 'error', message: 'mutation failed' },
+      }),
+    )
+    await tick()
+
+    expect(controller.state.operation).toBeNull()
+    expect(dialog().textContent).toContain('Marketplace registration failed')
+    expect(sourceKindRadio('marketplace', 'Marketplace endpoint').checked).toBe(true)
+    expect(field('Source location').value).toBe(endpoint)
+    expect((button('Add source') as HTMLButtonElement).disabled).toBe(false)
+  })
+
+  it('updates the user source list in place after Marketplace registration settles', async () => {
+    const { client, push } = sourcesClient({ userSources: [] })
+    const { controller, wrapper } = mountWorkspace(client)
+    push(event({ sequence: 1 }))
+    await tick()
+    const operation: OperationRef = { id: 9, kind: 'mutation' }
+    ;(client.configure as ReturnType<typeof vi.fn>).mockResolvedValue(operation)
+    ;(client.configuration as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce(sourcesConfiguration({ userSources: [] }))
+      .mockResolvedValue(sourcesConfiguration({ userSources: [marketplaceSource] }))
+
+    await openSources(wrapper)
+    await chooseSourceKind('marketplace', 'Marketplace endpoint')
+    await setInput('Source location', marketplaceSource.location)
+    const addButton = button('Add source')
+    addButton.click()
+    await tick()
+    await settleOperation(controller, push, operation, 2)
+    await tick()
+
+    const list = dialog().querySelector('[aria-label="User sources"]')!
+    expect(list.textContent).toContain(marketplaceSource.location)
+    expect(list.textContent).toContain('Marketplace endpoint')
+    expect(dialog()).toBeDefined()
+    expect(controller.state.operation).toBeNull()
+    expect(controller.state.requesting).toBe(false)
+    expect((addButton as HTMLButtonElement).disabled).toBe(false)
   })
 })

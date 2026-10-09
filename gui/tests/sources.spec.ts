@@ -1,9 +1,61 @@
-import { test, expect } from '@playwright/test'
+import { expect, test, type Locator, type Page } from '@playwright/test'
 import { existsSync, readdirSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { startHarness } from './harness'
 import { distIndexExists, serveBuiltApp } from './app'
+
+async function actionVisibility(page: Page, dialog: Locator, action: Locator, name: string) {
+  await action.focus()
+  const [dialogBox, actionBox] = await Promise.all([dialog.boundingBox(), action.boundingBox()])
+  const viewport = page.viewportSize()
+  const hittable = await action.evaluate((element) => {
+    const box = element.getBoundingClientRect()
+    const target = document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2)
+    return target != null && (target === element || element.contains(target))
+  })
+  const insideDialog = dialogBox != null && actionBox != null &&
+    actionBox.x >= dialogBox.x && actionBox.y >= dialogBox.y &&
+    actionBox.x + actionBox.width <= dialogBox.x + dialogBox.width &&
+    actionBox.y + actionBox.height <= dialogBox.y + dialogBox.height
+  const insideViewport = viewport != null && actionBox != null &&
+    actionBox.x >= 0 && actionBox.y >= 0 &&
+    actionBox.x + actionBox.width <= viewport.width && actionBox.y + actionBox.height <= viewport.height
+  return { name, dialogBox, actionBox, viewport, insideDialog, insideViewport, hittable }
+}
+
+async function sourceListVisibility(page: Page, dialog: Locator, sources: Locator, longLocation: string) {
+  const item = sources.locator('li').filter({ hasText: longLocation })
+  const kind = item.getByText('Directory registry', { exact: true })
+  const location = item.getByText(longLocation, { exact: true })
+  const [dialogBox, kindBox, locationBox] = await Promise.all([
+    dialog.boundingBox(), kind.boundingBox(), location.boundingBox(),
+  ])
+  const textRects = await location.evaluate((element) => {
+    const range = document.createRange()
+    range.selectNodeContents(element)
+    return Array.from(range.getClientRects()).map((rect) => ({
+      left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom,
+    }))
+  })
+  const [dialogWidth, sourcesWidth, documentWidth] = await Promise.all([
+    dialog.evaluate((element) => [element.scrollWidth, element.clientWidth]),
+    sources.evaluate((element) => [element.scrollWidth, element.clientWidth]),
+    page.evaluate(() => [document.documentElement.scrollWidth, window.innerWidth]),
+  ])
+  const viewport = page.viewportSize()
+  return {
+    kindAboveLocation: kindBox != null && locationBox != null && kindBox.y + kindBox.height <= locationBox.y,
+    locationLines: new Set(textRects.map((rect) => Math.round(rect.top))).size,
+    locationWithinDialog: dialogBox != null && viewport != null && textRects.length > 0 && textRects.every((rect) =>
+      rect.left >= dialogBox.x && rect.right <= dialogBox.x + dialogBox.width &&
+      rect.left >= 0 && rect.right <= viewport.width && rect.top >= dialogBox.y && rect.bottom <= dialogBox.y + dialogBox.height,
+    ),
+    dialogHasNoHorizontalOverflow: dialogWidth[0] <= dialogWidth[1],
+    sourcesHaveNoHorizontalOverflow: sourcesWidth[0] <= sourcesWidth[1],
+    pageHasNoHorizontalOverflow: documentWidth[0] <= documentWidth[1],
+  }
+}
 
 // spec: gui-configuration/adding-a-git-or-directory-source-alone-changes-only-that-entry
 test('built GUI adds and removes a user directory source against the real user-scope core', async ({
@@ -54,6 +106,7 @@ test('built GUI adds and removes a user directory source against the real user-s
 
     const addSection = dialog.getByLabel('Add user source')
     await expect(addSection).toBeVisible()
+    await expect(addSection.getByRole('group', { name: 'Source kind' }).getByRole('radio', { name: 'Directory registry' })).toBeChecked()
     await expect(addSection.getByLabel('Source location')).toBeEnabled()
     await addSection.getByLabel('Source location').pressSequentially(sourceDir)
     await dialog.getByRole('button', { name: 'Cancel', exact: true }).press('Enter')
@@ -133,7 +186,6 @@ test('built GUI adds and removes a user directory source against the real user-s
           post('{"action":"add-source"}'),
           post('{"action":"remove-source"}'),
           post(`{"action":"remove-source","id":"${'0'.repeat(64)}"}`),
-          post('{"action":"add-source","source":{"kind":"marketplace","location":"https://m.example"}}'),
           post('{"action":"add-source","source":{"kind":"directory","location":"relative/dir"}}'),
           post('{"action":"add-source","source":{"kind":"directory","location":"/tmp/x","ref":null}}'),
           post('{"action":"remove-source","id":"x"}', 'wrong'),
@@ -147,12 +199,177 @@ test('built GUI adds and removes a user directory source against the real user-s
       { status: 400, code: 'localapi.invalid_request' },
       { status: 400, code: 'localapi.invalid_request' },
       { status: 400, code: 'localapi.invalid_request' },
-      { status: 400, code: 'localapi.invalid_request' },
       { status: 401, code: 'localapi.unauthorized' },
     ])
     expect(await readFile(userConfigPath, 'utf8')).toBe(original)
     expect(await readFile(fragmentPath, 'utf8')).toBe(fragment)
   } finally {
+    await harness.stop()
+  }
+})
+
+test('built GUI registers a Marketplace endpoint in the open Sources dialog', async ({ page }, testInfo) => {
+  if (!distIndexExists()) {
+    throw new Error('built GUI assets missing: run `make gui-build` or `pnpm run build` in gui/ first')
+  }
+  await page.setViewportSize({ width: 1280, height: 720 })
+
+  const harness = await startHarness('user', { AM_LOCALAPI_USER_FIXTURE: 'marketplace' })
+  const { bootstrap } = harness
+  const endpoint = bootstrap.marketplaceEndpoint
+  const tracePath = testInfo.outputPath('source-visibility-trace.zip')
+  const formActionScreenshotPath = testInfo.outputPath('source-visibility-form-action.png')
+  const updatedListScreenshotPath = testInfo.outputPath('source-visibility-updated-list.png')
+  let tracing = false
+
+  try {
+    if (endpoint == null) {
+      throw new Error('Marketplace endpoint fixture missing from bootstrap')
+    }
+    const home = bootstrap.home!
+    const userConfigPath = join(home, '.agents', 'config.yaml')
+    const fragmentPath = join(home, '.agents', 'fragment.yaml')
+    const orgConfigPath = bootstrap.orgConfig!
+    const repoConfigPath = join(bootstrap.repo!, '.agents', 'config.yaml')
+    const repoLocalPath = join(bootstrap.repo!, '.agents', 'config.local.yaml')
+    const codexHome = join(home, '.codex')
+    const xdgDirs = [bootstrap.xdgConfig!, bootstrap.xdgState!, bootstrap.xdgCache!]
+
+    await page.context().tracing.start({ screenshots: true, snapshots: true, sources: true })
+    tracing = true
+    await serveBuiltApp(page, bootstrap.url)
+    await page.addInitScript(
+      ([credential]) => {
+        ;(window as unknown as Record<string, unknown>).__AM_GUI_BOOTSTRAP__ = { credential }
+      },
+      [bootstrap.credential] as const,
+    )
+    await page.goto(bootstrap.url, { waitUntil: 'domcontentloaded' })
+    await expect(page.getByText('skill/solo').first()).toBeVisible({ timeout: 60_000 })
+
+    const original = await readFile(userConfigPath, 'utf8')
+    const fragment = await readFile(fragmentPath, 'utf8')
+    const orgBefore = await readFile(orgConfigPath, 'utf8')
+    const repoBefore = await readFile(repoConfigPath, 'utf8')
+    const repoLocalBefore = await readFile(repoLocalPath, 'utf8')
+    const sourcesButton = page.getByRole('button', { name: 'Sources' })
+    await sourcesButton.press('Enter')
+    const dialog = page.getByRole('dialog', { name: 'Sources' })
+    await expect(dialog).toBeVisible()
+
+    const addSection = dialog.getByLabel('Add user source')
+    const userSources = dialog.getByLabel('User sources')
+    const longLocation = join(home, 'keep-source')
+    await expect(userSources).toContainText(longLocation)
+
+    const listMetrics = await sourceListVisibility(page, dialog, userSources, longLocation)
+    const scrollBefore = await dialog.evaluate((element) => element.scrollTop)
+    const dialogBox = await dialog.boundingBox()
+    if (dialogBox != null) {
+      await page.mouse.move(dialogBox.x + dialogBox.width / 2, dialogBox.y + dialogBox.height / 2)
+      await page.mouse.wheel(0, 600)
+    }
+    await expect.poll(async () => await dialog.evaluate((element) => element.scrollTop), { timeout: 1_000 }).toBeGreaterThan(scrollBefore)
+    const scrollAfter = await dialog.evaluate((element) => element.scrollTop)
+    await page.mouse.wheel(0, -600)
+    await dialog.evaluate((element) => {
+      element.scrollTop = 0
+    })
+
+    const kindGroup = addSection.getByRole('group', { name: 'Source kind' })
+    await expect(kindGroup).toBeVisible()
+    const marketplaceRadio = kindGroup.getByRole('radio', { name: 'Marketplace endpoint' })
+    await marketplaceRadio.focus()
+    await marketplaceRadio.press('Space')
+    await expect(marketplaceRadio).toBeChecked()
+    await expect(addSection.getByLabel('Source ref')).toHaveCount(0)
+    await expect(addSection.getByLabel('Source subpath')).toHaveCount(0)
+    const location = addSection.getByLabel('Source location')
+    await location.pressSequentially(endpoint)
+    const addButton = addSection.getByRole('button', { name: 'Add source' })
+    const cancelButton = dialog.getByRole('button', { name: 'Cancel', exact: true })
+    await expect(addButton).toBeEnabled()
+    const cancelMetrics = await actionVisibility(page, dialog, cancelButton, 'Cancel')
+    const addMetrics = await actionVisibility(page, dialog, addButton, 'Add source')
+    await page.screenshot({ path: formActionScreenshotPath, fullPage: true })
+    const viewport = page.viewportSize()
+    const visibility = {
+      viewport,
+      wheelScrolled: scrollAfter > scrollBefore,
+      list: listMetrics,
+      actions: [cancelMetrics, addMetrics],
+    }
+    expect(visibility, `visibility metrics: ${JSON.stringify(visibility)}`).toMatchObject({
+      viewport: { width: 1280, height: 720 },
+      wheelScrolled: true,
+      list: {
+        kindAboveLocation: true,
+        locationWithinDialog: true,
+        dialogHasNoHorizontalOverflow: true,
+        sourcesHaveNoHorizontalOverflow: true,
+        pageHasNoHorizontalOverflow: true,
+      },
+      actions: [
+        { name: 'Cancel', insideDialog: true, insideViewport: true, hittable: true },
+        { name: 'Add source', insideDialog: true, insideViewport: true, hittable: true },
+      ],
+    })
+    expect(listMetrics.locationLines).toBeGreaterThan(1)
+
+    await cancelButton.press('Enter')
+    await expect(dialog).not.toBeVisible()
+    expect(await readFile(userConfigPath, 'utf8')).toBe(original)
+
+    await sourcesButton.press('Enter')
+    await expect(dialog).toBeVisible()
+    await marketplaceRadio.focus()
+    await marketplaceRadio.press('Space')
+    await expect(marketplaceRadio).toBeChecked()
+    await expect(location).toHaveValue('')
+    await location.pressSequentially(endpoint)
+    await expect(addButton).toBeEnabled()
+    const finalAddMetrics = await actionVisibility(page, dialog, addButton, 'Add source')
+    expect(finalAddMetrics).toMatchObject({ insideDialog: true, insideViewport: true, hittable: true })
+    await addButton.press('Enter')
+
+    await expect(userSources).toContainText(endpoint, { timeout: 60_000 })
+    await expect(userSources).toContainText('Marketplace endpoint')
+    await expect(page.getByLabel('Notifications').getByText('mutation complete')).toBeVisible()
+    await expect(dialog.getByText('mutation running')).toHaveCount(0)
+    await expect(addButton).toBeEnabled()
+    await expect(location).toBeEnabled()
+    await expect(dialog).toBeVisible()
+    await userSources.scrollIntoViewIfNeeded()
+    await page.screenshot({ path: updatedListScreenshotPath, fullPage: true })
+    const updatedListMetrics = await sourceListVisibility(page, dialog, userSources, longLocation)
+    expect(updatedListMetrics).toMatchObject({
+      kindAboveLocation: true,
+      locationWithinDialog: true,
+      dialogHasNoHorizontalOverflow: true,
+      sourcesHaveNoHorizontalOverflow: true,
+      pageHasNoHorizontalOverflow: true,
+    })
+    expect(updatedListMetrics.locationLines).toBeGreaterThan(1)
+
+    const expectedRoot = original.replace(
+      'resources:\n',
+      `  marketplace:\n    marketplace: ${endpoint}\nresources:\n`,
+    )
+    expect(expectedRoot).not.toBe(original)
+    await expect.poll(async () => await readFile(userConfigPath, 'utf8'), { timeout: 60_000 }).toBe(expectedRoot)
+    expect(await readFile(fragmentPath, 'utf8')).toBe(fragment)
+    expect(await readFile(orgConfigPath, 'utf8')).toBe(orgBefore)
+    expect(await readFile(repoConfigPath, 'utf8')).toBe(repoBefore)
+    expect(await readFile(repoLocalPath, 'utf8')).toBe(repoLocalBefore)
+    expect(existsSync(codexHome)).toBe(false)
+    expect(existsSync(join(home, '.devin'))).toBe(false)
+    expect(
+      xdgDirs.map((dir) => (existsSync(dir) ? readdirSync(dir).sort().join(',') : '<absent>')),
+    ).not.toContain('devin')
+  } finally {
+    if (tracing) {
+      await page.context().tracing.stop({ path: tracePath }).catch(() => undefined)
+    }
     await harness.stop()
   }
 })

@@ -17,6 +17,7 @@ export interface Bootstrap {
   xdgCache?: string
   addSourceDir?: string
   orgConfig?: string
+  marketplaceEndpoint?: string
 }
 
 export interface Harness {

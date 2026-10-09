@@ -409,6 +409,9 @@ func (i Intent) AllowedMarketplaces() []string {
 	for _, source := range intentLayerOrder {
 		allowed := i.Layers[source].Settings().AllowedMarketplaces
 		if allowed != nil {
+			if *allowed == nil {
+				return []string{}
+			}
 			return *allowed
 		}
 	}

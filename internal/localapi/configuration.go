@@ -435,6 +435,19 @@ func validateAddSource(source *configurationActionSource, allowed []string) (con
 		if err := config.ValidateRegistryPath(entry.Path); err != nil {
 			return config.RegistryEntry{}, false
 		}
+	case config.V4SourceMarketplace:
+		if entry.URL == "" || source.refSeen || source.pathSeen {
+			return config.RegistryEntry{}, false
+		}
+		endpoint, err := config.NormalizeMarketplaceURL(entry.URL)
+		if err != nil {
+			return config.RegistryEntry{}, false
+		}
+		if err := config.ValidateMarketplaceURLs([]config.MarketplaceEntry{{URL: endpoint}}, allowed); err != nil {
+			return config.RegistryEntry{}, false
+		}
+		entry.URL = endpoint
+		return entry, true
 	default:
 		return config.RegistryEntry{}, false
 	}
@@ -472,11 +485,20 @@ func (a *API) handleSourceMutation(w http.ResponseWriter, r *http.Request, req c
 		return
 	}
 
+	marketplaceEndpoint := ""
 	switch req.action {
 	case "add-source":
-		if _, ok := validateAddSource(req.source, intent.AllowedRegistries()); !ok {
+		allowed := intent.AllowedRegistries()
+		if req.source.Kind == string(config.V4SourceMarketplace) {
+			allowed = intent.AllowedMarketplaces()
+		}
+		entry, valid := validateAddSource(req.source, allowed)
+		if !valid {
 			writeError(w, http.StatusBadRequest, codeInvalidRequest)
 			return
+		}
+		if entry.V4Kind == config.V4SourceMarketplace {
+			marketplaceEndpoint = entry.URL
 		}
 	case "remove-source":
 		matches := 0
@@ -514,6 +536,17 @@ func (a *API) handleSourceMutation(w http.ResponseWriter, r *http.Request, req c
 	_ = json.NewEncoder(w).Encode(map[string]any{"operation": operationRef{ID: uint64(operation), Kind: string(session.OperationMutation)}})
 
 	go a.runOperation(operation, session.OperationMutation, func(ctx context.Context, _ session.RequestGeneration) (warnings []error, final session.Snapshot, failed error) {
+		if marketplaceEndpoint != "" {
+			_, failed = pipeline.Install(ctx, pipeline.InstallOptions{
+				RepoRoot:       a.homeDir,
+				LocalConfigDir: a.homeDir,
+				Args:           []string{marketplaceEndpoint},
+				Scope:          pipeline.ScopeUser,
+				ScopeSpecified: true,
+			})
+			final = a.readSnapshot(ctx, session.CatalogLoadCached)
+			return nil, final, failed
+		}
 		failed = a.lifecycle.Mutate(ctx, a.workspace, func(mapper pipeline.ConfigPathMapper) error {
 			staged, err := mapper(a.userConfigPath())
 			if err != nil {

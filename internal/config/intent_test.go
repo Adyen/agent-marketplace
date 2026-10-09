@@ -128,6 +128,71 @@ resources:
 	}
 }
 
+func TestIntentAllowedMarketplacesPreservesEmptyPolicyAndOrganizationPrecedence(t *testing.T) {
+	for _, root := range []struct {
+		name       string
+		apiVersion string
+	}{
+		{name: "v4", apiVersion: APIVersionV4},
+		{name: "v2", apiVersion: APIVersionV2},
+		{name: "v3", apiVersion: APIVersionV3},
+	} {
+		t.Run(root.name, func(t *testing.T) {
+			layerFor := func(source Source, settings string) LayerIntent {
+				t.Helper()
+				kind := userLayer
+				if source == Organization {
+					kind = organizationLayer
+				}
+				path := filepath.Join(t.TempDir(), "config.yaml")
+				data := []byte("apiVersion: " + root.apiVersion + "\nharnesses: [devin]\n" + settings)
+				if err := os.WriteFile(path, data, 0o600); err != nil {
+					t.Fatal(err)
+				}
+				layer := loadLayerIntent(source, path, kind, nil)
+				if err := layer.Err(); err != nil {
+					t.Fatal(err)
+				}
+				return layer
+			}
+
+			absent := Intent{Layers: [5]LayerIntent{
+				UserPersonal: layerFor(UserPersonal, ""),
+			}}
+			if got := absent.AllowedMarketplaces(); got != nil {
+				t.Fatalf("absent allowlist = %#v, want nil", got)
+			}
+
+			empty := Intent{Layers: [5]LayerIntent{
+				UserPersonal: layerFor(UserPersonal, "allowed_marketplaces: []\n"),
+			}}
+			if got := empty.AllowedMarketplaces(); got == nil || len(got) != 0 {
+				t.Fatalf("explicit empty allowlist = %#v, want nonnil empty", got)
+			}
+
+			const userPattern = `^https://user\.example$`
+			userLayer := layerFor(UserPersonal, "allowed_marketplaces: ['"+userPattern+"']\n")
+			user := Intent{Layers: [5]LayerIntent{UserPersonal: userLayer}}
+			userAllowed := user.AllowedMarketplaces()
+			if !reflect.DeepEqual(userAllowed, []string{userPattern}) {
+				t.Fatalf("user allowlist = %#v, want [%q]", userAllowed, userPattern)
+			}
+			if err := ValidateMarketplaceURLs([]MarketplaceEntry{{URL: "https://user.example"}}, userAllowed); err != nil {
+				t.Fatalf("user allowlist should permit its matching endpoint: %v", err)
+			}
+
+			organization := layerFor(Organization, "allowed_marketplaces: []\n")
+			combined := Intent{Layers: [5]LayerIntent{
+				Organization: organization,
+				UserPersonal: userLayer,
+			}}
+			if got := combined.AllowedMarketplaces(); got == nil || len(got) != 0 {
+				t.Fatalf("organization empty allowlist = %#v, want nonnil empty despite user pattern", got)
+			}
+		})
+	}
+}
+
 func TestLayerIntentDescribeSources(t *testing.T) {
 	dir := t.TempDir()
 	includePath := filepath.Join(dir, "fragment.yaml")
