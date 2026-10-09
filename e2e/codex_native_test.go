@@ -183,7 +183,7 @@ registries:
 		alpha = env.RunAMWithEnv(map[string]string{"AGENT_MARKETPLACE_V3_ORG_CONFIG": alphaOrg}, "sync", "--no-backup")
 	}()
 
-	fifoWriter := openFIFOWriter(t, proofPath, alphaDone, &alpha)
+	fifoWriter := openOwnershipProofFIFOWriter(t, proofPath, proofBytes, alphaDone, &alpha)
 	if err := os.Rename(proofPath+".seed", proofPath); err != nil {
 		_ = fifoWriter.Close()
 		t.Fatal(err)

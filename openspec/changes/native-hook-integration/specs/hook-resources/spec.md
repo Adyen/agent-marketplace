@@ -94,6 +94,55 @@ entries SHALL NOT carry an in-file `_managed_by` marker.
 - **WHEN** a hook is synced to any harness target
 - **THEN** the written entry MUST NOT contain a `_managed_by` member
 
+### Requirement: Native hook files are reversed into canonical events
+
+Each harness target's source layout SHALL ingest its native hook file while
+preserving native event names and recording `HookSource`. Mapping into a
+target's event vocabulary SHALL occur through the shipped catalogs during
+compilation, not by normalizing events during ingestion. Undocumented events
+SHALL retain their spelling and produce an ingestion diagnostic; unsupported
+handlers SHALL be skipped where they cannot be represented. Historical
+source-revision digest projections and existing acquisition locks SHALL remain
+unchanged.
+
+#### Scenario: Windsurf native file keeps every handler
+
+- **WHEN** a Windsurf `hooks.json` declares several handlers for one event
+- **THEN** ingestion MUST produce one hook per handler with distinct names, in
+  source order
+
+#### Scenario: Gemini BeforeAgent maps to UserPromptSubmit
+
+- **WHEN** a Gemini `settings.json` declares a `BeforeAgent` hook and that hook
+  is ingested and compiled for Claude Code
+- **THEN** ingestion MUST preserve event `BeforeAgent` and `HookSource` `gemini`
+- **AND** the compiled Claude hook MUST use event `UserPromptSubmit`
+
+#### Scenario: Undocumented Devin event keeps its name with a diagnostic
+
+- **WHEN** a Devin hook file declares an event outside Devin's documented
+  vocabulary
+- **THEN** ingestion MUST keep the original event name and emit
+  `ingest.devin.hook-event-unmappable`
+- **AND** a Devin `PostCompaction` hook MUST NOT become a canonical
+  `PreCompact` hook
+
+#### Scenario: Unsupported Codex handlers are skipped
+
+- **WHEN** a Codex `hooks.json` declares an unsupported non-command handler
+  beside valid command handlers and an undocumented event
+- **THEN** ingestion MUST skip the unsupported handler with
+  `ingest.codex.hook-unsupported`
+- **AND** valid sibling handlers MUST still be ingested
+- **AND** the undocumented event MUST retain its native spelling and emit
+  `ingest.codex.hook-event-unmappable`; compilation MUST refuse it when the
+  target catalog cannot represent it
+
+#### Scenario: Cursor plugin-root token is normalized
+
+- **WHEN** a legacy Cursor hook command references `${CURSOR_PLUGIN_ROOT}`
+- **THEN** ingestion MUST rewrite it to `${CLAUDE_PLUGIN_ROOT}`
+
 ## ADDED Requirements
 
 ### Requirement: Hooks materialize into each harness target's native hook file

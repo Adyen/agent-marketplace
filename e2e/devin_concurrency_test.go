@@ -96,7 +96,7 @@ registries:
 		}, "sync", "--no-backup")
 	}()
 
-	fifoWriter := openFIFOWriter(t, proofPath, alphaDone, &results[0])
+	fifoWriter := openOwnershipProofFIFOWriter(t, proofPath, proofBytes, alphaDone, &results[0])
 	if err := os.Rename(proofPath+".seed", proofPath); err != nil {
 		_ = fifoWriter.Close()
 		t.Fatal(err)

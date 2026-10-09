@@ -138,6 +138,7 @@ func TestNativeHookActivationInstalledAliasIsReaderProofIdentity(t *testing.T) {
 }
 
 // spec: hook-resources/every-harness-target-receives-hooks-in-its-native-file
+// spec: hook-resources/factory-hooks-use-the-standalone-native-file
 func TestFactoryNativeHookPreservesStandaloneRootFormatting(t *testing.T) {
 	repo, _, _ := nativeHookJSONTestEnvironment(t)
 	nativeFile := filepath.Join(repo, ".factory", "hooks.json")

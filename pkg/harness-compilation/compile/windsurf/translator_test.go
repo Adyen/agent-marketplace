@@ -245,7 +245,6 @@ func TestTranslateHook_AbsentSidecarWorkdirRemainsBlocked(t *testing.T) {
 	}
 }
 
-// spec: hook-resources/codex-devin-and-windsurf-receive-the-source-bundle-root
 func TestTranslateHook_WithPluginRoot(t *testing.T) {
 	hook := ir.NewHookWithMatcher(
 		"PreToolUse-Read-command",

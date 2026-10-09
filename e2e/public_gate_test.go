@@ -403,11 +403,12 @@ marketplaces:
 		"/workspace/.factory/skills/skill-one/SKILL.md",
 		"/workspace/.factory/commands/command-one.md",
 		"/workspace/.factory/droids/agent-one.md",
-		"/workspace/.factory/hooks/hooks.json",
 		"/workspace/.factory/mcp.json",
 	} {
 		consumer.AssertFileExists(path)
 	}
+	assertFactoryNativeHookFile(t, consumer, "/workspace/.factory/hooks.json", "Read", "echo hook")
+	consumer.AssertFileAbsent("/workspace/.factory/hooks/hooks.json")
 	if !strings.Contains(consumer.ReadFile("/workspace/.factory/skills/skill-one/SKILL.md"), "hostile-safe skill") {
 		t.Fatal("Marketplace mirror install produced the wrong skill content")
 	}
@@ -452,7 +453,8 @@ resources:
 	consumer.AssertFileContains("/workspace/.factory/skills/skill-one/SKILL.md", "A hostile-safe skill")
 	consumer.AssertFileContains("/workspace/.factory/commands/command-one.md", "echo command-one")
 	consumer.AssertFileExists("/workspace/.factory/droids/agent-one.md")
-	consumer.AssertFileContains("/workspace/.factory/hooks/hooks.json", "echo hook")
+	assertFactoryNativeHookFile(t, consumer, "/workspace/.factory/hooks.json", "Read", "echo hook")
+	consumer.AssertFileAbsent("/workspace/.factory/hooks/hooks.json")
 	consumer.AssertFileContains("/workspace/.factory/mcp.json", "server-one")
 	consumer.AssertFileAbsent("/workspace/.factory/skills/public-bundle")
 	if got := consumer.ReadFile("/workspace/.agents/config.yaml"); got != before {

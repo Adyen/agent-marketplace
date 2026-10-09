@@ -106,9 +106,11 @@ func TestMarketplaceIndexOnlyRegistryMoveOfflineAndAllKinds(t *testing.T) {
 	if result := env.RunAM("sync"); result.ExitCode != 0 {
 		t.Fatalf("initial online sync failed (exit %d):\n%s", result.ExitCode, result.Combined)
 	}
-	for _, path := range []string{"/workspace/.factory/skills/skill-one/SKILL.md", "/workspace/.factory/commands/command-one.md", "/workspace/.factory/droids/agent-one.md", "/workspace/.factory/hooks/hooks.json", "/workspace/.factory/mcp.json"} {
+	for _, path := range []string{"/workspace/.factory/skills/skill-one/SKILL.md", "/workspace/.factory/commands/command-one.md", "/workspace/.factory/droids/agent-one.md", "/workspace/.factory/mcp.json"} {
 		env.AssertFileExists(path)
 	}
+	assertFactoryNativeHookFile(t, env, "/workspace/.factory/hooks.json", "Read", "echo hook")
+	env.AssertFileAbsent("/workspace/.factory/hooks/hooks.json")
 
 	// Remove the old origin before the next online sync. Success proves the
 	// resolver used only the occurrence's current origin, not origin history.

@@ -453,6 +453,7 @@ func TestWindsurfMalformedHooksPreserveBytes(t *testing.T) {
 	}
 }
 
+// spec: hook-resources/blocked-windsurf-hooks-keep-their-installed-entries
 func TestWindsurfIncompleteHooksRetainManagedSiblings(t *testing.T) {
 	repo, _ := additiveSafetyEnv(t)
 	legacyFile := filepath.Join(repo, ".windsurf", "hooks.json")

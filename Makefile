@@ -248,7 +248,7 @@ comma := ,
 # The pinned Go build image ships git; override when Docker Hub is unavailable.
 AM_E2E_UPGRADE_IMAGE ?= $(GO_BUILD_IMAGE)
 AM_E2E_RELEASED_IMAGE ?= $(GO_BUILD_IMAGE)
-UPGRADE_GATE_TESTS := TestPreV4ReleaseUpgrade,TestPreV4GitLockUpgrade,TestPreV4AggregateOwnershipUpgrade,TestPreV4LocalLayerUpgrade,TestPreV4DuplicateRefUpgrade
+UPGRADE_GATE_TESTS := TestPreV4ReleaseUpgrade,TestPreV4GitLockUpgrade,TestPreV4AggregateOwnershipUpgrade,TestPreV4LocalLayerUpgrade,TestPreV4DuplicateRefUpgrade,TestPreV4HookOwnershipUpgrade
 RELEASED_CLIENT_GATE_TESTS := TestReleasedClientReadsCandidateCommittedState
 
 upgrade-gate:

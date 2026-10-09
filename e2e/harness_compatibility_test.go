@@ -103,6 +103,7 @@ func runCompatibilityScenario(t *testing.T, results []compatibilityResult, nativ
 		t.Fatal(init.Error)
 	}
 	f := newCompatibilityFixture(e, first.Harness, server)
+	assertCompatibilityHookSource(t, f)
 	paths := compatibilityPaths(e, first.Harness, first.Scope, f)
 	otherScope := "user"
 	if first.Scope == "user" {
@@ -349,20 +350,74 @@ func assertCompatibilityMCP(t *testing.T, text, target string, f compatibilityFi
 	}
 }
 
-func assertCompatibilityNoNamedFile(t *testing.T, root, name string) {
-	t.Helper()
-	if err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
+func compatibilityNamedFiles(root, name string, ignoredDirs ...string) ([]string, error) {
+	var matches []string
+	err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
 			return err
+		}
+		rel, err := filepath.Rel(root, path)
+		if err != nil {
+			return err
+		}
+		slashed := filepath.ToSlash(rel)
+		for _, ignored := range ignoredDirs {
+			if slashed == ignored || strings.HasPrefix(slashed, ignored+"/") {
+				if d.IsDir() {
+					return filepath.SkipDir
+				}
+				return nil
+			}
 		}
 		if d.IsDir() && (d.Name() == ".cache" || d.Name() == ".local") {
 			return filepath.SkipDir
 		}
 		if strings.Contains(d.Name(), name) {
-			t.Errorf("unsupported resource emitted at %s", path)
+			matches = append(matches, path)
 		}
 		return nil
-	}); err != nil {
+	})
+	return matches, err
+}
+
+func assertCompatibilityNoNamedFile(t *testing.T, root, name string) {
+	t.Helper()
+	matches, err := compatibilityNamedFiles(root, name, "hook-support", ".codeium/windsurf/hook-support")
+	if err != nil {
 		t.Fatal(err)
+	}
+	for _, path := range matches {
+		t.Errorf("unsupported resource emitted at %s", path)
+	}
+}
+
+func TestCompatibilityNamedFileSearch(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	name := "forbidden-subagent"
+	passive := []string{
+		filepath.Join(root, "hook-support", "registry", name+".json"),
+		filepath.Join(root, ".codeium", "windsurf", "hook-support", "registry", name+".json"),
+	}
+	active := []string{
+		filepath.Join(root, "agents", name+".md"),
+		filepath.Join(root, "not-hook-support", name+".md"),
+	}
+	for _, path := range append(append([]string(nil), passive...), active...) {
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte("copy"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got, err := compatibilityNamedFiles(root, name, "hook-support", ".codeium/windsurf/hook-support")
+	if err != nil {
+		t.Fatal(err)
+	}
+	slices.Sort(got)
+	slices.Sort(active)
+	if !slices.Equal(got, active) {
+		t.Fatalf("compatibilityNamedFiles = %v, want exactly the active paths %v", got, active)
 	}
 }

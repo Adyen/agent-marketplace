@@ -2907,6 +2907,7 @@ func TestRunHookSupportFilesAreSymlinked(t *testing.T) {
 	}
 }
 
+// spec: materialization/repository-scope-hook-command-stays-repository-relative
 func TestRunFactoryHookCommandPointsIntoInstallRoot(t *testing.T) {
 	repoRoot := t.TempDir()
 	t.Setenv("HOME", t.TempDir())

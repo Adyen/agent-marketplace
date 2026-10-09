@@ -250,7 +250,7 @@ hook matrix goldens deliberately.
 - [x] 8.2 Add the hook and tool documentation sources from the catalog
   `evidence.refs` to PR #276's catalog audit tool, with sha256 baselines.
   Verify `go test` for the audit tool passes offline
-- [ ] 8.3 Update the hook rows in
+- [x] 8.3 Update the hook rows in
   `site/docs/reference/harnesses-and-output-paths.md`, the hook and tool
   sections of `docs/harness-validation/*.md` (including the third-party
   loaders and the Windsurf `.devin/hooks.json` path), the hook and tool rows
@@ -261,7 +261,7 @@ hook matrix goldens deliberately.
 
 ## 9. Validate and archive
 
-- [ ] 9.1 Run `go run ./tools/specaudit trace`. Verify there are no unbound
+- [x] 9.1 Run `go run ./tools/specaudit trace`. Verify there are no unbound
   `hook-resources` or `harness-tool-catalogs` scenarios and no dangling
   annotations
 - [ ] 9.2 Run `make validate`, `make spec-check`, `make validate-e2e`,

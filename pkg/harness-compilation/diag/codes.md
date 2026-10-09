@@ -100,9 +100,9 @@ comparison in non-test code.
 | `hook.timeout-rounded` | Timeout unit conversion to seconds rounded up to the next whole second | Use a whole-second timeout or accept the rounded value |
 | `hook.timeout-capped` | Timeout exceeded the documented per-event limit and was lowered to the limit | Set a timeout within the documented limit |
 | `hook.duplicate-execution-risk` | Two selected harness targets load the same hook files by default, so the hook may run twice | Deselect one of the targets for this scope, or accept the duplicate execution |
-| `materialize.hook.review` | Repository hook output changed on a target that may require trust review | Review the changed hooks before using the configuration |
+| `materialize.hook.review` | An owned hook command or prompt was added, changed, or removed in either scope, and the exact values were printed to stdout for review | Review the printed hook changes before relying on them |
 | `materialize.hook.review-pending` | A check found a pending hook change without mutating files | A later sync will apply the pending hook change |
-| `materialize.hook.satisfied-by-unmanaged` | A semantically identical handwritten hook already exists; no entry was added | No action needed; the handwritten entry satisfies the desired hook |
+| `materialize.hook.satisfied-by-unmanaged` | On a target without a target-specific code, a semantically identical handwritten hook already exists; no entry was added | No action needed; the handwritten entry satisfies the desired hook and is not adopted |
 | `skill.support-files-deferred` | Skill support file names were preserved but bytes were not materialized | Materialize source-relative support files in the owning layer |
 | `mcp.credentials.literal-secret` | MCP configuration contains a literal credential-like value | Use environment interpolation or an external secret reference |
 | `skill.devin.model-unmappable` | Explicit skill model has no resolved Devin representation; model omitted | Update the shipped Devin model catalog or use an explicit model override |
@@ -140,9 +140,21 @@ comparison in non-test code.
 | `doctor.devin.version-unknown` | A Devin CLI is installed but its version could not be established | The version probe failed, timed out, or printed no recognizable version; nothing is blocked, but 3000.3 compatibility could not be confirmed |
 | `doctor.repair.conflict-replaceable` | An existing unmanaged aggregate entry has the same key as a desired entry but a different value, so it is neither an exact adoption match nor an evidence-backed orphan | Run doctor --repair on a terminal to confirm replacing it with the generated entry; the existing entry is preserved until you confirm, a fresh safety backup is taken first, and --yes never replaces it |
 
+### Hook review output
+
+`materialize.hook.review` is a warning about a completed publication in either
+repository or user scope. The separate stdout review lists the changed entry's
+target, scope, file, event, matcher, and exact old and new command or prompt.
+Metadata-only updates and no-op syncs emit no listing or review diagnostic.
+`materialize.hook.review-pending` is the check-mode counterpart: it reports the
+same pending listing while writing no native file, configuration, ownership
+state, or backup. Review output is not written to application logs or
+telemetry; caller redirection that captures stdout is outside those value-free
+channels.
+
 ### Unconsumed configuration audits
 
-Unconsumed-configuration diagnostics use this fixed, ordered inventory of recognized MCP and hook paths: root `.mcp.json`, `mcp.json`, `hooks/hooks.json`; Claude `.claude/.mcp.json`, `.claude.json`, `.claude/hooks/hooks.json`; Factory `.factory/mcp.json`, `.factory/hooks/hooks.json`; Cursor `.cursor/mcp.json`, `.cursor/hooks/hooks.json`; Gemini root `gemini-extension.json`, `.gemini/mcp.json`, `.gemini/settings.json`, `.gemini/gemini-extension.json`; Windsurf `mcp_config.json`, `.windsurf/mcp_config.json`, `hooks.json`, `.windsurf/hooks.json`; Devin `hooks.v1.json`, `.devin/hooks.v1.json`, `.devin/config.json`, `.devin/mcp_config.json`; and Codex `.codex/hooks.json`, `.codex/config.toml`. The audit is file-level rather than member-level: a recognized file is considered consumed when its selected loader reads it, regardless of which entries it contains. Empty valid aggregates and files that were read but failed validation are therefore not unconsumed; empty bytes that fail parsing remain load failures. Generic root `config.json`, arbitrary JSON/support files, and personal override files governed by dedicated diagnostics are excluded. The audit never reads configuration contents and never moves files automatically; use the actionable diagnostic hint to select the matching source layout or merge definitions without overwriting existing entries. Audit warnings are non-owning traversal diagnostics: diagnostic-only containers retain their warnings while nested resources are discovered, whereas actual resource and load diagnostics still bound traversal.
+Unconsumed-configuration diagnostics use this fixed, ordered inventory of recognized MCP and hook paths: root `.mcp.json`, `mcp.json`, and `hooks/hooks.json`; Claude `.claude/.mcp.json`, `.claude.json`, `.claude/hooks/hooks.json`, and `.claude/settings.json`; Factory `.factory/hooks.json`; Cursor `.cursor/hooks.json`; the shared `.devin/hooks.json`; Factory `.factory/mcp.json` and `.factory/hooks/hooks.json`; Cursor `.cursor/mcp.json` and `.cursor/hooks/hooks.json`; Gemini `gemini-extension.json`, `.gemini/mcp.json`, `.gemini/settings.json`, and `.gemini/gemini-extension.json`; Windsurf `mcp_config.json`, `.windsurf/mcp_config.json`, `hooks.json`, and `.windsurf/hooks.json`; Devin `hooks.v1.json`, `.devin/hooks.v1.json`, `.devin/config.json`, and `.devin/mcp_config.json`; and Codex `.codex/hooks.json` and `.codex/config.toml`. The audit is file-level rather than member-level: a recognized file is considered consumed when its selected loader reads it, regardless of which entries it contains. Empty valid aggregates and files that were read but failed validation are therefore not unconsumed; empty bytes that fail parsing remain load failures. Generic root `config.json`, arbitrary JSON/support files, and personal override files governed by dedicated diagnostics are excluded. The audit never reads configuration contents and never moves files automatically; use the actionable diagnostic hint to select the matching source layout or merge definitions without overwriting existing entries. Audit warnings are non-owning traversal diagnostics: diagnostic-only containers retain their warnings while nested resources are discovered, whereas actual resource and load diagnostics still bound traversal.
 
 ### Codex diagnostics are evidence-bound and fail closed on authority loss
 
@@ -565,7 +577,7 @@ key or a hook event name), the resource name, and content digests are reported.
 | `subagent.factory.tool-unknown` | Factory cannot map an explicit subagent tool; subagent artifact suppressed | Use a supported tool mapping or remove the restriction explicitly |
 | `skill.codex.security-restriction-unsupported` | Codex skills cannot enforce an explicit security restriction; artifact suppressed | Remove the restriction explicitly or use a target that represents it |
 | `hook.event-unmappable` | Target cannot preserve this hook event; hook suppressed | Use a hook event documented by the target |
-| `hook.gemini.event-unmappable` | Gemini has no equivalent hook event; hook suppressed | Use a Gemini-supported event such as PreToolUse, PostToolUse, or PreCompact |
+| `hook.gemini.event-unmappable` | Gemini has no equivalent hook event; hook suppressed | Use a Gemini native event such as BeforeTool, AfterTool, or PreCompress |
 | `hook.windsurf.event-unmappable` | Claude hook event has no Windsurf equivalent; hook suppressed | Consider using a mappable event (PreToolUse with a known tool matcher, UserPromptSubmit, or Stop) |
 | `hook.matcher-untranslatable` | No exact tool-matcher coverage exists for the target; hook suppressed | Rewrite the matcher with tools the target's catalog covers, or remove it |
 | `hook.env-unrepresentable` | The hook command references a variable with no target equivalent; hook suppressed | Rewrite the command with variables the target documents, or use an absolute path |
@@ -574,8 +586,8 @@ key or a hook event name), the resource name, and content digests are reported.
 | `hook.support-path-unrepresentable` | The hook command references the plugin root but the target declares no repository base; hook suppressed | Use an absolute command path or a target with a repository base |
 | `hook.prompt.unsupported` | Target cannot represent prompt hooks; hook suppressed | Use a command hook on this target |
 | `hook.factory.non-command-type-dropped` | Factory only supports command-type hooks; hook suppressed | Convert the hook to a command type or remove it |
-| `hook.cursor.unsupported-type` | Cursor only supports command-type hooks; hook suppressed | Convert the hook to a command type or remove it |
-| `hook.gemini.unsupported-type` | Gemini cannot represent this hook type; hook suppressed | Use a command or prompt hook on Gemini |
+| `hook.cursor.unsupported-type` | Cursor does not declare this hook type for the event; hook suppressed | Use a command or prompt type; the Cursor catalog declares both on every event |
+| `hook.gemini.unsupported-type` | Gemini cannot represent this hook type; hook suppressed | Use a command hook on Gemini |
 | `hook.windsurf.unsupported-type` | Windsurf cannot represent this hook type; hook suppressed | Use a command hook on Windsurf |
 | `materialize.hook.legacy-malformed` | A legacy hook file could not be parsed or reconciled safely; both files were left unchanged | Fix the legacy hook file by hand; the migration runs again on the next sync |
 | `hook.native-literal-unsupported` | Target would reinterpret a native Codex hook literal; hook suppressed | Remove the target-specific interpolation token or keep the hook in Codex format |
@@ -595,7 +607,7 @@ key or a hook event name), the resource name, and content digests are reported.
 | `subagent.factory.disallowed-tools-dropped` | Factory cannot represent disallowedTools; artifact suppressed | Use a target that supports disallowedTools or remove the restriction explicitly |
 | `subagent.factory.isolation-dropped` | Factory cannot represent isolation; artifact suppressed | Use a target that supports isolation or remove the restriction explicitly |
 | `subagent.gemini.tool-unknown` | Gemini tool is not in the mapping table; artifact suppressed | Add the tool to the mapping table or remove the explicit tool |
-| `subagent.cursor.tool-unknown` | Cursor tool is not in the mapping table; artifact suppressed | Add the tool to the mapping table or remove the explicit tool |
+| `subagent.cursor.tool-unknown` | Cursor cannot represent the authored subagent tool restriction; artifact suppressed | Remove the restriction explicitly or use a target whose subagent format can express it |
 | `subagent.claude.tool-unknown` | Claude has no tool covering a foreign-source tool name; artifact suppressed | Use a tool name the Claude tool catalog covers, or remove the restriction explicitly |
 | `subagent.security-restriction-unsupported` | Unsupported subagent security restriction suppresses the artifact | Use a target that represents the restriction or remove it explicitly |
 | `bundle.conflict.duplicate-artifact-path` | Two resources produce the same artifact output path; neither resource is emitted | Rename one of the conflicting resources or adjust the output path |

@@ -2,26 +2,31 @@ package e2e_test
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
+	"time"
 )
 
 // releasedClientArch maps the checksum of each pinned latest-release Linux
 // asset to its architecture. Bump these, the CI download, and the version
 // label after every stable release.
-const releasedClientVersion = "v4.0.8"
+const releasedClientVersion = "v4.1.2"
 
 var releasedClientArch = map[string]string{
-	"02a34b1786ffbe2cf2d19f5163a9383ab5712c61db44636abc803771654665bb": "amd64",
-	"51829f84d90da1035b983f24cf7f02a9c93c9d3aae32e2846ae4fcd10768370b": "arm64",
+	"37e7bc3e7a7510c88b381a1f734436da8dfc4a80409aae30594f6d7ea1d9eef7": "amd64",
+	"c1bbc42793769cd732e8d5b70067e92d162951b13af854bc6e8f88b15de9e645": "arm64",
 }
 
-// A teammate on the candidate upgrades a committed Git-only lock to v2.
-// The latest release can read v1, but must refuse v2 without altering the
-// repository. Each actor has its own HOME; only the repository is shared.
+// spec: hook-resources/latest-release-still-verifies-after-migration
+// A teammate on the candidate syncs a committed Git-only v2 lock and
+// migrates a hook the release installed in its legacy layout into the
+// native file. The latest release reads v2 locks, so its sync --locked and
+// sync --check must keep succeeding without rewriting the healthy lock,
+// recreating the legacy file, or duplicating the hook. Each actor has its
+// own HOME; only the repository is shared.
 func TestReleasedClientReadsCandidateCommittedState(t *testing.T) {
 	image := os.Getenv("AM_E2E_RELEASED_IMAGE")
 	if os.Getenv("AM_E2E_RELEASED_BINARY") == "" || image == "" {
@@ -37,6 +42,15 @@ func TestReleasedClientReadsCandidateCommittedState(t *testing.T) {
 		}
 	}
 	registry := world.gitRegistry(map[string]string{"review": "Review body", "second": "Second body"})
+	legacySource := filepath.Join(registry.source, "hooks", "hooks.json")
+	if err := os.MkdirAll(filepath.Dir(legacySource), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(legacySource, []byte(`{"hooks":{"PreToolUse":[{"type":"command","matcher":"Bash","command":"echo released-legacy-hook"}]}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	registry.commit("add hooks")
+	gitRun(t, registry.source, "push", "-q", "origin", "main")
 	gitRun(t, "", "init", "-q", "-b", "main", workspace)
 
 	homes := map[string]string{released: world.path("home-released"), candidate: world.path("home-candidate")}
@@ -48,16 +62,6 @@ func TestReleasedClientReadsCandidateCommittedState(t *testing.T) {
 		t.Helper()
 		world.must(homes[executable], workspace, executable, args...)
 	}
-	// Teammates and CI fetch the committed exact snapshot with --locked; the
-	// check-only mode is deliberately offline and runs afterwards.
-	releasedReads := func(after string) {
-		t.Helper()
-		for _, args := range [][]string{{"sync", "--locked"}, {"sync", "--check"}} {
-			if output, err := run(released, args...); err != nil {
-				t.Fatalf("%s %v cannot use state committed after candidate %s: %v\n%s", releasedClientVersion, args, after, err, output)
-			}
-		}
-	}
 	lockPath := filepath.Join(workspace, ".agents", "lock.yaml")
 	readLock := func() []byte {
 		t.Helper()
@@ -67,46 +71,117 @@ func TestReleasedClientReadsCandidateCommittedState(t *testing.T) {
 		}
 		return lock
 	}
-	releasedRejects := func(after string) {
+	legacyHook := filepath.Join(workspace, ".factory", "hooks", "hooks.json")
+	nativeHook := filepath.Join(workspace, ".factory", "hooks.json")
+	// Teammates and CI fetch the committed exact snapshot with --locked; the
+	// check-only mode is deliberately offline and runs afterwards. Neither
+	// may rewrite a healthy lock.
+	var migratedNative []byte
+	var migratedMode os.FileMode
+	var migratedMtime time.Time
+	assertMigratedHook := func(stage string) {
+		t.Helper()
+		data, err := os.ReadFile(nativeHook)
+		if err != nil {
+			t.Fatalf("%s: candidate did not converge the hook into the native file: %v", stage, err)
+		}
+		var document map[string]json.RawMessage
+		if err := json.Unmarshal(data, &document); err != nil {
+			t.Fatalf("%s: native hook file is not a Factory event map: %v\n%s", stage, err, data)
+		}
+		if _, wrapped := document["hooks"]; wrapped {
+			t.Fatalf("%s: native hook file wraps the event map in a hooks member:\n%s", stage, data)
+		}
+		var groups []struct {
+			Matcher string           `json:"matcher"`
+			Hooks   []map[string]any `json:"hooks"`
+		}
+		if err := json.Unmarshal(document["PreToolUse"], &groups); err != nil {
+			t.Fatalf("%s: native PreToolUse member is not a group array: %v\n%s", stage, err, data)
+		}
+		if len(groups) != 1 || groups[0].Matcher != "Execute" {
+			t.Fatalf("%s: native PreToolUse groups = %+v, want exactly one Execute group:\n%s", stage, groups, data)
+		}
+		if len(groups[0].Hooks) != 1 || groups[0].Hooks[0]["type"] != "command" || groups[0].Hooks[0]["command"] != "echo released-legacy-hook" {
+			t.Fatalf("%s: native Execute handlers = %+v, want exactly one command handler echo released-legacy-hook:\n%s", stage, groups[0].Hooks, data)
+		}
+		if bytes.Contains(data, []byte("_managed_by")) {
+			t.Fatalf("%s: native hook file carries an in-file ownership marker:\n%s", stage, data)
+		}
+		info, err := os.Stat(nativeHook)
+		if err != nil {
+			t.Fatalf("%s: stat native hook file: %v", stage, err)
+		}
+		if migratedNative == nil {
+			migratedNative = data
+			migratedMode = info.Mode()
+			migratedMtime = info.ModTime()
+		} else if !bytes.Equal(data, migratedNative) || info.Mode() != migratedMode || !info.ModTime().Equal(migratedMtime) {
+			t.Fatalf("%s: native hook file bytes, mode, or mtime changed after migration:\nbefore:\n%s\nafter:\n%s", stage, migratedNative, data)
+		}
+		if _, err := os.Lstat(legacyHook); !os.IsNotExist(err) {
+			t.Fatalf("%s: legacy hook file still present or recreated after candidate migration: %v", stage, err)
+		}
+	}
+	releasedReads := func(after string) {
 		t.Helper()
 		lock := readLock()
 		for _, args := range [][]string{{"sync", "--locked"}, {"sync", "--check"}} {
 			output, err := run(released, args...)
-			if err == nil || !strings.Contains(output, "lock.invalid-document") || !strings.Contains(output, `apiVersion "agent-marketplace-lock/v2"`) {
-				t.Fatalf("%s %v after candidate %s did not reject Git-only v2: %v\n%s", releasedClientVersion, args, after, err, output)
+			if err != nil {
+				t.Fatalf("%s %v cannot use state committed after candidate %s: %v\n%s", releasedClientVersion, args, after, err, output)
 			}
 			if got := readLock(); !bytes.Equal(got, lock) {
-				t.Fatalf("%s %v changed the unsupported lock after %s:\nbefore:\n%s\nafter:\n%s", releasedClientVersion, args, after, lock, got)
+				t.Fatalf("%s %v rewrote a healthy lock after %s:\nbefore:\n%s\nafter:\n%s", releasedClientVersion, args, after, lock, got)
+			}
+			if migratedNative != nil {
+				assertMigratedHook(fmt.Sprintf("%s %v", args, after))
 			}
 		}
 	}
 
 	must(released, "init", "--harnesses", "factory")
 	must(candidate, "init", "--harnesses", "factory")
-	repoConfig := fmt.Sprintf("apiVersion: agent-marketplace/v2\nregistries:\n  - url: %s\n    ref: main\n    skills:\n      include: [review]\n", registry.URL)
+	repoConfig := fmt.Sprintf("apiVersion: agent-marketplace/v2\nregistries:\n  - url: %s\n    ref: main\n    skills:\n      include: [review]\n    hooks:\n      include: [PreToolUse-command]\n", registry.URL)
 	if err := os.WriteFile(filepath.Join(workspace, ".agents", "config.yaml"), []byte(repoConfig), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	must(released, "sync")
+	legacy, err := os.ReadFile(legacyHook)
+	if err != nil || !bytes.Contains(legacy, []byte("released-legacy-hook")) {
+		t.Fatalf("%s did not seed its legacy hook output: %v\n%s", releasedClientVersion, err, legacy)
+	}
 	committed := readLock()
-	releasedReads("initial v1 sync")
+	releasedReads("initial sync")
 
 	must(candidate, "sync")
-	expectV2GitLockUpgrade(t, committed, readLock())
-	releasedRejects("sync")
+	if got := readLock(); !bytes.Equal(got, committed) {
+		t.Fatalf("a healthy candidate sync rewrote the committed v2 lock:\nbefore:\n%s\nafter:\n%s", committed, got)
+	}
+	assertMigratedHook("candidate sync")
+	releasedReads("candidate hook migration")
+
+	must(candidate, "sync")
+	if got := readLock(); !bytes.Equal(got, committed) {
+		t.Fatalf("a repeat healthy candidate sync rewrote the lock:\nbefore:\n%s\nafter:\n%s", committed, got)
+	}
+	assertMigratedHook("repeat candidate sync")
 
 	must(candidate, "install", "second", "--scope", "repo")
 	if _, err := os.Stat(filepath.Join(workspace, ".factory", "skills", "second", "SKILL.md")); err != nil {
 		t.Fatalf("candidate did not materialize its committed selection: %v", err)
 	}
-	releasedRejects("install")
+	assertMigratedHook("install")
+	releasedReads("install")
 
 	registry.publish("review", "Review body, revised")
 	must(candidate, "update", "--scope", "repo")
-	releasedRejects("update")
+	assertMigratedHook("update")
+	releasedReads("update")
 
 	must(candidate, "remove", "second", "--scope", "repo")
-	releasedRejects("remove")
+	assertMigratedHook("remove")
+	releasedReads("remove")
 	must(candidate, "sync", "--locked")
 	must(candidate, "sync", "--check")
 }

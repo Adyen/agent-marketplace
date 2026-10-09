@@ -186,7 +186,7 @@ var testTable = []TestCase{
 		GlobalCfg:  "apiVersion: agent-marketplace/v4\nharnesses: [factory]\nsources: {shared: {git: '{{REG:new-repo-config}}', ref: main}}\n",
 		Steps: []Step{
 			{Args: []string{"install", "new-skill", "--scope", "repo"}, MustPass: true,
-				FileContains: map[string]string{"/workspace/.agents/config.yaml": "apiVersion: agent-marketplace/v4", "/workspace/.factory/skills/new-skill/SKILL.md": "name: new-skill"},
+				FileContains:    map[string]string{"/workspace/.agents/config.yaml": "apiVersion: agent-marketplace/v4", "/workspace/.factory/skills/new-skill/SKILL.md": "name: new-skill"},
 				FileNotContains: map[string]string{"/workspace/.agents/config.yaml": "apiVersion: agent-marketplace/v2"}},
 			{Args: []string{"sync", "--check"}, MustPass: true, FileContains: map[string]string{"/workspace/.agents/config.yaml": "skill/new-skill"}},
 		},
@@ -302,17 +302,21 @@ var testTable = []TestCase{
 	},
 	{
 		Name:       "security/hook_merge_opaque_members",
-		Desc:       "Given handwritten hook-container metadata and managed hooks, When sync updates hooks, Then unrelated members survive byte-for-byte while stale managed hooks are removed",
-		Registries: []RegistryDef{{Name: "opaque-hooks", Files: map[string]string{"hooks/hooks.json": `{"hooks":{"PreToolUse":[{"hooks":[{"type":"command","command":"echo generated"}]}]}}`}}},
+		Desc:       "Given handwritten Claude settings with opaque root members and a native hook group alongside managed hooks, When sync updates hooks and one managed hook is removed, Then unrelated members survive byte-for-byte while only the owned hook is removed",
+		Registries: []RegistryDef{{Name: "opaque-hooks", Files: map[string]string{"hooks/hooks.json": `{"hooks":{"PreToolUse":[{"hooks":[{"type":"command","command":"echo generated"}]}],"Stop":[{"hooks":[{"type":"command","command":"stale-owned"}]}]}}`}}},
 		GlobalCfg:  "harnesses: [claude]\nregistries: []\n",
 		RepoCfg:    "harnesses: [claude]\nregistries:\n  - url: {{REG:opaque-hooks}}\n    ref: main\n    default: true\n",
 		Steps: []Step{
-			{Action: ActionWriteFile, Path: "/workspace/.claude/hooks/hooks.json", Body: "{\n  \"hooks\": {\n    // handwritten metadata\n    \"notes\" : \"keep\",\n    \"options\" : {\"enabled\":false},\n    \"disabled\" : false,\n    \"value\" : 1.2300,\n    \"nothing\" : null,\n    \"empty\" : [],\n    \"PostToolUse\": [{\"type\":\"command\",\"command\":\"manual-hook\"}],\n    \"Stop\": [{\"type\":\"command\",\"command\":\"stale-owned\",\"_managed_by\":\"agent-marketplace\"}]\n  }\n}\n"},
-			{Args: []string{"sync"}, MustPass: true, FileContains: map[string]string{"/workspace/.claude/hooks/hooks.json": "echo generated"}, FileNotContains: map[string]string{"/workspace/.claude/hooks/hooks.json": "stale-owned"}},
-			{FileContains: map[string]string{"/workspace/.claude/hooks/hooks.json": "// handwritten metadata\n    \"notes\" : \"keep\",\n    \"options\" : {\"enabled\":false},\n    \"disabled\" : false,\n    \"value\" : 1.2300,\n    \"nothing\" : null,\n    \"empty\" : [],"}},
-			{FileContains: map[string]string{"/workspace/.claude/hooks/hooks.json": "manual-hook"}},
-			{Args: []string{"sync", "--check"}, MustPass: true, PathsUnchanged: []string{"/workspace/.claude/hooks/hooks.json"}},
-			{Args: []string{"sync", "--locked"}, MustPass: true, PathsUnchanged: []string{"/workspace/.claude/hooks/hooks.json"}},
+			{Action: ActionWriteFile, Path: "/workspace/.claude/settings.json", Body: "{\n  // handwritten metadata\n  \"notes\" : \"keep\",\n  \"options\" : {\"enabled\":false},\n  \"disabled\" : false,\n  \"value\" : 1.2300,\n  \"nothing\" : null,\n  \"empty\" : [],\n  \"hooks\": {\n    \"PostToolUse\": [{\"hooks\":[{\"type\":\"command\",\"command\":\"manual-hook\"}]}]\n  }\n}\n"},
+			{Args: []string{"sync"}, MustPass: true, FileContains: map[string]string{"/workspace/.claude/settings.json": "echo generated"}, FileNotContains: map[string]string{"/workspace/.claude/settings.json": "_managed_by"}},
+			{FileContains: map[string]string{"/workspace/.claude/settings.json": "stale-owned"}},
+			{FileContains: map[string]string{"/workspace/.claude/settings.json": "// handwritten metadata\n  \"notes\" : \"keep\",\n  \"options\" : {\"enabled\":false},\n  \"disabled\" : false,\n  \"value\" : 1.2300,\n  \"nothing\" : null,\n  \"empty\" : [],"}},
+			{FileContains: map[string]string{"/workspace/.claude/settings.json": "manual-hook"}},
+			{Args: []string{"remove", "Stop-command", "--kind", "hook", "--scope", "repo"}, MustPass: true, FileNotContains: map[string]string{"/workspace/.claude/settings.json": "stale-owned"}, FileContains: map[string]string{"/workspace/.claude/settings.json": "echo generated"}},
+			{FileContains: map[string]string{"/workspace/.claude/settings.json": "// handwritten metadata\n  \"notes\" : \"keep\",\n  \"options\" : {\"enabled\":false},\n  \"disabled\" : false,\n  \"value\" : 1.2300,\n  \"nothing\" : null,\n  \"empty\" : [],"}},
+			{FileContains: map[string]string{"/workspace/.claude/settings.json": "manual-hook"}},
+			{Args: []string{"sync", "--check"}, MustPass: true, PathsUnchanged: []string{"/workspace/.claude/settings.json"}},
+			{Args: []string{"sync", "--locked"}, MustPass: true, PathsUnchanged: []string{"/workspace/.claude/settings.json"}},
 		},
 	},
 	{
@@ -350,7 +354,7 @@ var testTable = []TestCase{
 		Name: "security/factory_hook_event",
 		Desc: "Given a Devin permission hook and a valid tool hook, When converting to Factory, Then unsupported authorization behavior is reported and omitted without suppressing the valid sibling",
 		Steps: []Step{
-			{Action: ActionWriteFile, Path: "/workspace/source/.devin/hooks.v1.json", Body: `{"PermissionRequest":[{"hooks":[{"type":"command","command":"permission-check"}]}],"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"valid-check"}]}]}`},
+			{Action: ActionWriteFile, Path: "/workspace/source/.devin/hooks.v1.json", Body: `{"PermissionRequest":[{"hooks":[{"type":"command","command":"permission-check"}]}],"PreToolUse":[{"matcher":"^exec$","hooks":[{"type":"command","command":"valid-check"}]}]}`},
 			{Args: []string{"convert", "--from", "devin", "--to", "factory", "--out", "./converted", "./source"}, AssertExitCode: intPtr(1), OutContains: []string{"hook.event-unmappable"}, FileContains: map[string]string{"/workspace/converted/hooks/hooks.json": "valid-check"}, FileNotContains: map[string]string{"/workspace/converted/hooks/hooks.json": "PermissionRequest"}},
 		},
 	},
@@ -362,7 +366,7 @@ var testTable = []TestCase{
 			{Args: []string{"convert", "--from", "windsurf", "--to", "claude", "--out", "./converted", "./source"}, MustPass: true, FileContains: map[string]string{"/workspace/converted/hooks/hooks.json": "Write|Edit"}},
 			{Args: []string{"convert", "--from", "claude", "--to", "windsurf", "--out", "./roundtrip", "./converted"}, MustPass: true, FileContains: map[string]string{"/workspace/roundtrip/.windsurf/hooks.json": "pre_write_code"}},
 			{Action: ActionWriteFile, Path: "/workspace/scoped/hooks/hooks.json", Body: `{"Stop":[{"hooks":[{"type":"command","command":"global-stop"}]}],"SubagentStop":[{"hooks":[{"type":"command","command":"subagent-only"}]}]}`},
-			{Args: []string{"convert", "--from", "claude", "--to", "windsurf", "--out", "./scope-output", "./scoped"}, MustPass: true, OutContains: []string{"Diagnostics 1"}, FileContains: map[string]string{"/workspace/scope-output/.windsurf/hooks.json": "global-stop"}, FileNotContains: map[string]string{"/workspace/scope-output/.windsurf/hooks.json": "subagent-only"}},
+			{Args: []string{"convert", "--from", "claude", "--to", "windsurf", "--out", "./scope-output", "./scoped"}, AssertExitCode: intPtr(1), OutContains: []string{"hook.windsurf.event-unmappable"}, FileContains: map[string]string{"/workspace/scope-output/.windsurf/hooks.json": "global-stop"}, FileNotContains: map[string]string{"/workspace/scope-output/.windsurf/hooks.json": "subagent-only"}},
 		},
 	},
 	{
@@ -564,8 +568,8 @@ registries:
 		Name: "hooks/additive_cross_registry",
 		Desc: "Given two Factory registries with same-named hooks, when install-all and removal run, then both providers materialize additively and removing one preserves the other",
 		Registries: []RegistryDef{
-			{Name: "first", Files: map[string]string{".factory/hooks/hooks.json": `{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"echo first"}]}]}`}},
-			{Name: "second", Files: map[string]string{".factory/hooks/hooks.json": `{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"echo second"}]}]}`}},
+			{Name: "first", Files: map[string]string{".factory/hooks.json": `{"PreToolUse":[{"matcher":"Execute","hooks":[{"type":"command","command":"echo first"}]}]}`}},
+			{Name: "second", Files: map[string]string{".factory/hooks.json": `{"PreToolUse":[{"matcher":"Execute","hooks":[{"type":"command","command":"echo second"}]}]}`}},
 		},
 		RepoCfg: `harnesses: [factory]
 registries:
@@ -577,43 +581,18 @@ registries:
     source_harness: factory
 `,
 		Steps: []Step{
-			{Args: []string{"install", "--all", "--kind", "hook"}, MustPass: true, OutContains: []string{"PreToolUse-command"}, OutNotContains: []string{"multiple registries"}, FileContains: map[string]string{"/workspace/.factory/hooks/hooks.json": "echo first"}},
-			{Args: []string{"list", "--kind", "hook"}, MustPass: true, OutContains: []string{"PreToolUse-command"}, FileContains: map[string]string{"/workspace/.factory/hooks/hooks.json": "echo second"}},
-			{Args: []string{"sync", "--check"}, MustPass: true, PathsUnchanged: []string{"/workspace/.factory/hooks/hooks.json", "/workspace/.agents/lock.yaml"}},
-			{Args: []string{"sync"}, MustPass: true, PathsUnchanged: []string{"/workspace/.factory/hooks/hooks.json"}},
-			{Args: []string{"remove", "PreToolUse-command", "--kind", "hook", "--from", "{{REG:first}}"}, MustPass: true, FileNotContains: map[string]string{"/workspace/.factory/hooks/hooks.json": "echo first"}, FileContains: map[string]string{"/workspace/.factory/hooks/hooks.json": "echo second"}},
-			{Args: []string{"sync", "--check"}, MustPass: true, PathsUnchanged: []string{"/workspace/.factory/hooks/hooks.json", "/workspace/.agents/lock.yaml"}},
-		},
-	},
-	{
-		Name: "hooks/additive_native_definitions",
-		Desc: "Given two Devin source registries with native hooks and a Windsurf target, when install-all and removal run, then native definitions are not materialized as hook support files and both providers remain additive",
-		Registries: []RegistryDef{
-			{Name: "first", Files: map[string]string{".devin/hooks.v1.json": `{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"echo first"}]}]}`}},
-			{Name: "second", Files: map[string]string{".devin/hooks.v1.json": `{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"echo second"}]}]}`}},
-		},
-		RepoCfg: `harnesses: [windsurf]
-registries:
-  - url: {{REG:first}}
-    ref: main
-    source_harness: devin
-  - url: {{REG:second}}
-    ref: main
-    source_harness: devin
-`,
-		Steps: []Step{
-			{Args: []string{"install", "--all", "--kind", "hook"}, MustPass: true, FileContains: map[string]string{"/workspace/.windsurf/hooks.json": "echo first"}, FilesAbsent: []string{"/workspace/.windsurf/hook-support/hooks.v1.json"}},
-			{Args: []string{"list", "--kind", "hook"}, MustPass: true, FileContains: map[string]string{"/workspace/.windsurf/hooks.json": "echo second"}},
-			{Args: []string{"sync", "--check"}, MustPass: true, PathsUnchanged: []string{"/workspace/.windsurf/hooks.json", "/workspace/.agents/lock.yaml"}},
-			{Args: []string{"sync"}, MustPass: true, PathsUnchanged: []string{"/workspace/.windsurf/hooks.json"}},
-			{Args: []string{"remove", "PreToolUse-command", "--kind", "hook", "--from", "{{REG:first}}"}, MustPass: true, FileNotContains: map[string]string{"/workspace/.windsurf/hooks.json": "echo first"}, FileContains: map[string]string{"/workspace/.windsurf/hooks.json": "echo second"}},
-			{Args: []string{"sync", "--check"}, MustPass: true, PathsUnchanged: []string{"/workspace/.windsurf/hooks.json", "/workspace/.agents/lock.yaml"}},
+			{Args: []string{"install", "--all", "--kind", "hook"}, MustPass: true, OutContains: []string{"PreToolUse-command"}, OutNotContains: []string{"multiple registries"}, RegularFiles: []string{"/workspace/.factory/hooks.json"}, FileContains: map[string]string{"/workspace/.factory/hooks.json": "echo first"}},
+			{Args: []string{"list", "--kind", "hook"}, MustPass: true, OutContains: []string{"PreToolUse-command"}, FileContains: map[string]string{"/workspace/.factory/hooks.json": "echo second"}},
+			{Args: []string{"sync", "--check"}, MustPass: true, PathsUnchanged: []string{"/workspace/.factory/hooks.json", "/workspace/.agents/lock.yaml"}},
+			{Args: []string{"sync"}, MustPass: true, PathsUnchanged: []string{"/workspace/.factory/hooks.json"}},
+			{Args: []string{"remove", "PreToolUse-command", "--kind", "hook", "--from", "{{REG:first}}"}, MustPass: true, FileNotContains: map[string]string{"/workspace/.factory/hooks.json": "echo first"}, FileContains: map[string]string{"/workspace/.factory/hooks.json": "echo second"}},
+			{Args: []string{"sync", "--check"}, MustPass: true, PathsUnchanged: []string{"/workspace/.factory/hooks.json", "/workspace/.agents/lock.yaml"}},
 		},
 	},
 	{
 		Name:       "hooks/additive_session_start",
 		Desc:       "Given one Factory registry with two SessionStart handlers, when both generated names are selected, then both handlers remain stable across sync and check",
-		Registries: []RegistryDef{{Name: "session-start", Files: map[string]string{".factory/hooks/hooks.json": `{"SessionStart":[{"hooks":[{"type":"command","command":"echo first"}]},{"hooks":[{"type":"command","command":"echo second"}]}]}`}}},
+		Registries: []RegistryDef{{Name: "session-start", Files: map[string]string{".factory/hooks.json": `{"SessionStart":[{"hooks":[{"type":"command","command":"echo first"}]},{"hooks":[{"type":"command","command":"echo second"}]}]}`}}},
 		RepoCfg: `harnesses: [factory]
 registries:
   - url: {{REG:session-start}}
@@ -622,9 +601,9 @@ registries:
     hooks: [SessionStart-command, SessionStart-command-2]
 `,
 		Steps: []Step{
-			{Args: []string{"sync"}, MustPass: true, FileContains: map[string]string{"/workspace/.factory/hooks/hooks.json": "echo first"}},
-			{Args: []string{"sync", "--check"}, MustPass: true, PathsUnchanged: []string{"/workspace/.factory/hooks/hooks.json", "/workspace/.agents/lock.yaml"}, FileContains: map[string]string{"/workspace/.factory/hooks/hooks.json": "echo second"}},
-			{Args: []string{"sync"}, MustPass: true, PathsUnchanged: []string{"/workspace/.factory/hooks/hooks.json"}},
+			{Args: []string{"sync"}, MustPass: true, FileContains: map[string]string{"/workspace/.factory/hooks.json": "echo first"}},
+			{Args: []string{"sync", "--check"}, MustPass: true, PathsUnchanged: []string{"/workspace/.factory/hooks.json", "/workspace/.agents/lock.yaml"}, FileContains: map[string]string{"/workspace/.factory/hooks.json": "echo second"}},
+			{Args: []string{"sync"}, MustPass: true, PathsUnchanged: []string{"/workspace/.factory/hooks.json"}},
 		},
 	},
 
@@ -657,8 +636,8 @@ registries:
 		Steps: []Step{
 			{Action: ActionWriteFile, Path: "/workspace/resources/skills/shared/SKILL.md", Body: (Skill{Name: "shared", Description: "Unreviewed repository selection"}).SkillFile()},
 			{Args: []string{"sync"}, MustPass: true, OutContains: []string{"multiple registries"},
-				Symlinks: []string{"/root/.factory/skills/shared"},
-				FilesAbsent: []string{"/workspace/.factory/skills/shared"},
+				Symlinks:     []string{"/root/.factory/skills/shared"},
+				FilesAbsent:  []string{"/workspace/.factory/skills/shared"},
 				FileContains: map[string]string{"/root/.factory/skills/shared/SKILL.md": "Mandatory user selection"}},
 			{Args: []string{"sync"}, MustPass: true, PathsUnchanged: []string{"/root/.factory/skills/shared"}, FilesAbsent: []string{"/workspace/.factory/skills/shared"}},
 			{Args: []string{"sync", "--check"}, MustPass: true, PathsUnchanged: []string{"/root/.factory/skills/shared"}},
@@ -2079,8 +2058,8 @@ registries:
 		},
 	},
 	{
-		Name: "subagent/write_tool_expanded_to_edit_create",
-		Desc: "Given a registry with a subagent using Write tool, When sync is run for factory, Then Write is expanded to Edit and Create",
+		Name: "subagent/write_tool_maps_to_create",
+		Desc: "Given a registry with a subagent using Write tool, When sync is run for factory, Then Write maps to Create alongside the existing Read tool",
 		Registries: []RegistryDef{
 			{Name: "sub-tools", Subagents: []Subagent{
 				{Name: "write-agent", Tools: []string{"Read", "Write"}},
@@ -2097,10 +2076,16 @@ registries:
 			{Args: []string{"sync"}, MustPass: true,
 				FilesExist: []string{"/root/.factory/droids/write-agent.md"},
 				FileContains: map[string]string{
-					"/root/.factory/droids/write-agent.md": "Edit",
+					"/root/.factory/droids/write-agent.md": "- Read",
 				}},
 			{FileContains: map[string]string{
-				"/root/.factory/droids/write-agent.md": "Create",
+				"/root/.factory/droids/write-agent.md": "- Create",
+			},
+				FileNotContains: map[string]string{
+					"/root/.factory/droids/write-agent.md": "  - Edit",
+				}},
+			{FileNotContains: map[string]string{
+				"/root/.factory/droids/write-agent.md": "  - Write",
 			}},
 		},
 	},
@@ -2308,7 +2293,7 @@ registries: []
 	},
 	{
 		Name: "subagent/multi_harness_output",
-		Desc: "Given factory and cursor harnesses configured with a subagent, When sync is run, Then the subagent materializes in both harness output directories",
+		Desc: "Given factory and cursor harnesses configured with a tool-restricted subagent, When sync is run, Then Cursor fails closed on the unrepresentable restriction while the valid Factory sibling is materialized",
 		Registries: []RegistryDef{
 			{Name: "sub-multi", Subagents: []Subagent{
 				{Name: "multi-agent", Model: "sonnet", Tools: []string{"Read", "Write"}},
@@ -2325,14 +2310,21 @@ registries:
       - multi-agent
 `,
 		Steps: []Step{
-			{Args: []string{"sync"}, MustPass: true,
-				FilesExist: []string{
-					"/root/.factory/droids/multi-agent.md",
-					"/root/.cursor/agents/multi-agent.md",
-				},
+			{Args: []string{"sync"}, AssertExitCode: intPtr(1),
+				OutContains: []string{"subagent.cursor.tool-unknown"},
+				FilesExist:  []string{"/root/.factory/droids/multi-agent.md"},
+				FilesAbsent: []string{"/root/.cursor/agents/multi-agent.md"},
 				FileContains: map[string]string{
 					"/root/.factory/droids/multi-agent.md": "model: claude-sonnet-5",
-					"/root/.cursor/agents/multi-agent.md":  "model: claude-sonnet-4-5-20250929",
+				}},
+			{FileContains: map[string]string{
+				"/root/.factory/droids/multi-agent.md": "- Read",
+			}},
+			{FileContains: map[string]string{
+				"/root/.factory/droids/multi-agent.md": "- Create",
+			},
+				FileNotContains: map[string]string{
+					"/root/.factory/droids/multi-agent.md": "  - Edit",
 				}},
 		},
 	},
@@ -2344,7 +2336,7 @@ registries:
 		// assertion below with no file to inspect, and the test would pass on an
 		// absent artifact rather than on a correctly rewritten one.
 		Name: "subagent/full_renormalization_end_to_end",
-		Desc: "Given a registry with a subagent using model=sonnet, effort=high, tools=[Read,Write], When sync is run for factory, Then all renormalizations apply: model mapped, effort→reasoningEffort, Write→Edit+Create",
+		Desc: "Given a registry with a subagent using model=sonnet, effort=high, tools=[Read,Write], When sync is run for factory, Then all renormalizations apply: model mapped, effort→reasoningEffort, Write→Create",
 		Registries: []RegistryDef{
 			{Name: "sub-full", Subagents: []Subagent{
 				{Name: "full-agent", Model: "sonnet", Tools: []string{"Read", "Write"}, Effort: "high"},
@@ -2374,14 +2366,17 @@ registries:
 					"/root/.factory/droids/full-agent.md": "\neffort:",
 				}},
 			{FileContains: map[string]string{
-				"/root/.factory/droids/full-agent.md": "Edit",
+				"/root/.factory/droids/full-agent.md": "- Read",
 			}},
 			{FileContains: map[string]string{
-				"/root/.factory/droids/full-agent.md": "Create",
+				"/root/.factory/droids/full-agent.md": "- Create",
 			},
 				FileNotContains: map[string]string{
-					"/root/.factory/droids/full-agent.md": "\nWrite",
+					"/root/.factory/droids/full-agent.md": "  - Edit",
 				}},
+			{FileNotContains: map[string]string{
+				"/root/.factory/droids/full-agent.md": "  - Write",
+			}},
 		},
 	},
 
@@ -4258,7 +4253,7 @@ registries:
 					"/root/.codex/config.toml",
 					"/root/.factory/skills/machine-skill/SKILL.md",
 					"/root/.factory/droids/machine-agent.md",
-					"/root/.factory/hooks/hooks.json",
+					"/root/.factory/hooks.json",
 					"/root/.factory/mcp.json",
 				},
 				FileContains: map[string]string{
@@ -4266,7 +4261,7 @@ registries:
 					"/root/.codex/hooks.json":                "echo machine-hook",
 					"/root/.codex/config.toml":               "machine-mcp-bin",
 					"/root/.factory/droids/machine-agent.md": "name: machine-agent",
-					"/root/.factory/hooks/hooks.json":        "echo machine-hook",
+					"/root/.factory/hooks.json":              "echo machine-hook",
 					"/root/.factory/mcp.json":                "machine-mcp-bin",
 				}},
 			{Args: []string{"sync", "--check"}, AssertExitCode: intPtr(0),
@@ -4308,10 +4303,10 @@ registries: []
 					"/root/.factory/droids/machine-agent.md",
 				},
 				FileNotContains: map[string]string{
-					"/root/.codex/hooks.json":         "echo machine-hook",
-					"/root/.codex/config.toml":        "machine-mcp-bin",
-					"/root/.factory/hooks/hooks.json": "echo machine-hook",
-					"/root/.factory/mcp.json":         "machine-mcp-bin",
+					"/root/.codex/hooks.json":   "echo machine-hook",
+					"/root/.codex/config.toml":  "machine-mcp-bin",
+					"/root/.factory/hooks.json": "echo machine-hook",
+					"/root/.factory/mcp.json":   "machine-mcp-bin",
 				}},
 			{Action: ActionWriteGlobalConfig, Body: `
 harnesses:
@@ -4341,14 +4336,14 @@ registries:
 					"/root/.codex/config.toml",
 					"/root/.factory/skills/machine-skill/SKILL.md",
 					"/root/.factory/droids/machine-agent.md",
-					"/root/.factory/hooks/hooks.json",
+					"/root/.factory/hooks.json",
 					"/root/.factory/mcp.json",
 				},
 				FileContains: map[string]string{
-					"/root/.codex/hooks.json":         "echo machine-hook",
-					"/root/.codex/config.toml":        "machine-mcp-bin",
-					"/root/.factory/hooks/hooks.json": "echo machine-hook",
-					"/root/.factory/mcp.json":         "machine-mcp-bin",
+					"/root/.codex/hooks.json":   "echo machine-hook",
+					"/root/.codex/config.toml":  "machine-mcp-bin",
+					"/root/.factory/hooks.json": "echo machine-hook",
+					"/root/.factory/mcp.json":   "machine-mcp-bin",
 				}},
 			{Args: []string{"deinit"}, MustPass: true,
 				FilesAbsent: []string{
@@ -4358,10 +4353,10 @@ registries:
 					"/root/.factory/droids/machine-agent.md",
 				},
 				FileNotContains: map[string]string{
-					"/root/.codex/hooks.json":         "echo machine-hook",
-					"/root/.codex/config.toml":        "machine-mcp-bin",
-					"/root/.factory/hooks/hooks.json": "echo machine-hook",
-					"/root/.factory/mcp.json":         "machine-mcp-bin",
+					"/root/.codex/hooks.json":   "echo machine-hook",
+					"/root/.codex/config.toml":  "machine-mcp-bin",
+					"/root/.factory/hooks.json": "echo machine-hook",
+					"/root/.factory/mcp.json":   "machine-mcp-bin",
 				}},
 		},
 	},
@@ -4515,7 +4510,7 @@ registries:
 `,
 		Steps: []Step{
 			{Action: ActionWriteFile, Path: "/workspace/.devin/hooks.v1.json",
-				Body: "{\n  \"PostToolUse\": [{\"type\":\"command\",\"command\":\"echo handwritten-hook\"}]\n}\n"},
+				Body: "{\n  \"PostToolUse\": [{\"hooks\":[{\"type\":\"command\",\"command\":\"echo handwritten-hook\"}]}]\n}\n"},
 			{Action: ActionWriteFile, Path: "/workspace/.devin/mcp_config.json",
 				Body: "{\n  \"mcpServers\": {\n    \"handwritten\": { \"command\": \"user-owned-binary\" }\n  }\n}\n"},
 			{Args: []string{"sync"}, MustPass: true,
