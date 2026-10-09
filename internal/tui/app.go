@@ -409,6 +409,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.KeyPressMsg:
+		m.pendingClick = pendingClick{}
 		next, cmd := m.handleKey(msg)
 		if m.previewSel.active {
 			if nm, ok := next.(Model); ok {
@@ -446,6 +447,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.MouseWheelMsg:
+		m.pendingClick = pendingClick{}
 		if m.belowMinimumTerminal() ||
 			(msg.Button != tea.MouseWheelUp && msg.Button != tea.MouseWheelDown) {
 			return m, nil

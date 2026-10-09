@@ -411,7 +411,8 @@ type Model struct {
 	detailSelectedPath string
 	detailLegacyRender bool
 
-	previewSel previewSelection
+	previewSel   previewSelection
+	pendingClick pendingClick
 
 	// toast/toastExp mirror the newest visible toast for the single-line
 	// footer segment; toastQueue holds the whole visible stack (newest
