@@ -201,13 +201,14 @@ export class WorkspaceController {
     return this.requestOperation(() => this.client.configure({ action: 'remove-source', id }))
   }
 
-  async initialize(targets: string[], consent?: boolean): Promise<boolean> {
+  async initialize(targets: string[], consent?: boolean, sources: SourceInput[] = []): Promise<boolean> {
     return this.requestOperation(() =>
-      this.client.configure(
-        consent === undefined
-          ? { action: 'initialize', targets }
-          : { action: 'initialize', targets, consent },
-      ),
+      this.client.configure({
+        action: 'initialize',
+        targets,
+        ...(consent === undefined ? {} : { consent }),
+        ...(sources.length === 0 ? {} : { sources }),
+      }),
     )
   }
 

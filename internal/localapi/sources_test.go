@@ -64,6 +64,7 @@ type marketplaceEndpointTestServer struct {
 	instanceID   string
 	canonicalURL string
 	status       int
+	nextStatus   atomic.Int32
 	requests     atomic.Int32
 }
 
@@ -81,6 +82,10 @@ func newMarketplaceEndpointTestServer(t *testing.T, pathPrefix, instanceID, cano
 			http.NotFound(w, r)
 			return
 		}
+		if status := fixture.nextStatus.Swap(0); status != 0 {
+			http.Error(w, "temporarily unavailable", int(status))
+			return
+		}
 		if fixture.status != 0 && fixture.status != http.StatusOK {
 			http.Error(w, "unavailable", fixture.status)
 			return
@@ -95,6 +100,10 @@ func newMarketplaceEndpointTestServer(t *testing.T, pathPrefix, instanceID, cano
 	fixture.endpoint = fixture.URL + fixture.pathPrefix
 	t.Cleanup(fixture.Close)
 	return fixture
+}
+
+func (fixture *marketplaceEndpointTestServer) failNextStatus(status int) {
+	fixture.nextStatus.Store(int32(status))
 }
 
 type marketplaceSourceFixture struct {
@@ -901,6 +910,67 @@ func TestUserMarketplaceEndpointMatchingAllowlistAccepted(t *testing.T) {
 	assertNoSourceNativeOutput(t, fixture.home)
 }
 
+// spec: gui-configuration/adding-a-git-or-directory-source-alone-changes-only-that-entry
+func TestUserSourceAddUnderOrganizationInclude(t *testing.T) {
+	home, repo := newUserAPIFixture(t, false)
+	t.Setenv("TMPDIR", t.TempDir())
+	userPath := filepath.Join(home, ".agents", "config.yaml")
+	writeFile(t, userPath, "apiVersion: agent-marketplace/v4\nharnesses: [devin]\n")
+	orgPath := filepath.Join(t.TempDir(), "organization.yaml")
+	fragmentPath := filepath.Join(filepath.Dir(orgPath), "fragment.yaml")
+	orgBytes := "apiVersion: agent-marketplace/v4\ninclude: fragment.yaml\nharnesses: [claude]\n"
+	fragmentBytes := "telemetry: {level: off}\n"
+	writeFile(t, orgPath, orgBytes)
+	writeFile(t, fragmentPath, fragmentBytes)
+	config.SetTestOrganizationConfigPath(t, orgPath)
+	repoConfigPath := filepath.Join(repo, ".agents", "config.yaml")
+	repoLocalPath := filepath.Join(repo, ".agents", "config.local.yaml")
+	repoBefore, err := os.ReadFile(repoConfigPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	localBefore, err := os.ReadFile(repoLocalPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	api, err := NewUser(context.Background(), home, session.RuntimeLifecycle(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(api.Close)
+	events := streamEvents(t, api)
+	for nextEvent(t, events).snapshotStage() != "final" {
+	}
+
+	source := t.TempDir()
+	status, result := sourceAction(t, api, `{"action":"add-source","source":{"kind":"directory","location":`+jsonString(source)+`}}`)
+	if status != http.StatusAccepted {
+		t.Fatalf("valid source request under organization include = %d/%v, want 202", status, result)
+	}
+	if got := notificationSeverity(t, awaitNotification(t, events)); got != "info" {
+		t.Fatalf("valid source mutation under organization include = %q, diagnostics=%v, want info", got, mutationDiagnostics(t, api))
+	}
+	if !reflect.DeepEqual(descSet(readUserSourceDescs(t, home)), map[string]bool{"directory|" + source + "|||": true}) {
+		t.Fatalf("effective sources under organization include = %v, want only the added directory", descSet(readUserSourceDescs(t, home)))
+	}
+	for path, want := range map[string]string{orgPath: orgBytes, fragmentPath: fragmentBytes} {
+		if after, err := os.ReadFile(path); err != nil || string(after) != want {
+			t.Fatalf("organization bytes changed: %s=%q (err=%v)", path, after, err)
+		}
+	}
+	if after, err := os.ReadFile(repoConfigPath); err != nil || !bytes.Equal(after, repoBefore) {
+		t.Fatalf("repo config changed: %q (err=%v)", after, err)
+	}
+	if after, err := os.ReadFile(repoLocalPath); err != nil || !bytes.Equal(after, localBefore) {
+		t.Fatalf("local config changed: %q (err=%v)", after, err)
+	}
+	residue, err := filepath.Glob(filepath.Join(os.Getenv("TMPDIR"), ".agent-marketplace-config-*"))
+	if err != nil || len(residue) != 0 {
+		t.Fatalf("source mutation left staging residue %v (err=%v)", residue, err)
+	}
+	assertNoSourceNativeOutput(t, home)
+}
+
 func marketplaceEndpointLock(endpoint, instanceID string) []byte {
 	return []byte("apiVersion: agent-marketplace-lock/v2\nscope: user\nmarketplaces:\n  - url: " + endpoint + "\n    instance_id: " + instanceID + "\n")
 }
@@ -1154,7 +1224,12 @@ func TestUserSourceActionsRejectInvalidRequests(t *testing.T) {
 
 	writeFile(t, userConfig, string(before))
 	decoy := t.TempDir()
-	writeFile(t, filepath.Join(decoy, ".agents", "config.yaml"), "apiVersion: agent-marketplace/v4\nharnesses: [devin]\n")
+	decoyConfigPath := filepath.Join(decoy, ".agents", "config.yaml")
+	writeFile(t, decoyConfigPath, "apiVersion: agent-marketplace/v4\nharnesses: [devin]\n")
+	decoyBefore, err := os.ReadFile(decoyConfigPath)
+	if err != nil {
+		t.Fatal(err)
+	}
 	t.Setenv("HOME", decoy)
 	status, decoded = sourceAction(t, api, `{"action":"add-source","source":{"kind":"directory","location":`+jsonString(dupDir)+`}}`)
 	if status != http.StatusBadRequest || decoded["code"] != codeInvalidRequest {
@@ -1163,8 +1238,48 @@ func TestUserSourceActionsRejectInvalidRequests(t *testing.T) {
 	if after, _ := os.ReadFile(userConfig); !bytes.Equal(after, before) {
 		t.Fatal("relocated-home request changed the captured root")
 	}
-	if data, _ := os.ReadFile(filepath.Join(decoy, ".agents", "config.yaml")); bytes.Contains(data, []byte("sources")) {
+	if data, _ := os.ReadFile(decoyConfigPath); bytes.Contains(data, []byte("sources")) {
 		t.Fatalf("relocated-home request wrote the decoy root: %s", data)
+	}
+	marketplaceBody := `{"action":"add-source","source":{"kind":"marketplace","location":` + jsonString(marketplace.endpoint) + `}}`
+	status, decoded = sourceAction(t, api, marketplaceBody)
+	if status != http.StatusBadRequest || decoded["code"] != codeInvalidRequest {
+		t.Fatalf("relocated-home Marketplace add status/code = %d/%v, want 400/%s", status, decoded["code"], codeInvalidRequest)
+	}
+	if marketplace.requests.Load() != 0 {
+		t.Fatalf("relocated-home Marketplace request reached network %d time(s)", marketplace.requests.Load())
+	}
+	if after, err := os.ReadFile(decoyConfigPath); err != nil || !bytes.Equal(after, decoyBefore) {
+		t.Fatalf("relocated-home request changed decoy root: %q (err=%v)", after, err)
+	}
+	if after, err := os.ReadFile(userConfig); err != nil || !bytes.Equal(after, before) {
+		t.Fatalf("relocated-home request changed captured root: %q (err=%v)", after, err)
+	}
+	for _, check := range []struct {
+		path   string
+		before []byte
+	}{
+		{path: fragment, before: fragBefore},
+		{path: orgPath, before: orgBytes},
+		{path: repoConfig, before: repoBefore},
+		{path: repoLocal, before: localBefore},
+	} {
+		if after, err := os.ReadFile(check.path); err != nil || !bytes.Equal(after, check.before) {
+			t.Fatalf("relocated-home request changed %s: %q (err=%v)", check.path, after, err)
+		}
+	}
+	for _, path := range []string{
+		filepath.Join(home, ".agents", "lock.yaml"),
+		filepath.Join(decoy, ".agents", "lock.yaml"),
+	} {
+		if _, err := os.Lstat(path); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("relocated-home request wrote lock %s (err=%v)", path, err)
+		}
+	}
+	assertNoSourceNativeOutput(t, home)
+	residue, err = filepath.Glob(filepath.Join(os.Getenv("TMPDIR"), ".agent-marketplace-config-*"))
+	if err != nil || len(residue) != 0 {
+		t.Fatalf("relocated-home request left staging residue %v (err=%v)", residue, err)
 	}
 	t.Setenv("HOME", home)
 

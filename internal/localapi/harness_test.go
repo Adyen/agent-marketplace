@@ -3,6 +3,7 @@ package localapi
 import (
 	"context"
 	"encoding/json"
+	"net/http"
 	"os"
 	"path/filepath"
 	"testing"
@@ -117,6 +118,14 @@ func TestLocalAPIUserHarness(t *testing.T) {
 	}
 	if fixture == "marketplace" {
 		marketplace := newMarketplaceEndpointTestServer(t, "/playwright/catalog", "playwright-marketplace", "", 0)
+		bootstrap["marketplaceEndpoint"] = marketplace.endpoint
+	}
+	if fixture == "first-run" {
+		addDir := filepath.Join(home, "optional-directory")
+		writeFile(t, filepath.Join(addDir, "queued", "SKILL.md"), fixtureSkillBody)
+		bootstrap["addSourceDir"] = addDir
+		marketplace := newMarketplaceEndpointTestServer(t, "/playwright/first-run", "first-run-marketplace", "", 0)
+		marketplace.failNextStatus(http.StatusInternalServerError)
 		bootstrap["marketplaceEndpoint"] = marketplace.endpoint
 	}
 	api, err := NewUser(context.Background(), home, session.RuntimeLifecycle(), nil)

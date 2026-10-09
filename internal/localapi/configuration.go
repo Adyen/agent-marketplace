@@ -204,6 +204,8 @@ type configurationAction struct {
 	consent     bool
 	consentSeen bool
 	source      *configurationActionSource
+	sources     []*configurationActionSource
+	sourcesSeen bool
 	id          string
 	idSeen      bool
 }
@@ -298,6 +300,33 @@ func parseConfigurationAction(r *http.Request) (configurationAction, bool) {
 			}
 			req.source = source
 			return true
+		case "sources":
+			if req.sourcesSeen {
+				return false
+			}
+			req.sourcesSeen = true
+			token, err := decoder.Token()
+			if err != nil {
+				return false
+			}
+			if delim, ok := token.(json.Delim); !ok || delim != '[' {
+				return false
+			}
+			for decoder.More() {
+				source, ok := decodeActionSource(decoder)
+				if !ok {
+					return false
+				}
+				req.sources = append(req.sources, source)
+			}
+			token, err = decoder.Token()
+			if err != nil {
+				return false
+			}
+			if delim, ok := token.(json.Delim); !ok || delim != ']' {
+				return false
+			}
+			return true
 		case "id":
 			if req.idSeen {
 				return false
@@ -312,7 +341,7 @@ func parseConfigurationAction(r *http.Request) (configurationAction, bool) {
 	}
 	switch req.action {
 	case "save-targets":
-		if req.consentSeen || req.source != nil || req.idSeen {
+		if req.consentSeen || req.source != nil || req.sourcesSeen || req.idSeen {
 			return configurationAction{}, false
 		}
 	case "initialize":
@@ -320,11 +349,11 @@ func parseConfigurationAction(r *http.Request) (configurationAction, bool) {
 			return configurationAction{}, false
 		}
 	case "add-source":
-		if req.source == nil || req.idSeen || seenTargets || req.consentSeen {
+		if req.source == nil || req.idSeen || seenTargets || req.consentSeen || req.sourcesSeen {
 			return configurationAction{}, false
 		}
 	case "remove-source":
-		if !req.idSeen || req.id == "" || req.source != nil || seenTargets || req.consentSeen {
+		if !req.idSeen || req.id == "" || req.source != nil || seenTargets || req.consentSeen || req.sourcesSeen {
 			return configurationAction{}, false
 		}
 	default:
@@ -494,20 +523,11 @@ func (a *API) handleSourceMutation(w http.ResponseWriter, r *http.Request, req c
 		return
 	}
 
-	marketplaceEndpoint := ""
 	switch req.action {
 	case "add-source":
-		allowed := intent.AllowedRegistries()
-		if req.source.Kind == string(config.V4SourceMarketplace) {
-			allowed = intent.AllowedMarketplaces()
-		}
-		entry, valid := validateAddSource(req.source, allowed)
-		if !valid {
+		if _, valid := validateAddSource(req.source, sourceAllowlist(intent, req.source.Kind)); !valid {
 			writeError(w, http.StatusBadRequest, codeInvalidRequest)
 			return
-		}
-		if entry.V4Kind == config.V4SourceMarketplace {
-			marketplaceEndpoint = entry.URL
 		}
 	case "remove-source":
 		matches := 0
@@ -545,76 +565,94 @@ func (a *API) handleSourceMutation(w http.ResponseWriter, r *http.Request, req c
 	_ = json.NewEncoder(w).Encode(map[string]any{"operation": operationRef{ID: uint64(operation), Kind: string(session.OperationMutation)}})
 
 	go a.runOperation(operation, session.OperationMutation, func(ctx context.Context, _ session.RequestGeneration) (warnings []error, final session.Snapshot, failed error) {
-		if marketplaceEndpoint != "" {
-			_, failed = pipeline.Install(ctx, pipeline.InstallOptions{
-				RepoRoot:       a.homeDir,
-				LocalConfigDir: a.homeDir,
-				Args:           []string{marketplaceEndpoint},
-				Scope:          pipeline.ScopeUser,
-				ScopeSpecified: true,
-			})
-			final = a.readSnapshot(ctx, session.CatalogLoadCached)
-			return nil, final, failed
-		}
-		failed = a.lifecycle.Mutate(ctx, a.workspace, func(mapper pipeline.ConfigPathMapper) error {
-			staged, err := mapper(a.userConfigPath())
-			if err != nil {
-				return err
-			}
-			stagedBytes, err := os.ReadFile(staged)
-			if err != nil {
-				return err
-			}
-			stagedIntent := a.configurationIntent(ctx, map[string][]byte{a.userConfigPath(): stagedBytes})
-			stagedUser := stagedIntent.Layers[config.UserPersonal]
-			if !stagedUser.Present() || stagedUser.Err() != nil || len(stagedIntent.Errors) != 0 {
-				return fmt.Errorf("%w: user configuration changed while staging", dependencytxn.ErrGenerationConflict)
-			}
-			var entry config.RegistryEntry
-			var removal config.SourceDescription
-			switch req.action {
-			case "add-source":
-				var valid bool
-				entry, valid = validateAddSource(req.source, stagedIntent.AllowedRegistries())
-				if !valid {
-					return fmt.Errorf("%w: source request is no longer valid under the staged configuration", dependencytxn.ErrGenerationConflict)
-				}
-			case "remove-source":
-				var matches []config.SourceDescription
-				for _, desc := range stagedUser.DescribeSources() {
-					if a.sourceID("user", desc) == req.id {
-						matches = append(matches, desc)
-					}
-				}
-				if len(matches) != 1 || !sourceRemovalSupported(matches[0].Kind) {
-					return fmt.Errorf("%w: source descriptor changed while staging", dependencytxn.ErrGenerationConflict)
-				}
-				removal = matches[0]
-			}
-			return pipeline.EditLayerAtPath(config.LayerTarget{
-				Source:        config.UserPersonal,
-				StagedPath:    staged,
-				DeclaringPath: a.userConfigPath(),
-			}, func(m *pipeline.LayerMutation) error {
-				if req.action == "add-source" {
-					_, err := m.EnsureRegistry(entry)
-					return err
-				}
-				if removal.Kind == config.V4SourceMarketplace {
-					return m.RemoveMarketplaceRegistration(config.MarketplaceEntry{URL: removal.Location, InstanceID: removal.InstanceID})
-				}
-				binding, found, err := m.LookupRegistry(sourceEntry(removal))
-				if err != nil {
-					return err
-				}
-				if !found {
-					return errors.New("source is no longer present in the user configuration")
-				}
-				return m.RemoveSource(binding)
-			})
-		})
+		failed = a.executeSourceMutation(ctx, req)
 		final = a.readSnapshot(ctx, session.CatalogLoadCached)
 		return nil, final, failed
+	})
+}
+
+func sourceAllowlist(intent config.Intent, kind string) []string {
+	if kind == string(config.V4SourceMarketplace) {
+		return intent.AllowedMarketplaces()
+	}
+	return intent.AllowedRegistries()
+}
+
+func (a *API) executeSourceMutation(ctx context.Context, req configurationAction) error {
+	if req.action == "add-source" && req.source.Kind == string(config.V4SourceMarketplace) {
+		home, err := os.UserHomeDir()
+		if err != nil || home != a.homeDir {
+			return errors.New("the captured user home directory changed during the session")
+		}
+		endpoint, err := config.NormalizeMarketplaceURL(strings.TrimSpace(req.source.Location))
+		if err != nil {
+			return err
+		}
+		_, err = pipeline.Install(ctx, pipeline.InstallOptions{
+			RepoRoot:       a.homeDir,
+			LocalConfigDir: a.homeDir,
+			Args:           []string{endpoint},
+			Scope:          pipeline.ScopeUser,
+			ScopeSpecified: true,
+		})
+		return err
+	}
+	return a.lifecycle.Mutate(ctx, a.workspace, func(mapper pipeline.ConfigPathMapper) error {
+		staged, err := mapper(a.userConfigPath())
+		if err != nil {
+			return err
+		}
+		stagedBytes, err := os.ReadFile(staged)
+		if err != nil {
+			return err
+		}
+		stagedIntent := a.configurationIntent(ctx, map[string][]byte{a.userConfigPath(): stagedBytes})
+		stagedUser := stagedIntent.Layers[config.UserPersonal]
+		if !stagedUser.Present() || stagedUser.Err() != nil || len(stagedIntent.Errors) != 0 {
+			return fmt.Errorf("%w: user configuration changed while staging", dependencytxn.ErrGenerationConflict)
+		}
+		var entry config.RegistryEntry
+		var removal config.SourceDescription
+		switch req.action {
+		case "add-source":
+			var valid bool
+			entry, valid = validateAddSource(req.source, stagedIntent.AllowedRegistries())
+			if !valid {
+				return fmt.Errorf("%w: source request is no longer valid under the staged configuration", dependencytxn.ErrGenerationConflict)
+			}
+		case "remove-source":
+			var matches []config.SourceDescription
+			for _, desc := range stagedUser.DescribeSources() {
+				if a.sourceID("user", desc) == req.id {
+					matches = append(matches, desc)
+				}
+			}
+			if len(matches) != 1 || !sourceRemovalSupported(matches[0].Kind) {
+				return fmt.Errorf("%w: source descriptor changed while staging", dependencytxn.ErrGenerationConflict)
+			}
+			removal = matches[0]
+		}
+		return pipeline.EditLayerAtPath(config.LayerTarget{
+			Source:        config.UserPersonal,
+			StagedPath:    staged,
+			DeclaringPath: a.userConfigPath(),
+		}, func(m *pipeline.LayerMutation) error {
+			if req.action == "add-source" {
+				_, err := m.EnsureRegistry(entry)
+				return err
+			}
+			if removal.Kind == config.V4SourceMarketplace {
+				return m.RemoveMarketplaceRegistration(config.MarketplaceEntry{URL: removal.Location, InstanceID: removal.InstanceID})
+			}
+			binding, found, err := m.LookupRegistry(sourceEntry(removal))
+			if err != nil {
+				return err
+			}
+			if !found {
+				return errors.New("source is no longer present in the user configuration")
+			}
+			return m.RemoveSource(binding)
+		})
 	})
 }
 
@@ -702,6 +740,24 @@ func (a *API) handleInitialize(w http.ResponseWriter, r *http.Request, req confi
 		reject(http.StatusBadRequest, codeInvalidRequest)
 		return
 	}
+	if len(req.sources) > 0 {
+		if len(metadata.OrganizationSources) > 0 {
+			reject(http.StatusBadRequest, codeInvalidRequest)
+			return
+		}
+		home, err := os.UserHomeDir()
+		if err != nil || home != a.homeDir {
+			reject(http.StatusBadRequest, codeInvalidRequest)
+			return
+		}
+		intent := a.configurationIntent(r.Context(), nil)
+		for _, source := range req.sources {
+			if _, valid := validateAddSource(source, sourceAllowlist(intent, source.Kind)); !valid {
+				reject(http.StatusBadRequest, codeInvalidRequest)
+				return
+			}
+		}
+	}
 	a.wg.Add(1)
 
 	w.Header().Set("Content-Type", "application/json")
@@ -713,6 +769,15 @@ func (a *API) handleInitialize(w http.ResponseWriter, r *http.Request, req confi
 		path, err := config.InitializeUserPersonalAtPath(a.userConfigPath(), req.targets)
 		if err == nil && consent {
 			err = config.SetUserTelemetryLevel(path, tmcfg.LevelBasic)
+		}
+		if err == nil {
+			for _, source := range req.sources {
+				queued := configurationAction{action: "add-source", source: source}
+				if err = a.executeSourceMutation(ctx, queued); err != nil {
+					err = fmt.Errorf("add optional source: %w", err)
+					break
+				}
+			}
 		}
 		final = a.readSnapshot(ctx, session.CatalogLoadCached)
 		return nil, final, err

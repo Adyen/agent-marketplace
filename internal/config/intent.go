@@ -558,8 +558,11 @@ func readOrganizationIntent(path string) (LayerIntent, ManagedInstallationDiagno
 	if err != nil {
 		li.errors = []error{err}
 	}
-	if len(li.Reads) > 0 {
-		li.Reads[0].RequestedPath, _ = filepath.Abs(path)
+	for i := range li.Reads {
+		if li.Reads[i].Path == canonicalPath {
+			li.Reads[i].RequestedPath, _ = filepath.Abs(path)
+			break
+		}
 	}
 	probe := li.probeConfig()
 	if len(li.errors) > 0 {

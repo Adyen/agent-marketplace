@@ -50,7 +50,7 @@ Completing first-run setup SHALL create the v4 user-personal root through the sa
 
 ### Requirement: Optional source step
 
-After the Harness target and consent steps, first-run setup SHALL offer an optional source step. The source step SHALL be skipped when Consumer organization configuration already provides sources, and any source edit SHALL use the same mutation path as the `gui-configuration` source form.
+After the Harness target and consent steps, first-run setup SHALL offer an optional source step. The source step SHALL be skipped when Consumer organization configuration already provides sources, and any source edit SHALL use the same mutation path as the `gui-configuration` source form. Source drafts SHALL remain in memory until the user presses Finish setup. After successful Harness and consent initialization, a failed optional source addition SHALL NOT roll back the initialized root or prior successful source additions.
 
 #### Scenario: Organization sources skip the source step
 
@@ -62,6 +62,13 @@ After the Harness target and consent steps, first-run setup SHALL offer an optio
 - **WHEN** the source step is available and the user adds or removes a source
 - **THEN** the change SHALL use the same user-personal mutation path as the `gui-configuration` source form
 - **AND** the user SHALL be able to complete setup without adding a source
+
+#### Scenario: Optional source failure keeps initialized configuration
+
+- **WHEN** Harness and consent initialization succeeds and an optional source addition fails
+- **THEN** the GUI SHALL NOT roll back the initialized user-personal root or prior successful source additions
+- **AND** the GUI SHALL report the source failure and allow retry through source settings
+- **AND** the failed addition SHALL NOT be shown as a registered source
 
 ### Requirement: Cancelling first run writes nothing
 

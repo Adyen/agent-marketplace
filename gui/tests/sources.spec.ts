@@ -327,6 +327,7 @@ test('built GUI adds and removes a Marketplace endpoint registration in the open
 
     await sourcesButton.press('Enter')
     await expect(dialog).toBeVisible()
+    await expect(marketplaceRadio).toBeEnabled()
     await marketplaceRadio.focus()
     await marketplaceRadio.press('Space')
     await expect(marketplaceRadio).toBeChecked()
