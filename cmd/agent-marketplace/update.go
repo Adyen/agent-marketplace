@@ -60,10 +60,14 @@ func newUpdateCmd() *cobra.Command {
 func runUpdate(ctx context.Context, out io.Writer, bump, verbose bool, selected map[lockfile.Scope]bool, targets *upgradeTargetSpec) error {
 	repoRoot := config.FindRepoRoot()
 	localDir := config.FindLocalConfigDir()
+	ws, err := pipeline.WorkspaceForRoots(repoRoot, localDir)
+	if err != nil {
+		return err
+	}
 	if err := prepareDependencyTransactions(ctx, false); err != nil {
 		return err
 	}
-	if _, err := bootstrapMissingMarketplaceLocks(ctx, repoRoot, localDir, selected, nil); err != nil {
+	if _, err := bootstrapMissingMarketplaceLocks(ctx, ws.RepoRoot(), ws.LocalConfigDir(), selected, nil); err != nil {
 		return err
 	}
 	targetResult := &upgradeTargetResult{}
