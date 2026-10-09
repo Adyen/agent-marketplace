@@ -706,6 +706,201 @@ func TestUserMarketplaceEndpointAllowlistRejectedBeforeNetwork(t *testing.T) {
 	}
 }
 
+func TestUserSourceAddHonorsComposedV4EmptyRegistryPolicy(t *testing.T) {
+	for _, tc := range []struct {
+		name                 string
+		organizationRoot     string
+		organizationFragment string
+		userPolicy           string
+		acceptRequest        bool
+		includedOnly         bool
+	}{
+		{
+			name:             "root deny-all beats permissive user policy",
+			organizationRoot: "apiVersion: agent-marketplace/v4\nharnesses: [claude]\nallowed_registries: []\n",
+			userPolicy:       "allowed_registries: ['.*']\n",
+		},
+		{
+			name:                 "included-only deny-all beats permissive user policy",
+			organizationRoot:     "apiVersion: agent-marketplace/v4\ninclude: policy.yaml\nharnesses: [claude]\n",
+			organizationFragment: "allowed_registries: []\n",
+			userPolicy:           "allowed_registries: ['.*']\n",
+			includedOnly:         true,
+		},
+		{
+			name:                 "included deny-all beats organization root and user patterns",
+			organizationRoot:     "apiVersion: agent-marketplace/v4\ninclude: policy.yaml\nharnesses: [claude]\nallowed_registries: ['.*']\n",
+			organizationFragment: "allowed_registries: []\n",
+			userPolicy:           "allowed_registries: ['.*']\n",
+		},
+		{
+			name:             "nil policy accepts the request",
+			organizationRoot: "apiVersion: agent-marketplace/v4\nharnesses: [claude]\n",
+			acceptRequest:    true,
+		},
+		{
+			name:             "matching nonempty user policy accepts the request",
+			organizationRoot: "apiVersion: agent-marketplace/v4\nharnesses: [claude]\n",
+			userPolicy:       "allowed_registries: ['.*']\n",
+			acceptRequest:    true,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			home, repo := newUserAPIFixture(t, false)
+			t.Setenv("TMPDIR", t.TempDir())
+			var requests atomic.Int32
+			remote := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				requests.Add(1)
+				http.NotFound(w, r)
+			}))
+			t.Cleanup(remote.Close)
+			userConfigPath := filepath.Join(home, ".agents", "config.yaml")
+			userBefore := []byte("apiVersion: agent-marketplace/v4\nharnesses: [devin]\n" + tc.userPolicy)
+			writeFile(t, userConfigPath, string(userBefore))
+			organizationPath := filepath.Join(t.TempDir(), "organization.yaml")
+			writeFile(t, organizationPath, tc.organizationRoot)
+			var organizationFragmentPath string
+			var organizationFragmentBefore []byte
+			if tc.organizationFragment != "" {
+				organizationFragmentPath = filepath.Join(filepath.Dir(organizationPath), "policy.yaml")
+				organizationFragmentBefore = []byte(tc.organizationFragment)
+				writeFile(t, organizationFragmentPath, tc.organizationFragment)
+			}
+			if tc.includedOnly && (strings.Contains(tc.organizationRoot, "allowed_registries:") || strings.Contains(tc.organizationRoot, "allowed_marketplaces:")) {
+				t.Fatal("included-only organization policy fixture redundantly declares a root allowlist")
+			}
+			config.SetTestOrganizationConfigPath(t, organizationPath)
+			repoConfigPath := filepath.Join(repo, ".agents", "config.yaml")
+			localConfigPath := filepath.Join(repo, ".agents", "config.local.yaml")
+			repoBefore, _ := os.ReadFile(repoConfigPath)
+			localBefore, _ := os.ReadFile(localConfigPath)
+			lockPath := filepath.Join(home, ".agents", "lock.yaml")
+
+			api, err := NewUser(context.Background(), home, session.DependencyLifecycle{}, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			closed := false
+			t.Cleanup(func() {
+				if !closed {
+					api.Close()
+				}
+			})
+			payload, err := json.Marshal(map[string]any{
+				"action": "add-source",
+				"source": map[string]string{"kind": "git", "location": remote.URL + "/repo.git", "ref": "main"},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			requests.Store(0)
+			status, decoded := postRaw(t, api, "/api/configuration/actions", string(payload))
+			if tc.acceptRequest {
+				if status != http.StatusAccepted {
+					t.Fatalf("allowed Git source request status = %d, body = %v; want 202", status, decoded)
+				}
+				operation, ok := decoded["operation"].(map[string]any)
+				if !ok || operation["kind"] != string(session.OperationMutation) {
+					t.Fatalf("accepted Git source operation = %v, want mutation", decoded["operation"])
+				}
+				api.Close()
+				closed = true
+				return
+			}
+			if status == http.StatusAccepted {
+				api.Close()
+				closed = true
+				t.Fatalf("empty organization registry policy accepted Git source request: %v", decoded)
+			}
+			if status != http.StatusBadRequest || decoded["code"] != codeInvalidRequest {
+				t.Fatalf("blocked Git source status/code = %d/%v, want 400/%s", status, decoded["code"], codeInvalidRequest)
+			}
+			if got := requests.Load(); got != 0 {
+				t.Fatalf("blocked Git source made %d HTTPS request(s) before policy rejection", got)
+			}
+			if current, err := os.ReadFile(userConfigPath); err != nil || !bytes.Equal(current, userBefore) {
+				t.Fatalf("blocked Git source changed user root: %q (err=%v)", current, err)
+			}
+			if current, err := os.ReadFile(organizationPath); err != nil || current == nil || string(current) != tc.organizationRoot {
+				t.Fatalf("blocked Git source changed organization root: %q (err=%v)", current, err)
+			}
+			if organizationFragmentPath != "" {
+				if current, err := os.ReadFile(organizationFragmentPath); err != nil || !bytes.Equal(current, organizationFragmentBefore) {
+					t.Fatalf("blocked Git source changed included policy: %q (err=%v)", current, err)
+				}
+			}
+			if current, err := os.ReadFile(repoConfigPath); err != nil || !bytes.Equal(current, repoBefore) {
+				t.Fatalf("blocked Git source changed repository config: %q (err=%v)", current, err)
+			}
+			if current, err := os.ReadFile(localConfigPath); err != nil || !bytes.Equal(current, localBefore) {
+				t.Fatalf("blocked Git source changed local config: %q (err=%v)", current, err)
+			}
+			if _, err := os.Lstat(lockPath); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("blocked Git source created a user lock: %v", err)
+			}
+			if _, _, active := api.gate.Active(); active {
+				t.Fatal("blocked Git source left the operation gate held")
+			}
+			assertNoSourceNativeOutput(t, home)
+			residue, err := filepath.Glob(filepath.Join(os.Getenv("TMPDIR"), ".agent-marketplace-config-*"))
+			if err != nil || len(residue) != 0 {
+				t.Fatalf("blocked Git source left staging residue %v (err=%v)", residue, err)
+			}
+		})
+	}
+}
+
+// spec: config-layering/marketplace-url-allowlist
+func TestUserMarketplaceEndpointMatchingAllowlistAccepted(t *testing.T) {
+	endpoint := newMarketplaceEndpointTestServer(t, "/services/catalog", "matching-instance", "", 0)
+	userConfig, fragment, organization := marketplaceSourceTestContents(t, "", "")
+	fixture := newMarketplaceSourceFixture(t, userConfig, fragment, organization+"allowed_marketplaces: ['.*']\n", nil)
+	endpoint.requests.Store(0)
+	body := `{"action":"add-source","source":{"kind":"marketplace","location":` + jsonString(endpoint.endpoint) + `}}`
+
+	status, decoded := sourceAction(t, fixture.api, body)
+	if status != http.StatusAccepted {
+		t.Fatalf("matching Marketplace allowlist status = %d, body = %v; want 202", status, decoded)
+	}
+	if got := notificationSeverity(t, awaitNotification(t, fixture.events)); got != "info" {
+		t.Fatalf("matching Marketplace allowlist severity = %q, want info", got)
+	}
+	if got := endpoint.requests.Load(); got == 0 {
+		t.Fatal("matching Marketplace policy control did not reach its local endpoint")
+	}
+	descriptions := readUserSourceDescs(t, fixture.home)
+	var registeredDescription bool
+	for _, description := range descriptions {
+		if description.Kind == config.V4SourceMarketplace && description.Location == endpoint.endpoint {
+			registeredDescription = true
+		}
+	}
+	if !registeredDescription {
+		t.Fatalf("matching Marketplace endpoint missing from source projection: %#v", descriptions)
+	}
+	lockData, err := os.ReadFile(fixture.lockPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lock, err := lockfile.Decode(lockData)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if lock.Scope != lockfile.ScopeUser || len(lock.Marketplaces) != 1 {
+		t.Fatalf("matching Marketplace lock = %#v, want one user endpoint", lock)
+	}
+	var registered bool
+	for _, marketplace := range lock.Marketplaces {
+		if marketplace.URL == endpoint.endpoint && marketplace.InstanceID == "matching-instance" && len(marketplace.Resources) == 0 {
+			registered = true
+		}
+	}
+	if !registered {
+		t.Fatalf("matching Marketplace endpoint was not registered without Resources: %#v", lock.Marketplaces)
+	}
+	assertNoSourceNativeOutput(t, fixture.home)
+}
+
 func marketplaceEndpointLock(endpoint, instanceID string) []byte {
 	return []byte("apiVersion: agent-marketplace-lock/v2\nscope: user\nmarketplaces:\n  - url: " + endpoint + "\n    instance_id: " + instanceID + "\n")
 }

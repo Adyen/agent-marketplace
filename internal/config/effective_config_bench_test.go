@@ -64,6 +64,30 @@ func BenchmarkOrganizationIncludeTreeDiskReads(b *testing.B) {
 	}
 }
 
+func BenchmarkV4EmptyPolicyComposition(b *testing.B) {
+	dir := b.TempDir()
+	root := filepath.Join(dir, "organization.yaml")
+	writeBenchFile(b, filepath.Join(dir, "policy.yaml"), "allowed_registries: []\nallowed_marketplaces: []\n")
+	writeBenchFile(b, root, "apiVersion: agent-marketplace/v4\ninclude: policy.yaml\nharnesses: [devin]\n")
+	b.ReportAllocs()
+	b.ResetTimer()
+	for b.Loop() {
+		data, err := readConfigFile(root)
+		if err != nil {
+			b.Fatal(err)
+		}
+		layer, err := readLayerIntent(root, "", data, organizationLayer, nil)
+		if err != nil {
+			b.Fatal(err)
+		}
+		settings := layer.Settings()
+		if settings.AllowedRegistries == nil || settings.AllowedMarketplaces == nil ||
+			len(*settings.AllowedRegistries) != 0 || len(*settings.AllowedMarketplaces) != 0 {
+			b.Fatal("composed fixture must retain both declared empty policies")
+		}
+	}
+}
+
 func writeBenchConfig(b testing.TB, dir string, n int) {
 	b.Helper()
 	// Authored Git selections exercise configuration I/O without acquisition.
