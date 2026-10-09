@@ -57,6 +57,7 @@ async function sourceListVisibility(page: Page, dialog: Locator, sources: Locato
   }
 }
 
+// spec: gui-configuration/add-and-remove-user-sources
 // spec: gui-configuration/adding-a-git-or-directory-source-alone-changes-only-that-entry
 test('built GUI adds and removes a user directory source against the real user-scope core', async ({
   page,
@@ -208,6 +209,7 @@ test('built GUI adds and removes a user directory source against the real user-s
   }
 })
 
+// spec: gui-configuration/add-and-remove-user-sources
 // spec: gui-configuration/removing-a-marketplace-endpoint-registration-changes-only-that-entry
 test('built GUI adds and removes a Marketplace endpoint registration in the open Sources dialog', async ({ page }, testInfo) => {
   if (!distIndexExists()) {
@@ -428,6 +430,180 @@ test('built GUI adds and removes a Marketplace endpoint registration in the open
   } finally {
     if (tracing) {
       await page.context().tracing.stop({ path: tracePath }).catch(() => undefined)
+    }
+    await harness.stop()
+  }
+})
+
+// spec: gui-configuration/add-and-remove-user-sources
+// spec: gui-configuration/adding-a-git-or-directory-source-alone-changes-only-that-entry
+test('built GUI adds and removes a user Git source with ref and subpath by keyboard', async ({ page }, testInfo) => {
+  if (!distIndexExists()) {
+    throw new Error('built GUI assets missing: run `make gui-build` or `pnpm run build` in gui/ first')
+  }
+  await page.setViewportSize({ width: 1280, height: 720 })
+
+  const harness = await startHarness('user', { AM_LOCALAPI_USER_FIXTURE: 'sources-git' })
+  const { bootstrap } = harness
+  const artifactDirectory = process.env.AM_GIT_SOURCE_EVIDENCE_DIR
+  const artifactPath = (name: string) =>
+    artifactDirectory == null ? testInfo.outputPath(name) : join(artifactDirectory, name)
+  let tracing = false
+
+  try {
+    if (bootstrap.gitSourceURL == null) {
+      throw new Error('Git source fixture missing from bootstrap')
+    }
+    if (bootstrap.codexHome == null) {
+      throw new Error('CODEX_HOME fixture missing from bootstrap')
+    }
+    const home = bootstrap.home!
+    const gitURL = bootstrap.gitSourceURL
+    const userConfigPath = join(home, '.agents', 'config.yaml')
+    const fragmentPath = join(home, '.agents', 'fragment.yaml')
+    const lockPath = join(home, '.agents', 'lock.yaml')
+    const orgConfigPath = bootstrap.orgConfig!
+    const repoConfigPath = join(bootstrap.repo!, '.agents', 'config.yaml')
+    const repoLocalPath = join(bootstrap.repo!, '.agents', 'config.local.yaml')
+    const codexHome = bootstrap.codexHome
+    const xdgDirs = [bootstrap.xdgConfig!, bootstrap.xdgState!, bootstrap.xdgCache!]
+
+    await page.context().tracing.start({ screenshots: true, snapshots: true, sources: true })
+    tracing = true
+    await serveBuiltApp(page, bootstrap.url)
+    await page.addInitScript(
+      ([credential]) => {
+        ;(window as unknown as Record<string, unknown>).__AM_GUI_BOOTSTRAP__ = { credential }
+      },
+      [bootstrap.credential] as const,
+    )
+    await page.goto(bootstrap.url, { waitUntil: 'domcontentloaded' })
+    await expect(page.getByText('skill/solo').first()).toBeVisible({ timeout: 60_000 })
+
+    const original = await readFile(userConfigPath, 'utf8')
+    const fragment = await readFile(fragmentPath, 'utf8')
+    const orgBefore = await readFile(orgConfigPath, 'utf8')
+    const repoBefore = await readFile(repoConfigPath, 'utf8')
+    const repoLocalBefore = await readFile(repoLocalPath, 'utf8')
+    const keepDir = join(home, 'keep-source')
+    const addedRoot =
+      `apiVersion: agent-marketplace/v4\ninclude: fragment.yaml\nharnesses: [devin]\n` +
+      `logging: {level: debug}\nsources:\n  keep: {directory: ${keepDir}}\n` +
+      `  repo:\n    git: ${gitURL}\n    ref: main\n    path: solo\n` +
+      `resources:\n  keep: {all: true, harnesses: [devin]}\n`
+
+    const sourcesButton = page.getByRole('button', { name: 'Sources' })
+    await sourcesButton.press('Enter')
+    const dialog = page.getByRole('dialog', { name: 'Sources' })
+    await expect(dialog).toBeVisible()
+    const notifications = page.getByLabel('Notifications')
+
+    const managedSection = dialog.getByLabel('Managed outside the GUI')
+    for (const label of ['included files', 'per-source configuration', 'other settings']) {
+      await expect(managedSection.getByText(`${label} — managed outside the GUI`)).toBeVisible()
+    }
+    const orgSection = dialog.getByLabel('Organization sources')
+    await expect(orgSection.getByText('Managed by your organization; read-only.')).toBeVisible()
+    await expect(orgSection).toContainText('Directory registry')
+    await expect(orgSection.locator('button, input, select, a')).toHaveCount(0)
+    await page.screenshot({ path: artifactPath('git-source-before.png'), fullPage: true })
+
+    const addSection = dialog.getByLabel('Add user source')
+    const kindGroup = addSection.getByRole('group', { name: 'Source kind' })
+    const gitRadio = kindGroup.getByRole('radio', { name: 'Git registry' })
+    await expect(gitRadio).toBeEnabled()
+    await gitRadio.focus()
+    await gitRadio.press('Space')
+    await expect(gitRadio).toBeChecked()
+
+    const location = addSection.getByLabel('Source location')
+    const ref = addSection.getByLabel('Source ref')
+    const subpath = addSection.getByLabel('Source subpath')
+    await expect(location).toBeEnabled()
+    await location.pressSequentially(gitURL)
+    await ref.pressSequentially('main')
+    await subpath.pressSequentially('solo')
+    const addButton = addSection.getByRole('button', { name: 'Add source' })
+    await expect(addButton).toBeEnabled()
+    const gitControls = [
+      await actionVisibility(page, dialog, ref, 'Source ref'),
+      await actionVisibility(page, dialog, subpath, 'Source subpath'),
+      await actionVisibility(page, dialog, addButton, 'Add source'),
+    ]
+    for (const metrics of gitControls) {
+      expect(metrics, `git control ${metrics.name}: ${JSON.stringify(metrics)}`).toMatchObject({
+        insideDialog: true,
+        insideViewport: true,
+        hittable: true,
+      })
+    }
+    await addSection.screenshot({ path: artifactPath('git-source-form-action.png') })
+    await addButton.press('Enter')
+
+    const userSources = dialog.getByLabel('User sources')
+    await expect(userSources).toContainText(gitURL, { timeout: 60_000 })
+    await expect(userSources).toContainText('Git registry')
+    await expect(userSources).toContainText('Ref main')
+    await expect(userSources).toContainText('Subpath solo')
+    await expect(notifications.getByText('mutation complete')).toBeVisible()
+    await expect(dialog.getByText('mutation running')).toHaveCount(0)
+    await expect(addButton).toBeEnabled()
+    await expect(location).toBeEnabled()
+    await expect(dialog).toBeVisible()
+    for (const label of ['included files', 'per-source configuration', 'other settings']) {
+      await expect(managedSection.getByText(`${label} — managed outside the GUI`)).toBeVisible()
+    }
+    await expect.poll(async () => await readFile(userConfigPath, 'utf8'), { timeout: 60_000 }).toBe(addedRoot)
+    expect(await readFile(fragmentPath, 'utf8')).toBe(fragment)
+    expect(await readFile(orgConfigPath, 'utf8')).toBe(orgBefore)
+    expect(await readFile(repoConfigPath, 'utf8')).toBe(repoBefore)
+    expect(await readFile(repoLocalPath, 'utf8')).toBe(repoLocalBefore)
+    expect(existsSync(lockPath)).toBe(true)
+    expect(existsSync(codexHome)).toBe(false)
+    expect(existsSync(join(home, '.devin'))).toBe(false)
+    expect(existsSync(join(bootstrap.xdgConfig!, 'devin'))).toBe(false)
+    expect(
+      xdgDirs.map((dir) => (existsSync(dir) ? readdirSync(dir).sort().join(',') : '<absent>')).join(','),
+    ).not.toContain('devin')
+    await page.screenshot({ path: artifactPath('git-source-added.png'), fullPage: true })
+
+    const removeButton = userSources.getByRole('button', { name: `Remove source ${gitURL}` })
+    await expect(removeButton).toBeEnabled()
+    await removeButton.press('Enter')
+    const confirmation = dialog.getByRole('region', { name: 'Confirm removal' })
+    await expect(confirmation).toBeVisible()
+    const cancelRemove = dialog.getByRole('button', { name: 'Cancel remove' })
+    await cancelRemove.press('Enter')
+    await expect(confirmation).toHaveCount(0)
+    expect(await readFile(userConfigPath, 'utf8')).toBe(addedRoot)
+    await expect(userSources).toContainText(gitURL)
+
+    await removeButton.press('Enter')
+    await expect(confirmation).toBeVisible()
+    const confirmRemove = dialog.getByRole('button', { name: 'Confirm remove' })
+    await expect(confirmRemove).toBeEnabled()
+    await confirmRemove.press('Enter')
+
+    await expect(userSources.getByText(gitURL)).toHaveCount(0, { timeout: 60_000 })
+    await expect(userSources).toContainText(keepDir)
+    await expect(notifications.getByText('mutation complete').last()).toBeVisible({ timeout: 60_000 })
+    await expect(dialog.getByText('mutation running')).toHaveCount(0)
+    await expect(dialog).toBeVisible()
+    await expect.poll(async () => await readFile(userConfigPath, 'utf8'), { timeout: 60_000 }).toBe(original)
+    expect(await readFile(fragmentPath, 'utf8')).toBe(fragment)
+    expect(await readFile(orgConfigPath, 'utf8')).toBe(orgBefore)
+    expect(await readFile(repoConfigPath, 'utf8')).toBe(repoBefore)
+    expect(await readFile(repoLocalPath, 'utf8')).toBe(repoLocalBefore)
+    expect(existsSync(codexHome)).toBe(false)
+    expect(existsSync(join(home, '.devin'))).toBe(false)
+    expect(existsSync(join(bootstrap.xdgConfig!, 'devin'))).toBe(false)
+    expect(
+      xdgDirs.map((dir) => (existsSync(dir) ? readdirSync(dir).sort().join(',') : '<absent>')).join(','),
+    ).not.toContain('devin')
+    await page.screenshot({ path: artifactPath('git-source-removed.png'), fullPage: true })
+  } finally {
+    if (tracing) {
+      await page.context().tracing.stop({ path: artifactPath('git-source-trace.zip') }).catch(() => undefined)
     }
     await harness.stop()
   }

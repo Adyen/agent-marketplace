@@ -258,17 +258,69 @@ describe('Source settings', () => {
     expect(() => button(`Remove source ${marketplaceSource.location}`)).toThrow()
   })
 
-  it('keeps organization sources free of any source controls', async () => {
-    const { client, push } = sourcesClient({
-      organizationSources: [{ id: 'org-id', kind: 'directory', location: '/opt/org', ref: '', path: '', sourceHarness: '' }],
-    })
+  it.each([
+    {
+      source: { id: 'org-dir', kind: 'directory' as const, location: '/opt/org-regs', ref: '', path: '', sourceHarness: '' },
+      texts: ['Directory registry', '/opt/org-regs'],
+      absent: ['Ref ', 'Subpath '],
+    },
+    {
+      source: {
+        id: 'org-git',
+        kind: 'git' as const,
+        location: 'https://example.com/org.git',
+        ref: 'main',
+        path: 'nested',
+        sourceHarness: 'devin',
+      },
+      texts: ['Git registry', 'https://example.com/org.git', 'Ref main', 'Subpath nested', 'Source layout devin'],
+      absent: [],
+    },
+    {
+      source: { id: 'org-mp', kind: 'marketplace' as const, location: 'https://org-mp.example', ref: '', path: '', sourceHarness: '' },
+      texts: ['Marketplace endpoint', 'https://org-mp.example'],
+      absent: ['Ref ', 'Subpath '],
+    },
+  ])('keeps the organization $source.kind source free of any controls', async ({ source, texts, absent }) => {
+    const { client, push } = sourcesClient({ organizationSources: [source] })
     const { wrapper } = mountWorkspace(client)
     push(event({ sequence: 1 }))
     await tick()
 
     await openSources(wrapper)
     const org = dialog().querySelector('[aria-label="Organization sources"]')!
+    expect(org.textContent).toContain('Managed by your organization; read-only.')
+    for (const text of texts) {
+      expect(org.textContent).toContain(text)
+    }
+    for (const text of absent) {
+      expect(org.textContent).not.toContain(text)
+    }
     expect(org.querySelectorAll('button, input, select, a')).toHaveLength(0)
+    expect(client.configure).not.toHaveBeenCalled()
+  })
+
+  it('shows managed-outside labels while a user source is being edited', async () => {
+    const { client, push } = sourcesClient({
+      managedOutsideGUI: ['included files', 'per-source configuration', 'other settings'],
+    })
+    const { wrapper } = mountWorkspace(client)
+    push(event({ sequence: 1 }))
+    await tick()
+
+    await openSources(wrapper)
+    const section = dialog().querySelector('[aria-label="Managed outside the GUI"]')!
+    for (const label of ['included files', 'per-source configuration', 'other settings']) {
+      expect(section.textContent).toContain(`${label} — managed outside the GUI`)
+    }
+
+    button(`Remove source ${dirSource.location}`).click()
+    await tick()
+    for (const label of ['included files', 'per-source configuration', 'other settings']) {
+      expect(section.textContent).toContain(`${label} — managed outside the GUI`)
+    }
+    button('Cancel remove').click()
+    await tick()
     expect(client.configure).not.toHaveBeenCalled()
   })
 

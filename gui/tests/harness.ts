@@ -12,12 +12,14 @@ export interface Bootstrap {
   credential: string
   repo?: string
   home?: string
+  codexHome?: string
   xdgConfig?: string
   xdgState?: string
   xdgCache?: string
   addSourceDir?: string
   orgConfig?: string
   marketplaceEndpoint?: string
+  gitSourceURL?: string
 }
 
 export interface Harness {
