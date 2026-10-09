@@ -1,11 +1,13 @@
 package tui
 
 import (
+	"context"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/marketplace"
+	"github.com/Adyen/agent-marketplace/internal/pipeline"
 	mpapi "github.com/Adyen/agent-marketplace/pkg/marketplace/api"
 )
 
@@ -76,14 +78,14 @@ func assertSearchFoldInvariant(t *testing.T, m Model, wantRows int) {
 	if m.pane != paneList {
 		t.Fatalf("pane = %v, want list", m.pane)
 	}
-	for _, collapsed := range m.foldedSections {
+	for _, collapsed := range m.foldedSections[m.viewSettings.normalized()] {
 		if collapsed {
 			t.Fatalf("browsing fold state mutated during search: %v", m.foldedSections)
 		}
 	}
 }
 
-func assertSectionCollapsed(t *testing.T, m Model, path string) {
+func assertSectionCollapsed(t *testing.T, m Model, path string, names ...string) {
 	t.Helper()
 	found := false
 	for _, it := range m.flatItems {
@@ -97,21 +99,27 @@ func assertSectionCollapsed(t *testing.T, m Model, path string) {
 	if !found {
 		t.Fatalf("collapsed section %s header should still be listed", path)
 	}
-	for _, name := range searchChildrenOf(path) {
+	if len(names) == 0 {
+		names = searchChildrenOf(path)
+	}
+	for _, name := range names {
 		if searchChildVisible(m, name) {
 			t.Fatalf("collapsed %s should hide %s", path, name)
 		}
 	}
 }
 
-func assertSectionExpanded(t *testing.T, m Model, path string) {
+func assertSectionExpanded(t *testing.T, m Model, path string, names ...string) {
 	t.Helper()
 	for _, it := range m.flatItems {
 		if it.SectionPath == path && it.Collapsed {
 			t.Fatalf("%s header should not report Collapsed", path)
 		}
 	}
-	for _, name := range searchChildrenOf(path) {
+	if len(names) == 0 {
+		names = searchChildrenOf(path)
+	}
+	for _, name := range names {
 		if !searchChildVisible(m, name) {
 			t.Fatalf("expanded %s should show %s", path, name)
 		}
@@ -130,9 +138,6 @@ func TestSearchFoldControls(t *testing.T) {
 		{"enter toggles twice", "status:enabled",
 			[]tea.KeyPressMsg{keyNamed("enter")}, []tea.KeyPressMsg{keyNamed("enter")},
 			[]string{"status:enabled"}},
-		{"space toggles twice", "status:available",
-			[]tea.KeyPressMsg{keyNamed("space")}, []tea.KeyPressMsg{keyNamed("space")},
-			[]string{"status:available"}},
 		{"za toggles twice", "status:enabled",
 			[]tea.KeyPressMsg{keyPress('z'), keyPress('a')}, []tea.KeyPressMsg{keyPress('z'), keyPress('a')},
 			[]string{"status:enabled"}},
@@ -188,12 +193,126 @@ func TestSearchFoldControls(t *testing.T) {
 	})
 }
 
+// spec: tui-interactions/scope-direction-confirmation-and-cancellation
+func TestSearchSpaceOpensBulkAndEscPreservesFolds(t *testing.T) {
+	m := newSearchFoldModel(t)
+	mutations := 0
+	m.dependencyLifecycle.Mutate = func(context.Context, pipeline.Workspace, func(pipeline.ConfigPathMapper) error) error {
+		mutations++
+		return nil
+	}
+	selectSearchSection(t, &m, "status:enabled")
+	m = pressKey(t, m, keyNamed("enter"))
+	assertSectionCollapsed(t, m, "status:enabled")
+
+	m = pressKey(t, m, keyNamed("space"))
+	if m.pane != paneBulkToggle {
+		t.Fatalf("space on a folded search section should open the bulk toggle, pane=%v", m.pane)
+	}
+	if m.filter != "deploy" || len(m.filteredRows) != 3 {
+		t.Fatalf("bulk modal must not change the query: filter=%q rows=%d", m.filter, len(m.filteredRows))
+	}
+	assertSectionCollapsed(t, m, "status:enabled")
+
+	m = pressKey(t, m, keyNamed("esc"))
+	if m.pane != paneList {
+		t.Fatalf("esc should return to the list, pane=%v", m.pane)
+	}
+	if m.filter != "deploy" || len(m.filteredRows) != 3 {
+		t.Fatalf("esc must not change the query: filter=%q rows=%d", m.filter, len(m.filteredRows))
+	}
+	assertSectionCollapsed(t, m, "status:enabled")
+	if mutations != 0 {
+		t.Fatalf("esc started %d mutations", mutations)
+	}
+	if len(m.bulkModal.confirmed) != 0 {
+		t.Fatalf("esc left a submitted bulk command: %+v", m.bulkModal.confirmed)
+	}
+}
+
+// spec: tui-navigation/grouping-changes-preserve-folds-and-resource-selection
+func TestSearchFoldGroupingIsolation(t *testing.T) {
+	m := newSearchFoldModel(t)
+	srcKind := viewSettings{GroupBy: axisSource, ThenBy: axisKind}
+	kindSrc := viewSettings{GroupBy: axisKind, ThenBy: axisSource}
+
+	m.applyViewSettings(srcKind)
+	var primaries, primaryTitles []string
+	for _, it := range m.flatItems {
+		if it.Kind == flatSection && it.SectionDepth == 0 {
+			primaries = append(primaries, it.SectionPath)
+			primaryTitles = append(primaryTitles, it.SectionTitle)
+		}
+	}
+	if len(primaries) < 2 {
+		t.Fatalf("need at least two primary sections, got %v", primaries)
+	}
+	if primaryTitles[0] != "security" || primaryTitles[1] != "team" {
+		t.Fatalf("source fixture precondition: primary titles %v", primaryTitles)
+	}
+	securityMembers := []string{"deploy-alpha", "deploy-beta"}
+	teamMembers := []string{"deploy-remote"}
+	browsePrefold := primaries[1]
+	m.foldedSections[srcKind] = map[string]bool{browsePrefold: true}
+
+	selectSearchSection(t, &m, primaries[0])
+	m = pressKey(t, m, keyNamed("enter"))
+	assertSectionCollapsed(t, m, primaries[0], securityMembers...)
+
+	m.applyViewSettings(kindSrc)
+	if got := len(m.currentFoldState()); got != 0 {
+		t.Fatalf("Kind→Source query folds should start empty, got %d", got)
+	}
+	kindMembers := []string{"deploy-alpha", "deploy-beta", "deploy-remote"}
+	var kindPrimary string
+	for _, it := range m.flatItems {
+		if it.Kind == flatSection && it.SectionDepth == 0 {
+			kindPrimary = it.SectionPath
+			break
+		}
+	}
+	if kindPrimary == "" {
+		t.Fatalf("no Kind→Source primary section")
+	}
+	selectSearchSection(t, &m, kindPrimary)
+	m = pressKey(t, m, keyNamed("enter"))
+	assertSectionCollapsed(t, m, kindPrimary, kindMembers...)
+
+	m.applyViewSettings(srcKind)
+	assertSectionCollapsed(t, m, primaries[0], securityMembers...)
+
+	m = pressKey(t, m, keyPress('z'))
+	m = pressKey(t, m, keyPress('R'))
+	assertSectionExpanded(t, m, primaries[0], securityMembers...)
+	m.applyViewSettings(kindSrc)
+	assertSectionCollapsed(t, m, kindPrimary, kindMembers...)
+
+	m = pressKey(t, m, v2KeyPress('/'))
+	m = pressKey(t, m, keyNamed("backspace"))
+	m = pressKey(t, m, v2Enter())
+	if m.filter != "deplo" {
+		t.Fatalf("filter = %q, want deplo", m.filter)
+	}
+	m.applyViewSettings(srcKind)
+	assertSectionExpanded(t, m, primaries[0], securityMembers...)
+	m.applyViewSettings(kindSrc)
+	assertSectionExpanded(t, m, kindPrimary, kindMembers...)
+
+	m = pressKey(t, m, keyNamed("esc"))
+	if m.filter != "" {
+		t.Fatalf("filter = %q, want cleared", m.filter)
+	}
+	m.applyViewSettings(srcKind)
+	assertSectionCollapsed(t, m, browsePrefold, teamMembers...)
+	assertSectionExpanded(t, m, primaries[0], securityMembers...)
+}
+
 // spec: tui-navigation/change-query-reveals-previously-folded-matches
 func TestSearchFoldQueryLifecycle(t *testing.T) {
 	m := newTestModel()
 	m.rows = searchFoldRows()
 	m.filteredRows = m.rows
-	m.foldedSections["status:enabled"] = true
+	m.currentFoldState()["status:enabled"] = true
 	m.rebuildFlatItems()
 	if searchChildVisible(m, "deploy-alpha") {
 		t.Fatalf("precondition: browsing fold should hide deploy-alpha")
@@ -307,7 +426,7 @@ func TestSearchFoldEmptyResults(t *testing.T) {
 	m := newTestModel()
 	m.rows = searchFoldRows()
 	m.filteredRows = m.rows
-	m.foldedSections["status:available"] = true
+	m.currentFoldState()["status:available"] = true
 	m.rebuildFlatItems()
 
 	m = pressKey(t, m, v2KeyPress('/'))
@@ -326,7 +445,7 @@ func TestSearchFoldEmptyResults(t *testing.T) {
 	if m.pane != paneList || m.cursor != 0 || len(m.flatItems) != 0 {
 		t.Fatalf("fold controls on empty results: pane=%v cursor=%d items=%d", m.pane, m.cursor, len(m.flatItems))
 	}
-	if !m.foldedSections["status:available"] {
+	if !m.foldedSections[m.viewSettings.normalized()]["status:available"] {
 		t.Fatalf("empty search folds must not touch browsing fold state")
 	}
 
