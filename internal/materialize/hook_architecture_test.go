@@ -360,10 +360,6 @@ func hookPolicyFields(loader, loaded string, loadsHooksOf []string, machineScope
 
 func hookArchitectureReaderAllowances() []hookArchitectureAllowance {
 	return []hookArchitectureAllowance{
-		{File: "native_hook_tolerance.go", Function: "nativeHookRootFor", Rule: hookArchitectureTargetCase, Expression: "hcc.TargetClaude"},
-		{File: "native_hook_tolerance.go", Function: "nativeHookRootFor", Rule: hookArchitectureTargetCase, Expression: "hcc.TargetCursor"},
-		{File: "native_hook_tolerance.go", Function: "nativeHookRootFor", Rule: hookArchitectureTargetCase, Expression: "hcc.TargetFactory"},
-		{File: "native_hook_tolerance.go", Function: "nativeHookRootFor", Rule: hookArchitectureTargetCase, Expression: "hcc.TargetWindsurf"},
 		{File: "native_hook_inspect.go", Function: "nativeHookLayoutFor", Rule: hookArchitectureTargetCase, Expression: "hcc.TargetClaude"},
 		{File: "native_hook_inspect.go", Function: "nativeHookLayoutFor", Rule: hookArchitectureTargetCase, Expression: "hcc.TargetCursor"},
 		{File: "native_hook_inspect.go", Function: "nativeHookLayoutFor", Rule: hookArchitectureTargetCase, Expression: "hcc.TargetFactory"},

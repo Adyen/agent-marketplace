@@ -15,38 +15,6 @@ import (
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 )
 
-// nativeHookRootFor returns the authorized destination root that owns the
-// documented native hook file for (target, machineScope) — the same root the
-// future native writer's ownership store opens on. It deliberately does NOT
-// reuse the legacy install root: Windsurf's repository native file
-// (.devin/hooks.json) lives under the repository root, not under .windsurf.
-func nativeHookRootFor(target hcc.Target, machineScope bool, repoRoot, home string) (string, bool) {
-	if _, ok := nativeHookLayoutFor(target, machineScope); !ok {
-		return "", false
-	}
-	base := repoRoot
-	if machineScope {
-		if home == "" {
-			return "", false
-		}
-		base = home
-	}
-	switch target {
-	case hcc.TargetClaude:
-		return filepath.Join(base, ".claude"), true
-	case hcc.TargetCursor:
-		return filepath.Join(base, ".cursor"), true
-	case hcc.TargetFactory:
-		return filepath.Join(base, ".factory"), true
-	case hcc.TargetWindsurf:
-		if machineScope {
-			return filepath.Join(home, ".codeium", "windsurf"), true
-		}
-		return repoRoot, true
-	}
-	return "", false
-}
-
 // nativeHookSourceIdentity derives the spec's stable source identity for one
 // selected hook: a git registry occurrence, a canonical local-directory source,
 // or an exact Marketplace resource revision. The derivation matches the
