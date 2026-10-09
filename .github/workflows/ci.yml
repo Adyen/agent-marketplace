@@ -636,13 +636,13 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          gh release download v4.1.1 --repo "$GITHUB_REPOSITORY" --pattern agent-marketplace-v4.1.1-linux-amd64 --dir "$RUNNER_TEMP"
-          printf '%s  %s\n' 188f48669e15bdd8286c25cc43f601afc2bae9408ee26ebca9d47bfd7bc573cc "$RUNNER_TEMP/agent-marketplace-v4.1.1-linux-amd64" | sha256sum --check
-          chmod u+x "$RUNNER_TEMP/agent-marketplace-v4.1.1-linux-amd64"
+          gh release download v4.1.2 --repo "$GITHUB_REPOSITORY" --pattern agent-marketplace-v4.1.2-linux-amd64 --dir "$RUNNER_TEMP"
+          printf '%s  %s\n' 37e7bc3e7a7510c88b381a1f734436da8dfc4a80409aae30594f6d7ea1d9eef7 "$RUNNER_TEMP/agent-marketplace-v4.1.2-linux-amd64" | sha256sum --check
+          chmod u+x "$RUNNER_TEMP/agent-marketplace-v4.1.2-linux-amd64"
 
       - name: Exercise committed state with the latest release
         env:
-          AM_E2E_RELEASED_BINARY: ${{ runner.temp }}/agent-marketplace-v4.1.1-linux-amd64
+          AM_E2E_RELEASED_BINARY: ${{ runner.temp }}/agent-marketplace-v4.1.2-linux-amd64
         shell: bash
         run: |
           set -o pipefail

@@ -44,12 +44,24 @@ type ResolvedArtifact struct {
 	Harnesses []hcc.Target
 
 	// Marketplace-specific fields.
-	IsMarketplace            bool
-	MarketplaceURL           string
-	MarketplaceInstanceID    string
-	MarketplaceAlias         string
-	MarketplaceRegistryID    string
-	MarketplaceResourceName  string
+	IsMarketplace           bool
+	MarketplaceURL          string
+	MarketplaceInstanceID   string
+	MarketplaceAlias        string
+	MarketplaceRegistryID   string
+	MarketplaceResourceName string
+	// MarketplaceDigest is the pin's exact content digest ("sha256:<64 hex>")
+	// identifying the resolved Marketplace resource revision.
+	MarketplaceDigest string
+	// MarketplaceAcquisition is the resolved acquisition mode ("mirror" or
+	// "index-only"). Mirror artifacts carry no original source tree — Path is
+	// the verified artifact archive — while index-only pins reconstruct the
+	// resource source into StagedSourceDir.
+	MarketplaceAcquisition string
+	// StagedSourceDir, when set, is the absolute root of a staged copy of the
+	// resolved resource's source directory (the index-only reconstructed
+	// resource staging area). Path is the definition file inside it.
+	StagedSourceDir          string
 	InstalledName            string // overrides Name for materialization while preserving canonical digest
 	Unresolved               bool   // true when only metadata was fetched (status inspect mode)
 	Revoked                  bool   // true when the resolved revision is revoked
