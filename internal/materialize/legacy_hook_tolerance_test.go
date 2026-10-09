@@ -1,11 +1,15 @@
 package materialize
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
+	"strings"
 	"testing"
 
 	"github.com/Adyen/agent-marketplace/internal/config"
@@ -18,7 +22,7 @@ import (
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 )
 
-// runLegacyToleranceFixture keeps the frozen Factory and Cursor fragments on the generic materializer path.
+// runLegacyToleranceFixture characterizes the frozen legacy writer, not native Run.
 func runLegacyToleranceFixture(ctx context.Context, repoRoot string, resolved []resolver.ResolvedArtifact, options ...RunOption) (*Report, error) {
 	if len(resolved) == 0 {
 		return nil, fmt.Errorf("unsupported legacy tolerance selection")
@@ -273,4 +277,272 @@ func TestLegacyToleranceFixtureCompleteProofWithoutLegacyTwinSuppressesOutput(t 
 	}
 	assertFileUnchanged(t, nativePath, nativeBefore, nativeMode, nativeMtime)
 	assertFileUnchanged(t, statePath, stateBefore, stateMode, stateMtime)
+}
+
+// hookSatisfied reports whether the durable record proves that the selected
+// hook — identified by its version-1 source fingerprint and its ownership
+// resource name — is completely present in the native file. It never equates
+// legacy rule bytes with native bytes: the future native writer records this
+// fingerprint and resource identity on every entry it emits for the hook, so
+// a match requires that EVERY recorded entry carrying (resource, fingerprint)
+// is still present and owned-clean. A missing or drifted recorded entry is
+// partial proof and suppresses nothing; a recorded entry for a different
+// fingerprint or resource is no evidence for this hook at all.
+func (ins *nativeHookInspection) hookSatisfied(fingerprint, resource string) bool {
+	matched := false
+	for _, id := range ins.proof.OwnedIDs() {
+		if id.Kind != ownership.KindHook {
+			continue
+		}
+		if !ins.proof.HasHookSource(id, resource, fingerprint) {
+			continue
+		}
+		valueDigest, present := ins.current[id]
+		if !present || ins.proof.Classify(id, valueDigest) != ownership.StatusOwnedClean {
+			return false
+		}
+		matched = true
+	}
+	for _, satisfaction := range ins.proof.HookSatisfactions() {
+		if !slices.Contains(satisfaction.Sources, ownership.HookSourceEvidence{Resource: resource, SourceDigest: fingerprint}) {
+			continue
+		}
+		valueDigest, present := ins.current[satisfaction.ID()]
+		if !present || valueDigest != satisfaction.ValueDigest {
+			return false
+		}
+		matched = true
+	}
+	return matched
+}
+
+// nativeHookInspectionFor inspects the target's native hook file at most once
+// per output key. Targets without a documented native hook file get an empty
+// inspection (nothing can satisfy them); a failed inspection is cached so
+// every hook of the same (target, scope) sees the identical refusal.
+// Read-only native hook inspections are shared per output key: one
+// cached refusal must fail every hook of the same target closed before
+// any legacy mutation, and one cached entry set keeps classification
+// consistent within the run.
+func nativeHookInspectionFor(cache map[outputKey]*nativeHookInspection, key outputKey, repoRoot string) *nativeHookInspection {
+	if ins, ok := cache[key]; ok {
+		return ins
+	}
+	ins := &nativeHookInspection{}
+	cache[key] = ins
+	home := ""
+	if key.machineScope {
+		if resolved, err := os.UserHomeDir(); err == nil {
+			home = resolved
+		}
+	}
+	root, ok := nativeHookRootFor(key.target, key.machineScope, repoRoot, home)
+	if !ok {
+		return ins
+	}
+	ins.root = root
+	store, err := ownership.Open(root)
+	if err != nil {
+		ins.err = nativeHookRefused(root, "", fmt.Errorf("open ownership store: %w", err))
+		return ins
+	}
+	parsed, err := inspectNativeHookFile(store, root, key.target, key.machineScope)
+	if err != nil {
+		ins.err = err
+		return ins
+	}
+	ins.entries = parsed.entries
+	ins.current = parsed.current
+	ins.proof = parsed.proof
+	return ins
+}
+
+// hookFragmentEventMap decodes one compiled hook fragment into its event map.
+// Fragments arrive in two documented envelopes: a bare event map
+// ({event: [rules]}, Factory) or one nested under a "hooks" member
+// (Claude, Cursor, Windsurf). Any other shape is not a hook fragment this
+// function may rewrite and is left entirely alone.
+func hookFragmentEventMap(data []byte) (events map[string][]json.RawMessage, nested bool, ok bool) {
+	var root map[string]json.RawMessage
+	if err := json.Unmarshal(data, &root); err != nil || len(root) == 0 {
+		return nil, false, false
+	}
+	if member, has := root["hooks"]; has {
+		var inner map[string][]json.RawMessage
+		if err := json.Unmarshal(member, &inner); err == nil && inner != nil {
+			return inner, true, true
+		}
+	}
+	events = make(map[string][]json.RawMessage, len(root))
+	for name, raw := range root {
+		trimmed := bytes.TrimSpace(raw)
+		if len(trimmed) == 0 || trimmed[0] != '[' {
+			return nil, false, false
+		}
+		var rules []json.RawMessage
+		if err := json.Unmarshal(raw, &rules); err != nil {
+			return nil, false, false
+		}
+		events[name] = rules
+	}
+	return events, false, true
+}
+
+// marshalHookFragment re-renders a filtered event map in the same envelope
+// the compiler emitted.
+func marshalHookFragment(events map[string][]json.RawMessage, nested bool) ([]byte, error) {
+	if nested {
+		return json.Marshal(map[string]any{"hooks": events})
+	}
+	return json.Marshal(events)
+}
+
+// legacyManagedRulePresent reports whether the existing legacy file already
+// holds a MARKED element canonically equal to the desired rule (ignoring the
+// _managed_by marker itself). A surviving managed twin must be kept desired:
+// dropping it would let the merge delete legacy bytes, which this release is
+// forbidden to do. An equal UNMARKED element — the proven native entry itself
+// in the Windsurf shared file — does not keep the rule desired: suppressing
+// it leaves exactly that element in place, marked-duplicate free.
+//
+// The file is read through the same descriptor-anchored boundary as every
+// other aggregate: a symlink in any component, a non-regular file (a FIFO
+// would hang a plain path read forever), or an oversized file is refused
+// rather than followed. Any failure to survey the file — unsafe shape, read
+// error, or an undecodable/mismatched document — returns an error so the
+// caller fails the affected target closed instead of guessing "no managed
+// twin" and letting the merge delete user bytes.
+func legacyManagedRulePresent(legacyRoot, rel string, nested bool, event string, rule json.RawMessage) (bool, error) {
+	raw, err := ownership.ReadAggregateFileAt(legacyRoot, rel)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return false, nil
+		}
+		return false, err
+	}
+	events, fileNested, ok := hookFragmentEventMap(raw)
+	if !ok || fileNested != nested {
+		return false, fmt.Errorf("legacy hook file %q is not a decodable hook document", filepath.Join(legacyRoot, filepath.FromSlash(rel)))
+	}
+	want, err := canonicalOwnedJSON(rule)
+	if err != nil {
+		return false, err
+	}
+	for _, existing := range events[event] {
+		unmarked, marked := stripManagedByMarker(existing)
+		if !marked {
+			continue
+		}
+		canonical, err := canonicalOwnedJSON(unmarked)
+		if err != nil {
+			continue
+		}
+		if bytes.Equal(canonical, want) {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+// stripManagedByMarker removes the _managed_by member from one JSON object,
+// reporting whether the marker was present, and leaving every other field —
+// and non-objects — untouched.
+func stripManagedByMarker(raw json.RawMessage) (json.RawMessage, bool) {
+	var obj map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &obj); err != nil || obj == nil {
+		return raw, false
+	}
+	if _, ok := obj[managedByField]; !ok {
+		return raw, false
+	}
+	delete(obj, managedByField)
+	out, err := json.Marshal(obj)
+	if err != nil {
+		return raw, false
+	}
+	return out, true
+}
+
+// suppressNativeSatisfiedHookRules drops one hook's compiled fragment
+// artifacts when the durable record proves the SAME selected hook — matching
+// version-1 source fingerprint and ownership resource identity — is already
+// completely present in the target's documented native file. Native rule
+// bytes deliberately play no part: PR #403 emits target-native events,
+// translated matchers, and rewritten support-command paths, so byte equality
+// with the old fragment could never prove anything.
+//
+// Suppression is all-or-nothing per hook, never per rule: a hook emitting
+// more than one native rule is proven only when every recorded entry is
+// still owned-clean (partial proof keeps the whole legacy output). A rule
+// whose managed legacy twin is still on disk stays desired so merge
+// preserves those bytes instead of deleting them.
+//
+// A hook whose source fingerprint cannot be computed at all suppresses
+// nothing — an identity guess could suppress the wrong entry. And a legacy
+// file that cannot be surveyed safely for a surviving managed twin returns
+// an error: the caller must fail this target closed rather than risk the
+// merge deleting bytes it could not inspect.
+func suppressNativeSatisfiedHookRules(res resolver.ResolvedArtifact, key outputKey, legacyRoot string, ins *nativeHookInspection, artifacts []artifact.Artifact) ([]artifact.Artifact, error) {
+	fingerprint, err := nativeHookFingerprint(res, key.target, key.machineScope)
+	if err != nil {
+		return artifacts, nil
+	}
+	name := res.Name
+	if res.InstalledName != "" {
+		name = res.InstalledName
+	}
+	if !ins.hookSatisfied(fingerprint, name) {
+		return artifacts, nil
+	}
+	// A fresh backing array is required: an error return hands the caller's
+	// original slice back, and reusing its storage would leak the
+	// already-rewritten fragment bytes into that "unchanged" input.
+	out := make([]artifact.Artifact, 0, len(artifacts))
+	for _, a := range artifacts {
+		if !a.Fragment {
+			out = append(out, a)
+			continue
+		}
+		events, nested, ok := hookFragmentEventMap(a.Bytes)
+		if !ok {
+			out = append(out, a)
+			continue
+		}
+		legacyRel := a.Path
+		if key.target == hcc.TargetWindsurf && key.machineScope {
+			// The machine-scope install root already IS ~/.codeium/windsurf:
+			// the compiled ".windsurf/" prefix is a project-scope prefix that
+			// machine-scope plans strip before writing.
+			legacyRel = strings.TrimPrefix(a.Path, windsurfDir+"/")
+		}
+		filtered := make(map[string][]json.RawMessage, len(events))
+		for _, event := range sortedKeys(events) {
+			var kept []json.RawMessage
+			for _, rule := range events[event] {
+				present, presentErr := legacyManagedRulePresent(legacyRoot, legacyRel, nested, event, rule)
+				if presentErr != nil {
+					return artifacts, presentErr
+				}
+				if present {
+					kept = append(kept, rule)
+				}
+			}
+			if len(kept) > 0 {
+				filtered[event] = kept
+			}
+		}
+		if len(filtered) == 0 {
+			// The hook is natively satisfied and no managed legacy twin
+			// survives: it contributes nothing to the legacy file.
+			continue
+		}
+		body, marshalErr := marshalHookFragment(filtered, nested)
+		if marshalErr != nil {
+			out = append(out, a)
+			continue
+		}
+		a.Bytes = body
+		out = append(out, a)
+	}
+	return out, nil
 }

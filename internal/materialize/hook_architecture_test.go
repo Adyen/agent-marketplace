@@ -364,7 +364,6 @@ func hookArchitectureReaderAllowances() []hookArchitectureAllowance {
 		{File: "native_hook_tolerance.go", Function: "nativeHookRootFor", Rule: hookArchitectureTargetCase, Expression: "hcc.TargetCursor"},
 		{File: "native_hook_tolerance.go", Function: "nativeHookRootFor", Rule: hookArchitectureTargetCase, Expression: "hcc.TargetFactory"},
 		{File: "native_hook_tolerance.go", Function: "nativeHookRootFor", Rule: hookArchitectureTargetCase, Expression: "hcc.TargetWindsurf"},
-		{File: "native_hook_tolerance.go", Function: "suppressNativeSatisfiedHookRules", Rule: hookArchitectureTargetComparison, Expression: "key.target == hcc.TargetWindsurf"},
 		{File: "native_hook_inspect.go", Function: "nativeHookLayoutFor", Rule: hookArchitectureTargetCase, Expression: "hcc.TargetClaude"},
 		{File: "native_hook_inspect.go", Function: "nativeHookLayoutFor", Rule: hookArchitectureTargetCase, Expression: "hcc.TargetCursor"},
 		{File: "native_hook_inspect.go", Function: "nativeHookLayoutFor", Rule: hookArchitectureTargetCase, Expression: "hcc.TargetFactory"},
