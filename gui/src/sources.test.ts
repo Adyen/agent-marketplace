@@ -152,15 +152,110 @@ describe('Source settings', () => {
     expect(dialog().querySelector('[aria-label="Confirm removal"]')).toBeNull()
   })
 
-  it('offers no removal control for marketplace sources', async () => {
+  it('cancels Marketplace registration removal without sending a request', async () => {
     const { client, push } = sourcesClient()
     const { wrapper } = mountWorkspace(client)
     push(event({ sequence: 1 }))
     await tick()
 
     await openSources(wrapper)
-    expect(() => button(`Remove source ${marketplaceSource.location}`)).toThrow()
+    button(`Remove source ${marketplaceSource.location}`).click()
+    await tick()
     expect(client.configure).not.toHaveBeenCalled()
+
+    button('Cancel remove').click()
+    await tick()
+
+    expect(client.configure).not.toHaveBeenCalled()
+    expect(dialog().querySelector('[aria-label="Confirm removal"]')).toBeNull()
+    expect(dialog().querySelector('[aria-label="User sources"]')?.textContent).toContain(marketplaceSource.location)
+  })
+
+  it('preserves a Marketplace draft and registration when removal is refused', async () => {
+    const { client, push } = sourcesClient()
+    const { controller, wrapper } = mountWorkspace(client)
+    push(event({ sequence: 1 }))
+    await tick()
+    const operation: OperationRef = { id: 9, kind: 'mutation' }
+    ;(client.configure as ReturnType<typeof vi.fn>).mockResolvedValue(operation)
+
+    await openSources(wrapper)
+    await chooseSourceKind('marketplace', 'Marketplace endpoint')
+    const draft = 'https://marketplace.example/draft'
+    await setInput('Source location', draft)
+    button(`Remove source ${marketplaceSource.location}`).click()
+    await tick()
+    button('Confirm remove').click()
+    await tick()
+
+    expect(client.configure).toHaveBeenCalledWith({ action: 'remove-source', id: marketplaceSource.id })
+    push(event({ sequence: 2, generation: 2, operation }))
+    push(
+      event({
+        sequence: 3,
+        generation: 2,
+        operation: null,
+        payload: snapshot([], {
+          diagnostics: [
+            {
+              severity: 'error',
+              category: 'mutation',
+              code: 'config.edit.source-in-use',
+              message: 'config.edit.source-in-use: Marketplace source has resources',
+            },
+          ],
+        }),
+      }),
+    )
+    push(
+      event({
+        sequence: 4,
+        generation: 2,
+        operation,
+        type: 'notification',
+        payload: { severity: 'error', message: 'mutation failed' },
+      }),
+    )
+    await tick()
+
+    expect(controller.state.operation).toBeNull()
+    expect(dialog().textContent).toContain('config.edit.source-in-use')
+    expect(sourceKindRadio('marketplace', 'Marketplace endpoint').checked).toBe(true)
+    expect(field('Source location').value).toBe(draft)
+    expect(dialog().querySelector('[aria-label="User sources"]')?.textContent).toContain(marketplaceSource.location)
+    expect((button(`Remove source ${marketplaceSource.location}`) as HTMLButtonElement).disabled).toBe(false)
+  })
+
+  it('updates the Marketplace source list in place after removal settles', async () => {
+    const { client, push } = sourcesClient()
+    const { controller, wrapper } = mountWorkspace(client)
+    push(event({ sequence: 1 }))
+    await tick()
+    const operation: OperationRef = { id: 9, kind: 'mutation' }
+    ;(client.configure as ReturnType<typeof vi.fn>).mockResolvedValue(operation)
+    ;(client.configuration as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce(sourcesConfiguration())
+      .mockResolvedValue(sourcesConfiguration({ userSources: [dirSource, gitSource] }))
+
+    await openSources(wrapper)
+    button(`Remove source ${marketplaceSource.location}`).click()
+    await tick()
+    button('Confirm remove').click()
+    await tick()
+    expect(client.configure).toHaveBeenCalledWith({ action: 'remove-source', id: marketplaceSource.id })
+
+    await settleOperation(controller, push, operation, 2)
+    await tick()
+
+    const list = dialog().querySelector('[aria-label="User sources"]')!
+    expect(list.textContent).not.toContain(marketplaceSource.location)
+    expect(dialog()).toBeDefined()
+    expect(controller.state.operation).toBeNull()
+    expect(controller.state.requesting).toBe(false)
+    expect(field('Source location').disabled).toBe(false)
+    expect((button(`Remove source ${dirSource.location}`) as HTMLButtonElement).disabled).toBe(false)
+    expect((button('Add source') as HTMLButtonElement).disabled).toBe(true)
+    expect(() => button(`Remove source ${marketplaceSource.location}`)).toThrow()
   })
 
   it('keeps organization sources free of any source controls', async () => {
@@ -244,6 +339,7 @@ describe('Source settings', () => {
     expect((addSection!.querySelector('fieldset') as HTMLFieldSetElement).disabled).toBe(true)
     expect((button('Add source') as HTMLButtonElement).disabled).toBe(true)
     expect((button(`Remove source ${dirSource.location}`) as HTMLButtonElement).disabled).toBe(true)
+    expect((button(`Remove source ${marketplaceSource.location}`) as HTMLButtonElement).disabled).toBe(true)
   })
 
   it('cancelling the dialog discards the draft and sends no request', async () => {

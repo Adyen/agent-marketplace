@@ -1,10 +1,13 @@
 package config
 
 import (
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
+	"sort"
 	"strings"
 	"testing"
 
@@ -1930,5 +1933,525 @@ func TestLayerEditorRemoveMarketplacePinDirectWithSelection(t *testing.T) {
 	}
 	if !strings.Contains(string(candidate.Bytes), "marketplace:") {
 		t.Fatalf("endpoint source dropped:\n%s", candidate.Bytes)
+	}
+}
+
+func marketplaceEditorReadIntent(t *testing.T, home, userPath string) Intent {
+	t.Helper()
+	t.Setenv("HOME", home)
+	SetTestOrganizationConfigPath(t, filepath.Join(t.TempDir(), "missing-organization.yaml"))
+	repo := t.TempDir()
+	intent := ReadIntent(context.Background(), LoadEffectiveOptions{
+		RepoRoot:       repo,
+		LocalConfigDir: repo,
+		GlobalPath:     userPath,
+		RepoPath:       ProjectConfigPath(repo),
+		LocalPath:      LocalConfigPath(repo),
+	})
+	if len(intent.Errors) > 0 || intent.Layers[UserPersonal].Err() != nil {
+		t.Fatalf("read effective user intent: %v / %v", intent.Errors, intent.Layers[UserPersonal].Err())
+	}
+	return intent
+}
+
+func marketplaceEditorSortedSources(sources []SourceDescription) []SourceDescription {
+	out := append([]SourceDescription(nil), sources...)
+	sort.Slice(out, func(i, j int) bool {
+		left := strings.Join([]string{string(out[i].Kind), out[i].Location, out[i].Ref, out[i].Path, out[i].SourceHarness, out[i].InstanceID}, "\x00")
+		right := strings.Join([]string{string(out[j].Kind), out[j].Location, out[j].Ref, out[j].Path, out[j].SourceHarness, out[j].InstanceID}, "\x00")
+		return left < right
+	})
+	return out
+}
+
+func marketplaceEditorSortedSelections(selections []ExplicitSelection) []ExplicitSelection {
+	out := append([]ExplicitSelection(nil), selections...)
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Kind != out[j].Kind {
+			return out[i].Kind < out[j].Kind
+		}
+		return out[i].Name < out[j].Name
+	})
+	return out
+}
+
+func assertMarketplaceEditorGroup(t *testing.T, groups map[string]V4ResourceGroup, name string, include, exclude, harnesses []string) {
+	t.Helper()
+	group, ok := groups[name]
+	if !ok || group.SourceName != name {
+		t.Fatalf("resource group %q missing from effective config: %#v", name, group)
+	}
+	var locators []string
+	for _, request := range group.Include {
+		locators = append(locators, request.Locator)
+	}
+	if !slices.Equal(locators, include) || !slices.Equal(group.Exclude, exclude) ||
+		!slices.Equal(group.Harnesses, harnesses) || group.HasHarnesses != (len(harnesses) > 0) {
+		t.Fatalf("resource group %q policy = %#v, want include=%v exclude=%v harnesses=%v", name, group, include, exclude, harnesses)
+	}
+}
+
+func TestLayerEditorRemoveMarketplaceRegistrationV4RootOnly(t *testing.T) {
+	home := t.TempDir()
+	rootDir := filepath.Join(home, ".agents")
+	path := filepath.Join(rootDir, "config.yaml")
+	fragmentPath := filepath.Join(rootDir, "fragment.yaml")
+	localDir := filepath.Join(home, "local-registry")
+	fragmentDir := filepath.Join(home, "included-registry")
+	for _, dir := range []string{localDir, fragmentDir} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	targetURL := "http://127.0.0.1:12345/services/catalog"
+	otherURL := "http://127.0.0.1:12346/other"
+	root := "apiVersion: agent-marketplace/v4\ninclude: fragment.yaml\nharnesses: [devin, claude] # preserve targets\nallowed_marketplaces: []\nlogging: {level: debug}\nsources:\n  target: {marketplace: " + targetURL + "}\n  other: {marketplace: " + otherURL + "} # preserve sibling\n  local: {directory: " + localDir + "}\nresources:\n  local:\n    include: [skill/keep]\n    exclude: [skill/drop]\n    harnesses: [devin]\n"
+	fragment := "sources:\n  fragment: {directory: " + fragmentDir + "}\nresources:\n  fragment:\n    include: [skill/from-fragment]\n    harnesses: [claude]\n"
+	layerEditorWrite(t, path, root)
+	layerEditorWrite(t, fragmentPath, fragment)
+	beforeIntent := marketplaceEditorReadIntent(t, home, path)
+	beforeUser := beforeIntent.Layers[UserPersonal]
+	wantBeforeSources := marketplaceEditorSortedSources([]SourceDescription{
+		{Kind: V4SourceMarketplace, Location: targetURL},
+		{Kind: V4SourceMarketplace, Location: otherURL},
+		{Kind: V4SourceDirectory, Location: localDir},
+		{Kind: V4SourceDirectory, Location: fragmentDir},
+	})
+	if got := marketplaceEditorSortedSources(beforeUser.DescribeSources()); !reflect.DeepEqual(got, wantBeforeSources) {
+		t.Fatalf("effective v4 sources before removal = %#v, want %#v", got, wantBeforeSources)
+	}
+	wantSelections := marketplaceEditorSortedSelections([]ExplicitSelection{
+		{Kind: ir.KindSkill, Name: "keep"},
+		{Kind: ir.KindSkill, Name: "from-fragment"},
+	})
+	if got := marketplaceEditorSortedSelections(beforeUser.ExplicitSelections()); !reflect.DeepEqual(got, wantSelections) {
+		t.Fatalf("unrelated v4 selections before removal = %#v, want %#v", got, wantSelections)
+	}
+
+	editor := openTestEditor(t, UserPersonal, path, path)
+	entry := MarketplaceEntry{URL: targetURL}
+	if err := editor.RemoveMarketplaceRegistration(entry); err != nil {
+		t.Fatalf("remove endpoint-only v4 registration: %v", err)
+	}
+	candidate, err := editor.Render()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !candidate.Changed || candidate.Legacy || strings.Contains(string(candidate.Bytes), targetURL) {
+		t.Fatalf("v4 registration candidate = %#v\n%s", candidate, candidate.Bytes)
+	}
+	if !strings.Contains(string(candidate.Bytes), "# preserve targets") || !strings.Contains(string(candidate.Bytes), "# preserve sibling") {
+		t.Fatalf("v4 removal lost unrelated comments:\n%s", candidate.Bytes)
+	}
+	if err := os.WriteFile(path, candidate.Bytes, candidate.Mode); err != nil {
+		t.Fatal(err)
+	}
+	afterIntent := marketplaceEditorReadIntent(t, home, path)
+	afterUser := afterIntent.Layers[UserPersonal]
+	wantAfterSources := marketplaceEditorSortedSources([]SourceDescription{
+		{Kind: V4SourceMarketplace, Location: otherURL},
+		{Kind: V4SourceDirectory, Location: localDir},
+		{Kind: V4SourceDirectory, Location: fragmentDir},
+	})
+	if got := marketplaceEditorSortedSources(afterUser.DescribeSources()); !reflect.DeepEqual(got, wantAfterSources) {
+		t.Fatalf("effective v4 sources after removal = %#v, want %#v", got, wantAfterSources)
+	}
+	if !reflect.DeepEqual(beforeUser.Settings(), afterUser.Settings()) ||
+		!reflect.DeepEqual(beforeUser.ExplicitSelections(), afterUser.ExplicitSelections()) {
+		t.Fatalf("unrelated v4 settings or selections changed: before=%#v/%#v after=%#v/%#v", beforeUser.Settings(), beforeUser.ExplicitSelections(), afterUser.Settings(), afterUser.ExplicitSelections())
+	}
+	if len(beforeUser.v4.Groups) != 2 || len(afterUser.v4.Groups) != 2 {
+		t.Fatalf("unrelated v4 resource groups changed: before=%#v after=%#v", beforeUser.v4.Groups, afterUser.v4.Groups)
+	}
+	for _, groups := range []map[string]V4ResourceGroup{beforeUser.v4.Groups, afterUser.v4.Groups} {
+		assertMarketplaceEditorGroup(t, groups, "local", []string{"skill/keep"}, []string{"skill/drop"}, []string{"devin"})
+		assertMarketplaceEditorGroup(t, groups, "fragment", []string{"skill/from-fragment"}, nil, []string{"claude"})
+	}
+	if len(afterUser.v4.Sources) != len(beforeUser.v4.Sources)-1 {
+		t.Fatalf("effective v4 source count after removal = %d, want %d", len(afterUser.v4.Sources), len(beforeUser.v4.Sources)-1)
+	}
+	if _, ok := afterUser.v4.Sources["target"]; ok {
+		t.Fatal("target Marketplace source remains after removal")
+	}
+	for name, beforeSource := range beforeUser.v4.Sources {
+		if name == "target" {
+			continue
+		}
+		afterSource, ok := afterUser.v4.Sources[name]
+		if !ok || beforeSource.Name != afterSource.Name || beforeSource.Kind != afterSource.Kind ||
+			beforeSource.URL != afterSource.URL || beforeSource.Git != afterSource.Git ||
+			beforeSource.Directory != afterSource.Directory || beforeSource.Marketplace != afterSource.Marketplace ||
+			beforeSource.Ref != afterSource.Ref || beforeSource.Path != afterSource.Path ||
+			beforeSource.SourceHarness != afterSource.SourceHarness || beforeSource.CanonicalURL != afterSource.CanonicalURL {
+			t.Fatalf("unrelated v4 source %q changed: before=%#v after=%#v", name, beforeSource, afterSource)
+		}
+	}
+	staleEditor := openTestEditor(t, UserPersonal, path, path)
+	if err := staleEditor.RemoveMarketplaceRegistration(entry); layerEditorErrCode(err) != "config.edit.invalid-binding" {
+		t.Fatalf("repeated stale v4 registration removal = %v, want config.edit.invalid-binding", err)
+	}
+	repeated, err := staleEditor.Render()
+	if err != nil || repeated.Changed || string(repeated.Bytes) != string(candidate.Bytes) {
+		t.Fatalf("repeated stale removal changed candidate: %v\n%s", err, repeated.Bytes)
+	}
+	if got, err := os.ReadFile(fragmentPath); err != nil || got == nil || string(got) != fragment {
+		t.Fatalf("v4 removal changed included fragment: %q (err=%v)", got, err)
+	}
+}
+
+func marketplaceEditorSortedEntries(entries []MarketplaceEntry) []MarketplaceEntry {
+	out := append([]MarketplaceEntry(nil), entries...)
+	sort.Slice(out, func(i, j int) bool {
+		left := out[i].URL + "\x00" + out[i].InstanceID
+		right := out[j].URL + "\x00" + out[j].InstanceID
+		return left < right
+	})
+	return out
+}
+
+func TestLayerEditorRemoveMarketplaceRegistrationLegacyRootVersions(t *testing.T) {
+	for _, version := range []string{APIVersionV2, APIVersionV3} {
+		t.Run(version, func(t *testing.T) {
+			home := t.TempDir()
+			rootDir := filepath.Join(home, ".agents")
+			path := filepath.Join(rootDir, "config.yaml")
+			fragmentPath := filepath.Join(rootDir, "fragment.yaml")
+			fragmentDir := filepath.Join(home, "included-registry")
+			if err := os.MkdirAll(fragmentDir, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			targetURL := "http://127.0.0.1:12345/services/catalog"
+			targetURLWithSlash := targetURL + "/"
+			otherURL := "http://127.0.0.1:12346/other"
+			fragmentURL := "http://127.0.0.1:12347/fragment"
+			root := "apiVersion: " + version + "\ninclude: fragment.yaml\n# preserve legacy root settings\nharnesses: &targets [devin, claude]\nallowed_marketplaces: []\nlogging: {level: debug} # retain logging\nregistries:\n  - url: file:///tmp/marketplace-removal.git\n    ref: main\n    harnesses: *targets\n    skills: {include: [registry-keep], exclude: [registry-drop]}\nskills: {include: [global-keep], exclude: [global-drop]}\nmarketplaces:\n  - url: " + targetURLWithSlash + " # target registration\n    instance_id: target-instance\n    alias: remove-me\n  - url: " + otherURL + "\n    instance_id: other-instance\n    alias: retained-alias # sibling marketplace retained\n    resources:\n      - registry_id: tools-id\n        registry_slug: tools\n        kind: skill\n        name: protected\n        revision: rev-two\n        digest: " + testMarketplaceDigest + "\n        acquisition: mirror\n        direct: true\n"
+			fragment := "# included file remains unchanged\nregistries:\n  - path: " + fragmentDir + "\n    source_harness: windsurf\n    skills: {include: [fragment-keep], exclude: [fragment-drop]}\nmarketplaces:\n  - url: " + fragmentURL + "\n    instance_id: fragment-instance\n    alias: included-alias\n"
+			layerEditorWrite(t, path, root)
+			layerEditorWrite(t, fragmentPath, fragment)
+			beforeIntent := marketplaceEditorReadIntent(t, home, path)
+			beforeUser := beforeIntent.Layers[UserPersonal]
+			wantBeforeSources := marketplaceEditorSortedSources([]SourceDescription{
+				{Kind: V4SourceGit, Location: "file:///tmp/marketplace-removal.git", Ref: "main"},
+				{Kind: V4SourceDirectory, Location: fragmentDir, SourceHarness: "windsurf"},
+				{Kind: V4SourceMarketplace, Location: targetURLWithSlash, InstanceID: "target-instance"},
+				{Kind: V4SourceMarketplace, Location: otherURL, InstanceID: "other-instance"},
+				{Kind: V4SourceMarketplace, Location: fragmentURL, InstanceID: "fragment-instance"},
+			})
+			if got := marketplaceEditorSortedSources(beforeUser.DescribeSources()); !reflect.DeepEqual(got, wantBeforeSources) {
+				t.Fatalf("effective legacy sources before removal = %#v, want %#v", got, wantBeforeSources)
+			}
+			wantSelections := marketplaceEditorSortedSelections([]ExplicitSelection{
+				{Kind: ir.KindSkill, Name: "registry-keep"},
+				{Kind: ir.KindSkill, Name: "fragment-keep"},
+			})
+			if got := marketplaceEditorSortedSelections(beforeUser.ExplicitSelections()); !reflect.DeepEqual(got, wantSelections) {
+				t.Fatalf("unrelated legacy selections before removal = %#v, want %#v", got, wantSelections)
+			}
+
+			editor := openTestEditor(t, UserPersonal, path, path)
+			entry := MarketplaceEntry{URL: targetURL, InstanceID: "target-instance"}
+			if err := editor.RemoveMarketplaceRegistration(entry); err != nil {
+				t.Fatalf("remove endpoint-only legacy registration: %v", err)
+			}
+			candidate, err := editor.Render()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !candidate.Changed || !candidate.Legacy || strings.Contains(string(candidate.Bytes), targetURLWithSlash) {
+				t.Fatalf("legacy registration candidate = %#v\n%s", candidate, candidate.Bytes)
+			}
+			for _, marker := range []string{"&targets", "*targets", "# preserve legacy root settings", "# retain logging", "retained-alias", "# sibling marketplace retained", "allowed_marketplaces: []"} {
+				if !strings.Contains(string(candidate.Bytes), marker) {
+					t.Fatalf("legacy removal lost %q:\n%s", marker, candidate.Bytes)
+				}
+			}
+			if err := os.WriteFile(path, candidate.Bytes, candidate.Mode); err != nil {
+				t.Fatal(err)
+			}
+			afterIntent := marketplaceEditorReadIntent(t, home, path)
+			afterUser := afterIntent.Layers[UserPersonal]
+			wantAfterSources := marketplaceEditorSortedSources([]SourceDescription{
+				{Kind: V4SourceGit, Location: "file:///tmp/marketplace-removal.git", Ref: "main"},
+				{Kind: V4SourceDirectory, Location: fragmentDir, SourceHarness: "windsurf"},
+				{Kind: V4SourceMarketplace, Location: otherURL, InstanceID: "other-instance"},
+				{Kind: V4SourceMarketplace, Location: fragmentURL, InstanceID: "fragment-instance"},
+			})
+			if got := marketplaceEditorSortedSources(afterUser.DescribeSources()); !reflect.DeepEqual(got, wantAfterSources) {
+				t.Fatalf("effective legacy sources after removal = %#v, want %#v", got, wantAfterSources)
+			}
+			if !reflect.DeepEqual(beforeUser.Settings(), afterUser.Settings()) ||
+				!reflect.DeepEqual(beforeUser.ExplicitSelections(), afterUser.ExplicitSelections()) ||
+				!reflect.DeepEqual(beforeUser.legacy.Registries, afterUser.legacy.Registries) ||
+				!reflect.DeepEqual(beforeUser.legacy.Skills, afterUser.legacy.Skills) {
+				t.Fatalf("unrelated legacy configuration changed: before=%#v after=%#v", beforeUser, afterUser)
+			}
+			wantRetained := make([]MarketplaceEntry, 0, len(beforeUser.legacy.Marketplaces)-1)
+			for _, marketplace := range beforeUser.legacy.Marketplaces {
+				if marketplace.URL != targetURLWithSlash || marketplace.InstanceID != "target-instance" {
+					wantRetained = append(wantRetained, marketplace)
+				}
+			}
+			if len(wantRetained) != 2 || !reflect.DeepEqual(
+				marketplaceEditorSortedEntries(afterUser.legacy.Marketplaces),
+				marketplaceEditorSortedEntries(wantRetained),
+			) {
+				t.Fatalf("effective Marketplace registrations after removal = %#v, want %#v", afterUser.legacy.Marketplaces, wantRetained)
+			}
+			var preservedOther bool
+			for _, marketplace := range afterUser.legacy.Marketplaces {
+				if marketplace.InstanceID != "other-instance" {
+					continue
+				}
+				preservedOther = marketplace.Alias == "retained-alias" && len(marketplace.Resources) == 1 &&
+					marketplace.Resources[0].Name == "protected" && marketplace.Resources[0].Digest == testMarketplaceDigest
+			}
+			if !preservedOther {
+				t.Fatalf("unrelated Marketplace alias/pin changed: %#v", afterUser.legacy.Marketplaces)
+			}
+			staleEditor := openTestEditor(t, UserPersonal, path, path)
+			if err := staleEditor.RemoveMarketplaceRegistration(entry); layerEditorErrCode(err) != "config.edit.invalid-binding" {
+				t.Fatalf("stale legacy registration removal = %v, want config.edit.invalid-binding", err)
+			}
+			repeated, err := staleEditor.Render()
+			if err != nil || repeated.Changed || string(repeated.Bytes) != string(candidate.Bytes) {
+				t.Fatalf("stale legacy removal changed candidate: %v\n%s", err, repeated.Bytes)
+			}
+			if got, err := os.ReadFile(fragmentPath); err != nil || string(got) != fragment {
+				t.Fatalf("legacy removal changed included fragment: %q (err=%v)", got, err)
+			}
+		})
+	}
+}
+
+func TestLayerEditorRemoveMarketplaceRegistrationRefusesV4Groups(t *testing.T) {
+	targetURL := "http://127.0.0.1:12345/services/catalog"
+	for _, tc := range []struct {
+		name              string
+		include           string
+		rootSource        bool
+		rootResource      string
+		fragment          string
+		wantGroup         bool
+		wantInclude       bool
+		wantExclude       bool
+		wantHarnessNarrow bool
+		wantCode          string
+	}{
+		{
+			name:         "root include",
+			rootSource:   true,
+			rootResource: "    include: [tools/skill/keep]\n",
+			wantGroup:    true,
+			wantInclude:  true,
+			wantCode:     "config.edit.source-in-use",
+		},
+		{
+			name:         "exclude only",
+			rootSource:   true,
+			rootResource: "    exclude: [tools/skill/blocked]\n",
+			wantGroup:    true,
+			wantExclude:  true,
+			wantCode:     "config.edit.source-in-use",
+		},
+		{
+			name:              "narrowing only",
+			rootSource:        true,
+			rootResource:      "    harnesses: [claude]\n",
+			wantGroup:         true,
+			wantHarnessNarrow: true,
+			wantCode:          "config.edit.source-in-use",
+		},
+		{
+			name:        "included resource group",
+			include:     "include: fragment.yaml\n",
+			rootSource:  true,
+			fragment:    "resources:\n  target: {exclude: [tools/skill/blocked]}\n",
+			wantGroup:   true,
+			wantExclude: true,
+			wantCode:    "config.edit.source-in-use",
+		},
+		{
+			name:     "included-only source",
+			include:  "include: fragment.yaml\n",
+			fragment: "sources:\n  target: {marketplace: " + targetURL + "}\n",
+			wantCode: "config.edit.include-owned",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			path := filepath.Join(dir, "config.yaml")
+			fragmentPath := filepath.Join(dir, "fragment.yaml")
+			root := "apiVersion: agent-marketplace/v4\nharnesses: [devin]\n" + tc.include
+			if tc.rootSource {
+				root += "sources:\n  target: {marketplace: " + targetURL + "}\n"
+			}
+			if tc.rootResource != "" {
+				root += "resources:\n  target:\n" + tc.rootResource
+			}
+			if tc.fragment != "" {
+				layerEditorWrite(t, fragmentPath, tc.fragment)
+			}
+			layerEditorWrite(t, path, root)
+			editor := openTestEditor(t, UserPersonal, path, path)
+			if tc.wantGroup {
+				group, ok := editor.loaded.Groups["target"]
+				if !ok {
+					t.Fatal("protected Marketplace resource group is absent from effective input")
+				}
+				if tc.wantInclude && len(group.Include) == 0 {
+					t.Fatalf("include control has no effective include: %#v", group)
+				}
+				if tc.wantExclude && len(group.Exclude) == 0 {
+					t.Fatalf("exclude control has no effective exclusion: %#v", group)
+				}
+				if tc.wantHarnessNarrow && !group.HasHarnesses {
+					t.Fatalf("narrowing control has no harness policy: %#v", group)
+				}
+			}
+			if tc.name == "included-only source" {
+				source, ok := editor.loaded.Sources["target"]
+				if !ok || source.File == editor.canonical {
+					t.Fatalf("include-owned control is not nonvacuous: %#v", source)
+				}
+			}
+			err := editor.RemoveMarketplaceRegistration(MarketplaceEntry{URL: targetURL})
+			if got := layerEditorErrCode(err); got != tc.wantCode {
+				t.Fatalf("remove error = %v, code = %q, want %q", err, got, tc.wantCode)
+			}
+			candidate, err := editor.Render()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if candidate.Changed || string(candidate.Bytes) != root {
+				t.Fatalf("rejected Marketplace removal changed candidate:\n%s", candidate.Bytes)
+			}
+			if current, err := os.ReadFile(path); err != nil || string(current) != root {
+				t.Fatalf("rejected Marketplace removal changed root: %q (err=%v)", current, err)
+			}
+			if tc.fragment != "" {
+				if current, err := os.ReadFile(fragmentPath); err != nil || current == nil || string(current) != tc.fragment {
+					t.Fatalf("rejected Marketplace removal changed fragment: %q (err=%v)", current, err)
+				}
+			}
+		})
+	}
+}
+
+func TestLayerEditorRemoveMarketplaceRegistrationRejectsLegacyIdentities(t *testing.T) {
+	targetURL := "http://127.0.0.1:12345/services/catalog"
+	otherURL := "http://127.0.0.1:12346/other"
+	pin := "    resources:\n      - registry_id: tools-id\n        registry_slug: tools\n        kind: skill\n        name: protected\n        revision: rev-one\n        digest: " + testMarketplaceDigest + "\n        acquisition: mirror\n        direct: true\n"
+	for _, tc := range []struct {
+		name       string
+		root       string
+		fragment   string
+		requestURL string
+		instanceID string
+		wantCode   string
+	}{
+		{
+			name:       "stale instance",
+			root:       "marketplaces:\n  - url: " + targetURL + "\n    instance_id: current-instance\n",
+			requestURL: targetURL,
+			instanceID: "old-instance",
+			wantCode:   "config.edit.invalid-binding",
+		},
+		{
+			name:       "unknown endpoint",
+			root:       "marketplaces:\n  - url: " + otherURL + "\n    instance_id: other-instance\n",
+			requestURL: targetURL,
+			instanceID: "missing-instance",
+			wantCode:   "config.edit.invalid-binding",
+		},
+		{
+			name:       "duplicate identity",
+			root:       "marketplaces:\n  - url: " + targetURL + "\n    instance_id: duplicate-instance\n    alias: first\n  - url: " + targetURL + "\n    instance_id: duplicate-instance\n    alias: second\n",
+			requestURL: targetURL,
+			instanceID: "duplicate-instance",
+			wantCode:   "config.edit.ambiguous-source",
+		},
+		{
+			name:       "resource pins",
+			root:       "marketplaces:\n  - url: " + targetURL + "\n    instance_id: pinned-instance\n" + pin,
+			requestURL: targetURL,
+			instanceID: "pinned-instance",
+			wantCode:   "config.edit.source-in-use",
+		},
+		{
+			name:       "included only",
+			root:       "include: child.yaml\n",
+			fragment:   "marketplaces:\n  - url: " + targetURL + "\n    instance_id: included-instance\n",
+			requestURL: targetURL,
+			instanceID: "included-instance",
+			wantCode:   "config.edit.include-owned",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			path := filepath.Join(dir, "config.yaml")
+			fragmentPath := filepath.Join(dir, "child.yaml")
+			root := "apiVersion: agent-marketplace/v2\nharnesses: [devin]\n" + tc.root
+			if tc.fragment != "" {
+				layerEditorWrite(t, fragmentPath, tc.fragment)
+			}
+			layerEditorWrite(t, path, root)
+			editor := openTestEditor(t, UserPersonal, path, path)
+			err := editor.RemoveMarketplaceRegistration(MarketplaceEntry{URL: tc.requestURL, InstanceID: tc.instanceID})
+			if got := layerEditorErrCode(err); got != tc.wantCode {
+				t.Fatalf("remove error = %v, code = %q, want %q", err, got, tc.wantCode)
+			}
+			candidate, err := editor.Render()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if candidate.Changed || string(candidate.Bytes) != root {
+				t.Fatalf("rejected legacy Marketplace removal changed candidate:\n%s", candidate.Bytes)
+			}
+			if current, err := os.ReadFile(path); err != nil || string(current) != root {
+				t.Fatalf("rejected legacy Marketplace removal changed root: %q (err=%v)", current, err)
+			}
+			if tc.fragment != "" {
+				if current, err := os.ReadFile(fragmentPath); err != nil || string(current) != tc.fragment {
+					t.Fatalf("rejected legacy Marketplace removal changed fragment: %q (err=%v)", current, err)
+				}
+			}
+		})
+	}
+}
+
+func TestLayerEditorRemoveMarketplaceRegistrationRejectsV4Identity(t *testing.T) {
+	targetURL := "http://127.0.0.1:12345/services/catalog"
+	for _, tc := range []struct {
+		name     string
+		root     string
+		wantCode string
+	}{
+		{
+			name:     "ambiguous canonical endpoint",
+			root:     "apiVersion: agent-marketplace/v4\nsources:\n  first: {marketplace: " + targetURL + "/}\n  second: {marketplace: " + targetURL + "}\n",
+			wantCode: "config.edit.ambiguous-source",
+		},
+		{
+			name:     "unknown endpoint",
+			root:     "apiVersion: agent-marketplace/v4\nsources:\n  other: {marketplace: http://127.0.0.1:12346/other}\n",
+			wantCode: "config.edit.invalid-binding",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "config.yaml")
+			layerEditorWrite(t, path, tc.root)
+			editor := openTestEditor(t, UserPersonal, path, path)
+			err := editor.RemoveMarketplaceRegistration(MarketplaceEntry{URL: targetURL})
+			if got := layerEditorErrCode(err); got != tc.wantCode {
+				t.Fatalf("remove error = %v, code = %q, want %q", err, got, tc.wantCode)
+			}
+			candidate, err := editor.Render()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if candidate.Changed || string(candidate.Bytes) != tc.root {
+				t.Fatalf("rejected v4 Marketplace removal changed candidate:\n%s", candidate.Bytes)
+			}
+		})
 	}
 }

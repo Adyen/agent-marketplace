@@ -61,7 +61,7 @@ watch(open, () => {
 })
 
 function removable(source: SourceDescription) {
-  return source.kind === 'git' || source.kind === 'directory'
+  return source.kind === 'git' || source.kind === 'directory' || source.kind === 'marketplace'
 }
 
 async function add() {

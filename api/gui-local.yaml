@@ -177,11 +177,13 @@ paths:
         root. Marketplace endpoints are normalized and checked against the
         effective allowed_marketplaces policy before network access, then use
         the existing install registration path without selecting a Resource.
-        remove-source removes one user-personal Git or directory source by its
-        opaque id; Marketplace endpoint removal is not supported by this
-        action. Source additions and Git/directory removal use the shared
-        staged configuration-layer editor and change nothing else. Available
-        only in user-scope mode.
+        remove-source removes one user-personal Git, directory, or Marketplace
+        endpoint registration by its opaque id. Marketplace removal is limited
+        to root-owned registration-only endpoints; legacy resource pins, v4
+        resource groups, and include-owned entries are refused rather than lost.
+        Git/directory and Marketplace removal use the shared staged
+        configuration-layer editor and change nothing else. Available only in
+        user-scope mode.
       security:
         - launchToken: []
       requestBody:
@@ -198,7 +200,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/ActionAccepted'
         '400':
-          description: Unknown action, malformed request, blocked or invalid Marketplace endpoint, empty selection, newly introduced unsupported target, unsupported session mode, or uneditable root; code localapi.invalid_request, localapi.not_ready, or localapi.not_supported
+          description: Unknown action, malformed request, blocked or invalid Marketplace endpoint, empty selection, unknown/ambiguous/non-user/stale source id, newly introduced unsupported target, unsupported session mode, or uneditable root; code localapi.invalid_request, localapi.not_ready, or localapi.not_supported
           content:
             application/json:
               schema:
@@ -534,7 +536,7 @@ components:
           enum: [remove-source]
         id:
           type: string
-          description: Opaque id of one user-personal Git or directory source from the configuration projection; unknown, ambiguous, non-user, or Marketplace endpoint ids are rejected.
+          description: Opaque id of one user-personal Git, directory, or Marketplace endpoint registration from the configuration projection; unknown, ambiguous, non-user, or stale ids are rejected. Marketplace removal only succeeds for a root-owned registration without legacy resource pins or a v4 resource group.
     SaveTargetsActionRequest:
       type: object
       required: [action, targets]

@@ -62,6 +62,7 @@ type SourceDescription struct {
 	Ref           string
 	Path          string
 	SourceHarness string
+	InstanceID    string
 }
 
 type MarketplaceSource struct {
@@ -196,7 +197,7 @@ func (l LayerIntent) DescribeSources() []SourceDescription {
 		}
 	}
 	for _, entry := range l.legacy.Marketplaces {
-		descs = append(descs, SourceDescription{Kind: V4SourceMarketplace, Location: entry.URL})
+		descs = append(descs, SourceDescription{Kind: V4SourceMarketplace, Location: entry.URL, InstanceID: entry.InstanceID})
 	}
 	return descs
 }

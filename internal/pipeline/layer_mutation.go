@@ -39,6 +39,10 @@ func (m *LayerMutation) RemoveSource(binding config.SourceBinding) error {
 	return m.editor.RemoveSource(binding)
 }
 
+func (m *LayerMutation) RemoveMarketplaceRegistration(entry config.MarketplaceEntry) error {
+	return m.editor.RemoveMarketplaceRegistration(entry)
+}
+
 func (m *LayerMutation) ClearInstallExclude(entry config.RegistryEntry, locator config.ResourceLocator) error {
 	if m == nil || m.editor == nil {
 		return errors.New("layer mutation has no open editor")
