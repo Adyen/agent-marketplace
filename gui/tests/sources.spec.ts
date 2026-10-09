@@ -208,7 +208,8 @@ test('built GUI adds and removes a user directory source against the real user-s
   }
 })
 
-test('built GUI registers a Marketplace endpoint in the open Sources dialog', async ({ page }, testInfo) => {
+// spec: gui-configuration/removing-a-marketplace-endpoint-registration-changes-only-that-entry
+test('built GUI adds and removes a Marketplace endpoint registration in the open Sources dialog', async ({ page }, testInfo) => {
   if (!distIndexExists()) {
     throw new Error('built GUI assets missing: run `make gui-build` or `pnpm run build` in gui/ first')
   }
@@ -217,9 +218,13 @@ test('built GUI registers a Marketplace endpoint in the open Sources dialog', as
   const harness = await startHarness('user', { AM_LOCALAPI_USER_FIXTURE: 'marketplace' })
   const { bootstrap } = harness
   const endpoint = bootstrap.marketplaceEndpoint
-  const tracePath = testInfo.outputPath('source-visibility-trace.zip')
-  const formActionScreenshotPath = testInfo.outputPath('source-visibility-form-action.png')
-  const updatedListScreenshotPath = testInfo.outputPath('source-visibility-updated-list.png')
+  const artifactDirectory = process.env.AM_MARKETPLACE_REMOVAL_EVIDENCE_DIR
+  const artifactPath = (name: string) =>
+    artifactDirectory == null ? testInfo.outputPath(name) : join(artifactDirectory, name)
+  const tracePath = artifactPath('marketplace-removal-trace.zip')
+  const formActionScreenshotPath = artifactPath('marketplace-removal-form-action.png')
+  const marketplacePresentScreenshotPath = artifactPath('marketplace-removal-present.png')
+  const marketplaceRemovedScreenshotPath = artifactPath('marketplace-removal-removed.png')
   let tracing = false
 
   try {
@@ -340,7 +345,7 @@ test('built GUI registers a Marketplace endpoint in the open Sources dialog', as
     await expect(location).toBeEnabled()
     await expect(dialog).toBeVisible()
     await userSources.scrollIntoViewIfNeeded()
-    await page.screenshot({ path: updatedListScreenshotPath, fullPage: true })
+    await userSources.screenshot({ path: marketplacePresentScreenshotPath })
     const updatedListMetrics = await sourceListVisibility(page, dialog, userSources, longLocation)
     expect(updatedListMetrics).toMatchObject({
       kindAboveLocation: true,
@@ -366,6 +371,59 @@ test('built GUI registers a Marketplace endpoint in the open Sources dialog', as
     expect(
       xdgDirs.map((dir) => (existsSync(dir) ? readdirSync(dir).sort().join(',') : '<absent>')),
     ).not.toContain('devin')
+
+    const removeButton = userSources.getByRole('button', { name: `Remove source ${endpoint}` })
+    await expect(removeButton).toBeVisible({ timeout: 5_000 })
+    const removeMetrics = await actionVisibility(page, dialog, removeButton, 'Remove source')
+    expect(removeMetrics).toMatchObject({ insideDialog: true, insideViewport: true, hittable: true })
+    const confirmation = dialog.getByRole('region', { name: 'Confirm removal' })
+    const notifications = page.getByLabel('Notifications')
+    await expect(notifications.getByText('mutation complete')).toHaveCount(0, { timeout: 10_000 })
+
+    await removeButton.press('Enter')
+    await expect(confirmation).toBeVisible()
+    const cancelRemove = dialog.getByRole('button', { name: 'Cancel remove' })
+    const cancelRemoveMetrics = await actionVisibility(page, dialog, cancelRemove, 'Cancel remove')
+    expect(cancelRemoveMetrics).toMatchObject({ insideDialog: true, insideViewport: true, hittable: true })
+    await cancelRemove.press('Enter')
+    await expect(confirmation).toHaveCount(0)
+    await expect(userSources).toContainText(endpoint)
+    expect(await readFile(userConfigPath, 'utf8')).toBe(expectedRoot)
+
+    await removeButton.press('Enter')
+    await expect(confirmation).toBeVisible()
+    const confirmRemove = dialog.getByRole('button', { name: 'Confirm remove' })
+    const confirmRemoveMetrics = await actionVisibility(page, dialog, confirmRemove, 'Confirm remove')
+    expect(confirmRemoveMetrics).toMatchObject({ insideDialog: true, insideViewport: true, hittable: true })
+    await confirmRemove.press('Enter')
+
+    await expect(userSources).not.toContainText(endpoint, { timeout: 60_000 })
+    await expect(notifications.getByText('mutation complete').last()).toBeVisible({ timeout: 60_000 })
+    await expect(dialog.getByText('mutation running')).toHaveCount(0)
+    await expect(addButton).toBeEnabled()
+    await expect(location).toBeEnabled()
+    await expect(dialog).toBeVisible()
+    await expect.poll(async () => await readFile(userConfigPath, 'utf8'), { timeout: 60_000 }).toBe(original)
+    expect(await readFile(fragmentPath, 'utf8')).toBe(fragment)
+    expect(await readFile(orgConfigPath, 'utf8')).toBe(orgBefore)
+    expect(await readFile(repoConfigPath, 'utf8')).toBe(repoBefore)
+    expect(await readFile(repoLocalPath, 'utf8')).toBe(repoLocalBefore)
+    expect(existsSync(codexHome)).toBe(false)
+    expect(existsSync(join(home, '.devin'))).toBe(false)
+    expect(
+      xdgDirs.map((dir) => (existsSync(dir) ? readdirSync(dir).sort().join(',') : '<absent>')),
+    ).not.toContain('devin')
+    const removedListMetrics = await sourceListVisibility(page, dialog, userSources, longLocation)
+    expect(removedListMetrics).toMatchObject({
+      kindAboveLocation: true,
+      locationWithinDialog: true,
+      dialogHasNoHorizontalOverflow: true,
+      sourcesHaveNoHorizontalOverflow: true,
+      pageHasNoHorizontalOverflow: true,
+    })
+    expect(removedListMetrics.locationLines).toBeGreaterThan(1)
+    await userSources.scrollIntoViewIfNeeded()
+    await userSources.screenshot({ path: marketplaceRemovedScreenshotPath })
   } finally {
     if (tracing) {
       await page.context().tracing.stop({ path: tracePath }).catch(() => undefined)

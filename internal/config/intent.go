@@ -62,6 +62,7 @@ type SourceDescription struct {
 	Ref           string
 	Path          string
 	SourceHarness string
+	InstanceID    string
 }
 
 type MarketplaceSource struct {

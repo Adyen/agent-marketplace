@@ -253,7 +253,7 @@ marketplaces:
 	wantLegacy := []SourceDescription{
 		{Kind: V4SourceGit, Location: "https://example.com/legacy.git", Ref: "v1", Path: "sub/dir", SourceHarness: "claude"},
 		{Kind: V4SourceDirectory, Location: filepath.Join(dir, "local-regs"), SourceHarness: "windsurf"},
-		{Kind: V4SourceMarketplace, Location: "https://mp.example"},
+		{Kind: V4SourceMarketplace, Location: "https://mp.example", InstanceID: "main"},
 	}
 	if got := ll.DescribeSources(); !reflect.DeepEqual(got, wantLegacy) {
 		t.Fatalf("legacy described sources = %#v, want %#v", got, wantLegacy)

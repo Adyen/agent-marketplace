@@ -37,7 +37,7 @@ type sourceDescriptionDTO struct {
 
 func (a *API) sourceID(scope string, desc config.SourceDescription) string {
 	mac := hmac.New(sha256.New, []byte(a.token))
-	data, _ := json.Marshal([6]string{scope, string(desc.Kind), desc.Location, desc.Ref, desc.Path, desc.SourceHarness})
+	data, _ := json.Marshal([7]string{scope, string(desc.Kind), desc.Location, desc.Ref, desc.Path, desc.SourceHarness, desc.InstanceID})
 	_, _ = mac.Write(data)
 	return hex.EncodeToString(mac.Sum(nil))
 }
@@ -381,6 +381,15 @@ func sourceEntry(desc config.SourceDescription) config.RegistryEntry {
 	}
 }
 
+func sourceRemovalSupported(kind config.SourceKind) bool {
+	switch kind {
+	case config.V4SourceGit, config.V4SourceDirectory, config.V4SourceMarketplace:
+		return true
+	default:
+		return false
+	}
+}
+
 func validGitLocation(location string) bool {
 	if err := giturl.ValidateURL(location); err != nil {
 		return false
@@ -505,7 +514,7 @@ func (a *API) handleSourceMutation(w http.ResponseWriter, r *http.Request, req c
 		for _, desc := range user.DescribeSources() {
 			if a.sourceID("user", desc) == req.id {
 				matches++
-				if desc.Kind != config.V4SourceGit && desc.Kind != config.V4SourceDirectory {
+				if !sourceRemovalSupported(desc.Kind) {
 					matches++
 				}
 			}
@@ -562,6 +571,7 @@ func (a *API) handleSourceMutation(w http.ResponseWriter, r *http.Request, req c
 				return fmt.Errorf("%w: user configuration changed while staging", dependencytxn.ErrGenerationConflict)
 			}
 			var entry config.RegistryEntry
+			var removal config.SourceDescription
 			switch req.action {
 			case "add-source":
 				var valid bool
@@ -576,11 +586,10 @@ func (a *API) handleSourceMutation(w http.ResponseWriter, r *http.Request, req c
 						matches = append(matches, desc)
 					}
 				}
-				if len(matches) != 1 ||
-					(matches[0].Kind != config.V4SourceGit && matches[0].Kind != config.V4SourceDirectory) {
+				if len(matches) != 1 || !sourceRemovalSupported(matches[0].Kind) {
 					return fmt.Errorf("%w: source descriptor changed while staging", dependencytxn.ErrGenerationConflict)
 				}
-				entry = sourceEntry(matches[0])
+				removal = matches[0]
 			}
 			return pipeline.EditLayerAtPath(config.LayerTarget{
 				Source:        config.UserPersonal,
@@ -591,7 +600,10 @@ func (a *API) handleSourceMutation(w http.ResponseWriter, r *http.Request, req c
 					_, err := m.EnsureRegistry(entry)
 					return err
 				}
-				binding, found, err := m.LookupRegistry(entry)
+				if removal.Kind == config.V4SourceMarketplace {
+					return m.RemoveMarketplaceRegistration(config.MarketplaceEntry{URL: removal.Location, InstanceID: removal.InstanceID})
+				}
+				binding, found, err := m.LookupRegistry(sourceEntry(removal))
 				if err != nil {
 					return err
 				}
