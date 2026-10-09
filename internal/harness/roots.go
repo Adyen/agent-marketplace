@@ -367,12 +367,9 @@ func appendUnique(list []string, rel string) []string {
 // exactly as the descriptor declares it.
 func appendAggregateFiles(set *AggregateFileSet, prefix string, aggregates []targetmeta.NativeAggregate) {
 	for _, aggregate := range aggregates {
-		// AggregateFiles must name the files the compilers merge into
-		// today: while the native write switch is pending, a hook
-		// aggregate's emitted file is its declared legacy location (the
-		// plugin-layout file the compilers still emit), not the declared
-		// native file it will move to. This keeps backup coverage exactly
-		// equal to produced output in both phases.
+		// AggregateFiles covers the default compilation paths. Native hook
+		// output has a separate aggregation route, while default hook
+		// compilation keeps the declared legacy location.
 		project, user := aggregate.Project.Path, aggregate.User.Path
 		if aggregate.Kind == ir.KindHook {
 			if len(aggregate.Project.Legacy) > 0 {

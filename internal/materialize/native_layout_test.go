@@ -102,8 +102,7 @@ func TestNativeLayoutMatchesCompiledArtifactPaths(t *testing.T) {
 			aggregate, hasAggregate := targetmeta.NativeAggregateFileForScope(tt.target, kind, tt.machineScope)
 			if hasAggregate {
 				predicted[aggregate.Path] = true
-				// Declared legacy locations predict output too: until the
-				// native write switch the compilers emit there.
+				// Declared legacy locations also predict default compilation output.
 				for _, legacy := range aggregate.Legacy {
 					predicted[legacy] = true
 				}

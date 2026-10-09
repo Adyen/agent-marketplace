@@ -56,7 +56,7 @@ For a vendor update, change the embedded catalog and prove it with an independen
 2. **Update hook environment names or events.** In `hookpolicy/catalogs/<harness>.yaml`, put the name emitted by the harness first and retain names it still sets. Add events as native-only unless the vendor documents the same timing and blocking role as an existing canonical event.
 3. **Add one independent fixture.** Put a cross-harness case in `hookpolicy/testdata/conversions.yaml` under `matchers`, `events`, `env`, `timeouts`, or `allow_lists`. Write the expected output or diagnostic by hand rather than deriving it from the resolver or catalog.
 4. **Run local checks.** From the repository root, run `make catalog-docs`, then `make catalog-check`. Both run offline. The check validates catalogs, fixtures, compiler matrix goldens, and freshness of `site/docs/reference/hook-and-tool-names.md`.
-5. **Review evidence drift.** When an audit reports `source.evidence-changed`, re-read the first-party source before updating its SHA baseline. The nightly audit does not yet include hook/tool sources; task 8.2 adds them, so verify those refs manually until then.
+5. **Review evidence drift.** When an audit reports `source.evidence-changed`, re-read the first-party source before updating its SHA baseline.
 6. **Review output changes.** Changing an actively tested native spelling may require deliberate compiler-matrix and golden updates. Real changes are not limited to a YAML entry, one fixture line, and the generated reference.
 
 ## Investigate nightly model drift
