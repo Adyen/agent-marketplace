@@ -86,7 +86,7 @@ Security.
 
 ### With Go
 
-With Go 1.26.6 or newer:
+With Go 1.26.9 or newer:
 
 ```bash
 go install github.com/Adyen/agent-marketplace/cmd/agent-marketplace@latest
@@ -98,7 +98,7 @@ select the `v4.x.x` tags for this module path. Go places the binary in
 
 ### Build from source
 
-Building from source also requires Go 1.26.6 or newer. To build a release,
+Building from source also requires Go 1.26.9 or newer. To build a release,
 check out its tag first (for example `git checkout v4.0.9`).
 
 ```bash
