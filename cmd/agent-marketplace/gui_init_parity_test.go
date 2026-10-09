@@ -9,11 +9,13 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/localapi"
+	"github.com/Adyen/agent-marketplace/internal/pipeline"
 	"github.com/Adyen/agent-marketplace/internal/session"
 )
 
@@ -75,6 +77,7 @@ func runInteractiveInit(t *testing.T, home, answers string) []byte {
 		t.Fatal(err)
 	}
 	t.Setenv("HOME", home)
+	t.Setenv("CODEX_HOME", filepath.Join(home, ".codex"))
 
 	prev := isTerminal
 	isTerminal = func(fd uintptr) bool { return true }
@@ -101,14 +104,19 @@ func runInteractiveInit(t *testing.T, home, answers string) []byte {
 	return data
 }
 
-func guiInitializeBytes(t *testing.T, home, body string) []byte {
+func guiInitializeBytes(t *testing.T, home, body string, lifecycles ...session.DependencyLifecycle) []byte {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Join(home, ".factory"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("HOME", home)
+	t.Setenv("CODEX_HOME", filepath.Join(home, ".codex"))
+	lifecycle := session.DependencyLifecycle{}
+	if len(lifecycles) > 0 {
+		lifecycle = lifecycles[0]
+	}
 
-	api, err := localapi.NewUser(context.Background(), home, session.DependencyLifecycle{}, nil)
+	api, err := localapi.NewUser(context.Background(), home, lifecycle, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -198,5 +206,78 @@ func TestGUIInitializationMatchesInteractiveInit(t *testing.T) {
 				t.Fatalf("GUI init bytes = %q, want %q", guiBytes, tc.wantFile)
 			}
 		})
+	}
+}
+
+// spec: gui-first-run/harness-targets-and-consent-match-init-output
+// spec: gui-first-run/optional-source-step-uses-the-configuration-form
+func TestGUIInitializationWritesInitBytesBeforeOptionalSourceMutation(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	config.SetTestOrganizationConfigPath(t, filepath.Join(t.TempDir(), "missing-organization.yaml"))
+
+	cliHome := t.TempDir()
+	cliBytes := runInteractiveInit(t, cliHome, "y\nn\n")
+	guiHome := t.TempDir()
+	sourceDir := filepath.Join(guiHome, "optional-source")
+	if err := os.MkdirAll(filepath.Join(sourceDir, "queued"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(sourceDir, "queued", "SKILL.md"), []byte("---\nname: queued\ndescription: Queued\n---\n# Queued\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	userConfig := filepath.Join(guiHome, ".agents", "config.yaml")
+	beforeMutation := make(chan []byte, 1)
+	var mutations atomic.Int32
+	runtime := session.RuntimeLifecycle()
+	lifecycle := session.DependencyLifecycle{
+		Sync:   runtime.Sync,
+		Update: runtime.Update,
+		Mutate: func(ctx context.Context, workspace pipeline.Workspace, mutation func(pipeline.ConfigPathMapper) error) error {
+			if mutations.Add(1) == 1 {
+				data, err := os.ReadFile(userConfig)
+				if err != nil {
+					return err
+				}
+				beforeMutation <- append([]byte(nil), data...)
+			}
+			return runtime.Mutate(ctx, workspace, mutation)
+		},
+	}
+	body, err := json.Marshal(map[string]any{
+		"action":  "initialize",
+		"targets": []string{"factory"},
+		"consent": false,
+		"sources": []map[string]string{{"kind": "directory", "location": sourceDir}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	guiBytes := guiInitializeBytes(t, guiHome, string(body), lifecycle)
+	select {
+	case initializedRoot := <-beforeMutation:
+		if !bytes.Equal(initializedRoot, cliBytes) {
+			t.Fatalf("root immediately before first optional source mutation = %q, want interactive init bytes %q", initializedRoot, cliBytes)
+		}
+	case <-time.After(30 * time.Second):
+		t.Fatal("optional directory source mutation did not observe the initialized root")
+	}
+	if got := mutations.Load(); got != 1 {
+		t.Fatalf("optional source lifecycle mutation count = %d, want one", got)
+	}
+	expectedRoot := "apiVersion: agent-marketplace/v4\nharnesses:\n  - factory\nsources:\n  optional-source:\n    directory: " + sourceDir + "\n"
+	if string(guiBytes) != expectedRoot {
+		t.Fatalf("GUI root after queued directory source = %q, want %q", guiBytes, expectedRoot)
+	}
+	v4, err := config.LoadV4ConfigFromPath(userConfig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(v4.Sources) != 1 || len(v4.Groups) != 0 || len(v4.Requests) != 0 {
+		t.Fatalf("source-only root selected Resources: sources=%#v groups=%#v requests=%#v", v4.Sources, v4.Groups, v4.Requests)
+	}
+	if _, err := os.Stat(filepath.Join(guiHome, ".factory", "skills")); !os.IsNotExist(err) {
+		t.Fatalf("source-only initialization materialized Resources: %v", err)
 	}
 }

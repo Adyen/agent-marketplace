@@ -811,3 +811,103 @@ resources:
 		t.Fatalf("parsed sources = %#v, want A bytes", li.v4.Sources)
 	}
 }
+
+func TestOrganizationIntentReadsKeepDistinctRequestedAliases(t *testing.T) {
+	writeOrgFixture := func(t *testing.T, root string) (fragmentPath string) {
+		t.Helper()
+		fragmentPath = filepath.Join(filepath.Dir(root), "fragment.yaml")
+		layerEditorWrite(t, fragmentPath, "telemetry: {level: off}\n")
+		layerEditorWrite(t, root, "apiVersion: agent-marketplace/v4\ninclude: fragment.yaml\nharnesses: [claude]\n")
+		return fragmentPath
+	}
+	organizationLayerReads := func(t *testing.T, orgPath string) []ConfigRead {
+		t.Helper()
+		intent := ReadIntent(context.Background(), LoadEffectiveOptions{
+			OrganizationPath: orgPath,
+			GlobalPath:       filepath.Join(t.TempDir(), "missing-global.yaml"),
+			RepoPath:         filepath.Join(t.TempDir(), "missing-repo.yaml"),
+			LocalPath:        filepath.Join(t.TempDir(), "missing-local.yaml"),
+		})
+		if len(intent.Errors) != 0 {
+			t.Fatalf("read organization fixture: %v", intent.Errors)
+		}
+		li := intent.Layers[Organization]
+		if err := li.Err(); err != nil {
+			t.Fatal(err)
+		}
+		if len(li.Reads) != 2 {
+			t.Fatalf("organization reads = %#v, want root and fragment", li.Reads)
+		}
+		return li.Reads
+	}
+	assertDistinctAliases := func(t *testing.T, orgPath, fragmentPath string) {
+		t.Helper()
+		reads := organizationLayerReads(t, orgPath)
+		rootCanonical, err := canonicalConfigPath(orgPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		fragmentCanonical, err := canonicalConfigPath(fragmentPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		orgAbs, err := filepath.Abs(orgPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		fragmentRequested, err := filepath.Abs(filepath.Join(filepath.Dir(orgPath), "fragment.yaml"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		byRequested := make(map[string]ConfigRead, len(reads))
+		for _, read := range reads {
+			if _, dup := byRequested[read.RequestedPath]; dup {
+				t.Fatalf("requested alias %q shared by multiple reads %#v", read.RequestedPath, reads)
+			}
+			byRequested[read.RequestedPath] = read
+		}
+		rootRead, ok := byRequested[orgAbs]
+		if !ok || rootRead.Path != rootCanonical {
+			t.Fatalf("root read = %#v, want canonical %q requested %q in %#v", rootRead, rootCanonical, orgAbs, reads)
+		}
+		fragmentRead, ok := byRequested[fragmentRequested]
+		if !ok || fragmentRead.Path != fragmentCanonical {
+			t.Fatalf("fragment read = %#v, want canonical %q requested %q in %#v", fragmentRead, fragmentCanonical, fragmentRequested, reads)
+		}
+	}
+
+	t.Run("v4 root include", func(t *testing.T) {
+		orgPath := filepath.Join(t.TempDir(), "organization.yaml")
+		assertDistinctAliases(t, orgPath, writeOrgFixture(t, orgPath))
+	})
+	t.Run("v4 root through logical path", func(t *testing.T) {
+		orgPath := filepath.Join(t.TempDir(), "organization.yaml")
+		writeOrgFixture(t, orgPath)
+		orgAbs, err := filepath.Abs(orgPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		rootCanonical, err := canonicalConfigPath(orgPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if rootCanonical == orgAbs {
+			t.Skip("fixture path is already canonical; no logical alias to exercise")
+		}
+		assertDistinctAliases(t, orgPath, filepath.Join(filepath.Dir(orgPath), "fragment.yaml"))
+		reads := organizationLayerReads(t, orgPath)
+		for _, read := range reads {
+			if read.Path == rootCanonical && read.RequestedPath != orgAbs {
+				t.Fatalf("logical root alias lost: read = %#v, want requested %q", read, orgAbs)
+			}
+		}
+	})
+	t.Run("legacy root include", func(t *testing.T) {
+		dir := t.TempDir()
+		orgPath := filepath.Join(dir, "organization.yaml")
+		fragmentPath := filepath.Join(dir, "fragment.yaml")
+		layerEditorWrite(t, fragmentPath, "harnesses: [claude]\n")
+		layerEditorWrite(t, orgPath, "apiVersion: agent-marketplace/v2\ninclude: fragment.yaml\nharnesses: [devin]\n")
+		assertDistinctAliases(t, orgPath, fragmentPath)
+	})
+}

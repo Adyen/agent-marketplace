@@ -1,14 +1,19 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
+import type { SourceDescription, SourceInput } from './api/client'
 import type { WorkspaceController } from './controller'
+import SourceForm from './SourceForm.vue'
+import SourceList from './SourceList.vue'
 
 const props = defineProps<{ controller: WorkspaceController }>()
 const open = defineModel<boolean>('open', { default: false })
 const emit = defineEmits<{ cancel: [] }>()
 
-const step = ref<'targets' | 'consent'>('targets')
+const step = ref<'targets' | 'consent' | 'sources'>('targets')
 const draft = ref<Set<string>>(new Set())
 const consent = ref<boolean | null>(null)
+const pendingSources = ref<SourceInput[]>([])
+const formEpoch = ref(0)
 const pending = ref(false)
 const actionError = ref<string | null>(null)
 let submitted = false
@@ -17,12 +22,24 @@ const configuration = computed(() => props.controller.state.configuration)
 const canInitialize = computed(() => configuration.value?.canInitialize === true)
 const detectionUnavailable = computed(() => configuration.value?.detectionUnavailable === true)
 const needsConsent = computed(() => configuration.value?.consentRequired === true)
+const showSources = computed(() => (configuration.value?.organizationSources ?? []).length === 0)
 const options = computed(() => configuration.value?.supportedTargets ?? [])
 const submitting = computed(
   () =>
     pending.value ||
     props.controller.state.operation != null ||
     props.controller.state.requesting,
+)
+const sourceFieldsDisabled = computed(() => submitting.value || !canInitialize.value)
+const pendingDescriptions = computed<SourceDescription[]>(() =>
+  pendingSources.value.map((source, index) => ({
+    id: `draft-${index}`,
+    kind: source.kind,
+    location: source.location,
+    ref: source.kind === 'git' ? source.ref : '',
+    path: source.kind === 'git' ? (source.path ?? '') : '',
+    sourceHarness: '',
+  })),
 )
 
 watch(open, (isOpen) => {
@@ -36,6 +53,8 @@ watch(open, (isOpen) => {
   step.value = 'targets'
   consent.value = null
   actionError.value = null
+  pendingSources.value = []
+  formEpoch.value += 1
   draft.value = new Set(configuration.value?.detectedTargets ?? [])
 })
 
@@ -60,6 +79,26 @@ function cancel() {
   open.value = false
 }
 
+function nextFromTargets() {
+  step.value = needsConsent.value ? 'consent' : 'sources'
+}
+
+function backFromSources() {
+  step.value = needsConsent.value ? 'consent' : 'targets'
+}
+
+function addPending(source: SourceInput) {
+  pendingSources.value = [...pendingSources.value, source]
+  formEpoch.value += 1
+}
+
+function removePending(id: string) {
+  const index = pendingDescriptions.value.findIndex((source) => source.id === id)
+  if (index >= 0) {
+    pendingSources.value = pendingSources.value.filter((_, i) => i !== index)
+  }
+}
+
 async function finish() {
   const targets = selectedTargets()
   if (!canInitialize.value || targets.length === 0 || (needsConsent.value && consent.value === null)) {
@@ -69,6 +108,7 @@ async function finish() {
   const ok = await props.controller.initialize(
     targets,
     needsConsent.value ? consent.value === true : undefined,
+    pendingSources.value,
   )
   pending.value = false
   if (ok) {
@@ -86,6 +126,7 @@ async function finish() {
     title="Set up Agent Marketplace"
     aria-label="Set up Agent Marketplace"
     :dismissible="!submitting"
+    :ui="{ content: 'overflow-y-auto' }"
   >
     <template #content>
       <section class="settings" aria-label="Set up Agent Marketplace">
@@ -110,11 +151,11 @@ async function finish() {
           <div class="settings__actions">
             <UButton label="Cancel" color="neutral" variant="outline" aria-label="Cancel" :disabled="submitting" @click="cancel" />
             <UButton
-              v-if="needsConsent"
+              v-if="needsConsent || showSources"
               label="Next"
               aria-label="Next"
               :disabled="!canInitialize || draft.size === 0 || submitting"
-              @click="step = 'consent'"
+              @click="nextFromTargets"
             />
             <UButton
               v-else
@@ -126,7 +167,7 @@ async function finish() {
           </div>
         </template>
 
-        <template v-else>
+        <template v-else-if="step === 'consent'">
           <p>Agent Marketplace can send basic telemetry: CLI version, OS, architecture, command name (not arguments), harness types, outcome, and coarse duration.</p>
           <p>It does not include resource names, URLs, paths, errors, or prompts.</p>
           <p>Project destination: {{ configuration?.telemetryDestination }}</p>
@@ -158,9 +199,44 @@ async function finish() {
             <UButton label="Back" color="neutral" variant="outline" aria-label="Back" :disabled="submitting" @click="step = 'targets'" />
             <UButton label="Cancel" color="neutral" variant="outline" aria-label="Cancel" :disabled="submitting" @click="cancel" />
             <UButton
+              v-if="showSources"
+              label="Next"
+              aria-label="Next"
+              :disabled="!canInitialize || consent === null || submitting"
+              @click="step = 'sources'"
+            />
+            <UButton
+              v-else
               label="Finish setup"
               aria-label="Finish setup"
               :disabled="!canInitialize || consent === null || submitting"
+              @click="finish"
+            />
+          </div>
+        </template>
+
+        <template v-else>
+          <p>Sources will be added after initialization when Finish setup is pressed.</p>
+          <SourceForm :key="formEpoch" :disabled="sourceFieldsDisabled" @add="addPending" />
+          <SourceList title="Pending sources" :sources="pendingDescriptions" :organization="false">
+            <template #actions="{ source }">
+              <UButton
+                label="Remove"
+                color="neutral"
+                variant="outline"
+                :aria-label="`Remove source ${source.location}`"
+                :disabled="submitting"
+                @click="removePending(source.id)"
+              />
+            </template>
+          </SourceList>
+          <div class="settings__actions">
+            <UButton label="Back" color="neutral" variant="outline" aria-label="Back" :disabled="submitting" @click="backFromSources" />
+            <UButton label="Cancel" color="neutral" variant="outline" aria-label="Cancel" :disabled="submitting" @click="cancel" />
+            <UButton
+              label="Finish setup"
+              aria-label="Finish setup"
+              :disabled="!canInitialize || submitting"
               @click="finish"
             />
           </div>

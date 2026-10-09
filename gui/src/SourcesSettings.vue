@@ -2,15 +2,13 @@
 import { computed, ref, watch } from 'vue'
 import type { Configuration, SourceDescription, SourceInput } from './api/client'
 import type { WorkspaceController } from './controller'
+import SourceForm from './SourceForm.vue'
 import SourceList from './SourceList.vue'
 
 const props = defineProps<{ controller: WorkspaceController }>()
 const open = defineModel<boolean>('open', { default: false })
 
-const kind = ref<SourceInput['kind']>('directory')
-const location = ref('')
-const refName = ref('')
-const subpath = ref('')
+const formEpoch = ref(0)
 const pendingRemove = ref<SourceDescription | null>(null)
 const loading = ref(false)
 const actionError = ref<string | null>(null)
@@ -25,18 +23,9 @@ const mutationErrors = computed(() =>
 )
 const editable = computed(() => configuration.value?.editable === true)
 const fieldsDisabled = computed(() => loading.value || busy.value || !editable.value)
-const addDisabled = computed(
-  () =>
-    fieldsDisabled.value ||
-    location.value === '' ||
-    (kind.value === 'git' && refName.value === ''),
-)
 
 function resetDraft() {
-  kind.value = 'directory'
-  location.value = ''
-  refName.value = ''
-  subpath.value = ''
+  formEpoch.value += 1
   pendingRemove.value = null
 }
 
@@ -64,19 +53,8 @@ function removable(source: SourceDescription) {
   return source.kind === 'git' || source.kind === 'directory' || source.kind === 'marketplace'
 }
 
-async function add() {
+async function add(source: SourceInput) {
   pendingRemove.value = null
-  const source: SourceInput =
-    kind.value === 'git'
-      ? {
-          kind: 'git',
-          location: location.value,
-          ref: refName.value,
-          ...(subpath.value === '' ? {} : { path: subpath.value }),
-        }
-      : kind.value === 'marketplace'
-        ? { kind: 'marketplace', location: location.value }
-        : { kind: 'directory', location: location.value }
   if (await props.controller.addSource(source)) {
     actionError.value = null
     return
@@ -159,43 +137,7 @@ function cancel() {
 
           <section class="settings__group" aria-label="Add user source">
             <h3>Add a source</h3>
-            <fieldset :disabled="fieldsDisabled">
-              <fieldset class="settings__group" aria-label="Source kind">
-                <legend>Source kind</legend>
-                <label class="settings__option">
-                  <input v-model="kind" type="radio" name="source-kind" value="directory" />
-                  Directory registry
-                </label>
-                <label class="settings__option">
-                  <input v-model="kind" type="radio" name="source-kind" value="git" />
-                  Git registry
-                </label>
-                <label class="settings__option">
-                  <input v-model="kind" type="radio" name="source-kind" value="marketplace" />
-                  Marketplace endpoint
-                </label>
-              </fieldset>
-              <label class="settings__option">
-                Location
-                <input v-model="location" aria-label="Source location" type="text" />
-              </label>
-              <template v-if="kind === 'git'">
-                <label class="settings__option">
-                  Ref
-                  <input v-model="refName" aria-label="Source ref" type="text" />
-                </label>
-                <label class="settings__option">
-                  Subpath
-                  <input v-model="subpath" aria-label="Source subpath" type="text" />
-                </label>
-              </template>
-              <UButton
-                label="Add source"
-                aria-label="Add source"
-                :disabled="addDisabled"
-                @click="add"
-              />
-            </fieldset>
+            <SourceForm :key="formEpoch" :disabled="fieldsDisabled" @add="add" />
           </section>
         </template>
         <div class="settings__actions">

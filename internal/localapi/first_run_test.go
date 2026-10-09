@@ -9,8 +9,10 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -20,9 +22,13 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/session"
 )
 
-func newFirstRunAPI(t *testing.T, home string) *API {
+func newFirstRunAPI(t *testing.T, home string, lifecycles ...session.DependencyLifecycle) *API {
 	t.Helper()
-	api, err := NewUser(context.Background(), home, session.DependencyLifecycle{}, nil)
+	lifecycle := session.DependencyLifecycle{}
+	if len(lifecycles) > 0 {
+		lifecycle = lifecycles[0]
+	}
+	api, err := NewUser(context.Background(), home, lifecycle, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -42,6 +48,23 @@ func firstRunHome(t *testing.T) (home, userConfig string) {
 		t.Fatal(err)
 	}
 	return home, filepath.Join(home, ".agents", "config.yaml")
+}
+
+func assertNoFirstRunResources(t *testing.T, home string) {
+	t.Helper()
+	for _, path := range []string{
+		filepath.Join(home, ".devin", "skills"),
+		filepath.Join(home, ".claude", "skills"),
+		filepath.Join(home, ".factory", "skills"),
+		filepath.Join(home, ".codex", "agents"),
+		filepath.Join(home, ".agents", "skills"),
+		filepath.Join(os.Getenv("CODEX_HOME"), "agents"),
+		filepath.Join(os.Getenv("XDG_CONFIG_HOME"), "devin"),
+	} {
+		if _, err := os.Lstat(path); !os.IsNotExist(err) {
+			t.Fatalf("first-run source mutation created native output %s (err=%v)", path, err)
+		}
+	}
 }
 
 // spec: gui-first-run/absent-user-personal-root-starts-first-run
@@ -286,8 +309,28 @@ func TestFirstRunInitializeRejectsInvalidRequests(t *testing.T) {
 		`{"action":"Initialize","targets":["devin"],"consent":true}`,
 		`{"action":"initialize","targets":["devin"],"Consent":true}`,
 		`{"action":"initialize","targets":["devin"],"consent":true} trailing`,
+		`{"action":"initialize","targets":["devin"],"consent":false,"sources":null}`,
+		`{"action":"initialize","targets":["devin"],"consent":false,"sources":"source"}`,
+		`{"action":"initialize","targets":["devin"],"consent":false,"sources":1}`,
+		`{"action":"initialize","targets":["devin"],"consent":false,"sources":{}}`,
+		`{"action":"initialize","targets":["devin"],"consent":false,"sources":[null]}`,
+		`{"action":"initialize","targets":["devin"],"consent":false,"sources":[1]}`,
+		`{"action":"initialize","targets":["devin"],"consent":false,"sources":["directory"]}`,
+		`{"action":"initialize","targets":["devin"],"consent":false,"sources":[{}]}`,
+		`{"action":"initialize","targets":["devin"],"consent":false,"sources":[{"kind":"directory","location":"/tmp/x","unknown":true}]}`,
+		`{"action":"initialize","targets":["devin"],"consent":false,"sources":[{"kind":"directory","location":"/tmp/x","Kind":"git"}]}`,
+		`{"action":"initialize","targets":["devin"],"consent":false,"sources":[{"kind":"directory","kind":"git","location":"/tmp/x"}]}`,
+		`{"action":"initialize","targets":["devin"],"consent":false,"sources":[],"Sources":[]}`,
+		`{"action":"initialize","targets":["devin"],"consent":false,"sources":[],"sources":[]}`,
+		`{"action":"initialize","targets":["devin"],"consent":false,"sources":[],"extra":true}`,
+		`{"action":"save-targets","targets":["devin"],"sources":[]}`,
+		`{"action":"save-targets","targets":["devin"],"sources":null}`,
 		`{"action":"save-targets","targets":["devin"],"consent":true}`,
 		`{"action":"save-targets","targets":[]}`,
+		`{"action":"add-source","source":{"kind":"directory","location":"/tmp/x"},"sources":[]}`,
+		`{"action":"add-source","source":{"kind":"directory","location":"/tmp/x"},"sources":null}`,
+		`{"action":"remove-source","id":"source-id","sources":[]}`,
+		`{"action":"remove-source","id":"source-id","sources":null}`,
 		`{"targets":["devin"],"consent":true}`,
 		`{}`,
 		``,
@@ -344,9 +387,17 @@ func TestFirstRunInitializeRejectsInvalidRequests(t *testing.T) {
 	if _, err := os.Lstat(userConfig); !os.IsNotExist(err) {
 		t.Fatal("rejected requests wrote the user root")
 	}
-	if _, err := os.Stat(filepath.Join(home, ".agents", "lock.yaml")); !os.IsNotExist(err) {
-		t.Fatal("rejected requests wrote a lock file")
+	for _, path := range []string{
+		filepath.Join(home, ".agents", "lock.yaml"),
+		filepath.Join(repo, ".agents", "lock.yaml"),
+		filepath.Join(repo, ".agents", "lock.local.yaml"),
+		filepath.Join(os.Getenv("XDG_STATE_HOME"), "agent-marketplace"),
+	} {
+		if _, err := os.Lstat(path); !os.IsNotExist(err) {
+			t.Fatalf("rejected requests wrote %s (err=%v)", path, err)
+		}
 	}
+	assertNoFirstRunResources(t, home)
 	if entries, err := os.ReadDir(home); err != nil || len(entries) != 0 {
 		t.Fatalf("rejected requests left entries under home: %v (err=%v)", entries, err)
 	}
@@ -394,6 +445,12 @@ func TestFirstRunInitializeWritesInitBytes(t *testing.T) {
 			name:     "declined",
 			body:     `{"action":"initialize","targets":["devin"],"consent":false}`,
 			replay:   `{"action":"initialize","targets":["devin"],"consent":false}`,
+			wantFile: "apiVersion: agent-marketplace/v4\nharnesses:\n  - devin\n",
+		},
+		{
+			name:     "empty source array",
+			body:     `{"action":"initialize","targets":["devin"],"consent":false,"sources":[]}`,
+			replay:   `{"action":"initialize","targets":["devin"],"consent":false,"sources":[]}`,
 			wantFile: "apiVersion: agent-marketplace/v4\nharnesses:\n  - devin\n",
 		},
 		{
@@ -641,4 +698,454 @@ func TestFirstRunInitializeBeforeStartupAnnouncesOperation(t *testing.T) {
 	if data, err := os.ReadFile(userConfig); err != nil || string(data) != "apiVersion: agent-marketplace/v4\nharnesses:\n  - devin\n" {
 		t.Fatalf("root bytes = %q (err=%v)", data, err)
 	}
+}
+
+// spec: gui-first-run/optional-source-step-uses-the-configuration-form
+func TestFirstRunInitializeAddsQueuedDirectoryAndMarketplaceSources(t *testing.T) {
+	home, repo := newUserAPIFixture(t, false)
+	if err := os.MkdirAll(filepath.Join(home, ".devin"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	userConfig := filepath.Join(home, ".agents", "config.yaml")
+	repoConfig := filepath.Join(repo, ".agents", "config.yaml")
+	repoLocal := filepath.Join(repo, ".agents", "config.local.yaml")
+	repoBefore, err := os.ReadFile(repoConfig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	localBefore, err := os.ReadFile(repoLocal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("TMPDIR", t.TempDir())
+	directory := filepath.Join(home, "queued-directory")
+	writeFile(t, filepath.Join(directory, "queued", "SKILL.md"), fixtureSkillBody)
+	endpoint := newMarketplaceEndpointTestServer(t, "/first-run/catalog", "first-run-marketplace", "", 0)
+	organizationPath := filepath.Join(t.TempDir(), "organization.yaml")
+	organizationFragmentPath := filepath.Join(filepath.Dir(organizationPath), "fragment.yaml")
+	organizationBytes := []byte("apiVersion: agent-marketplace/v4\ninclude: fragment.yaml\nharnesses: [claude]\n")
+	organizationFragmentBytes := []byte("telemetry: {level: off}\n")
+	writeFile(t, organizationPath, string(organizationBytes))
+	writeFile(t, organizationFragmentPath, string(organizationFragmentBytes))
+	config.SetTestOrganizationConfigPath(t, organizationPath)
+	api := newFirstRunAPI(t, home, session.RuntimeLifecycle())
+	events := streamEvents(t, api)
+
+	body, err := json.Marshal(map[string]any{
+		"action":  "initialize",
+		"targets": []string{"devin"},
+		"sources": []map[string]string{
+			{"kind": "directory", "location": directory},
+			{"kind": "marketplace", "location": endpoint.endpoint},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	status, decoded := initializeRequest(t, api, string(body))
+	if status != http.StatusAccepted {
+		t.Fatalf("initialize with optional sources status = %d, body = %v", status, decoded)
+	}
+	operation, ok := decoded["operation"].(map[string]any)
+	if !ok || operation["kind"] != string(session.OperationMutation) {
+		t.Fatalf("initialize operation = %v, want mutation", decoded["operation"])
+	}
+	acceptedID, ok := operation["id"].(float64)
+	if !ok || acceptedID <= 0 {
+		t.Fatalf("initialize operation id = %v, want positive id", operation["id"])
+	}
+	if got := notificationSeverity(t, awaitNotification(t, events)); got != "info" {
+		t.Fatalf("initialize with optional sources severity = %q, want info", got)
+	}
+	snapshot := postSnapshot(t, api)
+	if snapshot.Stage != "final" || snapshot.Operation != nil {
+		t.Fatalf("settled snapshot = %#v, want final idle", snapshot)
+	}
+	if snapshot.SettledOperation == nil || snapshot.SettledOperation.Kind != string(session.OperationMutation) || snapshot.SettledOperation.ID != uint64(acceptedID) {
+		t.Fatalf("settled operation = %#v, want accepted mutation %d", snapshot.SettledOperation, uint64(acceptedID))
+	}
+	metadataStatus, metadata := postRaw(t, api, "/api/configuration", "")
+	if metadataStatus != http.StatusOK || metadata["rootPresent"] != true || metadata["firstRun"] != false || metadata["editable"] != true {
+		t.Fatalf("post-initialize metadata = %d/%v", metadataStatus, metadata)
+	}
+	wantSources := map[string]bool{
+		"directory|" + directory + "|||":           true,
+		"marketplace|" + endpoint.endpoint + "|||": true,
+	}
+	if got := descSet(readUserSourceDescs(t, home)); !reflect.DeepEqual(got, wantSources) {
+		t.Fatalf("effective sources = %v, want exactly %v", got, wantSources)
+	}
+	v4, err := config.LoadV4ConfigFromPath(userConfig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(v4.Sources) != 2 || len(v4.Groups) != 0 || len(v4.Requests) != 0 {
+		t.Fatalf("optional source initialization selected Resources: sources=%#v groups=%#v requests=%#v", v4.Sources, v4.Groups, v4.Requests)
+	}
+	lockPath := filepath.Join(home, ".agents", "lock.yaml")
+	lockBytes, err := os.ReadFile(lockPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(lockBytes, marketplaceEndpointLock(endpoint.endpoint, "first-run-marketplace")) {
+		t.Fatalf("endpoint-only lock = %q", lockBytes)
+	}
+	if endpoint.requests.Load() == 0 {
+		t.Fatal("queued Marketplace endpoint did not reach its local fixture")
+	}
+	if after, err := os.ReadFile(organizationPath); err != nil || !bytes.Equal(after, organizationBytes) {
+		t.Fatalf("organization config changed: %q (err=%v)", after, err)
+	}
+	if after, err := os.ReadFile(organizationFragmentPath); err != nil || !bytes.Equal(after, organizationFragmentBytes) {
+		t.Fatalf("organization fragment changed: %q (err=%v)", after, err)
+	}
+	if after, err := os.ReadFile(repoConfig); err != nil || !bytes.Equal(after, repoBefore) {
+		t.Fatalf("repo config changed: %q (err=%v)", after, err)
+	}
+	if after, err := os.ReadFile(repoLocal); err != nil || !bytes.Equal(after, localBefore) {
+		t.Fatalf("local config changed: %q (err=%v)", after, err)
+	}
+	assertNoFirstRunResources(t, home)
+}
+
+func TestFirstRunInitializeSourcePreflightRejectsPolicyBeforeWrites(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		kind         string
+		policy       string
+		wantAllowed  bool
+		relocateHome bool
+	}{
+		{name: "empty registry policy blocks Git", kind: "git", policy: "allowed_registries: []\n"},
+		{name: "nil registry policy accepts Git preflight", kind: "git", wantAllowed: true},
+		{name: "matching registry policy accepts Git preflight", kind: "git", policy: "allowed_registries: ['.*']\n", wantAllowed: true},
+		{name: "empty Marketplace policy blocks endpoint", kind: "marketplace", policy: "allowed_marketplaces: []\n"},
+		{name: "relocated HOME rejects queued Marketplace before init", kind: "marketplace", relocateHome: true},
+		{name: "nil Marketplace policy accepts endpoint", kind: "marketplace", wantAllowed: true},
+		{name: "matching Marketplace policy accepts endpoint", kind: "marketplace", policy: "allowed_marketplaces: ['.*']\n", wantAllowed: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			home, repo := newUserAPIFixture(t, false)
+			if err := os.MkdirAll(filepath.Join(home, ".devin"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("TMPDIR", t.TempDir())
+			organizationPath := filepath.Join(t.TempDir(), "organization.yaml")
+			organizationBytes := []byte("apiVersion: agent-marketplace/v4\nharnesses: [claude]\ntelemetry: {level: off}\n" + tc.policy)
+			writeFile(t, organizationPath, string(organizationBytes))
+			config.SetTestOrganizationConfigPath(t, organizationPath)
+			userConfig := filepath.Join(home, ".agents", "config.yaml")
+			userLock := filepath.Join(home, ".agents", "lock.yaml")
+			repoConfig := filepath.Join(repo, ".agents", "config.yaml")
+			repoLocal := filepath.Join(repo, ".agents", "config.local.yaml")
+			repoBefore, err := os.ReadFile(repoConfig)
+			if err != nil {
+				t.Fatal(err)
+			}
+			localBefore, err := os.ReadFile(repoLocal)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			var source map[string]string
+			var requests atomic.Int32
+			var marketplace *marketplaceEndpointTestServer
+			var gitServer *httptest.Server
+			if tc.kind == "git" {
+				gitServer = httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					requests.Add(1)
+					http.NotFound(w, r)
+				}))
+				t.Cleanup(gitServer.Close)
+				source = map[string]string{"kind": "git", "location": gitServer.URL + "/repo.git", "ref": "main"}
+			} else {
+				marketplace = newMarketplaceEndpointTestServer(t, "/preflight/catalog", "preflight-marketplace", "", 0)
+				source = map[string]string{"kind": "marketplace", "location": marketplace.endpoint}
+			}
+			api := newFirstRunAPI(t, home, session.RuntimeLifecycle())
+			var decoyConfig string
+			var decoyBefore []byte
+			if tc.relocateHome {
+				decoyHome := t.TempDir()
+				decoyConfig = filepath.Join(decoyHome, ".agents", "config.yaml")
+				decoyBefore = []byte("apiVersion: agent-marketplace/v4\nharnesses: [factory]\n")
+				writeFile(t, decoyConfig, string(decoyBefore))
+				t.Setenv("HOME", decoyHome)
+			}
+			body, err := json.Marshal(map[string]any{
+				"action":  "initialize",
+				"targets": []string{"devin"},
+				"sources": []map[string]string{source},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			status, decoded := initializeRequest(t, api, string(body))
+			if tc.wantAllowed {
+				if status != http.StatusAccepted {
+					t.Fatalf("allowed %s initialize status = %d, body = %v; want 202", tc.kind, status, decoded)
+				}
+				operation, ok := decoded["operation"].(map[string]any)
+				if !ok || operation["kind"] != string(session.OperationMutation) {
+					t.Fatalf("accepted %s operation = %v, want mutation", tc.kind, decoded["operation"])
+				}
+				return
+			}
+			if status != http.StatusBadRequest || decoded["code"] != codeInvalidRequest {
+				t.Fatalf("blocked %s initialize = %d/%v, want 400/%s", tc.kind, status, decoded["code"], codeInvalidRequest)
+			}
+			if gitServer != nil && requests.Load() != 0 {
+				t.Fatalf("blocked Git source made %d HTTPS request(s) before initialization", requests.Load())
+			}
+			if marketplace != nil && marketplace.requests.Load() != 0 {
+				t.Fatalf("blocked Marketplace source made %d request(s) before initialization", marketplace.requests.Load())
+			}
+			if _, err := os.Lstat(userConfig); !os.IsNotExist(err) {
+				t.Fatalf("blocked source wrote user root: %v", err)
+			}
+			if _, err := os.Lstat(userLock); !os.IsNotExist(err) {
+				t.Fatalf("blocked source wrote user lock: %v", err)
+			}
+			if decoyConfig != "" {
+				if after, err := os.ReadFile(decoyConfig); err != nil || !bytes.Equal(after, decoyBefore) {
+					t.Fatalf("relocated HOME changed decoy root: %q (err=%v)", after, err)
+				}
+				if _, err := os.Lstat(filepath.Join(filepath.Dir(decoyConfig), "lock.yaml")); !os.IsNotExist(err) {
+					t.Fatalf("relocated HOME wrote decoy lock: %v", err)
+				}
+			}
+			if after, err := os.ReadFile(organizationPath); err != nil || !bytes.Equal(after, organizationBytes) {
+				t.Fatalf("blocked source changed organization config: %q (err=%v)", after, err)
+			}
+			if after, err := os.ReadFile(repoConfig); err != nil || !bytes.Equal(after, repoBefore) {
+				t.Fatalf("blocked source changed repo config: %q (err=%v)", after, err)
+			}
+			if after, err := os.ReadFile(repoLocal); err != nil || !bytes.Equal(after, localBefore) {
+				t.Fatalf("blocked source changed local config: %q (err=%v)", after, err)
+			}
+			if _, _, active := api.gate.Active(); active {
+				t.Fatal("blocked source held the operation gate")
+			}
+			assertNoFirstRunResources(t, home)
+			residue, err := filepath.Glob(filepath.Join(os.Getenv("TMPDIR"), ".agent-marketplace-config-*"))
+			if err != nil || len(residue) != 0 {
+				t.Fatalf("blocked source left staging residue %v (err=%v)", residue, err)
+			}
+		})
+	}
+}
+
+// spec: gui-first-run/organization-sources-skip-the-source-step
+func TestFirstRunOrganizationSourcesSkipOptionalQueue(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		kind     string
+		location string
+		source   string
+	}{
+		{name: "directory", kind: "directory", location: "/org/directory", source: "directory: /org/directory"},
+		{name: "git", kind: "git", location: "https://org.example/repo.git", source: "git: https://org.example/repo.git, ref: main"},
+		{name: "marketplace", kind: "marketplace", location: "https://org.example/services/catalog", source: "marketplace: https://org.example/services/catalog"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			home, userConfig := firstRunHome(t)
+			organizationPath := filepath.Join(t.TempDir(), "organization.yaml")
+			organizationBytes := []byte("apiVersion: agent-marketplace/v4\nharnesses: [claude]\ntelemetry: {level: off}\nsources:\n  organization: {" + tc.source + "}\n")
+			writeFile(t, organizationPath, string(organizationBytes))
+			config.SetTestOrganizationConfigPath(t, organizationPath)
+			api := newFirstRunAPI(t, home, session.RuntimeLifecycle())
+
+			status, metadata := postRaw(t, api, "/api/configuration", "")
+			if status != http.StatusOK {
+				t.Fatalf("configuration metadata status = %d, body = %v", status, metadata)
+			}
+			organizationSources, ok := metadata["organizationSources"].([]any)
+			if !ok || len(organizationSources) != 1 {
+				t.Fatalf("projected organization sources = %v, want one declared source", metadata["organizationSources"])
+			}
+			organizationSource, ok := organizationSources[0].(map[string]any)
+			if !ok || organizationSource["kind"] != tc.kind || organizationSource["location"] != tc.location {
+				t.Fatalf("organization source projection = %v, want %s %s", organizationSources[0], tc.kind, tc.location)
+			}
+
+			optionalDirectory := t.TempDir()
+			queueBody, err := json.Marshal(map[string]any{
+				"action":  "initialize",
+				"targets": []string{"devin"},
+				"sources": []map[string]string{{"kind": "directory", "location": optionalDirectory}},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			status, decoded := initializeRequest(t, api, string(queueBody))
+			if status != http.StatusBadRequest || decoded["code"] != codeInvalidRequest {
+				t.Fatalf("initialization with organization sources = %d/%v, want 400/%s", status, decoded["code"], codeInvalidRequest)
+			}
+			if _, err := os.Lstat(userConfig); !os.IsNotExist(err) {
+				t.Fatalf("organization source skip refusal wrote user root: %v", err)
+			}
+
+			events := streamEvents(t, api)
+			status, decoded = initializeRequest(t, api, `{"action":"initialize","targets":["devin"]}`)
+			if status != http.StatusAccepted {
+				t.Fatalf("source-less initialize with organization source = %d, body = %v", status, decoded)
+			}
+			if got := notificationSeverity(t, awaitNotification(t, events)); got != "info" {
+				t.Fatalf("source-less initialize notification severity = %q, want info", got)
+			}
+			if data, err := os.ReadFile(userConfig); err != nil || string(data) != "apiVersion: agent-marketplace/v4\nharnesses:\n  - devin\n" {
+				t.Fatalf("source-less root = %q (err=%v)", data, err)
+			}
+			if after, err := os.ReadFile(organizationPath); err != nil || !bytes.Equal(after, organizationBytes) {
+				t.Fatalf("organization source changed: %q (err=%v)", after, err)
+			}
+		})
+	}
+}
+
+// spec: gui-first-run/optional-source-failure-keeps-initialized-configuration
+func TestFirstRunInitializeOptionalSourceFailureKeepsRootAndAllowsRetry(t *testing.T) {
+	home, repo := newUserAPIFixture(t, false)
+	if err := os.MkdirAll(filepath.Join(home, ".devin"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	userConfig := filepath.Join(home, ".agents", "config.yaml")
+	repoConfig := filepath.Join(repo, ".agents", "config.yaml")
+	repoLocal := filepath.Join(repo, ".agents", "config.local.yaml")
+	repoBefore, err := os.ReadFile(repoConfig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	localBefore, err := os.ReadFile(repoLocal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("TMPDIR", t.TempDir())
+	firstDirectory := filepath.Join(home, "first-directory")
+	secondDirectory := filepath.Join(home, "second-directory")
+	writeFile(t, filepath.Join(firstDirectory, "first", "SKILL.md"), fixtureSkillBody)
+	writeFile(t, filepath.Join(secondDirectory, "second", "SKILL.md"), fixtureSkillBody)
+	endpoint := newMarketplaceEndpointTestServer(t, "/optional/catalog", "optional-marketplace", "", 0)
+	endpoint.failNextStatus(http.StatusInternalServerError)
+	organizationPath := filepath.Join(t.TempDir(), "organization.yaml")
+	organizationBytes := []byte("apiVersion: agent-marketplace/v4\ntelemetry: {level: off}\n")
+	writeFile(t, organizationPath, string(organizationBytes))
+	config.SetTestOrganizationConfigPath(t, organizationPath)
+	api := newFirstRunAPI(t, home, session.RuntimeLifecycle())
+	events := streamEvents(t, api)
+	userLock := filepath.Join(home, ".agents", "lock.yaml")
+
+	body, err := json.Marshal(map[string]any{
+		"action":  "initialize",
+		"targets": []string{"devin"},
+		"sources": []map[string]string{
+			{"kind": "directory", "location": firstDirectory},
+			{"kind": "marketplace", "location": endpoint.endpoint},
+			{"kind": "directory", "location": secondDirectory},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	status, decoded := initializeRequest(t, api, string(body))
+	if status != http.StatusAccepted {
+		t.Fatalf("initialize with optional source failure status = %d, body = %v", status, decoded)
+	}
+	operation, ok := decoded["operation"].(map[string]any)
+	if !ok || operation["kind"] != string(session.OperationMutation) {
+		t.Fatalf("initialize operation = %v, want mutation", decoded["operation"])
+	}
+	acceptedID, ok := operation["id"].(float64)
+	if !ok || acceptedID <= 0 {
+		t.Fatalf("initialize operation id = %v, want positive id", operation["id"])
+	}
+	if got := notificationSeverity(t, awaitNotification(t, events)); got != "error" {
+		t.Fatalf("optional source failure notification severity = %q, want error", got)
+	}
+	diagnostics := mutationDiagnostics(t, api)
+	if len(diagnostics) != 1 || diagnostics[0].Severity != "error" || diagnostics[0].Code == "" || !strings.Contains(diagnostics[0].Message, "add optional source:") {
+		t.Fatalf("optional source failure diagnostics = %#v, want one coded wrapped source error", diagnostics)
+	}
+	final := postSnapshot(t, api)
+	if final.Stage != "final" || final.Operation != nil {
+		t.Fatalf("settled failure snapshot = %#v, want final idle", final)
+	}
+	if final.SettledOperation == nil || final.SettledOperation.Kind != string(session.OperationMutation) || final.SettledOperation.ID != uint64(acceptedID) {
+		t.Fatalf("settled failure operation = %#v, want accepted mutation %d", final.SettledOperation, uint64(acceptedID))
+	}
+	if endpoint.requests.Load() != 1 {
+		t.Fatalf("failed optional Marketplace request count = %d, want exactly one before retry", endpoint.requests.Load())
+	}
+	wantRoot := "apiVersion: agent-marketplace/v4\nharnesses:\n  - devin\nsources:\n  first-directory:\n    directory: " + firstDirectory + "\n"
+	rootAfterFailure, err := os.ReadFile(userConfig)
+	if err != nil || string(rootAfterFailure) != wantRoot {
+		t.Fatalf("root after optional failure = %q (err=%v), want retained init and first source:\n%s", rootAfterFailure, err, wantRoot)
+	}
+	wantFailureSources := map[string]bool{"directory|" + firstDirectory + "|||": true}
+	if got := descSet(readUserSourceDescs(t, home)); !reflect.DeepEqual(got, wantFailureSources) {
+		t.Fatalf("effective sources after failure = %v, want only prior successful source %v", got, wantFailureSources)
+	}
+	if _, err := os.Lstat(userLock); !os.IsNotExist(err) {
+		t.Fatalf("failed endpoint wrote a user lock: %v", err)
+	}
+	if status, metadata := postRaw(t, api, "/api/configuration", ""); status != http.StatusOK || metadata["rootPresent"] != true || metadata["firstRun"] != false || metadata["editable"] != true {
+		t.Fatalf("retained-root metadata = %d/%v", status, metadata)
+	}
+	if after, err := os.ReadFile(organizationPath); err != nil || !bytes.Equal(after, organizationBytes) {
+		t.Fatalf("optional source failure changed organization config: %q (err=%v)", after, err)
+	}
+	if after, err := os.ReadFile(repoConfig); err != nil || !bytes.Equal(after, repoBefore) {
+		t.Fatalf("optional source failure changed repo config: %q (err=%v)", after, err)
+	}
+	if after, err := os.ReadFile(repoLocal); err != nil || !bytes.Equal(after, localBefore) {
+		t.Fatalf("optional source failure changed local config: %q (err=%v)", after, err)
+	}
+	assertNoFirstRunResources(t, home)
+
+	status, decoded = initializeRequest(t, api, `{"action":"initialize","targets":["devin"]}`)
+	if status != http.StatusBadRequest || decoded["code"] != codeNotReady {
+		t.Fatalf("reinitialization after optional source failure = %d/%v, want 400/%s", status, decoded["code"], codeNotReady)
+	}
+	if after, err := os.ReadFile(userConfig); err != nil || !bytes.Equal(after, rootAfterFailure) {
+		t.Fatalf("reinitialization changed retained root: %q (err=%v)", after, err)
+	}
+
+	retryBody := `{"action":"add-source","source":{"kind":"marketplace","location":` + jsonString(endpoint.endpoint) + `}}`
+	status, decoded = sourceAction(t, api, retryBody)
+	if status != http.StatusAccepted {
+		t.Fatalf("ordinary Marketplace retry status = %d, body = %v", status, decoded)
+	}
+	if got := notificationSeverity(t, awaitNotification(t, events)); got != "info" {
+		t.Fatalf("ordinary Marketplace retry severity = %q, want info", got)
+	}
+	if endpoint.requests.Load() != 3 {
+		t.Fatalf("Marketplace requests after retry = %d, want failure then registration and snapshot recovery", endpoint.requests.Load())
+	}
+	wantRetrySources := map[string]bool{
+		"directory|" + firstDirectory + "|||":      true,
+		"marketplace|" + endpoint.endpoint + "|||": true,
+	}
+	if got := descSet(readUserSourceDescs(t, home)); !reflect.DeepEqual(got, wantRetrySources) {
+		t.Fatalf("effective sources after retry = %v, want %v", got, wantRetrySources)
+	}
+	if got := mutationDiagnostics(t, api); len(got) != 0 {
+		t.Fatalf("successful retry retained source error diagnostics: %#v", got)
+	}
+	lockBytes, err := os.ReadFile(userLock)
+	if err != nil || !bytes.Equal(lockBytes, marketplaceEndpointLock(endpoint.endpoint, "optional-marketplace")) {
+		t.Fatalf("retry endpoint lock = %q (err=%v)", lockBytes, err)
+	}
+	if after, err := os.ReadFile(organizationPath); err != nil || !bytes.Equal(after, organizationBytes) {
+		t.Fatalf("ordinary retry changed organization config: %q (err=%v)", after, err)
+	}
+	if after, err := os.ReadFile(repoConfig); err != nil || !bytes.Equal(after, repoBefore) {
+		t.Fatalf("ordinary retry changed repo config: %q (err=%v)", after, err)
+	}
+	if after, err := os.ReadFile(repoLocal); err != nil || !bytes.Equal(after, localBefore) {
+		t.Fatalf("ordinary retry changed local config: %q (err=%v)", after, err)
+	}
+	if after, err := os.ReadFile(userConfig); err != nil || strings.Contains(string(after), filepath.Base(secondDirectory)) {
+		t.Fatalf("second queued directory was attempted: %q (err=%v)", after, err)
+	}
+	assertNoFirstRunResources(t, home)
 }

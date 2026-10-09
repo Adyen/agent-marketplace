@@ -121,3 +121,22 @@ func writeBenchFile(b testing.TB, path, content string) {
 		b.Fatalf("write file: %v", err)
 	}
 }
+
+func BenchmarkReadOrganizationIntentV4Include(b *testing.B) {
+	dir := b.TempDir()
+	root := filepath.Join(dir, "organization.yaml")
+	writeBenchFile(b, filepath.Join(dir, "fragment.yaml"), "telemetry: {level: off}\n")
+	writeBenchFile(b, root, "apiVersion: agent-marketplace/v4\ninclude: fragment.yaml\nharnesses: [claude]\n")
+	SetTestOrganizationConfigPath(b, root)
+	b.ReportAllocs()
+	b.ResetTimer()
+	for b.Loop() {
+		layer, _ := readOrganizationIntent(root)
+		if err := layer.Err(); err != nil {
+			b.Fatal(err)
+		}
+		if !layer.Present() || len(layer.Reads) != 2 {
+			b.Fatal("benchmark fixture must read root and included fragment")
+		}
+	}
+}

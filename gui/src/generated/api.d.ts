@@ -266,6 +266,8 @@ export interface components {
             action: "initialize";
             /** @description The explicit telemetry consent answer; required when the projection reports consentRequired, rejected otherwise. */
             consent?: boolean;
+            /** @description Optional source additions validated before initialization and applied serially through the Sources mutation path after Harness and consent initialization. A later source failure keeps the initialized root and earlier successful additions, reports an error, and leaves remaining entries unattempted. Nonempty sources are rejected when organization sources are declared. */
+            sources?: components["schemas"]["SourceInput"][];
             /** @description The user-personal Harness target selection for the new root; canonical supported IDs only. */
             targets: string[];
         };
