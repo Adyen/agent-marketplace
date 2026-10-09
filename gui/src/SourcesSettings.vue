@@ -74,7 +74,9 @@ async function add() {
           ref: refName.value,
           ...(subpath.value === '' ? {} : { path: subpath.value }),
         }
-      : { kind: 'directory', location: location.value }
+      : kind.value === 'marketplace'
+        ? { kind: 'marketplace', location: location.value }
+        : { kind: 'directory', location: location.value }
   if (await props.controller.addSource(source)) {
     actionError.value = null
     return
@@ -100,7 +102,7 @@ function cancel() {
 </script>
 
 <template>
-  <UModal v-model:open="open" title="Sources" aria-label="Sources">
+  <UModal v-model:open="open" title="Sources" aria-label="Sources" :ui="{ content: 'overflow-y-auto' }">
     <template #content>
       <section class="settings" aria-label="Sources">
         <h2 class="settings__heading">Sources</h2>
@@ -158,13 +160,21 @@ function cancel() {
           <section class="settings__group" aria-label="Add user source">
             <h3>Add a source</h3>
             <fieldset :disabled="fieldsDisabled">
-              <label class="settings__option">
-                Kind
-                <select v-model="kind" aria-label="Source kind">
-                  <option value="directory">Directory registry</option>
-                  <option value="git">Git registry</option>
-                </select>
-              </label>
+              <fieldset class="settings__group" aria-label="Source kind">
+                <legend>Source kind</legend>
+                <label class="settings__option">
+                  <input v-model="kind" type="radio" name="source-kind" value="directory" />
+                  Directory registry
+                </label>
+                <label class="settings__option">
+                  <input v-model="kind" type="radio" name="source-kind" value="git" />
+                  Git registry
+                </label>
+                <label class="settings__option">
+                  <input v-model="kind" type="radio" name="source-kind" value="marketplace" />
+                  Marketplace endpoint
+                </label>
+              </fieldset>
               <label class="settings__option">
                 Location
                 <input v-model="location" aria-label="Source location" type="text" />

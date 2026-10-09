@@ -161,7 +161,7 @@ paths:
   /api/configuration/actions:
     post:
       operationId: runConfigurationAction
-      summary: Run a guarded configuration action (save user Harness targets or initialize the absent root)
+      summary: Run a guarded configuration action (save targets, initialize the absent root, or mutate a user source)
       description: |
         Configuration mutations hold the same guarded operation serializer
         as every other session operation. save-targets writes the
@@ -172,12 +172,16 @@ paths:
         through the same initializer as `agent-marketplace init` and records
         the telemetry consent answer exactly as interactive init does; the
         consent field is required when the projection reports
-        consentRequired and rejected otherwise. add-source ensures one git
-        or directory source entry in the user-personal root, and
-        remove-source removes the single user-personal source entry whose
-        opaque id matches; both flow through the shared staged
-        configuration-layer editor and change nothing else. Available only
-        in user-scope mode.
+        consentRequired and rejected otherwise. add-source ensures one Git,
+        directory, or Marketplace endpoint registration in the user-personal
+        root. Marketplace endpoints are normalized and checked against the
+        effective allowed_marketplaces policy before network access, then use
+        the existing install registration path without selecting a Resource.
+        remove-source removes one user-personal Git or directory source by its
+        opaque id; Marketplace endpoint removal is not supported by this
+        action. Source additions and Git/directory removal use the shared
+        staged configuration-layer editor and change nothing else. Available
+        only in user-scope mode.
       security:
         - launchToken: []
       requestBody:
@@ -194,7 +198,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/ActionAccepted'
         '400':
-          description: Unknown action, malformed or empty selection, newly introduced unsupported target, unsupported session mode, or uneditable root; code localapi.invalid_request, localapi.not_ready, or localapi.not_supported
+          description: Unknown action, malformed request, blocked or invalid Marketplace endpoint, empty selection, newly introduced unsupported target, unsupported session mode, or uneditable root; code localapi.invalid_request, localapi.not_ready, or localapi.not_supported
           content:
             application/json:
               schema:
@@ -460,24 +464,56 @@ components:
           add-source: '#/components/schemas/AddSourceActionRequest'
           remove-source: '#/components/schemas/RemoveSourceActionRequest'
     SourceInput:
+      description: Closed typed source form union; unknown, duplicate, or mistyped keys are rejected.
+      oneOf:
+        - $ref: '#/components/schemas/DirectorySourceInput'
+        - $ref: '#/components/schemas/GitSourceInput'
+        - $ref: '#/components/schemas/MarketplaceSourceInput'
+      discriminator:
+        propertyName: kind
+        mapping:
+          directory: '#/components/schemas/DirectorySourceInput'
+          git: '#/components/schemas/GitSourceInput'
+          marketplace: '#/components/schemas/MarketplaceSourceInput'
+    DirectorySourceInput:
       type: object
       required: [kind, location]
       additionalProperties: false
-      description: Closed typed source form input; unknown, duplicate, or mistyped keys are rejected.
       properties:
         kind:
           type: string
-          enum: [git, directory]
-          description: Source kind; directory accepts only a location, git requires an explicit ref and accepts an optional path.
+          enum: [directory]
         location:
           type: string
-          description: Directory accepts an absolute filesystem path, ~ or ~/ home-relative path, or an absolute file:// URL; git accepts an https, file, or ssh URL or an SCP-like [user@]host:path origin. Usernames are allowed only for ssh/SCP forms; passwords, userinfo on non-ssh schemes, query, and fragment are rejected.
+          description: Absolute filesystem path, ~ or ~/ home-relative path, or an absolute file:// URL.
+    GitSourceInput:
+      type: object
+      required: [kind, location, ref]
+      additionalProperties: false
+      properties:
+        kind:
+          type: string
+          enum: [git]
+        location:
+          type: string
+          description: An https, file, or ssh URL or an SCP-like [user@]host:path origin. Usernames are allowed only for ssh/SCP forms; passwords, userinfo on non-ssh schemes, query, and fragment are rejected.
         ref:
           type: string
-          description: Explicit git ref; required for git, rejected for directory.
+          description: Explicit git ref.
         path:
           type: string
-          description: Optional sub-path within a git source; rejected for directory.
+          description: Optional sub-path within the Git source.
+    MarketplaceSourceInput:
+      type: object
+      required: [kind, location]
+      additionalProperties: false
+      properties:
+        kind:
+          type: string
+          enum: [marketplace]
+        location:
+          type: string
+          description: HTTP(S) Marketplace endpoint; ref and path are not accepted.
     AddSourceActionRequest:
       type: object
       required: [action, source]
@@ -498,7 +534,7 @@ components:
           enum: [remove-source]
         id:
           type: string
-          description: Opaque id of one user-personal source from the configuration projection; unknown, ambiguous, or non-user ids are rejected.
+          description: Opaque id of one user-personal Git or directory source from the configuration projection; unknown, ambiguous, non-user, or Marketplace endpoint ids are rejected.
     SaveTargetsActionRequest:
       type: object
       required: [action, targets]

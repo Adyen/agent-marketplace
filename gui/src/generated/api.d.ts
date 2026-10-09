@@ -67,7 +67,7 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Run a guarded configuration action (save user Harness targets or initialize the absent root)
+         * Run a guarded configuration action (save targets, initialize the absent root, or mutate a user source)
          * @description Configuration mutations hold the same guarded operation serializer
          *     as every other session operation. save-targets writes the
          *     user-personal Harness target set with the shared configuration
@@ -77,12 +77,16 @@ export interface paths {
          *     through the same initializer as `agent-marketplace init` and records
          *     the telemetry consent answer exactly as interactive init does; the
          *     consent field is required when the projection reports
-         *     consentRequired and rejected otherwise. add-source ensures one git
-         *     or directory source entry in the user-personal root, and
-         *     remove-source removes the single user-personal source entry whose
-         *     opaque id matches; both flow through the shared staged
-         *     configuration-layer editor and change nothing else. Available only
-         *     in user-scope mode.
+         *     consentRequired and rejected otherwise. add-source ensures one Git,
+         *     directory, or Marketplace endpoint registration in the user-personal
+         *     root. Marketplace endpoints are normalized and checked against the
+         *     effective allowed_marketplaces policy before network access, then use
+         *     the existing install registration path without selecting a Resource.
+         *     remove-source removes one user-personal Git or directory source by its
+         *     opaque id; Marketplace endpoint removal is not supported by this
+         *     action. Source additions and Git/directory removal use the shared
+         *     staged configuration-layer editor and change nothing else. Available
+         *     only in user-scope mode.
          *
          */
         post: operations["runConfigurationAction"];
@@ -208,6 +212,15 @@ export interface components {
             /** @enum {string} */
             severity: "error" | "warning";
         };
+        DirectorySourceInput: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "directory";
+            /** @description Absolute filesystem path, ~ or ~/ home-relative path, or an absolute file:// URL. */
+            location: string;
+        };
         /** @enum {string} */
         DriftAssessment: "pending" | "ready" | "failed";
         Error: {
@@ -230,6 +243,19 @@ export interface components {
             sequence: number;
             type: string;
         };
+        GitSourceInput: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "git";
+            /** @description An https, file, or ssh URL or an SCP-like [user@]host:path origin. Usernames are allowed only for ssh/SCP forms; passwords, userinfo on non-ssh schemes, query, and fragment are rejected. */
+            location: string;
+            /** @description Optional sub-path within the Git source. */
+            path?: string;
+            /** @description Explicit git ref. */
+            ref: string;
+        };
         InitializeActionRequest: {
             /**
              * @description discriminator enum property added by openapi-typescript
@@ -240,6 +266,15 @@ export interface components {
             consent?: boolean;
             /** @description The user-personal Harness target selection for the new root; canonical supported IDs only. */
             targets: string[];
+        };
+        MarketplaceSourceInput: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "marketplace";
+            /** @description HTTP(S) Marketplace endpoint; ref and path are not accepted. */
+            location: string;
         };
         NotificationEvent: components["schemas"]["EventBase"] & {
             payload: {
@@ -287,7 +322,7 @@ export interface components {
              * @enum {string}
              */
             action: "remove-source";
-            /** @description Opaque id of one user-personal source from the configuration projection; unknown, ambiguous, or non-user ids are rejected. */
+            /** @description Opaque id of one user-personal Git or directory source from the configuration projection; unknown, ambiguous, non-user, or Marketplace endpoint ids are rejected. */
             id: string;
         };
         SaveTargetsActionRequest: {
@@ -366,20 +401,8 @@ export interface components {
             /** @description Declared source layout, or empty. */
             sourceHarness: string;
         };
-        /** @description Closed typed source form input; unknown, duplicate, or mistyped keys are rejected. */
-        SourceInput: {
-            /**
-             * @description Source kind; directory accepts only a location, git requires an explicit ref and accepts an optional path.
-             * @enum {string}
-             */
-            kind: "git" | "directory";
-            /** @description Directory accepts an absolute filesystem path, ~ or ~/ home-relative path, or an absolute file:// URL; git accepts an https, file, or ssh URL or an SCP-like [user@]host:path origin. Usernames are allowed only for ssh/SCP forms; passwords, userinfo on non-ssh schemes, query, and fragment are rejected. */
-            location: string;
-            /** @description Optional sub-path within a git source; rejected for directory. */
-            path?: string;
-            /** @description Explicit git ref; required for git, rejected for directory. */
-            ref?: string;
-        };
+        /** @description Closed typed source form union; unknown, duplicate, or mistyped keys are rejected. */
+        SourceInput: components["schemas"]["DirectorySourceInput"] | components["schemas"]["GitSourceInput"] | components["schemas"]["MarketplaceSourceInput"];
     };
     responses: {
         /** @description API lifetime ended; code localapi.closed */
@@ -536,7 +559,7 @@ export interface operations {
                     "application/json": components["schemas"]["ActionAccepted"];
                 };
             };
-            /** @description Unknown action, malformed or empty selection, newly introduced unsupported target, unsupported session mode, or uneditable root; code localapi.invalid_request, localapi.not_ready, or localapi.not_supported */
+            /** @description Unknown action, malformed request, blocked or invalid Marketplace endpoint, empty selection, newly introduced unsupported target, unsupported session mode, or uneditable root; code localapi.invalid_request, localapi.not_ready, or localapi.not_supported */
             400: {
                 headers: {
                     [name: string]: unknown;

@@ -95,7 +95,7 @@ func TestLocalAPIUserHarness(t *testing.T) {
 		"xdgState":  os.Getenv("XDG_STATE_HOME"),
 		"xdgCache":  os.Getenv("XDG_CACHE_HOME"),
 	}
-	if fixture == "sources" {
+	if fixture == "sources" || fixture == "marketplace" {
 		userDir := filepath.Join(home, ".agents")
 		keepDir := filepath.Join(home, "keep-source")
 		fragDir := filepath.Join(home, "frag-source")
@@ -114,6 +114,10 @@ func TestLocalAPIUserHarness(t *testing.T) {
 		config.SetTestOrganizationConfigPath(t, orgPath)
 		bootstrap["addSourceDir"] = addDir
 		bootstrap["orgConfig"] = orgPath
+	}
+	if fixture == "marketplace" {
+		marketplace := newMarketplaceEndpointTestServer(t, "/playwright/catalog", "playwright-marketplace", "", 0)
+		bootstrap["marketplaceEndpoint"] = marketplace.endpoint
 	}
 	api, err := NewUser(context.Background(), home, session.RuntimeLifecycle(), nil)
 	if err != nil {

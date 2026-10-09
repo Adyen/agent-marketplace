@@ -13,12 +13,15 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/Adyen/agent-marketplace/internal/config"
+	"github.com/Adyen/agent-marketplace/internal/lockfile"
 	"github.com/Adyen/agent-marketplace/internal/pipeline"
 	"github.com/Adyen/agent-marketplace/internal/session"
+	mpapi "github.com/Adyen/agent-marketplace/pkg/marketplace/api"
 )
 
 func sourceGit(t *testing.T, dir string, args ...string) {
@@ -52,6 +55,205 @@ func newBareGitSource(t *testing.T) string {
 	sourceGit(t, work, "commit", "-m", "seed")
 	sourceGit(t, "", "clone", "--bare", work, bare)
 	return bare
+}
+
+type marketplaceEndpointTestServer struct {
+	*httptest.Server
+	endpoint     string
+	pathPrefix   string
+	instanceID   string
+	canonicalURL string
+	status       int
+	requests     atomic.Int32
+}
+
+func newMarketplaceEndpointTestServer(t *testing.T, pathPrefix, instanceID, canonicalURL string, status int) *marketplaceEndpointTestServer {
+	t.Helper()
+	fixture := &marketplaceEndpointTestServer{
+		pathPrefix:   "/" + strings.Trim(pathPrefix, "/"),
+		instanceID:   instanceID,
+		canonicalURL: canonicalURL,
+		status:       status,
+	}
+	fixture.Server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fixture.requests.Add(1)
+		if r.URL.Path != fixture.pathPrefix+"/.well-known/agent-marketplace.json" {
+			http.NotFound(w, r)
+			return
+		}
+		if fixture.status != 0 && fixture.status != http.StatusOK {
+			http.Error(w, "unavailable", fixture.status)
+			return
+		}
+		canonical := fixture.canonicalURL
+		if canonical == "" {
+			canonical = fixture.endpoint
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(mpapi.DefaultWellKnown(fixture.instanceID, canonical))
+	}))
+	fixture.endpoint = fixture.URL + fixture.pathPrefix
+	t.Cleanup(fixture.Close)
+	return fixture
+}
+
+type marketplaceSourceFixture struct {
+	home, userConfigPath, fragmentPath, organizationPath string
+	repoConfigPath, localConfigPath, lockPath, statePath string
+	userBefore, fragmentBefore, organizationBefore       []byte
+	repoBefore, localBefore, lockBefore                  []byte
+	lockExisted, stateExisted                            bool
+	stateEntriesBefore                                   []string
+	tmpDir                                               string
+	api                                                  *API
+	events                                               <-chan sessionEvent
+}
+
+func marketplaceSourceTestContents(t *testing.T, registeredEndpoint, organizationPolicy string) (userConfig, fragment, organization string) {
+	t.Helper()
+	keepDir := t.TempDir()
+	fragmentDir := t.TempDir()
+	writeFile(t, filepath.Join(keepDir, "solo", "SKILL.md"), fixtureSkillBody)
+	writeFile(t, filepath.Join(fragmentDir, "fragment", "SKILL.md"), fixtureSkillBody)
+
+	sources := "  keep: {directory: " + keepDir + "}\n"
+	if registeredEndpoint != "" {
+		sources += "  existing:\n    marketplace: " + registeredEndpoint + "\n"
+	}
+	userConfig = "apiVersion: agent-marketplace/v4\ninclude: fragment.yaml\nharnesses: [devin]\n" +
+		"logging: {level: debug}\nsources:\n" + sources +
+		"resources:\n  keep: {all: true, harnesses: [devin]}\n"
+	fragment = "sources:\n  fragment: {directory: " + fragmentDir + "}\n" +
+		"resources:\n  fragment: {all: true, harnesses: [claude]}\n"
+	organization = "apiVersion: agent-marketplace/v4\nharnesses: [claude]\ntelemetry: {level: off}\n" + organizationPolicy
+	return userConfig, fragment, organization
+}
+
+func newMarketplaceSourceFixture(t *testing.T, userConfig, fragment, organization string, lockData []byte) *marketplaceSourceFixture {
+	t.Helper()
+	home, repo := newUserAPIFixture(t, false)
+	t.Setenv("TMPDIR", t.TempDir())
+	fixture := &marketplaceSourceFixture{
+		home:             home,
+		userConfigPath:   filepath.Join(home, ".agents", "config.yaml"),
+		fragmentPath:     filepath.Join(home, ".agents", "fragment.yaml"),
+		organizationPath: filepath.Join(t.TempDir(), "organization.yaml"),
+		repoConfigPath:   filepath.Join(repo, ".agents", "config.yaml"),
+		localConfigPath:  filepath.Join(repo, ".agents", "config.local.yaml"),
+		lockPath:         filepath.Join(home, ".agents", "lock.yaml"),
+		statePath:        os.Getenv("XDG_STATE_HOME"),
+		tmpDir:           os.Getenv("TMPDIR"),
+	}
+	writeFile(t, fixture.userConfigPath, userConfig)
+	writeFile(t, fixture.fragmentPath, fragment)
+	writeFile(t, fixture.organizationPath, organization)
+	config.SetTestOrganizationConfigPath(t, fixture.organizationPath)
+	fixture.repoBefore = []byte("apiVersion: agent-marketplace/v4\nharnesses: [claude]\n")
+	fixture.localBefore = []byte("sources:\n  local: {directory: /tmp/personal-local-sentinel}\n")
+	writeFile(t, fixture.repoConfigPath, string(fixture.repoBefore))
+	writeFile(t, fixture.localConfigPath, string(fixture.localBefore))
+	if lockData != nil {
+		writeFile(t, fixture.lockPath, string(lockData))
+	}
+	var err error
+	fixture.userBefore, err = os.ReadFile(fixture.userConfigPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fixture.fragmentBefore, err = os.ReadFile(fixture.fragmentPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fixture.organizationBefore, err = os.ReadFile(fixture.organizationPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fixture.lockBefore, err = os.ReadFile(fixture.lockPath); err == nil {
+		fixture.lockExisted = true
+	} else if !errors.Is(err, os.ErrNotExist) {
+		t.Fatal(err)
+	}
+	fixture.api, err = NewUser(context.Background(), home, session.RuntimeLifecycle(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(fixture.api.Close)
+	fixture.events = streamEvents(t, fixture.api)
+	for nextEvent(t, fixture.events).snapshotStage() != "final" {
+	}
+	entries, err := os.ReadDir(fixture.statePath)
+	if err == nil {
+		fixture.stateExisted = true
+		for _, entry := range entries {
+			fixture.stateEntriesBefore = append(fixture.stateEntriesBefore, entry.Name())
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		t.Fatal(err)
+	}
+	return fixture
+}
+
+func assertMarketplaceNoWrite(t *testing.T, fixture *marketplaceSourceFixture) {
+	t.Helper()
+	for _, check := range []struct {
+		path   string
+		before []byte
+	}{
+		{path: fixture.userConfigPath, before: fixture.userBefore},
+		{path: fixture.fragmentPath, before: fixture.fragmentBefore},
+		{path: fixture.organizationPath, before: fixture.organizationBefore},
+		{path: fixture.repoConfigPath, before: fixture.repoBefore},
+		{path: fixture.localConfigPath, before: fixture.localBefore},
+	} {
+		after, err := os.ReadFile(check.path)
+		if err != nil || !bytes.Equal(after, check.before) {
+			t.Fatalf("registration attempt changed %s: %q (err=%v)", check.path, after, err)
+		}
+	}
+	if fixture.lockExisted {
+		after, err := os.ReadFile(fixture.lockPath)
+		if err != nil || !bytes.Equal(after, fixture.lockBefore) {
+			t.Fatalf("registration attempt changed lock bytes: %q (err=%v)", after, err)
+		}
+	} else if _, err := os.Lstat(fixture.lockPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("registration attempt created lock, stat error = %v", err)
+	}
+	entries, err := os.ReadDir(fixture.statePath)
+	if fixture.stateExisted {
+		if err != nil {
+			t.Fatalf("read state directory: %v", err)
+		}
+		var got []string
+		for _, entry := range entries {
+			got = append(got, entry.Name())
+		}
+		if !reflect.DeepEqual(got, fixture.stateEntriesBefore) {
+			t.Fatalf("registration attempt changed state entries: %v -> %v", fixture.stateEntriesBefore, got)
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("registration attempt created state directory, read error = %v", err)
+	}
+	assertNoSourceNativeOutput(t, fixture.home)
+	residue, err := filepath.Glob(filepath.Join(fixture.tmpDir, ".agent-marketplace-config-*"))
+	if err != nil || len(residue) != 0 {
+		t.Fatalf("registration attempt left staging residue %v (err=%v)", residue, err)
+	}
+}
+
+func assertNoSourceNativeOutput(t *testing.T, home string) {
+	t.Helper()
+	for _, path := range []string{
+		filepath.Join(home, ".devin"),
+		filepath.Join(home, ".claude"),
+		filepath.Join(home, ".factory"),
+		filepath.Join(home, ".codex"),
+		os.Getenv("CODEX_HOME"),
+		filepath.Join(home, ".agents", "skills"),
+	} {
+		if _, err := os.Lstat(path); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("registration created native output %s (err=%v)", path, err)
+		}
+	}
 }
 
 func sourceAction(t *testing.T, api *API, body string) (int, map[string]any) {
@@ -370,6 +572,195 @@ func TestUserSourceAddAndRemoveThroughSharedEditor(t *testing.T) {
 	}
 }
 
+func TestUserMarketplaceEndpointRegistration(t *testing.T) {
+	userConfig, fragment, organization := marketplaceSourceTestContents(t, "", "")
+	fixture := newMarketplaceSourceFixture(t, userConfig, fragment, organization, nil)
+	endpoint := newMarketplaceEndpointTestServer(t, "/services/catalog", "marketplace-instance", "", 0)
+	body := `{"action":"add-source","source":{"kind":"marketplace","location":` + jsonString(endpoint.endpoint) + `}}`
+
+	status, decoded := sourceAction(t, fixture.api, body)
+	if status != http.StatusAccepted {
+		t.Fatalf("Marketplace add status = %d, body = %v", status, decoded)
+	}
+	operation, ok := decoded["operation"].(map[string]any)
+	if !ok || operation["kind"] != string(session.OperationMutation) {
+		t.Fatalf("accepted operation = %v, want mutation", decoded["operation"])
+	}
+	if got := notificationSeverity(t, awaitNotification(t, fixture.events)); got != "info" {
+		t.Fatalf("Marketplace add severity = %q, want info", got)
+	}
+	if _, _, active := fixture.api.gate.Active(); active {
+		t.Fatal("Marketplace add left the operation gate held")
+	}
+
+	wantRoot := strings.Replace(userConfig, "resources:\n", "  marketplace:\n    marketplace: "+endpoint.endpoint+"\nresources:\n", 1)
+	if wantRoot == userConfig {
+		t.Fatal("Marketplace fixture has no resource-group insertion point")
+	}
+	current, err := os.ReadFile(fixture.userConfigPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(current) != wantRoot {
+		t.Fatalf("user root after registration =\n%s\nwant\n%s", current, wantRoot)
+	}
+	for _, check := range []struct {
+		path string
+		want []byte
+	}{
+		{path: fixture.fragmentPath, want: fixture.fragmentBefore},
+		{path: fixture.organizationPath, want: fixture.organizationBefore},
+		{path: fixture.repoConfigPath, want: fixture.repoBefore},
+		{path: fixture.localConfigPath, want: fixture.localBefore},
+	} {
+		got, err := os.ReadFile(check.path)
+		if err != nil || !bytes.Equal(got, check.want) {
+			t.Fatalf("registration changed %s: %q (err=%v)", check.path, got, err)
+		}
+	}
+	if endpoint.requests.Load() == 0 {
+		t.Fatal("registration did not fetch the path-prefixed well-known document")
+	}
+	ids := userSourceIDs(t, fixture.api)
+	if ids["marketplace|"+endpoint.endpoint+"|||"] == "" {
+		t.Fatalf("registered Marketplace endpoint missing from metadata: %v", ids)
+	}
+	lockData, err := os.ReadFile(fixture.lockPath)
+	if err != nil {
+		t.Fatalf("read user lock: %v", err)
+	}
+	lock, err := lockfile.Decode(lockData)
+	if err != nil {
+		t.Fatalf("decode user lock: %v", err)
+	}
+	if lock.Scope != lockfile.ScopeUser || len(lock.Marketplaces) != 1 ||
+		lock.Marketplaces[0].URL != endpoint.endpoint ||
+		lock.Marketplaces[0].InstanceID != "marketplace-instance" ||
+		len(lock.Marketplaces[0].Resources) != 0 {
+		t.Fatalf("endpoint lock = %#v", lock.Marketplaces)
+	}
+	assertNoSourceNativeOutput(t, fixture.home)
+
+	configBeforeRepeat := append([]byte(nil), current...)
+	lockBeforeRepeat := append([]byte(nil), lockData...)
+	status, decoded = sourceAction(t, fixture.api, body)
+	if status != http.StatusAccepted {
+		t.Fatalf("repeat Marketplace add status = %d, body = %v", status, decoded)
+	}
+	if got := notificationSeverity(t, awaitNotification(t, fixture.events)); got != "info" {
+		t.Fatalf("repeat Marketplace add severity = %q, want info", got)
+	}
+	current, err = os.ReadFile(fixture.userConfigPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lockData, err = os.ReadFile(fixture.lockPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(current, configBeforeRepeat) || !bytes.Equal(lockData, lockBeforeRepeat) {
+		t.Fatal("repeat registration changed config or lock bytes")
+	}
+}
+
+// spec: gui-configuration/blocked-endpoint-cannot-be-added
+func TestUserMarketplaceEndpointAllowlistRejectedBeforeNetwork(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		policy string
+	}{
+		{name: "organization pattern", policy: `allowed_marketplaces: ['^https://allowed\.example$']` + "\n"},
+		{name: "empty organization allowlist", policy: "allowed_marketplaces: []\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			userConfig, fragment, organization := marketplaceSourceTestContents(t, "", "")
+			fixture := newMarketplaceSourceFixture(t, userConfig, fragment, organization+tc.policy, nil)
+			endpoint := newMarketplaceEndpointTestServer(t, "/services/catalog", "marketplace-instance", "", 0)
+			endpoint.requests.Store(0)
+			body := `{"action":"add-source","source":{"kind":"marketplace","location":` + jsonString(endpoint.endpoint) + `}}`
+			status, decoded := sourceAction(t, fixture.api, body)
+			if status != http.StatusBadRequest || decoded["code"] != codeInvalidRequest {
+				t.Fatalf("blocked add status/code = %d/%v, want 400/%s", status, decoded["code"], codeInvalidRequest)
+			}
+			if got := endpoint.requests.Load(); got != 0 {
+				t.Fatalf("blocked endpoint made %d request(s) before policy rejection", got)
+			}
+			assertMarketplaceNoWrite(t, fixture)
+
+			unrestrictedOrganization := organization
+			writeFile(t, fixture.organizationPath, unrestrictedOrganization)
+			status, decoded = sourceAction(t, fixture.api, body)
+			if status != http.StatusAccepted {
+				t.Fatalf("nil-allowlist control status = %d, body = %v", status, decoded)
+			}
+			if got := notificationSeverity(t, awaitNotification(t, fixture.events)); got != "info" {
+				t.Fatalf("nil-allowlist control severity = %q, want info", got)
+			}
+			if endpoint.requests.Load() == 0 {
+				t.Fatal("nil-allowlist control did not reach the Marketplace server")
+			}
+			if after, err := os.ReadFile(fixture.organizationPath); err != nil || !bytes.Equal(after, []byte(unrestrictedOrganization)) {
+				t.Fatalf("registration changed organization config: %q (err=%v)", after, err)
+			}
+		})
+	}
+}
+
+func marketplaceEndpointLock(endpoint, instanceID string) []byte {
+	return []byte("apiVersion: agent-marketplace-lock/v2\nscope: user\nmarketplaces:\n  - url: " + endpoint + "\n    instance_id: " + instanceID + "\n")
+}
+
+func TestUserMarketplaceEndpointRegistrationOperationFailures(t *testing.T) {
+	for _, tc := range []struct {
+		name                        string
+		instanceID                  string
+		canonicalURL                string
+		status                      int
+		differentConfiguredEndpoint bool
+		configuredInstanceID        string
+	}{
+		{name: "well-known failure", instanceID: "marketplace-failure", status: http.StatusInternalServerError},
+		{name: "canonical URL mismatch", instanceID: "marketplace-canonical", canonicalURL: "https://canonical.example"},
+		{name: "invalid instance", instanceID: " "},
+		{name: "same URL different instance", instanceID: "marketplace-new", configuredInstanceID: "marketplace-old"},
+		{name: "same instance different URL", instanceID: "marketplace-shared", differentConfiguredEndpoint: true, configuredInstanceID: "marketplace-shared"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			endpoint := newMarketplaceEndpointTestServer(t, "/services/catalog", tc.instanceID, tc.canonicalURL, tc.status)
+			var configuredEndpoint string
+			var lockData []byte
+			if tc.differentConfiguredEndpoint {
+				previous := newMarketplaceEndpointTestServer(t, "/previous", tc.configuredInstanceID, "", 0)
+				configuredEndpoint = previous.endpoint
+				lockData = marketplaceEndpointLock(configuredEndpoint, tc.configuredInstanceID)
+			} else if tc.configuredInstanceID != "" {
+				configuredEndpoint = endpoint.endpoint
+				lockData = marketplaceEndpointLock(configuredEndpoint, tc.configuredInstanceID)
+			}
+			userConfig, fragment, organization := marketplaceSourceTestContents(t, configuredEndpoint, "")
+			fixture := newMarketplaceSourceFixture(t, userConfig, fragment, organization, lockData)
+			endpoint.requests.Store(0)
+			body := `{"action":"add-source","source":{"kind":"marketplace","location":` + jsonString(endpoint.endpoint) + `}}`
+
+			status, decoded := sourceAction(t, fixture.api, body)
+			if status != http.StatusAccepted {
+				t.Fatalf("failed Marketplace registration status = %d, body = %v", status, decoded)
+			}
+			if got := notificationSeverity(t, awaitNotification(t, fixture.events)); got != "error" {
+				t.Fatalf("failed registration notification severity = %q, want error", got)
+			}
+			diagnostics := mutationDiagnostics(t, fixture.api)
+			if len(diagnostics) != 1 || diagnostics[0].Severity != "error" || diagnostics[0].Code == "" {
+				t.Fatalf("failed registration diagnostics = %#v, want one coded mutation error", diagnostics)
+			}
+			if endpoint.requests.Load() == 0 {
+				t.Fatal("valid registration failure did not reach the Marketplace server")
+			}
+			assertMarketplaceNoWrite(t, fixture)
+		})
+	}
+}
+
 func TestUserSourceActionsRejectInvalidRequests(t *testing.T) {
 	home, repo := newUserAPIFixture(t, false)
 	t.Setenv("TMPDIR", t.TempDir())
@@ -401,6 +792,16 @@ func TestUserSourceActionsRejectInvalidRequests(t *testing.T) {
 	events := streamEvents(t, api)
 	for nextEvent(t, events).snapshotStage() != "final" {
 	}
+	statePath := os.Getenv("XDG_STATE_HOME")
+	stateEntries, stateErr := os.ReadDir(statePath)
+	stateExisted := stateErr == nil
+	if stateErr != nil && !errors.Is(stateErr, os.ErrNotExist) {
+		t.Fatal(stateErr)
+	}
+	var stateBefore []string
+	for _, entry := range stateEntries {
+		stateBefore = append(stateBefore, entry.Name())
+	}
 
 	status, decoded := postRaw(t, api, "/api/configuration", "")
 	if status != http.StatusOK {
@@ -420,10 +821,25 @@ func TestUserSourceActionsRejectInvalidRequests(t *testing.T) {
 		t.Fatalf("missing projected ids: org=%q dup=%q", orgID, dupID)
 	}
 
+	marketplace := newMarketplaceEndpointTestServer(t, "/invalid", "marketplace-instance", "", 0)
+	marketplaceCredential := strings.Replace(marketplace.endpoint, "://", "://test-user:test-password@", 1)
 	bodies := []string{
 		`{"action":"add-source"}`,
 		`{"action":"add-source","source":null}`,
-		`{"action":"add-source","source":{"kind":"marketplace","location":"https://m.example"}}`,
+		`{"action":"add-source","source":{"kind":"marketplace"}}`,
+		`{"action":"add-source","source":{"kind":"marketplace","location":""}}`,
+		`{"action":"add-source","source":{"kind":"marketplace","location":null}}`,
+		`{"action":"add-source","source":{"kind":"marketplace","location":` + jsonString(marketplaceCredential) + `}}`,
+		`{"action":"add-source","source":{"kind":"marketplace","location":` + jsonString(marketplace.endpoint+"?token=fixture") + `}}`,
+		`{"action":"add-source","source":{"kind":"marketplace","location":` + jsonString(marketplace.endpoint+"#fixture") + `}}`,
+		`{"action":"add-source","source":{"kind":"marketplace","location":` + jsonString(marketplace.endpoint) + `,"ref":""}}`,
+		`{"action":"add-source","source":{"kind":"marketplace","location":` + jsonString(marketplace.endpoint) + `,"ref":null}}`,
+		`{"action":"add-source","source":{"kind":"marketplace","location":` + jsonString(marketplace.endpoint) + `,"path":""}}`,
+		`{"action":"add-source","source":{"kind":"marketplace","location":` + jsonString(marketplace.endpoint) + `,"path":null}}`,
+		`{"action":"add-source","source":{"kind":"marketplace","kind":"marketplace","location":` + jsonString(marketplace.endpoint) + `}}`,
+		`{"action":"add-source","source":{"kind":"marketplace","Kind":"marketplace","location":` + jsonString(marketplace.endpoint) + `}}`,
+		`{"action":"add-source","source":{"kind":"marketplace","location":` + jsonString(marketplace.endpoint) + `,"Location":` + jsonString(marketplace.endpoint) + `}}`,
+		`{"action":"add-source","source":{"kind":"marketplace","location":` + jsonString(marketplace.endpoint) + `,"unknown":true}}`,
 		`{"action":"add-source","source":{"kind":"Git","location":"/tmp/x"}}`,
 		`{"action":"add-source","source":{"kind":"directory","location":"relative/dir"}}`,
 		`{"action":"add-source","source":{"kind":"directory","location":"./rel"}}`,
@@ -480,6 +896,9 @@ func TestUserSourceActionsRejectInvalidRequests(t *testing.T) {
 			t.Fatalf("body %q status/code = %d/%v, want 400/%s", body, status, decoded["code"], codeInvalidRequest)
 		}
 	}
+	if got := marketplace.requests.Load(); got != 0 {
+		t.Fatalf("invalid Marketplace requests reached the server %d time(s)", got)
+	}
 	if after, _ := os.ReadFile(userConfig); !bytes.Equal(after, before) {
 		t.Fatalf("rejected bodies changed the root:\n%s", after)
 	}
@@ -494,6 +913,25 @@ func TestUserSourceActionsRejectInvalidRequests(t *testing.T) {
 	}
 	if after, _ := os.ReadFile(repoLocal); !bytes.Equal(after, localBefore) {
 		t.Fatal("rejected bodies changed the local config")
+	}
+	if _, err := os.Lstat(filepath.Join(home, ".agents", "lock.yaml")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("rejected bodies created a lock file: %v", err)
+	}
+	assertNoSourceNativeOutput(t, home)
+	stateAfter, stateErr := os.ReadDir(statePath)
+	if stateExisted {
+		if stateErr != nil {
+			t.Fatalf("read state after rejected bodies: %v", stateErr)
+		}
+		var stateAfterNames []string
+		for _, entry := range stateAfter {
+			stateAfterNames = append(stateAfterNames, entry.Name())
+		}
+		if !reflect.DeepEqual(stateBefore, stateAfterNames) {
+			t.Fatalf("rejected bodies changed state entries: %v -> %v", stateBefore, stateAfterNames)
+		}
+	} else if !errors.Is(stateErr, os.ErrNotExist) {
+		t.Fatalf("rejected bodies created state directory, read error = %v", stateErr)
 	}
 	residue, _ := filepath.Glob(filepath.Join(os.Getenv("TMPDIR"), ".agent-marketplace-config-*"))
 	if len(residue) != 0 {
