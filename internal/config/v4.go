@@ -1353,11 +1353,11 @@ func mergeV4Config(dst, src *V4Config) error {
 	// Allowlist policy is first-authority: an included child claims the field
 	// before its containing document can provide a weaker replacement.
 	if dst.AllowedRegistries == nil && src.AllowedRegistries != nil {
-		values := append([]string(nil), (*src.AllowedRegistries)...)
+		values := cloneV4StringList(*src.AllowedRegistries)
 		dst.AllowedRegistries = &values
 	}
 	if dst.AllowedMarketplaces == nil && src.AllowedMarketplaces != nil {
-		values := append([]string(nil), (*src.AllowedMarketplaces)...)
+		values := cloneV4StringList(*src.AllowedMarketplaces)
 		dst.AllowedMarketplaces = &values
 	}
 	dst.Backup = mergeV4Backup(dst.Backup, src.Backup)

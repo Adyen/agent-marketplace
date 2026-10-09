@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
@@ -159,35 +160,230 @@ func TestIntentAllowedMarketplacesPreservesEmptyPolicyAndOrganizationPrecedence(
 			absent := Intent{Layers: [5]LayerIntent{
 				UserPersonal: layerFor(UserPersonal, ""),
 			}}
+			if got := absent.AllowedRegistries(); got != nil {
+				t.Fatalf("absent registry allowlist = %#v, want nil", got)
+			}
 			if got := absent.AllowedMarketplaces(); got != nil {
-				t.Fatalf("absent allowlist = %#v, want nil", got)
+				t.Fatalf("absent Marketplace allowlist = %#v, want nil", got)
 			}
 
 			empty := Intent{Layers: [5]LayerIntent{
-				UserPersonal: layerFor(UserPersonal, "allowed_marketplaces: []\n"),
+				UserPersonal: layerFor(UserPersonal, "allowed_registries: []\nallowed_marketplaces: []\n"),
 			}}
+			if got := empty.AllowedRegistries(); got == nil || len(got) != 0 {
+				t.Fatalf("explicit empty registry allowlist = %#v, want nonnil empty", got)
+			}
 			if got := empty.AllowedMarketplaces(); got == nil || len(got) != 0 {
-				t.Fatalf("explicit empty allowlist = %#v, want nonnil empty", got)
+				t.Fatalf("explicit empty Marketplace allowlist = %#v, want nonnil empty", got)
 			}
 
+			const userRegistryPattern = `^https://registry\.user\.example/`
 			const userPattern = `^https://user\.example$`
-			userLayer := layerFor(UserPersonal, "allowed_marketplaces: ['"+userPattern+"']\n")
+			userLayer := layerFor(UserPersonal, "allowed_registries: ['"+userRegistryPattern+"']\nallowed_marketplaces: ['"+userPattern+"']\n")
 			user := Intent{Layers: [5]LayerIntent{UserPersonal: userLayer}}
+			userRegistries := user.AllowedRegistries()
+			if !reflect.DeepEqual(userRegistries, []string{userRegistryPattern}) {
+				t.Fatalf("user registry allowlist = %#v, want [%q]", userRegistries, userRegistryPattern)
+			}
 			userAllowed := user.AllowedMarketplaces()
 			if !reflect.DeepEqual(userAllowed, []string{userPattern}) {
-				t.Fatalf("user allowlist = %#v, want [%q]", userAllowed, userPattern)
+				t.Fatalf("user Marketplace allowlist = %#v, want [%q]", userAllowed, userPattern)
 			}
 			if err := ValidateMarketplaceURLs([]MarketplaceEntry{{URL: "https://user.example"}}, userAllowed); err != nil {
-				t.Fatalf("user allowlist should permit its matching endpoint: %v", err)
+				t.Fatalf("user Marketplace allowlist should permit its matching endpoint: %v", err)
 			}
 
-			organization := layerFor(Organization, "allowed_marketplaces: []\n")
+			organization := layerFor(Organization, "allowed_registries: []\nallowed_marketplaces: []\n")
 			combined := Intent{Layers: [5]LayerIntent{
 				Organization: organization,
 				UserPersonal: userLayer,
 			}}
+			if got := combined.AllowedRegistries(); got == nil || len(got) != 0 {
+				t.Fatalf("organization empty registry allowlist = %#v, want nonnil empty despite user pattern", got)
+			}
 			if got := combined.AllowedMarketplaces(); got == nil || len(got) != 0 {
-				t.Fatalf("organization empty allowlist = %#v, want nonnil empty despite user pattern", got)
+				t.Fatalf("organization empty Marketplace allowlist = %#v, want nonnil empty despite user pattern", got)
+			}
+		})
+	}
+}
+
+func readV4PolicyIntentFixture(t *testing.T, organizationRoot, organizationFragment, userRoot string) (Intent, EffectiveConfig) {
+	t.Helper()
+	organizationDir := t.TempDir()
+	organizationPath := filepath.Join(organizationDir, "config.yaml")
+	organizationFragmentPath := filepath.Join(organizationDir, "policy.yaml")
+	userPath := filepath.Join(t.TempDir(), ".agents", "config.yaml")
+	repoRoot := t.TempDir()
+	layerEditorWrite(t, organizationPath, organizationRoot)
+	layerEditorWrite(t, userPath, userRoot)
+	files := map[string]string{organizationPath: organizationRoot, userPath: userRoot}
+	if organizationFragment != "" {
+		layerEditorWrite(t, organizationFragmentPath, organizationFragment)
+		files[organizationFragmentPath] = organizationFragment
+	}
+	intent := ReadIntent(context.Background(), LoadEffectiveOptions{
+		RepoRoot:         repoRoot,
+		LocalConfigDir:   repoRoot,
+		OrganizationPath: organizationPath,
+		GlobalPath:       userPath,
+		RepoPath:         ProjectConfigPath(repoRoot),
+		LocalPath:        LocalConfigPath(repoRoot),
+	})
+	if len(intent.Errors) != 0 {
+		t.Fatalf("read real v4 policy fixture: %v", intent.Errors)
+	}
+	effective := Bind(intent, Evidence{})
+	if len(effective.Errors) != 0 || effective.Merged == nil {
+		t.Fatalf("bind real v4 policy fixture: errors=%v merged=%#v", effective.Errors, effective.Merged)
+	}
+	for path, want := range files {
+		if got, err := os.ReadFile(path); err != nil || string(got) != want {
+			t.Fatalf("policy composition changed %s: %q (err=%v)", path, got, err)
+		}
+	}
+	return intent, effective
+}
+
+func assertPolicySlice(t *testing.T, name string, got, want []string) {
+	t.Helper()
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("%s = %#v, want %#v", name, got, want)
+	}
+}
+
+func assertPolicyPointer(t *testing.T, name string, got *[]string, want []string) {
+	t.Helper()
+	if want == nil {
+		if got != nil {
+			t.Fatalf("%s = %#v, want nil", name, got)
+		}
+		return
+	}
+	if got == nil || *got == nil || !reflect.DeepEqual(*got, want) {
+		t.Fatalf("%s = %#v, want pointer to %#v", name, got, want)
+	}
+}
+
+// spec: config-layering/allowed-marketplace-patterns-follow-include-authority-in-a-v4-root
+// spec: config-layering/marketplace-url-allowlist
+func TestReadIntentAndBindPreserveRealV4SourcePolicyComposition(t *testing.T) {
+	userPatterns := `allowed_registries: ['registry-first', 'registry-second']
+allowed_marketplaces: ['^https://user-marketplace\\.example$', '^https://secondary-marketplace\\.example$']
+`
+	userRoot := "apiVersion: agent-marketplace/v4\nharnesses: [devin]\nlogging: {level: info}\n"
+	userWithPatterns := userRoot + userPatterns
+	registryPatterns := []string{"registry-first", "registry-second"}
+	marketplacePatterns := []string{`^https://user-marketplace\\.example$`, `^https://secondary-marketplace\\.example$`}
+	organizationRoot := "apiVersion: agent-marketplace/v4\nharnesses: [claude]\nlogging: {level: debug, max_age_days: 5}\n"
+	organizationRootPatterns := "allowed_registries: ['.*']\nallowed_marketplaces: ['.*']\n"
+	organizationEmpty := "allowed_registries: []\nallowed_marketplaces: []\n"
+	cases := []struct {
+		name                     string
+		organizationRoot         string
+		organizationFragment     string
+		userRoot                 string
+		organizationRegistries   []string
+		organizationMarketplaces []string
+		userRegistries           []string
+		userMarketplaces         []string
+		effectiveRegistries      []string
+		effectiveMarketplaces    []string
+		includedPolicyIsRootOnly bool
+	}{
+		{
+			name:                     "absent remains nil",
+			organizationRoot:         organizationRoot,
+			userRoot:                 userRoot,
+			organizationRegistries:   nil,
+			organizationMarketplaces: nil,
+			userRegistries:           nil,
+			userMarketplaces:         nil,
+			effectiveRegistries:      nil,
+			effectiveMarketplaces:    nil,
+		},
+		{
+			name:                     "explicit user empty remains nonnil",
+			organizationRoot:         organizationRoot,
+			userRoot:                 userRoot + organizationEmpty,
+			organizationRegistries:   nil,
+			organizationMarketplaces: nil,
+			userRegistries:           []string{},
+			userMarketplaces:         []string{},
+			effectiveRegistries:      []string{},
+			effectiveMarketplaces:    []string{},
+		},
+		{
+			name:                     "nonempty user order remains unchanged",
+			organizationRoot:         organizationRoot,
+			userRoot:                 userWithPatterns,
+			organizationRegistries:   nil,
+			organizationMarketplaces: nil,
+			userRegistries:           registryPatterns,
+			userMarketplaces:         marketplacePatterns,
+			effectiveRegistries:      registryPatterns,
+			effectiveMarketplaces:    marketplacePatterns,
+		},
+		{
+			name:                     "organization root empty beats permissive user",
+			organizationRoot:         organizationRoot + organizationEmpty,
+			userRoot:                 userWithPatterns,
+			organizationRegistries:   []string{},
+			organizationMarketplaces: []string{},
+			userRegistries:           registryPatterns,
+			userMarketplaces:         marketplacePatterns,
+			effectiveRegistries:      []string{},
+			effectiveMarketplaces:    []string{},
+		},
+		{
+			name:                     "included-only empty beats permissive user",
+			organizationRoot:         "apiVersion: agent-marketplace/v4\ninclude: policy.yaml\nharnesses: [claude]\nlogging: {max_age_days: 5}\n",
+			organizationFragment:     organizationEmpty + "logging: {level: debug}\n",
+			userRoot:                 userWithPatterns,
+			organizationRegistries:   []string{},
+			organizationMarketplaces: []string{},
+			userRegistries:           registryPatterns,
+			userMarketplaces:         marketplacePatterns,
+			effectiveRegistries:      []string{},
+			effectiveMarketplaces:    []string{},
+			includedPolicyIsRootOnly: true,
+		},
+		{
+			name:                     "included empty beats containing root and user patterns",
+			organizationRoot:         "apiVersion: agent-marketplace/v4\ninclude: policy.yaml\nharnesses: [claude]\nlogging: {max_age_days: 5}\n" + organizationRootPatterns,
+			organizationFragment:     organizationEmpty + "logging: {level: debug}\n",
+			userRoot:                 userWithPatterns,
+			organizationRegistries:   []string{},
+			organizationMarketplaces: []string{},
+			userRegistries:           registryPatterns,
+			userMarketplaces:         marketplacePatterns,
+			effectiveRegistries:      []string{},
+			effectiveMarketplaces:    []string{},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.includedPolicyIsRootOnly && (strings.Contains(tc.organizationRoot, "allowed_registries:") || strings.Contains(tc.organizationRoot, "allowed_marketplaces:")) {
+				t.Fatal("included-only policy fixture redundantly repeats an allowlist in the root")
+			}
+			intent, effective := readV4PolicyIntentFixture(t, tc.organizationRoot, tc.organizationFragment, tc.userRoot)
+			organizationSettings := intent.Layers[Organization].Settings()
+			userSettings := intent.Layers[UserPersonal].Settings()
+			assertPolicyPointer(t, "organization settings allowed_registries", organizationSettings.AllowedRegistries, tc.organizationRegistries)
+			assertPolicyPointer(t, "organization settings allowed_marketplaces", organizationSettings.AllowedMarketplaces, tc.organizationMarketplaces)
+			assertPolicyPointer(t, "user settings allowed_registries", userSettings.AllowedRegistries, tc.userRegistries)
+			assertPolicyPointer(t, "user settings allowed_marketplaces", userSettings.AllowedMarketplaces, tc.userMarketplaces)
+			assertPolicySlice(t, "Intent.AllowedRegistries", intent.AllowedRegistries(), tc.effectiveRegistries)
+			assertPolicySlice(t, "Intent.AllowedMarketplaces", intent.AllowedMarketplaces(), tc.effectiveMarketplaces)
+			assertPolicyPointer(t, "bound config allowed_registries", effective.Merged.AllowedRegistries, tc.effectiveRegistries)
+			assertPolicyPointer(t, "bound config allowed_marketplaces", effective.Merged.AllowedMarketplaces, tc.effectiveMarketplaces)
+			assertPolicySlice(t, "bound registry allowlist", effective.Allowed, tc.effectiveRegistries)
+			assertPolicySlice(t, "bound Marketplace allowlist", effective.AllowedMarketplaces, tc.effectiveMarketplaces)
+			if !reflect.DeepEqual(organizationSettings.Harnesses, []string{"claude"}) || organizationSettings.Logging == nil || organizationSettings.Logging.Level == nil || *organizationSettings.Logging.Level != "debug" || organizationSettings.Logging.MaxAgeDays == nil || *organizationSettings.Logging.MaxAgeDays != 5 {
+				t.Fatalf("organization settings outside policies changed: %#v", organizationSettings)
+			}
+			if !reflect.DeepEqual(userSettings.Harnesses, []string{"devin"}) || userSettings.Logging == nil || userSettings.Logging.Level == nil || *userSettings.Logging.Level != "info" {
+				t.Fatalf("user settings outside policies changed: %#v", userSettings)
 			}
 		})
 	}
