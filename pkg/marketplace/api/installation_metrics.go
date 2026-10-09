@@ -6,14 +6,16 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"log/slog"
 	"math"
+	"math/rand/v2"
 	"net/http"
 	"net/url"
 	"os"
 	"sort"
 	"strconv"
 	"strings"
-	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/jsonc"
@@ -21,12 +23,14 @@ import (
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/store"
 )
 
-const (
-	installationMetricsTimeout     = 2 * time.Second
-	installationMetricsMaxBody     = 8 << 20
-	installationMetricsFreshness   = 5 * time.Minute
-	installationMetricsFailureHold = 30 * time.Second
-)
+const installationMetricsMaxBody = 8 << 20
+
+type installationSnapshot struct {
+	counts      installationCounts
+	signature   string
+	evaluatedAt time.Time
+	expiresAt   time.Time
+}
 
 type installationMetricsReader struct {
 	url           string
@@ -35,30 +39,32 @@ type installationMetricsReader struct {
 	marketplaceID store.MarketplaceID
 	client        *http.Client
 	now           func() time.Time
+	timing        config.InstallationMetricsTiming
+	metrics       *serverMetrics
 
-	mu               sync.Mutex
-	cached           installationCounts
-	cachedSignature  string
-	cachedAt         time.Time
-	hasCached        bool
-	failureAt        time.Time
-	failureSignature string
-	hasFailure       bool
+	snapshot atomic.Pointer[installationSnapshot]
+	hints    chan struct{}
+
+	backoffUntil time.Time
+	nextWake     time.Time
 }
 
 func newInstallationMetricsReader(metrics config.InstallationMetrics, marketplaceID store.MarketplaceID) *installationMetricsReader {
+	timing := config.ResolveInstallationMetricsTiming(metrics)
 	return &installationMetricsReader{
 		url:           strings.TrimRight(strings.TrimSpace(metrics.URL), "/"),
 		labels:        metrics.Labels,
 		tokenEnv:      strings.TrimSpace(metrics.BearerTokenEnv),
 		marketplaceID: marketplaceID,
 		client: &http.Client{
-			Timeout: installationMetricsTimeout,
+			Timeout: timing.Timeout,
 			CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
 				return http.ErrUseLastResponse
 			},
 		},
-		now: time.Now,
+		now:    time.Now,
+		timing: timing,
+		hints:  make(chan struct{}, 1),
 	}
 }
 
@@ -71,33 +77,111 @@ func registryOriginsSignature(registries map[store.RegistryID]store.Registry) st
 	return strings.Join(rows, "\x00\x00")
 }
 
-func (r *installationMetricsReader) counts(ctx context.Context, registries map[store.RegistryID]store.Registry) (installationCounts, error) {
-	signature := registryOriginsSignature(registries)
-
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	now := r.now()
-	if r.hasCached && r.cachedSignature == signature && now.Before(minTime(r.cachedAt.Add(installationMetricsFreshness), r.cached.ValidUntil)) {
-		return r.cached, nil
+func (r *installationMetricsReader) lookup(registries map[store.RegistryID]store.Registry) (*installationCounts, bool) {
+	snapshot := r.snapshot.Load()
+	if snapshot == nil || snapshot.signature != registryOriginsSignature(registries) || !r.now().Before(snapshot.expiresAt) {
+		return nil, false
 	}
-	if r.hasFailure && r.failureSignature == signature && now.Before(r.failureAt.Add(installationMetricsFailureHold)) {
-		return installationCounts{}, errInstallationMetricsUnavailable
-	}
+	return &snapshot.counts, true
+}
 
-	counts, err := r.fetch(ctx, registries, now)
+func (r *installationMetricsReader) hint() {
+	select {
+	case r.hints <- struct{}{}:
+	default:
+	}
+}
+
+func (r *installationMetricsReader) refresh(ctx context.Context, registries map[store.RegistryID]store.Registry) (installationCounts, error) {
+	evaluatedAt := r.now()
+	counts, err := r.fetch(ctx, registries, evaluatedAt)
 	if err != nil {
-		r.hasCached = false
-		r.hasFailure = true
-		r.failureAt = now
-		r.failureSignature = signature
 		return installationCounts{}, err
 	}
-	r.cached = counts
-	r.cachedSignature = signature
-	r.cachedAt = now
-	r.hasCached = true
-	r.hasFailure = false
+	expiresAt := minTime(evaluatedAt.Add(r.timing.MaxAge), counts.ValidUntil)
+	if !r.now().Before(expiresAt) {
+		return installationCounts{}, errInstallationMetricsUnavailable
+	}
+	r.snapshot.Store(&installationSnapshot{
+		counts:      counts,
+		signature:   registryOriginsSignature(registries),
+		evaluatedAt: evaluatedAt,
+		expiresAt:   expiresAt,
+	})
 	return counts, nil
+}
+
+func (r *installationMetricsReader) run(ctx context.Context, index func(context.Context) (map[store.RegistryID]store.Registry, error)) {
+	timer := time.NewTimer(0)
+	defer timer.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-timer.C:
+			timer.Reset(r.attempt(ctx, index, false))
+		case <-r.hints:
+			timer.Reset(r.attempt(ctx, index, true))
+		}
+	}
+}
+
+func (r *installationMetricsReader) attempt(ctx context.Context, index func(context.Context) (map[store.RegistryID]store.Registry, error), fromHint bool) time.Duration {
+	started := r.now()
+	if fromHint && started.Before(r.backoffUntil) {
+		return r.backoffUntil.Sub(started)
+	}
+	attemptCtx, cancel := context.WithTimeout(ctx, r.timing.Timeout)
+	defer cancel()
+	registries, err := index(attemptCtx)
+	if err != nil {
+		return r.failedAttempt(started, "unavailable")
+	}
+	signature := registryOriginsSignature(registries)
+	if fromHint {
+		if snapshot := r.snapshot.Load(); snapshot != nil && snapshot.signature == signature && r.now().Before(snapshot.expiresAt) {
+			if r.nextWake.IsZero() {
+				r.nextWake = minTime(snapshot.evaluatedAt.Add(r.timing.Interval+r.jitter()), snapshot.expiresAt)
+			}
+			return r.remaining(r.now())
+		}
+	}
+	if _, err := r.refresh(attemptCtx, registries); err != nil {
+		return r.failedAttempt(started, installationCountsErrorLogValue(err))
+	}
+	completed := r.now()
+	published := r.snapshot.Load()
+	r.backoffUntil = time.Time{}
+	if r.metrics != nil {
+		r.metrics.observeInstallationRefresh("success", started, completed, published.evaluatedAt)
+	}
+	r.nextWake = minTime(published.evaluatedAt.Add(r.timing.Interval+r.jitter()), published.expiresAt)
+	return r.remaining(completed)
+}
+
+func (r *installationMetricsReader) remaining(now time.Time) time.Duration {
+	if delay := r.nextWake.Sub(now); delay > 0 {
+		return delay
+	}
+	return 0
+}
+
+func (r *installationMetricsReader) jitter() time.Duration {
+	if r.timing.Jitter <= 0 {
+		return 0
+	}
+	return time.Duration(rand.Int64N(int64(r.timing.Jitter)))
+}
+
+func (r *installationMetricsReader) failedAttempt(started time.Time, outcome string) time.Duration {
+	completed := r.now()
+	r.backoffUntil = completed.Add(r.timing.RetryInterval)
+	r.nextWake = r.backoffUntil
+	if r.metrics != nil {
+		r.metrics.observeInstallationRefresh(outcome, started, completed, time.Time{})
+	}
+	slog.Warn("installation metrics refresh failed", "reason", outcome)
+	return r.timing.RetryInterval
 }
 
 func minTime(a, b time.Time) time.Time {
