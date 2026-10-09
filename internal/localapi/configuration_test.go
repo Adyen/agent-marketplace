@@ -449,7 +449,6 @@ func notificationSeverity(t *testing.T, event sessionEvent) string {
 	return payload.Severity
 }
 
-// spec: gui-configuration/harness-target-edit-matches-the-cli-mutation
 // spec: gui-configuration/organization-harness-targets-are-read-only
 func TestConfigurationSaveTargetsMatchesSharedWriter(t *testing.T) {
 	for _, tc := range []struct {

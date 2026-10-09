@@ -280,9 +280,9 @@ func TestGUIRegistryRemovalMatchesCLI(t *testing.T) {
 			}
 			tc.sourceKey = "gone-src"
 
-			root := "apiVersion: agent-marketplace/v4\ninclude: fragment.yaml\nharnesses: [devin]\nsources:\n  keep: {directory: " + keepDir + "}\n  " + tc.sourceKey + ": {" + sourceYAML + "}\nresources:\n  keep: {all: true}\n  " + tc.sourceKey + ": {all: true}\n"
-			fragment := "sources:\n  frag: {directory: " + fragDir + "}\nresources:\n  frag: {all: true}\n"
-			wantRoot := "apiVersion: agent-marketplace/v4\ninclude: fragment.yaml\nharnesses: [devin]\nsources:\n  keep: {directory: " + keepDir + "}\nresources:\n  keep: {all: true}\n"
+			root := "apiVersion: agent-marketplace/v4\ninclude: fragment.yaml\nharnesses: [devin]\nlogging: {level: debug}\nsources:\n  keep: {directory: " + keepDir + "}\n  " + tc.sourceKey + ": {" + sourceYAML + "}\nresources:\n  keep: {include: [skill/solo], exclude: [skill/retired], harnesses: [devin]}\n  " + tc.sourceKey + ": {all: true}\n"
+			fragment := "sources:\n  frag: {directory: " + fragDir + "}\nresources:\n  frag: {all: true, harnesses: [claude]}\n"
+			wantRoot := "apiVersion: agent-marketplace/v4\ninclude: fragment.yaml\nharnesses: [devin]\nlogging: {level: debug}\nsources:\n  keep: {directory: " + keepDir + "}\nresources:\n  keep: {include: [skill/solo], exclude: [skill/retired], harnesses: [devin]}\n"
 
 			repo := t.TempDir()
 			writeFile(t, filepath.Join(repo, ".agents", "config.yaml"), "apiVersion: agent-marketplace/v4\nharnesses: [devin]\n")

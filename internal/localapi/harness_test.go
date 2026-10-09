@@ -92,29 +92,44 @@ func TestLocalAPIUserHarness(t *testing.T) {
 	bootstrap := map[string]string{
 		"home":      home,
 		"repo":      repo,
+		"codexHome": os.Getenv("CODEX_HOME"),
 		"xdgConfig": os.Getenv("XDG_CONFIG_HOME"),
 		"xdgState":  os.Getenv("XDG_STATE_HOME"),
 		"xdgCache":  os.Getenv("XDG_CACHE_HOME"),
 	}
-	if fixture == "sources" || fixture == "marketplace" {
+	if fixture == "sources" || fixture == "marketplace" || fixture == "sources-git" {
+		gitSource := fixture == "sources-git"
 		userDir := filepath.Join(home, ".agents")
 		keepDir := filepath.Join(home, "keep-source")
 		fragDir := filepath.Join(home, "frag-source")
 		addDir := filepath.Join(home, "added-source")
 		writeFile(t, filepath.Join(keepDir, "solo", "SKILL.md"), fixtureSkillBody)
 		writeFile(t, filepath.Join(fragDir, "frag", "SKILL.md"), fixtureSkillBody)
-		writeFile(t, filepath.Join(addDir, "added", "SKILL.md"), fixtureSkillBody)
+		fragResources := "{all: true}"
+		rootLogging := ""
+		keepResources := "{all: true}"
+		if gitSource {
+			fragResources = "{all: true, harnesses: [claude]}"
+			rootLogging = "logging: {level: debug}\n"
+			keepResources = "{all: true, harnesses: [devin]}"
+		} else {
+			writeFile(t, filepath.Join(addDir, "added", "SKILL.md"), fixtureSkillBody)
+		}
 		writeFile(t, filepath.Join(userDir, "fragment.yaml"),
-			"sources:\n  frag: {directory: "+fragDir+"}\nresources:\n  frag: {all: true}\n")
+			"sources:\n  frag: {directory: "+fragDir+"}\nresources:\n  frag: "+fragResources+"\n")
 		writeFile(t, filepath.Join(userDir, "config.yaml"),
-			"apiVersion: agent-marketplace/v4\ninclude: fragment.yaml\nharnesses: [devin]\nsources:\n  keep: {directory: "+keepDir+"}\nresources:\n  keep: {all: true}\n")
+			"apiVersion: agent-marketplace/v4\ninclude: fragment.yaml\nharnesses: [devin]\n"+rootLogging+"sources:\n  keep: {directory: "+keepDir+"}\nresources:\n  keep: "+keepResources+"\n")
 		orgPath := filepath.Join(t.TempDir(), "org.yaml")
 		orgSource := filepath.Join(t.TempDir(), "org-regs")
 		writeFile(t, filepath.Join(orgSource, "orgskill", "SKILL.md"), fixtureSkillBody)
 		writeFile(t, orgPath, "apiVersion: agent-marketplace/v4\nharnesses: [claude]\nsources:\n  orgdir: {directory: "+orgSource+"}\n")
 		config.SetTestOrganizationConfigPath(t, orgPath)
-		bootstrap["addSourceDir"] = addDir
 		bootstrap["orgConfig"] = orgPath
+		if gitSource {
+			bootstrap["gitSourceURL"] = "file://" + filepath.ToSlash(newBareGitSource(t))
+		} else {
+			bootstrap["addSourceDir"] = addDir
+		}
 	}
 	if fixture == "marketplace" {
 		marketplace := newMarketplaceEndpointTestServer(t, "/playwright/catalog", "playwright-marketplace", "", 0)
