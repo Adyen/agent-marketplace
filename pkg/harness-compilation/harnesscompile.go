@@ -119,6 +119,9 @@ func ValidateTargetRegistrations() error {
 	if err := targetmeta.ValidateNativeLayouts(); err != nil {
 		errs = append(errs, err)
 	}
+	if err := targetmeta.ValidateHookProjections(); err != nil {
+		errs = append(errs, err)
+	}
 	// Reverse direction: a registration for an undeclared target, or for a
 	// target that does not declare the capability, is a wiring bug.
 	for _, t := range compile.RegisteredTargets() {
@@ -199,6 +202,16 @@ func Compile(r Resource, t Target, opts ...Option) (*Result, error) {
 		Artifacts:   res.Artifacts,
 		Diagnostics: res.Diagnostics,
 	}, nil
+}
+
+// CompileNativeHookProjection compiles one hook into the target's declared
+// native hook file fragment through the shipped hook and tool catalogs.
+func CompileNativeHookProjection(h *ir.Hook, dst Target, scope Scope, supportBase string) (*Result, error) {
+	res, err := compile.NativeHookProjection(h, compile.Target(dst), compile.Scope(scope), supportBase)
+	if err != nil {
+		return nil, err
+	}
+	return &Result{Artifacts: res.Artifacts, Diagnostics: res.Diagnostics}, nil
 }
 
 // Convert compiles an entire harness-specific source directory from one harness

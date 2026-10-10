@@ -331,6 +331,29 @@ library lists. The Factory byte replacement and the cache-root
 `WithPluginRoot` injection are deleted. `materialize.hook.support-conflict`
 remains for residual collisions.
 
+For the bounded independent-client correction, repository-hook support is
+always a regular copy of the verified source bytes and permission bits.
+Machine-scope hooks and non-hook resources retain their configured mode.
+The writer and compatibility reader use the same pure native projection;
+its hook-only topology is derived from the writer's existing `NativeLayout`,
+not a second path table. The writer retains its definition-digest and
+index-only semantic binding checks.
+
+Support-first sequencing is retained. Regular support copies and their
+portable manifest publish through one existing recoverable CAS transaction
+before the native/state/legacy transaction. Link conversion requires complete
+current clean owned-source evidence, the exact authorized generated cache
+target, and verified referent bytes and permissions. Missing, corrupt,
+drifted or satisfaction-only evidence grants no conversion authority.
+Descriptor-anchored staging and rename distinguish the old link, exact new
+regular copy and foreign state; checks create no files or state, and mutating
+recovery is idempotent. Native and legacy generation guards remain mandatory.
+
+Quoted-reference rendering must preserve shell semantics. Recognized
+plugin-root tokens inside authored single-quoted literals are refused with
+`hook.env-unrepresentable`; representable double-quoted and unquoted forms
+continue to translate. Support script bytes are never rewritten.
+
 ### D9: Ownership state for every hook aggregate
 
 Every hook aggregate is reconciled through the durable ownership state
@@ -477,11 +500,17 @@ update uses an already supported generator version; no new version is added.
 
 ## Migration Plan
 
-0. **Prerequisite release (a separate change, `hook-native-location-tolerance`).**
-   Clients that still write legacy locations accept a hook's owned entry in
-   the native file as satisfying the legacy output. They neither report
-   drift nor re-create the legacy entry. That change must be the latest
-   release pinned in `released-client-gate` before this change merges.
+0. **Prerequisite reader release.** `hook-native-location-tolerance` accepts
+   proven native satisfaction instead of recreating legacy output. Its private
+   ownership proof alone is insufficient for independent HOME/XDG actors:
+   verified `v4.1.3` still fails this change's unchanged mixed-version gate.
+   The separate `hook-native-independent-satisfaction` reader in PR #616
+   reconstructs exact complete repository-native and regular support
+   equivalence without gaining ownership or prune authority. Human merge and
+   release of that reader precedes writer merge. Pin and checksum-verify its
+   actual release and pass the unchanged independent-teammate gate before
+   merging or archiving this writer; do not invent a future version or share
+   private state. Reviewed conditional PR publication may proceed now.
 1. Ship `toolpolicy` and `hookpolicy`, and switch translators and allow-lists
    per target.
 2. Switch Claude Code, Cursor, Factory Droid, and Windsurf repository scope
@@ -489,10 +518,11 @@ update uses an already supported generator version; no new version is added.
 3. Extend `upgrade-gate` with a v3.1.1 hook fixture for all seven targets,
    and `released-client-gate` with a hook migration step.
 
-Rollback: a client from before the prerequisite release re-emits its legacy
-files, which duplicates Factory hooks and stops Windsurf hooks from loading
-if `.devin/hooks.json` exists. Clients from the prerequisite release onward
-do not. This is documented in the release notes.
+Rollback: a client that cannot prove native satisfaction may re-emit legacy
+files, duplicating Factory hooks or affecting Windsurf loading when
+`.devin/hooks.json` exists. A merged reader PR or private shared-state
+success does not establish independent-client compatibility. Only the
+unchanged gate against an actual released reader clears this boundary.
 
 ## Open Questions
 

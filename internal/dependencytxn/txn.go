@@ -734,8 +734,8 @@ func normalizeDesired(desired []DesiredFile) ([]DesiredFile, error) {
 		var path string
 		var err error
 		if files[i].ExpectedLinkTarget != "" {
-			if !files[i].Delete || !files[i].Expected.Exists || files[i].Expected.Digest != Digest([]byte(files[i].ExpectedLinkTarget)) || files[i].ExpectedMode != 0 || len(files[i].Bytes) != 0 || files[i].Mode != 0 {
-				return nil, fmt.Errorf("%w: invalid link deletion participant: %s", ErrUnsafePath, files[i].Path)
+			if !files[i].Expected.Exists || files[i].Expected.Digest != Digest([]byte(files[i].ExpectedLinkTarget)) || files[i].ExpectedMode != 0 || !files[i].Delete && files[i].Mode == 0 {
+				return nil, fmt.Errorf("%w: invalid link participant: %s", ErrUnsafePath, files[i].Path)
 			}
 			path, err = normalizeDestinationPath(files[i].Path)
 		} else {
@@ -1106,6 +1106,10 @@ func publish(file journalFile, syncDir func(string) error) error {
 		} else if err := os.Remove(file.Path); err != nil {
 			return fmt.Errorf("dependency transaction: delete %s: %w", file.Path, err)
 		}
+	} else if file.OldLinkTarget != "" {
+		if err := replaceSymlinkAt(file); err != nil {
+			return err
+		}
 	} else {
 		if err := validateStaged(file); err != nil {
 			return err
@@ -1119,17 +1123,50 @@ func publish(file journalFile, syncDir func(string) error) error {
 
 func classify(file journalFile) (string, error) {
 	if file.OldLinkTarget != "" {
-		snapshot, err := inspectLinkDestination(file.Path)
+		parent, name, err := openParentNoFollow(file.Path)
+		if err != nil {
+			if !file.Delete {
+				return "", fmt.Errorf("%w: replacement path is unsafe: %w", ErrRecoveryBlocked, err)
+			}
+			return "", err
+		}
+		defer func() { _ = unix.Close(parent) }()
+		snapshot, err := inspectLinkAt(parent, name)
 		if err != nil {
 			return "", err
 		}
 		if !snapshot.exists {
-			return "new", nil
+			if file.Delete {
+				return "new", nil
+			}
+			return "foreign", nil
 		}
 		if snapshot.symlink && snapshot.target == file.OldLinkTarget && snapshot.generation == file.Old {
 			return "old", nil
 		}
-		return "foreign", nil
+		if file.Delete || snapshot.stat.Mode&unix.S_IFMT != unix.S_IFREG {
+			return "foreign", nil
+		}
+		if filepath.Clean(filepath.Dir(file.Temp)) != filepath.Clean(filepath.Dir(file.Path)) {
+			return "", fmt.Errorf("%w: replacement stage is not beside %s", ErrRecoveryBlocked, file.Path)
+		}
+		stageName := filepath.Base(file.Temp)
+		var stageInfo unix.Stat_t
+		if err := unix.Fstatat(parent, stageName, &stageInfo, unix.AT_SYMLINK_NOFOLLOW); err == nil {
+			return "foreign", nil
+		} else if !errors.Is(err, unix.ENOENT) {
+			return "", fmt.Errorf("%w: inspect replacement stage for %s: %v", ErrRecoveryBlocked, file.Path, err)
+		}
+		fd, data, current, err := readRegularFileAt(parent, name)
+		if err != nil {
+			return "", err
+		}
+		_ = unix.Close(fd)
+		if snapshot.stat.Dev != current.Dev || snapshot.stat.Ino != current.Ino || current.Nlink != 1 ||
+			uint32(current.Mode)&0o7777 != uint32(file.NewMode) || Digest(data) != file.NewDigest {
+			return "foreign", nil
+		}
+		return "new", nil
 	}
 	generation, mode, err := inspectDestination(file.Path)
 	if err != nil {
@@ -1190,8 +1227,21 @@ func validateJournal(j *journal) error {
 			return fmt.Errorf("%w: invalid journal mode for %s", ErrRecoveryBlocked, file.Path)
 		}
 		if file.OldLinkTarget != "" {
-			if !file.Delete || !file.Old.Exists || file.Old.Digest != Digest([]byte(file.OldLinkTarget)) || file.OldMode != 0 || file.Temp != "" || file.NewDigest != "" || file.NewMode != 0 {
-				return fmt.Errorf("%w: invalid link deletion for %s", ErrRecoveryBlocked, file.Path)
+			if !file.Old.Exists || file.Old.Digest != Digest([]byte(file.OldLinkTarget)) || file.OldMode != 0 {
+				return fmt.Errorf("%w: invalid link generation for %s", ErrRecoveryBlocked, file.Path)
+			}
+			if file.Delete {
+				if file.Temp != "" || file.NewDigest != "" || file.NewMode != 0 {
+					return fmt.Errorf("%w: invalid link deletion for %s", ErrRecoveryBlocked, file.Path)
+				}
+			} else {
+				if file.Temp == "" || file.NewDigest == "" || file.NewMode == 0 ||
+					filepath.Dir(file.Temp) != filepath.Dir(file.Path) {
+					return fmt.Errorf("%w: invalid link replacement for %s", ErrRecoveryBlocked, file.Path)
+				}
+				if err := ensureContained(filepath.Dir(file.Path), file.Temp); err != nil {
+					return fmt.Errorf("%w: %v", ErrRecoveryBlocked, err)
+				}
 			}
 		} else if file.Delete {
 			if !file.Old.Exists || file.Temp != "" || file.NewMode != 0 {

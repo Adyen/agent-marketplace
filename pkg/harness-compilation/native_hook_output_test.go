@@ -45,10 +45,17 @@ func TestNativeHookOutputAllTargetsAndScopes(t *testing.T) {
 				if err != nil {
 					t.Fatalf("Compile: %v", err)
 				}
+				pure, err := CompileNativeHookProjection(hook, tc.target, scope, "")
+				if err != nil || pure.HasErrors() || len(pure.Artifacts) != 1 {
+					t.Fatalf("CompileNativeHookProjection: err=%v result=%+v", err, pure)
+				}
 				if len(result.Artifacts) != 1 {
 					t.Fatalf("artifacts = %#v, want one native fragment", result.Artifacts)
 				}
 				a := result.Artifacts[0]
+				if pure.Artifacts[0].Path != a.Path || pure.Artifacts[0].Mode != a.Mode || !bytes.Equal(pure.Artifacts[0].Bytes, a.Bytes) {
+					t.Fatalf("native flag output differs from pure projection: flag=%+v pure=%+v", a, pure.Artifacts[0])
+				}
 				if a.Path != wantPath || a.Mode.Perm() != 0o600 {
 					t.Fatalf("artifact path/mode = %q/%#o, want %q/0600", a.Path, a.Mode.Perm(), wantPath)
 				}
@@ -202,11 +209,45 @@ func TestNativeHookOutputPreservesNormalExtrasAndRawNumbers(t *testing.T) {
 	if bytes.Contains(result.Artifacts[0].Bytes, []byte("_managed_by")) || !bytes.Contains(result.Artifacts[0].Bytes, []byte("userExtra")) || !bytes.Contains(result.Artifacts[0].Bytes, []byte("keep")) {
 		t.Fatalf("native extra output = %s", result.Artifacts[0].Bytes)
 	}
+	pure, err := CompileNativeHookProjection(hook, TargetFactory, ScopeProject, "")
+	if err != nil || pure.HasErrors() || len(pure.Artifacts) != 1 || !bytes.Equal(pure.Artifacts[0].Bytes, result.Artifacts[0].Bytes) {
+		t.Fatalf("native flag extra output differs from pure projection: pure=%+v err=%v", pure, err)
+	}
 	raw, err := compile.NativeHookArtifact(compile.TargetFactory, compile.ScopeProject, "PreToolUse", json.RawMessage(`{"matcher":"Execute","hooks":[{"type":"command","command":"echo raw","userExtra":1.0}]}`))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !bytes.Contains(raw.Bytes, []byte(`"userExtra":1.0`)) {
 		t.Fatalf("raw extra numeric spelling changed: %s", raw.Bytes)
+	}
+}
+
+// spec: hook-resources/gemini-timeouts-are-converted-to-milliseconds
+func TestNativeHookOutputFlagMatchesPureProjectionTimeout(t *testing.T) {
+	hook := ir.NewHookWithMatcherOptions("guard", "PreToolUse", "Bash", "echo timeout", "command", nil,
+		ir.SourceRef{File: "hooks/hooks.json"}, ir.WithHookSource("claude"), ir.WithHookTimeout(30))
+	withFlag, err := Compile(hook, TargetGemini, WithNativeHookOutput(), WithScope(ScopeProject))
+	if err != nil || withFlag == nil || withFlag.HasErrors() || len(withFlag.Artifacts) != 1 {
+		t.Fatalf("native Compile: result=%+v err=%v", withFlag, err)
+	}
+	pure, err := CompileNativeHookProjection(hook, TargetGemini, ScopeProject, "")
+	if err != nil || pure == nil || pure.HasErrors() || len(pure.Artifacts) != 1 {
+		t.Fatalf("pure projection: result=%+v err=%v", pure, err)
+	}
+	if withFlag.Artifacts[0].Path != "settings.json" || pure.Artifacts[0].Path != withFlag.Artifacts[0].Path ||
+		!bytes.Equal(withFlag.Artifacts[0].Bytes, pure.Artifacts[0].Bytes) {
+		t.Fatalf("native Compile output = %+v, pure projection = %+v", withFlag.Artifacts[0], pure.Artifacts[0])
+	}
+	var document map[string]any
+	if err := json.Unmarshal(withFlag.Artifacts[0].Bytes, &document); err != nil {
+		t.Fatal(err)
+	}
+	group := document["hooks"].(map[string]any)["BeforeTool"].([]any)[0].(map[string]any)
+	if group["matcher"] != "^run_shell_command$" {
+		t.Fatalf("Gemini matcher = %v", group["matcher"])
+	}
+	handler := group["hooks"].([]any)[0].(map[string]any)
+	if handler["type"] != "command" || handler["command"] != "echo timeout" || handler["timeout"] != float64(30000) {
+		t.Fatalf("Gemini handler = %v, want command with 30000ms timeout", handler)
 	}
 }

@@ -146,3 +146,121 @@ func unlinkSymlinkAt(path, expectedTarget string) error {
 	}
 	return nil
 }
+
+func readRegularFileAt(parent int, name string) (int, []byte, unix.Stat_t, error) {
+	var beforeName unix.Stat_t
+	if err := unix.Fstatat(parent, name, &beforeName, unix.AT_SYMLINK_NOFOLLOW); err != nil {
+		return -1, nil, unix.Stat_t{}, fmt.Errorf("%w: inspect staged file: %v", ErrRecoveryBlocked, err)
+	}
+	if beforeName.Mode&unix.S_IFMT != unix.S_IFREG || beforeName.Nlink != 1 {
+		return -1, nil, unix.Stat_t{}, ErrRecoveryBlocked
+	}
+	if beforeName.Size < 0 || beforeName.Size > maxDependencyFileSize {
+		return -1, nil, unix.Stat_t{}, fmt.Errorf("%w: staged file exceeds %d bytes", ErrRecoveryBlocked, maxDependencyFileSize)
+	}
+	fd, err := unix.Openat(parent, name, unix.O_RDONLY|unix.O_CLOEXEC|unix.O_NOFOLLOW|unix.O_NONBLOCK, 0)
+	if err != nil {
+		return -1, nil, unix.Stat_t{}, fmt.Errorf("%w: open staged file: %v", ErrRecoveryBlocked, err)
+	}
+	keepFD := false
+	defer func() {
+		if !keepFD {
+			_ = unix.Close(fd)
+		}
+	}()
+	var beforeFD unix.Stat_t
+	if err := unix.Fstat(fd, &beforeFD); err != nil || !sameRegularFileState(beforeName, beforeFD) {
+		return -1, nil, unix.Stat_t{}, fmt.Errorf("%w: staged file changed while opening", ErrRecoveryBlocked)
+	}
+	data := make([]byte, 0, int(beforeFD.Size))
+	buffer := make([]byte, 32*1024)
+	for {
+		n, readErr := unix.Read(fd, buffer)
+		if n > 0 {
+			if int64(len(data))+int64(n) > maxDependencyFileSize {
+				return -1, nil, unix.Stat_t{}, fmt.Errorf("%w: staged file exceeds %d bytes", ErrRecoveryBlocked, maxDependencyFileSize)
+			}
+			data = append(data, buffer[:n]...)
+		}
+		if errors.Is(readErr, unix.EINTR) {
+			continue
+		}
+		if readErr != nil {
+			return -1, nil, unix.Stat_t{}, fmt.Errorf("%w: read staged file: %v", ErrRecoveryBlocked, readErr)
+		}
+		if n == 0 {
+			break
+		}
+	}
+	var afterFD, afterName unix.Stat_t
+	if err := unix.Fstat(fd, &afterFD); err != nil {
+		return -1, nil, unix.Stat_t{}, fmt.Errorf("%w: recheck staged file: %v", ErrRecoveryBlocked, err)
+	}
+	if err := unix.Fstatat(parent, name, &afterName, unix.AT_SYMLINK_NOFOLLOW); err != nil {
+		return -1, nil, unix.Stat_t{}, fmt.Errorf("%w: recheck staged file name: %v", ErrRecoveryBlocked, err)
+	}
+	if !sameRegularFileState(beforeFD, afterFD) || !sameRegularFileState(afterFD, afterName) || int64(len(data)) != afterFD.Size {
+		return -1, nil, unix.Stat_t{}, fmt.Errorf("%w: staged file changed while reading", ErrRecoveryBlocked)
+	}
+	keepFD = true
+	return fd, data, afterFD, nil
+}
+
+func sameRegularFileState(a, b unix.Stat_t) bool {
+	return a.Mode&unix.S_IFMT == unix.S_IFREG && b.Mode&unix.S_IFMT == unix.S_IFREG &&
+		a.Dev == b.Dev && a.Ino == b.Ino && a.Size == b.Size && a.Mode == b.Mode && a.Nlink == b.Nlink &&
+		a.Mtim == b.Mtim && a.Ctim == b.Ctim
+}
+
+func replaceSymlinkAt(file journalFile) error {
+	if file.Temp == "" || filepath.Dir(file.Temp) != filepath.Dir(file.Path) {
+		return fmt.Errorf("%w: replacement stage is not beside %s", ErrRecoveryBlocked, file.Path)
+	}
+	if err := ensureContained(filepath.Dir(file.Path), file.Temp); err != nil {
+		return fmt.Errorf("%w: %v", ErrRecoveryBlocked, err)
+	}
+	parent, name, err := openParentNoFollow(file.Path)
+	if err != nil {
+		return fmt.Errorf("%w: replacement path is unsafe: %w", ErrRecoveryBlocked, err)
+	}
+	defer func() { _ = unix.Close(parent) }()
+	beforeLink, err := inspectLinkAt(parent, name)
+	if err != nil {
+		return err
+	}
+	if !beforeLink.exists || !beforeLink.symlink || beforeLink.target != file.OldLinkTarget || beforeLink.generation != file.Old {
+		return fmt.Errorf("%w: symlink changed before replacement: %s", ErrRecoveryBlocked, file.Path)
+	}
+	stageName := filepath.Base(file.Temp)
+	fd, data, stageInfo, err := readRegularFileAt(parent, stageName)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = unix.Close(fd) }()
+	if stageInfo.Nlink != 1 || uint32(stageInfo.Mode)&0o7777 != uint32(file.NewMode) || Digest(data) != file.NewDigest {
+		return fmt.Errorf("%w: staged replacement changed for %s", ErrRecoveryBlocked, file.Path)
+	}
+	afterLink, err := inspectLinkAt(parent, name)
+	if err != nil {
+		return err
+	}
+	if !afterLink.exists || !afterLink.symlink || afterLink.target != file.OldLinkTarget || afterLink.generation != file.Old ||
+		beforeLink.stat.Dev != afterLink.stat.Dev || beforeLink.stat.Ino != afterLink.stat.Ino {
+		return fmt.Errorf("%w: symlink changed before replacement: %s", ErrRecoveryBlocked, file.Path)
+	}
+	var stageFD, stageNameInfo unix.Stat_t
+	if err := unix.Fstat(fd, &stageFD); err != nil {
+		return fmt.Errorf("%w: recheck staged replacement for %s: %v", ErrRecoveryBlocked, file.Path, err)
+	}
+	if err := unix.Fstatat(parent, stageName, &stageNameInfo, unix.AT_SYMLINK_NOFOLLOW); err != nil {
+		return fmt.Errorf("%w: recheck staged replacement name for %s: %v", ErrRecoveryBlocked, file.Path, err)
+	}
+	if !sameRegularFileState(stageInfo, stageFD) || !sameRegularFileState(stageFD, stageNameInfo) ||
+		uint32(stageFD.Mode)&0o7777 != uint32(file.NewMode) {
+		return fmt.Errorf("%w: staged replacement changed before publish for %s", ErrRecoveryBlocked, file.Path)
+	}
+	if err := unix.Renameat(parent, stageName, parent, name); err != nil {
+		return fmt.Errorf("%w: dependency transaction: replace symlink %s: %w", ErrRecoveryBlocked, file.Path, err)
+	}
+	return nil
+}

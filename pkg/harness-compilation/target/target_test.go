@@ -16,6 +16,10 @@ func TestCodexIdentityIsPubliclyDiscoverable(t *testing.T) {
 	if !ok {
 		t.Fatal("Codex must be publicly discoverable after target promotion")
 	}
+	if definition.HookProjection == nil {
+		t.Fatal("Codex hook projection is not derived")
+	}
+	definition.HookProjection = nil
 	want := Definition{Target: TargetCodex, Label: "Codex", PartitionedRoots: true, Compiler: true, Ingester: true, Conversion: true, UI: true, UIOrder: 6}
 	if !reflect.DeepEqual(definition, want) {
 		t.Fatalf("Lookup(codex) = %#v, want %#v", definition, want)
@@ -107,7 +111,14 @@ func TestDefinitionsAppendCodexWithoutChangingExistingTargets(t *testing.T) {
 		{Target: TargetDevin, Label: "Devin CLI", RepoRoot: ".devin", UserRoot: ".config/devin", Compiler: true, Ingester: true, Conversion: true, UI: true, UIOrder: 5},
 		{Target: TargetCodex, Label: "Codex", PartitionedRoots: true, Compiler: true, Ingester: true, Conversion: true, UI: true, UIOrder: 6},
 	}
-	if got := Definitions(); !reflect.DeepEqual(got, want) {
+	got := Definitions()
+	for i := range got {
+		if got[i].HookProjection == nil {
+			t.Fatalf("Definitions()[%d] has no derived hook projection", i)
+		}
+		got[i].HookProjection = nil
+	}
+	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("Definitions() = %#v, want %#v", got, want)
 	}
 }

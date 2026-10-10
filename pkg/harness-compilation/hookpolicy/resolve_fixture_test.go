@@ -9,6 +9,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"os"
+	"os/exec"
 	"strconv"
 	"strings"
 	"testing"
@@ -393,4 +394,219 @@ func TestCompileRefusesForeignPluginVariables(t *testing.T) {
 		diagnostic.Severity != hcc.SeverityError {
 		t.Fatalf("overridden diagnostic = %+v, want error %q", diagnostic, diag.CodeHookEnvUnrepresentable)
 	}
+}
+
+// spec: hook-resources/single-quoted-plugin-root-literals-refuse-safely
+func TestCompileRefusesSingleQuotedPluginRoot(t *testing.T) {
+	machineBase := "/tmp/hook home/quote'/$literal/\"double\"/`tick`/guard"
+	machineDouble := "echo \"/tmp/hook home/quote'/\\$literal/\\\"double\\\"/\\`tick\\`/guard/scripts/run.sh\""
+	machineBare := "echo '/tmp/hook home/quote'\\''/$literal/\"double\"/`tick`/guard'/scripts/run.sh"
+	targets := []struct {
+		name, member, event string
+		target              hcc.Target
+		grouped             bool
+		repoBase            string
+		repoDouble          string
+		repoBare            string
+	}{
+		{
+			name:       "factory",
+			target:     hcc.TargetFactory,
+			event:      "PreToolUse",
+			grouped:    true,
+			repoBase:   ".factory/hook-support/source/guard",
+			repoDouble: `echo "$FACTORY_PROJECT_DIR/.factory/hook-support/source/guard/scripts/run.sh"`,
+			repoBare:   `echo "$FACTORY_PROJECT_DIR"/.factory/hook-support/source/guard/scripts/run.sh`,
+		},
+		{
+			name:       "codex",
+			target:     hcc.TargetCodex,
+			member:     "hooks",
+			event:      "PreToolUse",
+			grouped:    true,
+			repoBase:   ".codex/hook-support/source/guard",
+			repoDouble: `echo "$(git rev-parse --show-toplevel)/.codex/hook-support/source/guard/scripts/run.sh"`,
+			repoBare:   `echo "$(git rev-parse --show-toplevel)"/.codex/hook-support/source/guard/scripts/run.sh`,
+		},
+		{
+			name:       "windsurf",
+			target:     hcc.TargetWindsurf,
+			member:     "hooks",
+			event:      "pre_run_command",
+			repoBase:   "hook-support/source/guard",
+			repoDouble: `echo "hook-support/source/guard/scripts/run.sh"`,
+			repoBare:   "echo hook-support/source/guard/scripts/run.sh",
+		},
+	}
+	commandFromResult := func(t *testing.T, result *hcc.Result, member, event string, grouped bool) string {
+		t.Helper()
+		if result == nil {
+			t.Fatal("Compile returned nil result without an error")
+			return ""
+		}
+		if len(result.Artifacts) != 1 {
+			t.Fatalf("native artifact count = %d, want 1", len(result.Artifacts))
+		}
+		var document map[string]json.RawMessage
+		if err := json.Unmarshal(result.Artifacts[0].Bytes, &document); err != nil {
+			t.Fatalf("decode native artifact: %v", err)
+		}
+		if member != "" {
+			if err := json.Unmarshal(document[member], &document); err != nil {
+				t.Fatalf("decode native %s member: %v", member, err)
+			}
+		}
+		var entries []json.RawMessage
+		if err := json.Unmarshal(document[event], &entries); err != nil || len(entries) != 1 {
+			t.Fatalf("native %s entries = %d, %v; want one", event, len(entries), err)
+		}
+		handler := entries[0]
+		if grouped {
+			var group struct {
+				Hooks []json.RawMessage `json:"hooks"`
+			}
+			if err := json.Unmarshal(entries[0], &group); err != nil || len(group.Hooks) != 1 {
+				t.Fatalf("native %s handlers = %d, %v; want one", event, len(group.Hooks), err)
+			}
+			handler = group.Hooks[0]
+		}
+		var command struct {
+			Value string `json:"command"`
+		}
+		if err := json.Unmarshal(handler, &command); err != nil {
+			t.Fatalf("decode native command: %v", err)
+		}
+		return command.Value
+	}
+	checkSyntax := func(t *testing.T, command string) {
+		t.Helper()
+		syntax := exec.Command("sh", "-n")
+		syntax.Stdin = strings.NewReader(command)
+		if output, err := syntax.CombinedOutput(); err != nil {
+			t.Errorf("actual projected command is not valid shell: %v: %s; command=%q", err, output, command)
+		}
+	}
+	compile := func(t *testing.T, command string, target hcc.Target, scope hcc.Scope, base string) (*hcc.Result, *hcc.Result, error) {
+		t.Helper()
+		hook := ir.NewHookWithMatcherOptions("guard", "PreToolUse", "Bash", command, "command", nil,
+			ir.SourceRef{}, ir.WithHookSource("claude"))
+		withFlag, err := hcc.Compile(hook, target,
+			hcc.WithNativeHookOutput(), hcc.WithPluginRoot(base), hcc.WithScope(scope))
+		if err != nil {
+			return nil, nil, err
+		}
+		pure, err := hcc.CompileNativeHookProjection(hook, target, scope, base)
+		return withFlag, pure, err
+	}
+	compareProjectionResults := func(t *testing.T, withFlag, pure *hcc.Result) {
+		t.Helper()
+		if withFlag == nil || pure == nil || len(withFlag.Artifacts) != len(pure.Artifacts) || len(withFlag.Diagnostics) != len(pure.Diagnostics) {
+			t.Fatalf("native flag and pure projection result shapes differ: flag=%+v pure=%+v", withFlag, pure)
+		}
+		for i := range withFlag.Diagnostics {
+			if withFlag.Diagnostics[i] != pure.Diagnostics[i] {
+				t.Errorf("native flag diagnostics = %+v, pure diagnostics = %+v", withFlag.Diagnostics, pure.Diagnostics)
+				break
+			}
+		}
+		for i := range withFlag.Artifacts {
+			left, right := withFlag.Artifacts[i], pure.Artifacts[i]
+			if left.Path != right.Path || left.Mode != right.Mode || !bytes.Equal(left.Bytes, right.Bytes) {
+				t.Errorf("native flag artifact differs from pure projection: flag=%+v pure=%+v", left, right)
+			}
+		}
+	}
+	checkError := func(t *testing.T, result *hcc.Result, member, event string, grouped bool) {
+		t.Helper()
+		if result == nil {
+			t.Fatal("Compile returned nil result without an error")
+			return
+		}
+		if !result.HasErrors() || !diag.HasCode(result.Diagnostics, diag.CodeHookEnvUnrepresentable) {
+			t.Errorf("single-quoted plugin root diagnostics = %+v, want %s error", result.Diagnostics, diag.CodeHookEnvUnrepresentable)
+		}
+		if len(result.Artifacts) != 0 {
+			t.Errorf("single-quoted plugin root emitted %d artifacts, want none", len(result.Artifacts))
+			checkSyntax(t, commandFromResult(t, result, member, event, grouped))
+		}
+	}
+
+	for _, tc := range targets {
+		for _, scopeCase := range []struct {
+			name  string
+			scope hcc.Scope
+		}{
+			{name: "repository", scope: hcc.ScopeProject},
+			{name: "machine", scope: hcc.ScopeUser},
+		} {
+			base := tc.repoBase
+			wantDouble, wantBare := tc.repoDouble, tc.repoBare
+			if scopeCase.scope == hcc.ScopeUser {
+				base = machineBase
+				wantDouble, wantBare = machineDouble, machineBare
+			}
+			t.Run(tc.name+"/"+scopeCase.name+"/single-quoted", func(t *testing.T) {
+				result, pure, err := compile(t, `echo '${CLAUDE_PLUGIN_ROOT}/scripts/run.sh'`, tc.target, scopeCase.scope, base)
+				if err != nil {
+					t.Fatalf("public Compile: %v", err)
+				}
+				compareProjectionResults(t, result, pure)
+				checkError(t, result, tc.member, tc.event, tc.grouped)
+			})
+			t.Run(tc.name+"/"+scopeCase.name+"/double-quoted", func(t *testing.T) {
+				result, pure, err := compile(t, `echo "${CLAUDE_PLUGIN_ROOT}/scripts/run.sh"`, tc.target, scopeCase.scope, base)
+				if err != nil {
+					t.Fatalf("public Compile: %v", err)
+				}
+				compareProjectionResults(t, result, pure)
+				if result == nil || result.HasErrors() {
+					t.Fatalf("double-quoted plugin root diagnostics = %+v", result)
+				}
+				got := commandFromResult(t, result, tc.member, tc.event, tc.grouped)
+				if got != wantDouble {
+					t.Errorf("projected command = %q, want %q", got, wantDouble)
+				}
+				checkSyntax(t, got)
+			})
+			t.Run(tc.name+"/"+scopeCase.name+"/unquoted", func(t *testing.T) {
+				result, pure, err := compile(t, `echo ${CLAUDE_PLUGIN_ROOT}/scripts/run.sh`, tc.target, scopeCase.scope, base)
+				if err != nil {
+					t.Fatalf("public Compile: %v", err)
+				}
+				compareProjectionResults(t, result, pure)
+				if result == nil || result.HasErrors() {
+					t.Fatalf("unquoted plugin root diagnostics = %+v", result)
+				}
+				got := commandFromResult(t, result, tc.member, tc.event, tc.grouped)
+				if got != wantBare {
+					t.Errorf("projected command = %q, want %q", got, wantBare)
+				}
+				checkSyntax(t, got)
+			})
+		}
+	}
+
+	t.Run("same-harness project variable remains authored inside single quotes", func(t *testing.T) {
+		command := `echo '$CLAUDE_PROJECT_DIR/ordinary'`
+		hook := ir.NewHookWithMatcherOptions("guard", "PreToolUse", "Bash", command, "command", nil,
+			ir.SourceRef{}, ir.WithHookSource("claude"))
+		result, err := hcc.Compile(hook, hcc.TargetClaude,
+			hcc.WithNativeHookOutput(), hcc.WithScope(hcc.ScopeProject))
+		if err != nil {
+			t.Fatalf("public same-harness Compile: %v", err)
+		}
+		pure, err := hcc.CompileNativeHookProjection(hook, hcc.TargetClaude, hcc.ScopeProject, "")
+		if err != nil {
+			t.Fatalf("public same-harness pure projection: %v", err)
+		}
+		compareProjectionResults(t, result, pure)
+		if result == nil || result.HasErrors() {
+			t.Fatalf("same-harness project-variable diagnostics = %+v", result)
+		}
+		got := commandFromResult(t, result, "hooks", "PreToolUse", true)
+		if got != command {
+			t.Errorf("same-harness command = %q, want authored command %q", got, command)
+		}
+		checkSyntax(t, got)
+	})
 }

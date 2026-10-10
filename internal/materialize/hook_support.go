@@ -30,10 +30,12 @@ import (
 )
 
 type hookSupportPlan struct {
-	relBase      string
-	artifacts    []artifact.Artifact
-	sourceDigest string
-	err          error
+	relBase             string
+	artifacts           []artifact.Artifact
+	sourceDigest        string
+	sourceSnapshot      *hookSourceSnapshot
+	sourceExcludedPeers []string
+	err                 error
 }
 
 type nativeHookInstalledSupport struct {
@@ -60,6 +62,7 @@ func prepareHookSupport(work []skillTarget) (map[int]hookSupportPlan, map[int][]
 	}
 	snapshots := make(map[captureKey]*hookSourceSnapshot)
 	snapshotErrs := make(map[captureKey]error)
+	snapshotExcludedPeers := make(map[captureKey][]string)
 	claims := make(map[string]*hookSupportClaim)
 	var keys []string
 	for i, w := range work {
@@ -130,12 +133,15 @@ func prepareHookSupport(work []skillTarget) (map[int]hookSupportPlan, map[int][]
 				snapshot, err = captureHookSourceSnapshot(root, definition, definitionDir, excludedPeers...)
 				snapshots[key] = snapshot
 				snapshotErrs[key] = err
+				snapshotExcludedPeers[key] = append([]string(nil), excludedPeers...)
 			}
 			if err := snapshotErrs[key]; err != nil {
 				plan.err = err
 				plans[i] = plan
 				continue
 			}
+			plan.sourceSnapshot = snapshot
+			plan.sourceExcludedPeers = append([]string(nil), snapshotExcludedPeers[key]...)
 			files, err = hookSupportArtifactsFromSnapshot(projection, snapshot)
 			if err != nil {
 				plan.err = err
@@ -442,7 +448,7 @@ func hookSupportSourceLocation(sourceRoot, definitionPath string) (root, definit
 
 func openHookSupportDirAt(rootFD int, relative string) (int, error) {
 	if relative == "" || relative == "." {
-		return unix.Dup(rootFD)
+		return unix.FcntlInt(uintptr(rootFD), unix.F_DUPFD_CLOEXEC, 0)
 	}
 	if !fs.ValidPath(relative) {
 		return -1, fmt.Errorf("hook support directory path is invalid")

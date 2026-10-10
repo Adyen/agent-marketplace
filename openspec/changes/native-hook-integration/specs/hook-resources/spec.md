@@ -422,7 +422,15 @@ cache. If a target
 catalog declares no repository base, a repository-scope hook whose command
 contains a plugin-root token SHALL be suppressed with the error
 `hook.support-path-unrepresentable`. Commands without a plugin-root token
-SHALL be emitted unchanged.
+SHALL be emitted unchanged. A plugin-root token inside an authored single-quoted
+shell literal SHALL be refused with `hook.env-unrepresentable` rather than
+changing literal shell semantics or emitting malformed executable output.
+
+#### Scenario: Single-quoted plugin-root literals refuse safely
+
+- **WHEN** a native hook command contains a source plugin-root token inside an authored single-quoted shell literal
+- **THEN** compilation MUST emit `hook.env-unrepresentable` as an error and no hook artifact
+- **AND** ordinary double-quoted and unquoted representable plugin-root references MUST continue to translate, while same-harness ordinary non-plugin variables retain their existing behavior
 
 #### Scenario: Repository-scope commands use the project-directory variable
 
@@ -468,9 +476,12 @@ file, except the hook definition itself and native aggregate siblings, into
 `hook-support/<source>/<hook>/` under the harness target's root for that
 scope. `<source>` is a filesystem-safe identifier derived deterministically
 from the hook's registry source, and `<hook>` is the hook's installed name.
-Relative paths below the source directory SHALL be preserved. The
-materialization mode applies to these files. Every harness target, including
-Devin CLI, Codex, and Gemini CLI, SHALL receive support files. When two
+Relative paths below the source directory SHALL be preserved. Repository-scope
+hook support SHALL be installed as portable regular copies with the verified
+source bytes and permission bits, regardless of the configured materialization
+mode. Machine-scope hook support and non-hook resources SHALL retain their
+existing materialization-mode policy. Every harness target, including Devin
+CLI, Codex, and Gemini CLI, SHALL receive support files. When two
 selected hooks would still write different bytes or permissions to one
 support path, both SHALL be refused with `materialize.hook.support-conflict`
 before any aggregate changes. Previously installed entries and files SHALL be
@@ -497,6 +508,29 @@ kept.
 - **THEN** its support directory MUST be removed
 - **AND** files in the target root that Agent Marketplace does not own MUST
   be kept
+
+#### Scenario: Repository support copies preserve machine and non-hook policy
+
+- **WHEN** repository hooks, machine hooks and non-hook resources are synced with symlink materialization configured
+- **THEN** repository hook support MUST be regular files with the verified source bytes and permission bits
+- **AND** machine hook support and non-hook resources MUST retain their configured materialization-mode behavior
+
+#### Scenario: Proven repository support links convert with recovery
+
+- **WHEN** an installed repository support link has clean current native ownership evidence for its selected source, points to the exact authorized generated cache file, and matches the verified source bytes and permissions
+- **THEN** sync MUST replace the link with a regular copy using compare-and-swap and recoverable publication without changing its referent
+- **AND** an interrupted conversion MUST be refused by read-only commands and completed idempotently by the next mutating recovery
+
+#### Scenario: Unproven or unsafe repository support links are preserved
+
+- **WHEN** an existing support link lacks clean source-bound ownership evidence, has a different target, or crosses an unsafe file boundary
+- **THEN** sync MUST refuse the affected hook without replacing that link or changing its referent, native file or legacy file
+- **AND** corrupt ownership evidence and foreign regular files MUST NOT become overwrite or adoption authority
+
+#### Scenario: Repository support conversion check writes nothing
+
+- **WHEN** a read-only sync check discovers a pending managed-link conversion or changed output generation
+- **THEN** it MUST report the pending change or refusal without creating state, staging files or support copies and without changing native, legacy, support or referent bytes and permissions
 
 ### Requirement: Hook command changes are reported for review on every harness target
 

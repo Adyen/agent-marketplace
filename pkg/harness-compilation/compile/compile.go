@@ -329,6 +329,13 @@ func Compile(r ir.Resource, t Target, opts ...Option) (*Result, error) {
 			opt(cfg)
 		}
 	}
+	if kind == ir.KindHook && cfg.NativeHookOutput() {
+		hook, ok := r.(*ir.Hook)
+		if !ok {
+			return nil, fmt.Errorf("compile: native hook output requires a hook resource")
+		}
+		return NativeHookProjection(hook, t, cfg.Scope(), cfg.pluginRoot)
+	}
 	var (
 		arts  []artifact.Artifact
 		diags []diag.Diagnostic
@@ -340,12 +347,6 @@ func Compile(r ir.Resource, t Target, opts ...Option) (*Result, error) {
 	if err != nil {
 		slog.Error("compile failed", "target", t, "kind", kind, "resource", name, "error", err)
 		return nil, err
-	}
-	if kind == ir.KindHook && cfg.NativeHookOutput() {
-		arts, err = nativeHookOutputArtifacts(t, cfg.Scope(), arts)
-		if err != nil {
-			return nil, fmt.Errorf("compile: native hook output: %w", err)
-		}
 	}
 	if kind == ir.KindMcpServer {
 		for i := range arts {

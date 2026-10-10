@@ -12,6 +12,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"strings"
 
@@ -38,7 +39,12 @@ type nativeHookAggregateSnapshot struct {
 	mode       fs.FileMode
 }
 
-type nativeHookSupportInstaller func(context.Context, bool) (bool, error)
+type nativeHookSupportAuthority struct {
+	cleanSources map[string]bool
+	assertions   []dependencytxn.DesiredFile
+}
+
+type nativeHookSupportInstaller func(context.Context, bool, nativeHookSupportAuthority) (bool, error)
 
 type nativeHookTransactionExtras struct {
 	originalNative        *nativeHookAggregateSnapshot
@@ -108,8 +114,151 @@ func revalidateNativeHookAggregateSnapshot(snapshot *nativeHookAggregateSnapshot
 	return nil
 }
 
+func nativeHookCleanSupportSources(file ownedJSONFileSpec, raw []byte, proof ownership.Proof, proofErr error) (map[string]bool, error) {
+	clean := make(map[string]bool)
+	if proofErr != nil || len(raw) == 0 {
+		return clean, nil
+	}
+	doc, err := jsonc.Parse(file.rel, raw)
+	if err != nil {
+		return clean, fmt.Errorf("parse current native hook file: %w", err)
+	}
+	container, _, err := ownedJSONContainerNode(doc, file)
+	if err != nil || container == nil {
+		return clean, err
+	}
+	existing, err := ownedJSONExistingEntries(file, container)
+	if err != nil {
+		return nil, err
+	}
+	current := make(map[ownership.EntryID]string, len(existing))
+	duplicates := make(map[ownership.EntryID]bool)
+	for _, entry := range existing {
+		id := entry.value.ID
+		if _, ok := current[id]; ok {
+			duplicates[id] = true
+		}
+		current[id] = entry.value.ValueDigest
+	}
+	ids := proof.OwnedIDs()
+	sources := make(map[string]ownership.HookSourceEvidence)
+	for _, id := range ids {
+		if id.Kind != ownership.KindHook {
+			continue
+		}
+		entry, ok := proof.Entry(id)
+		if !ok {
+			continue
+		}
+		if entry.Resource != "" && entry.SourceDigest != "" {
+			pair := ownership.HookSourceEvidence{Resource: entry.Resource, SourceDigest: entry.SourceDigest}
+			sources[hookSupportOwnerID(pair.Resource, pair.SourceDigest)] = pair
+		}
+		for _, pair := range entry.SourceEvidence {
+			if pair.Resource != "" && pair.SourceDigest != "" {
+				sources[hookSupportOwnerID(pair.Resource, pair.SourceDigest)] = pair
+			}
+		}
+	}
+	for key, pair := range sources {
+		matches := 0
+		complete := true
+		for _, id := range ids {
+			if !proof.HasHookSource(id, pair.Resource, pair.SourceDigest) {
+				continue
+			}
+			matches++
+			valueDigest, ok := current[id]
+			if !ok || duplicates[id] || proof.Classify(id, valueDigest) != ownership.StatusOwnedClean {
+				complete = false
+			}
+		}
+		if matches > 0 && complete {
+			clean[key] = true
+		}
+	}
+	return clean, nil
+}
+
+func nativeHookSupportPreflightCleanSources(key outputKey, repoRoot string) (map[string]bool, error) {
+	destination, file, err := nativeHookJSONLayout(key, repoRoot)
+	if err != nil {
+		return nil, err
+	}
+	raw, err := ownership.ReadAggregateFileAt(destination.Root, file.rel)
+	if errors.Is(err, os.ErrNotExist) {
+		raw, err = nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	store, err := ownership.Open(destination.Root)
+	if err != nil {
+		return nil, err
+	}
+	proof, proofErr := store.Proof(file.rel)
+	return nativeHookCleanSupportSources(file, raw, proof, proofErr)
+}
+
+func nativeHookSupportProofsEqual(left, right ownership.Proof) bool {
+	if left.File() != right.File() || left.Generation() != right.Generation() || left.ContentDigest() != right.ContentDigest() {
+		return false
+	}
+	leftIDs := left.OwnedIDs()
+	rightIDs := right.OwnedIDs()
+	if !reflect.DeepEqual(leftIDs, rightIDs) {
+		return false
+	}
+	for _, id := range leftIDs {
+		leftEntry, leftOK := left.Entry(id)
+		rightEntry, rightOK := right.Entry(id)
+		if !leftOK || !rightOK || !reflect.DeepEqual(leftEntry, rightEntry) {
+			return false
+		}
+	}
+	return reflect.DeepEqual(left.HookSatisfactions(), right.HookSatisfactions())
+}
+
+func nativeHookSupportProofStateAssertion(store *ownership.Store, rel string, planningProof ownership.Proof) (dependencytxn.DesiredFile, error) {
+	if store == nil {
+		return dependencytxn.DesiredFile{}, fmt.Errorf("%w: native hook ownership store is unavailable", dependencytxn.ErrGenerationConflict)
+	}
+	statePath := store.StateFile()
+	beforeBytes, beforeGeneration, beforeMode, err := dependencytxn.ReadSnapshot(statePath)
+	if err != nil {
+		return dependencytxn.DesiredFile{}, fmt.Errorf("%w: snapshot native hook ownership state: %v", dependencytxn.ErrGenerationConflict, err)
+	}
+	freshProof, err := store.Proof(rel)
+	if err != nil {
+		return dependencytxn.DesiredFile{}, fmt.Errorf("%w: reload native hook ownership proof: %v", dependencytxn.ErrGenerationConflict, err)
+	}
+	afterBytes, afterGeneration, afterMode, err := dependencytxn.ReadSnapshot(statePath)
+	if err != nil {
+		return dependencytxn.DesiredFile{}, fmt.Errorf("%w: recheck native hook ownership state: %v", dependencytxn.ErrGenerationConflict, err)
+	}
+	if !beforeGeneration.Exists || beforeGeneration != afterGeneration || beforeMode != afterMode ||
+		!bytes.Equal(beforeBytes, afterBytes) || !nativeHookSupportProofsEqual(planningProof, freshProof) {
+		return dependencytxn.DesiredFile{}, fmt.Errorf("%w: native hook ownership proof changed before support publication", dependencytxn.ErrGenerationConflict)
+	}
+	return dependencytxn.DesiredFile{
+		Path: statePath, Expected: afterGeneration, ExpectedMode: afterMode,
+		Bytes: afterBytes, Mode: afterMode,
+	}, nil
+}
+
+func nativeHookSupportSnapshotAssertion(snapshot *nativeHookAggregateSnapshot) dependencytxn.DesiredFile {
+	assertion := dependencytxn.DesiredFile{Path: snapshot.abs, Expected: snapshot.generation, ExpectedMode: snapshot.mode}
+	if snapshot.generation.Exists {
+		assertion.Bytes = append([]byte(nil), snapshot.raw...)
+		assertion.Mode = snapshot.mode
+	} else {
+		assertion.Delete = true
+	}
+	return assertion
+}
+
 func nativeHookActivationFinalizer(key outputKey, repoRoot string, mcpEntries []ownedJSONEntry, mcpIncomplete bool, markMCPIncomplete func(), mcpDiagnostics *[]diag.Diagnostic, supportInstallers ...nativeHookSupportInstaller) nativeHookFinalizer {
-	return func(ctx context.Context, _ *ownership.Store, _ outputKey, outDir string, file ownedJSONFileSpec, nativeAbs string, nativeRaw []byte, nativeReadErr error, doc *jsonc.Document, plan ownedJSONPatch, proof ownership.Proof, proofErr error, incomplete, dryRun bool) (nativeHookTransactionExtras, error) {
+	return func(ctx context.Context, store *ownership.Store, _ outputKey, outDir string, file ownedJSONFileSpec, nativeAbs string, nativeRaw []byte, nativeReadErr error, doc *jsonc.Document, plan ownedJSONPatch, proof ownership.Proof, proofErr error, incomplete, dryRun bool) (nativeHookTransactionExtras, error) {
 		extras := nativeHookTransactionExtras{}
 		nativeSnapshot, snapshotErr := nativeHookAggregateSnapshotAtPlan(nativeAbs, file.rel, nativeRaw, nativeReadErr)
 		if snapshotErr != nil {
@@ -249,7 +398,28 @@ func nativeHookActivationFinalizer(key outputKey, repoRoot string, mcpEntries []
 			}
 		}
 		if supportInstall != nil {
-			pending, installErr := supportInstall(ctx, dryRun)
+			authority := nativeHookSupportAuthority{cleanSources: map[string]bool{}}
+			if !key.machineScope {
+				var sourceErr error
+				authority.cleanSources, sourceErr = nativeHookCleanSupportSources(file, nativeSnapshot.raw, proof, proofErr)
+				if sourceErr != nil {
+					extras.refused = true
+					return extras, diag.NewCodedError(diag.CodeMaterializeHookSupportConflict, diag.SourceRef{File: file.rel}, sourceErr)
+				}
+				if len(authority.cleanSources) > 0 {
+					proofAssertion, assertionErr := nativeHookSupportProofStateAssertion(store, file.rel, proof)
+					if assertionErr != nil {
+						extras.refused = true
+						return extras, diag.NewCodedError(diag.CodeMaterializeHookSupportConflict, diag.SourceRef{File: file.rel}, assertionErr)
+					}
+					authority.assertions = append(authority.assertions, nativeHookSupportSnapshotAssertion(nativeSnapshot))
+					for _, snapshot := range legacySnapshots {
+						authority.assertions = append(authority.assertions, nativeHookSupportSnapshotAssertion(snapshot))
+					}
+					authority.assertions = append(authority.assertions, proofAssertion)
+				}
+			}
+			pending, installErr := supportInstall(ctx, dryRun, authority)
 			if installErr != nil {
 				extras.refused = true
 				if _, coded := diag.AsCodedError(installErr); coded {

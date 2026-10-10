@@ -94,6 +94,9 @@ type nativeHookSupportPublication struct {
 	plans map[nativeHookSupportPlanKey]*nativeHookSupportPlanPublication
 }
 
+type nativeRepositorySupportWriteFaultKey struct{}
+type nativeRepositorySupportCommitFaultKey struct{}
+
 func nativeHookSupportPlanKeyFor(plan materializePlan) nativeHookSupportPlanKey {
 	return nativeHookSupportPlanKey{outDir: filepath.Clean(plan.outDir), reportPrefix: filepath.ToSlash(plan.reportPrefix)}
 }
@@ -450,6 +453,7 @@ type runConfig struct {
 	scopeFilter        *bool // nil = all scopes; true = machine only; false = repo only
 	modes              config.MaterializationModes
 	beforeSupportWrite func(string, string) error
+	supportCommitFault dependencytxn.FaultHook
 }
 
 // WithMaterializationModes supplies the already-resolved scope policy. Keeping
@@ -480,6 +484,10 @@ func withNativeHookSupportWriteFault(fault func(string, string) error) RunOption
 	return func(c *runConfig) { c.beforeSupportWrite = fault }
 }
 
+func withNativeHookSupportCommitFault(fault dependencytxn.FaultHook) RunOption {
+	return func(c *runConfig) { c.supportCommitFault = fault }
+}
+
 // skillTarget pairs a resolved skill with a specific compilation target.
 type skillTarget struct {
 	skill        resolver.ResolvedArtifact
@@ -488,9 +496,11 @@ type skillTarget struct {
 }
 
 type hookSupportOwner struct {
-	skill        skillTarget
-	resourceName string
-	sourceDigest string
+	skill               skillTarget
+	resourceName        string
+	sourceDigest        string
+	sourceSnapshot      *hookSourceSnapshot
+	sourceExcludedPeers []string
 }
 
 func blockedResourceFor(key outputKey, w skillTarget) BlockedResource {
@@ -557,6 +567,9 @@ func Run(ctx context.Context, repoRoot string, resolved []resolver.ResolvedArtif
 	rc.modes = config.DefaultMaterializationModes()
 	for _, o := range opts {
 		o(&rc)
+	}
+	if rc.supportCommitFault != nil {
+		ctx = context.WithValue(ctx, nativeRepositorySupportCommitFaultKey{}, rc.supportCommitFault)
 	}
 	slog.Debug("materialize start", "repo_root", repoRoot, "resolved", len(resolved), "dry_run", rc.dryRun,
 		"machine_mode", rc.modes.Machine, "project_mode", rc.modes.Project)
@@ -1215,7 +1228,10 @@ func compileWorkItems(work []skillTarget, allDiags []diag.Diagnostic, allOutputs
 				if hookSupportOwners[key] == nil {
 					hookSupportOwners[key] = make(map[string][]hookSupportOwner)
 				}
-				owner := hookSupportOwner{skill: w, resourceName: blockedResourceFor(key, w).Name, sourceDigest: plan.sourceDigest}
+				owner := hookSupportOwner{
+					skill: w, resourceName: blockedResourceFor(key, w).Name, sourceDigest: plan.sourceDigest,
+					sourceSnapshot: plan.sourceSnapshot, sourceExcludedPeers: append([]string(nil), plan.sourceExcludedPeers...),
+				}
 				for _, support := range plan.artifacts {
 					hookSupportPaths[key][support.Path] = true
 					hookSupportOwners[key][support.Path] = append(hookSupportOwners[key][support.Path], owner)
@@ -1532,7 +1548,7 @@ func executeMaterializePlans(ctx context.Context, compileResult compilePhaseResu
 		slog.Debug("materialize target", "target", key.target, "machine_scope", key.machineScope, "mode", mode, "out_dir", outDir)
 		var supportDiags []diag.Diagnostic
 		var supportBlocked []BlockedResource
-		artifacts, supportDiags, supportBlocked = preflightHookSupportDestinations(&compileResult, key, repoRoot, outDir, artifacts, compileResult.skillLinks[key])
+		artifacts, supportDiags, supportBlocked = preflightHookSupportDestinations(&compileResult, key, repoRoot, outDir, artifacts, compileResult.skillLinks[key], coalescedCodexPartitions)
 		report.Diags = append(report.Diags, supportDiags...)
 		for _, resource := range supportBlocked {
 			if !slices.Contains(report.BlockedResources, resource) {
@@ -1600,19 +1616,15 @@ func executeMaterializePlans(ctx context.Context, compileResult compilePhaseResu
 				var mcpDiagnostics []diag.Diagnostic
 				var supportInstallers []nativeHookSupportInstaller
 				if len(compileResult.hookSupportPaths[key]) > 0 {
-					supportInstallers = append(supportInstallers, func(ctx context.Context, dryRun bool) (bool, error) {
-						publication, pending, installErr := executeNativeHookSupportPlan(key, repoRoot, outDir, artifacts,
-							compileResult.hookSupportPaths[key], compileResult.skillLinks[key], compileResult.artifactMeta,
+					supportInstallers = append(supportInstallers, func(ctx context.Context, dryRun bool, authority nativeHookSupportAuthority) (bool, error) {
+						publication, pending, installErr := executeNativeHookSupportPlan(ctx, key, repoRoot, outDir, artifacts,
+							compileResult.hookSupportPaths[key], compileResult.hookSupportOwners[key], authority, compileResult.skillLinks[key], compileResult.artifactMeta,
 							mode, dryRun, coalescedCodexPartitions, supportWriteFault)
-						if !dryRun {
-							supportPublication = publication
-						}
+						supportPublication = publication
 						if installErr != nil {
 							return pending, installErr
 						}
-						if !dryRun {
-							artifacts = withoutNativeHookSupportArtifacts(artifacts, compileResult.hookSupportPaths[key])
-						}
+						artifacts = withoutNativeHookSupportArtifacts(artifacts, compileResult.hookSupportPaths[key])
 						return pending, nil
 					})
 				}
@@ -1786,7 +1798,319 @@ func mergeNativeHookSupportWriteReport(dst, src *hcc.WriteReport) *hcc.WriteRepo
 	return dst
 }
 
-func executeNativeHookSupportPlan(key outputKey, repoRoot, outDir string, artifacts []artifact.Artifact, supportPaths map[string]bool, linkedSkills map[string]*skillLinkGroup, artifactMeta map[outputKey]map[string]skillLink, mode config.MaterializationMode, dryRun bool, coalescedCodexPartitions map[string]bool, beforeSupportWrite func(string, string) error) (nativeHookSupportPublication, bool, error) {
+func sameNativeHookSupportDesiredFile(left, right dependencytxn.DesiredFile) bool {
+	return left.Expected == right.Expected && left.ExpectedMode == right.ExpectedMode &&
+		left.ExpectedLinkTarget == right.ExpectedLinkTarget && left.Mode == right.Mode && left.Delete == right.Delete &&
+		bytes.Equal(left.Bytes, right.Bytes)
+}
+
+func dedupeNativeHookSupportParticipants(files []dependencytxn.DesiredFile) ([]dependencytxn.DesiredFile, error) {
+	seen := make(map[string]dependencytxn.DesiredFile, len(files))
+	participants := make([]dependencytxn.DesiredFile, 0, len(files))
+	for _, file := range files {
+		key := filepath.Clean(file.Path)
+		if existing, ok := seen[key]; ok {
+			if !sameNativeHookSupportDesiredFile(existing, file) {
+				return nil, fmt.Errorf("%w: conflicting hook support transaction preconditions for %s", dependencytxn.ErrGenerationConflict, key)
+			}
+			continue
+		}
+		seen[key] = file
+		participants = append(participants, file)
+	}
+	return participants, nil
+}
+
+func syncNativeRepositoryHookSupportCopies(ctx context.Context, outDir string, artifacts []artifact.Artifact, cacheDir string, dryRun bool, collisionMeta map[string]skillLink, state *portableState, target hcc.Target, reportPrefix string, desired map[string]bool, owners map[string][]hookSupportOwner, authority nativeHookSupportAuthority) (*hcc.WriteReport, []diag.Diagnostic, error) {
+	report := &hcc.WriteReport{OutDir: outDir}
+	conflict := func(a artifact.Artifact, relative string, pathOwners []hookSupportOwner, cause error) (*hcc.WriteReport, []diag.Diagnostic, error) {
+		resource := ""
+		if meta, ok := collisionMeta[a.Path]; ok {
+			resource = meta.resourceName
+		}
+		if resource == "" && len(pathOwners) > 0 {
+			resource = pathOwners[0].resourceName
+		}
+		message := "hook support destination could not be verified"
+		if resource != "" {
+			message = fmt.Sprintf("hook support for %q could not be verified", resource)
+		}
+		if cause == nil {
+			cause = errors.New(message)
+		} else {
+			cause = fmt.Errorf("%s: %w", message, cause)
+		}
+		return &hcc.WriteReport{OutDir: outDir}, nil, diag.NewCodedError(diag.CodeMaterializeHookSupportConflict, diag.SourceRef{File: relative}, cause)
+	}
+	if state == nil {
+		return report, nil, portableManifestError("", errors.New("native hook support has no portable state"))
+	}
+	manifestBytes, manifestGeneration, manifestMode, err := dependencytxn.ReadSnapshot(state.path)
+	if err != nil {
+		return report, nil, portableManifestError(state.path, err)
+	}
+	if err := validatePortableManifestSnapshot(state, manifestBytes, manifestGeneration, manifestMode); err != nil {
+		return report, nil, portableManifestError(state.path, err)
+	}
+	nextState := *state
+	nextState.entries = make(map[string]portableManifestEntry, len(state.entries))
+	for key, entry := range state.entries {
+		nextState.entries[key] = entry
+	}
+	participants := make([]dependencytxn.DesiredFile, 0, len(artifacts)+1)
+	writeDirs := make(map[string]bool)
+	changed := false
+	for _, a := range artifacts {
+		if err := a.Validate(); err != nil {
+			return report, nil, err
+		}
+		relative := filepath.ToSlash(path.Join(reportPrefix, a.Path))
+		desired[relative] = true
+		pathOwners := owners[a.Path]
+		if len(pathOwners) == 0 {
+			return conflict(a, relative, pathOwners, errors.New("captured hook support has no selected source owner"))
+		}
+		for _, owner := range pathOwners {
+			if owner.resourceName == "" {
+				return conflict(a, relative, pathOwners, errors.New("captured hook support has no resource identity"))
+			}
+		}
+		destination, err := portableOutputPath(outDir, a.Path)
+		if err != nil {
+			return conflict(a, relative, pathOwners, err)
+		}
+		mode := portableArtifactMode(a.Mode)
+		digest := portableArtifactDigest(a)
+		info, err := os.Lstat(destination)
+		if os.IsNotExist(err) {
+			participants = append(participants, dependencytxn.DesiredFile{
+				Path: destination, Expected: dependencytxn.Generation{}, Bytes: append([]byte(nil), a.Bytes...), Mode: mode,
+			})
+			nextState.add(target, relative, digest)
+			writeDirs[filepath.ToSlash(filepath.Dir(a.Path))] = true
+			report.Written = append(report.Written, a.Path)
+			changed = true
+			continue
+		}
+		if err != nil {
+			return conflict(a, relative, pathOwners, err)
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			linkTarget, expected, err := dependencytxn.ReadSymlinkSnapshot(destination)
+			if err != nil {
+				return conflict(a, relative, pathOwners, err)
+			}
+			expectedCacheFile := filepath.Join(cacheDir, filepath.FromSlash(a.Path))
+			if linkTarget != expectedCacheFile {
+				return conflict(a, relative, pathOwners, errors.New("hook support link does not point to its authorized cache file"))
+			}
+			for _, owner := range pathOwners {
+				if owner.sourceDigest == "" || !authority.cleanSources[hookSupportOwnerID(owner.resourceName, owner.sourceDigest)] {
+					return conflict(a, relative, pathOwners, errors.New("hook support link has no complete clean native source proof"))
+				}
+			}
+			if _, err := validatePortableOutputDir(cacheDir, filepath.ToSlash(filepath.Dir(a.Path))); err != nil {
+				return conflict(a, relative, pathOwners, err)
+			}
+			cacheBytes, cacheGeneration, cacheMode, err := dependencytxn.ReadSnapshot(expectedCacheFile)
+			if err != nil || !cacheGeneration.Exists || !bytes.Equal(cacheBytes, a.Bytes) || cacheMode != mode {
+				if err == nil {
+					err = errors.New("authorized hook support cache bytes or permissions changed")
+				}
+				return conflict(a, relative, pathOwners, err)
+			}
+			participants = append(participants,
+				dependencytxn.DesiredFile{
+					Path: expectedCacheFile, Expected: cacheGeneration, ExpectedMode: cacheMode,
+					Bytes: append([]byte(nil), cacheBytes...), Mode: cacheMode,
+				},
+				dependencytxn.DesiredFile{
+					Path: destination, Expected: expected, ExpectedMode: 0, ExpectedLinkTarget: linkTarget,
+					Bytes: append([]byte(nil), a.Bytes...), Mode: mode,
+				},
+			)
+			nextState.add(target, relative, digest)
+			report.Written = append(report.Written, a.Path)
+			changed = true
+			continue
+		}
+		if !info.Mode().IsRegular() {
+			return conflict(a, relative, pathOwners, errors.New("hook support destination is not a regular file"))
+		}
+		currentBytes, expected, currentMode, err := dependencytxn.ReadSnapshot(destination)
+		if err != nil {
+			return conflict(a, relative, pathOwners, err)
+		}
+		currentDigest := portableArtifactDigest(artifact.Artifact{Bytes: currentBytes, Mode: currentMode})
+		entry, owned := state.entry(target, relative)
+		if !owned {
+			if currentDigest != digest || !bytes.Equal(currentBytes, a.Bytes) || currentMode != mode {
+				return conflict(a, relative, pathOwners, errors.New("foreign regular hook support file differs from captured bytes"))
+			}
+			participants = append(participants, dependencytxn.DesiredFile{
+				Path: destination, Expected: expected, ExpectedMode: currentMode,
+				Bytes: currentBytes, Mode: currentMode,
+			})
+			report.Skipped = append(report.Skipped, a.Path)
+			continue
+		}
+		switch portableOwnershipDecision(entry, currentDigest, digest) {
+		case portableOwnershipAdopt:
+			nextState.add(target, relative, digest)
+			participants = append(participants, dependencytxn.DesiredFile{
+				Path: destination, Expected: expected, ExpectedMode: currentMode,
+				Bytes: currentBytes, Mode: currentMode,
+			})
+			report.Skipped = append(report.Skipped, a.Path)
+		case portableOwnershipReplace:
+			participants = append(participants, dependencytxn.DesiredFile{
+				Path: destination, Expected: expected, ExpectedMode: currentMode,
+				Bytes: append([]byte(nil), a.Bytes...), Mode: mode,
+			})
+			nextState.add(target, relative, digest)
+			report.Written = append(report.Written, a.Path)
+			changed = true
+		default:
+			return conflict(a, relative, pathOwners, errors.New("owned hook support file changed outside materialization"))
+		}
+	}
+	manifestNext, hasEntries, err := nextState.serialized()
+	if err != nil {
+		return report, nil, err
+	}
+	manifestModeNext := manifestMode
+	if !manifestGeneration.Exists {
+		manifestModeNext = 0o600
+	}
+	manifestChanged := hasEntries && (!manifestGeneration.Exists || !bytes.Equal(manifestNext, manifestBytes))
+	if manifestChanged {
+		participants = append(participants, dependencytxn.DesiredFile{
+			Path: state.path, Expected: manifestGeneration, ExpectedMode: manifestMode,
+			Bytes: manifestNext, Mode: manifestModeNext,
+		})
+		changed = true
+	} else if changed && manifestGeneration.Exists {
+		participants = append(participants, dependencytxn.DesiredFile{
+			Path: state.path, Expected: manifestGeneration, ExpectedMode: manifestMode,
+			Bytes: manifestBytes, Mode: manifestMode,
+		})
+	}
+	participants = append(participants, authority.assertions...)
+	participants, err = dedupeNativeHookSupportParticipants(participants)
+	if err != nil {
+		if len(artifacts) == 0 {
+			return report, nil, err
+		}
+		a := artifacts[0]
+		return conflict(a, filepath.ToSlash(path.Join(reportPrefix, a.Path)), owners[a.Path], err)
+	}
+	writeFault, hasWriteFault := ctx.Value(nativeRepositorySupportWriteFaultKey{}).(func(string, string) error)
+	if hasWriteFault {
+		for _, a := range artifacts {
+			destination, err := portableOutputPath(outDir, a.Path)
+			if err != nil {
+				return &hcc.WriteReport{OutDir: outDir}, nil, fmt.Errorf("resolve hook support output: %w", err)
+			}
+			if err := writeFault("output", destination); err != nil {
+				return &hcc.WriteReport{OutDir: outDir}, nil, fmt.Errorf("prepare hook support output: %w", err)
+			}
+		}
+		currentManifest, currentGeneration, currentMode, err := dependencytxn.ReadSnapshot(state.path)
+		if err != nil {
+			return &hcc.WriteReport{OutDir: outDir}, nil, portableManifestError(state.path, err)
+		}
+		if err := validatePortableManifestSnapshot(state, currentManifest, currentGeneration, currentMode); err != nil {
+			return &hcc.WriteReport{OutDir: outDir}, nil, portableManifestError(state.path, err)
+		}
+	}
+	if !changed {
+		if hasWriteFault {
+			for _, a := range artifacts {
+				destination, err := portableOutputPath(outDir, a.Path)
+				if err != nil {
+					return conflict(a, filepath.ToSlash(path.Join(reportPrefix, a.Path)), owners[a.Path], err)
+				}
+				for _, participant := range participants {
+					if participant.Path != destination {
+						continue
+					}
+					current, generation, mode, err := dependencytxn.ReadSnapshot(destination)
+					if err != nil || generation != participant.Expected || mode != participant.ExpectedMode || !bytes.Equal(current, participant.Bytes) {
+						if err == nil {
+							err = dependencytxn.ErrGenerationConflict
+						}
+						return conflict(a, filepath.ToSlash(path.Join(reportPrefix, a.Path)), owners[a.Path], err)
+					}
+				}
+			}
+		}
+		sort.Strings(report.Written)
+		sort.Strings(report.Skipped)
+		return report, nil, nil
+	}
+	if dryRun {
+		sort.Strings(report.Written)
+		sort.Strings(report.Skipped)
+		return report, nil, nil
+	}
+	type sourceSnapshotKey struct {
+		snapshot      *hookSourceSnapshot
+		excludedPeers string
+	}
+	validatedSources := make(map[sourceSnapshotKey]bool)
+	for _, a := range artifacts {
+		for _, owner := range owners[a.Path] {
+			if owner.sourceSnapshot == nil {
+				continue
+			}
+			key := sourceSnapshotKey{snapshot: owner.sourceSnapshot, excludedPeers: strings.Join(owner.sourceExcludedPeers, "\x00")}
+			if validatedSources[key] {
+				continue
+			}
+			validatedSources[key] = true
+			if err := revalidateHookSourceSnapshot(owner.sourceSnapshot, owner.sourceExcludedPeers); err != nil {
+				return conflict(a, filepath.ToSlash(path.Join(reportPrefix, a.Path)), owners[a.Path], err)
+			}
+		}
+	}
+	for rel := range writeDirs {
+		if _, err := ensurePortableOutputDir(outDir, rel); err != nil {
+			return report, nil, fmt.Errorf("prepare repository hook support directory: %w", err)
+		}
+	}
+	if manifestChanged && !manifestGeneration.Exists {
+		manifestRel, err := filepath.Rel(state.repoRoot, state.path)
+		if err != nil || manifestRel == "." || manifestRel == ".." || strings.HasPrefix(manifestRel, ".."+string(filepath.Separator)) || filepath.IsAbs(manifestRel) {
+			return report, nil, portableManifestError(state.path, errors.New("portable manifest path is outside its root"))
+		}
+		if _, err := ensurePortableOutputDir(state.repoRoot, filepath.ToSlash(filepath.Dir(manifestRel))); err != nil {
+			return report, nil, portableManifestError(state.path, err)
+		}
+	}
+	var commitOptions []dependencytxn.Option
+	if fault, ok := ctx.Value(nativeRepositorySupportCommitFaultKey{}).(dependencytxn.FaultHook); ok && fault != nil {
+		commitOptions = append(commitOptions, dependencytxn.WithFaultHook(fault))
+	}
+	if _, err := commitNativeHookFiles(ctx, participants, commitOptions...); err != nil {
+		if errors.Is(err, dependencytxn.ErrGenerationConflict) || errors.Is(err, dependencytxn.ErrRecoveryBlocked) || errors.Is(err, dependencytxn.ErrUnsafePath) {
+			for _, a := range artifacts {
+				return conflict(a, filepath.ToSlash(path.Join(reportPrefix, a.Path)), owners[a.Path], err)
+			}
+		}
+		return report, nil, fmt.Errorf("commit repository hook support copies: %w", err)
+	}
+	state.entries = nextState.entries
+	if manifestChanged {
+		state.raw = append([]byte(nil), manifestNext...)
+		state.exists = true
+		state.mode = manifestModeNext
+	}
+	sort.Strings(report.Written)
+	sort.Strings(report.Skipped)
+	return report, nil, nil
+}
+
+func executeNativeHookSupportPlan(ctx context.Context, key outputKey, repoRoot, outDir string, artifacts []artifact.Artifact, supportPaths map[string]bool, owners map[string][]hookSupportOwner, authority nativeHookSupportAuthority, linkedSkills map[string]*skillLinkGroup, artifactMeta map[outputKey]map[string]skillLink, mode config.MaterializationMode, dryRun bool, coalescedCodexPartitions map[string]bool, beforeSupportWrite func(string, string) error) (nativeHookSupportPublication, bool, error) {
 	publication := nativeHookSupportPublication{plans: make(map[nativeHookSupportPlanKey]*nativeHookSupportPlanPublication)}
 	if len(supportPaths) == 0 {
 		return publication, false, nil
@@ -1795,16 +2119,23 @@ func executeNativeHookSupportPlan(key outputKey, repoRoot, outDir string, artifa
 	if err != nil {
 		return publication, false, err
 	}
+	repositoryCopies := !key.machineScope
+	effectiveMode := mode
+	if repositoryCopies {
+		effectiveMode = config.MaterializationModeFile
+	}
 	plans := materializePlans(key.target, outDir, artifacts, linkedComponents(linkedSkills), key.machineScope)
 	seen := make(map[string]bool, len(supportPaths))
 	var installedSupport []nativeHookInstalledSupport
 	pending := false
 	for _, plan := range plans {
 		var supportArtifacts []artifact.Artifact
+		artifactOwners := make(map[string][]hookSupportOwner)
 		for _, candidate := range plan.artifacts {
 			if supportKey, ok := hookSupportArtifactKey(supportPaths, plan.reportPrefix, candidate.Path); ok {
 				seen[supportKey] = true
 				supportArtifacts = append(supportArtifacts, candidate)
+				artifactOwners[candidate.Path] = append(artifactOwners[candidate.Path], owners[supportKey]...)
 			}
 		}
 		if len(supportArtifacts) == 0 {
@@ -1823,39 +2154,48 @@ func executeNativeHookSupportPlan(key outputKey, repoRoot, outDir string, artifa
 			return publication, pending, fmt.Errorf("hook support output directory is outside its root")
 		}
 		validate := validatePortableOutputDir
-		if mode == config.MaterializationModeFile && !dryRun {
+		if effectiveMode == config.MaterializationModeFile && !dryRun && !repositoryCopies {
 			validate = ensurePortableOutputDir
 		}
 		if _, err := validate(planRoot, filepath.ToSlash(rel)); err != nil {
 			return publication, pending, fmt.Errorf("validate hook support output directory: %w", err)
 		}
-		if mode != config.MaterializationModeFile && !dryRun {
+		if effectiveMode != config.MaterializationModeFile && !dryRun {
 			if err := os.MkdirAll(plan.outDir, 0o755); err != nil {
 				return publication, pending, fmt.Errorf("create hook support output directory: %w", err)
 			}
 		}
 		cacheDir := cachedPlanDirectoryForOutput(key, outDir, plan, coalescedCodexPartitions)
-		cacheReport, err := materializeArtifactLinkCache(cacheDir, regularArtifacts, dryRun, false)
-		if err != nil {
-			return publication, pending, fmt.Errorf("prepare hook support cache: %w", err)
+		cacheChanged := false
+		if !repositoryCopies {
+			cacheReport, err := materializeArtifactLinkCache(cacheDir, regularArtifacts, dryRun, false)
+			if err != nil {
+				return publication, pending, fmt.Errorf("prepare hook support cache: %w", err)
+			}
+			cacheChanged = cacheReport != nil && len(cacheReport.Written) > 0
 		}
-		cacheChanged := cacheReport != nil && len(cacheReport.Written) > 0
 		collisionMeta := materializePlanCollisionMetadata(key, plan, regularArtifacts, artifactMeta)
 		if !dryRun && beforeSupportWrite != nil {
-			for _, candidate := range regularArtifacts {
-				destination, err := portableOutputPath(plan.outDir, candidate.Path)
-				if err != nil {
-					return publication, pending, fmt.Errorf("resolve hook support output: %w", err)
-				}
-				if err := beforeSupportWrite("output", destination); err != nil {
-					return publication, pending, fmt.Errorf("prepare hook support output: %w", err)
+			if repositoryCopies {
+				ctx = context.WithValue(ctx, nativeRepositorySupportWriteFaultKey{}, beforeSupportWrite)
+			} else {
+				for _, candidate := range regularArtifacts {
+					destination, err := portableOutputPath(plan.outDir, candidate.Path)
+					if err != nil {
+						return publication, pending, fmt.Errorf("resolve hook support output: %w", err)
+					}
+					if err := beforeSupportWrite("output", destination); err != nil {
+						return publication, pending, fmt.Errorf("prepare hook support output: %w", err)
+					}
 				}
 			}
 		}
 		desired := make(map[string]bool, len(regularArtifacts))
 		var writeReport *hcc.WriteReport
 		var writeDiags []diag.Diagnostic
-		if mode == config.MaterializationModeFile {
+		if repositoryCopies {
+			writeReport, writeDiags, err = syncNativeRepositoryHookSupportCopies(ctx, plan.outDir, regularArtifacts, cacheDir, dryRun, collisionMeta, state, key.target, plan.reportPrefix, desired, artifactOwners, authority)
+		} else if mode == config.MaterializationModeFile {
 			writeReport, writeDiags, err = syncPortableArtifactFiles(plan.outDir, regularArtifacts, cacheDir, dryRun, false, collisionMeta, state, key.target, plan.reportPrefix, desired)
 		} else {
 			writeReport, writeDiags, err = syncArtifactLinks(plan.outDir, regularArtifacts, cacheDir, dryRun, false, collisionMeta, portableSyncContext{state: state, target: key.target, reportPrefix: plan.reportPrefix, desired: desired})
@@ -1882,11 +2222,11 @@ func executeNativeHookSupportPlan(key outputKey, repoRoot, outDir string, artifa
 					outputRoot:    plan.outDir,
 					relativePath:  filepath.ToSlash(candidate.Path),
 					outputPath:    outputPath,
-					mode:          mode,
+					mode:          effectiveMode,
 					capturedBytes: append([]byte(nil), candidate.Bytes...),
-					capturedMode:  candidate.Mode.Perm(),
+					capturedMode:  portableArtifactMode(candidate.Mode),
 				}
-				if mode == config.MaterializationModeSymlink {
+				if effectiveMode == config.MaterializationModeSymlink {
 					installed.cacheRoot = cacheDir
 					installed.expectedSymlinkTarget = filepath.Join(cacheDir, filepath.FromSlash(candidate.Path))
 				}
@@ -1897,7 +2237,7 @@ func executeNativeHookSupportPlan(key outputKey, repoRoot, outDir string, artifa
 			}
 			manifestPath := filepath.ToSlash(path.Join(plan.reportPrefix, candidate.Path))
 			published.manifestPaths[manifestPath] = true
-			if mode == config.MaterializationModeSymlink {
+			if effectiveMode == config.MaterializationModeSymlink {
 				published.supportTargets[filepath.ToSlash(candidate.Path)] = filepath.Join(cacheDir, filepath.FromSlash(candidate.Path))
 			}
 		}
@@ -1916,8 +2256,10 @@ func executeNativeHookSupportPlan(key outputKey, repoRoot, outDir string, artifa
 		if err := validatePortableManifestSnapshot(state, data, generation, mode); err != nil {
 			return publication, pending, portableManifestError(state.path, err)
 		}
-		if err := state.save(false); err != nil {
-			return publication, pending, portableManifestError(state.path, err)
+		if !repositoryCopies {
+			if err := state.save(false); err != nil {
+				return publication, pending, portableManifestError(state.path, err)
+			}
 		}
 		if beforeSupportWrite != nil {
 			for _, output := range installedSupport {
@@ -2481,7 +2823,7 @@ func ownedJSONEntryHasBlockedHookSource(entry ownedJSONEntry, blocked map[string
 	return false
 }
 
-func preflightHookSupportDestinations(result *compilePhaseResult, key outputKey, repoRoot, outDir string, artifacts []artifact.Artifact, links map[string]*skillLinkGroup) ([]artifact.Artifact, []diag.Diagnostic, []BlockedResource) {
+func preflightHookSupportDestinations(result *compilePhaseResult, key outputKey, repoRoot, outDir string, artifacts []artifact.Artifact, links map[string]*skillLinkGroup, coalescedCodexPartitions map[string]bool) ([]artifact.Artifact, []diag.Diagnostic, []BlockedResource) {
 	ownersByPath := result.hookSupportOwners[key]
 	if len(ownersByPath) == 0 {
 		return artifacts, nil, nil
@@ -2516,6 +2858,16 @@ func preflightHookSupportDestinations(result *compilePhaseResult, key outputKey,
 				Source:   compilepkg.SourceOf(owner.skill.skill.Resource),
 			}
 		}
+	}
+	var supportProofLoaded bool
+	var cleanSupportSources map[string]bool
+	var supportProofErr error
+	loadSupportProof := func() {
+		if supportProofLoaded {
+			return
+		}
+		supportProofLoaded = true
+		cleanSupportSources, supportProofErr = nativeHookSupportPreflightCleanSources(key, repoRoot)
 	}
 	if stateErr != nil {
 		paths := make([]string, 0, len(ownersByPath))
@@ -2564,6 +2916,31 @@ func preflightHookSupportDestinations(result *compilePhaseResult, key outputKey,
 					continue
 				}
 				if info.Mode()&os.ModeSymlink != 0 && isManagedSymlink(destination) {
+					if key.machineScope {
+						continue
+					}
+					cacheDir := cachedPlanDirectoryForOutput(key, outDir, plan, coalescedCodexPartitions)
+					expectedCacheFile := filepath.Join(cacheDir, filepath.FromSlash(candidate.Path))
+					linkTarget, _, linkErr := dependencytxn.ReadSymlinkSnapshot(destination)
+					if linkErr != nil || linkTarget != expectedCacheFile {
+						addIssue(relative, affected, diag.CodeMaterializeHookSupportConflict)
+						continue
+					}
+					if _, err := validatePortableOutputDir(cacheDir, filepath.ToSlash(filepath.Dir(candidate.Path))); err != nil {
+						addIssue(relative, affected, diag.CodeMaterializeHookSupportConflict)
+						continue
+					}
+					cacheBytes, cacheGeneration, cacheMode, err := dependencytxn.ReadSnapshot(expectedCacheFile)
+					if err != nil || !cacheGeneration.Exists || !bytes.Equal(cacheBytes, candidate.Bytes) || cacheMode != portableArtifactMode(candidate.Mode) {
+						addIssue(relative, affected, diag.CodeMaterializeHookSupportConflict)
+						continue
+					}
+					loadSupportProof()
+					for _, owner := range affected {
+						if supportProofErr != nil || owner.sourceDigest == "" || !cleanSupportSources[hookSupportOwnerID(owner.resourceName, owner.sourceDigest)] {
+							addIssue(relative, []hookSupportOwner{owner}, diag.CodeMaterializeHookSupportConflict)
+						}
+					}
 					continue
 				}
 				currentDigest, err := portablePathDigest(destination)
@@ -2612,12 +2989,19 @@ func preflightHookSupportDestinations(result *compilePhaseResult, key outputKey,
 	result.hookResources[key] = slices.DeleteFunc(result.hookResources[key], func(resource BlockedResource) bool {
 		return blockedResourcesByValue[resource]
 	})
+	for path := range blockedPaths {
+		delete(result.hookSupportPaths[key], path)
+		delete(result.hookSupportOwners[key], path)
+	}
 	if work := result.nativeHooks[key]; work != nil {
 		work.entries = slices.DeleteFunc(work.entries, func(entry ownedJSONEntry) bool {
 			return ownedJSONEntryHasBlockedHookSource(entry, blockedSources)
 		})
-		if len(work.entries) == 0 && len(result.nativeMCPEntries[key]) == 0 && !result.nativeMCPIncomplete[key] &&
-			len(work.incomplete) == 0 && !nativeHookOutputPresent(key, repoRoot) {
+		allNativeHooksBlocked := len(work.entries) == 0 && len(result.nativeMCPEntries[key]) == 0 &&
+			!result.nativeMCPIncomplete[key] && len(work.incomplete) == 0
+		if allNativeHooksBlocked && !key.machineScope && !nativeHookSharesMCPRoute(key, repoRoot) && len(result.hookSupportPaths[key]) == 0 {
+			delete(result.nativeHooks, key)
+		} else if allNativeHooksBlocked && !nativeHookOutputPresent(key, repoRoot) {
 			delete(result.nativeHooks, key)
 		} else if _, file, err := nativeHookJSONLayout(key, repoRoot); err == nil {
 			work.markIncomplete(file.rel)
@@ -2633,10 +3017,6 @@ func preflightHookSupportDestinations(result *compilePhaseResult, key outputKey,
 		targetWork.artifacts = slices.DeleteFunc(targetWork.artifacts, func(candidate artifact.Artifact) bool {
 			return blockedPaths[filepath.ToSlash(candidate.Path)]
 		})
-	}
-	for path := range blockedPaths {
-		delete(result.hookSupportPaths[key], path)
-		delete(result.hookSupportOwners[key], path)
 	}
 	return remaining, diagnostics, blockedResources
 }

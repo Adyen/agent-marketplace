@@ -36,6 +36,7 @@ type Definition struct {
 	Conversion       bool
 	UI               bool
 	UIOrder          int
+	HookProjection   *NativeHookProjection
 }
 
 // ValidateDefinition rejects target metadata that mixes or omits the legacy
@@ -69,14 +70,27 @@ var definitions = []Definition{
 
 // Definitions returns all target declarations in stable display order.
 func Definitions() []Definition {
-	return append([]Definition(nil), definitions...)
+	return derivedDefinitions()
+}
+
+func derivedDefinitions() []Definition {
+	out := make([]Definition, len(definitions))
+	for i, definition := range definitions {
+		out[i] = definitionWithHookProjection(definition)
+	}
+	return out
+}
+
+func definitionWithHookProjection(definition Definition) Definition {
+	definition.HookProjection = nativeHookProjectionForLayout(definition.Target)
+	return definition
 }
 
 // Lookup returns the declaration for name, if it is a known target.
 func Lookup(name string) (Definition, bool) {
 	for _, definition := range definitions {
 		if definition.Target == Target(name) {
-			return definition, true
+			return definitionWithHookProjection(definition), true
 		}
 	}
 	return Definition{}, false

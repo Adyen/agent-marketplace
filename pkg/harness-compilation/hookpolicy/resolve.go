@@ -391,9 +391,9 @@ func resolveTimeout(h *ir.Hook, dst target.Target, src, dstUnit timeoutPolicy, d
 	return true
 }
 
-// envReference matches "$NAME", "${NAME}", and either wrapped in double
-// quotes. Group 1 is the braced name, group 2 the bare name.
-var envReference = regexp.MustCompile(`"?\$(?:\{([A-Za-z_][A-Za-z0-9_]*)\}|([A-Za-z_][A-Za-z0-9_]*))"?`)
+// envReference matches bare and braced variable references. Group 1 is the
+// braced name, group 2 the bare name.
+var envReference = regexp.MustCompile(`\$(?:\{([A-Za-z_][A-Za-z0-9_]*)\}|([A-Za-z_][A-Za-z0-9_]*))`)
 
 // rewriteCommand applies design D6: $NAME/${NAME} references are resolved
 // through the source catalog. References no shipped catalog recognizes are left
@@ -407,7 +407,29 @@ func rewriteCommand(h *ir.Hook, srcCat, dstCat catalog, event string, scope Scop
 	}
 	var out strings.Builder
 	pos := 0
+	scanPos := 0
+	var quote byte
 	for _, m := range matches {
+		for scanPos < m[0] {
+			ch := command[scanPos]
+			if ch == '\\' && quote != '\'' {
+				scanPos++
+				if scanPos < m[0] {
+					scanPos++
+				}
+				continue
+			}
+			if ch == '\'' || ch == '"' {
+				switch quote {
+				case 0:
+					quote = ch
+				case ch:
+					quote = 0
+				}
+			}
+			scanPos++
+		}
+		scanPos = m[1]
 		name := ""
 		if m[2] >= 0 {
 			name = command[m[2]:m[3]]
@@ -421,47 +443,69 @@ func rewriteCommand(h *ir.Hook, srcCat, dstCat catalog, event string, scope Scop
 			}
 			continue
 		}
-		out.WriteString(command[pos:m[0]])
-		pos = m[1]
-		if plugin {
-			if concept != "plugin_root" {
-				// Other plugin-only variables never resolve in a native
-				// hook file.
-				return fail(diag.CodeHookEnvUnrepresentable, "A plugin-only variable has no native equivalent on the target; hook suppressed", "Replace the reference with a documented variable")
+		// Other plugin-only variables never resolve in a native hook file.
+		if plugin && concept != "plugin_root" {
+			return fail(diag.CodeHookEnvUnrepresentable, "A plugin-only variable has no native equivalent on the target; hook suppressed", "Replace the reference with a documented variable")
+		}
+		if plugin && quote == '\'' {
+			return fail(diag.CodeHookEnvUnrepresentable, "A plugin-root reference inside a single-quoted shell literal cannot be translated; hook suppressed", "Move the reference outside the single-quoted literal")
+		}
+		preserveProjectVariable := false
+		repositoryBaseReference := !sameHarness && !plugin && srcCat.RepositoryBase != nil && srcCat.RepositoryBase.Env == concept
+		repositoryBase, repositoryBaseKind, hasRepositoryBase := "", 0, false
+		if repositoryBaseReference {
+			if variable, exists := dstCat.Env[concept]; exists && slices.Contains(variable.Names, name) {
+				// The target accepts the same spelling; keep it (Cursor and
+				// Gemini accept CLAUDE_PROJECT_DIR).
+				preserveProjectVariable = true
+			} else {
+				repositoryBase, repositoryBaseKind, hasRepositoryBase = repositoryBaseReplacement(dstCat)
+				if !hasRepositoryBase {
+					return fail(diag.CodeHookEnvUnrepresentable, "The target declares no repository base for a project-directory reference; hook suppressed", "Use a documented variable")
+				}
 			}
-			ref, refusal, ok := supportReference(dstCat, scope, supportBase)
+		}
+		isolatedDoubleQuoted := quote == '"' && m[0] > pos && command[m[0]-1] == '"' &&
+			m[1]+1 < len(command) && command[m[1]] == '"' && command[m[1]+1] == '/' &&
+			(plugin || repositoryBaseReference && !preserveProjectVariable && repositoryBaseKind == repoBaseCwd)
+		prefixEnd := m[0]
+		if isolatedDoubleQuoted {
+			prefixEnd--
+		}
+		out.WriteString(command[pos:prefixEnd])
+		pos = m[1]
+		replacementQuote := quote
+		if isolatedDoubleQuoted {
+			pos++
+			replacementQuote = 0
+		}
+		if plugin {
+			ref, refusal, ok := supportReference(dstCat, scope, supportBase, replacementQuote)
 			if !ok {
 				return fail(refusal.Code, refusal.Message, refusal.Hint)
 			}
 			out.WriteString(ref)
 			continue
 		}
-		if sameHarness {
+		if sameHarness || preserveProjectVariable {
 			out.WriteString(command[m[0]:m[1]])
 			continue
 		}
-		if srcCat.RepositoryBase != nil && srcCat.RepositoryBase.Env == concept {
-			if v, exists := dstCat.Env[concept]; exists && slices.Contains(v.Names, name) {
-				// The target accepts the same spelling; keep it (Cursor and
-				// Gemini accept CLAUDE_PROJECT_DIR).
-				out.WriteString(command[m[0]:m[1]])
-				continue
-			}
-			repl, kind, ok := repositoryBaseReplacement(dstCat)
-			if !ok {
-				return fail(diag.CodeHookEnvUnrepresentable, "The target declares no repository base for a project-directory reference; hook suppressed", "Use a documented variable")
-			}
-			switch kind {
+		if repositoryBaseReference {
+			switch repositoryBaseKind {
 			case repoBaseCwd:
 				// {cwd: repository}: remove the reference and one following
 				// slash so the path becomes repository-relative.
-				if m[1] < len(command) && command[m[1]] == '/' {
-					pos = m[1] + 1
+				if pos < len(command) && command[pos] == '/' {
+					pos++
 				}
 			case repoBaseLiteral:
-				out.WriteString(repl)
+				if replacementQuote == '"' {
+					repositoryBase = withoutOuterDoubleQuotes(repositoryBase)
+				}
+				out.WriteString(repositoryBase)
 			default:
-				out.WriteString(nameReplacement(command, m, repl))
+				out.WriteString(nameReplacement(m, repositoryBase))
 			}
 			continue
 		}
@@ -474,7 +518,7 @@ func rewriteCommand(h *ir.Hook, srcCat, dstCat catalog, event string, scope Scop
 			out.WriteString(command[m[0]:m[1]])
 			continue
 		}
-		out.WriteString(nameReplacement(command, m, targetVar.Names[0]))
+		out.WriteString(nameReplacement(m, targetVar.Names[0]))
 	}
 	out.WriteString(command[pos:])
 	result := out.String()
@@ -529,28 +573,19 @@ func repositoryBaseReplacement(c catalog) (replacement string, kind int, ok bool
 	return "", 0, false
 }
 
-// nameReplacement rebuilds the matched reference with a different variable
-// name, preserving the authored quoting and brace style.
-func nameReplacement(command string, m []int, name string) string {
-	matched := command[m[0]:m[1]]
-	quoted := strings.HasPrefix(matched, `"`)
-	braced := m[2] >= 0
-	var b strings.Builder
-	if quoted {
-		b.WriteByte('"')
+// nameReplacement emits the target variable name with the source brace style.
+func nameReplacement(m []int, name string) string {
+	if m[2] >= 0 {
+		return "${" + name + "}"
 	}
-	b.WriteByte('$')
-	if braced {
-		b.WriteByte('{')
+	return "$" + name
+}
+
+func withoutOuterDoubleQuotes(value string) string {
+	if len(value) >= 2 && value[0] == '"' && value[len(value)-1] == '"' {
+		return value[1 : len(value)-1]
 	}
-	b.WriteString(name)
-	if braced {
-		b.WriteByte('}')
-	}
-	if quoted {
-		b.WriteByte('"')
-	}
-	return b.String()
+	return value
 }
 
 // machineSupportBaseLiteral renders an absolute machine-scope support base as
@@ -572,7 +607,7 @@ func machineSupportBaseLiteral(base string) string {
 
 // supportReference renders the installed support-directory reference for a
 // plugin-root token.
-func supportReference(c catalog, scope Scope, supportBase string) (string, diag.Diagnostic, bool) {
+func supportReference(c catalog, scope Scope, supportBase string, quote byte) (string, diag.Diagnostic, bool) {
 	refuse := func() (string, diag.Diagnostic, bool) {
 		return "", diag.Diagnostic{Code: diag.CodeHookSupportPathUnrepresentable, Message: "The plugin-root reference has no representable support path on the target; hook suppressed", Hint: "Remove the plugin-root reference"}, false
 	}
@@ -580,24 +615,33 @@ func supportReference(c catalog, scope Scope, supportBase string) (string, diag.
 		return refuse()
 	}
 	if scope == ScopeMachine {
+		if quote == '"' {
+			literal := strings.NewReplacer(`\`, `\\`, `"`, `\"`, "$", `\$`, "`", "\\`").Replace(supportBase)
+			return literal, diag.Diagnostic{}, true
+		}
 		return machineSupportBaseLiteral(supportBase), diag.Diagnostic{}, true
 	}
 	rb := c.RepositoryBase
 	if rb == nil {
 		return refuse()
 	}
-	// At repository scope the support base is repository-relative; join
-	// without duplicating slashes.
 	rel := strings.Trim(supportBase, "/")
 	switch {
 	case rb.Cwd != "":
 		return rel, diag.Diagnostic{}, true
 	case rb.Shell != "":
-		return rb.Shell + "/" + rel, diag.Diagnostic{}, true
+		base := rb.Shell
+		if quote == '"' {
+			base = withoutOuterDoubleQuotes(base)
+		}
+		return base + "/" + rel, diag.Diagnostic{}, true
 	case rb.Env != "":
 		v, exists := c.Env[rb.Env]
 		if !exists || len(v.Names) == 0 {
 			return refuse()
+		}
+		if quote == '"' {
+			return "$" + v.Names[0] + "/" + rel, diag.Diagnostic{}, true
 		}
 		return `"$` + v.Names[0] + `"/` + rel, diag.Diagnostic{}, true
 	}

@@ -97,6 +97,26 @@ func captureHookSourceSnapshot(sourceRoot, definition, definitionDir string, exc
 	return snapshot, nil
 }
 
+func revalidateHookSourceSnapshot(original *hookSourceSnapshot, excludedPeers []string) error {
+	if original == nil {
+		return nil
+	}
+	current, err := captureHookSourceSnapshot(original.root, original.definitionRel, original.definitionDir, excludedPeers...)
+	if err != nil {
+		return fmt.Errorf("hook source changed after capture: %w", err)
+	}
+	if !bytes.Equal(original.definitionData, current.definitionData) || len(original.files) != len(current.files) {
+		return errors.New("hook source changed after capture")
+	}
+	for i, file := range original.files {
+		live := current.files[i]
+		if file.rel != live.rel || file.mode.Perm() != live.mode.Perm() || !bytes.Equal(file.data, live.data) {
+			return errors.New("hook source changed after capture")
+		}
+	}
+	return nil
+}
+
 func readHookSourceSnapshotFile(dirFD int, relative string, total *int64) ([]byte, os.FileMode, error) {
 	file, mode, size, err := openHookSupportFileAt(dirFD, relative, *total)
 	if err != nil {

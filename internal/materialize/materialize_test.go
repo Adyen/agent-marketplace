@@ -2840,8 +2840,8 @@ func TestRunExcludedHookEntryRemovedFromMergedFile(t *testing.T) {
 	}
 }
 
-// TestRunHookSupportFilesAreSymlinked verifies that support files materialize
-// as symlinks under the hook's support path and are pruned when the hook is removed.
+// TestRunHookSupportFilesAreSymlinked verifies repository support copies and
+// their cleanup when the hook is removed.
 func TestRunHookSupportFilesAreSymlinked(t *testing.T) {
 	repoRoot := t.TempDir()
 	homeDir := t.TempDir()
@@ -2872,8 +2872,8 @@ func TestRunHookSupportFilesAreSymlinked(t *testing.T) {
 		t.Errorf("hooks.json should be a real file, not a symlink")
 	}
 
-	// remind.sh should be a symlink (regular artifact) under the hook's
-	// namespaced support directory.
+	// remind.sh should be a regular copy under the hook's namespaced
+	// support directory.
 	scriptMatches, _ := filepath.Glob(filepath.Join(repoRoot, ".factory", "hook-support", "*", "post-tool-use-remind", "remind.sh"))
 	if len(scriptMatches) != 1 {
 		t.Fatalf("expected one namespaced remind.sh, got %v", scriptMatches)
@@ -2883,27 +2883,27 @@ func TestRunHookSupportFilesAreSymlinked(t *testing.T) {
 	if err != nil {
 		t.Fatalf("remind.sh not materialized: %v", err)
 	}
-	if scriptInfo.Mode()&os.ModeSymlink == 0 {
-		t.Errorf("remind.sh should be a symlink, got mode: %v", scriptInfo.Mode())
+	if !scriptInfo.Mode().IsRegular() {
+		t.Errorf("remind.sh should be a regular copy, got mode: %v", scriptInfo.Mode())
 	}
 
-	// The symlink should resolve to the correct content.
+	// The copy should contain the captured support content.
 	content, err := os.ReadFile(scriptLink)
 	if err != nil {
-		t.Fatalf("read remind.sh through symlink: %v", err)
+		t.Fatalf("read remind.sh copy: %v", err)
 	}
 	if !bytes.Contains(content, []byte("remind to fix isolated builds")) {
 		t.Errorf("remind.sh content mismatch: %s", content)
 	}
 
-	// Second sync with no hooks: remind.sh symlink should be pruned,
-	// but hooks.json should be cleaned of managed entries (becoming empty/minimal).
+	// Second sync with no hooks: remind.sh copy should be pruned, but
+	// hooks.json should be cleaned of managed entries (becoming empty/minimal).
 	if _, err := Run(context.Background(), repoRoot, nil); err != nil {
 		t.Fatalf("second run (empty): %v", err)
 	}
 
 	if _, err := os.Lstat(scriptLink); !os.IsNotExist(err) {
-		t.Errorf("remind.sh symlink should have been pruned, got err: %v", err)
+		t.Errorf("remind.sh copy should have been pruned, got err: %v", err)
 	}
 }
 

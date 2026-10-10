@@ -72,6 +72,11 @@ makes each fix risky.
   expression, or a relative path where hooks run from the repository root
   (Windsurf). At machine scope it is an absolute path. Plugin-only
   variables and paths into the registry cache are no longer emitted.
+  Repository-hook support uses portable regular copies in either configured
+  materialization mode. Machine hooks and non-hook resources retain their
+  existing mode policy. Only clean source-proven links to the exact authorized
+  generated cache file may convert through CAS and recovery; unproven links
+  remain untouched and are refused.
 - Every harness target reports hook command changes: sync prints a review
   listing the exact commands added, changed, or removed, and emits a
   review diagnostic. `sync --check` reports the same changes as pending

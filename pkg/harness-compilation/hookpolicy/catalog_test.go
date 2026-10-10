@@ -211,7 +211,7 @@ events:
 }
 
 func TestSupportReferenceRefusesWithoutRepositoryBase(t *testing.T) {
-	ref, refusal, ok := supportReference(catalog{}, ScopeRepository, "hook-support/source/hook")
+	ref, refusal, ok := supportReference(catalog{}, ScopeRepository, "hook-support/source/hook", 0)
 	if ok || ref != "" {
 		t.Fatalf("supportReference succeeded without a repository base: %q", ref)
 	}
@@ -221,7 +221,7 @@ func TestSupportReferenceRefusesWithoutRepositoryBase(t *testing.T) {
 }
 
 func TestSupportReferenceUsesDeclaredRepositoryBase(t *testing.T) {
-	ref, _, ok := supportReference(catalog{RepositoryBase: &repositoryBase{Cwd: "repository"}}, ScopeRepository, "hook-support/source/hook")
+	ref, _, ok := supportReference(catalog{RepositoryBase: &repositoryBase{Cwd: "repository"}}, ScopeRepository, "hook-support/source/hook", 0)
 	if !ok || ref != "hook-support/source/hook" {
 		t.Fatalf("supportReference = %q, want repository-relative support path", ref)
 	}

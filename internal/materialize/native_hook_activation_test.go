@@ -643,13 +643,6 @@ func TestNativeHookActivationSupportOnlyRefreshKeepsAggregateSnapshot(t *testing
 			if err != nil {
 				t.Fatal(err)
 			}
-			var supportTargetBefore string
-			if mode == config.MaterializationModeSymlink {
-				supportTargetBefore, err = os.Readlink(supportPath)
-				if err != nil {
-					t.Fatal(err)
-				}
-			}
 			if err := os.WriteFile(sourceSupport, []byte("#!/bin/sh\necho new support bytes\n"), 0o755); err != nil {
 				t.Fatal(err)
 			}
@@ -685,11 +678,8 @@ func TestNativeHookActivationSupportOnlyRefreshKeepsAggregateSnapshot(t *testing
 				!proof.HasHookSource(id, resolved.Name, planAfter.sourceDigest) || proof.HasHookSource(id, resolved.Name, planBefore.sourceDigest) {
 				t.Fatalf("refreshed hook proof = %+v, want the new captured digest", entry)
 			}
-			if mode == config.MaterializationModeSymlink {
-				afterTarget, err := os.Readlink(supportPath)
-				if err != nil || supportTargetBefore != afterTarget {
-					t.Fatalf("support link changed: %q -> %q / %v", supportTargetBefore, afterTarget, err)
-				}
+			if installedInfoAfter.Mode()&os.ModeSymlink != 0 || !installedInfoAfter.Mode().IsRegular() {
+				t.Fatalf("repository hook support is not a regular copy: %v", installedInfoAfter.Mode())
 			}
 		})
 	}
