@@ -48,6 +48,9 @@ func independentlySatisfiedNativeHook(w skillTarget, repoRoot string, ins *nativ
 	}
 	projection, err := prepareNativeHookProjection(w, repoRoot)
 	if err != nil {
+		if errors.Is(err, errNativeHookSourceUnavailable) {
+			return false, nil
+		}
 		if coded, ok := diag.AsCodedError(err); ok {
 			return false, coded
 		}

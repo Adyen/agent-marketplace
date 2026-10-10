@@ -2,6 +2,8 @@ package harnesscompile
 
 import (
 	"encoding/json"
+	"os/exec"
+	"strings"
 	"testing"
 
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
@@ -438,4 +440,171 @@ func TestIndependentNativeHookProjectionUsesCatalogs(t *testing.T) {
 			t.Fatalf("legacy fragment = %v, want top-level event map", document)
 		}
 	})
+}
+
+// spec: hook-native-independent-satisfaction/changed-execution-fields-do-not-establish-satisfaction
+func TestNativeHookProjectionPreservesSurroundingShellQuotes(t *testing.T) {
+	source := ir.SourceRef{File: "hooks/hooks.json"}
+	machineBase := "/tmp/hook home/$literal/quote'\"backtick`"
+	for _, tc := range []struct {
+		name         string
+		target       Target
+		command      string
+		want         string
+		machineScope bool
+		supportBase  string
+	}{
+		{
+			name:    "factory path",
+			target:  TargetFactory,
+			command: `echo "$CLAUDE_PROJECT_DIR/.claude/hooks/x.sh"`,
+			want:    `echo "$FACTORY_PROJECT_DIR/.claude/hooks/x.sh"`,
+		},
+		{
+			name:    "factory whole variable",
+			target:  TargetFactory,
+			command: `echo "dir: $CLAUDE_PROJECT_DIR"`,
+			want:    `echo "dir: $FACTORY_PROJECT_DIR"`,
+		},
+		{
+			name:    "codex path",
+			target:  TargetCodex,
+			command: `echo "$CLAUDE_PROJECT_DIR/.claude/hooks/x.sh"`,
+			want:    `echo "$(git rev-parse --show-toplevel)/.claude/hooks/x.sh"`,
+		},
+		{
+			name:    "codex whole variable",
+			target:  TargetCodex,
+			command: `echo "dir: $CLAUDE_PROJECT_DIR"`,
+			want:    `echo "dir: $(git rev-parse --show-toplevel)"`,
+		},
+		{
+			name:    "windsurf path",
+			target:  TargetWindsurf,
+			command: `echo "$CLAUDE_PROJECT_DIR/.claude/hooks/x.sh"`,
+			want:    `echo ".claude/hooks/x.sh"`,
+		},
+		{
+			name:    "factory embedded variable",
+			target:  TargetFactory,
+			command: `echo "dir: $CLAUDE_PROJECT_DIR done"`,
+			want:    `echo "dir: $FACTORY_PROJECT_DIR done"`,
+		},
+		{
+			name:    "codex embedded variable",
+			target:  TargetCodex,
+			command: `echo "dir: $CLAUDE_PROJECT_DIR done"`,
+			want:    `echo "dir: $(git rev-parse --show-toplevel) done"`,
+		},
+		{
+			name:        "factory quoted plugin path",
+			target:      TargetFactory,
+			command:     `echo "${CLAUDE_PLUGIN_ROOT}/scripts/run.sh"`,
+			want:        `echo "$FACTORY_PROJECT_DIR/.factory/hooks/support/src/hook/scripts/run.sh"`,
+			supportBase: ".factory/hooks/support/src/hook",
+		},
+		{
+			name:        "factory whole quoted plugin reference",
+			target:      TargetFactory,
+			command:     `echo "${CLAUDE_PLUGIN_ROOT}"`,
+			want:        `echo "$FACTORY_PROJECT_DIR/.factory/hooks/support/src/hook"`,
+			supportBase: ".factory/hooks/support/src/hook",
+		},
+		{
+			name:        "factory unquoted plugin reference",
+			target:      TargetFactory,
+			command:     `echo ${CLAUDE_PLUGIN_ROOT}`,
+			want:        `echo "$FACTORY_PROJECT_DIR"/.factory/hooks/support/src/hook`,
+			supportBase: ".factory/hooks/support/src/hook",
+		},
+		{
+			name:         "factory machine quoted plugin path",
+			target:       TargetFactory,
+			command:      `echo "${CLAUDE_PLUGIN_ROOT}/scripts/run.sh"`,
+			want:         "echo \"/tmp/hook home/\\$literal/quote'\\\"backtick\\`/scripts/run.sh\"",
+			machineScope: true,
+			supportBase:  machineBase,
+		},
+		{
+			name:         "factory machine unquoted plugin path",
+			target:       TargetFactory,
+			command:      `echo ${CLAUDE_PLUGIN_ROOT}/scripts/run.sh`,
+			want:         "echo '/tmp/hook home/$literal/quote'\\''\"backtick`'/scripts/run.sh",
+			machineScope: true,
+			supportBase:  machineBase,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			hook := ir.NewHookWithMatcher("guard", "PreToolUse", "Bash", tc.command, "command", nil, source)
+			scope := ScopeProject
+			if tc.machineScope {
+				scope = ScopeUser
+			}
+			res, err := CompileNativeHookProjection(hook, tc.target, scope, tc.supportBase)
+			if err != nil {
+				t.Fatalf("CompileNativeHookProjection: %v", err)
+			}
+			if res.HasErrors() {
+				t.Fatalf("unexpected error diagnostics: %+v", res.Diagnostics)
+			}
+			if len(res.Artifacts) != 1 {
+				t.Fatalf("artifacts = %+v, want one native fragment", res.Artifacts)
+			}
+			document := decodeObject(t, res.Artifacts[0].Bytes)
+			var handler map[string]any
+			if tc.target == TargetCodex {
+				hooks, ok := document["hooks"].(map[string]any)
+				if !ok {
+					t.Fatalf("hooks = %T, want object", document["hooks"])
+				}
+				document = hooks
+			}
+			switch tc.target {
+			case TargetFactory, TargetCodex:
+				groups, ok := document["PreToolUse"].([]any)
+				if !ok || len(groups) != 1 {
+					t.Fatalf("PreToolUse = %v, want one group", document["PreToolUse"])
+				}
+				group, ok := groups[0].(map[string]any)
+				if !ok {
+					t.Fatalf("group = %T, want object", groups[0])
+				}
+				handlers, ok := group["hooks"].([]any)
+				if !ok || len(handlers) != 1 {
+					t.Fatalf("group hooks = %v, want one handler", group["hooks"])
+				}
+				handler, ok = handlers[0].(map[string]any)
+				if !ok {
+					t.Fatalf("handler = %T, want object", handlers[0])
+				}
+			case TargetWindsurf:
+				hooks, ok := document["hooks"].(map[string]any)
+				if !ok {
+					t.Fatalf("hooks = %T, want object", document["hooks"])
+				}
+				handlers, ok := hooks["pre_run_command"].([]any)
+				if !ok || len(handlers) != 1 {
+					t.Fatalf("pre_run_command = %v, want one handler", hooks["pre_run_command"])
+				}
+				handler, ok = handlers[0].(map[string]any)
+				if !ok {
+					t.Fatalf("handler = %T, want object", handlers[0])
+				}
+			default:
+				t.Fatalf("unexpected target %s", tc.target)
+			}
+			command, ok := handler["command"].(string)
+			if !ok {
+				t.Fatalf("command = %T, want string", handler["command"])
+			}
+			if command != tc.want {
+				t.Errorf("projected command = %q, want %q", command, tc.want)
+			}
+			syntax := exec.Command("sh", "-n")
+			syntax.Stdin = strings.NewReader(command)
+			if output, err := syntax.CombinedOutput(); err != nil {
+				t.Errorf("projected command is not valid shell: %v: %s", err, output)
+			}
+		})
+	}
 }

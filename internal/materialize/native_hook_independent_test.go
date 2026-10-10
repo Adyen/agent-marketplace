@@ -134,6 +134,129 @@ func TestRunIndependentHookWithoutNativeProjectionRetainsLegacyOutput(t *testing
 	assertIndependentStateAbsent(t, stateRoot)
 }
 
+// spec: hook-native-independent-satisfaction/stale-unavailable-or-unverified-source-establishes-no-satisfaction
+// spec: hook-native-independent-satisfaction/unproven-hooks-retain-ordinary-legacy-emission
+func TestRunIndependentNativeHookUnsafeSourceRetainsLegacy(t *testing.T) {
+	fixture := newIndependentFactoryFixture(t)
+	sourceDir := filepath.Dir(fixture.sourceDefinition)
+	helperTargetName := "helper-target.sh"
+	helperLinkName := "helper-link.sh"
+	helperBytes := []byte("inert contained helper bytes\n")
+	helperTargetPath := filepath.Join(sourceDir, helperTargetName)
+	helperLinkPath := filepath.Join(sourceDir, helperLinkName)
+	if err := os.WriteFile(helperTargetPath, helperBytes, 0o640); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(helperTargetName, helperLinkPath); err != nil {
+		t.Fatal(err)
+	}
+	sourceDefinitionBefore := snapshotIndependentFile(t, fixture.sourceDefinition)
+	helperTargetBefore := snapshotIndependentFile(t, helperTargetPath)
+	helperLinkInfo, err := os.Lstat(helperLinkPath)
+	if err != nil || helperLinkInfo.Mode()&os.ModeSymlink == 0 {
+		t.Fatalf("source helper is not a symlink: %v", err)
+	}
+	helperLinkTarget, err := os.Readlink(helperLinkPath)
+	if err != nil || helperLinkTarget != helperTargetName {
+		t.Fatalf("source helper target = %q, %v", helperLinkTarget, err)
+	}
+	assertIndependentFileAbsent(t, fixture.nativePath)
+	baseline := fixture.run(t)
+	if len(baseline.BlockedResources) != 0 {
+		t.Fatalf("legacy control blocked resources = %#v", baseline.BlockedResources)
+	}
+	legacyBefore := snapshotIndependentFile(t, fixture.legacyPath)
+	if !bytes.Contains(legacyBefore.data, []byte("scripts/run.sh")) {
+		t.Fatalf("legacy control did not emit the selected hook: %s", legacyBefore.data)
+	}
+	legacyHelperPath := filepath.Join(fixture.nativeRoot, "hooks", helperLinkName)
+	legacyHelperBefore := snapshotIndependentFile(t, legacyHelperPath)
+	if !bytes.Equal(legacyHelperBefore.data, helperBytes) || legacyHelperBefore.info.Mode().Perm() != 0o640 {
+		t.Fatalf("legacy control did not preserve contained helper bytes/mode: %+v", legacyHelperBefore.info)
+	}
+	hasLegacyWrite := func(report *Report) bool {
+		for _, root := range report.PerRoot {
+			for _, written := range root.Written {
+				if filepath.Clean(filepath.Join(root.OutDir, written)) == fixture.legacyPath {
+					return true
+				}
+			}
+		}
+		return false
+	}
+	if !hasLegacyWrite(baseline) {
+		t.Fatalf("legacy control did not report the selected legacy write: %#v", baseline.PerRoot)
+	}
+	if err := os.Remove(fixture.legacyPath); err != nil {
+		t.Fatal(err)
+	}
+
+	fixture.writeNative(t, fixture.nativeBody)
+	fixture.writeSupport(t, fixture.supportBytes, 0o755)
+	nativeSupportRoot := filepath.Join(fixture.nativeRoot, "hook-support", fixture.sourceKey, fixture.name)
+	if err := os.MkdirAll(nativeSupportRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	nativeHelperTarget := filepath.Join(nativeSupportRoot, helperTargetName)
+	nativeHelperLink := filepath.Join(nativeSupportRoot, helperLinkName)
+	if err := os.WriteFile(nativeHelperTarget, helperBytes, 0o640); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(nativeHelperLink, helperBytes, 0o640); err != nil {
+		t.Fatal(err)
+	}
+	handwrittenSupport := filepath.Join(nativeSupportRoot, "handwritten.txt")
+	handwrittenBytes := []byte("unrelated handwritten support\n")
+	if err := os.WriteFile(handwrittenSupport, handwrittenBytes, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	nativeBefore := snapshotIndependentFile(t, fixture.nativePath)
+	runSupportBefore := snapshotIndependentFile(t, fixture.supportPath)
+	nativeHelperTargetBefore := snapshotIndependentFile(t, nativeHelperTarget)
+	nativeHelperLinkBefore := snapshotIndependentFile(t, nativeHelperLink)
+	handwrittenBefore := snapshotIndependentFile(t, handwrittenSupport)
+
+	report, runErr := Run(context.Background(), fixture.repoRoot, []resolver.ResolvedArtifact{fixture.resolved})
+	if report == nil {
+		t.Fatalf("Run returned nil report: %v", runErr)
+	}
+	if runErr != nil {
+		t.Errorf("Run returned error instead of retaining legacy behavior: %v", runErr)
+	}
+	if diag.HasErrors(report.Diags) {
+		t.Errorf("Run reported an error instead of retaining legacy behavior: %#v", report.Diags)
+	}
+	if len(report.BlockedResources) != 0 {
+		t.Errorf("Run blocked the selected resource instead of falling back to legacy: %#v", report.BlockedResources)
+	}
+	legacyAfter, err := os.ReadFile(fixture.legacyPath)
+	if err != nil {
+		t.Errorf("Run did not recreate the selected legacy hook: %v", err)
+	} else if !bytes.Equal(legacyBefore.data, legacyAfter) {
+		t.Errorf("legacy output = %s, want the ordinary legacy bytes %s", legacyAfter, legacyBefore.data)
+	}
+	if !hasLegacyWrite(report) {
+		t.Errorf("Run did not report the selected legacy write: %#v", report.PerRoot)
+	}
+
+	assertIndependentFileUnchanged(t, fixture.sourceDefinition, sourceDefinitionBefore)
+	assertIndependentFileUnchanged(t, helperTargetPath, helperTargetBefore)
+	helperLinkAfter, err := os.Lstat(helperLinkPath)
+	if err != nil || !os.SameFile(helperLinkInfo, helperLinkAfter) || helperLinkAfter.Mode()&os.ModeSymlink == 0 {
+		t.Errorf("source helper link changed: %v", err)
+	}
+	if target, err := os.Readlink(helperLinkPath); err != nil || target != helperLinkTarget {
+		t.Errorf("source helper link target = %q, %v; want %q", target, err, helperLinkTarget)
+	}
+	assertIndependentFileUnchanged(t, legacyHelperPath, legacyHelperBefore)
+	assertIndependentFileUnchanged(t, fixture.nativePath, nativeBefore)
+	assertIndependentFileUnchanged(t, fixture.supportPath, runSupportBefore)
+	assertIndependentFileUnchanged(t, nativeHelperTarget, nativeHelperTargetBefore)
+	assertIndependentFileUnchanged(t, nativeHelperLink, nativeHelperLinkBefore)
+	assertIndependentFileUnchanged(t, handwrittenSupport, handwrittenBefore)
+	assertIndependentStateAbsent(t, fixture.stateRoot)
+}
+
 type independentFactoryFixture struct {
 	resolved         resolver.ResolvedArtifact
 	sourceRoot       string
@@ -878,6 +1001,44 @@ func TestRunIndependentNativeHookFIFORefusesInBoundedChild(t *testing.T) {
 	}
 	if !bytes.Contains(output, []byte("FIFO_REFUSAL_OK")) {
 		t.Fatalf("FIFO child did not report its completed refusal: %s", output)
+	}
+}
+
+// spec: hook-native-independent-satisfaction/unsafe-support-refuses-the-affected-target-without-mutation
+func TestHookSupportRootDuplicateIsCloseOnExec(t *testing.T) {
+	rootFD, err := unix.Open(t.TempDir(), unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = unix.Close(rootFD) }()
+	rootFlags, err := unix.FcntlInt(uintptr(rootFD), unix.F_GETFD, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rootFlags&unix.FD_CLOEXEC == 0 {
+		t.Fatal("root descriptor is not close-on-exec")
+	}
+	for _, tc := range []struct {
+		name     string
+		relative string
+	}{
+		{name: "empty root", relative: ""},
+		{name: "dot root", relative: "."},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			duplicateFD, err := openHookSupportDirAt(rootFD, tc.relative)
+			if err != nil {
+				t.Fatalf("openHookSupportDirAt: %v", err)
+			}
+			defer func() { _ = unix.Close(duplicateFD) }()
+			flags, err := unix.FcntlInt(uintptr(duplicateFD), unix.F_GETFD, 0)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if flags&unix.FD_CLOEXEC == 0 {
+				t.Error("duplicated support root descriptor is not close-on-exec")
+			}
+		})
 	}
 }
 

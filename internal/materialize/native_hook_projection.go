@@ -11,6 +11,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/harness"
 	"github.com/Adyen/agent-marketplace/internal/ownership"
+	"github.com/Adyen/agent-marketplace/internal/resolver"
 	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
@@ -31,6 +32,8 @@ type nativeHookProjection struct {
 	layout         nativeHookLayout
 	supportRelBase string
 }
+
+var errNativeHookSourceUnavailable = errors.New("native hook source unavailable")
 
 // prepareNativeHookProjection captures the selected hook's verified source
 // definition and support under the configured source root, proves the
@@ -72,66 +75,9 @@ func prepareNativeHookProjection(w skillTarget, repoRoot string) (nativeHookProj
 	}
 	outputRoot := destination.Root
 
-	var captured *ir.Hook
-	var digest string
-	var support []artifact.Artifact
-	if res.IsMarketplace && res.MarketplaceAcquisition == config.MarketplaceAcquisitionMirror {
-		// Verified mirror acquisition carries no source tree: the decoded
-		// resource and the verified intrinsic support inventory are the only
-		// inputs, the mirror fingerprint domain supplies the source digest,
-		// and the archive Path is never opened as a source root.
-		if res.MarketplaceHookSupport == nil {
-			return nativeHookProjection{}, errors.New("mirror hook support inventory is unknown")
-		}
-		digest, err = nativeHookFingerprint(res, w.target, w.machineScope)
-		if err != nil {
-			return nativeHookProjection{}, err
-		}
-		captured = hook
-		support, err = marketplaceHookSupportArtifacts(res.MarketplaceHookSupport)
-		if err != nil {
-			return nativeHookProjection{}, err
-		}
-	} else {
-		root, definition, definitionDir, err := nativeHookProjectionSource(res)
-		if err != nil {
-			return nativeHookProjection{}, err
-		}
-		projection := res
-		sourceHarness, err := capturedHookSourceHarness(res, hook)
-		if err != nil {
-			return nativeHookProjection{}, err
-		}
-		projection.SourceHarness = string(sourceHarness)
-		excluded, _ := nativeHookSourceExclusions(projection, definitionDir)
-		definitionName := path.Base(definition)
-		peers := make([]string, 0, len(excluded))
-		for peer := range excluded {
-			if peer != definitionName {
-				peers = append(peers, peer)
-			}
-		}
-		sort.Strings(peers)
-		snapshot, err := captureHookSourceSnapshot(root, definition, definitionDir, peers...)
-		if err != nil {
-			return nativeHookProjection{}, err
-		}
-		captured, err = verifyCapturedSourceHook(res, hook, snapshot)
-		if err != nil {
-			return nativeHookProjection{}, err
-		}
-		input, err := nativeHookFingerprintInput(res, w.target, w.machineScope)
-		if err != nil {
-			return nativeHookProjection{}, err
-		}
-		digest, err = hookSourceFingerprintFromSnapshot(input, snapshot)
-		if err != nil {
-			return nativeHookProjection{}, err
-		}
-		support, err = hookSupportArtifactsFromSnapshot(projection, snapshot)
-		if err != nil {
-			return nativeHookProjection{}, err
-		}
+	captured, digest, support, err := prepareNativeHookProjectionSource(res, hook, w.target, w.machineScope)
+	if err != nil {
+		return nativeHookProjection{}, errors.Join(errNativeHookSourceUnavailable, err)
 	}
 	sourceKey, err := hookSupportSourceKey(res)
 	if err != nil {
@@ -168,6 +114,72 @@ func prepareNativeHookProjection(w skillTarget, repoRoot string) (nativeHookProj
 		layout:         layout,
 		supportRelBase: supportRelBase,
 	}, nil
+}
+
+func prepareNativeHookProjectionSource(res resolver.ResolvedArtifact, hook *ir.Hook, dst hcc.Target, machineScope bool) (*ir.Hook, string, []artifact.Artifact, error) {
+	var captured *ir.Hook
+	var digest string
+	var support []artifact.Artifact
+	var err error
+	if res.IsMarketplace && res.MarketplaceAcquisition == config.MarketplaceAcquisitionMirror {
+		// Verified mirror acquisition carries no source tree: the decoded
+		// resource and the verified intrinsic support inventory are the only
+		// inputs, the mirror fingerprint domain supplies the source digest,
+		// and the archive Path is never opened as a source root.
+		if res.MarketplaceHookSupport == nil {
+			return nil, "", nil, errors.New("mirror hook support inventory is unknown")
+		}
+		digest, err = nativeHookFingerprint(res, dst, machineScope)
+		if err != nil {
+			return nil, "", nil, err
+		}
+		captured = hook
+		support, err = marketplaceHookSupportArtifacts(res.MarketplaceHookSupport)
+		if err != nil {
+			return nil, "", nil, err
+		}
+	} else {
+		root, definition, definitionDir, err := nativeHookProjectionSource(res)
+		if err != nil {
+			return nil, "", nil, err
+		}
+		projection := res
+		sourceHarness, err := capturedHookSourceHarness(res, hook)
+		if err != nil {
+			return nil, "", nil, err
+		}
+		projection.SourceHarness = string(sourceHarness)
+		excluded, _ := nativeHookSourceExclusions(projection, definitionDir)
+		definitionName := path.Base(definition)
+		peers := make([]string, 0, len(excluded))
+		for peer := range excluded {
+			if peer != definitionName {
+				peers = append(peers, peer)
+			}
+		}
+		sort.Strings(peers)
+		snapshot, err := captureHookSourceSnapshot(root, definition, definitionDir, peers...)
+		if err != nil {
+			return nil, "", nil, err
+		}
+		captured, err = verifyCapturedSourceHook(res, hook, snapshot)
+		if err != nil {
+			return nil, "", nil, err
+		}
+		input, err := nativeHookFingerprintInput(res, dst, machineScope)
+		if err != nil {
+			return nil, "", nil, err
+		}
+		digest, err = hookSourceFingerprintFromSnapshot(input, snapshot)
+		if err != nil {
+			return nil, "", nil, err
+		}
+		support, err = hookSupportArtifactsFromSnapshot(projection, snapshot)
+		if err != nil {
+			return nil, "", nil, err
+		}
+	}
+	return captured, digest, support, nil
 }
 
 func nativeHookProjectionDestination(destinations []harness.Destination, file targetmeta.NativeHookProjectionFile) (harness.Destination, string, error) {

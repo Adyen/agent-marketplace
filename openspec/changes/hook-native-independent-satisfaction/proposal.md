@@ -13,12 +13,9 @@ A released client with its own HOME cannot see a teammate's native-hook ownershi
 
 ## Capabilities
 
-### New Capabilities
-
-- `hook-native-independent-satisfaction`: Exact complete source-derived native projection, safe portable-support verification and ephemeral non-owning repository satisfaction across independent ownership profiles.
-
 ### Modified Capabilities
 
+- `hook-native-independent-satisfaction`: Exact complete source-derived native projection, safe portable-support verification and ephemeral non-owning repository satisfaction across independent ownership profiles. The review repair preserves the already-published normative requirements.
 - `hook-native-location-tolerance`: Permit complete independently reconstructed repository satisfaction in addition to existing durable evidence, while preserving all existing proof meanings, refusals, no-write guarantees and marked legacy-twin preservation.
 
 ## Impact

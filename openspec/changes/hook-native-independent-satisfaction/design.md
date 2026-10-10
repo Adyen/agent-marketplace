@@ -21,7 +21,7 @@ See proposal.md for motivation and the two capability deltas for behavior. The c
 
 ### D1: Catalog dependencies are immutable reuse
 
-Copy only the reviewed hookpolicy/toolpolicy runtime and their shipped catalogs. Add only hook provenance required to interpret native source values and the referenced diagnostic definitions. Do not import skill/subagent model or tool metadata. Default compiler golden output must remain unchanged until an explicit native projection is requested.
+The dependency extraction copies the reviewed hookpolicy/toolpolicy runtime and shipped catalog data. The bounded review repair changes only shared quoted-reference rendering in that runtime; the catalog data and policies remain unchanged. Add only hook provenance required to interpret native source values and the referenced diagnostic definitions. Do not import skill/subagent model or tool metadata. Default compiler golden output must remain unchanged until an explicit native projection is requested.
 
 ### D2: Explicit pure native projection
 

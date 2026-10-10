@@ -167,7 +167,7 @@ func validateHookSupportPeersAt(dirFD int, peers []string, definitionName string
 
 func openHookSupportDirAt(rootFD int, relative string) (int, error) {
 	if relative == "" || relative == "." {
-		return unix.Dup(rootFD)
+		return unix.FcntlInt(uintptr(rootFD), unix.F_DUPFD_CLOEXEC, 0)
 	}
 	if !fs.ValidPath(relative) {
 		return -1, fmt.Errorf("hook support directory path is invalid")

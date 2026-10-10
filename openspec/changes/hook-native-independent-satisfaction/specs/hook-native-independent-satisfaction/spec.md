@@ -2,7 +2,7 @@
 
 Keep independent clients from duplicating selected repository hooks when complete source-derived native satisfaction can be verified without sharing ownership state or granting owned-entry authority.
 
-## ADDED Requirements
+## MODIFIED Requirements
 
 ### Requirement: Verified selected sources define complete native satisfaction
 
