@@ -94,14 +94,6 @@ func nativeHookFingerprint(res resolver.ResolvedArtifact, target hcc.Target, mac
 	if res.Resource == nil || res.Resource.Kind() != ir.KindHook {
 		return "", errors.New("hook native tolerance: not a hook resource")
 	}
-	scope := HookScopeRepository
-	if machineScope {
-		scope = HookScopeMachine
-	}
-	name := res.Name
-	if res.InstalledName != "" {
-		name = res.InstalledName
-	}
 	if res.IsMarketplace && res.MarketplaceAcquisition == config.MarketplaceAcquisitionMirror {
 		// Verified mirror acquisition retains no original source tree: Path
 		// is the verified artifact archive, which must never be read as a
@@ -114,6 +106,14 @@ func nativeHookFingerprint(res resolver.ResolvedArtifact, target hcc.Target, mac
 		if resource == "" {
 			resource = res.Name
 		}
+		name := res.Name
+		if res.InstalledName != "" {
+			name = res.InstalledName
+		}
+		scope := HookScopeRepository
+		if machineScope {
+			scope = HookScopeMachine
+		}
 		return HookSourceMirrorFingerprint(HookSourceMirrorFingerprintInput{
 			InstanceID:    res.MarketplaceInstanceID,
 			RegistryID:    res.MarketplaceRegistryID,
@@ -125,9 +125,32 @@ func nativeHookFingerprint(res resolver.ResolvedArtifact, target hcc.Target, mac
 			Scope:         scope,
 		})
 	}
-	identity, err := nativeHookSourceIdentity(res)
+	input, err := nativeHookFingerprintInput(res, target, machineScope)
 	if err != nil {
 		return "", err
+	}
+	return HookSourceFingerprint(input)
+}
+
+// nativeHookFingerprintInput resolves the version-1 source-hook fingerprint
+// inputs for one selected non-mirror hook: the stable source identity,
+// installed name, target, scope, and the source-layout root plus relative
+// definition path both sides of the reader/writer seam derive identically.
+func nativeHookFingerprintInput(res resolver.ResolvedArtifact, target hcc.Target, machineScope bool) (HookSourceFingerprintInput, error) {
+	if res.Resource == nil || res.Resource.Kind() != ir.KindHook {
+		return HookSourceFingerprintInput{}, errors.New("hook native tolerance: not a hook resource")
+	}
+	scope := HookScopeRepository
+	if machineScope {
+		scope = HookScopeMachine
+	}
+	name := res.Name
+	if res.InstalledName != "" {
+		name = res.InstalledName
+	}
+	identity, err := nativeHookSourceIdentity(res)
+	if err != nil {
+		return HookSourceFingerprintInput{}, err
 	}
 	var root, rel string
 	if res.IsMarketplace && res.StagedSourceDir != "" {
@@ -139,11 +162,11 @@ func nativeHookFingerprint(res resolver.ResolvedArtifact, target hcc.Target, mac
 		// definition path relative to the staged root.
 		root = filepath.Clean(res.StagedSourceDir)
 		if !filepath.IsAbs(root) {
-			return "", fmt.Errorf("hook native tolerance: staged source root %q is not absolute", res.StagedSourceDir)
+			return HookSourceFingerprintInput{}, fmt.Errorf("hook native tolerance: staged source root %q is not absolute", res.StagedSourceDir)
 		}
 		r, err := filepath.Rel(root, filepath.Clean(res.Path))
 		if err != nil || r == ".." || strings.HasPrefix(r, ".."+string(os.PathSeparator)) || filepath.IsAbs(r) || r == "." {
-			return "", fmt.Errorf("hook native tolerance: %q is not a definition file under staged source root", res.Path)
+			return HookSourceFingerprintInput{}, fmt.Errorf("hook native tolerance: %q is not a definition file under staged source root", res.Path)
 		}
 		rel = filepath.ToSlash(r)
 	} else {
@@ -156,7 +179,7 @@ func nativeHookFingerprint(res resolver.ResolvedArtifact, target hcc.Target, mac
 			// and the snapshot bytes rooted there are authoritative.
 			rel = commonTrailingSlashPath(srcFile, filepath.Clean(res.Path))
 			if rel == "" {
-				return "", fmt.Errorf("hook native tolerance: %q source %q does not resolve under %q", res.Name, srcFile, res.Path)
+				return HookSourceFingerprintInput{}, fmt.Errorf("hook native tolerance: %q source %q does not resolve under %q", res.Name, srcFile, res.Path)
 			}
 			root = srcFile
 			for range strings.Split(rel, "/") {
@@ -165,22 +188,22 @@ func nativeHookFingerprint(res resolver.ResolvedArtifact, target hcc.Target, mac
 		} else {
 			root = sourceBundleRoot(res)
 			if root == "" {
-				return "", fmt.Errorf("hook native tolerance: %q has no source-layout root", res.Name)
+				return HookSourceFingerprintInput{}, fmt.Errorf("hook native tolerance: %q has no source-layout root", res.Name)
 			}
 			rel = filepath.ToSlash(srcFile)
 			if rel == "" || rel == "." {
-				return "", fmt.Errorf("hook native tolerance: %q has no source-relative definition path", res.Name)
+				return HookSourceFingerprintInput{}, fmt.Errorf("hook native tolerance: %q has no source-relative definition path", res.Name)
 			}
 		}
 	}
-	return HookSourceFingerprint(HookSourceFingerprintInput{
+	return HookSourceFingerprintInput{
 		SourceIdentity: identity,
 		Name:           name,
 		Target:         string(target),
 		Scope:          scope,
 		SourceRoot:     root,
 		DefinitionRel:  rel,
-	})
+	}, nil
 }
 
 // commonTrailingSlashPath returns the slash-separated trailing component run
@@ -422,55 +445,5 @@ func suppressNativeSatisfiedHookRules(res resolver.ResolvedArtifact, key outputK
 	if !ins.hookSatisfied(fingerprint, name) {
 		return artifacts, nil
 	}
-	// A fresh backing array is required: an error return hands the caller's
-	// original slice back, and reusing its storage would leak the
-	// already-rewritten fragment bytes into that "unchanged" input.
-	out := make([]artifact.Artifact, 0, len(artifacts))
-	for _, a := range artifacts {
-		if !a.Fragment {
-			out = append(out, a)
-			continue
-		}
-		events, nested, ok := hookFragmentEventMap(a.Bytes)
-		if !ok {
-			out = append(out, a)
-			continue
-		}
-		legacyRel := a.Path
-		if key.target == hcc.TargetWindsurf && key.machineScope {
-			// The machine-scope install root already IS ~/.codeium/windsurf:
-			// the compiled ".windsurf/" prefix is a project-scope prefix that
-			// machine-scope plans strip before writing.
-			legacyRel = strings.TrimPrefix(a.Path, windsurfDir+"/")
-		}
-		filtered := make(map[string][]json.RawMessage, len(events))
-		for _, event := range sortedKeys(events) {
-			var kept []json.RawMessage
-			for _, rule := range events[event] {
-				present, presentErr := legacyManagedRulePresent(legacyRoot, legacyRel, nested, event, rule)
-				if presentErr != nil {
-					return artifacts, presentErr
-				}
-				if present {
-					kept = append(kept, rule)
-				}
-			}
-			if len(kept) > 0 {
-				filtered[event] = kept
-			}
-		}
-		if len(filtered) == 0 {
-			// The hook is natively satisfied and no managed legacy twin
-			// survives: it contributes nothing to the legacy file.
-			continue
-		}
-		body, marshalErr := marshalHookFragment(filtered, nested)
-		if marshalErr != nil {
-			out = append(out, a)
-			continue
-		}
-		a.Bytes = body
-		out = append(out, a)
-	}
-	return out, nil
+	return preserveNativeSatisfiedLegacyTwins(key, legacyRoot, artifacts)
 }

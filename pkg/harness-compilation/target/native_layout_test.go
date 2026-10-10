@@ -928,3 +928,166 @@ func TestIsDirShapedPattern(t *testing.T) {
 		}
 	}
 }
+
+// TestHookProjectionDeclarations pins the additive hook-only native
+// projection topology: the four tolerance targets and the three targets with
+// existing native hook emission declare it, and the declaration validates at
+// the registration boundary.
+func TestHookProjectionDeclarations(t *testing.T) {
+	if err := ValidateHookProjections(); err != nil {
+		t.Fatalf("ValidateHookProjections: %v", err)
+	}
+	for _, tt := range []struct {
+		target                Target
+		projectPath, userPath string
+		projectMember         string
+		userMember            string
+		shape                 HookShape
+	}{
+		{TargetClaude, "settings.json", "settings.json", "hooks", "hooks", HookShapeMatcherGroups},
+		{TargetFactory, "hooks.json", "hooks.json", "", "", HookShapeMatcherGroups},
+		{TargetCursor, "hooks.json", "hooks.json", "hooks", "hooks", HookShapeEventHandlers},
+		{TargetWindsurf, ".devin/hooks.json", "hooks.json", "hooks", "hooks", HookShapeEventHandlers},
+		{TargetGemini, "settings.json", "settings.json", "hooks", "hooks", HookShapeMatcherGroups},
+		{TargetDevin, "hooks.v1.json", "config.json", "", "hooks", HookShapeMatcherGroups},
+		{TargetCodex, ".codex/hooks.json", ".codex/hooks.json", "hooks", "hooks", HookShapeMatcherGroups},
+	} {
+		projection, ok := LookupHookProjection(tt.target)
+		if !ok {
+			t.Fatalf("target %s declares no hook projection", tt.target)
+		}
+		if projection.Shape != tt.shape {
+			t.Fatalf("target %s shape = %q, want %q", tt.target, projection.Shape, tt.shape)
+		}
+		if projection.Project.Path != tt.projectPath || projection.User.Path != tt.userPath {
+			t.Fatalf("target %s files = %q/%q, want %q/%q", tt.target, projection.Project.Path, projection.User.Path, tt.projectPath, tt.userPath)
+		}
+		if projection.Project.Member != tt.projectMember || projection.User.Member != tt.userMember {
+			t.Fatalf("target %s members = %q/%q, want %q/%q", tt.target, projection.Project.Member, projection.User.Member, tt.projectMember, tt.userMember)
+		}
+		if projection.SupportDir == "" {
+			t.Fatalf("target %s declares no hook support directory", tt.target)
+		}
+	}
+	if got := Definitions()[0].HookProjection; got == nil {
+		t.Fatal("Definitions must expose the hook projection declaration")
+	}
+}
+
+func TestHookProjectionDefensiveClone(t *testing.T) {
+	definition, ok := Lookup(string(TargetCursor))
+	if !ok || definition.HookProjection == nil {
+		t.Fatal("cursor hook projection missing")
+	}
+	definition.HookProjection.Project.Path = "mutated.json"
+	definition.HookProjection.Project.Envelope["version"] = 99
+	fresh, ok := LookupHookProjection(TargetCursor)
+	if !ok {
+		t.Fatal("cursor hook projection missing")
+	}
+	if fresh.Project.Path != "hooks.json" || fresh.Project.Envelope["version"] != 1 {
+		t.Fatalf("registry projection mutated through returned copy: %+v", fresh.Project)
+	}
+	fresh.Project.Envelope["version"] = 99
+	if again, _ := LookupHookProjection(TargetCursor); again.Project.Envelope["version"] != 1 {
+		t.Fatalf("registry projection mutated through lookup copy: %+v", again.Project)
+	}
+	file := fresh.File(false)
+	file.Envelope["version"] = 42
+	if again, _ := LookupHookProjection(TargetCursor); again.Project.Envelope["version"] != 1 {
+		t.Fatalf("registry projection mutated through File() copy: %+v", again.Project)
+	}
+	for _, d := range Definitions() {
+		if d.HookProjection != nil {
+			d.HookProjection.Project.Envelope = map[string]any{"version": -1}
+		}
+	}
+	if again, _ := LookupHookProjection(TargetCursor); again.Project.Envelope["version"] != 1 {
+		t.Fatalf("registry projection mutated through Definitions() copy: %+v", again.Project)
+	}
+}
+
+func TestValidateHookProjectionRejectsInvalidDeclarations(t *testing.T) {
+	valid := NativeHookProjection{
+		Shape:      HookShapeMatcherGroups,
+		SupportDir: "hook-support",
+		Project:    NativeHookProjectionFile{Path: "hooks.json"},
+		User:       NativeHookProjectionFile{Path: "hooks.json"},
+	}
+	if err := ValidateHookProjection(TargetClaude, valid); err != nil {
+		t.Fatalf("valid projection rejected: %v", err)
+	}
+	scalars := valid
+	scalars.Project.Envelope = map[string]any{"version": 1, "label": "x", "flag": true, "ratio": 1.5, "nothing": nil}
+	if err := ValidateHookProjection(TargetClaude, scalars); err != nil {
+		t.Fatalf("scalar envelope values rejected: %v", err)
+	}
+	for _, tt := range []struct {
+		name   string
+		mutate func(*NativeHookProjection)
+	}{
+		{"unknown shape", func(p *NativeHookProjection) { p.Shape = "weird" }},
+		{"empty shape", func(p *NativeHookProjection) { p.Shape = "" }},
+		{"invalid support dir", func(p *NativeHookProjection) { p.SupportDir = "../escape" }},
+		{"root support dir", func(p *NativeHookProjection) { p.SupportDir = "." }},
+		{"empty path", func(p *NativeHookProjection) { p.Project.Path = "" }},
+		{"root path", func(p *NativeHookProjection) { p.Project.Path = "." }},
+		{"traversal path", func(p *NativeHookProjection) { p.User.Path = "../hooks.json" }},
+		{"member with slash", func(p *NativeHookProjection) { p.Project.Member = "a/b" }},
+		{"envelope empty key", func(p *NativeHookProjection) { p.Project.Envelope = map[string]any{"": 1} }},
+		{"envelope collides with member", func(p *NativeHookProjection) {
+			p.Project.Member = "hooks"
+			p.Project.Envelope = map[string]any{"hooks": true}
+		}},
+		{"envelope case-collides with member", func(p *NativeHookProjection) {
+			p.Project.Member = "hooks"
+			p.Project.Envelope = map[string]any{"Hooks": true}
+		}},
+		{"envelope key with slash", func(p *NativeHookProjection) { p.Project.Envelope = map[string]any{"a/b": 1} }},
+		{"envelope nested map", func(p *NativeHookProjection) { p.Project.Envelope = map[string]any{"nested": map[string]any{"x": 1}} }},
+		{"envelope nested slice", func(p *NativeHookProjection) { p.Project.Envelope = map[string]any{"list": []any{1}} }},
+		{"envelope unserializable", func(p *NativeHookProjection) { p.Project.Envelope = map[string]any{"f": func() {}} }},
+		{"file path with backslash", func(p *NativeHookProjection) { p.Project.Path = `a\b.json` }},
+		{"file path with NUL", func(p *NativeHookProjection) { p.Project.Path = "a\x00b.json" }},
+		{"member with NUL", func(p *NativeHookProjection) { p.Project.Member = "a\x00b" }},
+		{"member with backslash", func(p *NativeHookProjection) { p.Project.Member = `a\b` }},
+		{"member traversal", func(p *NativeHookProjection) { p.Project.Member = ".." }},
+		{"support dir with backslash", func(p *NativeHookProjection) { p.SupportDir = `a\b` }},
+	} {
+		projection := valid
+		tt.mutate(&projection)
+		if err := ValidateHookProjection(TargetClaude, projection); err == nil {
+			t.Fatalf("%s: invalid projection accepted", tt.name)
+		}
+	}
+}
+
+func TestHookProjectionLeavesExistingLayoutModelsUnchanged(t *testing.T) {
+	for _, tt := range []struct {
+		target     Target
+		repo, user string
+	}{
+		{TargetClaude, ".claude", ".claude"},
+		{TargetFactory, ".factory", ".factory"},
+		{TargetCursor, ".cursor", ".cursor"},
+		{TargetWindsurf, ".", ".codeium/windsurf"},
+		{TargetGemini, ".gemini", ".gemini"},
+		{TargetDevin, ".devin", ".config/devin"},
+	} {
+		definition, ok := Lookup(string(tt.target))
+		if !ok || definition.RepoRoot != tt.repo || definition.UserRoot != tt.user || definition.PartitionedRoots {
+			t.Fatalf("root model for %s changed: %+v", tt.target, definition)
+		}
+	}
+	if definition, ok := Lookup(string(TargetCodex)); !ok || !definition.PartitionedRoots || definition.RepoRoot != "" {
+		t.Fatalf("codex partitioned root model changed: %+v", definition)
+	}
+	// Only Claude, Devin and Codex carry a complete NativeLayout at this
+	// revision; the hook projection seam must not have activated one for the
+	// remaining targets.
+	for _, t2 := range []Target{TargetFactory, TargetCursor, TargetWindsurf, TargetGemini} {
+		if _, ok := LookupNativeLayout(t2); ok {
+			t.Fatalf("target %s unexpectedly gained a full native layout", t2)
+		}
+	}
+}

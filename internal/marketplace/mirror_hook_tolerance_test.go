@@ -1,6 +1,7 @@
 package marketplace
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"net/http"
@@ -28,6 +29,11 @@ func serveCanonicalMirrorHook(t *testing.T, canonical hccartifact.CanonicalArtif
 	if err != nil {
 		t.Fatalf("Encode: %v", err)
 	}
+	served, _, err := hccartifact.Decode(bytes.NewReader(raw))
+	if err != nil {
+		t.Fatalf("Decode served artifact: %v", err)
+	}
+	contentDigest := served.Manifest.ContentDigest
 	rev := assessedRevision(store.ResourceRevision{
 		Coordinate: store.ResourceCoordinate{
 			Marketplace: store.MarketplaceID("mp"),
@@ -35,7 +41,7 @@ func serveCanonicalMirrorHook(t *testing.T, canonical hccartifact.CanonicalArtif
 			Kind:        "hook",
 			Name:        hookName,
 		},
-		ContentDigest: store.RevisionDigest(canonical.Manifest.ContentDigest),
+		ContentDigest: store.RevisionDigest(contentDigest),
 		ArchiveDigest: store.ArchiveDigest(archiveDigest),
 	})
 	mux := http.NewServeMux()
@@ -52,7 +58,7 @@ func serveCanonicalMirrorHook(t *testing.T, canonical hccartifact.CanonicalArtif
 	})
 	server := httptest.NewServer(mux)
 	t.Cleanup(server.Close)
-	return server, canonical.Manifest.ContentDigest
+	return server, contentDigest
 }
 
 // mirrorHookNativeProof writes the Factory native hook file plus the durable
@@ -210,6 +216,71 @@ func TestMirrorHookNativeProofSuppressesLegacyOutput(t *testing.T) {
 		data, err := os.ReadFile(legacyFile(repoRoot))
 		if err != nil || !strings.Contains(string(data), "run.sh") {
 			t.Fatalf("changed mirror digest suppressed legacy output: %v %q", err, data)
+		}
+	})
+}
+
+func TestMirrorHookSupportInventoryCaptured(t *testing.T) {
+	isolateHarnessState(t)
+
+	newResolver := func(support map[string]hccartifact.SupportFile) (*httptest.Server, string, resolver.ResolvedArtifact) {
+		t.Helper()
+		hook := ir.NewHookWithMatcher("deploy-hook", "PreToolUse", "Bash", "./run.sh", "command", nil, ir.SourceRef{File: "hooks/hooks.json"})
+		canonical, err := hccartifact.FromIR(hook)
+		if err != nil {
+			t.Fatalf("FromIR: %v", err)
+		}
+		canonical.Support = support
+		server, contentDigest := serveCanonicalMirrorHook(t, canonical, "deploy-hook")
+		cfg := &config.Config{
+			Marketplaces: []config.MarketplaceEntry{{
+				URL:        server.URL,
+				InstanceID: "mp",
+				Resources: []config.MarketplaceResourcePin{{
+					RegistryID: "src", Kind: "hook", Name: "deploy-hook",
+					Revision: "v1", Digest: contentDigest,
+					Acquisition: config.MarketplaceAcquisitionMirror,
+				}},
+			}},
+		}
+		r := &Resolver{Cache: NewCache(t.TempDir())}
+		resolved, errs := r.Resolve(context.Background(), cfg, []hcc.Target{hcc.TargetFactory}, resolver.MarketplaceResolveModeRefresh)
+		if len(errs) > 0 {
+			t.Fatalf("Resolve errors: %v", errs)
+		}
+		if len(resolved) != 1 {
+			t.Fatalf("resolved = %#v, want one", resolved)
+		}
+		if resolved[0].MarketplaceDigest != contentDigest {
+			t.Fatalf("resolved content digest = %q, want served digest %q", resolved[0].MarketplaceDigest, contentDigest)
+		}
+		return server, contentDigest, resolved[0]
+	}
+
+	t.Run("binary and executable support copied", func(t *testing.T) {
+		_, _, res := newResolver(map[string]hccartifact.SupportFile{
+			"run.sh":   {Data: []byte("#!/bin/sh\necho go\n"), Executable: true},
+			"data.bin": {Data: []byte{0x00, 0xff, 0x0a}, Executable: false},
+		})
+		if len(res.MarketplaceHookSupport) != 2 {
+			t.Fatalf("MarketplaceHookSupport = %#v, want 2", res.MarketplaceHookSupport)
+		}
+		first, second := res.MarketplaceHookSupport[0], res.MarketplaceHookSupport[1]
+		if first.Path != "data.bin" || !bytes.Equal(first.Bytes, []byte{0x00, 0xff, 0x0a}) || first.Mode.Perm() != 0o644 {
+			t.Fatalf("binary support = %#v", first)
+		}
+		if second.Path != "run.sh" || !bytes.Equal(second.Bytes, []byte("#!/bin/sh\necho go\n")) || second.Mode.Perm() != 0o755 {
+			t.Fatalf("executable support = %#v", second)
+		}
+	})
+
+	t.Run("verified empty inventory is non-nil", func(t *testing.T) {
+		_, _, res := newResolver(map[string]hccartifact.SupportFile{})
+		if res.MarketplaceHookSupport == nil {
+			t.Fatal("verified empty mirror hook support inventory is nil")
+		}
+		if len(res.MarketplaceHookSupport) != 0 {
+			t.Fatalf("support = %#v, want empty", res.MarketplaceHookSupport)
 		}
 	})
 }
