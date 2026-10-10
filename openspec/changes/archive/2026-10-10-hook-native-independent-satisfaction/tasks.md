@@ -22,5 +22,5 @@
 
 - [x] 4.1 Run affected package/public-consumer tests plus frozen source/fingerprint and diagnostic checks; verify default legacy golden output and all safety/control cases
 - [x] 4.2 Run the final Full reader verification and required native/domain gates with retained command and exit evidence; verify make validate, make spec-check, make validate-e2e and appropriate exact witnessed historical/mixed-version gates without skip substitution
-- [ ] 4.3 Complete fresh independent acceptance and adversarial reviews on one immutable reader candidate, address actionable findings and verify affected deltas; verify exact-head CI and reader-before-writer publication description
-- [ ] 4.4 Run `openspec archive hook-native-independent-satisfaction --yes` as the final change commit in this pull request; verify `openspec validate --all --strict` and `make spec-check` afterward
+- [x] 4.3 Complete fresh independent acceptance and adversarial reviews on one immutable reader candidate, address actionable findings and verify affected deltas; verify exact-head CI and reader-before-writer publication description
+- [x] 4.4 Run `openspec archive hook-native-independent-satisfaction --yes` as the final change commit in this pull request; verify `openspec validate --all --strict` and `make spec-check` afterward

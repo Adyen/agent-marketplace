@@ -7,7 +7,7 @@ Prevent a legacy-writing client from recreating a hook in its old file when the 
 
 ### Requirement: Proven native hooks satisfy legacy output
 
-Before writing a selected hook into a legacy file, a client SHALL recognize the same selected source hook in the harness target's native file when valid durable evidence proves both the native entry's current canonical value and a matching source-hook fingerprint. The evidence SHALL be either current-byte ownership proof or separate native satisfaction evidence that grants no ownership. The files and shapes are fixed for both scopes:
+Before writing a selected hook into a legacy file, a client SHALL recognize the same selected source hook in the harness target's native file when valid durable evidence proves both the native entry's current canonical value and a matching source-hook fingerprint, or when complete repository-scoped independent native satisfaction is established under the source-derived satisfaction requirements. Durable evidence SHALL be either current-byte ownership proof or separate native satisfaction evidence that grants no ownership. Independent satisfaction SHALL be ephemeral, source-derived and non-owning and SHALL NOT substitute for corrupt, contradictory, drifted or partial private evidence. The files and shapes are fixed for both scopes:
 
 | Harness target | Repository native file | Machine native file | Hook member | Legacy file |
 |---|---|---|---|---|
@@ -16,7 +16,7 @@ Before writing a selected hook into a legacy file, a client SHALL recognize the 
 | Factory Droid | `.factory/hooks.json` | `~/.factory/hooks.json` | top-level event map | `hooks/hooks.json` under the target root |
 | Windsurf | `.devin/hooks.json` | `~/.codeium/windsurf/hooks.json` | `hooks` | repository `.windsurf/hooks.json`; machine native file is also the legacy file |
 
-The client SHALL not recreate a legacy entry or report a pending legacy write for a proven match on `sync`, `sync --locked`, or `sync --check`. It SHALL NOT treat a resource name or command string alone as equivalence. A proof for one selected hook SHALL NOT suppress unproven sibling hooks. Every recorded owned or satisfaction entry carrying the selected resource-name and source-fingerprint pair SHALL be present with its recorded current canonical value; partial proof SHALL suppress nothing for that selection. A surviving marked legacy twin SHALL remain byte-identical under this reader-only compatibility behavior.
+The client SHALL not recreate a legacy entry or report a pending legacy write for a proven match on `sync`, `sync --locked`, or `sync --check`. It SHALL NOT treat a resource name or command string alone as equivalence. A proof for one selected hook SHALL NOT suppress unproven sibling hooks. Every recorded owned or satisfaction entry carrying the selected resource-name and source-fingerprint pair SHALL be present with its recorded current canonical value; partial proof SHALL suppress nothing for that selection. A surviving marked legacy twin SHALL remain byte-identical under this reader-only compatibility behavior. Independent reconstruction SHALL NOT grant authority to remove such a twin or modify a native entry.
 
 #### Scenario: Native owned entry prevents duplicate legacy output
 
@@ -40,7 +40,7 @@ The client SHALL not recreate a legacy entry or report a pending legacy write fo
 - **WHEN** separate durable satisfaction evidence binds an unchanged handwritten native hook to the selected resource and its exact version-1 source fingerprint for Claude Code, Cursor, Factory Droid, or Windsurf in either scope
 - **THEN** `sync`, `sync --locked`, and `sync --check` MUST recognize the selected hook without recreating a legacy entry or reporting a pending legacy write
 - **AND** the native entry MUST remain unmanaged and its bytes, mode, and modification time MUST remain unchanged
-- **AND** a matching native entry without satisfaction evidence MUST retain the ordinary unproven legacy behavior
+- **AND** a matching native entry without durable satisfaction evidence or complete source-derived repository satisfaction MUST retain the ordinary unproven legacy behavior
 
 ### Requirement: Source-hook fingerprints are stable across client versions
 
@@ -71,7 +71,7 @@ For a verified Marketplace mirror artifact whose original definition files are u
 
 ### Requirement: Incomplete proof does not suppress legacy output
 
-A native entry without valid current canonical-value evidence and a matching source-hook fingerprint SHALL NOT suppress the existing legacy write. Valid evidence SHALL be current-byte ownership proof or separate source-bound satisfaction proof. The compatibility check SHALL never adopt, change, or prune a handwritten native entry. A changed matcher, event, handler type, command, or relevant execution field SHALL NOT be treated as equivalent merely because its resource name matches.
+A native entry without valid current canonical-value evidence and a matching source-hook fingerprint, or without complete independently reconstructed repository satisfaction, SHALL NOT suppress the existing legacy write. Durable evidence SHALL be current-byte ownership proof or separate source-bound satisfaction proof. Source-derived satisfaction SHALL verify the complete expected native entries and portable support from verified selected input and SHALL NOT be established by payload similarity alone. The compatibility check SHALL never adopt, change, or prune a handwritten native entry. A changed matcher, event, handler type, command, or relevant execution field SHALL NOT be treated as equivalent merely because its resource name matches. Existing partial or drifted private evidence for the selection SHALL NOT be bypassed by reconstruction.
 
 #### Scenario: Mismatched source or native value retains legacy behavior
 
@@ -83,7 +83,7 @@ A native entry without valid current canonical-value evidence and a matching sou
 
 - **WHEN** a native hook lacks ownership proof even though it has the same resource name or command as a selected hook
 - **THEN** the client MUST NOT treat it as owned, change it, or prune it
-- **AND** it MUST NOT suppress its legacy output based solely on that entry
+- **AND** it MUST NOT suppress its legacy output based solely on that entry without complete independent source-derived satisfaction
 
 ### Requirement: Unsafe native input is refused without mutation
 
