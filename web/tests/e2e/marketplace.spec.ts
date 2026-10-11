@@ -70,6 +70,7 @@ function streamingItems(count: number) {
 async function routeStreamingSearch(page: Page, failNextPageOnce = false) {
   const items = streamingItems(30)
   const offsets: number[] = []
+  const sorts: (string | null)[] = []
   let shouldFail = failNextPageOnce
   await page.route('**/api/v1/search**', async (route) => {
     const url = new URL(route.request().url())
@@ -77,6 +78,7 @@ async function routeStreamingSearch(page: Page, failNextPageOnce = false) {
     const offset = Number(url.searchParams.get('offset') || 0)
     const limit = Number(url.searchParams.get('limit') || 25)
     offsets.push(offset)
+    sorts.push(url.searchParams.get('sort'))
     if (offset > 0 && shouldFail) {
       shouldFail = false
       return route.fulfill({ status: 400, contentType: 'application/json', body: '{}' })
@@ -87,22 +89,26 @@ async function routeStreamingSearch(page: Page, failNextPageOnce = false) {
       body: JSON.stringify({ items: items.slice(offset, offset + limit), total: items.length, offset, limit }),
     })
   })
-  return offsets
+  return { offsets, sorts }
 }
 
 test.describe('Marketplace browser discovery', () => {
+  // spec: marketplace-web-ui/footer-identifies-the-running-marketplace
   test('shows the running Marketplace version in the footer', async ({ page }) => {
     const instanceRequests: string[] = []
     page.on('request', (request) => {
       if (new URL(request.url()).pathname === '/api/v1/instance') instanceRequests.push(request.url())
     })
     await page.goto('/')
-    await expect(page.locator('footer')).toContainText('Version v4.0.0-e2e')
+    const footer = page.locator('footer')
+    await expect(footer).toContainText('Version v4.0.0-e2e')
+    await expect(footer.getByRole('link', { name: 'Docs', exact: true })).toBeVisible()
+    await expect(footer).toContainText('built at Adyen')
     expect(instanceRequests).toEqual([])
   })
 
   test('streams additional search results while scrolling', async ({ page }) => {
-    const offsets = await routeStreamingSearch(page)
+    const { offsets } = await routeStreamingSearch(page)
     await page.goto('/')
     await page.getByLabel('Search', { exact: true }).fill('stream')
     await expect(page.locator('article')).toHaveCount(25)
@@ -121,7 +127,7 @@ test.describe('Marketplace browser discovery', () => {
         disconnect() {}
       } as unknown as typeof IntersectionObserver
     })
-    const offsets = await routeStreamingSearch(page, true)
+    const { offsets } = await routeStreamingSearch(page, true)
     await page.goto('/')
     await page.getByLabel('Search', { exact: true }).fill('stream')
     await expect(page.locator('article')).toHaveCount(25)
@@ -408,7 +414,7 @@ test.describe('Marketplace browser discovery', () => {
       await expect(markdown.locator('pre')).toHaveCSS('border-color', theme.marketplace.border)
 
       const command = page.getByTestId('command-text')
-      await expect(command.locator('../..')).toHaveCSS('background-color', theme.marketplace.code)
+      await expect(page.getByTestId('command-container')).toHaveCSS('background-color', theme.marketplace.code)
       await expect(command).toHaveCSS('color', theme.marketplace.primaryText)
       await expect(page.getByRole('button', { name: /Copy pinned CLI install command/ })).toHaveCSS('background-color', theme.marketplace.action)
 
@@ -543,6 +549,56 @@ test.describe('Marketplace browser discovery', () => {
     await expect(page.getByText(/on this page cannot be installed/)).toHaveCount(0)
   })
 
+  // spec: marketplace-browser/browser-displays-counts-while-preserving-filtered-pagination
+  test('requests installation ordering and displays reported counts', async ({ page }) => {
+    const searchRequests: URL[] = []
+    page.on('request', request => {
+      if (new URL(request.url()).pathname === '/api/v1/search') searchRequests.push(new URL(request.url()))
+    })
+
+    await page.goto('/')
+    const rows = page.locator('article')
+    await expect(rows).toHaveCount(2)
+    await expect(rows.nth(0).getByRole('link', { name: 'team-tools/secure-review', exact: true })).toBeVisible()
+    const countText = rows.nth(0).getByText('7 reported installations', { exact: true })
+    await expect(countText).toBeVisible()
+    await expect(countText).toHaveAttribute('title', /latest configuration within the last 30 days/)
+    await expect(rows.nth(1)).not.toContainText('reported installation')
+
+    await page.getByLabel('Search', { exact: true }).fill('secure')
+    await expectResourceCount(page, 1)
+    await expect(rows).toHaveCount(1)
+    await expect(rows.nth(0)).toContainText('7 reported installations')
+
+    await page.getByLabel('Search', { exact: true }).fill('')
+    await page.getByRole('radio', { name: 'Command', exact: true }).check()
+    await expectResourceCount(page, 1)
+    await expect(rows.nth(0).getByRole('link', { name: 'team-tools/deploy-preview', exact: true })).toBeVisible()
+    await expect(rows.nth(0)).not.toContainText('reported installation')
+
+    await page.getByRole('button', { name: 'Clear', exact: true }).click()
+    await page.getByRole('checkbox', { name: 'team-tools', exact: true }).check()
+    await expectResourceCount(page, 2)
+    await expect(rows.nth(0)).toContainText('7 reported installations')
+
+    expect(searchRequests.length).toBeGreaterThan(0)
+    for (const request of searchRequests) {
+      expect(request.searchParams.get('sort')).toBe('installations')
+    }
+  })
+
+  // spec: marketplace-browser/browser-displays-counts-while-preserving-filtered-pagination
+  test('keeps installation ordering while loading more results', async ({ page }) => {
+    const { offsets, sorts } = await routeStreamingSearch(page)
+    await page.goto('/')
+    await page.getByLabel('Search', { exact: true }).fill('stream')
+    await expect(page.locator('article')).toHaveCount(25)
+    await page.getByTestId('load-more-trigger').scrollIntoViewIfNeeded()
+    await expect(page.locator('article')).toHaveCount(30)
+    expect(offsets).toEqual([0, 25])
+    expect(sorts).toEqual(['installations', 'installations'])
+  })
+
   test('searches from the homepage and persists URL-backed filters', async ({ page }) => {
     await page.goto('/')
     await expect(page.getByRole('heading', { name: 'Resources', exact: true })).toBeVisible()
@@ -611,16 +667,29 @@ test.describe('Marketplace browser discovery', () => {
     await expect(page).toHaveURL(`${appURL}/r/team-tools/skill/secure-review/revisions/${encodeURIComponent(digest)}`)
     await expect(page.getByRole('heading', { name: 'secure-review', exact: true })).toBeVisible()
     await expect(page.getByTestId('revision-summary')).toHaveCount(0)
+    await expect(page.getByRole('heading', { name: 'Install', exact: true })).toBeVisible()
+    const setupCLI = page.getByRole('link', { name: 'Set up CLI (opens in a new tab)', exact: true })
+    await expect(setupCLI).toHaveAttribute('target', '_blank')
+    await expect(setupCLI.getByTestId('setup-external-icon')).toHaveCount(1)
     const pinnedCommand = `agent-marketplace install "${appURL}/r/team-tools/skill/secure-review/revisions/${encodeURIComponent(digest)}"`
     await expect(page.getByTestId('command-text')).toHaveText(pinnedCommand)
     const copyCommand = page.getByRole('button', { name: /Copy pinned CLI install command/ })
     await expect(copyCommand).toBeEnabled()
     await copyCommand.click()
     await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe(pinnedCommand)
-    const copyRevision = page.getByRole('button', { name: /Copy revision/ }).first()
+    const revisionRow = page.getByTestId('revision-row')
+    const copyRevision = revisionRow.getByRole('button')
+    await expect(revisionRow.getByTestId('revision-label')).toHaveText('Revision (latest)')
+    await expect(revisionRow.getByTestId('revision-id')).toHaveText('a'.repeat(12))
+    await expect(revisionRow.getByTestId('scanned-label')).toHaveText('Scanned')
+    await expect(revisionRow.getByTestId('revision-scanned-at')).toHaveText('Jan 2, 2026')
+    await expect(copyRevision).toHaveAttribute('aria-label', /Copy revision/)
     await expect(copyRevision).toBeEnabled()
     await copyRevision.click()
     await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe(digest)
+    await expect(copyRevision).toHaveText('')
+    await expect(copyRevision).toHaveAttribute('aria-label', 'Revision copied')
+    await expect(revisionRow.getByTestId('revision-copy-status')).toHaveText('Copied')
     await expect(page.getByRole('button', { name: /Copy detail URL/ })).toHaveCount(0)
 
     await page.getByRole('tab', { name: 'Security', exact: true }).click()
@@ -643,7 +712,7 @@ test.describe('Marketplace browser discovery', () => {
     await expect(page).toHaveURL(`${appURL}/r/team-tools/skill/secure-review/revisions/${encodeURIComponent(previousDigest)}?tab=revisions`)
     await expect(page.getByRole('tab', { name: 'Revisions', exact: true })).toHaveAttribute('aria-selected', 'true')
     await expect(page.getByRole('link', { name: 'Newer revision available', exact: true })).toHaveAttribute('href', `/r/team-tools/skill/secure-review/revisions/${encodeURIComponent(digest)}`)
-    await expect(page.getByRole('alert', { name: 'This revision is revoked' })).toContainText('superseded policy')
+    await expect(page.getByTestId('unavailable-notice')).toContainText('This revision has been revoked and can no longer be installed.')
   })
 
   test('follows an exact digest-pinned browser route to safely render hostile primary Markdown', async ({ page }) => {
@@ -702,16 +771,24 @@ test.describe('Marketplace browser discovery', () => {
     expect(contentRequests.some(url => url.includes(`${encodeURIComponent('sha256:2222222222222222222222222222222222222222222222222222222222222222')}`))).toBe(false)
   })
 
-  test('keeps revoked revision metadata visible but disables install command actions', async ({ page }) => {
+  test('keeps revoked revision metadata visible with one compact unavailable notice', async ({ page }) => {
     const revokedDigest = `sha256:${'b'.repeat(64)}`
     await page.goto(`/r/team-tools/command/deploy-preview/revisions/${encodeURIComponent(revokedDigest)}`)
 
     await expect(page.getByRole('heading', { name: 'deploy-preview', exact: true })).toBeVisible()
-    await expect(page.getByRole('alert')).toContainText('This revision is revoked')
+    const notice = page.getByTestId('unavailable-notice')
+    await expect(notice).toContainText('Not available')
+    await expect(notice).toContainText('This revision has been revoked and can no longer be installed.')
+    await expect(notice.getByTestId('unavailable-status-icon')).toHaveCount(1)
+    await expect(notice).toHaveCSS('border-top-width', '1px')
+    expect(await notice.evaluate(element => getComputedStyle(element).backgroundColor)).not.toBe('rgba(0, 0, 0, 0)')
+    await expect(page.getByRole('alert')).toHaveCount(0)
+    await expect(page.getByRole('button', { name: /Copy pinned CLI install command/ })).toHaveCount(0)
+    await expect(page.getByRole('link', { name: /Set up CLI/ })).toHaveCount(0)
+    await expect(page.getByRole('button', { name: 'View security details', exact: true })).toHaveCount(0)
     await expect(page.getByTestId('revision-summary')).toHaveCount(0)
     await page.getByRole('tab', { name: 'Technical details', exact: true }).click()
     await expect(page.getByText(revokedDigest, { exact: true }).first()).toBeVisible()
-    await expect(page.getByRole('button', { name: /Copy pinned CLI install command/ })).toBeDisabled()
     await expect(page.getByRole('button', { name: /Copy detail URL/ })).toHaveCount(0)
   })
 

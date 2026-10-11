@@ -1,0 +1,11 @@
+## Context
+
+Actual native Factory skill file-mode prune removes a replacement after the manifest digest was accepted. Empty-parent cleanup also independently reopens directories. Stale file-mode links need link-only authority instead of a recursive pathname delete.
+
+## Decisions
+
+Reuse scoped parent capture and tree digest to compare full observed state and recorded ownership below the captured parent both before and after the private refusal fixture; recheck named parent identity then remove descriptor-relatively. Typed unsafe paths must not become optional absence. Stale-link deletion additionally requires a symbolic leaf targeting the managed cache; no target bytes are read and failures must not report successful removal. Empty-directory cleanup captures strict ancestors and uses unlinkat(AT_REMOVEDIR), which cannot remove regular files or non-empty directories; retain best-effort behavior and original comments. No transaction or exclusion of uncooperative writers between checks and deletion.
+
+## Verification
+
+Native install proves payload before deterministic prune replacement, then coded refusal retains admitted/replacement/manifest bytes. All existing native portable/no-op/mode/migration/prune controls and healthy actual native nil-selection removal pass on Linux/macOS; full short materialize/fsboundary, count20 native-prune/Rmdir races, scoped validate/lint/build and strict specs pass. Kernel Rmdir also refuses regular-file/symlink/non-empty fixtures without changing their bytes and succeeds for a real empty directory. All twelve implementation entries reviewed including tests/benchmark/script/spec exclusions, none skipped; review retained Unlink comment association, passed admitted harness authority into empty cleanup, preserved typed absence and corrected stale-link Removed reporting. Post-classification regular removal local disk/no network legacy syscall vs captured validation comparison2s×5 arm64 median110.508→626.327µs(+466.77%),128→14518B(+11242.19%),1→204alloc(+20300%),p=.008n5/no95%interval. Baseline ranged40–210µs; shared initial classification/digest not timed, so not an end-to-end prune or speed claim. Final R2 inventory includes remaining generic symlink-mode pruning and admitted aggregate/restore/ownership consumers; no full R2 closure here.

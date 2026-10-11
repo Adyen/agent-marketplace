@@ -12,6 +12,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/Adyen/agent-marketplace/internal/cache"
 	"github.com/Adyen/agent-marketplace/internal/catalog"
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/materialize"
@@ -189,13 +190,34 @@ func runListFrom(ctx context.Context, out io.Writer, errOut io.Writer, fromURL, 
 
 	// Validate the ad-hoc URL against the allowlist resolved by ReadIntent
 	// before any network access.
-	intent := config.ReadIntent(ctx, config.LoadEffectiveOptions{})
+	ws, err := pipeline.DiscoverWorkspace()
+	if err != nil {
+		return err
+	}
+	intent := config.ReadIntent(ctx, config.LoadEffectiveOptions{RepoRoot: ws.RepoRoot(), LocalConfigDir: ws.LocalConfigDir()})
 	for _, w := range intent.Warnings {
 		fmt.Fprintf(errOut, "warning: %s\n", terminalSafeText(fmt.Sprint(w))) //nolint:errcheck // best-effort warning on stderr
+	}
+	if len(intent.Errors) > 0 {
+		return errors.Join(intent.Errors...)
 	}
 	syntheticEntry := config.RegistryEntry{URL: fromURL, Ref: fromRef, Path: fromPath}
 	if err := config.ValidateRegistryURLs([]config.RegistryEntry{syntheticEntry}, intent.AllowedRegistries()); err != nil {
 		return err
+	}
+
+	// A Git registry without an explicit ref uses the branch its remote HEAD
+	// advertises, matching install --from. Local directory registries ignore
+	// the ref entirely. Resolving after the allowlist check keeps a blocked URL
+	// offline.
+	if !syntheticEntry.IsLocal() && fromRef == "" {
+		defaultBranch, err := cache.DefaultBranch(fromURL)
+		if err != nil {
+			return err
+		}
+		fromRef = defaultBranch
+		syntheticEntry.Ref = fromRef
+		slog.Info("list --from using registry default branch", "ref", fromRef)
 	}
 
 	// Build a synthetic config with just the --from entry to load catalogs.

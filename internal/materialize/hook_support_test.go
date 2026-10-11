@@ -21,27 +21,27 @@ func TestPrepareHookSupportDetectsSameOutputConflicts(t *testing.T) {
 		{skill: resolverHook(first, "first"), target: hcc.TargetFactory},
 		{skill: resolverHook(second, "second"), target: hcc.TargetFactory},
 	}
-	_, conflicts := prepareHookSupport(work)
+	_, conflicts, _ := prepareHookSupport(work)
 	if len(conflicts) != 2 || len(conflicts[0]) != 1 || len(conflicts[1]) != 1 {
 		t.Fatalf("conflicts = %#v, want one conflict per producer", conflicts)
 	}
 
 	equal := makeHookSupportSource(t, "echo same", 0o644)
 	equalWork := []skillTarget{{skill: resolverHook(equal, "one"), target: hcc.TargetFactory}, {skill: resolverHook(equal, "two"), target: hcc.TargetFactory}}
-	_, conflicts = prepareHookSupport(equalWork)
+	_, conflicts, _ = prepareHookSupport(equalWork)
 	if len(conflicts) != 0 {
 		t.Fatalf("equal support files conflicted: %#v", conflicts)
 	}
 
 	mode := makeHookSupportSource(t, "echo same", 0o600)
 	modeWork := []skillTarget{{skill: resolverHook(equal, "one"), target: hcc.TargetFactory}, {skill: resolverHook(mode, "two"), target: hcc.TargetFactory}}
-	_, conflicts = prepareHookSupport(modeWork)
+	_, conflicts, _ = prepareHookSupport(modeWork)
 	if len(conflicts) != 2 {
 		t.Fatalf("mode conflict = %#v, want both producers", conflicts)
 	}
 
 	differentTarget := []skillTarget{{skill: resolverHook(first, "one"), target: hcc.TargetFactory}, {skill: resolverHook(second, "two"), target: hcc.TargetWindsurf}}
-	_, conflicts = prepareHookSupport(differentTarget)
+	_, conflicts, _ = prepareHookSupport(differentTarget)
 	if len(conflicts) != 0 {
 		t.Fatalf("cross-target support files conflicted: %#v", conflicts)
 	}

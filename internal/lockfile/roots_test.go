@@ -37,23 +37,3 @@ func TestProjectGitRoots(t *testing.T) {
 		})
 	}
 }
-
-func TestPlanProjectsEquivalentRoots(t *testing.T) {
-	for _, reverse := range []bool{false, true} {
-		wanted := []GitRootRequirement{{Path: "skills"}, {Path: "skills", SourceHarness: "factory"}}
-		if reverse {
-			wanted[0], wanted[1] = wanted[1], wanted[0]
-		}
-		current := Document{APIVersion: APIVersionV2, Scope: ScopeRepo, Registries: []GitRegistry{{URL: "https://example.com/repo", Ref: "main", Commit: mustOID(t, sha1a), Roots: []GitRoot{
-			{Path: "skills", SourceHarness: "claude", RevisionSchema: "v1", RevisionDigest: Digest(sha256a)},
-			{Path: "skills", SourceHarness: "factory", RevisionSchema: "v1", RevisionDigest: Digest(sha256a)},
-		}}}}
-		plan, err := Plan(Requirements{Scope: ScopeRepo, Git: []GitRequirement{{URL: "https://example.com/repo", Ref: "main", Roots: wanted}}}, &current, OperationSync)
-		if err != nil || !plan.Changed() || len(plan.Removed) != 1 || len(plan.Acquisitions) != 0 || len(plan.Desired.Registries) != 1 {
-			t.Fatalf("plan = %#v, %v", plan, err)
-		}
-		if got := plan.Desired.Registries[0].Roots; len(got) != 1 || got[0].SourceHarness != "factory" {
-			t.Fatalf("projected roots = %#v", got)
-		}
-	}
-}

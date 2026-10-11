@@ -24,9 +24,14 @@ paths:
           required: false
           description: Post-sign-in destination. Only /marketplace/admin and descendant paths are accepted.
           schema: { type: string }
+        - name: Accept
+          in: header
+          required: false
+          description: When the request explicitly prefers text/html over JSON, failures respond 303 to the fixed same-origin /marketplace/auth/error page with an allowlisted code and a validated destination instead of a JSON error body.
+          schema: { type: string }
       responses:
         '303':
-          description: Redirect to the identity provider authorization endpoint; sets a signed host-only login transaction cookie. HTTPS origins use the browser-enforced __Host-marketplace_admin_login name with Secure, Path=/, and no Domain; explicit loopback HTTP uses the unprefixed name confined to /api/v1/admin/auth.
+          description: Redirect to the identity provider authorization endpoint; sets a signed host-only login transaction cookie. HTTPS origins use the browser-enforced __Host-marketplace_admin_login name with Secure, Path=/, and no Domain; explicit loopback HTTP uses the unprefixed name confined to /api/v1/admin/auth. For HTML-preferring requests this response also carries browser failures to /marketplace/auth/error?code=...&next=...; the JSON error statuses below apply to all other clients.
         '400':
           description: Invalid sign-in destination; code authentication_request_invalid
           content:
@@ -70,9 +75,14 @@ paths:
           in: query
           required: true
           schema: { type: string }
+        - name: Accept
+          in: header
+          required: false
+          description: When the request explicitly prefers text/html over JSON, failures respond 303 to the fixed same-origin /marketplace/auth/error page with an allowlisted code and the validated transaction destination instead of a JSON error body.
+          schema: { type: string }
       responses:
         '303':
-          description: Sign-in completed; sets the signed host-only admin session cookie and redirects to the validated destination. HTTPS origins use the browser-enforced __Host-marketplace_admin_session name with Secure, Path=/, and no Domain; explicit loopback HTTP uses the unprefixed name confined to /api/v1/admin.
+          description: Sign-in completed; sets the signed host-only admin session cookie and redirects to the validated destination. HTTPS origins use the browser-enforced __Host-marketplace_admin_session name with Secure, Path=/, and no Domain; explicit loopback HTTP uses the unprefixed name confined to /api/v1/admin. For HTML-preferring requests this response also carries browser failures to /marketplace/auth/error?code=...&next=...; the JSON error statuses below apply to all other clients.
         '400':
           description: Malformed provider response; code authentication_request_invalid
           content:
@@ -104,7 +114,7 @@ paths:
                   code: { type: string }
                   message: { type: string }
         '503':
-          description: Identity provider unavailable; code authentication_unavailable
+          description: Identity provider unavailable or administration trust configuration unavailable; code authentication_unavailable or admin_unavailable
           content:
             application/json:
               schema:
@@ -470,6 +480,18 @@ paths:
           schema:
             type: integer
             default: 0
+        - in: query
+          name: sort
+          schema:
+            type: string
+            enum:
+              - installations
+          description: >-
+            Optional result ordering. `installations` orders the full filtered
+            result by descending reported installation count before
+            pagination; text relevance still precedes adoption for text
+            searches. Omitted requests keep the existing ordering and never
+            require a metrics backend. Other values return HTTP 400.
       responses:
         "200":
           description: Paginated resource search results
@@ -1154,6 +1176,8 @@ components:
         outcome: { type: string, enum: [started, failed, superseded, succeeded] }
         publication_id: { type: string }
         expected_publication_id: { type: string }
+        failure_code: { type: string, description: "Stable machine-readable failure classification; set on failed and superseded attempts, empty on started and succeeded outcomes." }
+        failure_cause: { type: string, description: "Sanitized failure cause; never contains raw command output or credentials. Set alongside failure_code on failed and superseded attempts." }
         recorded_at: { type: string, format: date-time }
     AdminPreview:
       type: object
@@ -1577,6 +1601,19 @@ components:
         score:
           type: number
           description: Server-assigned relevance score for the query.
+        installation_count:
+          type: integer
+          minimum: 0
+          maximum: 9007199254740991
+          description: >-
+            Optional. How many distinct reporting installations enabled this
+            resource in their latest reported configuration within the last 30
+            days, derived from inventory telemetry matched by Git identity or
+            explicit coordinates from this Marketplace. Counts describe enabled
+            configuration, not verified installation events or unique
+            users, and can undercount non-reporting installations. Present
+            only when the instance reports adoption for this registry; absent
+            means unknown rather than zero.
 
     ResourceRevision:
       type: object

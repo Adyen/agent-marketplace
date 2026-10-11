@@ -7,7 +7,7 @@ Defines which deployed acquisition locks can authorize exact remote resources an
 
 ### Requirement: Deployed evidence is validated before use
 
-The CLI MUST reject malformed or stale deployed organization acquisition locks before using their remote resources, while permitting organization deployments without a lock where online acquisition is allowed.
+The CLI MUST reject malformed, wrong-scope, or stale deployed organization acquisition locks before using their remote resources, while permitting organization deployments without a lock where online acquisition is allowed. Single-file configuration reads MUST reject acquisition locks declaring a different layer scope.
 
 #### Scenario: Absent organization lock
 
@@ -23,6 +23,11 @@ The CLI MUST reject malformed or stale deployed organization acquisition locks b
 
 - **WHEN** a deployed organization acquisition lock is malformed
 - **THEN** the CLI MUST reject it rather than use or replace its contents
+
+#### Scenario: Wrong scope in single-file read
+
+- **WHEN** a single-file loader reads an otherwise valid acquisition lock declaring a different layer scope
+- **THEN** it MUST reject the lock without binding its remote evidence
 
 ### Requirement: Writable layers retain exact acquisition boundaries
 
@@ -65,3 +70,12 @@ An online consumer MAY reuse verified in-memory organization Marketplace evidenc
 
 - **WHEN** the effective target harnesses change between two resolutions in the same invocation
 - **THEN** the second resolution MUST reacquire organization Marketplace evidence for the new target harnesses
+
+### Requirement: Organization acquisition errors preserve independent diagnostics
+
+An organization acquisition failure SHALL replace the stale organization missing-evidence diagnostic without discarding errors from independent configuration layers.
+
+#### Scenario: Independent layer errors survive organization acquisition failure
+
+- **WHEN** organization acquisition fails and another configuration layer has an independent error
+- **THEN** both the actual organization acquisition failure and the independent error SHALL remain available to the consumer

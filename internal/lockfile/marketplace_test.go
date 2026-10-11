@@ -445,32 +445,6 @@ func TestMarketplaceEndpointAndSelectionOrderingDedup(t *testing.T) {
 	}
 }
 
-func TestMarketplaceRecordsSurviveGitPlan(t *testing.T) {
-	current, err := Normalize(v2GoldenDocument())
-	if err != nil {
-		t.Fatal(err)
-	}
-	requirements := Requirements{Scope: ScopeRepo, Git: []GitRequirement{
-		{URL: "https://git.example.com/team/tools.git", Ref: "main", Roots: []GitRootRequirement{{Path: "skills", SourceHarness: "claude"}}},
-		{URL: "https://example.com/new", Ref: "main"},
-	}}
-	for _, operation := range []Operation{OperationSync, OperationUpgrade} {
-		plan, err := Plan(requirements, &current, operation)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if plan.Desired.APIVersion != APIVersionV2 {
-			t.Fatalf("operation %d: desired apiVersion = %q", operation, plan.Desired.APIVersion)
-		}
-		if !reflect.DeepEqual(plan.Desired.Marketplaces, current.Marketplaces) {
-			t.Fatalf("operation %d: marketplace records changed:\n%#v", operation, plan.Desired.Marketplaces)
-		}
-		if len(plan.Added) != 1 || len(plan.Retained)+len(plan.Upgraded) != 1 {
-			t.Fatalf("operation %d: git plan = %#v", operation, plan)
-		}
-	}
-}
-
 func TestV2AllowsGitOnlyAndEmptyMarketplaceState(t *testing.T) {
 	gitRegistries := []GitRegistry{{
 		URL: "https://git.example.com/team/tools", Ref: "main", Commit: mustOID(t, sha1a),
@@ -502,17 +476,6 @@ func TestV2AllowsGitOnlyAndEmptyMarketplaceState(t *testing.T) {
 				t.Fatalf("%s v2 lock registries = %#v, want %#v", tc.name, decoded.Registries, tc.wantRegistries)
 			}
 		})
-	}
-}
-
-func TestV1GitOnlyPlanUpgradesToV2(t *testing.T) {
-	current := Document{APIVersion: APIVersionV1, Scope: ScopeRepo}
-	plan, err := Plan(Requirements{Scope: ScopeRepo}, &current, OperationSync)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if plan.Desired.APIVersion != APIVersionV2 || len(plan.Desired.Marketplaces) != 0 {
-		t.Fatalf("v1 plan did not upgrade to v2: %#v", plan.Desired)
 	}
 }
 

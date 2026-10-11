@@ -1,13 +1,17 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"sync/atomic"
@@ -16,6 +20,7 @@ import (
 
 	"github.com/Adyen/agent-marketplace/internal/cache"
 	"github.com/Adyen/agent-marketplace/internal/config"
+	"github.com/Adyen/agent-marketplace/internal/dependencytxn"
 	"github.com/Adyen/agent-marketplace/internal/lockfile"
 	"github.com/Adyen/agent-marketplace/internal/marketplace"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/store"
@@ -211,6 +216,271 @@ func TestGcCommandAllowsMissingOrganizationLockWithoutCreatingIt(t *testing.T) {
 	}
 	if _, statErr := os.Stat(orphan); !os.IsNotExist(statErr) {
 		t.Fatalf("gc did not remove orphan cache: %v", statErr)
+	}
+}
+
+func TestGcCommandUsesCachedOrganizationMarketplaceReachabilityWithoutNetwork(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	for _, dryRun := range []bool{true, false} {
+		name := "gc"
+		if dryRun {
+			name = "dry-run"
+		}
+		t.Run(name, func(t *testing.T) {
+			home := t.TempDir()
+			t.Setenv("HOME", home)
+			t.Setenv("XDG_CACHE_HOME", filepath.Join(home, "cache"))
+			t.Setenv("XDG_STATE_HOME", filepath.Join(home, "state"))
+			var requests atomic.Int32
+			var activeDigest string
+			server := newV4MarketplaceLockServerWithRevision(t, func() { requests.Add(1) }, func(revision *store.AssessedResourceRevision) {
+				activeDigest = string(revision.ArchiveDigest)
+			})
+			defer server.Close()
+			orgPath := filepath.Join(canonicalTempDir(t), "config.yaml")
+			orgConfig := "apiVersion: agent-marketplace/v4\nallowed_marketplaces: ['^" + regexp.QuoteMeta(server.URL) + "$']\nsources:\n  hosted: {marketplace: " + server.URL + "}\nresources:\n  hosted: {include: [tools/skill/review]}\n"
+			writeFile(t, orgPath, orgConfig)
+			config.SetTestOrganizationConfigPath(t, orgPath)
+			writeConfig(t, filepath.Join(home, ".agents", "config.yaml"), "apiVersion: agent-marketplace/v4\nharnesses: [factory]\n")
+			repo := t.TempDir()
+			withWorkingDir(t, repo)
+			marketplaceCache := marketplace.DefaultCache()
+			orphanDigest := "sha256:" + strings.Repeat("f", 64)
+			if activeDigest == orphanDigest {
+				t.Fatal("orphan digest matches active resource")
+			}
+			orphanArchive, err := marketplaceCache.WriteArtifact(orphanDigest, []byte("orphan"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			orphanRegistry := filepath.Join(cache.CacheDir(), cache.HashURL("https://git.example.com/orphan.git"), "main", ".gitkeep")
+			writeFile(t, orphanRegistry, "orphan\n")
+			if output, err := executeCommand("sync"); err != nil {
+				t.Fatalf("seed reachable Marketplace artifact: %v\n%s", err, output)
+			}
+			requests.Store(0)
+			args := []string{"gc"}
+			if dryRun {
+				args = append(args, "--dry-run")
+			}
+			output, err := executeCommand(args...)
+			if err != nil {
+				t.Fatalf("%v rejected verified organization Marketplace resource: %v\n%s", args, err, output)
+			}
+			for _, path := range []string{filepath.Dir(orphanArchive), filepath.Dir(filepath.Dir(orphanRegistry))} {
+				if !strings.Contains(output, path) {
+					t.Fatalf("%v did not report orphan %s:\n%s", args, path, output)
+				}
+			}
+			if strings.Contains(output, filepath.Dir(marketplaceCache.ArtifactPath(activeDigest))) {
+				t.Fatalf("gc nominated active Marketplace archive:\n%s", output)
+			}
+			if requests.Load() != 0 {
+				t.Fatalf("gc made %d Marketplace requests, want no network acquisition", requests.Load())
+			}
+			if _, err := os.Stat(marketplaceCache.ArtifactPath(activeDigest)); err != nil {
+				t.Fatalf("gc removed active Marketplace archive: %v", err)
+			}
+			if _, err := os.Lstat(filepath.Join(filepath.Dir(orgPath), "lock.yaml")); !os.IsNotExist(err) {
+				t.Fatalf("gc created organization lock: %v", err)
+			}
+			if got, err := os.ReadFile(orgPath); err != nil || string(got) != orgConfig {
+				t.Fatalf("gc changed organization config: %v\n%s", err, got)
+			}
+			for _, path := range []string{orphanArchive, orphanRegistry} {
+				_, err := os.Stat(path)
+				if dryRun && err != nil || !dryRun && !os.IsNotExist(err) {
+					t.Fatalf("%v orphan %s survival = %v, want dry-run=%t", args, path, err, dryRun)
+				}
+			}
+		})
+	}
+}
+
+func TestGcCommandCollectsWithoutOrganizationNetworkAndRejectsInvalidLocks(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	for _, scenario := range []string{"unavailable", "malformed lock", "mismatched lock"} {
+		t.Run(scenario, func(t *testing.T) {
+			home := t.TempDir()
+			t.Setenv("HOME", home)
+			t.Setenv("XDG_CACHE_HOME", filepath.Join(home, "cache"))
+			t.Setenv("XDG_STATE_HOME", filepath.Join(home, "state"))
+			var requests atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				requests.Add(1)
+				http.Error(w, "unavailable", http.StatusServiceUnavailable)
+			}))
+			defer server.Close()
+			authority := canonicalTempDir(t)
+			orgPath := filepath.Join(authority, "config.yaml")
+			orgConfig := "apiVersion: agent-marketplace/v4\nsources:\n  hosted: {marketplace: " + server.URL + "}\nresources:\n  hosted: {include: [tools/skill/review]}\n"
+			writeFile(t, orgPath, orgConfig)
+			config.SetTestOrganizationConfigPath(t, orgPath)
+			writeConfig(t, filepath.Join(home, ".agents", "config.yaml"), "apiVersion: agent-marketplace/v4\nharnesses: [factory]\n")
+			lockPath := filepath.Join(authority, "lock.yaml")
+			var lock []byte
+			switch scenario {
+			case "malformed lock":
+				lock = []byte("not: [valid\n")
+			case "mismatched lock":
+				var err error
+				lock, err = lockfile.Encode(lockfile.Document{APIVersion: lockfile.APIVersionV2, Scope: lockfile.ScopeOrganization, Marketplaces: []lockfile.MarketplaceLock{{URL: "https://other.example", InstanceID: "other"}}})
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			if lock != nil {
+				if err := os.WriteFile(lockPath, lock, 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			marketplaceCache := marketplace.DefaultCache()
+			orphanArchive, err := marketplaceCache.WriteArtifact("sha256:"+strings.Repeat("f", 64), []byte("keep-artifact"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			orphanRegistry := filepath.Join(cache.CacheDir(), cache.HashURL("https://git.example.com/orphan.git"), "main", ".gitkeep")
+			writeFile(t, orphanRegistry, "keep-registry\n")
+			withWorkingDir(t, t.TempDir())
+
+			output, err := executeCommand("gc")
+			if requests.Load() != 0 {
+				t.Fatalf("%s made %d Marketplace requests", scenario, requests.Load())
+			}
+			if scenario == "unavailable" {
+				if err != nil {
+					t.Fatalf("gc depended on an unavailable organization endpoint: %v\n%s", err, output)
+				}
+				for _, path := range []string{orphanArchive, orphanRegistry} {
+					if _, statErr := os.Stat(path); !os.IsNotExist(statErr) {
+						t.Fatalf("gc retained unreachable %s: %v", path, statErr)
+					}
+				}
+				if after, err := os.ReadFile(orgPath); err != nil || string(after) != orgConfig {
+					t.Fatalf("gc changed organization configuration: %v", err)
+				}
+				if _, err := os.Lstat(lockPath); !os.IsNotExist(err) {
+					t.Fatalf("gc created an organization acquisition lock: %v", err)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatalf("gc accepted %s organization source:\n%s", scenario, output)
+			}
+			if scenario == "malformed lock" && !strings.Contains(err.Error(), "lock.malformed") || scenario == "mismatched lock" && !strings.Contains(err.Error(), "v4.marketplace-lock-mismatch") {
+				t.Fatalf("gc returned wrong error for %s: %v", scenario, err)
+			}
+			for path, want := range map[string]string{orphanArchive: "keep-artifact", orphanRegistry: "keep-registry\n", orgPath: orgConfig} {
+				if after, readErr := os.ReadFile(path); readErr != nil || string(after) != want {
+					t.Fatalf("gc changed %s after %s: %v\n%s", path, scenario, readErr, after)
+				}
+			}
+			if lock == nil {
+				if _, err := os.Lstat(lockPath); !os.IsNotExist(err) {
+					t.Fatalf("gc created organization lock: %v", err)
+				}
+			} else if after, err := os.ReadFile(lockPath); err != nil || string(after) != string(lock) {
+				t.Fatalf("gc changed organization lock: %v\n%s", err, after)
+			}
+		})
+	}
+}
+
+type gcPreflightPolicyInjector struct {
+	path     string
+	contents []byte
+	mutated  atomic.Bool
+	failed   error
+}
+
+func (w *gcPreflightPolicyInjector) Write(p []byte) (int, error) {
+	if bytes.Contains(p, []byte("marketplace cache garbage collection completed")) && bytes.Contains(p, []byte("dry_run=true")) && w.mutated.CompareAndSwap(false, true) {
+		w.failed = os.WriteFile(w.path, w.contents, 0o600)
+	}
+	return len(p), nil
+}
+
+// spec: cache-garbage-collection/organization-acquisition-lock-appears-after-preflight
+func TestGcCommandRefusesOrganizationLockAppearingAfterPreflight(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	testGcCommandRefusesPolicyChangeAfterPreflight(t, false)
+}
+
+// spec: cache-garbage-collection/configuration-changes-after-preflight
+func TestGcCommandRefusesConfigChangeAfterPreflight(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	testGcCommandRefusesPolicyChangeAfterPreflight(t, true)
+}
+
+func testGcCommandRefusesPolicyChangeAfterPreflight(t *testing.T, configChange bool) {
+	t.Helper()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, "cache"))
+	t.Setenv("XDG_STATE_HOME", filepath.Join(home, "state"))
+	var activeDigest string
+	var requests atomic.Int32
+	server := newV4MarketplaceLockServerWithRevision(t, func() { requests.Add(1) }, func(revision *store.AssessedResourceRevision) {
+		activeDigest = string(revision.ArchiveDigest)
+	})
+	defer server.Close()
+	authority := canonicalTempDir(t)
+	orgPath := filepath.Join(authority, "config.yaml")
+	writeFile(t, orgPath, "apiVersion: agent-marketplace/v4\nsources:\n  hosted: {marketplace: "+server.URL+"}\nresources:\n  hosted: {include: [tools/skill/review]}\n")
+	config.SetTestOrganizationConfigPath(t, orgPath)
+	writeConfig(t, filepath.Join(home, ".agents", "config.yaml"), "apiVersion: agent-marketplace/v4\nharnesses: [factory]\n")
+	orphanArchive, err := marketplace.DefaultCache().WriteArtifact("sha256:"+strings.Repeat("f", 64), []byte("preserve-artifact"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	orphanRegistry := filepath.Join(cache.CacheDir(), cache.HashURL("https://git.example.com/orphan.git"), "main", ".gitkeep")
+	writeFile(t, orphanRegistry, "preserve-registry\n")
+	withWorkingDir(t, t.TempDir())
+	if output, err := executeCommand("sync"); err != nil {
+		t.Fatalf("seed reachable Marketplace artifact: %v\n%s", err, output)
+	}
+	requests.Store(0)
+	injector := &gcPreflightPolicyInjector{path: filepath.Join(authority, "lock.yaml"), contents: []byte("not: [valid\n")}
+	if configChange {
+		original, err := os.ReadFile(orgPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		injector.path = orgPath
+		injector.contents = append(original, []byte("harnesses: [factory, devin]\n")...)
+	}
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(injector, nil)))
+	t.Cleanup(func() { slog.SetDefault(previous) })
+	var out strings.Builder
+	err = runGC(context.Background(), &out, false)
+	if !injector.mutated.Load() || injector.failed != nil {
+		t.Fatalf("test did not deploy lock after preflight: %v", injector.failed)
+	}
+	if !errors.Is(err, dependencytxn.ErrGenerationConflict) {
+		t.Fatalf("gc accepted changed policy after preflight: %v\n%s", err, out.String())
+	}
+	if requests.Load() != 0 {
+		t.Fatalf("gc made %d network requests", requests.Load())
+	}
+	if changed, err := os.ReadFile(injector.path); err != nil || !bytes.Equal(changed, injector.contents) {
+		t.Fatalf("gc rewrote changed policy: %v", err)
+	}
+	for path, want := range map[string]string{orphanArchive: "preserve-artifact", orphanRegistry: "preserve-registry\n"} {
+		if got, readErr := os.ReadFile(path); readErr != nil || string(got) != want {
+			t.Fatalf("gc deleted %s after organization lock appeared: %v\n%s", path, readErr, got)
+		}
+	}
+	if _, err := os.Stat(marketplace.DefaultCache().ArtifactPath(activeDigest)); err != nil {
+		t.Fatalf("gc lost the active Marketplace archive: %v", err)
 	}
 }
 

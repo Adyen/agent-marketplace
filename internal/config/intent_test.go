@@ -30,6 +30,29 @@ func TestLoadEffectiveCanceledContextDoesNotBind(t *testing.T) {
 	}
 }
 
+func TestReadIntentRejectsMissingRepoRoot(t *testing.T) {
+	dir := t.TempDir()
+	for _, name := range []string{"org.yaml", "user.yaml", "repo.yaml", "local.yaml"} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte("apiVersion: agent-marketplace/v2\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	intent := ReadIntent(context.Background(), LoadEffectiveOptions{
+		OrganizationPath: filepath.Join(dir, "org.yaml"),
+		GlobalPath:       filepath.Join(dir, "user.yaml"),
+		RepoPath:         filepath.Join(dir, "repo.yaml"),
+		LocalPath:        filepath.Join(dir, "local.yaml"),
+	})
+	if len(intent.Errors) == 0 {
+		t.Fatal("ReadIntent with an empty RepoRoot must return an intent error instead of discovering roots from the working directory")
+	}
+	for source, layer := range intent.Layers {
+		if layer.Present() || len(layer.Reads) > 0 {
+			t.Fatalf("layer %d read configuration without a repository root: %#v", source, layer)
+		}
+	}
+}
+
 func TestLayerIntentViews(t *testing.T) {
 	dir := t.TempDir()
 	v4, err := ParseV4Config([]byte(`apiVersion: agent-marketplace/v4

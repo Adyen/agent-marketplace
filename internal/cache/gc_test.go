@@ -802,7 +802,7 @@ func TestGarbageCollectWaitsForLiveRegistryDiscovery(t *testing.T) {
 	discovery.Add(1)
 	go func() {
 		defer discovery.Done()
-		_, err := WithCacheReadLock(func() (struct{}, error) {
+		_, err := WithRegistryReadLockWithContext(context.Background(), nil, func() (struct{}, error) {
 			close(entered)
 			<-release
 			return struct{}{}, nil

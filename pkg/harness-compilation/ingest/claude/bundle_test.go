@@ -2,6 +2,7 @@ package claude
 
 import (
 	"io/fs"
+	"strings"
 	"testing"
 	"testing/fstest"
 
@@ -455,6 +456,41 @@ func TestClaudeIngester_LoadBundle_BareSkillsDir(t *testing.T) {
 	}
 	if !names["caveman"] {
 		t.Error("missing skill 'caveman'")
+	}
+}
+
+func TestClaudeIngester_LoadBundle_SkillsGitMetadataIgnored(t *testing.T) {
+	ing, ok := ingest.For(ingest.HarnessClaude)
+	if !ok {
+		t.Fatal("Claude ingester not registered")
+	}
+
+	gitSkillsFS := fstest.MapFS{
+		"skills/.git/HEAD":             &fstest.MapFile{Data: []byte("ref: refs/heads/main\n")},
+		"skills/.git/hooks/pre-commit": &fstest.MapFile{Data: []byte("#!/bin/sh\n")},
+		"skills/good-skill/SKILL.md":   &fstest.MapFile{Data: []byte("---\nname: good-skill\n---\nGood")},
+		"skills/bad-skill/SKILL.md":    &fstest.MapFile{Data: []byte("---\nname: Bad_Skill\n---\nBad")},
+	}
+
+	b, err := ing.LoadBundle(gitSkillsFS)
+	if err != nil {
+		t.Fatalf("LoadBundle: %v", err)
+	}
+
+	if len(b.Resources) != 1 || b.Resources[0].Name() != "good-skill" {
+		t.Fatalf("LoadBundle: expected only good-skill resource, got %#v", b.Resources)
+	}
+
+	gitDiag, badDiag := false, false
+	for _, d := range b.Diagnostics {
+		gitDiag = gitDiag || strings.Contains(d.Resource, ".git")
+		badDiag = badDiag || strings.Contains(d.Resource, "bad-skill")
+	}
+	if gitDiag {
+		t.Errorf("skills/.git produced a diagnostic; diagnostics=%#v", b.Diagnostics)
+	}
+	if !badDiag {
+		t.Errorf("expected a diagnostic for malformed authored skill bad-skill; diagnostics=%#v", b.Diagnostics)
 	}
 }
 

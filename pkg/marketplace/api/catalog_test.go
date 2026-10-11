@@ -85,6 +85,7 @@ func TestCatalogETagIsOrderIndependent(t *testing.T) {
 	}
 }
 
+// spec: marketplace-catalog-performance/invalid-data-is-rejected-and-valid-sources-remain-sanitized
 func TestCatalogProjectionHTTPContract(t *testing.T) {
 	ctx := context.Background()
 	meta := sqlite.New(":memory:")
@@ -224,6 +225,7 @@ func TestCatalogProjectionRejectsInvalidInputAndAppliesLiveRevocation(t *testing
 	}
 }
 
+// spec: marketplace-catalog-performance/publication-between-pages-preserves-stateless-continuation
 func TestCatalogProjectionMovingScanUsesOnlyStatelessCursor(t *testing.T) {
 	ctx := context.Background()
 	meta := sqlite.New(":memory:")

@@ -1,0 +1,13 @@
+## Context
+
+Selected manifest observations already carry opened identity, and captured payload readers already enforce regular/single-link shape and compressed size, but RestoreCodexSet discards member generations between validation and extraction.
+
+## Decisions
+
+Reuse captured loadCompleteCodexSetsAt and fsboundary destinations for the two declared native partitions, with one owned set parent and bounded source handles closed on all returns. Preflight and extraction use the same source generation; no public archive pathname reopen. Before every partition, verify named set parent, original selected manifest full state, every source and canonical root keys. Keep valid initial aliases, genuine missing-backup/no-complete semantics and existing late partial-completion errors. Meaningful structured debug preflight-complete phase supports a public consumer observer without a new callback API. No source comments, format/dependency/new budget or whole restore transaction/exclusion promise.
+
+Existing real-output-root preflight shape validation moved into the shared payload validator so both old path and captured-source callers retain it; archive input root/parent aliases remain supported, not output-root aliases. Pre-push review caught and corrected that omitted wrapper check. Source comments unchanged.
+
+## Verification
+
+Actual CreateCodexSet archives inert native bytes; change native bytes, then public RestoreCodexSet preflight-completion observer replaces original archive with identical bytes/mode. Parent accepted replacement and extracted/red; fix returns typed generation before output writes/green. Manifest same-JSON/mode replacement also refuses. Current native bytes/inode/mode/mtime and replacement members survive; restoring original member genuinely restores archived payload through both-partition public restore. Native Linux/macOS backup suites, count20 restore/manifest/publication controls, validate/lint/build/spec and full public restore disk lifecycle measured before push. Fixture backup creation/native reset/independent payload assertion excluded from timing; actual selection/metadata/preflight/tar-gzip reads/native staging/extraction/cleanup included, no network/logs discarded. Final full disk Restore medians1.880835→2.450955ms (+30.31%),310964→325120B (+4.55%),1050→1246alloc (+18.67%),2sx5 p=.016/no95CI: explicit safety cost, not a speedup/new budget. Parent sample includes the same meaningful debug-phase instrumentation. Final sample includes inherited root-shape validation restored during review; earlier intermediate samples are not final-head cost claims.

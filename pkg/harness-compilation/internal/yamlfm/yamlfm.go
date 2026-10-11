@@ -32,7 +32,7 @@ func QuoteScalar(s string) string {
 	// single-line single-quoted scalar; fall back to a double-quoted form
 	// (strconv.Quote escapes are valid YAML double-quoted escapes and stay on
 	// one line, avoiding YAML line-folding).
-	if strings.ContainsAny(s, "\n\r\t") {
+	if strings.ContainsAny(s, "\n\r\t\u0085\u2028\u2029") {
 		return strconv.Quote(s)
 	}
 	// Single-quoted scalars carry every other character verbatim; embedded
@@ -46,6 +46,9 @@ func scalarNeedsQuoting(s string) bool {
 	// Empty string must be quoted so it round-trips as an empty string;
 	// an unquoted "key: " parses back as null, losing the string type.
 	if s == "" {
+		return true
+	}
+	if strings.ContainsAny(s, "\u0085\u2028\u2029") {
 		return true
 	}
 	// Leading or trailing whitespace is not preserved by a plain scalar.

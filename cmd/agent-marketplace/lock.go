@@ -112,21 +112,6 @@ type exactLockSet struct {
 	catalogs   map[string]map[string]*catalog.Catalog
 }
 
-func (set *exactLockSet) discover(path, sourceHarness string) (catalog.LoadedCatalog, error) {
-	catalogs := set.catalogs[filepath.Clean(path)]
-	loaded := catalogs[sourceHarness]
-	if loaded == nil && sourceHarness == "" && len(catalogs) == 1 {
-		for _, candidate := range catalogs {
-			loaded = candidate
-		}
-	}
-	if loaded != nil {
-		slog.Debug("reusing verified source catalog", "path", path, "source_harness", loaded.SourceHarness)
-		return loaded.Discover(path, sourceHarness)
-	}
-	return catalog.Discover(path, sourceHarness)
-}
-
 type lockedGit struct {
 	canonical string
 	fetchURL  string
@@ -527,17 +512,12 @@ func snapshotEffectiveConfigs(ec config.EffectiveConfig, overlays map[string][]b
 			}
 			writablePaths[participantPath] = layer.Source
 		}
-		generation, expectedMode, err := dependencytxn.ReadGenerationAndMode(participantPath)
+		raw, generation, expectedMode, err := dependencytxn.ReadSnapshot(participantPath)
 		if err != nil {
 			return nil, err
 		}
 		mode := os.FileMode(0o644)
-		var raw []byte
 		if generation.Exists {
-			raw, err = os.ReadFile(participantPath)
-			if err != nil {
-				return nil, fmt.Errorf("read configuration transaction participant %s: %w", participantPath, err)
-			}
 			mode = expectedMode
 		} else if _, staged := overlays[participantPath]; !staged {
 			return nil, fmt.Errorf("configuration layer disappeared while loading: %s", layer.Path)
@@ -556,21 +536,39 @@ func snapshotEffectiveConfigs(ec config.EffectiveConfig, overlays map[string][]b
 
 func effectiveReadAssertions(ec config.EffectiveConfig, staged map[string]pipeline.StagedConfigEdit, stagedLocks map[string]pipeline.StagedLockEdit) ([]dependencytxn.ReadAssertion, error) {
 	byAlias := make(map[string]dependencytxn.ReadAssertion)
-	byPath := make(map[string]string)
+	byPath := make(map[string]config.ConfigRead)
 	for _, layer := range ec.PresentLayers() {
 		for _, read := range layer.Reads {
-			if digest, exists := byPath[read.Path]; exists && digest != read.Digest {
-				return nil, fmt.Errorf("%w: inconsistent config read at %s", dependencytxn.ErrGenerationConflict, read.Path)
+			if previous, exists := byPath[read.Path]; exists {
+				if dependencytxn.ClassifyDestination(previous.RequestedPath) != dependencytxn.AuthorityLegacy && dependencytxn.ClassifyDestination(read.RequestedPath) != dependencytxn.AuthorityLegacy {
+					priorPath, priorErr := canonicalConfigDependencyPath(previous.RequestedPath)
+					readPath, readErr := canonicalConfigDependencyPath(read.RequestedPath)
+					if priorErr != nil || readErr != nil {
+						return nil, errors.Join(priorErr, readErr)
+					}
+					if priorPath != readPath {
+						return nil, fmt.Errorf("%w: layer destinations %s and %s resolve to the same object", dependencytxn.ErrUnsafePath, priorPath, readPath)
+					}
+				}
+				if previous.Digest != read.Digest {
+					return nil, fmt.Errorf("%w: inconsistent config read at %s", dependencytxn.ErrGenerationConflict, read.Path)
+				}
 			}
-			byPath[read.Path] = read.Digest
+			byPath[read.Path] = read
 			expected := dependencytxn.Generation{Exists: true, Digest: read.Digest}
 			if read.Overlay {
 				if staged == nil && stagedLocks == nil {
 					continue
 				}
-				if edit, exists := staged[read.Path]; exists && dependencytxn.Digest(edit.Bytes) == read.Digest {
+				path := read.Path
+				if _, exists := staged[path]; !exists {
+					if canonical, err := canonicalConfigDependencyPath(read.RequestedPath); err == nil {
+						path = canonical
+					}
+				}
+				if edit, exists := staged[path]; exists && dependencytxn.Digest(edit.Bytes) == read.Digest {
 					expected = edit.Expected
-				} else if lockEdit, exists := stagedLocks[read.Path]; exists && dependencytxn.Digest(lockEdit.Bytes) == read.Digest {
+				} else if lockEdit, exists := stagedLocks[path]; exists && dependencytxn.Digest(lockEdit.Bytes) == read.Digest {
 					expected = lockEdit.Expected
 				} else {
 					return nil, fmt.Errorf("%w: unmatched config overlay at %s", dependencytxn.ErrGenerationConflict, read.Path)
@@ -638,6 +636,10 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 		slog.Info("lock lifecycle completed", attrs...)
 	}()
 
+	ws, err := pipeline.WorkspaceForRoots(repoRoot, localDir)
+	if err != nil {
+		return nil, 0, nil, err
+	}
 	stateDir, err := dependencyStateDir()
 	if err != nil {
 		return nil, 0, nil, err
@@ -679,7 +681,7 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 		overlays[destination] = edit.Bytes
 	}
 	loadOptions := config.LoadEffectiveOptions{
-		RepoRoot: repoRoot, LocalConfigDir: localDir,
+		RepoRoot: ws.RepoRoot(), LocalConfigDir: ws.LocalConfigDir(),
 		FileOverlays: overlays,
 	}
 	loadMode := pipeline.ConfigLoadStrict
@@ -699,7 +701,7 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 	}
 	canBootstrapMarketplace := !mode.readOnlyDependencies() && mode.prepareInstall == nil && mode.reuseInstall == nil && len(mode.stagedConfigEdits) == 0 && len(mode.stagedLockEdits) == 0 && mode.commitScope == nil
 	if canBootstrapMarketplace && pipeline.NeedsLockBootstrap(ec.Errors) {
-		bootstrapChanged, err := bootstrapMissingMarketplaceLocks(ctx, repoRoot, localDir, mode.selects, mode.marketplacePolicy)
+		bootstrapChanged, err := bootstrapMissingMarketplaceLocks(ctx, ws.RepoRoot(), ws.LocalConfigDir(), mode.selects, mode.marketplacePolicy)
 		if err != nil {
 			return nil, 0, nil, err
 		}
@@ -1045,6 +1047,15 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 			}
 		}
 		for _, file := range desiredFiles {
+			if dependencytxn.ClassifyDestination(file.Path) != dependencytxn.AuthorityLegacy {
+				// Managed layer directories are created below the captured
+				// layer root so a replaced or symlinked .agents cannot
+				// redirect the creation into another tree.
+				if err := dependencytxn.EnsureDestinationDir(file.Path); err != nil {
+					return nil, changed, nil, fmt.Errorf("create dependency destination directory: %w", err)
+				}
+				continue
+			}
 			if err := os.MkdirAll(filepath.Dir(file.Path), 0o755); err != nil {
 				return nil, changed, nil, fmt.Errorf("create dependency destination directory: %w", err)
 			}
@@ -1102,7 +1113,7 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 		return nil
 	}
 
-	option := catalog.WithExactSnapshots(func(entry config.RegistryEntry) (string, string, error) {
+	option := catalog.WithVerifiedExactSnapshots(func(entry config.RegistryEntry) (string, string, error) {
 		if err := validateExactLocks(); err != nil {
 			return "", "", err
 		}
@@ -1124,7 +1135,7 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 		}
 		catalogKey := canonical + "@" + locked.commit.String() + ":" + entry.Path
 		return locked.snapshot, catalogKey, nil
-	}, set.discover)
+	}, set.catalogs)
 	hasExactConsumers := len(set.byIdentity) > 0
 	resultLease = func(ctx context.Context) (func(), error) {
 		if !hasExactConsumers {
