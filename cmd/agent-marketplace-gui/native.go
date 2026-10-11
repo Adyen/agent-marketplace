@@ -37,6 +37,10 @@ type lifecycleHooks struct {
 
 func (app *App) appOptions(hooks lifecycleHooks) *options.App {
 	var windowCtx context.Context
+	app.quit = func() {
+		app.closeApproved.Store(true)
+		wailsruntime.Quit(windowCtx)
+	}
 	return &options.App{
 		Title:  "Agent Marketplace",
 		Width:  1280,
@@ -53,6 +57,9 @@ func (app *App) appOptions(hooks lifecycleHooks) *options.App {
 			}
 		},
 		OnDomReady: hooks.onDomReady,
+		OnBeforeClose: func(ctx context.Context) bool {
+			return app.beforeClose(nativeWindow{ctx: ctx}, app.closeApproved.Swap(false))
+		},
 		SingleInstanceLock: &options.SingleInstanceLock{
 			UniqueId: singleInstanceID,
 			OnSecondInstanceLaunch: func(second options.SecondInstanceData) {

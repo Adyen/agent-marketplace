@@ -12,12 +12,24 @@ interface WailsBootstrap {
 declare global {
   interface Window {
     __AM_GUI_BOOTSTRAP__?: { url?: string; credential: string; version?: string }
-    go?: { main?: { App?: { Bootstrap?: () => Promise<WailsBootstrap> } } }
+    go?: { main?: { App?: { Bootstrap?: () => Promise<WailsBootstrap>; Quit?: () => Promise<void> } } }
     runtime?: { EventsOn?: (event: string, callback: (...data: unknown[]) => void) => (() => void) | void }
   }
 }
 
 export const launchRequestEvent = 'desktop:launch-request'
+
+export const closeRequestEvent = 'desktop:close-request'
+
+export function nativeQuit(): (() => void) | undefined {
+  const quit = window.go?.main?.App?.Quit
+  if (quit == null) {
+    return undefined
+  }
+  return () => {
+    void quit()
+  }
+}
 
 export async function resolveBootstrap(): Promise<GuiBootstrap> {
   const bridge = window.go?.main?.App?.Bootstrap

@@ -202,6 +202,49 @@ func (w *recordedWindow) Emit(event string, args ...string) {
 	w.args = args
 }
 
+// spec: session-interactions/confirmation-retains-all-user-choices
+func TestBeforeCloseBlocksUntilApproved(t *testing.T) {
+	newHostFixture(t)
+	app, err := NewApp(context.Background(), session.DependencyLifecycle{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(app.close)
+
+	window := &recordedWindow{}
+	if !app.beforeClose(window, false) {
+		t.Fatal("unapproved close was not blocked")
+	}
+	if window.event != closeRequestEvent {
+		t.Fatalf("blocked close emitted %q, want %q", window.event, closeRequestEvent)
+	}
+	window.event = ""
+	if app.beforeClose(window, true) {
+		t.Fatal("approved close was blocked")
+	}
+	if window.event != "" {
+		t.Fatalf("approved close emitted %q", window.event)
+	}
+}
+
+// spec: session-interactions/confirmation-retains-all-user-choices
+func TestQuitInvokesInstalledCallbackOnce(t *testing.T) {
+	newHostFixture(t)
+	app, err := NewApp(context.Background(), session.DependencyLifecycle{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(app.close)
+
+	app.Quit()
+	calls := 0
+	app.quit = func() { calls++ }
+	app.Quit()
+	if calls != 1 {
+		t.Fatalf("quit callback invoked %d times, want 1", calls)
+	}
+}
+
 // spec: gui-shell/second-launch-focuses-the-running-instance
 func TestSecondLaunchFocusesExistingWindow(t *testing.T) {
 	newHostFixture(t)

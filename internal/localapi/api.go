@@ -69,6 +69,8 @@ type snapshotDTO struct {
 	Rows             []rowDTO        `json:"rows"`
 	Diagnostics      []diagnosticDTO `json:"diagnostics"`
 	Harnesses        []string        `json:"harnesses"`
+	PendingChanges   int             `json:"pendingChanges"`
+	MigrationOffered bool            `json:"migrationOffered"`
 	Operation        *operationRef   `json:"operation"`
 	SettledOperation *operationRef   `json:"settledOperation,omitempty"`
 }
@@ -458,7 +460,17 @@ func (a *API) snapshotPresentationLocked(snapshot session.Snapshot, op *operatio
 	case session.DriftFailed:
 		drift = "failed"
 	}
-	dto := snapshotDTO{Stage: stage, Drift: drift, Rows: []rowDTO{}, Diagnostics: []diagnosticDTO{}, Harnesses: []string{}, Operation: op, SettledOperation: a.lastSettledOperation}
+	dto := snapshotDTO{
+		Stage:            stage,
+		Drift:            drift,
+		Rows:             []rowDTO{},
+		Diagnostics:      []diagnosticDTO{},
+		Harnesses:        []string{},
+		PendingChanges:   snapshot.DriftReport.PendingCount(),
+		MigrationOffered: snapshot.PendingMigration.HasConfigs(),
+		Operation:        op,
+		SettledOperation: a.lastSettledOperation,
+	}
 	var rows []session.Row
 	switch {
 	case stage == "provisional":
@@ -663,6 +675,8 @@ func parseAction(r *http.Request) (session.OperationKind, bool) {
 		return session.OperationSync, true
 	case "update":
 		return session.OperationUpdate, true
+	case "migrate":
+		return session.OperationMigration, true
 	default:
 		return "", false
 	}
@@ -672,6 +686,10 @@ func (a *API) handleAction(w http.ResponseWriter, r *http.Request) {
 	kind, ok := parseAction(r)
 	if !ok {
 		writeError(w, http.StatusBadRequest, codeInvalidRequest)
+		return
+	}
+	if kind == session.OperationMigration && !a.userOnly {
+		writeError(w, http.StatusBadRequest, codeNotSupported)
 		return
 	}
 
@@ -688,16 +706,21 @@ func (a *API) handleAction(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, codeClosed)
 		return
 	}
-	current := a.current
-	ready := current != nil && current.Stage != "provisional" && current.Stage != "config" && current.Drift != "failed"
-	if ready && a.userOnly {
-		ready = a.userRootPresent() && len(current.Harnesses) > 0
-	}
-	if ready {
-		for _, d := range a.diag.Snapshot {
-			if d.Severity == session.DiagnosticError {
-				ready = false
-				break
+	ready := false
+	if kind == session.OperationMigration {
+		ready = session.PendingMigrationFor("", "", a.homeDir).HasConfigs()
+	} else {
+		current := a.current
+		ready = current != nil && current.Stage != "provisional" && current.Stage != "config" && current.Drift != "failed"
+		if ready && a.userOnly {
+			ready = a.userRootPresent() && len(current.Harnesses) > 0
+		}
+		if ready {
+			for _, d := range a.diag.Snapshot {
+				if d.Severity == session.DiagnosticError {
+					ready = false
+					break
+				}
 			}
 		}
 	}
@@ -726,6 +749,14 @@ func (a *API) handleAction(w http.ResponseWriter, r *http.Request) {
 			})
 			warnings, failed = result.Warnings, result.Err
 			final = result.Snapshot
+		case session.OperationMigration:
+			prompt := session.PendingMigrationFor("", "", a.homeDir)
+			if !prompt.HasConfigs() {
+				failed = errors.New("no legacy user configuration remains to migrate")
+			} else {
+				_, failed = session.RunMigration(ctx, prompt)
+			}
+			final = a.readSnapshot(ctx, session.CatalogLoadCached)
 		}
 		return warnings, final, failed
 	})
@@ -774,6 +805,8 @@ func (a *API) runOperation(operation session.OperationID, kind session.Operation
 		category = session.DiagnosticUpdate
 	case session.OperationTargets, session.OperationMutation:
 		category = session.DiagnosticMutation
+	case session.OperationMigration:
+		category = session.DiagnosticMigration
 	}
 	a.mu.Lock()
 	defer a.mu.Unlock()

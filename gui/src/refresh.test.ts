@@ -102,8 +102,9 @@ describe('focus and launch-request triggers', () => {
     const eventsOn = vi.fn((event: string, callback: (...data: unknown[]) => void) => {
       if (event === 'desktop:launch-request') {
         callbacks.push(callback)
+        return unsubscribe
       }
-      return unsubscribe
+      return vi.fn()
     })
     window.runtime = { EventsOn: eventsOn }
     return { callbacks, eventsOn, unsubscribe }

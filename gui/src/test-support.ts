@@ -20,6 +20,8 @@ export function snapshot(rows: Row[] = [], overrides: Partial<Snapshot> = {}): S
     rows,
     diagnostics: [],
     harnesses: ['devin'],
+    pendingChanges: 0,
+    migrationOffered: false,
     operation: null,
     ...overrides,
   }
@@ -137,8 +139,8 @@ export async function tick() {
   await flushPromises()
 }
 
-export function mountWorkspace(client: Client, notifyTtl = 60_000) {
-  const controller = new WorkspaceController(client, notifyTtl)
+export function mountWorkspace(client: Client, notifyTtl = 60_000, onQuit?: () => void) {
+  const controller = new WorkspaceController(client, notifyTtl, onQuit)
   const wrapper = mount(WorkspaceView, {
     attachTo: document.body,
     props: { controller },
