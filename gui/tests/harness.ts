@@ -20,6 +20,8 @@ export interface Bootstrap {
   orgConfig?: string
   marketplaceEndpoint?: string
   gitSourceURL?: string
+  syncStarted?: string
+  syncRelease?: string
 }
 
 export interface Harness {

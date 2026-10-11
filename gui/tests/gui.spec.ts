@@ -215,8 +215,6 @@ test('built GUI guided first-run setup initializes the absent root by keyboard',
   const repoLocalBefore = await readFile(repoLocalPath)
   const xdgDirs = [bootstrap.xdgConfig!, bootstrap.xdgState!, bootstrap.xdgCache!]
   const artifactPath = (name: string) => firstRunArtifactPath(testInfo, name)
-  const tracePath = testInfo.outputPath('work23-guided-first-run.raw-trace.zip')
-  let tracing = false
 
   const xdgEntries = () =>
     xdgDirs.map((dir) => (existsSync(dir) ? readdirSync(dir).sort().join(',') : '<absent>'))
@@ -225,8 +223,6 @@ test('built GUI guided first-run setup initializes the absent root by keyboard',
     expect(existsSync(userConfigPath)).toBe(false)
     expect(existsSync(userLockPath)).toBe(false)
 
-    await page.context().tracing.start({ screenshots: true, snapshots: true, sources: true })
-    tracing = true
     const actionBodies = observeConfigurationActions(page)
     await launchBuiltUserApp(page, bootstrap)
 
@@ -379,9 +375,6 @@ test('built GUI guided first-run setup initializes the absent root by keyboard',
     expect((await readFile(repoLocalPath)).equals(repoLocalBefore)).toBe(true)
     expect(xdgEntries()).toEqual(['<absent>', '<absent>', '<absent>'])
   } finally {
-    if (tracing) {
-      await page.context().tracing.stop({ path: tracePath }).catch(() => undefined)
-    }
     await harness.stop()
   }
 })
@@ -399,14 +392,10 @@ test('built GUI initializes a queued directory source only after Finish setup', 
   const userConfigPath = join(home, '.agents', 'config.yaml')
   const userLockPath = join(home, '.agents', 'lock.yaml')
   const artifactPath = (name: string) => firstRunArtifactPath(testInfo, name)
-  const tracePath = testInfo.outputPath('work23-valid-source.raw-trace.zip')
-  let tracing = false
 
   try {
     expect(existsSync(userConfigPath)).toBe(false)
     expect(existsSync(userLockPath)).toBe(false)
-    await page.context().tracing.start({ screenshots: true, snapshots: true, sources: true })
-    tracing = true
     const actionBodies = observeConfigurationActions(page)
     await launchBuiltUserApp(page, bootstrap)
     const dialog = page.getByRole('dialog', { name: 'Set up Agent Marketplace' })
@@ -472,9 +461,6 @@ test('built GUI initializes a queued directory source only after Finish setup', 
     await expect(sourcesDialog.getByLabel('User sources')).toContainText(sourceDir)
     await page.screenshot({ path: artifactPath('first-run-valid-source-registered.png'), fullPage: true })
   } finally {
-    if (tracing) {
-      await page.context().tracing.stop({ path: tracePath }).catch(() => undefined)
-    }
     await harness.stop()
   }
 })
@@ -503,14 +489,10 @@ test('built GUI keeps initialized sources on optional failure and retries from S
   const xdgEntries = () =>
     xdgDirs.map((dir) => (existsSync(dir) ? readdirSync(dir).sort().join(',') : '<absent>'))
   const artifactPath = (name: string) => firstRunArtifactPath(testInfo, name)
-  const tracePath = testInfo.outputPath('work23-optional-source-failure-retry.raw-trace.zip')
-  let tracing = false
 
   try {
     expect(existsSync(userConfigPath)).toBe(false)
     expect(existsSync(userLockPath)).toBe(false)
-    await page.context().tracing.start({ screenshots: true, snapshots: true, sources: true })
-    tracing = true
     const actionBodies = observeConfigurationActions(page)
     await launchBuiltUserApp(page, bootstrap)
     const dialog = page.getByRole('dialog', { name: 'Set up Agent Marketplace' })
@@ -641,9 +623,6 @@ test('built GUI keeps initialized sources on optional failure and retries from S
     expect(existsSync(join(home, '.factory', 'skills'))).toBe(false)
     await page.screenshot({ path: artifactPath('first-run-optional-source-retried.png'), fullPage: true })
   } finally {
-    if (tracing) {
-      await page.context().tracing.stop({ path: tracePath }).catch(() => undefined)
-    }
     await harness.stop()
   }
 })

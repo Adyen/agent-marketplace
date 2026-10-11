@@ -4,8 +4,8 @@
 - [x] 1.2 Implement user-scope-only workspace resolution, single-instance focus/handoff, explicit refresh, window-focus ordinary reload, and post-mutation reload; add annotated host/Playwright tests for each `gui-shell` scenario and verify repository/personal-local files are untouched and reloads retain the accepted view until final assessment.
 - [ ] 1.3 Add keyboard access, accessible names, and English-only controls; add annotated accessibility tests and verify every action can be completed with keyboard input.
 - [ ] 1.4 Implement the public GitHub Releases latest-stable check and GUI telemetry; add annotated tests for newer/no-newer releases, silent failures, and `gui` surface identity. Verify `gui.version_check: false` makes no network request and shows no notice.
-- [ ] 1.5 Verify no raw configuration editing action is exposed by the shell or its keyboard action map; bind an annotated test to that observable behavior.
-- [ ] 1.6 Implement the `session-interactions` migration, sync-and-quit, and quit confirmations; test affirmative, negative, and cancel paths, including closing the window while sync is pending.
+- [x] 1.5 Verify no raw configuration editing action is exposed by the shell or its keyboard action map; bind an annotated test to that observable behavior.
+- [x] 1.6 Implement the `session-interactions` migration, sync-and-quit, and quit confirmations; test affirmative, negative, and cancel paths, including closing the window while sync is pending.
 
 ## 2. Guided first run and configuration
 

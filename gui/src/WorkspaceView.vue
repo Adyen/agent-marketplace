@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
 import { createClient } from './api/client'
-import { launchRequestEvent, resolveBootstrap } from './bootstrap'
+import { closeRequestEvent, launchRequestEvent, nativeQuit, resolveBootstrap } from './bootstrap'
 import { eligible, GROUP_ORDER, WorkspaceController, groupKey, groupLabel, type Row } from './controller'
+import Confirmations from './Confirmations.vue'
 import FirstRun from './FirstRun.vue'
 import HarnessSettings from './HarnessSettings.vue'
 import SourcesSettings from './SourcesSettings.vue'
@@ -20,6 +21,7 @@ const setupOpen = ref(false)
 const setupDismissed = ref(false)
 const setupOpened = ref(false)
 const setupButton = ref<HTMLButtonElement | null>(null)
+const quitOpen = ref(false)
 
 const configuration = computed(() => state.value?.state.configuration ?? null)
 
@@ -71,17 +73,21 @@ function onSetupCancel() {
 }
 
 let detachLaunchRequest: (() => void) | void
+let detachCloseRequest: (() => void) | void
 
 onMounted(async () => {
   window.addEventListener('focus', onFocus)
   detachLaunchRequest = window.runtime?.EventsOn?.(launchRequestEvent, onFocus)
+  detachCloseRequest = window.runtime?.EventsOn?.(closeRequestEvent, () => {
+    quitOpen.value = true
+  })
   if (state.value) {
     void state.value.loadConfiguration()
     return
   }
   try {
     const bootstrap = await resolveBootstrap()
-    const c = new WorkspaceController(createClient(bootstrap.url, bootstrap.credential))
+    const c = new WorkspaceController(createClient(bootstrap.url, bootstrap.credential), undefined, nativeQuit())
     state.value = c
     void c.loadConfiguration()
     c.connect().catch(() => {
@@ -96,6 +102,8 @@ onBeforeUnmount(() => {
   window.removeEventListener('focus', onFocus)
   detachLaunchRequest?.()
   detachLaunchRequest = undefined
+  detachCloseRequest?.()
+  detachCloseRequest = undefined
   state.value?.dispose()
 })
 
@@ -176,6 +184,11 @@ async function run(action: 'sync' | 'update') {
           aria-label="Settings"
           @click="settingsOpen = true"
         >Settings</button>
+        <button
+          type="button"
+          aria-label="Quit"
+          @click="quitOpen = true"
+        >Quit</button>
       </div>
     </header>
 
@@ -254,6 +267,7 @@ async function run(action: 'sync' | 'update') {
     <HarnessSettings v-if="state" v-model:open="settingsOpen" :controller="state" />
     <SourcesSettings v-if="state" v-model:open="sourcesOpen" :controller="state" />
     <FirstRun v-if="state" v-model:open="setupOpen" :controller="state" @cancel="onSetupCancel" />
+    <Confirmations v-if="state" v-model:quit-open="quitOpen" :controller="state" />
 
     <ul class="workspace__notifications" aria-live="polite" aria-label="Notifications">
       <li v-for="n in view?.notifications" :key="n.id" :class="`notification--${n.severity}`">

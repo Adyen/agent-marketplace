@@ -14,10 +14,14 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Run a guarded session action (sync or update)
+         * Run a guarded session action (sync, update, or migrate)
          * @description Mutating actions hold the same guarded operation serializer as the
          *     TUI. A request arriving while another guarded operation is active is
-         *     rejected as busy before any side effect.
+         *     rejected as busy before any side effect. migrate is available only
+         *     in user-scope mode and only while a legacy user-personal root is
+         *     offered for migration; the session recomputes the pending migration
+         *     itself and migrates exactly that root to v4 through the shared
+         *     transactional migration.
          *
          */
         post: operations["runAction"];
@@ -162,7 +166,7 @@ export interface components {
         };
         ActionRequest: {
             /** @enum {string} */
-            action: "sync" | "update";
+            action: "sync" | "update" | "migrate";
         };
         AddSourceActionRequest: {
             /**
@@ -349,8 +353,12 @@ export interface components {
             drift: components["schemas"]["DriftAssessment"];
             /** @description Effective target harness IDs for the session. */
             harnesses: string[];
+            /** @description Whether the accepted snapshot carries a pending legacy user-personal migration offer; scalar metadata only, never paths or prompt contents. */
+            migrationOffered: boolean;
             /** @description Active guarded operation, or null. */
             operation: components["schemas"]["OperationRef"] | null;
+            /** @description Count of drifted items awaiting materialization, derived from the accepted snapshot's drift assessment. */
+            pendingChanges: number;
             rows: components["schemas"]["SnapshotRow"][];
             /** @description Last completed guarded operation, when any has settled; authoritative completion identity independent of the active operation. */
             settledOperation?: components["schemas"]["OperationRef"] | null;
@@ -484,7 +492,7 @@ export interface operations {
                     "application/json": components["schemas"]["ActionAccepted"];
                 };
             };
-            /** @description Unknown action, malformed body, or session state not ready for mutation; code localapi.invalid_request or localapi.not_ready */
+            /** @description Unknown action, malformed body, session state not ready for mutation, unsupported session mode, or no pending user migration; code localapi.invalid_request, localapi.not_ready, or localapi.not_supported */
             400: {
                 headers: {
                     [name: string]: unknown;

@@ -52,12 +52,9 @@ test('built GUI loads external user-config changes only on refresh triggers', as
   const repoConfigBefore = await readFile(repoConfigPath)
   const repoLocalBefore = await readFile(repoLocalPath)
   const orgBefore = await readFile(orgConfig)
-  let tracing = false
 
   try {
     const snapshotRequests = countSnapshotRequests(page)
-    await page.context().tracing.start({ screenshots: true, snapshots: true, sources: true })
-    tracing = true
     await launchBuiltUserApp(page, bootstrap)
     await expect(page.getByText('skill/solo')).toBeVisible({ timeout: 60_000 })
 
@@ -119,12 +116,6 @@ test('built GUI loads external user-config changes only on refresh triggers', as
     expect((await readFile(orgConfig)).equals(orgBefore)).toBe(true)
     expect(await readFile(userConfigPath, 'utf8')).toBe(userConfig('[devin]'))
   } finally {
-    if (tracing) {
-      await page
-        .context()
-        .tracing.stop({ path: artifactPath(testInfo, 'refresh-journey-trace.zip') })
-        .catch(() => undefined)
-    }
     await harness.stop()
   }
 })

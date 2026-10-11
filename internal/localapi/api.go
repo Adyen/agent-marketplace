@@ -69,6 +69,8 @@ type snapshotDTO struct {
 	Rows             []rowDTO        `json:"rows"`
 	Diagnostics      []diagnosticDTO `json:"diagnostics"`
 	Harnesses        []string        `json:"harnesses"`
+	PendingChanges   int             `json:"pendingChanges"`
+	MigrationOffered bool            `json:"migrationOffered"`
 	Operation        *operationRef   `json:"operation"`
 	SettledOperation *operationRef   `json:"settledOperation,omitempty"`
 }
@@ -458,7 +460,17 @@ func (a *API) snapshotPresentationLocked(snapshot session.Snapshot, op *operatio
 	case session.DriftFailed:
 		drift = "failed"
 	}
-	dto := snapshotDTO{Stage: stage, Drift: drift, Rows: []rowDTO{}, Diagnostics: []diagnosticDTO{}, Harnesses: []string{}, Operation: op, SettledOperation: a.lastSettledOperation}
+	dto := snapshotDTO{
+		Stage:            stage,
+		Drift:            drift,
+		Rows:             []rowDTO{},
+		Diagnostics:      []diagnosticDTO{},
+		Harnesses:        []string{},
+		PendingChanges:   snapshot.DriftReport.PendingCount(),
+		MigrationOffered: false,
+		Operation:        op,
+		SettledOperation: a.lastSettledOperation,
+	}
 	var rows []session.Row
 	switch {
 	case stage == "provisional":

@@ -3,6 +3,7 @@ package localapi
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -10,6 +11,7 @@ import (
 	"time"
 
 	"github.com/Adyen/agent-marketplace/internal/config"
+	"github.com/Adyen/agent-marketplace/internal/pipeline"
 	"github.com/Adyen/agent-marketplace/internal/session"
 )
 
@@ -92,6 +94,11 @@ func TestLocalAPIUserHarness(t *testing.T) {
 		config.SetTestOrganizationConfigPath(t, orgPath)
 		orgConfigPath = orgPath
 	}
+	if fixture == "legacy" {
+		source := filepath.Join(home, "fixture-source")
+		writeFile(t, filepath.Join(source, "solo", "SKILL.md"), fixtureSkillBody)
+		writeLegacyUserRoot(t, home, legacyUserRootBody("agent-marketplace/v2", source))
+	}
 	bootstrap := map[string]string{
 		"home":      home,
 		"repo":      repo,
@@ -149,7 +156,35 @@ func TestLocalAPIUserHarness(t *testing.T) {
 		marketplace.failNextStatus(http.StatusInternalServerError)
 		bootstrap["marketplaceEndpoint"] = marketplace.endpoint
 	}
-	api, err := NewUser(context.Background(), home, session.RuntimeLifecycle(), nil)
+	lifecycle := session.RuntimeLifecycle()
+	if fixture == "held-sync" {
+		markerDir := t.TempDir()
+		started := filepath.Join(markerDir, "sync-started")
+		release := filepath.Join(markerDir, "sync-release")
+		bootstrap["syncStarted"] = started
+		bootstrap["syncRelease"] = release
+		inner := lifecycle.Sync
+		lifecycle.Sync = func(ctx context.Context, ws pipeline.Workspace) ([]error, error) {
+			if err := os.WriteFile(started, []byte("1"), 0o644); err != nil {
+				return nil, err
+			}
+			deadline := time.Now().Add(90 * time.Second)
+			for {
+				if _, err := os.Stat(release); err == nil {
+					break
+				}
+				if ctx.Err() != nil {
+					return nil, ctx.Err()
+				}
+				if time.Now().After(deadline) {
+					return nil, fmt.Errorf("held-sync release file never appeared")
+				}
+				time.Sleep(20 * time.Millisecond)
+			}
+			return inner(ctx, ws)
+		}
+	}
+	api, err := NewUser(context.Background(), home, lifecycle, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -42,6 +42,12 @@ func TestNativeAppOptionsWiring(t *testing.T) {
 	if opts.OnStartup == nil || opts.OnDomReady == nil {
 		t.Fatal("lifecycle hooks not wired")
 	}
+	if opts.OnBeforeClose == nil {
+		t.Fatal("before-close hook missing")
+	}
+	if app.quit == nil {
+		t.Fatal("native quit callback not installed")
+	}
 	startupSentinel := context.WithValue(context.Background(), struct{ k string }{"startup"}, 1)
 	domReadySentinel := context.WithValue(context.Background(), struct{ k string }{"domReady"}, 1)
 	opts.OnStartup(startupSentinel)
@@ -60,7 +66,7 @@ func TestNativeAppOptionsWiring(t *testing.T) {
 	for i := 0; i < bound.NumMethod(); i++ {
 		methods = append(methods, bound.Method(i).Name)
 	}
-	if len(methods) != 1 || methods[0] != "Bootstrap" {
-		t.Fatalf("bound method set = %v, want [Bootstrap]", methods)
+	if len(methods) != 2 || methods[0] != "Bootstrap" || methods[1] != "Quit" {
+		t.Fatalf("bound method set = %v, want [Bootstrap Quit]", methods)
 	}
 }

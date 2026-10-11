@@ -223,11 +223,9 @@ test('built GUI adds and removes a Marketplace endpoint registration in the open
   const artifactDirectory = process.env.AM_MARKETPLACE_REMOVAL_EVIDENCE_DIR
   const artifactPath = (name: string) =>
     artifactDirectory == null ? testInfo.outputPath(name) : join(artifactDirectory, name)
-  const tracePath = artifactPath('marketplace-removal-trace.zip')
   const formActionScreenshotPath = artifactPath('marketplace-removal-form-action.png')
   const marketplacePresentScreenshotPath = artifactPath('marketplace-removal-present.png')
   const marketplaceRemovedScreenshotPath = artifactPath('marketplace-removal-removed.png')
-  let tracing = false
 
   try {
     if (endpoint == null) {
@@ -242,8 +240,6 @@ test('built GUI adds and removes a Marketplace endpoint registration in the open
     const codexHome = join(home, '.codex')
     const xdgDirs = [bootstrap.xdgConfig!, bootstrap.xdgState!, bootstrap.xdgCache!]
 
-    await page.context().tracing.start({ screenshots: true, snapshots: true, sources: true })
-    tracing = true
     await serveBuiltApp(page, bootstrap.url)
     await page.addInitScript(
       ([credential]) => {
@@ -428,9 +424,6 @@ test('built GUI adds and removes a Marketplace endpoint registration in the open
     await userSources.scrollIntoViewIfNeeded()
     await userSources.screenshot({ path: marketplaceRemovedScreenshotPath })
   } finally {
-    if (tracing) {
-      await page.context().tracing.stop({ path: tracePath }).catch(() => undefined)
-    }
     await harness.stop()
   }
 })
@@ -448,7 +441,6 @@ test('built GUI adds and removes a user Git source with ref and subpath by keybo
   const artifactDirectory = process.env.AM_GIT_SOURCE_EVIDENCE_DIR
   const artifactPath = (name: string) =>
     artifactDirectory == null ? testInfo.outputPath(name) : join(artifactDirectory, name)
-  let tracing = false
 
   try {
     if (bootstrap.gitSourceURL == null) {
@@ -468,8 +460,6 @@ test('built GUI adds and removes a user Git source with ref and subpath by keybo
     const codexHome = bootstrap.codexHome
     const xdgDirs = [bootstrap.xdgConfig!, bootstrap.xdgState!, bootstrap.xdgCache!]
 
-    await page.context().tracing.start({ screenshots: true, snapshots: true, sources: true })
-    tracing = true
     await serveBuiltApp(page, bootstrap.url)
     await page.addInitScript(
       ([credential]) => {
@@ -602,9 +592,6 @@ test('built GUI adds and removes a user Git source with ref and subpath by keybo
     ).not.toContain('devin')
     await page.screenshot({ path: artifactPath('git-source-removed.png'), fullPage: true })
   } finally {
-    if (tracing) {
-      await page.context().tracing.stop({ path: artifactPath('git-source-trace.zip') }).catch(() => undefined)
-    }
     await harness.stop()
   }
 })

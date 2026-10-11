@@ -27,6 +27,8 @@ export interface WorkspaceState {
   rows: Row[]
   harnesses: string[]
   diagnostics: Diagnostic[]
+  pendingChanges: number
+  migrationOffered: boolean
   phase: string | null
   operation: OperationRef | null
   notifications: { id: number; severity: string; message: string }[]
@@ -90,6 +92,8 @@ export class WorkspaceController {
     rows: [],
     harnesses: [],
     diagnostics: [],
+    pendingChanges: 0,
+    migrationOffered: false,
     phase: null,
     operation: null,
     notifications: [],
@@ -100,7 +104,9 @@ export class WorkspaceController {
 
   private readonly cursor = new EventCursor()
   private readonly timers = new Set<ReturnType<typeof setTimeout>>()
-  private lastSettledOperationId = 0
+  private lastSettled: OperationRef | null = null
+  private pendingQuitId: number | null = null
+  private quitEpoch = 0
   private configurationSeq = 0
   private accepted = false
   private nextNotificationId = 1
@@ -109,6 +115,7 @@ export class WorkspaceController {
   constructor(
     private readonly client: Client,
     private readonly notifyTtl: number = NOTIFICATION_TTL_MS,
+    private readonly onQuit?: () => void,
   ) {}
 
   async connect(): Promise<void> {
@@ -152,6 +159,7 @@ export class WorkspaceController {
   }
 
   dispose(): void {
+    this.cancelQuit()
     this.abort?.abort()
     for (const timer of this.timers) {
       clearTimeout(timer)
@@ -193,6 +201,28 @@ export class WorkspaceController {
     return this.requestOperation(() => this.client.action(action))
   }
 
+  async syncAndQuit(): Promise<boolean> {
+    const active = this.state.operation
+    if (active != null) {
+      if (active.kind !== 'sync') {
+        return false
+      }
+      this.pendingQuitId = active.id
+      return true
+    }
+    return this.requestOperation(() => this.client.action('sync'), true)
+  }
+
+  quit(): void {
+    this.cancelQuit()
+    this.onQuit?.()
+  }
+
+  cancelQuit(): void {
+    this.pendingQuitId = null
+    this.quitEpoch++
+  }
+
   async saveTargets(targets: string[]): Promise<boolean> {
     return this.requestOperation(() => this.client.configure({ action: 'save-targets', targets }))
   }
@@ -216,11 +246,12 @@ export class WorkspaceController {
     )
   }
 
-  private async requestOperation(start: () => Promise<OperationRef>): Promise<boolean> {
+  private async requestOperation(start: () => Promise<OperationRef>, quitAfter = false): Promise<boolean> {
     if (this.state.operation != null || this.state.requesting) {
       return false
     }
     this.state.requesting = true
+    const quitEpoch = this.quitEpoch
     let operation: OperationRef
     try {
       operation = await start()
@@ -233,9 +264,18 @@ export class WorkspaceController {
       return false
     }
     this.state.requesting = false
-    if (operation.id > this.lastSettledOperationId && this.state.operation == null) {
+    if (operation.id > (this.lastSettled?.id ?? 0) && this.state.operation == null) {
       this.state.operation = operation
       this.state.phase = null
+    }
+    if (quitAfter && quitEpoch === this.quitEpoch) {
+      const settled = this.lastSettled
+      if (settled != null && settled.id === operation.id && settled.kind === 'sync') {
+        this.quitEpoch++
+        this.onQuit?.()
+      } else {
+        this.pendingQuitId = operation.id
+      }
     }
     return true
   }
@@ -261,30 +301,60 @@ export class WorkspaceController {
 
   private applySnapshot(snapshot: Snapshot, operation: OperationRef | null): void {
     if (operation != null) {
-      if (this.state.operation?.id !== operation.id) {
-        this.state.phase = null
+      if (this.lastSettled == null || operation.id > this.lastSettled.id) {
+        if (this.state.operation?.id !== operation.id) {
+          this.state.phase = null
+        }
+        this.state.operation = operation
       }
-      this.state.operation = operation
     } else if (snapshot.stage === 'final') {
-      const settledRef = snapshot.settledOperation ?? this.state.operation
-      const settledId = Math.max(this.lastSettledOperationId, settledRef?.id ?? 0)
-      const current = this.state.operation
-      if (current == null || current.id <= settledId) {
-        this.state.operation = null
-        this.state.phase = null
+      const reported = snapshot.settledOperation ?? null
+      const settled = reported ?? this.state.operation
+      let quitNow = false
+      if (settled != null) {
+        const last = this.lastSettled
+        const active = this.state.operation
+        const fresh = last == null || settled.id > last.id
+        if (reported != null && last != null && settled.id < last.id) {
+          return
+        }
+        if (reported != null && fresh && active != null && active.id !== settled.id) {
+          return
+        }
+        if (fresh) {
+          this.lastSettled = settled
+          if (active != null && active.id <= settled.id) {
+            this.state.operation = null
+            this.state.phase = null
+          }
+          if (settled.kind === 'targets' || settled.kind === 'mutation' || settled.kind === 'migration') {
+            void this.loadConfiguration()
+          }
+          if (this.pendingQuitId != null && settled.id === this.pendingQuitId && settled.kind === 'sync') {
+            this.cancelQuit()
+            quitNow = true
+          }
+        } else if (reported == null && active != null && last != null && active.id <= last.id) {
+          this.state.operation = null
+          this.state.phase = null
+        }
       }
-      if (
-        settledId > this.lastSettledOperationId &&
-        (settledRef?.kind === 'targets' || settledRef?.kind === 'mutation')
-      ) {
-        void this.loadConfiguration()
+      this.applySnapshotFields(snapshot)
+      if (quitNow) {
+        this.onQuit?.()
       }
-      this.lastSettledOperationId = settledId
+      return
     }
+    this.applySnapshotFields(snapshot)
+  }
+
+  private applySnapshotFields(snapshot: Snapshot): void {
     this.state.stage = snapshot.stage
     this.state.drift = snapshot.drift
     this.state.harnesses = snapshot.harnesses
     this.state.diagnostics = snapshot.diagnostics
+    this.state.pendingChanges = snapshot.pendingChanges ?? 0
+    this.state.migrationOffered = snapshot.migrationOffered === true
     if (snapshot.stage === 'final' || !this.accepted) {
       this.state.rows = snapshot.rows
     }
