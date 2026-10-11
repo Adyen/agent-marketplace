@@ -73,6 +73,7 @@ func TestLocalAPIUserHarness(t *testing.T) {
 	}
 	fixture := os.Getenv("AM_LOCALAPI_USER_FIXTURE")
 	home, repo := newUserAPIFixture(t, fixture != "first-run")
+	var orgConfigPath string
 	if fixture == "first-run" {
 		if err := os.MkdirAll(filepath.Join(home, ".factory"), 0o755); err != nil {
 			t.Fatal(err)
@@ -86,8 +87,10 @@ func TestLocalAPIUserHarness(t *testing.T) {
 			"apiVersion: agent-marketplace/v4\nharnesses: [devin, e2e-future-harness]\nsources:\n  local: {directory: "+source+"}\nresources:\n  local: {all: true}\n")
 		orgPath := filepath.Join(t.TempDir(), "org.yaml")
 		orgSource := filepath.Join(t.TempDir(), "org-regs")
+		writeFile(t, filepath.Join(orgSource, "orgskill", "SKILL.md"), fixtureSkillBody)
 		writeFile(t, orgPath, "apiVersion: agent-marketplace/v4\nharnesses: [claude]\nsources:\n  orgdir: {directory: "+orgSource+"}\n")
 		config.SetTestOrganizationConfigPath(t, orgPath)
+		orgConfigPath = orgPath
 	}
 	bootstrap := map[string]string{
 		"home":      home,
@@ -96,6 +99,9 @@ func TestLocalAPIUserHarness(t *testing.T) {
 		"xdgConfig": os.Getenv("XDG_CONFIG_HOME"),
 		"xdgState":  os.Getenv("XDG_STATE_HOME"),
 		"xdgCache":  os.Getenv("XDG_CACHE_HOME"),
+	}
+	if orgConfigPath != "" {
+		bootstrap["orgConfig"] = orgConfigPath
 	}
 	if fixture == "sources" || fixture == "marketplace" || fixture == "sources-git" {
 		gitSource := fixture == "sources-git"

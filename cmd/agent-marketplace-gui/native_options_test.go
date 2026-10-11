@@ -18,7 +18,18 @@ func TestNativeAppOptionsWiring(t *testing.T) {
 	}
 	t.Cleanup(app.close)
 
-	opts := app.appOptions(lifecycleHooks{})
+	var startupCalls, domReadyCalls int
+	var startupCtx, domReadyCtx context.Context
+	opts := app.appOptions(lifecycleHooks{
+		onStartup: func(ctx context.Context) {
+			startupCalls++
+			startupCtx = ctx
+		},
+		onDomReady: func(ctx context.Context) {
+			domReadyCalls++
+			domReadyCtx = ctx
+		},
+	})
 	if opts.AssetServer == nil || opts.AssetServer.Handler == nil {
 		t.Fatal("asset server handler missing from production options")
 	}
@@ -30,6 +41,16 @@ func TestNativeAppOptionsWiring(t *testing.T) {
 	}
 	if opts.OnStartup == nil || opts.OnDomReady == nil {
 		t.Fatal("lifecycle hooks not wired")
+	}
+	startupSentinel := context.WithValue(context.Background(), struct{ k string }{"startup"}, 1)
+	domReadySentinel := context.WithValue(context.Background(), struct{ k string }{"domReady"}, 1)
+	opts.OnStartup(startupSentinel)
+	opts.OnDomReady(domReadySentinel)
+	if startupCalls != 1 || startupCtx != startupSentinel {
+		t.Fatalf("startup hook calls = %d ctx = %v, want 1 invocation with the supplied context", startupCalls, startupCtx)
+	}
+	if domReadyCalls != 1 || domReadyCtx != domReadySentinel {
+		t.Fatalf("dom-ready hook calls = %d ctx = %v, want 1 invocation with the supplied context", domReadyCalls, domReadyCtx)
 	}
 	if len(opts.Bind) != 1 {
 		t.Fatalf("bound objects = %d, want 1", len(opts.Bind))

@@ -50,22 +50,13 @@ func newHostFixture(t *testing.T) (home, repo string) {
 	return home, repo
 }
 
-// spec: gui-shell/launch-directory-does-not-change-the-gui-workspace
-func TestAppResolvesUserWorkspaceFromAnyDirectory(t *testing.T) {
-	home, repo := newHostFixture(t)
-	orgPath := filepath.Join(t.TempDir(), "missing-org.yaml")
-	config.SetTestOrganizationConfigPath(t, orgPath)
-	repoConfig := filepath.Join(repo, ".agents", "config.yaml")
-	repoLocal := filepath.Join(repo, ".agents", "config.local.yaml")
-	repoBefore, _ := os.ReadFile(repoConfig)
-	localBefore, _ := os.ReadFile(repoLocal)
+type rowDTO struct {
+	Name  string `json:"name"`
+	Scope string `json:"scope"`
+}
 
-	app, err := NewApp(context.Background(), session.DependencyLifecycle{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(app.close)
-
+func finalRows(t *testing.T, app *App) []rowDTO {
+	t.Helper()
 	server := httptest.NewServer(app.handler())
 	t.Cleanup(server.Close)
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
@@ -81,11 +72,6 @@ func TestAppResolvesUserWorkspaceFromAnyDirectory(t *testing.T) {
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	type rowDTO struct {
-		Name  string `json:"name"`
-		Scope string `json:"scope"`
-	}
-	var finalRows []rowDTO
 	scanner := bufio.NewScanner(resp.Body)
 	scanner.Buffer(make([]byte, 1<<20), 1<<20)
 	for scanner.Scan() {
@@ -103,21 +89,67 @@ func TestAppResolvesUserWorkspaceFromAnyDirectory(t *testing.T) {
 			continue
 		}
 		if event.Payload.Stage == "final" {
-			finalRows = event.Payload.Rows
-			break
+			return event.Payload.Rows
 		}
 	}
 	if err := scanner.Err(); err != nil {
 		t.Fatal(err)
 	}
+	t.Fatal("event stream ended before a final snapshot")
+	return nil
+}
+
+// spec: gui-shell/launch-directory-does-not-change-the-gui-workspace
+func TestAppResolvesUserWorkspaceFromAnyDirectory(t *testing.T) {
+	_, repo := newHostFixture(t)
+	orgPath := filepath.Join(t.TempDir(), "org.yaml")
+	writeFile(t, orgPath, "apiVersion: agent-marketplace/v4\nharnesses: [claude]\n")
+	config.SetTestOrganizationConfigPath(t, orgPath)
+	repoConfig := filepath.Join(repo, ".agents", "config.yaml")
+	repoLocal := filepath.Join(repo, ".agents", "config.local.yaml")
+	repoBefore, _ := os.ReadFile(repoConfig)
+	localBefore, _ := os.ReadFile(repoLocal)
+	orgBefore, _ := os.ReadFile(orgPath)
+
+	repoApp, err := NewApp(context.Background(), session.DependencyLifecycle{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(repoApp.close)
+	repoRows := finalRows(t, repoApp)
+
+	t.Chdir(t.TempDir())
+	elsewhereApp, err := NewApp(context.Background(), session.DependencyLifecycle{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(elsewhereApp.close)
+	elsewhereRows := finalRows(t, elsewhereApp)
+
+	if len(repoRows) == 0 {
+		t.Fatal("final snapshot from repository cwd carried no rows")
+	}
+	for _, row := range repoRows {
+		if row.Scope != "user" {
+			t.Fatalf("non-user row in repository-cwd snapshot: %+v", row)
+		}
+	}
+	if len(repoRows) != len(elsewhereRows) {
+		t.Fatalf("rows differ by launch directory: %+v vs %+v", repoRows, elsewhereRows)
+	}
+	for i := range repoRows {
+		if repoRows[i] != elsewhereRows[i] {
+			t.Fatalf("rows differ by launch directory: %+v vs %+v", repoRows, elsewhereRows)
+		}
+	}
 	found := false
-	for _, row := range finalRows {
-		if row.Name == "solo" && row.Scope == "user" {
+	for _, row := range repoRows {
+		if row.Name == "solo" {
 			found = true
 		}
 	}
 	if !found {
-		t.Fatalf("user-scope row missing from final snapshot: %+v", finalRows)
+		t.Fatalf("user-scope row missing from final snapshot: %+v", repoRows)
 	}
 	if after, _ := os.ReadFile(repoConfig); string(after) != string(repoBefore) {
 		t.Fatal("repo-committed config changed")
@@ -125,10 +157,9 @@ func TestAppResolvesUserWorkspaceFromAnyDirectory(t *testing.T) {
 	if after, _ := os.ReadFile(repoLocal); string(after) != string(localBefore) {
 		t.Fatal("personal-local config changed")
 	}
-	if _, err := os.Stat(orgPath); !os.IsNotExist(err) {
-		t.Fatal("organization config path was created")
+	if after, _ := os.ReadFile(orgPath); string(after) != string(orgBefore) {
+		t.Fatal("organization config changed")
 	}
-	_ = home
 }
 
 func TestHostOptionWiring(t *testing.T) {

@@ -13,7 +13,7 @@ declare global {
   interface Window {
     __AM_GUI_BOOTSTRAP__?: { url?: string; credential: string; version?: string }
     go?: { main?: { App?: { Bootstrap?: () => Promise<WailsBootstrap> } } }
-    runtime?: { EventsOn?: (event: string, callback: (...data: unknown[]) => void) => void }
+    runtime?: { EventsOn?: (event: string, callback: (...data: unknown[]) => void) => (() => void) | void }
   }
 }
 

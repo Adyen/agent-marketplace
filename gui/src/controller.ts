@@ -160,9 +160,13 @@ export class WorkspaceController {
   }
 
   async refresh(): Promise<void> {
+    if (this.state.requesting || this.state.operation != null) {
+      return
+    }
     this.state.requesting = true
     try {
       await this.client.snapshot()
+      await this.loadConfiguration()
     } catch {
       this.state.error ??= 'Refresh failed'
     } finally {
