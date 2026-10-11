@@ -83,6 +83,7 @@ onMounted(async () => {
   })
   if (state.value) {
     void state.value.loadConfiguration()
+    void state.value.checkRelease()
     return
   }
   try {
@@ -90,6 +91,7 @@ onMounted(async () => {
     const c = new WorkspaceController(createClient(bootstrap.url, bootstrap.credential), undefined, nativeQuit())
     state.value = c
     void c.loadConfiguration()
+    void c.checkRelease()
     c.connect().catch(() => {
       error.value = 'Could not connect to the session'
     })
@@ -198,6 +200,9 @@ async function run(action: 'sync' | 'update') {
     </p>
     <p v-else-if="view?.operation" class="workspace__notice" role="status">
       {{ view.operation.kind }} {{ view.phase ?? 'running' }}
+    </p>
+    <p v-if="view?.latestVersion" class="workspace__notice" role="status">
+      Agent Marketplace {{ view.latestVersion }} is available.
     </p>
 
     <div class="workspace__panes">

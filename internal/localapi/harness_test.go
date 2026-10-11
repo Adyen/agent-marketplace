@@ -1,12 +1,15 @@
 package localapi
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 	"time"
 
@@ -184,10 +187,54 @@ func TestLocalAPIUserHarness(t *testing.T) {
 			return inner(ctx, ws)
 		}
 	}
-	api, err := NewUser(context.Background(), home, lifecycle, nil)
+	if fixture == "release" {
+		orgPath := filepath.Join(t.TempDir(), "org.yaml")
+		writeFile(t, orgPath, "apiVersion: agent-marketplace/v4\n")
+		config.SetTestOrganizationConfigPath(t, orgPath)
+		bootstrap["orgConfig"] = orgPath
+	}
+	api, err := NewUser(context.Background(), home, lifecycle, nil, WithVersion(os.Getenv("AM_LOCALAPI_RELEASE_VERSION")))
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer api.Close()
+	if marker := os.Getenv("AM_LOCALAPI_RELEASE_MARK"); marker != "" {
+		api.releaseClient.Transport = releaseHarnessTransport(marker, os.Getenv("AM_LOCALAPI_RELEASE_STATUS"), os.Getenv("AM_LOCALAPI_RELEASE_BODY"))
+	}
 	serveHarness(t, api, bootstrap)
+}
+
+func releaseHarnessTransport(marker, statusEnv, bodyPath string) http.RoundTripper {
+	status := http.StatusOK
+	if statusEnv != "" {
+		if parsed, err := strconv.Atoi(statusEnv); err == nil {
+			status = parsed
+		}
+	}
+	return releaseRoundTripFunc(func(r *http.Request) (*http.Response, error) {
+		file, err := os.OpenFile(marker, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+		if err != nil {
+			return nil, err
+		}
+		if _, err := file.WriteString(r.Method + " " + r.URL.String() + "\n"); err != nil {
+			_ = file.Close()
+			return nil, err
+		}
+		if err := file.Close(); err != nil {
+			return nil, err
+		}
+		var body []byte
+		if bodyPath != "" {
+			if data, err := os.ReadFile(bodyPath); err == nil {
+				body = data
+			}
+		}
+		return &http.Response{
+			StatusCode: status,
+			Status:     fmt.Sprintf("%d", status),
+			Header:     make(http.Header),
+			Body:       io.NopCloser(bytes.NewReader(body)),
+			Request:    r,
+		}, nil
+	})
 }

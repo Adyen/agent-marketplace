@@ -119,6 +119,11 @@ type API struct {
 	diag                 session.DiagnosticStore
 	subs                 map[*subscriber]struct{}
 
+	version       string
+	releaseClient *http.Client
+	releaseOnce   sync.Once
+	releaseNotice string
+
 	wg sync.WaitGroup
 }
 
@@ -130,7 +135,7 @@ func New(ctx context.Context, workspace pipeline.Workspace, homeDir string, life
 	return commonNew(ctx, ws, homeDir, lifecycle, gate, false)
 }
 
-func NewUser(ctx context.Context, homeDir string, lifecycle session.DependencyLifecycle, gate *session.OperationGate) (*API, error) {
+func NewUser(ctx context.Context, homeDir string, lifecycle session.DependencyLifecycle, gate *session.OperationGate, options ...UserOption) (*API, error) {
 	if !config.IsHomeDir(homeDir) {
 		return nil, fmt.Errorf("localapi: %s is not the user home directory", homeDir)
 	}
@@ -138,7 +143,14 @@ func NewUser(ctx context.Context, homeDir string, lifecycle session.DependencyLi
 	if err != nil {
 		return nil, err
 	}
-	return commonNew(ctx, ws, homeDir, lifecycle, gate, true)
+	api, err := commonNew(ctx, ws, homeDir, lifecycle, gate, true)
+	if err != nil {
+		return nil, err
+	}
+	for _, option := range options {
+		option(api)
+	}
+	return api, nil
 }
 
 func commonNew(ctx context.Context, ws pipeline.Workspace, homeDir string, lifecycle session.DependencyLifecycle, gate *session.OperationGate, userOnly bool) (*API, error) {
@@ -170,6 +182,12 @@ func commonNew(ctx context.Context, ws pipeline.Workspace, homeDir string, lifec
 		token:     hex.EncodeToString(token[:]),
 		userOnly:  userOnly,
 		subs:      map[*subscriber]struct{}{},
+		releaseClient: &http.Client{
+			Timeout: 5 * time.Second,
+			CheckRedirect: func(*http.Request, []*http.Request) error {
+				return http.ErrUseLastResponse
+			},
+		},
 	}, nil
 }
 
@@ -316,6 +334,8 @@ func (a *API) dispatch(w http.ResponseWriter, r *http.Request) {
 		a.handleConfiguration(w, r)
 	case "/api/configuration/actions":
 		a.handleConfigurationAction(w, r)
+	case "/api/release":
+		a.handleRelease(w, r)
 	default:
 		writeError(w, http.StatusNotFound, codeInvalidRequest)
 	}

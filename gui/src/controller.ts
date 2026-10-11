@@ -35,6 +35,7 @@ export interface WorkspaceState {
   requesting: boolean
   error: string | null
   configuration: Configuration | null
+  latestVersion: string
 }
 
 export function groupKey(row: Row): string {
@@ -100,6 +101,7 @@ export class WorkspaceController {
     requesting: false,
     error: null,
     configuration: null,
+    latestVersion: '',
   })
 
   private readonly cursor = new EventCursor()
@@ -108,6 +110,7 @@ export class WorkspaceController {
   private pendingQuitId: number | null = null
   private quitEpoch = 0
   private configurationSeq = 0
+  private releaseSeq = 0
   private accepted = false
   private nextNotificationId = 1
   private abort: AbortController | null = null
@@ -158,7 +161,23 @@ export class WorkspaceController {
     }
   }
 
+  async checkRelease(): Promise<void> {
+    const seq = ++this.releaseSeq
+    try {
+      const notice = await this.client.release()
+      if (seq !== this.releaseSeq) {
+        return
+      }
+      this.state.latestVersion = notice.latestVersion ?? ''
+    } catch {
+      if (seq === this.releaseSeq) {
+        this.state.latestVersion = ''
+      }
+    }
+  }
+
   dispose(): void {
+    this.releaseSeq++
     this.cancelQuit()
     this.abort?.abort()
     for (const timer of this.timers) {
@@ -175,6 +194,7 @@ export class WorkspaceController {
     try {
       await this.client.snapshot()
       await this.loadConfiguration()
+      await this.checkRelease()
     } catch {
       this.state.error ??= 'Refresh failed'
     } finally {

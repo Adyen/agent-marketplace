@@ -21,7 +21,7 @@
 
 - [x] 3.1 Add CLI read support for the top-level `gui.version_check` setting in v4 and legacy config decoding; verify the organization value defaults to enabled when absent and an organization false value disables the GUI check.
 - [x] 3.2 Ignore `gui.version_check` from user-personal, repository-committed, and personal-local layers and report a warning without rejecting those roots; add annotated tests for each layer.
-- [ ] 3.3 Add the `config-layering` scenario witnesses and the GUI no-network/no-notice witness; verify the setting is honored only from Consumer organization configuration.
+- [x] 3.3 Add the `config-layering` scenario witnesses and the GUI no-network/no-notice witness; verify the setting is honored only from Consumer organization configuration.
 - [ ] 3.4 Add administrator documentation and release notes stating that the key may be deployed only after every managed client runs a release that reads it; verify no user-facing instruction recommends early deployment.
 
 ## 4. Surface parity and finalization
