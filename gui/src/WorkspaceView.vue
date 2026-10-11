@@ -70,9 +70,11 @@ function onSetupCancel() {
   setupDismissed.value = true
 }
 
+let detachLaunchRequest: (() => void) | void
+
 onMounted(async () => {
   window.addEventListener('focus', onFocus)
-  window.runtime?.EventsOn?.(launchRequestEvent, onFocus)
+  detachLaunchRequest = window.runtime?.EventsOn?.(launchRequestEvent, onFocus)
   if (state.value) {
     void state.value.loadConfiguration()
     return
@@ -92,6 +94,8 @@ onMounted(async () => {
 
 onBeforeUnmount(() => {
   window.removeEventListener('focus', onFocus)
+  detachLaunchRequest?.()
+  detachLaunchRequest = undefined
   state.value?.dispose()
 })
 

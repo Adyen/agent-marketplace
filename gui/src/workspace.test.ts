@@ -12,29 +12,8 @@ import {
   EVENT_OUTAGE_MESSAGE,
   EVENT_RETRY_DELAY_MS,
   WorkspaceController,
-  type Row,
 } from './controller'
-import { event, fakeClient, mountWorkspace, snapshot, tick } from './test-support'
-
-type RowOverrides = Partial<Row>
-
-function row(name: string, overrides: RowOverrides = {}): Row {
-  return {
-    id: `skill/${name}#${name.length.toString(16)}`,
-    name,
-    kind: 'skill',
-    description: `${name} description`,
-    registry: 'local',
-    scope: 'user',
-    required: false,
-    pendingVerification: false,
-    checked: true,
-    harnessOverride: false,
-    harnesses: ['devin'],
-    status: 'enabled',
-    ...overrides,
-  }
-}
+import { event, fakeClient, mountWorkspace, row, snapshot, tick } from './test-support'
 
 describe('WorkspaceView', () => {
   it('groups rows by status with registry-qualified names, scope, and harness badges', async () => {

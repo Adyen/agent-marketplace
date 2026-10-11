@@ -25,6 +25,24 @@ export function snapshot(rows: Row[] = [], overrides: Partial<Snapshot> = {}): S
   }
 }
 
+export function row(name: string, overrides: Partial<Row> = {}): Row {
+  return {
+    id: `skill/${name}#${name.length.toString(16)}`,
+    name,
+    kind: 'skill',
+    description: `${name} description`,
+    registry: 'local',
+    scope: 'user',
+    required: false,
+    pendingVerification: false,
+    checked: true,
+    harnessOverride: false,
+    harnesses: ['devin'],
+    status: 'enabled',
+    ...overrides,
+  }
+}
+
 export function event(overrides: Partial<SessionEvent>): SessionEvent {
   return { type: 'snapshot', sequence: 0, generation: 1, operation: null, payload: snapshot(), ...overrides } as SessionEvent
 }
