@@ -1,11 +1,13 @@
 package pipeline
 
 import (
+	"context"
 	"errors"
 	"strings"
 	"testing"
 
 	"github.com/Adyen/agent-marketplace/internal/catalog"
+	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/materialize"
 	"github.com/Adyen/agent-marketplace/internal/resolver"
 	"github.com/Adyen/agent-marketplace/internal/skill"
@@ -29,6 +31,54 @@ func issueMessages(issues []InspectionIssue) []string {
 		msgs = append(msgs, issue.Err.Error())
 	}
 	return msgs
+}
+
+func TestInspectReportsResolvedInventoryBeforeDryRun(t *testing.T) {
+	root := t.TempDir()
+	ws, err := NewWorkspace(root, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var order []string
+	opts := InspectOptions{
+		Resolve: ResolveOptions{
+			Workspace:     ws,
+			SkipInventory: true,
+			Loaders: Loaders{
+				Org:    func() (*config.Config, error) { return nil, nil },
+				Global: func() (*config.Config, error) { return nil, nil },
+				Repo:   func() (*config.Config, error) { return &config.Config{}, nil },
+				Local:  func() (*config.LocalConfig, error) { return nil, nil },
+			},
+			ConfigReady: func(*config.Config) { order = append(order, "config") },
+		},
+		Resolved: func(result InspectionResult) {
+			if result.MergedCfg == nil || len(result.ConfigErrors) != 0 {
+				t.Fatalf("inventory callback received invalid result: %+v", result)
+			}
+			order = append(order, "inventory")
+		},
+		DryRun: func(_ context.Context, gotRoot string, _ []resolver.ResolvedArtifact, _ ...materialize.RunOption) (*materialize.Report, error) {
+			if gotRoot != ws.MaterializeRoot() {
+				t.Fatalf("dry run root = %q, want %q", gotRoot, ws.MaterializeRoot())
+			}
+			order = append(order, "assessment")
+			return &materialize.Report{}, nil
+		},
+	}
+	result, release := Inspect(context.Background(), opts)
+	release()
+	if !result.Healthy() || strings.Join(order, ",") != "config,inventory,assessment" {
+		t.Fatalf("stage order=%v issues=%v", order, issueMessages(result.Issues))
+	}
+
+	order = nil
+	opts.Resolve.Workspace = Workspace{}
+	result, release = Inspect(context.Background(), opts)
+	release()
+	if result.Healthy() || len(order) != 0 {
+		t.Fatalf("invalid workspace ran callbacks %v or reported healthy", order)
+	}
 }
 
 func TestInspectionIssuesClassifyEverySource(t *testing.T) {

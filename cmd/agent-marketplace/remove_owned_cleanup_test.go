@@ -256,7 +256,7 @@ func TestRemoveBlockedOwnedMCPPreservesSiblings(t *testing.T) {
 				t.Fatal(err)
 			}
 			entries := next.Files[filepath.Base(f.aggregate)].Entries
-			if len(entries) != 1 || entries[0] != keeper {
+			if len(entries) != 1 || !reflect.DeepEqual(entries[0], keeper) {
 				t.Fatalf("sibling ownership changed: %#v", entries)
 			}
 			proof, err := f.store.Proof(filepath.Base(f.aggregate))

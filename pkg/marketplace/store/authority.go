@@ -20,27 +20,32 @@ var (
 // refresh history and blob ownership capabilities on the configured store.
 // Accepting configuration revisions alone is not safe enablement.
 func CheckConfigurationAuthority(ctx context.Context, meta MetadataStore, id MarketplaceID, mode string) error {
+	_, err := ReadConfigurationAuthority(ctx, meta, id, mode)
+	return err
+}
+
+func ReadConfigurationAuthority(ctx context.Context, meta MetadataStore, id MarketplaceID, mode string) (ManagedChange, error) {
 	if mode != "" && mode != "file" && mode != "database" {
-		return ErrAuthorityModeConflict
+		return ManagedChange{}, ErrAuthorityModeConflict
 	}
 	managed, ok := meta.(interface {
 		CurrentManagedConfiguration(context.Context, MarketplaceID) (ManagedChange, error)
 	})
 	if !ok {
-		return ErrTopology
+		return ManagedChange{}, ErrTopology
 	}
-	_, err := managed.CurrentManagedConfiguration(ctx, id)
+	change, err := managed.CurrentManagedConfiguration(ctx, id)
 	if errors.Is(err, ErrNotFound) {
 		if mode == "database" {
-			return ErrManagedAdoptionRequired
+			return ManagedChange{}, ErrManagedAdoptionRequired
 		}
-		return nil
+		return ManagedChange{}, nil
 	}
 	if err != nil {
-		return fmt.Errorf("check configuration authority: %w", err)
+		return ManagedChange{}, fmt.Errorf("check configuration authority: %w", err)
 	}
 	if mode != "database" {
-		return ErrAuthorityModeConflict
+		return ManagedChange{}, ErrAuthorityModeConflict
 	}
 	if _, ok := meta.(interface {
 		ManagedConfigurationStore
@@ -49,7 +54,7 @@ func CheckConfigurationAuthority(ctx context.Context, meta MetadataStore, id Mar
 		BlobOwnerStore
 		BlobOwnerMaintenanceStore
 	}); !ok {
-		return ErrManagedRuntimeUnavailable
+		return ManagedChange{}, ErrManagedRuntimeUnavailable
 	}
-	return nil
+	return change, nil
 }

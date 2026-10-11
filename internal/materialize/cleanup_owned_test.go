@@ -288,7 +288,7 @@ func TestRemoveOwnedPreservesDriftedAndHandwrittenSiblings(t *testing.T) {
 					keepAfter = entry
 				}
 			}
-			if keepAfter != keepRecord {
+			if !reflect.DeepEqual(keepAfter, keepRecord) {
 				t.Fatalf("keep metadata changed: before=%#v after=%#v", keepRecord, keepAfter)
 			}
 			fresh, freshDiags := file.adapter.read(file.store, outputKey{target: file.Target, machineScope: file.MachineScope}, file.OutDir, file.Rel)
@@ -419,7 +419,7 @@ func TestRemoveOwnedRemovesOnlyProvenTarget(t *testing.T) {
 			keepBefore = entry
 		}
 	}
-	if len(recordBefore.Files[file.Rel].Entries) != 2 || len(recordAfter.Files[file.Rel].Entries) != 1 || recordAfter.Files[file.Rel].Entries[0] != keepBefore {
+	if len(recordBefore.Files[file.Rel].Entries) != 2 || len(recordAfter.Files[file.Rel].Entries) != 1 || !reflect.DeepEqual(recordAfter.Files[file.Rel].Entries[0], keepBefore) {
 		t.Fatalf("ownership entries changed unexpectedly: before=%#v after=%#v", recordBefore.Files[file.Rel].Entries, recordAfter.Files[file.Rel].Entries)
 	}
 	backup, err := os.ReadFile(result.BackupPath)

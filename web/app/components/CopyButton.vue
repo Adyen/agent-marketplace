@@ -7,22 +7,30 @@ type Props = {
   copiedText?: string
   disabled?: boolean
   iconOnly?: boolean
+  variant?: 'default' | 'ghost'
 }
 
 withDefaults(defineProps<Props>(), {
   copied: false,
-  copyText: 'Copy command',
+  copyText: 'Copy',
   copiedText: 'Copied',
   disabled: false,
   iconOnly: false,
+  variant: 'default',
 })
 </script>
 
 <template>
   <button
     type="button"
-    class="inline-flex min-h-8 shrink-0 items-center rounded border border-[var(--am-color-border-default)] bg-[var(--am-color-bg-subtle)] text-xs font-semibold text-[var(--am-color-text-primary)] transition-colors hover:border-[var(--am-color-border-strong)] hover:bg-[var(--am-color-bg-hover)] disabled:border-[var(--am-color-border-default)] disabled:bg-[var(--am-color-bg-subtle)] disabled:text-[var(--am-color-text-muted)] disabled:shadow-none motion-reduce:transition-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--am-color-action-focus-ring)]"
-    :class="[disabled ? 'cursor-not-allowed' : 'cursor-pointer', iconOnly ? 'size-8 justify-center p-0' : 'gap-1.5 px-2']"
+    class="inline-flex min-h-8 shrink-0 items-center rounded text-xs font-semibold transition-colors disabled:shadow-none motion-reduce:transition-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-(--am-color-action-focus-ring)"
+    :class="[
+      disabled ? 'cursor-not-allowed text-(--am-color-text-muted)' : 'cursor-pointer text-(--am-color-text-primary)',
+      iconOnly ? 'size-8 justify-center p-0' : 'gap-1.5 px-2',
+      variant === 'ghost'
+        ? ['border-0 bg-transparent', disabled ? '' : 'hover:bg-(--am-color-bg-hover)']
+        : ['border border-(--am-color-border-default) bg-(--am-color-bg-subtle)', disabled ? '' : 'hover:border-(--am-color-border-strong) hover:bg-(--am-color-bg-hover)'],
+    ]"
     :aria-label="copied ? copiedLabel : copyLabel"
     :title="copied ? copiedLabel : copyLabel"
     :disabled="disabled"

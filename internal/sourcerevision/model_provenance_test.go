@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/Adyen/agent-marketplace/internal/catalog"
+	"github.com/Adyen/agent-marketplace/internal/fsboundary"
 	"github.com/Adyen/agent-marketplace/internal/lockfile"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir/ext"
@@ -42,7 +43,17 @@ func TestModelProvenanceLegacyFallbackDigests(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				got, err := buildResource(t.TempDir(), catalog.Entry{Kind: ir.KindSubagent, Name: "review", Resource: r}, contract)
+				root := t.TempDir()
+				sourceFS, err := fsboundary.OpenSourceFS(root)
+				if err != nil {
+					t.Fatal(err)
+				}
+				t.Cleanup(func() {
+					if err := sourceFS.Close(); err != nil {
+						t.Fatal(err)
+					}
+				})
+				got, err := buildResource(root, sourceFS, catalog.Entry{Kind: ir.KindSubagent, Name: "review", Resource: r}, contract)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -65,7 +76,17 @@ func TestModelProvenanceCurrentFallbackDigest(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	got, err := buildResource(t.TempDir(), catalog.Entry{Kind: ir.KindSubagent, Name: "review", Resource: r}, contract)
+	root := t.TempDir()
+	sourceFS, err := fsboundary.OpenSourceFS(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := sourceFS.Close(); err != nil {
+			t.Fatal(err)
+		}
+	})
+	got, err := buildResource(root, sourceFS, catalog.Entry{Kind: ir.KindSubagent, Name: "review", Resource: r}, contract)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/store"
@@ -91,7 +92,24 @@ func (s *Store) putRegistryOccurrence(ctx context.Context, occ store.RegistryOcc
 	core := existing
 	core.SourceOrigin = occ.SourceOrigin
 	if !occ.Equal(core) {
-		return fmt.Errorf("%w: registry occurrence %q already has different immutable fields", store.ErrConflict, occ.Commit)
+		repaired := core
+		repaired.MirroredArtifactDigest = occ.MirroredArtifactDigest
+		repaired.RegistryRevisionManifestDigest = occ.RegistryRevisionManifestDigest
+		if !occ.Equal(repaired) {
+			return fmt.Errorf("%w: registry occurrence %q already has different immutable fields", store.ErrConflict, occ.Commit)
+		}
+		if _, err := s.q.ExecContext(ctx, `UPDATE registry_occurrences SET manifest_digest=$1, mirrored_artifact_digest=NULLIF($2, '')
+			WHERE registry_id=$3 AND revision_commit=$4`,
+			occ.RegistryRevisionManifestDigest, mirrored, occ.RegistryID, occ.Commit); err != nil {
+			return err
+		}
+		slog.WarnContext(ctx, "registry occurrence archive evidence repaired",
+			"registry", occ.RegistryID, "commit", occ.Commit,
+			"old_archive_digest", existing.MirroredArtifactDigest, "new_archive_digest", occ.MirroredArtifactDigest,
+			"old_manifest_digest", existing.RegistryRevisionManifestDigest, "new_manifest_digest", occ.RegistryRevisionManifestDigest)
+		existing.MirroredArtifactDigest = occ.MirroredArtifactDigest
+		existing.RegistryRevisionManifestDigest = occ.RegistryRevisionManifestDigest
+		changed = true
 	}
 	if existing.SourceOrigin != "" && occ.SourceOrigin != "" && existing.SourceOrigin != occ.SourceOrigin {
 		return fmt.Errorf("%w: registry occurrence %q already has different source origin", store.ErrConflict, occ.Commit)
@@ -120,6 +138,19 @@ func (s *Store) putRegistryOccurrence(ctx context.Context, occ store.RegistryOcc
 		return nil
 	}
 	return s.advanceCatalogVersion(ctx)
+}
+
+func (s *Store) FenceRegistryPublication(ctx context.Context, req store.RegistryRevisionPublication) (bool, error) {
+	var current bool
+	err := s.withTx(ctx, func(tx *Store) error {
+		if _, err := tx.q.ExecContext(ctx, `SELECT pg_advisory_xact_lock(hashtext($1)::bigint)`, "agent-marketplace:registry-head:"+req.Occurrence.RegistryID.String()); err != nil {
+			return err
+		}
+		var err error
+		current, err = store.FenceRegistryPublication(ctx, tx.q, tx, req)
+		return err
+	})
+	return current, err
 }
 
 func (s *Store) SetRegistryHead(ctx context.Context, registry store.RegistryID, commit, expectedCommit string) error {

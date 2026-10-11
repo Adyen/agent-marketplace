@@ -63,6 +63,11 @@ type migrationFile struct {
 	apiVersion string
 	harnesses  []string
 	modified   bool
+	// generation is the compare-and-swap precondition captured with the
+	// file's bytes at load time for managed layer destinations. A zero
+	// generation publishes without a precondition, matching the behavior
+	// of legacy destinations and pre-existing tests.
+	generation dependencytxn.Generation
 }
 
 // MigrateConfigFiles performs structural remediation on user personal,
@@ -230,19 +235,36 @@ func MigrateConfigFiles(paths MigratePaths, explicitHarnesses []string) (*Migrat
 // pass. Missing files are represented with exists=false.
 func loadMigrationFile(path string, kind layerKind) (*migrationFile, error) {
 	f := &migrationFile{path: path, kind: kind}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		if os.IsNotExist(err) {
+	var data []byte
+	if dependencytxn.ClassifyDestination(path) != dependencytxn.AuthorityLegacy {
+		// Managed destinations read through the descriptor boundary and
+		// carry their generation into the publication precondition.
+		raw, generation, mode, err := dependencytxn.ReadSnapshot(path)
+		if err != nil {
+			return nil, fmt.Errorf("read %s config %q: %w", kind.name(), path, err)
+		}
+		if !generation.Exists {
 			return f, nil
 		}
-		return nil, fmt.Errorf("read %s config %q: %w", kind.name(), path, err)
-	}
+		f.generation = generation
+		f.mode = mode
+		data = raw
+	} else {
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			if os.IsNotExist(err) {
+				return f, nil
+			}
+			return nil, fmt.Errorf("read %s config %q: %w", kind.name(), path, err)
+		}
 
-	info, err := os.Stat(path)
-	if err != nil {
-		return nil, fmt.Errorf("stat %s config %q: %w", kind.name(), path, err)
+		info, err := os.Stat(path)
+		if err != nil {
+			return nil, fmt.Errorf("stat %s config %q: %w", kind.name(), path, err)
+		}
+		f.mode = info.Mode().Perm()
+		data = raw
 	}
-	f.mode = info.Mode().Perm()
 
 	if len(bytes.TrimSpace(data)) == 0 {
 		f.exists = true
@@ -544,6 +566,8 @@ type stagedMigratedFile struct {
 func writeMigratedFilesAtomically(files map[string]*migrationFile, result *MigrateResult) error {
 	layerOrder := []string{"user", "repo", "local"}
 	var staged []stagedMigratedFile
+	var managed []dependencytxn.DesiredFile
+	var managedNames []string
 
 	// First pass: write every temp file.
 	for _, name := range layerOrder {
@@ -556,6 +580,20 @@ func writeMigratedFilesAtomically(files map[string]*migrationFile, result *Migra
 		if err != nil {
 			cleanupStagedMigratedFiles(staged)
 			return fmt.Errorf("encode migrated %s config: %w", name, err)
+		}
+
+		if dependencytxn.ClassifyDestination(f.path) != dependencytxn.AuthorityLegacy {
+			// Managed destinations publish through the descriptor boundary:
+			// an approved link stays a link and its captured target receives
+			// the migrated document; a drifted or replaced destination fails
+			// with a stable conflict instead of being overwritten.
+			var expectedMode os.FileMode
+			if f.generation.Exists {
+				expectedMode = f.mode
+			}
+			managed = append(managed, dependencytxn.DesiredFile{Path: f.path, Expected: f.generation, ExpectedMode: expectedMode, Bytes: data, Mode: f.mode})
+			managedNames = append(managedNames, name)
+			continue
 		}
 
 		dir := filepath.Dir(f.path)
@@ -591,22 +629,48 @@ func writeMigratedFilesAtomically(files map[string]*migrationFile, result *Migra
 		staged = append(staged, stagedMigratedFile{name: name, tmp: tmp.Name(), dst: f.path, mode: f.mode})
 	}
 
+	if len(managed) > 0 {
+		for _, file := range managed {
+			if !file.Expected.Exists {
+				if err := dependencytxn.EnsureDestinationDir(file.Path); err != nil {
+					cleanupStagedMigratedFiles(staged)
+					return err
+				}
+			}
+		}
+		state, err := dependencytxn.StateDir()
+		if err == nil {
+			_, err = dependencytxn.Commit(context.Background(), state, managed)
+		}
+		if err != nil {
+			cleanupStagedMigratedFiles(staged)
+			return fmt.Errorf("commit managed config migration: %w", err)
+		}
+		for _, name := range managedNames {
+			markMigratedFile(result, name)
+		}
+	}
+
 	// Second pass: rename all temps to their final paths.
 	for _, s := range staged {
 		if err := os.Rename(s.tmp, s.dst); err != nil {
 			return fmt.Errorf("replace config %q: %w", s.dst, err)
 		}
-		switch s.name {
-		case "user":
-			result.UserMigrated = true
-		case "repo":
-			result.RepoMigrated = true
-		case "local":
-			result.LocalMigrated = true
-		}
+		markMigratedFile(result, s.name)
 	}
 
 	return nil
+}
+
+func markMigratedFile(result *MigrateResult, name string) {
+	switch name {
+	case "user":
+		result.UserMigrated = true
+	case "repo":
+		result.RepoMigrated = true
+	case "local":
+		result.LocalMigrated = true
+	}
 }
 
 func cleanupStagedMigratedFiles(staged []stagedMigratedFile) {
@@ -814,7 +878,11 @@ func MigrateConfigFilesToV4WithHarnesses(ctx context.Context, paths MigratePaths
 			return nil, fmt.Errorf("resolve %s config path %q: %w", item.name, item.path, err)
 		}
 		logicalPath = filepath.Clean(logicalPath)
-		canonical, err := canonicalConfigPath(logicalPath)
+		// Resolve through the layer authority: a managed destination keeps
+		// its logical layer path so the migration transaction captures,
+		// reads, and publishes it through the descriptor boundary, while
+		// legacy paths keep the adjacent-link compatibility resolution.
+		canonical, err := dependencytxn.CanonicalConfigDestination(logicalPath)
 		if err != nil {
 			if errors.Is(err, os.ErrNotExist) {
 				continue

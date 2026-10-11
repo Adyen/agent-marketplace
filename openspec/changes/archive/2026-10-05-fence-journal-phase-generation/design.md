@@ -1,0 +1,11 @@
+## Context
+
+The three writeJournal consumers (initial preparation, staged-collision disarm and aggregate-renamed phase) share the captured durable metadata publisher. After initial publication, Journal already has a private observed pin, but the writer drops it and accepts a newly captured replacement name.
+
+## Decisions
+
+Reuse verifyOriginalMetadata inside the existing shared observed metadata writer with optional expected pin: ordinary state metadata passes nil, journal passes its private observation. Existing unobserved initial journal creation stays unchanged. Observed generations validate before parent capture/preparation and inside the existing pre-publication callback alongside named-parent verification. Publication advances the observation only on success. No new public callback/framework/schema/dependency/budget or source comments. Native and metadata are not one transaction; no uncooperative-writer exclusion.
+
+## Verification
+
+Public Apply's existing after-aggregate-rename Crasher replaces prepared journal with identical bytes/private mode. Parent overwrote/deleted replacement, committed state/reported success/red. Guard returns typed generation conflict preserving replacement inode/mode/mtime/bytes and original bytes, absent state and no metadata staging; native next bytes prove actual rename was reached. Restoring original prepared journal allows public Recover to genuinely roll forward/commit generation1/remove journal. Native Linux/macOS full ownership/materialize, count20 phase/crash/recovery, validate/lint/build/strict specs and complete all-file adversarial review before push. Existing full ApplyUncontended disk benchmark includes proof/read/lock/safety payload+sidecar/stage/native/journal/state/durable sync/retention/cleanup, no network/logs discarded, fixture outside timing; before/after measured, no narrower-helper-only cost claim. Serial paired disk medians83.843245→86.491576ms (+3.16%,p=.310),329246→359357B (+9.15%),4256→4577alloc (+7.54%),2sx5/no95CI. Initial samples under parallel verification had82.411949→151.890392ms (+84.31%,p=.032),B+8.50%alloc+6.94% with87–206ms after range; retain/disclose both load conditions, no speedup or precise isolated-check wall-cost claim.

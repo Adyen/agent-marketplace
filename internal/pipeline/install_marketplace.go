@@ -219,6 +219,7 @@ func (p *PreparedMarketplaceInstall) RequiresRiskAcceptance() bool {
 // without mutating configuration. The returned plan is the only value accepted
 // by CommitPreparedMarketplaceInstall.
 func PrepareMarketplaceInstall(ctx context.Context, opts InstallOptions) (*PreparedMarketplaceInstall, error) {
+	ObservePhase(ctx, PhasePrepare)
 	if !isMarketplaceInstall(opts) || isMarketplaceEndpointRegistration(opts) {
 		return nil, errors.New("marketplace resource install is required")
 	}
@@ -250,7 +251,11 @@ func PrepareMarketplaceInstall(ctx context.Context, opts InstallOptions) (*Prepa
 			}
 		}
 	}
-	ec := LoadEffective(ctx, ConfigLoadOnline, config.LoadEffectiveOptions{RepoRoot: opts.RepoRoot, LocalConfigDir: opts.LocalConfigDir}, nil)
+	ws, err := workspaceForRoots(opts.RepoRoot, opts.LocalConfigDir)
+	if err != nil {
+		return nil, err
+	}
+	ec := LoadEffective(ctx, ConfigLoadOnline, config.LoadEffectiveOptions{RepoRoot: ws.RepoRoot(), LocalConfigDir: ws.LocalConfigDir()}, nil)
 	if len(ec.Errors) > 0 {
 		return nil, errors.Join(ec.Errors...)
 	}
@@ -343,12 +348,16 @@ func CommitPreparedMarketplaceInstall(ctx context.Context, prepared *PreparedMar
 	if err := evaluateMarketplaceConsent(prepared.plan, true); err != nil {
 		return nil, err
 	}
+	ws, err := workspaceForRoots(prepared.options.RepoRoot, prepared.options.LocalConfigDir)
+	if err != nil {
+		return nil, err
+	}
 	pins := marketplaceInstallPins(prepared.plan)
 	lockOverlay, err := preparedMarketplaceLockOverlay(prepared.configPath, installScopeSource(prepared.options.Scope), prepared.plan.Entry, pins)
 	if err != nil {
 		return nil, err
 	}
-	ec := LoadEffective(ctx, ConfigLoadOnline, config.LoadEffectiveOptions{RepoRoot: prepared.options.RepoRoot, LocalConfigDir: prepared.options.LocalConfigDir, FileOverlays: lockOverlay}, nil)
+	ec := LoadEffective(ctx, ConfigLoadOnline, config.LoadEffectiveOptions{RepoRoot: ws.RepoRoot(), LocalConfigDir: ws.LocalConfigDir(), FileOverlays: lockOverlay}, nil)
 	var allowedMarketplaces, allowedRegistries *[]string
 	if ec.Merged != nil {
 		allowedMarketplaces = ec.Merged.AllowedMarketplaces

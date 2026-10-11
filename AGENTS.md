@@ -45,11 +45,15 @@ E2E_PARALLEL=8 make e2e  # control concurrency (default 4, set to 1 for serial)
 
 ### TUI QA
 
-Run direct real-terminal test typechecking with `make tui-qa-check` and all twelve deterministic user journeys with `make tui-qa`. TUI QA requires no organization-specific infrastructure; do not place machine-specific values in tracked commands, reports, or fixtures.
+Run direct real-terminal test typechecking with `make tui-qa-check` and all deterministic user journeys with `make tui-qa`. TUI QA requires no organization-specific infrastructure; do not place machine-specific values in tracked commands, reports, or fixtures.
 
 ### Local toolchain
 
 Local toolchain notes: on macOS hosts where the system linker rejects the SDK, run Go tests with `CGO_ENABLED=0` (as the Makefile does). In `web/`, `pnpm run` may refuse to start when `node_modules` is stale; `node scripts/generate-api.mjs` and `./node_modules/.bin/{vitest,eslint,nuxt}` run the same checks directly.
+
+Temporary worktrees should use sibling paths rather than paths nested in the repository: `specaudit trace` scans ignored directories, so nested worktrees can contribute unrelated scenario annotations. Remove only task-created worktrees before final gates; leave existing worktrees untouched.
+
+For Linux checks in a cached Go container, set command-scoped `GOMODCACHE` to the container path of the mounted module cache; do not assume the image's default GOPATH matches that mount. Populate pinned modules through the host's configured proxy when necessary, without changing proxy/authentication policy. A dependency-download failure is not a test result.
 
 ### Session completion
 
@@ -71,6 +75,8 @@ Local toolchain notes: on macOS hosts where the system linker rejects the SDK, r
 7. **Hand off** - Provide context for next session
 
 **Pre-push adversarial review:** Before every GitHub push, run an adversarial review of the intended changes, including consumer-path reachability, failure behavior, unintended writes, ownership/scope boundaries, and regression-test validity. Validate reported findings against the code; fix actionable issues and rerun affected checks before pushing. Record the reviewed revision or diff and the outcome. Do not treat a passing test suite or a clean review as proof that no defects remain.
+
+**Lint cache verification:** If golangci-lint reports cached source paths from missing or unrelated worktrees, rerun with `GOLANGCI_LINT_CACHE="$(mktemp -d)" make ci-lint`. A cached `0 issues` result with source-mapping warnings can hide real findings; verify with a fresh cache rather than changing lint rules or CI policy.
 
 **CRITICAL RULES:**
 - Work is NOT complete until `git push` succeeds

@@ -1,0 +1,7 @@
+## Decision
+
+At the existing meaningful symbolic replacement boundary, OpenDir the captured parent's recorded pathname, compare existing directory identities with SameObject and close the fresh descriptor before existing full leaf/absence revalidation and RemoveAll/Symlink. Captured descriptors alone cannot prove that the currently named parent is still that directory. Admission retains current initial alias semantics; failures preserve typed generation identity and inspection cause. No alternate mutation helper/reader/API/budget/durability change, no deep-member snapshot or atomic uncooperative namespace CAS.
+
+## Public consumer evidence
+
+Actual public ordinary and two-partition Codex backup/restore admit a native regular leaf for archived symbolic output. Final symbolic observer detaches the original root, creates foreign named root/leaf and records both original and foreign generations. Parent code removes original held leaf/publishes under detached descriptor and reports success/red. Fix refuses before deleting original, preserving original and foreign leaf bytes/inodes/modes/mtimes, parent identities/modes/mtimes and exact members. Restore original parent: genuine archived symbolic target recovery while retained foreign parent remains unchanged. Independent initial selected parent alias control performs real symbolic recovery without changing alias text. Linux/macOS suites,20-run races/macCLI/validate/spec/shellcheck, timed namespace costs and full review required. Original131-case appendix/final R2 audit remains open.

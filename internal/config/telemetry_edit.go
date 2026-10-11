@@ -38,15 +38,6 @@ func SetUserTelemetryEndpoint(configPath, endpoint string) error {
 	return updateTelemetryScalar(configPath, "endpoint", scalarNode(endpoint))
 }
 
-// SetUserTelemetryCommunityReporting sets telemetry.community_reporting in the
-// user-personal config.
-func SetUserTelemetryCommunityReporting(configPath string, enabled bool) error {
-	if !isGlobalConfigPath(configPath) {
-		return fmt.Errorf("telemetry can only be configured in the user-personal config")
-	}
-	return updateTelemetryScalar(configPath, "community_reporting", boolNode(enabled))
-}
-
 // DisableTelemetry sets telemetry.level to "off" in the user-personal config.
 // It is a no-op when the config file does not exist.
 func DisableTelemetry(configPath string) error {

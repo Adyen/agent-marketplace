@@ -55,9 +55,10 @@ func runSharedScanners(content, file, analyzer string) []Finding {
 // ScanHTMLComments finds HTML-style comments.
 func ScanHTMLComments(content, file, analyzer string) []Finding {
 	var findings []Finding
+	ranges := sourceRangeCursor{content: content}
 	for _, loc := range htmlCommentRe.FindAllStringIndex(content, -1) {
 		msg := fmt.Sprintf("HTML comment (%s)", describeBytes(loc[1]-loc[0]))
-		findings = append(findings, NewFinding(FindingHTMLComment, msg, analyzer, SourceRangeAt(file, content, loc[0])))
+		findings = append(findings, NewFinding(FindingHTMLComment, msg, analyzer, ranges.at(file, loc[0])))
 	}
 	return findings
 }
@@ -76,6 +77,7 @@ func isZeroWidth(r rune) bool {
 // ScanZeroWidth finds zero-width / invisible Unicode characters.
 func ScanZeroWidth(content, file, analyzer string) []Finding {
 	var findings []Finding
+	ranges := sourceRangeCursor{content: content}
 	start := -1
 	runeCount := 0
 	for i, r := range content {
@@ -91,14 +93,14 @@ func ScanZeroWidth(content, file, analyzer string) []Finding {
 		}
 		if start != -1 {
 			msg := fmt.Sprintf("zero-width/invisible characters (%d runes)", runeCount)
-			findings = append(findings, NewFinding(FindingZeroWidth, msg, analyzer, SourceRangeAt(file, content, start)))
+			findings = append(findings, NewFinding(FindingZeroWidth, msg, analyzer, ranges.at(file, start)))
 			start = -1
 			runeCount = 0
 		}
 	}
 	if start != -1 {
 		msg := fmt.Sprintf("zero-width/invisible characters (%d runes)", runeCount)
-		findings = append(findings, NewFinding(FindingZeroWidth, msg, analyzer, SourceRangeAt(file, content, start)))
+		findings = append(findings, NewFinding(FindingZeroWidth, msg, analyzer, ranges.at(file, start)))
 	}
 	return findings
 }
@@ -117,6 +119,7 @@ func isUnsafeBidi(r rune) bool {
 // ScanUnsafeBidi finds bidirectional override characters.
 func ScanUnsafeBidi(content, file, analyzer string) []Finding {
 	var findings []Finding
+	ranges := sourceRangeCursor{content: content}
 	start := -1
 	runeCount := 0
 	for i, r := range content {
@@ -129,14 +132,14 @@ func ScanUnsafeBidi(content, file, analyzer string) []Finding {
 		}
 		if start != -1 {
 			msg := fmt.Sprintf("bidirectional override characters (%d runes)", runeCount)
-			findings = append(findings, NewFinding(FindingUnsafeBidi, msg, analyzer, SourceRangeAt(file, content, start)))
+			findings = append(findings, NewFinding(FindingUnsafeBidi, msg, analyzer, ranges.at(file, start)))
 			start = -1
 			runeCount = 0
 		}
 	}
 	if start != -1 {
 		msg := fmt.Sprintf("bidirectional override characters (%d runes)", runeCount)
-		findings = append(findings, NewFinding(FindingUnsafeBidi, msg, analyzer, SourceRangeAt(file, content, start)))
+		findings = append(findings, NewFinding(FindingUnsafeBidi, msg, analyzer, ranges.at(file, start)))
 	}
 	return findings
 }
@@ -145,6 +148,7 @@ func ScanUnsafeBidi(content, file, analyzer string) []Finding {
 // C1 control characters, and ANSI/CSI/OSC escape sequences.
 func ScanTerminalControl(content, file, analyzer string) []Finding {
 	var findings []Finding
+	ranges := sourceRangeCursor{content: content}
 	start := -1
 	var kind byte
 
@@ -175,7 +179,7 @@ func ScanTerminalControl(content, file, analyzer string) []Finding {
 
 		if start != -1 {
 			msg := terminalControlMessage(content, start, i, kind)
-			findings = append(findings, NewFinding(FindingTerminalControl, msg, analyzer, SourceRangeAt(file, content, start)))
+			findings = append(findings, NewFinding(FindingTerminalControl, msg, analyzer, ranges.at(file, start)))
 			start = -1
 			kind = 0
 		}
@@ -184,7 +188,7 @@ func ScanTerminalControl(content, file, analyzer string) []Finding {
 
 	if start != -1 {
 		msg := terminalControlMessage(content, start, len(content), kind)
-		findings = append(findings, NewFinding(FindingTerminalControl, msg, analyzer, SourceRangeAt(file, content, start)))
+		findings = append(findings, NewFinding(FindingTerminalControl, msg, analyzer, ranges.at(file, start)))
 	}
 	return findings
 }

@@ -1,8 +1,8 @@
 package tui
 
 import (
-	"github.com/charmbracelet/bubbles/help"
-	"github.com/charmbracelet/bubbles/key"
+	"charm.land/bubbles/v2/help"
+	"charm.land/bubbles/v2/key"
 )
 
 // keyMap defines all keyboard shortcuts for the TUI. It is the single source
@@ -18,13 +18,6 @@ type keyMap struct {
 	PageUp       key.Binding
 	Top          key.Binding
 	Bottom       key.Binding
-	NextTab      key.Binding
-	PrevTab      key.Binding
-
-	// Tab switching
-	Tab1 key.Binding
-	Tab2 key.Binding
-	Tab3 key.Binding
 
 	// Actions
 	Search     key.Binding
@@ -38,6 +31,8 @@ type keyMap struct {
 	Update     key.Binding
 	Harness    key.Binding
 	EditConfig key.Binding
+	Palette    key.Binding
+	View       key.Binding
 
 	// Fold (vim-style z-prefix)
 	FoldPrefix key.Binding
@@ -97,19 +92,12 @@ var defaultKeyMap = keyMap{
 	PageUp:       key.NewBinding(key.WithKeys("b", "ctrl+b", "pgup"), key.WithHelp("b/ctrl+b/pgup", "page up")),
 	Top:          key.NewBinding(key.WithKeys("g", "home"), key.WithHelp("g/home", "jump to top")),
 	Bottom:       key.NewBinding(key.WithKeys("G", "end"), key.WithHelp("G/end", "jump to bottom")),
-	NextTab:      key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "next tab")),
-	PrevTab:      key.NewBinding(key.WithKeys("shift+tab"), key.WithHelp("S-tab", "previous tab")),
-
-	// Tab switching
-	Tab1: key.NewBinding(key.WithKeys("1"), key.WithHelp("1", "Scope tab")),
-	Tab2: key.NewBinding(key.WithKeys("2"), key.WithHelp("2", "Registry tab")),
-	Tab3: key.NewBinding(key.WithKeys("3"), key.WithHelp("3", "Status tab")),
 
 	// Actions
 	Search:     key.NewBinding(key.WithKeys("/"), key.WithHelp("/", "fuzzy search")),
 	Clear:      key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "clear search / close")),
 	Enter:      key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "view details / toggle fold")),
-	Space:      key.NewBinding(key.WithKeys(" "), key.WithHelp("space", "toggle modal / fold section")),
+	Space:      key.NewBinding(key.WithKeys("space"), key.WithHelp("space", "toggle resource / all in section")),
 	Collapse:   key.NewBinding(key.WithKeys("h", "left"), key.WithHelp("h/←", "collapse section")),
 	Expand:     key.NewBinding(key.WithKeys("l", "right"), key.WithHelp("l/→", "expand section")),
 	Reload:     key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "reload from disk")),
@@ -117,6 +105,8 @@ var defaultKeyMap = keyMap{
 	Update:     key.NewBinding(key.WithKeys("u"), key.WithHelp("u", "update caches")),
 	Harness:    key.NewBinding(key.WithKeys("H"), key.WithHelp("H", "harness defaults")),
 	EditConfig: key.NewBinding(key.WithKeys("E"), key.WithHelp("E", "edit config")),
+	Palette:    key.NewBinding(key.WithKeys("ctrl+k", ":"), key.WithHelp("ctrl+k/:", "command palette")),
+	View:       key.NewBinding(key.WithKeys("v"), key.WithHelp("v", "view settings")),
 
 	// Fold (vim-style z-prefix)
 	FoldPrefix: key.NewBinding(key.WithKeys("z"), key.WithHelp("z", "fold prefix")),
@@ -168,7 +158,7 @@ var defaultKeyMap = keyMap{
 // ShortHelp returns key bindings to show in the footer hint line.
 func (k keyMap) ShortHelp() []key.Binding {
 	return []key.Binding{
-		k.Help, k.Search, k.Tab1, k.Tab2, k.Tab3, k.Harness, k.EditConfig, k.Sync, k.Quit,
+		k.Help, k.Search, k.Harness, k.EditConfig, k.Sync, k.Quit,
 	}
 }
 
@@ -187,12 +177,12 @@ func (k keyMap) FullHelp() [][]key.Binding {
 
 // navigationBindings returns the navigation-related key bindings.
 func (k keyMap) navigationBindings() []key.Binding {
-	return []key.Binding{k.Up, k.Down, k.HalfPageDown, k.HalfPageUp, k.PageDown, k.PageUp, k.Top, k.Bottom, k.Tab1, k.Tab2, k.Tab3, k.NextTab, k.PrevTab}
+	return []key.Binding{k.Up, k.Down, k.HalfPageDown, k.HalfPageUp, k.PageDown, k.PageUp, k.Top, k.Bottom}
 }
 
 // actionBindings returns the action-related key bindings.
 func (k keyMap) actionBindings() []key.Binding {
-	return []key.Binding{k.Search, k.Clear, k.Enter, k.Space, k.Collapse, k.Expand, k.FoldToggle, k.FoldAll, k.ExpandAll, k.Harness, k.EditConfig, k.Sync, k.Update}
+	return []key.Binding{k.Search, k.Clear, k.Enter, k.Space, k.Collapse, k.Expand, k.FoldToggle, k.FoldAll, k.ExpandAll, k.View, k.Harness, k.EditConfig, k.Sync, k.Update, k.Palette}
 }
 
 // toggleModalBindings returns the toggle-modal key bindings.
@@ -213,18 +203,25 @@ func (k keyMap) otherBindings() []key.Binding {
 	return []key.Binding{k.Reload, k.Errors, k.Help, k.Quit}
 }
 
-// newHelpModel creates a help.Model styled to match the TUI theme.
-func newHelpModel() help.Model {
-	h := help.New()
-	h.ShortSeparator = " · "
-	h.Styles = help.Styles{
+// helpStyles builds the help.Model styles for one model theme. The full-key
+// and full-desc styles follow the model's reported background; the rest use
+// background-independent roles.
+func helpStyles(t theme) help.Styles {
+	return help.Styles{
 		ShortKey:       shortcutKeyStyle,
 		ShortDesc:      shortcutDescStyle,
 		ShortSeparator: shortcutSepStyle,
 		Ellipsis:       shortcutSepStyle,
-		FullKey:        helpFullKeyStyle,
-		FullDesc:       helpFullDescStyle,
+		FullKey:        fullKeyStyle(t),
+		FullDesc:       textStyle(t),
 		FullSeparator:  helpFullSepStyle,
 	}
+}
+
+// newHelpModel creates a help.Model styled to match the model theme.
+func newHelpModel(t theme) help.Model {
+	h := help.New()
+	h.ShortSeparator = " · "
+	h.Styles = helpStyles(t)
 	return h
 }

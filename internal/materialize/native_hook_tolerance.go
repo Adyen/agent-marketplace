@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/Adyen/agent-marketplace/internal/config"
@@ -225,16 +226,21 @@ func (ins *nativeHookInspection) hookSatisfied(fingerprint, resource string) boo
 		if id.Kind != ownership.KindHook {
 			continue
 		}
-		recorded, ok := ins.proof.Resource(id)
-		if !ok || recorded != resource {
-			continue
-		}
-		digest, ok := ins.proof.SourceDigest(id)
-		if !ok || digest != fingerprint {
+		if !ins.proof.HasHookSource(id, resource, fingerprint) {
 			continue
 		}
 		valueDigest, present := ins.current[id]
 		if !present || ins.proof.Classify(id, valueDigest) != ownership.StatusOwnedClean {
+			return false
+		}
+		matched = true
+	}
+	for _, satisfaction := range ins.proof.HookSatisfactions() {
+		if !slices.Contains(satisfaction.Sources, ownership.HookSourceEvidence{Resource: resource, SourceDigest: fingerprint}) {
+			continue
+		}
+		valueDigest, present := ins.current[satisfaction.ID()]
+		if !present || valueDigest != satisfaction.ValueDigest {
 			return false
 		}
 		matched = true

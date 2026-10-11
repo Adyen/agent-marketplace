@@ -2,9 +2,9 @@ package skill
 
 import (
 	"bufio"
-	"errors"
 	"fmt"
-	"os"
+	"io"
+	"path/filepath"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -19,15 +19,16 @@ type skillFrontmatter struct {
 }
 
 func parseFrontmatter(skillMdPath string) (name, description string, tags []string, err error) {
-	file, err := os.Open(skillMdPath)
-	if err != nil {
-		return "", "", nil, fmt.Errorf("read file: %w", err)
-	}
-	defer func() {
-		err = errors.Join(err, file.Close())
-	}()
+	return parseFrontmatterSource(filepath.Dir(skillMdPath), skillMdPath)
+}
 
-	frontmatter, err := readFrontmatter(file)
+func parseFrontmatterSource(rootPath, skillMdPath string) (name, description string, tags []string, err error) {
+	var frontmatter []byte
+	err = readSourceMetadata(rootPath, skillMdPath, func(file io.Reader) error {
+		var readErr error
+		frontmatter, readErr = readFrontmatter(file)
+		return readErr
+	})
 	if err != nil {
 		return "", "", nil, err
 	}
@@ -40,7 +41,7 @@ func parseFrontmatter(skillMdPath string) (name, description string, tags []stri
 	return parsed.Name, parsed.Description, parsed.Metadata.Tags, nil
 }
 
-func readFrontmatter(file *os.File) ([]byte, error) {
+func readFrontmatter(file io.Reader) ([]byte, error) {
 	scanner := bufio.NewScanner(file)
 	scanner.Buffer(make([]byte, 0, 1024), 64*1024)
 
