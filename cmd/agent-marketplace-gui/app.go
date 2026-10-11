@@ -42,7 +42,7 @@ func NewApp(ctx context.Context, lifecycle session.DependencyLifecycle) (*App, e
 	if err != nil {
 		return nil, fmt.Errorf("resolve home directory: %w", err)
 	}
-	api, err := localapi.NewUser(ctx, homeDir, lifecycle, nil)
+	api, err := localapi.NewUser(ctx, homeDir, lifecycle, nil, localapi.WithVersion(version))
 	if err != nil {
 		return nil, err
 	}

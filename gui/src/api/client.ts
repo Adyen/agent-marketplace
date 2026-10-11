@@ -12,6 +12,7 @@ export type SourceDescription = components['schemas']['SourceDescription']
 export type SourceInput = components['schemas']['SourceInput']
 export type ConfigureRequest = components['schemas']['ConfigurationActionRequest']
 export type ApiError = components['schemas']['Error']
+export type ReleaseNotice = components['schemas']['ReleaseNotice']
 
 export class RequestError extends Error {
   constructor(
@@ -137,6 +138,7 @@ export interface Client {
   action(action: Action): Promise<OperationRef>
   configuration(): Promise<Configuration>
   configure(request: ConfigureRequest): Promise<OperationRef>
+  release(): Promise<ReleaseNotice>
 }
 
 export function createClient(baseURL: string, credential: string, fetchImpl: typeof fetch = fetch): Client {
@@ -212,6 +214,11 @@ export function createClient(baseURL: string, credential: string, fetchImpl: typ
     async configure(request: ConfigureRequest) {
       const response = await post('/api/configuration/actions', request satisfies NonNullable<paths['/api/configuration/actions']['post']['requestBody']>['content']['application/json'])
       return ((await response.json()) as components['schemas']['ActionAccepted']).operation
+    },
+
+    async release() {
+      const response = await post('/api/release')
+      return (await response.json()) as ReleaseNotice
     },
   }
 }

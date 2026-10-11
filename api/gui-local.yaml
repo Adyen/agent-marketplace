@@ -223,6 +223,42 @@ paths:
                 $ref: '#/components/schemas/Error'
         '503':
           $ref: '#/components/responses/Closed'
+  /api/release:
+    post:
+      operationId: readReleaseNotice
+      summary: Report the newer stable public release, if any
+      description: |
+        Available only in user-scope mode; the request carries no body and
+        no query. When Consumer organization configuration enables release
+        checking (the default), the session compares the running GUI
+        version with the latest stable public GitHub release at most once
+        per launch and returns the newer stable version. A disabled
+        policy, a policy read failure, any check failure, or a non-newer
+        result silently returns an empty latestVersion without an error;
+        the check never downloads or installs a release.
+      security:
+        - launchToken: []
+      responses:
+        '200':
+          description: Newer stable public release version, or empty
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReleaseNotice'
+        '400':
+          description: Request carried a body or query, or the session mode does not support release checks; code localapi.invalid_request or localapi.not_supported
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/OriginRejected'
+        '405':
+          $ref: '#/components/responses/MethodNotAllowed'
+        '503':
+          $ref: '#/components/responses/Closed'
 
 components:
   securitySchemes:
@@ -461,6 +497,13 @@ components:
         retentionPolicyURL:
           type: string
           description: Resolved telemetry retention policy URL for disclosure, or 'not configured'.
+    ReleaseNotice:
+      type: object
+      required: [latestVersion]
+      properties:
+        latestVersion:
+          type: string
+          description: Newer stable public release version, or empty when no notice applies.
     ConfigurationActionRequest:
       description: Tagged configuration action; the action field selects the strictly closed variant.
       oneOf:

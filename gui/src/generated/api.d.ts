@@ -128,6 +128,34 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/release": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Report the newer stable public release, if any
+         * @description Available only in user-scope mode; the request carries no body and
+         *     no query. When Consumer organization configuration enables release
+         *     checking (the default), the session compares the running GUI
+         *     version with the latest stable public GitHub release at most once
+         *     per launch and returns the newer stable version. A disabled
+         *     policy, a policy read failure, any check failure, or a non-newer
+         *     result silently returns an empty latestVersion without an error;
+         *     the check never downloads or installs a release.
+         *
+         */
+        post: operations["readReleaseNotice"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/snapshot": {
         parameters: {
             query?: never;
@@ -323,6 +351,10 @@ export interface components {
              * @enum {string}
              */
             type: "progress";
+        };
+        ReleaseNotice: {
+            /** @description Newer stable public release version, or empty when no notice applies. */
+            latestVersion: string;
         };
         RemoveSourceActionRequest: {
             /**
@@ -611,6 +643,39 @@ export interface operations {
                 };
                 content: {
                     "text/event-stream": components["schemas"]["SessionEvent"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["OriginRejected"];
+            405: components["responses"]["MethodNotAllowed"];
+            503: components["responses"]["Closed"];
+        };
+    };
+    readReleaseNotice: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Newer stable public release version, or empty */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReleaseNotice"];
+                };
+            };
+            /** @description Request carried a body or query, or the session mode does not support release checks; code localapi.invalid_request or localapi.not_supported */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
                 };
             };
             401: components["responses"]["Unauthorized"];
