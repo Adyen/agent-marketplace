@@ -41,7 +41,7 @@ func prepareBlockedOwnedRemoval(ctx context.Context, opts RemoveOptions, ec conf
 			return nil, fmt.Errorf("%w: live local registries are not supported", materialize.ErrOwnedCleanupUnsupported)
 		}
 	}
-	reads, err := cleanupReadAssertions(ec)
+	reads, err := EffectivePolicyReadAssertions(ec)
 	if err != nil {
 		return nil, err
 	}
@@ -149,14 +149,14 @@ func (p *ownedRemovalPreparation) commit(opts RemoveOptions) error {
 	return commitErr
 }
 
-func cleanupReadAssertions(ec config.EffectiveConfig) ([]dependencytxn.ReadAssertion, error) {
+func EffectivePolicyReadAssertions(ec config.EffectiveConfig) ([]dependencytxn.ReadAssertion, error) {
 	byRequested, err := configReadAssertions(ec.LayerResults(), true)
 	if err != nil {
 		return nil, err
 	}
 	layers := []config.LayerResult{ec.Organization, ec.User, ec.Repo, ec.LocalLayer}
 	for _, layer := range layers {
-		if len(readOnlyRemoteEntries(layer)) == 0 || layer.Path == "" {
+		if layer.Path == "" || len(readOnlyRemoteEntries(layer)) == 0 && (layer.Config == nil || len(layer.Config.Marketplaces) == 0) {
 			continue
 		}
 		lockPath, err := lockfile.PathForConfig(layer.Path)

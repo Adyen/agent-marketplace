@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 
@@ -21,8 +22,10 @@ import (
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ingest/claude"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ingest/windsurf"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/target"
 
 	"github.com/Adyen/agent-marketplace/internal/collection"
+	"github.com/Adyen/agent-marketplace/internal/fsboundary"
 	"github.com/Adyen/agent-marketplace/internal/skill"
 )
 
@@ -40,13 +43,14 @@ const (
 
 // Entry represents a single cataloged resource discovered from a registry.
 type Entry struct {
-	Kind          ir.ResourceKind
-	Name          string
-	Description   string
-	Tags          []string
-	Resource      ir.Resource // underlying IR resource for downstream compile/materialize
-	Path          string      // source file path (from ir.SourceRef)
-	SourceHarness string      `json:"-"`
+	Kind              ir.ResourceKind
+	Name              string
+	Description       string
+	Tags              []string
+	Resource          ir.Resource // underlying IR resource for downstream compile/materialize
+	Path              string      // source file path (from ir.SourceRef)
+	SourceHarness     string      `json:"-"`
+	PrimarySourcePath string      `json:"-"`
 }
 
 // Requirement identifies another resource that must be selected for a
@@ -61,6 +65,7 @@ type Requirement struct {
 
 // Catalog holds the result of loading a registry via HCC.
 type Catalog struct {
+	sourceRefusal error
 	Entries       []Entry
 	Diagnostics   []diag.Diagnostic
 	SourceHarness string // harness name used for ingestion (autodetected or explicit)
@@ -286,6 +291,8 @@ type IngestOptions struct {
 	LegacyBareMCP       bool
 }
 
+func (c *Catalog) SourceRefusal() error { return c.sourceRefusal }
+
 // Load discovers resources from a directory on disk using HCC IngestBundle,
 // filtered to KindSkill. The sourceHarness parameter controls the ingest
 // format; empty string triggers autodetection via ingest.Autodetect.
@@ -296,17 +303,42 @@ func Load(dir string, sourceHarness string) (*Catalog, error) {
 	return LoadWithOptions(dir, sourceHarness, IngestOptions{})
 }
 
-func LoadWithOptions(dir string, sourceHarness string, opts IngestOptions) (*Catalog, error) {
+func LoadWithOptions(dir string, sourceHarness string, opts IngestOptions) (cat *Catalog, err error) {
 	root, err := filepath.Abs(dir)
 	if err != nil {
 		return nil, fmt.Errorf("resolve load root %q: %w", dir, err)
 	}
-	srcFS := os.DirFS(root)
+	srcFS, err := fsboundary.OpenSourceFS(root)
+	if err != nil {
+		return nil, fmt.Errorf("capture load root %q: %w", dir, err)
+	}
+	defer func() {
+		if closeErr := srcFS.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
+	return LoadSourceWithOptions(srcFS, root, sourceHarness, opts)
+}
+
+func LoadSourceWithOptions(srcFS *fsboundary.SourceFS, dir, sourceHarness string, opts IngestOptions) (*Catalog, error) {
+	root, err := filepath.Abs(dir)
+	if err != nil {
+		return nil, fmt.Errorf("resolve load root %q: %w", dir, err)
+	}
 	cat, err := LoadFSWithOptions(srcFS, sourceHarness, opts)
 	if err != nil {
-		return nil, err
+		return nil, errors.Join(err, srcFS.Refusal())
 	}
+	cat.sourceRefusal = srcFS.Refusal()
+	definition, _ := target.Lookup(cat.SourceHarness)
 	for i := range cat.Entries {
+		primary := filepath.ToSlash(cat.Entries[i].Path)
+		if !srcFS.WasRead(primary) && definition.RepoRoot != "" {
+			primary = path.Join(definition.RepoRoot, primary)
+		}
+		if srcFS.WasRead(primary) {
+			cat.Entries[i].PrimarySourcePath = filepath.Join(root, filepath.FromSlash(primary))
+		}
 		if cat.Entries[i].Path != "" && !filepath.IsAbs(cat.Entries[i].Path) {
 			cat.Entries[i].Path = filepath.Join(root, cat.Entries[i].Path)
 		}
@@ -632,8 +664,11 @@ func preserveResourceSourcePath(r ir.Resource, sourcePath string) {
 // display compatibility, while the IR SourceRef remains pinned to the immutable
 // snapshot that was actually ingested.
 func SourcePath(entry Entry) string {
+	if entry.PrimarySourcePath != "" {
+		return entry.PrimarySourcePath
+	}
 	if entry.Resource != nil {
-		if source, ok := sourceRefFromResource(entry.Resource); ok {
+		if source, ok := sourceRefFromResource(entry.Resource); ok && filepath.IsAbs(source) {
 			return source
 		}
 	}

@@ -100,6 +100,11 @@ func (f ResourceSearchFilter) RegistryValues() []string {
 	return nil
 }
 
+type ConditionalCatalogProjectionStore interface {
+	OwnsCatalogProjectionStore(meta MetadataStore) bool
+	ReadCatalogProjectionPageConditional(ctx context.Context, req CatalogProjectionPageRequest, unchanged func(CatalogVersion) bool) (CatalogProjectionPage, bool, error)
+}
+
 // MaxRegistryHistoryEntries is the maximum number of registry occurrences returned
 // by history queries. API handlers apply the same bound before serialization.
 const MaxRegistryHistoryEntries = 1000
@@ -164,6 +169,7 @@ type MetadataStore interface {
 	// Registry occurrences.
 	GetRegistryOccurrence(ctx context.Context, registry RegistryID, commit string) (RegistryOccurrence, error)
 	PutRegistryOccurrence(ctx context.Context, occ RegistryOccurrence) error
+	FenceRegistryPublication(ctx context.Context, req RegistryRevisionPublication) (bool, error)
 	SetRegistryHead(ctx context.Context, registry RegistryID, commit, expectedCommit string) error
 	LatestRegistryOccurrence(ctx context.Context, registry RegistryID) (RegistryOccurrence, error)
 

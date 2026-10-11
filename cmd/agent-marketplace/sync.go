@@ -133,7 +133,7 @@ func runSyncWithLocks(ctx context.Context, out io.Writer, noBackup bool, strict 
 		}
 		return err
 	}
-	resolveOpts := pipeline.ResolveOptions{Workspace: ws, NoBackup: noBackup, Offline: offline, CatalogOption: []pkgcatalog.LoadOption{exactOption}, ExactLockLease: exactLease, SkipInventory: pruneStale, MarketplaceRevocationPolicy: marketplacePolicy}
+	resolveOpts := pipeline.ResolveOptions{Workspace: ws, NoBackup: noBackup, Offline: offline, CatalogOption: []pkgcatalog.LoadOption{exactOption}, ExactLockLease: exactLease, SkipInventory: pruneStale, MarketplaceRevocationPolicy: marketplacePolicy, MarketplaceLockEvidenceStrict: locked, MarketplaceReportArchiveEvidenceDrift: !locked && !offline}
 	syncResult := pipeline.Sync(ctx, resolveOpts)
 	syncResult.Warnings = append(lockWarnings, syncResult.Warnings...)
 	errs := syncResult.Errors
@@ -141,6 +141,16 @@ func runSyncWithLocks(ctx context.Context, out io.Writer, noBackup bool, strict 
 	mergedCfg := syncResult.MergedCfg
 	resolvedCount := len(syncResult.Resolved)
 	report := syncResult.Report
+
+	var persistedRefreshes map[archiveRefreshKey]bool
+	if !locked && !offline && len(errs) == 0 {
+		var refreshErr error
+		persistedRefreshes, refreshErr = refreshDriftedMarketplaceLocks(ctx, repoRoot, localDir, mergedCfg, syncResult.Warnings)
+		if refreshErr != nil {
+			errs = append(errs, fmt.Errorf("refresh Marketplace lock evidence: %w", refreshErr))
+		}
+	}
+	syncResult.Warnings = stripUnpersistedRefreshWarnings(syncResult.Warnings, persistedRefreshes)
 
 	// Collect stale selections before strict mode reclassifies them.
 	// Only collect direct selections (not collection-sourced) for pruning.
@@ -340,8 +350,12 @@ func runSyncWithLocks(ctx context.Context, out io.Writer, noBackup bool, strict 
 }
 
 func configuredSelectionLabels(ctx context.Context, repoRoot, localDir string) []string {
+	ws, err := pipeline.WorkspaceForRoots(repoRoot, localDir)
+	if err != nil {
+		return nil
+	}
 	intent := config.ReadIntent(ctx, config.LoadEffectiveOptions{
-		RepoRoot: repoRoot, LocalConfigDir: localDir,
+		RepoRoot: ws.RepoRoot(), LocalConfigDir: ws.LocalConfigDir(),
 	})
 	seen := make(map[string]struct{})
 	for _, source := range []config.Source{config.Organization, config.UserPersonal, config.RepoCommitted, config.RepoPersonal} {
@@ -452,7 +466,7 @@ func runSyncCheck(ctx context.Context, out io.Writer, strict bool, offline ...bo
 	resolveOpts := pipeline.ResolveOptions{
 		Workspace: ws, CatalogMode: pkgcatalog.LoadModeRefresh, Offline: isOffline,
 		CatalogOption: []pkgcatalog.LoadOption{exactOption}, ExactLockLease: exactLease,
-		ConfigLoadMode: configLoadMode,
+		ConfigLoadMode: configLoadMode, MarketplaceLockEvidenceStrict: true,
 	}
 	resolveOpts.RequireTargetSet = true
 	// Use materialize in dry-run mode to check for drift; the Workspace derives
@@ -467,8 +481,8 @@ func runSyncCheck(ctx context.Context, out io.Writer, strict bool, offline ...bo
 	matErr := inspection.MaterializeErr
 
 	// Surface every warning the run produced, not just the ineffective-subdir
-	// ones. --check used to recompute AncestorMaterializedExcludeWarnings and
-	// print only those, which was both a duplicate (Resolve already puts them
+	// ones. --check used to recompute the ancestor-materialized exclude warnings
+	// and print only those, which was both a duplicate (Resolve already puts them
 	// in Warnings) and a silent drop of everything else: catalog overlaps, soft
 	// selected-not-found, soft malformed selections and materialize warning
 	// diagnostics never reached the user. A drift check that hides why output is

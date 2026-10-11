@@ -19,7 +19,7 @@ const emit = defineEmits<{
   'update:registry': [value: string[]]
 }>()
 
-const INITIAL_REGISTRY_LIMIT = 6
+const INITIAL_REGISTRY_LIMIT = 7
 const showAllRegistries = ref(false)
 
 const registryOptions = computed(() => props.registries.map(registry => ({
@@ -51,7 +51,7 @@ function updateRegistry(value: string, checked: boolean) {
 </script>
 
 <template>
-  <div class="catalog-filter-rail">
+  <div class="catalog-filter-rail" :data-expanded="showAllRegistries">
     <fieldset class="catalog-filter-group">
       <legend class="catalog-filter-label">
         Kind

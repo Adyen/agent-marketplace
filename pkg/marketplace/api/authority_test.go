@@ -31,6 +31,7 @@ func (*mismatchedResourceStore) CurrentManagedConfiguration(context.Context, sto
 	return store.ManagedChange{}, store.ErrNotFound
 }
 
+// spec: marketplace-catalog-performance/unavailable-or-invalid-authority-rejects-public-requests
 func TestPublicAuthorityFailsClosedAfterAdoption(t *testing.T) {
 	meta := &authorityMetadata{err: store.ErrNotFound}
 	server := NewServer(config.Config{Instance: config.Instance{ID: "market"}}, meta, nil)

@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"sync"
 	"time"
+
+	"github.com/Adyen/agent-marketplace/internal/fsboundary"
 )
 
 // CrashPoint names one boundary at which a real process can die mid-mutation.
@@ -41,6 +43,7 @@ const (
 	CrashAfterStateCommit CrashPoint = "after-state-commit"
 	// CrashAfterJournalCleanup: the generation is complete.
 	CrashAfterJournalCleanup CrashPoint = "after-journal-cleanup"
+	CrashAfterRecoveryRead   CrashPoint = "after-recovery-read"
 )
 
 // ErrInjectedCrash is returned by [Store.Apply] when a [Crasher] fires. It is
@@ -53,6 +56,8 @@ var ErrInjectedCrash = errors.New("ownership: injected crash")
 type Crasher interface {
 	Crash(point CrashPoint) error
 }
+
+var defaultCrasher func() Crasher
 
 // CrashAt returns a Crasher that fires exactly once at the given point.
 func CrashAt(point CrashPoint) Crasher { return &onceCrasher{point: point} }
@@ -72,9 +77,18 @@ func (c *onceCrasher) Crash(point CrashPoint) error {
 
 // Store is the durable ownership store for one canonical target root.
 type Store struct {
-	stateRoot     string
-	canonicalRoot string
-	rootKey       string
+	stateRoot          string
+	canonicalStateRoot string
+	canonicalLockRoot  string
+	lockRootErr        error
+	canonicalRoot      string
+	rootKey            string
+	// rootMu guards rootIdentity/rootBound: the directory object admitted as
+	// canonicalRoot, bound at Open when it already exists or on the first
+	// captured read otherwise. A later read through a replaced root refuses.
+	rootMu       sync.Mutex
+	rootIdentity fsboundary.Identity
+	rootBound    bool
 
 	crasher Crasher
 	now     func() time.Time
@@ -114,7 +128,7 @@ type Store struct {
 	// reach the ErrLockUnsupported branch on a filesystem that supports locking.
 	tryLock func(*os.File) error
 	// removeJournalFile overrides journal deletion for failure-path tests. It is
-	// nil in production, where clearJournal uses os.Remove.
+	// nil in production, where clearJournal uses captured journal removal.
 	removeJournalFile func(string) error
 }
 
@@ -167,9 +181,22 @@ func Open(targetRoot string, opts ...Option) (*Store, error) {
 		retain:        SafetyBackupRetention,
 		lockTimeout:   DefaultLockTimeout,
 	}
+	if info, statErr := os.Lstat(canonical); statErr == nil && info.IsDir() {
+		if identity, idErr := fsboundary.FileInfoIdentity(info); idErr == nil {
+			s.rootIdentity, s.rootBound = identity, true
+		}
+	}
 	for _, opt := range opts {
 		opt(s)
 	}
+	if s.crasher == nil && defaultCrasher != nil {
+		s.crasher = defaultCrasher()
+	}
+	s.canonicalStateRoot, err = CanonicalRoot(s.stateRoot)
+	if err != nil {
+		return nil, err
+	}
+	s.canonicalLockRoot, s.lockRootErr = CanonicalRoot(filepath.Dir(s.LockPath()))
 	// Env var > in-process configuration > code default, per AGENTS.md. The
 	// resolution happens AFTER the options so the env var genuinely wins; see
 	// [LockTimeoutEnvVar] for why that direction is the right one. A malformed
@@ -220,55 +247,4 @@ func (s *Store) crash(point CrashPoint) error {
 		return nil
 	}
 	return s.crasher.Crash(point)
-}
-
-// atomicWrite writes data to path atomically and durably: a temp file in the
-// same directory, fsync of the file, rename, then fsync of the directory so the
-// rename itself survives a power loss.
-func atomicWrite(path string, data []byte, mode os.FileMode) error {
-	dir := filepath.Dir(path)
-	tmp, err := os.CreateTemp(dir, ".tmp-"+filepath.Base(path)+"-*")
-	if err != nil {
-		return fmt.Errorf("ownership: create temp file in %s: %w", dir, err)
-	}
-	tmpName := tmp.Name()
-	cleanup := func() {
-		_ = tmp.Close()
-		_ = os.Remove(tmpName)
-	}
-	if _, err := tmp.Write(data); err != nil {
-		cleanup()
-		return fmt.Errorf("ownership: write %s: %w", tmpName, err)
-	}
-	if err := tmp.Chmod(mode); err != nil {
-		cleanup()
-		return fmt.Errorf("ownership: chmod %s: %w", tmpName, err)
-	}
-	if err := tmp.Sync(); err != nil {
-		cleanup()
-		return fmt.Errorf("ownership: fsync %s: %w", tmpName, err)
-	}
-	if err := tmp.Close(); err != nil {
-		_ = os.Remove(tmpName)
-		return fmt.Errorf("ownership: close %s: %w", tmpName, err)
-	}
-	if err := os.Rename(tmpName, path); err != nil {
-		_ = os.Remove(tmpName)
-		return fmt.Errorf("ownership: rename %s: %w", tmpName, err)
-	}
-	return fsyncDir(dir)
-}
-
-// fsyncDir flushes a directory entry so a rename or unlink is durable.
-func fsyncDir(dir string) error {
-	f, err := os.Open(dir)
-	if err != nil {
-		return fmt.Errorf("ownership: open dir %s: %w", dir, err)
-	}
-	defer func() { _ = f.Close() }()
-	// Some filesystems refuse fsync on a directory. That is not a reason to
-	// fail the whole mutation: the rename is still ordered, we simply cannot
-	// prove it reached the platter.
-	_ = f.Sync()
-	return nil
 }

@@ -53,7 +53,39 @@ func BuildInventorySnapshot(result ResolveResult) (telemetry.InventorySnapshot, 
 		snapshot.Registries = append(snapshot.Registries, registry)
 	}
 
+	type hostedRegistryKey struct {
+		marketplaceID string
+		registryID    string
+		configScope   string
+		required      bool
+	}
+	hostedRegistries := make(map[hostedRegistryKey]struct{})
 	for _, artifact := range result.Resolved {
+		if artifact.IsMarketplace {
+			sourceKind := telemetry.InventorySourceMarketplace
+			if reason := telemetry.ValidateInventorySourceIdentity(sourceKind, artifact.MarketplaceInstanceID, artifact.MarketplaceRegistryID, artifact.MarketplaceResourceName); reason != "" {
+				return telemetry.InventorySnapshot{}, reason, false
+			}
+			scope := inventoryScope(artifact.Source)
+			snapshot.Resources = append(snapshot.Resources, telemetry.InventoryResource{
+				RegistryID: artifact.MarketplaceRegistryID, SourceKind: sourceKind, MarketplaceID: artifact.MarketplaceInstanceID,
+				RegistryLocation: "marketplace", RegistryRef: strings.TrimSpace(artifact.Ref),
+				Kind: artifact.Kind.String(), Name: artifact.MarketplaceResourceName, ConfigScope: scope, Required: artifact.Required,
+			})
+			key := hostedRegistryKey{
+				marketplaceID: artifact.MarketplaceInstanceID, registryID: artifact.MarketplaceRegistryID,
+				configScope: scope, required: artifact.Required,
+			}
+			if _, exists := hostedRegistries[key]; !exists {
+				hostedRegistries[key] = struct{}{}
+				snapshot.Registries = append(snapshot.Registries, telemetry.InventoryRegistry{
+					ID: artifact.MarketplaceRegistryID, SourceKind: sourceKind, MarketplaceID: artifact.MarketplaceInstanceID,
+					Location: "marketplace", ConfigScope: scope, Required: artifact.Required,
+				})
+			}
+			continue
+		}
+
 		identity, location, local, ok := telemetry.SanitizeRegistryTelemetry(artifact.RegistryURL)
 		if !ok {
 			return telemetry.InventorySnapshot{}, telemetry.InventoryOmissionInvalid, false
@@ -68,6 +100,9 @@ func BuildInventorySnapshot(result ResolveResult) (telemetry.InventorySnapshot, 
 			resource.RegistryRef = ""
 		}
 		snapshot.Resources = append(snapshot.Resources, resource)
+	}
+	if len(snapshot.Registries) > telemetry.MaxInventoryRegistries {
+		return telemetry.InventorySnapshot{}, telemetry.InventoryOmissionTooLarge, false
 	}
 
 	sort.Slice(snapshot.Registries, func(i, j int) bool {
@@ -142,11 +177,11 @@ func inventoryScope(source config.Source) string {
 }
 
 func inventoryRegistryKey(value telemetry.InventoryRegistry) string {
-	return strings.Join([]string{value.ID, value.Location, value.Path, value.Ref, value.ConfigScope, boolString(value.Required), boolString(value.Default)}, "\x00")
+	return strings.Join([]string{value.SourceKind, value.MarketplaceID, value.ID, value.Location, value.Path, value.Ref, value.ConfigScope, boolString(value.Required), boolString(value.Default)}, "\x00")
 }
 
 func inventoryResourceKey(value telemetry.InventoryResource) string {
-	return strings.Join([]string{value.RegistryID, value.RegistryLocation, value.RegistryPath, value.RegistryRef, value.Kind, value.Name, value.ConfigScope, boolString(value.Required)}, "\x00")
+	return strings.Join([]string{value.SourceKind, value.MarketplaceID, value.RegistryID, value.RegistryLocation, value.RegistryPath, value.RegistryRef, value.Kind, value.Name, value.ConfigScope, boolString(value.Required)}, "\x00")
 }
 
 func inventoryRegistryCount(result ResolveResult) int {

@@ -43,11 +43,11 @@ func PrepareOwnedMCPRemoval(ctx context.Context, repoRoot string, target resolve
 		}
 		targets[string(harnessTarget)] = struct{}{}
 	}
-	targetViews, err := RepairPreviews(ctx, repoRoot, []resolver.ResolvedArtifact{target})
+	targetViews, err := RepairPreviews(ctx, repoRoot, []resolver.ResolvedArtifact{target}, nil)
 	if err != nil {
 		return nil, err
 	}
-	remainingViews, err := RepairPreviews(ctx, repoRoot, remaining)
+	remainingViews, err := RepairPreviews(ctx, repoRoot, remaining, nil)
 	if err != nil {
 		return nil, err
 	}

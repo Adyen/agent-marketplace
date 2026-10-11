@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/Adyen/agent-marketplace/internal/catalog"
@@ -48,7 +48,7 @@ func marketplaceDiscoveryRow(kind, name string, availability mpapi.Availability)
 
 func enterDetail(t *testing.T, m Model) (Model, tea.Cmd) {
 	t.Helper()
-	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	updated, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	return updated.(Model), cmd
 }
 
@@ -61,14 +61,14 @@ func TestMarketplaceDiscoveryDetailShowsOperatorExposedRejection(t *testing.T) {
 	if !ok {
 		t.Fatal("no selected row")
 	}
-	content := renderDetailFullContent(selected, 100)
+	content := renderDetailFullContent(newTheme(true), selected, 100)
 	if !strings.Contains(content, "Operator-exposed rejection") || !strings.Contains(content, "Press space to install") {
 		t.Fatalf("operator-exposed detail = %q", content)
 	}
 }
 
 func TestMarketplaceDiscoveryDetailShowsMetadataWithoutSourcePathError(t *testing.T) {
-	for _, kind := range []string{"skill", "collection", "command"} {
+	for _, kind := range []string{"collection", "command"} {
 		t.Run(kind, func(t *testing.T) {
 			m := modelWithSelectedRow(t, marketplaceDiscoveryRow(kind, "review-"+kind, mpapi.AvailabilityAvailable))
 			m.width = 100
@@ -151,6 +151,7 @@ func installedMarketplaceRow(kind ir.ResourceKind, name, path string) row {
 	}}
 }
 
+// spec: tui-navigation/authoritative-remote-inspection-paths-remain-unchanged
 func TestInstalledMarketplaceArchiveOpensVerifiedBundle(t *testing.T) {
 	payload := []byte(`{"name":"review","description":"review bundle"}`)
 	artifactPath := writeVerifiedArtifact(t, "skill", "review", payload, map[string][]byte{"notes.md": []byte("# Notes\n")})
@@ -282,6 +283,118 @@ func TestMarketplaceArchiveDetailFailsClosed(t *testing.T) {
 	}
 }
 
+// spec: tui-navigation/installed-skill-definition-and-supporting-files-remain-browsable
+func TestInstalledMarketplaceStagedSkillShowsVirtualPrimary(t *testing.T) {
+	staged := filepath.Join(t.TempDir(), "sha256_"+strings.Repeat("a", 64))
+	if err := os.MkdirAll(staged, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	notes := []byte("# Notes\n\nSupporting instructions.")
+	if err := os.WriteFile(filepath.Join(staged, "notes.md"), notes, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	skillResource := ir.NewSkill("grill", "Grill things", "# Grill with docs\n\nPrimary instructions.", nil, nil, ir.SourceRef{})
+	skillResource.SupportFiles = []string{"notes.md"}
+	r := installedMarketplaceRow(ir.KindSkill, "grill", staged)
+	r.Artifact.Resource = skillResource
+
+	m := modelWithSelectedRow(t, r)
+	m.width = 100
+	m.height = 30
+	m, cmd := enterDetail(t, m)
+	if m.bundle == nil {
+		t.Fatalf("staged skill did not open a bundle; viewport:\n%s", ansi.Strip(m.detailViewport.View()))
+	}
+	if m.detailSelectedPath != "SKILL.md" {
+		t.Fatalf("initial staged-skill selection = %q, want SKILL.md", m.detailSelectedPath)
+	}
+	var names []string
+	for _, entry := range m.bundle.entries() {
+		names = append(names, entry.RelPath)
+	}
+	for _, want := range []string{"SKILL.md", "notes.md"} {
+		found := false
+		for _, got := range names {
+			if got == want {
+				found = true
+			}
+		}
+		if !found {
+			t.Fatalf("staged bundle missing %q in %v", want, names)
+		}
+	}
+	if cmd == nil {
+		t.Fatal("enter did not schedule a primary preview")
+	}
+	updated, _ := m.Update(cmd().(detailContentMsg))
+	m = updated.(Model)
+	if out := ansi.Strip(m.detailViewport.View()); !contains(out, "Primary instructions.") {
+		t.Fatalf("virtual primary preview missing body:\n%s", out)
+	}
+
+	next, cmd := m.moveBundleCursor(1)
+	m = next.(Model)
+	if m.detailSelectedPath != "notes.md" {
+		t.Fatalf("moving down selected %q, want notes.md", m.detailSelectedPath)
+	}
+	updated, _ = m.Update(cmd().(detailContentMsg))
+	m = updated.(Model)
+	if out := ansi.Strip(m.detailViewport.View()); !contains(out, "Supporting instructions.") {
+		t.Fatalf("support file preview missing body:\n%s", out)
+	}
+
+	entries, err := os.ReadDir(staged)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 || entries[0].Name() != "notes.md" {
+		t.Fatalf("staging directory mutated: %v", entries)
+	}
+	data, err := os.ReadFile(filepath.Join(staged, "notes.md"))
+	if err != nil || string(data) != string(notes) {
+		t.Fatalf("support file changed: %v", err)
+	}
+}
+
+// spec: tui-navigation/installed-skill-definition-and-supporting-files-remain-browsable
+func TestInstalledMarketplaceStagedSkillFailsVisibly(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		row  func(t *testing.T) row
+	}{
+		{name: "missing directory", row: func(t *testing.T) row {
+			r := installedMarketplaceRow(ir.KindSkill, "grill", filepath.Join(t.TempDir(), "missing"))
+			r.Artifact.Resource = ir.NewSkill("grill", "Grill", "# Grill", nil, nil, ir.SourceRef{})
+			return r
+		}},
+		{name: "staged support without attached skill", row: func(t *testing.T) row {
+			staged := t.TempDir()
+			if err := os.WriteFile(filepath.Join(staged, "notes.md"), []byte("# Notes\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			return installedMarketplaceRow(ir.KindSkill, "grill", staged)
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := modelWithSelectedRow(t, tc.row(t))
+			m.width = 100
+			m.height = 30
+			m.detailViewport.SetContent("stale preview content")
+			m, cmd := enterDetail(t, m)
+			if cmd != nil || m.bundle != nil || m.detailSelectedPath != "" {
+				t.Fatalf("invalid staged skill opened a bundle: cmd=%v bundle=%v", cmd, m.bundle != nil)
+			}
+			out := ansi.Strip(m.detailViewport.View())
+			if !contains(out, "Error reading resource") || contains(out, "stale preview content") {
+				t.Fatalf("invalid staged skill did not fail visibly:\n%s", out)
+			}
+			if strings.Contains(out, ".cache") || strings.Contains(out, "sha256_") {
+				t.Fatalf("error leaked cache internals:\n%s", out)
+			}
+		})
+	}
+}
+
 func TestMarketplaceArchiveMemberTraversalRejected(t *testing.T) {
 	var buf bytes.Buffer
 	gw := gzip.NewWriter(&buf)
@@ -335,18 +448,18 @@ func TestMarketplaceDetailResizeKeepsMetadataAndRejectsStalePreview(t *testing.T
 }
 
 func TestRenderDetailFullContentMarketplaceRows(t *testing.T) {
-	discovery := renderDetailFullContent(marketplaceDiscoveryRow("collection", "bundle", mpapi.AvailabilityAvailable), 80)
+	discovery := renderDetailFullContent(newTheme(true), marketplaceDiscoveryRow("collection", "bundle", mpapi.AvailabilityAvailable), 80)
 	if strings.Contains(discovery, "no source path") || !contains(discovery, "bundle") {
 		t.Fatalf("collection discovery full detail = %q", discovery)
 	}
 
 	artifactPath := writeVerifiedArtifact(t, "command", "deploy", []byte(`{"name":"deploy","run":"go deploy"}`), nil)
-	out := ansi.Strip(renderDetailFullContent(installedMarketplaceRow(ir.KindCommand, "deploy", artifactPath), 80))
+	out := ansi.Strip(renderDetailFullContent(newTheme(true), installedMarketplaceRow(ir.KindCommand, "deploy", artifactPath), 80))
 	if !contains(out, "go deploy") {
 		t.Fatalf("installed archive full detail did not render payload:\n%s", out)
 	}
 
-	missing := ansi.Strip(renderDetailFullContent(installedMarketplaceRow(ir.KindSkill, "gone", filepath.Join(t.TempDir(), "artifact.tar.gz")), 80))
+	missing := ansi.Strip(renderDetailFullContent(newTheme(true), installedMarketplaceRow(ir.KindSkill, "gone", filepath.Join(t.TempDir(), "artifact.tar.gz")), 80))
 	if !contains(missing, "Error reading resource") {
 		t.Fatalf("missing archive full detail = %q", missing)
 	}

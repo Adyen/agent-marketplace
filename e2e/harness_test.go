@@ -201,14 +201,6 @@ func (m MCPServer) MCPFile() string {
 	return b.String()
 }
 
-// MCPPath returns the path within a registry.
-// Uses .mcp.json (Claude convention) so that autodetect discovers MCP
-// servers even when the registry is detected as Claude layout (which
-// is checked before Factory in the autodetect order).
-func (m MCPServer) MCPPath() string {
-	return ".mcp.json"
-}
-
 // ---------- registry builder ----------
 
 // RegistryFiles builds a files map suitable for Env.CreateBareRepo from a

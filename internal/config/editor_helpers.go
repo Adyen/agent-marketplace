@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/Adyen/agent-marketplace/internal/dependencytxn"
 	"github.com/Adyen/agent-marketplace/internal/skill"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 	"gopkg.in/yaml.v3"
@@ -78,38 +79,31 @@ func readOrInitConfig(configPath string) (*yaml.Node, os.FileMode, error) {
 }
 
 func readOrInitConfigWithV4(configPath string, allowV4 bool) (*yaml.Node, os.FileMode, error) {
+	if dependencytxn.ClassifyDestination(configPath) != dependencytxn.AuthorityLegacy {
+		// Managed layer destinations read through the descriptor boundary:
+		// approved links resolve to their captured target, escapes and
+		// unsafe objects refuse, and the mode comes from the same inspected
+		// state as the bytes.
+		data, generation, mode, err := dependencytxn.ReadSnapshot(configPath)
+		if err != nil {
+			return nil, 0, fmt.Errorf("read config %q: %w", configPath, err)
+		}
+		if !generation.Exists {
+			return initialConfigDocument(configPath)
+		}
+		if PeekAPIVersion(data) == APIVersionV4 && !allowV4 {
+			return nil, 0, v4err("v4.writer-opt-in", configPath, 0, "legacy config writers do not edit v4 files; use an explicit v4-aware operation")
+		}
+		doc, err := parseConfigDocument(configPath, data)
+		if err != nil {
+			return nil, 0, err
+		}
+		return doc, mode, nil
+	}
 	data, err := os.ReadFile(configPath)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			var content []*yaml.Node
-			// Local config files use the LocalConfig schema which does not
-			// have apiVersion or harnesses. Only write apiVersion for
-			// Config-type files (global, repo, org).
-			if !isLocalConfigPath(configPath) {
-				content = append(content,
-					&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: "apiVersion"},
-					&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: APIVersionV2},
-				)
-			}
-			// Include harnesses only for the global config path, where
-			// the default target set is useful. Project/local configs omit harnesses
-			// until the user explicitly selects project targets.
-			if isGlobalConfigPath(configPath) {
-				harnesses := DefaultHarnesses()
-				seqContent := make([]*yaml.Node, 0, len(harnesses))
-				for _, h := range harnesses {
-					seqContent = append(seqContent, &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: h})
-				}
-				content = append(content,
-					&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: "harnesses"},
-					&yaml.Node{Kind: yaml.SequenceNode, Tag: "!!seq", Content: seqContent},
-				)
-			}
-			doc := &yaml.Node{Kind: yaml.DocumentNode, Content: []*yaml.Node{{
-				Kind: yaml.MappingNode, Tag: "!!map",
-				Content: content,
-			}}}
-			return doc, defaultConfigMode, nil
+			return initialConfigDocument(configPath)
 		}
 		return nil, 0, fmt.Errorf("read config %q: %w", configPath, err)
 	}
@@ -128,6 +122,38 @@ func readOrInitConfigWithV4(configPath string, allowV4 bool) (*yaml.Node, os.Fil
 	}
 
 	return doc, info.Mode().Perm(), nil
+}
+
+// initialConfigDocument returns the skeleton document for a config that
+// does not exist yet. Local config files use the LocalConfig schema which
+// does not have apiVersion or harnesses. Only write apiVersion for
+// Config-type files (global, repo, org). The skeleton includes
+// harnesses: [factory, windsurf] only for the global config path; project
+// and local configs omit harnesses until explicitly configured.
+func initialConfigDocument(configPath string) (*yaml.Node, os.FileMode, error) {
+	var content []*yaml.Node
+	if !isLocalConfigPath(configPath) {
+		content = append(content,
+			&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: "apiVersion"},
+			&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: APIVersionV2},
+		)
+	}
+	if isGlobalConfigPath(configPath) {
+		harnesses := DefaultHarnesses()
+		seqContent := make([]*yaml.Node, 0, len(harnesses))
+		for _, h := range harnesses {
+			seqContent = append(seqContent, &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: h})
+		}
+		content = append(content,
+			&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: "harnesses"},
+			&yaml.Node{Kind: yaml.SequenceNode, Tag: "!!seq", Content: seqContent},
+		)
+	}
+	doc := &yaml.Node{Kind: yaml.DocumentNode, Content: []*yaml.Node{{
+		Kind: yaml.MappingNode, Tag: "!!map",
+		Content: content,
+	}}}
+	return doc, defaultConfigMode, nil
 }
 
 // isGlobalConfigPath reports whether configPath refers to the global
@@ -621,16 +647,31 @@ func validateConfigDocumentData(configPath string, data []byte) error {
 }
 
 func writeConfigDocument(configPath string, mode os.FileMode, doc *yaml.Node) error {
+	return writeConfigDocumentWithOptions(configPath, mode, doc)
+}
+
+func writeConfigDocumentWithOptions(configPath string, mode os.FileMode, doc *yaml.Node, txnOpts ...dependencytxn.Option) error {
 	data, err := encodeConfigDocument(configPath, doc)
 	if err != nil {
 		return err
 	}
-	return writeConfigDocumentData(configPath, mode, data)
+	return writeConfigDocumentDataWithOptions(configPath, mode, data, txnOpts...)
 }
 
 // writeConfigDocumentData atomically replaces the config file at configPath
 // with data, preserving the existing file's mode.
 func writeConfigDocumentData(configPath string, mode os.FileMode, data []byte) error {
+	return writeConfigDocumentDataWithOptions(configPath, mode, data)
+}
+
+func writeConfigDocumentDataWithOptions(configPath string, mode os.FileMode, data []byte, txnOpts ...dependencytxn.Option) error {
+	if dependencytxn.ClassifyDestination(configPath) != dependencytxn.AuthorityLegacy {
+		// Managed layer destinations write through the descriptor boundary.
+		// An approved link is preserved as a link and its captured target
+		// receives the edit; escapes, unsafe leaves, and parent or leaf
+		// replacements fail before the destination changes.
+		return dependencytxn.PublishDestination(configPath, dependencytxn.Generation{}, data, mode, txnOpts...)
+	}
 	// Edit through a symlink, not over it. The atomic rename below replaces
 	// whatever `configPath` names, so on the common dotfile setup where
 	// .agents/config.yaml is a symlink into a shared/checked-out file, the

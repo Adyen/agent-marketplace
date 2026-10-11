@@ -109,11 +109,7 @@ func (i Inspection) Resolve(ctx context.Context, _ *config.Config, _ []hcc.Targe
 	}
 
 	var errs []error
-	for _, pin := range i.Pins {
-		if pin.Required && pinStatusUnhealthy(pin) {
-			errs = append(errs, &PinStatusError{Pin: pin})
-		}
-	}
+	errs = append(errs, RequiredPinHealthErrors(i.Pins)...)
 
 	// Inspection artifacts are intentionally metadata-only. Do not let them
 	// enter winner selection, collision reporting, requirement validation, or
@@ -131,6 +127,21 @@ func (i Inspection) Resolve(ctx context.Context, _ *config.Config, _ []hcc.Targe
 
 func pinStatusUnhealthy(pin PinStatus) bool {
 	return pin.Cache == CacheStateError || pin.State == PinStateRevoked || pin.State == PinStateMissing || pin.State == PinStateUnavailable
+}
+
+// RequiredPinHealthErrors returns one error per required pin whose inspected
+// state is unhealthy. Read-only surfaces that also resolve Marketplace
+// artifacts from the verified local cache merge these with resolution
+// failures so one broken pin produces one attributable error rather than two
+// rows for the same pin.
+func RequiredPinHealthErrors(pins []PinStatus) []error {
+	var errs []error
+	for _, pin := range pins {
+		if pin.Required && pinStatusUnhealthy(pin) {
+			errs = append(errs, &PinStatusError{Pin: pin})
+		}
+	}
+	return errs
 }
 
 func (r *Resolver) Inspect(ctx context.Context, cfg *config.Config, targetSet []hcc.Target, mode resolver.MarketplaceResolveMode) Inspection {

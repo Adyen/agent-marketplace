@@ -446,3 +446,81 @@ func writeRecord(t *testing.T, st *Store, rec *Record) {
 		t.Fatal(err)
 	}
 }
+
+func TestProofHasHookResourceScansEntriesAndSourceEvidence(t *testing.T) {
+	f := newFixture(t)
+	f.writeAggregate(priorContent)
+	store := f.store()
+	hook := hookEntry("PreToolUse", "scalar-resource", `{"command":"echo hook","type":"command"}`)
+	hook.SourceEvidence = []HookSourceEvidence{{Resource: "evidence-resource", SourceDigest: Digest([]byte("source"))}}
+	mcp := mcpEntry("server", "mcp-resource", `{"command":"echo mcp"}`)
+	mustApply(t, store, Mutation{
+		Rel: f.rel, AbsFile: f.absFile, NextBytes: []byte(nextContent),
+		Entries: []Entry{hook, mcp}, Reason: ReasonSync,
+	})
+	proof, err := store.Proof(f.rel)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stateBefore, err := os.ReadFile(store.StateFile())
+	if err != nil {
+		t.Fatal(err)
+	}
+	stateInfo, err := os.Stat(store.StateFile())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, resource := range []string{"scalar-resource", "evidence-resource"} {
+		if !proof.HasHookResource(resource) {
+			t.Errorf("HasHookResource(%q) = false, want true", resource)
+		}
+	}
+	for _, resource := range []string{"mcp-resource", "unrelated-resource", ""} {
+		if proof.HasHookResource(resource) {
+			t.Errorf("HasHookResource(%q) = true, want false", resource)
+		}
+	}
+	var zero Proof
+	if zero.HasHookResource("scalar-resource") {
+		t.Fatal("zero Proof reported hook evidence")
+	}
+	stateAfter, err := os.ReadFile(store.StateFile())
+	if err != nil {
+		t.Fatal(err)
+	}
+	stateAfterInfo, err := os.Stat(store.StateFile())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(stateBefore) != string(stateAfter) || !os.SameFile(stateInfo, stateAfterInfo) || stateInfo.Mode() != stateAfterInfo.Mode() || !stateInfo.ModTime().Equal(stateAfterInfo.ModTime()) {
+		t.Fatal("HasHookResource changed ownership state")
+	}
+}
+
+func TestProofHasHookResourceScansSatisfactionSources(t *testing.T) {
+	f, store := newHookSatisfactionStore(t, `{"hooks":{"PreToolUse":[]}}`)
+	satisfaction := fixtureHookSatisfaction("PreToolUse", hookSatisfactionValueA,
+		HookSourceEvidence{Resource: "satisfaction-alpha", SourceDigest: hookSatisfactionFPAlpha},
+		HookSourceEvidence{Resource: "satisfaction-beta", SourceDigest: hookSatisfactionFPBeta},
+	)
+	writeRawFileState(t, store, f.rel, rawHookSatisfactionFileState("[]", "["+rawHookSatisfaction(t, satisfaction)+"]"))
+	proof, err := store.Proof(f.rel)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if proof.OwnedCount() != 0 {
+		t.Fatalf("satisfaction-only proof owned %d entries, want zero", proof.OwnedCount())
+	}
+	for _, resource := range []string{"satisfaction-alpha", "satisfaction-beta"} {
+		if !proof.HasHookResource(resource) {
+			t.Errorf("HasHookResource(%q) = false, want true", resource)
+		}
+	}
+	if proof.HasHookResource("other-resource") {
+		t.Fatal("unrelated satisfaction source was reported")
+	}
+	var zero Proof
+	if zero.HasHookResource("satisfaction-alpha") {
+		t.Fatal("zero Proof reported satisfaction-only evidence")
+	}
+}

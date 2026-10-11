@@ -98,6 +98,13 @@ func PublishRegistryRevision(ctx context.Context, meta MetadataStore, blobs Blob
 			}
 			return recordPublicationBlobOwners(txCtx, tx, req, uploads)
 		}
+		alreadyCurrent, err := tx.FenceRegistryPublication(txCtx, req)
+		if err != nil {
+			return err
+		}
+		if alreadyCurrent {
+			return nil
+		}
 		for _, rev := range req.Resources {
 			if err := tx.PutResourceRevision(txCtx, rev); err != nil {
 				return err

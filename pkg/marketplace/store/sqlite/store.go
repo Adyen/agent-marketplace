@@ -152,9 +152,9 @@ func (s *Store) withTx(ctx context.Context, fn func(*Store) error) error {
 	if err != nil {
 		return fmt.Errorf("begin tx: %w", err)
 	}
+	defer func() { _ = tx.Rollback() }()
 	txStore := &Store{path: s.path, db: s.db, q: tx, tx: tx}
 	if err := fn(txStore); err != nil {
-		_ = tx.Rollback()
 		return err
 	}
 	if err := tx.Commit(); err != nil {

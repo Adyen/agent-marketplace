@@ -171,6 +171,58 @@ func TestTUIQADriverShell(t *testing.T) {
 	}
 }
 
+// spec: regression-gates/nightly-budget-accommodates-all-repetitions
+func TestTUIQAStressBudget(t *testing.T) {
+	doc := loadWorkflow(t, "tui-qa-stress.yml")
+	on := getMap(t, doc, "on")
+	if len(getSlice(t, on, "schedule")) == 0 {
+		t.Fatal("nightly stress must retain its schedule")
+	}
+	if _, ok := on["workflow_dispatch"]; !ok {
+		t.Fatal("nightly stress must allow manual verification")
+	}
+	stress := getMap(t, getMap(t, doc, "jobs"), "stress")
+	// The measured suite takes about 38 minutes for 20 iterations. Include
+	// setup and runner headroom without weakening any journey deadline.
+	if got := stress["timeout-minutes"]; got != 60 {
+		t.Errorf("nightly deadline = %v minutes, want 60 for the measured 20-iteration workload", got)
+	}
+	run := findStepRun(t, doc, "stress", "Run complete journey suite 20 times")
+	for _, required := range []string{"set -euo pipefail", "seq 1 20", "pnpm qa:compiled"} {
+		if !strings.Contains(run, required) {
+			t.Errorf("nightly stress must retain %q:\n%s", required, run)
+		}
+	}
+	for _, tc := range []struct {
+		name, failAt, wantCount string
+		wantPass                bool
+	}{
+		{"all iterations execute", "0", "20", true},
+		{"journey failure stops the job", "7", "7", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			countFile := filepath.Join(dir, "count")
+			if err := os.WriteFile(countFile, []byte("0"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			const pnpm = "#!/bin/sh\n[ \"$1\" = qa:compiled ] || exit 41\nn=$(cat \"$COUNT_FILE\")\nn=$((n + 1))\nprintf '%s' \"$n\" > \"$COUNT_FILE\"\n[ \"$n\" -ne \"$FAIL_AT\" ]\n"
+			if err := os.WriteFile(filepath.Join(dir, "pnpm"), []byte(pnpm), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			cmd := exec.Command("bash", "-c", run)
+			cmd.Env = []string{"PATH=" + dir + ":/usr/bin:/bin", "COUNT_FILE=" + countFile, "FAIL_AT=" + tc.failAt}
+			if out, err := cmd.CombinedOutput(); (err == nil) != tc.wantPass {
+				t.Fatalf("pass = %v, want %v; err %v, output:\n%s", err == nil, tc.wantPass, err, out)
+			}
+			got, err := os.ReadFile(countFile)
+			if err != nil || string(got) != tc.wantCount {
+				t.Fatalf("iterations = %q, want %s: %v", got, tc.wantCount, err)
+			}
+		})
+	}
+}
+
 // E2E Gates is the single required context for the Marketplace, pre-v4
 // upgrade, and released-client gates, which share one planner output.
 func TestE2EGatesDriver(t *testing.T) {

@@ -6,9 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
-	"github.com/muesli/termenv"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2/compat"
 )
 
 // TestMain silences the first-run init modal for every test in the tui
@@ -16,12 +15,23 @@ import (
 // (below) flip testSkipInitModal off for the duration of their assertion.
 func TestMain(m *testing.M) {
 	testSkipInitModal = true
-	lipgloss.SetColorProfile(termenv.Ascii)
-	lipgloss.SetHasDarkBackground(true)
+	compat.HasDarkBackground = true
+	// Keep view-preference reads off the developer's real XDG state tree even
+	// for tests that never think about preferences.
+	xdg, err := os.MkdirTemp("", "am-tui-test-state")
+	if err != nil {
+		panic(err)
+	}
+	if err := os.Setenv("XDG_STATE_HOME", xdg); err != nil {
+		panic(err)
+	}
 	// The runtime allowlist is now derived from effective configuration
 	// layers. TUI tests use example.com URLs with no allowlist configured
 	// (permitting all) unless they explicitly declare one.
 	code := m.Run()
+	// os.Exit skips deferred cleanup, so remove the task-created state root
+	// explicitly.
+	_ = os.RemoveAll(xdg)
 	os.Exit(code)
 }
 
@@ -81,7 +91,7 @@ func TestInitModalDismissesOnEsc(t *testing.T) {
 	m := NewModel("/repo", "/home")
 	m.pane = paneInitModal
 
-	mi, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	mi, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEsc})
 	m = mi.(Model)
 	if m.pane != paneList {
 		t.Fatalf("esc should cancel init, got pane=%v", m.pane)
@@ -101,14 +111,14 @@ func TestInitModalTogglesAndSavesHarnesses(t *testing.T) {
 
 	// Toggle claude on.
 	m.initModal.cursor = 1 // claude
-	mi, _ := m.Update(tea.KeyMsg{Type: tea.KeySpace})
+	mi, _ := m.Update(tea.KeyPressMsg{Code: tea.KeySpace})
 	m = mi.(Model)
 	if !m.initModal.selected["claude"] {
 		t.Fatal("space should select claude")
 	}
 
 	// Save.
-	mi, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	mi, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = mi.(Model)
 	if m.pane != paneList {
 		t.Fatalf("enter should dismiss init, got pane=%v", m.pane)
@@ -144,7 +154,7 @@ func TestInitModalRejectsEmptySelection(t *testing.T) {
 	m.pane = paneInitModal
 	m.initModal = initModalState{selected: map[string]bool{}}
 
-	mi, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	mi, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = mi.(Model)
 	if cmd == nil {
 		t.Fatal("expected toast command for empty selection")
