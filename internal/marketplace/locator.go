@@ -58,16 +58,6 @@ func ParseMarketplaceLocator(raw string) (MarketplaceLocator, error) {
 	return parseAliasLocator(input)
 }
 
-// ParseLocator is a short alias for ParseMarketplaceLocator.
-func ParseLocator(raw string) (MarketplaceLocator, error) {
-	return ParseMarketplaceLocator(raw)
-}
-
-// ParseResourceLocator is a short alias for ParseMarketplaceLocator.
-func ParseResourceLocator(raw string) (MarketplaceLocator, error) {
-	return ParseMarketplaceLocator(raw)
-}
-
 // NormalizeMarketplaceURL canonicalizes an endpoint URL for Marketplace
 // identity comparisons. It accepts only HTTP(S) endpoint URLs, removes a
 // trailing slash, and normalizes scheme and host casing. Browser route paths

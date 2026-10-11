@@ -18,6 +18,7 @@ import (
 	"sync"
 	"syscall"
 
+	"github.com/Adyen/agent-marketplace/internal/fsboundary"
 	"golang.org/x/sys/unix"
 )
 
@@ -204,6 +205,14 @@ type preparedFile struct {
 	desired DesiredFile
 	oldMode fs.FileMode
 	temp    string
+	// bound holds the captured layer destination for managed config/lock
+	// paths, pinning the ancestor chain, honored link, and target identity
+	// from the compare-and-swap check until publication.
+	bound *boundDestination
+	// staging and tempName locate the staged file below the captured layer
+	// directory for a bound destination.
+	staging  *fsboundary.Dir
+	tempName string
 }
 
 const (
@@ -218,6 +227,13 @@ func Digest(data []byte) string {
 }
 
 func ReadGeneration(path string) (Generation, error) {
+	if ClassifyDestination(path) != AuthorityLegacy {
+		_, generation, _, err := readManagedSnapshot(path)
+		if err != nil {
+			return Generation{}, fmt.Errorf("dependency transaction: read generation %s: %w", path, err)
+		}
+		return generation, nil
+	}
 	raw, _, err := readRegularFile(path, maxDependencyFileSize)
 	if errors.Is(err, os.ErrNotExist) {
 		return Generation{}, nil
@@ -241,6 +257,13 @@ func ReadGenerationAndMode(path string) (Generation, fs.FileMode, error) {
 // A missing destination returns zero values without error; symlinks,
 // non-regular files, and oversize files are refused like other readers.
 func ReadSnapshot(path string) ([]byte, Generation, fs.FileMode, error) {
+	if ClassifyDestination(path) != AuthorityLegacy {
+		raw, generation, mode, err := readManagedSnapshot(path)
+		if err != nil {
+			return nil, Generation{}, 0, fmt.Errorf("dependency transaction: snapshot %s: %w", path, err)
+		}
+		return raw, generation, mode, nil
+	}
 	raw, info, err := readRegularFile(path, maxDependencyFileSize)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, Generation{}, 0, nil
@@ -414,12 +437,37 @@ func commitLocked(ctx context.Context, stateDir string, files []DesiredFile, cfg
 	if err := ValidateReadAssertions(cfg.reads); err != nil {
 		return Result{}, err
 	}
+	if err := rejectObjectAliases(files, cfg.reads); err != nil {
+		return Result{}, err
+	}
 	changed := make([]preparedFile, 0, len(files))
 	assertions := make([]journalAssertion, 0, len(files))
+	var opened []*boundDestination
+	defer func() {
+		for _, bound := range opened {
+			_ = bound.Close()
+		}
+	}()
 	for _, file := range files {
-		current, mode, err := inspectDestination(file.Path)
-		if err != nil {
-			return Result{}, err
+		var bound *boundDestination
+		var current Generation
+		var mode fs.FileMode
+		var err error
+		if ClassifyDestination(file.Path) != AuthorityLegacy {
+			bound, err = bindDestination(file.Path)
+			if err != nil {
+				return Result{}, err
+			}
+			opened = append(opened, bound)
+			current, mode, err = bound.inspect()
+			if err != nil {
+				return Result{}, err
+			}
+		} else {
+			current, mode, err = inspectDestination(file.Path)
+			if err != nil {
+				return Result{}, err
+			}
 		}
 		if current != file.Expected || file.ExpectedMode != 0 && mode != file.ExpectedMode {
 			return Result{}, fmt.Errorf("%w: %s", ErrGenerationConflict, file.Path)
@@ -428,7 +476,7 @@ func commitLocked(ctx context.Context, stateDir string, files []DesiredFile, cfg
 			assertions = append(assertions, journalAssertion{Path: file.Path, Expected: current, Mode: mode})
 			continue
 		}
-		changed = append(changed, preparedFile{desired: file, oldMode: mode})
+		changed = append(changed, preparedFile{desired: file, oldMode: mode, bound: bound})
 	}
 	if err := inject(cfg, FaultPoint{Stage: FaultAfterCAS, Index: -1}); err != nil {
 		return Result{}, err
@@ -438,11 +486,25 @@ func commitLocked(ctx context.Context, stateDir string, files []DesiredFile, cfg
 	}
 
 	journalPublished := false
+	// Deferred close runs before the unlink cleanup below only if it is
+	// registered first: defers execute last-in-first-out, and Unlink needs
+	// an open staging descriptor.
+	defer func() {
+		for _, file := range changed {
+			if file.staging != nil {
+				_ = file.staging.Close()
+			}
+		}
+	}()
 	defer func() {
 		if !journalPublished {
 			for _, file := range changed {
 				if file.temp != "" {
-					_ = os.Remove(file.temp)
+					if file.staging != nil {
+						_ = file.staging.Unlink(file.tempName)
+					} else {
+						_ = os.Remove(file.temp)
+					}
 				}
 			}
 		}
@@ -450,12 +512,23 @@ func commitLocked(ctx context.Context, stateDir string, files []DesiredFile, cfg
 	stagedDirs := make(map[string]struct{}, len(changed))
 	for i := range changed {
 		if !changed[i].desired.Delete {
-			temp, err := stageFile(changed[i].desired.Path, changed[i].desired.Bytes, changed[i].desired.Mode)
-			if err != nil {
-				return Result{}, err
+			if changed[i].bound != nil {
+				temp, staging, name, err := stageManaged(changed[i].bound, changed[i].desired.Bytes, changed[i].desired.Mode)
+				if err != nil {
+					return Result{}, err
+				}
+				changed[i].temp = temp
+				changed[i].staging = staging
+				changed[i].tempName = name
+				stagedDirs[filepath.Dir(temp)] = struct{}{}
+			} else {
+				temp, err := stageFile(changed[i].desired.Path, changed[i].desired.Bytes, changed[i].desired.Mode)
+				if err != nil {
+					return Result{}, err
+				}
+				changed[i].temp = temp
+				stagedDirs[filepath.Dir(temp)] = struct{}{}
 			}
-			changed[i].temp = temp
-			stagedDirs[filepath.Dir(temp)] = struct{}{}
 		}
 		if err := inject(cfg, FaultPoint{Stage: FaultAfterStage, Index: i, Path: changed[i].desired.Path}); err != nil {
 			return Result{}, err
@@ -500,7 +573,7 @@ func commitLocked(ctx context.Context, stateDir string, files []DesiredFile, cfg
 		if err := validatePublishPreconditions(j.Files, j.Assertions, i); err != nil {
 			return Result{}, err
 		}
-		if err := publish(file, cfg.syncDir); err != nil {
+		if err := publishPrepared(changed[i], file, cfg.syncDir); err != nil {
 			return Result{}, err
 		}
 		if err := inject(cfg, FaultPoint{Stage: FaultAfterPublish, Index: i, Path: file.Path}); err != nil {
@@ -742,7 +815,13 @@ func normalizeDesired(desired []DesiredFile) ([]DesiredFile, error) {
 // ValidateDestination validates the lexical destination used by a dependency
 // transaction. Existing ancestors are inspected with Lstat so a symlink cannot
 // be canonicalized into a different layer before the transaction starts.
+// Managed config/lock destinations are validated by their layer authority
+// instead: an approved link leaf stays named by its logical layer path and is
+// captured through the descriptor boundary.
 func ValidateDestination(path string) (string, error) {
+	if ClassifyDestination(path) != AuthorityLegacy {
+		return validateManagedDestinationPath(path)
+	}
 	path, err := normalizeDestinationPath(path)
 	if err != nil {
 		return "", err
@@ -761,7 +840,13 @@ func ValidateDestination(path string) (string, error) {
 // compatibility, but only when the target remains adjacent to the logical
 // config path. It never follows an ancestor symlink, and therefore cannot
 // redirect a config transaction (or its adjacent lock) outside its layer.
+// Managed layer destinations keep their logical layer path: approved links
+// are honored by the descriptor boundary at capture, read, and publication
+// time instead of being resolved lexically here.
 func CanonicalConfigDestination(path string) (string, error) {
+	if ClassifyDestination(path) != AuthorityLegacy {
+		return validateManagedDestinationPath(path)
+	}
 	path, err := normalizeDestinationPath(path)
 	if err != nil {
 		return "", err
@@ -893,6 +978,9 @@ func prepareStateDir(path string) (string, error) {
 }
 
 func inspectDestination(path string) (Generation, fs.FileMode, error) {
+	if ClassifyDestination(path) != AuthorityLegacy {
+		return inspectManagedPath(path)
+	}
 	info, err := os.Lstat(path)
 	if os.IsNotExist(err) {
 		return Generation{}, 0, nil
@@ -1007,6 +1095,28 @@ func validateReadAssertions(reads []ReadAssertion, published map[string]Generati
 			return err
 		}
 		next, owned := published[read.Path]
+		if !owned && ClassifyDestination(read.RequestedPath) != AuthorityLegacy {
+			// The layer file was published through its managed path while
+			// the loader recorded the read at the link's resolved target:
+			// ownership follows the requested layer destination.
+			if canonical, err := canonicalManagedPath(read.RequestedPath); err == nil {
+				next, owned = published[canonical]
+			}
+		}
+		if ClassifyDestination(read.Path) != AuthorityLegacy {
+			// A managed read keeps its logical layer path; an approved link
+			// resolves through the descriptor boundary, so the lexical
+			// canonical comparison does not apply. The generation check
+			// below reads through that boundary.
+			generation, err := ReadGeneration(read.Path)
+			if err != nil {
+				return fmt.Errorf("%w: config read unavailable at %s: %w", ErrGenerationConflict, read.Path, err)
+			}
+			if generation != read.Expected && (!owned || generation != next) {
+				return fmt.Errorf("%w: config read changed at %s", ErrGenerationConflict, read.Path)
+			}
+			continue
+		}
 		canonical, err := filepath.EvalSymlinks(read.RequestedPath)
 		if errors.Is(err, os.ErrNotExist) && (!read.Expected.Exists || owned && !next.Exists) {
 			canonical, err = CanonicalConfigDestination(read.RequestedPath)
@@ -1062,7 +1172,34 @@ func validateAssertions(assertions []journalAssertion) error {
 	return nil
 }
 
+// publishPrepared publishes one journaled file during a live commit. Bound
+// destinations rename or unlink descriptor-relatively through the captured
+// layer boundary; legacy destinations keep the path-based behavior.
+func publishPrepared(prepared preparedFile, file journalFile, syncDir func(string) error) error {
+	if prepared.bound == nil {
+		return publish(file, syncDir)
+	}
+	if file.Delete {
+		if err := prepared.bound.dest.RemoveLeaf(); err != nil {
+			return mapBoundaryErr(err)
+		}
+		return nil
+	}
+	if err := validateStaged(file); err != nil {
+		return err
+	}
+	if err := prepared.bound.dest.Publish(prepared.staging, prepared.tempName); err != nil {
+		return mapBoundaryErr(err)
+	}
+	return nil
+}
+
 func publish(file journalFile, syncDir func(string) error) error {
+	if ClassifyDestination(file.Path) != AuthorityLegacy {
+		// Recovery rebinds the managed destination from its journaled path
+		// and publishes through a fresh capture of the layer boundary.
+		return publishManagedJournal(file, syncDir)
+	}
 	state, err := classify(file)
 	if err != nil {
 		return err
@@ -1103,7 +1240,7 @@ func classify(file journalFile) (string, error) {
 }
 
 func validateStaged(file journalFile) error {
-	if err := ensureContained(filepath.Dir(file.Path), file.Temp); err != nil {
+	if err := validateStagingPath(file); err != nil {
 		return err
 	}
 	raw, info, err := readRegularFile(file.Temp, maxDependencyFileSize)
@@ -1145,8 +1282,8 @@ func validateJournal(j *journal) error {
 			if !file.Old.Exists || file.Temp != "" || file.NewMode != 0 {
 				return fmt.Errorf("%w: invalid journal deletion for %s", ErrRecoveryBlocked, file.Path)
 			}
-		} else if err := ensureContained(filepath.Dir(file.Path), file.Temp); err != nil {
-			return fmt.Errorf("%w: %v", ErrRecoveryBlocked, err)
+		} else if err := validateStagingPath(file); err != nil {
+			return fmt.Errorf("%w: %w", ErrRecoveryBlocked, err)
 		}
 		destinations[file.Path] = struct{}{}
 		previous = file.Path

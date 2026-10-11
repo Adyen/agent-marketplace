@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Adyen/agent-marketplace/internal/fsboundary"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
 )
 
@@ -379,7 +380,7 @@ func (s *Store) LockContext(ctx context.Context) (release func(), err error) {
 	}
 	s.lockMu.Unlock()
 
-	f, waited, attempts, err := s.acquireLock(ctx)
+	f, parent, waited, attempts, err := s.acquireLock(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -389,7 +390,11 @@ func (s *Store) LockContext(ctx context.Context) (release func(), err error) {
 	s.session = &lockSession{f: f, depth: 1}
 	s.lockMu.Unlock()
 
-	s.writeLockMetadata(f)
+	s.writeLockMetadata(f, parent)
+	if closeErr := parent.Close(); closeErr != nil {
+		slog.Debug("could not close the captured lock directory; the lock itself is unaffected",
+			"root_key", s.rootKey, "err", closeErr)
+	}
 	s.observeLock(LockEvent{Kind: LockAcquired, Depth: 1, Waited: waited, Attempts: attempts})
 	return s.releaser(), nil
 }
@@ -680,28 +685,41 @@ func dropHeldDescriptor(f *os.File) {
 // acquireLock opens the lock file and takes the kernel lock, polling until the
 // deadline. It returns the descriptor that owns the lock, how long it waited,
 // and how many attempts it made.
-func (s *Store) acquireLock(ctx context.Context) (*os.File, time.Duration, int, error) {
+func (s *Store) acquireLock(ctx context.Context) (f *os.File, parent *fsboundary.Dir, waited time.Duration, attempts int, err error) {
 	path := s.LockPath()
 	// An already-cancelled caller must not even create locks/: it asked to stop,
 	// and the lock directory is the one thing acquisition adds to the state root.
 	if err := ctx.Err(); err != nil {
-		return nil, 0, 0, fmt.Errorf("ownership: lock %s: %w", path, err)
+		return nil, nil, 0, 0, fmt.Errorf("ownership: lock %s: %w", path, err)
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return nil, 0, 0, fmt.Errorf("ownership: create lock directory %s: %w", filepath.Dir(path), err)
-	}
+
 	// O_CREATE without O_EXCL: the file is created once per root and reused
 	// forever. Recreating it would split the lock across two inodes.
 	//
-	// lockOpenFlags adds O_NOFOLLOW on unix. Acquisition TRUNCATES this path to
+	// Captured creation adds O_NOFOLLOW. Acquisition truncates the descriptor to
 	// write its diagnostics-only metadata, so a symlink in the final component
 	// would let anything that can write into locks/ redirect that truncation at
 	// a file the lock does not own — including this package's own ownership
 	// record two directories away. A symlinked lock path is refused loudly
 	// instead: it is never something this package created.
-	f, err := os.OpenFile(path, lockOpenFlags, 0o644)
+	f, parent, err = s.openLockFile()
 	if err != nil {
-		return nil, 0, 0, fmt.Errorf("ownership: open lock file %s: %w", path, err)
+		return nil, nil, 0, 0, fmt.Errorf("ownership: open lock file %s: %w", path, err)
+	}
+	// One captured lock directory serves every named-leaf validation of this
+	// acquisition; the caller closes it on success, every failure closes it here.
+	captured := parent
+	defer func() {
+		if err != nil {
+			err = closeLockParent(captured, err)
+		}
+	}()
+	if err := s.validateLockAuthority(f, parent); err != nil {
+		err = fmt.Errorf("ownership: validate lock file %s: %w", path, err)
+		if closeErr := f.Close(); closeErr != nil {
+			return nil, nil, 0, 0, errors.Join(err, closeErr)
+		}
+		return nil, nil, 0, 0, err
 	}
 
 	start := time.Now()
@@ -718,6 +736,13 @@ func (s *Store) acquireLock(ctx context.Context) (*os.File, time.Duration, int, 
 		lockErr := try(f)
 		switch {
 		case lockErr == nil:
+			if err := s.validateLockAuthority(f, parent); err != nil {
+				err = fmt.Errorf("ownership: validate locked file %s: %w", path, err)
+				if closeErr := f.Close(); closeErr != nil {
+					return nil, nil, time.Since(start), attempts, errors.Join(err, closeErr)
+				}
+				return nil, nil, time.Since(start), attempts, err
+			}
 			waited := time.Since(start)
 			if waited >= LockContendedReportThreshold {
 				slog.Info("waited for another agent-marketplace process to release the ownership lock",
@@ -727,7 +752,7 @@ func (s *Store) acquireLock(ctx context.Context) (*os.File, time.Duration, int, 
 					"attempts", attempts,
 				)
 			}
-			return f, waited, attempts, nil
+			return f, parent, waited, attempts, nil
 
 		case errors.Is(lockErr, ErrLockUnsupported):
 			_ = f.Close()
@@ -743,11 +768,11 @@ func (s *Store) acquireLock(ctx context.Context) (*os.File, time.Duration, int, 
 				"root_key", s.rootKey,
 				"err", lockErr,
 			)
-			return nil, time.Since(start), attempts, coded(diag.CodeOwnershipLockUnavailable, path, lockErr)
+			return nil, nil, time.Since(start), attempts, coded(diag.CodeOwnershipLockUnavailable, path, lockErr)
 
 		case !errors.Is(lockErr, errLockBusy):
 			_ = f.Close()
-			return nil, time.Since(start), attempts, fmt.Errorf("ownership: lock %s: %w", path, lockErr)
+			return nil, nil, time.Since(start), attempts, fmt.Errorf("ownership: lock %s: %w", path, lockErr)
 		}
 
 		// Contended.
@@ -762,7 +787,7 @@ func (s *Store) acquireLock(ctx context.Context) (*os.File, time.Duration, int, 
 
 			if isENOLCK(lockErr) {
 				s.observeLock(LockEvent{Kind: LockUnsupported, Waited: waited, Attempts: attempts, Err: ErrLockUnsupported})
-				return nil, waited, attempts, coded(diag.CodeOwnershipLockUnavailable, path, ErrLockUnsupported)
+				return nil, nil, waited, attempts, coded(diag.CodeOwnershipLockUnavailable, path, ErrLockUnsupported)
 			}
 
 			s.observeLock(LockEvent{Kind: LockTimedOut, Waited: waited, Attempts: attempts, Err: ErrLockTimeout})
@@ -772,7 +797,7 @@ func (s *Store) acquireLock(ctx context.Context) (*os.File, time.Duration, int, 
 				"waited", waited.String(),
 				"attempts", attempts,
 			)
-			return nil, waited, attempts, coded(diag.CodeOwnershipLockTimeout, path,
+			return nil, nil, waited, attempts, coded(diag.CodeOwnershipLockTimeout, path,
 				fmt.Errorf("%w after %s", ErrLockTimeout, waited.Round(time.Millisecond)))
 		}
 		// Cancellation is checked HERE, alongside the remaining time, rather than
@@ -785,7 +810,7 @@ func (s *Store) acquireLock(ctx context.Context) (*os.File, time.Duration, int, 
 			s.observeLock(LockEvent{Kind: LockCanceled, Waited: waited, Attempts: attempts, Err: err})
 			slog.Debug("abandoned the wait for the ownership lock because the caller was cancelled",
 				"root_key", s.rootKey, "waited", waited.String(), "attempts", attempts, "err", err)
-			return nil, waited, attempts, fmt.Errorf("ownership: lock %s: %w", path, err)
+			return nil, nil, waited, attempts, fmt.Errorf("ownership: lock %s: %w", path, err)
 		}
 		backoff = min(backoff*2, lockBackoffMax)
 	}
@@ -850,10 +875,14 @@ func (s *Store) observeLock(ev LockEvent) {
 // `cat`ting the named path and finding the pid and argv0 of that process. If
 // that path ever stops being reported to users, this write becomes dead weight
 // and should be deleted rather than left as decoration.
-func (s *Store) writeLockMetadata(f *os.File) {
+func (s *Store) writeLockMetadata(f *os.File, parent *fsboundary.Dir) {
 	line := fmt.Sprintf("pid=%d host=%s argv0=%s acquired=%s\n",
 		os.Getpid(), lockHost(), sanitizeLockField(filepath.Base(os.Args[0])),
 		s.now().UTC().Format(time.RFC3339Nano))
+	if err := s.validateLockAuthority(f, parent); err != nil {
+		slog.Debug("refused unsafe advisory lock metadata write", "root_key", s.rootKey, "err", err)
+		return
+	}
 	if _, err := f.Seek(0, 0); err != nil {
 		slog.Debug("could not rewind the advisory lock file for its metadata; the lock itself is unaffected",
 			"root_key", s.rootKey, "err", err)

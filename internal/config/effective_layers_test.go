@@ -94,13 +94,16 @@ func TestEffectiveConfigUsesNearestMonorepoLocalLayerPath(t *testing.T) {
 	ResetRepoRootCache()
 	t.Cleanup(ResetRepoRootCache)
 
-	ec := loadEffectiveForTest(context.Background(), LoadEffectiveOptions{})
-	if len(ec.Errors) != 0 {
-		t.Fatalf("LoadEffective errors: %v", ec.Errors)
-	}
 	canonicalService, err := filepath.EvalSymlinks(service)
 	if err != nil {
 		t.Fatal(err)
+	}
+	ec := loadEffectiveForTest(context.Background(), LoadEffectiveOptions{
+		RepoRoot:       repo,
+		LocalConfigDir: canonicalService,
+	})
+	if len(ec.Errors) != 0 {
+		t.Fatalf("LoadEffective errors: %v", ec.Errors)
 	}
 	wantLocalPath := filepath.Join(canonicalService, ".agents", "config.local.yaml")
 	if ec.LocalLayer.Path != wantLocalPath {

@@ -46,7 +46,11 @@ func newSearchCmd() *cobra.Command {
 func runSearchContext(ctx context.Context, out io.Writer, errOut io.Writer, args []string, marketplaceFlag, kindFilter, output string, limit, offset int) error {
 	query := strings.Join(args, " ")
 
-	ec := pipeline.LoadEffective(ctx, pipeline.ConfigLoadOnline, config.LoadEffectiveOptions{}, nil)
+	ws, err := pipeline.DiscoverWorkspace()
+	if err != nil {
+		return err
+	}
+	ec := pipeline.LoadEffective(ctx, pipeline.ConfigLoadOnline, config.LoadEffectiveOptions{RepoRoot: ws.RepoRoot(), LocalConfigDir: ws.LocalConfigDir()}, nil)
 	config.LogManagedDiagnostics(ec.Diagnostics)
 	for _, w := range ec.Warnings {
 		slog.Warn("config warning during search", "warning", w)

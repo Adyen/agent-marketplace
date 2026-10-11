@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/jsonc"
 )
 
 // stateVersion is the on-disk schema version. A record with an unknown version
@@ -62,6 +63,31 @@ type Entry struct {
 	// it, and only as a sha256 digest, so no hook payload can ride along in
 	// this field. Absent means "no source proof", never a guess.
 	SourceDigest string `json:"source_digest,omitempty"`
+	// SourceEvidence records every additional (resource, source fingerprint)
+	// pair a multi-source native writer proved for this entry, under the
+	// same non-secret validation rules as the scalar evidence. Readers must
+	// never add tuples while reading, and a tuple only ever matches its
+	// exact pair.
+	SourceEvidence []HookSourceEvidence `json:"source_evidence,omitempty"`
+}
+
+// HookSourceEvidence is one additional contributing source for an owned
+// native hook entry: the marketplace resource name and the version-1
+// source-hook fingerprint of one selected hook that produced the entry.
+type HookSourceEvidence struct {
+	Resource     string `json:"resource"`
+	SourceDigest string `json:"source_digest"`
+}
+
+type HookSatisfaction struct {
+	Container      string               `json:"container"`
+	IdentityDigest string               `json:"identity_digest"`
+	ValueDigest    string               `json:"value_digest"`
+	Sources        []HookSourceEvidence `json:"sources"`
+}
+
+func (s HookSatisfaction) ID() EntryID {
+	return EntryID{Kind: KindHook, Container: s.Container, IdentityDigest: s.IdentityDigest}
 }
 
 // EntryID is the identity half of an [Entry], with no value digest, so a caller
@@ -86,8 +112,9 @@ func (id EntryID) mapKey() string {
 type FileState struct {
 	// ContentDigest is the digest of the whole file as this package last wrote
 	// it. A mismatch means the file changed outside our control.
-	ContentDigest string  `json:"content_digest"`
-	Entries       []Entry `json:"entries"`
+	ContentDigest     string             `json:"content_digest"`
+	Entries           []Entry            `json:"entries"`
+	HookSatisfactions []HookSatisfaction `json:"hook_satisfactions,omitempty"`
 }
 
 // Record is the durable ownership record for one canonical target root.
@@ -212,6 +239,50 @@ func validateEntry(e Entry) error {
 	if e.SourceDigest != "" && (e.Kind != KindHook || !digestPattern.MatchString(e.SourceDigest)) {
 		return fmt.Errorf("%w: source digest must be a sha256 digest on a hook entry", ErrUnsafeStateValue)
 	}
+	if len(e.SourceEvidence) > 0 && e.Kind != KindHook {
+		return fmt.Errorf("%w: source evidence is valid only on hook entries", ErrUnsafeStateValue)
+	}
+	for _, ev := range e.SourceEvidence {
+		if !safeToken.MatchString(ev.Resource) {
+			return fmt.Errorf("%w: source evidence resource name", ErrUnsafeStateValue)
+		}
+		if !digestPattern.MatchString(ev.SourceDigest) {
+			return fmt.Errorf("%w: source evidence digest is not a sha256 digest", ErrUnsafeStateValue)
+		}
+	}
+	return nil
+}
+
+func validateHookSatisfaction(s HookSatisfaction) error {
+	if !safeToken.MatchString(s.Container) {
+		return fmt.Errorf("%w: hook satisfaction container", ErrUnsafeStateValue)
+	}
+	if !digestPattern.MatchString(s.IdentityDigest) {
+		return fmt.Errorf("%w: hook satisfaction identity digest is not a sha256 digest", ErrUnsafeStateValue)
+	}
+	if !digestPattern.MatchString(s.ValueDigest) {
+		return fmt.Errorf("%w: hook satisfaction value digest is not a sha256 digest", ErrUnsafeStateValue)
+	}
+	if s.IdentityDigest != HookIdentityDigest(s.Container, s.ValueDigest) {
+		return fmt.Errorf("%w: hook satisfaction identity digest does not match value", ErrUnsafeStateValue)
+	}
+	if len(s.Sources) == 0 {
+		return fmt.Errorf("%w: hook satisfaction has no source evidence", ErrUnsafeStateValue)
+	}
+	seenSources := make(map[string]struct{}, len(s.Sources))
+	for _, source := range s.Sources {
+		if !safeToken.MatchString(source.Resource) {
+			return fmt.Errorf("%w: hook satisfaction source resource name", ErrUnsafeStateValue)
+		}
+		if !digestPattern.MatchString(source.SourceDigest) {
+			return fmt.Errorf("%w: hook satisfaction source digest is not a sha256 digest", ErrUnsafeStateValue)
+		}
+		key := source.Resource + "\x00" + source.SourceDigest
+		if _, duplicate := seenSources[key]; duplicate {
+			return fmt.Errorf("%w: duplicate hook satisfaction source pair", ErrUnsafeStateValue)
+		}
+		seenSources[key] = struct{}{}
+	}
 	return nil
 }
 
@@ -236,6 +307,17 @@ func validateRecord(r *Record, canonicalRoot, rootKey string) error {
 			if err := validateEntry(e); err != nil {
 				return errors.Join(ErrStateCorrupt, err)
 			}
+		}
+		seenSatisfactions := make(map[string]struct{}, len(fs.HookSatisfactions))
+		for _, satisfaction := range fs.HookSatisfactions {
+			if err := validateHookSatisfaction(satisfaction); err != nil {
+				return errors.Join(ErrStateCorrupt, err)
+			}
+			key := satisfaction.ID().mapKey()
+			if _, duplicate := seenSatisfactions[key]; duplicate {
+				return errors.Join(ErrStateCorrupt, fmt.Errorf("%w: duplicate hook satisfaction identity", ErrUnsafeStateValue))
+			}
+			seenSatisfactions[key] = struct{}{}
 		}
 	}
 	return nil
@@ -309,16 +391,24 @@ func (s *Store) missingStateError() error {
 // record that went away. That is a reporting distinction only: the code, the
 // severity, and the nil record are identical either way.
 func (s *Store) Load() (*Record, error) {
-	data, err := os.ReadFile(s.StateFile())
+	record, _, err := s.loadObservedRecord()
+	return record, err
+}
+
+func (s *Store) loadObservedRecord() (*Record, metadataPin, error) {
+	data, exists, pin, err := s.readObservedMetadata(stateFileName)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, coded(diag.CodeOwnershipStateMissing, s.StateFile(), s.missingStateError())
-		}
-		return nil, coded(diag.CodeOwnershipStateCorrupt, s.StateFile(), fmt.Errorf("%w: %v", ErrStateCorrupt, err))
+		return nil, pin, coded(diag.CodeOwnershipStateCorrupt, s.StateFile(), fmt.Errorf("%w: %w", ErrStateCorrupt, err))
+	}
+	if !exists {
+		return nil, pin, coded(diag.CodeOwnershipStateMissing, s.StateFile(), s.missingStateError())
 	}
 	var rec Record
-	if err := json.Unmarshal(data, &rec); err != nil {
-		return nil, coded(diag.CodeOwnershipStateCorrupt, s.StateFile(), fmt.Errorf("%w: malformed JSON", ErrStateCorrupt))
+	// The typed jsonc decode rejects literal duplicate keys and case-folded
+	// aliases for modeled fields (including nested source_evidence members)
+	// before any value reaches the record.
+	if err := jsonc.Unmarshal(s.StateFile(), data, &rec); err != nil {
+		return nil, pin, coded(diag.CodeOwnershipStateCorrupt, s.StateFile(), fmt.Errorf("%w: malformed state JSON", ErrStateCorrupt))
 	}
 	normalizeHookEntries(&rec)
 	if err := validateRecord(&rec, s.canonicalRoot, s.rootKey); err != nil {
@@ -326,18 +416,22 @@ func (s *Store) Load() (*Record, error) {
 		if errors.Is(err, ErrStateRootMismatch) {
 			code = diag.CodeOwnershipStateRootMismatch
 		}
-		return nil, coded(code, s.StateFile(), err)
+		return nil, pin, coded(code, s.StateFile(), err)
 	}
 	if rec.Files == nil {
 		rec.Files = map[string]FileState{}
 	}
-	return &rec, nil
+	return &rec, pin, nil
 }
 
 // commitRecord writes the record atomically and durably: temp file in the same
 // directory, fsync the file, rename over the target, fsync the directory. On any
 // crash the reader sees either the whole previous record or the whole new one.
 func (s *Store) commitRecord(rec *Record) error {
+	return s.commitRecordWithValidation(rec, nil)
+}
+
+func (s *Store) commitRecordWithValidation(rec *Record, validate func() error) (err error) {
 	if err := validateRecord(rec, s.canonicalRoot, s.rootKey); err != nil {
 		return err
 	}
@@ -346,10 +440,28 @@ func (s *Store) commitRecord(rec *Record) error {
 		return fmt.Errorf("ownership: marshal record: %w", err)
 	}
 	data = append(data, '\n')
-	if err := os.MkdirAll(s.recordDir(), 0o700); err != nil {
-		return fmt.Errorf("ownership: create state directory: %w", err)
+	if validate == nil {
+		return s.writeMetadata(stateFileName, data)
 	}
-	return atomicWrite(s.StateFile(), data, 0o600)
+	if err := validate(); err != nil {
+		return err
+	}
+	parent, err := s.captureMetadataParent()
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if closeErr := parent.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
+	_, _, err = writeObservedMetadataFile(parent, stateFileName, data, func() error {
+		if err := s.verifyMetadataParent(parent); err != nil {
+			return err
+		}
+		return validate()
+	})
+	return err
 }
 
 // nextRecord builds the record that a mutation will commit, from the currently
@@ -392,10 +504,13 @@ func (s *Store) nextRecord(current *Record, rel string, contentDigest string, en
 		}
 		return a.IdentityDigest < b.IdentityDigest
 	})
-	if len(sorted) == 0 {
+	fileState := next.Files[rel]
+	fileState.ContentDigest = contentDigest
+	fileState.Entries = sorted
+	if len(sorted) == 0 && len(fileState.HookSatisfactions) == 0 {
 		delete(next.Files, rel)
 	} else {
-		next.Files[rel] = FileState{ContentDigest: contentDigest, Entries: sorted}
+		next.Files[rel] = fileState
 	}
 	return next, nil
 }
@@ -435,10 +550,11 @@ func (s *Store) Proof(rel string) (Proof, error) {
 		entries[e.ID().mapKey()] = e
 	}
 	return Proof{
-		file:          rel,
-		generation:    rec.Generation,
-		contentDigest: fs.ContentDigest,
-		entries:       entries,
+		file:              rel,
+		generation:        rec.Generation,
+		contentDigest:     fs.ContentDigest,
+		entries:           entries,
+		hookSatisfactions: fs.HookSatisfactions,
 	}, nil
 }
 
@@ -485,10 +601,11 @@ func (s Status) String() string {
 // [Store.Proof]. This is the structural half of "doctor primitives cannot infer
 // ownership heuristically".
 type Proof struct {
-	file          string
-	generation    uint64
-	contentDigest string
-	entries       map[string]Entry
+	file              string
+	generation        uint64
+	contentDigest     string
+	entries           map[string]Entry
+	hookSatisfactions []HookSatisfaction
 }
 
 // File returns the output-relative file the proof covers.
@@ -499,6 +616,25 @@ func (p Proof) Generation() uint64 { return p.generation }
 
 // ContentDigest returns the digest of the file as this package last wrote it.
 func (p Proof) ContentDigest() string { return p.contentDigest }
+
+func (p Proof) HookSatisfactions() []HookSatisfaction {
+	satisfactions := make([]HookSatisfaction, len(p.hookSatisfactions))
+	for i, satisfaction := range p.hookSatisfactions {
+		satisfactions[i] = satisfaction
+		satisfactions[i].Sources = append([]HookSourceEvidence(nil), satisfaction.Sources...)
+	}
+	sort.Slice(satisfactions, func(i, j int) bool {
+		a, b := satisfactions[i], satisfactions[j]
+		return a.Container < b.Container || a.Container == b.Container && a.IdentityDigest < b.IdentityDigest
+	})
+	for i := range satisfactions {
+		sort.Slice(satisfactions[i].Sources, func(a, b int) bool {
+			left, right := satisfactions[i].Sources[a], satisfactions[i].Sources[b]
+			return left.Resource < right.Resource || left.Resource == right.Resource && left.SourceDigest < right.SourceDigest
+		})
+	}
+	return satisfactions
+}
 
 // OwnedCount returns how many entries the proof covers.
 func (p Proof) OwnedCount() int { return len(p.entries) }
@@ -547,6 +683,32 @@ func (p Proof) SourceDigest(id EntryID) (string, bool) {
 		return "", false
 	}
 	return e.SourceDigest, true
+}
+
+// HasHookSource reports whether the recorded entry for id proves that the
+// selected hook named by (resource, digest) contributed to it — either as the
+// entry's scalar resource/fingerprint pair or as one exact source_evidence
+// tuple. It is evidence lookup only, never a current-byte grant: an absent
+// digest, an unknown identity, a non-hook entry, and the zero Proof all
+// return false, and the caller remains responsible for the complete
+// owned-clean classification of every matching entry.
+func (p Proof) HasHookSource(id EntryID, resource, digest string) bool {
+	if digest == "" {
+		return false
+	}
+	e, ok := p.entries[id.mapKey()]
+	if !ok || e.Kind != KindHook {
+		return false
+	}
+	if e.Resource == resource && e.SourceDigest == digest {
+		return true
+	}
+	for _, ev := range e.SourceEvidence {
+		if ev.Resource == resource && ev.SourceDigest == digest {
+			return true
+		}
+	}
+	return false
 }
 
 // appendLengthPrefixed adds a length-prefixed string to buf. It is used to build

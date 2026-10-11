@@ -29,28 +29,55 @@ const isCopied = computed(() => copied.value === 'command')
   <div>
     <!-- Filled, unbordered, prompt-prefixed: a command is output to be taken,
          not a field to be typed in, so it must not borrow input chrome. -->
-    <div class="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-2 rounded border border-[var(--am-color-code-border)] bg-[var(--am-color-code-bg)] p-2">
-      <div class="flex min-w-0 items-center gap-3 overflow-x-auto px-2 py-1">
-        <span class="select-none font-mono text-sm leading-6 text-dimmed" aria-hidden="true">$</span>
-        <code
+    <div data-testid="command-container" class="grid h-12 grid-cols-[minmax(0,1fr)_auto] overflow-hidden rounded border border-(--am-color-code-border) bg-(--am-color-code-bg)">
+      <pre data-testid="command-scroll" class="command-scroll m-0 flex h-full min-w-0 items-center gap-3 overflow-x-auto overflow-y-hidden pl-4 pr-10 py-2 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-(--am-color-action-focus-ring)" tabindex="0" aria-label="Install command"><span class="select-none font-mono text-sm leading-6 text-dimmed" aria-hidden="true">$</span><code
           v-if="available"
           data-testid="command-text"
-          class="whitespace-pre font-mono text-sm leading-6 text-[var(--am-color-code-text)]"
-        >{{ command }}</code>
-        <span v-else class="font-mono text-sm leading-6 text-dimmed">command unavailable</span>
-      </div>
+          class="whitespace-pre font-mono text-sm leading-6 text-(--am-color-code-text)"
+        >{{ command }}</code><span v-else class="font-mono text-sm leading-6 text-dimmed">command unavailable</span></pre>
 
-      <CopyButton
-        class="self-stretch border-primary bg-primary px-3 text-inverted hover:border-primary hover:bg-primary"
-        :copied="isCopied"
-        :copy-label="`Copy ${label}`"
-        :copied-label="`${label} copied`"
-        :disabled="!available"
-        @click="copy(command, 'command')"
-      />
+      <div data-testid="command-copy-area" class="flex items-center border-l border-(--am-color-code-border) bg-(--am-color-bg-subtle) p-2">
+        <CopyButton
+          class="border-primary bg-primary px-3 text-inverted hover:border-primary hover:bg-primary"
+          :copied="isCopied"
+          :copy-label="`Copy ${label}`"
+          :copied-label="`${label} copied`"
+          :disabled="!available"
+          @click="copy(command, 'command')"
+        />
+      </div>
     </div>
 
     <p v-if="copyError === 'command'" role="alert" class="mt-2 text-xs text-error">Clipboard access failed. Select the command and copy it manually.</p>
     <p class="sr-only" aria-live="polite">{{ isCopied ? `${label} copied.` : '' }}</p>
   </div>
 </template>
+
+<style scoped>
+.command-scroll {
+  scrollbar-color: transparent transparent;
+  scrollbar-width: thin;
+  -webkit-mask-image: linear-gradient(to right, #000 0, #000 calc(100% - 32px), transparent 100%);
+  mask-image: linear-gradient(to right, #000 0, #000 calc(100% - 32px), transparent 100%);
+}
+
+.command-scroll:hover,
+.command-scroll:focus-visible {
+  scrollbar-color: var(--am-color-border-strong) transparent;
+}
+
+.command-scroll::-webkit-scrollbar {
+  height: 6px;
+}
+
+.command-scroll::-webkit-scrollbar-track,
+.command-scroll::-webkit-scrollbar-thumb {
+  background: transparent;
+}
+
+.command-scroll:hover::-webkit-scrollbar-thumb,
+.command-scroll:focus-visible::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: var(--am-color-border-strong);
+}
+</style>

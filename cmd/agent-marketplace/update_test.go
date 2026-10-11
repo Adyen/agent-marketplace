@@ -72,6 +72,7 @@ registries:
 	}
 }
 
+// spec: update-output/verbose-organization-pin-output-omits-owner-guidance
 func TestUpdateSupportsV4GitSourcesWithTransientOrganizationMarketplace(t *testing.T) {
 	if isolateCommandTest(t) {
 		return
@@ -146,9 +147,15 @@ harnesses: [factory, windsurf]
 	writeSkillAt(t, working, "teams/common/genai", "genai-architect", "Architect v2")
 	commitAndPushAll(t, working, "advance v4 sources")
 
-	output, err := executeCommand("update")
+	output, err := executeCommand("update", "--verbose")
 	if err != nil {
 		t.Fatalf("update: %v\n%s", err, output)
+	}
+	if !strings.Contains(output, "Organization-managed Marketplace pins: 1") || !strings.Contains(output, `"skill"/"review": not checked (organization-managed)`) {
+		t.Fatalf("verbose update did not explain and list the organization pin:\n%s", output)
+	}
+	if strings.Contains(output, "Ask your organization config owner") {
+		t.Fatalf("verbose update includes organization config owner guidance:\n%s", output)
 	}
 	afterConfig, err := os.ReadFile(configPath)
 	if err != nil {
@@ -816,6 +823,7 @@ registries:
 	}
 }
 
+// spec: update-output/default-organization-pin-output-omits-owner-guidance
 func TestUpdateCommandOutputIncludesMarketplaceDecisions(t *testing.T) {
 	if isolateCommandTest(t) {
 		return
@@ -824,21 +832,37 @@ func TestUpdateCommandOutputIncludesMarketplaceDecisions(t *testing.T) {
 	newDigest := "sha256:" + strings.Repeat("b", 64)
 	result := &pipeline.UpdateResult{
 		UpdatedRegistries: 2, Bumps: []pipeline.RefBump{{URL: "https://git.example/repo.git", OldRef: "v1", NewRef: "v2"}},
-		UpdatedMarketplacePins: 1, SkippedMarketplacePins: 1,
+		UpdatedMarketplacePins: 1, SkippedMarketplacePins: 3,
 		MarketplacePins: []pipeline.MarketplacePinUpdate{
 			{Entry: config.MarketplaceEntry{URL: "https://market.example\nunsafe"}, OldPin: config.MarketplaceResourcePin{RegistryID: "src", Kind: "skill", Name: "review", Digest: oldDigest}, NewPin: config.MarketplaceResourcePin{Digest: newDigest}, Updated: true},
-			{Entry: config.MarketplaceEntry{URL: "https://org.example"}, OldPin: config.MarketplaceResourcePin{RegistryID: "org", Kind: "skill", Name: "required"}, Required: true, Skipped: true, Reason: "organization pin is required and managed externally"},
+			{Entry: config.MarketplaceEntry{URL: "https://market.example"}, OldPin: config.MarketplaceResourcePin{RegistryID: "src", Kind: "skill", Name: "unchanged"}, Skipped: true, Reason: "content digest unchanged"},
+			{Entry: config.MarketplaceEntry{URL: "https://org.example"}, OldPin: config.MarketplaceResourcePin{RegistryID: "org", Kind: "skill", Name: "required"}, Source: config.Organization, Required: true, Skipped: true, Reason: "organization pin is required and managed externally"},
+			{Entry: config.MarketplaceEntry{URL: "https://org.example"}, OldPin: config.MarketplaceResourcePin{RegistryID: "org", Kind: "collection", Name: "onboarding"}, Source: config.Organization, Required: true, Skipped: true, Reason: "organization pin is required and managed externally"},
 		},
 	}
 	var out bytes.Buffer
-	if err := writeUpdateOutput(&out, result, true); err != nil {
+	if err := writeUpdateOutput(&out, result, true, false); err != nil {
 		t.Fatal(err)
 	}
 	text := out.String()
-	for _, want := range []string{"Updated 2 registries, bumped 1 refs", "Marketplace pins: updated 1, skipped 1", "updated \"" + oldDigest + "\" -> \"" + newDigest + "\"", "skipped (required)"} {
+	for _, want := range []string{
+		"Configured registry entries: 2, refs bumped: 1\n",
+		"Marketplace pins updated: 1\n",
+		"Other Marketplace pins skipped: 1\n",
+		"Organization-managed Marketplace pins: 2 (not checked for newer revisions; pins unchanged)\n",
+		"Use `agent-marketplace update --verbose` to list organization-managed pins.\n",
+		"updated \"" + oldDigest + "\" -> \"" + newDigest + "\"",
+		"\"unchanged\": skipped (\"content digest unchanged\")",
+	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("output missing %q: %s", want, text)
 		}
+	}
+	if strings.Contains(text, "Ask your organization config owner") {
+		t.Fatalf("default update includes organization config owner guidance: %q", text)
+	}
+	if strings.Contains(text, "\"required\"") || strings.Contains(text, "\"onboarding\"") || strings.Contains(text, "skipped (required)") {
+		t.Fatalf("default output repeats organization pins: %q", text)
 	}
 	if strings.Contains(text, "unsafe\\n") || strings.ContainsAny(text, "\x00\x1b\r\t") {
 		t.Fatalf("output contains unsafe terminal data: %q", text)

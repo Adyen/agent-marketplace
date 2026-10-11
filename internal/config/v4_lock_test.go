@@ -482,6 +482,56 @@ func TestLoadV4MarketplaceConfigWithAdjacentLock(t *testing.T) {
 	}
 }
 
+func TestLoadV4MarketplaceConfigUsesLogicalLockPathForApprovedLinks(t *testing.T) {
+	repo := t.TempDir()
+	agents := filepath.Join(repo, ".agents")
+	configDir := filepath.Join(repo, "config")
+	lockDir := filepath.Join(repo, "locks")
+	for _, dir := range []string{agents, configDir, lockDir} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	configTarget := filepath.Join(configDir, "config.yaml")
+	if err := os.WriteFile(configTarget, []byte(v4MarketplaceConfigYAML), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	configPath := filepath.Join(agents, "config.yaml")
+	if err := os.Symlink(filepath.Join("..", "config", "config.yaml"), configPath); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+
+	lockData, err := lockfile.Encode(v4LockFixture(t, lockfile.ScopeRepo))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(lockDir, "lock.yaml"), lockData, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join("..", "locks", "lock.yaml"), filepath.Join(agents, "lock.yaml")); err != nil {
+		t.Fatal(err)
+	}
+
+	decoy := v4LockFixture(t, lockfile.ScopeRepo)
+	decoy.Marketplaces[0].InstanceID = "decoy-instance"
+	decoyData, err := lockfile.Encode(decoy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(configDir, "lock.yaml"), decoyData, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := LoadConfigFromPath(configPath)
+	if err != nil {
+		t.Fatalf("load config through approved links: %v", err)
+	}
+	if cfg == nil || len(cfg.Marketplaces) != 1 || cfg.Marketplaces[0].InstanceID != "market-id" {
+		t.Fatalf("marketplaces = %#v, want the identity from the logical layer lock", cfg)
+	}
+}
+
 func TestLoadV4MarketplaceConfigRejectsInvalidLock(t *testing.T) {
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, "config.yaml")
@@ -511,6 +561,44 @@ marketplaces:
 	_, err := LoadConfigFromPath(configPath)
 	if err == nil || !strings.Contains(err.Error(), "decode lock") {
 		t.Fatalf("invalid lock bypassed Decode: %v", err)
+	}
+}
+
+// spec: deployed-acquisition-locks/wrong-scope-in-single-file-read
+func TestLoadV4MarketplaceConfigWrongScopeLockRejectedAtRead(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		scope lockfile.Scope
+		want  string
+	}{
+		{name: "matching scope binds evidence", scope: lockfile.ScopeRepo},
+		{name: "wrong scope rejected before bind", scope: lockfile.ScopeUser, want: "v4.marketplace-lock-mismatch"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			configPath := filepath.Join(dir, "config.yaml")
+			if err := os.WriteFile(configPath, []byte(v4MarketplaceConfigYAML), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			data, err := lockfile.Encode(v4LockFixture(t, tc.scope))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(dir, "lock.yaml"), data, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			cfg, err := LoadConfigFromPath(configPath)
+			if tc.want == "" {
+				if err != nil || cfg == nil || len(cfg.Marketplaces) != 1 {
+					t.Fatalf("control load = %#v, err = %v", cfg, err)
+				}
+				return
+			}
+			var validation *V4ValidationError
+			if !errors.As(err, &validation) || validation.Code != tc.want {
+				t.Fatalf("error = %v, want V4ValidationError %s rejecting the lock at read", err, tc.want)
+			}
+		})
 	}
 }
 

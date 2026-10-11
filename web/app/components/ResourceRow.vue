@@ -31,6 +31,16 @@ const commandLabel = computed(() => {
   if (!command.value) return `Install command unavailable for ${props.item.name}: this Marketplace returned an invalid route value`
   return `Copy install command for ${props.item.name}`
 })
+
+const installationCountDescription = 'Installations that reported this resource enabled in their latest configuration within the last 30 days'
+const installationCountText = computed(() => {
+  const count = props.item.installation_count
+  if (count === undefined) return undefined
+  return `${count} reported ${count === 1 ? 'installation' : 'installations'}`
+})
+const installationCountLabel = computed(() =>
+  installationCountText.value === undefined ? undefined : `${installationCountText.value}. ${installationCountDescription}`
+)
 </script>
 
 <template>
@@ -55,6 +65,7 @@ const commandLabel = computed(() => {
 
         <p v-if="item.description" class="mt-1 truncate text-sm font-medium leading-5 text-toned">{{ item.description }}</p>
         <p v-else class="mt-1 truncate text-sm italic leading-5 text-dimmed">No description provided.</p>
+        <p v-if="installationCountText !== undefined" :aria-label="installationCountLabel" :title="installationCountDescription" class="mt-1 truncate text-xs leading-4 text-dimmed">{{ installationCountText }}</p>
       </div>
 
       <div class="relative z-10 col-start-2 mt-2 flex min-h-16 min-w-20 flex-col items-start justify-center sm:col-start-3 sm:row-start-1 sm:mt-0 sm:min-w-28 sm:items-end">

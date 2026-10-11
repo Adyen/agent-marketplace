@@ -2,13 +2,16 @@ package pipeline
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/Adyen/agent-marketplace/internal/config"
+	"github.com/Adyen/agent-marketplace/internal/dependencytxn"
 	"github.com/Adyen/agent-marketplace/internal/lockfile"
 	"github.com/Adyen/agent-marketplace/internal/marketplace"
 	"github.com/Adyen/agent-marketplace/internal/marketplacelock"
@@ -313,5 +316,66 @@ func TestLoadEffectiveUsesStagedMarketplaceLockOverlay(t *testing.T) {
 	}
 	if loaded.User.Config == nil || len(loaded.User.Config.Marketplaces) != 1 {
 		t.Fatalf("missing repository lock discarded verified user Marketplace evidence: %#v", loaded.User.Config)
+	}
+}
+
+func TestReadLayerLockPreservesManagedAndLegacySymlinkPolicy(t *testing.T) {
+	repo := t.TempDir()
+	agents := filepath.Join(repo, ".agents")
+	lockDir := filepath.Join(repo, "locks")
+	if err := os.MkdirAll(agents, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(lockDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	data, err := lockfile.Encode(lockfile.Document{APIVersion: lockfile.APIVersionV2, Scope: lockfile.ScopeRepo})
+	if err != nil {
+		t.Fatal(err)
+	}
+	containedLock := filepath.Join(lockDir, "lock.yaml")
+	if err := os.WriteFile(containedLock, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	managedLock := filepath.Join(agents, "lock.yaml")
+	if err := os.Symlink(filepath.Join("..", "locks", "lock.yaml"), managedLock); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+
+	doc, generation, exists, err := ReadLayerLock(managedLock, lockfile.ScopeRepo)
+	if err != nil || !exists || doc == nil || doc.Scope != lockfile.ScopeRepo {
+		t.Fatalf("contained managed lock = %#v, %#v, %t, %v", doc, generation, exists, err)
+	}
+	if generation.Digest != fmt.Sprintf("%x", sha256.Sum256(data)) {
+		t.Fatalf("generation digest = %q, want SHA-256 of lock bytes", generation.Digest)
+	}
+
+	externalDir := t.TempDir()
+	externalLock := filepath.Join(externalDir, "lock.yaml")
+	if err := os.WriteFile(externalLock, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(managedLock); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(externalLock, managedLock); err != nil {
+		t.Fatal(err)
+	}
+	doc, _, exists, err = ReadLayerLock(managedLock, lockfile.ScopeRepo)
+	if err == nil || !errors.Is(err, dependencytxn.ErrUnsafePath) || doc != nil || exists {
+		t.Fatalf("escaping managed lock = %#v, %t, %v; want unsafe path without evidence", doc, exists, err)
+	}
+	unchanged, err := os.ReadFile(externalLock)
+	if err != nil || string(unchanged) != string(data) {
+		t.Fatalf("external lock changed: bytes=%q err=%v", unchanged, err)
+	}
+
+	legacyLink := filepath.Join(repo, "legacy-lock.yaml")
+	if err := os.Symlink(externalLock, legacyLink); err != nil {
+		t.Fatal(err)
+	}
+	doc, _, exists, err = ReadLayerLock(legacyLink, lockfile.ScopeRepo)
+	if err == nil || !errors.Is(err, lockfile.ErrUnsafeFile) || doc != nil || exists {
+		t.Fatalf("legacy symlink lock = %#v, %t, %v; want lockfile.ErrUnsafeFile without evidence", doc, exists, err)
 	}
 }

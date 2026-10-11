@@ -147,41 +147,6 @@ func TestPathMapping(t *testing.T) {
 	}
 }
 
-func TestPlanMinimalRetainsAndRemoves(t *testing.T) {
-	old := Document{APIVersion: APIVersionV2, Scope: ScopeRepo, Registries: []GitRegistry{{URL: "https://example/a", Ref: "main", Commit: mustOID(t, sha1a), Roots: []GitRoot{{Path: "skills", SourceHarness: "claude", RevisionSchema: "v1", RevisionDigest: Digest(sha256a)}}}, {URL: "https://example/orphan", Ref: "main", Commit: mustOID(t, sha1a)}}}
-	reqs := Requirements{Scope: ScopeRepo, Git: []GitRequirement{{URL: "https://example/a.git", Ref: "main", Roots: []GitRootRequirement{{Path: "skills", SourceHarness: "claude"}}}, {URL: "https://example/new", Ref: "main"}}}
-	plan, err := Plan(reqs, &old, OperationSync)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(plan.Retained) != 1 || len(plan.Added) != 1 || len(plan.Removed) != 1 || len(plan.Acquisitions) != 1 || !plan.Changed() {
-		t.Fatalf("plan = %#v", plan)
-	}
-}
-
-func TestPlanUnchangedAndUpgradeSelection(t *testing.T) {
-	locked := Document{APIVersion: APIVersionV2, Scope: ScopeRepo, Registries: []GitRegistry{{URL: "https://example/a", Ref: "main", Commit: mustOID(t, sha1a), Roots: []GitRoot{{Path: "skills", SourceHarness: "claude", RevisionSchema: "v1", RevisionDigest: Digest(sha256a)}}}}}
-	requirements := Requirements{Scope: ScopeRepo, Git: []GitRequirement{{URL: "https://example/a.git", Ref: "main", Roots: []GitRootRequirement{{Path: "skills", SourceHarness: "claude"}}}}}
-	plan, err := Plan(requirements, &locked, OperationSync)
-	if err != nil || plan.Changed() || len(plan.Retained) != 1 || !reflect.DeepEqual(plan.Desired, locked) {
-		t.Fatalf("unchanged plan = %#v, %v", plan, err)
-	}
-	requirements.Upgrade = UpgradeSelection{Git: []GitUpgradeSelector{{URL: "https://example/a", Path: "skills"}}}
-	plan, err = Plan(requirements, &locked, OperationUpgrade)
-	if err != nil || len(plan.Upgraded) != 1 || len(plan.Acquisitions) != 1 {
-		t.Fatalf("targeted upgrade plan = %#v, %v", plan, err)
-	}
-}
-
-func TestPlanAutodetectedGitHarnessMatchesExistingRoot(t *testing.T) {
-	current := Document{APIVersion: APIVersionV2, Scope: ScopeRepo, Registries: []GitRegistry{{URL: "https://example.com/repo", Ref: "main", Commit: mustOID(t, sha1a), Roots: []GitRoot{{Path: "skills", SourceHarness: "factory", RevisionSchema: "v1", RevisionDigest: Digest(sha256a)}}}}}
-	requirements := Requirements{Scope: ScopeRepo, Git: []GitRequirement{{URL: "https://example.com/repo.git", Ref: "main", Roots: []GitRootRequirement{{Path: "skills"}}}}}
-	plan, err := Plan(requirements, &current, OperationSync)
-	if err != nil || plan.Changed() || len(plan.Retained) != 1 || plan.Desired.Registries[0].Roots[0].SourceHarness != "factory" {
-		t.Fatalf("autodetected plan = %#v, %v", plan, err)
-	}
-}
-
 func mustOID(t *testing.T, value string) GitOID {
 	t.Helper()
 	oid, err := ParseGitOID(value)

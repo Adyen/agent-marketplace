@@ -105,3 +105,28 @@ func BenchmarkAllDiscoveredResourceNamesLarge(b *testing.B) {
 		}
 	}
 }
+
+func BenchmarkPlanNamedInstalls(b *testing.B) {
+	regs := benchRegistries(1)
+	catalogs := benchCatalogs(regs, 100, 100, 100)
+	cfg := &config.Config{Registries: regs}
+
+	b.Run("single", func(b *testing.B) {
+		args := []string{"skill-000"}
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			if _, _, err := planNamedInstalls(args, catalogs, nil, nil, cfg, 0, false, ScopeRepo, nil); err != nil {
+				b.Fatal(err)
+			}
+		}
+	})
+	b.Run("multiple", func(b *testing.B) {
+		args := []string{"skill-000", "cmd-001", "agent-002", "skill-003", "skill-000"}
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			if _, _, err := planNamedInstalls(args, catalogs, nil, nil, cfg, 0, false, ScopeRepo, nil); err != nil {
+				b.Fatal(err)
+			}
+		}
+	})
+}

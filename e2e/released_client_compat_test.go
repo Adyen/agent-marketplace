@@ -5,23 +5,22 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 )
 
 // releasedClientArch maps the checksum of each pinned latest-release Linux
 // asset to its architecture. Bump these, the CI download, and the version
 // label after every stable release.
-const releasedClientVersion = "v4.0.8"
+const releasedClientVersion = "v4.1.2"
 
 var releasedClientArch = map[string]string{
-	"02a34b1786ffbe2cf2d19f5163a9383ab5712c61db44636abc803771654665bb": "amd64",
-	"51829f84d90da1035b983f24cf7f02a9c93c9d3aae32e2846ae4fcd10768370b": "arm64",
+	"37e7bc3e7a7510c88b381a1f734436da8dfc4a80409aae30594f6d7ea1d9eef7": "amd64",
+	"c1bbc42793769cd732e8d5b70067e92d162951b13af854bc6e8f88b15de9e645": "arm64",
 }
 
-// A teammate on the candidate upgrades a committed Git-only lock to v2.
-// The latest release can read v1, but must refuse v2 without altering the
-// repository. Each actor has its own HOME; only the repository is shared.
+// Each actor has its own HOME and checkout. Only committed configuration and
+// lock state are shared, never generated output or cache-backed symlinks.
+// spec: regression-gates/released-client-remains-usable-after-candidate-mutations
 func TestReleasedClientReadsCandidateCommittedState(t *testing.T) {
 	image := os.Getenv("AM_E2E_RELEASED_IMAGE")
 	if os.Getenv("AM_E2E_RELEASED_BINARY") == "" || image == "" {
@@ -30,7 +29,8 @@ func TestReleasedClientReadsCandidateCommittedState(t *testing.T) {
 	released, arch := verifiedExecutable(t, "AM_E2E_RELEASED_BINARY", releasedClientArch)
 	world := newHistoricalWorld(t, image)
 	candidate := world.buildCandidate(arch)
-	workspace := world.path("workspace")
+	workspace := world.path("workspace-released")
+	candidateWorkspace := world.path("workspace-candidate")
 	for _, dir := range []string{filepath.Join(workspace, ".agents"), world.path("home-released"), world.path("home-candidate")} {
 		if err := os.MkdirAll(dir, 0o700); err != nil {
 			t.Fatal(err)
@@ -38,27 +38,25 @@ func TestReleasedClientReadsCandidateCommittedState(t *testing.T) {
 	}
 	registry := world.gitRegistry(map[string]string{"review": "Review body", "second": "Second body"})
 	gitRun(t, "", "init", "-q", "-b", "main", workspace)
-
-	homes := map[string]string{released: world.path("home-released"), candidate: world.path("home-candidate")}
-	run := func(executable string, args ...string) (string, error) {
+	excludeOutputs := func(checkout string) {
 		t.Helper()
-		return world.run(homes[executable], workspace, executable, args...)
-	}
-	must := func(executable string, args ...string) {
-		t.Helper()
-		world.must(homes[executable], workspace, executable, args...)
-	}
-	// Teammates and CI fetch the committed exact snapshot with --locked; the
-	// check-only mode is deliberately offline and runs afterwards.
-	releasedReads := func(after string) {
-		t.Helper()
-		for _, args := range [][]string{{"sync", "--locked"}, {"sync", "--check"}} {
-			if output, err := run(released, args...); err != nil {
-				t.Fatalf("%s %v cannot use state committed after candidate %s: %v\n%s", releasedClientVersion, args, after, err, output)
-			}
+		if err := os.WriteFile(filepath.Join(checkout, ".git", "info", "exclude"), []byte(".factory/\n"), 0o600); err != nil {
+			t.Fatal(err)
 		}
 	}
-	lockPath := filepath.Join(workspace, ".agents", "lock.yaml")
+	excludeOutputs(workspace)
+
+	homes := map[string]string{released: world.path("home-released"), candidate: world.path("home-candidate")}
+	workspaces := map[string]string{released: workspace, candidate: candidateWorkspace}
+	run := func(executable string, args ...string) (string, error) {
+		t.Helper()
+		return world.run(homes[executable], workspaces[executable], executable, args...)
+	}
+	must := func(executable string, args ...string) string {
+		t.Helper()
+		return world.must(homes[executable], workspaces[executable], executable, args...)
+	}
+	lockPath := filepath.Join(candidateWorkspace, ".agents", "lock.yaml")
 	readLock := func() []byte {
 		t.Helper()
 		lock, err := os.ReadFile(lockPath)
@@ -67,46 +65,72 @@ func TestReleasedClientReadsCandidateCommittedState(t *testing.T) {
 		}
 		return lock
 	}
-	releasedRejects := func(after string) {
+	// Teammates and CI fetch the committed exact snapshot with --locked; the
+	// check-only mode is deliberately offline and runs afterwards.
+	releasedReads := func(after string) {
 		t.Helper()
-		lock := readLock()
+		gitRun(t, workspace, "fetch", "-q", "origin")
+		gitRun(t, workspace, "merge", "-q", "--ff-only", "origin/main")
+		lockPath := filepath.Join(workspace, ".agents", "lock.yaml")
+		before, err := os.ReadFile(lockPath)
+		if err != nil {
+			t.Fatal(err)
+		}
 		for _, args := range [][]string{{"sync", "--locked"}, {"sync", "--check"}} {
-			output, err := run(released, args...)
-			if err == nil || !strings.Contains(output, "lock.invalid-document") || !strings.Contains(output, `apiVersion "agent-marketplace-lock/v2"`) {
-				t.Fatalf("%s %v after candidate %s did not reject Git-only v2: %v\n%s", releasedClientVersion, args, after, err, output)
+			if output, err := run(released, args...); err != nil {
+				t.Fatalf("%s %v cannot use state committed after candidate %s: %v\n%s", releasedClientVersion, args, after, err, output)
 			}
-			if got := readLock(); !bytes.Equal(got, lock) {
-				t.Fatalf("%s %v changed the unsupported lock after %s:\nbefore:\n%s\nafter:\n%s", releasedClientVersion, args, after, lock, got)
+			if got, err := os.ReadFile(lockPath); err != nil || !bytes.Equal(got, before) {
+				t.Fatalf("%s %v changed committed lock after %s: %v", releasedClientVersion, args, after, err)
 			}
 		}
 	}
-
 	must(released, "init", "--harnesses", "factory")
-	must(candidate, "init", "--harnesses", "factory")
 	repoConfig := fmt.Sprintf("apiVersion: agent-marketplace/v2\nregistries:\n  - url: %s\n    ref: main\n    skills:\n      include: [review]\n", registry.URL)
 	if err := os.WriteFile(filepath.Join(workspace, ".agents", "config.yaml"), []byte(repoConfig), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	must(released, "sync")
+	(&gitRegistry{t: t, source: workspace}).commit("initial released configuration and lock")
+	gitRun(t, "", "clone", "-q", workspace, candidateWorkspace)
+	excludeOutputs(candidateWorkspace)
+	gitRun(t, workspace, "remote", "add", "origin", candidateWorkspace)
+	must(candidate, "init", "--harnesses", "factory")
 	committed := readLock()
-	releasedReads("initial v1 sync")
+	releasedReads("initial sync")
 
+	commit := func(after string) {
+		t.Helper()
+		(&gitRegistry{t: t, source: candidateWorkspace}).commit("candidate " + after)
+	}
 	must(candidate, "sync")
-	expectV2GitLockUpgrade(t, committed, readLock())
-	releasedRejects("sync")
+	if got := readLock(); !bytes.Equal(got, committed) {
+		t.Fatalf("plain candidate sync changed a healthy committed lock:\nbefore:\n%s\nafter:\n%s", committed, got)
+	}
+	releasedReads("sync")
 
 	must(candidate, "install", "second", "--scope", "repo")
-	if _, err := os.Stat(filepath.Join(workspace, ".factory", "skills", "second", "SKILL.md")); err != nil {
+	if _, err := os.Stat(filepath.Join(candidateWorkspace, ".factory", "skills", "second", "SKILL.md")); err != nil {
 		t.Fatalf("candidate did not materialize its committed selection: %v", err)
 	}
-	releasedRejects("install")
+	commit("install")
+	releasedReads("install")
 
 	registry.publish("review", "Review body, revised")
-	must(candidate, "update", "--scope", "repo")
-	releasedRejects("update")
+	updateOutput := must(candidate, "update", "--scope", "repo")
+	reviewPath := filepath.Join(candidateWorkspace, ".factory", "skills", "review", "SKILL.md")
+	if got, err := os.ReadFile(reviewPath); err != nil || string(got) != skillDocument("review", "Review body, revised") {
+		t.Fatalf("candidate update did not materialize revised review: %v\n%s\nupdate:\n%s", err, got, updateOutput)
+	}
+	commit("update")
+	releasedReads("update")
 
 	must(candidate, "remove", "second", "--scope", "repo")
-	releasedRejects("remove")
+	if _, err := os.Lstat(filepath.Join(candidateWorkspace, ".factory", "skills", "second")); !os.IsNotExist(err) {
+		t.Fatalf("candidate remove left second installed: %v", err)
+	}
+	commit("remove")
+	releasedReads("remove")
 	must(candidate, "sync", "--locked")
 	must(candidate, "sync", "--check")
 }

@@ -50,18 +50,24 @@ Look for these values of the `code` attribute:
 Also watch for these messages:
 
 - `serve failed` with reason `open stores`: the process could not open storage, which includes a failed database migration.
+- `resource revision archive digest repaired`: a refresh staged unchanged content under a different archive digest. The stored digest was repaired and the previous artifact is still downloadable. No server-side action is needed. However, consumers whose locks reference the old digest will fail `sync --locked` or `sync --check`. Owners of client-managed locks must run `agent-marketplace sync` and commit the updated lock file; when the artifact can be re-acquired, that run reports `marketplace.archive-evidence-refreshed` and updates one `archive_digest` line per resource, otherwise it leaves the lock unchanged and reports the failure. Locks managed by another layer, such as a deployed organization lock, must be refreshed through that layer.
+- `managed refresh attempt failed`: a managed indexing attempt failed. The line carries `failure_code` (a stable classification) and `cause` (sanitized, without raw command output or credentials); the same pair appears on the attempt in `/api/v1/admin/attempts`.
 - `process refresh job failed` and `reindex failed`: a registry refresh failed. The worker message puts the cause in the `err` attribute, and `serve reindex` puts it in `error`.
 
 ## Alert on metrics
 
 The API exposes these application metrics, alongside the standard Go runtime and process metrics:
 
-- `agent_marketplace_requests_total`: counter of HTTP requests, labeled by `listener`, `method`, `route`, and `code`. Use it for request rate and error rate.
-- `agent_marketplace_request_duration_seconds`: histogram of request duration, labeled by `listener`, `method`, and `route`. Use it for latency.
+- `agent_marketplace_requests_total`: counter of HTTP requests, labeled by `listener`, `method`, `route`, and `code`. Use it for request rate and error rate on requests that reach routing.
+- `agent_marketplace_request_duration_seconds`: histogram of request duration, labeled by `listener`, `method`, and `route`. Use it for routed-request latency.
 - `agent_marketplace_active_requests`: gauge of in-flight requests, labeled by `listener`.
+- `agent_marketplace_public_request_duration_seconds`: histogram of the full public request stack, labeled by `method`, `route`, and `code`. Unlike the three series above, it also records the early `503` rejections that the configuration authority and availability checks produce before routing, so use it for full public latency and early-failure counts.
+- `agent_marketplace_request_phase_duration_seconds`: histogram labeled by `phase` (`authority`, `availability`, `catalog_read`, `catalog_availability`, `catalog_response`). Use it to attribute public catalog time to a stage; a phase is recorded only when that work ran.
+- `agent_marketplace_metadata_pool_waits_total` and `agent_marketplace_metadata_pool_wait_seconds_total`: cumulative metadata connection pool waits and wait seconds since the pool opened. They show pool contention only; they are not a general storage-saturation signal.
 
-The `route` label holds the registered route pattern, or `unmatched`, never the raw request path. None of these metrics cover queue age, storage saturation, or reindex health. Get those signals from application logs, the reverse proxy, or the platform that runs the containers. The Helm chart can create a `ServiceMonitor` that scrapes the API's `operations` port (`serviceMonitor.enabled`).
+The `route` label holds the registered route pattern, or `unmatched`, never the raw request path. None of these metrics cover queue age, general storage saturation, or reindex health. Get those signals from application logs, the reverse proxy, or the platform that runs the containers. The Helm chart can create a `ServiceMonitor` that scrapes the API's `operations` port (`serviceMonitor.enabled`).
 
 ## Related documentation
 
+- [How to reset and reindex a registry](./reset-and-reindex-a-registry.md)
 - [Marketplace health and metrics reference](../../reference/marketplace-health-and-metrics.md)

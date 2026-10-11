@@ -339,6 +339,7 @@ const (
 	CodeIngestCodexSubagentSecurityUnsupported   = "ingest.codex.subagent-security-unsupported" // Authority-bearing native subagent fields cannot be represented
 	CodeMaterializeCodexDuplicateIdentity        = "materialize.codex.duplicate-identity"       // Duplicate desired Codex aggregate identity suppressed
 	CodeMaterializeHookSupportConflict           = "materialize.hook.support-conflict"
+	CodeMaterializeHookSupportRefused            = "materialize.hook.support-refused"
 	CodeSubagentFactoryDisallowedToolsDropped    = "subagent.factory.disallowed-tools-dropped" // Factory cannot represent disallowedTools
 	CodeSubagentFactoryIsolationDropped          = "subagent.factory.isolation-dropped"        // Factory cannot represent isolation
 	CodeSubagentGeminiToolUnknown                = "subagent.gemini.tool-unknown"              // Gemini tool not in mapping table; artifact suppressed
@@ -651,6 +652,7 @@ var codeCatalog = []CodeDoc{
 	{CodeOwnershipLockTimeout, SeverityError, "This target root's ownership lock could not be acquired before the timeout, so its aggregates were left exactly as found", "Another agent-marketplace process is still holding it; wait for that run to finish, or raise AGENT_MARKETPLACE_OWNERSHIP_LOCK_TIMEOUT"},
 	{CodeOwnershipGenerationConflict, SeverityError, "The aggregate file or ownership generation changed underneath this mutation; the aggregate was left as found", "Another writer or an external tool changed the file or the ownership record after this run read it; re-run sync"},
 	{CodeMaterializeHookSupportConflict, SeverityError, "Conflicting desired support files block affected hooks rather than selecting a winner", "Rename the conflicting support files or exclude one hook provider"},
+	{CodeMaterializeHookSupportRefused, SeverityError, "Unsafe or unreadable support sources block affected hooks while installed content is retained", "Fix or remove the unsafe support source and re-run sync"},
 	{CodeMaterializeDevinAggregateMalformed, SeverityError, "The destination Devin aggregate JSON could not be parsed, so that file was left exactly as found", "Fix the reported parse location by hand; a safety backup of the raw bytes is retained under the Agent Marketplace state root"},
 	{CodeMaterializeDevinAggregateShape, SeverityError, "The destination Devin aggregate has a shape this target cannot patch, so that file was left exactly as found", "The aggregate root and its hooks/mcpServers members must be JSON objects; move the conflicting value out of the way by hand"},
 	{CodeMaterializeDevinAggregateWrite, SeverityError, "The journaled Devin aggregate mutation failed, so that file was left exactly as found", "Nothing was partially written; check the reported cause and re-run sync"},

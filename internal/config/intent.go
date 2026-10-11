@@ -2,7 +2,6 @@ package config
 
 import (
 	"context"
-	"crypto/sha256"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -309,7 +308,7 @@ func (l LayerIntent) deployedLock(overlays map[string][]byte) (*lockfile.Documen
 	if !l.NeedsMarketplaceLock() {
 		return nil, nil
 	}
-	doc, _, err := readDeployedLock(l.Path, overlays)
+	doc, _, err := readDeployedLock(l.Path, lockfile.Scope(l.Source.LockScope()), overlays)
 	return doc, err
 }
 
@@ -430,42 +429,6 @@ func readRootLayerIntent(path string, data []byte, kind layerKind) (LayerIntent,
 	return li, nil
 }
 
-func readDeployedLock(path string, overlays map[string][]byte) (*lockfile.Document, *ConfigRead, error) {
-	canonical, err := canonicalConfigPathTolerateMissing(path)
-	if err != nil {
-		return nil, nil, err
-	}
-	paths, err := configLockPaths(path, canonical)
-	if err != nil {
-		return nil, nil, err
-	}
-	data, overlaid := overlays[paths.CanonicalLock]
-	if !overlaid {
-		data, overlaid = overlays[paths.RequestedLock]
-	}
-	if !overlaid {
-		data, err = lockfile.ReadBytes(paths.CanonicalLock)
-		if err != nil {
-			if errors.Is(err, os.ErrNotExist) {
-				return nil, nil, nil
-			}
-			return nil, nil, fmt.Errorf("read lock %q for config %q: %w", paths.CanonicalLock, path, err)
-		}
-	}
-	doc, err := lockfile.Decode(data)
-	if err != nil {
-		return nil, nil, fmt.Errorf("decode lock %q for config %q: %w", paths.CanonicalLock, path, err)
-	}
-	read := &ConfigRead{
-		Path:            paths.CanonicalLock,
-		RequestedPath:   paths.RequestedLock,
-		Digest:          fmt.Sprintf("%x", sha256.Sum256(data)),
-		Overlay:         overlaid,
-		AcquisitionLock: true,
-	}
-	return &doc, read, nil
-}
-
 func loadLayerIntent(source Source, path string, kind layerKind, overlays map[string][]byte) LayerIntent {
 	li := LayerIntent{Source: source, Path: path}
 	canonicalPath, data, readErr := readEffectiveLayer(path, overlays)
@@ -574,7 +537,7 @@ func deployedLayerEvidence(li LayerIntent, source Source, opts LoadEffectiveOpti
 	var read *ConfigRead
 	if li.NeedsMarketplaceLock() {
 		var err error
-		doc, read, err = readDeployedLock(li.Path, overlays)
+		doc, read, err = readDeployedLock(li.Path, lockfile.Scope(li.Source.LockScope()), overlays)
 		if err != nil {
 			return nil, nil, []error{err}
 		}
@@ -595,11 +558,11 @@ func ReadIntent(ctx context.Context, opts LoadEffectiveOptions) Intent {
 
 	repoRoot := opts.RepoRoot
 	if repoRoot == "" {
-		repoRoot = FindRepoRoot()
+		return Intent{Errors: []error{errors.New("repository root is required: pass a validated workspace repository root")}, aborted: true}
 	}
 	localDir := opts.LocalConfigDir
 	if localDir == "" {
-		localDir = FindLocalConfigDir()
+		localDir = repoRoot
 	}
 
 	intent := Intent{}

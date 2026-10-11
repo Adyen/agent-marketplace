@@ -70,13 +70,6 @@ func (ts *telemetryServer) setFailFirstN(n int32) {
 	ts.failFirstN.Store(n)
 }
 
-func (ts *telemetryServer) reset() {
-	ts.mu.Lock()
-	ts.requests = ts.requests[:0]
-	ts.mu.Unlock()
-	ts.count.Store(0)
-}
-
 // telemetryEnv creates a sandbox with a minimal global config so non-catalog
 // commands like list run without interactive prompts.
 func telemetryEnv(t *testing.T, srv *telemetryServer) *Env {
