@@ -71,6 +71,17 @@ func fileAnnotations(path, rel string) ([]annotation, error) {
 	return out, nil
 }
 
+func annotationSurface(file string) uint8 {
+	switch {
+	case strings.HasPrefix(file, "internal/tui/"), strings.HasPrefix(file, "tools/tui-qa/"):
+		return 1
+	case strings.HasPrefix(file, "gui/"), strings.HasPrefix(file, "cmd/agent-marketplace-gui/"):
+		return 2
+	default:
+		return 0
+	}
+}
+
 func trace(root string) ([]finding, string, error) {
 	known, findings, err := knownScenarios(root)
 	if err != nil {
@@ -81,16 +92,30 @@ func trace(root string) ([]finding, string, error) {
 		return nil, "", err
 	}
 	bound := map[string]bool{}
+	surfaceBound := map[string]uint8{}
 	for _, a := range annotations {
 		if _, ok := known[a.id]; !ok {
 			findings = append(findings, finding{kindDanglingAnnotation, fmt.Sprintf("%s:%d: %s", a.file, a.line, a.id)})
 			continue
 		}
 		bound[a.id] = true
+		if strings.HasPrefix(a.id, "session-") {
+			surfaceBound[a.id] |= annotationSurface(a.file)
+		}
 	}
 	for id, s := range known {
 		if !bound[id] {
 			findings = append(findings, finding{kindUnboundScenario, fmt.Sprintf("%s (%s)", id, s.pos())})
+		}
+		if strings.HasPrefix(s.capability, "session-") {
+			for _, surface := range []struct {
+				mask uint8
+				name string
+			}{{1, "TUI"}, {2, "GUI"}} {
+				if surfaceBound[id]&surface.mask == 0 {
+					findings = append(findings, finding{kindMissingSurface, fmt.Sprintf("%s missing %s witness (%s)", id, surface.name, s.pos())})
+				}
+			}
 		}
 	}
 	return findings, fmt.Sprintf("%d scenarios, %d annotations", len(known), len(annotations)), nil
