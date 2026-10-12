@@ -16,7 +16,7 @@ Suppose `.agents/config.yaml` in your project selects the `frontend-design` skil
 6. It converts that description for each target. The skill becomes Claude Code's `.claude/skills/frontend-design/SKILL.md` and Cursor's `.cursor/skills/frontend-design/SKILL.md`. When a target has no way to express something (a field, a hook event, or a whole resource kind), the CLI reports a [diagnostic](../glossary.md#diagnostic) with a fixed code and leaves that part out. It does not guess.
 7. It writes the files into the harness folders. The product calls this step [materialize](../glossary.md#materialize). By default each skill, command, and subagent is a [symlink](../glossary.md#symlink) (a shortcut) to a converted copy in the cache; Factory commands are the exception and are written as regular files. Shared configuration files such as `.mcp.json` hold entries from several places, so the CLI edits only its own entries in them. Output that the CLI generated earlier, and that the configuration no longer selects, is removed.
 
-`install` edits a configuration file and then runs the same steps. `sync --check` reads the same configuration, lock, and cached content and performs the same conversion, but writes nothing and does not download missing content; it reports what is out of date.
+`install` edits a configuration file and then runs the same steps. `sync --check` resolves the selected content and runs conversion and materialization in dry-run mode to report drift. It does not update configuration or lockfiles or materialize harness files. An online check can contact a Marketplace; for locked Git sources, the exact snapshot must already be cached.
 
 ## How resources are found
 
