@@ -636,6 +636,33 @@ func (p Proof) HookSatisfactions() []HookSatisfaction {
 	return satisfactions
 }
 
+func (p Proof) HasHookResource(resource string) bool {
+	if resource == "" {
+		return false
+	}
+	for _, entry := range p.entries {
+		if entry.Kind != KindHook {
+			continue
+		}
+		if entry.Resource == resource {
+			return true
+		}
+		for _, evidence := range entry.SourceEvidence {
+			if evidence.Resource == resource {
+				return true
+			}
+		}
+	}
+	for _, satisfaction := range p.hookSatisfactions {
+		for _, evidence := range satisfaction.Sources {
+			if evidence.Resource == resource {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // OwnedCount returns how many entries the proof covers.
 func (p Proof) OwnedCount() int { return len(p.entries) }
 

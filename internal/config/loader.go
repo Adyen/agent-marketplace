@@ -387,6 +387,35 @@ func configLockPaths(path, canonical string) (ConfigLockPaths, error) {
 	}, nil
 }
 
+func readDeployedLock(path string, scope lockfile.Scope, overlays map[string][]byte) (*lockfile.Document, *ConfigRead, error) {
+	paths, err := ResolveConfigLockPathsTolerateMissing(path)
+	if err != nil {
+		return nil, nil, err
+	}
+	ev, decode, err := dependencytxn.ReadLayerLock(paths.CanonicalLock, paths.RequestedLock, scope, overlays)
+	if err != nil {
+		var coded *lockfile.Error
+		if decode && errors.As(err, &coded) && coded.Code == lockfile.CodeScopeMismatch {
+			return nil, nil, v4err(v4MarketplaceLockMismatchCode, "", 0, "%s", coded.Err)
+		}
+		op := "read"
+		if decode {
+			op = "decode"
+		}
+		return nil, nil, fmt.Errorf("%s lock %q for config %q: %w", op, paths.CanonicalLock, path, err)
+	}
+	if ev.Digest == "" {
+		return nil, nil, nil
+	}
+	return &ev.Document, &ConfigRead{
+		Path:            paths.CanonicalLock,
+		RequestedPath:   paths.RequestedLock,
+		Digest:          ev.Digest,
+		Overlay:         ev.Overlay,
+		AcquisitionLock: true,
+	}, nil
+}
+
 func sourceForLayer(kind layerKind) Source {
 	switch kind {
 	case organizationLayer:

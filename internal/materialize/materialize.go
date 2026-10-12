@@ -887,11 +887,15 @@ func compileWorkItems(work []skillTarget, allDiags []diag.Diagnostic, allOutputs
 				allDiags = append(allDiags, ownedAggregateCodedDiag(key, ins.root, "", ins.err, diag.CodeHookNativeToleranceRefused))
 				continue
 			}
-			if len(ins.entries) > 0 || ins.proof.OwnedCount() > 0 {
-				legacyRoot := repoRoot
-				if roots, ok := harness.MakeInstallRoots()[w.target]; ok {
-					legacyRoot = roots.For(w.machineScope, repoRoot)
-				}
+			legacyRoot := repoRoot
+			if roots, ok := harness.MakeInstallRoots()[w.target]; ok {
+				legacyRoot = roots.For(w.machineScope, repoRoot)
+			}
+			name := w.skill.Name
+			if w.skill.InstalledName != "" {
+				name = w.skill.InstalledName
+			}
+			if ins.proof.HasHookResource(name) {
 				suppressed, suppressErr := suppressNativeSatisfiedHookRules(w.skill, key, legacyRoot, ins, result.Artifacts)
 				if suppressErr != nil {
 					// The legacy file could not be surveyed safely for a
@@ -903,6 +907,24 @@ func compileWorkItems(work []skillTarget, allDiags []diag.Diagnostic, allOutputs
 					continue
 				}
 				result.Artifacts = suppressed
+			} else {
+				satisfied, satisfyErr := independentlySatisfiedNativeHook(w, repoRoot, ins)
+				if satisfyErr != nil {
+					blockResource(key, w)
+					markOwnedAggregateIncomplete(aggregateHandler, ownedAggregates, key, w)
+					allDiags = append(allDiags, ownedAggregateCodedDiag(key, ins.root, "", satisfyErr, diag.CodeHookNativeToleranceRefused))
+					continue
+				}
+				if satisfied {
+					suppressed, suppressErr := preserveNativeSatisfiedLegacyTwins(key, legacyRoot, result.Artifacts)
+					if suppressErr != nil {
+						blockResource(key, w)
+						markOwnedAggregateIncomplete(aggregateHandler, ownedAggregates, key, w)
+						allDiags = append(allDiags, ownedAggregateCodedDiag(key, legacyRoot, "", suppressErr, diag.CodeHookNativeToleranceRefused))
+						continue
+					}
+					result.Artifacts = suppressed
+				}
 			}
 		}
 
@@ -1248,7 +1270,7 @@ func executeMaterializePlans(ctx context.Context, compileResult compilePhaseResu
 			slog.Debug("native-only aggregate work complete", "target", key.target, "machine_scope", key.machineScope)
 			continue
 		}
-		report = executeTargetPlans(report, key, outDir, artifacts, compileResult.skillLinks, compileResult.artifactMeta, compileResult.blocked.componentsFor(key), dryRun, mode, repoRoot, coalescedCodexPartitions, boundary)
+		report = executeTargetPlans(report, key, outDir, destinations, artifacts, compileResult.skillLinks, compileResult.artifactMeta, compileResult.blocked.componentsFor(key), dryRun, mode, repoRoot, coalescedCodexPartitions, boundary)
 		if binding, ok := composition.bindings[key.target]; ok {
 			report = binding.handler.reconcile(ctx, report, compileResult.ownedAggregateState(), key, outDir, adapterDestinations, dryRun)
 		}
@@ -1258,7 +1280,7 @@ func executeMaterializePlans(ctx context.Context, compileResult compilePhaseResu
 }
 
 // executeTargetPlans writes artifact plans and skill links for a single target.
-func executeTargetPlans(report *Report, key outputKey, outDir string, artifacts []artifact.Artifact, skillLinks map[outputKey]map[string]*skillLinkGroup, artifactMeta map[outputKey]map[string]skillLink, blocked map[string]bool, dryRun bool, mode config.MaterializationMode, repoRoot string, coalescedCodexPartitions map[string]bool, boundary destinationBoundary) *Report {
+func executeTargetPlans(report *Report, key outputKey, outDir string, destinations []harness.Destination, artifacts []artifact.Artifact, skillLinks map[outputKey]map[string]*skillLinkGroup, artifactMeta map[outputKey]map[string]skillLink, blocked map[string]bool, dryRun bool, mode config.MaterializationMode, repoRoot string, coalescedCodexPartitions map[string]bool, boundary destinationBoundary) *Report {
 	state, stateErr := loadPortableState(repoRoot, key.machineScope)
 	if stateErr != nil {
 		slog.Error("materialize manifest load failed", "target", key.target, "machine_scope", key.machineScope, "error", stateErr)
@@ -1453,7 +1475,9 @@ func executeTargetPlans(report *Report, key outputKey, outDir string, artifacts 
 	if key.target == hcc.Target(targetmeta.TargetCodex) {
 		pruneReport = &hcc.WriteReport{OutDir: pruneOutDir}
 	} else if !componentBlocked(blocked, "") {
-		pruneReport, pruneDiags = pruneUncoveredManagedMergeFiles(pruneOutDir, dirsCoveredByMergePlans, dryRun, nativeAggregatePruneFence(key.target, key.machineScope))
+		protected := nativeAggregatePruneFence(key.target, key.machineScope)
+		protected = extendNativeHookProjectionPruneFence(key.target, key.machineScope, pruneOutDir, destinations, protected)
+		pruneReport, pruneDiags = pruneUncoveredManagedMergeFiles(pruneOutDir, dirsCoveredByMergePlans, dryRun, protected)
 	} else {
 		pruneReport = &hcc.WriteReport{OutDir: pruneOutDir}
 	}

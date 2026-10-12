@@ -90,6 +90,8 @@ const (
 	CodeIngestCodexFieldDropped        = "ingest.codex.field-dropped"              // Benign native Codex field omitted
 	CodeRuleFactoryMetadataDropped     = "rule.factory.metadata-dropped"           // Factory rules are plain markdown; globs/alwaysApply dropped
 	CodeCanonicalFieldOverridesExtra   = "compile.canonical-field-overrides-extra" // Canonical field wins over conflicting preserved extra
+	CodeHookTimeoutRounded             = "hook.timeout-rounded"                    // Timeout conversion to seconds rounded up to the next whole second
+	CodeHookTimeoutCapped              = "hook.timeout-capped"                     // Timeout above a documented per-event limit; lowered to the limit
 	CodeHookPromptUnsupported          = "hook.prompt.unsupported"                 // Target cannot represent prompt hooks
 	CodeHookGeminiEventUnmappable      = "hook.gemini.event-unmappable"            // Gemini has no equivalent event
 	CodeHookGeminiUnsupportedType      = "hook.gemini.unsupported-type"            // Gemini cannot represent hook type
@@ -320,6 +322,11 @@ const (
 const (
 	CodeSkillCodexSecurityRestrictionUnsupported = "skill.codex.security-restriction-unsupported" // Codex skill cannot enforce an explicit restriction
 	CodeHookEventUnmappable                      = "hook.event-unmappable"                        // Target cannot preserve this hook event
+	CodeHookMatcherUntranslatable                = "hook.matcher-untranslatable"                  // No exact tool-matcher coverage for the target; hook suppressed
+	CodeHookEnvUnrepresentable                   = "hook.env-unrepresentable"                     // Referenced variable has no target equivalent; hook suppressed
+	CodeHookTimeoutUnsupported                   = "hook.timeout-unsupported"                     // Target cannot represent a hook timeout; hook suppressed
+	CodeHookTypeUnsupported                      = "hook.type-unsupported"                        // Target catalog does not declare this hook type for the event; hook suppressed
+	CodeHookSupportPathUnrepresentable           = "hook.support-path-unrepresentable"            // Plugin-root token has no repository base on this target; hook suppressed
 	CodeHookNativeLiteralUnsupported             = "hook.native-literal-unsupported"              // Native Codex hook literal would be reinterpreted
 	CodeHookCodexNativeFieldsUnsupported         = "hook.codex.native-fields-unsupported"         // Target cannot preserve native Codex hook fields
 	CodeHookCodexUnsupported                     = "hook.codex.unsupported"                       // Codex does not execute this hook event or handler
@@ -533,6 +540,8 @@ var codeCatalog = []CodeDoc{
 	{CodeIngestCodexFieldDropped, SeverityWarning, "A benign native Codex field has no canonical equivalent and was omitted", "Remove the field or keep the resource in Codex format"},
 	{CodeRuleFactoryMetadataDropped, SeverityWarning, "Factory rules are plain markdown; globs/alwaysApply metadata dropped", "Factory does not support conditional (glob-scoped) rule application; the rule body is emitted verbatim"},
 	{CodeCanonicalFieldOverridesExtra, SeverityWarning, "Canonical field overrides a conflicting preserved extra", "The canonical modeled value wins; rename the extension field to preserve both values"},
+	{CodeHookTimeoutRounded, SeverityWarning, "Timeout unit conversion to seconds rounded up to the next whole second", "Use a whole-second timeout or accept the rounded value"},
+	{CodeHookTimeoutCapped, SeverityWarning, "Timeout exceeded the documented per-event limit and was lowered to the limit", "Set a timeout within the documented limit"},
 	{CodeHookPromptUnsupported, SeverityWarning, "Target cannot represent prompt hooks; hook dropped", "Use a command hook on this target"},
 	{CodeHookGeminiEventUnmappable, SeverityWarning, "Gemini has no equivalent hook event; hook dropped", "Use a Gemini-supported event such as PreToolUse, PostToolUse, or PreCompact"},
 	{CodeHookGeminiUnsupportedType, SeverityWarning, "Gemini cannot represent this hook type; hook dropped", "Use a command or prompt hook on Gemini"},
@@ -578,6 +587,11 @@ var codeCatalog = []CodeDoc{
 	{CodeSubagentFactoryToolUnknown, SeverityError, "Factory cannot map an explicit subagent tool; subagent artifact suppressed", "Use a supported tool mapping or remove the restriction explicitly"},
 	{CodeSkillCodexSecurityRestrictionUnsupported, SeverityError, "Codex skills cannot enforce an explicit security restriction; artifact suppressed", "Remove the restriction explicitly or use a target that represents it"},
 	{CodeHookEventUnmappable, SeverityError, "Target cannot preserve this hook event; hook suppressed", "Use a hook event documented by the target"},
+	{CodeHookMatcherUntranslatable, SeverityError, "No exact tool-matcher coverage exists for the target; hook suppressed", "Rewrite the matcher with tools the target's catalog covers, or remove it"},
+	{CodeHookEnvUnrepresentable, SeverityError, "The hook command references a variable with no target equivalent; hook suppressed", "Rewrite the command with variables the target documents, or use an absolute path"},
+	{CodeHookTimeoutUnsupported, SeverityError, "Target cannot represent an explicit hook timeout; hook suppressed", "Remove the timeout explicitly or use a target that supports it"},
+	{CodeHookTypeUnsupported, SeverityError, "The target's catalog does not declare this hook type for the event; hook suppressed", "Use a hook type the target documents for this event"},
+	{CodeHookSupportPathUnrepresentable, SeverityError, "The hook command references the plugin root but the target declares no repository base; hook suppressed", "Use an absolute command path or a target with a repository base"},
 	{CodeHookNativeLiteralUnsupported, SeverityError, "Target would reinterpret a native Codex hook literal; hook suppressed", "Remove the target-specific interpolation token or keep the hook in Codex format"},
 	{CodeHookCodexNativeFieldsUnsupported, SeverityError, "Target cannot preserve native Codex hook execution or context fields; hook suppressed", "Remove async, commandWindows, and additionalContextLimit explicitly or keep the hook in Codex format"},
 	{CodeHookCodexUnsupported, SeverityError, "Codex does not execute this hook event or handler; hook suppressed", "Use a documented Codex command hook event"},

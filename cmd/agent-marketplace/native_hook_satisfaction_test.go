@@ -266,7 +266,9 @@ func TestSyncRecognizesUnownedNativeSatisfaction(t *testing.T) {
 				var legacyBefore []byte
 				var legacyInfo os.FileInfo
 				if twin {
-					writeFile(t, nativePath, doc)
+					if d.machineScope {
+						writeFile(t, nativePath, doc)
+					}
 					out, err := executeCommand("sync")
 					if err != nil {
 						t.Fatalf("twin-seeding sync: %v\n%s", err, out)
@@ -511,7 +513,11 @@ func TestSyncSatisfactionCheckDoesNotCreateStateRoot(t *testing.T) {
 			homeDir, _, nativeRoot, nativePath, legacyPath, lockPath, configPath, _ := cliSatisfactionFixture(t, d)
 			stateHome := filepath.Join(homeDir, "no-state-root")
 			t.Setenv("XDG_STATE_HOME", stateHome)
-			writeFile(t, nativePath, d.doc)
+			doc := d.doc
+			if !d.machineScope {
+				doc = strings.Replace(doc, "echo shared-proof", "echo native-unmatched", 1)
+			}
+			writeFile(t, nativePath, doc)
 			store, err := ownership.Open(nativeRoot)
 			if err != nil {
 				t.Fatal(err)

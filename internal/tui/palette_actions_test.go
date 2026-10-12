@@ -37,6 +37,7 @@ func TestPaletteExcludesModalOnlyActions(t *testing.T) {
 		"harness": true, "edit-config": true,
 		"help": true, "diagnostics": true,
 		"fold-toggle": true, "fold-all": true, "expand-all": true,
+		"view-settings": true, "toggle-section": true,
 		"quit": true,
 	}
 	for _, a := range paletteActions() {
