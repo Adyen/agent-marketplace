@@ -2,7 +2,7 @@
 
 This page lists every file and folder Agent Marketplace reads or writes outside the harness folders, and says which ones you commit, which ones you keep, and which ones you can delete. For the skill, command, subagent, hook, and MCP files that `sync` writes into each harness, see the [harnesses and output paths reference](./harnesses-and-output-paths.md).
 
-`$XDG_STATE_HOME` below means the value of that environment variable. When it is not set, Agent Marketplace uses `~/.local/state` instead. Set it to an absolute path. Ownership and telemetry state ignore a relative value and use the default, but commands that update configuration and locks stop with the error `XDG_STATE_HOME must be absolute`.
+`$XDG_STATE_HOME` below means the value of that environment variable. When it is not set, Agent Marketplace uses `~/.local/state` instead. The value must be an absolute path. Ownership and telemetry state ignore a relative value and use the default, but commands that update configuration and locks stop with the error `XDG_STATE_HOME must be absolute`.
 
 ## Repository paths
 

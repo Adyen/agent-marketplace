@@ -102,7 +102,7 @@ apiVersion: agent-marketplace/v4
 include: profiles/company.yaml
 ```
 
-Use a list when including more than one fragment:
+A list includes more than one fragment:
 
 ```yaml
 include:
@@ -202,7 +202,7 @@ Validation rules by kind:
 | `source_harness` that is not a supported harness id | `v4.harness` |
 | Empty `git`, `directory`, or `marketplace` value | `v4.source-value` |
 
-Use `directory` for a local folder; point it at the subfolder you want instead of using `path`.
+A `directory` source names the folder to read directly; a subfolder is selected through `directory`, not `path`.
 
 In the repository `.agents/config.yaml` and `.agents/config.local.yaml`, `directory: .` selects the repository root and `directory: ./resources/skills` selects `<repo>/resources/skills`. User and organization files, included fragments, and files outside that layout resolve relative paths from their own directory. Relative paths, including through symlinks, must stay inside that base directory. Absolute paths are used as written. Earlier v4 releases resolved repository-root declarations from `.agents/`; a source stored under `.agents/` needs an explicit `./.agents/` prefix.
 
@@ -367,7 +367,7 @@ materialization:
 | `symlink` | Default. Skills, commands, and subagents are [symlinks](../glossary.md#symlink) into the compiled cache under `~/.cache/agent-marketplace/`. Factory commands are always regular files. |
 | `file` | Writes regular files and folders for every target. The CLI tracks what it wrote in a materialization manifest. |
 
-Use `targets` when one harness needs a different mode:
+`targets` gives one harness a different mode:
 
 ```yaml
 materialization:
