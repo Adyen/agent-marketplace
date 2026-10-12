@@ -1094,4 +1094,232 @@ describe('Event stream reconnect', () => {
     expect(discovery.mock.calls).toHaveLength(2)
     expect(controller.state.rows.map((entry) => entry.id)).toEqual(['local-row', 'remote-row'])
   })
+
+  // spec: session-navigation/inspect-an-exact-skill-before-installation-without-writes
+  it('opens verified inspection by keyboard, retries, navigates members, rejects stale replies, and closes without operations', async () => {
+    type Pending = {
+      rowId: string
+      fileId?: string
+      signal?: AbortSignal
+      resolve: (value: import('./api/client').InspectionPayload) => void
+      reject: (reason: unknown) => void
+    }
+    const { client, push } = fakeClient()
+    const calls: Pending[] = []
+    const inspection = vi.fn((rowId: string, fileId?: string, signal?: AbortSignal) =>
+      new Promise<import('./api/client').InspectionPayload>((resolve, reject) => calls.push({ rowId, fileId, signal, resolve, reject })),
+    )
+    const inspectionClient = Object.assign(client, { inspection })
+    const first = row('first', { id: 'row-first', discovery: true, inspectable: true, group: 'available', checked: false, scope: 'available', status: 'available' })
+    const second = row('second', { id: 'row-second', discovery: true, inspectable: true, group: 'available', checked: false, scope: 'available', status: 'available' })
+    const operation: OperationRef = { id: 91, kind: 'sync' }
+    const quit = vi.fn()
+    const { controller, wrapper } = mountWorkspace(inspectionClient, 60_000, quit)
+    push(event({ sequence: 1, generation: 4, operation, payload: snapshot([first, second], { discoveryEnabled: true }) }))
+    await tick()
+
+    const initialState = { stage: controller.state.stage, drift: controller.state.drift, operation: controller.state.operation }
+    const firstRow = wrapper.find('[role="option"][aria-selected="true"]')
+    await firstRow.trigger('keydown', { key: 'Enter' })
+    await tick()
+    expect(inspection).toHaveBeenCalledTimes(1)
+    expect(calls[0]?.rowId).toBe(first.id)
+    expect(calls[0]?.fileId).toBeUndefined()
+    const firstSignal = calls[0]?.signal
+    expect(document.body.querySelector('[role="dialog"]')).not.toBeNull()
+
+    await firstRow.trigger('keydown', { key: 'ArrowDown' })
+    await tick()
+    expect(firstSignal?.aborted).toBe(true)
+    expect(inspection).toHaveBeenCalledTimes(1)
+    expect(document.body.querySelector('[role="dialog"]')).toBeNull()
+
+    const secondRow = wrapper.find('[role="option"][aria-selected="true"]')
+    await secondRow.trigger('keydown', { key: 'Enter' })
+    await tick()
+    expect(calls[1]?.rowId).toBe(second.id)
+    const failedSignal = calls[1]?.signal
+    calls[1]?.reject(new RequestError(502, 'localapi.inspection_unavailable'))
+    await tick()
+    expect(document.body.querySelector('[role="alert"]')?.textContent).toContain('Verified inspection is unavailable')
+    const retry = document.body.querySelector('button[aria-label="Retry inspection"]') as HTMLButtonElement | null
+    expect(retry).not.toBeNull()
+    retry?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+    await tick()
+    expect(calls[2]?.signal).not.toBe(failedSignal)
+    expect(calls[2]?.rowId).toBe(second.id)
+    expect(calls[2]?.fileId).toBeUndefined()
+
+    const primaryID = 'p'.repeat(64)
+    const notesID = 'n'.repeat(64)
+    const imageID = 'i'.repeat(64)
+    const files: import('./api/client').InspectionPayload['files'] = [
+      { id: primaryID, path: 'SKILL.md', mediaType: 'text/markdown', size: 64, inspectionClass: 'text' },
+      { id: notesID, path: 'support/notes.md', mediaType: 'text/markdown', size: 24, inspectionClass: 'text' },
+      { id: imageID, path: 'support/logo.png', mediaType: 'image/png', size: 8, inspectionClass: 'image' },
+    ]
+    const payload = (rowId: string, selectedFileId: string, content: string, unsupportedMessage = '') => ({
+      rowId,
+      generation: 4,
+      revision: 'sha256:' + 'a'.repeat(64),
+      manifestDigest: 'sha256:' + 'b'.repeat(64),
+      files,
+      primaryFileId: primaryID,
+      selectedFileId,
+      content,
+      truncated: false,
+      unsupportedMessage,
+    })
+    const hostile = 'Literal <script>alert(1)</script> <img src=x onerror=alert(1)> \u001b[31m\u202e'
+    calls[2]?.resolve(payload(second.id, primaryID, hostile))
+    await tick()
+    expect(document.body.querySelector('script')).toBeNull()
+    expect(document.body.querySelector('img')).toBeNull()
+    expect(document.body.querySelector('pre')?.textContent).toContain('<script>alert(1)</script>')
+    const primaryItem = document.body.querySelector('[role="treeitem"][aria-label="SKILL.md"]') as HTMLElement | null
+    expect(primaryItem?.getAttribute('aria-selected')).toBe('true')
+    expect(document.activeElement).toBe(primaryItem)
+
+    const supportDirectory = document.body.querySelector('[role="treeitem"][aria-label="support"]') as HTMLElement | null
+    expect(supportDirectory).not.toBeNull()
+    document.activeElement?.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowUp', bubbles: true }))
+    await tick()
+    expect(document.activeElement).toBe(supportDirectory)
+    supportDirectory?.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }))
+    await tick()
+    supportDirectory?.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }))
+    await tick()
+    const imageItem = document.body.querySelector('[role="treeitem"][aria-label="support/logo.png"]') as HTMLElement | null
+    expect(document.activeElement).toBe(imageItem)
+    imageItem?.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true }))
+    await tick()
+    expect(document.activeElement).toBe(supportDirectory)
+    supportDirectory?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+    await tick()
+    expect(supportDirectory?.getAttribute('aria-expanded')).toBe('false')
+    supportDirectory?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+    await tick()
+    expect(supportDirectory?.getAttribute('aria-expanded')).toBe('true')
+    supportDirectory?.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }))
+    await tick()
+    const expandedImage = document.body.querySelector('[role="treeitem"][aria-label="support/logo.png"]') as HTMLElement | null
+    expect(document.activeElement).toBe(expandedImage)
+    expandedImage?.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }))
+    await tick()
+    const notes = document.body.querySelector('[role="treeitem"][aria-label="support/notes.md"]') as HTMLElement | null
+    expect(notes).not.toBeNull()
+    expect(document.activeElement).toBe(notes)
+    notes?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+    await tick()
+    expect(calls[3]?.rowId).toBe(second.id)
+    expect(calls[3]?.fileId).toBe(notesID)
+    calls[3]?.resolve(payload(second.id, notesID, '# Supporting inspection.'))
+    await tick()
+
+    calls[0]?.resolve(payload(first.id, primaryID, 'stale first resource'))
+    await tick()
+    expect(controller.state.inspection?.rowId).toBe(second.id)
+    expect(document.body.querySelector('pre')?.textContent).toBe('# Supporting inspection.')
+
+    const image = document.body.querySelector('[role="treeitem"][aria-label="support/logo.png"]') as HTMLElement | null
+    expect(image).not.toBeNull()
+    document.activeElement?.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowUp', bubbles: true }))
+    await tick()
+    expect(document.activeElement).toBe(image)
+    image?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+    await tick()
+    expect(calls[4]?.fileId).toBe(imageID)
+    calls[4]?.resolve(payload(second.id, imageID, '', 'Preview is not supported for this file type (image/png, 8 bytes).'))
+    await tick()
+    expect(controller.state.inspection?.data?.unsupportedMessage).toContain('image/png')
+    expect(document.body.querySelector('pre')?.textContent ?? '').toBe('')
+
+    const notesAgain = document.body.querySelector('[role="treeitem"][aria-label="support/notes.md"]') as HTMLElement | null
+    notesAgain?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+    await tick()
+    expect(calls[5]?.fileId).toBe(notesID)
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    await tick()
+    expect(calls[5]?.signal?.aborted).toBe(true)
+    expect(controller.state.inspection).toBeNull()
+    expect(document.body.querySelector('[role="dialog"]')).toBeNull()
+    expect((document.activeElement as HTMLElement | null)?.getAttribute('aria-label')).toBe('Open resource')
+
+    controller.dispose()
+    controller.openInspection(second.id)
+    calls[5]?.resolve(payload(second.id, notesID, 'late support body'))
+    await tick()
+    expect(inspection).toHaveBeenCalledTimes(6)
+    expect(controller.state.inspection).toBeNull()
+    expect(controller.state.stage).toBe(initialState.stage)
+    expect(controller.state.drift).toBe(initialState.drift)
+    expect(controller.state.operation).toEqual(initialState.operation)
+    expect(client.action).not.toHaveBeenCalled()
+    expect(client.configure).not.toHaveBeenCalled()
+    for (const [event] of (client.telemetry as ReturnType<typeof vi.fn>).mock.calls) {
+      expect(event).not.toHaveProperty('filePath')
+      expect(event).not.toHaveProperty('path')
+      expect(event).not.toHaveProperty('sourceName')
+    }
+    expect(quit).not.toHaveBeenCalled()
+  })
+
+  it('invalidates an inspection after a new core generation or a discovery result removes its row', async () => {
+    type Pending = {
+      rowId: string
+      signal?: AbortSignal
+      resolve: (value: import('./api/client').InspectionPayload) => void
+    }
+    const { client, push } = fakeClient()
+    const calls: Pending[] = []
+    const inspection = vi.fn((rowId: string, _fileId?: string, signal?: AbortSignal) =>
+      new Promise<import('./api/client').InspectionPayload>((resolve) => calls.push({ rowId, signal, resolve })),
+    )
+    const inspectionClient = Object.assign(client, { inspection })
+    const remote = row('remote', { id: 'remote-row', discovery: true, inspectable: true, group: 'available', checked: false, scope: 'available', status: 'available' })
+    const { controller } = mountWorkspace(inspectionClient)
+    push(event({ sequence: 1, generation: 1, payload: snapshot([remote], { discoveryEnabled: true }) }))
+    await tick()
+
+    controller.openInspection(remote.id)
+    await tick()
+    const firstSignal = calls[0]?.signal
+    push(event({ sequence: 2, generation: 2, payload: snapshot([remote], { discoveryEnabled: true }) }))
+    await tick()
+    expect(firstSignal?.aborted).toBe(true)
+    expect(controller.state.inspection).toBeNull()
+
+    controller.openInspection(remote.id)
+    await tick()
+    const secondSignal = calls[1]?.signal
+    controller.setDiscoveryQuery('no-match')
+    push({
+      type: 'discovery',
+      sequence: 3,
+      generation: 2,
+      operation: null,
+      payload: { requestId: 1, query: 'no-match', discoverySequence: 1, rows: [], health: [], loading: false },
+    } as SessionEvent)
+    await tick()
+    expect(secondSignal?.aborted).toBe(true)
+    expect(controller.state.inspection).toBeNull()
+
+    const stalePayload = {
+      rowId: remote.id,
+      generation: 2,
+      revision: 'sha256:' + 'a'.repeat(64),
+      manifestDigest: 'sha256:' + 'b'.repeat(64),
+      files: [],
+      primaryFileId: 'p'.repeat(64),
+      selectedFileId: 'p'.repeat(64),
+      content: 'stale',
+      truncated: false,
+      unsupportedMessage: '',
+    }
+    calls[0]?.resolve({ ...stalePayload, generation: 1 })
+    calls[1]?.resolve(stalePayload)
+    await tick()
+    expect(controller.state.inspection).toBeNull()
+    controller.dispose()
+  })
 })

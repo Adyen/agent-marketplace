@@ -7,6 +7,7 @@ import {
   type Configuration,
   type DiscoveryPayload,
   type GUIEvent,
+  type InspectionPayload,
   type OperationRef,
   type SessionEvent,
   type Snapshot,
@@ -16,11 +17,20 @@ import {
 export type Row = Snapshot['rows'][number]
 export type Diagnostic = Snapshot['diagnostics'][number]
 
+export interface InspectionState {
+  rowId: string
+  loading: boolean
+  data: InspectionPayload | null
+  error: string | null
+  selectedFileId: string | null
+}
+
 export const MAX_NOTIFICATIONS = 3
 export const NOTIFICATION_TTL_MS = 6000
 export const EVENT_RETRY_DELAY_MS = 250
 export const EVENT_OUTAGE_MESSAGE = 'Session updates are unavailable'
 export const DISCOVERY_REQUEST_ERROR_MESSAGE = 'Marketplace discovery request failed; retry or check the endpoint'
+export const INSPECTION_UNAVAILABLE_MESSAGE = 'Verified inspection is unavailable; check the Marketplace and retry.'
 
 const FATAL_EVENT_STATUSES = new Set([400, 401, 403, 405])
 
@@ -40,6 +50,7 @@ export interface WorkspaceState {
   discoverySequence: number
   discoveryLoading: boolean
   discoveryError: string | null
+  inspection: InspectionState | null
   phase: string | null
   operation: OperationRef | null
   notifications: { id: number; severity: string; message: string }[]
@@ -81,6 +92,7 @@ export class WorkspaceController {
     discoverySequence: 0,
     discoveryLoading: false,
     discoveryError: null,
+    inspection: null,
     phase: null,
     operation: null,
     notifications: [],
@@ -101,6 +113,9 @@ export class WorkspaceController {
   private nextNotificationId = 1
   private abort: AbortController | null = null
   private discoveryAbort: AbortController | null = null
+  private inspectionAbort: AbortController | null = null
+  private inspectionEpoch = 0
+  private inspectionGeneration: number | null = null
   private snapshotGeneration = 0
   private browserDiscoveryRequestId = 0
   private currentDiscoveryQuery = ''
@@ -177,6 +192,7 @@ export class WorkspaceController {
     this.cancelQuit()
     this.abort?.abort()
     this.cancelDiscoveryRequest()
+    this.closeInspection()
     for (const timer of this.timers) {
       clearTimeout(timer)
     }
@@ -267,6 +283,42 @@ export class WorkspaceController {
 
   browse(row: Row): void {
     this.reportTelemetry({ action: 'browse', rowId: row.id })
+  }
+
+  openInspection(rowId: string): void {
+    if (this.disposed) {
+      return
+    }
+    const row = this.state.rows.find((candidate) => candidate.id === rowId)
+    if (row == null || !row.inspectable) {
+      this.closeInspection()
+      return
+    }
+    this.issueInspection(rowId)
+  }
+
+  selectInspectionFile(fileId: string): void {
+    const current = this.state.inspection
+    if (this.disposed || current?.data == null || !current.data.files.some((file) => file.id === fileId)) {
+      return
+    }
+    this.issueInspection(current.rowId, fileId)
+  }
+
+  retryInspection(): void {
+    const current = this.state.inspection
+    if (this.disposed || current == null) {
+      return
+    }
+    this.issueInspection(current.rowId, current.selectedFileId ?? undefined)
+  }
+
+  closeInspection(): void {
+    this.inspectionEpoch++
+    this.inspectionAbort?.abort()
+    this.inspectionAbort = null
+    this.inspectionGeneration = null
+    this.state.inspection = null
   }
 
   recordSyncQuitCancellation(): void {
@@ -410,6 +462,9 @@ export class WorkspaceController {
   }
 
   private applySnapshotFields(snapshot: Snapshot, generation: number): void {
+    if (this.state.inspection != null && generation !== this.snapshotGeneration) {
+      this.closeInspection()
+    }
     this.snapshotGeneration = generation
     this.state.stage = snapshot.stage
     this.state.drift = snapshot.drift
@@ -446,6 +501,7 @@ export class WorkspaceController {
       this.state.rows = rows
     }
     if (snapshot.stage === 'final') {
+      this.cancelInspectionIfRowMissing()
       this.accepted = true
       if (this.state.error === EVENT_OUTAGE_MESSAGE) {
         this.state.error = null
@@ -467,6 +523,7 @@ export class WorkspaceController {
       return
     }
     this.state.rows = payload.rows
+    this.cancelInspectionIfRowMissing()
     this.state.discoveryHealth = payload.health
     this.state.discoveryQuery = payload.query
     this.state.discoveryRequestId = payload.requestId
@@ -499,6 +556,85 @@ export class WorkspaceController {
   private cancelDiscoveryRequest(): void {
     this.discoveryAbort?.abort()
     this.discoveryAbort = null
+  }
+
+  private issueInspection(rowId: string, fileId?: string): void {
+    if (this.disposed) {
+      return
+    }
+    const row = this.state.rows.find((candidate) => candidate.id === rowId && candidate.inspectable)
+    if (row == null) {
+      this.closeInspection()
+      return
+    }
+    const previous = this.state.inspection
+    const data = previous?.rowId === rowId ? previous.data : null
+    const selectedFileId = fileId ?? (previous?.rowId === rowId ? previous.selectedFileId : null)
+    this.inspectionEpoch++
+    const epoch = this.inspectionEpoch
+    this.inspectionAbort?.abort()
+    const abort = new AbortController()
+    const generation = this.snapshotGeneration
+    this.inspectionAbort = abort
+    this.inspectionGeneration = generation
+    this.state.inspection = { rowId, loading: true, data, error: null, selectedFileId }
+    void this.client.inspection(rowId, fileId, abort.signal).then((payload) => {
+      if (!this.inspectionRequestIsCurrent(rowId, generation, epoch, abort.signal)) {
+        return
+      }
+      const current = this.state.inspection
+      if (current == null) {
+        return
+      }
+      if (
+        payload.rowId !== rowId ||
+        payload.generation !== generation ||
+        payload.selectedFileId !== (fileId ?? payload.primaryFileId) ||
+        !payload.files.some((file) => file.id === payload.primaryFileId) ||
+        !payload.files.some((file) => file.id === payload.selectedFileId)
+      ) {
+        this.inspectionAbort = null
+        this.state.inspection = { ...current, loading: false, error: INSPECTION_UNAVAILABLE_MESSAGE }
+        return
+      }
+      this.inspectionAbort = null
+      this.state.inspection = { ...current, loading: false, data: payload, error: null, selectedFileId: payload.selectedFileId }
+    }).catch(() => {
+      if (!this.inspectionRequestIsCurrent(rowId, generation, epoch, abort.signal)) {
+        return
+      }
+      this.inspectionAbort = null
+      const current = this.state.inspection
+      if (current != null) {
+        this.state.inspection = { ...current, loading: false, error: INSPECTION_UNAVAILABLE_MESSAGE }
+      }
+    })
+  }
+
+  private inspectionRequestIsCurrent(rowId: string, generation: number, epoch: number, signal: AbortSignal): boolean {
+    if (
+      this.disposed ||
+      signal.aborted ||
+      epoch !== this.inspectionEpoch ||
+      generation !== this.snapshotGeneration ||
+      generation !== this.inspectionGeneration ||
+      this.state.inspection?.rowId !== rowId
+    ) {
+      return false
+    }
+    const row = this.state.rows.find((candidate) => candidate.id === rowId && candidate.inspectable)
+    if (row == null) {
+      this.closeInspection()
+      return false
+    }
+    return true
+  }
+
+  private cancelInspectionIfRowMissing(): void {
+    const current = this.state.inspection
+    if (current != null && !this.state.rows.some((row) => row.id === current.rowId && row.inspectable)) {
+      this.closeInspection()
+    }
   }
 
   private notify(severity: string, message: string): void {

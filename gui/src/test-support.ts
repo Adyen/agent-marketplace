@@ -7,6 +7,7 @@ import {
   EventCursor,
   type Client,
   type Configuration,
+  type InspectionPayload,
   type OperationRef,
   type SessionEvent,
   type Snapshot,
@@ -61,6 +62,7 @@ export function row(name: string, overrides: Partial<Row> = {}): Row {
     status: 'enabled',
     group: 'enabled',
     discovery: false,
+    inspectable: false,
     ...overrides,
   }
 }
@@ -121,6 +123,9 @@ export function fakeClient(options: { configuration?: Partial<Configuration> } =
     release: vi.fn(async () => ({ latestVersion: '' })),
     telemetry: vi.fn(async () => undefined),
     discovery: vi.fn(async () => undefined),
+    inspection: vi.fn(async (): Promise<InspectionPayload> => {
+      throw new Error('inspection fixture response not configured')
+    }),
   }
   const push = (e: SessionEvent) => {
     if (pending) {

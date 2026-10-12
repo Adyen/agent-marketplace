@@ -16,6 +16,9 @@ export type ConfigureRequest = components['schemas']['ConfigurationActionRequest
 export type ApiError = components['schemas']['Error']
 export type ReleaseNotice = components['schemas']['ReleaseNotice']
 export type GUIEvent = components['schemas']['GUIEvent']
+export type InspectionRequest = components['schemas']['InspectionRequest']
+export type InspectionPayload = components['schemas']['InspectionPayload']
+export type InspectionFile = components['schemas']['InspectionFile']
 
 export class RequestError extends Error {
   constructor(
@@ -153,6 +156,7 @@ export interface Client {
   snapshot(): Promise<Snapshot>
   events(cursor?: EventCursor, signal?: AbortSignal): AsyncIterable<SessionEvent>
   discovery(query: string, requestId: number, signal?: AbortSignal): Promise<void>
+  inspection(rowId: string, fileId?: string, signal?: AbortSignal): Promise<InspectionPayload>
   action(action: Action): Promise<OperationRef>
   configuration(): Promise<Configuration>
   configure(request: ConfigureRequest): Promise<OperationRef>
@@ -226,6 +230,12 @@ export function createClient(baseURL: string, credential: string, fetchImpl: typ
         { query, requestId } satisfies NonNullable<paths['/api/discovery']['post']['requestBody']>['content']['application/json'],
         signal,
       )
+    },
+
+    async inspection(rowId: string, fileId?: string, signal?: AbortSignal) {
+      const request = { rowId, ...(fileId === undefined ? {} : { fileId }) } satisfies InspectionRequest
+      const response = await post('/api/inspection', request, signal)
+      return (await response.json()) as InspectionPayload
     },
 
     async action(action: Action) {
