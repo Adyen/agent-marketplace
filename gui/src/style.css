@@ -48,6 +48,25 @@ body {
   opacity: 0.5;
 }
 
+.workspace__search-input {
+  background: var(--am-color-bg-surface);
+  border: 1px solid var(--am-color-border-default);
+  border-radius: 4px;
+  color: var(--am-color-text-primary);
+  min-width: 10rem;
+  padding: 0.375rem 0.5rem;
+}
+
+.workspace__search-input:focus-visible {
+  outline: 2px solid var(--am-color-action-focus-ring);
+  outline-offset: 1px;
+}
+
+.workspace__search-status {
+  color: var(--am-color-text-secondary);
+  font-size: var(--text-xs, 0.8125rem);
+}
+
 .workspace__actions button:focus-visible,
 .workspace__group-toggle:focus-visible,
 .workspace__row:focus-visible {
@@ -134,6 +153,12 @@ body {
 .workspace__name,
 .mono {
   font-family: var(--font-mono, ui-monospace, monospace);
+}
+
+.workspace__name-match {
+  background: var(--am-color-action-selection);
+  color: inherit;
+  font-weight: 600;
 }
 
 .workspace__scope {

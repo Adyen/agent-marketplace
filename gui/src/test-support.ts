@@ -40,6 +40,9 @@ export function row(name: string, overrides: Partial<Row> = {}): Row {
   return {
     id: `skill/${name}#${name.length.toString(16)}`,
     name,
+    displayName: name,
+    searchName: name.toLowerCase(),
+    searchWords: [name.toLowerCase()],
     kind: 'skill',
     description: `${name} description`,
     registry: 'local',

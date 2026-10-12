@@ -3,6 +3,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch 
 import { createClient } from './api/client'
 import { closeRequestEvent, launchRequestEvent, nativeQuit, resolveBootstrap } from './bootstrap'
 import { eligible, WorkspaceController, type Row, type WorkspaceState } from './controller'
+import { compareRows, hasSearchTerms, highlightNameParts, rankRows, type NameSegment, type SearchMatch } from './search'
 import Confirmations from './Confirmations.vue'
 import FirstRun from './FirstRun.vue'
 import HarnessSettings from './HarnessSettings.vue'
@@ -14,12 +15,20 @@ type VisibleEntry =
   | { key: string; kind: 'section'; elementId: string }
   | { key: string; kind: 'row'; elementId: string; row: Row }
 type ViewportAnchor = { key: string; top: number }
+type SearchFoldState = { query: string; groups: Record<string, boolean> }
 
 const props = defineProps<{ controller?: WorkspaceController }>()
 
 const state = shallowRef<WorkspaceController | null>(props.controller ?? null)
 const selectedKey = ref<string | null>(null)
 const foldedGroups = ref<Record<string, boolean>>({})
+const temporarySearchFolds = ref<SearchFoldState>({ query: '', groups: {} })
+const activeQuery = ref('')
+const draftQuery = ref('')
+const appliedQuery = ref('')
+const searchEditing = ref(false)
+const searchButton = ref<HTMLButtonElement | null>(null)
+const searchInput = ref<HTMLInputElement | null>(null)
 const listRoot = ref<HTMLElement | null>(null)
 const error = ref<string | null>(null)
 const settingsOpen = ref(false)
@@ -33,6 +42,14 @@ const setupButton = ref<HTMLButtonElement | null>(null)
 const quitOpen = ref(false)
 
 const configuration = computed(() => state.value?.state.configuration ?? null)
+
+watch(searchEditing, (isEditing, wasEditing) => {
+  if (isEditing) {
+    void nextTick(() => searchInput.value?.focus())
+  } else if (wasEditing) {
+    void nextTick(() => searchButton.value?.focus())
+  }
+})
 
 watch(settingsOpen, (isOpen, wasOpen) => {
   if (!isOpen && wasOpen) {
@@ -81,6 +98,40 @@ function onSetupCancel() {
   setupDismissed.value = true
 }
 
+function openSearch() {
+  if (searchEditing.value) {
+    return
+  }
+  draftQuery.value = appliedQuery.value
+  activeQuery.value = appliedQuery.value
+  searchEditing.value = true
+}
+
+function updateSearch(event: Event) {
+  const query = (event.currentTarget as HTMLInputElement).value
+  draftQuery.value = query
+  activeQuery.value = query
+}
+
+function confirmSearch() {
+  appliedQuery.value = draftQuery.value
+  activeQuery.value = appliedQuery.value
+  searchEditing.value = false
+}
+
+function cancelSearch() {
+  draftQuery.value = appliedQuery.value
+  activeQuery.value = appliedQuery.value
+  searchEditing.value = false
+}
+
+function clearSearch() {
+  appliedQuery.value = ''
+  draftQuery.value = ''
+  activeQuery.value = ''
+  searchEditing.value = false
+}
+
 let detachLaunchRequest: (() => void) | void
 let detachCloseRequest: (() => void) | void
 
@@ -120,22 +171,6 @@ onBeforeUnmount(() => {
 
 const view = computed(() => state.value?.state)
 
-function compareRows(left: Row, right: Row): number {
-  if (left.name < right.name) {
-    return -1
-  }
-  if (left.name > right.name) {
-    return 1
-  }
-  if (left.id < right.id) {
-    return -1
-  }
-  if (left.id > right.id) {
-    return 1
-  }
-  return 0
-}
-
 function rowKey(id: string): string {
   return `row:${id}`
 }
@@ -152,19 +187,35 @@ function sectionElementId(id: string): string {
   return `section-${id}`
 }
 
+const searchMatches = computed<SearchMatch[]>(() => rankRows(view.value?.rows ?? [], activeQuery.value))
+const searchMatchesByID = computed(() => new Map<string, SearchMatch>(searchMatches.value.map((match) => [match.row.id, match])))
+const filteredSearch = computed(() => hasSearchTerms(activeQuery.value))
+const localMatchCount = computed(() => searchMatches.value.length)
+
+function nameParts(row: Row): NameSegment[] {
+  const match = searchMatchesByID.value.get(row.id)
+  return highlightNameParts(row.displayName, row.searchName, match?.nameMatch === true ? match.indexes : [])
+}
+
 const groups = computed<GroupView[]>(() => {
   const rowsByGroup = new Map<string, Row[]>()
-  for (const row of view.value?.rows ?? []) {
-    const groupRows = rowsByGroup.get(row.group) ?? []
-    groupRows.push(row)
-    rowsByGroup.set(row.group, groupRows)
+  for (const match of searchMatches.value) {
+    const groupRows = rowsByGroup.get(match.row.group) ?? []
+    groupRows.push(match.row)
+    rowsByGroup.set(match.row.group, groupRows)
   }
   return (view.value?.groups ?? []).flatMap((group) => {
-    const rows = (rowsByGroup.get(group.id) ?? []).slice().sort(compareRows)
+    const rows = rowsByGroup.get(group.id) ?? []
     if (rows.length === 0) {
       return []
     }
-    return [{ ...group, rows, collapsed: foldedGroups.value[group.id] === true }]
+    if (!filteredSearch.value) {
+      rows.sort(compareRows)
+    }
+    const collapsed = filteredSearch.value
+      ? temporarySearchFolds.value.query === activeQuery.value && temporarySearchFolds.value.groups[group.id] === true
+      : foldedGroups.value[group.id] === true
+    return [{ ...group, rows, collapsed }]
   })
 })
 
@@ -230,6 +281,20 @@ watch(
 )
 
 watch(
+  activeQuery,
+  () => {
+    temporarySearchFolds.value = { query: activeQuery.value, groups: {} }
+    if (filteredSearch.value) {
+      const best = searchMatches.value[0]
+      selectedKey.value = best == null ? null : rowKey(best.row.id)
+    } else {
+      selectedKey.value = nextSelectionKey(selectedKey.value, previousVisibleEntries, visibleEntries.value)
+    }
+  },
+  { flush: 'pre' },
+)
+
+watch(
   [() => view.value?.rows, () => view.value?.stage],
   ([rows, stage], previous) => {
     if (rows == null || stage == null) {
@@ -281,7 +346,17 @@ function select(row: Row) {
 }
 
 function toggleGroup(groupID: string) {
-  foldedGroups.value = { ...foldedGroups.value, [groupID]: !foldedGroups.value[groupID] }
+  if (filteredSearch.value) {
+    const groups = temporarySearchFolds.value.query === activeQuery.value
+      ? temporarySearchFolds.value.groups
+      : {}
+    temporarySearchFolds.value = {
+      query: activeQuery.value,
+      groups: { ...groups, [groupID]: groups[groupID] !== true },
+    }
+  } else {
+    foldedGroups.value = { ...foldedGroups.value, [groupID]: !foldedGroups.value[groupID] }
+  }
   selectedKey.value = sectionKey(groupID)
 }
 
@@ -325,6 +400,34 @@ async function run(action: 'sync' | 'update') {
     <header class="workspace__header">
       <h1>Agent Marketplace</h1>
       <div class="workspace__actions" role="toolbar" aria-label="Session actions">
+        <button
+          ref="searchButton"
+          type="button"
+          aria-label="Search"
+          :aria-expanded="searchEditing"
+          @click="openSearch"
+        >Search</button>
+        <input
+          v-if="searchEditing"
+          id="workspace-search"
+          ref="searchInput"
+          class="workspace__search-input"
+          type="search"
+          aria-label="Search resources"
+          :value="draftQuery"
+          @input="updateSearch"
+          @keydown.enter.prevent="confirmSearch"
+          @keydown.esc.prevent="cancelSearch"
+        />
+        <span v-if="activeQuery !== ''" class="workspace__search-status" role="status" aria-live="polite">
+          {{ activeQuery }} · {{ localMatchCount }} local {{ localMatchCount === 1 ? 'match' : 'matches' }}
+        </span>
+        <button
+          v-if="activeQuery !== '' || appliedQuery !== '' || draftQuery !== ''"
+          type="button"
+          aria-label="Clear search"
+          @click="clearSearch"
+        >Clear search</button>
         <button type="button" aria-label="Refresh" :disabled="busy" @click="refresh">Refresh</button>
         <button type="button" aria-label="Sync" :disabled="!ready" @click="run('sync')">Sync</button>
         <button type="button" aria-label="Update" :disabled="!ready" @click="run('update')">Update</button>
@@ -407,7 +510,12 @@ async function run(action: 'sync' | 'update') {
               @keydown.up.prevent="moveSelection(-1)"
             >
               <span class="workspace__check" aria-hidden="true">{{ row.checked ? '[x]' : '[ ]' }}</span>
-              <span class="workspace__name">{{ row.registry }}/{{ row.kind }}/{{ row.name }}</span>
+              <span class="workspace__name">
+                <span>{{ row.registry }}/{{ row.kind }}/</span><template v-for="(part, index) in nameParts(row)" :key="index">
+                  <mark v-if="part.matched" class="workspace__name-match">{{ part.text }}</mark>
+                  <template v-else>{{ part.text }}</template>
+                </template>
+              </span>
               <span class="workspace__scope">{{ row.scope }}</span>
               <span v-if="row.harnessOverride" class="workspace__badge" title="Registry-level harness override">harnesses: {{ row.harnesses.join(', ') }}</span>
             </li>
@@ -417,7 +525,7 @@ async function run(action: 'sync' | 'update') {
 
       <aside aria-label="Detail" class="workspace__detail">
         <template v-if="selected">
-          <h2>{{ selected.registry }}/{{ selected.kind }}/{{ selected.name }}</h2>
+          <h2>{{ selected.registry }}/{{ selected.kind }}/{{ selected.displayName }}</h2>
           <p>{{ selected.description }}</p>
           <dl>
             <dt>Registry</dt>

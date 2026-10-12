@@ -16,6 +16,9 @@ function snapshotEvent(sequence: number, generation: number, stage = 'final', op
         {
           id: `skill/gen-${generation}`,
           name: `gen-${generation}`,
+          displayName: `gen-${generation}`,
+          searchName: `gen-${generation}`.toLowerCase(),
+          searchWords: [`gen-${generation}`.toLowerCase()],
           kind: 'skill',
           description: '',
           registry: 'local',

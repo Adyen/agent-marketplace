@@ -45,6 +45,9 @@ type operationRef struct {
 type rowDTO struct {
 	ID                  string   `json:"id"`
 	Name                string   `json:"name"`
+	DisplayName         string   `json:"displayName"`
+	SearchName          string   `json:"searchName"`
+	SearchWords         []string `json:"searchWords"`
 	Kind                string   `json:"kind"`
 	Description         string   `json:"description"`
 	Registry            string   `json:"registry"`
@@ -553,6 +556,8 @@ func activeOperation(gate *session.OperationGate) *operationRef {
 }
 
 func rowPresentation(row session.Row) rowDTO {
+	row.EnsureSearchable()
+	displayName := session.SanitizeTerminalData(row.Artifact.Name, session.TerminalSingleLine)
 	scope := "available"
 	switch {
 	case row.Artifact.Source == config.Organization:
@@ -568,7 +573,13 @@ func rowPresentation(row session.Row) rowDTO {
 	if registry == "" {
 		registry = row.RegistryURL
 	}
+	registry = session.SanitizeTerminalData(registry, session.TerminalSingleLine)
+	description := session.SanitizeTerminalData(row.Artifact.Description, session.TerminalMarkdownBody)
+	status := session.SanitizeTerminalData(row.StatusText(), session.TerminalSingleLine)
 	harnesses := append([]string{}, row.Harnesses...)
+	for i, harness := range harnesses {
+		harnesses[i] = session.SanitizeTerminalData(harness, session.TerminalSingleLine)
+	}
 	kind := row.Artifact.Kind.String()
 	identity, _ := json.Marshal([4]string{
 		session.RegistryIdentityKey(row.RegistryURL, row.RegistryRef, row.RegistryPath),
@@ -580,8 +591,11 @@ func rowPresentation(row session.Row) rowDTO {
 	return rowDTO{
 		ID:                  kind + "/" + row.Artifact.Name + "#" + hex.EncodeToString(sum[:]),
 		Name:                row.Artifact.Name,
+		DisplayName:         displayName,
+		SearchName:          row.SearchName,
+		SearchWords:         append([]string{}, row.SearchWords...),
 		Kind:                kind,
-		Description:         row.Artifact.Description,
+		Description:         description,
 		Registry:            registry,
 		Scope:               scope,
 		Required:            row.Artifact.Required,
@@ -589,7 +603,7 @@ func rowPresentation(row session.Row) rowDTO {
 		Checked:             row.EnabledGlobal || row.EnabledProject || row.EnabledLocal || row.Artifact.Required,
 		HarnessOverride:     row.HarnessSource == "registry override",
 		Harnesses:           harnesses,
-		Status:              row.StatusText(),
+		Status:              status,
 		Group:               row.StatusGroup().ID(),
 	}
 }

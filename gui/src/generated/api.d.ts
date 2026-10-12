@@ -458,6 +458,8 @@ export interface components {
             /** @description Whether the resource is enabled by any configuration scope, derived from row enablement metadata. */
             checked: boolean;
             description: string;
+            /** @description Sanitized single-line resource name for display. */
+            displayName: string;
             group: components["schemas"]["StatusGroupID"];
             /** @description Target harness IDs this row materializes into. */
             harnesses: string[];
@@ -466,12 +468,17 @@ export interface components {
             /** @description Stable identity bound to the source registry identity and scope (kind/name plus a SHA256 digest of the registry-identity/scope tuple), not kind/name alone. */
             id: string;
             kind: string;
+            /** @description Raw resource name retained for identity and deterministic sorting. */
             name: string;
             pendingVerification: boolean;
             registry: string;
             required: boolean;
             /** @enum {string} */
             scope: "organization" | "user" | "project" | "local" | "available";
+            /** @description Lowercased sanitized name used for local fuzzy matching. */
+            searchName: string;
+            /** @description Sorted, deduplicated lowercased name and metadata words used for local prefix matching. */
+            searchWords: string[];
             status: string;
         };
         /** @enum {string} */
