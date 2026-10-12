@@ -29,8 +29,8 @@
 ## 6. Documentation, Performance, and Gates
 
 - [x] 6.1 Update the relevant reference, how-to, and glossary pages for default-false opt-in and advisory preview preservation without claiming Marketplace lookup or an N+1 default flip; verify the existing documentation checks accept the updates.
-- [ ] 6.2 Repeat the existing `Resolve` and materialization hot-path benchmarks and retain raw output and invocation details alongside the baseline; report observed deltas without introducing a numeric budget.
-- [ ] 6.3 Run `make validate`, `make spec-check`, `make validate-e2e`, and `openspec validate --all --strict`; verify each gate succeeds, including selected TUI consumer regressions without adding a new TUI journey.
+- [x] 6.2 Repeat the existing `Resolve` and materialization hot-path benchmarks and retain raw output and invocation details alongside the baseline; report observed deltas without introducing a numeric budget.
+- [x] 6.3 Run `make validate`, `make spec-check`, `make validate-e2e`, and `openspec validate --all --strict`; verify each gate succeeds, including selected TUI consumer regressions without adding a new TUI journey.
 
 ## 7. Archive
 
