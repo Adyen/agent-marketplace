@@ -133,6 +133,7 @@ const selected = computed(() => (view.value?.rows ?? []).find((row) => row.id ==
 
 function select(row: Row) {
   selectedId.value = row.id
+  state.value?.browse(row)
 }
 
 async function moveSelection(direction: 1 | -1) {
@@ -142,9 +143,14 @@ async function moveSelection(direction: 1 | -1) {
   }
   const index = rows.findIndex((row) => row.id === selectedId.value)
   const next = index === -1 ? 0 : Math.min(rows.length - 1, Math.max(0, index + direction))
-  selectedId.value = rows[next].id
+  const row = rows[next]
+  const changed = selectedId.value !== row.id
+  selectedId.value = row.id
+  if (changed) {
+    state.value?.browse(row)
+  }
   await nextTick()
-  document.getElementById(`row-${rows[next].id}`)?.focus()
+  document.getElementById(`row-${row.id}`)?.focus()
 }
 
 const busy = computed(() => view.value == null || view.value.operation != null || view.value.requesting)

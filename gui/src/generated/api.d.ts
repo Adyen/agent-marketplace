@@ -185,6 +185,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/telemetry": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Record one bounded GUI interaction event
+         * @description Available only in user-scope mode. The tagged request is a closed
+         *     set of browse and sync-and-quit outcome events. Browse identifiers
+         *     are resolved against the current authoritative snapshot; no raw
+         *     Resource names, IDs, or client-provided attributes are exported.
+         *
+         */
+        post: operations["recordTelemetryEvent"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -289,6 +313,28 @@ export interface components {
             path?: string;
             /** @description Explicit git ref. */
             ref: string;
+        };
+        GUIBrowseEvent: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            action: "browse";
+            /** @description Opaque row identity from the current snapshot; the server resolves its Resource kind. */
+            rowId: string;
+        };
+        /** @description Closed GUI telemetry event union; unknown, duplicate, or mistyped keys are rejected. */
+        GUIEvent: components["schemas"]["GUIBrowseEvent"] | components["schemas"]["GUIModalOutcomeEvent"];
+        GUIModalOutcomeEvent: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            action: "modal_outcome";
+            /** @enum {string} */
+            modal: "sync+quit";
+            /** @enum {string} */
+            outcome: "cancelled";
         };
         InitializeActionRequest: {
             /**
@@ -706,6 +752,41 @@ export interface operations {
             403: components["responses"]["OriginRejected"];
             405: components["responses"]["MethodNotAllowed"];
             503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    recordTelemetryEvent: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["GUIEvent"];
+            };
+        };
+        responses: {
+            /** @description Event accepted; no response body */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Malformed, stale, ambiguous, or unsupported event, or unsupported session mode; code localapi.invalid_request or localapi.not_supported */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["OriginRejected"];
+            405: components["responses"]["MethodNotAllowed"];
+            503: components["responses"]["Closed"];
         };
     };
 }

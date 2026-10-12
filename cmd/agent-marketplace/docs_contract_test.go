@@ -160,6 +160,20 @@ func TestDocsContract(t *testing.T) {
 		}
 	})
 
+	t.Run("gui_release_rollout", func(t *testing.T) {
+		rolloutWarning := "every managed client runs a release whose cli reads the `gui` mapping"
+		configuration := strings.ToLower(readDoc(t, "site/docs/reference/configuration.md"))
+		warningIndex := strings.Index(configuration, rolloutWarning)
+		exampleIndex := strings.Index(configuration, "apiversion: agent-marketplace/v4\ngui:\n  version_check: false")
+		if warningIndex < 0 || exampleIndex < 0 || warningIndex > exampleIndex {
+			t.Error("configuration.md must put the reader-first warning before the GUI deployment example")
+		}
+		releaseNotes := strings.ToLower(readDoc(t, "docs/gui-desktop-release-notes.md"))
+		if !strings.Contains(releaseNotes, rolloutWarning) {
+			t.Error("GUI release notes must include the reader-first rollout warning")
+		}
+	})
+
 	t.Run("section_helper", func(t *testing.T) {
 		docAtStart := "## Heading At Start\ncontent line 1\n# Next Top Heading\ncontent line 2"
 		if got := section(docAtStart, "## Heading At Start"); !strings.Contains(got, "content line 1") || strings.Contains(got, "content line 2") {

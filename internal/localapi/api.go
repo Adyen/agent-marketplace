@@ -20,6 +20,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/pipeline"
 	"github.com/Adyen/agent-marketplace/internal/session"
+	"github.com/Adyen/agent-marketplace/internal/telemetry"
 )
 
 const tokenHeader = "X-Agent-Marketplace-Token"
@@ -330,6 +331,8 @@ func (a *API) dispatch(w http.ResponseWriter, r *http.Request) {
 		a.handleEvents(w, r)
 	case "/api/actions":
 		a.handleAction(w, r)
+	case "/api/telemetry":
+		a.handleTelemetry(w, r)
 	case "/api/configuration":
 		a.handleConfiguration(w, r)
 	case "/api/configuration/actions":
@@ -740,6 +743,9 @@ func (a *API) handleAction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	a.wg.Add(1)
+	if kind == session.OperationSync || kind == session.OperationUpdate {
+		telemetry.RecordInteractiveAction(a.ctx, "gui", string(kind), nil)
+	}
 	a.mu.Unlock()
 
 	w.Header().Set("Content-Type", "application/json")

@@ -261,6 +261,30 @@ describe('createClient', () => {
     ])
   })
 
+  // spec: gui-shell/gui-actions-use-existing-telemetry-policy
+  it('posts a closed telemetry event and accepts the empty response', async () => {
+    const calls: { url: string; method: string; token: string | null; body: string | null }[] = []
+    const fetcher: typeof fetch = async (input, init) => {
+      calls.push({
+        url: String(input),
+        method: init?.method ?? '',
+        token: new Headers(init?.headers).get('X-Agent-Marketplace-Token'),
+        body: init?.body == null ? null : String(init.body),
+      })
+      return new Response(null, { status: 204 })
+    }
+    const client = createClient('http://127.0.0.1:9999', 'secret-token', fetcher)
+    await client.telemetry({ action: 'browse', rowId: 'opaque-row-id' })
+    expect(calls).toEqual([
+      {
+        url: 'http://127.0.0.1:9999/api/telemetry',
+        method: 'POST',
+        token: 'secret-token',
+        body: '{"action":"browse","rowId":"opaque-row-id"}',
+      },
+    ])
+  })
+
   it('raises RequestError with the server code on rejection', async () => {
     const fetcher: typeof fetch = async () =>
       new Response(JSON.stringify({ code: 'localapi.busy', message: 'busy' }), { status: 409 })

@@ -13,6 +13,7 @@ export type SourceInput = components['schemas']['SourceInput']
 export type ConfigureRequest = components['schemas']['ConfigurationActionRequest']
 export type ApiError = components['schemas']['Error']
 export type ReleaseNotice = components['schemas']['ReleaseNotice']
+export type GUIEvent = components['schemas']['GUIEvent']
 
 export class RequestError extends Error {
   constructor(
@@ -139,6 +140,7 @@ export interface Client {
   configuration(): Promise<Configuration>
   configure(request: ConfigureRequest): Promise<OperationRef>
   release(): Promise<ReleaseNotice>
+  telemetry(event: GUIEvent): Promise<void>
 }
 
 export function createClient(baseURL: string, credential: string, fetchImpl: typeof fetch = fetch): Client {
@@ -219,6 +221,10 @@ export function createClient(baseURL: string, credential: string, fetchImpl: typ
     async release() {
       const response = await post('/api/release')
       return (await response.json()) as ReleaseNotice
+    },
+
+    async telemetry(event: GUIEvent) {
+      await post('/api/telemetry', event satisfies NonNullable<paths['/api/telemetry']['post']['requestBody']>['content']['application/json'])
     },
   }
 }

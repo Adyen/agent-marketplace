@@ -3,7 +3,7 @@
 - [x] 1.1 Add the desktop host using the Wails version selected by the `gui-local-api` transport spike and the frontend at the specified boundary; verify the CLI remains buildable with `CGO_ENABLED=0` and the GUI host is independently launchable.
 - [x] 1.2 Implement user-scope-only workspace resolution, single-instance focus/handoff, explicit refresh, window-focus ordinary reload, and post-mutation reload; add annotated host/Playwright tests for each `gui-shell` scenario and verify repository/personal-local files are untouched and reloads retain the accepted view until final assessment.
 - [ ] 1.3 Add keyboard access, accessible names, and English-only controls; add annotated accessibility tests and verify every action can be completed with keyboard input.
-- [ ] 1.4 Implement the public GitHub Releases latest-stable check and GUI telemetry; add annotated tests for newer/no-newer releases, silent failures, and `gui` surface identity. Verify `gui.version_check: false` makes no network request and shows no notice.
+- [x] 1.4 Implement the public GitHub Releases latest-stable check and GUI telemetry; add annotated tests for newer/no-newer releases, silent failures, and `gui` surface identity. Verify `gui.version_check: false` makes no network request and shows no notice.
 - [x] 1.5 Verify no raw configuration editing action is exposed by the shell or its keyboard action map; bind an annotated test to that observable behavior.
 - [x] 1.6 Implement the `session-interactions` migration, sync-and-quit, and quit confirmations; test affirmative, negative, and cancel paths, including closing the window while sync is pending.
 
@@ -22,7 +22,7 @@
 - [x] 3.1 Add CLI read support for the top-level `gui.version_check` setting in v4 and legacy config decoding; verify the organization value defaults to enabled when absent and an organization false value disables the GUI check.
 - [x] 3.2 Ignore `gui.version_check` from user-personal, repository-committed, and personal-local layers and report a warning without rejecting those roots; add annotated tests for each layer.
 - [x] 3.3 Add the `config-layering` scenario witnesses and the GUI no-network/no-notice witness; verify the setting is honored only from Consumer organization configuration.
-- [ ] 3.4 Add administrator documentation and release notes stating that the key may be deployed only after every managed client runs a release that reads it; verify no user-facing instruction recommends early deployment.
+- [x] 3.4 Add administrator documentation and release notes stating that the key may be deployed only after every managed client runs a release that reads it; verify no user-facing instruction recommends early deployment.
 
 ## 4. Surface parity and finalization
 

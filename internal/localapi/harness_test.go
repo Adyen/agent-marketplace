@@ -193,11 +193,34 @@ func TestLocalAPIUserHarness(t *testing.T) {
 		config.SetTestOrganizationConfigPath(t, orgPath)
 		bootstrap["orgConfig"] = orgPath
 	}
-	api, err := NewUser(context.Background(), home, lifecycle, nil, WithVersion(os.Getenv("AM_LOCALAPI_RELEASE_VERSION")))
+	apiCtx := context.Background()
+	var telemetryHarness *localTelemetryHarness
+	if mode := os.Getenv("AM_LOCALAPI_TELEMETRY_MODE"); mode != "" {
+		orgPath := filepath.Join(t.TempDir(), "org.yaml")
+		writeFile(t, orgPath, "apiVersion: agent-marketplace/v4\ngui:\n  version_check: false\n")
+		config.SetTestOrganizationConfigPath(t, orgPath)
+		bootstrap["orgConfig"] = orgPath
+		var telemetrySetupErr error
+		apiCtx, telemetryHarness, telemetrySetupErr = newLocalTelemetryHarness(t, home, mode, os.Getenv("AM_LOCALAPI_TELEMETRY_CAPTURE"))
+		if telemetrySetupErr != nil {
+			t.Fatal("setup private telemetry harness")
+		}
+	}
+	api, err := NewUser(apiCtx, home, lifecycle, nil, WithVersion(os.Getenv("AM_LOCALAPI_RELEASE_VERSION")))
 	if err != nil {
+		if telemetryHarness != nil {
+			telemetryHarness.finish(t)
+		}
 		t.Fatal(err)
 	}
-	defer api.Close()
+	if telemetryHarness == nil {
+		defer api.Close()
+	} else {
+		defer func() {
+			api.Close()
+			telemetryHarness.finish(t)
+		}()
+	}
 	if marker := os.Getenv("AM_LOCALAPI_RELEASE_MARK"); marker != "" {
 		api.releaseClient.Transport = releaseHarnessTransport(marker, os.Getenv("AM_LOCALAPI_RELEASE_STATUS"), os.Getenv("AM_LOCALAPI_RELEASE_BODY"))
 	}

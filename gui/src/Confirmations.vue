@@ -21,6 +21,35 @@ const syncQuitBlocked = computed(
   () => state.value.requesting || (state.value.operation != null && !syncRunning.value) || quitPending.value,
 )
 
+const choiceMade = ref(false)
+const syncChoicesOffered = ref(false)
+
+watch(
+  quitOpen,
+  (isOpen, wasOpen) => {
+    if (isOpen) {
+      choiceMade.value = false
+      syncChoicesOffered.value = showSyncChoices.value
+    } else if (wasOpen && !choiceMade.value) {
+      props.controller.cancelQuit()
+      if (syncChoicesOffered.value) {
+        props.controller.recordSyncQuitCancellation()
+      }
+    }
+  },
+  { flush: 'sync', immediate: true },
+)
+
+watch(
+  showSyncChoices,
+  (offered) => {
+    if (quitOpen.value && offered) {
+      syncChoicesOffered.value = true
+    }
+  },
+  { flush: 'sync' },
+)
+
 watch(
   () => state.value.migrationOffered,
   (offered, was) => {
@@ -64,6 +93,7 @@ async function syncAndQuit() {
   try {
     const accepted = await props.controller.syncAndQuit()
     if (accepted) {
+      choiceMade.value = true
       quitOpen.value = false
     }
   } finally {
@@ -72,11 +102,19 @@ async function syncAndQuit() {
 }
 
 function quitNow() {
+  choiceMade.value = true
+  if (syncChoicesOffered.value) {
+    props.controller.recordSyncQuitCancellation()
+  }
   props.controller.quit()
   quitOpen.value = false
 }
 
 function cancelQuit() {
+  choiceMade.value = true
+  if (syncChoicesOffered.value) {
+    props.controller.recordSyncQuitCancellation()
+  }
   props.controller.cancelQuit()
   quitOpen.value = false
 }

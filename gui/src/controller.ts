@@ -5,6 +5,7 @@ import {
   type Action,
   type Client,
   type Configuration,
+  type GUIEvent,
   type OperationRef,
   type SessionEvent,
   type Snapshot,
@@ -243,6 +244,14 @@ export class WorkspaceController {
     this.quitEpoch++
   }
 
+  browse(row: Row): void {
+    this.reportTelemetry({ action: 'browse', rowId: row.id })
+  }
+
+  recordSyncQuitCancellation(): void {
+    this.reportTelemetry({ action: 'modal_outcome', modal: 'sync+quit', outcome: 'cancelled' })
+  }
+
   async saveTargets(targets: string[]): Promise<boolean> {
     return this.requestOperation(() => this.client.configure({ action: 'save-targets', targets }))
   }
@@ -264,6 +273,10 @@ export class WorkspaceController {
         ...(sources.length === 0 ? {} : { sources }),
       }),
     )
+  }
+
+  private reportTelemetry(event: GUIEvent): void {
+    void this.client.telemetry(event).catch(() => undefined)
   }
 
   private async requestOperation(start: () => Promise<OperationRef>, quitAfter = false): Promise<boolean> {
