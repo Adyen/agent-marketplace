@@ -831,6 +831,7 @@ func TestOrganizationIntentReadsKeepDistinctRequestedAliases(t *testing.T) {
 	organizationLayerReads := func(t *testing.T, orgPath string) []ConfigRead {
 		t.Helper()
 		intent := ReadIntent(context.Background(), LoadEffectiveOptions{
+			RepoRoot:         t.TempDir(),
 			OrganizationPath: orgPath,
 			GlobalPath:       filepath.Join(t.TempDir(), "missing-global.yaml"),
 			RepoPath:         filepath.Join(t.TempDir(), "missing-repo.yaml"),

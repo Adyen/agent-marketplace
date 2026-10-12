@@ -27,6 +27,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/resolver"
 	"github.com/Adyen/agent-marketplace/internal/session"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
+	mpapi "github.com/Adyen/agent-marketplace/pkg/marketplace/api"
 )
 
 const fixtureSkillBody = "---\nname: solo\ndescription: Solo skill\n---\n# Solo\n"
@@ -1399,6 +1400,110 @@ func TestSnapshotStatusGroupPresentation(t *testing.T) {
 
 	check(session.Snapshot{Stage: session.SnapshotStageFinal, DriftAssessment: session.DriftReady, Rows: rows}, wantRows)
 	check(session.Snapshot{Stage: session.SnapshotStageFinal, DriftAssessment: session.DriftFailed}, nil)
+}
+
+// spec: session-navigation/ranked-search-within-sections
+// spec: session-rendering-safety/hostile-text-is-inert
+func TestSnapshotSearchMetadataPresentation(t *testing.T) {
+	type searchProjection struct {
+		Name        string   `json:"name"`
+		DisplayName string   `json:"displayName"`
+		SearchName  string   `json:"searchName"`
+		SearchWords []string `json:"searchWords"`
+		Registry    string   `json:"registry"`
+		Description string   `json:"description"`
+		Status      string   `json:"status"`
+		Harnesses   []string `json:"harnesses"`
+	}
+	api := &API{}
+	project := func(row session.Row) searchProjection {
+		t.Helper()
+		body, err := json.Marshal(api.snapshotPresentationLocked(session.Snapshot{
+			Stage: session.SnapshotStageFinal, DriftAssessment: session.DriftReady, Rows: []session.Row{row},
+		}, nil))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var got struct {
+			Rows []searchProjection `json:"rows"`
+		}
+		if err := json.Unmarshal(body, &got); err != nil {
+			t.Fatal(err)
+		}
+		if len(got.Rows) != 1 {
+			t.Fatalf("snapshot rows = %d, want 1 positive projection", len(got.Rows))
+		}
+		return got.Rows[0]
+	}
+
+	rawName := "Danger\x1b[31m\u202e"
+	display := project(session.Row{Artifact: resolver.ResolvedArtifact{Entry: catalog.Entry{Kind: ir.KindSkill, Name: rawName}}})
+	if display.Name != rawName {
+		t.Fatalf("raw name = %q, want identity name %q", display.Name, rawName)
+	}
+	if display.DisplayName != "Danger\\x1B[31m\\u202E" {
+		t.Fatalf("display name = %q, want sanitized literal", display.DisplayName)
+	}
+	if display.SearchName != "danger\\x1b[31m\\u202e" {
+		t.Fatalf("search name = %q, want canonical sanitized lowercase name", display.SearchName)
+	}
+
+	iDotted := project(session.Row{Artifact: resolver.ResolvedArtifact{Entry: catalog.Entry{Kind: ir.KindSkill, Name: "İ"}}})
+	if iDotted.DisplayName != "İ" || iDotted.SearchName != "i" {
+		t.Fatalf("dotted I projection = display %q search %q, want display İ search i", iDotted.DisplayName, iDotted.SearchName)
+	}
+
+	metadataRow := func(metadata map[string]string) session.Row {
+		return session.Row{
+			Artifact:             resolver.ResolvedArtifact{Entry: catalog.Entry{Kind: ir.KindSkill, Name: "resource", Description: "description"}},
+			MarketplaceDiscovery: &session.MarketplaceDiscovery{Item: mpapi.ResourceListItem{Metadata: metadata}},
+		}
+	}
+	firstOrder := map[string]string{}
+	firstOrder["zeta"] = "last"
+	firstOrder["alpha"] = "first"
+	secondOrder := map[string]string{}
+	secondOrder["alpha"] = "first"
+	secondOrder["zeta"] = "last"
+	first := project(metadataRow(firstOrder))
+	second := project(metadataRow(secondOrder))
+	wantWords := []string{"alpha", "description", "first", "last", "local", "resource", "skill", "zeta"}
+	if len(first.SearchWords) == 0 {
+		t.Fatal("search words are empty without a positive metadata-index control")
+	}
+	if strings.Join(first.SearchWords, "\x00") != strings.Join(wantWords, "\x00") {
+		t.Fatalf("search words = %q, want %q", first.SearchWords, wantWords)
+	}
+	if strings.Join(first.SearchWords, "\x00") != strings.Join(second.SearchWords, "\x00") {
+		t.Fatalf("metadata insertion order changed search words: %q vs %q", first.SearchWords, second.SearchWords)
+	}
+
+	rawRegistry := "registry <script>\x1b[31m\u202e Å"
+	rawDescription := "description <img src=x>\nprintable Ω\x1b[31m\u202e"
+	rawStatus := "bad <b>frontmatter</b> \x1b[31m\u202e"
+	rawHarness := "custom <img>\x1b[31m\u202e"
+	hostile := project(session.Row{
+		Artifact:     resolver.ResolvedArtifact{Entry: catalog.Entry{Kind: ir.KindSkill, Name: rawName, Description: rawDescription}},
+		RegistryName: rawRegistry,
+		IsMalformed:  true,
+		MalformedMsg: rawStatus,
+		Harnesses:    []string{rawHarness},
+	})
+	if hostile.Registry != "registry <script>\\x1B[31m\\u202E Å" {
+		t.Fatalf("registry = %q, want sanitized literal with printable Unicode", hostile.Registry)
+	}
+	if hostile.Description != "description <img src=x>\nprintable Ω\\x1B[31m\\u202E" {
+		t.Fatalf("description = %q, want sanitized multiline literal with printable Unicode", hostile.Description)
+	}
+	if hostile.Status != "malformed: bad <b>frontmatter</b> \\x1B[31m\\u202E" {
+		t.Fatalf("status = %q, want sanitized malformed literal", hostile.Status)
+	}
+	if len(hostile.Harnesses) != 1 || hostile.Harnesses[0] != "custom <img>\\x1B[31m\\u202E" {
+		t.Fatalf("harnesses = %q, want sanitized literal", hostile.Harnesses)
+	}
+	if !strings.Contains(hostile.Registry, "Å") || !strings.Contains(hostile.Description, "printable Ω") || !strings.Contains(hostile.Description, "<img src=x>") {
+		t.Fatalf("printable Unicode or inert markup was lost: registry=%q description=%q", hostile.Registry, hostile.Description)
+	}
 }
 
 // spec: gui-local-api/event-identity-preserves-order-and-generation

@@ -11,6 +11,9 @@ importers:
       '@nuxt/ui':
         specifier: 4.10.0
         version: 4.10.0(e80934ffed3bc00baa36ec428a29cdb8)
+      fuzzysort:
+        specifier: 3.1.0
+        version: 3.1.0
       vue:
         specifier: 3.5.22
         version: 3.5.22(typescript@5.9.3)
@@ -1371,6 +1374,9 @@ packages:
   fuse.js@7.5.0:
     resolution: {integrity: sha512-sQtrEfA+ez/3G0cCZecF70oqpCRttCexYUG4mUrtWL49ULUzUyxokt5kyqwtKzj1270RaKih+hcP3qLcumccow==}
     engines: {node: '>=10'}
+
+  fuzzysort@3.1.0:
+    resolution: {integrity: sha512-sR9BNCjBg6LNgwvxlBd0sBABvQitkLzoVY9MYYROQVX/FvfJ4Mai9LsGhDgd8qYdds0bY77VzYd5iuB+v5rwQQ==}
 
   get-stream@8.0.1:
     resolution: {integrity: sha512-VaUJspBffn/LMCJVoMvSAdmscJyS1auj5Zulnn5UoYcY531UWmdwhRWkcGKnGU93m5HSXP9LP2usOryrBtQowA==}
@@ -3809,6 +3815,8 @@ snapshots:
     optional: true
 
   fuse.js@7.5.0: {}
+
+  fuzzysort@3.1.0: {}
 
   get-stream@8.0.1: {}
 

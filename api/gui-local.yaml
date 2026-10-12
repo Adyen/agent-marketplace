@@ -373,12 +373,24 @@ components:
         title: { type: string }
     SnapshotRow:
       type: object
-      required: [id, name, kind, description, registry, scope, required, pendingVerification, checked, harnessOverride, harnesses, status, group]
+      required: [id, name, displayName, searchName, searchWords, kind, description, registry, scope, required, pendingVerification, checked, harnessOverride, harnesses, status, group]
       properties:
         id:
           type: string
           description: Stable identity bound to the source registry identity and scope (kind/name plus a SHA256 digest of the registry-identity/scope tuple), not kind/name alone.
-        name: { type: string }
+        name:
+          type: string
+          description: Raw resource name retained for identity and deterministic sorting.
+        displayName:
+          type: string
+          description: Sanitized single-line resource name for display.
+        searchName:
+          type: string
+          description: Lowercased sanitized name used for local fuzzy matching.
+        searchWords:
+          type: array
+          items: { type: string }
+          description: Sorted, deduplicated lowercased name and metadata words used for local prefix matching.
         kind: { type: string }
         description: { type: string }
         registry: { type: string }
