@@ -1008,14 +1008,25 @@ func compileWorkItems(work []skillTarget, allDiags []diag.Diagnostic, allOutputs
 		if isHook && plan.err != nil {
 			blockResource(key, w)
 			markResourceIncomplete(key, w, aggregateHandler)
+			source := compilepkg.SourceOf(w.skill.Resource)
 			allDiags = append(allDiags, diag.Diagnostic{
 				Code:     "materialize.compile.error",
 				Severity: diag.SeverityError,
 				Target:   string(w.target),
 				Resource: w.skill.Name,
 				Message:  "Hook support could not be prepared safely; hook suppressed",
-				Source:   compilepkg.SourceOf(w.skill.Resource),
+				Source:   source,
 			})
+			if plan.supportAdmissionRefused {
+				allDiags = append(allDiags, diag.Diagnostic{
+					Code:     diag.CodeMaterializeHookSupportRefused,
+					Severity: diag.SeverityError,
+					Target:   string(w.target),
+					Resource: w.skill.Name,
+					Message:  "Hook support source could not be admitted safely; installed hook content preserved",
+					Source:   source,
+				})
+			}
 			continue
 		}
 		if isHook && plan.sourceDigest == "" {
@@ -2599,22 +2610,6 @@ func executeTargetPlans(report *Report, key outputKey, outDir string, artifacts 
 			rel, err := filepath.Rel(planRoot, plan.outDir)
 			if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 				report.Diags = append(report.Diags, diag.Diagnostic{Code: "materialize.mkdir.error", Severity: diag.SeverityError, Target: string(key.target), Message: fmt.Sprintf("unsafe portable output directory %s", plan.outDir)})
-				if hasSupportPublication && supportPlan.writeReport != nil {
-					appendMaterializePlanWriteReport(report, key, outDir, plan, supportPlan.writeReport)
-				}
-				continue
-			}
-			validate := validatePortableOutputDir
-			if !dryRun {
-				validate = ensurePortableOutputDir
-			}
-			if _, err := validate(planRoot, rel); err != nil {
-				report.Diags = append(report.Diags, diag.Diagnostic{
-					Code:     "materialize.mkdir.error",
-					Severity: diag.SeverityError,
-					Target:   string(key.target),
-					Message:  fmt.Sprintf("validate portable output directory %s: %v", plan.outDir, err),
-				})
 				if hasSupportPublication && supportPlan.writeReport != nil {
 					appendMaterializePlanWriteReport(report, key, outDir, plan, supportPlan.writeReport)
 				}

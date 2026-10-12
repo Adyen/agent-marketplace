@@ -285,6 +285,41 @@ func TestE2EGatesDriver(t *testing.T) {
 	}
 }
 
+func TestTestJobWarmsModulesBeforeWitnessedTests(t *testing.T) {
+	job := getMap(t, getMap(t, loadCIWorkflow(t), "jobs"), "test")
+	steps := getSlice(t, job, "steps")
+	setupIndex, cacheIndex, testIndex := -1, -1, -1
+	var witnessedTests map[string]any
+	for i, raw := range steps {
+		step := stepMap(t, raw)
+		name, _ := step["name"].(string)
+		switch name {
+		case "Set up Go":
+			setupIndex = i
+		case "Cache dependencies for offline Unix cross-builds":
+			cacheIndex = i
+			if got := step["run"]; got != "go mod download" {
+				t.Errorf("module cache step run = %v, want %q", got, "go mod download")
+			}
+			if _, ok := step["env"]; ok {
+				t.Errorf("module cache step must not override the environment: %v", step["env"])
+			}
+		case "Run tests and verify CLI behavior witnesses":
+			testIndex = i
+			witnessedTests = step
+		}
+	}
+	if setupIndex < 0 || cacheIndex < 0 || testIndex < 0 {
+		t.Fatalf("Test job steps omit Go setup, cache warm, or witnessed tests: %+v", steps)
+	}
+	if cacheIndex != setupIndex+1 || cacheIndex >= testIndex {
+		t.Fatalf("module cache warm step index = %d, Set up Go = %d, witnessed tests = %d", cacheIndex, setupIndex, testIndex)
+	}
+	if got := witnessedTests["run"]; got != "make test-witnessed" {
+		t.Errorf("witnessed test step run = %v, want %q", got, "make test-witnessed")
+	}
+}
+
 func TestPullRequestTrigger(t *testing.T) {
 	doc := loadCIWorkflow(t)
 

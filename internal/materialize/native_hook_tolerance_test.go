@@ -185,6 +185,30 @@ func marketplaceHookFixture(t *testing.T, target hcc.Target, digest string) (res
 	}, staged
 }
 
+// spec: hook-native-location-tolerance/source-and-support-changes-invalidate-the-fingerprint
+func TestRunIndexOnlyHookDefinitionMismatchIsNotSupportAdmissionRefusal(t *testing.T) {
+	home, repo := t.TempDir(), t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_STATE_HOME", filepath.Join(home, "state"))
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, "cache"))
+	resolved, staged := marketplaceHookFixture(t, hcc.TargetFactory, "sha256:"+strings.Repeat("a", 64))
+	definitionPath := filepath.Join(staged, "hooks.json")
+	changedDefinition := []byte(`{"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"./changed.sh"}]}]}}`)
+	if err := os.WriteFile(definitionPath, changedDefinition, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	report, err := Run(context.Background(), repo, []resolver.ResolvedArtifact{resolved})
+	if err != nil || report == nil || !hasDiagCode(report.Diags, "materialize.compile.error") {
+		t.Fatalf("index-only definition mismatch was not refused: %+v / %v", report, err)
+	}
+	if hasDiagCode(report.Diags, diag.CodeMaterializeHookSupportRefused) {
+		t.Fatalf("index-only definition-binding refusal was mislabeled as source admission: %+v", report.Diags)
+	}
+	if _, err := os.Lstat(filepath.Join(repo, ".factory", "hooks.json")); !os.IsNotExist(err) {
+		t.Fatalf("index-only definition-binding refusal published a native hook: %v", err)
+	}
+}
+
 // mirrorHookFixture returns the resolved artifact the Marketplace resolver
 // hands materialize for a verified MIRROR hook: no staged source tree exists,
 // and Path names the verified artifact archive — which must never be read as

@@ -31,12 +31,13 @@ import (
 )
 
 type hookSupportPlan struct {
-	relBase             string
-	artifacts           []artifact.Artifact
-	sourceDigest        string
-	sourceSnapshot      *hookSourceSnapshot
-	sourceExcludedPeers []string
-	err                 error
+	relBase                 string
+	artifacts               []artifact.Artifact
+	sourceDigest            string
+	sourceSnapshot          *hookSourceSnapshot
+	sourceExcludedPeers     []string
+	err                     error
+	supportAdmissionRefused bool
 }
 
 type nativeHookInstalledSupport struct {
@@ -139,6 +140,7 @@ func prepareHookSupport(work []skillTarget) (map[int]hookSupportPlan, map[int][]
 			}
 			if err := snapshotErrs[key]; err != nil {
 				plan.err = err
+				plan.supportAdmissionRefused = true
 				plans[i] = plan
 				continue
 			}

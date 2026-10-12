@@ -16,6 +16,31 @@ import (
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 )
 
+func requireHookSupportRefusalPair(t *testing.T, report *Report, target hcc.Target, resource string) {
+	t.Helper()
+	var compile, refused *diag.Diagnostic
+	var refusedCount int
+	for i := range report.Diags {
+		diagnostic := &report.Diags[i]
+		if diagnostic.Code == "materialize.compile.error" {
+			compile = diagnostic
+		}
+		if diagnostic.Code == diag.CodeMaterializeHookSupportRefused {
+			refused = diagnostic
+			refusedCount++
+		}
+	}
+	if compile == nil || refused == nil || refusedCount != 1 {
+		t.Fatalf("source refusal lacks exactly one generic and registered diagnostic: %+v", report.Diags)
+	}
+	if compile.Severity != diag.SeverityError || refused.Severity != diag.SeverityError ||
+		compile.Target != string(target) || compile.Resource != resource ||
+		refused.Target != compile.Target || refused.Resource != compile.Resource || refused.Source != compile.Source ||
+		refused.Message != "Hook support source could not be admitted safely; installed hook content preserved" {
+		t.Fatalf("source refusal diagnostics differ: generic=%+v registered=%+v", compile, refused)
+	}
+}
+
 // spec: materialization/hook-support-source-refusal-preserves-installed-native-content
 func TestRunHookSupportSourceRefusalPreservesNativeContent(t *testing.T) {
 	home, repo, source, outside := t.TempDir(), t.TempDir(), t.TempDir(), t.TempDir()
@@ -113,9 +138,10 @@ func TestRunHookSupportSourceRefusalPreservesNativeContent(t *testing.T) {
 	changedDefinitionBefore, changedDefinitionMode, changedDefinitionMtime := fileSnapshot(t, definitionPath)
 	resolved = resolverHook(t, definitionPath, "support-probe")
 	report, err := Run(t.Context(), repo, []resolver.ResolvedArtifact{resolved})
-	if err != nil || !hasDiagCode(report.Diags, "materialize.compile.error") {
+	if err != nil || report == nil {
 		t.Fatalf("foreign hook source did not refuse: %+v %v", report, err)
 	}
+	requireHookSupportRefusalPair(t, report, hcc.TargetFactory, "support-probe")
 	blocked := false
 	for _, resource := range report.BlockedResources {
 		blocked = blocked || resource.Target == hcc.TargetFactory && resource.Name == "support-probe"
@@ -367,9 +393,10 @@ func TestRunHookSourceRefusalKeepsIndependentNativeWork(t *testing.T) {
 	good := resolverHook(t, goodDefinition, "good-hook")
 	good.Harnesses = []hcc.Target{hcc.TargetFactory}
 	report, err := Run(t.Context(), repo, []resolver.ResolvedArtifact{bad, good})
-	if err != nil || report == nil || !hasDiagCode(report.Diags, "materialize.compile.error") {
+	if err != nil || report == nil {
 		t.Fatalf("bad source did not refuse: %+v %v", report, err)
 	}
+	requireHookSupportRefusalPair(t, report, hcc.TargetFactory, "bad-hook")
 	badBlocked, goodBlocked := false, false
 	for _, blocked := range report.BlockedResources {
 		badBlocked = badBlocked || blocked.Name == "bad-hook" && blocked.Target == hcc.TargetFactory
@@ -689,9 +716,10 @@ func TestRunGeminiHookSupportSourceRefusalPreservesNativeContent(t *testing.T) {
 		t.Fatal(err)
 	}
 	report, err := Run(t.Context(), repo, []resolver.ResolvedArtifact{hook}, WithMaterializationModes(modes))
-	if err != nil || report == nil || !hasDiagCode(report.Diags, "materialize.compile.error") {
+	if err != nil || report == nil {
 		t.Fatalf("unsafe source sibling was not refused: %+v %v", report, err)
 	}
+	requireHookSupportRefusalPair(t, report, hcc.TargetGemini, "gemini-probe")
 	blocked := false
 	for _, resource := range report.BlockedResources {
 		blocked = blocked || resource.Target == hcc.TargetGemini && resource.Name == "gemini-probe"

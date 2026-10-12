@@ -441,6 +441,9 @@ jobs:
           go-version-file: go.mod
           cache: true
 
+      - name: Cache dependencies for offline Unix cross-builds
+        run: go mod download
+
       - name: Run tests and verify CLI behavior witnesses
         run: make test-witnessed
 
