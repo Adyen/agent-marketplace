@@ -15,6 +15,7 @@ import (
 
 	"golang.org/x/sys/unix"
 
+	"github.com/Adyen/agent-marketplace/internal/fsboundary"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact"
 )
 
@@ -72,6 +73,48 @@ func hookSourceFingerprintFieldString(buf []byte, field string) []byte {
 	return hookSourceFingerprintField(buf, []byte(field))
 }
 
+type hookSourceFingerprintFile struct {
+	rel  string
+	mode os.FileMode
+	data []byte
+}
+
+func validateHookSourceFingerprintInput(in HookSourceFingerprintInput) error {
+	if in.SourceIdentity == "" || in.Name == "" || in.Target == "" {
+		return errors.New("hook source fingerprint: source identity, name and target are required")
+	}
+	if in.Scope != HookScopeRepository && in.Scope != HookScopeMachine {
+		return fmt.Errorf("hook source fingerprint: scope %q is not repository or machine", in.Scope)
+	}
+	if in.SourceRoot == "" {
+		return errors.New("hook source fingerprint: source root is required")
+	}
+	rel := in.DefinitionRel
+	if rel == "" || strings.HasPrefix(rel, "/") || filepath.IsAbs(rel) ||
+		rel == ".." || strings.HasPrefix(rel, "../") || strings.Contains(rel, "/../") || strings.HasSuffix(rel, "/..") ||
+		filepath.ToSlash(filepath.Clean(filepath.FromSlash(rel))) != rel {
+		return fmt.Errorf("hook source fingerprint: definition path %q is not a clean source-relative path", rel)
+	}
+	return nil
+}
+
+func serializeHookSourceFingerprint(in HookSourceFingerprintInput, definition []byte, files []hookSourceFingerprintFile) string {
+	buf := []byte("hook-source/v1\x00")
+	buf = hookSourceFingerprintFieldString(buf, in.SourceIdentity)
+	buf = hookSourceFingerprintFieldString(buf, in.Name)
+	buf = hookSourceFingerprintFieldString(buf, in.Target)
+	buf = hookSourceFingerprintFieldString(buf, in.Scope)
+	buf = hookSourceFingerprintFieldString(buf, in.DefinitionRel)
+	buf = hookSourceFingerprintField(buf, definition)
+	for _, file := range files {
+		buf = hookSourceFingerprintFieldString(buf, file.rel)
+		buf = hookSourceFingerprintFieldString(buf, fmt.Sprintf("%04o", file.mode.Perm()))
+		buf = hookSourceFingerprintField(buf, file.data)
+	}
+	sum := sha256.Sum256(buf)
+	return "sha256:" + hex.EncodeToString(sum[:])
+}
+
 // HookSourceFingerprint computes the spec's version-1 source-hook fingerprint:
 // sha256 over the literal "hook-source/v1\x00" followed by length-prefixed
 // source identity, installed name, target, scope, the source-layout-relative
@@ -87,21 +130,10 @@ func hookSourceFingerprintFieldString(buf []byte, field string) []byte {
 // traversal-suspect relative path, or symlink anywhere under the definition
 // directory returns an error and no fingerprint, never a partial match.
 func HookSourceFingerprint(in HookSourceFingerprintInput) (string, error) {
-	if in.SourceIdentity == "" || in.Name == "" || in.Target == "" {
-		return "", errors.New("hook source fingerprint: source identity, name and target are required")
-	}
-	if in.Scope != HookScopeRepository && in.Scope != HookScopeMachine {
-		return "", fmt.Errorf("hook source fingerprint: scope %q is not repository or machine", in.Scope)
-	}
-	if in.SourceRoot == "" {
-		return "", errors.New("hook source fingerprint: source root is required")
+	if err := validateHookSourceFingerprintInput(in); err != nil {
+		return "", err
 	}
 	rel := in.DefinitionRel
-	if rel == "" || strings.HasPrefix(rel, "/") || filepath.IsAbs(rel) ||
-		rel == ".." || strings.HasPrefix(rel, "../") || strings.Contains(rel, "/../") || strings.HasSuffix(rel, "/..") ||
-		filepath.ToSlash(filepath.Clean(filepath.FromSlash(rel))) != rel {
-		return "", fmt.Errorf("hook source fingerprint: definition path %q is not a clean source-relative path", rel)
-	}
 
 	rootFD, err := unix.Open(in.SourceRoot, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0)
 	if err != nil {
@@ -136,12 +168,7 @@ func HookSourceFingerprint(in HookSourceFingerprintInput) (string, error) {
 		return "", err
 	}
 
-	type supportFile struct {
-		rel  string
-		mode string
-		data []byte
-	}
-	var support []supportFile
+	var support []hookSourceFingerprintFile
 	if err := walkFingerprintDir(defDirFD, func(relPath string) error {
 		if relPath == filepath.ToSlash(defName) {
 			return nil
@@ -150,31 +177,14 @@ func HookSourceFingerprint(in HookSourceFingerprintInput) (string, error) {
 		if err != nil {
 			return err
 		}
-		support = append(support, supportFile{
-			rel:  relPath,
-			mode: fmt.Sprintf("%04o", perm),
-			data: data,
-		})
+		support = append(support, hookSourceFingerprintFile{rel: relPath, mode: perm, data: data})
 		return nil
 	}); err != nil {
 		return "", err
 	}
 	sort.Slice(support, func(i, j int) bool { return support[i].rel < support[j].rel })
 
-	buf := []byte("hook-source/v1\x00")
-	buf = hookSourceFingerprintFieldString(buf, in.SourceIdentity)
-	buf = hookSourceFingerprintFieldString(buf, in.Name)
-	buf = hookSourceFingerprintFieldString(buf, in.Target)
-	buf = hookSourceFingerprintFieldString(buf, in.Scope)
-	buf = hookSourceFingerprintFieldString(buf, rel)
-	buf = hookSourceFingerprintField(buf, defBytes)
-	for _, s := range support {
-		buf = hookSourceFingerprintFieldString(buf, s.rel)
-		buf = hookSourceFingerprintFieldString(buf, s.mode)
-		buf = hookSourceFingerprintField(buf, s.data)
-	}
-	sum := sha256.Sum256(buf)
-	return "sha256:" + hex.EncodeToString(sum[:]), nil
+	return serializeHookSourceFingerprint(in, defBytes, support), nil
 }
 
 // hookSourceMirrorDigestPattern is the only content-digest shape the mirror
@@ -268,7 +278,7 @@ func openFingerprintFile(dirfd int, name string) (*os.File, os.FileMode, error) 
 	}
 	if st.Mode&unix.S_IFMT != unix.S_IFREG {
 		_ = f.Close()
-		return nil, 0, fmt.Errorf("hook source fingerprint: %s is not a regular file", name)
+		return nil, 0, fmt.Errorf("%w: hook source fingerprint: %s is not a regular file", fsboundary.ErrUnsafeFile, name)
 	}
 	return f, os.FileMode(st.Mode & 0o777), nil
 }
@@ -279,7 +289,7 @@ func openFingerprintFile(dirfd int, name string) (*os.File, os.FileMode, error) 
 func readFingerprintFD(f *os.File, relPath string, total *int64) ([]byte, error) {
 	remaining := hookSourceFingerprintMaxBytes - *total
 	if remaining < 0 {
-		return nil, fmt.Errorf("hook source fingerprint: source files exceed %d bytes", hookSourceFingerprintMaxBytes)
+		return nil, fmt.Errorf("%w: hook source fingerprint: source files exceed %d bytes", fsboundary.ErrTooLarge, hookSourceFingerprintMaxBytes)
 	}
 	data, err := io.ReadAll(io.LimitReader(f, remaining+1))
 	if err != nil {
@@ -287,7 +297,7 @@ func readFingerprintFD(f *os.File, relPath string, total *int64) ([]byte, error)
 	}
 	*total += int64(len(data))
 	if *total > hookSourceFingerprintMaxBytes {
-		return nil, fmt.Errorf("hook source fingerprint: source files exceed %d bytes", hookSourceFingerprintMaxBytes)
+		return nil, fmt.Errorf("%w: hook source fingerprint: source files exceed %d bytes", fsboundary.ErrTooLarge, hookSourceFingerprintMaxBytes)
 	}
 	return data, nil
 }
@@ -386,7 +396,7 @@ func walkFingerprintDir(defDirFD int, fn func(relPath string) error) error {
 			}
 			typ := e.Type()
 			if typ&os.ModeSymlink != 0 {
-				return fmt.Errorf("hook source fingerprint: %s is a symlink; refusing to follow", relPath)
+				return fmt.Errorf("%w: hook source fingerprint: %s is a symlink; refusing to follow", fsboundary.ErrUnsafePath, relPath)
 			}
 			if typ.IsDir() {
 				sub, err := openFingerprintDir(dirfd, e.Name())
@@ -401,7 +411,7 @@ func walkFingerprintDir(defDirFD int, fn func(relPath string) error) error {
 				continue
 			}
 			if !typ.IsRegular() {
-				return fmt.Errorf("hook source fingerprint: %s is not a regular file", relPath)
+				return fmt.Errorf("%w: hook source fingerprint: %s is not a regular file", fsboundary.ErrUnsafeFile, relPath)
 			}
 			files++
 			if files > maxFiles {
