@@ -70,8 +70,53 @@ the warning never quotes the malformed value. An item is skipped when:
 A prerequisite is met when a selected resource in the same resolution has the
 same kind and name, regardless of which registry, path, or configuration
 layer supplies it. The `registry` and `path` hints do not restrict
-satisfaction — they only shape the remediation command. A skill named `docs`
-does not satisfy an `mcp:docs` prerequisite.
+satisfaction — they shape the remediation command and steer lookup when
+[requirement expansion](#requirement-expansion) is enabled. A skill named
+`docs` does not satisfy an `mcp:docs` prerequisite.
+
+## Requirement expansion
+
+Expansion is opt-in and off by default. Set `requires.expand: true` in any v4
+configuration layer to turn it on:
+
+```yaml
+requires:
+  expand: true
+```
+
+The highest-precedence layer that sets the value wins, an explicit `false`
+overrides a lower-precedence `true`, and a layer that omits it changes
+nothing. v2 and v3 configurations keep the release default of `false`, and
+`migrate` does not add the key. See the
+[configuration reference](configuration.md) and
+[configuration layers reference](configuration-layers.md#requires).
+
+When expansion is enabled, a prerequisite that is not already selected is
+looked up and selected transitively after collections are expanded:
+
+- Without a `registry` hint, only the requiring resource's own source (same
+  registry, ref, and root) is searched.
+- A `registry` hint must match a source that is already configured: a Git
+  source by its normalized URL, with `path` narrowing to a matching
+  configured root, or a directory source by its absolute location. A hint
+  that matches nothing configured produces a warning; the CLI never fetches
+  or guesses another source.
+- Implied resources are selected only in the requiring resource's scope and
+  only for the supplying group's harness targets. They are not `required`,
+  and a direct selection wins a collision with an implied candidate.
+- Explicit exclusions still win unless a `required: true` group supplies
+  the resource. An exclusion in the repository scope cannot unselect a
+  machine-scope resource.
+- Requirement cycles terminate, and the first candidate in declaration and
+  resolution order wins among competing implied candidates.
+
+With expansion disabled, `sync` computes the same transitive closure as a
+preview only. Selections are unchanged, but outputs the preview would
+produce are preserved when they already exist with matching ownership:
+`sync`, `sync --locked`, and `sync --check` never create, rewrite, or adopt
+files for a previewed resource, and they do not prune an existing managed
+output that a preview still covers. Removing the last resource that
+requires it ends that retention at the next sync.
 
 ## Warning and remediation
 

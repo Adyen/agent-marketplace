@@ -22,7 +22,7 @@ import (
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/jsonc"
 )
 
-func materializeNativeAggregates(ctx context.Context, report *Report, key outputKey, repoRoot string, artifacts []artifact.Artifact, blocked map[string]bool, dryRun bool, boundaries ...*destinationBoundary) []artifact.Artifact {
+func materializeNativeAggregates(ctx context.Context, report *Report, key outputKey, repoRoot string, artifacts, preview []artifact.Artifact, blocked map[string]bool, dryRun bool, boundaries ...*destinationBoundary) []artifact.Artifact {
 	if len(harness.NativeAggregateInstalls(key.target)) == 0 {
 		return artifacts
 	}
@@ -60,19 +60,34 @@ func materializeNativeAggregates(ctx context.Context, report *Report, key output
 			}
 			remaining = kept
 		}
+		previewDesired := make(map[string]json.RawMessage)
+		for _, route := range destination.AggregateRoutes {
+			for _, a := range preview {
+				if a.Path != route.ArtifactPath {
+					continue
+				}
+				var fragment map[string]json.RawMessage
+				if err := json.Unmarshal(a.Bytes, &fragment); err != nil {
+					continue
+				}
+				if value, ok := fragment[route.Container]; ok {
+					previewDesired[route.Container] = value
+				}
+			}
+		}
 		rel := destination.Info.AggregateFilesForScope(key.machineScope)[0]
 		if routeErr == nil {
 			var tr TargetReport
 			if key.target == hcc.TargetGemini {
 				var diagnostics []diag.Diagnostic
-				tr, diagnostics, routeErr = syncGeminiNativeAggregate(ctx, key, destination, desired, dryRun, !componentBlocked(blocked, ""), boundaries...)
+				tr, diagnostics, routeErr = syncGeminiNativeAggregate(ctx, key, destination, desired, previewDesired, dryRun, !componentBlocked(blocked, ""), boundaries...)
 				report.Diags = append(report.Diags, diagnostics...)
 			} else {
 				pruneStale := !componentBlocked(blocked, "")
 				if slices.ContainsFunc(destination.AggregateRoutes, func(route harness.AggregateRoute) bool { return route.Container == "hooks" }) {
 					pruneStale = pruneStale && !componentBlocked(blocked, resourceInstallDirRel(key.target, ir.KindHook))
 				}
-				tr, routeErr = syncNativeAggregate(key, destination, rel, desired, dryRun, pruneStale, boundaries...)
+				tr, routeErr = syncNativeAggregate(key, destination, rel, desired, previewDesired, dryRun, pruneStale, boundaries...)
 			}
 			if routeErr == nil && len(tr.Written)+len(tr.Skipped)+len(tr.Removed) > 0 {
 				report.PerRoot = append(report.PerRoot, tr)
@@ -87,7 +102,7 @@ func materializeNativeAggregates(ctx context.Context, report *Report, key output
 	return remaining
 }
 
-func syncNativeAggregate(key outputKey, destination harness.Destination, rel string, desired map[string]json.RawMessage, dryRun, pruneStaleEntries bool, boundaries ...*destinationBoundary) (TargetReport, error) {
+func syncNativeAggregate(key outputKey, destination harness.Destination, rel string, desired, preview map[string]json.RawMessage, dryRun, pruneStaleEntries bool, boundaries ...*destinationBoundary) (TargetReport, error) {
 	var boundary *destinationBoundary
 	if len(boundaries) > 0 {
 		boundary = boundaries[0]
@@ -130,7 +145,7 @@ func syncNativeAggregate(key outputKey, destination harness.Destination, rel str
 	if absent {
 		existing = []byte("{}\n")
 	}
-	merged, err := mergeNativeAggregate(existing, desired, pruneStaleEntries)
+	merged, err := mergeNativeAggregate(existing, desired, preview, pruneStaleEntries)
 	if err != nil {
 		return tr, err
 	}
@@ -148,7 +163,7 @@ func syncNativeAggregate(key outputKey, destination harness.Destination, rel str
 	return tr, nil
 }
 
-func mergeNativeAggregate(existing []byte, desired map[string]json.RawMessage, pruneStaleEntries bool) ([]byte, error) {
+func mergeNativeAggregate(existing []byte, desired, preview map[string]json.RawMessage, pruneStaleEntries bool) ([]byte, error) {
 	doc, err := jsonc.Parse("", existing)
 	if err != nil {
 		return nil, err
@@ -213,6 +228,12 @@ func mergeNativeAggregate(existing []byte, desired map[string]json.RawMessage, p
 	if err != nil {
 		return nil, err
 	}
+	if len(preview) > 0 {
+		rawDesired, err = augmentDesiredWithPreviewManaged(doc, desired, preview, rawDesired)
+		if err != nil {
+			return nil, err
+		}
+	}
 	if !pruneStaleEntries {
 		rawDesired, err = retainNativeManagedEntries(doc, desired, rawDesired)
 		if err != nil {
@@ -242,6 +263,102 @@ func mergeNativeAggregate(existing []byte, desired map[string]json.RawMessage, p
 		doc.SetMember(doc.Root(), container, next.Raw())
 	}
 	return doc.Bytes(), nil
+}
+
+func augmentDesiredWithPreviewManaged(doc *jsonc.Document, desired, preview map[string]json.RawMessage, rawDesired []byte) ([]byte, error) {
+	var desiredDoc map[string]json.RawMessage
+	if err := json.Unmarshal(rawDesired, &desiredDoc); err != nil {
+		return nil, err
+	}
+	changed := false
+	for _, container := range sortedKeys(preview) {
+		existing, ok := doc.Root().Member(container)
+		if !ok || existing.Kind() != jsonc.KindObject {
+			continue
+		}
+		var prevMembers map[string]json.RawMessage
+		if err := json.Unmarshal(preview[container], &prevMembers); err != nil || prevMembers == nil {
+			continue
+		}
+		wantMembers := make(map[string]json.RawMessage)
+		if err := json.Unmarshal(desiredDoc[container], &wantMembers); err != nil || wantMembers == nil {
+			wantMembers = make(map[string]json.RawMessage)
+		}
+		containerChanged := false
+		for _, member := range sortedKeys(prevMembers) {
+			node, ok := existing.Member(member)
+			if !ok {
+				continue
+			}
+			var prevArray []json.RawMessage
+			if err := json.Unmarshal(prevMembers[member], &prevArray); err == nil && prevArray != nil {
+				if node.Kind() != jsonc.KindArray {
+					continue
+				}
+				var wantArray []json.RawMessage
+				_ = json.Unmarshal(wantMembers[member], &wantArray)
+				wantCanon := make(map[string]bool, len(wantArray))
+				for _, elem := range wantArray {
+					wantCanon[canonicalMemberKey(elem)] = true
+				}
+				prevCanon := make(map[string]bool, len(prevArray))
+				for _, elem := range prevArray {
+					prevCanon[canonicalMemberKey(elem)] = true
+				}
+				memberChanged := false
+				for i := 0; i < node.Len(); i++ {
+					elem, _ := node.Element(i)
+					canon := canonicalMemberKey(elem.Canonical())
+					if isManagedNode(elem) && prevCanon[canon] && !wantCanon[canon] {
+						wantArray = append(wantArray, elem.Canonical())
+						wantCanon[canon] = true
+						memberChanged = true
+					}
+				}
+				if !memberChanged {
+					continue
+				}
+				raw, err := json.Marshal(wantArray)
+				if err != nil {
+					return nil, err
+				}
+				wantMembers[member] = raw
+				containerChanged = true
+				continue
+			}
+			if _, wanted := wantMembers[member]; wanted || !isManagedNode(node) {
+				continue
+			}
+			wantMembers[member] = node.Canonical()
+			containerChanged = true
+		}
+		if !containerChanged {
+			continue
+		}
+		changed = true
+		raw, err := json.Marshal(wantMembers)
+		if err != nil {
+			return nil, err
+		}
+		desiredDoc[container] = raw
+		desired[container] = raw
+	}
+	if !changed {
+		return rawDesired, nil
+	}
+	return json.Marshal(desiredDoc)
+}
+
+func canonicalMemberKey(raw json.RawMessage) string {
+	var value any
+	if err := json.Unmarshal(raw, &value); err != nil {
+		return string(raw)
+	}
+	canonical, err := json.Marshal(value)
+	if err != nil {
+		return string(raw)
+	}
+	return string(canonical)
 }
 
 func hasNativeDesiredEntries(desired map[string]json.RawMessage) bool {

@@ -58,6 +58,10 @@ The AI coding tool that uses the resources: Claude Code, Codex, Cursor, Devin, F
 
 A shell command that your [harness](#harness) runs automatically when something happens, for example before a tool runs or when a session starts. `agent-marketplace` adds hook entries to the file where the harness reads its hooks.
 
+## Implied resource
+
+A resource selected only because another selected resource declares it as a [prerequisite](#prerequisite) while `requires.expand` is enabled. An implied resource is not `required`, stays in the requiring resource's [scope](#scope), and loses to a direct selection or an explicit exclusion. With expansion disabled the same closure is computed as a preview: it changes no selections, but existing managed outputs it covers are preserved rather than pruned.
+
 ## Lockfile
 
 A generated file, `lock.yaml`, that records the exact [commit](#commit) and a fingerprint of the content for each Git or Marketplace [source](#source). It makes sure that everyone who runs [sync](#sync) gets identical files, even after a branch moves on. Commit `.agents/lock.yaml` together with `.agents/config.yaml`, and do not edit it by hand. `agent-marketplace update` moves it forward on purpose. See [Reproducibility and lockfiles](./explanation/reproducibility-and-lockfiles.md).
@@ -84,7 +88,7 @@ Records that `agent-marketplace` keeps about which entries it wrote into setting
 
 ## Prerequisite
 
-Another resource that a resource needs to work, declared in its front matter under `metadata.requires`. An unmet prerequisite produces an advisory warning with the install command that fixes it; it never blocks the install or changes the exit status. See [Declare resource prerequisites](./how-to/author/declare-resource-prerequisites.md) and the [resource prerequisites reference](./reference/resource-prerequisites.md).
+Another resource that a resource needs to work, declared in its front matter under `metadata.requires`. An unmet prerequisite produces an advisory warning with the install command that fixes it; it never blocks the install or changes the exit status. A consumer who opts in with `requires.expand: true` selects prerequisites transitively as [implied resources](#implied-resource). See [Declare resource prerequisites](./how-to/author/declare-resource-prerequisites.md) and the [resource prerequisites reference](./reference/resource-prerequisites.md).
 
 ## Ref
 

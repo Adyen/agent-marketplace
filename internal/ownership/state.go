@@ -699,6 +699,20 @@ func (p Proof) Resource(id EntryID) (string, bool) {
 	return e.Resource, ok
 }
 
+// Entry returns the complete recorded ownership entry for an owned identity,
+// including every evidence field the state carries (resource, source digest,
+// source evidence). It exists for callers that must retain prior proof
+// verbatim; a rebuild from the ID and a current digest would silently drop
+// evidence or rebaseline drifted bytes as clean. The returned value is a copy.
+func (p Proof) Entry(id EntryID) (Entry, bool) {
+	e, ok := p.entries[id.mapKey()]
+	if !ok {
+		return Entry{}, false
+	}
+	e.SourceEvidence = append([]HookSourceEvidence(nil), e.SourceEvidence...)
+	return e, true
+}
+
 // SourceDigest returns the version-1 source-hook fingerprint recorded for an
 // owned hook identity. It is read-only evidence: a missing entry or a missing
 // digest returns ("", false) and proves nothing. It does not widen the

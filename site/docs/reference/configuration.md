@@ -111,7 +111,7 @@ An included fragment has lower precedence than the file that includes it. In a l
 - A source name declared in more than one file must have identical values everywhere. Different values fail with `v4.source-conflict`.
 - Resource groups with the same name are combined. Their `include` and `exclude` lists are concatenated in merge order. `tags`, `all`, `registries`, `required`, and `harnesses` take the value from the last file that sets them.
 - `allowed_registries` and `allowed_marketplaces` take the first declaration in merge order. A fragment that sets an allowlist cannot be relaxed by a later fragment or by the including file.
-- `harnesses` takes the value from the last file that sets it. `backup`, `logging`, `telemetry`, and `materialization` merge field by field, with later files winning.
+- `harnesses` takes the value from the last file that sets it. `backup`, `logging`, `telemetry`, `materialization`, and `requires` merge field by field, with later files winning.
 
 The loader rejects the whole layer when an include is missing, unreadable, malformed, not allowed in that layer, or part of a cycle. Fragments must use only the fields their layer allows. Organization fragments have extra ownership and permission requirements; see the [configuration layers reference](configuration-layers.md#include).
 
@@ -132,8 +132,9 @@ Unknown top-level fields are rejected.
 | `logging` | mapping | no | Log file settings: `enabled`, `level`, `file`, `max_size_mb`, `max_backups`, `max_age_days`, `compress`. See the [logging reference](logging.md). |
 | `telemetry` | mapping | no | Machine telemetry policy: `level`, `endpoint`, `community_reporting`, `retention_policy`, `ca_file`, `allow_insecure`, `headers`. See the [telemetry reference](telemetry.md). Organization and user files only. |
 | `materialization` | mapping | no | Whether generated resources are symlinks or regular files: `mode` and `targets`. See [Materialization](#materialization). |
+| `requires` | mapping | no | Opt-in resource-requirement expansion: `expand` (boolean, default `false`). See [Requirement expansion](resource-prerequisites.md#requirement-expansion). |
 
-`harnesses`, `allowed_registries`, and `allowed_marketplaces` must be lists of strings. Allowlist entries must compile as regular expressions.
+`harnesses`, `allowed_registries`, and `allowed_marketplaces` must be lists of strings. Allowlist entries must compile as regular expressions. `requires.expand` must be a boolean; any other value fails strict validation.
 
 ## `harnesses`
 

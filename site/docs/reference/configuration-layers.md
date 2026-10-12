@@ -29,6 +29,7 @@ Every layer may declare `sources`, `resources`, and `include`. The other top-lev
 | `logging` | accepted, not used | yes | no | no |
 | `telemetry` | yes | yes | no | no |
 | `materialization` | no | yes | yes | yes |
+| `requires` | yes | yes | yes | yes |
 | Exclusion-only Marketplace source | no | yes | no | no |
 
 An exclusion-only Marketplace source is a Marketplace resource group that contains only `exclude`. It lets a user hide optional resources that the organization file selects from the same endpoint. See [Hosted Marketplaces](./configuration.md#hosted-marketplaces).
@@ -78,6 +79,10 @@ These fields control machine-wide behavior, so repository files cannot change th
 | Organization | not allowed | not allowed |
 
 For repository output, the repository personal file wins over the repository file, which wins over the user file. Machine output uses only the user file.
+
+### Requires
+
+Every layer may declare `requires.expand`, and the highest-precedence layer that sets it wins. An explicit `false` counts as set and overrides a lower-precedence `true`; an absent value does not override anything. When no layer sets it, requirement expansion is disabled. See [Requirement expansion](./resource-prerequisites.md#requirement-expansion).
 
 ## `include`
 

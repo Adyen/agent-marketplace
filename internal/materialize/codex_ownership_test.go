@@ -38,7 +38,7 @@ func TestCodexAggregateReportsResolvedDestinationID(t *testing.T) {
 		Info: harness.TargetInfo{OwnershipReconciledAggregates: true},
 	}}
 
-	report = (codexOwnedAggregateHandler{}).reconcile(context.Background(), report, state, key, "", destinations, true)
+	report = (codexOwnedAggregateHandler{}).reconcile(context.Background(), report, state, ownedAggregateState{}, key, "", destinations, true)
 	if len(report.PerRoot) != 1 {
 		t.Fatalf("per-root reports = %#v, want one", report.PerRoot)
 	}

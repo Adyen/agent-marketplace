@@ -38,6 +38,12 @@ type ResolvedArtifact struct {
 	// Empty string for directly-configured artifacts.
 	Via string
 
+	// RequiredBy records which selected resources declared this artifact as a
+	// prerequisite when it joined the resolution as an implied resource (or
+	// appears in the advisory implied preview). Prerequisite provenance is
+	// kept separate from collection provenance: Via stays collection-only.
+	RequiredBy []ResourceRef
+
 	// Harnesses lists the target harnesses this artifact should be compiled
 	// into. Inherited from the top-level config by default; overridden by
 	// per-entry harnesses if set. Nil means "no harnesses configured"
@@ -85,6 +91,9 @@ type UnmetRequirementWarning struct {
 	ResourceKind ir.ResourceKind
 	ResourceName string
 	Requirement  catalog.Requirement
+	// Reason is the typed classification of why the prerequisite remains
+	// unmet: not-found, excluded, or source-not-configured.
+	Reason UnmetRequirementReason
 }
 
 func (w *UnmetRequirementWarning) Error() string {
@@ -116,6 +125,7 @@ type resolveOptions struct {
 	marketplaceResolver         MarketplaceResolver
 	marketplaceMode             MarketplaceResolveMode
 	marketplaceRevocationPolicy MarketplaceRevocationPolicy
+	impliedPreview              *[]ResolvedArtifact
 }
 
 // ResolveOption configures optional behavior for Resolve.
@@ -646,6 +656,10 @@ type SelectedMalformedError struct {
 	// Via is set when the selection originated from a collection expansion
 	// rather than a direct config entry. Format: "collection:<name>@<version>".
 	Via string
+	// RequiredBy is set only when the selection was a declared prerequisite
+	// of another resource; it attributes the diagnostic to the requiring
+	// resource without using collection provenance.
+	RequiredBy *ResourceRef
 	// DirName is the directory (or file) the ingester failed to load. It differs
 	// from Name when the selection matched the authored frontmatter name.
 	DirName string
@@ -662,6 +676,9 @@ func (e *SelectedMalformedError) Error() string {
 	}
 	loc += "@" + e.Ref
 	msg := fmt.Sprintf("%s %q was selected and found in %s but failed to load", skill.KindLabel(e.Kind), e.Name, loc)
+	if e.RequiredBy != nil {
+		msg = fmt.Sprintf("%s %q requires %s", skill.KindLabel(e.RequiredBy.Kind), e.RequiredBy.Name, msg)
+	}
 	if e.DirName != "" && e.DirName != e.Name {
 		// Not "authored as": Name is the authored frontmatter name in exactly
 		// this branch, and DirName is what the ingester saw on disk.
@@ -794,22 +811,24 @@ func malformedSelectionError(
 	url, path, ref string,
 	required bool,
 	via string,
+	requiredBy *ResourceRef,
 ) *SelectedMalformedError {
 	match, found := malformed.lookup(catalogKey, kind, name)
 	if !found {
 		return nil
 	}
 	return &SelectedMalformedError{
-		Kind:     kind,
-		Name:     name,
-		URL:      url,
-		Path:     path,
-		Ref:      ref,
-		Required: required,
-		Via:      via,
-		DirName:  strings.TrimSpace(match.DirName),
-		File:     skill.MalformedSourceFile(match),
-		Err:      match.Error,
+		Kind:       kind,
+		Name:       name,
+		URL:        url,
+		Path:       path,
+		Ref:        ref,
+		Required:   required,
+		Via:        via,
+		RequiredBy: requiredBy,
+		DirName:    strings.TrimSpace(match.DirName),
+		File:       skill.MalformedSourceFile(match),
+		Err:        match.Error,
 	}
 }
 
@@ -841,6 +860,9 @@ func Resolve(cfg *config.Config, catalogs map[string][]catalog.Entry, localCfg *
 	}
 	if ro.context == nil {
 		ro.context = context.Background()
+	}
+	if ro.impliedPreview != nil {
+		*ro.impliedPreview = nil
 	}
 
 	if cfg == nil || (len(cfg.Registries) == 0 && (ro.marketplaceResolver == nil || len(cfg.Marketplaces) == 0)) {
@@ -946,7 +968,16 @@ func Resolve(cfg *config.Config, catalogs map[string][]catalog.Entry, localCfg *
 	// that still shadow a required artifact are removed here.
 	resolved, selectErrs = shadows.remove(resolved, selectErrs)
 	errs = append(errs, selectErrs...)
-	errs = append(errs, validateRequirements(resolved)...)
+
+	// Phase 5: Compute the prerequisite closure over the resolved resources.
+	implied, unmetReasons, reqErrs := expandRequirements(resolved, cfg, catalogs, ro.resources, malformedIdx, localExcludes, excludeAllKinds, targetSet)
+	errs = append(errs, reqErrs...)
+	if cfg.RequiresExpansionEnabled() {
+		resolved = append(resolved, implied...)
+	} else if ro.impliedPreview != nil {
+		*ro.impliedPreview = implied
+	}
+	errs = append(errs, validateRequirements(resolved, unmetReasons)...)
 	logNameCollisions(errs)
 	slog.Debug("resolver end", "duration_ms", time.Since(start).Milliseconds(), "resolved", len(resolved), "errors", len(errs))
 
@@ -1098,7 +1129,7 @@ func buildMarketplaceOccurrences(ctx context.Context, mpResolver MarketplaceReso
 	return occurrencesByName, errs
 }
 
-func validateRequirements(resolved []ResolvedArtifact) []error {
+func validateRequirements(resolved []ResolvedArtifact, unmetReasons map[unmetKey]UnmetRequirementReason) []error {
 	firstRequirementIndex := -1
 	var firstRequirements []catalog.Requirement
 	for i, artifact := range resolved {
@@ -1135,16 +1166,22 @@ func validateRequirements(resolved []ResolvedArtifact) []error {
 			if _, ok := selected[resourceKey{kind: requirement.Kind, name: requirement.Name}]; ok {
 				continue
 			}
+			reason := unmetReasons[newUnmetKey(artifact, requirement)]
+			if reason == "" {
+				reason = UnmetReasonNotFound
+			}
 			slog.Debug("unmet resource requirement",
 				"resource_kind", skill.KindLabel(artifact.Kind),
 				"resource_name", artifact.Name,
 				"requirement_kind", skill.KindLabel(requirement.Kind),
 				"requirement_name", requirement.Name,
+				"reason", string(reason),
 			)
 			warnings = append(warnings, &UnmetRequirementWarning{
 				ResourceKind: artifact.Kind,
 				ResourceName: artifact.Name,
 				Requirement:  requirement,
+				Reason:       reason,
 			})
 		}
 	}
@@ -1822,7 +1859,7 @@ func expandMembersRecursive(
 			// is present upstream, so reporting it as removed would send the
 			// user to edit a collection definition that is correct.
 			if sme := malformedSelectionError(malformed, memberCatalogKey, member.Kind, memberName,
-				memberRegistryURL, memberRegistryPath, memberRef, memberRequired, viaLabel); sme != nil {
+				memberRegistryURL, memberRegistryPath, memberRef, memberRequired, viaLabel, nil); sme != nil {
 				*errs = append(*errs, sme)
 				continue
 			}
@@ -2311,7 +2348,7 @@ func buildOccurrences(cfg *config.Config, catalogs map[string][]catalog.Entry, r
 					// and "removed upstream" is a misdiagnosis.
 					var selErr error
 					if sme := malformedSelectionError(malformed, catalogKey, selected.kind, selected.name,
-						entry.URL, entry.Path, entry.Ref, entry.Required, ""); sme != nil {
+						entry.URL, entry.Path, entry.Ref, entry.Required, "", nil); sme != nil {
 						selErr = sme
 					} else {
 						snf := &SelectedNotFoundError{

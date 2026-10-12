@@ -168,7 +168,7 @@ type ownedAggregateHandler interface {
 	markIncomplete(ownedAggregateState, outputKey, ir.ResourceKind)
 	aggregateRels(ir.ResourceKind, bool) []string
 	malformedDiagnostic(outputKey, string, error) diag.Diagnostic
-	reconcile(context.Context, *Report, ownedAggregateState, outputKey, string, []harness.Destination, bool) *Report
+	reconcile(context.Context, *Report, ownedAggregateState, ownedAggregateState, outputKey, string, []harness.Destination, bool) *Report
 }
 
 type materializeAdapter struct {

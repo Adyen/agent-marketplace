@@ -974,6 +974,7 @@ func LoadRegistriesWithContext(ctx context.Context, cfg *config.Config, repoRoot
 	// the downstream resolver would see only the Marketplace pins and could
 	// acquire an index-only source without the configured allowlist.
 	result.Config.AllowedRegistries = cfg.AllowedRegistries
+	result.Config.Requires = cfg.Requires
 
 	// Phase 1: Prepare fetch jobs from registry entries.
 	requests, jobs, err := prepareFetchJobs(cfg, repoRoot, mode, lc.localConfigDir, lc.exactSnapshot)

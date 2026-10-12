@@ -42,6 +42,7 @@ type Settings struct {
 	Logging             *LoggingConfig
 	Telemetry           *telemetryconfig.TelemetryConfig
 	Materialization     *MaterializationConfig
+	Requires            *RequiresConfig
 }
 
 type SourceKind = V4SourceKind
@@ -104,6 +105,7 @@ func (l LayerIntent) Settings() Settings {
 			Logging:         l.v4.Logging,
 			Telemetry:       l.v4.Telemetry,
 			Materialization: l.v4.Materialization,
+			Requires:        l.v4.Requires,
 		}
 		if l.v4.AllowedRegistries != nil {
 			values := cloneV4StringList(*l.v4.AllowedRegistries)
@@ -124,6 +126,7 @@ func (l LayerIntent) Settings() Settings {
 		Logging:         l.legacy.Logging,
 		Telemetry:       l.legacy.Telemetry,
 		Materialization: l.legacy.Materialization,
+		Requires:        l.legacy.Requires,
 	}
 	if l.legacy.AllowedRegistries != nil {
 		values := cloneV4StringList(*l.legacy.AllowedRegistries)
@@ -146,6 +149,7 @@ func (s Settings) config() *Config {
 		Logging:             s.Logging,
 		Telemetry:           s.Telemetry,
 		Materialization:     s.Materialization,
+		Requires:            s.Requires,
 	}
 }
 

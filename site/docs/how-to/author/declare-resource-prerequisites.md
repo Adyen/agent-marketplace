@@ -75,8 +75,8 @@ skill:review-code  mcp:docs-server  agent-marketplace install "docs-server" --ki
 
 ## Boundaries
 
-- A prerequisite is met when a resource with that kind and name is selected in the same run, from any source or configuration layer. `registry` and `path` are remediation hints only.
-- Prerequisites are advisory. The CLI never installs them automatically.
+- A prerequisite is met when a resource with that kind and name is selected in the same run, from any source or configuration layer.
+- Prerequisites are advisory by default. A consumer who sets `requires.expand: true` in a v4 configuration layer selects declared prerequisites transitively, and `registry`/`path` hints steer that lookup — but only against sources the consumer already configured; the CLI never fetches a new one. See [Requirement expansion](../../reference/resource-prerequisites.md#requirement-expansion).
 - URL credentials inside a `registry` hint are replaced with `***` in the suggested command.
 
 ## Troubleshooting
