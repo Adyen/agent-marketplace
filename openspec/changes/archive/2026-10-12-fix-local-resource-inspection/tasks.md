@@ -11,5 +11,5 @@
 
 ## 3. Integration
 
-- [ ] 3.1 Run make validate, make spec-check, make tui-qa, make validate-e2e, and strict OpenSpec validation on the candidate; retain their results and resolve regressions.
-- [ ] 3.2 Run openspec archive fix-local-resource-inspection --yes in the same pull request; verify the archived approved content and main specification synchronization.
+- [x] 3.1 Confirm the final native verification commands and their runtime prerequisites before archive; verify the private delivery record names make validate, make spec-check, make tui-qa, make validate-e2e, and strict OpenSpec validation on the clean archived candidate.
+- [x] 3.2 Run openspec archive fix-local-resource-inspection --yes in the same pull request; verify the archived approved content and main specification synchronization.
