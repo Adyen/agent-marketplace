@@ -53,7 +53,7 @@ A `directory` source is a folder on your disk. The CLI reads it fresh on every r
 
 Nothing moves a lock forward on its own, not even a new push to the branch you follow. You do it explicitly:
 
-- `agent-marketplace update` looks up each ref again, records the commit it points to now, and syncs. `update --bump` first moves eligible refs in v4 `sources:` to newer matching tags. Included-fragment refs are reported and left unchanged; edits stay owned by the selected writable root.
+- `agent-marketplace update` looks up each ref again, records the commit it points to now, and syncs. With `--bump` it first rewrites eligible refs in v4 `sources:` to newer matching tags. A ref that an included config file declares is reported and left unchanged; edits stay owned by the selected writable root.
 - `agent-marketplace lock --upgrade` refreshes the locks to the current commits of their refs without syncing. You can limit it to one registry with `--registry`.
 
 After either command, review the change to `.agents/lock.yaml` and commit it like any other change. [How to keep resources reproducible](../how-to/keep-resources-reproducible.md) walks through the workflow.

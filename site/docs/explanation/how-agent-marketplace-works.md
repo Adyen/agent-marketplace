@@ -16,7 +16,7 @@ Suppose `.agents/config.yaml` in your project selects the `frontend-design` skil
 6. It converts that description for each target. The skill becomes Claude Code's `.claude/skills/frontend-design/SKILL.md` and Cursor's `.cursor/skills/frontend-design/SKILL.md`. When a target has no way to express something (a field, a hook event, or a whole resource kind), the CLI reports a [diagnostic](../glossary.md#diagnostic) with a fixed code and leaves that part out. It does not guess.
 7. It writes the files into the harness folders. The product calls this step [materialize](../glossary.md#materialize). By default each skill, command, and subagent is a [symlink](../glossary.md#symlink) (a shortcut) to a converted copy in the cache; Factory commands are the exception and are written as regular files. Shared configuration files such as `.mcp.json` hold entries from several places, so the CLI edits only its own entries in them. Output that the CLI generated earlier, and that the configuration no longer selects, is removed.
 
-`install` edits a configuration file and then runs the same steps. `sync --check` runs them without writing anything and reports what is out of date.
+`install` edits a configuration file and then runs the same steps. `sync --check` runs the same read of configuration, lock, and cached content and the same conversion, but writes nothing and does not download missing content; it reports what is out of date.
 
 ## How resources are found
 
@@ -30,17 +30,9 @@ The conversion keeps meaning, not exact bytes. A Claude skill converted back to 
 
 ## Where state lives
 
-| State | Location | Committed to Git? | Safe to delete? |
-|---|---|---|---|
-| Repository selections | `.agents/config.yaml` | yes | no |
-| Repository lock | `.agents/lock.yaml` | yes | a writing `sync` recreates it, but it records whatever commit the ref points to at that moment, so you lose the old pin |
-| Personal selections | `~/.agents/config.yaml`, `~/.agents/lock.yaml` | no | no |
-| Personal overrides for one checkout | `.agents/config.local.yaml`, `.agents/lock.local.yaml` | no; when `.agents/config.local.yaml` exists, the CLI adds both to `.gitignore` | the lock yes; deleting the config removes your personal overrides |
-| Cache | `~/.cache/agent-marketplace/` | no | yes; installed symlinks point into it and stay broken until the next `sync` downloads the locked commits again, which needs network access |
-| Ownership state for Devin, Codex, and Gemini MCP entries | `$XDG_STATE_HOME/agent-marketplace/` | no | no; without it, every existing entry in those shared files counts as handwritten |
-| Generated harness files | Symlinks and generated files inside `.claude/`, `.cursor/`, `~/.claude/`, and similar folders | usually not; the CLI does not add them to `.gitignore` | yes; `sync` recreates them from the configuration and lock |
+State divides into two kinds. The configuration files and lockfiles (`.agents/config.yaml` and `.agents/lock.yaml` in the repository, `~/.agents/config.yaml` and `~/.agents/lock.yaml` on the machine, plus the personal-local pair for one checkout) are the record of what you asked for. The cache under `~/.cache/agent-marketplace/` and the generated harness files are derived from that record: a `sync` recreates them when the locked content is still available, either in the cache or by fetching the recorded commits again. Losing the cache breaks installed symlinks until such an online `sync` runs; losing a lock loses the pin it recorded.
 
-The configuration files and lockfiles are the record of what you asked for. `sync` can rebuild the cache and the generated harness files from them. Do not delete ownership state or files you wrote by hand. Without ownership state, the CLI treats every existing entry in the files it tracks as handwritten: it keeps them all, refuses to write an entry whose name is already taken, and removes nothing until you repair the state. Your configuration cannot recreate handwritten settings or the safety backups stored next to the ownership state. [Shared configuration ownership](./shared-configuration-ownership.md) explains this in more detail.
+The ownership state under `$XDG_STATE_HOME/agent-marketplace/` is not derived. It records which entries in the shared Devin, Codex, and Gemini files the CLI wrote, and without it every existing entry counts as handwritten, so `sync` keeps them all, refuses to write an entry whose name is already taken, and removes nothing until you repair the state. Entries you wrote by hand exist nowhere else. The [filesystem layout reference](../reference/filesystem-layout.md) lists every path, and [shared configuration ownership](./shared-configuration-ownership.md) explains the ownership state.
 
 ## Related documentation
 
