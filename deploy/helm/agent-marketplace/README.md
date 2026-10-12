@@ -7,7 +7,7 @@ This guide deploys the Agent Marketplace service with the reusable Helm chart in
 Before starting, check that:
 
 - Helm 3 is available.
-- The cluster can pull the Marketplace image and the image for each frontend you enable. `Dockerfile.marketplace` builds two targets: `api`, and `worker`, which adds Git. The `all` and `worker` roles run acquisition and need an image built from the `worker` target. The top-level `image` applies to every Marketplace role; in split mode you can point `api.image` at an image built from the `api` target.
+- The cluster can pull the Marketplace image and the image for each frontend you enable. `Dockerfile.marketplace` builds two targets: `api`, and `worker`, which adds Git. The `all` and `worker` roles run acquisition and need an image built from the `worker` target. The top-level `image` applies to every Marketplace role; in split mode you can point `api.image` at an image built from the `api` target. Every release also publishes ready-made images to GHCR: `ghcr.io/adyen/agent-marketplace/worker`, `ghcr.io/adyen/agent-marketplace/api`, and `ghcr.io/adyen/agent-marketplace/web`, tagged with the release tag. Use those when your own release pipeline does not build images.
 - A Marketplace operator configuration is ready, or the default example configuration is enough for a local SQLite/filesystem deployment.
 - A private authentication and TLS boundary is available in front of the public routes. The public application routes have no authentication or authorization.
 
@@ -62,12 +62,12 @@ The chart's container ports are fixed at 8080 (`http`) and 9090 (`operations`), 
 
 ## 2. Configure images and optional frontends
 
-Set the image repositories and immutable tags or digests supplied by your release pipeline:
+Set the image repositories and immutable tags or digests. Use the images published to GHCR for each release, or the ones supplied by your own release pipeline:
 
 ```yaml
 image:
-  repository: agent-marketplace
-  tag: "1.0.0"
+  repository: ghcr.io/adyen/agent-marketplace/worker
+  tag: "v4.2.0"
   digest: ""
 
 web:
@@ -75,14 +75,16 @@ web:
   basePath: /
   publicApiBase: /
   image:
-    repository: agent-marketplace-web
-    tag: "1.0.0"
+    repository: ghcr.io/adyen/agent-marketplace/web
+    tag: "v4.2.0"
 
 docs:
   enabled: true
   image:
+    # The documentation image is not published to GHCR; build and publish
+    # your own from site/Dockerfile and reference it here.
     repository: agent-marketplace-docs
-    tag: "1.0.0"
+    tag: "v4.2.0"
 ```
 
 The chart sets the web container's internal API base (`NUXT_API_BASE_INTERNAL`) to the API Service. The API Service exists in both modes; in `mode: all` it selects the all-in-one pods. It exposes the public `http` port and a named `operations` port (`service.api.operationsPort`, default 9090). The operations port is for private monitoring and health endpoints only, and the Ingress does not route to it.
@@ -166,7 +168,7 @@ Each workload block (`api`, `worker`, `all`, `web`, `docs`) accepts the same opt
         readOnly: true
   ```
 
-The API and `all` roles also render a `startupProbe` (`<role>.probes.startup`, enabled by default). It polls `/readyz` on the `operations` port so the liveness probe does not kill an API that starts slowly. The API and `all` roles check liveness with `/healthz` on the `http` port and readiness with `/readyz` on the `operations` port. The worker has no HTTP listener, and its probes are disabled by default.
+The API and `all` roles also render a `startupProbe` (`<role>.probes.startup`, enabled by default). It polls `/readyz` on the `operations` port so the liveness probe does not kill an API that starts slowly. The API and `all` roles check liveness with `/healthz` on the `http` port and readiness with `/readyz` on the `operations` port. The worker has no HTTP listener, and its probes are disabled by default. The web frontend serves only routes under `web.basePath`, so its liveness and readiness probes default to that base path without its trailing slash; set an explicit `web.probes.liveness.path` or `web.probes.readiness.path` to override. The docs frontend serves at `/docs/` and keeps that default.
 
 When the chart manages the ConfigMap (`config.enabled: true` and no `config.existingConfigMap`), the API, worker, and `all` pods carry a `checksum/config` annotation computed from the rendered ConfigMap. A change to `config.content` therefore restarts those pods. Set `config.nameOverride` to pin the ConfigMap name, and `config.key` to change both the data key and the mounted `subPath`. The chart mounts the configuration at `config.mountPath` (default `/etc/agent-marketplace/config.yaml`), which is the path the default `args` pass to `--config`.
 

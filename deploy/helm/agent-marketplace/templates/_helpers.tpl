@@ -99,6 +99,13 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- $component := .component -}}
 {{- $role := .role -}}
 {{- $isMarketplace := has $role (list "api" "worker" "all") -}}
+{{- $probePathBase := "/" -}}
+{{- if eq $role "web" -}}
+{{-   $probePathBase = trimSuffix "/" $root.Values.web.basePath -}}
+{{-   if not $probePathBase -}}
+{{-     $probePathBase = "/" -}}
+{{-   end -}}
+{{- end -}}
 {{- $podSecurityContext := mergeOverwrite (deepCopy $root.Values.podSecurityContext) (default (dict) $component.podSecurityContext) -}}
 {{- $podAnnotations := deepCopy (default (dict) $root.Values.podAnnotations) -}}
 {{- if and $isMarketplace $root.Values.config.enabled (not $root.Values.config.existingConfigMap) }}
@@ -229,7 +236,7 @@ spec:
           {{- if $component.probes.liveness.enabled }}
           livenessProbe:
             httpGet:
-              path: {{ $component.probes.liveness.path }}
+              path: {{ default $probePathBase $component.probes.liveness.path }}
               port: {{ $component.probes.liveness.port }}
             initialDelaySeconds: {{ $component.probes.liveness.initialDelaySeconds }}
             periodSeconds: {{ $component.probes.liveness.periodSeconds }}
@@ -239,7 +246,7 @@ spec:
           {{- if $component.probes.readiness.enabled }}
           readinessProbe:
             httpGet:
-              path: {{ $component.probes.readiness.path }}
+              path: {{ default $probePathBase $component.probes.readiness.path }}
               port: {{ $component.probes.readiness.port }}
             initialDelaySeconds: {{ $component.probes.readiness.initialDelaySeconds }}
             periodSeconds: {{ $component.probes.readiness.periodSeconds }}
@@ -249,7 +256,7 @@ spec:
           {{- if and $component.probes.startup $component.probes.startup.enabled }}
           startupProbe:
             httpGet:
-              path: {{ $component.probes.startup.path }}
+              path: {{ default $probePathBase $component.probes.startup.path }}
               port: {{ $component.probes.startup.port }}
             periodSeconds: {{ $component.probes.startup.periodSeconds }}
             timeoutSeconds: {{ $component.probes.startup.timeoutSeconds }}
