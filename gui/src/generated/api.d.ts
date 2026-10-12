@@ -102,6 +102,36 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/discovery": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Start cached-first Marketplace discovery for the current query
+         * @description Available only in user-scope mode after a validated accepted merged
+         *     configuration enables Marketplace discovery. The browser requestId is
+         *     a correlation identity, while the server's discovery generation owns
+         *     cancellation and stale-worker rejection. Cached pages are published
+         *     immediately; network discovery waits for the shared 250 millisecond
+         *     debounce only when the SDK reports a miss or stale revalidation. The
+         *     request stays open until discovery completes, so an aborted request
+         *     cancels its server context. Results arrive only on the session event
+         *     stream; a 204 response contains no operation or result state. Query
+         *     values are not logged or exported to telemetry.
+         *
+         */
+        post: operations["discoverMarketplace"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/events": {
         parameters: {
             query?: never;
@@ -114,7 +144,7 @@ export interface paths {
         /**
          * Subscribe to the ordered session event stream
          * @description Opens a text/event-stream delivering ordered snapshot, progress,
-         *     and notification events. When an accepted snapshot already exists,
+         *     notification, and discovery events. When an accepted snapshot already exists,
          *     an atomic current-state snapshot envelope precedes any live event;
          *     an idle stream before the first read carries no synthetic stage.
          *     Slow subscribers are disconnected rather than allowed to block
@@ -279,6 +309,52 @@ export interface components {
             /** @description Absolute filesystem path, ~ or ~/ home-relative path, or an absolute file:// URL. */
             location: string;
         };
+        /** @description Discovery-only projection for the applicable snapshot generation; it does not advance stage, drift, diagnostics, operation, or progress state. */
+        DiscoveryEvent: components["schemas"]["EventBase"] & {
+            operation?: null;
+            payload: {
+                /**
+                 * Format: uint64
+                 * @description API-lifetime discovery sequence, distinct from the stream sequence and core snapshot generation.
+                 */
+                discoverySequence: number;
+                health: components["schemas"]["DiscoveryHealth"][];
+                loading: boolean;
+                query: string;
+                /** Format: uint64 */
+                requestId: number;
+                /** @description Full shared-server-merged visible rows; clients do not merge Marketplace coordinates. */
+                rows: components["schemas"]["SnapshotRow"][];
+            };
+            /** @enum {string} */
+            type?: "discovery";
+        } & {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "discovery";
+        };
+        DiscoveryHealth: {
+            /** @enum {string} */
+            cacheState: "miss" | "fresh" | "stale";
+            /** @description SHA256 digest of the normalized Marketplace endpoint URL and verified instance identity. */
+            id: string;
+            /** @description Sanitized endpoint alias or normalized URL. */
+            label: string;
+            /** @description Sanitized static endpoint health message without credentials or query values. */
+            message: string;
+            total: number;
+            truncated: boolean;
+        };
+        DiscoveryRequest: {
+            query: string;
+            /**
+             * Format: uint64
+             * @description Browser issuance identity echoed for stale-response rejection; the server request generation remains authoritative.
+             */
+            requestId: number;
+        };
         /** @enum {string} */
         DriftAssessment: "pending" | "ready" | "failed";
         Error: {
@@ -425,9 +501,26 @@ export interface components {
          *     carries the active operation identity where applicable; payload is
          *     typed by type.
          *      */
-        SessionEvent: components["schemas"]["SnapshotEvent"] | components["schemas"]["ProgressEvent"] | components["schemas"]["NotificationEvent"];
+        SessionEvent: components["schemas"]["SnapshotEvent"] | components["schemas"]["ProgressEvent"] | components["schemas"]["NotificationEvent"] | components["schemas"]["DiscoveryEvent"];
         Snapshot: {
             diagnostics: components["schemas"]["Diagnostic"][];
+            /** @description Whether a validated accepted user-scope configuration enables Marketplace discovery. */
+            discoveryEnabled: boolean;
+            discoveryHealth: components["schemas"]["DiscoveryHealth"][];
+            /** @description Whether current endpoint discovery is waiting for debounce or SDK updates. */
+            discoveryLoading: boolean;
+            /** @description Current server discovery query retained for event-stream reconnection. */
+            discoveryQuery: string;
+            /**
+             * Format: uint64
+             * @description Current browser issuance identity, zero for the server-owned initial empty browse.
+             */
+            discoveryRequestId: number;
+            /**
+             * Format: uint64
+             * @description Monotonic API-lifetime discovery state sequence, independent of core snapshots and operations.
+             */
+            discoverySequence: number;
             drift: components["schemas"]["DriftAssessment"];
             groups: components["schemas"]["StatusGroup"][];
             /** @description Effective target harness IDs for the session. */
@@ -458,6 +551,8 @@ export interface components {
             /** @description Whether the resource is enabled by any configuration scope, derived from row enablement metadata. */
             checked: boolean;
             description: string;
+            /** @description Whether this row is a Marketplace discovery result rather than an accepted local row. */
+            discovery: boolean;
             /** @description Sanitized single-line resource name for display. */
             displayName: string;
             group: components["schemas"]["StatusGroupID"];
@@ -465,7 +560,7 @@ export interface components {
             harnesses: string[];
             /** @description Whether the row carries a registry-level harness narrowing that differs from its layer default. */
             harnessOverride: boolean;
-            /** @description Stable identity bound to the source registry identity and scope (kind/name plus a SHA256 digest of the registry-identity/scope tuple), not kind/name alone. */
+            /** @description Stable opaque resource identity. Local rows include source registry identity and scope; Marketplace discovery rows include normalized endpoint URL, verified instance and registry identity, kind, name, exact revision, and content digest. */
             id: string;
             kind: string;
             /** @description Raw resource name retained for identity and deterministic sorting. */
@@ -685,6 +780,41 @@ export interface operations {
                     "application/json": components["schemas"]["Error"];
                 };
             };
+            503: components["responses"]["Closed"];
+        };
+    };
+    discoverMarketplace: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DiscoveryRequest"];
+            };
+        };
+        responses: {
+            /** @description Discovery trigger completed; no response body */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unsupported session mode, malformed request, or discovery configuration not ready; code localapi.not_supported, localapi.invalid_request, or localapi.not_ready */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["OriginRejected"];
+            405: components["responses"]["MethodNotAllowed"];
             503: components["responses"]["Closed"];
         };
     };

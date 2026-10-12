@@ -23,6 +23,12 @@ export interface Bootstrap {
   gitSourceURL?: string
   syncStarted?: string
   syncRelease?: string
+  discoveryAcquisitionStarted?: string
+  discoveryRelease?: string
+  discoverySearchCount?: string
+  discoveryFirstSearchStarted?: string
+  discoveryFirstSearchCanceled?: string
+  discoverySecondSearchStarted?: string
 }
 
 export interface Harness {

@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/Adyen/agent-marketplace/internal/config"
+	"github.com/Adyen/agent-marketplace/internal/marketplace"
 	"github.com/Adyen/agent-marketplace/internal/materialize"
 	"github.com/Adyen/agent-marketplace/internal/resolver"
 	"github.com/Adyen/agent-marketplace/internal/session"
@@ -1108,6 +1109,13 @@ func TestFirstRunInitializeOptionalSourceFailureKeepsRootAndAllowsRetry(t *testi
 	}
 	if after, err := os.ReadFile(userConfig); err != nil || !bytes.Equal(after, rootAfterFailure) {
 		t.Fatalf("reinitialization changed retained root: %q (err=%v)", after, err)
+	}
+
+	if err := marketplace.DefaultDiscoveryCache().Store(marketplace.DiscoveryOutcome{
+		Endpoint:   config.MarketplaceEntry{URL: endpoint.endpoint, InstanceID: endpoint.instanceID},
+		ObservedAt: time.Now(),
+	}, "", "", marketplace.DiscoveryPageLimit); err != nil {
+		t.Fatal(err)
 	}
 
 	retryBody := `{"action":"add-source","source":{"kind":"marketplace","location":` + jsonString(endpoint.endpoint) + `}}`

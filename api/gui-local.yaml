@@ -55,7 +55,7 @@ paths:
       summary: Subscribe to the ordered session event stream
       description: |
         Opens a text/event-stream delivering ordered snapshot, progress,
-        and notification events. When an accepted snapshot already exists,
+        notification, and discovery events. When an accepted snapshot already exists,
         an atomic current-state snapshot envelope precedes any live event;
         an idle stream before the first read carries no synthetic stage.
         Slow subscribers are disconnected rather than allowed to block
@@ -69,6 +69,46 @@ paths:
             text/event-stream:
               schema:
                 $ref: '#/components/schemas/SessionEvent'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/OriginRejected'
+        '405':
+          $ref: '#/components/responses/MethodNotAllowed'
+        '503':
+          $ref: '#/components/responses/Closed'
+  /api/discovery:
+    post:
+      operationId: discoverMarketplace
+      summary: Start cached-first Marketplace discovery for the current query
+      description: |
+        Available only in user-scope mode after a validated accepted merged
+        configuration enables Marketplace discovery. The browser requestId is
+        a correlation identity, while the server's discovery generation owns
+        cancellation and stale-worker rejection. Cached pages are published
+        immediately; network discovery waits for the shared 250 millisecond
+        debounce only when the SDK reports a miss or stale revalidation. The
+        request stays open until discovery completes, so an aborted request
+        cancels its server context. Results arrive only on the session event
+        stream; a 204 response contains no operation or result state. Query
+        values are not logged or exported to telemetry.
+      security:
+        - launchToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DiscoveryRequest'
+      responses:
+        '204':
+          description: Discovery trigger completed; no response body
+        '400':
+          description: Unsupported session mode, malformed request, or discovery configuration not ready; code localapi.not_supported, localapi.invalid_request, or localapi.not_ready
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -373,11 +413,11 @@ components:
         title: { type: string }
     SnapshotRow:
       type: object
-      required: [id, name, displayName, searchName, searchWords, kind, description, registry, scope, required, pendingVerification, checked, harnessOverride, harnesses, status, group]
+      required: [id, name, displayName, searchName, searchWords, kind, description, registry, scope, required, pendingVerification, checked, harnessOverride, harnesses, status, group, discovery]
       properties:
         id:
           type: string
-          description: Stable identity bound to the source registry identity and scope (kind/name plus a SHA256 digest of the registry-identity/scope tuple), not kind/name alone.
+          description: Stable opaque resource identity. Local rows include source registry identity and scope; Marketplace discovery rows include normalized endpoint URL, verified instance and registry identity, kind, name, exact revision, and content digest.
         name:
           type: string
           description: Raw resource name retained for identity and deterministic sorting.
@@ -412,6 +452,9 @@ components:
         status: { type: string }
         group:
           $ref: '#/components/schemas/StatusGroupID'
+        discovery:
+          type: boolean
+          description: Whether this row is a Marketplace discovery result rather than an accepted local row.
     Diagnostic:
       type: object
       required: [severity, category, code, message]
@@ -424,9 +467,38 @@ components:
           type: string
           description: Stable deduplication/identity key of the diagnostic.
         message: { type: string }
+    DiscoveryHealth:
+      type: object
+      required: [id, label, total, truncated, cacheState, message]
+      properties:
+        id:
+          type: string
+          description: SHA256 digest of the normalized Marketplace endpoint URL and verified instance identity.
+        label:
+          type: string
+          description: Sanitized endpoint alias or normalized URL.
+        total: { type: integer }
+        truncated: { type: boolean }
+        cacheState:
+          type: string
+          enum: [miss, fresh, stale]
+        message:
+          type: string
+          description: Sanitized static endpoint health message without credentials or query values.
+    DiscoveryRequest:
+      type: object
+      required: [query, requestId]
+      additionalProperties: false
+      properties:
+        query: { type: string }
+        requestId:
+          type: integer
+          format: uint64
+          minimum: 1
+          description: Browser issuance identity echoed for stale-response rejection; the server request generation remains authoritative.
     Snapshot:
       type: object
-      required: [stage, drift, rows, groups, diagnostics, harnesses, pendingChanges, migrationOffered, operation]
+      required: [stage, drift, rows, groups, diagnostics, harnesses, pendingChanges, migrationOffered, discoveryEnabled, discoveryHealth, discoveryQuery, discoveryRequestId, discoverySequence, discoveryLoading, operation]
       properties:
         stage:
           $ref: '#/components/schemas/SnapshotStage'
@@ -454,6 +526,27 @@ components:
         migrationOffered:
           type: boolean
           description: Whether the accepted snapshot carries a pending legacy user-personal migration offer; scalar metadata only, never paths or prompt contents.
+        discoveryEnabled:
+          type: boolean
+          description: Whether a validated accepted user-scope configuration enables Marketplace discovery.
+        discoveryHealth:
+          type: array
+          items:
+            $ref: '#/components/schemas/DiscoveryHealth'
+        discoveryQuery:
+          type: string
+          description: Current server discovery query retained for event-stream reconnection.
+        discoveryRequestId:
+          type: integer
+          format: uint64
+          description: Current browser issuance identity, zero for the server-owned initial empty browse.
+        discoverySequence:
+          type: integer
+          format: uint64
+          description: Monotonic API-lifetime discovery state sequence, independent of core snapshots and operations.
+        discoveryLoading:
+          type: boolean
+          description: Whether current endpoint discovery is waiting for debounce or SDK updates.
         operation:
           anyOf:
             - $ref: '#/components/schemas/OperationRef'
@@ -731,12 +824,14 @@ components:
         - $ref: '#/components/schemas/SnapshotEvent'
         - $ref: '#/components/schemas/ProgressEvent'
         - $ref: '#/components/schemas/NotificationEvent'
+        - $ref: '#/components/schemas/DiscoveryEvent'
       discriminator:
         propertyName: type
         mapping:
           snapshot: '#/components/schemas/SnapshotEvent'
           progress: '#/components/schemas/ProgressEvent'
           notification: '#/components/schemas/NotificationEvent'
+          discovery: '#/components/schemas/DiscoveryEvent'
     EventBase:
       type: object
       required: [type, sequence, generation, operation]
@@ -800,3 +895,37 @@ components:
                   type: string
                   enum: [info, warning, error]
                 message: { type: string }
+    DiscoveryEvent:
+      description: Discovery-only projection for the applicable snapshot generation; it does not advance stage, drift, diagnostics, operation, or progress state.
+      allOf:
+        - $ref: '#/components/schemas/EventBase'
+        - type: object
+          required: [payload]
+          properties:
+            type:
+              type: string
+              enum: [discovery]
+            operation:
+              type: 'null'
+            payload:
+              type: object
+              required: [requestId, query, discoverySequence, rows, health, loading]
+              properties:
+                requestId:
+                  type: integer
+                  format: uint64
+                query: { type: string }
+                discoverySequence:
+                  type: integer
+                  format: uint64
+                  description: API-lifetime discovery sequence, distinct from the stream sequence and core snapshot generation.
+                rows:
+                  type: array
+                  items:
+                    $ref: '#/components/schemas/SnapshotRow'
+                  description: Full shared-server-merged visible rows; clients do not merge Marketplace coordinates.
+                health:
+                  type: array
+                  items:
+                    $ref: '#/components/schemas/DiscoveryHealth'
+                loading: { type: boolean }

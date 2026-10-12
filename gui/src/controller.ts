@@ -5,6 +5,7 @@ import {
   type Action,
   type Client,
   type Configuration,
+  type DiscoveryPayload,
   type GUIEvent,
   type OperationRef,
   type SessionEvent,
@@ -19,6 +20,7 @@ export const MAX_NOTIFICATIONS = 3
 export const NOTIFICATION_TTL_MS = 6000
 export const EVENT_RETRY_DELAY_MS = 250
 export const EVENT_OUTAGE_MESSAGE = 'Session updates are unavailable'
+export const DISCOVERY_REQUEST_ERROR_MESSAGE = 'Marketplace discovery request failed; retry or check the endpoint'
 
 const FATAL_EVENT_STATUSES = new Set([400, 401, 403, 405])
 
@@ -31,6 +33,13 @@ export interface WorkspaceState {
   diagnostics: Diagnostic[]
   pendingChanges: number
   migrationOffered: boolean
+  discoveryEnabled: boolean
+  discoveryHealth: Snapshot['discoveryHealth']
+  discoveryQuery: string
+  discoveryRequestId: number
+  discoverySequence: number
+  discoveryLoading: boolean
+  discoveryError: string | null
   phase: string | null
   operation: OperationRef | null
   notifications: { id: number; severity: string; message: string }[]
@@ -65,6 +74,13 @@ export class WorkspaceController {
     diagnostics: [],
     pendingChanges: 0,
     migrationOffered: false,
+    discoveryEnabled: false,
+    discoveryHealth: [],
+    discoveryQuery: '',
+    discoveryRequestId: 0,
+    discoverySequence: 0,
+    discoveryLoading: false,
+    discoveryError: null,
     phase: null,
     operation: null,
     notifications: [],
@@ -84,6 +100,12 @@ export class WorkspaceController {
   private accepted = false
   private nextNotificationId = 1
   private abort: AbortController | null = null
+  private discoveryAbort: AbortController | null = null
+  private snapshotGeneration = 0
+  private browserDiscoveryRequestId = 0
+  private currentDiscoveryQuery = ''
+  private lastDispatchedDiscoveryRequestId = 0
+  private disposed = false
 
   constructor(
     private readonly client: Client,
@@ -92,6 +114,9 @@ export class WorkspaceController {
   ) {}
 
   async connect(): Promise<void> {
+    if (this.disposed) {
+      return
+    }
     if (this.abort != null && !this.abort.signal.aborted) {
       return
     }
@@ -147,13 +172,40 @@ export class WorkspaceController {
   }
 
   dispose(): void {
+    this.disposed = true
     this.releaseSeq++
     this.cancelQuit()
     this.abort?.abort()
+    this.cancelDiscoveryRequest()
     for (const timer of this.timers) {
       clearTimeout(timer)
     }
     this.timers.clear()
+  }
+
+  setDiscoveryQuery(query: string): void {
+    this.issueDiscoveryRequest(query, false)
+  }
+
+  retryDiscovery(): void {
+    if (this.state.discoveryEnabled) {
+      this.issueDiscoveryRequest(this.currentDiscoveryQuery, true)
+    }
+  }
+
+  private issueDiscoveryRequest(query: string, retry: boolean): void {
+    if (this.disposed || (!retry && query === this.currentDiscoveryQuery)) {
+      return
+    }
+    this.currentDiscoveryQuery = query
+    this.browserDiscoveryRequestId++
+    this.state.discoveryQuery = query
+    this.state.discoveryRequestId = this.browserDiscoveryRequestId
+    this.state.discoveryHealth = []
+    this.state.discoveryLoading = this.state.discoveryEnabled
+    this.state.discoveryError = null
+    this.cancelDiscoveryRequest()
+    this.dispatchDiscoveryRequest()
   }
 
   async refresh(): Promise<void> {
@@ -283,9 +335,16 @@ export class WorkspaceController {
   }
 
   private apply(event: SessionEvent): void {
+    if (this.disposed) {
+      return
+    }
     switch (event.type) {
       case 'snapshot': {
-        this.applySnapshot(event.payload, event.operation ?? null)
+        this.applySnapshot(event.payload, event.operation ?? null, event.generation)
+        break
+      }
+      case 'discovery': {
+        this.applyDiscovery(event.generation, event.payload)
         break
       }
       case 'progress': {
@@ -301,7 +360,7 @@ export class WorkspaceController {
     }
   }
 
-  private applySnapshot(snapshot: Snapshot, operation: OperationRef | null): void {
+  private applySnapshot(snapshot: Snapshot, operation: OperationRef | null, generation: number): void {
     if (operation != null) {
       if (this.lastSettled == null || operation.id > this.lastSettled.id) {
         if (this.state.operation?.id !== operation.id) {
@@ -341,16 +400,17 @@ export class WorkspaceController {
           this.state.phase = null
         }
       }
-      this.applySnapshotFields(snapshot)
+      this.applySnapshotFields(snapshot, generation)
       if (quitNow) {
         this.onQuit?.()
       }
       return
     }
-    this.applySnapshotFields(snapshot)
+    this.applySnapshotFields(snapshot, generation)
   }
 
-  private applySnapshotFields(snapshot: Snapshot): void {
+  private applySnapshotFields(snapshot: Snapshot, generation: number): void {
+    this.snapshotGeneration = generation
     this.state.stage = snapshot.stage
     this.state.drift = snapshot.drift
     this.state.groups = snapshot.groups
@@ -358,8 +418,32 @@ export class WorkspaceController {
     this.state.diagnostics = snapshot.diagnostics
     this.state.pendingChanges = snapshot.pendingChanges ?? 0
     this.state.migrationOffered = snapshot.migrationOffered === true
+    const wasDiscoveryEnabled = this.state.discoveryEnabled
+    const pendingDiscoveryIntent = this.browserDiscoveryRequestId > snapshot.discoveryRequestId
+    this.state.discoveryEnabled = snapshot.discoveryEnabled === true
+    this.browserDiscoveryRequestId = Math.max(this.browserDiscoveryRequestId, snapshot.discoveryRequestId)
+    const currentDiscovery =
+      this.state.discoveryEnabled &&
+      snapshot.discoveryRequestId === this.browserDiscoveryRequestId &&
+      snapshot.discoveryQuery === this.currentDiscoveryQuery
+    this.state.discoveryQuery = this.currentDiscoveryQuery
+    this.state.discoveryRequestId = this.browserDiscoveryRequestId
+    if (currentDiscovery) {
+      this.state.discoverySequence = Math.max(this.state.discoverySequence, snapshot.discoverySequence)
+      this.state.discoveryHealth = snapshot.discoveryHealth
+      this.state.discoveryLoading = snapshot.discoveryLoading
+      this.state.discoveryError = null
+    } else {
+      this.state.discoveryHealth = []
+      this.state.discoveryLoading = false
+    }
+    if (!this.state.discoveryEnabled) {
+      this.cancelDiscoveryRequest()
+      this.lastDispatchedDiscoveryRequestId = 0
+    }
+    const rows = currentDiscovery ? snapshot.rows : snapshot.rows.filter((row) => !row.discovery)
     if (snapshot.stage === 'final' || !this.accepted) {
-      this.state.rows = snapshot.rows
+      this.state.rows = rows
     }
     if (snapshot.stage === 'final') {
       this.accepted = true
@@ -367,6 +451,54 @@ export class WorkspaceController {
         this.state.error = null
       }
     }
+    if (this.state.discoveryEnabled && !wasDiscoveryEnabled && pendingDiscoveryIntent) {
+      this.dispatchDiscoveryRequest()
+    }
+  }
+
+  private applyDiscovery(generation: number, payload: DiscoveryPayload): void {
+    if (
+      !this.state.discoveryEnabled ||
+      generation !== this.snapshotGeneration ||
+      payload.requestId !== this.browserDiscoveryRequestId ||
+      payload.query !== this.currentDiscoveryQuery ||
+      payload.discoverySequence <= this.state.discoverySequence
+    ) {
+      return
+    }
+    this.state.rows = payload.rows
+    this.state.discoveryHealth = payload.health
+    this.state.discoveryQuery = payload.query
+    this.state.discoveryRequestId = payload.requestId
+    this.state.discoverySequence = payload.discoverySequence
+    this.state.discoveryLoading = payload.loading
+    this.state.discoveryError = null
+  }
+
+  private dispatchDiscoveryRequest(): void {
+    if (this.disposed || !this.state.discoveryEnabled || this.browserDiscoveryRequestId === 0 || this.lastDispatchedDiscoveryRequestId === this.browserDiscoveryRequestId) {
+      return
+    }
+    this.cancelDiscoveryRequest()
+    const controller = new AbortController()
+    const requestId = this.browserDiscoveryRequestId
+    const query = this.currentDiscoveryQuery
+    this.state.discoveryLoading = true
+    this.state.discoveryError = null
+    this.discoveryAbort = controller
+    this.lastDispatchedDiscoveryRequestId = requestId
+    void this.client.discovery(query, requestId, controller.signal).catch(() => {
+      if (controller.signal.aborted || requestId !== this.browserDiscoveryRequestId || query !== this.currentDiscoveryQuery) {
+        return
+      }
+      this.state.discoveryError = DISCOVERY_REQUEST_ERROR_MESSAGE
+      this.state.discoveryLoading = false
+    })
+  }
+
+  private cancelDiscoveryRequest(): void {
+    this.discoveryAbort?.abort()
+    this.discoveryAbort = null
   }
 
   private notify(severity: string, message: string): void {

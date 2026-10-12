@@ -819,4 +819,279 @@ describe('Event stream reconnect', () => {
     controller.dispose()
     await connect
   })
+
+  // spec: session-navigation/remote-marketplace-search-is-debounced
+  // spec: session-navigation/clear-and-refresh
+  it('rejects stale discovery frames and accepts only the current query without changing operation state', async () => {
+    const { client, push } = fakeClient()
+    const local = row('needle-local', { id: 'local-row', group: 'enabled' })
+    const operation = { id: 7, kind: 'sync' as const }
+    const { controller, wrapper } = mountWorkspace(client)
+    push(event({
+      sequence: 1,
+      generation: 3,
+      operation,
+      payload: snapshot([local], { stage: 'config', drift: 'pending', operation, discoveryEnabled: true }),
+    }))
+    await tick()
+
+    await wrapper.find('button[aria-label="Search"]').trigger('click')
+    await tick()
+    await wrapper.find('input[aria-label="Search resources"]').setValue('needle')
+    await tick()
+
+    const pushDiscovery = (sequence: number, generation: number, requestId: number, query: string, discoverySequence: number, name: string, label: string) => {
+      push({
+        type: 'discovery',
+        sequence,
+        generation,
+        operation: null,
+        payload: {
+          requestId,
+          query,
+          discoverySequence,
+          rows: [local, row(name, { id: name, discovery: true, group: 'available', checked: false, scope: 'available', status: 'available' })],
+          health: [{ id: label, label, total: 1, truncated: false, cacheState: 'fresh', message: '' }],
+          loading: false,
+        },
+      } as unknown as SessionEvent)
+    }
+
+    pushDiscovery(2, 3, 0, '', 1, 'remote-old-query', 'old query')
+    pushDiscovery(3, 2, 1, 'needle', 2, 'remote-old-generation', 'old generation')
+    pushDiscovery(4, 3, 0, 'needle', 2, 'remote-old-request', 'old request')
+    pushDiscovery(5, 3, 1, 'other', 3, 'remote-wrong-query', 'wrong query')
+    await tick()
+    expect(controller.state.rows.map((entry) => entry.id)).toEqual(['local-row'])
+    expect(controller.state.discoveryHealth).toEqual([])
+
+    pushDiscovery(6, 3, 1, 'needle', 4, 'remote-current', 'current Marketplace')
+    await tick()
+    expect(controller.state.rows.map((entry) => entry.id)).toEqual(['local-row', 'remote-current'])
+    expect(controller.state.stage).toBe('config')
+    expect(controller.state.drift).toBe('pending')
+    expect(controller.state.diagnostics).toEqual([])
+    if (controller.state.discoveryQuery !== 'needle') {
+      throw new Error('accepted discovery query was not retained')
+    }
+    expect(controller.state.discoveryRequestId).toBe(1)
+    expect(controller.state.discoverySequence).toBe(4)
+    expect(controller.state.discoveryHealth[0]?.label).toBe('current Marketplace')
+    expect(wrapper.find('[role="option"][aria-selected="true"]').attributes('id')).toBe('row-local-row')
+    expect(controller.state.operation).toEqual(operation)
+    expect(client.telemetry).not.toHaveBeenCalled()
+
+    pushDiscovery(7, 3, 1, 'needle', 3, 'remote-old-sequence', 'old sequence')
+    await tick()
+    expect(controller.state.rows.map((entry) => entry.id)).toEqual(['local-row', 'remote-current'])
+    expect(controller.state.discoveryHealth[0]?.label).toBe('current Marketplace')
+    expect(controller.state.operation).toEqual(operation)
+  })
+
+  // spec: session-navigation/remote-marketplace-search-is-debounced
+  it('advances issuance beyond reconnection state without restoring its prior query', async () => {
+    const { client, push } = fakeClient()
+    const local = row('local-resource', { id: 'local-row', group: 'enabled' })
+    const oldRemote = row('old-remote', { id: 'old-remote', discovery: true, group: 'available', checked: false, scope: 'available', status: 'available' })
+    const restoredQuery = String.fromCharCode(111, 108, 100)
+    const newQuery = String.fromCharCode(110, 101, 119)
+    const { controller, wrapper } = mountWorkspace(client)
+    push(event({
+      sequence: 1,
+      generation: 4,
+      payload: snapshot([local, oldRemote], {
+        stage: 'config',
+        drift: 'pending',
+        discoveryEnabled: true,
+        discoveryHealth: [{ id: 'market', label: 'Marketplace', total: 1, truncated: false, cacheState: 'fresh', message: '' }],
+        discoveryQuery: restoredQuery,
+        discoveryRequestId: 7,
+        discoverySequence: 3,
+      }),
+    }))
+    await tick()
+    expect(controller.state.discoveryQuery).toBe('')
+    expect(controller.state.discoveryRequestId).toBe(7)
+    expect(controller.state.rows.map((entry) => entry.id)).toEqual(['local-row'])
+
+    await wrapper.find('button[aria-label="Search"]').trigger('click')
+    await wrapper.find('input[aria-label="Search resources"]').setValue(newQuery)
+    await tick()
+    const discovery = client.discovery as unknown as ReturnType<typeof vi.fn>
+    const calls = discovery.mock.calls as unknown as [string, number, AbortSignal?][]
+    if (calls.length !== 1 || calls[0][0] !== newQuery || calls[0][1] !== 8) {
+      throw new Error('new search did not advance beyond the server issuance high-water mark')
+    }
+  })
+
+  // spec: session-startup/final-stage-merges-discovery-published-during-the-config-stage
+  it('retains merged discovery through final assessment without action or quit settlement', async () => {
+    const { client, push } = fakeClient()
+    const local = row('local-resource', { id: 'local-row', group: 'enabled' })
+    const remote = row('remote-resource', { id: 'remote-row', discovery: true, group: 'available', checked: false, scope: 'available', status: 'available' })
+    const quit = vi.fn()
+    const { controller, wrapper } = mountWorkspace(client, 60_000, quit)
+    push(event({
+      sequence: 1,
+      generation: 4,
+      payload: snapshot([local], { stage: 'config', drift: 'pending', discoveryEnabled: true }),
+    }))
+    await tick()
+    push({
+      type: 'discovery',
+      sequence: 2,
+      generation: 4,
+      operation: null,
+      payload: { requestId: 0, query: '', discoverySequence: 1, rows: [local, remote], health: [{ id: 'market', label: 'Marketplace', total: 1, truncated: false, cacheState: 'fresh', message: '' }], loading: false },
+    } as SessionEvent)
+    await tick()
+    expect(controller.state.stage).toBe('config')
+    expect(controller.state.drift).toBe('pending')
+    expect(controller.state.rows.map((entry) => entry.id)).toEqual(['local-row', 'remote-row'])
+    expect(controller.state.operation).toBeNull()
+
+    push(event({
+      sequence: 3,
+      generation: 4,
+      payload: snapshot([local, remote], {
+        stage: 'final',
+        drift: 'ready',
+        discoveryEnabled: true,
+        discoveryHealth: [{ id: 'market', label: 'Marketplace', total: 1, truncated: false, cacheState: 'fresh', message: '' }],
+        discoveryQuery: '',
+        discoveryRequestId: 0,
+        discoverySequence: 1,
+        discoveryLoading: false,
+      }),
+    }))
+    await tick()
+    expect(controller.state.stage).toBe('final')
+    expect(controller.state.drift).toBe('ready')
+    expect(controller.state.rows.map((entry) => entry.id)).toEqual(['local-row', 'remote-row'])
+    expect(wrapper.find('[role="option"][id="row-remote-row"]').exists()).toBe(true)
+    expect(client.action).not.toHaveBeenCalled()
+    expect(client.telemetry).not.toHaveBeenCalled()
+    expect(quit).not.toHaveBeenCalled()
+  })
+
+  // spec: session-rendering-safety/hostile-text-is-inert
+  it('renders sanitized Marketplace health text literally without activating markup', async () => {
+    const { client, push } = fakeClient()
+    const label = 'market <img src=x onerror=alert(1)>\\\\x1B[31m\\\\u202E Å'
+    const message = 'Marketplace search failed <script>\\\\x1B[31m\\\\u202E Ω'
+    const { wrapper } = mountWorkspace(client)
+    push(event({
+      sequence: 1,
+      payload: snapshot([], {
+        discoveryEnabled: true,
+        discoveryHealth: [{ id: 'health-id', label, total: 1, truncated: false, cacheState: 'stale', message }],
+      }),
+    }))
+    await tick()
+
+    const health = wrapper.get('[aria-label="Marketplace discovery health"]')
+    expect(health.text()).toContain(label)
+    expect(health.text()).toContain(message)
+    expect(wrapper.find('img').exists()).toBe(false)
+    expect(wrapper.find('script').exists()).toBe(false)
+  })
+
+  // spec: session-navigation/remote-marketplace-search-is-debounced
+  it('retries a failed discovery with a new request identity and preserves the current local view', async () => {
+    const { client, push } = fakeClient()
+    const query = String.fromCharCode(110, 101, 101, 100, 108, 101)
+    const local = row('needle-local', { id: 'local-row', group: 'enabled' })
+    const operation = { id: 7, kind: 'sync' as const }
+    const quit = vi.fn()
+    const { controller, wrapper } = mountWorkspace(client, 60_000, quit)
+    push(event({
+      sequence: 1,
+      generation: 3,
+      operation,
+      payload: snapshot([local], { stage: 'config', drift: 'pending', operation, discoveryEnabled: true }),
+    }))
+    await tick()
+
+    await wrapper.find('button[aria-label="Search"]').trigger('click')
+    await wrapper.find('input[aria-label="Search resources"]').setValue(query)
+    await tick()
+    const discovery = client.discovery as unknown as ReturnType<typeof vi.fn>
+    const firstCalls = discovery.mock.calls as unknown as [string, number, AbortSignal?][]
+    if (firstCalls.length !== 1 || firstCalls[0][1] !== 1) {
+      throw new Error('first discovery intent was not issued')
+    }
+    push({
+      type: 'discovery',
+      sequence: 2,
+      generation: 3,
+      operation: null,
+      payload: {
+        requestId: 1,
+        query,
+        discoverySequence: 1,
+        rows: [local],
+        health: [{ id: 'market', label: 'Marketplace', total: 1, truncated: false, cacheState: 'stale', message: 'Marketplace search failed; cached results were retained when available.' }],
+        loading: false,
+      },
+    } as SessionEvent)
+    await tick()
+    const retry = wrapper.find('button[aria-label="Retry Marketplace search"]')
+    expect(retry.exists()).toBe(true)
+    await retry.trigger('click')
+    await tick()
+
+    const retryCalls = discovery.mock.calls as unknown as [string, number, AbortSignal?][]
+    if (retryCalls.length !== 2 || retryCalls[1][0] !== query || retryCalls[1][1] !== 2) {
+      throw new Error('retry did not issue the current query with a newer identity')
+    }
+    expect(retryCalls[0][2]?.aborted).toBe(true)
+    expect(controller.state.rows.map((entry) => entry.id)).toEqual(['local-row'])
+    expect(controller.state.operation).toEqual(operation)
+    expect(quit).not.toHaveBeenCalled()
+
+    push({
+      type: 'discovery',
+      sequence: 3,
+      generation: 3,
+      operation: null,
+      payload: {
+        requestId: 2,
+        query,
+        discoverySequence: 2,
+        rows: [local, row('needle-remote', { id: 'remote-row', discovery: true, group: 'available', checked: false, scope: 'available', status: 'available' })],
+        health: [{ id: 'market', label: 'Marketplace', total: 1, truncated: false, cacheState: 'fresh', message: '' }],
+        loading: false,
+      },
+    } as SessionEvent)
+    await tick()
+    if (controller.state.discoveryQuery !== query) {
+      throw new Error('retry changed the active query')
+    }
+    expect(controller.state.discoveryRequestId).toBe(2)
+    expect(controller.state.rows.map((entry) => entry.id)).toEqual(['local-row', 'remote-row'])
+    expect(wrapper.find('[role="option"][aria-selected="true"]').attributes('id')).toBe('row-local-row')
+    expect(controller.state.operation).toEqual(operation)
+    expect(client.action).not.toHaveBeenCalled()
+    expect(quit).not.toHaveBeenCalled()
+
+    controller.dispose()
+    controller.retryDiscovery()
+    push({
+      type: 'discovery',
+      sequence: 4,
+      generation: 3,
+      operation: null,
+      payload: {
+        requestId: 2,
+        query,
+        discoverySequence: 3,
+        rows: [row('late-remote', { id: 'late-row', discovery: true })],
+        health: [],
+        loading: false,
+      },
+    } as SessionEvent)
+    await tick()
+    expect(discovery.mock.calls).toHaveLength(2)
+    expect(controller.state.rows.map((entry) => entry.id)).toEqual(['local-row', 'remote-row'])
+  })
 })
