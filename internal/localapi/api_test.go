@@ -1406,6 +1406,7 @@ func TestSnapshotStatusGroupPresentation(t *testing.T) {
 // spec: session-rendering-safety/hostile-text-is-inert
 func TestSnapshotSearchMetadataPresentation(t *testing.T) {
 	type searchProjection struct {
+		ID          string   `json:"id"`
 		Name        string   `json:"name"`
 		DisplayName string   `json:"displayName"`
 		SearchName  string   `json:"searchName"`
@@ -1503,6 +1504,48 @@ func TestSnapshotSearchMetadataPresentation(t *testing.T) {
 	}
 	if !strings.Contains(hostile.Registry, "Å") || !strings.Contains(hostile.Description, "printable Ω") || !strings.Contains(hostile.Description, "<img src=x>") {
 		t.Fatalf("printable Unicode or inert markup was lost: registry=%q description=%q", hostile.Registry, hostile.Description)
+	}
+
+	marketplaceRow := func(endpointURL, instanceID, registryID, revision, digest string) session.Row {
+		return session.Row{
+			Artifact: resolver.ResolvedArtifact{
+				Entry:                   catalog.Entry{Kind: ir.KindSkill, Name: "shared"},
+				IsMarketplace:           true,
+				MarketplaceURL:          endpointURL,
+				MarketplaceInstanceID:   instanceID,
+				MarketplaceRegistryID:   registryID,
+				MarketplaceResourceName: "shared",
+			},
+			IsAvailable: true,
+			RegistryURL: endpointURL,
+			MarketplaceDiscovery: &session.MarketplaceDiscovery{
+				Endpoint: config.MarketplaceEntry{URL: endpointURL, InstanceID: instanceID},
+				Item: mpapi.ResourceListItem{
+					RegistryID: registryID, Kind: "skill", Name: "shared", Revision: revision,
+					ContentDigest: digest, Availability: mpapi.AvailabilityAvailable,
+				},
+			},
+		}
+	}
+	baseID := project(marketplaceRow("https://market.example", "instance-one", "registry-one", "revision-one", "sha256:"+strings.Repeat("a", 64))).ID
+	canonicalID := project(marketplaceRow("HTTPS://MARKET.EXAMPLE/", "instance-one", "registry-one", "revision-one", "sha256:"+strings.Repeat("a", 64))).ID
+	if baseID == "" || canonicalID != baseID {
+		t.Fatalf("canonical discovery endpoint identity = %q, want stable id %q", canonicalID, baseID)
+	}
+	variants := []struct {
+		name string
+		row  session.Row
+	}{
+		{name: "endpoint", row: marketplaceRow("https://other.example", "instance-one", "registry-one", "revision-one", "sha256:"+strings.Repeat("a", 64))},
+		{name: "instance", row: marketplaceRow("https://market.example", "instance-two", "registry-one", "revision-one", "sha256:"+strings.Repeat("a", 64))},
+		{name: "registry", row: marketplaceRow("https://market.example", "instance-one", "registry-two", "revision-one", "sha256:"+strings.Repeat("a", 64))},
+		{name: "revision", row: marketplaceRow("https://market.example", "instance-one", "registry-one", "revision-two", "sha256:"+strings.Repeat("a", 64))},
+		{name: "content digest", row: marketplaceRow("https://market.example", "instance-one", "registry-one", "revision-one", "sha256:"+strings.Repeat("b", 64))},
+	}
+	for _, variant := range variants {
+		if got := project(variant.row).ID; got == baseID {
+			t.Errorf("discovery row id did not distinguish %s", variant.name)
+		}
 	}
 }
 

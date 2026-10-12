@@ -299,4 +299,40 @@ describe('local resource search', () => {
     ])
     expect(client.telemetry).toHaveBeenCalledTimes(1)
   })
+
+  // spec: session-navigation/local-search-applies-immediately
+  // spec: session-navigation/remote-marketplace-search-is-debounced
+  it('filters locally immediately and aborts the superseded Marketplace request', async () => {
+    const { client, push } = fakeClient()
+    const { wrapper } = mountWorkspace(client)
+    push(event({ sequence: 1, payload: snapshot([
+      row('needle-local', { id: 'local-row', group: 'enabled' }),
+      row('needle-cached', { id: 'cached-row', group: 'available', checked: false, scope: 'available', status: 'available', discovery: true }),
+    ], { discoveryEnabled: true, discoveryHealth: [{ id: 'market', label: 'Marketplace', total: 1, truncated: false, cacheState: 'fresh', message: '' }] }) }))
+    await tick()
+
+    const input = await openSearch(wrapper)
+    await input.setValue('need')
+    await tick()
+    expect(wrapper.findAll('[role="option"]').map((option) => option.attributes('id'))).toEqual(['row-local-row', 'row-cached-row'])
+
+    const discovery = (client as unknown as { discovery: ReturnType<typeof vi.fn> }).discovery
+    const firstCalls = discovery.mock.calls as unknown as [string, number, AbortSignal?][]
+    if (firstCalls.length !== 1 || firstCalls[0][0] !== 'need' || firstCalls[0][1] !== 1) {
+      throw new Error('first current discovery request was not issued')
+    }
+    const firstSignal = firstCalls[0][2]
+    expect(firstSignal?.aborted).toBe(false)
+
+    await input.setValue('needle')
+    await tick()
+    const calls = discovery.mock.calls as unknown as [string, number, AbortSignal?][]
+    if (calls.length !== 2 || calls[1][0] !== 'needle' || calls[1][1] !== 2) {
+      throw new Error('superseding discovery request was not issued')
+    }
+    expect(firstSignal?.aborted).toBe(true)
+    expect(calls[1][2]?.aborted).toBe(false)
+    expect(wrapper.find('.workspace__search-status').text()).toContain('1 local match')
+    expect(client.telemetry).not.toHaveBeenCalled()
+  })
 })

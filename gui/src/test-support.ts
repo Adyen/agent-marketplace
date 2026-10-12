@@ -31,6 +31,12 @@ export function snapshot(rows: Row[] = [], overrides: Partial<Snapshot> = {}): S
     harnesses: ['devin'],
     pendingChanges: 0,
     migrationOffered: false,
+    discoveryEnabled: false,
+    discoveryHealth: [],
+    discoveryQuery: '',
+    discoveryRequestId: 0,
+    discoverySequence: 0,
+    discoveryLoading: false,
     operation: null,
     ...overrides,
   }
@@ -54,6 +60,7 @@ export function row(name: string, overrides: Partial<Row> = {}): Row {
     harnesses: ['devin'],
     status: 'enabled',
     group: 'enabled',
+    discovery: false,
     ...overrides,
   }
 }
@@ -113,6 +120,7 @@ export function fakeClient(options: { configuration?: Partial<Configuration> } =
     configure: vi.fn(async () => ({ id: 8, kind: 'targets' }) as OperationRef),
     release: vi.fn(async () => ({ latestVersion: '' })),
     telemetry: vi.fn(async () => undefined),
+    discovery: vi.fn(async () => undefined),
   }
   const push = (e: SessionEvent) => {
     if (pending) {

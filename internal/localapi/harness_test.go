@@ -7,15 +7,21 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/Adyen/agent-marketplace/internal/config"
+	"github.com/Adyen/agent-marketplace/internal/marketplace"
 	"github.com/Adyen/agent-marketplace/internal/pipeline"
 	"github.com/Adyen/agent-marketplace/internal/session"
+	mpapi "github.com/Adyen/agent-marketplace/pkg/marketplace/api"
 )
 
 func serveHarness(t *testing.T, api *API, bootstrapFields map[string]string) {
@@ -77,6 +83,7 @@ func TestLocalAPIUserHarness(t *testing.T) {
 		t.Skip("user-scope harness; enabled only by the Playwright E2E driver")
 	}
 	fixture := os.Getenv("AM_LOCALAPI_USER_FIXTURE")
+	var discoveryCounterWriteFailed atomic.Bool
 	home, repo := newUserAPIFixture(t, fixture != "first-run")
 	var orgConfigPath string
 	if fixture == "first-run" {
@@ -170,6 +177,9 @@ func TestLocalAPIUserHarness(t *testing.T) {
 			"apiVersion: agent-marketplace/v4\nharnesses: [devin]\nsources:\n  navigation: {directory: "+source+"}\nresources:\n  navigation: {all: true}\n")
 		bootstrap["navigationSourceDir"] = source
 	}
+	if fixture == "work35-discovery" {
+		setupWork35DiscoveryFixture(t, bootstrap, &discoveryCounterWriteFailed)
+	}
 	lifecycle := session.RuntimeLifecycle()
 	if fixture == "held-sync" {
 		markerDir := t.TempDir()
@@ -236,6 +246,124 @@ func TestLocalAPIUserHarness(t *testing.T) {
 		api.releaseClient.Transport = releaseHarnessTransport(marker, os.Getenv("AM_LOCALAPI_RELEASE_STATUS"), os.Getenv("AM_LOCALAPI_RELEASE_BODY"))
 	}
 	serveHarness(t, api, bootstrap)
+	if discoveryCounterWriteFailed.Load() {
+		t.Fatal("Work35 discovery search counter write failed")
+	}
+}
+
+func setupWork35DiscoveryFixture(t *testing.T, bootstrap map[string]string, counterWriteFailed *atomic.Bool) {
+	t.Helper()
+	markerDir := t.TempDir()
+	discoveryStarted := filepath.Join(markerDir, "acquisition-started")
+	discoveryRelease := filepath.Join(markerDir, "acquisition-release")
+	searchCountPath := filepath.Join(markerDir, "search-count")
+	firstSearchStarted := filepath.Join(markerDir, "first-search-started")
+	firstSearchCanceled := filepath.Join(markerDir, "first-search-canceled")
+	secondSearchStarted := filepath.Join(markerDir, "second-search-started")
+	if err := os.WriteFile(searchCountPath, []byte("0"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	const instanceID = "work35-marketplace"
+	var server *httptest.Server
+	var searchCount atomic.Int32
+	var countMu sync.Mutex
+	writeCount := func() {
+		countMu.Lock()
+		count := searchCount.Add(1)
+		err := os.WriteFile(searchCountPath, []byte(strconv.Itoa(int(count))), 0o600)
+		countMu.Unlock()
+		if err != nil {
+			counterWriteFailed.Store(true)
+		}
+	}
+	writeMarker := func(path string) {
+		_ = os.WriteFile(path, []byte("1"), 0o600)
+	}
+	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/.well-known/agent-marketplace.json":
+			_ = json.NewEncoder(w).Encode(mpapi.DefaultWellKnown(instanceID, "http://"+r.Host))
+		case r.URL.Path == "/api/v1/search":
+			writeCount()
+			switch r.URL.Query().Get("q") {
+			case "alpha":
+				writeMarker(firstSearchStarted)
+				select {
+				case <-r.Context().Done():
+					writeMarker(firstSearchCanceled)
+				case <-work35ReleaseSignal(r.Context(), discoveryRelease):
+				}
+				return
+			case "beta":
+				writeMarker(secondSearchStarted)
+				item := mpapi.ResourceListItem{
+					RegistryID: "tools", RegistrySlug: "tools", Kind: "skill", Name: "remote-beta",
+					Revision: "sha256:" + strings.Repeat("d", 64), ContentDigest: "sha256:" + strings.Repeat("d", 64),
+					Availability: mpapi.AvailabilityAvailable, Score: 1,
+				}
+				_ = json.NewEncoder(w).Encode(marketplace.SearchResponse{Items: []mpapi.ResourceListItem{item}, Total: 1, Offset: 0, Limit: marketplace.DiscoveryPageLimit})
+			default:
+				_ = json.NewEncoder(w).Encode(marketplace.SearchResponse{Items: []mpapi.ResourceListItem{}, Total: 0, Offset: 0, Limit: marketplace.DiscoveryPageLimit})
+			}
+		case strings.HasPrefix(r.URL.Path, "/api/v1/"):
+			writeMarker(discoveryStarted)
+			select {
+			case <-r.Context().Done():
+			case <-work35ReleaseSignal(r.Context(), discoveryRelease):
+			}
+			http.NotFound(w, r)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	orgPath := filepath.Join(t.TempDir(), "config.yaml")
+	organization := "apiVersion: agent-marketplace/v4\nharnesses: [devin]\nsources:\n  mp: {marketplace: " + server.URL + "}\nresources:\n  mp: {include: [tools/skill/pending]}\n"
+	if err := os.WriteFile(orgPath, []byte(organization), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	config.SetTestOrganizationConfigPath(t, orgPath)
+	bootstrap["orgConfig"] = orgPath
+	bootstrap["marketplaceEndpoint"] = server.URL
+	bootstrap["discoveryAcquisitionStarted"] = discoveryStarted
+	bootstrap["discoveryRelease"] = discoveryRelease
+	bootstrap["discoverySearchCount"] = searchCountPath
+	bootstrap["discoveryFirstSearchStarted"] = firstSearchStarted
+	bootstrap["discoveryFirstSearchCanceled"] = firstSearchCanceled
+	bootstrap["discoverySecondSearchStarted"] = secondSearchStarted
+
+	endpoint := config.MarketplaceEntry{URL: server.URL, InstanceID: instanceID, Alias: "mp"}
+	item := mpapi.ResourceListItem{
+		RegistryID: "tools", RegistrySlug: "tools", Kind: "skill", Name: "cached-resource",
+		Revision: "sha256:" + strings.Repeat("b", 64), ContentDigest: "sha256:" + strings.Repeat("b", 64),
+		Availability: mpapi.AvailabilityAvailable, Score: 2,
+	}
+	if err := marketplace.DefaultDiscoveryCache().Store(marketplace.DiscoveryOutcome{
+		Endpoint: endpoint, Items: []mpapi.ResourceListItem{item}, Total: 1, ObservedAt: time.Now(),
+	}, "", "", marketplace.DiscoveryPageLimit); err != nil {
+		t.Fatalf("seed Work35 discovery cache: %v", err)
+	}
+}
+
+func work35ReleaseSignal(ctx context.Context, path string) <-chan struct{} {
+	released := make(chan struct{})
+	go func() {
+		ticker := time.NewTicker(20 * time.Millisecond)
+		defer ticker.Stop()
+		for {
+			if _, err := os.Stat(path); err == nil {
+				close(released)
+				return
+			}
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+			}
+		}
+	}()
+	return released
 }
 
 func releaseHarnessTransport(marker, statusEnv, bodyPath string) http.RoundTripper {

@@ -1,11 +1,13 @@
 import type { components, paths } from '../generated/api'
 
 export type Snapshot = components['schemas']['Snapshot']
+export type SnapshotRow = components['schemas']['SnapshotRow']
+export type DiscoveryHealth = components['schemas']['DiscoveryHealth']
+export type DiscoveryPayload = components['schemas']['DiscoveryEvent']['payload']
+export type DiscoveryEvent = components['schemas']['DiscoveryEvent']
 export type OperationRef = components['schemas']['OperationRef']
-export type SessionEvent =
-  | components['schemas']['SnapshotEvent']
-  | components['schemas']['ProgressEvent']
-  | components['schemas']['NotificationEvent']
+export type SessionEvent = components['schemas']['SessionEvent']
+export type DiscoveryRequest = components['schemas']['DiscoveryRequest']
 export type Action = components['schemas']['ActionRequest']['action']
 export type Configuration = components['schemas']['Configuration']
 export type SourceDescription = components['schemas']['SourceDescription']
@@ -38,6 +40,7 @@ export class EventCursor {
   private stage = 0
   private operation = 0
   private progressSequence = 0
+  private discoverySequence = 0
 
   accept(event: SessionEvent): boolean {
     if (typeof event.sequence !== 'number' || event.sequence <= this.sequence) {
@@ -66,6 +69,10 @@ export class EventCursor {
           this.progressSequence = 0
         }
         this.operation = nextOperation
+        const discoverySequence = event.payload.discoverySequence
+        if (typeof discoverySequence === 'number' && discoverySequence > this.discoverySequence) {
+          this.discoverySequence = discoverySequence
+        }
         return true
       }
       case 'progress': {
@@ -82,6 +89,19 @@ export class EventCursor {
           return false
         }
         this.progressSequence = next
+        return true
+      }
+      case 'discovery': {
+        const next = event.payload.discoverySequence
+        if (
+          event.operation !== null ||
+          event.generation !== this.generation ||
+          typeof next !== 'number' ||
+          next <= this.discoverySequence
+        ) {
+          return false
+        }
+        this.discoverySequence = next
         return true
       }
       case 'notification': {
@@ -132,6 +152,7 @@ function parseEvents(buffer: string): { events: SessionEvent[]; rest: string } {
 export interface Client {
   snapshot(): Promise<Snapshot>
   events(cursor?: EventCursor, signal?: AbortSignal): AsyncIterable<SessionEvent>
+  discovery(query: string, requestId: number, signal?: AbortSignal): Promise<void>
   action(action: Action): Promise<OperationRef>
   configuration(): Promise<Configuration>
   configure(request: ConfigureRequest): Promise<OperationRef>
@@ -197,6 +218,14 @@ export function createClient(baseURL: string, credential: string, fetchImpl: typ
       } finally {
         reader.cancel().catch(() => undefined)
       }
+    },
+
+    async discovery(query: string, requestId: number, signal?: AbortSignal) {
+      await post(
+        '/api/discovery',
+        { query, requestId } satisfies NonNullable<paths['/api/discovery']['post']['requestBody']>['content']['application/json'],
+        signal,
+      )
     },
 
     async action(action: Action) {

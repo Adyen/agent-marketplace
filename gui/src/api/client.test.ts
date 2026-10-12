@@ -30,6 +30,7 @@ function snapshotEvent(sequence: number, generation: number, stage = 'final', op
           harnesses: ['devin'],
           status: 'enabled',
           group: 'enabled',
+          discovery: false,
         },
       ],
       groups: [
@@ -46,6 +47,12 @@ function snapshotEvent(sequence: number, generation: number, stage = 'final', op
       operation: ref,
       pendingChanges: 0,
       migrationOffered: false,
+      discoveryEnabled: false,
+      discoveryHealth: [],
+      discoveryQuery: '',
+      discoveryRequestId: 0,
+      discoverySequence: 0,
+      discoveryLoading: false,
     },
   }
 }
@@ -67,6 +74,16 @@ function notificationEvent(sequence: number, generation: number, operation: numb
     generation,
     operation: { id: operation, kind: 'sync' },
     payload: { severity: 'info', message: 'done' },
+  }
+}
+
+function discoveryEvent(sequence: number, generation: number, discoverySequence: number, operation: null = null): SessionEvent {
+  return {
+    type: 'discovery',
+    sequence,
+    generation,
+    operation,
+    payload: { requestId: 1, query: '', discoverySequence, rows: [], health: [], loading: false },
   }
 }
 
@@ -131,6 +148,18 @@ describe('EventCursor', () => {
     expect(cursor.accept(snapshotEvent(1, 1, 'final', 7))).toBe(true)
     const event = { ...progressEvent(2, 1, 7, 1), operation: null } as SessionEvent
     expect(cursor.accept(event)).toBe(false)
+  })
+
+  it('accepts discovery only for the current snapshot generation and a monotonic discovery sequence', () => {
+    const cursor = new EventCursor()
+    expect(cursor.accept(snapshotEvent(1, 4, 'config'))).toBe(true)
+    expect(cursor.accept(discoveryEvent(2, 4, 4))).toBe(true)
+    expect(cursor.accept(discoveryEvent(3, 3, 5))).toBe(false)
+    expect(cursor.accept(discoveryEvent(4, 4, 3))).toBe(false)
+    expect(cursor.accept({ ...discoveryEvent(5, 4, 5), operation: { id: 9, kind: 'sync' } } as unknown as SessionEvent)).toBe(false)
+    expect(cursor.accept(discoveryEvent(6, 5, 6))).toBe(false)
+    expect(cursor.accept(snapshotEvent(7, 5, 'config'))).toBe(true)
+    expect(cursor.accept(discoveryEvent(8, 5, 7))).toBe(true)
   })
 })
 
@@ -297,6 +326,33 @@ describe('createClient', () => {
         body: '{"action":"browse","rowId":"opaque-row-id"}',
       },
     ])
+  })
+
+  it('posts discovery query state with its abort signal and treats 204 as transport completion', async () => {
+    const calls: { url: string; method: string; token: string | null; body: string | null; signal?: AbortSignal }[] = []
+    const fetcher: typeof fetch = async (input, init) => {
+      calls.push({
+        url: String(input),
+        method: init?.method ?? '',
+        token: new Headers(init?.headers).get('X-Agent-Marketplace-Token'),
+        body: init?.body == null ? null : String(init.body),
+        signal: init?.signal as AbortSignal | undefined,
+      })
+      return new Response(null, { status: 204 })
+    }
+    const client = createClient('http://127.0.0.1:9999', 'secret-token', fetcher)
+    const signal = new AbortController().signal
+    const query = String.fromCharCode(97, 108, 112, 104, 97)
+    await client.discovery(query, 2, signal)
+
+    const call = calls[0]
+    const body = call?.body == null ? null : JSON.parse(call.body) as Record<string, unknown>
+    if (
+      calls.length !== 1 || call?.url !== 'http://127.0.0.1:9999/api/discovery' || call.method !== 'POST' ||
+      call.token !== 'secret-token' || call.signal !== signal || body?.query !== query || body.requestId !== 2
+    ) {
+      throw new Error('discovery transport did not preserve its typed request and abort signal')
+    }
   })
 
   it('raises RequestError with the server code on rejection', async () => {

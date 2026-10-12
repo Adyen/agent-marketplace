@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/Adyen/agent-marketplace/internal/config"
+	"github.com/Adyen/agent-marketplace/internal/marketplace"
 	"github.com/Adyen/agent-marketplace/internal/pipeline"
 	"github.com/Adyen/agent-marketplace/internal/session"
 	"github.com/Adyen/agent-marketplace/internal/telemetry"
@@ -59,6 +60,7 @@ type rowDTO struct {
 	Harnesses           []string `json:"harnesses"`
 	Status              string   `json:"status"`
 	Group               string   `json:"group"`
+	Discovery           bool     `json:"discovery"`
 }
 
 type diagnosticDTO struct {
@@ -74,16 +76,22 @@ type statusGroupDTO struct {
 }
 
 type snapshotDTO struct {
-	Stage            string           `json:"stage"`
-	Drift            string           `json:"drift"`
-	Rows             []rowDTO         `json:"rows"`
-	Groups           []statusGroupDTO `json:"groups"`
-	Diagnostics      []diagnosticDTO  `json:"diagnostics"`
-	Harnesses        []string         `json:"harnesses"`
-	PendingChanges   int              `json:"pendingChanges"`
-	MigrationOffered bool             `json:"migrationOffered"`
-	Operation        *operationRef    `json:"operation"`
-	SettledOperation *operationRef    `json:"settledOperation,omitempty"`
+	Stage              string               `json:"stage"`
+	Drift              string               `json:"drift"`
+	Rows               []rowDTO             `json:"rows"`
+	Groups             []statusGroupDTO     `json:"groups"`
+	Diagnostics        []diagnosticDTO      `json:"diagnostics"`
+	Harnesses          []string             `json:"harnesses"`
+	PendingChanges     int                  `json:"pendingChanges"`
+	MigrationOffered   bool                 `json:"migrationOffered"`
+	DiscoveryEnabled   bool                 `json:"discoveryEnabled"`
+	DiscoveryHealth    []discoveryHealthDTO `json:"discoveryHealth"`
+	DiscoveryQuery     string               `json:"discoveryQuery"`
+	DiscoveryRequestID uint64               `json:"discoveryRequestId"`
+	DiscoverySequence  uint64               `json:"discoverySequence"`
+	DiscoveryLoading   bool                 `json:"discoveryLoading"`
+	Operation          *operationRef        `json:"operation"`
+	SettledOperation   *operationRef        `json:"settledOperation,omitempty"`
 }
 
 func statusGroupMetadata() []statusGroupDTO {
@@ -133,6 +141,13 @@ type API struct {
 	sequence uint64
 	current  *snapshotDTO
 	currentG session.RequestGeneration
+
+	snapshotRowsKnown bool
+	authoritativeRows []session.Row
+	provisionalRows   []session.Row
+	acceptedMergedCfg *config.Config
+	acceptedConfigKey string
+	discovery         discoveryState
 
 	lastSettledOperation *operationRef
 	started              bool
@@ -218,6 +233,7 @@ func (a *API) Close() {
 	if !a.closed {
 		a.closed = true
 		a.cancel()
+		a.cancelDiscoveryLocked()
 	}
 	a.mu.Unlock()
 	a.wg.Wait()
@@ -348,6 +364,8 @@ func (a *API) dispatch(w http.ResponseWriter, r *http.Request) {
 		a.handleSnapshot(w, r)
 	case "/api/events":
 		a.handleEvents(w, r)
+	case "/api/discovery":
+		a.handleDiscovery(w, r)
 	case "/api/actions":
 		a.handleAction(w, r)
 	case "/api/telemetry":
@@ -413,6 +431,9 @@ func (a *API) emitLocked(eventType string, generation session.RequestGeneration,
 		if snapshot, ok := payload.(*snapshotDTO); ok {
 			a.current = snapshot
 			a.currentG = generation
+			if a.discovery.enabled && a.discovery.configKey == a.acceptedConfigKey {
+				a.discovery.snapshotGeneration = generation
+			}
 		}
 	}
 	for sub := range a.subs {
@@ -427,14 +448,17 @@ func (a *API) emitLocked(eventType string, generation session.RequestGeneration,
 
 func (a *API) deliverSnapshot(generation session.RequestGeneration, snapshot session.Snapshot) *snapshotDTO {
 	a.mu.Lock()
-	defer a.mu.Unlock()
-	if generation == 0 || a.requests.Active(session.RequestSnapshot) != generation || snapshot.Generation != generation {
+	if a.closed || generation == 0 || a.requests.Active(session.RequestSnapshot) != generation || snapshot.Generation != generation {
+		a.mu.Unlock()
 		return nil
 	}
+	launch := a.acceptSnapshotStateLocked(snapshot)
 	op := activeOperation(a.gate)
 	a.diag.ReplaceSnapshot(snapshot.Diagnostics)
 	dto := a.snapshotPresentationLocked(snapshot, op)
 	a.emitLocked("snapshot", generation, dto.Operation, &dto)
+	a.mu.Unlock()
+	a.launchDiscovery(launch)
 	return &dto
 }
 
@@ -502,26 +526,40 @@ func (a *API) snapshotPresentationLocked(snapshot session.Snapshot, op *operatio
 	case session.DriftFailed:
 		drift = "failed"
 	}
+	health := append([]discoveryHealthDTO{}, a.discovery.health...)
 	dto := snapshotDTO{
-		Stage:            stage,
-		Drift:            drift,
-		Rows:             []rowDTO{},
-		Groups:           statusGroupMetadata(),
-		Diagnostics:      []diagnosticDTO{},
-		Harnesses:        []string{},
-		PendingChanges:   snapshot.DriftReport.PendingCount(),
-		MigrationOffered: false,
-		Operation:        op,
-		SettledOperation: a.lastSettledOperation,
+		Stage:              stage,
+		Drift:              drift,
+		Rows:               []rowDTO{},
+		Groups:             statusGroupMetadata(),
+		Diagnostics:        []diagnosticDTO{},
+		Harnesses:          []string{},
+		PendingChanges:     snapshot.DriftReport.PendingCount(),
+		MigrationOffered:   false,
+		DiscoveryEnabled:   a.discovery.enabled,
+		DiscoveryHealth:    health,
+		DiscoveryQuery:     a.discovery.query,
+		DiscoveryRequestID: a.discovery.requestID,
+		DiscoverySequence:  a.discovery.sequence,
+		DiscoveryLoading:   a.discovery.loading,
+		Operation:          op,
+		SettledOperation:   a.lastSettledOperation,
 	}
 	var rows []session.Row
-	switch {
-	case stage == "provisional":
-		rows = snapshot.ProvisionalRows
-	case stage == "config" && a.current != nil:
-		dto.Rows = a.current.Rows
-	default:
-		rows = snapshot.Rows
+	if a.snapshotRowsKnown {
+		rows = session.MergeDiscoveryRows(a.authoritativeRows, a.provisionalRows, a.discovery.rows)
+	} else {
+		switch {
+		case stage == "provisional":
+			rows = snapshot.ProvisionalRows
+		case stage == "config" && a.current != nil:
+			dto.Rows = append([]rowDTO{}, a.current.Rows...)
+		default:
+			rows = snapshot.Rows
+		}
+		if rows != nil {
+			rows = session.MergeDiscoveryRows(rows, nil, a.discovery.rows)
+		}
 	}
 	for _, row := range rows {
 		dto.Rows = append(dto.Rows, rowPresentation(row))
@@ -581,12 +619,29 @@ func rowPresentation(row session.Row) rowDTO {
 		harnesses[i] = session.SanitizeTerminalData(harness, session.TerminalSingleLine)
 	}
 	kind := row.Artifact.Kind.String()
-	identity, _ := json.Marshal([4]string{
-		session.RegistryIdentityKey(row.RegistryURL, row.RegistryRef, row.RegistryPath),
-		kind,
-		row.Artifact.Name,
-		scope,
-	})
+	var identity []byte
+	if discovery := row.MarketplaceDiscovery; discovery != nil {
+		endpointURL := discovery.Endpoint.URL
+		if normalized, err := marketplace.NormalizeMarketplaceURL(endpointURL); err == nil {
+			endpointURL = normalized
+		}
+		identity, _ = json.Marshal([7]string{
+			endpointURL,
+			discovery.Endpoint.InstanceID,
+			discovery.Item.RegistryID,
+			kind,
+			row.Artifact.Name,
+			discovery.Item.Revision,
+			discovery.Item.ContentDigest,
+		})
+	} else {
+		identity, _ = json.Marshal([4]string{
+			session.RegistryIdentityKey(row.RegistryURL, row.RegistryRef, row.RegistryPath),
+			kind,
+			row.Artifact.Name,
+			scope,
+		})
+	}
 	sum := sha256.Sum256(identity)
 	return rowDTO{
 		ID:                  kind + "/" + row.Artifact.Name + "#" + hex.EncodeToString(sum[:]),
@@ -605,6 +660,7 @@ func rowPresentation(row session.Row) rowDTO {
 		Harnesses:           harnesses,
 		Status:              status,
 		Group:               row.StatusGroup().ID(),
+		Discovery:           row.MarketplaceDiscovery != nil,
 	}
 }
 
@@ -846,7 +902,6 @@ func (a *API) runOperation(operation session.OperationID, kind session.Operation
 		category = session.DiagnosticMutation
 	}
 	a.mu.Lock()
-	defer a.mu.Unlock()
 	a.diag.ReplaceSnapshot(final.Diagnostics)
 	switch {
 	case failed != nil:
@@ -857,6 +912,7 @@ func (a *API) runOperation(operation session.OperationID, kind session.Operation
 		a.diag.RecordOperationSuccess(kind)
 	}
 	a.lastSettledOperation = op
+	launch := a.acceptSnapshotStateLocked(final)
 	dto := a.snapshotPresentationLocked(final, nil)
 	a.gate.Finish(operation)
 	a.emitLocked("snapshot", generation, nil, &dto)
@@ -867,6 +923,8 @@ func (a *API) runOperation(operation session.OperationID, kind session.Operation
 		severity, message = "error", string(kind)+" failed"
 	}
 	a.emitLocked("notification", generation, op, notificationPayload{Severity: severity, Message: message})
+	a.mu.Unlock()
+	a.launchDiscovery(launch)
 	if failed != nil {
 		slog.Error("localapi operation failed", "kind", string(kind), "err", session.SanitizeReturnedError(failed))
 	}

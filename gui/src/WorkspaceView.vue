@@ -142,6 +142,9 @@ onMounted(async () => {
     quitOpen.value = true
   })
   if (state.value) {
+    if (activeQuery.value !== '') {
+      state.value.setDiscoveryQuery(activeQuery.value)
+    }
     void state.value.loadConfiguration()
     void state.value.checkRelease()
     return
@@ -150,6 +153,9 @@ onMounted(async () => {
     const bootstrap = await resolveBootstrap()
     const c = new WorkspaceController(createClient(bootstrap.url, bootstrap.credential), undefined, nativeQuit())
     state.value = c
+    if (activeQuery.value !== '') {
+      c.setDiscoveryQuery(activeQuery.value)
+    }
     void c.loadConfiguration()
     void c.checkRelease()
     c.connect().catch(() => {
@@ -190,7 +196,8 @@ function sectionElementId(id: string): string {
 const searchMatches = computed<SearchMatch[]>(() => rankRows(view.value?.rows ?? [], activeQuery.value))
 const searchMatchesByID = computed(() => new Map<string, SearchMatch>(searchMatches.value.map((match) => [match.row.id, match])))
 const filteredSearch = computed(() => hasSearchTerms(activeQuery.value))
-const localMatchCount = computed(() => searchMatches.value.length)
+const localMatchCount = computed(() => searchMatches.value.filter((match) => !match.row.discovery).length)
+const discoveryFailed = computed(() => view.value?.discoveryError != null || (view.value?.discoveryHealth ?? []).some((health) => health.message !== ''))
 
 function nameParts(row: Row): NameSegment[] {
   const match = searchMatchesByID.value.get(row.id)
@@ -290,6 +297,7 @@ watch(
     } else {
       selectedKey.value = nextSelectionKey(selectedKey.value, previousVisibleEntries, visibleEntries.value)
     }
+    state.value?.setDiscoveryQuery(activeQuery.value)
   },
   { flush: 'pre' },
 )
@@ -543,6 +551,18 @@ async function run(action: 'sync' | 'update') {
         <h2>Session</h2>
         <p>Drift: {{ view?.drift }}</p>
         <p>Harnesses: <span class="mono">{{ (view?.harnesses ?? []).join(', ') || 'none' }}</span></p>
+        <section v-if="view?.discoveryEnabled" role="region" aria-label="Marketplace discovery health" class="workspace__discovery-health">
+          <h2>Marketplace discovery</h2>
+          <p v-if="view.discoveryLoading" role="status" aria-live="polite">Marketplace discovery is updating.</p>
+          <p v-if="view.discoveryError" role="status">{{ view.discoveryError }}</p>
+          <button v-if="discoveryFailed" type="button" aria-label="Retry Marketplace search" @click="state?.retryDiscovery()">Retry Marketplace search</button>
+          <ul v-if="view.discoveryHealth.length" aria-label="Marketplace endpoint health">
+            <li v-for="health in view.discoveryHealth" :key="health.id">
+              <p><strong>{{ health.label }}</strong> · {{ health.cacheState }} · {{ health.total }} {{ health.total === 1 ? 'result' : 'results' }}<span v-if="health.truncated"> · truncated</span></p>
+              <p v-if="health.message">{{ health.message }}</p>
+            </li>
+          </ul>
+        </section>
 
         <h2>Diagnostics</h2>
         <ul v-if="(view?.diagnostics?.length ?? 0) > 0" aria-label="Diagnostics">
