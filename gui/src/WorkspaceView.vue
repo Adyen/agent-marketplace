@@ -384,7 +384,7 @@ function select(row: Row) {
 
 function openInspection(row: Row) {
   const controller = state.value
-  if (controller == null || !row.inspectable) {
+  if (controller == null || (!row.inspectable && !row.installedFiles)) {
     return
   }
   controller.openInspection(row.id)
@@ -395,7 +395,7 @@ function openInspection(row: Row) {
 
 function activateRow(row: Row) {
   select(row)
-  if (row.inspectable) {
+  if (row.inspectable || row.installedFiles) {
     openInspection(row)
   }
 }
@@ -593,7 +593,7 @@ async function run(action: 'sync' | 'update') {
             <dd class="mono">{{ selected.harnesses.join(', ') || 'none' }}</dd>
           </dl>
           <button
-            v-if="selected.inspectable"
+            v-if="selected.inspectable || selected.installedFiles"
             ref="openResourceButton"
             type="button"
             aria-label="Open resource"

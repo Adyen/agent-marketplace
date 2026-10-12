@@ -8,6 +8,7 @@ import {
   type Client,
   type Configuration,
   type InspectionPayload,
+  type InstalledSkillFilesPayload,
   type OperationRef,
   type SessionEvent,
   type Snapshot,
@@ -63,6 +64,7 @@ export function row(name: string, overrides: Partial<Row> = {}): Row {
     group: 'enabled',
     discovery: false,
     inspectable: false,
+    installedFiles: false,
     ...overrides,
   }
 }
@@ -125,6 +127,9 @@ export function fakeClient(options: { configuration?: Partial<Configuration> } =
     discovery: vi.fn(async () => undefined),
     inspection: vi.fn(async (): Promise<InspectionPayload> => {
       throw new Error('inspection fixture response not configured')
+    }),
+    installedSkillFiles: vi.fn(async (): Promise<InstalledSkillFilesPayload> => {
+      throw new Error('installed skill files fixture response not configured')
     }),
   }
   const push = (e: SessionEvent) => {

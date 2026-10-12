@@ -1322,4 +1322,157 @@ describe('Event stream reconnect', () => {
     expect(controller.state.inspection).toBeNull()
     controller.dispose()
   })
+
+  // spec: session-navigation/installed-skill-definition-and-supporting-files-remain-browsable
+  it('uses the installed-files RPC for keyboard browsing and ignores superseded responses', async () => {
+    type Pending = {
+      rowId: string
+      fileId?: string
+      signal?: AbortSignal
+      resolve: (value: import('./api/client').InstalledSkillFilesPayload) => void
+      reject: (reason: unknown) => void
+    }
+    const { client, push } = fakeClient()
+    const calls: Pending[] = []
+    const installedSkillFiles = vi.fn((rowId: string, fileId?: string, signal?: AbortSignal) =>
+      new Promise<import('./api/client').InstalledSkillFilesPayload>((resolve, reject) => calls.push({ rowId, fileId, signal, resolve, reject })),
+    )
+    const testClient = Object.assign(client, { installedSkillFiles })
+    const first = row('alpha', { id: 'row-alpha', installedFiles: true, group: 'enabled', checked: true, status: 'enabled' })
+    const second = row('beta', { id: 'row-beta', installedFiles: true, group: 'enabled', checked: true, status: 'enabled' })
+    const operation: OperationRef = { id: 91, kind: 'sync' }
+    const quit = vi.fn()
+    const { controller, wrapper } = mountWorkspace(testClient, 60_000, quit)
+    push(event({ sequence: 1, generation: 4, operation, payload: snapshot([first, second]) }))
+    await tick()
+    const initial = { stage: controller.state.stage, drift: controller.state.drift, operation: controller.state.operation }
+
+    const firstRow = wrapper.find('[role="option"][aria-selected="true"]')
+    await firstRow.trigger('keydown', { key: 'Enter' })
+    await tick()
+    expect(installedSkillFiles).toHaveBeenCalledTimes(1)
+    expect(calls[0]?.rowId).toBe(first.id)
+    expect(calls[0]?.fileId).toBeUndefined()
+    expect(client.inspection).not.toHaveBeenCalled()
+    const failedSignal = calls[0]?.signal
+    calls[0]?.reject(new RequestError(502, 'localapi.resource_files_unavailable'))
+    await tick()
+    expect(document.body.querySelector('[role="alert"]')?.textContent).toContain('Resource files are unavailable')
+
+    const retry = document.body.querySelector('button[aria-label="Retry inspection"]') as HTMLButtonElement | null
+    expect(retry).not.toBeNull()
+    retry?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+    await tick()
+    expect(calls[1]?.signal).not.toBe(failedSignal)
+    expect(calls[1]?.rowId).toBe(first.id)
+    expect(calls[1]?.fileId).toBeUndefined()
+
+    const primaryID = 'p'.repeat(64)
+    const notesID = 'n'.repeat(64)
+    const scriptID = 's'.repeat(64)
+    const files: import('./api/client').InstalledSkillFilesPayload['files'] = [
+      { id: primaryID, path: 'SKILL.md', mediaType: 'text/markdown', size: 64, inspectionClass: 'text' },
+      { id: notesID, path: 'notes.md', mediaType: 'text/markdown', size: 22, inspectionClass: 'text' },
+      { id: scriptID, path: 'scripts/helper.sh', mediaType: 'text/plain', size: 17, inspectionClass: 'text' },
+    ]
+    const payload = (rowId: string, generation: number, selectedFileId: string, content: string) => ({
+      rowId,
+      generation,
+      files,
+      primaryFileId: primaryID,
+      selectedFileId,
+      content,
+      truncated: false,
+      unsupportedMessage: '',
+    })
+    calls[1]?.resolve(payload(first.id, 4, primaryID, '# Installed alpha'))
+    await tick()
+    const dialog = document.body.querySelector('[role="dialog"]')
+    expect(dialog).not.toBeNull()
+    const primaryItem = document.body.querySelector('[role="treeitem"][aria-label="SKILL.md"]') as HTMLElement | null
+    expect(document.activeElement).toBe(primaryItem)
+    expect(document.body.querySelector('pre')?.textContent).toBe('# Installed alpha')
+
+    document.activeElement?.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowUp', bubbles: true }))
+    await tick()
+    const notes = document.body.querySelector('[role="treeitem"][aria-label="notes.md"]') as HTMLElement | null
+    expect(document.activeElement).toBe(notes)
+    notes?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+    await tick()
+    expect(calls[2]?.rowId).toBe(first.id)
+    expect(calls[2]?.fileId).toBe(notesID)
+    calls[2]?.resolve(payload(first.id, 4, notesID, '# Supporting review'))
+    await tick()
+    expect(document.body.querySelector('pre')?.textContent).toBe('# Supporting review')
+
+    document.activeElement?.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowUp', bubbles: true }))
+    await tick()
+    const scripts = document.body.querySelector('[role="treeitem"][aria-label="scripts"]') as HTMLElement | null
+    expect(document.activeElement).toBe(scripts)
+    scripts?.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }))
+    await tick()
+    scripts?.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }))
+    await tick()
+    const helper = document.body.querySelector('[role="treeitem"][aria-label="scripts/helper.sh"]') as HTMLElement | null
+    expect(document.activeElement).toBe(helper)
+    helper?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+    await tick()
+    expect(calls[3]?.rowId).toBe(first.id)
+    expect(calls[3]?.fileId).toBe(scriptID)
+    calls[3]?.resolve(payload(first.id, 4, scriptID, 'printf "review"'))
+    await tick()
+    expect(document.body.querySelector('pre')?.textContent).toBe('printf "review"')
+    expect(document.body.querySelector('script, img')).toBeNull()
+
+    helper?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+    await tick()
+    const supersededSignal = calls[4]?.signal
+    push(event({ sequence: 2, generation: 5, operation, payload: snapshot([second]) }))
+    await tick()
+    expect(supersededSignal?.aborted).toBe(true)
+    expect(controller.state.inspection).toBeNull()
+
+    const betaRow = wrapper.find('[role="option"][aria-selected="true"]')
+    await betaRow.trigger('keydown', { key: 'Enter' })
+    await tick()
+    expect(calls[5]?.rowId).toBe(second.id)
+    calls[5]?.resolve(payload(second.id, 5, primaryID, '# Installed beta'))
+    await tick()
+    calls[4]?.resolve(payload(first.id, 4, scriptID, 'stale alpha script'))
+    await tick()
+    expect(controller.state.inspection?.rowId).toBe(second.id)
+    expect(document.body.querySelector('pre')?.textContent).toBe('# Installed beta')
+
+    document.activeElement?.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowUp', bubbles: true }))
+    await tick()
+    const betaNotes = document.body.querySelector('[role="treeitem"][aria-label="notes.md"]') as HTMLElement | null
+    betaNotes?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+    await tick()
+    expect(calls[6]?.rowId).toBe(second.id)
+    expect(calls[6]?.fileId).toBe(notesID)
+    const closeSignal = calls[6]?.signal
+
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    await tick()
+    expect(closeSignal?.aborted).toBe(true)
+    expect(controller.state.inspection).toBeNull()
+    expect((document.activeElement as HTMLElement | null)?.getAttribute('aria-label')).toBe('Open resource')
+    expect(controller.state.stage).toBe(initial.stage)
+    expect(controller.state.drift).toBe(initial.drift)
+    expect(controller.state.operation).toEqual(initial.operation)
+    expect(client.action).not.toHaveBeenCalled()
+    expect(client.configure).not.toHaveBeenCalled()
+    expect(client.inspection).not.toHaveBeenCalled()
+    controller.dispose()
+    calls[6]?.resolve(payload(second.id, 5, notesID, 'late disposed response'))
+    await tick()
+    expect(controller.state.inspection).toBeNull()
+    expect(installedSkillFiles).toHaveBeenCalledTimes(7)
+    for (const [event] of (client.telemetry as ReturnType<typeof vi.fn>).mock.calls) {
+      expect(event).not.toHaveProperty('filePath')
+      expect(event).not.toHaveProperty('path')
+      expect(event).not.toHaveProperty('sourceName')
+    }
+    expect(quit).not.toHaveBeenCalled()
+  })
 })

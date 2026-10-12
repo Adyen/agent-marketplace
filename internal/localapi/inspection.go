@@ -102,7 +102,7 @@ func cloneInspectionRow(row session.Row) session.Row {
 	return cloned
 }
 
-func (a *API) inspectableRow(rowID string) (session.Row, session.RequestGeneration, string) {
+func (a *API) visibleResourceRow(rowID string, eligible func(session.Row) bool) (session.Row, session.RequestGeneration, string) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if a.closed {
@@ -119,7 +119,7 @@ func (a *API) inspectableRow(rowID string) (session.Row, session.RequestGenerati
 		if rowPresentation(row).ID != rowID {
 			continue
 		}
-		if !session.MarketplaceInspectableSkill(row) {
+		if !eligible(row) {
 			return session.Row{}, 0, codeNotSupported
 		}
 		return cloneInspectionRow(row), a.currentG, ""
@@ -127,26 +127,24 @@ func (a *API) inspectableRow(rowID string) (session.Row, session.RequestGenerati
 	return session.Row{}, 0, codeNotReady
 }
 
-func (a *API) inspectionRowStillCurrent(rowID string, generation session.RequestGeneration) (bool, bool) {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	if a.closed || a.currentG != generation || a.current == nil || !a.snapshotRowsKnown {
-		return false, a.closed
+func (a *API) visibleResourceRowStillCurrent(rowID string, generation session.RequestGeneration, eligible func(session.Row) bool) (bool, bool) {
+	_, currentGeneration, code := a.visibleResourceRow(rowID, eligible)
+	if code == codeClosed {
+		return false, true
 	}
-	for _, row := range session.MergeDiscoveryRows(a.authoritativeRows, a.provisionalRows, a.discovery.rows) {
-		if rowPresentation(row).ID == rowID {
-			return session.MarketplaceInspectableSkill(row), false
-		}
-	}
-	return false, false
+	return code == "" && currentGeneration == generation, false
 }
 
 func inspectionUnsupportedMessage(file inspection.File) string {
-	mediaType := session.SanitizeTerminalData(file.MediaType, session.TerminalSingleLine)
+	return unsupportedFileMessage(file.MediaType, file.Size)
+}
+
+func unsupportedFileMessage(mediaType string, size int64) string {
+	mediaType = session.SanitizeTerminalData(mediaType, session.TerminalSingleLine)
 	if mediaType == "" {
 		mediaType = "unknown"
 	}
-	return fmt.Sprintf("Preview is not supported for this file type (%s, %d bytes).", mediaType, file.Size)
+	return fmt.Sprintf("Preview is not supported for this file type (%s, %d bytes).", mediaType, size)
 }
 
 func truncateInspectionPreviewBytes(data []byte, limit int) []byte {
@@ -207,7 +205,7 @@ func (a *API) handleInspection(w http.ResponseWriter, r *http.Request) {
 		cancel()
 	}()
 
-	row, generation, code := a.inspectableRow(request.rowID)
+	row, generation, code := a.visibleResourceRow(request.rowID, session.MarketplaceInspectableSkill)
 	if code != "" {
 		status := http.StatusBadRequest
 		if code == codeClosed {
@@ -278,7 +276,7 @@ func (a *API) handleInspection(w http.ResponseWriter, r *http.Request) {
 		}
 		response.Content, response.Truncated = inspectionPreview(data)
 	}
-	current, closed := a.inspectionRowStillCurrent(request.rowID, generation)
+	current, closed := a.visibleResourceRowStillCurrent(request.rowID, generation, session.MarketplaceInspectableSkill)
 	if closed {
 		writeError(w, http.StatusServiceUnavailable, codeClosed)
 		return

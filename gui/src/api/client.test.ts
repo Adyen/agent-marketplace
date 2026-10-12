@@ -32,6 +32,7 @@ function snapshotEvent(sequence: number, generation: number, stage = 'final', op
           group: 'enabled',
           discovery: false,
           inspectable: false,
+          installedFiles: false,
         },
       ],
       groups: [
@@ -391,6 +392,52 @@ describe('createClient', () => {
     ) {
       throw new Error('inspection transport did not preserve its closed row/file request, abort signal, and verified response')
     }
+  })
+
+  it('posts only row and opaque file identities for installed skill files with an abort signal', async () => {
+    const calls: { url: string; method: string; token: string | null; body: string | null; signal?: AbortSignal }[] = []
+    const payload: import('./client').InstalledSkillFilesPayload = {
+      rowId: 'row-installed',
+      generation: 9,
+      files: [{ id: 'f'.repeat(64), path: 'scripts/helper.sh', mediaType: 'text/plain', size: 16, inspectionClass: 'text' }],
+      primaryFileId: 'p'.repeat(64),
+      selectedFileId: 'f'.repeat(64),
+      content: 'script preview',
+      truncated: false,
+      unsupportedMessage: '',
+    }
+    const fetcher: typeof fetch = async (input, init) => {
+      calls.push({
+        url: String(input),
+        method: init?.method ?? '',
+        token: new Headers(init?.headers).get('X-Agent-Marketplace-Token'),
+        body: init?.body == null ? null : String(init.body),
+        signal: init?.signal as AbortSignal | undefined,
+      })
+      return new Response(JSON.stringify(payload), { status: 200 })
+    }
+    const client = createClient('http://127.0.0.1:9999', 'secret-token', fetcher)
+    const signal = new AbortController().signal
+    const selected = await client.installedSkillFiles('row-installed', 'f'.repeat(64), signal)
+    const primary = await client.installedSkillFiles('row-installed')
+    expect(selected).toEqual(payload)
+    expect(primary).toEqual(payload)
+    expect(calls).toEqual([
+      {
+        url: 'http://127.0.0.1:9999/api/installed-skill-files',
+        method: 'POST',
+        token: 'secret-token',
+        body: JSON.stringify({ rowId: 'row-installed', fileId: 'f'.repeat(64) }),
+        signal,
+      },
+      {
+        url: 'http://127.0.0.1:9999/api/installed-skill-files',
+        method: 'POST',
+        token: 'secret-token',
+        body: JSON.stringify({ rowId: 'row-installed' }),
+        signal: undefined,
+      },
+    ])
   })
 
   it('omits fileId when requesting the default primary preview', async () => {

@@ -18,6 +18,8 @@ export type ReleaseNotice = components['schemas']['ReleaseNotice']
 export type GUIEvent = components['schemas']['GUIEvent']
 export type InspectionRequest = components['schemas']['InspectionRequest']
 export type InspectionPayload = components['schemas']['InspectionPayload']
+export type InstalledSkillFilesRequest = components['schemas']['InstalledSkillFilesRequest']
+export type InstalledSkillFilesPayload = components['schemas']['InstalledSkillFilesPayload']
 export type InspectionFile = components['schemas']['InspectionFile']
 
 export class RequestError extends Error {
@@ -157,6 +159,7 @@ export interface Client {
   events(cursor?: EventCursor, signal?: AbortSignal): AsyncIterable<SessionEvent>
   discovery(query: string, requestId: number, signal?: AbortSignal): Promise<void>
   inspection(rowId: string, fileId?: string, signal?: AbortSignal): Promise<InspectionPayload>
+  installedSkillFiles(rowId: string, fileId?: string, signal?: AbortSignal): Promise<InstalledSkillFilesPayload>
   action(action: Action): Promise<OperationRef>
   configuration(): Promise<Configuration>
   configure(request: ConfigureRequest): Promise<OperationRef>
@@ -236,6 +239,12 @@ export function createClient(baseURL: string, credential: string, fetchImpl: typ
       const request = { rowId, ...(fileId === undefined ? {} : { fileId }) } satisfies InspectionRequest
       const response = await post('/api/inspection', request, signal)
       return (await response.json()) as InspectionPayload
+    },
+
+    async installedSkillFiles(rowId: string, fileId?: string, signal?: AbortSignal) {
+      const request = { rowId, ...(fileId === undefined ? {} : { fileId }) } satisfies InstalledSkillFilesRequest
+      const response = await post('/api/installed-skill-files', request, signal)
+      return (await response.json()) as InstalledSkillFilesPayload
     },
 
     async action(action: Action) {

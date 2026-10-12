@@ -29,14 +29,15 @@ const tokenHeader = "X-Agent-Marketplace-Token"
 const guiOrigin = "wails://wails"
 
 const (
-	codeUnauthorized          = "localapi.unauthorized"
-	codeForbidden             = "localapi.forbidden"
-	codeInvalidRequest        = "localapi.invalid_request"
-	codeNotReady              = "localapi.not_ready"
-	codeNotSupported          = "localapi.not_supported"
-	codeBusy                  = "localapi.busy"
-	codeClosed                = "localapi.closed"
-	codeInspectionUnavailable = "localapi.inspection_unavailable"
+	codeUnauthorized             = "localapi.unauthorized"
+	codeForbidden                = "localapi.forbidden"
+	codeInvalidRequest           = "localapi.invalid_request"
+	codeNotReady                 = "localapi.not_ready"
+	codeNotSupported             = "localapi.not_supported"
+	codeBusy                     = "localapi.busy"
+	codeClosed                   = "localapi.closed"
+	codeInspectionUnavailable    = "localapi.inspection_unavailable"
+	codeResourceFilesUnavailable = "localapi.resource_files_unavailable"
 )
 
 type operationRef struct {
@@ -63,6 +64,7 @@ type rowDTO struct {
 	Group               string   `json:"group"`
 	Discovery           bool     `json:"discovery"`
 	Inspectable         bool     `json:"inspectable"`
+	InstalledFiles      bool     `json:"installedFiles"`
 }
 
 type diagnosticDTO struct {
@@ -370,6 +372,8 @@ func (a *API) dispatch(w http.ResponseWriter, r *http.Request) {
 		a.handleDiscovery(w, r)
 	case "/api/inspection":
 		a.handleInspection(w, r)
+	case "/api/installed-skill-files":
+		a.handleInstalledSkillFiles(w, r)
 	case "/api/actions":
 		a.handleAction(w, r)
 	case "/api/telemetry":
@@ -389,14 +393,15 @@ func writeError(w http.ResponseWriter, status int, code string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	message := map[string]string{
-		codeUnauthorized:          "unauthorized",
-		codeForbidden:             "origin rejected",
-		codeInvalidRequest:        "invalid request",
-		codeNotReady:              "session is not ready for mutation",
-		codeNotSupported:          "operation not supported by this session mode",
-		codeBusy:                  "another operation is in progress",
-		codeClosed:                "api is closed",
-		codeInspectionUnavailable: "Verified inspection is unavailable; check the Marketplace and retry.",
+		codeUnauthorized:             "unauthorized",
+		codeForbidden:                "origin rejected",
+		codeInvalidRequest:           "invalid request",
+		codeNotReady:                 "session is not ready for mutation",
+		codeNotSupported:             "operation not supported by this session mode",
+		codeBusy:                     "another operation is in progress",
+		codeClosed:                   "api is closed",
+		codeInspectionUnavailable:    "Verified inspection is unavailable; check the Marketplace and retry.",
+		codeResourceFilesUnavailable: "Resource files are unavailable; refresh this resource and retry.",
 	}[code]
 	_ = json.NewEncoder(w).Encode(map[string]string{"code": code, "message": message})
 }
@@ -667,6 +672,7 @@ func rowPresentation(row session.Row) rowDTO {
 		Group:               row.StatusGroup().ID(),
 		Discovery:           row.MarketplaceDiscovery != nil,
 		Inspectable:         session.MarketplaceInspectableSkill(row),
+		InstalledFiles:      session.MarketplaceInstalledSkillFiles(row),
 	}
 }
 
