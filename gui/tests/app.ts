@@ -2,7 +2,7 @@ import type { Page } from '@playwright/test'
 import { existsSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { repoRoot } from './harness'
+import { repoRoot, type Bootstrap } from './harness'
 
 const dist = join(repoRoot, 'cmd', 'agent-marketplace-gui', 'frontend', 'dist')
 
@@ -44,4 +44,15 @@ export async function serveBuiltApp(page: Page, url: string) {
       body: await readFile(file),
     })
   })
+}
+
+export async function launchBuiltUserApp(page: Page, bootstrap: Bootstrap) {
+  await serveBuiltApp(page, bootstrap.url)
+  await page.addInitScript(
+    ([credential]) => {
+      ;(window as unknown as Record<string, unknown>).__AM_GUI_BOOTSTRAP__ = { credential }
+    },
+    [bootstrap.credential] as const,
+  )
+  await page.goto(bootstrap.url, { waitUntil: 'domcontentloaded' })
 }
