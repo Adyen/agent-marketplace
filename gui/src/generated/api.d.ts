@@ -179,6 +179,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/installed-skill-files": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Read primary and declared supporting files from an installed Marketplace skill
+         * @description Available only in user-scope mode. rowId is resolved against the current visible session rows; the browser supplies no root, path, source coordinate, revision, or digest. fileId is an opaque identity bound to the row, current generation, member path, and captured source identity. The route reads only the verified canonical skill primary and its archive members or declared staged support files. Raster image members return metadata without file bytes; text, scripts, JavaScript, and SVG are returned only as inert text. Missing or changed content fails with a static unavailable error. The request does not access the Marketplace SDK, mutate session state, write configuration, acquisition locks, caches, or materialized files, or emit operation, snapshot, discovery, telemetry, or progress events.
+         *
+         */
+        post: operations["readInstalledMarketplaceSkillFiles"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/release": {
         parameters: {
             query?: never;
@@ -380,7 +401,7 @@ export interface components {
         DriftAssessment: "pending" | "ready" | "failed";
         Error: {
             /** @enum {string} */
-            code: "localapi.unauthorized" | "localapi.forbidden" | "localapi.invalid_request" | "localapi.not_ready" | "localapi.not_supported" | "localapi.busy" | "localapi.closed" | "localapi.inspection_unavailable";
+            code: "localapi.unauthorized" | "localapi.forbidden" | "localapi.invalid_request" | "localapi.not_ready" | "localapi.not_supported" | "localapi.busy" | "localapi.closed" | "localapi.inspection_unavailable" | "localapi.resource_files_unavailable";
             /** @description Static, non-reflective failure description. */
             message: string;
         };
@@ -451,7 +472,7 @@ export interface components {
             /** @enum {string} */
             inspectionClass: "text" | "image" | "metadata";
             mediaType: string;
-            /** @description Sanitized display path from the verified inspection manifest. */
+            /** @description Sanitized display path of a verified member within its inspected bundle. */
             path: string;
             /** Format: int64 */
             size: number;
@@ -475,6 +496,25 @@ export interface components {
             /** @description Optional opaque identity of one member in the verified inspection manifest; never a path or coordinate. */
             fileId?: string;
             /** @description Opaque identity of a currently visible row from the authoritative session snapshot. */
+            rowId: string;
+        };
+        InstalledSkillFilesPayload: {
+            /** @description Sanitized inert text preview, bounded to 256 KiB plus the existing truncation marker. */
+            content: string;
+            files: components["schemas"]["InspectionFile"][];
+            /** Format: uint64 */
+            generation: number;
+            primaryFileId: string;
+            rowId: string;
+            selectedFileId: string;
+            truncated: boolean;
+            /** @description Empty for text; static safe metadata-only message for unsupported members. */
+            unsupportedMessage: string;
+        };
+        InstalledSkillFilesRequest: {
+            /** @description Optional opaque identity of one member in the current installed bundle; never a path or coordinate. */
+            fileId?: string;
+            /** @description Opaque identity of a currently visible installed Marketplace skill row. */
             rowId: string;
         };
         MarketplaceSourceInput: {
@@ -616,6 +656,8 @@ export interface components {
             id: string;
             /** @description Whether this exact uninstalled Marketplace skill has a current verified revision eligible for read-only inspection. */
             inspectable: boolean;
+            /** @description Whether this installed Marketplace skill has the read-only installed-files capability. The capability remains visible if its local cached content is unavailable. */
+            installedFiles: boolean;
             kind: string;
             /** @description Raw resource name retained for identity and deterministic sorting. */
             name: string;
@@ -931,6 +973,52 @@ export interface operations {
             403: components["responses"]["OriginRejected"];
             405: components["responses"]["MethodNotAllowed"];
             /** @description Marketplace inspection provenance or selected content could not be verified; code localapi.inspection_unavailable */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            503: components["responses"]["Closed"];
+        };
+    };
+    readInstalledMarketplaceSkillFiles: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["InstalledSkillFilesRequest"];
+            };
+        };
+        responses: {
+            /** @description Bounded sanitized text preview or static unsupported-member metadata */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InstalledSkillFilesPayload"];
+                };
+            };
+            /** @description Malformed request, stale or unknown row, unsupported row, or fileId outside the current bundle; code localapi.invalid_request, localapi.not_ready, or localapi.not_supported */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["OriginRejected"];
+            405: components["responses"]["MethodNotAllowed"];
+            /** @description Verified local resource files are missing or unavailable; code localapi.resource_files_unavailable */
             502: {
                 headers: {
                     [name: string]: unknown;

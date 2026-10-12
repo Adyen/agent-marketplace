@@ -8,6 +8,7 @@ import {
   type DiscoveryPayload,
   type GUIEvent,
   type InspectionPayload,
+  type InstalledSkillFilesPayload,
   type OperationRef,
   type SessionEvent,
   type Snapshot,
@@ -17,10 +18,14 @@ import {
 export type Row = Snapshot['rows'][number]
 export type Diagnostic = Snapshot['diagnostics'][number]
 
+function canInspectResource(row: Row): boolean {
+  return row.inspectable || row.installedFiles
+}
+
 export interface InspectionState {
   rowId: string
   loading: boolean
-  data: InspectionPayload | null
+  data: InspectionPayload | InstalledSkillFilesPayload | null
   error: string | null
   selectedFileId: string | null
 }
@@ -31,6 +36,7 @@ export const EVENT_RETRY_DELAY_MS = 250
 export const EVENT_OUTAGE_MESSAGE = 'Session updates are unavailable'
 export const DISCOVERY_REQUEST_ERROR_MESSAGE = 'Marketplace discovery request failed; retry or check the endpoint'
 export const INSPECTION_UNAVAILABLE_MESSAGE = 'Verified inspection is unavailable; check the Marketplace and retry.'
+export const RESOURCE_FILES_UNAVAILABLE_MESSAGE = 'Resource files are unavailable; refresh this resource and retry.'
 
 const FATAL_EVENT_STATUSES = new Set([400, 401, 403, 405])
 
@@ -290,7 +296,7 @@ export class WorkspaceController {
       return
     }
     const row = this.state.rows.find((candidate) => candidate.id === rowId)
-    if (row == null || !row.inspectable) {
+    if (row == null || !canInspectResource(row)) {
       this.closeInspection()
       return
     }
@@ -562,8 +568,8 @@ export class WorkspaceController {
     if (this.disposed) {
       return
     }
-    const row = this.state.rows.find((candidate) => candidate.id === rowId && candidate.inspectable)
-    if (row == null) {
+    const row = this.state.rows.find((candidate) => candidate.id === rowId)
+    if (row == null || !canInspectResource(row)) {
       this.closeInspection()
       return
     }
@@ -578,7 +584,10 @@ export class WorkspaceController {
     this.inspectionAbort = abort
     this.inspectionGeneration = generation
     this.state.inspection = { rowId, loading: true, data, error: null, selectedFileId }
-    void this.client.inspection(rowId, fileId, abort.signal).then((payload) => {
+    const request = row.inspectable
+      ? this.client.inspection(rowId, fileId, abort.signal)
+      : this.client.installedSkillFiles(rowId, fileId, abort.signal)
+    void request.then((payload) => {
       if (!this.inspectionRequestIsCurrent(rowId, generation, epoch, abort.signal)) {
         return
       }
@@ -599,14 +608,17 @@ export class WorkspaceController {
       }
       this.inspectionAbort = null
       this.state.inspection = { ...current, loading: false, data: payload, error: null, selectedFileId: payload.selectedFileId }
-    }).catch(() => {
+    }).catch((error: unknown) => {
       if (!this.inspectionRequestIsCurrent(rowId, generation, epoch, abort.signal)) {
         return
       }
       this.inspectionAbort = null
       const current = this.state.inspection
       if (current != null) {
-        this.state.inspection = { ...current, loading: false, error: INSPECTION_UNAVAILABLE_MESSAGE }
+        const message = error instanceof RequestError && error.code === 'localapi.resource_files_unavailable'
+          ? RESOURCE_FILES_UNAVAILABLE_MESSAGE
+          : INSPECTION_UNAVAILABLE_MESSAGE
+        this.state.inspection = { ...current, loading: false, error: message }
       }
     })
   }
@@ -622,8 +634,8 @@ export class WorkspaceController {
     ) {
       return false
     }
-    const row = this.state.rows.find((candidate) => candidate.id === rowId && candidate.inspectable)
-    if (row == null) {
+    const row = this.state.rows.find((candidate) => candidate.id === rowId)
+    if (row == null || !canInspectResource(row)) {
       this.closeInspection()
       return false
     }
@@ -632,7 +644,7 @@ export class WorkspaceController {
 
   private cancelInspectionIfRowMissing(): void {
     const current = this.state.inspection
-    if (current != null && !this.state.rows.some((row) => row.id === current.rowId && row.inspectable)) {
+    if (current != null && !this.state.rows.some((row) => row.id === current.rowId && canInspectResource(row))) {
       this.closeInspection()
     }
   }

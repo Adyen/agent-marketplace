@@ -123,6 +123,11 @@ func TestLocalAPIUserHarness(t *testing.T) {
 		work36Protected = setupWork36InspectionFixture(t, home, bootstrap)
 		orgConfigPath = bootstrap["orgConfig"]
 	}
+	var work37Fixture *work37InstalledFixture
+	if fixture == "work37-installed" || fixture == "work37-installed-missing" {
+		work37Fixture = setupWork37InstalledFixture(t, home, bootstrap, true)
+		orgConfigPath = bootstrap["orgConfig"]
+	}
 	if orgConfigPath != "" {
 		bootstrap["orgConfig"] = orgConfigPath
 	}
@@ -248,12 +253,47 @@ func TestLocalAPIUserHarness(t *testing.T) {
 			telemetryHarness.finish(t)
 		}()
 	}
+	if work37Fixture != nil {
+		events := streamEvents(t, api)
+		waitForInspectionFinal(t, api, events)
+		api.mu.Lock()
+		rowID := ""
+		generation := api.currentG
+		for _, row := range api.current.Rows {
+			if row.Name == "review" && !row.Discovery {
+				rowID = row.ID
+				break
+			}
+		}
+		api.mu.Unlock()
+		if rowID == "" {
+			t.Fatal("Work37 NewUser pipeline did not publish the installed skill")
+		}
+		row, capturedGeneration, code := api.visibleResourceRow(rowID, session.MarketplaceInstalledSkillFiles)
+		if code != "" || capturedGeneration != generation || row.Artifact.Path != work37Fixture.stagePath {
+			t.Fatalf("Work37 installed row lookup = generation %d/%d path %q code %q", capturedGeneration, generation, row.Artifact.Path, code)
+		}
+		if fixture == "work37-installed-missing" {
+			if err := os.Remove(filepath.Join(row.Artifact.Path, "notes.md")); err != nil {
+				t.Fatal(err)
+			}
+		}
+		work37Fixture.protected = captureWork37InstalledProtected(t, home, work37Fixture, row)
+		work37Fixture.baselineRequests = work37Fixture.requests.Load()
+	}
 	if marker := os.Getenv("AM_LOCALAPI_RELEASE_MARK"); marker != "" {
 		api.releaseClient.Transport = releaseHarnessTransport(marker, os.Getenv("AM_LOCALAPI_RELEASE_STATUS"), os.Getenv("AM_LOCALAPI_RELEASE_BODY"))
 	}
 	serveHarness(t, api, bootstrap)
 	if fixture == "work36-inspection" {
 		assertInspectionFilesUnchanged(t, work36Protected)
+	}
+	if work37Fixture != nil {
+		assertInspectionFilesUnchanged(t, work37Fixture.protected)
+		assertWork37CacheTreeUnchanged(t, work37Fixture)
+		if got := work37Fixture.requests.Load(); got != work37Fixture.baselineRequests {
+			t.Fatalf("Work37 installed-file browsing made SDK requests: before=%d after=%d", work37Fixture.baselineRequests, got)
+		}
 	}
 	if discoveryCounterWriteFailed.Load() {
 		t.Fatal("Work35 discovery search counter write failed")
