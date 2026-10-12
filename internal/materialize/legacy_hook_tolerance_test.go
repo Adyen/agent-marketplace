@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -36,6 +37,7 @@ func runLegacyToleranceFixture(ctx context.Context, repoRoot string, resolved []
 		ownedState:   make(map[outputKey]any),
 	}
 	inspections := make(map[outputKey]*nativeHookInspection)
+	roots := harness.MakeInstallRoots()
 	for _, selection := range resolved {
 		hook, ok := selection.Resource.(*ir.Hook)
 		if !ok || hook == nil || !legacyToleranceSelectionSupported(selection, hook) {
@@ -46,6 +48,11 @@ func runLegacyToleranceFixture(ctx context.Context, repoRoot string, resolved []
 				return nil, fmt.Errorf("unsupported legacy tolerance target")
 			}
 			key := outputKey{target: target, machineScope: selection.Source.IsMachineScope()}
+			installRoots, ok := roots[target]
+			if !ok {
+				return nil, fmt.Errorf("unsupported legacy tolerance target")
+			}
+			legacyRoot := installRoots.For(key.machineScope, repoRoot)
 			result.allOutputs[key] = true
 			w := skillTarget{skill: selection, target: target, machineScope: key.machineScope}
 			tw := result.byTarget[key]
@@ -54,7 +61,7 @@ func runLegacyToleranceFixture(ctx context.Context, repoRoot string, resolved []
 				result.byTarget[key] = tw
 			}
 
-			fragment, err := frozenLegacyToleranceFragmentForSelection(selection, target, hook)
+			fragment, err := frozenLegacyToleranceFragmentForSelection(selection, target, hook, repoRoot, legacyRoot)
 			if err != nil {
 				return nil, err
 			}
@@ -64,19 +71,34 @@ func runLegacyToleranceFixture(ctx context.Context, repoRoot string, resolved []
 				continue
 			}
 			artifacts := []artifact.Artifact{fragment}
-			if len(ins.entries) > 0 || ins.proof.OwnedCount() > 0 {
-				roots := harness.MakeInstallRoots()
-				installRoots, ok := roots[target]
-				if !ok {
-					return nil, fmt.Errorf("unsupported legacy tolerance target")
-				}
-				legacyRoot := installRoots.For(key.machineScope, repoRoot)
+			resourceName := selection.Name
+			if selection.InstalledName != "" {
+				resourceName = selection.InstalledName
+			}
+			if ins.proof.HasHookResource(resourceName) {
 				suppressed, suppressErr := suppressNativeSatisfiedHookRules(selection, key, legacyRoot, ins, artifacts)
 				if suppressErr != nil {
 					recordLegacyToleranceRefusal(&result, key, w, legacyRoot, suppressErr)
 					continue
 				}
 				artifacts = suppressed
+			} else {
+				satisfied, satisfactionErr := independentlySatisfiedNativeHook(w, repoRoot, ins)
+				if satisfactionErr != nil {
+					recordLegacyToleranceRefusal(&result, key, w, legacyRoot, satisfactionErr)
+					continue
+				}
+				if satisfied {
+					preserved, preserveErr := preserveNativeSatisfiedLegacyTwins(key, legacyRoot, artifacts)
+					if preserveErr != nil {
+						recordLegacyToleranceRefusal(&result, key, w, legacyRoot, preserveErr)
+						continue
+					}
+					artifacts = preserved
+				}
+			}
+			if len(artifacts) > 0 {
+				artifacts = append(artifacts, legacyToleranceSupportArtifacts(selection, target, key.machineScope, legacyRoot)...)
 			}
 			tw.artifacts = append(tw.artifacts, artifacts...)
 		}
@@ -87,7 +109,82 @@ func runLegacyToleranceFixture(ctx context.Context, repoRoot string, resolved []
 			option(&run)
 		}
 	}
-	return executeMaterializePlans(ctx, result, run.dryRun, repoRoot, run.modes), nil
+	report := &Report{
+		PerTarget:        make(map[hcc.Target]TargetReport),
+		Diags:            result.allDiags,
+		BlockedResources: result.blockedResources,
+	}
+	keys := make([]outputKey, 0, len(result.allOutputs))
+	for key := range result.allOutputs {
+		keys = append(keys, key)
+	}
+	slices.SortFunc(keys, func(a, b outputKey) int {
+		if a.target != b.target {
+			return strings.Compare(string(a.target), string(b.target))
+		}
+		if a.machineScope != b.machineScope {
+			if a.machineScope {
+				return 1
+			}
+			return -1
+		}
+		return 0
+	})
+	for _, key := range keys {
+		installRoots, ok := roots[key.target]
+		if !ok {
+			return nil, fmt.Errorf("unsupported legacy tolerance target")
+		}
+		outDir := installRoots.For(key.machineScope, repoRoot)
+		targetReport := TargetReport{Target: key.target, MachineScope: key.machineScope, OutDir: outDir}
+		if work := result.byTarget[key]; work != nil && len(work.artifacts) > 0 {
+			writeOptions := []hcc.WriteOption{hcc.WithWriteMode(hcc.WriteModeOverwrite)}
+			if run.dryRun {
+				writeOptions = append(writeOptions, hcc.WithDryRun())
+			}
+			writeReport, err := hcc.Materialize(&hcc.Result{Artifacts: work.artifacts}, outDir, writeOptions...)
+			if err != nil {
+				return nil, fmt.Errorf("materialize legacy tolerance fixture for %s: %w", key.target, err)
+			}
+			targetReport.Written = writeReport.Written
+			targetReport.Skipped = writeReport.Skipped
+			targetReport.Removed = writeReport.Removed
+			targetReport.Diags = append(targetReport.Diags, work.diags...)
+			report.Diags = append(report.Diags, work.diags...)
+		}
+		report.PerRoot = append(report.PerRoot, targetReport)
+		aggregate := report.PerTarget[key.target]
+		aggregate.Target = key.target
+		aggregate.Written = append(aggregate.Written, targetReport.Written...)
+		aggregate.Skipped = append(aggregate.Skipped, targetReport.Skipped...)
+		aggregate.Removed = append(aggregate.Removed, targetReport.Removed...)
+		aggregate.Diags = append(aggregate.Diags, targetReport.Diags...)
+		report.PerTarget[key.target] = aggregate
+	}
+	return report, nil
+}
+
+func legacyToleranceSupportArtifacts(selection resolver.ResolvedArtifact, target hcc.Target, machineScope bool, legacyRoot string) []artifact.Artifact {
+	hook, ok := selection.Resource.(*ir.Hook)
+	if !ok || hook == nil {
+		return nil
+	}
+	_, _, support, err := prepareNativeHookProjectionSource(selection, hook, target, machineScope)
+	if err != nil {
+		return nil
+	}
+	files := make([]artifact.Artifact, 0, len(support))
+	for _, file := range support {
+		file.Path = path.Join("hooks", file.Path)
+		if err := file.Validate(); err != nil {
+			continue
+		}
+		if _, err := os.Lstat(filepath.Join(legacyRoot, filepath.FromSlash(file.Path))); err == nil || !errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		files = append(files, file)
+	}
+	return files
 }
 
 func legacyToleranceSelectionSupported(selection resolver.ResolvedArtifact, hook *ir.Hook) bool {
@@ -98,6 +195,9 @@ func legacyToleranceSelectionSupported(selection resolver.ResolvedArtifact, hook
 	mirrorFixture := selection.IsMarketplace && selection.MarketplaceAcquisition == config.MarketplaceAcquisitionMirror &&
 		selection.StagedSourceDir == "" && filepath.Ext(selection.Path) == ".gz" && hook.Source.File == "hooks/hooks.json" &&
 		selection.Name == "deploy" && selection.InstalledName == "deploy" && selection.MarketplaceResourceName == hook.Name() && hook.SourceDefinitionDigest() == ""
+	if legacyTolerancePureProjectionSource(selection, hook) {
+		return true
+	}
 	canonicalIdentity := hook.Name() == selection.Name || hook.SourceDefinitionDigest() != "" || indexOnlyFixture || mirrorFixture
 	legacySource := hook.Source.File == "hooks/hooks.json" || hook.Source.File == "deploy-hook/hooks.json"
 	rawFixtureMetadata := selection.SourceHarness == "" && selection.RegistryPath == "" && selection.Ref == "" && selection.CatalogKey == ""
@@ -115,6 +215,32 @@ func legacyToleranceSelectionSupported(selection resolver.ResolvedArtifact, hook
 		legacyToleranceExtraIsCanonical(hook.Extra) && (rawFixtureMetadata || capturedLocalMetadata || capturedMirrorMetadata) &&
 		filepath.IsAbs(selection.Path) && selection.Source != config.SourceUnset && len(selection.Harnesses) > 0 &&
 		(localFixture || indexOnlyFixture || mirrorFixture)
+}
+
+func legacyTolerancePureProjectionSource(selection resolver.ResolvedArtifact, hook *ir.Hook) bool {
+	if selection.IsMarketplace || !selection.IsLocal() || selection.V4Kind != config.V4SourceDirectory ||
+		selection.RegistryURL == "" || selection.Name == "" || selection.Source == config.SourceUnset || hook == nil ||
+		len(selection.Harnesses) == 0 || hook.Name() != selection.Name && hook.SourceDefinitionDigest() == "" {
+		return false
+	}
+	if _, _, _, err := nativeHookProjectionSource(selection); err != nil {
+		return false
+	}
+	if _, err := nativeHookSourceIdentity(selection); err != nil {
+		return false
+	}
+	for _, target := range selection.Harnesses {
+		if harness.IsInstallationAdapterTarget(target) {
+			return false
+		}
+		if _, ok := nativeHookLayoutFor(target, selection.Source.IsMachineScope()); !ok {
+			return false
+		}
+		if _, err := nativeHookFingerprintInput(selection, target, selection.Source.IsMachineScope()); err != nil {
+			return false
+		}
+	}
+	return true
 }
 
 func knownFactoryToleranceSibling(hook *ir.Hook) bool {
@@ -192,10 +318,13 @@ func frozenLegacyToleranceFragment(target hcc.Target, hook *ir.Hook) (artifact.A
 	}, nil
 }
 
-func frozenLegacyToleranceFragmentForSelection(selection resolver.ResolvedArtifact, target hcc.Target, hook *ir.Hook) (artifact.Artifact, error) {
+func frozenLegacyToleranceFragmentForSelection(selection resolver.ResolvedArtifact, target hcc.Target, hook *ir.Hook, outputRoots ...string) (artifact.Artifact, error) {
 	fragment, err := frozenLegacyToleranceFragment(target, hook)
 	if err != nil {
-		return fragment, err
+		if !legacyTolerancePureProjectionSource(selection, hook) || len(outputRoots) != 2 {
+			return fragment, err
+		}
+		return compiledLegacyToleranceFragment(selection, target, hook, outputRoots[0], outputRoots[1])
 	}
 	if target == hcc.TargetWindsurf {
 		if selection.Source.IsMachineScope() {
@@ -210,6 +339,48 @@ func frozenLegacyToleranceFragmentForSelection(selection resolver.ResolvedArtifa
 	}
 	fragment.Bytes = []byte(fmt.Sprintf(`{"%s":[{"matcher":"Execute","hooks":[{"type":"command","command":%q}]}]}`, hook.Event, hook.Command))
 	return fragment, nil
+}
+
+func compiledLegacyToleranceFragment(selection resolver.ResolvedArtifact, target hcc.Target, hook *ir.Hook, repoRoot, legacyRoot string) (artifact.Artifact, error) {
+	supportBase := filepath.Join(legacyRoot, "hooks")
+	if !selection.Source.IsMachineScope() {
+		relative, err := filepath.Rel(repoRoot, supportBase)
+		if err != nil {
+			return artifact.Artifact{}, err
+		}
+		supportBase = filepath.ToSlash(relative)
+	}
+	options := []hcc.Option{
+		hcc.WithManagedBy("_managed_by", "agent-marketplace"),
+		hcc.WithPluginRoot(supportBase),
+	}
+	if selection.Source.IsMachineScope() {
+		options = append(options, hcc.WithScope(hcc.ScopeUser))
+	}
+	result, err := hcc.Compile(hook, target, options...)
+	if err != nil {
+		return artifact.Artifact{}, err
+	}
+	if result == nil || result.HasErrors() {
+		return artifact.Artifact{}, fmt.Errorf("legacy hook compilation did not produce a usable result")
+	}
+	var fragment *artifact.Artifact
+	for _, candidate := range result.Artifacts {
+		if !candidate.Fragment {
+			continue
+		}
+		if fragment != nil {
+			return artifact.Artifact{}, fmt.Errorf("legacy hook compilation produced multiple fragments")
+		}
+		candidate.ManagedByField = "_managed_by"
+		candidate.ManagedByValue = "agent-marketplace"
+		candidate.MergeWithExisting = true
+		fragment = &candidate
+	}
+	if fragment == nil {
+		return artifact.Artifact{}, fmt.Errorf("legacy hook compilation produced no fragment")
+	}
+	return *fragment, nil
 }
 
 func TestLegacyToleranceFixtureWritesUnprovenMarkedFactoryFragment(t *testing.T) {

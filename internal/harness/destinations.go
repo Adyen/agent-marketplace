@@ -161,6 +161,9 @@ func resolveDestinations(target hcc.Target, machineScope bool, repoRoot, homeDir
 	if err != nil {
 		return nil, err
 	}
+	if err := ValidateDestinationRoot(machineScope, repoRoot, homeDir, root); err != nil {
+		return nil, fmt.Errorf("harness destination root: %w", err)
+	}
 	return nativeAggregateDestinations(target, machineScope, repoRoot, homeDir, Destination{ID: "default", Root: root, InstallationEvidence: true, Info: info})
 }
 

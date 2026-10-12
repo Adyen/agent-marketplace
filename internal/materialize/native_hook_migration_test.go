@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/Adyen/agent-marketplace/internal/cache"
+	"github.com/Adyen/agent-marketplace/internal/catalog"
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/dependencytxn"
 	"github.com/Adyen/agent-marketplace/internal/ownership"
@@ -700,29 +701,156 @@ func TestNativeHookSupportManifestFailuresRefuseLegacyMigration(t *testing.T) {
 }
 
 func TestValidatePortableManifestSnapshotDetectsConflicts(t *testing.T) {
-	state := &portableState{path: filepath.Join(t.TempDir(), "manifest.yaml"), raw: []byte("version: 1\n"), exists: true, mode: 0o600}
-	generation := dependencytxn.Generation{Exists: true, Digest: dependencytxn.Digest(state.raw)}
-	if err := validatePortableManifestSnapshot(state, state.raw, generation, 0o600); err != nil {
-		t.Fatalf("matching manifest snapshot: %v", err)
+	newState := func(t *testing.T) (*portableState, []byte, dependencytxn.Generation, os.FileMode) {
+		t.Helper()
+		root := t.TempDir()
+		path := filepath.Join(root, ".agents", "materialization-manifest.yaml")
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		data := []byte("version: 1\nentries: []\n")
+		if err := os.WriteFile(path, data, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chmod(path, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		state, err := loadPortableState(root, false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		read, generation, mode, err := dependencytxn.ReadSnapshot(path)
+		if err != nil || !bytes.Equal(read, data) {
+			t.Fatalf("manifest snapshot = %q / %v", read, err)
+		}
+		return state, data, generation, mode
 	}
-	cases := []struct {
-		name       string
-		state      *portableState
-		data       []byte
-		generation dependencytxn.Generation
-		mode       os.FileMode
+	expectConflict := func(t *testing.T, err error) {
+		t.Helper()
+		if !errors.Is(err, dependencytxn.ErrGenerationConflict) {
+			t.Fatalf("snapshot conflict error = %v, want ErrGenerationConflict", err)
+		}
+	}
+	t.Run("matching", func(t *testing.T) {
+		state, data, generation, mode := newState(t)
+		if err := validatePortableManifestSnapshot(state, data, generation, mode); err != nil {
+			t.Fatalf("matching manifest snapshot: %v", err)
+		}
+	})
+	for _, tc := range []struct {
+		name string
+		read func(*testing.T, *portableState, []byte, os.FileMode) ([]byte, dependencytxn.Generation, os.FileMode)
 	}{
-		{name: "bytes", state: state, data: []byte("version: 2\n"), generation: generation, mode: 0o600},
-		{name: "missing", state: state, data: state.raw, generation: dependencytxn.Generation{}, mode: 0o600},
-		{name: "mode", state: state, data: state.raw, generation: generation, mode: 0o640},
-		{name: "appeared", state: &portableState{path: state.path}, data: state.raw, generation: generation, mode: 0o600},
-	}
-	for _, tc := range cases {
+		{name: "bytes", read: func(_ *testing.T, _ *portableState, data []byte, mode os.FileMode) ([]byte, dependencytxn.Generation, os.FileMode) {
+			return []byte("version: 2\n"), dependencytxn.Generation{Exists: true, Digest: dependencytxn.Digest(data)}, mode
+		}},
+		{name: "missing", read: func(_ *testing.T, _ *portableState, _ []byte, _ os.FileMode) ([]byte, dependencytxn.Generation, os.FileMode) {
+			return nil, dependencytxn.Generation{}, 0
+		}},
+		{name: "mode", read: func(_ *testing.T, _ *portableState, data []byte, _ os.FileMode) ([]byte, dependencytxn.Generation, os.FileMode) {
+			return data, dependencytxn.Generation{Exists: true, Digest: dependencytxn.Digest(data)}, 0o640
+		}},
+	} {
 		t.Run(tc.name, func(t *testing.T) {
-			err := validatePortableManifestSnapshot(tc.state, tc.data, tc.generation, tc.mode)
-			if !errors.Is(err, dependencytxn.ErrGenerationConflict) {
-				t.Fatalf("snapshot conflict error = %v, want ErrGenerationConflict", err)
+			state, data, _, mode := newState(t)
+			observed, generation, observedMode := tc.read(t, state, data, mode)
+			expectConflict(t, validatePortableManifestSnapshot(state, observed, generation, observedMode))
+		})
+	}
+	t.Run("appeared", func(t *testing.T) {
+		root := t.TempDir()
+		path := filepath.Join(root, ".agents", "materialization-manifest.yaml")
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		state, err := loadPortableState(root, false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		data := []byte("version: 1\nentries: []\n")
+		if err := os.WriteFile(path, data, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		read, generation, mode, err := dependencytxn.ReadSnapshot(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		expectConflict(t, validatePortableManifestSnapshot(state, read, generation, mode))
+	})
+	for _, tc := range []struct {
+		name  string
+		repin func(*testing.T, *portableState, []byte, os.FileMode)
+	}{
+		{name: "file-replaced-with-identical-bytes", repin: func(t *testing.T, state *portableState, data []byte, mode os.FileMode) {
+			retained := state.path + ".retained"
+			if err := os.Rename(state.path, retained); err != nil {
+				t.Fatal(err)
 			}
+			if err := os.WriteFile(state.path, data, mode.Perm()); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Chmod(state.path, mode.Perm()); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{name: "parent-replaced-with-identical-manifest", repin: func(t *testing.T, state *portableState, data []byte, mode os.FileMode) {
+			parent := filepath.Dir(state.path)
+			parentInfo, err := os.Stat(parent)
+			if err != nil {
+				t.Fatal(err)
+			}
+			retained := parent + ".retained"
+			if err := os.Rename(parent, retained); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Mkdir(parent, parentInfo.Mode().Perm()); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Chmod(parent, parentInfo.Mode().Perm()); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(state.path, data, mode.Perm()); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Chmod(state.path, mode.Perm()); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{name: "scope-replaced-with-identical-manifest", repin: func(t *testing.T, state *portableState, data []byte, mode os.FileMode) {
+			root := state.repoRoot
+			rootInfo, err := os.Stat(root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			retained := root + ".retained"
+			if err := os.Rename(root, retained); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Mkdir(root, rootInfo.Mode().Perm()); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Chmod(root, rootInfo.Mode().Perm()); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Mkdir(filepath.Dir(state.path), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(state.path, data, mode.Perm()); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Chmod(state.path, mode.Perm()); err != nil {
+				t.Fatal(err)
+			}
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			state, data, _, mode := newState(t)
+			tc.repin(t, state, data, mode)
+			read, generation, observedMode, err := dependencytxn.ReadSnapshot(state.path)
+			if err != nil || !bytes.Equal(read, data) || generation.Digest != dependencytxn.Digest(data) || observedMode.Perm() != mode.Perm() {
+				t.Fatalf("replacement fixture changed manifest bytes/generation/mode: %q / %+v / %v / %v", read, generation, observedMode, err)
+			}
+			expectConflict(t, validatePortableManifestSnapshot(state, read, generation, observedMode))
 		})
 	}
 }
@@ -1017,8 +1145,8 @@ func TestNativeHookLegacyMigrationRejectsSymlinkedAncestor(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !diag.HasCode(report.Diags, diag.CodeMaterializeHookLegacyMalformed) {
-		t.Fatalf("missing unsafe-legacy refusal: %+v", report.Diags)
+	if !diag.HasCode(report.Diags, "materialize.destination.error") || !diag.HasCode(report.Diags, diag.CodeMaterializeHookLegacyMalformed) {
+		t.Fatalf("unsafe native legacy refusal lacks its early boundary and scoped hook diagnostics: %+v", report.Diags)
 	}
 	assertFileUnchanged(t, legacyFile, legacyBefore, legacyMode, legacyMtime)
 	assertFileUnchanged(t, supportFile, supportBefore, supportMode, supportMtime)
@@ -1027,6 +1155,62 @@ func TestNativeHookLegacyMigrationRejectsSymlinkedAncestor(t *testing.T) {
 		t.Fatalf("symlinked ancestor changed: %q / %v", linkAfter, err)
 	}
 	assertPathAbsent(t, filepath.Join(home, "state", "agent-marketplace", "ownership"))
+	t.Run("non-hook-boundary-error-does-not-report-legacy-refusal", func(t *testing.T) {
+		nonHookHome, nonHookRepo, outside := t.TempDir(), t.TempDir(), t.TempDir()
+		t.Setenv("HOME", nonHookHome)
+		t.Setenv("CODEX_HOME", filepath.Join(nonHookHome, ".codex"))
+		t.Setenv("XDG_STATE_HOME", filepath.Join(nonHookHome, "state"))
+		t.Setenv("XDG_CACHE_HOME", filepath.Join(nonHookHome, "cache"))
+		factoryRoot := filepath.Join(nonHookRepo, ".factory")
+		if err := os.MkdirAll(factoryRoot, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		foreign := filepath.Join(outside, "foreign.txt")
+		if err := os.WriteFile(foreign, []byte("foreign skill bytes"), 0o640); err != nil {
+			t.Fatal(err)
+		}
+		skillsLink := filepath.Join(factoryRoot, "skills")
+		if err := os.Symlink(outside, skillsLink); err != nil {
+			t.Fatal(err)
+		}
+		linkBefore, err := os.Lstat(skillsLink)
+		if err != nil {
+			t.Fatal(err)
+		}
+		linkTarget, err := os.Readlink(skillsLink)
+		if err != nil {
+			t.Fatal(err)
+		}
+		foreignBefore, foreignMode, foreignMtime := fileSnapshot(t, foreign)
+		foreignInfo, err := os.Stat(foreign)
+		if err != nil {
+			t.Fatal(err)
+		}
+		skill := ir.NewSkill("boundary-probe", "Boundary probe", "inert skill body", nil, nil, ir.SourceRef{})
+		resolved := []resolver.ResolvedArtifact{{
+			Entry:  catalog.Entry{Name: "boundary-probe", Kind: ir.KindSkill, Resource: skill, Path: "skills/boundary-probe/SKILL.md"},
+			Source: config.RepoCommitted, Harnesses: []hcc.Target{hcc.TargetFactory},
+		}}
+		report, err := Run(t.Context(), nonHookRepo, resolved)
+		if err != nil || report == nil || !diag.HasCode(report.Diags, "materialize.destination.error") {
+			t.Fatalf("unsafe non-hook destination was not refused: %+v %v", report, err)
+		}
+		if diag.HasCode(report.Diags, diag.CodeMaterializeHookLegacyMalformed) {
+			t.Fatalf("non-hook destination received Native legacy diagnostic: %+v", report.Diags)
+		}
+		linkAfter, err := os.Lstat(skillsLink)
+		if err != nil || !os.SameFile(linkBefore, linkAfter) || linkBefore.Mode() != linkAfter.Mode() || !linkBefore.ModTime().Equal(linkAfter.ModTime()) {
+			t.Fatalf("non-hook destination alias changed: %v", err)
+		}
+		if target, err := os.Readlink(skillsLink); err != nil || target != linkTarget {
+			t.Fatalf("non-hook destination alias target changed: %q %v", target, err)
+		}
+		assertFileUnchanged(t, foreign, foreignBefore, foreignMode, foreignMtime)
+		foreignAfter, err := os.Stat(foreign)
+		if err != nil || !os.SameFile(foreignInfo, foreignAfter) {
+			t.Fatalf("foreign non-hook payload identity changed: %v", err)
+		}
+	})
 }
 
 func equalStrings(a, b []string) bool {

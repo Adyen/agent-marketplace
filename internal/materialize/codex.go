@@ -465,7 +465,7 @@ func reconcileCodexMCPWithSession(ctx context.Context, report *Report, key outpu
 				return err
 			}
 		}
-		raw, readErr := ownership.ReadAggregateFile(abs)
+		raw, readErr := store.ReadAggregate(codexMCPFile)
 		if readErr != nil && !os.IsNotExist(readErr) {
 			return readErr
 		}

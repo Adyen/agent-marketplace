@@ -73,3 +73,21 @@ func BenchmarkGitAuthEnvironment(b *testing.B) {
 		}
 	}
 }
+
+// BenchmarkGitAuthIncludedEnvironment includes descriptor reads and four native
+// parser subprocesses, but no network or credential-helper execution.
+func BenchmarkGitAuthIncludedEnvironment(b *testing.B) {
+	isolatedGitAuth(b)
+	leaf := authFile(b, "leaf", "[credential]\n\thelper = fixture-helper\n", 0o600)
+	child := authFile(b, "child", fmt.Sprintf("[include]\n\tpath = %q\n", leaf), 0o600)
+	root := authFile(b, "system", fmt.Sprintf("[include]\n\tpath = %q\n", child), 0o600)
+	b.Setenv("GIT_CONFIG_SYSTEM", root)
+	b.Setenv("GIT_CONFIG_GLOBAL", authFile(b, "global", "[credential \"https://example.invalid\"]\n\thelper =\n\thelper = fixture-helper\n", 0o600))
+	b.ReportAllocs()
+	b.ResetTimer()
+	for b.Loop() {
+		if _, _, err := gitAuthEnvironment(b.Context(), "", gitEnv(), "https://example.invalid/fixture"); err != nil {
+			b.Fatal(err)
+		}
+	}
+}

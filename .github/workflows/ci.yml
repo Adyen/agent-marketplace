@@ -691,13 +691,13 @@ jobs:
     needs: changes
     if: github.event_name == 'pull_request' && (needs.changes.outputs.benchmark == 'true' || contains(github.event.pull_request.labels.*.name, 'run-benchmarks'))
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 45
     permissions:
       contents: read
       pull-requests: write
     env:
       BENCHMARK_PACKAGES: ./internal/resolver ./internal/materialize ./internal/tui ./internal/catalog ./internal/config ./cmd/agent-marketplace ./internal/cache ./pkg/harness-compilation ./internal/dependencytxn ./internal/lockfile ./internal/sourcerevision ./internal/pipeline ./internal/marketplace ./internal/marketplacelock
-      BENCHMARK_PATTERN: ^Benchmark(ResolveDefaultAllLargeCatalog|RunDryRunLargeMixedResources|BuildRowsLargeMixed|LoadFSHCCIngest|MergeLayersLargeConfig|BuildListRows|GarbageCollectDryRun|MaterializeLargeArtifacts|CompileBundleLarge|SyncWarmUnchangedRemoteGitLock|SyncLocalGitDiskIONoNetwork|ResolveExactGitRef|CommitUnchanged|CheckPending|PlanUnchanged|Build|ProjectLockedRoots|LoadStableEffectiveIncludes|ExactGitGCDryRunFilesystem|MutableLocalGitBatchDiskIONoNetwork|VerifyExactGitTrackedTreeDiskNoNetwork|GitAuthEnvironment|ReadOnlyGitDocumentMatches|OrganizationIncludeTreeDiskReads|CaptureSnapshotTraversalDiskIO|CaptureAggregateDetailDiskIO|HookSupportFiles|DiscoverLegacyFallback|WarmConfiguredLegacyInstallDiskIO|ProvisionalManyMarketplaceSources|ApplySnapshotStatusWithoutPendingMutation|ResolveCachedNoFetch|MarketplaceInstallWarmRegistries|AliasedMarketplaceSkillDryRunDiskIONoNetwork)$
+      BENCHMARK_PATTERN: ^Benchmark(ResolveDefaultAllLargeCatalog|RunDryRunLargeMixedResources|BuildRowsLargeMixed|LoadFSHCCIngest|MergeLayersLargeConfig|BuildListRows|GarbageCollectDryRun|MaterializeLargeArtifacts|CompileBundleLarge|SyncWarmUnchangedRemoteGitLock|SyncLocalGitDiskIONoNetwork|ResolveExactGitRef|CommitUnchanged|CheckPending|PlanUnchanged|Build|ProjectLockedRoots|LoadStableEffectiveIncludes|ExactGitGCDryRunFilesystem|MutableLocalGitBatchDiskIONoNetwork|VerifyExactGitTrackedTreeDiskNoNetwork|GitAuthEnvironment|ReadOnlyGitDocumentMatches|OrganizationIncludeTreeDiskReads|CaptureSnapshotTraversalDiskIO|CaptureAggregateDetailDiskIO|HookSupportFiles|DiscoverLegacyFallback|WarmConfiguredLegacyInstallDiskIO|ProvisionalManyMarketplaceSources|ApplySnapshotStatusWithoutPendingMutation|ResolveCachedNoFetch|MarketplaceInstallWarmRegistries|AliasedMarketplaceSkillDryRunDiskIONoNetwork|TUIStartupDiskIO|TUIToggleEditorAndReloadDiskIONoReconcile|TUIConfigTransactionDiskIONoNetwork|TUIMarketplaceBrowseWarmCacheDiskIONoNetwork|TUIStartupStages|RecomputeView|RenderBaseScreen)$
       BENCHSTAT_VERSION: v0.0.0-20260709024250-82a0b07e230d
       GOMAXPROCS: 2
     steps:
@@ -766,18 +766,7 @@ jobs:
           awk '/^(goos|goarch|pkg|cpu):/ || (/^Benchmark/ && $2 ~ /^[0-9]+$/)' benchmark-base.txt > benchmark-base-clean.txt
           awk '/^(goos|goarch|pkg|cpu):/ || (/^Benchmark/ && $2 ~ /^[0-9]+$/)' benchmark-head.txt > benchmark-head-clean.txt
           benchstat -table '' benchmark-base-clean.txt benchmark-head-clean.txt | tee benchmark-stat.txt
-          awk '
-            BEGIN { change["sec/op"] = change["B/op"] = change["allocs/op"] = "n/a" }
-            /sec\/op.*vs base/ { unit = "sec/op" }
-            /B\/op.*vs base/ { unit = "B/op" }
-            /allocs\/op.*vs base/ { unit = "allocs/op" }
-            /^geomean/ && unit != "" { change[unit] = $NF }
-            END {
-              printf "- Geomean: **%s sec/op**\n", change["sec/op"]
-              printf "- **%s B/op**\n", change["B/op"]
-              printf "- **%s allocs/op**\n", change["allocs/op"]
-            }
-          ' benchmark-stat.txt > benchmark-summary.txt
+          (cd benchmark-head && go run ./tools/benchmark-report ../benchmark-base-clean.txt ../benchmark-head-clean.txt) > benchmark-summary.txt
           {
             echo '<!-- agent-marketplace-benchmark-results -->'
             echo '## Benchmark comparison'
@@ -786,15 +775,33 @@ jobs:
             echo
             cat benchmark-summary.txt
             echo
-            echo '<details><summary>Full benchstat output</summary>'
+            echo '<details><summary>Workload notes</summary>'
             echo
-            head -n 400 benchmark-stat.txt | sed 's/^/    /'
+            echo 'TUI startup measures 200 selected skills across three harnesses, including disk reads, exact-lock verification, drift checks, and rendering; fixtures begin without materialized output. Toggle transaction measures config/lock publication across four Git registries without sync or reload. Editor-and-reload measures 200 directory resources without dependency reconciliation. Marketplace browse measures 50 fresh disk-cached results, not installed-pin resolution or HTTP latency.'
             echo
             echo '</details>'
             echo
-            echo '_Informational only; benchmark changes do not fail CI._'
+            echo "_Informational only; benchmark changes do not fail CI. Full benchstat output and profiles are in the [\`tui-performance-evidence\` artifact](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID})._"
           } > benchmark-comment.md
           cat benchmark-comment.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Profile TUI actions
+        working-directory: benchmark-head
+        run: |
+          go test ./internal/tui -run '^$' -bench '^BenchmarkTUIStartupDiskIO$' -benchtime=2s -cpuprofile="$GITHUB_WORKSPACE/tui-startup-cpu.pprof" -memprofile="$GITHUB_WORKSPACE/tui-startup-heap.pprof" -trace="$GITHUB_WORKSPACE/tui-startup.trace" -o "$RUNNER_TEMP/tui-profile.test"
+          go test ./cmd/agent-marketplace -run '^$' -bench '^BenchmarkTUIConfigTransactionDiskIONoNetwork$' -benchtime=2s -cpuprofile="$GITHUB_WORKSPACE/tui-toggle-cpu.pprof" -memprofile="$GITHUB_WORKSPACE/tui-toggle-heap.pprof" -trace="$GITHUB_WORKSPACE/tui-toggle.trace" -o "$RUNNER_TEMP/tui-toggle-profile.test"
+
+      - name: Upload benchmark evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: tui-performance-evidence
+          path: |
+            benchmark-*.txt
+            benchmark-comment.md
+            tui-*.pprof
+            tui-*.trace
+          retention-days: 14
 
       - name: Update pull request comment
         if: github.event.pull_request.head.repo.full_name == github.repository

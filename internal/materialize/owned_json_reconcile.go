@@ -295,13 +295,7 @@ func reconcileOwnedJSONAggregateFile(ctx context.Context, store *ownership.Store
 	rel := file.rel
 	abs := filepath.Join(outDir, rel)
 
-	var raw []byte
-	var readErr error
-	if file.hookShape != "" {
-		raw, readErr = ownership.ReadAggregateFileAt(outDir, rel)
-	} else {
-		raw, readErr = ownership.ReadAggregateFile(abs)
-	}
+	raw, readErr := store.ReadAggregate(rel)
 	switch {
 	case readErr == nil:
 	case os.IsNotExist(readErr):
@@ -610,7 +604,7 @@ func finishNativeOwnedJSONFile(ctx context.Context, out ownedJSONAggregateReport
 		return out
 	}
 	for _, participant := range desired {
-		if participant.Path == abs || participant.Delete {
+		if participant.Path == abs || participant.Delete || participant.Namespace != nil {
 			continue
 		}
 		if err := os.MkdirAll(filepath.Dir(participant.Path), 0o700); err != nil {
@@ -622,6 +616,21 @@ func finishNativeOwnedJSONFile(ctx context.Context, out ownedJSONAggregateReport
 	if _, err := commitNativeHookFiles(ctx, desired, extras.commitOptions...); err != nil {
 		out.diags = append(out.diags, ownedAggregateCodedDiag(key, outDir, rel, err, options.writeCode))
 		return out
+	}
+	for _, manifestCommit := range extras.manifestCommits {
+		if err := refreshNativeHookManifestCommit(manifestCommit); err != nil {
+			coded := portableManifestError(manifestCommit.state.path, err)
+			if code, ok := diag.AsCodedError(coded); ok {
+				diagnostic := code.Diagnostic(rel)
+				diagnostic.Target = string(key.target)
+				out.diags = append(out.diags, diagnostic)
+			} else {
+				out.diags = append(out.diags, diag.Diagnostic{Code: diag.CodeOwnershipGenerationConflict, Severity: diag.SeverityError, Target: string(key.target), Resource: rel, Message: err.Error()})
+			}
+			out.written = changed || extras.pending
+			out.hookChanges = changes
+			return out
+		}
 	}
 	slog.Info("native hook aggregate reconciled", "target", key.target, "machine_scope", key.machineScope,
 		"file", rel, "owned_entries", len(plan.owned), "satisfactions", len(plan.satisfactions),

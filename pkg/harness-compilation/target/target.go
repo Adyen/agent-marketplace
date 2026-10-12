@@ -36,7 +36,12 @@ type Definition struct {
 	Conversion       bool
 	UI               bool
 	UIOrder          int
-	HookProjection   *NativeHookProjection
+	// HookProjection is the optional hook-only topology derived from the
+	// target's NativeLayout. Paths are relative to the scope root the
+	// Definition owns (RepoRoot or UserRoot); partitioned-root targets name
+	// their sub-root explicitly. The projection compiler and native
+	// inspection use no second path switch.
+	HookProjection *NativeHookProjection
 }
 
 // ValidateDefinition rejects target metadata that mixes or omits the legacy

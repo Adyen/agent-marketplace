@@ -44,7 +44,15 @@ type nativeHookSupportAuthority struct {
 	assertions   []dependencytxn.DesiredFile
 }
 
-type nativeHookSupportInstaller func(context.Context, bool, nativeHookSupportAuthority) (bool, error)
+type nativeHookSupportInstaller struct {
+	key     outputKey
+	install func(context.Context, bool, nativeHookSupportAuthority) (bool, *portableState, error)
+}
+
+type nativeHookManifestCommit struct {
+	state       *portableState
+	participant dependencytxn.DesiredFile
+}
 
 type nativeHookTransactionExtras struct {
 	originalNative        *nativeHookAggregateSnapshot
@@ -54,6 +62,7 @@ type nativeHookTransactionExtras struct {
 	planSet               bool
 	participants          []dependencytxn.DesiredFile
 	assertions            []dependencytxn.DesiredFile
+	manifestCommits       []nativeHookManifestCommit
 	backups               []nativeHookBackup
 	commitOptions         []dependencytxn.Option
 	beforeNativeAssertion func() error
@@ -269,10 +278,6 @@ func nativeHookActivationFinalizer(key outputKey, repoRoot string, mcpEntries []
 			return extras, snapshotErr
 		}
 		extras.originalNative = nativeSnapshot
-		var supportInstall nativeHookSupportInstaller
-		if len(supportInstallers) > 0 {
-			supportInstall = supportInstallers[0]
-		}
 		if nativeHookSharesMCPRoute(key, repoRoot) {
 			if proofErr != nil && !errors.Is(proofErr, ownership.ErrStateMissing) {
 				return nativeHookTransactionExtras{refused: true, diagnostics: []diag.Diagnostic{{Code: "materialize.write.error", Severity: diag.SeverityError, Target: string(key.target), Message: "shared native ownership state is unavailable; aggregate was left unchanged"}}}, nil
@@ -397,9 +402,13 @@ func nativeHookActivationFinalizer(key outputKey, repoRoot string, mcpEntries []
 				})
 			}
 		}
-		if supportInstall != nil {
+		var manifestState *portableState
+		for _, supportInstall := range supportInstallers {
+			if supportInstall.install == nil {
+				continue
+			}
 			authority := nativeHookSupportAuthority{cleanSources: map[string]bool{}}
-			if !key.machineScope {
+			if !supportInstall.key.machineScope {
 				var sourceErr error
 				authority.cleanSources, sourceErr = nativeHookCleanSupportSources(file, nativeSnapshot.raw, proof, proofErr)
 				if sourceErr != nil {
@@ -419,7 +428,10 @@ func nativeHookActivationFinalizer(key outputKey, repoRoot string, mcpEntries []
 					authority.assertions = append(authority.assertions, proofAssertion)
 				}
 			}
-			pending, installErr := supportInstall(ctx, dryRun, authority)
+			pending, supportState, installErr := supportInstall.install(ctx, dryRun, authority)
+			if supportInstall.key == key {
+				manifestState = supportState
+			}
 			if installErr != nil {
 				extras.refused = true
 				if _, coded := diag.AsCodedError(installErr); coded {
@@ -444,7 +456,7 @@ func nativeHookActivationFinalizer(key outputKey, repoRoot string, mcpEntries []
 			}
 		}
 		if !incomplete {
-			supportExtras, supportErr := nativeHookSupportCleanup(key, repoRoot, outDir, declaration)
+			supportExtras, supportErr := nativeHookSupportCleanup(key, repoRoot, outDir, declaration, manifestState, dryRun)
 			if supportErr != nil {
 				extras.refused = true
 				if _, coded := diag.AsCodedError(supportErr); coded {
@@ -458,6 +470,7 @@ func nativeHookActivationFinalizer(key outputKey, repoRoot string, mcpEntries []
 			}
 			extras.participants = append(extras.participants, supportExtras.participants...)
 			extras.assertions = append(extras.assertions, supportExtras.assertions...)
+			extras.manifestCommits = append(extras.manifestCommits, supportExtras.manifestCommits...)
 			extras.backups = append(extras.backups, supportExtras.backups...)
 			extras.pending = extras.pending || supportExtras.pending
 			extras.diagnostics = append(extras.diagnostics, supportExtras.diagnostics...)
@@ -506,6 +519,56 @@ func nativeHookLegacyRefusal(key outputKey) diag.Diagnostic {
 		Target:   string(key.target),
 		Message:  "a declared legacy hook aggregate could not be reconciled safely; native and legacy files were left unchanged",
 	}
+}
+
+func nativeHookLegacyBoundaryAffected(key outputKey, repoRoot, failedPath string, work *ownedJSONAggregateWork) bool {
+	if failedPath == "" || work == nil {
+		return false
+	}
+	boundSource := false
+	for _, entry := range work.entries {
+		if entry.kind == ownership.KindHook && (entry.sourceDigest != "" || len(entry.sourceEvidence) > 0) {
+			boundSource = true
+			break
+		}
+	}
+	if !boundSource {
+		return false
+	}
+	destination, _, err := nativeHookJSONLayout(key, repoRoot)
+	if err != nil {
+		return false
+	}
+	declaration, err := nativeHookAggregateForScope(targetmeta.Target(key.target), key.machineScope)
+	if err != nil || len(declaration.file.Legacy) == 0 {
+		return false
+	}
+	var declaredPaths []string
+	for _, legacy := range declaration.file.Legacy {
+		declaredPaths = append(declaredPaths, filepath.Join(destination.Root, filepath.FromSlash(path.Join(declaration.partition.Prefix, legacy))))
+	}
+	for _, supportDir := range nativeHookLegacySupportDirs(key, declaration) {
+		declaredPaths = append(declaredPaths, filepath.Join(destination.Root, filepath.FromSlash(supportDir)))
+	}
+	for _, declaredPath := range declaredPaths {
+		if nativeHookPathsOverlap(failedPath, declaredPath) {
+			return true
+		}
+	}
+	return false
+}
+
+func nativeHookPathsOverlap(left, right string) bool {
+	left, leftErr := filepath.Abs(filepath.Clean(left))
+	right, rightErr := filepath.Abs(filepath.Clean(right))
+	if leftErr != nil || rightErr != nil {
+		return false
+	}
+	contains := func(root, candidate string) bool {
+		rel, err := filepath.Rel(root, candidate)
+		return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && !filepath.IsAbs(rel)
+	}
+	return contains(left, right) || contains(right, left)
 }
 
 func nativeHookLegacySupportDirs(key outputKey, declaration nativeHookAggregateDeclaration) []string {
@@ -782,8 +845,8 @@ func nativeHookPortableManifestPath(repoRoot string, machineScope bool) (string,
 	return manifestPath, nil
 }
 
-func nativeHookSupportCleanup(key outputKey, repoRoot, outDir string, declaration nativeHookAggregateDeclaration) (nativeHookTransactionExtras, error) {
-	extras := nativeHookTransactionExtras{}
+func nativeHookSupportCleanup(key outputKey, repoRoot, outDir string, declaration nativeHookAggregateDeclaration, state *portableState, dryRun bool) (extras nativeHookTransactionExtras, retErr error) {
+	extras = nativeHookTransactionExtras{}
 	supportDirs := nativeHookLegacySupportDirs(key, declaration)
 	if len(supportDirs) == 0 {
 		return extras, nil
@@ -792,9 +855,11 @@ func nativeHookSupportCleanup(key outputKey, repoRoot, outDir string, declaratio
 	if err != nil {
 		return extras, portableManifestError(manifestPath, err)
 	}
-	state, stateErr := loadPortableState(repoRoot, key.machineScope)
-	if stateErr != nil {
-		return extras, portableManifestError(manifestPath, stateErr)
+	if state == nil {
+		state, err = loadNativeHookSupportState(repoRoot, key.machineScope)
+		if err != nil {
+			return extras, portableManifestError(manifestPath, err)
+		}
 	}
 	manifestBytes, manifestGeneration, manifestMode, snapshotErr := dependencytxn.ReadSnapshot(state.path)
 	if snapshotErr != nil {
@@ -802,6 +867,11 @@ func nativeHookSupportCleanup(key outputKey, repoRoot, outDir string, declaratio
 	}
 	if err := validatePortableManifestSnapshot(state, manifestBytes, manifestGeneration, manifestMode); err != nil {
 		return extras, portableManifestError(state.path, err)
+	}
+	nextState := *state
+	nextState.entries = make(map[string]portableManifestEntry, len(state.entries))
+	for key, entry := range state.entries {
+		nextState.entries[key] = entry
 	}
 	excluded := nativeHookExcludedSupportFiles(key)
 	var removals []dependencytxn.DesiredFile
@@ -853,7 +923,7 @@ func nativeHookSupportCleanup(key outputKey, repoRoot, outDir string, declaratio
 				})
 				if manifestEntry, ok := state.entries[portableManifestKey(key.target, rel)]; ok && manifestEntry.Digest != "" &&
 					nativeHookSymlinkSnapshotDigest(info.Mode(), linkTarget) == manifestEntry.Digest {
-					state.remove(key.target, rel)
+					nextState.remove(key.target, rel)
 					removedManifest = true
 				}
 				return nil
@@ -875,7 +945,7 @@ func nativeHookSupportCleanup(key outputKey, repoRoot, outDir string, declaratio
 			removals = append(removals, dependencytxn.DesiredFile{
 				Path: candidate, Expected: generation, ExpectedMode: mode, Delete: true,
 			})
-			state.remove(key.target, rel)
+			nextState.remove(key.target, rel)
 			removedManifest = true
 			return nil
 		})
@@ -888,31 +958,77 @@ func nativeHookSupportCleanup(key outputKey, repoRoot, outDir string, declaratio
 	}
 	extras.participants = append(extras.participants, removals...)
 	extras.pending = true
-	if removedManifest {
-		manifestNext, hasEntries, err := state.serialized()
-		if err != nil {
+	if dryRun {
+		if err := appendNativeHookCleanupManifestPlan(&extras, state, nextState, manifestBytes, manifestGeneration, manifestMode, removedManifest, nil, false); err != nil {
 			return nativeHookTransactionExtras{}, err
 		}
-		if hasEntries && !bytes.Equal(manifestBytes, manifestNext) {
-			extras.participants = append(extras.participants, dependencytxn.DesiredFile{
-				Path: state.path, Expected: manifestGeneration, ExpectedMode: manifestMode,
-				Bytes: manifestNext, Mode: manifestMode,
-			})
-		} else if !hasEntries && manifestGeneration.Exists {
-			extras.participants = append(extras.participants, dependencytxn.DesiredFile{
-				Path: state.path, Expected: manifestGeneration, ExpectedMode: manifestMode, Delete: true,
-			})
-		} else {
-			extras.assertions = append(extras.assertions, portableManifestAssertion(state.path, manifestBytes, manifestGeneration, manifestMode))
-		}
-	} else {
-		extras.assertions = append(extras.assertions, portableManifestAssertion(state.path, manifestBytes, manifestGeneration, manifestMode))
+		return extras, nil
+	}
+	manifestParent, err := state.captureManifestParent(true)
+	if err != nil {
+		return nativeHookTransactionExtras{}, portableManifestError(state.path, err)
+	}
+	manifestNamespace, namespaceErr := state.manifestNamespaceExpectation(manifestParent)
+	parentCloseErr := manifestParent.Close()
+	if namespaceErr != nil || parentCloseErr != nil {
+		return nativeHookTransactionExtras{}, portableManifestError(state.path, errors.Join(namespaceErr, parentCloseErr))
+	}
+	if err := appendNativeHookCleanupManifestPlan(&extras, state, nextState, manifestBytes, manifestGeneration, manifestMode, removedManifest, manifestNamespace, true); err != nil {
+		return nativeHookTransactionExtras{}, err
 	}
 	return extras, nil
 }
 
+func appendNativeHookCleanupManifestPlan(extras *nativeHookTransactionExtras, state *portableState, nextState portableState, manifestBytes []byte, manifestGeneration dependencytxn.Generation, manifestMode fs.FileMode, removedManifest bool, namespace *dependencytxn.NamespaceExpectation, recordCommit bool) error {
+	if recordCommit && namespace == nil {
+		return fmt.Errorf("%w: manifest commit plan has no captured namespace", dependencytxn.ErrGenerationConflict)
+	}
+	appendReceipt := func(participant dependencytxn.DesiredFile) {
+		if recordCommit {
+			extras.manifestCommits = append(extras.manifestCommits, nativeHookManifestCommit{state: state, participant: participant})
+		}
+	}
+	appendAssertion := func() {
+		participant := portableManifestAssertion(state.path, manifestBytes, manifestGeneration, manifestMode, namespace)
+		extras.assertions = append(extras.assertions, participant)
+		appendReceipt(participant)
+	}
+	if removedManifest {
+		manifestNext, hasEntries, err := nextState.serialized()
+		if err != nil {
+			return err
+		}
+		if hasEntries && !bytes.Equal(manifestBytes, manifestNext) {
+			participant := dependencytxn.DesiredFile{
+				Path: state.path, Expected: manifestGeneration, ExpectedMode: manifestMode, Namespace: namespace,
+				Bytes: manifestNext, Mode: manifestMode,
+			}
+			extras.participants = append(extras.participants, participant)
+			appendReceipt(participant)
+		} else if !hasEntries && manifestGeneration.Exists {
+			participant := dependencytxn.DesiredFile{
+				Path: state.path, Expected: manifestGeneration, ExpectedMode: manifestMode, Namespace: namespace, Delete: true,
+			}
+			extras.participants = append(extras.participants, participant)
+			appendReceipt(participant)
+		} else {
+			appendAssertion()
+		}
+	} else {
+		appendAssertion()
+	}
+	return nil
+}
+
 func validatePortableManifestSnapshot(state *portableState, data []byte, generation dependencytxn.Generation, mode fs.FileMode) error {
 	if state.exists != generation.Exists || !bytes.Equal(state.raw, data) || (state.exists && state.mode.Perm() != mode.Perm()) {
+		return fmt.Errorf("%w: %s", dependencytxn.ErrGenerationConflict, state.path)
+	}
+	current, err := readPortableManifestSnapshot(state.path)
+	if err != nil {
+		return err
+	}
+	if !portableManifestSnapshotMatches(state.pin, current) {
 		return fmt.Errorf("%w: %s", dependencytxn.ErrGenerationConflict, state.path)
 	}
 	return nil
@@ -926,8 +1042,8 @@ func portableManifestError(path string, err error) error {
 	return diag.NewCodedError(code, diag.SourceRef{File: path}, err)
 }
 
-func portableManifestAssertion(path string, data []byte, generation dependencytxn.Generation, mode fs.FileMode) dependencytxn.DesiredFile {
-	assertion := dependencytxn.DesiredFile{Path: path, Expected: generation}
+func portableManifestAssertion(path string, data []byte, generation dependencytxn.Generation, mode fs.FileMode, namespace *dependencytxn.NamespaceExpectation) dependencytxn.DesiredFile {
+	assertion := dependencytxn.DesiredFile{Path: path, Expected: generation, Namespace: namespace}
 	if generation.Exists {
 		assertion.ExpectedMode = mode
 		assertion.Bytes = data

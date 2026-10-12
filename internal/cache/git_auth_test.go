@@ -166,10 +166,14 @@ func TestGitAuthSkipsReadersForLocalTransports(t *testing.T) {
 			marker := filepath.Join(t.TempDir(), "readers")
 			t.Setenv("AUTH_READER_MARKER", marker)
 			t.Setenv("AUTH_REAL_GIT", realGit)
-			wrapper := authFile(t, "git", "#!/bin/sh\nfor arg do\n  if [ \"$arg\" = --show-origin ]; then echo reader >> \"$AUTH_READER_MARKER\"; fi\ndone\nexec \"$AUTH_REAL_GIT\" \"$@\"\n", 0o700)
+			wrapper := authFile(t, "git", "#!/bin/sh\nif [ \"$1\" = config ] && { [ \"$2\" = --file ] || [ \"$2\" = --system ]; }; then echo reader >> \"$AUTH_READER_MARKER\"; fi\nif [ \"$1\" = config ] && [ \"$2\" = --system ]; then printf 'file:%s\\000credential.helper\\000' \"$AUTH_DISCOVERY_CONFIG\"; exit 0; fi\nexec \"$AUTH_REAL_GIT\" \"$@\"\n", 0o700)
 			t.Setenv("PATH", filepath.Dir(wrapper)+string(os.PathListSeparator)+os.Getenv("PATH"))
 			for _, key := range []string{"GIT_CONFIG_SYSTEM", "GIT_CONFIG_GLOBAL"} {
 				t.Setenv(key, authFile(t, "config", "[credential]\n\thelper = fixture-helper\n", 0o600))
+			}
+			t.Setenv("AUTH_DISCOVERY_CONFIG", os.Getenv("GIT_CONFIG_SYSTEM"))
+			if err := os.Unsetenv("GIT_CONFIG_SYSTEM"); err != nil {
+				t.Fatal(err)
 			}
 			source := repo
 			if transport == "file" {
@@ -407,14 +411,12 @@ func TestGitPrivateHTTPSLegacyAndUntrustedWorkingDirectory(t *testing.T) {
 }
 
 func TestGitAuthRejectsUnsafeTrustedConfiguration(t *testing.T) {
-	for _, kind := range []string{"include", "includeIf", "writable", "relative", "empty", "malformed"} {
+	for _, kind := range []string{"includeIf", "writable", "relative", "empty", "malformed"} {
 		t.Run(kind, func(t *testing.T) {
 			isolatedGitAuth(t)
 			config := "[credential]\n\thelper = synthetic-auth-secret\n"
 			mode := os.FileMode(0o600)
 			switch kind {
-			case "include":
-				config += "[include]\n\tpath = never-read\n"
 			case "includeIf":
 				config += "[includeIf \"gitdir:/never-matches/\"]\n\tpath = never-read\n"
 			case "writable":

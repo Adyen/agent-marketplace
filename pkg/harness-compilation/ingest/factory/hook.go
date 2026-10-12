@@ -7,6 +7,7 @@ import (
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/compile/mapping"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
+	targetmeta "github.com/Adyen/agent-marketplace/pkg/harness-compilation/target"
 )
 
 // LoadHooks reads a Factory hooks file. Factory spellings — the `Execute`
@@ -32,9 +33,24 @@ func LoadHooks(src fs.FS, path string) ([]*ir.Hook, []diag.Diagnostic, error) {
 		hook.HookSource = string(mapping.TargetFactory)
 	}
 
+	return hooks, copyFactoryHookDiagnostics(hookDiags), nil
+}
+
+func LoadHooksForNativeProjection(src fs.FS, path string) ([]*ir.Hook, []diag.Diagnostic, error) {
+	hooks, hookDiags, err := bundle.LoadFactoryHooksForNativeProjection(src, path)
+	if err != nil {
+		return nil, nil, err
+	}
+	for _, hook := range hooks {
+		hook.HookSource = string(targetmeta.TargetFactory)
+	}
+	return hooks, copyFactoryHookDiagnostics(hookDiags), nil
+}
+
+func copyFactoryHookDiagnostics(hookDiags []*diag.Diagnostic) []diag.Diagnostic {
 	diags := make([]diag.Diagnostic, 0, len(hookDiags))
 	for _, diagnostic := range hookDiags {
 		diags = append(diags, *diagnostic)
 	}
-	return hooks, diags, nil
+	return diags
 }

@@ -3268,7 +3268,7 @@ func TestStaleArtifactLinksPreservesUserSymlinks(t *testing.T) {
 	userFilePath := filepath.Join(outDir, "user-file.txt")
 	_ = os.WriteFile(userFilePath, []byte("data"), 0o644)
 
-	stale, diags, err := staleArtifactLinks(outDir, desired)
+	stale, diags, err := staleArtifactLinks(outDir, desired, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -4778,6 +4778,149 @@ func TestRunFileModePortableManifestPruneAndMigration(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+// spec: materialization/portable-manifest-repeats-preserve-identity-and-update-permissions
+func TestRunCodexPortableSkillTreePreparesManifestParent(t *testing.T) {
+	repoRoot, homeDir := devinEnv(t)
+	t.Setenv("CODEX_HOME", filepath.Join(homeDir, ".codex"))
+	sourceRoot := t.TempDir()
+	skillDir := filepath.Join(sourceRoot, "skills", "portable-tree-only")
+	if err := os.MkdirAll(filepath.Join(skillDir, "scripts"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	skillFile := filepath.Join(skillDir, "SKILL.md")
+	if err := os.WriteFile(skillFile, []byte("---\nname: portable-tree-only\ndescription: portable tree\n---\n\nbody"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	supportFile := filepath.Join(skillDir, "scripts", "helper.sh")
+	if err := os.WriteFile(supportFile, []byte("echo portable tree"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(supportFile, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	sourceSkillBefore, sourceSkillMode, sourceSkillMtime := fileSnapshot(t, skillFile)
+	sourceSkillInfo, err := os.Stat(skillFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sourceSupportBefore, sourceSupportMode, sourceSupportMtime := fileSnapshot(t, supportFile)
+	sourceSupportInfo, err := os.Stat(supportFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := catalog.Load(sourceRoot, "claude")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var resolved []resolver.ResolvedArtifact
+	for _, entry := range loaded.Entries {
+		if entry.Kind != ir.KindSkill {
+			continue
+		}
+		resolved = append(resolved, resolver.ResolvedArtifact{
+			Entry: entry, Source: config.RepoCommitted, RegistryURL: sourceRoot, CatalogKey: sourceRoot,
+			V4Kind: config.V4SourceDirectory, Harnesses: []hcc.Target{hcc.TargetCodex},
+		})
+	}
+	if len(resolved) != 1 {
+		t.Fatalf("source tree skills = %d, want one: %+v", len(resolved), loaded.Entries)
+	}
+	modes := config.MaterializationModes{Project: config.MaterializationModeFile, Machine: config.MaterializationModeSymlink}
+	manifestPath := filepath.Join(repoRoot, ".agents", "materialization-manifest.yaml")
+	if _, err := os.Lstat(filepath.Dir(manifestPath)); !os.IsNotExist(err) {
+		t.Fatalf("Codex manifest parent existed before source-tree install: %v", err)
+	}
+	first, err := Run(t.Context(), repoRoot, resolved, WithMaterializationModes(modes))
+	if err != nil {
+		t.Fatal(err)
+	}
+	requireNoErrorDiags(t, first.Diags)
+	if first.TotalWritten() == 0 {
+		t.Fatalf("source-tree Codex install wrote no files: %+v", first)
+	}
+	groupWriteReported := false
+	for _, root := range first.PerRoot {
+		groupWriteReported = groupWriteReported || root.Target == hcc.TargetCodex && filepath.Clean(root.OutDir) == filepath.Join(repoRoot, ".agents", "skills") && len(root.Written) > 0
+	}
+	if !groupWriteReported {
+		t.Fatalf("source-tree Codex install did not use the portable skill group: %+v", first.PerRoot)
+	}
+	installed := filepath.Join(repoRoot, ".agents", "skills", "portable-tree-only")
+	for _, file := range []struct {
+		path  string
+		data  string
+		mode  os.FileMode
+		exact bool
+	}{
+		{path: filepath.Join(installed, "SKILL.md"), data: "body", mode: 0o644},
+		{path: filepath.Join(installed, "scripts", "helper.sh"), data: "echo portable tree", mode: 0o755, exact: true},
+	} {
+		got, err := os.ReadFile(file.path)
+		matches := strings.Contains(string(got), file.data)
+		if file.exact {
+			matches = bytes.Equal(got, []byte(file.data))
+		}
+		if err != nil || !matches {
+			t.Fatalf("portable tree output %s = %q / %v", file.path, got, err)
+		}
+		info, err := os.Lstat(file.path)
+		if err != nil || !info.Mode().IsRegular() || info.Mode().Perm() != file.mode {
+			t.Fatalf("portable tree output mode %s = %v / %v", file.path, info, err)
+		}
+	}
+	manifest, err := os.ReadFile(manifestPath)
+	if err != nil || !bytes.Contains(manifest, []byte("portable-tree-only")) {
+		t.Fatalf("Codex source-tree manifest missing: %q %v", manifest, err)
+	}
+	manifestInfo, err := os.Stat(manifestPath)
+	if err != nil || manifestInfo.Mode().Perm() != 0o644 {
+		t.Fatalf("Codex source-tree manifest mode: %v", err)
+	}
+	skillBefore, skillMode, skillMtime := fileSnapshot(t, filepath.Join(installed, "SKILL.md"))
+	skillIdentity, err := os.Stat(filepath.Join(installed, "SKILL.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	supportBefore, supportMode, supportMtime := fileSnapshot(t, filepath.Join(installed, "scripts", "helper.sh"))
+	supportIdentity, err := os.Stat(filepath.Join(installed, "scripts", "helper.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifestBefore, manifestMode, manifestMtime := fileSnapshot(t, manifestPath)
+	second, err := Run(t.Context(), repoRoot, resolved, WithMaterializationModes(modes))
+	if err != nil {
+		t.Fatal(err)
+	}
+	requireNoErrorDiags(t, second.Diags)
+	if !second.InSync() || second.TotalWritten() != 0 {
+		t.Fatalf("source-tree Codex repeat is not idempotent: %+v", second)
+	}
+	check, err := Run(t.Context(), repoRoot, resolved, WithMaterializationModes(modes), WithDryRun())
+	if err != nil || !check.InSync() || hasErrorDiagnostics(check.Diags) {
+		t.Fatalf("source-tree Codex dry run drifted: %+v %v", check, err)
+	}
+	assertFileUnchanged(t, filepath.Join(installed, "SKILL.md"), skillBefore, skillMode, skillMtime)
+	assertFileUnchanged(t, filepath.Join(installed, "scripts", "helper.sh"), supportBefore, supportMode, supportMtime)
+	assertFileUnchanged(t, manifestPath, manifestBefore, manifestMode, manifestMtime)
+	if after, err := os.Stat(filepath.Join(installed, "SKILL.md")); err != nil || !os.SameFile(skillIdentity, after) {
+		t.Fatalf("source-tree Codex skill identity changed: %v", err)
+	}
+	if after, err := os.Stat(filepath.Join(installed, "scripts", "helper.sh")); err != nil || !os.SameFile(supportIdentity, after) {
+		t.Fatalf("source-tree Codex support identity changed: %v", err)
+	}
+	if after, err := os.Stat(manifestPath); err != nil || !os.SameFile(manifestInfo, after) {
+		t.Fatalf("source-tree Codex manifest identity changed: %v", err)
+	}
+	assertFileUnchanged(t, skillFile, sourceSkillBefore, sourceSkillMode, sourceSkillMtime)
+	assertFileUnchanged(t, supportFile, sourceSupportBefore, sourceSupportMode, sourceSupportMtime)
+	if after, err := os.Stat(skillFile); err != nil || !os.SameFile(sourceSkillInfo, after) {
+		t.Fatalf("source skill identity changed: %v", err)
+	}
+	if after, err := os.Stat(supportFile); err != nil || !os.SameFile(sourceSupportInfo, after) {
+		t.Fatalf("source support identity changed: %v", err)
 	}
 }
 

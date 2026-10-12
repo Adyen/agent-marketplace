@@ -137,6 +137,7 @@ func newRootCmd() *cobra.Command {
 		newServeCmd(),
 		newTelemetryCmd(),
 	)
+	guardCommandErrors(rootCmd)
 
 	return rootCmd
 }

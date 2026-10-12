@@ -10,12 +10,11 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
-	"syscall"
 
 	"github.com/Adyen/agent-marketplace/internal/lockfile"
 )
 
-var ErrGitAuthConfigUntrusted = errors.New("git.auth-config-untrusted: authentication configuration must use trusted system/global files without includes or repository-local authentication settings")
+var ErrGitAuthConfigUntrusted = errors.New("git.auth-config-untrusted: authentication configuration must use trusted system/global files and ordinary include chains; conditional includes and repository-local authentication settings are unsupported")
 
 func gitAcquisition(args []string) (string, bool) {
 	for len(args) >= 2 && args[0] == "-c" {
@@ -123,7 +122,7 @@ func gitAuthEnvironment(ctx context.Context, repoDir string, env []string, sourc
 		return env, source, nil
 	}
 
-	count := 0
+	reader := gitAuthConfigReader{ctx: ctx, env: env, active: make(map[[2]uint64]bool)}
 	for _, scope := range []string{"system", "global"} {
 		if scope == "system" {
 			switch strings.ToLower(os.Getenv("GIT_CONFIG_NOSYSTEM")) {
@@ -158,69 +157,23 @@ func gitAuthEnvironment(ctx context.Context, repoDir string, env []string, sourc
 			if configPath != "" && !filepath.IsAbs(configPath) {
 				return nil, source, ErrGitAuthConfigUntrusted
 			}
-			var readerEnv []string
-			for _, entry := range env {
-				key, _, _ := strings.Cut(entry, "=")
-				if key != "GIT_CONFIG_GLOBAL" && key != "GIT_CONFIG_NOSYSTEM" {
-					readerEnv = append(readerEnv, entry)
+			if configPath == "" {
+				var err error
+				configPath, err = gitSystemAuthConfigPath(ctx, env)
+				if err != nil {
+					return nil, source, err
 				}
-			}
-			if configPath != "" {
-				readerEnv = append(readerEnv, configKey+"="+configPath)
-			}
-			scopeArgs := []string{"--system"}
-			if scope == "global" {
-				scopeArgs = []string{"--file", configPath}
-			}
-			args := append([]string{"config"}, scopeArgs...)
-			args = append(args, "--no-includes", "--null", "--show-origin", "--get-regexp", `^(credential\.|http\.|include\.|includeif\.)`)
-			cmd := exec.CommandContext(ctx, "git", args...)
-			cmd.Env = readerEnv
-			output, err := cmd.Output()
-			if err != nil {
-				var exit *exec.ExitError
-				if errors.As(err, &exit) && exit.ExitCode() == 1 && len(output) == 0 {
+				if configPath == "" {
 					continue
 				}
-				return nil, source, ErrGitAuthConfigUntrusted
 			}
-			fields := strings.Split(string(output), "\x00")
-			if len(fields)%2 != 1 || fields[len(fields)-1] != "" {
-				return nil, source, ErrGitAuthConfigUntrusted
-			}
-			for i := 0; i+1 < len(fields); i += 2 {
-				origin, record := fields[i], fields[i+1]
-				key, value, hasValue := strings.Cut(record, "\n")
-				lower := strings.ToLower(key)
-				if strings.HasPrefix(lower, "include.") || strings.HasPrefix(lower, "includeif.") {
-					return nil, source, ErrGitAuthConfigUntrusted
-				}
-				if !gitAuthKey(key) {
-					continue
-				}
-				path, ok := strings.CutPrefix(origin, "file:")
-				if !ok || !filepath.IsAbs(path) {
-					return nil, source, ErrGitAuthConfigUntrusted
-				}
-				info, err := os.Stat(path)
-				if err != nil || !info.Mode().IsRegular() || info.Mode().Perm()&0o022 != 0 {
-					return nil, source, ErrGitAuthConfigUntrusted
-				}
-				stat, ok := info.Sys().(*syscall.Stat_t)
-				if !ok || stat.Uid != 0 && stat.Uid != uint32(os.Geteuid()) {
-					return nil, source, ErrGitAuthConfigUntrusted
-				}
-				if !hasValue {
-					if strings.HasSuffix(lower, ".usehttppath") || strings.HasSuffix(lower, ".sslcertpasswordprotected") {
-						value = "true"
-					} else {
-						return nil, source, ErrGitAuthConfigUntrusted
-					}
-				}
-				env = append(env, fmt.Sprintf("GIT_CONFIG_KEY_%d=%s", count, key), fmt.Sprintf("GIT_CONFIG_VALUE_%d=%s", count, value))
-				count++
+			if err := reader.read(configPath, 0); err != nil {
+				return nil, source, err
 			}
 		}
 	}
-	return append(env, fmt.Sprintf("GIT_CONFIG_COUNT=%d", count)), source, nil
+	for i, setting := range reader.settings {
+		env = append(env, fmt.Sprintf("GIT_CONFIG_KEY_%d=%s", i, setting.key), fmt.Sprintf("GIT_CONFIG_VALUE_%d=%s", i, setting.value))
+	}
+	return append(env, fmt.Sprintf("GIT_CONFIG_COUNT=%d", len(reader.settings))), source, nil
 }

@@ -86,7 +86,7 @@ Security.
 
 ### With Go
 
-With Go 1.26.6 or newer:
+With Go 1.26.9 or newer:
 
 ```bash
 go install github.com/Adyen/agent-marketplace/cmd/agent-marketplace@latest
@@ -98,7 +98,7 @@ select the `v4.x.x` tags for this module path. Go places the binary in
 
 ### Build from source
 
-Building from source also requires Go 1.26.6 or newer. To build a release,
+Building from source also requires Go 1.26.9 or newer. To build a release,
 check out its tag first (for example `git checkout v4.0.9`).
 
 ```bash
@@ -141,18 +141,25 @@ is a full-screen terminal interface over the commands described below.
 
 The keys you will use most in the TUI are `j`/`k` to move, `/` to search,
 `enter` to view details, and `space` to open the scope picker, where `g`, `p`,
-and `l` toggle a resource for your user, project, or local configuration. `s`
+and `l` toggle a resource for your user, project, or local configuration —
+on a section header, `space` instead opens a bulk toggle for every eligible
+row in that section. `v` opens View settings to regroup the list by status,
+source, or kind. `s`
 syncs pending changes, `u` updates Git locks and syncs, `r` reloads from disk,
 `H` picks the harnesses to target, `E` opens a configuration file in your
 editor, `e` shows errors and warnings, `?` lists every binding, and `q` quits.
 The [TUI reference](https://github.com/Adyen/agent-marketplace/blob/main/site/docs/reference/tui.md)
 has the full list.
 
-The TUI shows configured and enabled resources before it contacts a
-Marketplace. It then loads up to 50 results from each configured Marketplace.
-`/` filters the loaded rows as you type, and after 250 ms without input it also
-searches the configured Marketplaces. Discovery has no pagination, so narrow
-your search or use the `search` command for large result sets.
+Once configuration validates, the TUI shows locally configured selections as
+verification-pending rows, including local-directory `all:true` selections
+with configured excludes applied. These rows do not claim installation or sync
+status until exact-lock and catalog verification replaces them. Cached
+Marketplace results (up to 50 per configured Marketplace) may appear while
+verification runs; drift is assessed afterward. `/` filters loaded rows as you
+type and, after 250 ms without input, searches the configured Marketplaces.
+Discovery has no pagination, so narrow your search or use the `search` command
+for large result sets.
 
 The TUI caches discovery results per endpoint. Results stay fresh for five
 minutes and can remain visible as stale for up to 24 hours while a refresh

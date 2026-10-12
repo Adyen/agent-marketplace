@@ -155,6 +155,7 @@ export function normalizeResourceListItem(input: unknown, label = 'resource'): R
     ...(object.description === undefined ? {} : { description: boundedString(object.description, `${label}.description`) }),
     ...(metadata === undefined ? {} : { metadata }),
     ...(object.score === undefined ? {} : { score: boundedNumber(object.score, `${label}.score`) }),
+    ...(object.installation_count === undefined ? {} : { installation_count: boundedInteger(object.installation_count, `${label}.installation_count`, Number.MAX_SAFE_INTEGER) }),
     ...(availability === undefined ? {} : { availability }),
   }
 }
@@ -518,8 +519,8 @@ function boundedUnknown(value: unknown, label: string, depth = 0): unknown {
   return Object.fromEntries(Object.entries(object).map(([key, item]) => [boundedString(key, `${label} key`), boundedUnknown(item, `${label}.${key}`, depth + 1)]))
 }
 
-function boundedInteger(value: unknown, label: string): number {
-  if (!Number.isInteger(value) || (value as number) < 0 || (value as number) > 1_000_000_000) throw new ApiValidationError(`${label} must be a bounded non-negative integer`)
+function boundedInteger(value: unknown, label: string, max = 1_000_000_000): number {
+  if (!Number.isInteger(value) || (value as number) < 0 || (value as number) > max) throw new ApiValidationError(`${label} must be a bounded non-negative integer`)
   return value as number
 }
 

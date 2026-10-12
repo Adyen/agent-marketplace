@@ -174,20 +174,16 @@ registries:
 	if err := os.WriteFile(configPath, []byte(seed), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	proofPath, proofBytes := prepareOwnershipProofFIFO(t, env, alphaOrg)
+	pausePath, signal := prepareOwnershipPause(t, env, betaOrg)
 
 	var alpha, beta ExecResult
 	alphaDone := make(chan struct{})
 	go func() {
 		defer close(alphaDone)
-		alpha = env.RunAMWithEnv(map[string]string{"AGENT_MARKETPLACE_V3_ORG_CONFIG": alphaOrg}, "sync", "--no-backup")
+		alpha = env.RunAMWithEnv(map[string]string{"AGENT_MARKETPLACE_V3_ORG_CONFIG": alphaOrg, "AGENT_MARKETPLACE_E2E_OWNERSHIP_PAUSE": pausePath}, "sync", "--no-backup")
 	}()
 
-	fifoWriter := openOwnershipProofFIFOWriter(t, proofPath, proofBytes, alphaDone, &alpha)
-	if err := os.Rename(proofPath+".seed", proofPath); err != nil {
-		_ = fifoWriter.Close()
-		t.Fatal(err)
-	}
+	fifoWriter := openFIFOWriter(t, pausePath, alphaDone, &alpha)
 
 	betaLog := filepath.Join(t.TempDir(), "beta.log")
 	betaDone := make(chan struct{})
@@ -203,7 +199,7 @@ registries:
 	// Hold the first writer long enough for the default-wait path to report
 	// contention after the second writer reaches the same root.
 	time.Sleep(1100 * time.Millisecond)
-	if _, err := fifoWriter.Write(proofBytes); err != nil {
+	if _, err := fifoWriter.Write(signal); err != nil {
 		_ = fifoWriter.Close()
 		t.Fatal(err)
 	}
@@ -461,6 +457,7 @@ func TestE2ECodexDestructiveRepairRequiresConfirmationAndRedactsSecrets(t *testi
 	if err := os.WriteFile(configPath, []byte(original), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	env.MustRunAM("lock", "--scope", "repo")
 
 	preview := env.RunAM("doctor", "--repair", "--yes")
 	assertRepairResult(t, preview, 0, "replace mcp-server", "left unchanged")
@@ -514,6 +511,7 @@ func TestE2ECodexRepairCorruptionAfterIndependentAdoptionIsPartialFailure(t *tes
 	if err := os.WriteFile(codexPath, []byte(codexOriginal), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	env.MustRunAM("lock", "--scope", "repo")
 
 	result := env.RunAM("doctor", "--repair", "--yes")
 	if result.ExitCode == 0 {
@@ -637,6 +635,13 @@ func runDoctorRepairInTTY(t *testing.T, env *Env, answer string) ExecResult {
 
 func runAMInTTY(t *testing.T, env *Env, command, option, prompt, answer string) ExecResult {
 	t.Helper()
+	return runAMInTTYAtPrompt(t, env, command, option, prompt, answer, nil)
+}
+
+// runAMInTTYAtPrompt is runAMInTTY with atPrompt called while the command is
+// blocked at its prompt, before the answer is written.
+func runAMInTTYAtPrompt(t *testing.T, env *Env, command, option, prompt, answer string, atPrompt func()) ExecResult {
+	t.Helper()
 	scriptPath, err := exec.LookPath("script")
 	if err != nil {
 		t.Fatalf("interactive E2E requires the system 'script' utility: %v", err)
@@ -715,6 +720,9 @@ exec "$AM_E2E_BINARY" "$AM_E2E_COMMAND" >"$AM_E2E_STDOUT" 2>"$AM_E2E_STDERR"
 	}
 
 prompted:
+	if atPrompt != nil {
+		atPrompt()
+	}
 	if _, err := stdin.Write([]byte(answer)); err != nil {
 		t.Fatalf("answer %s prompt: %v", command, err)
 	}

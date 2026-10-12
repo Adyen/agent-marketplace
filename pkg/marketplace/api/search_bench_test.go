@@ -2,9 +2,11 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -50,9 +52,36 @@ func benchSearchServer(b *testing.B, num int) *Server {
 		b.Fatalf("put source: %v", err)
 	}
 
+	manifest := store.RevisionDigest("sha256:" + strings.Repeat("a", 64))
+	commit := strings.Repeat("d", 40)
+	if err := meta.PutRegistryOccurrence(ctx, store.RegistryOccurrence{
+		RegistryID: src.ID, Ref: src.Ref, Commit: commit, RegistryRevisionManifestDigest: manifest,
+		Acquisition: src.Acquisition, OccurredAt: time.Now().UTC(),
+	}); err != nil {
+		b.Fatalf("put registry occurrence: %v", err)
+	}
 	for i := 0; i < num; i++ {
-		if err := meta.PutResourceRevision(ctx, benchRevision(src.ID, store.MarketplaceID(cfg.Instance.ID), i)); err != nil {
+		revision := benchRevision(src.ID, store.MarketplaceID(cfg.Instance.ID), i)
+		if err := meta.PutResourceRevision(ctx, revision); err != nil {
 			b.Fatalf("put resource revision: %v", err)
+		}
+		if err := meta.PutResourceOccurrence(ctx, store.ResourceOccurrence{
+			Coordinate: revision.Coordinate, ContentDigest: revision.ContentDigest, Commit: commit, ManifestDigest: manifest,
+		}); err != nil {
+			b.Fatalf("put resource occurrence: %v", err)
+		}
+		assessment := store.ResourceAssessment{
+			Coordinate: revision.Coordinate, ContentDigest: revision.ContentDigest, AnalyzerVersion: "1.0.0",
+			PolicyDigest:             store.PolicyDigest("sha256:" + strings.Repeat("b", 64)),
+			Decision:                 store.AssessmentDecisionAllow,
+			InspectionManifestDigest: store.RevisionDigest("sha256:" + strings.Repeat("c", 64)),
+			AssessedAt:               time.Now().UTC(),
+		}
+		if err := meta.PutResourceAssessment(ctx, assessment); err != nil {
+			b.Fatalf("put resource assessment: %v", err)
+		}
+		if err := meta.SetCurrentResourceAssessment(ctx, assessment); err != nil {
+			b.Fatalf("set current resource assessment: %v", err)
 		}
 	}
 
@@ -80,12 +109,26 @@ func benchRevision(source store.RegistryID, marketplace store.MarketplaceID, i i
 	}
 }
 
+func validateSearchBenchmark(b *testing.B, handler http.Handler, request *http.Request, want int) {
+	b.Helper()
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	var result struct {
+		Items []json.RawMessage `json:"items"`
+		Total int               `json:"total"`
+	}
+	if response.Code != http.StatusOK || json.Unmarshal(response.Body.Bytes(), &result) != nil || len(result.Items) != want || result.Total != want {
+		b.Fatalf("search benchmark did not return its expected %d resources", want)
+	}
+}
+
 // BenchmarkSearchHandler measures the search hot path without a loopback TCP
 // connection, so the number reflects store access, revocation filtering,
 // sorting, and DTO construction rather than the host's socket latency.
 func BenchmarkSearchHandler(b *testing.B) {
 	handler := benchSearchServer(b, 100).PublicHandler()
 	request := httptest.NewRequest(http.MethodGet, "/api/v1/search?q=skill-0050", nil)
+	validateSearchBenchmark(b, handler, request, 1)
 
 	b.ReportAllocs()
 	b.ResetTimer()
@@ -103,6 +146,7 @@ func BenchmarkSearchHandler(b *testing.B) {
 func BenchmarkSearchHandlerAll(b *testing.B) {
 	handler := benchSearchServer(b, 100).PublicHandler()
 	request := httptest.NewRequest(http.MethodGet, "/api/v1/search", nil)
+	validateSearchBenchmark(b, handler, request, 100)
 
 	b.ReportAllocs()
 	b.ResetTimer()

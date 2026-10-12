@@ -23,7 +23,7 @@ func TestPrepareHookSupportNamespacesSupportFiles(t *testing.T) {
 	}
 	plans, conflicts := prepareHookSupport(work)
 	if len(conflicts) != 0 {
-		t.Fatalf("distinct sources must not conflict: %#v", conflicts)
+		t.Fatalf("distinct source paths conflicted: %#v", conflicts)
 	}
 	for i, want := range []string{"first", "second"} {
 		plan := plans[i]
@@ -42,6 +42,26 @@ func TestPrepareHookSupportNamespacesSupportFiles(t *testing.T) {
 	}
 	if plans[0].relBase == plans[1].relBase {
 		t.Fatalf("distinct sources share relBase %q", plans[0].relBase)
+	}
+
+	equal := makeHookSupportSource(t, "echo same", 0o644)
+	equalWork := []skillTarget{{skill: resolverHook(t, equal, "one"), target: hcc.TargetFactory}, {skill: resolverHook(t, equal, "two"), target: hcc.TargetFactory}}
+	equalPlans, conflicts := prepareHookSupport(equalWork)
+	if len(conflicts) != 0 || equalPlans[0].err != nil || equalPlans[1].err != nil || len(equalPlans[0].artifacts) != 1 || len(equalPlans[1].artifacts) != 1 || equalPlans[0].relBase == equalPlans[1].relBase {
+		t.Fatalf("same-source installed names were not isolated: plans=%#v conflicts=%#v", equalPlans, conflicts)
+	}
+
+	mode := makeHookSupportSource(t, "echo same", 0o600)
+	modeWork := []skillTarget{{skill: resolverHook(t, equal, "one"), target: hcc.TargetFactory}, {skill: resolverHook(t, mode, "two"), target: hcc.TargetFactory}}
+	modePlans, conflicts := prepareHookSupport(modeWork)
+	if len(conflicts) != 0 || modePlans[0].err != nil || modePlans[1].err != nil || len(modePlans[0].artifacts) != 1 || len(modePlans[1].artifacts) != 1 || modePlans[0].artifacts[0].Mode.Perm() != 0o644 || modePlans[1].artifacts[0].Mode.Perm() != 0o600 {
+		t.Fatalf("per-source support mode changed: plans=%#v conflicts=%#v", modePlans, conflicts)
+	}
+
+	differentTarget := []skillTarget{{skill: resolverHook(t, first, "one"), target: hcc.TargetFactory}, {skill: resolverHook(t, second, "two"), target: hcc.TargetWindsurf}}
+	_, conflicts = prepareHookSupport(differentTarget)
+	if len(conflicts) != 0 {
+		t.Fatalf("cross-target support files conflicted: %#v", conflicts)
 	}
 }
 

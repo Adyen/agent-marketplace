@@ -392,14 +392,20 @@ func (s *Store) missingStateError() error {
 // record that went away. That is a reporting distinction only: the code, the
 // severity, and the nil record are identical either way.
 func (s *Store) Load() (*Record, error) {
-	data, err := os.ReadFile(s.StateFile())
+	record, _, err := s.loadObservedRecord()
+	return record, err
+}
+
+func (s *Store) loadObservedRecord() (*Record, metadataPin, error) {
+	data, exists, pin, err := s.readObservedMetadata(stateFileName)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, coded(diag.CodeOwnershipStateMissing, s.StateFile(), s.missingStateError())
-		}
-		return nil, coded(diag.CodeOwnershipStateCorrupt, s.StateFile(), fmt.Errorf("%w: %v", ErrStateCorrupt, err))
+		return nil, pin, coded(diag.CodeOwnershipStateCorrupt, s.StateFile(), fmt.Errorf("%w: %w", ErrStateCorrupt, err))
 	}
-	return s.decodeStateRecord(s.StateFile(), data)
+	if !exists {
+		return nil, pin, coded(diag.CodeOwnershipStateMissing, s.StateFile(), s.missingStateError())
+	}
+	rec, decodeErr := s.decodeStateRecord(s.StateFile(), data)
+	return rec, pin, decodeErr
 }
 
 func (s *Store) decodeStateRecord(path string, data []byte) (*Record, error) {
@@ -428,6 +434,10 @@ func (s *Store) decodeStateRecord(path string, data []byte) (*Record, error) {
 // directory, fsync the file, rename over the target, fsync the directory. On any
 // crash the reader sees either the whole previous record or the whole new one.
 func (s *Store) commitRecord(rec *Record) error {
+	return s.commitRecordWithValidation(rec, nil)
+}
+
+func (s *Store) commitRecordWithValidation(rec *Record, validate func() error) (err error) {
 	if err := validateRecord(rec, s.canonicalRoot, s.rootKey); err != nil {
 		return err
 	}
@@ -436,10 +446,28 @@ func (s *Store) commitRecord(rec *Record) error {
 		return fmt.Errorf("ownership: marshal record: %w", err)
 	}
 	data = append(data, '\n')
-	if err := os.MkdirAll(s.recordDir(), 0o700); err != nil {
-		return fmt.Errorf("ownership: create state directory: %w", err)
+	if validate == nil {
+		return s.writeMetadata(stateFileName, data)
 	}
-	return atomicWrite(s.StateFile(), data, 0o600)
+	if err := validate(); err != nil {
+		return err
+	}
+	parent, err := s.captureMetadataParent()
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if closeErr := parent.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
+	_, _, err = writeObservedMetadataFile(parent, stateFileName, data, func() error {
+		if err := s.verifyMetadataParent(parent); err != nil {
+			return err
+		}
+		return validate()
+	})
+	return err
 }
 
 // nextRecord builds the record that a mutation will commit, from the currently
@@ -674,6 +702,33 @@ func (p Proof) HookSatisfactions() []HookSatisfaction {
 		})
 	}
 	return satisfactions
+}
+
+func (p Proof) HasHookResource(resource string) bool {
+	if resource == "" {
+		return false
+	}
+	for _, entry := range p.entries {
+		if entry.Kind != KindHook {
+			continue
+		}
+		if entry.Resource == resource {
+			return true
+		}
+		for _, evidence := range entry.SourceEvidence {
+			if evidence.Resource == resource {
+				return true
+			}
+		}
+	}
+	for _, satisfaction := range p.hookSatisfactions {
+		for _, evidence := range satisfaction.Sources {
+			if evidence.Resource == resource {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // OwnedCount returns how many entries the proof covers.

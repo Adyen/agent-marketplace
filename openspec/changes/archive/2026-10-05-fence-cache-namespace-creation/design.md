@@ -1,0 +1,11 @@
+## Context
+
+prepareSkillLinkCache used path MkdirAll/MkdirTemp before its producer cleanup and shared output copy capture. Parent retarget at that boundary redirects the whole compiled cache into a foreign directory. Its initial parent aliases are supported and must not be banned.
+
+## Decision
+
+Normalize selected cache path, capture/create its parent with existing harness.CaptureDestinationPath machine-root semantics, then reuse destinationBoundary's captured-root/name checks. Prepare producer directories with Dir.Mkdir(0700) and crypto/rand.Text names; existing cleanup pins their directory inode. No reserve-file unlink window is introduced. Revalidate parent before copy admission and use the captured boundary for compiled cache-directory preparation. Producer and cache preparation share the parent descriptor; initial alias points to the same admitted object and remains usable. Code uses existing modules, no helper/framework or dependency.
+
+## Verification
+
+Public Factory Run moves actual admitted parent and links its public name to an inert foreign directory before producer creation. Parent creates foreign namespace-probe cache/red. Guard leaves foreign members/bytes/inode/mode/mtime and original parent empty, reports materialize.write.error and leaves native absent. Replace hostile alias with an initially selected alias to the retained real parent; real sync then installs source support with exact bytes/640 mode and removes its producer staging. Linux/macOS full materialize and repeated races, validate/spec/shellcheck, full disk RunSupportFiles costs and complete intended-file adversarial review required. SDK publication is not bound into a whole-tree transaction by this slice; final admitted-case audit remains open. Native Linux/macOS full materialization, count20 race/source/cache controls, validate/lint/build/spec/shellcheck passed. Complete RunSupportFiles disk serial medians13.335657→12.473818ms (-6.46%,p=.151,not significant),463726→472885B/op (+1.98%),5240→5328alloc/op (+1.68%),2sx5/no95CI. Earlier baseline7.415018ms disclosed; samples vary with host load and are not an isolated guard cost/speedup. Source/staging/cache/prune/copy/native I/O timed,no network/logdiscard/setup excluded.

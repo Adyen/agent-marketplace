@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"charm.land/bubbletea/v2"
 	"github.com/Adyen/agent-marketplace/internal/catalog"
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/materialize"
@@ -215,29 +216,23 @@ func BenchmarkBuildRowsLargeMixed(b *testing.B) {
 	}
 }
 
-// BenchmarkRecomputeView covers scope, registry, and status tabs with empty
+// BenchmarkRecomputeView covers the single status-grouped view with empty
 // and active filters.
 func BenchmarkRecomputeView(b *testing.B) {
 	rows := buildBenchRows(500)
 
 	cases := []struct {
 		name   string
-		tab    tab
 		filter string
 	}{
-		{"scope_empty_filter", tabScope, ""},
-		{"scope_active_filter", tabScope, "security"},
-		{"registry_empty_filter", tabRegistry, ""},
-		{"registry_active_filter", tabRegistry, "helm"},
-		{"status_empty_filter", tabStatus, ""},
-		{"status_active_filter", tabStatus, "go"},
+		{"status_empty_filter", ""},
+		{"status_active_filter", "go"},
 	}
 
 	for _, c := range cases {
 		b.Run(c.name, func(b *testing.B) {
 			m := NewModel("/repo", "/home")
 			m.rows = append([]row(nil), rows...)
-			m.activeTab = c.tab
 			m.filter = c.filter
 
 			b.ReportAllocs()
@@ -337,6 +332,22 @@ func BenchmarkMoveCursorByPage(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		m.cursor = i % len(m.flatItems)
 		m.moveCursorByPage(1)
+	}
+}
+
+func BenchmarkMouseWheelListUpdate(b *testing.B) {
+	m := benchmarkClampModel()
+	m.loading = false
+	msg := tea.MouseWheelMsg{Button: tea.MouseWheelDown}
+	listWidth, _ := paneWidths(m.width)
+	m.listHeightOffsets(listWidth)
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		m.cursor = 0
+		m.listOffset = 0
+		updated, _ := m.Update(msg)
+		m = updated.(Model)
 	}
 }
 
@@ -451,4 +462,29 @@ func BenchmarkRecordActionSpan(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		recordActionSpan(ctx, "tui.action.sync", map[string]string{"resource.kind": "skill"})
 	}
+}
+
+func benchSyncDone(b *testing.B, msg syncDoneMsg) {
+	b.Helper()
+	defer benchDiscardLogs()()
+	model := NewModel("/repo", "/home")
+	model.loading = false
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		model.syncing = true
+		updated, _ := model.Update(msg)
+		model = updated.(Model)
+	}
+}
+
+func BenchmarkSyncDoneClean(b *testing.B) {
+	benchSyncDone(b, syncDoneMsg{})
+}
+
+func BenchmarkSyncDoneWarnings(b *testing.B) {
+	benchSyncDone(b, syncDoneMsg{warnings: []error{
+		fmt.Errorf("marketplace.archive-evidence-refreshed: src/skill/review locked archive digest sha256:a refreshed to sha256:b for the unchanged content digest"),
+		fmt.Errorf("marketplace.archive-evidence-refreshed: src/skill/audit locked archive digest sha256:c refreshed to sha256:d for the unchanged content digest"),
+	}})
 }

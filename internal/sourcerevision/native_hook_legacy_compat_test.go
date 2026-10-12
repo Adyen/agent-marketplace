@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/Adyen/agent-marketplace/internal/catalog"
+	"github.com/Adyen/agent-marketplace/internal/fsboundary"
 	"github.com/Adyen/agent-marketplace/internal/lockfile"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 )
@@ -166,6 +167,15 @@ func TestFrozenLegacyHookFallbacks(t *testing.T) {
 	}
 	for _, fixture := range legacyCaptureFixtures {
 		root := writeLegacyFixture(t, fixture)
+		sourceFS, err := fsboundary.OpenSourceFS(root)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() {
+			if err := sourceFS.Close(); err != nil {
+				t.Errorf("close legacy source snapshot: %v", err)
+			}
+		}()
 		for _, schema := range []string{"v1", "v2", "v3", "v4"} {
 			contract, err := lockfile.RevisionContract(schema)
 			if err != nil {
@@ -184,7 +194,7 @@ func TestFrozenLegacyHookFallbacks(t *testing.T) {
 				var got []frozenFallback
 				for _, entry := range loaded.Entries {
 					entry.Path = ""
-					payload, err := resourceSourceBytes(root, entry, contract)
+					payload, err := resourceSourceBytes(root, sourceFS, entry, contract)
 					if err != nil {
 						t.Fatalf("%s: %v", key, err)
 					}

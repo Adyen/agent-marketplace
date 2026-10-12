@@ -420,6 +420,7 @@ func TestSyncSharedNativeProofRefusesPartialOrInvalidEvidence(t *testing.T) {
 			}
 			if _, statErr := os.Lstat(legacyPath); !os.IsNotExist(statErr) {
 				t.Fatalf("sync --check created the legacy file: %v", statErr)
+
 			}
 			assertStatUnchanged(t, "--check native", nativePath, nativeBefore, nativeInfo)
 			assertStatUnchanged(t, "--check state", statePath, stateBefore, stateInfo)

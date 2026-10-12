@@ -64,10 +64,7 @@ name are not selected.
 
 ### Requirement: Satisfaction by kind and name
 
-A prerequisite SHALL be met when any selected resource in the same resolution
-has the same kind and name, regardless of the registry, path, or configuration
-layer that supplies it. The `registry` and `path` hints SHALL NOT restrict
-satisfaction.
+A prerequisite SHALL be met when any selected resource in the same resolution has the same kind and name, regardless of the registry, path, configuration layer, or Marketplace selection that supplies it. The `registry` and `path` hints SHALL NOT restrict satisfaction.
 
 #### Scenario: Prerequisite supplied by another registry
 
@@ -79,13 +76,20 @@ satisfaction.
 - **WHEN** a skill requires MCP server `docs` and only a skill named `docs` is selected
 - **THEN** the marketplace MUST report the MCP prerequisite as unmet
 
+#### Scenario: Doctor treats a Marketplace selection as a satisfied prerequisite
+
+- **WHEN** a selected resource declares a prerequisite that only a Marketplace-selected resource satisfies and `doctor` runs
+- **THEN** `doctor` MUST NOT report the prerequisite as unmet
+
 ### Requirement: Unmet prerequisite warning text
 
 Each unmet prerequisite SHALL produce the message
 `<kind> "<resource>" requires <kind> "<prerequisite>", but it is not selected`
 and the remediation
-`agent-marketplace install "<prerequisite>" --kind <kind>`, followed by
-`--from "<registry>"` and `--path "<path>"` when those hints are present.
+`agent-marketplace install` with the POSIX-literal-formatted `<prerequisite>`
+and `--kind <kind>`, followed by `--from` and `--path` with the corresponding
+POSIX-literal-formatted hint values when those hints are present. Argument
+formatting SHALL follow the prerequisite shell-literal requirement below.
 Kinds SHALL be printed as `skill`, `command`, `subagent`, `hook`, or `mcp`.
 
 #### Scenario: Remediation with hints
@@ -222,3 +226,17 @@ resource selection.
 
 - **WHEN** a selected resource's prerequisites are also selected and `sync --strict` runs
 - **THEN** sync MUST NOT print an unmet-prerequisite warning or fail because of it
+
+### Requirement: Prerequisite remediation arguments are shell literals
+
+Agent Marketplace MUST format registry-authored prerequisite resource names, registry locations and paths as literal POSIX shell arguments in install remediation. Command/variable substitution, whitespace, delimiters and embedded single quotes MUST NOT gain shell meaning from display quoting. Existing credential redaction MUST occur before argument formatting. Typed unmet warnings, resource selection and requested kind/location semantics MUST remain unchanged. This requirement changes human-readable command guidance, not resource schemas or machine-readable warning identities.
+
+#### Scenario: Requirement remediation keeps shell syntax literal
+
+- **WHEN** prerequisite name or location arguments contain inert shell syntax or embedded quotes
+- **THEN** install remediation MUST represent them as literal arguments using the established POSIX formatter after credential redaction
+
+#### Scenario: Resolver keeps ordinary prerequisite warnings and selection
+
+- **WHEN** an otherwise selected resource declares an unmet prerequisite
+- **THEN** resolution MUST keep the selected resource and typed warning while its install hint represents the prerequisite name literally

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io/fs"
 	"sort"
+	"strings"
 
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/internal/jsonutil"
@@ -26,7 +27,7 @@ import (
 // agent) produce a warning diagnostic attached to the returned Hook
 // but do not cause an error.
 func LoadHooks(src fs.FS, path string) ([]*ir.Hook, []*diag.Diagnostic, error) {
-	return loadHooks(src, path, false)
+	return loadHooks(src, path, false, false)
 }
 
 // LoadHooksStrict is LoadHooks for files that are a pure event map: every
@@ -34,7 +35,7 @@ func LoadHooks(src fs.FS, path string) ([]*ir.Hook, []*diag.Diagnostic, error) {
 // non-event keys. Use it for native hook files that cannot carry unrelated
 // metadata.
 func LoadHooksStrict(src fs.FS, path string) ([]*ir.Hook, []*diag.Diagnostic, error) {
-	return loadHooks(src, path, true)
+	return loadHooks(src, path, true, false)
 }
 
 // LoadHooksMember reads only the modeled "hooks" member of a settings-style
@@ -80,10 +81,14 @@ func LoadHooksMember(src fs.FS, path string) ([]*ir.Hook, []*diag.Diagnostic, er
 		}
 		return nil, nil, jsonutil.Coded(path, data, fmt.Errorf("top-level hooks must be an object of event arrays: %w", err))
 	}
-	return flattenHookEventMap(rawEvents, path, true)
+	return flattenHookEventMap(rawEvents, path, true, false)
 }
 
-func loadHooks(src fs.FS, path string, strict bool) ([]*ir.Hook, []*diag.Diagnostic, error) {
+func LoadFactoryHooksForNativeProjection(src fs.FS, path string) ([]*ir.Hook, []*diag.Diagnostic, error) {
+	return loadHooks(src, path, true, true)
+}
+
+func loadHooks(src fs.FS, path string, strict, factoryProjection bool) ([]*ir.Hook, []*diag.Diagnostic, error) {
 	if err := validatePath(path); err != nil {
 		return nil, nil, err
 	}
@@ -119,14 +124,14 @@ func loadHooks(src fs.FS, path string, strict bool) ([]*ir.Hook, []*diag.Diagnos
 	// Fall back to the Claude Code workspace format (top-level event keys).
 	// Use RawMessage to handle non-event keys (e.g. "claudeHooksImported": true)
 	// that can't unmarshal into []claudeHookGroup.
-	return flattenHookEventMap(rawWorkspace, path, strict)
+	return flattenHookEventMap(rawWorkspace, path, strict, factoryProjection)
 }
 
 // flattenHookEventMap converts a raw event→groups map into flat hook rules.
 // When strict is set every member must decode to a non-null group array;
 // otherwise members that are not event arrays (workspace metadata keys such
 // as "claudeHooksImported") are skipped.
-func flattenHookEventMap(rawWorkspace map[string]json.RawMessage, path string, strict bool) ([]*ir.Hook, []*diag.Diagnostic, error) {
+func flattenHookEventMap(rawWorkspace map[string]json.RawMessage, path string, strict, factoryProjection bool) ([]*ir.Hook, []*diag.Diagnostic, error) {
 	// Convert workspace format groups into the flat rule map.
 	rulesByEvent := make(map[string][]hookRule)
 	for event, raw := range rawWorkspace {
@@ -151,14 +156,37 @@ func flattenHookEventMap(rawWorkspace map[string]json.RawMessage, path string, s
 		}
 		var flatRules []hookRule
 		for _, group := range groups {
+			groupCommandRegex := ""
+			hasGroupCommandRegex := false
+			if factoryProjection && group.hooksPresent {
+				if group.flatExecutionFieldsPresent {
+					return nil, nil, fmt.Errorf("bundle: parse %s: Factory hook group cannot combine nested hooks with flat execution fields", path)
+				}
+				var err error
+				groupCommandRegex, hasGroupCommandRegex, err = factoryNativeGroupCommandRegex(group.ExtraFields)
+				if err != nil {
+					return nil, nil, fmt.Errorf("bundle: parse %s: %w", path, err)
+				}
+			}
 			if len(group.Hooks) > 0 {
 				for _, h := range group.Hooks {
+					if factoryProjection && h.matcherPresent {
+						return nil, nil, fmt.Errorf("bundle: parse %s: Factory nested handler matcher must be declared on its group", path)
+					}
+					extraFields := h.ExtraFields
+					if factoryProjection {
+						var err error
+						extraFields, err = factoryNativeHookExtraFields(h.ExtraFields, groupCommandRegex, hasGroupCommandRegex, true)
+						if err != nil {
+							return nil, nil, fmt.Errorf("bundle: parse %s: %w", path, err)
+						}
+					}
 					r := hookRule{
 						Type:        h.Type,
 						Command:     h.Command,
 						Prompt:      h.Prompt,
 						Timeout:     h.Timeout,
-						ExtraFields: h.ExtraFields,
+						ExtraFields: extraFields,
 					}
 					if group.Matcher != "" {
 						r.Matcher = group.Matcher
@@ -178,13 +206,21 @@ func flattenHookEventMap(rawWorkspace map[string]json.RawMessage, path string, s
 				}
 			} else if group.Type != "" || group.Command != "" {
 				// Flat rule without nesting.
+				extraFields := group.ExtraFields
+				if factoryProjection {
+					var err error
+					extraFields, err = factoryNativeHookExtraFields(group.ExtraFields, "", false, false)
+					if err != nil {
+						return nil, nil, fmt.Errorf("bundle: parse %s: %w", path, err)
+					}
+				}
 				r := hookRule{
 					Type:        group.Type,
 					Command:     group.Command,
 					Prompt:      group.Prompt,
 					Timeout:     group.Timeout,
 					Matcher:     group.Matcher,
-					ExtraFields: group.ExtraFields,
+					ExtraFields: extraFields,
 				}
 				flatRules = append(flatRules, r)
 			}
@@ -317,20 +353,86 @@ func DistinctHookNames(hooks []*ir.Hook) {
 	}
 }
 
+func factoryNativeGroupCommandRegex(extra map[string]any) (string, bool, error) {
+	keys := make([]string, 0, len(extra))
+	for key := range extra {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	var commandRegex string
+	found := false
+	for _, key := range keys {
+		if !strings.EqualFold(key, "commandRegex") {
+			return "", false, fmt.Errorf("factory hook group field %q is not representable", key)
+		}
+		if key != "commandRegex" || found {
+			return "", false, fmt.Errorf("factory hook group has a case-colliding commandRegex alias %q", key)
+		}
+		value, ok := extra[key].(string)
+		if !ok {
+			return "", false, fmt.Errorf("factory hook group commandRegex must be a string")
+		}
+		commandRegex = value
+		found = true
+	}
+	return commandRegex, found, nil
+}
+
+func factoryNativeHookExtraFields(source map[string]any, groupCommandRegex string, hasGroupCommandRegex, nestedHandler bool) (map[string]any, error) {
+	keys := make([]string, 0, len(source))
+	for key := range source {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	fields := []string{"type", "command", "prompt", "timeout", "matcher", "commandRegex"}
+	for _, key := range keys {
+		for _, field := range fields {
+			if !strings.EqualFold(key, field) {
+				continue
+			}
+			if key != field {
+				return nil, fmt.Errorf("factory hook extra field %q aliases typed field %q", key, field)
+			}
+			if field == "commandRegex" {
+				if nestedHandler {
+					if hasGroupCommandRegex {
+						return nil, fmt.Errorf("factory hook handler commandRegex conflicts with group commandRegex")
+					}
+					return nil, fmt.Errorf("factory nested handler commandRegex requires the group-level field")
+				}
+				if _, ok := source[key].(string); !ok {
+					return nil, fmt.Errorf("factory flat commandRegex must be a string")
+				}
+			}
+		}
+	}
+	extra := make(map[string]any, len(source)+1)
+	for key, value := range source {
+		extra[key] = value
+	}
+	if hasGroupCommandRegex {
+		extra["commandRegex"] = groupCommandRegex
+	}
+	return extra, nil
+}
+
 // claudeHookGroup represents a single entry in the Claude Code workspace
 // hooks.json format: an optional matcher plus an array of hook handlers.
 type claudeHookGroup struct {
-	Matcher     string         `json:"matcher,omitempty"`
-	Hooks       []hookRule     `json:"hooks"`
-	Type        string         `json:"type,omitempty"`    // flat rule fallback
-	Command     string         `json:"command,omitempty"` // flat rule fallback
-	Prompt      string         `json:"prompt,omitempty"`
-	Timeout     *int           `json:"timeout,omitempty"`
-	ExtraFields map[string]any `json:"-"`
+	Matcher                    string         `json:"matcher,omitempty"`
+	Hooks                      []hookRule     `json:"hooks"`
+	Type                       string         `json:"type,omitempty"`    // flat rule fallback
+	Command                    string         `json:"command,omitempty"` // flat rule fallback
+	Prompt                     string         `json:"prompt,omitempty"`
+	Timeout                    *int           `json:"timeout,omitempty"`
+	ExtraFields                map[string]any `json:"-"`
+	hooksPresent               bool           `json:"-"`
+	flatExecutionFieldsPresent bool           `json:"-"`
 }
 
 // UnmarshalJSON implements custom unmarshalling to capture extra fields.
 func (g *claudeHookGroup) UnmarshalJSON(data []byte) error {
+	*g = claudeHookGroup{}
 	if err := jsonutil.ValidateFieldAliases("", data, g); err != nil {
 		return err
 	}
@@ -346,6 +448,7 @@ func (g *claudeHookGroup) UnmarshalJSON(data []byte) error {
 		delete(raw, "matcher")
 	}
 	if v, ok := raw["hooks"]; ok {
+		g.hooksPresent = true
 		if err := json.Unmarshal(v, &g.Hooks); err != nil {
 			return fmt.Errorf("hook group hooks: %w", err)
 		}
@@ -355,24 +458,28 @@ func (g *claudeHookGroup) UnmarshalJSON(data []byte) error {
 		delete(raw, "hooks")
 	}
 	if v, ok := raw["type"]; ok {
+		g.flatExecutionFieldsPresent = true
 		if err := json.Unmarshal(v, &g.Type); err != nil {
 			return fmt.Errorf("hook group type: %w", err)
 		}
 		delete(raw, "type")
 	}
 	if v, ok := raw["command"]; ok {
+		g.flatExecutionFieldsPresent = true
 		if err := json.Unmarshal(v, &g.Command); err != nil {
 			return fmt.Errorf("hook group command: %w", err)
 		}
 		delete(raw, "command")
 	}
 	if v, ok := raw["prompt"]; ok {
+		g.flatExecutionFieldsPresent = true
 		if err := json.Unmarshal(v, &g.Prompt); err != nil {
 			return fmt.Errorf("hook group prompt: %w", err)
 		}
 		delete(raw, "prompt")
 	}
 	if v, ok := raw["timeout"]; ok {
+		g.flatExecutionFieldsPresent = true
 		if err := json.Unmarshal(v, &g.Timeout); err != nil {
 			return fmt.Errorf("hook group timeout: %w", err)
 		}
@@ -407,10 +514,12 @@ type hookRule struct {
 	// PromotedExtraKeys names ExtraFields entries copied from the enclosing
 	// hook group, not authored on the handler itself.
 	PromotedExtraKeys []string `json:"-"`
+	matcherPresent    bool     `json:"-"`
 }
 
 // UnmarshalJSON implements custom unmarshalling to capture extra fields.
 func (r *hookRule) UnmarshalJSON(data []byte) error {
+	*r = hookRule{}
 	if err := jsonutil.ValidateFieldAliases("", data, r); err != nil {
 		return err
 	}
@@ -445,6 +554,7 @@ func (r *hookRule) UnmarshalJSON(data []byte) error {
 		delete(raw, "timeout")
 	}
 	if v, ok := raw["matcher"]; ok {
+		r.matcherPresent = true
 		if err := json.Unmarshal(v, &r.Matcher); err != nil {
 			return fmt.Errorf("hook rule matcher: %w", err)
 		}

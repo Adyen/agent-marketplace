@@ -321,13 +321,14 @@ The TUI is a standard [Elm-style][elm] Bubble Tea app:
 | `actions.go` | Snapshot loading (`loadSnapshot`/`readSnapshot`), `buildRows`, tea.Cmd factories |
 | `requests.go` | `requestGeneration` bookkeeping for async results |
 | `modal.go` | Per-scope toggle modal (`paneToggleModal`) |
+| `bulk.go` | Section bulk-toggle modal (`space` on a section header): scope → direction → confirmation, one staged layer transaction |
+| `view_settings.go` | `v` View settings modal (primary/secondary grouping with live preview) and the versioned per-user preference file under `$XDG_STATE_HOME` |
 | `harness.go` / `init.go` | `H` harness modal and first-run harness selection |
 | `migration.go` | Startup v4 migration prompt |
 | `edit_config.go` / `editor_process.go` | `E` config picker and `$EDITOR` lifecycle |
 | `discovery.go` | Hosted Marketplace discovery rows |
 | `diagnostics.go` | `e` errors/warnings view |
 | `bundle_tree*.go` | `enter` file browser for cached resource files |
-| `tabs.go` | Scope / Registry / Status tab switching + per-tab state |
 | `tree.go` / `flatitems.go` | Section tree and its flattened rendered list |
 | `list.go` / `detail.go` | Left and right panes |
 | `badges.go` | `G`/`P`/`L`/`R`/`P-` origin badges next to each row |
@@ -337,7 +338,7 @@ The TUI is a standard [Elm-style][elm] Bubble Tea app:
 | `theme.go` | lipgloss styles |
 
 `docs/tui-product-contract.md` describes the intended TUI behavior; the
-`tui-*` capabilities under `openspec/specs/` are normative once they exist.
+`tui-*` capabilities under `openspec/specs/` are normative.
 
 ### Message flow for a config-writing toggle
 
@@ -356,13 +357,6 @@ truth is the config file, and the snapshot reload is what produces new
 rows. Mutating in place hides bugs where the write path didn't land in
 the right config location.
 
-### Tab state isolation
-
-Each tab keeps its own cursor/offset/filter/fold state in
-`tabStates[tab]` (`tabs.go`). `switchTab` saves outgoing state and
-restores incoming state. Any new per-tab concern goes into
-`tabViewState`, not the top-level `Model`.
-
 ### Request generation pattern
 
 Async results (`snapshotLoadedMsg`, `refreshLoadedMsg`, detail and
@@ -376,13 +370,17 @@ overwriting a newer user-triggered reload. New async work gets a
 ### UX for selecting skills across scopes and registries
 
 The toggle modal is the only place in the TUI where the user picks
-*where* a skill is enabled. The modal displays per-scope checks for
+*where* a single skill is enabled; `space` on a section header opens the
+section bulk-toggle modal (`bulk.go`), which applies the same per-row
+eligibility to every matching row in one staged transaction after an
+explicit scope, direction, and confirmation. The single-row modal displays
+per-scope checks for
 Global / Project / Local / LocalExclude and lets the user flip any of
 them independently. When designing new flows:
 
 - A skill can be enabled in multiple scopes simultaneously (e.g. both
-  global and local). The rendered badge on the row (`badges.go`) shows
-  the highest-precedence active scope; don't collapse the modal to a
+  global and local). The letter badge on the row (`badges.go`) shows
+  every active scope (`GPL`, `P-`, ...); don't collapse the modal to a
   single-choice picker.
 - The toggle always targets the specific registry entry that contains
   the skill (`row.RegistryURL`). A skill available from multiple
@@ -544,6 +542,11 @@ and organization-specific infrastructure are not required.
    passing and every listed journey exercised, none skipped. On failure, retain the failing
    test name and console output/current terminal screen; the suite produces
    no snapshot or trace files. Report setup failures as blocked, not passed.
+
+   When a journey asserts the outcome of a config write, wait for the
+   authoritative post-reload assessment (for example the `~ N out of sync`
+   drift state) before quitting: a `config written` toast acknowledges the
+   write, not the settled drift verdict.
 
 For journey coverage or an already-built test binary, read the
 [TUI QA package reference](../../tools/tui-qa/README.md).

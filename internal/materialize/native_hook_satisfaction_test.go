@@ -109,6 +109,7 @@ func namedHookPairFixture(t *testing.T, source config.Source, target hcc.Target,
 	if pre.Resource == nil || post.Resource == nil {
 		t.Fatalf("Claude catalog ingest returned incomplete pair: %#v", resolved)
 	}
+
 	return []resolver.ResolvedArtifact{pre, post}, sourceRoot
 }
 
@@ -474,6 +475,7 @@ func TestFrozenLegacyReaderDoesNotSuppressHandwrittenClaudeHookWithoutProof(t *t
 	if _, err := os.Lstat(store.StateFile()); !os.IsNotExist(err) {
 		t.Fatalf("frozen reader adopted handwritten native rule: %v", err)
 	}
+
 }
 
 // spec: hook-native-location-tolerance/satisfaction-proof-matches-every-contributor-exactly

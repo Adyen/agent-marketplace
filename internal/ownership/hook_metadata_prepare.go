@@ -134,7 +134,7 @@ func (s *Store) BackupPreparedMutation(m Mutation) (string, error) {
 		if _, _, err := s.preparedMutationRecord(m, snapshot, &emptySatisfactions); err != nil {
 			return err
 		}
-		backupPath, _, _, err = s.writeSafetyBackupSnapshot(m.Rel, m.AbsFile, snapshot.currentGeneration+1, m.Reason, m.Entries, snapshot.raw, snapshot.priorAbsent)
+		backupPath, _, _, _, err = s.writeSafetyBackupSnapshot(m.Rel, m.AbsFile, snapshot.currentGeneration+1, m.Reason, m.Entries, snapshot.raw, snapshot.priorAbsent)
 		if err != nil {
 			return err
 		}

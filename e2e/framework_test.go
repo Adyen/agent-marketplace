@@ -880,35 +880,6 @@ func (e *Env) AssertFileContains(path, substr string) {
 	}
 }
 
-// AssertSymlink checks that a path is a symbolic link.
-func (e *Env) AssertSymlink(path string) {
-	e.t.Helper()
-	localPath := e.mustResolvePath(path)
-	fi, err := os.Lstat(localPath)
-	if err != nil {
-		e.t.Errorf("path %q does not exist", path)
-		return
-	}
-	if fi.Mode()&os.ModeSymlink == 0 {
-		e.t.Errorf("path %q is not a symlink", path)
-	}
-}
-
-// AssertFactorySkillExists checks for .factory/skills/<name>/SKILL.md at the
-// machine-scope path (~/.factory). Use AssertRepoFactorySkillExists for
-// repo-scoped skills.
-func (e *Env) AssertFactorySkillExists(name string) {
-	e.t.Helper()
-	e.AssertFileExists(fmt.Sprintf("/root/.factory/skills/%s/SKILL.md", name))
-}
-
-// AssertFactorySkillAbsent checks that .factory/skills/<name> does NOT exist
-// at the machine-scope path.
-func (e *Env) AssertFactorySkillAbsent(name string) {
-	e.t.Helper()
-	e.AssertFileAbsent(fmt.Sprintf("/root/.factory/skills/%s", name))
-}
-
 // AssertRepoFactorySkillExists checks for .factory/skills/<name>/SKILL.md
 // in the repo-scoped path (workspace/.factory).
 func (e *Env) AssertRepoFactorySkillExists(name string) {
@@ -923,49 +894,6 @@ func (e *Env) AssertRepoFactorySkillAbsent(name string) {
 	e.AssertFileAbsent(fmt.Sprintf("/workspace/.factory/skills/%s", name))
 }
 
-// AssertWindsurfSkillExists checks for .windsurf/skills/<name>/SKILL.md at
-// the machine-scope path (~/.codeium/windsurf/skills).
-func (e *Env) AssertWindsurfSkillExists(name string) {
-	e.t.Helper()
-	e.AssertFileExists(fmt.Sprintf("/root/.codeium/windsurf/skills/%s/SKILL.md", name))
-}
-
-// AssertWindsurfSkillAbsent checks that windsurf skills/<name> does NOT exist
-// at the machine-scope path.
-func (e *Env) AssertWindsurfSkillAbsent(name string) {
-	e.t.Helper()
-	e.AssertFileAbsent(fmt.Sprintf("/root/.codeium/windsurf/skills/%s", name))
-}
-
-// AssertRepoWindsurfSkillExists checks for .windsurf/skills/<name>/SKILL.md
-// at the repo-scope path (workspace/.windsurf/skills).
-func (e *Env) AssertRepoWindsurfSkillExists(name string) {
-	e.t.Helper()
-	e.AssertFileExists(fmt.Sprintf("/workspace/.windsurf/skills/%s/SKILL.md", name))
-}
-
-// AssertRepoWindsurfSkillAbsent checks that windsurf skills/<name> does NOT
-// exist at the repo-scope path.
-func (e *Env) AssertRepoWindsurfSkillAbsent(name string) {
-	e.t.Helper()
-	e.AssertFileAbsent(fmt.Sprintf("/workspace/.windsurf/skills/%s", name))
-}
-
-// ListDir returns the output of ls for a directory inside the sandbox.
-func (e *Env) ListDir(path string) string {
-	e.t.Helper()
-	localPath := e.mustResolvePath(path)
-	entries, err := os.ReadDir(localPath)
-	if err != nil {
-		return fmt.Sprintf("ls: %v", err)
-	}
-	var b strings.Builder
-	for _, entry := range entries {
-		fmt.Fprintf(&b, "%s\n", entry.Name())
-	}
-	return b.String()
-}
-
 // ---------- non-fatal check methods (return bool, no t.Errorf) ----------
 
 // CheckFileExists reports whether a file exists inside the sandbox.
@@ -974,12 +902,6 @@ func (e *Env) CheckFileExists(path string) bool {
 	localPath := e.mustResolvePath(path)
 	_, err := os.Stat(localPath)
 	return err == nil
-}
-
-// CheckFileAbsent reports whether a file does NOT exist inside the sandbox.
-func (e *Env) CheckFileAbsent(path string) bool {
-	e.t.Helper()
-	return !e.CheckFileExists(path)
 }
 
 // CheckSymlink reports whether a path is a symbolic link.

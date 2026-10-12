@@ -57,6 +57,13 @@ func NativeHookProjection(h *ir.Hook, dst Target, scope Scope, supportBase strin
 	return &Result{Artifacts: artifacts, Diagnostics: diags}, nil
 }
 
+// validateNativeSupportBase checks only the shape of the caller-chosen
+// support base: a repository-scope base must be a clean relative slash path
+// contained below the caller's repository root, and a machine-scope base must
+// be a clean absolute path. Whether the caller passed an authorized root is
+// the caller's responsibility; an empty base stays valid so hooks without a
+// plugin-root reference need none, and the catalog resolver refuses a base
+// that a plugin-root reference requires but cannot represent.
 func validateNativeSupportBase(supportBase string, machineScope bool) error {
 	if supportBase == "" {
 		return nil
@@ -76,6 +83,7 @@ func validateNativeSupportBase(supportBase string, machineScope bool) error {
 	return nil
 }
 
+// projectNativeHook resolves and encodes the hook for one projected target.
 func projectNativeHook(h *ir.Hook, dst Target, projection *targetmeta.NativeHookProjection, machineScope bool, supportBase string) ([]artifact.Artifact, []diag.Diagnostic, error) {
 	resolveHook := h
 	if dst == TargetWindsurf && h.HookSource == "" && h.Ext.Windsurf != nil && h.Ext.Windsurf.OriginalHookEvent != "" {
@@ -159,6 +167,9 @@ func nativeProjectionArtifact(projection *targetmeta.NativeHookProjection, machi
 	}, nil
 }
 
+// nativeHookPrechecks applies the hook-only native-source guards the catalog
+// resolver does not own: Codex refuses hooks outside its declared native
+// vocabulary and an invalid additional context limit before resolution.
 func nativeHookPrechecks(h *ir.Hook, dst Target) ([]diag.Diagnostic, bool) {
 	if dst != TargetCodex {
 		return nil, false
@@ -176,6 +187,12 @@ func nativeHookPrechecks(h *ir.Hook, dst Target) ([]diag.Diagnostic, bool) {
 	return nil, false
 }
 
+// nativeHookRule builds the pre-shape native rule for one target: either a
+// flat handler (which the shape then nests) or, for targets with group-level
+// fields, an already grouped {matcher?, hooks: [handler], ...} object.
+// Returning emit=false suppresses the entry; the accompanying diagnostics are
+// retained. Construction mirrors the target translators' hook-only field
+// serialization so the reader and the native writer emit identical rules.
 func nativeHookRule(h *ir.Hook, dst Target, resolved hookpolicy.Resolved) (rule map[string]any, diags []diag.Diagnostic, emit bool) {
 	name, source := h.Name(), DiagSource(h.Source)
 	canonical := PresentFields(map[string]bool{
@@ -303,6 +320,10 @@ func nativeHookRule(h *ir.Hook, dst Target, resolved hookpolicy.Resolved) (rule 
 	return rule, diags, true
 }
 
+// windsurfNativeHookRule builds the flat Windsurf handler. A native source's
+// preserved event/type/matcher extras must equal the typed fields and a
+// preserved timeout or conflicting working directory is refused: re-emitting
+// them would silently change when or how the hook runs.
 func windsurfNativeHookRule(h *ir.Hook, resolved hookpolicy.Resolved) (map[string]any, []diag.Diagnostic, bool) {
 	name, source := h.Name(), DiagSource(h.Source)
 	if h.Type == "prompt" || h.Prompt != "" {
@@ -362,6 +383,11 @@ func windsurfNativeHookRule(h *ir.Hook, resolved hookpolicy.Resolved) (map[strin
 	return body, diags, true
 }
 
+// devinHookPayload returns the rule member the hook type selects and its
+// value. Devin executes exactly one payload, so emitting both would either be
+// ignored or run something the type did not declare; an empty selected
+// payload skips the entry. Command hooks resolve plugin-root tokens in the
+// resolved command; prompt hooks keep their prose unchanged.
 func devinHookPayload(h *ir.Hook, name string, source diag.SourceRef, resolvedCommand string) (key, value string, diags []diag.Diagnostic) {
 	var unusedKey, unused string
 	if h.Type == "command" {

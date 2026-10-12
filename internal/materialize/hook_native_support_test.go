@@ -2398,35 +2398,420 @@ func TestNativeRepositoryHookSupportRefusesUnprovenLinks(t *testing.T) {
 	}
 }
 
+func seedNativeHookSupportForeignManifest(t *testing.T, fixture nativeHookSupportPublicationFixture) (string, portableManifestEntry, []byte, os.FileMode, time.Time) {
+	t.Helper()
+	const foreignPath = "skills/foreign-control/SKILL.md"
+	path := filepath.Join(fixture.repo, ".claude", filepath.FromSlash(foreignPath))
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	data := []byte("foreign handwritten output\n")
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(path, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	state, err := loadPortableState(fixture.repo, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state.add(hcc.TargetClaude, foreignPath, "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+	if err := state.save(false); err != nil {
+		t.Fatal(err)
+	}
+	persisted, err := loadPortableState(fixture.repo, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	entry, ok := persisted.entry(hcc.TargetClaude, foreignPath)
+	if !ok {
+		t.Fatalf("foreign manifest entry was not persisted: %s", persisted.raw)
+	}
+	data, mode, mtime := fileSnapshot(t, path)
+	return path, entry, data, mode, mtime
+}
+
+func replaceNativeManifestParentWithIdenticalClone(t *testing.T, fixture nativeHookSupportPublicationFixture) string {
+	t.Helper()
+	manifestBytes, manifestMode, _ := fileSnapshot(t, fixture.manifestPath)
+	parent := filepath.Dir(fixture.manifestPath)
+	parentInfo := nativeSupportFileInfo(t, parent)
+	retained := filepath.Join(fixture.repo, "retained-agents")
+	if err := os.Rename(parent, retained); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(parent, parentInfo.Mode().Perm()); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(parent, parentInfo.Mode().Perm()); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(fixture.manifestPath, manifestBytes, manifestMode.Perm()); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(fixture.manifestPath, manifestMode.Perm()); err != nil {
+		t.Fatal(err)
+	}
+	return retained
+}
+
 // spec: hook-resources/unproven-or-unsafe-repository-support-links-are-preserved
 func TestNativeRepositoryHookSupportManifestGenerationSwapRefusesCopy(t *testing.T) {
-	fixture, _ := seedNativeRepositorySupportLink(t, config.MaterializationModeSymlink)
+	fixture, _ := seedNativeRepositorySupportLink(t, config.MaterializationModeFile)
+	seedNativeHookSupportForeignManifest(t, fixture)
 	var callbackCalled bool
 	var externalState map[string]nativeSupportState
-	fault := func(stage, destination string) error {
-		if stage != "output" || filepath.Clean(destination) != filepath.Clean(fixture.supportPath) {
-			return nil
+	publicationHook := func(path string) {
+		if filepath.Clean(path) != filepath.Clean(fixture.manifestPath) || callbackCalled {
+			return
 		}
 		callbackCalled = true
+		if info, err := os.Lstat(fixture.supportPath); err != nil || info.Mode()&os.ModeSymlink == 0 {
+			t.Fatalf("manifest publication hook ran after Native support mutation: %v / %v", info, err)
+		}
 		state, err := loadPortableState(fixture.repo, false)
 		if err != nil {
-			return err
+			t.Fatal(err)
 		}
 		state.add(hcc.TargetFactory, "external-sentinel", portableArtifactDigest(artifact.Artifact{Bytes: []byte("foreign manifest entry\n"), Mode: 0o600}))
 		if err := state.save(false); err != nil {
-			return err
+			t.Fatal(err)
 		}
 		externalState = nativeSupportSnapshot(t, fixture.repo, filepath.Dir(fixture.statePath), cache.CacheDir())
-		return nil
 	}
-	report, err := Run(context.Background(), fixture.repo, []resolver.ResolvedArtifact{fixture.hook}, WithMaterializationModes(config.MaterializationModes{Project: config.MaterializationModeSymlink, Machine: config.MaterializationModeSymlink}), withNativeHookSupportWriteFault(fault))
+	report, err := Run(context.Background(), fixture.repo, []resolver.ResolvedArtifact{fixture.hook}, WithMaterializationModes(config.MaterializationModes{Project: config.MaterializationModeFile, Machine: config.MaterializationModeFile}), func(cfg *runConfig) {
+		cfg.manifestPublicationHook = publicationHook
+	})
 	if err != nil || report == nil || !hasErrorDiagnostics(report.Diags) {
 		t.Fatalf("manifest-generation conversion refusal: %v / %v", err, report)
 	}
-	if !callbackCalled || !diag.HasCode(report.Diags, diag.CodeOwnershipGenerationConflict) {
+	if !callbackCalled || !diag.HasCode(report.Diags, diag.CodeMaterializeHookSupportConflict) {
 		t.Fatalf("manifest generation swap was not refused: called=%v diagnostics=%+v", callbackCalled, report.Diags)
 	}
 	assertNativeSupportSnapshot(t, externalState, nativeSupportSnapshot(t, fixture.repo, filepath.Dir(fixture.statePath), cache.CacheDir()))
+}
+
+func TestNativeRepositoryHookSupportManifestPinRefusesNamespaceRaces(t *testing.T) {
+	for _, tc := range []struct {
+		name           string
+		manifestAbsent bool
+		withForeign    bool
+		mutate         func(*testing.T, nativeHookSupportPublicationFixture)
+	}{
+		{
+			name:        "captured-parent-replaced-by-identical-clone",
+			withForeign: true,
+			mutate: func(t *testing.T, fixture nativeHookSupportPublicationFixture) {
+				replaceNativeManifestParentWithIdenticalClone(t, fixture)
+			},
+		},
+		{
+			name:           "manifest-appears-at-captured-absent-leaf",
+			manifestAbsent: true,
+			mutate: func(t *testing.T, fixture nativeHookSupportPublicationFixture) {
+				foreign := []byte("version: 1\nentries: []\n")
+				if err := os.WriteFile(fixture.manifestPath, foreign, 0o600); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Chmod(fixture.manifestPath, 0o600); err != nil {
+					t.Fatal(err)
+				}
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fixture, _ := seedNativeRepositorySupportLink(t, config.MaterializationModeFile)
+			if tc.withForeign {
+				seedNativeHookSupportForeignManifest(t, fixture)
+			}
+			if tc.manifestAbsent {
+				parent := filepath.Dir(fixture.manifestPath)
+				if err := os.MkdirAll(parent, 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Remove(fixture.manifestPath); err != nil && !os.IsNotExist(err) {
+					t.Fatal(err)
+				}
+				if _, err := os.Lstat(fixture.manifestPath); !os.IsNotExist(err) {
+					t.Fatalf("manifest leaf is not absent at capture: %v", err)
+				}
+			}
+			var callbackCalled bool
+			var externalState map[string]nativeSupportState
+			publicationHook := func(path string) {
+				if filepath.Clean(path) != filepath.Clean(fixture.manifestPath) || callbackCalled {
+					return
+				}
+				callbackCalled = true
+				if info, err := os.Lstat(fixture.supportPath); err != nil || info.Mode()&os.ModeSymlink == 0 {
+					t.Fatalf("manifest hook ran after Native support mutation: %v / %v", info, err)
+				}
+				tc.mutate(t, fixture)
+				externalState = snapshotNativeRepositorySupportLink(t, fixture)
+			}
+			report, err := Run(t.Context(), fixture.repo, []resolver.ResolvedArtifact{fixture.hook}, WithMaterializationModes(config.MaterializationModes{Project: config.MaterializationModeFile, Machine: config.MaterializationModeFile}), func(cfg *runConfig) {
+				cfg.manifestPublicationHook = publicationHook
+			})
+			if !callbackCalled {
+				t.Fatalf("Native manifest publication hook did not run: err=%v report=%+v", err, report)
+			}
+			if err != nil || report == nil || !diag.HasCode(report.Diags, diag.CodeMaterializeHookSupportConflict) {
+				t.Fatalf("captured manifest namespace replacement was accepted: err=%v report=%+v", err, report)
+			}
+			assertNativeSupportSnapshot(t, externalState, snapshotNativeRepositorySupportLink(t, fixture))
+		})
+	}
+}
+
+// spec: materialization/portable-manifest-staging-keeps-captured-namespace-authority
+func TestNativeRepositoryHookSupportTransactionPinsManifestNamespace(t *testing.T) {
+	for _, stage := range []dependencytxn.FaultStage{dependencytxn.FaultAfterJournal, dependencytxn.FaultBeforePublish} {
+		t.Run(string(stage), func(t *testing.T) {
+			fixture := newNativeHookSupportPublicationFixture(t, config.MaterializationModeFile)
+			assertPathAbsent(t, fixture.supportPath)
+			manifestBefore, manifestMode, manifestMtime := fileSnapshot(t, fixture.manifestPath)
+			manifestSnapshot, err := readPortableManifestSnapshot(fixture.manifestPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			assertPathAbsent(t, fixture.nativePath)
+			assertPathAbsent(t, fixture.statePath)
+			legacyBefore, legacyMode, legacyMtime := fileSnapshot(t, fixture.legacyPath)
+			oldSupportBefore, oldSupportMode, oldSupportMtime := fileSnapshot(t, fixture.oldSupportPath)
+			sourceDefinition := filepath.Join(fixture.hook.RegistryURL, "hooks", "hooks.json")
+			sourceSupport := filepath.Join(fixture.hook.RegistryURL, "hooks", "scripts", "check.sh")
+			sourceDefinitionBefore, sourceDefinitionMode, sourceDefinitionMtime := fileSnapshot(t, sourceDefinition)
+			sourceSupportBefore, sourceSupportMode, sourceSupportMtime := fileSnapshot(t, sourceSupport)
+			var faultReached bool
+			var retained string
+			var cloneBefore []byte
+			var cloneMode os.FileMode
+			var cloneMtime time.Time
+			fault := dependencytxn.FaultHook(func(point dependencytxn.FaultPoint) error {
+				if point.Stage == stage && !faultReached {
+					faultReached = true
+					retained = replaceNativeManifestParentWithIdenticalClone(t, fixture)
+					cloneBefore, cloneMode, cloneMtime = fileSnapshot(t, fixture.manifestPath)
+				}
+				return nil
+			})
+			report, runErr := Run(t.Context(), fixture.repo, []resolver.ResolvedArtifact{fixture.hook},
+				WithMaterializationModes(config.MaterializationModes{Project: config.MaterializationModeFile, Machine: config.MaterializationModeFile}),
+				func(cfg *runConfig) { cfg.supportCommitFault = fault })
+			if !faultReached {
+				t.Fatalf("support producer did not reach %s: err=%v report=%+v", stage, runErr, report)
+			}
+			if runErr != nil || report == nil || !diag.HasCode(report.Diags, diag.CodeMaterializeHookSupportConflict) {
+				t.Fatalf("producer accepted cloned manifest namespace at %s: err=%v report=%+v", stage, runErr, report)
+			}
+			assertPathAbsent(t, fixture.supportPath)
+			assertPathAbsent(t, fixture.nativePath)
+			assertPathAbsent(t, fixture.statePath)
+			assertFileUnchanged(t, fixture.legacyPath, legacyBefore, legacyMode, legacyMtime)
+			assertFileUnchanged(t, fixture.oldSupportPath, oldSupportBefore, oldSupportMode, oldSupportMtime)
+			assertFileUnchanged(t, filepath.Join(retained, filepath.Base(fixture.manifestPath)), manifestBefore, manifestMode, manifestMtime)
+			assertFileUnchanged(t, fixture.manifestPath, cloneBefore, cloneMode, cloneMtime)
+			assertFileUnchanged(t, sourceDefinition, sourceDefinitionBefore, sourceDefinitionMode, sourceDefinitionMtime)
+			assertFileUnchanged(t, sourceSupport, sourceSupportBefore, sourceSupportMode, sourceSupportMtime)
+			stateDir, err := dependencytxn.StateDir()
+			if err != nil {
+				t.Fatal(err)
+			}
+			pending, err := filepath.Glob(filepath.Join(stateDir, ".dependencytxn-*.json"))
+			if err != nil || len(pending) != 1 {
+				t.Fatalf("namespace transaction journal = %v, %v", pending, err)
+			}
+			type journalParticipant struct {
+				Path      string                              `json:"path"`
+				Namespace *dependencytxn.NamespaceExpectation `json:"namespace,omitempty"`
+			}
+			var journal struct {
+				Version    int                  `json:"version"`
+				Files      []journalParticipant `json:"files"`
+				Assertions []journalParticipant `json:"assertions"`
+			}
+			rawJournal, err := os.ReadFile(pending[0])
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := json.Unmarshal(rawJournal, &journal); err != nil {
+				t.Fatal(err)
+			}
+			manifestPath, err := filepath.EvalSymlinks(fixture.manifestPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var manifestNamespace *dependencytxn.NamespaceExpectation
+			for _, participant := range append(journal.Files, journal.Assertions...) {
+				if participant.Path == manifestPath {
+					manifestNamespace = participant.Namespace
+				}
+			}
+			scopePath, err := filepath.EvalSymlinks(filepath.Dir(filepath.Dir(fixture.manifestPath)))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if journal.Version != 1 || manifestNamespace == nil ||
+				manifestNamespace.ScopePath != scopePath || manifestNamespace.ScopeDevice != manifestSnapshot.scope.Device ||
+				manifestNamespace.ScopeInode != manifestSnapshot.scope.Inode || manifestNamespace.ParentDevice != manifestSnapshot.parent.Device ||
+				manifestNamespace.ParentInode != manifestSnapshot.parent.Inode {
+				t.Fatalf("producer journal namespace/version = %d / %+v", journal.Version, manifestNamespace)
+			}
+			if err := os.RemoveAll(filepath.Dir(fixture.manifestPath)); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Rename(retained, filepath.Dir(fixture.manifestPath)); err != nil {
+				t.Fatal(err)
+			}
+			if err := dependencytxn.Recover(t.Context(), stateDir); err != nil {
+				t.Fatalf("Recover after restoring captured manifest namespace: %v", err)
+			}
+			support := fixture.supportPlan.artifacts[0]
+			supportBytes, supportMode, _ := fileSnapshot(t, fixture.supportPath)
+			if !bytes.Equal(supportBytes, support.Bytes) || supportMode.Perm() != portableArtifactMode(support.Mode) {
+				t.Fatalf("recovered support copy = %q / %v", supportBytes, supportMode)
+			}
+			manifestAfter, err := loadPortableState(fixture.repo, false)
+			if err != nil {
+				t.Fatal(err)
+			}
+			oldRel, err := filepath.Rel(fixture.factoryRoot, fixture.oldSupportPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, ok := manifestAfter.entry(hcc.TargetFactory, filepath.ToSlash(oldRel)); !ok {
+				t.Fatalf("recovery lost retained legacy support ownership: %s", manifestAfter.raw)
+			}
+			supportRel, err := filepath.Rel(fixture.factoryRoot, fixture.supportPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, ok := manifestAfter.entry(hcc.TargetFactory, filepath.ToSlash(supportRel)); !ok {
+				t.Fatalf("recovery did not record copied support %q: %s", supportRel, manifestAfter.raw)
+			}
+			if manifestAfter.mode.Perm() != manifestMode.Perm() {
+				t.Fatalf("recovered manifest mode = %v, want %v", manifestAfter.mode, manifestMode)
+			}
+			if err := dependencytxn.CheckPending(stateDir); err != nil {
+				t.Fatalf("pending after producer recovery: %v", err)
+			}
+		})
+	}
+}
+
+func TestNativeHookManifestReceiptRejectsMatchingParentCloneWithoutStateUpdate(t *testing.T) {
+	fixture := newNativeHookSupportPublicationFixture(t, config.MaterializationModeFile)
+	state, err := loadPortableState(fixture.repo, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parent, err := state.captureManifestParent(false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	namespace, err := state.manifestNamespaceExpectation(parent)
+	if closeErr := parent.Close(); closeErr != nil {
+		t.Fatal(closeErr)
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifestBefore, manifestMode, manifestMtime := fileSnapshot(t, fixture.manifestPath)
+	pinBefore := state.pin
+	rawBefore := append([]byte(nil), state.raw...)
+	entriesBefore := make(map[string]portableManifestEntry, len(state.entries))
+	for key, entry := range state.entries {
+		entriesBefore[key] = entry
+	}
+	nextState := *state
+	nextState.entries = make(map[string]portableManifestEntry, len(state.entries))
+	for key, entry := range state.entries {
+		nextState.entries[key] = entry
+	}
+	nextState.add(hcc.TargetFactory, "hook-support/receipt-control.sh", nativeHookRegularSnapshotDigest([]byte("receipt bytes\n"), 0o600))
+	nextBytes, hasEntries, err := nextState.serialized()
+	if err != nil || !hasEntries {
+		t.Fatalf("serialize receipt bytes: %v / %v", hasEntries, err)
+	}
+	participant := dependencytxn.DesiredFile{
+		Path: fixture.manifestPath, Expected: dependencytxn.Generation{Exists: state.exists},
+		ExpectedMode: state.mode, Namespace: namespace, Bytes: nextBytes, Mode: state.mode,
+	}
+	if state.exists {
+		participant.Expected.Digest = dependencytxn.Digest(state.raw)
+	}
+	retained := replaceNativeManifestParentWithIdenticalClone(t, fixture)
+	if err := os.WriteFile(fixture.manifestPath, nextBytes, state.mode.Perm()); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(fixture.manifestPath, state.mode.Perm()); err != nil {
+		t.Fatal(err)
+	}
+	cloneBytes, cloneMode, cloneMtime := fileSnapshot(t, fixture.manifestPath)
+	err = refreshNativeHookManifestCommit(nativeHookManifestCommit{state: state, participant: participant})
+	if !errors.Is(err, dependencytxn.ErrGenerationConflict) {
+		t.Fatalf("receipt for matching-bytes parent clone = %v, want ErrGenerationConflict", err)
+	}
+	assertFileUnchanged(t, filepath.Join(retained, filepath.Base(fixture.manifestPath)), manifestBefore, manifestMode, manifestMtime)
+	assertFileUnchanged(t, fixture.manifestPath, cloneBytes, cloneMode, cloneMtime)
+	if !bytes.Equal(state.raw, rawBefore) || state.exists != (pinBefore.data != nil) || state.mode != pinBefore.file.Mode.Perm() || !portableManifestSnapshotMatches(pinBefore, state.pin) {
+		t.Fatal("refused receipt refreshed captured manifest state")
+	}
+	if len(state.entries) != len(entriesBefore) {
+		t.Fatalf("refused receipt changed entry count: %d, want %d", len(state.entries), len(entriesBefore))
+	}
+	for key, entry := range entriesBefore {
+		if state.entries[key] != entry {
+			t.Fatalf("refused receipt changed entry %q", key)
+		}
+	}
+}
+
+func TestNativeRepositoryHookSupportManifestRefreshRetainsForeignEntries(t *testing.T) {
+	fixture, _ := seedNativeRepositorySupportLink(t, config.MaterializationModeFile)
+	foreignFile, foreignBefore, foreignBytes, foreignMode, foreignMtime := seedNativeHookSupportForeignManifest(t, fixture)
+	laterSkill := resolver.ResolvedArtifact{
+		Entry: catalog.Entry{
+			Kind: ir.KindSkill, Name: "later-generic",
+			Resource: ir.NewSkill("later-generic", "Later generic manifest writer", "inert later generic body", nil, nil, ir.SourceRef{}),
+		},
+		Source:    config.RepoCommitted,
+		Harnesses: []hcc.Target{hcc.TargetFactory},
+	}
+	report, err := Run(t.Context(), fixture.repo, []resolver.ResolvedArtifact{fixture.hook, laterSkill}, WithMaterializationModes(config.MaterializationModes{Project: config.MaterializationModeFile, Machine: config.MaterializationModeFile}))
+	if err != nil || report == nil || hasErrorDiagnostics(report.Diags) {
+		t.Fatalf("native support CAS followed by generic manifest save failed: err=%v report=%+v", err, report)
+	}
+	if !reportHasHookSupportWrite(report) {
+		t.Fatalf("Native support copy was not published: %+v", report.PerTarget)
+	}
+	if info, err := os.Lstat(fixture.supportPath); err != nil || !info.Mode().IsRegular() {
+		t.Fatalf("Native support output is not a regular copy: %v / %v", info, err)
+	}
+	if data, err := os.ReadFile(filepath.Join(fixture.factoryRoot, "skills", "later-generic", "SKILL.md")); err != nil || !bytes.Contains(data, []byte("inert later generic body")) {
+		t.Fatalf("later generic skill output missing: %q / %v", data, err)
+	}
+	if data, mode, mtime := fileSnapshot(t, foreignFile); !bytes.Equal(data, foreignBytes) || mode.Perm() != foreignMode.Perm() || !mtime.Equal(foreignMtime) {
+		t.Fatalf("foreign manifest output changed: %q / %v / %v", data, mode, mtime)
+	}
+	updated, err := loadPortableState(fixture.repo, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if entry, ok := updated.entry(hcc.TargetClaude, foreignBefore.Path); !ok || entry != foreignBefore {
+		t.Fatalf("generic save lost or changed unrelated manifest entry: %+v / %t / %s", entry, ok, updated.raw)
+	}
+	supportRel, err := filepath.Rel(fixture.factoryRoot, fixture.supportPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := updated.entry(hcc.TargetFactory, filepath.ToSlash(supportRel)); !ok {
+		t.Fatalf("generic save lost Native support ownership for %q", supportRel)
+	}
+	if !bytes.Contains(updated.raw, []byte("later-generic")) {
+		t.Fatalf("generic manifest save did not record the later resource: %s", updated.raw)
+	}
 }
 
 // spec: hook-resources/proven-repository-support-links-convert-with-recovery

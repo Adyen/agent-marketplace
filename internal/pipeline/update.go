@@ -19,6 +19,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/marketplace"
 	"github.com/Adyen/agent-marketplace/internal/marketplacelock"
 	"github.com/Adyen/agent-marketplace/internal/telemetry"
+	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
 	mpapi "github.com/Adyen/agent-marketplace/pkg/marketplace/api"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/store"
 )
@@ -105,7 +106,7 @@ func Update(ctx context.Context, opts UpdateOptions) (result *UpdateResult, retE
 		return nil, err
 	}
 	slog.Info("update start", "repo_root", repoRoot, "bump", opts.Bump)
-	ec := LoadEffective(ctx, ConfigLoadOnline, config.LoadEffectiveOptions{RepoRoot: repoRoot, LocalConfigDir: opts.LocalConfigDir}, nil)
+	ec := LoadEffective(ctx, ConfigLoadOnline, config.LoadEffectiveOptions{RepoRoot: ws.RepoRoot(), LocalConfigDir: ws.LocalConfigDir()}, nil)
 	if len(ec.Errors) > 0 {
 		return nil, errors.Join(ec.Errors...)
 	}
@@ -253,7 +254,7 @@ func planMarketplaceUpdates(ctx context.Context, opts UpdateOptions, ec *config.
 	}
 	targets := hccTargetsFromStrings(ec.TargetHarnesses)
 	plans := make([]marketplaceUpdatePlan, 0, len(ec.Merged.Marketplaces))
-	collectionLeaves := make(map[string]struct{})
+	collectionLeaves := make(map[string]bool)
 	for _, entry := range ec.Merged.Marketplaces {
 		configPath := ""
 		if entry.Source.IsWritable() {
@@ -271,58 +272,24 @@ func planMarketplaceUpdates(ctx context.Context, opts UpdateOptions, ec *config.
 			if pin.Kind != "collection" {
 				continue
 			}
-			item := MarketplacePinUpdate{Entry: entry, OldPin: pin, Source: entry.Source, Required: entry.Required, Skipped: true}
-			expanded := false
+			var leaves []string
 			for _, leaf := range entry.Resources {
 				for _, selector := range leaf.SelectedBy.List() {
 					if selector.RegistryID == pin.RegistryID && selector.Name == pin.Name && selector.Revision == pin.Revision {
-						expanded = true
-						collectionLeaves[marketplaceUpdateKey(entry, leaf)] = struct{}{}
+						leaves = append(leaves, marketplaceUpdateKey(entry, leaf))
 					}
 				}
 			}
-			if constrained[marketplaceV4PinKey(entry.Alias, pin)] {
-				item.Reason = "request pins an explicit revision"
-				plans = append(plans, marketplaceUpdatePlan{MarketplacePinUpdate: item, ConfigPath: configPath})
-				continue
-			}
-			if entry.Source == config.Organization {
-				item.Reason = "organization pin is managed externally"
-				plans = append(plans, marketplaceUpdatePlan{MarketplacePinUpdate: item, ConfigPath: configPath})
-				continue
-			}
-			if !expanded {
-				item.Reason = "collection pin updates are not supported"
-				plans = append(plans, marketplaceUpdatePlan{MarketplacePinUpdate: item, ConfigPath: configPath})
-				continue
-			}
-			source, latest, err := resolverMP.LatestRevision(ctx, entry, pin)
+			plan, err := planMarketplaceCollectionUpdate(ctx, resolverMP, entry, pin, configPath, constrained[marketplaceV4PinKey(entry.Alias, pin)], len(leaves) > 0, targets)
 			if err != nil {
-				return nil, fmt.Errorf("marketplace %s pin %s/%s/%s: %w", entry.URL, pin.RegistryID, pin.Kind, pin.Name, err)
+				return nil, err
 			}
-			if string(latest.ContentDigest) == pin.Digest {
-				item.Reason = "content digest unchanged"
-				plans = append(plans, marketplaceUpdatePlan{MarketplacePinUpdate: item, ConfigPath: configPath})
-				continue
+			plans = append(plans, plan)
+			unchanged := plan.Skipped && plan.Reason == contentDigestUnchangedReason
+			for _, key := range leaves {
+				refreshable, seen := collectionLeaves[key]
+				collectionLeaves[key] = unchanged && (refreshable || !seen)
 			}
-			if len(targets) == 0 {
-				return nil, &TargetHarnessSetMissingError{}
-			}
-			locator := marketplace.MarketplaceLocator{Registry: string(source.ID), Kind: pin.Kind, Name: pin.Name, Revision: string(latest.ContentDigest), Digest: string(latest.ContentDigest)}
-			prepared, err := resolverMP.PrepareLocator(ctx, entry, locator, targets)
-			if err != nil {
-				return nil, fmt.Errorf("prepare Marketplace collection %s/%s/%s: %w", entry.URL, pin.RegistryID, pin.Kind, err)
-			}
-			for _, leaf := range prepared.CollectionMembers {
-				if err := validatePreparedMarketplaceUpdate(leaf); err != nil {
-					return nil, fmt.Errorf("validate Marketplace collection leaf: %w", err)
-				}
-			}
-			newPins := marketplaceInstallPins(prepared)
-			item.Skipped = false
-			item.NewPin = prepared.Pin
-			item.ArchiveDigest = prepared.ArchiveDigest
-			plans = append(plans, marketplaceUpdatePlan{MarketplacePinUpdate: item, ConfigPath: configPath, ReplacementPins: newPins, CollectionUpdate: true})
 		}
 		for _, pin := range entry.Resources {
 			if pin.Kind == "collection" {
@@ -342,8 +309,9 @@ func planMarketplaceUpdates(ctx context.Context, opts UpdateOptions, ec *config.
 				plans = append(plans, marketplaceUpdatePlan{MarketplacePinUpdate: item, ConfigPath: configPath})
 				continue
 			}
-			if _, selected := collectionLeaves[marketplaceUpdateKey(entry, pin)]; selected {
-				plans = append(plans, marketplaceUpdatePlan{MarketplacePinUpdate: MarketplacePinUpdate{Entry: entry, OldPin: pin, Source: entry.Source, Skipped: true, Reason: "leaf is pinned by a collection revision"}, ConfigPath: configPath})
+			refreshable, selected := collectionLeaves[marketplaceUpdateKey(entry, pin)]
+			if selected && !refreshable {
+				plans = append(plans, marketplaceUpdatePlan{MarketplacePinUpdate: MarketplacePinUpdate{Entry: entry, OldPin: pin, Source: entry.Source, Skipped: true, Reason: collectionLeafPinnedReason}, ConfigPath: configPath})
 				continue
 			}
 			source, latest, err := resolverMP.LatestRevision(ctx, entry, pin)
@@ -356,8 +324,26 @@ func planMarketplaceUpdates(ctx context.Context, opts UpdateOptions, ec *config.
 				plans = append(plans, marketplaceUpdatePlan{MarketplacePinUpdate: item, ConfigPath: configPath})
 				continue
 			}
-			if string(latest.ContentDigest) == pin.Digest && !marketplace.IndexOnlyOccurrenceChanged(pin, latest) {
-				item.Reason = "content digest unchanged"
+			unchanged := string(latest.ContentDigest) == pin.Digest && !marketplace.IndexOnlyOccurrenceChanged(pin, latest)
+			if unchanged {
+				verified, refreshed, err := refreshDriftedArchiveEvidence(ctx, resolverMP, entry, pin, latest)
+				if err != nil {
+					return nil, fmt.Errorf("marketplace %s pin %s/%s/%s: %w", entry.URL, pin.RegistryID, pin.Kind, pin.Name, err)
+				}
+				if refreshed {
+					item.Skipped = false
+					item.NewPin = pin
+					item.ArchiveDigest = verified
+					item.Reason = fmt.Sprintf("archive evidence refreshed %s -> %s", pin.LockArchiveDigest, verified)
+					plans = append(plans, marketplaceUpdatePlan{MarketplacePinUpdate: item, ConfigPath: configPath})
+					continue
+				}
+			}
+			if selected || unchanged {
+				item.Reason = contentDigestUnchangedReason
+				if selected {
+					item.Reason = collectionLeafPinnedReason
+				}
 				plans = append(plans, marketplaceUpdatePlan{MarketplacePinUpdate: item, ConfigPath: configPath})
 				continue
 			}
@@ -382,6 +368,65 @@ func planMarketplaceUpdates(ctx context.Context, opts UpdateOptions, ec *config.
 		}
 	}
 	return plans, nil
+}
+
+const (
+	contentDigestUnchangedReason = "content digest unchanged"
+	collectionLeafPinnedReason   = "leaf is pinned by a collection revision"
+)
+
+func planMarketplaceCollectionUpdate(ctx context.Context, resolverMP *marketplace.Resolver, entry config.MarketplaceEntry, pin config.MarketplaceResourcePin, configPath string, constrained, expanded bool, targets []hcc.Target) (marketplaceUpdatePlan, error) {
+	item := MarketplacePinUpdate{Entry: entry, OldPin: pin, Source: entry.Source, Required: entry.Required, Skipped: true}
+	skip := func(reason string) (marketplaceUpdatePlan, error) {
+		item.Reason = reason
+		return marketplaceUpdatePlan{MarketplacePinUpdate: item, ConfigPath: configPath}, nil
+	}
+	switch {
+	case constrained:
+		return skip("request pins an explicit revision")
+	case entry.Source == config.Organization:
+		return skip("organization pin is managed externally")
+	case !expanded:
+		return skip("collection pin updates are not supported")
+	}
+	source, latest, err := resolverMP.LatestRevision(ctx, entry, pin)
+	if err != nil {
+		return marketplaceUpdatePlan{}, fmt.Errorf("marketplace %s pin %s/%s/%s: %w", entry.URL, pin.RegistryID, pin.Kind, pin.Name, err)
+	}
+	if string(latest.ContentDigest) == pin.Digest {
+		return skip(contentDigestUnchangedReason)
+	}
+	if len(targets) == 0 {
+		return marketplaceUpdatePlan{}, &TargetHarnessSetMissingError{}
+	}
+	locator := marketplace.MarketplaceLocator{Registry: string(source.ID), Kind: pin.Kind, Name: pin.Name, Revision: string(latest.ContentDigest), Digest: string(latest.ContentDigest)}
+	prepared, err := resolverMP.PrepareLocator(ctx, entry, locator, targets)
+	if err != nil {
+		return marketplaceUpdatePlan{}, fmt.Errorf("prepare Marketplace collection %s/%s/%s: %w", entry.URL, pin.RegistryID, pin.Kind, err)
+	}
+	for _, leaf := range prepared.CollectionMembers {
+		if err := validatePreparedMarketplaceUpdate(leaf); err != nil {
+			return marketplaceUpdatePlan{}, fmt.Errorf("validate Marketplace collection leaf: %w", err)
+		}
+	}
+	item.Skipped = false
+	item.NewPin = prepared.Pin
+	item.ArchiveDigest = prepared.ArchiveDigest
+	return marketplaceUpdatePlan{MarketplacePinUpdate: item, ConfigPath: configPath, ReplacementPins: marketplaceInstallPins(prepared), CollectionUpdate: true}, nil
+}
+
+func refreshDriftedArchiveEvidence(ctx context.Context, resolverMP *marketplace.Resolver, entry config.MarketplaceEntry, pin config.MarketplaceResourcePin, latest store.AssessedResourceRevision) (string, bool, error) {
+	if pin.LockArchiveDigest == "" || latest.ArchiveDigest == "" || string(latest.ArchiveDigest) == pin.LockArchiveDigest {
+		return "", false, nil
+	}
+	verified, err := resolverMP.RefreshArchiveEvidence(ctx, entry, pin)
+	if err != nil {
+		return "", false, err
+	}
+	if verified == "" || verified == pin.LockArchiveDigest {
+		return "", false, nil
+	}
+	return verified, true, nil
 }
 
 func marketplaceUpdateKey(entry config.MarketplaceEntry, pin config.MarketplaceResourcePin) string {

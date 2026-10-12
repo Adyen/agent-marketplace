@@ -19,6 +19,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/cache"
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/dependencytxn"
+	"github.com/Adyen/agent-marketplace/internal/fsboundary"
 	"github.com/Adyen/agent-marketplace/internal/harness"
 	"github.com/Adyen/agent-marketplace/internal/ownership"
 	"github.com/Adyen/agent-marketplace/internal/resolver"
@@ -65,6 +66,7 @@ func prepareHookSupport(work []skillTarget) (map[int]hookSupportPlan, map[int][]
 	snapshotExcludedPeers := make(map[captureKey][]string)
 	claims := make(map[string]*hookSupportClaim)
 	var keys []string
+
 	for i, w := range work {
 		if w.skill.Resource == nil || w.skill.Resource.Kind() != ir.KindHook {
 			continue
@@ -473,42 +475,16 @@ func openHookSupportFileAt(dirFD int, relative string, total int64) (*os.File, f
 	if !fs.ValidPath(relative) {
 		return nil, 0, 0, fmt.Errorf("hook support file path is invalid")
 	}
-	components := strings.Split(relative, "/")
-	currentFD := dirFD
-	ownedFD := -1
-	for _, component := range components[:len(components)-1] {
-		nextFD, err := openFingerprintDir(currentFD, component)
-		if ownedFD >= 0 {
-			_ = unix.Close(ownedFD)
-		}
-		if err != nil {
-			return nil, 0, 0, err
-		}
-		currentFD = nextFD
-		ownedFD = nextFD
-	}
-	if ownedFD >= 0 {
-		defer func() { _ = unix.Close(ownedFD) }()
-	}
-	file, _, err := openFingerprintFile(currentFD, components[len(components)-1])
+	file, mode, size, err := openFingerprintFileAt(dirFD, relative)
 	if err != nil {
 		return nil, 0, 0, err
 	}
-	var stat unix.Stat_t
-	if err := unix.Fstat(int(file.Fd()), &stat); err != nil {
-		_ = file.Close()
-		return nil, 0, 0, fmt.Errorf("stat hook support file: %w", err)
-	}
-	if stat.Nlink != 1 {
-		_ = file.Close()
-		return nil, 0, 0, fmt.Errorf("hook support file has multiple hard links")
-	}
 	remaining := int64(hookSourceFingerprintMaxBytes) - total
-	if stat.Size < 0 || remaining < 0 || stat.Size > remaining {
+	if size < 0 || remaining < 0 || size > remaining {
 		_ = file.Close()
-		return nil, 0, 0, fmt.Errorf("hook support source exceeds the existing size limit")
+		return nil, 0, 0, fmt.Errorf("%w: hook support source exceeds the existing size limit", fsboundary.ErrTooLarge)
 	}
-	return file, fs.FileMode(stat.Mode & 0o777), stat.Size, nil
+	return file, mode.Perm(), size, nil
 }
 
 func verifyNativeHookSupportOutput(output nativeHookInstalledSupport) error {
@@ -606,10 +582,10 @@ func marketplaceHookSupportArtifacts(support []artifact.Artifact) ([]artifact.Ar
 	for _, source := range support {
 		file := artifact.Artifact{Path: source.Path, Bytes: bytes.Clone(source.Bytes), Mode: source.Mode.Perm()}
 		if err := file.Validate(); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("%w: mirror hook support path is invalid: %v", fsboundary.ErrUnsafePath, err)
 		}
 		if _, ok := seen[file.Path]; ok {
-			return nil, errors.New("mirror hook support contains a duplicate path")
+			return nil, fmt.Errorf("%w: mirror hook support contains a duplicate path", fsboundary.ErrUnsafePath)
 		}
 		seen[file.Path] = struct{}{}
 		files = append(files, file)

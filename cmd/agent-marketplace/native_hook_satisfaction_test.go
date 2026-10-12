@@ -119,7 +119,6 @@ func seedCliOwnershipLock(t *testing.T, root string) string {
 	}
 	return store.LockPath()
 }
-
 func assertCliSatisfactionUnmanaged(t *testing.T, phase, nativeRoot string, d cliNativeDoc, fps map[string]string) {
 	t.Helper()
 	store, err := ownership.Open(nativeRoot)
@@ -183,7 +182,6 @@ func assertCliCompleteHookSatisfaction(t *testing.T, nativeRoot string, d cliNat
 		}
 	}
 }
-
 func cliTwinAndSiblingDoc(d cliNativeDoc) string {
 	sibling := `{"command":"./handwritten.sh","matcher":"Bash","type":"command"}`
 	twin := `{"_managed_by":"agent-marketplace","command":"` + cliSharedHookCommand + `","matcher":"Bash","type":"command"}`
@@ -225,7 +223,6 @@ func cliLegacyHookRules(t *testing.T, d cliNativeDoc, data []byte) []json.RawMes
 	}
 	return rules
 }
-
 func cliTree(t *testing.T, root string) []string {
 	t.Helper()
 	if _, err := os.Lstat(root); os.IsNotExist(err) {
@@ -491,6 +488,7 @@ func assertCliLegacySafetyBackup(t *testing.T, store *ownership.Store, rel strin
 		t.Fatalf("safety backup manifest for %s = %+v", rel, backup.Manifest)
 	}
 	return backup
+
 }
 
 // spec: hook-native-location-tolerance/handwritten-native-satisfaction-prevents-legacy-recreation
@@ -527,6 +525,7 @@ func TestSyncRecognizesUnownedNativeSatisfaction(t *testing.T) {
 				}
 				statePath := cliSeedHookSatisfaction(t, nativeRoot, d, d.doc, fps, cliSatisfactionComplete)
 				ownerLockPath := seedCliOwnershipLock(t, nativeRoot)
+
 				nativeBefore, nativeInfo := statSnapshot(t, nativePath)
 				stateBefore, stateInfo := statSnapshot(t, statePath)
 				lockBefore, lockInfo := statSnapshot(t, lockPath)
@@ -544,6 +543,7 @@ func TestSyncRecognizesUnownedNativeSatisfaction(t *testing.T) {
 				legacyAfterFirstSync := false
 
 				checkAll := func(phase string, commandIndex int) {
+
 					t.Helper()
 					assertStatUnchanged(t, phase+" native", nativePath, nativeBefore, nativeInfo)
 					assertStatUnchanged(t, phase+" state", statePath, stateBefore, stateInfo)
@@ -579,6 +579,7 @@ func TestSyncRecognizesUnownedNativeSatisfaction(t *testing.T) {
 							assertCliFilesystemSnapshotExceptLock(t, phase+" state root", stateRoot, ownerLockPath, stateSnapshotAfterFirst)
 							assertCliFilesystemSnapshot(t, phase+" Native root", nativeRoot, nativeSnapshotAfterFirst)
 						}
+
 					} else if !sharedFile {
 						if _, statErr := os.Lstat(legacyPath); !os.IsNotExist(statErr) {
 							t.Fatalf("%s created legacy hook output at %s (err=%v)", phase, legacyPath, statErr)
@@ -641,6 +642,7 @@ func TestSyncIncompleteSatisfactionKeepsLegacyBehavior(t *testing.T) {
 				home, _, nativeRoot, nativePath, legacyPath, lockPath, configPath, fps := cliSatisfactionFixture(t, d)
 				statePath := cliSeedHookSatisfaction(t, nativeRoot, d, d.doc, fps, cliSatisfactionIncomplete)
 				ownerLockPath := seedCliOwnershipLock(t, nativeRoot)
+
 				sharedFile := d.target == "windsurf" && d.machineScope
 				nativeBefore, nativeInfo := statSnapshot(t, nativePath)
 				stateBefore, stateInfo := statSnapshot(t, statePath)
@@ -660,6 +662,7 @@ func TestSyncIncompleteSatisfactionKeepsLegacyBehavior(t *testing.T) {
 				if !sharedFile {
 					if _, statErr := os.Lstat(legacyPath); !os.IsNotExist(statErr) {
 						t.Fatalf("sync --check created the legacy file: %v", statErr)
+
 					}
 				}
 				assertStatUnchanged(t, "--check native", nativePath, nativeBefore, nativeInfo)
@@ -710,6 +713,7 @@ func TestSyncIncompleteSatisfactionKeepsLegacyBehavior(t *testing.T) {
 				assertCliTreeUnchanged(t, "post-refresh check native root", nativeRoot, nativeTree)
 				assertCliFilesystemSnapshot(t, "post-refresh check cache", cacheRoot, cacheSnapshot)
 				assertCliCompleteHookSatisfaction(t, nativeRoot, d, fps)
+
 			})
 		}
 	}
@@ -779,6 +783,7 @@ func TestSyncSatisfactionCheckDoesNotCreateStateRoot(t *testing.T) {
 	for _, d := range cliNativeDocs() {
 		t.Run(fmt.Sprintf("%s_machine=%v", d.target, d.machineScope), func(t *testing.T) {
 			homeDir, _, nativeRoot, nativePath, legacyPath, lockPath, configPath, fps := cliSatisfactionFixture(t, d)
+
 			stateHome := filepath.Join(homeDir, "no-state-root")
 			t.Setenv("XDG_STATE_HOME", stateHome)
 			writeFile(t, nativePath, d.doc)

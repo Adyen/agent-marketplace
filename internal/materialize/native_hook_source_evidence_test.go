@@ -136,6 +136,7 @@ func ingestedHookFixture(t testing.TB, source config.Source, target hcc.Target, 
 		t.Fatalf("expected one ingested hook, got %d", len(resolved))
 	}
 	return resolved[0]
+
 }
 
 // namedFingerprint computes the version-1 source-hook fingerprint for a

@@ -167,11 +167,24 @@ func planGeminiMCPContainer(doc *jsonc.Document, key outputKey, outDir string, h
 	return patch, diagnostics, nil
 }
 
-func syncGeminiNativeAggregate(ctx context.Context, key outputKey, destination harness.Destination, desired map[string]json.RawMessage, dryRun, prune bool) (TargetReport, []diag.Diagnostic, error) {
+func syncGeminiNativeAggregate(ctx context.Context, key outputKey, destination harness.Destination, desired map[string]json.RawMessage, dryRun, prune bool, boundaries ...*destinationBoundary) (TargetReport, []diag.Diagnostic, error) {
+	var boundary *destinationBoundary
+	if len(boundaries) > 0 {
+		boundary = boundaries[0]
+	}
 	rel := destination.AggregateFile
 	report := TargetReport{Target: key.target, MachineScope: key.machineScope, RootID: destination.ID, OutDir: destination.Root}
-	if !hasNativeDesiredEntries(desired) && (!prune || !nativeAggregateHasManagedEntries(key.target, destination)) {
-		return report, nil, nil
+	if !hasNativeDesiredEntries(desired) {
+		if !prune {
+			return report, nil, nil
+		}
+		hasEntries, err := nativeAggregateHasManagedEntries(key.target, destination, boundary)
+		if err != nil {
+			return report, nil, err
+		}
+		if !hasEntries {
+			return report, nil, nil
+		}
 	}
 	if rel == "" || harness.ValidateRelPath(rel) != nil {
 		return report, nil, fmt.Errorf("invalid Gemini native aggregate path")
@@ -201,7 +214,7 @@ func syncGeminiNativeAggregate(ctx context.Context, key outputKey, destination h
 				diagnostics = append(diagnostics, ownedAggregateDiag(diag.CodeOwnershipRecovered, key, outcome.File, "recovered an incomplete Gemini native aggregate generation"))
 			}
 		}
-		raw, readErr := ownership.ReadAggregateFile(file)
+		raw, readErr := store.ReadAggregate(rel)
 		if readErr != nil && !os.IsNotExist(readErr) {
 			return readErr
 		}

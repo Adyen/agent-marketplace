@@ -29,7 +29,7 @@ func nativeHookActivationSupportPath(t *testing.T, resolved resolver.ResolvedArt
 	plans, conflicts := prepareHookSupport([]skillTarget{{skill: resolved, target: target, machineScope: machine}})
 	plan := plans[0]
 	if plan.err != nil || len(conflicts) != 0 || len(plan.artifacts) == 0 {
-		t.Fatalf("prepareHookSupport = %+v / %v", plan, conflicts)
+		t.Fatalf("prepareHookSupport error=%v plan=%+v conflicts=%+v", plan.err, plan, conflicts)
 	}
 	return plan, filepath.Join(root, filepath.FromSlash(plan.artifacts[0].Path))
 }

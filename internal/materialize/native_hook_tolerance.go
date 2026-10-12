@@ -97,6 +97,9 @@ func nativeHookFingerprint(res resolver.ResolvedArtifact, target hcc.Target, mac
 }
 
 func nativeHookFingerprintInput(res resolver.ResolvedArtifact, target hcc.Target, machineScope bool) (HookSourceFingerprintInput, error) {
+	if res.Resource == nil || res.Resource.Kind() != ir.KindHook {
+		return HookSourceFingerprintInput{}, errors.New("hook native tolerance: not a hook resource")
+	}
 	scope := HookScopeRepository
 	if machineScope {
 		scope = HookScopeMachine

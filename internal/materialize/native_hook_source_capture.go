@@ -18,6 +18,8 @@ import (
 	"golang.org/x/sys/unix"
 
 	"github.com/Adyen/agent-marketplace/internal/config"
+	"github.com/Adyen/agent-marketplace/internal/dependencytxn"
+	"github.com/Adyen/agent-marketplace/internal/fsboundary"
 	"github.com/Adyen/agent-marketplace/internal/resolver"
 	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact"
@@ -118,20 +120,51 @@ func revalidateHookSourceSnapshot(original *hookSourceSnapshot, excludedPeers []
 }
 
 func readHookSourceSnapshotFile(dirFD int, relative string, total *int64) ([]byte, os.FileMode, error) {
+	return readHookSourceSnapshotFileChecked(dirFD, relative, total, nil)
+}
+
+// readHookSourceSnapshotFileChecked reads one captured support file while
+// proving the opened descriptor remains unchanged before and after the read.
+// The state comparison includes device, inode, size, modification and change
+// times (ctime), link count, mode, and owner. The between hook is a
+// deterministic test seam that runs after descriptor validation and before
+// its bytes are read.
+func readHookSourceSnapshotFileChecked(dirFD int, relative string, total *int64, between func(*os.File)) ([]byte, os.FileMode, error) {
 	file, mode, size, err := openHookSupportFileAt(dirFD, relative, *total)
 	if err != nil {
 		return nil, 0, err
 	}
+	before, err := fsboundary.FileIdentity(file)
+	if err != nil {
+		_ = file.Close()
+		return nil, 0, err
+	}
+	if before.Size != size || before.Mode != mode.Perm() {
+		_ = file.Close()
+		return nil, 0, fmt.Errorf("%w: %w: hook support file changed during admission", dependencytxn.ErrGenerationConflict, fsboundary.ErrGenerationConflict)
+	}
+	if before.Links != 1 {
+		_ = file.Close()
+		return nil, 0, fmt.Errorf("%w: hook support file has multiple hard links", fsboundary.ErrUnsafeFile)
+	}
+	if between != nil {
+		between(file)
+	}
 	data, readErr := readFingerprintFD(file, relative, total)
-	closeErr := file.Close()
 	if readErr != nil {
+		_ = file.Close()
 		return nil, 0, readErr
+	}
+	after, statErr := fsboundary.FileIdentity(file)
+	closeErr := file.Close()
+	if statErr != nil {
+		return nil, 0, statErr
 	}
 	if closeErr != nil {
 		return nil, 0, closeErr
 	}
-	if int64(len(data)) != size {
-		return nil, 0, fmt.Errorf("hook support file changed while reading")
+	if int64(len(data)) != size || !before.SameState(after) {
+		return nil, 0, fmt.Errorf("%w: %w: hook support file changed while reading", dependencytxn.ErrGenerationConflict, fsboundary.ErrGenerationConflict)
 	}
 	return data, mode.Perm(), nil
 }

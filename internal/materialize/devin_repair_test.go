@@ -53,7 +53,7 @@ func repairFileFor(t *testing.T, preview *RepairPreview, rel string) *RepairFile
 
 func TestRepairPreviewsEnumeratesEveryValidatedAdapter(t *testing.T) {
 	repoRoot := t.TempDir()
-	previews, err := RepairPreviews(context.Background(), repoRoot, nil)
+	previews, err := RepairPreviews(context.Background(), repoRoot, nil, nil)
 	if err != nil {
 		t.Fatalf("repair previews: %v", err)
 	}

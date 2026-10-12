@@ -1,7 +1,9 @@
 package catalog
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -10,6 +12,7 @@ import (
 
 	"github.com/Adyen/agent-marketplace/internal/cache"
 	"github.com/Adyen/agent-marketplace/internal/config"
+	"github.com/Adyen/agent-marketplace/internal/fsboundary"
 	"github.com/Adyen/agent-marketplace/internal/skill"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ingest"
@@ -556,6 +559,7 @@ func TestDiscover_DoesNotRecurseWhenWarningDiagnostics(t *testing.T) {
 // that are also bundles, a warning is emitted telling the user to restructure
 // so the parent is a pure container. Sub-bundles are NOT discovered in this
 // case — only root-level resources are returned.
+// spec: catalog-discovery/mixed-root-warning-identifies-resources-and-remediation
 func TestDiscover_MixedRootEmitsSubBundlesIgnoredWarning(t *testing.T) {
 	dir := t.TempDir()
 
@@ -573,7 +577,7 @@ description: Root command
 
 	// Sub-directory that is also a bundle — should NOT be discovered,
 	// but the user should be warned.
-	pluginA := filepath.Join(dir, "alpha-plugin")
+	pluginA := filepath.Join(dir, "guides", "alpha-plugin")
 	if err := os.MkdirAll(filepath.Join(pluginA, "skills", "skill-a"), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -608,17 +612,142 @@ metadata:
 	for _, m := range result.Malformed {
 		if m.DirName == "catalog.discover.sub-bundles-ignored" {
 			found = true
-			if !strings.Contains(m.Error.Error(), "sub-bundle") {
-				t.Errorf("warning message should mention sub-bundles, got: %v", m.Error)
+			message := m.Error.Error()
+			if !strings.Contains(message, `root resource example: command "root-cmd" at "commands/root-cmd.md"`) {
+				t.Errorf("warning message should identify a root resource to move, got: %v", m.Error)
 			}
-			if !strings.Contains(m.Error.Error(), "common/") {
+			if !strings.Contains(message, `"guides/alpha-plugin" (affected: skill "skill-a")`) {
+				t.Errorf("warning message should identify the ignored bundle and affected resource, got: %v", m.Error)
+			}
+			if !strings.Contains(message, "common/") {
 				t.Errorf("warning message should suggest common/ sub-bundle, got: %v", m.Error)
+			}
+			if !strings.Contains(message, `path: "<entry-path>/guides/alpha-plugin"`) {
+				t.Errorf("warning message should explain how to target the ignored bundle, got: %v", m.Error)
+			}
+			if strings.Contains(message, dir) {
+				t.Errorf("warning message should use registry-relative paths, got: %v", m.Error)
 			}
 			break
 		}
 	}
 	if !found {
 		t.Errorf("expected MalformedSkill with DirName %q, got: %#v", "catalog.discover.sub-bundles-ignored", result.Malformed)
+	}
+}
+
+// spec: catalog-discovery/ignored-bundle-warning-identifies-its-registry-entry
+func TestLoadRegistriesAddsRegistryToIgnoredSubBundleWarning(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	snapshot := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(snapshot, "catalog"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cfg := &config.Config{Registries: []config.RegistryEntry{{
+		URL:  "https://example.invalid/team/resources.git",
+		Ref:  "main",
+		Path: "catalog",
+	}}}
+	cause := errors.New("nested bundles are ignored")
+	result := LoadRegistries(cfg, "", LoadModeRefresh,
+		WithCloneOrPull(func(_, _ string) (string, error) { return snapshot, nil }),
+		WithDiscoverFunc(func(dir, _ string) (LoadedCatalog, error) {
+			return LoadedCatalog{Malformed: []skill.MalformedSkill{{
+				DirName: "catalog.discover.sub-bundles-ignored",
+				Path:    dir,
+				Error:   cause,
+			}}}, nil
+		}),
+	)
+
+	if len(result.Malformed) != 1 {
+		t.Fatalf("malformed diagnostics = %#v, want one ignored-sub-bundle warning", result.Malformed)
+	}
+	if !errors.Is(result.Malformed[0].Error, cause) {
+		t.Fatalf("registry context did not preserve the diagnostic cause: %v", result.Malformed[0].Error)
+	}
+	message := result.Malformed[0].Error.Error()
+	if want := `registry "https://example.invalid/team/resources.git" (ref "main", entry path "catalog")`; !strings.Contains(message, want) {
+		t.Fatalf("warning message should identify the configured registry; missing %q in %q", want, message)
+	}
+}
+
+// spec: catalog-discovery/ignored-bundle-warning-retains-captured-source-authority
+func TestIgnoredSubBundleWarningUsesCapturedSourceRoot(t *testing.T) {
+	t.Parallel()
+	root := filepath.Join(t.TempDir(), "registry")
+	writeDiscoveryFiles(t, root, map[string]string{
+		"commands/root.md":                  "---\nname: root\ndescription: Root\n---\nRoot",
+		"guides/original/skills/a/SKILL.md": "---\nname: original\ndescription: Original\n---\nOriginal",
+	})
+	source, err := fsboundary.OpenSourceFS(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = source.Close() })
+	if err := os.Rename(root, root+".captured"); err != nil {
+		t.Fatal(err)
+	}
+	writeDiscoveryFiles(t, root, map[string]string{
+		"commands/replacement.md":             "---\nname: replacement-root\ndescription: Replacement\n---\nReplacement",
+		"foreign/skills/replacement/SKILL.md": "---\nname: replacement\ndescription: Replacement\n---\nReplacement",
+	})
+
+	result, err := DiscoverSourceWithOptions(source, root, "claude", IngestOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Entries) != 1 || result.Entries[0].Name != "root" {
+		t.Fatalf("discovery lost the captured root resource: %+v", result.Entries)
+	}
+	for _, malformed := range result.Malformed {
+		if malformed.DirName != ignoredSubBundlesDiagnostic {
+			continue
+		}
+		message := malformed.Error.Error()
+		if !strings.Contains(message, `"guides/original" (affected: skill "original")`) || strings.Contains(message, "replacement") || strings.Contains(message, "foreign") {
+			t.Fatalf("ignored-bundle warning used the replacement root: %s", message)
+		}
+		return
+	}
+	t.Fatal("captured root's ignored bundle was not reported")
+}
+
+// spec: catalog-discovery/ignored-bundle-details-are-sorted-and-bounded
+func TestIgnoredSubBundlesMessageIsDeterministicAndBounded(t *testing.T) {
+	root := filepath.Join(string(filepath.Separator), "registry")
+	bundles := make([]subBundle, 0, 6)
+	for bundleIndex := 0; bundleIndex < 6; bundleIndex++ {
+		entries := make([]Entry, 0, 6)
+		for resourceIndex := 5; resourceIndex >= 0; resourceIndex-- {
+			entries = append(entries, Entry{Kind: ir.KindSkill, Name: fmt.Sprintf("skill-%02d", resourceIndex)})
+		}
+		bundles = append(bundles, subBundle{
+			path:    filepath.Join(root, fmt.Sprintf("bundle-%02d", bundleIndex)),
+			catalog: &Catalog{Entries: entries},
+		})
+	}
+
+	rootEntries := []Entry{
+		{Kind: ir.KindSkill, Name: "nested", Path: filepath.Join(root, "bundle-00", "skills", "nested", "SKILL.md")},
+		{Kind: ir.KindCommand, Name: "root", Path: filepath.Join(root, "commands", "root.md")},
+	}
+	message := ignoredSubBundlesMessage(root, rootEntries, bundles, bundles)
+	for _, want := range []string{
+		`root resource example: command "root" at "commands/root.md"`,
+		`"bundle-00" (affected: skill "skill-00", skill "skill-01", skill "skill-02", skill "skill-03", skill "skill-04", and 1 more)`,
+		`"bundle-04"`,
+		"nested bundles are ignored (6 total)",
+		"and 1 more nested bundles",
+	} {
+		if !strings.Contains(message, want) {
+			t.Errorf("warning message missing %q: %s", want, message)
+		}
+	}
+	for _, unwanted := range []string{`"bundle-05"`, `skill "skill-05"`} {
+		if strings.Contains(message, unwanted) {
+			t.Errorf("warning message should bound detailed output and omit %q: %s", unwanted, message)
+		}
 	}
 }
 
@@ -772,8 +901,8 @@ func TestHasBundleRoot_RootSkillPreservesExplicitMarkers(t *testing.T) {
 			dir := t.TempDir()
 			writeFile(t, filepath.Join(dir, "SKILL.md"), "---\nname: root-skill\n---\nBody\n")
 			test.setup(t, dir)
-			if got := hasBundleRoot(dir); got != test.wantBundle {
-				t.Fatalf("hasBundleRoot() = %v, want %v", got, test.wantBundle)
+			if got, err := hasBundleRoot(dir); err != nil || got != test.wantBundle {
+				t.Fatalf("hasBundleRoot() = %v, %v, want %v", got, err, test.wantBundle)
 			}
 		})
 	}
@@ -1275,6 +1404,155 @@ metadata:
 	}
 	if result.Entries[0].Name != "vm-lifecycle" {
 		t.Errorf("entry name = %q, want %q", result.Entries[0].Name, "vm-lifecycle")
+	}
+}
+
+// spec: directory-source-discovery/git-metadata-beside-valid-and-malformed-skills
+func TestDiscover_SkillsGitMetadataIgnored(t *testing.T) {
+	dir := t.TempDir()
+	for rel, content := range map[string]string{
+		"skills/.git/HEAD":             "ref: refs/heads/main\n",
+		"skills/.git/hooks/pre-commit": "#!/bin/sh\n",
+		"skills/good-skill/SKILL.md":   "---\nname: good-skill\n---\nGood\n",
+		"skills/bad-skill/SKILL.md":    "---\nname: Bad_Skill\n---\nBad\n",
+	} {
+		path := filepath.Join(dir, rel)
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		writeFile(t, path, content)
+	}
+
+	result, err := Discover(dir, "claude")
+	if err != nil {
+		t.Fatalf("Discover(%q, \"claude\") = _, %v", dir, err)
+	}
+
+	if len(result.Entries) != 1 || result.Entries[0].Name != "good-skill" {
+		t.Fatalf("expected exactly the good-skill entry, got %#v", result.Entries)
+	}
+
+	badSkillMalformed := false
+	for _, m := range result.Malformed {
+		if strings.Contains(m.DirName, ".git") || strings.Contains(m.Path, ".git") || m.DirName == "catalog.discover.sub-bundles-ignored" {
+			t.Errorf("unexpected malformed entry: %#v", m)
+		}
+		if strings.Contains(m.DirName, "bad-skill") || strings.Contains(m.Path, "bad-skill") {
+			badSkillMalformed = true
+		}
+	}
+	if !badSkillMalformed {
+		t.Errorf("expected malformed authored skill bad-skill to be reported, got %#v", result.Malformed)
+	}
+}
+
+// spec: directory-source-discovery/non-claude-source-layouts-ignore-git-metadata
+func TestDiscover_NonClaudeLayoutsIgnoreGitMetadata(t *testing.T) {
+	cases := []struct {
+		harness   string
+		skillsDir string
+	}{
+		{"factory", ".factory/skills"},
+		{"cursor", ".cursor/skills"},
+		{"gemini", ".gemini/skills"},
+		{"codex", ".agents/skills"},
+		{"windsurf", ".windsurf/skills"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.harness, func(t *testing.T) {
+			dir := t.TempDir()
+			for rel, content := range map[string]string{
+				tc.skillsDir + "/.git/HEAD":             "ref: refs/heads/main\n",
+				tc.skillsDir + "/.git/hooks/pre-commit": "#!/bin/sh\n",
+				tc.skillsDir + "/good-skill/SKILL.md":   "---\nname: good-skill\ndescription: ok\n---\nGood\n",
+			} {
+				path := filepath.Join(dir, rel)
+				if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				writeFile(t, path, content)
+			}
+
+			result, err := Discover(dir, tc.harness)
+			if err != nil {
+				t.Fatalf("Discover(%q, %q) = _, %v", dir, tc.harness, err)
+			}
+			if len(result.Entries) != 1 || result.Entries[0].Name != "good-skill" {
+				t.Fatalf("expected exactly the good-skill entry, got %#v", result.Entries)
+			}
+			for _, m := range result.Malformed {
+				if strings.Contains(m.DirName, ".git") || strings.Contains(m.Path, ".git") {
+					t.Errorf("unexpected malformed entry for git metadata: %#v", m)
+				}
+			}
+			for _, d := range result.Diagnostics {
+				if strings.Contains(d.Resource, ".git") || strings.Contains(d.Source.File, ".git") {
+					t.Errorf("unexpected diagnostic for git metadata: %#v", d)
+				}
+			}
+		})
+	}
+}
+
+// spec: directory-source-discovery/windsurf-metadata-does-not-abort-discovery
+func TestDiscover_WindsurfGitMetadataDoesNotAbort(t *testing.T) {
+	dir := t.TempDir()
+	for rel, content := range map[string]string{
+		".windsurf/skills/.git/HEAD":           "ref: refs/heads/main\n",
+		".windsurf/skills/good-skill/SKILL.md": "---\nname: good-skill\ndescription: ok\n---\nGood\n",
+	} {
+		path := filepath.Join(dir, rel)
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		writeFile(t, path, content)
+	}
+
+	result, err := Discover(dir, "windsurf")
+	if err != nil {
+		t.Fatalf("Discover(%q, \"windsurf\") = _, %v", dir, err)
+	}
+	if len(result.Entries) != 1 || result.Entries[0].Name != "good-skill" {
+		t.Fatalf("expected exactly the good-skill entry, got %#v", result.Entries)
+	}
+}
+
+// spec: directory-source-discovery/factory-git-metadata-directory-symlink-is-not-a-skill
+func TestDiscover_FactoryGitMetadataSymlinkIgnored(t *testing.T) {
+	dir := t.TempDir()
+
+	gitTarget := filepath.Join(dir, "git-metadata")
+	if err := os.MkdirAll(gitTarget, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(gitTarget, "HEAD"), "ref: refs/heads/main\n")
+
+	skillPath := filepath.Join(dir, ".factory", "skills", "good-skill", "SKILL.md")
+	if err := os.MkdirAll(filepath.Dir(skillPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, skillPath, "---\nname: good-skill\ndescription: ok\n---\nGood\n")
+
+	if err := os.Symlink(gitTarget, filepath.Join(dir, ".factory", "skills", ".git")); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := Discover(dir, "factory")
+	if err != nil {
+		t.Fatalf("Discover(%q, \"factory\") = _, %v", dir, err)
+	}
+	if len(result.Entries) != 1 || result.Entries[0].Name != "good-skill" {
+		t.Fatalf("expected exactly the good-skill entry, got %#v", result.Entries)
+	}
+	for _, m := range result.Malformed {
+		if strings.Contains(m.DirName, ".git") || strings.Contains(m.Path, ".git") {
+			t.Errorf("unexpected malformed entry for git metadata: %#v", m)
+		}
+	}
+	for _, d := range result.Diagnostics {
+		if strings.Contains(d.Resource, ".git") || strings.Contains(d.Source.File, ".git") {
+			t.Errorf("unexpected diagnostic for git metadata: %#v", d)
+		}
 	}
 }
 
@@ -2329,5 +2607,113 @@ func BenchmarkDiscoverMalformedPathNormalization(b *testing.B) {
 		if _, err := Discover(dir, "factory"); err != nil {
 			b.Fatal(err)
 		}
+	}
+}
+
+// TestDiscoverSubBundleSourceRefusalsAreErrors proves source refusals inside
+// recursively discovered sub-bundles fail discovery instead of reading as
+// absent resources: a refused marker probe of the only candidate, and a
+// sub-bundle that loaded partially beside a healthy sibling.
+func TestDiscoverSubBundleSourceRefusalsAreErrors(t *testing.T) {
+	outside := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(outside, "plugin"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(outside, "plugin", "plugin.json"), `{"name":"foreign"}`)
+	writeFile(t, filepath.Join(outside, "SKILL.md"), "---\nname: foreign\ndescription: foreign inert skill\n---\nBody\n")
+	skill := func(t *testing.T, dir, name string) {
+		t.Helper()
+		if err := os.MkdirAll(filepath.Join(dir, "skills", name), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		writeFile(t, filepath.Join(dir, "skills", name, "SKILL.md"), "---\nname: "+name+"\ndescription: inert skill\n---\nBody\n")
+	}
+
+	t.Run("refused marker probe", func(t *testing.T) {
+		dir := t.TempDir()
+		candidate := filepath.Join(dir, "aliased-plugin")
+		if err := os.Mkdir(candidate, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(filepath.Join(outside, "plugin"), filepath.Join(candidate, ".claude-plugin")); err != nil {
+			t.Fatal(err)
+		}
+		if result, err := Discover(dir, "claude"); err == nil && len(result.Errors) == 0 {
+			t.Fatalf("refused sub-bundle marker became an empty catalog: %+v", result)
+		} else if err != nil && !errors.Is(err, fsboundary.ErrUnsafePath) {
+			t.Fatalf("sub-bundle probe refusal lost its identity: %v", err)
+		}
+	})
+
+	t.Run("partially loaded sub-bundle", func(t *testing.T) {
+		dir := t.TempDir()
+		skill(t, filepath.Join(dir, "alpha-plugin"), "alpha")
+		beta := filepath.Join(dir, "beta-plugin")
+		skill(t, beta, "beta")
+		if err := os.MkdirAll(filepath.Join(beta, "skills", "foreign"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(filepath.Join(outside, "SKILL.md"), filepath.Join(beta, "skills", "foreign", "SKILL.md")); err != nil {
+			t.Fatal(err)
+		}
+		result, err := Discover(dir, "claude")
+		if err != nil {
+			if !errors.Is(err, fsboundary.ErrUnsafePath) {
+				t.Fatalf("partial sub-bundle refusal lost its identity: %v", err)
+			}
+			return
+		}
+		refused := false
+		for _, subErr := range result.Errors {
+			refused = refused || errors.Is(subErr, fsboundary.ErrUnsafePath)
+		}
+		if !refused {
+			t.Fatalf("partially refused sub-bundle merged without an error: entries=%v errors=%v", result.Entries, result.Errors)
+		}
+		for _, entry := range result.Entries {
+			if entry.Name == "foreign" {
+				t.Fatalf("foreign aliased skill imported: %+v", entry)
+			}
+		}
+	})
+}
+
+func TestRecordSubBundleCloseErrorJoinsExistingCandidate(t *testing.T) {
+	closeErr := errors.New("injected sub-source close failure")
+	bundles := []subBundle{{path: "/registry/other"}, {path: "/registry/alpha", catalog: &Catalog{}}}
+	recordSubBundleCloseError(&bundles, 1, "/registry/alpha", closeErr)
+	if len(bundles) != 2 || !errors.Is(bundles[1].err, closeErr) || bundles[1].catalog == nil {
+		t.Fatalf("close error not joined into the recorded candidate: %+v", bundles)
+	}
+	recordSubBundleCloseError(&bundles, -1, "/registry/beta", closeErr)
+	if len(bundles) != 3 || bundles[2].path != "/registry/beta" || !errors.Is(bundles[2].err, closeErr) {
+		t.Fatalf("unrecorded close error not reported as a failed candidate: %+v", bundles)
+	}
+	loaded, err := discoverSubBundles(bundles[1:2])
+	if err == nil && len(loaded.SubBundles) != 0 {
+		t.Fatalf("candidate with a close error both loaded and failed: %+v %v", loaded, err)
+	}
+}
+
+func TestDiscoverReportsUnreadableSubBundleCandidate(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("permission denial is not observable as root")
+	}
+	dir := t.TempDir()
+	candidate := filepath.Join(dir, "locked-plugin")
+	if err := os.MkdirAll(filepath.Join(candidate, "skills", "locked"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(candidate, "skills", "locked", "SKILL.md"), "---\nname: locked\ndescription: inert skill\n---\nBody\n")
+	if err := os.Chmod(candidate, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(candidate, 0o755) })
+	result, err := Discover(dir, "claude")
+	if err == nil && len(result.Errors) == 0 {
+		t.Fatalf("unreadable sub-bundle candidate became an empty catalog: %+v", result)
+	}
+	if err != nil && !errors.Is(err, fs.ErrPermission) {
+		t.Fatalf("unreadable candidate lost its permission error: %v", err)
 	}
 }
