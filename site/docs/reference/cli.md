@@ -181,13 +181,13 @@ A successful Marketplace install prints a short confirmation:
 ✓ Installed coderabbit-skills · 3 skills
 ```
 
-Installs from configured Git or directory registries say where the selection went: `in this repo`, `user-wide`, or `locally`. For example, `Installed frontend-design in this repo` or `Installed collection web-development in this repo`. The line lists only resources that the resulting configuration selects. A tag or bundle install keeps any existing exclusion and names the resources it left out, for example `Not installed: review; the effective configuration does not select it (for example, an exclusion wins). Install by name to select explicitly`. Installing a resource by name clears its exclusion. Missing prerequisites are reported as warnings; `install` does not install them for you.
+Installs from configured Git or directory registries say where the selection went: `in this repo`, `user-wide`, or `locally`. For example, `Installed frontend-design in this repo` or `Installed collection web-development in this repo`. The line lists only resources that the resulting configuration selects. A tag or bundle install keeps any existing exclusion and names the resources it left out, for example `Not installed: review; the effective configuration does not select it (for example, an exclusion wins). Install by name to select explicitly`. Installing a resource by name clears its exclusion. Missing prerequisites are reported as warnings; by default `install` does not install them for you. With `requires.expand: true`, resolution instead selects configured, resolvable prerequisites transitively — see [Requirement expansion](./resource-prerequisites.md#requirement-expansion).
 
 For configured Git registries, discovery uses the exact locked inventory of every layer that already has a valid lock. A registry can bootstrap from its branch or tag only when its own configuration layer has no lock. A missing lock in one layer does not make content that appeared after another layer's lock installable.
 
 ## `remove`
 
-Removes an explicit selection, or records an exclusion when the resource was selected some other way (for example, by a collection or a registry default). It then syncs output. Required organization resources cannot be removed or excluded.
+Removes an explicit selection, or records an exclusion when the resource was selected some other way (for example, by a collection or a registry default). It then syncs output. Required organization resources cannot be removed or excluded. With `requires.expand` enabled, removing an optional resource that a still-selected resource requires also succeeds: the direct selection is dropped, an explicit exclusion is recorded, and the requiring resource keeps its selection and reports the unmet prerequisite — removal never cascades to it.
 
 `--from` and `--ref` follow the same rule, so an explicit selection in the target config is dropped. If a selected collection also provides the resource, it stays installed through the collection until a second `remove` excludes it from the collection.
 

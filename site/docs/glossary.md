@@ -88,7 +88,7 @@ Records that `agent-marketplace` keeps about which entries it wrote into setting
 
 ## Prerequisite
 
-Another resource that a resource needs to work, declared in its front matter under `metadata.requires`. An unmet prerequisite produces an advisory warning with the install command that fixes it; it never blocks the install or changes the exit status. A consumer who opts in with `requires.expand: true` selects prerequisites transitively as [implied resources](#implied-resource). See [Declare resource prerequisites](./how-to/author/declare-resource-prerequisites.md) and the [resource prerequisites reference](./reference/resource-prerequisites.md).
+Another resource that a resource needs to work, declared in its front matter under `metadata.requires`. An unmet prerequisite produces an advisory warning with the install command that fixes it; it never blocks the install, and only `sync --strict` (including `sync --strict --check`) exits nonzero because of it. A consumer who opts in with `requires.expand: true` selects prerequisites transitively as [implied resources](#implied-resource). See [Declare resource prerequisites](./how-to/author/declare-resource-prerequisites.md) and the [resource prerequisites reference](./reference/resource-prerequisites.md).
 
 ## Ref
 

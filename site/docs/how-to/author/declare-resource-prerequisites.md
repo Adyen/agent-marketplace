@@ -32,7 +32,7 @@ metadata:
 Review code with the documentation MCP server available.
 ```
 
-`kind` defaults to `skill` when you leave it out and accepts the same spellings as `--kind` (`agents`, `commands`, `mcp_servers`, and so on, matched case-insensitively). `registry` and `path` are optional hints: the CLI copies them into the `--from` and `--path` flags of the install command it suggests. They do not restrict where the prerequisite may come from.
+`kind` defaults to `skill` when you leave it out and accepts the same spellings as `--kind` (`agents`, `commands`, `mcp_servers`, and so on, matched case-insensitively). `registry` and `path` are optional hints: by default the CLI only copies them into the `--from` and `--path` flags of the install command it suggests, and they do not restrict where the prerequisite may come from. When a consumer opts in to [requirement expansion](../../reference/resource-prerequisites.md#requirement-expansion) (`requires.expand: true`), the same hints steer prerequisite lookup — a `registry` hint must match a source the consumer already configured (a Git source by normalized URL, with `path` narrowing to a configured root, or a directory source by absolute location), and an unconfigured hint is never fetched or replaced by a fallback source.
 
 ## 3. Use the shorthand for the simple case
 

@@ -44,13 +44,13 @@ Harness-specific skill fields such as `allowed-tools`, `model`, and `argument-hi
 | Field | Type | Description |
 |---|---|---|
 | `metadata.tags` | list of strings | Tags used for tag-based selection. Matching is exact and case-sensitive after surrounding whitespace is trimmed. Items that are not strings are ignored. |
-| `metadata.requires` | list | Advisory prerequisites. Each item is a map (below) or a string. |
+| `metadata.requires` | list | Prerequisites, advisory by default. Each item is a map (below) or a string. |
 
 Commands and subagents written as Markdown with front matter read `metadata.tags` and `metadata.requires` from the same place.
 
 ## `requires` item
 
-Each `metadata.requires` item is a map with `name` and optional `kind`, `registry`, and `path`, or a string shorthand (`mcp:docs-server`, or a bare name for a skill). An unmet prerequisite produces an advisory warning, never an error. The full declaration grammar, satisfaction rule, warning format, and exit status live in the [resource prerequisites reference](./resource-prerequisites.md).
+Each `metadata.requires` item is a map with `name` and optional `kind`, `registry`, and `path`, or a string shorthand (`mcp:docs-server`, or a bare name for a skill). Prerequisites are advisory by default: an unmet prerequisite produces a warning, never an error. A consumer who opts in with `requires.expand: true` selects declared prerequisites transitively from already-configured sources. The full declaration grammar, satisfaction rule, expansion behavior, warning format, and exit status live in the [resource prerequisites reference](./resource-prerequisites.md).
 
 ## Command marker
 

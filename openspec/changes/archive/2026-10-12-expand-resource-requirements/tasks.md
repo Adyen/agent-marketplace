@@ -34,4 +34,4 @@
 
 ## 7. Archive
 
-- [ ] 7.1 Run `openspec archive expand-resource-requirements --yes` as the final change task and verify the archived specs match the validated delta.
+- [x] 7.1 Run `openspec archive expand-resource-requirements --yes` as the final change task and verify the archived specs match the validated delta.

@@ -118,6 +118,14 @@ files for a previewed resource, and they do not prune an existing managed
 output that a preview still covers. Removing the last resource that
 requires it ends that retention at the next sync.
 
+Expansion also changes one `remove` outcome. With expansion enabled,
+removing an optional resource that a still-selected resource requires
+succeeds: `remove` drops the resource's direct selection when one exists
+and records an explicit exclusion, so the requiring resource stays
+selected and reports the prerequisite as unmet. Removal never cascades to
+the requiring resource and needs no new flag. With expansion disabled,
+`remove` behaves as before and records no prerequisite-driven exclusion.
+
 ## Warning and remediation
 
 An unmet prerequisite produces:
@@ -130,7 +138,9 @@ warning: <kind> "<resource>" requires <kind> "<prerequisite>", but it is not sel
 The remediation gains `--from "<registry>"` and `--path "<path>"` when the
 item declares those hints. Kinds print as `skill`, `command`, `subagent`,
 `hook`, or `mcp`. URL credentials inside a `registry` hint are replaced with
-`***`.
+`***`. Internally each unmet warning also carries a typed reason —
+`not-found`, `excluded`, or `source-not-configured` — which does not change
+the printed text or table columns.
 
 | Command | Behavior |
 |---|---|
