@@ -14,5 +14,5 @@
 
 - [x] 3.1 Run focused tools/ci-plan tests and validate the GitHub workflow syntax with actionlint if available; record any unavailable external tooling rather than claiming it ran.
 - [x] 3.2 Run make validate once with TEST_PACKAGES=./tools/ci-plan and the repository spec gate. Leave pre-existing go.work.sum and any untracked token file untouched and out of commits.
-- [ ] 3.3 Record Cloud project/token onboarding steps, fork skips, partial Go-only coverage, and the unverified live scan in the PR description. Commit intended files only, perform the pre-push adversarial review, push the branch, and open the PR against main. Do not create secrets or change protection settings.
-- [ ] 3.4 openspec archive add-sonarqube-cloud-ci --yes
+- [x] 3.3 Record Cloud project/token onboarding steps, fork skips, partial Go-only coverage, and the unverified live scan in the PR description. Commit intended files only, perform the pre-push adversarial review, push the branch, and open the PR against main. Do not create secrets or change protection settings.
+- [x] 3.4 openspec archive add-sonarqube-cloud-ci --yes
