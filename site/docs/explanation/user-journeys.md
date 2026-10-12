@@ -12,7 +12,7 @@ Find → Inspect → Choose scope and harnesses → Install → Use
 
 ## Configuration compatibility
 
-The current configuration format is v4 (`apiVersion: agent-marketplace/v4`), which `init` and the TUI's first-run prompt create. On a v4 file the supported edits include `install` and `remove` by name, `--from` for a Git or directory registry that is not configured yet, `install --tag` and `install --all`, Marketplace registration and installs, and TUI toggles for Git and directory sources plus the harness modal.
+The current configuration format is v4 (`apiVersion: agent-marketplace/v4`), which `init` and the TUI's first-run prompt create. On a v4 file, the supported edits include `install` and `remove` by name, `--from` for a Git or directory registry that is not configured yet, `install --tag` and `install --all`, Marketplace registration and installs, and TUI toggles for Git and directory sources plus the harness modal.
 
 Every existing root, including organization and personal-local, must declare exact v4. Included fragments may omit the version or declare exact v4. Versionless roots fail with `v4.api-version-required`; explicit unsupported or invalid versions fail with `v4.api-version`, naming the file and field. There is no shipped `migrate` command, startup prompt, TUI migration modal, or legacy fallback. [Convert writable roots with an older released migrator before upgrading](../how-to/migrate-configuration.md); administrators convert organization configuration externally. Conversion can refuse includes, unrepresentable legacy input, or missing verified Marketplace evidence, and changing only the version string is insufficient. Some Marketplace cases are not supported: acquiring content offline when the organization lockfile is absent, rebinding hosted pins, and recording snapshots for dynamic selectors. When the CLI cannot verify a pin, it refuses and changes nothing.
 
@@ -24,7 +24,7 @@ Before anything is installed, the [scope](../glossary.md#scope) decides which co
 
 Resources come from three kinds of place: a Git registry address, a hosted Marketplace, or a source already in the configuration. `list` shows configured Git and directory sources, `search` queries hosted Marketplaces, and the TUI and the Marketplace browser offer the same discovery visually. Inspection before install matters: the resource kind, its declared prerequisites, its source, and its license all decide whether it belongs in your setup, and an automated scan cannot prove a resource is safe.
 
-Two selection details are worth knowing early. A bare name can match more than one resource, so commands accept a kind or a full [locator](../glossary.md#locator) to disambiguate. And `agent-marketplace` reports a resource's prerequisites but does not install them; the resource's own setup instructions apply. [Sources and resources](./sources-and-resources.md) explains how groups select resources once a source exists.
+Two selection details are worth knowing early. A bare name can match more than one resource. Installation accepts a kind or a full [locator](../glossary.md#locator) to disambiguate; `remove` uses `--kind` and refuses ambiguous names. And `agent-marketplace` reports a resource's prerequisites but does not install them; the resource's own setup instructions apply. [Sources and resources](./sources-and-resources.md) explains how groups select resources once a source exists.
 
 ## Installing and checking
 
@@ -34,7 +34,7 @@ After install, `status` shows what is selected where, and `sync --check` reports
 
 ## Growing a setup
 
-A setup can add more resource kinds (commands, subagents, hooks, and MCP servers alongside skills, often selected together through [tags, collections, or bundles](../how-to/install-resource-bundles.md)), more [harnesses](../how-to/configure-multiple-harnesses.md), and broader sharing. To share with a team, [adopt the CLI in the repository](../how-to/adopt-agent-marketplace-in-a-repository.md): the committed configuration and lockfile go to the team while the personal-local file and the generated harness output stay out of Git, and [personal overrides](../how-to/use-personal-repository-overrides.md) cover checkout-only additions or exclusions. When sync changes a repository's Codex hooks or MCP entries it warns that Codex may ask for a trust review; the [harnesses reference](../reference/harnesses-and-output-paths.md) covers what each harness writes.
+A setup can add more resource kinds (commands, subagents, hooks, and MCP servers alongside skills, often selected together through [tags, collections, or bundles](../how-to/install-resource-bundles.md)), more [harnesses](../how-to/configure-multiple-harnesses.md), and broader sharing. To share with a team, [adopt the CLI in the repository](../how-to/adopt-agent-marketplace-in-a-repository.md): the committed configuration and lockfile go to the team while the personal-local file and the generated harness output stay out of Git, and [personal overrides](../how-to/use-personal-repository-overrides.md) cover checkout-only additions or exclusions. When sync changes a repository's Codex hooks or MCP entries, it warns that Codex may ask for a trust review; the [harnesses reference](../reference/harnesses-and-output-paths.md) covers what each harness writes.
 
 ## Updating and removing
 

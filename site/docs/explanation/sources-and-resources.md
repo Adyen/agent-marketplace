@@ -16,7 +16,7 @@ A group can only bind to a source declared in the same configuration root, meani
 
 ### `git`: pinned to one commit
 
-A Git source is a repository at one URL and one `ref` (a branch, tag, or commit). The first `sync` resolves the ref to one exact commit and records it in the layer's lockfile, along with digests of the resources found there. Later syncs keep installing from that commit even after the branch moves; only an explicit `update` or `lock --upgrade` advances it. A locked commit stays installable while the Git server still retains it. You can declare the same repository under two names, for example a `stable` source on a tag and an `edge` source on `main`, each with its own group.
+A Git source is a repository at one URL and one `ref` (a branch, tag, or commit). The first `sync` resolves the ref to one exact commit and records it in the layer's lockfile, along with digests of the resources found there. Later syncs keep installing from that commit even after the branch moves. An explicit `update` or `lock --upgrade` advances the lock; changing the configured `ref` also makes the next writable `sync` resolve that ref and rewrite its lock record. A locked commit stays installable while the Git server still retains it. You can declare the same repository under two names, for example a `stable` source on a tag and an `edge` source on `main`, each with its own group.
 
 The trade-off: reproducibility and an audit trail, at the cost of a lock to maintain and a network fetch the first time.
 
@@ -42,7 +42,7 @@ The word covers two things. A resource is one installable item, such as a skill,
 
 ## How a group picks resources
 
-The candidates are everything named by `include`, matched by `tags`, or covered by `all`. Collections then expand into their members, and excludes remove anything that is not `required`. Within one file, excludes always apply after includes whatever order the keys are written in; across an include tree, a fragment merges below the file that includes it. An include can carry a rename option (`as`) and an exact `revision` pin where the source kind supports them.
+The candidates are everything named by `include`, matched by `tags`, or covered by `all`. Collections then expand into their members, and excludes remove anything that is not `required`. Within one file, excludes always apply after includes, whatever order the keys are written in; across an include tree, a fragment merges below the file that includes it. An include can carry a rename option (`as`) and an exact `revision` pin where the source kind supports them.
 
 A few declarations are valid but select nothing: an empty group, a group with only `required: true`, or an exclude that matches nothing. [Scopes, selection, and precedence](./scopes-selection-and-precedence.md) covers how excludes and collisions resolve across configuration layers.
 
@@ -50,7 +50,7 @@ A few declarations are valid but select nothing: an empty group, a group with on
 
 Locks pin the remote kinds, not the local one, and only where a lock may exist: every writable layer records its own, while an organization layer whose administrator deploys no lock leaves its Git sources following their refs unpinned. A Git source's lock records the commit its ref resolved to and digests of the resources under it; a Marketplace source's lock records the exact content revisions. The lock covers every resource under a Git source whether a group selects it or not, so most group edits leave it unchanged, while changing a `ref` rewrites it. A directory source is never locked because it is read live.
 
-Because a Git lock stores URLs and refs rather than your source names, renaming a Git or directory source together with its group leaves both as they were. A Marketplace source name is different: it also becomes the endpoint's alias, which `status` and `search` use.
+Because a Git lock stores URLs and refs rather than your source names, renaming a Git or directory source together with its group leaves the lock and generated files unchanged. A Marketplace source name is different: it also becomes the endpoint's alias, which `status` and `search` use.
 
 [How agent-marketplace works](./how-agent-marketplace-works.md) follows a full sync through these pieces, and [reproducibility and lockfiles](./reproducibility-and-lockfiles.md) explains the lock format and update commands. [Install and remove](../reference/cli.md) can edit both maps for you, or you can edit them by hand.
 
