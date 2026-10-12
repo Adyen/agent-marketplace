@@ -664,8 +664,11 @@ func preserveResourceSourcePath(r ir.Resource, sourcePath string) {
 // display compatibility, while the IR SourceRef remains pinned to the immutable
 // snapshot that was actually ingested.
 func SourcePath(entry Entry) string {
+	if entry.PrimarySourcePath != "" {
+		return entry.PrimarySourcePath
+	}
 	if entry.Resource != nil {
-		if source, ok := sourceRefFromResource(entry.Resource); ok {
+		if source, ok := sourceRefFromResource(entry.Resource); ok && filepath.IsAbs(source) {
 			return source
 		}
 	}
