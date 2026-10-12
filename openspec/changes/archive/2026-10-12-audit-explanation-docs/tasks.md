@@ -9,4 +9,4 @@
 
 - [x] 2.1 Run the frozen site installation and build with no dead links.
 - [x] 2.2 Run the focused TestDocsContract check and retain the evidence.
-- [ ] 2.3 Run openspec archive audit-explanation-docs --yes.
+- [x] 2.3 Run openspec archive audit-explanation-docs --yes.

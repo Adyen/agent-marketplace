@@ -1,6 +1,6 @@
 # Shared configuration ownership
 
-Some harnesses keep hooks and MCP servers in one shared file instead of one file per resource. Devin uses `mcp_config.json`, Codex uses `.codex/hooks.json` and `.codex/config.toml`, and Gemini keeps MCP servers in `.gemini/settings.json`. You may have written entries in those files yourself. `agent-marketplace` adds and updates its own entries there, and it must never delete or overwrite yours. To tell the two apart, it keeps a record of the entries it wrote. The docs call that record [ownership state](../glossary.md#ownership-state).
+Some harnesses keep hooks and MCP servers in one shared file instead of one file per resource. Devin uses `mcp_config.json`, Codex uses `.codex/hooks.json` and `.codex/config.toml`, and Gemini keeps MCP servers in `.gemini/settings.json`. You may have written entries in those files yourself. `agent-marketplace` adds and updates its own entries there, and on its own it never deletes or overwrites yours; only an explicit repair, which asks first, can replace one. To tell the two apart, it keeps a record of the entries it wrote. The docs call that record [ownership state](../glossary.md#ownership-state).
 
 This page covers Devin, Codex, and Gemini MCP servers. Other harnesses mark managed entries inside the file instead; [native harness materialization](./native-harness-materialization.md#shared-configuration-files) explains the difference.
 

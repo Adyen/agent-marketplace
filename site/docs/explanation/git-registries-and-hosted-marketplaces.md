@@ -6,7 +6,7 @@
 
 A Git registry is any Git repository that holds resources in a supported harness layout. You give the CLI a URL, a [ref](../glossary.md#ref) (a branch, tag, or commit), and optionally a path inside the repository. The CLI resolves the ref to one exact [commit](../glossary.md#commit), records that commit in a [lockfile](../glossary.md#lockfile), and writes the resources from that commit into your harness folders.
 
-A Git registry needs nothing except Git. Access works through the SSH keys or HTTPS credentials you already use. The lockfile records the commit and a digest of every resource, so if someone rewrites the branch, a later `sync` still produces the same files.
+A Git registry needs nothing except Git. Access works through the SSH keys or HTTPS credentials you already use. The lockfile records the commit and a digest of every resource, so if someone rewrites the branch, a later `sync` still produces the same files while the recorded commit remains in the cache or fetchable from the server.
 
 A resource in a Git registry is identified by the registry URL, the ref, the path, its kind, and its name. It installs under its own name. When two registries offer the same kind and name, the CLI picks one winner by fixed rules and prints a warning; see [Scopes, selection, and precedence](./scopes-selection-and-precedence.md).
 
