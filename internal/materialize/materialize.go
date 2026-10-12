@@ -508,11 +508,16 @@ func Run(ctx context.Context, repoRoot string, resolved []resolver.ResolvedArtif
 
 	var previewResult *compilePhaseResult
 	if len(rc.impliedPreview) > 0 {
-		previewWork, previewOutputs, previewBlocked, _ := buildWorkItems(rc.impliedPreview, repoRoot)
+		previewWork, previewOutputs, previewBlocked, previewDiags := buildWorkItems(rc.impliedPreview, repoRoot)
 		if rc.scopeFilter != nil {
 			for key := range previewOutputs {
 				if key.machineScope != *rc.scopeFilter {
 					delete(previewOutputs, key)
+				}
+			}
+			for key := range previewBlocked {
+				if key.machineScope != *rc.scopeFilter {
+					delete(previewBlocked, key)
 				}
 			}
 			filtered := previewWork[:0]
@@ -523,7 +528,7 @@ func Run(ctx context.Context, repoRoot string, resolved []resolver.ResolvedArtif
 			}
 			previewWork = filtered
 		}
-		compiled := compileWorkItems(previewWork, nil, previewOutputs, previewBlocked, repoRoot)
+		compiled := compileWorkItems(previewWork, previewDiags, previewOutputs, previewBlocked, repoRoot)
 		previewResult = &compiled
 	}
 
@@ -1130,6 +1135,47 @@ func executeMaterializePlans(ctx context.Context, compileResult compilePhaseResu
 		Diags:            compileResult.allDiags,
 		BlockedResources: compileResult.blockedResources,
 	}
+	var previewWildcard map[outputKey]bool
+	var previewMergeErrs map[outputKey]error
+	if preview != nil {
+		report.Diags = append(report.Diags, preview.allDiags...)
+		report.BlockedResources = append(report.BlockedResources, preview.blockedResources...)
+		for _, tw := range preview.byTarget {
+			report.Diags = append(report.Diags, tw.diags...)
+		}
+		previewWildcard = make(map[outputKey]bool)
+		for key, components := range preview.blocked {
+			for component := range components {
+				compileResult.blocked.mark(key, component)
+			}
+			if components[blockedAllComponents] {
+				previewWildcard[key] = true
+			}
+		}
+		actualAggregates := compileResult.ownedAggregateState()
+		for _, blockedResource := range preview.blockedResources {
+			binding, hasBinding, bindingErr := materializeAdapterFor(blockedResource.Target)
+			if bindingErr != nil || !hasBinding {
+				continue
+			}
+			binding.handler.markIncomplete(actualAggregates, outputKey{target: blockedResource.Target, machineScope: blockedResource.MachineScope}, blockedResource.Kind)
+		}
+		previewMergeErrs = make(map[outputKey]error)
+		for key, tw := range preview.byTarget {
+			merged, mergeErr := artifact.MergeFragments(tw.artifacts)
+			if mergeErr != nil {
+				previewMergeErrs[key] = mergeErr
+				report.Diags = append(report.Diags, diag.Diagnostic{
+					Code:     "materialize.merge.error",
+					Severity: diag.SeverityError,
+					Target:   string(key.target),
+					Message:  fmt.Sprintf("merge preview fragments for target %s: %v", key.target, mergeErr),
+				})
+				continue
+			}
+			tw.artifacts = merged
+		}
+	}
 	coalescedGemini, err := coalesceGeminiNativeAggregates(&compileResult, repoRoot)
 	if err != nil {
 		slog.Error("shared Gemini destination refused", "code", diag.CodeMaterializeDestinationOverlap, "error", err)
@@ -1138,7 +1184,8 @@ func executeMaterializePlans(ctx context.Context, compileResult compilePhaseResu
 	}
 	if preview != nil {
 		if _, previewErr := coalesceGeminiNativeAggregates(preview, repoRoot); previewErr != nil {
-			preview = nil
+			report.Diags = append(report.Diags, diag.Diagnostic{Code: diag.CodeMaterializeDestinationOverlap, Severity: diag.SeverityError, Target: string(hcc.TargetGemini), Message: previewErr.Error()})
+			return report
 		}
 	}
 	coalescedCodexPartitions, preflightDiag := preflightCodexDestinations(&compileResult, repoRoot, modes)
@@ -1244,6 +1291,14 @@ func executeMaterializePlans(ctx context.Context, compileResult compilePhaseResu
 			// are left empty to avoid duplication across multiple plans.
 			report.Diags = append(report.Diags, targetDiags...)
 		}
+		if preview != nil {
+			if previewWildcard[key] {
+				continue
+			}
+			if _, failed := previewMergeErrs[key]; failed {
+				continue
+			}
+		}
 
 		boundaryHome := home
 		if boundaryHome == "" {
@@ -1335,11 +1390,7 @@ func previewArtifacts(key outputKey, preview *compilePhaseResult) []artifact.Art
 	if tw == nil {
 		return nil
 	}
-	merged, err := artifact.MergeFragments(tw.artifacts)
-	if err != nil {
-		return nil
-	}
-	return merged
+	return tw.artifacts
 }
 
 func previewKeepPaths(key outputKey, outDir string, preview *compilePhaseResult) map[string]bool {

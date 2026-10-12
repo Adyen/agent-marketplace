@@ -13,6 +13,7 @@ import (
 	"golang.org/x/sys/unix"
 
 	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 
@@ -827,5 +828,225 @@ func TestImpliedPreviewFileModePreservesBytesAndHonestReport(t *testing.T) {
 	}
 	if _, statErr := os.Lstat(filepath.Join(repo, ".devin", "skills", "zzstale")); !os.IsNotExist(statErr) {
 		t.Fatalf("unrelated stale output survived preview retention: %v", statErr)
+	}
+}
+
+// spec: materialization/preview-preservation-does-not-weaken-fail-closed-ownership-or-aggregate-handling
+func TestImpliedPreviewCompileRefusalRetainsOwnedCodexMCP(t *testing.T) {
+	for _, variant := range []struct {
+		name   string
+		dryRun bool
+	}{
+		{name: "live"},
+		{name: "dry-run", dryRun: true},
+	} {
+		t.Run(variant.name, func(t *testing.T) {
+			repo, home := devinEnv(t)
+			t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+			t.Setenv("CODEX_HOME", filepath.Join(home, ".codex"))
+			keep := requiredMCP("keep", false, hcc.TargetCodex)
+			report, err := Run(context.Background(), repo, []resolver.ResolvedArtifact{keep})
+			if err != nil || report == nil || hasErrorDiagnostics(report.Diags) {
+				t.Fatalf("seed=%#v err=%v", report, err)
+			}
+			path := filepath.Join(repo, ".codex", codexMCPFile)
+			before := readFileString(t, path)
+			proofFor := func(t *testing.T) ownership.Proof {
+				store, err := ownership.Open(filepath.Join(repo, ".codex"))
+				if err != nil {
+					t.Fatal(err)
+				}
+				proof, err := store.Proof(codexMCPFile)
+				if err != nil {
+					t.Fatal(err)
+				}
+				return proof
+			}
+			seedProof := proofFor(t)
+			keepID := ownership.EntryID{Kind: ownership.KindMcpServer, Container: codexMCPContainer, Key: "keep", IdentityDigest: ownership.Digest([]byte("keep"))}
+			seedEntry, ok := seedProof.Entry(keepID)
+			if !ok {
+				t.Fatal("seeded proof entry missing")
+			}
+
+			unsupported := ir.NewMcpServer("keep", "keep-binary", nil, nil, nil, ir.SourceRef{})
+			unsupported.OAuthClientID = "unsupported"
+			keep.Resource = unsupported
+			selected := cleanupLinkSkill("parent", false, hcc.TargetCodex)
+			opts := []RunOption{WithImpliedPreview([]resolver.ResolvedArtifact{keep})}
+			if variant.dryRun {
+				opts = append(opts, WithDryRun())
+			}
+			report, err = Run(context.Background(), repo, []resolver.ResolvedArtifact{selected}, opts...)
+			if err != nil {
+				t.Fatalf("Run error = %v", err)
+			}
+			if !hasDiagCode(report.Diags, diag.CodeMcpCodexSecurityUnsupported) {
+				t.Fatalf("preview compiler refusal hidden: %#v", report.Diags)
+			}
+			if got := readFileString(t, path); got != before {
+				t.Fatalf("preview compiler refusal changed owned MCP bytes\nbefore: %s\nafter: %s", before, got)
+			}
+			after := proofFor(t)
+			if after.Generation() != seedProof.Generation() {
+				t.Fatalf("proof generation changed under preview refusal: %d -> %d", seedProof.Generation(), after.Generation())
+			}
+			entry, ok := after.Entry(keepID)
+			if !ok || !reflect.DeepEqual(entry, seedEntry) {
+				t.Fatalf("owned proof entry changed under preview refusal: ok=%v\nbefore: %+v\nafter: %+v", ok, seedEntry, entry)
+			}
+		})
+	}
+}
+
+// spec: materialization/preview-preservation-does-not-weaken-fail-closed-ownership-or-aggregate-handling
+func TestImpliedPreviewCompileRefusalRetainsOwnedCodexHook(t *testing.T) {
+	repo, home := devinEnv(t)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+	t.Setenv("CODEX_HOME", filepath.Join(home, ".codex"))
+	hook := resolver.ResolvedArtifact{
+		Entry:     catalog.Entry{Kind: ir.KindHook, Name: "keep", Resource: ir.NewHookWithMatcher("keep", "PreToolUse", "Bash", "./keep", "command", nil, ir.SourceRef{})},
+		Source:    config.RepoCommitted,
+		Harnesses: []hcc.Target{hcc.TargetCodex},
+	}
+	sibling := cleanupLinkSkill("sibling", false, hcc.TargetCodex)
+	stale := cleanupLinkSkill("zzstale", false, hcc.TargetCodex)
+	report, err := Run(context.Background(), repo, []resolver.ResolvedArtifact{hook, sibling, stale})
+	if err != nil || report == nil || hasErrorDiagnostics(report.Diags) {
+		t.Fatalf("seed=%#v err=%v", report, err)
+	}
+	hookPath := filepath.Join(repo, ".codex", codexHooksFile)
+	before := readFileString(t, hookPath)
+
+	invalid := ir.NewHookWithMatcher("keep", "PreToolUse", "Bash", "./keep", "prompt", nil, ir.SourceRef{})
+	hook.Resource = invalid
+	report, err = Run(context.Background(), repo, []resolver.ResolvedArtifact{sibling}, WithImpliedPreview([]resolver.ResolvedArtifact{hook}))
+	if err != nil {
+		t.Fatalf("Run error = %v", err)
+	}
+	if !hasErrorDiagnostics(report.Diags) {
+		t.Fatalf("preview hook refusal hidden: %#v", report.Diags)
+	}
+	if got := readFileString(t, hookPath); got != before {
+		t.Fatalf("preview hook refusal changed owned hooks\nbefore: %s\nafter: %s", before, got)
+	}
+	if _, statErr := os.Lstat(filepath.Join(repo, ".agents", "skills", "sibling")); statErr != nil {
+		t.Fatalf("selected sibling not materialized beside preview refusal: %v", statErr)
+	}
+	if _, statErr := os.Lstat(filepath.Join(repo, ".agents", "skills", "zzstale")); !os.IsNotExist(statErr) {
+		t.Fatalf("unrelated stale output survived per-file suppression: %v", statErr)
+	}
+}
+
+// spec: materialization/preview-preservation-does-not-weaken-fail-closed-ownership-or-aggregate-handling
+func TestImpliedPreviewNilResourceBlocksWholeKey(t *testing.T) {
+	repo, home := devinEnv(t)
+	keep := previewSkill("keep", false)
+	staleMachine := cleanupLinkSkill("zzmachine", true, hcc.TargetDevin)
+	seedCleanupLinks(t, repo, keep, staleMachine)
+	keepPath := filepath.Join(repo, ".devin", "skills", "keep")
+	stalePath := filepath.Join(devinUserRoot(home), "skills", "zzmachine")
+	for _, path := range []string{keepPath, stalePath} {
+		if _, err := os.Lstat(path); err != nil {
+			t.Fatalf("positive seed missing at %s: %v", path, err)
+		}
+	}
+	nilPreview := cleanupLinkSkill("nilres", false, hcc.TargetDevin)
+	nilPreview.RequiredBy = []resolver.ResourceRef{{Kind: ir.KindSkill, Name: "parent"}}
+	nilPreview.Resource = nil
+	selected := cleanupLinkSkill("parent", false, hcc.TargetDevin)
+	report := runPreview(t, repo, []resolver.ResolvedArtifact{selected}, []resolver.ResolvedArtifact{keep, nilPreview})
+	if !hasDiagCode(report.Diags, "materialize.resource.nil") {
+		t.Fatalf("nil preview resource diagnostic missing: %#v", report.Diags)
+	}
+	if _, statErr := os.Lstat(keepPath); statErr != nil {
+		t.Fatalf("wildcard-blocked key lost retained output: %v", statErr)
+	}
+	if _, statErr := os.Lstat(stalePath); !os.IsNotExist(statErr) {
+		t.Fatalf("stale output in the other scope survived wildcard suppression: %v", statErr)
+	}
+}
+
+// spec: materialization/preview-preservation-does-not-weaken-fail-closed-ownership-or-aggregate-handling
+func TestImpliedPreviewNilResourceBlocksWholeKeyMachineScope(t *testing.T) {
+	repo, home := devinEnv(t)
+	staleMachine := cleanupLinkSkill("zzmachine", true, hcc.TargetDevin)
+	seedCleanupLinks(t, repo, staleMachine)
+	stalePath := filepath.Join(devinUserRoot(home), "skills", "zzmachine")
+	if _, err := os.Lstat(stalePath); err != nil {
+		t.Fatalf("positive machine seed missing at %s: %v", stalePath, err)
+	}
+	nilPreview := cleanupLinkSkill("nilres", false, hcc.TargetDevin)
+	nilPreview.RequiredBy = []resolver.ResourceRef{{Kind: ir.KindSkill, Name: "parent"}}
+	nilPreview.Resource = nil
+	selected := cleanupLinkSkill("parent", true, hcc.TargetDevin)
+	report := runPreview(t, repo, []resolver.ResolvedArtifact{selected}, []resolver.ResolvedArtifact{nilPreview}, WithMachineScopeOnly())
+	if !hasDiagCode(report.Diags, "materialize.resource.nil") {
+		t.Fatalf("nil preview resource diagnostic missing: %#v", report.Diags)
+	}
+	if _, statErr := os.Lstat(filepath.Join(devinUserRoot(home), "skills", "parent")); statErr != nil {
+		t.Fatalf("machine selection not materialized under repo-scoped preview failure: %v", statErr)
+	}
+	if _, statErr := os.Lstat(stalePath); !os.IsNotExist(statErr) {
+		t.Fatalf("repo preview failure blocked machine ordinary prune: %v", statErr)
+	}
+}
+
+// spec: materialization/preview-retention-does-not-suppress-unrelated-pruning
+func TestImpliedPreviewMergeErrorSkipsOnlyFailedKey(t *testing.T) {
+	repo, _ := devinEnv(t)
+	keep := requiredMCP("keep", false, hcc.TargetFactory)
+	report, err := Run(context.Background(), repo, []resolver.ResolvedArtifact{keep})
+	if err != nil || report == nil || hasErrorDiagnostics(report.Diags) {
+		t.Fatalf("seed=%#v err=%v", report, err)
+	}
+	mergePath := filepath.Join(repo, ".factory", "mcp.json")
+	before := readFileString(t, mergePath)
+
+	healthy := cleanupLinkSkill("healthy", false, hcc.TargetDevin)
+	work, allOutputs, blocked, diags := buildWorkItems([]resolver.ResolvedArtifact{healthy}, repo)
+	compiled := compileWorkItems(work, diags, allOutputs, blocked, repo)
+	factoryKey := outputKey{target: hcc.TargetFactory}
+	preview := &compilePhaseResult{
+		blocked:  blockedOutputs{},
+		byTarget: map[outputKey]*targetWork{},
+	}
+	preview.byTarget[factoryKey] = &targetWork{artifacts: []artifact.Artifact{
+		{Path: "mcp.json", Bytes: []byte(`{"mcpServers":{}}`), Fragment: true, FragmentKey: "json", FragmentOrderKey: "a"},
+		{Path: "mcp.json", Bytes: []byte(`{"mcpServers":{}}`), Fragment: true, FragmentKey: "json"},
+	}}
+	report = executeMaterializePlans(context.Background(), compiled, false, repo, config.DefaultMaterializationModes(), preview)
+	if !hasDiagCode(report.Diags, "materialize.merge.error") {
+		t.Fatalf("preview merge refusal missing: %#v", report.Diags)
+	}
+	if got := readFileString(t, mergePath); got != before {
+		t.Fatalf("preview merge failure mutated the failed key\nbefore: %s\nafter: %s", before, got)
+	}
+	if _, statErr := os.Lstat(filepath.Join(repo, ".devin", "skills", "healthy")); statErr != nil {
+		t.Fatalf("healthy sibling key did not proceed: %v", statErr)
+	}
+}
+
+// spec: materialization/preview-preservation-does-not-weaken-fail-closed-ownership-or-aggregate-handling
+func TestImpliedPreviewSharedGeminiCoalesceRefusesWithoutMutation(t *testing.T) {
+	home := configureSharedGeminiHome(t)
+	repo := home
+	healthy := cleanupLinkSkill("healthy", false, hcc.TargetDevin)
+	work, allOutputs, blocked, diags := buildWorkItems([]resolver.ResolvedArtifact{healthy}, repo)
+	compiled := compileWorkItems(work, diags, allOutputs, blocked, repo)
+	geminiKey := outputKey{target: hcc.TargetGemini}
+	preview := &compilePhaseResult{
+		allOutputs: map[outputKey]bool{geminiKey: true},
+		blocked:    blockedOutputs{},
+		byTarget: map[outputKey]*targetWork{
+			geminiKey: {artifacts: []artifact.Artifact{{Path: "gemini-extension.json", Bytes: []byte(`{"mcpServers":`)}}},
+		},
+	}
+	report := executeMaterializePlans(context.Background(), compiled, false, repo, config.DefaultMaterializationModes(), preview)
+	if !hasDiagCode(report.Diags, diag.CodeMaterializeDestinationOverlap) {
+		t.Fatalf("preview coalesce refusal missing: %#v", report.Diags)
+	}
+	if _, statErr := os.Lstat(filepath.Join(repo, ".devin", "skills", "healthy")); !os.IsNotExist(statErr) {
+		t.Fatalf("preview coalesce refusal still mutated: %v", statErr)
 	}
 }
