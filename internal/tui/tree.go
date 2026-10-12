@@ -6,7 +6,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/Adyen/agent-marketplace/internal/materialize"
+	"github.com/Adyen/agent-marketplace/internal/session"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 )
 
@@ -78,81 +78,38 @@ type flatItem struct {
 type statusBucket int
 
 const (
-	statusRequired statusBucket = iota
-	statusEnabled
-	statusPending
-	statusStale
-	statusBroken
-	statusAvailable
-	statusMalformed
+	statusRequired  statusBucket = statusBucket(session.GroupRequired)
+	statusEnabled   statusBucket = statusBucket(session.GroupEnabled)
+	statusPending   statusBucket = statusBucket(session.GroupPending)
+	statusStale     statusBucket = statusBucket(session.GroupStale)
+	statusBroken    statusBucket = statusBucket(session.GroupBroken)
+	statusAvailable statusBucket = statusBucket(session.GroupAvailable)
+	statusMalformed statusBucket = statusBucket(session.GroupMalformed)
 )
 
-func (s statusBucket) path() string {
-	switch s {
-	case statusRequired:
-		return "status:required"
-	case statusEnabled:
-		return "status:enabled"
-	case statusPending:
-		return "status:pending"
-	case statusStale:
-		return "status:stale"
-	case statusBroken:
-		return "status:broken"
-	case statusAvailable:
-		return "status:available"
-	case statusMalformed:
-		return "status:malformed"
+var statusBucketPaths = func() [7]string {
+	var paths [7]string
+	for _, group := range session.StatusGroups() {
+		paths[group] = "status:" + group.ID()
 	}
-	return "status:unknown"
+	return paths
+}()
+
+func (s statusBucket) path() string {
+	if s < 0 || s >= statusBucket(len(statusBucketPaths)) {
+		return "status:unknown"
+	}
+	return statusBucketPaths[s]
 }
 
 func (s statusBucket) title() string {
-	switch s {
-	case statusRequired:
-		return "Required"
-	case statusEnabled:
-		return "Enabled"
-	case statusPending:
-		return "Pending sync"
-	case statusStale:
-		return "Stale"
-	case statusBroken:
-		return "Broken"
-	case statusAvailable:
-		return "Available"
-	case statusMalformed:
-		return "Malformed"
-	}
-	return "?"
+	return session.StatusGroup(s).Title()
 }
 
 // classifyStatus assigns a row to a status bucket. Required wins over sync
 // status. Drift reasons map to pending/stale/broken.
 func classifyStatus(r row) statusBucket {
-	if r.IsMalformed {
-		return statusMalformed
-	}
-	if r.UnavailableReason != "" {
-		return statusBroken
-	}
-	if r.Artifact.Required {
-		return statusRequired
-	}
-	if r.IsAvailable {
-		return statusAvailable
-	}
-	if r.DriftItem != nil {
-		switch r.DriftItem.Reason {
-		case materialize.DriftMissing:
-			return statusPending
-		case materialize.DriftOrphaned:
-			return statusBroken
-		case materialize.DriftBroken:
-			return statusBroken
-		}
-	}
-	return statusEnabled
+	return statusBucket(r.StatusGroup())
 }
 
 // attentionBuckets is the pinned Needs attention membership: actionable
@@ -193,9 +150,9 @@ func groupByAxis(rows []row, axis groupingAxis, prefix string) []groupedSection 
 			b := classifyStatus(r)
 			byBucket[b] = append(byBucket[b], r)
 		}
-		order := []statusBucket{statusRequired, statusEnabled, statusPending, statusStale, statusBroken, statusAvailable, statusMalformed}
 		var out []groupedSection
-		for _, b := range order {
+		for _, group := range session.StatusGroups() {
+			b := statusBucket(group)
 			members := byBucket[b]
 			if len(members) == 0 {
 				continue

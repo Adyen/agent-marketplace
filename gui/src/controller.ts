@@ -26,6 +26,7 @@ export interface WorkspaceState {
   stage: string
   drift: string
   rows: Row[]
+  groups: Snapshot['groups']
   harnesses: string[]
   diagnostics: Diagnostic[]
   pendingChanges: number
@@ -37,39 +38,6 @@ export interface WorkspaceState {
   error: string | null
   configuration: Configuration | null
   latestVersion: string
-}
-
-export function groupKey(row: Row): string {
-  if (row.required) {
-    return 'required'
-  }
-  if (
-    row.status.startsWith('malformed') ||
-    row.status.startsWith('unavailable') ||
-    row.status === 'broken' ||
-    row.status === 'orphaned'
-  ) {
-    return 'attention'
-  }
-  if (row.checked) {
-    return 'enabled'
-  }
-  return 'available'
-}
-
-export const GROUP_ORDER = ['attention', 'required', 'enabled', 'available'] as const
-
-export function groupLabel(group: string): string {
-  switch (group) {
-    case 'attention':
-      return 'Needs attention'
-    case 'required':
-      return 'Required'
-    case 'enabled':
-      return 'Enabled'
-    default:
-      return 'Available'
-  }
 }
 
 const FATAL_DIAGNOSTIC_CATEGORIES = new Set(['config', 'catalog', 'resolution', 'materialization'])
@@ -92,6 +60,7 @@ export class WorkspaceController {
     stage: '',
     drift: 'pending',
     rows: [],
+    groups: [],
     harnesses: [],
     diagnostics: [],
     pendingChanges: 0,
@@ -384,6 +353,7 @@ export class WorkspaceController {
   private applySnapshotFields(snapshot: Snapshot): void {
     this.state.stage = snapshot.stage
     this.state.drift = snapshot.drift
+    this.state.groups = snapshot.groups
     this.state.harnesses = snapshot.harnesses
     this.state.diagnostics = snapshot.diagnostics
     this.state.pendingChanges = snapshot.pendingChanges ?? 0

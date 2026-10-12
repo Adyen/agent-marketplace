@@ -159,6 +159,17 @@ func TestLocalAPIUserHarness(t *testing.T) {
 		marketplace.failNextStatus(http.StatusInternalServerError)
 		bootstrap["marketplaceEndpoint"] = marketplace.endpoint
 	}
+	if fixture == "navigation" {
+		source := filepath.Join(home, "navigation-source")
+		for i := 0; i < 60; i++ {
+			name := fmt.Sprintf("skill-%03d", i)
+			body := fmt.Sprintf("---\nname: %s\ndescription: Navigation fixture %s\n---\n# %s\n", name, name, name)
+			writeFile(t, filepath.Join(source, name, "SKILL.md"), body)
+		}
+		writeFile(t, filepath.Join(home, ".agents", "config.yaml"),
+			"apiVersion: agent-marketplace/v4\nharnesses: [devin]\nsources:\n  navigation: {directory: "+source+"}\nresources:\n  navigation: {all: true}\n")
+		bootstrap["navigationSourceDir"] = source
+	}
 	lifecycle := session.RuntimeLifecycle()
 	if fixture == "held-sync" {
 		markerDir := t.TempDir()

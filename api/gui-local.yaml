@@ -361,9 +361,19 @@ components:
           format: uint64
         kind:
           $ref: '#/components/schemas/OperationKind'
+    StatusGroupID:
+      type: string
+      enum: [required, enabled, pending, stale, broken, available, malformed]
+    StatusGroup:
+      type: object
+      required: [id, title]
+      properties:
+        id:
+          $ref: '#/components/schemas/StatusGroupID'
+        title: { type: string }
     SnapshotRow:
       type: object
-      required: [id, name, kind, description, registry, scope, required, pendingVerification, checked, harnessOverride, harnesses, status]
+      required: [id, name, kind, description, registry, scope, required, pendingVerification, checked, harnessOverride, harnesses, status, group]
       properties:
         id:
           type: string
@@ -388,6 +398,8 @@ components:
           items: { type: string }
           description: Target harness IDs this row materializes into.
         status: { type: string }
+        group:
+          $ref: '#/components/schemas/StatusGroupID'
     Diagnostic:
       type: object
       required: [severity, category, code, message]
@@ -402,7 +414,7 @@ components:
         message: { type: string }
     Snapshot:
       type: object
-      required: [stage, drift, rows, diagnostics, harnesses, pendingChanges, migrationOffered, operation]
+      required: [stage, drift, rows, groups, diagnostics, harnesses, pendingChanges, migrationOffered, operation]
       properties:
         stage:
           $ref: '#/components/schemas/SnapshotStage'
@@ -412,6 +424,10 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/SnapshotRow'
+        groups:
+          type: array
+          items:
+            $ref: '#/components/schemas/StatusGroup'
         diagnostics:
           type: array
           items:

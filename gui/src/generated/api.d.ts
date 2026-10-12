@@ -429,6 +429,7 @@ export interface components {
         Snapshot: {
             diagnostics: components["schemas"]["Diagnostic"][];
             drift: components["schemas"]["DriftAssessment"];
+            groups: components["schemas"]["StatusGroup"][];
             /** @description Effective target harness IDs for the session. */
             harnesses: string[];
             /** @description Whether the accepted snapshot carries a pending legacy user-personal migration offer; scalar metadata only, never paths or prompt contents. */
@@ -457,6 +458,7 @@ export interface components {
             /** @description Whether the resource is enabled by any configuration scope, derived from row enablement metadata. */
             checked: boolean;
             description: string;
+            group: components["schemas"]["StatusGroupID"];
             /** @description Target harness IDs this row materializes into. */
             harnesses: string[];
             /** @description Whether the row carries a registry-level harness narrowing that differs from its layer default. */
@@ -493,6 +495,12 @@ export interface components {
         };
         /** @description Closed typed source form union; unknown, duplicate, or mistyped keys are rejected. */
         SourceInput: components["schemas"]["DirectorySourceInput"] | components["schemas"]["GitSourceInput"] | components["schemas"]["MarketplaceSourceInput"];
+        StatusGroup: {
+            id: components["schemas"]["StatusGroupID"];
+            title: string;
+        };
+        /** @enum {string} */
+        StatusGroupID: "required" | "enabled" | "pending" | "stale" | "broken" | "available" | "malformed";
     };
     responses: {
         /** @description API lifetime ended; code localapi.closed */

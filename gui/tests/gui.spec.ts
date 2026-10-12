@@ -81,13 +81,13 @@ test('built GUI drives the real user-scope core', async ({ page }) => {
       [bootstrap.credential] as const,
     )
     await page.goto(bootstrap.url, { waitUntil: 'domcontentloaded' })
-    await expect(page.getByText('skill/solo')).toBeVisible({ timeout: 60_000 })
+    await expect(page.getByRole('option').filter({ hasText: 'skill/solo' }).first()).toBeVisible({ timeout: 60_000 })
     await expect(page.getByRole('button', { name: 'Refresh' })).toBeEnabled()
     await expect(page.getByRole('button', { name: 'Sync' })).toBeEnabled()
 
     await page.getByRole('button', { name: 'Refresh' }).focus()
     await page.keyboard.press('Enter')
-    await expect(page.getByText('skill/solo')).toBeVisible()
+    await expect(page.getByRole('option').filter({ hasText: 'skill/solo' }).first()).toBeVisible()
 
     await expect(page.getByRole('button', { name: 'Sync' })).toBeEnabled()
     await page.getByRole('button', { name: 'Sync' }).focus()
@@ -136,7 +136,7 @@ test('built GUI saves Harness targets through the real user-scope core', async (
       [bootstrap.credential] as const,
     )
     await page.goto(bootstrap.url, { waitUntil: 'domcontentloaded' })
-    await expect(page.getByText('skill/solo')).toBeVisible({ timeout: 60_000 })
+    await expect(page.getByRole('option').filter({ hasText: 'skill/solo' }).first()).toBeVisible({ timeout: 60_000 })
 
     const before = await readFile(userConfigPath, 'utf8')
     expect(before).toBe(fixtureConfig('[devin, e2e-future-harness]'))

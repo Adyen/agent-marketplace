@@ -12,6 +12,7 @@ body {
 .workspace {
   display: flex;
   flex-direction: column;
+  height: 100vh;
   min-height: 100vh;
 }
 
@@ -48,6 +49,7 @@ body {
 }
 
 .workspace__actions button:focus-visible,
+.workspace__group-toggle:focus-visible,
 .workspace__row:focus-visible {
   outline: 2px solid var(--am-color-action-focus-ring);
   outline-offset: 1px;
@@ -69,10 +71,12 @@ body {
   display: grid;
   flex: 1;
   grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
+  min-height: 0;
 }
 
 .workspace__list {
   border-right: 1px solid var(--am-color-border-default);
+  min-height: 0;
   overflow-y: auto;
   padding: 0.5rem 1rem;
 }
@@ -84,6 +88,27 @@ body {
   letter-spacing: 0.04em;
   margin: 0.75rem 0 0.25rem;
   text-transform: uppercase;
+}
+
+.workspace__group-toggle {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  color: inherit;
+  cursor: pointer;
+  display: flex;
+  font: inherit;
+  justify-content: space-between;
+  letter-spacing: inherit;
+  padding: 0;
+  text-align: left;
+  text-transform: inherit;
+  width: 100%;
+}
+
+.workspace__group-toggle--selected {
+  background: var(--am-color-action-selection);
+  border-radius: 4px;
 }
 
 .workspace__list ul {
@@ -126,6 +151,7 @@ body {
 
 .workspace__detail {
   background: var(--am-color-bg-subtle);
+  min-height: 0;
   overflow-y: auto;
   padding: 0.5rem 1rem;
 }
