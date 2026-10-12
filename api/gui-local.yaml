@@ -223,6 +223,40 @@ paths:
                 $ref: '#/components/schemas/Error'
         '503':
           $ref: '#/components/responses/Closed'
+  /api/telemetry:
+    post:
+      operationId: recordTelemetryEvent
+      summary: Record one bounded GUI interaction event
+      description: |
+        Available only in user-scope mode. The tagged request is a closed
+        set of browse and sync-and-quit outcome events. Browse identifiers
+        are resolved against the current authoritative snapshot; no raw
+        Resource names, IDs, or client-provided attributes are exported.
+      security:
+        - launchToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GUIEvent'
+      responses:
+        '204':
+          description: Event accepted; no response body
+        '400':
+          description: Malformed, stale, ambiguous, or unsupported event, or unsupported session mode; code localapi.invalid_request or localapi.not_supported
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/OriginRejected'
+        '405':
+          $ref: '#/components/responses/MethodNotAllowed'
+        '503':
+          $ref: '#/components/responses/Closed'
   /api/release:
     post:
       operationId: readReleaseNotice
@@ -497,6 +531,41 @@ components:
         retentionPolicyURL:
           type: string
           description: Resolved telemetry retention policy URL for disclosure, or 'not configured'.
+    GUIEvent:
+      description: Closed GUI telemetry event union; unknown, duplicate, or mistyped keys are rejected.
+      oneOf:
+        - $ref: '#/components/schemas/GUIBrowseEvent'
+        - $ref: '#/components/schemas/GUIModalOutcomeEvent'
+      discriminator:
+        propertyName: action
+        mapping:
+          browse: '#/components/schemas/GUIBrowseEvent'
+          modal_outcome: '#/components/schemas/GUIModalOutcomeEvent'
+    GUIBrowseEvent:
+      type: object
+      required: [action, rowId]
+      additionalProperties: false
+      properties:
+        action:
+          type: string
+          enum: [browse]
+        rowId:
+          type: string
+          description: Opaque row identity from the current snapshot; the server resolves its Resource kind.
+    GUIModalOutcomeEvent:
+      type: object
+      required: [action, modal, outcome]
+      additionalProperties: false
+      properties:
+        action:
+          type: string
+          enum: [modal_outcome]
+        modal:
+          type: string
+          enum: [sync+quit]
+        outcome:
+          type: string
+          enum: [cancelled]
     ReleaseNotice:
       type: object
       required: [latestVersion]

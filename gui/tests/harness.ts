@@ -78,8 +78,9 @@ export async function startHarness(mode: HarnessMode, extraEnv: Record<string, s
   const dumpStderr = () => {
     const text = stderrText()
     if (text.trim() !== '') {
+      const directory = process.env.AM_WORK28_TELEMETRY_EVIDENCE_DIR ?? join(guiRoot, 'test-results')
       try {
-        writeFileSync(join(guiRoot, 'test-results', `harness-stderr-${child.pid}.log`), text)
+        writeFileSync(join(directory, `harness-stderr-${child.pid}.log`), text)
       } catch {
       }
     }

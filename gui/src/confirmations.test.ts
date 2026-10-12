@@ -199,6 +199,7 @@ describe('quit confirmation', () => {
     await tick()
     expect(onQuit).not.toHaveBeenCalled()
     expect(client.action).not.toHaveBeenCalled()
+    expect(client.telemetry).not.toHaveBeenCalled()
     expect(dialog()).toBeNull()
 
     await wrapper.find('button[aria-label="Quit"]').trigger('click')
@@ -207,6 +208,7 @@ describe('quit confirmation', () => {
     await tick()
     expect(onQuit).toHaveBeenCalledTimes(1)
     expect(client.action).not.toHaveBeenCalled()
+    expect(client.telemetry).not.toHaveBeenCalled()
   })
 
   // spec: session-interactions/confirmation-retains-all-user-choices
@@ -235,6 +237,43 @@ describe('quit confirmation', () => {
     } finally {
       window.runtime = previousRuntime
     }
+  })
+
+  // spec: gui-shell/gui-actions-use-existing-telemetry-policy
+  it('Escape dismissal records one cancellation when sync choices were offered', async () => {
+    const { client, wrapper, onQuit } = quitMount(1)
+    await tick()
+    await wrapper.find('button[aria-label="Quit"]').trigger('click')
+    await tick()
+    expect(dialogButton('Sync and quit')).toBeDefined()
+
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
+    await tick()
+
+    expect(dialog()).toBeNull()
+    expect(onQuit).not.toHaveBeenCalled()
+    expect(client.action).not.toHaveBeenCalled()
+    expect(client.telemetry).toHaveBeenCalledTimes(1)
+    expect(client.telemetry).toHaveBeenCalledWith({ action: 'modal_outcome', modal: 'sync+quit', outcome: 'cancelled' })
+  })
+
+  // spec: gui-shell/gui-actions-use-existing-telemetry-policy
+  it('tracks sync choices first offered while the quit dialog is open', async () => {
+    const { client, push, wrapper } = quitMount(0)
+    await tick()
+    await wrapper.find('button[aria-label="Quit"]').trigger('click')
+    await tick()
+    expect(dialogButton('Sync and quit')).toBeUndefined()
+
+    push(snapshotEvent(2, { pendingChanges: 1 }))
+    await tick()
+    expect(dialogButton('Sync and quit')).toBeDefined()
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
+    await tick()
+
+    expect(dialog()).toBeNull()
+    expect(client.telemetry).toHaveBeenCalledTimes(1)
+    expect(client.telemetry).toHaveBeenCalledWith({ action: 'modal_outcome', modal: 'sync+quit', outcome: 'cancelled' })
   })
 
   // spec: session-interactions/confirmation-retains-all-user-choices
@@ -290,6 +329,7 @@ describe('quit confirmation', () => {
     await tick()
     expect(onQuit).toHaveBeenCalledTimes(1)
     expect(controller.state.operation).toBeNull()
+    expect(client.telemetry).not.toHaveBeenCalled()
   })
 
   // spec: session-interactions/cancel-or-stale-completion
@@ -347,6 +387,8 @@ describe('quit confirmation', () => {
     await tick()
     expect(onQuit).toHaveBeenCalledTimes(1)
     expect(client.action).not.toHaveBeenCalled()
+    expect(client.telemetry).toHaveBeenCalledTimes(1)
+    expect(client.telemetry).toHaveBeenCalledWith({ action: 'modal_outcome', modal: 'sync+quit', outcome: 'cancelled' })
   })
 
   // spec: session-interactions/confirmation-retains-all-user-choices
@@ -431,12 +473,15 @@ describe('quit confirmation', () => {
     expect(cancel.disabled).toBe(false)
     cancel.click()
     await tick()
+    expect(client.telemetry).toHaveBeenCalledTimes(1)
+    expect(client.telemetry).toHaveBeenCalledWith({ action: 'modal_outcome', modal: 'sync+quit', outcome: 'cancelled' })
 
     resolveAction({ id: 9, kind: 'sync' })
     await tick()
     push(settledSnapshot(2, { id: 9, kind: 'sync' }, {}, 2))
     await tick()
     expect(onQuit).not.toHaveBeenCalled()
+    expect(client.telemetry).toHaveBeenCalledTimes(1)
   })
 
   // spec: session-interactions/confirmation-retains-all-user-choices
@@ -479,6 +524,7 @@ describe('quit confirmation', () => {
     await pending
     await tick()
     expect(onQuit).not.toHaveBeenCalled()
+    expect(client.telemetry).not.toHaveBeenCalled()
   })
 
   // spec: session-interactions/confirmation-retains-all-user-choices
@@ -498,11 +544,14 @@ describe('quit confirmation', () => {
     dialogButton('Quit without syncing')!.click()
     await tick()
     expect(onQuit).toHaveBeenCalledTimes(1)
+    expect(client.telemetry).toHaveBeenCalledTimes(1)
+    expect(client.telemetry).toHaveBeenCalledWith({ action: 'modal_outcome', modal: 'sync+quit', outcome: 'cancelled' })
 
     push(settledSnapshot(3, { id: 11, kind: 'sync' }, {}, 2))
     await tick()
     expect(onQuit).toHaveBeenCalledTimes(1)
     expect(client.action).not.toHaveBeenCalled()
+    expect(client.telemetry).toHaveBeenCalledTimes(1)
   })
 
   // spec: session-interactions/cancel-or-stale-completion

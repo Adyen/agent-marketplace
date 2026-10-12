@@ -99,6 +99,7 @@ export function fakeClient(options: { configuration?: Partial<Configuration> } =
     configuration: vi.fn(async () => configuration(options.configuration)),
     configure: vi.fn(async () => ({ id: 8, kind: 'targets' }) as OperationRef),
     release: vi.fn(async () => ({ latestVersion: '' })),
+    telemetry: vi.fn(async () => undefined),
   }
   const push = (e: SessionEvent) => {
     if (pending) {

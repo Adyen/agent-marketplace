@@ -143,6 +143,93 @@ describe('WorkspaceView', () => {
     expect(wrapper.findAll('[role="option"]')[1].attributes('aria-selected')).toBe('true')
   })
 
+  // spec: gui-shell/gui-actions-use-existing-telemetry-policy
+  it('reports one canonical browse event for each click, Enter, and Space activation', async () => {
+    const { client, push } = fakeClient()
+    const selected = row('solo')
+    const { wrapper } = mountWorkspace(client)
+    push(event({ sequence: 1, payload: snapshot([selected]) }))
+    await tick()
+
+    const option = wrapper.find('[role="option"]')
+    await option.trigger('click')
+    await option.trigger('keydown', { key: 'Enter' })
+    await option.trigger('keydown', { key: ' ' })
+    await tick()
+
+    expect(client.telemetry).toHaveBeenCalledTimes(3)
+    expect(client.telemetry).toHaveBeenNthCalledWith(1, { action: 'browse', rowId: selected.id })
+    expect(client.telemetry).toHaveBeenNthCalledWith(2, { action: 'browse', rowId: selected.id })
+    expect(client.telemetry).toHaveBeenNthCalledWith(3, { action: 'browse', rowId: selected.id })
+    expect(option.attributes('aria-selected')).toBe('true')
+  })
+
+  // spec: gui-shell/gui-actions-use-existing-telemetry-policy
+  it('reports arrow selection only when the Resource detail actually changes', async () => {
+    const { client, push } = fakeClient()
+    const first = row('first')
+    const second = row('second')
+    const { wrapper } = mountWorkspace(client)
+    push(event({ sequence: 1, payload: snapshot([first, second]) }))
+    await tick()
+
+    const options = wrapper.findAll('[role="option"]')
+    await options[0].trigger('click')
+    await options[0].trigger('keydown', { key: 'ArrowDown' })
+    await tick()
+    await wrapper.findAll('[role="option"]')[1].trigger('keydown', { key: 'ArrowDown' })
+    await tick()
+
+    expect(client.telemetry).toHaveBeenCalledTimes(2)
+    expect(client.telemetry).toHaveBeenNthCalledWith(1, { action: 'browse', rowId: first.id })
+    expect(client.telemetry).toHaveBeenNthCalledWith(2, { action: 'browse', rowId: second.id })
+    expect(wrapper.findAll('[role="option"]')[1].attributes('aria-selected')).toBe('true')
+  })
+
+  // spec: gui-shell/gui-actions-use-existing-telemetry-policy
+  it('keeps the view and selected Resource unchanged when browse telemetry fails', async () => {
+    const { client, push } = fakeClient()
+    client.telemetry = vi.fn(async () => {
+      throw new Error('telemetry unavailable')
+    })
+    const selected = row('solo')
+    const { controller, wrapper } = mountWorkspace(client)
+    push(event({ sequence: 1, payload: snapshot([selected]) }))
+    await tick()
+
+    await wrapper.find('[role="option"]').trigger('keydown', { key: 'Enter' })
+    await tick()
+
+    expect(client.telemetry).toHaveBeenCalledWith({ action: 'browse', rowId: selected.id })
+    expect(wrapper.find('[role="option"]').attributes('aria-selected')).toBe('true')
+    expect(wrapper.text()).toContain('skill/solo')
+    expect(controller.state.error).toBeNull()
+    expect(controller.state.requesting).toBe(false)
+    expect(controller.state.operation).toBeNull()
+  })
+
+  // spec: gui-shell/gui-actions-use-existing-telemetry-policy
+  it('leaves sync and update telemetry to the accepted local API action', async () => {
+    const { client, push } = fakeClient()
+    client.action = vi.fn(async (action: Parameters<Client['action']>[0]) => {
+      return action === 'update' ? ({ id: 8, kind: 'update' } as OperationRef) : ({ id: 7, kind: 'sync' } as OperationRef)
+    })
+    const { wrapper } = mountWorkspace(client)
+    push(event({ sequence: 1, payload: snapshot([row('solo')]) }))
+    await tick()
+
+    await wrapper.find('button[aria-label="Sync"]').trigger('click')
+    await tick()
+    push(event({ sequence: 2, generation: 2, payload: snapshot([row('solo')], { settledOperation: { id: 7, kind: 'sync' } }) }))
+    await tick()
+    await wrapper.find('button[aria-label="Update"]').trigger('click')
+    await tick()
+
+    expect(client.action).toHaveBeenNthCalledWith(1, 'sync')
+    expect(client.action).toHaveBeenNthCalledWith(2, 'update')
+    expect(client.telemetry).not.toHaveBeenCalled()
+  })
+
   it('shows generic running when no phase is observed and settles only on final', async () => {
     const { client, push } = fakeClient()
     const { controller, wrapper } = mountWorkspace(client)
