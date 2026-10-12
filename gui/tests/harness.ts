@@ -17,6 +17,7 @@ export interface Bootstrap {
   xdgState?: string
   xdgCache?: string
   addSourceDir?: string
+  navigationSourceDir?: string
   orgConfig?: string
   marketplaceEndpoint?: string
   gitSourceURL?: string

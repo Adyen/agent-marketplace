@@ -18,6 +18,15 @@ export function snapshot(rows: Row[] = [], overrides: Partial<Snapshot> = {}): S
     stage: 'final',
     drift: 'ready',
     rows,
+    groups: [
+      { id: 'required', title: 'Required' },
+      { id: 'enabled', title: 'Enabled' },
+      { id: 'pending', title: 'Pending sync' },
+      { id: 'stale', title: 'Stale' },
+      { id: 'broken', title: 'Broken' },
+      { id: 'available', title: 'Available' },
+      { id: 'malformed', title: 'Malformed' },
+    ],
     diagnostics: [],
     harnesses: ['devin'],
     pendingChanges: 0,
@@ -41,6 +50,7 @@ export function row(name: string, overrides: Partial<Row> = {}): Row {
     harnessOverride: false,
     harnesses: ['devin'],
     status: 'enabled',
+    group: 'enabled',
     ...overrides,
   }
 }

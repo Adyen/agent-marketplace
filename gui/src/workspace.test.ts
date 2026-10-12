@@ -23,19 +23,18 @@ describe('WorkspaceView', () => {
       event({
         sequence: 1,
         payload: snapshot([
-          row('needed', { required: true, status: 'required (org)', scope: 'organization', registry: 'corp' }),
-          row('on', {}),
-          row('off', { checked: false, scope: 'available', status: 'available' }),
-          row('narrow', { harnessOverride: true, harnesses: ['claude'] }),
-          row('broken', { checked: false, status: 'malformed: bad frontmatter' }),
+          row('needed', { group: 'required', required: true, status: 'required (org)', scope: 'organization', registry: 'corp' }),
+          row('on', { group: 'enabled' }),
+          row('off', { group: 'available', checked: false, scope: 'available', status: 'available' }),
+          row('narrow', { group: 'enabled', harnessOverride: true, harnesses: ['claude'] }),
+          row('broken', { group: 'malformed', checked: false, status: 'malformed: bad frontmatter' }),
         ]),
       }),
     )
     await tick()
 
-    const headings = wrapper.findAll('h2').map((h) => h.text())
-    expect(headings.indexOf('Required')).toBeLessThan(headings.indexOf('Enabled'))
-    expect(headings.indexOf('Enabled')).toBeLessThan(headings.indexOf('Available'))
+    const groups = wrapper.findAll('.workspace__group-toggle').map((button) => button.attributes('aria-label'))
+    expect(groups).toEqual(['Required', 'Enabled', 'Available', 'Malformed'])
 
     const text = wrapper.text()
     expect(text).toContain('corp/skill/needed')
@@ -114,54 +113,64 @@ describe('WorkspaceView', () => {
     expect(updated[1].attributes('aria-selected')).toBe('true')
   })
 
-  it('traverses the rendered group order and moves DOM focus on arrows', async () => {
+  // spec: session-navigation/status-grouped-resource-order-and-filtering
+  it('traverses visible section headers and rows on arrows', async () => {
     const { client, push } = fakeClient()
     const { wrapper } = mountWorkspace(client)
     push(
       event({
         sequence: 1,
-        payload: snapshot([row('avail', { checked: false, status: 'available' }), row('req', { required: true })]),
+        payload: snapshot([row('avail', { group: 'available', checked: false, status: 'available' }), row('req', { group: 'required', required: true, status: 'required' })]),
       }),
     )
     await tick()
 
-    const rendered = wrapper.findAll('[role="option"]')
-    expect(rendered.map((el) => el.text())).toEqual([
+    const options = wrapper.findAll('[role="option"]')
+    expect(options.map((el) => el.text())).toEqual([
       expect.stringContaining('skill/req'),
       expect.stringContaining('skill/avail'),
     ])
+    expect(options[0].attributes('aria-selected')).toBe('true')
 
-    await rendered[0].trigger('click')
-    await rendered[0].trigger('keydown', { key: 'ArrowDown' })
+    await options[0].trigger('keydown', { key: 'ArrowDown' })
     await tick()
-    const options = wrapper.findAll('[role="option"]')
-    expect(options[1].attributes('aria-selected')).toBe('true')
-    expect(document.activeElement).toBe(options[1].element)
+    const availableSection = wrapper.find('button[aria-label="Available"]')
+    expect(availableSection.attributes('aria-current')).toBe('true')
+    expect(document.activeElement).toBe(availableSection.element)
 
-    await options[1].trigger('keydown', { key: 'Enter' })
+    await availableSection.trigger('keydown', { key: 'ArrowDown' })
+    await tick()
+    const updatedOptions = wrapper.findAll('[role="option"]')
+    expect(updatedOptions[1].attributes('aria-selected')).toBe('true')
+    expect(document.activeElement).toBe(updatedOptions[1].element)
+
+    await updatedOptions[1].trigger('keydown', { key: 'Enter' })
     await tick()
     expect(wrapper.findAll('[role="option"]')[1].attributes('aria-selected')).toBe('true')
   })
 
   // spec: gui-shell/gui-actions-use-existing-telemetry-policy
-  it('reports one canonical browse event for each click, Enter, and Space activation', async () => {
+  it('reports browse once for each new selection across click, Enter, and Space', async () => {
     const { client, push } = fakeClient()
-    const selected = row('solo')
+    const first = row('first')
+    const second = row('second')
     const { wrapper } = mountWorkspace(client)
-    push(event({ sequence: 1, payload: snapshot([selected]) }))
+    push(event({ sequence: 1, payload: snapshot([first, second]) }))
     await tick()
 
-    const option = wrapper.find('[role="option"]')
-    await option.trigger('click')
-    await option.trigger('keydown', { key: 'Enter' })
-    await option.trigger('keydown', { key: ' ' })
+    const options = wrapper.findAll('[role="option"]')
+    expect(options[0].attributes('aria-selected')).toBe('true')
+    await options[1].trigger('click')
+    await options[0].trigger('keydown', { key: 'Enter' })
+    await options[1].trigger('keydown', { key: ' ' })
+    await options[1].trigger('click')
     await tick()
 
     expect(client.telemetry).toHaveBeenCalledTimes(3)
-    expect(client.telemetry).toHaveBeenNthCalledWith(1, { action: 'browse', rowId: selected.id })
-    expect(client.telemetry).toHaveBeenNthCalledWith(2, { action: 'browse', rowId: selected.id })
-    expect(client.telemetry).toHaveBeenNthCalledWith(3, { action: 'browse', rowId: selected.id })
-    expect(option.attributes('aria-selected')).toBe('true')
+    expect(client.telemetry).toHaveBeenNthCalledWith(1, { action: 'browse', rowId: second.id })
+    expect(client.telemetry).toHaveBeenNthCalledWith(2, { action: 'browse', rowId: first.id })
+    expect(client.telemetry).toHaveBeenNthCalledWith(3, { action: 'browse', rowId: second.id })
+    expect(options[1].attributes('aria-selected')).toBe('true')
   })
 
   // spec: gui-shell/gui-actions-use-existing-telemetry-policy
@@ -174,15 +183,15 @@ describe('WorkspaceView', () => {
     await tick()
 
     const options = wrapper.findAll('[role="option"]')
+    expect(options[0].attributes('aria-selected')).toBe('true')
     await options[0].trigger('click')
     await options[0].trigger('keydown', { key: 'ArrowDown' })
     await tick()
     await wrapper.findAll('[role="option"]')[1].trigger('keydown', { key: 'ArrowDown' })
     await tick()
 
-    expect(client.telemetry).toHaveBeenCalledTimes(2)
-    expect(client.telemetry).toHaveBeenNthCalledWith(1, { action: 'browse', rowId: first.id })
-    expect(client.telemetry).toHaveBeenNthCalledWith(2, { action: 'browse', rowId: second.id })
+    expect(client.telemetry).toHaveBeenCalledTimes(1)
+    expect(client.telemetry).toHaveBeenCalledWith({ action: 'browse', rowId: second.id })
     expect(wrapper.findAll('[role="option"]')[1].attributes('aria-selected')).toBe('true')
   })
 
@@ -192,16 +201,17 @@ describe('WorkspaceView', () => {
     client.telemetry = vi.fn(async () => {
       throw new Error('telemetry unavailable')
     })
+    const first = row('first')
     const selected = row('solo')
     const { controller, wrapper } = mountWorkspace(client)
-    push(event({ sequence: 1, payload: snapshot([selected]) }))
+    push(event({ sequence: 1, payload: snapshot([first, selected]) }))
     await tick()
 
-    await wrapper.find('[role="option"]').trigger('keydown', { key: 'Enter' })
+    await wrapper.findAll('[role="option"]')[1].trigger('keydown', { key: 'Enter' })
     await tick()
 
     expect(client.telemetry).toHaveBeenCalledWith({ action: 'browse', rowId: selected.id })
-    expect(wrapper.find('[role="option"]').attributes('aria-selected')).toBe('true')
+    expect(wrapper.findAll('[role="option"]')[1].attributes('aria-selected')).toBe('true')
     expect(wrapper.text()).toContain('skill/solo')
     expect(controller.state.error).toBeNull()
     expect(controller.state.requesting).toBe(false)

@@ -2,16 +2,25 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
 import { createClient } from './api/client'
 import { closeRequestEvent, launchRequestEvent, nativeQuit, resolveBootstrap } from './bootstrap'
-import { eligible, GROUP_ORDER, WorkspaceController, groupKey, groupLabel, type Row } from './controller'
+import { eligible, WorkspaceController, type Row, type WorkspaceState } from './controller'
 import Confirmations from './Confirmations.vue'
 import FirstRun from './FirstRun.vue'
 import HarnessSettings from './HarnessSettings.vue'
 import SourcesSettings from './SourcesSettings.vue'
 
+type GroupMetadata = WorkspaceState['groups'][number]
+type GroupView = GroupMetadata & { rows: Row[]; collapsed: boolean }
+type VisibleEntry =
+  | { key: string; kind: 'section'; elementId: string }
+  | { key: string; kind: 'row'; elementId: string; row: Row }
+type ViewportAnchor = { key: string; top: number }
+
 const props = defineProps<{ controller?: WorkspaceController }>()
 
 const state = shallowRef<WorkspaceController | null>(props.controller ?? null)
-const selectedId = ref<string | null>(null)
+const selectedKey = ref<string | null>(null)
+const foldedGroups = ref<Record<string, boolean>>({})
+const listRoot = ref<HTMLElement | null>(null)
 const error = ref<string | null>(null)
 const settingsOpen = ref(false)
 const settingsButton = ref<HTMLButtonElement | null>(null)
@@ -111,46 +120,192 @@ onBeforeUnmount(() => {
 
 const view = computed(() => state.value?.state)
 
-const groups = computed(() => {
-  const rows = view.value?.rows ?? []
-  const byGroup = new Map<string, Row[]>()
-  for (const row of rows) {
-    const key = groupKey(row)
-    const list = byGroup.get(key) ?? []
-    list.push(row)
-    byGroup.set(key, list)
+function compareRows(left: Row, right: Row): number {
+  if (left.name < right.name) {
+    return -1
   }
-  return GROUP_ORDER.filter((key) => byGroup.has(key)).map((key) => ({
-    key,
-    label: groupLabel(key),
-    rows: byGroup.get(key) ?? [],
-  }))
+  if (left.name > right.name) {
+    return 1
+  }
+  if (left.id < right.id) {
+    return -1
+  }
+  if (left.id > right.id) {
+    return 1
+  }
+  return 0
+}
+
+function rowKey(id: string): string {
+  return `row:${id}`
+}
+
+function sectionKey(id: string): string {
+  return `section:${id}`
+}
+
+function rowElementId(id: string): string {
+  return `row-${id}`
+}
+
+function sectionElementId(id: string): string {
+  return `section-${id}`
+}
+
+const groups = computed<GroupView[]>(() => {
+  const rowsByGroup = new Map<string, Row[]>()
+  for (const row of view.value?.rows ?? []) {
+    const groupRows = rowsByGroup.get(row.group) ?? []
+    groupRows.push(row)
+    rowsByGroup.set(row.group, groupRows)
+  }
+  return (view.value?.groups ?? []).flatMap((group) => {
+    const rows = (rowsByGroup.get(group.id) ?? []).slice().sort(compareRows)
+    if (rows.length === 0) {
+      return []
+    }
+    return [{ ...group, rows, collapsed: foldedGroups.value[group.id] === true }]
+  })
 })
 
-const orderedRows = computed(() => groups.value.flatMap((group) => group.rows))
+const visibleEntries = computed<VisibleEntry[]>(() => {
+  const entries: VisibleEntry[] = []
+  for (const group of groups.value) {
+    entries.push({ key: sectionKey(group.id), kind: 'section', elementId: sectionElementId(group.id) })
+    if (!group.collapsed) {
+      for (const row of group.rows) {
+        entries.push({ key: rowKey(row.id), kind: 'row', elementId: rowElementId(row.id), row })
+      }
+    }
+  }
+  return entries
+})
 
-const selected = computed(() => (view.value?.rows ?? []).find((row) => row.id === selectedId.value) ?? null)
+const selected = computed(() => {
+  const key = selectedKey.value
+  if (key == null || !key.startsWith('row:')) {
+    return null
+  }
+  const rowID = key.slice('row:'.length)
+  return (view.value?.rows ?? []).find((row) => row.id === rowID) ?? null
+})
+
+function nextSelectionKey(currentKey: string | null, previous: VisibleEntry[], next: VisibleEntry[]): string | null {
+  const nextKeys = new Set(next.map((entry) => entry.key))
+  if (currentKey == null) {
+    return next.find((entry) => entry.kind === 'row')?.key ?? null
+  }
+  if (nextKeys.has(currentKey)) {
+    return currentKey
+  }
+
+  const previousIndex = previous.findIndex((entry) => entry.key === currentKey)
+  if (previousIndex >= 0) {
+    const rowSelection = currentKey.startsWith('row:')
+    for (let index = previousIndex + 1; index < previous.length; index++) {
+      const candidate = previous[index]
+      if (nextKeys.has(candidate.key) && (!rowSelection || candidate.kind === 'row')) {
+        return candidate.key
+      }
+    }
+    for (let index = previousIndex - 1; index >= 0; index--) {
+      const candidate = previous[index]
+      if (nextKeys.has(candidate.key) && (!rowSelection || candidate.kind === 'row')) {
+        return candidate.key
+      }
+    }
+  }
+  return next.find((entry) => entry.kind === 'row')?.key ?? next[0]?.key ?? null
+}
+
+let previousVisibleEntries: VisibleEntry[] = []
+let hasAcceptedSnapshot = false
+
+watch(
+  visibleEntries,
+  (entries) => {
+    previousVisibleEntries = entries
+  },
+  { flush: 'post' },
+)
+
+watch(
+  [() => view.value?.rows, () => view.value?.stage],
+  ([rows, stage], previous) => {
+    if (rows == null || stage == null) {
+      return
+    }
+    const entries = visibleEntries.value
+    const nextKey = nextSelectionKey(selectedKey.value, previousVisibleEntries, entries)
+    const acceptedReplacement = stage === 'final' && hasAcceptedSnapshot && rows !== previous?.[0]
+    let anchor: ViewportAnchor | null = null
+    if (acceptedReplacement && nextKey != null) {
+      const previousEntry = previousVisibleEntries.find((entry) => entry.key === nextKey)
+      const root = listRoot.value
+      const element = previousEntry == null ? null : document.getElementById(previousEntry.elementId)
+      if (root != null && element != null) {
+        anchor = {
+          key: nextKey,
+          top: element.getBoundingClientRect().top - root.getBoundingClientRect().top,
+        }
+      }
+    }
+    selectedKey.value = nextKey
+    if (stage === 'final') {
+      hasAcceptedSnapshot = true
+    }
+    if (anchor != null) {
+      const currentAnchor = anchor
+      void nextTick(() => {
+        const root = listRoot.value
+        const entry = visibleEntries.value.find((candidate) => candidate.key === currentAnchor.key)
+        const element = entry == null ? null : document.getElementById(entry.elementId)
+        if (root == null || element == null) {
+          return
+        }
+        const top = element.getBoundingClientRect().top - root.getBoundingClientRect().top
+        root.scrollTop += top - currentAnchor.top
+      })
+    }
+  },
+  { flush: 'pre' },
+)
 
 function select(row: Row) {
-  selectedId.value = row.id
+  const key = rowKey(row.id)
+  if (selectedKey.value === key) {
+    return
+  }
+  selectedKey.value = key
   state.value?.browse(row)
 }
 
+function toggleGroup(groupID: string) {
+  foldedGroups.value = { ...foldedGroups.value, [groupID]: !foldedGroups.value[groupID] }
+  selectedKey.value = sectionKey(groupID)
+}
+
 async function moveSelection(direction: 1 | -1) {
-  const rows = orderedRows.value
-  if (rows.length === 0) {
+  const entries = visibleEntries.value
+  if (entries.length === 0) {
     return
   }
-  const index = rows.findIndex((row) => row.id === selectedId.value)
-  const next = index === -1 ? 0 : Math.min(rows.length - 1, Math.max(0, index + direction))
-  const row = rows[next]
-  const changed = selectedId.value !== row.id
-  selectedId.value = row.id
-  if (changed) {
-    state.value?.browse(row)
+  const index = entries.findIndex((entry) => entry.key === selectedKey.value)
+  const nextIndex = index === -1 ? (direction > 0 ? 0 : entries.length - 1) : Math.min(entries.length - 1, Math.max(0, index + direction))
+  const next = entries[nextIndex]
+  const changed = selectedKey.value !== next.key
+  selectedKey.value = next.key
+  if (changed && next.kind === 'row') {
+    state.value?.browse(next.row)
   }
-  await nextTick()
-  document.getElementById(`row-${row.id}`)?.focus()
+  if (changed) {
+    await nextTick()
+    const element = document.getElementById(next.elementId)
+    element?.focus()
+    if (element != null && typeof element.scrollIntoView === 'function') {
+      element.scrollIntoView({ block: 'nearest' })
+    }
+  }
 }
 
 const busy = computed(() => view.value == null || view.value.operation != null || view.value.requesting)
@@ -212,25 +367,41 @@ async function run(action: 'sync' | 'update') {
     </p>
 
     <div class="workspace__panes">
-      <section aria-label="Resources" class="workspace__list">
+      <section ref="listRoot" aria-label="Resources" class="workspace__list">
         <div
           v-for="group in groups"
-          :key="group.key"
+          :key="group.id"
           class="workspace__group"
         >
-          <h2>{{ group.label }}</h2>
-          <ul role="listbox" aria-label="Resources">
+          <h2>
+            <button
+              :id="sectionElementId(group.id)"
+              type="button"
+              :class="{ 'workspace__group-toggle--selected': selectedKey === sectionKey(group.id) }"
+              class="workspace__group-toggle"
+              :aria-label="group.title"
+              :aria-expanded="!group.collapsed"
+              :aria-current="selectedKey === sectionKey(group.id) ? 'true' : undefined"
+              @click="toggleGroup(group.id)"
+              @keydown.down.prevent="moveSelection(1)"
+              @keydown.up.prevent="moveSelection(-1)"
+            >
+              <span>{{ group.title }}</span>
+              <span aria-hidden="true">{{ group.collapsed ? '▸' : '▾' }}</span>
+            </button>
+          </h2>
+          <ul v-if="!group.collapsed" role="listbox" :aria-label="'Resources: ' + group.title">
             <li
               v-for="row in group.rows"
-              :id="`row-${row.id}`"
+              :id="rowElementId(row.id)"
               :key="row.id"
               role="option"
               tabindex="0"
-              :aria-selected="selectedId === row.id"
-              :class="{ 'workspace__row--selected': selectedId === row.id }"
+              :aria-selected="selectedKey === rowKey(row.id)"
+              :class="{ 'workspace__row--selected': selectedKey === rowKey(row.id) }"
               class="workspace__row"
               @click="select(row)"
-              @keydown.enter="select(row)"
+              @keydown.enter.prevent="select(row)"
               @keydown.space.prevent="select(row)"
               @keydown.down.prevent="moveSelection(1)"
               @keydown.up.prevent="moveSelection(-1)"

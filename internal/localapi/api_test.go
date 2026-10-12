@@ -22,6 +22,7 @@ import (
 
 	"github.com/Adyen/agent-marketplace/internal/catalog"
 	"github.com/Adyen/agent-marketplace/internal/config"
+	"github.com/Adyen/agent-marketplace/internal/materialize"
 	"github.com/Adyen/agent-marketplace/internal/pipeline"
 	"github.com/Adyen/agent-marketplace/internal/resolver"
 	"github.com/Adyen/agent-marketplace/internal/session"
@@ -1319,6 +1320,85 @@ func TestRowIDsBoundToRegistryIdentityAndStable(t *testing.T) {
 	if other := rowPresentation(scoped); other.ID == first.ID {
 		t.Fatalf("row ID %q ignores scope identity", first.ID)
 	}
+}
+
+func TestSnapshotStatusGroupPresentation(t *testing.T) {
+	api := &API{}
+	rows := []session.Row{
+		{Artifact: resolver.ResolvedArtifact{Entry: catalog.Entry{Kind: ir.KindSkill, Name: "required"}}},
+		{Artifact: resolver.ResolvedArtifact{Entry: catalog.Entry{Kind: ir.KindSkill, Name: "enabled"}}, EnabledProject: true},
+		{Artifact: resolver.ResolvedArtifact{Entry: catalog.Entry{Kind: ir.KindSkill, Name: "pending"}}, DriftItem: &materialize.DriftItem{Reason: materialize.DriftMissing}},
+		{Artifact: resolver.ResolvedArtifact{Entry: catalog.Entry{Kind: ir.KindSkill, Name: "orphaned"}}, DriftItem: &materialize.DriftItem{Reason: materialize.DriftOrphaned}},
+		{Artifact: resolver.ResolvedArtifact{Entry: catalog.Entry{Kind: ir.KindSkill, Name: "broken"}}, UnavailableReason: "catalog unavailable"},
+		{Artifact: resolver.ResolvedArtifact{Entry: catalog.Entry{Kind: ir.KindSkill, Name: "available"}}, IsAvailable: true},
+		{Artifact: resolver.ResolvedArtifact{Entry: catalog.Entry{Kind: ir.KindSkill, Name: "malformed"}}, IsMalformed: true},
+	}
+	rows[0].Artifact.Required = true
+
+	wantGroups := []struct {
+		id    string
+		title string
+	}{
+		{"required", "Required"},
+		{"enabled", "Enabled"},
+		{"pending", "Pending sync"},
+		{"stale", "Stale"},
+		{"broken", "Broken"},
+		{"available", "Available"},
+		{"malformed", "Malformed"},
+	}
+	type rowExpectation struct {
+		name  string
+		group string
+	}
+	wantRows := []rowExpectation{
+		{"required", "required"},
+		{"enabled", "enabled"},
+		{"pending", "pending"},
+		{"orphaned", "broken"},
+		{"broken", "broken"},
+		{"available", "available"},
+		{"malformed", "malformed"},
+	}
+	check := func(snapshot session.Snapshot, expectedRows []rowExpectation) {
+		t.Helper()
+		body, err := json.Marshal(api.snapshotPresentationLocked(snapshot, nil))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var got struct {
+			Groups []struct {
+				ID    string `json:"id"`
+				Title string `json:"title"`
+			} `json:"groups"`
+			Rows []struct {
+				Name  string `json:"name"`
+				Group string `json:"group"`
+			} `json:"rows"`
+		}
+		if err := json.Unmarshal(body, &got); err != nil {
+			t.Fatal(err)
+		}
+		if len(got.Groups) != len(wantGroups) {
+			t.Fatalf("groups = %v, want all %d status groups", got.Groups, len(wantGroups))
+		}
+		for i, want := range wantGroups {
+			if got.Groups[i].ID != want.id || got.Groups[i].Title != want.title {
+				t.Fatalf("groups[%d] = %+v, want id=%q title=%q", i, got.Groups[i], want.id, want.title)
+			}
+		}
+		if len(got.Rows) != len(expectedRows) {
+			t.Fatalf("rows = %v, want %d rows", got.Rows, len(expectedRows))
+		}
+		for i, want := range expectedRows {
+			if got.Rows[i].Name != want.name || got.Rows[i].Group != want.group {
+				t.Fatalf("rows[%d] = %+v, want name=%q group=%q", i, got.Rows[i], want.name, want.group)
+			}
+		}
+	}
+
+	check(session.Snapshot{Stage: session.SnapshotStageFinal, DriftAssessment: session.DriftReady, Rows: rows}, wantRows)
+	check(session.Snapshot{Stage: session.SnapshotStageFinal, DriftAssessment: session.DriftFailed}, nil)
 }
 
 // spec: gui-local-api/event-identity-preserves-order-and-generation

@@ -43,7 +43,7 @@ async function startTelemetryHarness(testInfo: TestInfo, mode: 'detailed' | 'bas
   const capturePath = artifactPath(testInfo, `telemetry-${mode}.json`)
   await mkdir(dirname(capturePath), { recursive: true })
   const harness = await startHarness('user', {
-    AM_LOCALAPI_USER_FIXTURE: 'telemetry',
+    AM_LOCALAPI_USER_FIXTURE: 'navigation',
     AM_LOCALAPI_TELEMETRY_MODE: mode,
     AM_LOCALAPI_TELEMETRY_CAPTURE: capturePath,
     AM_LOCALAPI_RELEASE_MARK: '',
@@ -77,7 +77,7 @@ test('built GUI sends canonical detailed browse, sync, and sync-choice cancellat
 
   try {
     await launchBuiltUserApp(page, bootstrap)
-    await expect(page.getByText('skill/solo')).toBeVisible({ timeout: 60_000 })
+    await expect(page.getByRole('option').filter({ hasText: 'skill/skill-000' }).first()).toBeVisible({ timeout: 60_000 })
 
     const quit = page.getByRole('button', { name: 'Quit', exact: true })
     await quit.press('Enter')
@@ -89,11 +89,11 @@ test('built GUI sends canonical detailed browse, sync, and sync-choice cancellat
     expect((await cancelResponse).status()).toBe(204)
     await expect(dialog).not.toBeVisible()
 
-    const resource = page.getByRole('option').filter({ hasText: 'skill/solo' })
+    const resource = page.getByRole('option').filter({ hasText: 'skill/skill-001' })
     const browseResponse = page.waitForResponse((response) => response.request().method() === 'POST' && new URL(response.url()).pathname === '/api/telemetry')
     await resource.press('Enter')
     expect((await browseResponse).status()).toBe(204)
-    await expect(page.getByRole('complementary', { name: 'Detail' }).getByRole('heading').first()).toContainText('skill/solo')
+    await expect(page.getByRole('complementary', { name: 'Detail' }).getByRole('heading').first()).toContainText('skill/skill-001')
 
     const actionResponse = page.waitForResponse((response) => response.request().method() === 'POST' && new URL(response.url()).pathname === '/api/actions')
     await page.getByRole('button', { name: 'Sync', exact: true }).press('Enter')
@@ -157,9 +157,9 @@ for (const mode of ['basic', 'off'] as const) {
     const events = observeTelemetryRequests(page)
     try {
       await launchBuiltUserApp(page, bootstrap)
-      await expect(page.getByText('skill/solo')).toBeVisible({ timeout: 60_000 })
+      await expect(page.getByRole('option').filter({ hasText: 'skill/skill-000' }).first()).toBeVisible({ timeout: 60_000 })
       const response = page.waitForResponse((candidate) => candidate.request().method() === 'POST' && new URL(candidate.url()).pathname === '/api/telemetry')
-      await page.getByRole('option').filter({ hasText: 'skill/solo' }).press('Enter')
+      await page.getByRole('option').filter({ hasText: 'skill/skill-001' }).press('Enter')
       expect((await response).status()).toBe(204)
       expect(events.count()).toBe(1)
       await page.screenshot({ path: artifactPath(testInfo, `telemetry-${mode}-browse.png`), fullPage: true, animations: 'disabled' })

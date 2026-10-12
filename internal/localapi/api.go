@@ -55,6 +55,7 @@ type rowDTO struct {
 	HarnessOverride     bool     `json:"harnessOverride"`
 	Harnesses           []string `json:"harnesses"`
 	Status              string   `json:"status"`
+	Group               string   `json:"group"`
 }
 
 type diagnosticDTO struct {
@@ -64,16 +65,31 @@ type diagnosticDTO struct {
 	Message  string `json:"message"`
 }
 
+type statusGroupDTO struct {
+	ID    string `json:"id"`
+	Title string `json:"title"`
+}
+
 type snapshotDTO struct {
-	Stage            string          `json:"stage"`
-	Drift            string          `json:"drift"`
-	Rows             []rowDTO        `json:"rows"`
-	Diagnostics      []diagnosticDTO `json:"diagnostics"`
-	Harnesses        []string        `json:"harnesses"`
-	PendingChanges   int             `json:"pendingChanges"`
-	MigrationOffered bool            `json:"migrationOffered"`
-	Operation        *operationRef   `json:"operation"`
-	SettledOperation *operationRef   `json:"settledOperation,omitempty"`
+	Stage            string           `json:"stage"`
+	Drift            string           `json:"drift"`
+	Rows             []rowDTO         `json:"rows"`
+	Groups           []statusGroupDTO `json:"groups"`
+	Diagnostics      []diagnosticDTO  `json:"diagnostics"`
+	Harnesses        []string         `json:"harnesses"`
+	PendingChanges   int              `json:"pendingChanges"`
+	MigrationOffered bool             `json:"migrationOffered"`
+	Operation        *operationRef    `json:"operation"`
+	SettledOperation *operationRef    `json:"settledOperation,omitempty"`
+}
+
+func statusGroupMetadata() []statusGroupDTO {
+	groups := session.StatusGroups()
+	metadata := make([]statusGroupDTO, 0, len(groups))
+	for _, group := range groups {
+		metadata = append(metadata, statusGroupDTO{ID: group.ID(), Title: group.Title()})
+	}
+	return metadata
 }
 
 type sessionEvent struct {
@@ -487,6 +503,7 @@ func (a *API) snapshotPresentationLocked(snapshot session.Snapshot, op *operatio
 		Stage:            stage,
 		Drift:            drift,
 		Rows:             []rowDTO{},
+		Groups:           statusGroupMetadata(),
 		Diagnostics:      []diagnosticDTO{},
 		Harnesses:        []string{},
 		PendingChanges:   snapshot.DriftReport.PendingCount(),
@@ -573,6 +590,7 @@ func rowPresentation(row session.Row) rowDTO {
 		HarnessOverride:     row.HarnessSource == "registry override",
 		Harnesses:           harnesses,
 		Status:              row.StatusText(),
+		Group:               row.StatusGroup().ID(),
 	}
 }
 

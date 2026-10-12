@@ -106,7 +106,7 @@ test('built GUI declines the legacy migration offer with Leave unchanged and Can
     await expect(migration).not.toBeVisible()
     expect(actionBodies).toHaveLength(0)
     expect((await readFile(userConfigPath)).equals(configBefore)).toBe(true)
-    await expect(page.getByText('skill/solo')).toBeVisible()
+    await expect(page.getByRole('option').filter({ hasText: 'skill/solo' }).first()).toBeVisible()
 
     await page.reload({ waitUntil: 'domcontentloaded' })
     await expect(migration).toBeVisible({ timeout: 60_000 })
@@ -116,7 +116,7 @@ test('built GUI declines the legacy migration offer with Leave unchanged and Can
     expect((await readFile(userConfigPath)).equals(configBefore)).toBe(true)
     expect((await readFile(repoConfigPath)).equals(repoConfigBefore)).toBe(true)
     expect((await readFile(repoLocalPath)).equals(repoLocalBefore)).toBe(true)
-    await expect(page.getByText('skill/solo')).toBeVisible()
+    await expect(page.getByRole('option').filter({ hasText: 'skill/solo' }).first()).toBeVisible()
     await page.screenshot({ path: artifactPath(testInfo, 'migration-declined-settled.png'), fullPage: true, animations: 'disabled' })
   } finally {
     await harness.stop()
@@ -151,7 +151,7 @@ test('built GUI migrates the legacy user root through the confirmation', async (
     await expect.poll(() => actionBodies.length).toBe(1)
     expect(JSON.parse(actionBodies[0])).toEqual({ action: 'migrate' })
     await expect(migration).not.toBeVisible({ timeout: 60_000 })
-    await expect(page.getByText('skill/solo')).toBeVisible()
+    await expect(page.getByRole('option').filter({ hasText: 'skill/solo' }).first()).toBeVisible()
     await page.screenshot({ path: artifactPath(testInfo, 'migration-accepted-settled.png'), fullPage: true, animations: 'disabled' })
 
     const migrated = await readFile(userConfigPath, 'utf8')
@@ -182,7 +182,7 @@ test('built GUI drives ordinary quit choices through the native Quit bridge', as
     await expect(migration).toBeVisible({ timeout: 60_000 })
     await migration.getByRole('button', { name: 'Leave unchanged' }).press('Enter')
     await expect(migration).not.toBeVisible()
-    await expect(page.getByText('skill/solo')).toBeVisible()
+    await expect(page.getByRole('option').filter({ hasText: 'skill/solo' }).first()).toBeVisible()
 
     await page.getByRole('button', { name: 'Sync' }).press('Enter')
     await expect(page.getByText('sync complete')).toBeVisible({ timeout: 60_000 })
@@ -290,7 +290,7 @@ test('built GUI attaches native close to a running sync and quits on its settlem
   try {
     const actionBodies = observeRequests(page, '/api/actions')
     await launchWithNativeBridge(page, bootstrap)
-    await expect(page.getByText('skill/solo')).toBeVisible({ timeout: 60_000 })
+    await expect(page.getByRole('option').filter({ hasText: 'skill/solo' }).first()).toBeVisible({ timeout: 60_000 })
 
     await page.getByRole('button', { name: 'Sync' }).press('Enter')
     await expect.poll(() => actionBodies.filter((b) => JSON.parse(b).action === 'sync').length).toBe(1)
@@ -342,7 +342,7 @@ test('built GUI keyboard input never opens a raw configuration editor', async ({
     const actionBodies = observeRequests(page, '/api/actions')
     const configureBodies = observeRequests(page, '/api/configuration/actions')
     await launchBuiltUserApp(page, bootstrap)
-    await expect(page.getByText('skill/solo')).toBeVisible({ timeout: 60_000 })
+    await expect(page.getByRole('option').filter({ hasText: 'skill/solo' }).first()).toBeVisible({ timeout: 60_000 })
 
     for (const name of ['Sync', 'Refresh', 'Settings', 'Sources', 'Quit']) {
       const button = page.getByRole('button', { name, exact: true })
