@@ -103,8 +103,6 @@ jobs:
     timeout-minutes: 15
     permissions:
       contents: read
-    env:
-      AUDIT_REPORT_DIR: ${{ runner.temp }}/model-catalog-audit
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -112,6 +110,9 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
         with:
           go-version-file: go.mod
+      - name: Prepare model audit diagnostics
+        if: always()
+        run: echo "AUDIT_REPORT_DIR=$RUNNER_TEMP/model-catalog-audit" >> "$GITHUB_ENV"
       - name: Verify offline audit contracts
         run: go test ./tools/model-catalog-audit -count=1
       - name: Audit public model evidence without modifying catalogs
