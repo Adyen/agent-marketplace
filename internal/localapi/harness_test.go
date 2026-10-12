@@ -21,6 +21,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/marketplace"
 	"github.com/Adyen/agent-marketplace/internal/pipeline"
 	"github.com/Adyen/agent-marketplace/internal/session"
+	inspectiontest "github.com/Adyen/agent-marketplace/internal/testutil/marketplace/inspection"
 	mpapi "github.com/Adyen/agent-marketplace/pkg/marketplace/api"
 )
 
@@ -116,6 +117,11 @@ func TestLocalAPIUserHarness(t *testing.T) {
 		"xdgConfig": os.Getenv("XDG_CONFIG_HOME"),
 		"xdgState":  os.Getenv("XDG_STATE_HOME"),
 		"xdgCache":  os.Getenv("XDG_CACHE_HOME"),
+	}
+	var work36Protected []discoveryFixtureFile
+	if fixture == "work36-inspection" {
+		work36Protected = setupWork36InspectionFixture(t, home, bootstrap)
+		orgConfigPath = bootstrap["orgConfig"]
 	}
 	if orgConfigPath != "" {
 		bootstrap["orgConfig"] = orgConfigPath
@@ -246,6 +252,9 @@ func TestLocalAPIUserHarness(t *testing.T) {
 		api.releaseClient.Transport = releaseHarnessTransport(marker, os.Getenv("AM_LOCALAPI_RELEASE_STATUS"), os.Getenv("AM_LOCALAPI_RELEASE_BODY"))
 	}
 	serveHarness(t, api, bootstrap)
+	if fixture == "work36-inspection" {
+		assertInspectionFilesUnchanged(t, work36Protected)
+	}
 	if discoveryCounterWriteFailed.Load() {
 		t.Fatal("Work35 discovery search counter write failed")
 	}
@@ -344,6 +353,60 @@ func setupWork35DiscoveryFixture(t *testing.T, bootstrap map[string]string, coun
 	}, "", "", marketplace.DiscoveryPageLimit); err != nil {
 		t.Fatalf("seed Work35 discovery cache: %v", err)
 	}
+}
+
+func setupWork36InspectionFixture(t *testing.T, home string, bootstrap map[string]string) []discoveryFixtureFile {
+	t.Helper()
+	fixture := inspectiontest.NewFixtureContent(t,
+		[]byte("# Grill inspection\n\nLiteral <script>text</script> remains inert."),
+		map[string][]byte{
+			"notes.md":   []byte("# Notes\n\nSupporting inspection."),
+			"logo.png":   []byte("\x89PNG\r\n\x1a\nfake-image"),
+			"unsafe.svg": []byte("<svg onload=alert(1)></svg>"),
+		}, nil)
+	if !fixture.CorruptNextSupportBody("notes.md") {
+		t.Fatal("inspection support member missing from verified fixture")
+	}
+	endpoint := fixture.Endpoint()
+	endpoint.Alias = "mp"
+	orgPath := filepath.Join(t.TempDir(), "config.yaml")
+	orgConfig := "apiVersion: agent-marketplace/v4\nharnesses: [devin]\nsources:\n  mp: {marketplace: " + endpoint.URL + "}\n"
+	if err := os.WriteFile(orgPath, []byte(orgConfig), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	config.SetTestOrganizationConfigPath(t, orgPath)
+	if err := config.ValidateOrganizationTrustUnit(orgPath, true, true); err != nil {
+		t.Fatalf("validate trusted Work36 Marketplace endpoint: %v", err)
+	}
+	if err := marketplace.DefaultDiscoveryCache().Store(marketplace.DiscoveryOutcome{
+		Endpoint: endpoint, Items: []mpapi.ResourceListItem{fixture.Item()}, Total: 1, ObservedAt: time.Now(),
+	}, "", "", marketplace.DiscoveryPageLimit); err != nil {
+		t.Fatalf("seed fresh Work36 discovery page: %v", err)
+	}
+	bootstrap["orgConfig"] = orgPath
+	bootstrap["marketplaceEndpoint"] = endpoint.URL
+
+	userConfigPath := filepath.Join(home, ".agents", "config.yaml")
+	userLockPaths, err := config.ResolveConfigLockPathsTolerateMissing(userConfigPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	orgLockPaths, err := config.ResolveConfigLockPathsTolerateMissing(orgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	materializedPath := filepath.Join(home, ".devin", "skills", "work36-protected", "SKILL.md")
+	if err := os.MkdirAll(filepath.Dir(materializedPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(materializedPath, []byte("work36 protected materialized bytes\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	protected := make([]discoveryFixtureFile, 0, 5)
+	for _, path := range []string{userConfigPath, orgPath, userLockPaths.CanonicalLock, orgLockPaths.CanonicalLock, materializedPath} {
+		protected = append(protected, captureDiscoveryFixtureFile(t, path))
+	}
+	return protected
 }
 
 func work35ReleaseSignal(ctx context.Context, path string) <-chan struct{} {

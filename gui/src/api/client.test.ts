@@ -31,6 +31,7 @@ function snapshotEvent(sequence: number, generation: number, stage = 'final', op
           status: 'enabled',
           group: 'enabled',
           discovery: false,
+          inspectable: false,
         },
       ],
       groups: [
@@ -353,6 +354,54 @@ describe('createClient', () => {
     ) {
       throw new Error('discovery transport did not preserve its typed request and abort signal')
     }
+  })
+
+  it('posts only row and opaque file identities for inspection and binds the abort signal', async () => {
+    const calls: { url: string; method: string; token: string | null; body: string | null; signal?: AbortSignal }[] = []
+    const payload = {
+      rowId: 'row-opaque',
+      generation: 7,
+      revision: 'sha256:revision',
+      manifestDigest: 'sha256:manifest',
+      files: [{ id: 'f'.repeat(64), path: 'support/notes.md', mediaType: 'text/markdown', size: 16, inspectionClass: 'text' }],
+      primaryFileId: 'p'.repeat(64),
+      selectedFileId: 'f'.repeat(64),
+      content: '# verified',
+      truncated: false,
+      unsupportedMessage: '',
+    }
+    const fetcher: typeof fetch = async (input, init) => {
+      calls.push({
+        url: String(input),
+        method: init?.method ?? '',
+        token: new Headers(init?.headers).get('X-Agent-Marketplace-Token'),
+        body: init?.body == null ? null : String(init.body),
+        signal: init?.signal as AbortSignal | undefined,
+      })
+      return new Response(JSON.stringify(payload), { status: 200 })
+    }
+    const client = createClient('http://127.0.0.1:9999', 'secret-token', fetcher)
+    const signal = new AbortController().signal
+    const result = await client.inspection('row-opaque', 'f'.repeat(64), signal)
+    const call = calls[0]
+    if (
+      calls.length !== 1 || call?.url !== 'http://127.0.0.1:9999/api/inspection' || call.method !== 'POST' ||
+      call.token !== 'secret-token' || call.signal !== signal || call.body !== JSON.stringify({ rowId: 'row-opaque', fileId: 'f'.repeat(64) }) ||
+      result.rowId !== payload.rowId || result.selectedFileId !== payload.selectedFileId || result.content !== payload.content
+    ) {
+      throw new Error('inspection transport did not preserve its closed row/file request, abort signal, and verified response')
+    }
+  })
+
+  it('omits fileId when requesting the default primary preview', async () => {
+    let requestBody = ''
+    const fetcher: typeof fetch = async (_input, init) => {
+      requestBody = String(init?.body ?? '')
+      return new Response(JSON.stringify({ rowId: 'row-primary' }), { status: 200 })
+    }
+    const client = createClient('http://127.0.0.1:9999', 'secret-token', fetcher)
+    await client.inspection('row-primary')
+    expect(requestBody).toBe('{"rowId":"row-primary"}')
   })
 
   it('raises RequestError with the server code on rejection', async () => {

@@ -7,6 +7,7 @@ import { compareRows, hasSearchTerms, highlightNameParts, rankRows, type NameSeg
 import Confirmations from './Confirmations.vue'
 import FirstRun from './FirstRun.vue'
 import HarnessSettings from './HarnessSettings.vue'
+import ResourceInspection from './ResourceInspection.vue'
 import SourcesSettings from './SourcesSettings.vue'
 
 type GroupMetadata = WorkspaceState['groups'][number]
@@ -39,6 +40,8 @@ const setupOpen = ref(false)
 const setupDismissed = ref(false)
 const setupOpened = ref(false)
 const setupButton = ref<HTMLButtonElement | null>(null)
+const openResourceButton = ref<HTMLButtonElement | null>(null)
+const inspectionOpen = ref(false)
 const quitOpen = ref(false)
 
 const configuration = computed(() => state.value?.state.configuration ?? null)
@@ -60,6 +63,12 @@ watch(settingsOpen, (isOpen, wasOpen) => {
 watch(sourcesOpen, (isOpen, wasOpen) => {
   if (!isOpen && wasOpen) {
     void nextTick(() => sourcesButton.value?.focus())
+  }
+})
+
+watch(inspectionOpen, (isOpen, wasOpen) => {
+  if (!isOpen && wasOpen) {
+    void nextTick(() => openResourceButton.value?.focus())
   }
 })
 
@@ -248,6 +257,26 @@ const selected = computed(() => {
   return (view.value?.rows ?? []).find((row) => row.id === rowID) ?? null
 })
 
+watch(
+  () => selected.value?.id,
+  (rowID) => {
+    const inspection = state.value?.state.inspection
+    if (inspection != null && inspection.rowId !== rowID) {
+      state.value?.closeInspection()
+      inspectionOpen.value = false
+    }
+  },
+)
+
+watch(
+  () => state.value?.state.inspection,
+  (inspection) => {
+    if (inspection == null && inspectionOpen.value) {
+      inspectionOpen.value = false
+    }
+  },
+)
+
 function nextSelectionKey(currentKey: string | null, previous: VisibleEntry[], next: VisibleEntry[]): string | null {
   const nextKeys = new Set(next.map((entry) => entry.key))
   if (currentKey == null) {
@@ -351,6 +380,24 @@ function select(row: Row) {
   }
   selectedKey.value = key
   state.value?.browse(row)
+}
+
+function openInspection(row: Row) {
+  const controller = state.value
+  if (controller == null || !row.inspectable) {
+    return
+  }
+  controller.openInspection(row.id)
+  if (controller.state.inspection != null) {
+    inspectionOpen.value = true
+  }
+}
+
+function activateRow(row: Row) {
+  select(row)
+  if (row.inspectable) {
+    openInspection(row)
+  }
 }
 
 function toggleGroup(groupID: string) {
@@ -512,7 +559,7 @@ async function run(action: 'sync' | 'update') {
               :class="{ 'workspace__row--selected': selectedKey === rowKey(row.id) }"
               class="workspace__row"
               @click="select(row)"
-              @keydown.enter.prevent="select(row)"
+              @keydown.enter.prevent="activateRow(row)"
               @keydown.space.prevent="select(row)"
               @keydown.down.prevent="moveSelection(1)"
               @keydown.up.prevent="moveSelection(-1)"
@@ -545,6 +592,14 @@ async function run(action: 'sync' | 'update') {
             <dt>Harnesses</dt>
             <dd class="mono">{{ selected.harnesses.join(', ') || 'none' }}</dd>
           </dl>
+          <button
+            v-if="selected.inspectable"
+            ref="openResourceButton"
+            type="button"
+            aria-label="Open resource"
+            class="workspace__open-resource"
+            @click="openInspection(selected)"
+          >Open resource</button>
         </template>
         <p v-else>Select a resource to inspect it.</p>
 
@@ -578,6 +633,7 @@ async function run(action: 'sync' | 'update') {
     <SourcesSettings v-if="state" v-model:open="sourcesOpen" :controller="state" />
     <FirstRun v-if="state" v-model:open="setupOpen" :controller="state" @cancel="onSetupCancel" />
     <Confirmations v-if="state" v-model:quit-open="quitOpen" :controller="state" />
+    <ResourceInspection v-if="state" v-model:open="inspectionOpen" :controller="state" />
 
     <ul class="workspace__notifications" aria-live="polite" aria-label="Notifications">
       <li v-for="n in view?.notifications" :key="n.id" :class="`notification--${n.severity}`">

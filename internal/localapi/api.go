@@ -29,13 +29,14 @@ const tokenHeader = "X-Agent-Marketplace-Token"
 const guiOrigin = "wails://wails"
 
 const (
-	codeUnauthorized   = "localapi.unauthorized"
-	codeForbidden      = "localapi.forbidden"
-	codeInvalidRequest = "localapi.invalid_request"
-	codeNotReady       = "localapi.not_ready"
-	codeNotSupported   = "localapi.not_supported"
-	codeBusy           = "localapi.busy"
-	codeClosed         = "localapi.closed"
+	codeUnauthorized          = "localapi.unauthorized"
+	codeForbidden             = "localapi.forbidden"
+	codeInvalidRequest        = "localapi.invalid_request"
+	codeNotReady              = "localapi.not_ready"
+	codeNotSupported          = "localapi.not_supported"
+	codeBusy                  = "localapi.busy"
+	codeClosed                = "localapi.closed"
+	codeInspectionUnavailable = "localapi.inspection_unavailable"
 )
 
 type operationRef struct {
@@ -61,6 +62,7 @@ type rowDTO struct {
 	Status              string   `json:"status"`
 	Group               string   `json:"group"`
 	Discovery           bool     `json:"discovery"`
+	Inspectable         bool     `json:"inspectable"`
 }
 
 type diagnosticDTO struct {
@@ -366,6 +368,8 @@ func (a *API) dispatch(w http.ResponseWriter, r *http.Request) {
 		a.handleEvents(w, r)
 	case "/api/discovery":
 		a.handleDiscovery(w, r)
+	case "/api/inspection":
+		a.handleInspection(w, r)
 	case "/api/actions":
 		a.handleAction(w, r)
 	case "/api/telemetry":
@@ -385,13 +389,14 @@ func writeError(w http.ResponseWriter, status int, code string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	message := map[string]string{
-		codeUnauthorized:   "unauthorized",
-		codeForbidden:      "origin rejected",
-		codeInvalidRequest: "invalid request",
-		codeNotReady:       "session is not ready for mutation",
-		codeNotSupported:   "operation not supported by this session mode",
-		codeBusy:           "another operation is in progress",
-		codeClosed:         "api is closed",
+		codeUnauthorized:          "unauthorized",
+		codeForbidden:             "origin rejected",
+		codeInvalidRequest:        "invalid request",
+		codeNotReady:              "session is not ready for mutation",
+		codeNotSupported:          "operation not supported by this session mode",
+		codeBusy:                  "another operation is in progress",
+		codeClosed:                "api is closed",
+		codeInspectionUnavailable: "Verified inspection is unavailable; check the Marketplace and retry.",
 	}[code]
 	_ = json.NewEncoder(w).Encode(map[string]string{"code": code, "message": message})
 }
@@ -661,6 +666,7 @@ func rowPresentation(row session.Row) rowDTO {
 		Status:              status,
 		Group:               row.StatusGroup().ID(),
 		Discovery:           row.MarketplaceDiscovery != nil,
+		Inspectable:         session.MarketplaceInspectableSkill(row),
 	}
 }
 

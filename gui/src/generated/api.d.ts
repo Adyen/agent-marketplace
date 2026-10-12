@@ -158,6 +158,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/inspection": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Read verified files from one exact uninstalled Marketplace skill
+         * @description Available only in user-scope mode. rowId is resolved against the current visible session rows; the browser supplies no endpoint, coordinate, revision, or path. fileId is an opaque member identity bound to that row and the verified manifest. A syntactically valid fileId outside the verified manifest may cause only WellKnown, assessed-revision, and manifest metadata reads; it is rejected before any inspection content request. Successful inspection reads only the selected text member. Unsupported image or metadata members return their verified metadata without fetching their bodies. The request does not install, mutate session state, write configuration or locks, synchronize materialized files, or emit operation, snapshot, discovery, telemetry, or progress events.
+         *
+         */
+        post: operations["inspectMarketplaceSkill"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/release": {
         parameters: {
             query?: never;
@@ -359,7 +380,7 @@ export interface components {
         DriftAssessment: "pending" | "ready" | "failed";
         Error: {
             /** @enum {string} */
-            code: "localapi.unauthorized" | "localapi.forbidden" | "localapi.invalid_request" | "localapi.not_ready" | "localapi.not_supported" | "localapi.busy" | "localapi.closed";
+            code: "localapi.unauthorized" | "localapi.forbidden" | "localapi.invalid_request" | "localapi.not_ready" | "localapi.not_supported" | "localapi.busy" | "localapi.closed" | "localapi.inspection_unavailable";
             /** @description Static, non-reflective failure description. */
             message: string;
         };
@@ -424,6 +445,37 @@ export interface components {
             sources?: components["schemas"]["SourceInput"][];
             /** @description The user-personal Harness target selection for the new root; canonical supported IDs only. */
             targets: string[];
+        };
+        InspectionFile: {
+            id: string;
+            /** @enum {string} */
+            inspectionClass: "text" | "image" | "metadata";
+            mediaType: string;
+            /** @description Sanitized display path from the verified inspection manifest. */
+            path: string;
+            /** Format: int64 */
+            size: number;
+        };
+        InspectionPayload: {
+            /** @description Sanitized inert text preview, bounded to 256 KiB plus the existing truncation marker. */
+            content: string;
+            files: components["schemas"]["InspectionFile"][];
+            /** Format: uint64 */
+            generation: number;
+            manifestDigest: string;
+            primaryFileId: string;
+            revision: string;
+            rowId: string;
+            selectedFileId: string;
+            truncated: boolean;
+            /** @description Empty for text; static safe metadata-only message for unsupported members. */
+            unsupportedMessage: string;
+        };
+        InspectionRequest: {
+            /** @description Optional opaque identity of one member in the verified inspection manifest; never a path or coordinate. */
+            fileId?: string;
+            /** @description Opaque identity of a currently visible row from the authoritative session snapshot. */
+            rowId: string;
         };
         MarketplaceSourceInput: {
             /**
@@ -562,6 +614,8 @@ export interface components {
             harnessOverride: boolean;
             /** @description Stable opaque resource identity. Local rows include source registry identity and scope; Marketplace discovery rows include normalized endpoint URL, verified instance and registry identity, kind, name, exact revision, and content digest. */
             id: string;
+            /** @description Whether this exact uninstalled Marketplace skill has a current verified revision eligible for read-only inspection. */
+            inspectable: boolean;
             kind: string;
             /** @description Raw resource name retained for identity and deterministic sorting. */
             name: string;
@@ -839,6 +893,52 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["OriginRejected"];
             405: components["responses"]["MethodNotAllowed"];
+            503: components["responses"]["Closed"];
+        };
+    };
+    inspectMarketplaceSkill: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["InspectionRequest"];
+            };
+        };
+        responses: {
+            /** @description Bounded sanitized text preview or static unsupported-member metadata */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InspectionPayload"];
+                };
+            };
+            /** @description Malformed request, stale or unknown row, unsupported row, or fileId outside the verified manifest; code localapi.invalid_request, localapi.not_ready, or localapi.not_supported */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["OriginRejected"];
+            405: components["responses"]["MethodNotAllowed"];
+            /** @description Marketplace inspection provenance or selected content could not be verified; code localapi.inspection_unavailable */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
             503: components["responses"]["Closed"];
         };
     };

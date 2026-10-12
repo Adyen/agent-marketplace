@@ -2,7 +2,7 @@ import { defineConfig } from '@playwright/test'
 
 export default defineConfig({
   testDir: './tests',
-  testMatch: ['local-api.spec.ts', 'gui.spec.ts', 'sources.spec.ts', 'refresh.spec.ts', 'confirmations.spec.ts', 'releases.spec.ts', 'telemetry.spec.ts', 'accessibility.spec.ts', 'navigation.spec.ts', 'search.spec.ts', 'discovery.spec.ts'],
+  testMatch: ['local-api.spec.ts', 'gui.spec.ts', 'sources.spec.ts', 'refresh.spec.ts', 'confirmations.spec.ts', 'releases.spec.ts', 'telemetry.spec.ts', 'accessibility.spec.ts', 'navigation.spec.ts', 'search.spec.ts', 'discovery.spec.ts', 'inspection.spec.ts'],
   timeout: 120_000,
   retries: 0,
   workers: 1,
