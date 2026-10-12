@@ -230,6 +230,87 @@ describe('WorkspaceView', () => {
     expect(client.telemetry).not.toHaveBeenCalled()
   })
 
+  // spec: session-feedback/phase-observed-before-completion
+  it('keeps accepting observed phases after a notification without settling the operation', async () => {
+    const { client, push } = fakeClient()
+    const { controller, wrapper } = mountWorkspace(client)
+    const operation: OperationRef = { id: 3, kind: 'update' }
+    const diagnostic = { severity: 'warning' as const, category: 'catalog', code: 'kept', message: 'Existing warning' }
+    push(event({ sequence: 1, generation: 2, operation, payload: snapshot([row('a')], { diagnostics: [diagnostic] }) }))
+    push(event({ sequence: 2, generation: 2, operation, type: 'progress', payload: { progressSequence: 1, phase: 'resolve' } }))
+    await tick()
+    expect(wrapper.text()).toContain('update resolve')
+    push(event({ sequence: 3, generation: 2, operation, type: 'notification', payload: { severity: 'warning', message: 'Still working' } }))
+    push(event({ sequence: 4, generation: 2, operation, type: 'progress', payload: { progressSequence: 2, phase: 'materialize' } }))
+    await tick()
+    expect(wrapper.text()).toContain('update materialize')
+    expect(controller.state.operation).toEqual(operation)
+    expect(controller.state.diagnostics).toEqual([diagnostic])
+    expect(wrapper.find('button[aria-label="Update"]').attributes('disabled')).toBeDefined()
+    expect(wrapper.text()).not.toContain('update complete')
+  })
+
+  // spec: session-feedback/late-progress
+  it('late-progress leaves mounted feedback unchanged for stale phases', async () => {
+    const { client, push } = fakeClient()
+    const { controller, wrapper } = mountWorkspace(client)
+    const operation: OperationRef = { id: 30, kind: 'update' }
+    const diagnostic = { severity: 'warning' as const, category: 'catalog', code: 'retained', message: 'Retained warning' }
+    const notifications = () => wrapper.findAll('ul[aria-label="Notifications"] li')
+    const expectCurrentFeedback = () => {
+      expect(controller.state.operation).toEqual(operation)
+      expect(controller.state.phase).toBe('materialize')
+      expect(controller.state.diagnostics).toEqual([diagnostic])
+      expect(wrapper.find('ul[aria-label="Diagnostics"]').text()).toContain('Retained warning')
+      expect(wrapper.findAll('[role="status"]').map((status) => status.text())).toContain('update materialize')
+      expect(notifications()).toHaveLength(0)
+    }
+
+    push(event({ sequence: 1, generation: 2, operation, payload: snapshot([row('a')], { operation, diagnostics: [diagnostic] }) }))
+    push(event({ sequence: 2, generation: 2, operation, type: 'progress', payload: { progressSequence: 1, phase: 'resolve' } }))
+    await tick()
+    expect(wrapper.findAll('[role="status"]').map((status) => status.text())).toContain('update resolve')
+    expect(controller.state.operation).toEqual(operation)
+    expect(controller.state.diagnostics).toEqual([diagnostic])
+    expect(wrapper.find('ul[aria-label="Diagnostics"]').text()).toContain('Retained warning')
+
+    push(event({ sequence: 3, generation: 2, operation, type: 'progress', payload: { progressSequence: 2, phase: 'materialize' } }))
+    await tick()
+    expectCurrentFeedback()
+
+    push(event({ sequence: 4, generation: 2, operation, type: 'progress', payload: { progressSequence: 2, phase: 'duplicate-phase-sentinel' } }))
+    await tick()
+    expectCurrentFeedback()
+
+    push(event({ sequence: 5, generation: 2, operation, type: 'progress', payload: { progressSequence: 1, phase: 'lower-sequence-sentinel' } }))
+    await tick()
+    expectCurrentFeedback()
+
+    push(event({ sequence: 6, generation: 2, operation: { id: 31, kind: 'update' }, type: 'progress', payload: { progressSequence: 3, phase: 'wrong-operation-sentinel' } }))
+    await tick()
+    expectCurrentFeedback()
+
+    push(event({ sequence: 7, generation: 1, operation, type: 'progress', payload: { progressSequence: 3, phase: 'older-generation-sentinel' } }))
+    await tick()
+    expectCurrentFeedback()
+
+    push(event({ sequence: 8, generation: 2, operation: null, payload: snapshot([row('a')], { diagnostics: [diagnostic] }) }))
+    await tick()
+    expect(controller.state.operation).toBeNull()
+    expect(controller.state.phase).toBeNull()
+    expect(controller.state.diagnostics).toEqual([diagnostic])
+    expect(notifications()).toHaveLength(0)
+
+    push(event({ sequence: 9, generation: 2, operation, type: 'progress', payload: { progressSequence: 3, phase: 'post-final-sentinel' } }))
+    await tick()
+    expect(controller.state.operation).toBeNull()
+    expect(controller.state.phase).toBeNull()
+    expect(controller.state.diagnostics).toEqual([diagnostic])
+    expect(notifications()).toHaveLength(0)
+    expect(wrapper.text()).not.toContain('post-final-sentinel')
+  })
+
+  // spec: session-feedback/no-observer
   it('shows generic running when no phase is observed and settles only on final', async () => {
     const { client, push } = fakeClient()
     const { controller, wrapper } = mountWorkspace(client)
@@ -351,10 +432,21 @@ describe('WorkspaceView', () => {
     expect(wrapper.text()).toContain('skill/a')
   })
 
-  it('caps notifications at three and expires them on a timer', async () => {
+  // spec: session-feedback/notification-overflow
+  it('notification-overflow caps mounted notices and expires them with controls usable', async () => {
     vi.useFakeTimers()
     const { client, push } = fakeClient()
-    const { controller } = mountWorkspace(client)
+    const { controller, wrapper } = mountWorkspace(client)
+    const notifications = () => wrapper.findAll('ul[aria-label="Notifications"] li')
+    const expectRequiredControlsUsable = () => {
+      for (const label of ['Sync', 'Update']) {
+        const control = wrapper.find(`button[aria-label="${label}"]`)
+        expect(control.exists()).toBe(true)
+        expect(control.isVisible()).toBe(true)
+        expect((control.element as HTMLButtonElement).disabled).toBe(false)
+      }
+    }
+
     push(event({ sequence: 1, payload: snapshot([row('a')]) }))
     for (let i = 0; i < 4; i++) {
       push(
@@ -370,9 +462,16 @@ describe('WorkspaceView', () => {
     await vi.advanceTimersByTimeAsync(0)
     await tick()
     expect(controller.state.notifications.map((n) => n.message)).toEqual(['note 1', 'note 2', 'note 3'])
+    expect(notifications()).toHaveLength(3)
+    expect(notifications().map((notice) => notice.text())).toEqual(['note 1', 'note 2', 'note 3'])
+    expect(notifications().every((notice) => notice.isVisible())).toBe(true)
+    expectRequiredControlsUsable()
+
     await vi.advanceTimersByTimeAsync(60_000)
     await tick()
     expect(controller.state.notifications).toEqual([])
+    expect(notifications()).toHaveLength(0)
+    expectRequiredControlsUsable()
   })
 
   it('disables mutations until a verified inventory with targets and enables them when eligible', async () => {

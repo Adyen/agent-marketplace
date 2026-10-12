@@ -102,8 +102,9 @@ describe('EventCursor', () => {
     const cursor = new EventCursor()
     expect(cursor.accept(snapshotEvent(1, 1, 'final', 7))).toBe(true)
     expect(cursor.accept(progressEvent(2, 1, 7, 1))).toBe(true)
-    expect(cursor.accept(notificationEvent(3, 1, 7))).toBe(true)
-    expect(cursor.accept(progressEvent(4, 1, 7, 2))).toBe(false)
+    expect(cursor.accept(snapshotEvent(3, 1, 'final'))).toBe(true)
+    expect(cursor.accept(notificationEvent(4, 1, 7))).toBe(true)
+    expect(cursor.accept(progressEvent(5, 1, 7, 2))).toBe(false)
   })
 
   it('rejects an older-generation notification', () => {

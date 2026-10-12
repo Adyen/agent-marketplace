@@ -89,10 +89,6 @@ export class EventCursor {
         if (generation < this.generation) {
           return false
         }
-        if (event.operation != null && event.operation.id === this.operation) {
-          this.operation = 0
-          this.progressSequence = 0
-        }
         return true
       }
       default:
