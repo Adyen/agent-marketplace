@@ -595,11 +595,6 @@ key or a hook event name), the resource name, and content digests are reported.
 | `hook.codex.unsupported` | Codex does not execute this hook event or handler; hook suppressed | Use a documented Codex command hook event |
 | `hook.windsurf.native-fields-unsupported` | Windsurf cannot preserve conflicting native hook fields; hook suppressed | Remove the conflicting native fields explicitly or use a target that represents them |
 | `hook.windsurf.timeout-unsupported` | Windsurf cannot represent an explicit hook timeout; hook artifact suppressed | Remove the timeout explicitly or use a target that supports it |
-| `hook.matcher-untranslatable` | No exact tool-matcher coverage exists for the target; hook suppressed | Rewrite the matcher with tools the target's catalog covers, or remove it |
-| `hook.env-unrepresentable` | The hook command references a variable with no target equivalent; hook suppressed | Rewrite the command with variables the target documents, or use an absolute path |
-| `hook.timeout-unsupported` | Target cannot represent an explicit hook timeout; hook suppressed | Remove the timeout explicitly or use a target that supports it |
-| `hook.type-unsupported` | The target's catalog does not declare this hook type for the event; hook suppressed | Use a hook type the target documents for this event |
-| `hook.support-path-unrepresentable` | The hook command references the plugin root but the target declares no repository base; hook suppressed | Use an absolute command path or a target with a repository base |
 | `materialize.hook.support-conflict` | Conflicting desired support files block affected hooks rather than selecting a winner | Rename the conflicting support files or exclude one hook provider |
 | `materialize.hook.support-refused` | Unsafe or unreadable support sources block affected hooks while installed content is retained | Fix or remove the unsafe support source and re-run sync |
 | `mcp.security-restriction-unsupported` | Target cannot preserve native MCP authority or literal semantics; server suppressed | Keep the server in its native format or remove the unsupported security field explicitly |

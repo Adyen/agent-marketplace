@@ -343,6 +343,18 @@ func openFingerprintFileAt(rootFD int, relPath string) (*os.File, os.FileMode, i
 	return openFingerprintFileAtSeen(rootFD, relPath, make(map[string]bool))
 }
 
+func openFingerprintFileAtNoAliases(rootFD int, relPath string) (*os.File, os.FileMode, int64, error) {
+	if !fs.ValidPath(relPath) || relPath == "." {
+		return nil, 0, 0, fmt.Errorf("hook source fingerprint: support path %q is invalid", relPath)
+	}
+	dirFD, err := openHookSupportDirAt(rootFD, path.Dir(relPath))
+	if err != nil {
+		return nil, 0, 0, err
+	}
+	defer func() { _ = unix.Close(dirFD) }()
+	return openFingerprintRegularFileAt(dirFD, path.Base(relPath), relPath)
+}
+
 func openFingerprintFileAtSeen(rootFD int, relPath string, seen map[string]bool) (*os.File, os.FileMode, int64, error) {
 	components := strings.Split(relPath, "/")
 	dirFD := rootFD
@@ -392,6 +404,10 @@ func openFingerprintFileAtSeen(rootFD int, relPath string, seen map[string]bool)
 	if observed.Mode&unix.S_IFMT != unix.S_IFREG {
 		return nil, 0, 0, fmt.Errorf("%w: hook source fingerprint: %s is not a regular file", fsboundary.ErrUnsafeFile, relPath)
 	}
+	return openFingerprintRegularFileAt(dirFD, name, relPath)
+}
+
+func openFingerprintRegularFileAt(dirFD int, name, relPath string) (*os.File, os.FileMode, int64, error) {
 	file, mode, err := openFingerprintFile(dirFD, name)
 	if err != nil {
 		return nil, 0, 0, err
@@ -567,7 +583,7 @@ func walkFingerprintDir(defDirFD int, fn func(relPath string) error) error {
 				continue
 			}
 			if !typ.IsRegular() {
-				return fmt.Errorf("hook source fingerprint: %s is not a regular file", relPath)
+				return fmt.Errorf("%w: hook source fingerprint: %s is not a regular file", fsboundary.ErrUnsafeFile, relPath)
 			}
 			files++
 			if files > maxFiles {

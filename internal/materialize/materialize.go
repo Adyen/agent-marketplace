@@ -1799,7 +1799,7 @@ func executeMaterializePlans(ctx context.Context, compileResult compilePhaseResu
 				slog.Debug("native-only aggregate work complete", "target", key.target, "machine_scope", key.machineScope)
 				return nil
 			}
-			report = executeTargetPlans(report, key, outDir, artifacts, compileResult.skillLinks, compileResult.artifactMeta, compileResult.blocked.componentsFor(key), dryRun, mode, repoRoot, coalescedCodexPartitions, supportPublication, geminiCoalescence.supportPathsForKey(key, compileResult.hookSupportPaths), supportWriteFault, &boundary, geminiCoalescence, nativeProtectedPaths)
+			report = executeTargetPlans(report, key, outDir, destinations, artifacts, compileResult.skillLinks, compileResult.artifactMeta, compileResult.blocked.componentsFor(key), dryRun, mode, repoRoot, coalescedCodexPartitions, supportPublication, geminiCoalescence.supportPathsForKey(key, compileResult.hookSupportPaths), supportWriteFault, &boundary, geminiCoalescence, nativeProtectedPaths)
 			if hasBinding {
 				report = binding.handler.reconcile(ctx, report, aggregateState, key, outDir, adapterDestinations, dryRun)
 			}
@@ -2536,7 +2536,7 @@ func executeNativeHookSupportPlan(ctx context.Context, key outputKey, repoRoot, 
 }
 
 // executeTargetPlans writes artifact plans and skill links for a single target.
-func executeTargetPlans(report *Report, key outputKey, outDir string, artifacts []artifact.Artifact, skillLinks map[outputKey]map[string]*skillLinkGroup, artifactMeta map[outputKey]map[string]skillLink, blocked map[string]bool, dryRun bool, mode config.MaterializationMode, repoRoot string, coalescedCodexPartitions map[string]bool, supportPublication nativeHookSupportPublication, hookSupportPaths map[string]bool, beforeSupportWrite func(string, string) error, boundary *destinationBoundary, geminiCoalescence geminiAggregateCoalescence, protectedPathSets ...map[string]bool) *Report {
+func executeTargetPlans(report *Report, key outputKey, outDir string, destinations []harness.Destination, artifacts []artifact.Artifact, skillLinks map[outputKey]map[string]*skillLinkGroup, artifactMeta map[outputKey]map[string]skillLink, blocked map[string]bool, dryRun bool, mode config.MaterializationMode, repoRoot string, coalescedCodexPartitions map[string]bool, supportPublication nativeHookSupportPublication, hookSupportPaths map[string]bool, beforeSupportWrite func(string, string) error, boundary *destinationBoundary, geminiCoalescence geminiAggregateCoalescence, protectedPathSets ...map[string]bool) *Report {
 	protectedPaths := map[string]bool{}
 	if len(protectedPathSets) > 0 && protectedPathSets[0] != nil {
 		protectedPaths = protectedPathSets[0]
@@ -2562,6 +2562,14 @@ func executeTargetPlans(report *Report, key outputKey, outDir string, artifacts 
 	// File mode must also prune stale cache-backed symlinks from every regular
 	// component directory, including components that have no desired artifacts.
 	portableCleanupDirs := make(map[string]string)
+	pruneOutDir := outDir
+	pruneReportPrefix := ""
+	if key.target == hcc.TargetWindsurf && !key.machineScope {
+		pruneOutDir = filepath.Join(outDir, windsurfDir)
+		pruneReportPrefix = windsurfDir
+	}
+	protected := nativeAggregatePruneFence(key.target, key.machineScope)
+	protected = extendNativeHookProjectionPruneFence(key.target, key.machineScope, pruneOutDir, destinations, protected)
 
 	plans := materializePlans(key.target, outDir, artifacts, linkedComponents(skillLinks[key]), key.machineScope)
 	if info, ok := harness.TargetInfoFor(key.target); ok {
@@ -2705,7 +2713,11 @@ func executeTargetPlans(report *Report, key outputKey, outDir string, artifacts 
 			}
 			mergeArtifacts = retained
 		}
-		mergeReport, mergeDiags, mergeErr := materializeMergeArtifacts(plan.outDir, mergeArtifacts, dryRun, wantPrune, boundary)
+		mergePrune := wantPrune
+		if len(mergeArtifacts) == 0 && genericMarkerPruneRootProtected(pruneOutDir, plan.outDir, protected) {
+			mergePrune = false
+		}
+		mergeReport, mergeDiags, mergeErr := materializeMergeArtifacts(plan.outDir, mergeArtifacts, dryRun, mergePrune, boundary)
 		if len(mergeArtifacts) > 0 {
 			dirsCoveredByMergePlans[plan.outDir] = true
 		}
@@ -2758,12 +2770,6 @@ func executeTargetPlans(report *Report, key outputKey, outDir string, artifacts 
 	// resolved set is empty and no plans exist for root-level directories
 	// that contain merge files (like mcp.json). Directories already covered
 	// by a merge-artifact plan are handled by materializeMergeArtifacts.
-	pruneOutDir := outDir
-	pruneReportPrefix := ""
-	if key.target == hcc.TargetWindsurf && !key.machineScope {
-		pruneOutDir = filepath.Join(outDir, windsurfDir)
-		pruneReportPrefix = windsurfDir
-	}
 	var pruneReport *hcc.WriteReport
 	var pruneDiags []diag.Diagnostic
 	// Root-level managed merge files belong to no component, so only the
@@ -2771,7 +2777,7 @@ func executeTargetPlans(report *Report, key outputKey, outDir string, artifacts 
 	if key.target == hcc.Target(targetmeta.TargetCodex) {
 		pruneReport = &hcc.WriteReport{OutDir: pruneOutDir}
 	} else if !componentBlocked(blocked, "") {
-		pruneReport, pruneDiags = pruneUncoveredManagedMergeFiles(pruneOutDir, dirsCoveredByMergePlans, dryRun, nativeAggregatePruneFence(key.target, key.machineScope))
+		pruneReport, pruneDiags = pruneUncoveredManagedMergeFiles(pruneOutDir, dirsCoveredByMergePlans, dryRun, protected)
 	} else {
 		pruneReport = &hcc.WriteReport{OutDir: pruneOutDir}
 	}
@@ -4013,6 +4019,24 @@ func materializeMergeArtifacts(outDir string, artifacts []artifact.Artifact, dry
 	result := &hcc.Result{Artifacts: artifacts}
 	writeReport, writeErr := hcc.Materialize(result, outDir, options...)
 	return writeReport, nil, writeErr
+}
+
+func genericMarkerPruneRootProtected(pruneRoot, candidate string, protected map[string]bool) bool {
+	rel, err := filepath.Rel(pruneRoot, candidate)
+	if err != nil || filepath.IsAbs(rel) || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return false
+	}
+	rel = filepath.ToSlash(filepath.Clean(rel))
+	for protectedPath := range protected {
+		if !strings.HasSuffix(protectedPath, "/") {
+			continue
+		}
+		protectedDir := strings.TrimSuffix(protectedPath, "/")
+		if rel == protectedDir || strings.HasPrefix(rel, protectedDir+"/") {
+			return true
+		}
+	}
+	return false
 }
 
 // pruneUncoveredManagedMergeFiles walks outDir and its subdirectories for

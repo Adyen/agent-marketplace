@@ -474,10 +474,18 @@ func openHookSupportDirAt(rootFD int, relative string) (int, error) {
 }
 
 func openHookSupportFileAt(dirFD int, relative string, total int64) (*os.File, fs.FileMode, int64, error) {
+	return openHookSupportFileAtWithOpener(dirFD, relative, total, openFingerprintFileAt)
+}
+
+func openHookSupportFileAtNoAliases(dirFD int, relative string, total int64) (*os.File, fs.FileMode, int64, error) {
+	return openHookSupportFileAtWithOpener(dirFD, relative, total, openFingerprintFileAtNoAliases)
+}
+
+func openHookSupportFileAtWithOpener(dirFD int, relative string, total int64, openFile func(int, string) (*os.File, fs.FileMode, int64, error)) (*os.File, fs.FileMode, int64, error) {
 	if !fs.ValidPath(relative) {
 		return nil, 0, 0, fmt.Errorf("hook support file path is invalid")
 	}
-	file, mode, size, err := openFingerprintFileAt(dirFD, relative)
+	file, mode, size, err := openFile(dirFD, relative)
 	if err != nil {
 		return nil, 0, 0, err
 	}

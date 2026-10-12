@@ -138,11 +138,11 @@ func TestLoadHooks(t *testing.T) {
 	if hooks[0].Matcher != "Read" {
 		t.Fatalf("Matcher = %q, want %q", hooks[0].Matcher, "Read")
 	}
-	if hooks[0].HookSource != "" {
-		t.Fatalf("HookSource = %q, want canonical default", hooks[0].HookSource)
+	if hooks[0].HookSource != "factory" {
+		t.Fatalf("HookSource = %q, want factory source provenance", hooks[0].HookSource)
 	}
-	if _, ok := hooks[0].Extra["commandRegex"]; ok {
-		t.Fatalf("default LoadHooks promoted group commandRegex: %#v", hooks[0].Extra)
+	if hooks[0].Extra["commandRegex"] != "^Read.*$" || !hooks[0].GroupExtraKeys["commandRegex"] {
+		t.Fatalf("default LoadHooks did not preserve Factory group commandRegex provenance: %#v / %#v", hooks[0].Extra, hooks[0].GroupExtraKeys)
 	}
 }
 

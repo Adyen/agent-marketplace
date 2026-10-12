@@ -92,7 +92,7 @@ func TestRunIndependentNativeHookSatisfaction(t *testing.T) {
 		t.Fatalf("independent reconstruction published private proof: %+v", proof)
 	}
 	assertIndependentStateAbsent(t, fixture.stateRoot)
-	dryReport, err := runLegacyToleranceFixture(context.Background(), fixture.repoRoot, []resolver.ResolvedArtifact{fixture.resolved}, WithDryRun())
+	dryReport, err := runIndependentLegacyToleranceFixture(context.Background(), fixture.repoRoot, []resolver.ResolvedArtifact{fixture.resolved}, WithDryRun())
 	if err != nil || dryReport == nil {
 		t.Fatalf("dry Run: %v", err)
 	}
@@ -119,7 +119,7 @@ func TestRunIndependentHookWithoutNativeProjectionRetainsLegacyOutput(t *testing
 	stateRoot := isolateIndependentHookRun(t)
 	fixture := writeProjectionSource(t, "echo legacy-control")
 	repoRoot := t.TempDir()
-	report, err := runLegacyToleranceFixture(context.Background(), repoRoot, []resolver.ResolvedArtifact{fixture.resolved})
+	report, err := runIndependentLegacyToleranceFixture(context.Background(), repoRoot, []resolver.ResolvedArtifact{fixture.resolved})
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -216,7 +216,7 @@ func TestRunIndependentNativeHookUnsafeSourceRetainsLegacy(t *testing.T) {
 	nativeHelperLinkBefore := snapshotIndependentFile(t, nativeHelperLink)
 	handwrittenBefore := snapshotIndependentFile(t, handwrittenSupport)
 
-	report, runErr := runLegacyToleranceFixture(context.Background(), fixture.repoRoot, []resolver.ResolvedArtifact{fixture.resolved})
+	report, runErr := runIndependentLegacyToleranceFixture(context.Background(), fixture.repoRoot, []resolver.ResolvedArtifact{fixture.resolved})
 	if report == nil {
 		t.Fatalf("Run returned nil report: %v", runErr)
 	}
@@ -385,7 +385,7 @@ func assertIndependentStateAbsent(t *testing.T, stateRoot string) {
 
 func runIndependentLegacyReader(t *testing.T, repoRoot string, resolved []resolver.ResolvedArtifact) *Report {
 	t.Helper()
-	report, err := runLegacyToleranceFixture(context.Background(), repoRoot, resolved)
+	report, err := runIndependentLegacyToleranceFixture(context.Background(), repoRoot, resolved)
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -899,7 +899,7 @@ func TestRunIndependentNativeHookFactoryUnsafeSupportRefuses(t *testing.T) {
 				}
 			}
 			nativeBefore := snapshotIndependentFile(t, f.nativePath)
-			report, err := runLegacyToleranceFixture(context.Background(), f.repoRoot, []resolver.ResolvedArtifact{f.resolved})
+			report, err := runIndependentLegacyToleranceFixture(context.Background(), f.repoRoot, []resolver.ResolvedArtifact{f.resolved})
 			if err != nil {
 				t.Fatalf("Run: %v", err)
 			}
@@ -945,7 +945,7 @@ func TestRunIndependentNativeHookNativeRootLinkRefuses(t *testing.T) {
 	if err := os.Symlink(externalRoot, f.nativeRoot); err != nil {
 		t.Fatal(err)
 	}
-	report, err := runLegacyToleranceFixture(context.Background(), f.repoRoot, []resolver.ResolvedArtifact{f.resolved})
+	report, err := runIndependentLegacyToleranceFixture(context.Background(), f.repoRoot, []resolver.ResolvedArtifact{f.resolved})
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -973,7 +973,7 @@ func TestRunIndependentNativeHookFIFORefusesInBoundedChild(t *testing.T) {
 			t.Fatal(err)
 		}
 		nativeBefore := snapshotIndependentFile(t, f.nativePath)
-		report, err := runLegacyToleranceFixture(context.Background(), f.repoRoot, []resolver.ResolvedArtifact{f.resolved})
+		report, err := runIndependentLegacyToleranceFixture(context.Background(), f.repoRoot, []resolver.ResolvedArtifact{f.resolved})
 		if err != nil {
 			t.Fatalf("Run: %v", err)
 		}
@@ -1224,7 +1224,7 @@ func TestRunIndependentNativeHookPrivateEvidenceCannotBeBypassed(t *testing.T) {
 			nativeBefore := snapshotIndependentFile(t, f.nativePath)
 			supportBefore := snapshotIndependentFile(t, f.supportPath)
 			stateBefore := snapshotIndependentFile(t, statePath)
-			report, err := runLegacyToleranceFixture(context.Background(), f.repoRoot, []resolver.ResolvedArtifact{f.resolved})
+			report, err := runIndependentLegacyToleranceFixture(context.Background(), f.repoRoot, []resolver.ResolvedArtifact{f.resolved})
 			if err != nil {
 				t.Fatalf("Run: %v", err)
 			}
@@ -1486,7 +1486,7 @@ func TestRunIndependentNativeHookFactorySupportRefusalDoesNotBlockClaude(t *test
 	factoryBefore := snapshotIndependentFile(t, f.nativePath)
 	claudeBefore := snapshotIndependentFile(t, claudePath)
 	resolved := append([]resolver.ResolvedArtifact{f.resolved}, claudeResolved...)
-	report, err := runLegacyToleranceFixture(context.Background(), repoRoot, resolved)
+	report, err := runIndependentLegacyToleranceFixture(context.Background(), repoRoot, resolved)
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}

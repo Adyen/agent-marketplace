@@ -158,7 +158,6 @@ func TestDefinitionsAppendCodexWithoutChangingExistingTargets(t *testing.T) {
 		if got[i].HookProjection == nil {
 			t.Fatalf("Definitions()[%d] has no derived hook projection", i)
 		}
-		got[i].HookProjection = nil
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("Definitions() = %#v, want %#v", got, want)

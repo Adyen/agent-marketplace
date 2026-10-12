@@ -20,6 +20,10 @@ import (
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 )
 
+var capturedNativeHookSourceLoaders = map[hcc.Harness]func(fs.FS, string) ([]*ir.Hook, []diag.Diagnostic, error){
+	hcc.Harness(hcc.TargetFactory): factoryingest.LoadHooksForNativeProjection,
+}
+
 // nativeHookProjectionSource resolves the verified source layout root and the
 // hook definition's root-relative path for one selected non-mirror hook,
 // using the same rules the version-1 fingerprint derives: local and Git
@@ -154,13 +158,14 @@ func verifyCapturedSourceHook(res resolver.ResolvedArtifact, hook *ir.Hook, snap
 	if !bytes.Equal(want, got) {
 		return nil, errors.New("captured hook definition differs from the selected resource")
 	}
-	if sourceHarness != hcc.Harness(hcc.TargetFactory) {
+	nativeLoader, ok := capturedNativeHookSourceLoaders[sourceHarness]
+	if !ok {
 		return legacyHook, nil
 	}
 
-	nativeHooks, nativeDiagnostics, err := factoryingest.LoadHooksForNativeProjection(snapshotFS, sourceFile)
+	nativeHooks, nativeDiagnostics, err := nativeLoader(snapshotFS, sourceFile)
 	if err != nil {
-		return nil, errors.New("captured native Factory hook definition could not be re-ingested")
+		return nil, errors.New("captured native hook definition could not be re-ingested")
 	}
 	nativeBundle := &ingest.Bundle{Diagnostics: nativeDiagnostics, Resources: make([]ir.Resource, 0, len(nativeHooks))}
 	for _, nativeHook := range nativeHooks {

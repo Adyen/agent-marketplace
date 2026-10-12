@@ -25,6 +25,14 @@ import (
 
 // runLegacyToleranceFixture characterizes the frozen legacy writer, not native Run.
 func runLegacyToleranceFixture(ctx context.Context, repoRoot string, resolved []resolver.ResolvedArtifact, options ...RunOption) (*Report, error) {
+	return runLegacyToleranceFixtureWithIndependentReader(ctx, repoRoot, resolved, false, options...)
+}
+
+func runIndependentLegacyToleranceFixture(ctx context.Context, repoRoot string, resolved []resolver.ResolvedArtifact, options ...RunOption) (*Report, error) {
+	return runLegacyToleranceFixtureWithIndependentReader(ctx, repoRoot, resolved, true, options...)
+}
+
+func runLegacyToleranceFixtureWithIndependentReader(ctx context.Context, repoRoot string, resolved []resolver.ResolvedArtifact, independentReader bool, options ...RunOption) (*Report, error) {
 	if len(resolved) == 0 {
 		return nil, fmt.Errorf("unsupported legacy tolerance selection")
 	}
@@ -82,7 +90,7 @@ func runLegacyToleranceFixture(ctx context.Context, repoRoot string, resolved []
 					continue
 				}
 				artifacts = suppressed
-			} else {
+			} else if independentReader {
 				satisfied, satisfactionErr := independentlySatisfiedNativeHook(w, repoRoot, ins)
 				if satisfactionErr != nil {
 					recordLegacyToleranceRefusal(&result, key, w, legacyRoot, satisfactionErr)
@@ -165,19 +173,27 @@ func runLegacyToleranceFixture(ctx context.Context, repoRoot string, resolved []
 }
 
 func legacyToleranceSupportArtifacts(selection resolver.ResolvedArtifact, target hcc.Target, machineScope bool, legacyRoot string) []artifact.Artifact {
-	hook, ok := selection.Resource.(*ir.Hook)
-	if !ok || hook == nil {
+	if _, ok := selection.Resource.(*ir.Hook); !ok {
 		return nil
 	}
-	_, _, support, err := prepareNativeHookProjectionSource(selection, hook, target, machineScope)
-	if err != nil {
+	plans, conflicts := prepareHookSupport([]skillTarget{{skill: selection, target: target, machineScope: machineScope}})
+	plan, ok := plans[0]
+	if !ok || plan.err != nil || len(conflicts[0]) != 0 || plan.relBase == "" {
 		return nil
 	}
-	files := make([]artifact.Artifact, 0, len(support))
-	for _, file := range support {
-		file.Path = path.Join("hooks", file.Path)
+	prefix := plan.relBase + "/"
+	files := make([]artifact.Artifact, 0, len(plan.artifacts))
+	for _, file := range plan.artifacts {
+		if !strings.HasPrefix(file.Path, prefix) {
+			return nil
+		}
+		relative := strings.TrimPrefix(file.Path, prefix)
+		if relative == "" {
+			return nil
+		}
+		file.Path = path.Join("hooks", relative)
 		if err := file.Validate(); err != nil {
-			continue
+			return nil
 		}
 		if _, err := os.Lstat(filepath.Join(legacyRoot, filepath.FromSlash(file.Path))); err == nil || !errors.Is(err, os.ErrNotExist) {
 			continue

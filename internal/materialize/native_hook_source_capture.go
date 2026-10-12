@@ -36,7 +36,18 @@ type hookSourceSnapshot struct {
 	files          []hookSourceFingerprintFile
 }
 
+type hookSourceSnapshotReadFunc func(int, string, *int64) ([]byte, os.FileMode, error)
+type hookSourceSnapshotOpenFunc func(int, string, int64) (*os.File, fs.FileMode, int64, error)
+
 func captureHookSourceSnapshot(sourceRoot, definition, definitionDir string, excludedPeers ...string) (*hookSourceSnapshot, error) {
+	return captureHookSourceSnapshotWithIO(sourceRoot, definition, definitionDir, readHookSourceSnapshotFile, openHookSupportFileAt, excludedPeers...)
+}
+
+func captureHookSourceSnapshotForReader(sourceRoot, definition, definitionDir string, excludedPeers ...string) (*hookSourceSnapshot, error) {
+	return captureHookSourceSnapshotWithIO(sourceRoot, definition, definitionDir, readHookSourceSnapshotFileNoAliases, openHookSupportFileAtNoAliases, excludedPeers...)
+}
+
+func captureHookSourceSnapshotWithIO(sourceRoot, definition, definitionDir string, readFile hookSourceSnapshotReadFunc, openFile hookSourceSnapshotOpenFunc, excludedPeers ...string) (*hookSourceSnapshot, error) {
 	if !filepath.IsAbs(sourceRoot) {
 		return nil, fmt.Errorf("hook support source root is not absolute")
 	}
@@ -62,7 +73,7 @@ func captureHookSourceSnapshot(sourceRoot, definition, definitionDir string, exc
 	if definition != "" {
 		definitionName = path.Base(definition)
 	}
-	if err := validateHookSupportPeersAt(dirFD, excludedPeers, definitionName); err != nil {
+	if err := validateHookSupportPeersAtWithOpener(dirFD, excludedPeers, definitionName, openFile); err != nil {
 		return nil, err
 	}
 	snapshot := &hookSourceSnapshot{
@@ -73,7 +84,7 @@ func captureHookSourceSnapshot(sourceRoot, definition, definitionDir string, exc
 	}
 	var total int64
 	if definition != "" {
-		data, _, err := readHookSourceSnapshotFile(dirFD, definitionName, &total)
+		data, _, err := readFile(dirFD, definitionName, &total)
 		if err != nil {
 			return nil, err
 		}
@@ -83,7 +94,7 @@ func captureHookSourceSnapshot(sourceRoot, definition, definitionDir string, exc
 		if relative == definitionName && definitionName != "" {
 			return nil
 		}
-		data, mode, err := readHookSourceSnapshotFile(dirFD, relative, &total)
+		data, mode, err := readFile(dirFD, relative, &total)
 		if err != nil {
 			return err
 		}
@@ -92,7 +103,7 @@ func captureHookSourceSnapshot(sourceRoot, definition, definitionDir string, exc
 	}); err != nil {
 		return nil, err
 	}
-	if err := validateHookSupportPeersAt(dirFD, excludedPeers, definitionName); err != nil {
+	if err := validateHookSupportPeersAtWithOpener(dirFD, excludedPeers, definitionName, openFile); err != nil {
 		return nil, err
 	}
 	sort.Slice(snapshot.files, func(i, j int) bool { return snapshot.files[i].rel < snapshot.files[j].rel })
@@ -130,7 +141,15 @@ func readHookSourceSnapshotFile(dirFD int, relative string, total *int64) ([]byt
 // deterministic test seam that runs after descriptor validation and before
 // its bytes are read.
 func readHookSourceSnapshotFileChecked(dirFD int, relative string, total *int64, between func(*os.File)) ([]byte, os.FileMode, error) {
-	file, mode, size, err := openHookSupportFileAt(dirFD, relative, *total)
+	return readHookSourceSnapshotFileCheckedWithOpener(dirFD, relative, total, between, openHookSupportFileAt)
+}
+
+func readHookSourceSnapshotFileNoAliases(dirFD int, relative string, total *int64) ([]byte, os.FileMode, error) {
+	return readHookSourceSnapshotFileCheckedWithOpener(dirFD, relative, total, nil, openHookSupportFileAtNoAliases)
+}
+
+func readHookSourceSnapshotFileCheckedWithOpener(dirFD int, relative string, total *int64, between func(*os.File), openFile hookSourceSnapshotOpenFunc) ([]byte, os.FileMode, error) {
+	file, mode, size, err := openFile(dirFD, relative, *total)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -169,12 +188,12 @@ func readHookSourceSnapshotFileChecked(dirFD int, relative string, total *int64,
 	return data, mode.Perm(), nil
 }
 
-func validateHookSupportPeersAt(dirFD int, peers []string, definitionName string) error {
+func validateHookSupportPeersAtWithOpener(dirFD int, peers []string, definitionName string, openFile hookSourceSnapshotOpenFunc) error {
 	for _, peer := range peers {
 		if peer == definitionName {
 			continue
 		}
-		file, _, _, err := openHookSupportFileAt(dirFD, peer, 0)
+		file, _, _, err := openFile(dirFD, peer, 0)
 		if errors.Is(err, unix.ENOENT) {
 			continue
 		}

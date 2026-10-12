@@ -497,7 +497,7 @@ func TestPrepareIndependentNativeHookProjectionFactoryCanonicalControl(t *testin
 	if !ok {
 		t.Fatalf("fixture resource = %#v, want hook", fixture.resolved.Resource)
 	}
-	if hook.HookSource != "" || hook.Matcher != "Bash" || hook.Command != "${CLAUDE_PLUGIN_ROOT}/scripts/run.sh" {
+	if hook.HookSource != "factory" || hook.Matcher != "Bash" || hook.Command != "${CLAUDE_PLUGIN_ROOT}/scripts/run.sh" {
 		t.Fatalf("canonical pseudo-Factory hook = %#v", hook)
 	}
 }
@@ -509,7 +509,8 @@ func TestPrepareIndependentNativeHookProjectionFactoryNativeSourceProjects(t *te
 	if !ok {
 		t.Fatal("fixture resource is not a hook")
 	}
-	if legacy.HookSource != "" || legacy.Matcher != "Execute" || legacy.Command != "${CLAUDE_PLUGIN_ROOT}/scripts/run.sh" {
+	if legacy.HookSource != "factory" || legacy.Matcher != "Execute" || legacy.Command != "${DROID_PLUGIN_ROOT}/scripts/run.sh" ||
+		legacy.Extra["commandRegex"] != "^make.*$" || !legacy.GroupExtraKeys["commandRegex"] {
 		t.Fatalf("unexpected default Factory-loader control: %#v", legacy)
 	}
 	repoRoot := t.TempDir()
@@ -805,6 +806,40 @@ func TestPrepareIndependentNativeHookProjectionSourceBoundaries(t *testing.T) {
 		assertHookProjectionRefusal(t, err, repoRoot, "hooks.json")
 		if !bytes.Equal(mustRead(t, outside), outsideBefore) {
 			t.Fatal("external definition changed during refusal")
+		}
+		if entries, err := os.ReadDir(repoRoot); err != nil || len(entries) != 0 {
+			t.Fatalf("repoRoot mutated on refusal: %v %v", entries, err)
+		}
+	})
+
+	t.Run("contained support alias refuses", func(t *testing.T) {
+		fixture := writeProjectionSource(t, "echo witness")
+		repoRoot := t.TempDir()
+		aliasPath := filepath.Join(filepath.Dir(fixture.definition), "alias.sh")
+		if err := os.Symlink(filepath.Base(fixture.support), aliasPath); err != nil {
+			t.Fatal(err)
+		}
+		aliasBefore, err := os.Lstat(aliasPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		aliasTarget, err := os.Readlink(aliasPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		supportBefore := mustRead(t, fixture.support)
+		work := skillTarget{skill: fixture.resolved, target: hcc.TargetFactory}
+		_, err = prepareNativeHookProjection(work, repoRoot)
+		assertHookProjectionRefusal(t, err, repoRoot, "hooks.json")
+		if !bytes.Equal(mustRead(t, fixture.support), supportBefore) {
+			t.Fatal("contained alias target changed during reader refusal")
+		}
+		aliasAfter, err := os.Lstat(aliasPath)
+		if err != nil || !os.SameFile(aliasBefore, aliasAfter) || aliasBefore.Mode() != aliasAfter.Mode() || !aliasBefore.ModTime().Equal(aliasAfter.ModTime()) {
+			t.Fatalf("contained alias changed during reader refusal: %v", err)
+		}
+		if target, err := os.Readlink(aliasPath); err != nil || target != aliasTarget {
+			t.Fatalf("contained alias target changed: %q %v", target, err)
 		}
 		if entries, err := os.ReadDir(repoRoot); err != nil || len(entries) != 0 {
 			t.Fatalf("repoRoot mutated on refusal: %v %v", entries, err)

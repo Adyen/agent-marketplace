@@ -34,6 +34,61 @@ func nativeHookActivationSupportPath(t *testing.T, resolved resolver.ResolvedArt
 	return plan, filepath.Join(root, filepath.FromSlash(plan.artifacts[0].Path))
 }
 
+// spec: hook-native-independent-satisfaction/reconstruction-grants-no-ownership-or-pruning
+func TestRunNativeHookPruneFencePreservesUnownedSupportMarker(t *testing.T) {
+	repo, _ := additiveSafetyEnv(t)
+	resolved := additiveSafetyProvider(t, hcc.TargetFactory, false, "echo native-runner", "#!/bin/sh\necho support\n")
+	factoryRoot := filepath.Join(repo, ".factory")
+	_, supportPath := nativeHookActivationSupportPath(t, resolved, hcc.TargetFactory, false, factoryRoot)
+	initial, err := Run(context.Background(), repo, []resolver.ResolvedArtifact{resolved})
+	if err != nil || diag.HasErrors(initial.Diags) {
+		t.Fatalf("initial Run: %v / %v", err, initial)
+	}
+
+	supportMarker := filepath.Join(filepath.Dir(supportPath), "unrelated.json")
+	supportBytes := []byte(`{"PreToolUse":[{"_managed_by":"agent-marketplace","matcher":"Manual","hooks":[{"type":"command","command":"echo handwritten support"}]}]}`)
+	if err := os.WriteFile(supportMarker, supportBytes, 0o640); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(supportMarker, 0o640); err != nil {
+		t.Fatal(err)
+	}
+	supportBefore, supportMode, supportMtime := fileSnapshot(t, supportMarker)
+	supportInfoBefore, err := os.Stat(supportMarker)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	staleMarker := filepath.Join(factoryRoot, "uncovered-stale.json")
+	staleBytes := []byte(`{"hooks":[{"_managed_by":"agent-marketplace","name":"stale-marker","type":"command","command":"echo stale"}]}`)
+	if err := os.WriteFile(staleMarker, staleBytes, 0o640); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(staleMarker, 0o640); err != nil {
+		t.Fatal(err)
+	}
+
+	report, err := Run(context.Background(), repo, nil)
+	if err != nil || diag.HasErrors(report.Diags) {
+		t.Fatalf("Run after hook deselection: %v / %v", err, report)
+	}
+	assertFileUnchanged(t, supportMarker, supportBefore, supportMode, supportMtime)
+	supportInfoAfter, err := os.Stat(supportMarker)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !os.SameFile(supportInfoBefore, supportInfoAfter) {
+		t.Fatal("native hook support marker file identity changed")
+	}
+	staleAfter, err := os.ReadFile(staleMarker)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		t.Fatal(err)
+	}
+	if err == nil && (bytes.Equal(staleAfter, staleBytes) || bytes.Contains(staleAfter, []byte(managedByField)) || bytes.Contains(staleAfter, []byte("stale-marker"))) {
+		t.Fatalf("generic prune did not remove the stale managed marker: %s", staleAfter)
+	}
+}
+
 // spec: hook-native-location-tolerance/satisfaction-proof-matches-every-contributor-exactly
 func TestNativeHookActivationIdenticalContributorsUseSelectedAliases(t *testing.T) {
 	repo, _ := additiveSafetyEnv(t)

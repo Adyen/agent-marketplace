@@ -222,7 +222,7 @@ func nativeHookProjectionSupportMatches(projection nativeHookProjection, refused
 		if err := expected.Validate(); err != nil {
 			return false, nil
 		}
-		actual, mode, err := readHookSourceSnapshotFile(supportFD, expected.Path, &total)
+		actual, mode, err := readHookSourceSnapshotFileNoAliases(supportFD, expected.Path, &total)
 		if err != nil {
 			return nativeHookSupportReadFailure(refusedRoot, refusedFile, err)
 		}
@@ -251,68 +251,6 @@ func nativeHookUnsafeBoundary(err error) bool {
 		errors.Is(err, dependencytxn.ErrGenerationConflict) ||
 		errors.Is(err, unix.ELOOP) ||
 		errors.Is(err, unix.ENOTDIR)
-}
-
-func extendNativeHookProjectionPruneFence(target hcc.Target, machineScope bool, pruneRoot string, destinations []harness.Destination, protected map[string]bool) map[string]bool {
-	if machineScope {
-		return protected
-	}
-	layout, ok := nativeHookLayoutFor(target, false)
-	if !ok {
-		return protected
-	}
-	declaration, ok := targetmeta.LookupHookProjection(targetmeta.Target(target))
-	if !ok {
-		return protected
-	}
-	file := declaration.File(false)
-	destination, nativeRel, err := nativeHookProjectionDestination(destinations, file)
-	if err != nil || nativeRel != layout.rel || file.Member != layout.container {
-		return protected
-	}
-	var valid bool
-	protected, valid = addNativeHookPrunePath(protected, pruneRoot, destination.Root, nativeRel, false)
-	if !valid {
-		return protected
-	}
-	supportRel, err := nativeHookProjectionSupportDir(declaration.SupportDir, destination.Prefix)
-	if err != nil {
-		return protected
-	}
-	protected, _ = addNativeHookPrunePath(protected, pruneRoot, destination.Root, supportRel, true)
-	return protected
-}
-
-func addNativeHookPrunePath(protected map[string]bool, pruneRoot, destinationRoot, relative string, directory bool) (map[string]bool, bool) {
-	if pruneRoot == "" || destinationRoot == "" || relative == "" || !fs.ValidPath(relative) || path.IsAbs(relative) || path.Clean(relative) != relative {
-		return protected, false
-	}
-	pruneRootAbs, err := filepath.Abs(filepath.Clean(pruneRoot))
-	if err != nil {
-		return protected, false
-	}
-	destinationRootAbs, err := filepath.Abs(filepath.Clean(destinationRoot))
-	if err != nil {
-		return protected, false
-	}
-	rel, err := filepath.Rel(pruneRootAbs, filepath.Join(destinationRootAbs, filepath.FromSlash(relative)))
-	if err != nil {
-		return protected, false
-	}
-	if filepath.IsAbs(rel) || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		return protected, true
-	}
-	if protected == nil {
-		protected = make(map[string]bool)
-	}
-	key := filepath.ToSlash(rel)
-	if key == "." {
-		return protected, false
-	} else if directory {
-		key = strings.TrimSuffix(key, "/") + "/"
-	}
-	protected[key] = true
-	return protected, true
 }
 
 func preserveNativeSatisfiedLegacyTwins(key outputKey, legacyRoot string, artifacts []artifact.Artifact) ([]artifact.Artifact, error) {
