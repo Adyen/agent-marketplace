@@ -79,7 +79,7 @@ When `AGENT_MARKETPLACE_TELEMETRY_ENDPOINT` points somewhere other than your con
 | Command | What it does |
 |---|---|
 | `agent-marketplace telemetry status` | Shows the effective level and where it came from, the primary endpoint host, header names, retention policy, community reporting, whether the installation is managed by an organization, the installation ID, pending records, retained diagnostic payloads, the last delivery failure, and any fields the organization locks. |
-| `agent-marketplace telemetry enable --level <basic\|detailed> [--endpoint <url>]` | Saves the level (and optional endpoint) in your user config. Run `agent-marketplace init` first. Use `telemetry disable` to turn telemetry off. |
+| `agent-marketplace telemetry enable --level <basic\|detailed> [--endpoint <url>]` | Saves the level (and optional endpoint) in your user config. It requires an existing user config (`agent-marketplace init` creates one). `telemetry disable` turns telemetry off. |
 | `agent-marketplace telemetry disable` | Sets your user level to `off`. |
 | `agent-marketplace telemetry preview --level <basic\|detailed\|diagnostic>` | Writes an example payload with sample values to a local file and prints its path. Nothing is sent. The `diagnostic` preview asks for confirmation, or needs `--diagnostic-accept-sensitive-data` when not run in a [terminal](../glossary.md#terminal). |
 | `agent-marketplace telemetry reset-id` | Deletes the installation ID, queued records, and retained diagnostic payloads, then creates a new ID and prints it. |
@@ -122,7 +122,7 @@ At the `detailed` level, the names of your registries' Git hosts and repositorie
 
 ## Diagnostic payloads
 
-Add `--diagnostic` to a command when you want to send one detailed capture of that run, for example to help someone investigate a problem. It needs the effective level `detailed`.
+`--diagnostic` captures one run for review before export. It needs the effective level `detailed`.
 
 1. The CLI records the run's metrics, traces, and diagnostic events in memory. URL credentials are removed.
 2. When the command ends, it writes the payload to `payload-<trace-id>.json` under `$XDG_STATE_HOME/agent-marketplace/telemetry/diagnostic/` (default `~/.local/state/agent-marketplace/telemetry/diagnostic/`) and prints the path, destination host, retention policy, installation ID, and trace ID. Only you can read the file.

@@ -156,7 +156,7 @@ A Marketplace can repair a `mirror` archive without changing the resource's cont
 | `sync --check` | Reports lock and output drift without writing, and exits `1` if anything is out of date. |
 | `update` | Advances Git locks to the current commits of their refs, then syncs. Also refreshes Marketplace archive evidence when the locked content digest is unchanged. `--bump` first moves eligible refs in v4 `sources:` to newer matching tags. Refs declared by included fragments are reported and left unchanged. |
 
-A current lock does not move when the remote branch or tag moves. Use `lock --upgrade` or `update` to pick up new commits.
+A current lock does not move when the remote branch or tag moves. `lock --upgrade` or `update` picks up new commits.
 
 ## Errors
 
