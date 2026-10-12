@@ -8,6 +8,6 @@
 ## 2. Verification and delivery
 
 - [x] 2.1 Pass the frozen-lockfile site install and build without dead links.
-- [ ] 2.2 Pass TestDocsContract and the scoped repository validation and strict OpenSpec checks.
-- [ ] 2.3 Reconcile the complete published reference claims and apply the deletion test to the candidate diff.
-- [ ] 2.4 Archive with openspec archive audit-reference-docs --yes --skip-specs.
+- [x] 2.2 Pass TestDocsContract and the scoped repository validation and strict OpenSpec checks.
+- [x] 2.3 Reconcile the complete published reference claims and apply the deletion test to the candidate diff.
+- [x] 2.4 Archive with openspec archive audit-reference-docs --yes --skip-specs.

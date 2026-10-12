@@ -539,7 +539,7 @@ agent-marketplace serve adopt --config <path> --actor <id> --reason <text> --ide
 | `--idempotency-key` | string | yes | none | Stable key reused when retrying this adoption. |
 | `--reason` | string | yes | none | Reason recorded in the adoption audit. |
 
-Before running adoption, stop every API and worker process and back up the database and blob storage. The command does not check either. The configuration file must set `management.mode: database`. On success it prints `Adopted marketplace configuration at revision <n>. Database authority is durable; runtime safety checks still apply.`
+Adoption requires a controlled maintenance window: every API and worker process stopped, the database and blob storage backed up, and controllable shared caches invalidated. The command does not verify external process shutdown or cache invalidation. The configuration file must set `management.mode: database`. On success it prints `Adopted marketplace configuration at revision <n>. Database authority is durable; runtime safety checks still apply.`
 
 ## `deinit`
 
