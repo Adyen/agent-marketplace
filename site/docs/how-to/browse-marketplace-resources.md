@@ -30,7 +30,7 @@ You can still inspect a revoked or policy-rejected revision, but its install act
 
 The command under **Install with the CLI** pins the revision you are viewing. Copy it to install exactly that revision, or share the revision's page URL so someone else can inspect the same content. If you use a resource URL without a revision, the CLI can pick a newer usable revision later.
 
-Before you run the command, [install the CLI](../install.md), choose your target [harnesses](../glossary.md#harness), and check that the CLI can edit the configuration file it will write to. You do not need to register the Marketplace endpoint first to install from a browser URL. See the [configuration compatibility note](../explanation/user-journeys.md#before-following-a-journey).
+Before you run the command, [install the CLI](../install.md), choose your target [harnesses](../glossary.md#harness), and check that the CLI can edit the configuration file it will write to. You do not need to register the Marketplace endpoint first to install from a browser URL. See the [configuration compatibility note](../explanation/user-journeys.md#configuration-compatibility).
 
 Run the copied command inside the repository where you want the resource. By default it installs into the repository scope. To choose a different scope, add `--scope`:
 

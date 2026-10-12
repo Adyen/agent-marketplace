@@ -43,14 +43,7 @@ The installed name is a fourth, separate thing: the folder or file name the reso
 
 ### Locators
 
-| Form | Shape |
-|---|---|
-| Compact | `<alias>:<registry>/<kind>/<name>` |
-| Compact, exact | `<alias>:<registry>/<kind>/<name>@sha256:<64 hex>` |
-| URL | `https://host/r/<registry>/<kind>/<name>` |
-| URL, exact | `https://host/r/<registry>/<kind>/<name>/revisions/sha256:<64 hex>` |
-
-`<kind>` uses the Marketplace spelling: `mcpserver`, not `mcp`. The [locators reference](../reference/marketplace-resource-locators.md) has the full rules.
+A locator names one Marketplace resource in compact form (`<alias>:<registry>/<kind>/<name>`) or as a URL on the endpoint, each with an exact variant that appends the revision digest. `<kind>` uses the Marketplace spelling: `mcpserver`, not `mcp`. The [locators reference](../reference/marketplace-resource-locators.md) has the full rules.
 
 ### Mirror and index-only acquisition
 
