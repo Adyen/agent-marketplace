@@ -508,7 +508,7 @@ func Run(ctx context.Context, repoRoot string, resolved []resolver.ResolvedArtif
 
 	var previewResult *compilePhaseResult
 	if len(rc.impliedPreview) > 0 {
-		previewWork, previewOutputs, previewBlocked, previewDiags := buildWorkItems(rc.impliedPreview, repoRoot)
+		previewWork, previewOutputs, previewBlocked, previewDiags := buildResourceWorkItems(rc.impliedPreview)
 		if rc.scopeFilter != nil {
 			for key := range previewOutputs {
 				if key.machineScope != *rc.scopeFilter {
@@ -549,6 +549,22 @@ func Run(ctx context.Context, repoRoot string, resolved []resolver.ResolvedArtif
 // buildWorkItems groups resolved skills by target and identifies all output
 // keys (including empty targets that need pruning).
 func buildWorkItems(resolved []resolver.ResolvedArtifact, repoRoot string) ([]skillTarget, map[outputKey]bool, blockedOutputs, []diag.Diagnostic) {
+	work, allOutputs, blocked, allDiags := buildResourceWorkItems(resolved)
+
+	// Include previously materialized targets even when they have no
+	// resolved artifacts in this run, so stale managed files get pruned.
+	addExistingOutputKeys(repoRoot, allOutputs)
+	addExistingNativeAggregateKeys(repoRoot, allOutputs)
+	// A file-mode manifest may be the only remaining record after a harness
+	// root is deleted. Include its known targets so deinit can still process
+	// that state instead of silently skipping it.
+	addPortableManifestOutputKeys(repoRoot, false, allOutputs, &allDiags)
+	addPortableManifestOutputKeys(repoRoot, true, allOutputs, &allDiags)
+
+	return work, allOutputs, blocked, allDiags
+}
+
+func buildResourceWorkItems(resolved []resolver.ResolvedArtifact) ([]skillTarget, map[outputKey]bool, blockedOutputs, []diag.Diagnostic) {
 	var work []skillTarget
 	var allDiags []diag.Diagnostic
 	allOutputs := make(map[outputKey]bool)
@@ -592,16 +608,6 @@ func buildWorkItems(resolved []resolver.ResolvedArtifact, repoRoot string) ([]sk
 			work = append(work, skillTarget{skill: s, target: t, machineScope: machineScope})
 		}
 	}
-
-	// Include previously materialized targets even when they have no
-	// resolved artifacts in this run, so stale managed files get pruned.
-	addExistingOutputKeys(repoRoot, allOutputs)
-	addExistingNativeAggregateKeys(repoRoot, allOutputs)
-	// A file-mode manifest may be the only remaining record after a harness
-	// root is deleted. Include its known targets so deinit can still process
-	// that state instead of silently skipping it.
-	addPortableManifestOutputKeys(repoRoot, false, allOutputs, &allDiags)
-	addPortableManifestOutputKeys(repoRoot, true, allOutputs, &allDiags)
 
 	return work, allOutputs, blocked, allDiags
 }
@@ -1135,7 +1141,6 @@ func executeMaterializePlans(ctx context.Context, compileResult compilePhaseResu
 		Diags:            compileResult.allDiags,
 		BlockedResources: compileResult.blockedResources,
 	}
-	var previewWildcard map[outputKey]bool
 	var previewMergeErrs map[outputKey]error
 	if preview != nil {
 		report.Diags = append(report.Diags, preview.allDiags...)
@@ -1143,16 +1148,18 @@ func executeMaterializePlans(ctx context.Context, compileResult compilePhaseResu
 		for _, tw := range preview.byTarget {
 			report.Diags = append(report.Diags, tw.diags...)
 		}
-		previewWildcard = make(map[outputKey]bool)
+		actualAggregates := compileResult.ownedAggregateState()
 		for key, components := range preview.blocked {
 			for component := range components {
 				compileResult.blocked.mark(key, component)
 			}
 			if components[blockedAllComponents] {
-				previewWildcard[key] = true
+				if binding, hasBinding, bindingErr := materializeAdapterFor(key.target); bindingErr == nil && hasBinding {
+					binding.handler.markIncomplete(actualAggregates, key, ir.KindHook)
+					binding.handler.markIncomplete(actualAggregates, key, ir.KindMcpServer)
+				}
 			}
 		}
-		actualAggregates := compileResult.ownedAggregateState()
 		for _, blockedResource := range preview.blockedResources {
 			binding, hasBinding, bindingErr := materializeAdapterFor(blockedResource.Target)
 			if bindingErr != nil || !hasBinding {
@@ -1292,9 +1299,6 @@ func executeMaterializePlans(ctx context.Context, compileResult compilePhaseResu
 			report.Diags = append(report.Diags, targetDiags...)
 		}
 		if preview != nil {
-			if previewWildcard[key] {
-				continue
-			}
 			if _, failed := previewMergeErrs[key]; failed {
 				continue
 			}
@@ -2460,7 +2464,7 @@ func materializeMergeArtifacts(outDir string, artifacts []artifact.Artifact, pre
 		if !pruneStaleEntries {
 			return &hcc.WriteReport{OutDir: outDir}, nil, nil
 		}
-		pruneReport, pruneDiags := pruneManagedMergeFiles(outDir, dryRun)
+		pruneReport, pruneDiags := pruneUncoveredManagedMergeFiles(outDir, nil, dryRun, nil, preview)
 		return pruneReport, pruneDiags, nil
 	}
 	// Replace any existing symlinks at merge artifact paths with regular
@@ -2630,6 +2634,19 @@ func retainedPreviewMergeBytes(existing, desired, preview []byte) ([]byte, error
 	return augmentDesiredWithPreviewManaged(doc, desiredDoc, previewDoc, desired)
 }
 
+func canonicalManagedElemKey(raw json.RawMessage) string {
+	var value map[string]any
+	if err := json.Unmarshal(raw, &value); err != nil || value == nil {
+		return canonicalMemberKey(raw)
+	}
+	value[managedByField] = managedByValue
+	canonical, err := json.Marshal(value)
+	if err != nil {
+		return canonicalMemberKey(raw)
+	}
+	return string(canonical)
+}
+
 func previewKeepIdentities(preview []byte) map[string]bool {
 	if len(preview) == 0 {
 		return nil
@@ -2654,7 +2671,7 @@ func previewKeepIdentities(preview []byte) map[string]bool {
 			for i := 0; i < node.Len(); i++ {
 				elem, ok := node.Element(i)
 				if ok {
-					keep[container+"\x00elem\x00"+canonicalMemberKey(elem.Canonical())] = true
+					keep[container+"\x00elem\x00"+canonicalManagedElemKey(elem.Canonical())] = true
 				}
 			}
 		}
