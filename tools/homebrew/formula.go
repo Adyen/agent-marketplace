@@ -6,6 +6,10 @@ import (
 )
 
 const privateDownloadStrategy = `class AgentMarketplacePrivateDownloadStrategy < NoUnzipCurlDownloadStrategy
+  def basename
+    Pathname.new(meta.fetch(:filename))
+  end
+
   def fetch(timeout: nil)
     token = ENV["HOMEBREW_AGENT_MARKETPLACE_TOKEN"]
     odie "HOMEBREW_AGENT_MARKETPLACE_TOKEN is required to download this private release asset" if token.nil? || token.empty?
@@ -46,7 +50,7 @@ func renderFormula(repo, tag, version, visibility string, assets map[string]asse
 			using = ", using: :nounzip"
 		} else {
 			url = fmt.Sprintf("https://api.github.com/repos/%s/releases/assets/%d", repo, assets[name].id)
-			using = ", using: AgentMarketplacePrivateDownloadStrategy"
+			using = fmt.Sprintf(", using: AgentMarketplacePrivateDownloadStrategy, filename: %q", name)
 		}
 		fmt.Fprintf(&b, "    %s do\n      url %q%s\n      sha256 %q\n    end\n", archKeyword, url, using, assets[name].sha256)
 	}

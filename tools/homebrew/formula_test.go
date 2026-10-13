@@ -19,8 +19,15 @@ func sha256Hex(t *testing.T, b []byte) string {
 
 const dslStub = `
 require "json"
+require "pathname"
+require "fileutils"
+
 $record = { urls: {}, shas: {}, meta: {}, fetches: [] }
 $platform = { os: ENV.fetch("HB_OS"), cpu: ENV.fetch("HB_CPU") }
+$stage_dir = File.join(ENV.fetch("HB_ROOT"), "stage")
+$cache_dir = File.join(ENV.fetch("HB_ROOT"), "cache")
+$bin_dir = File.join(ENV.fetch("HB_ROOT"), "bin")
+[$stage_dir, $cache_dir, $bin_dir].each { |d| FileUtils.mkdir_p(d) }
 
 def odie(msg); raise "odie: #{msg}"; end
 
@@ -38,6 +45,18 @@ class NoUnzipCurlDownloadStrategy
     @meta = meta
   end
 
+  def basename
+    Pathname.new(File.basename(@url.split("?").first))
+  end
+
+  def cached_location
+    Pathname.new(File.join($cache_dir, "cached-input"))
+  end
+
+  def stage
+    FileUtils.cp(cached_location, File.join($stage_dir, basename.to_s))
+  end
+
   def fetch(timeout: nil)
     $record[:fetches] << { "host" => "api.github.com", "headers" => (@meta[:headers] || []).dup }
     if ENV["HB_SIMULATE_REDIRECT"] == "1"
@@ -52,6 +71,11 @@ end
 
 class Bin
   def install(maps)
+    maps.each do |src, dst|
+      source = File.join($stage_dir, src)
+      raise "staged source missing: #{src}" unless File.exist?(source)
+      FileUtils.cp(source, File.join($bin_dir, dst))
+    end
     $record[:install] = maps
   end
 end
@@ -92,12 +116,29 @@ load ARGV[0]
 case ENV.fetch("HB_MODE")
 when "install"
   f = AgentMarketplace.new
+  %w[darwin-arm64 darwin-amd64 linux-arm64 linux-amd64].each do |sfx|
+    File.write(File.join($stage_dir, "agent-marketplace-v#{AgentMarketplace.version}-#{sfx}"), "binary-#{sfx}")
+  end
   begin
     f.install
   rescue StandardError, SystemExit => e
     $record[:install_error] = e.message
   end
   f.instance_eval(&$testblock)
+when "stage"
+  url, opts = $record[:urls]["#{$platform[:os]}-#{$platform[:cpu]}"]
+  meta = (opts || {}).dup
+  using = meta.delete(:using)
+  File.write(File.join($cache_dir, "cached-input"), ENV.fetch("HB_BINARY_CONTENT"))
+  klass = using == :nounzip ? NoUnzipCurlDownloadStrategy : using
+  begin
+    klass.new(url, meta).stage
+    $record[:staged] = Dir.children($stage_dir)
+    AgentMarketplace.new.install
+    $record[:installed] = File.read(File.join($bin_dir, "agent-marketplace"))
+  rescue StandardError, SystemExit => e
+    $record[:install_error] = e.message
+  end
 when "fetch"
   s = AgentMarketplacePrivateDownloadStrategy.new(
     "https://api.github.com/repos/Adyen/agent-marketplace/releases/assets/1000", {})
@@ -118,12 +159,13 @@ func evalFormula(t *testing.T, formulaPath string, env map[string]string) map[st
 	if err != nil {
 		t.Fatalf("formula contract tests require a ruby executable on PATH: %v", err)
 	}
-	stub := filepath.Join(t.TempDir(), "stub.rb")
+	root := t.TempDir()
+	stub := filepath.Join(root, "stub.rb")
 	if err := os.WriteFile(stub, []byte(dslStub), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	cmd := exec.Command(ruby, stub, formulaPath)
-	cmd.Env = append(os.Environ(), "HB_MODE=install")
+	cmd.Env = append(os.Environ(), "HB_MODE=install", "HB_ROOT="+root)
 	for k, v := range env {
 		cmd.Env = append(cmd.Env, k+"="+v)
 	}
@@ -214,6 +256,42 @@ func TestFormulaInstallsDeclaredVersion(t *testing.T) {
 	}
 	if tree["VERSION"] != "1.2.3\n" {
 		t.Errorf("VERSION = %q", tree["VERSION"])
+	}
+}
+
+// spec: homebrew-packaging/formula-installs-the-declared-agent-marketplace-version
+func TestFormulaStageInstallsCorrectBinary(t *testing.T) {
+	combos := []struct{ os, cpu, arch, suffix string }{
+		{"macos", "arm", "arm64", "darwin-arm64"},
+		{"macos", "intel", "x86_64", "darwin-amd64"},
+		{"linux", "arm", "arm64", "linux-arm64"},
+		{"linux", "intel", "x86_64", "linux-amd64"},
+	}
+	for _, visibility := range []string{"public", "private", "internal"} {
+		formulaPath, _ := generateFormula(t, visibility)
+		for _, combo := range combos {
+			t.Run(visibility+"/"+combo.suffix, func(t *testing.T) {
+				want := "binary-" + combo.suffix
+				rec := evalFormula(t, formulaPath, map[string]string{
+					"HB_OS": combo.os, "HB_CPU": combo.cpu, "HB_ARCH": combo.arch,
+					"HB_MODE": "stage", "HB_BINARY_CONTENT": want,
+				})
+				if msg, _ := rec["install_error"].(string); msg != "" {
+					t.Fatalf("stage->install failed: %s (%v)", msg, rec)
+				}
+				if rec["installed"] != want {
+					t.Errorf("installed bytes = %v, want %q", rec["installed"], want)
+				}
+				install, _ := rec["install"].(map[string]any)
+				if len(install) != 1 || install["agent-marketplace-v1.2.3-"+combo.suffix] != "agent-marketplace" {
+					t.Errorf("install = %v, want rename to agent-marketplace", install)
+				}
+				staged, _ := rec["staged"].([]any)
+				if len(staged) != 1 || staged[0] != "agent-marketplace-v1.2.3-"+combo.suffix {
+					t.Errorf("staged files = %v, want exact asset filename", staged)
+				}
+			})
+		}
 	}
 }
 
