@@ -1470,7 +1470,7 @@ func (r *Resolver) requirementInManifest(ctx context.Context, client *Client, ma
 	// occurrence and the looked-up commit leaves the root unestablished.
 	rev, err := client.GetResourceRevisionForRegistry(ctx, routeRegistry, q.RegistryID, q.Kind, q.Name, digest)
 	if err != nil {
-		if isMarketplaceNotFound(err) {
+		if isMarketplaceUnavailable(err) {
 			return resolver.MarketplaceRequirementResult{}, nil
 		}
 		return resolver.MarketplaceRequirementResult{}, fmt.Errorf("marketplace requirement %s/%s/%s@%s: %w", q.RegistryID, q.Kind, q.Name, digest, err)
@@ -1511,8 +1511,8 @@ func isMarketplaceNotFound(err error) bool {
 }
 
 // isMarketplaceUnavailable reports a candidate the Marketplace refuses to
-// serve: missing (404), blocked (403), or revoked (410). It applies only to
-// the latest-revision lookup; occurrence and manifest fetches stay 404-only.
+// serve: missing (404), blocked (403), or revoked (410). It applies to
+// resource revision fetches; occurrence and manifest fetches stay 404-only.
 func isMarketplaceUnavailable(err error) bool {
 	var apiErr *APIError
 	if !errors.As(err, &apiErr) {

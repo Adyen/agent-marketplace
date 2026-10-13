@@ -217,6 +217,47 @@ func TestResolveMarketplaceRequirementUsesRequiringRegistry(t *testing.T) {
 	}
 }
 
+// A registry hint naming a different bound registry must not inherit the
+// requiring pin's registry_commit: the target registry's current revision
+// policy applies instead.
+func TestResolveMarketplaceRequirementCrossRegistryHintIgnoresRequirerCommit(t *testing.T) {
+	reqs := []any{map[string]any{"name": "helper", "kind": "skill", "registry": "extras"}}
+	cfg, artifacts := marketplaceRequiresFixture(true, reqs, false)
+	otherPin := config.MarketplaceResourcePin{
+		RegistryID: "other", RegistrySlug: "extras", Kind: "skill", Name: "bres",
+		Digest: requiresHelperDig, Direct: true,
+	}
+	cfg.Marketplaces[0].Resources = append(cfg.Marketplaces[0].Resources, otherPin)
+	artifacts = append(artifacts, ResolvedArtifact{
+		Entry:                   catalog.Entry{Kind: ir.KindSkill, Name: "bres", Resource: requiringSkill("bres")},
+		Source:                  config.RepoCommitted,
+		IsMarketplace:           true,
+		MarketplaceURL:          requiresMPEndpoint,
+		MarketplaceInstanceID:   "mp",
+		MarketplaceRegistryID:   "other",
+		MarketplaceResourceName: "bres",
+		MarketplaceDigest:       requiresHelperDig,
+		CatalogKey:              config.MarketplaceCatalogKey(cfg.Marketplaces[0], otherPin),
+	})
+	mp := &recordingMarketplaceLookup{staticMarketplaceResolver: staticMarketplaceResolver{artifacts: artifacts}}
+
+	_, _ = Resolve(cfg, nil, nil, WithMarketplaceResolver(mp))
+
+	if len(mp.queries) != 1 {
+		t.Fatalf("queries = %d, want exactly one lookup", len(mp.queries))
+	}
+	q := mp.queries[0]
+	if q.RegistryID != "other" || q.RegistrySlug != "extras" {
+		t.Fatalf("lookup must target the hinted registry, got %+v", q)
+	}
+	if q.SameRegistry {
+		t.Fatalf("cross-registry lookup must not be marked same-registry, got %+v", q)
+	}
+	if q.RegistryCommit != "" {
+		t.Fatalf("cross-registry lookup must not carry the requirer's registry_commit, got %q", q.RegistryCommit)
+	}
+}
+
 // spec: resource-prerequisites/lookup-candidate-is-previewed-not-recorded
 func TestResolveMarketplaceRequirementFoundIsPreviewOnly(t *testing.T) {
 	cfg, artifacts := marketplaceRequiresFixture(false, []any{"skill:helper"}, false)

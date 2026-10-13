@@ -188,6 +188,96 @@ func TestLookupRequirementLatestRevision(t *testing.T) {
 	}
 }
 
+// A cross-registry lookup deliberately carrying the requirer's pinned commit
+// must ignore it and use the target registry's current revision.
+func TestLookupRequirementCrossRegistryIgnoresRequirerCommit(t *testing.T) {
+	revision := assessedRevisionOccurrence(store.ResourceRevision{
+		Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Registry: "other", Kind: "skill", Name: "helper"},
+		ContentDigest: store.RevisionDigest(lookupHelperD),
+	}, lookupCommitB, "sha256:"+strings.Repeat("e", 64))
+	manifest, manifestDigest := lookupManifest(t,
+		marketplaceartifact.RevisionResource{Kind: "skill", Name: "helper", ContentDigest: "sha256:" + strings.Repeat("f", 64)},
+	)
+	var pinnedRouteHit bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v1/resources/extras/skill/helper":
+			_ = json.NewEncoder(w).Encode(revision)
+		case "/api/v1/registries/other/occurrences/" + lookupCommitA:
+			pinnedRouteHit = true
+			_ = json.NewEncoder(w).Encode(lookupOccurrence(lookupCommitA, manifestDigest))
+		case "/api/v1/manifests/" + manifestDigest:
+			pinnedRouteHit = true
+			_, _ = w.Write(manifest)
+		default:
+			http.Error(w, "not found", http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	r := &Resolver{Cache: NewCache(t.TempDir())}
+	result, err := r.LookupMarketplaceRequirement(t.Context(), resolver.MarketplaceRequirementQuery{
+		Entry:          lookupEntry(server),
+		RegistryID:     "other",
+		RegistrySlug:   "extras",
+		SameRegistry:   false,
+		RegistryCommit: lookupCommitA,
+		Kind:           "skill",
+		Name:           "helper",
+	})
+	if err != nil {
+		t.Fatalf("lookup = %v", err)
+	}
+	if !result.Found || result.ContentDigest != lookupHelperD {
+		t.Fatalf("cross-registry lookup = %+v, want found %s", result, lookupHelperD)
+	}
+	if pinnedRouteHit {
+		t.Fatal("cross-registry lookup consulted the requirer's pinned commit")
+	}
+}
+
+// A blocked or revoked revision-by-digest fetch on the pinned-commit manifest
+// path is an unavailable candidate, not a resolution error.
+func TestLookupRequirementUnavailablePinnedRevisionIsNotFound(t *testing.T) {
+	for _, status := range []int{http.StatusForbidden, http.StatusGone} {
+		t.Run(strconv.Itoa(status), func(t *testing.T) {
+			manifest, digest := lookupManifest(t,
+				marketplaceartifact.RevisionResource{Kind: "skill", Name: "helper", ContentDigest: lookupHelperD},
+			)
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/api/v1/registries/src/occurrences/" + lookupCommitA:
+					_ = json.NewEncoder(w).Encode(lookupOccurrence(lookupCommitA, digest))
+				case "/api/v1/manifests/" + digest:
+					_, _ = w.Write(manifest)
+				case "/api/v1/resources/src/skill/helper/revisions/" + lookupHelperD:
+					http.Error(w, http.StatusText(status), status)
+				default:
+					http.Error(w, "not found", http.StatusNotFound)
+				}
+			}))
+			defer server.Close()
+
+			r := &Resolver{Cache: NewCache(t.TempDir())}
+			result, err := r.LookupMarketplaceRequirement(t.Context(), resolver.MarketplaceRequirementQuery{
+				Entry:          lookupEntry(server),
+				RegistryID:     "src",
+				SameRegistry:   true,
+				RegistryCommit: lookupCommitA,
+				Kind:           "skill",
+				Name:           "helper",
+				Path:           "tools",
+			})
+			if err != nil {
+				t.Fatalf("status %d lookup error = %v, want not-found", status, err)
+			}
+			if result.Found {
+				t.Fatalf("status %d lookup = %+v, want not found", status, result)
+			}
+		})
+	}
+}
+
 // spec: resource-prerequisites/missing-candidate-has-not-found-reason
 func TestLookupRequirementUnavailableRevisionsAreNotFound(t *testing.T) {
 	for _, status := range []int{http.StatusForbidden, http.StatusGone, http.StatusNotFound} {
