@@ -34,4 +34,4 @@
 
 - [x] 6.1 Update the site reference pages for prerequisites, the Marketplace API, and the acquisition-lock format with the release-N boundary and the deferred recording behavior.
 - [x] 6.2 Run `go run ./tools/specaudit trace` and `openspec validate --all --strict`.
-- [ ] 6.3 Run `openspec archive marketplace-requirements --yes`.
+- [x] 6.3 Run `openspec archive marketplace-requirements --yes`.

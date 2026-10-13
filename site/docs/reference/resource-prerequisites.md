@@ -159,11 +159,16 @@ This release never records a lookup result: a found candidate appears in
 the implied preview only, preserves or prunes no materialized output,
 changes neither configuration nor lock bytes, and — with expansion
 enabled — reports the prerequisite unmet with reason `unrecorded`.
+Every lock rewrite keeps a requires edge only while its requiring
+resource stays locked at the same content digest; updating the parent
+drops the edge and prunes any record it alone held. Refreshing an
+implied pin on update is deferred — no rewrite ever adds a requires
+edge.
 
 Removing a requires-held prerequisite succeeds like any authorized
 removal: its lock record and requires edges are removed, an exact
 `registry/kind/name` Marketplace exclusion is written only when expansion
-is enabled (into the user layer, the one layer where Marketplace
+is enabled (into the layer being mutated, a layer where Marketplace
 exclusions take effect), and the requiring resource stays selected with
 its prerequisite reported unmet.
 
