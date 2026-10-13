@@ -70,7 +70,7 @@ Run the release checklist.
 
 This marker belongs to Devin and Codex converted-command layouts. Other command formats, such as Claude's `commands/<name>.md`, do not use it.
 
-A marked command cannot also carry controls a command cannot hold. In a Devin layout, `permissions`, `agent`, `subagent`, or `triggers` other than `[user]` make the CLI refuse the resource with `ingest.devin.command-security-unsupported`. Remove the marker to keep such a file as a skill.
+A marked command cannot also carry controls a command cannot hold. In a Devin layout, `permissions`, `agent`, `subagent`, or `triggers` that do not include `user` make the CLI refuse the resource with `ingest.devin.command-security-unsupported`. Remove the marker to keep such a file as a skill.
 
 ## Non-skill resources
 

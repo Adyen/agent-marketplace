@@ -21,12 +21,17 @@ Harness Compilation MUST preserve U+0085, U+2028 and U+2029 in YAML frontmatter 
 
 ### Requirement: Converted command skills keep their restrictions
 
-Harness Compilation MUST NOT discard an authority-bearing control while converting between a Devin converted command skill and a command. When the Devin source layout marks a skill with `x-agent-marketplace-kind: command` and the skill declares a `permissions` policy, an `agent` or `subagent` execution selector, or triggers other than exactly `[user]`, ingestion MUST refuse the resource with the error diagnostic `ingest.devin.command-security-unsupported`, and the refused resource MUST produce no artifact on any harness target. A marked skill with user-only activation and a representable `allowed-tools` restriction MUST still be ingested as a command. Devin compilation of a command MUST NOT emit `agent` or `subagent` from command extension fields; it MUST report `compile.canonical-field-overrides-extra` and keep the mapped `allowed-tools` restriction. Ordinary Devin skills MUST keep their native execution selectors.
+Harness Compilation MUST NOT discard an authority-bearing control while converting between a Devin converted command skill and a command. When the Devin source layout marks a skill with `x-agent-marketplace-kind: command` and the skill declares a `permissions` policy, an `agent` or `subagent` execution selector, or triggers that do not include `user`, ingestion MUST refuse the resource with the error diagnostic `ingest.devin.command-security-unsupported`, and the refused resource MUST produce no artifact on any harness target. A marked skill whose activation includes `user` and whose `allowed-tools` restriction is representable MUST still be ingested as a command; activation other than user-only MUST be narrowed to user-only with the warning `ingest.devin.command-field-dropped`. Devin compilation of a command MUST NOT emit `agent` or `subagent` from command extension fields; it MUST report `compile.canonical-field-overrides-extra` and keep the mapped `allowed-tools` restriction. Ordinary Devin skills MUST keep their native execution selectors.
 
 #### Scenario: Marked Devin skill with controls the command cannot hold is refused
 
 - **WHEN** a Devin source layout skill is marked as a converted command skill and declares a permissions deny policy, model-only activation, or an agent or subagent selector, next to an unmarked sibling skill
 - **THEN** conversion to Devin and to Claude MUST report the error `ingest.devin.command-security-unsupported`, MUST emit no artifact for the marked resource, and MUST still emit the sibling skill
+
+#### Scenario: Activation that includes user narrows to a converted command
+
+- **WHEN** a Devin source layout skill is marked as a converted command skill and declares user and model triggers
+- **THEN** conversion from Devin to Devin MUST report the warning `ingest.devin.command-field-dropped` and no error, and MUST emit the converted command skill with user-only triggers
 
 #### Scenario: Plain converted command skill still round-trips
 

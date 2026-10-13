@@ -45,7 +45,6 @@ func TestDevinMarkedSkillWithUnholdableControlsIsRefused(t *testing.T) {
 		"allow-only policy":   "permissions:\n  allow: [read]\n",
 		"model-only triggers": "triggers: [model]\n",
 		"empty triggers":      "triggers: []\n",
-		"user and model":      "triggers: [user, model]\n",
 		"agent selector":      "triggers: [user]\nagent: reviewer\n",
 		"subagent selector":   "subagent: subagent_explore\n",
 	}
@@ -89,6 +88,37 @@ func TestDevinMarkedSkillWithUnholdableControlsIsRefused(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+// spec: harness-compilation/activation-that-includes-user-narrows-to-a-converted-command
+func TestDevinUserActivationNarrowsToConvertedCommand(t *testing.T) {
+	const doc = "---\nname: review\ndescription: Review the diff\nx-agent-marketplace-kind: command\ntriggers:\n  - user\n  - model\n---\nInert command body.\n"
+	src := fstest.MapFS{".devin/skills/review/SKILL.md": {Data: []byte(doc)}}
+	result, err := Convert(src, HarnessDevin, TargetDevin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.HasErrors() {
+		t.Fatalf("narrowable activation refused: %+v", result.Diagnostics)
+	}
+	narrowed := false
+	for _, d := range result.Diagnostics {
+		if d.Code == diag.CodeIngestDevinCommandFieldDropped && d.Severity == diag.SeverityWarning && d.Resource == "review" {
+			narrowed = true
+		}
+	}
+	if !narrowed {
+		t.Fatalf("narrowed activation not reported: %+v", result.Diagnostics)
+	}
+	data, ok := artifactBytes(result, "skills/review/SKILL.md")
+	if !ok {
+		t.Fatalf("converted command skill missing: %+v", result.Artifacts)
+	}
+	fields := devinFrontmatter(t, data)
+	triggers, _ := fields["triggers"].([]any)
+	if len(triggers) != 1 || triggers[0] != "user" || fields["x-agent-marketplace-kind"] != "command" {
+		t.Fatalf("activation not narrowed to a user-only converted command: %#v", fields)
 	}
 }
 

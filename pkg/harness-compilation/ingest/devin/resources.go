@@ -5,6 +5,7 @@ import (
 	"io/fs"
 	"log/slog"
 	"path"
+	"slices"
 	"strings"
 
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/bundle"
@@ -101,6 +102,11 @@ func canonicalizeSkill(skill *ir.Skill, file string) (ir.Resource, []diag.Diagno
 	// reported as a hard error.
 	tools, toolDiags := reverseTools(skill.AllowedTools, name, file)
 	if len(toolDiags) > 0 {
+		if kind, ok := skill.Extra[kindExtensionKey]; ok && kind == commandKindValue {
+			if refusal, refused := commandControlRefusal(skill, file); refused {
+				toolDiags = append(toolDiags, refusal)
+			}
+		}
 		return nil, toolDiags, false
 	}
 	skill.AllowedTools = tools
@@ -168,11 +174,12 @@ func canonicalizeSkill(skill *ir.Skill, file string) (ir.Resource, []diag.Diagno
 //     file, because the Devin command compiler never writes it, and putting it
 //     back into Extra would pass an unvalidated model straight into the next
 //     artifact behind the compiler's back.
-//   - permissions, subagent, agent, and any triggers other than `[user]` never
-//     reach this function: commandControlRefusal refuses the resource, because
+//   - permissions, subagent, agent, and triggers without `user` never reach
+//     this function: commandControlRefusal refuses the resource, because
 //     dropping them would change what it may do or who may invoke it.
-//   - triggers `[user]` is exactly what the compiler writes and is restored
-//     from the kind, so it is consumed silently.
+//   - triggers is dropped. `[user]` is exactly what the compiler writes and is
+//     restored from the kind, so it is dropped silently; any other list that
+//     includes `user` only narrows activation to user-only and is reported.
 func commandFromSkill(skill *ir.Skill, file string) (*ir.Command, []diag.Diagnostic) {
 	name := skill.Name()
 
@@ -206,6 +213,9 @@ func commandFromSkill(skill *ir.Skill, file string) (*ir.Command, []diag.Diagnos
 		})
 	}
 
+	if skill.Triggers != nil && (len(skill.Triggers) != 1 || skill.Triggers[0] != triggerUser) {
+		dropped(triggersKey)
+	}
 	if skill.Model != "" {
 		dropped(modelKey)
 	}
@@ -217,7 +227,7 @@ func commandControlRefusal(skill *ir.Skill, file string) (diag.Diagnostic, bool)
 	// Fixed field order so a file with several unrepresentable fields reports
 	// the same diagnostic sequence on every run.
 	var fields []string
-	if skill.Triggers != nil && (len(skill.Triggers) != 1 || skill.Triggers[0] != triggerUser) {
+	if skill.Triggers != nil && !slices.Contains(skill.Triggers, triggerUser) {
 		fields = append(fields, triggersKey)
 	}
 	if skill.PermissionsSet {

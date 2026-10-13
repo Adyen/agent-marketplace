@@ -4,8 +4,8 @@ A Devin converted command skill and a command do not carry the same controls. In
 
 ## What Changes
 
-- Devin ingestion refuses a marked converted command skill that declares `permissions`, `agent`, `subagent`, or triggers other than exactly user-only, with the error diagnostic `ingest.devin.command-security-unsupported`. The refused resource produces no artifact on any harness target.
-- Marked converted command skills with user-only activation and a representable `allowed-tools` restriction keep round-tripping as commands.
+- Devin ingestion refuses a marked converted command skill that declares `permissions`, `agent`, `subagent`, or triggers that do not include `user`, with the error diagnostic `ingest.devin.command-security-unsupported`. The refused resource produces no artifact on any harness target.
+- Marked converted command skills whose activation includes `user` and whose `allowed-tools` restriction is representable keep round-tripping as commands. Extra activation next to `user` is narrowed to user-only with the existing `ingest.devin.command-field-dropped` warning.
 - Devin compilation never emits `agent` or `subagent` from command extension fields. It reports the existing `compile.canonical-field-overrides-extra` warning and keeps the mapped `allowed-tools` restriction.
 - Ordinary Devin skills keep their native `agent` and `subagent` execution selectors.
 
