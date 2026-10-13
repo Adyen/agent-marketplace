@@ -10,7 +10,7 @@ Make a registry's CI job fail when a resource it ships is malformed, missing fro
 
 ## 1. Install a pinned CLI
 
-Pin the version so CI results are reproducible and match what consumers run. Choose the release your consumers use and pin that exact tag; do not track the newest release automatically, because a new release can change diagnostics and make an unchanged registry fail. The examples pin v4.1.3. Run the job in bash and prepare a job-owned bin directory first, so either installation path below works:
+Pin the version so CI results are reproducible and match what consumers run. Choose the release your consumers use and pin that exact tag; do not track the newest release automatically, because a new release can change diagnostics and make an unchanged registry fail. The examples pin v4.1.3. Run these blocks in one Bash script or one GitHub Actions `run` step, choosing one installation option. Later blocks reuse `BIN_DIR`, `PATH`, `CONSUMER`, and the working directory. Run the job in bash and prepare a job-owned bin directory first, so either installation path below works:
 
 ```bash
 set -euo pipefail
@@ -35,10 +35,11 @@ Or build from source at the pinned tag:
 SOURCE_DIR="$(mktemp -d)"
 git clone --depth 1 --branch v4.1.3 https://github.com/Adyen/agent-marketplace.git "$SOURCE_DIR"
 (cd "$SOURCE_DIR" && CGO_ENABLED=0 go build -ldflags "-X main.version=v4.1.3" -o "$BIN_DIR/agent-marketplace" ./cmd/agent-marketplace)
+rm -rf -- "$SOURCE_DIR"
 agent-marketplace --version
 ```
 
-`curl`, `chmod`, and `go build` succeed silently; `git clone` prints progress lines. Either way, the last command prints `v4.1.3`. The `-ldflags` value makes `agent-marketplace --version` print the tag. Remove the `mktemp` directories at the end of the job unless your runner cleans its workspace; both hold only files this job created. There is no Windows build.
+`curl`, `chmod`, `go build`, and the `rm -rf` cleanup succeed silently; `git clone` prints progress lines. Either way, the last command prints `v4.1.3`. The `-ldflags` value makes `agent-marketplace --version` print the tag. Remove the remaining `mktemp` directories at the end of the job unless your runner cleans its workspace; they hold only files this job created. There is no Windows build.
 
 ## 2. Point a throwaway consumer at the checkout
 
