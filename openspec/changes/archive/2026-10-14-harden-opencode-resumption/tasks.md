@@ -6,4 +6,4 @@
 - [x] 4. Fix and exercise native compatibility inspection and fixtures without weakening isolation.
 - [x] 5. Bind every added scenario to regression tests and record benchmark evidence.
 - [x] 6. Run focused tests, repository/domain gates, and adversarial review.
-- [ ] 7. Run `openspec archive harden-opencode-resumption --yes`.
+- [x] 7. Run `openspec archive harden-opencode-resumption --yes`.
