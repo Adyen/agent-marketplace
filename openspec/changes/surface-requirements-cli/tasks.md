@@ -1,13 +1,13 @@
 ## 1. Prove reporting behavior
 
-- [ ] 1.1 Add sandboxed TestSurfaceRequirements command tests for every new or modified delta scenario with spec annotations and positive/negative output controls; observe focused failure on the unchanged base.
-- [ ] 1.2 Prove direct RequiredBy providers are not called implied, transitive install reachability/dedup/filtering, collection behavior, hint redaction and warning-only doctor/read-only safety.
+- [x] 1.1 Add sandboxed TestSurfaceRequirements command tests for every new or modified delta scenario with spec annotations and positive/negative output controls; observe focused failure on the unchanged base.
+- [x] 1.2 Prove direct RequiredBy providers are not called implied, transitive install reachability/dedup/filtering, collection behavior, hint redaction and warning-only doctor/read-only safety.
 
 ## 2. Implement CLI relationship reporting
 
-- [ ] 2.1 Carry reporting-only implied-admission metadata and capture existing sync resolution/preview into install results without changing selection or adding acquisition.
-- [ ] 2.2 Render install after-summary relationship output, configured-list VIA, ad-hoc REQUIRES, status VIA/REASON and doctor unconfigured-source warning.
-- [ ] 2.3 Run focused command and reporting-seam regressions, retaining strict exits and existing command witnesses.
+- [x] 2.1 Carry reporting-only implied-admission metadata and capture existing sync resolution/preview into install results without changing selection or adding acquisition.
+- [x] 2.2 Render install after-summary relationship output, configured-list VIA, ad-hoc REQUIRES, status VIA/REASON and doctor unconfigured-source warning.
+- [x] 2.3 Run focused command and reporting-seam regressions, retaining strict exits and existing command witnesses.
 
 ## 3. Reconcile documentation and verification
 

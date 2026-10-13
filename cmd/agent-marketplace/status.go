@@ -72,6 +72,7 @@ type errorRow struct {
 type requirementRow struct {
 	Resource    string
 	Requirement string
+	Reason      string
 	Remediation string
 }
 
@@ -321,6 +322,7 @@ func splitRequirementWarnings(errs []error) ([]requirementRow, []error) {
 		rows = append(rows, requirementRow{
 			Resource:    fmt.Sprintf("%s:%s", skill.KindLabel(warning.ResourceKind), warning.ResourceName),
 			Requirement: fmt.Sprintf("%s:%s", skill.KindLabel(warning.Requirement.Kind), warning.Requirement.Name),
+			Reason:      string(warning.Reason),
 			Remediation: warning.Remediation(),
 		})
 	}
@@ -441,7 +443,7 @@ func buildStatusRows(repoRoot string, resolved []resolver.ResolvedArtifact, cach
 			Ref:      resolvedArtifact.Ref,
 			Cache:    cacheFreshness[cacheKey],
 			Source:   resolvedArtifact.Source,
-			Via:      resolvedArtifact.Via,
+			Via:      requirementVia(resolvedArtifact.Via, resolvedArtifact.RequiredBy),
 		})
 	}
 
@@ -827,7 +829,7 @@ func writeStatusSections(out io.Writer, view statusView) error {
 	}
 
 	if len(requirements) > 0 {
-		if err := writeStatusTable(out, "UNMET REQUIREMENTS", []string{"RESOURCE", "REQUIRES", "FIX"}, requirementRowsToCells(requirements)); err != nil {
+		if err := writeStatusTable(out, "UNMET REQUIREMENTS", []string{"RESOURCE", "REQUIRES", "REASON", "FIX"}, requirementRowsToCells(requirements)); err != nil {
 			return err
 		}
 	}
@@ -1012,7 +1014,7 @@ func collisionRowsToCells(rows []collisionRow) [][]string {
 func requirementRowsToCells(rows []requirementRow) [][]string {
 	cells := make([][]string, 0, len(rows))
 	for _, row := range rows {
-		cells = append(cells, []string{row.Resource, row.Requirement, row.Remediation})
+		cells = append(cells, []string{row.Resource, row.Requirement, row.Reason, row.Remediation})
 	}
 	return cells
 }

@@ -385,10 +385,11 @@ func CommitPreparedMarketplaceInstall(ctx context.Context, prepared *PreparedMar
 		return nil, err
 	}
 	identities := marketplaceInstallIdentities(prepared.plan)
+	var syncRes ResolveResult
 	requirementWarnings, err := MutateMarketplaceLayer(ctx, prepared.options.RepoRoot, prepared.options.LocalConfigDir, prepared.configPath, installScopeSource(prepared.options.Scope), func(m *MarketplaceLayerMutation) error {
 		return m.IncludePins(commitEntry, pins)
 	}, func() ([]error, error) {
-		syncOpts := append(silentSyncOptsForInstall(prepared.options), withMarketplaceInstall(prepared.plan, installScopeSource(prepared.options.Scope)), withMarketplaceMode(marketplaceInstallResolveMode(prepared.plan, ec.Merged)))
+		syncOpts := append(silentSyncOptsForInstall(prepared.options), withMarketplaceInstall(prepared.plan, installScopeSource(prepared.options.Scope)), withMarketplaceMode(marketplaceInstallResolveMode(prepared.plan, ec.Merged)), withSyncResultCapture(&syncRes))
 		return syncAfterInstall(ctx, prepared.options, identities, syncOpts...)
 	})
 	if err != nil {
@@ -398,10 +399,12 @@ func CommitPreparedMarketplaceInstall(ctx context.Context, prepared *PreparedMar
 	for _, identity := range identities {
 		installed = append(installed, identity.name)
 	}
+	alsoSelected, preview := relatedRequirementArtifacts(syncRes, identities)
 	return &InstallResult{
 		Installed: installed, IsCollection: len(prepared.plan.CollectionMembers) > 0,
 		CollectionLabel: prepared.plan.Pin.Name, MarketplacePreview: prepared.preview,
 		MarketplaceSummary: marketplaceInstallSummary(prepared.plan), RequirementWarnings: requirementWarnings,
+		AlsoSelected: alsoSelected, ImpliedPreview: preview,
 	}, nil
 }
 

@@ -43,6 +43,7 @@ type ResolvedArtifact struct {
 	// appears in the advisory implied preview). Prerequisite provenance is
 	// kept separate from collection provenance: Via stays collection-only.
 	RequiredBy []ResourceRef
+	Implied    bool
 
 	// Harnesses lists the target harnesses this artifact should be compiled
 	// into. Inherited from the top-level config by default; overridden by
