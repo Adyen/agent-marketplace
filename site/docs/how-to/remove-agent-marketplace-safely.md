@@ -30,7 +30,7 @@ Remove the files `agent-marketplace` generated in a repository or on your machin
    agent-marketplace deinit --scope repo
    ```
 
-   The run prints the same listing as the preview, ending with `Removed N managed artifact(s)` instead of `Would remove N`. This deletes the generated [harness](../glossary.md#harness) output in the repository and nothing else. Your configuration files, lockfiles, organization policy, and the durable ownership state on your machine stay in place, so a later `agent-marketplace sync` can put everything back.
+   The run prints `Removed N managed artifact(s)`, or `No managed artifacts to remove` when there is nothing to remove. Unlike the preview, it does not list the individual files. This deletes the generated [harness](../glossary.md#harness) output in the repository and nothing else. Your configuration files, lockfiles, organization policy, and the durable ownership state on your machine stay in place, so a later `agent-marketplace sync` can put everything back.
 
 3. Delete the repository configuration too, but only if you no longer want it:
 
@@ -38,7 +38,7 @@ Remove the files `agent-marketplace` generated in a repository or on your machin
    agent-marketplace deinit --scope repo --purge-config
    ```
 
-   It prints the same `Removed N managed artifact(s)` summary. This also deletes `.agents/config.yaml` and `.agents/lock.yaml`, and removes the `.agents` folder if it is left empty. It does not touch `.agents/config.local.yaml` or `.agents/lock.local.yaml`; delete those with `--scope local --purge-config`. Files that your configuration pulls in with `include` are not deleted.
+   After the artifact summary, it prints `Removed config <path>` and `Removed lock <path>`, one line for each file that actually existed, so an absent file produces no line. It removes the `.agents` folder if it is left empty. It does not touch `.agents/config.local.yaml` or `.agents/lock.local.yaml`; delete those with `--scope local --purge-config`. Files that your configuration pulls in with `include` are not deleted.
 
 4. Run `git status`, which lists the deleted files under `Changes not staged for commit`. Review them and commit the changes you want to keep.
 
@@ -58,7 +58,7 @@ Remove the files `agent-marketplace` generated in a repository or on your machin
    agent-marketplace deinit --scope user
    ```
 
-   The run prints each deleted path and cache folder (`Removed cache <path>`) and ends with `Removed N managed artifact(s)`. This deletes the machine-wide generated output and the cached registry clones under `~/.cache/agent-marketplace/` that your organization's configuration does not use. That includes clones your repositories still use; the next `sync` in each repository downloads them again. Resources that your organization's configuration still selects stay installed, together with the cache they need; if one of them is missing, `deinit` writes it again.
+   The run prints `Removed N managed artifact(s)` (or `No managed artifacts to remove`) and then one `Removed cache <path>` line for each cache folder it deletes. This removes the machine-wide generated output and the cached registry clones under `~/.cache/agent-marketplace/` that your organization's configuration does not use. That includes clones your repositories still use; the next `sync` in each repository downloads them again. Resources that your organization's configuration still selects stay installed, together with the cache they need; if one of them is missing, `deinit` writes it again.
 
 3. Delete your personal configuration, but only if you no longer want it:
 
@@ -66,7 +66,7 @@ Remove the files `agent-marketplace` generated in a repository or on your machin
    agent-marketplace deinit --scope user --purge-config
    ```
 
-   It prints the same `Removed N managed artifact(s)` summary. This also deletes `~/.agents/config.yaml` and `~/.agents/lock.yaml`.
+   After the artifact and cache output, it prints `Removed config <path>` and `Removed lock <path>` for each file that actually existed. This also deletes `~/.agents/config.yaml` and `~/.agents/lock.yaml`.
 
 ## What `deinit` leaves alone
 
