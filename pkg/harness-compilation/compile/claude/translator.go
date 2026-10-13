@@ -170,6 +170,17 @@ func (c *claudeCompiler) translateSubagent(s *ir.Subagent, opts compile.Options)
 	effort := s.Effort
 	isolation := s.Isolation
 	if sidecar := s.Ext.Claude; sidecar != nil {
+		if !compile.SidecarToolsWithinCanonical(s.Tools, sidecar.Tools, mapping.TargetClaude, opts.ToolOverride()) {
+			return nil, []diag.Diagnostic{{
+				Code:     diag.CodeSubagentSecurityRestrictionUnsupported,
+				Severity: diag.SeverityError,
+				Target:   string(mapping.TargetClaude),
+				Resource: s.Name(),
+				Message:  "A preserved Claude tool list grants tools the canonical subagent does not; subagent suppressed",
+				Hint:     "Remove the preserved sidecar or align it with the canonical tool list",
+				Source:   compile.DiagSource(s.Source),
+			}}, nil
+		}
 		if sidecar.Model != "" {
 			model = sidecar.Model
 		}
@@ -266,8 +277,16 @@ func (c *claudeCompiler) translateSubagent(s *ir.Subagent, opts compile.Options)
 
 func (c *claudeCompiler) translateHook(h *ir.Hook, opts compile.Options) ([]artifact.Artifact, []diag.Diagnostic, error) {
 	hookType := h.Type
-	if sidecar := h.Ext.Claude; sidecar != nil && sidecar.HookType != "" {
-		hookType = sidecar.HookType
+	if sidecar := h.Ext.Claude; sidecar != nil && sidecar.HookType != "" && sidecar.HookType != h.Type {
+		return nil, []diag.Diagnostic{{
+			Code:     diag.CodeHookClaudeUnsupportedType,
+			Severity: diag.SeverityError,
+			Target:   string(mapping.TargetClaude),
+			Resource: h.Name(),
+			Message:  "A preserved Claude hook type contradicts the canonical hook type; hook suppressed",
+			Hint:     "Remove the preserved sidecar or align it with the declared hook type",
+			Source:   diag.SourceRef(h.Source),
+		}}, nil
 	}
 
 	// Build hooks.json fragment without inventing command for prompt-only hooks.

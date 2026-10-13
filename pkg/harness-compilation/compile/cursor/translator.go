@@ -214,6 +214,17 @@ func (c *cursorCompiler) translateSubagent(sub *ir.Subagent, opts compile.Option
 
 	effort := sub.Effort
 	if sidecar := sub.Ext.Cursor; sidecar != nil {
+		if !compile.SidecarToolsWithinCanonical(sub.Tools, sidecar.Tools, mapping.TargetCursor, opts.ToolOverride()) {
+			return nil, []diag.Diagnostic{{
+				Code:     diag.CodeSubagentSecurityRestrictionUnsupported,
+				Severity: diag.SeverityError,
+				Target:   string(mapping.TargetCursor),
+				Resource: sub.Name(),
+				Message:  "A preserved Cursor tool list grants tools the canonical subagent does not; subagent suppressed",
+				Hint:     "Remove the preserved sidecar or align it with the canonical tool list",
+				Source:   diag.SourceRef(sub.Source),
+			}}, nil
+		}
 		if sidecar.Model != "" {
 			mappedModel = sidecar.Model
 		}
@@ -277,8 +288,16 @@ func (c *cursorCompiler) translateSubagent(sub *ir.Subagent, opts compile.Option
 // ${CLAUDE_PLUGIN_ROOT} → ${CURSOR_PLUGIN_ROOT} env token swap.
 func (c *cursorCompiler) translateHook(h *ir.Hook, opts compile.Options) ([]artifact.Artifact, []diag.Diagnostic, error) {
 	hookType := h.Type
-	if sidecar := h.Ext.Cursor; sidecar != nil && sidecar.HookType != "" {
-		hookType = sidecar.HookType
+	if sidecar := h.Ext.Cursor; sidecar != nil && sidecar.HookType != "" && sidecar.HookType != h.Type {
+		return nil, []diag.Diagnostic{{
+			Code:     diag.CodeHookCursorUnsupportedType,
+			Severity: diag.SeverityError,
+			Target:   string(mapping.TargetCursor),
+			Resource: h.Name(),
+			Message:  "A preserved Cursor hook type contradicts the canonical hook type; hook suppressed",
+			Hint:     "Remove the preserved sidecar or align it with the declared hook type",
+			Source:   diag.SourceRef(h.Source),
+		}}, nil
 	}
 
 	// Prompt hooks have no Cursor primitive and must not become empty commands.
