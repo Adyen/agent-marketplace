@@ -106,7 +106,7 @@ func Update(ctx context.Context, opts UpdateOptions) (result *UpdateResult, retE
 		return nil, err
 	}
 	slog.Info("update start", "repo_root", repoRoot, "bump", opts.Bump)
-	ec := LoadEffective(ctx, ConfigLoadOnline, config.LoadEffectiveOptions{RepoRoot: repoRoot, LocalConfigDir: opts.LocalConfigDir}, nil)
+	ec := LoadEffective(ctx, ConfigLoadOnline, config.LoadEffectiveOptions{RepoRoot: ws.RepoRoot(), LocalConfigDir: ws.LocalConfigDir()}, nil)
 	if len(ec.Errors) > 0 {
 		return nil, errors.Join(ec.Errors...)
 	}

@@ -117,8 +117,8 @@ func TestFramePacedListWheelOrder(t *testing.T) {
 			t.Fatalf("Shift+wheel-down selected %d, want 1", got)
 		}
 		for _, msg := range []tea.Msg{
-			tea.MouseClickMsg{Button: tea.MouseLeft, X: 2, Y: 3},
-			tea.MouseReleaseMsg{Button: tea.MouseLeft, X: 2, Y: 3},
+			tea.MouseClickMsg{Button: tea.MouseLeft, X: 2, Y: 0},
+			tea.MouseReleaseMsg{Button: tea.MouseLeft, X: 2, Y: 0},
 			tea.MouseMotionMsg{Button: tea.MouseLeft, X: 4, Y: 4},
 			tea.MouseWheelMsg{Button: tea.MouseWheelRight, X: 2, Y: 3},
 		} {

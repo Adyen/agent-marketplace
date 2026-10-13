@@ -247,7 +247,6 @@ func runScopedToggleAt(repoRoot string, act toggleAction, mapper pipeline.Config
 			source = config.RepoCommitted
 		}
 		entry := config.RegistryEntry{URL: act.registryURL, Ref: act.registryRef, Path: act.registryPath, V4Kind: act.registryKind, SourceHarness: act.sourceHarness}
-		locator := config.ResourceLocator{Kind: act.kind, Name: act.skillName}
 		// Repo-relative local paths are valid in repo/local configs but
 		// meaningless machine-wide; refuse to write them to the user (global)
 		// config when enabling. Disabling an existing broken entry is still
@@ -258,51 +257,7 @@ func runScopedToggleAt(repoRoot string, act toggleAction, mapper pipeline.Config
 			}
 		}
 		err := pipeline.EditLayerAtPath(config.LayerTarget{Source: source, StagedPath: mappedPath, DeclaringPath: originalPath}, func(m *pipeline.LayerMutation) error {
-			if act.scope == scopeLocalExclude {
-				if strings.TrimSpace(act.registryURL) == "" {
-					if act.enable {
-						return m.SetUnboundExclude(locator)
-					}
-					return m.ClearUnboundExclude(locator)
-				}
-				if act.enable {
-					binding, err := m.EnsureRegistry(entry)
-					if err != nil {
-						return err
-					}
-					return m.Apply(binding, config.SelectionChange{Operation: config.SelectionExclude, Locators: []config.ResourceLocator{locator}})
-				}
-				binding, found, err := m.LookupRegistry(entry)
-				if err != nil {
-					return err
-				}
-				if found {
-					if err := m.Apply(binding, config.SelectionChange{Operation: config.SelectionClearExclude, Locators: []config.ResourceLocator{locator}}); err != nil {
-						return err
-					}
-				}
-				return m.ClearUnboundExclude(locator)
-			}
-			var binding config.SourceBinding
-			var found bool
-			var err error
-			if !act.enable {
-				binding, found, err = m.LookupRegistry(entry)
-				if err != nil {
-					return err
-				}
-			}
-			if !found {
-				binding, err = m.EnsureRegistry(entry)
-				if err != nil {
-					return err
-				}
-			}
-			operation := config.SelectionExclude
-			if act.enable {
-				operation = config.SelectionInclude
-			}
-			return m.Apply(binding, config.SelectionChange{Operation: operation, Locators: []config.ResourceLocator{locator}})
+			return applyToggleAction(m, act)
 		})
 		if err != nil {
 			slog.Error("TUI toggle failed", "kind", act.kind.String(), "name", act.skillName, "scope", scopeName(act.scope), "enable", act.enable, "error", err)
@@ -316,6 +271,94 @@ func runScopedToggleAt(repoRoot string, act toggleAction, mapper pipeline.Config
 			err:        err,
 		}
 	}
+}
+
+// applyToggleAction applies one resolved selection change inside an open
+// layer mutation. It is shared by the single-row toggle and the atomic
+// section bulk toggle so both write identical semantics.
+func applyToggleAction(m *pipeline.LayerMutation, act toggleAction) error {
+	if act.isMarketplace {
+		return applyMarketplacePinAction(m, act)
+	}
+	entry := config.RegistryEntry{URL: act.registryURL, Ref: act.registryRef, Path: act.registryPath, V4Kind: act.registryKind, SourceHarness: act.sourceHarness}
+	locator := config.ResourceLocator{Kind: act.kind, Name: act.skillName}
+	if act.scope == scopeLocalExclude {
+		if strings.TrimSpace(act.registryURL) == "" {
+			if act.enable {
+				return m.SetUnboundExclude(locator)
+			}
+			return m.ClearUnboundExclude(locator)
+		}
+		if act.enable {
+			binding, err := m.EnsureRegistry(entry)
+			if err != nil {
+				return err
+			}
+			return m.Apply(binding, config.SelectionChange{Operation: config.SelectionExclude, Locators: []config.ResourceLocator{locator}})
+		}
+		binding, found, err := m.LookupRegistry(entry)
+		if err != nil {
+			return err
+		}
+		if found {
+			if err := m.Apply(binding, config.SelectionChange{Operation: config.SelectionClearExclude, Locators: []config.ResourceLocator{locator}}); err != nil {
+				return err
+			}
+		}
+		return m.ClearUnboundExclude(locator)
+	}
+	var binding config.SourceBinding
+	var found bool
+	var err error
+	if !act.enable {
+		binding, found, err = m.LookupRegistry(entry)
+		if err != nil {
+			return err
+		}
+	}
+	if !found {
+		binding, err = m.EnsureRegistry(entry)
+		if err != nil {
+			return err
+		}
+	}
+	operation := config.SelectionExclude
+	if act.enable {
+		operation = config.SelectionInclude
+	}
+	return m.Apply(binding, config.SelectionChange{Operation: operation, Locators: []config.ResourceLocator{locator}})
+}
+
+// applyMarketplacePinAction applies a Marketplace pin add/remove inside an
+// open v4 layer mutation, enforcing the same direct-pin rule the standalone
+// toggle applies. scopeUserExclude is handled by the caller because it owns
+// a different file-level edit.
+func applyMarketplacePinAction(m *pipeline.LayerMutation, act toggleAction) error {
+	if !act.hasMarketplaceSelection {
+		return fmt.Errorf("marketplace %s %q has no direct installation pin", skill.KindLabel(act.kind), act.skillName)
+	}
+	selection := act.marketplaceSelection
+	if !act.enable && !selection.Pin.Direct && len(selection.Pin.SelectedBy.List()) > 0 {
+		return fmt.Errorf("marketplace %s %q is selected only through a collection", skill.KindLabel(act.kind), act.skillName)
+	}
+	if act.enable {
+		binding, err := m.EnsureMarketplaceSource(selection.Entry.URL)
+		if err != nil {
+			return err
+		}
+		pin := selection.Pin
+		pin.Direct = true
+		pin.SelectedBy = ""
+		return m.IncludeMarketplacePins(binding, []config.MarketplaceResourcePin{pin})
+	}
+	binding, found, err := m.LookupMarketplaceSource(selection.Entry.URL)
+	if err != nil {
+		return err
+	}
+	if !found {
+		return fmt.Errorf("marketplace endpoint %q is not declared in this layer", selection.Entry.URL)
+	}
+	return m.RemoveMarketplacePins(binding, []config.MarketplaceResourcePin{selection.Pin})
 }
 
 func runDependencyScopedToggle(ctx context.Context, workspace pipeline.Workspace, act toggleAction, mutate DependencyMutationFunc) tea.Cmd {

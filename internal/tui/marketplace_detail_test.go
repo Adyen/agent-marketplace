@@ -151,6 +151,7 @@ func installedMarketplaceRow(kind ir.ResourceKind, name, path string) row {
 	}}
 }
 
+// spec: tui-navigation/authoritative-remote-inspection-paths-remain-unchanged
 func TestInstalledMarketplaceArchiveOpensVerifiedBundle(t *testing.T) {
 	payload := []byte(`{"name":"review","description":"review bundle"}`)
 	artifactPath := writeVerifiedArtifact(t, "skill", "review", payload, map[string][]byte{"notes.md": []byte("# Notes\n")})

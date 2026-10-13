@@ -131,14 +131,26 @@ func TestEnterOnSectionHeaderTogglesFold(t *testing.T) {
 	}
 }
 
-func TestSpaceOnSectionHeaderTogglesFold(t *testing.T) {
+// spec: tui-interactions/filtered-folded-descendants-and-skipped-rows
+func TestSpaceOnSectionHeaderOpensBulkModalNotFold(t *testing.T) {
 	m := newTestModel()
 	m.cursor = 0
 
 	mi, _ := m.Update(keyNamed("space"))
 	m = mi.(Model)
+	if m.pane != paneBulkToggle {
+		t.Fatalf("space on a section header should open the bulk toggle modal, got pane %v", m.pane)
+	}
+	if m.currentFoldState()["status:enabled"] {
+		t.Fatalf("space on a section header must not fold anymore")
+	}
+	// Enter still folds.
+	mi, _ = m.Update(keyNamed("esc"))
+	m = mi.(Model)
+	mi, _ = m.Update(keyNamed("enter"))
+	m = mi.(Model)
 	if !m.currentFoldState()["status:enabled"] {
-		t.Fatalf("space on section header should toggle fold")
+		t.Fatalf("enter on section header should still toggle fold")
 	}
 }
 

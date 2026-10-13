@@ -88,7 +88,7 @@ func NewModel(repoRoot, homeDir string, options ...Option) Model {
 		width:                      80,
 		height:                     24,
 		loading:                    true,
-		foldedSections:             map[string]bool{},
+		foldedSections:             map[viewSettings]map[string]bool{},
 		spinner:                    sp,
 		searchInput:                si,
 		detailViewport:             newTUIViewport(80, 24),
@@ -103,6 +103,9 @@ func NewModel(repoRoot, homeDir string, options ...Option) Model {
 	for _, option := range options {
 		option(&m)
 	}
+	settings, prefsWarning := loadViewPreferences(homeDir)
+	m.viewSettings = settings
+	m.viewPrefsWarning = prefsWarning
 	if !testSkipInitModal && shouldShowInitModal(homeDir) {
 		slog.Info("init modal opened", "home_dir", homeDir)
 		initModal, err := newInitModalState(homeDir)
@@ -146,7 +149,14 @@ func shouldShowInitModal(homeDir string) bool {
 }
 
 func (m Model) Init() tea.Cmd {
-	return tea.Batch(loadSnapshotProgressive(ctxOrBackground(m.ctx), m.workspace, m.homeDir, m.requests.active(requestSnapshot)), m.spinner.Tick)
+	var warningCmd tea.Cmd
+	if m.viewPrefsWarning != "" {
+		text := m.viewPrefsWarning
+		warningCmd = func() tea.Msg {
+			return toastMsg{text: text, duration: 5 * time.Second}
+		}
+	}
+	return tea.Batch(loadSnapshotProgressive(ctxOrBackground(m.ctx), m.workspace, m.homeDir, m.requests.active(requestSnapshot)), m.spinner.Tick, warningCmd)
 }
 
 func (m *Model) applySnapshotStatus(msg snapshotLoadedMsg) {
@@ -197,7 +207,7 @@ func (m *Model) dismissInvalidConfigMutationPane() bool {
 		return false
 	}
 	switch m.pane {
-	case paneToggleModal, paneHarnessModal, paneMigrationModal, paneInitModal:
+	case paneToggleModal, paneHarnessModal, paneMigrationModal, paneInitModal, paneBulkToggle:
 		m.pane = paneList
 		return true
 	case paneMarketplaceConsent:
@@ -399,6 +409,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.KeyPressMsg:
+		m.pendingClick = pendingClick{}
 		next, cmd := m.handleKey(msg)
 		if m.previewSel.active {
 			if nm, ok := next.(Model); ok {
@@ -436,6 +447,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.MouseWheelMsg:
+		m.pendingClick = pendingClick{}
 		if m.belowMinimumTerminal() ||
 			(msg.Button != tea.MouseWheelUp && msg.Button != tea.MouseWheelDown) {
 			return m, nil
@@ -1099,6 +1111,10 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m.handleHarnessModalKey(msg)
 	case paneEditConfigModal:
 		return m.handleEditConfigModalKey(msg)
+	case paneViewSettings:
+		return m.handleViewSettingsKey(msg)
+	case paneBulkToggle:
+		return m.handleBulkToggleKey(msg)
 	}
 
 	// The command palette owns all keys while open (its input takes
@@ -1196,6 +1212,9 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 
 	case key.Matches(msg, m.keys.EditConfig):
 		return m.dispatchAction(actionEditConfig)
+
+	case key.Matches(msg, m.keys.View):
+		return m.dispatchAction(actionViewSettings)
 
 	case key.Matches(msg, m.keys.Enter):
 		return m.dispatchAction(actionDetail)
@@ -1304,11 +1323,12 @@ func (m Model) dispatchAction(id paletteActionID) (tea.Model, tea.Cmd) {
 		if m.syncing {
 			return m, nil
 		}
-		// Space on a section header: toggle fold.
-		if _, ok := m.selectedSectionPath(); ok {
-			m.toggleFoldAtCursor()
-			m.rebuildFlatItems()
-			m.clampListOffset()
+		// Space on a section header: open the confirmed bulk toggle modal.
+		if path, ok := m.selectedSectionPath(); ok {
+			if m.configInvalid {
+				return m, invalidConfigToastCmd()
+			}
+			m.openBulkModal(path)
 			return m, nil
 		}
 		// Space on a skill row: open the toggle modal so the user picks
@@ -1318,6 +1338,22 @@ func (m Model) dispatchAction(id paletteActionID) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		return m.applyRowSpaceEligibility(r)
+
+	case actionViewSettings:
+		m.openViewSettingsModal()
+		return m, nil
+
+	case actionToggleSection:
+		if m.loading || m.syncing {
+			return m, nil
+		}
+		if m.configInvalid {
+			return m, invalidConfigToastCmd()
+		}
+		if path, ok := m.selectedSectionPath(); ok {
+			m.openBulkModal(path)
+		}
+		return m, nil
 
 	case actionFoldToggle:
 		m.toggleFoldAtCursor()
@@ -1927,6 +1963,10 @@ func (m Model) viewContent() string {
 		modal = renderHarnessModal(m)
 	case paneEditConfigModal:
 		modal = renderEditConfigModal(m)
+	case paneViewSettings:
+		modal = renderViewSettingsModal(m)
+	case paneBulkToggle:
+		modal = renderBulkToggleModal(m)
 	}
 	if modal == "" {
 		return m.applyPreviewSelection(compositeToasts(base, m.layeredToasts(), m.width, m.height))
