@@ -913,7 +913,7 @@ func mergeObjectArray(existingArr []any, desired []map[string]any, field, marker
 	}
 	appendedUnnamed := pendingUnnamed[next:]
 
-	result := make([]any, 0, len(slots)+len(appendedNamed)+len(appendedUnnamed))
+	result := make([]any, 0, max(len(slots), len(appendedNamed), len(appendedUnnamed)))
 	for _, slot := range slots {
 		if slot.dropped {
 			continue
@@ -932,7 +932,7 @@ func markManagedEntry(value any, field, marker string) any {
 	if !ok || field == "" {
 		return value
 	}
-	marked := make(map[string]any, len(entry)+1)
+	marked := make(map[string]any, len(entry))
 	for k, v := range entry {
 		marked[k] = v
 	}

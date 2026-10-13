@@ -420,7 +420,7 @@ func indentOnly(trivia []byte) []byte {
 }
 
 func concat(a, b []byte) []byte {
-	out := make([]byte, 0, len(a)+len(b))
+	out := make([]byte, 0, max(len(a), len(b)))
 	out = append(out, a...)
 	return append(out, b...)
 }

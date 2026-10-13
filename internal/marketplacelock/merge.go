@@ -236,7 +236,7 @@ func finishV4MarketplaceMerge(v4 *config.V4Config, doc lockfile.Document, canoni
 		}
 		next.Resources = retained
 	}
-	resources := make(map[string]lockfile.MarketplaceResourceLock, len(next.Resources)+len(pins))
+	resources := make(map[string]lockfile.MarketplaceResourceLock, max(len(next.Resources), len(pins)))
 	for _, record := range next.Resources {
 		key := record.RegistryID + "\x00" + record.Kind + "\x00" + record.Name
 		resources[key] = record

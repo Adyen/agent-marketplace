@@ -1,6 +1,9 @@
 package telemetryconfig
 
 import (
+	"errors"
+	"io"
+	"log/slog"
 	"net"
 	"os"
 	"path/filepath"
@@ -8,6 +11,28 @@ import (
 	"slices"
 	"testing"
 )
+
+// spec: configuration-settings/untrusted-log-values-cannot-create-records
+func TestEndpointValidationEscapesLogValues(t *testing.T) {
+	oldLookup, oldLogger := LookupIP, slog.Default()
+	t.Cleanup(func() { LookupIP = oldLookup; slog.SetDefault(oldLogger) })
+	LookupIP = func(string) ([]net.IP, error) { return nil, errors.New("lookup failed\r\nforged record") }
+	var logged string
+	slog.SetDefault(slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{
+		ReplaceAttr: func(_ []string, attr slog.Attr) slog.Attr {
+			if attr.Key == "error" {
+				logged = attr.Value.String()
+			}
+			return attr
+		},
+	})))
+	if err := ValidateEndpoint("http://private.example", true); err != nil {
+		t.Fatal(err)
+	}
+	if logged != `lookup failed\r\nforged record` {
+		t.Fatalf("log attribute = %q, want escaped line breaks", logged)
+	}
+}
 
 func TestNormalizeLevel(t *testing.T) {
 	tests := []struct {

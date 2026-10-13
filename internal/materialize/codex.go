@@ -269,7 +269,7 @@ func canonicalCodexMCPFragment(raw []byte, name string) ([]byte, error) {
 	sort.Slice(edits, func(i, j int) bool { return edits[i].start > edits[j].start })
 	next := append([]byte(nil), raw...)
 	for _, candidate := range edits {
-		patched := make([]byte, 0, len(next)-(candidate.end-candidate.start)+len(candidate.replacement))
+		patched := make([]byte, 0, len(next))
 		patched = append(patched, next[:candidate.start]...)
 		patched = append(patched, candidate.replacement...)
 		patched = append(patched, next[candidate.end:]...)

@@ -19,6 +19,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Adyen/agent-marketplace/internal/logging/logvalue"
 	tmcfg "github.com/Adyen/agent-marketplace/internal/telemetry/config"
 
 	otlpmetrichttp "go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetrichttp"
@@ -218,13 +219,13 @@ func buildRouteClients(endpoint string, headers map[string]string, caFile string
 	slog.Info("building route clients", "route", route, "signal", signal, "endpoint", endpoint)
 
 	if err := tmcfg.ValidateEndpoint(endpoint, allowInsecure); err != nil {
-		slog.Error("invalid telemetry endpoint", "endpoint", endpoint, "error", err)
+		slog.Error("invalid telemetry endpoint", "endpoint", endpoint, "error", logvalue.Safe(err))
 		return nil, nil, err
 	}
 
 	_, err := url.Parse(endpoint)
 	if err != nil {
-		slog.Error("failed to parse telemetry endpoint", "endpoint", endpoint, "error", err)
+		slog.Error("failed to parse telemetry endpoint", "endpoint", endpoint, "error", logvalue.Safe(err))
 		return nil, nil, fmt.Errorf("parse endpoint: %w", err)
 	}
 
@@ -235,7 +236,7 @@ func buildRouteClients(endpoint string, headers map[string]string, caFile string
 		tlsCfg, err := tlsConfig(caFile)
 		if err != nil {
 			transportCacheMu.Unlock()
-			slog.Error("failed to build tls config", "ca_file", caFile, "error", err)
+			slog.Error("failed to build tls config", "ca_file", caFile, "error", logvalue.Safe(err))
 			return nil, nil, err
 		}
 
@@ -295,7 +296,7 @@ func buildMetricExporterWithTemporality(ctx context.Context, live *http.Client, 
 
 	ep, err := buildSignalEndpoint(endpoint, queueSubdirMetrics)
 	if err != nil {
-		slog.Error("failed to build metric endpoint", "endpoint", endpoint, "error", err)
+		slog.Error("failed to build metric endpoint", "endpoint", endpoint, "error", logvalue.Safe(err))
 		return nil, err
 	}
 
@@ -310,7 +311,7 @@ func buildMetricExporterWithTemporality(ctx context.Context, live *http.Client, 
 		otlpmetrichttp.WithAggregationSelector(sdkmetric.DefaultAggregationSelector),
 	)
 	if err != nil {
-		slog.Error("failed to build metric exporter", "endpoint", endpoint, "error", err)
+		slog.Error("failed to build metric exporter", "endpoint", endpoint, "error", logvalue.Safe(err))
 		return nil, err
 	}
 
@@ -323,7 +324,7 @@ func buildTraceExporter(ctx context.Context, live *http.Client, endpoint string,
 
 	ep, err := buildSignalEndpoint(endpoint, queueSubdirTraces)
 	if err != nil {
-		slog.Error("failed to build trace endpoint", "endpoint", endpoint, "error", err)
+		slog.Error("failed to build trace endpoint", "endpoint", endpoint, "error", logvalue.Safe(err))
 		return nil, err
 	}
 
@@ -336,7 +337,7 @@ func buildTraceExporter(ctx context.Context, live *http.Client, endpoint string,
 		otlptracehttp.WithTimeout(30*time.Second),
 	)
 	if err != nil {
-		slog.Error("failed to build trace exporter", "endpoint", endpoint, "error", err)
+		slog.Error("failed to build trace exporter", "endpoint", endpoint, "error", logvalue.Safe(err))
 		return nil, err
 	}
 
@@ -386,7 +387,7 @@ func (qt *queueTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 
 	ctx := req.Context()
 
-	slog.Debug("export round trip", "route", qt.route, "signal", qt.signal, "url_host", req.URL.Host)
+	slog.Debug("export round trip", "route", qt.route, "signal", qt.signal, "url_host", logvalue.Safe(req.URL.Host))
 
 	var payload []byte
 	if req.Body != nil && req.Body != http.NoBody {
@@ -395,7 +396,7 @@ func (qt *queueTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 		var err error
 		payload, err = io.ReadAll(req.Body)
 		if err != nil {
-			slog.Error("failed to read request body", "url_host", req.URL.Host, "error", err)
+			slog.Error("failed to read request body", "url_host", logvalue.Safe(req.URL.Host), "error", logvalue.Safe(err))
 			return nil, err
 		}
 	}
@@ -422,8 +423,8 @@ func (qt *queueTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 			slog.Error("export failed, not enqueueing permanent failure",
 				"route", qt.route,
 				"signal", qt.signal,
-				"url_host", req.URL.Host,
-				"error", exportErr,
+				"url_host", logvalue.Safe(req.URL.Host),
+				"error", logvalue.Safe(exportErr),
 			)
 			if resp != nil {
 				_ = resp.Body.Close()
@@ -434,8 +435,8 @@ func (qt *queueTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 		slog.Error("export failed, enqueueing payload for retry",
 			"route", qt.route,
 			"signal", qt.signal,
-			"url_host", req.URL.Host,
-			"error", exportErr,
+			"url_host", logvalue.Safe(req.URL.Host),
+			"error", logvalue.Safe(exportErr),
 		)
 
 		env := Envelope{
@@ -452,8 +453,8 @@ func (qt *queueTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 			slog.Error("failed to marshal queued envelope",
 				"route", qt.route,
 				"signal", qt.signal,
-				"url_host", req.URL.Host,
-				"error", marshalErr,
+				"url_host", logvalue.Safe(req.URL.Host),
+				"error", logvalue.Safe(marshalErr),
 			)
 			if exportErr != nil {
 				return nil, errors.Join(exportErr, marshalErr)
@@ -468,8 +469,8 @@ func (qt *queueTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 			slog.Error("failed to enqueue export payload",
 				"route", qt.route,
 				"signal", qt.signal,
-				"url_host", req.URL.Host,
-				"error", qerr,
+				"url_host", logvalue.Safe(req.URL.Host),
+				"error", logvalue.Safe(qerr),
 			)
 			if exportErr != nil {
 				return nil, errors.Join(exportErr, qerr)
@@ -477,7 +478,7 @@ func (qt *queueTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 			return nil, qerr
 		}
 
-		slog.Debug("enqueued failed export payload", "route", qt.route, "signal", qt.signal, "url_host", req.URL.Host)
+		slog.Debug("enqueued failed export payload", "route", qt.route, "signal", qt.signal, "url_host", logvalue.Safe(req.URL.Host))
 
 		if resp != nil {
 			_ = resp.Body.Close()
@@ -485,7 +486,7 @@ func (qt *queueTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 		return nil, exportErr
 	}
 
-	slog.Debug("export succeeded", "route", qt.route, "signal", qt.signal, "url_host", req.URL.Host)
+	slog.Debug("export succeeded", "route", qt.route, "signal", qt.signal, "url_host", logvalue.Safe(req.URL.Host))
 	return resp, nil
 }
 
