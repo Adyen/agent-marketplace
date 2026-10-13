@@ -40,6 +40,7 @@ license: Apache-2.0
 metadata:
   tags:
     - security
+    - frontend
 ---
 ```
 
@@ -56,7 +57,7 @@ REGISTRY  KIND   NAME           TAGS (metadata)    STATUS
 .         skill  secure-inputs  security,frontend  available
 ```
 
-The `license` field does not appear in `list` output; the [resource metadata reference](../../reference/resource-metadata.md) confirms the field name.
+The `license` field does not appear in `list` output; inspect the file's front matter to check it. The [resource metadata reference](../../reference/resource-metadata.md) lists the accepted fields.
 
 ## Boundaries
 
