@@ -40,13 +40,8 @@ func FinalizeResourceAssessment(assessment ResourceAssessment) (ResourceAssessme
 	if err != nil {
 		return ResourceAssessment{}, err
 	}
-	if assessment.AssessmentDigest != "" {
-		if err := validateSHA256Digest("assessment digest", string(assessment.AssessmentDigest)); err != nil {
-			return ResourceAssessment{}, err
-		}
-		if assessment.AssessmentDigest != digest {
-			return ResourceAssessment{}, fmt.Errorf("assessment digest %q does not match canonical identity %q", assessment.AssessmentDigest, digest)
-		}
+	if err := checkResourceAssessmentDigest(assessment.AssessmentDigest, digest); err != nil {
+		return ResourceAssessment{}, err
 	}
 	assessment.AssessmentDigest = digest
 	return assessment, nil
@@ -63,8 +58,27 @@ func (a ResourceAssessment) Validate() error {
 	if a.AssessmentDigest == "" {
 		return fmt.Errorf("assessment digest is required")
 	}
-	_, err := FinalizeResourceAssessment(a)
-	return err
+	if err := validateResourceAssessmentFields(a); err != nil {
+		return err
+	}
+	digest, err := resourceAssessmentDigest(a)
+	if err != nil {
+		return err
+	}
+	return checkResourceAssessmentDigest(a.AssessmentDigest, digest)
+}
+
+func checkResourceAssessmentDigest(provided, computed AssessmentDigest) error {
+	if provided == "" {
+		return nil
+	}
+	if err := validateSHA256Digest("assessment digest", string(provided)); err != nil {
+		return err
+	}
+	if provided != computed {
+		return fmt.Errorf("assessment digest %q does not match canonical identity %q", provided, computed)
+	}
+	return nil
 }
 
 type resourceAssessmentIdentity struct {
@@ -78,13 +92,17 @@ type resourceAssessmentIdentity struct {
 }
 
 func resourceAssessmentDigest(assessment ResourceAssessment) (AssessmentDigest, error) {
+	findings := assessment.Findings
+	if len(findings) == 0 {
+		findings = []Finding{}
+	}
 	canonical, err := json.Marshal(resourceAssessmentIdentity{
 		Coordinate:               assessment.Coordinate,
 		ContentDigest:            assessment.ContentDigest,
 		AnalyzerVersion:          assessment.AnalyzerVersion,
 		PolicyDigest:             assessment.PolicyDigest,
 		Decision:                 assessment.Decision,
-		Findings:                 assessment.Findings,
+		Findings:                 findings,
 		InspectionManifestDigest: assessment.InspectionManifestDigest,
 	})
 	if err != nil {

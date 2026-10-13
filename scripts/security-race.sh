@@ -2,7 +2,7 @@
 # Checked contract race selection for the issue 215 security stack.
 #
 # .github/workflows/security-race.yml runs this script on Ubuntu at the
-# exact pushed revision with Go 1.26.6 and CGO_ENABLED=1. Each run_race
+# exact pushed revision with Go 1.26.9 and CGO_ENABLED=1. Each run_race
 # line below is one validation-contract selection; it is executed exactly
 # as:
 #
@@ -70,4 +70,52 @@ run_race ./internal/materialize \
 
 run_race ./internal/materialize \
     -run '^TestRun(PortableManifestAliasRefusalPreservesNativeOutput|ContainedPortableManifestParentAliasRetainsNativeUpdates|ReadOnlyPortableManifestParentRefusalIsNotAbsence|PortableManifestUnsafeShapesDoNotInstall)$' \
+    -count=20
+
+run_race ./internal/materialize \
+    -run '^TestRunPortableManifest(RemovalPreservesReplacedGeneration|PublicationPreservesReplacedGeneration|RepeatKeepsIdentityModeAndUpdates|StagingRefusesNamespaceReplacement|MissingParentDoesNotRecreate|EmptySaveRefusesAppearedLeaf)$' \
+    -count=20
+
+run_race ./internal/materialize \
+    -run '^TestRunPortableSourceHash.*$' \
+    -count=20
+
+run_race ./internal/catalog ./internal/fsboundary \
+    -run '^Test(LoadPrimarySource.*|LoadFactoryContainedDirectoryAliases|LoadFactoryUnsafeDirectoryAliases|DiscoverSourceRefusalPreservesIndependentSiblingPolicy|SourceFS.*)$' \
+    -count=20
+
+run_race ./internal/sourcerevision \
+    -run '^Test(BuildSourceHash.*|BuildRefusesIngestionBoundaryWithValidSibling|Cursor.*|ResourceSourceBytesPreservesLegacyFallbackBoundary)$' \
+    -count=20
+
+run_race ./internal/collection \
+    -run '^TestDiscoverCollectionSource.*$' \
+    -count=20
+
+run_race ./cmd/agent-marketplace \
+    -run '^TestConvertSource.*$' \
+    -count=20
+
+run_race ./internal/skill ./internal/fsboundary \
+    -run '^Test(DiscoverLegacySourceMetadata.*|LegacySourceMetadata.*|TargetPrefixRead.*)$' \
+    -count=20
+
+run_race ./internal/tui \
+    -run '^TestDetailSourcePreview.*$' \
+    -count=20
+
+run_race ./internal/materialize \
+    -run '^Test(RunPortableOutputDigest.*|RunPortableFilePublication.*|RunPortableTreePublication.*|RunPortablePrune.*|RunNativeManagedLinkPrune.*|RunNativeOwnershipMarker.*|RunNativeCommandPublication.*|RunNativeCommandPrune.*|RunPruneDirectory.*|PruneDirectory.*|RunNativeMarkerAggregate.*|RunDurableAggregateRead.*|RunNativeAggregate.*|NativeAggregate.*|NativePruneClassificationSnapshot|NativeSkillMarkedFilePruning|NativeCommandFilePruneMissingParity|NativeCommandSymlinkPruneClassification|RunNativeCommandSymlinkPruneRefusesReplacement|PortableRegularDigest.*|PortableTreeDigest.*|PortableTreeReadOnly.*|PortableTreeInitialInspectionCleanup|PortableTreeCleanupPreservesNestedForeignMetadata|PortableReadOnlyOwned.*|OwnedPortableRemoval.*|ReadOnlyPortablePrune.*|OrphanRemovalRefusesRetargetedEvidenceAfterStaging|RunSupportCachePrune.*|RunSupportPublication.*|RunSupportProducerCleanup.*|RunSupportOutput.*|RunCacheNamespace.*|SDKOutputComparison.*|SDKPublication.*|SDKStage.*|SDKFilePublication.*|SDKStaleReads.*|SDKStaleDiscovery.*|SDKQuarantine.*|SDKEmptyParent.*|SDKRemovalReceipts.*)$' \
+    -count=20
+
+run_race ./internal/fsboundary \
+    -run '^Test(Rmdir.*|ReadTargetPropagatesOwnedDescriptorCloseFailures)$' \
+    -count=20
+
+run_race ./internal/ownership \
+    -run '^Test(StoreReadAggregate.*|ApplyRetargetedParentDoesNotStageOutsideRoot|ApplyRefuses.*Generation|ApplyCapturedPublicationPreservesSharedMode|ApplyStagedRefusalDisarmsJournalForRecovery|ProofRefusesAliasedOwnershipState|RecoverRefusesAliasedJournal|OwnershipMetadata.*|ApplyMetadataPublication.*|ApplyJournalCleanupPreservesReplacementGeneration|RecoverStagedCleanup.*|OrphanCandidatesRefuseAliasedSafetyManifest|SafetyEvidence.*|RetainedSafetyPayload.*|SafetyPayload.*|BackupOnlyRefusesRetargetedSafetyDirectory|BackupOnlyPreservesReplacedProducer|BackupOnlyRetention.*|SafetyRemoval.*|ApplyCASCleanup.*|ApplyRefusesSameJSONOriginalRecordReplacement|ApplyRefusesOriginalRecordReplacementBeforeCommit|LockContextRefusesHardlinkedMetadata|LockContextFIFORefusesWithoutBlocking|LockMetadataPreservesLinkAddedAfterAcquisition|LockRefusesDirectoryRetargetAfterStoreAdmission|LockNamespaceRefusesLeafReplacedWhileWaiting|RecoverRefusesAliasedStateBeforeRollback|RecoverRefusesOriginalJournalReplacementBeforeAction|RecoverRefusesOriginalRecordReplacementBeforeAction|RecoverRefusesPreparedJournalReplacementBeforeCleanup|ApplyJournalPhaseUpdatePreservesReplacementGeneration|MetadataPublicationJournalAndSafetyConsumersRetainStages|RecoverCleanupRechecksOriginalStateAfterAggregateRead|JournalCleanupRefusesDetachedOriginalParent|ApplyEmptySafetyDirectoryCleanupPreservesReplacementGeneration)$' \
+    -count=20
+
+run_race ./internal/backup \
+    -run '^Test(RestoreCodexSetRefusesAliasedManifest|RestoreRefusesHardlinkedArchivePayload|RestoreRegularFileRefusesHardlinkedDestination|MappedRestoreRefusesReplacedGeneration|MappedRestoreRefusesRetargetedParentGeneration|RestoreKeepsUnreadableArchivedModes|RestoreTreeRefusesRetargetedRoot|CreateRefusesHardlinkedSourcePayload|CreateRefusesAliasedMetadataAncestor|ArchiveOutputRefusalKeepsForeignReplacement|ArchiveOutputRefusalKeepsReplacementLeaf|ArchiveOutputRefusesRetargetedParentGeneration|CreateCodexSetPreservesAliasedPartialManifest|CodexSetOutputPreservesChangedGenerations|RotateRefusesHardlinkedArchive|RetentionMemberRefusesReplacementGeneration|RotateCodexSetRefusesHardlinkedMember|RestoreSymlinkRefusesHardlinkedDestination|RestoreCodexSetRefusesArchiveReplacementAfterPreflight|RestoreStagedPayloadReplacementPreservesForeignGeneration|RestoreFinalDestinationReplacementPreservesOriginalAuthority|RestoreInitialOutputAliasRetainsHealthyPublication|RestoreSymbolicPreservesLateForeignDestinationGeneration|RestoreCodexSymbolicPreflightPreservesExistingSymlink|RestoreSymbolicRefusesDetachedNamedParentGeneration|RestoreSymbolicInitialParentAliasRetainsRecovery|CreateDirectoryGenerationRefusesForeignMemberImport|CreateDirectoryRootDotAndInitialAliasRetainActualArchive|ListBackupsRefusesReplacedTargetDirectoryGeneration|ListBackupsInitialRootAliasAndOptionalAbsenceRetainRecovery|OrdinaryRestoreRetainsSelectedArchiveAndDirectoryGenerations|OrdinaryRestoreSelectionInitialAliasesAndMissingBackup|RotateRefusesReplacedTargetDirectoryGeneration|RotateInitialBackupRootAliasRetainsHealthyRetention|CreateOrdinaryNamespaceRefusesRetargetedParent|CreateOrdinaryNamespaceInitialAliasesAndEmptySource|CreateCodexNamespaceRefusesRetargetedParent|CreateCodexNamespaceInitialAliasesAndEmptyPartitions|RestoreCodexNamespaceRetainsOriginalRootAuthority|RestoreCodexNamespaceInitialParentAliasAndRootShape)$' \
     -count=20

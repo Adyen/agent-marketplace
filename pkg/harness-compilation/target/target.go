@@ -37,6 +37,15 @@ type Definition struct {
 	Conversion       bool
 	UI               bool
 	UIOrder          int
+	// HookProjection is the optional hook-only native projection topology.
+	// It is additive to the root models and the legacy NativeLayout
+	// declarations: several targets do not declare a complete NativeLayout,
+	// so the hook projection seam must not wait for one. Paths inside it are
+	// relative to the scope root the Definition owns (RepoRoot or UserRoot);
+	// a partitioned-root target names its sub-root explicitly. The hook
+	// projection compiler and native inspection consume this single
+	// declaration; no second path switch exists.
+	HookProjection *NativeHookProjection
 }
 
 // ValidateDefinition rejects target metadata that mixes or omits the legacy
@@ -54,30 +63,77 @@ func ValidateDefinition(definition Definition) error {
 }
 
 var definitions = []Definition{
-	{Target: TargetClaude, Label: "Claude Code", RepoRoot: ".claude", UserRoot: ".claude", Compiler: true, Ingester: true, Conversion: true, UI: true, UIOrder: 1},
-	{Target: TargetFactory, Label: "Factory Droid", RepoRoot: ".factory", UserRoot: ".factory", Compiler: true, Ingester: true, Conversion: true, UI: true, UIOrder: 0},
-	{Target: TargetCursor, Label: "Cursor", RepoRoot: ".cursor", UserRoot: ".cursor", Compiler: true, Ingester: true, Conversion: true, UI: true, UIOrder: 2},
-	{Target: TargetWindsurf, Label: "Windsurf", RepoRoot: ".", UserRoot: ".codeium/windsurf", Compiler: true, Ingester: true, Conversion: true, UI: true, UIOrder: 3},
-	{Target: TargetGemini, Label: "Gemini CLI", RepoRoot: ".gemini", UserRoot: ".gemini", Compiler: true, Ingester: true, Conversion: true, UI: true, UIOrder: 4},
+	{Target: TargetClaude, Label: "Claude Code", RepoRoot: ".claude", UserRoot: ".claude", Compiler: true, Ingester: true, Conversion: true, UI: true, UIOrder: 1,
+		HookProjection: &NativeHookProjection{
+			Shape:      HookShapeMatcherGroups,
+			SupportDir: "hook-support",
+			Project:    NativeHookProjectionFile{Path: "settings.json", Member: "hooks"},
+			User:       NativeHookProjectionFile{Path: "settings.json", Member: "hooks"},
+		}},
+	{Target: TargetFactory, Label: "Factory Droid", RepoRoot: ".factory", UserRoot: ".factory", Compiler: true, Ingester: true, Conversion: true, UI: true, UIOrder: 0,
+		HookProjection: &NativeHookProjection{
+			Shape:      HookShapeMatcherGroups,
+			SupportDir: "hook-support",
+			Project:    NativeHookProjectionFile{Path: "hooks.json"},
+			User:       NativeHookProjectionFile{Path: "hooks.json"},
+		}},
+	{Target: TargetCursor, Label: "Cursor", RepoRoot: ".cursor", UserRoot: ".cursor", Compiler: true, Ingester: true, Conversion: true, UI: true, UIOrder: 2,
+		HookProjection: &NativeHookProjection{
+			Shape:      HookShapeEventHandlers,
+			SupportDir: "hook-support",
+			Project:    NativeHookProjectionFile{Path: "hooks.json", Member: "hooks", Envelope: map[string]any{"version": 1}},
+			User:       NativeHookProjectionFile{Path: "hooks.json", Member: "hooks", Envelope: map[string]any{"version": 1}},
+		}},
+	{Target: TargetWindsurf, Label: "Windsurf", RepoRoot: ".", UserRoot: ".codeium/windsurf", Compiler: true, Ingester: true, Conversion: true, UI: true, UIOrder: 3,
+		HookProjection: &NativeHookProjection{
+			Shape:      HookShapeEventHandlers,
+			SupportDir: "hook-support",
+			Project:    NativeHookProjectionFile{Path: ".devin/hooks.json", Member: "hooks"},
+			User:       NativeHookProjectionFile{Path: "hooks.json", Member: "hooks"},
+		}},
+	{Target: TargetGemini, Label: "Gemini CLI", RepoRoot: ".gemini", UserRoot: ".gemini", Compiler: true, Ingester: true, Conversion: true, UI: true, UIOrder: 4,
+		HookProjection: &NativeHookProjection{
+			Shape:      HookShapeMatcherGroups,
+			SupportDir: "hook-support",
+			Project:    NativeHookProjectionFile{Path: "settings.json", Member: "hooks"},
+			User:       NativeHookProjectionFile{Path: "settings.json", Member: "hooks"},
+		}},
 	// D8 registered the canonical Devin ingester, so Ingester and Conversion are
 	// true: `convert --from devin`, `convert --to devin`, and registry
 	// `source_harness: devin` are all valid. UI became true in work package D11.
 	// UIOrder 5 preserves the display order of the five targets that shipped
 	// before it.
-	{Target: TargetDevin, Label: "Devin CLI", RepoRoot: ".devin", UserRoot: ".config/devin", Compiler: true, Ingester: true, Conversion: true, UI: true, UIOrder: 5},
-	{Target: TargetCodex, Label: "Codex", PartitionedRoots: true, Compiler: true, Ingester: true, Conversion: true, UI: true, UIOrder: 6},
+	{Target: TargetDevin, Label: "Devin CLI", RepoRoot: ".devin", UserRoot: ".config/devin", Compiler: true, Ingester: true, Conversion: true, UI: true, UIOrder: 5,
+		HookProjection: &NativeHookProjection{
+			Shape:      HookShapeMatcherGroups,
+			SupportDir: "hook-support",
+			Project:    NativeHookProjectionFile{Path: "hooks.v1.json"},
+			User:       NativeHookProjectionFile{Path: "config.json", Member: "hooks"},
+		}},
+	{Target: TargetCodex, Label: "Codex", PartitionedRoots: true, Compiler: true, Ingester: true, Conversion: true, UI: true, UIOrder: 6,
+		HookProjection: &NativeHookProjection{
+			Shape:      HookShapeMatcherGroups,
+			SupportDir: ".codex/hook-support",
+			Project:    NativeHookProjectionFile{Path: ".codex/hooks.json", Member: "hooks"},
+			User:       NativeHookProjectionFile{Path: ".codex/hooks.json", Member: "hooks"},
+		}},
 	{Target: TargetOpenCode, Label: "OpenCode", RepoRoot: ".opencode", UserRoot: ".config/opencode", Compiler: true, Ingester: true, Conversion: true, UI: true, UIOrder: 7},
 }
 
 // Definitions returns all target declarations in stable display order.
 func Definitions() []Definition {
-	return append([]Definition(nil), definitions...)
+	out := append([]Definition(nil), definitions...)
+	for i := range out {
+		out[i].HookProjection = cloneHookProjection(out[i].HookProjection)
+	}
+	return out
 }
 
 // Lookup returns the declaration for name, if it is a known target.
 func Lookup(name string) (Definition, bool) {
 	for _, definition := range definitions {
 		if definition.Target == Target(name) {
+			definition.HookProjection = cloneHookProjection(definition.HookProjection)
 			return definition, true
 		}
 	}

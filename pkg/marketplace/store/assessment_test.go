@@ -1,6 +1,7 @@
 package store_test
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -169,4 +170,115 @@ func isSHA256Digest(digest string) bool {
 		}
 	}
 	return true
+}
+
+func TestResourceAssessmentValidationGolden(t *testing.T) {
+	populated, err := store.FinalizeResourceAssessment(validResourceAssessment())
+	if err != nil {
+		t.Fatal(err)
+	}
+	const populatedDigest = store.AssessmentDigest("sha256:2e7c339d14f903ba227bc73206d33e4c4e781971477f61d294805840546f83f9")
+	if populated.AssessmentDigest != populatedDigest {
+		t.Fatalf("populated digest = %q, want %q", populated.AssessmentDigest, populatedDigest)
+	}
+	if err := populated.Validate(); err != nil {
+		t.Fatalf("populated Validate: %v", err)
+	}
+
+	emptyNil := validResourceAssessment()
+	emptyNil.Findings = nil
+	finalizedNil, err := store.FinalizeResourceAssessment(emptyNil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const emptyDigest = store.AssessmentDigest("sha256:6be64d613f910e1c4c280c9b99e192bf4f7d79f3748f3abef917ee5196d42c7c")
+	if finalizedNil.AssessmentDigest != emptyDigest {
+		t.Fatalf("empty digest = %q, want %q", finalizedNil.AssessmentDigest, emptyDigest)
+	}
+	emptySlice := validResourceAssessment()
+	emptySlice.Findings = []store.Finding{}
+	finalizedSlice, err := store.FinalizeResourceAssessment(emptySlice)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if finalizedSlice.AssessmentDigest != finalizedNil.AssessmentDigest {
+		t.Fatalf("nil and empty findings digest differ: %q != %q", finalizedSlice.AssessmentDigest, finalizedNil.AssessmentDigest)
+	}
+	for _, assessment := range []store.ResourceAssessment{finalizedNil, finalizedSlice} {
+		if err := assessment.Validate(); err != nil {
+			t.Fatalf("empty findings Validate: %v", err)
+		}
+	}
+
+	rawNil := validResourceAssessment()
+	rawNil.Findings = nil
+	rawNil.AssessmentDigest = emptyDigest
+	if err := rawNil.Validate(); err != nil {
+		t.Fatalf("raw nil findings Validate: %v", err)
+	}
+	if rawNil.Findings != nil {
+		t.Fatal("Validate changed nil findings")
+	}
+	rawEmpty := validResourceAssessment()
+	rawEmpty.Findings = []store.Finding{}
+	rawEmpty.AssessmentDigest = emptyDigest
+	if err := rawEmpty.Validate(); err != nil {
+		t.Fatalf("raw empty findings Validate: %v", err)
+	}
+	if rawEmpty.Findings == nil {
+		t.Fatal("Validate changed empty findings")
+	}
+
+	tampered := populated
+	tampered.AssessmentDigest = emptyDigest
+	if err := tampered.Validate(); err == nil {
+		t.Fatal("Validate accepted a digest computed for different findings")
+	}
+}
+
+func TestResourceAssessmentValidationPreservesInput(t *testing.T) {
+	assessment := validResourceAssessment()
+	assessment.Findings[0].Location = &store.FindingLocation{Path: "resource/skill.json", Line: 2, Column: 1, StartByte: 3, EndByte: 9}
+	finalized, err := store.FinalizeResourceAssessment(assessment)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot := finalized
+	snapshot.Findings = append([]store.Finding(nil), finalized.Findings...)
+	for i := range snapshot.Findings {
+		if snapshot.Findings[i].Location != nil {
+			location := *snapshot.Findings[i].Location
+			snapshot.Findings[i].Location = &location
+		}
+	}
+	if err := finalized.Validate(); err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+	if !reflect.DeepEqual(finalized, snapshot) {
+		t.Fatalf("Validate mutated its input: %+v != %+v", finalized, snapshot)
+	}
+
+	caller := validResourceAssessment()
+	caller.Findings[0].Location = &store.FindingLocation{Path: "resource/skill.json", Line: 2}
+	final, err := store.FinalizeResourceAssessment(caller)
+	if err != nil {
+		t.Fatal(err)
+	}
+	caller.Findings[0].Message = "mutated after finalize"
+	caller.Findings[0].Location.Path = "mutated/path.json"
+	if final.Findings[0].Message == "mutated after finalize" || final.Findings[0].Location.Path == "mutated/path.json" {
+		t.Fatal("Finalize retained caller-owned findings or location memory")
+	}
+
+	badLocation := finalized
+	badLocation.Findings = append([]store.Finding(nil), finalized.Findings...)
+	badLocation.Findings[0].Location = &store.FindingLocation{}
+	if err := badLocation.Validate(); err == nil {
+		t.Fatal("Validate accepted a malformed finding location")
+	}
+	zeroTime := finalized
+	zeroTime.AssessedAt = time.Time{}
+	if err := zeroTime.Validate(); err == nil {
+		t.Fatal("Validate accepted a zero assessed_at")
+	}
 }

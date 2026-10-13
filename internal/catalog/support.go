@@ -1,7 +1,9 @@
 package catalog
 
 import (
+	"io/fs"
 	"os"
+	"path"
 	"path/filepath"
 )
 
@@ -9,7 +11,14 @@ func HookSupportFiles(sourcePath string) ([]string, error) {
 	if sourcePath == "" {
 		return nil, nil
 	}
-	entries, err := os.ReadDir(filepath.Dir(sourcePath))
+	return HookSupportFilesFS(os.DirFS(filepath.Dir(sourcePath)), filepath.Base(sourcePath))
+}
+
+func HookSupportFilesFS(source fs.FS, sourcePath string) ([]string, error) {
+	if sourcePath == "" {
+		return nil, nil
+	}
+	entries, err := fs.ReadDir(source, path.Dir(sourcePath))
 	if err != nil {
 		return nil, err
 	}

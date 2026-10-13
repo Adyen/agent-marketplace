@@ -433,7 +433,7 @@ func reconcileCodexMCP(ctx context.Context, report *Report, key outputKey, rootI
 				return err
 			}
 		}
-		raw, readErr := ownership.ReadAggregateFile(abs)
+		raw, readErr := store.ReadAggregate(codexMCPFile)
 		if readErr != nil && !os.IsNotExist(readErr) {
 			return readErr
 		}

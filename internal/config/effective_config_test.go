@@ -11,6 +11,17 @@ import (
 )
 
 func loadEffectiveForTest(ctx context.Context, opts LoadEffectiveOptions) EffectiveConfig {
+	if opts.RepoRoot == "" {
+		for _, path := range []string{opts.RepoPath, opts.LocalPath, opts.GlobalPath, opts.OrganizationPath} {
+			if path != "" {
+				opts.RepoRoot = filepath.Dir(path)
+				break
+			}
+		}
+	}
+	if opts.LocalConfigDir == "" {
+		opts.LocalConfigDir = opts.RepoRoot
+	}
 	intent := ReadIntent(ctx, opts)
 	ev := Evidence{}
 	for _, source := range intentLayerOrder {
@@ -728,6 +739,8 @@ resources:
 		t.Fatal(err)
 	}
 	opts := LoadEffectiveOptions{
+		RepoRoot:         dir,
+		LocalConfigDir:   dir,
 		OrganizationPath: filepath.Join(dir, "missing-org.yaml"),
 		GlobalPath:       userPath,
 		RepoPath:         filepath.Join(dir, "missing-repo.yaml"),

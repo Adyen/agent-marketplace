@@ -554,6 +554,9 @@ func TestCloneRejectsAuthenticatedHTTPRedirects(t *testing.T) {
 }
 
 func TestCloneHTTPSWithTokenUsesPreemptiveAuthorization(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("GIT_CONFIG_GLOBAL", os.DevNull)
+	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
 	sourceRepo := createGitRepo(t, map[string]string{
 		"README.md": "hello",
 	})
@@ -568,11 +571,18 @@ func TestCloneHTTPSWithTokenUsesPreemptiveAuthorization(t *testing.T) {
 	if err != nil {
 		t.Fatalf("git --exec-path: %v", err)
 	}
+	systemConfig := filepath.Join(t.TempDir(), "system.gitconfig")
+	if err := os.WriteFile(systemConfig, []byte("[not-closed\n"), 0o600); err != nil {
+		t.Fatalf("write system Git config: %v", err)
+	}
 	backend := &cgi.Handler{
 		Path: filepath.Join(strings.TrimSpace(string(gitExecPath)), "git-http-backend"),
 		Env: []string{
 			"GIT_PROJECT_ROOT=" + projectRoot,
 			"GIT_HTTP_EXPORT_ALL=1",
+			"GIT_CONFIG_SYSTEM=" + systemConfig,
+			"GIT_CONFIG_NOSYSTEM=1",
+			"GIT_CONFIG_GLOBAL=" + os.DevNull,
 		},
 	}
 

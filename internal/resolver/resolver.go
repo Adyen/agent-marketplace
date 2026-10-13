@@ -10,6 +10,7 @@ import (
 	"time"
 
 	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 
 	"github.com/Adyen/agent-marketplace/internal/catalog"
@@ -50,11 +51,30 @@ type ResolvedArtifact struct {
 	MarketplaceAlias        string
 	MarketplaceRegistryID   string
 	MarketplaceResourceName string
-	InstalledName           string // overrides Name for materialization while preserving canonical digest
-	Unresolved              bool   // true when only metadata was fetched (status inspect mode)
-	Revoked                 bool   // true when the resolved revision is revoked
-	UpdateAvailable         bool   // true when a newer revision exists (status/update)
-	Stale                   bool   // true when the registry refresh is stale/unavailable
+	// MarketplaceDigest is the pin's exact content digest ("sha256:<64 hex>")
+	// identifying the resolved Marketplace resource revision.
+	MarketplaceDigest string
+	// MarketplaceAcquisition is the resolved acquisition mode ("mirror" or
+	// "index-only"). Mirror artifacts carry no original source tree — Path is
+	// the verified artifact archive — while index-only pins reconstruct the
+	// resource source into StagedSourceDir.
+	MarketplaceAcquisition string
+	// StagedSourceDir, when set, is the absolute root of a staged copy of the
+	// resolved resource's source directory (the index-only reconstructed
+	// resource staging area). Path is the definition file inside it.
+	StagedSourceDir string
+	// MarketplaceHookSupport carries the verified mirror artifact's intrinsic
+	// support inventory: sorted immutable copies populated only after the
+	// archive passes every content, manifest and identity validation. A
+	// non-nil empty slice denotes a verified empty inventory; nil means the
+	// inventory is unknown and must not be treated as empty.
+	MarketplaceHookSupport   []artifact.Artifact `json:"-"`
+	InstalledName            string              // overrides Name for materialization while preserving canonical digest
+	Unresolved               bool                // true when only metadata was fetched (status inspect mode)
+	Revoked                  bool                // true when the resolved revision is revoked
+	MarketplaceArchiveDigest string
+	UpdateAvailable          bool // true when a newer revision exists (status/update)
+	Stale                    bool // true when the registry refresh is stale/unavailable
 }
 
 func HasAdditiveSources(kind ir.ResourceKind) bool {
@@ -405,6 +425,23 @@ func IsNameCollision(err error) bool {
 	return errors.As(err, &collisionErr) || errors.As(err, &collisionWarn)
 }
 
+type ArchiveEvidenceRefreshedWarning struct {
+	MarketplaceURL   string
+	InstanceID       string
+	RegistryID       string
+	Kind             string
+	Name             string
+	OldArchiveDigest string
+	NewArchiveDigest string
+}
+
+const ArchiveEvidenceRefreshedCode = "marketplace.archive-evidence-refreshed"
+
+func (w *ArchiveEvidenceRefreshedWarning) Error() string {
+	return fmt.Sprintf("%s: %s/%s/%s locked archive digest %s refreshed to %s for the unchanged content digest",
+		ArchiveEvidenceRefreshedCode, w.RegistryID, w.Kind, w.Name, w.OldArchiveDigest, w.NewArchiveDigest)
+}
+
 // IncompatibleOrganizationRequirement is a hard error emitted when an
 // Organization registry entry marked required:true has no harnesses remaining
 // after intersecting with the machine-wide target harness set.
@@ -450,10 +487,12 @@ func IsWarning(err error) bool {
 	var collision *NameCollisionWarning
 	var requirement *UnmetRequirementWarning
 	var incompatibleDefault *IncompatibleOrganizationDefault
+	var evidenceRefresh *ArchiveEvidenceRefreshedWarning
 	return errors.As(err, &warning) ||
 		errors.As(err, &collision) ||
 		errors.As(err, &requirement) ||
 		errors.As(err, &incompatibleDefault) ||
+		errors.As(err, &evidenceRefresh) ||
 		IsCollectionMemberAmbiguity(err)
 }
 
@@ -3347,20 +3386,6 @@ func kindMismatchHint(byName map[resourceSelection]catalog.Entry, selected resou
 		}
 	}
 	return ""
-}
-
-// NamesSelected returns the set of skill names that the given registry entry
-// selects from its catalog. Uses the same selection logic as Resolve but
-// without cross-registry deduplication, collision detection, or error
-// reporting. Callers use this to compute per-scope enablement (e.g., which
-// skills are enabled via a specific registry vs. another).
-func NamesSelected(entry config.RegistryEntry, catalog []catalog.Entry) []string {
-	selected := resolveSelectedResources(entry, catalog)
-	names := make([]string, 0, len(selected))
-	for _, s := range selected {
-		names = append(names, s.name)
-	}
-	return names
 }
 
 func ResourcesSelected(entry config.RegistryEntry, catalog []catalog.Entry) []SelectedResource {

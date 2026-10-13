@@ -89,9 +89,11 @@ func IsCacheMetadataMissingError(err error) bool {
 
 // Resolver resolves Marketplace entries into resolver.ResolvedArtifact values.
 type Resolver struct {
-	HTTPClient        *http.Client
-	Cache             *Cache
-	AllowedRegistries []string
+	HTTPClient                 *http.Client
+	Cache                      *Cache
+	AllowedRegistries          []string
+	LockEvidenceStrict         bool
+	ReportArchiveEvidenceDrift bool
 }
 
 // NewResolver creates a Marketplace resolver with a default cache.
@@ -201,6 +203,15 @@ func (r *Resolver) ResolveWithPolicy(ctx context.Context, cfg *config.Config, ta
 			if err != nil {
 				errs = append(errs, &PinError{Entry: entry, Pin: pin, Err: err})
 				continue
+			}
+			if archiveEvidenceDrifted(pin, resolved.MarketplaceArchiveDigest) && !entry.Source.IsWritable() {
+				errs = append(errs, &PinError{Entry: entry, Pin: pin, Err: fmt.Errorf("locked archive digest drifted: lock pins %q but the revision now serves %q for the same content digest; the %s lock is managed externally and cannot be refreshed by this client", pin.LockArchiveDigest, resolved.MarketplaceArchiveDigest, entry.Source.LockScope())})
+				continue
+			}
+			if r.ReportArchiveEvidenceDrift {
+				if warning := archiveEvidenceRefreshWarning(entry, pin, resolved.MarketplaceArchiveDigest); warning != nil {
+					errs = append(errs, warning)
+				}
 			}
 			out = append(out, resolved)
 		}
@@ -429,6 +440,22 @@ func (r *Resolver) resolvePinWithPolicy(ctx context.Context, client *Client, cac
 	return artifact, err
 }
 
+func (r *Resolver) RefreshArchiveEvidence(ctx context.Context, entry config.MarketplaceEntry, pin config.MarketplaceResourcePin) (string, error) {
+	canonical, err := canonicalMarketplaceEntry(entry)
+	if err != nil {
+		return "", err
+	}
+	client, err := r.clientForEntry(canonical)
+	if err != nil {
+		return "", err
+	}
+	resolved, _, err := r.resolvePinWithArtifactPolicy(ctx, client, r.cache(), canonical, pin, nil, resolver.MarketplaceResolveModeRefresh, nil, r.AllowedRegistries)
+	if err != nil {
+		return "", err
+	}
+	return resolved.MarketplaceArchiveDigest, nil
+}
+
 // resolvePinWithArtifact returns the same resolved artifact as resolvePin and
 // also retains the CanonicalArtifact decoded and verified during resolution.
 // Callers that need metadata for a prepared install must use this value rather
@@ -471,6 +498,9 @@ func (r *Resolver) resolvePinWithArtifactPolicy(ctx context.Context, client *Cli
 	if err := validateResourceRevision(entry, pin, rev); err != nil {
 		return resolver.ResolvedArtifact{}, hccartifact.CanonicalArtifact{}, err
 	}
+	if err := r.archiveEvidenceDrift(pin, string(rev.ArchiveDigest)); err != nil {
+		return resolver.ResolvedArtifact{}, hccartifact.CanonicalArtifact{}, err
+	}
 
 	name := pin.Name
 	if pin.InstalledName != "" {
@@ -492,21 +522,24 @@ func (r *Resolver) resolvePinWithArtifactPolicy(ctx context.Context, client *Cli
 			Kind: kind,
 			Name: name,
 		},
-		RegistryURL:             entry.URL,
-		RegistryPath:            pin.RegistryID,
-		Ref:                     pin.Revision,
-		Source:                  entry.Source,
-		Required:                required,
-		CatalogKey:              marketplaceCatalogKey(entry, pin),
-		Harnesses:               targetSet,
-		IsMarketplace:           true,
-		MarketplaceURL:          entry.URL,
-		MarketplaceInstanceID:   entry.InstanceID,
-		MarketplaceAlias:        entry.Alias,
-		MarketplaceRegistryID:   pin.RegistryID,
-		MarketplaceResourceName: pin.Name,
-		InstalledName:           pin.InstalledName,
-		Revoked:                 rev.Revocation != nil,
+		RegistryURL:              entry.URL,
+		RegistryPath:             pin.RegistryID,
+		Ref:                      pin.Revision,
+		Source:                   entry.Source,
+		Required:                 required,
+		CatalogKey:               marketplaceCatalogKey(entry, pin),
+		Harnesses:                targetSet,
+		IsMarketplace:            true,
+		MarketplaceURL:           entry.URL,
+		MarketplaceInstanceID:    entry.InstanceID,
+		MarketplaceAlias:         entry.Alias,
+		MarketplaceRegistryID:    pin.RegistryID,
+		MarketplaceResourceName:  pin.Name,
+		MarketplaceDigest:        pin.Digest,
+		MarketplaceAcquisition:   config.MarketplaceAcquisitionMirror,
+		InstalledName:            pin.InstalledName,
+		Revoked:                  rev.Revocation != nil,
+		MarketplaceArchiveDigest: string(rev.ArchiveDigest),
 	}
 	if err := enforceMarketplaceUse(rev, policy); err != nil {
 		return artifact, hccartifact.CanonicalArtifact{}, err
@@ -596,7 +629,28 @@ func (r *Resolver) resolvePinWithArtifactPolicy(ctx context.Context, client *Cli
 			return resolver.ResolvedArtifact{}, hccartifact.CanonicalArtifact{}, fmt.Errorf("mark artifact verified: %w", err)
 		}
 	}
+	if resource.Kind() == ir.KindHook {
+		artifact.MarketplaceHookSupport = mirrorHookSupportArtifacts(ca.Support)
+	}
 	return artifact, ca, nil
+}
+
+func mirrorHookSupportArtifacts(support map[string]hccartifact.SupportFile) []hccartifact.Artifact {
+	paths := make([]string, 0, len(support))
+	for relative := range support {
+		paths = append(paths, relative)
+	}
+	sort.Strings(paths)
+	artifacts := make([]hccartifact.Artifact, 0, len(paths))
+	for _, relative := range paths {
+		file := support[relative]
+		mode := os.FileMode(0o644)
+		if file.Executable {
+			mode = 0o755
+		}
+		artifacts = append(artifacts, hccartifact.Artifact{Path: relative, Bytes: bytes.Clone(file.Data), Mode: mode})
+	}
+	return artifacts
 }
 
 func stageMirrorResource(cache *Cache, digest string, resource ir.Resource, ca hccartifact.CanonicalArtifact) (string, error) {
@@ -684,6 +738,9 @@ func (r *Resolver) resolveIndexOnlyPin(ctx context.Context, client *Client, cach
 	if err := validateResourceRevision(entry, pin, rev); err != nil {
 		return resolver.ResolvedArtifact{}, hccartifact.CanonicalArtifact{}, err
 	}
+	if err := r.archiveEvidenceDrift(pin, string(rev.ArchiveDigest)); err != nil {
+		return resolver.ResolvedArtifact{}, hccartifact.CanonicalArtifact{}, err
+	}
 	if mode != resolver.MarketplaceResolveModeRefresh && (rev.Occurrence.Coordinate.Registry != store.RegistryID(pin.RegistryID) || rev.Occurrence.Commit != pin.RegistryCommit || rev.Occurrence.ManifestDigest != store.RevisionDigest(pin.RegistryManifestDigest)) {
 		return resolver.ResolvedArtifact{}, hccartifact.CanonicalArtifact{}, fmt.Errorf("cached registry occurrence digest mismatch: revision occurrence does not match pinned registry occurrence")
 	}
@@ -698,7 +755,10 @@ func (r *Resolver) resolveIndexOnlyPin(ctx context.Context, client *Client, cach
 		CatalogKey: marketplaceCatalogKey(entry, pin), Harnesses: targetSet,
 		IsMarketplace: true, MarketplaceURL: entry.URL, MarketplaceInstanceID: entry.InstanceID,
 		MarketplaceAlias: entry.Alias, MarketplaceRegistryID: pin.RegistryID,
-		MarketplaceResourceName: pin.Name, InstalledName: pin.InstalledName, Revoked: rev.Revocation != nil,
+		MarketplaceResourceName: pin.Name, MarketplaceDigest: pin.Digest,
+		MarketplaceAcquisition: config.MarketplaceAcquisitionIndexOnly,
+		InstalledName:          pin.InstalledName, Revoked: rev.Revocation != nil,
+		MarketplaceArchiveDigest: string(rev.ArchiveDigest),
 	}
 	artifact.Ref = pin.RegistryCommit
 	if err := enforceMarketplaceUse(rev, policy); err != nil {
@@ -865,6 +925,9 @@ func (r *Resolver) resolveIndexOnlyPin(ctx context.Context, client *Client, cach
 	artifact.Resource = resource
 	artifact.Description = descriptionFromResource(resource)
 	artifact.Path = resourcePath
+	// The reconstructed staging area holds the exact resource source tree;
+	// record it so compatibility fingerprints can read the same bytes.
+	artifact.StagedSourceDir = filepath.Dir(resourcePath)
 	return artifact, ca, nil
 }
 
@@ -1194,13 +1257,36 @@ func validateResourceRevision(entry config.MarketplaceEntry, pin config.Marketpl
 	if rev.Revocation == nil && rev.ArchiveDigest == "" && pin.Kind != "collection" && acquisition != config.MarketplaceAcquisitionIndexOnly {
 		return fmt.Errorf("revision archive digest is required")
 	}
-	if pin.LockArchiveDigest != "" && string(rev.ArchiveDigest) != pin.LockArchiveDigest {
-		return fmt.Errorf("locked archive digest mismatch: metadata %q, lock %q", rev.ArchiveDigest, pin.LockArchiveDigest)
-	}
 	if pin.LockSourcePath != "" && rev.Occurrence.SourcePath != pin.LockSourcePath {
 		return fmt.Errorf("locked source path mismatch: metadata %q, lock %q", rev.Occurrence.SourcePath, pin.LockSourcePath)
 	}
 	return nil
+}
+
+func archiveEvidenceDrifted(pin config.MarketplaceResourcePin, archiveDigest string) bool {
+	return pin.LockArchiveDigest != "" && archiveDigest != "" && pin.LockArchiveDigest != archiveDigest
+}
+
+func (r *Resolver) archiveEvidenceDrift(pin config.MarketplaceResourcePin, archiveDigest string) error {
+	if !r.LockEvidenceStrict || !archiveEvidenceDrifted(pin, archiveDigest) {
+		return nil
+	}
+	return fmt.Errorf("locked archive digest drifted: lock pins %q but the revision now serves %q for the same content digest; run 'agent-marketplace sync' or 'agent-marketplace update' to refresh lock evidence", pin.LockArchiveDigest, archiveDigest)
+}
+
+func archiveEvidenceRefreshWarning(entry config.MarketplaceEntry, pin config.MarketplaceResourcePin, archiveDigest string) error {
+	if !archiveEvidenceDrifted(pin, archiveDigest) {
+		return nil
+	}
+	return &resolver.ArchiveEvidenceRefreshedWarning{
+		MarketplaceURL:   entry.URL,
+		InstanceID:       entry.InstanceID,
+		RegistryID:       pin.RegistryID,
+		Kind:             pin.Kind,
+		Name:             pin.Name,
+		OldArchiveDigest: pin.LockArchiveDigest,
+		NewArchiveDigest: archiveDigest,
+	}
 }
 
 func validateReconstructedArtifactIdentity(pin config.MarketplaceResourcePin, artifact hccartifact.CanonicalArtifact) error {

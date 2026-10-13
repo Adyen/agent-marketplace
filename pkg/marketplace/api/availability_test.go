@@ -123,6 +123,7 @@ func TestManagedAvailabilityMatrix(t *testing.T) {
 	}
 }
 
+// spec: marketplace-catalog-performance/unavailable-or-invalid-authority-rejects-public-requests
 func TestManagedAvailabilityRejectsCorruptSnapshots(t *testing.T) {
 	for _, mutate := range []func(*admin.Snapshot){
 		func(s *admin.Snapshot) { s.Version = 0 },

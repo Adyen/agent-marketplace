@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"path/filepath"
 
 	"github.com/Adyen/agent-marketplace/internal/ownership"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
@@ -123,7 +122,7 @@ func previewOwnedJSONAggregateFile(store *ownership.Store, key outputKey, outDir
 
 func readOwnedJSONRepairState(store *ownership.Store, key outputKey, outDir string, file ownedJSONFileSpec, options ownedJSONReconcileOptions) (*ownedJSONRepairState, []diag.Diagnostic) {
 	rel := file.rel
-	raw, err := ownership.ReadAggregateFile(filepath.Join(outDir, rel))
+	raw, err := store.ReadAggregate(rel)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, nil

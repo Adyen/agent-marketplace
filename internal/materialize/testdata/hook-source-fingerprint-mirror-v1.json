@@ -1,0 +1,97 @@
+{
+  "version": 1,
+  "algorithm": "sha256 over b\"hook-source/mirror/v1\\x00\" then length-prefixed UTF-8 fields in order: instance_id, registry_id, kind, resource_name, verified resource-revision content digest, installed_name, target, scope. Each field x is encoded as len(x) + ':' + x. Used only for verified Marketplace mirror acquisitions whose original definition files are unavailable; it is disjoint from hook-source/v1.",
+  "cases": [
+    {
+      "name": "factory-repository-mirror",
+      "instance_id": "mp",
+      "registry_id": "src",
+      "kind": "hook",
+      "resource_name": "deploy-hook",
+      "digest": "sha256:abababababababababababababababababababababababababababababababab",
+      "installed_name": "deploy",
+      "target": "factory",
+      "scope": "repository",
+      "fingerprint": "sha256:05cbe381bc66c38c5e0ecf50d99b6227e3d60cb9e2e48424436920b4a4beec21"
+    },
+    {
+      "name": "claude-machine-mirror",
+      "instance_id": "mp",
+      "registry_id": "src",
+      "kind": "hook",
+      "resource_name": "deploy-hook",
+      "digest": "sha256:abababababababababababababababababababababababababababababababab",
+      "installed_name": "deploy",
+      "target": "claude",
+      "scope": "machine",
+      "fingerprint": "sha256:ae62f0458fa67a01545989d7527b09f0d431ea15b24e29d2455d14cda00ccf5c"
+    },
+    {
+      "name": "cursor-changed-digest",
+      "instance_id": "mp",
+      "registry_id": "src",
+      "kind": "hook",
+      "resource_name": "deploy-hook",
+      "digest": "sha256:cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+      "installed_name": "deploy",
+      "target": "cursor",
+      "scope": "repository",
+      "fingerprint": "sha256:bf25fbec0e39531c2bfdaa51cfafbe8139be74444f3fb1aaa31a3314442a16e5"
+    },
+    {
+      "name": "installed-name-changed",
+      "instance_id": "mp",
+      "registry_id": "src",
+      "kind": "hook",
+      "resource_name": "deploy-hook",
+      "digest": "sha256:abababababababababababababababababababababababababababababababab",
+      "installed_name": "deploy-renamed",
+      "target": "factory",
+      "scope": "repository",
+      "fingerprint": "sha256:16fc81f0716721f5b3ce6b0a780207e4da01d460a8986bd05dc194ac3a6b9610"
+    },
+    {
+      "name": "missing-digest",
+      "instance_id": "mp",
+      "registry_id": "src",
+      "kind": "hook",
+      "resource_name": "deploy-hook",
+      "digest": "",
+      "installed_name": "deploy",
+      "target": "factory",
+      "scope": "repository",
+      "expect_error": true
+    },
+    {
+      "name": "unverified-digest-shape",
+      "instance_id": "mp",
+      "registry_id": "src",
+      "kind": "hook",
+      "resource_name": "deploy-hook",
+      "digest": "sha256:not-a-verified-hex-digest",
+      "installed_name": "deploy",
+      "target": "factory",
+      "scope": "repository",
+      "expect_error": true
+    }
+  ],
+  "distinct_pairs": [
+    [
+      "factory-repository-mirror",
+      "claude-machine-mirror"
+    ],
+    [
+      "factory-repository-mirror",
+      "cursor-changed-digest"
+    ],
+    [
+      "factory-repository-mirror",
+      "installed-name-changed"
+    ]
+  ],
+  "domain_separation": {
+    "comment": "sha256 over b\"hook-source/v1\\x00\" followed by the factory-repository-mirror field tuple in the same length-prefixed encoding. Independently computed: the mirror fingerprint for that tuple must never equal a source-domain digest over identical fields.",
+    "case": "factory-repository-mirror",
+    "source_domain_digest": "sha256:a1f0063066595c6a6f3b96a934a8e174aeaba8d9e1fcae3f12c520ce28bd416e"
+  }
+}

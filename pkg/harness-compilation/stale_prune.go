@@ -8,10 +8,11 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"log/slog"
 	"os"
 	"path/filepath"
-	"syscall"
 
+	"github.com/Adyen/agent-marketplace/internal/fsboundary"
 	"golang.org/x/sys/unix"
 )
 
@@ -33,62 +34,6 @@ type StaleFileCandidate struct {
 type staleParentSnapshot struct {
 	path string
 	info fs.FileInfo
-}
-
-func snapshotStaleFileCandidate(path, rel string) (StaleFileCandidate, error) {
-	info, err := os.Lstat(path)
-	if err != nil {
-		return StaleFileCandidate{}, err
-	}
-	candidate := StaleFileCandidate{Path: rel, Info: info}
-	parents, err := snapshotStaleParents(path, rel)
-	if err != nil {
-		return StaleFileCandidate{}, err
-	}
-	candidate.parents = parents
-	if !info.Mode().IsRegular() {
-		// Symlinks and special files are never candidates for destructive
-		// pruning. Keeping their identity lets revalidation report and preserve
-		// them without following a user-controlled path.
-		return candidate, nil
-	}
-	digest, err := digestNoFollow(path, info)
-	if err != nil {
-		return StaleFileCandidate{}, err
-	}
-	candidate.Digest = digest
-	return candidate, nil
-}
-
-func snapshotStaleParents(path, rel string) ([]staleParentSnapshot, error) {
-	root := path
-	for current := filepath.FromSlash(rel); current != "."; current = filepath.Dir(current) {
-		root = filepath.Dir(root)
-	}
-	rootInfo, err := os.Lstat(root)
-	if err != nil {
-		return nil, err
-	}
-	if !rootInfo.IsDir() || rootInfo.Mode()&os.ModeSymlink != 0 {
-		return nil, fmt.Errorf("stale candidate output root is not a real directory")
-	}
-	// Include the output root itself. Conversion publication discovers stale
-	// files before it publishes and removes them afterward, so substituting the
-	// root in that interval must preserve the replacement tree rather than
-	// redirecting a stale removal into it.
-	parents := []staleParentSnapshot{{path: root, info: rootInfo}}
-	for current := filepath.Dir(filepath.FromSlash(rel)); current != "."; current = filepath.Dir(current) {
-		parentPath := filepath.Join(root, current)
-		info, err := os.Lstat(parentPath)
-		if err != nil {
-			return nil, err
-		}
-		if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
-			return nil, fmt.Errorf("stale candidate parent %q is not a real directory", current)
-		}
-		parents = append(parents, staleParentSnapshot{path: parentPath, info: info})
-	}
-	return parents, nil
 }
 
 func staleParentsUnchanged(parents []staleParentSnapshot) (bool, error) {
@@ -127,7 +72,7 @@ func RevalidateStaleFileCandidate(path string, candidate StaleFileCandidate) (bo
 	}
 	digest, err := digestNoFollow(path, candidate.Info)
 	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
+		if errors.Is(err, os.ErrNotExist) || errors.Is(err, fsboundary.ErrGenerationConflict) {
 			return false, nil
 		}
 		return false, err
@@ -150,70 +95,107 @@ func RevalidateStaleFileCandidate(path string, candidate StaleFileCandidate) (bo
 }
 
 func RemoveStaleFileCandidate(path string, candidate StaleFileCandidate) error {
-	return removeStaleFileCandidate(path, candidate, nil)
+	_, err := removeStaleFileCandidate(path, candidate, nil)
+	return err
 }
 
-func removeStaleFileCandidate(path string, candidate StaleFileCandidate, beforeRename func() error) error {
+func removeStaleFileCandidate(path string, candidate StaleFileCandidate, beforeRename func() error) (removed bool, err error) {
 	unchanged, err := RevalidateStaleFileCandidate(path, candidate)
 	if err != nil {
-		return err
+		return false, err
 	}
 	if !unchanged {
-		return fmt.Errorf("%w: %s", ErrStalePruneConflict, candidate.Path)
+		return false, fmt.Errorf("%w: %s", ErrStalePruneConflict, candidate.Path)
 	}
 
 	parentPath := filepath.Dir(path)
 	parentFD, err := unix.Open(parentPath, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0)
 	if err != nil {
-		return fmt.Errorf("open stale candidate parent: %w", err)
+		return false, fmt.Errorf("open stale candidate parent: %w", err)
 	}
-	defer func() { _ = unix.Close(parentFD) }()
-	if err := verifyStaleParentFD(parentFD, candidate, parentPath); err != nil {
-		return err
-	}
-
-	quarantine, err := createStaleQuarantine(parentFD)
-	if err != nil {
-		return err
-	}
-	quarantineActive := true
 	defer func() {
-		if quarantineActive {
-			_ = unix.Unlinkat(parentFD, quarantine, 0)
+		if closeErr := unix.Close(parentFD); closeErr != nil {
+			err = errors.Join(err, closeErr)
 		}
 	}()
+	if err := verifyStaleParentFD(parentFD, candidate, parentPath); err != nil {
+		return false, err
+	}
+
+	quarantine, reservation, err := createStaleQuarantine(parentFD)
+	if quarantine == "" {
+		return false, err
+	}
+	reserved := StaleFileCandidate{Info: reservation, Digest: sha256.Sum256(nil)}
+	quarantineActive := true
+	defer func() {
+		if !quarantineActive {
+			return
+		}
+		matches, inspectErr := staleCandidateFileMatches(parentFD, quarantine, reserved)
+		if errors.Is(inspectErr, fs.ErrNotExist) {
+			return
+		}
+		if inspectErr != nil || !matches {
+			err = errors.Join(err, ErrStalePruneConflict, inspectErr)
+			return
+		}
+		if removeErr := unix.Unlinkat(parentFD, quarantine, 0); removeErr != nil {
+			err = errors.Join(err, removeErr)
+		}
+	}()
+	if err != nil {
+		return false, err
+	}
 	if beforeRename != nil {
 		if err := beforeRename(); err != nil {
-			return err
+			return false, err
 		}
+	}
+	slog.Debug("SDK stale payload ready for quarantine", "path", path, "phase", "sdk-stale-quarantine")
+	matchesReservation, inspectErr := staleCandidateFileMatches(parentFD, quarantine, reserved)
+	if inspectErr != nil || !matchesReservation {
+		return false, errors.Join(ErrStalePruneConflict, inspectErr)
 	}
 	if err := unix.Renameat(parentFD, filepath.Base(path), parentFD, quarantine); err != nil {
 		if err == unix.ENOENT {
-			return nil
+			return false, nil
 		}
-		return fmt.Errorf("quarantine stale candidate %q: %w", candidate.Path, err)
+		return false, fmt.Errorf("quarantine stale candidate %q: %w", candidate.Path, err)
 	}
 
+	var quarantined unix.Stat_t
+	if statErr := unix.Fstatat(parentFD, quarantine, &quarantined, unix.AT_SYMLINK_NOFOLLOW); statErr != nil {
+		quarantineActive = false
+		return false, errors.Join(ErrStalePruneConflict, statErr)
+	}
 	matches, verifyErr := staleCandidateFileMatches(parentFD, quarantine, candidate)
 	if verifyErr == nil && matches {
+		slog.Debug("SDK stale quarantine payload verified for removal", "path", filepath.Join(parentPath, quarantine), "phase", "sdk-stale-quarantine-remove")
+		matches, verifyErr = staleCandidateFileMatches(parentFD, quarantine, candidate)
+		if verifyErr != nil || !matches {
+			quarantineActive = false
+			return false, errors.Join(ErrStalePruneConflict, verifyErr)
+		}
 		if err := unix.Unlinkat(parentFD, quarantine, 0); err != nil {
 			quarantineActive = false
-			return fmt.Errorf("remove quarantined stale candidate %q: %w", candidate.Path, err)
+			return false, fmt.Errorf("remove quarantined stale candidate %q: %w", candidate.Path, err)
 		}
 		quarantineActive = false
-		return nil
+		return true, nil
 	}
 
 	conflict := fmt.Errorf("%w: %s", ErrStalePruneConflict, candidate.Path)
 	if verifyErr != nil {
 		conflict = errors.Join(conflict, verifyErr)
 	}
-	if restoreErr := restoreStaleQuarantine(parentFD, quarantine, filepath.Base(path)); restoreErr != nil {
+	slog.Debug("SDK stale quarantine payload refused before restoration", "path", filepath.Join(parentPath, quarantine), "phase", "sdk-stale-quarantine-restore")
+	if restoreErr := restoreStaleQuarantine(parentFD, quarantine, filepath.Base(path), quarantined); restoreErr != nil {
 		quarantineActive = false
-		return errors.Join(conflict, fmt.Errorf("stale candidate %q preserved in quarantine %q: %w", candidate.Path, quarantine, restoreErr))
+		return false, errors.Join(conflict, fmt.Errorf("stale candidate %q preserved in quarantine %q: %w", candidate.Path, quarantine, restoreErr))
 	}
 	quarantineActive = false
-	return conflict
+	return false, conflict
 }
 
 func verifyStaleParentFD(parentFD int, candidate StaleFileCandidate, parentPath string) error {
@@ -240,35 +222,43 @@ func verifyStaleParentFD(parentFD int, candidate StaleFileCandidate, parentPath 
 	return nil
 }
 
-func createStaleQuarantine(parentFD int) (string, error) {
+func createStaleQuarantine(parentFD int) (string, fs.FileInfo, error) {
 	for range 32 {
 		var token [12]byte
 		if _, err := rand.Read(token[:]); err != nil {
-			return "", fmt.Errorf("generate stale quarantine name: %w", err)
+			return "", nil, fmt.Errorf("generate stale quarantine name: %w", err)
 		}
 		name := ".agent-marketplace-stale-" + hex.EncodeToString(token[:])
 		fd, err := unix.Openat(parentFD, name, unix.O_CREAT|unix.O_EXCL|unix.O_RDWR|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0o600)
 		if err == nil {
-			if closeErr := unix.Close(fd); closeErr != nil {
-				_ = unix.Unlinkat(parentFD, name, 0)
-				return "", fmt.Errorf("close stale quarantine: %w", closeErr)
+			file := os.NewFile(uintptr(fd), name)
+			info, inspectErr := file.Stat()
+			if closeErr := file.Close(); closeErr != nil {
+				inspectErr = errors.Join(inspectErr, closeErr)
 			}
-			return name, nil
+			if inspectErr != nil {
+				return name, info, inspectErr
+			}
+			return name, info, nil
 		}
 		if err != unix.EEXIST {
-			return "", fmt.Errorf("create stale quarantine: %w", err)
+			return "", nil, fmt.Errorf("create stale quarantine: %w", err)
 		}
 	}
-	return "", errors.New("create stale quarantine: exhausted unique names")
+	return "", nil, errors.New("create stale quarantine: exhausted unique names")
 }
 
-func staleCandidateFileMatches(parentFD int, name string, candidate StaleFileCandidate) (bool, error) {
-	fd, err := unix.Openat(parentFD, name, unix.O_RDONLY|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0)
+func staleCandidateFileMatches(parentFD int, name string, candidate StaleFileCandidate) (matches bool, err error) {
+	fd, err := unix.Openat(parentFD, name, unix.O_RDONLY|unix.O_CLOEXEC|unix.O_NOFOLLOW|unix.O_NONBLOCK, 0)
 	if err != nil {
 		return false, err
 	}
 	file := os.NewFile(uintptr(fd), name)
-	defer func() { _ = file.Close() }()
+	defer func() {
+		if closeErr := file.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
 	info, err := file.Stat()
 	if err != nil {
 		return false, err
@@ -276,52 +266,102 @@ func staleCandidateFileMatches(parentFD int, name string, candidate StaleFileCan
 	if candidate.Info == nil || !info.Mode().IsRegular() || !os.SameFile(candidate.Info, info) {
 		return false, nil
 	}
-	digest, err := digestOpenFile(file)
+	expected, err := fsboundary.FileInfoIdentity(info)
+	if err != nil {
+		return false, err
+	}
+	digest, err := digestOpenFile(file, expected)
 	if err != nil {
 		return false, err
 	}
 	return digest == candidate.Digest, nil
 }
 
-func digestOpenFile(file *os.File) ([sha256.Size]byte, error) {
+func digestOpenFile(file *os.File, expected fsboundary.Identity) ([sha256.Size]byte, error) {
 	if _, err := file.Seek(0, io.SeekStart); err != nil {
 		return [sha256.Size]byte{}, err
 	}
-	hash := sha256.New()
-	if _, err := io.Copy(hash, file); err != nil {
-		return [sha256.Size]byte{}, err
-	}
-	var digest [sha256.Size]byte
-	copy(digest[:], hash.Sum(nil))
-	return digest, nil
-}
-
-func restoreStaleQuarantine(parentFD int, quarantine, destination string) error {
-	if err := unix.Linkat(parentFD, quarantine, parentFD, destination, 0); err != nil {
-		return err
-	}
-	return unix.Unlinkat(parentFD, quarantine, 0)
-}
-
-func digestNoFollow(path string, expected fs.FileInfo) ([sha256.Size]byte, error) {
-	file, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW, 0)
+	before, err := fsboundary.FileIdentity(file)
 	if err != nil {
 		return [sha256.Size]byte{}, err
 	}
-	opened, err := file.Stat()
+	if !before.Mode.IsRegular() || before.Links != 1 {
+		return [sha256.Size]byte{}, fsboundary.ErrUnsafeFile
+	}
+	if !before.SameState(expected) {
+		return [sha256.Size]byte{}, fsboundary.ErrGenerationConflict
+	}
+	data, identity, err := fsboundary.ReadFile(file, expected.Size)
 	if err != nil {
-		return [sha256.Size]byte{}, errors.Join(err, file.Close())
+		return [sha256.Size]byte{}, err
 	}
-	if expected == nil || !opened.Mode().IsRegular() || !os.SameFile(expected, opened) {
-		return [sha256.Size]byte{}, errors.Join(fmt.Errorf("stale candidate identity changed while reading"), file.Close())
+	if !identity.SameState(before) {
+		return [sha256.Size]byte{}, fsboundary.ErrGenerationConflict
 	}
-	hash := sha256.New()
-	_, copyErr := io.Copy(hash, file)
-	closeErr := file.Close()
-	if copyErr != nil || closeErr != nil {
-		return [sha256.Size]byte{}, errors.Join(copyErr, closeErr)
+	return sha256.Sum256(data), nil
+}
+
+func restoreStaleQuarantine(parentFD int, quarantine, destination string, expected unix.Stat_t) error {
+	for step := range 2 {
+		var current unix.Stat_t
+		if err := unix.Fstatat(parentFD, quarantine, &current, unix.AT_SYMLINK_NOFOLLOW); err != nil {
+			return err
+		}
+		if current.Dev != expected.Dev || current.Ino != expected.Ino || current.Mode != expected.Mode || current.Size != expected.Size || current.Nlink != expected.Nlink {
+			return fsboundary.ErrGenerationConflict
+		}
+		if step == 1 {
+			return unix.Unlinkat(parentFD, quarantine, 0)
+		}
+		if err := unix.Linkat(parentFD, quarantine, parentFD, destination, 0); err != nil {
+			return err
+		}
+		expected.Nlink++
+		slog.Debug("SDK observed quarantine generation restored", "path", quarantine, "phase", "sdk-stale-quarantine-restore-linked")
 	}
-	var digest [sha256.Size]byte
-	copy(digest[:], hash.Sum(nil))
-	return digest, nil
+	return nil
+}
+
+func digestNoFollow(path string, expected fs.FileInfo) (digest [sha256.Size]byte, err error) {
+	if expected == nil {
+		return digest, fsboundary.ErrGenerationConflict
+	}
+	absolute, err := filepath.Abs(path)
+	if err != nil {
+		return digest, err
+	}
+	root, err := fsboundary.OpenDir(filepath.Dir(absolute))
+	if err != nil {
+		return digest, err
+	}
+	defer func() {
+		if closeErr := root.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
+	return digestCapturedNoFollow(root, filepath.Base(absolute), path, expected)
+}
+
+func digestCapturedNoFollow(parent *fsboundary.Dir, name, path string, expected fs.FileInfo) (digest [sha256.Size]byte, err error) {
+	if expected == nil {
+		return digest, fsboundary.ErrGenerationConflict
+	}
+	file, opened, err := parent.OpenFile(name)
+	if err != nil {
+		return digest, err
+	}
+	defer func() {
+		if closeErr := file.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
+	original, err := fsboundary.FileInfoIdentity(expected)
+	if err != nil {
+		return digest, err
+	}
+	if !opened.SameState(original) {
+		return digest, fsboundary.ErrGenerationConflict
+	}
+	slog.Debug("SDK stale payload admitted", "path", path, "phase", "sdk-stale-read")
+	return digestOpenFile(file, original)
 }

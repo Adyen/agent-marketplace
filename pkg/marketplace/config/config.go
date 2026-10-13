@@ -19,6 +19,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/publicurl"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/store"
@@ -116,20 +117,163 @@ func (d Duration) Duration() time.Duration { return time.Duration(d) }
 
 // Config is the top-level Marketplace operator configuration.
 type Config struct {
-	Admin              Administration    `yaml:"admin"`
-	Management         Management        `yaml:"management"`
-	APIVersion         string            `yaml:"apiVersion"`
-	Instance           Instance          `yaml:"instance"`
-	Listen             string            `yaml:"listen"`
-	OperationsListen   string            `yaml:"operations_listen"`
-	Storage            Storage           `yaml:"storage"`
-	AcquisitionDefault string            `yaml:"acquisition_default"`
-	Refresh            Refresh           `yaml:"refresh"`
-	RefreshConcurrency int               `yaml:"refresh_concurrency,omitempty"`
-	Policy             Policy            `yaml:"policy"`
-	Registries         []Registry        `yaml:"registries"`
-	Revocations        Revocations       `yaml:"revocations"`
-	CatalogProjection  CatalogProjection `yaml:"catalog_projection"`
+	Admin               Administration      `yaml:"admin"`
+	Management          Management          `yaml:"management"`
+	APIVersion          string              `yaml:"apiVersion"`
+	Instance            Instance            `yaml:"instance"`
+	Listen              string              `yaml:"listen"`
+	OperationsListen    string              `yaml:"operations_listen"`
+	Storage             Storage             `yaml:"storage"`
+	AcquisitionDefault  string              `yaml:"acquisition_default"`
+	Refresh             Refresh             `yaml:"refresh"`
+	RefreshConcurrency  int                 `yaml:"refresh_concurrency,omitempty"`
+	Policy              Policy              `yaml:"policy"`
+	Registries          []Registry          `yaml:"registries"`
+	Revocations         Revocations         `yaml:"revocations"`
+	CatalogProjection   CatalogProjection   `yaml:"catalog_projection"`
+	InstallationMetrics InstallationMetrics `yaml:"installation_metrics"`
+}
+
+type InstallationMetrics struct {
+	URL            string                     `yaml:"url"`
+	BearerTokenEnv string                     `yaml:"bearer_token_env"`
+	Labels         map[string]string          `yaml:"labels"`
+	MaxAge         *Duration                  `yaml:"max_age"`
+	Timeout        *Duration                  `yaml:"timeout"`
+	Refresh        InstallationMetricsRefresh `yaml:"refresh"`
+}
+
+type InstallationMetricsRefresh struct {
+	Interval      *Duration `yaml:"interval"`
+	RetryInterval *Duration `yaml:"retry_interval"`
+	Jitter        *Duration `yaml:"jitter"`
+}
+
+type InstallationMetricsTiming struct {
+	Interval      time.Duration
+	RetryInterval time.Duration
+	Jitter        time.Duration
+	MaxAge        time.Duration
+	Timeout       time.Duration
+}
+
+const (
+	defaultInstallationMetricsInterval = 4 * time.Minute
+	defaultInstallationMetricsRetry    = 30 * time.Second
+	defaultInstallationMetricsJitter   = 15 * time.Second
+	defaultInstallationMetricsMaxAge   = 5 * time.Minute
+	defaultInstallationMetricsTimeout  = 2 * time.Second
+)
+
+func ResolveInstallationMetricsTiming(m InstallationMetrics) InstallationMetricsTiming {
+	timing := InstallationMetricsTiming{
+		Interval:      defaultInstallationMetricsInterval,
+		RetryInterval: defaultInstallationMetricsRetry,
+		Jitter:        defaultInstallationMetricsJitter,
+		MaxAge:        defaultInstallationMetricsMaxAge,
+		Timeout:       defaultInstallationMetricsTimeout,
+	}
+	if m.Refresh.Interval != nil {
+		timing.Interval = m.Refresh.Interval.Duration()
+	}
+	if m.Refresh.RetryInterval != nil {
+		timing.RetryInterval = m.Refresh.RetryInterval.Duration()
+	}
+	if m.Refresh.Jitter != nil {
+		timing.Jitter = m.Refresh.Jitter.Duration()
+	}
+	if m.MaxAge != nil {
+		timing.MaxAge = m.MaxAge.Duration()
+	}
+	if m.Timeout != nil {
+		timing.Timeout = m.Timeout.Duration()
+	}
+	return timing
+}
+
+var installationMetricsLabelKeys = map[string]bool{
+	"namespace": true, "endpoint": true, "service": true, "job": true, "cluster": true,
+}
+
+const installationMetricsLabelBound = 256
+
+var installationMetricsEnvName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+
+func (m InstallationMetrics) Validate() []error {
+	errs := validateInstallationMetricsTiming(ResolveInstallationMetricsTiming(m))
+	urlText := strings.TrimSpace(m.URL)
+	env := strings.TrimSpace(m.BearerTokenEnv)
+	if urlText == "" {
+		if env != "" || len(m.Labels) != 0 {
+			errs = append(errs, errors.New("installation_metrics.url is required when bearer_token_env or labels are set"))
+		}
+		return errs
+	}
+	u, err := url.Parse(urlText)
+	if err != nil || u.Hostname() == "" || (u.Scheme != "http" && u.Scheme != "https") {
+		return append(errs, errors.New("installation_metrics.url must be an HTTP or HTTPS URL with a hostname"))
+	}
+	if u.User != nil {
+		errs = append(errs, errors.New("installation_metrics.url must not contain userinfo"))
+	}
+	if u.RawQuery != "" || u.ForceQuery || u.Fragment != "" {
+		errs = append(errs, errors.New("installation_metrics.url must not contain a query or fragment"))
+	}
+	if env != "" {
+		if !installationMetricsEnvName.MatchString(env) {
+			errs = append(errs, errors.New("installation_metrics.bearer_token_env must be a conventional environment variable name"))
+		}
+		loopback := strings.EqualFold(u.Hostname(), "localhost")
+		if ip := net.ParseIP(u.Hostname()); ip != nil {
+			loopback = loopback || ip.IsLoopback()
+		}
+		if u.Scheme != "https" && !loopback {
+			errs = append(errs, errors.New("installation_metrics bearer authentication requires HTTPS except for a loopback endpoint"))
+		}
+	}
+	labelKeys := make([]string, 0, len(m.Labels))
+	for key := range m.Labels {
+		labelKeys = append(labelKeys, key)
+	}
+	slices.Sort(labelKeys)
+	for _, key := range labelKeys {
+		value := m.Labels[key]
+		if !installationMetricsLabelKeys[key] {
+			errs = append(errs, fmt.Errorf("installation_metrics.labels key %q is not a supported deployment selector", key))
+		}
+		if len(value) > installationMetricsLabelBound || strings.ContainsFunc(value, unicode.IsControl) {
+			errs = append(errs, fmt.Errorf("installation_metrics.labels[%q] must be a bounded string without control characters", key))
+		}
+	}
+	return errs
+}
+
+func validateInstallationMetricsTiming(timing InstallationMetricsTiming) []error {
+	var errs []error
+	if timing.Interval <= 0 {
+		errs = append(errs, errors.New("installation_metrics.refresh.interval must be a positive duration"))
+	}
+	if timing.RetryInterval <= 0 {
+		errs = append(errs, errors.New("installation_metrics.refresh.retry_interval must be a positive duration"))
+	}
+	if timing.Jitter < 0 {
+		errs = append(errs, errors.New("installation_metrics.refresh.jitter must not be negative"))
+	}
+	if timing.MaxAge <= 0 {
+		errs = append(errs, errors.New("installation_metrics.max_age must be a positive duration"))
+	}
+	if timing.Timeout <= 0 {
+		errs = append(errs, errors.New("installation_metrics.timeout must be a positive duration"))
+	}
+	if timing.Interval <= 0 || timing.MaxAge <= 0 || timing.Timeout <= 0 || timing.Jitter < 0 {
+		return errs
+	}
+	if timing.Interval >= timing.MaxAge ||
+		timing.Timeout >= timing.MaxAge-timing.Interval ||
+		timing.Jitter >= timing.MaxAge-timing.Interval-timing.Timeout {
+		errs = append(errs, errors.New("installation_metrics refresh interval+jitter+timeout must stay below installation_metrics.max_age"))
+	}
+	return errs
 }
 
 // CatalogProjection controls the optional catalog projection API. It is
@@ -463,6 +607,7 @@ func (cfg Config) validateWithoutAdministration() error {
 		seenSlugs[src.Slug] = true
 	}
 	errs = append(errs, cfg.Revocations.ValidateForMarketplace(cfg.Instance.ID)...)
+	errs = append(errs, cfg.InstallationMetrics.Validate()...)
 	return errors.Join(errs...)
 }
 

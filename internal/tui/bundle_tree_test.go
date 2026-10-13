@@ -146,6 +146,7 @@ func TestBundleTreeFileBackedResourceHasOneEntry(t *testing.T) {
 	}
 }
 
+// spec: tui-navigation/authoritative-remote-inspection-paths-remain-unchanged
 func TestBundleTreeUsesAuthoritativeResourceSourcePath(t *testing.T) {
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "SKILL.md"), []byte("# Skill"), 0o644); err != nil {
@@ -175,7 +176,7 @@ func TestRenderBundleFileCapsAndRendersSelectedPath(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "other.md"), []byte("# Other"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	out := renderBundleFile(root, "selected.md", 40)
+	out := renderBundleFile(true, root, "selected.md", 40)
 	if !contains(out, "Selected") || contains(out, "Other") {
 		t.Fatalf("selected preview = %q", out)
 	}
@@ -188,7 +189,7 @@ func BenchmarkBundlePreviewRendering(b *testing.B) {
 	}
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_ = renderBundleFile(root, "SKILL.md", 80)
+		_ = renderBundleFile(true, root, "SKILL.md", 80)
 	}
 }
 

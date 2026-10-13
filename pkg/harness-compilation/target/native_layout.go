@@ -1,6 +1,7 @@
 package target
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -99,6 +100,158 @@ type NativeAggregateFile struct {
 	// entry keyspace and are rejected; the same Path under different members
 	// is a legal shared envelope.
 	Member string
+}
+
+// NativeHookProjectionFile locates the native hook file a hook-only
+// projection writes within a single scope. Path and Member carry the same
+// meaning as NativeAggregateFile; Envelope lists the additional top-level
+// members the file must carry beside Member when it is written, including
+// fixed scalar declarations like Cursor's `version: 1`. Envelope values are
+// restricted to JSON scalars (strings, booleans, numbers, null): a nested
+// value could hide mutable structure a shallow clone would share, and the
+// clone contract would silently stop being defensive. An envelope key may
+// not equal Member, case-insensitively: the entry member is owned by the
+// resource entries, not by static envelope data.
+type NativeHookProjectionFile struct {
+	Path     string
+	Member   string
+	Envelope map[string]any
+}
+
+// HookShape names the entry encoding a hook aggregate file carries: how an
+// event key maps to its hook entries inside the file's hook member (or its
+// top level, when Member is empty).
+type HookShape string
+
+const (
+	// HookShapeMatcherGroups is event → array of rule groups
+	// ({matcher?, hooks: [handler]}): the Claude-family encoding shared by
+	// Factory Droid, Gemini CLI, Devin CLI, and Codex.
+	HookShapeMatcherGroups HookShape = "matcher-groups"
+	// HookShapeEventHandlers is event → array of handler entries: the flat
+	// encoding Cursor (handlers may carry a matcher field) and Windsurf use.
+	HookShapeEventHandlers HookShape = "event-handlers"
+)
+
+// NativeHookProjection is the hook-only native projection topology a target
+// Definition may declare. It is deliberately narrower than NativeLayout: a
+// target without a complete native layout can still declare where its native
+// hook file lives, how entries nest under the event key, and where hook
+// support files install, without activating unrelated layout routing.
+type NativeHookProjection struct {
+	// Project and User locate the native hook file per scope, resolved
+	// against the scope root the owning Definition declares.
+	Project NativeHookProjectionFile
+	User    NativeHookProjectionFile
+	// Shape is the hook entry encoding inside the file. It is load-bearing:
+	// serializers and readers must never guess it.
+	Shape HookShape
+	// SupportDir is the directory root, relative to the same scope base as
+	// the file paths, below which a hook's support files install
+	// (<support dir>/<source>/<hook>/).
+	SupportDir string
+}
+
+// File returns the scope's declared hook file with a cloned envelope.
+func (p NativeHookProjection) File(machineScope bool) NativeHookProjectionFile {
+	file := p.Project
+	if machineScope {
+		file = p.User
+	}
+	file.Envelope = maps.Clone(file.Envelope)
+	return file
+}
+
+func cloneHookProjection(p *NativeHookProjection) *NativeHookProjection {
+	if p == nil {
+		return nil
+	}
+	out := *p
+	out.Project.Envelope = maps.Clone(p.Project.Envelope)
+	out.User.Envelope = maps.Clone(p.User.Envelope)
+	return &out
+}
+
+// LookupHookProjection returns a defensive copy of the target's declared
+// hook-only native projection topology.
+func LookupHookProjection(t Target) (NativeHookProjection, bool) {
+	definition, ok := Lookup(string(t))
+	if !ok || definition.HookProjection == nil {
+		return NativeHookProjection{}, false
+	}
+	return *cloneHookProjection(definition.HookProjection), true
+}
+
+// ValidateHookProjections validates every target's declared hook projection
+// at the same registration boundary ValidateNativeLayouts uses.
+func ValidateHookProjections() error {
+	var errs []error
+	for _, definition := range definitions {
+		if definition.HookProjection == nil {
+			continue
+		}
+		if err := ValidateHookProjection(definition.Target, *definition.HookProjection); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	return errors.Join(errs...)
+}
+
+// ValidateHookProjection rejects a hook projection declaration with an
+// invalid file path or member, an unknown entry shape, a colliding or
+// unserializable envelope, or an invalid support directory.
+func ValidateHookProjection(t Target, p NativeHookProjection) error {
+	var errs []error
+	switch p.Shape {
+	case HookShapeMatcherGroups, HookShapeEventHandlers:
+	default:
+		errs = append(errs, fmt.Errorf("target %q hook projection declares unknown shape %q", t, p.Shape))
+	}
+	if !fs.ValidPath(p.SupportDir) || p.SupportDir == "." || strings.ContainsAny(p.SupportDir, "\\\x00") {
+		errs = append(errs, fmt.Errorf("target %q hook projection has invalid support directory %q", t, p.SupportDir))
+	}
+	for _, scope := range []struct {
+		name string
+		file NativeHookProjectionFile
+	}{{"project", p.Project}, {"user", p.User}} {
+		if !fs.ValidPath(scope.file.Path) || scope.file.Path == "." || strings.ContainsAny(scope.file.Path, "\\\x00") {
+			errs = append(errs, fmt.Errorf("target %q hook projection %s-scope file has invalid path %q", t, scope.name, scope.file.Path))
+		}
+		if member := scope.file.Member; member != "" && (strings.ContainsAny(member, "/\\\x00") || member == "." || member == "..") {
+			errs = append(errs, fmt.Errorf("target %q hook projection %s-scope file has invalid member %q", t, scope.name, member))
+		}
+		for _, key := range slices.Sorted(maps.Keys(scope.file.Envelope)) {
+			if key == "" || strings.ContainsAny(key, "/\\\x00") || key == "." || key == ".." {
+				errs = append(errs, fmt.Errorf("target %q hook projection %s-scope file declares an invalid envelope member name %q", t, scope.name, key))
+				continue
+			}
+			if scope.file.Member != "" && strings.EqualFold(key, scope.file.Member) {
+				errs = append(errs, fmt.Errorf("target %q hook projection %s-scope file declares envelope member %q colliding with the entry member %q", t, scope.name, key, scope.file.Member))
+				continue
+			}
+			if !validEnvelopeScalar(scope.file.Envelope[key]) {
+				errs = append(errs, fmt.Errorf("target %q hook projection %s-scope file declares envelope member %q with a non-scalar or unserializable value", t, scope.name, key))
+			}
+		}
+	}
+	return errors.Join(errs...)
+}
+
+// validEnvelopeScalar accepts only the fixed scalar declaration contract: a
+// null, a string, a boolean, or a JSON-serializable number. Nested maps and
+// slices are rejected because the projection's clone contract is top-level.
+func validEnvelopeScalar(value any) bool {
+	if _, err := json.Marshal(value); err != nil {
+		return false
+	}
+	switch value.(type) {
+	case nil, string, bool,
+		float32, float64, json.Number,
+		int, int8, int16, int32, int64,
+		uint, uint8, uint16, uint32, uint64:
+		return true
+	}
+	return false
 }
 
 // NativeAggregate identifies a shared target file produced for one resource

@@ -30,3 +30,8 @@ func unlockFile(*os.File) error { return ErrLockUnsupported }
 func isENOLCK(error) bool { return false }
 
 func ReadAggregateFile(string) ([]byte, error) { return nil, ErrUnsafeAggregateFile }
+
+// ReadAggregateFileAt refuses everywhere the descriptor-anchored unix reader
+// does not exist: a platform without openat confinement gets no aggregate
+// reads at all rather than a path-based substitute.
+func ReadAggregateFileAt(string, string) ([]byte, error) { return nil, ErrUnsafeAggregateFile }

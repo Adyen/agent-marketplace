@@ -143,7 +143,7 @@ func Remove(ctx context.Context, opts RemoveOptions) (result *RemoveResult, retE
 		return nil, fmt.Errorf("resource name is required")
 	}
 
-	mergedCfg, repoCfg, orgCfg, err := loadRemoveConfig(ctx, opts.RepoRoot)
+	mergedCfg, repoCfg, orgCfg, err := loadRemoveConfig(ctx, ws)
 	if err != nil {
 		return nil, err
 	}
@@ -627,8 +627,8 @@ func requiredCollectionAutoSelects(entry config.RegistryEntry) bool {
 	return true
 }
 
-func loadRemoveConfig(ctx context.Context, repoRoot string) (mergedCfg, repoCfg, orgCfg *config.Config, err error) {
-	ec := LoadEffective(ctx, ConfigLoadOnline, config.LoadEffectiveOptions{RepoRoot: repoRoot}, nil)
+func loadRemoveConfig(ctx context.Context, ws Workspace) (mergedCfg, repoCfg, orgCfg *config.Config, err error) {
+	ec := LoadEffective(ctx, ConfigLoadOnline, config.LoadEffectiveOptions{RepoRoot: ws.RepoRoot(), LocalConfigDir: ws.LocalConfigDir()}, nil)
 	if len(ec.Errors) > 0 && !config.OnlyRegistryURLBlockedErrors(ec.Errors) {
 		return nil, nil, nil, errors.Join(ec.Errors...)
 	}
@@ -1297,6 +1297,10 @@ func localRegistryEntryExists(localCfg *config.LocalConfig, registryURL, registr
 // Without a name: remove the entire registry entry from the config.
 func removeFromAdHoc(ctx context.Context, opts RemoveOptions, fromURL string) (*RemoveResult, error) {
 	repoRoot := opts.RepoRoot
+	ws, err := removeWorkspace(opts)
+	if err != nil {
+		return nil, err
+	}
 
 	// Resolve web URLs into git URL + ref + path. Explicit flags win.
 	resolvedURL, resolvedRef, resolvedPath, _ := ResolveFromURL(fromURL, opts.FromRef, opts.FromPath)
@@ -1309,7 +1313,7 @@ func removeFromAdHoc(ctx context.Context, opts RemoveOptions, fromURL string) (*
 	// ignored on remove: a registry that was previously allowed and is now
 	// blocked by a tightened allowed_registries policy must still be removable.
 	syntheticEntry := config.RegistryEntry{URL: fromURL, Ref: fromRef, Path: fromPath}
-	ec := LoadEffective(ctx, ConfigLoadOnline, config.LoadEffectiveOptions{RepoRoot: repoRoot}, nil)
+	ec := LoadEffective(ctx, ConfigLoadOnline, config.LoadEffectiveOptions{RepoRoot: ws.RepoRoot(), LocalConfigDir: ws.LocalConfigDir()}, nil)
 	if len(ec.Errors) > 0 && !config.OnlyRegistryURLBlockedErrors(ec.Errors) {
 		return nil, errors.Join(ec.Errors...)
 	}
@@ -1332,7 +1336,7 @@ func removeFromAdHoc(ctx context.Context, opts RemoveOptions, fromURL string) (*
 	// The merged config finds entries defined by includes or lower layers. A
 	// missing --path/--ref may identify one entry, but never silently selects
 	// among distinct paths or refs.
-	mergedCfg, _, _, err := loadRemoveConfig(ctx, repoRoot)
+	mergedCfg, _, _, err := loadRemoveConfig(ctx, ws)
 	if err != nil {
 		return nil, err
 	}
@@ -1472,10 +1476,6 @@ func removeFromAdHoc(ctx context.Context, opts RemoveOptions, fromURL string) (*
 	// resource like a skill enabled at both user and repo scope would be
 	// reported as spuriously "ambiguous" even though --from already names the
 	// entry to operate on).
-	ws, err := removeWorkspace(opts)
-	if err != nil {
-		return nil, err
-	}
 	resolvedResult := Resolve(ctx, ResolveOptions{Workspace: ws, IgnoreBlockedRegistries: true, SkipInventory: true, ReadOnlyExactLocks: true})
 	if len(resolvedResult.Errors) > 0 {
 		return nil, errors.Join(resolvedResult.Errors...)

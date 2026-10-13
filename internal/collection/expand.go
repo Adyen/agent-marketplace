@@ -358,16 +358,6 @@ func authoredURLForRegistry(url, ref, registryPath string, entries []config.Regi
 	return strings.TrimSpace(url)
 }
 
-func excludeForRegistry(url string, entries []config.RegistryEntry) []string {
-	norm := config.NormalizeGitURL(url)
-	for _, e := range entries {
-		if config.NormalizeGitURL(e.URL) == norm {
-			return append([]string(nil), e.AllExcludes()...)
-		}
-	}
-	return nil
-}
-
 // excludeForRegistryWithPath returns the exclude list from the first entry
 // matching (url, ref, path). Falls back to (url, ref) matching when path is
 // empty. Used by Expand for path-specific synthetic entries.

@@ -112,21 +112,6 @@ type exactLockSet struct {
 	catalogs   map[string]map[string]*catalog.Catalog
 }
 
-func (set *exactLockSet) discover(path, sourceHarness string) (catalog.LoadedCatalog, error) {
-	catalogs := set.catalogs[filepath.Clean(path)]
-	loaded := catalogs[sourceHarness]
-	if loaded == nil && sourceHarness == "" && len(catalogs) == 1 {
-		for _, candidate := range catalogs {
-			loaded = candidate
-		}
-	}
-	if loaded != nil {
-		slog.Debug("reusing verified source catalog", "path", path, "source_harness", loaded.SourceHarness)
-		return loaded.Discover(path, sourceHarness)
-	}
-	return catalog.Discover(path, sourceHarness)
-}
-
 type lockedGit struct {
 	canonical string
 	fetchURL  string
@@ -651,6 +636,10 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 		slog.Info("lock lifecycle completed", attrs...)
 	}()
 
+	ws, err := pipeline.WorkspaceForRoots(repoRoot, localDir)
+	if err != nil {
+		return nil, 0, nil, err
+	}
 	stateDir, err := dependencyStateDir()
 	if err != nil {
 		return nil, 0, nil, err
@@ -692,7 +681,7 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 		overlays[destination] = edit.Bytes
 	}
 	loadOptions := config.LoadEffectiveOptions{
-		RepoRoot: repoRoot, LocalConfigDir: localDir,
+		RepoRoot: ws.RepoRoot(), LocalConfigDir: ws.LocalConfigDir(),
 		FileOverlays: overlays,
 	}
 	loadMode := pipeline.ConfigLoadStrict
@@ -712,7 +701,7 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 	}
 	canBootstrapMarketplace := !mode.readOnlyDependencies() && mode.prepareInstall == nil && mode.reuseInstall == nil && len(mode.stagedConfigEdits) == 0 && len(mode.stagedLockEdits) == 0 && mode.commitScope == nil
 	if canBootstrapMarketplace && pipeline.NeedsLockBootstrap(ec.Errors) {
-		bootstrapChanged, err := bootstrapMissingMarketplaceLocks(ctx, repoRoot, localDir, mode.selects, mode.marketplacePolicy)
+		bootstrapChanged, err := bootstrapMissingMarketplaceLocks(ctx, ws.RepoRoot(), ws.LocalConfigDir(), mode.selects, mode.marketplacePolicy)
 		if err != nil {
 			return nil, 0, nil, err
 		}
@@ -1124,7 +1113,7 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 		return nil
 	}
 
-	option := catalog.WithExactSnapshots(func(entry config.RegistryEntry) (string, string, error) {
+	option := catalog.WithVerifiedExactSnapshots(func(entry config.RegistryEntry) (string, string, error) {
 		if err := validateExactLocks(); err != nil {
 			return "", "", err
 		}
@@ -1146,7 +1135,7 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 		}
 		catalogKey := canonical + "@" + locked.commit.String() + ":" + entry.Path
 		return locked.snapshot, catalogKey, nil
-	}, set.discover)
+	}, set.catalogs)
 	hasExactConsumers := len(set.byIdentity) > 0
 	resultLease = func(ctx context.Context) (func(), error) {
 		if !hasExactConsumers {
