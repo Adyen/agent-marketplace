@@ -22,6 +22,7 @@ const props = defineProps<{ controller?: WorkspaceController }>()
 
 const state = shallowRef<WorkspaceController | null>(props.controller ?? null)
 const selectedKey = ref<string | null>(null)
+const selectionTouched = ref(false)
 const foldedGroups = ref<Record<string, boolean>>({})
 const temporarySearchFolds = ref<SearchFoldState>({ query: '', groups: {} })
 const activeQuery = ref('')
@@ -117,24 +118,28 @@ function openSearch() {
 }
 
 function updateSearch(event: Event) {
+  selectionTouched.value = true
   const query = (event.currentTarget as HTMLInputElement).value
   draftQuery.value = query
   activeQuery.value = query
 }
 
 function confirmSearch() {
+  selectionTouched.value = true
   appliedQuery.value = draftQuery.value
   activeQuery.value = appliedQuery.value
   searchEditing.value = false
 }
 
 function cancelSearch() {
+  selectionTouched.value = true
   draftQuery.value = appliedQuery.value
   activeQuery.value = appliedQuery.value
   searchEditing.value = false
 }
 
 function clearSearch() {
+  selectionTouched.value = true
   appliedQuery.value = ''
   draftQuery.value = ''
   activeQuery.value = ''
@@ -306,7 +311,7 @@ function nextSelectionKey(currentKey: string | null, previous: VisibleEntry[], n
 }
 
 let previousVisibleEntries: VisibleEntry[] = []
-let hasAcceptedSnapshot = false
+let rowReplacementEpoch = 0
 
 watch(
   visibleEntries,
@@ -338,10 +343,13 @@ watch(
       return
     }
     const entries = visibleEntries.value
-    const nextKey = nextSelectionKey(selectedKey.value, previousVisibleEntries, entries)
-    const acceptedReplacement = stage === 'final' && hasAcceptedSnapshot && rows !== previous?.[0]
+    const acceptedReplacement = rows !== previous?.[0]
+    const epoch = acceptedReplacement ? ++rowReplacementEpoch : rowReplacementEpoch
+    const nextKey = selectionTouched.value
+      ? nextSelectionKey(selectedKey.value, previousVisibleEntries, entries)
+      : entries.find((entry) => entry.kind === 'row')?.key ?? null
     let anchor: ViewportAnchor | null = null
-    if (acceptedReplacement && nextKey != null) {
+    if (acceptedReplacement && selectionTouched.value && nextKey != null) {
       const previousEntry = previousVisibleEntries.find((entry) => entry.key === nextKey)
       const root = listRoot.value
       const element = previousEntry == null ? null : document.getElementById(previousEntry.elementId)
@@ -353,27 +361,40 @@ watch(
       }
     }
     selectedKey.value = nextKey
-    if (stage === 'final') {
-      hasAcceptedSnapshot = true
+    if (!acceptedReplacement) {
+      return
     }
-    if (anchor != null) {
-      const currentAnchor = anchor
-      void nextTick(() => {
-        const root = listRoot.value
-        const entry = visibleEntries.value.find((candidate) => candidate.key === currentAnchor.key)
-        const element = entry == null ? null : document.getElementById(entry.elementId)
-        if (root == null || element == null) {
-          return
-        }
-        const top = element.getBoundingClientRect().top - root.getBoundingClientRect().top
-        root.scrollTop += top - currentAnchor.top
-      })
-    }
+    const capturedKey = nextKey
+    const selectionWasTouched = selectionTouched.value
+    void nextTick(() => {
+      if (epoch !== rowReplacementEpoch || selectedKey.value !== capturedKey || (!selectionWasTouched && selectionTouched.value)) {
+        return
+      }
+      const root = listRoot.value
+      if (root == null) {
+        return
+      }
+      if (!selectionWasTouched) {
+        root.scrollTop = 0
+        return
+      }
+      if (anchor == null) {
+        return
+      }
+      const entry = visibleEntries.value.find((candidate) => candidate.key === anchor?.key)
+      const element = entry == null ? null : document.getElementById(entry.elementId)
+      if (element == null) {
+        return
+      }
+      const top = element.getBoundingClientRect().top - root.getBoundingClientRect().top
+      root.scrollTop += top - anchor.top
+    })
   },
   { flush: 'pre' },
 )
 
 function select(row: Row) {
+  selectionTouched.value = true
   const key = rowKey(row.id)
   if (selectedKey.value === key) {
     return
@@ -401,6 +422,7 @@ function activateRow(row: Row) {
 }
 
 function toggleGroup(groupID: string) {
+  selectionTouched.value = true
   if (filteredSearch.value) {
     const groups = temporarySearchFolds.value.query === activeQuery.value
       ? temporarySearchFolds.value.groups
@@ -416,6 +438,7 @@ function toggleGroup(groupID: string) {
 }
 
 async function moveSelection(direction: 1 | -1) {
+  selectionTouched.value = true
   const entries = visibleEntries.value
   if (entries.length === 0) {
     return
