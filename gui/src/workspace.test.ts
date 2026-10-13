@@ -15,6 +15,96 @@ import {
 } from './controller'
 import { event, fakeClient, mountWorkspace, row, snapshot, tick } from './test-support'
 
+function testRect(left: number, top: number, width: number, height: number): DOMRect {
+  return { x: left, y: top, left, top, right: left + width, bottom: top + height, width, height, toJSON: () => ({}) } as DOMRect
+}
+
+function stubListViewport(root: HTMLElement) {
+  const original = HTMLElement.prototype.getBoundingClientRect
+  let pendingMeasurement: { elementID: string; resolve: () => void } | null = null
+  const spy = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
+    if (this === root) {
+      return testRect(0, 100, 400, 240)
+    }
+    if (this.getAttribute('role') === 'option') {
+      if (pendingMeasurement?.elementID === this.id) {
+        const resolve = pendingMeasurement.resolve
+        pendingMeasurement = null
+        resolve()
+      }
+      const rows = Array.from(root.querySelectorAll<HTMLElement>('[role="option"]'))
+      const index = rows.indexOf(this)
+      const relativeTop = 120 + (index - 19) * 20 - (root.scrollTop - 200)
+      return testRect(0, 100 + relativeTop, 380, 20)
+    }
+    return original.call(this)
+  })
+  return {
+    spy,
+    measureNext(elementID: string): Promise<void> {
+      return new Promise((resolve) => {
+        pendingMeasurement = { elementID, resolve }
+      })
+    },
+  }
+}
+
+function work38Row(name: string, overrides: Partial<ReturnType<typeof row>> = {}) {
+  return row(name, {
+    id: `opaque-user-source-${name}`,
+    registry: 'source',
+    scope: 'user',
+    group: 'pending',
+    status: 'pending verification',
+    pendingVerification: true,
+    checked: false,
+    description: `Pending ${name} details`,
+    ...overrides,
+  })
+}
+
+function work38Rows() {
+  return Array.from({ length: 40 }, (_, index) => work38Row(`resource-${String(index).padStart(2, '0')}`))
+}
+
+function work38SnapshotEvent(
+  sequence: number,
+  generation: number,
+  stage: Snapshot['stage'],
+  rows: ReturnType<typeof row>[],
+  operation: OperationRef | null = null,
+  settledOperation: OperationRef | null = null,
+  discoveryEnabled = false,
+) {
+  return event({
+    sequence,
+    generation,
+    operation,
+    payload: snapshot(rows, {
+      stage,
+      drift: stage === 'final' ? 'ready' : 'pending',
+      operation,
+      settledOperation,
+      pendingChanges: stage === 'final' ? 0 : rows.length,
+      discoveryEnabled,
+    }),
+  })
+}
+
+function work38DiscoveryEvent(sequence: number, generation: number, rows: ReturnType<typeof row>[]): SessionEvent {
+  return {
+    type: 'discovery',
+    sequence,
+    generation,
+    operation: null,
+    payload: { requestId: 0, query: '', discoverySequence: 1, rows, health: [], loading: false },
+  }
+}
+
+function relativeTop(element: HTMLElement, root: HTMLElement): number {
+  return element.getBoundingClientRect().top - root.getBoundingClientRect().top
+}
+
 describe('WorkspaceView', () => {
   it('groups rows by status with registry-qualified names, scope, and harness badges', async () => {
     const { client, push } = fakeClient()
@@ -111,6 +201,230 @@ describe('WorkspaceView', () => {
     await tick()
     const updated = wrapper.findAll('[role="option"]')
     expect(updated[1].attributes('aria-selected')).toBe('true')
+  })
+
+  // spec: session-startup/selection-follows-its-resource-when-rows-are-inserted
+  // spec: session-startup/an-open-detail-follows-its-verified-row
+  it('preserves a touched pending resource and its viewport through inventory and final stages', async () => {
+    const { client, push } = fakeClient()
+    const operation: OperationRef = { id: 91, kind: 'sync' }
+    const initialRows = work38Rows()
+    const targetID = initialRows[19].id
+    const { controller, wrapper } = mountWorkspace(client)
+    const list = wrapper.find('.workspace__list').element as HTMLElement
+    const geometry = stubListViewport(list)
+
+    try {
+      push(work38SnapshotEvent(1, 7, 'config', initialRows, operation))
+      await tick()
+      expect(controller.state.operation).toEqual(operation)
+      expect(controller.state.drift).toBe('pending')
+      expect(wrapper.findAll('[role="option"]')).toHaveLength(40)
+
+      const first = wrapper.findAll('[role="option"]')[0]
+      expect(first.attributes('aria-selected')).toBe('true')
+      first.element.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }))
+      await tick()
+      for (let step = 1; step < 19; step++) {
+        const active = document.activeElement
+        if (!(active instanceof HTMLElement)) {
+          throw new Error('keyboard traversal lost the active resource')
+        }
+        active.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }))
+        await tick()
+      }
+
+      let selected = wrapper.find('[role="option"][aria-selected="true"]')
+      expect(selected.text()).toContain('resource-19')
+      const selectedDOMID = selected.attributes('id')
+      expect(selectedDOMID).toBeTruthy()
+      expect(selected.attributes('id')).toBeTruthy()
+      expect(wrapper.find('.workspace__detail').text()).toContain('Pending resource-19 details')
+      list.scrollTop = 200
+      expect(relativeTop(selected.element as HTMLElement, list)).toBe(120)
+
+      const inventoryRows = [
+        ...Array.from({ length: 10 }, (_, index) => work38Row(`aaa-inventory-${String(index).padStart(2, '0')}`)),
+        ...initialRows,
+      ]
+      push(work38SnapshotEvent(2, 7, 'inventory', inventoryRows, operation))
+      await tick()
+      selected = wrapper.find('[role="option"][aria-selected="true"]')
+      expect(wrapper.findAll('[role="option"]')).toHaveLength(50)
+      expect(selected.attributes('id')).toBe(selectedDOMID)
+      expect(selected.text()).toContain('resource-19')
+      expect(list.scrollTop).toBe(400)
+      expect(relativeTop(selected.element as HTMLElement, list)).toBe(120)
+      expect(wrapper.find('.workspace__detail').text()).toContain('Pending resource-19 details')
+      expect(controller.state.operation).toEqual(operation)
+      expect(controller.state.drift).toBe('pending')
+
+      const verifiedRows = inventoryRows.map((candidate) => candidate.id === targetID
+        ? { ...candidate, description: 'Verified resource-19 details', pendingVerification: false, status: 'pending sync' }
+        : candidate)
+      const finalRows = [
+        ...Array.from({ length: 4 }, (_, index) => work38Row(`aab-final-${String(index).padStart(2, '0')}`)),
+        ...verifiedRows,
+      ]
+      push(work38SnapshotEvent(3, 7, 'final', finalRows, null, operation))
+      await tick()
+      selected = wrapper.find('[role="option"][aria-selected="true"]')
+      expect(wrapper.findAll('[role="option"]')).toHaveLength(54)
+      expect(selected.attributes('id')).toBe(selectedDOMID)
+      expect(selected.text()).toContain('resource-19')
+      expect(list.scrollTop).toBe(480)
+      expect(relativeTop(selected.element as HTMLElement, list)).toBe(120)
+      expect(wrapper.find('.workspace__detail').text()).toContain('Verified resource-19 details')
+      expect(controller.state.operation).toBeNull()
+      expect(controller.state.drift).toBe('ready')
+    } finally {
+      geometry.spy.mockRestore()
+    }
+  })
+
+  // spec: session-startup/untouched-selection-remains-at-the-top-as-rows-arrive
+  it('keeps untouched selection and viewport at the top through config, inventory, discovery, and final deliveries', async () => {
+    const { client, push } = fakeClient()
+    const localRows = work38Rows()
+    const cachedDiscovery = work38Row('cached-marketplace-resource', {
+      id: 'opaque-marketplace-cached-resource',
+      registry: 'marketplace',
+      scope: 'available',
+      group: 'available',
+      status: 'available',
+      pendingVerification: false,
+      checked: false,
+      discovery: true,
+    })
+    const discoveryRows = [...localRows, cachedDiscovery]
+    const { wrapper } = mountWorkspace(client)
+    const list = wrapper.find('.workspace__list').element as HTMLElement
+    const geometry = stubListViewport(list)
+
+    try {
+      push(work38SnapshotEvent(1, 7, 'config', localRows, null, null, true))
+      await tick()
+      const firstOption = wrapper.findAll('[role="option"]')[0]
+      expect(firstOption.text()).toContain('resource-00')
+      expect(wrapper.find('[role="option"][aria-selected="true"]').attributes('id')).toBe(firstOption.attributes('id'))
+      expect(wrapper.text()).not.toContain('cached-marketplace-resource')
+      expect(list.scrollTop).toBe(0)
+
+      push(work38DiscoveryEvent(2, 7, discoveryRows))
+      await tick()
+      const afterDiscoveryFirst = wrapper.findAll('[role="option"]')[0]
+      expect(wrapper.findAll('[role="option"]')).toHaveLength(41)
+      expect(afterDiscoveryFirst.text()).toContain('resource-00')
+      expect(wrapper.text()).toContain('cached-marketplace-resource')
+      expect(wrapper.find('[role="option"][aria-selected="true"]').attributes('id')).toBe(afterDiscoveryFirst.attributes('id'))
+      expect(list.scrollTop).toBe(0)
+
+      const requiredInventory = work38Row('aaa-required-inventory', {
+        group: 'required',
+        status: 'required',
+        required: true,
+        pendingVerification: false,
+        checked: true,
+      })
+      const inventoryRows = [requiredInventory, ...discoveryRows]
+      push(work38SnapshotEvent(3, 7, 'inventory', inventoryRows, null, null, true))
+      await tick()
+      const inventoryFirst = wrapper.findAll('[role="option"]')[0]
+      expect(inventoryFirst.text()).toContain('aaa-required-inventory')
+      expect(wrapper.find('[role="option"][aria-selected="true"]').attributes('id')).toBe(inventoryFirst.attributes('id'))
+      expect(list.scrollTop).toBe(0)
+
+      const requiredFinal = work38Row('000-required-final', {
+        group: 'required',
+        status: 'required',
+        required: true,
+        pendingVerification: false,
+        checked: true,
+      })
+      const finalRows = [requiredFinal, ...inventoryRows]
+      push(work38SnapshotEvent(4, 7, 'final', finalRows, null))
+      await tick()
+      const finalFirst = wrapper.findAll('[role="option"]')[0]
+      expect(finalFirst.text()).toContain('000-required-final')
+      expect(wrapper.find('[role="option"][aria-selected="true"]').attributes('id')).toBe(finalFirst.attributes('id'))
+      expect(list.scrollTop).toBe(0)
+    } finally {
+      geometry.spy.mockRestore()
+    }
+  })
+
+  it('rejects a deferred viewport anchor after a superseding selection and stale generation frames', async () => {
+    const { client, push } = fakeClient()
+    const operation: OperationRef = { id: 91, kind: 'sync' }
+    const initialRows = work38Rows()
+    const targetID = initialRows[19].id
+    const { controller, wrapper } = mountWorkspace(client)
+    const list = wrapper.find('.workspace__list').element as HTMLElement
+    const geometry = stubListViewport(list)
+
+    try {
+      push(work38SnapshotEvent(1, 7, 'final', initialRows))
+      await tick()
+      const first = wrapper.findAll('[role="option"]')[0]
+      first.element.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }))
+      await tick()
+      for (let step = 1; step < 19; step++) {
+        const active = document.activeElement
+        if (!(active instanceof HTMLElement)) {
+          throw new Error('keyboard traversal lost the active resource')
+        }
+        active.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }))
+        await tick()
+      }
+      const selected = wrapper.find('[role="option"][aria-selected="true"]')
+      expect(selected.text()).toContain('resource-19')
+      const selectedDOMID = selected.attributes('id')
+      if (selectedDOMID == null) {
+        throw new Error('selected startup row has no stable DOM id')
+      }
+      list.scrollTop = 200
+      const initialViewportTop = relativeTop(selected.element as HTMLElement, list)
+
+      push(work38SnapshotEvent(2, 8, 'config', initialRows, operation))
+      await tick()
+      push(work38SnapshotEvent(3, 7, 'inventory', [work38Row('stale-row')], null, operation))
+      push(work38SnapshotEvent(4, 7, 'final', [work38Row('stale-final')], null, operation))
+      await tick()
+      expect(controller.state.stage).toBe('config')
+      expect(controller.state.drift).toBe('pending')
+      expect(controller.state.operation).toEqual(operation)
+      expect(controller.state.rows.map((candidate) => candidate.id)).toEqual(initialRows.map((candidate) => candidate.id))
+
+      push(work38SnapshotEvent(5, 8, 'inventory', initialRows, operation))
+      await tick()
+      const inventoryRows = [
+        ...Array.from({ length: 10 }, (_, index) => work38Row(`aaa-generation-eight-${String(index).padStart(2, '0')}`)),
+        ...initialRows,
+      ]
+      const finalRows = inventoryRows.map((candidate) => candidate.id === targetID
+        ? { ...candidate, description: 'Verified generation-eight resource-19 details', pendingVerification: false, status: 'pending sync' }
+        : candidate)
+      const oldAnchorMeasurement = geometry.measureNext(selectedDOMID)
+      push(work38SnapshotEvent(6, 8, 'final', finalRows, null, operation))
+      await oldAnchorMeasurement
+      expect(wrapper.find('.workspace__detail').text()).toContain('Verified generation-eight resource-19 details')
+      const target = document.getElementById(selectedDOMID)
+      if (!(target instanceof HTMLElement)) {
+        throw new Error('selected startup row disappeared after the verified frame')
+      }
+      target.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }))
+      await tick()
+
+      expect(controller.state.stage).toBe('final')
+      expect(controller.state.drift).toBe('ready')
+      expect(controller.state.operation).toBeNull()
+      expect(controller.state.rows.map((candidate) => candidate.id)).toEqual(finalRows.map((candidate) => candidate.id))
+      expect(wrapper.find('[role="option"][aria-selected="true"]').attributes('id')).not.toBe(selectedDOMID)
+      expect(list.scrollTop).toBe(200)
+      expect(relativeTop(target, list)).toBeGreaterThan(initialViewportTop)
+    } finally {
+      geometry.spy.mockRestore()
+    }
   })
 
   // spec: session-navigation/status-grouped-resource-order-and-filtering
