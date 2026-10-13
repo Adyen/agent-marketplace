@@ -6,4 +6,4 @@
 - [x] Register and document the new diagnostic; update the field matrix, changelog and registry-author reference.
 - [x] Update the existing Devin ingestion and compilation unit tests to the new contract.
 - [x] Run affected packages, `make validate`, `make spec-check` and `make validate-e2e`; review every changed entry adversarially.
-- [ ] `openspec archive keep-devin-converted-command-restrictions --yes`
+- [x] `openspec archive keep-devin-converted-command-restrictions --yes`
