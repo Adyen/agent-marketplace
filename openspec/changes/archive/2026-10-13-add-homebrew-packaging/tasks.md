@@ -20,4 +20,4 @@
 ## 5. Verification and Archival
 
 - [x] 5.1 Run `CGO_ENABLED=0 go test ./tools/homebrew ./tools/ci-plan`, `make validate TEST_PACKAGES='./tools/homebrew ./tools/ci-plan'`, and `make spec-check`; verify all new scenarios have matching annotations and, where a suitable CI runner exists, run the Homebrew smoke without relying on host-managed Homebrew.
-- [ ] 5.2 After implementation and required gates succeed, run `openspec archive add-homebrew-packaging --yes`; verify the capability spec is archived and the change status is complete.
+- [x] 5.2 After implementation and required gates succeed, run `openspec archive add-homebrew-packaging --yes`; verify the capability spec is archived and the change status is complete.
