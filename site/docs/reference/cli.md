@@ -91,7 +91,7 @@ agent-marketplace list [flags]
 | `--ref` | string | no | inferred or registry default | Selects a branch, tag, or commit for `--from`. Requires `--from`. |
 | `--path` | string | no | inferred or registry root | Selects a subdirectory for `--from`. Requires `--from`. |
 
-The table columns are `REGISTRY`, `KIND`, `NAME`, `TAGS (metadata)`, and `STATUS`. Resources from configured registries have status `available`, `enabled`, or `required (org)`. A resource that failed validation has status `malformed: <reason>`. Valid ad hoc resources have status `available`, and ones that fail validation show `malformed: <reason>`.
+The table columns are `REGISTRY`, `KIND`, `NAME`, `TAGS (metadata)`, `STATUS`, and a final relationship column. For configured registries it is `VIA`, showing collection provenance and, for selected resources with recorded requirement provenance, `requires <kind>:<name>` provenance; a resource with both shows both. That provenance covers any selected resource another selected resource requires, whether it was selected directly, through a collection, or transitively; only the transitively selected ones are also reported as implied in `install` summaries. With `--from` it is `REQUIRES`, listing the resource's declared prerequisites as `<kind>:<name>` pairs in declaration order; resources with no valid declarations leave the cell empty, and browse still writes no configuration, locks, or output. Resources from configured registries have status `available`, `enabled`, or `required (org)`. A resource that failed validation has status `malformed: <reason>`. Valid ad hoc resources have status `available`, and ones that fail validation show `malformed: <reason>`.
 
 When configured output is out of sync, the command appends a summary like this:
 
@@ -181,7 +181,7 @@ A successful Marketplace install prints a short confirmation:
 ✓ Installed coderabbit-skills · 3 skills
 ```
 
-Installs from configured Git or directory registries say where the selection went: `in this repo`, `user-wide`, or `locally`. For example, `Installed frontend-design in this repo` or `Installed collection web-development in this repo`. The line lists only resources that the resulting configuration selects. A tag or bundle install keeps any existing exclusion and names the resources it left out, for example `Not installed: review; the effective configuration does not select it (for example, an exclusion wins). Install by name to select explicitly`. Installing a resource by name clears its exclusion. Missing prerequisites are reported as warnings; by default `install` does not install them for you. With `requires.expand: true`, resolution instead selects configured, resolvable prerequisites transitively — see [Requirement expansion](./resource-prerequisites.md#requirement-expansion).
+Installs from configured Git or directory registries say where the selection went: `in this repo`, `user-wide`, or `locally`. For example, `Installed frontend-design in this repo` or `Installed collection web-development in this repo`. The line lists only resources that the resulting configuration selects. A tag or bundle install keeps any existing exclusion and names the resources it left out, for example `Not installed: review; the effective configuration does not select it (for example, an exclusion wins). Install by name to select explicitly`. Installing a resource by name clears its exclusion. Missing prerequisites are reported as warnings; by default `install` does not install them for you. With `requires.expand: true`, resolution instead selects configured, resolvable prerequisites transitively — see [Requirement expansion](./resource-prerequisites.md#requirement-expansion). After its summary, `install` prints `also selected <kind> "<name>" (required by <kind> "<name>")` for each prerequisite selected transitively from the requested resources or collection members, deduplicated to one line per prerequisite; prerequisites that are already directly selected are not called implied. With expansion disabled the same reachable prerequisites print as `would also select` advisory lines instead, and the preview resources are neither selected nor written. A prerequisite with no eligible candidate keeps only its unmet warning.
 
 For configured Git registries, discovery uses the exact locked inventory of every layer that already has a valid lock. A registry can bootstrap from its branch or tag only when its own configuration layer has no lock. A missing lock in one layer does not make content that appeared after another layer's lock installable.
 
@@ -324,14 +324,14 @@ The report prints these sections in this order. Sections other than `TARGET HARN
 | `MANAGED INSTALLATION` | Present when an organization config manages the installation: its path and validation result. |
 | `TARGET HARNESS SET` | Effective harness list and the configuration layer that supplied it. |
 | `EXACT REGISTRY LOCKS` | Source layer, canonical Git origin, declared ref, exact commit, and whether the cached snapshot is `available` or `missing`. |
-| `SYNCED RESOURCES` | Resource kind, name, harness, source, collection origin (`VIA`), target path, registry, ref, and cache state. |
+| `SYNCED RESOURCES` | Resource kind, name, harness, source, collection and prerequisite origin (`VIA`, including `requires <kind>:<name>` for selected resources with recorded requirement provenance, whether selected directly, through a collection, or transitively), target path, registry, ref, and cache state. |
 | `MARKETPLACE PINS` | Endpoint identity, registry, resource coordinate, installed name, exact revision and digest, acquisition mode, source layer, revocation and current state, cache state, and update availability. |
 | `HARNESS TARGETS` | Target capabilities and resolved repository and machine roots. |
 | `LOCALLY EXCLUDED` | Resources removed by exclusions in a legacy v2 or v3 `.agents/config.local.yaml`. Exclusions in a v4 local file do not appear here. |
 | `LOCAL REGISTRIES` | Registry entries declared in repository-personal configuration. |
 | `ORPHANED FILES` | Generated files that a sync would remove. |
 | `NAME COLLISIONS` | Registry overlap and resource-name collision diagnostics. |
-| `UNMET REQUIREMENTS` | Advisory [resource prerequisites](./resource-prerequisites.md) and install hints. |
+| `UNMET REQUIREMENTS` | Advisory [resource prerequisites](./resource-prerequisites.md) with a typed `REASON` (`not-found`, `excluded`, or `source-not-configured`) and install hints. |
 | `WARNINGS` | Configuration, resolution, and materialization warnings, with a remediation hint where one exists. |
 | `DRIFT` | `In sync`, the number of files to write and remove, or `Unknown (exact registry view incomplete)`. |
 | `ERRORS` | Configuration, catalog, materialization, or drift-inspection failures. |
@@ -414,6 +414,8 @@ agent-marketplace doctor [flags]
 `doctor` detects a locally installed Devin CLI and reports whether it meets the 3000.3 compatibility floor. It recommends selecting the `devin` harness when a Devin CLI is installed but no harness list contains it. `sync` never needs a Devin binary, so none of these findings blocks it.
 
 `--repair` covers `hooks.v1.json`, `config.json#hooks`, `mcp_config.json`, `.codex/hooks.json`, and `.codex/config.toml`. It sorts candidates into three groups: exact matches it can adopt, orphans it has evidence for (entries a completed sync wrote that are no longer wanted), and unmanaged entries whose key matches a selected resource but whose value differs. It lists every file it inspected, including files with nothing to repair, and it never edits harness lists. Without a terminal, it only previews, unless `--yes` can do byte-identical adoption. Removing an orphan or replacing a conflicting entry always needs a per-entry confirmation on a terminal, and the command takes a fresh backup first. `--yes` without `--repair` is an error.
+
+For an unmet prerequisite whose `registry` hint matches no configured source, `doctor` also prints an explicit `unconfigured prerequisite source: <kind> "<resource>" requires <kind> "<name>" from <hint>` line followed by the suggested `install --from` command, with URL credentials redacted. The finding is warning-only: `doctor` never configures or fetches the hinted source, does not report it when the prerequisite is already satisfied by a selected resource with the same kind and name, and keeps its existing suppression for selected Marketplace providers that are still pending usable local evidence.
 
 Compatibility findings do not block `sync`. Repair failures, corrupt ownership state, and unparseable shared files return exit status 1.
 

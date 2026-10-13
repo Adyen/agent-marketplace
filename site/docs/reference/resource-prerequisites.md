@@ -132,31 +132,34 @@ An unmet prerequisite produces:
 
 ```text
 warning: <kind> "<resource>" requires <kind> "<prerequisite>", but it is not selected
-  → agent-marketplace install "<prerequisite>" --kind <kind>
+  → agent-marketplace install <prerequisite> --kind <kind>
 ```
 
-The remediation gains `--from "<registry>"` and `--path "<path>"` when the
-item declares those hints. Kinds print as `skill`, `command`, `subagent`,
-`hook`, or `mcp`. URL credentials inside a `registry` hint are replaced with
-`***`. Internally each unmet warning also carries a typed reason —
-`not-found`, `excluded`, or `source-not-configured` — which does not change
-the printed text or table columns.
+The remediation gains `--from <registry>` and `--path <path>` when the item
+declares those hints. Each argument is a POSIX shell literal: simple values
+print unquoted and values that need quoting are single-quoted. Kinds print as
+`skill`, `command`, `subagent`, `hook`, or `mcp`. URL credentials inside a
+`registry` hint are replaced with `***` before the command is formatted. Each
+unmet warning also carries a typed reason — `not-found`, `excluded`, or
+`source-not-configured` — which `status` prints in its `REASON` column and
+`doctor` uses to explain unconfigured source hints.
 
 | Command | Behavior |
 |---|---|
-| `install` | Prints warnings only for the resources the install selected, including members of a collection it installs. |
+| `install` | Prints warnings only for the resources the install selected, including members of a collection it installs. After its summary it also prints `also selected <kind> "<name>" (required by <kind> "<name>")` for each prerequisite it selected transitively when [requirement expansion](#requirement-expansion) is enabled, or `would also select` for the eligible preview when expansion is disabled. |
 | `sync` | Prints grouped warnings. |
 | `sync --check` | Prints grouped warnings. |
-| `status` | Prints an `UNMET REQUIREMENTS` table with `RESOURCE`, `REQUIRES` (`<kind>:<name>`), and `FIX` columns, sorted by `RESOURCE` then `REQUIRES`. |
-| `doctor` | Prints grouped warnings. |
+| `status` | Prints an `UNMET REQUIREMENTS` table with `RESOURCE`, `REQUIRES` (`<kind>:<name>`), `REASON`, and `FIX` columns, sorted by `RESOURCE` then `REQUIRES`. Its main table's `VIA` column shows `requires <kind>:<name>` provenance alongside collection provenance. |
+| `doctor` | Prints grouped warnings, and explicitly reports `unconfigured prerequisite source` for an unmet prerequisite whose `registry` hint matches no configured source. That line is warning-only: `doctor` never configures or fetches the hinted source. |
 
 ## Exit status
 
 `install`, `sync`, `sync --check`, `status`, and `doctor` exit with status 0
 when unmet prerequisites are the only findings. `sync --strict` — including
 `sync --strict --check` — still prints the advisory warning and remediation,
-but exits nonzero so CI can enforce declared prerequisites. Strict mode never
-selects the prerequisite for you.
+but exits nonzero so CI can enforce declared prerequisites. Strict mode changes
+only the exit status; whether a prerequisite is selected depends solely on
+[requirement expansion](#requirement-expansion).
 
 ## Related documentation
 
