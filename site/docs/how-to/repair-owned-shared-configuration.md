@@ -23,7 +23,15 @@ After the normal `doctor` report, the command lists every Devin and Codex shared
 - `replace`: the existing entry has the same key but a different value. Replacing overwrites your value with the generated one.
 - `orphan candidate`: evidence shows that an earlier run of `agent-marketplace` wrote the entry, and nothing selects it anymore. Removing it deletes the entry.
 
-If standard input is not a terminal (for example in a script), the command stops after the preview unless you pass `--yes`, which is described in the next step.
+When there is nothing to repair, the preview ends like this:
+
+```text
+repair: Codex shared-aggregate ownership
+repair: devin shared-aggregate ownership
+  nothing to repair
+```
+
+If standard input is not a terminal (for example in a script), the command stops after the preview, printing `preview only: not a terminal; re-run on a terminal to confirm, or use --repair --yes to adopt exact matches` when there is something to confirm. `--yes` is described in the next step.
 
 ## 2. Confirm each repair
 
@@ -35,7 +43,7 @@ To adopt every exact match without being asked:
 agent-marketplace doctor --repair --yes
 ```
 
-`--yes` covers adoption only. Replacing a conflicting entry or removing an orphan still asks you on a terminal, and is skipped when there is no terminal.
+`--yes` covers adoption only. Each adopted file is reported as `adopted <n> entr(y/ies) in <file>`. Replacing a conflicting entry or removing an orphan still asks you on a terminal, and is skipped when there is no terminal; each skipped entry is printed as `left unchanged`.
 
 ## 3. Verify
 

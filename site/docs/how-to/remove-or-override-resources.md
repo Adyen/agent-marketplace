@@ -57,6 +57,8 @@ Remove only the repository occurrence:
 agent-marketplace remove code-review --scope repo
 ```
 
+Each prints `Removed code-review` and syncs, so the resource's files disappear from the harness folders right away.
+
 When a resource comes from your user or organization configuration and you omit `--scope`, the CLI writes the change to `~/.agents/config.yaml` and says that it applies across all repositories. You cannot exclude such a resource with `--scope repo` or `--scope local`; the CLI refuses and suggests the scope that works.
 
 ## 5. Remove an entire ad-hoc registry

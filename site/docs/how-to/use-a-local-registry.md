@@ -32,7 +32,7 @@ In `~/.agents/config.yaml`, in the organization configuration, and in included f
 agent-marketplace sync
 ```
 
-Sync reads the folder as it is at that moment. Directory sources never appear in `.agents/lock.yaml`.
+Sync reads the folder as it is at that moment and prints the usual `Installed <n>  Removed <n>  Malformed <n>  Errors <n>` summary with one `→` line per output root. Directory sources never appear in `.agents/lock.yaml`.
 
 ## 3. Verify the result
 
@@ -40,7 +40,13 @@ Sync reads the folder as it is at that moment. Directory sources never appear in
 agent-marketplace status
 ```
 
-Under `SYNCED RESOURCES`, the resource's `REGISTRY` column shows the resolved absolute path of the folder, and its `CACHE` column shows `local`.
+Under `SYNCED RESOURCES`, the resource's `REGISTRY` column shows the resolved absolute path of the folder, and its `CACHE` column shows `local`. Typical output (`/abs/repo` stands for your real paths; column widths vary):
+
+```text
+SYNCED RESOURCES
+KIND   NAME          HARNESS  SOURCE  VIA  TARGET                                      REGISTRY                          REF  CACHE
+skill  local-review  claude   REPO    -    /abs/repo/agent-resources/skills/...        /abs/repo/agent-resources              local
+```
 
 ## Boundaries
 
