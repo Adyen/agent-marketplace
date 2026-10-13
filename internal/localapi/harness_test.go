@@ -240,7 +240,7 @@ func TestLocalAPIUserHarness(t *testing.T) {
 	}
 	fixture := os.Getenv("AM_LOCALAPI_USER_FIXTURE")
 	var discoveryCounterWriteFailed atomic.Bool
-	home, repo := newUserAPIFixture(t, fixture != "first-run" && fixture != "work39-resource-actions")
+	home, repo := newUserAPIFixture(t, fixture != "first-run" && fixture != "work39-resource-actions" && fixture != "work40-resource-actions")
 	var orgConfigPath string
 	if fixture == "first-run" {
 		if err := os.MkdirAll(filepath.Join(home, ".factory"), 0o755); err != nil {
@@ -296,6 +296,12 @@ func TestLocalAPIUserHarness(t *testing.T) {
 		bootstrap["resourceActionOrgLock"] = work39Fixture.orgLockPath
 		bootstrap["resourceActionMaterialized"] = work39Fixture.materializedPath
 		bootstrap["resourceActionUnrelatedMaterialized"] = work39Fixture.unrelatedMaterialized
+	}
+	var work40Fixture *work40DirectoryFixture
+	if fixture == "work40-resource-actions" {
+		mode := work40DirectoryMode(os.Getenv("AM_LOCALAPI_USER_INITIAL_MODE"))
+		work40Fixture = setupWork40DirectoryFixture(t, home, repo, bootstrap, mode)
+		orgConfigPath = work40Fixture.orgConfigPath
 	}
 	if orgConfigPath != "" {
 		bootstrap["orgConfig"] = orgConfigPath
@@ -422,6 +428,9 @@ func TestLocalAPIUserHarness(t *testing.T) {
 			telemetryHarness.finish(t)
 		}()
 	}
+	if work40Fixture != nil {
+		assertWork40ProtectedFilesUnchanged(t, work40Fixture.protected)
+	}
 	if work37Fixture != nil {
 		events := streamEvents(t, api)
 		waitForInspectionFinal(t, api, events)
@@ -453,13 +462,21 @@ func TestLocalAPIUserHarness(t *testing.T) {
 	if marker := os.Getenv("AM_LOCALAPI_RELEASE_MARK"); marker != "" {
 		api.releaseClient.Transport = releaseHarnessTransport(marker, os.Getenv("AM_LOCALAPI_RELEASE_STATUS"), os.Getenv("AM_LOCALAPI_RELEASE_BODY"))
 	}
-	if work39Fixture != nil {
+	if work39Fixture != nil || work40Fixture != nil {
 		serveWork39Harness(t, api, bootstrap)
 	} else {
 		serveHarness(t, api, bootstrap)
 	}
 	if work39Fixture != nil {
 		assertWork39ProtectedFilesUnchangedExcept(t, work39Fixture.protected, work39Fixture.userConfigPath, work39Fixture.userLockPath, work39Fixture.materializedPath)
+	}
+	if work40Fixture != nil {
+		if work40Fixture.mode == work40RootOwned {
+			assertWork40ProtectedFilesUnchanged(t, work40Fixture.protected, work40Fixture.userConfigPath)
+			work40UserRootMode(t, work40Fixture, work40Fixture.protected)
+		} else {
+			assertWork40ProtectedFilesUnchanged(t, work40Fixture.protected)
+		}
 	}
 	if fixture == "work36-inspection" {
 		assertInspectionFilesUnchanged(t, work36Protected)

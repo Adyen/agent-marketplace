@@ -2455,3 +2455,144 @@ func TestLayerEditorRemoveMarketplaceRegistrationRejectsV4Identity(t *testing.T)
 		})
 	}
 }
+
+// spec: session-interactions/guarded-submission
+func TestLayerEditorApplyRootOwned(t *testing.T) {
+	t.Run("owned user directory selector remains editable", func(t *testing.T) {
+		dir := t.TempDir()
+		registry := filepath.Join(dir, "registry")
+		if err := os.MkdirAll(registry, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		path := filepath.Join(dir, "config.yaml")
+		fragmentPath := filepath.Join(dir, "fragment.yaml")
+		root := "apiVersion: agent-marketplace/v4\ninclude: fragment.yaml\nharnesses: [devin]\nsources:\n  local: {directory: " + filepath.ToSlash(registry) + "}\nresources:\n  local: {all: true, exclude: [skill/review]}\n"
+		fragment := "apiVersion: agent-marketplace/v4\nharnesses: [devin]\n"
+		layerEditorWrite(t, path, root)
+		layerEditorWrite(t, fragmentPath, fragment)
+		rootInfo, err := os.Stat(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		editor := openTestEditor(t, UserPersonal, path, path)
+		binding, err := editor.EnsureRegistry(RegistryEntry{URL: registry, V4Kind: V4SourceDirectory})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !binding.root {
+			t.Fatal("root-owned directory source produced an included binding")
+		}
+		for _, operation := range []SelectionOperation{SelectionInclude, SelectionExclude, SelectionInclude} {
+			if err := editor.ApplyRootOwned(binding, SelectionChange{Operation: operation, Locators: []ResourceLocator{loc(ir.KindSkill, "review")}}); err != nil {
+				t.Fatalf("ApplyRootOwned(%d): %v", operation, err)
+			}
+			candidate, err := editor.Render()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !candidate.Changed || candidate.Mode != rootInfo.Mode().Perm() {
+				t.Fatalf("owned selection candidate changed/mode = %t/%#o", candidate.Changed, candidate.Mode)
+			}
+			cfg, err := ParseV4Config(candidate.Bytes, path, true)
+			if err != nil {
+				t.Fatalf("parse candidate: %v", err)
+			}
+			group := cfg.Groups["local"]
+			if group.All == nil || !*group.All {
+				t.Fatalf("all selection lost: %#v", group.All)
+			}
+			included, excluded := false, false
+			for _, request := range group.Include {
+				included = included || request.Locator == "skill/review"
+			}
+			for _, locator := range group.Exclude {
+				excluded = excluded || locator == "skill/review"
+			}
+			wantInclude := operation == SelectionInclude
+			if included != wantInclude || excluded == wantInclude {
+				t.Fatalf("owned selection include/exclude = %t/%t for operation %d", included, excluded, operation)
+			}
+		}
+		if current, err := os.ReadFile(fragmentPath); err != nil || string(current) != fragment {
+			t.Fatalf("owned edit changed the included fragment: %v", err)
+		}
+	})
+
+	for _, test := range []struct {
+		name     string
+		root     string
+		fragment string
+	}{
+		{
+			name:     "source declared by included fragment",
+			root:     "apiVersion: agent-marketplace/v4\ninclude: fragment.yaml\nharnesses: [devin]\nresources:\n  local: {all: true}\n",
+			fragment: "apiVersion: agent-marketplace/v4\nharnesses: [devin]\nsources:\n  local: {directory: %s}\n",
+		},
+		{
+			name:     "resource selected by included fragment",
+			root:     "apiVersion: agent-marketplace/v4\ninclude: fragment.yaml\nharnesses: [devin]\nsources:\n  local: {directory: %s}\n",
+			fragment: "apiVersion: agent-marketplace/v4\nresources:\n  local: {include: [skill/review]}\n",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			dir := t.TempDir()
+			registry := filepath.Join(dir, "registry")
+			if err := os.MkdirAll(registry, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			path := filepath.Join(dir, "config.yaml")
+			fragmentPath := filepath.Join(dir, "fragment.yaml")
+			root := strings.ReplaceAll(test.root, "%s", filepath.ToSlash(registry))
+			fragment := strings.ReplaceAll(test.fragment, "%s", filepath.ToSlash(registry))
+			layerEditorWrite(t, path, root)
+			layerEditorWrite(t, fragmentPath, fragment)
+			rootInfo, err := os.Stat(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			fragmentInfo, err := os.Stat(fragmentPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			editor := openTestEditor(t, UserPersonal, path, path)
+			binding, err := editor.EnsureRegistry(RegistryEntry{URL: registry, V4Kind: V4SourceDirectory})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if test.name == "source declared by included fragment" && binding.root {
+				t.Fatal("included source produced a root-owned binding")
+			}
+			if test.name == "resource selected by included fragment" && !binding.root {
+				t.Fatal("root-owned source produced an included binding")
+			}
+			err = editor.ApplyRootOwned(binding, SelectionChange{Operation: SelectionExclude, Locators: []ResourceLocator{loc(ir.KindSkill, "review")}})
+			if layerEditorErrCode(err) != "config.edit.include-owned" {
+				t.Fatalf("ApplyRootOwned error = %v, want config.edit.include-owned", err)
+			}
+			candidate, err := editor.Render()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if candidate.Changed || string(candidate.Bytes) != root {
+				t.Fatal("rejected root-owned edit changed the candidate")
+			}
+			if current, err := os.ReadFile(path); err != nil || string(current) != root {
+				t.Fatalf("rejected root-owned edit changed the root: %v", err)
+			}
+			if current, err := os.ReadFile(fragmentPath); err != nil || string(current) != fragment {
+				t.Fatalf("rejected root-owned edit changed the fragment: %v", err)
+			}
+			currentRootInfo, err := os.Stat(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			currentFragmentInfo, err := os.Stat(fragmentPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if currentRootInfo.Mode().Perm() != rootInfo.Mode().Perm() || currentFragmentInfo.Mode().Perm() != fragmentInfo.Mode().Perm() {
+				t.Fatal("rejected root-owned edit changed a configuration mode")
+			}
+		})
+	}
+}
