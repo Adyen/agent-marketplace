@@ -691,6 +691,9 @@ export class WorkspaceController {
       this.cancelResourceAction()
     }
     this.snapshotGeneration = generation
+    if (this.accepted && snapshot.stage !== 'final') {
+      return
+    }
     this.state.stage = snapshot.stage
     this.state.drift = snapshot.drift
     this.state.groups = snapshot.groups
