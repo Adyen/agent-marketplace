@@ -20,8 +20,8 @@ func TestCLITableAndInstallDataIsTerminalSafe(t *testing.T) {
 		copies int
 	}{
 		{"list", func(w io.Writer) error {
-			return writeListTable(w, []listRow{{Registry: bad, Kind: bad, Name: bad, Tags: bad, Status: bad}})
-		}, 5},
+			return writeListTable(w, []listRow{{Registry: bad, Kind: bad, Name: bad, Tags: bad, Status: bad, Relation: bad}}, "VIA")
+		}, 6},
 		{"status", func(w io.Writer) error {
 			return writeStatusTable(w, "CONTROL TABLE", []string{"ONE", "TWO"}, [][]string{{bad, bad}})
 		}, 2},
@@ -62,7 +62,7 @@ func TestCLIDisplayLeavesSourceRowsUnchanged(t *testing.T) {
 		t.Fatal("display changed source data")
 	}
 	out.Reset()
-	if err := writeListTable(&out, []listRow{{Registry: "registry", Kind: "skill", Name: "control", Tags: "safe", Status: "selected"}}); err != nil {
+	if err := writeListTable(&out, []listRow{{Registry: "registry", Kind: "skill", Name: "control", Tags: "safe", Status: "selected"}}, "VIA"); err != nil {
 		t.Fatal(err)
 	}
 	for _, plain := range []string{"REGISTRY", "registry", "control", "selected"} {
