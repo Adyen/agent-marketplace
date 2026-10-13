@@ -1390,7 +1390,7 @@ func descriptionFromResource(r ir.Resource) string {
 
 // LookupMarketplaceRequirement implements resolver.MarketplaceRequirementLookup.
 // It answers whether one prerequisite resolves inside the requiring pin's
-// configured Marketplace entry. The result is an identity only — lookup
+// configured Marketplace entry. The result is an identity only. Lookup
 // candidates are never recorded into configuration or lock.
 //
 // A requirement in the requiring pin's own registry honors the pin's
@@ -1482,11 +1482,12 @@ func (r *Resolver) requirementInManifest(ctx context.Context, client *Client, ma
 	return resolver.MarketplaceRequirementResult{Found: true, ContentDigest: digest}, nil
 }
 
-// requirementPathMatches reports whether the candidate's source root — the
-// single root of its exact registry occurrence that contains its source path —
-// equals the path hint. An empty hint always matches. expectCommit, when set,
-// rejects a served occurrence that is not the looked-up commit, because the
-// source root of a different occurrence cannot establish the hint.
+// requirementPathMatches reports whether the candidate's source root, the
+// single root of its exact registry occurrence that contains its source
+// path, equals the path hint. An empty hint always matches. expectCommit,
+// when set, rejects a served occurrence that is not the looked-up commit,
+// because the source root of a different occurrence cannot establish the
+// hint.
 func (r *Resolver) requirementPathMatches(ctx context.Context, client *Client, q resolver.MarketplaceRequirementQuery, occ store.ResourceOccurrence, expectCommit string) (bool, error) {
 	if q.Path == "" {
 		return true, nil

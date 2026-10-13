@@ -46,7 +46,7 @@ type ResolvedArtifact struct {
 	RequiredBy []ResourceRef
 	Implied    bool
 	// PreviewOnly marks an implied artifact that only joins the implied
-	// preview — it is never admitted to the resolved selection. Marketplace
+	// preview, never the resolved selection. Marketplace
 	// requirement lookup results stay preview-only because they are never
 	// recorded into configuration.
 	PreviewOnly bool
@@ -979,8 +979,8 @@ func Resolve(cfg *config.Config, catalogs map[string][]catalog.Entry, localCfg *
 	errs = append(errs, selectErrs...)
 
 	// Phase 5: Compute the prerequisite closure over the resolved resources.
-	// Marketplace requirement lookup results stay preview-only — they are
-	// never recorded — while requires-held pins may be admitted.
+	// Marketplace requirement lookup results stay preview-only because they
+	// are never recorded, while requires-held pins may be admitted.
 	var mpLookup MarketplaceRequirementLookup
 	if ro.marketplaceResolver != nil && ro.marketplaceMode != MarketplaceResolveModeCachedNoFetch {
 		if lookup, ok := ro.marketplaceResolver.(MarketplaceRequirementLookup); ok {

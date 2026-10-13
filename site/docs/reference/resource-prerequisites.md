@@ -145,24 +145,24 @@ requiring resource's configured Marketplace entry:
   registry ID; an unbound hint produces a `source-not-configured` warning
   and no Marketplace request.
 - When the requiring pin records `registry_commit` and the target is its
-  own registry, only that exact registry occurrence is consulted — through
-  its verified registry revision manifest — with no fallback to the
+  own registry, only that exact registry occurrence is consulted, through
+  its verified registry revision manifest, with no fallback to the
   current revision. Otherwise the target registry's current revision is
   used.
-- A `path` hint matches only when the candidate's source root — the single
-  root of its exact registry occurrence containing its source path —
+- A `path` hint matches only when the candidate's source root, the single
+  root of its exact registry occurrence containing its source path,
   equals the hint; when the root cannot be established the prerequisite
   is `not-found`.
 - Offline resolution never contacts a Marketplace for lookup.
 
 This release never records a lookup result: a found candidate appears in
 the implied preview only, preserves or prunes no materialized output,
-changes neither configuration nor lock bytes, and — with expansion
-enabled — reports the prerequisite unmet with reason `unrecorded`.
+changes neither configuration nor lock bytes, and, with expansion
+enabled, reports the prerequisite unmet with reason `unrecorded`.
 Every lock rewrite keeps a requires edge only while its requiring
 resource stays locked at the same content digest; updating the parent
 drops the edge and prunes any record it alone held. Refreshing an
-implied pin on update is deferred — no rewrite ever adds a requires
+implied pin on update is deferred. No rewrite ever adds a requires
 edge.
 
 Removing a requires-held prerequisite succeeds like any authorized
@@ -186,8 +186,8 @@ declares those hints. Each argument is a POSIX shell literal: simple values
 print unquoted and values that need quoting are single-quoted. Kinds print as
 `skill`, `command`, `subagent`, `hook`, or `mcp`. URL credentials inside a
 `registry` hint are replaced with `***` before the command is formatted. Each
-unmet warning also carries a typed reason — `not-found`, `excluded`,
-`source-not-configured`, or `unrecorded` — which `status` prints in its `REASON` column and
+unmet warning also carries a typed reason, `not-found`, `excluded`,
+`source-not-configured`, or `unrecorded`, which `status` prints in its `REASON` column and
 `doctor` uses to explain unconfigured source hints.
 
 | Command | Behavior |

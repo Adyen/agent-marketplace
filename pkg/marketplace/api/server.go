@@ -1064,29 +1064,21 @@ func (s *Server) handleResourceDetail(w http.ResponseWriter, r *http.Request, re
 		writeError(w, http.StatusInternalServerError, "failed to load resource")
 		return
 	}
-	requires, requiredBy, err := s.resourceRelations(r.Context(), rev)
+	requires, err := s.resourceRequires(r.Context(), rev)
 	if err != nil {
-		slog.Error("resource relations failed", "coord", coord, "err", err)
+		slog.Error("resource requires failed", "coord", coord, "err", err)
+		writeError(w, http.StatusInternalServerError, "failed to load resource")
+		return
+	}
+	requiredBy, err := s.resourceRequiredBy(r.Context(), rev.Coordinate)
+	if err != nil {
+		slog.Error("resource required_by failed", "coord", coord, "err", err)
 		writeError(w, http.StatusInternalServerError, "failed to load resource")
 		return
 	}
 	dto.Requires = requires
 	dto.RequiredBy = requiredBy
 	writeJSON(w, http.StatusOK, dto)
-}
-
-// resourceRelations computes the requires and required_by relationship fields
-// of the latest resource detail response. Both stay nil when absent.
-func (s *Server) resourceRelations(ctx context.Context, rev store.AssessedResourceRevision) (*[]ResourceRequirement, *[]ResourceRelation, error) {
-	requires, err := s.resourceRequires(ctx, rev)
-	if err != nil {
-		return nil, nil, err
-	}
-	requiredBy, err := s.resourceRequiredBy(ctx, rev.Coordinate)
-	if err != nil {
-		return nil, nil, err
-	}
-	return requires, requiredBy, nil
 }
 
 // resourceVisible reports whether coord's own resource detail request would

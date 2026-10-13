@@ -195,7 +195,7 @@ type MarketplaceResourcePin struct {
 }
 
 // RequiresHeld reports whether the pin is selected only through requires
-// edges — never a direct user selection and never collection-held. The
+// edges, never a direct user selection and never collection-held. The
 // resolver treats requires-held pins as prerequisite candidates instead of
 // ordinary selections.
 func (p MarketplaceResourcePin) RequiresHeld() bool {

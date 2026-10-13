@@ -202,7 +202,7 @@ func impliedCandidateExcluded(art ResolvedArtifact, cand requirementCandidate, c
 
 // marketplaceHeldCandidate is a Marketplace pin held only through requires
 // edges. It was resolved by the Marketplace resolver but diverted from the
-// ordinary occurrence map; a requires declaration may admit it through the
+// ordinary occurrence map. A requires declaration may admit it through the
 // existing implied/preview path.
 type marketplaceHeldCandidate struct {
 	artifact ResolvedArtifact
@@ -355,9 +355,10 @@ func expandRequirements(
 // resolveMarketplaceRequirement resolves one prerequisite declared by a
 // selected Marketplace resource. A requires-held pin whose edge names this
 // requirer wins first (it is already resolved and recorded); otherwise the
-// requirement targets the registry hint — unbound hints are
-// source-not-configured without a request — or the requiring pin's own
-// registry. Found lookup candidates are preview-only and never recorded.
+// requirement targets the registry hint, or the requiring pin's own
+// registry when there is none. Unbound hints are source-not-configured
+// without a request. Found lookup candidates are preview-only and never
+// recorded.
 func resolveMarketplaceRequirement(ctx context.Context, requirer ResolvedArtifact, req catalog.Requirement, reqSel resourceSelection, ref ResourceRef, cfg *config.Config, held []marketplaceHeldCandidate, lookup MarketplaceRequirementLookup) marketplaceReqOutcome {
 	requirerKind := mpapi.FromIR(requirer.Kind)
 	for i := range held {

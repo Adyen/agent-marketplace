@@ -75,7 +75,7 @@ RESOURCE           REQUIRES         REASON                  FIX
 skill:review-code  mcp:docs-server  source-not-configured   agent-marketplace install docs-server --kind mcp --from https://github.com/example-org/integrations.git --path mcp
 ```
 
-`REASON` is `not-found`, `excluded`, `source-not-configured`, or `unrecorded` — the last only for a Marketplace prerequisite whose lookup found a candidate that this release does not record. Because this sample names a `registry` hint that the consumer never configured, `agent-marketplace doctor` also reports `unconfigured prerequisite source: skill "review-code" requires mcp "docs-server" from https://github.com/example-org/integrations.git`. That report is warning only; `doctor` does not configure or fetch the hinted source.
+`REASON` is `not-found`, `excluded`, `source-not-configured`, or `unrecorded`. The last applies only to a Marketplace prerequisite whose lookup found a candidate that this release does not record. Because this sample names a `registry` hint that the consumer never configured, `agent-marketplace doctor` also reports `unconfigured prerequisite source: skill "review-code" requires mcp "docs-server" from https://github.com/example-org/integrations.git`. That report is warning only; `doctor` does not configure or fetch the hinted source.
 
 ## Boundaries
 

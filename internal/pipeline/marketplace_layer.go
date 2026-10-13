@@ -25,7 +25,6 @@ type MarketplaceLayerMutation struct {
 	pins      []config.MarketplaceResourcePin
 	pinsS     bool
 	strip     []config.MarketplaceResourcePin
-	stripS    bool
 	removal   *marketplaceRemoval
 }
 
@@ -95,7 +94,7 @@ func (m *MarketplaceLayerMutation) RemoveCollection(entry config.MarketplaceEntr
 }
 
 // RemoveRequiresHeldPin removes a lock-only pin held only through requires
-// edges. The record — and the requires edges it alone carries — is stripped
+// edges. The record, and the requires edges it alone carries, is stripped
 // from the merged lock. When exclude is true the exact Marketplace exclusion
 // ("registry/kind/name") is written into the same layer, which acquires the
 // Marketplace whose lock held the pin.
@@ -130,7 +129,6 @@ func (m *MarketplaceLayerMutation) RemoveRequiresHeldPin(entry config.Marketplac
 		}
 	}
 	m.strip = append(m.strip, pin)
-	m.stripS = true
 	m.endpoint = entry
 	m.endpointS = true
 	return nil
