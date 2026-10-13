@@ -70,10 +70,10 @@ agent-marketplace sync
 agent-marketplace status
 ```
 
-Sync prints its usual summary plus the same warning, for example:
+Sync prints a summary (counts vary with what changed) plus the same warning. A typical excerpt after the install above:
 
 ```text
-Installed 1  Removed 0  Malformed 0  Errors 0
+Installed 0  Removed 0  Malformed 0  Errors 0
 warning: skill "review-code" requires mcp "docs-server", but it is not selected
   → agent-marketplace install docs-server --kind mcp --from https://github.com/example-org/integrations.git --path mcp
 ```
