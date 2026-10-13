@@ -26,7 +26,9 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/harness"
 	"github.com/Adyen/agent-marketplace/internal/materialize"
 	"github.com/Adyen/agent-marketplace/internal/pipeline"
+	"github.com/Adyen/agent-marketplace/internal/redact"
 	"github.com/Adyen/agent-marketplace/internal/resolver"
+	"github.com/Adyen/agent-marketplace/internal/skill"
 )
 
 // doctorOptions carries everything doctor needs that a test must be able to
@@ -349,6 +351,21 @@ func writeDoctorRequirementWarnings(out io.Writer, ctx context.Context, repoRoot
 	if err := writeGroupedWarnings(out, requirementDiagnostics, false); err != nil {
 		slog.Error("doctor prerequisite warning output failed", "error", err)
 		return fmt.Errorf("write doctor prerequisite warnings: %w", err)
+	}
+	for _, diagnostic := range requirementDiagnostics {
+		var warning *resolver.UnmetRequirementWarning
+		if !errors.As(diagnostic, &warning) || warning.Reason != resolver.UnmetReasonSourceNotConfigured {
+			continue
+		}
+		if _, err := fmt.Fprintf(out, "unconfigured prerequisite source: %s %s requires %s %s from %s\n",
+			skill.KindLabel(warning.ResourceKind), terminalSafeText(fmt.Sprintf("%q", warning.ResourceName)),
+			skill.KindLabel(warning.Requirement.Kind), terminalSafeText(fmt.Sprintf("%q", warning.Requirement.Name)),
+			terminalSafeText(redact.URL(warning.Requirement.Registry))); err != nil {
+			return err
+		}
+		if _, err := fmt.Fprintf(out, "  → %s\n", terminalSafeText(warning.Remediation())); err != nil {
+			return err
+		}
 	}
 
 	return nil

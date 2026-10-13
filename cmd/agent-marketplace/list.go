@@ -27,6 +27,7 @@ type listRow struct {
 	Name     string
 	Tags     string
 	Status   string
+	Relation string
 }
 
 type loadedCatalog = catalog.LoadedCatalog
@@ -141,7 +142,7 @@ func runList(ctx context.Context, out io.Writer, errOut io.Writer, kindFilter st
 	if hasKind {
 		rows = filterListRowsByKind(rows, skill.KindLabel(kind))
 	}
-	if err := writeListTable(out, rows); err != nil {
+	if err := writeListTable(out, rows, "VIA"); err != nil {
 		return err
 	}
 
@@ -244,6 +245,7 @@ func runListFrom(ctx context.Context, out io.Writer, errOut io.Writer, fromURL, 
 				Name:     discovered.Name,
 				Tags:     strings.Join(discovered.Tags, ","),
 				Status:   "available",
+				Relation: requirementDeclarations(discovered),
 			})
 		}
 		for _, malformed := range catalogForEntry.Malformed {
@@ -269,7 +271,16 @@ func runListFrom(ctx context.Context, out io.Writer, errOut io.Writer, fromURL, 
 		return err
 	}
 
-	return writeListTable(out, rows)
+	return writeListTable(out, rows, "REQUIRES")
+}
+
+func requirementDeclarations(entry catalog.Entry) string {
+	requirements := catalog.RequirementsFromResource(entry.Resource)
+	labels := make([]string, 0, len(requirements))
+	for _, req := range requirements {
+		labels = append(labels, fmt.Sprintf("%s:%s", skill.KindLabel(req.Kind), req.Name))
+	}
+	return strings.Join(labels, ", ")
 }
 
 func requiresInvalidWarnings(catalogs map[string]loadedCatalog) []error {
@@ -306,6 +317,7 @@ func buildListRows(cfg *config.Config, catalogs map[string]loadedCatalog, resolv
 			Name:     artifact.Name,
 			Tags:     strings.Join(artifact.Tags, ","),
 			Status:   status,
+			Relation: requirementVia(artifact.Via, artifact.RequiredBy),
 		})
 	}
 
@@ -349,14 +361,14 @@ func buildListRows(cfg *config.Config, catalogs map[string]loadedCatalog, resolv
 	return rows
 }
 
-func writeListTable(out io.Writer, rows []listRow) error {
+func writeListTable(out io.Writer, rows []listRow, relationHeader string) error {
 	writer := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
-	if _, err := fmt.Fprintln(writer, "REGISTRY\tKIND\tNAME\tTAGS (metadata)\tSTATUS"); err != nil {
+	if _, err := fmt.Fprintf(writer, "REGISTRY\tKIND\tNAME\tTAGS (metadata)\tSTATUS\t%s\n", relationHeader); err != nil {
 		return err
 	}
 
 	for _, row := range rows {
-		if _, err := fmt.Fprintf(writer, "%s\t%s\t%s\t%s\t%s\n", terminalSafeText(row.Registry), terminalSafeText(row.Kind), terminalSafeText(row.Name), terminalSafeText(row.Tags), terminalSafeText(row.Status)); err != nil {
+		if _, err := fmt.Fprintf(writer, "%s\t%s\t%s\t%s\t%s\t%s\n", terminalSafeText(row.Registry), terminalSafeText(row.Kind), terminalSafeText(row.Name), terminalSafeText(row.Tags), terminalSafeText(row.Status), terminalSafeText(row.Relation)); err != nil {
 			return err
 		}
 	}

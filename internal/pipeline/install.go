@@ -92,6 +92,8 @@ type InstallResult struct {
 	NotSelected                  []string
 	IsCollection                 bool
 	CollectionLabel              string
+	AlsoSelected                 []resolver.ResolvedArtifact
+	ImpliedPreview               []resolver.ResolvedArtifact
 	RequirementWarnings          []error
 	MarketplacePreview           string
 	MarketplaceSummary           MarketplaceInstallSummary
@@ -641,13 +643,17 @@ func namedInstallNames(plan []namedInstallSelection) []string {
 
 func syncNamedInstallResult(ctx context.Context, opts InstallOptions, plan []namedInstallSelection, warnings []resourceIdentity, syncOpts ...silentSyncOpt) (*InstallResult, error) {
 	if len(plan) == 1 && plan[0].collection {
-		requirementWarnings, err := syncAfterInstall(ctx, opts, plan[0].members, syncOpts...)
+		var syncRes ResolveResult
+		requirementWarnings, err := syncAfterInstall(ctx, opts, plan[0].members, append(slices.Clip(syncOpts), withSyncResultCapture(&syncRes))...)
 		if err != nil {
 			return nil, err
 		}
+		alsoSelected, preview := relatedRequirementArtifacts(syncRes, plan[0].members)
 		return &InstallResult{
 			IsCollection:        true,
 			CollectionLabel:     plan[0].label,
+			AlsoSelected:        alsoSelected,
+			ImpliedPreview:      preview,
 			RequirementWarnings: requirementWarnings,
 		}, nil
 	}
@@ -695,12 +701,84 @@ func expandInstalledCollectionResources(installed []resourceIdentity, available 
 // resources the final resolution selected separately from those it did not.
 func syncInstalledResources(ctx context.Context, iopts InstallOptions, names []string, resources []resourceIdentity, opts ...silentSyncOpt) (*InstallResult, error) {
 	var resolved []resolver.ResolvedArtifact
-	requirementWarnings, err := syncAfterInstall(ctx, iopts, resources, append(slices.Clip(opts), withResolvedCapture(&resolved))...)
+	var syncRes ResolveResult
+	syncOpts := append(slices.Clip(opts), withResolvedCapture(&resolved), withSyncResultCapture(&syncRes))
+	requirementWarnings, err := syncAfterInstall(ctx, iopts, resources, syncOpts...)
 	if err != nil {
 		return nil, err
 	}
 	installed, notSelected := partitionInstalledNames(names, resources, resolved)
-	return &InstallResult{Installed: installed, NotSelected: notSelected, RequirementWarnings: requirementWarnings}, nil
+	alsoSelected, preview := relatedRequirementArtifacts(syncRes, resources)
+	return &InstallResult{Installed: installed, NotSelected: notSelected, AlsoSelected: alsoSelected, ImpliedPreview: preview, RequirementWarnings: requirementWarnings}, nil
+}
+
+func relatedRequirementArtifacts(result ResolveResult, roots []resourceIdentity) (alsoSelected, preview []resolver.ResolvedArtifact) {
+	if len(roots) == 0 || (len(result.Resolved) == 0 && len(result.ImpliedPreview) == 0) {
+		return nil, nil
+	}
+	identityOf := func(kind ir.ResourceKind, name string) resourceIdentity {
+		return resourceIdentity{kind: kind, name: strings.TrimSpace(name)}
+	}
+	reachable := make(map[resourceIdentity]bool, len(roots))
+	for _, root := range roots {
+		reachable[identityOf(root.kind, root.name)] = true
+	}
+	combined := make([]resolver.ResolvedArtifact, 0, len(result.Resolved)+len(result.ImpliedPreview))
+	combined = append(combined, result.Resolved...)
+	combined = append(combined, result.ImpliedPreview...)
+	for changed := true; changed; {
+		changed = false
+		for _, artifact := range combined {
+			id := identityOf(artifact.Kind, artifact.Name)
+			if reachable[id] {
+				continue
+			}
+			for _, ref := range artifact.RequiredBy {
+				if reachable[identityOf(ref.Kind, ref.Name)] {
+					reachable[id] = true
+					changed = true
+					break
+				}
+			}
+		}
+	}
+	type scopeKey struct {
+		resourceIdentity
+		machine bool
+	}
+	admitted := make(map[scopeKey]struct{})
+	emit := func(artifact resolver.ResolvedArtifact) resolver.ResolvedArtifact {
+		var parents []resolver.ResourceRef
+		for _, ref := range artifact.RequiredBy {
+			if reachable[identityOf(ref.Kind, ref.Name)] {
+				parents = append(parents, ref)
+			}
+		}
+		artifact.RequiredBy = parents
+		return artifact
+	}
+	resolvedCount := len(result.Resolved)
+	for i, artifact := range combined {
+		id := identityOf(artifact.Kind, artifact.Name)
+		if !reachable[id] {
+			continue
+		}
+		key := scopeKey{id, artifact.Source.IsMachineScope()}
+		if _, dup := admitted[key]; dup {
+			continue
+		}
+		if i < resolvedCount {
+			if !artifact.Implied {
+				continue
+			}
+			admitted[key] = struct{}{}
+			alsoSelected = append(alsoSelected, emit(artifact))
+		} else {
+			admitted[key] = struct{}{}
+			preview = append(preview, emit(artifact))
+		}
+	}
+	return alsoSelected, preview
 }
 
 // partitionInstalledNames keeps a name as installed when the resolution
