@@ -16,7 +16,7 @@ Run a normal sync to create or update `.agents/lock.yaml`:
 agent-marketplace sync
 ```
 
-It prints the usual `Installed <n>  Removed <n>  Malformed <n>  Errors <n>` summary with one `→` line per output root, and writes `.agents/lock.yaml`. Check that the file exists:
+It prints the usual `Installed <n>  Removed <n>  Malformed <n>  Errors <n>` summary, followed by a single `→` line listing the output roots it changed, separated by commas, and writes `.agents/lock.yaml`. Check that the file exists:
 
 ```bash
 test -f .agents/lock.yaml && echo "lock present"
