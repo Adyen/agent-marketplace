@@ -481,6 +481,7 @@ cells:
       class: cross
       diagnostics:
         - ingest.gemini.bundle-manifest-synthesized
+        - compile.opencode.field-dropped
       allowedLosses:
         - disallowedTools
         - effort

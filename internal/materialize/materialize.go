@@ -747,6 +747,12 @@ func compileWorkItems(work []skillTarget, allDiags []diag.Diagnostic, allOutputs
 
 	for index, w := range work {
 		key := outputKey{target: w.target, machineScope: w.machineScope}
+		if w.target == hcc.TargetOpenCode && w.skill.Required && w.skill.Resource.Kind() == ir.KindHook {
+			blockResource(key, w)
+			blocked.mark(key, "hooks", "plugins")
+			allDiags = append(allDiags, diag.Diagnostic{Code: diag.CodeHookOpenCodeUnsupported, Severity: diag.SeverityError, Target: string(w.target), Resource: w.skill.Name, Message: "OpenCode can disable or skip native plugins; required hook enforcement cannot be guaranteed", Source: compilepkg.SourceOf(w.skill.Resource)})
+			continue
+		}
 		binding, hasBinding, bindingErr := materializeAdapterFor(w.target)
 		if bindingErr != nil {
 			blockResource(key, w)

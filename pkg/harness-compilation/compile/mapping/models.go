@@ -105,9 +105,14 @@ var modelTable = []modelEntry{
 		// unauthenticated probe suite cannot reproduce it. Evidence:
 		// docs/devin-cli-harness-spec-3000.3.md and internal/devinprobe/manual.go
 		// entry model-alias-list.
-		TargetDevin:    "haiku",
-		TargetCodex:    modelUnmappable,
-		TargetOpenCode: "anthropic/claude-haiku-3-5-20241022",
+		TargetDevin: "haiku",
+		TargetCodex: modelUnmappable,
+		// OpenCode: the previously emitted dated identifier was never verified
+		// against the pinned OpenCode 1.18.34 model catalog, and an unverified
+		// identifier is not a supported native model. The plan forbids both
+		// guessing another model and passing an unverified one through, so the
+		// alias is unmappable: translation omits the model and reports the loss.
+		TargetOpenCode: modelUnmappable,
 	}},
 
 	// --- Specific model IDs ---
@@ -152,9 +157,12 @@ var modelTable = []modelEntry{
 		// Devin: no stable alias for a pinned/versioned model family. The plan
 		// forbids guessing versioned IDs, so this is unmappable (omit + warn),
 		// not an inherit-style passthrough.
-		TargetDevin:    modelUnmappable,
-		TargetCodex:    modelUnmappable,
-		TargetOpenCode: "anthropic/claude-haiku-3-5-20241022",
+		TargetDevin: modelUnmappable,
+		TargetCodex: modelUnmappable,
+		// OpenCode: unmappable for the same reason as the haiku alias above —
+		// the dated identifier's acceptance by the pinned native was never
+		// verified, and no verified OpenCode identifier exists for it.
+		TargetOpenCode: modelUnmappable,
 	}},
 
 	// --- Gemini-native model families (for Gemini→other compilation) ---
@@ -181,9 +189,12 @@ var modelTable = []modelEntry{
 		// probe suite cannot reproduce it. Evidence:
 		// docs/devin-cli-harness-spec-3000.3.md and internal/devinprobe/manual.go
 		// entry model-alias-list.
-		TargetDevin:    modelUnmappable,
-		TargetCodex:    modelUnmappable,
-		TargetOpenCode: "google/gemini-3-preview",
+		TargetDevin: modelUnmappable,
+		TargetCodex: modelUnmappable,
+		// OpenCode: unmappable — the gemini-3-preview identifier's acceptance by
+		// the pinned OpenCode 1.18.34 catalog was never verified, and
+		// substituting an unrelated Google model is forbidden.
+		TargetOpenCode: modelUnmappable,
 	}},
 
 	// Last verified: 2026-04-24 against Gemini CLI
@@ -205,9 +216,13 @@ var modelTable = []modelEntry{
 		// gemini-3-preview (Pro-class) row above stays unmappable. Evidence:
 		// docs/devin-cli-harness-spec-3000.3.md and internal/devinprobe/manual.go
 		// entry model-alias-list.
-		TargetDevin:    "gemini",
-		TargetCodex:    modelUnmappable,
-		TargetOpenCode: "google/gemini-3-flash-preview",
+		TargetDevin: "gemini",
+		TargetCodex: modelUnmappable,
+		// OpenCode: unmappable — like gemini-3-preview, the flash identifier's
+		// acceptance by the pinned native was never verified. Unlike Devin's
+		// floating `gemini` alias, an OpenCode catalog ID is pinned, so an
+		// unverified ID is unmappable rather than inherit-style passthrough.
+		TargetOpenCode: modelUnmappable,
 	}},
 }
 

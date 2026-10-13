@@ -127,6 +127,12 @@ func runCompatibilityScenario(t *testing.T, results []compatibilityResult, nativ
 		rows[results[i].Resource] = &results[i]
 	}
 	native := prepareCompatibilityNative(e, f, rows["native-cli"], nativeMode, reason, expectedVersion)
+	// OpenCode's negative-control startup can create the machine JSONC file.
+	// Assert the documented effective destination, not a competing JSON file.
+	if first.Harness == "opencode" {
+		paths = compatibilityPaths(e, first.Harness, first.Scope, f)
+		otherPaths = compatibilityPaths(e, first.Harness, otherScope, f)
+	}
 	for i := range results {
 		results[i].Version = rows["native-cli"].Version
 	}

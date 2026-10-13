@@ -75,7 +75,7 @@ func TestOpenCodeMalformedAggregatePreservesBytes(t *testing.T) {
 			repo := openCodeSandbox(t)
 			file := filepath.Join(repo, "opencode.jsonc")
 			additiveSafetyWrite(t, file, data)
-			report, err := Run(t.Context(), repo, []resolver.ResolvedArtifact{openCodeResource(ir.NewMcpServer("docs", "server", nil, nil, nil, ir.SourceRef{})), openCodeResource(ir.NewCommand("control", "", "Body", nil, ir.SourceRef{}))})
+			report, err := Run(t.Context(), repo, []resolver.ResolvedArtifact{openCodeResource(ir.NewMcpServer("docs", "server", nil, nil, nil, ir.SourceRef{})), openCodeResource(ir.NewSkill("control", "", "Body", nil, nil, ir.SourceRef{}))})
 			if err != nil || !diag.HasErrors(report.Diags) {
 				t.Fatal("malformed aggregate accepted")
 			}
@@ -83,7 +83,7 @@ func TestOpenCodeMalformedAggregatePreservesBytes(t *testing.T) {
 			if string(after) != data {
 				t.Fatal("malformed aggregate changed")
 			}
-			if _, err := os.Stat(filepath.Join(repo, ".opencode", "commands", "control.md")); err != nil {
+			if _, err := os.Stat(filepath.Join(repo, ".opencode", "skills", "control", "SKILL.md")); err != nil {
 				t.Fatal("independent resource blocked")
 			}
 		})

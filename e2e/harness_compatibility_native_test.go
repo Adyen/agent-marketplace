@@ -19,11 +19,12 @@ type compatibilityNative struct {
 }
 
 type compatibilityNativeProbe struct {
-	kind     string
-	list     []string
-	names    []string
-	protocol string
-	before   compatibilityCommand
+	kind          string
+	list          []string
+	names         []string
+	protocol      string
+	before        compatibilityCommand
+	jsonInventory bool
 }
 
 type compatibilityInventoryRunner struct {
@@ -72,12 +73,15 @@ func (p compatibilityNativeProbe) run(e *Env, binary string) compatibilityComman
 	if p.protocol != "" {
 		return runCompatibilityProtocol(e, binary, p.protocol, 30*time.Second)
 	}
-	return runCompatibilityCommand(e, binary, p.list, 20*time.Second)
+	return runCompatibilityInspection(e, binary, p.list, 20*time.Second, p.jsonInventory)
 }
 
 func (p compatibilityNativeProbe) observe(command *compatibilityCommand, e *Env, f compatibilityFixture, scope string, paths []string, absent bool) error {
 	if p.protocol != "" {
 		return requireCompatibilityProtocolInventory(command, e, f, p, scope, paths, absent)
+	}
+	if p.jsonInventory {
+		return requireOpenCodeInventory(command, f, p, absent)
 	}
 	return requireCompatibilityObservation(command, absent, p.names...)
 }
@@ -223,6 +227,9 @@ func compatibilityTrustBlocksDiscovery(row compatibilityResult, command compatib
 }
 
 func configureCompatibilityRuntime(e *Env, target string) error {
+	if target == "opencode" {
+		return prepareOpenCodeCompatibilityRuntime(e)
+	}
 	if target != "devin" {
 		return nil
 	}

@@ -146,6 +146,45 @@ func TestInlineResourcesDoNotLoseOverrides(t *testing.T) {
 	}
 }
 
+// TestShortInputBoundaries pins the parser boundaries reviewed under
+// harden-opencode-resumption: frontmatter shorter than the opening delimiter
+// and empty or truncated native configuration are reported or recovered
+// without ever panicking the loader. These claims were verified as safe against
+// the actual parsers, so they are pinned here rather than patched.
+func TestShortInputBoundaries(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		files      fstest.MapFS
+		resources  int
+		diagnostic string
+	}{
+		{"empty markdown", fstest.MapFS{"agents/reviewer.md": {Data: []byte("")}, "commands/control.md": {Data: []byte("Control")}}, 2, ""},
+		{"opening dashes without newline", fstest.MapFS{"agents/reviewer.md": {Data: []byte("---")}, "commands/control.md": {Data: []byte("Control")}}, 2, ""},
+		{"opening delimiter without closing", fstest.MapFS{"agents/reviewer.md": {Data: []byte("---\n")}, "commands/control.md": {Data: []byte("Control")}}, 1, "ingest.opencode.invalid-resource"},
+		{"empty native config", fstest.MapFS{"opencode.json": {Data: []byte("")}, "commands/control.md": {Data: []byte("Control")}}, 1, "ingest.opencode.invalid-resource"},
+		{"whitespace native config", fstest.MapFS{"opencode.json": {Data: []byte("  ")}, "commands/control.md": {Data: []byte("Control")}}, 1, "ingest.opencode.invalid-resource"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			b, err := LoadBundle(tc.files)
+			if err != nil {
+				t.Fatalf("load: %v", err)
+			}
+			if len(b.Resources) != tc.resources {
+				t.Fatalf("resources=%d diagnostics=%#v, want %d", len(b.Resources), b.Diagnostics, tc.resources)
+			}
+			if tc.diagnostic == "" {
+				if len(b.Diagnostics) != 0 {
+					t.Fatalf("unexpected diagnostics: %#v", b.Diagnostics)
+				}
+				return
+			}
+			if len(b.Diagnostics) != 1 || b.Diagnostics[0].Code != tc.diagnostic {
+				t.Fatalf("diagnostics=%#v, want one %q", b.Diagnostics, tc.diagnostic)
+			}
+		})
+	}
+}
+
 func TestHookDeclarationNativeJSONAndMatcherTypes(t *testing.T) {
 	valid := `{"format":"agent-marketplace/opencode-hook-v1","name":"check","event":"PreToolUse","matcher":"Bash","command":"true","timeout":1}`
 	for _, tc := range []struct {

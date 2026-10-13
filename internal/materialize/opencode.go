@@ -95,8 +95,9 @@ func (openCodeOwnedAggregateHandler) reconcile(ctx context.Context, report *Repo
 		}
 		rel := destination.AggregateFile
 		files := []ownedJSONFileSpec{{rel: rel, container: "mcp", keyed: true}}
+		priorDiagnostics := len(report.Diags)
 		report = reconcileOwnedJSONAggregates(ctx, report, key, destination.Root, files, routeOpenCodeWork(work, rel), openCodeJSONOptions(), dryRun)
-		for _, diagnostic := range report.Diags {
+		for _, diagnostic := range report.Diags[priorDiagnostics:] {
 			if diagnostic.Target == string(key.target) && diagnostic.Code == diag.CodeOwnershipUnmanagedKey {
 				report.Diags = append(report.Diags, diag.Diagnostic{Code: diag.CodeMaterializeOpenCodeAggregateCollision, Severity: diag.SeverityError, Target: string(key.target), Message: "A handwritten MCP entry conflicts with the selected server; configuration preserved"})
 				break

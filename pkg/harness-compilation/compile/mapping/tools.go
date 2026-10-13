@@ -142,6 +142,32 @@ var toolTable = []toolEntry{
 		TargetCodex:    nil,
 		TargetOpenCode: {"websearch"},
 	}},
+
+	// OpenCode provenance for every OpenCode-only row below (Task, TodoWrite,
+	// Skill): the native spellings are the fixed command-hook adapter's
+	// runtime canonicalization table, executed against the pinned OpenCode
+	// 1.18.34 (see internal/opencodehook/adapter.js and the compatibility
+	// note).
+	//
+	// Every other target carries an explicit nil cell, per the table-wide
+	// coverage contract. That is deliberately the same resolution as before
+	// these rows existed (unknown → passthrough plus W_TOOL_UNKNOWN, or
+	// fail-closed where the target already fails): the curated lookup returns
+	// (nil, false) for a nil cell exactly as it does for a missing row, so no
+	// existing target's behavior changes, and the nil cells prevent a future
+	// edit from silently widening an explicitly unsupported tool.
+	{Claude: "Task", Targets: map[Target][]string{
+		TargetClaude: nil, TargetFactory: nil, TargetCursor: nil, TargetWindsurf: nil,
+		TargetGemini: nil, TargetDevin: nil, TargetCodex: nil, TargetOpenCode: {"task"},
+	}},
+	{Claude: "TodoWrite", Targets: map[Target][]string{
+		TargetClaude: nil, TargetFactory: nil, TargetCursor: nil, TargetWindsurf: nil,
+		TargetGemini: nil, TargetDevin: nil, TargetCodex: nil, TargetOpenCode: {"todowrite"},
+	}},
+	{Claude: "Skill", Targets: map[Target][]string{
+		TargetClaude: nil, TargetFactory: nil, TargetCursor: nil, TargetWindsurf: nil,
+		TargetGemini: nil, TargetDevin: nil, TargetCodex: nil, TargetOpenCode: {"skill"},
+	}},
 }
 
 // Tool returns the target-specific tool ID(s) for a given Claude tool ID.

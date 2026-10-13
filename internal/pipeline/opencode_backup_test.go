@@ -57,6 +57,9 @@ func TestOpenCodeCustomBackupInventory(t *testing.T) {
 		t.Fatal(err)
 	}
 	restored := filepath.Join(home, "restored")
+	if err := os.MkdirAll(restored, 0o755); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := backup.Restore(hcc.TargetOpenCode, restored, paths.MappedFiles); err != nil {
 		t.Fatal(err)
 	}

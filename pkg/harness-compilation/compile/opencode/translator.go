@@ -102,6 +102,7 @@ func command(c *ir.Command, opts compile.Options) ([]artifact.Artifact, []diag.D
 			return nil, []diag.Diagnostic{diagnostic(diag.CodeCommandOpenCodeRestrictionUnsupported, diag.SeverityError, c.Name(), c.Source, "Command execution restriction has no native equivalent; command omitted")}, nil
 		}
 	}
+	var d []diag.Diagnostic
 	native := c.Ext.OpenCode
 	for _, key := range []string{"agent", "model", "subtask"} {
 		value, present := c.Extra[key]
@@ -136,15 +137,22 @@ func command(c *ir.Command, opts compile.Options) ([]artifact.Artifact, []diag.D
 				if override, ok := opts.ModelOverride()[model]; ok {
 					value = override
 				} else if native == nil || native.Model == "" {
-					if mapped, ok := mapping.Model(model, mapping.TargetOpenCode); ok {
+					mapped, ok := mapping.Model(model, mapping.TargetOpenCode)
+					switch {
+					case ok:
 						value = mapped
+					case mapped == "":
+						// The canonical model has no supported native
+						// identifier: omit the selection and report the loss
+						// rather than emit a known-invalid model.
+						d = append(d, diagnostic(diag.CodeOpenCodeFieldDropped, diag.SeverityWarning, c.Name(), c.Source, "Canonical model has no supported OpenCode identifier; the model selection was omitted"))
+						continue
 					}
 				}
 			}
 			fm.Set(key, value)
 		}
 	}
-	var d []diag.Diagnostic
 	for key := range c.Extra {
 		if key != "agent" && key != "model" && key != "subtask" && key != "name" && key != "description" {
 			d = append(d, dropped(c.Name(), c.Source))
@@ -152,8 +160,6 @@ func command(c *ir.Command, opts compile.Options) ([]artifact.Artifact, []diag.D
 	}
 	return document("commands/"+c.Name()+".md", fm, c.Body, d)
 }
-
-var tools = map[string]string{"Read": "read", "Write": "write", "Edit": "edit", "Bash": "bash", "Glob": "glob", "Grep": "grep", "WebFetch": "webfetch", "WebSearch": "websearch", "Task": "task", "TodoWrite": "todowrite", "Skill": "skill"}
 
 func agent(a *ir.Subagent, opts compile.Options) ([]artifact.Artifact, []diag.Diagnostic, error) {
 	fail := func() ([]artifact.Artifact, []diag.Diagnostic, error) {
@@ -179,11 +185,21 @@ func agent(a *ir.Subagent, opts compile.Options) ([]artifact.Artifact, []diag.Di
 			model = native.Model
 		}
 	}
+	var d []diag.Diagnostic
 	if override, ok := opts.ModelOverride()[a.Model]; ok {
 		model = override
 	} else if native == nil || native.Model == "" {
-		if mapped, ok := mapping.Model(model, mapping.TargetOpenCode); ok {
+		mapped, ok := mapping.Model(model, mapping.TargetOpenCode)
+		switch {
+		case ok:
 			model = mapped
+		case mapped == "" && model != "":
+			// No supported native identifier exists for this canonical model:
+			// omit the selection and report the loss rather than emit a
+			// known-invalid model. Explicit native models and overrides are
+			// preserved above.
+			model = ""
+			d = append(d, diagnostic(diag.CodeOpenCodeFieldDropped, diag.SeverityWarning, a.Name(), a.Source, "Canonical model has no supported OpenCode identifier; the model selection was omitted"))
 		}
 	}
 	if mode != "subagent" && mode != "primary" && mode != "all" {
@@ -205,13 +221,15 @@ func agent(a *ir.Subagent, opts compile.Options) ([]artifact.Artifact, []diag.Di
 			action string
 		}{{a.Tools, "allow"}, {a.DisallowedTools, "deny"}} {
 			for _, tool := range group.list {
-				mapped, ok := opts.ToolOverride()[tool]
-				if !ok {
-					mapped, ok = tools[tool]
-				}
-				if !ok {
+				// Resolve through the authoritative curated mapping and the
+				// consumer override, the same authority as hook matchers. An
+				// unmappable tool must fail the subagent rather than widen the
+				// restriction to nothing.
+				mappedTools, ok := mapping.ToolWithOverride(tool, mapping.TargetOpenCode, opts.ToolOverride())
+				if !ok || len(mappedTools) != 1 {
 					return fail()
 				}
+				mapped := mappedTools[0]
 				if index, exists := indices[mapped]; exists {
 					permission.Rules[index].Action = group.action
 				} else {
@@ -251,7 +269,6 @@ func agent(a *ir.Subagent, opts compile.Options) ([]artifact.Artifact, []diag.Di
 		}
 		fm.Set("permission", value)
 	}
-	var d []diag.Diagnostic
 	if a.Effort != "" || len(a.Extra) > 0 {
 		d = append(d, dropped(a.Name(), a.Source))
 	}

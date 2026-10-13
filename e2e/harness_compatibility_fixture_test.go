@@ -156,6 +156,9 @@ func compatibilityPaths(e *Env, target, scope string, f compatibilityFixture) ma
 		paths["mcp"] = []string{"opencode.json"}
 		if scope == "user" {
 			paths["mcp"] = []string{root + "/opencode.json"}
+			if _, err := os.Lstat(filepath.Join(base, root, "opencode.jsonc")); err == nil {
+				paths["mcp"] = []string{root + "/opencode.jsonc"}
+			}
 		}
 	}
 	for kind, entries := range paths {

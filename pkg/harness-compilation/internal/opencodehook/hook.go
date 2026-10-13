@@ -1,9 +1,40 @@
 // Package opencodehook defines the fixed adapter and its data-only declarations.
 package opencodehook
 
-import _ "embed"
+import (
+	"path"
+	"strings"
+
+	_ "embed"
+)
 
 const Format = "agent-marketplace/opencode-hook-v1"
+
+// AdapterPath is the native autoload location of the fixed adapter. Every
+// contributing hook resource publishes the same reviewed bytes there, so a
+// bundle must coalesce the copies into exactly one file.
+const AdapterPath = "plugins/agent-marketplace.js"
+
+// AdapterFragmentKey groups the identical adapter fragments emitted once per
+// contributing hook resource. Fragments that share a path and this key coalesce
+// into one published adapter.
+const AdapterFragmentKey = "agent-marketplace/opencode-adapter-v1"
+
+// DeclarationsDir holds the adapter's data-only JSON declarations. The fixed
+// adapter reads that directory relative to its own compiled location.
+const DeclarationsDir = "hooks/agent-marketplace"
+
+// MaxDeclarationsPerToolEvent is the aggregate invocation budget the fixed
+// adapter enforces at runtime for one tool event. Compilation refuses an
+// unusable generation before publication instead of installing one the runtime
+// would reject whole.
+const MaxDeclarationsPerToolEvent = 64
+
+// IsDeclarationPath reports whether an artifact path is one adapter declaration.
+func IsDeclarationPath(p string) bool {
+	dir, base := path.Split(p)
+	return path.Clean(dir) == DeclarationsDir && strings.HasSuffix(base, ".json") && len(base) > len(".json")
+}
 
 //go:embed adapter.js
 var Adapter []byte

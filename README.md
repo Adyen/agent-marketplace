@@ -967,7 +967,7 @@ agent-marketplace completion <shell>             Generate a shell completion scr
 ```
 
 `--from` and `--to` on `convert` accept `claude`, `factory`, `cursor`,
-`windsurf`, `gemini`, `devin`, and `codex`; without `--out`, output goes to
+`windsurf`, `gemini`, `devin`, `codex`, and `opencode`; without `--out`, output goes to
 `<path>-<to>`. `--yes` on `doctor` is valid only together with `--repair`. Run
 any command with `--help` for its full flag list, or see the
 [CLI reference](https://github.com/Adyen/agent-marketplace/blob/main/site/docs/reference/cli.md).

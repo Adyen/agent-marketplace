@@ -80,6 +80,10 @@ OpenCode's native plugin behavior is part of this contract: absent, disabled
 (`OPENCODE_PURE`), or initialization-failed adapters are **inactive** and do not
 block the tool. Active hooks do not grant permissions or manage provider/auth
 configuration. This integration does not provide a global enforcement policy.
+Required hook selections are therefore refused by synchronization and checking
+with `hook.opencode.unsupported`, rather than reported as successfully enforced.
+The affected installed generation is retained. Ordinary opt-in hooks remain
+supported under the active-plugin contract.
 
 ## Destinations and ownership
 

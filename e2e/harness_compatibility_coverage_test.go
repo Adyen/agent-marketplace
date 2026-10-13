@@ -12,8 +12,8 @@ func compatibilityResourceProbes(harness string, f compatibilityFixture) []compa
 	switch harness {
 	case "opencode":
 		probes = append(probes,
-			compatibilityNativeProbe{kind: "skill", list: []string{"debug", "skill"}, names: []string{f.name("skill")}},
-			compatibilityNativeProbe{kind: "command", list: []string{"debug", "config"}, names: []string{f.name("command")}},
+			compatibilityNativeProbe{kind: "skill", list: []string{"debug", "skill"}, names: []string{f.name("skill")}, jsonInventory: true},
+			compatibilityNativeProbe{kind: "command", list: []string{"debug", "config"}, names: []string{f.name("command")}, jsonInventory: true},
 			compatibilityNativeProbe{kind: "subagent", list: []string{"agent", "list"}, names: []string{f.name("subagent")}},
 		)
 	case "devin":

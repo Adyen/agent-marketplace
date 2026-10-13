@@ -19,7 +19,7 @@ test("selects OpenCode and installs a skill through the harness modal", async ({
   // Stable registry order puts the opt-in OpenCode choice after Codex.
   await terminal.write("\x1b[B".repeat(7));
   await step("enable OpenCode", () => terminal.write(" "), async () => {
-    await expect(terminal.getByText("[x] OpenCode", { strict: false })).toBeVisible();
+    await expect(terminal.getByText("[•] OpenCode", { strict: false })).toBeVisible();
   });
   await step("save global selection", () => terminal.write("\r"), async () => {
     await expect(terminal.getByText("Saved global harnesses")).toBeVisible();

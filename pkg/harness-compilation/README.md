@@ -237,7 +237,7 @@ UPDATE_GOLDEN=1 go test -run TestGolden ./...
 
 ## Status
 
-v0.x. The 7×7 translation matrix and the core API are implemented. The design document lists the deferred items.
+v0.x. The 8×8 translation matrix and the core API are implemented. The design document lists the deferred items.
 
 OpenCode-specific notes:
 

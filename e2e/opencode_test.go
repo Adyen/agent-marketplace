@@ -114,3 +114,44 @@ func TestE2EOpenCodeOwnershipRepair(t *testing.T) {
 		t.Fatalf("replacement: %s", confirmed.Combined)
 	}
 }
+
+// spec: opencode-hooks/required-hook-selections-refuse-unenforceable-activation
+func TestE2EOpenCodeRequiredHookRefusal(t *testing.T) {
+	for _, schema := range []string{"v2", "v4"} {
+		t.Run(schema, func(t *testing.T) {
+			env := newEnv(t)
+			env.InitGitRepo()
+			source := filepath.Join(env.repos, "required-hooks")
+			env.WriteFile(filepath.Join(source, ".claude-plugin", "plugin.json"), `{"name":"required-hooks"}`)
+			env.WriteFile(filepath.Join(source, "hooks", "hooks.json"), `{"hooks":{"PreToolUse":[{"type":"command","matcher":"Bash","command":"touch hook-executed"}]}}`)
+			config := func(required bool) string {
+				if schema == "v4" {
+					return fmt.Sprintf("apiVersion: agent-marketplace/v4\nharnesses: [opencode]\nsources:\n  hooks: {directory: %q, source_harness: claude}\nresources:\n  hooks: {include: [hook/PreToolUse-command], required: %v}\n", source, required)
+				}
+				return fmt.Sprintf("apiVersion: agent-marketplace/v2\nharnesses: [opencode]\nregistries:\n  - {url: %q, source_harness: claude, hooks: [PreToolUse-command], required: %v}\n", source, required)
+			}
+			env.WriteGlobalConfig(config(false))
+			env.MustRunAM("sync")
+			file := filepath.Join(env.home, ".config", "opencode", "hooks", "agent-marketplace", "PreToolUse-command.json")
+			prior := readFile(t, file)
+			info, err := os.Stat(file)
+			if err != nil {
+				t.Fatal(err)
+			}
+			env.WriteGlobalConfig(config(true))
+			for _, args := range [][]string{{"sync"}, {"sync", "--check"}} {
+				result := env.RunAM(args...)
+				if result.ExitCode == 0 || !strings.Contains(result.Combined, "hook.opencode.unsupported") {
+					t.Fatalf("required-hook activation was not refused: %s", result.Combined)
+				}
+				after, err := os.Stat(file)
+				if err != nil || readFile(t, file) != prior || after.Mode() != info.Mode() || !after.ModTime().Equal(info.ModTime()) {
+					t.Fatal("required-hook refusal changed installed output")
+				}
+			}
+			if _, err := os.Lstat(filepath.Join(env.workspace, "hook-executed")); !os.IsNotExist(err) {
+				t.Fatal("consumer executed a source hook")
+			}
+		})
+	}
+}

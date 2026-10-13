@@ -1,6 +1,9 @@
 package materialize
 
 import (
+	"errors"
+	"github.com/Adyen/agent-marketplace/internal/fsboundary"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -53,10 +56,24 @@ func preflightOpenCodeResources(result *compilePhaseResult, repo string) []diag.
 			continue
 		} // Destination preflight reports this error.
 		root := destinations[0].Root
-		if componentBlocked(result.blocked[key], "hooks") {
-			result.blocked.mark(key, "plugins")
-		}
 		blockedHooks := false
+		hookArtifacts := append([]artifact.Artifact(nil), work.artifacts...)
+		for _, group := range result.skillLinks[key] {
+			for _, link := range group.links {
+				if link.kind != ir.KindHook {
+					continue
+				}
+				for _, declaration := range link.artifacts {
+					declaration.Path = filepath.ToSlash(filepath.Join(group.installDirRel, declaration.Path))
+					hookArtifacts = append(hookArtifacts, declaration)
+				}
+			}
+		}
+		if refusal := hcc.ValidateOpenCodeHookBudget(hookArtifacts); refusal != nil {
+			blockedHooks = true
+			result.blocked.mark(key, "hooks", "plugins")
+			diagnostics = append(diagnostics, *refusal)
+		}
 		for _, candidate := range work.artifacts {
 			if candidate.Path != "plugins/agent-marketplace.js" {
 				continue
@@ -84,14 +101,41 @@ func preflightOpenCodeResources(result *compilePhaseResult, repo string) []diag.
 		// Config-defined agents load over Markdown files. Preserve their identity
 		// instead of installing a resource which cannot become effective.
 		configAgents := map[string]bool{}
-		for _, configuration := range openCodeConfigInventory(repo, root, destinations[1]) {
-			if data, err := ownership.ReadAggregateFile(configuration); err == nil && data != nil {
-				if document, err := jsonc.ParseWithOptions(configuration, data, jsonc.ParseOptions{AllowTrailingCommas: true}); err == nil {
-					if agents, ok := document.Root().Member("agent"); ok && agents.Kind() == jsonc.KindObject {
-						for _, name := range agents.Keys() {
-							configAgents[name] = true
+		configCommands := map[string]bool{}
+		inventorySafe := true
+		if len(work.artifacts) != 0 || len(result.skillLinks[key]) != 0 {
+			seen := map[string]bool{}
+			for _, configuration := range openCodeConfigInventory(repo, root, destinations[1]) {
+				if seen[configuration] {
+					continue
+				}
+				seen[configuration] = true
+				data, err := readOpenCodeIdentityConfig(repo, configuration)
+				if errors.Is(err, fs.ErrNotExist) && !errors.Is(err, fsboundary.ErrUnsafePath) {
+					continue
+				}
+				if err == nil {
+					document, parseErr := jsonc.ParseWithOptions(configuration, data, jsonc.ParseOptions{AllowTrailingCommas: true})
+					inventorySafe = parseErr == nil && document.Root().Kind() == jsonc.KindObject
+					if inventorySafe {
+						for field, identities := range map[string]map[string]bool{"agent": configAgents, "command": configCommands} {
+							if declarations, ok := document.Root().Member(field); ok {
+								if declarations.Kind() != jsonc.KindObject {
+									inventorySafe = false
+									break
+								}
+								for _, name := range declarations.Keys() {
+									identities[name] = true
+								}
+							}
 						}
 					}
+				} else {
+					inventorySafe = false
+				}
+				if !inventorySafe {
+					diagnostics = append(diagnostics, diag.Diagnostic{Code: diag.CodeMaterializeOpenCodeAggregateMalformed, Severity: diag.SeverityError, Target: "opencode", Message: "Existing OpenCode configuration cannot be safely inventoried; command and subagent definitions preserved"})
+					break
 				}
 			}
 		}
@@ -100,13 +144,14 @@ func preflightOpenCodeResources(result *compilePhaseResult, repo string) []diag.
 			if blockedHooks && (strings.HasPrefix(candidate.Path, "hooks/") || strings.HasPrefix(candidate.Path, "plugins/")) {
 				continue
 			}
-			if strings.HasPrefix(candidate.Path, "agents/") {
-				name := strings.TrimSuffix(strings.TrimPrefix(candidate.Path, "agents/"), ".md")
-				if configAgents[name] || openCodeBuiltInAgent(name) {
-					result.blocked.mark(key, "agents")
-					diagnostics = append(diagnostics, diag.Diagnostic{Code: "materialize.collision.user-owned", Severity: diag.SeverityError, Target: "opencode", Resource: name, Message: "OpenCode agent conflicts with an existing config-defined or built-in agent; resource omitted"})
-					continue
+			component, file, _ := strings.Cut(candidate.Path, "/")
+			name := strings.TrimSuffix(file, ".md")
+			if (!inventorySafe && (component == "agents" || component == "commands")) || openCodeIdentityCollision(root, component, name, configAgents, configCommands) {
+				result.blocked.mark(key, component)
+				if inventorySafe {
+					diagnostics = append(diagnostics, openCodeIdentityCollisionDiagnostic(name))
 				}
+				continue
 			}
 			kept = append(kept, candidate)
 		}
@@ -118,9 +163,18 @@ func preflightOpenCodeResources(result *compilePhaseResult, repo string) []diag.
 					continue
 				}
 				name := strings.TrimSuffix(link.name, ".md")
-				if link.kind == ir.KindSubagent && (configAgents[name] || openCodeBuiltInAgent(name)) {
-					result.blocked.mark(key, "agents")
-					diagnostics = append(diagnostics, diag.Diagnostic{Code: "materialize.collision.user-owned", Severity: diag.SeverityError, Target: "opencode", Resource: name, Message: "OpenCode agent conflicts with an existing config-defined or built-in agent; resource omitted"})
+				component := ""
+				switch link.kind {
+				case ir.KindSubagent:
+					component = "agents"
+				case ir.KindCommand:
+					component = "commands"
+				}
+				if (!inventorySafe && component != "") || openCodeIdentityCollision(root, component, name, configAgents, configCommands) {
+					result.blocked.mark(key, component)
+					if inventorySafe {
+						diagnostics = append(diagnostics, openCodeIdentityCollisionDiagnostic(name))
+					}
 					continue
 				}
 				links = append(links, link)
@@ -132,6 +186,60 @@ func preflightOpenCodeResources(result *compilePhaseResult, repo string) []diag.
 		}
 	}
 	return diagnostics
+}
+
+func readOpenCodeIdentityConfig(repo, path string) ([]byte, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return nil, err
+	}
+	rel, err := filepath.Rel(repo, path)
+	machine := err != nil || filepath.IsAbs(rel) || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator))
+	parentPath := filepath.Dir(path)
+	boundary := destinationBoundary{machineScope: machine, repoRoot: repo, homeDir: home, roots: []string{parentPath}}
+	parent, err := boundary.captureDirectory(parentPath, false)
+	if err != nil {
+		return nil, err
+	}
+	if parent == nil {
+		return nil, fs.ErrNotExist
+	}
+	defer func() { _ = parent.Close() }()
+	policy := fsboundary.LinkPolicyRepository
+	if machine {
+		policy = fsboundary.LinkPolicyUser
+	}
+	file, err := fsboundary.CaptureDestination(parent, filepath.Base(path), policy)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = file.Close() }()
+	data, _, err := file.ReadTarget(ownership.MaxAggregateFileBytes)
+	return data, err
+}
+
+func openCodeIdentityCollision(root, component, name string, agents, commands map[string]bool) bool {
+	var legacy string
+	switch component {
+	case "agents":
+		if agents[name] || openCodeBuiltInAgent(name) {
+			return true
+		}
+		legacy = "agent"
+	case "commands":
+		if commands[name] {
+			return true
+		}
+		legacy = "command"
+	default:
+		return false
+	}
+	_, err := os.Lstat(filepath.Join(root, legacy, name+".md"))
+	return !os.IsNotExist(err)
+}
+
+func openCodeIdentityCollisionDiagnostic(name string) diag.Diagnostic {
+	return diag.Diagnostic{Code: "materialize.collision.user-owned", Severity: diag.SeverityError, Target: "opencode", Resource: name, Message: "OpenCode resource conflicts with an existing config-defined, legacy, or built-in identity; resource omitted"}
 }
 
 func openCodeBuiltInAgent(name string) bool {

@@ -19,7 +19,14 @@ function execute(command, cwd, input, timeout) {
     const fail = () => { if (!settled) { settled = true; clearTimeout(timer); stop(); reject(refusal()); } };
     const timer = setTimeout(fail, timeout);
     child.on("error", fail);
-    child.stdin.on("error", fail);
+    // A handler that stopped reading closes the input pipe, and the pending
+    // write then fails with EPIPE. That alone is not a refusal: the handler's
+    // exit status and its validated output decide success. Failing here would
+    // reject every successful handler that declines stdin. Spawn failures are
+    // reported on the child, timeouts on the timer, and both output streams
+    // below still fail closed. The listener must exist so EPIPE never becomes
+    // an unhandled process error.
+    child.stdin.on("error", () => {});
     for (const stream of [child.stdout, child.stderr]) {
       stream.on("data", chunk => { bytes += chunk.length; if (bytes > limit) fail(); else if (stream === child.stdout) output.push(chunk); });
       stream.on("error", fail);

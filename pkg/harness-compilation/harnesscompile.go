@@ -1,8 +1,8 @@
 // Package harnesscompile converts AI-agent configuration resources from
 // a canonical source format into vendor-specific layouts.
 //
-// It supports seven conversion targets (Claude Code, Factory Droid, Cursor,
-// Windsurf, Gemini CLI, Devin CLI, and Codex), each with a registered compiler
+// It supports eight conversion targets (Claude Code, Factory Droid, Cursor,
+// Windsurf, Gemini CLI, Devin CLI, Codex, and OpenCode), each with a registered compiler
 // and ingester.
 package harnesscompile
 
@@ -24,6 +24,7 @@ import (
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/compile"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ingest"
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/internal/opencodehook"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 	targetmeta "github.com/Adyen/agent-marketplace/pkg/harness-compilation/target"
 )
@@ -449,6 +450,67 @@ func resolveArtifactPathConflicts(outputs []resourceOutput, t Target) ([]Artifac
 	return artifacts, diagnostics, skipped
 }
 
+// ValidateOpenCodeHookBudget checks accepted compiler artifacts against the
+// fixed adapter's invocation budget. Callers must collect the complete desired
+// installation after per-resource suppression, restore installation-relative
+// paths, and preserve the existing hook generation when this reports an error.
+// It performs no I/O; the runtime retains its independent fail-closed safeguard.
+func ValidateOpenCodeHookBudget(artifacts []Artifact) *Diagnostic {
+	declarations := 0
+	for _, a := range artifacts {
+		if opencodehook.IsDeclarationPath(a.Path) {
+			declarations++
+		}
+	}
+	if declarations <= opencodehook.MaxDeclarationsPerToolEvent {
+		return nil
+	}
+	return &Diagnostic{
+		Code:     diag.CodeHookOpenCodeUnsupported,
+		Severity: SeverityError,
+		Target:   string(TargetOpenCode),
+		Message:  fmt.Sprintf("accepted OpenCode hook declarations (%d) exceed the supported aggregate invocation budget of %d handlers per tool event; no hook generation was emitted", declarations, opencodehook.MaxDeclarationsPerToolEvent),
+		Hint:     "Reduce the selected hooks or split them across separate installations",
+	}
+}
+
+func enforceOpenCodeHookBudget(t Target, outputs []resourceOutput, artifacts []Artifact) ([]Artifact, []SkippedResource, *Diagnostic) {
+	if t != TargetOpenCode {
+		return artifacts, nil, nil
+	}
+	diagnostic := ValidateOpenCodeHookBudget(artifacts)
+	if diagnostic == nil {
+		return artifacts, nil, nil
+	}
+	kept := make([]Artifact, 0, len(artifacts))
+	for _, a := range artifacts {
+		if opencodehook.IsDeclarationPath(a.Path) || a.Path == opencodehook.AdapterPath {
+			continue
+		}
+		kept = append(kept, a)
+	}
+	var skipped []SkippedResource
+	for _, output := range outputs {
+		if output.kind != ir.KindHook {
+			continue
+		}
+		contributed := false
+		for _, a := range output.artifacts {
+			if opencodehook.IsDeclarationPath(a.Path) {
+				contributed = true
+				break
+			}
+		}
+		if !contributed {
+			continue
+		}
+		skipped = append(skipped, SkippedResource{Kind: output.kind, Name: output.name, Codes: []string{diag.CodeHookOpenCodeUnsupported}})
+		logResourceSkip(t, output.kind, output.name, []string{diag.CodeHookOpenCodeUnsupported}, 2, "aggregate invocation budget exceeded")
+	}
+	slog.Error("bundle exceeded the OpenCode hook invocation budget", "target", t, "budget", opencodehook.MaxDeclarationsPerToolEvent, "suppressed_hooks", len(skipped))
+	return kept, skipped, diagnostic
+}
+
 // compileBundleFromIR compiles all resources in an ingest.Bundle to the
 // target harness. It is the generalized N-to-N compilation path used by
 // Convert for all source harnesses.
@@ -521,6 +583,18 @@ func compileBundleFromIR(b *ingest.Bundle, t Target, opts ...Option) (*Result, e
 	allArtifacts, conflictDiagnostics, conflictSkips := resolveArtifactPathConflicts(outputs, t)
 	allDiagnostics = append(allDiagnostics, conflictDiagnostics...)
 	skipped = append(skipped, conflictSkips...)
+
+	// OpenCode hooks share one aggregate runtime budget per tool event. When
+	// the accepted declarations of a bundle exceed it, the runtime would
+	// refuse the whole generation, so conversion rejects the generation
+	// before publication instead of installing an unusable one. The runtime
+	// safeguard in the fixed adapter stays in place for every other path.
+	budgetArtifacts, budgetSkips, budgetDiag := enforceOpenCodeHookBudget(t, outputs, allArtifacts)
+	if budgetDiag != nil {
+		allDiagnostics = append(allDiagnostics, *budgetDiag)
+		skipped = append(skipped, budgetSkips...)
+		allArtifacts = budgetArtifacts
+	}
 
 	// Merge fragment artifacts. Only fragments from resources that survived the
 	// rules above take part, so an aggregate is complete with respect to the
