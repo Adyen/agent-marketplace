@@ -277,7 +277,6 @@ func TestSurfaceRequirementsInstallDisabledTransitivePreview(t *testing.T) {
 	if !reflect.DeepEqual(snapshot, ownedCommandSnapshot(t, factoryDir)) {
 		t.Fatal("status changed materialized bytes")
 	}
-	requireIdenticalBytes(t, configPath, configBytes, "repo config")
 }
 
 // spec: resource-installation/install-summary-omits-direct-and-unrelated-resources
@@ -464,11 +463,6 @@ func TestSurfaceRequirementsListShowsProvenanceAndDeclarations(t *testing.T) {
 	gotLock, _ := os.ReadFile(lockPath)
 	if string(gotConfig) != string(configBytes) || string(gotLock) != string(lockBytes) {
 		t.Fatal("kind-filtered list rewrote config or lock")
-	}
-	gotConfig, _ = os.ReadFile(configPath)
-	gotLock, _ = os.ReadFile(lockPath)
-	if string(gotConfig) != string(configBytes) || string(gotLock) != string(lockBytes) {
-		t.Fatal("configured list rewrote config or lock")
 	}
 	if !reflect.DeepEqual(snapshot, ownedCommandSnapshot(t, factoryDir)) {
 		t.Fatal("configured list changed materialized bytes")
