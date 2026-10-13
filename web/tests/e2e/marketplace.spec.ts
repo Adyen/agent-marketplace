@@ -228,6 +228,7 @@ test.describe('Marketplace browser discovery', () => {
     await expect(landingBrand.locator('img.light')).toBeVisible()
     await expect(landingBrand.locator('img.dark')).toHaveAttribute('src', '/brand/logo-horizontal-white.svg')
     await expect(landingBrand.locator('img.dark')).toBeHidden()
+    const sharedLogoWidth = await landingBrand.locator('img.light').evaluate(element => element.getBoundingClientRect().width)
     await expect(page.locator('link[rel="icon"][type="image/svg+xml"]')).toHaveAttribute('href', '/brand/favicon.svg')
 
     await page.goto(sharedOriginURL)
@@ -239,6 +240,7 @@ test.describe('Marketplace browser discovery', () => {
     await expect(marketplaceBrand).toHaveAttribute('href', '/')
     await expect(marketplaceBrand.locator('.am-site-nav__brand-logo--light')).toHaveAttribute('src', '/brand/logo-horizontal-black.svg')
     await expect(marketplaceBrand.locator('.am-site-nav__brand-logo--light')).toBeVisible()
+    await expect(marketplaceBrand.locator('.am-site-nav__brand-logo--light')).toHaveCSS('width', `${sharedLogoWidth}px`)
     await expect(marketplaceBrand.locator('.am-site-nav__brand-logo--dark')).toHaveAttribute('src', '/brand/logo-horizontal-white.svg')
     await expect(marketplaceBrand.locator('.am-site-nav__brand-logo--dark')).toBeHidden()
     await expect(page.locator('link[rel="icon"][type="image/svg+xml"]')).toHaveAttribute('href', '/brand/favicon.svg')
@@ -270,6 +272,7 @@ test.describe('Marketplace browser discovery', () => {
     await expect(docsBrand.locator('img.light')).toBeHidden()
     await expect(docsBrand.locator('img.dark')).toHaveAttribute('src', '/docs/brand/logo-horizontal-white.svg')
     await expect(docsBrand.locator('img.dark')).toBeVisible()
+    await expect(docsBrand.locator('img.dark')).toHaveCSS('width', `${sharedLogoWidth}px`)
     await expect(page.locator('link[rel="icon"][type="image/svg+xml"]')).toHaveAttribute('href', '/docs/brand/favicon.svg')
     await expect(docsNav.getByRole('link', { name: 'Marketplace', exact: true })).toHaveAttribute('href', '/')
     await expect(docsNav.getByRole('link', { name: 'Docs', exact: true })).toHaveAttribute('href', '/docs/')

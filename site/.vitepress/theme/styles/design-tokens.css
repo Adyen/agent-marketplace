@@ -1,3 +1,4 @@
+@import "../../../../design/brand.css";
 @import "../../../../design/semantic-colors.css";
 
 /**
@@ -74,6 +75,11 @@
   --am-footer-bg: var(--am-color-footer-bg);
 
   --vp-code-font-size: 13px;
+}
+
+.VPNavBarTitle .logo {
+  width: var(--am-brand-logo-width);
+  height: auto;
 }
 
 .dark {

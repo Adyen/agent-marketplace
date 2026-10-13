@@ -75,8 +75,8 @@ button[role="switch"] {
 
 .am-site-nav__brand-logo {
   display: block;
-  width: 154px;
-  height: 17px;
+  width: var(--am-brand-logo-width);
+  height: auto;
 }
 
 .am-site-nav__brand-logo--dark,
