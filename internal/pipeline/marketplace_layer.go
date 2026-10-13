@@ -315,7 +315,11 @@ func mutateV4MarketplaceLayer(ctx context.Context, repoRoot, localConfigDir, con
 	if absolute, err := filepath.Abs(configPath); err == nil {
 		overlays[filepath.Clean(absolute)] = configEdit.Bytes
 	}
-	finalEC := LoadEffective(ctx, ConfigLoadOnline, config.LoadEffectiveOptions{RepoRoot: repoRoot, LocalConfigDir: localConfigDir, FileOverlays: overlays}, nil)
+	ws, err := workspaceForRoots(repoRoot, localConfigDir)
+	if err != nil {
+		return nil, err
+	}
+	finalEC := LoadEffective(ctx, ConfigLoadOnline, config.LoadEffectiveOptions{RepoRoot: ws.RepoRoot(), LocalConfigDir: ws.LocalConfigDir(), FileOverlays: overlays}, nil)
 	if len(finalEC.Errors) > 0 {
 		return nil, errors.Join(finalEC.Errors...)
 	}

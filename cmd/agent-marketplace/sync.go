@@ -350,8 +350,12 @@ func runSyncWithLocks(ctx context.Context, out io.Writer, noBackup bool, strict 
 }
 
 func configuredSelectionLabels(ctx context.Context, repoRoot, localDir string) []string {
+	ws, err := pipeline.WorkspaceForRoots(repoRoot, localDir)
+	if err != nil {
+		return nil
+	}
 	intent := config.ReadIntent(ctx, config.LoadEffectiveOptions{
-		RepoRoot: repoRoot, LocalConfigDir: localDir,
+		RepoRoot: ws.RepoRoot(), LocalConfigDir: ws.LocalConfigDir(),
 	})
 	seen := make(map[string]struct{})
 	for _, source := range []config.Source{config.Organization, config.UserPersonal, config.RepoCommitted, config.RepoPersonal} {

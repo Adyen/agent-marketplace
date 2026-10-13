@@ -629,7 +629,28 @@ func (r *Resolver) resolvePinWithArtifactPolicy(ctx context.Context, client *Cli
 			return resolver.ResolvedArtifact{}, hccartifact.CanonicalArtifact{}, fmt.Errorf("mark artifact verified: %w", err)
 		}
 	}
+	if resource.Kind() == ir.KindHook {
+		artifact.MarketplaceHookSupport = mirrorHookSupportArtifacts(ca.Support)
+	}
 	return artifact, ca, nil
+}
+
+func mirrorHookSupportArtifacts(support map[string]hccartifact.SupportFile) []hccartifact.Artifact {
+	paths := make([]string, 0, len(support))
+	for relative := range support {
+		paths = append(paths, relative)
+	}
+	sort.Strings(paths)
+	artifacts := make([]hccartifact.Artifact, 0, len(paths))
+	for _, relative := range paths {
+		file := support[relative]
+		mode := os.FileMode(0o644)
+		if file.Executable {
+			mode = 0o755
+		}
+		artifacts = append(artifacts, hccartifact.Artifact{Path: relative, Bytes: bytes.Clone(file.Data), Mode: mode})
+	}
+	return artifacts
 }
 
 func stageMirrorResource(cache *Cache, digest string, resource ir.Resource, ca hccartifact.CanonicalArtifact) (string, error) {

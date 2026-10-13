@@ -20,21 +20,23 @@ import (
 type paletteActionID string
 
 const (
-	actionSearch      paletteActionID = "search"
-	actionClearSearch paletteActionID = "clear-search"
-	actionDetail      paletteActionID = "detail"
-	actionToggle      paletteActionID = "toggle"
-	actionReload      paletteActionID = "reload"
-	actionSync        paletteActionID = "sync"
-	actionUpdate      paletteActionID = "update"
-	actionHarness     paletteActionID = "harness"
-	actionEditConfig  paletteActionID = "edit-config"
-	actionHelp        paletteActionID = "help"
-	actionDiagnostics paletteActionID = "diagnostics"
-	actionFoldToggle  paletteActionID = "fold-toggle"
-	actionFoldAll     paletteActionID = "fold-all"
-	actionExpandAll   paletteActionID = "expand-all"
-	actionQuit        paletteActionID = "quit"
+	actionSearch        paletteActionID = "search"
+	actionClearSearch   paletteActionID = "clear-search"
+	actionDetail        paletteActionID = "detail"
+	actionToggle        paletteActionID = "toggle"
+	actionToggleSection paletteActionID = "toggle-section"
+	actionViewSettings  paletteActionID = "view-settings"
+	actionReload        paletteActionID = "reload"
+	actionSync          paletteActionID = "sync"
+	actionUpdate        paletteActionID = "update"
+	actionHarness       paletteActionID = "harness"
+	actionEditConfig    paletteActionID = "edit-config"
+	actionHelp          paletteActionID = "help"
+	actionDiagnostics   paletteActionID = "diagnostics"
+	actionFoldToggle    paletteActionID = "fold-toggle"
+	actionFoldAll       paletteActionID = "fold-all"
+	actionExpandAll     paletteActionID = "expand-all"
+	actionQuit          paletteActionID = "quit"
 )
 
 // paletteAction pairs a stable identity with the label the fuzzy matcher
@@ -55,7 +57,9 @@ func paletteActions() []paletteAction {
 		{actionSearch, "Search resources", "/"},
 		{actionClearSearch, "Clear search", "esc"},
 		{actionDetail, "View details / toggle fold", "enter"},
-		{actionToggle, "Toggle resource / fold", "space"},
+		{actionToggle, "Toggle resource", "space"},
+		{actionToggleSection, "Toggle all in section", "space"},
+		{actionViewSettings, "View settings (grouping)", "v"},
 		{actionReload, "Reload from disk", "r"},
 		{actionSync, "Sync pending changes", "s"},
 		{actionUpdate, "Update caches", "u"},
@@ -112,6 +116,9 @@ func (m Model) actionEligible(id paletteActionID) bool {
 		return m.filter != ""
 	case actionToggle:
 		return m.paletteToggleable()
+	case actionToggleSection:
+		_, ok := m.selectedSectionPath()
+		return ok && !m.loading && !m.syncing && !m.configInvalid
 	case actionDetail, actionFoldToggle, actionFoldAll, actionExpandAll:
 		return len(m.flatItems) > 0
 	}

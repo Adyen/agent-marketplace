@@ -256,6 +256,9 @@ func (m *Model) invalidateStaleSelection() {
 
 func (m Model) handlePreviewSelection(msg previewSelectionMouseMsg) (tea.Model, tea.Cmd) {
 	snap := msg.snap
+	if next, cmd, handled := m.routeNavigationClick(msg.msg, snap); handled {
+		return next, cmd
+	}
 	if snap.identity == "" || snap.identity != m.previewSelectionIdentity() {
 		m.previewSel = previewSelection{}
 		return m, nil

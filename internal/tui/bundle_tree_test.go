@@ -146,6 +146,7 @@ func TestBundleTreeFileBackedResourceHasOneEntry(t *testing.T) {
 	}
 }
 
+// spec: tui-navigation/authoritative-remote-inspection-paths-remain-unchanged
 func TestBundleTreeUsesAuthoritativeResourceSourcePath(t *testing.T) {
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "SKILL.md"), []byte("# Skill"), 0o644); err != nil {
