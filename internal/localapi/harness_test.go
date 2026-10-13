@@ -403,14 +403,19 @@ func TestLocalAPIUserHarness(t *testing.T) {
 	apiCtx := context.Background()
 	var telemetryHarness *localTelemetryHarness
 	if mode := os.Getenv("AM_LOCALAPI_TELEMETRY_MODE"); mode != "" {
-		orgPath := filepath.Join(t.TempDir(), "org.yaml")
-		writeFile(t, orgPath, "apiVersion: agent-marketplace/v4\ngui:\n  version_check: false\n")
-		config.SetTestOrganizationConfigPath(t, orgPath)
-		bootstrap["orgConfig"] = orgPath
+		if work40Fixture == nil {
+			orgPath := filepath.Join(t.TempDir(), "org.yaml")
+			writeFile(t, orgPath, "apiVersion: agent-marketplace/v4\ngui:\n  version_check: false\n")
+			config.SetTestOrganizationConfigPath(t, orgPath)
+			bootstrap["orgConfig"] = orgPath
+		}
 		var telemetrySetupErr error
 		apiCtx, telemetryHarness, telemetrySetupErr = newLocalTelemetryHarness(t, home, mode, os.Getenv("AM_LOCALAPI_TELEMETRY_CAPTURE"))
 		if telemetrySetupErr != nil {
 			t.Fatal("setup private telemetry harness")
+		}
+		if work40Fixture != nil {
+			work40Fixture.protected = captureWork40ProtectedFiles(t, work40Fixture)
 		}
 	}
 	api, err := NewUser(apiCtx, home, lifecycle, nil, WithVersion(os.Getenv("AM_LOCALAPI_RELEASE_VERSION")))
@@ -430,6 +435,70 @@ func TestLocalAPIUserHarness(t *testing.T) {
 	}
 	if work40Fixture != nil {
 		assertWork40ProtectedFilesUnchanged(t, work40Fixture.protected)
+	}
+	if work40Fixture != nil && telemetryHarness != nil {
+		events := streamEvents(t, api)
+		waitForInspectionFinal(t, api, events)
+		api.mu.Lock()
+		if api.current == nil || api.current.Stage != "final" {
+			api.mu.Unlock()
+			t.Fatal("Work40 telemetry fixture did not settle an authoritative snapshot")
+		}
+		var review rowDTO
+		reviewMatches := 0
+		rowValues := make([]string, 0, len(api.current.Rows)*2)
+		for _, row := range api.current.Rows {
+			if row.ID != "" {
+				rowValues = append(rowValues, row.ID)
+			}
+			if row.Name != "" {
+				rowValues = append(rowValues, row.Name)
+			}
+			if row.Name == "review" && row.Kind == "skill" && !row.Discovery {
+				review = row
+				reviewMatches++
+			}
+		}
+		api.mu.Unlock()
+		if reviewMatches != 1 {
+			t.Fatal("Work40 telemetry fixture did not expose one current review skill")
+		}
+		planRequest, err := json.Marshal(struct {
+			RowID string `json:"rowId"`
+		}{RowID: review.ID})
+		if err != nil {
+			t.Fatal("encode private telemetry preview check plan request")
+		}
+		planStatus, planResponse := sendTelemetryRequest(t, api, http.MethodPost, "/api/resource-plan", string(planRequest), true, false)
+		if planStatus != http.StatusOK {
+			t.Fatal("Work40 telemetry privacy fixture could not read the current static plan")
+		}
+		var plan struct {
+			Preview string `json:"preview"`
+		}
+		if err := json.Unmarshal(planResponse, &plan); err != nil || plan.Preview == "" {
+			t.Fatal("Work40 telemetry privacy fixture had no static preview")
+		}
+		telemetryHarness.privateValues = append([]string{
+			api.Credential(),
+			work40Fixture.home,
+			work40Fixture.repo,
+			work40Fixture.userConfigPath,
+			work40Fixture.userFragmentPath,
+			work40Fixture.userLockPath,
+			work40Fixture.orgConfigPath,
+			work40Fixture.orgLockPath,
+			work40Fixture.registryDir,
+			work40Fixture.reviewSourcePath,
+			work40Fixture.nextSourcePath,
+			work40Fixture.reviewMaterialized,
+			work40Fixture.nextMaterialized,
+			work40Fixture.unrelatedMaterialized,
+			plan.Preview,
+		}, rowValues...)
+		if len(telemetryHarness.privateValues) < 6 {
+			t.Fatal("Work40 telemetry raw-payload privacy guard was not populated")
+		}
 	}
 	if work37Fixture != nil {
 		events := streamEvents(t, api)

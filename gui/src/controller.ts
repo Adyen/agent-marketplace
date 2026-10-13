@@ -435,6 +435,15 @@ export class WorkspaceController {
     this.state.resourceAction = null
   }
 
+  dismissResourceAction(): void {
+    const current = this.state.resourceAction
+    if (this.disposed || this.resourceActionPosting || current == null) {
+      return
+    }
+    this.reportTelemetry({ action: 'modal_outcome', modal: 'toggle', outcome: 'cancelled', rowId: current.rowId })
+    this.cancelResourceAction()
+  }
+
   async confirmResourceAction(): Promise<boolean> {
     const current = this.state.resourceAction
     const plan = current?.plan ?? null

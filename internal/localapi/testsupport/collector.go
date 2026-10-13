@@ -272,7 +272,7 @@ func safeTelemetryAttribute(key, value string) bool {
 			return true
 		}
 	case "modal":
-		return value == "sync+quit"
+		return value == "sync+quit" || value == "toggle"
 	case "outcome":
 		return value == "cancelled"
 	case "harnesses":

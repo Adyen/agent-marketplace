@@ -2372,4 +2372,155 @@ describe('Event stream reconnect', () => {
       expect(client.inspection).not.toHaveBeenCalled()
     })
   })
+
+  describe('Resource cancellation telemetry', () => {
+    async function mountWork41ResourceAction() {
+      const resource = work39Row('review', 'opaque-work41-directory-review', 'install', {
+        scope: 'available',
+        group: 'available',
+        status: 'available',
+        checked: false,
+        discovery: false,
+      })
+      const { client, push } = fakeClient()
+      let generation = 1
+      vi.mocked(client.resourcePlan).mockImplementation(async (rowId) => work39Plan(rowId, generation, 'install'))
+      const { controller, wrapper } = mountWorkspace(client)
+      push(work39SnapshotEvent(1, 1, [resource]))
+      await tick()
+      expect(client.telemetry).not.toHaveBeenCalled()
+      return { client, controller, push, resource, wrapper, setGeneration: (value: number) => { generation = value } }
+    }
+
+    async function openWork41InstallPlan(wrapper: ReturnType<typeof mountWorkspace>['wrapper']): Promise<HTMLElement> {
+      await wrapper.get('button[aria-label="Install Resource"]').trigger('click')
+      await tick()
+      const dialog = document.body.querySelector('[role="dialog"]') as HTMLElement | null
+      if (dialog == null) {
+        throw new Error('Work41 resource action dialog was not rendered')
+      }
+      return dialog
+    }
+
+    // spec: gui-shell/gui-actions-use-existing-telemetry-policy
+    it('emits one toggle-cancel event for explicit Cancel, Decline, and Escape dismissal', async () => {
+      const { client, controller, resource, wrapper } = await mountWork41ResourceAction()
+      const expectedEvent = {
+        action: 'modal_outcome' as const,
+        modal: 'toggle' as const,
+        outcome: 'cancelled' as const,
+        rowId: resource.id,
+      }
+
+      let dialog = await openWork41InstallPlan(wrapper)
+      const cancel = dialog.querySelector('button[aria-label="Cancel"]') as HTMLButtonElement | null
+      if (cancel == null) {
+        throw new Error('Work41 Cancel button was not rendered')
+      }
+      cancel.click()
+      await tick()
+      expect(controller.state.resourceAction).toBeNull()
+      expect(client.telemetry).toHaveBeenNthCalledWith(1, expectedEvent)
+      expect(client.resourceAction).not.toHaveBeenCalled()
+
+      dialog = await openWork41InstallPlan(wrapper)
+      const decline = dialog.querySelector('button[aria-label="Decline"]') as HTMLButtonElement | null
+      if (decline == null) {
+        throw new Error('Work41 Decline button was not rendered')
+      }
+      decline.click()
+      await tick()
+      expect(controller.state.resourceAction).toBeNull()
+      expect(client.telemetry).toHaveBeenNthCalledWith(2, expectedEvent)
+      expect(client.resourceAction).not.toHaveBeenCalled()
+
+      await openWork41InstallPlan(wrapper)
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+      await tick()
+      expect(controller.state.resourceAction).toBeNull()
+      expect(client.telemetry).toHaveBeenNthCalledWith(3, expectedEvent)
+      expect(client.telemetry).toHaveBeenCalledTimes(3)
+      expect(client.resourceAction).not.toHaveBeenCalled()
+    })
+
+    // spec: session-interactions/cancel-or-stale-completion
+    it('keeps internal cancellation, retry, row/generation invalidation, and disposal telemetry-silent', async () => {
+      const { client, controller, push, resource, setGeneration } = await mountWork41ResourceAction()
+      vi.mocked(client.resourcePlan).mockRejectedValueOnce(new Error('plan unavailable'))
+      controller.openResourceAction(resource.id)
+      await tick()
+      expect(controller.state.resourceAction?.error).not.toBeNull()
+      controller.retryResourceActionPlan()
+      await tick()
+      expect(controller.state.resourceAction?.plan).not.toBeNull()
+      controller.cancelResourceAction()
+      await tick()
+      expect(client.telemetry).not.toHaveBeenCalled()
+
+      controller.openResourceAction(resource.id)
+      await tick()
+      setGeneration(2)
+      push(work39SnapshotEvent(2, 2, [resource]))
+      await tick()
+      expect(controller.state.resourceAction).toBeNull()
+      expect(client.telemetry).not.toHaveBeenCalled()
+
+      controller.openResourceAction(resource.id)
+      await tick()
+      push(work39SnapshotEvent(3, 2, [{ ...resource, resourceAction: 'none' }]))
+      await tick()
+      expect(controller.state.resourceAction).toBeNull()
+      expect(client.telemetry).not.toHaveBeenCalled()
+
+      setGeneration(3)
+      push(work39SnapshotEvent(4, 3, [resource]))
+      await tick()
+      controller.openResourceAction(resource.id)
+      await tick()
+      controller.dispose()
+      await tick()
+      expect(controller.state.resourceAction).toBeNull()
+      expect(client.telemetry).not.toHaveBeenCalled()
+    })
+
+    // spec: gui-shell/gui-actions-use-existing-telemetry-policy
+    it('makes public dismissal idempotent and silent while posting or disposed', async () => {
+      const { client, controller, resource, wrapper } = await mountWork41ResourceAction()
+      const expectedEvent = {
+        action: 'modal_outcome' as const,
+        modal: 'toggle' as const,
+        outcome: 'cancelled' as const,
+        rowId: resource.id,
+      }
+      await openWork41InstallPlan(wrapper)
+      controller.dismissResourceAction()
+      controller.dismissResourceAction()
+      await tick()
+      expect(client.telemetry).toHaveBeenCalledTimes(1)
+      expect(client.telemetry).toHaveBeenCalledWith(expectedEvent)
+
+      const actionRequest = deferred<OperationRef>()
+      vi.mocked(client.resourceAction).mockReturnValue(actionRequest.promise)
+      const dialog = await openWork41InstallPlan(wrapper)
+      const confirm = dialog.querySelector('button[aria-label="Confirm install"]') as HTMLButtonElement | null
+      if (confirm == null) {
+        throw new Error('Work41 Confirm install button was not rendered')
+      }
+      confirm.click()
+      await tick()
+      expect(controller.resourceActionSubmitting).toBe(true)
+      controller.dismissResourceAction()
+      await tick()
+      expect(client.telemetry).toHaveBeenCalledTimes(1)
+      expect(controller.state.resourceAction?.loading).toBe(true)
+
+      actionRequest.resolve({ id: 91, kind: 'mutation' })
+      await tick()
+      expect(controller.state.resourceAction).toBeNull()
+      expect(client.telemetry).toHaveBeenCalledTimes(1)
+      controller.dispose()
+      controller.dismissResourceAction()
+      expect(client.telemetry).toHaveBeenCalledTimes(1)
+    })
+  })
 })
