@@ -39,7 +39,7 @@ Consumers can only use a tag after you push it.
 
 A consumer whose source has `ref: v1.4.0` stays on that tag until the ref changes. Plain `agent-marketplace update` does not change it. The consumer has two options:
 
-- Edit `ref:` in their configuration file to `v1.5.0` and run `agent-marketplace sync`. Sync updates the [lockfile](../../glossary.md#lockfile) to match.
+- Edit `ref:` in their configuration file to `v1.5.0` and run `agent-marketplace sync`. Sync prints its usual summary, such as `Installed 12  Removed 0  Malformed 0  Errors 0` (counts vary), and updates the [lockfile](../../glossary.md#lockfile) to the new tag.
 - Run `agent-marketplace update --bump`. It rewrites a Git source ref only when the ref ends in a number, and only to the tag that shares the same prefix and has the greatest trailing number. `v1.4.0` can move to `v1.4.1` or `v1.4.7`, but never to `v1.5.0`. A ref such as `v1` can move to `v2`.
 
 So `--bump` reaches patch releases of a full version tag, not minor or major releases. It rewrites refs declared in the root of a writable configuration file, v4 `sources:` included; a ref declared in an included file is reported as skipped and left unchanged. A local `directory` source never bumps. Typical output:

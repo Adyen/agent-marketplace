@@ -26,6 +26,8 @@ resources:
 EOF
 ```
 
+The commands succeed silently and create `collections/platform-onboarding/COLLECTION.yaml`.
+
 Consumers install the collection by its `name`. Members without a `registry` field come from the same registry as the collection. `kind` defaults to `skill` and accepts `skill`, `command`, `subagent`, `hook`, or `mcp`. The CLI skips a flat file such as `collections/platform-onboarding.yaml`.
 
 ## 2. Add members from another registry (optional)

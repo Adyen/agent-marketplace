@@ -18,7 +18,7 @@ BIN_DIR="$(mktemp -d)"
 export PATH="$BIN_DIR:$PATH"
 ```
 
-Both commands succeed silently. Then download the release asset for the pinned version:
+The three prep commands succeed silently. Then download the release asset for the pinned version:
 
 ```bash
 # Download a pinned release binary (Linux runner example)
@@ -38,7 +38,7 @@ git clone --depth 1 --branch v4.1.3 https://github.com/Adyen/agent-marketplace.g
 agent-marketplace --version
 ```
 
-`curl`, `chmod`, and `go build` succeed silently; `git clone` prints progress lines. Either way, the last command prints `v4.1.3`. The `-ldflags` value makes `agent-marketplace --version` print the tag; without it the binary prints a Go pseudo-version. The runner removes the `mktemp` directories when the job ends. There is no Windows build.
+`curl`, `chmod`, and `go build` succeed silently; `git clone` prints progress lines. Either way, the last command prints `v4.1.3`. The `-ldflags` value makes `agent-marketplace --version` print the tag; without it the binary prints a Go pseudo-version. Remove the `mktemp` directories at the end of the job unless your runner cleans its workspace; both hold only files this job created. There is no Windows build.
 
 ## 2. Point a throwaway consumer at the checkout
 
@@ -109,7 +109,7 @@ REGISTRY               KIND   NAME         TAGS (metadata)  STATUS
 <registry-directory>   skill  code-review  review,quality   available
 ```
 
-Check a row for every resource you expect: compare the printed `NAME` and `KIND` values against a checked-in list of expected resources. A resource placed in a directory that the layout does not read is absent from the table, so the job fails instead of silently shipping without it.
+Check a row for every resource you expect: compare the printed `NAME` and `KIND` values against a checked-in list of expected resources, and make that comparison exit nonzero when an expected resource is missing. `list` exits `0` whether or not the table contains the row, so without the check a resource placed in a directory the layout does not read would silently ship missing.
 
 ## Troubleshooting
 
