@@ -66,17 +66,26 @@ button[role="switch"] {
 }
 
 .am-site-nav__brand {
+  display: inline-flex;
+  align-items: center;
   flex: 0 1 auto;
   min-width: 0;
-  color: var(--am-color-text-primary);
-  font-size: 16px;
-  font-weight: var(--am-font-semibold);
-  line-height: 1;
   text-decoration: none;
 }
 
-.am-site-nav__brand:hover {
-  color: var(--am-color-action-primary);
+.am-site-nav__brand-logo {
+  display: block;
+  width: 154px;
+  height: 17px;
+}
+
+.am-site-nav__brand-logo--dark,
+.dark .am-site-nav__brand-logo--light {
+  display: none;
+}
+
+.dark .am-site-nav__brand-logo--dark {
+  display: block;
 }
 
 .am-site-nav__actions,
