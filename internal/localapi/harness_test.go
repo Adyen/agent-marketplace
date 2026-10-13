@@ -1,6 +1,7 @@
 package localapi
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -8,6 +9,8 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/http/httputil"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -27,20 +30,24 @@ import (
 
 func serveHarness(t *testing.T, api *API, bootstrapFields map[string]string) {
 	t.Helper()
+	loopback, err := api.ListenLoopback(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = loopback.Close() }()
+	serveHarnessAt(t, loopback.URL, api.Credential(), bootstrapFields)
+}
+
+func serveHarnessAt(t *testing.T, serverURL, credential string, bootstrapFields map[string]string) {
+	t.Helper()
 	bootstrap := os.NewFile(3, "bootstrap")
 	if bootstrap == nil {
 		t.Fatal("fd 3 bootstrap pipe is required")
 	}
 	defer func() { _ = bootstrap.Close() }()
 
-	loopback, err := api.ListenLoopback(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = loopback.Close() }()
-
-	bootstrapFields["url"] = loopback.URL
-	bootstrapFields["credential"] = api.Credential()
+	bootstrapFields["url"] = serverURL
+	bootstrapFields["credential"] = credential
 	line, err := json.Marshal(bootstrapFields)
 	if err != nil {
 		t.Fatal(err)
@@ -66,6 +73,154 @@ func serveHarness(t *testing.T, api *API, bootstrapFields map[string]string) {
 	}
 }
 
+type work39FinalEventBarrier struct {
+	reached     chan struct{}
+	released    chan struct{}
+	reachedOnce sync.Once
+	releaseOnce sync.Once
+}
+
+func newWork39FinalEventBarrier() *work39FinalEventBarrier {
+	return &work39FinalEventBarrier{reached: make(chan struct{}), released: make(chan struct{})}
+}
+
+func (b *work39FinalEventBarrier) hold(ctx context.Context) bool {
+	b.reachedOnce.Do(func() { close(b.reached) })
+	select {
+	case <-b.released:
+		return true
+	case <-ctx.Done():
+		return false
+	}
+}
+
+func (b *work39FinalEventBarrier) release() {
+	b.releaseOnce.Do(func() { close(b.released) })
+}
+
+func serveWork39Harness(t *testing.T, api *API, bootstrapFields map[string]string) {
+	t.Helper()
+	loopback, err := api.ListenLoopback(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = loopback.Close() }()
+	target, err := url.Parse(loopback.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	barrier := newWork39FinalEventBarrier()
+	backend := httputil.NewSingleHostReverseProxy(target)
+	backend.Transport = &work39LoopbackTransport{base: http.DefaultTransport, target: target, barrier: barrier}
+	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/_work39/wait-final" && r.Method == http.MethodGet:
+			select {
+			case <-barrier.reached:
+				w.WriteHeader(http.StatusNoContent)
+			case <-r.Context().Done():
+			}
+		case r.URL.Path == "/_work39/release-final" && r.Method == http.MethodPost:
+			barrier.release()
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			backend.ServeHTTP(w, r)
+		}
+	}))
+	defer proxy.Close()
+	bootstrapFields["resourceActionBarrierWaitURL"] = proxy.URL + "/_work39/wait-final"
+	bootstrapFields["resourceActionBarrierReleaseURL"] = proxy.URL + "/_work39/release-final"
+	serveHarnessAt(t, proxy.URL, api.Credential(), bootstrapFields)
+}
+
+type work39LoopbackTransport struct {
+	base    http.RoundTripper
+	target  *url.URL
+	barrier *work39FinalEventBarrier
+}
+
+func (t *work39LoopbackTransport) RoundTrip(request *http.Request) (*http.Response, error) {
+	outbound := request.Clone(request.Context())
+	outbound.Header = request.Header.Clone()
+	outbound.URL.Scheme = t.target.Scheme
+	outbound.URL.Host = t.target.Host
+	outbound.Host = t.target.Host
+	outbound.Header.Set("Origin", t.target.String())
+	outbound.RequestURI = ""
+	response, err := t.base.RoundTrip(outbound)
+	if err == nil && request.URL.Path == "/api/events" {
+		response.Body = &work39FinalEventBody{
+			body:    response.Body,
+			reader:  bufio.NewReader(response.Body),
+			context: request.Context(),
+			barrier: t.barrier,
+		}
+	}
+	return response, err
+}
+
+type work39FinalEventBody struct {
+	body    io.ReadCloser
+	reader  *bufio.Reader
+	context context.Context
+	barrier *work39FinalEventBarrier
+	pending []byte
+}
+
+func (b *work39FinalEventBody) Read(p []byte) (int, error) {
+	if len(p) == 0 {
+		return 0, nil
+	}
+	if len(b.pending) == 0 {
+		frame, err := b.nextFrame()
+		if len(frame) == 0 && err != nil {
+			return 0, err
+		}
+		if work39FinalMutationEvent(frame) && !b.barrier.hold(b.context) {
+			return 0, b.context.Err()
+		}
+		b.pending = frame
+	}
+	n := copy(p, b.pending)
+	b.pending = b.pending[n:]
+	return n, nil
+}
+
+func (b *work39FinalEventBody) nextFrame() ([]byte, error) {
+	var frame []byte
+	for {
+		line, err := b.reader.ReadBytes('\n')
+		frame = append(frame, line...)
+		if bytes.HasSuffix(frame, []byte("\n\n")) || bytes.HasSuffix(frame, []byte("\r\n\r\n")) {
+			return frame, nil
+		}
+		if err != nil {
+			return frame, err
+		}
+	}
+}
+
+func (b *work39FinalEventBody) Close() error {
+	return b.body.Close()
+}
+
+func work39FinalMutationEvent(frame []byte) bool {
+	data := bytes.TrimSpace(bytes.TrimPrefix(bytes.TrimSpace(frame), []byte("data:")))
+	var event struct {
+		Type    string `json:"type"`
+		Payload struct {
+			Stage            string `json:"stage"`
+			SettledOperation *struct {
+				Kind string `json:"kind"`
+			} `json:"settledOperation"`
+		} `json:"payload"`
+	}
+	if json.Unmarshal(data, &event) != nil {
+		return false
+	}
+	return event.Type == "snapshot" && event.Payload.Stage == "final" && event.Payload.SettledOperation != nil && event.Payload.SettledOperation.Kind == string(session.OperationMutation)
+}
+
 func TestLocalAPIHarness(t *testing.T) {
 	if os.Getenv("AM_LOCALAPI_E2E") != "1" {
 		t.Skip("real-core harness; enabled only by the Playwright E2E driver")
@@ -85,7 +240,7 @@ func TestLocalAPIUserHarness(t *testing.T) {
 	}
 	fixture := os.Getenv("AM_LOCALAPI_USER_FIXTURE")
 	var discoveryCounterWriteFailed atomic.Bool
-	home, repo := newUserAPIFixture(t, fixture != "first-run")
+	home, repo := newUserAPIFixture(t, fixture != "first-run" && fixture != "work39-resource-actions")
 	var orgConfigPath string
 	if fixture == "first-run" {
 		if err := os.MkdirAll(filepath.Join(home, ".factory"), 0o755); err != nil {
@@ -127,6 +282,20 @@ func TestLocalAPIUserHarness(t *testing.T) {
 	if fixture == "work37-installed" || fixture == "work37-installed-missing" {
 		work37Fixture = setupWork37InstalledFixture(t, home, bootstrap, true)
 		orgConfigPath = bootstrap["orgConfig"]
+	}
+	var work39Fixture *work39MarketplaceFixture
+	if fixture == "work39-resource-actions" {
+		mode := work39InitialMode(os.Getenv("AM_LOCALAPI_USER_INITIAL_MODE"))
+		required := os.Getenv("AM_LOCALAPI_USER_ORG_REQUIRED") == "1"
+		risk := os.Getenv("AM_LOCALAPI_USER_RISK") == "1"
+		work39Fixture = setupWork39MarketplaceFixture(t, home, repo, bootstrap, mode, required, risk)
+		orgConfigPath = work39Fixture.orgConfigPath
+		bootstrap["resourceActionUserConfig"] = work39Fixture.userConfigPath
+		bootstrap["resourceActionUserLock"] = work39Fixture.userLockPath
+		bootstrap["resourceActionOrgConfig"] = work39Fixture.orgConfigPath
+		bootstrap["resourceActionOrgLock"] = work39Fixture.orgLockPath
+		bootstrap["resourceActionMaterialized"] = work39Fixture.materializedPath
+		bootstrap["resourceActionUnrelatedMaterialized"] = work39Fixture.unrelatedMaterialized
 	}
 	if orgConfigPath != "" {
 		bootstrap["orgConfig"] = orgConfigPath
@@ -284,7 +453,14 @@ func TestLocalAPIUserHarness(t *testing.T) {
 	if marker := os.Getenv("AM_LOCALAPI_RELEASE_MARK"); marker != "" {
 		api.releaseClient.Transport = releaseHarnessTransport(marker, os.Getenv("AM_LOCALAPI_RELEASE_STATUS"), os.Getenv("AM_LOCALAPI_RELEASE_BODY"))
 	}
-	serveHarness(t, api, bootstrap)
+	if work39Fixture != nil {
+		serveWork39Harness(t, api, bootstrap)
+	} else {
+		serveHarness(t, api, bootstrap)
+	}
+	if work39Fixture != nil {
+		assertWork39ProtectedFilesUnchangedExcept(t, work39Fixture.protected, work39Fixture.userConfigPath, work39Fixture.userLockPath, work39Fixture.materializedPath)
+	}
 	if fixture == "work36-inspection" {
 		assertInspectionFilesUnchanged(t, work36Protected)
 	}

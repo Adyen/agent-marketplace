@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { createClient, EventCursor, RequestError } from './client'
-import type { SessionEvent, Snapshot } from './client'
+import type { ResourceActionPlan, SessionEvent, Snapshot } from './client'
 
 function snapshotEvent(sequence: number, generation: number, stage = 'final', operation: number | null = null): SessionEvent {
   const ref = operation == null ? null : { id: operation, kind: 'sync' as const }
@@ -33,6 +33,7 @@ function snapshotEvent(sequence: number, generation: number, stage = 'final', op
           discovery: false,
           inspectable: false,
           installedFiles: false,
+          resourceAction: 'none',
         },
       ],
       groups: [
@@ -436,6 +437,68 @@ describe('createClient', () => {
         token: 'secret-token',
         body: JSON.stringify({ rowId: 'row-installed' }),
         signal: undefined,
+      },
+    ])
+  })
+
+  // spec: session-interactions/guarded-submission
+  it('posts a row-only resource plan and forwards its abort signal', async () => {
+    const calls: { url: string; method: string; token: string | null; body: string | null; signal?: AbortSignal }[] = []
+    const plan: ResourceActionPlan = {
+      rowId: 'row-opaque',
+      generation: 42,
+      planId: 'a'.repeat(64),
+      action: 'install',
+      preview: 'Marketplace install preview',
+      requiresRiskAcceptance: true,
+    }
+    const fetcher: typeof fetch = async (input, init) => {
+      calls.push({
+        url: String(input),
+        method: init?.method ?? '',
+        token: new Headers(init?.headers).get('X-Agent-Marketplace-Token'),
+        body: init?.body == null ? null : String(init.body),
+        signal: init?.signal as AbortSignal | undefined,
+      })
+      return new Response(JSON.stringify(plan), { status: 200 })
+    }
+    const client = createClient('http://127.0.0.1:9999', 'secret-token', fetcher)
+    const signal = new AbortController().signal
+    await expect(client.resourcePlan('row-opaque', signal)).resolves.toEqual(plan)
+    expect(calls).toEqual([
+      {
+        url: 'http://127.0.0.1:9999/api/resource-plan',
+        method: 'POST',
+        token: 'secret-token',
+        body: '{"rowId":"row-opaque"}',
+        signal,
+      },
+    ])
+  })
+
+  // spec: session-interactions/guarded-submission
+  it('posts the exact one-shot resource action body and returns its operation', async () => {
+    const calls: { url: string; method: string; token: string | null; body: string | null; signal?: AbortSignal }[] = []
+    const fetcher: typeof fetch = async (input, init) => {
+      calls.push({
+        url: String(input),
+        method: init?.method ?? '',
+        token: new Headers(init?.headers).get('X-Agent-Marketplace-Token'),
+        body: init?.body == null ? null : String(init.body),
+        signal: init?.signal as AbortSignal | undefined,
+      })
+      return new Response(JSON.stringify({ operation: { id: 55, kind: 'mutation' } }), { status: 202 })
+    }
+    const client = createClient('http://127.0.0.1:9999', 'secret-token', fetcher)
+    const signal = new AbortController().signal
+    await expect(client.resourceAction('row-opaque', 'b'.repeat(64), false, signal)).resolves.toEqual({ id: 55, kind: 'mutation' })
+    expect(calls).toEqual([
+      {
+        url: 'http://127.0.0.1:9999/api/resource-actions',
+        method: 'POST',
+        token: 'secret-token',
+        body: '{"rowId":"row-opaque","planId":"' + 'b'.repeat(64) + '","acceptRisk":false}',
+        signal,
       },
     ])
   })

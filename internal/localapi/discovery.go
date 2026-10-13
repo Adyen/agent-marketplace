@@ -504,7 +504,7 @@ func (a *API) publishDiscoveryLocked() {
 	rows := session.MergeDiscoveryRows(a.authoritativeRows, a.provisionalRows, a.discovery.rows)
 	projected := make([]rowDTO, 0, len(rows))
 	for _, row := range rows {
-		projected = append(projected, rowPresentation(row))
+		projected = append(projected, a.resourceRowPresentation(row))
 	}
 	health := append([]discoveryHealthDTO{}, a.discovery.health...)
 	payload := discoveryEventPayload{

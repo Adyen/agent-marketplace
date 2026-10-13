@@ -44,7 +44,8 @@ body {
   padding: 0.375rem 0.875rem;
 }
 
-.workspace__actions button:disabled {
+.workspace__actions button:disabled,
+.workspace__open-resource:disabled {
   cursor: default;
   opacity: 0.5;
 }
@@ -278,6 +279,32 @@ body {
   .resource-inspection__columns {
     grid-template-columns: minmax(0, 1fr);
   }
+}
+
+.resource-actions {
+  display: grid;
+  gap: 1rem;
+  min-width: 0;
+  padding: 1rem;
+}
+
+.resource-actions__preview {
+  background: var(--am-color-bg-subtle);
+  border: 1px solid var(--am-color-border-default);
+  border-radius: 4px;
+  margin: 0;
+  max-height: min(24rem, 60vh);
+  overflow: auto;
+  overflow-wrap: anywhere;
+  padding: 0.75rem;
+  user-select: text;
+  white-space: pre-wrap;
+}
+
+.resource-actions__risk {
+  align-items: flex-start;
+  display: flex;
+  gap: 0.5rem;
 }
 
 .workspace__discovery-health ul {
