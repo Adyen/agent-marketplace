@@ -320,7 +320,7 @@ func snapshotAcceptanceError(msg snapshotLoadedMsg) error {
 		return errors.Join(hardErrors...)
 	}
 	if msg.driftAssessment != driftReady {
-		return errors.New("authoritative state could not be verified")
+		return errResourceStateUnverified
 	}
 	return nil
 }
