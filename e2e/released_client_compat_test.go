@@ -11,11 +11,11 @@ import (
 // releasedClientArch maps the checksum of each pinned latest-release Linux
 // asset to its architecture. Bump these, the CI download, and the version
 // label after every stable release.
-const releasedClientVersion = "v4.1.1"
+const releasedClientVersion = "v4.1.3"
 
 var releasedClientArch = map[string]string{
-	"188f48669e15bdd8286c25cc43f601afc2bae9408ee26ebca9d47bfd7bc573cc": "amd64",
-	"d8523397babe0fa057f8a46749d1e3bdba959409d5eae5fc0feced1e3f1de85b": "arm64",
+	"f29846a258081d2789d07263a5b5919a770c631f6c8dec69ed5c7e0f0fc59aeb": "amd64",
+	"e4bca90471bd1b8f0cef82c804c9755fd5d27a92065584e837c47cbf227ea02a": "arm64",
 }
 
 // Each actor has its own HOME and checkout. Only committed configuration and
@@ -56,6 +56,15 @@ func TestReleasedClientReadsCandidateCommittedState(t *testing.T) {
 		t.Helper()
 		return world.must(homes[executable], workspaces[executable], executable, args...)
 	}
+	lockPath := filepath.Join(candidateWorkspace, ".agents", "lock.yaml")
+	readLock := func() []byte {
+		t.Helper()
+		lock, err := os.ReadFile(lockPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return lock
+	}
 	// Teammates and CI fetch the committed exact snapshot with --locked; the
 	// check-only mode is deliberately offline and runs afterwards.
 	releasedReads := func(after string) {
@@ -75,15 +84,6 @@ func TestReleasedClientReadsCandidateCommittedState(t *testing.T) {
 				t.Fatalf("%s %v changed committed lock after %s: %v", releasedClientVersion, args, after, err)
 			}
 		}
-	}
-	lockPath := filepath.Join(candidateWorkspace, ".agents", "lock.yaml")
-	readLock := func() []byte {
-		t.Helper()
-		lock, err := os.ReadFile(lockPath)
-		if err != nil {
-			t.Fatal(err)
-		}
-		return lock
 	}
 	must(released, "init", "--harnesses", "factory")
 	repoConfig := fmt.Sprintf("apiVersion: agent-marketplace/v2\nregistries:\n  - url: %s\n    ref: main\n    skills:\n      include: [review]\n", registry.URL)

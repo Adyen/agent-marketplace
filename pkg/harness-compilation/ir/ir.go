@@ -316,16 +316,17 @@ func (s *Subagent) SetName(name string) { s.name = name }
 
 // Hook represents a compilable hook resource.
 type Hook struct {
-	name    string         // Unique kebab-case name
-	Event   string         // Triggering event (e.g. "PreToolUse", "UserPromptSubmit")
-	Matcher string         // Optional tool matcher for tool-specific events
-	Command string         // Shell command to run
-	Prompt  string         // Prompt payload for prompt hooks
-	Timeout *int           // Optional timeout in seconds; nil means absent
-	Type    string         // Hook type (e.g. "command" or "prompt")
-	Ext     extpkg.Bag     // Optional target-specific sidecars
-	Extra   map[string]any // Preserved unknown fields
-	Source  SourceRef      // Origin in the source bundle
+	name       string         // Unique kebab-case name
+	Event      string         // Triggering event (e.g. "PreToolUse", "UserPromptSubmit")
+	Matcher    string         // Optional tool matcher for tool-specific events
+	Command    string         // Shell command to run
+	Prompt     string         // Prompt payload for prompt hooks
+	Timeout    *int           // Optional timeout in seconds; nil means absent
+	Type       string         // Hook type (e.g. "command" or "prompt")
+	HookSource string         `json:"HookSource,omitempty"` // Harness whose native event/matcher/env values the hook carries; empty means canonical
+	Ext        extpkg.Bag     // Optional target-specific sidecars
+	Extra      map[string]any // Preserved unknown fields
+	Source     SourceRef      // Origin in the source bundle
 }
 
 // HookOption customizes the additive hook fields.
@@ -339,6 +340,10 @@ func WithHookTimeout(v int) HookOption { return func(h *Hook) { h.Timeout = &v }
 
 // WithHookTimeoutPtr sets the hook timeout pointer.
 func WithHookTimeoutPtr(v *int) HookOption { return func(h *Hook) { h.Timeout = v } }
+
+// WithHookSource records the harness whose native event, matcher, and env
+// values the hook carries; empty means the canonical vocabulary.
+func WithHookSource(v string) HookOption { return func(h *Hook) { h.HookSource = v } }
 
 // WithHookWindsurfSidecar preserves Windsurf-native hook fields during ingestion.
 func WithHookWindsurfSidecar(v *extpkg.Windsurf) HookOption {

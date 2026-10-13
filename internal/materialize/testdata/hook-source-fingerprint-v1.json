@@ -1,0 +1,256 @@
+{
+  "version": 1,
+  "algorithm": "sha256 over b\"hook-source/v1\\x00\" then length-prefixed fields in order: source_identity, installed_name, target, scope, source-layout-relative definition path, definition bytes, then each regular file below the definition directory (excluding the definition itself) sorted by slash-relative path contributing path, mode as %04o, bytes. Each field x is encoded as len(x) + ':' + x.",
+  "cases": [
+    {
+      "name": "claude-repository-git",
+      "source_identity": "git:https://github.com/example/registry.git@v1.2.3:plugins/deploy",
+      "installed_name": "deploy",
+      "target": "claude",
+      "scope": "repository",
+      "definition": {
+        "path": "hooks/hooks.json",
+        "bytes_b64": "eyJob29rcyI6eyJQcmVUb29sVXNlIjpbeyJtYXRjaGVyIjoiQmFzaCIsImhvb2tzIjpbeyJ0eXBlIjoiY29tbWFuZCIsImNvbW1hbmQiOiIuL3J1bi5zaCJ9XX1dfX0="
+      },
+      "support": [
+        {
+          "path": "run.sh",
+          "mode": "0755",
+          "bytes_b64": "IyEvYmluL3NoCmVjaG8gZGVwbG95Cg=="
+        },
+        {
+          "path": "docs/README.md",
+          "mode": "0644",
+          "bytes_b64": "IyBkZXBsb3kgaG9vawo="
+        }
+      ],
+      "digest": "sha256:a9afa2c16e48376481f71e9de3faac33b11ac884703c3a8ede4fd4ea3c4b78d5"
+    },
+    {
+      "name": "claude-machine-git",
+      "source_identity": "git:https://github.com/example/registry.git@v1.2.3:plugins/deploy",
+      "installed_name": "deploy",
+      "target": "claude",
+      "scope": "machine",
+      "definition": {
+        "path": "hooks/hooks.json",
+        "bytes_b64": "eyJob29rcyI6eyJQcmVUb29sVXNlIjpbeyJtYXRjaGVyIjoiQmFzaCIsImhvb2tzIjpbeyJ0eXBlIjoiY29tbWFuZCIsImNvbW1hbmQiOiIuL3J1bi5zaCJ9XX1dfX0="
+      },
+      "support": [
+        {
+          "path": "run.sh",
+          "mode": "0755",
+          "bytes_b64": "IyEvYmluL3NoCmVjaG8gZGVwbG95Cg=="
+        },
+        {
+          "path": "docs/README.md",
+          "mode": "0644",
+          "bytes_b64": "IyBkZXBsb3kgaG9vawo="
+        }
+      ],
+      "digest": "sha256:c5ab469fd6f8be98ee060dca38366fcd6a09da21b44c0da1813474ce831c8baa"
+    },
+    {
+      "name": "cursor-repository-marketplace",
+      "source_identity": "marketplace:resource/deploy-hook@sha256:abababababababababababababababababababababababababababababababab",
+      "installed_name": "deploy",
+      "target": "cursor",
+      "scope": "repository",
+      "definition": {
+        "path": "hooks/hooks.json",
+        "bytes_b64": "eyJob29rcyI6eyJQcmVUb29sVXNlIjpbeyJtYXRjaGVyIjoiQmFzaCIsImhvb2tzIjpbeyJ0eXBlIjoiY29tbWFuZCIsImNvbW1hbmQiOiIuL3J1bi5zaCJ9XX1dfX0="
+      },
+      "support": [
+        {
+          "path": "run.sh",
+          "mode": "0755",
+          "bytes_b64": "IyEvYmluL3NoCmVjaG8gZGVwbG95Cg=="
+        },
+        {
+          "path": "docs/README.md",
+          "mode": "0644",
+          "bytes_b64": "IyBkZXBsb3kgaG9vawo="
+        }
+      ],
+      "digest": "sha256:1793445e3a541bc61aadaa2ecf64092706a49b7dfd8a728f565660f5e7416501"
+    },
+    {
+      "name": "factory-repository-local",
+      "source_identity": "local:/opt/shared/hooks",
+      "installed_name": "deploy",
+      "target": "factory",
+      "scope": "repository",
+      "definition": {
+        "path": "hooks/hooks.json",
+        "bytes_b64": "eyJob29rcyI6eyJQcmVUb29sVXNlIjpbeyJtYXRjaGVyIjoiQmFzaCIsImhvb2tzIjpbeyJ0eXBlIjoiY29tbWFuZCIsImNvbW1hbmQiOiIuL3J1bi5zaCJ9XX1dfX0="
+      },
+      "support": [
+        {
+          "path": "run.sh",
+          "mode": "0755",
+          "bytes_b64": "IyEvYmluL3NoCmVjaG8gZGVwbG95Cg=="
+        },
+        {
+          "path": "docs/README.md",
+          "mode": "0644",
+          "bytes_b64": "IyBkZXBsb3kgaG9vawo="
+        }
+      ],
+      "digest": "sha256:8935ecc788bbb387f35cdcfdceaacd1ad18dae1c57ae7c2b857608b673dc7e36"
+    },
+    {
+      "name": "windsurf-source-layout",
+      "source_identity": "git:https://github.com/example/registry.git@v1.2.3:plugins/deploy",
+      "installed_name": "deploy",
+      "target": "windsurf",
+      "scope": "repository",
+      "definition": {
+        "path": ".windsurf/hooks.json",
+        "bytes_b64": "eyJob29rcyI6eyJQcmVUb29sVXNlIjpbeyJtYXRjaGVyIjoiQmFzaCIsImhvb2tzIjpbeyJ0eXBlIjoiY29tbWFuZCIsImNvbW1hbmQiOiIuL3J1bi5zaCJ9XX1dfX0="
+      },
+      "support": [
+        {
+          "path": "run.sh",
+          "mode": "0755",
+          "bytes_b64": "IyEvYmluL3NoCmVjaG8gZGVwbG95Cg=="
+        },
+        {
+          "path": "docs/README.md",
+          "mode": "0644",
+          "bytes_b64": "IyBkZXBsb3kgaG9vawo="
+        }
+      ],
+      "digest": "sha256:4733bc439fab77c32df97d12aaf0b6ef5bdce1ae71b2e3a7e8e68000091dc30c"
+    },
+    {
+      "name": "definition-bytes-changed",
+      "source_identity": "git:https://github.com/example/registry.git@v1.2.3:plugins/deploy",
+      "installed_name": "deploy",
+      "target": "claude",
+      "scope": "repository",
+      "definition": {
+        "path": "hooks/hooks.json",
+        "bytes_b64": "eyJob29rcyI6eyJQcmVUb29sVXNlIjpbeyJtYXRjaGVyIjoiQmFzaCIsImhvb2tzIjpbeyJ0eXBlIjoiY29tbWFuZCIsImNvbW1hbmQiOiIuL290aGVyLnNoIn1dfV19fQ=="
+      },
+      "support": [
+        {
+          "path": "run.sh",
+          "mode": "0755",
+          "bytes_b64": "IyEvYmluL3NoCmVjaG8gZGVwbG95Cg=="
+        },
+        {
+          "path": "docs/README.md",
+          "mode": "0644",
+          "bytes_b64": "IyBkZXBsb3kgaG9vawo="
+        }
+      ],
+      "digest": "sha256:14d51194bfb50433f673ca30278a8ff8c42f96e7e293f3a2953f5f52ffbc7978"
+    },
+    {
+      "name": "support-bytes-changed",
+      "source_identity": "git:https://github.com/example/registry.git@v1.2.3:plugins/deploy",
+      "installed_name": "deploy",
+      "target": "claude",
+      "scope": "repository",
+      "definition": {
+        "path": "hooks/hooks.json",
+        "bytes_b64": "eyJob29rcyI6eyJQcmVUb29sVXNlIjpbeyJtYXRjaGVyIjoiQmFzaCIsImhvb2tzIjpbeyJ0eXBlIjoiY29tbWFuZCIsImNvbW1hbmQiOiIuL3J1bi5zaCJ9XX1dfX0="
+      },
+      "support": [
+        {
+          "path": "run.sh",
+          "mode": "0755",
+          "bytes_b64": "IyEvYmluL3NoCmVjaG8gY2hhbmdlZAo="
+        },
+        {
+          "path": "docs/README.md",
+          "mode": "0644",
+          "bytes_b64": "IyBkZXBsb3kgaG9vawo="
+        }
+      ],
+      "digest": "sha256:be03e94474022ccfb014f001ff525d10b6c5853bd4ecc25dd1304524d64b22ea"
+    },
+    {
+      "name": "support-mode-changed",
+      "source_identity": "git:https://github.com/example/registry.git@v1.2.3:plugins/deploy",
+      "installed_name": "deploy",
+      "target": "claude",
+      "scope": "repository",
+      "definition": {
+        "path": "hooks/hooks.json",
+        "bytes_b64": "eyJob29rcyI6eyJQcmVUb29sVXNlIjpbeyJtYXRjaGVyIjoiQmFzaCIsImhvb2tzIjpbeyJ0eXBlIjoiY29tbWFuZCIsImNvbW1hbmQiOiIuL3J1bi5zaCJ9XX1dfX0="
+      },
+      "support": [
+        {
+          "path": "run.sh",
+          "mode": "0644",
+          "bytes_b64": "IyEvYmluL3NoCmVjaG8gZGVwbG95Cg=="
+        },
+        {
+          "path": "docs/README.md",
+          "mode": "0644",
+          "bytes_b64": "IyBkZXBsb3kgaG9vawo="
+        }
+      ],
+      "digest": "sha256:aafd34bf5013e472ba431207ee31c81d26b37b693b6aeb1760a0a74c5b1d584c"
+    },
+    {
+      "name": "ir-provenance-native-event",
+      "source_identity": "git:https://github.com/example/registry.git@v1.2.3:plugins/deploy",
+      "installed_name": "deploy",
+      "target": "claude",
+      "scope": "repository",
+      "definition": {
+        "path": "hooks/hooks.json",
+        "bytes_b64": "eyJob29rcyI6eyJQcmVUb29sVXNlIjpbeyJtYXRjaGVyIjoiQmFzaCIsImhvb2tzIjpbeyJ0eXBlIjoiY29tbWFuZCIsImNvbW1hbmQiOiIuL3J1bi5zaCJ9XX1dfX0="
+      },
+      "support": [
+        {
+          "path": "run.sh",
+          "mode": "0755",
+          "bytes_b64": "IyEvYmluL3NoCmVjaG8gZGVwbG95Cg=="
+        },
+        {
+          "path": "docs/README.md",
+          "mode": "0644",
+          "bytes_b64": "IyBkZXBsb3kgaG9vawo="
+        }
+      ],
+      "digest": "sha256:a9afa2c16e48376481f71e9de3faac33b11ac884703c3a8ede4fd4ea3c4b78d5"
+    },
+    {
+      "name": "ir-provenance-tool-derived",
+      "source_identity": "git:https://github.com/example/registry.git@v1.2.3:plugins/deploy",
+      "installed_name": "deploy",
+      "target": "claude",
+      "scope": "repository",
+      "definition": {
+        "path": "hooks/hooks.json",
+        "bytes_b64": "eyJob29rcyI6eyJQcmVUb29sVXNlIjpbeyJtYXRjaGVyIjoiQmFzaCIsImhvb2tzIjpbeyJ0eXBlIjoiY29tbWFuZCIsImNvbW1hbmQiOiIuL3J1bi5zaCJ9XX1dfX0="
+      },
+      "support": [
+        {
+          "path": "run.sh",
+          "mode": "0755",
+          "bytes_b64": "IyEvYmluL3NoCmVjaG8gZGVwbG95Cg=="
+        },
+        {
+          "path": "docs/README.md",
+          "mode": "0644",
+          "bytes_b64": "IyBkZXBsb3kgaG9vawo="
+        }
+      ],
+      "digest": "sha256:a9afa2c16e48376481f71e9de3faac33b11ac884703c3a8ede4fd4ea3c4b78d5"
+    }
+  ],
+  "invariant_pairs": [
+    [
+      "ir-provenance-native-event",
+      "ir-provenance-tool-derived"
+    ],
+    [
+      "claude-repository-git",
+      "ir-provenance-native-event"
+    ]
+  ]
+}
