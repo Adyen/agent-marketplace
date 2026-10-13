@@ -20,6 +20,12 @@ The TUI SHALL describe failed resource-state verification in plain language and 
 - **AND** otherwise it MUST show typed-cause or category-appropriate next steps with supported commands
 - **AND** unclassified errors MUST NOT be presented as configuration errors
 
+#### Scenario: Shared-key diagnostics retain their own recovery guidance
+- **WHEN** the errors screen displays multiple diagnostics sharing a stable error key across categories or severities
+- **THEN** each diagnostic MUST preserve its original cause and show nonempty or typed remediation when one applies
+- **AND** otherwise it MUST show category-appropriate next steps using its own category
+- **AND** diagnostic ordering, counts, identities, and lifetimes MUST remain unchanged
+
 #### Scenario: Acquisition lock guidance respects scope and verification
 - **WHEN** a typed error reports a missing or stale writable acquisition lock
 - **THEN** the errors screen MUST provide a scope-specific `agent-marketplace lock` command without `--upgrade`
