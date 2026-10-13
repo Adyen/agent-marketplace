@@ -76,7 +76,7 @@ Includes expand in declaration order, preserving credential-helper resets and UR
 agent-marketplace sync
 ```
 
-Sync fetches through your Git credentials and prints the usual `Installed <n>  Removed <n>  Malformed <n>  Errors <n>` summary, followed by a single `→` line listing the output roots it changed, separated by commas. Check the locked commit and the selected resources:
+Sync fetches through your Git credentials and prints the usual `Installed <n>  Removed <n>  Malformed <n>  Errors <n>` summary, followed by a single `→` line listing the output roots it changed, separated by commas; that line appears only when sync writes or removes output. Check the locked commit and the selected resources:
 
 ```bash
 agent-marketplace status

@@ -40,7 +40,7 @@ To apply the changes, and update a lock that no longer matches the configuration
 agent-marketplace sync
 ```
 
-It prints the `Installed <n>  Removed <n>  Malformed <n>  Errors <n>` summary and a single `→` line listing the output roots it changed, separated by commas.
+It prints the `Installed <n>  Removed <n>  Malformed <n>  Errors <n>` summary and, only when sync writes or removes output, a single `→` line listing the output roots it changed, separated by commas.
 
 ## 3. Common causes and fixes
 
