@@ -62,7 +62,17 @@ func parseTelemetryEvent(r *http.Request) (telemetryEvent, bool) {
 	case "browse":
 		return event, event.rowIDSeen && event.RowID != "" && !event.modalSeen && !event.outcomeSeen
 	case "modal_outcome":
-		return event, !event.rowIDSeen && event.modalSeen && event.outcomeSeen && event.Modal == "sync+quit" && event.Outcome == "cancelled"
+		if !event.modalSeen || !event.outcomeSeen || event.Outcome != "cancelled" {
+			return telemetryEvent{}, false
+		}
+		switch event.Modal {
+		case "sync+quit":
+			return event, !event.rowIDSeen
+		case "toggle":
+			return event, event.rowIDSeen && event.RowID != ""
+		default:
+			return telemetryEvent{}, false
+		}
 	default:
 		return telemetryEvent{}, false
 	}
@@ -87,7 +97,16 @@ func (a *API) handleTelemetry(w http.ResponseWriter, r *http.Request) {
 		}
 		telemetry.RecordInteractiveAction(a.ctx, "gui", "browse", map[string]string{"view": "detail", "resource.kind": kind})
 	case "modal_outcome":
-		telemetry.RecordInteractiveAction(a.ctx, "gui", "modal_outcome", map[string]string{"modal": event.Modal, "outcome": event.Outcome})
+		attributes := map[string]string{"modal": event.Modal, "outcome": event.Outcome}
+		if event.Modal == "toggle" {
+			kind, ok := a.currentTelemetryResourceKind(event.RowID)
+			if !ok {
+				writeError(w, http.StatusBadRequest, codeInvalidRequest)
+				return
+			}
+			attributes["resource.kind"] = kind
+		}
+		telemetry.RecordInteractiveAction(a.ctx, "gui", "modal_outcome", attributes)
 	}
 	w.WriteHeader(http.StatusNoContent)
 }

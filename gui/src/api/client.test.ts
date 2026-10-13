@@ -331,6 +331,28 @@ describe('createClient', () => {
     ])
   })
 
+  // spec: gui-shell/gui-actions-use-existing-telemetry-policy
+  it('posts a toggle cancellation with the exact closed current-row event shape', async () => {
+    let call: { url: string; method: string; tokenPresent: boolean; body: string | null } | undefined
+    const fetcher: typeof fetch = async (input, init) => {
+      call = {
+        url: String(input),
+        method: init?.method ?? '',
+        tokenPresent: new Headers(init?.headers).has('X-Agent-Marketplace-Token'),
+        body: init?.body == null ? null : String(init.body),
+      }
+      return new Response(null, { status: 204 })
+    }
+    const client = createClient('http://127.0.0.1:9999', 'ephemeral-test-token', fetcher)
+    await client.telemetry({ action: 'modal_outcome', modal: 'toggle', outcome: 'cancelled', rowId: 'opaque-current-row' })
+    expect(call).toEqual({
+      url: 'http://127.0.0.1:9999/api/telemetry',
+      method: 'POST',
+      tokenPresent: true,
+      body: '{"action":"modal_outcome","modal":"toggle","outcome":"cancelled","rowId":"opaque-current-row"}',
+    })
+  })
+
   it('posts discovery query state with its abort signal and treats 204 as transport completion', async () => {
     const calls: { url: string; method: string; token: string | null; body: string | null; signal?: AbortSignal }[] = []
     const fetcher: typeof fetch = async (input, init) => {

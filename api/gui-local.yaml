@@ -461,10 +461,11 @@ paths:
       operationId: recordTelemetryEvent
       summary: Record one bounded GUI interaction event
       description: |
-        Available only in user-scope mode. The tagged request is a closed
-        set of browse and sync-and-quit outcome events. Browse identifiers
-        are resolved against the current authoritative snapshot; no raw
-        Resource names, IDs, or client-provided attributes are exported.
+        Available only in user-scope mode. The closed request union includes
+        browse, sync-and-quit cancellation, and toggle cancellation events.
+        Browse and toggle row IDs are resolved against the current authoritative
+        snapshot; only the server-derived Resource kind is exported, never the
+        opaque row ID, Resource name, path, or client-provided attributes.
       security:
         - launchToken: []
       requestBody:
@@ -1037,6 +1038,11 @@ components:
           type: string
           description: Opaque row identity from the current snapshot; the server resolves its Resource kind.
     GUIModalOutcomeEvent:
+      description: Closed modal-outcome union for sync/quit and Resource toggle cancellation.
+      oneOf:
+        - $ref: '#/components/schemas/GUISyncQuitModalOutcomeEvent'
+        - $ref: '#/components/schemas/GUIResourceModalOutcomeEvent'
+    GUISyncQuitModalOutcomeEvent:
       type: object
       required: [action, modal, outcome]
       additionalProperties: false
@@ -1050,6 +1056,23 @@ components:
         outcome:
           type: string
           enum: [cancelled]
+    GUIResourceModalOutcomeEvent:
+      type: object
+      required: [action, modal, outcome, rowId]
+      additionalProperties: false
+      properties:
+        action:
+          type: string
+          enum: [modal_outcome]
+        modal:
+          type: string
+          enum: [toggle]
+        outcome:
+          type: string
+          enum: [cancelled]
+        rowId:
+          type: string
+          description: Opaque row identity from the current snapshot; the server resolves its Resource kind.
     ReleaseNotice:
       type: object
       required: [latestVersion]

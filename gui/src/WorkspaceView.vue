@@ -201,7 +201,7 @@ const resourceActionOpen = computed({
   get: () => view.value?.resourceAction != null,
   set: (open: boolean) => {
     if (!open) {
-      state.value?.cancelResourceAction()
+      state.value?.dismissResourceAction()
     }
   },
 })

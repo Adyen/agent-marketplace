@@ -333,10 +333,11 @@ export interface paths {
         put?: never;
         /**
          * Record one bounded GUI interaction event
-         * @description Available only in user-scope mode. The tagged request is a closed
-         *     set of browse and sync-and-quit outcome events. Browse identifiers
-         *     are resolved against the current authoritative snapshot; no raw
-         *     Resource names, IDs, or client-provided attributes are exported.
+         * @description Available only in user-scope mode. The closed request union includes
+         *     browse, sync-and-quit cancellation, and toggle cancellation events.
+         *     Browse and toggle row IDs are resolved against the current authoritative
+         *     snapshot; only the server-derived Resource kind is exported, never the
+         *     opaque row ID, Resource name, path, or client-provided attributes.
          *
          */
         post: operations["recordTelemetryEvent"];
@@ -508,11 +509,20 @@ export interface components {
         };
         /** @description Closed GUI telemetry event union; unknown, duplicate, or mistyped keys are rejected. */
         GUIEvent: components["schemas"]["GUIBrowseEvent"] | components["schemas"]["GUIModalOutcomeEvent"];
-        GUIModalOutcomeEvent: {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
+        /** @description Closed modal-outcome union for sync/quit and Resource toggle cancellation. */
+        GUIModalOutcomeEvent: components["schemas"]["GUISyncQuitModalOutcomeEvent"] | components["schemas"]["GUIResourceModalOutcomeEvent"];
+        GUIResourceModalOutcomeEvent: {
+            /** @enum {string} */
+            action: "modal_outcome";
+            /** @enum {string} */
+            modal: "toggle";
+            /** @enum {string} */
+            outcome: "cancelled";
+            /** @description Opaque row identity from the current snapshot; the server resolves its Resource kind. */
+            rowId: string;
+        };
+        GUISyncQuitModalOutcomeEvent: {
+            /** @enum {string} */
             action: "modal_outcome";
             /** @enum {string} */
             modal: "sync+quit";
