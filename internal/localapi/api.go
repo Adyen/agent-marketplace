@@ -613,6 +613,10 @@ func activeOperation(gate *session.OperationGate) *operationRef {
 }
 
 func rowPresentation(row session.Row) rowDTO {
+	return rowPresentationForUser(row, false)
+}
+
+func rowPresentationForUser(row session.Row, userOnly bool) rowDTO {
 	row.EnsureSearchable()
 	displayName := session.SanitizeTerminalData(row.Artifact.Name, session.TerminalSingleLine)
 	scope := "available"
@@ -654,11 +658,15 @@ func rowPresentation(row session.Row) rowDTO {
 			discovery.Item.ContentDigest,
 		})
 	} else {
+		identityScope := scope
+		if userOnly && !row.Artifact.IsMarketplace {
+			identityScope = ""
+		}
 		identity, _ = json.Marshal([4]string{
 			session.RegistryIdentityKey(row.RegistryURL, row.RegistryRef, row.RegistryPath),
 			kind,
 			row.Artifact.Name,
-			scope,
+			identityScope,
 		})
 	}
 	sum := sha256.Sum256(identity)

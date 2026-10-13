@@ -49,6 +49,10 @@ func (m *LayerMutation) Apply(binding config.SourceBinding, change config.Select
 	return m.editor.Apply(binding, change)
 }
 
+func (m *LayerMutation) ApplyRootOwned(binding config.SourceBinding, change config.SelectionChange) error {
+	return m.editor.ApplyRootOwned(binding, change)
+}
+
 func (m *LayerMutation) LookupRegistry(entry config.RegistryEntry) (config.SourceBinding, bool, error) {
 	return m.editor.LookupRegistry(entry)
 }

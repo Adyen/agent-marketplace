@@ -88,6 +88,26 @@ func UserMarketplaceAction(r Row) (string, error) {
 	return UserMarketplaceActionRemove, nil
 }
 
+func UserResourceAction(r Row) (string, error) {
+	if r.Artifact.IsMarketplace {
+		return UserMarketplaceAction(r)
+	}
+	if RowToggleEligibility(r, false, false) != RowToggleEligible {
+		return UserMarketplaceActionNone, nil
+	}
+	entry, _, err := RegistryResourceSelection(r)
+	if err != nil {
+		return UserMarketplaceActionNone, nil
+	}
+	if !r.EnabledGlobal {
+		if err := config.ValidateGlobalRegistryWrite(entry); err != nil {
+			return UserMarketplaceActionNone, nil
+		}
+		return UserMarketplaceActionInstall, nil
+	}
+	return UserMarketplaceActionRemove, nil
+}
+
 func UserDiscoveryInstallOptions(homeDir string, r Row) (pipeline.InstallOptions, error) {
 	if !config.IsHomeDir(homeDir) {
 		return pipeline.InstallOptions{}, errors.New("user Marketplace install requires the home directory")

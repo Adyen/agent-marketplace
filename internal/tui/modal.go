@@ -15,6 +15,7 @@ import (
 
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/pipeline"
+	"github.com/Adyen/agent-marketplace/internal/session"
 	"github.com/Adyen/agent-marketplace/internal/skill"
 )
 
@@ -247,18 +248,16 @@ func runScopedToggleAt(repoRoot string, act toggleAction, mapper pipeline.Config
 			source = config.RepoCommitted
 		}
 		entry := config.RegistryEntry{URL: act.registryURL, Ref: act.registryRef, Path: act.registryPath, V4Kind: act.registryKind, SourceHarness: act.sourceHarness}
-		// Repo-relative local paths are valid in repo/local configs but
-		// meaningless machine-wide; refuse to write them to the user (global)
-		// config when enabling. Disabling an existing broken entry is still
-		// allowed so users can clean it up.
-		if act.scope == scopeGlobal && act.enable {
-			if err := config.ValidateGlobalRegistryWrite(entry); err != nil {
-				return configWrittenMsg{skillName: act.skillName, enabled: act.enable, selectNext: act.disablesResource(), err: err}
-			}
+		locator := config.ResourceLocator{Kind: act.kind, Name: act.skillName}
+		target := config.LayerTarget{Source: source, StagedPath: mappedPath, DeclaringPath: originalPath}
+		var err error
+		if act.scope == scopeLocalExclude {
+			err = pipeline.EditLayerAtPath(target, func(m *pipeline.LayerMutation) error {
+				return applyToggleAction(m, act)
+			})
+		} else {
+			err = session.EditRegistryResourceSelection(target, entry, locator, act.enable, false)
 		}
-		err := pipeline.EditLayerAtPath(config.LayerTarget{Source: source, StagedPath: mappedPath, DeclaringPath: originalPath}, func(m *pipeline.LayerMutation) error {
-			return applyToggleAction(m, act)
-		})
 		if err != nil {
 			slog.Error("TUI toggle failed", "kind", act.kind.String(), "name", act.skillName, "scope", scopeName(act.scope), "enable", act.enable, "error", err)
 		} else {

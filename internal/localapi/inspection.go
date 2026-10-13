@@ -116,7 +116,7 @@ func (a *API) visibleResourceRow(rowID string, eligible func(session.Row) bool) 
 	}
 	rows := session.MergeDiscoveryRows(a.authoritativeRows, a.provisionalRows, a.discovery.rows)
 	for _, row := range rows {
-		if rowPresentation(row).ID != rowID {
+		if a.resourceRowPresentation(row).ID != rowID {
 			continue
 		}
 		if !eligible(row) {

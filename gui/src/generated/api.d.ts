@@ -238,15 +238,19 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Confirm one prepared user-scope Marketplace Resource action
+         * Confirm one prepared user-scope Resource action
          * @description Available only in user-scope mode. The server consumes a matching
          *     rowId/planId/generation once, rechecks the current raw row and shared
-         *     eligibility, and begins the existing guarded mutation. acceptRisk is
-         *     required even when false; an install plan that requires acknowledgement
-         *     is not consumed when acceptRisk is false. A 202 response is not a claim
-         *     that files were written: the existing session event stream and final
-         *     authoritative snapshot settle the operation. Organization configuration
-         *     and locks are read-only.
+         *     eligibility, and begins the existing guarded mutation. Git and directory
+         *     registry actions update only selectors in the user root; source or
+         *     resource ownership supplied by an included fragment is refused. These
+         *     actions do not invoke Marketplace installation or materialization.
+         *     Marketplace install risk acknowledgement is required even when false;
+         *     an install plan that requires acknowledgement is not consumed when
+         *     acceptRisk is false. A 202 response is not a claim that files were
+         *     written: the existing session event stream and final authoritative
+         *     snapshot settle the operation. Organization configuration and its lock
+         *     are read-only; repository and personal-local layers are not accessed.
          *
          */
         post: operations["confirmUserMarketplaceResourceAction"];
@@ -266,12 +270,15 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Prepare one current user-scope Marketplace Resource action
+         * Prepare one eligible user-scope Resource action
          * @description Available only in user-scope mode after the accepted session is ready
          *     and the user root is editable. The request supplies only an opaque rowId;
-         *     endpoint URLs, coordinates, scopes, paths, revisions, and policy inputs
-         *     are derived from the current server row. Install preparation may read
-         *     Marketplace metadata and populate the SDK cache, but does not write user
+         *     source coordinates and scope are derived from the current server row.
+         *     Eligible rows may come from Git or directory registries, or from a
+         *     Marketplace. Git and directory plans are static and do not fetch a
+         *     registry, write configuration or locks, materialize files, or publish
+         *     an operation or snapshot generation. Marketplace install preparation
+         *     may read metadata and populate the SDK cache, but does not write user
          *     configuration, acquisition locks, or materialized files, and does not
          *     publish an operation or snapshot generation. The server keeps one
          *     in-memory plan bound to the row and current generation; another valid

@@ -2291,4 +2291,85 @@ describe('Event stream reconnect', () => {
       expect(controller.state.notifications.at(-1)?.severity).toBe('error')
     })
   })
+
+  describe('user Git and directory resource actions', () => {
+    // spec: session-interactions/guarded-submission
+    it('confirms a static user registry install without risk acknowledgement', async () => {
+      const resource = row('review', {
+        id: 'opaque-user-directory-review',
+        registry: 'local',
+        scope: 'available',
+        group: 'available',
+        status: 'available',
+        checked: false,
+        discovery: false,
+        inspectable: false,
+        resourceAction: 'install',
+      })
+      const plan: ResourceActionPlan = {
+        rowId: resource.id,
+        generation: 1,
+        planId: 'b'.repeat(64),
+        action: 'install',
+        preview: 'Resource: skill/review\nLayer: user',
+        requiresRiskAcceptance: false,
+      }
+      const actionRequest = deferred<OperationRef>()
+      const { client, push } = fakeClient()
+      vi.mocked(client.resourcePlan).mockResolvedValue(plan)
+      vi.mocked(client.resourceAction).mockReturnValue(actionRequest.promise)
+      const { controller, wrapper } = mountWorkspace(client)
+      push(work39SnapshotEvent(1, 1, [resource]))
+      await tick()
+      await selectWork39Row(wrapper, resource.id)
+
+      await wrapper.get('button[aria-label="Install Resource"]').trigger('click')
+      await tick()
+      const dialog = document.body.querySelector('[role="dialog"]') as HTMLElement | null
+      expect(dialog).not.toBeNull()
+      if (dialog == null) {
+        throw new Error('user registry action dialog was not rendered')
+      }
+      expect(dialog.querySelector('input[type="checkbox"]')).toBeNull()
+      expect(dialog.querySelector('pre')?.textContent).toBe(plan.preview)
+      const confirm = dialog.querySelector('button[aria-label="Confirm install"]') as HTMLButtonElement | null
+      expect(confirm?.disabled).toBe(false)
+      ;(dialog.querySelector('button[aria-label="Cancel"]') as HTMLButtonElement | null)?.click()
+      await tick()
+      expect(controller.state.resourceAction).toBeNull()
+      expect(client.resourceAction).not.toHaveBeenCalled()
+
+      await wrapper.get('button[aria-label="Install Resource"]').trigger('click')
+      await tick()
+      const installDialog = document.body.querySelector('[role="dialog"]') as HTMLElement | null
+      if (installDialog == null) {
+        throw new Error('user registry action dialog did not reopen')
+      }
+      ;(installDialog.querySelector('button[aria-label="Confirm install"]') as HTMLButtonElement | null)?.click()
+      await tick()
+      expect(client.resourceAction).toHaveBeenCalledWith(resource.id, plan.planId, false, expect.any(AbortSignal))
+      const operation: OperationRef = { id: 91, kind: 'mutation' }
+      actionRequest.resolve(operation)
+      await tick()
+      const installed = row('review', {
+        id: resource.id,
+        registry: 'local',
+        scope: 'user',
+        group: 'enabled',
+        status: 'enabled',
+        checked: true,
+        discovery: false,
+        inspectable: false,
+        resourceAction: 'remove',
+      })
+      push(work39SnapshotEvent(2, 2, [installed], operation))
+      push(work39SnapshotEvent(3, 3, [installed], null, operation))
+      push(event({ sequence: 4, generation: 3, type: 'notification', operation, payload: { severity: 'info', message: 'selection settled' } }))
+      await tick()
+      expect(controller.state.rows[0]?.resourceAction).toBe('remove')
+      expect(controller.state.settledMutation).toBeNull()
+      expect(document.activeElement?.getAttribute('aria-label')).toBe('Remove Resource')
+      expect(client.inspection).not.toHaveBeenCalled()
+    })
+  })
 })

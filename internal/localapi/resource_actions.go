@@ -51,9 +51,9 @@ type preparedResourceActionPlan struct {
 }
 
 func (a *API) resourceRowPresentation(row session.Row) rowDTO {
-	dto := rowPresentation(row)
+	dto := rowPresentationForUser(row, a.userOnly)
 	if a.userOnly {
-		if action, err := session.UserMarketplaceAction(row); err == nil {
+		if action, err := session.UserResourceAction(row); err == nil {
 			dto.ResourceAction = action
 		}
 	}
@@ -88,17 +88,14 @@ func (a *API) currentUserResourceActionRowLocked(rowID string) (session.Row, ses
 	}
 	rows := session.MergeDiscoveryRows(a.authoritativeRows, a.provisionalRows, a.discovery.rows)
 	for _, row := range rows {
-		if rowPresentation(row).ID != rowID {
+		presentation := a.resourceRowPresentation(row)
+		if presentation.ID != rowID {
 			continue
 		}
-		action, err := session.UserMarketplaceAction(row)
-		if err != nil {
+		if presentation.ResourceAction == "" || presentation.ResourceAction == session.UserMarketplaceActionNone {
 			return session.Row{}, 0, "", codeNotSupported
 		}
-		if action == session.UserMarketplaceActionNone {
-			return session.Row{}, 0, "", codeNotSupported
-		}
-		return cloneResourceActionRow(row), a.currentG, action, ""
+		return cloneResourceActionRow(row), a.currentG, presentation.ResourceAction, ""
 	}
 	return session.Row{}, 0, "", codeNotReady
 }
@@ -238,7 +235,7 @@ func (a *API) handleResourcePlan(w http.ResponseWriter, r *http.Request) {
 	a.mu.Unlock()
 
 	plan := &preparedResourceActionPlan{rowID: request.rowID, generation: generation, action: action, row: row, preview: resourceActionPreview(row)}
-	if action == session.UserMarketplaceActionInstall {
+	if action == session.UserMarketplaceActionInstall && row.Artifact.IsMarketplace {
 		options, err := session.UserDiscoveryInstallOptions(a.homeDir, row)
 		if err != nil {
 			writeError(w, http.StatusBadRequest, codeNotReady)
@@ -371,12 +368,20 @@ func (a *API) handleResourceAction(w http.ResponseWriter, r *http.Request) {
 		ctx = pipeline.WithTransientOrganizationMarketplaceLockCache(ctx)
 		switch acceptedPlan.action {
 		case session.UserMarketplaceActionInstall:
-			result := session.CommitDiscoveryInstall(ctx, acceptedPlan.options, acceptedPlan.prepared)
-			failed = result.Err
-			if result.Result != nil {
-				warnings = append(warnings, result.Result.RequirementWarnings...)
+			if acceptedPlan.row.Artifact.IsMarketplace {
+				result := session.CommitDiscoveryInstall(ctx, acceptedPlan.options, acceptedPlan.prepared)
+				failed = result.Err
+				if result.Result != nil {
+					warnings = append(warnings, result.Result.RequirementWarnings...)
+				}
+			} else {
+				failed = a.editUserRegistryResourceSelection(ctx, acceptedPlan.row, true)
 			}
 		case session.UserMarketplaceActionRemove:
+			if !acceptedPlan.row.Artifact.IsMarketplace {
+				failed = a.editUserRegistryResourceSelection(ctx, acceptedPlan.row, false)
+				break
+			}
 			selection, found := acceptedPlan.row.MarketplaceSelections[config.UserPersonal]
 			if !found {
 				failed = fmt.Errorf("user Marketplace direct pin disappeared from the prepared row")
@@ -402,6 +407,21 @@ func (a *API) handleResourceAction(w http.ResponseWriter, r *http.Request) {
 		}
 		final = a.readSnapshot(ctx, session.CatalogLoadCached)
 		return warnings, final, failed
+	})
+}
+
+func (a *API) editUserRegistryResourceSelection(ctx context.Context, row session.Row, enable bool) error {
+	entry, locator, err := session.RegistryResourceSelection(row)
+	if err != nil {
+		return err
+	}
+	userConfigPath := a.userConfigPath()
+	return a.lifecycle.Mutate(ctx, a.workspace, func(mapper pipeline.ConfigPathMapper) error {
+		mappedUserRoot, err := mapper(userConfigPath)
+		if err != nil {
+			return err
+		}
+		return session.EditRegistryResourceSelection(config.LayerTarget{Source: config.UserPersonal, StagedPath: mappedUserRoot, DeclaringPath: userConfigPath}, entry, locator, enable, true)
 	})
 }
 
