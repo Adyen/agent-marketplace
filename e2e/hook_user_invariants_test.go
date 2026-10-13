@@ -148,7 +148,7 @@ func TestHookInvariantMatchAllRegexMatcherSyncsLikeStar(t *testing.T) {
 	installedStar := 0
 	for _, target := range hookInvariantTargets {
 		t.Run(target, func(t *testing.T) {
-			sync := func(matcher string) outcome {
+			sync := func(matcher string) (outcome, ExecResult) {
 				t.Helper()
 				e := newEnv(t)
 				e.InitGitRepo()
@@ -156,9 +156,20 @@ func TestHookInvariantMatchAllRegexMatcherSyncsLikeStar(t *testing.T) {
 				registry := hookInvariantRegistry(e, "match-all", fmt.Sprintf(`{"hooks":{"PreToolUse":[{"matcher":%q,"hooks":[{"type":"command","command":"echo %s"}]}]}}`, matcher, token))
 				e.WriteRepoConfig(hookInvariantV4Config(target, registry, "hook/PreToolUse-command"))
 				r := e.RunAM("sync")
-				return outcome{exit: r.ExitCode, copies: hookInvariantCount(t, e.workspace, hookInvariantHookFiles(target, false), token)}
+				return outcome{exit: r.ExitCode, copies: hookInvariantCount(t, e.workspace, hookInvariantHookFiles(target, false), token)}, r
 			}
-			star, regex := sync("*"), sync(".*")
+			star, starResult := sync("*")
+			regex, _ := sync(".*")
+			// Windsurf splits tool events by category and has no event for
+			// every tool, so the "*" control is refused there; every other
+			// target installs it exactly once.
+			if target == "windsurf" {
+				if star.copies != 0 || !strings.Contains(starResult.Combined, "hook.windsurf.event-unmappable") {
+					t.Fatalf("Windsurf \"*\" control installed %d copies; want a hook.windsurf.event-unmappable refusal\n%s", star.copies, starResult.Combined)
+				}
+			} else if star != (outcome{exit: 0, copies: 1}) {
+				t.Fatalf("\"*\" control gave exit %d with %d installed copies, want exit 0 with 1\n%s", star.exit, star.copies, starResult.Combined)
+			}
 			if star.copies > 0 {
 				installedStar++
 			}
@@ -204,7 +215,76 @@ func TestHookInvariantRefusedSiblingDoesNotBlockDeselection(t *testing.T) {
 	}
 }
 
-var hookInvariantProjectRelativePath = regexp.MustCompile(`\$\{?CLAUDE_PROJECT_DIR\}?"?/([^"\s]+)`)
+var hookInvariantProjectDir = regexp.MustCompile(`^\$(CLAUDE_PROJECT_DIR\b|\{CLAUDE_PROJECT_DIR\})`)
+
+// hookInvariantScriptPath resolves the file a Claude hook command runs for a
+// checkout. The command's word naming script may use $CLAUDE_PROJECT_DIR or
+// be relative to the checkout; it must resolve to an existing file inside
+// checkout. Unresolved variables and absolute paths outside checkout, such
+// as another teammate's checkout or cache, are errors.
+func hookInvariantScriptPath(command, checkout, script string) (string, error) {
+	var word string
+	for _, field := range strings.Fields(command) {
+		if strings.Contains(field, script) {
+			word = strings.NewReplacer(`"`, "", `'`, "").Replace(field)
+			break
+		}
+	}
+	if word == "" {
+		return "", fmt.Errorf("command %q does not name %s", command, script)
+	}
+	path := hookInvariantProjectDir.ReplaceAllLiteralString(word, checkout)
+	if strings.Contains(path, "$") {
+		return "", fmt.Errorf("command %q leaves a variable unresolved", command)
+	}
+	if !filepath.IsAbs(path) {
+		path = filepath.Join(checkout, filepath.FromSlash(path))
+	}
+	if rel, err := filepath.Rel(checkout, filepath.Clean(path)); err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("command %q runs %s outside the checkout", command, path)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		return "", fmt.Errorf("command %q runs a missing file: %w", command, err)
+	}
+	if !info.Mode().IsRegular() {
+		return "", fmt.Errorf("command %q runs %s, which is not a regular file", command, path)
+	}
+	return path, nil
+}
+
+func TestHookInvariantScriptPathResolution(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	checkout, other := filepath.Join(root, "checkout"), filepath.Join(root, "other-checkout")
+	for _, dir := range []string{checkout, other} {
+		if err := os.MkdirAll(filepath.Join(dir, ".claude", "support", "scripts"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, ".claude", "support", "scripts", "guard.sh"), []byte("#!/bin/sh\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, tc := range []struct {
+		name, command string
+		ok            bool
+	}{
+		{"quoted project directory", `"$CLAUDE_PROJECT_DIR"/.claude/support/scripts/guard.sh`, true},
+		{"braced project directory", `${CLAUDE_PROJECT_DIR}/.claude/support/scripts/guard.sh --flag`, true},
+		{"checkout-relative", `.claude/support/scripts/guard.sh`, true},
+		{"absolute inside checkout", filepath.Join(checkout, ".claude", "support", "scripts", "guard.sh"), true},
+		{"missing file", `"$CLAUDE_PROJECT_DIR"/.claude/missing/scripts/guard.sh`, false},
+		{"another teammate's checkout", filepath.Join(other, ".claude", "support", "scripts", "guard.sh"), false},
+		{"plugin root variable", `${CLAUDE_PLUGIN_ROOT}/scripts/guard.sh`, false},
+		{"other variable", `$HOME/.claude/support/scripts/guard.sh`, false},
+		{"escaping relative path", `../other-checkout/.claude/support/scripts/guard.sh`, false},
+		{"no script", `echo unrelated`, false},
+	} {
+		if _, err := hookInvariantScriptPath(tc.command, checkout, "scripts/guard.sh"); (err == nil) != tc.ok {
+			t.Errorf("%s: hookInvariantScriptPath(%q) error = %v, want ok=%t", tc.name, tc.command, err, tc.ok)
+		}
+	}
+}
 
 // hookInvariantCommands returns every "command" string in a hook document.
 func hookInvariantCommands(t *testing.T, data []byte) []string {
@@ -245,7 +325,8 @@ func TestHookInvariantTeammateCheckoutPathDoesNotDuplicateHooks(t *testing.T) {
 	if err := os.Chmod(e.mustResolvePath("/workspace/vendor/reg/hooks/scripts/guard.sh"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	e.WriteFile("/workspace/vendor/reg/hooks/hooks.json", `{"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"${CLAUDE_PLUGIN_ROOT}/scripts/guard.sh"}]}]}}`)
+	const authored = "${CLAUDE_PLUGIN_ROOT}/scripts/guard.sh"
+	e.WriteFile("/workspace/vendor/reg/hooks/hooks.json", `{"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"`+authored+`"}]}]}}`)
 	e.WriteRepoConfig(hookInvariantV4Config("claude", "./vendor/reg", "hook/PreToolUse-command"))
 	e.InitGitRepo()
 	e.MustRunAM("sync")
@@ -270,6 +351,12 @@ func TestHookInvariantTeammateCheckoutPathDoesNotDuplicateHooks(t *testing.T) {
 	if got := hookInvariantCount(t, checkout, files, "scripts/guard.sh"); got != 1 {
 		t.Errorf("teammate's sync left %d hook entries, want 1", got)
 	}
+	// Claude Code loads hooks from .claude/settings.json; it never reads the
+	// plugin-layout .claude/hooks/hooks.json, so a command there cannot run
+	// and must merely stay the authored one. Every command in a file Claude
+	// Code loads must run a script that exists in this checkout.
+	const pluginLayout = ".claude/hooks/hooks.json"
+	checked := 0
 	for _, rel := range files {
 		data, err := os.ReadFile(filepath.Join(checkout, filepath.FromSlash(rel)))
 		if errors.Is(err, os.ErrNotExist) {
@@ -279,12 +366,20 @@ func TestHookInvariantTeammateCheckoutPathDoesNotDuplicateHooks(t *testing.T) {
 			t.Fatal(err)
 		}
 		for _, command := range hookInvariantCommands(t, data) {
-			for _, match := range hookInvariantProjectRelativePath.FindAllStringSubmatch(command, -1) {
-				if _, err := os.Stat(filepath.Join(checkout, filepath.FromSlash(match[1]))); err != nil {
-					t.Errorf("%s hook command references missing repository file %s: %v", rel, match[1], err)
+			checked++
+			if rel == pluginLayout {
+				if command != authored {
+					t.Errorf("%s command = %q, want the authored %q", rel, command, authored)
 				}
+				continue
+			}
+			if _, err := hookInvariantScriptPath(command, checkout, "scripts/guard.sh"); err != nil {
+				t.Errorf("%s: %v", rel, err)
 			}
 		}
+	}
+	if checked == 0 {
+		t.Error("teammate's checkout holds no hook command to check")
 	}
 	if status := e.Exec("git", "-C", checkout, "status", "--porcelain"); strings.TrimSpace(status.Stdout) != "" || status.ExitCode != 0 {
 		t.Errorf("teammate's sync of a healthy committed tree changed tracked files:\n%s", status.Combined)
