@@ -89,7 +89,7 @@ agent-marketplace install platform-onboarding \
   --ref v1.4.0
 ```
 
-`--kind collection` removes any ambiguity with a resource of the same name. This adds `collection/platform-onboarding` to the `include` list of that source in the consumer's configuration, then installs the members. Typical output:
+This adds `collection/platform-onboarding` to the `include` list of that source in the consumer's configuration, then installs the members. Typical output:
 
 ```text
 Installed collection platform-onboarding in this repo
@@ -103,5 +103,5 @@ Installed collection platform-onboarding in this repo
 
 ## Troubleshooting
 
-- `resource or collection "platform-onboarding" not found in configured registries`: check that `collections/` sits at the root of the consumer's source, inside its `path` if it has one.
+- `resource or collection "platform-onboarding" not found in configured registries` (or `not found in registry <registry-url>` when installing with `--from`): check that `collections/` sits at the root of the consumer's source, inside its `path` if it has one.
 - A member does not install: sync prints `warning: <kind> "<name>" was selected but not found`, with a note that the collection references it. Check that the member's `kind` and `name` match a real resource and that the consumer has not excluded it.
