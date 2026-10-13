@@ -53,7 +53,7 @@ You can also let the CLI write this file: `agent-marketplace install <name> --sc
 agent-marketplace sync
 ```
 
-It prints the usual `Installed <n>  Removed <n>  Malformed <n>  Errors <n>` summary, followed by a single `→` line listing the output roots it changed, separated by commas. When `.agents/config.local.yaml` exists, the CLI adds `.agents/config.local.yaml` and `.agents/lock.local.yaml` to the repository's `.gitignore` if they are not listed yet. Sync writes `.agents/lock.local.yaml` for the Git registries in your local file.
+It prints the usual `Installed <n>  Removed <n>  Malformed <n>  Errors <n>` summary, followed by a single `→` line listing the output roots it changed, separated by commas; that line appears only when sync writes or removes output. When `.agents/config.local.yaml` exists, the CLI adds `.agents/config.local.yaml` and `.agents/lock.local.yaml` to the repository's `.gitignore` if they are not listed yet. Sync writes `.agents/lock.local.yaml` for the Git registries in your local file.
 
 ## 3. Verify the override
 

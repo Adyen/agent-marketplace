@@ -16,7 +16,7 @@ Run a normal sync to create or update `.agents/lock.yaml`:
 agent-marketplace sync
 ```
 
-It prints the usual `Installed <n>  Removed <n>  Malformed <n>  Errors <n>` summary, followed by a single `→` line listing the output roots it changed, separated by commas, and writes `.agents/lock.yaml`. Check that the file exists:
+It prints the usual `Installed <n>  Removed <n>  Malformed <n>  Errors <n>` summary, followed by a single `→` line listing the output roots it changed (the line appears only when sync writes or removes output), separated by commas, and writes `.agents/lock.yaml`. Check that the file exists:
 
 ```bash
 test -f .agents/lock.yaml && echo "lock present"
@@ -61,7 +61,7 @@ A lock keeps its commit when the branch or tag it came from moves. To move a Git
 agent-marketplace lock --upgrade
 ```
 
-It prints `Locks: 1 changed` when the ref moved, or `Locks: 0 changed` when the lock was already current. `lock --upgrade` changes only the lock. Run `agent-marketplace sync` afterwards to update the harness files, or use `agent-marketplace update`, which advances the locks and syncs in one step. Then commit the updated `.agents/lock.yaml`.
+It prints `Locks: <n> changed`, for example `Locks: 0 changed` or `Locks: 1 changed`. The default scope includes user, repository, and personal-local locks, so the count can exceed one. `lock --upgrade` changes only locks. Run `agent-marketplace sync` afterwards to update the harness files, or use `agent-marketplace update`, which advances the locks and syncs in one step. Then commit the updated `.agents/lock.yaml`.
 
 ## 4. Avoid editing locks by hand
 
