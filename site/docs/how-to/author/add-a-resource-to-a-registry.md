@@ -42,7 +42,7 @@ Review code changes and suggest improvements.
 EOF
 ```
 
-Both commands succeed silently and leave the file at `skills/code-review/SKILL.md`. Give the name lowercase letters, digits, and hyphens, starting with a letter, as the [resource metadata reference](../../reference/resource-metadata.md) requires.
+Both commands succeed silently and leave the file at `skills/code-review/SKILL.md`. Use a name containing only lowercase letters, digits, and hyphens, starting with a letter, as the [resource metadata reference](../../reference/resource-metadata.md) requires.
 
 In the Claude Code layout, a command is a Markdown file under `commands/`. Its name comes from the file name:
 
