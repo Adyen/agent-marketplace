@@ -20,6 +20,18 @@ func actAsAnotherUser(t *testing.T) {
 	t.Cleanup(func() { gitAuthEffectiveUID = original })
 }
 
+// ownAsFixtureAccount gives path to the account actAsAnotherUser stands in
+// for. Unprivileged runs already own their files; root is always trusted, so a
+// root run hands the file to an unprivileged account.
+func ownAsFixtureAccount(t *testing.T, path string) {
+	t.Helper()
+	if os.Geteuid() == 0 {
+		if err := os.Chown(path, 65534, 65534); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
 // installGitOnPath puts a git entry first on PATH that resolves, through a
 // Homebrew-style symlink, to target.
 func installGitOnPath(t *testing.T, target string) {
@@ -46,6 +58,7 @@ func gitWrapper(t *testing.T, realGit string, mode os.FileMode) string {
 	if err := os.Chmod(path, mode); err != nil {
 		t.Fatal(err)
 	}
+	ownAsFixtureAccount(t, path)
 	t.Setenv("AUTH_REAL_GIT", realGit)
 	return path
 }
@@ -93,7 +106,9 @@ func TestGitAuthTrustsConfigurationOwnedByGitExecutableOwner(t *testing.T) {
 			isolatedGitAuth(t)
 			f := newGitAuthServer(t)
 			complete := `!f() { test "$1" != get || printf 'username=fixture-user\npassword=synthetic-auth-secret\n'; }; f`
-			t.Setenv("GIT_CONFIG_SYSTEM", authFile(t, "system", fmt.Sprintf("[credential]\n\thelper = %q\n[http]\n\tsslCAInfo = %q\n", complete, f.ca), 0o644))
+			system := authFile(t, "system", fmt.Sprintf("[credential]\n\thelper = %q\n[http]\n\tsslCAInfo = %q\n", complete, f.ca), 0o644)
+			ownAsFixtureAccount(t, system)
+			t.Setenv("GIT_CONFIG_SYSTEM", system)
 			installGitOnPath(t, tc.git(t))
 			actAsAnotherUser(t)
 
