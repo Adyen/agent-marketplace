@@ -38,7 +38,7 @@ git clone --depth 1 --branch v4.1.3 https://github.com/Adyen/agent-marketplace.g
 agent-marketplace --version
 ```
 
-`curl`, `chmod`, and `go build` succeed silently; `git clone` prints progress lines. Either way, the last command prints `v4.1.3`. The `-ldflags` value makes `agent-marketplace --version` print the tag; without it the binary prints a Go pseudo-version. Remove the `mktemp` directories at the end of the job unless your runner cleans its workspace; both hold only files this job created. There is no Windows build.
+`curl`, `chmod`, and `go build` succeed silently; `git clone` prints progress lines. Either way, the last command prints `v4.1.3`. The `-ldflags` value makes `agent-marketplace --version` print the tag. Remove the `mktemp` directories at the end of the job unless your runner cleans its workspace; both hold only files this job created. There is no Windows build.
 
 ## 2. Point a throwaway consumer at the checkout
 
@@ -81,11 +81,11 @@ grep -q 'Malformed 0  Errors' sync.log || { echo "registry has malformed resourc
 agent-marketplace sync --check
 ```
 
-A clean sync ends with a summary such as `Installed 12  Removed 0  Malformed 0  Errors 0` (counts vary with the registry). `sync --check` prints nothing on success and exits with status `0`.
+A clean sync ends with a summary such as `Installed 12  Removed 0  Malformed 0  Errors 0` (counts vary with the registry). `sync --check` exits with status `0` when there is no drift; warnings may still print.
 
 - `sync` exits with status `1` when any resource fails to compile for a selected harness (`Errors` greater than `0`). Warnings, such as a subagent that Windsurf cannot represent, do not fail the run.
 - `--strict` makes sync exit with status `1` when a resource named in a configuration or a collection is missing or fails to load. `all: true` also selects every collection, so this checks that every collection member exists.
-- With `all: true`, a resource that fails to load is left out of the catalog and counted under `Malformed` without failing the run, even with `--strict`. The `grep` line catches it. `-v` lists each malformed resource with its path, diagnostic code, and reason.
+- With `all: true`, a resource that fails to load is left out of the catalog and counted under `Malformed` without failing the run, even with `--strict`. The `grep` line catches it. `-v` lists each malformed resource with its path and error.
 - `sync --check` then exits with status `1` if the output on disk does not match what sync would write, which would mean the result is not stable.
 - `pipefail`, set at the start of the job, keeps a failing `sync` from being hidden by `tee`, which exits with status `0` on its own. Run the job with bash (`shell: bash` in GitHub Actions); dash, which is `/bin/sh` on Debian and Ubuntu, rejects `set -o pipefail`.
 
