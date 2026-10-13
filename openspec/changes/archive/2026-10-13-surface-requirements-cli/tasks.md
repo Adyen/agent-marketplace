@@ -11,7 +11,7 @@
 
 ## 3. Reconcile documentation and verification
 
-- [ ] 3.1 Reconcile affected CLI/prerequisite reference, how-to and glossary claims with tested release-N behavior.
+- [x] 3.1 Reconcile affected CLI/prerequisite reference, how-to and glossary claims with tested release-N behavior.
 - [ ] 3.2 Capture matched CLI before/after evidence and repository-required same-workload list/status benchmark evidence without invented performance acceptance claims.
 - [ ] 3.3 Run scoped native validation, strict spec audit and combined E2E verification on the clean candidate.
-- [ ] 3.4 Run `openspec archive surface-requirements-cli --yes` in the same pull request as the implementation.
+- [x] 3.4 Run `openspec archive surface-requirements-cli --yes` in the same pull request as the implementation.
