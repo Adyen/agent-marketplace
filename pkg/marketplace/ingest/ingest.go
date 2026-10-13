@@ -22,6 +22,7 @@ import (
 
 	"github.com/Adyen/agent-marketplace/internal/catalog"
 	"github.com/Adyen/agent-marketplace/internal/collection"
+	"github.com/Adyen/agent-marketplace/internal/redact"
 
 	hccartifact "github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
@@ -38,6 +39,29 @@ import (
 )
 
 var ErrNoValidResources = errors.New("catalog error: no valid resources remain after skipping malformed resources; previous publication is preserved")
+
+// revisionRequires encodes a resource's declared prerequisites as canonical
+// JSON in declaration order, credential-redacting registry and path hints.
+// Hooks, MCP servers and collections record an empty list.
+func revisionRequires(entry catalog.Entry) string {
+	requirements := make([]store.ResourceRequirement, 0)
+	switch entry.Kind {
+	case hccir.KindSkill, hccir.KindCommand, hccir.KindSubagent:
+		for _, req := range catalog.RequirementsFromResource(entry.Resource) {
+			requirements = append(requirements, store.ResourceRequirement{
+				Kind:     api.FromIR(req.Kind),
+				Name:     strings.TrimSpace(req.Name),
+				Registry: redact.URL(strings.TrimSpace(req.Registry)),
+				Path:     redact.URL(strings.TrimSpace(req.Path)),
+			})
+		}
+	}
+	payload, err := json.Marshal(requirements)
+	if err != nil {
+		return "[]"
+	}
+	return string(payload)
+}
 
 // Revision is the result of ingesting a single registry commit.
 type Revision struct {
@@ -497,6 +521,7 @@ func BuildRegistryRevision(ctx context.Context, cfg config.Config, mpID store.Ma
 			ArchiveDigest: store.ArchiveDigest(archiveDigest),
 			License:       p.result.License,
 			Description:   p.result.Description,
+			Requires:      revisionRequires(p.entry),
 		}
 		assessment, err := store.FinalizeResourceAssessment(store.ResourceAssessment{
 			Coordinate:               coord,

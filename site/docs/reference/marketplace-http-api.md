@@ -92,6 +92,11 @@ In `database` management mode, a resource route for a revision that is not `avai
 
 The inspection routes return `404` when no inspection exists and `413` for inspection files larger than `policy.limits.file_bytes`. In `database` management mode they also return `410` for revoked content and `403` for blocked content.
 
+The latest-revision resource response also carries prerequisite relations recorded at publication:
+
+- `requires`: the revision's `metadata.requires` declarations in declaration order, each `{"kind", "name", "registry"?, "path"?, "resolved"?}`. `resolved` names the visible current-head resource (`{"registry", "kind", "name"}`, registry by slug) that satisfies the declaration — within the same registry, or the hinted registry — including the `path` source-root rule; it is omitted when no candidate qualifies. Revisions published before prerequisite indexing report `requires` as `null` rather than `[]`.
+- `required_by`: the in-scope dependents whose current-head revisions declare this resource as a prerequisite, ordered by (`registry`, `kind`, `name`); `null` when a visible in-scope unindexed revision leaves the dependent set unknowable.
+
 ### Catalog projection
 
 This route exists only when `catalog_projection.enabled` is `true`. Otherwise it returns `404`.

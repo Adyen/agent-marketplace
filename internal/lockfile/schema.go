@@ -72,6 +72,10 @@ type MarketplaceSelectionLock struct {
 	RegistryID string `yaml:"registry_id"`
 	Name       string `yaml:"name"`
 	Revision   Digest `yaml:"revision"`
+	// Kind, when set, makes the entry a requires edge naming the requiring
+	// locked resource by registry ID, kind, and name. Absent keeps the
+	// collection-edge encoding.
+	Kind string `yaml:"kind,omitempty"`
 }
 
 const (

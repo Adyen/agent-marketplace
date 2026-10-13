@@ -70,7 +70,7 @@ func mergeSelectedBy(existing, added []lockfile.MarketplaceSelectionLock) []lock
 	merged := make([]lockfile.MarketplaceSelectionLock, 0, len(existing)+len(added))
 	for _, selections := range [][]lockfile.MarketplaceSelectionLock{existing, added} {
 		for _, edge := range selections {
-			key := edge.RegistryID + "\x00" + edge.Name + "\x00" + string(edge.Revision)
+			key := edge.RegistryID + "\x00" + edge.Kind + "\x00" + edge.Name + "\x00" + string(edge.Revision)
 			if seen[key] {
 				continue
 			}
@@ -146,7 +146,7 @@ func ReplacePinsToV4(v4 *config.V4Config, current lockfile.Document, entry confi
 			record := &existing.Resources[i]
 			kept := record.SelectedBy[:0]
 			for _, edge := range record.SelectedBy {
-				if edge.RegistryID == expectedRoot.RegistryID && edge.Name == expectedRoot.Name && string(edge.Revision) == expectedRoot.Revision {
+				if edge.Kind == "" && edge.RegistryID == expectedRoot.RegistryID && edge.Name == expectedRoot.Name && string(edge.Revision) == expectedRoot.Revision {
 					continue
 				}
 				kept = append(kept, edge)
@@ -341,7 +341,7 @@ func reachableResources(v4 *config.V4Config, sourceName string, records []lockfi
 			direct := requested[record.RegistryName+"\x00"+record.Kind+"\x00"+record.Name]
 			member := false
 			for _, edge := range record.SelectedBy {
-				if selected[edge.RegistryID+"\x00"+edge.Name+"\x00"+string(edge.Revision)] {
+				if selected[edge.RegistryID+"\x00"+edge.Kind+"\x00"+edge.Name+"\x00"+string(edge.Revision)] {
 					member = true
 					break
 				}
@@ -349,8 +349,9 @@ func reachableResources(v4 *config.V4Config, sourceName string, records []lockfi
 			if direct || member {
 				retained = append(retained, record)
 				if record.Kind == "collection" {
-					selected[record.RegistryID+"\x00"+record.Name+"\x00"+string(record.ContentDigest)] = true
+					selected[record.RegistryID+"\x00\x00"+record.Name+"\x00"+string(record.ContentDigest)] = true
 				}
+				selected[record.RegistryID+"\x00"+record.Kind+"\x00"+record.Name+"\x00"+string(record.ContentDigest)] = true
 				progress = true
 				continue
 			}
@@ -364,7 +365,7 @@ func reachableResources(v4 *config.V4Config, sourceName string, records []lockfi
 	for i := range retained {
 		var edges []lockfile.MarketplaceSelectionLock
 		for index, edge := range retained[i].SelectedBy {
-			if selected[edge.RegistryID+"\x00"+edge.Name+"\x00"+string(edge.Revision)] {
+			if selected[edge.RegistryID+"\x00"+edge.Kind+"\x00"+edge.Name+"\x00"+string(edge.Revision)] {
 				if edges != nil {
 					edges = append(edges, edge)
 				}
@@ -378,4 +379,46 @@ func reachableResources(v4 *config.V4Config, sourceName string, records []lockfi
 		}
 	}
 	return retained, nil
+}
+
+// RemoveRequiresHeldRecords drops the lock records matching pins from the
+// endpoint's record so a requires-held pin can be removed even though its
+// requires edge would otherwise keep it reachable. Records that only an edge
+// of a stripped record held become unreachable and are pruned by the
+// following merge.
+func RemoveRequiresHeldRecords(doc lockfile.Document, entry config.MarketplaceEntry, pins []config.MarketplaceResourcePin) (lockfile.Document, error) {
+	if len(pins) == 0 {
+		return doc, nil
+	}
+	canonical, err := marketplace.NormalizeMarketplaceURL(entry.URL)
+	if err != nil {
+		return lockfile.Document{}, err
+	}
+	strip := make(map[string]bool, len(pins))
+	for _, pin := range pins {
+		strip[pin.RegistryID+"\x00"+pin.Kind+"\x00"+pin.Name] = true
+	}
+	doc.Marketplaces = cloneMarketplaceLockRecords(doc.Marketplaces)
+	for i := range doc.Marketplaces {
+		record := &doc.Marketplaces[i]
+		recordCanonical, err := marketplace.NormalizeMarketplaceURL(record.URL)
+		if err != nil {
+			return lockfile.Document{}, lockMismatch("marketplaces", "lock endpoint %q is not a valid URL: %v", record.URL, err)
+		}
+		if recordCanonical != canonical {
+			continue
+		}
+		if entry.InstanceID != "" && record.InstanceID != entry.InstanceID {
+			continue
+		}
+		kept := make([]lockfile.MarketplaceResourceLock, 0, len(record.Resources))
+		for _, resource := range record.Resources {
+			if strip[resource.RegistryID+"\x00"+resource.Kind+"\x00"+resource.Name] {
+				continue
+			}
+			kept = append(kept, resource)
+		}
+		record.Resources = kept
+	}
+	return doc, nil
 }

@@ -1,6 +1,7 @@
 package resolver
 
 import (
+	"context"
 	"log/slog"
 	"path/filepath"
 	"slices"
@@ -8,6 +9,7 @@ import (
 
 	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
+	mpapi "github.com/Adyen/agent-marketplace/pkg/marketplace/api"
 
 	"github.com/Adyen/agent-marketplace/internal/catalog"
 	"github.com/Adyen/agent-marketplace/internal/config"
@@ -24,7 +26,36 @@ const (
 	UnmetReasonNotFound            UnmetRequirementReason = "not-found"
 	UnmetReasonExcluded            UnmetRequirementReason = "excluded"
 	UnmetReasonSourceNotConfigured UnmetRequirementReason = "source-not-configured"
+	UnmetReasonUnrecorded          UnmetRequirementReason = "unrecorded"
 )
+
+// MarketplaceRequirementQuery asks a configured Marketplace resolver whether
+// one prerequisite declaration resolves to a resource inside the requiring
+// pin's configured Marketplace entry. A found candidate is never recorded,
+// so the result is an identity, not an artifact.
+type MarketplaceRequirementQuery struct {
+	Entry          config.MarketplaceEntry
+	RegistryID     string
+	RegistrySlug   string
+	SameRegistry   bool
+	RegistryCommit string // requirer pin registry_commit; honored only when SameRegistry
+	Kind           string // Marketplace wire kind
+	Name           string
+	Path           string // trimmed path hint; "" when absent
+}
+
+// MarketplaceRequirementResult reports whether the query resolved.
+type MarketplaceRequirementResult struct {
+	Found         bool
+	ContentDigest string
+}
+
+// MarketplaceRequirementLookup is an optional extension a Marketplace resolver
+// can implement to answer prerequisite lookups. Implementations without it
+// behave as not found.
+type MarketplaceRequirementLookup interface {
+	LookupMarketplaceRequirement(ctx context.Context, q MarketplaceRequirementQuery) (MarketplaceRequirementResult, error)
+}
 
 func WithImpliedPreview(preview *[]ResolvedArtifact) ResolveOption {
 	return func(opts *resolveOptions) {
@@ -169,6 +200,26 @@ func impliedCandidateExcluded(art ResolvedArtifact, cand requirementCandidate, c
 	return localResourceExcluded(localExcludes, localExcludeAll, art.Kind, art.Name, cand.entry.Required, art.Source)
 }
 
+// marketplaceHeldCandidate is a Marketplace pin held only through requires
+// edges. It was resolved by the Marketplace resolver but diverted from the
+// ordinary occurrence map; a requires declaration may admit it through the
+// existing implied/preview path.
+type marketplaceHeldCandidate struct {
+	artifact ResolvedArtifact
+	entry    config.MarketplaceEntry
+	pin      config.MarketplaceResourcePin
+}
+
+// marketplaceReqOutcome reports how one Marketplace prerequisite declaration
+// resolved: an admitted requires-held artifact, a preview-only lookup
+// candidate, an unmet reason, or a lookup error.
+type marketplaceReqOutcome struct {
+	admitted *ResolvedArtifact
+	preview  *ResolvedArtifact
+	reason   UnmetRequirementReason
+	err      error
+}
+
 func expandRequirements(
 	resolved []ResolvedArtifact,
 	cfg *config.Config,
@@ -178,7 +229,11 @@ func expandRequirements(
 	localExcludes resourceSelections,
 	localExcludeAll map[ir.ResourceKind]bool,
 	targetSet []hcc.Target,
-) (implied []ResolvedArtifact, unmet map[unmetKey]UnmetRequirementReason, errs []error) {
+	ctx context.Context,
+	held map[resourceSelection][]marketplaceHeldCandidate,
+	lookup MarketplaceRequirementLookup,
+	expansionEnabled bool,
+) (implied []ResolvedArtifact, preview []ResolvedArtifact, unmet map[unmetKey]UnmetRequirementReason, errs []error) {
 	hasRequirements := false
 	for i := range resolved {
 		if len(catalog.RequirementsFromResource(resolved[i].Resource)) > 0 {
@@ -187,7 +242,7 @@ func expandRequirements(
 		}
 	}
 	if !hasRequirements {
-		return nil, nil, nil
+		return nil, nil, nil, nil
 	}
 	unmet = make(map[unmetKey]UnmetRequirementReason)
 	indexes := make(catalogIndexes)
@@ -225,6 +280,26 @@ func expandRequirements(
 				continue
 			}
 			if _, seen := unmet[key]; seen {
+				continue
+			}
+			if requirer.IsMarketplace {
+				outcome := resolveMarketplaceRequirement(ctx, requirer, req, reqSel, ref, cfg, held[reqSel], lookup)
+				switch {
+				case outcome.err != nil:
+					errs = append(errs, outcome.err)
+					unmet[key] = UnmetReasonNotFound
+				case outcome.admitted != nil:
+					admitted[scopeKey] = len(implied)
+					implied = append(implied, *outcome.admitted)
+					queue = append(queue, *outcome.admitted)
+				case outcome.preview != nil:
+					preview = append(preview, *outcome.preview)
+					if expansionEnabled {
+						unmet[key] = UnmetReasonUnrecorded
+					}
+				default:
+					unmet[key] = outcome.reason
+				}
 				continue
 			}
 			candidates, sourceMissing := requirementCandidates(requirer, req, cfg, catalogs, indexes)
@@ -273,6 +348,143 @@ func expandRequirements(
 			}
 		}
 	}
-	slog.Debug("requirement expansion complete", "implied", len(implied), "unmet", len(unmet), "malformed_diagnostics", len(errs))
-	return implied, unmet, errs
+	slog.Debug("requirement expansion complete", "implied", len(implied), "preview_only", len(preview), "unmet", len(unmet), "malformed_diagnostics", len(errs))
+	return implied, preview, unmet, errs
+}
+
+// resolveMarketplaceRequirement resolves one prerequisite declared by a
+// selected Marketplace resource. A requires-held pin whose edge names this
+// requirer wins first (it is already resolved and recorded); otherwise the
+// requirement targets the registry hint — unbound hints are
+// source-not-configured without a request — or the requiring pin's own
+// registry. Found lookup candidates are preview-only and never recorded.
+func resolveMarketplaceRequirement(ctx context.Context, requirer ResolvedArtifact, req catalog.Requirement, reqSel resourceSelection, ref ResourceRef, cfg *config.Config, held []marketplaceHeldCandidate, lookup MarketplaceRequirementLookup) marketplaceReqOutcome {
+	requirerKind := mpapi.FromIR(requirer.Kind)
+	for i := range held {
+		cand := &held[i]
+		if cand.entry.InstanceID != requirer.MarketplaceInstanceID {
+			continue
+		}
+		matched := false
+		for _, edge := range cand.pin.RequiresEdges.List() {
+			if edge.RegistryID == requirer.MarketplaceRegistryID &&
+				edge.Kind == requirerKind &&
+				edge.Name == requirer.MarketplaceResourceName &&
+				edge.Revision == requirer.MarketplaceDigest {
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			continue
+		}
+		if cfg.MarketplacePinExcluded(cand.entry, cand.pin) {
+			return marketplaceReqOutcome{reason: UnmetReasonExcluded}
+		}
+		art := cand.artifact
+		art.Implied = true
+		art.RequiredBy = []ResourceRef{ref}
+		return marketplaceReqOutcome{admitted: &art}
+	}
+
+	entry := marketplaceEntryFor(requirer, cfg)
+	if entry == nil {
+		return marketplaceReqOutcome{reason: UnmetReasonNotFound}
+	}
+	bound := make(map[string]string, len(entry.Resources))
+	var requirerPin *config.MarketplaceResourcePin
+	for i := range entry.Resources {
+		pin := &entry.Resources[i]
+		if pin.RegistryID != "" {
+			if _, ok := bound[pin.RegistryID]; !ok {
+				bound[pin.RegistryID] = pin.RegistrySlug
+			}
+		}
+		if pin.RegistryID == requirer.MarketplaceRegistryID &&
+			pin.Kind == requirerKind &&
+			pin.Name == requirer.MarketplaceResourceName &&
+			pin.Digest == requirer.MarketplaceDigest {
+			requirerPin = pin
+		}
+	}
+	hint := strings.TrimSpace(req.Registry)
+	var targetID, targetSlug string
+	if hint == "" {
+		targetID = requirer.MarketplaceRegistryID
+		targetSlug = bound[targetID]
+		if requirerPin != nil && requirerPin.RegistrySlug != "" {
+			targetSlug = requirerPin.RegistrySlug
+		}
+	} else {
+		found := false
+		for _, pin := range entry.Resources {
+			if pin.RegistrySlug == hint || pin.RegistryID == hint {
+				targetID, targetSlug, found = pin.RegistryID, pin.RegistrySlug, true
+				break
+			}
+		}
+		if !found {
+			return marketplaceReqOutcome{reason: UnmetReasonSourceNotConfigured}
+		}
+	}
+	if lookup == nil {
+		// Offline resolution or a Marketplace resolver without the lookup
+		// extension: the requirement is unmet without network access.
+		return marketplaceReqOutcome{reason: UnmetReasonNotFound}
+	}
+	query := MarketplaceRequirementQuery{
+		Entry:        *entry,
+		RegistryID:   targetID,
+		RegistrySlug: targetSlug,
+		SameRegistry: targetID == requirer.MarketplaceRegistryID,
+		Kind:         mpapi.FromIR(reqSel.kind),
+		Name:         reqSel.name,
+		Path:         strings.TrimSpace(req.Path),
+	}
+	if query.SameRegistry && requirerPin != nil {
+		query.RegistryCommit = requirerPin.RegistryCommit
+	}
+	result, err := lookup.LookupMarketplaceRequirement(ctx, query)
+	if err != nil {
+		return marketplaceReqOutcome{err: err}
+	}
+	if !result.Found {
+		return marketplaceReqOutcome{reason: UnmetReasonNotFound}
+	}
+	candidatePin := config.MarketplaceResourcePin{
+		RegistryID:   targetID,
+		RegistrySlug: targetSlug,
+		Kind:         query.Kind,
+		Name:         query.Name,
+	}
+	if cfg.MarketplacePinExcluded(*entry, candidatePin) {
+		return marketplaceReqOutcome{reason: UnmetReasonExcluded}
+	}
+	art := ResolvedArtifact{
+		Entry:                   catalog.Entry{Kind: reqSel.kind, Name: reqSel.name},
+		RequiredBy:              []ResourceRef{ref},
+		Implied:                 true,
+		PreviewOnly:             true,
+		IsMarketplace:           true,
+		MarketplaceURL:          entry.URL,
+		MarketplaceInstanceID:   entry.InstanceID,
+		MarketplaceAlias:        entry.Alias,
+		MarketplaceRegistryID:   targetID,
+		MarketplaceResourceName: query.Name,
+		MarketplaceDigest:       result.ContentDigest,
+		Source:                  entry.Source,
+	}
+	return marketplaceReqOutcome{preview: &art}
+}
+
+// marketplaceEntryFor returns the configured Marketplace entry that produced
+// the requirer artifact, or nil when it cannot be found.
+func marketplaceEntryFor(requirer ResolvedArtifact, cfg *config.Config) *config.MarketplaceEntry {
+	for i := range cfg.Marketplaces {
+		entry := &cfg.Marketplaces[i]
+		if entry.InstanceID == requirer.MarketplaceInstanceID {
+			return entry
+		}
+	}
+	return nil
 }

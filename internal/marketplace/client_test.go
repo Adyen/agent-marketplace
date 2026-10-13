@@ -104,6 +104,63 @@ func TestClientPreservesOperatorExposedAvailability(t *testing.T) {
 	}
 }
 
+func TestClientDecodesRequires(t *testing.T) {
+	digest := "sha256:" + strings.Repeat("a", 64)
+	coord := store.ResourceCoordinate{Marketplace: "mp", Registry: "src", Kind: "skill", Name: "review"}
+	revision := assessedRevision(store.ResourceRevision{Coordinate: coord, ContentDigest: store.RevisionDigest(digest)})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(struct {
+			store.AssessedResourceRevision
+			Requires []map[string]any `json:"requires"`
+		}{revision, []map[string]any{
+			{"kind": "skill", "name": "lint", "resolved": map[string]any{"registry": "src", "kind": "skill", "name": "lint"}},
+			{"kind": "mcpserver", "name": "docs", "registry": "other", "path": "vendor/tools"},
+		}})
+	}))
+	defer server.Close()
+	client, err := NewClient(server.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	client.instanceID = "mp"
+	got, err := client.GetLatestResourceRevision(context.Background(), "src", "skill", "review")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want, err := json.Marshal([]store.ResourceRequirement{
+		{Kind: "skill", Name: "lint"},
+		{Kind: "mcpserver", Name: "docs", Registry: "other", Path: "vendor/tools"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Requires != string(want) {
+		t.Fatalf("requires = %q, want %q", got.Requires, string(want))
+	}
+}
+
+func TestClientLeavesRequiresEmptyWhenAbsent(t *testing.T) {
+	digest := "sha256:" + strings.Repeat("a", 64)
+	coord := store.ResourceCoordinate{Marketplace: "mp", Registry: "src", Kind: "skill", Name: "review"}
+	revision := assessedRevision(store.ResourceRevision{Coordinate: coord, ContentDigest: store.RevisionDigest(digest)})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(revision)
+	}))
+	defer server.Close()
+	client, err := NewClient(server.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	client.instanceID = "mp"
+	got, err := client.GetLatestResourceRevision(context.Background(), "src", "skill", "review")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Requires != "" {
+		t.Fatalf("requires = %q, want absent", got.Requires)
+	}
+}
+
 func TestNewClientValidatesBaseURL(t *testing.T) {
 	tests := []struct {
 		name    string

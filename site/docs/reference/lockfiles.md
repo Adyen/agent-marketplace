@@ -137,7 +137,7 @@ Each resource record has these fields:
 | `registry_commit` | `index-only` | Source Git commit, in lowercase. |
 | `registry_manifest_digest` | `index-only` | Digest of the source registry manifest. |
 | `source_path` | `index-only` | Path of the resource inside the source repository. |
-| `selected_by` | resources selected through a collection | Each collection (`registry_id`, `name`, `revision`) that selected this resource. Every entry must point to a collection locked in the same file. |
+| `selected_by` | resources selected through a collection or a requires edge | Each collection (`registry_id`, `name`, `revision`) that selected this resource, or — when the entry also carries `kind` — the requiring locked resource (`registry_id`, `kind`, `name`, `revision`) whose `requires` declaration holds this resource. Every entry must point to a collection or resource locked in the same file. A record held only through requires edges is a prerequisite selection, never a user selection or collection member. |
 
 The CLI installs a Marketplace resource only when the requested endpoint, registry, resource, and revision match a record in the owning layer's lock.
 

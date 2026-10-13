@@ -126,6 +126,47 @@ selected and reports the prerequisite as unmet. Removal never cascades to
 the requiring resource and needs no new flag. With expansion disabled,
 `remove` behaves as before and records no prerequisite-driven exclusion.
 
+### Marketplace prerequisites
+
+Prerequisites declared by Marketplace resources keep their recorded edges
+in the acquisition lock: an entry in a record's `selected_by` carrying a
+`kind` is a requires edge naming the requiring locked resource. A record
+held only through requires edges is not a user selection and never counts
+as a collection member. When a still-selected parent declares its
+prerequisite, a requires-held resource joins the selection as an implied
+resource (expansion enabled) or the implied preview (disabled); an edge
+with no such parent leaves the record unselected and unreported.
+
+For a prerequisite with no recorded edge, lookup stays inside the
+requiring resource's configured Marketplace entry:
+
+- Without a `registry` hint, the requiring pin's own registry is searched.
+- A `registry` hint must name a registry bound in that entry by slug or
+  registry ID; an unbound hint produces a `source-not-configured` warning
+  and no Marketplace request.
+- When the requiring pin records `registry_commit` and the target is its
+  own registry, only that exact registry occurrence is consulted — through
+  its verified registry revision manifest — with no fallback to the
+  current revision. Otherwise the target registry's current revision is
+  used.
+- A `path` hint matches only when the candidate's source root — the single
+  root of its exact registry occurrence containing its source path —
+  equals the hint; when the root cannot be established the prerequisite
+  is `not-found`.
+- Offline resolution never contacts a Marketplace for lookup.
+
+This release never records a lookup result: a found candidate appears in
+the implied preview only, preserves or prunes no materialized output,
+changes neither configuration nor lock bytes, and — with expansion
+enabled — reports the prerequisite unmet with reason `unrecorded`.
+
+Removing a requires-held prerequisite succeeds like any authorized
+removal: its lock record and requires edges are removed, an exact
+`registry/kind/name` Marketplace exclusion is written only when expansion
+is enabled (into the user layer, the one layer where Marketplace
+exclusions take effect), and the requiring resource stays selected with
+its prerequisite reported unmet.
+
 ## Warning and remediation
 
 An unmet prerequisite produces:
@@ -140,8 +181,8 @@ declares those hints. Each argument is a POSIX shell literal: simple values
 print unquoted and values that need quoting are single-quoted. Kinds print as
 `skill`, `command`, `subagent`, `hook`, or `mcp`. URL credentials inside a
 `registry` hint are replaced with `***` before the command is formatted. Each
-unmet warning also carries a typed reason — `not-found`, `excluded`, or
-`source-not-configured` — which `status` prints in its `REASON` column and
+unmet warning also carries a typed reason — `not-found`, `excluded`,
+`source-not-configured`, or `unrecorded` — which `status` prints in its `REASON` column and
 `doctor` uses to explain unconfigured source hints.
 
 | Command | Behavior |

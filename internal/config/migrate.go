@@ -1376,13 +1376,31 @@ func verifyMigrationEvidenceRecord(pin MarketplaceResourcePin, record lockfile.M
 		return fmt.Errorf("evidence occurrence (%s/%s) does not match pin (%s/%s)", record.RegistryCommit, record.RegistryManifestDigest, pin.RegistryCommit, pin.RegistryManifestDigest)
 	}
 	selected := pin.SelectedBy.List()
-	if len(record.SelectedBy) != len(selected) {
-		return fmt.Errorf("evidence selected_by length %d does not match pin %d", len(record.SelectedBy), len(selected))
+	var collections, requires []lockfile.MarketplaceSelectionLock
+	for _, edge := range record.SelectedBy {
+		if edge.Kind == "" {
+			collections = append(collections, edge)
+		} else {
+			requires = append(requires, edge)
+		}
+	}
+	if len(collections) != len(selected) {
+		return fmt.Errorf("evidence selected_by length %d does not match pin %d", len(collections), len(selected))
 	}
 	for i, edge := range selected {
-		got := record.SelectedBy[i]
+		got := collections[i]
 		if got.RegistryID != edge.RegistryID || got.Name != edge.Name || got.Revision.String() != edge.Revision {
 			return fmt.Errorf("evidence selected_by[%d] %v does not match pin %v", i, got, edge)
+		}
+	}
+	requireEdges := pin.RequiresEdges.List()
+	if len(requires) != len(requireEdges) {
+		return fmt.Errorf("evidence requires edge count %d does not match pin %d", len(requires), len(requireEdges))
+	}
+	for i, edge := range requireEdges {
+		got := requires[i]
+		if got.RegistryID != edge.RegistryID || got.Kind != edge.Kind || got.Name != edge.Name || got.Revision.String() != edge.Revision {
+			return fmt.Errorf("evidence requires edge[%d] %v does not match pin %v", i, got, edge)
 		}
 	}
 	return nil

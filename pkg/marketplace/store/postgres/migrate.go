@@ -9,7 +9,7 @@ import (
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/store"
 )
 
-var migrations = []string{migration0, migration1, migration2, store.ManagedConfigurationSchema, store.PublicationSchema, store.BlobOwnershipMigration(true), store.ManagedRuntimeSchema, store.ManagedPreviewSchema, migrationDigestIndexes}
+var migrations = []string{migration0, migration1, migration2, store.ManagedConfigurationSchema, store.PublicationSchema, store.BlobOwnershipMigration(true), store.ManagedRuntimeSchema, store.ManagedPreviewSchema, migrationDigestIndexes, migrationRequires}
 
 const migrationTable = "marketplace_metadata_v2_schema_migrations"
 
@@ -232,4 +232,10 @@ ALTER TABLE collection_revisions ADD COLUMN includes TEXT NOT NULL DEFAULT '[]';
 const migrationDigestIndexes = `
 CREATE INDEX idx_resource_revisions_content ON resource_revisions(marketplace_id, content_digest);
 CREATE INDEX idx_current_assessments_content ON current_resource_assessments(marketplace_id, content_digest);
+`
+
+// migrationRequires adds the nullable per-revision prerequisite column. NULL
+// marks revisions published before prerequisite indexing; no backfill.
+const migrationRequires = `
+ALTER TABLE resource_revisions ADD COLUMN requires TEXT;
 `

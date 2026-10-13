@@ -1,6 +1,7 @@
 package store
 
 import (
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -379,6 +380,16 @@ const (
 	RevocationRevision RevocationKind = "revision"
 )
 
+// ResourceRequirement is one indexed prerequisite declaration of a resource
+// revision. Registry and Path are optional hints; their stored values are
+// credential-redacted at ingest.
+type ResourceRequirement struct {
+	Kind     string `json:"kind"`
+	Name     string `json:"name"`
+	Registry string `json:"registry,omitempty"`
+	Path     string `json:"path,omitempty"`
+}
+
 // ResourceRevision is an immutable canonical content and metadata record.
 type ResourceRevision struct {
 	// Coordinate identifies the resource lineage.
@@ -397,7 +408,36 @@ type ResourceRevision struct {
 	// originates in a third-party registry, so it is bounded and normalized by
 	// BoundDescription before it is stored or served.
 	Description string `json:"description,omitempty"`
+
+	// Requires is the canonical JSON array of ResourceRequirement declarations
+	// recorded at publication. An empty string means the revision predates
+	// prerequisite indexing (SQL NULL); "[]" means indexed with none.
+	Requires string `json:"-"`
 }
+
+// RequirementCandidate is a current-head skill, command, or subagent revision
+// in scope for a resource detail dependent lookup. Requires is empty when the
+// revision is unindexed (SQL NULL).
+type RequirementCandidate struct {
+	Registry      RegistryID
+	RegistrySlug  string
+	Kind          string
+	Name          string
+	ContentDigest RevisionDigest
+	Requires      string
+}
+
+// CurrentOccurrenceRoots is the current-head occurrence of one resource with
+// the roots of its registry occurrence, used to derive its source root.
+type CurrentOccurrenceRoots struct {
+	ContentDigest RevisionDigest
+	SourcePath    string
+	Roots         []RegistryRoot
+}
+
+// ErrAmbiguousOccurrence is returned when a resource has more than one
+// current-head occurrence row, leaving its source root undefined.
+var ErrAmbiguousOccurrence = errors.New("marketplace/store: ambiguous occurrence")
 
 // ResourceOccurrence records one resource revision's membership in a registry occurrence.
 type ResourceOccurrence struct {

@@ -174,3 +174,118 @@ resources:
 		t.Fatalf("binding error = %q", mismatch.Msg)
 	}
 }
+
+// spec: resource-prerequisites/updating-a-requiring-resource-prunes-its-stale-requires-held-pins
+func TestReachableResourcesPrunesRequiresHeldRecordAfterParentUpdate(t *testing.T) {
+	oldDigest := lockfile.Digest("sha256:" + strings.Repeat("a", 64))
+	newDigest := lockfile.Digest("sha256:" + strings.Repeat("b", 64))
+	childDigest := lockfile.Digest("sha256:" + strings.Repeat("c", 64))
+	v4 := &config.V4Config{
+		Sources: map[string]config.V4Source{"hosted": {Kind: config.V4SourceMarketplace}},
+		Requests: []config.V4ResourceRequest{
+			{SourceName: "hosted", Registry: "tools", Kind: "skill", Name: "parent"},
+		},
+	}
+	resources := []lockfile.MarketplaceResourceLock{
+		{RegistryName: "tools", RegistryID: "registry-id", Kind: "skill", Name: "parent", ContentDigest: newDigest},
+		{RegistryName: "tools", RegistryID: "registry-id", Kind: "skill", Name: "helper", ContentDigest: childDigest, SelectedBy: []lockfile.MarketplaceSelectionLock{
+			{RegistryID: "registry-id", Kind: "skill", Name: "parent", Revision: oldDigest},
+		}},
+	}
+	retained, err := reachableResources(v4, "hosted", resources)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(retained) != 1 || retained[0].Name != "parent" {
+		t.Fatalf("stale requires edge must drop the record it alone held, retained = %#v", retained)
+	}
+	for _, record := range retained {
+		for _, edge := range record.SelectedBy {
+			if edge.Kind != "" {
+				t.Fatalf("rewrite must not add requires edges, got %#v", edge)
+			}
+		}
+	}
+}
+
+// spec: resource-prerequisites/unrelated-lock-rewrites-keep-valid-requires-edges
+func TestReachableResourcesKeepsValidRequiresEdges(t *testing.T) {
+	parentDigest := lockfile.Digest("sha256:" + strings.Repeat("a", 64))
+	goneDigest := lockfile.Digest("sha256:" + strings.Repeat("b", 64))
+	childDigest := lockfile.Digest("sha256:" + strings.Repeat("c", 64))
+	validEdge := lockfile.MarketplaceSelectionLock{RegistryID: "registry-id", Kind: "skill", Name: "parent", Revision: parentDigest}
+	v4 := &config.V4Config{
+		Sources: map[string]config.V4Source{"hosted": {Kind: config.V4SourceMarketplace}},
+		Requests: []config.V4ResourceRequest{
+			{SourceName: "hosted", Registry: "tools", Kind: "skill", Name: "parent"},
+			{SourceName: "hosted", Registry: "tools", Kind: "skill", Name: "sibling"},
+		},
+	}
+	resources := []lockfile.MarketplaceResourceLock{
+		{RegistryName: "tools", RegistryID: "registry-id", Kind: "skill", Name: "parent", ContentDigest: parentDigest},
+		{RegistryName: "tools", RegistryID: "registry-id", Kind: "skill", Name: "helper", ContentDigest: childDigest, SelectedBy: []lockfile.MarketplaceSelectionLock{
+			validEdge,
+			{RegistryID: "registry-id", Kind: "skill", Name: "gone", Revision: goneDigest},
+		}},
+		{RegistryName: "tools", RegistryID: "registry-id", Kind: "skill", Name: "sibling", ContentDigest: childDigest},
+	}
+	retained, err := reachableResources(v4, "hosted", resources)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var helper *lockfile.MarketplaceResourceLock
+	for i := range retained {
+		if retained[i].Name == "helper" {
+			helper = &retained[i]
+		}
+	}
+	if helper == nil {
+		t.Fatalf("requires edge with a live parent must keep its record, retained = %#v", retained)
+	}
+	if !reflect.DeepEqual(helper.SelectedBy, []lockfile.MarketplaceSelectionLock{validEdge}) {
+		t.Fatalf("dangling requires edges must drop while valid ones stay, got %#v", helper.SelectedBy)
+	}
+}
+
+func TestRemoveRequiresHeldRecordsDropsRecordAndDependents(t *testing.T) {
+	parentDigest := lockfile.Digest("sha256:" + strings.Repeat("a", 64))
+	childDigest := lockfile.Digest("sha256:" + strings.Repeat("b", 64))
+	grandchildDigest := lockfile.Digest("sha256:" + strings.Repeat("c", 64))
+	doc := lockfile.Document{APIVersion: lockfile.APIVersionV2, Scope: lockfile.ScopeUser, Marketplaces: []lockfile.MarketplaceLock{{
+		URL:        "https://market.example",
+		InstanceID: "mp",
+		Resources: []lockfile.MarketplaceResourceLock{
+			{RegistryName: "tools", RegistryID: "registry-id", Kind: "skill", Name: "parent", ContentDigest: parentDigest},
+			{RegistryName: "tools", RegistryID: "registry-id", Kind: "skill", Name: "helper", ContentDigest: childDigest, SelectedBy: []lockfile.MarketplaceSelectionLock{
+				{RegistryID: "registry-id", Kind: "skill", Name: "parent", Revision: parentDigest},
+			}},
+			{RegistryName: "tools", RegistryID: "registry-id", Kind: "skill", Name: "grandchild", ContentDigest: grandchildDigest, SelectedBy: []lockfile.MarketplaceSelectionLock{
+				{RegistryID: "registry-id", Kind: "skill", Name: "helper", Revision: childDigest},
+			}},
+		},
+	}}}
+	entry := config.MarketplaceEntry{URL: "https://market.example", InstanceID: "mp"}
+
+	stripped, err := RemoveRequiresHeldRecords(doc, entry, []config.MarketplaceResourcePin{
+		{RegistryID: "registry-id", Kind: "skill", Name: "helper", Digest: string(childDigest)},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	v4 := &config.V4Config{
+		Sources: map[string]config.V4Source{"hosted": {Kind: config.V4SourceMarketplace, CanonicalURL: "https://market.example"}},
+		Requests: []config.V4ResourceRequest{
+			{SourceName: "hosted", Registry: "tools", Kind: "skill", Name: "parent"},
+		},
+	}
+	retained, err := reachableResources(v4, "hosted", stripped.Marketplaces[0].Resources)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(retained) != 1 || retained[0].Name != "parent" {
+		t.Fatalf("removing the held record must also prune dependents of it, retained = %#v", retained)
+	}
+	if doc.Marketplaces[0].Resources[1].Name != "helper" {
+		t.Fatal("strip mutated the input lock document")
+	}
+}

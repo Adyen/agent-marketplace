@@ -203,6 +203,39 @@ func Remove(ctx context.Context, opts RemoveOptions) (result *RemoveResult, retE
 		return &RemoveResult{RemovedName: name}, nil
 	}
 
+	if pin, entry, ok := marketplaceRequiresHeldPinByName(mergedCfg, name, opts.Kind, opts.HasKind); ok {
+		if entry.Source == config.Organization {
+			if entry.Required {
+				return nil, fmt.Errorf("%s %q is required and managed externally", skill.KindLabel(opts.Kind), name)
+			}
+			return nil, fmt.Errorf("%s %q is managed externally", skill.KindLabel(opts.Kind), name)
+		}
+		effective := opts.Scope
+		if !opts.ScopeSpecified {
+			effective = inferMarketplaceRemoveScope(entry.Source)
+		}
+		if err := config.ValidateScopeBoundary(entry.Source, scopeToConfigSource(effective)); err != nil {
+			return nil, err
+		}
+		configPath, err := scopedConfigPath(opts.RepoRoot, effective)
+		if err != nil {
+			return nil, fmt.Errorf("resolve config path: %w", err)
+		}
+		// The exact exclusion is written only when expansion is enabled. It
+		// goes into the layer being mutated: a requires-held pin comes from
+		// that layer's lock, so the layer acquires the Marketplace and its
+		// exclusions take effect.
+		exclude := mergedCfg.RequiresExpansionEnabled()
+		if _, err := MutateMarketplaceLayer(ctx, opts.RepoRoot, opts.RepoRoot, configPath, scopeToConfigSource(effective), func(m *MarketplaceLayerMutation) error {
+			return m.RemoveRequiresHeldPin(entry, pin, exclude)
+		}, func() ([]error, error) {
+			return nil, syncAfterRemove(ctx, opts)
+		}); err != nil {
+			return nil, err
+		}
+		return &RemoveResult{RemovedName: name}, nil
+	}
+
 	if pin, ok := marketplaceCollectionOnlyPinByName(mergedCfg, name, opts.Kind, opts.HasKind); ok {
 		collectionName := "an explicitly selected collection"
 		if selections := pin.SelectedBy.List(); len(selections) > 0 {
@@ -1615,7 +1648,7 @@ func marketplaceDirectPinMatches(cfg *config.Config, name string, kind ir.Resour
 			if hasKind && marketplaceProtocolKind(kind) != pin.Kind {
 				continue
 			}
-			if !pin.Direct && len(pin.SelectedBy.List()) > 0 {
+			if !pin.Direct && (len(pin.SelectedBy.List()) > 0 || len(pin.RequiresEdges.List()) > 0) {
 				continue
 			}
 			found, foundEntry, count = pin, entry, count+1
@@ -1647,6 +1680,29 @@ func marketplaceCollectionOnlyPinByName(cfg *config.Config, name string, kind ir
 		}
 	}
 	return config.MarketplaceResourcePin{}, false
+}
+
+// marketplaceRequiresHeldPinByName returns the pin held only through
+// requires edges whose name or installed name matches. Such pins are
+// lock-derived prerequisite selections, never collection members.
+func marketplaceRequiresHeldPinByName(cfg *config.Config, name string, kind ir.ResourceKind, hasKind bool) (config.MarketplaceResourcePin, config.MarketplaceEntry, bool) {
+	if cfg == nil {
+		return config.MarketplaceResourcePin{}, config.MarketplaceEntry{}, false
+	}
+	for _, entry := range cfg.Marketplaces {
+		for _, pin := range entry.Resources {
+			if pin.Kind == "collection" || !marketplacePinNamed(pin, name) {
+				continue
+			}
+			if hasKind && marketplaceProtocolKind(kind) != pin.Kind {
+				continue
+			}
+			if pin.RequiresHeld() {
+				return pin, entry, true
+			}
+		}
+	}
+	return config.MarketplaceResourcePin{}, config.MarketplaceEntry{}, false
 }
 
 func inferMarketplaceRemoveScope(source config.Source) Scope {

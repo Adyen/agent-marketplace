@@ -12,6 +12,7 @@ import (
 	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
+	mpapi "github.com/Adyen/agent-marketplace/pkg/marketplace/api"
 
 	"github.com/Adyen/agent-marketplace/internal/catalog"
 	"github.com/Adyen/agent-marketplace/internal/config"
@@ -44,6 +45,11 @@ type ResolvedArtifact struct {
 	// kept separate from collection provenance: Via stays collection-only.
 	RequiredBy []ResourceRef
 	Implied    bool
+	// PreviewOnly marks an implied artifact that only joins the implied
+	// preview — it is never admitted to the resolved selection. Marketplace
+	// requirement lookup results stay preview-only because they are never
+	// recorded into configuration.
+	PreviewOnly bool
 
 	// Harnesses lists the target harnesses this artifact should be compiled
 	// into. Inherited from the top-level config by default; overridden by
@@ -907,10 +913,12 @@ func Resolve(cfg *config.Config, catalogs map[string][]catalog.Entry, localCfg *
 	filterShadowedOccurrences(occurrencesByName, cfg.Registries)
 	slog.Debug("resolver occurrences built", "registries", len(cfg.Registries), "resources", len(occurrencesByName), "errors", len(errs))
 
-	// Phase 1b: Add Marketplace pins to the occurrence map.
+	// Phase 1b: Add Marketplace pins to the occurrence map. Pins held only
+	// through requires edges divert into prerequisite candidates.
+	held := make(map[resourceSelection][]marketplaceHeldCandidate)
 	if ro.marketplaceResolver != nil && len(cfg.Marketplaces) > 0 {
 		nextOrder := maxOccurrenceOrder(occurrencesByName)
-		mpOccurrences, mpErrs := buildMarketplaceOccurrences(ro.context, ro.marketplaceResolver, cfg, targetSet, ro.marketplaceMode, ro.marketplaceRevocationPolicy, nextOrder)
+		mpOccurrences, mpErrs := buildMarketplaceOccurrences(ro.context, ro.marketplaceResolver, cfg, targetSet, ro.marketplaceMode, ro.marketplaceRevocationPolicy, nextOrder, held)
 		errs = append(errs, mpErrs...)
 		for sel, occs := range mpOccurrences {
 			occurrencesByName[sel] = append(occurrencesByName[sel], occs...)
@@ -971,12 +979,24 @@ func Resolve(cfg *config.Config, catalogs map[string][]catalog.Entry, localCfg *
 	errs = append(errs, selectErrs...)
 
 	// Phase 5: Compute the prerequisite closure over the resolved resources.
-	implied, unmetReasons, reqErrs := expandRequirements(resolved, cfg, catalogs, ro.resources, malformedIdx, localExcludes, excludeAllKinds, targetSet)
+	// Marketplace requirement lookup results stay preview-only — they are
+	// never recorded — while requires-held pins may be admitted.
+	var mpLookup MarketplaceRequirementLookup
+	if ro.marketplaceResolver != nil && ro.marketplaceMode != MarketplaceResolveModeCachedNoFetch {
+		if lookup, ok := ro.marketplaceResolver.(MarketplaceRequirementLookup); ok {
+			mpLookup = lookup
+		}
+	}
+	implied, previewOnly, unmetReasons, reqErrs := expandRequirements(resolved, cfg, catalogs, ro.resources, malformedIdx, localExcludes, excludeAllKinds, targetSet, ro.context, held, mpLookup, cfg.RequiresExpansionEnabled())
 	errs = append(errs, reqErrs...)
 	if cfg.RequiresExpansionEnabled() {
 		resolved = append(resolved, implied...)
-	} else if ro.impliedPreview != nil {
-		*ro.impliedPreview = implied
+	}
+	if ro.impliedPreview != nil {
+		*ro.impliedPreview = previewOnly
+		if !cfg.RequiresExpansionEnabled() {
+			*ro.impliedPreview = append(*ro.impliedPreview, implied...)
+		}
 	}
 	errs = append(errs, validateRequirements(resolved, unmetReasons)...)
 	logNameCollisions(errs)
@@ -1083,7 +1103,7 @@ func maxOccurrenceOrder(occurrencesByName map[resourceSelection][]skillOccurrenc
 	return max
 }
 
-func buildMarketplaceOccurrences(ctx context.Context, mpResolver MarketplaceResolver, cfg *config.Config, targetSet []hcc.Target, mode MarketplaceResolveMode, policy MarketplaceRevocationPolicy, startOrder int) (map[resourceSelection][]skillOccurrence, []error) {
+func buildMarketplaceOccurrences(ctx context.Context, mpResolver MarketplaceResolver, cfg *config.Config, targetSet []hcc.Target, mode MarketplaceResolveMode, policy MarketplaceRevocationPolicy, startOrder int, held map[resourceSelection][]marketplaceHeldCandidate) (map[resourceSelection][]skillOccurrence, []error) {
 	var artifacts []ResolvedArtifact
 	var errs []error
 	if resolverWithPolicy, ok := mpResolver.(MarketplaceResolverWithPolicy); ok {
@@ -1109,8 +1129,29 @@ func buildMarketplaceOccurrences(ctx context.Context, mpResolver MarketplaceReso
 			}
 		}
 	}
+	// Pins held only through requires edges are not ordinary selections:
+	// divert them into prerequisite candidates instead of the occurrence map.
+	type heldPin struct {
+		entry config.MarketplaceEntry
+		pin   config.MarketplaceResourcePin
+	}
+	heldPins := make(map[string]heldPin)
+	for _, entry := range cfg.Marketplaces {
+		for _, pin := range entry.Resources {
+			if !pin.RequiresHeld() {
+				continue
+			}
+			key := entry.InstanceID + "\x00" + pin.RegistryID + "\x00" + pin.Kind + "\x00" + pin.Name + "\x00" + pin.Digest
+			heldPins[key] = heldPin{entry: entry, pin: pin}
+		}
+	}
 	occurrencesByName := make(map[resourceSelection][]skillOccurrence, len(artifacts))
 	for i, a := range artifacts {
+		if hp, ok := heldPins[a.MarketplaceInstanceID+"\x00"+a.MarketplaceRegistryID+"\x00"+mpapi.FromIR(a.Kind)+"\x00"+a.MarketplaceResourceName+"\x00"+a.MarketplaceDigest]; ok {
+			sel := resourceSelection{kind: a.Kind, name: a.Name}
+			held[sel] = append(held[sel], marketplaceHeldCandidate{artifact: a, entry: hp.entry, pin: hp.pin})
+			continue
+		}
 		if a.IsMarketplace && !a.Required && suppressed[ownedPin{a.Source, a.CatalogKey}] {
 			continue
 		}
