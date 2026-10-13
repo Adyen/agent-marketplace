@@ -22,8 +22,12 @@ func hookTargetDiagnostic(target string) diag.Diagnostic {
 // spec: hook-sync-diagnostics/hook-errors-retain-target-and-source
 func TestDiagIssueHookErrorNamesTargetResourceAndSource(t *testing.T) {
 	want := `hook.matcher-untranslatable: The target tool catalog cannot exactly cover the source matcher; hook suppressed (target factory, resource "PreToolUse-command", .devin/hooks.v1.json:3)`
-	if got := newDiagIssue(hookTargetDiagnostic("factory")).Error(); got != want {
+	issue := newDiagIssue(hookTargetDiagnostic("factory"))
+	if got := issue.Error(); got != want {
 		t.Fatalf("Error() =\n%s\nwant\n%s", got, want)
+	}
+	if got := issue.DiagnosticMessage(); got != want {
+		t.Fatalf("DiagnosticMessage() =\n%s\nwant the full identity\n%s", got, want)
 	}
 
 	warning := hookTargetDiagnostic("factory")

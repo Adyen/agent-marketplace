@@ -48,7 +48,7 @@ func TestSyncHookMatcherRefusalNamesTargetAndStage(t *testing.T) {
 
 			repoRoot := filepath.Join(t.TempDir(), "repo")
 			writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
-harnesses: [devin, factory]
+harnesses: [devin, factory, cursor]
 registries:
   - url: `+registry+`
     ref: main
@@ -63,7 +63,7 @@ registries:
 			if err == nil {
 				t.Fatalf("sync succeeded with a suppressed factory hook:\n%s", output)
 			}
-			assertMatcherRefusalDiagnostic(t, err.Error()+"\n"+output, tt.matcher, tt.wantMessage, tt.wantHint)
+			assertMatcherRefusalDiagnostics(t, err.Error()+"\n"+output, tt.matcher, tt.wantMessage, tt.wantHint)
 
 			stateRoot := filepath.Join(homeDir, "state")
 			repoSnap := cliFilesystemSnapshot(t, repoRoot)
@@ -73,7 +73,7 @@ registries:
 			if checkErr == nil {
 				t.Fatalf("sync --check succeeded with a suppressed factory hook:\n%s", checkOutput)
 			}
-			assertMatcherRefusalDiagnostic(t, checkErr.Error()+"\n"+checkOutput, tt.matcher, tt.wantMessage, tt.wantHint)
+			assertMatcherRefusalDiagnostics(t, checkErr.Error()+"\n"+checkOutput, tt.matcher, tt.wantMessage, tt.wantHint)
 			assertCliFilesystemSnapshot(t, "sync --check repository", repoRoot, repoSnap)
 			assertCliFilesystemSnapshot(t, "sync --check registry", registry, registrySnap)
 			assertCliFilesystemSnapshot(t, "sync --check state", stateRoot, stateSnap)
@@ -81,25 +81,30 @@ registries:
 	}
 }
 
-func assertMatcherRefusalDiagnostic(t *testing.T, text, matcher, message, hint string) {
+func assertMatcherRefusalDiagnostics(t *testing.T, text, matcher, message, hint string) {
 	t.Helper()
-	found := false
+	targets := []string{"factory", "cursor"}
+	found := map[string]bool{}
 	for _, line := range strings.Split(text, "\n") {
 		if !strings.Contains(line, "hook.matcher-untranslatable") {
 			continue
-		}
-		if strings.Contains(line, "target factory") && strings.Contains(line, `resource "PreToolUse-command"`) &&
-			strings.Contains(line, ".devin/hooks.v1.json") && strings.Contains(line, message) {
-			found = true
 		}
 		for _, payload := range []string{matcher, "mcp_call_tool", "blackboard", "guard-check-5d1a"} {
 			if strings.Contains(line, payload) {
 				t.Fatalf("refusal line quotes %q:\n%s", payload, line)
 			}
 		}
+		for _, target := range targets {
+			if strings.Contains(line, "target "+target) && strings.Contains(line, `resource "PreToolUse-command"`) &&
+				strings.Contains(line, ".devin/hooks.v1.json") && strings.Contains(line, message) {
+				found[target] = true
+			}
+		}
 	}
-	if !found {
-		t.Fatalf("no hook.matcher-untranslatable line names target factory, resource, source, and %q:\n%s", message, text)
+	for _, target := range targets {
+		if !found[target] {
+			t.Fatalf("no hook.matcher-untranslatable line names target %s, resource, source, and %q:\n%s", target, message, text)
+		}
 	}
 	if !strings.Contains(text, hint) {
 		t.Fatalf("output missing remediation %q:\n%s", hint, text)

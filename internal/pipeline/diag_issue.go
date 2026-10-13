@@ -89,6 +89,7 @@ func newDiagIssue(d diag.Diagnostic) *diagIssue {
 	issue.key = diagDedupKey(d, issue)
 	if target != "" {
 		issue.key += "\x00" + target
+		issue.message = issue.msg
 	}
 	if d.Code != "" && resource != "" && target == "" {
 		issue.presentationKey = strings.Join([]string{d.Code, strings.ReplaceAll(d.Hint, "\x00", ""), normalizeDiagMessageForKey(d.Message)}, "\x00")
