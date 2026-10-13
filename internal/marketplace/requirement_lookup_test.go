@@ -188,16 +188,13 @@ func TestLookupRequirementLatestRevision(t *testing.T) {
 	}
 }
 
-// A cross-registry lookup deliberately carrying the requirer's pinned commit
-// must ignore it and use the target registry's current revision.
+// A cross-registry lookup carrying the requirer's pinned commit must ignore
+// it and use the target registry's current revision.
 func TestLookupRequirementCrossRegistryIgnoresRequirerCommit(t *testing.T) {
 	revision := assessedRevisionOccurrence(store.ResourceRevision{
 		Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Registry: "other", Kind: "skill", Name: "helper"},
 		ContentDigest: store.RevisionDigest(lookupHelperD),
 	}, lookupCommitB, "sha256:"+strings.Repeat("e", 64))
-	manifest, manifestDigest := lookupManifest(t,
-		marketplaceartifact.RevisionResource{Kind: "skill", Name: "helper", ContentDigest: "sha256:" + strings.Repeat("f", 64)},
-	)
 	var pinnedRouteHit bool
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
@@ -205,10 +202,7 @@ func TestLookupRequirementCrossRegistryIgnoresRequirerCommit(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(revision)
 		case "/api/v1/registries/other/occurrences/" + lookupCommitA:
 			pinnedRouteHit = true
-			_ = json.NewEncoder(w).Encode(lookupOccurrence(lookupCommitA, manifestDigest))
-		case "/api/v1/manifests/" + manifestDigest:
-			pinnedRouteHit = true
-			_, _ = w.Write(manifest)
+			_ = json.NewEncoder(w).Encode(lookupOccurrence(lookupCommitA, "sha256:"+strings.Repeat("e", 64)))
 		default:
 			http.Error(w, "not found", http.StatusNotFound)
 		}
