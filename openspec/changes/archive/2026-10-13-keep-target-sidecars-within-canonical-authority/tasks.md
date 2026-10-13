@@ -7,4 +7,4 @@
 - [x] Reserve every modeled MCP connection field and its case variants in the shared MCP entry builder.
 - [x] Update existing sidecar precedence tests, the field matrix and the changelog.
 - [x] Run affected packages, `make validate`, `make spec-check` and `make validate-e2e`; review every changed entry adversarially.
-- [ ] `openspec archive keep-target-sidecars-within-canonical-authority --yes`
+- [x] `openspec archive keep-target-sidecars-within-canonical-authority --yes`
