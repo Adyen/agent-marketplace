@@ -36,7 +36,12 @@ type serverMetrics struct {
 	active         *prometheus.GaugeVec
 	publicDuration *prometheus.HistogramVec
 	phases         *prometheus.HistogramVec
-	scrape         http.Handler
+
+	installationRefresh     *prometheus.CounterVec
+	installationRefreshSecs prometheus.Histogram
+	installationLastSuccess prometheus.Gauge
+
+	scrape http.Handler
 }
 
 func newServerMetrics(meta store.MetadataStore) *serverMetrics {
@@ -50,9 +55,20 @@ func newServerMetrics(meta store.MetadataStore) *serverMetrics {
 		phases: prometheus.NewHistogramVec(prometheus.HistogramOpts{
 			Name: "agent_marketplace_request_phase_duration_seconds", Help: "Public request phase duration in seconds.", Buckets: requestPhaseBuckets,
 		}, []string{"phase"}),
+		installationRefresh: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "agent_marketplace_installation_metrics_refresh_total", Help: "Background installation metrics refresh attempts by outcome.",
+		}, []string{"outcome"}),
+		installationRefreshSecs: prometheus.NewHistogram(prometheus.HistogramOpts{
+			Name: "agent_marketplace_installation_metrics_refresh_duration_seconds", Help: "Background installation metrics refresh duration in seconds.", Buckets: requestPhaseBuckets,
+		}),
+		installationLastSuccess: prometheus.NewGauge(prometheus.GaugeOpts{
+			Name: "agent_marketplace_installation_metrics_last_success_timestamp_seconds", Help: "Unix timestamp of the last successful installation metrics evaluation.",
+		}),
 	}
 	registry := prometheus.NewRegistry()
-	registry.MustRegister(metrics.requests, metrics.duration, metrics.active, metrics.publicDuration, metrics.phases, collectors.NewGoCollector(), collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}))
+	registry.MustRegister(metrics.requests, metrics.duration, metrics.active, metrics.publicDuration, metrics.phases,
+		metrics.installationRefresh, metrics.installationRefreshSecs, metrics.installationLastSuccess,
+		collectors.NewGoCollector(), collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}))
 	if pool, ok := meta.(interface{ PoolStats() sql.DBStats }); ok {
 		registry.MustRegister(
 			prometheus.NewCounterFunc(prometheus.CounterOpts{Name: "agent_marketplace_metadata_pool_waits_total", Help: "Total metadata connection pool waits."}, func() float64 {
@@ -69,6 +85,14 @@ func newServerMetrics(meta store.MetadataStore) *serverMetrics {
 
 func (m *serverMetrics) observePhase(phase string, start time.Time) {
 	m.phases.WithLabelValues(phase).Observe(time.Since(start).Seconds())
+}
+
+func (m *serverMetrics) observeInstallationRefresh(outcome string, started, completed, evaluatedAt time.Time) {
+	m.installationRefresh.WithLabelValues(outcome).Inc()
+	m.installationRefreshSecs.Observe(completed.Sub(started).Seconds())
+	if !evaluatedAt.IsZero() {
+		m.installationLastSuccess.Set(float64(evaluatedAt.Unix()))
+	}
 }
 
 func (m *serverMetrics) publicStack(mux *http.ServeMux, next http.Handler) http.Handler {

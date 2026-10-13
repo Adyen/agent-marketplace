@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log/slog"
 	"os"
 	"sort"
 	"sync"
@@ -33,67 +32,27 @@ func NeedsLockBootstrap(errs []error) bool {
 }
 
 func ReadLayerLock(path string, scope lockfile.Scope) (*lockfile.Document, dependencytxn.Generation, bool, error) {
-	var data []byte
-	var err error
-	if dependencytxn.ClassifyDestination(path) != dependencytxn.AuthorityLegacy {
-		var generation dependencytxn.Generation
-		data, generation, _, err = dependencytxn.ReadSnapshot(path)
-		if err == nil && !generation.Exists {
-			return nil, dependencytxn.Generation{}, false, nil
-		}
-	} else {
-		data, err = lockfile.ReadBytes(path)
-	}
-	if errors.Is(err, os.ErrNotExist) {
-		return nil, dependencytxn.Generation{}, false, nil
-	}
-	if errors.Is(err, lockfile.ErrUnsafeFile) {
-		return nil, dependencytxn.Generation{}, false, fmt.Errorf("%w: %w", dependencytxn.ErrUnsafePath, err)
-	}
-	if err != nil {
-		return nil, dependencytxn.Generation{}, false, err
-	}
-	generation := dependencytxn.Generation{Exists: true, Digest: dependencytxn.Digest(data)}
-	doc, err := decodeLayerLock(data, path, scope)
-	if err != nil {
-		return nil, generation, true, err
-	}
-	return doc, generation, true, nil
-}
-
-func decodeLayerLock(data []byte, path string, scope lockfile.Scope) (*lockfile.Document, error) {
-	doc, err := lockfile.Decode(data)
-	if err == nil {
-		err = lockfile.ValidateScope(doc, scope)
-	}
-	if err != nil {
-		return nil, &LockViewError{Code: "lock.invalid", Scope: scope, Path: path, Err: err}
-	}
-	if doc.APIVersion == lockfile.APIVersionV1 {
-		slog.Warn("lock file uses the deprecated v1 schema; the next writable reconciliation upgrades it to v2",
-			slog.String("code", "lock.version-deprecated"),
-			slog.String("path", path),
-			slog.String("scope", string(scope)),
-		)
-	}
-	return &doc, nil
+	doc, generation, exists, _, err := readLayerLockWithOverlays(config.ConfigLockPaths{CanonicalLock: path, RequestedLock: path}, scope, nil)
+	return doc, generation, exists, err
 }
 
 func readLayerLockWithOverlays(paths config.ConfigLockPaths, scope lockfile.Scope, overlays map[string][]byte) (*lockfile.Document, dependencytxn.Generation, bool, bool, error) {
-	for _, path := range []string{paths.CanonicalLock, paths.RequestedLock} {
-		data, ok := overlays[path]
-		if !ok {
-			continue
+	ev, decode, err := dependencytxn.ReadLayerLock(paths.CanonicalLock, paths.RequestedLock, scope, overlays)
+	exists := ev.Digest != ""
+	generation := dependencytxn.Generation{Exists: exists, Digest: ev.Digest}
+	if err == nil {
+		if !exists {
+			return nil, dependencytxn.Generation{}, false, false, nil
 		}
-		doc, err := decodeLayerLock(data, paths.CanonicalLock, scope)
-		if err != nil {
-			return nil, dependencytxn.Generation{}, true, true, err
-		}
-		generation := dependencytxn.Generation{Exists: true, Digest: dependencytxn.Digest(data)}
-		return doc, generation, true, true, nil
+		return &ev.Document, generation, true, ev.Overlay, nil
 	}
-	doc, generation, exists, err := ReadLayerLock(paths.CanonicalLock, scope)
-	return doc, generation, exists, false, err
+	if decode {
+		return nil, generation, true, ev.Overlay, &LockViewError{Code: "lock.invalid", Scope: scope, Path: paths.CanonicalLock, Err: err}
+	}
+	if errors.Is(err, lockfile.ErrUnsafeFile) {
+		err = fmt.Errorf("%w: %w", dependencytxn.ErrUnsafePath, err)
+	}
+	return nil, dependencytxn.Generation{}, false, false, err
 }
 
 var deployedLockOrder = []config.Source{config.Organization, config.UserPersonal, config.RepoCommitted, config.RepoPersonal}

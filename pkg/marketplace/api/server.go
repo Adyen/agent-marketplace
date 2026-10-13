@@ -90,6 +90,7 @@ func NewServer(cfg config.Config, meta store.MetadataStore, blobs store.BlobStor
 	s.metrics = newServerMetrics(meta)
 	if strings.TrimSpace(cfg.InstallationMetrics.URL) != "" {
 		s.installations = newInstallationMetricsReader(cfg.InstallationMetrics, s.mpID)
+		s.installations.metrics = s.metrics
 	}
 
 	publicMux := http.NewServeMux()
@@ -154,6 +155,14 @@ func (s *Server) Start(ctx context.Context) error {
 
 	var wg sync.WaitGroup
 	errCh := make(chan error, 2)
+
+	if s.installations != nil {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			s.installations.run(ctx, s.registryIndex)
+		}()
+	}
 
 	wg.Add(1)
 	go func() {
@@ -756,11 +765,10 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 
 	var adoption *installationCounts
 	if sortByInstallations && s.installations != nil {
-		counts, err := s.installations.counts(r.Context(), registries)
-		if err != nil {
-			slog.Warn("installation metrics refresh failed; search continues in existing order", "reason", installationCountsErrorLogValue(err))
+		if counts, ok := s.installations.lookup(registries); ok {
+			adoption = counts
 		} else {
-			adoption = &counts
+			s.installations.hint()
 		}
 	}
 

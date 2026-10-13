@@ -24,13 +24,17 @@ func asModel(t *testing.T, tm tea.Model) Model {
 	return m
 }
 
-func TestV2SpaceOnSectionHeaderTogglesFold(t *testing.T) {
+// spec: tui-interactions/filtered-folded-descendants-and-skipped-rows
+func TestV2SpaceOnSectionHeaderOpensBulkModal(t *testing.T) {
 	m := newTestModel()
 	m.cursor = 0 // status:enabled section header
 
 	m = asModel(t, mustUpdate(m.Update(v2Space())))
-	if !m.currentFoldState()["status:enabled"] {
-		t.Fatalf("v2 Space press on a section header must toggle its fold")
+	if m.pane != paneBulkToggle {
+		t.Fatalf("v2 Space press on a section header must open the bulk toggle modal, got pane %v", m.pane)
+	}
+	if m.currentFoldState()["status:enabled"] {
+		t.Fatalf("v2 Space on a section header must not fold it")
 	}
 }
 

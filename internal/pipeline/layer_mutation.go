@@ -66,6 +66,28 @@ func (m *LayerMutation) SetLayerExclude(locator config.ResourceLocator, entries 
 	return m.editor.SetLayerExclude(locator, entries)
 }
 
+// EnsureMarketplaceSource binds a Marketplace endpoint source in the staged
+// layer so pins can be included in the same transaction.
+func (m *LayerMutation) EnsureMarketplaceSource(marketplaceURL string) (config.SourceBinding, error) {
+	return m.editor.EnsureMarketplaceSource(marketplaceURL)
+}
+
+// LookupMarketplaceSource resolves a Marketplace endpoint source already
+// declared in the staged layer.
+func (m *LayerMutation) LookupMarketplaceSource(marketplaceURL string) (config.SourceBinding, bool, error) {
+	return m.editor.LookupMarketplaceSource(marketplaceURL)
+}
+
+// IncludeMarketplacePins adds direct pins to a bound Marketplace source.
+func (m *LayerMutation) IncludeMarketplacePins(binding config.SourceBinding, pins []config.MarketplaceResourcePin) error {
+	return m.editor.IncludeMarketplacePins(binding, pins)
+}
+
+// RemoveMarketplacePins removes pins from a bound Marketplace source.
+func (m *LayerMutation) RemoveMarketplacePins(binding config.SourceBinding, pins []config.MarketplaceResourcePin) error {
+	return m.editor.RemoveMarketplacePins(binding, pins)
+}
+
 func MutateLayer(ctx context.Context, target LayerMutationTarget, mutate func(*LayerMutation) error) error {
 	if target.Reconcile == nil {
 		return errors.New("layer mutation reconciler is required")

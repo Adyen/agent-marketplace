@@ -535,6 +535,8 @@ func (r *Resolver) resolvePinWithArtifactPolicy(ctx context.Context, client *Cli
 		MarketplaceAlias:         entry.Alias,
 		MarketplaceRegistryID:    pin.RegistryID,
 		MarketplaceResourceName:  pin.Name,
+		MarketplaceDigest:        pin.Digest,
+		MarketplaceAcquisition:   config.MarketplaceAcquisitionMirror,
 		InstalledName:            pin.InstalledName,
 		Revoked:                  rev.Revocation != nil,
 		MarketplaceArchiveDigest: string(rev.ArchiveDigest),
@@ -627,7 +629,28 @@ func (r *Resolver) resolvePinWithArtifactPolicy(ctx context.Context, client *Cli
 			return resolver.ResolvedArtifact{}, hccartifact.CanonicalArtifact{}, fmt.Errorf("mark artifact verified: %w", err)
 		}
 	}
+	if resource.Kind() == ir.KindHook {
+		artifact.MarketplaceHookSupport = mirrorHookSupportArtifacts(ca.Support)
+	}
 	return artifact, ca, nil
+}
+
+func mirrorHookSupportArtifacts(support map[string]hccartifact.SupportFile) []hccartifact.Artifact {
+	paths := make([]string, 0, len(support))
+	for relative := range support {
+		paths = append(paths, relative)
+	}
+	sort.Strings(paths)
+	artifacts := make([]hccartifact.Artifact, 0, len(paths))
+	for _, relative := range paths {
+		file := support[relative]
+		mode := os.FileMode(0o644)
+		if file.Executable {
+			mode = 0o755
+		}
+		artifacts = append(artifacts, hccartifact.Artifact{Path: relative, Bytes: bytes.Clone(file.Data), Mode: mode})
+	}
+	return artifacts
 }
 
 func stageMirrorResource(cache *Cache, digest string, resource ir.Resource, ca hccartifact.CanonicalArtifact) (string, error) {
@@ -732,7 +755,9 @@ func (r *Resolver) resolveIndexOnlyPin(ctx context.Context, client *Client, cach
 		CatalogKey: marketplaceCatalogKey(entry, pin), Harnesses: targetSet,
 		IsMarketplace: true, MarketplaceURL: entry.URL, MarketplaceInstanceID: entry.InstanceID,
 		MarketplaceAlias: entry.Alias, MarketplaceRegistryID: pin.RegistryID,
-		MarketplaceResourceName: pin.Name, InstalledName: pin.InstalledName, Revoked: rev.Revocation != nil,
+		MarketplaceResourceName: pin.Name, MarketplaceDigest: pin.Digest,
+		MarketplaceAcquisition: config.MarketplaceAcquisitionIndexOnly,
+		InstalledName:          pin.InstalledName, Revoked: rev.Revocation != nil,
 		MarketplaceArchiveDigest: string(rev.ArchiveDigest),
 	}
 	artifact.Ref = pin.RegistryCommit
@@ -900,6 +925,9 @@ func (r *Resolver) resolveIndexOnlyPin(ctx context.Context, client *Client, cach
 	artifact.Resource = resource
 	artifact.Description = descriptionFromResource(resource)
 	artifact.Path = resourcePath
+	// The reconstructed staging area holds the exact resource source tree;
+	// record it so compatibility fingerprints can read the same bytes.
+	artifact.StagedSourceDir = filepath.Dir(resourcePath)
 	return artifact, ca, nil
 }
 
