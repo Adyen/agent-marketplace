@@ -870,7 +870,7 @@ func writeDoctorConfigurationErrorsSection(out io.Writer, ec config.EffectiveCon
 
 func writeDoctorErrorList(out io.Writer, errs []error) error {
 	for _, e := range errs {
-		if _, err := fmt.Fprintf(out, "error: %v\n", e); err != nil {
+		if _, err := fmt.Fprintf(out, "error: %s\n", terminalSafeLines(fmt.Sprint(e))); err != nil {
 			return err
 		}
 	}
