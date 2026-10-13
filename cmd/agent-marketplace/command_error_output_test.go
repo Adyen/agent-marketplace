@@ -38,8 +38,7 @@ func TestCommandErrorsAreTerminalSafe(t *testing.T) {
 
 		for _, command := range []string{"status", "list", "sync"} {
 			output, err := executeCommand(command)
-			var validation *config.V4ValidationError
-			if !errors.As(err, &validation) || validation.Code != "v4.source-name" {
+			if validation, ok := errors.AsType[*config.V4ValidationError](err); !ok || validation.Code != "v4.source-name" {
 				t.Fatalf("%s: error identity lost: %v\n%q", command, err, output)
 			}
 			assertNoTerminalControls(t, command, output)
