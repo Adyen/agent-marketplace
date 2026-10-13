@@ -21,15 +21,23 @@ function get(path) {
       let body = ''
       response.setEncoding('utf8')
       response.on('data', (chunk) => { body += chunk })
-      response.on('end', () => resolve(body))
+      response.on('end', () => resolve({ body, headers: response.headers }))
     })
     req.on('error', reject)
     req.end()
+  }).then(({ body, headers }) => {
+    assert.equal(headers['content-type'], 'text/plain; charset=utf-8')
+    assert.equal(headers['x-content-type-options'], 'nosniff')
+    return body
   })
 }
 
 before(async () => {
-  const upstream = name => createServer((req, res) => res.end(`${name}:${req.url}`))
+  const upstream = name => createServer((req, res) => {
+    res.setHeader('Content-Type', 'text/plain; charset=utf-8')
+    res.setHeader('X-Content-Type-Options', 'nosniff')
+    res.end(`${name}:${req.url}`)
+  })
   const siteOrigin = await listen(upstream('site'))
   const marketplaceOrigin = await listen(upstream('marketplace'))
   const apiOrigin = await listen(upstream('api'))
