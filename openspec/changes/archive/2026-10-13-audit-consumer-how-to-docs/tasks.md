@@ -13,4 +13,4 @@
 
 ## 3. Archive
 
-- [ ] 3.1 Run `openspec archive audit-consumer-how-to-docs --yes` after implementation and documentation verification.
+- [x] 3.1 Run `openspec archive audit-consumer-how-to-docs --yes` after implementation and documentation verification.

@@ -56,7 +56,7 @@ Sync writes this group only to harnesses that appear in both lists. With the con
 agent-marketplace sync
 ```
 
-The summary line starts with `Installed <n>  Removed <n>  Malformed <n>  Errors <n>`, followed by one `→ <root> (<m> written)` line per output root. `n` counts the files and entries sync wrote across all harnesses, so it changes with your selection and your harnesses and is not a resource count.
+The summary line starts with `Installed <n>  Removed <n>  Malformed <n>  Errors <n>`, followed by a single `→` line that lists the output roots it changed, separated by commas, each with its own counts in parentheses, for example `→ /path/.claude/skills (1 written), /path/.cursor/skills (1 written)`. `n` counts the files and entries sync wrote across all harnesses, so it changes with your selection and your harnesses and is not a resource count.
 
 Each selected resource now appears in the folders of every harness it applies to. Check with:
 
