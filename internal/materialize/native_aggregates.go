@@ -273,7 +273,34 @@ func augmentDesiredWithPreviewManaged(doc *jsonc.Document, desired, preview map[
 	changed := false
 	for _, container := range sortedKeys(preview) {
 		existing, ok := doc.Root().Member(container)
-		if !ok || existing.Kind() != jsonc.KindObject {
+		if !ok {
+			continue
+		}
+		if existing.Kind() == jsonc.KindArray {
+			var prevArray []json.RawMessage
+			if err := json.Unmarshal(preview[container], &prevArray); err != nil || prevArray == nil {
+				continue
+			}
+			var wantArray []json.RawMessage
+			if raw := desiredDoc[container]; len(raw) > 0 {
+				if err := json.Unmarshal(raw, &wantArray); err != nil {
+					continue
+				}
+			}
+			updated, arrayChanged := retainPreviewManagedArray(existing, wantArray, prevArray)
+			if !arrayChanged {
+				continue
+			}
+			raw, err := json.Marshal(updated)
+			if err != nil {
+				return nil, err
+			}
+			desiredDoc[container] = raw
+			desired[container] = raw
+			changed = true
+			continue
+		}
+		if existing.Kind() != jsonc.KindObject {
 			continue
 		}
 		var prevMembers map[string]json.RawMessage
@@ -296,29 +323,16 @@ func augmentDesiredWithPreviewManaged(doc *jsonc.Document, desired, preview map[
 					continue
 				}
 				var wantArray []json.RawMessage
-				_ = json.Unmarshal(wantMembers[member], &wantArray)
-				wantCanon := make(map[string]bool, len(wantArray))
-				for _, elem := range wantArray {
-					wantCanon[canonicalMemberKey(elem)] = true
-				}
-				prevCanon := make(map[string]bool, len(prevArray))
-				for _, elem := range prevArray {
-					prevCanon[canonicalMemberKey(elem)] = true
-				}
-				memberChanged := false
-				for i := 0; i < node.Len(); i++ {
-					elem, _ := node.Element(i)
-					canon := canonicalMemberKey(elem.Canonical())
-					if isManagedNode(elem) && prevCanon[canon] && !wantCanon[canon] {
-						wantArray = append(wantArray, elem.Canonical())
-						wantCanon[canon] = true
-						memberChanged = true
+				if raw := wantMembers[member]; len(raw) > 0 {
+					if err := json.Unmarshal(raw, &wantArray); err != nil {
+						continue
 					}
 				}
+				updated, memberChanged := retainPreviewManagedArray(node, wantArray, prevArray)
 				if !memberChanged {
 					continue
 				}
-				raw, err := json.Marshal(wantArray)
+				raw, err := json.Marshal(updated)
 				if err != nil {
 					return nil, err
 				}
@@ -347,6 +361,31 @@ func augmentDesiredWithPreviewManaged(doc *jsonc.Document, desired, preview map[
 		return rawDesired, nil
 	}
 	return json.Marshal(desiredDoc)
+}
+
+func retainPreviewManagedArray(existing *jsonc.Node, desired, preview []json.RawMessage) ([]json.RawMessage, bool) {
+	want := make(map[string]bool, len(desired))
+	for _, elem := range desired {
+		want[canonicalManagedElemKey(elem)] = true
+	}
+	prev := make(map[string]bool, len(preview))
+	for _, elem := range preview {
+		prev[canonicalManagedElemKey(elem)] = true
+	}
+	changed := false
+	for i := 0; i < existing.Len(); i++ {
+		elem, ok := existing.Element(i)
+		if !ok || !isManagedNode(elem) {
+			continue
+		}
+		canon := canonicalManagedElemKey(elem.Canonical())
+		if prev[canon] && !want[canon] {
+			desired = append(desired, elem.Canonical())
+			want[canon] = true
+			changed = true
+		}
+	}
+	return desired, changed
 }
 
 func canonicalMemberKey(raw json.RawMessage) string {

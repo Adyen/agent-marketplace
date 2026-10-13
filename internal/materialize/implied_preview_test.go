@@ -3,6 +3,7 @@ package materialize
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -17,6 +18,7 @@ import (
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/jsonc"
 
 	"github.com/Adyen/agent-marketplace/internal/catalog"
 	"github.com/Adyen/agent-marketplace/internal/config"
@@ -1161,7 +1163,6 @@ func TestImpliedPreviewSharedGeminiCoalesceRefusesWithoutMutation(t *testing.T) 
 
 // spec: materialization/preview-retention-does-not-suppress-unrelated-pruning
 func TestImpliedPreviewFactoryHookComponentRetainsManagedEntries(t *testing.T) {
-	repo, _ := devinEnv(t)
 	hook := func(name string, preview bool) resolver.ResolvedArtifact {
 		art := resolver.ResolvedArtifact{
 			Entry:     catalog.Entry{Kind: ir.KindHook, Name: name, Resource: ir.NewHook(name, "PreToolUse", "echo "+name, "command", nil, ir.SourceRef{})},
@@ -1173,55 +1174,130 @@ func TestImpliedPreviewFactoryHookComponentRetainsManagedEntries(t *testing.T) {
 		}
 		return art
 	}
-	keep, stale := hook("keep", true), hook("zzstale", false)
-	report, err := Run(context.Background(), repo, []resolver.ResolvedArtifact{keep, stale})
-	if err != nil || report == nil || hasErrorDiagnostics(report.Diags) {
-		t.Fatalf("seed=%#v err=%v", report, err)
-	}
-	path := filepath.Join(repo, ".factory", "hooks", "hooks.json")
-	seeded := readFileString(t, path)
-	for _, want := range []string{"echo keep", "echo zzstale"} {
-		if !strings.Contains(seeded, want) {
-			t.Fatalf("seed hooks.json missing %s: %s", want, seeded)
-		}
-	}
-	var document map[string]any
-	if err := json.Unmarshal([]byte(seeded), &document); err != nil {
-		t.Fatal(err)
-	}
-	events, ok := document["PreToolUse"].([]any)
-	if !ok {
-		t.Fatalf("seed hooks.json has no PreToolUse array: %s", seeded)
-	}
-	document["PreToolUse"] = append(events, map[string]any{"matcher": "Bash", "hooks": []any{map[string]any{"type": "command", "command": "echo handwritten"}}})
-	handwritten, err := json.Marshal(document)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(path, handwritten, 0o600); err != nil {
-		t.Fatal(err)
-	}
+	for _, tc := range []struct {
+		name     string
+		selected func() resolver.ResolvedArtifact
+		written  func(t *testing.T, repo, raw string)
+	}{
+		{
+			name:     "empty-component",
+			selected: func() resolver.ResolvedArtifact { return cleanupLinkSkill("parent", false, hcc.TargetFactory) },
+			written: func(t *testing.T, repo, _ string) {
+				t.Helper()
+				if _, statErr := os.Lstat(filepath.Join(repo, ".factory", "skills", "parent")); statErr != nil {
+					t.Fatalf("selected output suppressed by preview: %v", statErr)
+				}
+			},
+		},
+		{
+			name:     "selected-hook-sibling",
+			selected: func() resolver.ResolvedArtifact { return hook("sibling", false) },
+			written: func(t *testing.T, _ string, raw string) {
+				t.Helper()
+				if !strings.Contains(raw, "echo sibling") {
+					t.Fatalf("selected hook sibling not written: %s", raw)
+				}
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			repo, _ := devinEnv(t)
+			keep, stale := hook("keep", true), hook("zzstale", false)
+			report, err := Run(context.Background(), repo, []resolver.ResolvedArtifact{keep, stale})
+			if err != nil || report == nil || hasErrorDiagnostics(report.Diags) {
+				t.Fatalf("seed=%#v err=%v", report, err)
+			}
+			path := filepath.Join(repo, ".factory", "hooks", "hooks.json")
+			seeded := readFileString(t, path)
+			for _, want := range []string{"echo keep", "echo zzstale"} {
+				if !strings.Contains(seeded, want) {
+					t.Fatalf("seed hooks.json missing %s: %s", want, seeded)
+				}
+			}
+			var document map[string]any
+			if err := json.Unmarshal([]byte(seeded), &document); err != nil {
+				t.Fatal(err)
+			}
+			events, ok := document["PreToolUse"].([]any)
+			if !ok {
+				t.Fatalf("seed hooks.json has no PreToolUse array: %s", seeded)
+			}
+			document["PreToolUse"] = append(events, map[string]any{"matcher": "Bash", "hooks": []any{map[string]any{"type": "command", "command": "echo handwritten"}}})
+			handwritten, err := json.Marshal(document)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(path, handwritten, 0o600); err != nil {
+				t.Fatal(err)
+			}
 
-	selected := cleanupLinkSkill("parent", false, hcc.TargetFactory)
-	dry := runPreview(t, repo, []resolver.ResolvedArtifact{selected}, []resolver.ResolvedArtifact{keep}, WithDryRun())
-	requireNoErrorDiags(t, dry.Diags)
-	if got := readFileString(t, path); got != string(handwritten) {
-		t.Fatalf("dry-run preview mutated the managed hook file:\nbefore %s\nafter  %s", handwritten, got)
-	}
+			selected := tc.selected()
+			dry := runPreview(t, repo, []resolver.ResolvedArtifact{selected}, []resolver.ResolvedArtifact{keep}, WithDryRun())
+			requireNoErrorDiags(t, dry.Diags)
+			if got := readFileString(t, path); got != string(handwritten) {
+				t.Fatalf("dry-run preview mutated the managed hook file:\nbefore %s\nafter  %s", handwritten, got)
+			}
 
-	report = runPreview(t, repo, []resolver.ResolvedArtifact{selected}, []resolver.ResolvedArtifact{keep})
-	requireNoErrorDiags(t, report.Diags)
-	raw := readFileString(t, path)
-	for _, want := range []string{"echo keep", "echo handwritten"} {
-		if !strings.Contains(raw, want) {
-			t.Fatalf("merge lost %s: %s", want, raw)
-		}
+			report = runPreview(t, repo, []resolver.ResolvedArtifact{selected}, []resolver.ResolvedArtifact{keep})
+			requireNoErrorDiags(t, report.Diags)
+			raw := readFileString(t, path)
+			for _, want := range []string{"echo keep", "echo handwritten"} {
+				if !strings.Contains(raw, want) {
+					t.Fatalf("merge lost %s: %s", want, raw)
+				}
+			}
+			if strings.Contains(raw, "echo zzstale") {
+				t.Fatalf("unrelated stale managed entry survived: %s", raw)
+			}
+			tc.written(t, repo, raw)
+		})
 	}
-	if strings.Contains(raw, "echo zzstale") {
-		t.Fatalf("unrelated stale managed entry survived: %s", raw)
+}
+
+// spec: materialization/preview-retention-does-not-suppress-unrelated-pruning
+func TestRetainPreviewManagedArraySeam(t *testing.T) {
+	managedElem := func(command string) json.RawMessage {
+		return json.RawMessage(fmt.Sprintf(`{"_managed_by":"agent-marketplace","hooks":[{"command":%q,"type":"command"}]}`, command))
 	}
-	if _, statErr := os.Lstat(filepath.Join(repo, ".factory", "skills", "parent")); statErr != nil {
-		t.Fatalf("selected output suppressed by preview: %v", statErr)
+	desiredElem := func(command string) json.RawMessage {
+		return json.RawMessage(fmt.Sprintf(`{"hooks":[{"command":%q,"type":"command"}]}`, command))
+	}
+	array := strings.Join([]string{string(managedElem("keep")), string(managedElem("stale")), `{"hooks":[{"command":"hand","type":"command"}]}`}, ",")
+	for _, tc := range []struct{ name, raw, member string }{
+		{name: "top-level", raw: "[" + array + "]"},
+		{name: "nested", raw: `{"events":[` + array + `]}`, member: "events"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			doc, err := jsonc.Parse("", []byte(tc.raw))
+			if err != nil {
+				t.Fatal(err)
+			}
+			node := doc.Root()
+			if tc.member != "" {
+				var ok bool
+				if node, ok = node.Member(tc.member); !ok {
+					t.Fatal("nested member missing")
+				}
+			}
+			updated, changed := retainPreviewManagedArray(node, []json.RawMessage{desiredElem("sibling")}, []json.RawMessage{desiredElem("keep"), desiredElem("absent")})
+			if !changed || len(updated) != 2 || !strings.Contains(string(updated[1]), `"keep"`) {
+				t.Fatalf("changed=%v updated=%s", changed, updated)
+			}
+			for _, absent := range []string{"stale", "hand", "absent"} {
+				for _, elem := range updated {
+					if strings.Contains(string(elem), absent) {
+						t.Fatalf("unmanaged or unmatched %q in %s", absent, updated)
+					}
+				}
+			}
+			again, changed := retainPreviewManagedArray(node, []json.RawMessage{desiredElem("keep")}, []json.RawMessage{desiredElem("keep")})
+			if changed || len(again) != 1 {
+				t.Fatalf("desired duplicate doubled: %v %s", changed, again)
+			}
+			if none, changed := retainPreviewManagedArray(node, nil, []json.RawMessage{desiredElem("never")}); changed || len(none) != 0 {
+				t.Fatalf("missing preview element created: %s", none)
+			}
+		})
 	}
 }
 
