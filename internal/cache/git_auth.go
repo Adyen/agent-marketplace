@@ -133,7 +133,7 @@ func gitAuthEnvironment(ctx context.Context, repoDir string, env []string, sourc
 		return env, source, nil
 	}
 
-	reader := gitAuthConfigReader{ctx: ctx, env: env, active: make(map[[2]uint64]bool)}
+	reader := gitAuthConfigReader{ctx: ctx, env: env, owners: gitAuthTrustedOwners(), active: make(map[[2]uint64]bool)}
 	for _, scope := range []string{"system", "global"} {
 		if scope == "system" {
 			switch strings.ToLower(os.Getenv("GIT_CONFIG_NOSYSTEM")) {

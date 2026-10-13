@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"syscall"
 )
@@ -20,6 +21,10 @@ const (
 	maxGitAuthFileVisits = 128
 )
 
+// gitAuthEffectiveUID identifies the current account for configuration
+// ownership checks; tests substitute another account.
+var gitAuthEffectiveUID = os.Geteuid
+
 type gitAuthSetting struct {
 	key, value string
 }
@@ -27,10 +32,35 @@ type gitAuthSetting struct {
 type gitAuthConfigReader struct {
 	ctx      context.Context
 	env      []string
+	owners   []uint32
 	active   map[[2]uint64]bool
 	bytes    int
 	visits   int
 	settings []gitAuthSetting
+}
+
+// gitAuthTrustedOwners lists the accounts whose configuration files may supply
+// authentication: root, the current account, and the owner of the git
+// executable this process runs (PATH lookup, symlinks followed). That owner can
+// already replace the program acquisition executes, so its files grant no new
+// authority. A group- or other-writable executable extends no trust.
+func gitAuthTrustedOwners() []uint32 {
+	owners := []uint32{0, uint32(gitAuthEffectiveUID())}
+	path, err := exec.LookPath("git")
+	if err != nil {
+		return owners
+	}
+	if path, err = filepath.EvalSymlinks(path); err != nil {
+		return owners
+	}
+	info, err := os.Stat(path)
+	if err != nil || !info.Mode().IsRegular() || info.Mode().Perm()&0o022 != 0 {
+		return owners
+	}
+	if stat, ok := info.Sys().(*syscall.Stat_t); ok {
+		owners = append(owners, stat.Uid)
+	}
+	return owners
 }
 
 // gitSystemAuthConfigPath discovers Git's compiled-in system path without
@@ -133,7 +163,7 @@ func (r *gitAuthConfigReader) read(path string, depth int) error {
 		return ErrGitAuthConfigUntrusted
 	}
 	stat, ok := info.Sys().(*syscall.Stat_t)
-	if !ok || stat.Nlink != 1 || stat.Uid != 0 && stat.Uid != uint32(os.Geteuid()) {
+	if !ok || stat.Nlink != 1 || !slices.Contains(r.owners, stat.Uid) {
 		return ErrGitAuthConfigUntrusted
 	}
 	id := [2]uint64{uint64(stat.Dev), uint64(stat.Ino)}
