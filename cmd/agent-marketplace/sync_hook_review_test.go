@@ -74,6 +74,7 @@ func hookReviewFileCommand(t *testing.T, nativeFile string) string {
 // spec: hook-resources/changed-hook-commands-are-listed-with-exact-values
 // spec: hook-resources/check-reports-pending-hook-changes-without-writing
 // spec: hook-resources/unchanged-hooks-produce-no-review
+// spec: hook-sync-diagnostics/hook-review-labels-additions-replacements-and-removals
 func TestSyncPrintsHookChangesForReview(t *testing.T) {
 	if isolateCommandTest(t) {
 		return
@@ -86,13 +87,13 @@ func TestSyncPrintsHookChangesForReview(t *testing.T) {
 
 	registry := t.TempDir()
 	hookReviewRegistry(t, registry, "echo hook-review-v1-7b2c")
-	_, nativeFile := hookReviewRepo(t, registry)
+	repoRoot, nativeFile := hookReviewRepo(t, registry)
 
 	output, err := executeCommand("sync")
 	if err != nil {
 		t.Fatalf("initial sync: %v\n%s", err, output)
 	}
-	if !strings.Contains(output, "Hook changes") || !strings.Contains(output, "echo hook-review-v1-7b2c") {
+	if !strings.Contains(output, "Hook changes") || !strings.Contains(output, "echo hook-review-v1-7b2c") || !strings.Contains(output, "factory (repository) add ") {
 		t.Fatalf("initial sync output = %q, want a Hook changes section naming the added command", output)
 	}
 	if !strings.Contains(output, "materialize.hook.review") {
@@ -114,7 +115,7 @@ func TestSyncPrintsHookChangesForReview(t *testing.T) {
 	if checkErr == nil {
 		t.Fatalf("sync --check succeeded with a pending hook change: %s", output)
 	}
-	if !strings.Contains(output, "Hook changes") || !strings.Contains(output, "echo hook-review-v1-7b2c") {
+	if !strings.Contains(output, "Hook changes") || !strings.Contains(output, "echo hook-review-v1-7b2c") || !strings.Contains(output, "factory (repository) add ") {
 		t.Fatalf("sync --check output = %q, want the pending addition naming the command", output)
 	}
 	if !strings.Contains(output, "materialize.hook.review-pending") {
@@ -134,12 +135,49 @@ func TestSyncPrintsHookChangesForReview(t *testing.T) {
 	if got := hookReviewFileCommand(t, nativeFile); got != "echo hook-review-v1-7b2c" {
 		t.Fatalf("native hook command = %q, want the restored command", got)
 	}
+
+	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
+harnesses: [factory]
+registries:
+  - url: `+registry+`
+    ref: main
+    source_harness: factory
+    default: false
+`)
+	stateRoot := filepath.Join(homeDir, "state")
+	repoSnap := cliFilesystemSnapshot(t, repoRoot)
+	stateSnap := cliFilesystemSnapshot(t, stateRoot)
+	output, checkErr = executeCommand("sync", "--check")
+	if checkErr == nil {
+		t.Fatalf("sync --check succeeded with a pending hook removal: %s", output)
+	}
+	if !strings.Contains(output, "factory (repository) remove ") || !strings.Contains(output, "Deselecting hooks removes their owned entries and owned support files.") {
+		t.Fatalf("sync --check output = %q, want the pending removal and its cleanup explanation", output)
+	}
+	assertCliFilesystemSnapshot(t, "sync --check repository", repoRoot, repoSnap)
+	assertCliFilesystemSnapshot(t, "sync --check state", stateRoot, stateSnap)
+
+	output, err = executeCommand("sync")
+	if err != nil {
+		t.Fatalf("deselecting sync: %v\n%s", err, output)
+	}
+	if strings.Contains(output, "Deselecting hooks") {
+		t.Fatalf("applied removal printed the pending-removal explanation:\n%s", output)
+	}
+	data, readErr := os.ReadFile(nativeFile)
+	if readErr != nil && !os.IsNotExist(readErr) {
+		t.Fatalf("read native hooks after deselection: %v", readErr)
+	}
+	if readErr == nil && strings.Contains(string(data), "echo hook-review-v1-7b2c") {
+		t.Fatalf("native hook file still carries the deselected command:\n%s", data)
+	}
 }
 
 // spec: hook-resources/changed-hook-commands-are-listed-with-exact-values
 // spec: hook-resources/check-reports-pending-hook-changes-without-writing
 // spec: hook-resources/unchanged-hooks-produce-no-review
 // spec: hook-resources/codex-keeps-its-trust-review-codes
+// spec: hook-sync-diagnostics/hook-review-labels-additions-replacements-and-removals
 func TestSyncHookReviewClaudeUpdateAndCodexCodes(t *testing.T) {
 	if isolateCommandTest(t) {
 		return
@@ -196,7 +234,7 @@ registries:
 	if checkErr == nil {
 		t.Fatalf("sync --check succeeded with a pending hook change: %s", output)
 	}
-	for _, want := range []string{"Hook changes", `"echo claude-review-old-6f1d"`, `"echo claude-review-new-8c2b"`, "materialize.hook.review-pending", "materialize.codex.trust-review-pending"} {
+	for _, want := range []string{"Hook changes", `"echo claude-review-old-6f1d"`, `"echo claude-review-new-8c2b"`, "claude (repository) replace ", "codex (repository) replace ", "materialize.hook.review-pending", "materialize.codex.trust-review-pending"} {
 		if !strings.Contains(output, want) {
 			t.Fatalf("sync --check output = %q, missing %q", output, want)
 		}
@@ -210,7 +248,7 @@ registries:
 		t.Fatalf("update sync: %v\n%s", err, output)
 	}
 	t.Logf("sync stdout:\n%s", output)
-	for _, want := range []string{`"echo claude-review-old-6f1d"`, `"echo claude-review-new-8c2b"`, "materialize.hook.review", "materialize.codex.trust-review"} {
+	for _, want := range []string{`"echo claude-review-old-6f1d"`, `"echo claude-review-new-8c2b"`, "claude (repository) replace ", "codex (repository) replace ", "materialize.hook.review", "materialize.codex.trust-review"} {
 		if !strings.Contains(output, want) {
 			t.Fatalf("update sync output = %q, missing %q", output, want)
 		}

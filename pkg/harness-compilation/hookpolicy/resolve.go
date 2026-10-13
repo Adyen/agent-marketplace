@@ -338,11 +338,11 @@ func resolveMatcher(h *ir.Hook, dst target.Target, srcCat, dstCat catalog, srcEv
 	case MatcherKindTool:
 		decoded, err := decodeSourceMatcher(h, srcCat, srcEvent)
 		if err != nil {
-			return fail(diag.CodeHookMatcherUntranslatable, "No exact tool coverage on the target for this matcher; hook suppressed", "Use exact tool names the target documents")
+			return fail(diag.CodeHookMatcherUntranslatable, "The source matcher cannot be decoded for cross-harness translation; hook suppressed", "Use exact source tool names or a supported MCP pattern, or author a target-specific hook")
 		}
 		rendered, err := toolpolicy.RenderMatcher(dst, decoded, matcherSpec(dstCat))
 		if err != nil {
-			return fail(diag.CodeHookMatcherUntranslatable, "No exact tool coverage on the target for this matcher; hook suppressed", "Use exact tool names the target documents")
+			return fail(diag.CodeHookMatcherUntranslatable, "The target tool catalog cannot exactly cover the source matcher; hook suppressed", "Author a target-specific hook or explicitly narrow the selected harnesses; preview cleanup with agent-marketplace sync --check")
 		}
 		res.Matcher = rendered
 	default:

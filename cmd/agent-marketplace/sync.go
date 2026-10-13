@@ -583,10 +583,10 @@ func writeSyncCheckSummary(out io.Writer, report *materialize.Report, errorRows 
 
 		parts := []string{}
 		if report.TotalWritten() > 0 {
-			parts = append(parts, fmt.Sprintf("%d missing", report.TotalWritten()))
+			parts = append(parts, fmt.Sprintf("%d writes", report.TotalWritten()))
 		}
 		if report.TotalRemoved() > 0 {
-			parts = append(parts, fmt.Sprintf("%d orphaned", report.TotalRemoved()))
+			parts = append(parts, fmt.Sprintf("%d removals", report.TotalRemoved()))
 		}
 
 		if len(parts) > 0 {
@@ -603,6 +603,12 @@ func writeSyncCheckSummary(out io.Writer, report *materialize.Report, errorRows 
 	}
 
 	for _, d := range errorDiags {
+		if strings.HasPrefix(d.Code, "hook.") {
+			if err := writeSyncIssues(out, []error{pipeline.PromoteDiagnostic(d)}, false, "error:"); err != nil {
+				return err
+			}
+			continue
+		}
 		label := d.Code
 		if d.Resource != "" {
 			label = fmt.Sprintf("%s (%s)", d.Code, d.Resource)
@@ -620,7 +626,7 @@ func writeSyncCheckSummary(out io.Writer, report *materialize.Report, errorRows 
 
 	switch {
 	case pendingCount > 0:
-		return fmt.Errorf("%d skills out of sync", pendingCount)
+		return fmt.Errorf("%d outputs out of sync", pendingCount)
 	case len(errorDiags) > 0:
 		return fmt.Errorf("%d materialization error(s)", len(errorDiags))
 	case len(configErrs) > 0:
@@ -664,12 +670,21 @@ func writeHookChanges(out io.Writer, report *materialize.Report, pending bool) e
 		return err
 	}
 	homeDir, _ := os.UserHomeDir()
+	removed := false
 	for _, change := range changes {
 		scope := "repository"
 		if change.MachineScope {
 			scope = "machine"
 		}
-		if _, err := fmt.Fprintf(out, "  %s (%s) %s: %s", change.Target, scope, abbreviateHome(change.File, homeDir), change.Event); err != nil {
+		action := "replace"
+		switch {
+		case len(change.Before) == 0:
+			action = "add"
+		case len(change.After) == 0:
+			action = "remove"
+			removed = true
+		}
+		if _, err := fmt.Fprintf(out, "  %s (%s) %s %s: %s", change.Target, scope, action, abbreviateHome(change.File, homeDir), change.Event); err != nil {
 			return err
 		}
 		if change.Matcher != "" {
@@ -689,6 +704,11 @@ func writeHookChanges(out io.Writer, report *materialize.Report, pending bool) e
 					return err
 				}
 			}
+		}
+	}
+	if pending && removed {
+		if _, err := fmt.Fprintln(out, "Deselecting hooks removes their owned entries and owned support files."); err != nil {
+			return err
 		}
 	}
 	return nil
