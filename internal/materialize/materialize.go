@@ -2434,23 +2434,10 @@ func materializeMergeArtifacts(outDir string, artifacts []artifact.Artifact, dry
 			if len(boundary) > 0 {
 				capturedBoundary = boundary[0]
 			}
-			existing, mode, readErr := markerAliasSnapshot(outDir, destPath, capturedBoundary) // follows symlink
+			aliasErr := materializeMarkerAlias(outDir, destPath, capturedBoundary, dryRun) // follows symlink
 			// get target file info for permissions
-			if readErr != nil {
-				return nil, nil, fmt.Errorf("read symlink target %s: %w", destPath, readErr)
-			}
-			if dryRun {
-				continue
-			}
-			if len(existing) > 0 {
-				if mode == 0 {
-					mode = 0o644
-				}
-				if err := atomicWriteFile(destPath, existing, mode); err != nil {
-					return nil, nil, fmt.Errorf("replace symlink %s: %w", destPath, err)
-				}
-			} else if err := os.Remove(destPath); err != nil {
-				return nil, nil, fmt.Errorf("remove symlink %s: %w", destPath, err)
+			if aliasErr != nil {
+				return nil, nil, fmt.Errorf("detach marker symlink %s: %w", destPath, aliasErr)
 			}
 		}
 	}
