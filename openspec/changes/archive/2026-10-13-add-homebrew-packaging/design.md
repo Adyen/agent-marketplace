@@ -55,9 +55,12 @@ The first successful stable publication creates `homebrew`; subsequent publicati
 
 ```sh
 brew tap --custom-remote adyen/agent-marketplace git@github.com:Adyen/agent-marketplace.git
-git -C "$(brew --repository adyen/agent-marketplace)" fetch origin homebrew
+git -C "$(brew --repository adyen/agent-marketplace)" fetch origin homebrew:refs/remotes/origin/homebrew
 git -C "$(brew --repository adyen/agent-marketplace)" checkout --track origin/homebrew
+git -C "$(brew --repository adyen/agent-marketplace)" remote set-head origin homebrew
 brew install agent-marketplace
 ```
+
+Homebrew updates a tapped repository from its local `origin/HEAD`, so `remote set-head` selects `homebrew` instead of the default `main`.
 
 Do not use `brew tap --branch`. If a release formula is defective, publish a corrected forward stable release so the version remains monotonic; do not silently rewrite the tap to an older release. When the repository becomes public, future formula generation switches to anonymous canonical release URLs, and consumers can use `https://github.com/Adyen/agent-marketplace.git` as the custom tap remote for anonymous branch access. No anonymous access is promised while it is private.
