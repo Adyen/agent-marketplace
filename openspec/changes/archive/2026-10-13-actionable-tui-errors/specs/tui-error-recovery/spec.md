@@ -1,3 +1,7 @@
+## Purpose
+
+Describes the recovery steps shown by the TUI for failed resource-state verification, configuration, source access, acquisition lock, and operation errors while preserving original causes, write guards, and terminal-safe rendering.
+
 ## ADDED Requirements
 
 ### Requirement: TUI errors provide safe recovery steps
