@@ -207,7 +207,7 @@ func (r *gitAuthConfigReader) read(path string, depth int) error {
 			continue
 		}
 		if !hasValue {
-			if strings.HasSuffix(lower, ".usehttppath") || strings.HasSuffix(lower, ".sslcertpasswordprotected") {
+			if strings.HasSuffix(lower, ".usehttppath") || strings.HasSuffix(lower, ".sslcertpasswordprotected") || strings.HasSuffix(lower, ".followredirects") {
 				value = "true"
 			} else {
 				return ErrGitAuthConfigUntrusted

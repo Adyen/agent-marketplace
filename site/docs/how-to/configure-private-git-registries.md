@@ -13,7 +13,8 @@ Let `agent-marketplace` read a private Git [registry](../glossary.md#registry) u
 `agent-marketplace` runs your `git` program with a restricted setup, so a command that works in your shell does not always work unchanged:
 
 - Git never prompts for a username or password. Credentials must come from an SSH agent, an SSH key, or a credential helper.
-- Your personal and system Git configuration files are not loaded as a whole. For HTTPS registries, `agent-marketplace` copies only the credential and TLS settings from them: `credential.helper`, `credential.username`, `credential.useHttpPath`, `http.extraHeader`, and the `http.ssl*` certificate settings. Other settings, such as `url.<base>.insteadOf` rewrites or `core.sshCommand`, are not applied.
+- Your personal and system Git configuration files are not loaded as a whole. For HTTPS registries, `agent-marketplace` copies only the credential, TLS and redirect settings from them: `credential.helper`, `credential.username`, `credential.useHttpPath`, `http.extraHeader`, the `http.ssl*` certificate settings, and `http.followRedirects`. Other settings, such as `url.<base>.insteadOf` rewrites or `core.sshCommand`, are not applied.
+- Redirects follow Git's rules. By default (`http.followRedirects=initial`), Git follows a redirect of the first request and sends the rest of the fetch, including your credentials, to the redirected URL, exactly as `git clone` does. To refuse redirects, set `http.followRedirects=false` in your Git configuration, for all hosts or for one URL (`[http "https://git.example.com/"]`). Redirect failures are reported as `git.auth-transport-failed`.
 - Most `GIT_*` environment variables are dropped. `GIT_SSH`, `GIT_SSH_COMMAND`, `GIT_ASKPASS`, `GIT_SSL_CERT`, `GIT_SSL_KEY`, `GIT_SSL_CAINFO`, `GIT_SSL_CAPATH`, `GIT_HTTP_PROXY`, `GIT_HTTPS_PROXY`, and `GIT_NO_PROXY` pass through. `GIT_SSL_NO_VERIFY` is removed. Your SSH agent (`SSH_AUTH_SOCK`) and `~/.ssh/config` work as usual.
 
 ## Use SSH key authentication
@@ -70,7 +71,7 @@ resources:
 
 Ordinary `[include]` sections work, including nested includes. Every included file must meet the same trust rules. Absolute include paths work; `~/` resolves against your home directory, `%(prefix)/` resolves against Git's installation prefix, and relative paths resolve beside the file declaring the include. For a symlinked config, that means beside the symlink, as in Git. Missing optional files and `/dev/null` includes contribute no settings.
 
-Includes expand in declaration order, preserving credential-helper resets and URL-specific settings. The reader allows ten include levels, at most 128 expanded file visits, 4 MiB per file, and 16 MiB of expanded content. Cycles and malformed files are rejected before the fetch runs. Only credential and TLS settings are copied; other settings in included files are not applied.
+Includes expand in declaration order, preserving credential-helper resets and URL-specific settings. The reader allows ten include levels, at most 128 expanded file visits, 4 MiB per file, and 16 MiB of expanded content. Cycles and malformed files are rejected before the fetch runs. Only credential, TLS and redirect settings are copied; other settings in included files are not applied.
 
 Conditional `[includeIf]` sections remain unsupported, even when their condition does not match. Repository-local authentication settings, including worktree-specific settings in the registry cache, are still rejected. Your caller worktree's local credentials do not supply registry authentication.
 
