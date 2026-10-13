@@ -32,7 +32,7 @@ In `~/.agents/config.yaml`, in the organization configuration, and in included f
 agent-marketplace sync
 ```
 
-Sync reads the folder as it is at that moment and prints the usual `Installed <n>  Removed <n>  Malformed <n>  Errors <n>` summary with one `→` line per output root. Directory sources never appear in `.agents/lock.yaml`.
+Sync reads the folder as it is at that moment and prints the usual `Installed <n>  Removed <n>  Malformed <n>  Errors <n>` summary, followed by a single `→` line listing the output roots it changed, separated by commas. Directory sources never appear in `.agents/lock.yaml`.
 
 ## 3. Verify the result
 
