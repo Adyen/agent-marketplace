@@ -7,6 +7,7 @@ import { compareRows, hasSearchTerms, highlightNameParts, rankRows, type NameSeg
 import Confirmations from './Confirmations.vue'
 import FirstRun from './FirstRun.vue'
 import HarnessSettings from './HarnessSettings.vue'
+import ResourceActions from './ResourceActions.vue'
 import ResourceInspection from './ResourceInspection.vue'
 import SourcesSettings from './SourcesSettings.vue'
 
@@ -17,6 +18,7 @@ type VisibleEntry =
   | { key: string; kind: 'row'; elementId: string; row: Row }
 type ViewportAnchor = { key: string; top: number }
 type SearchFoldState = { query: string; groups: Record<string, boolean> }
+type PendingResourceSelection = { rowId: string; selectedKey: string; operationId: number | null; nextKey: string | null; previous: VisibleEntry[] }
 
 const props = defineProps<{ controller?: WorkspaceController }>()
 
@@ -42,6 +44,7 @@ const setupDismissed = ref(false)
 const setupOpened = ref(false)
 const setupButton = ref<HTMLButtonElement | null>(null)
 const openResourceButton = ref<HTMLButtonElement | null>(null)
+const resourceActionButton = ref<HTMLButtonElement | null>(null)
 const inspectionOpen = ref(false)
 const quitOpen = ref(false)
 
@@ -119,6 +122,7 @@ function openSearch() {
 
 function updateSearch(event: Event) {
   selectionTouched.value = true
+  pendingResourceSelection = null
   const query = (event.currentTarget as HTMLInputElement).value
   draftQuery.value = query
   activeQuery.value = query
@@ -126,6 +130,7 @@ function updateSearch(event: Event) {
 
 function confirmSearch() {
   selectionTouched.value = true
+  pendingResourceSelection = null
   appliedQuery.value = draftQuery.value
   activeQuery.value = appliedQuery.value
   searchEditing.value = false
@@ -133,6 +138,7 @@ function confirmSearch() {
 
 function cancelSearch() {
   selectionTouched.value = true
+  pendingResourceSelection = null
   draftQuery.value = appliedQuery.value
   activeQuery.value = appliedQuery.value
   searchEditing.value = false
@@ -140,6 +146,7 @@ function cancelSearch() {
 
 function clearSearch() {
   selectionTouched.value = true
+  pendingResourceSelection = null
   appliedQuery.value = ''
   draftQuery.value = ''
   activeQuery.value = ''
@@ -190,6 +197,14 @@ onBeforeUnmount(() => {
 })
 
 const view = computed(() => state.value?.state)
+const resourceActionOpen = computed({
+  get: () => view.value?.resourceAction != null,
+  set: (open: boolean) => {
+    if (!open) {
+      state.value?.cancelResourceAction()
+    }
+  },
+})
 
 function rowKey(id: string): string {
   return `row:${id}`
@@ -265,10 +280,17 @@ const selected = computed(() => {
 watch(
   () => selected.value?.id,
   (rowID) => {
-    const inspection = state.value?.state.inspection
+    const controller = state.value
+    const inspection = controller?.state.inspection
     if (inspection != null && inspection.rowId !== rowID) {
-      state.value?.closeInspection()
+      controller?.closeInspection()
       inspectionOpen.value = false
+    }
+    const resourceAction = controller?.state.resourceAction
+    if (resourceAction != null && resourceAction.rowId !== rowID && !controller?.resourceActionSubmitting) {
+      pendingResourceSelection = null
+      resourceActionFocusPending = false
+      controller?.cancelResourceAction()
     }
   },
 )
@@ -310,8 +332,31 @@ function nextSelectionKey(currentKey: string | null, previous: VisibleEntry[], n
   return next.find((entry) => entry.kind === 'row')?.key ?? next[0]?.key ?? null
 }
 
+function nextRowAfterDisabled(rowId: string, previous: VisibleEntry[], next: VisibleEntry[]): string | null {
+  const disabledKey = rowKey(rowId)
+  const nextKeys = new Set(next.map((entry) => entry.key))
+  const previousIndex = previous.findIndex((entry) => entry.key === disabledKey)
+  if (previousIndex >= 0) {
+    for (let index = previousIndex + 1; index < previous.length; index++) {
+      const candidate = previous[index]
+      if (candidate.kind === 'row' && candidate.key !== disabledKey && nextKeys.has(candidate.key)) {
+        return candidate.key
+      }
+    }
+    for (let index = previousIndex - 1; index >= 0; index--) {
+      const candidate = previous[index]
+      if (candidate.kind === 'row' && candidate.key !== disabledKey && nextKeys.has(candidate.key)) {
+        return candidate.key
+      }
+    }
+  }
+  return next.find((entry) => entry.kind === 'row' && entry.key !== disabledKey)?.key ?? null
+}
+
 let previousVisibleEntries: VisibleEntry[] = []
 let rowReplacementEpoch = 0
+let pendingResourceSelection: PendingResourceSelection | null = null
+let resourceActionFocusPending = false
 
 watch(
   visibleEntries,
@@ -348,6 +393,26 @@ watch(
     const nextKey = selectionTouched.value
       ? nextSelectionKey(selectedKey.value, previousVisibleEntries, entries)
       : entries.find((entry) => entry.kind === 'row')?.key ?? null
+    const settlement = view.value?.settlementIntent ?? view.value?.settledMutation
+    const currentResourceAction = view.value?.resourceAction
+    const pendingDisable = settlement?.selectNext
+      ? { rowId: settlement.rowId, operationId: settlement.operation.id }
+      : currentResourceAction?.loading &&
+          (currentResourceAction.plan?.action === 'remove' || currentResourceAction.plan?.action === 'exclude')
+        ? { rowId: currentResourceAction.rowId, operationId: null }
+        : null
+    if (
+      acceptedReplacement && stage === 'final' && view.value?.operation == null && selectionTouched.value && pendingDisable != null &&
+      selectedKey.value === rowKey(pendingDisable.rowId)
+    ) {
+      pendingResourceSelection = {
+        rowId: pendingDisable.rowId,
+        selectedKey: rowKey(pendingDisable.rowId),
+        operationId: pendingDisable.operationId,
+        nextKey: nextRowAfterDisabled(pendingDisable.rowId, previousVisibleEntries, entries),
+        previous: previousVisibleEntries.slice(),
+      }
+    }
     let anchor: ViewportAnchor | null = null
     if (acceptedReplacement && selectionTouched.value && nextKey != null) {
       const previousEntry = previousVisibleEntries.find((entry) => entry.key === nextKey)
@@ -395,6 +460,7 @@ watch(
 
 function select(row: Row) {
   selectionTouched.value = true
+  pendingResourceSelection = null
   const key = rowKey(row.id)
   if (selectedKey.value === key) {
     return
@@ -414,6 +480,21 @@ function openInspection(row: Row) {
   }
 }
 
+function resourceActionLabel(action: Row['resourceAction']): string {
+  switch (action) {
+    case 'install':
+      return 'Install Resource'
+    case 'remove':
+      return 'Remove Resource'
+    case 'exclude':
+      return 'Exclude Resource'
+    case 'restore':
+      return 'Restore Resource'
+    default:
+      return 'Resource action'
+  }
+}
+
 function activateRow(row: Row) {
   select(row)
   if (row.inspectable || row.installedFiles) {
@@ -423,6 +504,7 @@ function activateRow(row: Row) {
 
 function toggleGroup(groupID: string) {
   selectionTouched.value = true
+  pendingResourceSelection = null
   if (filteredSearch.value) {
     const groups = temporarySearchFolds.value.query === activeQuery.value
       ? temporarySearchFolds.value.groups
@@ -439,6 +521,7 @@ function toggleGroup(groupID: string) {
 
 async function moveSelection(direction: 1 | -1) {
   selectionTouched.value = true
+  pendingResourceSelection = null
   const entries = visibleEntries.value
   if (entries.length === 0) {
     return
@@ -463,6 +546,96 @@ async function moveSelection(direction: 1 | -1) {
 
 const busy = computed(() => view.value == null || view.value.operation != null || view.value.requesting)
 const ready = computed(() => view.value != null && eligible(view.value))
+
+function openResourceAction(row: Row) {
+  selectionTouched.value = true
+  resourceActionFocusPending = true
+  pendingResourceSelection = null
+  state.value?.openResourceAction(row.id)
+}
+
+function tryRestoreResourceActionFocus() {
+  if (
+    !resourceActionFocusPending || resourceActionOpen.value || state.value?.resourceActionSubmitting ||
+    view.value?.operation != null || view.value?.requesting || view.value?.settlementIntent != null || view.value?.settledMutation != null
+  ) {
+    return
+  }
+  void nextTick(() => {
+    if (
+      !resourceActionFocusPending || resourceActionOpen.value || state.value?.resourceActionSubmitting ||
+      view.value?.operation != null || view.value?.requesting || view.value?.settlementIntent != null || view.value?.settledMutation != null
+    ) {
+      return
+    }
+    const actionButton = resourceActionButton.value
+    if (actionButton != null && !actionButton.disabled) {
+      actionButton.focus()
+    } else if (selected.value != null) {
+      document.getElementById(rowElementId(selected.value.id))?.focus()
+    }
+    resourceActionFocusPending = false
+  })
+}
+
+watch(
+  resourceActionOpen,
+  (isOpen, wasOpen) => {
+    if (!isOpen && wasOpen) {
+      const current = view.value
+      if (current?.operation == null && current?.settlementIntent == null && current?.settledMutation == null) {
+        pendingResourceSelection = null
+      }
+      tryRestoreResourceActionFocus()
+    }
+  },
+)
+
+watch(
+  () => view.value?.settlementIntent,
+  (intent, previous) => {
+    if (intent != null && pendingResourceSelection?.rowId === intent.rowId) {
+      pendingResourceSelection = { ...pendingResourceSelection, operationId: intent.operation.id }
+    } else if (intent == null && previous != null && view.value?.settledMutation?.operation.id !== previous.operation.id) {
+      if (pendingResourceSelection?.rowId === previous.rowId && pendingResourceSelection.operationId === previous.operation.id) {
+        pendingResourceSelection = null
+      }
+    }
+  },
+)
+
+watch(
+  () => view.value?.settledMutation,
+  (settled) => {
+    if (settled == null) {
+      return
+    }
+    const pending = pendingResourceSelection
+    const settledRow = view.value?.rows.find((row) => row.id === settled.rowId)
+    const disabled = settledRow == null || !settledRow.checked
+    if (
+      settled.selectNext && disabled && pending != null && pending.rowId === settled.rowId &&
+      (pending.operationId == null || pending.operationId === settled.operation.id) && selectedKey.value === pending.selectedKey
+    ) {
+      const visibleKeys = new Set(visibleEntries.value.map((entry) => entry.key))
+      const target = pending.nextKey != null && visibleKeys.has(pending.nextKey)
+        ? pending.nextKey
+        : nextRowAfterDisabled(pending.rowId, pending.previous, visibleEntries.value)
+      selectedKey.value = target
+    }
+    if (pending?.rowId === settled.rowId && (pending.operationId == null || pending.operationId === settled.operation.id)) {
+      pendingResourceSelection = null
+    }
+    state.value?.consumeSettledMutation(settled.operation.id)
+    tryRestoreResourceActionFocus()
+  },
+  { flush: 'post' },
+)
+
+watch(
+  [() => view.value?.operation, () => view.value?.settlementIntent, () => view.value?.settledMutation, ready],
+  () => tryRestoreResourceActionFocus(),
+)
 
 async function refresh() {
   await state.value?.refresh()
@@ -616,6 +789,15 @@ async function run(action: 'sync' | 'update') {
             <dd class="mono">{{ selected.harnesses.join(', ') || 'none' }}</dd>
           </dl>
           <button
+            v-if="selected.resourceAction !== 'none'"
+            ref="resourceActionButton"
+            type="button"
+            :aria-label="resourceActionLabel(selected.resourceAction)"
+            class="workspace__open-resource"
+            :disabled="!ready || configuration?.editable !== true || busy || resourceActionOpen"
+            @click="openResourceAction(selected)"
+          >{{ resourceActionLabel(selected.resourceAction) }}</button>
+          <button
             v-if="selected.inspectable || selected.installedFiles"
             ref="openResourceButton"
             type="button"
@@ -656,6 +838,7 @@ async function run(action: 'sync' | 'update') {
     <SourcesSettings v-if="state" v-model:open="sourcesOpen" :controller="state" />
     <FirstRun v-if="state" v-model:open="setupOpen" :controller="state" @cancel="onSetupCancel" />
     <Confirmations v-if="state" v-model:quit-open="quitOpen" :controller="state" />
+    <ResourceActions v-if="state" v-model:open="resourceActionOpen" :controller="state" />
     <ResourceInspection v-if="state" v-model:open="inspectionOpen" :controller="state" />
 
     <ul class="workspace__notifications" aria-live="polite" aria-label="Notifications">

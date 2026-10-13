@@ -5,6 +5,7 @@ import {
   RequestError,
   type Client,
   type OperationRef,
+  type ResourceActionPlan,
   type SessionEvent,
   type Snapshot,
 } from './api/client'
@@ -103,6 +104,91 @@ function work38DiscoveryEvent(sequence: number, generation: number, rows: Return
 
 function relativeTop(element: HTMLElement, root: HTMLElement): number {
   return element.getBoundingClientRect().top - root.getBoundingClientRect().top
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  let reject!: (reason: unknown) => void
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise
+    reject = rejectPromise
+  })
+  return { promise, resolve, reject }
+}
+
+function work39Row(
+  name: string,
+  id: string,
+  resourceAction: Snapshot['rows'][number]['resourceAction'],
+  overrides: Partial<ReturnType<typeof row>> = {},
+) {
+  return row(name, {
+    id,
+    registry: 'source',
+    scope: 'available',
+    group: 'available',
+    status: 'available',
+    checked: false,
+    discovery: true,
+    resourceAction,
+    ...overrides,
+  })
+}
+
+function work39Plan(rowId: string, generation: number, action: ResourceActionPlan['action'], requiresRiskAcceptance = false): ResourceActionPlan {
+  return {
+    rowId,
+    generation,
+    planId: 'a'.repeat(64),
+    action,
+    preview: 'Resource action preview',
+    requiresRiskAcceptance,
+  }
+}
+
+function work39SnapshotEvent(
+  sequence: number,
+  generation: number,
+  rows: ReturnType<typeof row>[],
+  operation: OperationRef | null = null,
+  settledOperation: OperationRef | null = null,
+) {
+  return work38SnapshotEvent(sequence, generation, 'final', rows, operation, settledOperation, true)
+}
+
+async function selectWork39Row(wrapper: ReturnType<typeof mountWorkspace>['wrapper'], rowId: string) {
+  await wrapper.get(`[role="option"][id="row-${rowId}"]`).trigger('click')
+  await tick()
+}
+
+async function startWork39HeldRemoval() {
+  const removed = work39Row('resource-a', 'opaque-user-source-removed', 'remove', {
+    scope: 'user', group: 'enabled', status: 'enabled', checked: true, discovery: false,
+  })
+  const next = work39Row('resource-b', 'opaque-user-source-next', 'restore', {
+    scope: 'organization', group: 'enabled', status: 'excluded by user', checked: false, discovery: false,
+  })
+  const actionRequest = deferred<OperationRef>()
+  const plan = work39Plan(removed.id, 1, 'remove')
+  const { client, push } = fakeClient()
+  vi.mocked(client.resourcePlan).mockResolvedValue(plan)
+  vi.mocked(client.resourceAction).mockReturnValue(actionRequest.promise)
+  const { controller, wrapper } = mountWorkspace(client)
+  push(work39SnapshotEvent(1, 1, [removed, next]))
+  await tick()
+  await selectWork39Row(wrapper, removed.id)
+  await wrapper.get('button[aria-label="Remove Resource"]').trigger('click')
+  await tick()
+  const confirm = document.body.querySelector('button[aria-label="Confirm remove"]') as HTMLButtonElement | null
+  if (confirm == null) {
+    throw new Error('resource removal confirmation was not rendered')
+  }
+  confirm.click()
+  await tick()
+  if (!controller.resourceActionSubmitting) {
+    throw new Error('resource removal request was not held')
+  }
+  return { actionRequest, client, controller, next, plan, push, removed, wrapper }
 }
 
 describe('WorkspaceView', () => {
@@ -1788,5 +1874,421 @@ describe('Event stream reconnect', () => {
       expect(event).not.toHaveProperty('sourceName')
     }
     expect(quit).not.toHaveBeenCalled()
+  })
+
+  describe('Marketplace resource actions', () => {
+    // spec: session-interactions/guarded-submission
+    it('opens the explicit action button and requires risk acknowledgement before submission', async () => {
+      const resource = work39Row('review', 'opaque-user-source-review', 'install', { inspectable: true })
+      const planRequest = deferred<ResourceActionPlan>()
+      const actionRequest = deferred<OperationRef>()
+      const { client, push } = fakeClient()
+      vi.mocked(client.resourcePlan).mockReturnValue(planRequest.promise)
+      vi.mocked(client.resourceAction).mockReturnValue(actionRequest.promise)
+      const { controller, wrapper } = mountWorkspace(client)
+      push(work39SnapshotEvent(1, 1, [resource]))
+      await tick()
+
+      const reviewOption = wrapper.find('[role="option"]')
+      await reviewOption.trigger('keydown', { key: ' ' })
+      await tick()
+      expect(client.resourcePlan).not.toHaveBeenCalled()
+      await reviewOption.trigger('keydown', { key: 'Enter' })
+      await tick()
+      expect(client.inspection).toHaveBeenCalledWith(resource.id, undefined, expect.any(AbortSignal))
+      expect(client.resourcePlan).not.toHaveBeenCalled()
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+      await tick()
+
+      await wrapper.get('button[aria-label="Install Resource"]').trigger('click')
+      await tick()
+      const actionSignal = vi.mocked(client.resourcePlan).mock.calls[0]?.[1]
+      expect(vi.mocked(client.resourcePlan).mock.calls[0]?.[0]).toBe(resource.id)
+      expect(actionSignal).toBeInstanceOf(AbortSignal)
+      const dialog = document.body.querySelector('[role="dialog"]') as HTMLElement | null
+      expect(dialog).not.toBeNull()
+      if (dialog == null) {
+        throw new Error('resource action dialog was not rendered')
+      }
+      expect(dialog.querySelector('[role="status"]')?.textContent).toContain('Preparing')
+
+      const plan = { ...work39Plan(resource.id, 1, 'install', true), preview: '<script>not executable</script>' }
+      planRequest.resolve(plan)
+      await tick()
+      const previewRegion = dialog.querySelector('pre') as HTMLPreElement | null
+      expect(previewRegion?.textContent).toBe(plan.preview)
+      expect(previewRegion?.getAttribute('role')).toBe('region')
+      expect(previewRegion?.tabIndex).toBe(0)
+      expect(dialog.querySelector('script, img')).toBeNull()
+      expect(dialog.querySelector('button[aria-label="Decline"]')).not.toBeNull()
+      expect(dialog.querySelector('button[aria-label="Cancel"]')).not.toBeNull()
+      const confirm = dialog.querySelector('button[aria-label="Confirm install"]') as HTMLButtonElement | null
+      const risk = dialog.querySelector('input[type="checkbox"]') as HTMLInputElement | null
+      expect(confirm?.disabled).toBe(true)
+      expect(risk?.checked).toBe(false)
+
+      if (risk == null || confirm == null) {
+        throw new Error('resource risk confirmation controls were not rendered')
+      }
+      risk.checked = true
+      risk.dispatchEvent(new Event('change', { bubbles: true }))
+      await tick()
+      expect(controller.state.resourceAction?.acceptRisk).toBe(true)
+      expect(confirm.disabled).toBe(false)
+      confirm.click()
+      await tick()
+      expect(client.resourceAction).toHaveBeenCalledTimes(1)
+      expect(vi.mocked(client.resourceAction).mock.calls[0]).toEqual([resource.id, plan.planId, true, expect.any(AbortSignal)])
+      expect(controller.state.resourceAction?.loading).toBe(true)
+      expect(controller.resourceActionSubmitting).toBe(true)
+      expect(controller.state.settledMutation).toBeNull()
+      expect((dialog.querySelector('button[aria-label="Cancel"]') as HTMLButtonElement | null)?.disabled).toBe(true)
+      expect((dialog.querySelector('button[aria-label="Decline"]') as HTMLButtonElement | null)?.disabled).toBe(true)
+      confirm.click()
+      await tick()
+      expect(client.resourceAction).toHaveBeenCalledTimes(1)
+      expect(await controller.confirmResourceAction()).toBe(false)
+
+      const operation: OperationRef = { id: 91, kind: 'mutation' }
+      actionRequest.resolve(operation)
+      await tick()
+      expect(controller.state.resourceAction).toBeNull()
+      expect(controller.state.operation).toEqual(operation)
+      expect(controller.state.settledMutation).toBeNull()
+
+      const installed = work39Row('review', resource.id, 'remove', {
+        scope: 'user', group: 'enabled', status: 'enabled', checked: true, discovery: false,
+      })
+      push(work39SnapshotEvent(2, 2, [installed], null, operation))
+      push(event({ sequence: 3, generation: 2, type: 'notification', operation, payload: { severity: 'info', message: 'done' } }))
+      await tick()
+      expect(controller.state.operation).toBeNull()
+      expect(controller.state.rows[0]?.resourceAction).toBe('remove')
+      expect(controller.state.settledMutation).toBeNull()
+      expect(document.activeElement?.getAttribute('aria-label')).toBe('Remove Resource')
+    })
+
+    // spec: session-interactions/cancel-or-stale-completion
+    it('aborts a superseded plan and ignores its late result after switching rows or closing', async () => {
+      const first = work39Row('first', 'opaque-row-first', 'install')
+      const second = work39Row('second', 'opaque-row-second', 'remove')
+      const requests: { rowId: string; signal?: AbortSignal; response: ReturnType<typeof deferred<ResourceActionPlan>> }[] = []
+      const { client, push } = fakeClient()
+      vi.mocked(client.resourcePlan).mockImplementation((rowId, signal) => {
+        const response = deferred<ResourceActionPlan>()
+        requests.push({ rowId, signal, response })
+        return response.promise
+      })
+      const { controller, wrapper } = mountWorkspace(client)
+      push(work39SnapshotEvent(1, 1, [first, second]))
+      await tick()
+
+      await wrapper.get('button[aria-label="Install Resource"]').trigger('click')
+      await tick()
+      const firstSignal = requests[0]?.signal
+      await wrapper.findAll('[role="option"]')[1].trigger('click')
+      await tick()
+      expect(firstSignal?.aborted).toBe(true)
+      expect(controller.state.resourceAction).toBeNull()
+
+      await wrapper.get('button[aria-label="Remove Resource"]').trigger('click')
+      await tick()
+      requests[0]?.response.resolve(work39Plan(first.id, 1, 'install'))
+      await tick()
+      expect(controller.state.resourceAction?.rowId).toBe(second.id)
+      expect(controller.state.resourceAction?.plan).toBeNull()
+
+      const secondSignal = requests[1]?.signal
+      controller.cancelResourceAction()
+      await tick()
+      expect(secondSignal?.aborted).toBe(true)
+      requests[1]?.response.resolve(work39Plan(second.id, 1, 'remove'))
+      await tick()
+      expect(controller.state.resourceAction).toBeNull()
+      expect(document.body.querySelector('[role="dialog"]')).toBeNull()
+
+      await wrapper.get('button[aria-label="Remove Resource"]').trigger('click')
+      await tick()
+      const generationSignal = requests[2]?.signal
+      push(work39SnapshotEvent(2, 2, [first, second]))
+      await tick()
+      expect(generationSignal?.aborted).toBe(true)
+      requests[2]?.response.resolve(work39Plan(second.id, 1, 'remove'))
+      await tick()
+      expect(controller.state.resourceAction).toBeNull()
+      expect(document.body.querySelector('[role="dialog"]')).toBeNull()
+
+      await wrapper.get('button[aria-label="Remove Resource"]').trigger('click')
+      await tick()
+      const disposedSignal = requests[3]?.signal
+      controller.dispose()
+      expect(disposedSignal?.aborted).toBe(true)
+      requests[3]?.response.resolve(work39Plan(second.id, 2, 'remove'))
+      await tick()
+      expect(controller.state.resourceAction).toBeNull()
+      expect(document.body.querySelector('[role="dialog"]')).toBeNull()
+      expect(client.resourceAction).not.toHaveBeenCalled()
+    })
+
+    // spec: session-interactions/guarded-submission
+    it('shows static preparation failures and keeps decline and cancel write-free', async () => {
+      const resource = work39Row('review', 'opaque-user-source-review', 'install')
+      const plan = work39Plan(resource.id, 1, 'install')
+      const { client, push } = fakeClient()
+      vi.mocked(client.resourcePlan)
+        .mockRejectedValueOnce(new RequestError(502, 'localapi.resource_action_unavailable'))
+        .mockResolvedValue(plan)
+      const { controller, wrapper } = mountWorkspace(client)
+      push(work39SnapshotEvent(1, 1, [resource]))
+      await tick()
+
+      await wrapper.get('button[aria-label="Install Resource"]').trigger('click')
+      await tick()
+      const alert = document.body.querySelector('[role="alert"]')
+      expect(alert?.textContent).toBe('Resource action could not be prepared; refresh this resource and retry.')
+      expect(alert?.textContent).not.toContain('resource_action_unavailable')
+      const retry = document.body.querySelector('button[aria-label="Retry resource action plan"]') as HTMLButtonElement | null
+      expect(retry).not.toBeNull()
+      retry?.click()
+      await tick()
+      expect(controller.state.resourceAction?.plan?.planId).toBe(plan.planId)
+
+      const decline = document.body.querySelector('button[aria-label="Decline"]') as HTMLButtonElement | null
+      expect(decline).not.toBeNull()
+      decline?.click()
+      await tick()
+      expect(controller.state.resourceAction).toBeNull()
+      expect(client.resourceAction).not.toHaveBeenCalled()
+
+      await wrapper.get('button[aria-label="Install Resource"]').trigger('click')
+      await tick()
+      const cancel = document.body.querySelector('button[aria-label="Cancel"]') as HTMLButtonElement | null
+      expect(cancel).not.toBeNull()
+      cancel?.click()
+      await tick()
+      expect(controller.state.resourceAction).toBeNull()
+      expect(client.resourceAction).not.toHaveBeenCalled()
+    })
+
+    // spec: session-interactions/cancel-or-stale-completion
+    it('does not re-arm a cancelled confirmation when a late 202 follows final events', async () => {
+      const resource = work39Row('review', 'opaque-user-source-review', 'remove', { scope: 'user', group: 'enabled', status: 'enabled', checked: true, discovery: false })
+      const plan = work39Plan(resource.id, 1, 'remove')
+      const actionRequest = deferred<OperationRef>()
+      const { client, push } = fakeClient()
+      vi.mocked(client.resourcePlan).mockResolvedValue(plan)
+      vi.mocked(client.resourceAction).mockReturnValue(actionRequest.promise)
+      const { controller, wrapper } = mountWorkspace(client)
+      push(work39SnapshotEvent(1, 1, [resource]))
+      await tick()
+
+      await wrapper.get('button[aria-label="Remove Resource"]').trigger('click')
+      await tick()
+      const confirm = document.body.querySelector('button[aria-label="Confirm remove"]') as HTMLButtonElement | null
+      expect(confirm?.disabled).toBe(false)
+      confirm?.click()
+      await tick()
+      expect(controller.resourceActionSubmitting).toBe(true)
+      const submissionSignal = vi.mocked(client.resourceAction).mock.calls[0]?.[3]
+      expect(submissionSignal?.aborted).toBe(false)
+      controller.cancelResourceAction()
+      await tick()
+      expect(submissionSignal?.aborted).toBe(true)
+      expect(controller.state.resourceAction).toBeNull()
+
+      const operation: OperationRef = { id: 91, kind: 'mutation' }
+      const available = work39Row('review', resource.id, 'install', { scope: 'available', group: 'available', status: 'available', checked: false, discovery: true })
+      push(work39SnapshotEvent(2, 2, [available], operation))
+      push(event({
+        sequence: 3,
+        generation: 3,
+        operation: null,
+        payload: snapshot([available], {
+          stage: 'final',
+          drift: 'ready',
+          settledOperation: operation,
+          diagnostics: [{ severity: 'warning', category: 'sync', code: 'resource.action.final', message: 'Final snapshot updated' }],
+          discoveryEnabled: true,
+        }),
+      }))
+      push(event({ sequence: 4, generation: 3, type: 'notification', operation, payload: { severity: 'info', message: 'done' } }))
+      await tick()
+      actionRequest.resolve(operation)
+      await tick()
+      expect(controller.state.resourceAction).toBeNull()
+      expect(controller.state.operation).toBeNull()
+      expect(controller.state.settlementIntent).toBeNull()
+      expect(controller.state.settledMutation).toBeNull()
+      expect(controller.state.rows[0]?.resourceAction).toBe('install')
+      expect(controller.state.diagnostics[0]?.code).toBe('resource.action.final')
+      expect(document.body.querySelector('[role="dialog"]')).toBeNull()
+    })
+
+    // spec: session-interactions/cancel-or-stale-completion
+    it('ignores a late 202 after a newer mutation has already settled', async () => {
+      const { actionRequest, controller, next, push, removed, wrapper } = await startWork39HeldRemoval()
+      const newer: OperationRef = { id: 92, kind: 'mutation' }
+      const available = work39Row('resource-a', removed.id, 'install', {
+        scope: 'available', group: 'available', status: 'available', checked: false, discovery: true,
+      })
+      push(work39SnapshotEvent(2, 2, [available, next], newer))
+      push(work39SnapshotEvent(3, 3, [available, next], null, newer))
+      push(event({ sequence: 4, generation: 3, type: 'notification', operation: newer, payload: { severity: 'info', message: 'newer operation done' } }))
+      await tick()
+      expect(controller.state.operation).toBeNull()
+      expect(wrapper.find('[role="option"][aria-selected="true"]').attributes('id')).toBe(`row-${removed.id}`)
+
+      actionRequest.resolve({ id: 91, kind: 'mutation' })
+      await tick()
+      expect(controller.state.resourceAction).toBeNull()
+      expect(controller.state.operation).toBeNull()
+      expect(controller.state.settlementIntent).toBeNull()
+      expect(controller.state.settledMutation).toBeNull()
+      expect(wrapper.find('[role="option"][aria-selected="true"]').attributes('id')).toBe(`row-${removed.id}`)
+      expect(document.activeElement?.getAttribute('aria-label')).toBe('Install Resource')
+    })
+
+    // spec: session-interactions/cancel-or-stale-completion
+    it('preserves a newer active mutation and phase when an older 202 arrives', async () => {
+      const { actionRequest, controller, next, push, removed, wrapper } = await startWork39HeldRemoval()
+      const newer: OperationRef = { id: 92, kind: 'mutation' }
+      const available = work39Row('resource-a', removed.id, 'install', {
+        scope: 'available', group: 'available', status: 'available', checked: false, discovery: true,
+      })
+      push(work39SnapshotEvent(2, 2, [available, next], newer))
+      push(event({ sequence: 3, generation: 2, type: 'progress', operation: newer, payload: { progressSequence: 1, phase: 'materialize' } }))
+      await tick()
+
+      actionRequest.resolve({ id: 91, kind: 'mutation' })
+      await tick()
+      expect(controller.state.operation).toEqual(newer)
+      expect(controller.state.phase).toBe('materialize')
+      expect(controller.state.settlementIntent).toBeNull()
+      expect(controller.state.settledMutation).toBeNull()
+      expect(wrapper.find('[role="option"][aria-selected="true"]').attributes('id')).toBe(`row-${removed.id}`)
+
+      push(work39SnapshotEvent(4, 3, [available, next], null, newer))
+      push(event({ sequence: 5, generation: 3, type: 'notification', operation: newer, payload: { severity: 'info', message: 'newer operation done' } }))
+      await tick()
+      expect(controller.state.operation).toBeNull()
+      expect(controller.state.phase).toBeNull()
+      expect(controller.state.settlementIntent).toBeNull()
+      expect(controller.state.settledMutation).toBeNull()
+      expect(wrapper.find('[role="option"][aria-selected="true"]').attributes('id')).toBe(`row-${removed.id}`)
+      expect(document.activeElement?.getAttribute('aria-label')).toBe('Install Resource')
+    })
+
+    // spec: session-interactions/cancel-or-stale-completion
+    it('discards an accepted action intent when a newer mutation starts before its final event', async () => {
+      const { actionRequest, controller, next, push, removed, wrapper } = await startWork39HeldRemoval()
+      const accepted: OperationRef = { id: 91, kind: 'mutation' }
+      const newer: OperationRef = { id: 92, kind: 'mutation' }
+      const available = work39Row('resource-a', removed.id, 'install', {
+        scope: 'available', group: 'available', status: 'available', checked: false, discovery: true,
+      })
+      actionRequest.resolve(accepted)
+      await tick()
+      expect(controller.state.settlementIntent?.operation).toEqual(accepted)
+
+      push(work39SnapshotEvent(2, 2, [available, next], newer))
+      push(event({ sequence: 3, generation: 2, type: 'progress', operation: newer, payload: { progressSequence: 1, phase: 'materialize' } }))
+      await tick()
+      expect(controller.state.operation).toEqual(newer)
+      expect(controller.state.phase).toBe('materialize')
+      expect(controller.state.settlementIntent).toBeNull()
+      expect(controller.state.settledMutation).toBeNull()
+      expect(wrapper.find('[role="option"][aria-selected="true"]').attributes('id')).toBe(`row-${removed.id}`)
+
+      push(work39SnapshotEvent(4, 3, [available, next], null, newer))
+      push(event({ sequence: 5, generation: 3, type: 'notification', operation: newer, payload: { severity: 'info', message: 'newer operation done' } }))
+      await tick()
+      expect(controller.state.operation).toBeNull()
+      expect(controller.state.settlementIntent).toBeNull()
+      expect(controller.state.settledMutation).toBeNull()
+      expect(wrapper.find('[role="option"][aria-selected="true"]').attributes('id')).toBe(`row-${removed.id}`)
+      expect(document.activeElement?.getAttribute('aria-label')).toBe('Install Resource')
+    })
+
+    // spec: session-navigation/clear-and-refresh
+    it('keeps the removed row selected when a collection still selects it', async () => {
+      const { actionRequest, controller, next, push, removed, wrapper } = await startWork39HeldRemoval()
+      const operation: OperationRef = { id: 91, kind: 'mutation' }
+      const retained = work39Row('resource-a', removed.id, 'none', {
+        scope: 'user', group: 'enabled', status: 'enabled', checked: true, discovery: false,
+      })
+      actionRequest.resolve(operation)
+      await tick()
+      push(work39SnapshotEvent(2, 2, [removed, next], operation))
+      push(work39SnapshotEvent(3, 3, [retained, next], null, operation))
+      push(event({ sequence: 4, generation: 3, type: 'notification', operation, payload: { severity: 'info', message: 'removal settled' } }))
+      await tick()
+
+      expect(controller.state.rows.find((candidate) => candidate.id === removed.id)?.checked).toBe(true)
+      expect(controller.state.rows.find((candidate) => candidate.id === removed.id)?.resourceAction).toBe('none')
+      expect(controller.state.settledMutation).toBeNull()
+      expect(wrapper.find('[role="option"][aria-selected="true"]').attributes('id')).toBe(`row-${removed.id}`)
+      expect(document.body.querySelector('button[aria-label="Remove Resource"]')).toBeNull()
+      expect(document.activeElement?.getAttribute('id')).toBe(`row-${removed.id}`)
+    })
+
+    // spec: session-navigation/clear-and-refresh
+    it('selects the next row only after a successful removal settles, even when the row remains available', async () => {
+      const removed = work39Row('resource-a', 'opaque-user-source-removed', 'remove', { scope: 'user', group: 'enabled', status: 'enabled', checked: true, discovery: false })
+      const next = work39Row('resource-b', 'opaque-user-source-next', 'restore', { scope: 'organization', group: 'enabled', status: 'excluded by user', checked: false, discovery: false })
+      const lower = work39Row('resource-c', 'opaque-user-source-lower', 'none', { scope: 'available', group: 'available', status: 'available', checked: false })
+      const plan = work39Plan(removed.id, 1, 'remove')
+      const actionRequest = deferred<OperationRef>()
+      const { client, push } = fakeClient()
+      vi.mocked(client.resourcePlan).mockResolvedValue(plan)
+      vi.mocked(client.resourceAction).mockReturnValue(actionRequest.promise)
+      const { controller, wrapper } = mountWorkspace(client)
+      push(work39SnapshotEvent(1, 1, [removed, next, lower]))
+      await tick()
+      await selectWork39Row(wrapper, removed.id)
+
+      await wrapper.get('button[aria-label="Remove Resource"]').trigger('click')
+      await tick()
+      const confirm = document.body.querySelector('button[aria-label="Confirm remove"]') as HTMLButtonElement | null
+      confirm?.click()
+      await tick()
+      const operation: OperationRef = { id: 91, kind: 'mutation' }
+      push(work39SnapshotEvent(2, 2, [removed, next, lower], operation))
+      push(work39SnapshotEvent(3, 3, [work39Row('resource-a', removed.id, 'install', { scope: 'available', group: 'available', status: 'available', checked: false }), next, lower], null, operation))
+      push(event({ sequence: 4, generation: 3, type: 'notification', operation, payload: { severity: 'info', message: 'done' } }))
+      await tick()
+      expect(wrapper.find('[role="option"][aria-selected="true"]').attributes('id')).not.toBe(`row-${next.id}`)
+
+      actionRequest.resolve(operation)
+      await tick()
+      expect(controller.state.settledMutation).toBeNull()
+      expect(wrapper.find('[role="option"][aria-selected="true"]').attributes('id')).toBe(`row-${next.id}`)
+      expect(document.activeElement?.getAttribute('aria-label')).toBe('Restore Resource')
+    })
+
+    // spec: session-navigation/clear-and-refresh
+    it('does not advance selection when a removal operation settles with an error', async () => {
+      const removed = work39Row('resource-a', 'opaque-user-source-removed', 'remove', { scope: 'user', group: 'enabled', status: 'enabled', checked: true, discovery: false })
+      const next = work39Row('resource-b', 'opaque-user-source-next', 'restore', { scope: 'organization', group: 'enabled', status: 'excluded by user', checked: false, discovery: false })
+      const plan = work39Plan(removed.id, 1, 'remove')
+      const { client, push } = fakeClient()
+      vi.mocked(client.resourcePlan).mockResolvedValue(plan)
+      vi.mocked(client.resourceAction).mockResolvedValue({ id: 91, kind: 'mutation' })
+      const { controller, wrapper } = mountWorkspace(client)
+      push(work39SnapshotEvent(1, 1, [removed, next]))
+      await tick()
+      await selectWork39Row(wrapper, removed.id)
+
+      await wrapper.get('button[aria-label="Remove Resource"]').trigger('click')
+      await tick()
+      ;(document.body.querySelector('button[aria-label="Confirm remove"]') as HTMLButtonElement | null)?.click()
+      await tick()
+      const operation: OperationRef = { id: 91, kind: 'mutation' }
+      push(work39SnapshotEvent(2, 2, [removed, next], null, operation))
+      push(event({ sequence: 3, generation: 2, type: 'notification', operation, payload: { severity: 'error', message: 'failed' } }))
+      await tick()
+      expect(wrapper.find('[role="option"][aria-selected="true"]').attributes('id')).toBe(`row-${removed.id}`)
+      expect(controller.state.settledMutation).toBeNull()
+      expect(controller.state.notifications.at(-1)?.severity).toBe('error')
+    })
   })
 })

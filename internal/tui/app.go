@@ -1520,46 +1520,21 @@ func (m *Model) rebuildOpenBundle(previous row, hadPrevious bool) {
 	m.ensureBundleCursorVisible()
 }
 
-// toggleDenial identifies why the guarded row toggle cannot proceed, in the
-// order the keyboard Space dispatch reports it. toggleEligible means the
-// toggle modal may open. This is the single authoritative toggle policy:
-// the keyboard path maps each denial to its toast/no-op outcome and the
-// palette maps any denial to hiding the toggle action.
-type toggleDenial int
+type toggleDenial = session.RowToggleDenial
 
 const (
-	toggleEligible toggleDenial = iota
-	toggleBusy
-	toggleConfigInvalid
-	toggleMalformed
-	togglePendingVerification
-	toggleMarketplaceBlocked
-	toggleRequired
-	toggleCollectionOnly
+	toggleEligible            = session.RowToggleEligible
+	toggleBusy                = session.RowToggleBusy
+	toggleConfigInvalid       = session.RowToggleConfigInvalid
+	toggleMalformed           = session.RowToggleMalformed
+	togglePendingVerification = session.RowTogglePendingVerification
+	toggleMarketplaceBlocked  = session.RowToggleMarketplaceBlocked
+	toggleRequired            = session.RowToggleRequired
+	toggleCollectionOnly      = session.RowToggleCollectionOnly
 )
 
-// rowToggleEligibility evaluates the shared toggle guards against the
-// current model and row without dispatching.
 func (m Model) rowToggleEligibility(r row) toggleDenial {
-	if m.loading || m.syncing {
-		return toggleBusy
-	}
-	if m.configInvalid {
-		return toggleConfigInvalid
-	}
-	switch {
-	case r.IsMalformed:
-		return toggleMalformed
-	case r.PendingVerification:
-		return togglePendingVerification
-	case r.MarketplaceDiscovery != nil && !marketplaceDiscoveryInstallable(r):
-		return toggleMarketplaceBlocked
-	case r.Artifact.Required:
-		return toggleRequired
-	case r.MarketplaceCollectionOnly && !r.CanOverrideMarketplace():
-		return toggleCollectionOnly
-	}
-	return toggleEligible
+	return session.RowToggleEligibility(r, m.loading || m.syncing, m.configInvalid)
 }
 
 func (m Model) applyRowSpaceEligibility(r row) (tea.Model, tea.Cmd) {

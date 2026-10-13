@@ -20,6 +20,10 @@ export type InspectionRequest = components['schemas']['InspectionRequest']
 export type InspectionPayload = components['schemas']['InspectionPayload']
 export type InstalledSkillFilesRequest = components['schemas']['InstalledSkillFilesRequest']
 export type InstalledSkillFilesPayload = components['schemas']['InstalledSkillFilesPayload']
+export type ResourceAction = components['schemas']['ResourceAction']
+export type ResourcePlanRequest = components['schemas']['ResourcePlanRequest']
+export type ResourceActionRequest = components['schemas']['ResourceActionRequest']
+export type ResourceActionPlan = components['schemas']['ResourceActionPlan']
 export type InspectionFile = components['schemas']['InspectionFile']
 
 export class RequestError extends Error {
@@ -160,6 +164,8 @@ export interface Client {
   discovery(query: string, requestId: number, signal?: AbortSignal): Promise<void>
   inspection(rowId: string, fileId?: string, signal?: AbortSignal): Promise<InspectionPayload>
   installedSkillFiles(rowId: string, fileId?: string, signal?: AbortSignal): Promise<InstalledSkillFilesPayload>
+  resourcePlan(rowId: string, signal?: AbortSignal): Promise<ResourceActionPlan>
+  resourceAction(rowId: string, planId: string, acceptRisk: boolean, signal?: AbortSignal): Promise<OperationRef>
   action(action: Action): Promise<OperationRef>
   configuration(): Promise<Configuration>
   configure(request: ConfigureRequest): Promise<OperationRef>
@@ -245,6 +251,18 @@ export function createClient(baseURL: string, credential: string, fetchImpl: typ
       const request = { rowId, ...(fileId === undefined ? {} : { fileId }) } satisfies InstalledSkillFilesRequest
       const response = await post('/api/installed-skill-files', request, signal)
       return (await response.json()) as InstalledSkillFilesPayload
+    },
+
+    async resourcePlan(rowId: string, signal?: AbortSignal) {
+      const request = { rowId } satisfies ResourcePlanRequest
+      const response = await post('/api/resource-plan', request, signal)
+      return (await response.json()) as ResourceActionPlan
+    },
+
+    async resourceAction(rowId: string, planId: string, acceptRisk: boolean, signal?: AbortSignal) {
+      const request = { rowId, planId, acceptRisk } satisfies ResourceActionRequest
+      const response = await post('/api/resource-actions', request, signal)
+      return ((await response.json()) as components['schemas']['ActionAccepted']).operation
     },
 
     async action(action: Action) {

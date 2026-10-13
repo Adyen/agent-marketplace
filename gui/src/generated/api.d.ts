@@ -228,6 +228,64 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/resource-actions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Confirm one prepared user-scope Marketplace Resource action
+         * @description Available only in user-scope mode. The server consumes a matching
+         *     rowId/planId/generation once, rechecks the current raw row and shared
+         *     eligibility, and begins the existing guarded mutation. acceptRisk is
+         *     required even when false; an install plan that requires acknowledgement
+         *     is not consumed when acceptRisk is false. A 202 response is not a claim
+         *     that files were written: the existing session event stream and final
+         *     authoritative snapshot settle the operation. Organization configuration
+         *     and locks are read-only.
+         *
+         */
+        post: operations["confirmUserMarketplaceResourceAction"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/resource-plan": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Prepare one current user-scope Marketplace Resource action
+         * @description Available only in user-scope mode after the accepted session is ready
+         *     and the user root is editable. The request supplies only an opaque rowId;
+         *     endpoint URLs, coordinates, scopes, paths, revisions, and policy inputs
+         *     are derived from the current server row. Install preparation may read
+         *     Marketplace metadata and populate the SDK cache, but does not write user
+         *     configuration, acquisition locks, or materialized files, and does not
+         *     publish an operation or snapshot generation. The server keeps one
+         *     in-memory plan bound to the row and current generation; another valid
+         *     plan replaces it. The preview is sanitized inert text, not executable
+         *     HTML, and the planId is an opaque lower-case 32-byte random token.
+         *
+         */
+        post: operations["planUserMarketplaceResourceAction"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/snapshot": {
         parameters: {
             query?: never;
@@ -401,7 +459,7 @@ export interface components {
         DriftAssessment: "pending" | "ready" | "failed";
         Error: {
             /** @enum {string} */
-            code: "localapi.unauthorized" | "localapi.forbidden" | "localapi.invalid_request" | "localapi.not_ready" | "localapi.not_supported" | "localapi.busy" | "localapi.closed" | "localapi.inspection_unavailable" | "localapi.resource_files_unavailable";
+            code: "localapi.unauthorized" | "localapi.forbidden" | "localapi.invalid_request" | "localapi.not_ready" | "localapi.not_supported" | "localapi.busy" | "localapi.closed" | "localapi.inspection_unavailable" | "localapi.resource_files_unavailable" | "localapi.resource_action_unavailable";
             /** @description Static, non-reflective failure description. */
             message: string;
         };
@@ -579,6 +637,38 @@ export interface components {
             /** @description Opaque id of one user-personal Git, directory, or Marketplace endpoint registration from the configuration projection; unknown, ambiguous, non-user, or stale ids are rejected. Marketplace removal only succeeds for a root-owned registration without legacy resource pins or a v4 resource group. */
             id: string;
         };
+        /** @enum {string} */
+        ResourceAction: "none" | "install" | "remove" | "exclude" | "restore";
+        ResourceActionPlan: {
+            action: components["schemas"]["ResourcePlanAction"];
+            /**
+             * Format: uint64
+             * @description Snapshot generation to which this plan is bound.
+             */
+            generation: number;
+            /** @description Opaque one-shot plan identity. */
+            planId: string;
+            /** @description Sanitized inert text preview bounded to 256 KiB plus the existing truncation marker. */
+            preview: string;
+            /** @description Whether explicit user acknowledgement is required before an install can be committed. */
+            requiresRiskAcceptance: boolean;
+            /** @description Opaque identity of the current Resource row. */
+            rowId: string;
+        };
+        ResourceActionRequest: {
+            /** @description Explicit acknowledgement of an install plan that requires risk acceptance; must be present even when false. */
+            acceptRisk: boolean;
+            /** @description Opaque plan identity returned by the current user-scope resource-plan request. */
+            planId: string;
+            /** @description Opaque identity of the Resource row used to prepare this action. */
+            rowId: string;
+        };
+        /** @enum {string} */
+        ResourcePlanAction: "install" | "remove" | "exclude" | "restore";
+        ResourcePlanRequest: {
+            /** @description Opaque identity of one currently visible, eligible Marketplace Resource row. */
+            rowId: string;
+        };
         SaveTargetsActionRequest: {
             /**
              * @description discriminator enum property added by openapi-typescript
@@ -664,6 +754,8 @@ export interface components {
             pendingVerification: boolean;
             registry: string;
             required: boolean;
+            /** @description Server-derived user-only Marketplace action; none in other session modes or for ineligible rows. */
+            resourceAction: components["schemas"]["ResourceAction"];
             /** @enum {string} */
             scope: "organization" | "user" | "project" | "local" | "available";
             /** @description Lowercased sanitized name used for local fuzzy matching. */
@@ -1060,6 +1152,107 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["OriginRejected"];
             405: components["responses"]["MethodNotAllowed"];
+            503: components["responses"]["Closed"];
+        };
+    };
+    confirmUserMarketplaceResourceAction: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ResourceActionRequest"];
+            };
+        };
+        responses: {
+            /** @description Guarded action accepted; authoritative completion arrives as a session event */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ActionAccepted"];
+                };
+            };
+            /** @description Malformed, stale, mismatched, unsupported, or risk-unacknowledged confirmation; code localapi.invalid_request, localapi.not_ready, or localapi.not_supported */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["OriginRejected"];
+            405: components["responses"]["MethodNotAllowed"];
+            /** @description Another guarded operation is active; code localapi.busy */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            503: components["responses"]["Closed"];
+        };
+    };
+    planUserMarketplaceResourceAction: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ResourcePlanRequest"];
+            };
+        };
+        responses: {
+            /** @description Current row-bound action plan and inert preview */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ResourceActionPlan"];
+                };
+            };
+            /** @description Malformed request, unsupported session mode/action, stale row, or unavailable prerequisites; code localapi.invalid_request, localapi.not_ready, or localapi.not_supported */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["OriginRejected"];
+            405: components["responses"]["MethodNotAllowed"];
+            /** @description Another guarded operation is active; code localapi.busy */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description The exact Marketplace install could not be prepared; code localapi.resource_action_unavailable */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
             503: components["responses"]["Closed"];
         };
     };

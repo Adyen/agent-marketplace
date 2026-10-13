@@ -29,15 +29,16 @@ const tokenHeader = "X-Agent-Marketplace-Token"
 const guiOrigin = "wails://wails"
 
 const (
-	codeUnauthorized             = "localapi.unauthorized"
-	codeForbidden                = "localapi.forbidden"
-	codeInvalidRequest           = "localapi.invalid_request"
-	codeNotReady                 = "localapi.not_ready"
-	codeNotSupported             = "localapi.not_supported"
-	codeBusy                     = "localapi.busy"
-	codeClosed                   = "localapi.closed"
-	codeInspectionUnavailable    = "localapi.inspection_unavailable"
-	codeResourceFilesUnavailable = "localapi.resource_files_unavailable"
+	codeUnauthorized              = "localapi.unauthorized"
+	codeForbidden                 = "localapi.forbidden"
+	codeInvalidRequest            = "localapi.invalid_request"
+	codeNotReady                  = "localapi.not_ready"
+	codeNotSupported              = "localapi.not_supported"
+	codeBusy                      = "localapi.busy"
+	codeClosed                    = "localapi.closed"
+	codeInspectionUnavailable     = "localapi.inspection_unavailable"
+	codeResourceFilesUnavailable  = "localapi.resource_files_unavailable"
+	codeResourceActionUnavailable = "localapi.resource_action_unavailable"
 )
 
 type operationRef struct {
@@ -65,6 +66,7 @@ type rowDTO struct {
 	Discovery           bool     `json:"discovery"`
 	Inspectable         bool     `json:"inspectable"`
 	InstalledFiles      bool     `json:"installedFiles"`
+	ResourceAction      string   `json:"resourceAction"`
 }
 
 type diagnosticDTO struct {
@@ -146,12 +148,13 @@ type API struct {
 	current  *snapshotDTO
 	currentG session.RequestGeneration
 
-	snapshotRowsKnown bool
-	authoritativeRows []session.Row
-	provisionalRows   []session.Row
-	acceptedMergedCfg *config.Config
-	acceptedConfigKey string
-	discovery         discoveryState
+	snapshotRowsKnown  bool
+	authoritativeRows  []session.Row
+	provisionalRows    []session.Row
+	acceptedMergedCfg  *config.Config
+	acceptedConfigKey  string
+	discovery          discoveryState
+	resourceActionPlan *preparedResourceActionPlan
 
 	lastSettledOperation *operationRef
 	started              bool
@@ -238,6 +241,7 @@ func (a *API) Close() {
 		a.closed = true
 		a.cancel()
 		a.cancelDiscoveryLocked()
+		a.resourceActionPlan = nil
 	}
 	a.mu.Unlock()
 	a.wg.Wait()
@@ -374,6 +378,10 @@ func (a *API) dispatch(w http.ResponseWriter, r *http.Request) {
 		a.handleInspection(w, r)
 	case "/api/installed-skill-files":
 		a.handleInstalledSkillFiles(w, r)
+	case "/api/resource-plan":
+		a.handleResourcePlan(w, r)
+	case "/api/resource-actions":
+		a.handleResourceAction(w, r)
 	case "/api/actions":
 		a.handleAction(w, r)
 	case "/api/telemetry":
@@ -393,15 +401,16 @@ func writeError(w http.ResponseWriter, status int, code string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	message := map[string]string{
-		codeUnauthorized:             "unauthorized",
-		codeForbidden:                "origin rejected",
-		codeInvalidRequest:           "invalid request",
-		codeNotReady:                 "session is not ready for mutation",
-		codeNotSupported:             "operation not supported by this session mode",
-		codeBusy:                     "another operation is in progress",
-		codeClosed:                   "api is closed",
-		codeInspectionUnavailable:    "Verified inspection is unavailable; check the Marketplace and retry.",
-		codeResourceFilesUnavailable: "Resource files are unavailable; refresh this resource and retry.",
+		codeUnauthorized:              "unauthorized",
+		codeForbidden:                 "origin rejected",
+		codeInvalidRequest:            "invalid request",
+		codeNotReady:                  "session is not ready for mutation",
+		codeNotSupported:              "operation not supported by this session mode",
+		codeBusy:                      "another operation is in progress",
+		codeClosed:                    "api is closed",
+		codeInspectionUnavailable:     "Verified inspection is unavailable; check the Marketplace and retry.",
+		codeResourceFilesUnavailable:  "Resource files are unavailable; refresh this resource and retry.",
+		codeResourceActionUnavailable: "Resource action could not be prepared; refresh this resource and retry.",
 	}[code]
 	_ = json.NewEncoder(w).Encode(map[string]string{"code": code, "message": message})
 }
@@ -572,7 +581,7 @@ func (a *API) snapshotPresentationLocked(snapshot session.Snapshot, op *operatio
 		}
 	}
 	for _, row := range rows {
-		dto.Rows = append(dto.Rows, rowPresentation(row))
+		dto.Rows = append(dto.Rows, a.resourceRowPresentation(row))
 	}
 	for _, d := range a.diag.All() {
 		if d.Err == nil {
@@ -673,6 +682,7 @@ func rowPresentation(row session.Row) rowDTO {
 		Discovery:           row.MarketplaceDiscovery != nil,
 		Inspectable:         session.MarketplaceInspectableSkill(row),
 		InstalledFiles:      session.MarketplaceInstalledSkillFiles(row),
+		ResourceAction:      session.UserMarketplaceActionNone,
 	}
 }
 

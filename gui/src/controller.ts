@@ -10,6 +10,8 @@ import {
   type InspectionPayload,
   type InstalledSkillFilesPayload,
   type OperationRef,
+  type ResourceAction,
+  type ResourceActionPlan,
   type SessionEvent,
   type Snapshot,
   type SourceInput,
@@ -30,6 +32,20 @@ export interface InspectionState {
   selectedFileId: string | null
 }
 
+export interface ResourceActionState {
+  rowId: string
+  loading: boolean
+  plan: ResourceActionPlan | null
+  error: string | null
+  acceptRisk: boolean
+}
+
+export interface ResourceActionSettlementIntent {
+  operation: OperationRef
+  rowId: string
+  selectNext: boolean
+}
+
 export const MAX_NOTIFICATIONS = 3
 export const NOTIFICATION_TTL_MS = 6000
 export const EVENT_RETRY_DELAY_MS = 250
@@ -37,6 +53,10 @@ export const EVENT_OUTAGE_MESSAGE = 'Session updates are unavailable'
 export const DISCOVERY_REQUEST_ERROR_MESSAGE = 'Marketplace discovery request failed; retry or check the endpoint'
 export const INSPECTION_UNAVAILABLE_MESSAGE = 'Verified inspection is unavailable; check the Marketplace and retry.'
 export const RESOURCE_FILES_UNAVAILABLE_MESSAGE = 'Resource files are unavailable; refresh this resource and retry.'
+export const RESOURCE_ACTION_UNAVAILABLE_MESSAGE = 'Resource action could not be prepared; refresh this resource and retry.'
+export const RESOURCE_ACTION_FAILED_MESSAGE = 'The resource action could not be started; refresh this resource and retry.'
+export const RESOURCE_ACTION_STALE_MESSAGE = 'This resource changed; prepare the action again.'
+export const RESOURCE_ACTION_BUSY_MESSAGE = 'Another session operation is in progress.'
 
 const FATAL_EVENT_STATUSES = new Set([400, 401, 403, 405])
 
@@ -57,6 +77,9 @@ export interface WorkspaceState {
   discoveryLoading: boolean
   discoveryError: string | null
   inspection: InspectionState | null
+  resourceAction: ResourceActionState | null
+  settlementIntent: ResourceActionSettlementIntent | null
+  settledMutation: ResourceActionSettlementIntent | null
   phase: string | null
   operation: OperationRef | null
   notifications: { id: number; severity: string; message: string }[]
@@ -99,6 +122,9 @@ export class WorkspaceController {
     discoveryLoading: false,
     discoveryError: null,
     inspection: null,
+    resourceAction: null,
+    settlementIntent: null,
+    settledMutation: null,
     phase: null,
     operation: null,
     notifications: [],
@@ -122,6 +148,12 @@ export class WorkspaceController {
   private inspectionAbort: AbortController | null = null
   private inspectionEpoch = 0
   private inspectionGeneration: number | null = null
+  private resourceActionAbort: AbortController | null = null
+  private resourceActionEpoch = 0
+  private resourceActionGeneration: number | null = null
+  private resourceActionKind: ResourceAction | null = null
+  private resourceActionPosting = false
+  private lastMutationNotification: { operation: OperationRef; succeeded: boolean } | null = null
   private snapshotGeneration = 0
   private browserDiscoveryRequestId = 0
   private currentDiscoveryQuery = ''
@@ -133,6 +165,10 @@ export class WorkspaceController {
     private readonly notifyTtl: number = NOTIFICATION_TTL_MS,
     private readonly onQuit?: () => void,
   ) {}
+
+  get resourceActionSubmitting(): boolean {
+    return this.resourceActionPosting
+  }
 
   async connect(): Promise<void> {
     if (this.disposed) {
@@ -199,6 +235,7 @@ export class WorkspaceController {
     this.abort?.abort()
     this.cancelDiscoveryRequest()
     this.closeInspection()
+    this.cancelResourceAction()
     for (const timer of this.timers) {
       clearTimeout(timer)
     }
@@ -327,6 +364,170 @@ export class WorkspaceController {
     this.state.inspection = null
   }
 
+  openResourceAction(rowId: string): void {
+    if (this.disposed || this.state.resourceAction != null || this.state.operation != null || this.state.requesting || !eligible(this.state) || this.state.configuration?.editable !== true) {
+      return
+    }
+    const row = this.state.rows.find((candidate) => candidate.id === rowId)
+    if (row == null || row.resourceAction === 'none') {
+      return
+    }
+    this.cancelResourceAction()
+    const generation = this.snapshotGeneration
+    const epoch = this.resourceActionEpoch
+    const abort = new AbortController()
+    this.resourceActionAbort = abort
+    this.resourceActionGeneration = generation
+    this.resourceActionKind = row.resourceAction
+    this.state.resourceAction = { rowId, loading: true, plan: null, error: null, acceptRisk: false }
+    void this.client.resourcePlan(rowId, abort.signal).then((plan) => {
+      if (!this.resourceActionRequestIsCurrent(rowId, generation, epoch, abort.signal)) {
+        return
+      }
+      const currentRow = this.state.rows.find((candidate) => candidate.id === rowId)
+      const current = this.state.resourceAction
+      if (current == null) {
+        return
+      }
+      if (plan.rowId !== rowId || plan.generation !== generation || plan.action !== this.resourceActionKind || currentRow?.resourceAction !== plan.action) {
+        this.resourceActionAbort = null
+        this.state.resourceAction = { ...current, loading: false, plan: null, error: RESOURCE_ACTION_STALE_MESSAGE, acceptRisk: false }
+        return
+      }
+      this.resourceActionAbort = null
+      this.state.resourceAction = { ...current, loading: false, plan, error: null, acceptRisk: false }
+    }).catch((error: unknown) => {
+      if (!this.resourceActionRequestIsCurrent(rowId, generation, epoch, abort.signal)) {
+        return
+      }
+      this.resourceActionAbort = null
+      const current = this.state.resourceAction
+      if (current != null) {
+        this.state.resourceAction = { ...current, loading: false, plan: null, error: resourceActionErrorMessage(error, true), acceptRisk: false }
+      }
+    })
+  }
+
+  retryResourceActionPlan(): void {
+    const rowId = this.state.resourceAction?.rowId
+    if (rowId == null || this.disposed) {
+      return
+    }
+    this.cancelResourceAction()
+    this.openResourceAction(rowId)
+  }
+
+  setResourceActionRiskAcceptance(acceptRisk: boolean): void {
+    const current = this.state.resourceAction
+    if (current == null || current.loading || current.plan?.requiresRiskAcceptance !== true || this.resourceActionPosting) {
+      return
+    }
+    this.state.resourceAction = { ...current, acceptRisk }
+  }
+
+  cancelResourceAction(): void {
+    this.resourceActionEpoch++
+    this.resourceActionAbort?.abort()
+    this.resourceActionAbort = null
+    this.resourceActionGeneration = null
+    this.resourceActionKind = null
+    this.resourceActionPosting = false
+    this.state.resourceAction = null
+  }
+
+  async confirmResourceAction(): Promise<boolean> {
+    const current = this.state.resourceAction
+    const plan = current?.plan ?? null
+    const generation = this.resourceActionGeneration
+    if (
+      this.disposed || current == null || plan == null || current.loading || this.resourceActionPosting ||
+      this.state.operation != null || this.state.requesting || !eligible(this.state) || this.state.configuration?.editable !== true
+    ) {
+      return false
+    }
+    const row = this.state.rows.find((candidate) => candidate.id === current.rowId)
+    if (generation == null || generation !== this.snapshotGeneration || plan.rowId !== current.rowId || plan.generation !== generation || row?.resourceAction !== plan.action || plan.action !== this.resourceActionKind) {
+      this.state.resourceAction = { ...current, plan: null, error: RESOURCE_ACTION_STALE_MESSAGE, acceptRisk: false }
+      return false
+    }
+    if (plan.requiresRiskAcceptance && !current.acceptRisk) {
+      return false
+    }
+
+    const epoch = this.resourceActionEpoch
+    const abort = new AbortController()
+    this.resourceActionAbort = abort
+    this.resourceActionPosting = true
+    this.state.resourceAction = { ...current, loading: true, error: null }
+    try {
+      const operation = await this.client.resourceAction(current.rowId, plan.planId, current.acceptRisk, abort.signal)
+      if (!this.resourceActionPostIsCurrent(current.rowId, epoch, abort.signal)) {
+        return false
+      }
+      if (operation.id <= 0 || operation.kind !== 'mutation') {
+        this.resourceActionAbort = null
+        this.resourceActionPosting = false
+        const latest = this.state.resourceAction
+        if (latest != null) {
+          this.state.resourceAction = { ...latest, loading: false, plan: null, error: RESOURCE_ACTION_FAILED_MESSAGE, acceptRisk: false }
+        }
+        return false
+      }
+      this.resourceActionAbort = null
+      this.resourceActionPosting = false
+      this.resourceActionEpoch++
+      this.resourceActionGeneration = null
+      this.resourceActionKind = null
+      this.state.resourceAction = null
+      const superseded = this.isSupersededOperation(operation)
+      const activeOperation = this.state.operation as OperationRef | null
+      if (!superseded && operation.id > (this.lastSettled?.id ?? 0) && (activeOperation == null || activeOperation.id <= operation.id)) {
+        if (activeOperation?.id !== operation.id) {
+          this.state.phase = null
+        }
+        this.state.operation = operation
+      }
+      if (superseded) {
+        if ((this.state.settlementIntent?.operation.id ?? 0) <= operation.id) {
+          this.state.settlementIntent = null
+        }
+        if ((this.state.settledMutation?.operation.id ?? 0) <= operation.id) {
+          this.state.settledMutation = null
+        }
+      } else {
+        if ((this.state.settlementIntent?.operation.id ?? 0) <= operation.id) {
+          this.state.settlementIntent = {
+            operation,
+            rowId: current.rowId,
+            selectNext: plan.action === 'remove' || plan.action === 'exclude',
+          }
+        }
+        if ((this.state.settledMutation?.operation.id ?? 0) <= operation.id) {
+          this.state.settledMutation = null
+        }
+      }
+      this.tryCompleteResourceActionSettlement()
+      return true
+    } catch (error) {
+      if (!this.resourceActionPostIsCurrent(current.rowId, epoch, abort.signal)) {
+        return false
+      }
+      this.resourceActionAbort = null
+      this.resourceActionPosting = false
+      const latest = this.state.resourceAction
+      if (latest != null) {
+        this.state.resourceAction = { ...latest, loading: false, plan: null, error: resourceActionErrorMessage(error, false), acceptRisk: false }
+      }
+      return false
+    }
+  }
+
+  consumeSettledMutation(operationId: number): void {
+    if (this.state.settledMutation?.operation.id === operationId) {
+      this.state.settledMutation = null
+    }
+  }
+
   recordSyncQuitCancellation(): void {
     this.reportTelemetry({ action: 'modal_outcome', modal: 'sync+quit', outcome: 'cancelled' })
   }
@@ -413,6 +614,10 @@ export class WorkspaceController {
       }
       case 'notification': {
         this.notify(event.payload.severity, event.payload.message)
+        if (event.operation?.kind === 'mutation') {
+          this.lastMutationNotification = { operation: event.operation, succeeded: event.payload.severity !== 'error' }
+          this.tryCompleteResourceActionSettlement()
+        }
         break
       }
     }
@@ -459,17 +664,22 @@ export class WorkspaceController {
         }
       }
       this.applySnapshotFields(snapshot, generation)
+      this.tryCompleteResourceActionSettlement()
       if (quitNow) {
         this.onQuit?.()
       }
       return
     }
     this.applySnapshotFields(snapshot, generation)
+    this.tryCompleteResourceActionSettlement()
   }
 
   private applySnapshotFields(snapshot: Snapshot, generation: number): void {
     if (this.state.inspection != null && generation !== this.snapshotGeneration) {
       this.closeInspection()
+    }
+    if (this.state.resourceAction != null && generation !== this.resourceActionGeneration && !this.resourceActionPosting) {
+      this.cancelResourceAction()
     }
     this.snapshotGeneration = generation
     this.state.stage = snapshot.stage
@@ -506,6 +716,7 @@ export class WorkspaceController {
     if (snapshot.stage === 'final' || !this.accepted) {
       this.state.rows = rows
     }
+    this.cancelResourceActionIfRowChanged()
     if (snapshot.stage === 'final') {
       this.cancelInspectionIfRowMissing()
       this.accepted = true
@@ -530,6 +741,7 @@ export class WorkspaceController {
     }
     this.state.rows = payload.rows
     this.cancelInspectionIfRowMissing()
+    this.cancelResourceActionIfRowChanged()
     this.state.discoveryHealth = payload.health
     this.state.discoveryQuery = payload.query
     this.state.discoveryRequestId = payload.requestId
@@ -649,6 +861,69 @@ export class WorkspaceController {
     }
   }
 
+  private resourceActionPostIsCurrent(rowId: string, epoch: number, signal: AbortSignal): boolean {
+    return !this.disposed && !signal.aborted && epoch === this.resourceActionEpoch && this.state.resourceAction?.rowId === rowId
+  }
+
+  private isSupersededOperation(operation: OperationRef): boolean {
+    const activeOperation = this.state.operation as OperationRef | null
+    return (activeOperation != null && activeOperation.id > operation.id) ||
+      (this.lastSettled != null && this.lastSettled.id > operation.id)
+  }
+
+  private resourceActionRequestIsCurrent(rowId: string, generation: number, epoch: number, signal: AbortSignal): boolean {
+    if (
+      this.disposed || signal.aborted || epoch !== this.resourceActionEpoch || generation !== this.snapshotGeneration ||
+      generation !== this.resourceActionGeneration || this.state.resourceAction?.rowId !== rowId
+    ) {
+      return false
+    }
+    const row = this.state.rows.find((candidate) => candidate.id === rowId)
+    if (row == null || row.resourceAction !== this.resourceActionKind) {
+      this.cancelResourceAction()
+      return false
+    }
+    return true
+  }
+
+  private cancelResourceActionIfRowChanged(): void {
+    if (this.resourceActionPosting) {
+      return
+    }
+    const current = this.state.resourceAction
+    if (current == null) {
+      return
+    }
+    const row = this.state.rows.find((candidate) => candidate.id === current.rowId)
+    if (row == null || row.resourceAction !== this.resourceActionKind) {
+      this.cancelResourceAction()
+    }
+  }
+
+  private tryCompleteResourceActionSettlement(): void {
+    const intent = this.state.settlementIntent
+    if (intent == null) {
+      return
+    }
+    if (this.isSupersededOperation(intent.operation)) {
+      if (this.state.settlementIntent?.operation.id === intent.operation.id) {
+        this.state.settlementIntent = null
+      }
+      if (this.state.settledMutation?.operation.id === intent.operation.id) {
+        this.state.settledMutation = null
+      }
+      return
+    }
+    const notification = this.lastMutationNotification
+    if (this.lastSettled?.id !== intent.operation.id || notification?.operation.id !== intent.operation.id) {
+      return
+    }
+    this.state.settlementIntent = null
+    if (notification.succeeded && (this.state.settledMutation == null || this.state.settledMutation.operation.id <= intent.operation.id)) {
+      this.state.settledMutation = intent
+    }
+  }
+
   private notify(severity: string, message: string): void {
     const id = this.nextNotificationId++
     this.state.notifications.push({ id, severity, message })
@@ -664,4 +939,16 @@ export class WorkspaceController {
     }, this.notifyTtl)
     this.timers.add(timer)
   }
+}
+
+function resourceActionErrorMessage(error: unknown, preparing: boolean): string {
+  if (error instanceof RequestError) {
+    if (error.status === 409 || error.code === 'localapi.busy') {
+      return RESOURCE_ACTION_BUSY_MESSAGE
+    }
+    if (error.code === 'localapi.not_ready' || error.code === 'localapi.not_supported' || error.code === 'localapi.invalid_request') {
+      return RESOURCE_ACTION_STALE_MESSAGE
+    }
+  }
+  return preparing ? RESOURCE_ACTION_UNAVAILABLE_MESSAGE : RESOURCE_ACTION_FAILED_MESSAGE
 }

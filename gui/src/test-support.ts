@@ -65,6 +65,7 @@ export function row(name: string, overrides: Partial<Row> = {}): Row {
     discovery: false,
     inspectable: false,
     installedFiles: false,
+    resourceAction: 'none',
     ...overrides,
   }
 }
@@ -130,6 +131,12 @@ export function fakeClient(options: { configuration?: Partial<Configuration> } =
     }),
     installedSkillFiles: vi.fn(async (): Promise<InstalledSkillFilesPayload> => {
       throw new Error('installed skill files fixture response not configured')
+    }),
+    resourcePlan: vi.fn(async () => {
+      throw new Error('resource action plan fixture response not configured')
+    }),
+    resourceAction: vi.fn(async () => {
+      throw new Error('resource action fixture response not configured')
     }),
   }
   const push = (e: SessionEvent) => {
