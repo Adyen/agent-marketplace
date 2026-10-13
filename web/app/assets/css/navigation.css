@@ -77,6 +77,7 @@ button[role="switch"] {
   display: block;
   width: var(--am-brand-logo-width);
   height: auto;
+  transform: translateY(var(--am-brand-logo-offset-y));
 }
 
 .am-site-nav__brand-logo--dark,
