@@ -46,6 +46,22 @@ func installGitOnPath(t *testing.T, target string) {
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 }
 
+// installRelativeGitOnPath resolves git through a relative PATH entry, with
+// Go's ErrDot protection disabled so the lookup itself returns a relative path.
+func installRelativeGitOnPath(t *testing.T, target string) {
+	t.Helper()
+	dir := t.TempDir()
+	if err := os.Mkdir(filepath.Join(dir, "relbin"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, filepath.Join(dir, "relbin", "git")); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(dir)
+	t.Setenv("PATH", "relbin"+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("GODEBUG", "execerrdot=0")
+}
+
 func gitWrapper(t *testing.T, realGit string, mode os.FileMode) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "Cellar", "git", "bin", "git")
@@ -93,14 +109,16 @@ func TestGitAuthTrustsConfigurationOwnedByGitExecutableOwner(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, tc := range []struct {
-		name    string
-		git     func(t *testing.T) string
-		trusted bool
+		name     string
+		git      func(t *testing.T) string
+		relative bool
+		trusted  bool
 	}{
-		{"executable owner", func(t *testing.T) string { return gitWrapper(t, realGit, 0o755) }, true},
-		{"group-writable executable", func(t *testing.T) string { return gitWrapper(t, realGit, 0o775) }, false},
-		{"other-writable executable", func(t *testing.T) string { return gitWrapper(t, realGit, 0o757) }, false},
-		{"unrelated executable owner", func(t *testing.T) string { return rootOwnedGit(t, "/usr/bin/git", realGit) }, false},
+		{name: "executable owner", git: func(t *testing.T) string { return gitWrapper(t, realGit, 0o755) }, trusted: true},
+		{name: "group-writable executable", git: func(t *testing.T) string { return gitWrapper(t, realGit, 0o775) }},
+		{name: "other-writable executable", git: func(t *testing.T) string { return gitWrapper(t, realGit, 0o757) }},
+		{name: "unrelated executable owner", git: func(t *testing.T) string { return rootOwnedGit(t, "/usr/bin/git", realGit) }},
+		{name: "relative PATH entry", git: func(t *testing.T) string { return gitWrapper(t, realGit, 0o755) }, relative: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			isolatedGitAuth(t)
@@ -109,7 +127,11 @@ func TestGitAuthTrustsConfigurationOwnedByGitExecutableOwner(t *testing.T) {
 			system := authFile(t, "system", fmt.Sprintf("[credential]\n\thelper = %q\n[http]\n\tsslCAInfo = %q\n", complete, f.ca), 0o644)
 			ownAsFixtureAccount(t, system)
 			t.Setenv("GIT_CONFIG_SYSTEM", system)
-			installGitOnPath(t, tc.git(t))
+			if tc.relative {
+				installRelativeGitOnPath(t, tc.git(t))
+			} else {
+				installGitOnPath(t, tc.git(t))
+			}
 			actAsAnotherUser(t)
 
 			_, err := ResolveExactGitRef("https://example.invalid/owner-fixture", f.url, "main")

@@ -69,7 +69,7 @@ resources:
 
 `agent-marketplace` copies credential settings only from regular, singly linked Git configuration files that group and other users cannot write to, and that are owned by you, `root`, or the account that owns the `git` executable it runs. Symlinks to such files are supported.
 
-The last case covers Git installed under a dedicated account, such as a Homebrew installation with a separate install user. Git's system configuration (`$(brew --prefix)/etc/gitconfig`) then belongs to that account. `agent-marketplace` finds `git` on your `PATH`, follows symlinks to the real executable, and trusts its owner only if no group or other user can write to that executable. That account can already change the `git` program itself, so trusting its configuration grants it nothing new.
+The last case covers Git installed under a dedicated account, such as a Homebrew installation with a separate install user. Git's system configuration (`$(brew --prefix)/etc/gitconfig`) then belongs to that account. `agent-marketplace` finds `git` on your `PATH`, follows symlinks to the real executable, and trusts its owner only if it was found through an absolute `PATH` entry and no group or other user can write to it. That account can already change the `git` program itself, so trusting its configuration grants it nothing new.
 
 Ordinary `[include]` sections work, including nested includes. Every included file must meet the same trust rules. Absolute include paths work; `~/` resolves against your home directory, `%(prefix)/` resolves against Git's installation prefix, and relative paths resolve beside the file declaring the include. For a symlinked config, that means beside the symlink, as in Git. Missing optional files and `/dev/null` includes contribute no settings.
 

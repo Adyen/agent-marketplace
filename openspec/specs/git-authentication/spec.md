@@ -24,7 +24,7 @@ HTTP(S) registry acquisition SHALL expand ordinary `include.path` entries from s
 
 ### Requirement: Every included authentication file is trusted and bounded
 
-The reader MUST validate each opened configuration file before reading its contents. Files MUST be regular, singly linked, and not writable by group or others. Each file MUST be owned by root, by the effective user, or by the owner of the `git` executable that acquisition runs: the `PATH` lookup, resolved through symlinks. The executable owner is trusted only when that executable is a regular file that is not writable by group or others. The reader MUST parse the same validated bytes rather than reopening their path. It MUST reject malformed configuration, include cycles, nesting beyond ten include levels, any file exceeding 4 MiB, expanded content exceeding 16 MiB, and more than 128 expanded file visits with `git.auth-config-untrusted` before acquisition transport runs. Missing optional configuration roots and include targets, and explicit `/dev/null` includes, SHALL contribute no settings.
+The reader MUST validate each opened configuration file before reading its contents. Files MUST be regular, singly linked, and not writable by group or others. Each file MUST be owned by root, by the effective user, or by the owner of the `git` executable that acquisition runs: the `PATH` lookup, resolved through symlinks. The executable owner is trusted only when the lookup yields an absolute path and that executable is a regular file that is not writable by group or others. The reader MUST parse the same validated bytes rather than reopening their path. It MUST reject malformed configuration, include cycles, nesting beyond ten include levels, any file exceeding 4 MiB, expanded content exceeding 16 MiB, and more than 128 expanded file visits with `git.auth-config-untrusted` before acquisition transport runs. Missing optional configuration roots and include targets, and explicit `/dev/null` includes, SHALL contribute no settings.
 
 #### Scenario: Unsafe include chains fail before transport
 
@@ -45,7 +45,7 @@ The reader MUST validate each opened configuration file before reading its conte
 
 #### Scenario: Executable owner trust requires a protected executable
 
-- **WHEN** the `git` executable is writable by group or others, or belongs to an account other than the configuration file's owner
+- **WHEN** the `git` executable is writable by group or others, is found through a relative `PATH` entry, or belongs to an account other than the configuration file's owner
 - **THEN** acquisition MUST refuse the configuration with `git.auth-config-untrusted` before contacting the registry
 
 ### Requirement: Include support does not broaden authentication authority

@@ -43,11 +43,13 @@ type gitAuthConfigReader struct {
 // authentication: root, the current account, and the owner of the git
 // executable this process runs (PATH lookup, symlinks followed). That owner can
 // already replace the program acquisition executes, so its files grant no new
-// authority. A group- or other-writable executable extends no trust.
+// authority. A group- or other-writable executable, or one found through a
+// relative PATH entry (which later commands resolve from other directories),
+// extends no trust.
 func gitAuthTrustedOwners() []uint32 {
 	owners := []uint32{0, uint32(gitAuthEffectiveUID())}
 	path, err := exec.LookPath("git")
-	if err != nil {
+	if err != nil || !filepath.IsAbs(path) {
 		return owners
 	}
 	if path, err = filepath.EvalSymlinks(path); err != nil {

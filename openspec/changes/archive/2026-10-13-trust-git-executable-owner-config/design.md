@@ -6,7 +6,7 @@
 
 1. **Authority, not names.** Trust is extended only to an account that already controls acquisition: the owner of the executable we run can rewrite it. An organisation setting or a username allowlist would add configuration surface without adding safety.
 2. **Resolve like `exec`.** Use `exec.LookPath("git")` and follow symlinks to the executed file (`bin/git` → `Cellar/git/<version>/bin/git`). The final file's owner is taken; symlink and directory owners are not added.
-3. **Protected executable only.** Group- or other-writable executables, unresolvable paths and non-regular files extend no trust, so a wider group never becomes trusted through the executable.
+3. **Protected executable only.** Group- or other-writable executables, unresolvable paths, non-regular files and relative lookups extend no trust. A wider group never becomes trusted through the executable, and a relative `PATH` entry (which later commands resolve from other working directories) cannot make the trusted owner differ from the executed program.
 4. **Uniform owner set.** The same owner set (root, effective user, executable owner) applies to system, global and included files; every other check is unchanged.
 5. **Accepted boundary.** Ownership is treated as authority over the executable; a read-only mount that would deny its owner that authority is not distinguished.
 
