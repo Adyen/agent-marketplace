@@ -135,9 +135,60 @@ type Config struct {
 }
 
 type InstallationMetrics struct {
-	URL            string            `yaml:"url"`
-	BearerTokenEnv string            `yaml:"bearer_token_env"`
-	Labels         map[string]string `yaml:"labels"`
+	URL            string                     `yaml:"url"`
+	BearerTokenEnv string                     `yaml:"bearer_token_env"`
+	Labels         map[string]string          `yaml:"labels"`
+	MaxAge         *Duration                  `yaml:"max_age"`
+	Timeout        *Duration                  `yaml:"timeout"`
+	Refresh        InstallationMetricsRefresh `yaml:"refresh"`
+}
+
+type InstallationMetricsRefresh struct {
+	Interval      *Duration `yaml:"interval"`
+	RetryInterval *Duration `yaml:"retry_interval"`
+	Jitter        *Duration `yaml:"jitter"`
+}
+
+type InstallationMetricsTiming struct {
+	Interval      time.Duration
+	RetryInterval time.Duration
+	Jitter        time.Duration
+	MaxAge        time.Duration
+	Timeout       time.Duration
+}
+
+const (
+	defaultInstallationMetricsInterval = 4 * time.Minute
+	defaultInstallationMetricsRetry    = 30 * time.Second
+	defaultInstallationMetricsJitter   = 15 * time.Second
+	defaultInstallationMetricsMaxAge   = 5 * time.Minute
+	defaultInstallationMetricsTimeout  = 2 * time.Second
+)
+
+func ResolveInstallationMetricsTiming(m InstallationMetrics) InstallationMetricsTiming {
+	timing := InstallationMetricsTiming{
+		Interval:      defaultInstallationMetricsInterval,
+		RetryInterval: defaultInstallationMetricsRetry,
+		Jitter:        defaultInstallationMetricsJitter,
+		MaxAge:        defaultInstallationMetricsMaxAge,
+		Timeout:       defaultInstallationMetricsTimeout,
+	}
+	if m.Refresh.Interval != nil {
+		timing.Interval = m.Refresh.Interval.Duration()
+	}
+	if m.Refresh.RetryInterval != nil {
+		timing.RetryInterval = m.Refresh.RetryInterval.Duration()
+	}
+	if m.Refresh.Jitter != nil {
+		timing.Jitter = m.Refresh.Jitter.Duration()
+	}
+	if m.MaxAge != nil {
+		timing.MaxAge = m.MaxAge.Duration()
+	}
+	if m.Timeout != nil {
+		timing.Timeout = m.Timeout.Duration()
+	}
+	return timing
 }
 
 var installationMetricsLabelKeys = map[string]bool{
@@ -149,7 +200,7 @@ const installationMetricsLabelBound = 256
 var installationMetricsEnvName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
 func (m InstallationMetrics) Validate() []error {
-	var errs []error
+	errs := validateInstallationMetricsTiming(ResolveInstallationMetricsTiming(m))
 	urlText := strings.TrimSpace(m.URL)
 	env := strings.TrimSpace(m.BearerTokenEnv)
 	if urlText == "" {
@@ -193,6 +244,34 @@ func (m InstallationMetrics) Validate() []error {
 		if len(value) > installationMetricsLabelBound || strings.ContainsFunc(value, unicode.IsControl) {
 			errs = append(errs, fmt.Errorf("installation_metrics.labels[%q] must be a bounded string without control characters", key))
 		}
+	}
+	return errs
+}
+
+func validateInstallationMetricsTiming(timing InstallationMetricsTiming) []error {
+	var errs []error
+	if timing.Interval <= 0 {
+		errs = append(errs, errors.New("installation_metrics.refresh.interval must be a positive duration"))
+	}
+	if timing.RetryInterval <= 0 {
+		errs = append(errs, errors.New("installation_metrics.refresh.retry_interval must be a positive duration"))
+	}
+	if timing.Jitter < 0 {
+		errs = append(errs, errors.New("installation_metrics.refresh.jitter must not be negative"))
+	}
+	if timing.MaxAge <= 0 {
+		errs = append(errs, errors.New("installation_metrics.max_age must be a positive duration"))
+	}
+	if timing.Timeout <= 0 {
+		errs = append(errs, errors.New("installation_metrics.timeout must be a positive duration"))
+	}
+	if timing.Interval <= 0 || timing.MaxAge <= 0 || timing.Timeout <= 0 || timing.Jitter < 0 {
+		return errs
+	}
+	if timing.Interval >= timing.MaxAge ||
+		timing.Timeout >= timing.MaxAge-timing.Interval ||
+		timing.Jitter >= timing.MaxAge-timing.Interval-timing.Timeout {
+		errs = append(errs, errors.New("installation_metrics refresh interval+jitter+timeout must stay below installation_metrics.max_age"))
 	}
 	return errs
 }

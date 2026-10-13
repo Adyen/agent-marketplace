@@ -37,7 +37,7 @@ The terminal UI SHALL enable cell-motion mouse reporting while active. A vertica
 
 #### Scenario: Unrelated mouse events are ignored
 
-- **WHEN** the TUI receives a click without a drag, a release without an active selection, a drag beginning outside a selectable right-hand pane, or a horizontal-wheel event
+- **WHEN** the TUI receives a click without a drag outside a resource-list row or bundle-tree entry, a release without an active selection or pending navigation click, a drag beginning outside a selectable right-hand pane, or a horizontal-wheel event
 - **THEN** it MUST NOT perform a TUI action
 - **AND** Shift-modified vertical wheel events MUST still scroll vertically
 
@@ -102,7 +102,7 @@ Resource-list presentation pacing SHALL preserve the complete input outcome thro
 
 ### Requirement: Right-hand text selection coexists with mouse scrolling
 
-The TUI SHALL highlight unmodified left-button drags within the right-hand details or file-preview pane and copy the selected displayed text on release through the terminal clipboard protocol. It SHALL preserve complete Unicode characters and exclude styling, terminal control sequences, neighboring panes, and layout padding from copied text. A click without a drag SHALL NOT copy. Selection SHALL NOT begin in the resource list, bundle tree, footer, or an overlay. Existing wheel routing and frame pacing SHALL remain unchanged. Scrolling, resize, resource or file changes, and replacement preview content SHALL clear stale selection. Out-of-pane drags that began inside a selectable pane SHALL be clipped to that pane. Escape SHALL clear selection before its normal action; Ctrl+C SHALL retain hard-exit behavior.
+The TUI SHALL highlight unmodified left-button drags within the right-hand details or file-preview pane and copy the selected displayed text on release through the terminal clipboard protocol. It SHALL preserve complete Unicode characters and exclude styling, terminal control sequences, neighboring panes, and layout padding from copied text. A click without a drag SHALL NOT copy. Selection SHALL NOT begin in the resource list, bundle tree, footer, or an overlay other than the errors body. Existing wheel routing and frame pacing SHALL remain unchanged. Scrolling, resize, resource or file changes, and replacement preview content SHALL clear stale selection. Out-of-pane drags that began inside a selectable pane SHALL be clipped to that pane. Escape SHALL clear selection before its normal action; Ctrl+C SHALL retain hard-exit behavior.
 
 #### Scenario: Forward and backward drags copy displayed Unicode text
 
@@ -111,7 +111,7 @@ The TUI SHALL highlight unmodified left-button drags within the right-hand detai
 
 #### Scenario: Gestures outside selectable text do not copy
 
-- **WHEN** a drag starts in the resource list, bundle tree, footer, or an overlay, or the user clicks without dragging
+- **WHEN** a drag starts in the resource list, bundle tree, footer, or an overlay other than the errors body, or the user clicks without dragging
 - **THEN** the TUI MUST NOT select text or write to the clipboard
 
 #### Scenario: Scrolling clears selection without changing navigation
@@ -147,3 +147,65 @@ Marketplace full-view browsing SHALL retain pointer-targeted wheel routing, sele
 
 - **WHEN** a user selects Marketplace preview text, scrolls the tree or preview, resizes, changes the preview, or starts a drag in the tree, footer, or overlay
 - **THEN** existing wheel routing MUST remain intact, stale selection MUST clear, and gestures starting outside the selectable preview MUST NOT write to the clipboard
+
+### Requirement: Errors-screen text selection follows displayed diagnostics
+
+The TUI SHALL highlight unmodified left-button drags that start within the displayed errors body and copy the selected displayed text on release through the terminal clipboard protocol. Selection SHALL cover the errors body while excluding the footer. Copied text MUST preserve complete Unicode characters across wrapped lines and exclude styling, terminal control sequences, layout padding, and the footer. A click without a drag or a gesture that starts outside displayed error text MUST NOT write to the clipboard. Scrolling, terminal resize, diagnostic replacement, or closing the errors screen SHALL clear stale selection. Escape SHALL clear selection before its existing errors-screen action; `e` SHALL close the errors screen, and Ctrl+C SHALL quit.
+
+#### Scenario: Forward and backward drags copy wrapped Unicode error text
+
+- **WHEN** the user presses `e` and drags forward or backward across wrapped error text containing Unicode characters
+- **THEN** the selected text MUST be visibly highlighted and copied on release with complete Unicode characters from the displayed errors body only
+
+#### Scenario: Error-screen gestures outside displayed text do not copy
+
+- **WHEN** the user clicks without dragging, starts a gesture outside displayed error text, or starts in the footer while the errors screen is open
+- **THEN** the TUI MUST NOT select text or write to the clipboard
+
+#### Scenario: Scrolling and view changes cancel error-screen selection and preserve exits
+
+- **WHEN** an error-screen selection is active and the user scrolls, the terminal resizes, diagnostics change, or the errors screen closes
+- **THEN** stale selection MUST clear; Escape MUST clear selection before its existing action, `e` MUST close the errors screen, and Ctrl+C MUST quit
+
+#### Scenario: Terminal drag transport copies selected error text
+
+- **WHEN** the running TUI receives encoded terminal drag and release input within displayed error text
+- **THEN** its terminal output MUST show the selected text highlight and emit a clipboard write containing exactly the selected displayed error text
+- **AND** an ignored gesture MUST emit no clipboard write
+
+### Requirement: Left clicks navigate the resource list and bundle tree
+
+The TUI SHALL treat an unmodified left-button press and release in the same cell over the resource list, or over the tree of the split bundle browser, as a navigation click. A navigation click on an unselected resource row SHALL select it; on the already-selected resource it SHALL open that resource's details as Enter does; on a section header it SHALL select that header and fold or unfold it. A navigation click on a bundle-tree file SHALL select it and request its preview unless that file is already previewed, and on a directory SHALL select it and expand or collapse it. A press that moves to another cell, or is followed by a key or wheel event, before release, a click with a modifier or another button, and a click over the header, search row, footer, an empty list row, the right-hand pane, an overlay, a dialog, or the command palette, while a search is being typed, or below the minimum terminal size SHALL NOT perform a TUI action. A navigation click SHALL clear any right-hand text selection and SHALL NOT write to the clipboard. Wheel routing, frame pacing, and right-hand text selection SHALL remain unchanged.
+
+#### Scenario: Clicking a resource row selects it
+
+- **WHEN** the user clicks an unselected resource row, including a row that wraps or follows a scrolled list offset
+- **THEN** that row MUST become the selected entry and the right-hand pane MUST show its details
+- **AND** the TUI MUST NOT write to the clipboard
+
+#### Scenario: Clicking the selected resource opens its details
+
+- **WHEN** the user clicks the resource row that is already selected
+- **THEN** the TUI MUST open that resource's detail view as Enter does
+
+#### Scenario: Clicking a section header toggles its fold
+
+- **WHEN** the user clicks a section header in the resource list
+- **THEN** that header MUST become the selected entry and its section MUST fold if expanded or unfold if folded
+
+#### Scenario: Clicking a bundle-tree entry selects and previews it
+
+- **WHEN** the user clicks a file or directory in the tree of the split bundle browser
+- **THEN** a file MUST become the selected entry and its preview MUST be requested unless that file is already previewed
+- **AND** a directory MUST become the selected entry and expand if collapsed or collapse if expanded
+
+#### Scenario: Clicks that do not target a navigable row are ignored
+
+- **WHEN** a press moves to another cell, or a key or wheel event arrives, before release, a click uses a modifier or a non-left button, or a click lands on the header, search row, footer, an empty list row, the right-hand pane, an overlay, a dialog, or the command palette, or arrives while a search is being typed or below the minimum terminal size
+- **THEN** the selection, fold state, and active view MUST remain unchanged and the TUI MUST NOT write to the clipboard
+
+#### Scenario: Terminal clicks navigate the running TUI
+
+- **WHEN** the running TUI receives encoded left press and release input over a resource row, then over the same row again, after a drag that began in the resource list
+- **THEN** the drag MUST leave the selection unchanged, the first click MUST show that resource's details, and the second click MUST open its detail view
+- **AND** no click MUST emit a clipboard write

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 
 	"github.com/Adyen/agent-marketplace/internal/catalog"
@@ -44,15 +45,33 @@ type ResolvedArtifact struct {
 	Harnesses []hcc.Target
 
 	// Marketplace-specific fields.
-	IsMarketplace            bool
-	MarketplaceURL           string
-	MarketplaceInstanceID    string
-	MarketplaceAlias         string
-	MarketplaceRegistryID    string
-	MarketplaceResourceName  string
-	InstalledName            string // overrides Name for materialization while preserving canonical digest
-	Unresolved               bool   // true when only metadata was fetched (status inspect mode)
-	Revoked                  bool   // true when the resolved revision is revoked
+	IsMarketplace           bool
+	MarketplaceURL          string
+	MarketplaceInstanceID   string
+	MarketplaceAlias        string
+	MarketplaceRegistryID   string
+	MarketplaceResourceName string
+	// MarketplaceDigest is the pin's exact content digest ("sha256:<64 hex>")
+	// identifying the resolved Marketplace resource revision.
+	MarketplaceDigest string
+	// MarketplaceAcquisition is the resolved acquisition mode ("mirror" or
+	// "index-only"). Mirror artifacts carry no original source tree — Path is
+	// the verified artifact archive — while index-only pins reconstruct the
+	// resource source into StagedSourceDir.
+	MarketplaceAcquisition string
+	// StagedSourceDir, when set, is the absolute root of a staged copy of the
+	// resolved resource's source directory (the index-only reconstructed
+	// resource staging area). Path is the definition file inside it.
+	StagedSourceDir string
+	// MarketplaceHookSupport carries the verified mirror artifact's intrinsic
+	// support inventory: sorted immutable copies populated only after the
+	// archive passes every content, manifest and identity validation. A
+	// non-nil empty slice denotes a verified empty inventory; nil means the
+	// inventory is unknown and must not be treated as empty.
+	MarketplaceHookSupport   []artifact.Artifact `json:"-"`
+	InstalledName            string              // overrides Name for materialization while preserving canonical digest
+	Unresolved               bool                // true when only metadata was fetched (status inspect mode)
+	Revoked                  bool                // true when the resolved revision is revoked
 	MarketplaceArchiveDigest string
 	UpdateAvailable          bool // true when a newer revision exists (status/update)
 	Stale                    bool // true when the registry refresh is stale/unavailable

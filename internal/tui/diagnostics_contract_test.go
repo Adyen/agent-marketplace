@@ -656,16 +656,14 @@ func TestInvalidConfigSnapshotKeepsEditorOnlyRecovery(t *testing.T) {
 	if m.pane != paneList {
 		t.Fatalf("Space on a section header moved the pane under invalid config: pane %v", m.pane)
 	}
-	if cmd != nil {
-		t.Fatal("Space on a section header returned a command under invalid config")
+	if cmd == nil {
+		t.Fatal("Space on a section header returned no editor guidance under invalid config")
 	}
-	if m.currentFoldState()[sectionPath] == wasFolded {
-		t.Fatal("Space on a section header did not toggle the fold under invalid config")
+	if msg, ok := cmd().(toastMsg); !ok || !strings.Contains(msg.text, "edit config") {
+		t.Fatalf("Space on a section header guidance = %#v, want an edit-config toast", cmd())
 	}
-	updated, cmd = m.handleKey(tea.KeyPressMsg{Code: tea.KeySpace})
-	m = updated.(Model)
-	if cmd != nil {
-		t.Fatal("unfolding the section header returned a command under invalid config")
+	if m.currentFoldState()[sectionPath] != wasFolded {
+		t.Fatal("Space on a section header changed the fold under invalid config")
 	}
 	for i := range m.flatItems {
 		if m.flatItems[i].Kind == flatArtifact {

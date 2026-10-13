@@ -148,11 +148,14 @@ func TestInstallationMetricsProjectedInventoryReaderCounts(t *testing.T) {
 	reader := newTestReader(t, fixture)
 	reader.now = func() time.Time { return time.Unix(3456000, 0) }
 
-	counts, err := reader.counts(context.Background(), adoptionTestRegistries())
-	if err != nil {
-		t.Fatalf("reader counts() error = %v", err)
+	if _, err := reader.refresh(context.Background(), adoptionTestRegistries()); err != nil {
+		t.Fatalf("reader refresh() error = %v", err)
 	}
-	assertAdoptionCounts(t, counts, map[installationResourceKey]int64{
+	snapshot, ok := reader.lookup(adoptionTestRegistries())
+	if !ok {
+		t.Fatal("lookup() after refresh returned no snapshot")
+	}
+	assertAdoptionCounts(t, *snapshot, map[installationResourceKey]int64{
 		adoptionKey("rA", "skill", "alpha"): 1,
 	}, nil)
 	if hits := fixture.hits.Load(); hits != 1 {
@@ -168,14 +171,17 @@ func TestInstallationMetricsReaderRequestShapeAndCounts(t *testing.T) {
 	t.Setenv("MARKETPLACE_METRICS_TEST_TOKEN", "fixture-token")
 	reader.tokenEnv = "MARKETPLACE_METRICS_TEST_TOKEN"
 
-	counts, err := reader.counts(context.Background(), adoptionTestRegistries())
-	if err != nil {
-		t.Fatalf("counts() error = %v", err)
+	if _, err := reader.refresh(context.Background(), adoptionTestRegistries()); err != nil {
+		t.Fatalf("refresh() error = %v", err)
 	}
-	if got := counts.Counts[installationResourceKey{Registry: "rA", Kind: "skill", Name: "res-a"}]; got != 1 {
+	snapshot, ok := reader.lookup(adoptionTestRegistries())
+	if !ok {
+		t.Fatal("lookup() after refresh returned no snapshot")
+	}
+	if got := snapshot.Counts[installationResourceKey{Registry: "rA", Kind: "skill", Name: "res-a"}]; got != 1 {
 		t.Fatalf("count for res-a = %d, want 1", got)
 	}
-	if !counts.KnownRegistries["rA"] {
+	if !snapshot.KnownRegistries["rA"] {
 		t.Fatal("rA should be a known registry")
 	}
 
@@ -209,21 +215,29 @@ func TestInstallationMetricsReaderCachesAggregatesFiveMinutes(t *testing.T) {
 	reader := newTestReader(t, fixture)
 	now := adoptionFixedNow
 	reader.now = func() time.Time { return now }
+	registries := adoptionTestRegistries()
 
+	if _, err := reader.refresh(context.Background(), registries); err != nil {
+		t.Fatalf("refresh() error = %v", err)
+	}
 	for i := 0; i < 3; i++ {
-		if _, err := reader.counts(context.Background(), adoptionTestRegistries()); err != nil {
-			t.Fatalf("counts() call %d error = %v", i, err)
+		if _, ok := reader.lookup(registries); !ok {
+			t.Fatalf("lookup() call %d missed the published snapshot", i)
 		}
 	}
 	if hits := fixture.hits.Load(); hits != 1 {
 		t.Fatalf("metrics endpoint hits = %d, want 1", hits)
 	}
-	now = now.Add(4 * time.Minute)
-	if _, err := reader.counts(context.Background(), adoptionTestRegistries()); err != nil {
-		t.Fatalf("counts() within freshness error = %v", err)
+	now = adoptionFixedNow.Add(5*time.Minute - time.Nanosecond)
+	if _, ok := reader.lookup(registries); !ok {
+		t.Fatal("lookup() dropped a snapshot inside its freshness window")
 	}
 	if hits := fixture.hits.Load(); hits != 1 {
 		t.Fatalf("metrics endpoint hits inside cache window = %d, want 1", hits)
+	}
+	now = adoptionFixedNow.Add(5 * time.Minute)
+	if _, ok := reader.lookup(registries); ok {
+		t.Fatal("lookup() served a snapshot at its exact max_age expiry boundary")
 	}
 }
 
@@ -231,25 +245,34 @@ func TestInstallationMetricsReaderCachesAggregatesFiveMinutes(t *testing.T) {
 func TestInstallationMetricsReaderExpiryFailureAndBackoff(t *testing.T) {
 	fixture := newMetricsFixture(t, func() string { return prometheusVector(adoptionSamples(), adoptionFixedNow) })
 	reader := newTestReader(t, fixture)
-	now := adoptionFixedNow
-	reader.now = func() time.Time { return now }
+	var now atomic.Int64
+	now.Store(adoptionFixedNow.UnixNano())
+	reader.now = func() time.Time { return time.Unix(0, now.Load()) }
 	registries := adoptionTestRegistries()
 
-	if _, err := reader.counts(context.Background(), registries); err != nil {
-		t.Fatalf("initial counts() error = %v", err)
+	if _, err := reader.refresh(context.Background(), registries); err != nil {
+		t.Fatalf("initial refresh() error = %v", err)
 	}
+	failedAt := adoptionFixedNow.Add(6 * time.Minute)
 	fixture.handler.Store(func(w http.ResponseWriter, _ *http.Request) {
+		now.Store(failedAt.Add(3 * time.Second).UnixNano())
 		w.WriteHeader(http.StatusInternalServerError)
 	})
-	now = now.Add(6 * time.Minute)
-	if _, err := reader.counts(context.Background(), registries); err == nil {
-		t.Fatal("counts() after expiry with failing metrics = nil, want unavailable")
+	now.Store(failedAt.UnixNano())
+	if delay := reader.attempt(context.Background(), staticRegistryIndex(registries), false); delay != reader.timing.RetryInterval {
+		t.Fatalf("failed attempt delay = %v, want retry interval %v", delay, reader.timing.RetryInterval)
+	}
+	if want := failedAt.Add(3*time.Second + reader.timing.RetryInterval); !reader.backoffUntil.Equal(want) {
+		t.Fatalf("backoffUntil = %v, want attempt completion + retry interval = %v", reader.backoffUntil, want)
+	}
+	if _, ok := reader.lookup(registries); ok {
+		t.Fatal("lookup() after expiry with failing metrics still served counts")
 	}
 	if hits := fixture.hits.Load(); hits != 2 {
 		t.Fatalf("metrics endpoint hits = %d, want 2", hits)
 	}
-	if _, err := reader.counts(context.Background(), registries); err == nil {
-		t.Fatal("counts() inside failure backoff = nil, want unavailable")
+	if delay := reader.attempt(context.Background(), staticRegistryIndex(registries), true); delay != reader.timing.RetryInterval {
+		t.Fatalf("hint inside failure backoff delay = %v, want remaining backoff %v", delay, reader.timing.RetryInterval)
 	}
 	if hits := fixture.hits.Load(); hits != 2 {
 		t.Fatalf("failure backoff did not hold for 30s: hits = %d, want 2", hits)
@@ -269,17 +292,21 @@ func TestInstallationMetricsReaderObservationHorizonExpiresEarlier(t *testing.T)
 	reader.now = func() time.Time { return now }
 	registries := adoptionTestRegistries()
 
-	counts, err := reader.counts(context.Background(), registries)
-	if err != nil {
-		t.Fatalf("counts() error = %v", err)
+	if _, err := reader.refresh(context.Background(), registries); err != nil {
+		t.Fatalf("refresh() error = %v", err)
 	}
-	if counts.ValidUntil.After(now.Add(installationMetricsFreshness)) {
+	counts, ok := reader.lookup(registries)
+	if !ok {
+		t.Fatal("lookup() after refresh returned no snapshot")
+	}
+	if counts.ValidUntil.After(now.Add(5 * time.Minute)) {
 		t.Fatalf("ValidUntil %v beyond five-minute freshness", counts.ValidUntil)
 	}
 	now = now.Add(3 * time.Minute)
-	if _, err := reader.counts(context.Background(), registries); err == nil {
-		t.Fatal("counts() reused an aggregate past its inventory validity horizon")
+	if _, ok := reader.lookup(registries); ok {
+		t.Fatal("lookup() reused an aggregate past its inventory validity horizon")
 	}
+	reader.attempt(context.Background(), staticRegistryIndex(registries), false)
 	if hits := fixture.hits.Load(); hits != 2 {
 		t.Fatalf("metrics endpoint hits = %d, want 2 after validity horizon", hits)
 	}
@@ -292,16 +319,25 @@ func TestInstallationMetricsReaderOriginChangeInvalidatesCache(t *testing.T) {
 	reader.now = func() time.Time { return adoptionFixedNow }
 
 	registries := adoptionTestRegistries()
-	if _, err := reader.counts(context.Background(), registries); err != nil {
-		t.Fatalf("counts() error = %v", err)
+	if _, err := reader.refresh(context.Background(), registries); err != nil {
+		t.Fatalf("refresh() error = %v", err)
 	}
 	changed := adoptionTestRegistries()
 	rA := changed["rA"]
 	rA.Origins = []string{"https://example.test/team/moved-alpha.git"}
 	changed["rA"] = rA
-	counts, err := reader.counts(context.Background(), changed)
-	if err != nil {
-		t.Fatalf("counts() after origin change error = %v", err)
+	if _, ok := reader.lookup(changed); ok {
+		t.Fatal("lookup() served a stale signature after origin change")
+	}
+	if hits := fixture.hits.Load(); hits != 1 {
+		t.Fatalf("identity-mismatched lookup issued telemetry: hits = %d, want 1", hits)
+	}
+	if _, err := reader.refresh(context.Background(), changed); err != nil {
+		t.Fatalf("refresh() after origin change error = %v", err)
+	}
+	counts, ok := reader.lookup(changed)
+	if !ok {
+		t.Fatal("lookup() after origin change refresh returned no snapshot")
 	}
 	if hits := fixture.hits.Load(); hits != 2 {
 		t.Fatalf("origin change did not invalidate aggregate cache: hits = %d, want 2", hits)
@@ -348,9 +384,9 @@ func TestInstallationMetricsReaderRejectsUnusableResponses(t *testing.T) {
 			fixture.handler.Store(test.respond)
 			reader := newTestReader(t, fixture)
 			reader.now = func() time.Time { return adoptionFixedNow }
-			counts, err := reader.counts(context.Background(), adoptionTestRegistries())
+			counts, err := reader.refresh(context.Background(), adoptionTestRegistries())
 			if err == nil {
-				t.Fatalf("counts() = %+v, want an unavailable error", counts)
+				t.Fatalf("refresh() = %+v, want an unavailable error", counts)
 			}
 			if strings.Contains(err.Error(), "install-1") {
 				t.Fatalf("error leaks installation ID: %v", err)
@@ -391,15 +427,15 @@ func TestInstallationMetricsReaderRejectsAmbiguousJSON(t *testing.T) {
 			fixture := newMetricsFixture(t, func() string { return test.body })
 			reader := newTestReader(t, fixture)
 			reader.now = func() time.Time { return adoptionFixedNow }
-			counts, err := reader.counts(context.Background(), adoptionTestRegistries())
+			counts, err := reader.refresh(context.Background(), adoptionTestRegistries())
 			if test.valid {
 				if err != nil {
-					t.Fatalf("counts() error = %v, want acceptance", err)
+					t.Fatalf("refresh() error = %v, want acceptance", err)
 				}
 				return
 			}
 			if !errors.Is(err, errInvalidInstallationMetrics) {
-				t.Fatalf("counts() error = %v, counts = %+v, want errInvalidInstallationMetrics", err, counts)
+				t.Fatalf("refresh() error = %v, counts = %+v, want errInvalidInstallationMetrics", err, counts)
 			}
 			if strings.Contains(err.Error(), "install-1") {
 				t.Fatalf("error leaks installation ID: %v", err)
@@ -429,8 +465,8 @@ func TestInstallationMetricsReaderRedirectForwardsNoCredentials(t *testing.T) {
 	reader.tokenEnv = "MARKETPLACE_METRICS_TEST_TOKEN"
 	t.Setenv("MARKETPLACE_METRICS_TEST_TOKEN", "fixture-token")
 
-	if _, err := reader.counts(context.Background(), adoptionTestRegistries()); err == nil {
-		t.Fatal("counts() on redirect = nil, want unavailable (no redirect following)")
+	if _, err := reader.refresh(context.Background(), adoptionTestRegistries()); err == nil {
+		t.Fatal("refresh() on redirect = nil, want unavailable (no redirect following)")
 	}
 	if got := secondHits.Load(); got != 0 {
 		t.Fatalf("redirect target received %d requests, want 0", got)
@@ -444,8 +480,8 @@ func TestInstallationMetricsReaderUnsetTokenAndTimeout(t *testing.T) {
 	reader.now = func() time.Time { return adoptionFixedNow }
 	reader.tokenEnv = "MARKETPLACE_METRICS_TEST_UNSET"
 	t.Setenv("MARKETPLACE_METRICS_TEST_UNSET", "")
-	if _, err := reader.counts(context.Background(), adoptionTestRegistries()); err == nil {
-		t.Fatal("counts() with unset bearer env = nil, want unavailable")
+	if _, err := reader.refresh(context.Background(), adoptionTestRegistries()); err == nil {
+		t.Fatal("refresh() with unset bearer env = nil, want unavailable")
 	}
 	if hits := fixture.hits.Load(); hits != 0 {
 		t.Fatalf("request was sent without resolvable credential: hits = %d", hits)
@@ -456,8 +492,8 @@ func TestInstallationMetricsReaderUnsetTokenAndTimeout(t *testing.T) {
 	newlineReader.now = func() time.Time { return adoptionFixedNow }
 	newlineReader.tokenEnv = "MARKETPLACE_METRICS_TEST_UNSET"
 	t.Setenv("MARKETPLACE_METRICS_TEST_UNSET", "line1\nline2")
-	if _, err := newlineReader.counts(context.Background(), adoptionTestRegistries()); err == nil {
-		t.Fatal("counts() with newline token = nil, want unavailable")
+	if _, err := newlineReader.refresh(context.Background(), adoptionTestRegistries()); err == nil {
+		t.Fatal("refresh() with newline token = nil, want unavailable")
 	}
 	if hits := newlineFixture.hits.Load(); hits != 0 {
 		t.Fatalf("request was sent with a malformed credential: hits = %d", hits)
@@ -468,8 +504,8 @@ func TestInstallationMetricsReaderUnsetTokenAndTimeout(t *testing.T) {
 	validReader.now = func() time.Time { return adoptionFixedNow }
 	validReader.tokenEnv = "MARKETPLACE_METRICS_TEST_UNSET"
 	t.Setenv("MARKETPLACE_METRICS_TEST_UNSET", "fixture-token")
-	if _, err := validReader.counts(context.Background(), adoptionTestRegistries()); err != nil {
-		t.Fatalf("counts() with a valid token error = %v", err)
+	if _, err := validReader.refresh(context.Background(), adoptionTestRegistries()); err != nil {
+		t.Fatalf("refresh() with a valid token error = %v", err)
 	}
 	if hits := validFixture.hits.Load(); hits != 1 {
 		t.Fatalf("valid token did not reach the metrics endpoint once: hits = %d", hits)
@@ -483,8 +519,8 @@ func TestInstallationMetricsReaderUnsetTokenAndTimeout(t *testing.T) {
 	slowReader := newInstallationMetricsReader(config.InstallationMetrics{URL: slow.server.URL}, "mp")
 	slowReader.now = func() time.Time { return adoptionFixedNow }
 	start := time.Now()
-	if _, err := slowReader.counts(context.Background(), adoptionTestRegistries()); err == nil {
-		t.Fatal("counts() against hung endpoint = nil, want timeout error")
+	if _, err := slowReader.refresh(context.Background(), adoptionTestRegistries()); err == nil {
+		t.Fatal("refresh() against hung endpoint = nil, want timeout error")
 	}
 	if elapsed := time.Since(start); elapsed > 5*time.Second {
 		t.Fatalf("metrics request exceeded bound: %v", elapsed)

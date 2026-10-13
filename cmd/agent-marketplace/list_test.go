@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -700,6 +701,54 @@ registries: []
 	}
 	if !strings.Contains(output, "available") {
 		t.Fatalf("expected 'available' status in output, got:\n%s", output)
+	}
+}
+
+// spec: ad-hoc-registry-browsing/ad-hoc-git-listing-without-a-ref-uses-the-default-branch
+func TestListFromFlagUsesRegistryDefaultBranchWhenRefIsOmitted(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+
+	origin, working := createBareRepoWithWorkingCloneOnBranch(t, "list-default-branch.git", "trunk")
+	writeSkill(t, working, "vm-lifecycle", "VM lifecycle", []string{"openstack"})
+	commitAndPushAllToBranch(t, working, "setup", "trunk")
+
+	repoRoot := filepath.Join(t.TempDir(), "repo")
+	configPath := filepath.Join(repoRoot, ".agents", "config.yaml")
+	writeConfig(t, configPath, `
+registries: []
+`)
+	withWorkingDir(t, repoRoot)
+
+	before, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("read repo config before list --from: %v", err)
+	}
+
+	output, err := executeCommand("list", "--from", origin)
+	if err != nil {
+		t.Fatalf("list --from without --ref failed: %v\n%s", err, output)
+	}
+
+	if !strings.Contains(output, "vm-lifecycle") {
+		t.Fatalf("expected vm-lifecycle in list output, got:\n%s", output)
+	}
+	if !strings.Contains(output, "available") {
+		t.Fatalf("expected 'available' status in output, got:\n%s", output)
+	}
+
+	after, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("read repo config after list --from: %v", err)
+	}
+	if string(after) != string(before) {
+		t.Fatalf("list --from wrote repo config:\nbefore:\n%s\nafter:\n%s", before, after)
+	}
+	if _, err := os.Stat(filepath.Join(repoRoot, ".agents", "lock.yaml")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("list --from wrote an acquisition lock, stat err = %v", err)
 	}
 }
 

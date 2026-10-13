@@ -297,6 +297,15 @@ var testTable = []TestCase{
 		},
 	},
 	{
+		Name:    "security/command_error_controls",
+		Desc:    "Given a repository source name carrying terminal controls, When status fails and doctor reports configuration errors, Then both print visible escapes without changing the configuration",
+		RepoCfg: "apiVersion: agent-marketplace/v4\nsources:\n  \"\\e]0;TITLE\\a\\e[2J\\u202EEVIL\\N\":\n    directory: ./missing\n",
+		Steps: []Step{
+			{Args: []string{"status"}, AssertExitCode: intPtr(1), OutContains: []string{`Error: v4.source-name: sources.\x1B]0;TITLE\x07\x1B[2J\u202EEVIL\x85 (line 3)`}, OutNotContains: []string{"\x1b", "\a", "\u202e", "\u0085"}, PathsUnchanged: []string{"/workspace/.agents/config.yaml"}},
+			{Args: []string{"doctor"}, MustPass: true, OutContains: []string{`error: v4.source-name: sources.\x1B]0;TITLE\x07\x1B[2J\u202EEVIL\x85 (line 3)`}, OutNotContains: []string{"\x1b", "\a", "\u202e", "\u0085"}, PathsUnchanged: []string{"/workspace/.agents/config.yaml"}},
+		},
+	},
+	{
 		Name:      "security/cli_table_collection_controls",
 		Desc:      "Given local registry and collection metadata containing terminal controls, When listing checking status and installing a collection, Then display is escaped while selection and installation remain intact",
 		GlobalCfg: "harnesses: [factory]\nregistries: []\n",

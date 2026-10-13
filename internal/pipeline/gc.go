@@ -69,22 +69,26 @@ func GarbageCollect(ctx context.Context, dryRun bool) (report GCReport, resultEr
 		slog.Info("cache garbage collection completed", attrs...)
 	}()
 
+	ws, err := DiscoverWorkspace()
+	if err != nil {
+		return report, err
+	}
 	if err := RecoverDependencyTransactions(ctx); err != nil {
 		return report, err
 	}
-	err := cache.WithExactGitNamespaceExclusiveLease(ctx, func(leaseCtx context.Context) error {
+	err = cache.WithExactGitNamespaceExclusiveLease(ctx, func(leaseCtx context.Context) error {
 		var runErr error
-		report, runErr = garbageCollectUnderLease(leaseCtx, dryRun)
+		report, runErr = garbageCollectUnderLease(leaseCtx, ws, dryRun)
 		return runErr
 	})
 	return report, err
 }
 
-func garbageCollectUnderLease(ctx context.Context, dryRun bool) (GCReport, error) {
+func garbageCollectUnderLease(ctx context.Context, ws Workspace, dryRun bool) (GCReport, error) {
 	var report GCReport
 	intent := config.ReadIntent(ctx, config.LoadEffectiveOptions{
-		RepoRoot:       config.FindRepoRoot(),
-		LocalConfigDir: config.FindLocalConfigDir(),
+		RepoRoot:       ws.RepoRoot(),
+		LocalConfigDir: ws.LocalConfigDir(),
 	})
 	if len(intent.Errors) > 0 {
 		return report, errors.Join(intent.Errors...)

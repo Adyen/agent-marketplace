@@ -18,6 +18,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/materialize"
 	"github.com/Adyen/agent-marketplace/internal/pipeline"
 	"github.com/Adyen/agent-marketplace/internal/resolver"
+	"github.com/Adyen/agent-marketplace/internal/skill"
 	"github.com/Adyen/agent-marketplace/internal/telemetry"
 	mpapi "github.com/Adyen/agent-marketplace/pkg/marketplace/api"
 )
@@ -44,6 +45,8 @@ const (
 	paneHarnessModal
 	paneEditConfigModal
 	paneMarketplaceConsent
+	paneViewSettings
+	paneBulkToggle
 )
 
 type marketplaceSelection struct {
@@ -147,6 +150,12 @@ func (r *row) ensureSearchable() {
 	}
 	b.WriteByte(' ')
 	b.WriteString(r.Artifact.RegistryURL)
+	b.WriteByte(' ')
+	b.WriteString(r.Artifact.Kind.String())
+	b.WriteByte(' ')
+	b.WriteString(skill.KindLabel(r.Artifact.Kind))
+	b.WriteByte(' ')
+	b.WriteString(sourceLabel(*r))
 	b.WriteByte(' ')
 	b.WriteString(r.Artifact.Description)
 	if r.MarketplaceDiscovery != nil {
@@ -311,11 +320,26 @@ type Model struct {
 	width            int
 	height           int
 
-	// foldedSections is the single status-grouped list's fold state, keyed by
-	// section path ("status:enabled", ...).
-	foldedSections map[string]bool
+	// viewSettings is the confirmed (or live-previewed) grouping selection.
+	viewSettings viewSettings
 
-	queryFoldSections map[string]bool
+	// foldedSections keeps fold state per grouping combination for the
+	// session, keyed by the normalized viewSettings; each inner map is keyed
+	// by section path ("status:enabled", "src:<id>:kind:skills", ...).
+	foldedSections map[viewSettings]map[string]bool
+
+	// viewPrefsWarning holds the startup preference-load warning; it is
+	// surfaced once as a footer toast without touching authored config.
+	viewPrefsWarning string
+
+	// viewModal is the View settings modal state: the focused field and the
+	// original settings captured at open so Esc can restore them.
+	viewModal viewModalState
+
+	// bulkModal is the section bulk-toggle modal state; see bulk.go.
+	bulkModal bulkModalState
+
+	queryFoldSections map[viewSettings]map[string]bool
 	queryFoldQuery    string
 
 	// flatItems is the render-ready list computed from filteredRows +
@@ -387,7 +411,8 @@ type Model struct {
 	detailSelectedPath string
 	detailLegacyRender bool
 
-	previewSel previewSelection
+	previewSel   previewSelection
+	pendingClick pendingClick
 
 	// toast/toastExp mirror the newest visible toast for the single-line
 	// footer segment; toastQueue holds the whole visible stack (newest

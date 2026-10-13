@@ -1,0 +1,104 @@
+name: SonarQube Cloud
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened]
+  workflow_dispatch:
+
+concurrency:
+  group: sonar-cloud-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions: {}
+
+jobs:
+  configuration:
+    name: SonarQube Cloud configuration
+    if: >-
+      github.actor != 'dependabot[bot]' &&
+      (github.event_name == 'push' ||
+       (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') ||
+       (github.event_name == 'pull_request' &&
+        github.event.pull_request.head.repo.full_name == github.repository &&
+        github.event.pull_request.user.login != 'dependabot[bot]'))
+    runs-on: ubuntu-24.04
+    timeout-minutes: 1
+    permissions: {}
+    outputs:
+      enabled: ${{ steps.token.outputs.enabled }}
+    steps:
+      - name: Check analysis token availability
+        id: token
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -n "$SONAR_TOKEN" ]]; then
+            echo 'enabled=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'enabled=false' >> "$GITHUB_OUTPUT"
+            echo '::notice::SonarQube Cloud analysis skipped: configure the SONAR_TOKEN repository secret.'
+          fi
+
+  coverage:
+    name: SonarQube Go coverage
+    needs: configuration
+    if: needs.configuration.outputs.enabled == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Generate Go coverage
+        env:
+          CGO_ENABLED: '0'
+        run: go test -short -timeout=50m -covermode=atomic -coverprofile=coverage.out ./...
+
+      - name: Upload Go coverage
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: sonar-go-coverage-${{ github.sha }}
+          path: coverage.out
+          if-no-files-found: error
+          retention-days: 7
+
+  analysis:
+    name: SonarQube Cloud analysis
+    needs: coverage
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Download matching Go coverage
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: sonar-go-coverage-${{ github.sha }}
+
+      - name: Analyze with SonarQube Cloud
+        uses: SonarSource/sonarqube-scan-action@d209202bc7d53ff1cc128f7f907dac145c9d6ae9
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        with:
+          args: -Dsonar.scm.revision=${{ github.sha }}
