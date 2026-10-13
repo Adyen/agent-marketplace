@@ -46,7 +46,7 @@ func TestPruneDirectoryClassificationRetainsCapturedRoot(t *testing.T) {
 				call := func() (TargetReport, error) {
 					if commandLane {
 						var r TargetReport
-						e := pruneStaleCommandFiles(dir, nil, dryRun, &r, boundary)
+						e := pruneStaleCommandFiles(dir, nil, dryRun, &r, portableSyncContext{boundary: boundary})
 						return r, e
 					}
 					return syncSkillLinks(dir, nil, dryRun, true, portableSyncContext{boundary: boundary})

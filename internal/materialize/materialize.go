@@ -174,6 +174,13 @@ type portableSyncContext struct {
 	desired      map[string]bool
 }
 
+func portableKeep(reportPrefix string, desired map[string]bool, name string) bool {
+	if desired == nil {
+		return false
+	}
+	return desired[filepath.ToSlash(filepath.Join(reportPrefix, name))]
+}
+
 func portableManifestKey(target hcc.Target, path string) string {
 	return string(target) + "\x00" + filepath.ToSlash(path)
 }
@@ -369,6 +376,7 @@ type runConfig struct {
 	dryRun                  bool
 	scopeFilter             *bool // nil = all scopes; true = machine only; false = repo only
 	modes                   config.MaterializationModes
+	impliedPreview          []resolver.ResolvedArtifact
 	linkPublicationHook     func(string)
 	pruneClassificationHook func(string)
 	pruneEnumerationHook    func(string)
@@ -397,6 +405,13 @@ func WithMachineScopeOnly() RunOption {
 // only. Machine-scope (user-level) artifacts are not touched.
 func WithRepoScopeOnly() RunOption {
 	return func(c *runConfig) { v := false; c.scopeFilter = &v }
+}
+
+// WithImpliedPreview supplies the advisory implied-preview closure from the
+// resolver: only already-present managed outputs at preview identities are
+// retained; nothing is written or adopted.
+func WithImpliedPreview(preview []resolver.ResolvedArtifact) RunOption {
+	return func(c *runConfig) { c.impliedPreview = preview }
 }
 
 // skillTarget pairs a resolved skill with a specific compilation target.
@@ -491,12 +506,38 @@ func Run(ctx context.Context, repoRoot string, resolved []resolver.ResolvedArtif
 	compileResult.scopeFilter = rc.scopeFilter
 	slog.Debug("materialize compile complete", "targets", len(compileResult.byTarget), "diagnostics", len(compileResult.allDiags))
 
+	var previewResult *compilePhaseResult
+	if len(rc.impliedPreview) > 0 {
+		previewWork, previewOutputs, previewBlocked, previewDiags := buildResourceWorkItems(rc.impliedPreview)
+		if rc.scopeFilter != nil {
+			for key := range previewOutputs {
+				if key.machineScope != *rc.scopeFilter {
+					delete(previewOutputs, key)
+				}
+			}
+			for key := range previewBlocked {
+				if key.machineScope != *rc.scopeFilter {
+					delete(previewBlocked, key)
+				}
+			}
+			filtered := previewWork[:0]
+			for _, w := range previewWork {
+				if w.machineScope == *rc.scopeFilter {
+					filtered = append(filtered, w)
+				}
+			}
+			previewWork = filtered
+		}
+		compiled := compileWorkItems(previewWork, previewDiags, previewOutputs, previewBlocked, repoRoot)
+		previewResult = &compiled
+	}
+
 	// Phase 3: Materialize per target — write artifacts and sync skill links.
 	compileResult.linkPublicationHook = rc.linkPublicationHook
 	compileResult.pruneClassificationHook = rc.pruneClassificationHook
 	compileResult.pruneEnumerationHook = rc.pruneEnumerationHook
 	compileResult.manifestPublicationHook = rc.manifestPublicationHook
-	report := executeMaterializePlans(ctx, compileResult, rc.dryRun, repoRoot, rc.modes)
+	report := executeMaterializePlans(ctx, compileResult, rc.dryRun, repoRoot, rc.modes, previewResult)
 	slog.Info("materialize end",
 		"duration_ms", time.Since(start).Milliseconds(),
 		"targets", len(report.PerRoot),
@@ -508,6 +549,22 @@ func Run(ctx context.Context, repoRoot string, resolved []resolver.ResolvedArtif
 // buildWorkItems groups resolved skills by target and identifies all output
 // keys (including empty targets that need pruning).
 func buildWorkItems(resolved []resolver.ResolvedArtifact, repoRoot string) ([]skillTarget, map[outputKey]bool, blockedOutputs, []diag.Diagnostic) {
+	work, allOutputs, blocked, allDiags := buildResourceWorkItems(resolved)
+
+	// Include previously materialized targets even when they have no
+	// resolved artifacts in this run, so stale managed files get pruned.
+	addExistingOutputKeys(repoRoot, allOutputs)
+	addExistingNativeAggregateKeys(repoRoot, allOutputs)
+	// A file-mode manifest may be the only remaining record after a harness
+	// root is deleted. Include its known targets so deinit can still process
+	// that state instead of silently skipping it.
+	addPortableManifestOutputKeys(repoRoot, false, allOutputs, &allDiags)
+	addPortableManifestOutputKeys(repoRoot, true, allOutputs, &allDiags)
+
+	return work, allOutputs, blocked, allDiags
+}
+
+func buildResourceWorkItems(resolved []resolver.ResolvedArtifact) ([]skillTarget, map[outputKey]bool, blockedOutputs, []diag.Diagnostic) {
 	var work []skillTarget
 	var allDiags []diag.Diagnostic
 	allOutputs := make(map[outputKey]bool)
@@ -551,16 +608,6 @@ func buildWorkItems(resolved []resolver.ResolvedArtifact, repoRoot string) ([]sk
 			work = append(work, skillTarget{skill: s, target: t, machineScope: machineScope})
 		}
 	}
-
-	// Include previously materialized targets even when they have no
-	// resolved artifacts in this run, so stale managed files get pruned.
-	addExistingOutputKeys(repoRoot, allOutputs)
-	addExistingNativeAggregateKeys(repoRoot, allOutputs)
-	// A file-mode manifest may be the only remaining record after a harness
-	// root is deleted. Include its known targets so deinit can still process
-	// that state instead of silently skipping it.
-	addPortableManifestOutputKeys(repoRoot, false, allOutputs, &allDiags)
-	addPortableManifestOutputKeys(repoRoot, true, allOutputs, &allDiags)
 
 	return work, allOutputs, blocked, allDiags
 }
@@ -1088,17 +1135,65 @@ func markOwnedAggregateIncomplete(handler ownedAggregateHandler, state ownedAggr
 //
 // ctx reaches the owned-aggregate handlers because their per-canonical-root
 // critical sections must abandon a contended wait when the run is cancelled.
-func executeMaterializePlans(ctx context.Context, compileResult compilePhaseResult, dryRun bool, repoRoot string, modes config.MaterializationModes) *Report {
+func executeMaterializePlans(ctx context.Context, compileResult compilePhaseResult, dryRun bool, repoRoot string, modes config.MaterializationModes, preview *compilePhaseResult) *Report {
 	report := &Report{
 		PerTarget:        make(map[hcc.Target]TargetReport),
 		Diags:            compileResult.allDiags,
 		BlockedResources: compileResult.blockedResources,
+	}
+	var previewMergeErrs map[outputKey]error
+	if preview != nil {
+		report.Diags = append(report.Diags, preview.allDiags...)
+		report.BlockedResources = append(report.BlockedResources, preview.blockedResources...)
+		for _, tw := range preview.byTarget {
+			report.Diags = append(report.Diags, tw.diags...)
+		}
+		actualAggregates := compileResult.ownedAggregateState()
+		for key, components := range preview.blocked {
+			for component := range components {
+				compileResult.blocked.mark(key, component)
+			}
+			if components[blockedAllComponents] {
+				if binding, hasBinding, bindingErr := materializeAdapterFor(key.target); bindingErr == nil && hasBinding {
+					binding.handler.markIncomplete(actualAggregates, key, ir.KindHook)
+					binding.handler.markIncomplete(actualAggregates, key, ir.KindMcpServer)
+				}
+			}
+		}
+		for _, blockedResource := range preview.blockedResources {
+			binding, hasBinding, bindingErr := materializeAdapterFor(blockedResource.Target)
+			if bindingErr != nil || !hasBinding {
+				continue
+			}
+			binding.handler.markIncomplete(actualAggregates, outputKey{target: blockedResource.Target, machineScope: blockedResource.MachineScope}, blockedResource.Kind)
+		}
+		previewMergeErrs = make(map[outputKey]error)
+		for key, tw := range preview.byTarget {
+			merged, mergeErr := artifact.MergeFragments(tw.artifacts)
+			if mergeErr != nil {
+				previewMergeErrs[key] = mergeErr
+				report.Diags = append(report.Diags, diag.Diagnostic{
+					Code:     "materialize.merge.error",
+					Severity: diag.SeverityError,
+					Target:   string(key.target),
+					Message:  fmt.Sprintf("merge preview fragments for target %s: %v", key.target, mergeErr),
+				})
+				continue
+			}
+			tw.artifacts = merged
+		}
 	}
 	coalescedGemini, err := coalesceGeminiNativeAggregates(&compileResult, repoRoot)
 	if err != nil {
 		slog.Error("shared Gemini destination refused", "code", diag.CodeMaterializeDestinationOverlap, "error", err)
 		report.Diags = append(report.Diags, diag.Diagnostic{Code: diag.CodeMaterializeDestinationOverlap, Severity: diag.SeverityError, Target: string(hcc.TargetGemini), Message: err.Error()})
 		return report
+	}
+	if preview != nil {
+		if _, previewErr := coalesceGeminiNativeAggregates(preview, repoRoot); previewErr != nil {
+			report.Diags = append(report.Diags, diag.Diagnostic{Code: diag.CodeMaterializeDestinationOverlap, Severity: diag.SeverityError, Target: string(hcc.TargetGemini), Message: previewErr.Error()})
+			return report
+		}
 	}
 	coalescedCodexPartitions, preflightDiag := preflightCodexDestinations(&compileResult, repoRoot, modes)
 	if preflightDiag != nil {
@@ -1203,6 +1298,11 @@ func executeMaterializePlans(ctx context.Context, compileResult compilePhaseResu
 			// are left empty to avoid duplication across multiple plans.
 			report.Diags = append(report.Diags, targetDiags...)
 		}
+		if preview != nil {
+			if _, failed := previewMergeErrs[key]; failed {
+				continue
+			}
+		}
 
 		boundaryHome := home
 		if boundaryHome == "" {
@@ -1264,23 +1364,62 @@ func executeMaterializePlans(ctx context.Context, compileResult compilePhaseResu
 		// shared aggregates retain their separate ownership reconciliation.
 		slog.Debug("materialize target", "target", key.target, "machine_scope", key.machineScope, "mode", mode, "out_dir", outDir)
 		if !coalescedGemini || key.target != hcc.TargetGemini || key.machineScope {
-			artifacts = materializeNativeAggregates(ctx, report, key, repoRoot, artifacts, compileResult.blocked.componentsFor(key), dryRun, &boundary)
+			artifacts = materializeNativeAggregates(ctx, report, key, repoRoot, artifacts, previewArtifacts(key, preview), compileResult.blocked.componentsFor(key), dryRun, &boundary)
 		}
 		if tw != nil && tw.nativeOnly {
 			slog.Debug("native-only aggregate work complete", "target", key.target, "machine_scope", key.machineScope)
 			continue
 		}
-		report = executeTargetPlans(report, key, outDir, destinations, artifacts, compileResult.skillLinks, compileResult.artifactMeta, compileResult.blocked.componentsFor(key), dryRun, mode, repoRoot, coalescedCodexPartitions, boundary)
+		report = executeTargetPlans(report, key, outDir, destinations, artifacts, compileResult.skillLinks, compileResult.artifactMeta, compileResult.blocked.componentsFor(key), dryRun, mode, repoRoot, coalescedCodexPartitions, boundary, preview)
 		if binding, ok := composition.bindings[key.target]; ok {
-			report = binding.handler.reconcile(ctx, report, compileResult.ownedAggregateState(), key, outDir, adapterDestinations, dryRun)
+			report = binding.handler.reconcile(ctx, report, compileResult.ownedAggregateState(), previewAggregateState(preview), key, outDir, adapterDestinations, dryRun)
 		}
 	}
 
 	return report
 }
 
+func previewAggregateState(preview *compilePhaseResult) ownedAggregateState {
+	if preview == nil {
+		return ownedAggregateState{}
+	}
+	return preview.ownedAggregateState()
+}
+
+func previewArtifacts(key outputKey, preview *compilePhaseResult) []artifact.Artifact {
+	if preview == nil {
+		return nil
+	}
+	tw := preview.byTarget[key]
+	if tw == nil {
+		return nil
+	}
+	return tw.artifacts
+}
+
+func previewKeepPaths(key outputKey, outDir string, preview *compilePhaseResult) map[string]bool {
+	keep := make(map[string]bool)
+	if preview == nil {
+		return keep
+	}
+	merged := previewArtifacts(key, preview)
+	plans := materializePlans(key.target, outDir, merged, linkedComponents(preview.skillLinks[key]), key.machineScope)
+	for _, plan := range plans {
+		regular, _ := splitMergeArtifacts(plan.artifacts)
+		for _, a := range regular {
+			keep[filepath.ToSlash(filepath.Join(plan.reportPrefix, a.Path))] = true
+		}
+	}
+	for _, group := range preview.skillLinks[key] {
+		for _, link := range group.links {
+			keep[filepath.ToSlash(filepath.Join(group.reportPrefix, link.name))] = true
+		}
+	}
+	return keep
+}
+
 // executeTargetPlans writes artifact plans and skill links for a single target.
-func executeTargetPlans(report *Report, key outputKey, outDir string, destinations []harness.Destination, artifacts []artifact.Artifact, skillLinks map[outputKey]map[string]*skillLinkGroup, artifactMeta map[outputKey]map[string]skillLink, blocked map[string]bool, dryRun bool, mode config.MaterializationMode, repoRoot string, coalescedCodexPartitions map[string]bool, boundary destinationBoundary) *Report {
+func executeTargetPlans(report *Report, key outputKey, outDir string, destinations []harness.Destination, artifacts []artifact.Artifact, skillLinks map[outputKey]map[string]*skillLinkGroup, artifactMeta map[outputKey]map[string]skillLink, blocked map[string]bool, dryRun bool, mode config.MaterializationMode, repoRoot string, coalescedCodexPartitions map[string]bool, boundary destinationBoundary, preview *compilePhaseResult) *Report {
 	state, stateErr := loadPortableState(repoRoot, key.machineScope)
 	if stateErr != nil {
 		slog.Error("materialize manifest load failed", "target", key.target, "machine_scope", key.machineScope, "error", stateErr)
@@ -1289,6 +1428,18 @@ func executeTargetPlans(report *Report, key outputKey, outDir string, destinatio
 	}
 	state.publicationHook = boundary.manifestPublicationHook
 	fileDesired := make(map[string]bool)
+	for path := range previewKeepPaths(key, outDir, preview) {
+		fileDesired[path] = true
+	}
+	previewMerge := make(map[string][]byte)
+	if preview != nil {
+		for _, plan := range materializePlans(key.target, outDir, previewArtifacts(key, preview), linkedComponents(preview.skillLinks[key]), key.machineScope) {
+			_, mergeArtifacts := splitMergeArtifacts(plan.artifacts)
+			for _, a := range mergeArtifacts {
+				previewMerge[filepath.Join(plan.outDir, filepath.FromSlash(a.Path))] = a.Bytes
+			}
+		}
+	}
 	// Track which plan output directories had merge artifacts, so we can
 	// prune managed merge entries from directories NOT covered by any plan.
 	dirsCoveredByMergePlans := make(map[string]bool)
@@ -1398,7 +1549,7 @@ func executeTargetPlans(report *Report, key outputKey, outDir string, destinatio
 			}
 			mergeArtifacts = retained
 		}
-		mergeReport, mergeDiags, mergeErr := materializeMergeArtifacts(plan.outDir, mergeArtifacts, dryRun, wantPrune, &boundary)
+		mergeReport, mergeDiags, mergeErr := materializeMergeArtifacts(plan.outDir, mergeArtifacts, previewMerge, dryRun, wantPrune, &boundary)
 		if len(mergeArtifacts) > 0 {
 			dirsCoveredByMergePlans[plan.outDir] = true
 		}
@@ -1477,7 +1628,7 @@ func executeTargetPlans(report *Report, key outputKey, outDir string, destinatio
 	} else if !componentBlocked(blocked, "") {
 		protected := nativeAggregatePruneFence(key.target, key.machineScope)
 		protected = extendNativeHookProjectionPruneFence(key.target, key.machineScope, pruneOutDir, destinations, protected)
-		pruneReport, pruneDiags = pruneUncoveredManagedMergeFiles(pruneOutDir, dirsCoveredByMergePlans, dryRun, protected)
+		pruneReport, pruneDiags = pruneUncoveredManagedMergeFiles(pruneOutDir, dirsCoveredByMergePlans, dryRun, protected, previewMerge)
 	} else {
 		pruneReport = &hcc.WriteReport{OutDir: pruneOutDir}
 	}
@@ -1549,7 +1700,7 @@ func executeTargetPlans(report *Report, key outputKey, outDir string, destinatio
 
 		if len(copyLinks) > 0 {
 			copyDirsCovered[groupDir] = true
-			tr, err := syncCommandFiles(groupDir, copyLinks, dryRun, !componentBlocked(blocked, group.installDirRel), &boundary)
+			tr, err := syncCommandFiles(groupDir, copyLinks, dryRun, !componentBlocked(blocked, group.installDirRel), portableSyncContext{target: key.target, reportPrefix: group.reportPrefix, desired: fileDesired, boundary: &boundary})
 			report = appendGroupReport(report, key, outDir, group.reportPrefix, tr, err, "copy command files for target %s to %s")
 		}
 	}
@@ -1559,7 +1710,7 @@ func executeTargetPlans(report *Report, key outputKey, outDir string, destinatio
 	// removal case where the resolved set no longer contains the resource.
 	// Regular files are never pruned by the symlink-oriented artifact plan,
 	// so they must be cleaned up here.
-	report = pruneUncoveredFileCopyDirs(report, key, outDir, copyDirsCovered, blocked, dryRun, &boundary)
+	report = pruneUncoveredFileCopyDirs(report, key, outDir, copyDirsCovered, fileDesired, blocked, dryRun, &boundary)
 
 	// The two manifest-driven prune passes below walk the target's whole
 	// recorded state rather than one component directory, so they cannot be
@@ -1599,7 +1750,7 @@ func executeTargetPlans(report *Report, key outputKey, outDir string, destinatio
 
 // pruneUncoveredFileCopyDirs removes orphaned managed file-copy resources from
 // the target's file-copy install dirs that were not handled by any copy group.
-func pruneUncoveredFileCopyDirs(report *Report, key outputKey, outDir string, covered map[string]bool, blocked map[string]bool, dryRun bool, boundaries ...*destinationBoundary) *Report {
+func pruneUncoveredFileCopyDirs(report *Report, key outputKey, outDir string, covered map[string]bool, fileDesired map[string]bool, blocked map[string]bool, dryRun bool, boundaries ...*destinationBoundary) *Report {
 	info, ok := harness.TargetInfoFor(key.target)
 	if !ok || len(info.FileCopyKinds) == 0 {
 		return report
@@ -1619,7 +1770,11 @@ func pruneUncoveredFileCopyDirs(report *Report, key outputKey, outDir string, co
 		}
 		seen[dir] = true
 		tr := TargetReport{OutDir: dir}
-		if err := pruneStaleCommandFiles(dir, nil, dryRun, &tr, boundaries...); err != nil {
+		var boundary *destinationBoundary
+		if len(boundaries) > 0 {
+			boundary = boundaries[0]
+		}
+		if err := pruneStaleCommandFiles(dir, nil, dryRun, &tr, portableSyncContext{target: key.target, reportPrefix: installDirRel, desired: fileDesired, boundary: boundary}); err != nil {
 			report.Diags = append(report.Diags, diag.Diagnostic{
 				Code:     "materialize.write.error",
 				Severity: diag.SeverityError,
@@ -2304,12 +2459,12 @@ func splitMergeArtifacts(artifacts []artifact.Artifact) ([]artifact.Artifact, []
 	return regular, merge
 }
 
-func materializeMergeArtifacts(outDir string, artifacts []artifact.Artifact, dryRun bool, pruneStaleEntries bool, boundary ...*destinationBoundary) (*hcc.WriteReport, []diag.Diagnostic, error) {
+func materializeMergeArtifacts(outDir string, artifacts []artifact.Artifact, preview map[string][]byte, dryRun bool, pruneStaleEntries bool, boundary ...*destinationBoundary) (*hcc.WriteReport, []diag.Diagnostic, error) {
 	if len(artifacts) == 0 {
 		if !pruneStaleEntries {
 			return &hcc.WriteReport{OutDir: outDir}, nil, nil
 		}
-		pruneReport, pruneDiags := pruneManagedMergeFiles(outDir, dryRun)
+		pruneReport, pruneDiags := pruneUncoveredManagedMergeFiles(outDir, nil, dryRun, nil, preview)
 		return pruneReport, pruneDiags, nil
 	}
 	// Replace any existing symlinks at merge artifact paths with regular
@@ -2319,16 +2474,16 @@ func materializeMergeArtifacts(outDir string, artifacts []artifact.Artifact, dry
 	// symlink target only contains managed entries; we read through it first
 	// so hcc.Materialize can merge from the real content, then replace the
 	// symlink with a regular file.
+	var capturedBoundary *destinationBoundary
+	if len(boundary) > 0 {
+		capturedBoundary = boundary[0]
+	}
 	for _, a := range artifacts {
 		if err := a.Validate(); err != nil {
 			return nil, nil, fmt.Errorf("invalid merge artifact path %q: %w", a.Path, err)
 		}
 		destPath := filepath.Join(outDir, filepath.FromSlash(a.Path))
 		if info, err := os.Lstat(destPath); err == nil && info.Mode()&os.ModeSymlink != 0 {
-			var capturedBoundary *destinationBoundary
-			if len(boundary) > 0 {
-				capturedBoundary = boundary[0]
-			}
 			existing, mode, readErr := markerAliasSnapshot(outDir, destPath, capturedBoundary) // follows symlink
 			// get target file info for permissions
 			if readErr != nil {
@@ -2348,6 +2503,25 @@ func materializeMergeArtifacts(outDir string, artifacts []artifact.Artifact, dry
 				return nil, nil, fmt.Errorf("remove symlink %s: %w", destPath, err)
 			}
 		}
+	}
+	for i := range artifacts {
+		destPath := filepath.Join(outDir, filepath.FromSlash(artifacts[i].Path))
+		previewBytes, ok := preview[destPath]
+		if !ok {
+			continue
+		}
+		existing, _, readErr := markerAliasSnapshot(outDir, destPath, capturedBoundary)
+		if readErr != nil {
+			if nativeAggregateInventoryAbsent(readErr) {
+				continue
+			}
+			return nil, nil, fmt.Errorf("retain preview merge members in %s: %w", artifacts[i].Path, readErr)
+		}
+		augmented, err := retainedPreviewMergeBytes(existing, artifacts[i].Bytes, previewBytes)
+		if err != nil {
+			return nil, nil, fmt.Errorf("retain preview merge members in %s: %w", artifacts[i].Path, err)
+		}
+		artifacts[i].Bytes = augmented
 	}
 	options := []hcc.WriteOption{hcc.WithWriteMode(hcc.WriteModeOverwrite)}
 	if dryRun {
@@ -2380,7 +2554,7 @@ func materializeMergeArtifacts(outDir string, artifacts []artifact.Artifact, dry
 // non-zero: a prune that did not happen is a real failure, exactly as bead .18
 // decided for the refusal itself and bead .20 decided for skipped Devin
 // aggregate entries.
-func pruneUncoveredManagedMergeFiles(outDir string, dirsCoveredByMergePlans map[string]bool, dryRun bool, protected map[string]bool) (*hcc.WriteReport, []diag.Diagnostic) {
+func pruneUncoveredManagedMergeFiles(outDir string, dirsCoveredByMergePlans map[string]bool, dryRun bool, protected map[string]bool, preview map[string][]byte) (*hcc.WriteReport, []diag.Diagnostic) {
 	report := &hcc.WriteReport{OutDir: outDir}
 	var diags []diag.Diagnostic
 	info, err := os.Stat(outDir)
@@ -2427,7 +2601,7 @@ func pruneUncoveredManagedMergeFiles(outDir string, dirsCoveredByMergePlans map[
 			return nil
 		}
 		relSlash := filepath.ToSlash(rel)
-		cleaned, removed, pruneErr := stripManagedEntriesFromFile(path, dryRun)
+		cleaned, removed, pruneErr := stripManagedEntriesFromFile(path, dryRun, previewKeepIdentities(preview[path]))
 		if pruneErr != nil {
 			// PER-FILE failure: report this file and keep walking.
 			diags = append(diags, managedMergePruneDiag(relSlash, path, pruneErr))
@@ -2443,6 +2617,66 @@ func pruneUncoveredManagedMergeFiles(outDir string, dirsCoveredByMergePlans map[
 		return nil
 	})
 	return report, diags
+}
+
+func retainedPreviewMergeBytes(existing, desired, preview []byte) ([]byte, error) {
+	doc, err := jsonc.Parse("", existing)
+	if err != nil || doc.Root().Kind() != jsonc.KindObject {
+		return desired, nil
+	}
+	var desiredDoc, previewDoc map[string]json.RawMessage
+	if err := json.Unmarshal(desired, &desiredDoc); err != nil {
+		return nil, err
+	}
+	if err := json.Unmarshal(preview, &previewDoc); err != nil {
+		return desired, nil
+	}
+	return augmentDesiredWithPreviewManaged(doc, desiredDoc, previewDoc, desired)
+}
+
+func canonicalManagedElemKey(raw json.RawMessage) string {
+	var value map[string]any
+	if err := json.Unmarshal(raw, &value); err != nil || value == nil {
+		return canonicalMemberKey(raw)
+	}
+	value[managedByField] = managedByValue
+	canonical, err := json.Marshal(value)
+	if err != nil {
+		return canonicalMemberKey(raw)
+	}
+	return string(canonical)
+}
+
+func previewKeepIdentities(preview []byte) map[string]bool {
+	if len(preview) == 0 {
+		return nil
+	}
+	doc, err := jsonc.Parse("", preview)
+	if err != nil || doc.Root().Kind() != jsonc.KindObject {
+		return nil
+	}
+	keep := make(map[string]bool)
+	root := doc.Root()
+	for _, container := range root.Keys() {
+		node, ok := root.Member(container)
+		if !ok {
+			continue
+		}
+		switch node.Kind() {
+		case jsonc.KindObject:
+			for _, name := range node.Keys() {
+				keep[container+"\x00key\x00"+name] = true
+			}
+		case jsonc.KindArray:
+			for i := 0; i < node.Len(); i++ {
+				elem, ok := node.Element(i)
+				if ok {
+					keep[container+"\x00elem\x00"+canonicalManagedElemKey(elem.Canonical())] = true
+				}
+			}
+		}
+	}
+	return keep
 }
 
 // managedMergePruneDiag turns a single file's prune failure into a keyed,
@@ -2555,7 +2789,7 @@ func aggregateProtectedPathsFor(info harness.TargetInfo, machineScope bool) map[
 // walks, which was the whole point of bead agent-marketplace-5exj.25: the two
 // callbacks had drifted into two copies of the same abort-the-walk mistake.
 func pruneManagedMergeFiles(outDir string, dryRun bool) (*hcc.WriteReport, []diag.Diagnostic) {
-	return pruneUncoveredManagedMergeFiles(outDir, nil, dryRun, nil)
+	return pruneUncoveredManagedMergeFiles(outDir, nil, dryRun, nil, nil)
 }
 
 // stripManagedEntriesFromFile reads a JSON file, removes all top-level
@@ -2590,7 +2824,7 @@ func pruneManagedMergeFiles(outDir string, dryRun bool) (*hcc.WriteReport, []dia
 // Malformed JSON keeps the historical behaviour of being left completely alone
 // with no error: we never had a coherent view of that file, and failing a sync
 // over a file the user already has to fix by hand adds nothing.
-func stripManagedEntriesFromFile(path string, dryRun bool) (cleaned []byte, removed []string, err error) {
+func stripManagedEntriesFromFile(path string, dryRun bool, keep map[string]bool) (cleaned []byte, removed []string, err error) {
 	data, readErr := os.ReadFile(path)
 	if readErr != nil {
 		return nil, nil, readErr
@@ -2636,6 +2870,9 @@ func stripManagedEntriesFromFile(path string, dryRun bool) (cleaned []byte, remo
 				if !found || !isManagedNode(entry) {
 					continue
 				}
+				if keep[key+"\x00key\x00"+name] {
+					continue // an admitted preview still produces this member
+				}
 				doc.DeleteMember(container, name)
 				removed = append(removed, name)
 			}
@@ -2650,7 +2887,7 @@ func stripManagedEntriesFromFile(path string, dryRun bool) (cleaned []byte, remo
 				if !found {
 					continue
 				}
-				if isManagedNode(entry) {
+				if isManagedNode(entry) && !keep[key+"\x00elem\x00"+canonicalMemberKey(entry.Canonical())] {
 					dropped++
 					if name := nodeStringMember(entry, "name"); name != "" {
 						removed = append(removed, name)
@@ -3385,6 +3622,19 @@ func syncArtifactLinks(outDir string, artifacts []artifact.Artifact, cacheDir st
 		var readBoundary *destinationBoundary
 		if len(portable) > 0 {
 			readBoundary = portable[0].boundary
+			prefix := filepath.ToSlash(reportPrefix)
+			for path := range portableDesired {
+				rel := filepath.ToSlash(path)
+				if prefix != "" && prefix != "." {
+					var ok bool
+					if rel, ok = strings.CutPrefix(rel, prefix+"/"); !ok {
+						continue
+					}
+				}
+				if _, wanted := desired[rel]; !wanted {
+					desired[rel] = ""
+				}
+			}
 		}
 		snapshots := make(map[string]managedLinkSnapshot)
 		stale, staleDiags, err := staleArtifactLinks(outDir, desired, snapshots, readBoundary)
@@ -4164,7 +4414,13 @@ func syncSkillLinks(skillsDir string, links []skillLink, dryRun bool, pruneStale
 	if len(portable) > 0 {
 		readBoundary = portable[0].boundary
 	}
-	entries, err := readPruneDirectory(skillsDir, readBoundary, func(name string) bool { _, keep := desired[name]; return keep }, pruneStaleEntries)
+	keepEntry := func(name string) bool {
+		if _, keep := desired[name]; keep {
+			return true
+		}
+		return portableKeep(reportPrefix, portableDesired, name)
+	}
+	entries, err := readPruneDirectory(skillsDir, readBoundary, keepEntry, pruneStaleEntries)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) && !errors.Is(err, fsboundary.ErrUnsafePath) && !errors.Is(err, fsboundary.ErrGenerationConflict) {
 			return report, nil
@@ -4173,7 +4429,7 @@ func syncSkillLinks(skillsDir string, links []skillLink, dryRun bool, pruneStale
 	}
 	for _, entry := range entries {
 		name := entry.Name()
-		if _, keep := desired[name]; keep {
+		if keepEntry(name) {
 			continue
 		}
 		path := filepath.Join(skillsDir, name)
@@ -4275,11 +4531,8 @@ func ensureDirectoryReplacingSymlink(path string) error {
 // TEMPORARY WORKAROUND: this path exists only because Factory's droid CLI does
 // not follow symlinked command files. Remove it (and TargetInfo.FileCopyKinds)
 // once Factory resolves symlink loading for commands.
-func syncCommandFiles(dir string, links []skillLink, dryRun, pruneStaleEntries bool, boundaries ...*destinationBoundary) (TargetReport, error) {
-	var boundary *destinationBoundary
-	if len(boundaries) > 0 {
-		boundary = boundaries[0]
-	}
+func syncCommandFiles(dir string, links []skillLink, dryRun, pruneStaleEntries bool, portable portableSyncContext) (TargetReport, error) {
+	boundary := portable.boundary
 	report := TargetReport{OutDir: dir}
 	desired := make(map[string][]byte, len(links))
 	linkMeta := make(map[string]skillLink, len(links))
@@ -4359,7 +4612,7 @@ func syncCommandFiles(dir string, links []skillLink, dryRun, pruneStaleEntries b
 	}
 
 	if pruneStaleEntries {
-		if err := pruneStaleCommandFiles(dir, desired, dryRun, &report, boundary); err != nil {
+		if err := pruneStaleCommandFiles(dir, desired, dryRun, &report, portable); err != nil {
 			return report, err
 		}
 	}
@@ -4372,12 +4625,15 @@ func syncCommandFiles(dir string, links []skillLink, dryRun, pruneStaleEntries b
 
 // pruneStaleCommandFiles removes managed command files and stale managed
 // symlinks in dir that are no longer desired. User-owned entries are preserved.
-func pruneStaleCommandFiles(dir string, desired map[string][]byte, dryRun bool, report *TargetReport, boundaries ...*destinationBoundary) error {
-	var readBoundary *destinationBoundary
-	if len(boundaries) > 0 {
-		readBoundary = boundaries[0]
+func pruneStaleCommandFiles(dir string, desired map[string][]byte, dryRun bool, report *TargetReport, portable portableSyncContext) error {
+	readBoundary := portable.boundary
+	keepEntry := func(name string) bool {
+		if _, keep := desired[name]; keep {
+			return true
+		}
+		return portableKeep(portable.reportPrefix, portable.desired, name)
 	}
-	entries, err := readPruneDirectory(dir, readBoundary, func(name string) bool { _, keep := desired[name]; return keep }, true)
+	entries, err := readPruneDirectory(dir, readBoundary, keepEntry, true)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) && !errors.Is(err, fsboundary.ErrUnsafePath) && !errors.Is(err, fsboundary.ErrGenerationConflict) {
 			return nil
@@ -4386,7 +4642,7 @@ func pruneStaleCommandFiles(dir string, desired map[string][]byte, dryRun bool, 
 	}
 	for _, entry := range entries {
 		name := entry.Name()
-		if _, keep := desired[name]; keep {
+		if keepEntry(name) {
 			continue
 		}
 		path := filepath.Join(dir, name)
@@ -4409,10 +4665,7 @@ func pruneStaleCommandFiles(dir string, desired map[string][]byte, dryRun bool, 
 				continue
 			}
 		}
-		var boundary *destinationBoundary
-		if len(boundaries) > 0 {
-			boundary = boundaries[0]
-		}
+		boundary := portable.boundary
 		var cleanupErr error
 		if info.Mode()&os.ModeSymlink != 0 {
 			cleanupErr = pruneManagedLink(path, snapshot, boundary, dryRun)

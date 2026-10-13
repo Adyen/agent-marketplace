@@ -162,8 +162,12 @@ nouns: one domain (`infra`, `security`, `platform`) plus technologies (`k8s`,
 maps with `name` and optional `kind`, `registry`, `path`. Kinds are `skill`,
 `command`, `subagent`, `hook`, `mcp`; `collection` is not accepted. A
 prerequisite is met by any selected resource of that kind and name, from any
-source; `registry` and `path` only improve the suggested install command.
-Unmet prerequisites warn and never install anything. Items with an unknown kind
+source. By default `registry` and `path` only improve the suggested install
+command and unmet prerequisites warn without installing anything; a consumer
+who sets `requires.expand: true` opts in to selecting prerequisites
+transitively, and then the hints steer lookup against sources that consumer
+already configured (never fetched). See
+`site/docs/reference/resource-prerequisites.md`. Items with an unknown kind
 or no `name` are skipped with a log warning.
 
 ## Collections

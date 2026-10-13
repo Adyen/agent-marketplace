@@ -5192,6 +5192,93 @@ harnesses:
 			{Args: []string{"update", "--verbose"}, MustPass: true, OutContains: []string{"Configured registry entries: 1", "Marketplace pins updated: 0"}, OutNotContains: []string{"Organization-managed Marketplace pins:"}, Symlinks: []string{"/workspace/.factory/skills/review"}},
 		},
 	},
+	// spec: resource-prerequisites/unhinted-prerequisite-uses-the-requiring-source-root
+	// spec: resource-prerequisites/disabled-expansion-preserves-selection-while-previewing-prerequisites
+	{
+		Name: "requires/same_source_expansion_selects_implied",
+		Desc: "Given a skill requiring a sibling in the same source, When expansion is enabled and sync runs, Then the implied prerequisite is selected and materialized; when expansion is disabled the existing output is preserved as an advisory preview",
+		Registries: []RegistryDef{
+			{
+				Name: "requires-same-source",
+				Skills: []Skill{
+					{Name: "parent", Requires: []string{"skill:child"}},
+					{Name: "child"},
+				},
+			},
+		},
+		GlobalCfg: "apiVersion: agent-marketplace/v4\nharnesses: [factory]\n",
+		RepoCfg:   "apiVersion: agent-marketplace/v4\nrequires: {expand: true}\nsources:\n  tools: {git: '{{REG:requires-same-source}}', ref: main}\nresources:\n  tools: {include: [skill/parent]}\n",
+		Steps: []Step{
+			{Args: []string{"sync"}, MustPass: true,
+				Symlinks: []string{"/workspace/.factory/skills/parent", "/workspace/.factory/skills/child"}},
+			{
+				Action:   ActionWriteRepoConfig,
+				Body:     "apiVersion: agent-marketplace/v4\nrequires: {expand: false}\nsources:\n  tools: {git: '{{REG:requires-same-source}}', ref: main}\nresources:\n  tools: {include: [skill/parent]}\n",
+				Args:     []string{"sync"},
+				MustPass: true,
+				OutContains: []string{
+					`warning: skill "parent" requires skill "child", but it is not selected`,
+				},
+				Symlinks: []string{"/workspace/.factory/skills/child"},
+			},
+		},
+	},
+	// spec: resource-prerequisites/configured-git-hint-narrows-lookup-to-its-root
+	{
+		Name: "requires/configured_cross_source_hint",
+		Desc: "Given a skill requiring a resource from another configured source, When expansion is enabled and sync runs, Then the implied prerequisite is admitted from the hinted source",
+		Registries: []RegistryDef{
+			{
+				Name:   "requires-provider",
+				Skills: []Skill{{Name: "child"}, {Name: "other"}},
+			},
+			{
+				Name: "requires-requirer",
+				Files: map[string]string{
+					"skills/parent/SKILL.md": "---\nname: parent\ndescription: Requiring skill\nmetadata:\n  requires:\n    - kind: skill\n      name: child\n      registry: {{REG:requires-provider}}\n---\n\n# parent\n",
+				},
+			},
+		},
+		GlobalCfg: "apiVersion: agent-marketplace/v4\nharnesses: [factory]\n",
+		RepoCfg: "apiVersion: agent-marketplace/v4\nrequires: {expand: true}\nsources:\n  provider: {git: '{{REG:requires-provider}}', ref: main}\n  requirer: {git: '{{REG:requires-requirer}}', ref: main}\nresources:\n  provider: {include: [skill/other]}\n  requirer: {include: [skill/parent]}\n",
+		Steps: []Step{
+			{Args: []string{"sync"}, MustPass: true,
+				Symlinks: []string{
+					"/workspace/.factory/skills/parent",
+					"/workspace/.factory/skills/other",
+					"/workspace/.factory/skills/child",
+				}},
+		},
+	},
+	// spec: resource-prerequisites/unconfigured-git-hint-has-no-fallback
+	{
+		Name: "requires/unconfigured_hint_has_no_fallback",
+		Desc: "Given a skill requiring a resource from an unconfigured source, When expansion is enabled and sync runs, Then the requirement stays unmet with no fallback to the requiring source",
+		Registries: []RegistryDef{
+			{
+				Name: "requires-unconfigured",
+				Skills: []Skill{
+					{Name: "child"},
+				},
+				Files: map[string]string{
+					"skills/parent/SKILL.md": "---\nname: parent\ndescription: Requiring skill\nmetadata:\n  requires:\n    - kind: skill\n      name: child\n      registry: https://example.invalid/not-configured.git\n---\n\n# parent\n",
+				},
+			},
+		},
+		GlobalCfg: "apiVersion: agent-marketplace/v4\nharnesses: [factory]\n",
+		RepoCfg: "apiVersion: agent-marketplace/v4\nrequires: {expand: true}\nsources:\n  tools: {git: '{{REG:requires-unconfigured}}', ref: main}\nresources:\n  tools: {include: [skill/parent]}\n",
+		Steps: []Step{
+			{
+				Args:     []string{"sync"},
+				MustPass: true,
+				OutContains: []string{
+					`warning: skill "parent" requires skill "child", but it is not selected`,
+				},
+				Symlinks:    []string{"/workspace/.factory/skills/parent"},
+				FilesAbsent: []string{"/workspace/.factory/skills/child"},
+			},
+		},
+	},
 }
 
 // ---------- parallelism configuration ----------
@@ -5371,7 +5458,11 @@ func TestE2E(t *testing.T) {
 			// Seed registries and collect their file:// URLs.
 			urls := make(map[string]string)
 			for _, reg := range tc.Registries {
-				urls[reg.Name] = env.CreateBareRepo(reg.Name, reg.FilesMap())
+				files := reg.FilesMap()
+				for p, content := range files {
+					files[p] = resolvePlaceholders(content, urls)
+				}
+				urls[reg.Name] = env.CreateBareRepo(reg.Name, files)
 			}
 
 			// Write initial config layers (placeholders resolved).

@@ -103,10 +103,17 @@ func (codexOwnedAggregateHandler) malformedDiagnostic(key outputKey, resource st
 	return diag.Diagnostic{Code: diag.CodeMaterializeCodexAggregateMalformed, Severity: diag.SeverityError, Target: string(key.target), Resource: resource, Message: err.Error()}
 }
 
-func (codexOwnedAggregateHandler) reconcile(ctx context.Context, report *Report, state ownedAggregateState, key outputKey, _ string, destinations []harness.Destination, dryRun bool) *Report {
+func (codexOwnedAggregateHandler) reconcile(ctx context.Context, report *Report, state ownedAggregateState, previewState ownedAggregateState, key outputKey, _ string, destinations []harness.Destination, dryRun bool) *Report {
 	current, _ := state.get(key).(*codexOwnedAggregateState)
 	if current == nil {
 		current = &codexOwnedAggregateState{}
+	}
+	preview, _ := previewState.get(key).(*codexOwnedAggregateState)
+	var previewHooks *ownedJSONAggregateWork
+	var previewMCPs []codexMCPEntry
+	if preview != nil {
+		previewHooks = preview.hooks
+		previewMCPs = preview.mcps
 	}
 	for _, destination := range destinations {
 		if !destination.Info.OwnershipReconciledAggregates {
@@ -116,8 +123,8 @@ func (codexOwnedAggregateHandler) reconcile(ctx context.Context, report *Report,
 		hookOptions.rootID = destination.ID
 		hookOptions.onWrite = appendCodexTrustReviewDiagnostic
 		hookFile := ownedJSONFileSpec{rel: codexHooksFile, container: codexHooksContainer, rawValueDigest: true}
-		report = reconcileOwnedJSONAggregates(ctx, report, key, destination.Root, []ownedJSONFileSpec{hookFile}, current.hooks, hookOptions, dryRun)
-		return reconcileCodexMCP(ctx, report, key, destination.ID, destination.Root, current.mcps, current.blocked, dryRun)
+		report = reconcileOwnedJSONAggregates(ctx, report, key, destination.Root, []ownedJSONFileSpec{hookFile}, current.hooks, previewHooks, hookOptions, dryRun)
+		return reconcileCodexMCP(ctx, report, key, destination.ID, destination.Root, current.mcps, previewMCPs, current.blocked, dryRun)
 	}
 	return report
 }
@@ -401,7 +408,7 @@ func lineEnd(raw []byte, offset int) int {
 	return len(raw)
 }
 
-func reconcileCodexMCP(ctx context.Context, report *Report, key outputKey, rootID, root string, desired []codexMCPEntry, incomplete, dryRun bool) *Report {
+func reconcileCodexMCP(ctx context.Context, report *Report, key outputKey, rootID, root string, desired, preview []codexMCPEntry, incomplete, dryRun bool) *Report {
 	slog.Debug("Codex MCP reconciliation start", "target", key.target, "machine_scope", key.machineScope, "root", root, "desired_entries", len(desired), "incomplete", incomplete, "dry_run", dryRun)
 	seen := make(map[string]string, len(desired))
 	for _, entry := range desired {
@@ -471,8 +478,18 @@ func reconcileCodexMCP(ctx context.Context, report *Report, key outputKey, rootI
 		}
 		var edits []edit
 		owned := make([]ownership.Entry, 0, len(desired)+len(drift.Stale))
+		previewKeep := make(map[string]bool, len(preview))
+		for _, entry := range preview {
+			previewKeep[ownedAggregateIDKey(entry.id())] = true
+		}
 		if !incomplete {
 			for _, id := range drift.Stale {
+				if previewKeep[ownedAggregateIDKey(id)] {
+					if recorded, ok := proof.Entry(id); ok {
+						owned = append(owned, recorded)
+					}
+					continue
+				}
 				if section, ok := sections[id.Key]; ok {
 					if section.alternate {
 						report.Diags = append(report.Diags, diag.Diagnostic{Code: diag.CodeMaterializeCodexAggregateUnpatchable, Severity: diag.SeverityError, Target: string(key.target), Resource: id.Key, Message: fmt.Sprintf("Codex MCP server %q uses an alternate TOML form that cannot be pruned safely; existing entry preserved", id.Key)})

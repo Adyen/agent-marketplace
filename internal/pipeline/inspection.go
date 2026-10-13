@@ -69,7 +69,8 @@ func Inspect(ctx context.Context, opts InspectOptions) (InspectionResult, func()
 			dryRun = materialize.Run
 		}
 		report, matErr = dryRun(ctx, opts.Resolve.Workspace.MaterializeRoot(), resolved.Resolved,
-			materialize.WithDryRun(), materialize.WithMaterializationModes(resolved.MaterializationModes))
+			materialize.WithDryRun(), materialize.WithMaterializationModes(resolved.MaterializationModes),
+			materialize.WithImpliedPreview(resolved.ImpliedPreview))
 	}
 	return buildInspection(resolved, report, matErr), release
 }

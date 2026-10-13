@@ -329,7 +329,8 @@ func Remove(ctx context.Context, opts RemoveOptions) (result *RemoveResult, retE
 		return &RemoveResult{RemovedName: name, CollectionVia: target.Via, InferredUserScope: inferredUserScope}, nil
 	}
 
-	if err := removeResource(opts.RepoRoot, effective, opts.configStaging, repoCfg, target, name, opts.ScopeSpecified); err != nil {
+	stillRequired := len(target.RequiredBy) > 0 && mergedCfg.RequiresExpansionEnabled()
+	if err := removeResource(opts.RepoRoot, effective, opts.configStaging, repoCfg, target, name, opts.ScopeSpecified, stillRequired); err != nil {
 		return nil, enrichRemoveError(err, name, target)
 	}
 
@@ -746,7 +747,7 @@ func excludeCollectionMember(repoRoot string, scope Scope, staging *configStagin
 	return editRemovalSelection(repoRoot, scope, staging, registryEntryForResolved(target), target.Kind, name, config.SelectionExclude)
 }
 
-func removeResource(repoRoot string, scope Scope, staging *configStagingManager, repoCfg *config.Config, target *resolver.ResolvedArtifact, name string, scopeSpecified bool) error {
+func removeResource(repoRoot string, scope Scope, staging *configStagingManager, repoCfg *config.Config, target *resolver.ResolvedArtifact, name string, scopeSpecified bool, stillRequired bool) error {
 	entry := registryEntryForResolved(target)
 	switch scope {
 	case ScopeUser:
@@ -757,6 +758,9 @@ func removeResource(repoRoot string, scope Scope, staging *configStagingManager,
 		operation, err := removalSelectionOperation(destination, entry, target.Kind, name)
 		if err != nil {
 			return err
+		}
+		if stillRequired {
+			operation = config.SelectionExclude
 		}
 		return editRemovalSelection(repoRoot, scope, staging, entry, target.Kind, name, operation)
 
@@ -798,6 +802,9 @@ func removeResource(repoRoot string, scope Scope, staging *configStagingManager,
 		operation, err := removalSelectionOperation(destination, entry, target.Kind, name)
 		if err != nil {
 			return err
+		}
+		if stillRequired {
+			operation = config.SelectionExclude
 		}
 		return editRemovalSelection(repoRoot, scope, staging, entry, target.Kind, name, operation)
 	}

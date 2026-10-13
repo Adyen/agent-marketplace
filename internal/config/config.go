@@ -413,6 +413,12 @@ type LoggingConfig struct {
 	Compress   *bool   `yaml:"compress,omitempty"`
 }
 
+// RequiresConfig controls opt-in resource-requirement expansion. The pointer
+// preserves an explicit false as distinct from an absent value during merges.
+type RequiresConfig struct {
+	Expand *bool `yaml:"expand,omitempty"`
+}
+
 type IncludePaths []string
 
 func (p *IncludePaths) UnmarshalYAML(value *yaml.Node) error {
@@ -486,6 +492,16 @@ type Config struct {
 	// Telemetry is the machine-scope telemetry policy. It is only allowed in
 	// the organization and user-personal configuration layers.
 	Telemetry *telemetryconfig.TelemetryConfig `yaml:"telemetry,omitempty"`
+
+	// Requires carries the v4 requires.* settings. Legacy schemas do not
+	// model it and receive the release default instead.
+	Requires *RequiresConfig `yaml:"-"`
+}
+
+// RequiresExpansionEnabled reports whether resource-requirement expansion is
+// enabled. The release default is false when no layer declares the setting.
+func (c *Config) RequiresExpansionEnabled() bool {
+	return c != nil && c.Requires != nil && c.Requires.Expand != nil && *c.Requires.Expand
 }
 
 // SelectorForKind returns the top-level KindSelector for the given resource
@@ -555,6 +571,10 @@ type LocalConfig struct {
 	// Materialization is a project-only override. It never changes the
 	// user-wide policy resolved from ~/.agents/config.yaml.
 	Materialization *MaterializationConfig `yaml:"materialization,omitempty"`
+
+	// Requires carries the v4 requires.* settings. Legacy local schemas do
+	// not model it.
+	Requires *RequiresConfig `yaml:"-"`
 }
 
 // SelectorForKind returns the KindSelector for the given resource kind.

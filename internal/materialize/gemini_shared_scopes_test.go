@@ -81,7 +81,7 @@ func TestGeminiSharedScopeDecodeErrorsIncludeContext(t *testing.T) {
 			if !strings.Contains(err.Error(), artifactPath) {
 				t.Fatalf("decode error omits artifact context: %v", err)
 			}
-			report := executeMaterializePlans(t.Context(), result, false, home, config.MaterializationModes{})
+			report := executeMaterializePlans(t.Context(), result, false, home, config.MaterializationModes{}, nil)
 			if !hasDiagCode(report.Diags, "materialize.destination.overlap") || len(report.Diags) != 1 || report.Diags[0].Message != err.Error() {
 				t.Fatalf("decode error context did not reach the diagnostic: %+v", report.Diags)
 			}

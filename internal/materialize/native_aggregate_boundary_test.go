@@ -329,9 +329,9 @@ func TestNativeAggregateEmptyDesiredGuardsRefuseHardlinks(t *testing.T) {
 				key := outputKey{target: target}
 				var report TargetReport
 				if target == hcc.TargetGemini {
-					report, _, err = syncGeminiNativeAggregate(t.Context(), key, destination, empty, true, true)
+					report, _, err = syncGeminiNativeAggregate(t.Context(), key, destination, empty, nil, true, true)
 				} else {
-					report, err = syncNativeAggregate(key, destination, destination.AggregateFile, empty, true, true)
+					report, err = syncNativeAggregate(key, destination, destination.AggregateFile, empty, nil, true, true)
 				}
 				if !errors.Is(err, fsboundary.ErrUnsafeFile) || len(report.Written)+len(report.Removed)+len(report.Skipped) != 0 {
 					t.Fatalf("empty-desired guard hid unsafe snapshot: %+v %v", report, err)

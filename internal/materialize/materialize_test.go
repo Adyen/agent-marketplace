@@ -2088,7 +2088,7 @@ func TestStripManagedEntriesFromFile_ArrayContainer(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	cleaned, removed, err := stripManagedEntriesFromFile(path, false)
+	cleaned, removed, err := stripManagedEntriesFromFile(path, false, nil)
 	if err != nil {
 		t.Fatalf("stripManagedEntriesFromFile: %v", err)
 	}
@@ -4013,7 +4013,7 @@ func TestStripManagedEntriesFromFileSkipsFilesWithoutMarker(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	cleaned, removed, err := stripManagedEntriesFromFile(path, false)
+	cleaned, removed, err := stripManagedEntriesFromFile(path, false, nil)
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
@@ -4032,7 +4032,7 @@ func TestStripManagedEntriesFromFileInvalidJson(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, removed, err := stripManagedEntriesFromFile(path, false)
+	_, removed, err := stripManagedEntriesFromFile(path, false, nil)
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}

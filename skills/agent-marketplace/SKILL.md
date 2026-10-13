@@ -243,12 +243,16 @@ record fails with `v4.marketplace-lock-required`/`-mismatch`.
 
 ## Resource prerequisites
 
-Resources declare advisory prerequisites in their own frontmatter
-(`metadata.requires`), never in `.agents/config.yaml`. A prerequisite is met
-when a resource of that kind and name is selected from any source or layer.
-Unmet prerequisites warn during `install`, `sync`, `sync --check`, and `doctor`,
-and appear under `UNMET REQUIREMENTS` in `status`; they never install anything,
-never override an exclude, and never fail `sync --check`.
+Resources declare prerequisites in their own frontmatter
+(`metadata.requires`), never in `.agents/config.yaml`. They are advisory by
+default: a prerequisite is met when a resource of that kind and name is
+selected from any source or layer, unmet prerequisites warn during `install`,
+`sync`, `sync --check`, and `doctor` and appear under `UNMET REQUIREMENTS` in
+`status`, and they never override an exclude or fail `sync --check` — only
+`sync --strict` (including `sync --strict --check`) exits nonzero. Setting
+`requires.expand: true` in a v4 layer opts in to selecting prerequisites
+transitively from already-configured sources; see
+`site/docs/reference/resource-prerequisites.md` for the reference.
 
 ## Migrating legacy configs
 

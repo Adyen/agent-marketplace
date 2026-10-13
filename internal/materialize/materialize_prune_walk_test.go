@@ -124,7 +124,7 @@ func TestPruneWalkRefusesOneFileAndKeepsPruningTheRest(t *testing.T) {
 		{
 			name: "pruneUncoveredManagedMergeFiles",
 			run: func(outDir string) (*hcc.WriteReport, []diag.Diagnostic) {
-				return pruneUncoveredManagedMergeFiles(outDir, nil, false, nil)
+				return pruneUncoveredManagedMergeFiles(outDir, nil, false, nil, nil)
 			},
 		},
 	}
