@@ -231,7 +231,7 @@ comma := ,
 AM_E2E_UPGRADE_IMAGE ?= $(GO_BUILD_IMAGE)
 AM_E2E_RELEASED_IMAGE ?= $(GO_BUILD_IMAGE)
 UPGRADE_GATE_TESTS := TestPreV4ReleaseUpgrade,TestPreV4GitLockUpgrade,TestPreV4AggregateOwnershipUpgrade,TestPreV4LocalLayerUpgrade,TestPreV4DuplicateRefUpgrade
-RELEASED_CLIENT_GATE_TESTS := TestReleasedClientReadsCandidateCommittedState
+RELEASED_CLIENT_GATE_TESTS := TestReleasedClientReadsCandidateCommittedState,TestReleasedClientLockVerifiesNativeHookSourceLayouts,TestReleasedClientHookOutputUpgrades
 
 upgrade-gate:
 	@test -n "$(AM_E2E_PRE_V4_BINARY)" || { echo "ERROR: AM_E2E_PRE_V4_BINARY must point to the verified v3.1.1 Linux release" >&2; exit 1; }
