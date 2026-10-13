@@ -1,6 +1,7 @@
+import { realpathSync } from 'node:fs'
 import { createServer } from 'node:http'
 import { pipeline } from 'node:stream'
-import { pathToFileURL } from 'node:url'
+import { fileURLToPath } from 'node:url'
 
 const port = Number(process.env.E2E_SHARED_ORIGIN_PORT || 4323)
 const siteOrigin = process.env.E2E_SITE_ORIGIN || 'http://127.0.0.1:4324'
@@ -61,7 +62,7 @@ export function createSharedOriginProxy(origins = { siteOrigin, marketplaceOrigi
   })
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (process.argv[1] && realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const server = createSharedOriginProxy()
   server.listen(port, '127.0.0.1')
 

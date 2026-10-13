@@ -216,16 +216,16 @@ func rejectTelemetryRedirect(*http.Request, []*http.Request) error { return http
 // buildRouteClients builds the HTTP clients used for live exports and for
 // draining queued payloads to endpoint. The live client queues failed payloads.
 func buildRouteClients(endpoint string, headers map[string]string, caFile string, allowInsecure bool, route, signal string, onFailure func(error), q *Queue) (*http.Client, *http.Client, error) {
-	slog.Info("building route clients", "route", route, "signal", signal, "endpoint", endpoint)
+	slog.Info("building route clients", "route", route, "signal", signal, "endpoint", logvalue.Safe(endpoint))
 
 	if err := tmcfg.ValidateEndpoint(endpoint, allowInsecure); err != nil {
-		slog.Error("invalid telemetry endpoint", "endpoint", endpoint, "error", logvalue.Safe(err))
+		slog.Error("invalid telemetry endpoint", "endpoint", logvalue.Safe(endpoint), "error", logvalue.Safe(err))
 		return nil, nil, err
 	}
 
 	_, err := url.Parse(endpoint)
 	if err != nil {
-		slog.Error("failed to parse telemetry endpoint", "endpoint", endpoint, "error", logvalue.Safe(err))
+		slog.Error("failed to parse telemetry endpoint", "endpoint", logvalue.Safe(endpoint), "error", logvalue.Safe(err))
 		return nil, nil, fmt.Errorf("parse endpoint: %w", err)
 	}
 
@@ -236,7 +236,7 @@ func buildRouteClients(endpoint string, headers map[string]string, caFile string
 		tlsCfg, err := tlsConfig(caFile)
 		if err != nil {
 			transportCacheMu.Unlock()
-			slog.Error("failed to build tls config", "ca_file", caFile, "error", logvalue.Safe(err))
+			slog.Error("failed to build tls config", "ca_file", logvalue.Safe(caFile), "error", logvalue.Safe(err))
 			return nil, nil, err
 		}
 
@@ -292,11 +292,11 @@ func buildMetricExporter(ctx context.Context, live *http.Client, endpoint string
 }
 
 func buildMetricExporterWithTemporality(ctx context.Context, live *http.Client, endpoint string, headers map[string]string, temporality sdkmetric.TemporalitySelector) (sdkmetric.Exporter, error) {
-	slog.Debug("building metric exporter", "endpoint", endpoint)
+	slog.Debug("building metric exporter", "endpoint", logvalue.Safe(endpoint))
 
 	ep, err := buildSignalEndpoint(endpoint, queueSubdirMetrics)
 	if err != nil {
-		slog.Error("failed to build metric endpoint", "endpoint", endpoint, "error", logvalue.Safe(err))
+		slog.Error("failed to build metric endpoint", "endpoint", logvalue.Safe(endpoint), "error", logvalue.Safe(err))
 		return nil, err
 	}
 
@@ -311,20 +311,20 @@ func buildMetricExporterWithTemporality(ctx context.Context, live *http.Client, 
 		otlpmetrichttp.WithAggregationSelector(sdkmetric.DefaultAggregationSelector),
 	)
 	if err != nil {
-		slog.Error("failed to build metric exporter", "endpoint", endpoint, "error", logvalue.Safe(err))
+		slog.Error("failed to build metric exporter", "endpoint", logvalue.Safe(endpoint), "error", logvalue.Safe(err))
 		return nil, err
 	}
 
-	slog.Debug("metric exporter built", "endpoint", endpoint)
+	slog.Debug("metric exporter built", "endpoint", logvalue.Safe(endpoint))
 	return exp, nil
 }
 
 func buildTraceExporter(ctx context.Context, live *http.Client, endpoint string, headers map[string]string) (sdktrace.SpanExporter, error) {
-	slog.Debug("building trace exporter", "endpoint", endpoint)
+	slog.Debug("building trace exporter", "endpoint", logvalue.Safe(endpoint))
 
 	ep, err := buildSignalEndpoint(endpoint, queueSubdirTraces)
 	if err != nil {
-		slog.Error("failed to build trace endpoint", "endpoint", endpoint, "error", logvalue.Safe(err))
+		slog.Error("failed to build trace endpoint", "endpoint", logvalue.Safe(endpoint), "error", logvalue.Safe(err))
 		return nil, err
 	}
 
@@ -337,11 +337,11 @@ func buildTraceExporter(ctx context.Context, live *http.Client, endpoint string,
 		otlptracehttp.WithTimeout(30*time.Second),
 	)
 	if err != nil {
-		slog.Error("failed to build trace exporter", "endpoint", endpoint, "error", logvalue.Safe(err))
+		slog.Error("failed to build trace exporter", "endpoint", logvalue.Safe(endpoint), "error", logvalue.Safe(err))
 		return nil, err
 	}
 
-	slog.Debug("trace exporter built", "endpoint", endpoint)
+	slog.Debug("trace exporter built", "endpoint", logvalue.Safe(endpoint))
 	return exp, nil
 }
 

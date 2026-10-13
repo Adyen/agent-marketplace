@@ -1048,12 +1048,12 @@ func (s *Server) handleResourceDetail(w http.ResponseWriter, r *http.Request, re
 			writeError(w, http.StatusNotFound, "resource not found")
 			return
 		}
-		slog.Error("resource detail failed", "coord", coord, "err", logvalue.Safe(err))
+		slog.Error("resource detail failed", "coord", logvalue.Safe(coord), "err", logvalue.Safe(err))
 		writeError(w, http.StatusInternalServerError, "failed to load resource")
 		return
 	}
 	if err := validatePublicResourceRevisionMatches(rev, coord, ""); err != nil {
-		slog.Error("resource detail contains invalid revision", "coord", coord, "err", logvalue.Safe(err))
+		slog.Error("resource detail contains invalid revision", "coord", logvalue.Safe(coord), "err", logvalue.Safe(err))
 		writeError(w, http.StatusInternalServerError, "failed to load resource")
 		return
 	}
@@ -1081,13 +1081,13 @@ func (s *Server) handleResourceRevisions(w http.ResponseWriter, r *http.Request,
 	coord := store.ResourceCoordinate{Marketplace: s.mpID, Registry: src.ID, Kind: kind, Name: name}
 	revs, err := s.meta.ListResourceRevisions(r.Context(), coord)
 	if err != nil {
-		slog.Error("list revisions failed", "coord", coord, "err", logvalue.Safe(err))
+		slog.Error("list revisions failed", "coord", logvalue.Safe(coord), "err", logvalue.Safe(err))
 		writeError(w, http.StatusInternalServerError, "failed to load revisions")
 		return
 	}
 	for i, rev := range revs {
 		if err := validatePublicResourceRevisionMatches(rev, coord, ""); err != nil {
-			slog.Error("resource revisions contain invalid revision", "coord", coord, "err", logvalue.Safe(err))
+			slog.Error("resource revisions contain invalid revision", "coord", logvalue.Safe(coord), "err", logvalue.Safe(err))
 			writeError(w, http.StatusInternalServerError, "failed to load revisions")
 			return
 		}
@@ -1129,12 +1129,12 @@ func (s *Server) handleResourceRevision(w http.ResponseWriter, r *http.Request, 
 			writeError(w, http.StatusNotFound, "revision not found")
 			return
 		}
-		slog.Error("revision detail failed", "coord", coord, "digest", logvalue.Safe(digest), "err", logvalue.Safe(err))
+		slog.Error("revision detail failed", "coord", logvalue.Safe(coord), "digest", logvalue.Safe(digest), "err", logvalue.Safe(err))
 		writeError(w, http.StatusInternalServerError, "failed to load revision")
 		return
 	}
 	if err := validatePublicResourceRevisionMatches(rev, coord, digest); err != nil {
-		slog.Error("revision detail contains invalid revision", "coord", coord, "digest", logvalue.Safe(digest), "err", logvalue.Safe(err))
+		slog.Error("revision detail contains invalid revision", "coord", logvalue.Safe(coord), "digest", logvalue.Safe(digest), "err", logvalue.Safe(err))
 		writeError(w, http.StatusInternalServerError, "failed to load revision")
 		return
 	}

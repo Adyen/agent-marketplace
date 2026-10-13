@@ -20,7 +20,20 @@ func (logFailureMetadata) GetRegistryBySlug(context.Context, string) (store.Regi
 	return store.Registry{}, errors.New("store failure\r\nforged record")
 }
 
-func TestRegistryFailureEncodesLogAttributes(t *testing.T) {
+type coordinateFailureMetadata struct {
+	store.MetadataStore
+}
+
+func (coordinateFailureMetadata) GetRegistryBySlug(context.Context, string) (store.Registry, error) {
+	return store.Registry{ID: "registry"}, nil
+}
+
+func (coordinateFailureMetadata) GetLatestResourceRevision(context.Context, store.ResourceCoordinate) (store.AssessedResourceRevision, error) {
+	return store.AssessedResourceRevision{}, errors.New("store failure")
+}
+
+func captureLogAttributes(t *testing.T) map[string]string {
+	t.Helper()
 	previous := slog.Default()
 	t.Cleanup(func() { slog.SetDefault(previous) })
 	attributes := map[string]string{}
@@ -30,6 +43,11 @@ func TestRegistryFailureEncodesLogAttributes(t *testing.T) {
 			return attr
 		},
 	})))
+	return attributes
+}
+
+func TestRegistryFailureEncodesLogAttributes(t *testing.T) {
+	attributes := captureLogAttributes(t)
 	server := &Server{meta: logFailureMetadata{}}
 	response := httptest.NewRecorder()
 	server.handleRegistryDetail(response, httptest.NewRequest(http.MethodGet, "/api/v1/registries/example", nil), "registry\r\nforged")
@@ -38,5 +56,19 @@ func TestRegistryFailureEncodesLogAttributes(t *testing.T) {
 	}
 	if attributes["registry"] != `registry\r\nforged` || attributes["err"] != `store failure\r\nforged record` {
 		t.Fatalf("unencoded failure attributes: %#v", attributes)
+	}
+}
+
+// spec: configuration-settings/untrusted-log-values-cannot-create-records
+func TestResourceFailureEncodesCoordinateLogAttribute(t *testing.T) {
+	attributes := captureLogAttributes(t)
+	server := &Server{mpID: "mp", meta: coordinateFailureMetadata{}}
+	response := httptest.NewRecorder()
+	server.handleResourceDetail(response, httptest.NewRequest(http.MethodGet, "/api/v1/resources/registry/skill/example", nil), "registry", "skill", "name\r\nforged")
+	if response.Code != http.StatusInternalServerError {
+		t.Fatalf("response = %d, want 500", response.Code)
+	}
+	if attributes["coord"] != `mp/registry/skill/name\r\nforged` || attributes["err"] != "store failure" {
+		t.Fatalf("unencoded coordinate attributes: %#v", attributes)
 	}
 }

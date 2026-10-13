@@ -12,6 +12,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -76,6 +77,32 @@ func TestAuthHeaderResolution(t *testing.T) {
 	}
 	if gotHeaders.Get("X-Tenant") != "tenant-42" {
 		t.Fatalf("x-tenant header = %q, want tenant-42", gotHeaders.Get("X-Tenant"))
+	}
+}
+
+// spec: configuration-settings/untrusted-log-values-cannot-create-records
+func TestRouteClientLogsEncodeConfiguredValues(t *testing.T) {
+	previous := slog.Default()
+	t.Cleanup(func() { slog.SetDefault(previous) })
+	var values []string
+	slog.SetDefault(slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{
+		ReplaceAttr: func(_ []string, attr slog.Attr) slog.Attr {
+			if attr.Key == "endpoint" || attr.Key == "ca_file" {
+				values = append(values, attr.Key+"="+attr.Value.String())
+			}
+			return attr
+		},
+	})))
+	q := NewQueue(filepath.Join(t.TempDir(), "queue"))
+	if _, _, err := buildRouteClients("http://127.0.0.1/\r\nforged", nil, "", false, "primary", queueSubdirMetrics, nil, q); err == nil {
+		t.Fatal("endpoint with line breaks accepted")
+	}
+	if _, _, err := buildRouteClients("http://127.0.0.1:1", nil, filepath.Join(t.TempDir(), "missing\r\nforged.pem"), false, "primary", queueSubdirMetrics, nil, q); err == nil {
+		t.Fatal("missing CA file accepted")
+	}
+	want := []string{`endpoint=http://127.0.0.1/\r\nforged`, `endpoint=http://127.0.0.1/\r\nforged`, "endpoint=http://127.0.0.1:1"}
+	if len(values) != 4 || !slices.Equal(values[:3], want) || !strings.HasSuffix(values[3], `missing\r\nforged.pem`) || strings.ContainsAny(values[3], "\r\n") {
+		t.Fatalf("logged configured values = %q", values)
 	}
 }
 
