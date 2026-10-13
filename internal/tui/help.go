@@ -76,13 +76,22 @@ func renderErrors(m Model) string {
 		}
 	}
 	categories := m.diagnosticCategories()
+	categoryFor := func(severity diagnosticSeverity, err error) diagnosticCategory {
+		key := diagnosticCategoryKey{severity: severity, stableKey: stableDiagnosticKey(err)}
+		queue := categories[key]
+		if len(queue) == 0 {
+			return ""
+		}
+		categories[key] = queue[1:]
+		return queue[0]
+	}
 
 	if len(m.errs) > 0 {
 		b.WriteString(styleErrorTitle.Render(fmt.Sprintf("Errors (%d)", len(m.errs))))
 		b.WriteString("\n\n")
 		for _, err := range m.errs {
 			writeDiagnostic(textStyle(m.currentTheme()), "• ", err.Error())
-			writeRecovery(textStyle(m.currentTheme()), err, categories[stableDiagnosticKey(err)])
+			writeRecovery(textStyle(m.currentTheme()), err, categoryFor(diagnosticError, err))
 		}
 	}
 
@@ -107,7 +116,7 @@ func renderErrors(m Model) string {
 		for _, w := range m.warnings {
 			writeDiagnostic(styleWarningMsg, "• ", w.Error())
 			// Print remediation hint for remediable warnings
-			writeRecovery(styleWarningMsg, w, categories[stableDiagnosticKey(w)])
+			writeRecovery(styleWarningMsg, w, categoryFor(diagnosticWarning, w))
 		}
 	}
 

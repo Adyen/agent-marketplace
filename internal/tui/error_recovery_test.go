@@ -405,3 +405,72 @@ func TestErrorRecoverySnapshotAcceptancePreservesJoinedCauses(t *testing.T) {
 		t.Fatalf("diagnostic cause lost identity: %v", err)
 	}
 }
+
+// spec: tui-error-recovery/shared-key-diagnostics-retain-their-own-recovery-guidance
+func TestErrorRecoveryToggleReloadKeepsSharedKeyCategories(t *testing.T) {
+	m := NewModel(t.TempDir(), t.TempDir())
+	m.loading = false
+	operation, ok := m.beginOperation(operationMutation)
+	if !ok {
+		t.Fatal("toggle was blocked")
+	}
+	updated, _ := m.Update(configWrittenMsg{operation: operation, skillName: "demo", enabled: true})
+	m = updated.(Model)
+	generation := m.requests.active(requestSnapshot)
+	promoted := pipeline.PromoteDiagnostic(diag.Diagnostic{
+		Code:     "skill.test.materialization",
+		Resource: "demo",
+		Message:  "cannot represent resource",
+		Hint:     "",
+	})
+	updated, _ = m.Update(snapshotLoadedMsg{
+		generation:      generation,
+		mergedCfg:       &config.Config{},
+		driftAssessment: driftFailed,
+		diagnostics:     []tuiDiagnostic{snapshotDiagnostic(diagnosticError, diagnosticMaterialization, promoted)},
+	})
+	m = updated.(Model)
+	if m.operations.active != nil || !m.rowsStale {
+		t.Fatalf("failed toggle reload did not complete the operation as stale: active=%v stale=%t", m.operations.active, m.rowsStale)
+	}
+	if len(m.errs) != 2 {
+		t.Fatalf("errors = %d, want snapshot cause and operation cause", len(m.errs))
+	}
+	for i, err := range m.errs {
+		if !errors.Is(err, promoted) {
+			t.Fatalf("errs[%d] lost the promoted cause: %v", i, err)
+		}
+	}
+	key := stableDiagnosticKey(promoted)
+	if stableDiagnosticKey(m.errs[0]) != key || stableDiagnosticKey(m.errs[1]) != key {
+		t.Fatalf("shared-key fixture diverged: %q %q want %q", stableDiagnosticKey(m.errs[0]), stableDiagnosticKey(m.errs[1]), key)
+	}
+	cause := promoted.Error()
+	want := "• " + cause + "\n  → " + recoveryMaterialCopy + "\n" + "• " + cause + "\n  → " + recoveryOperationCopy
+	if screen := renderedErrorsScreen(m); !strings.Contains(screen, want) {
+		t.Fatalf("errors screen lost per-cause categories:\n%s", screen)
+	}
+}
+
+// spec: tui-error-recovery/shared-key-diagnostics-retain-their-own-recovery-guidance
+func TestErrorRecoverySharedKeySeparatesSeverities(t *testing.T) {
+	m := recoveryErrorsModel(t)
+	promoted := pipeline.PromoteDiagnostic(diag.Diagnostic{
+		Code:     "skill.test.materialization",
+		Resource: "demo",
+		Message:  "cannot represent resource",
+		Hint:     "",
+	})
+	m.replaceSnapshotDiagnostics([]tuiDiagnostic{snapshotDiagnostic(diagnosticWarning, diagnosticMaterialization, promoted)}, nil, nil)
+	editorErr := fmt.Errorf("editor: %w", promoted)
+	m.recordOperationFailure(operationEditor, diagnosticEditor, editorErr)
+	screen := renderedErrorsScreen(m)
+	errorsBlock := "• " + editorErr.Error() + "\n  → " + recoveryEditorCopy
+	warningsBlock := "• " + promoted.Error() + "\n  → " + recoveryMaterialCopy
+	if !strings.Contains(screen, errorsBlock) || !strings.Contains(screen, warningsBlock) {
+		t.Fatalf("shared-key diagnostics lost their severity or category:\n%s", screen)
+	}
+	if strings.Index(screen, errorsBlock) > strings.Index(screen, warningsBlock) {
+		t.Fatalf("warnings rendered before errors:\n%s", screen)
+	}
+}

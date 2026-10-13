@@ -33,20 +33,20 @@ func (resourceStateUnverifiedError) Error() string { return resourceStateUnverif
 
 var errResourceStateUnverified error = resourceStateUnverifiedError{}
 
-func (m Model) diagnosticCategories() map[string]diagnosticCategory {
-	categories := make(map[string]diagnosticCategory, len(m.diagnostics.snapshot)+len(m.diagnostics.operations))
+type diagnosticCategoryKey struct {
+	severity  diagnosticSeverity
+	stableKey string
+}
+
+func (m Model) diagnosticCategories() map[diagnosticCategoryKey][]diagnosticCategory {
+	categories := make(map[diagnosticCategoryKey][]diagnosticCategory, len(m.diagnostics.snapshot)+len(m.diagnostics.operations))
 	for _, diagnostics := range [][]tuiDiagnostic{m.diagnostics.snapshot, m.diagnostics.operations} {
 		for _, d := range diagnostics {
 			if d.err == nil {
 				continue
 			}
-			key := d.stableKey
-			if key == "" {
-				key = stableDiagnosticKey(d.err)
-			}
-			if _, seen := categories[key]; !seen {
-				categories[key] = d.category
-			}
+			key := diagnosticCategoryKey{severity: d.severity, stableKey: stableDiagnosticKey(d.err)}
+			categories[key] = append(categories[key], d.category)
 		}
 	}
 	return categories
