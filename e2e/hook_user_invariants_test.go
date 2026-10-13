@@ -218,20 +218,22 @@ func TestHookInvariantRefusedSiblingDoesNotBlockDeselection(t *testing.T) {
 var hookInvariantProjectDir = regexp.MustCompile(`^\$(CLAUDE_PROJECT_DIR\b|\{CLAUDE_PROJECT_DIR\})`)
 
 // hookInvariantScriptPath resolves the file a Claude hook command runs for a
-// checkout. The command's word naming script may use $CLAUDE_PROJECT_DIR or
-// be relative to the checkout; it must resolve to an existing file inside
-// checkout. Unresolved variables and absolute paths outside checkout, such
-// as another teammate's checkout or cache, are errors.
+// checkout. The command must execute script, directly or through sh or
+// bash; its path may use $CLAUDE_PROJECT_DIR or be relative to the checkout
+// and must resolve to an existing file inside checkout. Unresolved variables
+// and absolute paths outside checkout, such as another teammate's checkout
+// or cache, are errors.
 func hookInvariantScriptPath(command, checkout, script string) (string, error) {
-	var word string
-	for _, field := range strings.Fields(command) {
-		if strings.Contains(field, script) {
-			word = strings.NewReplacer(`"`, "", `'`, "").Replace(field)
-			break
-		}
+	fields := strings.Fields(command)
+	if len(fields) > 1 && (filepath.Base(fields[0]) == "sh" || filepath.Base(fields[0]) == "bash") {
+		fields = fields[1:]
 	}
-	if word == "" {
-		return "", fmt.Errorf("command %q does not name %s", command, script)
+	var word string
+	if len(fields) > 0 {
+		word = strings.NewReplacer(`"`, "", `'`, "").Replace(fields[0])
+	}
+	if !strings.HasSuffix(word, "/"+script) && word != script {
+		return "", fmt.Errorf("command %q does not run %s", command, script)
 	}
 	path := hookInvariantProjectDir.ReplaceAllLiteralString(word, checkout)
 	if strings.Contains(path, "$") {
@@ -261,8 +263,10 @@ func TestHookInvariantScriptPathResolution(t *testing.T) {
 		if err := os.MkdirAll(filepath.Join(dir, ".claude", "support", "scripts"), 0o755); err != nil {
 			t.Fatal(err)
 		}
-		if err := os.WriteFile(filepath.Join(dir, ".claude", "support", "scripts", "guard.sh"), []byte("#!/bin/sh\n"), 0o755); err != nil {
-			t.Fatal(err)
+		for _, name := range []string{"guard.sh", "guard.sh.disabled"} {
+			if err := os.WriteFile(filepath.Join(dir, ".claude", "support", "scripts", name), []byte("#!/bin/sh\n"), 0o755); err != nil {
+				t.Fatal(err)
+			}
 		}
 	}
 	for _, tc := range []struct {
@@ -273,6 +277,10 @@ func TestHookInvariantScriptPathResolution(t *testing.T) {
 		{"braced project directory", `${CLAUDE_PROJECT_DIR}/.claude/support/scripts/guard.sh --flag`, true},
 		{"checkout-relative", `.claude/support/scripts/guard.sh`, true},
 		{"absolute inside checkout", filepath.Join(checkout, ".claude", "support", "scripts", "guard.sh"), true},
+		{"through bash", `bash "$CLAUDE_PROJECT_DIR"/.claude/support/scripts/guard.sh`, true},
+		{"through an absolute sh", `/bin/sh .claude/support/scripts/guard.sh`, true},
+		{"script only as an argument", `echo "$CLAUDE_PROJECT_DIR"/.claude/support/scripts/guard.sh`, false},
+		{"different file sharing the prefix", `"$CLAUDE_PROJECT_DIR"/.claude/support/scripts/guard.sh.disabled`, false},
 		{"missing file", `"$CLAUDE_PROJECT_DIR"/.claude/missing/scripts/guard.sh`, false},
 		{"another teammate's checkout", filepath.Join(other, ".claude", "support", "scripts", "guard.sh"), false},
 		{"plugin root variable", `${CLAUDE_PLUGIN_ROOT}/scripts/guard.sh`, false},
