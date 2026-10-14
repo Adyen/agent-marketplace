@@ -6,6 +6,17 @@ import { expect, test } from "@microsoft/tui-test";
 
 import { defineFixture, step, waitForExit } from "./helpers.js";
 
+// Read bytes and metadata from one descriptor so both describe the same file.
+function snapshotFile(file: string): { bytes: Buffer; mtime: number; mode: number } {
+  const fd = fs.openSync(file, "r");
+  try {
+    const stat = fs.fstatSync(fd);
+    return { bytes: fs.readFileSync(fd), mtime: stat.mtimeMs, mode: stat.mode };
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
 // One refusal journey through both launch routes, not another config-policy matrix.
 for (const [route, args] of [["bare", []], ["explicit", ["tui"]]] as const) {
   test.describe(`${route} TTY startup`, () => {
@@ -23,8 +34,7 @@ for (const [route, args] of [["bare", []], ["explicit", ["tui"]]] as const) {
         path.join(fixture.repo, ".agents", "lock.yaml"),
         path.join(fixture.repo, ".factory", "skills", "beta-skill", "SKILL.md")
       ]) {
-        const stat = fs.statSync(file);
-        before.set(file, { bytes: fs.readFileSync(file), mtime: stat.mtimeMs, mode: stat.mode });
+        before.set(file, snapshotFile(file));
       }
     });
     test.afterAll(journey.cleanup);
@@ -55,9 +65,9 @@ for (const [route, args] of [["bare", []], ["explicit", ["tui"]]] as const) {
         assert.equal((await waitForExit(terminal)).exitCode, 0);
       });
       for (const [file, prior] of before) {
-        const after = fs.statSync(file);
-        assert.deepEqual(fs.readFileSync(file), prior.bytes, `refusal changed ${file}`);
-        assert.equal(after.mtimeMs, prior.mtime, `refusal rewrote ${file}`);
+        const after = snapshotFile(file);
+        assert.deepEqual(after.bytes, prior.bytes, `refusal changed ${file}`);
+        assert.equal(after.mtime, prior.mtime, `refusal rewrote ${file}`);
         assert.equal(after.mode, prior.mode, `refusal changed permissions of ${file}`);
       }
       assert.equal(fs.lstatSync(path.join(fixture.repo, ".factory", "skills", "beta-skill")).isSymbolicLink(), true);
