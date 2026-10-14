@@ -57,7 +57,13 @@ curl -fsS "https://marketplace.example.com/api/v1/resources/shared-agents/skill/
 python3 -c 'import json,sys; r=json.load(open("revision.json")); print(r.get("revocation"))'
 ```
 
-A revoked revision has a `revocation` object with `kind` (`registry`, `coordinate`, or `revision`), `target_id`, `reason`, and `applied_at`, and its `current_availability.availability` is `revoked`. `None` means the latest revision is not revoked. With `management.mode: database`, the API answers a revoked resource with `410 Gone`, so `curl -f` fails instead of saving the file.
+Typical output for a revoked revision:
+
+```text
+{'kind': 'coordinate', 'target_id': 'team-marketplace/shared-agents/skill/review', 'reason': 'operator configured', 'applied_at': '2026-10-14T08:30:00Z'}
+```
+
+A revoked revision has a `revocation` object with `kind` (`registry`, `coordinate`, or `revision`), `target_id`, `reason`, and `applied_at`, and its `current_availability.availability` is `revoked`. `None` means the latest revision is not revoked. With `management.mode: database`, the API answers a revoked resource with `410 Gone` and a body such as `{"error":"resource unavailable","current_availability":{"availability":"revoked",...}}`, so `curl -f` fails instead of saving the file.
 
 Avoid `curl ... | head` for this check: without `set -o pipefail`, the pipeline reports success even when `curl` fails.
 
