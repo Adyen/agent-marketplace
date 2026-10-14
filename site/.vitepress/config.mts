@@ -118,7 +118,7 @@ export default defineConfig({
                 { text: 'Configure multiple harnesses', link: `${DOCS_PATH}how-to/configure-multiple-harnesses` },
                 { text: 'Write regular files instead of symlinks', link: `${DOCS_PATH}how-to/write-regular-files-instead-of-symlinks` },
                 { text: 'Use a local registry', link: `${DOCS_PATH}how-to/use-a-local-registry` },
-                { text: 'Maintain v4 configuration', link: `${DOCS_PATH}how-to/migrate-configuration` },
+                { text: 'Convert configuration before upgrading', link: `${DOCS_PATH}how-to/migrate-configuration` },
                 { text: 'Convert a harness layout', link: `${DOCS_PATH}how-to/convert-a-harness-layout` },
                 { text: 'Repair owned shared configuration', link: `${DOCS_PATH}how-to/repair-owned-shared-configuration` },
                 { text: 'Back up and restore machine resources', link: `${DOCS_PATH}how-to/back-up-and-restore-machine-resources` },

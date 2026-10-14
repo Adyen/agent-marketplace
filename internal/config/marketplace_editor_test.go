@@ -505,6 +505,41 @@ func TestEnsureMarketplacePinSnapshotWaitsForWriterHoldingPathLock(t *testing.T)
 	}
 }
 
+// A fragment-owned wildcard exclusion suppresses a Marketplace include the
+// same way it suppresses a Git include: the root cannot silently override it.
+func TestIncludeMarketplacePinsRefusesInheritedWildcardExclusion(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	fragment := filepath.Join(dir, "policy.yaml")
+	if err := os.WriteFile(fragment, []byte("resources:\n  public: {exclude: ['source-slug/skill/*']}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	writeMarketplaceV4(t, path, "include: policy.yaml\nsources:\n  public: {marketplace: https://market.example}\nresources:\n  public: [source-slug/command/run]\n")
+	before := marketplaceState(t, path)
+	fragmentBefore := marketplaceState(t, fragment)
+	editor := openMarketplaceEditor(t, path, RepoCommitted)
+	binding, err := editor.EnsureMarketplaceSource("https://market.example")
+	if err != nil {
+		t.Fatal(err)
+	}
+	requireMarketplaceV4Code(t, editor.IncludeMarketplacePins(binding, []MarketplaceResourcePin{testMarketplacePin()}), "v4.edit-exclusion")
+	candidate, err := editor.Render()
+	if err != nil || candidate.Changed {
+		t.Fatalf("refused include changed the candidate: %#v, %v", candidate, err)
+	}
+	requireMarketplaceUnchanged(t, path, before)
+	requireMarketplaceUnchanged(t, fragment, fragmentBefore)
+	// Control: a kind outside the inherited wildcard is still accepted.
+	command := testMarketplacePin()
+	command.Kind, command.Name = "command", "deploy"
+	if err := editor.IncludeMarketplacePins(binding, []MarketplaceResourcePin{command}); err != nil {
+		t.Fatalf("control include: %v", err)
+	}
+	if candidate, err = editor.Render(); err != nil || !candidate.Changed || !slices.Contains(marketplaceRequestLocators(editor.RenderedV4()), "source-slug/command/deploy") {
+		t.Fatalf("control include candidate = %#v, %v", candidate, err)
+	}
+}
+
 func TestUpdateMarketplaceRequestCandidateRollback(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.yaml")
 	writeMarketplaceV4(t, path, "sources:\n  public: {marketplace: https://market.example}\nresources:\n  public: [{source-slug/skill/review: {as: chosen-review, revision: sha256:1111111111111111111111111111111111111111111111111111111111111111}}]\n")

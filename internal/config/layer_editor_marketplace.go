@@ -204,6 +204,9 @@ func (e *LayerEditor) IncludeMarketplacePins(binding SourceBinding, pins []Marke
 				clearExact = append(clearExact, request.locator)
 			}
 		}
+		if e.v4InheritedSuppression(name, request.locator) {
+			return v4err("v4.edit-exclusion", "resources."+name+".exclude", 0, "an inherited exclusion suppresses %q", request.locator)
+		}
 		conflict := false
 		if includes != nil {
 			for _, item := range includes.Content {

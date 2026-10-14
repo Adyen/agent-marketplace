@@ -67,14 +67,14 @@ func (m *MarketplaceLayerMutation) IncludePins(entry config.MarketplaceEntry, pi
 }
 
 func (m *MarketplaceLayerMutation) RemoveDirectPin(entry config.MarketplaceEntry, pin config.MarketplaceResourcePin) error {
-	return m.removeMarketplacePin(entry, pin, false)
+	return m.removeMarketplacePin(entry, pin)
 }
 
 func (m *MarketplaceLayerMutation) RemoveCollection(entry config.MarketplaceEntry, collection config.MarketplaceResourcePin) error {
-	return m.removeMarketplacePin(entry, collection, true)
+	return m.removeMarketplacePin(entry, collection)
 }
 
-func (m *MarketplaceLayerMutation) removeMarketplacePin(entry config.MarketplaceEntry, pin config.MarketplaceResourcePin, collection bool) error {
+func (m *MarketplaceLayerMutation) removeMarketplacePin(entry config.MarketplaceEntry, pin config.MarketplaceResourcePin) error {
 	if m == nil {
 		return errors.New("marketplace layer mutation is nil")
 	}

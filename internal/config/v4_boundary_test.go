@@ -99,10 +99,6 @@ func TestV4OnlyDirectWritersValidateIncludeTree(t *testing.T) {
 	}{
 		{"harnesses", func(path string) error { return SetHarnessesInConfig(path, []string{"claude"}) }},
 		{"telemetry", func(path string) error { return SetUserTelemetryLevel(path, "off") }},
-		{"ref", func(path string) error {
-			_, err := UpdateRegistryRefInConfig(path, "https://example.test/agents.git", "main", "release")
-			return err
-		}},
 	} {
 		t.Run(writer.name, func(t *testing.T) {
 			fixture := newV4OnlyFixture(t)

@@ -1,6 +1,7 @@
 package config
 
 import (
+	"bytes"
 	"fmt"
 	"io/fs"
 	"os"
@@ -150,7 +151,7 @@ func (e *LayerEditor) Render() (LayerCandidate, error) {
 	}
 	e.rendered = loaded
 	candidate.Bytes = append([]byte(nil), data...)
-	candidate.Changed = true
+	candidate.Changed = !bytes.Equal(data, e.original)
 	return candidate, nil
 }
 

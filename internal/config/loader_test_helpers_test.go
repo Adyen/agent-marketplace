@@ -14,7 +14,3 @@ func loadConfigGated(path string, requireHarnesses, requireAPIVersion bool, laye
 	}
 	return cfg, nil
 }
-
-func loadLocalConfig(path string) (*LocalConfig, error) {
-	return LoadLocalConfigFromPath(path)
-}

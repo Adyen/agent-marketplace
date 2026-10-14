@@ -316,10 +316,6 @@ func ensureMappingSequence(mapping *yaml.Node, key string) (*yaml.Node, error) {
 	return valueNode, nil
 }
 
-func removeTopLevelKey(mapping *yaml.Node, keyIndex int) {
-	removeMappingKey(mapping, keyIndex)
-}
-
 // removeMappingKey removes a key-value pair at the given index from a
 // mapping node. No-op if the index is out of range.
 func removeMappingKey(mapping *yaml.Node, keyIndex int) {
@@ -343,20 +339,6 @@ func removeMappingKeyByName(mapping *yaml.Node, key string) bool {
 		}
 	}
 	return false
-}
-
-// findEntrySequence finds a key-value pair in a mapping node where the value
-// is a sequence. Returns (keyIndex, valueNode). Returns (-1, nil) if not
-// found.
-func findEntrySequence(mapping *yaml.Node, key string) (int, *yaml.Node) {
-	for i := 0; i+1 < len(mapping.Content); i += 2 {
-		keyNode := mapping.Content[i]
-		if keyNode.Kind != yaml.ScalarNode || keyNode.Value != key {
-			continue
-		}
-		return i, mapping.Content[i+1]
-	}
-	return -1, nil
 }
 
 func findMappingValue(mapping *yaml.Node, key string) *yaml.Node {

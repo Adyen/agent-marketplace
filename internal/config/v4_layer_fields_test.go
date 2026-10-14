@@ -2,7 +2,6 @@ package config
 
 import (
 	"errors"
-	"strings"
 	"testing"
 )
 
@@ -73,12 +72,4 @@ resources: {first: {all: true, required: true}}
 	if !errors.As(err, &validation) || validation.Code != "v4.alias-forbidden" {
 		t.Fatalf("error = %v, want alias refusal", err)
 	}
-}
-
-func errorsJoin(errs []error) string {
-	var parts []string
-	for _, e := range errs {
-		parts = append(parts, e.Error())
-	}
-	return strings.Join(parts, "; ")
 }

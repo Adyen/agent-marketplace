@@ -657,14 +657,17 @@ func bumpRepoRegistryRefs(ctx context.Context, layerTarget config.LayerTarget, v
 	for _, bump := range bumps {
 		owned := false
 		for name, source := range v4.Sources {
-			if source.Kind == config.V4SourceGit && source.File == v4.Files[len(v4.Files)-1] &&
+			// A source declared identically in an included fragment is not
+			// root-owned: advancing only the root copy would leave the tree
+			// with conflicting declarations.
+			if source.Kind == config.V4SourceGit && source.File == v4.Files[len(v4.Files)-1] && len(source.AlsoDeclaredIn) == 0 &&
 				config.NormalizeGitURL(source.URL) == config.NormalizeGitURL(bump.URL) && source.Ref == bump.OldRef {
 				rootRefs[name] = bump
 				owned = true
 			}
 		}
 		if !owned {
-			slog.Warn("update bump skipped: ref is declared outside the root config file", "url", bump.URL, "old_ref", bump.OldRef, "new_ref", bump.NewRef)
+			slog.Warn("update bump skipped: ref is not owned by the root config file alone", "url", bump.URL, "old_ref", bump.OldRef, "new_ref", bump.NewRef)
 			skipped = append(skipped, bump)
 			continue
 		}

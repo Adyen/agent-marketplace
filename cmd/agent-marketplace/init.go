@@ -33,7 +33,7 @@ func newInitCmd() *cobra.Command {
 			"harnesses list. It does not install resources, add registries, or configure a marketplace.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runInit(cmd.OutOrStdout(), os.Stdin, harnesses)
+			return runInit(cmd.Context(), cmd.OutOrStdout(), os.Stdin, harnesses)
 		},
 	}
 
@@ -43,11 +43,11 @@ func newInitCmd() *cobra.Command {
 	return cmd
 }
 
-func runInit(out io.Writer, in *os.File, harnesses []string) error {
+func runInit(ctx context.Context, out io.Writer, in *os.File, harnesses []string) error {
 	slog.Info("init start")
 
 	if len(harnesses) > 0 {
-		return initWithHarnesses(out, harnesses)
+		return initWithHarnesses(ctx, out, harnesses)
 	}
 
 	if !isTerminal(in.Fd()) {
@@ -76,7 +76,7 @@ func runInit(out io.Writer, in *os.File, harnesses []string) error {
 		return err
 	}
 
-	path, created, err := initializeAndReport(out, harnesses)
+	path, created, err := initializeAndReport(ctx, out, harnesses)
 	if err != nil {
 		return err
 	}
@@ -89,17 +89,16 @@ func runInit(out io.Writer, in *os.File, harnesses []string) error {
 	return nil
 }
 
-func initWithHarnesses(out io.Writer, harnesses []string) error {
+func initWithHarnesses(ctx context.Context, out io.Writer, harnesses []string) error {
 	if err := config.ValidateHarnessIDs(harnesses); err != nil {
 		slog.Error("init failed to validate harnesses", "err", err)
 		return err
 	}
-	_, _, err := initializeAndReport(out, harnesses)
+	_, _, err := initializeAndReport(ctx, out, harnesses)
 	return err
 }
 
-func initializeAndReport(out io.Writer, harnesses []string) (string, bool, error) {
-	ctx := context.Background()
+func initializeAndReport(ctx context.Context, out io.Writer, harnesses []string) (string, bool, error) {
 	if err := prepareDependencyTransactions(ctx, false); err != nil {
 		return "", false, err
 	}

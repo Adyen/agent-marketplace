@@ -7,6 +7,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 	"gopkg.in/yaml.v3"
@@ -315,6 +316,52 @@ resources:
 	data, err = os.ReadFile(path)
 	if err != nil || strings.Contains(string(data), "tools/skill/review") {
 		t.Fatalf("exclusion not removed: %s, %v", data, err)
+	}
+}
+
+// A removal of an exclusion that is not recorded, and a repeated exclusion,
+// are no-ops: the authored bytes, mode and modification time stay untouched.
+func TestSetUserMarketplaceExclusionNoOpLeavesFileUntouched(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	path := filepath.Join(home, ".agents", "config.yaml")
+	mustMkdirAll(t, filepath.Dir(path))
+	original := []byte("apiVersion: agent-marketplace/v4\nsources:\n  company:   {marketplace: https://market.example}\nresources:\n  company:\n    exclude:   [tools/skill/audit]   # keep\n")
+	mustWriteFile(t, path, original)
+	if err := os.Chmod(path, 0o640); err != nil {
+		t.Fatal(err)
+	}
+	frozen := time.Date(2024, 1, 2, 3, 4, 5, 0, time.UTC)
+	if err := os.Chtimes(path, frozen, frozen); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, excluded := range []bool{false, true} {
+		name := "review"
+		if excluded {
+			name = "audit"
+		}
+		if err := SetUserMarketplaceExclusion(path, "https://market.example", "tools", ir.KindSkill, name, excluded); err != nil {
+			t.Fatalf("no-op edit (excluded=%t): %v", excluded, err)
+		}
+		data, err := os.ReadFile(path)
+		if err != nil || string(data) != string(original) {
+			t.Fatalf("no-op edit (excluded=%t) rewrote bytes: %s, %v", excluded, data, err)
+		}
+		after, err := os.Stat(path)
+		if err != nil || after.Mode() != before.Mode() || !after.ModTime().Equal(before.ModTime()) {
+			t.Fatalf("no-op edit (excluded=%t) changed mode or mtime: %v", excluded, err)
+		}
+	}
+	// Control: a real removal still writes.
+	if err := SetUserMarketplaceExclusion(path, "https://market.example", "tools", ir.KindSkill, "audit", false); err != nil {
+		t.Fatal(err)
+	}
+	if data, err := os.ReadFile(path); err != nil || strings.Contains(string(data), "tools/skill/audit") {
+		t.Fatalf("control removal did not drop the exclusion: %s, %v", data, err)
 	}
 }
 

@@ -836,18 +836,6 @@ func stageConfigPath(staging *configStagingManager, path string) (string, error)
 	return staging.Path(path)
 }
 
-// registryEntryInList reports whether the list contains an entry that exactly
-// matches url and path (the same exact-match rule the editor uses when writing
-// to a specific scope's config).
-func registryEntryInList(entries []config.RegistryEntry, url, registryPath string) bool {
-	for _, entry := range entries {
-		if config.NormalizeGitURL(entry.URL) == config.NormalizeGitURL(url) && config.NormalizeRegistryPath(entry.Path) == config.NormalizeRegistryPath(registryPath) {
-			return true
-		}
-	}
-	return false
-}
-
 // selectAdHocRegistryEntry resolves one configured entry for --from. An
 // omitted path or ref is a wildcard only while it identifies one logical
 // location; distinct paths or refs are ambiguous and fail closed.

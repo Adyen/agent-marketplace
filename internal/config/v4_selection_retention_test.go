@@ -20,7 +20,7 @@ func TestV4RootRejectsLegacyInstallationKeys(t *testing.T) {
 
 func TestV4SelectorsAndPoliciesRemainEffective(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.yaml")
-	writeV2Config(t, path, `apiVersion: agent-marketplace/v4
+	writeIncludeConfig(t, path, `apiVersion: agent-marketplace/v4
 harnesses: [claude, factory]
 allowed_registries: ["^https://"]
 sources:
@@ -52,7 +52,7 @@ resources:
 
 func TestV4EveryResourceKindRemainsSelected(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.yaml")
-	writeV2Config(t, path, `apiVersion: agent-marketplace/v4
+	writeIncludeConfig(t, path, `apiVersion: agent-marketplace/v4
 sources: {agents: {git: https://example.test/agents.git, ref: main}}
 resources:
   agents:
@@ -83,7 +83,7 @@ func TestV4HundredSourcesRetainAuthoredOrderAndPolicies(t *testing.T) {
 		fmt.Fprintf(&input, "  source-%03d: {include: [skill/skill-%03d], required: %t, all: %t}\n", i, i, i%2 == 0, i%3 == 0)
 	}
 	path := filepath.Join(t.TempDir(), "config.yaml")
-	writeV2Config(t, path, input.String())
+	writeIncludeConfig(t, path, input.String())
 	cfg, err := LoadConfigFromPath(path)
 	if err != nil || len(cfg.Registries) != 100 {
 		t.Fatalf("hundred-source config = %#v %v", cfg, err)
@@ -98,7 +98,7 @@ func TestV4HundredSourcesRetainAuthoredOrderAndPolicies(t *testing.T) {
 func TestV4HarnessDefaultsStayAtRootAndTelemetryIsOptIn(t *testing.T) {
 	for _, telemetry := range []string{"", "telemetry: {level: basic}\n"} {
 		path := filepath.Join(t.TempDir(), "config.yaml")
-		writeV2Config(t, path, "apiVersion: agent-marketplace/v4\nharnesses: [factory]\n"+telemetry+`sources:
+		writeIncludeConfig(t, path, "apiVersion: agent-marketplace/v4\nharnesses: [factory]\n"+telemetry+`sources:
   agents: {git: https://example.test/agents.git, ref: main}
   security: {git: https://example.test/security.git, ref: main}
 resources:

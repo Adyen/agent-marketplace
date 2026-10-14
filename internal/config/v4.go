@@ -52,6 +52,9 @@ type V4Source struct {
 	File              string
 	Line              int
 	CanonicalURL      string
+	// AlsoDeclaredIn lists the other files of the include tree that declare
+	// this source identically; the winning declaration alone does not own it.
+	AlsoDeclaredIn []string
 }
 
 // V4ResourceOptions are options authored on one explicit resource request.
@@ -1352,20 +1355,19 @@ func loadV4TreeWithResolvedRoot(file, resolvedRoot string, root bool, visiting m
 	return result, nil
 }
 
+// v4ConfigData returns the bytes to parse for one file and whether they came
+// from a staged overlay. A staged overlay takes precedence over caller-supplied
+// root bytes so the overlay flag never describes bytes that were not used.
 func v4ConfigData(canonical, requested string, root bool, rootData []byte, overlays map[string][]byte) ([]byte, bool, error) {
-	if root && rootData != nil {
-		data, err := boundedConfigData(rootData)
-		_, overlaid := overlays[canonical]
-		if !overlaid {
-			_, overlaid = overlays[requested]
-		}
-		return data, overlaid, err
-	}
 	for _, key := range []string{canonical, requested} {
 		if data, ok := overlays[key]; ok {
 			bounded, err := boundedConfigData(data)
 			return bounded, true, err
 		}
+	}
+	if root && rootData != nil {
+		data, err := boundedConfigData(rootData)
+		return data, false, err
 	}
 	data, err := v4ReadConfigFile(canonical)
 	return data, false, err
@@ -1411,8 +1413,11 @@ func mergeV4Config(dst, src *V4Config) error {
 	dst.telemetryFields = mergeV4TelemetryFields(dst.telemetryFields, src.telemetryFields)
 	dst.Materialization = mergeV4Materialization(dst.Materialization, src.Materialization)
 	for name, s := range src.Sources {
-		if old, ok := dst.Sources[name]; ok && (old.Kind != s.Kind || old.CanonicalURL != s.CanonicalURL || old.Ref != s.Ref || old.Path != s.Path || old.SourceHarness != s.SourceHarness) {
-			return v4err("v4.source-conflict", "sources."+name, s.Line, "source name is declared with conflicting values in %q and %q", old.File, s.File)
+		if old, ok := dst.Sources[name]; ok {
+			if old.Kind != s.Kind || old.CanonicalURL != s.CanonicalURL || old.Ref != s.Ref || old.Path != s.Path || old.SourceHarness != s.SourceHarness {
+				return v4err("v4.source-conflict", "sources."+name, s.Line, "source name is declared with conflicting values in %q and %q", old.File, s.File)
+			}
+			s.AlsoDeclaredIn = append(append(append([]string(nil), s.AlsoDeclaredIn...), old.AlsoDeclaredIn...), old.File)
 		}
 		dst.Sources[name] = s
 	}

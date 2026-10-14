@@ -317,24 +317,15 @@ func TestV4OnlyIncludedFragments(t *testing.T) {
 
 func TestV4OnlyAlternateWriters(t *testing.T) {
 	for _, writer := range []struct {
-		name                   string
-		source                 Source
-		write                  func(string) (int, error)
-		wantHarnesses          []any
-		wantTelemetry, wantRef string
+		name          string
+		source        Source
+		write         func(string) error
+		wantHarnesses []any
+		wantTelemetry string
 	}{
-		{"SetHarnessesInConfig/user", UserPersonal, func(p string) (int, error) { return 0, SetHarnessesInConfig(p, []string{"claude"}) }, []any{"claude"}, "off", "main"},
-		{"SetHarnessesInConfig/repo", RepoCommitted, func(p string) (int, error) { return 0, SetHarnessesInConfig(p, []string{"claude"}) }, []any{"claude"}, "", "main"},
-		{"SetUserTelemetryLevel", UserPersonal, func(p string) (int, error) { return 0, SetUserTelemetryLevel(p, "detailed") }, []any{"factory"}, "detailed", "main"},
-		{"UpdateRegistryRefInConfig/user", UserPersonal, func(p string) (int, error) {
-			return UpdateRegistryRefInConfig(p, "https://example.test/agents.git", "main", "release")
-		}, []any{"factory"}, "off", "release"},
-		{"UpdateRegistryRefInConfig/repo", RepoCommitted, func(p string) (int, error) {
-			return UpdateRegistryRefInConfig(p, "https://example.test/agents.git", "main", "release")
-		}, []any{"factory"}, "", "release"},
-		{"UpdateRegistryRefInConfig/local", RepoPersonal, func(p string) (int, error) {
-			return UpdateRegistryRefInConfig(p, "https://example.test/agents.git", "main", "release")
-		}, nil, "", "release"},
+		{"SetHarnessesInConfig/user", UserPersonal, func(p string) error { return SetHarnessesInConfig(p, []string{"claude"}) }, []any{"claude"}, "off"},
+		{"SetHarnessesInConfig/repo", RepoCommitted, func(p string) error { return SetHarnessesInConfig(p, []string{"claude"}) }, []any{"claude"}, ""},
+		{"SetUserTelemetryLevel", UserPersonal, func(p string) error { return SetUserTelemetryLevel(p, "detailed") }, []any{"factory"}, "detailed"},
 	} {
 		t.Run(writer.name, func(t *testing.T) {
 			for _, version := range v4OnlyVersions {
@@ -370,19 +361,13 @@ func TestV4OnlyAlternateWriters(t *testing.T) {
 							}
 						})
 					}
-					updated, err := writer.write(path)
+					err = writer.write(path)
 					if version.code != "" {
 						v4OnlyAssertDiagnostic(t, err, version.code, path)
-						if writer.wantRef == "release" && updated != 0 {
-							t.Errorf("refused writer updated %d registry refs, want 0", updated)
-						}
 						return
 					}
 					if err != nil {
 						t.Fatalf("valid v4 edit rejected: %v", err)
-					}
-					if writer.wantRef == "release" && updated != 1 {
-						t.Errorf("updated refs = %d, want 1", updated)
 					}
 					after := v4OnlyFileSnapshot(t, path)
 					if bytes.Equal(before.data, after.data) {
@@ -394,7 +379,7 @@ func TestV4OnlyAlternateWriters(t *testing.T) {
 					want := map[string]any{
 						"apiVersion": "agent-marketplace/v4",
 						"sources": map[string]any{
-							"agents": map[string]any{"git": "https://example.test/agents.git", "ref": writer.wantRef},
+							"agents": map[string]any{"git": "https://example.test/agents.git", "ref": "main"},
 							"other":  map[string]any{"git": "https://example.test/other.git", "ref": "stable"},
 						},
 						"resources": map[string]any{"agents": []any{"skill/review"}},

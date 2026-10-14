@@ -17,13 +17,18 @@ import (
 
 func TestUpdateBumpUsesDeclaringRootForIncludes(t *testing.T) {
 	for _, tc := range []struct {
-		name    string
-		rootRef bool
-		linked  bool
+		name      string
+		rootRef   bool
+		linked    bool
+		duplicate bool
 	}{
 		{name: "included_only"},
 		{name: "root_ref_control", rootRef: true},
 		{name: "linked_root_ref_control", rootRef: true, linked: true},
+		// The root repeats the fragment's declaration verbatim. Advancing only
+		// the root copy would leave conflicting declarations, so the bump is
+		// skipped and the tree stays loadable.
+		{name: "identical_root_declaration", duplicate: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			home := t.TempDir()
@@ -41,6 +46,9 @@ func TestUpdateBumpUsesDeclaringRootForIncludes(t *testing.T) {
 			root := "apiVersion: agent-marketplace/v4\n# Keep this relative include in its declaring directory.\ninclude: shared.yaml\n"
 			if tc.rootRef {
 				root += fmt.Sprintf("sources:\n  owned: {git: '%s', ref: v1.0}\nresources:\n  owned: {include: [skill/root]}\n", rootURL)
+			}
+			if tc.duplicate {
+				root += fmt.Sprintf("sources:\n  shared: {git: '%s', ref: v1.0}\n", includedURL)
 			}
 			writeFileMode(t, fragmentPath, fragment, 0o640)
 			authoredPath := rootPath

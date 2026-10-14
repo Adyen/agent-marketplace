@@ -6,12 +6,6 @@ import (
 	"testing"
 )
 
-func writeV2Config(t *testing.T, path, content string) {
-	t.Helper()
-	mustMkdirAll(t, filepath.Dir(path))
-	mustWriteFile(t, path, []byte(content))
-}
-
 func readConfigString(t *testing.T, path string) string {
 	t.Helper()
 	data, err := os.ReadFile(path)

@@ -78,6 +78,7 @@ func SetUserMarketplaceExclusion(configPath, endpoint, registrySlug string, kind
 		if err != nil {
 			return err
 		}
+		changed := false
 		for i, node := range sequence.Content {
 			if node.Value != locator {
 				continue
@@ -86,10 +87,15 @@ func SetUserMarketplaceExclusion(configPath, endpoint, registrySlug string, kind
 				return nil
 			}
 			sequence.Content = append(sequence.Content[:i], sequence.Content[i+1:]...)
+			changed = true
 			break
 		}
 		if excluded {
 			sequence.Content = append(sequence.Content, scalarNode(locator))
+			changed = true
+		}
+		if !changed {
+			return nil
 		}
 		return writeConfigDocument(configPath, mode, doc)
 	})

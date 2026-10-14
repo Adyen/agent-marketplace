@@ -52,34 +52,8 @@ func ValidateMarketplaceResourcePin(pin MarketplaceResourcePin) error {
 	return ValidateMarketplaceInstalledName(pin.InstalledName)
 }
 
-func containsMarketplaceSelection(selections []MarketplaceSelection, wanted MarketplaceSelection) bool {
-	for _, selection := range selections {
-		if selection == wanted {
-			return true
-		}
-	}
-	return false
-}
-
 func scalarNode(value string) *yaml.Node {
 	return &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: value}
-}
-
-func boolNode(value bool) *yaml.Node {
-	if value {
-		return &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!bool", Value: "true"}
-	}
-	return &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!bool", Value: "false"}
-}
-
-func validateMarketplaceAlias(label, value string) error {
-	if err := validateMarketplaceSegment(label, value); err != nil {
-		return err
-	}
-	if value == "all" {
-		return fmt.Errorf("%s %q is reserved for federated search", label, value)
-	}
-	return nil
 }
 
 func validateMarketplaceSegment(label, value string) error {

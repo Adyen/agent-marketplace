@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -177,7 +178,7 @@ func TestInitInteractiveUsesDetectedHarnesses(t *testing.T) {
 	}()
 
 	var out bytes.Buffer
-	if err := runInit(&out, r, nil); err != nil {
+	if err := runInit(context.Background(), &out, r, nil); err != nil {
 		t.Fatalf("runInit failed: %v\noutput: %s", err, out.String())
 	}
 
@@ -252,7 +253,7 @@ func TestInitInteractiveTelemetryConsentNo(t *testing.T) {
 	}()
 
 	var out bytes.Buffer
-	if err := runInit(&out, r, nil); err != nil {
+	if err := runInit(context.Background(), &out, r, nil); err != nil {
 		t.Fatalf("runInit failed: %v\noutput: %s", err, out.String())
 	}
 
@@ -349,7 +350,7 @@ func TestInitInteractiveTelemetryManagedSkipsPrompt(t *testing.T) {
 	}()
 
 	var out bytes.Buffer
-	if err := runInit(&out, r, nil); err != nil {
+	if err := runInit(context.Background(), &out, r, nil); err != nil {
 		t.Fatalf("runInit failed: %v\noutput: %s", err, out.String())
 	}
 
