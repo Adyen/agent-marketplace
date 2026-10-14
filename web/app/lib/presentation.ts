@@ -1,4 +1,4 @@
-import type { ResourceKind, ResourceListItem, ResourceRevision } from '~/types/marketplace'
+import type { ResourceKind, ResourceListItem, ResourceRelation, ResourceRequirement, ResourceRevision } from '~/types/marketplace'
 import { isSafeRouteToken, isSafeResourceRoute } from '~/lib/routes'
 import { isSha256Digest } from '~/lib/validation'
 
@@ -49,7 +49,7 @@ export function registryRoute(item: Pick<ResourceListItem, 'registry_id' | 'regi
   return `/registries/${encodeURIComponent(registry)}`
 }
 
-export function resourceLatestRoute(item: ResourceListItem): string {
+export function resourceLatestRoute(item: Pick<ResourceListItem, 'registry_id' | 'registry_slug' | 'kind' | 'name'>): string {
   const registry = item.registry_slug || item.registry_id
   if (!registryRoute(item) || !isSafeResourceRoute(registry, item.kind, item.name)) return ''
   return `/r/${encodeURIComponent(registry)}/${encodeURIComponent(item.kind)}/${encodeURIComponent(item.name)}`
@@ -59,6 +59,18 @@ export function resourceLatestLocator(item: ResourceListItem, browserBase: strin
   const canonical = safeCanonicalUrl(browserBase)
   const route = resourceLatestRoute(item)
   return canonical && route ? `${canonical}${route}` : ''
+}
+
+export function resourceRelationRoute(relation: ResourceRelation): string {
+  return resourceLatestRoute({ registry_id: relation.registry, kind: relation.kind, name: relation.name })
+}
+
+export type RequirementBadge = 'resolved' | 'external' | 'unresolved'
+
+export function requirementBadge(requirement: ResourceRequirement): RequirementBadge {
+  if (requirement.resolved) return 'resolved'
+  if (requirement.registry) return 'external'
+  return 'unresolved'
 }
 
 export function resourceRoute(item: ResourceListItem): string {

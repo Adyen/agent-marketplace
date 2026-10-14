@@ -217,5 +217,6 @@ only the exit status; whether a prerequisite is selected depends solely on
 ## Related documentation
 
 - [How to declare resource prerequisites](../how-to/author/declare-resource-prerequisites.md)
+- [Browse and inspect Marketplace resources](../how-to/browse-marketplace-resources.md)
 - [Resource metadata](./resource-metadata.md)
 - [Registry layout](./registry-layout.md)

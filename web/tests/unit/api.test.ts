@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { apiPath, createMarketplaceApi, devApiProxyTargets, isRasterMediaType, isResourceKind, normalizeApiBase, resourceInspectionContentPath, resourceInspectionPath, resourcePath, resourceRevisionPath, resourceRevisionsPath, selectMarketplaceApiBase, selectMarketplaceFetcher, selectMarketplacePublicApiBase, serializeSearchQuery, registryHistoryPath, registryPath, wellKnownPath } from '../../app/lib/api'
 import { RESOURCE_KINDS } from '../../app/types/marketplace'
-import { ApiValidationError, MAX_ASSESSMENT_FINDINGS, MAX_RESOURCE_REVISION_ENTRIES, MAX_REGISTRY_HISTORY_ENTRIES, normalizeInspectionManifest, normalizeMarketplace, normalizeResourceRevision, normalizeResourceRevisions, normalizeSearchResult, normalizeRegistry, normalizeRegistryHistory, normalizeRegistrySummaries, normalizeWellKnown } from '../../app/lib/validation'
+import { ApiValidationError, MAX_ASSESSMENT_FINDINGS, MAX_RESOURCE_REQUIREMENTS, MAX_RESOURCE_REVISION_ENTRIES, MAX_REGISTRY_HISTORY_ENTRIES, normalizeInspectionManifest, normalizeMarketplace, normalizeResourceRevision, normalizeResourceRevisions, normalizeSearchResult, normalizeRegistry, normalizeRegistryHistory, normalizeRegistrySummaries, normalizeWellKnown } from '../../app/lib/validation'
 import type { ApiFetcher, SearchParams } from '../../app/types/marketplace'
 
 function revisionPayload(contentDigest: string, overrides: Record<string, unknown> = {}) {
@@ -342,5 +342,54 @@ describe('search result installation counts', () => {
   it('accepts counts above the default integer bound but rejects unsafe integers', () => {
     expect(search(1_000_000_001).items[0]?.installation_count).toBe(1_000_000_001)
     expect(() => search(Number.MAX_SAFE_INTEGER + 1)).toThrow(ApiValidationError)
+  })
+})
+
+describe('resource revision prerequisites', () => {
+  const digest = 'sha256:' + 'a'.repeat(64)
+  const requires = [
+    { kind: 'skill', name: 'lint', resolved: { registry: 'team-tools', kind: 'skill', name: 'lint' } },
+    { kind: 'command', name: 'fmt', registry: 'upstream/tools', path: 'commands/fmt' },
+    { kind: 'subagent', name: 'helper' },
+  ]
+  const requiredBy = [{ registry: 'team-tools', kind: 'collection', name: 'bundle' }]
+
+  // spec: marketplace-web-ui/requires-entries-carry-one-badge-each
+  it('carries requires entries with every optional field through normalization', () => {
+    expect(normalizeResourceRevision(revisionPayload(digest, { requires })).requires).toEqual(requires)
+  })
+
+  // spec: marketplace-web-ui/required-by-shows-dependents-none-or-unknown
+  it('carries required_by relations through normalization', () => {
+    expect(normalizeResourceRevision(revisionPayload(digest, { requires: [], required_by: requiredBy })).required_by).toEqual(requiredBy)
+  })
+
+  // spec: marketplace-web-ui/absent-prerequisite-data-shows-no-sections
+  it('keeps absent fields absent and empty arrays empty', () => {
+    const absent = normalizeResourceRevision(revisionPayload(digest))
+    expect(absent.requires).toBeUndefined()
+    expect(absent.required_by).toBeUndefined()
+    const empty = normalizeResourceRevision(revisionPayload(digest, { requires: [], required_by: [] }))
+    expect(empty.requires).toEqual([])
+    expect(empty.required_by).toEqual([])
+  })
+
+  it.each([
+    ['an unsupported requirement kind', { requires: [{ kind: 'collection', name: 'bundle' }] }, /requires\[0\]\.kind is unsupported/],
+    ['a requirement without a name', { requires: [{ kind: 'skill' }] }, /requires\[0\]\.name/],
+    ['a non-array requires value', { requires: 'lint' }, /requires must be a bounded array/],
+    ['a non-array required_by value', { required_by: 'lint' }, /required_by must be a bounded array/],
+    ['a resolved relation without a registry', { requires: [{ kind: 'skill', name: 'lint', resolved: { kind: 'skill', name: 'lint' } }] }, /requires\[0\]\.resolved\.registry/],
+    ['a dependent without a kind', { required_by: [{ registry: 'team-tools', name: 'bundle' }] }, /required_by\[0\]\.kind/],
+  ])('rejects %s', (_label, overrides, error) => {
+    expect(() => normalizeResourceRevision(revisionPayload(digest, overrides))).toThrow(error)
+  })
+
+  it('rejects prerequisite arrays beyond the bound', () => {
+    const entry = { kind: 'skill', name: 'lint' }
+    const overBound = Array.from({ length: MAX_RESOURCE_REQUIREMENTS + 1 }, () => entry)
+    expect(normalizeResourceRevision(revisionPayload(digest, { requires: Array.from({ length: MAX_RESOURCE_REQUIREMENTS }, () => entry) })).requires).toHaveLength(MAX_RESOURCE_REQUIREMENTS)
+    expect(() => normalizeResourceRevision(revisionPayload(digest, { requires: overBound }))).toThrow(/requires must be a bounded array of at most 256 entries/)
+    expect(() => normalizeResourceRevision(revisionPayload(digest, { required_by: overBound }))).toThrow(/required_by must be a bounded array of at most 256 entries/)
   })
 })

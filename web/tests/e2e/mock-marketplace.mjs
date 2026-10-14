@@ -75,7 +75,7 @@ const wellKnown = {
   features: ['search', 'registry-history', 'inspection'],
 }
 
-function resource(item, contentDigest = item.content_digest, revocation) {
+function resource(item, contentDigest = item.content_digest, revocation, prerequisites = false) {
   const coordinate = { marketplace: 'e2e-marketplace', registry: item.registry_id, kind: item.kind, name: item.name }
   const reason = revocation?.reason ?? (revocation === undefined && item.name === 'deploy-preview' ? 'security review' : '')
   return {
@@ -97,6 +97,16 @@ function resource(item, contentDigest = item.content_digest, revocation) {
     },
     occurrence: { coordinate, content_digest: contentDigest, commit: '8'.repeat(40), manifest_digest: `sha256:${'5'.repeat(64)}` },
     ...(reason ? { revocation: { kind: 'revision', target_id: contentDigest, reason, applied_at: '2026-01-03T03:04:05Z' } } : {}),
+    ...(prerequisites ? {
+      requires: [
+        { kind: 'skill', name: 'base-checks', resolved: { registry: 'team-tools', kind: 'skill', name: 'base-checks' } },
+        { kind: 'command', name: 'audit-export', registry: 'https://example.invalid/tools.git', path: 'commands/audit' },
+        { kind: 'subagent', name: 'missing-helper' },
+      ],
+      required_by: [
+        { registry: 'team-tools', kind: 'collection', name: 'security-starter' },
+      ],
+    } : {}),
   }
 }
 
@@ -188,7 +198,7 @@ const server = createServer((request, response) => {
         { path: 'support/tool.bin', content_digest: `sha256:${'2'.repeat(64)}`, media_type: 'application/octet-stream', size: 4, inspection_class: 'metadata' },
       ] })
     }
-    return sendJson(response, 200, resource(item, requestedRevision, requestedRevision === previousDigest && item.name === 'secure-review' ? { reason: 'superseded policy' } : undefined))
+    return sendJson(response, 200, resource(item, requestedRevision, requestedRevision === previousDigest && item.name === 'secure-review' ? { reason: 'superseded policy' } : undefined, parts[6] === undefined && item.name === 'secure-review'))
   }
   sendJson(response, 404, { error: 'not found' })
 })
