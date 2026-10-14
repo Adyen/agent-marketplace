@@ -49,7 +49,7 @@ command/hello sha256:aa2247a9… sha256:a1ddfa7c…
 agent-marketplace serve reset shared-agents --config /app/marketplace.yaml --dry-run
 ```
 
-Expected output:
+Typical output (row list abbreviated):
 
 ```text
 Would reset catalog for registry "shared-agents" (src-shared).
