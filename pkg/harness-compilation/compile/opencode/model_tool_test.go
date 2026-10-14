@@ -40,7 +40,7 @@ func TestUnmappableCanonicalModelIsNotEmitted(t *testing.T) {
 		if strings.Contains(string(result.Artifacts[0].Bytes), "model:") {
 			t.Fatalf("unmappable canonical model was emitted: %s", result.Artifacts[0].Bytes)
 		}
-		if diag.HasErrors(result.Diagnostics) || !diag.HasCode(result.Diagnostics, diag.CodeOpenCodeFieldDropped) {
+		if diag.HasErrors(result.Diagnostics) || !diag.HasCode(result.Diagnostics, diag.CodeModelUnresolved) {
 			t.Fatalf("model loss was not reported as a stable warning: %#v", result.Diagnostics)
 		}
 	}

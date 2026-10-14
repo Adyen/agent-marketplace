@@ -16,13 +16,11 @@ func TestCodexIdentityIsPubliclyDiscoverable(t *testing.T) {
 	if !ok {
 		t.Fatal("Codex must be publicly discoverable after target promotion")
 	}
-	want := Definition{Target: TargetCodex, Label: "Codex", PartitionedRoots: true, Compiler: true, Ingester: true, Conversion: true, UI: true, UIOrder: 6,
-		HookProjection: &NativeHookProjection{
-			Shape:      HookShapeMatcherGroups,
-			SupportDir: ".codex/hook-support",
-			Project:    NativeHookProjectionFile{Path: ".codex/hooks.json", Member: "hooks"},
-			User:       NativeHookProjectionFile{Path: ".codex/hooks.json", Member: "hooks"},
-		}}
+	if definition.HookProjection == nil {
+		t.Fatal("Codex hook projection is not derived")
+	}
+	definition.HookProjection = nil
+	want := Definition{Target: TargetCodex, Label: "Codex", PartitionedRoots: true, Compiler: true, Ingester: true, Conversion: true, UI: true, UIOrder: 6}
 	if !reflect.DeepEqual(definition, want) {
 		t.Fatalf("Lookup(codex) = %#v, want %#v", definition, want)
 	}
@@ -48,13 +46,15 @@ func TestCodexNativeLayoutIsAvailable(t *testing.T) {
 			Prefix:               ".codex",
 			MachineRootEnv:       "CODEX_HOME",
 			InstallationEvidence: true,
-			Components:           []string{"agents"},
+			Components:           []string{"agents", "hook-support"},
 			ResourcePaths:        map[ir.ResourceKind]string{ir.KindSubagent: "agents/%s.toml"},
 			Aggregates: []NativeAggregate{
 				{
-					Kind:    ir.KindHook,
-					Project: NativeAggregateFile{Path: "hooks.json", Member: "hooks"},
-					User:    NativeAggregateFile{Path: "hooks.json", Member: "hooks"},
+					Kind:       ir.KindHook,
+					Shape:      HookShapeMatcherGroups,
+					SupportDir: "hook-support",
+					Project:    NativeAggregateFile{Path: "hooks.json", Member: "hooks"},
+					User:       NativeAggregateFile{Path: "hooks.json", Member: "hooks"},
 				},
 				{
 					Kind:    ir.KindMcpServer,
@@ -154,7 +154,14 @@ func TestDefinitionsAppendCodexWithoutChangingExistingTargets(t *testing.T) {
 			}},
 		{Target: TargetOpenCode, Label: "OpenCode", RepoRoot: ".opencode", UserRoot: ".config/opencode", Compiler: true, Ingester: true, Conversion: true, UI: true, UIOrder: 7},
 	}
-	if got := Definitions(); !reflect.DeepEqual(got, want) {
+	got := Definitions()
+	for i := range got {
+		_, _, aggregate := nativeAggregate(got[i].Target, ir.KindHook)
+		if aggregate != (got[i].HookProjection != nil) {
+			t.Fatalf("Definitions()[%d] hook projection = %v, want one exactly when a hook aggregate is declared", i, got[i].HookProjection)
+		}
+	}
+	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("Definitions() = %#v, want %#v", got, want)
 	}
 }

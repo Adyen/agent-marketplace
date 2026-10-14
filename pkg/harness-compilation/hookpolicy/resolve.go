@@ -49,6 +49,7 @@ var eventUnmappableCodes = map[target.Target]string{
 	target.TargetWindsurf: diag.CodeHookWindsurfEventUnmappable,
 	target.TargetDevin:    diag.CodeHookDevinEventUnmappable,
 	target.TargetCodex:    diag.CodeHookCodexUnsupported,
+	target.TargetOpenCode: diag.CodeHookOpenCodeUnsupported,
 }
 
 var typeUnsupportedCodes = map[target.Target]string{
@@ -58,6 +59,7 @@ var typeUnsupportedCodes = map[target.Target]string{
 	target.TargetWindsurf: diag.CodeHookWindsurfUnsupportedType,
 	target.TargetDevin:    diag.CodeHookDevinUnsupportedType,
 	target.TargetCodex:    diag.CodeHookCodexUnsupported,
+	target.TargetOpenCode: diag.CodeHookOpenCodeUnsupported,
 }
 
 func eventUnmappableCode(dst target.Target) string {
@@ -93,6 +95,23 @@ func timeoutCappedCode(dst target.Target) string {
 
 func matcherSpec(c catalog) toolpolicy.MatcherSpec {
 	return toolpolicy.MatcherSpec{Syntax: c.Matcher.Syntax, Anchor: c.Matcher.Anchor, ExactLists: c.Matcher.ExactLists}
+}
+
+// MatcherSpecFor returns the shipped matcher syntax for harness h. Hooks
+// without source provenance use the Claude catalog, as Resolve does.
+func MatcherSpecFor(h target.Target) (toolpolicy.MatcherSpec, bool) {
+	if h == "" {
+		h = target.TargetClaude
+	}
+	r, err := shipped()
+	if err != nil {
+		return toolpolicy.MatcherSpec{}, false
+	}
+	c, ok := r.catalogs[h]
+	if !ok {
+		return toolpolicy.MatcherSpec{}, false
+	}
+	return matcherSpec(c), true
 }
 
 // IsDeclaredEvent reports whether the shipped hook catalog for h declares the
@@ -338,11 +357,11 @@ func resolveMatcher(h *ir.Hook, dst target.Target, srcCat, dstCat catalog, srcEv
 	case MatcherKindTool:
 		decoded, err := decodeSourceMatcher(h, srcCat, srcEvent)
 		if err != nil {
-			return fail(diag.CodeHookMatcherUntranslatable, "No exact tool coverage on the target for this matcher; hook suppressed", "Use exact tool names the target documents")
+			return fail(diag.CodeHookMatcherUntranslatable, "The source matcher cannot be decoded for cross-harness translation; hook suppressed", "Use exact source tool names or a supported MCP pattern, or author a target-specific hook")
 		}
 		rendered, err := toolpolicy.RenderMatcher(dst, decoded, matcherSpec(dstCat))
 		if err != nil {
-			return fail(diag.CodeHookMatcherUntranslatable, "No exact tool coverage on the target for this matcher; hook suppressed", "Use exact tool names the target documents")
+			return fail(diag.CodeHookMatcherUntranslatable, "The target tool catalog cannot exactly cover the source matcher; hook suppressed", "Author a target-specific hook or explicitly narrow the selected harnesses; preview cleanup with agent-marketplace sync --check")
 		}
 		res.Matcher = rendered
 	default:
@@ -443,50 +462,69 @@ func rewriteCommand(h *ir.Hook, srcCat, dstCat catalog, event string, scope Scop
 			}
 			continue
 		}
-		out.WriteString(command[pos:m[0]])
-		pos = m[1]
-		if plugin {
-			if concept != "plugin_root" {
-				// Other plugin-only variables never resolve in a native
-				// hook file.
-				return fail(diag.CodeHookEnvUnrepresentable, "A plugin-only variable has no native equivalent on the target; hook suppressed", "Replace the reference with a documented variable")
+		// Other plugin-only variables never resolve in a native hook file.
+		if plugin && concept != "plugin_root" {
+			return fail(diag.CodeHookEnvUnrepresentable, "A plugin-only variable has no native equivalent on the target; hook suppressed", "Replace the reference with a documented variable")
+		}
+		if plugin && quote == '\'' {
+			return fail(diag.CodeHookEnvUnrepresentable, "A plugin-root reference inside a single-quoted shell literal cannot be translated; hook suppressed", "Move the reference outside the single-quoted literal")
+		}
+		preserveProjectVariable := false
+		repositoryBaseReference := !sameHarness && !plugin && srcCat.RepositoryBase != nil && srcCat.RepositoryBase.Env == concept
+		repositoryBase, repositoryBaseKind, hasRepositoryBase := "", 0, false
+		if repositoryBaseReference {
+			if variable, exists := dstCat.Env[concept]; exists && slices.Contains(variable.Names, name) {
+				// The target accepts the same spelling; keep it (Cursor and
+				// Gemini accept CLAUDE_PROJECT_DIR).
+				preserveProjectVariable = true
+			} else {
+				repositoryBase, repositoryBaseKind, hasRepositoryBase = repositoryBaseReplacement(dstCat)
+				if !hasRepositoryBase {
+					return fail(diag.CodeHookEnvUnrepresentable, "The target declares no repository base for a project-directory reference; hook suppressed", "Use a documented variable")
+				}
 			}
-			ref, refusal, ok := supportReference(dstCat, scope, supportBase, quote)
+		}
+		isolatedDoubleQuoted := quote == '"' && m[0] > pos && command[m[0]-1] == '"' &&
+			m[1]+1 < len(command) && command[m[1]] == '"' && command[m[1]+1] == '/' &&
+			(plugin || repositoryBaseReference && !preserveProjectVariable && repositoryBaseKind == repoBaseCwd)
+		prefixEnd := m[0]
+		if isolatedDoubleQuoted {
+			prefixEnd--
+		}
+		out.WriteString(command[pos:prefixEnd])
+		pos = m[1]
+		replacementQuote := quote
+		if isolatedDoubleQuoted {
+			pos++
+			replacementQuote = 0
+		}
+		if plugin {
+			ref, refusal, ok := supportReference(dstCat, scope, supportBase, replacementQuote)
 			if !ok {
 				return fail(refusal.Code, refusal.Message, refusal.Hint)
 			}
 			out.WriteString(ref)
 			continue
 		}
-		if sameHarness {
+		if sameHarness || preserveProjectVariable {
 			out.WriteString(command[m[0]:m[1]])
 			continue
 		}
-		if srcCat.RepositoryBase != nil && srcCat.RepositoryBase.Env == concept {
-			if v, exists := dstCat.Env[concept]; exists && slices.Contains(v.Names, name) {
-				// The target accepts the same spelling; keep it (Cursor and
-				// Gemini accept CLAUDE_PROJECT_DIR).
-				out.WriteString(command[m[0]:m[1]])
-				continue
-			}
-			repl, kind, ok := repositoryBaseReplacement(dstCat)
-			if !ok {
-				return fail(diag.CodeHookEnvUnrepresentable, "The target declares no repository base for a project-directory reference; hook suppressed", "Use a documented variable")
-			}
-			switch kind {
+		if repositoryBaseReference {
+			switch repositoryBaseKind {
 			case repoBaseCwd:
 				// {cwd: repository}: remove the reference and one following
 				// slash so the path becomes repository-relative.
-				if m[1] < len(command) && command[m[1]] == '/' {
-					pos = m[1] + 1
+				if pos < len(command) && command[pos] == '/' {
+					pos++
 				}
 			case repoBaseLiteral:
-				if quote == '"' {
-					repl = withoutOuterDoubleQuotes(repl)
+				if replacementQuote == '"' {
+					repositoryBase = withoutOuterDoubleQuotes(repositoryBase)
 				}
-				out.WriteString(repl)
+				out.WriteString(repositoryBase)
 			default:
-				out.WriteString(nameReplacement(m, repl))
+				out.WriteString(nameReplacement(m, repositoryBase))
 			}
 			continue
 		}
@@ -606,8 +644,6 @@ func supportReference(c catalog, scope Scope, supportBase string, quote byte) (s
 	if rb == nil {
 		return refuse()
 	}
-	// At repository scope the support base is repository-relative; join
-	// without duplicating slashes.
 	rel := strings.Trim(supportBase, "/")
 	switch {
 	case rb.Cwd != "":

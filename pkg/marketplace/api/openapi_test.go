@@ -110,18 +110,25 @@ func TestOpenAPIAdminAuthDocumentsBrowserAndJSONErrors(t *testing.T) {
 		operation := paths[path].(map[string]any)["get"].(map[string]any)
 		responses := operation["responses"].(map[string]any)
 		redirect := responses["303"].(map[string]any)["description"].(string)
-		if !strings.Contains(redirect, "/marketplace/auth/error") {
-			t.Errorf("%s 303 description omits the browser error page: %q", path, redirect)
+		if !strings.Contains(redirect, "instance.browser_base") || strings.Contains(redirect, "fixed same-origin /marketplace/auth/error") {
+			t.Errorf("%s 303 description does not derive the browser error page from instance.browser_base: %q", path, redirect)
 		}
 		var acceptFound bool
+		var nextDescription string
 		for _, parameter := range operation["parameters"].([]any) {
 			p := parameter.(map[string]any)
 			if p["name"] == "Accept" && p["in"] == "header" {
 				acceptFound = true
 			}
+			if p["name"] == "next" && p["in"] == "query" {
+				nextDescription, _ = p["description"].(string)
+			}
 		}
 		if !acceptFound {
 			t.Errorf("%s does not document the Accept negotiation header", path)
+		}
+		if path == "/api/v1/admin/auth/login" && (!strings.Contains(nextDescription, "instance.browser_base") || !strings.Contains(nextDescription, "/admin") || !strings.Contains(nextDescription, "/marketplace/admin")) {
+			t.Errorf("%s does not document configured and legacy administration destinations: %q", path, nextDescription)
 		}
 		for status, codes := range statuses {
 			response, ok := responses[status].(map[string]any)

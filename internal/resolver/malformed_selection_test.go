@@ -94,6 +94,39 @@ func TestResolveSelectedButMalformedReportsParseErrorInsteadOfRemovalGuess(t *te
 	assertNoRemovalGuess(t, full)
 }
 
+func TestResolveRequiredMalformedSharedLocationIsHardRegardlessOfEntryOrder(t *testing.T) {
+	const url = "git@example.com:infra.git"
+	cfg := &config.Config{
+		Registries: []config.RegistryEntry{
+			{URL: url, Ref: "main", Skills: ks("broken-skill")},
+			{URL: url, Ref: "main", Required: true, Skills: ks("broken-skill")},
+		},
+	}
+	key := ck(url, "main")
+	catalogs := map[string][]catalog.Entry{
+		key: {{Name: "valid-skill", Path: "/cache/infra/skills/valid-skill"}},
+	}
+	malformed := malformedFixture(key, skill.MalformedSkill{
+		DirName: "broken-skill",
+		Path:    "/cache/infra/skills/broken-skill",
+		Error:   errors.New("yaml: did not find expected ',' or ']'"),
+	})
+
+	setCatalogKeys(cfg)
+
+	_, errs := Resolve(cfg, catalogs, nil, WithMalformed(malformed))
+	if len(errs) != 1 {
+		t.Fatalf("expected exactly 1 error, got %d: %v", len(errs), errs)
+	}
+	var sme *SelectedMalformedError
+	if !errors.As(errs[0], &sme) || !sme.Required {
+		t.Fatalf("expected Required=true on SelectedMalformedError, got %T: %v", errs[0], errs[0])
+	}
+	if IsSoftSelectedMalformed(errs[0]) {
+		t.Fatal("required malformed selection shared across entries must not be a soft warning")
+	}
+}
+
 // TestResolveSelectedButMalformedMatchesFrontmatterName covers the case that
 // most resembles a rename: the selection uses the frontmatter `name:` while the
 // dropped resource is only known by its directory name.

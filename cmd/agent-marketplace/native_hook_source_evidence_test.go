@@ -302,12 +302,6 @@ func cliSharedHookFingerprints(t *testing.T, repoRoot, home string, d cliNativeD
 	return fps
 }
 
-// Partial or invalid shared proof can never suppress a selection: --check
-// first proves the unproven contributor is pending without writing anything,
-// then a mutating sync writes exactly that contributor's legacy handler while
-// native, state, config, and lock stay untouched. Corrupt evidence fails
-// closed with the stable tolerance code under all three commands.
-// spec: hook-native-location-tolerance/partial-shared-proof-cannot-suppress-a-selection
 // spec: hook-native-location-tolerance/invalid-additional-evidence-refuses-without-mutation
 // spec: hook-native-location-tolerance/read-only-shared-proof-checks-leave-state-untouched
 func TestSyncSharedNativeProofRefusesPartialOrInvalidEvidence(t *testing.T) {
@@ -337,6 +331,40 @@ func TestSyncSharedNativeProofRefusesPartialOrInvalidEvidence(t *testing.T) {
 		configPath = filepath.Join(repoRoot, ".agents", "config.yaml")
 		return
 	}
+	assertCompleteOwnedSources := func(t *testing.T, repoRoot string, fps map[string]string) {
+		t.Helper()
+		store, err := ownership.Open(filepath.Join(repoRoot, doc.rootDir))
+		if err != nil {
+			t.Fatal(err)
+		}
+		proof, err := store.Proof(doc.rel)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ids := proof.OwnedIDs()
+		if proof.OwnedCount() != 1 || len(ids) != 1 || len(proof.HookSatisfactions()) != 0 {
+			t.Fatalf("refreshed proof = owned %v / satisfactions %v", ids, proof.HookSatisfactions())
+		}
+		entry, ok := proof.Entry(ids[0])
+		if !ok || entry.Resource != cliHookNames[0] || entry.SourceDigest != fps[cliHookNames[0]] || len(entry.SourceEvidence) != 1 ||
+			entry.SourceEvidence[0] != (ownership.HookSourceEvidence{Resource: cliHookNames[1], SourceDigest: fps[cliHookNames[1]]}) {
+			t.Fatalf("refreshed contributor evidence = %+v", entry)
+		}
+	}
+	assertOneNativeGroup := func(t *testing.T, nativePath string) {
+		t.Helper()
+		data, err := os.ReadFile(nativePath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var document map[string][]json.RawMessage
+		if err := json.Unmarshal(data, &document); err != nil {
+			t.Fatalf("Native document: %v", err)
+		}
+		if len(document) != 1 || len(document[doc.event]) != 1 {
+			t.Fatalf("Native document = %#v, want exactly one current hook group", document)
+		}
+	}
 
 	// Healthy control: both contributors proven on the wire, all three
 	// commands quiet and nothing written.
@@ -364,63 +392,175 @@ func TestSyncSharedNativeProofRefusesPartialOrInvalidEvidence(t *testing.T) {
 		}
 	})
 
-	// Partial proof: only the first contributor is recorded. On a fresh
-	// fixture for each mutating command, --check first reports the unproven
-	// write WITHOUT creating any file; the mutating sync then writes exactly
-	// that one handler.
 	for _, mutating := range [][]string{{"sync"}, {"sync", "--locked"}} {
 		label := strings.Join(mutating, " ")
-		t.Run("partial_proof_keeps_unproven_legacy/"+label, func(t *testing.T) {
-			_, _, nativePath, legacyPath, statePath, lockPath, configPath, _ := newFixture(t)
+		t.Run("partial_proof_refreshes_native_metadata/"+label, func(t *testing.T) {
+			home, repoRoot, nativePath, legacyPath, statePath, lockPath, configPath, fps := newFixture(t)
+			nativeRoot := filepath.Join(repoRoot, doc.rootDir)
+			store, err := ownership.Open(nativeRoot)
+			if err != nil {
+				t.Fatal(err)
+			}
+			ownerLockPath := store.LockPath()
 			nativeBefore, nativeInfo := statSnapshot(t, nativePath)
 			stateBefore, stateInfo := statSnapshot(t, statePath)
 			lockBefore, lockInfo := statSnapshot(t, lockPath)
 			configBefore, configInfo := statSnapshot(t, configPath)
+			stateRoot := filepath.Join(home, "state")
+			stateSnapshot := cliFilesystemSnapshot(t, stateRoot)
+			nativeTree := cliTree(t, nativeRoot)
+			assertOneNativeGroup(t, nativePath)
+			cacheRoot := filepath.Join(home, "cache")
+			cacheTree := cliFilesystemSnapshot(t, cacheRoot)
 
-			// Read-only check first: pending write reported, nothing created.
 			out, err := executeCommand("sync", "--check")
 			t.Logf("sync --check output:\n%s", out)
-			if err == nil {
-				t.Fatalf("sync --check succeeded despite the unproven contributor:\n%s", out)
+			if err != nil || strings.Contains(out, "out of sync") {
+				t.Fatalf("metadata-only partial proof check: %v\n%s", err, out)
 			}
-			if !strings.Contains(out, "out of sync") && !strings.Contains(out, "missing") {
-				t.Fatalf("sync --check output does not report the pending legacy write:\n%s", out)
-			}
-			if _, statErr := os.Stat(legacyPath); !os.IsNotExist(statErr) {
-				t.Fatalf("sync --check created the legacy file")
+			if _, statErr := os.Lstat(legacyPath); !os.IsNotExist(statErr) {
+				t.Fatalf("sync --check created the legacy file: %v", statErr)
+
 			}
 			assertStatUnchanged(t, "--check native", nativePath, nativeBefore, nativeInfo)
 			assertStatUnchanged(t, "--check state", statePath, stateBefore, stateInfo)
 			assertStatUnchanged(t, "--check lock", lockPath, lockBefore, lockInfo)
 			assertStatUnchanged(t, "--check config", configPath, configBefore, configInfo)
+			assertCliFilesystemSnapshot(t, "--check state root", stateRoot, stateSnapshot)
+			assertCliTreeUnchanged(t, "--check native root", nativeRoot, nativeTree)
+			assertCliFilesystemSnapshot(t, "--check cache", cacheRoot, cacheTree)
 
-			// The mutating command writes ONLY the unproven contributor's handler.
 			out, err = executeCommand(mutating...)
 			if err != nil {
-				t.Fatalf("%s: %v\n%s", label, err, out)
+				t.Fatalf("%s metadata refresh: %v\n%s", label, err, out)
 			}
 			t.Logf("%s output:\n%s", label, out)
-			rules := parseLegacyHooks(t, legacyPath)
-			if len(rules) != 1 {
-				t.Fatalf("legacy output holds %d handlers, want exactly the 1 unproven hook: %#v", len(rules), rules)
-			}
-			r := rules[0]
-			if r["matcher"] != "Bash" || r["_managed_by"] != "agent-marketplace" {
-				t.Fatalf("unexpected legacy handler: %#v", r)
-			}
-			hooks, _ := r["hooks"].([]any)
-			if len(hooks) != 1 {
-				t.Fatalf("legacy handler has %d commands: %#v", len(hooks), r)
-			}
-			if cmd, _ := hooks[0].(map[string]any)["command"].(string); cmd != cliSharedHookCommand {
-				t.Fatalf("unproven legacy command = %q, want %q", cmd, cliSharedHookCommand)
+			if _, statErr := os.Lstat(legacyPath); !os.IsNotExist(statErr) {
+				t.Fatalf("%s created legacy output: %v", label, statErr)
 			}
 			assertStatUnchanged(t, label+" native", nativePath, nativeBefore, nativeInfo)
-			assertStatUnchanged(t, label+" state", statePath, stateBefore, stateInfo)
+			assertOneNativeGroup(t, nativePath)
 			assertStatUnchanged(t, label+" lock", lockPath, lockBefore, lockInfo)
 			assertStatUnchanged(t, label+" config", configPath, configBefore, configInfo)
+			stateAfter, stateInfoAfter := statSnapshot(t, statePath)
+			stateSnapshotAfter := cliFilesystemSnapshot(t, stateRoot)
+			if bytes.Equal(stateBefore, stateAfter) || stateInfoAfter.Mode().Perm() != stateInfo.Mode().Perm() {
+				t.Fatalf("%s did not update only the existing ownership metadata", label)
+			}
+			assertCliStateOnlyRecordChanged(t, label, stateRoot, ownerLockPath, statePath, stateSnapshot, stateSnapshotAfter)
+			assertCliTreeUnchanged(t, label+" native root", nativeRoot, nativeTree)
+			assertCliFilesystemSnapshot(t, label+" cache", cacheRoot, cacheTree)
+			assertCompleteOwnedSources(t, repoRoot, fps)
+
+			out, err = executeCommand("sync", "--check")
+			if err != nil || strings.Contains(out, "out of sync") {
+				t.Fatalf("post-refresh sync --check: %v\n%s", err, out)
+			}
+			assertStatUnchanged(t, "post-refresh check native", nativePath, nativeBefore, nativeInfo)
+			assertOneNativeGroup(t, nativePath)
+			assertStatUnchanged(t, "post-refresh check state", statePath, stateAfter, stateInfoAfter)
+			assertStatUnchanged(t, "post-refresh check lock", lockPath, lockBefore, lockInfo)
+			assertStatUnchanged(t, "post-refresh check config", configPath, configBefore, configInfo)
+			assertCliFilesystemSnapshot(t, "post-refresh check state root", stateRoot, stateSnapshotAfter)
+			assertCliTreeUnchanged(t, "post-refresh check native root", nativeRoot, nativeTree)
+			assertCliFilesystemSnapshot(t, "post-refresh check cache", cacheRoot, cacheTree)
+			if _, statErr := os.Lstat(legacyPath); !os.IsNotExist(statErr) {
+				t.Fatalf("post-refresh check created legacy output: %v", statErr)
+			}
+			assertCompleteOwnedSources(t, repoRoot, fps)
 		})
 	}
+
+	t.Run("native_value_absent_reports_pending_and_repairs", func(t *testing.T) {
+		home, repoRoot, nativePath, legacyPath, statePath, lockPath, configPath, fps := newFixture(t)
+		nativeRoot := filepath.Join(repoRoot, doc.rootDir)
+		if err := os.WriteFile(nativePath, []byte("{\"PreToolUse\":[]}\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		nativeBefore, nativeInfo := statSnapshot(t, nativePath)
+		stateBefore, stateInfo := statSnapshot(t, statePath)
+		lockBefore, lockInfo := statSnapshot(t, lockPath)
+		configBefore, configInfo := statSnapshot(t, configPath)
+		stateRoot := filepath.Join(home, "state")
+		stateSnapshot := cliFilesystemSnapshot(t, stateRoot)
+		nativeTree := cliTree(t, nativeRoot)
+		cacheRoot := filepath.Join(home, "cache")
+		cacheTree := cliFilesystemSnapshot(t, cacheRoot)
+
+		out, err := executeCommand("sync", "--check")
+		t.Logf("sync --check output:\n%s", out)
+		if err == nil || !strings.Contains(out, "out of sync") && !strings.Contains(out, "missing") {
+			t.Fatalf("sync --check did not report the pending Native write: %v\n%s", err, out)
+		}
+		if _, statErr := os.Lstat(legacyPath); !os.IsNotExist(statErr) {
+			t.Fatalf("sync --check created legacy output: %v", statErr)
+		}
+		assertStatUnchanged(t, "--check native", nativePath, nativeBefore, nativeInfo)
+		assertStatUnchanged(t, "--check state", statePath, stateBefore, stateInfo)
+		assertStatUnchanged(t, "--check lock", lockPath, lockBefore, lockInfo)
+		assertStatUnchanged(t, "--check config", configPath, configBefore, configInfo)
+		assertCliFilesystemSnapshot(t, "--check state root", stateRoot, stateSnapshot)
+		assertCliTreeUnchanged(t, "--check native root", nativeRoot, nativeTree)
+		assertCliFilesystemSnapshot(t, "--check cache", cacheRoot, cacheTree)
+
+		out, err = executeCommand("sync")
+		if err != nil {
+			t.Fatalf("sync Native repair: %v\n%s", err, out)
+		}
+		rules := parseLegacyHooks(t, nativePath)
+		if len(rules) != 1 {
+			t.Fatalf("repaired Native rules = %#v, want exactly one current rule", rules)
+		}
+		var expected map[string]any
+		if err := json.Unmarshal([]byte(doc.rule), &expected); err != nil {
+			t.Fatal(err)
+		}
+		actualBytes, err := json.Marshal(rules[0])
+		if err != nil {
+			t.Fatal(err)
+		}
+		expectedBytes, err := json.Marshal(expected)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !bytes.Equal(actualBytes, expectedBytes) {
+			t.Fatalf("repaired Native rule = %s, want %s", actualBytes, expectedBytes)
+		}
+		if _, statErr := os.Lstat(legacyPath); !os.IsNotExist(statErr) {
+			t.Fatalf("sync created legacy output: %v", statErr)
+		}
+		stateAfter, stateInfoAfter := statSnapshot(t, statePath)
+		if bytes.Equal(stateBefore, stateAfter) || stateInfoAfter.Mode().Perm() != stateInfo.Mode().Perm() {
+			t.Fatal("sync did not update the existing ownership evidence")
+		}
+		_, nativeInfoAfter := statSnapshot(t, nativePath)
+		if nativeInfoAfter.Mode().Perm() != nativeInfo.Mode().Perm() {
+			t.Fatalf("Native permissions changed: %v -> %v", nativeInfo.Mode(), nativeInfoAfter.Mode())
+		}
+		assertStatUnchanged(t, "sync lock", lockPath, lockBefore, lockInfo)
+		assertStatUnchanged(t, "sync config", configPath, configBefore, configInfo)
+		assertCliTreeUnchanged(t, "sync native root", nativeRoot, nativeTree)
+		assertCliFilesystemSnapshot(t, "sync cache", cacheRoot, cacheTree)
+		assertCompleteOwnedSources(t, repoRoot, fps)
+
+		stateSnapshotAfter := cliFilesystemSnapshot(t, stateRoot)
+		nativeAfter, nativeInfoAfter := statSnapshot(t, nativePath)
+		out, err = executeCommand("sync", "--check")
+		if err != nil || strings.Contains(out, "out of sync") {
+			t.Fatalf("post-repair sync --check: %v\n%s", err, out)
+		}
+		assertStatUnchanged(t, "post-repair check native", nativePath, nativeAfter, nativeInfoAfter)
+		assertStatUnchanged(t, "post-repair check state", statePath, stateAfter, stateInfoAfter)
+		assertStatUnchanged(t, "post-repair check lock", lockPath, lockBefore, lockInfo)
+		assertStatUnchanged(t, "post-repair check config", configPath, configBefore, configInfo)
+		assertCliFilesystemSnapshot(t, "post-repair check state root", stateRoot, stateSnapshotAfter)
+		assertCliTreeUnchanged(t, "post-repair check native root", nativeRoot, nativeTree)
+		assertCliFilesystemSnapshot(t, "post-repair check cache", cacheRoot, cacheTree)
+		if _, statErr := os.Lstat(legacyPath); !os.IsNotExist(statErr) {
+			t.Fatalf("post-repair check created legacy output: %v", statErr)
+		}
+		assertCompleteOwnedSources(t, repoRoot, fps)
+	})
 
 	// Invalid evidence: corrupt the durable record on the wire; every command
 	// fails closed with the stable tolerance code and changes nothing.

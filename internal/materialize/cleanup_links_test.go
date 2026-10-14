@@ -14,8 +14,8 @@ import (
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 )
 
-func cleanupLinkSkill(name string, machine bool, targets ...hcc.Target) resolver.ResolvedArtifact {
-	resource := devinResolved(name, ir.NewSkill(name, "skill", name+" original", nil, nil, ir.SourceRef{}), machine)
+func cleanupLinkSkill(t *testing.T, name string, machine bool, targets ...hcc.Target) resolver.ResolvedArtifact {
+	resource := devinResolved(t, name, ir.NewSkill(name, "skill", name+" original", nil, nil, ir.SourceRef{}), machine)
 	resource.Kind = ir.KindSkill
 	resource.Harnesses = targets
 	resource.RegistryURL = "https://example.invalid/registry.git"
@@ -38,11 +38,11 @@ func TestManagedResourceLinkPlanProtectsOtherKinds(t *testing.T) {
 			repo, home := devinEnv(t)
 			t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
 			t.Setenv("CODEX_HOME", filepath.Join(home, ".codex"))
-			command := cleanupLinkSkill("shared", false, target)
+			command := cleanupLinkSkill(t, "shared", false, target)
 			command.Kind = ir.KindCommand
 			command.Resource = ir.NewCommand("shared", "command", "body", nil, ir.SourceRef{})
 			seedCleanupLinks(t, repo, command)
-			remaining := cleanupLinkSkill("shared", false, target)
+			remaining := cleanupLinkSkill(t, "shared", false, target)
 			if _, err := PrepareManagedLinkRemoval(context.Background(), repo, command, []resolver.ResolvedArtifact{remaining}, config.DefaultMaterializationModes()); !errors.Is(err, ErrManagedLinkCleanupConflict) {
 				t.Fatalf("shared path error=%v", err)
 			}
@@ -58,10 +58,10 @@ func TestManagedResourceLinkPlanProtectsOtherKinds(t *testing.T) {
 	t.Run("distinct subagent path", func(t *testing.T) {
 		repo, home := devinEnv(t)
 		t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
-		subagent := cleanupLinkSkill("shared", false, hcc.TargetDevin)
+		subagent := cleanupLinkSkill(t, "shared", false, hcc.TargetDevin)
 		subagent.Kind = ir.KindSubagent
 		subagent.Resource = ir.NewSubagent("shared", "agent", "body", "", nil, "", nil, "", nil, ir.SourceRef{})
-		skill := cleanupLinkSkill("shared", false, hcc.TargetDevin)
+		skill := cleanupLinkSkill(t, "shared", false, hcc.TargetDevin)
 		seedCleanupLinks(t, repo, subagent, skill)
 		skillPath := filepath.Join(repo, ".devin", "skills", "shared", "SKILL.md")
 		before := readFileString(t, skillPath)
@@ -85,8 +85,8 @@ func TestManagedSkillLinkPlanMultiTarget(t *testing.T) {
 	repo, home := devinEnv(t)
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
 	t.Setenv("CODEX_HOME", filepath.Join(home, ".codex"))
-	target := cleanupLinkSkill("remove", false, hcc.TargetFactory, hcc.TargetDevin)
-	keep := cleanupLinkSkill("keep", false, hcc.TargetFactory, hcc.TargetDevin)
+	target := cleanupLinkSkill(t, "remove", false, hcc.TargetFactory, hcc.TargetDevin)
+	keep := cleanupLinkSkill(t, "keep", false, hcc.TargetFactory, hcc.TargetDevin)
 	seedCleanupLinks(t, repo, target, keep)
 	plan, err := PrepareManagedLinkRemoval(context.Background(), repo, target, []resolver.ResolvedArtifact{keep}, config.DefaultMaterializationModes())
 	if err != nil {
@@ -115,7 +115,7 @@ func TestManagedSkillLinkPlanRefusals(t *testing.T) {
 		t.Run(scenario, func(t *testing.T) {
 			repo, home := devinEnv(t)
 			t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
-			target := cleanupLinkSkill("remove", false, hcc.TargetDevin)
+			target := cleanupLinkSkill(t, "remove", false, hcc.TargetDevin)
 			if scenario == "shared fragment" {
 				target.Harnesses = []hcc.Target{hcc.TargetDevin, hcc.TargetClaude}
 			}
@@ -132,7 +132,7 @@ func TestManagedSkillLinkPlanRefusals(t *testing.T) {
 			case "still selected":
 				remaining = []resolver.ResolvedArtifact{target}
 			case "same slot command":
-				command := devinResolved("remove", ir.NewCommand("remove", "command", "body", nil, ir.SourceRef{}), false)
+				command := devinResolved(t, "remove", ir.NewCommand("remove", "command", "body", nil, ir.SourceRef{}), false)
 				command.Kind = ir.KindCommand
 				remaining = []resolver.ResolvedArtifact{command}
 			case "file mode":
@@ -186,9 +186,9 @@ func TestManagedSkillLinkPlanProtectsAliasedScope(t *testing.T) {
 	_, home := devinEnv(t)
 	t.Setenv("CODEX_HOME", filepath.Join(home, ".codex"))
 	repo := home
-	target := cleanupLinkSkill("remove", false, hcc.TargetCodex)
+	target := cleanupLinkSkill(t, "remove", false, hcc.TargetCodex)
 	seedCleanupLinks(t, repo, target)
-	machine := cleanupLinkSkill("remove", true, hcc.TargetCodex)
+	machine := cleanupLinkSkill(t, "remove", true, hcc.TargetCodex)
 	if _, err := PrepareManagedLinkRemoval(context.Background(), repo, target, []resolver.ResolvedArtifact{machine}, config.DefaultMaterializationModes()); !errors.Is(err, ErrManagedLinkCleanupConflict) {
 		t.Fatalf("aliased scope error=%v", err)
 	}
@@ -200,7 +200,7 @@ func TestManagedSkillLinkPlanProtectsAliasedScope(t *testing.T) {
 func TestManagedSkillLinkPlanRechecksAfterPublication(t *testing.T) {
 	repo, home := devinEnv(t)
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
-	target := cleanupLinkSkill("remove", false, hcc.TargetDevin)
+	target := cleanupLinkSkill(t, "remove", false, hcc.TargetDevin)
 	seedCleanupLinks(t, repo, target)
 	plan, err := PrepareManagedLinkRemoval(context.Background(), repo, target, nil, config.DefaultMaterializationModes())
 	if err != nil {

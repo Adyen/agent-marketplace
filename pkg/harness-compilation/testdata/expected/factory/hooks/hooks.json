@@ -3,11 +3,11 @@
     {
       "hooks": [
         {
-          "command": "${DROID_PLUGIN_ROOT}/scripts/check.sh",
+          "command": "\"$FACTORY_PROJECT_DIR\"/plugins/demo/scripts/check.sh",
           "type": "command"
         }
       ],
-      "matcher": "Read"
+      "matcher": "Execute"
     }
   ]
 }

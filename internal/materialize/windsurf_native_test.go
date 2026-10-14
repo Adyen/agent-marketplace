@@ -50,7 +50,7 @@ func TestWindsurfNativeHooksIngestResolveMaterialize(t *testing.T) {
 					t.Fatalf("Resolve = %d artifacts, errors=%v", len(resolved), errs)
 				}
 				initial := `{"hooks":{"pre_run_command":[{"command":"echo handwritten"}],"other":[{"command":"echo unrelated"}]}}`
-				nativePath := filepath.Join(repo, ".windsurf", "hooks.json")
+				nativePath := filepath.Join(repo, ".devin", "hooks.json")
 				if machineScope {
 					nativePath = filepath.Join(home, ".codeium", "windsurf", "hooks.json")
 				}

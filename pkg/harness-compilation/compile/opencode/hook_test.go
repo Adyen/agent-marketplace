@@ -3,6 +3,7 @@ package opencode
 import (
 	"bytes"
 	"encoding/json"
+	"slices"
 	"testing"
 
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
@@ -58,7 +59,7 @@ func TestHookUnsupportedForms(t *testing.T) {
 			if len(a) != 2 || len(d) != 0 {
 				t.Fatalf("valid hook refused: %v", d)
 			}
-		} else if len(a) != 0 || len(d) != 1 || d[0].Code != "hook.opencode.unsupported" || d[0].Severity != diag.SeverityError {
+		} else if len(a) != 0 || !diag.HasCode(d, diag.CodeHookOpenCodeUnsupported) || slices.ContainsFunc(d, func(d diag.Diagnostic) bool { return d.Severity != diag.SeverityError }) {
 			t.Fatalf("unsupported hook emitted: %v %v", a, d)
 		}
 	}

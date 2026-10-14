@@ -10,8 +10,8 @@ executable checksums are in [the probe guide](../../tools/opencode-probe/README.
 | Kind | Supported representation | Explicit limits |
 |---|---|---|
 | Skill | `skills/<name>/SKILL.md`, body, support files, description, license, compatibility, metadata | Execution restrictions unsupported by native skills produce `skill.opencode.security-restriction-unsupported` |
-| Command | `commands/<name>.md`, description, body, argument placeholders, native agent/model/subtask selections | Unrepresentable restrictions produce `command.opencode.restriction-unsupported` |
-| Subagent | `agents/<name>.md`, subagent mode, model, ordered permission rules, tools, hidden, temperature, steps | Unknown mappings and unsupported isolation/nesting controls produce `subagent.opencode.restriction-unsupported`; built-in/config agent collisions are refused |
+| Command | `commands/<name>.md`, description, body, argument placeholders, native agent/model/subtask selections | Unrepresentable restrictions produce `command.opencode.restriction-unsupported`; canonical models without a catalog identifier produce `model.unresolved` |
+| Subagent | `agents/<name>.md`, subagent mode, model, ordered permission rules, tools, hidden, temperature, steps | Tool lists that do not map onto whole permission keys, unknown mappings, and unsupported isolation/nesting controls produce `subagent.opencode.restriction-unsupported`; built-in/config agent collisions are refused |
 | MCP | Native local command arrays/environment or remote URL/headers; enabled, timeout, supported OAuth fields | Unrepresentable combinations produce `mcp.opencode.unrepresentable` |
 | Hook | Fixed plugin plus versioned JSON command declarations | Only the command `PreToolUse` subset below |
 | Rule | No output | `rule.opencode.unsupported` warning |
@@ -35,6 +35,15 @@ are refused. Unsupported native execution fields also block conversion to
 another target instead of being silently discarded. Benign metadata loss uses
 `compile.opencode.field-dropped` warnings.
 
+Models, tools, and hook events translate through the shipped OpenCode catalogs
+in `pkg/harness-compilation/{modelpolicy,toolpolicy,hookpolicy}/catalogs`.
+Native provider-qualified models keep their spelling; canonical models without
+an OpenCode catalog identifier are omitted with `model.unresolved`. Agent
+permission keys group `edit`, `write`, and `apply_patch` under `edit`, so a
+tool list is translated only when it maps onto whole permission keys: `Edit`
+and `Write` together become `edit`, while either one alone refuses the agent
+instead of producing an unenforced `write` rule or a broader `edit` rule.
+
 ## Command hooks
 
 The fixed `agent-marketplace/opencode-hook-v1` adapter subscribes to
@@ -42,13 +51,28 @@ The fixed `agent-marketplace/opencode-hook-v1` adapter subscribes to
 outside the native `plugins` autoload directory. They run in filename order.
 The adapter is copied as a regular file even in symlink mode.
 
-Matchers accept an empty value or `*`, or canonical ordinary tool names joined
-with `|`: `Bash`, `Read`, `Write`, `Edit`, `Glob`, `Grep`, `WebFetch`, `WebSearch`,
-`TodoWrite`, and `Skill`. The ordinary native callback was executed with Bash
-allow/block, a nonmatching Read control, and matching TodoWrite. MCP and nested subagent execution
-coverage is not advertised; explicit MCP and Task matchers are rejected.
-Other lifecycle events, regex matchers, prompt handlers, input mutation, and
-additional-context output are unsupported.
+Hooks from any source layout translate through the hook and tool catalogs.
+Declaration matchers are an empty value, `*`, or exact tool names joined with
+`|`, spelled as the adapter compares them: `Bash`, `Read`, `Write`, `Edit`,
+`Glob`, `Grep`, `WebFetch`, `WebSearch`, `TodoWrite`, and `Skill` for the IDs it
+canonicalizes, and the native ID for `apply_patch` and `question`. A matcher is
+emitted only when it covers exactly the source tool set. Because `apply_patch`
+also writes and edits files, `Edit` or `Write` alone is refused; `Edit|Write`
+becomes `Write|Edit|apply_patch`. The ordinary native callback was executed
+with Bash allow/block, a nonmatching Read control, and matching TodoWrite. MCP
+and nested subagent execution coverage is not advertised; explicit MCP and Task
+matchers are rejected. Other lifecycle events, regex matchers, prompt handlers,
+input mutation, and additional-context output are unsupported. Ingested
+declarations with regex-like, comma-separated, or adapter-rewritten native
+matchers are refused because the adapter would read them differently.
+
+Hook support files are not installed. The adapter sets no project or plugin
+variable and runs from the instance directory, which need not be the
+repository root, so a command referencing a plugin root or project directory
+is refused with `hook.opencode.unsupported` and the catalog refusal code
+(`hook.support-path-unrepresentable` or `hook.env-unrepresentable`) instead of
+pointing into the registry cache. Use self-contained commands or absolute
+paths that exist on every machine.
 
 Each command runs through `/bin/sh -c` with the native workspace as its current
 working directory and inherits the native process environment. Standard input

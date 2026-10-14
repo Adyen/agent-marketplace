@@ -1,6 +1,7 @@
 package mapping
 
 import (
+	"slices"
 	"testing"
 
 	targetmeta "github.com/Adyen/agent-marketplace/pkg/harness-compilation/target"
@@ -78,63 +79,6 @@ func TestModel_Unknown(t *testing.T) {
 	}
 	if got != "nonexistent-model" {
 		t.Errorf("Model(unknown, factory) = %q, want passthrough %q", got, "nonexistent-model")
-	}
-}
-
-// --- Tool tests ---
-
-func TestTool_BasicMapping(t *testing.T) {
-	tests := []struct {
-		claude string
-		target Target
-		want   []string
-		ok     bool
-	}{
-		// Read → same everywhere
-		{"Read", TargetClaude, []string{"Read"}, true},
-		{"Read", TargetFactory, []string{"Read"}, true},
-		{"Read", TargetCursor, []string{"Read"}, true},
-		{"Read", TargetWindsurf, []string{"Read"}, true},
-		{"Read", TargetGemini, []string{"Read"}, true},
-
-		// Write → Edit+Create for Factory, Write for others
-		{"Write", TargetClaude, []string{"Write"}, true},
-		{"Write", TargetFactory, []string{"Edit", "Create"}, true},
-		{"Write", TargetCursor, []string{"Write"}, true},
-		{"Write", TargetWindsurf, []string{"Write"}, true},
-		{"Write", TargetGemini, []string{"Write"}, true},
-
-		// Bash → same everywhere
-		{"Bash", TargetClaude, []string{"Bash"}, true},
-		{"Bash", TargetFactory, []string{"Bash"}, true},
-		{"Bash", TargetGemini, []string{"Bash"}, true},
-
-		// Glob → same everywhere
-		{"Glob", TargetClaude, []string{"Glob"}, true},
-		{"Glob", TargetFactory, []string{"Glob"}, true},
-
-		// Grep → same everywhere
-		{"Grep", TargetClaude, []string{"Grep"}, true},
-		{"Grep", TargetFactory, []string{"Grep"}, true},
-	}
-	for _, tt := range tests {
-		got, ok := Tool(tt.claude, tt.target)
-		if ok != tt.ok {
-			t.Errorf("Tool(%q, %s): ok=%v, want %v", tt.claude, tt.target, ok, tt.ok)
-		}
-		if !sliceEqual(got, tt.want) {
-			t.Errorf("Tool(%q, %s) = %v, want %v", tt.claude, tt.target, got, tt.want)
-		}
-	}
-}
-
-func TestTool_Unknown(t *testing.T) {
-	got, ok := Tool("NonExistentTool", TargetFactory)
-	if ok {
-		t.Errorf("Tool(unknown, factory) = ok=true, want ok=false")
-	}
-	if got != nil {
-		t.Errorf("Tool(unknown, factory) = %v, want nil", got)
 	}
 }
 
@@ -230,28 +174,6 @@ func TestMappingTables_Coverage(t *testing.T) {
 		}
 	}
 
-	// Tool table anchor entries — these must always be present.
-	toolAnchors := []string{
-		"Read",
-		"Write",
-		"Edit",
-		"Bash",
-		"Glob",
-		"Grep",
-		"MultiEdit",
-		"WebFetch",
-		"WebSearch",
-	}
-	toolSet := make(map[string]bool)
-	for _, e := range toolTable {
-		toolSet[e.Claude] = true
-	}
-	for _, a := range toolAnchors {
-		if !toolSet[a] {
-			t.Errorf("tool table missing anchor entry %q", a)
-		}
-	}
-
 	// Env table anchor entries.
 	envAnchors := []string{
 		"${CLAUDE_PLUGIN_ROOT}",
@@ -282,21 +204,14 @@ func TestMappingTables_Coverage(t *testing.T) {
 		}
 	}
 
-	// Each model entry must cover all declared targets.
+	// Each model entry must cover every target that existed when the table
+	// froze. Later targets resolve models only through modelpolicy catalogs.
 	allTargets := targetmeta.Targets()
+	frozenModelTargets := slices.DeleteFunc(slices.Clone(allTargets), func(tgt Target) bool { return tgt == TargetOpenCode })
 	for _, e := range modelTable {
-		for _, tgt := range allTargets {
+		for _, tgt := range frozenModelTargets {
 			if _, ok := e.Targets[tgt]; !ok {
 				t.Errorf("model entry %q missing target %s", e.Claude, tgt)
-			}
-		}
-	}
-
-	// Each tool entry must cover all declared targets.
-	for _, e := range toolTable {
-		for _, tgt := range allTargets {
-			if _, ok := e.Targets[tgt]; !ok {
-				t.Errorf("tool entry %q missing target %s", e.Claude, tgt)
 			}
 		}
 	}
@@ -318,18 +233,4 @@ func TestMappingTables_Coverage(t *testing.T) {
 			}
 		}
 	}
-}
-
-// --- Helpers ---
-
-func sliceEqual(a, b []string) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if a[i] != b[i] {
-			return false
-		}
-	}
-	return true
 }

@@ -236,6 +236,7 @@ func coalesceCodexPartition(result *compilePhaseResult, group []codexDestination
 	if d := coalesceCodexHooks(result, group); d != nil {
 		return d
 	}
+	coalesceCodexNativeHooks(result, group)
 	return coalesceCodexMCP(result, group)
 }
 
@@ -512,6 +513,33 @@ func coalesceCodexHooks(result *compilePhaseResult, group []codexDestinationBind
 		state.hooks = merged
 	}
 	return nil
+}
+
+func coalesceCodexNativeHooks(result *compilePhaseResult, group []codexDestinationBinding) {
+	var merged *ownedJSONAggregateWork
+	for _, binding := range group {
+		work := result.nativeHooks[binding.key]
+		if work == nil {
+			continue
+		}
+		if merged == nil {
+			merged = &ownedJSONAggregateWork{}
+		}
+		for rel, incomplete := range work.incomplete {
+			if incomplete {
+				merged.markIncomplete(rel)
+			}
+		}
+		for _, entry := range work.entries {
+			merged.add(entry)
+		}
+	}
+	if merged == nil {
+		return
+	}
+	for _, binding := range group {
+		result.nativeHooks[binding.key] = merged
+	}
 }
 
 func codexHookEntriesCompatible(a, b ownedJSONEntry) bool {

@@ -1,11 +1,15 @@
 package opencode
 
 import (
+	"strconv"
 	"strings"
 	"testing"
 	"testing/fstest"
 
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/compile"
+	_ "github.com/Adyen/agent-marketplace/pkg/harness-compilation/compile/claude"
 	compiler "github.com/Adyen/agent-marketplace/pkg/harness-compilation/compile/opencode"
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/internal/opencodehook"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 )
@@ -203,6 +207,85 @@ func TestHookDeclarationNativeJSONAndMatcherTypes(t *testing.T) {
 		})
 		if err != nil || len(bundle.Resources) != tc.want+1 || len(bundle.Diagnostics) != 1-tc.want {
 			t.Fatalf("declaration: %v %#v", err, bundle)
+		}
+	}
+}
+
+// spec: opencode-hooks/ambiguous-declaration-matchers-are-refused-at-ingestion
+func TestAmbiguousDeclarationMatchersAreRefused(t *testing.T) {
+	declaration := func(matcher string) []byte {
+		return []byte(`{"format":"agent-marketplace/opencode-hook-v1","name":"check","event":"PreToolUse","matcher":` + strconv.Quote(matcher) + `,"command":"true","timeout":30}`)
+	}
+	for _, tc := range []struct {
+		matcher  string
+		accepted bool
+	}{
+		{"", true}, {"*", true}, {"Bash", true}, {"Bash|Read", true}, {"apply_patch", true}, {"Task", true},
+		{"^Bash$", false}, {".*", false}, {"Bash,Read", false}, {"bash", false}, {"Bash|", false}, {"mcp_.*", false}, {"Bash(git:*)", false},
+	} {
+		b, err := LoadBundle(fstest.MapFS{
+			"plugins/agent-marketplace.js":       {Data: opencodehook.Adapter},
+			"hooks/agent-marketplace/check.json": {Data: declaration(tc.matcher)},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if tc.accepted {
+			if len(b.Resources) != 1 || len(b.Diagnostics) != 0 {
+				t.Fatalf("%q refused: %#v", tc.matcher, b)
+			}
+			hook := b.Resources[0].(*ir.Hook)
+			if hook.HookSource != "opencode" || hook.Matcher != tc.matcher || hook.Timeout == nil || *hook.Timeout != 30 {
+				t.Fatalf("%q ingested as %#v", tc.matcher, hook)
+			}
+			continue
+		}
+		if len(b.Resources) != 0 || len(b.Diagnostics) != 1 || b.Diagnostics[0].Code != "ingest.opencode.invalid-resource" {
+			t.Fatalf("%q accepted: %#v", tc.matcher, b)
+		}
+	}
+}
+
+// The adapter's default deadline is indistinguishable from an explicit one,
+// so it stays unset in the canonical form and compiles back unchanged.
+func TestDefaultDeclarationTimeoutStaysUnset(t *testing.T) {
+	b, err := LoadBundle(fstest.MapFS{
+		"plugins/agent-marketplace.js":       {Data: opencodehook.Adapter},
+		"hooks/agent-marketplace/check.json": {Data: []byte(`{"format":"agent-marketplace/opencode-hook-v1","name":"check","event":"PreToolUse","matcher":"Bash","command":"true","timeout":60}`)},
+	})
+	if err != nil || len(b.Resources) != 1 || b.Resources[0].(*ir.Hook).Timeout != nil {
+		t.Fatalf("load: %v %#v", err, b)
+	}
+}
+
+// spec: harness-opencode/native-model-selections-keep-their-provenance
+func TestNativeModelSelectionsKeepTheirProvenance(t *testing.T) {
+	for _, tc := range []struct{ native, claude string }{
+		{"anthropic/claude-sonnet-4-5-20250929", "claude-sonnet-4-5-20250929"},
+		{"provider/unknown", ""},
+	} {
+		b, err := LoadBundle(fstest.MapFS{"agents/reviewer.md": {Data: []byte("---\ndescription: Review\nmode: subagent\nmodel: " + tc.native + "\n---\nReview\n")}})
+		if err != nil || len(b.Resources) != 1 {
+			t.Fatalf("load: %v %#v", err, b)
+		}
+		agent := b.Resources[0].(*ir.Subagent)
+		if agent.Model != tc.native || agent.ModelSource != "opencode" {
+			t.Fatalf("ingested model %q from %q", agent.Model, agent.ModelSource)
+		}
+		native, _, err := compiler.Compiler{}.Translate(agent)
+		if err != nil || len(native) != 1 || !strings.Contains(string(native[0].Bytes), "model: "+tc.native+"\n") {
+			t.Fatalf("native output: %v %#v", err, native)
+		}
+		result, err := compile.Compile(agent, "claude")
+		if err != nil || len(result.Artifacts) == 0 || result.Artifacts[0].Path != "agents/reviewer.md" {
+			t.Fatalf("claude output: %v %#v", err, result)
+		}
+		text := string(result.Artifacts[0].Bytes)
+		if tc.claude != "" && !strings.Contains(text, "model: "+tc.claude+"\n") {
+			t.Fatalf("claude model: %s", text)
+		}
+		if tc.claude == "" && (strings.Contains(text, "model:") || !diag.HasCode(result.Diagnostics, diag.CodeModelUnresolved)) {
+			t.Fatalf("unresolved native model leaked: %s %v", text, result.Diagnostics)
 		}
 	}
 }

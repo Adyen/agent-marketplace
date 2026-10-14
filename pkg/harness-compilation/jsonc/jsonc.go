@@ -32,6 +32,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"slices"
 
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/internal/jsonutil"
 )
@@ -285,7 +286,7 @@ func (d *Document) DeleteMember(n *Node, key string) bool {
 			// The removed member owned the pre-close trivia position; keep the
 			// previous member's trail as the new pre-close trivia so the closing
 			// brace does not end up on the value's line.
-			n.tail = concat(n.members[i-1].trail, n.tail)
+			n.tail = slices.Concat(n.members[i-1].trail, n.tail)
 			n.members[i-1].trail = nil
 		}
 		n.members = append(n.members[:i], n.members[i+1:]...)
@@ -388,7 +389,7 @@ func (d *Document) SetElements(n *Node, raws [][]byte) bool {
 	}
 	if len(next) > 0 {
 		// The last element must not keep a trailing-comma trivia slot.
-		n.tail = concat(next[len(next)-1].trail, n.tail)
+		n.tail = slices.Concat(next[len(next)-1].trail, n.tail)
 		next[len(next)-1].trail = nil
 	}
 	n.elements = next
@@ -426,12 +427,6 @@ func indentOnly(trivia []byte) []byte {
 		}
 	}
 	return append([]byte(nil), rest...)
-}
-
-func concat(a, b []byte) []byte {
-	out := make([]byte, 0, len(a)+len(b))
-	out = append(out, a...)
-	return append(out, b...)
 }
 
 func (n *Node) write(buf *bytes.Buffer) {

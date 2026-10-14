@@ -7,7 +7,7 @@
           "type": "command"
         }
       ],
-      "matcher": "Read"
+      "matcher": "Bash"
     }
   ]
 }

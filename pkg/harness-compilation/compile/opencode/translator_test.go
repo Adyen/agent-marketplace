@@ -9,7 +9,23 @@ import (
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/internal/yamlfm"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
+	ext "github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir/ext"
 )
+
+// nativeCommand and nativeSubagent carry the provenance OpenCode ingestion
+// records, so their native model selections are kept as authored.
+func nativeCommand() *ir.Command {
+	subtask := true
+	c := ir.NewCommand("check", "Check changes", "Check $ARGUMENTS and $1.\n", nil, ir.SourceRef{})
+	c.Ext.OpenCode = &ext.OpenCode{Agent: "reviewer", Model: "provider/model", Subtask: &subtask}
+	return c
+}
+
+func nativeSubagent() *ir.Subagent {
+	a := ir.NewSubagent("reviewer", "Review code", "Review only.\n", "provider/model", nil, "", nil, "", nil, ir.SourceRef{})
+	a.ModelSource = "opencode"
+	return a
+}
 
 // spec: harness-opencode/native-fields-survive-a-supported-round-trip
 func TestNativeResourceFormats(t *testing.T) {
@@ -18,8 +34,8 @@ func TestNativeResourceFormats(t *testing.T) {
 		path, want string
 	}{
 		{ir.NewSkill("review", "Review code", "Review the diff.\n", nil, nil, ir.SourceRef{}), "skills/review/SKILL.md", "---\nname: review\ndescription: Review code\n---\nReview the diff.\n"},
-		{ir.NewCommand("check", "Check changes", "Check $ARGUMENTS and $1.\n", map[string]any{"agent": "reviewer", "model": "provider/model", "subtask": true}, ir.SourceRef{}), "commands/check.md", "---\ndescription: Check changes\nagent: reviewer\nmodel: provider/model\nsubtask: true\n---\nCheck $ARGUMENTS and $1.\n"},
-		{ir.NewSubagent("reviewer", "Review code", "Review only.\n", "provider/model", nil, "", nil, "", nil, ir.SourceRef{}), "agents/reviewer.md", "---\ndescription: Review code\nmode: subagent\nmodel: provider/model\n---\nReview only.\n"},
+		{nativeCommand(), "commands/check.md", "---\ndescription: Check changes\nagent: reviewer\nmodel: provider/model\nsubtask: true\n---\nCheck $ARGUMENTS and $1.\n"},
+		{nativeSubagent(), "agents/reviewer.md", "---\ndescription: Review code\nmode: subagent\nmodel: provider/model\n---\nReview only.\n"},
 	} {
 		t.Run(tc.path, func(t *testing.T) {
 			artifacts, diagnostics, err := (Compiler{}).Translate(tc.resource)

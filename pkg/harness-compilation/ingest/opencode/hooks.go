@@ -6,12 +6,14 @@ import (
 	"errors"
 	"io/fs"
 	"path"
+	"regexp"
 	"strings"
 
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/internal/opencodehook"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/jsonc"
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/target"
 )
 
 func loadHooks(src fs.FS, root string) ([]ir.Resource, []diag.Diagnostic) {
@@ -74,12 +76,38 @@ func loadHooks(src fs.FS, root string) ([]ir.Resource, []diag.Diagnostic) {
 			}
 		}
 		var declaration opencodehook.Declaration
-		if strictKeys(fields, []string{"format", "name", "event", "matcher", "command", "timeout"}) != nil || jsonc.Unmarshal(file, data, &declaration) != nil || declaration.Format != opencodehook.Format || declaration.Event != "PreToolUse" || declaration.Command == "" || declaration.Timeout < 1 || declaration.Timeout > 600 || ir.ValidateName(declaration.Name) != nil || !recognized {
+		if strictKeys(fields, []string{"format", "name", "event", "matcher", "command", "timeout"}) != nil || jsonc.Unmarshal(file, data, &declaration) != nil || declaration.Format != opencodehook.Format || declaration.Event != "PreToolUse" || declaration.Command == "" || declaration.Timeout < 1 || declaration.Timeout > 600 || ir.ValidateName(declaration.Name) != nil || !adapterMatcher(declaration.Matcher) || !recognized {
 			diagnostics = append(diagnostics, failure(file, fs.ErrInvalid))
 			continue
 		}
-		hook := ir.NewHookWithMatcherOptions(declaration.Name, declaration.Event, declaration.Matcher, declaration.Command, "command", nil, ir.SourceRef{File: file, Line: 1}, ir.WithHookTimeout(declaration.Timeout))
+		options := []ir.HookOption{ir.WithHookSource(string(target.TargetOpenCode))}
+		// The compiler always writes the adapter's 60-second default, so a
+		// declaration cannot distinguish it from an explicit 60; it stays
+		// unset in the canonical form.
+		if declaration.Timeout != opencodehook.DefaultTimeout {
+			options = append(options, ir.WithHookTimeout(declaration.Timeout))
+		}
+		hook := ir.NewHookWithMatcherOptions(declaration.Name, declaration.Event, declaration.Matcher, declaration.Command, "command", nil, ir.SourceRef{File: file, Line: 1}, options...)
 		resources = append(resources, hook)
 	}
 	return resources, diagnostics
+}
+
+var adapterMatcherElement = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
+
+// adapterMatcher accepts only matchers whose adapter meaning is unambiguous:
+// empty, `*`, or exact tool names joined by `|`. The adapter compares names
+// literally, so regex-like or comma-separated text and native IDs the adapter
+// rewrites before comparison would be dead at runtime yet decode as a live
+// selection in another harness.
+func adapterMatcher(matcher string) bool {
+	if matcher == "" || matcher == "*" {
+		return true
+	}
+	for _, element := range strings.Split(matcher, "|") {
+		if _, rewritten := opencodehook.CanonicalTools[element]; rewritten || !adapterMatcherElement.MatchString(element) {
+			return false
+		}
+	}
+	return true
 }

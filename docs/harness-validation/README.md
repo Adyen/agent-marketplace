@@ -38,6 +38,30 @@ selections, not native runtime primitives.
    actual output. No alternate resource directory, inline agent definition, or
    copied configuration may stand in for the generated files.
 
+## Hook coverage boundary
+
+The shared fixture checks the native sync file, support files, ownership
+preservation, diagnostics, and `sync --check` for each harness. Those checks do
+not prove that a vendor executed a hook. The generated
+[hook and tool name reference](../../site/docs/reference/hook-and-tool-names.md)
+is the catalog inventory for event names, matcher syntax, handler types,
+variables, and timeout units; use it instead of duplicating a second catalog in
+this directory. Catalog entries for handler types such as `http`, `agent`, or
+`mcp_tool` describe the vendor vocabulary only. They do not claim that Agent
+Marketplace can execute or probe that type.
+
+Cursor and the Devin CLI both also load Claude hook files. Selecting Claude
+with either target emits `hook.duplicate-execution-risk`; Agent Marketplace
+warns and leaves both outputs unchanged. The warning does not change vendor
+trust or guarantee that either runtime will execute a hook.
+
+When a real sync changes an owned hook command or prompt, stdout lists the
+exact old and new values for review in both scopes after successful
+publication. `sync --check` prints the same pending review after its safe
+preview and writes no native files, configuration, or state. Metadata-only
+updates and no-op runs are silent. Application diagnostics, logs, and telemetry
+still omit hook payloads; the stdout listing is the intended review output.
+
 ## Common scenario, in execution order
 
 Each target runs four scenarios: `repo/symlink`, `repo/file`, `user/symlink`,

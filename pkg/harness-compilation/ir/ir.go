@@ -153,7 +153,9 @@ type Skill struct {
 	Body           string         // Markdown body content
 	ArgumentHint   string         // Optional argument hint shown to callers
 	Model          string         // Optional model identifier
+	ModelSource    string         `json:"ModelSource,omitempty"`
 	AllowedTools   []string       // Explicitly allowed tool IDs; nil means absent, empty means explicit empty
+	ToolSource     string         `json:"ToolSource,omitempty"` // Harness whose native tool names AllowedTools carries; empty means canonical
 	Permissions    Permissions    // Optional allow/ask/deny permission policy
 	PermissionsSet bool           // Whether permissions was explicitly present in source
 	Triggers       []string       // Activation triggers (e.g. "user", "model")
@@ -187,6 +189,10 @@ func WithSkillSubagent(v string) SkillOption { return func(s *Skill) { s.Subagen
 
 // WithSkillAgent sets the optional named agent.
 func WithSkillAgent(v string) SkillOption { return func(s *Skill) { s.Agent = v } }
+
+// WithSkillToolSource records the harness whose native tool names AllowedTools
+// carries; empty means the canonical vocabulary.
+func WithSkillToolSource(v string) SkillOption { return func(s *Skill) { s.ToolSource = v } }
 
 // NewSkill creates a Skill with the stable constructor signature.
 func NewSkill(name, description, body string, triggers []string, extra map[string]any, source SourceRef) *Skill {
@@ -271,7 +277,9 @@ type Subagent struct {
 	Description     string         // One-line description
 	Body            string         // System prompt / instruction body
 	Model           string         // Model identifier (e.g. "sonnet")
+	ModelSource     string         `json:"ModelSource,omitempty"`
 	Tools           []string       // Allowed tool IDs
+	ToolSource      string         `json:"ToolSource,omitempty"` // Harness whose native tool names Tools carries; empty means canonical
 	Effort          string         // Reasoning effort level (e.g. "high")
 	DisallowedTools []string       // Explicitly disallowed tool IDs
 	Isolation       string         // Isolation mode (e.g. "worktree")
@@ -289,6 +297,10 @@ func WithSubagentMaxNesting(v int) SubagentOption { return func(s *Subagent) { s
 
 // WithSubagentMaxNestingPtr sets the maximum recursive nesting depth pointer.
 func WithSubagentMaxNestingPtr(v *int) SubagentOption { return func(s *Subagent) { s.MaxNesting = v } }
+
+// WithSubagentToolSource records the harness whose native tool names Tools
+// carries; empty means the canonical vocabulary.
+func WithSubagentToolSource(v string) SubagentOption { return func(s *Subagent) { s.ToolSource = v } }
 
 // NewSubagent creates a Subagent with the stable constructor signature.
 func NewSubagent(name, description, body, model string, tools []string, effort string, disallowedTools []string, isolation string, extra map[string]any, source SourceRef) *Subagent {
@@ -327,6 +339,15 @@ type Hook struct {
 	Ext        extpkg.Bag     // Optional target-specific sidecars
 	Extra      map[string]any // Preserved unknown fields
 	Source     SourceRef      // Origin in the source bundle
+
+	// GroupExtraKeys names the Extra keys the ingester promoted from the
+	// enclosing hook group rather than from the handler object itself (for
+	// example Factory's group-level commandRegex). It is metadata for
+	// source-revision digest projections that must replay the historical
+	// handler-level Extra view; it never serializes into lock payloads.
+	GroupExtraKeys map[string]bool `json:"-"`
+
+	sourceDefinitionDigest string
 }
 
 // HookOption customizes the additive hook fields.
@@ -389,6 +410,10 @@ func (h *Hook) Name() string { return h.name }
 
 // SetName sets the hook name.
 func (h *Hook) SetName(name string) { h.name = name }
+
+func (h *Hook) SourceDefinitionDigest() string { return h.sourceDefinitionDigest }
+
+func (h *Hook) SetSourceDefinitionDigest(digest string) { h.sourceDefinitionDigest = digest }
 
 // McpServer represents a compilable MCP server resource.
 type McpServer struct {

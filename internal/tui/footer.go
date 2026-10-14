@@ -1,11 +1,13 @@
 package tui
 
 import (
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
 	"sync"
 
+	"github.com/Adyen/agent-marketplace/internal/cache"
 	"github.com/charmbracelet/x/ansi"
 )
 
@@ -92,6 +94,14 @@ func (m Model) footerActionHints() []footerItem {
 	hints := make([]footerItem, len(actions))
 	for i, a := range actions {
 		hints[i] = hintItem(a[0], a[1], rankAction+i, false)
+		if a[0] == "s" {
+			for _, warning := range m.warnings {
+				if errors.Is(warning, cache.ErrExactGitSnapshotUnavailable) {
+					hints[i].rank = rankRecovery
+					break
+				}
+			}
+		}
 	}
 	return hints
 }
@@ -306,7 +316,7 @@ func joinFooter(items []footerItem, chosen []string) string {
 
 func rowsHaveUnavailable(rows []row) bool {
 	for _, r := range rows {
-		if r.UnavailableReason != "" {
+		if r.UnavailableReason != "" && !r.UnavailableSoft {
 			return true
 		}
 	}

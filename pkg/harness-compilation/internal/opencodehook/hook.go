@@ -30,6 +30,18 @@ const DeclarationsDir = "hooks/agent-marketplace"
 // would reject whole.
 const MaxDeclarationsPerToolEvent = 64
 
+// DefaultTimeout is the handler deadline, in seconds, written for a hook that
+// declares none.
+const DefaultTimeout = 60
+
+// CanonicalTools mirrors the fixed adapter's runtime canonicalization table:
+// the adapter rewrites these native tool IDs to the listed names before it
+// compares a declaration matcher, so declarations must use the listed names.
+var CanonicalTools = map[string]string{
+	"bash": "Bash", "read": "Read", "write": "Write", "edit": "Edit", "glob": "Glob", "grep": "Grep",
+	"webfetch": "WebFetch", "websearch": "WebSearch", "todowrite": "TodoWrite", "task": "Task", "skill": "Skill",
+}
+
 // IsDeclarationPath reports whether an artifact path is one adapter declaration.
 func IsDeclarationPath(p string) bool {
 	dir, base := path.Split(p)

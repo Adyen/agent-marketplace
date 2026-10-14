@@ -1266,7 +1266,7 @@ export interface operations {
                 state: string;
             };
             header?: {
-                /** @description When the request explicitly prefers text/html over JSON, failures respond 303 to the fixed same-origin /marketplace/auth/error page with an allowlisted code and the validated transaction destination instead of a JSON error body. */
+                /** @description When the request explicitly prefers text/html over JSON, failures respond 303 to the same-origin auth/error page beneath the path in instance.browser_base, with an allowlisted code and the validated transaction destination instead of a JSON error body. A root browser base uses /auth/error; an omitted browser base retains /marketplace/auth/error. */
                 Accept?: string;
             };
             path?: never;
@@ -1274,7 +1274,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Sign-in completed; sets the signed host-only admin session cookie and redirects to the validated destination. HTTPS origins use the browser-enforced __Host-marketplace_admin_session name with Secure, Path=/, and no Domain; explicit loopback HTTP uses the unprefixed name confined to /api/v1/admin. For HTML-preferring requests this response also carries browser failures to /marketplace/auth/error?code=...&next=...; the JSON error statuses below apply to all other clients. */
+            /** @description Sign-in completed; sets the signed host-only admin session cookie and redirects to the validated destination. HTTPS origins use the browser-enforced __Host-marketplace_admin_session name with Secure, Path=/, and no Domain; explicit loopback HTTP uses the unprefixed name confined to /api/v1/admin. For HTML-preferring requests this response also carries browser failures to the same-origin auth/error route derived from the path in instance.browser_base; the JSON error statuses below apply to all other clients. */
             303: {
                 headers: {
                     [name: string]: unknown;
@@ -1334,11 +1334,11 @@ export interface operations {
     adminAuthLogin: {
         parameters: {
             query?: {
-                /** @description Post-sign-in destination. Only /marketplace/admin and descendant paths are accepted. */
+                /** @description Post-sign-in destination. Only the administration path beneath instance.browser_base (/admin for a root base, or the base path followed by /admin) and its descendants are accepted. When instance.browser_base is omitted, the legacy /marketplace/admin path and its descendants are accepted. */
                 next?: string;
             };
             header?: {
-                /** @description When the request explicitly prefers text/html over JSON, failures respond 303 to the fixed same-origin /marketplace/auth/error page with an allowlisted code and a validated destination instead of a JSON error body. */
+                /** @description When the request explicitly prefers text/html over JSON, failures respond 303 to the same-origin auth/error page beneath the path in instance.browser_base, with an allowlisted code and a validated destination instead of a JSON error body. A root browser base uses /auth/error; an omitted browser base retains /marketplace/auth/error. */
                 Accept?: string;
             };
             path?: never;
@@ -1346,7 +1346,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Redirect to the identity provider authorization endpoint; sets a signed host-only login transaction cookie. HTTPS origins use the browser-enforced __Host-marketplace_admin_login name with Secure, Path=/, and no Domain; explicit loopback HTTP uses the unprefixed name confined to /api/v1/admin/auth. For HTML-preferring requests this response also carries browser failures to /marketplace/auth/error?code=...&next=...; the JSON error statuses below apply to all other clients. */
+            /** @description Redirect to the identity provider authorization endpoint; sets a signed host-only login transaction cookie. HTTPS origins use the browser-enforced __Host-marketplace_admin_login name with Secure, Path=/, and no Domain; explicit loopback HTTP uses the unprefixed name confined to /api/v1/admin/auth. For HTML-preferring requests this response also carries browser failures to the same-origin auth/error route derived from the path in instance.browser_base; the JSON error statuses below apply to all other clients. */
             303: {
                 headers: {
                     [name: string]: unknown;

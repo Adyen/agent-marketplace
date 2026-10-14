@@ -1,3 +1,3 @@
-// Package mapping contains curated translation tables for model IDs, tool IDs,
-// and environment variables across target harnesses.
+// Package mapping contains tool/environment mappings and frozen legacy model
+// mappings. Active model/reasoning conversion lives in package modelpolicy.
 package mapping

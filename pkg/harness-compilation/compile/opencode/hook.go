@@ -3,42 +3,67 @@ package opencode
 import (
 	"encoding/json"
 	"path"
+	"regexp"
 	"strings"
 
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/compile"
-	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/compile/mapping"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/hookpolicy"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/internal/opencodehook"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/target"
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/toolpolicy"
 )
 
+var adapterToolName = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
+
 func hook(h *ir.Hook, opts compile.Options) ([]artifact.Artifact, []diag.Diagnostic, error) {
-	fail := func() ([]artifact.Artifact, []diag.Diagnostic, error) {
-		return nil, []diag.Diagnostic{diagnostic(diag.CodeHookOpenCodeUnsupported, diag.SeverityError, h.Name(), h.Source, "OpenCode supports command PreToolUse hooks with bare tool matchers and positive timeouts up to 600 seconds; hook omitted")}, nil
+	fail := func(prior ...diag.Diagnostic) ([]artifact.Artifact, []diag.Diagnostic, error) {
+		if diag.HasCode(prior, diag.CodeHookOpenCodeUnsupported) {
+			return nil, prior, nil
+		}
+		return nil, append(prior, diagnostic(diag.CodeHookOpenCodeUnsupported, diag.SeverityError, h.Name(), h.Source, "OpenCode supports command PreToolUse hooks with exact tool matchers and positive timeouts up to 600 seconds; hook omitted")), nil
 	}
-	if h.Event != "PreToolUse" || (h.Type != "" && h.Type != "command") || h.Command == "" || h.Prompt != "" || len(h.Extra) > 0 {
+	if (h.Type != "" && h.Type != "command") || h.Command == "" || h.Prompt != "" || len(h.Extra) > 0 {
 		return fail()
 	}
-	matcher, ok := declarationMatcher(h.Matcher, opts.ToolOverride())
+	overridden, matcher, ok := overriddenMatcher(h, opts.ToolOverride())
 	if !ok {
 		return fail()
 	}
-	timeout := 60
-	if h.Timeout != nil {
-		timeout = *h.Timeout
+	resolveInput := h
+	if overridden {
+		// Event, deadline, and command still resolve through the catalogs;
+		// only the consumer-mapped matcher bypasses catalog coverage.
+		clone := *h
+		clone.Matcher = ""
+		resolveInput = &clone
+	}
+	scope := hookpolicy.ScopeRepository
+	if opts.Scope() == compile.ScopeUser {
+		scope = hookpolicy.ScopeMachine
+	}
+	resolved := hookpolicy.Resolve(resolveInput, target.TargetOpenCode, scope, opts.PluginRoot())
+	if resolved.Failed() {
+		return fail(resolved.Diagnostics...)
+	}
+	if resolved.Event != "PreToolUse" {
+		return fail()
+	}
+	if !overridden {
+		if matcher, ok = declarationMatcher(resolved.Matcher); !ok {
+			return fail()
+		}
+	}
+	timeout := opencodehook.DefaultTimeout
+	if resolved.Timeout != nil {
+		timeout = *resolved.Timeout
 	}
 	if timeout < 1 || timeout > 600 {
 		return fail()
 	}
-	command := h.Command
-	if strings.Contains(command, "${CLAUDE_PLUGIN_ROOT}") {
-		if opts.PluginRoot() == "" {
-			return fail()
-		}
-		command = strings.ReplaceAll(command, "${CLAUDE_PLUGIN_ROOT}", opts.PluginRoot())
-	}
-	declaration := opencodehook.Declaration{Format: opencodehook.Format, Name: h.Name(), Event: h.Event, Matcher: matcher, Command: command, Timeout: timeout}
+	declaration := opencodehook.Declaration{Format: opencodehook.Format, Name: h.Name(), Event: resolved.Event, Matcher: matcher, Command: resolved.Command, Timeout: timeout}
 	data, err := json.MarshalIndent(declaration, "", "  ")
 	if err != nil {
 		return nil, nil, err
@@ -51,46 +76,83 @@ func hook(h *ir.Hook, opts compile.Options) ([]artifact.Artifact, []diag.Diagnos
 	return []artifact.Artifact{
 		{Path: path.Join(opencodehook.DeclarationsDir, h.Name()+".json"), Bytes: append(data, '\n'), Mode: 0600},
 		{Path: opencodehook.AdapterPath, Bytes: append([]byte(nil), opencodehook.Adapter...), Mode: 0644, Fragment: true, FragmentKey: opencodehook.AdapterFragmentKey, DedupeFragmentEntries: true},
-	}, nil, nil
+	}, resolved.Diagnostics, nil
 }
 
-// declarationMatcher resolves the canonical matcher to the spelling the fixed
-// adapter compares at runtime and reports whether every entry is supported.
-//
-// An unoverridden tool must be a curated canonical tool: the adapter
-// canonicalizes native tool names before comparing them to a declaration
-// matcher, so a canonical entry such as "Bash" matches native bash invocations.
-//
-// An overridden tool uses the override spelling, the same mapping authority as
-// restrictive subagent policies. The override value must be a plain tool name
-// that the adapter does NOT canonicalize: a value the fixed runtime maps back
-// to a canonical name would never compare equal after canonicalization, so
-// such a mapping fails closed here instead of installing a silently dead
-// matcher. Task stays unsupported regardless of mapping because nested
-// subagent tool-execution coverage is not advertised.
-func declarationMatcher(matcher string, overrides map[string]string) (string, bool) {
-	if matcher == "" || matcher == "*" {
-		return matcher, true
+// declarationMatcher converts a catalog-rendered OpenCode matcher into the
+// spelling the fixed adapter compares at runtime: the adapter canonicalizes
+// native tool IDs before matching, so each native ID is written in its
+// canonical form. Only the verified catalog tools are accepted. Task stays
+// unsupported because nested subagent tool-execution coverage is not
+// advertised, and MCP patterns are refused because the adapter compares exact
+// names.
+func declarationMatcher(rendered string) (string, bool) {
+	if rendered == "" || rendered == "*" {
+		return rendered, true
 	}
-	var emitted []string
-	for _, tool := range strings.Split(matcher, "|") {
-		if tool == "Task" {
+	elements := strings.Split(rendered, "|")
+	for i, element := range elements {
+		if canonical, ok := opencodehook.CanonicalTools[element]; ok {
+			element = canonical
+		}
+		if element == "Task" || !toolpolicy.IsToolOnSurface(target.TargetOpenCode, toolpolicy.SurfaceHookMatcher, element) {
 			return "", false
 		}
-		if value, overridden := overrides[tool]; overridden {
-			if value == "" || value == "*" || strings.Contains(value, "|") {
-				return "", false
-			}
-			if _, known := mapping.ReverseTool(value, mapping.TargetOpenCode); known {
-				return "", false
+		elements[i] = element
+	}
+	return strings.Join(elements, "|"), true
+}
+
+// overriddenMatcher applies explicit tool overrides, the same mapping
+// authority as restrictive subagent policies. It reports whether any matcher
+// element was overridden; non-overridden elements of such a matcher still
+// translate through the catalogs individually.
+//
+// An override value must be a plain tool name that the adapter does NOT
+// canonicalize: a value the fixed runtime rewrites to another name would never
+// compare equal, so such a mapping fails closed instead of installing a
+// silently dead matcher. Task stays unsupported regardless of mapping.
+func overriddenMatcher(h *ir.Hook, overrides map[string]string) (bool, string, bool) {
+	if h.Matcher == "" || h.Matcher == "*" || len(overrides) == 0 {
+		return false, "", true
+	}
+	elements := strings.Split(h.Matcher, "|")
+	applies := false
+	for _, element := range elements {
+		if _, ok := overrides[element]; ok {
+			applies = true
+		}
+	}
+	if !applies {
+		return false, "", true
+	}
+	source := target.Target(h.HookSource)
+	srcSpec, srcOK := hookpolicy.MatcherSpecFor(source)
+	dstSpec, dstOK := hookpolicy.MatcherSpecFor(target.TargetOpenCode)
+	if !srcOK || !dstOK {
+		return true, "", false
+	}
+	emitted := make([]string, 0, len(elements))
+	for _, element := range elements {
+		translated, err := toolpolicy.TranslateMatcher(source, target.TargetOpenCode, element, srcSpec, dstSpec)
+		if err == nil && translated == "task" {
+			return true, "", false
+		}
+		if value, ok := overrides[element]; ok {
+			if _, canonicalized := opencodehook.CanonicalTools[value]; canonicalized || value == "Task" || !adapterToolName.MatchString(value) {
+				return true, "", false
 			}
 			emitted = append(emitted, value)
 			continue
 		}
-		if _, ok := mapping.ToolWithOverride(tool, mapping.TargetOpenCode, nil); !ok {
-			return "", false
+		if err != nil {
+			return true, "", false
 		}
-		emitted = append(emitted, tool)
+		converted, ok := declarationMatcher(translated)
+		if !ok || converted == "" || converted == "*" {
+			return true, "", false
+		}
+		emitted = append(emitted, converted)
 	}
-	return strings.Join(emitted, "|"), true
+	return true, strings.Join(emitted, "|"), true
 }

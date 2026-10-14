@@ -10,10 +10,11 @@ import (
 
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/compile"
-	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/compile/mapping"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 	ext "github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir/ext"
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/target"
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/toolpolicy"
 	"gopkg.in/yaml.v3"
 )
 
@@ -134,20 +135,21 @@ func command(c *ir.Command, opts compile.Options) ([]artifact.Artifact, []diag.D
 			}
 			if key == "model" {
 				model := value.(string)
-				if override, ok := opts.ModelOverride()[model]; ok {
+				if override, ok := opts.ModelOverride()[model]; ok && native != nil && native.Model != "" {
 					value = override
 				} else if native == nil || native.Model == "" {
-					mapped, ok := mapping.Model(model, mapping.TargetOpenCode)
-					switch {
-					case ok:
-						value = mapped
-					case mapped == "":
-						// The canonical model has no supported native
-						// identifier: omit the selection and report the loss
-						// rather than emit a known-invalid model.
-						d = append(d, diagnostic(diag.CodeOpenCodeFieldDropped, diag.SeverityWarning, c.Name(), c.Source, "Canonical model has no supported OpenCode identifier; the model selection was omitted"))
+					// The shipped catalogs either name a supported native
+					// identifier or report the loss; a known-invalid model is
+					// never emitted.
+					selection, losses, err := compile.CommandModel(c, model, compile.TargetOpenCode, opts)
+					if err != nil {
+						return nil, d, err
+					}
+					d = append(d, losses...)
+					if selection.Model == "" {
 						continue
 					}
+					value = selection.Model
 				}
 			}
 			fm.Set(key, value)
@@ -176,32 +178,18 @@ func agent(a *ir.Subagent, opts compile.Options) ([]artifact.Artifact, []diag.Di
 	fm := &compile.Frontmatter{}
 	fm.Set("description", a.Description)
 	native := a.Ext.OpenCode
-	mode, model := "subagent", a.Model
-	if native != nil {
-		if native.Mode != "" {
-			mode = native.Mode
-		}
-		if native.Model != "" {
-			model = native.Model
-		}
+	mode := "subagent"
+	if native != nil && native.Mode != "" {
+		mode = native.Mode
 	}
-	var d []diag.Diagnostic
-	if override, ok := opts.ModelOverride()[a.Model]; ok {
-		model = override
-	} else if native == nil || native.Model == "" {
-		mapped, ok := mapping.Model(model, mapping.TargetOpenCode)
-		switch {
-		case ok:
-			model = mapped
-		case mapped == "" && model != "":
-			// No supported native identifier exists for this canonical model:
-			// omit the selection and report the loss rather than emit a
-			// known-invalid model. Explicit native models and overrides are
-			// preserved above.
-			model = ""
-			d = append(d, diagnostic(diag.CodeOpenCodeFieldDropped, diag.SeverityWarning, a.Name(), a.Source, "Canonical model has no supported OpenCode identifier; the model selection was omitted"))
-		}
+	// Native OpenCode selections carry ModelSource provenance and are kept as
+	// authored; other selections resolve through the shipped catalogs, which
+	// report an unresolved model instead of emitting a known-invalid one.
+	selection, d, err := compile.SubagentModel(a, compile.TargetOpenCode, opts)
+	if err != nil {
+		return nil, d, err
 	}
+	model := selection.Model
 	if mode != "subagent" && mode != "primary" && mode != "all" {
 		return fail()
 	}
@@ -220,21 +208,20 @@ func agent(a *ir.Subagent, opts compile.Options) ([]artifact.Artifact, []diag.Di
 			list   []string
 			action string
 		}{{a.Tools, "allow"}, {a.DisallowedTools, "deny"}} {
-			for _, tool := range group.list {
-				// Resolve through the authoritative curated mapping and the
-				// consumer override, the same authority as hook matchers. An
-				// unmappable tool must fail the subagent rather than widen the
-				// restriction to nothing.
-				mappedTools, ok := mapping.ToolWithOverride(tool, mapping.TargetOpenCode, opts.ToolOverride())
-				if !ok || len(mappedTools) != 1 {
-					return fail()
-				}
-				mapped := mappedTools[0]
-				if index, exists := indices[mapped]; exists {
+			// Resolve through the shipped tool catalogs and the consumer
+			// override, the same authority as hook matchers. A list that is
+			// not exactly represented must fail the subagent rather than widen
+			// or silently narrow the restriction.
+			keys, ok := permissionKeys(target.Target(a.ToolSource), group.list, opts.ToolOverride())
+			if !ok {
+				return fail()
+			}
+			for _, key := range keys {
+				if index, exists := indices[key]; exists {
 					permission.Rules[index].Action = group.action
 				} else {
-					indices[mapped] = len(permission.Rules)
-					permission.Rules = append(permission.Rules, ext.OpenCodePermissionRule{Tool: mapped, Action: group.action})
+					indices[key] = len(permission.Rules)
+					permission.Rules = append(permission.Rules, ext.OpenCodePermissionRule{Tool: key, Action: group.action})
 				}
 			}
 		}
@@ -269,10 +256,87 @@ func agent(a *ir.Subagent, opts compile.Options) ([]artifact.Artifact, []diag.Di
 		}
 		fm.Set("permission", value)
 	}
-	if a.Effort != "" || len(a.Extra) > 0 {
+	if len(a.Extra) > 0 {
 		d = append(d, dropped(a.Name(), a.Source))
 	}
 	return document("agents/"+a.Name()+".md", fm, a.Body, d)
+}
+
+// permissionTools lists, per agent permission key, the native tool IDs whose
+// calls OpenCode checks under that key. The edit permission governs every
+// file modification, including write and apply_patch
+// (https://opencode.ai/docs/permissions.md), so those tools can only be
+// allowed or denied together.
+var permissionTools = []struct {
+	key   string
+	tools []string
+}{
+	{"bash", []string{"bash"}},
+	{"read", []string{"read"}},
+	{"edit", []string{"edit", "write", "apply_patch"}},
+	{"glob", []string{"glob"}},
+	{"grep", []string{"grep"}},
+	{"webfetch", []string{"webfetch"}},
+	{"websearch", []string{"websearch"}},
+	{"task", []string{"task"}},
+	{"todowrite", []string{"todowrite"}},
+	{"skill", []string{"skill"}},
+	{"question", []string{"question"}},
+}
+
+// permissionKeys maps a source tool list to the permission keys whose
+// governed tools express exactly the same capabilities. A key is emitted only
+// when everything it governs lies inside the requested set, and the emitted
+// keys must cover the whole set; otherwise the list cannot be represented
+// without widening or narrowing it. An explicit override names the
+// permission key for one source tool and is consumer authority, except that
+// it may not replace the restriction with the catch-all key.
+func permissionKeys(source target.Target, tools []string, overrides map[string]string) ([]string, bool) {
+	var keys []string
+	wanted := map[string]bool{}
+	for _, tool := range tools {
+		if override, ok := overrides[tool]; ok {
+			if override == "" || override == "*" {
+				return nil, false
+			}
+			keys = append(keys, override)
+			continue
+		}
+		concepts, ok := toolpolicy.ToolConcepts(source, tool)
+		if !ok {
+			return nil, false
+		}
+		for _, concept := range concepts {
+			wanted[concept] = true
+		}
+	}
+	covered := map[string]bool{}
+	for _, permission := range permissionTools {
+		governed := map[string]bool{}
+		for _, id := range permission.tools {
+			concepts, _ := toolpolicy.ToolConcepts(target.TargetOpenCode, id)
+			for _, concept := range concepts {
+				governed[concept] = true
+			}
+		}
+		inside := len(governed) > 0
+		for concept := range governed {
+			inside = inside && wanted[concept]
+		}
+		if !inside {
+			continue
+		}
+		keys = append(keys, permission.key)
+		for concept := range governed {
+			covered[concept] = true
+		}
+	}
+	for concept := range wanted {
+		if !covered[concept] {
+			return nil, false
+		}
+	}
+	return keys, true
 }
 
 // PermissionNode retains the authored precedence of native permission rules.

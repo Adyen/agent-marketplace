@@ -35,7 +35,7 @@ func dropOwnershipState(t *testing.T, outDir string) {
 func devinMcpSelection(names ...string) []resolver.ResolvedArtifact {
 	resolved := make([]resolver.ResolvedArtifact, 0, len(names))
 	for _, name := range names {
-		resolved = append(resolved, devinResolved(name, ir.NewMcpServer(name, name+"-binary", nil, nil, nil, ir.SourceRef{}), false))
+		resolved = append(resolved, devinResolvedResource(name, ir.NewMcpServer(name, name+"-binary", nil, nil, nil, ir.SourceRef{}), false))
 	}
 	return resolved
 }

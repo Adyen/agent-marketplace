@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"maps"
 	"path"
+	"reflect"
 	"slices"
 	"strings"
 
@@ -78,6 +79,21 @@ type NativePartition struct {
 	Aggregates []NativeAggregate
 }
 
+// HookShape names the entry encoding a hook aggregate file carries: how an
+// event key maps to its hook entries inside the file's hook member (or its
+// top level, when Member is empty).
+type HookShape string
+
+const (
+	// HookShapeMatcherGroups is event → array of rule groups
+	// ({matcher?, hooks: [handler]}): the Claude-family encoding shared by
+	// Factory Droid, Gemini CLI, Devin CLI, and Codex.
+	HookShapeMatcherGroups HookShape = "matcher-groups"
+	// HookShapeEventHandlers is event → array of handler entries: the flat
+	// encoding Cursor (handlers may carry a matcher field) and Windsurf use.
+	HookShapeEventHandlers HookShape = "event-handlers"
+)
+
 // NativeAggregateFile locates the shared file that carries one resource
 // kind's compiled entries within a single scope.
 type NativeAggregateFile struct {
@@ -100,158 +116,22 @@ type NativeAggregateFile struct {
 	// entry keyspace and are rejected; the same Path under different members
 	// is a legal shared envelope.
 	Member string
-}
-
-// NativeHookProjectionFile locates the native hook file a hook-only
-// projection writes within a single scope. Path and Member carry the same
-// meaning as NativeAggregateFile; Envelope lists the additional top-level
-// members the file must carry beside Member when it is written, including
-// fixed scalar declarations like Cursor's `version: 1`. Envelope values are
-// restricted to JSON scalars (strings, booleans, numbers, null): a nested
-// value could hide mutable structure a shallow clone would share, and the
-// clone contract would silently stop being defensive. An envelope key may
-// not equal Member, case-insensitively: the entry member is owned by the
-// resource entries, not by static envelope data.
-type NativeHookProjectionFile struct {
-	Path     string
-	Member   string
+	// Envelope lists the additional top-level members the file must carry
+	// beside Member when it is written — fixed scalar declarations like
+	// Cursor's `version: 1`. An envelope key may not equal Member: the
+	// entry member is owned by the resource entries, not by static
+	// envelope data.
 	Envelope map[string]any
-}
-
-// HookShape names the entry encoding a hook aggregate file carries: how an
-// event key maps to its hook entries inside the file's hook member (or its
-// top level, when Member is empty).
-type HookShape string
-
-const (
-	// HookShapeMatcherGroups is event → array of rule groups
-	// ({matcher?, hooks: [handler]}): the Claude-family encoding shared by
-	// Factory Droid, Gemini CLI, Devin CLI, and Codex.
-	HookShapeMatcherGroups HookShape = "matcher-groups"
-	// HookShapeEventHandlers is event → array of handler entries: the flat
-	// encoding Cursor (handlers may carry a matcher field) and Windsurf use.
-	HookShapeEventHandlers HookShape = "event-handlers"
-)
-
-// NativeHookProjection is the hook-only native projection topology a target
-// Definition may declare. It is deliberately narrower than NativeLayout: a
-// target without a complete native layout can still declare where its native
-// hook file lives, how entries nest under the event key, and where hook
-// support files install, without activating unrelated layout routing.
-type NativeHookProjection struct {
-	// Project and User locate the native hook file per scope, resolved
-	// against the scope root the owning Definition declares.
-	Project NativeHookProjectionFile
-	User    NativeHookProjectionFile
-	// Shape is the hook entry encoding inside the file. It is load-bearing:
-	// serializers and readers must never guess it.
-	Shape HookShape
-	// SupportDir is the directory root, relative to the same scope base as
-	// the file paths, below which a hook's support files install
-	// (<support dir>/<source>/<hook>/).
-	SupportDir string
-}
-
-// File returns the scope's declared hook file with a cloned envelope.
-func (p NativeHookProjection) File(machineScope bool) NativeHookProjectionFile {
-	file := p.Project
-	if machineScope {
-		file = p.User
-	}
-	file.Envelope = maps.Clone(file.Envelope)
-	return file
-}
-
-func cloneHookProjection(p *NativeHookProjection) *NativeHookProjection {
-	if p == nil {
-		return nil
-	}
-	out := *p
-	out.Project.Envelope = maps.Clone(p.Project.Envelope)
-	out.User.Envelope = maps.Clone(p.User.Envelope)
-	return &out
-}
-
-// LookupHookProjection returns a defensive copy of the target's declared
-// hook-only native projection topology.
-func LookupHookProjection(t Target) (NativeHookProjection, bool) {
-	definition, ok := Lookup(string(t))
-	if !ok || definition.HookProjection == nil {
-		return NativeHookProjection{}, false
-	}
-	return *cloneHookProjection(definition.HookProjection), true
-}
-
-// ValidateHookProjections validates every target's declared hook projection
-// at the same registration boundary ValidateNativeLayouts uses.
-func ValidateHookProjections() error {
-	var errs []error
-	for _, definition := range definitions {
-		if definition.HookProjection == nil {
-			continue
-		}
-		if err := ValidateHookProjection(definition.Target, *definition.HookProjection); err != nil {
-			errs = append(errs, err)
-		}
-	}
-	return errors.Join(errs...)
-}
-
-// ValidateHookProjection rejects a hook projection declaration with an
-// invalid file path or member, an unknown entry shape, a colliding or
-// unserializable envelope, or an invalid support directory.
-func ValidateHookProjection(t Target, p NativeHookProjection) error {
-	var errs []error
-	switch p.Shape {
-	case HookShapeMatcherGroups, HookShapeEventHandlers:
-	default:
-		errs = append(errs, fmt.Errorf("target %q hook projection declares unknown shape %q", t, p.Shape))
-	}
-	if !fs.ValidPath(p.SupportDir) || p.SupportDir == "." || strings.ContainsAny(p.SupportDir, "\\\x00") {
-		errs = append(errs, fmt.Errorf("target %q hook projection has invalid support directory %q", t, p.SupportDir))
-	}
-	for _, scope := range []struct {
-		name string
-		file NativeHookProjectionFile
-	}{{"project", p.Project}, {"user", p.User}} {
-		if !fs.ValidPath(scope.file.Path) || scope.file.Path == "." || strings.ContainsAny(scope.file.Path, "\\\x00") {
-			errs = append(errs, fmt.Errorf("target %q hook projection %s-scope file has invalid path %q", t, scope.name, scope.file.Path))
-		}
-		if member := scope.file.Member; member != "" && (strings.ContainsAny(member, "/\\\x00") || member == "." || member == "..") {
-			errs = append(errs, fmt.Errorf("target %q hook projection %s-scope file has invalid member %q", t, scope.name, member))
-		}
-		for _, key := range slices.Sorted(maps.Keys(scope.file.Envelope)) {
-			if key == "" || strings.ContainsAny(key, "/\\\x00") || key == "." || key == ".." {
-				errs = append(errs, fmt.Errorf("target %q hook projection %s-scope file declares an invalid envelope member name %q", t, scope.name, key))
-				continue
-			}
-			if scope.file.Member != "" && strings.EqualFold(key, scope.file.Member) {
-				errs = append(errs, fmt.Errorf("target %q hook projection %s-scope file declares envelope member %q colliding with the entry member %q", t, scope.name, key, scope.file.Member))
-				continue
-			}
-			if !validEnvelopeScalar(scope.file.Envelope[key]) {
-				errs = append(errs, fmt.Errorf("target %q hook projection %s-scope file declares envelope member %q with a non-scalar or unserializable value", t, scope.name, key))
-			}
-		}
-	}
-	return errors.Join(errs...)
-}
-
-// validEnvelopeScalar accepts only the fixed scalar declaration contract: a
-// null, a string, a boolean, or a JSON-serializable number. Nested maps and
-// slices are rejected because the projection's clone contract is top-level.
-func validEnvelopeScalar(value any) bool {
-	if _, err := json.Marshal(value); err != nil {
-		return false
-	}
-	switch value.(type) {
-	case nil, string, bool,
-		float32, float64, json.Number,
-		int, int8, int16, int32, int64,
-		uint, uint8, uint16, uint32, uint64:
-		return true
-	}
-	return false
+	// Legacy lists the superseded locations in the same scope that older
+	// output versions or the harness itself still read — plugin-layout
+	// hook files such as hooks/hooks.json, or Windsurf's repository-scope
+	// .windsurf/hooks.json. Legacy paths are relative to the same partition
+	// root as Path and must be clean, non-empty, and distinct from Path.
+	// Consumers reconcile owned entries out of them; the declaration never
+	// makes them write targets.
+	Legacy                    []string
+	PreserveLegacyHandwritten bool
+	LegacyMarkedFlatHooks     bool
 }
 
 // NativeAggregate identifies a shared target file produced for one resource
@@ -265,6 +145,17 @@ type NativeAggregate struct {
 	Kind    ir.ResourceKind
 	Project NativeAggregateFile
 	User    NativeAggregateFile
+	// Shape is the hook entry encoding inside the file, required exactly
+	// when Kind is ir.KindHook. It describes how entries nest under the
+	// event key so serializers and ingesters need no per-target shape
+	// tables.
+	Shape HookShape
+	// SupportDir is the directory root, relative to the partition root,
+	// below which a hook's support files install
+	// (<support dir>/<source>/<hook>/). It is required exactly when Kind is
+	// ir.KindHook.
+	SupportDir            string
+	LegacyMarkedFlatHooks bool
 }
 
 var nativeLayouts = map[Target]NativeLayout{
@@ -277,7 +168,7 @@ var nativeLayouts = map[Target]NativeLayout{
 		{
 			ID:         "default",
 			Prefix:     ".",
-			Components: []string{"skills", "commands", "agents", "hooks", ".claude-plugin"},
+			Components: []string{"skills", "commands", "agents", "hooks", "hook-support", ".claude-plugin"},
 			ResourcePaths: map[ir.ResourceKind]string{
 				ir.KindSkill:    "skills/%s/SKILL.md",
 				ir.KindCommand:  "commands/%s.md",
@@ -295,14 +186,134 @@ var nativeLayouts = map[Target]NativeLayout{
 					User:    NativeAggregateFile{Path: ".claude-plugin/plugin.json", Member: "agents"},
 				},
 				{
-					Kind:    ir.KindHook,
-					Project: NativeAggregateFile{Path: "hooks/hooks.json", Member: "hooks"},
-					User:    NativeAggregateFile{Path: "hooks/hooks.json", Member: "hooks"},
+					Kind:       ir.KindHook,
+					Shape:      HookShapeMatcherGroups,
+					SupportDir: "hook-support",
+					Project:    NativeAggregateFile{Path: "settings.json", Member: "hooks", Legacy: []string{"hooks/hooks.json"}},
+					User:       NativeAggregateFile{Path: "settings.json", Member: "hooks", Legacy: []string{"hooks/hooks.json"}},
 				},
 				{
 					Kind:    ir.KindMcpServer,
 					Project: NativeAggregateFile{Path: ".mcp.json", Member: "mcpServers"},
 					User:    NativeAggregateFile{Path: ".mcp.json", Member: "mcpServers"},
+				},
+			},
+		},
+	}},
+	TargetFactory: {Partitions: []NativePartition{
+		{
+			ID:         "default",
+			Prefix:     ".",
+			Components: []string{"skills", "commands", "droids", "hooks", "hook-support", ".factory-plugin"},
+			ResourcePaths: map[ir.ResourceKind]string{
+				ir.KindSkill:    "skills/%s/SKILL.md",
+				ir.KindCommand:  "commands/%s.md",
+				ir.KindSubagent: "droids/%s.md",
+				ir.KindRule:     "rules/%s.md",
+			},
+			Aggregates: []NativeAggregate{
+				// Factory's hooks.json carries the event map at its top
+				// level; the plugin-layout hooks/hooks.json older output
+				// wrote remains a loadable legacy location.
+				{
+					Kind:       ir.KindHook,
+					Shape:      HookShapeMatcherGroups,
+					SupportDir: "hook-support",
+					Project:    NativeAggregateFile{Path: "hooks.json", Legacy: []string{"hooks/hooks.json"}},
+					User:       NativeAggregateFile{Path: "hooks.json", Legacy: []string{"hooks/hooks.json"}},
+				},
+				{
+					Kind:    ir.KindMcpServer,
+					Project: NativeAggregateFile{Path: "mcp.json", Member: "mcpServers"},
+					User:    NativeAggregateFile{Path: "mcp.json", Member: "mcpServers"},
+				},
+			},
+		},
+	}},
+	TargetCursor: {Partitions: []NativePartition{
+		{
+			ID:         "default",
+			Prefix:     ".",
+			Components: []string{"skills", "commands", "agents", "hooks", "hook-support"},
+			ResourcePaths: map[ir.ResourceKind]string{
+				ir.KindSkill:    "skills/%s/SKILL.md",
+				ir.KindCommand:  "commands/%s.md",
+				ir.KindSubagent: "agents/%s.md",
+				ir.KindRule:     "rules/%s.mdc",
+			},
+			Aggregates: []NativeAggregate{
+				// Cursor's hooks.json nests events under `hooks` and pins
+				// `version: 1`; handlers are flat entries that may carry a
+				// matcher field rather than rule groups.
+				{
+					Kind:       ir.KindHook,
+					Shape:      HookShapeEventHandlers,
+					SupportDir: "hook-support",
+					Project:    NativeAggregateFile{Path: "hooks.json", Member: "hooks", Envelope: map[string]any{"version": 1}, Legacy: []string{"hooks/hooks.json"}},
+					User:       NativeAggregateFile{Path: "hooks.json", Member: "hooks", Envelope: map[string]any{"version": 1}, Legacy: []string{"hooks/hooks.json"}},
+				},
+				{
+					Kind:    ir.KindMcpServer,
+					Project: NativeAggregateFile{Path: "mcp.json", Member: "mcpServers"},
+					User:    NativeAggregateFile{Path: "mcp.json", Member: "mcpServers"},
+				},
+			},
+		},
+	}},
+	TargetWindsurf: {Partitions: []NativePartition{
+		{
+			ID:         "default",
+			Prefix:     ".",
+			Components: []string{"skills", "workflows", "hook-support"},
+			ResourcePaths: map[ir.ResourceKind]string{
+				ir.KindSkill:   ".windsurf/skills/%s/SKILL.md",
+				ir.KindCommand: ".windsurf/workflows/%s.md",
+				ir.KindRule:    ".windsurf/rules/%s.mdc",
+			},
+			Aggregates: []NativeAggregate{
+				// Windsurf (Devin Desktop) reads .devin/hooks.json at
+				// repository scope; the older .windsurf/hooks.json is read
+				// only as a legacy location. The machine-scope file is
+				// hooks.json under ~/.codeium/windsurf. Entries are flat
+				// per-event handler lists: the event name encodes the tool.
+				{
+					Kind:       ir.KindHook,
+					Shape:      HookShapeEventHandlers,
+					SupportDir: "hook-support",
+					Project:    NativeAggregateFile{Path: ".devin/hooks.json", Member: "hooks", Legacy: []string{".windsurf/hooks.json"}, PreserveLegacyHandwritten: true},
+					User:       NativeAggregateFile{Path: "hooks.json", Member: "hooks", LegacyMarkedFlatHooks: true},
+				},
+				{
+					Kind:    ir.KindMcpServer,
+					Project: NativeAggregateFile{Path: ".windsurf/mcp_config.json", Member: "mcpServers"},
+					User:    NativeAggregateFile{Path: "mcp_config.json", Member: "mcpServers"},
+				},
+			},
+		},
+	}},
+	TargetGemini: {Partitions: []NativePartition{
+		{
+			ID:         "default",
+			Prefix:     ".",
+			Components: []string{"skills", "commands", "hook-support"},
+			ResourcePaths: map[ir.ResourceKind]string{
+				ir.KindSkill:   "skills/%s/SKILL.md",
+				ir.KindCommand: "commands/%s.md",
+			},
+			Aggregates: []NativeAggregate{
+				// Hooks merge into the scope's settings.json under `hooks`.
+				{
+					Kind:                  ir.KindHook,
+					Shape:                 HookShapeMatcherGroups,
+					SupportDir:            "hook-support",
+					LegacyMarkedFlatHooks: true,
+					Project:               NativeAggregateFile{Path: "settings.json", Member: "hooks"},
+					User:                  NativeAggregateFile{Path: "settings.json", Member: "hooks"},
+				},
+				{
+					Kind:    ir.KindMcpServer,
+					Project: NativeAggregateFile{Path: "gemini-extension.json", Member: "mcpServers"},
+					User:    NativeAggregateFile{Path: "gemini-extension.json", Member: "mcpServers"},
 				},
 			},
 		},
@@ -313,7 +324,7 @@ var nativeLayouts = map[Target]NativeLayout{
 			Prefix: ".",
 			// Project hooks merge into a root-level file (hooks.v1.json),
 			// never a hooks directory, so hooks is not a component.
-			Components: []string{"skills", "agents"},
+			Components: []string{"skills", "agents", "hook-support"},
 			ResourcePaths: map[ir.ResourceKind]string{
 				ir.KindSkill:    "skills/%s/SKILL.md",
 				ir.KindCommand:  "skills/%s/SKILL.md",
@@ -327,9 +338,11 @@ var nativeLayouts = map[Target]NativeLayout{
 				// standalone hooks.v1.json is not part of the documented
 				// contract.
 				{
-					Kind:    ir.KindHook,
-					Project: NativeAggregateFile{Path: "hooks.v1.json"},
-					User:    NativeAggregateFile{Path: "config.json", Member: "hooks"},
+					Kind:       ir.KindHook,
+					Shape:      HookShapeMatcherGroups,
+					SupportDir: "hook-support",
+					Project:    NativeAggregateFile{Path: "hooks.v1.json"},
+					User:       NativeAggregateFile{Path: "config.json", Member: "hooks"},
 				},
 				{
 					Kind:    ir.KindMcpServer,
@@ -355,13 +368,15 @@ var nativeLayouts = map[Target]NativeLayout{
 			Prefix:               ".codex",
 			MachineRootEnv:       "CODEX_HOME",
 			InstallationEvidence: true,
-			Components:           []string{"agents"},
+			Components:           []string{"agents", "hook-support"},
 			ResourcePaths:        map[ir.ResourceKind]string{ir.KindSubagent: "agents/%s.toml"},
 			Aggregates: []NativeAggregate{
 				{
-					Kind:    ir.KindHook,
-					Project: NativeAggregateFile{Path: "hooks.json", Member: "hooks"},
-					User:    NativeAggregateFile{Path: "hooks.json", Member: "hooks"},
+					Kind:       ir.KindHook,
+					Shape:      HookShapeMatcherGroups,
+					SupportDir: "hook-support",
+					Project:    NativeAggregateFile{Path: "hooks.json", Member: "hooks"},
+					User:       NativeAggregateFile{Path: "hooks.json", Member: "hooks"},
 				},
 				{
 					Kind:    ir.KindMcpServer,
@@ -400,6 +415,12 @@ func LookupNativeLayout(target Target) (NativeLayout, bool) {
 		partition.ResourcePaths = maps.Clone(partition.ResourcePaths)
 		partition.SkillDirKinds = maps.Clone(partition.SkillDirKinds)
 		partition.Aggregates = slices.Clone(partition.Aggregates)
+		for j := range partition.Aggregates {
+			partition.Aggregates[j].Project.Envelope = maps.Clone(partition.Aggregates[j].Project.Envelope)
+			partition.Aggregates[j].Project.Legacy = slices.Clone(partition.Aggregates[j].Project.Legacy)
+			partition.Aggregates[j].User.Envelope = maps.Clone(partition.Aggregates[j].User.Envelope)
+			partition.Aggregates[j].User.Legacy = slices.Clone(partition.Aggregates[j].User.Legacy)
+		}
 		cloned.Partitions[i] = partition
 	}
 	return cloned, true
@@ -465,7 +486,7 @@ func NativeAggregateFileForScope(target Target, kind ir.ResourceKind, machineSco
 // scope; scope-aware callers use NativeAggregateFileForScope.
 func NativeAggregatePath(target Target, kind ir.ResourceKind) (string, bool) {
 	partition, aggregate, ok := nativeAggregate(target, kind)
-	if !ok || aggregate.Project != aggregate.User {
+	if !ok || !reflect.DeepEqual(aggregate.Project, aggregate.User) {
 		return "", false
 	}
 	return path.Join(partition.Prefix, aggregate.Project.Path), true
@@ -725,6 +746,40 @@ func validatePartitionContent(t Target, partition NativePartition, resourceKinds
 			errs = append(errs, fmt.Errorf("target %q declares aggregates for kind %s in partitions %q and %q", t, aggregate.Kind, other, partition.ID))
 		}
 		aggregateKinds[aggregate.Kind] = partition.ID
+		// Shape and SupportDir describe hook entries: required exactly for
+		// KindHook so a hook aggregate can never silently fall back to a
+		// guessed encoding, and forbidden elsewhere so a stale declaration
+		// cannot masquerade as meaningful topology.
+		switch {
+		case aggregate.Kind == ir.KindHook && aggregate.Shape == "":
+			errs = append(errs, fmt.Errorf("target %q partition %q hook aggregate declares no shape; the hook entry encoding is load-bearing", t, partition.ID))
+		case aggregate.Kind == ir.KindHook && aggregate.Shape != HookShapeMatcherGroups && aggregate.Shape != HookShapeEventHandlers:
+			errs = append(errs, fmt.Errorf("target %q partition %q hook aggregate declares unknown shape %q", t, partition.ID, aggregate.Shape))
+		case aggregate.Kind != ir.KindHook && aggregate.Shape != "":
+			errs = append(errs, fmt.Errorf("target %q partition %q aggregate for %s declares shape %q; shape describes hook entries only", t, partition.ID, aggregate.Kind, aggregate.Shape))
+		}
+		switch {
+		case aggregate.Kind == ir.KindHook && aggregate.SupportDir == "":
+			errs = append(errs, fmt.Errorf("target %q partition %q hook aggregate declares no support directory root", t, partition.ID))
+		case aggregate.Kind == ir.KindHook && (!fs.ValidPath(aggregate.SupportDir) || aggregate.SupportDir == "."):
+			errs = append(errs, fmt.Errorf("target %q partition %q hook aggregate has invalid support directory %q", t, partition.ID, aggregate.SupportDir))
+		case aggregate.Kind != ir.KindHook && aggregate.SupportDir != "":
+			errs = append(errs, fmt.Errorf("target %q partition %q aggregate for %s declares support directory %q; support directories belong to hooks", t, partition.ID, aggregate.Kind, aggregate.SupportDir))
+		}
+		if aggregate.LegacyMarkedFlatHooks && (aggregate.Kind != ir.KindHook || (aggregate.Shape != HookShapeMatcherGroups && aggregate.Shape != HookShapeEventHandlers)) {
+			errs = append(errs, fmt.Errorf("target %q partition %q aggregate for %s declares legacy marked flat hooks; the transition applies only to hook matcher-groups or event-handlers aggregates", t, partition.ID, aggregate.Kind))
+		}
+		for _, scope := range []struct {
+			name string
+			file NativeAggregateFile
+		}{{"project", aggregate.Project}, {"user", aggregate.User}} {
+			if scope.file.LegacyMarkedFlatHooks && (aggregate.Kind != ir.KindHook || (aggregate.Shape != HookShapeMatcherGroups && aggregate.Shape != HookShapeEventHandlers)) {
+				errs = append(errs, fmt.Errorf("target %q partition %q %s-scope aggregate for %s declares legacy marked flat hooks on a file; the transition applies only to hook matcher-groups or event-handlers files", t, partition.ID, scope.name, aggregate.Kind))
+			}
+			if scope.file.PreserveLegacyHandwritten && (aggregate.Kind != ir.KindHook || aggregate.Shape != HookShapeEventHandlers || len(scope.file.Legacy) == 0) {
+				errs = append(errs, fmt.Errorf("target %q partition %q %s-scope aggregate for %s preserves legacy handwritten entries; it requires a hook event-handlers aggregate with legacy paths", t, partition.ID, scope.name, aggregate.Kind))
+			}
+		}
 		for _, scope := range []struct {
 			name string
 			file NativeAggregateFile
@@ -761,6 +816,27 @@ func validatePartitionContent(t Target, partition NativePartition, resourceKinds
 			}
 			if member := scope.file.Member; member != "" && (strings.ContainsAny(member, `/\`) || member == "." || member == "..") {
 				errs = append(errs, fmt.Errorf("target %q partition %q %s-scope aggregate for %s has invalid member %q", t, partition.ID, scope.name, aggregate.Kind, member))
+			}
+			for _, key := range slices.Sorted(maps.Keys(scope.file.Envelope)) {
+				if key == "" {
+					errs = append(errs, fmt.Errorf("target %q partition %q %s-scope aggregate for %s declares an envelope member with an empty name", t, partition.ID, scope.name, aggregate.Kind))
+					continue
+				}
+				if key == scope.file.Member {
+					errs = append(errs, fmt.Errorf("target %q partition %q %s-scope aggregate for %s declares envelope member %q colliding with the entry member", t, partition.ID, scope.name, aggregate.Kind, key))
+					continue
+				}
+				if _, err := json.Marshal(scope.file.Envelope[key]); err != nil {
+					errs = append(errs, fmt.Errorf("target %q partition %q %s-scope aggregate for %s declares envelope member %q with unserializable value: %w", t, partition.ID, scope.name, aggregate.Kind, key, err))
+				}
+			}
+			for _, legacy := range scope.file.Legacy {
+				switch {
+				case !fs.ValidPath(legacy) || legacy == ".":
+					errs = append(errs, fmt.Errorf("target %q partition %q %s-scope aggregate for %s has invalid legacy location %q", t, partition.ID, scope.name, aggregate.Kind, legacy))
+				case legacy == scope.file.Path:
+					errs = append(errs, fmt.Errorf("target %q partition %q %s-scope aggregate for %s lists legacy location %q identical to its native file", t, partition.ID, scope.name, aggregate.Kind, legacy))
+				}
 			}
 		}
 	}

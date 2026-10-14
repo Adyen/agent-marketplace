@@ -8,8 +8,11 @@
   "type": "module",
   "scripts": {
     "dev": "vitepress dev",
-    "build": "vitepress build",
-    "preview": "vitepress preview"
+    "build": "SITE_PROFILE=public vitepress build",
+    "build:docs": "SITE_PROFILE=docs vitepress build",
+    "preview": "vitepress preview",
+    "test:public": "pnpm run build && node --test tests/public-site.test.ts",
+    "test:docs": "pnpm run build && pnpm run build:docs && node --test tests/docs-profile.test.ts"
   },
   "devDependencies": {
     "vitepress": "1.6.4"

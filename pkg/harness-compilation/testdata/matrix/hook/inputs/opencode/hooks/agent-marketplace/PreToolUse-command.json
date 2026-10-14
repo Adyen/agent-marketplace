@@ -2,7 +2,7 @@
   "format": "agent-marketplace/opencode-hook-v1",
   "name": "PreToolUse-command",
   "event": "PreToolUse",
-  "matcher": "Read",
+  "matcher": "Bash",
   "command": "/plugins/demo/scripts/check.sh",
   "timeout": 60
 }

@@ -14,13 +14,13 @@ import (
 	"strings"
 
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/bundle"
-	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/compile/mapping"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ingest"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/internal/yamlfm"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 	ext "github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir/ext"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/jsonc"
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/target"
 	"gopkg.in/yaml.v3"
 )
 
@@ -426,11 +426,11 @@ func loadMarkdown(src fs.FS, file string, kind ir.ResourceKind) (ir.Resource, er
 			}
 		}
 	}
-	model := native.Model
-	if canonical, ok := mapping.ReverseModel(model, mapping.TargetOpenCode); ok {
-		model = canonical
-	}
-	a := ir.NewSubagent(name, description, body, model, nil, "", nil, "", nil, ir.SourceRef{File: file, Line: 1})
+	// The native selection keeps its OpenCode spelling with source provenance;
+	// the shipped model catalogs translate it for other targets.
+	a := ir.NewSubagent(name, description, body, native.Model, nil, "", nil, "", nil, ir.SourceRef{File: file, Line: 1})
+	a.ModelSource = string(target.TargetOpenCode)
+	native.Model = ""
 	a.Ext.OpenCode = native
 	return a, nil
 }

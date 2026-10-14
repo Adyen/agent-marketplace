@@ -2,5 +2,5 @@ apiVersion: v2
 name: agent-marketplace
 description: Deploy the Agent Marketplace service and its optional web frontends on Kubernetes.
 type: application
-version: 0.1.0
+version: 0.2.0
 appVersion: "dev"

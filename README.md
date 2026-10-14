@@ -540,6 +540,8 @@ agent-marketplace convert --from opencode --to claude --out ./converted-back ./w
 The command-hook adapter supports `PreToolUse` for ordinary tools with bare tool
 names, `|` alternatives, or `*`. Active callbacks run handlers in the native
 workspace before the tool and block on handler failure or a blocking decision.
+Hook support files are not installed, so commands that reference
+`${CLAUDE_PLUGIN_ROOT}` or a project-directory variable are refused.
 OpenCode can skip absent, disabled, or failed plugins; those hooks are inactive.
 The [compatibility note](docs/harness-validation/opencode.md) documents the
 verified OpenCode 1.18.34 protocol, limits, diagnostics, and supported mappings.

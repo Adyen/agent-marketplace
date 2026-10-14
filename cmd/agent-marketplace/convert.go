@@ -991,7 +991,7 @@ func materializeOpenCodeConversion(result *hcc.Result, outDir string, matOpts []
 	}
 	for _, a := range result.Artifacts {
 		if _, err := a.Policy(); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("validate OpenCode conversion artifact %q: %w", a.Path, err)
 		}
 	}
 	return conversionPublisher{target: "OpenCode", rootGuard: rootGuard, shared: shared,
@@ -1001,7 +1001,10 @@ func materializeOpenCodeConversion(result *hcc.Result, outDir string, matOpts []
 		preflight: func(dir string) error {
 			return preflightConversionPaths(dir, []string{"opencode.json", "opencode.jsonc"}, "OpenCode")
 		},
-		validate: validateDevinConversionStage, pruneCandidates: pruneCodexConversionStaleCandidates, outputRoot: outputRoot,
+		validate: func(stage string, paths []string) error {
+			return validateConversionStage("OpenCode", stage, paths)
+		},
+		pruneCandidates: pruneCodexConversionStaleCandidates, outputRoot: outputRoot,
 	}.materialize(result, outDir, matOpts, dryRun)
 }
 
@@ -1054,16 +1057,20 @@ func preflightConversionPaths(outDir string, shared []string, target string) err
 }
 
 func validateDevinConversionStage(stage string, paths []string) error {
+	return validateConversionStage("Devin", stage, paths)
+}
+
+func validateConversionStage(target, stage string, paths []string) error {
 	for _, rel := range paths {
 		if filepath.Ext(rel) != ".json" {
 			continue
 		}
 		raw, err := os.ReadFile(filepath.Join(stage, filepath.FromSlash(rel)))
 		if err != nil {
-			return fmt.Errorf("read staged Devin aggregate %q: %w", rel, err)
+			return fmt.Errorf("read staged %s aggregate %q: %w", target, rel, err)
 		}
 		if _, err := jsonc.Parse(rel, raw); err != nil {
-			return fmt.Errorf("validate staged Devin aggregate %q: %w", rel, err)
+			return fmt.Errorf("validate staged %s aggregate %q: %w", target, rel, err)
 		}
 	}
 	return nil

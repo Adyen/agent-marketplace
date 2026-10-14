@@ -69,3 +69,15 @@ func TestConvertOpenCodeRefusesExistingSharedConfiguration(t *testing.T) {
 		})
 	}
 }
+
+func TestOpenCodeConversionStageErrorsNameOpenCode(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	stage := t.TempDir()
+	writeFile(t, filepath.Join(stage, "opencode.json"), "{")
+	err := validateConversionStage("OpenCode", stage, []string{"opencode.json"})
+	if err == nil || !strings.Contains(err.Error(), "staged OpenCode aggregate") || strings.Contains(err.Error(), "Devin") {
+		t.Fatalf("stage error = %v", err)
+	}
+}

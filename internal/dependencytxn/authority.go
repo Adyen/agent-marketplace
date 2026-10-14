@@ -204,6 +204,137 @@ func (b *boundDestination) Close() error {
 	return errors.Join(b.dest.Close(), b.root.Close())
 }
 
+type boundNamespaceDestination struct {
+	path        string
+	expectation NamespaceExpectation
+	scope       *fsboundary.Dir
+	parent      *fsboundary.Dir
+	dest        *fsboundary.Destination
+}
+
+func (b *boundNamespaceDestination) Close() error {
+	var err error
+	if b.dest != nil {
+		err = errors.Join(err, b.dest.Close())
+	}
+	if b.parent != nil && b.parent != b.scope {
+		err = errors.Join(err, b.parent.Close())
+	}
+	if b.scope != nil {
+		err = errors.Join(err, b.scope.Close())
+	}
+	return err
+}
+
+func (b *boundNamespaceDestination) inspect() (Generation, fs.FileMode, error) {
+	if !b.dest.Exists() {
+		return Generation{}, 0, nil
+	}
+	data, identity, err := b.dest.ReadTarget(maxDependencyFileSize)
+	if err != nil {
+		return Generation{}, 0, mapBoundaryErr(err)
+	}
+	return Generation{Exists: true, Digest: Digest(data)}, identity.Mode.Perm(), nil
+}
+
+func (b *boundNamespaceDestination) verifyNamespace() error {
+	current, err := bindNamespaceDestination(b.path, &b.expectation)
+	if err != nil {
+		return err
+	}
+	same := current.scope.Identity().SameObject(b.scope.Identity()) && current.parent.Identity().SameObject(b.parent.Identity())
+	closeErr := current.Close()
+	if !same {
+		return fmt.Errorf("%w: namespace changed at %s", ErrGenerationConflict, b.path)
+	}
+	return closeErr
+}
+
+func bindNamespaceDestination(path string, expectation *NamespaceExpectation) (*boundNamespaceDestination, error) {
+	if err := validateNamespaceExpectation(path, expectation); err != nil {
+		return nil, err
+	}
+	scope, err := fsboundary.OpenDir(expectation.ScopePath)
+	if err != nil {
+		return nil, mapBoundaryErr(err)
+	}
+	scopeID := scope.Identity()
+	if scopeID.Device != expectation.ScopeDevice || scopeID.Inode != expectation.ScopeInode {
+		_ = scope.Close()
+		return nil, fmt.Errorf("%w: namespace scope changed at %s", ErrGenerationConflict, expectation.ScopePath)
+	}
+	rel, err := filepath.Rel(expectation.ScopePath, path)
+	if err != nil {
+		_ = scope.Close()
+		return nil, fmt.Errorf("%w: namespace path is outside scope", ErrUnsafePath)
+	}
+	parentRel := filepath.Dir(rel)
+	parent := scope
+	if parentRel != "." {
+		parent, err = scope.OpenRoot(parentRel)
+		if err != nil {
+			_ = scope.Close()
+			return nil, mapBoundaryErr(err)
+		}
+	}
+	parentID := parent.Identity()
+	if parentID.Device != expectation.ParentDevice || parentID.Inode != expectation.ParentInode {
+		if parent != scope {
+			_ = parent.Close()
+		}
+		_ = scope.Close()
+		return nil, fmt.Errorf("%w: namespace parent changed at %s", ErrGenerationConflict, filepath.Dir(path))
+	}
+	dest, err := fsboundary.CaptureDestination(parent, filepath.Base(path), fsboundary.LinkPolicyRepository)
+	if err != nil {
+		if parent != scope {
+			_ = parent.Close()
+		}
+		_ = scope.Close()
+		return nil, mapBoundaryErr(err)
+	}
+	if dest.Link() != nil {
+		_ = dest.Close()
+		if parent != scope {
+			_ = parent.Close()
+		}
+		_ = scope.Close()
+		return nil, fmt.Errorf("%w: namespace destination is a link: %s", ErrUnsafePath, path)
+	}
+	return &boundNamespaceDestination{path: path, expectation: *expectation, scope: scope, parent: parent, dest: dest}, nil
+}
+
+func inspectNamespaceParticipant(path string, expectation *NamespaceExpectation) (generation Generation, mode fs.FileMode, retErr error) {
+	bound, err := bindNamespaceDestination(path, expectation)
+	if err != nil {
+		return Generation{}, 0, err
+	}
+	defer func() { retErr = errors.Join(retErr, bound.Close()) }()
+	return bound.inspect()
+}
+
+func validateNamespaceStaged(bound *boundNamespaceDestination, file journalFile) (retErr error) {
+	if filepath.Dir(file.Temp) != filepath.Dir(file.Path) || filepath.Clean(file.Temp) != file.Temp {
+		return fmt.Errorf("%w: namespace staged file is outside its captured parent", ErrUnsafePath)
+	}
+	staged, err := fsboundary.CaptureDestination(bound.parent, filepath.Base(file.Temp), fsboundary.LinkPolicyRepository)
+	if err != nil {
+		return fmt.Errorf("%w: staged file unavailable for %s: %v", ErrRecoveryBlocked, file.Path, err)
+	}
+	defer func() { retErr = errors.Join(retErr, staged.Close()) }()
+	if staged.Link() != nil || !staged.Exists() {
+		return fmt.Errorf("%w: staged file unavailable for %s", ErrRecoveryBlocked, file.Path)
+	}
+	data, identity, err := staged.ReadTarget(maxDependencyFileSize)
+	if err != nil {
+		return fmt.Errorf("%w: staged file unavailable for %s: %v", ErrRecoveryBlocked, file.Path, err)
+	}
+	if identity.Links != 1 || Digest(data) != file.NewDigest || identity.Mode.Perm() != file.NewMode {
+		return fmt.Errorf("%w: staged file changed for %s", ErrRecoveryBlocked, file.Path)
+	}
+	return nil
+}
+
 // bindDestination captures path as a managed destination. The layer's
 // .agents directory must already exist; a missing one reports
 // fs.ErrNotExist, like a missing destination parent always has.
@@ -309,8 +440,16 @@ func readManagedSnapshot(path string) ([]byte, Generation, fs.FileMode, error) {
 // stageManaged writes the desired bytes to a fresh staged file below the
 // captured layer directory. The parent chain is re-verified against the
 // capture, so a replaced .agents cannot receive the staged file.
-func stageManaged(bound *boundDestination, data []byte, mode fs.FileMode) (tempPath string, staging *fsboundary.Dir, name string, err error) {
-	staging, err = bound.dest.StagingDir()
+func stageManaged(bound *boundDestination, data []byte, mode fs.FileMode) (string, *fsboundary.Dir, string, error) {
+	return stageCapturedDestination(bound.dest, data, mode)
+}
+
+func stageNamespace(bound *boundNamespaceDestination, data []byte, mode fs.FileMode) (string, *fsboundary.Dir, string, error) {
+	return stageCapturedDestination(bound.dest, data, mode)
+}
+
+func stageCapturedDestination(dest *fsboundary.Destination, data []byte, mode fs.FileMode) (tempPath string, staging *fsboundary.Dir, name string, err error) {
+	staging, err = dest.StagingDir()
 	if err != nil {
 		return "", nil, "", mapBoundaryErr(err)
 	}
@@ -494,6 +633,18 @@ func PublishDestination(path string, expected Generation, data []byte, mode fs.F
 
 func validateStagingPath(file journalFile) error {
 	parent := filepath.Dir(file.Path)
+	if file.Namespace != nil {
+		if file.OldLinkTarget != "" {
+			return fmt.Errorf("%w: namespace participant cannot carry a link target", ErrUnsafePath)
+		}
+		if err := validateNamespaceExpectation(file.Path, file.Namespace); err != nil {
+			return err
+		}
+		if filepath.Dir(file.Temp) != parent || filepath.Clean(file.Temp) != file.Temp {
+			return fmt.Errorf("%w: namespace staged file is outside its captured publication parent", ErrUnsafePath)
+		}
+		return ensureContained(parent, file.Temp)
+	}
 	if ClassifyDestination(file.Path) == AuthorityLegacy {
 		return ensureContained(parent, file.Temp)
 	}

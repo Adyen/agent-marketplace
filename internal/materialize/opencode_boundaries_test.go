@@ -5,8 +5,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 
 	"github.com/Adyen/agent-marketplace/internal/catalog"
@@ -157,33 +159,83 @@ func TestOpenCodeEscapingRootRefused(t *testing.T) {
 }
 
 // spec: opencode-hooks/support-refusal-retains-the-installed-hook-generation
-func TestOpenCodeHookSupportRefusalRetainsInstallation(t *testing.T) {
-	repo, source := openCodeSandbox(t), t.TempDir()
-	additiveSafetyWrite(t, filepath.Join(source, "helper.txt"), "inert support")
-	file := filepath.Join(source, "hooks.json")
-	h := ir.NewHookWithMatcher("check", "PreToolUse", "Bash", "original", "command", nil, ir.SourceRef{File: file})
-	selected := resolver.ResolvedArtifact{Entry: catalog.Entry{Name: h.Name(), Kind: ir.KindHook, Resource: h, Path: file}, Source: config.RepoCommitted, Harnesses: []hcc.Target{hcc.TargetOpenCode}}
-	if report, err := Run(t.Context(), repo, []resolver.ResolvedArtifact{selected}); err != nil || diag.HasErrors(report.Diags) {
-		t.Fatalf("seed: %v %v", err, report.Diags)
+func TestOpenCodeSupportDependentHookRefusalRetainsInstallation(t *testing.T) {
+	for _, machine := range []bool{false, true} {
+		for _, command := range []string{"${CLAUDE_PLUGIN_ROOT}/scripts/check.sh", `"$CLAUDE_PROJECT_DIR"/scripts/check.sh`} {
+			t.Run(fmt.Sprintf("machine=%t/%s", machine, command), func(t *testing.T) {
+				repo, source := openCodeSandbox(t), t.TempDir()
+				additiveSafetyWrite(t, filepath.Join(source, "scripts", "check.sh"), "true\n")
+				file := filepath.Join(source, "hooks.json")
+				h := ir.NewHookWithMatcher("check", "PreToolUse", "Bash", "original", "command", nil, ir.SourceRef{File: file})
+				selected := resolver.ResolvedArtifact{Entry: catalog.Entry{Name: h.Name(), Kind: ir.KindHook, Resource: h, Path: file}, Source: config.RepoCommitted, Harnesses: []hcc.Target{hcc.TargetOpenCode}}
+				root := filepath.Join(repo, ".opencode")
+				if machine {
+					selected.Source = config.UserPersonal
+					root = filepath.Join(os.Getenv("XDG_CONFIG_HOME"), "opencode")
+				}
+				if report, err := Run(t.Context(), repo, []resolver.ResolvedArtifact{selected}); err != nil || diag.HasErrors(report.Diags) {
+					t.Fatalf("seed: %v %v", err, report.Diags)
+				}
+				installed := filepath.Join(root, "hooks", "agent-marketplace", "check.json")
+				before, err := os.ReadFile(installed)
+				if err != nil {
+					t.Fatal(err)
+				}
+				h.Command = command
+				report, err := Run(t.Context(), repo, []resolver.ResolvedArtifact{selected})
+				if err != nil || !diag.HasCode(report.Diags, diag.CodeHookOpenCodeUnsupported) {
+					t.Fatalf("support-dependent command accepted: %v %v", err, report.Diags)
+				}
+				after, _ := os.ReadFile(installed)
+				if !bytes.Equal(before, after) {
+					t.Fatal("refused hook replaced the installed declaration")
+				}
+				if _, err := os.Stat(filepath.Join(root, "plugins", "agent-marketplace.js")); err != nil {
+					t.Fatal("refused hook pruned the installed adapter")
+				}
+				if bytes.Contains(after, []byte(source)) || bytes.Contains(after, []byte("cache")) {
+					t.Fatal("declaration points into a source or cache directory")
+				}
+			})
+		}
 	}
-	installed := filepath.Join(repo, ".opencode", "hooks", "agent-marketplace", "check.json")
-	before, _ := os.ReadFile(installed)
-	foreign := filepath.Join(t.TempDir(), "foreign.txt")
-	additiveSafetyWrite(t, foreign, "foreign")
-	if err := os.Symlink(foreign, filepath.Join(source, "bad.txt")); err != nil {
-		t.Fatal(err)
-	}
-	h.Command = "changed"
-	report, err := Run(t.Context(), repo, []resolver.ResolvedArtifact{selected})
-	if err != nil || !diag.HasCode(report.Diags, diag.CodeMaterializeHookSupportRefused) {
-		t.Fatal("unsafe support accepted")
-	}
-	after, _ := os.ReadFile(installed)
-	if !bytes.Equal(before, after) {
-		t.Fatal("refused support replaced installed declaration")
-	}
-	if _, err := os.Stat(filepath.Join(repo, ".opencode", "plugins", "agent-marketplace.js")); err != nil {
-		t.Fatal("refused support pruned installed adapter")
+}
+
+// spec: opencode-hooks/sibling-source-files-are-never-installed
+func TestOpenCodeHookSiblingSourceFilesAreNeverInstalled(t *testing.T) {
+	for _, mode := range []config.MaterializationMode{config.MaterializationModeSymlink, config.MaterializationModeFile} {
+		t.Run(string(mode), func(t *testing.T) {
+			repo, source := openCodeSandbox(t), t.TempDir()
+			for name, content := range map[string]string{
+				"unselected.json": `{"format":"agent-marketplace/opencode-hook-v1","name":"unselected","event":"PreToolUse","command":"false","timeout":60}`,
+				"data.json":       `{"payload":"ordinary support"}`,
+				"check.sh":        "true\n",
+			} {
+				additiveSafetyWrite(t, filepath.Join(source, name), content)
+			}
+			file := filepath.Join(source, "selected.json")
+			additiveSafetyWrite(t, file, "{}")
+			h := ir.NewHookWithMatcher("selected", "PreToolUse", "Bash", "true", "command", nil, ir.SourceRef{File: file})
+			selected := resolver.ResolvedArtifact{Entry: catalog.Entry{Name: h.Name(), Kind: ir.KindHook, Resource: h, Path: file}, Source: config.RepoCommitted, Harnesses: []hcc.Target{hcc.TargetOpenCode}}
+			if report, err := Run(t.Context(), repo, []resolver.ResolvedArtifact{selected}, WithMaterializationModes(config.MaterializationModes{Project: mode, Machine: mode})); err != nil || diag.HasErrors(report.Diags) {
+				t.Fatalf("sync: %v %v", err, report.Diags)
+			}
+			var installed []string
+			root := filepath.Join(repo, ".opencode")
+			if err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
+				if err == nil && !entry.IsDir() {
+					rel, _ := filepath.Rel(root, path)
+					installed = append(installed, filepath.ToSlash(rel))
+				}
+				return err
+			}); err != nil {
+				t.Fatal(err)
+			}
+			slices.Sort(installed)
+			if want := []string{"hooks/agent-marketplace/selected.json", "plugins/agent-marketplace.js"}; !slices.Equal(installed, want) {
+				t.Fatalf("installed %v, want %v", installed, want)
+			}
+		})
 	}
 }
 

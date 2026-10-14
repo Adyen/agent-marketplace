@@ -1,0 +1,28 @@
+# Catalog data for pkg/harness-compilation/hookpolicy/catalogs/opencode.yaml.
+schema: 1
+harness: opencode
+evidence:
+  checked: "2026-10-14"
+  refs:
+    - https://opencode.ai/docs/plugins.md
+    - https://opencode.ai/docs/tools.md
+  notes: >-
+    Hooks are data-only declarations read by the fixed Agent Marketplace
+    plugin adapter, which runs command handlers on the tool.execute.before
+    plugin event with the OpenCode instance directory as the working
+    directory. That directory need not be the repository root, and the
+    adapter sets no project or plugin variables, so no repository base or
+    environment variables are declared. The adapter compares exact tool names
+    or `|` lists; regex forms are refused at ingestion and never emitted.
+    Deadlines are seconds between 1 and 600; the compiler refuses values
+    outside that range rather than capping them. Executed behavior is pinned
+    by tools/opencode-probe against OpenCode 1.18.34.
+
+env: {}
+plugin_env: {}
+
+timeout: {unit: seconds}
+matcher: {syntax: exact-or-regex, exact_lists: true}
+
+events:
+  PreToolUse: {canonical: PreToolUse, matcher: tool, types: [command]}
