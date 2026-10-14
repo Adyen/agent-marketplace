@@ -13,5 +13,5 @@
 
 - [x] Run focused regressions, disk-I/O benchmark comparison, `make validate`, OpenSpec traceability, and TUI QA.
 - [x] Review the intended diff using open-code-review-delegate and fix actionable findings.
-- [ ] Commit the implementation and verification evidence.
-- [ ] Run `openspec archive warn-missing-locked-git-snapshot --yes` as the final commit of this change.
+- [x] Commit the implementation and verification evidence.
+- [x] Run `openspec archive warn-missing-locked-git-snapshot --yes` as the final commit of this change.
