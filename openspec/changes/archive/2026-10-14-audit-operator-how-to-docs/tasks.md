@@ -11,4 +11,4 @@
 - [x] 2.2 Run the frozen site dependency install and production build without dead links.
 - [x] 2.3 Run fresh TestDocsContract, `openspec validate --all --strict` and `make spec-check`.
 - [x] 2.4 Review the complete source-to-document claim audit without changing runtime, tests or normative specifications.
-- [ ] 2.5 Run `openspec archive audit-operator-how-to-docs --yes` in the same pull request.
+- [x] 2.5 Run `openspec archive audit-operator-how-to-docs --yes` in the same pull request.
