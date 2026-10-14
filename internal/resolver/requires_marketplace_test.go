@@ -115,6 +115,7 @@ func TestResolveRequiresHeldPinAdmitsAsImplied(t *testing.T) {
 	}
 	if helper == nil || !helper.Implied {
 		t.Fatalf("requires-held helper must be selected as implied, got %#v", resolved)
+		return
 	}
 	if len(helper.RequiredBy) != 1 || helper.RequiredBy[0] != (ResourceRef{Kind: ir.KindSkill, Name: "parent"}) {
 		t.Fatalf("helper RequiredBy = %#v, want [skill parent]", helper.RequiredBy)
@@ -177,6 +178,7 @@ func TestResolveMarketplaceRequirementUnboundHint(t *testing.T) {
 	unmet := findUnmet(errs)
 	if unmet == nil || unmet.Reason != UnmetReasonSourceNotConfigured {
 		t.Fatalf("unmet = %v, want one source-not-configured warning", errs)
+		return
 	}
 	if len(mp.queries) != 0 {
 		t.Fatalf("unbound hint must not issue a Marketplace request, got %d queries", len(mp.queries))
@@ -215,6 +217,7 @@ func TestResolveMarketplaceRequirementUsesRequiringRegistry(t *testing.T) {
 	unmet := findUnmet(errs)
 	if unmet == nil || unmet.Reason != UnmetReasonUnrecorded {
 		t.Fatalf("unmet = %v, want one unrecorded warning", errs)
+		return
 	}
 }
 
@@ -342,5 +345,6 @@ func TestResolveMarketplaceRequirementOffline(t *testing.T) {
 	unmet := findUnmet(errs)
 	if unmet == nil || unmet.Reason != UnmetReasonNotFound {
 		t.Fatalf("unmet = %v, want one not-found warning", errs)
+		return
 	}
 }

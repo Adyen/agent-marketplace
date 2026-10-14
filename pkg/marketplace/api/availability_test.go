@@ -159,6 +159,7 @@ func TestAvailabilityRequestSnapshotAndCache(t *testing.T) {
 		view := availabilityFromContext(r.Context())
 		if view == nil {
 			t.Fatal("missing view")
+			return
 		}
 		first := server.evaluateAvailability(view, rev)
 		meta.err = errors.New("database changed after request snapshot")

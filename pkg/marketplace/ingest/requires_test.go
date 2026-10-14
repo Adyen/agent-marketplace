@@ -59,6 +59,7 @@ Review the code carefully.
 	}
 	if skill == nil || collection == nil {
 		t.Fatalf("missing revisions: %#v", rev.Resources)
+		return
 	}
 	if collection.Requires != "[]" {
 		t.Fatalf("collection requires = %q, want []", collection.Requires)

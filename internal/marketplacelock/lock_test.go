@@ -70,6 +70,7 @@ func TestMergePinsToV4DropsEdgesToRemovedCollections(t *testing.T) {
 				}
 				if member == nil || !reflect.DeepEqual(collections, tc.wantCollections) || !reflect.DeepEqual(member.SelectedBy, tc.wantEdges) {
 					t.Fatalf("endpoint %s retained resources = %#v, want collections %v and member edges %v", endpoint.URL, endpoint.Resources, tc.wantCollections, tc.wantEdges)
+					return
 				}
 			}
 		})

@@ -90,6 +90,7 @@ func requiresHeldFixture(t *testing.T, expand bool, scope requiresHeldScope) (ho
 	parent := marketplaceLockResource(doc, "skill", "parent")
 	if parent == nil {
 		t.Fatalf("lock missing parent record: %#v", doc.Marketplaces[0].Resources)
+		return
 	}
 	helper := *parent
 	helper.Name = "helper"
@@ -156,6 +157,7 @@ func TestRemoveRequiresHeldPinEnabledExpansion(t *testing.T) {
 			parent := marketplaceLockResource(doc, "skill", "parent")
 			if parent == nil {
 				t.Fatalf("requiring resource lost its lock record: %#v", doc.Marketplaces[0].Resources)
+				return
 			}
 			for _, edge := range parent.SelectedBy {
 				if edge.Kind != "" {

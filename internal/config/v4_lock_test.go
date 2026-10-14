@@ -573,6 +573,7 @@ func TestLoadV4MarketplaceConfigUsesLogicalLockPathForApprovedLinks(t *testing.T
 	}
 	if cfg == nil || len(cfg.Marketplaces) != 1 || cfg.Marketplaces[0].InstanceID != "market-id" {
 		t.Fatalf("marketplaces = %#v, want the identity from the logical layer lock", cfg)
+		return
 	}
 }
 
@@ -635,6 +636,7 @@ func TestLoadV4MarketplaceConfigWrongScopeLockRejectedAtRead(t *testing.T) {
 			if tc.want == "" {
 				if err != nil || cfg == nil || len(cfg.Marketplaces) != 1 {
 					t.Fatalf("control load = %#v, err = %v", cfg, err)
+					return
 				}
 				return
 			}
@@ -694,6 +696,7 @@ func TestLoadV4MarketplaceLockOverlayRead(t *testing.T) {
 	cfg := ec.Repo.Config
 	if cfg == nil || len(cfg.Marketplaces) != 1 {
 		t.Fatalf("repo config = %#v", cfg)
+		return
 	}
 	var lockRead *ConfigRead
 	for i := range ec.Repo.Reads {
@@ -703,5 +706,6 @@ func TestLoadV4MarketplaceLockOverlayRead(t *testing.T) {
 	}
 	if lockRead == nil || !lockRead.Overlay || lockRead.Digest != fmt.Sprintf("%x", sha256.Sum256(lockData)) {
 		t.Fatalf("lock read = %#v, reads = %#v", lockRead, ec.Repo.Reads)
+		return
 	}
 }
