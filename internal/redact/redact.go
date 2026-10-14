@@ -7,7 +7,7 @@ import (
 
 var (
 	credentialRE    = regexp.MustCompile(`://[^/\s?#]*@`)
-	scpCredentialRE = regexp.MustCompile(`^[^@\s/:]+:[^@\s]+@([^\s/:]+:)`)
+	scpCredentialRE = regexp.MustCompile(`^[^@\s/:]+:[^@\s/][^@\s]*@([^\s/:]+:)`)
 	urlSuffixRE     = regexp.MustCompile(`([A-Za-z][A-Za-z0-9+.-]*://[^\s?#]*)([?#])[^\s]*`)
 )
 
@@ -20,6 +20,20 @@ func URL(value string) string {
 	}
 	return urlSuffixRE.ReplaceAllString(value, "${1}${2}***")
 }
+
+// Error returns err with embedded URL credentials removed from its message.
+// The original error remains available to errors.Is and errors.As.
+func Error(err error) error {
+	if err == nil {
+		return nil
+	}
+	return redactedError{err: err}
+}
+
+type redactedError struct{ err error }
+
+func (e redactedError) Error() string { return URL(e.err.Error()) }
+func (e redactedError) Unwrap() error { return e.err }
 
 // Strings returns a copy with embedded URL credentials removed.
 func Strings(values []string) []string {

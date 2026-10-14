@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/Adyen/agent-marketplace/internal/logging/logvalue"
+	"github.com/Adyen/agent-marketplace/internal/redact"
 	tmcfg "github.com/Adyen/agent-marketplace/internal/telemetry/config"
 
 	otlpmetrichttp "go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetrichttp"
@@ -213,19 +214,22 @@ func (t *endpointValidationTransport) RoundTrip(req *http.Request) (*http.Respon
 
 func rejectTelemetryRedirect(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 
+func logURL(raw string) any { return logvalue.Safe(redact.URL(raw)) }
+
 // buildRouteClients builds the HTTP clients used for live exports and for
 // draining queued payloads to endpoint. The live client queues failed payloads.
 func buildRouteClients(endpoint string, headers map[string]string, caFile string, allowInsecure bool, route, signal string, onFailure func(error), q *Queue) (*http.Client, *http.Client, error) {
-	slog.Info("building route clients", "route", route, "signal", signal, "endpoint", logvalue.Safe(endpoint))
+	slog.Info("building route clients", "route", route, "signal", signal, "endpoint", logURL(endpoint))
 
 	if err := tmcfg.ValidateEndpoint(endpoint, allowInsecure); err != nil {
-		slog.Error("invalid telemetry endpoint", "endpoint", logvalue.Safe(endpoint), "error", logvalue.Safe(err))
+		slog.Error("invalid telemetry endpoint", "endpoint", logURL(endpoint), "error", logvalue.Safe(err))
 		return nil, nil, err
 	}
 
 	_, err := url.Parse(endpoint)
 	if err != nil {
-		slog.Error("failed to parse telemetry endpoint", "endpoint", logvalue.Safe(endpoint), "error", logvalue.Safe(err))
+		err = redact.Error(err)
+		slog.Error("failed to parse telemetry endpoint", "endpoint", logURL(endpoint), "error", logvalue.Safe(err))
 		return nil, nil, fmt.Errorf("parse endpoint: %w", err)
 	}
 
@@ -292,11 +296,11 @@ func buildMetricExporter(ctx context.Context, live *http.Client, endpoint string
 }
 
 func buildMetricExporterWithTemporality(ctx context.Context, live *http.Client, endpoint string, headers map[string]string, temporality sdkmetric.TemporalitySelector) (sdkmetric.Exporter, error) {
-	slog.Debug("building metric exporter", "endpoint", logvalue.Safe(endpoint))
+	slog.Debug("building metric exporter", "endpoint", logURL(endpoint))
 
 	ep, err := buildSignalEndpoint(endpoint, queueSubdirMetrics)
 	if err != nil {
-		slog.Error("failed to build metric endpoint", "endpoint", logvalue.Safe(endpoint), "error", logvalue.Safe(err))
+		slog.Error("failed to build metric endpoint", "endpoint", logURL(endpoint), "error", logvalue.Safe(err))
 		return nil, err
 	}
 
@@ -311,20 +315,20 @@ func buildMetricExporterWithTemporality(ctx context.Context, live *http.Client, 
 		otlpmetrichttp.WithAggregationSelector(sdkmetric.DefaultAggregationSelector),
 	)
 	if err != nil {
-		slog.Error("failed to build metric exporter", "endpoint", logvalue.Safe(endpoint), "error", logvalue.Safe(err))
+		slog.Error("failed to build metric exporter", "endpoint", logURL(endpoint), "error", logvalue.Safe(err))
 		return nil, err
 	}
 
-	slog.Debug("metric exporter built", "endpoint", logvalue.Safe(endpoint))
+	slog.Debug("metric exporter built", "endpoint", logURL(endpoint))
 	return exp, nil
 }
 
 func buildTraceExporter(ctx context.Context, live *http.Client, endpoint string, headers map[string]string) (sdktrace.SpanExporter, error) {
-	slog.Debug("building trace exporter", "endpoint", logvalue.Safe(endpoint))
+	slog.Debug("building trace exporter", "endpoint", logURL(endpoint))
 
 	ep, err := buildSignalEndpoint(endpoint, queueSubdirTraces)
 	if err != nil {
-		slog.Error("failed to build trace endpoint", "endpoint", logvalue.Safe(endpoint), "error", logvalue.Safe(err))
+		slog.Error("failed to build trace endpoint", "endpoint", logURL(endpoint), "error", logvalue.Safe(err))
 		return nil, err
 	}
 
@@ -337,18 +341,18 @@ func buildTraceExporter(ctx context.Context, live *http.Client, endpoint string,
 		otlptracehttp.WithTimeout(30*time.Second),
 	)
 	if err != nil {
-		slog.Error("failed to build trace exporter", "endpoint", logvalue.Safe(endpoint), "error", logvalue.Safe(err))
+		slog.Error("failed to build trace exporter", "endpoint", logURL(endpoint), "error", logvalue.Safe(err))
 		return nil, err
 	}
 
-	slog.Debug("trace exporter built", "endpoint", logvalue.Safe(endpoint))
+	slog.Debug("trace exporter built", "endpoint", logURL(endpoint))
 	return exp, nil
 }
 
 func endpointWithDefaultPath(endpoint, defaultPath string) (string, error) {
 	u, err := url.Parse(endpoint)
 	if err != nil {
-		return "", fmt.Errorf("parse endpoint: %w", err)
+		return "", fmt.Errorf("parse endpoint: %w", redact.Error(err))
 	}
 	if u.Path == "" || u.Path == "/" {
 		u.Path = defaultPath

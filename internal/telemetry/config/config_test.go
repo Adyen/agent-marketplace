@@ -5,12 +5,58 @@ import (
 	"io"
 	"log/slog"
 	"net"
+	"net/url"
 	"os"
 	"path/filepath"
 	"reflect"
 	"slices"
+	"strings"
 	"testing"
 )
+
+// spec: configuration-settings/telemetry-endpoint-credentials-are-not-logged
+func TestTelemetryURLValidationErrorsRedactCredentials(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		check func() error
+		host  string
+		parse bool
+	}{
+		{"syntax parse", func() error {
+			return ValidateEndpointSyntax("https://am-user:am-secret@collector.example/otlp\x7f?token=am-query-secret")
+		}, "collector.example/otlp", true},
+		{"syntax scheme", func() error {
+			return ValidateEndpointSyntax("ftp://am-user:am-secret@collector.example/otlp?token=am-query-secret")
+		}, "collector.example/otlp", false},
+		{"transport parse", func() error {
+			return ValidateEndpoint("https://am-user:am-secret@collector.example/otlp\x7f?token=am-query-secret", false)
+		}, "collector.example/otlp", true},
+		{"transport HTTPS", func() error {
+			return ValidateEndpoint("http://am-user:am-secret@203.0.113.10/otlp?token=am-query-secret", false)
+		}, "203.0.113.10/otlp", false},
+		{"retention parse", func() error {
+			return ValidateRetentionPolicy("https://am-user:am-secret@policy.example/retention\x7f?token=am-query-secret")
+		}, "policy.example/retention", true},
+		{"retention scheme", func() error {
+			return ValidateRetentionPolicy("ftp://am-user:am-secret@policy.example/retention?token=am-query-secret")
+		}, "policy.example/retention", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := tc.check()
+			if err == nil {
+				t.Fatal("invalid telemetry URL accepted")
+			}
+			message := err.Error()
+			if strings.Contains(message, "am-user") || strings.Contains(message, "am-secret") || strings.Contains(message, "am-query-secret") || !strings.Contains(message, tc.host) {
+				t.Fatalf("error = %q, want credentials removed and %s retained", message, tc.host)
+			}
+			var parseErr *url.Error
+			if errors.As(err, &parseErr) != tc.parse {
+				t.Fatalf("errors.As(*url.Error) = %v, want %v", !tc.parse, tc.parse)
+			}
+		})
+	}
+}
 
 // spec: configuration-settings/untrusted-log-values-cannot-create-records
 func TestEndpointValidationEscapesLogValues(t *testing.T) {
