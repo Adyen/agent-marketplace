@@ -41,6 +41,7 @@ jobs:
             --label "org.opencontainers.image.version=${VERSION}"
           )
 
+          images=()
           # The worker target includes Git and serves the `all` and `worker`
           # roles; the api target serves the API-only role in split mode.
           for role in worker api; do
@@ -57,7 +58,7 @@ jobs:
               echo "::error::${image} runs ${image_cmd}, not the ${role} role" >&2
               exit 1
             fi
-            docker push "$image"
+            images+=("$image")
           done
 
           web_image="${namespace}/web:${VERSION}"
@@ -74,7 +75,13 @@ jobs:
           done
           curl -fsS http://127.0.0.1:3199/ >/dev/null
           docker rm -f "$web_container"
-          docker push "$web_image"
+          images+=("$web_image")
+
+          # Push only after every image passed its check, so a failed check
+          # cannot leave a release tag with a partial image set in GHCR.
+          for image in "${images[@]}"; do
+            docker push "$image"
+          done
       - name: Report published images
         if: always()
         shell: bash
