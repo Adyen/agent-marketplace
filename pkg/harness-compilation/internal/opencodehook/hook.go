@@ -20,6 +20,12 @@ const AdapterPath = "plugins/agent-marketplace.js"
 // into one published adapter.
 const AdapterFragmentKey = "agent-marketplace/opencode-adapter-v1"
 
+// ProjectDirEnv names the variable the fixed adapter sets for every handler:
+// the directory containing the adapter's .opencode root, or the OpenCode
+// instance directory for an adapter in any other configuration directory.
+// Repository-scope commands locate installed hook support relative to it.
+const ProjectDirEnv = "AGENT_MARKETPLACE_PROJECT_DIR"
+
 // DeclarationsDir holds the adapter's data-only JSON declarations. The fixed
 // adapter reads that directory relative to its own compiled location.
 const DeclarationsDir = "hooks/agent-marketplace"

@@ -124,6 +124,7 @@ OpenCode is opt-in. Select `opencode` through the harness modal or configuration
 | command | `.opencode/commands/<name>.md` | `commands/<name>.md` |
 | subagent | `.opencode/agents/<name>.md` | `agents/<name>.md` |
 | hook | `.opencode/hooks/agent-marketplace/<name>.json` | `hooks/agent-marketplace/<name>.json` |
+| hook support | `.opencode/hook-support/<source>/<hook>/` | `hook-support/<source>/<hook>/` |
 | hook adapter | `.opencode/plugins/agent-marketplace.js` | `plugins/agent-marketplace.js` |
 | mcp | `opencode.json` or existing `opencode.jsonc`, under `mcp` | `opencode.json` or existing `opencode.jsonc`, under `mcp` |
 
@@ -135,9 +136,10 @@ folder and configuration file separately. Native configuration already in
 Commands stay commands, and agents use native subagent mode. The fixed hook
 adapter is a regular file in both materialization modes. Supported command
 `PreToolUse` hooks run through native plugins; absent, disabled, or failed
-plugins are inactive. OpenCode receives no `hook-support/` directory, so hooks
-whose commands reference a plugin root or project directory are refused. Rules
-and arbitrary executable plugin conversion are unsupported. For protocol details, see the repository's OpenCode compatibility
+plugins are inactive. Hook support is installed under `hook-support/`, and the
+adapter gives handlers `AGENT_MARKETPLACE_PROJECT_DIR` so repository commands
+reach it from any working directory. Rules and arbitrary executable plugin
+conversion are unsupported. For protocol details, see the repository's OpenCode compatibility
 note under `docs/harness-validation/opencode.md`.
 
 ### Windsurf

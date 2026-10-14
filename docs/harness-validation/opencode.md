@@ -66,13 +66,28 @@ input mutation, and additional-context output are unsupported. Ingested
 declarations with regex-like, comma-separated, or adapter-rewritten native
 matchers are refused because the adapter would read them differently.
 
-Hook support files are not installed. The adapter sets no project or plugin
-variable and runs from the instance directory, which need not be the
-repository root, so a command referencing a plugin root or project directory
-is refused with `hook.opencode.unsupported` and the catalog refusal code
-(`hook.support-path-unrepresentable` or `hook.env-unrepresentable`) instead of
-pointing into the registry cache. Use self-contained commands or absolute
-paths that exist on every machine.
+Each hook's support files (the regular files under its source definition's
+directory, excluding the definition and the JSON declarations of an OpenCode
+declaration directory) are installed under
+`hook-support/<source>/<hook>/` in the OpenCode root, as portable regular
+copies at repository scope in both modes. They are published before the
+declarations that reference them and pruned with their hook. Unsafe, replaced,
+or conflicting support refuses the hook with `materialize.hook.support-refused`
+or `materialize.hook.support-conflict` and keeps the installed generation.
+
+The adapter sets `AGENT_MARKETPLACE_PROJECT_DIR` for every handler: the
+directory containing its `.opencode` root, or the instance directory for an
+adapter in any other configuration directory. Repository-scope
+`${CLAUDE_PLUGIN_ROOT}` references become
+`"$AGENT_MARKETPLACE_PROJECT_DIR/.opencode/hook-support/<source>/<hook>/..."`,
+so they work when OpenCode starts in a subdirectory. Machine-scope references,
+and those of a repository selection relocated by `OPENCODE_CONFIG_DIR`, use the
+absolute support path. Project-directory variables translate to
+`AGENT_MARKETPLACE_PROJECT_DIR`. Commands never point into the registry cache.
+
+Sync lists added, replaced, and removed declarations in its hook review with
+`materialize.hook.review`; `sync --check` lists pending declaration changes
+with `materialize.hook.review-pending`, writes nothing, and exits nonzero.
 
 Each command runs through `/bin/sh -c` with the native workspace as its current
 working directory and inherits the native process environment. Standard input
@@ -96,7 +111,8 @@ Timeout and failure terminate the handler process group. Forced termination of
 the native parent process is outside this adapter's cleanup guarantee. Native
 execution tests cover missing/nonzero/malformed handlers, timeout, output size
 below/at/above the limit, declaration count 63/64/65, installed output in both
-modes, removal of a sibling hook, native permission denial, and coexistence with
+modes, removal of a sibling hook, installed hook support reached from the
+workspace and a subdirectory, native permission denial, and coexistence with
 a handwritten plugin. Input/event bounds are enforced by the adapter; the gate
 does not wait ten minutes or send a 1 MiB model-generated tool argument.
 

@@ -381,7 +381,11 @@ Timeout unit: `milliseconds`. Matcher syntax: `regex`. Repository base: env `pro
 
 ### opencode
 
-Timeout unit: `seconds`. Matcher syntax: `exact-or-regex` (exact `|`/`,` lists).
+Timeout unit: `seconds`. Matcher syntax: `exact-or-regex` (exact `|`/`,` lists). Repository base: env `project_dir`.
+
+| Variable concept | Names | Events |
+| --- | --- | --- |
+| `project_dir` | AGENT_MARKETPLACE_PROJECT_DIR | all |
 
 | Event | Canonical | Matcher | Types | Timeout bounds |
 | --- | --- | --- | --- | --- |

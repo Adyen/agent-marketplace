@@ -1,7 +1,7 @@
 // Agent Marketplace OpenCode command-hook adapter, format version 1.
 // Resource-authored commands live in JSON declarations, never in this module.
 import { readdir, readFile } from "node:fs/promises";
-import { dirname, resolve } from "node:path";
+import { basename, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawn } from "node:child_process";
 
@@ -9,9 +9,10 @@ const limit = 1024 * 1024;
 const canonicalTools = { bash: "Bash", read: "Read", write: "Write", edit: "Edit", glob: "Glob", grep: "Grep", webfetch: "WebFetch", websearch: "WebSearch", todowrite: "TodoWrite", task: "Task", skill: "Skill" };
 const refusal = () => new Error("Agent Marketplace hook failed or blocked this tool operation");
 
-function execute(command, cwd, input, timeout) {
+function execute(command, cwd, project, input, timeout) {
   return new Promise((resolveResult, reject) => {
-    const child = spawn("/bin/sh", ["-c", command], { cwd, detached: true, stdio: ["pipe", "pipe", "pipe"] });
+    const env = { ...process.env, AGENT_MARKETPLACE_PROJECT_DIR: project };
+    const child = spawn("/bin/sh", ["-c", command], { cwd, env, detached: true, stdio: ["pipe", "pipe", "pipe"] });
     let bytes = 0;
     const output = [];
     let settled = false;
@@ -57,7 +58,12 @@ function execute(command, cwd, input, timeout) {
 }
 
 export const AgentMarketplace = async ({ directory }) => {
-  const hooks = resolve(dirname(fileURLToPath(import.meta.url)), "../hooks/agent-marketplace");
+  const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+  const hooks = resolve(root, "hooks/agent-marketplace");
+  // A repository installation lives in <project>/.opencode and its commands
+  // locate installed support relative to that project, wherever OpenCode was
+  // started. Any other configuration directory serves the instance directory.
+  const project = basename(root) === ".opencode" ? dirname(root) : directory;
   const load = async () => {
   const declarations = [];
   let names;
@@ -86,7 +92,7 @@ export const AgentMarketplace = async ({ directory }) => {
         if (declaration.matcher && declaration.matcher !== "*" && !declaration.matcher.split("|").includes(tool)) continue;
         const remaining = deadline - Date.now();
         if (remaining <= 0) throw refusal();
-        await execute(declaration.command, directory, payload, Math.min(declaration.timeout * 1000, remaining));
+        await execute(declaration.command, directory, project, payload, Math.min(declaration.timeout * 1000, remaining));
       }
     }
   };

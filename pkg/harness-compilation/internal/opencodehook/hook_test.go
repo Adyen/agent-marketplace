@@ -32,3 +32,13 @@ func TestCanonicalToolsMirrorTheEmbeddedAdapter(t *testing.T) {
 		t.Fatalf("adapter canonicalization %v differs from CanonicalTools %v", adapter, CanonicalTools)
 	}
 }
+
+func TestEmbeddedAdapterExportsTheProjectDirectory(t *testing.T) {
+	adapter := string(Adapter)
+	if strings.Count(adapter, "{ ...process.env, "+ProjectDirEnv+": project }") != 1 {
+		t.Fatal("fixed adapter does not export the project directory to handlers")
+	}
+	if strings.Count(adapter, `const project = basename(root) === ".opencode" ? dirname(root) : directory;`) != 1 {
+		t.Fatal("fixed adapter project directory rule drifted")
+	}
+}

@@ -79,6 +79,30 @@ func hookUsesResourceFiles(target hcc.Target) bool {
 	return resourcePath
 }
 
+// resourceFileHookSupportDir returns the per-hook support root, relative to
+// the target root, of a target whose hooks are resource files, or "" when the
+// target declares none.
+func resourceFileHookSupportDir(target hcc.Target) string {
+	if !hookUsesResourceFiles(target) {
+		return ""
+	}
+	layout, _ := targetmeta.LookupNativeLayout(targetmeta.Target(target))
+	for _, partition := range layout.Partitions {
+		if partition.HookSupportDir != "" {
+			return path.Join(partition.Prefix, partition.HookSupportDir)
+		}
+	}
+	return ""
+}
+
+// resourceFileHookSupportPlan reports whether a materialization plan
+// publishes repository-scope support of resource-file hooks, which is
+// installed as portable regular copies in every materialization mode.
+func resourceFileHookSupportPlan(key outputKey, reportPrefix string) bool {
+	dir := resourceFileHookSupportDir(key.target)
+	return !key.machineScope && dir != "" && reportPrefix == componentName(dir)
+}
+
 func addExistingNativeHookOutputKeys(repoRoot string, outputs map[outputKey]bool) {
 	for _, target := range hcc.Targets() {
 		for _, machineScope := range []bool{false, true} {

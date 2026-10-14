@@ -44,8 +44,9 @@ func preflightOpenCodeResources(result *compilePhaseResult, repo string) []diag.
 	var diagnostics []diag.Diagnostic
 	for _, machine := range []bool{false, true} {
 		key := outputKey{target: hcc.TargetOpenCode, machineScope: machine}
+		support := componentName(resourceFileHookSupportDir(key.target))
 		if componentBlocked(result.blocked[key], "hooks") {
-			result.blocked.mark(key, "plugins")
+			result.blocked.mark(key, support, "plugins")
 		}
 		work := result.byTarget[key]
 		if work == nil {
@@ -71,7 +72,7 @@ func preflightOpenCodeResources(result *compilePhaseResult, repo string) []diag.
 		}
 		if refusal := hcc.ValidateOpenCodeHookBudget(hookArtifacts); refusal != nil {
 			blockedHooks = true
-			result.blocked.mark(key, "hooks", "plugins")
+			result.blocked.mark(key, support, "hooks", "plugins")
 			diagnostics = append(diagnostics, *refusal)
 		}
 		for _, candidate := range work.artifacts {
@@ -94,7 +95,7 @@ func preflightOpenCodeResources(result *compilePhaseResult, repo string) []diag.
 			}
 			if !owned {
 				blockedHooks = true
-				result.blocked.mark(key, "hooks", "plugins")
+				result.blocked.mark(key, support, "hooks", "plugins")
 				diagnostics = append(diagnostics, diag.Diagnostic{Code: "materialize.collision.user-owned", Severity: diag.SeverityError, Target: "opencode", Message: "OpenCode hook adapter is unmanaged or modified; its declarations and existing plugin are preserved"})
 			}
 		}
@@ -141,7 +142,7 @@ func preflightOpenCodeResources(result *compilePhaseResult, repo string) []diag.
 		}
 		kept := make([]artifact.Artifact, 0, len(work.artifacts))
 		for _, candidate := range work.artifacts {
-			if blockedHooks && (strings.HasPrefix(candidate.Path, "hooks/") || strings.HasPrefix(candidate.Path, "plugins/")) {
+			if blockedHooks && (strings.HasPrefix(candidate.Path, support+"/") || strings.HasPrefix(candidate.Path, "hooks/") || strings.HasPrefix(candidate.Path, "plugins/")) {
 				continue
 			}
 			component, file, _ := strings.Cut(candidate.Path, "/")

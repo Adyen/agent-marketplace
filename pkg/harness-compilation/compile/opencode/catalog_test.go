@@ -84,9 +84,9 @@ func cutFrontmatter(data []byte) ([]byte, []byte, bool) {
 	return nil, nil, false
 }
 
-func declarationOf(t *testing.T, h *ir.Hook) (opencodehook.Declaration, []diag.Diagnostic) {
+func declarationOf(t *testing.T, h *ir.Hook, options ...compile.Option) (opencodehook.Declaration, []diag.Diagnostic) {
 	t.Helper()
-	result, err := compile.Compile(h, "opencode")
+	result, err := compile.Compile(h, "opencode", options...)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -140,19 +140,33 @@ func TestPartialFileModificationMatchersAreRefused(t *testing.T) {
 	}
 }
 
-// Repository-scope commands have no representable support or project base.
-// Synchronization never supplies a support directory for resource-file hooks,
-// so its machine-scope refusal is proven in internal/materialize.
-func TestSupportDependentHookCommandsAreRefused(t *testing.T) {
-	for _, command := range []string{"${CLAUDE_PLUGIN_ROOT}/check.sh", `"$CLAUDE_PROJECT_DIR"/check.sh`} {
-		for _, options := range [][]compile.Option{nil, {compile.WithPluginRoot("/cache/source")}, {compile.WithScope(compile.ScopeUser)}} {
-			result, err := compile.Compile(ir.NewHookWithMatcher("check", "PreToolUse", "Bash", command, "command", nil, ir.SourceRef{}), "opencode", options...)
-			if err != nil {
-				t.Fatal(err)
+// spec: opencode-hooks/support-and-project-references-follow-the-adapter-project-directory
+func TestSupportAndProjectReferencesTranslate(t *testing.T) {
+	for _, tc := range []struct {
+		name, command string
+		options       []compile.Option
+		want          string
+	}{
+		{"repository support", "${CLAUDE_PLUGIN_ROOT}/check.sh", []compile.Option{compile.WithPluginRoot(".opencode/hook-support/src/check")}, `"$AGENT_MARKETPLACE_PROJECT_DIR"/.opencode/hook-support/src/check/check.sh`},
+		{"machine support", "${CLAUDE_PLUGIN_ROOT}/check.sh", []compile.Option{compile.WithPluginRoot("/home/user/.config/opencode/hook-support/src/check"), compile.WithScope(compile.ScopeUser)}, "/home/user/.config/opencode/hook-support/src/check/check.sh"},
+		{"project directory", `"$CLAUDE_PROJECT_DIR"/scripts/check.sh`, nil, `"$AGENT_MARKETPLACE_PROJECT_DIR"/scripts/check.sh`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			declaration, diagnostics := declarationOf(t, ir.NewHookWithMatcher("check", "PreToolUse", "Bash", tc.command, "command", nil, ir.SourceRef{}), tc.options...)
+			if diag.HasErrors(diagnostics) || declaration.Command != tc.want {
+				t.Fatalf("command = %q, want %q (%v)", declaration.Command, tc.want, diagnostics)
 			}
-			if len(result.Artifacts) != 0 || !diag.HasCode(result.Diagnostics, diag.CodeHookOpenCodeUnsupported) || len(result.Diagnostics) < 2 {
-				t.Fatalf("%s: support-dependent command emitted: %#v", command, result)
-			}
+		})
+	}
+	// Without an installed support directory a plugin-root reference has no
+	// target and is refused rather than pointed into a cache or source tree.
+	for _, options := range [][]compile.Option{nil, {compile.WithScope(compile.ScopeUser)}} {
+		result, err := compile.Compile(ir.NewHookWithMatcher("check", "PreToolUse", "Bash", "${CLAUDE_PLUGIN_ROOT}/check.sh", "command", nil, ir.SourceRef{}), "opencode", options...)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(result.Artifacts) != 0 || !diag.HasCode(result.Diagnostics, diag.CodeHookOpenCodeUnsupported) || !diag.HasCode(result.Diagnostics, diag.CodeHookSupportPathUnrepresentable) {
+			t.Fatalf("unsupported plugin-root reference emitted: %#v", result)
 		}
 	}
 }

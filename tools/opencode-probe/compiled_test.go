@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -124,6 +125,48 @@ func TestNativeInstalledCommandHooks(t *testing.T) {
 			}
 			assertNativeHookInput(t, result.input)
 		})
+	}
+}
+
+// spec: opencode-hooks/hook-support-is-installed-beside-the-adapter
+// spec: opencode-hooks/support-and-project-references-follow-the-adapter-project-directory
+func TestNativeInstalledHookSupport(t *testing.T) {
+	binary := requireNative(t)
+	for _, mode := range []config.MaterializationMode{config.MaterializationModeSymlink, config.MaterializationModeFile} {
+		for _, subdir := range []string{"", "nested/area"} {
+			t.Run(string(mode)+"/"+strings.ReplaceAll(subdir, "/", "-"), func(t *testing.T) {
+				result := runNativeCommandIn(t, binary, "installed", subdir, nil, map[string][]byte{}, func(workspace, root string) {
+					t.Setenv("HOME", filepath.Join(root, "home"))
+					t.Setenv("XDG_CONFIG_HOME", filepath.Join(root, "config"))
+					t.Setenv("XDG_STATE_HOME", filepath.Join(root, "state"))
+					t.Setenv("XDG_CACHE_HOME", filepath.Join(root, "cache"))
+					t.Setenv("OPENCODE_CONFIG", "")
+					t.Setenv("OPENCODE_CONFIG_DIR", "")
+					// The blocking handler lives beside its source definition
+					// and is reached only through the installed support copy.
+					source := filepath.Join(root, "registry")
+					writeFixture(t, filepath.Join(source, "hooks", "hooks.json"), `{"PreToolUse":[{"matcher":"Execute","hooks":[{"type":"command","command":"/bin/sh \"${DROID_PLUGIN_ROOT}/guard.sh\""}]}]}`)
+					writeFixture(t, filepath.Join(source, "hooks", "guard.sh"), `cat > "$AGENT_MARKETPLACE_PROJECT_DIR/hook-input.json"; printf '%s' '{"decision":"block"}'`+"\n")
+					loaded, err := catalog.Load(source, "factory")
+					if err != nil || len(loaded.Entries) != 1 {
+						t.Fatalf("source hook: %v %v", err, loaded)
+					}
+					selected := resolver.ResolvedArtifact{Entry: loaded.Entries[0], RegistryURL: source, CatalogKey: source, Source: config.RepoCommitted, Harnesses: []hcc.Target{hcc.TargetOpenCode}}
+					modes := config.MaterializationModes{Project: mode, Machine: mode}
+					report, err := materialize.Run(t.Context(), workspace, []resolver.ResolvedArtifact{selected}, materialize.WithMaterializationModes(modes))
+					if err != nil || diag.HasErrors(report.Diags) {
+						t.Fatalf("native installation: %v %v", err, report.Diags)
+					}
+					if err := os.RemoveAll(source); err != nil {
+						t.Fatal(err)
+					}
+				})
+				if !result.called || result.effect {
+					t.Fatal("installed hook support was not effective")
+				}
+				assertNativeHookInput(t, result.input)
+			})
+		}
 	}
 }
 

@@ -44,7 +44,7 @@ trap 'exit 143' TERM
 cd "$root"
 CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go test -c ./tools/opencode-probe -o "$attempt/probe.test"
 
-witnesses=TestNativeActivationControls,TestNativeRequiredActivationGate,TestNativeCompiledCommandHooks,TestNativeInstalledCommandHooks,TestNativePermissionsAndPlugins,TestNativeInvocationBudget,TestNativeInstalledResourceDiscovery
+witnesses=TestNativeActivationControls,TestNativeRequiredActivationGate,TestNativeCompiledCommandHooks,TestNativeInstalledCommandHooks,TestNativeInstalledHookSupport,TestNativePermissionsAndPlugins,TestNativeInvocationBudget,TestNativeInstalledResourceDiscovery
 # Creation gets its own group so terminal/group cancellation cannot interrupt
 # CID capture. Cleanup waits for it before starting or removing a container.
 set -m

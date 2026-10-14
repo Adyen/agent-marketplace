@@ -1347,3 +1347,39 @@ func TestHookProjectionLeavesExistingLayoutModelsUnchanged(t *testing.T) {
 		}
 	}
 }
+
+func TestHookSupportDirRequiresResourceFileHooks(t *testing.T) {
+	valid := func() NativePartition {
+		return NativePartition{
+			ID: "default", Prefix: ".", Components: []string{"hook-support", "hooks"},
+			ResourcePaths:  map[ir.ResourceKind]string{ir.KindHook: "hooks/managed/%s.json"},
+			HookSupportDir: "hook-support",
+		}
+	}
+	if err := ValidateNativeLayout(TargetOpenCode, NativeLayout{Partitions: []NativePartition{valid()}}); err != nil {
+		t.Fatalf("valid resource-file hook support rejected: %v", err)
+	}
+	for _, tt := range []struct {
+		name   string
+		mutate func(*NativePartition)
+		want   string
+	}{
+		{"no hook resource path", func(p *NativePartition) {
+			p.ResourcePaths = map[ir.ResourceKind]string{ir.KindCommand: "commands/%s.md"}
+		}, "without a hook resource path"},
+		{"beside a hook aggregate", func(p *NativePartition) {
+			p.Aggregates = []NativeAggregate{{Kind: ir.KindHook, Shape: HookShapeMatcherGroups, SupportDir: "hook-support", Project: NativeAggregateFile{Path: "settings.json", Member: "hooks"}, User: NativeAggregateFile{Path: "settings.json", Member: "hooks"}}}
+		}, "beside a hook aggregate"},
+		{"undeclared component", func(p *NativePartition) { p.Components = []string{"hooks"} }, "must be a declared component"},
+		{"shares the hook component", func(p *NativePartition) { p.HookSupportDir = "hooks" }, "shares the hook resource component"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			partition := valid()
+			tt.mutate(&partition)
+			err := ValidateNativeLayout(TargetOpenCode, NativeLayout{Partitions: []NativePartition{partition}})
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("ValidateNativeLayout error = %v, want %q", err, tt.want)
+			}
+		})
+	}
+}

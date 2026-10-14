@@ -34,7 +34,7 @@ Synthetic dependency manifests satisfy the native loader without installation.
 Go setup uses the local toolchain with module downloads disabled. The launcher
 bounds execution and cleans up its own container and process group.
 
-Seven required tests are witnessed through `tools/witness-check`; missing,
+Eight required tests are witnessed through `tools/witness-check`; missing,
 skipped, or failing witnesses fail the gate. Normal root tests require no
 OpenCode executable or container runtime.
 

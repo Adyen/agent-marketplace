@@ -424,16 +424,17 @@ cells:
     # plugin-root command cannot be represented and the hook is refused.
     - from: claude
       to: opencode
-      class: drop
-      diagnostics: [hook.opencode.unsupported, hook.support-path-unrepresentable]
+      class: cross
+      allowedLosses: [command, matcher]
     - from: opencode
       to: claude
       class: cross
       allowedLosses: [command]
     - from: factory
       to: opencode
-      class: drop
-      diagnostics: [hook.opencode.unsupported, hook.support-path-unrepresentable, ingest.factory.bundle-manifest-synthesized]
+      class: cross
+      diagnostics: [ingest.factory.bundle-manifest-synthesized]
+      allowedLosses: [command, matcher]
     - from: opencode
       to: factory
       class: cross
@@ -459,8 +460,9 @@ cells:
       expectedMatcher: ""
     - from: gemini
       to: opencode
-      class: drop
-      diagnostics: [hook.opencode.unsupported, hook.support-path-unrepresentable, ingest.gemini.bundle-manifest-synthesized]
+      class: cross
+      diagnostics: [ingest.gemini.bundle-manifest-synthesized]
+      allowedLosses: [command, matcher, name]
     - from: opencode
       to: gemini
       class: cross

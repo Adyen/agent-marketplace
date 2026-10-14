@@ -1139,7 +1139,7 @@ func compileWorkItems(work []skillTarget, allDiags []diag.Diagnostic, allOutputs
 		key := outputKey{target: w.target, machineScope: w.machineScope}
 		if w.target == hcc.TargetOpenCode && w.skill.Required && w.skill.Resource.Kind() == ir.KindHook {
 			blockResource(key, w)
-			blocked.mark(key, "hooks", "plugins")
+			blocked.mark(key, componentName(resourceFileHookSupportDir(key.target)), "hooks", "plugins")
 			allDiags = append(allDiags, diag.Diagnostic{Code: diag.CodeHookOpenCodeUnsupported, Severity: diag.SeverityError, Target: string(w.target), Resource: w.skill.Name, Message: "OpenCode can disable or skip native plugins; required hook enforcement cannot be guaranteed", Source: compilepkg.SourceOf(w.skill.Resource)})
 			continue
 		}
@@ -1162,9 +1162,11 @@ func compileWorkItems(work []skillTarget, allDiags []diag.Diagnostic, allOutputs
 			aggregateHandler = binding.handler
 		}
 		var plan hookSupportPlan
+		if isHook {
+			plan = hookSupport[index]
+		}
 		if nativeHook {
 			nativeHookWork(key)
-			plan = hookSupport[index]
 			resourceName := w.skill.Name
 			if w.skill.InstalledName != "" {
 				resourceName = w.skill.InstalledName
@@ -1192,7 +1194,7 @@ func compileWorkItems(work []skillTarget, allDiags []diag.Diagnostic, allOutputs
 			allDiags = append(allDiags, diag.Diagnostic{Code: diag.CodeMaterializeHookSupportConflict, Severity: diag.SeverityError, Target: string(w.target), Resource: w.skill.Name, Message: fmt.Sprintf("hook support paths conflict across selected sources: %s; affected hooks were not emitted", strings.Join(paths, ", ")), Hint: "Rename the conflicting support files or exclude one hook provider", Source: compilepkg.SourceOf(w.skill.Resource)})
 			continue
 		}
-		if nativeHook && plan.err != nil {
+		if isHook && plan.err != nil {
 			unknownHookSelection[key] = true
 			blockResource(key, w)
 			markResourceIncomplete(key, w, aggregateHandler)
@@ -1262,10 +1264,27 @@ func compileWorkItems(work []skillTarget, allDiags []diag.Diagnostic, allOutputs
 				compileOptions = append(compileOptions, hcc.WithScope(hcc.ScopeUser))
 			}
 		} else if isHook {
-			// No support directory is installed for resource-file hooks, so
-			// no plugin root is supplied: a plugin-root reference is refused
-			// rather than pointed into the registry cache.
-			if w.machineScope {
+			// Resource-file hooks reference their installed support directory,
+			// never the registry cache or source tree. Without a captured
+			// source the compiler receives no plugin root and refuses
+			// plugin-root references.
+			supportBase, absolute, err := resourceFileHookSupportBase(w, repoRoot, plan.relBase)
+			if err != nil {
+				blockResource(key, w)
+				allDiags = append(allDiags, diag.Diagnostic{
+					Code:     "materialize.compile.error",
+					Severity: diag.SeverityError,
+					Target:   string(w.target),
+					Resource: w.skill.Name,
+					Message:  "Hook support destination could not be resolved safely; hook suppressed",
+					Source:   compilepkg.SourceOf(w.skill.Resource),
+				})
+				continue
+			}
+			if supportBase != "" {
+				compileOptions = append(compileOptions, hcc.WithPluginRoot(supportBase))
+			}
+			if w.machineScope || absolute {
 				compileOptions = append(compileOptions, hcc.WithScope(hcc.ScopeUser))
 			}
 		} else if pluginRoot := sourceBundleRoot(w.skill); pluginRoot != "" {
@@ -1478,6 +1497,10 @@ func compileWorkItems(work []skillTarget, allDiags []diag.Diagnostic, allOutputs
 					hookSupportPaths[key][support.Path] = true
 					hookSupportOwners[key][support.Path] = append(hookSupportOwners[key][support.Path], owner)
 				}
+				result.Artifacts = append(result.Artifacts, plan.artifacts...)
+			} else if isHook {
+				// Resource-file hook support publishes as ordinary owned
+				// artifacts under the support component.
 				result.Artifacts = append(result.Artifacts, plan.artifacts...)
 			}
 			var linked []compiledResourceLink
@@ -2015,7 +2038,31 @@ func executeMaterializePlans(ctx context.Context, compileResult compilePhaseResu
 				slog.Debug("native-only aggregate work complete", "target", key.target, "machine_scope", key.machineScope)
 				return nil
 			}
+			// Resource-file hooks are reviewed like aggregate hook entries:
+			// the owned declarations before publication against those after
+			// it, or against the desired set when checking.
+			reviewHooks := hookUsesResourceFiles(key.target)
+			var hooksBefore map[string]resourceHookDeclaration
+			if reviewHooks {
+				hooksBefore = installedResourceHookDeclarations(key, outDir, repoRoot)
+			}
 			report = executeTargetPlans(report, key, outDir, destinations, artifacts, compileResult.skillLinks, compileResult.artifactMeta, compileResult.blocked.componentsFor(key), dryRun, mode, repoRoot, coalescedCodexPartitions, supportPublication, geminiCoalescence.supportPathsForKey(key, compileResult.hookSupportPaths), supportWriteFault, &boundary, geminiCoalescence, nativeProtectedPaths)
+			if reviewHooks {
+				var hooksAfter map[string]resourceHookDeclaration
+				if dryRun {
+					retain := componentBlocked(compileResult.blocked.componentsFor(key), componentName(resourceInstallDirRel(key.target, ir.KindHook)))
+					hooksAfter = desiredResourceHookDeclarations(key, artifacts, compileResult.skillLinks[key], hooksBefore, retain)
+				} else {
+					hooksAfter = installedResourceHookDeclarations(key, outDir, repoRoot)
+				}
+				if changes := resourceHookChanges(key, outDir, hooksBefore, hooksAfter); len(changes) > 0 {
+					report.HookChanges = append(report.HookChanges, changes...)
+					report.Diags = append(report.Diags, nativeHookReviewDiagnostic(key, resourceInstallDirRel(key.target, ir.KindHook), dryRun))
+					if dryRun {
+						markPendingResourceHookOutputs(report, key, outDir, changes)
+					}
+				}
+			}
 			if hasBinding {
 				report = binding.handler.reconcile(ctx, report, aggregateState, key, outDir, adapterDestinations, dryRun)
 			}
@@ -2826,7 +2873,7 @@ func executeTargetPlans(report *Report, key outputKey, outDir string, destinatio
 			report.Diags = append(report.Diags, diag.Diagnostic{Code: "materialize.destination.error", Severity: diag.SeverityError, Target: string(key.target), Message: err.Error()})
 			continue
 		}
-		if mode == config.MaterializationModeFile || (key.target == hcc.TargetOpenCode && plan.reportPrefix == "plugins") {
+		if mode == config.MaterializationModeFile || (key.target == hcc.TargetOpenCode && plan.reportPrefix == "plugins") || resourceFileHookSupportPlan(key, plan.reportPrefix) {
 			planRoot := outDir
 			if plan.root != "" {
 				planRoot = plan.root
@@ -2885,7 +2932,7 @@ func executeTargetPlans(report *Report, key outputKey, outDir string, destinatio
 		}
 		supportTargets := geminiCoalescence.supportTargetsForPlan(key, plan, supportPublication, hookSupportPaths)
 		if matErr == nil {
-			if mode == config.MaterializationModeFile || (key.target == hcc.TargetOpenCode && plan.reportPrefix == "plugins") {
+			if mode == config.MaterializationModeFile || (key.target == hcc.TargetOpenCode && plan.reportPrefix == "plugins") || resourceFileHookSupportPlan(key, plan.reportPrefix) {
 				writeReport, writeDiags, matErr = syncPortableArtifactFiles(plan.outDir, regularArtifacts, cacheDir, dryRun, wantPrune, planCollisionMeta, state, key.target, plan.reportPrefix, fileDesired, boundary)
 			} else {
 				writeReport, writeDiags, matErr = syncArtifactLinks(plan.outDir, regularArtifacts, cacheDir, dryRun, wantPrune, planCollisionMeta, portableSyncContext{state: state, target: key.target, reportPrefix: plan.reportPrefix, desired: fileDesired, supportDesired: supportTargets, boundary: boundary})

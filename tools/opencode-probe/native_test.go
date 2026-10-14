@@ -144,6 +144,14 @@ func runNativeArtifacts(t *testing.T, binary, mode string, artifacts map[string]
 
 func runNativeCommand(t *testing.T, binary, mode string, arguments []string, artifacts map[string][]byte, setup ...func(workspace, root string)) nativeResult {
 	t.Helper()
+	return runNativeCommandIn(t, binary, mode, "", arguments, artifacts, setup...)
+}
+
+// runNativeCommandIn starts OpenCode in subdir of the workspace. Protected
+// effects land in that instance directory; hook input is read from the
+// workspace, where the fixtures' handlers write it.
+func runNativeCommandIn(t *testing.T, binary, mode, subdir string, arguments []string, artifacts map[string][]byte, setup ...func(workspace, root string)) nativeResult {
+	t.Helper()
 	root := t.TempDir()
 	workspace := filepath.Join(root, "workspace")
 	config := filepath.Join(root, "config", "opencode")
@@ -221,8 +229,12 @@ func runNativeCommand(t *testing.T, binary, mode string, arguments []string, art
 	if modelTurn {
 		arguments = []string{"run", "--model", "probe/model", "--format", "json", "Run the supplied synthetic tool operation once."}
 	}
+	instance := filepath.Join(workspace, filepath.FromSlash(subdir))
+	if err := os.MkdirAll(instance, 0o700); err != nil {
+		t.Fatal(err)
+	}
 	cmd := exec.CommandContext(ctx, binary, arguments...)
-	cmd.Dir, cmd.Env = workspace, env
+	cmd.Dir, cmd.Env = instance, env
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
 	cmd.WaitDelay = time.Second
@@ -273,7 +285,7 @@ func runNativeCommand(t *testing.T, binary, mode string, arguments []string, art
 		initialized: fixtureExists(t, filepath.Join(workspace, "initialized")),
 		handwritten: fixtureExists(t, filepath.Join(workspace, "handwritten-active")),
 		called:      fixtureExists(t, filepath.Join(workspace, "hook-input.json")),
-		effect:      fixtureExists(t, filepath.Join(workspace, "effect.txt")),
+		effect:      fixtureExists(t, filepath.Join(instance, "effect.txt")),
 	}
 	if result.called {
 		result.input, err = os.ReadFile(filepath.Join(workspace, "hook-input.json"))
@@ -289,7 +301,7 @@ func runNativeCommand(t *testing.T, binary, mode string, arguments []string, art
 		result.runs = string(data)
 	}
 	if result.effect {
-		data, err := os.ReadFile(filepath.Join(workspace, "effect.txt"))
+		data, err := os.ReadFile(filepath.Join(instance, "effect.txt"))
 		if err != nil || string(data) != "protected" {
 			t.Fatal("protected effect did not contain the synthetic tool payload")
 		}

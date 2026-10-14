@@ -6,9 +6,11 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/Adyen/agent-marketplace/internal/catalog"
@@ -159,65 +161,92 @@ func TestOpenCodeEscapingRootRefused(t *testing.T) {
 }
 
 // spec: opencode-hooks/support-refusal-retains-the-installed-hook-generation
-func TestOpenCodeSupportDependentHookRefusalRetainsInstallation(t *testing.T) {
+func TestOpenCodeHookSupportRefusalRetainsInstallation(t *testing.T) {
 	for _, machine := range []bool{false, true} {
-		for _, command := range []string{"${CLAUDE_PLUGIN_ROOT}/scripts/check.sh", `"$CLAUDE_PROJECT_DIR"/scripts/check.sh`} {
-			t.Run(fmt.Sprintf("machine=%t/%s", machine, command), func(t *testing.T) {
-				repo, source := openCodeSandbox(t), t.TempDir()
-				additiveSafetyWrite(t, filepath.Join(source, "scripts", "check.sh"), "true\n")
-				file := filepath.Join(source, "hooks.json")
-				h := ir.NewHookWithMatcher("check", "PreToolUse", "Bash", "original", "command", nil, ir.SourceRef{File: file})
-				selected := resolver.ResolvedArtifact{Entry: catalog.Entry{Name: h.Name(), Kind: ir.KindHook, Resource: h, Path: file}, Source: config.RepoCommitted, Harnesses: []hcc.Target{hcc.TargetOpenCode}}
-				root := filepath.Join(repo, ".opencode")
-				if machine {
-					selected.Source = config.UserPersonal
-					root = filepath.Join(os.Getenv("XDG_CONFIG_HOME"), "opencode")
-				}
-				if report, err := Run(t.Context(), repo, []resolver.ResolvedArtifact{selected}); err != nil || diag.HasErrors(report.Diags) {
-					t.Fatalf("seed: %v %v", err, report.Diags)
-				}
-				installed := filepath.Join(root, "hooks", "agent-marketplace", "check.json")
-				before, err := os.ReadFile(installed)
-				if err != nil {
-					t.Fatal(err)
-				}
-				h.Command = command
-				report, err := Run(t.Context(), repo, []resolver.ResolvedArtifact{selected})
-				if err != nil || !diag.HasCode(report.Diags, diag.CodeHookOpenCodeUnsupported) {
-					t.Fatalf("support-dependent command accepted: %v %v", err, report.Diags)
-				}
-				after, _ := os.ReadFile(installed)
-				if !bytes.Equal(before, after) {
-					t.Fatal("refused hook replaced the installed declaration")
-				}
-				if _, err := os.Stat(filepath.Join(root, "plugins", "agent-marketplace.js")); err != nil {
-					t.Fatal("refused hook pruned the installed adapter")
-				}
-				if bytes.Contains(after, []byte(source)) || bytes.Contains(after, []byte("cache")) {
-					t.Fatal("declaration points into a source or cache directory")
-				}
-			})
-		}
+		t.Run(fmt.Sprintf("machine=%t", machine), func(t *testing.T) {
+			repo := openCodeSandbox(t)
+			selected := additiveSafetyProvider(t, hcc.TargetOpenCode, machine, `/bin/sh "${DROID_PLUGIN_ROOT}/shared.sh"`, "exit 0\n")
+			if report, err := Run(t.Context(), repo, []resolver.ResolvedArtifact{selected}); err != nil || diag.HasErrors(report.Diags) {
+				t.Fatalf("seed: %v %v", err, report.Diags)
+			}
+			root := openCodeSupportRoot(t, repo, machine)
+			snapshot := func() map[string]string {
+				files := map[string]string{}
+				_ = filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
+					if err == nil && !entry.IsDir() {
+						data, _ := os.ReadFile(path)
+						rel, _ := filepath.Rel(root, path)
+						files[filepath.ToSlash(rel)] = string(data)
+					}
+					return err
+				})
+				return files
+			}
+			before := snapshot()
+			if len(openCodeSupportFiles(t, root)) != 1 {
+				t.Fatalf("seeded support = %v", before)
+			}
+			// Replace the support script with a link outside the source.
+			script := filepath.Join(filepath.Dir(selected.Path), "shared.sh")
+			outside := filepath.Join(t.TempDir(), "outside.sh")
+			additiveSafetyWrite(t, outside, "exit 1\n")
+			if err := os.Remove(script); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(outside, script); err != nil {
+				t.Fatal(err)
+			}
+			report, err := Run(t.Context(), repo, []resolver.ResolvedArtifact{selected})
+			if err != nil || !diag.HasCode(report.Diags, diag.CodeMaterializeHookSupportRefused) {
+				t.Fatalf("unsafe support accepted: %v %v", err, report.Diags)
+			}
+			if after := snapshot(); !maps.Equal(before, after) {
+				t.Fatalf("refused support changed the installed generation:\nbefore %v\nafter  %v", before, after)
+			}
+		})
 	}
 }
 
-// spec: opencode-hooks/sibling-source-files-are-never-installed
-func TestOpenCodeHookSiblingSourceFilesAreNeverInstalled(t *testing.T) {
+// spec: opencode-hooks/sibling-declarations-are-never-installed
+func TestOpenCodeHookSiblingDeclarationsAreNeverInstalled(t *testing.T) {
+	compiled, err := hcc.Compile(ir.NewHookWithMatcher("seed", "PreToolUse", "Bash", "true", "command", nil, ir.SourceRef{}), hcc.TargetOpenCode)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var adapter []byte
+	for _, a := range compiled.Artifacts {
+		if a.Path == "plugins/agent-marketplace.js" {
+			adapter = a.Bytes
+		}
+	}
 	for _, mode := range []config.MaterializationMode{config.MaterializationModeSymlink, config.MaterializationModeFile} {
 		t.Run(string(mode), func(t *testing.T) {
-			repo, source := openCodeSandbox(t), t.TempDir()
-			for name, content := range map[string]string{
-				"unselected.json": `{"format":"agent-marketplace/opencode-hook-v1","name":"unselected","event":"PreToolUse","command":"false","timeout":60}`,
-				"data.json":       `{"payload":"ordinary support"}`,
-				"check.sh":        "true\n",
-			} {
-				additiveSafetyWrite(t, filepath.Join(source, name), content)
+			repo, registry := openCodeSandbox(t), t.TempDir()
+			declaration := func(name, command string) string {
+				return `{"format":"agent-marketplace/opencode-hook-v1","name":"` + name + `","event":"PreToolUse","matcher":"Bash","command":"` + command + `","timeout":30}`
 			}
-			file := filepath.Join(source, "selected.json")
-			additiveSafetyWrite(t, file, "{}")
-			h := ir.NewHookWithMatcher("selected", "PreToolUse", "Bash", "true", "command", nil, ir.SourceRef{File: file})
-			selected := resolver.ResolvedArtifact{Entry: catalog.Entry{Name: h.Name(), Kind: ir.KindHook, Resource: h, Path: file}, Source: config.RepoCommitted, Harnesses: []hcc.Target{hcc.TargetOpenCode}}
-			if report, err := Run(t.Context(), repo, []resolver.ResolvedArtifact{selected}, WithMaterializationModes(config.MaterializationModes{Project: mode, Machine: mode})); err != nil || diag.HasErrors(report.Diags) {
+			for name, content := range map[string]string{
+				".opencode/plugins/agent-marketplace.js":          string(adapter),
+				".opencode/hooks/agent-marketplace/selected.json": declaration("selected", "true"),
+				".opencode/hooks/agent-marketplace/other.json":    declaration("other", "false"),
+				".opencode/hooks/agent-marketplace/check.sh":      "true\n",
+			} {
+				additiveSafetyWrite(t, filepath.Join(registry, filepath.FromSlash(name)), content)
+			}
+			cat, err := catalog.Load(registry, "opencode")
+			if err != nil {
+				t.Fatal(err)
+			}
+			var selected []resolver.ResolvedArtifact
+			for _, entry := range cat.Entries {
+				if entry.Name == "selected" {
+					selected = append(selected, resolver.ResolvedArtifact{Entry: entry, RegistryURL: registry, CatalogKey: registry, Source: config.RepoCommitted, Harnesses: []hcc.Target{hcc.TargetOpenCode}})
+				}
+			}
+			if len(selected) != 1 {
+				t.Fatalf("catalog entries = %v", cat.Entries)
+			}
+			if report, err := Run(t.Context(), repo, selected, WithMaterializationModes(config.MaterializationModes{Project: mode, Machine: mode})); err != nil || diag.HasErrors(report.Diags) {
 				t.Fatalf("sync: %v %v", err, report.Diags)
 			}
 			var installed []string
@@ -232,8 +261,8 @@ func TestOpenCodeHookSiblingSourceFilesAreNeverInstalled(t *testing.T) {
 				t.Fatal(err)
 			}
 			slices.Sort(installed)
-			if want := []string{"hooks/agent-marketplace/selected.json", "plugins/agent-marketplace.js"}; !slices.Equal(installed, want) {
-				t.Fatalf("installed %v, want %v", installed, want)
+			if len(installed) != 3 || installed[0] != "hook-support/"+strings.Split(installed[0], "/")[1]+"/selected/check.sh" || installed[1] != "hooks/agent-marketplace/selected.json" || installed[2] != "plugins/agent-marketplace.js" {
+				t.Fatalf("installed %v, want the selected declaration, its support script, and the adapter", installed)
 			}
 		})
 	}
