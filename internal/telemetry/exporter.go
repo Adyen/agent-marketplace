@@ -214,7 +214,7 @@ func (t *endpointValidationTransport) RoundTrip(req *http.Request) (*http.Respon
 
 func rejectTelemetryRedirect(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 
-func logURL(raw string) any { return logvalue.Safe(redact.URL(raw)) }
+func logURL(raw string) any { return logvalue.Safe(redact.URLValue(raw)) }
 
 // buildRouteClients builds the HTTP clients used for live exports and for
 // draining queued payloads to endpoint. The live client queues failed payloads.

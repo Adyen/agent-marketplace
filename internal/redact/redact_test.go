@@ -16,10 +16,30 @@ func TestError(t *testing.T) {
 	if got, want := err.Error(), "post https://***@example.com/v1?*** offline"; got != want || !errors.Is(err, sentinel) {
 		t.Fatalf("Error() = %q, errors.Is = %v; want %q and the cause retained", got, errors.Is(err, sentinel), want)
 	}
-	parseErr := &url.Error{Op: "parse", URL: "https://YOUR_USER_HERE:YOUR_TOKEN_HERE@example.com/x", Err: errors.New("invalid")}
+	parseErr := &url.Error{Op: "parse", URL: "https://YOUR_USER_HERE:YOUR_TOKEN_HERE@example.com/x?token=FIRST SECOND", Err: errors.New("invalid")}
 	var urlErr *url.Error
-	if wrapped := Error(parseErr); !errors.As(wrapped, &urlErr) || wrapped.Error() == parseErr.Error() {
-		t.Fatalf("parse error identity or redaction lost: %v", wrapped)
+	wrapped := Error(fmt.Errorf("endpoint: %w", parseErr))
+	if got, want := wrapped.Error(), `endpoint: parse "https://***@example.com/x?***": invalid`; got != want || !errors.As(wrapped, &urlErr) {
+		t.Fatalf("Error() = %q, want %q with the *url.Error retained", got, want)
+	}
+}
+
+func TestURLValue(t *testing.T) {
+	for _, tt := range []struct{ value, want string }{
+		{"", ""},
+		{"https://example.com/v1/metrics", "https://example.com/v1/metrics"},
+		{"https://YOUR_USER_HERE:YOUR_TOKEN_HERE@example.com:8443/v1?token=FIRST SECOND#FRAGMENT", "https://***@example.com:8443/v1?***"},
+		{"https://example.com/v1#FRAGMENT SECOND", "https://example.com/v1#***"},
+		{"https://YOUR_USER_HERE:YOUR TOKEN@example.com/v1", "[redacted URL]"},
+		{"https://example.com/v1\x7f?token=FIRST SECOND", "[redacted URL]"},
+		{"YOUR_USER_HERE:YOUR_TOKEN_HERE@example.com", "[redacted URL]"},
+	} {
+		if got := URLValue(tt.value); got != tt.want {
+			t.Errorf("URLValue(%q) = %q, want %q", tt.value, got, tt.want)
+		}
+		if got := URLValue(tt.want); tt.want != "[redacted URL]" && got != tt.want {
+			t.Errorf("URLValue is not idempotent for %q: %q", tt.want, got)
+		}
 	}
 }
 

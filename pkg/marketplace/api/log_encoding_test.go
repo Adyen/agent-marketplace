@@ -7,7 +7,9 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/store"
 )
@@ -42,6 +44,22 @@ func (occurrenceFailureMetadata) GetRegistryBySlug(context.Context, string) (sto
 
 func (occurrenceFailureMetadata) GetRegistryOccurrence(context.Context, store.RegistryID, string) (store.RegistryOccurrence, error) {
 	return store.RegistryOccurrence{}, errors.New("store failure")
+}
+
+type occurrenceMismatchMetadata struct {
+	occurrenceFailureMetadata
+}
+
+func (occurrenceMismatchMetadata) GetRegistryOccurrence(_ context.Context, _ store.RegistryID, commit string) (store.RegistryOccurrence, error) {
+	return store.RegistryOccurrence{
+		RegistryID:                     "stored\r\nforged",
+		Ref:                            "main",
+		Roots:                          []store.RegistryRoot{{Path: ".agents"}},
+		Commit:                         commit,
+		RegistryRevisionManifestDigest: store.RevisionDigest("sha256:" + strings.Repeat("a", 64)),
+		Acquisition:                    store.AcquisitionIndexOnly,
+		OccurredAt:                     time.Now().UTC(),
+	}, nil
 }
 
 func captureLogAttributes(t *testing.T) map[string]string {
@@ -96,5 +114,19 @@ func TestRegistryOccurrenceFailureEncodesStoredRegistryID(t *testing.T) {
 	}
 	if attributes["registry"] != `registry\r\nforged` || attributes["commit"] != commit {
 		t.Fatalf("unencoded registry attributes: %#v", attributes)
+	}
+}
+
+func TestRegistryOccurrenceMismatchEncodesStoredRegistryIDs(t *testing.T) {
+	attributes := captureLogAttributes(t)
+	server := &Server{meta: occurrenceMismatchMetadata{}}
+	response := httptest.NewRecorder()
+	commit := "0123456789abcdef0123456789abcdef01234567"
+	server.handleRegistryOccurrence(response, httptest.NewRequest(http.MethodGet, "/api/v1/registries/example/occurrences/"+commit, nil), "example", commit)
+	if response.Code != http.StatusInternalServerError {
+		t.Fatalf("response = %d, want 500", response.Code)
+	}
+	if attributes["msg"] != "registry occurrence did not match requested identity" || attributes["registry"] != `registry\r\nforged` || attributes["occurrence_registry"] != `stored\r\nforged` {
+		t.Fatalf("unencoded mismatch attributes: %#v", attributes)
 	}
 }

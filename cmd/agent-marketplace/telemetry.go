@@ -173,7 +173,7 @@ func runTelemetryEnable(out io.Writer, level, endpoint string) error {
 		_, _ = fmt.Fprintf(out, " with endpoint %q", endpoint)
 	}
 	_, _ = fmt.Fprintln(out)
-	slog.Info("telemetry enabled", "level", normalized, "endpoint", logvalue.Safe(redact.URL(endpoint)))
+	slog.Info("telemetry enabled", "level", normalized, "endpoint", logvalue.Safe(redact.URLValue(endpoint)))
 	return nil
 }
 

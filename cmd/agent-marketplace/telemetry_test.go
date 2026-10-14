@@ -83,10 +83,10 @@ func TestTelemetryEnableRedactsEndpointCredentials(t *testing.T) {
 	t.Setenv("AGENT_MARKETPLACE_LOG_ENABLED", "true")
 	t.Setenv("AGENT_MARKETPLACE_LOG_FILE", logPath)
 	leaks := func(value string) bool {
-		return strings.Contains(value, "am-user") || strings.Contains(value, "am-secret") || strings.Contains(value, "am-query-secret")
+		return strings.Contains(value, "am-user") || strings.Contains(value, "am-secret") || strings.Contains(value, "am-query-secret") || strings.Contains(value, "am-space-secret")
 	}
 
-	_, err := executeCommand("telemetry", "enable", "--level", "basic", "--endpoint", "http://am-user:am-secret@203.0.113.10/otlp?token=am-query-secret")
+	_, err := executeCommand("telemetry", "enable", "--level", "basic", "--endpoint", "http://am-user:am-secret@203.0.113.10/otlp?token=am-query-secret am-space-secret")
 	if err == nil || leaks(err.Error()) || !strings.Contains(err.Error(), "203.0.113.10/otlp") {
 		t.Fatalf("insecure credentialed endpoint error = %v", err)
 	}

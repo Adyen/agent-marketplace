@@ -100,7 +100,7 @@ func TestRouteClientLogsEncodeConfiguredValues(t *testing.T) {
 	if _, _, err := buildRouteClients("http://127.0.0.1:1", nil, filepath.Join(t.TempDir(), "missing\r\nforged.pem"), false, "primary", queueSubdirMetrics, nil, q); err == nil {
 		t.Fatal("missing CA file accepted")
 	}
-	want := []string{`endpoint=http://127.0.0.1/\r\nforged`, `endpoint=http://127.0.0.1/\r\nforged`, "endpoint=http://127.0.0.1:1"}
+	want := []string{"endpoint=[redacted URL]", "endpoint=[redacted URL]", "endpoint=http://127.0.0.1:1"}
 	if len(values) != 4 || !slices.Equal(values[:3], want) || !strings.HasSuffix(values[3], `missing\r\nforged.pem`) || strings.ContainsAny(values[3], "\r\n") {
 		t.Fatalf("logged configured values = %q", values)
 	}

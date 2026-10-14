@@ -20,6 +20,7 @@ type stubRoundTripper func(*http.Request) (*http.Response, error)
 func (f stubRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) { return f(req) }
 
 // spec: configuration-settings/telemetry-endpoint-credentials-are-not-logged
+// spec: configuration-settings/unparseable-telemetry-urls-fail-closed
 func TestTelemetryEndpointCredentialsAreRedacted(t *testing.T) {
 	setStateRoot(t)
 	previous := slog.Default()
@@ -35,7 +36,7 @@ func TestTelemetryEndpointCredentialsAreRedacted(t *testing.T) {
 	ctx := context.Background()
 	q := NewQueue(filepath.Join(t.TempDir(), "queue"))
 
-	endpoint := "https://am-user:am-secret@127.0.0.1:1/otlp?token=am-query-secret"
+	endpoint := "https://am-user:am-secret@127.0.0.1:1/otlp?token=am-query-secret am-space-secret"
 	live, _, err := buildRouteClients(endpoint, nil, "", false, "primary", queueSubdirMetrics, nil, q)
 	if err != nil {
 		t.Fatal(err)
@@ -48,10 +49,10 @@ func TestTelemetryEndpointCredentialsAreRedacted(t *testing.T) {
 	}
 
 	var errs []error
-	_, _, err = buildRouteClients("http://am-user:am-secret@203.0.113.10/otlp?token=am-query-secret", nil, "", false, "primary", queueSubdirMetrics, nil, q)
+	_, _, err = buildRouteClients("http://am-user:am-secret@203.0.113.10/otlp?token=am-query-secret am-space-secret", nil, "", false, "primary", queueSubdirMetrics, nil, q)
 	errs = append(errs, err)
 
-	override := "https://am-user:am-secret@env.example/otlp?token=am-query-secret"
+	override := "https://am-user:am-secret@env.example/otlp?token=am-query-secret am-space-secret"
 	t.Setenv(EnvEndpoint, override)
 	state, err := ResolveTelemetryConfig(amconfig.Settings{}, amconfig.Settings{}, "", "")
 	if err != nil {
@@ -62,10 +63,15 @@ func TestTelemetryEndpointCredentialsAreRedacted(t *testing.T) {
 	}
 
 	offline := errors.New("offline")
-	envelope, err := json.Marshal(Envelope{Route: "primary", Signal: queueSubdirMetrics, URL: "https://am-user:am-secret@queue.example/v1/metrics?token=am-query-secret"})
-	if err != nil {
-		t.Fatal(err)
+	queued := func(rawURL string) []byte {
+		t.Helper()
+		envelope, err := json.Marshal(Envelope{Route: "primary", Signal: queueSubdirMetrics, URL: rawURL})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return envelope
 	}
+	envelope := queued("https://am-user:am-secret@queue.example/v1/metrics?token=am-query-secret am-space-secret")
 	for _, respond := range []stubRoundTripper{
 		func(*http.Request) (*http.Response, error) { return nil, offline },
 		func(req *http.Request) (*http.Response, error) {
@@ -75,6 +81,8 @@ func TestTelemetryEndpointCredentialsAreRedacted(t *testing.T) {
 		tel := &Telemetry{sendClients: map[string]*http.Client{"primary": {Transport: respond}}}
 		errs = append(errs, tel.send(ctx, envelope))
 	}
+	malformed := &Telemetry{sendClients: map[string]*http.Client{"primary": http.DefaultClient}}
+	errs = append(errs, malformed.send(ctx, queued("https://am-user:am-secret@queue.example/v1/%zz?token=am-query-secret am-space-secret")))
 
 	values := slices.Clone(logged)
 	for i, err := range errs {
@@ -86,8 +94,11 @@ func TestTelemetryEndpointCredentialsAreRedacted(t *testing.T) {
 	if !errors.Is(errs[1], offline) {
 		t.Fatalf("queued delivery error lost its cause: %v", errs[1])
 	}
+	if replay := errs[len(errs)-1].Error(); !strings.Contains(replay, "[redacted URL]") {
+		t.Fatalf("malformed queued URL did not fail closed: %q", replay)
+	}
 	for _, value := range values {
-		if strings.Contains(value, "am-user") || strings.Contains(value, "am-secret") || strings.Contains(value, "am-query-secret") {
+		if strings.Contains(value, "am-user") || strings.Contains(value, "am-secret") || strings.Contains(value, "am-query-secret") || strings.Contains(value, "am-space-secret") {
 			t.Fatalf("telemetry URL credentials leaked: %q", value)
 		}
 	}

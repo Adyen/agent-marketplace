@@ -15,6 +15,7 @@ import (
 )
 
 // spec: configuration-settings/telemetry-endpoint-credentials-are-not-logged
+// spec: configuration-settings/unparseable-telemetry-urls-fail-closed
 func TestTelemetryURLValidationErrorsRedactCredentials(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
@@ -23,22 +24,22 @@ func TestTelemetryURLValidationErrorsRedactCredentials(t *testing.T) {
 		parse bool
 	}{
 		{"syntax parse", func() error {
-			return ValidateEndpointSyntax("https://am-user:am-secret@collector.example/otlp\x7f?token=am-query-secret")
-		}, "collector.example/otlp", true},
+			return ValidateEndpointSyntax("https://am-user:am-secret@collector.example/otlp\x7f?token=am-query-secret am-space-secret")
+		}, "[redacted URL]", true},
 		{"syntax scheme", func() error {
-			return ValidateEndpointSyntax("ftp://am-user:am-secret@collector.example/otlp?token=am-query-secret")
+			return ValidateEndpointSyntax("ftp://am-user:am-secret@collector.example/otlp?token=am-query-secret am-space-secret")
 		}, "collector.example/otlp", false},
 		{"transport parse", func() error {
-			return ValidateEndpoint("https://am-user:am-secret@collector.example/otlp\x7f?token=am-query-secret", false)
-		}, "collector.example/otlp", true},
+			return ValidateEndpoint("https://am-user:am-secret@collector.example/otlp\x7f?token=am-query-secret am-space-secret", false)
+		}, "[redacted URL]", true},
 		{"transport HTTPS", func() error {
-			return ValidateEndpoint("http://am-user:am-secret@203.0.113.10/otlp?token=am-query-secret", false)
+			return ValidateEndpoint("http://am-user:am-secret@203.0.113.10/otlp?token=am-query-secret am-space-secret", false)
 		}, "203.0.113.10/otlp", false},
 		{"retention parse", func() error {
-			return ValidateRetentionPolicy("https://am-user:am-secret@policy.example/retention\x7f?token=am-query-secret")
-		}, "policy.example/retention", true},
+			return ValidateRetentionPolicy("https://am-user:am-secret@policy.example/retention\x7f?token=am-query-secret am-space-secret")
+		}, "[redacted URL]", true},
 		{"retention scheme", func() error {
-			return ValidateRetentionPolicy("ftp://am-user:am-secret@policy.example/retention?token=am-query-secret")
+			return ValidateRetentionPolicy("ftp://am-user:am-secret@policy.example/retention?token=am-query-secret am-space-secret")
 		}, "policy.example/retention", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -47,7 +48,7 @@ func TestTelemetryURLValidationErrorsRedactCredentials(t *testing.T) {
 				t.Fatal("invalid telemetry URL accepted")
 			}
 			message := err.Error()
-			if strings.Contains(message, "am-user") || strings.Contains(message, "am-secret") || strings.Contains(message, "am-query-secret") || !strings.Contains(message, tc.host) {
+			if strings.Contains(message, "am-user") || strings.Contains(message, "am-secret") || strings.Contains(message, "am-query-secret") || strings.Contains(message, "am-space-secret") || !strings.Contains(message, tc.host) {
 				t.Fatalf("error = %q, want credentials removed and %s retained", message, tc.host)
 			}
 			var parseErr *url.Error

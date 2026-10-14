@@ -44,7 +44,7 @@ func (t *Telemetry) send(ctx context.Context, payload []byte) error {
 
 	req, err := http.NewRequest(http.MethodPost, env.URL, bytes.NewReader(body))
 	if err != nil {
-		return fmt.Errorf("build replay request: %w", err)
+		return fmt.Errorf("build replay request: %w", redact.Error(err))
 	}
 	req = req.WithContext(ctx)
 
@@ -76,5 +76,5 @@ func (t *Telemetry) send(ctx context.Context, payload []byte) error {
 	}
 
 	slog.Error("queued payload delivery rejected", "url", logURL(env.URL), "route", env.Route, "status", resp.Status)
-	return fmt.Errorf("queued send to %s failed: %s", redact.URL(env.URL), resp.Status)
+	return fmt.Errorf("queued send to %s failed: %s", redact.URLValue(env.URL), resp.Status)
 }

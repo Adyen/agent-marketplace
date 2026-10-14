@@ -261,13 +261,13 @@ func ValidateEndpointSyntax(endpoint string) error {
 	}
 	u, err := url.Parse(endpoint)
 	if err != nil {
-		return fmt.Errorf("endpoint %q is not a valid URL: %w", redact.URL(endpoint), redact.Error(err))
+		return fmt.Errorf("endpoint %q is not a valid URL: %w", redact.URLValue(endpoint), redact.Error(err))
 	}
 	if u.Scheme != "http" && u.Scheme != "https" {
-		return fmt.Errorf("endpoint %q must use http or https, got %q", redact.URL(endpoint), u.Scheme)
+		return fmt.Errorf("endpoint %q must use http or https, got %q", redact.URLValue(endpoint), u.Scheme)
 	}
 	if u.Hostname() == "" {
-		return fmt.Errorf("endpoint %q must have a host", redact.URL(endpoint))
+		return fmt.Errorf("endpoint %q must have a host", redact.URLValue(endpoint))
 	}
 	return nil
 }
@@ -294,14 +294,14 @@ func validateEndpoint(endpoint string, allowInsecure, dnsFailureIsError bool) er
 	}
 	u, err := url.Parse(endpoint)
 	if err != nil {
-		return fmt.Errorf("endpoint %q is not a valid URL: %w", redact.URL(endpoint), redact.Error(err))
+		return fmt.Errorf("endpoint %q is not a valid URL: %w", redact.URLValue(endpoint), redact.Error(err))
 	}
 	if u.Scheme != "http" && u.Scheme != "https" {
-		return fmt.Errorf("endpoint %q must use http or https, got %q", redact.URL(endpoint), u.Scheme)
+		return fmt.Errorf("endpoint %q must use http or https, got %q", redact.URLValue(endpoint), u.Scheme)
 	}
 	host := u.Hostname()
 	if host == "" {
-		return fmt.Errorf("endpoint %q must have a host", redact.URL(endpoint))
+		return fmt.Errorf("endpoint %q must have a host", redact.URLValue(endpoint))
 	}
 	if u.Scheme == "https" {
 		return nil
@@ -327,7 +327,7 @@ func validateEndpoint(endpoint string, allowInsecure, dnsFailureIsError bool) er
 			return fmt.Errorf("insecure HTTP for private endpoint %q requires allow_insecure: true from organization policy", host)
 		}
 		slog.Warn("rejecting insecure HTTP endpoint", "host", logvalue.Safe(host), "reason", "public_ip")
-		return fmt.Errorf("endpoint %q must use HTTPS for non-loopback, non-private hosts", redact.URL(endpoint))
+		return fmt.Errorf("endpoint %q must use HTTPS for non-loopback, non-private hosts", redact.URLValue(endpoint))
 	}
 
 	// Hostnames are only allowed for insecure HTTP under organization policy.
@@ -387,13 +387,13 @@ func validateRetentionPolicy(urlStr string) error {
 	}
 	u, err := url.Parse(urlStr)
 	if err != nil {
-		return fmt.Errorf("retention_policy %q is not a valid URL: %w", redact.URL(urlStr), redact.Error(err))
+		return fmt.Errorf("retention_policy %q is not a valid URL: %w", redact.URLValue(urlStr), redact.Error(err))
 	}
 	if u.Scheme != "http" && u.Scheme != "https" {
-		return fmt.Errorf("retention_policy %q must use http or https, got %q", redact.URL(urlStr), u.Scheme)
+		return fmt.Errorf("retention_policy %q must use http or https, got %q", redact.URLValue(urlStr), u.Scheme)
 	}
 	if u.Host == "" {
-		return fmt.Errorf("retention_policy %q must have a host", redact.URL(urlStr))
+		return fmt.Errorf("retention_policy %q must have a host", redact.URLValue(urlStr))
 	}
 	return nil
 }
