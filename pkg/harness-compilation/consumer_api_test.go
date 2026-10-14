@@ -28,7 +28,7 @@ func claudeSourceFS() fstest.MapFS {
 		"skills/demo-skill/SKILL.md": {Data: []byte("---\nname: demo-skill\ndescription: Demo skill\n---\nDo the thing\n")},
 		"commands/demo-cmd.md":       {Data: []byte("---\nname: demo-cmd\ndescription: Demo command\n---\nRun the thing\n")},
 		"agents/demo-agent.md":       {Data: []byte("---\nname: demo-agent\ndescription: Demo agent\n---\nReview the thing\n")},
-		"hooks/hooks.json":           {Data: []byte(`{"PreToolUse":[{"matcher":"Read","hooks":[{"type":"command","command":"echo hi"}]}]}`)},
+		"hooks/hooks.json":           {Data: []byte(`{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"echo hi"}]}]}`)},
 		".mcp.json":                  {Data: []byte(`{"mcpServers":{"docs":{"command":"npx","args":["-y","docs-server"]}}}`)},
 	}
 }

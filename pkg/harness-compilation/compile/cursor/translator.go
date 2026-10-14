@@ -2,6 +2,7 @@ package cursor
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -9,7 +10,10 @@ import (
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/compile/mapping"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/compile/mdc"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/hookpolicy"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/target"
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/toolpolicy"
 
 	// Register in compile registry on import.
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/compile"
@@ -173,28 +177,46 @@ func (c *cursorCompiler) translateSubagent(sub *ir.Subagent, opts compile.Option
 		return nil, dgs, nil
 	}
 
-	// Map model via mapping table.
-	mappedModel, modelOK := mapping.ModelWithOverride(sub.Model, mapping.TargetCursor, opts.ModelOverride())
-	if !modelOK && sub.Model != "" {
+	// Resolve model and reasoning together through the shared catalog.
+	selection, modelDiags, err := compile.SubagentModel(sub, mapping.TargetCursor, opts)
+	if err != nil {
+		return nil, nil, err
+	}
+	mappedModel := selection.Model
+	dgs = append(dgs, modelDiags...)
+
+	// Map tools via the shipped tool catalogs. Cursor subagents have no
+	// tool allow-list surface at all, so any non-empty restriction is
+	// unenforceable and suppresses the artifact rather than emitting a field
+	// Cursor ignores (design D5). An explicit Cursor extension Tools field is
+	// an authored-native value and bypasses translation, as before.
+	var mappedTools []string
+	extTools := sub.Ext.Cursor != nil && sub.Ext.Cursor.Tools != nil
+	emittedTools, uncoveredTools, toolErr := toolpolicy.TranslateToolList(mapping.Target(sub.ToolSource), mapping.TargetCursor, toolpolicy.SurfaceSubagentTools, sub.Tools, opts.ToolOverride())
+	switch {
+	case errors.Is(toolErr, toolpolicy.ErrNoSurface) && extTools:
+		// Sidecar-carried native tools are emitted verbatim below.
+	case errors.Is(toolErr, toolpolicy.ErrNoSurface):
 		dgs = append(dgs, diag.Diagnostic{
-			Code:     diag.CodeSubagentCursorModelPassthrough,
-			Severity: diag.SeverityInfo,
+			Code:     diag.CodeSubagentCursorToolUnknown,
+			Severity: diag.SeverityError,
 			Target:   string(mapping.TargetCursor),
 			Resource: sub.Name(),
-			Message:  fmt.Sprintf("model %q not in mapping table; passed through unchanged", sub.Model),
-			Hint:     "Add the model to the mapping table if a Cursor-specific ID exists",
+			Message:  "Cursor cannot map an explicit subagent tool; artifact suppressed",
+			Hint:     "Add the tool to the mapping table or remove the explicit tool",
 			Source:   diag.SourceRef(sub.Source),
 		})
-	}
-
-	// Map tools via mapping table.
-	var mappedTools []string
-	if sub.Tools != nil {
-		mappedTools = make([]string, 0, len(sub.Tools))
-	}
-	for _, toolID := range sub.Tools {
-		mapped, toolOk := mapping.ToolWithOverride(toolID, mapping.TargetCursor, opts.ToolOverride())
-		if !toolOk {
+	case toolErr != nil:
+		return nil, nil, fmt.Errorf("cursor: translate subagent tools: %w", toolErr)
+	default:
+		mappedTools = emittedTools
+		if sub.Tools != nil && mappedTools == nil {
+			mappedTools = []string{}
+		}
+		if extTools {
+			break
+		}
+		for range uncoveredTools {
 			dgs = append(dgs, diag.Diagnostic{
 				Code:     diag.CodeSubagentCursorToolUnknown,
 				Severity: diag.SeverityError,
@@ -204,18 +226,16 @@ func (c *cursorCompiler) translateSubagent(sub *ir.Subagent, opts compile.Option
 				Hint:     "Add the tool to the mapping table or remove the explicit tool",
 				Source:   diag.SourceRef(sub.Source),
 			})
-		} else {
-			mappedTools = append(mappedTools, mapped...)
 		}
 	}
 	if diag.HasErrors(dgs) {
 		return nil, dgs, nil
 	}
 
-	effort := sub.Effort
+	effort := selection.Effort
 	if sidecar := sub.Ext.Cursor; sidecar != nil {
-		if !compile.SidecarToolsWithinCanonical(sub.Tools, sidecar.Tools, mapping.TargetCursor, opts.ToolOverride()) {
-			return nil, []diag.Diagnostic{{
+		if !compile.SidecarToolsWithinCanonical(mapping.Target(sub.ToolSource), sub.Tools, sidecar.Tools, mapping.TargetCursor, opts.ToolOverride()) {
+			return nil, append(dgs, diag.Diagnostic{
 				Code:     diag.CodeSubagentSecurityRestrictionUnsupported,
 				Severity: diag.SeverityError,
 				Target:   string(mapping.TargetCursor),
@@ -223,16 +243,10 @@ func (c *cursorCompiler) translateSubagent(sub *ir.Subagent, opts compile.Option
 				Message:  "A preserved Cursor tool list grants tools the canonical subagent does not; subagent suppressed",
 				Hint:     "Remove the preserved sidecar or align it with the canonical tool list",
 				Source:   diag.SourceRef(sub.Source),
-			}}, nil
-		}
-		if sidecar.Model != "" {
-			mappedModel = sidecar.Model
+			}), nil
 		}
 		if sidecar.Tools != nil {
 			mappedTools = sidecar.Tools
-		}
-		if sidecar.Effort != "" {
-			effort = sidecar.Effort
 		}
 	}
 
@@ -265,7 +279,7 @@ func (c *cursorCompiler) translateSubagent(sub *ir.Subagent, opts compile.Option
 			return nil, nil, err
 		}
 	}
-	extraKeys, extraDiags := compile.ExtraKeys(sub.Extra, compile.PresentFields(map[string]bool{"name": true, "description": true, "model": mappedModel != "", "tools": mappedTools != nil, "effort": effort != "", "disallowedTools": false, "isolation": false, "max-nesting": sub.MaxNesting != nil, "maxNesting": false}), mapping.TargetCursor, sub.Name(), diag.SourceRef(sub.Source))
+	extraKeys, extraDiags := compile.ModelExtraKeys(sub.Extra, compile.PresentFields(map[string]bool{"name": true, "description": true, "model": mappedModel != "", "tools": mappedTools != nil, "effort": effort != "", "disallowedTools": false, "isolation": false, "max-nesting": sub.MaxNesting != nil, "maxNesting": false}), mapping.TargetCursor, sub.Name(), diag.SourceRef(sub.Source))
 	for _, key := range extraKeys {
 		if err := writeYAMLKey(&fm, key, sub.Extra[key]); err != nil {
 			return nil, nil, err
@@ -284,62 +298,67 @@ func (c *cursorCompiler) translateSubagent(sub *ir.Subagent, opts compile.Option
 }
 
 // translateHook emits a hooks/hooks.json fragment.
-// Cursor accepts the same hook format as Claude, but with
-// ${CLAUDE_PLUGIN_ROOT} → ${CURSOR_PLUGIN_ROOT} env token swap.
+//
+// Event, matcher, timeout, handler type, and command translation come from
+// the catalog-driven hookpolicy resolver (OpenSpec native-hook-integration,
+// task 3.6): canonical events compile to Cursor's native names (preToolUse,
+// beforeSubmitPrompt, ...), matchers translate through the tool catalogs,
+// and handler types the catalog does not declare suppress this one entry
+// with an error rather than passing through unchecked.
 func (c *cursorCompiler) translateHook(h *ir.Hook, opts compile.Options) ([]artifact.Artifact, []diag.Diagnostic, error) {
-	hookType := h.Type
-	if sidecar := h.Ext.Cursor; sidecar != nil && sidecar.HookType != "" && sidecar.HookType != h.Type {
+	scope := hookpolicy.ScopeRepository
+	if opts.Scope() == compile.ScopeUser {
+		scope = hookpolicy.ScopeMachine
+	}
+	resolved := hookpolicy.Resolve(h, target.TargetCursor, scope, opts.PluginRoot())
+	if resolved.Failed() {
+		return nil, resolved.Diagnostics, nil
+	}
+	// The handler type selects the payload: a command hook carrying a
+	// prompt has no Cursor representation and must not emit both payloads.
+	if h.Prompt != "" && resolved.Type != "prompt" {
+		return nil, []diag.Diagnostic{{Code: diag.CodeHookPromptUnsupported, Severity: diag.SeverityError, Target: string(mapping.TargetCursor), Resource: h.Name(), Message: "Cursor cannot represent a command hook carrying a prompt payload; hook artifact suppressed", Hint: "Use a prompt hook or remove the prompt payload", Source: diag.SourceRef(h.Source)}}, nil
+	}
+
+	hookType := resolved.Type
+	if sidecar := h.Ext.Cursor; sidecar != nil && sidecar.HookType != "" && sidecar.HookType != resolved.Type {
 		return nil, []diag.Diagnostic{{
 			Code:     diag.CodeHookCursorUnsupportedType,
 			Severity: diag.SeverityError,
 			Target:   string(mapping.TargetCursor),
 			Resource: h.Name(),
-			Message:  "A preserved Cursor hook type contradicts the canonical hook type; hook suppressed",
+			Message:  "A preserved Cursor hook type contradicts the catalog-resolved type; hook suppressed",
 			Hint:     "Remove the preserved sidecar or align it with the declared hook type",
 			Source:   diag.SourceRef(h.Source),
 		}}, nil
 	}
 
-	// Prompt hooks have no Cursor primitive and must not become empty commands.
-	if hookType == "prompt" || h.Prompt != "" {
-		return nil, []diag.Diagnostic{{Code: diag.CodeHookPromptUnsupported, Severity: diag.SeverityWarning, Target: string(mapping.TargetCursor), Resource: h.Name(), Message: "Cursor cannot represent prompt hooks; hook artifact suppressed", Hint: "Use a command hook on Cursor", Source: diag.SourceRef(h.Source)}}, nil
-	}
-	// Only command-type hooks are supported.
-	if hookType != "command" {
-		return nil, []diag.Diagnostic{{
-			Code:     diag.CodeHookCursorUnsupportedType,
-			Severity: diag.SeverityWarning,
-			Target:   string(mapping.TargetCursor),
-			Resource: h.Name(),
-			Message:  fmt.Sprintf("Cursor only supports command-type hooks; type %q dropped", h.Type),
-			Hint:     "Convert the hook to a command type or remove it",
-			Source:   diag.SourceRef(h.Source),
-		}}, nil
-	}
-
-	// Apply env token substitution to the command string.
-	command := substituteEnvTokens(h.Command)
-
 	hookEntry := map[string]any{
-		"event":   h.Event,
-		"command": command,
+		"event": resolved.Event,
+		"type":  hookType,
 	}
-	if h.Matcher != "" {
-		hookEntry["matcher"] = h.Matcher
+	if hookType == "command" && resolved.Command != "" {
+		hookEntry["command"] = resolved.Command
 	}
-	if h.Timeout != nil {
-		hookEntry["timeout"] = *h.Timeout
+	if hookType == "prompt" && h.Prompt != "" {
+		hookEntry["prompt"] = h.Prompt
 	}
-	hookEntry["type"] = hookType
-	extraKeys, diags := compile.HookExtraKeys(h.Extra, compile.PresentFields(map[string]bool{"event": true, "matcher": h.Matcher != "", "type": hookType != "", "command": h.Command != "", "prompt": false, "timeout": h.Timeout != nil}), mapping.TargetCursor, h.Name(), diag.SourceRef(h.Source))
+	if resolved.Matcher != "" {
+		hookEntry["matcher"] = resolved.Matcher
+	}
+	if resolved.Timeout != nil {
+		hookEntry["timeout"] = *resolved.Timeout
+	}
+	extraKeys, diags := compile.HookExtraKeys(h.Extra, compile.PresentFields(map[string]bool{"event": true, "matcher": resolved.Matcher != "", "type": true, "command": resolved.Command != "", "prompt": h.Prompt != "", "timeout": resolved.Timeout != nil}), mapping.TargetCursor, h.Name(), diag.SourceRef(h.Source))
 	for _, key := range extraKeys {
 		hookEntry[key] = h.Extra[key]
 	}
+	diags = append(resolved.Diagnostics, diags...)
 
 	// Wrap in the hooks envelope matching Claude format.
 	hooksDoc := map[string]any{
 		"hooks": map[string]any{
-			h.Event: []any{hookEntry},
+			resolved.Event: []any{hookEntry},
 		},
 	}
 
@@ -389,13 +408,4 @@ func (c *cursorCompiler) translateMcpServer(m *ir.McpServer, opts compile.Option
 	art.ManagedByField, art.ManagedByValue = opts.ManagedBy()
 	art.MergeWithExisting = art.ManagedByField != ""
 	return []artifact.Artifact{art}, diags, nil
-}
-
-// substituteEnvTokens replaces source env tokens with Cursor equivalents.
-func substituteEnvTokens(s string) string {
-	replacement, literal := mapping.EnvToken("${CLAUDE_PLUGIN_ROOT}", mapping.TargetCursor)
-	if !literal && replacement != "${CLAUDE_PLUGIN_ROOT}" {
-		s = strings.ReplaceAll(s, "${CLAUDE_PLUGIN_ROOT}", replacement)
-	}
-	return s
 }

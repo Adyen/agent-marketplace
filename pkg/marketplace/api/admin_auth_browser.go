@@ -4,12 +4,32 @@ import (
 	"mime"
 	"net/http"
 	"net/url"
+	"path"
 	"regexp"
 	"strconv"
 	"strings"
 )
 
-const adminAuthErrorPage = "/marketplace/auth/error"
+type adminBrowserRoutes struct {
+	admin     string
+	authError string
+}
+
+func resolveAdminBrowserRoutes(browserBase string) adminBrowserRoutes {
+	root := "/marketplace"
+	if parsed, err := url.Parse(strings.TrimSpace(browserBase)); err == nil && parsed.IsAbs() && parsed.Host != "" {
+		candidate := strings.TrimRight(parsed.EscapedPath(), "/")
+		decoded, decodeErr := url.PathUnescape(candidate)
+		if decodeErr == nil && !strings.HasPrefix(decoded, "//") && !strings.ContainsAny(decoded, "\\\r\n") &&
+			(decoded == "" || path.Clean(decoded) == decoded) {
+			root = candidate
+		}
+	}
+	if root == "" {
+		return adminBrowserRoutes{admin: "/admin", authError: "/auth/error"}
+	}
+	return adminBrowserRoutes{admin: root + "/admin", authError: root + "/auth/error"}
+}
 
 var adminAcceptQualityPattern = regexp.MustCompile(`^(?:0(?:\.[0-9]{0,3})?|1(?:\.0{0,3})?)$`)
 
@@ -75,7 +95,7 @@ func prefersAdminHTML(r *http.Request) bool {
 	return html > 0 && html > json
 }
 
-func writeAdminOIDCError(w http.ResponseWriter, r *http.Request, status int, code, message, next string) {
+func writeAdminOIDCError(w http.ResponseWriter, r *http.Request, routes adminBrowserRoutes, status int, code, message, next string) {
 	if r.Method != http.MethodGet || !prefersAdminHTML(r) {
 		writeAdminError(w, status, code, message)
 		return
@@ -86,9 +106,9 @@ func writeAdminOIDCError(w http.ResponseWriter, r *http.Request, status int, cod
 	}
 	query := url.Values{"code": {code}}
 	if next != "" {
-		if safe, ok := validAdminNext([]string{next}); ok {
+		if safe, ok := validAdminNext([]string{next}, routes.admin); ok {
 			query.Set("next", safe)
 		}
 	}
-	http.Redirect(w, r, adminAuthErrorPage+"?"+query.Encode(), http.StatusSeeOther)
+	http.Redirect(w, r, routes.authError+"?"+query.Encode(), http.StatusSeeOther)
 }

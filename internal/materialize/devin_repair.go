@@ -181,6 +181,9 @@ func devinDesiredAggregates(repoRoot string, resolved []resolver.ResolvedArtifac
 			aggregates[key] = work
 		}
 	}
+	for key, hooks := range compiled.nativeHooks {
+		aggregates[key] = mergeOwnedJSONAggregateWork(aggregates[key], hooks)
+	}
 	return aggregates, keys, compiled.allDiags
 }
 

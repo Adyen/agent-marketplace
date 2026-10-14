@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -98,6 +99,80 @@ func TestHookSourceEvidenceRoundTrip(t *testing.T) {
 	}
 	if proof3.HasHookSource(plain.ID(), "alpha", "") {
 		t.Fatal("absent digest must never prove a source")
+	}
+}
+
+func TestOwnedEntryViewKeepsSourceEvidenceIsolated(t *testing.T) {
+	const (
+		fpA = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+		fpB = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+		fpC = "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+	)
+
+	f := newFixture(t)
+	st := f.store()
+
+	entry := hookEntry("PreToolUse", "alpha", `{"type":"command"}`)
+	entry.SourceDigest = fpA
+	entry.SourceEvidence = []HookSourceEvidence{{Resource: "beta", SourceDigest: fpB}}
+
+	satDigest := Digest([]byte(`{"type":"prompt"}`))
+	satisfaction := HookSatisfaction{
+		Container:      "PostToolUse",
+		IdentityDigest: HookIdentityDigest("PostToolUse", satDigest),
+		ValueDigest:    satDigest,
+		Sources:        []HookSourceEvidence{{Resource: "gamma", SourceDigest: fpC}},
+	}
+	satJSON, err := json.Marshal(satisfaction)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeRawFileState(t, st, f.rel,
+		`{"content_digest":"","entries":[`+hookEntryJSON(t, entry, "")+`],"hook_satisfactions":[`+string(satJSON)+`]}`)
+	stateBefore, stateInfo := fileSnapshot(t, st.StateFile())
+
+	proof, err := st.Proof(f.rel)
+	if err != nil {
+		t.Fatalf("Proof: %v", err)
+	}
+	got, ok := proof.Entry(entry.ID())
+	if !ok || !reflect.DeepEqual(got, entry) {
+		t.Fatalf("Entry = %#v, %v; want the recorded entry %#v", got, ok, entry)
+	}
+
+	got.Resource = "mutated"
+	got.ValueDigest = fpC
+	got.SourceEvidence[0].SourceDigest = "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+	again, ok := proof.Entry(entry.ID())
+	if !ok || !reflect.DeepEqual(again, entry) {
+		t.Fatalf("mutating the returned entry reached the proof: %#v", again)
+	}
+	if !proof.HasHookSource(entry.ID(), "beta", fpB) || !proof.HasHookSource(entry.ID(), "alpha", fpA) {
+		t.Fatal("mutating the returned entry corrupted recorded source evidence")
+	}
+
+	for _, id := range []EntryID{
+		{Kind: KindHook, Container: "PreToolUse", IdentityDigest: "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"},
+		satisfaction.ID(),
+	} {
+		if e, ok := proof.Entry(id); ok || !reflect.DeepEqual(e, Entry{}) {
+			t.Fatalf("Entry(%v) = %#v, %v; want empty,false", id, e, ok)
+		}
+	}
+	var zero Proof
+	if e, ok := zero.Entry(entry.ID()); ok || !reflect.DeepEqual(e, Entry{}) {
+		t.Fatal("zero Proof returned an entry")
+	}
+	if proof.OwnedCount() != 1 || len(proof.OwnedIDs()) != 1 {
+		t.Fatal("a satisfaction-only identity inflated the owned set")
+	}
+	if proof.Classify(satisfaction.ID(), satDigest) != StatusUnmanaged {
+		t.Fatal("a satisfaction-only identity classified as owned")
+	}
+
+	stateAfter, stateInfoAfter := fileSnapshot(t, st.StateFile())
+	if string(stateAfter) != string(stateBefore) || stateInfoAfter.Mode() != stateInfo.Mode() || !stateInfoAfter.ModTime().Equal(stateInfo.ModTime()) {
+		t.Fatal("the read-only entry view changed the state file bytes, mode, or mtime")
 	}
 }
 

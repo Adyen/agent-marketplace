@@ -15,6 +15,7 @@ import (
 
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/compile/mapping"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/hookpolicy"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ingest"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/internal/jsonutil"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/internal/yamlfm"
@@ -243,7 +244,7 @@ func LoadSkill(src fs.FS, root string) (*ir.Skill, error) {
 		if err != nil {
 			return nil, fmt.Errorf("ingest/gemini: invalid allowed-tools in %s: %w", mdPath, err)
 		}
-		options = append(options, ir.WithSkillAllowedTools(allowed))
+		options = append(options, ir.WithSkillAllowedTools(allowed), ir.WithSkillToolSource("gemini"))
 	}
 	if value, ok := fm["permissions"]; ok {
 		permissions, err := skillPermissions(value)
@@ -253,6 +254,7 @@ func LoadSkill(src fs.FS, root string) (*ir.Skill, error) {
 		options = append(options, ir.WithSkillPermissions(permissions))
 	}
 	skill := ir.NewSkillWithOptions(name, description, body, triggers, extra, ir.SourceRef{File: mdPath, Line: 1}, options...)
+	skill.ModelSource = "gemini"
 	supportFiles, err := skillSupportFiles(src, root)
 	if err != nil {
 		return nil, fmt.Errorf("ingest/gemini: walk support files %s: %w", root, err)
@@ -475,6 +477,10 @@ func LoadSubagent(src fs.FS, path string) (*ir.Subagent, []diag.Diagnostic, erro
 		extra,
 		ir.SourceRef{File: path, Line: 1}, options...,
 	)
+	subagent.ModelSource = "gemini"
+	if tools != nil {
+		subagent.ToolSource = "gemini"
+	}
 	subagent.Ext.Gemini = &extpkg.Gemini{
 		Kind:             kind,
 		KindSet:          kindSet,
@@ -643,46 +649,50 @@ func LoadHooks(src fs.FS, path string) ([]*ir.Hook, []diag.Diagnostic, error) {
 				hookType = "command"
 			}
 
-			claudeEvent, matcher, ok := mapping.ReverseHookEvent(event, mapping.TargetGemini)
-			if !ok {
-				claudeEvent = event
+			// Native provenance (design D7): keep the Gemini event name,
+			// matcher, millisecond timeout, and command spelling as authored
+			// and record HookSource so the catalog resolver sees Gemini
+			// values instead of early-canonicalized ones.
+			if !hookpolicy.IsDeclaredEvent(mapping.TargetGemini, event) {
 				diags = append(diags, diag.Diagnostic{
 					Code:     diag.CodeIngestGeminiHookEventPartialMapping,
 					Severity: diag.SeverityWarning,
 					Resource: event,
-					Message:  fmt.Sprintf("Gemini hook event %q has no exact Claude equivalent; preserving the original event name", event),
-					Hint:     "Use BeforeTool, AfterTool, or PreCompress for lossless cross-harness mapping",
+					Message:  fmt.Sprintf("Gemini hook event %q is outside the documented hook vocabulary; preserving the original event name", event),
+					Hint:     "Use a documented Gemini hook event",
 					Source:   diag.SourceRef{File: path, Line: 0},
 				})
 			}
 
-			extra := make(map[string]any, len(rule.ExtraFields)+1)
+			extra := make(map[string]any, len(rule.ExtraFields))
 			for key, value := range rule.ExtraFields {
 				extra[key] = value
-			}
-			if !ok {
-				extra["gemini_event"] = event
 			}
 			if len(extra) == 0 {
 				extra = nil
 			}
 
-			baseName := strings.ToLower(strings.ReplaceAll(claudeEvent, " ", "-")) + "-" + hookType
+			// Hook names become catalog resource keys, so they keep the
+			// historical canonical-event spelling (e.g. BeforeTool hooks are
+			// named pretooluse-command) even though the IR event stays
+			// native.
+			nameEvent := event
+			if canonical, _, known := hookpolicy.LegacyEvent(mapping.TargetGemini, event); known {
+				nameEvent = canonical
+			}
+			baseName := strings.ToLower(strings.ReplaceAll(nameEvent, " ", "-")) + "-" + hookType
 			name := baseName
 			for suffix := 2; usedNames[name]; suffix++ {
 				name = fmt.Sprintf("%s-%d", baseName, suffix)
 			}
 			usedNames[name] = true
-			command := normalizeEnvTokens(rule.Command)
-			options := []ir.HookOption{ir.WithHookPrompt(rule.Prompt)}
+			options := []ir.HookOption{ir.WithHookPrompt(rule.Prompt), ir.WithHookSource(string(mapping.TargetGemini))}
 			if rule.Timeout != nil {
 				options = append(options, ir.WithHookTimeoutPtr(rule.Timeout))
 			}
 
-			if matcher == "" {
-				matcher = rule.Matcher
-			}
-			hook := ir.NewHookWithMatcherOptions(name, claudeEvent, matcher, command, hookType, extra, ir.SourceRef{File: path, Line: 0}, options...)
+			matcher := rule.Matcher
+			hook := ir.NewHookWithMatcherOptions(name, event, matcher, rule.Command, hookType, extra, ir.SourceRef{File: path, Line: 0}, options...)
 			if len(rule.GroupExtra) > 0 {
 				hook.Ext.Gemini = &extpkg.Gemini{HookGroupExtra: rule.GroupExtra}
 			}
@@ -875,7 +885,7 @@ func validatePath(p string) error {
 }
 
 func listSubdirs(src fs.FS, root string) ([]string, error) {
-	entries, err := fs.ReadDir(src, root)
+	entries, err := ingest.ReadSkillEntries(src, root)
 	if err != nil {
 		return nil, err
 	}
@@ -1126,10 +1136,10 @@ func toIntPtr(value any) (*int, error) {
 		if math.IsNaN(v) || math.IsInf(v, 0) {
 			return nil, fmt.Errorf("value must be a finite integer")
 		}
-		if v < math.MinInt64 || v > math.MaxInt64 {
+		if v < float64(math.MinInt) || v >= -float64(math.MinInt) {
 			return nil, fmt.Errorf("integer out of range")
 		}
-		if v != float64(int64(v)) {
+		if v != math.Trunc(v) {
 			return nil, fmt.Errorf("value must be an integer")
 		}
 		n = int64(v)
@@ -1142,7 +1152,7 @@ func toIntPtr(value any) (*int, error) {
 	default:
 		return nil, fmt.Errorf("value has unsupported type %T", value)
 	}
-	if int64(int(n)) != n {
+	if n < math.MinInt || n > math.MaxInt {
 		return nil, fmt.Errorf("integer out of range")
 	}
 	return intPtr(int(n)), nil

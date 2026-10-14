@@ -42,7 +42,7 @@ func newReservedExtrasHook() *ir.Hook {
 		"HOOKS":    marker,
 		"x-custom": "custom-value",
 	}
-	return ir.NewHookWithMatcher("reserved", "PreToolUse", "Read", "echo typed", "command", extra, ir.SourceRef{File: "hooks.json", Line: 1})
+	return ir.NewHookWithMatcher("reserved", "PreToolUse", "Bash", "echo typed", "command", extra, ir.SourceRef{File: "hooks.json", Line: 1})
 }
 
 func artifactText(result *hcc.Result) string {
@@ -56,7 +56,7 @@ func artifactText(result *hcc.Result) string {
 func TestHookReservedExtrasAcrossTargets(t *testing.T) {
 	for _, target := range hookReservationTargets {
 		t.Run(target.name, func(t *testing.T) {
-			baseline, err := hcc.Compile(ir.NewHookWithMatcher("baseline", "PreToolUse", "Read", "echo typed", "command", nil, ir.SourceRef{}), target.target)
+			baseline, err := hcc.Compile(ir.NewHookWithMatcher("baseline", "PreToolUse", "Bash", "echo typed", "command", nil, ir.SourceRef{}), target.target)
 			if err != nil {
 				t.Fatalf("baseline compile: %v", err)
 			}
@@ -108,7 +108,7 @@ func TestHookReservedExtrasWindsurfNativeFields(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			hook := ir.NewHookWithMatcher("windsurf", "PreToolUse", "Read", "echo typed", "command", map[string]any{tc.key: "unreviewed-extra-value", "x-custom": "custom-value"}, ir.SourceRef{})
+			hook := ir.NewHookWithMatcher("windsurf", "PreToolUse", "Bash", "echo typed", "command", map[string]any{tc.key: "unreviewed-extra-value", "x-custom": "custom-value"}, ir.SourceRef{})
 			result, err := hcc.Compile(hook, hcc.TargetWindsurf)
 			if err != nil {
 				t.Fatalf("compile: %v", err)
@@ -171,7 +171,7 @@ func TestHookGroupReservedExtrasAndSequentialExtension(t *testing.T) {
 }
 
 func BenchmarkHookReservedExtras(b *testing.B) {
-	hook := ir.NewHookWithMatcher("benchmark", "PreToolUse", "Read", "echo typed", "command", map[string]any{
+	hook := ir.NewHookWithMatcher("benchmark", "PreToolUse", "Bash", "echo typed", "command", map[string]any{
 		"x-one":   "one",
 		"x-two":   "two",
 		"x-three": "three",

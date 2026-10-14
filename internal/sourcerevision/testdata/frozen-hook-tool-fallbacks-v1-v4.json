@@ -1,0 +1,1196 @@
+{
+  "claude/v1": [
+    {
+      "kind": "subagent",
+      "name": "review",
+      "payload": {
+        "Description": "Legacy review",
+        "Body": "Review the change.\n",
+        "Model": "",
+        "Tools": [
+          "Read",
+          "Bash"
+        ],
+        "Effort": "",
+        "DisallowedTools": null,
+        "Isolation": "",
+        "MaxNesting": null,
+        "Ext": {},
+        "Extra": null,
+        "Source": {
+          "File": "agents/review.md",
+          "Line": 1
+        }
+      },
+      "digest": "sha256:0f6e0b5b01735cd7921114f16be74c48ab596027c657e3e053edd0ec6ef9a932"
+    },
+    {
+      "kind": "hook",
+      "name": "PreToolUse-command",
+      "payload": {
+        "Event": "PreToolUse",
+        "Matcher": "Bash",
+        "Command": "echo legacy-claude",
+        "Prompt": "",
+        "Timeout": null,
+        "Type": "command",
+        "Ext": {},
+        "Extra": {},
+        "Source": {
+          "File": "hooks/hooks.json",
+          "Line": 0
+        }
+      },
+      "digest": "sha256:18a36d3ec4c70a2438604e4100f6e40f3acf0f17bb3ef43e7f02d3294cef700d"
+    }
+  ],
+  "claude/v2": [
+    {
+      "kind": "subagent",
+      "name": "review",
+      "payload": {
+        "Description": "Legacy review",
+        "Body": "Review the change.\n",
+        "Model": "",
+        "Tools": [
+          "Read",
+          "Bash"
+        ],
+        "Effort": "",
+        "DisallowedTools": null,
+        "Isolation": "",
+        "MaxNesting": null,
+        "Ext": {},
+        "Extra": null,
+        "Source": {
+          "File": "agents/review.md",
+          "Line": 1
+        }
+      },
+      "digest": "sha256:0f6e0b5b01735cd7921114f16be74c48ab596027c657e3e053edd0ec6ef9a932"
+    },
+    {
+      "kind": "hook",
+      "name": "PreToolUse-command",
+      "payload": {
+        "Event": "PreToolUse",
+        "Matcher": "Bash",
+        "Command": "echo legacy-claude",
+        "Prompt": "",
+        "Timeout": null,
+        "Type": "command",
+        "Ext": {},
+        "Extra": {},
+        "Source": {
+          "File": "hooks/hooks.json",
+          "Line": 0
+        }
+      },
+      "digest": "sha256:18a36d3ec4c70a2438604e4100f6e40f3acf0f17bb3ef43e7f02d3294cef700d"
+    }
+  ],
+  "claude/v3": [
+    {
+      "kind": "subagent",
+      "name": "review",
+      "payload": {
+        "Description": "Legacy review",
+        "Body": "Review the change.\n",
+        "Model": "",
+        "Tools": [
+          "Read",
+          "Bash"
+        ],
+        "Effort": "",
+        "DisallowedTools": null,
+        "Isolation": "",
+        "MaxNesting": null,
+        "Ext": {},
+        "Extra": null,
+        "Source": {
+          "File": "agents/review.md",
+          "Line": 1
+        }
+      },
+      "digest": "sha256:0f6e0b5b01735cd7921114f16be74c48ab596027c657e3e053edd0ec6ef9a932"
+    },
+    {
+      "kind": "hook",
+      "name": "PreToolUse-command",
+      "payload": {
+        "Event": "PreToolUse",
+        "Matcher": "Bash",
+        "Command": "echo legacy-claude",
+        "Prompt": "",
+        "Timeout": null,
+        "Type": "command",
+        "Ext": {},
+        "Extra": {},
+        "Source": {
+          "File": "hooks/hooks.json",
+          "Line": 0
+        }
+      },
+      "digest": "sha256:18a36d3ec4c70a2438604e4100f6e40f3acf0f17bb3ef43e7f02d3294cef700d"
+    }
+  ],
+  "claude/v4": [
+    {
+      "kind": "subagent",
+      "name": "review",
+      "payload": {
+        "Description": "Legacy review",
+        "Body": "Review the change.\n",
+        "Model": "",
+        "ModelSource": "claude",
+        "Tools": [
+          "Read",
+          "Bash"
+        ],
+        "Effort": "",
+        "DisallowedTools": null,
+        "Isolation": "",
+        "MaxNesting": null,
+        "Ext": {},
+        "Extra": null,
+        "Source": {
+          "File": "agents/review.md",
+          "Line": 1
+        }
+      },
+      "digest": "sha256:e91c7249639eeea94faea5095f731719e71a9bd173fdb7150a35faf4ea158c77"
+    },
+    {
+      "kind": "hook",
+      "name": "PreToolUse-command",
+      "payload": {
+        "Event": "PreToolUse",
+        "Matcher": "Bash",
+        "Command": "echo legacy-claude",
+        "Prompt": "",
+        "Timeout": null,
+        "Type": "command",
+        "Ext": {},
+        "Extra": {},
+        "Source": {
+          "File": "hooks/hooks.json",
+          "Line": 0
+        }
+      },
+      "digest": "sha256:18a36d3ec4c70a2438604e4100f6e40f3acf0f17bb3ef43e7f02d3294cef700d"
+    }
+  ],
+  "codex/v1": [
+    {
+      "kind": "subagent",
+      "name": "review",
+      "payload": {
+        "Description": "Legacy review",
+        "Body": "Review the change.",
+        "Model": "",
+        "Tools": null,
+        "Effort": "",
+        "DisallowedTools": null,
+        "Isolation": "",
+        "MaxNesting": null,
+        "Ext": {},
+        "Extra": null,
+        "Source": {
+          "File": ".codex/agents/review.toml",
+          "Line": 1
+        }
+      },
+      "digest": "sha256:64466c258b74cf5a4866bb8270766d9125ab58fd1884dd6792693ea0300eb0ea"
+    },
+    {
+      "kind": "hook",
+      "name": "pretooluse-1-1",
+      "payload": {
+        "Event": "PreToolUse",
+        "Matcher": "apply_patch",
+        "Command": "echo legacy-codex",
+        "Prompt": "",
+        "Timeout": 3,
+        "Type": "command",
+        "Ext": {
+          "codex": {
+            "nativeHook": true
+          }
+        },
+        "Extra": null,
+        "Source": {
+          "File": ".codex/hooks.json",
+          "Line": 1
+        }
+      },
+      "digest": "sha256:0bef8786d20a7a0f510b836f81839871d13aadc33c64f3abeba1b2c6f6f53846"
+    }
+  ],
+  "codex/v2": [
+    {
+      "kind": "subagent",
+      "name": "review",
+      "payload": {
+        "Description": "Legacy review",
+        "Body": "Review the change.",
+        "Model": "",
+        "Tools": null,
+        "Effort": "",
+        "DisallowedTools": null,
+        "Isolation": "",
+        "MaxNesting": null,
+        "Ext": {},
+        "Extra": null,
+        "Source": {
+          "File": ".codex/agents/review.toml",
+          "Line": 1
+        }
+      },
+      "digest": "sha256:64466c258b74cf5a4866bb8270766d9125ab58fd1884dd6792693ea0300eb0ea"
+    },
+    {
+      "kind": "hook",
+      "name": "pretooluse-1-1",
+      "payload": {
+        "Event": "PreToolUse",
+        "Matcher": "apply_patch",
+        "Command": "echo legacy-codex",
+        "Prompt": "",
+        "Timeout": 3,
+        "Type": "command",
+        "Ext": {
+          "codex": {
+            "nativeHook": true
+          }
+        },
+        "Extra": null,
+        "Source": {
+          "File": ".codex/hooks.json",
+          "Line": 1
+        }
+      },
+      "digest": "sha256:0bef8786d20a7a0f510b836f81839871d13aadc33c64f3abeba1b2c6f6f53846"
+    }
+  ],
+  "codex/v3": [
+    {
+      "kind": "subagent",
+      "name": "review",
+      "payload": {
+        "Description": "Legacy review",
+        "Body": "Review the change.",
+        "Model": "",
+        "Tools": null,
+        "Effort": "",
+        "DisallowedTools": null,
+        "Isolation": "",
+        "MaxNesting": null,
+        "Ext": {},
+        "Extra": null,
+        "Source": {
+          "File": ".codex/agents/review.toml",
+          "Line": 1
+        }
+      },
+      "digest": "sha256:64466c258b74cf5a4866bb8270766d9125ab58fd1884dd6792693ea0300eb0ea"
+    },
+    {
+      "kind": "hook",
+      "name": "pretooluse-1-1",
+      "payload": {
+        "Event": "PreToolUse",
+        "Matcher": "apply_patch",
+        "Command": "echo legacy-codex",
+        "Prompt": "",
+        "Timeout": 3,
+        "Type": "command",
+        "Ext": {
+          "codex": {
+            "nativeHook": true
+          }
+        },
+        "Extra": null,
+        "Source": {
+          "File": ".codex/hooks.json",
+          "Line": 1
+        }
+      },
+      "digest": "sha256:0bef8786d20a7a0f510b836f81839871d13aadc33c64f3abeba1b2c6f6f53846"
+    }
+  ],
+  "codex/v4": [
+    {
+      "kind": "subagent",
+      "name": "review",
+      "payload": {
+        "Description": "Legacy review",
+        "Body": "Review the change.",
+        "Model": "",
+        "ModelSource": "codex",
+        "Tools": null,
+        "Effort": "",
+        "DisallowedTools": null,
+        "Isolation": "",
+        "MaxNesting": null,
+        "Ext": {},
+        "Extra": null,
+        "Source": {
+          "File": ".codex/agents/review.toml",
+          "Line": 1
+        }
+      },
+      "digest": "sha256:c5b3e5e47f047f5f27e1f57363c687da4df82a1e7dbfb060439b6b9879907de4"
+    },
+    {
+      "kind": "hook",
+      "name": "pretooluse-1-1",
+      "payload": {
+        "Event": "PreToolUse",
+        "Matcher": "apply_patch",
+        "Command": "echo legacy-codex",
+        "Prompt": "",
+        "Timeout": 3,
+        "Type": "command",
+        "Ext": {
+          "codex": {
+            "nativeHook": true
+          }
+        },
+        "Extra": null,
+        "Source": {
+          "File": ".codex/hooks.json",
+          "Line": 1
+        }
+      },
+      "digest": "sha256:0bef8786d20a7a0f510b836f81839871d13aadc33c64f3abeba1b2c6f6f53846"
+    }
+  ],
+  "cursor/v1": [
+    {
+      "kind": "subagent",
+      "name": "review",
+      "payload": {
+        "Description": "Legacy review",
+        "Body": "Review the change.\n",
+        "Model": "",
+        "Tools": [
+          "Read",
+          "Shell"
+        ],
+        "Effort": "",
+        "DisallowedTools": null,
+        "Isolation": "",
+        "MaxNesting": null,
+        "Ext": {},
+        "Extra": null,
+        "Source": {
+          "File": "agents/review.md",
+          "Line": 1
+        }
+      },
+      "digest": "sha256:2d11004aca1b46200e4eb75194e9394eb346e5851af8b76a8b2d67eb0b308acb"
+    },
+    {
+      "kind": "hook",
+      "name": "PreToolUse-command",
+      "payload": {
+        "Event": "PreToolUse",
+        "Matcher": "Bash",
+        "Command": "echo legacy-cursor",
+        "Prompt": "",
+        "Timeout": null,
+        "Type": "command",
+        "Ext": {},
+        "Extra": {},
+        "Source": {
+          "File": "hooks/hooks.json",
+          "Line": 0
+        }
+      },
+      "digest": "sha256:2827b5e01b3dc0ad04d19df47d400b706f080f1247172b8e88ba9d9651228f52"
+    }
+  ],
+  "cursor/v2": [
+    {
+      "kind": "subagent",
+      "name": "review",
+      "payload": {
+        "Description": "Legacy review",
+        "Body": "Review the change.\n",
+        "Model": "",
+        "Tools": [
+          "Read",
+          "Shell"
+        ],
+        "Effort": "",
+        "DisallowedTools": null,
+        "Isolation": "",
+        "MaxNesting": null,
+        "Ext": {},
+        "Extra": null,
+        "Source": {
+          "File": "agents/review.md",
+          "Line": 1
+        }
+      },
+      "digest": "sha256:2d11004aca1b46200e4eb75194e9394eb346e5851af8b76a8b2d67eb0b308acb"
+    },
+    {
+      "kind": "hook",
+      "name": "PreToolUse-command",
+      "payload": {
+        "Event": "PreToolUse",
+        "Matcher": "Bash",
+        "Command": "echo legacy-cursor",
+        "Prompt": "",
+        "Timeout": null,
+        "Type": "command",
+        "Ext": {},
+        "Extra": {},
+        "Source": {
+          "File": "hooks/hooks.json",
+          "Line": 0
+        }
+      },
+      "digest": "sha256:2827b5e01b3dc0ad04d19df47d400b706f080f1247172b8e88ba9d9651228f52"
+    }
+  ],
+  "cursor/v3": [
+    {
+      "kind": "subagent",
+      "name": "review",
+      "payload": {
+        "Description": "Legacy review",
+        "Body": "Review the change.\n",
+        "Model": "",
+        "Tools": [
+          "Read",
+          "Shell"
+        ],
+        "Effort": "",
+        "DisallowedTools": null,
+        "Isolation": "",
+        "MaxNesting": null,
+        "Ext": {},
+        "Extra": null,
+        "Source": {
+          "File": "agents/review.md",
+          "Line": 1
+        }
+      },
+      "digest": "sha256:2d11004aca1b46200e4eb75194e9394eb346e5851af8b76a8b2d67eb0b308acb"
+    },
+    {
+      "kind": "hook",
+      "name": "PreToolUse-command",
+      "payload": {
+        "Event": "PreToolUse",
+        "Matcher": "Bash",
+        "Command": "echo legacy-cursor",
+        "Prompt": "",
+        "Timeout": null,
+        "Type": "command",
+        "Ext": {},
+        "Extra": {},
+        "Source": {
+          "File": "hooks/hooks.json",
+          "Line": 0
+        }
+      },
+      "digest": "sha256:2827b5e01b3dc0ad04d19df47d400b706f080f1247172b8e88ba9d9651228f52"
+    }
+  ],
+  "cursor/v4": [
+    {
+      "kind": "subagent",
+      "name": "review",
+      "payload": {
+        "Description": "Legacy review",
+        "Body": "Review the change.\n",
+        "Model": "",
+        "ModelSource": "cursor",
+        "Tools": [
+          "Read",
+          "Shell"
+        ],
+        "Effort": "",
+        "DisallowedTools": null,
+        "Isolation": "",
+        "MaxNesting": null,
+        "Ext": {},
+        "Extra": null,
+        "Source": {
+          "File": "agents/review.md",
+          "Line": 1
+        }
+      },
+      "digest": "sha256:7c7f366ae2ea43653dc102baebfa6e0c8063ce17a64a768f8725c8c7b4cce0a9"
+    },
+    {
+      "kind": "hook",
+      "name": "PreToolUse-command",
+      "payload": {
+        "Event": "PreToolUse",
+        "Matcher": "Bash",
+        "Command": "echo legacy-cursor",
+        "Prompt": "",
+        "Timeout": null,
+        "Type": "command",
+        "Ext": {},
+        "Extra": {},
+        "Source": {
+          "File": "hooks/hooks.json",
+          "Line": 0
+        }
+      },
+      "digest": "sha256:2827b5e01b3dc0ad04d19df47d400b706f080f1247172b8e88ba9d9651228f52"
+    }
+  ],
+  "devin/v1": [
+    {
+      "kind": "subagent",
+      "name": "review",
+      "payload": {
+        "Description": "Legacy review",
+        "Body": "Review the change.\n",
+        "Model": "",
+        "Tools": [
+          "Read",
+          "Bash"
+        ],
+        "Effort": "",
+        "DisallowedTools": null,
+        "Isolation": "",
+        "MaxNesting": null,
+        "Ext": {},
+        "Extra": null,
+        "Source": {
+          "File": ".devin/agents/review.md",
+          "Line": 1
+        }
+      },
+      "digest": "sha256:db0a97fa96ca080b21a6b173f8b98efdf0e79d839a7df4cde2ef985eeea9ce9f"
+    },
+    {
+      "kind": "hook",
+      "name": "PostCompaction-command",
+      "payload": {
+        "Event": "PostCompaction",
+        "Matcher": "",
+        "Command": "echo legacy-devin",
+        "Prompt": "",
+        "Timeout": 3,
+        "Type": "command",
+        "Ext": {},
+        "Extra": null,
+        "Source": {
+          "File": ".devin/hooks.v1.json",
+          "Line": 0
+        }
+      },
+      "digest": "sha256:384ef3b1697f98f8025251b518dfae53a2c559ac5573144df0386400a5abcb50"
+    }
+  ],
+  "devin/v2": [
+    {
+      "kind": "subagent",
+      "name": "review",
+      "payload": {
+        "Description": "Legacy review",
+        "Body": "Review the change.\n",
+        "Model": "",
+        "Tools": [
+          "Read",
+          "Bash"
+        ],
+        "Effort": "",
+        "DisallowedTools": null,
+        "Isolation": "",
+        "MaxNesting": null,
+        "Ext": {},
+        "Extra": null,
+        "Source": {
+          "File": ".devin/agents/review.md",
+          "Line": 1
+        }
+      },
+      "digest": "sha256:db0a97fa96ca080b21a6b173f8b98efdf0e79d839a7df4cde2ef985eeea9ce9f"
+    },
+    {
+      "kind": "hook",
+      "name": "PostCompaction-command",
+      "payload": {
+        "Event": "PostCompaction",
+        "Matcher": "",
+        "Command": "echo legacy-devin",
+        "Prompt": "",
+        "Timeout": 3,
+        "Type": "command",
+        "Ext": {},
+        "Extra": null,
+        "Source": {
+          "File": ".devin/hooks.v1.json",
+          "Line": 0
+        }
+      },
+      "digest": "sha256:384ef3b1697f98f8025251b518dfae53a2c559ac5573144df0386400a5abcb50"
+    }
+  ],
+  "devin/v3": [
+    {
+      "kind": "subagent",
+      "name": "review",
+      "payload": {
+        "Description": "Legacy review",
+        "Body": "Review the change.\n",
+        "Model": "",
+        "Tools": [
+          "Read",
+          "Bash"
+        ],
+        "Effort": "",
+        "DisallowedTools": null,
+        "Isolation": "",
+        "MaxNesting": null,
+        "Ext": {},
+        "Extra": null,
+        "Source": {
+          "File": ".devin/agents/review.md",
+          "Line": 1
+        }
+      },
+      "digest": "sha256:db0a97fa96ca080b21a6b173f8b98efdf0e79d839a7df4cde2ef985eeea9ce9f"
+    },
+    {
+      "kind": "hook",
+      "name": "PostCompaction-command",
+      "payload": {
+        "Event": "PostCompaction",
+        "Matcher": "",
+        "Command": "echo legacy-devin",
+        "Prompt": "",
+        "Timeout": 3,
+        "Type": "command",
+        "Ext": {},
+        "Extra": null,
+        "Source": {
+          "File": ".devin/hooks.v1.json",
+          "Line": 0
+        }
+      },
+      "digest": "sha256:384ef3b1697f98f8025251b518dfae53a2c559ac5573144df0386400a5abcb50"
+    }
+  ],
+  "devin/v4": [
+    {
+      "kind": "subagent",
+      "name": "review",
+      "payload": {
+        "Description": "Legacy review",
+        "Body": "Review the change.\n",
+        "Model": "",
+        "ModelSource": "devin",
+        "Tools": [
+          "Read",
+          "Bash"
+        ],
+        "Effort": "",
+        "DisallowedTools": null,
+        "Isolation": "",
+        "MaxNesting": null,
+        "Ext": {},
+        "Extra": null,
+        "Source": {
+          "File": ".devin/agents/review.md",
+          "Line": 1
+        }
+      },
+      "digest": "sha256:e90e9b8aec58a37dabf62719bc670f32ee675231f6e592f200d1a69b5cd4c100"
+    },
+    {
+      "kind": "hook",
+      "name": "PostCompaction-command",
+      "payload": {
+        "Event": "PostCompaction",
+        "Matcher": "",
+        "Command": "echo legacy-devin",
+        "Prompt": "",
+        "Timeout": 3,
+        "Type": "command",
+        "Ext": {},
+        "Extra": null,
+        "Source": {
+          "File": ".devin/hooks.v1.json",
+          "Line": 0
+        }
+      },
+      "digest": "sha256:384ef3b1697f98f8025251b518dfae53a2c559ac5573144df0386400a5abcb50"
+    }
+  ],
+  "factory/v1": [
+    {
+      "kind": "subagent",
+      "name": "review",
+      "payload": {
+        "Description": "Legacy review",
+        "Body": "Review the change.\n",
+        "Model": "",
+        "Tools": [
+          "Read",
+          "Execute"
+        ],
+        "Effort": "",
+        "DisallowedTools": null,
+        "Isolation": "",
+        "MaxNesting": null,
+        "Ext": {},
+        "Extra": null,
+        "Source": {
+          "File": ".factory/droids/review.md",
+          "Line": 1
+        }
+      },
+      "digest": "sha256:74fd0ccbeb8e1522b2854da64af5980f13ab312c4c1f257d3bf434a15b70e935"
+    },
+    {
+      "kind": "hook",
+      "name": "PreToolUse-command",
+      "payload": {
+        "Event": "PreToolUse",
+        "Matcher": "Execute",
+        "Command": "echo legacy-factory",
+        "Prompt": "",
+        "Timeout": null,
+        "Type": "command",
+        "Ext": {},
+        "Extra": {},
+        "Source": {
+          "File": ".factory/hooks/hooks.json",
+          "Line": 0
+        }
+      },
+      "digest": "sha256:25e1a8e61be8e5e76739a3a668ca65de38e0460b12f724f9b9b29e180a6a2644"
+    }
+  ],
+  "factory/v2": [
+    {
+      "kind": "subagent",
+      "name": "review",
+      "payload": {
+        "Description": "Legacy review",
+        "Body": "Review the change.\n",
+        "Model": "",
+        "Tools": [
+          "Read",
+          "Execute"
+        ],
+        "Effort": "",
+        "DisallowedTools": null,
+        "Isolation": "",
+        "MaxNesting": null,
+        "Ext": {},
+        "Extra": null,
+        "Source": {
+          "File": ".factory/droids/review.md",
+          "Line": 1
+        }
+      },
+      "digest": "sha256:74fd0ccbeb8e1522b2854da64af5980f13ab312c4c1f257d3bf434a15b70e935"
+    },
+    {
+      "kind": "hook",
+      "name": "PreToolUse-command",
+      "payload": {
+        "Event": "PreToolUse",
+        "Matcher": "Execute",
+        "Command": "echo legacy-factory",
+        "Prompt": "",
+        "Timeout": null,
+        "Type": "command",
+        "Ext": {},
+        "Extra": {},
+        "Source": {
+          "File": ".factory/hooks/hooks.json",
+          "Line": 0
+        }
+      },
+      "digest": "sha256:25e1a8e61be8e5e76739a3a668ca65de38e0460b12f724f9b9b29e180a6a2644"
+    }
+  ],
+  "factory/v3": [
+    {
+      "kind": "subagent",
+      "name": "review",
+      "payload": {
+        "Description": "Legacy review",
+        "Body": "Review the change.\n",
+        "Model": "",
+        "Tools": [
+          "Read",
+          "Execute"
+        ],
+        "Effort": "",
+        "DisallowedTools": null,
+        "Isolation": "",
+        "MaxNesting": null,
+        "Ext": {},
+        "Extra": null,
+        "Source": {
+          "File": ".factory/droids/review.md",
+          "Line": 1
+        }
+      },
+      "digest": "sha256:74fd0ccbeb8e1522b2854da64af5980f13ab312c4c1f257d3bf434a15b70e935"
+    },
+    {
+      "kind": "hook",
+      "name": "PreToolUse-command",
+      "payload": {
+        "Event": "PreToolUse",
+        "Matcher": "Execute",
+        "Command": "echo legacy-factory",
+        "Prompt": "",
+        "Timeout": null,
+        "Type": "command",
+        "Ext": {},
+        "Extra": {},
+        "Source": {
+          "File": ".factory/hooks/hooks.json",
+          "Line": 0
+        }
+      },
+      "digest": "sha256:25e1a8e61be8e5e76739a3a668ca65de38e0460b12f724f9b9b29e180a6a2644"
+    }
+  ],
+  "factory/v4": [
+    {
+      "kind": "subagent",
+      "name": "review",
+      "payload": {
+        "Description": "Legacy review",
+        "Body": "Review the change.\n",
+        "Model": "",
+        "ModelSource": "factory",
+        "Tools": [
+          "Read",
+          "Execute"
+        ],
+        "Effort": "",
+        "DisallowedTools": null,
+        "Isolation": "",
+        "MaxNesting": null,
+        "Ext": {},
+        "Extra": null,
+        "Source": {
+          "File": ".factory/droids/review.md",
+          "Line": 1
+        }
+      },
+      "digest": "sha256:985a24a0e5ad3fce54baec6ab39cc38509012645f5487fd26d688a120a47c8a1"
+    },
+    {
+      "kind": "hook",
+      "name": "PreToolUse-command",
+      "payload": {
+        "Event": "PreToolUse",
+        "Matcher": "Execute",
+        "Command": "echo legacy-factory",
+        "Prompt": "",
+        "Timeout": null,
+        "Type": "command",
+        "Ext": {},
+        "Extra": {},
+        "Source": {
+          "File": ".factory/hooks/hooks.json",
+          "Line": 0
+        }
+      },
+      "digest": "sha256:25e1a8e61be8e5e76739a3a668ca65de38e0460b12f724f9b9b29e180a6a2644"
+    }
+  ],
+  "gemini/v1": [
+    {
+      "kind": "subagent",
+      "name": "review",
+      "payload": {
+        "Description": "Legacy review",
+        "Body": "Review the change.\n",
+        "Model": "",
+        "Tools": [
+          "read_file",
+          "run_shell_command"
+        ],
+        "Effort": "",
+        "DisallowedTools": null,
+        "Isolation": "",
+        "MaxNesting": null,
+        "Ext": {
+          "gemini": {
+            "kind": "local",
+            "kindSet": true
+          }
+        },
+        "Extra": null,
+        "Source": {
+          "File": ".gemini/agents/review.md",
+          "Line": 1
+        }
+      },
+      "digest": "sha256:a60bae0e459280b2d80631c42556469baef5ff123a82bf4386093cc3ecb0d091"
+    },
+    {
+      "kind": "hook",
+      "name": "pretooluse-command",
+      "payload": {
+        "Event": "PreToolUse",
+        "Matcher": "run_shell_command",
+        "Command": "echo legacy-gemini",
+        "Prompt": "",
+        "Timeout": 2500,
+        "Type": "command",
+        "Ext": {},
+        "Extra": null,
+        "Source": {
+          "File": ".gemini/settings.json",
+          "Line": 0
+        }
+      },
+      "digest": "sha256:92f9410c62b2c671c3f18983dca1c2959dc265379ad8e4d45ae6c615f8f905c7"
+    }
+  ],
+  "gemini/v2": [
+    {
+      "kind": "subagent",
+      "name": "review",
+      "payload": {
+        "Description": "Legacy review",
+        "Body": "Review the change.\n",
+        "Model": "",
+        "Tools": [
+          "read_file",
+          "run_shell_command"
+        ],
+        "Effort": "",
+        "DisallowedTools": null,
+        "Isolation": "",
+        "MaxNesting": null,
+        "Ext": {
+          "gemini": {
+            "kind": "local",
+            "kindSet": true
+          }
+        },
+        "Extra": null,
+        "Source": {
+          "File": ".gemini/agents/review.md",
+          "Line": 1
+        }
+      },
+      "digest": "sha256:a60bae0e459280b2d80631c42556469baef5ff123a82bf4386093cc3ecb0d091"
+    },
+    {
+      "kind": "hook",
+      "name": "pretooluse-command",
+      "payload": {
+        "Event": "PreToolUse",
+        "Matcher": "run_shell_command",
+        "Command": "echo legacy-gemini",
+        "Prompt": "",
+        "Timeout": 2500,
+        "Type": "command",
+        "Ext": {},
+        "Extra": null,
+        "Source": {
+          "File": ".gemini/settings.json",
+          "Line": 0
+        }
+      },
+      "digest": "sha256:92f9410c62b2c671c3f18983dca1c2959dc265379ad8e4d45ae6c615f8f905c7"
+    }
+  ],
+  "gemini/v3": [
+    {
+      "kind": "subagent",
+      "name": "review",
+      "payload": {
+        "Description": "Legacy review",
+        "Body": "Review the change.\n",
+        "Model": "",
+        "Tools": [
+          "read_file",
+          "run_shell_command"
+        ],
+        "Effort": "",
+        "DisallowedTools": null,
+        "Isolation": "",
+        "MaxNesting": null,
+        "Ext": {
+          "gemini": {
+            "kind": "local",
+            "kindSet": true
+          }
+        },
+        "Extra": null,
+        "Source": {
+          "File": ".gemini/agents/review.md",
+          "Line": 1
+        }
+      },
+      "digest": "sha256:a60bae0e459280b2d80631c42556469baef5ff123a82bf4386093cc3ecb0d091"
+    },
+    {
+      "kind": "hook",
+      "name": "pretooluse-command",
+      "payload": {
+        "Event": "PreToolUse",
+        "Matcher": "run_shell_command",
+        "Command": "echo legacy-gemini",
+        "Prompt": "",
+        "Timeout": 2500,
+        "Type": "command",
+        "Ext": {},
+        "Extra": null,
+        "Source": {
+          "File": ".gemini/settings.json",
+          "Line": 0
+        }
+      },
+      "digest": "sha256:92f9410c62b2c671c3f18983dca1c2959dc265379ad8e4d45ae6c615f8f905c7"
+    }
+  ],
+  "gemini/v4": [
+    {
+      "kind": "subagent",
+      "name": "review",
+      "payload": {
+        "Description": "Legacy review",
+        "Body": "Review the change.\n",
+        "Model": "",
+        "ModelSource": "gemini",
+        "Tools": [
+          "read_file",
+          "run_shell_command"
+        ],
+        "Effort": "",
+        "DisallowedTools": null,
+        "Isolation": "",
+        "MaxNesting": null,
+        "Ext": {
+          "gemini": {
+            "kind": "local",
+            "kindSet": true
+          }
+        },
+        "Extra": null,
+        "Source": {
+          "File": ".gemini/agents/review.md",
+          "Line": 1
+        }
+      },
+      "digest": "sha256:9503385e8ab827c0fbb619f9ea2cc1788e44849329a887d2ea98212e44554664"
+    },
+    {
+      "kind": "hook",
+      "name": "pretooluse-command",
+      "payload": {
+        "Event": "PreToolUse",
+        "Matcher": "run_shell_command",
+        "Command": "echo legacy-gemini",
+        "Prompt": "",
+        "Timeout": 2500,
+        "Type": "command",
+        "Ext": {},
+        "Extra": null,
+        "Source": {
+          "File": ".gemini/settings.json",
+          "Line": 0
+        }
+      },
+      "digest": "sha256:92f9410c62b2c671c3f18983dca1c2959dc265379ad8e4d45ae6c615f8f905c7"
+    }
+  ],
+  "windsurf/v1": [
+    {
+      "kind": "hook",
+      "name": "hooks",
+      "payload": {
+        "Event": "PreToolUse",
+        "Matcher": "Bash",
+        "Command": "echo legacy-windsurf",
+        "Prompt": "",
+        "Timeout": null,
+        "Type": "command",
+        "Ext": {},
+        "Extra": null,
+        "Source": {
+          "File": ".windsurf/hooks.json",
+          "Line": 1
+        }
+      },
+      "digest": "sha256:b5190a97da48e8f6e5c0eaa53f858cfc0dfa08cc209d0c3e06c8622eb339020d"
+    }
+  ],
+  "windsurf/v2": [
+    {
+      "kind": "hook",
+      "name": "hooks",
+      "payload": {
+        "Event": "PreToolUse",
+        "Matcher": "Bash",
+        "Command": "echo legacy-windsurf",
+        "Prompt": "",
+        "Timeout": null,
+        "Type": "command",
+        "Ext": {},
+        "Extra": null,
+        "Source": {
+          "File": ".windsurf/hooks.json",
+          "Line": 1
+        }
+      },
+      "digest": "sha256:b5190a97da48e8f6e5c0eaa53f858cfc0dfa08cc209d0c3e06c8622eb339020d"
+    }
+  ],
+  "windsurf/v3": [
+    {
+      "kind": "hook",
+      "name": "hooks",
+      "payload": {
+        "Event": "PreToolUse",
+        "Matcher": "Bash",
+        "Command": "echo legacy-windsurf",
+        "Prompt": "",
+        "Timeout": null,
+        "Type": "command",
+        "Ext": {},
+        "Extra": null,
+        "Source": {
+          "File": ".windsurf/hooks.json",
+          "Line": 1
+        }
+      },
+      "digest": "sha256:b5190a97da48e8f6e5c0eaa53f858cfc0dfa08cc209d0c3e06c8622eb339020d"
+    }
+  ],
+  "windsurf/v4": [
+    {
+      "kind": "hook",
+      "name": "hooks",
+      "payload": {
+        "Event": "PreToolUse",
+        "Matcher": "Bash",
+        "Command": "echo legacy-windsurf",
+        "Prompt": "",
+        "Timeout": null,
+        "Type": "command",
+        "Ext": {},
+        "Extra": null,
+        "Source": {
+          "File": ".windsurf/hooks.json",
+          "Line": 1
+        }
+      },
+      "digest": "sha256:b5190a97da48e8f6e5c0eaa53f858cfc0dfa08cc209d0c3e06c8622eb339020d"
+    }
+  ]
+}

@@ -12,6 +12,7 @@ import (
 	"io"
 	"net/url"
 	"path"
+	"path/filepath"
 	"reflect"
 	"sort"
 	"strings"
@@ -308,7 +309,7 @@ func validateArchiveMemberPath(p string) error {
 }
 
 func ValidateSupportPath(p string) error {
-	if p == "" || p == "." || strings.Contains(p, "\\") {
+	if !filepath.IsLocal(p) || p == "." || strings.Contains(p, "\\") {
 		return fmt.Errorf("invalid support path: %s", p)
 	}
 	if p == "SKILL.md" {
@@ -433,13 +434,13 @@ func validateTarHeaderPath(p string) (string, error) {
 	if p == "" {
 		return "", errors.New("tar entry has empty name")
 	}
-	if path.IsAbs(p) || strings.HasPrefix(p, "/") {
-		return "", fmt.Errorf("tar entry absolute path: %s", p)
-	}
 	for _, part := range strings.Split(p, "/") {
 		if part == ".." {
-			return "", fmt.Errorf("tar entry path traversal: %s", p)
+			return "", errors.New("tar entry path traversal")
 		}
+	}
+	if !filepath.IsLocal(p) {
+		return "", errors.New("tar entry absolute path")
 	}
 	return path.Clean(p), nil
 }
@@ -733,7 +734,14 @@ func resourceJSON(r ir.Resource) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("extract resource extra: %w", err)
 	}
+	modelBearing := r.Kind() == ir.KindSkill || r.Kind() == ir.KindSubagent
 	for k, v := range extra {
+		if modelBearing && (strings.EqualFold(k, "ModelSource") || strings.EqualFold(k, "ToolSource")) {
+			continue
+		}
+		if r.Kind() == ir.KindHook && strings.EqualFold(k, "HookSource") {
+			continue
+		}
 		if _, ok := m[k]; !ok {
 			m[k] = v
 		}

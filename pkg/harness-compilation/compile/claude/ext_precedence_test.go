@@ -50,7 +50,11 @@ func TestClaudeSubagentExtPrecedence(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Translate() error: %v", err)
 		}
-		if len(arts) != 0 || len(diags) != 1 || diags[0].Code != diag.CodeSubagentSecurityRestrictionUnsupported || diags[0].Severity != diag.SeverityError {
+		refused := false
+		for _, d := range diags {
+			refused = refused || d.Code == diag.CodeSubagentSecurityRestrictionUnsupported && d.Severity == diag.SeverityError
+		}
+		if len(arts) != 0 || !refused {
 			t.Fatalf("artifacts = %d, diagnostics = %#v, want the widening sidecar refused", len(arts), diags)
 		}
 	})

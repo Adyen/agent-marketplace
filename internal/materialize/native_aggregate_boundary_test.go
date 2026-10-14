@@ -5,7 +5,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
 	"io/fs"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -16,6 +19,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/fsboundary"
 	"github.com/Adyen/agent-marketplace/internal/harness"
+	"github.com/Adyen/agent-marketplace/internal/ownership"
 	"github.com/Adyen/agent-marketplace/internal/resolver"
 	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
@@ -38,7 +42,7 @@ func TestRunNativeMarkerAggregateRefusesReplacedLeaf(t *testing.T) {
 			if err := os.WriteFile(file, []byte("{\n // handwritten comment\n \"custom\": true,\n \"mcpServers\": {\"user\": {\"command\": \"inert\"}}\n}\n"), 0o640); err != nil {
 				t.Fatal(err)
 			}
-			desired := nativeMCPResources(hcc.TargetClaude, source)
+			desired := nativeSourceBackedMCPResources(t, hcc.TargetClaude, source)
 			initial, err := Run(t.Context(), repo, desired)
 			if err != nil || diag.HasErrors(initial.Diags) {
 				t.Fatalf("native aggregate install failed: %+v %v", initial, err)
@@ -100,6 +104,91 @@ func TestRunNativeMarkerAggregateRefusesReplacedLeaf(t *testing.T) {
 	}
 }
 
+// spec: materialization/native-marker-merge-preserves-a-concurrent-input-generation
+func TestRunMarkerAggregateMergeRetainsReadGeneration(t *testing.T) {
+	for _, tc := range []rootBoundaryCase{
+		{name: "factory", target: hcc.TargetFactory, repoRoot: ".factory", userRoot: ".factory", artifact: "mcp.json"},
+		{name: "cursor", target: hcc.TargetCursor, repoRoot: ".cursor", userRoot: ".cursor", artifact: "mcp.json"},
+		{name: "windsurf", target: hcc.TargetWindsurf, repoRoot: ".windsurf", userRoot: ".codeium/windsurf", artifact: "mcp_config.json"},
+	} {
+		for _, machine := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/machine=%v", tc.name, machine), func(t *testing.T) { testNativeMergeReadGeneration(t, tc, machine) })
+		}
+	}
+}
+
+func testNativeMergeReadGeneration(t *testing.T, tc rootBoundaryCase, machine bool) {
+	home, repo := t.TempDir(), t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("CODEX_HOME", filepath.Join(home, ".codex"))
+	t.Setenv("XDG_STATE_HOME", filepath.Join(home, "state"))
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, "cache"))
+	root, source := filepath.Join(repo, tc.repoRoot), config.RepoCommitted
+	if machine {
+		root, source = filepath.Join(home, tc.userRoot), config.UserPersonal
+	}
+	desired := nativeMCPResources(tc.target, source)
+	installed, err := Run(t.Context(), repo, desired)
+	if err != nil || diag.HasErrors(installed.Diags) {
+		t.Fatalf("native marker install control failed: %+v %v", installed, err)
+	}
+	path := filepath.Join(root, tc.artifact)
+	original, err := os.ReadFile(path)
+	if err != nil || !bytes.Contains(original, []byte("first")) {
+		t.Fatalf("native marker control did not publish: %q %v", original, err)
+	}
+	retained := filepath.Join(t.TempDir(), "original.json")
+	const concurrent = "{\n // concurrent handwritten edit\n \"mcpServers\": {\"manual\": {\"command\": \"inert concurrent value\"}},\n \"theme\": \"concurrent\"\n}\n"
+	var replacement os.FileInfo
+	changed := false
+	logger := slog.Default()
+	t.Cleanup(func() { slog.SetDefault(logger) })
+	slog.SetDefault(slog.New(sdkStaleReadObserver{Handler: slog.NewTextHandler(io.Discard, &slog.HandlerOptions{Level: slog.LevelDebug}), mutate: func(phase, observed string) {
+		if changed || phase != "sdk-merge-input" || observed != path {
+			return
+		}
+		changed = true
+		if err := os.Rename(path, retained); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(concurrent), 0o640); err != nil {
+			t.Fatal(err)
+		}
+		var err error
+		replacement, err = os.Stat(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}}))
+	desired[0].Resource = ir.NewMcpServer("first", "inert updated command", nil, nil, nil, ir.SourceRef{})
+	report, err := Run(t.Context(), repo, desired)
+	if !changed {
+		t.Fatalf("actual native merge input boundary did not run: %+v %v", report, err)
+	}
+	if data, err := os.ReadFile(path); err != nil || string(data) != concurrent {
+		t.Fatalf("native merge lost the concurrent generation: %q %v; report=%+v", data, err, report)
+	}
+	if err != nil || !hasDiagCode(report.Diags, "materialize.write.error") {
+		t.Fatalf("native merge did not report generation refusal: %+v %v", report, err)
+	}
+	if after, err := os.Stat(path); err != nil || !os.SameFile(replacement, after) || replacement.Mode() != after.Mode() || !replacement.ModTime().Equal(after.ModTime()) {
+		t.Fatalf("native merge changed concurrent metadata: %v", err)
+	}
+	if data, err := os.ReadFile(retained); err != nil || !bytes.Equal(data, original) {
+		t.Fatalf("native merge changed retained original bytes: %q %v", data, err)
+	}
+	if stages, err := filepath.Glob(filepath.Join(root, ".tmp-*")); err != nil || len(stages) != 0 {
+		t.Fatalf("native merge refusal left staging: %v %v", stages, err)
+	}
+	retry, err := Run(t.Context(), repo, desired)
+	if err != nil || diag.HasErrors(retry.Diags) {
+		t.Fatalf("healthy native merge retry failed: %+v %v", retry, err)
+	}
+	if data, err := os.ReadFile(path); err != nil || !bytes.Contains(data, []byte("inert updated command")) || !bytes.Contains(data, []byte("concurrent handwritten edit")) || !bytes.Contains(data, []byte("inert concurrent value")) {
+		t.Fatalf("native retry did not preserve edits and publish update: %q %v", data, err)
+	}
+}
+
 // spec: materialization/native-marker-aggregate-refuses-replacement
 func TestRunNativeAggregateEmptyDesiredRefusesUnsafeInventory(t *testing.T) {
 	for _, target := range []hcc.Target{hcc.TargetClaude, hcc.TargetGemini} {
@@ -113,9 +202,10 @@ func TestRunNativeAggregateEmptyDesiredRefusesUnsafeInventory(t *testing.T) {
 							t.Fatalf("native installation control: %+v %v", installed, err)
 						}
 						before, err := os.ReadFile(file)
-						if err != nil || !bytes.Contains(before, []byte(`"_managed_by"`)) {
-							t.Fatalf("managed native control missing: %q %v", before, err)
+						if err != nil {
+							t.Fatal(err)
 						}
+						assertNativeAggregateManagedControl(t, target, file, before)
 						retained := filepath.Join(t.TempDir(), "retained.json")
 						if shape == "hardlink" {
 							if err := os.Link(file, retained); err != nil {
@@ -204,9 +294,10 @@ func TestRunNativeAggregateEmptyDesiredControls(t *testing.T) {
 					t.Fatalf("native install control: %+v %v", installed, err)
 				}
 				managed, err := os.ReadFile(file)
-				if err != nil || !bytes.Contains(managed, []byte(`"_managed_by"`)) {
-					t.Fatalf("native control lacks ownership: %q %v", managed, err)
+				if err != nil {
+					t.Fatal(err)
 				}
+				assertNativeAggregateManagedControl(t, target, file, managed)
 				managedInfo, err := os.Stat(file)
 				if err != nil {
 					t.Fatal(err)
@@ -225,8 +316,12 @@ func TestRunNativeAggregateEmptyDesiredControls(t *testing.T) {
 					t.Fatalf("native prune failed or lost comment: %q %v", got, err)
 				}
 				doc := nativeMCPDocument(t, got)
-				if doc["custom"] != true || doc["mcpServers"].(map[string]any)["user"].(map[string]any)["command"] != "inert" {
+				servers := doc["mcpServers"].(map[string]any)
+				if doc["custom"] != true || servers["user"].(map[string]any)["command"] != "inert" {
 					t.Fatalf("prune lost handwritten settings: %v", doc)
+				}
+				if target == hcc.TargetGemini && (servers["first"] != nil || servers["second"] != nil) {
+					t.Fatalf("prune retained owned Gemini MCP servers: %v", servers)
 				}
 				info, err := os.Stat(file)
 				if err != nil || info.Mode().Perm() != 0o640 {
@@ -251,9 +346,10 @@ func TestRunNativeAggregateInventoryRefusesBadParent(t *testing.T) {
 				t.Fatalf("native installation control: %+v %v", installed, err)
 			}
 			before, err := os.ReadFile(file)
-			if err != nil || !bytes.Contains(before, []byte(`"_managed_by"`)) {
-				t.Fatalf("managed native control missing: %q %v", before, err)
+			if err != nil {
+				t.Fatal(err)
 			}
+			assertNativeAggregateManagedControl(t, hcc.TargetGemini, file, before)
 			retained := filepath.Join(t.TempDir(), "admitted-gemini")
 			if err := os.Rename(filepath.Dir(file), retained); err != nil {
 				t.Fatal(err)
@@ -479,6 +575,40 @@ func TestNativeAggregateSnapshotParentDisappearanceIsGenerationConflict(t *testi
 	assertNativeAggregateFilePreserved(t, filepath.Join(retained, "native.json"), data, observed)
 }
 
+func assertNativeAggregateManagedControl(t *testing.T, target hcc.Target, file string, data []byte) {
+	t.Helper()
+	if target != hcc.TargetGemini {
+		if !bytes.Contains(data, []byte(`"_managed_by"`)) {
+			t.Fatalf("%s managed native control missing in %s: %q", target, file, data)
+		}
+		return
+	}
+	document := nativeMCPDocument(t, data)
+	servers, ok := document["mcpServers"].(map[string]any)
+	if !ok || servers["first"] == nil || servers["second"] == nil {
+		t.Fatalf("Gemini MCP control missing in %s: %v", file, document)
+	}
+	store, err := ownership.Open(filepath.Dir(file))
+	if err != nil {
+		t.Fatal(err)
+	}
+	proof, err := store.Proof(filepath.Base(file))
+	if err != nil {
+		t.Fatal(err)
+	}
+	seen := map[string]bool{}
+	for _, id := range proof.OwnedIDs() {
+		entry, ok := proof.Entry(id)
+		if !ok || id.Kind != ownership.KindMcpServer || id.Container != "mcpServers" || seen[entry.Resource] {
+			t.Fatalf("Gemini MCP ownership entry = %+v / %t", entry, ok)
+		}
+		seen[entry.Resource] = true
+	}
+	if len(seen) != 2 || !seen["first"] || !seen["second"] {
+		t.Fatalf("Gemini MCP proof entries = %+v", seen)
+	}
+}
+
 func nativeAggregateInventoryFixture(t *testing.T, target hcc.Target, machine bool) (string, string, []resolver.ResolvedArtifact) {
 	t.Helper()
 	home, repo := t.TempDir(), t.TempDir()
@@ -493,10 +623,7 @@ func nativeAggregateInventoryFixture(t *testing.T, target hcc.Target, machine bo
 	if target == hcc.TargetGemini {
 		rel = filepath.Join(".gemini", "settings.json")
 	}
-	desired := nativeMCPResources(target, source)
-	if target == hcc.TargetGemini {
-		desired = desired[2:]
-	}
+	desired := nativeMCPServerResources(t, target, source)
 	return repo, filepath.Join(root, rel), desired
 }
 

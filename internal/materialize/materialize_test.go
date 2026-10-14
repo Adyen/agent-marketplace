@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"slices"
@@ -1202,7 +1203,7 @@ func TestRunFactorySubagentSymlinksCompiledDroidToCache(t *testing.T) {
 	t.Setenv("HOME", homeDir)
 	repoRoot := t.TempDir()
 
-	subagent := ir.NewSubagent("worker-generic", "Worker", "You are a worker", "sonnet", []string{"Read"}, "", nil, "", nil, ir.SourceRef{})
+	subagent := ir.NewSubagent("worker-generic", "Worker", "You are a worker", "claude-sonnet-4-5-20250929", []string{"Read"}, "", nil, "", nil, ir.SourceRef{})
 	resolved := []resolver.ResolvedArtifact{
 		{
 			Entry:     catalog.Entry{Kind: ir.KindSubagent, Name: "worker-generic", Path: filepath.Join(t.TempDir(), "worker-generic.md"), Resource: subagent},
@@ -1351,7 +1352,7 @@ func TestRunFactorySubagentRenormalizationEffortToReasoningEffort(t *testing.T) 
 	t.Setenv("HOME", homeDir)
 	repoRoot := t.TempDir()
 
-	subagent := ir.NewSubagent("effort-agent", "Agent", "Body", "", []string{"Read"}, "high", nil, "", nil, ir.SourceRef{})
+	subagent := ir.NewSubagent("effort-agent", "Agent", "Body", "claude-sonnet-4-5-20250929", []string{"Read"}, "high", nil, "", nil, ir.SourceRef{})
 	resolved := []resolver.ResolvedArtifact{
 		{
 			Entry:     catalog.Entry{Kind: ir.KindSubagent, Name: "effort-agent", Path: filepath.Join(t.TempDir(), "effort-agent.md"), Resource: subagent},
@@ -1492,12 +1493,12 @@ func TestRunFactorySubagentModelMapping(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read droid: %v", err)
 	}
-	if !strings.Contains(string(body), "model: claude-sonnet-4-5-20250929") {
-		t.Errorf("expected mapped model claude-sonnet-4-5-20250929, got:\n%s", body)
+	if !strings.Contains(string(body), "model: claude-sonnet-5") {
+		t.Errorf("expected mapped model claude-sonnet-5, got:\n%s", body)
 	}
 }
 
-func TestRunFactorySubagentWriteToolExpanded(t *testing.T) {
+func TestRunFactorySubagentWriteToolTranslated(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 	repoRoot := t.TempDir()
@@ -1525,11 +1526,11 @@ func TestRunFactorySubagentWriteToolExpanded(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read droid: %v", err)
 	}
-	if !strings.Contains(string(body), "Edit") || !strings.Contains(string(body), "Create") {
-		t.Errorf("expected Write expanded to Edit+Create, got:\n%s", body)
+	if !strings.Contains(string(body), "Create") {
+		t.Errorf("expected Write translated to Create (file.write concept), got:\n%s", body)
 	}
-	if strings.Contains(string(body), "Write") {
-		t.Errorf("frontmatter should not contain Write (expanded to Edit+Create), got:\n%s", body)
+	if strings.Contains(string(body), "Write") || strings.Contains(string(body), "Edit") {
+		t.Errorf("frontmatter should not contain Write/Edit (Write maps to Create only, no widening), got:\n%s", body)
 	}
 }
 
@@ -2034,7 +2035,7 @@ func TestRunSubagentMergesIntoExistingFactoryPluginManifest(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	subagent := ir.NewSubagent("worker-generic", "Worker", "You are a worker", "sonnet", []string{"Read"}, "", nil, "", nil, ir.SourceRef{})
+	subagent := ir.NewSubagent("worker-generic", "Worker", "You are a worker", "claude-sonnet-4-5-20250929", []string{"Read"}, "", nil, "", nil, ir.SourceRef{})
 	resolved := []resolver.ResolvedArtifact{
 		{
 			Entry:     catalog.Entry{Kind: ir.KindSubagent, Name: "worker-generic", Path: filepath.Join(t.TempDir(), "worker-generic.md"), Resource: subagent},
@@ -2508,19 +2509,14 @@ func TestRunWindsurfRepoScopeSkillSyncIsIdempotent(t *testing.T) {
 // every sync. The hooks directory contains only merge (fragment) artifacts;
 // the previous behaviour called syncArtifactLinks(hooks_dir, [], prune=true)
 // which deleted all files before materializeMergeArtifacts re-wrote them.
+// spec: hook-resources/repeat-sync-is-byte-identical
 func TestRunHookArtifactsAreNotPrunedOnSecondSync(t *testing.T) {
 	repoRoot := t.TempDir()
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
-	hook := ir.NewHook("pre-tool-use", "PreToolUse", "${DROID_PLUGIN_ROOT}/check.sh", "command", nil, ir.SourceRef{})
-	resolved := []resolver.ResolvedArtifact{
-		{
-			Entry:     catalog.Entry{Name: "pre-tool-use", Resource: hook},
-			Source:    config.RepoCommitted,
-			Harnesses: []hcc.Target{hcc.TargetFactory},
-		},
-	}
+	hook := ir.NewHook("pre-tool-use", "PreToolUse", "echo check", "command", nil, ir.SourceRef{})
+	resolved := []resolver.ResolvedArtifact{ingestedHookFixture(t, config.RepoCommitted, hcc.TargetFactory, "pre-tool-use", hook, nil)}
 
 	report1, err := Run(context.Background(), repoRoot, resolved)
 	if err != nil {
@@ -2530,7 +2526,7 @@ func TestRunHookArtifactsAreNotPrunedOnSecondSync(t *testing.T) {
 		t.Fatal("first run: expected hook artifacts to be written")
 	}
 
-	hooksFile := filepath.Join(repoRoot, ".factory", "hooks", "hooks.json")
+	hooksFile := filepath.Join(repoRoot, ".factory", "hooks.json")
 	if _, err := os.Stat(hooksFile); err != nil {
 		t.Fatalf("first run: expected hooks.json to exist at %s: %v", hooksFile, err)
 	}
@@ -2558,29 +2554,30 @@ func TestRunHookArtifactsAreNotPrunedOnSecondSync(t *testing.T) {
 	}
 }
 
-// spec: materialization/machine-scope-hook-command-uses-the-absolute-machine-root
-// spec: materialization/repository-scope-hook-command-stays-repository-relative
 func TestFactoryHookCommandRootIsStableAcrossWorkingDirectories(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	repo := t.TempDir()
-	machineHook := ir.NewHook("user-check", "PreToolUse", "${DROID_PLUGIN_ROOT}/hooks/check.sh", "command", nil, ir.SourceRef{})
-	user := []resolver.ResolvedArtifact{{
-		Entry: catalog.Entry{Name: "user-check", Resource: machineHook}, Source: config.UserPersonal,
-		Harnesses: []hcc.Target{hcc.TargetFactory},
-	}}
-	machineFile := filepath.Join(home, ".factory", "hooks", "hooks.json")
+	machineSource := nativeSupportSource(t, "claude", "hooks/hooks.json", nativeSupportClaudeFiles("${CLAUDE_PLUGIN_ROOT}/scripts/check.sh"))
+	machineSource.Source = config.UserPersonal
+	machineSource.Harnesses = []hcc.Target{hcc.TargetFactory}
+	machineResolved := nativeSupportResolve(t, hcc.TargetFactory, true, []resolver.ResolvedArtifact{machineSource})
+	machineFile := filepath.Join(home, ".factory", "hooks.json")
+	loc := nativeSupportLocationFor(t, hcc.TargetFactory)
 	var first []byte
 	for _, root := range []string{home, repo} {
-		if _, err := Run(context.Background(), root, user); err != nil {
-			t.Fatalf("materialize machine hook from %s: %v", root, err)
+		report, err := Run(context.Background(), root, machineResolved)
+		if err != nil || hasErrorDiagnostics(report.Diags) {
+			t.Fatalf("materialize machine hook from %s: %v %v", root, err, report.Diags)
 		}
 		content, err := os.ReadFile(machineFile)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if !strings.Contains(string(content), filepath.Join(home, ".factory", "hooks", "check.sh")) {
-			t.Fatalf("machine hook must use absolute root, got %s", content)
+		commands := nativeSupportCommands(t, loc, machineFile, 1)
+		installed, _ := loc.installedRef(t, commands[0], repo, home, true)
+		if commands[0] != filepath.ToSlash(installed) {
+			t.Fatalf("machine hook command = %q, want absolute support path %q", commands[0], installed)
 		}
 		if first != nil && !bytes.Equal(first, content) {
 			t.Fatalf("machine hook bytes changed across roots:\n%s\n%s", first, content)
@@ -2588,19 +2585,22 @@ func TestFactoryHookCommandRootIsStableAcrossWorkingDirectories(t *testing.T) {
 		first = content
 	}
 
-	repoHook := ir.NewHook("repo-check", "PreToolUse", "${DROID_PLUGIN_ROOT}/hooks/repo-check.sh", "command", nil, ir.SourceRef{})
-	if _, err := Run(context.Background(), repo, []resolver.ResolvedArtifact{{
-		Entry: catalog.Entry{Name: "repo-check", Resource: repoHook}, Source: config.RepoCommitted,
-		Harnesses: []hcc.Target{hcc.TargetFactory},
-	}}); err != nil {
+	repoSource := nativeSupportSource(t, "claude", "hooks/hooks.json", nativeSupportClaudeFiles("${CLAUDE_PLUGIN_ROOT}/scripts/check.sh"))
+	repoSource.Source = config.RepoCommitted
+	repoSource.Harnesses = []hcc.Target{hcc.TargetFactory}
+	repoResolved := nativeSupportResolve(t, hcc.TargetFactory, false, []resolver.ResolvedArtifact{repoSource})
+	if _, err := Run(context.Background(), repo, repoResolved); err != nil {
 		t.Fatalf("materialize repository hook: %v", err)
 	}
-	content, err := os.ReadFile(filepath.Join(repo, ".factory", "hooks", "hooks.json"))
-	if err != nil {
-		t.Fatal(err)
+	repoFile := filepath.Join(repo, ".factory", "hooks.json")
+	commands := nativeSupportCommands(t, loc, repoFile, 1)
+	installed, ref := loc.installedRef(t, commands[0], repo, home, false)
+	wantCommand := loc.repoBase + filepath.ToSlash(ref)
+	if commands[0] != wantCommand || strings.Contains(commands[0], repo+"/.factory") {
+		t.Fatalf("repository hook command = %q, want repository-relative support path %q", commands[0], wantCommand)
 	}
-	if !strings.Contains(string(content), ".factory/hooks/repo-check.sh") || strings.Contains(string(content), repo+"/.factory") {
-		t.Fatalf("repository hook must use relative root, got %s", content)
+	if data, err := os.ReadFile(installed); err != nil || string(data) != nativeSupportScriptBody {
+		t.Fatalf("repository support file = %q (%v)", data, err)
 	}
 }
 
@@ -2612,13 +2612,13 @@ func TestRunMultipleHooksSameEventBothSurvive(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
-	hook1 := ir.NewHookWithMatcher("post-tool-use-1", "PostToolUse", "Edit|Create|MultiEdit",
-		"${DROID_PLUGIN_ROOT}/remind.sh", "command", nil, ir.SourceRef{})
-	hook2 := ir.NewHookWithMatcher("post-tool-use-2", "PostToolUse", "Read",
-		"${DROID_PLUGIN_ROOT}/check.sh", "command", nil, ir.SourceRef{})
+	hook1 := ir.NewHookWithMatcher("post-tool-use-1", "PostToolUse", "Write|Edit",
+		"echo remind.sh", "command", nil, ir.SourceRef{})
+	hook2 := ir.NewHookWithMatcher("post-tool-use-2", "PostToolUse", "Bash",
+		"echo check.sh", "command", nil, ir.SourceRef{})
 	resolved := []resolver.ResolvedArtifact{
-		{Entry: catalog.Entry{Name: "post-tool-use-1", Resource: hook1}, Source: config.RepoCommitted, Harnesses: []hcc.Target{hcc.TargetFactory}},
-		{Entry: catalog.Entry{Name: "post-tool-use-2", Resource: hook2}, Source: config.RepoCommitted, Harnesses: []hcc.Target{hcc.TargetFactory}},
+		ingestedHookFixture(t, config.RepoCommitted, hcc.TargetFactory, "post-tool-use-1", hook1, nil),
+		ingestedHookFixture(t, config.RepoCommitted, hcc.TargetFactory, "post-tool-use-2", hook2, nil),
 	}
 
 	// First sync: both hooks should be written.
@@ -2626,7 +2626,7 @@ func TestRunMultipleHooksSameEventBothSurvive(t *testing.T) {
 		t.Fatalf("first run: %v", err)
 	}
 
-	hooksFile := filepath.Join(repoRoot, ".factory", "hooks", "hooks.json")
+	hooksFile := filepath.Join(repoRoot, ".factory", "hooks.json")
 	content1, err := os.ReadFile(hooksFile)
 	if err != nil {
 		t.Fatalf("read hooks.json: %v", err)
@@ -2688,13 +2688,13 @@ func TestRunMultipleHooksSameEventSameMatcherBothSurvive(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
-	hook1 := ir.NewHookWithMatcher("post-tool-use-remind", "PostToolUse", "Edit|Create|MultiEdit",
-		"${DROID_PLUGIN_ROOT}/remind.sh", "command", nil, ir.SourceRef{})
-	hook2 := ir.NewHookWithMatcher("post-tool-use-check", "PostToolUse", "Edit|Create|MultiEdit",
-		"${DROID_PLUGIN_ROOT}/check.sh", "command", nil, ir.SourceRef{})
+	hook1 := ir.NewHookWithMatcher("post-tool-use-remind", "PostToolUse", "Write|Edit",
+		"echo remind.sh", "command", nil, ir.SourceRef{})
+	hook2 := ir.NewHookWithMatcher("post-tool-use-check", "PostToolUse", "Write|Edit",
+		"echo check.sh", "command", nil, ir.SourceRef{})
 	resolved := []resolver.ResolvedArtifact{
-		{Entry: catalog.Entry{Name: "post-tool-use-remind", Resource: hook1}, Source: config.RepoCommitted, Harnesses: []hcc.Target{hcc.TargetFactory}},
-		{Entry: catalog.Entry{Name: "post-tool-use-check", Resource: hook2}, Source: config.RepoPersonal, Harnesses: []hcc.Target{hcc.TargetFactory}},
+		ingestedHookFixture(t, config.RepoCommitted, hcc.TargetFactory, "post-tool-use-remind", hook1, nil),
+		ingestedHookFixture(t, config.RepoPersonal, hcc.TargetFactory, "post-tool-use-check", hook2, nil),
 	}
 
 	// First sync: both hooks should be written.
@@ -2702,7 +2702,7 @@ func TestRunMultipleHooksSameEventSameMatcherBothSurvive(t *testing.T) {
 		t.Fatalf("first run: %v", err)
 	}
 
-	hooksFile := filepath.Join(repoRoot, ".factory", "hooks", "hooks.json")
+	hooksFile := filepath.Join(repoRoot, ".factory", "hooks.json")
 	content1, err := os.ReadFile(hooksFile)
 	if err != nil {
 		t.Fatalf("read hooks.json: %v", err)
@@ -2758,36 +2758,31 @@ func TestRunMultipleHooksSameEventSameMatcherBothSurvive(t *testing.T) {
 // TestRunExcludedHookEntryRemovedFromMergedFile verifies that when a hook is
 // excluded (no longer in the resolved list), its managed entry is removed
 // from the merged hooks.json — not just the support file symlink.
+// spec: hook-resources/deselected-hook-is-removed-from-the-merged-file
 func TestRunExcludedHookEntryRemovedFromMergedFile(t *testing.T) {
 	repoRoot := t.TempDir()
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
-	// Create source dirs with scripts.
-	sourceDir1 := t.TempDir()
-	if err := os.WriteFile(filepath.Join(sourceDir1, "remind.sh"), []byte("#!/bin/bash\necho remind\n"), 0o755); err != nil {
-		t.Fatalf("write remind.sh: %v", err)
+	// Create source dirs with hook definitions and scripts.
+	definition1 := []byte(`{"PostToolUse":[{"matcher":"Write|Edit","hooks":[{"type":"command","command":"${CLAUDE_PLUGIN_ROOT}/remind.sh"}]}]}`)
+	resolved1, sourceDir1 := sourceBackedHookFixtures(t, "claude", config.RepoCommitted, hcc.TargetFactory, "post-tool-use-remind", definition1, map[string][]byte{"hooks/remind.sh": []byte("#!/bin/bash\necho remind\n")})
+	if err := os.Chmod(filepath.Join(sourceDir1, "hooks", "remind.sh"), 0o755); err != nil {
+		t.Fatal(err)
 	}
-	sourceDir2 := t.TempDir()
-	if err := os.WriteFile(filepath.Join(sourceDir2, "check.sh"), []byte("#!/bin/bash\necho check\n"), 0o755); err != nil {
-		t.Fatalf("write check.sh: %v", err)
+	definition2 := []byte(`{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"${CLAUDE_PLUGIN_ROOT}/check.sh"}]}]}`)
+	resolved2, sourceDir2 := sourceBackedHookFixtures(t, "claude", config.RepoCommitted, hcc.TargetFactory, "pre-tool-use-check", definition2, map[string][]byte{"hooks/check.sh": []byte("#!/bin/bash\necho check\n")})
+	if err := os.Chmod(filepath.Join(sourceDir2, "hooks", "check.sh"), 0o755); err != nil {
+		t.Fatal(err)
 	}
-
-	hook1 := ir.NewHookWithMatcher("post-tool-use-remind", "PostToolUse", "Edit|Create|MultiEdit",
-		".factory/hooks/remind.sh", "command", nil, ir.SourceRef{File: filepath.Join(sourceDir1, "hooks.json")})
-	hook2 := ir.NewHookWithMatcher("pre-tool-use-check", "PreToolUse", "Read",
-		".factory/hooks/check.sh", "command", nil, ir.SourceRef{File: filepath.Join(sourceDir2, "hooks.json")})
 
 	// First sync: both hooks active.
-	resolvedBoth := []resolver.ResolvedArtifact{
-		{Entry: catalog.Entry{Name: "post-tool-use-remind", Resource: hook1, Path: filepath.Join(sourceDir1, "hooks.json")}, Source: config.RepoCommitted, Harnesses: []hcc.Target{hcc.TargetFactory}},
-		{Entry: catalog.Entry{Name: "pre-tool-use-check", Resource: hook2, Path: filepath.Join(sourceDir2, "hooks.json")}, Source: config.RepoCommitted, Harnesses: []hcc.Target{hcc.TargetFactory}},
-	}
+	resolvedBoth := append(resolved1, resolved2...)
 	if _, err := Run(context.Background(), repoRoot, resolvedBoth); err != nil {
 		t.Fatalf("first run: %v", err)
 	}
 
-	hooksFile := filepath.Join(repoRoot, ".factory", "hooks", "hooks.json")
+	hooksFile := filepath.Join(repoRoot, ".factory", "hooks.json")
 	content1, _ := os.ReadFile(hooksFile)
 
 	// Verify both events are present.
@@ -2803,9 +2798,7 @@ func TestRunExcludedHookEntryRemovedFromMergedFile(t *testing.T) {
 	}
 
 	// Second sync: exclude hook1 (PostToolUse). Only hook2 remains.
-	resolvedOnly2 := []resolver.ResolvedArtifact{
-		{Entry: catalog.Entry{Name: "pre-tool-use-check", Resource: hook2, Path: filepath.Join(sourceDir2, "hooks.json")}, Source: config.RepoCommitted, Harnesses: []hcc.Target{hcc.TargetFactory}},
-	}
+	resolvedOnly2 := resolved2
 	if _, err := Run(context.Background(), repoRoot, resolvedOnly2); err != nil {
 		t.Fatalf("second run: %v", err)
 	}
@@ -2825,35 +2818,42 @@ func TestRunExcludedHookEntryRemovedFromMergedFile(t *testing.T) {
 		t.Errorf("PreToolUse should still be present: %s", content2)
 	}
 
-	// The remind.sh symlink should have been pruned.
-	if _, err := os.Lstat(filepath.Join(repoRoot, ".factory", "hooks", "remind.sh")); !os.IsNotExist(err) {
-		t.Errorf("remind.sh symlink should have been pruned")
+	// The remind.sh support artifact should have been pruned while the
+	// namespaced check.sh artifact survives.
+	supportLeaves := map[string]bool{}
+	if err := filepath.WalkDir(filepath.Join(repoRoot, ".factory", "hook-support"), func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if !d.IsDir() {
+			supportLeaves[filepath.Base(p)] = true
+		}
+		return nil
+	}); err != nil {
+		t.Fatalf("walk hook-support: %v", err)
 	}
-	// The check.sh symlink should still exist.
-	if _, err := os.Lstat(filepath.Join(repoRoot, ".factory", "hooks", "check.sh")); err != nil {
-		t.Errorf("check.sh symlink should still exist: %v", err)
+	if supportLeaves["remind.sh"] {
+		t.Errorf("remind.sh support artifact should have been pruned")
+	}
+	if !supportLeaves["check.sh"] {
+		t.Errorf("check.sh support artifact should still exist")
 	}
 }
 
-// TestRunHookSupportFilesAreSymlinked verifies that support files (scripts)
-// alongside hooks.json in the source directory are materialized as symlinks
-// in the hooks output directory, and are pruned when the hook is removed.
+// TestRunHookSupportFilesAreSymlinked verifies repository support copies and
+// their cleanup when the hook is removed.
 func TestRunHookSupportFilesAreSymlinked(t *testing.T) {
 	repoRoot := t.TempDir()
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
-	// Create a source directory with hooks.json and a support script.
-	sourceDir := t.TempDir()
+	// Create a source directory with hooks.json and its referenced support script.
+	command := "${CLAUDE_PLUGIN_ROOT}/remind.sh"
+	hooks := fmt.Sprintf(`{"PostToolUse":[{"matcher":"Write|Edit","hooks":[{"type":"command","command":%q}]}]}`, command)
 	scriptContent := []byte("#!/bin/bash\necho 'remind to fix isolated builds'\n")
-	if err := os.WriteFile(filepath.Join(sourceDir, "remind.sh"), scriptContent, 0o755); err != nil {
-		t.Fatalf("write source script: %v", err)
-	}
-
-	hook := ir.NewHookWithMatcher("post-tool-use-remind", "PostToolUse", "Edit|Create|MultiEdit",
-		"${DROID_PLUGIN_ROOT}/hooks/remind.sh", "command", nil, ir.SourceRef{File: filepath.Join(sourceDir, "hooks.json")})
-	resolved := []resolver.ResolvedArtifact{
-		{Entry: catalog.Entry{Name: "post-tool-use-remind", Resource: hook, Path: filepath.Join(sourceDir, "hooks.json")}, Source: config.RepoCommitted, Harnesses: []hcc.Target{hcc.TargetFactory}},
+	resolved, sourceDir := sourceBackedHookFixtures(t, "claude", config.RepoCommitted, hcc.TargetFactory, "post-tool-use-remind", []byte(hooks), map[string][]byte{"hooks/remind.sh": scriptContent})
+	if err := os.Chmod(filepath.Join(sourceDir, "hooks", "remind.sh"), 0o755); err != nil {
+		t.Fatal(err)
 	}
 
 	// First sync: hooks.json and remind.sh should both be materialized.
@@ -2861,10 +2861,9 @@ func TestRunHookSupportFilesAreSymlinked(t *testing.T) {
 		t.Fatalf("first run: %v", err)
 	}
 
-	hooksDir := filepath.Join(repoRoot, ".factory", "hooks")
-
-	// hooks.json should be a real file (merge artifact).
-	hooksJSON := filepath.Join(hooksDir, "hooks.json")
+	// hooks.json should be a real file (merge artifact) at the target's
+	// declared aggregate path.
+	hooksJSON := filepath.Join(repoRoot, ".factory", "hooks.json")
 	info, err := os.Lstat(hooksJSON)
 	if err != nil {
 		t.Fatalf("hooks.json not materialized: %v", err)
@@ -2873,33 +2872,68 @@ func TestRunHookSupportFilesAreSymlinked(t *testing.T) {
 		t.Errorf("hooks.json should be a real file, not a symlink")
 	}
 
-	// remind.sh should be a symlink (regular artifact).
-	scriptLink := filepath.Join(hooksDir, "remind.sh")
+	// remind.sh should be a regular copy under the hook's namespaced
+	// support directory.
+	scriptMatches, _ := filepath.Glob(filepath.Join(repoRoot, ".factory", "hook-support", "*", "post-tool-use-remind", "remind.sh"))
+	if len(scriptMatches) != 1 {
+		t.Fatalf("expected one namespaced remind.sh, got %v", scriptMatches)
+	}
+	scriptLink := scriptMatches[0]
 	scriptInfo, err := os.Lstat(scriptLink)
 	if err != nil {
 		t.Fatalf("remind.sh not materialized: %v", err)
 	}
-	if scriptInfo.Mode()&os.ModeSymlink == 0 {
-		t.Errorf("remind.sh should be a symlink, got mode: %v", scriptInfo.Mode())
+	if !scriptInfo.Mode().IsRegular() {
+		t.Errorf("remind.sh should be a regular copy, got mode: %v", scriptInfo.Mode())
 	}
 
-	// The symlink should resolve to the correct content.
+	// The copy should contain the captured support content.
 	content, err := os.ReadFile(scriptLink)
 	if err != nil {
-		t.Fatalf("read remind.sh through symlink: %v", err)
+		t.Fatalf("read remind.sh copy: %v", err)
 	}
 	if !bytes.Contains(content, []byte("remind to fix isolated builds")) {
 		t.Errorf("remind.sh content mismatch: %s", content)
 	}
 
-	// Second sync with no hooks: remind.sh symlink should be pruned,
-	// but hooks.json should be cleaned of managed entries (becoming empty/minimal).
+	// Second sync with no hooks: remind.sh copy should be pruned, but
+	// hooks.json should be cleaned of managed entries (becoming empty/minimal).
 	if _, err := Run(context.Background(), repoRoot, nil); err != nil {
 		t.Fatalf("second run (empty): %v", err)
 	}
 
 	if _, err := os.Lstat(scriptLink); !os.IsNotExist(err) {
-		t.Errorf("remind.sh symlink should have been pruned, got err: %v", err)
+		t.Errorf("remind.sh copy should have been pruned, got err: %v", err)
+	}
+}
+
+// spec: materialization/repository-scope-hook-command-stays-repository-relative
+func TestRunFactoryHookCommandPointsIntoInstallRoot(t *testing.T) {
+	repoRoot := t.TempDir()
+	t.Setenv("HOME", t.TempDir())
+	provider := nativeSupportSource(t, "claude", "hooks/hooks.json", nativeSupportClaudeFiles("${CLAUDE_PLUGIN_ROOT}/scripts/check.sh"))
+	provider.Source = config.RepoCommitted
+	provider.Harnesses = []hcc.Target{hcc.TargetFactory}
+	resolved := nativeSupportResolve(t, hcc.TargetFactory, false, []resolver.ResolvedArtifact{provider})
+
+	report, err := Run(context.Background(), repoRoot, resolved)
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if hasErrorDiagnostics(report.Diags) {
+		t.Fatalf("unexpected error diagnostics: %v", report.Diags)
+	}
+
+	loc := nativeSupportLocationFor(t, hcc.TargetFactory)
+	hookFile := filepath.Join(repoRoot, filepath.FromSlash(loc.repoFile))
+	commands := nativeSupportCommands(t, loc, hookFile, 1)
+	installed, ref := loc.installedRef(t, commands[0], repoRoot, "", false)
+	wantCommand := loc.repoBase + filepath.ToSlash(ref)
+	if commands[0] != wantCommand || !strings.HasPrefix(commands[0], `"$FACTORY_PROJECT_DIR"/.factory/hook-support/`) {
+		t.Fatalf("materialized command = %q, want repository-relative support path %q", commands[0], wantCommand)
+	}
+	if data, err := os.ReadFile(installed); err != nil || string(data) != nativeSupportScriptBody {
+		t.Fatalf("installed support file = %q (%v)", data, err)
 	}
 }
 
@@ -4744,6 +4778,149 @@ func TestRunFileModePortableManifestPruneAndMigration(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+// spec: materialization/portable-manifest-repeats-preserve-identity-and-update-permissions
+func TestRunCodexPortableSkillTreePreparesManifestParent(t *testing.T) {
+	repoRoot, homeDir := devinEnv(t)
+	t.Setenv("CODEX_HOME", filepath.Join(homeDir, ".codex"))
+	sourceRoot := t.TempDir()
+	skillDir := filepath.Join(sourceRoot, "skills", "portable-tree-only")
+	if err := os.MkdirAll(filepath.Join(skillDir, "scripts"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	skillFile := filepath.Join(skillDir, "SKILL.md")
+	if err := os.WriteFile(skillFile, []byte("---\nname: portable-tree-only\ndescription: portable tree\n---\n\nbody"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	supportFile := filepath.Join(skillDir, "scripts", "helper.sh")
+	if err := os.WriteFile(supportFile, []byte("echo portable tree"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(supportFile, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	sourceSkillBefore, sourceSkillMode, sourceSkillMtime := fileSnapshot(t, skillFile)
+	sourceSkillInfo, err := os.Stat(skillFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sourceSupportBefore, sourceSupportMode, sourceSupportMtime := fileSnapshot(t, supportFile)
+	sourceSupportInfo, err := os.Stat(supportFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := catalog.Load(sourceRoot, "claude")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var resolved []resolver.ResolvedArtifact
+	for _, entry := range loaded.Entries {
+		if entry.Kind != ir.KindSkill {
+			continue
+		}
+		resolved = append(resolved, resolver.ResolvedArtifact{
+			Entry: entry, Source: config.RepoCommitted, RegistryURL: sourceRoot, CatalogKey: sourceRoot,
+			V4Kind: config.V4SourceDirectory, Harnesses: []hcc.Target{hcc.TargetCodex},
+		})
+	}
+	if len(resolved) != 1 {
+		t.Fatalf("source tree skills = %d, want one: %+v", len(resolved), loaded.Entries)
+	}
+	modes := config.MaterializationModes{Project: config.MaterializationModeFile, Machine: config.MaterializationModeSymlink}
+	manifestPath := filepath.Join(repoRoot, ".agents", "materialization-manifest.yaml")
+	if _, err := os.Lstat(filepath.Dir(manifestPath)); !os.IsNotExist(err) {
+		t.Fatalf("Codex manifest parent existed before source-tree install: %v", err)
+	}
+	first, err := Run(t.Context(), repoRoot, resolved, WithMaterializationModes(modes))
+	if err != nil {
+		t.Fatal(err)
+	}
+	requireNoErrorDiags(t, first.Diags)
+	if first.TotalWritten() == 0 {
+		t.Fatalf("source-tree Codex install wrote no files: %+v", first)
+	}
+	groupWriteReported := false
+	for _, root := range first.PerRoot {
+		groupWriteReported = groupWriteReported || root.Target == hcc.TargetCodex && filepath.Clean(root.OutDir) == filepath.Join(repoRoot, ".agents", "skills") && len(root.Written) > 0
+	}
+	if !groupWriteReported {
+		t.Fatalf("source-tree Codex install did not use the portable skill group: %+v", first.PerRoot)
+	}
+	installed := filepath.Join(repoRoot, ".agents", "skills", "portable-tree-only")
+	for _, file := range []struct {
+		path  string
+		data  string
+		mode  os.FileMode
+		exact bool
+	}{
+		{path: filepath.Join(installed, "SKILL.md"), data: "body", mode: 0o644},
+		{path: filepath.Join(installed, "scripts", "helper.sh"), data: "echo portable tree", mode: 0o755, exact: true},
+	} {
+		got, err := os.ReadFile(file.path)
+		matches := strings.Contains(string(got), file.data)
+		if file.exact {
+			matches = bytes.Equal(got, []byte(file.data))
+		}
+		if err != nil || !matches {
+			t.Fatalf("portable tree output %s = %q / %v", file.path, got, err)
+		}
+		info, err := os.Lstat(file.path)
+		if err != nil || !info.Mode().IsRegular() || info.Mode().Perm() != file.mode {
+			t.Fatalf("portable tree output mode %s = %v / %v", file.path, info, err)
+		}
+	}
+	manifest, err := os.ReadFile(manifestPath)
+	if err != nil || !bytes.Contains(manifest, []byte("portable-tree-only")) {
+		t.Fatalf("Codex source-tree manifest missing: %q %v", manifest, err)
+	}
+	manifestInfo, err := os.Stat(manifestPath)
+	if err != nil || manifestInfo.Mode().Perm() != 0o644 {
+		t.Fatalf("Codex source-tree manifest mode: %v", err)
+	}
+	skillBefore, skillMode, skillMtime := fileSnapshot(t, filepath.Join(installed, "SKILL.md"))
+	skillIdentity, err := os.Stat(filepath.Join(installed, "SKILL.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	supportBefore, supportMode, supportMtime := fileSnapshot(t, filepath.Join(installed, "scripts", "helper.sh"))
+	supportIdentity, err := os.Stat(filepath.Join(installed, "scripts", "helper.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifestBefore, manifestMode, manifestMtime := fileSnapshot(t, manifestPath)
+	second, err := Run(t.Context(), repoRoot, resolved, WithMaterializationModes(modes))
+	if err != nil {
+		t.Fatal(err)
+	}
+	requireNoErrorDiags(t, second.Diags)
+	if !second.InSync() || second.TotalWritten() != 0 {
+		t.Fatalf("source-tree Codex repeat is not idempotent: %+v", second)
+	}
+	check, err := Run(t.Context(), repoRoot, resolved, WithMaterializationModes(modes), WithDryRun())
+	if err != nil || !check.InSync() || hasErrorDiagnostics(check.Diags) {
+		t.Fatalf("source-tree Codex dry run drifted: %+v %v", check, err)
+	}
+	assertFileUnchanged(t, filepath.Join(installed, "SKILL.md"), skillBefore, skillMode, skillMtime)
+	assertFileUnchanged(t, filepath.Join(installed, "scripts", "helper.sh"), supportBefore, supportMode, supportMtime)
+	assertFileUnchanged(t, manifestPath, manifestBefore, manifestMode, manifestMtime)
+	if after, err := os.Stat(filepath.Join(installed, "SKILL.md")); err != nil || !os.SameFile(skillIdentity, after) {
+		t.Fatalf("source-tree Codex skill identity changed: %v", err)
+	}
+	if after, err := os.Stat(filepath.Join(installed, "scripts", "helper.sh")); err != nil || !os.SameFile(supportIdentity, after) {
+		t.Fatalf("source-tree Codex support identity changed: %v", err)
+	}
+	if after, err := os.Stat(manifestPath); err != nil || !os.SameFile(manifestInfo, after) {
+		t.Fatalf("source-tree Codex manifest identity changed: %v", err)
+	}
+	assertFileUnchanged(t, skillFile, sourceSkillBefore, sourceSkillMode, sourceSkillMtime)
+	assertFileUnchanged(t, supportFile, sourceSupportBefore, sourceSupportMode, sourceSupportMtime)
+	if after, err := os.Stat(skillFile); err != nil || !os.SameFile(sourceSkillInfo, after) {
+		t.Fatalf("source skill identity changed: %v", err)
+	}
+	if after, err := os.Stat(supportFile); err != nil || !os.SameFile(sourceSupportInfo, after) {
+		t.Fatalf("source support identity changed: %v", err)
 	}
 }
 

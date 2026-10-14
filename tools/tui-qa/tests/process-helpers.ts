@@ -24,6 +24,16 @@ export interface ProcessFixture {
   cleanup(): void;
 }
 
+export const readRegularFile = (file: string): Buffer => {
+  const fd = fs.openSync(file, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK);
+  try {
+    if (!fs.fstatSync(fd).isFile()) throw new Error(`not a regular file: ${file}`);
+    return fs.readFileSync(fd);
+  } finally {
+    fs.closeSync(fd);
+  }
+};
+
 export const write = (file: string, content: string, mode = 0o600): void => {
   fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
   fs.writeFileSync(file, content, { encoding: "utf8", mode });

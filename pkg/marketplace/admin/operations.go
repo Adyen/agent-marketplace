@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/Adyen/agent-marketplace/internal/logging/logvalue"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/config"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/store"
 )
@@ -180,10 +181,10 @@ func (s Service) Apply(ctx context.Context, id store.MarketplaceID, m Mutation) 
 		return err
 	})
 	if err != nil {
-		slog.WarnContext(ctx, "managed operation rejected", "operation", m.Action)
+		slog.WarnContext(ctx, "managed operation rejected", "operation", logvalue.Safe(m.Action))
 		return store.ManagedChange{}, err
 	}
-	slog.InfoContext(ctx, "managed operation accepted", "operation", m.Action, "revision", accepted.Revision)
+	slog.InfoContext(ctx, "managed operation accepted", "operation", logvalue.Safe(m.Action), "revision", accepted.Revision)
 	return accepted, nil
 }
 

@@ -306,7 +306,7 @@ func joinFooter(items []footerItem, chosen []string) string {
 
 func rowsHaveUnavailable(rows []row) bool {
 	for _, r := range rows {
-		if r.UnavailableReason != "" {
+		if r.UnavailableReason != "" && !r.UnavailableSoft {
 			return true
 		}
 	}

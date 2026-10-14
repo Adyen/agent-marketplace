@@ -146,7 +146,7 @@ func DecodeMatcher(source target.Target, matcher string, src MatcherSpec) (Decod
 	if matcher == "" {
 		return DecodedMatcher{Empty: true}, nil
 	}
-	if matcher == "*" {
+	if matcher == "*" || (matcher == ".*" && (src.Syntax == MatcherRegex || src.Syntax == MatcherExactOrRegex)) {
 		return DecodedMatcher{All: true}, nil
 	}
 	c, err := sourceCatalog(source)

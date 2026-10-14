@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/bundle"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ingest"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
@@ -132,14 +133,23 @@ func (l *Loader) LoadBundle(src fs.FS) (*ingest.Bundle, error) {
 		diags = append(diags, addedDiags...)
 
 		if !hasPlugin {
-			consumed = append(consumed, ".factory/hooks/hooks.json", ".factory/mcp.json")
-			if hooks, hookDiags, err := LoadHooks(src, ".factory/hooks/hooks.json"); err == nil {
-				for _, hook := range hooks {
-					resources = append(resources, hook)
-				}
+			consumed = append(consumed, ".factory/hooks/hooks.json", ".factory/hooks.json", ".factory/mcp.json")
+			var hooks []*ir.Hook
+			if loaded, hookDiags, err := LoadHooks(src, ".factory/hooks/hooks.json"); err == nil {
+				hooks = append(hooks, loaded...)
 				diags = append(diags, hookDiags...)
 			} else if !isNotExist(err) {
 				return nil, fmt.Errorf("ingest/factory: load workspace hooks: %w", err)
+			}
+			if loaded, hookDiags, err := LoadHooks(src, ".factory/hooks.json"); err == nil {
+				hooks = append(hooks, loaded...)
+				diags = append(diags, hookDiags...)
+			} else if !isNotExist(err) {
+				return nil, fmt.Errorf("ingest/factory: load native hooks: %w", err)
+			}
+			bundle.DistinctHookNames(hooks)
+			for _, hook := range hooks {
+				resources = append(resources, hook)
 			}
 
 			resources, diags = appendMcpServers(resources, diags, src, ".factory/mcp.json")
@@ -368,6 +378,9 @@ func hasWorkspaceForm(src fs.FS) bool {
 			return true
 		}
 	}
+	if _, err := fs.ReadFile(src, ".factory/hooks.json"); err == nil {
+		return true
+	}
 	_, err := fs.ReadFile(src, ".factory/mcp.json")
 	return err == nil
 }
@@ -394,7 +407,7 @@ func isNotExist(err error) bool {
 }
 
 func listSubdirs(src fs.FS, root string) ([]string, error) {
-	entries, err := fs.ReadDir(src, root)
+	entries, err := ingest.ReadSkillEntries(src, root)
 	if err != nil {
 		return nil, err
 	}

@@ -113,7 +113,7 @@ func TestTranslate_Subagent(t *testing.T) {
 		"A test subagent",
 		"You are a helpful assistant",
 		"sonnet",
-		[]string{"Read", "Write", "Bash"},
+		nil, // tools: Cursor has no subagent tool surface; a non-empty list suppresses the artifact
 		"high",
 		nil, // no disallowedTools for Cursor (not relevant)
 		"",  // no isolation
@@ -150,15 +150,10 @@ func TestTranslate_Subagent(t *testing.T) {
 		t.Errorf("subagent artifact should contain mapped model ID 'claude-sonnet-4-5-20250929', got:\n%s", body)
 	}
 
-	// Verify tool mapping: "Write" stays "Write" for Cursor (not split like Factory)
-	if !strings.Contains(body, "- Read") {
-		t.Errorf("subagent artifact should contain mapped tool 'Read'")
-	}
-	if !strings.Contains(body, "- Write") {
-		t.Errorf("subagent artifact should contain mapped tool 'Write'")
-	}
-	if !strings.Contains(body, "- Bash") {
-		t.Errorf("subagent artifact should contain mapped tool 'Bash'")
+	// Cursor subagents have no tool allow-list, so no tools field is ever
+	// emitted; a canonical tools list would have suppressed the artifact.
+	if strings.Contains(body, "tools:") {
+		t.Errorf("subagent artifact emitted a tools field Cursor cannot enforce")
 	}
 
 	// Verify body content present
@@ -166,17 +161,19 @@ func TestTranslate_Subagent(t *testing.T) {
 		t.Errorf("subagent body not found in artifact")
 	}
 
-	// No diagnostics expected — all tools and model are known
-	if len(diags) != 0 {
-		t.Errorf("Translate(subagent) diagnostics = %d, want 0; got: %+v", len(diags), diags)
+	// Family pinning and unrepresentable reasoning are distinct losses.
+	if len(diags) != 2 || !diag.HasCode(diags, diag.CodeModelSelectorPinned) || !diag.HasCode(diags, diag.CodeModelReasoningOmitted) {
+		t.Errorf("Translate(subagent) expected pin and effort diagnostics: %+v", diags)
+	}
+	if strings.Contains(body, "\neffort:") {
+		t.Fatal("Cursor emitted unsupported effort field")
 	}
 }
 
 func TestTranslate_Subagent_AppliesMappingOverrides(t *testing.T) {
-	sub := ir.NewSubagent("override-agent", "Agent", "Work", "sonnet", []string{"Write"}, "", nil, "", nil, ir.SourceRef{})
+	sub := ir.NewSubagent("override-agent", "Agent", "Work", "sonnet", nil, "", nil, "", nil, ir.SourceRef{})
 	result, err := compile.Compile(sub, compile.TargetCursor,
 		compile.WithModelOverride(map[string]string{"sonnet": "custom-model"}),
-		compile.WithToolOverride(map[string]string{"Write": "CustomWrite"}),
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -185,8 +182,8 @@ func TestTranslate_Subagent_AppliesMappingOverrides(t *testing.T) {
 		t.Fatalf("result = %#v, want one artifact without diagnostics", result)
 	}
 	body := string(result.Artifacts[0].Bytes)
-	if !strings.Contains(body, "model: custom-model") || !strings.Contains(body, "- CustomWrite") {
-		t.Fatalf("mapping overrides not applied:\n%s", body)
+	if !strings.Contains(body, "model: custom-model") {
+		t.Fatalf("model override not applied:\n%s", body)
 	}
 }
 
@@ -197,7 +194,7 @@ func TestTranslate_Subagent_UnknownModel(t *testing.T) {
 		"Agent with unknown model",
 		"Do stuff",
 		"future-model-x",
-		[]string{"Read"},
+		nil, // tools: Cursor has no subagent tool surface; a non-empty list suppresses the artifact
 		"",
 		nil,
 		"",
@@ -210,24 +207,24 @@ func TestTranslate_Subagent_UnknownModel(t *testing.T) {
 		t.Fatalf("Translate(subagent) error: %v", err)
 	}
 
-	// Unknown model should passthrough and emit a diagnostic
+	// Unknown models are omitted without suppressing the resource.
 	if len(arts) != 1 {
 		t.Fatalf("expected 1 artifact, got %d", len(arts))
 	}
 	body := string(arts[0].Bytes)
-	if !strings.Contains(body, "future-model-x") {
-		t.Errorf("unknown model should passthrough in artifact, got:\n%s", body)
+	if strings.Contains(body, "future-model-x") || strings.Contains(body, "\nmodel:") {
+		t.Errorf("unknown model should be omitted, got:\n%s", body)
 	}
 
-	// Should emit a model-passthrough diagnostic (info)
+	// The field omission is reported as a warning.
 	found := false
 	for _, d := range diags {
-		if d.Severity == diag.SeverityInfo && d.Code == diag.CodeSubagentCursorModelPassthrough {
+		if d.Severity == diag.SeverityWarning && d.Code == diag.CodeModelUnresolved {
 			found = true
 		}
 	}
 	if !found {
-		t.Errorf("expected model-passthrough info diagnostic for unknown model, got: %+v", diags)
+		t.Errorf("expected unresolved-model warning, got: %+v", diags)
 	}
 }
 
@@ -269,20 +266,23 @@ func TestTranslate_Subagent_UnknownTool(t *testing.T) {
 
 // --- Hook matrix cell ---
 
+// spec: hook-resources/no-plugin-only-variable-or-cache-path-is-emitted
 func TestTranslate_Hook(t *testing.T) {
 	c := newCursorCompiler()
 	hook := ir.NewHook(
 		"pre-commit",
-		"pre-commit",
+		"PreToolUse",
 		"${CLAUDE_PLUGIN_ROOT}/scripts/check.sh",
 		"command",
 		map[string]any{},
 		ir.SourceRef{File: "hooks/hooks.json", Line: 5},
 	)
 
-	arts, diags, err := c.Translate(hook)
+	var opts compile.Options
+	compile.WithPluginRoot("hook-support/demo/pre-commit")(&opts)
+	arts, diags, err := c.TranslateWithOptions(hook, opts)
 	if err != nil {
-		t.Fatalf("Translate(hook) error: %v", err)
+		t.Fatalf("TranslateWithOptions(hook) error: %v", err)
 	}
 
 	if len(arts) != 1 {
@@ -303,13 +303,15 @@ func TestTranslate_Hook(t *testing.T) {
 		t.Fatalf("hook artifact is not valid JSON: %v\n%s", err, arts[0].Bytes)
 	}
 
-	// Verify env token swap: ${CLAUDE_PLUGIN_ROOT} → ${CURSOR_PLUGIN_ROOT}
+	// The plugin-root token resolves to the installed support directory under
+	// the catalog's repository base ("$CURSOR_PROJECT_DIR"/<rel>); no
+	// plugin-only variable may remain.
 	body := string(arts[0].Bytes)
-	if !strings.Contains(body, "${CURSOR_PLUGIN_ROOT}") {
-		t.Errorf("hook artifact should contain ${CURSOR_PLUGIN_ROOT}, got:\n%s", body)
+	if !strings.Contains(body, `$CURSOR_PROJECT_DIR`+`\"`+`/hook-support/demo/pre-commit/scripts/check.sh`) {
+		t.Errorf("hook artifact should reference the support directory via $CURSOR_PROJECT_DIR, got:\n%s", body)
 	}
-	if strings.Contains(body, "${CLAUDE_PLUGIN_ROOT}") {
-		t.Errorf("hook artifact should NOT contain ${CLAUDE_PLUGIN_ROOT}, got:\n%s", body)
+	if strings.Contains(body, "PLUGIN_ROOT") {
+		t.Errorf("hook artifact must not contain a plugin-only variable, got:\n%s", body)
 	}
 
 	if len(diags) != 0 {
@@ -321,7 +323,7 @@ func TestTranslate_Hook_NonCommandType(t *testing.T) {
 	c := newCursorCompiler()
 	hook := ir.NewHook(
 		"http-hook",
-		"post-commit",
+		"PreToolUse",
 		"",
 		"http",
 		map[string]any{"url": "https://example.com"},
@@ -341,12 +343,12 @@ func TestTranslate_Hook_NonCommandType(t *testing.T) {
 	// Should emit a diagnostic about unsupported type
 	found := false
 	for _, d := range diags {
-		if d.Severity == diag.SeverityWarning && d.Code == diag.CodeHookCursorUnsupportedType {
+		if d.Severity == diag.SeverityError && d.Code == diag.CodeHookCursorUnsupportedType {
 			found = true
 		}
 	}
 	if !found {
-		t.Errorf("expected unsupported-type warning diagnostic for non-command hook, got: %+v", diags)
+		t.Errorf("expected unsupported-type error diagnostic for non-command hook, got: %+v", diags)
 	}
 }
 

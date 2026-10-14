@@ -153,6 +153,19 @@ func openLeaf(parent *os.File, name string) (*os.File, Identity, error) {
 			return nil, Identity{}, fmt.Errorf("open leaf %s: %w", name, err)
 		}
 	}
+	var st unix.Stat_t
+	if err := unix.Fstat(fd, &st); err != nil {
+		return nil, Identity{}, errors.Join(fmt.Errorf("inspect leaf %s: %w", name, err), unix.Close(fd))
+	}
+	if st.Mode&unix.S_IFMT != unix.S_IFREG {
+		return nil, Identity{}, errors.Join(fmt.Errorf("%w: leaf is not a regular file: %s", ErrUnsafeFile, name), unix.Close(fd))
+	}
+	if st.Nlink != 1 {
+		return nil, Identity{}, errors.Join(fmt.Errorf("%w: leaf has %d links: %s", ErrUnsafeFile, st.Nlink, name), unix.Close(fd))
+	}
+	if err := unix.SetNonblock(fd, false); err != nil {
+		return nil, Identity{}, errors.Join(fmt.Errorf("restore blocking reads on %s: %w", name, err), unix.Close(fd))
+	}
 	file := os.NewFile(uintptr(fd), name)
 	id, err := identityOf(file)
 	if err != nil {
@@ -162,10 +175,6 @@ func openLeaf(parent *os.File, name string) (*os.File, Identity, error) {
 	if err := validateLeafIdentity(id, name); err != nil {
 		_ = file.Close()
 		return nil, Identity{}, err
-	}
-	if err := unix.SetNonblock(fd, false); err != nil {
-		_ = file.Close()
-		return nil, Identity{}, fmt.Errorf("restore blocking reads on %s: %w", name, err)
 	}
 	return file, id, nil
 }
