@@ -123,14 +123,14 @@ Four things in this file deserve a second look:
 - The ingress routes the well-known document, `/api/`, and `/healthz` to the API, and `/` to the web UI at the origin root. The web UI calls the API at the same origin, which is why both live behind one host.
 
 ::: details Private GHCR packages
-If your organization keeps its GHCR packages private, create a pull secret and add it to `values.yaml` under a top-level `imagePullSecrets` key:
+If your organization keeps its GHCR packages private, set `GHCR_USERNAME` to your GitHub username and `GHCR_TOKEN` to a token with the `read:packages` scope. Then create a pull secret and add it to `values.yaml` under a top-level `imagePullSecrets` key:
 
 ```bash
 kubectl create secret docker-registry ghcr-pull \
   --namespace marketplace-tutorial \
   --docker-server=ghcr.io \
-  --docker-username=<github-username> \
-  --docker-password=<token with read:packages>
+  --docker-username="$GHCR_USERNAME" \
+  --docker-password="$GHCR_TOKEN"
 ```
 
 ```yaml
