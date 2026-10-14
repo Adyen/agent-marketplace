@@ -1,4 +1,4 @@
-import { expect, test, type TestInfo } from '@playwright/test'
+import { expect, test, type Locator, type TestInfo } from '@playwright/test'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, isAbsolute, join, relative, sep } from 'node:path'
@@ -11,6 +11,49 @@ interface Bounds {
   y: number
   width: number
   height: number
+}
+
+type InspectionGeometry = { dialog: Bounds; tree: Bounds; preview: Bounds; columns: Bounds }
+
+// Settles layout after a viewport change, then reads every panel rect in one in-page snapshot
+// so the four rects always come from the same layout pass.
+async function inspectionGeometry(dialog: Locator, expectedColumns: number): Promise<InspectionGeometry> {
+  await expect
+    .poll(() =>
+      dialog.evaluate(
+        (root) => getComputedStyle(root.querySelector('.resource-inspection__columns') as Element).gridTemplateColumns.trim().split(/\s+/).length,
+      ),
+    )
+    .toBe(expectedColumns)
+  return dialog.evaluate(async (root) => {
+    const bounds = (element: Element): Bounds => {
+      const box = element.getBoundingClientRect()
+      return { x: box.x, y: box.y, width: box.width, height: box.height }
+    }
+    const rect = (selector: string): Bounds => {
+      const element = root.querySelector(selector)
+      if (element == null) {
+        throw new Error(`inspection geometry missing ${selector}`)
+      }
+      return bounds(element)
+    }
+    const snapshot = (): InspectionGeometry => ({
+      dialog: bounds(root),
+      tree: rect('[aria-label="Verified files"]'),
+      preview: rect('[aria-label="File preview"]'),
+      columns: rect('.resource-inspection__columns'),
+    })
+    let previous = snapshot()
+    for (let frame = 0; frame < 120; frame++) {
+      await new Promise((resolve) => requestAnimationFrame(() => resolve(undefined)))
+      const current = snapshot()
+      if (JSON.stringify(current) === JSON.stringify(previous)) {
+        return current
+      }
+      previous = current
+    }
+    return previous
+  })
 }
 
 function expectHorizontallyContained(container: Bounds, panel: Bounds): void {
@@ -98,16 +141,12 @@ test('built GUI inspects an exact uninstalled Marketplace skill read-only', asyn
     await expect(preview).toContainText('Grill inspection')
     await expect(preview).toContainText('<script>text</script>')
     expect(await dialog.locator('script, img').count()).toBe(0)
-    const treePanel = dialog.getByRole('region', { name: 'Verified files' })
-    const previewPanel = dialog.getByRole('region', { name: 'File preview' })
     const columns = dialog.locator('.resource-inspection__columns')
-    const desktopDialogBox = await dialog.boundingBox()
-    const desktopTreeBox = await treePanel.boundingBox()
-    const desktopPreviewBox = await previewPanel.boundingBox()
-    const desktopColumnsBox = await columns.boundingBox()
-    if (desktopDialogBox == null || desktopTreeBox == null || desktopPreviewBox == null || desktopColumnsBox == null) {
-      throw new Error('inspection desktop geometry unavailable')
-    }
+    const desktop = await inspectionGeometry(dialog, 2)
+    const desktopDialogBox = desktop.dialog
+    const desktopTreeBox = desktop.tree
+    const desktopPreviewBox = desktop.preview
+    const desktopColumnsBox = desktop.columns
     expect(desktopDialogBox.width).toBeLessThanOrEqual(1280 - 16)
     expectHorizontallyContained(desktopDialogBox, desktopTreeBox)
     expectHorizontallyContained(desktopDialogBox, desktopPreviewBox)
@@ -119,13 +158,11 @@ test('built GUI inspects an exact uninstalled Marketplace skill read-only', asyn
     await saveActions(testInfo, actions)
 
     await page.setViewportSize({ width: 640, height: 800 })
-    const mobileDialogBox = await dialog.boundingBox()
-    const mobileTreeBox = await treePanel.boundingBox()
-    const mobilePreviewBox = await previewPanel.boundingBox()
-    const mobileColumnsBox = await columns.boundingBox()
-    if (mobileDialogBox == null || mobileTreeBox == null || mobilePreviewBox == null || mobileColumnsBox == null) {
-      throw new Error('inspection mobile geometry unavailable')
-    }
+    const mobile = await inspectionGeometry(dialog, 1)
+    const mobileDialogBox = mobile.dialog
+    const mobileTreeBox = mobile.tree
+    const mobilePreviewBox = mobile.preview
+    const mobileColumnsBox = mobile.columns
     expect(mobileDialogBox.width).toBeLessThanOrEqual(624)
     expectHorizontallyContained(mobileDialogBox, mobileTreeBox)
     expectHorizontallyContained(mobileDialogBox, mobilePreviewBox)
