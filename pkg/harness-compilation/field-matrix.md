@@ -87,3 +87,9 @@ output. The table states only mappings supported by those sources and fixtures.
 Loaders reject malformed or mixed typed security lists rather than silently filtering them. Explicit empty lists remain empty; permissions maps preserve unknown nested keys and reject non-object/null permission values. MCP and hook map-backed iteration is sorted by resource/event name. Secret values never occur in diagnostics or logs.
 
 Constructors from earlier releases retain their fixed signatures. Rich typed fields use additive `*WithOptions` constructors and documented option functions. Support file bytes and D9 ownership/materialization remain outside this package.
+
+Ambiguous identities are refused rather than resolved by file order. Two
+Windsurf workflows, or two Windsurf rules, in one workspace root that claim the
+same name are all suppressed with `ingest.windsurf.duplicate-identity`; the
+workspace root still overrides the user root. A rule whose frontmatter repeats a
+key fails to load instead of keeping the last value.

@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Ambiguous Windsurf identities and repeated rule keys are refused
+
+Windsurf ingestion collected workflows and rules into a map keyed by name, so a later file claiming the same name silently replaced an earlier one, for example a `deploy` workflow in `zzz.md` replacing the reviewed `deploy.md`. Every claimant of a repeated name within one workspace root is now suppressed with the new error `ingest.windsurf.duplicate-identity`; unrelated resources still convert, and the workspace root still overrides the user root. The tolerant `.mdc` frontmatter parser, used when strict YAML rejects Cursor's unquoted globs, kept the last value of a repeated key, so `alwaysApply: false` followed by `alwaysApply: true` applied the rule everywhere. It now rejects repeated keys, and the rule fails to load with the strict parser's error.
+
 ### The Claude plugin form no longer drops a root-level SKILL.md
 
 `LoadBundleWithOptions` selects the plugin form for both `.claude-plugin/plugin.json` manifests and bare plugin layouts, and that form only scanned `skills/` subdirectories. A repository that IS a single skill (root `SKILL.md`, no `skills/` tree) therefore ingested zero resources with no diagnostic — the layout Claude Code documents for manifest `"skills": ["./"]` and that `github.com/blader/humanizer` ships. The plugin form now loads a root `SKILL.md` through `bundle.LoadRootSkill` when one exists. A root skill whose frontmatter name duplicates a `skills/` entry is dropped with the new warning `ingest.claude.duplicate-root-skill`; the `skills/` entry wins deterministically because it loads first in sorted order. Skill support files no longer include `.git` directories at any depth: a root skill's directory is the whole checkout, a marketplace clone keeps `.git` on disk, and VCS internals were being published into installable archives and fed to bounded support reads.

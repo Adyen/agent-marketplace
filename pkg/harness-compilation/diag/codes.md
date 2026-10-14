@@ -58,6 +58,7 @@ comparison in non-test code.
 | `ingest.windsurf.literal-path-preserved` | Literal Windsurf path preserved during MCP ingestion | Literal path values remain unchanged because there is no Claude-side canonical token for them |
 | `ingest.windsurf.mcp-env-normalized` | Windsurf MCP env interpolation normalized to canonical form | Windsurf ${env:VAR} was converted to canonical ${VAR} during ingestion so the IR is harness-neutral |
 | `ingest.windsurf.subagent-via-agents-md-skipped` | AGENTS.md was not synthesized into a Windsurf subagent | Windsurf has no subagent primitive; AGENTS.md remains external project guidance |
+| `ingest.windsurf.duplicate-identity` | Two Windsurf workflows or rules in one workspace root claim the same name; all of them were suppressed without choosing a winner | Give each workflow and rule a unique name |
 | `ingest.devin.bundle-manifest-synthesized` | Devin has no bundle manifest file; manifest synthesized | Devin roots carry no plugin manifest; bundle metadata is synthesized from the layout during ingestion |
 | `ingest.devin.local-override-ignored` | A Devin project-local personal override file was found and not ingested | Agent Marketplace neither reads nor writes .devin/config.local.json or .devin/mcp_config.local.json; move shared configuration into the non-local file |
 | `ingest.devin.mcp-env-normalized` | Devin MCP env interpolation normalized to canonical form | Devin ${env:VAR} was converted to canonical ${VAR} during ingestion so the IR is harness-neutral; compiling back to Devin restores ${env:VAR} |
