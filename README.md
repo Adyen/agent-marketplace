@@ -126,6 +126,19 @@ of `git describe --tags --always --dirty`, for example `v4.0.9` on the tag or
 or a plain `go build` without the version flag prints a Go pseudo-version such
 as `v0.0.0-2026...`.
 
+### Upgrade notices
+
+About once a day the CLI checks GitHub for a newer release. When one exists,
+a command run in a terminal prints one `info:` line on standard error after it
+finishes, and the TUI shows the same notice once. The check never changes a
+command's output or exit status, and failed checks stay silent. The result is
+cached in `update-check.json` under the state directory, which is
+`~/.local/state/agent-marketplace` unless `XDG_STATE_HOME` is set.
+
+The check is skipped in CI (when `CI` is set), when standard error is not a
+terminal, and for `serve`, shell completion, and `--version`. To turn it off,
+set `AGENT_MARKETPLACE_NO_UPDATE_CHECK=1`.
+
 ---
 
 ## Two ways to use it

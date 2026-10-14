@@ -12,6 +12,7 @@ import (
 	"charm.land/bubbles/v2/spinner"
 	"charm.land/bubbles/v2/textinput"
 	"charm.land/bubbles/v2/viewport"
+	tea "charm.land/bubbletea/v2"
 	"charm.land/huh/v2"
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/marketplace"
@@ -275,6 +276,7 @@ type Model struct {
 	repoRoot            string
 	workspace           pipeline.Workspace
 	homeDir             string
+	upgradeNotice       tea.Cmd
 	rows                []row
 	authoritativeRows   []row
 	provisionalRows     []row

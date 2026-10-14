@@ -32,6 +32,7 @@ An invalid value makes telemetry resolution fail; `telemetry` subcommands then e
 | Variable | Effect |
 |---|---|
 | `AGENT_MARKETPLACE_NO_TUI` | Any non-empty value stops a bare `agent-marketplace` from starting the TUI; it prints help instead. |
+| `AGENT_MARKETPLACE_NO_UPDATE_CHECK` | Any non-empty value turns off the daily check for a newer GitHub release and its notice. The check is also off when `CI` is set, when standard error is not a terminal, and for `serve`, shell completion, and `--version`. |
 | `AGENT_MARKETPLACE_OWNERSHIP_LOCK_TIMEOUT` | How long a command waits for another process that is updating the same Devin or Codex shared configuration files. Takes a Go duration such as `60s` or `500ms`; the default is `30s`. `0` fails immediately when another process holds the lock. A negative or unparseable value is an error. |
 | `EDITOR` | Editor the TUI `E` key opens. It may include arguments, for example `code --wait`. Defaults to `vi` when unset. |
 | `NO_COLOR`, `CLICOLOR=0`, `TERM=dumb` | Turn off colored `sync` and `install` output. `NO_COLOR` works when set to any value, even an empty one. |

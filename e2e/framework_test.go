@@ -501,6 +501,7 @@ func (e *Env) subprocessEnv() []string {
 		"PATH="+e.path,
 		"AGENT_MARKETPLACE_V3_ORG_CONFIG="+filepath.Join(e.etc, "config.yaml"),
 		"AGENT_MARKETPLACE_E2E_INVOCATION_DIR="+e2eInvocationDir,
+		"AGENT_MARKETPLACE_NO_UPDATE_CHECK=1",
 	)
 	return filtered
 }
