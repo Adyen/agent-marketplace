@@ -5282,6 +5282,9 @@ func init() {
 					{Args: []string{"sync", "--check"}, MustPass: true, OutContains: []string{warning}, OutNotContains: []string{prerequisite.code}, PathsUnchanged: unchanged, FilesAbsent: []string{prerequisite.output}},
 					{Args: []string{"sync", "--strict", "--check"}, AssertExitCode: intPtr(1), OutContains: []string{warning}, OutNotContains: []string{prerequisite.code}, PathsUnchanged: unchanged, FilesAbsent: []string{prerequisite.output}},
 					{Action: ActionWriteRepoConfig, Body: config(true), Args: []string{"sync"}, AssertExitCode: intPtr(1), OutContains: []string{prerequisite.code}, FilesAbsent: []string{prerequisite.output}, FileContains: map[string]string{"/workspace/.agents/skills/parent/SKILL.md": "# parent"}},
+					{Args: []string{"sync", "--locked"}, AssertExitCode: intPtr(1), OutContains: []string{prerequisite.code}, FilesAbsent: []string{prerequisite.output}, PathsUnchanged: unchanged, FileContains: map[string]string{"/workspace/.agents/skills/parent/SKILL.md": "# parent"}},
+					{Args: []string{"sync", "--check"}, AssertExitCode: intPtr(1), OutContains: []string{prerequisite.code}, FilesAbsent: []string{prerequisite.output}, PathsUnchanged: unchanged, FileContains: map[string]string{"/workspace/.agents/skills/parent/SKILL.md": "# parent"}},
+					{Args: []string{"sync", "--strict", "--check"}, AssertExitCode: intPtr(1), OutContains: []string{prerequisite.code}, FilesAbsent: []string{prerequisite.output}, PathsUnchanged: unchanged, FileContains: map[string]string{"/workspace/.agents/skills/parent/SKILL.md": "# parent"}},
 				},
 			})
 		}

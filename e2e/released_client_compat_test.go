@@ -2,11 +2,16 @@ package e2e_test
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 )
 
 // releasedClientArch maps the checksum of each pinned latest-release Linux
@@ -91,6 +96,21 @@ func TestReleasedClientReadsCandidateCommittedState(t *testing.T) {
 			}
 			reviewBody := "Review body"
 			secondSelected := false
+			assertClientOutputs := func(executable string) {
+				t.Helper()
+				reviewPath := filepath.Join(workspaces[executable], ".factory", "skills", "review", "SKILL.md")
+				if got, err := os.ReadFile(reviewPath); err != nil || string(got) != skillDocument("review", reviewBody) {
+					t.Fatalf("%s has incorrect review output: %v\n%s", filepath.Base(executable), err, got)
+				}
+				second := filepath.Join(workspaces[executable], ".factory", "skills", "second")
+				if secondSelected {
+					if got, err := os.ReadFile(filepath.Join(second, "SKILL.md")); err != nil || string(got) != skillDocument("second", "Second body") {
+						t.Fatalf("%s has incorrect second output: %v\n%s", filepath.Base(executable), err, got)
+					}
+				} else if absent, err := checkPathAbsent(second); err != nil || !absent {
+					t.Fatalf("%s left second installed: absent=%t err=%v", filepath.Base(executable), absent, err)
+				}
+			}
 			// Teammates and CI fetch the committed exact snapshot with --locked; the
 			// check-only mode is deliberately offline and runs afterwards.
 			releasedReads := func(after string) {
@@ -111,18 +131,7 @@ func TestReleasedClientReadsCandidateCommittedState(t *testing.T) {
 						t.Fatalf("%s %v changed committed lock after %s: %v", releasedClientVersion, args, after, err)
 					}
 					assertClientFilesUnchanged(protected)
-					reviewPath := filepath.Join(workspace, ".factory", "skills", "review", "SKILL.md")
-					if got, err := os.ReadFile(reviewPath); err != nil || string(got) != skillDocument("review", reviewBody) {
-						t.Fatalf("%s %v did not materialize review after %s: %v\n%s", releasedClientVersion, args, after, err, got)
-					}
-					second := filepath.Join(workspace, ".factory", "skills", "second")
-					if secondSelected {
-						if got, err := os.ReadFile(filepath.Join(second, "SKILL.md")); err != nil || string(got) != skillDocument("second", "Second body") {
-							t.Fatalf("%s %v did not materialize second after %s: %v\n%s", releasedClientVersion, args, after, err, got)
-						}
-					} else if absent, err := checkPathAbsent(second); err != nil || !absent {
-						t.Fatalf("%s %v left second after %s: absent=%t err=%v", releasedClientVersion, args, after, absent, err)
-					}
+					assertClientOutputs(released)
 				}
 			}
 			must(released, "init", "--harnesses", "factory")
@@ -185,6 +194,11 @@ func TestReleasedClientReadsCandidateCommittedState(t *testing.T) {
 			checkCacheOnly := func(executable string, missing bool) {
 				t.Helper()
 				protected := protectClientFiles(executable)
+				nativeRoot := filepath.Join(workspaces[executable], ".factory", "skills")
+				nativeBefore, err := pathFingerprint(nativeRoot)
+				if err != nil {
+					t.Fatal(err)
+				}
 				for _, args := range [][]string{{"sync", "--check"}, {"sync", "--check", "--offline"}} {
 					output, err := run(executable, args...)
 					if missing {
@@ -201,20 +215,64 @@ func TestReleasedClientReadsCandidateCommittedState(t *testing.T) {
 						}
 					} else if err != nil {
 						t.Fatalf("%s %v could not use its warm cache: %v\n%s", filepath.Base(executable), args, err, output)
+					} else {
+						assertClientOutputs(executable)
 					}
 					assertClientFilesUnchanged(protected)
+					if got, err := pathFingerprint(nativeRoot); err != nil || got != nativeBefore {
+						t.Fatalf("read-only %v changed native output: %v", args, err)
+					}
+				}
+			}
+			renameFixturePath := func(from, to string) {
+				t.Helper()
+				for _, path := range []string{from, to} {
+					rel, err := filepath.Rel(world.root, path)
+					if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+						t.Fatalf("fixture rename escapes sandbox: %s", path)
+					}
+				}
+				ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+				defer cancel()
+				args := []string{"run", "--rm", "--network", "none", "--read-only", "--cap-drop", "ALL", "--security-opt", "no-new-privileges"}
+				if runtime.GOOS == "linux" {
+					args = append(args, "--user", strconv.Itoa(os.Getuid())+":"+strconv.Itoa(os.Getgid()))
+				}
+				args = append(args, "--mount", "type=bind,src="+world.root+",dst="+world.root, "--entrypoint", "sh", world.image,
+					"-c", `test ! -e "$2" && test ! -L "$2" && mv -- "$1" "$2" && test ! -e "$1" && test ! -L "$1"`, "fixture-rename", from, to)
+				if output, err := exec.CommandContext(ctx, "docker", args...).CombinedOutput(); err != nil {
+					t.Fatalf("rename fixture %s to %s in consumer filesystem: %v\n%s", from, to, err, output)
 				}
 			}
 			bare, hidden := world.path("registry.git"), world.path("registry-hidden.git")
-			if err := os.Rename(bare, hidden); err != nil {
-				t.Fatal(err)
-			}
+			renameFixturePath(bare, hidden)
 			for _, executable := range []string{candidate, released} {
 				checkCacheOnly(executable, false)
+				protected := protectClientFiles(executable)
+				nativeRoot := filepath.Join(workspaces[executable], ".factory", "skills")
+				review := filepath.Join(nativeRoot, "review")
+				renameFixturePath(review, world.path("removed-review-"+filepath.Base(executable)))
+				missingBefore, err := pathFingerprint(nativeRoot)
+				if err != nil {
+					t.Fatal(err)
+				}
+				output, err := run(executable, "sync", "--check", "--offline")
+				if err == nil || !strings.Contains(output, "out of sync") || !strings.Contains(output, "review") {
+					t.Fatalf("%s check accepted missing native output: %v\n%s", filepath.Base(executable), err, output)
+				}
+				if absent, err := checkPathAbsent(review); err != nil || !absent {
+					t.Fatalf("read-only check recreated review: absent=%t err=%v", absent, err)
+				}
+				if got, err := pathFingerprint(nativeRoot); err != nil || got != missingBefore {
+					t.Fatalf("read-only check changed the missing-output tree: %v", err)
+				}
+				assertClientFilesUnchanged(protected)
+				must(executable, "sync", "--offline")
+				assertClientFilesUnchanged(protected)
+				assertClientOutputs(executable)
+				checkCacheOnly(executable, false)
 			}
-			if err := os.Rename(hidden, bare); err != nil {
-				t.Fatal(err)
-			}
+			renameFixturePath(hidden, bare)
 			for _, executable := range []string{candidate, released} {
 				warmHome := homes[executable]
 				coldHome := warmHome + "-cold"

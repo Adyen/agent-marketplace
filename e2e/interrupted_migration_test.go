@@ -2,10 +2,14 @@ package e2e_test
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
+
+	"gopkg.in/yaml.v3"
 )
 
 // The process dies after publishing the first file of `migrate --scope all`.
@@ -16,8 +20,12 @@ func TestInterruptedMigrationRecoversOnNextMutation(t *testing.T) {
 	migratedRoots := func() int {
 		t.Helper()
 		count := 0
-		for _, path := range roots {
-			if strings.Contains(env.ReadFile(path), "apiVersion: agent-marketplace/v4") {
+		for i, path := range roots {
+			data := env.ReadFile(path)
+			if strings.Contains(data, "apiVersion: agent-marketplace/v4") {
+				if err := checkMigrationRootPayload(data, []string{"", "review", "second"}[i]); err != nil {
+					t.Fatalf("incorrect migrated payload at %s: %v\n%s", path, err, data)
+				}
 				count++
 			}
 		}
@@ -82,6 +90,61 @@ func migrationRecoveryFixture(t *testing.T) (*Env, []string) {
 	return env, []string{"/root/.agents/config.yaml", "/workspace/.agents/config.yaml", "/workspace/.agents/config.local.yaml"}
 }
 
+func checkMigrationRootPayload(data, skill string) error {
+	var payload struct {
+		APIVersion string                    `yaml:"apiVersion"`
+		Harnesses  []string                  `yaml:"harnesses"`
+		Sources    map[string]map[string]any `yaml:"sources"`
+		Resources  map[string]map[string]any `yaml:"resources"`
+	}
+	if err := yaml.Unmarshal([]byte(data), &payload); err != nil {
+		return err
+	}
+	if payload.APIVersion != "agent-marketplace/v4" {
+		return fmt.Errorf("root is not v4")
+	}
+	if skill == "" {
+		if !reflect.DeepEqual(payload.Harnesses, []string{"factory"}) || len(payload.Sources) != 0 || len(payload.Resources) != 0 {
+			return fmt.Errorf("user root lost its harness or acquired source/resource selections")
+		}
+		return nil
+	}
+	if len(payload.Harnesses) != 0 || len(payload.Sources) != 1 || len(payload.Resources) != 1 {
+		return fmt.Errorf("root for %s has incorrect harness/source/resource cardinality", skill)
+	}
+	for alias, source := range payload.Sources {
+		if !reflect.DeepEqual(source, map[string]any{"directory": "./vendor/registry"}) || !reflect.DeepEqual(payload.Resources[alias], map[string]any{"include": []any{"skill/" + skill}}) {
+			return fmt.Errorf("root did not retain the directory source and selection for %s", skill)
+		}
+	}
+	return nil
+}
+
+func TestMigrationRootPayloadOracleRejectsSwappedSelections(t *testing.T) {
+	t.Parallel()
+	const repo = "apiVersion: agent-marketplace/v4\nsources:\n  registry: {directory: ./vendor/registry}\nresources:\n  registry: {include: [skill/review]}\n"
+	const local = "apiVersion: agent-marketplace/v4\nsources:\n  registry: {directory: ./vendor/registry}\nresources:\n  registry: {include: [skill/second]}\n"
+	for _, tc := range []struct {
+		name, data, skill string
+		valid             bool
+	}{
+		{"repo", repo, "review", true},
+		{"local", local, "second", true},
+		{"user", "apiVersion: agent-marketplace/v4\nharnesses: [factory]\n", "", true},
+		{"swapped-repo", local, "review", false},
+		{"swapped-local", repo, "second", false},
+		{"marker-only", "apiVersion: agent-marketplace/v4\n", "review", false},
+		{"wrong-source-path", strings.ReplaceAll(repo, "./vendor/registry", "./other"), "review", false},
+		{"user-takes-repo-selection", repo, "", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := checkMigrationRootPayload(tc.data, tc.skill); (err == nil) != tc.valid {
+				t.Fatalf("payload valid=%t; want %t: %v\n%s", err == nil, tc.valid, err, tc.data)
+			}
+		})
+	}
+}
+
 func TestInterruptedMigrationCrashWindows(t *testing.T) {
 	for _, tc := range []struct {
 		name, fault, recoveryFault string
@@ -113,8 +176,12 @@ func TestInterruptedMigrationCrashWindows(t *testing.T) {
 			migratedRoots := func() int {
 				t.Helper()
 				count := 0
-				for _, path := range roots {
-					if strings.Contains(env.ReadFile(path), "apiVersion: agent-marketplace/v4") {
+				for i, path := range roots {
+					data := env.ReadFile(path)
+					if strings.Contains(data, "apiVersion: agent-marketplace/v4") {
+						if err := checkMigrationRootPayload(data, []string{"", "review", "second"}[i]); err != nil {
+							t.Fatalf("incorrect migrated payload at %s: %v\n%s", path, err, data)
+						}
 						count++
 					}
 				}

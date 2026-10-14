@@ -60,6 +60,8 @@ Temporary worktrees should use sibling paths rather than paths nested in the rep
 
 Migration crash fixtures must account for private pre-v4 backups as transaction participants, not just config roots. A finalized journal does not imply materialized outputs are already in sync: read-only commands may report ordinary drift until the next sync, but must not demand recovery after finalization. Test interrupted recovery separately from the initial publication and assert backup fidelity plus no staging residue.
 
+Docker Desktop bind mounts can retain stale directory entries after host-side fixture renames. Move or hide historical-world fixture paths inside the container filesystem and verify source absence there before invoking the consumer; do not add sleeps or retries to mask an incoherent precondition.
+
 For Linux checks in a cached Go container, set command-scoped `GOMODCACHE` to the container path of the mounted module cache; do not assume the image's default GOPATH matches that mount. Populate pinned modules through the host's configured proxy when necessary, without changing proxy/authentication policy. A dependency-download failure is not a test result.
 
 ### Session completion
