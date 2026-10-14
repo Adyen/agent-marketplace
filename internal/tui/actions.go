@@ -1389,7 +1389,7 @@ func appendUnavailableSelectionRows(rows []row, cfg *config.Config, localCfg *co
 				CatalogKey:     meta.CatalogKey,
 			},
 			UnavailableReason: reason,
-			UnavailableSoft:   soft,
+			UnavailableSoft:   soft && !required,
 			DriftItem:         &materialize.DriftItem{Name: key, Reason: materialize.DriftBroken},
 			IsExcluded:        excludedLocally,
 			ExcludedLocally:   excludedLocally,

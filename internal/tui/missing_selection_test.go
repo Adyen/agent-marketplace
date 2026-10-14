@@ -54,6 +54,61 @@ func writeMissingSelectionFixture(t *testing.T, requiredRegistry bool) (repoRoot
 	return repoRoot, homeDir
 }
 
+// spec: resource-selection/optional-entry-ordered-before-a-required-entry-for-the-same-missing-resource
+func TestOptionalEntryBeforeRequiredEntryKeepsMissAsHard(t *testing.T) {
+	repoRoot := t.TempDir()
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+	registryRoot := filepath.Join(repoRoot, "local-skills")
+	auditDir := filepath.Join(registryRoot, "skills", "audit")
+	for _, dir := range []string{filepath.Join(repoRoot, ".agents"), filepath.Join(homeDir, ".agents"), auditDir} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", dir, err)
+		}
+	}
+	mustWriteFile(t, filepath.Join(auditDir, "SKILL.md"), []byte("# Audit\n"))
+	orgPath := filepath.Join(homeDir, "org.yaml")
+	mustWriteFile(t, orgPath, []byte(repoV2Header+"registries:\n  - url: "+registryRoot+"\n    path: skills\nskills:\n  - missing-skill\n"))
+	mustWriteFile(t, filepath.Join(repoRoot, ".agents", "config.yaml"),
+		[]byte(repoV2Header+"registries:\n  - url: "+registryRoot+"\n    path: skills\n    required: true\nskills:\n  - audit\n  - missing-skill\n"))
+	mustWriteFile(t, filepath.Join(homeDir, ".agents", "config.yaml"), []byte(v2Header))
+
+	t.Cleanup(swapCloneOrPull(func(url, ref string) (string, error) { return url, nil }))
+	t.Cleanup(swapDiscoverSkills(func(dir string) ([]catalog.Entry, []skill.MalformedSkill, error) {
+		return []catalog.Entry{{Name: "audit", Path: filepath.Join(dir, "audit")}}, nil, nil
+	}))
+	t.Cleanup(swapLoadOrgConfig(func() (*config.Config, error) { return config.LoadConfigFromPath(orgPath) }))
+	t.Cleanup(swapLoadGlobalConfig(func() (*config.Config, error) { return newMockGlobalConfig() }))
+	t.Cleanup(swapLoadRepoConfig(func() (*config.Config, error) {
+		return config.LoadConfigFromPath(filepath.Join(repoRoot, ".agents", "config.yaml"))
+	}))
+	t.Cleanup(swapLoadLocalConfig(func() (*config.LocalConfig, error) {
+		return config.LoadLocalConfigFromPath(filepath.Join(repoRoot, ".agents", "config.local.yaml"))
+	}))
+
+	snapshot := readSnapshot(context.Background(), repoRoot, homeDir, catalogLoadCached)
+	if snapshot.driftAssessment == driftReady {
+		t.Fatal("required miss shared across layers left drift assessed as ready")
+	}
+	missing := findSnapshotRow(t, snapshot, "missing-skill")
+	if missing.UnavailableReason == "" || missing.UnavailableSoft {
+		t.Fatalf("missing row reason %q soft %v, want hard unavailable", missing.UnavailableReason, missing.UnavailableSoft)
+	}
+	if err := snapshotAcceptanceError(snapshot); err == nil {
+		t.Fatal("required miss shared across layers was accepted")
+	}
+
+	m := beginSyncOperation(t)
+	next, _ := m.Update(syncDoneMsg{warnings: snapshot.warnings})
+	m = next.(Model)
+	snapshot.generation = m.requests.active(requestSnapshot)
+	next, _ = m.Update(snapshot)
+	m = next.(Model)
+	if strings.Contains(m.toast, "Sync complete") {
+		t.Fatalf("required miss shared across layers reported sync success: %q", m.toast)
+	}
+}
+
 func findSnapshotRow(t *testing.T, snapshot snapshotLoadedMsg, name string) row {
 	t.Helper()
 	for _, r := range snapshot.rows {
