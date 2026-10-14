@@ -104,10 +104,8 @@ func scopedToggleAction(r row, s scope) toggleAction {
 		act.marketplaceSelection, act.hasMarketplaceSelection = marketplaceSelectionForToggle(r, s)
 	}
 	if impliedScope, implied := impliedToggleScope(r); implied && impliedScope == s {
-		// An expansion-selected implied resource is effectively enabled in the
-		// layer that selected its requiring resource. Toggling it off there
-		// removes any direct selection and writes the effective explicit
-		// exclusion, matching `agent-marketplace remove`.
+		// An implied row has no direct enabled state of its own; toggling it
+		// in its owning scope always writes the effective exclusion.
 		act.enable = false
 		return act
 	}

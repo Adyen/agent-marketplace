@@ -139,13 +139,19 @@ func annotatePrerequisiteRows(rows []row, resolved []resolver.ResolvedArtifact, 
 	}
 }
 
+// impliedSelection reports whether the row is an expansion-selected implied
+// resource, as opposed to a directly selected or preview-only one.
+func impliedSelection(r row) bool {
+	return r.Artifact.Implied && !r.Artifact.PreviewOnly
+}
+
 // prerequisiteBadges renders the row-level prerequisite markers: `req` for an
 // expansion-selected implied resource and ⚠ for a resource with an unmet
 // prerequisite. Rows without prerequisite relationships get no marker, so
 // their rendered output stays byte-identical.
 func prerequisiteBadges(r row) string {
 	var b strings.Builder
-	if r.Artifact.Implied && !r.Artifact.PreviewOnly {
+	if impliedSelection(r) {
 		b.WriteString(" req")
 	}
 	if r.HasUnmetPrerequisite {
@@ -159,7 +165,7 @@ func prerequisiteBadges(r row) string {
 // resource, mirroring the CLI remove scope inference. The second result is
 // false for rows that are not implied selections.
 func impliedToggleScope(r row) (scope, bool) {
-	if !r.Artifact.Implied || r.Artifact.PreviewOnly {
+	if !impliedSelection(r) {
 		return 0, false
 	}
 	switch r.Artifact.Source {
@@ -202,13 +208,15 @@ func prerequisiteToggleNotes(act *toggleAction, msg snapshotLoadedMsg, preexisti
 	}
 	if act.disablesResource() {
 		var notes []string
-		for _, err := range append(append([]error{}, msg.warnings...), msg.errs...) {
-			var warning *resolver.UnmetRequirementWarning
-			if !errors.As(err, &warning) {
-				continue
-			}
-			if warning.Requirement.Kind == act.kind && strings.TrimSpace(warning.Requirement.Name) == act.skillName {
-				notes = append(notes, warning.Error())
+		for _, errs := range [][]error{msg.warnings, msg.errs} {
+			for _, err := range errs {
+				var warning *resolver.UnmetRequirementWarning
+				if !errors.As(err, &warning) {
+					continue
+				}
+				if warning.Requirement.Kind == act.kind && strings.TrimSpace(warning.Requirement.Name) == act.skillName {
+					notes = append(notes, warning.Error())
+				}
 			}
 		}
 		return notes

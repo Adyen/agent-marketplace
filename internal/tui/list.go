@@ -216,7 +216,7 @@ func stylizeFlatItem(it flatItem, width int, compact bool) string {
 		glyphRendered := glyphStyle(g).Render(g)
 		badge := badgeStyle(originBadge(r)).Render(scopeBadgeColumn(r))
 		prereqSuffix := ""
-		if r.Artifact.Implied && !r.Artifact.PreviewOnly {
+		if impliedSelection(r) {
 			prereqSuffix = " " + styleDim.Render("req")
 		}
 		if r.HasUnmetPrerequisite {
