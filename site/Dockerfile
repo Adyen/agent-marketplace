@@ -15,7 +15,7 @@ COPY --chown=1000:1000 package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 RUN pnpm install --frozen-lockfile
 
 COPY --chown=1000:1000 . .
-COPY --from=design --chown=1000:1000 semantic-colors.css /design/semantic-colors.css
+COPY --from=design --chown=1000:1000 semantic-colors.css brand.css /design/
 
 ARG SITE_BASE=/
 ARG SITE_PROFILE=public
