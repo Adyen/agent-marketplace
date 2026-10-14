@@ -9,6 +9,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"slices"
 	"sort"
 
 	"github.com/Adyen/agent-marketplace/internal/harness"
@@ -288,11 +289,7 @@ func canonicalCodexMCPFragment(raw []byte, name string) ([]byte, error) {
 	sort.Slice(edits, func(i, j int) bool { return edits[i].start > edits[j].start })
 	next := append([]byte(nil), raw...)
 	for _, candidate := range edits {
-		patched := make([]byte, 0, len(next)-(candidate.end-candidate.start)+len(candidate.replacement))
-		patched = append(patched, next[:candidate.start]...)
-		patched = append(patched, candidate.replacement...)
-		patched = append(patched, next[candidate.end:]...)
-		next = patched
+		next = slices.Concat(next[:candidate.start], candidate.replacement, next[candidate.end:])
 	}
 	return next, nil
 }

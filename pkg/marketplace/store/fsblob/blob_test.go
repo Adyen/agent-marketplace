@@ -29,6 +29,88 @@ func TestGetBounded(t *testing.T) {
 	}
 }
 
+// spec: marketplace-api/blob-addresses-cannot-escape-storage
+func TestBlobRejectsUnsafeAddresses(t *testing.T) {
+	ctx := context.Background()
+	parent := t.TempDir()
+	root := filepath.Join(parent, "blobs")
+	bs := fsblob.New(root)
+	if err := bs.Put(ctx, "sha256:control", []byte("valid blob")); err != nil {
+		t.Fatal(err)
+	}
+	outside := filepath.Join(parent, "sentinel")
+	if err := os.WriteFile(outside, []byte("preserve me"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	operations := map[string]func(store.ArchiveDigest) error{
+		"get":       func(d store.ArchiveDigest) error { _, err := bs.Get(ctx, d); return err },
+		"bounded":   func(d store.ArchiveDigest) error { _, err := bs.GetBounded(ctx, d, 1024); return err },
+		"put":       func(d store.ArchiveDigest) error { return bs.Put(ctx, d, []byte("overwrite")) },
+		"immutable": func(d store.ArchiveDigest) error { return bs.PutImmutable(ctx, d, []byte("overwrite")) },
+		"exists":    func(d store.ArchiveDigest) error { _, err := bs.Exists(ctx, d); return err },
+		"delete":    func(d store.ArchiveDigest) error { return bs.Delete(ctx, d) },
+	}
+	for _, digest := range []store.ArchiveDigest{"", ".", "..", "../sentinel", "..sentinel", "aa/../../sentinel", "/sentinel", `aa\sentinel`} {
+		for name, operation := range operations {
+			t.Run(name+"/"+string(digest), func(t *testing.T) {
+				if err := operation(digest); !errors.Is(err, store.ErrTopology) {
+					t.Fatalf("unsafe address error = %v, want ErrTopology", err)
+				}
+				if data, err := os.ReadFile(outside); err != nil || string(data) != "preserve me" {
+					t.Fatalf("outside file changed: %q, %v", data, err)
+				}
+			})
+		}
+	}
+	if data, err := bs.Get(ctx, "sha256:control"); err != nil || string(data) != "valid blob" {
+		t.Fatalf("valid blob changed: %q, %v", data, err)
+	}
+}
+
+// spec: marketplace-api/blob-addresses-cannot-escape-storage
+func TestBlobRejectsExternalShardSymlinks(t *testing.T) {
+	ctx := context.Background()
+	root, outside := t.TempDir(), t.TempDir()
+	bs := fsblob.New(root)
+	if err := bs.Put(ctx, "zz-control", []byte("valid blob")); err != nil {
+		t.Fatal(err)
+	}
+	file := filepath.Join(outside, "a256:escape")
+	if err := os.WriteFile(file, []byte("external bytes"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(root, "sh")); err != nil {
+		t.Fatal(err)
+	}
+	if data, err := bs.Get(ctx, "sha256:escape"); err == nil || data != nil {
+		t.Fatalf("external blob read: %q, %v", data, err)
+	}
+	if data, err := bs.GetBounded(ctx, "sha256:escape", 1024); err == nil || data != nil {
+		t.Fatalf("external bounded read: %q, %v", data, err)
+	}
+	if exists, err := bs.Exists(ctx, "sha256:escape"); err == nil || exists {
+		t.Fatalf("external blob stat: %v, %v", exists, err)
+	}
+	for _, mutate := range []func() error{
+		func() error { return bs.Put(ctx, "sha256:escape", []byte("overwrite")) },
+		func() error { return bs.PutImmutable(ctx, "sha256:escape", []byte("overwrite")) },
+		func() error { return bs.Delete(ctx, "sha256:escape") },
+	} {
+		if err := mutate(); err == nil {
+			t.Fatal("mutation through external shard accepted")
+		}
+	}
+	if data, err := os.ReadFile(file); err != nil || string(data) != "external bytes" {
+		t.Fatalf("external file changed: %q, %v", data, err)
+	}
+	if entries, err := os.ReadDir(outside); err != nil || len(entries) != 1 {
+		t.Fatalf("external staging residue: %v, %v", entries, err)
+	}
+	if data, err := bs.Get(ctx, "zz-control"); err != nil || string(data) != "valid blob" {
+		t.Fatalf("valid control changed: %q, %v", data, err)
+	}
+}
+
 func TestBlobRoundTrip(t *testing.T) {
 	ctx := context.Background()
 	bs := fsblob.New(t.TempDir())

@@ -26,9 +26,9 @@ ENV SITE_BASE=${SITE_BASE} \
 RUN if [ "${SITE_PROFILE}" = "docs" ] && [ "${SITE_BASE}" != "/docs/" ]; then \
         echo "docs profile requires SITE_BASE=/docs/" >&2; exit 1; \
     elif [ "${SITE_PROFILE}" = "docs" ]; then \
-        pnpm run build:docs && output=.vitepress/dist-docs; \
+        pnpm run build:docs && output=.vitepress/dist-docs || exit 1; \
     elif [ "${SITE_PROFILE}" = "public" ]; then \
-        pnpm run build && output=.vitepress/dist; \
+        pnpm run build && output=.vitepress/dist || exit 1; \
     else \
         echo "unsupported SITE_PROFILE: ${SITE_PROFILE}" >&2; exit 1; \
     fi; \

@@ -4,7 +4,7 @@ import path from "node:path";
 import { test } from "node:test";
 
 import { createFixture } from "./fixture.js";
-import { runNonTTY } from "./process-helpers.js";
+import { readRegularFile, runNonTTY } from "./process-helpers.js";
 
 // The reinstall support case without an organization Marketplace layer: a user
 // who deletes every personal and generated layer, re-initializes, and syncs
@@ -33,7 +33,7 @@ test("deleting every personal layer then re-initializing recovers the workspace"
 
   const init = runNonTTY(fixture, ["init", "--harnesses", "factory"], 30_000);
   assert.equal(init.status, 0, `${init.stdout}\n${init.stderr}`);
-  const userConfig = fs.readFileSync(userConfigPath, "utf8");
+  const userConfig = readRegularFile(userConfigPath).toString("utf8");
   assert.match(userConfig, /apiVersion: agent-marketplace\/v4/);
   assert.match(userConfig, /harnesses:/);
   assert.match(userConfig, /- factory/);

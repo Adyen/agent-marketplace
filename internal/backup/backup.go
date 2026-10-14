@@ -925,7 +925,7 @@ func rejectSymlinkAncestors(root, target string) error {
 }
 
 func archiveTarget(dstDir, name string) (string, error) {
-	if filepath.IsAbs(name) {
+	if !filepath.IsLocal(name) {
 		return "", fmt.Errorf("backup: invalid archive entry %q", name)
 	}
 	target := filepath.Join(dstDir, name)

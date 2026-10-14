@@ -69,6 +69,7 @@ type row struct {
 	IsMalformed       bool
 	MalformedMsg      string
 	UnavailableReason string
+	UnavailableSoft   bool                   // absent from a loaded registry; a warning that does not block drift
 	DriftItem         *materialize.DriftItem // nil if in sync or available-only
 
 	// Per-scope enablement: which config file(s) enable this skill.
