@@ -49,7 +49,7 @@ export function registryRoute(item: Pick<ResourceListItem, 'registry_id' | 'regi
   return `/registries/${encodeURIComponent(registry)}`
 }
 
-export function resourceLatestRoute(item: ResourceListItem): string {
+export function resourceLatestRoute(item: Pick<ResourceListItem, 'registry_id' | 'registry_slug' | 'kind' | 'name'>): string {
   const registry = item.registry_slug || item.registry_id
   if (!registryRoute(item) || !isSafeResourceRoute(registry, item.kind, item.name)) return ''
   return `/r/${encodeURIComponent(registry)}/${encodeURIComponent(item.kind)}/${encodeURIComponent(item.name)}`
@@ -62,7 +62,7 @@ export function resourceLatestLocator(item: ResourceListItem, browserBase: strin
 }
 
 export function resourceRelationRoute(relation: ResourceRelation): string {
-  return resourceLatestRoute({ registry_id: relation.registry, kind: relation.kind, name: relation.name, revision: '', content_digest: '' })
+  return resourceLatestRoute({ registry_id: relation.registry, kind: relation.kind, name: relation.name })
 }
 
 export type RequirementBadge = 'resolved' | 'external' | 'unresolved'
