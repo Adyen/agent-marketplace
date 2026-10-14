@@ -214,10 +214,115 @@ func loadPortableState(repoRoot string, machineScope bool) (*portableState, erro
 		if entry.Target == "" || clean == "." || clean == ".." || strings.HasPrefix(clean, "../") || filepath.IsAbs(entry.Path) {
 			return nil, fmt.Errorf("invalid materialization manifest entry %q", entry.Path)
 		}
+		if err := admitPortableNomination(hcc.Target(entry.Target), machineScope, entry.Path, clean); err != nil {
+			return nil, err
+		}
 		entry.Path = clean
 		state.entries[portableManifestKey(hcc.Target(entry.Target), clean)] = entry
 	}
 	return state, nil
+}
+
+type portableNominationPartition struct {
+	prefix     string
+	components []string
+	// aggregates holds the partition's shared files as manifest paths, indexed
+	// by scope (repository, then machine).
+	aggregates [2][]string
+}
+
+var portableNominationPartitions = func() map[hcc.Target][]portableNominationPartition {
+	partitions := make(map[hcc.Target][]portableNominationPartition)
+	for _, definition := range targetmeta.Definitions() {
+		if !definition.PartitionedRoots {
+			continue
+		}
+		layout, _ := targetmeta.LookupNativeLayout(definition.Target)
+		for _, partition := range layout.Partitions {
+			nomination := portableNominationPartition{prefix: strings.TrimSuffix(partition.Prefix, "/") + "/", components: partition.Components}
+			for _, aggregate := range partition.Aggregates {
+				nomination.aggregates[0] = append(nomination.aggregates[0], nomination.prefix+aggregate.Project.Path)
+				nomination.aggregates[1] = append(nomination.aggregates[1], nomination.prefix+aggregate.User.Path)
+			}
+			partitions[definition.Target] = append(partitions[definition.Target], nomination)
+		}
+	}
+	return partitions
+}()
+
+// admitPortableNomination refuses a manifest entry that does not name one
+// resource inside a native component directory. Writers record only that
+// shape, while harness target roots also hold shared harness configuration
+// (some of it inside component directories, such as hooks/hooks.json) and the
+// Codex .agents partition holds Agent Marketplace configuration and lockfiles.
+// A digest proves no authorship because committed bytes are public, so a
+// matching digest must not make such a path prunable. Single-root targets get
+// no component allowlist: their declared components are not exhaustive
+// (Gemini subagents, rules), and refusing a genuine entry would block the
+// scope's materialization.
+func admitPortableNomination(target hcc.Target, machineScope bool, path, clean string) error {
+	definition, ok := targetmeta.Lookup(string(target))
+	if !ok {
+		return nil
+	}
+	scope := 0
+	if machineScope {
+		scope = 1
+	}
+	rel, components, aggregates := clean, []string(nil), []string(nil)
+	if definition.PartitionedRoots {
+		matched := false
+		for _, partition := range portableNominationPartitions[target] {
+			if after, ok := strings.CutPrefix(clean, partition.prefix); ok {
+				rel, components, aggregates, matched = after, partition.components, partition.aggregates[scope], true
+				break
+			}
+		}
+		if !matched {
+			return fmt.Errorf("%w: portable %s path %q is outside native destinations", fsboundary.ErrUnsafePath, target, path)
+		}
+	} else {
+		info, ok := harness.TargetInfoFor(target)
+		if !ok {
+			return fmt.Errorf("%w: portable %s path %q has no native layout", fsboundary.ErrUnsafePath, target, path)
+		}
+		aggregates = info.AggregateFilesForScope(machineScope)
+		if target == hcc.TargetWindsurf && !machineScope {
+			if rel, ok = strings.CutPrefix(clean, windsurfDir+"/"); !ok {
+				return fmt.Errorf("%w: portable Windsurf path %q is outside native output", fsboundary.ErrUnsafePath, path)
+			}
+		}
+	}
+	component, resource, _ := strings.Cut(rel, "/")
+	if resource == "" || (definition.PartitionedRoots && !slices.Contains(components, component)) {
+		return fmt.Errorf("%w: portable %s path %q does not name a resource inside a native component", fsboundary.ErrUnsafePath, target, path)
+	}
+	for _, aggregate := range aggregates {
+		if nominationCovers(clean, filepath.ToSlash(filepath.Clean(aggregate))) {
+			return fmt.Errorf("%w: portable %s path %q names shared harness configuration", fsboundary.ErrUnsafePath, target, path)
+		}
+	}
+	return nil
+}
+
+// nominationCovers reports whether nomination equals path or is one of its
+// ancestors. Elements compare case-insensitively because the default macOS
+// and Windows filesystems resolve a case variant to the same file.
+func nominationCovers(nomination, path string) bool {
+	for {
+		element, nominationRest, nominationMore := strings.Cut(nomination, "/")
+		pathElement, pathRest, pathMore := strings.Cut(path, "/")
+		if !strings.EqualFold(element, pathElement) {
+			return false
+		}
+		if !nominationMore {
+			return true
+		}
+		if !pathMore {
+			return false
+		}
+		nomination, path = nominationRest, pathRest
+	}
 }
 
 func (s *portableState) entry(target hcc.Target, path string) (portableManifestEntry, bool) {
@@ -2329,23 +2434,10 @@ func materializeMergeArtifacts(outDir string, artifacts []artifact.Artifact, dry
 			if len(boundary) > 0 {
 				capturedBoundary = boundary[0]
 			}
-			existing, mode, readErr := markerAliasSnapshot(outDir, destPath, capturedBoundary) // follows symlink
+			aliasErr := materializeMarkerAlias(outDir, destPath, capturedBoundary, dryRun) // follows symlink
 			// get target file info for permissions
-			if readErr != nil {
-				return nil, nil, fmt.Errorf("read symlink target %s: %w", destPath, readErr)
-			}
-			if dryRun {
-				continue
-			}
-			if len(existing) > 0 {
-				if mode == 0 {
-					mode = 0o644
-				}
-				if err := atomicWriteFile(destPath, existing, mode); err != nil {
-					return nil, nil, fmt.Errorf("replace symlink %s: %w", destPath, err)
-				}
-			} else if err := os.Remove(destPath); err != nil {
-				return nil, nil, fmt.Errorf("remove symlink %s: %w", destPath, err)
+			if aliasErr != nil {
+				return nil, nil, fmt.Errorf("detach marker symlink %s: %w", destPath, aliasErr)
 			}
 		}
 	}
