@@ -77,6 +77,8 @@ test('real core over authenticated loopback', async ({ page, request }) => {
         const update = await observeAction('update')
 
         const cursor = new client.EventCursor()
+        // Progress stays accepted after a notification; the operation:null snapshot is the completion point (dcfdb679).
+        // Late progress after completion is rejected (openspec/specs/session-feedback/spec.md:10, :26-29).
         const accepted: boolean[] = [
           cursor.accept({ type: 'snapshot', sequence: 2, generation: 2, operation: { id: 9, kind: 'sync' }, payload: snapshot }),
           cursor.accept({ type: 'snapshot', sequence: 2, generation: 2, operation: { id: 9, kind: 'sync' }, payload: snapshot }),
@@ -85,6 +87,8 @@ test('real core over authenticated loopback', async ({ page, request }) => {
           cursor.accept({ type: 'progress', sequence: 5, generation: 2, operation: { id: 8, kind: 'sync' }, payload: { progressSequence: 1, phase: 'x' } }),
           cursor.accept({ type: 'notification', sequence: 6, generation: 2, operation: { id: 9, kind: 'sync' }, payload: { severity: 'info', message: 'done' } }),
           cursor.accept({ type: 'progress', sequence: 7, generation: 2, operation: { id: 9, kind: 'sync' }, payload: { progressSequence: 2, phase: 'x' } }),
+          cursor.accept({ type: 'snapshot', sequence: 8, generation: 2, operation: null, payload: snapshot }),
+          cursor.accept({ type: 'progress', sequence: 9, generation: 2, operation: { id: 9, kind: 'sync' }, payload: { progressSequence: 3, phase: 'x' } }),
         ]
 
         return { rowNames, denied, sync, update, accepted, snapshotStage: snapshot.stage }
@@ -95,7 +99,7 @@ test('real core over authenticated loopback', async ({ page, request }) => {
     expect(result.snapshotStage).toBe('final')
     expect(result.rowNames).toContain('solo')
     expect(result.denied).toBe('rejected:401')
-    expect(result.accepted).toEqual([true, false, false, true, false, true, false])
+    expect(result.accepted).toEqual([true, false, false, true, false, true, true, true, false])
     for (const [run, kind] of [[result.sync, 'sync'], [result.update, 'update']] as const) {
       expect(run.envelope?.type).toBe('snapshot')
       expect(run.operation.kind).toBe(kind)
