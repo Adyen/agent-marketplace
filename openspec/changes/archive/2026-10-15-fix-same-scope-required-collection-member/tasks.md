@@ -13,5 +13,5 @@
 ## 3. Validation and delivery
 
 - [x] 3.1 Run focused tests, `make validate`, `make spec-check`, `make validate-e2e`.
-- [ ] 3.2 Run an adversarial review of the diff and commit the implementation.
-- [ ] 3.3 `openspec archive fix-same-scope-required-collection-member --yes`
+- [x] 3.2 Run an adversarial review of the diff and commit the implementation.
+- [x] 3.3 `openspec archive fix-same-scope-required-collection-member --yes`
