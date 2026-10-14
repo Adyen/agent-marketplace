@@ -103,6 +103,14 @@ func scopedToggleAction(r row, s scope) toggleAction {
 	if act.isMarketplace {
 		act.marketplaceSelection, act.hasMarketplaceSelection = marketplaceSelectionForToggle(r, s)
 	}
+	if impliedScope, implied := impliedToggleScope(r); implied && impliedScope == s {
+		// An expansion-selected implied resource is effectively enabled in the
+		// layer that selected its requiring resource. Toggling it off there
+		// removes any direct selection and writes the effective explicit
+		// exclusion, matching `agent-marketplace remove`.
+		act.enable = false
+		return act
+	}
 	switch s {
 	case scopeGlobal:
 		act.enable = !r.EnabledGlobal
@@ -615,6 +623,8 @@ func (m Model) startToggleOperation(act toggleAction) (tea.Model, tea.Cmd) {
 	if act.enable && !act.isMarketplace && (act.scope == scopeGlobal || act.scope == scopeProject) && hasCollisionError(m.errs, m.modalSkill.Artifact.Kind, m.modalSkill.Artifact.Name) {
 		m.pendingExcludeAction = &act
 	}
+	m.pendingToggle = &act
+	m.pendingTogglePreexisting = preexistingImpliedKeys(m.resolved, m.impliedPreview)
 	return m, correlateOperation(runDependencyScopedToggle(ctxOrBackground(m.ctx), m.workspace, act, m.dependencyLifecycle.Mutate), operation, false)
 }
 

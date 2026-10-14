@@ -237,6 +237,25 @@ func renderDetail(m Model) string {
 	b.WriteString(keyValueTable(m.currentTheme(), fields))
 	b.WriteString("\n")
 
+	if len(r.Prerequisites) > 0 {
+		writeLine(styleDetailLabel.Render("Requires:"))
+		for _, req := range r.Prerequisites {
+			line := fmt.Sprintf("  %s %s %q", req.state.marker(), skill.KindLabel(req.kind), safe(req.name))
+			if req.hint != "" {
+				line += " (from " + safe(req.hint) + ")"
+			}
+			writeLine(value(line))
+		}
+		b.WriteString("\n")
+	}
+	if len(r.Artifact.RequiredBy) > 0 {
+		writeLine(styleDetailLabel.Render("Required by:"))
+		for _, ref := range r.Artifact.RequiredBy {
+			writeLine(value(fmt.Sprintf("  %s %q", skill.KindLabel(ref.Kind), safe(ref.Name))))
+		}
+		b.WriteString("\n")
+	}
+
 	if r.Artifact.Description != "" {
 		b.WriteString("\n")
 		// Word-wrap the description
