@@ -3,6 +3,7 @@ package resolver
 import (
 	"context"
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 
@@ -277,6 +278,51 @@ func TestResolveMarketplaceRequirementFoundIsPreviewOnly(t *testing.T) {
 	}
 	if preview[0].MarketplaceDigest != requiresHelperDig || preview[0].MarketplaceInstanceID != "mp" {
 		t.Fatalf("preview candidate must carry the looked-up identity, got %#v", preview[0])
+	}
+}
+
+func TestResolveMarketplaceRequirementLookupErrorReportedOnce(t *testing.T) {
+	cfg, artifacts := marketplaceRequiresFixture(true, []any{"skill:helper"}, false)
+	lookupErr := errors.New("marketplace unavailable")
+	mp := &recordingMarketplaceLookup{
+		staticMarketplaceResolver: staticMarketplaceResolver{artifacts: artifacts},
+		err:                       lookupErr,
+	}
+
+	_, errs := Resolve(cfg, nil, nil, WithMarketplaceResolver(mp))
+
+	if len(errs) != 1 || !errors.Is(errs[0], lookupErr) {
+		t.Fatalf("errors = %v, want exactly the lookup error", errs)
+	}
+	if unmet := findUnmet(errs); unmet != nil {
+		t.Fatalf("lookup error must not also report an unmet warning, got %v", unmet)
+	}
+}
+
+func TestResolveMarketplaceRequirementPreviewDedupesRequirers(t *testing.T) {
+	cfg, artifacts := marketplaceRequiresFixture(false, []any{"skill:helper"}, false)
+	secondPin := cfg.Marketplaces[0].Resources[0]
+	secondPin.Name = "parent2"
+	cfg.Marketplaces[0].Resources = append(cfg.Marketplaces[0].Resources, secondPin)
+	second := artifacts[0]
+	second.Entry = catalog.Entry{Kind: ir.KindSkill, Name: "parent2", Resource: requiringSkill("parent2", "skill:helper")}
+	second.MarketplaceResourceName = "parent2"
+	second.CatalogKey = config.MarketplaceCatalogKey(cfg.Marketplaces[0], secondPin)
+	artifacts = append(artifacts, second)
+	mp := &recordingMarketplaceLookup{
+		staticMarketplaceResolver: staticMarketplaceResolver{artifacts: artifacts},
+		result:                    MarketplaceRequirementResult{Found: true, ContentDigest: requiresHelperDig},
+	}
+	var preview []ResolvedArtifact
+
+	_, _ = Resolve(cfg, nil, nil, WithMarketplaceResolver(mp), WithImpliedPreview(&preview))
+
+	if len(preview) != 1 || preview[0].Name != "helper" {
+		t.Fatalf("preview = %#v, want one deduplicated helper candidate", preview)
+	}
+	want := []ResourceRef{{Kind: ir.KindSkill, Name: "parent"}, {Kind: ir.KindSkill, Name: "parent2"}}
+	if !slices.Equal(preview[0].RequiredBy, want) {
+		t.Fatalf("preview RequiredBy = %#v, want %#v", preview[0].RequiredBy, want)
 	}
 }
 

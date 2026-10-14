@@ -27,6 +27,8 @@ const (
 	UnmetReasonExcluded            UnmetRequirementReason = "excluded"
 	UnmetReasonSourceNotConfigured UnmetRequirementReason = "source-not-configured"
 	UnmetReasonUnrecorded          UnmetRequirementReason = "unrecorded"
+
+	unmetReasonLookupFailed UnmetRequirementReason = "lookup-failed"
 )
 
 // MarketplaceRequirementQuery asks a configured Marketplace resolver whether
@@ -256,6 +258,7 @@ func expandRequirements(
 		queue[i] = artifact
 	}
 	admitted := make(map[scopedSelection]int)
+	previewAt := make(map[scopedSelection]int)
 
 	for i := 0; i < len(queue); i++ {
 		requirer := queue[i]
@@ -287,13 +290,20 @@ func expandRequirements(
 				switch {
 				case outcome.err != nil:
 					errs = append(errs, outcome.err)
-					unmet[key] = UnmetReasonNotFound
+					unmet[key] = unmetReasonLookupFailed
 				case outcome.admitted != nil:
 					admitted[scopeKey] = len(implied)
 					implied = append(implied, *outcome.admitted)
 					queue = append(queue, *outcome.admitted)
 				case outcome.preview != nil:
-					preview = append(preview, *outcome.preview)
+					if at, seen := previewAt[scopeKey]; seen {
+						if !slices.Contains(preview[at].RequiredBy, ref) {
+							preview[at].RequiredBy = append(preview[at].RequiredBy, ref)
+						}
+					} else {
+						previewAt[scopeKey] = len(preview)
+						preview = append(preview, *outcome.preview)
+					}
 					if expansionEnabled {
 						unmet[key] = UnmetReasonUnrecorded
 					}

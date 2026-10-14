@@ -1209,6 +1209,9 @@ func validateRequirements(resolved []ResolvedArtifact, unmetReasons map[unmetKey
 				continue
 			}
 			reason := unmetReasons[newUnmetKey(artifact, requirement)]
+			if reason == unmetReasonLookupFailed {
+				continue
+			}
 			if reason == "" {
 				reason = UnmetReasonNotFound
 			}
