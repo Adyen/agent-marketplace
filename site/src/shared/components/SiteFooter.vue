@@ -1,10 +1,13 @@
 <script setup lang="ts">
-import { withBase } from 'vitepress'
-import { DOCS_PATH, GITHUB_REPOSITORY_URL } from '../site'
+import { useData, withBase } from 'vitepress'
+import { GITHUB_REPOSITORY_URL } from '../site'
+
+const { theme } = useData()
+const documentationPath = theme.value.siteProfile === 'docs' ? withBase('/') : withBase('/docs/')
 
 const links = [
   { label: 'Apache 2.0 license', href: `${GITHUB_REPOSITORY_URL}/blob/main/LICENSE`, external: true },
-  { label: 'Documentation', href: withBase(DOCS_PATH) },
+  { label: 'Documentation', href: documentationPath },
   { label: 'GitHub ↗', href: GITHUB_REPOSITORY_URL, external: true },
 ]
 </script>

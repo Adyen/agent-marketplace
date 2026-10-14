@@ -165,11 +165,16 @@ type adminOIDCAuthenticator struct {
 	redirectURL string
 	discovery   *lazyOIDCDiscovery
 	client      *http.Client
+	browser     adminBrowserRoutes
 	verifierMu  sync.Mutex
 	idVerifier  *oidc.IDTokenVerifier
 }
 
 func newAdminOIDCAuthenticator(options config.Administration) (*adminOIDCAuthenticator, error) {
+	return newAdminOIDCAuthenticatorWithBrowserBase(options, "")
+}
+
+func newAdminOIDCAuthenticatorWithBrowserBase(options config.Administration, browserBase string) (*adminOIDCAuthenticator, error) {
 	options.Enabled = true
 	if options.Validate() != nil || options.AuthMode() != config.AdminAuthOIDC {
 		return nil, errors.New("invalid OIDC administration configuration")
@@ -194,6 +199,7 @@ func newAdminOIDCAuthenticator(options config.Administration) (*adminOIDCAuthent
 		redirectURL: options.Origin + adminAuthBase + "/callback",
 		discovery:   &lazyOIDCDiscovery{issuer: resolved.Issuer, client: client},
 		client:      client,
+		browser:     resolveAdminBrowserRoutes(browserBase),
 	}, nil
 }
 
@@ -338,9 +344,8 @@ func validAdminIDTokenWindow(issuedAt, expiry, now time.Time) bool {
 		!now.After(expiry.Add(adminClockSkew))
 }
 
-// validAdminNext accepts only /marketplace/admin and descendant paths.
-func validAdminNext(values []string) (string, bool) {
-	const fallback = "/marketplace/admin"
+// validAdminNext accepts only the configured administration root and descendant paths.
+func validAdminNext(values []string, fallback string) (string, bool) {
 	if len(values) == 0 || len(values) == 1 && values[0] == "" {
 		return fallback, true
 	}
@@ -383,18 +388,18 @@ func adminAuthHeaders(w http.ResponseWriter) {
 func (a *adminOIDCAuthenticator) handleLogin(w http.ResponseWriter, r *http.Request) {
 	adminAuthHeaders(w)
 	fail := func(status int, code, message string) {
-		writeAdminOIDCError(w, r, status, code, message, "")
+		writeAdminOIDCError(w, r, a.browser, status, code, message, "")
 	}
 	if !adminRequestProtectionsWithError(w, r, a.options, fail) {
 		return
 	}
-	next, ok := validAdminNext(r.URL.Query()["next"])
+	next, ok := validAdminNext(r.URL.Query()["next"], a.browser.admin)
 	if !ok {
 		fail(http.StatusBadRequest, "authentication_request_invalid", "The sign-in destination is not an administration path.")
 		return
 	}
 	fail = func(status int, code, message string) {
-		writeAdminOIDCError(w, r, status, code, message, next)
+		writeAdminOIDCError(w, r, a.browser, status, code, message, next)
 	}
 	provider, err := a.discovery.provider(a.providerContext(r.Context()))
 	if err != nil {
@@ -430,7 +435,7 @@ func (a *adminOIDCAuthenticator) handleCallback(w http.ResponseWriter, r *http.R
 	adminAuthHeaders(w)
 	next := ""
 	fail := func(status int, code, message string) {
-		writeAdminOIDCError(w, r, status, code, message, next)
+		writeAdminOIDCError(w, r, a.browser, status, code, message, next)
 	}
 	if !adminRequestProtectionsWithError(w, r, a.options, fail) {
 		return
@@ -447,7 +452,7 @@ func (a *adminOIDCAuthenticator) handleCallback(w http.ResponseWriter, r *http.R
 		reject()
 		return
 	}
-	if _, ok := validAdminNext([]string{transaction.Next}); !ok || transaction.Next == "" {
+	if _, ok := validAdminNext([]string{transaction.Next}, a.browser.admin); !ok || transaction.Next == "" {
 		reject()
 		return
 	}

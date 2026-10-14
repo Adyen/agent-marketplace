@@ -286,6 +286,10 @@ func repositoryLocalSourceRel(res resolver.ResolvedArtifact, repoRoot string) (s
 	return filepath.ToSlash(rel), true, nil
 }
 
+func hookSupportSlugRune(r rune) bool {
+	return (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '.' || r == '_' || r == '-'
+}
+
 func hookSupportSlug(res resolver.ResolvedArtifact) string {
 	raw := ""
 	if res.IsMarketplace {
@@ -308,8 +312,7 @@ func hookSupportSlug(res resolver.ResolvedArtifact) string {
 	var b strings.Builder
 	lastDash := false
 	for _, r := range raw {
-		ok := (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '.' || r == '_' || r == '-'
-		if !ok {
+		if !hookSupportSlugRune(r) {
 			if lastDash {
 				continue
 			}

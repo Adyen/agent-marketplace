@@ -42,23 +42,23 @@ spec:
       targetPort: http
       protocol: TCP
 {{- end }}
-{{- if .Values.site.enabled }}
+{{- if .Values.docs.enabled }}
 ---
 apiVersion: v1
 kind: Service
 metadata:
-  name: {{ include "agent-marketplace.componentName" (dict "root" . "component" "site") }}
+  name: {{ include "agent-marketplace.componentName" (dict "root" . "component" "docs") }}
   labels:
     {{- include "agent-marketplace.labels" . | nindent 4 }}
-    app.kubernetes.io/component: site
+    app.kubernetes.io/component: docs
 spec:
-  type: {{ .Values.service.site.type }}
+  type: {{ .Values.service.docs.type }}
   selector:
     {{- include "agent-marketplace.selectorLabels" . | nindent 4 }}
-    app.kubernetes.io/component: site
+    app.kubernetes.io/component: docs
   ports:
     - name: http
-      port: {{ .Values.service.site.port }}
+      port: {{ .Values.service.docs.port }}
       targetPort: http
       protocol: TCP
 {{- end }}

@@ -2474,7 +2474,7 @@ func TestNativeRepositoryHookSupportManifestGenerationSwapRefusesCopy(t *testing
 		if err != nil {
 			t.Fatal(err)
 		}
-		state.add(hcc.TargetFactory, "external-sentinel", portableArtifactDigest(artifact.Artifact{Bytes: []byte("foreign manifest entry\n"), Mode: 0o600}))
+		state.add(hcc.TargetClaude, "skills/external-sentinel/SKILL.md", portableArtifactDigest(artifact.Artifact{Bytes: []byte("foreign manifest entry\n"), Mode: 0o600}))
 		if err := state.save(false); err != nil {
 			t.Fatal(err)
 		}

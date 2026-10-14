@@ -634,6 +634,7 @@ func newGitHTTPServer(t *testing.T, projectRoot string) *httptest.Server {
 	}))
 }
 
+// spec: site-deployment-profiles/legacy-marketplace-links-reach-the-root-mounted-interface
 func TestMarketplaceProxyRoutingContract(t *testing.T) {
 	root, err := filepath.Abs("..")
 	if err != nil {
@@ -651,10 +652,13 @@ func TestMarketplaceProxyRoutingContract(t *testing.T) {
 		for _, fragment := range []string{
 			"location = /.well-known/agent-marketplace.json {\n        proxy_pass http://marketplace_api;",
 			"location /api/ {\n        proxy_pass http://marketplace_api;",
-			"location = /marketplace {\n        return 308 /marketplace/;",
-			"location /marketplace/ {\n        proxy_pass http://marketplace_web;",
-			"location /_fonts/ {\n        proxy_pass http://marketplace_web;",
-			"location / {\n        proxy_pass http://landing_site;",
+			"location = /docs {\n        return 308 /docs/;",
+			"location /docs/ {\n        proxy_pass http://marketplace_docs;",
+			"location = /marketplace {\n        return 308 /$is_args$args;",
+			"location = /marketplace/ {\n        return 308 /$is_args$args;",
+			"location ~ (?s)^/marketplace/(?<legacy_browser_path>[^/].*)$ {",
+			"return 308 /$legacy_browser_path$is_args$args;",
+			"location / {\n        proxy_pass http://marketplace_web;",
 			"absolute_redirect off;",
 			"location = /readyz { return 404; }",
 			"location = /metrics { return 404; }",
@@ -663,8 +667,60 @@ func TestMarketplaceProxyRoutingContract(t *testing.T) {
 				t.Errorf("%s missing routing contract fragment %q", relative, fragment)
 			}
 		}
-		if strings.Contains(config, "location /marketplace/ {\n        proxy_pass http://marketplace_api;") {
-			t.Errorf("%s routes browser pages to the API", relative)
+		for _, fragment := range []string{
+			"location / {\n        proxy_pass http://marketplace_api;",
+			"location / {\n        proxy_pass http://marketplace_docs;",
+			"location /docs/ {\n        proxy_pass http://marketplace_web;",
+		} {
+			if strings.Contains(config, fragment) {
+				t.Errorf("%s contains conflicting routing contract fragment %q", relative, fragment)
+			}
+		}
+	}
+	operatorRelative := "deploy/compose/sqlite-filesystem/nginx-operator.local.conf"
+	operatorData, err := os.ReadFile(filepath.Join(root, operatorRelative))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, fragment := range []string{
+		"location = /marketplace { return 308 /$is_args$args; }",
+		"location = /marketplace/ { return 308 /$is_args$args; }",
+		"location ~ (?s)^/marketplace/(?<legacy_browser_path>[^/].*)$ {",
+		"return 308 /$legacy_browser_path$is_args$args;",
+	} {
+		if !strings.Contains(string(operatorData), fragment) {
+			t.Errorf("%s missing routing contract fragment %q", operatorRelative, fragment)
+		}
+	}
+}
+
+// spec: site-deployment-profiles/legacy-documentation-values-fail-with-migration-guidance
+func TestMarketplaceHelmRejectsLegacySiteValues(t *testing.T) {
+	root, err := filepath.Abs("..")
+	if err != nil {
+		t.Fatal(err)
+	}
+	helper, err := os.ReadFile(filepath.Join(root, "deploy/helm/agent-marketplace/templates/_helpers.tpl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, fragment := range []string{
+		`hasKey .Values "site"`,
+		`values.site was renamed to values.docs`,
+		`hasKey .Values.service "site"`,
+		`values.service.site was renamed to values.service.docs`,
+	} {
+		if !strings.Contains(string(helper), fragment) {
+			t.Errorf("Helm validation missing legacy-value migration contract %q", fragment)
+		}
+	}
+	values, err := os.ReadFile(filepath.Join(root, "deploy/helm/agent-marketplace/values.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, fragment := range []string{"\ndocs:\n", "\n  docs:\n", "repository: agent-marketplace-docs", "basePath: /"} {
+		if !strings.Contains(string(values), fragment) {
+			t.Errorf("current Helm values missing documentation profile contract %q", fragment)
 		}
 	}
 }
@@ -676,17 +732,17 @@ func TestMarketplaceComposeServesBothUIsUnderOneOrigin(t *testing.T) {
 	}
 	for _, tc := range []struct {
 		relative      string
-		siteContext   string
+		docsContext   string
 		designContext string
 	}{
 		{
 			relative:      "compose.yaml",
-			siteContext:   "./site",
+			docsContext:   "./site",
 			designContext: "./design",
 		},
 		{
 			relative:      "deploy/compose/postgres-s3/compose.yaml",
-			siteContext:   "../../../site",
+			docsContext:   "../../../site",
 			designContext: "../../../design",
 		},
 	} {
@@ -696,10 +752,14 @@ func TestMarketplaceComposeServesBothUIsUnderOneOrigin(t *testing.T) {
 		}
 		config := string(data)
 		for _, fragment := range []string{
-			"  site:\n    platform: *marketplace-platform",
-			"context: " + tc.siteContext,
+			"  web:\n    platform: *marketplace-platform",
+			"  docs:\n    platform: *marketplace-platform",
+			"context: " + tc.docsContext,
 			"additional_contexts:\n        design: " + tc.designContext,
-			"NUXT_APP_BASE_URL: /marketplace/",
+			"NUXT_APP_BASE_URL: /",
+			"SITE_PROFILE: docs",
+			"SITE_BASE: /docs/",
+			"MARKETPLACE_BASE: /",
 		} {
 			if !strings.Contains(config, fragment) {
 				t.Errorf("%s missing combined UI fragment %q", tc.relative, fragment)

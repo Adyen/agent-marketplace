@@ -36,15 +36,30 @@ func TestNestedOpenFailureClosesCapturedDirectories(t *testing.T) {
 		}
 		return len(names)
 	}
+	if err := os.Link(filepath.Join(path, "nested", "valid"), filepath.Join(path, "nested", "linked")); err != nil {
+		t.Fatal(err)
+	}
+	mustMkdir(t, filepath.Join(path, "nested", "directory"))
+	mustSymlink(t, "valid", filepath.Join(path, "nested", "alias"))
 	before := countDescriptors()
 	for range 64 {
-		file, _, err := root.OpenFile("nested/missing/leaf")
-		if file != nil {
-			_ = file.Close()
-			t.Fatal("failed open returned a descriptor")
-		}
-		if !errors.Is(err, fs.ErrNotExist) {
-			t.Fatalf("wrong refusal: %v", err)
+		for _, refusal := range []struct {
+			name string
+			want error
+		}{
+			{"nested/missing/leaf", fs.ErrNotExist},
+			{"nested/linked", ErrUnsafeFile},
+			{"nested/directory", ErrUnsafeFile},
+			{"nested/alias", ErrUnsafePath},
+		} {
+			file, _, err := root.OpenFile(refusal.name)
+			if file != nil {
+				_ = file.Close()
+				t.Fatal("failed open returned a descriptor")
+			}
+			if !errors.Is(err, refusal.want) {
+				t.Fatalf("wrong refusal for %s: %v", refusal.name, err)
+			}
 		}
 	}
 	after := countDescriptors()

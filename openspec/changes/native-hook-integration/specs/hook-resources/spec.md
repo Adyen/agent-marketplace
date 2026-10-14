@@ -125,6 +125,21 @@ input SHALL refuse native publication.
 - **AND** the handwritten handler bytes MUST be present in the native file before the generated handler
 - **AND** the copied handlers MUST NOT become owned
 
+#### Scenario: Portable admission retains native hook support boundaries
+
+- **WHEN** a selected captured Windsurf native hook declares support files, and
+  sync, check, retry, or removal runs in file mode
+- **THEN** a portable manifest entry naming a path below
+  `<support root>/<source key>/<hook name>/` MUST remain admissible, so the
+  published support is retained on repeat and removed on deselection
+- **AND** entries naming the support root, a source-key directory, a hook
+  directory, a malformed source key, shared aggregate configuration, or a path
+  outside both `.windsurf/` and the declared support root MUST be refused with
+  the existing unsafe-path diagnostic and their files preserved
+- **AND** admission MUST remain namespace containment; a matching digest inside
+  the admitted support namespace carries the same ownership contract as other
+  targets' support namespaces
+
 ### Requirement: Native hook files are reversed into canonical events
 
 Each harness target's source layout SHALL ingest its native hook file while
