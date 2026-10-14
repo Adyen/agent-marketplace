@@ -18,7 +18,7 @@ Then pick the section below that matches what you want to do.
 
 You want skills and other resources in your editor, and you want them to stay the same for everyone on the team.
 
-The [user-journey map](./explanation/user-journeys.md) follows a resource from finding and inspecting it, through installing and sharing it, to updating, removing, and recovering it. It gives steps for the browser, the CLI, and the TUI.
+The [user-journey map](./explanation/user-journeys.md) follows a resource from finding and inspecting it, through installing and sharing it, to updating, removing, and recovering it. It explains what each stage decides and links to the guide that walks through it.
 
 | Goal | Read |
 |---|---|
@@ -58,11 +58,12 @@ You run the hosted service that indexes and curates registries for an organizati
 |---|---|
 | See the whole thing working on your laptop | [Tutorial: run a local Marketplace](./tutorials/run-a-local-marketplace.md) |
 | Add a registry from the admin panel for the first time | [Tutorial: add your first registry](./tutorials/add-your-first-marketplace-registry.md) |
-| Deploy it for real | [Deploy a production Marketplace](./how-to/operator/deploy-a-production-marketplace.md) · [Configure a reverse proxy](./how-to/operator/configure-a-reverse-proxy.md) |
+| Deploy it for real | [Deploy a production Marketplace](./how-to/operator/deploy-a-production-marketplace.md) · [Test locally with Compose](./how-to/operator/test-locally-with-compose.md) · [Configure a reverse proxy](./how-to/operator/configure-a-reverse-proxy.md) |
+| Review submissions and policy in a browser | [Enable and use the admin panel](./how-to/operator/enable-and-use-the-admin-panel.md) |
 | Index a registry that needs credentials | [Connect a private registry](./how-to/operator/connect-a-private-registry.md) |
 | Decide what is allowed in | [Manage ingestion policy](./how-to/operator/manage-ingestion-policy.md) |
 | Pull something bad | [Revoke a resource revision](./how-to/operator/revoke-a-resource.md) |
-| Keep it healthy and recoverable | [Reindex and monitor](./how-to/operator/reindex-and-monitor.md) · [Back up and restore](./how-to/operator/back-up-and-restore.md) |
+| Keep it healthy and recoverable | [Reindex and monitor](./how-to/operator/reindex-and-monitor.md) · [Reset and reindex a registry](./how-to/operator/reset-and-reindex-a-registry.md) · [Back up and restore](./how-to/operator/back-up-and-restore.md) |
 | Understand the moving parts and the trust boundary | [Marketplace architecture](./explanation/marketplace-architecture.md) · [Marketplace trust model](./explanation/marketplace-trust-model.md) |
 
 ## Reference
@@ -71,7 +72,7 @@ Exact descriptions of commands, files, and fields.
 
 - CLI: [command line](./reference/cli.md) · [TUI](./reference/tui.md) · [environment variables](./reference/environment-variables.md) · [diagnostics](./reference/diagnostics.md) · [logging](./reference/logging.md) · [telemetry](./reference/telemetry.md)
 - Consumer files: [repository configuration](./reference/configuration.md) · [configuration layers](./reference/configuration-layers.md) · [lockfiles](./reference/lockfiles.md) · [filesystem layout](./reference/filesystem-layout.md) · [harnesses and output paths](./reference/harnesses-and-output-paths.md)
-- Registry files: [registry layout](./reference/registry-layout.md) · [resource metadata](./reference/resource-metadata.md) · [collections](./reference/collections.md)
+- Registry files: [registry layout](./reference/registry-layout.md) · [resource metadata](./reference/resource-metadata.md) · [resource prerequisites](./reference/resource-prerequisites.md) · [collections](./reference/collections.md)
 - Marketplace: [operator configuration](./reference/marketplace-operator-configuration.md) · [HTTP API](./reference/marketplace-http-api.md) · [health and metrics](./reference/marketplace-health-and-metrics.md) · [resource locators](./reference/marketplace-resource-locators.md)
 
 ## Explanation
