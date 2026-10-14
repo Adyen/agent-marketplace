@@ -12,5 +12,5 @@
 ## 3. Verify and document
 
 - [x] 3.1 Add a deterministic tools/tui-qa journey for detail sections and toggle feedback.
-- [ ] 3.2 Reconcile published TUI and prerequisite documentation.
-- [ ] 3.3 Run `openspec archive tui-requirements --yes` in the same pull request as the implementation.
+- [x] 3.2 Reconcile published TUI and prerequisite documentation.
+- [x] 3.3 Run `openspec archive tui-requirements --yes` in the same pull request as the implementation.
