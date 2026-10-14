@@ -32,6 +32,18 @@ func (coordinateFailureMetadata) GetLatestResourceRevision(context.Context, stor
 	return store.AssessedResourceRevision{}, errors.New("store failure")
 }
 
+type occurrenceFailureMetadata struct {
+	store.MetadataStore
+}
+
+func (occurrenceFailureMetadata) GetRegistryBySlug(context.Context, string) (store.Registry, error) {
+	return store.Registry{ID: "registry\r\nforged"}, nil
+}
+
+func (occurrenceFailureMetadata) GetRegistryOccurrence(context.Context, store.RegistryID, string) (store.RegistryOccurrence, error) {
+	return store.RegistryOccurrence{}, errors.New("store failure")
+}
+
 func captureLogAttributes(t *testing.T) map[string]string {
 	t.Helper()
 	previous := slog.Default()
@@ -70,5 +82,19 @@ func TestResourceFailureEncodesCoordinateLogAttribute(t *testing.T) {
 	}
 	if attributes["coord"] != `mp/registry/skill/name\r\nforged` || attributes["err"] != "store failure" {
 		t.Fatalf("unencoded coordinate attributes: %#v", attributes)
+	}
+}
+
+func TestRegistryOccurrenceFailureEncodesStoredRegistryID(t *testing.T) {
+	attributes := captureLogAttributes(t)
+	server := &Server{meta: occurrenceFailureMetadata{}}
+	response := httptest.NewRecorder()
+	commit := "0123456789abcdef0123456789abcdef01234567"
+	server.handleRegistryOccurrence(response, httptest.NewRequest(http.MethodGet, "/api/v1/registries/example/occurrences/"+commit, nil), "example", commit)
+	if response.Code != http.StatusInternalServerError {
+		t.Fatalf("response = %d, want 500", response.Code)
+	}
+	if attributes["registry"] != `registry\r\nforged` || attributes["commit"] != commit {
+		t.Fatalf("unencoded registry attributes: %#v", attributes)
 	}
 }

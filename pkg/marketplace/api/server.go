@@ -913,7 +913,7 @@ func (s *Server) handleRegistryOccurrence(w http.ResponseWriter, r *http.Request
 			writeError(w, http.StatusNotFound, "registry occurrence not found")
 			return
 		}
-		slog.Error("registry occurrence failed", "registry", src.ID, "commit", logvalue.Safe(commit), "err", logvalue.Safe(err))
+		slog.Error("registry occurrence failed", "registry", logvalue.Safe(src.ID), "commit", logvalue.Safe(commit), "err", logvalue.Safe(err))
 		writeError(w, http.StatusInternalServerError, "failed to load registry occurrence")
 		return
 	}
@@ -922,7 +922,7 @@ func (s *Server) handleRegistryOccurrence(w http.ResponseWriter, r *http.Request
 		return
 	}
 	if occurrence.RegistryID != src.ID || occurrence.Commit != commit {
-		slog.Error("registry occurrence did not match requested identity", "registry", src.ID, "commit", logvalue.Safe(commit), "occurrence_registry", occurrence.RegistryID, "occurrence_commit", logvalue.Safe(occurrence.Commit))
+		slog.Error("registry occurrence did not match requested identity", "registry", logvalue.Safe(src.ID), "commit", logvalue.Safe(commit), "occurrence_registry", logvalue.Safe(occurrence.RegistryID), "occurrence_commit", logvalue.Safe(occurrence.Commit))
 		writeError(w, http.StatusInternalServerError, "failed to load registry occurrence")
 		return
 	}
@@ -964,14 +964,14 @@ func (s *Server) handleRegistryHistory(w http.ResponseWriter, r *http.Request, s
 
 	history, err := s.meta.RegistryHistory(r.Context(), src.ID)
 	if err != nil {
-		slog.Error("registry history failed", "registry", src.ID, "err", logvalue.Safe(err))
+		slog.Error("registry history failed", "registry", logvalue.Safe(src.ID), "err", logvalue.Safe(err))
 		writeError(w, http.StatusInternalServerError, "failed to load registry history")
 		return
 	}
 	history = boundRegistryHistory(history)
 	for _, occurrence := range history {
 		if err := validatePublicRegistryOccurrence(occurrence); err != nil {
-			slog.Error("registry history contains invalid occurrence", "registry", src.ID, "err", logvalue.Safe(err))
+			slog.Error("registry history contains invalid occurrence", "registry", logvalue.Safe(src.ID), "err", logvalue.Safe(err))
 			writeError(w, http.StatusInternalServerError, "failed to load registry history")
 			return
 		}
