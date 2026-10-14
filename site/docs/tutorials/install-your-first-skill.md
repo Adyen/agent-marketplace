@@ -44,14 +44,14 @@ The command creates `~/.agents/config.yaml` and prints its path:
 Initialized user personal config: <home>/.agents/config.yaml
 ```
 
-If it prints `User personal config already initialized.` instead, you already have a personal configuration. Step 3 replaces that file, and the `sync` after it removes anything your old configuration installed into your personal harness folders. Copy the configuration and its lockfile first (the second copy is skipped if you have no lockfile):
+If it prints `User personal config already initialized.` instead, you already have a personal configuration. Step 3 replaces that file, and the `sync` after it removes anything your old configuration installed into your personal harness folders. Copy the configuration and its lockfile first (the second copy fails silently if you have no lockfile, which is harmless):
 
 ```bash
 cp ~/.agents/config.yaml ~/.agents/config.yaml.bak
 cp ~/.agents/lock.yaml ~/.agents/lock.yaml.bak 2>/dev/null
 ```
 
-To undo the tutorial afterwards, copy the two `.bak` files back over `~/.agents/` and run `agent-marketplace sync`; [Back up and restore machine resources](../how-to/back-up-and-restore-machine-resources.md) covers the fuller procedure.
+If you made the `.bak` copies, you can undo the tutorial afterwards by copying them back over `~/.agents/` and running `agent-marketplace sync`; [Back up and restore machine resources](../how-to/back-up-and-restore-machine-resources.md) covers the fuller procedure.
 
 Check which harness is selected:
 
