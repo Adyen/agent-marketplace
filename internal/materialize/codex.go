@@ -9,6 +9,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"slices"
 	"sort"
 
 	"github.com/Adyen/agent-marketplace/internal/harness"
@@ -112,11 +113,23 @@ func (codexOwnedAggregateHandler) reconcile(ctx context.Context, report *Report,
 		if !destination.Info.OwnershipReconciledAggregates {
 			continue
 		}
-		hookOptions := codexHookJSONOptions()
-		hookOptions.rootID = destination.ID
-		hookOptions.onWrite = appendCodexTrustReviewDiagnostic
-		hookFile := ownedJSONFileSpec{rel: codexHooksFile, container: codexHooksContainer, rawValueDigest: true}
-		report = reconcileOwnedJSONAggregates(ctx, report, key, destination.Root, []ownedJSONFileSpec{hookFile}, current.hooks, hookOptions, dryRun)
+		session, hasSession := state.writeSession(destination.Root)
+		if !state.reconcilesNativeHooks(key) {
+			hookOptions := codexHookJSONOptions()
+			hookOptions.rootID = destination.ID
+			hookOptions.onWrite = appendCodexTrustReviewDiagnostic
+			if hasSession {
+				hookOptions.store = session.store
+				hookOptions.lockReport = session.lockReport
+				hookOptions.deferLockDiagnostics = true
+				hookOptions.storeSessionHeld = true
+			}
+			hookFile := ownedJSONFileSpec{rel: codexHooksFile, container: codexHooksContainer, rawValueDigest: true}
+			report = reconcileOwnedJSONAggregates(ctx, report, key, destination.Root, []ownedJSONFileSpec{hookFile}, current.hooks, hookOptions, dryRun)
+		}
+		if hasSession {
+			return reconcileCodexMCPWithSession(ctx, report, key, destination.ID, destination.Root, current.mcps, current.blocked, dryRun, &session)
+		}
 		return reconcileCodexMCP(ctx, report, key, destination.ID, destination.Root, current.mcps, current.blocked, dryRun)
 	}
 	return report
@@ -131,6 +144,13 @@ func codexHookJSONOptions() ownedJSONReconcileOptions {
 		satisfiedCode:      diag.CodeMaterializeCodexHookSatisfiedByUnmanaged,
 		prunePostponedCode: diag.CodeMaterializeCodexAggregatePrunePostponed,
 	}
+}
+
+func (codexOwnedAggregateHandler) nativeHookReconcileOptions() ownedJSONReconcileOptions {
+	options := codexHookJSONOptions()
+	options.rawValueDigest = true
+	options.onWrite = appendCodexTrustReviewDiagnostic
+	return options
 }
 
 type codexMCPEntry struct {
@@ -269,11 +289,7 @@ func canonicalCodexMCPFragment(raw []byte, name string) ([]byte, error) {
 	sort.Slice(edits, func(i, j int) bool { return edits[i].start > edits[j].start })
 	next := append([]byte(nil), raw...)
 	for _, candidate := range edits {
-		patched := make([]byte, 0, len(next)-(candidate.end-candidate.start)+len(candidate.replacement))
-		patched = append(patched, next[:candidate.start]...)
-		patched = append(patched, candidate.replacement...)
-		patched = append(patched, next[candidate.end:]...)
-		next = patched
+		next = slices.Concat(next[:candidate.start], candidate.replacement, next[candidate.end:])
 	}
 	return next, nil
 }
@@ -402,6 +418,10 @@ func lineEnd(raw []byte, offset int) int {
 }
 
 func reconcileCodexMCP(ctx context.Context, report *Report, key outputKey, rootID, root string, desired []codexMCPEntry, incomplete, dryRun bool) *Report {
+	return reconcileCodexMCPWithSession(ctx, report, key, rootID, root, desired, incomplete, dryRun, nil)
+}
+
+func reconcileCodexMCPWithSession(ctx context.Context, report *Report, key outputKey, rootID, root string, desired []codexMCPEntry, incomplete, dryRun bool, sharedSession *ownedAggregateWriteSession) *Report {
 	slog.Debug("Codex MCP reconciliation start", "target", key.target, "machine_scope", key.machineScope, "root", root, "desired_entries", len(desired), "incomplete", incomplete, "dry_run", dryRun)
 	seen := make(map[string]string, len(desired))
 	for _, entry := range desired {
@@ -423,12 +443,21 @@ func reconcileCodexMCP(ctx context.Context, report *Report, key outputKey, rootI
 			return codexMCPDiag(report, key, fmt.Errorf("create Codex config root: %w", err))
 		}
 	}
-	store, err := ownership.Open(root)
-	if err != nil {
-		return codexMCPDiag(report, key, err)
+	var store *ownership.Store
+	var lockReport *ownedAggregateLockReporter
+	var err error
+	if sharedSession != nil {
+		store = sharedSession.store
+		lockReport = sharedSession.lockReport
+	} else {
+		lockReport = newOwnedAggregateLockReporter(key, root)
+		store, err = ownership.Open(root, ownership.WithLockObserver(lockReport.observe))
+		if err != nil {
+			return codexMCPDiag(report, key, err)
+		}
 	}
 	reconcile := func() error {
-		if !dryRun {
+		if !dryRun && sharedSession == nil {
 			if _, err := store.Recover(); err != nil {
 				return err
 			}
@@ -552,7 +581,7 @@ func reconcileCodexMCP(ctx context.Context, report *Report, key outputKey, rootI
 		}
 		return err
 	}
-	if dryRun {
+	if dryRun || sharedSession != nil {
 		err = reconcile()
 	} else {
 		err = store.WithWriteSessionContext(ctx, "reconcile-codex-mcp", reconcile)
@@ -560,12 +589,21 @@ func reconcileCodexMCP(ctx context.Context, report *Report, key outputKey, rootI
 	if err != nil {
 		return codexMCPDiag(report, key, err)
 	}
+	if sharedSession == nil {
+		report.Diags = append(report.Diags, lockReport.diags()...)
+	}
 	slog.Debug("Codex MCP reconciliation complete", "target", key.target, "machine_scope", key.machineScope, "root", root, "dry_run", dryRun)
 	return report
 }
 
 func appendCodexTrustReviewDiagnostic(report *Report, key outputKey, rel string, dryRun bool) {
-	if report == nil || key.target != targetmeta.TargetCodex || key.machineScope {
+	if report == nil || key.target != targetmeta.TargetCodex {
+		return
+	}
+	if key.machineScope {
+		if rel == codexHooksFile {
+			report.Diags = append(report.Diags, nativeHookReviewDiagnostic(key, rel, dryRun))
+		}
 		return
 	}
 	nativePath := path.Join(path.Dir(codexHooksArtifactPath), filepath.ToSlash(rel))

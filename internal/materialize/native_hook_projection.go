@@ -3,6 +3,7 @@ package materialize
 import (
 	"errors"
 	"fmt"
+	"io/fs"
 	"path"
 	"path/filepath"
 	"sort"
@@ -79,7 +80,7 @@ func prepareNativeHookProjection(w skillTarget, repoRoot string) (nativeHookProj
 	if err != nil {
 		return nativeHookProjection{}, errors.Join(errNativeHookSourceUnavailable, err)
 	}
-	sourceKey, err := hookSupportSourceKey(res)
+	sourceKey, err := hookSupportSourceKeyForScope(w, repoRoot)
 	if err != nil {
 		return nativeHookProjection{}, err
 	}
@@ -149,7 +150,7 @@ func prepareNativeHookProjectionSource(res resolver.ResolvedArtifact, hook *ir.H
 			return nil, "", nil, err
 		}
 		projection.SourceHarness = string(sourceHarness)
-		excluded, _ := nativeHookSourceExclusions(projection, definitionDir)
+		excluded, _ := hookSupportExclusions(projection, definitionDir)
 		definitionName := path.Base(definition)
 		peers := make([]string, 0, len(excluded))
 		for peer := range excluded {
@@ -158,7 +159,7 @@ func prepareNativeHookProjectionSource(res resolver.ResolvedArtifact, hook *ir.H
 			}
 		}
 		sort.Strings(peers)
-		snapshot, err := captureHookSourceSnapshot(root, definition, definitionDir, peers...)
+		snapshot, err := captureHookSourceSnapshotForReader(root, definition, definitionDir, peers...)
 		if err != nil {
 			return nil, "", nil, err
 		}
@@ -239,6 +240,68 @@ func nativeHookProjectionSupportDir(supportDir, prefix string) (string, error) {
 		return strings.TrimPrefix(supportDir, prefix+"/"), nil
 	}
 	return "", fmt.Errorf("hook support directory %q is outside destination prefix %q", supportDir, prefix)
+}
+
+func extendNativeHookProjectionPruneFence(target hcc.Target, machineScope bool, pruneRoot string, destinations []harness.Destination, protected map[string]bool) map[string]bool {
+	if machineScope {
+		return protected
+	}
+	layout, ok := nativeHookLayoutFor(target, false)
+	if !ok {
+		return protected
+	}
+	declaration, ok := targetmeta.LookupHookProjection(targetmeta.Target(target))
+	if !ok {
+		return protected
+	}
+	file := declaration.File(false)
+	destination, nativeRel, err := nativeHookProjectionDestination(destinations, file)
+	if err != nil || nativeRel != layout.rel || file.Member != layout.container {
+		return protected
+	}
+	var valid bool
+	protected, valid = addNativeHookPrunePath(protected, pruneRoot, destination.Root, nativeRel, false)
+	if !valid {
+		return protected
+	}
+	supportRel, err := nativeHookProjectionSupportDir(declaration.SupportDir, destination.Prefix)
+	if err != nil {
+		return protected
+	}
+	protected, _ = addNativeHookPrunePath(protected, pruneRoot, destination.Root, supportRel, true)
+	return protected
+}
+
+func addNativeHookPrunePath(protected map[string]bool, pruneRoot, destinationRoot, relative string, directory bool) (map[string]bool, bool) {
+	if pruneRoot == "" || destinationRoot == "" || relative == "" || !fs.ValidPath(relative) || path.IsAbs(relative) || path.Clean(relative) != relative {
+		return protected, false
+	}
+	pruneRootAbs, err := filepath.Abs(filepath.Clean(pruneRoot))
+	if err != nil {
+		return protected, false
+	}
+	destinationRootAbs, err := filepath.Abs(filepath.Clean(destinationRoot))
+	if err != nil {
+		return protected, false
+	}
+	rel, err := filepath.Rel(pruneRootAbs, filepath.Join(destinationRootAbs, filepath.FromSlash(relative)))
+	if err != nil {
+		return protected, false
+	}
+	if filepath.IsAbs(rel) || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return protected, true
+	}
+	if protected == nil {
+		protected = make(map[string]bool)
+	}
+	key := filepath.ToSlash(rel)
+	if key == "." {
+		return protected, false
+	} else if directory {
+		key = strings.TrimSuffix(key, "/") + "/"
+	}
+	protected[key] = true
+	return protected, true
 }
 
 // hookProjectionCommandBase resolves the support base the projection embeds

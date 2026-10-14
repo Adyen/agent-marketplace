@@ -6,7 +6,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
+	"path"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -28,6 +30,8 @@ const hookSourceFingerprintMaxBytes = 64 << 20
 // ReadDir call may accumulate at once; enumeration keeps working in batches so
 // a hostile directory cannot force an unbounded entry slice.
 const hookSourceFingerprintReadDirBatch = 128
+
+const maxContainedFingerprintAliasExpansions = 40
 
 // HookSourceFingerprintScope is the scope vocabulary the version-1 fingerprint
 // serializes.
@@ -58,19 +62,6 @@ type HookSourceFingerprintInput struct {
 	// DefinitionRel is the slash-separated, source-layout-relative path of the
 	// original hook definition (for example "hooks/hooks.json").
 	DefinitionRel string
-}
-
-// hookSourceFingerprintField appends one length-prefixed field so concatenated
-// fields cannot be re-parsed ambiguously. The format is frozen by the shared
-// golden vectors in testdata/hook-source-fingerprint-v1.json.
-func hookSourceFingerprintField(buf, field []byte) []byte {
-	buf = append(buf, []byte(strconv.Itoa(len(field)))...)
-	buf = append(buf, ':')
-	return append(buf, field...)
-}
-
-func hookSourceFingerprintFieldString(buf []byte, field string) []byte {
-	return hookSourceFingerprintField(buf, []byte(field))
 }
 
 type hookSourceFingerprintFile struct {
@@ -113,6 +104,19 @@ func serializeHookSourceFingerprint(in HookSourceFingerprintInput, definition []
 	}
 	sum := sha256.Sum256(buf)
 	return "sha256:" + hex.EncodeToString(sum[:])
+}
+
+// hookSourceFingerprintField appends one length-prefixed field so concatenated
+// fields cannot be re-parsed ambiguously. The format is frozen by the shared
+// golden vectors in testdata/hook-source-fingerprint-v1.json.
+func hookSourceFingerprintField(buf, field []byte) []byte {
+	buf = append(buf, []byte(strconv.Itoa(len(field)))...)
+	buf = append(buf, ':')
+	return append(buf, field...)
+}
+
+func hookSourceFingerprintFieldString(buf []byte, field string) []byte {
+	return hookSourceFingerprintField(buf, []byte(field))
 }
 
 // HookSourceFingerprint computes the spec's version-1 source-hook fingerprint:
@@ -183,7 +187,6 @@ func HookSourceFingerprint(in HookSourceFingerprintInput) (string, error) {
 		return "", err
 	}
 	sort.Slice(support, func(i, j int) bool { return support[i].rel < support[j].rel })
-
 	return serializeHookSourceFingerprint(in, defBytes, support), nil
 }
 
@@ -318,31 +321,193 @@ func readFingerprintEntry(defDirFD int, name, relPath string, total *int64) ([]b
 // O_NOFOLLOW so a swapped component cannot escape. It returns the file bytes
 // and permission bits taken from the opened descriptor's fstat.
 func readFingerprintEntryAt(defDirFD int, relPath string, total *int64) ([]byte, os.FileMode, error) {
+	file, mode, size, err := openFingerprintFileAt(defDirFD, relPath)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer func() { _ = file.Close() }()
+	data, err := readFingerprintFD(file, relPath, total)
+	if err != nil {
+		return nil, 0, err
+	}
+	if int64(len(data)) != size {
+		return nil, 0, fmt.Errorf("hook source fingerprint: %s changed while reading", relPath)
+	}
+	return data, mode, nil
+}
+
+func openFingerprintFileAt(rootFD int, relPath string) (*os.File, os.FileMode, int64, error) {
+	if !fs.ValidPath(relPath) || relPath == "." {
+		return nil, 0, 0, fmt.Errorf("hook source fingerprint: support path %q is invalid", relPath)
+	}
+	return openFingerprintFileAtSeen(rootFD, relPath, make(map[string]bool))
+}
+
+func openFingerprintFileAtNoAliases(rootFD int, relPath string) (*os.File, os.FileMode, int64, error) {
+	if !fs.ValidPath(relPath) || relPath == "." {
+		return nil, 0, 0, fmt.Errorf("hook source fingerprint: support path %q is invalid", relPath)
+	}
+	dirFD, err := openHookSupportDirAt(rootFD, path.Dir(relPath))
+	if err != nil {
+		return nil, 0, 0, err
+	}
+	defer func() { _ = unix.Close(dirFD) }()
+	return openFingerprintRegularFileAt(dirFD, path.Base(relPath), relPath)
+}
+
+func openFingerprintFileAtSeen(rootFD int, relPath string, seen map[string]bool) (*os.File, os.FileMode, int64, error) {
 	components := strings.Split(relPath, "/")
-	dirfd := defDirFD
-	for _, c := range components[:len(components)-1] {
-		next, err := openFingerprintDir(dirfd, c)
-		if dirfd != defDirFD {
-			_ = unix.Close(dirfd)
+	dirFD := rootFD
+	ownedFD := -1
+	for _, component := range components[:len(components)-1] {
+		nextFD, err := openFingerprintDir(dirFD, component)
+		if ownedFD >= 0 {
+			_ = unix.Close(ownedFD)
 		}
 		if err != nil {
-			return nil, 0, err
+			return nil, 0, 0, err
 		}
-		dirfd = next
+		dirFD = nextFD
+		ownedFD = nextFD
 	}
-	if dirfd != defDirFD {
-		defer func() { _ = unix.Close(dirfd) }()
+	if ownedFD >= 0 {
+		defer func() { _ = unix.Close(ownedFD) }()
 	}
-	f, perm, err := openFingerprintFile(dirfd, components[len(components)-1])
+	name := components[len(components)-1]
+	var observed unix.Stat_t
+	if err := unix.Fstatat(dirFD, name, &observed, unix.AT_SYMLINK_NOFOLLOW); err != nil {
+		return nil, 0, 0, fmt.Errorf("hook source fingerprint: inspect %s: %w", relPath, err)
+	}
+	if observed.Mode&unix.S_IFMT == unix.S_IFLNK {
+		if seen[relPath] {
+			return nil, 0, 0, fmt.Errorf("hook source fingerprint: symlink cycle at %s", relPath)
+		}
+		if len(seen) >= maxContainedFingerprintAliasExpansions {
+			return nil, 0, 0, fmt.Errorf("hook source fingerprint: too many contained aliases at %s", relPath)
+		}
+		target, err := readFingerprintLinkAt(dirFD, name)
+		if err != nil {
+			return nil, 0, 0, err
+		}
+		targetPath, err := resolveContainedFingerprintAlias(rootFD, relPath, target)
+		if err != nil {
+			return nil, 0, 0, err
+		}
+		if ownedFD >= 0 {
+			_ = unix.Close(ownedFD)
+			ownedFD = -1
+		}
+		seen[relPath] = true
+		defer delete(seen, relPath)
+		return openFingerprintFileAtSeen(rootFD, targetPath, seen)
+	}
+	if observed.Mode&unix.S_IFMT != unix.S_IFREG {
+		return nil, 0, 0, fmt.Errorf("%w: hook source fingerprint: %s is not a regular file", fsboundary.ErrUnsafeFile, relPath)
+	}
+	return openFingerprintRegularFileAt(dirFD, name, relPath)
+}
+
+func openFingerprintRegularFileAt(dirFD int, name, relPath string) (*os.File, os.FileMode, int64, error) {
+	file, mode, err := openFingerprintFile(dirFD, name)
 	if err != nil {
-		return nil, 0, err
+		return nil, 0, 0, err
 	}
-	defer func() { _ = f.Close() }()
-	data, err := readFingerprintFD(f, relPath, total)
+	var opened unix.Stat_t
+	if err := unix.Fstat(int(file.Fd()), &opened); err != nil {
+		_ = file.Close()
+		return nil, 0, 0, fmt.Errorf("hook source fingerprint: stat %s: %w", relPath, err)
+	}
+	if opened.Nlink != 1 {
+		_ = file.Close()
+		return nil, 0, 0, fmt.Errorf("%w: hook support file has multiple hard links", fsboundary.ErrUnsafeFile)
+	}
+	if opened.Size < 0 {
+		_ = file.Close()
+		return nil, 0, 0, fmt.Errorf("%w: hook source fingerprint: %s has an invalid size", fsboundary.ErrTooLarge, relPath)
+	}
+	return file, mode.Perm(), opened.Size, nil
+}
+
+func readFingerprintLinkAt(dirFD int, name string) (string, error) {
+	buf := make([]byte, 4096)
+	n, err := unix.Readlinkat(dirFD, name, buf)
 	if err != nil {
-		return nil, 0, err
+		return "", fmt.Errorf("hook source fingerprint: read link %s: %w", name, err)
 	}
-	return data, perm, nil
+	if n == len(buf) {
+		return "", fmt.Errorf("hook source fingerprint: link target for %s exceeds the system path limit", name)
+	}
+	return string(buf[:n]), nil
+}
+
+func resolveContainedFingerprintAlias(rootFD int, relPath, target string) (string, error) {
+	if !fs.ValidPath(relPath) || relPath == "." || target == "" || path.IsAbs(target) {
+		return "", fmt.Errorf("hook source fingerprint: symlink %s has an invalid target", relPath)
+	}
+	type capturedDir struct {
+		name string
+		fd   int
+	}
+	stack := []capturedDir{{fd: rootFD}}
+	defer func() {
+		for i := len(stack) - 1; i > 0; i-- {
+			_ = unix.Close(stack[i].fd)
+		}
+	}()
+	push := func(component string) error {
+		fd, err := openFingerprintDir(stack[len(stack)-1].fd, component)
+		if err != nil {
+			return err
+		}
+		stack = append(stack, capturedDir{name: component, fd: fd})
+		return nil
+	}
+	parent := path.Dir(relPath)
+	if parent != "." {
+		for _, component := range strings.Split(parent, "/") {
+			if component == "" || component == "." || component == ".." {
+				return "", fmt.Errorf("hook source fingerprint: symlink parent %s is not a clean path", relPath)
+			}
+			if err := push(component); err != nil {
+				return "", err
+			}
+		}
+	}
+	tokens := strings.Split(target, "/")
+	for i, component := range tokens {
+		hasFollowing := i+1 < len(tokens)
+		switch component {
+		case "", ".":
+			continue
+		case "..":
+			if len(stack) == 1 {
+				return "", fmt.Errorf("hook source fingerprint: symlink %s escapes the captured definition directory", relPath)
+			}
+			frame := stack[len(stack)-1]
+			stack = stack[:len(stack)-1]
+			if err := unix.Close(frame.fd); err != nil {
+				return "", fmt.Errorf("hook source fingerprint: close alias parent %s: %w", frame.name, err)
+			}
+		default:
+			if hasFollowing {
+				if err := push(component); err != nil {
+					return "", err
+				}
+				continue
+			}
+			resolved := make([]string, 0, len(stack))
+			for _, frame := range stack[1:] {
+				resolved = append(resolved, frame.name)
+			}
+			resolved = append(resolved, component)
+			logicalPath := strings.Join(resolved, "/")
+			if logicalPath == "" || !fs.ValidPath(logicalPath) {
+				return "", fmt.Errorf("hook source fingerprint: symlink %s does not resolve to a source file", relPath)
+			}
+			return logicalPath, nil
+		}
+	}
+	return "", fmt.Errorf("hook source fingerprint: symlink %s does not resolve to a source file", relPath)
 }
 
 // walkFingerprintDir recursively enumerates the tree beneath defDirFD using
@@ -396,7 +561,14 @@ func walkFingerprintDir(defDirFD int, fn func(relPath string) error) error {
 			}
 			typ := e.Type()
 			if typ&os.ModeSymlink != 0 {
-				return fmt.Errorf("%w: hook source fingerprint: %s is a symlink; refusing to follow", fsboundary.ErrUnsafePath, relPath)
+				files++
+				if files > maxFiles {
+					return fmt.Errorf("hook source fingerprint: source file count exceeds %d", maxFiles)
+				}
+				if err := fn(relPath); err != nil {
+					return err
+				}
+				continue
 			}
 			if typ.IsDir() {
 				sub, err := openFingerprintDir(dirfd, e.Name())

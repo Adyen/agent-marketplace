@@ -19,6 +19,16 @@ Harness Compilation MUST preserve U+0085, U+2028 and U+2029 in YAML frontmatter 
 - **WHEN** a command's typed Windsurf sidecar declares manual execution with an ordinary description
 - **THEN** public compilation MUST retain the ordinary description and explicit manual execution metadata in valid native YAML
 
+### Requirement: Integer metadata remains representable
+
+Harness ingestion MUST reject integer metadata outside the supported native integer range and MUST reject non-finite or fractional values instead of wrapping or truncating them. Representable integral values MUST retain their exact value.
+
+#### Scenario: Integer metadata does not wrap
+
+- **WHEN** canonical, Factory, or Gemini subagent metadata supplies a nesting limit that is out of range, non-finite, or fractional
+- **THEN** ingestion MUST reject the subagent rather than accepting a wrapped integer
+- **AND** a representable integral nesting limit MUST retain its value
+
 ### Requirement: Converted command skills keep their restrictions
 
 Harness Compilation MUST NOT discard an authority-bearing control while converting between a Devin converted command skill and a command. When the Devin source layout marks a skill with `x-agent-marketplace-kind: command` and the skill declares a `permissions` policy, an `agent` or `subagent` execution selector, or triggers that do not include `user`, ingestion MUST refuse the resource with the error diagnostic `ingest.devin.command-security-unsupported`, and the refused resource MUST produce no artifact on any harness target. A marked skill whose activation includes `user` and whose `allowed-tools` restriction is representable MUST still be ingested as a command; activation other than user-only MUST be narrowed to user-only with the warning `ingest.devin.command-field-dropped`. Devin compilation of a command MUST NOT emit `agent` or `subagent` from command extension fields; it MUST report `compile.canonical-field-overrides-extra` and keep the mapped `allowed-tools` restriction. Ordinary Devin skills MUST keep their native execution selectors.

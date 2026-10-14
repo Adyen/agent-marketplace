@@ -1,9 +1,12 @@
 package materialize
 
 import (
+	"path"
 	"strings"
 
 	"github.com/Adyen/agent-marketplace/internal/harness"
+	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 	targetmeta "github.com/Adyen/agent-marketplace/pkg/harness-compilation/target"
 )
 
@@ -116,7 +119,16 @@ func blockedComponentsFor(key outputKey, w skillTarget) []string {
 	}
 	kind := w.skill.Resource.Kind()
 	if handler := ownedAggregateHandlerFor(key.target); handler != nil && len(handler.aggregateRels(kind, key.machineScope)) > 0 {
+		if kind == ir.KindHook {
+			// A skipped hook still owns its installed support directory:
+			// without the component mark, a hook-support plan would prune
+			// the blocked hook's previously installed namespaced tree.
+			return hookBlockedComponents(key.target, info, key.machineScope)
+		}
 		return nil
+	}
+	if kind == ir.KindHook {
+		return hookBlockedComponents(key.target, info, key.machineScope)
 	}
 	if info.UsesSkillDir(kind) {
 		return []string{info.ComponentDirForScope(skillComponent(info), key.machineScope)}
@@ -136,4 +148,46 @@ func skillComponent(info harness.TargetInfo) string {
 		return "skills"
 	}
 	return componentName(info.SkillPathPattern)
+}
+
+// hookBlockedComponents returns the output components a skipped hook would
+// have written into: the component hosting its namespaced support directory
+// and the component hosting the target's hook aggregate file. Both must keep
+// their previously written bytes when the hook is blocked this run.
+func hookBlockedComponents(target hcc.Target, info harness.TargetInfo, machineScope bool) []string {
+	seen := make(map[string]bool)
+	var components []string
+	add := func(dir string) {
+		if dir == "" || dir == "." {
+			return
+		}
+		name := info.ComponentDirForScope(componentName(dir), machineScope)
+		if !seen[name] {
+			seen[name] = true
+			components = append(components, name)
+		}
+	}
+	add(info.ResourceInstallDir(ir.KindHook))
+	if layout, ok := targetmeta.LookupNativeLayout(targetmeta.Target(target)); ok {
+		for _, partition := range layout.Partitions {
+			for _, aggregate := range partition.Aggregates {
+				if aggregate.Kind != ir.KindHook {
+					continue
+				}
+				add(path.Join(partition.Prefix, aggregate.SupportDir))
+				file := aggregate.Project
+				if machineScope {
+					file = aggregate.User
+				}
+				add(path.Join(partition.Prefix, path.Dir(file.Path)))
+				for _, legacy := range file.Legacy {
+					add(path.Join(partition.Prefix, path.Dir(legacy)))
+				}
+			}
+		}
+	}
+	if len(components) == 0 {
+		return []string{blockedAllComponents}
+	}
+	return components
 }

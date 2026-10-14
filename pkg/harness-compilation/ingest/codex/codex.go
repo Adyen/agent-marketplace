@@ -18,6 +18,7 @@ import (
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/bundle"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/compile/mapping"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/hookpolicy"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ingest"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/internal/jsonutil"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
@@ -105,7 +106,7 @@ func loadSkills(src fs.FS) ([]ir.Resource, []diag.Diagnostic) {
 	if err != nil {
 		return nil, []diag.Diagnostic{loadFailure("codex layout", err)}
 	}
-	entries, err := fs.ReadDir(src, root)
+	entries, err := ingest.ReadSkillEntries(src, root)
 	if err != nil {
 		if isMissing(err) {
 			return nil, nil
@@ -128,6 +129,7 @@ func loadSkills(src fs.FS) ([]ir.Resource, []diag.Diagnostic) {
 			diagnostics = append(diagnostics, loadFailure(skillFile, err))
 			continue
 		}
+		skill.ModelSource = "codex"
 		if marker, ok := skill.Extra[kindKey]; ok && marker == "command" {
 			if skill.AllowedTools != nil || skill.PermissionsSet || skill.Triggers != nil || skill.Agent != "" || skill.Subagent != "" {
 				diagnostics = append(diagnostics, diag.Diagnostic{
@@ -210,18 +212,10 @@ func loadSubagents(src fs.FS) ([]ir.Resource, []diag.Diagnostic) {
 		if benignLoss {
 			diagnostics = append(diagnostics, diag.Diagnostic{Code: diag.CodeIngestCodexFieldDropped, Severity: diag.SeverityWarning, Resource: name, Message: "benign Codex subagent configuration fields were omitted", Source: diag.SourceRef{File: file, Line: 1}})
 		}
-		effort, nativeEffort, validEffort := mapping.CodexReasoningEffort(doc.Effort)
-		if !validEffort {
-			diagnostics = append(diagnostics, diag.Diagnostic{Code: diag.CodeIngestCodexFieldDropped, Severity: diag.SeverityWarning, Resource: name, Message: "unknown Codex reasoning effort was omitted", Source: diag.SourceRef{File: file, Line: 1}})
-		} else if nativeEffort != "" {
-			diagnostics = append(diagnostics, diag.Diagnostic{Code: diag.CodeIngestCodexFieldDropped, Severity: diag.SeverityWarning, Resource: name, Message: "native Codex reasoning effort was preserved for Codex but omitted from canonical IR", Source: diag.SourceRef{File: file, Line: 1}})
-		}
-		subagent := ir.NewSubagent(name, doc.Description, doc.Instructions, "", nil, effort, nil, "", nil, ir.SourceRef{File: file, Line: 1})
-		if doc.Model != "" || nativeEffort != "" || doc.SandboxMode != "" {
-			subagent.Ext.Codex = &extpkg.Codex{Model: doc.Model, ReasoningEffort: nativeEffort, SandboxMode: doc.SandboxMode}
-		}
-		if doc.Model != "" {
-			diagnostics = append(diagnostics, diag.Diagnostic{Code: diag.CodeIngestCodexFieldDropped, Severity: diag.SeverityWarning, Resource: name, Message: "native Codex model has no canonical cross-vendor equivalent", Source: diag.SourceRef{File: file, Line: 1}})
+		subagent := ir.NewSubagent(name, doc.Description, doc.Instructions, doc.Model, nil, doc.Effort, nil, "", nil, ir.SourceRef{File: file, Line: 1})
+		subagent.ModelSource = "codex"
+		if doc.SandboxMode != "" {
+			subagent.Ext.Codex = &extpkg.Codex{SandboxMode: doc.SandboxMode}
 		}
 		resources = append(resources, subagent)
 	}
@@ -287,20 +281,24 @@ func loadHooks(src fs.FS) ([]ir.Resource, []diag.Diagnostic) {
 			diagnostics = append(diagnostics, codexHookUnsupported(strings.ToLower(event), file, "Codex hook event entries are malformed; event skipped"))
 			continue
 		}
-		canonicalEvent, mappedMatcher, supported := mapping.ReverseHookEvent(event, mapping.TargetCodex)
+		// The event and matcher are preserved verbatim; canonical translation
+		// is the resolver's job through the recorded Codex provenance.
+		if !hookpolicy.IsDeclaredEvent(mapping.TargetCodex, event) {
+			diagnostics = append(diagnostics, diag.Diagnostic{
+				Code:     diag.CodeIngestCodexHookEventUnmappable,
+				Severity: diag.SeverityWarning,
+				Resource: strings.ToLower(event),
+				Message:  fmt.Sprintf("%q is not a documented Codex hook event; the original event name was preserved", event),
+				Hint:     "Use a documented Codex event: PreToolUse, PostToolUse, UserPromptSubmit, SessionStart, or SessionEnd",
+				Source:   diag.SourceRef{File: file, Line: 0},
+			})
+		}
 		for entryIndex, rawEntry := range entries {
 			entryName := fmt.Sprintf("%s-%d", strings.ToLower(event), entryIndex+1)
 			matcher, handlers, err := decodeCodexHookEntry(rawEntry)
 			if err != nil {
 				diagnostics = append(diagnostics, codexHookUnsupported(entryName, file, "unsupported or malformed Codex hook entry was skipped"))
 				continue
-			}
-			if !supported || matcher != "" && (canonicalEvent == "UserPromptSubmit" || canonicalEvent == "Stop") {
-				diagnostics = append(diagnostics, codexHookUnsupported(entryName, file, "unsupported Codex hook event or matcher; entry skipped"))
-				continue
-			}
-			if matcher == "" {
-				matcher = mappedMatcher
 			}
 			for handlerIndex, rawHandler := range handlers {
 				name := fmt.Sprintf("%s-%d", entryName, handlerIndex+1)
@@ -309,19 +307,10 @@ func loadHooks(src fs.FS) ([]ir.Resource, []diag.Diagnostic) {
 					diagnostics = append(diagnostics, codexHookUnsupported(name, file, "unsupported or malformed Codex hook handler was skipped"))
 					continue
 				}
-				if canonicalEvent == "SessionEnd" && handler.async != nil && *handler.async {
-					handler.async = nil
-					diagnostics = append(diagnostics, diag.Diagnostic{Code: diag.CodeIngestCodexFieldDropped, Severity: diag.SeverityWarning, Resource: name, Message: "SessionEnd always runs synchronously; async was omitted", Source: diag.SourceRef{File: file, Line: 1}})
-				}
-				if canonicalEvent == "SessionEnd" && handler.timeout != nil && *handler.timeout > 3 {
-					timeout := 3
-					handler.timeout = &timeout
-					diagnostics = append(diagnostics, diag.Diagnostic{Code: diag.CodeIngestCodexFieldDropped, Severity: diag.SeverityWarning, Resource: name, Message: "SessionEnd supports at most a three-second timeout; timeout was capped", Source: diag.SourceRef{File: file, Line: 1}})
-				}
 				if benignLoss {
 					diagnostics = append(diagnostics, diag.Diagnostic{Code: diag.CodeIngestCodexFieldDropped, Severity: diag.SeverityWarning, Resource: name, Message: "benign Codex hook display metadata was omitted", Source: diag.SourceRef{File: file, Line: 1}})
 				}
-				hook := ir.NewHookWithMatcherOptions(name, canonicalEvent, matcher, handler.command, handler.kind, nil, ir.SourceRef{File: file, Line: 1}, ir.WithHookTimeoutPtr(handler.timeout))
+				hook := ir.NewHookWithMatcherOptions(name, event, matcher, handler.command, handler.kind, nil, ir.SourceRef{File: file, Line: 1}, ir.WithHookTimeoutPtr(handler.timeout), ir.WithHookSource(string(mapping.TargetCodex)))
 				hook.Ext.Codex = &extpkg.Codex{
 					NativeHook: true, HookAsync: handler.async, HookStatusMessage: handler.statusMessage,
 					CommandWindows: handler.commandWindows, AdditionalContextLimit: handler.additionalContext,

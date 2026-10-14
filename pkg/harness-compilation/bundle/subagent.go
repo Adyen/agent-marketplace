@@ -83,5 +83,7 @@ func LoadSubagent(src fs.FS, path string) (*ir.Subagent, error) {
 	} else if maxNesting != nil {
 		options = append(options, ir.WithSubagentMaxNestingPtr(maxNesting))
 	}
-	return ir.NewSubagentWithOptions(name, description, body, model, tools, effort, disallowedTools, isolation, extra, source, options...), nil
+	subagent := ir.NewSubagentWithOptions(name, description, body, model, tools, effort, disallowedTools, isolation, extra, source, options...)
+	subagent.ModelSource = "claude"
+	return subagent, nil
 }

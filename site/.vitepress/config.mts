@@ -1,15 +1,32 @@
 import { defineConfig } from 'vitepress'
-import { DOCS_PATH, GITHUB_REPOSITORY_URL, MARKETPLACE_PATH } from '../src/shared/site'
+import { DOCS_PATH as PUBLIC_DOCS_PATH, GITHUB_REPOSITORY_URL } from '../src/shared/site'
+
+const docsOnly = process.env.SITE_PROFILE === 'docs'
+
+function deploymentBase(name: string, value: string): string {
+  if (!value.startsWith('/') || !value.endsWith('/') || value.startsWith('//') || value.includes('\\') || /[?#\r\n]/.test(value) || value.split('/').some(part => part === '.' || part === '..')) {
+    throw new Error(`${name} must be a canonical absolute path ending in /`)
+  }
+  return value
+}
 
 // The hosting target is deliberately undecided. SITE_BASE lets a project-path
 // deployment (e.g. GitHub Pages at /agent-marketplace/) be selected at build
 // time without touching any link in the content.
-const base = process.env.SITE_BASE ?? '/'
+const base = docsOnly ? '/docs/' : deploymentBase('SITE_BASE', process.env.SITE_BASE ?? '/')
+const marketplaceBase = docsOnly ? deploymentBase('MARKETPLACE_BASE', process.env.MARKETPLACE_BASE ?? '/') : '/'
+const DOCS_PATH = docsOnly ? '/' : PUBLIC_DOCS_PATH
+const publicAsset = (path: string) => `${base}${path}`
 
 const repo = GITHUB_REPOSITORY_URL
 
 export default defineConfig({
   base,
+  srcDir: '.',
+  srcExclude: docsOnly ? ['index.md', 'README.md'] : [],
+  rewrites: docsOnly ? id => id.startsWith('docs/') ? id.slice('docs/'.length) : id : undefined,
+  outDir: docsOnly ? '.vitepress/dist-docs' : '.vitepress/dist',
+  cacheDir: docsOnly ? '.vitepress/cache-docs' : '.vitepress/cache',
   lang: 'en-US',
   title: 'agent-marketplace',
   description:
@@ -26,23 +43,29 @@ export default defineConfig({
   },
 
   head: [
-    ['link', { rel: 'prefetch', href: MARKETPLACE_PATH }],
+    ['link', { rel: 'icon', type: 'image/svg+xml', href: publicAsset('brand/favicon.svg') }],
+    ['link', { rel: 'icon', type: 'image/png', sizes: '32x32', href: publicAsset('brand/favicon-32x32.png') }],
+    ['link', { rel: 'icon', type: 'image/png', sizes: '64x64', href: publicAsset('brand/favicon-64x64.png') }],
     ['meta', { property: 'og:type', content: 'website' }],
     ['meta', { property: 'og:site_name', content: 'agent-marketplace' }],
     ['meta', { name: 'twitter:card', content: 'summary_large_image' }]
   ],
 
   themeConfig: {
-    siteTitle: 'agent-marketplace',
+    logo: {
+      light: '/brand/logo-horizontal-black.svg',
+      dark: '/brand/logo-horizontal-white.svg',
+      alt: 'agent-marketplace'
+    },
+    siteTitle: false,
+    siteProfile: docsOnly ? 'docs' : 'public',
 
-    nav: [
-      // The Marketplace is a sibling app at the shared origin root, outside
-      // SITE_BASE. Nav `link` values pass through VitePress's withBase/relative
-      // normalization, which misresolves from nested docs pages or a non-root
-      // base, so a component item renders the origin-root anchor directly.
-      { component: 'MarketplaceNavLink' },
-      { text: 'Docs', link: DOCS_PATH, activeMatch: `^${DOCS_PATH}` }
-    ],
+    nav: docsOnly
+      ? [
+          { component: 'SiteNavLink', props: { label: 'Marketplace', href: marketplaceBase } },
+          { component: 'SiteNavLink', props: { label: 'Docs', href: '/docs/' } }
+        ]
+      : [{ text: 'Docs', link: DOCS_PATH, activeMatch: `^${DOCS_PATH}` }],
 
     // One entry per page, ordered by hand. Add a line here when adding a page
     // under site/docs/.

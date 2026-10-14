@@ -373,8 +373,10 @@ func TestCreateOnlyManagedPaths(t *testing.T) {
 
 func TestArchiveTargetRejectsTraversal(t *testing.T) {
 	dstDir := t.TempDir()
-	if _, err := archiveTarget(dstDir, "../escape"); err == nil {
-		t.Fatal("expected traversal archive entry to be rejected")
+	for _, name := range []string{"", "../escape", "skills/../../escape", "/absolute"} {
+		if _, err := archiveTarget(dstDir, name); err == nil {
+			t.Fatalf("unsafe archive entry %q accepted", name)
+		}
 	}
 	if _, err := archiveTarget(dstDir, filepath.Join("skills", "ok")); err != nil {
 		t.Fatalf("expected safe archive entry: %v", err)

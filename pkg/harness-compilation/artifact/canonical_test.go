@@ -67,6 +67,66 @@ func TestCanonicalArtifactRoundTripForKinds(t *testing.T) {
 	}
 }
 
+func TestCanonicalProvenanceRoundTrip(t *testing.T) {
+	cases := []struct {
+		name string
+		r    ir.Resource
+		want string
+		key  string
+	}{
+		{"hook", ir.NewHookWithOptions("h", "SessionEnd", "x", "command", nil, ir.SourceRef{}, ir.WithHookSource("codex")), "codex", "HookSource"},
+		{"subagent", ir.NewSubagentWithOptions("a", "", "", "", nil, "", nil, "", nil, ir.SourceRef{}, ir.WithSubagentToolSource("devin")), "devin", "ToolSource"},
+		{"skill", ir.NewSkillWithOptions("s", "", "", nil, nil, ir.SourceRef{}, ir.WithSkillToolSource("gemini")), "gemini", "ToolSource"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			a, err := FromIR(tc.r)
+			if err != nil {
+				t.Fatalf("FromIR: %v", err)
+			}
+			var payload map[string]any
+			if err := json.Unmarshal(a.Payload, &payload); err != nil {
+				t.Fatalf("unmarshal payload: %v", err)
+			}
+			if payload[tc.key] != tc.want {
+				t.Fatalf("payload[%q] = %v, want %q", tc.key, payload[tc.key], tc.want)
+			}
+			back, err := DecodeResource(tc.name, a.Payload)
+			if err != nil {
+				t.Fatalf("DecodeResource: %v", err)
+			}
+			var got string
+			switch r := back.(type) {
+			case *ir.Hook:
+				got = r.HookSource
+			case *ir.Subagent:
+				got = r.ToolSource
+			case *ir.Skill:
+				got = r.ToolSource
+			}
+			if got != tc.want {
+				t.Fatalf("round-tripped provenance = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestCanonicalProvenanceExtraCollisionSkipped(t *testing.T) {
+	hook := ir.NewHook("h", "Stop", "x", "command", map[string]any{"hooksource": "spoofed"}, ir.SourceRef{})
+	hook.HookSource = "codex"
+	a, err := FromIR(hook)
+	if err != nil {
+		t.Fatalf("FromIR: %v", err)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(a.Payload, &payload); err != nil {
+		t.Fatalf("unmarshal payload: %v", err)
+	}
+	if payload["HookSource"] != "codex" {
+		t.Fatalf("extra collision leaked into payload: %v", payload)
+	}
+}
+
 func TestCanonicalArtifactValidateArchiveRejectsAdversarialManifestFields(t *testing.T) {
 	base, err := FromIR(ir.NewSkill("review", "Review code", "Review the code carefully.", []string{"user"}, nil, ir.SourceRef{}))
 	if err != nil {
@@ -233,6 +293,24 @@ func TestCanonicalArtifactDecodeRejectsPathTraversal(t *testing.T) {
 
 	if _, _, err := Decode(bytes.NewReader(raw)); err == nil || !strings.Contains(err.Error(), "traversal") {
 		t.Fatalf("expected path traversal rejection, got %v", err)
+	}
+}
+
+// spec: marketplace-api/unsafe-entry-name-is-not-echoed
+func TestCanonicalArtifactDecodeRejectionOmitsEntryName(t *testing.T) {
+	for name, reason := range map[string]string{
+		"/etc/unsafe-entry":          "absolute",
+		"foo/../../etc/unsafe-entry": "traversal",
+	} {
+		raw := writeTarGz(t, func(tw *tar.Writer) {
+			if err := tw.WriteHeader(&tar.Header{Name: name, Typeflag: tar.TypeReg, Mode: 0o644}); err != nil {
+				t.Fatalf("WriteHeader: %v", err)
+			}
+		})
+		_, _, err := Decode(bytes.NewReader(raw))
+		if err == nil || !strings.Contains(err.Error(), reason) || strings.Contains(err.Error(), "unsafe-entry") {
+			t.Fatalf("Decode(%q) error = %v, want %s rejection without the entry name", name, err, reason)
+		}
 	}
 }
 

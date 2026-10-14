@@ -6,7 +6,7 @@ To try it on a laptop without an SSO provider, use [the local Docker Compose ope
 
 ## Overview
 
-The admin panel is a private, authenticated part of the Nuxt frontend at `/marketplace/admin`, backed by the Go API under `/api/v1/admin/`. From it you can:
+The admin panel is a private, authenticated part of the Nuxt frontend at `/admin`, backed by the Go API under `/api/v1/admin/`. From it you can:
 
 - add, edit, and reindex Git registries;
 - pause refresh, withdraw availability, restore, or retire a registry without deleting its history;
@@ -27,7 +27,7 @@ Infrastructure settings (listeners, database DSNs, blob storage, proxy trust, an
 ## Prerequisites
 
 - A running hosted Marketplace (API, worker, and Nuxt frontend) using PostgreSQL or SQLite.
-- A reverse proxy or ingress that terminates TLS and routes `/marketplace/admin` and `/api/v1/admin/` to the application. In `trusted_proxy` mode it must also authenticate operators against your identity provider.
+- A reverse proxy or ingress that terminates TLS and routes `/admin` and `/api/v1/admin/` to the application. In `trusted_proxy` mode it must also authenticate operators against your identity provider.
 - Shell access to run the `agent-marketplace` CLI against the deployment's configuration for the one-time adoption.
 - Coordinated metadata and blob backups taken before adoption.
 
@@ -41,7 +41,7 @@ instance:
   id: team-marketplace
   name: Team Agent Marketplace
   canonical_url: https://marketplace.example.com
-  browser_base: https://marketplace.example.com/marketplace
+  browser_base: https://marketplace.example.com
 
 # ... storage, listeners, refresh, and policy settings ...
 
@@ -141,9 +141,9 @@ The session lasts 12 hours by default; set `session_ttl` to change it, up to 24 
 
 A verified identity is authorized when one of its groups matches `admin_groups` or its immutable `sub` claim matches `admin_users`. Authorization is checked again on every admin request. A session that no longer matches receives `403 forbidden`. A missing or expired session receives `401 unauthenticated` and is never refreshed automatically.
 
-In OIDC mode the reverse proxy only routes `/api/v1/admin/`, `/marketplace/admin`, and the `/marketplace/auth/error` sign-in error page to the application and must not inject identity headers. Public Marketplace routes stay anonymous and keep working when the identity provider is down or the OIDC configuration is invalid.
+In OIDC mode the reverse proxy only routes `/api/v1/admin/`, `/admin`, and the `/auth/error` sign-in error page to the application and must not inject identity headers. Public Marketplace routes stay anonymous and keep working when the identity provider is down or the OIDC configuration is invalid.
 
-Sign-in failures use these stable codes. When a browser navigates to the login or callback endpoint (an `Accept` header that prefers `text/html` over JSON), failures redirect to the fixed same-origin `/marketplace/auth/error` page, which explains the allowlisted code, offers a fresh sign-in where retry can help, and links back to the Marketplace. Requests preferring JSON, missing `Accept`, wildcard-only, and tied preferences keep the JSON error bodies and statuses below. The error page never reflects provider error descriptions, state, authorization codes, tokens, or identity claims, and an unknown or malformed code shows a generic message.
+Sign-in failures use these stable codes. When a browser navigates to the login or callback endpoint (an `Accept` header that prefers `text/html` over JSON), failures redirect to the same-origin `/auth/error` page derived from `instance.browser_base`, which explains the allowlisted code, offers a fresh sign-in where retry can help, and links back to the Marketplace. Requests preferring JSON, missing `Accept`, wildcard-only, and tied preferences keep the JSON error bodies and statuses below. The error page never reflects provider error descriptions, state, authorization codes, tokens, or identity claims, and an unknown or malformed code shows a generic message.
 
 The HTML handoff is a compatible browser presentation addition; it does not change the supported JSON machine-client error contract. Automation that inspects authentication failure statuses or JSON bodies should send `Accept: application/json`. An explicit HTML preference selects a browser page and a 303 handoff instead of the machine error response.
 
@@ -168,7 +168,7 @@ Your reverse proxy must:
 1. Terminate TLS and authenticate operators against your identity provider.
 2. Remove any identity headers the client sent, so a client cannot spoof them.
 3. Set the authenticated user's identity and groups headers before proxying to the API.
-4. Route both `/marketplace/admin` (Nuxt frontend) and `/api/v1/admin/` (Go API) through the authenticated path.
+4. Route both `/admin` (Nuxt frontend) and `/api/v1/admin/` (Go API) through the authenticated path.
 
 ### Example Nginx snippet
 
@@ -181,8 +181,8 @@ upstream marketplace_web {
     server web:3000;
 }
 
-upstream landing_site {
-    server site:8080;
+upstream marketplace_docs {
+    server docs:8080;
 }
 
 server {
@@ -192,17 +192,16 @@ server {
     # SSL configuration ...
 
     # Public endpoints (no authentication required)
+    location = /docs {
+        return 308 /docs/;
+    }
+
+    location /docs/ {
+        proxy_pass http://marketplace_docs;
+        include /etc/nginx/proxy-headers.conf;
+    }
+
     location / {
-        proxy_pass http://landing_site;
-        include /etc/nginx/proxy-headers.conf;
-    }
-
-    location /marketplace/ {
-        proxy_pass http://marketplace_web;
-        include /etc/nginx/proxy-headers.conf;
-    }
-
-    location /_fonts/ {
         proxy_pass http://marketplace_web;
         include /etc/nginx/proxy-headers.conf;
     }
@@ -227,7 +226,7 @@ server {
     }
 
     # Protected admin routes (SSO authentication enforced)
-    location ^~ /marketplace/admin {
+    location ^~ /admin {
         # Enforce SSO / OAuth2 proxy authentication here
         auth_request /oauth2/auth;
 
@@ -319,7 +318,7 @@ After adoption, the database is the source of truth for registries, lifecycle, a
 
 ## 4. Work with the admin panel
 
-Open `/marketplace/admin`. In `trusted_proxy` mode your reverse proxy signs you in. In `oidc` mode the panel shows **Sign in with Okta** when you have no session.
+Open `/admin`. In `trusted_proxy` mode your reverse proxy signs you in. In `oidc` mode the panel shows **Sign in with Okta** when you have no session.
 
 The navigation bar has four sections:
 

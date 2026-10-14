@@ -9,9 +9,11 @@ import (
 	"strings"
 
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/bundle"
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/compile/mapping"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ingest"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/toolpolicy"
 )
 
 // Frontmatter keys this package interprets. Each one is either mapped into a
@@ -93,14 +95,15 @@ func loadSkills(src fs.FS, r root) ([]ir.Resource, []diag.Diagnostic, error) {
 func canonicalizeSkill(skill *ir.Skill, file string) (ir.Resource, []diag.Diagnostic, bool) {
 	name := skill.Name()
 
-	// allowed-tools is emitted in DEVIN vocabulary by compile/devin while the
-	// forward tool table is keyed on canonical IDs, so it MUST be reversed
-	// here. Skipping this would produce IR whose recompilation reports
+	// allowed-tools is emitted in DEVIN vocabulary by compile/devin, so the
+	// names stay verbatim and ToolSource records where they came from; the
+	// tool catalog validates them against Devin's closed skill surface.
+	// Skipping that validation would produce IR whose recompilation reports
 	// skill.devin.tool-unknown on a list this very ingester produced, and since
 	// bead agent-marketplace-pu6b that code drops the whole allowed-tools key
 	// instead of failing, so the restriction would be silently lost rather than
 	// reported as a hard error.
-	tools, toolDiags := reverseTools(skill.AllowedTools, name, file)
+	tools, toolDiags := validateDevinTools(skill.AllowedTools, toolpolicy.SurfaceSkillAllowedTools, name, file)
 	if len(toolDiags) > 0 {
 		if kind, ok := skill.Extra[kindExtensionKey]; ok && kind == commandKindValue {
 			if refusal, refused := commandControlRefusal(skill, file); refused {
@@ -110,10 +113,12 @@ func canonicalizeSkill(skill *ir.Skill, file string) (ir.Resource, []diag.Diagno
 		return nil, toolDiags, false
 	}
 	skill.AllowedTools = tools
+	if tools != nil {
+		skill.ToolSource = "devin"
+	}
 
-	model, modelDiags := reverseModel(skill.Model, name, file)
-	skill.Model = model
-	diags := modelDiags
+	skill.ModelSource = "devin"
+	var diags []diag.Diagnostic
 
 	// The provenance marker is ALWAYS consumed, whatever its value. Leaving it
 	// in Extra would make every recompile emit
@@ -191,10 +196,16 @@ func commandFromSkill(skill *ir.Skill, file string) (*ir.Command, []diag.Diagnos
 		extra[argumentHintKey] = skill.ArgumentHint
 	}
 	if skill.AllowedTools != nil {
-		// Reversed to canonical IDs above. The command compiler reads its tool
-		// restriction from this extension key and maps it forward through the
-		// Devin vocabulary, so canonical IDs are exactly what belongs here.
-		extra[allowedToolsKey] = skill.AllowedTools
+		// ir.Command has no ToolSource field, so the restriction is reversed
+		// through the tool catalogs to canonical Claude IDs: the command
+		// compiler reads its tool restriction from this extension key and maps
+		// it forward through the Devin vocabulary. Validation above guarantees
+		// every name is covered, so uncovered can only be empty.
+		emitted, _, err := toolpolicy.TranslateToolList(mapping.TargetDevin, mapping.TargetClaude, toolpolicy.SurfaceSkillAllowedTools, skill.AllowedTools, nil)
+		if err != nil {
+			return nil, []diag.Diagnostic{ingest.LoadFailure(diag.CodeIngestDevinLoadSubagentFailed, "command", name, file, err)}
+		}
+		extra[allowedToolsKey] = emitted
 	}
 	if len(extra) == 0 {
 		extra = nil
@@ -338,20 +349,19 @@ func canonicalizeSubagent(subagent *ir.Subagent, file string) ([]diag.Diagnostic
 			diags = append(diags, reservedFieldDropped(name, file, toolsKey,
 				"Devin reads allowed-tools, not tools; the tools value was dropped in favour of the allowed-tools restriction"))
 		}
-		tools, toolDiags := reverseTools(declared, name, file)
+		tools, toolDiags := validateDevinTools(declared, toolpolicy.SurfaceSubagentTools, name, file)
 		if len(toolDiags) > 0 {
 			return append(diags, toolDiags...), false
 		}
 		subagent.Tools = tools
+		subagent.ToolSource = "devin"
 	} else if subagent.Tools != nil {
 		diags = append(diags, reservedFieldDropped(name, file, toolsKey,
 			"Devin does not read the tools key, so the restriction it declares is not enforced and was not carried into canonical IR"))
 		subagent.Tools = nil
 	}
 
-	model, modelDiags := reverseModel(subagent.Model, name, file)
-	subagent.Model = model
-	diags = append(diags, modelDiags...)
+	subagent.ModelSource = "devin"
 
 	if len(subagent.Extra) == 0 {
 		subagent.Extra = nil

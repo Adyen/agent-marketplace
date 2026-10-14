@@ -53,8 +53,18 @@ func isGitTransportFailure(err error) bool {
 	return errors.As(err, &failure)
 }
 
+// canonicalGitTransport canonicalizes source without its credentials. Redacted
+// userinfo would turn an HTTP(S) URL with a port into an SCP-style address.
+func canonicalGitTransport(source string) (string, error) {
+	public, err := credentialFreeGitURL(source)
+	if err != nil {
+		return "", err
+	}
+	return lockfile.CanonicalGitURL(public)
+}
+
 func gitTransportFailureDiagnostic(source string) string {
-	canonical, err := lockfile.CanonicalGitURL(redactSecrets(source))
+	canonical, err := canonicalGitTransport(source)
 	if err == nil && (strings.HasPrefix(canonical, "ssh://") || strings.HasPrefix(canonical, "git+scp://")) {
 		return "git.auth-transport-failed: Git SSH connection failed. Verify your SSH agent and repository access"
 	}
@@ -71,7 +81,8 @@ func gitAuthKey(key string) bool {
 	}
 	switch strings.ToLower(section) + "." + strings.ToLower(rest) {
 	case "credential.helper", "credential.username", "credential.usehttppath",
-		"http.sslcainfo", "http.sslcapath", "http.sslcert", "http.sslkey", "http.sslcertpasswordprotected", "http.extraheader":
+		"http.sslcainfo", "http.sslcapath", "http.sslcert", "http.sslkey", "http.sslcertpasswordprotected", "http.extraheader",
+		"http.followredirects":
 		return true
 	}
 	return false
@@ -110,7 +121,7 @@ func gitAuthEnvironment(ctx context.Context, repoDir string, env []string, sourc
 			source = remoteURL
 		}
 	}
-	canonical, err := lockfile.CanonicalGitURL(redactSecrets(source))
+	canonical, err := canonicalGitTransport(source)
 	if err != nil {
 		parsed, err := url.Parse(source)
 		if err != nil || parsed.Host == "" {
@@ -122,7 +133,7 @@ func gitAuthEnvironment(ctx context.Context, repoDir string, env []string, sourc
 		return env, source, nil
 	}
 
-	reader := gitAuthConfigReader{ctx: ctx, env: env, active: make(map[[2]uint64]bool)}
+	reader := gitAuthConfigReader{ctx: ctx, env: env, owners: gitAuthTrustedOwners(), active: make(map[[2]uint64]bool)}
 	for _, scope := range []string{"system", "global"} {
 		if scope == "system" {
 			switch strings.ToLower(os.Getenv("GIT_CONFIG_NOSYSTEM")) {

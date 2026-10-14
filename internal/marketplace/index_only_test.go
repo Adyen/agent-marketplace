@@ -12,15 +12,19 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/materialize"
+	"github.com/Adyen/agent-marketplace/internal/ownership"
 	"github.com/Adyen/agent-marketplace/internal/resolver"
 	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
 	hccartifact "github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact"
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/api"
 	marketplaceconfig "github.com/Adyen/agent-marketplace/pkg/marketplace/config"
@@ -145,6 +149,319 @@ func TestIndexOnlyResolverChecksExactCommitAndReingestedDigests(t *testing.T) {
 	badManifestCfg := &config.Config{Marketplaces: []config.MarketplaceEntry{{URL: server.URL, InstanceID: "mp", Resources: []config.MarketplaceResourcePin{badManifestPin}}}}
 	if _, errs := r.ResolveWithPolicy(context.Background(), badManifestCfg, []hcc.Target{hcc.TargetFactory}, resolver.MarketplaceResolveModeRefresh, policy); len(errs) == 0 || !strings.Contains(errs[0].Error(), "manifest") {
 		t.Fatalf("registry manifest mismatch errors = %v", errs)
+	}
+}
+
+// spec: hook-resources/every-harness-target-receives-hooks-in-its-native-file
+func TestIndexOnlyResolverStagesNativeHookDefinitionsAndMaterializesOffline(t *testing.T) {
+	isolateHarnessState(t)
+	repo := t.TempDir()
+	type sourceCase struct {
+		name             string
+		harness          hcc.Harness
+		target           hcc.Target
+		sourceFile       string
+		definition       []byte
+		nativeFile       string
+		payload          string
+		peerFile         string
+		peerContents     string
+		peerMarker       string
+		supportScript    []byte
+		supportMode      os.FileMode
+		installedName    string
+		extraSourceFiles map[string][]byte
+		hookName         string
+	}
+	cases := []sourceCase{
+		{name: "claude", harness: hcc.HarnessClaude, target: hcc.TargetClaude, sourceFile: ".claude/settings.json", definition: []byte(`{"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"echo index-claude"}]}]}}`), nativeFile: ".claude/settings.json", payload: "echo index-claude"},
+		{
+			name: "factory", harness: hcc.HarnessFactory, target: hcc.TargetFactory,
+			sourceFile: ".factory/hooks.json",
+			definition: []byte(`{"PostToolUse":[{"matcher":"Execute","hooks":[{"type":"command","command":"${DROID_PLUGIN_ROOT}/scripts/check.sh"}]}]}`),
+			nativeFile: ".factory/hooks.json", payload: "scripts/check.sh",
+			peerFile: ".factory/mcp.json", peerContents: `{"mcpServers":{"peer-factory":{"command":"peer-binary"}}}`, peerMarker: "peer-factory",
+			supportScript: []byte("#!/bin/sh\necho index-factory support\n"), supportMode: 0o755, installedName: "installed-factory",
+			extraSourceFiles: map[string][]byte{
+				".factory/bundle/scripts/nested.sh": []byte("echo nested payload\n"),
+				"verified.marker":                   []byte("staging metadata\n"),
+				"sibling/other.sh":                  []byte("not hook support\n"),
+			},
+		},
+		{name: "cursor", harness: hcc.HarnessCursor, target: hcc.TargetCursor, sourceFile: ".cursor/hooks.json", definition: []byte(`{"version":1,"hooks":{"beforeSubmitPrompt":[{"type":"command","command":"echo index-cursor"}]}}`), nativeFile: ".cursor/hooks.json", payload: "echo index-cursor"},
+		{name: "windsurf", harness: hcc.HarnessWindsurf, target: hcc.TargetWindsurf, sourceFile: ".devin/hooks.json", definition: []byte(`{"hooks":{"pre_run_command":[{"type":"command","command":"echo index-windsurf"}]}}`), nativeFile: ".devin/hooks.json", payload: "echo index-windsurf"},
+		{name: "gemini", harness: hcc.HarnessGemini, target: hcc.TargetGemini, sourceFile: ".gemini/settings.json", definition: []byte(`{"hooks":{"BeforeTool":[{"matcher":"run_shell_command","hooks":[{"type":"command","command":"echo index-gemini"}]}]}}`), nativeFile: ".gemini/settings.json", payload: "echo index-gemini", peerFile: ".gemini/gemini-extension.json", peerContents: `{"mcpServers":{"peer-gemini":{"command":"peer-binary"}}}`, peerMarker: "peer-gemini"},
+		{name: "devin", harness: hcc.HarnessDevin, target: hcc.TargetDevin, sourceFile: ".devin/hooks.v1.json", definition: []byte(`{"PostCompaction":[{"type":"prompt","prompt":"index Devin prompt"}]}`), nativeFile: ".devin/hooks.v1.json", payload: "index Devin prompt"},
+		{name: "codex", harness: hcc.HarnessCodex, target: hcc.TargetCodex, sourceFile: ".codex/hooks.json", definition: []byte(`{"hooks":{"SessionStart":[{"matcher":"startup","hooks":[{"type":"command","command":"echo index-codex"}]}]}}`), nativeFile: ".codex/hooks.json", payload: "echo index-codex"},
+	}
+	registryRoots := make([]store.RegistryRoot, 0, len(cases))
+	for i := range cases {
+		tc := &cases[i]
+		rootPath := filepath.ToSlash(filepath.Join(".agents", "native", tc.name))
+		rootDir := filepath.Join(repo, filepath.FromSlash(rootPath))
+		writeSourceFile := func(rel string, data []byte, mode os.FileMode) {
+			t.Helper()
+			filePath := filepath.Join(rootDir, filepath.FromSlash(rel))
+			if err := os.MkdirAll(filepath.Dir(filePath), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filePath, data, 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if mode != 0 {
+				if err := os.Chmod(filePath, mode); err != nil {
+					t.Fatal(err)
+				}
+			}
+		}
+		writeSourceFile(tc.sourceFile, tc.definition, 0o644)
+		if len(tc.supportScript) > 0 {
+			supportPath := filepath.ToSlash(filepath.Join(filepath.Dir(filepath.FromSlash(tc.sourceFile)), "scripts", "check.sh"))
+			writeSourceFile(supportPath, tc.supportScript, tc.supportMode)
+		}
+		if tc.peerFile != "" {
+			writeSourceFile(tc.peerFile, []byte(tc.peerContents), 0o644)
+		}
+		extraPaths := make([]string, 0, len(tc.extraSourceFiles))
+		for rel := range tc.extraSourceFiles {
+			extraPaths = append(extraPaths, rel)
+		}
+		sort.Strings(extraPaths)
+		for _, rel := range extraPaths {
+			writeSourceFile(rel, tc.extraSourceFiles[rel], 0o644)
+		}
+		bundle, err := hcc.IngestBundle(os.DirFS(rootDir), tc.harness)
+		if err != nil || diag.HasErrors(bundle.Diagnostics) {
+			t.Fatalf("IngestBundle(%s): %v / %+v", tc.harness, err, bundle.Diagnostics)
+		}
+		for _, resource := range bundle.Resources {
+			if hook, ok := resource.(*ir.Hook); ok {
+				if tc.hookName != "" {
+					t.Fatalf("IngestBundle(%s) produced multiple hook definitions", tc.harness)
+				}
+				tc.hookName = hook.Name()
+				if hook.Source.File != tc.sourceFile {
+					t.Fatalf("IngestBundle(%s) source file = %q, want %q", tc.harness, hook.Source.File, tc.sourceFile)
+				}
+			}
+		}
+		if tc.hookName == "" {
+			t.Fatalf("IngestBundle(%s) produced no hook", tc.harness)
+		}
+		registryRoots = append(registryRoots, store.RegistryRoot{Path: rootPath, SourceHarness: string(tc.harness)})
+	}
+	for _, args := range [][]string{{"init", "-q", "--initial-branch=main"}, {"config", "user.email", "test@example.com"}, {"config", "user.name", "Test"}, {"add", "."}, {"commit", "-q", "-m", "native hook sources"}} {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = repo
+		if output, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, output)
+		}
+	}
+	cmd := exec.Command("git", "rev-parse", "HEAD")
+	cmd.Dir = repo
+	commitBytes, err := cmd.Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	commit := strings.TrimSpace(string(commitBytes))
+	origin := "file://" + repo
+	registry := store.Registry{ID: "src", Slug: "source", Ref: "main", Origins: []string{origin}, Acquisition: store.AcquisitionIndexOnly, License: "MIT", Roots: registryRoots}
+	built, err := ingest.BuildRegistryRevision(context.Background(), marketplaceconfig.Config{Policy: marketplaceconfig.Policy{HiddenContent: "warn", Limits: marketplaceconfig.Limits{IngestionDuration: marketplaceconfig.Duration(2 * time.Minute)}}}, "mp", registry, repo, commit)
+	if err != nil {
+		t.Fatalf("build reference revision: %v", err)
+	}
+	revisions := make(map[string]store.AssessedResourceRevision, len(built.Resources))
+	for _, candidate := range built.Resources {
+		revisions[string(candidate.Coordinate.Kind)+"\x00"+candidate.Coordinate.Name] = assessedRevisionOccurrence(candidate, commit, string(built.ManifestDigest))
+	}
+	var requests atomic.Int64
+	mux := http.NewServeMux()
+	mux.HandleFunc("/.well-known/agent-marketplace.json", func(w http.ResponseWriter, _ *http.Request) {
+		requests.Add(1)
+		writeTestWellKnown(w, "mp")
+	})
+	mux.HandleFunc("/api/v1/registries/", func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		if strings.Contains(r.URL.Path, "/occurrences/") {
+			_ = json.NewEncoder(w).Encode(api.ExactRegistryOccurrence{RegistryID: "src", Ref: "main", Roots: registry.Roots, Commit: commit, RegistryRevisionManifestDigest: built.ManifestDigest, Acquisition: store.AcquisitionIndexOnly, AcquisitionOrigin: origin, OccurredAt: revisionTime()})
+			return
+		}
+		_ = json.NewEncoder(w).Encode(api.PublicRegistry{ID: "src", Slug: "source", Origins: registry.Origins, Ref: "main", Roots: registry.Roots, Acquisition: store.AcquisitionIndexOnly, Listed: true})
+	})
+	mux.HandleFunc("/api/v1/resources/", func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		parts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
+		if len(parts) < 8 {
+			http.NotFound(w, r)
+			return
+		}
+		revision, ok := revisions[parts[len(parts)-4]+"\x00"+parts[len(parts)-3]]
+		if !ok {
+			http.NotFound(w, r)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(revision)
+	})
+	server := httptest.NewServer(mux)
+	defer server.Close()
+	resolverCache := NewCache(t.TempDir())
+	r := &Resolver{Cache: resolverCache}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			revision, ok := revisions["hook\x00"+tc.hookName]
+			if !ok || revision.ContentDigest == "" {
+				t.Fatalf("missing built revision for hook %q", tc.hookName)
+			}
+			pin := config.MarketplaceResourcePin{RegistryID: "src", Kind: "hook", Name: tc.hookName, Revision: string(revision.ContentDigest), Digest: string(revision.ContentDigest), Acquisition: config.MarketplaceAcquisitionIndexOnly, RegistryCommit: commit, RegistryManifestDigest: string(built.ManifestDigest), InstalledName: tc.installedName}
+			cfg := &config.Config{Marketplaces: []config.MarketplaceEntry{{URL: server.URL, InstanceID: "mp", Resources: []config.MarketplaceResourcePin{pin}}}}
+			online, resolveErrors := r.Resolve(context.Background(), cfg, []hcc.Target{tc.target}, resolver.MarketplaceResolveModeRefresh)
+			if len(resolveErrors) != 0 || len(online) != 1 {
+				t.Fatalf("online Resolve = %d artifacts / %v", len(online), resolveErrors)
+			}
+			res := online[0]
+			hook, ok := res.Resource.(*ir.Hook)
+			if !ok || hook.Name() != tc.hookName || hook.Source.File != tc.sourceFile || hook.SourceDefinitionDigest() != "" {
+				t.Fatalf("resolved canonical hook = %#v", res.Resource)
+			}
+			if tc.installedName != "" {
+				canonicalName := hook.Name()
+				if res.Name != tc.installedName || res.InstalledName != tc.installedName {
+					t.Fatalf("resolved installed names = entry %q / installed %q, want %q", res.Name, res.InstalledName, tc.installedName)
+				}
+				res.Name = "entry-factory"
+				if res.Name == canonicalName || res.Name == res.InstalledName || res.InstalledName == canonicalName || res.Name != "entry-factory" || hook.Name() != canonicalName {
+					t.Fatalf("Marketplace names = entry %q / installed %q / canonical %q", res.Name, res.InstalledName, hook.Name())
+				}
+				online[0] = res
+			}
+			if res.StagedSourceDir == "" || filepath.Base(res.Path) != filepath.Base(tc.sourceFile) {
+				t.Fatalf("online staged source = %q / %q, want basename %q", res.StagedSourceDir, res.Path, filepath.Base(tc.sourceFile))
+			}
+			if info, err := os.Lstat(res.Path); err != nil || !info.Mode().IsRegular() {
+				t.Fatalf("online hook definition is not a staged regular file: %v / %v", info, err)
+			}
+			if _, err := os.Lstat(filepath.Join(res.StagedSourceDir, "SKILL.md")); !os.IsNotExist(err) {
+				t.Fatalf("hook staging used a skill fallback: %v", err)
+			}
+			var peerBefore []byte
+			if tc.peerFile != "" {
+				peerBefore, err = os.ReadFile(filepath.Join(res.StagedSourceDir, filepath.Base(tc.peerFile)))
+				if err != nil || !bytes.Contains(peerBefore, []byte(tc.peerMarker)) {
+					t.Fatalf("staged peer aggregate = %q / %v", peerBefore, err)
+				}
+			}
+			workspace := t.TempDir()
+			materializeOpts := materialize.WithMaterializationModes(config.MaterializationModes{Project: config.MaterializationModeFile, Machine: config.MaterializationModeFile})
+			report, err := materialize.Run(context.Background(), workspace, online, materializeOpts)
+			if err != nil || diag.HasErrors(report.Diags) {
+				t.Fatalf("materialize online hook: %v / %v", err, report)
+			}
+			nativePath := filepath.Join(workspace, filepath.FromSlash(tc.nativeFile))
+			before, err := os.ReadFile(nativePath)
+			if err != nil || !bytes.Contains(before, []byte(tc.payload)) || bytes.Contains(before, []byte("_managed_by")) {
+				t.Fatalf("native hook output %s = %q / %v", tc.nativeFile, before, err)
+			}
+			beforeInfo, err := os.Stat(nativePath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(tc.supportScript) > 0 {
+				if !bytes.Contains(before, []byte(filepath.ToSlash(filepath.Join(tc.installedName, "scripts", "check.sh")))) {
+					t.Fatalf("Native command does not reference the selected support name: %s", before)
+				}
+				matches, err := filepath.Glob(filepath.Join(workspace, ".factory", "hook-support", "*", tc.installedName, "scripts", "check.sh"))
+				if err != nil || len(matches) != 1 {
+					t.Fatalf("index-only support scripts = %v / %v, want one selected script", matches, err)
+				}
+				installed := matches[0]
+				data, err := os.ReadFile(installed)
+				if err != nil || !bytes.Equal(data, tc.supportScript) {
+					t.Fatalf("index-only support bytes = %q / %v, want %q", data, err, tc.supportScript)
+				}
+				info, err := os.Stat(installed)
+				if err != nil || info.Mode().Perm() != tc.supportMode {
+					t.Fatalf("index-only support mode = %v / %v, want %v", info, err, tc.supportMode)
+				}
+				nestedScript, err := filepath.Glob(filepath.Join(workspace, ".factory", "hook-support", "*", tc.installedName, "bundle", "scripts", "nested.sh"))
+				if err != nil || len(nestedScript) != 1 {
+					t.Fatalf("nested source support file = %v / %v, want one relative-path-preserved file", nestedScript, err)
+				}
+				nestedBytes, err := os.ReadFile(nestedScript[0])
+				if err != nil || string(nestedBytes) != "echo nested payload\n" {
+					t.Fatalf("nested source support bytes = %q / %v", nestedBytes, err)
+				}
+				for _, excluded := range []string{"verified.marker", filepath.Join("sibling", "other.sh"), "mcp.json"} {
+					matches, err := filepath.Glob(filepath.Join(workspace, ".factory", "hook-support", "*", tc.installedName, filepath.FromSlash(excluded)))
+					if err != nil || len(matches) != 0 {
+						t.Fatalf("excluded source file %s was installed: %v / %v", excluded, matches, err)
+					}
+				}
+			}
+			if tc.peerFile != "" {
+				if bytes.Contains(before, []byte(tc.peerMarker)) {
+					t.Fatalf("unselected peer resource leaked into native hook output: %s", before)
+				}
+				var installedPeers []string
+				if err := filepath.WalkDir(workspace, func(path string, entry os.DirEntry, walkErr error) error {
+					if walkErr == nil && entry.Name() == filepath.Base(tc.peerFile) {
+						installedPeers = append(installedPeers, path)
+					}
+					return walkErr
+				}); err != nil {
+					t.Fatal(err)
+				}
+				if len(installedPeers) != 0 || peerBefore == nil {
+					t.Fatalf("peer aggregate control: staged=%q installed=%v", peerBefore, installedPeers)
+				}
+				store, err := ownership.Open(filepath.Dir(nativePath))
+				if err != nil {
+					t.Fatal(err)
+				}
+				proof, err := store.Proof(filepath.Base(nativePath))
+				if err != nil {
+					t.Fatal(err)
+				}
+				var sourceDigest, resourceName string
+				for _, id := range proof.OwnedIDs() {
+					if id.Kind == ownership.KindHook {
+						entry, ok := proof.Entry(id)
+						if ok {
+							sourceDigest = entry.SourceDigest
+							resourceName = entry.Resource
+						}
+					}
+				}
+				if sourceDigest == "" {
+					t.Fatal("staged peer source did not produce captured ownership evidence")
+				}
+				if tc.installedName != "" && resourceName != tc.installedName {
+					t.Fatalf("owned resource name = %q, want installed name %q", resourceName, tc.installedName)
+				}
+			}
+			requestCount := requests.Load()
+			offline, offlineErrors := r.Resolve(context.Background(), cfg, []hcc.Target{tc.target}, resolver.MarketplaceResolveModeCachedNoFetch)
+			if len(offlineErrors) != 0 || len(offline) != 1 || requests.Load() != requestCount {
+				t.Fatalf("offline Resolve = %d artifacts / %v; requests %d -> %d", len(offline), offlineErrors, requestCount, requests.Load())
+			}
+			if filepath.Base(offline[0].Path) != filepath.Base(tc.sourceFile) {
+				t.Fatalf("offline hook path = %q, want basename %q", offline[0].Path, filepath.Base(tc.sourceFile))
+			}
+			if info, err := os.Lstat(offline[0].Path); err != nil || !info.Mode().IsRegular() {
+				t.Fatalf("offline hook definition is not a staged regular file: %v / %v", info, err)
+			}
+			report, err = materialize.Run(context.Background(), workspace, offline, materializeOpts)
+			if err != nil || diag.HasErrors(report.Diags) {
+				t.Fatalf("materialize offline hook: %v / %v", err, report)
+			}
+			after, err := os.ReadFile(nativePath)
+			if err != nil || !bytes.Equal(before, after) {
+				t.Fatalf("offline native output changed: %q -> %q / %v", before, after, err)
+			}
+			afterInfo, err := os.Stat(nativePath)
+			if err != nil || beforeInfo.Mode() != afterInfo.Mode() || !beforeInfo.ModTime().Equal(afterInfo.ModTime()) {
+				t.Fatalf("offline native file generation changed: before=%v after=%v err=%v", beforeInfo, afterInfo, err)
+			}
+		})
 	}
 }
 
@@ -342,7 +659,8 @@ func TestStageReconstructedResourceRejectsSymlinkedSupportParent(t *testing.T) {
 	}
 
 	registry := store.Registry{Roots: []store.RegistryRoot{{Path: ".agents", SourceHarness: "factory"}}}
-	_, err := stageReconstructedResource(NewCache(t.TempDir()), IndexOnlyIdentity{Marketplace: "mp", RegistryID: "src", Commit: strings.Repeat("a", 40), ManifestDigest: "sha256:" + strings.Repeat("b", 64)}, checkout, registry, "skill", "review", []string{"docs/secret.txt"})
+	skill := ir.NewSkill("review", "Review", "body", nil, nil, ir.SourceRef{})
+	_, err := stageReconstructedResource(NewCache(t.TempDir()), IndexOnlyIdentity{Marketplace: "mp", RegistryID: "src", Commit: strings.Repeat("a", 40), ManifestDigest: "sha256:" + strings.Repeat("b", 64)}, checkout, registry, skill, []string{"docs/secret.txt"})
 	if err == nil || !strings.Contains(err.Error(), "symlink") {
 		t.Fatalf("stage symlinked support parent error = %v, want symlink rejection", err)
 	}
@@ -498,7 +816,8 @@ func TestStageReconstructedResourceRejectsSymlinkedCacheAncestor(t *testing.T) {
 		t.Fatal(err)
 	}
 	registry := store.Registry{Roots: []store.RegistryRoot{{Path: ".agents", SourceHarness: "factory"}}}
-	_, err := stageReconstructedResource(NewCache(cacheRoot), IndexOnlyIdentity{Marketplace: "mp", RegistryID: "src", Commit: strings.Repeat("a", 40), ManifestDigest: "sha256:" + strings.Repeat("b", 64)}, checkout, registry, "skill", "review", nil)
+	skill := ir.NewSkill("review", "Review", "body", nil, nil, ir.SourceRef{})
+	_, err := stageReconstructedResource(NewCache(cacheRoot), IndexOnlyIdentity{Marketplace: "mp", RegistryID: "src", Commit: strings.Repeat("a", 40), ManifestDigest: "sha256:" + strings.Repeat("b", 64)}, checkout, registry, skill, nil)
 	if err == nil || !strings.Contains(err.Error(), "symlink") {
 		t.Fatalf("stage symlinked cache ancestor error = %v, want symlink rejection", err)
 	}

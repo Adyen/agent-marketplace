@@ -1,8 +1,11 @@
 package materialize
 
 import (
+	"errors"
 	"fmt"
 	"io/fs"
+	"log/slog"
+	"os"
 	"path/filepath"
 	"strings"
 
@@ -11,31 +14,37 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/ownership"
 )
 
-func markerAliasSnapshot(outDir, path string, boundary *destinationBoundary) ([]byte, fs.FileMode, error) {
-	parentPath := filepath.Dir(path)
-	var parent *fsboundary.Dir
-	var err error
-	if boundary != nil {
-		parent, err = boundary.captureDirectory(parentPath, false)
-	} else {
-		absolute, absErr := filepath.Abs(parentPath)
-		if absErr != nil {
-			return nil, 0, absErr
-		}
-		parent, err = fsboundary.OpenDir(absolute)
-	}
+func materializeMarkerAlias(outDir, path string, boundary *destinationBoundary, dryRun bool) (err error) {
+	parent, err := capturePortableParent(path, boundary, false)
 	if err != nil {
-		return nil, 0, err
+		return err
 	}
 	if parent == nil {
-		return nil, 0, fmt.Errorf("%w: marker alias parent missing", fsboundary.ErrGenerationConflict)
+		return fmt.Errorf("%w: marker alias parent missing", fsboundary.ErrGenerationConflict)
 	}
-	defer func() { _ = parent.Close() }()
-	destination, err := fsboundary.CaptureDestination(parent, filepath.Base(path), fsboundary.LinkPolicyUser)
+	defer func() { err = errors.Join(err, parent.Close()) }()
+	native, err := parent.NativeRoot()
 	if err != nil {
-		return nil, 0, err
+		return err
 	}
-	defer func() { _ = destination.Close() }()
+	defer func() { err = errors.Join(err, native.Close()) }()
+	name := filepath.Base(path)
+	info, err := native.Lstat(name)
+	if err != nil {
+		return errors.Join(fsboundary.ErrGenerationConflict, err)
+	}
+	if info.Mode()&os.ModeSymlink == 0 {
+		return fsboundary.ErrGenerationConflict
+	}
+	link, err := fsboundary.FileInfoIdentity(info)
+	if err != nil {
+		return err
+	}
+	destination, err := fsboundary.CaptureDestination(parent, name, fsboundary.LinkPolicyUser)
+	if err != nil {
+		return err
+	}
+	defer func() { err = errors.Join(err, destination.Close()) }()
 	scope := outDir
 	if boundary != nil {
 		scope = boundary.repoRoot
@@ -51,7 +60,7 @@ func markerAliasSnapshot(outDir, path string, boundary *destinationBoundary) ([]
 	for _, root := range approved {
 		canonical, err := ownership.CanonicalRoot(root)
 		if err != nil {
-			return nil, 0, err
+			return err
 		}
 		if rel, err := filepath.Rel(canonical, destination.Path()); err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && !filepath.IsAbs(rel) {
 			contained = true
@@ -59,11 +68,116 @@ func markerAliasSnapshot(outDir, path string, boundary *destinationBoundary) ([]
 		}
 	}
 	if !contained {
-		return nil, 0, fmt.Errorf("%w: marker alias target outside admitted scope", fsboundary.ErrUnsafePath)
+		return fmt.Errorf("%w: marker alias target outside admitted scope", fsboundary.ErrUnsafePath)
 	}
-	bytes, identity, err := destination.ReadTarget(destination.Identity().Size)
+	data, identity, err := destination.ReadTarget(destination.Identity().Size)
 	if err != nil {
-		return nil, 0, err
+		return err
 	}
-	return bytes, identity.Mode.Perm(), nil
+	verify := func() error {
+		fresh, err := capturePortableParent(path, boundary, false)
+		if err != nil {
+			return errors.Join(fsboundary.ErrGenerationConflict, err)
+		}
+		unchanged := fresh != nil && fresh.Identity().SameObject(parent.Identity())
+		if fresh != nil {
+			if err := fresh.Close(); err != nil {
+				return err
+			}
+		}
+		if !unchanged {
+			return fsboundary.ErrGenerationConflict
+		}
+		if err := destination.Verify(); err != nil {
+			return err
+		}
+		current, err := native.Lstat(name)
+		if err != nil {
+			return errors.Join(fsboundary.ErrGenerationConflict, err)
+		}
+		observed, err := fsboundary.FileInfoIdentity(current)
+		if err != nil {
+			return err
+		}
+		if !observed.SameState(link) {
+			return fsboundary.ErrGenerationConflict
+		}
+		resolved, err := filepath.EvalSymlinks(filepath.Join(parent.Path(), name))
+		if err != nil || resolved != destination.Path() {
+			return errors.Join(fsboundary.ErrGenerationConflict, err)
+		}
+		return nil
+	}
+	slog.Debug("native marker alias input captured", "path", path, "phase", "native-marker-alias-input")
+	if err := verify(); err != nil || dryRun {
+		return err
+	}
+	if len(data) == 0 {
+		return destination.RemoveLeaf()
+	}
+	staged, stagedName, err := parent.CreateTemp(".agent-marketplace-*")
+	if err != nil {
+		return err
+	}
+	defer func() { err = errors.Join(err, staged.Close()) }()
+	var stagedID fsboundary.Identity
+	prepared := false
+	defer func() {
+		current, inspectErr := native.Lstat(stagedName)
+		if errors.Is(inspectErr, fs.ErrNotExist) {
+			return
+		}
+		if inspectErr != nil {
+			err = errors.Join(err, inspectErr)
+			return
+		}
+		expected := stagedID
+		if !prepared {
+			expected, inspectErr = fsboundary.FileIdentity(staged)
+			if inspectErr != nil {
+				err = errors.Join(err, inspectErr)
+				return
+			}
+		}
+		currentID, inspectErr := fsboundary.FileInfoIdentity(current)
+		if inspectErr != nil || !currentID.SameState(expected) {
+			err = errors.Join(err, fsboundary.ErrGenerationConflict, inspectErr)
+			return
+		}
+		err = errors.Join(err, parent.Unlink(stagedName))
+	}()
+	mode := identity.Mode.Perm()
+	if mode == 0 {
+		mode = 0o644
+	}
+	if err := staged.Chmod(mode); err != nil {
+		return err
+	}
+	if _, err := staged.Write(data); err != nil {
+		return err
+	}
+	if err := staged.Sync(); err != nil {
+		return err
+	}
+	stagedID, err = fsboundary.FileIdentity(staged)
+	if err != nil {
+		return err
+	}
+	prepared = true
+	slog.Debug("native marker alias replacement staged", "path", path, "phase", "native-marker-alias-staged")
+	if err := verify(); err != nil {
+		return err
+	}
+	current, err := native.Lstat(stagedName)
+	if err != nil {
+		return errors.Join(fsboundary.ErrGenerationConflict, err)
+	}
+	currentID, err := fsboundary.FileInfoIdentity(current)
+	if err != nil {
+		return err
+	}
+	if !currentID.SameState(stagedID) {
+		return fsboundary.ErrGenerationConflict
+	}
+	return native.Rename(stagedName, name)
 }

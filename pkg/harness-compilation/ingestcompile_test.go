@@ -281,7 +281,9 @@ func TestIngestCompile_FactoryIdentityByteStable(t *testing.T) {
 
 	var allArtifacts []artifact.Artifact
 	for _, r := range b.Resources {
-		res, err := Compile(r, TargetFactory)
+		// The fixture hook carries a plugin-root token; compiling it for the
+		// native path requires the installed support base.
+		res, err := Compile(r, TargetFactory, WithPluginRoot("/plugins/demo"))
 		if err != nil {
 			t.Fatalf("Compile(%s, Factory): %v", r.Name(), err)
 		}
@@ -309,6 +311,15 @@ func TestIngestCompile_FactoryIdentityByteStable(t *testing.T) {
 			}
 			continue
 		}
+		if art.Path == "hooks/hooks.json" {
+			// The plugin-root token resolves to the installed support path;
+			// the native file keeps the authored matcher.
+			want := "{\n  \"PreToolUse\": [\n    {\n      \"hooks\": [\n        {\n          \"command\": \"\\\"$FACTORY_PROJECT_DIR\\\"/plugins/demo/check.sh\",\n          \"type\": \"command\"\n        }\n      ],\n      \"matcher\": \"Read\"\n    }\n  ]\n}"
+			if string(art.Bytes) != want {
+				t.Errorf("artifact %q mismatch:\n got: %q\nwant: %q", art.Path, string(art.Bytes), want)
+			}
+			continue
+		}
 		data, err := fs.ReadFile(ingestFactoryPluginFS, art.Path)
 		if err != nil {
 			t.Fatalf("ReadFile(%q): %v", art.Path, err)
@@ -332,7 +343,9 @@ func TestIngestCompile_FactoryWorkspaceFormClaudeOutput(t *testing.T) {
 
 	var allArtifacts []artifact.Artifact
 	for _, r := range b.Resources {
-		res, err := Compile(r, TargetClaude)
+		// The fixture hook carries a plugin-root token; compiling it for the
+		// native path requires the installed support base.
+		res, err := Compile(r, TargetClaude, WithPluginRoot("/plugins/demo"))
 		if err != nil {
 			t.Fatalf("Compile(%s, Claude): %v", r.Name(), err)
 		}

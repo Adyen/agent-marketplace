@@ -20,6 +20,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Adyen/agent-marketplace/internal/logging/logvalue"
 	hccartifact "github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact"
 	marketplaceartifact "github.com/Adyen/agent-marketplace/pkg/marketplace/artifact"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/config"
@@ -353,7 +354,7 @@ func (s *Server) handleCatalogProjection(w http.ResponseWriter, r *http.Request)
 
 	response, err := s.catalogPageDTO(page)
 	if err != nil {
-		slog.Error("catalog projection contained invalid public data", "error", err)
+		slog.Error("catalog projection contained invalid public data", "error", logvalue.Safe(err))
 		writeError(w, http.StatusInternalServerError, "failed to read catalog projection")
 		return
 	}
@@ -669,7 +670,7 @@ func writeCatalogJSON(w http.ResponseWriter, method string, page CatalogPage) {
 		return
 	}
 	if err := json.NewEncoder(w).Encode(page); err != nil {
-		slog.Error("failed to encode catalog projection response", "err", err)
+		slog.Error("failed to encode catalog projection response", "err", logvalue.Safe(err))
 	}
 }
 
@@ -680,7 +681,7 @@ func (s *Server) handleInstance(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusNotFound, "marketplace not found")
 			return
 		}
-		slog.Error("failed to load marketplace", "err", err)
+		slog.Error("failed to load marketplace", "err", logvalue.Safe(err))
 		writeError(w, http.StatusInternalServerError, "failed to load marketplace")
 		return
 	}
@@ -688,7 +689,7 @@ func (s *Server) handleInstance(w http.ResponseWriter, r *http.Request) {
 	// response boundary so legacy canonical URLs cannot leak credentials.
 	mp.CanonicalURL = publicurl.Sanitize(mp.CanonicalURL)
 	if err := validatePublicMarketplace(mp); err != nil {
-		slog.Error("instance contains invalid public metadata", "err", err)
+		slog.Error("instance contains invalid public metadata", "err", logvalue.Safe(err))
 		writeError(w, http.StatusInternalServerError, "failed to load marketplace")
 		return
 	}
@@ -736,21 +737,21 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 		Query:       searchQ,
 	})
 	if err != nil {
-		slog.Error("search failed", "err", err)
+		slog.Error("search failed", "err", logvalue.Safe(err))
 		writeError(w, http.StatusInternalServerError, "search failed")
 		return
 	}
 
 	registries, err := s.registryIndex(r.Context())
 	if err != nil {
-		slog.Error("registry index failed", "err", err)
+		slog.Error("registry index failed", "err", logvalue.Safe(err))
 		writeError(w, http.StatusInternalServerError, "search failed")
 		return
 	}
 
 	for _, rev := range revs {
 		if err := validatePublicResourceRevision(rev); err != nil {
-			slog.Error("search returned invalid resource revision", "err", err)
+			slog.Error("search returned invalid resource revision", "err", logvalue.Safe(err))
 			writeError(w, http.StatusInternalServerError, "search failed")
 			return
 		}
@@ -822,7 +823,7 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleRegistryList(w http.ResponseWriter, r *http.Request) {
 	registries, err := s.meta.ListRegistries(r.Context())
 	if err != nil {
-		slog.Error("failed to list registries", "err", err)
+		slog.Error("failed to list registries", "err", logvalue.Safe(err))
 		writeError(w, http.StatusInternalServerError, "failed to list registries")
 		return
 	}
@@ -877,7 +878,7 @@ func (s *Server) handleRegistryDetail(w http.ResponseWriter, r *http.Request, sl
 			writeError(w, http.StatusNotFound, "registry not found")
 			return
 		}
-		slog.Error("failed to load registry", "registry", slugOrID, "err", err)
+		slog.Error("failed to load registry", "registry", logvalue.Safe(slugOrID), "err", logvalue.Safe(err))
 		writeError(w, http.StatusInternalServerError, "failed to load registry")
 		return
 	}
@@ -885,7 +886,7 @@ func (s *Server) handleRegistryDetail(w http.ResponseWriter, r *http.Request, sl
 	// refresh diagnostics that must never cross the API boundary.
 	public := registryDTO(src)
 	if err := validatePublicRegistry(public); err != nil {
-		slog.Error("registry contains invalid public metadata", "registry", slugOrID, "err", err)
+		slog.Error("registry contains invalid public metadata", "registry", logvalue.Safe(slugOrID), "err", logvalue.Safe(err))
 		writeError(w, http.StatusInternalServerError, "failed to load registry")
 		return
 	}
@@ -912,7 +913,7 @@ func (s *Server) handleRegistryOccurrence(w http.ResponseWriter, r *http.Request
 			writeError(w, http.StatusNotFound, "registry occurrence not found")
 			return
 		}
-		slog.Error("registry occurrence failed", "registry", src.ID, "commit", commit, "err", err)
+		slog.Error("registry occurrence failed", "registry", logvalue.Safe(src.ID), "commit", logvalue.Safe(commit), "err", logvalue.Safe(err))
 		writeError(w, http.StatusInternalServerError, "failed to load registry occurrence")
 		return
 	}
@@ -921,7 +922,7 @@ func (s *Server) handleRegistryOccurrence(w http.ResponseWriter, r *http.Request
 		return
 	}
 	if occurrence.RegistryID != src.ID || occurrence.Commit != commit {
-		slog.Error("registry occurrence did not match requested identity", "registry", src.ID, "commit", commit, "occurrence_registry", occurrence.RegistryID, "occurrence_commit", occurrence.Commit)
+		slog.Error("registry occurrence did not match requested identity", "registry", logvalue.Safe(src.ID), "commit", logvalue.Safe(commit), "occurrence_registry", logvalue.Safe(occurrence.RegistryID), "occurrence_commit", logvalue.Safe(occurrence.Commit))
 		writeError(w, http.StatusInternalServerError, "failed to load registry occurrence")
 		return
 	}
@@ -963,14 +964,14 @@ func (s *Server) handleRegistryHistory(w http.ResponseWriter, r *http.Request, s
 
 	history, err := s.meta.RegistryHistory(r.Context(), src.ID)
 	if err != nil {
-		slog.Error("registry history failed", "registry", src.ID, "err", err)
+		slog.Error("registry history failed", "registry", logvalue.Safe(src.ID), "err", logvalue.Safe(err))
 		writeError(w, http.StatusInternalServerError, "failed to load registry history")
 		return
 	}
 	history = boundRegistryHistory(history)
 	for _, occurrence := range history {
 		if err := validatePublicRegistryOccurrence(occurrence); err != nil {
-			slog.Error("registry history contains invalid occurrence", "registry", src.ID, "err", err)
+			slog.Error("registry history contains invalid occurrence", "registry", logvalue.Safe(src.ID), "err", logvalue.Safe(err))
 			writeError(w, http.StatusInternalServerError, "failed to load registry history")
 			return
 		}
@@ -1047,12 +1048,12 @@ func (s *Server) handleResourceDetail(w http.ResponseWriter, r *http.Request, re
 			writeError(w, http.StatusNotFound, "resource not found")
 			return
 		}
-		slog.Error("resource detail failed", "coord", coord, "err", err)
+		slog.Error("resource detail failed", "coord", logvalue.Safe(coord), "err", logvalue.Safe(err))
 		writeError(w, http.StatusInternalServerError, "failed to load resource")
 		return
 	}
 	if err := validatePublicResourceRevisionMatches(rev, coord, ""); err != nil {
-		slog.Error("resource detail contains invalid revision", "coord", coord, "err", err)
+		slog.Error("resource detail contains invalid revision", "coord", logvalue.Safe(coord), "err", logvalue.Safe(err))
 		writeError(w, http.StatusInternalServerError, "failed to load resource")
 		return
 	}
@@ -1080,13 +1081,13 @@ func (s *Server) handleResourceRevisions(w http.ResponseWriter, r *http.Request,
 	coord := store.ResourceCoordinate{Marketplace: s.mpID, Registry: src.ID, Kind: kind, Name: name}
 	revs, err := s.meta.ListResourceRevisions(r.Context(), coord)
 	if err != nil {
-		slog.Error("list revisions failed", "coord", coord, "err", err)
+		slog.Error("list revisions failed", "coord", logvalue.Safe(coord), "err", logvalue.Safe(err))
 		writeError(w, http.StatusInternalServerError, "failed to load revisions")
 		return
 	}
 	for i, rev := range revs {
 		if err := validatePublicResourceRevisionMatches(rev, coord, ""); err != nil {
-			slog.Error("resource revisions contain invalid revision", "coord", coord, "err", err)
+			slog.Error("resource revisions contain invalid revision", "coord", logvalue.Safe(coord), "err", logvalue.Safe(err))
 			writeError(w, http.StatusInternalServerError, "failed to load revisions")
 			return
 		}
@@ -1128,12 +1129,12 @@ func (s *Server) handleResourceRevision(w http.ResponseWriter, r *http.Request, 
 			writeError(w, http.StatusNotFound, "revision not found")
 			return
 		}
-		slog.Error("revision detail failed", "coord", coord, "digest", digest, "err", err)
+		slog.Error("revision detail failed", "coord", logvalue.Safe(coord), "digest", logvalue.Safe(digest), "err", logvalue.Safe(err))
 		writeError(w, http.StatusInternalServerError, "failed to load revision")
 		return
 	}
 	if err := validatePublicResourceRevisionMatches(rev, coord, digest); err != nil {
-		slog.Error("revision detail contains invalid revision", "coord", coord, "digest", digest, "err", err)
+		slog.Error("revision detail contains invalid revision", "coord", logvalue.Safe(coord), "digest", logvalue.Safe(digest), "err", logvalue.Safe(err))
 		writeError(w, http.StatusInternalServerError, "failed to load revision")
 		return
 	}
@@ -1175,7 +1176,7 @@ func (s *Server) handleResourceInspectionContent(w http.ResponseWriter, r *http.
 			writeError(w, http.StatusNotFound, "inspection content not found")
 			return
 		}
-		slog.Error("inspection content fetch failed", "digest", file.ContentDigest, "err", err)
+		slog.Error("inspection content fetch failed", "digest", file.ContentDigest, "err", logvalue.Safe(err))
 		writeError(w, http.StatusInternalServerError, "failed to fetch inspection content")
 		return
 	}
@@ -1184,7 +1185,7 @@ func (s *Server) handleResourceInspectionContent(w http.ResponseWriter, r *http.
 		return
 	}
 	if err := inspection.VerifyFileContent(*file, data); err != nil {
-		slog.Error("inspection content does not match manifest", "digest", file.ContentDigest, "err", err)
+		slog.Error("inspection content does not match manifest", "digest", file.ContentDigest, "err", logvalue.Safe(err))
 		writeError(w, http.StatusInternalServerError, "inspection content does not match manifest")
 		return
 	}
@@ -1264,7 +1265,7 @@ func (s *Server) writeInspectionError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusBadRequest, "invalid inspection revision")
 		return
 	}
-	slog.Error("inspection request failed", "err", err)
+	slog.Error("inspection request failed", "err", logvalue.Safe(err))
 	writeError(w, http.StatusInternalServerError, "failed to load inspection")
 }
 
@@ -1285,18 +1286,18 @@ func (s *Server) handleAssessmentDigest(w http.ResponseWriter, r *http.Request) 
 			writeError(w, http.StatusNotFound, "assessment not found")
 			return
 		}
-		slog.Error("assessment fetch failed", "digest", digest, "err", err)
+		slog.Error("assessment fetch failed", "digest", logvalue.Safe(digest), "err", logvalue.Safe(err))
 		writeError(w, http.StatusInternalServerError, "failed to fetch assessment")
 		return
 	}
 	if assessment.AssessmentDigest != store.AssessmentDigest(digest) || assessment.Coordinate.Marketplace != s.mpID || validatePublicResourceAssessment(assessment) != nil {
-		slog.Error("assessment contains invalid public metadata", "digest", digest)
+		slog.Error("assessment contains invalid public metadata", "digest", logvalue.Safe(digest))
 		writeError(w, http.StatusInternalServerError, "failed to fetch assessment")
 		return
 	}
 	payload, err := json.Marshal(assessment)
 	if err != nil {
-		slog.Error("assessment encoding failed", "digest", digest, "err", err)
+		slog.Error("assessment encoding failed", "digest", logvalue.Safe(digest), "err", logvalue.Safe(err))
 		writeError(w, http.StatusInternalServerError, "failed to fetch assessment")
 		return
 	}
@@ -1318,7 +1319,7 @@ func (s *Server) handleInspectionDigest(w http.ResponseWriter, r *http.Request) 
 			writeError(w, http.StatusNotFound, "inspection not found")
 			return
 		}
-		slog.Error("inspection manifest fetch failed", "digest", digest, "err", err)
+		slog.Error("inspection manifest fetch failed", "digest", logvalue.Safe(digest), "err", logvalue.Safe(err))
 		writeError(w, http.StatusInternalServerError, "failed to fetch inspection")
 		return
 	}
@@ -1428,7 +1429,7 @@ func (s *Server) handleManifests(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusNotFound, "manifest not found")
 			return
 		}
-		slog.Error("manifest fetch failed", "digest", digest, "err", err)
+		slog.Error("manifest fetch failed", "digest", logvalue.Safe(digest), "err", logvalue.Safe(err))
 		writeError(w, http.StatusInternalServerError, "failed to fetch manifest")
 		return
 	}
@@ -1443,13 +1444,13 @@ func (s *Server) handleManifests(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusUnsupportedMediaType, "manifest media type is not supported")
 			return
 		}
-		slog.Error("manifest blob is invalid", "digest", digest, "err", err)
+		slog.Error("manifest blob is invalid", "digest", logvalue.Safe(digest), "err", logvalue.Safe(err))
 		writeError(w, http.StatusInternalServerError, "failed to fetch manifest")
 		return
 	}
 	restriction, err := s.manifestRestriction(r.Context(), store.RevisionDigest(digest), data)
 	if err != nil {
-		slog.Error("manifest ownership lookup failed", "digest", digest, "err", err)
+		slog.Error("manifest ownership lookup failed", "digest", logvalue.Safe(digest), "err", logvalue.Safe(err))
 		writeError(w, http.StatusInternalServerError, "failed to fetch manifest")
 		return
 	}
@@ -1476,7 +1477,7 @@ func (s *Server) handleArtifacts(w http.ResponseWriter, r *http.Request) {
 	digest := store.ArchiveDigest("sha256:" + parts[1])
 	revisions, err := s.meta.ListResourceRevisionsByArchiveDigest(r.Context(), s.mpID, digest)
 	if err != nil {
-		slog.Error("artifact ownership lookup failed", "digest", digest, "err", err)
+		slog.Error("artifact ownership lookup failed", "digest", logvalue.Safe(digest), "err", logvalue.Safe(err))
 		writeError(w, http.StatusInternalServerError, "failed to fetch artifact")
 		return
 	}
@@ -1506,7 +1507,7 @@ func (s *Server) handleArtifacts(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusNotFound, "artifact not found")
 			return
 		}
-		slog.Error("artifact fetch failed", "digest", digest, "err", err)
+		slog.Error("artifact fetch failed", "digest", logvalue.Safe(digest), "err", logvalue.Safe(err))
 		writeError(w, http.StatusInternalServerError, "failed to fetch artifact")
 		return
 	}
@@ -1526,7 +1527,7 @@ func (s *Server) handleArtifacts(w http.ResponseWriter, r *http.Request) {
 		err = artifact.VerifyArchiveDigest(rawArchive)
 	}
 	if err != nil {
-		slog.Error("artifact blob digest mismatch", "digest", digest, "error", err)
+		slog.Error("artifact blob digest mismatch", "digest", logvalue.Safe(digest), "error", logvalue.Safe(err))
 		writeError(w, http.StatusInternalServerError, "artifact digest mismatch")
 		return
 	}
@@ -1634,7 +1635,7 @@ func (s *Server) handleReadyz(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx := r.Context()
 	if err := s.revocationsReady(ctx); err != nil {
-		slog.Error("readyz failed: live revocations are not reconciled", "err", err)
+		slog.Error("readyz failed: live revocations are not reconciled", "err", logvalue.Safe(err))
 		writeError(w, http.StatusServiceUnavailable, "not ready")
 		return
 	}
@@ -1645,7 +1646,7 @@ func (s *Server) handleReadyz(w http.ResponseWriter, r *http.Request) {
 	probeCtx, cancel := context.WithTimeout(ctx, blobProbeTimeout)
 	defer cancel()
 	if err := s.blobs.Probe(probeCtx); err != nil {
-		slog.Error("readyz failed: blob store unavailable", "err", err)
+		slog.Error("readyz failed: blob store unavailable", "err", logvalue.Safe(err))
 		writeError(w, http.StatusServiceUnavailable, "not ready")
 		return
 	}
@@ -1871,7 +1872,7 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	if err := json.NewEncoder(w).Encode(v); err != nil {
-		slog.Error("failed to encode json response", "err", err)
+		slog.Error("failed to encode json response", "err", logvalue.Safe(err))
 	}
 }
 

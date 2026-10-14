@@ -3,7 +3,7 @@
     {
       "hooks": [
         {
-          "command": "/plugins/demo/scripts/check.sh",
+          "command": "\"$DEVIN_PROJECT_DIR\"/plugins/demo/scripts/check.sh",
           "type": "command"
         }
       ]

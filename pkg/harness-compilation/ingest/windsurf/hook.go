@@ -8,9 +8,10 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/bundle"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/compile"
-	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/compile/mapping"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/hookpolicy"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/internal/jsonutil"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 	extpkg "github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir/ext"
@@ -189,37 +190,8 @@ func loadHooksAlias(data []byte, file string) ([]*ir.Hook, []diag.Diagnostic, er
 	if err != nil {
 		return nil, nil, err
 	}
-	distinctHookNames(hooks)
+	bundle.DistinctHookNames(hooks)
 	return hooks, diags, nil
-}
-
-func distinctHookNames(hooks []*ir.Hook) {
-	last := make(map[string]int, len(hooks))
-	used := make(map[string]bool, len(hooks))
-	next := make(map[string]int, len(hooks))
-	for i, hook := range hooks {
-		last[hook.Name()] = i
-		used[hook.Name()] = true
-	}
-	for i, hook := range hooks {
-		base := hook.Name()
-		if last[base] == i {
-			continue
-		}
-		start := next[base]
-		if start < 2 {
-			start = 2
-		}
-		for suffix := start; ; suffix++ {
-			name := fmt.Sprintf("%s-%d", base, suffix)
-			if !used[name] {
-				hook.SetName(name)
-				used[name] = true
-				next[base] = suffix + 1
-				break
-			}
-		}
-	}
 }
 
 func canonicalizeHook(file string, rule hookFile) (*ir.Hook, []diag.Diagnostic) {
@@ -227,55 +199,41 @@ func canonicalizeHook(file string, rule hookFile) (*ir.Hook, []diag.Diagnostic) 
 	if hookType == "" {
 		hookType = "command"
 	}
-	canonicalEvent, matcher, ok := mapping.ReverseHookEvent(rule.Event, compile.TargetWindsurf)
+	// The event and matcher stay in Windsurf vocabulary; the catalog resolver
+	// performs canonical translation through the recorded Windsurf provenance
+	// (design D7). Split events keep their native name with no fabricated
+	// matcher.
+	event := rule.Event
+	matcher := rule.Matcher
 	var diags []diag.Diagnostic
-	if !ok {
-		// Keep the native event in the sidecar and use the source event as the
-		// canonical placeholder. This lets the resource survive ingestion and
-		// round-trip back to Windsurf without pretending it maps to Claude.
-		canonicalEvent = rule.Event
-		matcher = rule.Matcher
+	if !hookpolicy.IsDeclaredEvent(compile.TargetWindsurf, rule.Event) {
 		diags = append(diags, diag.Diagnostic{
 			Code:     diag.CodeIngestWindsurfHookEventUnmappable,
 			Severity: diag.SeverityWarning,
 			Resource: path.Base(file),
-			Message:  fmt.Sprintf("Windsurf hook event %q has no Claude equivalent; original event preserved", rule.Event),
-			Hint:     "Use a mappable Windsurf hook event or preserve the native event through the Windsurf sidecar",
+			Message:  fmt.Sprintf("Windsurf hook event %q is outside the documented vocabulary; original event preserved", rule.Event),
+			Hint:     "Use a documented Windsurf hook event",
 			Source:   diag.SourceRef{File: file, Line: 1},
 		})
-	} else {
-		matcher = normalizeMatcher(rule.Event, matcher)
 	}
 	extra := rule.Extra
 	if len(extra) == 0 {
 		extra = nil
 	}
 	name := strings.TrimSuffix(path.Base(file), ".json")
-	options := []ir.HookOption{ir.WithHookPrompt(rule.Prompt)}
+	options := []ir.HookOption{ir.WithHookPrompt(rule.Prompt), ir.WithHookSource(string(compile.TargetWindsurf))}
 	if rule.Timeout != nil {
 		options = append(options, ir.WithHookTimeoutPtr(rule.Timeout))
 	}
 	var sidecar *extpkg.Windsurf
-	if !ok || rule.PowerShell != "" || rule.ShowOutput != nil || rule.WorkingDir != "" {
+	if rule.PowerShell != "" || rule.ShowOutput != nil || rule.WorkingDir != "" {
 		sidecar = &extpkg.Windsurf{HookPowerShell: rule.PowerShell, HookShowOutput: rule.ShowOutput, HookWorkingDir: rule.WorkingDir}
-		if !ok {
-			sidecar.OriginalHookEvent = rule.Event
-		}
 	}
 	if sidecar != nil {
 		options = append(options, ir.WithHookWindsurfSidecar(sidecar))
 	}
 	if matcher != "" {
-		return ir.NewHookWithMatcherOptions(name, canonicalEvent, matcher, rule.Command, hookType, extra, ir.SourceRef{File: file, Line: 1}, options...), diags
+		return ir.NewHookWithMatcherOptions(name, event, matcher, rule.Command, hookType, extra, ir.SourceRef{File: file, Line: 1}, options...), diags
 	}
-	return ir.NewHookWithOptions(name, canonicalEvent, rule.Command, hookType, extra, ir.SourceRef{File: file, Line: 1}, options...), diags
-}
-
-func normalizeMatcher(event, matcher string) string {
-	switch event {
-	case "pre_mcp_tool_use":
-		return "mcp__*"
-	default:
-		return matcher
-	}
+	return ir.NewHookWithOptions(name, event, rule.Command, hookType, extra, ir.SourceRef{File: file, Line: 1}, options...), diags
 }

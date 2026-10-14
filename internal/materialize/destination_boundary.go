@@ -10,6 +10,7 @@ import (
 
 	"github.com/Adyen/agent-marketplace/internal/fsboundary"
 	"github.com/Adyen/agent-marketplace/internal/harness"
+	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
 )
 
 type destinationBoundary struct {
@@ -116,16 +117,37 @@ func (b destinationBoundary) captureDirectory(dir string, create bool) (*fsbound
 	return harness.CaptureDestinationPath(b.machineScope, b.repoRoot, b.homeDir, root, rel, create)
 }
 
-func (b destinationBoundary) validate(dirs []string) error {
+func (b destinationBoundary) validateDirectories(dirs []string) (string, error) {
 	for _, root := range b.roots {
 		if err := harness.ValidateDestinationRoot(b.machineScope, b.repoRoot, b.homeDir, root); err != nil {
-			return err
+			return root, err
 		}
 	}
 	for _, dir := range dirs {
 		if err := b.directory(dir, false); err != nil {
-			return err
+			return dir, err
 		}
 	}
-	return nil
+	return "", nil
+}
+
+func configureDestinationBoundary(boundary *destinationBoundary, key outputKey, outDir, repoRoot string, destinations []harness.Destination) []string {
+	if key.target == hcc.TargetFactory {
+		boundary.legacySkillsDir = filepath.Join(outDir, "skills")
+	}
+	var directories []string
+	for _, destination := range destinations {
+		root := destination.Root
+		if key.target == hcc.TargetWindsurf && !key.machineScope {
+			root = filepath.Join(repoRoot, windsurfDir)
+		}
+		boundary.roots = append(boundary.roots, root)
+		if key.target == hcc.TargetCodex && (!key.machineScope || destination.Prefix == ".agents" || os.Getenv("CODEX_HOME") == "") {
+			boundary.roots = append(boundary.roots, filepath.Join(outDir, destination.Prefix))
+		}
+		if len(destination.AggregateRoutes) > 0 {
+			directories = append(directories, filepath.Dir(filepath.Join(destination.Root, destination.AggregateFile)))
+		}
+	}
+	return directories
 }

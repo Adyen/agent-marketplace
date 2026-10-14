@@ -543,8 +543,8 @@ func marketplaceInstallPins(plan *marketplace.PreparedInstall) []config.Marketpl
 	if len(plan.CollectionMembers) == 0 {
 		return []config.MarketplaceResourcePin{config.EnsureMarketplaceDirectPin(plan.Pin)}
 	}
-	pins := make([]config.MarketplaceResourcePin, 0, len(plan.CollectionMembers)+1)
-	pins = append(pins, plan.Pin)
+	pins := make([]config.MarketplaceResourcePin, 1, int64(len(plan.CollectionMembers))+1)
+	pins[0] = plan.Pin
 	for _, member := range plan.CollectionMembers {
 		pins = append(pins, member.Pin)
 	}

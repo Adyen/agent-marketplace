@@ -14,6 +14,33 @@ Devin command compilation now reserves `agent` and `subagent` alongside `permiss
 
 The consumer-side materializer walkers (`copySupportFilesExcluding` and the `--check` virtual digest in `internal/materialize`) now skip `.git` directories the same way. Previously a root skill's compiled cache copy contained the registry's entire `.git` object database, exposed to every workspace through the harness symlink and copied again by file-mode materialization; stale copies are pruned on the next sync's existing reconcile pass.
 
+### Shipped model catalogs and joint reasoning conversion
+
+Subagent compilers now share a source-aware model/reasoning resolver backed by
+`modelpolicy/catalogs/<harness>.yaml`. Unknown cross-harness models warn and omit
+only the model field; unsupported reasoning also warns without suppressing the
+resource. Automatic cross-provider approximations are removed. Floating-family
+pins are explicit catalog entries and produce informational diagnostics.
+
+Cursor reasoning uses cataloged model-parameter encodings; Gemini no longer emits
+an unsupported agent `effort` field. Devin native model strings round-trip without
+requiring a Claude alias, and native default selection is distinct from parent
+inheritance. Devin forward variant mappings are enabled from the captured
+`devin models list` CLI inventory plus the documented custom-profile `model`
+override; live acceptance in a real custom profile remains untested and is not
+claimed.
+
+Ingestion preserves native model/effort strings with `ModelSource` provenance.
+Existing constructors and legacy sidecars remain readable; source-aware editable
+fields take precedence over stale sidecars. The application adds source-revision
+v4 for provenance-bearing IR fallback hashes while retaining frozen v1/v2/v3
+projection and original-file hashing for existing exact locks.
+
+Model updates use a harness catalog plus an independent YAML conversion fixture;
+`make model-catalog-check` runs the offline maintenance gate. See the update recipe
+in the library README. No runtime catalog configuration or vendor CLI dependency
+is added.
+
 ### Validated native-layout descriptors now cover Codex, Devin, and Claude
 
 `target/native_layout.go` now carries a complete `NativeLayout` descriptor for

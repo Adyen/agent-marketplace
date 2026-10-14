@@ -67,7 +67,8 @@ discovers `resources/skills/...`, `resources/commands/...`, and so on.
 
 ## Layout by source harness
 
-Paths are relative to the registry root, or to the source's `path`.
+Bundle and root-form paths are relative to the registry root, or to the
+source's `path`.
 
 | Harness | Skill | Command | Subagent | Hook | MCP server |
 |---|---|---|---|---|---|
@@ -77,13 +78,75 @@ Paths are relative to the registry root, or to the source's `path`.
 | `windsurf` | `skills/<name>/SKILL.md` | `workflows/<name>.md` | not supported | `hooks.json` | `mcp_config.json` |
 | `gemini` | `.gemini/skills/<name>/SKILL.md` or `.agents/skills/…` | `commands/<name>.toml` | `.gemini/agents/<name>.md` | `.gemini/settings.json#hooks` | `.gemini/settings.json#mcpServers` |
 | `devin` | `skills/<name>/SKILL.md` | skill dir + `x-agent-marketplace-kind: command` | `agents/<name>.md` | `hooks.v1.json` | `mcp_config.json` |
-| `codex` | `.agents/skills/<name>/SKILL.md` | skill dir + `x-agent-marketplace-kind: command` | `.codex/agents/<name>.toml` | `.codex/hooks.json` | `.codex/config.toml#mcp_servers` |
+| `codex` | `.agents/skills/<name>/SKILL.md` | skill dir + `x-agent-marketplace-kind: command` | `.codex/agents/<name>.toml` | `.codex/hooks.json#hooks` | `.codex/config.toml#mcp_servers` |
 
 There are no generic `subagents/` or `mcp/` roots: a Claude subagent ships as
 `agents/<name>.md`, and Claude MCP servers ship in a root `.mcp.json`. Files in
-directories the layout does not read are silently undiscovered. Workspace forms
-(`.claude/`, `.cursor/`, `.factory/`, `.windsurf/`, `.devin/` prefixing the same
-paths) are also read.
+directories the layout does not read are silently undiscovered. Explicit
+workspace roots keep their resources inside the matching harness prefix; their
+hook files are listed below.
+
+### Hooks
+
+A registry may instead be an explicit native workspace root. Its hook file is:
+
+| Harness | Native workspace hook path |
+|---|---|
+| `claude` | `.claude/settings.json#hooks` |
+| `factory` | `.factory/hooks.json` |
+| `cursor` | `.cursor/hooks.json#hooks` |
+| `windsurf` | `.devin/hooks.json#hooks` |
+| `gemini` | `.gemini/settings.json#hooks` |
+| `devin` | `.devin/hooks.v1.json` |
+| `codex` | `.codex/hooks.json#hooks` |
+
+Use the source harness's documented workspace directories for its other
+resources. A Claude workspace source uses `.claude/skills/`, `.claude/commands/`, `.claude/agents/`, and
+`.claude/settings.json` together; it does not mix root-level bundle directories
+or a `.claude-plugin` manifest with that workspace hook file.
+
+For example, a Claude `PreToolUse` hook that runs only for `Bash` can ship in
+`.claude/settings.json`:
+
+```json
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/scripts/check.sh\""
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+Keep `scripts/check.sh` below `.claude/` beside the hook definition. Sync copies
+regular support files byte-for-byte into `hook-support/<source>/<hook>/` for
+each selected target and rewrites the plugin-root token to that installed
+location. Repository-scope commands use the target's documented
+project-directory variable or working-directory base; user-scope commands use
+the absolute installed path. The definition JSON itself is not copied into
+support output.
+
+Hook matchers must cover the same source tool concepts exactly, including
+anchoring and MCP naming. A partial or unknown mapping suppresses that hook
+with an error, while valid sibling hooks still install. The shipped
+[hook and tool catalog](https://github.com/Adyen/agent-marketplace/blob/main/site/docs/reference/hook-and-tool-names.md)
+lists the exact target events, types, names, and timeout rules. Do not expect
+every resource with an explicit tool list to convert to every target; an
+allow-list can only select tools the target actually has, and it cannot use a
+combined target tool to cover only part of that tool's scope.
+
+A hook command or prompt is trusted executable content. Review it as registry
+code, and note that sync prints changed command and prompt values to stdout for
+review. That stdout listing is intentionally exact; the application's logs and
+telemetry do not contain those values.
 
 ### Autodetection
 
@@ -92,8 +155,11 @@ then plugin manifests (`.claude-plugin/plugin.json`, `.factory-plugin/`,
 `.cursor-plugin/`, `gemini-extension.json`), then `.codex/`, then Claude-shaped
 roots, and so on. Root-level Cursor, Windsurf, Factory, and Gemini layouts share
 folder names with Claude, and a root-level Devin layout (no `.devin/`) is never
-detected. Tell consumers to set `source_harness` for those registries. An
-undetected registry falls back to Claude with `catalog.autodetect.fallback`.
+detected. `.devin/hooks.json` is Windsurf's workspace hook file, while
+`.devin/hooks.v1.json` is Devin CLI's; set `source_harness` explicitly when that
+context could be ambiguous. Tell consumers to set `source_harness` for the other
+ambiguous registries too. An undetected registry falls back to Claude with
+`catalog.autodetect.fallback`.
 
 ### Root shapes
 
@@ -229,6 +295,10 @@ A clean conversion reports `Diagnostics 0`. Look up `ingest.*` codes in the
 
 Sync a throwaway consumer against the checkout with a pinned CLI
 (`v4.0.9` or newer) and every harness your consumers target:
+
+> **Warning:** Hook review stdout includes exact command and prompt values.
+> This script deliberately captures that stdout in `sync.log`. Treat the log as
+> sensitive and do not publish it as a CI artifact.
 
 ```bash
 set -euo pipefail                       # run under bash
