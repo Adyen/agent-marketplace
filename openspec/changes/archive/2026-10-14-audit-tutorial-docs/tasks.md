@@ -10,4 +10,4 @@
 - [x] 2.1 Review prose for active voice, needless wording, em dashes, marketing language and internal-only values.
 - [x] 2.2 Run the frozen site dependency install and production build without dead links.
 - [x] 2.3 Run fresh TestDocsContract, `openspec validate --all --strict` and `make spec-check`.
-- [ ] 2.4 Run `openspec archive audit-tutorial-docs --yes` in the same pull request.
+- [x] 2.4 Run `openspec archive audit-tutorial-docs --yes` in the same pull request.
