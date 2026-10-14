@@ -133,11 +133,11 @@ export const createFixture = async (name: string, options: FixtureOptions = {}):
       const bareRegistry = path.join(registries, "fixture.git");
       git(registries, env, ["clone", "--quiet", "--bare", source, bareRegistry]);
       registryURL = pathToFileURL(bareRegistry).href;
-      expectedRepoConfig = `apiVersion: agent-marketplace/v2\nregistries:\n  - url: ${registryURL}\n    ref: main\n    path: skills\n    skills:\n      include:\n        - beta-skill\n${overflowSkills.map((name) => `        - ${name}\n`).join("")}`;
+      expectedRepoConfig = `apiVersion: agent-marketplace/v4\nsources:\n  fixture:\n    git: ${registryURL}\n    ref: main\n    path: skills\nresources:\n  fixture:\n    include:\n      - skill/beta-skill\n${overflowSkills.map((name) => `      - skill/${name}\n`).join("")}`;
       if (options.userMarketplaceDrift && stub) {
         write(path.join(home, ".agents", "config.yaml"), `apiVersion: agent-marketplace/v4\nharnesses:\n  - factory\nsources:\n  user-market:\n    marketplace: ${stub.url}\nresources:\n  user-market:\n    include:\n      - tools/skill/org-review\n    required: true\n`);
       } else {
-        write(path.join(home, ".agents", "config.yaml"), "apiVersion: agent-marketplace/v2\nharnesses:\n  - factory\nregistries: []\n");
+        write(path.join(home, ".agents", "config.yaml"), "apiVersion: agent-marketplace/v4\nharnesses:\n  - factory\nsources: {}\n");
       }
       write(path.join(repo, ".agents", "config.yaml"), expectedRepoConfig);
     }

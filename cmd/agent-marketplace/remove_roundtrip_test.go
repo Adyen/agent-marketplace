@@ -46,14 +46,16 @@ func TestInstallThenRemove_RepoScope(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
-	origin, working := createBareRepoWithWorkingClone(t, "repo-scope.git")
+	origin, working := createV4GitRegistry(t, "repo-scope.git")
 	writeSkill(t, working, "vm-lifecycle", "VM lifecycle", nil)
 	commitAndPushAll(t, working, "setup")
 
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
-registries:
-  - url: `+origin+`
+apiVersion: agent-marketplace/v4
+sources:
+  registry:
+    git: `+origin+`
     ref: main
 `)
 	withWorkingDir(t, repoRoot)
@@ -69,7 +71,7 @@ registries:
 	}
 
 	if _, err := os.Stat(filepath.Join(repoRoot, ".factory", "skills", "vm-lifecycle", "SKILL.md")); err != nil {
-		t.Skipf("factory skill missing after sync (CI limitation): %v", err)
+		t.Fatalf("factory skill missing after sync (CI limitation): %v", err)
 	}
 
 	// Remove — should delete from repo config and de-sync.
@@ -98,19 +100,23 @@ func TestInstallThenRemove_UserScope(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
-	origin, working := createBareRepoWithWorkingClone(t, "user-scope.git")
+	origin, working := createV4GitRegistry(t, "user-scope.git")
 	writeSkill(t, working, "secret-scan", "Secret scanning", nil)
 	commitAndPushAll(t, working, "setup")
 
 	writeConfig(t, filepath.Join(homeDir, ".agents", "config.yaml"), `
-registries:
-  - url: `+origin+`
+apiVersion: agent-marketplace/v4
+sources:
+  registry:
+    git: `+origin+`
     ref: main
 `)
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
-registries:
-  - url: `+origin+`
+apiVersion: agent-marketplace/v4
+sources:
+  registry:
+    git: `+origin+`
     ref: main
 `)
 	withWorkingDir(t, repoRoot)
@@ -154,14 +160,16 @@ func TestInstallThenRemove_LocalScope(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
-	origin, working := createBareRepoWithWorkingClone(t, "local-scope.git")
+	origin, working := createV4GitRegistry(t, "local-scope.git")
 	writeSkill(t, working, "k8s-deploy", "K8s deploy", nil)
 	commitAndPushAll(t, working, "setup")
 
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
-registries:
-  - url: `+origin+`
+apiVersion: agent-marketplace/v4
+sources:
+  registry:
+    git: `+origin+`
     ref: main
 `)
 	withWorkingDir(t, repoRoot)
@@ -176,7 +184,7 @@ registries:
 	}
 
 	if _, err := os.Stat(filepath.Join(repoRoot, ".factory", "skills", "k8s-deploy", "SKILL.md")); err != nil {
-		t.Skipf("factory skill missing after sync: %v", err)
+		t.Fatalf("factory skill missing after sync: %v", err)
 	}
 
 	// remove without --scope: skill has Source=RepoPersonal, infers scopeRepo,
@@ -202,14 +210,16 @@ func TestRemoveSkillNotEnabled(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
-	origin, working := createBareRepoWithWorkingClone(t, "not-enabled.git")
+	origin, working := createV4GitRegistry(t, "not-enabled.git")
 	writeSkill(t, working, "vm-lifecycle", "VM lifecycle", nil)
 	commitAndPushAll(t, working, "setup")
 
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
-registries:
-  - url: `+origin+`
+apiVersion: agent-marketplace/v4
+sources:
+  registry:
+    git: `+origin+`
     ref: main
 `)
 	withWorkingDir(t, repoRoot)
@@ -241,7 +251,7 @@ func TestRemoveTagSelectedSkill_RepoScope(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
-	origin, working := createBareRepoWithWorkingClone(t, "tag-remove.git")
+	origin, working := createV4GitRegistry(t, "tag-remove.git")
 	writeSkill(t, working, "k8s-basics", "K8s basics", []string{"k8s"})
 	writeSkill(t, working, "k8s-deploy", "K8s deploy", []string{"k8s"})
 	commitAndPushAll(t, working, "setup")
@@ -249,11 +259,14 @@ func TestRemoveTagSelectedSkill_RepoScope(t *testing.T) {
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	// Repo config selects all k8s-tagged skills via tags:.
 	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
-registries:
-  - url: `+origin+`
+apiVersion: agent-marketplace/v4
+sources:
+  registry:
+    git: `+origin+`
     ref: main
-tags:
-  - k8s
+resources:
+  registry:
+    tags: [k8s]
 `)
 	withWorkingDir(t, repoRoot)
 
@@ -303,23 +316,26 @@ func TestRemoveOrgSkillAtUserScope(t *testing.T) {
 
 	orgCfgPath := filepath.Join(t.TempDir(), "org.yaml")
 	writeConfig(t, orgCfgPath, `
-apiVersion: agent-marketplace/v3
-registries:
-  - url: `+registryRoot+`
-    default: true
+apiVersion: agent-marketplace/v4
+sources:
+  registry:
+    directory: `+registryRoot+`
+resources:
+  registry:
+    all: true
 `)
 	config.SetTestOrganizationConfigPath(t, orgCfgPath)
 
 	// User config exists but does NOT contain the org registry.
 	writeConfig(t, filepath.Join(homeDir, ".agents", "config.yaml"), `
-apiVersion: agent-marketplace/v2
+apiVersion: agent-marketplace/v4
 harnesses:
   - factory
 `)
 
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
-apiVersion: agent-marketplace/v2
+apiVersion: agent-marketplace/v4
 harnesses:
   - factory
 `)
@@ -393,14 +409,15 @@ func TestRemoveFromFlagRemovesNamedResourceFromAdHocRegistry(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
-	origin, working := createBareRepoWithWorkingClone(t, "from-registry.git")
+	origin, working := createV4GitRegistry(t, "from-registry.git")
 	writeSkill(t, working, "vm-lifecycle", "VM lifecycle", nil)
 	writeSkill(t, working, "k8s-onboarding", "Kubernetes onboarding", nil)
 	commitAndPushAll(t, working, "setup")
 
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
-registries: []
+apiVersion: agent-marketplace/v4
+sources: {}
 `)
 	withWorkingDir(t, repoRoot)
 
@@ -426,13 +443,14 @@ func TestRemoveFromFlagWithoutNameRemovesEntireRegistryEntry(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
-	origin, working := createBareRepoWithWorkingClone(t, "from-registry.git")
+	origin, working := createV4GitRegistry(t, "from-registry.git")
 	writeSkill(t, working, "vm-lifecycle", "VM lifecycle", nil)
 	commitAndPushAll(t, working, "setup")
 
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
-registries: []
+apiVersion: agent-marketplace/v4
+sources: {}
 `)
 	withWorkingDir(t, repoRoot)
 
@@ -465,7 +483,8 @@ func TestRemoveFromFlagRefAndPathRequireFrom(t *testing.T) {
 
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
-registries: []
+apiVersion: agent-marketplace/v4
+sources: {}
 `)
 	withWorkingDir(t, repoRoot)
 
@@ -493,14 +512,15 @@ func TestRemoveFromFlagUsesResolvedKindNotFlagDefault(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
-	origin, working := createBareRepoWithWorkingClone(t, "from-registry.git")
+	origin, working := createV4GitRegistry(t, "from-registry.git")
 	writeSkill(t, working, "deploy-helper", "Deploy helper", nil)
 	writeSubagent(t, working, "worker-generic", "Worker", []string{"Read"})
 	commitAndPushAll(t, working, "setup")
 
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
-registries: []
+apiVersion: agent-marketplace/v4
+sources: {}
 `)
 	withWorkingDir(t, repoRoot)
 
@@ -534,14 +554,12 @@ registries: []
 }
 
 // ---------------------------------------------------------------------------
-// local-scope remove must not require apiVersion on config.local.yaml
+// Local-scope remove accepts the canonical root generated by install.
 // ---------------------------------------------------------------------------
 
-// TestRemoveFromFlag_LocalScope_NoAPIVersion reproduces the bug where a
-// generated config.local.yaml (which carries no apiVersion) could not be
-// removed from via `remove --from --scope local`: the ad-hoc removal path
-// loaded the local config through the full Config loader, which demanded
-// apiVersion and failed with "missing apiVersion".
+// TestRemoveFromFlag_LocalScope_NoAPIVersion retains the historical local-root
+// round trip: install creates a supported v4 root and remove must edit that
+// same local layer and actually de-materialize the selected resource.
 func TestRemoveFromFlag_LocalScope_NoAPIVersion(t *testing.T) {
 	if isolateCommandTest(t) {
 		return
@@ -549,17 +567,18 @@ func TestRemoveFromFlag_LocalScope_NoAPIVersion(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
-	origin, working := createBareRepoWithWorkingClone(t, "local-noapiver.git")
+	origin, working := createV4GitRegistry(t, "local-noapiver.git")
 	writeSkill(t, working, "vm-lifecycle", "VM lifecycle", nil)
 	commitAndPushAll(t, working, "setup")
 
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
-registries: []
+apiVersion: agent-marketplace/v4
+sources: {}
 `)
 	withWorkingDir(t, repoRoot)
 
-	// Install at local scope — generates config.local.yaml WITHOUT apiVersion.
+	// Install at local scope — generates config.local.yaml with exact v4.
 	if out, err := executeCommand("install", "vm-lifecycle", "--from", origin, "--ref", "main", "--scope", "local"); err != nil {
 		t.Fatalf("install --scope local failed: %v\n%s", err, out)
 	}
@@ -596,11 +615,8 @@ registries: []
 	}
 }
 
-// TestRemove_LocalScope_WithManualAPIVersion reproduces the second half of the
-// bug: a user who hand-adds `apiVersion: agent-marketplace/v2` to
-// config.local.yaml (e.g. to satisfy the previous error) then hit a strict
-// decoder error: "field apiVersion not found in type config.LocalConfig".
-// The LocalConfig schema now tolerates an optional apiVersion.
+// TestRemove_LocalScope_WithManualAPIVersion verifies a handwritten v4 local
+// root is accepted and its apiVersion survives the selector edit.
 func TestRemove_LocalScope_WithManualAPIVersion(t *testing.T) {
 	if isolateCommandTest(t) {
 		return
@@ -608,22 +624,24 @@ func TestRemove_LocalScope_WithManualAPIVersion(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
-	origin, working := createBareRepoWithWorkingClone(t, "local-apiver.git")
+	origin, working := createV4GitRegistry(t, "local-apiver.git")
 	writeSkill(t, working, "vm-lifecycle", "VM lifecycle", nil)
 	commitAndPushAll(t, working, "setup")
 
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
-registries: []
+apiVersion: agent-marketplace/v4
+sources: {}
 `)
 	// Hand-written local config WITH apiVersion present.
-	writeFile(t, filepath.Join(repoRoot, ".agents", "config.local.yaml"), `apiVersion: agent-marketplace/v2
-registries:
-  - url: `+origin+`
+	writeFile(t, filepath.Join(repoRoot, ".agents", "config.local.yaml"), `apiVersion: agent-marketplace/v4
+sources:
+  registry:
+    git: `+origin+`
     ref: main
-    skills:
-      include:
-        - vm-lifecycle
+resources:
+  registry:
+    include: [skill/vm-lifecycle]
 `)
 	withWorkingDir(t, repoRoot)
 
@@ -643,7 +661,7 @@ registries:
 	if err != nil {
 		t.Fatalf("read config.local.yaml: %v", err)
 	}
-	if !strings.Contains(string(localBytes), "apiVersion: agent-marketplace/v2") {
+	if !strings.Contains(string(localBytes), "apiVersion: agent-marketplace/v4") {
 		t.Fatalf("expected apiVersion to be preserved, got:\n%s", localBytes)
 	}
 
@@ -684,18 +702,22 @@ func TestRemoveFromFlag_LocalScope_ExcludesProjectRegistry(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
-	origin, working := createBareRepoWithWorkingClone(t, "xlayer-all.git")
+	origin, working := createV4GitRegistry(t, "xlayer-all.git")
 	writeSkill(t, working, "db-migrate", "DB migrate", nil)
 	writeSkill(t, working, "db-backup", "DB backup", nil)
 	commitAndPushAll(t, working, "setup")
 
 	repoRoot := filepath.Join(t.TempDir(), "repo")
-	// Project config enables the registry with default:true (auto-selects all).
+	// Project config explicitly selects all resources from the source.
 	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
-registries:
-  - url: `+origin+`
+apiVersion: agent-marketplace/v4
+sources:
+  registry:
+    git: `+origin+`
     ref: main
-    default: true
+resources:
+  registry:
+    all: true
 `)
 	withWorkingDir(t, repoRoot)
 
@@ -739,17 +761,21 @@ func TestRemoveFromFlag_LocalScope_ExcludesNamedFromProjectRegistry(t *testing.T
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
-	origin, working := createBareRepoWithWorkingClone(t, "xlayer-named.git")
+	origin, working := createV4GitRegistry(t, "xlayer-named.git")
 	writeSkill(t, working, "db-migrate", "DB migrate", nil)
 	writeSkill(t, working, "db-backup", "DB backup", nil)
 	commitAndPushAll(t, working, "setup")
 
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
-registries:
-  - url: `+origin+`
+apiVersion: agent-marketplace/v4
+sources:
+  registry:
+    git: `+origin+`
     ref: main
-    default: true
+resources:
+  registry:
+    all: true
 `)
 	withWorkingDir(t, repoRoot)
 
@@ -782,17 +808,21 @@ func TestInstallAfterExcludeAll_ReEnablesResource(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
-	origin, working := createBareRepoWithWorkingClone(t, "exclude-then-install.git")
+	origin, working := createV4GitRegistry(t, "exclude-then-install.git")
 	writeSkill(t, working, "db-migrate", "DB migrate", nil)
 	writeSkill(t, working, "db-backup", "DB backup", nil)
 	commitAndPushAll(t, working, "setup")
 
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
-registries:
-  - url: `+origin+`
+apiVersion: agent-marketplace/v4
+sources:
+  registry:
+    git: `+origin+`
     ref: main
-    default: true
+resources:
+  registry:
+    all: true
 `)
 	withWorkingDir(t, repoRoot)
 
@@ -850,7 +880,7 @@ func TestRemoveFromFlag_BlockedRegistry_RemovesEntry(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
-	origin, working := createBareRepoWithWorkingClone(t, "blocked-registry.git")
+	origin, working := createV4GitRegistry(t, "blocked-registry.git")
 	writeSkill(t, working, "vm-lifecycle", "VM lifecycle", nil)
 	commitAndPushAll(t, working, "setup")
 
@@ -860,19 +890,21 @@ harnesses:
   - factory
 `)
 	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
-registries:
-  - url: `+origin+`
+apiVersion: agent-marketplace/v4
+sources:
+  registry:
+    git: `+origin+`
     ref: main
+resources:
+  registry:
+    all: true
 `)
 	withWorkingDir(t, repoRoot)
 
 	if out, err := executeCommand("sync"); err != nil {
 		t.Fatalf("initial sync failed: %v\n%s", err, out)
 	}
-	factoryPresent := false
-	if _, err := os.Stat(filepath.Join(repoRoot, ".factory", "skills", "vm-lifecycle", "SKILL.md")); err == nil {
-		factoryPresent = true
-	}
+	assertFactorySkillExists(t, repoRoot, "vm-lifecycle")
 
 	// Tighten the allowlist so the previously-allowed registry is now blocked.
 	writeConfig(t, filepath.Join(homeDir, ".agents", "config.yaml"), `
@@ -895,9 +927,7 @@ allowed_registries: []
 		t.Fatalf("expected no registries after remove --from, got %d", len(repoCfg.Registries))
 	}
 
-	if factoryPresent {
-		assertFactorySkillAbsent(t, repoRoot, "vm-lifecycle")
-	}
+	assertFactorySkillAbsent(t, repoRoot, "vm-lifecycle")
 }
 
 type blockedRemovalAcquisitionFixture struct {
@@ -919,19 +949,19 @@ func setupBlockedRemovalAcquisitionFixture(t *testing.T) blockedRemovalAcquisiti
 	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, ".cache"))
 	t.Setenv("XDG_STATE_HOME", filepath.Join(home, ".state"))
 	t.Setenv("CODEX_HOME", filepath.Join(home, ".codex"))
-	originA, workingA := createBareRepoWithWorkingClone(t, "blocked-a.git")
+	originA, workingA := createV4GitRegistry(t, "blocked-a.git")
 	writeSkill(t, workingA, "skill-a", "BODY-A", nil)
 	commitAndPushAll(t, workingA, "seed A")
-	originB, workingB := createBareRepoWithWorkingClone(t, "blocked-b.git")
+	originB, workingB := createV4GitRegistry(t, "blocked-b.git")
 	writeSkill(t, workingB, "skill-b", "BODY-B", nil)
 	commitAndPushAll(t, workingB, "seed B")
-	originC, workingC := createBareRepoWithWorkingClone(t, "blocked-c.git")
+	originC, workingC := createV4GitRegistry(t, "blocked-c.git")
 	writeSkill(t, workingC, "skill-c", "BODY-C", nil)
 	commitAndPushAll(t, workingC, "seed C")
 	repo := filepath.Join(t.TempDir(), "repo")
 	configPath := filepath.Join(repo, ".agents", "config.yaml")
 	writeConfig(t, filepath.Join(home, ".agents", "config.yaml"), "\nharnesses: [factory]\n")
-	writeConfig(t, configPath, "\nregistries:\n  - url: "+originA+"\n    ref: main\n    default: true\n  - url: "+originB+"\n    ref: main\n    default: true\n")
+	writeConfig(t, configPath, "apiVersion: agent-marketplace/v4\nsources:\n  registry-a:\n    git: "+originA+"\n    ref: main\n  registry-b:\n    git: "+originB+"\n    ref: main\nresources:\n  registry-a:\n    all: true\n  registry-b:\n    all: true\n")
 	withWorkingDir(t, repo)
 	if out, err := executeCommand("sync"); err != nil {
 		t.Fatalf("initial sync: %v\n%s", err, out)
@@ -949,7 +979,7 @@ func setupBlockedRemovalAcquisitionFixture(t *testing.T) blockedRemovalAcquisiti
 
 func addBlockedRemovalThirdRegistry(t *testing.T, fixture blockedRemovalAcquisitionFixture) {
 	t.Helper()
-	writeConfig(t, fixture.configPath, "\nregistries:\n  - url: "+fixture.originA+"\n    ref: main\n    default: true\n  - url: "+fixture.originB+"\n    ref: main\n    default: true\n  - url: "+fixture.originC+"\n    ref: main\n    default: true\n")
+	writeConfig(t, fixture.configPath, "apiVersion: agent-marketplace/v4\nsources:\n  registry-a:\n    git: "+fixture.originA+"\n    ref: main\n  registry-b:\n    git: "+fixture.originB+"\n    ref: main\n  registry-c:\n    git: "+fixture.originC+"\n    ref: main\nresources:\n  registry-a:\n    all: true\n  registry-b:\n    all: true\n  registry-c:\n    all: true\n")
 }
 
 func TestRemoveBlockedRegistryRefusesNewAcquisition(t *testing.T) {
@@ -1170,7 +1200,7 @@ func TestRemoveFromFlag_BlockedRegistry_RemovesNamedResource(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
-	origin, working := createBareRepoWithWorkingClone(t, "blocked-named.git")
+	origin, working := createV4GitRegistry(t, "blocked-named.git")
 	writeSkill(t, working, "vm-lifecycle", "VM lifecycle", nil)
 	writeSkill(t, working, "k8s-onboarding", "Kubernetes onboarding", nil)
 	commitAndPushAll(t, working, "setup")
@@ -1181,10 +1211,14 @@ harnesses:
   - factory
 `)
 	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
-registries:
-  - url: `+origin+`
+apiVersion: agent-marketplace/v4
+sources:
+  registry:
+    git: `+origin+`
     ref: main
-    default: true
+resources:
+  registry:
+    all: true
 `)
 	withWorkingDir(t, repoRoot)
 

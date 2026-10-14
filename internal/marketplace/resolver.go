@@ -138,8 +138,9 @@ func (r *Resolver) ResolveWithPolicy(ctx context.Context, cfg *config.Config, ta
 			errs = append(errs, fmt.Errorf("marketplace %s: %w", configuredEntry.URL, err))
 			continue
 		}
-		if strings.TrimSpace(entry.InstanceID) == "" {
-			errs = append(errs, fmt.Errorf("marketplace %s: configured marketplace instance ID is required", entry.URL))
+		if unacquiredMarketplaceRegistration(entry) && mode == resolver.MarketplaceResolveModeCachedNoFetch {
+			// No exact resources are selected, and an offline read must not
+			// discover or adopt an endpoint identity from untrusted cache data.
 			continue
 		}
 		var client *Client
@@ -149,13 +150,9 @@ func (r *Resolver) ResolveWithPolicy(ctx context.Context, cfg *config.Config, ta
 				errs = append(errs, fmt.Errorf("marketplace %s: %w", entry.URL, err))
 				continue
 			}
-			wellKnown, err := client.WellKnown(ctx)
+			entry, err = acquireMarketplaceIdentity(ctx, client, entry)
 			if err != nil {
-				errs = append(errs, fmt.Errorf("marketplace %s well-known document: %w", entry.URL, err))
-				continue
-			}
-			if wellKnown.InstanceID != entry.InstanceID {
-				errs = append(errs, fmt.Errorf("marketplace %s instance ID mismatch: endpoint %q, configured %q", entry.URL, wellKnown.InstanceID, entry.InstanceID))
+				errs = append(errs, fmt.Errorf("marketplace %s: %w", configuredEntry.URL, err))
 				continue
 			}
 		} else {
@@ -354,10 +351,42 @@ func (r *Resolver) enforceNestedCollectionRevocations(ctx context.Context, clien
 	return nil
 }
 
+// An authored registration has no acquired identity or exact resource evidence.
+// Missing identity on an entry with pins is never a discovery request.
+func unacquiredMarketplaceRegistration(entry config.MarketplaceEntry) bool {
+	return entry.InstanceID == "" && len(entry.Resources) == 0
+}
+
+// acquireMarketplaceIdentity uses validated live metadata only. It may bind a
+// resource-free declaration, but must never rebind an existing exact identity.
+func acquireMarketplaceIdentity(ctx context.Context, client *Client, entry config.MarketplaceEntry) (config.MarketplaceEntry, error) {
+	if strings.TrimSpace(entry.InstanceID) == "" && !unacquiredMarketplaceRegistration(entry) {
+		return entry, fmt.Errorf("configured marketplace instance ID is required")
+	}
+	wellKnown, err := client.WellKnown(ctx)
+	if err != nil {
+		return entry, fmt.Errorf("well-known document: %w", err)
+	}
+	if unacquiredMarketplaceRegistration(entry) {
+		entry.InstanceID = wellKnown.InstanceID
+		if errs := config.ValidateMarketplaceEntries([]config.MarketplaceEntry{entry}); len(errs) > 0 {
+			return entry, fmt.Errorf("invalid discovered Marketplace identity: %w", errors.Join(errs...))
+		}
+		slog.Debug("marketplace registration identity discovered", "url", entry.URL, "instance_id", entry.InstanceID)
+	} else if wellKnown.InstanceID != entry.InstanceID {
+		slog.Warn("marketplace endpoint instance ID mismatch", "url", entry.URL, "endpoint_instance_id", wellKnown.InstanceID, "configured_instance_id", entry.InstanceID)
+		return entry, fmt.Errorf("instance ID mismatch: endpoint %q, configured %q", wellKnown.InstanceID, entry.InstanceID)
+	}
+	return entry, nil
+}
+
 func canonicalMarketplaceEntry(entry config.MarketplaceEntry) (config.MarketplaceEntry, error) {
 	canonicalURL, err := urlutil.NormalizeEndpointURL(entry.URL)
 	if err != nil {
 		return config.MarketplaceEntry{}, err
+	}
+	if strings.TrimSpace(entry.InstanceID) == "" && !unacquiredMarketplaceRegistration(entry) {
+		return config.MarketplaceEntry{}, fmt.Errorf("configured marketplace instance ID is required")
 	}
 	entry.URL = canonicalURL
 	return entry, nil

@@ -445,7 +445,7 @@ func TestHookInvariantLegacyFileURLWorkingTreeHooksSync(t *testing.T) {
 	e.WriteFile("/repos/working-tree-registry/.claude-plugin/plugin.json", `{"name":"working-tree","version":"1.0.0"}`)
 	e.WriteFile("/repos/working-tree-registry/hooks/hooks.json", fmt.Sprintf(`{"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"echo %s"}]}]}}`, token))
 	e.MustRun(fmt.Sprintf(`cd %q && git init -q -b main && git add -A && git -c user.name='E2E Test' -c user.email='e2e@test.local' commit -q -m seed`, checkout))
-	e.WriteRepoConfig(fmt.Sprintf("apiVersion: agent-marketplace/v2\nharnesses: [claude]\nregistries:\n  - url: file://%s\n    ref: main\n    hooks: [PreToolUse-command]\n", checkout))
+	e.WriteRepoConfig(fmt.Sprintf("apiVersion: agent-marketplace/v4\nharnesses: [claude]\nsources: {team: {git: 'file://%s', ref: main}}\nresources: {team: {include: [hook/PreToolUse-command]}}\n", checkout))
 
 	e.AssertExitCode(e.RunAM("sync"), 0)
 	if got := hookInvariantCount(t, e.workspace, hookInvariantHookFiles("claude", false), token); got != 1 {

@@ -6,6 +6,10 @@ Pick one of the methods below, then [check that it works](#verify). Most people 
 
 You also need [Git](./glossary.md#git) to install resources from Git registries. Run `git --version` to check; [Terminal basics](./terminal-basics.md#install-git) explains how to install it.
 
+::: warning Upgrading an existing installation
+Before replacing your binary with the v4-only CLI, [convert every writable root and its include tree](./how-to/migrate-configuration.md) using an older released migrator. Existing organization, user, repository, and personal-local roots all require exact `apiVersion: agent-marketplace/v4`; organization configuration must be converted and deployed externally by its administrator. Conversion can refuse includes, unrepresentable legacy input, or missing verified Marketplace evidence. Do not merely change the version string. The new CLI has no `migrate` command or automatic startup/TUI conversion.
+:::
+
 ## From GitHub Releases
 
 1. Find out which build your computer needs:

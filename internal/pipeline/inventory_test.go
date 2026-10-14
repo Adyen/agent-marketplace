@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
 	"path/filepath"
 	"reflect"
 	"regexp"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/Adyen/agent-marketplace/internal/catalog"
 	"github.com/Adyen/agent-marketplace/internal/config"
+	"github.com/Adyen/agent-marketplace/internal/lockfile"
 	"github.com/Adyen/agent-marketplace/internal/resolver"
 	"github.com/Adyen/agent-marketplace/internal/telemetry"
 	tmcfg "github.com/Adyen/agent-marketplace/internal/telemetry/config"
@@ -33,29 +35,50 @@ func TestResolveEmitsInventoryAtSharedBoundary(t *testing.T) {
 	marketplace := newLayerMarketplaceServer(t)
 	hostedRegistry := marketplace.addRegistry(t, "awesome-ai")
 	marketplace.addSkill(t, hostedRegistry, "canonical-review")
-	resolvedRevision := string(marketplace.resources["awesome-ai/skill/canonical-review"].revision.ContentDigest)
-	repoCfg := &config.Config{
-		Registries: []config.RegistryEntry{{
-			URL: registryRoot, SourceHarness: "claude", Skills: config.KindSelector{Include: []string{"shared-inventory"}},
-		}},
-		Marketplaces: []config.MarketplaceEntry{{
-			URL: marketplace.URL, InstanceID: marketplace.instanceID, Source: config.RepoCommitted,
-			Resources: []config.MarketplaceResourcePin{{
-				RegistryID: string(hostedRegistry.ID), RegistrySlug: hostedRegistry.Slug, Kind: "skill", Name: "canonical-review",
-				Revision: resolvedRevision, Digest: resolvedRevision, InstalledName: "local-alias", Direct: true,
+	hostedResource := marketplace.resources["awesome-ai/skill/canonical-review"]
+	resolvedRevision := string(hostedResource.revision.ContentDigest)
+	repoRoot := t.TempDir()
+	repoPath := config.ProjectConfigPath(repoRoot)
+	writeFile(t, filepath.Join(home, ".agents", "config.yaml"), "apiVersion: agent-marketplace/v4\nharnesses: [factory]\n")
+	writeFile(t, repoPath, fmt.Sprintf(`apiVersion: agent-marketplace/v4
+sources:
+  registry: {directory: %q, source_harness: claude}
+  hosted: {marketplace: %q}
+resources:
+  registry: [skill/shared-inventory]
+  hosted:
+    - awesome-ai/skill/canonical-review: {as: local-alias, revision: %q}
+`, registryRoot, marketplace.URL, resolvedRevision))
+	lockData, err := lockfile.Encode(lockfile.Document{
+		APIVersion: lockfile.APIVersionV2,
+		Scope:      lockfile.ScopeRepo,
+		Marketplaces: []lockfile.MarketplaceLock{{
+			URL: marketplace.URL, InstanceID: marketplace.instanceID,
+			RegistryBindings: []lockfile.MarketplaceRegistryBinding{{Name: hostedRegistry.Slug, RegistryID: string(hostedRegistry.ID)}},
+			Resources: []lockfile.MarketplaceResourceLock{{
+				RegistryName: hostedRegistry.Slug, RegistryID: string(hostedRegistry.ID), Kind: "skill", Name: "canonical-review",
+				Revision: resolvedRevision, ContentDigest: lockfile.Digest(resolvedRevision), ArchiveDigest: lockfile.Digest(hostedResource.archiveDigest),
+				Acquisition: lockfile.MarketplaceAcquisitionMirror,
 			}},
 		}},
+	})
+	if err != nil {
+		t.Fatalf("encode repository lock: %v", err)
+	}
+	lockPath := filepath.Join(repoRoot, ".agents", "lock.yaml")
+	writeFile(t, lockPath, string(lockData))
+	lockBefore, err := os.Stat(lockPath)
+	if err != nil {
+		t.Fatal(err)
 	}
 	marketplaceMode := resolver.MarketplaceResolveModeRefresh
 	result := Resolve(ctx, ResolveOptions{
-		Workspace:       mustWorkspace(t, t.TempDir()),
+		Workspace:       mustWorkspace(t, repoRoot),
 		CatalogMode:     catalog.LoadModeInspect,
 		MarketplaceMode: &marketplaceMode,
-		Loaders: Loaders{
-			Org:    func() (*config.Config, error) { return nil, nil },
-			Global: func() (*config.Config, error) { return &config.Config{Harnesses: []string{"factory"}}, nil },
-			Repo:   func() (*config.Config, error) { return repoCfg, nil },
-			Local:  func() (*config.LocalConfig, error) { return nil, nil },
+		ConfigLoadMode:  ConfigLoadStrict,
+		EffectiveOpts: config.LoadEffectiveOptions{
+			OrganizationPath: filepath.Join(t.TempDir(), "missing-org.yaml"),
 		},
 	})
 	if len(result.Errors) != 0 {
@@ -68,11 +91,23 @@ func TestResolveEmitsInventoryAtSharedBoundary(t *testing.T) {
 	for _, artifact := range result.Resolved {
 		if artifact.IsMarketplace {
 			hostedFound = artifact.Name == "local-alias" && artifact.MarketplaceResourceName == "canonical-review" &&
-				artifact.MarketplaceInstanceID == marketplace.instanceID && artifact.MarketplaceRegistryID == string(hostedRegistry.ID)
+				artifact.MarketplaceInstanceID == marketplace.instanceID && artifact.MarketplaceRegistryID == string(hostedRegistry.ID) &&
+				artifact.Source == config.RepoCommitted
 		}
 	}
 	if !hostedFound {
 		t.Fatalf("shared Resolve did not retain hosted coordinate separately from installed alias: %#v", result.Resolved)
+	}
+	lockAfter, err := os.ReadFile(lockPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lockStatAfter, err := os.Stat(lockPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(lockAfter, lockData) || lockStatAfter.Mode() != lockBefore.Mode() || !lockStatAfter.ModTime().Equal(lockBefore.ModTime()) {
+		t.Fatal("inventory resolution changed owning repository lock bytes or metadata")
 	}
 	if err := tel.Shutdown(context.Background()); err != nil {
 		t.Fatalf("shutdown telemetry: %v", err)
@@ -111,11 +146,11 @@ func TestSilentSyncReportsPostMutationInventory(t *testing.T) {
 	ctx, tel := setupPipelineTelemetry(t, exporter)
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	writeFile(t, filepath.Join(home, ".agents", "config.yaml"), "apiVersion: agent-marketplace/v2\nharnesses: [factory]\n")
+	writeFile(t, filepath.Join(home, ".agents", "config.yaml"), "apiVersion: agent-marketplace/v4\nharnesses: [factory]\n")
 	registryRoot := t.TempDir()
 	writeSkill(t, registryRoot, "post-mutation", "test", nil)
 	repoRoot := t.TempDir()
-	writeFile(t, filepath.Join(repoRoot, ".agents", "config.yaml"), fmt.Sprintf("apiVersion: agent-marketplace/v2\nregistries:\n  - path: %s\n    source_harness: claude\n    skills: [post-mutation]\n", registryRoot))
+	writeFile(t, filepath.Join(repoRoot, ".agents", "config.yaml"), fmt.Sprintf("apiVersion: agent-marketplace/v4\nsources:\n  registry: {directory: %q, source_harness: claude}\nresources:\n  registry: [skill/post-mutation]\n", registryRoot))
 
 	if err := silentSync(ctx, mustWorkspace(t, repoRoot)); err != nil {
 		t.Fatalf("silentSync: %v", err)

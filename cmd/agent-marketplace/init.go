@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/harness"
+	"github.com/Adyen/agent-marketplace/internal/pipeline"
 	"github.com/Adyen/agent-marketplace/internal/telemetry"
 	tmcfg "github.com/Adyen/agent-marketplace/internal/telemetry/config"
 )
@@ -97,6 +99,13 @@ func initWithHarnesses(out io.Writer, harnesses []string) error {
 }
 
 func initializeAndReport(out io.Writer, harnesses []string) (string, bool, error) {
+	ctx := context.Background()
+	if err := prepareDependencyTransactions(ctx, false); err != nil {
+		return "", false, err
+	}
+	if err := pipeline.ValidateConsumerIntent(ctx, config.FindRepoRoot(), config.FindLocalConfigDir()); err != nil {
+		return "", false, err
+	}
 	path, err := config.InitializeUserPersonal(harnesses)
 	if errors.Is(err, config.ErrAlreadyInitialized) {
 		if _, err := fmt.Fprintln(out, "User personal config already initialized."); err != nil {

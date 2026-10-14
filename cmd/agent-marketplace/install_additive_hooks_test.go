@@ -28,10 +28,12 @@ func TestInstallCommandAllIncludesCrossRegistryHooks(t *testing.T) {
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
 harnesses: [factory]
-registries:
-  - url: `+firstOrigin+`
+sources:
+  first:
+    git: file://`+firstOrigin+`
     ref: main
-  - url: `+secondOrigin+`
+  second:
+    git: file://`+secondOrigin+`
     ref: main
 `)
 	withWorkingDir(t, repoRoot)
@@ -104,16 +106,21 @@ registries:
 	if err != nil {
 		t.Fatalf("load repo config after remove: %v", err)
 	}
+	if len(cfg.Registries) != 2 {
+		t.Fatalf("registry count after remove = %d, want both providers retained", len(cfg.Registries))
+	}
 	for _, entry := range cfg.Registries {
 		switch entry.URL {
-		case firstOrigin:
+		case "file://" + firstOrigin:
 			if len(entry.Hooks.Include) != 0 {
 				t.Fatalf("first registry hooks after remove = %#v, want empty", entry.Hooks.Include)
 			}
-		case secondOrigin:
+		case "file://" + secondOrigin:
 			if len(entry.Hooks.Include) != 1 || entry.Hooks.Include[0] != "PreToolUse-command" {
 				t.Fatalf("second registry hooks after remove = %#v, want provider retained", entry.Hooks.Include)
 			}
+		default:
+			t.Fatalf("unexpected source after provider-scoped remove: %q", entry.URL)
 		}
 	}
 	lock := readLockDocument(t, filepath.Join(repoRoot, ".agents", "lock.yaml"))

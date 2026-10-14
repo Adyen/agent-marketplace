@@ -47,24 +47,26 @@ func stalePruneCompoundRepo(t *testing.T, stale ...string) (string, string) {
 	writeFile(t, filepath.Join(working, ".mcp.json"), compoundMaterializeErrorMCP)
 	commitAndPushAll(t, working, "Add compound fixture")
 
-	selections := "      - keeper\n"
+	selections := "      - skill/keeper\n"
 	for _, name := range stale {
-		selections += "      - " + name + "\n"
+		selections += "      - skill/" + name + "\n"
 	}
 
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	configPath := filepath.Join(repoRoot, ".agents", "config.yaml")
 	writeConfig(t, configPath, `
-apiVersion: agent-marketplace/v2
+apiVersion: agent-marketplace/v4
 harnesses:
   - devin
-registries:
-  - url: `+origin+`
+sources:
+  compound:
+    git: file://`+origin+`
     ref: main
-    mcp:
-      - good
-      - bad
-    skills:
+resources:
+  compound:
+    include:
+      - mcp/good
+      - mcp/bad
 `+selections)
 
 	withWorkingDir(t, repoRoot)
@@ -106,7 +108,7 @@ func TestSyncPruneStalePrunesDespiteUnrelatedMaterializeError(t *testing.T) {
 	}
 	for _, name := range []string{"beads", "mayor", "openspec-to-beads"} {
 		for _, line := range strings.Split(string(configData), "\n") {
-			if strings.TrimSpace(line) == "- "+name {
+			if strings.TrimSpace(line) == "- skill/"+name {
 				t.Errorf("stale selection %q survived in the config:\n%s", name, configData)
 			}
 		}
@@ -202,12 +204,15 @@ func TestSyncPruneStaleStrictModePrunesTheSelectionsItPromoted(t *testing.T) {
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	configPath := filepath.Join(repoRoot, ".agents", "config.yaml")
 	writeConfig(t, configPath, `
-registries:
-  - url: `+origin+`
+sources:
+  skills:
+    git: file://`+origin+`
     ref: main
-    skills:
-      - vm-lifecycle
-      - deleted-skill
+resources:
+  skills:
+    include:
+      - skill/vm-lifecycle
+      - skill/deleted-skill
 `)
 	withWorkingDir(t, repoRoot)
 
@@ -223,7 +228,7 @@ registries:
 		t.Fatalf("read config: %v", readErr)
 	}
 	for _, line := range strings.Split(string(configData), "\n") {
-		if strings.TrimSpace(line) == "- deleted-skill" {
+		if strings.TrimSpace(line) == "- skill/deleted-skill" {
 			t.Errorf("stale selection survived:\n%s", configData)
 		}
 	}
@@ -260,15 +265,16 @@ skills:
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	configPath := filepath.Join(repoRoot, ".agents", "config.yaml")
 	writeConfig(t, configPath, `
-registries:
-  - url: `+origin+`
+sources:
+  skills:
+    git: file://`+origin+`
     ref: main
-    skills:
-      - vm-lifecycle
-      - deleted-skill
-collections:
-  include:
-    - infra-bundle
+resources:
+  skills:
+    include:
+      - skill/vm-lifecycle
+      - skill/deleted-skill
+      - collection/infra-bundle
 `)
 	withWorkingDir(t, repoRoot)
 
@@ -311,16 +317,20 @@ func TestSyncPruneStaleSkipExplainsUntrustedCatalog(t *testing.T) {
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	configPath := filepath.Join(repoRoot, ".agents", "config.yaml")
 	writeConfig(t, configPath, `
-registries:
-  - url: `+origin+`
+sources:
+  skills:
+    git: file://`+origin+`
     ref: main
-    skills:
-      - vm-lifecycle
-      - deleted-skill
-  - url: `+filepath.Join(t.TempDir(), "unreachable.git")+`
+  unreachable:
+    git: file://`+filepath.Join(t.TempDir(), "unreachable.git")+`
     ref: main
-    skills:
-      - vm-lifecycle
+resources:
+  skills:
+    include:
+      - skill/vm-lifecycle
+      - skill/deleted-skill
+  unreachable:
+    include: [skill/vm-lifecycle]
 `)
 	withWorkingDir(t, repoRoot)
 

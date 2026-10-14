@@ -2,181 +2,229 @@ package e2e_test
 
 import (
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 )
 
-// preV4ReleaseArch pins the last stable release before v4 (v3.1.1); only a
-// linux-amd64 asset was published.
-var preV4ReleaseArch = map[string]string{
-	"3e66fd4d88c03282e7505c60ee912c6f9d0f66a7db91b0d8512e6090993ab059": "amd64",
+// These launch witnesses replace successful pre-v4 upgrade execution. They use
+// the real CLI and retain evidence that rejection precedes acquisition/pruning.
+var consumerRootPaths = []string{
+	"/etc/agent-marketplace/config.yaml",
+	"/root/.agents/config.yaml",
+	"/workspace/.agents/config.yaml",
+	"/workspace/.agents/config.local.yaml",
 }
 
-func upgradeImage(t *testing.T) string {
+var unsupportedConsumerVersions = []struct {
+	name, field, code string
+}{
+	{"v1", "apiVersion: agent-marketplace/v1\n", "v4.api-version"},
+	{"v2", "apiVersion: agent-marketplace/v2\n", "v4.api-version"},
+	{"v3", "apiVersion: agent-marketplace/v3\n", "v4.api-version"},
+	{"unknown", "apiVersion: agent-marketplace/v99\n", "v4.api-version"},
+	{"omitted", "", "v4.api-version-required"},
+	{"empty", "apiVersion: ''\n", "v4.api-version"},
+	{"null", "apiVersion: null\n", "v4.api-version"},
+	{"integer", "apiVersion: 4\n", "v4.api-version"},
+	{"boolean", "apiVersion: true\n", "v4.api-version"},
+	{"sequence", "apiVersion: [agent-marketplace/v4]\n", "v4.api-version"},
+	{"mapping", "apiVersion: {version: agent-marketplace/v4}\n", "v4.api-version"},
+	{"whitespace", "apiVersion: ' agent-marketplace/v4 '\n", "v4.api-version"},
+	{"case", "apiVersion: Agent-Marketplace/v4\n", "v4.api-version"},
+}
+
+func consumerAcquisitionSentinel(t *testing.T) (string, *atomic.Int64) {
 	t.Helper()
-	image := os.Getenv("AM_E2E_UPGRADE_IMAGE")
-	if image == "" {
-		t.Fatal("AM_E2E_UPGRADE_IMAGE must name a local container image that provides git")
-	}
-	return image
+	count := &atomic.Int64{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		count.Add(1)
+		http.Error(w, "acquisition sentinel must not be reached", http.StatusServiceUnavailable)
+	}))
+	t.Cleanup(server.Close)
+	return server.URL + "/registry.git", count
 }
 
-func TestPreV4ReleaseUpgrade(t *testing.T) {
-	if os.Getenv("AM_E2E_PRE_V4_BINARY") == "" {
-		t.Skip("historical executable is supplied by the dedicated upgrade gate")
+func seedV4ConsumerInstallation(t *testing.T) (*Env, map[string]string) {
+	t.Helper()
+	env := newEnv(t)
+	env.InitGitRepo()
+	url := env.CreateBareRepo("format-controls", SkillsOnly(Skill{Name: "owned", Description: "Owned format-control resource"}, Skill{Name: "extra"}))
+	configs := map[string]string{}
+	for i, path := range consumerRootPaths {
+		body := fmt.Sprintf("apiVersion: agent-marketplace/v4\nsources: {team: {git: %q, ref: main}}\n", url)
+		if i < 3 {
+			body += "harnesses: [factory]\n"
+		}
+		if i == 1 || i == 2 {
+			body += "materialization: {mode: file}\n"
+		}
+		if i == 2 {
+			body += "resources: {team: {include: [skill/owned]}}\n"
+		}
+		env.WriteFile(path, body)
+		configs[path] = body
 	}
-	historical, arch := verifiedExecutable(t, "AM_E2E_PRE_V4_BINARY", preV4ReleaseArch)
-	world := newHistoricalWorld(t, upgradeImage(t))
-	root := world.root
-	candidate := world.buildCandidate(arch, "e2e")
+	env.MustRunAM("sync")
+	env.AssertFileContains("/workspace/.factory/skills/owned/SKILL.md", "Owned format-control resource")
+	env.MustRunAM("sync", "--check")
+	return env, configs
+}
 
-	home := filepath.Join(root, "home")
-	workspace := filepath.Join(root, "workspace")
-	registry := filepath.Join(root, "registry")
-	for _, dir := range []string{home, workspace, filepath.Join(registry, "skills", "release-review"), filepath.Join(registry, "skills", "after-upgrade"), filepath.Join(workspace, ".agents")} {
-		if err := os.MkdirAll(dir, 0o700); err != nil {
+func snapshotConsumerEvidence(t *testing.T, env *Env) map[string]string {
+	t.Helper()
+	result := map[string]string{}
+	for _, path := range []string{
+		"/etc/agent-marketplace", "/root/.agents", "/workspace/.agents", "/workspace/.factory",
+	} {
+		actual := env.mustResolvePath(path)
+		if _, err := os.Lstat(actual); os.IsNotExist(err) {
+			result[path] = "absent"
+			continue
+		}
+		fingerprint, err := pathFingerprint(actual)
+		if err != nil {
 			t.Fatal(err)
 		}
+		result[path] = fingerprint
 	}
-	const skill = "---\nname: release-review\ndescription: Historical release review\n---\n\n# Release Review\n\nHistorical content.\n"
-	const extraSkill = "---\nname: after-upgrade\ndescription: Another historical resource\n---\n\n# After Upgrade\n\nStill installable.\n"
-	if err := os.WriteFile(filepath.Join(registry, "skills", "release-review", "SKILL.md"), []byte(skill), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(registry, "skills", "after-upgrade", "SKILL.md"), []byte(extraSkill), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	runCommand := func(executable string, args ...string) (string, error) {
-		t.Helper()
-		return world.run(home, workspace, executable, args...)
-	}
-	run := func(executable string, args ...string) string {
-		t.Helper()
-		return world.must(home, workspace, executable, args...)
-	}
+	return result
+}
 
-	run(historical, "init", "--harnesses", "factory")
-	userConfig := filepath.Join(home, ".agents", "config.yaml")
-	userBefore, err := os.ReadFile(userConfig)
-	if err != nil || !strings.Contains(string(userBefore), "agent-marketplace/v2") {
-		t.Fatalf("v3.1.1 init did not create the legacy user config: %v, %q", err, userBefore)
-	}
-	repoConfig := filepath.Join(workspace, ".agents", "config.yaml")
-	legacy := fmt.Sprintf("apiVersion: agent-marketplace/v2\nregistries:\n  - path: %q\n    skills:\n      include: [release-review]\n", registry)
-	if err := os.WriteFile(repoConfig, []byte(legacy), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	run(historical, "sync")
-	installed := filepath.Join(workspace, ".factory", "skills", "release-review", "SKILL.md")
-	assertHistoricalSkill := func() {
-		t.Helper()
-		content, err := os.ReadFile(installed)
-		if err != nil || string(content) != skill {
-			t.Fatalf("installed historical skill = %q, %v; want exact source content", content, err)
+func assertConsumerEvidence(t *testing.T, env *Env, before map[string]string) {
+	t.Helper()
+	after := snapshotConsumerEvidence(t, env)
+	for path, want := range before {
+		if after[path] != want {
+			t.Fatalf("refused operation changed config/lock/owned output bytes, mode, mtime, or staging state at %s", path)
 		}
 	}
-	assertHistoricalSkill()
-	run(historical, "sync", "--check")
-	run(historical, "install", "after-upgrade", "--scope", "repo")
-	extraInstalled := filepath.Join(workspace, ".factory", "skills", "after-upgrade", "SKILL.md")
-	if got, err := os.ReadFile(extraInstalled); err != nil || string(got) != extraSkill {
-		t.Fatalf("v3.1.1 cannot install second resource: %q, %v", got, err)
-	}
-	run(historical, "remove", "after-upgrade", "--scope", "repo")
-	if _, err := os.Lstat(extraInstalled); !os.IsNotExist(err) {
-		t.Fatalf("v3.1.1 removal left second resource: %v", err)
-	}
-	legacyBeforeMigration, err := os.ReadFile(repoConfig)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if output := run(candidate, "list"); !strings.Contains(output, "release-review") {
-		t.Fatalf("candidate cannot browse legacy resource:\n%s", output)
-	}
-	if got, err := os.ReadFile(repoConfig); err != nil || string(got) != string(legacyBeforeMigration) {
-		t.Fatalf("candidate list rewrote legacy config: %q, %v", got, err)
-	}
-	run(candidate, "sync")
-	assertHistoricalSkill()
-	run(candidate, "migrate", "--scope", "repo")
-	migrated, err := os.ReadFile(repoConfig)
-	if err != nil || !strings.Contains(string(migrated), "agent-marketplace/v4") {
-		t.Fatalf("repo migration failed: %q, %v", migrated, err)
-	}
-	if got, err := os.ReadFile(userConfig); err != nil || string(got) != string(userBefore) {
-		t.Fatalf("repo migration changed user config: %q, %v", got, err)
-	}
-	run(candidate, "sync")
-	assertHistoricalSkill()
-	run(candidate, "migrate", "--scope", "user")
-	run(candidate, "sync", "--check")
-	assertHistoricalSkill()
-	if output := run(candidate, "status"); !strings.Contains(output, "release-review") {
-		t.Fatalf("migrated status lost release-review:\n%s", output)
-	}
-	run(candidate, "install", "after-upgrade", "--scope", "repo")
-	if got, err := os.ReadFile(extraInstalled); err != nil || string(got) != extraSkill {
-		t.Fatalf("migrated installation lost second resource: %q, %v", got, err)
-	}
-	removeOutput := run(candidate, "remove", "after-upgrade", "--scope", "repo")
-	if _, err := os.Lstat(extraInstalled); !os.IsNotExist(err) {
-		configData, _ := os.ReadFile(repoConfig)
-		t.Fatalf("migrated removal left second resource: %v; output=%q config=%q", err, removeOutput, configData)
-	}
-	run(candidate, "sync", "--check")
-	assertHistoricalSkill()
-	backups, err := filepath.Glob(repoConfig + ".pre-v4.*.bak")
-	if err != nil || len(backups) != 1 {
-		t.Fatalf("repository backups = %v, %v; want one", backups, err)
-	}
-	if got, err := os.ReadFile(backups[0]); err != nil || string(got) != string(legacyBeforeMigration) {
-		t.Fatalf("backup did not preserve old repository bytes: %q, %v", got, err)
-	}
-	if stat, err := os.Stat(backups[0]); err != nil || stat.Mode().Perm() != 0o600 {
-		t.Fatalf("backup mode = %v, %v; want 0600", stat, err)
-	}
-	finalConfig, err := os.ReadFile(repoConfig)
-	if err != nil {
-		t.Fatal(err)
-	}
-	run(candidate, "migrate", "--scope", "repo")
-	if got, err := os.ReadFile(repoConfig); err != nil || string(got) != string(finalConfig) {
-		t.Fatalf("repeated migration rewrote repository config: %q, %v", got, err)
-	}
+}
 
-	fragment := filepath.Join(workspace, ".agents", "fragments", "resources.yaml")
-	if err := os.MkdirAll(filepath.Dir(fragment), 0o700); err != nil {
-		t.Fatal(err)
+func assertConsumerFormatRefusal(t *testing.T, env *Env, result ExecResult, path, code string) {
+	t.Helper()
+	if result.ExitCode == 0 || !strings.Contains(result.Combined, code) || !strings.Contains(result.Combined, env.mustResolvePath(path)) || !strings.Contains(result.Combined, "apiVersion") {
+		t.Fatalf("want nonzero %s at %s apiVersion, got exit %d:\n%s", code, path, result.ExitCode, result.Combined)
 	}
-	fragmentData := fmt.Sprintf("registries:\n  - path: %q\n    skills: {include: [release-review]}\n", registry)
-	if err := os.WriteFile(fragment, []byte(fragmentData), 0o600); err != nil {
-		t.Fatal(err)
+}
+
+// spec: regression-gates/unsupported-roots-are-witnessed-by-the-launch-gate
+func TestUnsupportedConsumerRootsRefuseBeforeWork(t *testing.T) {
+	for layer, path := range consumerRootPaths {
+		for _, version := range unsupportedConsumerVersions {
+			t.Run(fmt.Sprintf("layer-%d/%s", layer, version.name), func(t *testing.T) {
+				t.Parallel()
+				env, _ := seedV4ConsumerInstallation(t)
+				url, count := consumerAcquisitionSentinel(t)
+				body := version.field + fmt.Sprintf("sources: {remote: {git: %q, ref: main}}\n", url)
+				// Omitted roots cannot inherit their version from a valid fragment.
+				fragment := filepath.Join(filepath.Dir(path), "version-control.yaml")
+				env.WriteFile(fragment, "apiVersion: agent-marketplace/v4\n")
+				body += "include: [version-control.yaml]\n"
+				env.WriteFile(path, body)
+				before := snapshotConsumerEvidence(t, env)
+				for _, args := range [][]string{{"list"}, {"sync"}, {"update"}, {"install", "extra", "--from", url, "--scope", "repo"}} {
+					assertConsumerFormatRefusal(t, env, env.RunAM(args...), path, version.code)
+					assertConsumerEvidence(t, env, before)
+				}
+				if count.Load() != 0 {
+					t.Fatalf("unsupported root made %d acquisition requests", count.Load())
+				}
+				// Non-vacuity: exact v4 reaches the same acquisition sentinel.
+				env.WriteFile(path, "apiVersion: agent-marketplace/v4\n"+strings.TrimPrefix(body, version.field))
+				result := env.RunAM("install", "extra", "--from", url, "--scope", "repo")
+				if count.Load() == 0 || strings.Contains(result.Combined, "v4.api-version") {
+					t.Fatalf("exact-v4 control did not reach acquisition: count=%d\n%s", count.Load(), result.Combined)
+				}
+			})
+		}
 	}
-	legacyRoot := "apiVersion: agent-marketplace/v2\ninclude: fragments/resources.yaml\n"
-	if err := os.WriteFile(repoConfig, []byte(legacyRoot), 0o600); err != nil {
-		t.Fatal(err)
+}
+
+// spec: regression-gates/unsupported-roots-are-witnessed-by-the-launch-gate
+func TestUnsupportedConsumerIncludesRefuseBeforeWork(t *testing.T) {
+	for layer, path := range consumerRootPaths {
+		for _, nested := range []bool{false, true} {
+			for _, version := range unsupportedConsumerVersions {
+				if version.name == "omitted" { // Omitted fragment versions are supported.
+					continue
+				}
+				t.Run(fmt.Sprintf("layer-%d/nested-%t/%s", layer, nested, version.name), func(t *testing.T) {
+					t.Parallel()
+					env, configs := seedV4ConsumerInstallation(t)
+					url, count := consumerAcquisitionSentinel(t)
+					fragment := filepath.Join(filepath.Dir(path), "bad-fragment.yaml")
+					if nested {
+						fragment = filepath.Join(filepath.Dir(path), "nested", "bad-fragment.yaml")
+						env.WriteFile(filepath.Join(filepath.Dir(path), "parent.yaml"), "include: [nested/bad-fragment.yaml]\n")
+						env.WriteFile(path, configs[path]+"include: [parent.yaml]\n")
+					} else {
+						env.WriteFile(path, configs[path]+"include: [bad-fragment.yaml]\n")
+					}
+					env.WriteFile(fragment, version.field+fmt.Sprintf("sources: {remote: {git: %q, ref: main}}\nresources: {remote: {include: [skill/extra]}}\n", url))
+					before := snapshotConsumerEvidence(t, env)
+					for _, args := range [][]string{{"list"}, {"sync"}, {"install", "extra", "--from", url, "--scope", "repo"}} {
+						assertConsumerFormatRefusal(t, env, env.RunAM(args...), fragment, "v4.api-version")
+						assertConsumerEvidence(t, env, before)
+					}
+					if count.Load() != 0 {
+						t.Fatalf("unsupported include made %d acquisition requests", count.Load())
+					}
+				})
+			}
+		}
+		// Positive controls declare the selection only in the fragment.
+		for _, field := range []string{"", "apiVersion: agent-marketplace/v4\n"} {
+			t.Run(fmt.Sprintf("layer-%d/positive-%t", layer, field != ""), func(t *testing.T) {
+				env, configs := seedV4ConsumerInstallation(t)
+				env.WriteFile(path, strings.Split(configs[path], "resources:")[0]+"include: [positive.yaml]\n")
+				env.WriteFile(filepath.Join(filepath.Dir(path), "positive.yaml"), field+"resources: {team: {include: [skill/extra]}}\n")
+				env.MustRunAM("sync")
+				output := "/workspace/.factory/skills/extra/SKILL.md"
+				if layer < 2 {
+					output = "/root/.factory/skills/extra/SKILL.md"
+				}
+				env.AssertFileContains(output, "name: extra")
+			})
+		}
 	}
-	if err := os.WriteFile(userConfig, userBefore, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	run(historical, "sync", "--check")
-	refusal, err := runCommand(candidate, "migrate", "--scope", "repo")
-	if err == nil || !strings.Contains(refusal, "v4.migration-unsupported") {
-		t.Fatalf("include-owned legacy migration = %v, %q; want safe refusal", err, refusal)
-	}
-	if got, err := os.ReadFile(repoConfig); err != nil || string(got) != legacyRoot {
-		t.Fatalf("refused migration changed legacy root: %q, %v", got, err)
-	}
-	if got, err := os.ReadFile(fragment); err != nil || string(got) != fragmentData {
-		t.Fatalf("refused migration changed included fragment: %q, %v", got, err)
-	}
-	if current, err := filepath.Glob(repoConfig + ".pre-v4.*.bak"); err != nil || len(current) != len(backups) {
-		t.Fatalf("refused migration changed backup set: %v, %v", current, err)
-	}
-	run(candidate, "install", "after-upgrade", "--scope", "repo")
-	if got, err := os.ReadFile(extraInstalled); err != nil || string(got) != extraSkill {
-		t.Fatalf("refused migration left legacy installation unusable: %q, %v", got, err)
+}
+
+func TestUnsupportedConsumerConfigPreventsMissingDestinations(t *testing.T) {
+	for layer, badPath := range consumerRootPaths {
+		for _, target := range []struct{ scope, root, lock string }{
+			{"user", consumerRootPaths[1], "/root/.agents/lock.yaml"},
+			{"repo", consumerRootPaths[2], "/workspace/.agents/lock.yaml"},
+			{"local", consumerRootPaths[3], "/workspace/.agents/lock.local.yaml"},
+		} {
+			if badPath == target.root {
+				continue
+			}
+			t.Run(fmt.Sprintf("layer-%d/to-%s", layer, target.scope), func(t *testing.T) {
+				env := newEnv(t)
+				env.InitGitRepo()
+				for _, path := range consumerRootPaths {
+					if path != target.root {
+						env.WriteFile(path, "apiVersion: agent-marketplace/v4\n")
+					}
+				}
+				env.WriteFile(badPath, "apiVersion: agent-marketplace/v3\n")
+				url, count := consumerAcquisitionSentinel(t)
+				before := snapshotConsumerEvidence(t, env)
+				result := env.RunAM("install", "extra", "--from", url, "--ref", "main", "--scope", target.scope)
+				assertConsumerFormatRefusal(t, env, result, badPath, "v4.api-version")
+				assertConsumerEvidence(t, env, before)
+				env.AssertFileAbsent(target.root)
+				env.AssertFileAbsent(target.lock)
+				env.AssertFileAbsent("/workspace/.factory")
+				if count.Load() != 0 {
+					t.Fatalf("missing destination refusal fetched %d requests", count.Load())
+				}
+			})
+		}
 	}
 }

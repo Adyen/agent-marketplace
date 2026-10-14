@@ -327,8 +327,8 @@ func TestInitInteractiveTelemetryManagedSkipsPrompt(t *testing.T) {
 
 	orgDir := t.TempDir()
 	orgPath := filepath.Join(orgDir, "org.yaml")
-	writeFile(t, orgPath, "apiVersion: agent-marketplace/v3\nharnesses:\n  - factory\ntelemetry:\n  level: basic\n  endpoint: https://org.example.com\n  retention_policy: https://org.example.com/retention\n")
-	config.SetTestV3OrganizationConfigPath(t, orgPath)
+	writeFile(t, orgPath, "apiVersion: agent-marketplace/v4\nharnesses:\n  - factory\ntelemetry:\n  level: basic\n  endpoint: https://org.example.com\n  retention_policy: https://org.example.com/retention\n")
+	config.SetTestOrganizationConfigPath(t, orgPath)
 
 	if err := os.MkdirAll(filepath.Join(home, ".factory"), 0o755); err != nil {
 		t.Fatalf("mkdir factory root: %v", err)

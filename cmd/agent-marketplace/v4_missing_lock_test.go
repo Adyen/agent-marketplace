@@ -166,10 +166,11 @@ resources:
 	writeSkill(t, working, "git-review", "Git review", nil)
 	commitAndPushAll(t, working, "seed install source")
 	repo := t.TempDir()
-	writeConfig(t, filepath.Join(repo, ".agents", "config.yaml"), `apiVersion: agent-marketplace/v2
+	writeConfig(t, filepath.Join(repo, ".agents", "config.yaml"), `apiVersion: agent-marketplace/v4
 harnesses: [factory]
-registries:
-  - url: `+origin+`
+sources:
+  tools:
+    git: file://`+origin+`
     ref: main
 `)
 	withWorkingDir(t, repo)
@@ -215,12 +216,10 @@ resources:
 	}
 	t.Cleanup(func() { _ = os.Chmod(authority, 0o700) })
 	config.SetTestOrganizationConfigPath(t, orgPath)
-	writeConfig(t, filepath.Join(home, ".agents", "config.yaml"), `apiVersion: agent-marketplace/v2
+	writeConfig(t, filepath.Join(home, ".agents", "config.yaml"), `apiVersion: agent-marketplace/v4
 harnesses: [factory]
-marketplaces:
-  - url: `+targetServer.URL+`
-    instance_id: target-mp
-    alias: target
+sources:
+  target: {marketplace: `+targetServer.URL+`}
 `)
 	repo := t.TempDir()
 	withWorkingDir(t, repo)
@@ -286,7 +285,7 @@ func TestInstallCommitReuseKeepsUnrelatedMissingLockError(t *testing.T) {
 	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, "cache"))
 	t.Setenv("XDG_STATE_HOME", filepath.Join(home, "state"))
 
-	writeConfig(t, filepath.Join(home, ".agents", "config.yaml"), "apiVersion: agent-marketplace/v2\nharnesses: [factory]\nregistries:\n  - url: https://example.test/a.git\n    ref: main\n")
+	writeConfig(t, filepath.Join(home, ".agents", "config.yaml"), "apiVersion: agent-marketplace/v4\nharnesses: [factory]\nsources:\n  tools:\n    git: https://example.test/a.git\n    ref: main\n")
 	reuse := &preparedInstallLocks{
 		documents: make(map[string]lockfile.Document),
 		lockPaths: map[config.Source]string{config.RepoCommitted: filepath.Join(t.TempDir(), "lock.yaml")},
@@ -1203,7 +1202,7 @@ func TestMissingV4MarketplaceLockHonorsAllowlistBeforeNetwork(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { requests.Add(1) }))
 	defer server.Close()
 	orgPath := filepath.Join(t.TempDir(), "config.yaml")
-	writeFile(t, orgPath, "apiVersion: agent-marketplace/v2\nallowed_marketplaces: ['^https://allowed\\.example$']\n")
+	writeFile(t, orgPath, "apiVersion: agent-marketplace/v4\nallowed_marketplaces: ['^https://allowed\\.example$']\n")
 	config.SetTestOrganizationConfigPath(t, orgPath)
 	repo := t.TempDir()
 	writeConfig(t, filepath.Join(repo, ".agents", "config.yaml"), `apiVersion: agent-marketplace/v4

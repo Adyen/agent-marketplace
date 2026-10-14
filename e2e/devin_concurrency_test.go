@@ -44,14 +44,10 @@ harnesses:
   - devin
 `)
 
-	baseOrg := `apiVersion: agent-marketplace/v3
-harnesses:
-  - devin
-registries:
-  - url: %s
-    ref: main
-    mcp:
-      - %s
+	baseOrg := `apiVersion: agent-marketplace/v4
+harnesses: [devin]
+sources: {team: {git: %q, ref: main}}
+resources: {team: {include: [mcp/%s]}}
 `
 	env.WriteFile("/etc/agent-marketplace/devin-alpha/config.yaml", fmt.Sprintf(baseOrg, alphaURL, "alpha"))
 	env.WriteFile("/etc/agent-marketplace/devin-beta/config.yaml", fmt.Sprintf(baseOrg, betaURL, "beta"))

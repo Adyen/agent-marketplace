@@ -86,7 +86,7 @@ func TestReleasedClientReadsCandidateCommittedState(t *testing.T) {
 		}
 	}
 	must(released, "init", "--harnesses", "factory")
-	repoConfig := fmt.Sprintf("apiVersion: agent-marketplace/v2\nregistries:\n  - url: %s\n    ref: main\n    skills:\n      include: [review]\n", registry.URL)
+	repoConfig := fmt.Sprintf("apiVersion: agent-marketplace/v4\nsources: {shared: {git: %q, ref: main}}\nresources: {shared: {include: [skill/review]}}\n", registry.URL)
 	if err := os.WriteFile(filepath.Join(workspace, ".agents", "config.yaml"), []byte(repoConfig), 0o644); err != nil {
 		t.Fatal(err)
 	}

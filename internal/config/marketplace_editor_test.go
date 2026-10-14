@@ -1,212 +1,340 @@
 package config
 
 import (
+	"bytes"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
-	"gopkg.in/yaml.v3"
+	"github.com/Adyen/agent-marketplace/internal/lockfile"
 )
 
 const testMarketplaceDigest = "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+const testMarketplaceRevision = "sha256:1111111111111111111111111111111111111111111111111111111111111111"
 
 func testMarketplacePin() MarketplaceResourcePin {
 	return MarketplaceResourcePin{
-		RegistryID:   "source-one",
-		RegistrySlug: "source-slug",
-		Kind:         "skill",
-		Name:         "review",
-		Revision:     "v1",
-		Digest:       testMarketplaceDigest,
-		Acquisition:  MarketplaceAcquisitionMirror,
+		RegistryID: "source-one", RegistrySlug: "source-slug", Kind: "skill", Name: "review",
+		Revision: testMarketplaceRevision, Digest: testMarketplaceDigest, Acquisition: MarketplaceAcquisitionMirror,
+	}
+}
+
+// These fixtures are authored v4 documents, not converted runtime pins.
+func writeMarketplaceV4(t *testing.T, path, body string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("apiVersion: agent-marketplace/v4\n"+body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func openMarketplaceEditor(t *testing.T, path string, source Source) *LayerEditor {
+	t.Helper()
+	editor, err := OpenLayerEditor(LayerTarget{Source: source, StagedPath: path, DeclaringPath: path})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return editor
+}
+
+// Exercise the supported candidate API and existing publication/snapshot
+// primitives. No exact installation evidence is written into consumer roots.
+func commitMarketplaceEdit(path string, source Source, edit func(*LayerEditor) error) (*FileSnapshot, ConfigFileCommit, error) {
+	var snapshot *FileSnapshot
+	var commit ConfigFileCommit
+	err := withConfigPathLock(path, func() error {
+		var err error
+		snapshot, err = SnapshotConfigFile(path)
+		if err != nil {
+			return err
+		}
+		editor, err := OpenLayerEditor(LayerTarget{Source: source, StagedPath: path, DeclaringPath: path})
+		if err != nil {
+			return err
+		}
+		if err := edit(editor); err != nil {
+			return err
+		}
+		candidate, err := editor.Render()
+		if err != nil {
+			return err
+		}
+		commit = NewConfigFileCommit(candidate.Bytes)
+		if !candidate.Changed {
+			return nil
+		}
+		return writeConfigDocumentData(path, candidate.Mode, candidate.Bytes)
+	})
+	return snapshot, commit, err
+}
+
+func marketplaceIncludeEdit(endpoint string, pins ...MarketplaceResourcePin) func(*LayerEditor) error {
+	return func(editor *LayerEditor) error {
+		binding, err := editor.EnsureMarketplaceSource(endpoint)
+		if err != nil {
+			return err
+		}
+		return editor.IncludeMarketplacePins(binding, pins)
+	}
+}
+
+func requireMarketplaceV4Code(t *testing.T, err error, code string) {
+	t.Helper()
+	var validation *V4ValidationError
+	if !errors.As(err, &validation) || validation.Code != code {
+		t.Fatalf("error = %v, want V4ValidationError code %q", err, code)
+	}
+}
+
+type marketplaceFileState struct {
+	data []byte
+	info os.FileInfo
+}
+
+func marketplaceState(t *testing.T, path string) marketplaceFileState {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return marketplaceFileState{data: data, info: info}
+}
+
+func requireMarketplaceUnchanged(t *testing.T, path string, before marketplaceFileState) {
+	t.Helper()
+	after := marketplaceState(t, path)
+	if !bytes.Equal(before.data, after.data) || !os.SameFile(before.info, after.info) || before.info.Mode() != after.info.Mode() || !before.info.ModTime().Equal(after.info.ModTime()) {
+		t.Fatalf("refused/no-op edit changed bytes or metadata of %s", path)
+	}
+	entries, err := os.ReadDir(filepath.Dir(path))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range entries {
+		if strings.Contains(entry.Name(), ".tmp-") || strings.HasPrefix(entry.Name(), ".config-rollback-") {
+			t.Fatalf("staging residue remains: %s", entry.Name())
+		}
+	}
+}
+
+func marketplaceRequestLocators(cfg *V4Config) []string {
+	locators := make([]string, 0, len(cfg.Requests))
+	for _, request := range cfg.Requests {
+		locators = append(locators, request.Locator)
+	}
+	return locators
+}
+
+func marketplaceTestEvidence() lockfile.Document {
+	return lockfile.Document{
+		APIVersion: lockfile.APIVersionV2, Scope: lockfile.ScopeRepo,
+		Marketplaces: []lockfile.MarketplaceLock{{
+			URL: "https://market.example", InstanceID: "instance",
+			RegistryBindings: []lockfile.MarketplaceRegistryBinding{{Name: "source-slug", RegistryID: "source-one"}},
+			Resources: []lockfile.MarketplaceResourceLock{{
+				RegistryName: "source-slug", RegistryID: "source-one", Kind: "skill", Name: "review", Revision: testMarketplaceRevision,
+				ContentDigest: testMarketplaceDigest, ArchiveDigest: lockfile.Digest("sha256:" + strings.Repeat("f", 64)), Acquisition: "mirror",
+			}},
+		}},
 	}
 }
 
 func TestEnsureMarketplacePinPersistsExactIndexOnlyOccurrence(t *testing.T) {
 	path := filepath.Join(t.TempDir(), ".agents", "config.yaml")
+	writeMarketplaceV4(t, path, "sources:\n  public: {marketplace: https://market.example}\n")
 	pin := testMarketplacePin()
 	pin.Acquisition = MarketplaceAcquisitionIndexOnly
-	pin.RegistryCommit = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	pin.RegistryCommit = strings.Repeat("a", 40)
 	pin.RegistryManifestDigest = testMarketplaceDigest
-	if err := EnsureMarketplacePinInConfig(path, "https://market.example", "instance", "public", pin); err != nil {
+	if _, _, err := commitMarketplaceEdit(path, RepoCommitted, marketplaceIncludeEdit("https://market.example", pin)); err != nil {
 		t.Fatal(err)
 	}
-	data, err := os.ReadFile(path)
+	data := marketplaceState(t, path).data
+	for _, forbidden := range []string{"instance_id", "registry_commit", "registry_manifest_digest", "acquisition", "digest"} {
+		if bytes.Contains(data, []byte(forbidden)) {
+			t.Fatalf("consumer root contains lock field %q: %s", forbidden, data)
+		}
+	}
+	v4, err := LoadV4ConfigFromPath(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	var cfg Config
-	if err := yaml.Unmarshal(data, &cfg); err != nil {
+	doc := marketplaceTestEvidence()
+	doc.Marketplaces[0].Resources[0].Acquisition = "index-only"
+	doc.Marketplaces[0].Resources[0].RegistryCommit = strings.Repeat("a", 40)
+	doc.Marketplaces[0].Resources[0].RegistryManifestDigest = testMarketplaceDigest
+	doc.Marketplaces[0].Resources[0].SourcePath = "skills/review"
+	// Serialize the independent acquisition-lock format, then hydrate via the real adapter.
+	lockBytes, err := lockfile.Encode(doc)
+	if err != nil {
 		t.Fatal(err)
 	}
+	doc, err = lockfile.Decode(lockBytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := v4.ToLegacyConfigWithLock(repoLayer, &doc); err != nil {
+		t.Fatal(err)
+	}
+	lockPath := filepath.Join(filepath.Dir(path), "lock.yaml")
+	if err := os.WriteFile(lockPath, lockBytes, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	beforeRoot, beforeLock := marketplaceState(t, path), marketplaceState(t, lockPath)
+	cfg, err := LoadConfigFromPath(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	requireMarketplaceUnchanged(t, path, beforeRoot)
+	requireMarketplaceUnchanged(t, lockPath, beforeLock)
 	got := cfg.Marketplaces[0].Resources[0]
-	if got.Acquisition != pin.Acquisition || got.RegistryCommit != pin.RegistryCommit || got.RegistryManifestDigest != pin.RegistryManifestDigest {
-		t.Fatalf("persisted index-only pin = %#v", got)
+	if got.Acquisition != "index-only" || got.RegistryCommit != strings.Repeat("a", 40) || got.RegistryManifestDigest != testMarketplaceDigest || got.LockSourcePath != "skills/review" || !got.Direct {
+		t.Fatalf("hydrated index-only occurrence = %#v", got)
 	}
 }
 
 func TestEnsureMarketplacePinRejectsInvalidIndexOnlyOccurrenceBeforeMutation(t *testing.T) {
 	path := filepath.Join(t.TempDir(), ".agents", "config.yaml")
-	original := []byte("apiVersion: agent-marketplace/v2\n# preserve this byte\n")
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(path, original, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	pin := testMarketplacePin()
-	pin.Acquisition = MarketplaceAcquisitionIndexOnly
-	pin.RegistryCommit = "not-a-commit"
-	pin.RegistryManifestDigest = "not-a-digest"
-	if err := EnsureMarketplacePinInConfig(path, "https://market.example", "instance", "public", pin); err == nil || !strings.Contains(err.Error(), "registry_commit") {
-		t.Fatalf("invalid index-only pin error = %v, want registry_commit validation", err)
-	}
-	got, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(got) != string(original) {
-		t.Fatalf("config mutated before index-only validation: got %q, want %q", got, original)
-	}
-
-	pin = testMarketplacePin()
-	pin.RegistryCommit = strings.Repeat("a", 40)
-	pin.RegistryManifestDigest = "bad"
-	if err := EnsureMarketplacePinInConfig(path, "https://market.example", "instance", "public", pin); err == nil || !strings.Contains(err.Error(), "registry_manifest_digest") {
-		t.Fatalf("invalid registry manifest digest error = %v, want validation", err)
-	}
-
-	pin = testMarketplacePin()
-	pin.RegistryCommit = "not-a-commit"
-	if err := EnsureMarketplacePinInConfig(path, "https://market.example", "instance", "public", pin); err == nil || !strings.Contains(err.Error(), "require acquisition") {
-		t.Fatalf("mirror occurrence fields error = %v, want acquisition validation", err)
+	writeMarketplaceV4(t, path, "# preserve this byte\nsources:\n  public: {marketplace: https://market.example}\n")
+	before := marketplaceState(t, path)
+	for _, tc := range []struct{ acquisition, commit, manifest, want string }{
+		{"index-only", "not-a-commit", "not-a-digest", "registry_commit"},
+		{"index-only", strings.Repeat("a", 40), "bad", "registry_manifest_digest"},
+		{"mirror", "not-a-commit", "", "require acquisition"},
+	} {
+		pin := testMarketplacePin()
+		pin.Acquisition, pin.RegistryCommit, pin.RegistryManifestDigest = tc.acquisition, tc.commit, tc.manifest
+		if _, _, err := commitMarketplaceEdit(path, RepoCommitted, marketplaceIncludeEdit("https://market.example", pin)); err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Fatalf("invalid occurrence error = %v, want %q", err, tc.want)
+		}
+		requireMarketplaceUnchanged(t, path, before)
 	}
 }
 
 func TestEnsureMarketplacePinInConfigTargetsSelectedLayersAndIsIdempotent(t *testing.T) {
-	for _, filename := range []string{"config.yaml", "config.local.yaml"} {
-		t.Run(filename, func(t *testing.T) {
-			path := filepath.Join(t.TempDir(), ".agents", filename)
-			pin := testMarketplacePin()
-			if err := EnsureMarketplacePinInConfig(path, "HTTPS://MARKET.example/", "market-instance", "public", pin); err != nil {
-				t.Fatalf("ensure pin: %v", err)
+	for _, tc := range []struct {
+		filename string
+		source   Source
+	}{{"config.yaml", RepoCommitted}, {"config.local.yaml", RepoPersonal}} {
+		t.Run(tc.filename, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), ".agents", tc.filename)
+			writeMarketplaceV4(t, path, "sources:\n  public: {marketplace: https://market.example}\n")
+			if _, _, err := commitMarketplaceEdit(path, tc.source, marketplaceIncludeEdit("HTTPS://MARKET.example/", testMarketplacePin())); err != nil {
+				t.Fatal(err)
 			}
-			first, err := os.ReadFile(path)
+			first := marketplaceState(t, path)
+			if _, _, err := commitMarketplaceEdit(path, tc.source, marketplaceIncludeEdit("https://market.example", testMarketplacePin())); err != nil {
+				t.Fatal(err)
+			}
+			requireMarketplaceUnchanged(t, path, first)
+			v4, err := LoadV4ConfigFromPath(path)
 			if err != nil {
 				t.Fatal(err)
 			}
-			if err := EnsureMarketplacePinInConfig(path, "https://market.example", "market-instance", "new-alias", pin); err != nil {
-				t.Fatalf("repeat ensure pin: %v", err)
-			}
-			second, err := os.ReadFile(path)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if string(first) != string(second) {
-				t.Fatalf("idempotent mutation changed bytes:\nfirst:\n%s\nsecond:\n%s", first, second)
-			}
-			var cfg Config
-			if err := yaml.Unmarshal(second, &cfg); err != nil {
-				t.Fatalf("decode edited config: %v", err)
-			}
-			if len(cfg.Marketplaces) != 1 || cfg.Marketplaces[0].Alias != "public" {
-				t.Fatalf("marketplace entry = %#v, want one entry retaining alias public", cfg.Marketplaces)
-			}
-			if len(cfg.Marketplaces[0].Resources) != 1 || cfg.Marketplaces[0].Resources[0].Name != "review" {
-				t.Fatalf("resources = %#v", cfg.Marketplaces[0].Resources)
+			if len(v4.Sources) != 1 || v4.Sources["public"].CanonicalURL != "https://market.example" || !slices.Equal(marketplaceRequestLocators(v4), []string{"source-slug/skill/review"}) {
+				t.Fatalf("source/request = %#v/%#v", v4.Sources, v4.Requests)
 			}
 		})
 	}
 }
 
 func TestEnsureMarketplacePinTargetsUserLayerPath(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
+	t.Setenv("HOME", t.TempDir())
 	path, err := GlobalConfigPath()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := EnsureMarketplacePinInConfig(path, "https://market.example", "instance", "public", testMarketplacePin()); err != nil {
-		t.Fatalf("ensure user-layer pin: %v", err)
+	writeMarketplaceV4(t, path, "harnesses: [factory]\n")
+	if _, _, err := commitMarketplaceEdit(path, UserPersonal, marketplaceIncludeEdit("https://market.example", testMarketplacePin())); err != nil {
+		t.Fatal(err)
 	}
-	if _, err := os.Stat(path); err != nil {
-		t.Fatalf("user-layer config was not created: %v", err)
+	v4, err := LoadV4ConfigIfPresent(path, UserPersonal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v4.Sources["marketplace"].Kind != V4SourceMarketplace || len(v4.Requests) != 1 || v4.Requests[0].Locator != "source-slug/skill/review" {
+		t.Fatalf("user source/selection = %#v/%#v", v4.Sources, v4.Requests)
 	}
 }
 
 func TestEnsureMarketplacePinPreservesInstalledName(t *testing.T) {
 	path := filepath.Join(t.TempDir(), ".agents", "config.yaml")
+	writeMarketplaceV4(t, path, "sources:\n  public: {marketplace: https://market.example}\n")
 	pin := testMarketplacePin()
 	pin.InstalledName = "chosen-review"
-	if err := EnsureMarketplacePinInConfig(path, "https://market.example", "instance", "public", pin); err != nil {
+	if _, _, err := commitMarketplaceEdit(path, RepoCommitted, marketplaceIncludeEdit("https://market.example", pin)); err != nil {
 		t.Fatal(err)
 	}
+	before := marketplaceState(t, path)
 	pin.InstalledName = "different-review"
-	if err := EnsureMarketplacePinInConfig(path, "https://market.example/", "instance", "public", pin); err == nil || !strings.Contains(err.Error(), "conflicting installed_name") {
-		t.Fatalf("installed_name conflict error = %v", err)
-	}
-	data, err := os.ReadFile(path)
+	_, _, err := commitMarketplaceEdit(path, RepoCommitted, marketplaceIncludeEdit("https://market.example/", pin))
+	requireMarketplaceV4Code(t, err, "v4.duplicate-request")
+	requireMarketplaceUnchanged(t, path, before)
+	v4, err := LoadV4ConfigFromPath(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	var cfg Config
-	if err := yaml.Unmarshal(data, &cfg); err != nil {
+	doc := marketplaceTestEvidence()
+	cfg, err := v4.ToLegacyConfigWithLock(repoLayer, &doc)
+	if err != nil {
 		t.Fatal(err)
 	}
 	if got := cfg.Marketplaces[0].Resources[0].InstalledName; got != "chosen-review" {
-		t.Fatalf("installed_name = %q, want chosen-review", got)
+		t.Fatalf("installed name = %q", got)
 	}
 }
 
 func TestEnsureMarketplacePinAllowsRegistrySlugRename(t *testing.T) {
-	path := filepath.Join(t.TempDir(), ".agents", "config.yaml")
-	pin := testMarketplacePin()
-	if err := EnsureMarketplacePinInConfig(path, "https://market.example", "instance", "public", pin); err != nil {
+	v4, err := ParseV4([]byte("apiVersion: agent-marketplace/v4\nsources:\n  public: {marketplace: https://market.example}\nresources:\n  public: [source-slug/skill/review]\n"))
+	if err != nil {
 		t.Fatal(err)
 	}
-	pin.RegistrySlug = "renamed-source"
-	if err := EnsureMarketplacePinInConfig(path, "HTTPS://MARKET.example/", "instance", "public", pin); err != nil {
-		t.Fatalf("registry slug rename rejected: %v", err)
+	doc := marketplaceTestEvidence()
+	doc.Marketplaces[0].RegistryBindings = append(doc.Marketplaces[0].RegistryBindings, lockfile.MarketplaceRegistryBinding{Name: "renamed-source", RegistryID: "source-one"})
+	doc.Marketplaces[0].Resources[0].RegistryName = "renamed-source"
+	cfg, err := v4.ToLegacyConfigWithLock(repoLayer, &doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := cfg.Marketplaces[0].Resources[0]; got.RegistryID != "source-one" || got.RegistrySlug != "renamed-source" || !got.Direct {
+		t.Fatalf("renamed occurrence = %#v", got)
 	}
 }
 
 func TestEnsureMarketplacePinRejectsConflictingIdentity(t *testing.T) {
 	path := filepath.Join(t.TempDir(), ".agents", "config.yaml")
+	writeMarketplaceV4(t, path, "sources:\n  public: {marketplace: https://market.example}\nresources:\n  public:\n    include:\n      - source-slug/skill/review: {revision: sha256:1111111111111111111111111111111111111111111111111111111111111111}\n")
+	before := marketplaceState(t, path)
 	pin := testMarketplacePin()
-	if err := EnsureMarketplacePinInConfig(path, "https://market.example", "instance", "public", pin); err != nil {
-		t.Fatal(err)
-	}
-	pin.Revision = "v2"
-	if err := EnsureMarketplacePinInConfig(path, "https://market.example", "instance", "public", pin); err == nil || !strings.Contains(err.Error(), "conflicting") {
-		t.Fatalf("conflict error = %v", err)
-	}
+	pin.Revision = "sha256:" + strings.Repeat("b", 64)
+	_, _, err := commitMarketplaceEdit(path, RepoCommitted, marketplaceIncludeEdit("https://market.example", pin))
+	requireMarketplaceV4Code(t, err, "v4.duplicate-request")
+	requireMarketplaceUnchanged(t, path, before)
 }
 
 func TestEnsureMarketplacePinRejectsMalformedAndMultiDocumentConfig(t *testing.T) {
-	tests := []struct {
-		name string
-		data string
-		want string
-	}{
-		{name: "malformed", data: "marketplaces: [\n", want: "parse config"},
-		{name: "multi-document", data: "marketplaces: []\n---\nmarketplaces: []\n", want: "additional YAML document"},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			path := filepath.Join(t.TempDir(), ".agents", "config.yaml")
-			if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-				t.Fatal(err)
-			}
-			if err := os.WriteFile(path, []byte(tt.data), 0o644); err != nil {
-				t.Fatal(err)
-			}
-			if err := EnsureMarketplacePinInConfig(path, "https://market.example", "instance", "", testMarketplacePin()); err == nil || !strings.Contains(err.Error(), tt.want) {
-				t.Fatalf("error = %v, want substring %q", err, tt.want)
-			}
-		})
+	for _, data := range []string{"apiVersion: agent-marketplace/v4\nsources: [\n", "apiVersion: agent-marketplace/v4\nsources: {}\n---\nsources: {}\n"} {
+		path := filepath.Join(t.TempDir(), "config.yaml")
+		if err := os.WriteFile(path, []byte(data), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		before := marketplaceState(t, path)
+		if _, _, err := commitMarketplaceEdit(path, RepoCommitted, marketplaceIncludeEdit("https://market.example", testMarketplacePin())); err == nil {
+			t.Fatal("malformed/multi-document root accepted")
+		}
+		requireMarketplaceUnchanged(t, path, before)
 	}
 }
 
@@ -218,7 +346,7 @@ func TestValidateMarketplaceResourcePinRejectsUnsafeInstalledName(t *testing.T) 
 			t.Errorf("unsafe installed name %q accepted", name)
 		}
 		if errs := ValidateMarketplaceEntries([]MarketplaceEntry{{URL: "https://market.example", InstanceID: "instance", Resources: []MarketplaceResourcePin{pin}}}); len(errs) == 0 {
-			t.Errorf("ValidateMarketplaceEntries accepted unsafe installed name %q", name)
+			t.Errorf("unsafe installed name %q accepted by evidence validator", name)
 		}
 	}
 	for _, name := range []string{"review.copy", "review copy", "résumé"} {
@@ -230,206 +358,126 @@ func TestValidateMarketplaceResourcePinRejectsUnsafeInstalledName(t *testing.T) 
 	}
 }
 
-func TestEnsureMarketplaceEntryRejectsUnsafeIdentityAndDuplicate(t *testing.T) {
+func TestEnsureMarketplaceSourceRejectsUnsafeIdentityAndDuplicate(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.yaml")
-	for _, entry := range []MarketplaceEntry{
-		{URL: "https://market.example", InstanceID: " instance"},
-		{URL: "https://market.example", InstanceID: "instance", Alias: "alias/name"},
-	} {
-		if err := EnsureMarketplaceEntryInConfig(path, entry); err == nil {
-			t.Fatalf("unsafe entry %#v accepted", entry)
+	writeMarketplaceV4(t, path, "sources:\n  public: {marketplace: https://market.example}\n")
+	before := marketplaceState(t, path)
+	for _, endpoint := range []string{"https://user:pass@market.example", "https://market.example?token=secret"} {
+		if _, _, err := commitMarketplaceEdit(path, RepoCommitted, marketplaceIncludeEdit(endpoint, testMarketplacePin())); err == nil {
+			t.Fatalf("unsafe endpoint %q accepted", endpoint)
 		}
+		requireMarketplaceUnchanged(t, path, before)
 	}
-	data := []byte(`marketplaces:
-  - url: https://market.example/
-    instance_id: instance
-  - url: HTTPS://MARKET.example
-    instance_id: instance
-`)
-	if err := os.WriteFile(path, data, 0o644); err != nil {
-		t.Fatal(err)
-	}
-	before, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := EnsureMarketplaceEntryInConfig(path, MarketplaceEntry{URL: "https://market.example", InstanceID: "instance"}); err == nil || !strings.Contains(err.Error(), "duplicate") {
-		t.Fatalf("duplicate entry error = %v", err)
-	}
-	after, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(after) != string(before) {
-		t.Fatalf("duplicate rejection changed config bytes:\nbefore:\n%safter:\n%s", before, after)
+	writeMarketplaceV4(t, path, "sources:\n  one: {marketplace: https://market.example/}\n  two: {marketplace: 'HTTPS://MARKET.example'}\n")
+	before = marketplaceState(t, path)
+	_, _, err := commitMarketplaceEdit(path, RepoCommitted, marketplaceIncludeEdit("https://market.example", testMarketplacePin()))
+	requireMarketplaceV4Code(t, err, "config.edit.ambiguous-source")
+	requireMarketplaceUnchanged(t, path, before)
+	if errs := ValidateMarketplaceEntries([]MarketplaceEntry{{URL: "https://market.example", InstanceID: " instance"}}); len(errs) == 0 {
+		t.Fatal("unsafe acquired instance accepted")
 	}
 }
 
-func TestEnsureMarketplaceEntrySerializesIdentityConflicts(t *testing.T) {
-	tests := []struct {
-		name    string
-		entries []MarketplaceEntry
-	}{
-		{name: "same URL different instance", entries: []MarketplaceEntry{{URL: "https://market.example", InstanceID: "one"}, {URL: "https://market.example", InstanceID: "two"}}},
-		{name: "same instance different URL", entries: []MarketplaceEntry{{URL: "https://one.example", InstanceID: "same"}, {URL: "https://two.example", InstanceID: "same"}}},
+func TestEnsureMarketplaceSourceSerializesNormalizedRegistration(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	writeMarketplaceV4(t, path, "")
+	start := make(chan struct{})
+	errs := make(chan error, 2)
+	for _, endpoint := range []string{"HTTPS://MARKET.example/", "https://market.example"} {
+		go func(endpoint string) {
+			<-start
+			_, _, err := commitMarketplaceEdit(path, RepoCommitted, func(editor *LayerEditor) error { _, err := editor.EnsureMarketplaceSource(endpoint); return err })
+			errs <- err
+		}(endpoint)
 	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			path := filepath.Join(t.TempDir(), "config.yaml")
-			start := make(chan struct{})
-			errs := make(chan error, len(tc.entries))
-			var wg sync.WaitGroup
-			for _, entry := range tc.entries {
-				wg.Add(1)
-				go func(entry MarketplaceEntry) {
-					defer wg.Done()
-					<-start
-					errs <- EnsureMarketplaceEntryInConfig(path, entry)
-				}(entry)
-			}
-			close(start)
-			wg.Wait()
-			close(errs)
-			succeeded, failed := 0, 0
-			for err := range errs {
-				if err == nil {
-					succeeded++
-				} else {
-					failed++
-				}
-			}
-			if succeeded != 1 || failed != 1 {
-				t.Fatalf("succeeded/failed = %d/%d, want 1/1", succeeded, failed)
-			}
-			cfg, err := LoadConfigFromPath(path)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if len(cfg.Marketplaces) != 1 {
-				t.Fatalf("marketplaces = %#v", cfg.Marketplaces)
-			}
-		})
+	close(start)
+	for range 2 {
+		if err := <-errs; err != nil {
+			t.Fatal(err)
+		}
+	}
+	v4, err := LoadV4ConfigFromPath(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(v4.Sources) != 1 || v4.Sources["marketplace"].CanonicalURL != "https://market.example" {
+		t.Fatalf("registrations = %#v", v4.Sources)
+	}
+	// Endpoint instance identity remains lock evidence, not authored registration.
+	doc := marketplaceTestEvidence()
+	doc.Marketplaces = append(doc.Marketplaces, lockfile.MarketplaceLock{URL: "https://market.example/", InstanceID: "other-instance"})
+	if _, err := v4.ToLegacyConfigWithLock(repoLayer, &doc); err == nil {
+		t.Fatal("conflicting acquired endpoint identities accepted")
+	} else {
+		requireMarketplaceV4Code(t, err, "v4.marketplace-lock-mismatch")
 	}
 }
 
 func TestEnsureMarketplacePinFailsClosedAndPreservesBytes(t *testing.T) {
-	tests := []string{
-		"marketplaces:\n  - https://market.example\n",
-		"marketplaces:\n  - url: https://market.example\n    instance_id: instance\n    resources:\n      - skill\n",
-		"marketplaces:\n  - url: https://market.example\n    instance_id: instance\n    alias: bad/name\n",
-	}
-	for i, data := range tests {
-		t.Run(fmt.Sprintf("case-%d", i), func(t *testing.T) {
-			path := filepath.Join(t.TempDir(), "config.yaml")
-			if err := os.WriteFile(path, []byte(data), 0o644); err != nil {
-				t.Fatal(err)
-			}
-			before, err := os.ReadFile(path)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if err := EnsureMarketplacePinInConfig(path, "https://market.example", "instance", "", testMarketplacePin()); err == nil {
-				t.Fatal("malformed config accepted")
-			}
-			after, err := os.ReadFile(path)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if string(after) != string(before) {
-				t.Fatalf("failed edit changed config bytes:\nbefore:\n%safter:\n%s", before, after)
-			}
-		})
+	for _, tc := range []struct{ body, code string }{
+		{"sources:\n  public: https://market.example\n", "v4.source-type"},
+		{"sources:\n  public: {marketplace: https://market.example}\nresources:\n  public: [skill]\n", "v4.locator"},
+		{"sources:\n  bad/name: {marketplace: https://market.example}\n", "v4.source-name"},
+	} {
+		path := filepath.Join(t.TempDir(), "config.yaml")
+		writeMarketplaceV4(t, path, tc.body)
+		before := marketplaceState(t, path)
+		_, _, err := commitMarketplaceEdit(path, RepoCommitted, marketplaceIncludeEdit("https://market.example", testMarketplacePin()))
+		requireMarketplaceV4Code(t, err, tc.code)
+		requireMarketplaceUnchanged(t, path, before)
 	}
 }
 
+// spec: config-layering/marketplace-entries-are-validated
 func TestEnsureMarketplacePinRejectsUnknownAndMalformedMarketplaceFieldsBeforeMutation(t *testing.T) {
-	tests := []string{
-		"marketplaces:\n  - url: https://market.example\n    instance_id: instance\n    unexpected: true\n",
-		"marketplaces:\n  - url: https://market.example\n    instance_id: instance\n    resources:\n      - registry_id: source\n        kind: skill\n        name: review\n        revision: v1\n        digest: sha256:0000000000000000000000000000000000000000000000000000000000000000\n        unexpected: true\n",
-		"marketplaces:\n  - url: https://market.example\n    instance_id: instance\n    resources:\n      - registry_id: [source]\n",
-	}
-	for i, data := range tests {
-		t.Run(fmt.Sprintf("case-%d", i), func(t *testing.T) {
-			path := filepath.Join(t.TempDir(), "config.yaml")
-			if err := os.WriteFile(path, []byte(data), 0o644); err != nil {
-				t.Fatal(err)
-			}
-			before, err := os.ReadFile(path)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if err := EnsureMarketplacePinInConfig(path, "https://market.example", "instance", "", testMarketplacePin()); err == nil {
-				t.Fatal("invalid Marketplace mapping accepted")
-			}
-			after, err := os.ReadFile(path)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if string(after) != string(before) {
-				t.Fatalf("failed edit changed config bytes:\nbefore:\n%safter:\n%s", before, after)
-			}
-		})
+	for _, tc := range []struct{ body, code string }{
+		{"sources:\n  public: {marketplace: https://market.example, unexpected: true}\n", "v4.unknown-field"},
+		{"sources:\n  public: {marketplace: https://market.example}\nresources:\n  public: [{source-slug/skill/review: {unexpected: true}}]\n", "v4.unknown-field"},
+		{"sources:\n  public: {marketplace: [source]}\n", "v4.type"},
+	} {
+		path := filepath.Join(t.TempDir(), "config.yaml")
+		writeMarketplaceV4(t, path, tc.body)
+		before := marketplaceState(t, path)
+		_, _, err := commitMarketplaceEdit(path, RepoCommitted, marketplaceIncludeEdit("https://market.example", testMarketplacePin()))
+		requireMarketplaceV4Code(t, err, tc.code)
+		requireMarketplaceUnchanged(t, path, before)
 	}
 }
 
 func TestEnsureMarketplacePinRejectsYAMLAliasesBeforeMutation(t *testing.T) {
-	for name, data := range map[string]string{
-		"anchored entry": `marketplaces:
-  - &entry
-    url: https://market.example
-    instance_id: instance
-    resources: []
-`,
-		"aliased entry": `marketplace_defaults: &entry
-  url: https://market.example
-  instance_id: instance
-  resources: []
-marketplaces:
-  - *entry
-`,
+	for _, body := range []string{
+		"sources:\n  public: &entry {marketplace: https://market.example}\n  other: *entry\n",
+		"sources:\n  public: {marketplace: https://market.example}\nresources:\n  public: &requests [source-slug/skill/review]\n  other: *requests\n",
 	} {
-		t.Run(name, func(t *testing.T) {
-			path := filepath.Join(t.TempDir(), "config.yaml")
-			if err := os.WriteFile(path, []byte(data), 0o644); err != nil {
-				t.Fatal(err)
-			}
-			before, err := os.ReadFile(path)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if err := EnsureMarketplacePinInConfig(path, "https://market.example", "instance", "", testMarketplacePin()); err == nil || !strings.Contains(err.Error(), "YAML alias or anchor") {
-				t.Fatalf("error = %v, want explicit YAML alias/anchor error", err)
-			}
-			after, err := os.ReadFile(path)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if string(after) != string(before) {
-				t.Fatalf("alias rejection changed config bytes")
-			}
-		})
+		path := filepath.Join(t.TempDir(), "config.yaml")
+		writeMarketplaceV4(t, path, body)
+		before := marketplaceState(t, path)
+		_, _, err := commitMarketplaceEdit(path, RepoCommitted, marketplaceIncludeEdit("https://market.example", testMarketplacePin()))
+		requireMarketplaceV4Code(t, err, "v4.alias-forbidden")
+		requireMarketplaceUnchanged(t, path, before)
+	}
+	// An unused anchor is not an alias and is supported by the strict v4 reader.
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	writeMarketplaceV4(t, path, "sources:\n  public: &entry {marketplace: https://market.example}\n")
+	if _, _, err := commitMarketplaceEdit(path, RepoCommitted, marketplaceIncludeEdit("https://market.example", testMarketplacePin())); err != nil {
+		t.Fatal(err)
+	}
+	v4, err := LoadV4ConfigFromPath(path)
+	if err != nil || !slices.Equal(marketplaceRequestLocators(v4), []string{"source-slug/skill/review"}) {
+		t.Fatalf("anchor control = %#v, %v", v4, err)
 	}
 }
 
 func TestEnsureMarketplacePinSnapshotWaitsForWriterHoldingPathLock(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.yaml")
-	original := []byte("apiVersion: agent-marketplace/v2\n")
-	if err := os.WriteFile(path, original, 0o644); err != nil {
-		t.Fatal(err)
-	}
-	concurrent := []byte("apiVersion: agent-marketplace/v2\n# writer committed first\n")
-	writerReady := make(chan struct{})
-	releaseWriter := make(chan struct{})
+	writeMarketplaceV4(t, path, "")
+	concurrent := []byte("apiVersion: agent-marketplace/v4\n# writer committed first\n")
+	writerReady, releaseWriter := make(chan struct{}), make(chan struct{})
 	writerDone := make(chan error, 1)
 	go func() {
-		writerDone <- withConfigPathLock(path, func() error {
-			close(writerReady)
-			<-releaseWriter
-			return os.WriteFile(path, concurrent, 0o644)
-		})
+		writerDone <- withConfigPathLock(path, func() error { close(writerReady); <-releaseWriter; return os.WriteFile(path, concurrent, 0o600) })
 	}()
 	<-writerReady
-
 	type result struct {
 		snapshot *FileSnapshot
 		commit   ConfigFileCommit
@@ -437,94 +485,92 @@ func TestEnsureMarketplacePinSnapshotWaitsForWriterHoldingPathLock(t *testing.T)
 	}
 	resultCh := make(chan result, 1)
 	go func() {
-		snapshot, commit, err := EnsureMarketplacePinInConfigWithSnapshotAndCommit(path, "https://market.example", "instance", "public", testMarketplacePin())
-		resultCh <- result{snapshot: snapshot, commit: commit, err: err}
+		snapshot, commit, err := commitMarketplaceEdit(path, RepoCommitted, marketplaceIncludeEdit("https://market.example", testMarketplacePin()))
+		resultCh <- result{snapshot, commit, err}
 	}()
 	close(releaseWriter)
 	if err := <-writerDone; err != nil {
-		t.Fatalf("concurrent writer: %v", err)
+		t.Fatal(err)
 	}
-	got := <-resultCh
-	if got.err != nil {
-		t.Fatalf("ensure pin: %v", got.err)
-	}
-	if string(got.snapshot.data) != string(concurrent) {
-		t.Fatalf("snapshot = %q, want writer bytes %q", got.snapshot.data, concurrent)
-	}
-	if string(got.commit.Bytes) == string(concurrent) || !strings.Contains(string(got.commit.Bytes), "review") {
-		t.Fatalf("commit = %q, want pin based on writer bytes", got.commit.Bytes)
+	select {
+	case got := <-resultCh:
+		if got.err != nil {
+			t.Fatal(got.err)
+		}
+		if !bytes.Equal(got.snapshot.data, concurrent) || !bytes.Contains(got.commit.Bytes, []byte("review")) || !bytes.Contains(got.commit.Bytes, []byte("writer committed first")) {
+			t.Fatalf("snapshot/commit = %#v/%s", got.snapshot, got.commit.Bytes)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("candidate edit did not resume after path lock release")
 	}
 }
 
-func TestUpdateMarketplacePinCompareAndSwap(t *testing.T) {
+func TestUpdateMarketplaceRequestCandidateRollback(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.yaml")
+	writeMarketplaceV4(t, path, "sources:\n  public: {marketplace: https://market.example}\nresources:\n  public: [{source-slug/skill/review: {as: chosen-review, revision: sha256:1111111111111111111111111111111111111111111111111111111111111111}}]\n")
+	before := marketplaceState(t, path)
 	old := testMarketplacePin()
 	old.InstalledName = "chosen-review"
-	if err := EnsureMarketplacePinInConfig(path, "https://market.example", "instance", "public", old); err != nil {
-		t.Fatal(err)
-	}
 	updated := old
 	updated.Revision = "sha256:" + strings.Repeat("b", 64)
-	updated.Digest = updated.Revision
-	updated.RegistrySlug = "renamed-source"
-	snapshot, commit, err := UpdateMarketplacePinInConfigWithSnapshotAndCommit(path, "HTTPS://MARKET.example/", "instance", old, updated)
-	if err != nil {
-		t.Fatalf("update pin: %v", err)
-	}
-	if snapshot == nil || len(commit.Bytes) == 0 || commit.Generation == "" {
-		t.Fatalf("update snapshot/commit = %#v/%#v", snapshot, commit)
-	}
-	if err := snapshot.RestoreIfCurrent(commit); err != nil {
-		t.Fatalf("restore update snapshot: %v", err)
-	}
-	if err := UpdateMarketplacePinInConfig(path, "HTTPS://MARKET.example/", "instance", old, updated); err != nil {
-		t.Fatalf("repeat update pin: %v", err)
-	}
-	cfg, err := LoadConfigFromPath(path)
+	snapshot, commit, err := commitMarketplaceEdit(path, RepoCommitted, func(editor *LayerEditor) error {
+		binding, err := editor.EnsureMarketplaceSource("HTTPS://MARKET.example/")
+		if err != nil {
+			return err
+		}
+		if err := editor.RemoveMarketplacePins(binding, []MarketplaceResourcePin{old}); err != nil {
+			return err
+		}
+		return editor.IncludeMarketplacePins(binding, []MarketplaceResourcePin{updated})
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	got := cfg.Marketplaces[0].Resources[0]
-	if got != updated || got.InstalledName != "chosen-review" {
-		t.Fatalf("updated pin = %#v, want %#v", got, updated)
+	v4, err := LoadV4ConfigFromPath(path)
+	if err != nil {
+		t.Fatal(err)
 	}
-	conflict := updated
-	conflict.Revision = "sha256:" + strings.Repeat("c", 64)
-	if err := UpdateMarketplacePinInConfig(path, "https://market.example", "instance", old, conflict); err == nil || !strings.Contains(err.Error(), "compare-and-swap conflict") {
-		t.Fatalf("CAS conflict error = %v", err)
+	if len(v4.Requests) != 1 || v4.Requests[0].Options.As != "chosen-review" || v4.Requests[0].Options.Revision != "sha256:"+strings.Repeat("b", 64) || snapshot == nil || commit.Generation == "" {
+		t.Fatalf("updated request/CAS = %#v/%#v", v4.Requests, commit)
+	}
+	if err := snapshot.RestoreIfCurrent(commit); err != nil {
+		t.Fatal(err)
+	}
+	after := marketplaceState(t, path)
+	if !bytes.Equal(after.data, before.data) || after.info.Mode() != before.info.Mode() {
+		t.Fatal("rollback did not restore exact bytes and mode")
 	}
 }
 
 func TestEnsureMarketplacePinSerializesConcurrentDistinctAdds(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.yaml")
+	writeMarketplaceV4(t, path, "")
 	const count = 12
 	errs := make(chan error, count)
 	var wg sync.WaitGroup
-	for i := 0; i < count; i++ {
+	for i := range count {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
 			pin := testMarketplacePin()
 			pin.Name = fmt.Sprintf("review-%d", i)
-			errs <- EnsureMarketplacePinInConfig(path, "HTTPS://MARKET.example/", "instance", "public", pin)
+			_, _, err := commitMarketplaceEdit(path, RepoCommitted, marketplaceIncludeEdit("HTTPS://MARKET.example/", pin))
+			errs <- err
 		}(i)
 	}
 	wg.Wait()
 	close(errs)
 	for err := range errs {
 		if err != nil {
-			t.Fatalf("concurrent ensure: %v", err)
+			t.Fatal(err)
 		}
 	}
-	data, err := os.ReadFile(path)
+	v4, err := LoadV4ConfigFromPath(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	var cfg Config
-	if err := yaml.Unmarshal(data, &cfg); err != nil {
-		t.Fatalf("decode concurrent result: %v\n%s", err, data)
-	}
-	if len(cfg.Marketplaces) != 1 || len(cfg.Marketplaces[0].Resources) != count {
-		t.Fatalf("concurrent result = %#v, want one entry with %d resources", cfg.Marketplaces, count)
+	want := []string{"source-slug/skill/review-0", "source-slug/skill/review-1", "source-slug/skill/review-10", "source-slug/skill/review-11", "source-slug/skill/review-2", "source-slug/skill/review-3", "source-slug/skill/review-4", "source-slug/skill/review-5", "source-slug/skill/review-6", "source-slug/skill/review-7", "source-slug/skill/review-8", "source-slug/skill/review-9"}
+	if len(v4.Sources) != 1 || !slices.Equal(marketplaceRequestLocators(v4), want) {
+		t.Fatalf("concurrent sources/requests = %#v/%#v", v4.Sources, v4.Requests)
 	}
 }

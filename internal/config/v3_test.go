@@ -1,281 +1,77 @@
 package config
 
 import (
+	"errors"
 	"strings"
 	"testing"
 )
 
-func TestV3OrganizationRejectsUnknownFields(t *testing.T) {
-	data := []byte(`apiVersion: agent-marketplace/v3
-harnesses:
-  - factory
-unknown_field: value
-registries: []
-`)
-	_, errs := loadV3Config(data, organizationLayer, false)
-	if len(errs) == 0 {
-		t.Fatalf("expected unknown field to be rejected")
-	}
-	if !strings.Contains(errs[0].Error(), "unknown top-level field \"unknown_field\"") {
-		t.Fatalf("expected error to mention unknown_field, got: %v", errs[0])
-	}
-}
-
-// spec: config-layering/v2-and-v3-roots-declare-marketplace-entries
-func TestV3MarketplaceRejectsDevelopmentAliasesEvenWithOtherConfigErrors(t *testing.T) {
-	data := []byte(`apiVersion: agent-marketplace/v2
-harnesses:
-  - factory
-unknown_field: value
-marketplaces:
-  - url: https://market.example
-    instance_id: market
-    resources:
-      - registry_id: source
-        kind: skill
-        name: review
-        revision: revision
-        digest: sha256:0000000000000000000000000000000000000000000000000000000000000000
-        acquisition: index
-        revision_commit: legacy-commit
-`)
-	_, errs := loadV3Config(data, userLayer, true)
-	if len(errs) == 0 {
-		t.Fatal("expected invalid Marketplace aliases to be rejected")
-	}
-	combined := errorsJoin(errs)
-	for _, want := range []string{"revision_commit", "acquisition"} {
-		if !strings.Contains(combined, want) {
-			t.Fatalf("expected error to mention %q, got: %v", want, combined)
-		}
-	}
-}
-
-func TestV3UserRejectsForbiddenFields(t *testing.T) {
-	data := []byte(`apiVersion: agent-marketplace/v3
-harnesses:
-  - factory
-identity:
-  provider: ldap
-registries: []
-`)
-	_, errs := loadV3Config(data, userLayer, true)
-	if len(errs) == 0 {
-		t.Fatalf("expected forbidden identity field to be rejected")
-	}
-	if !strings.Contains(errs[0].Error(), "identity") {
-		t.Fatalf("expected error to mention identity, got: %v", errs[0])
-	}
-}
-
-func TestV3RepoAllowsHarnessesAndRejectsBackup(t *testing.T) {
-	data := []byte(`apiVersion: agent-marketplace/v3
-harnesses:
-  - factory
-backup:
-  enabled: true
-registries: []
-`)
-	_, errs := loadV3Config(data, repoLayer, false)
-	if len(errs) != 1 {
-		t.Fatalf("expected one forbidden field error, got %d: %v", len(errs), errs)
-	}
-	if !strings.Contains(errorsJoin(errs), "backup") {
-		t.Fatalf("expected error to mention backup, got: %v", errs)
-	}
-}
-
-func TestV3LocalAllowsRequiredAndDefault(t *testing.T) {
-	data := []byte(`apiVersion: agent-marketplace/v3
-registries:
-  - url: git@example.com:repo.git
-    ref: main
-    required: true
-    default: true
-`)
-	_, errs := loadV3LocalConfig(data)
-	if len(errs) != 0 {
-		t.Fatalf("expected local config to accept required/default, got: %v", errs)
-	}
-}
-
-func TestV3LocalRejectsAllowedRegistries(t *testing.T) {
-	data := []byte(`apiVersion: agent-marketplace/v3
-allowed_registries: []
-registries:
-  - url: git@example.com:repo.git
-    ref: main
-`)
-	_, errs := loadV3LocalConfig(data)
-	if len(errs) != 1 {
-		t.Fatalf("expected 1 forbidden field error, got %d: %v", len(errs), errs)
-	}
-	if !strings.Contains(errs[0].Error(), "allowed_registries") {
-		t.Fatalf("expected error to mention allowed_registries, got: %v", errs[0])
-	}
-}
-
-func TestV3AnyLayerRejectsIdentityAndTeamProfiles(t *testing.T) {
-	for _, kind := range []layerKind{organizationLayer, userLayer, repoLayer, localLayer} {
-		data := []byte(`apiVersion: agent-marketplace/v3
-team_profiles:
-  platform:
-    registries: []
-identity:
-  provider: ldap
-`)
-		if kind == localLayer {
-			_, errs := loadV3LocalConfig(data)
-			if len(errs) != 2 {
-				t.Fatalf("kind %v: expected 2 forbidden field errors, got %d: %v", kind, len(errs), errs)
-			}
-			continue
-		}
-		_, errs := loadV3Config(data, kind, kind != repoLayer)
-		if len(errs) != 2 {
-			t.Fatalf("kind %v: expected 2 forbidden field errors, got %d: %v", kind, len(errs), errs)
-		}
-	}
-}
-
-func TestV3RegistryEntryRejectsForbiddenLocalRequired(t *testing.T) {
-	data := []byte(`apiVersion: agent-marketplace/v3
-registries:
-  - url: git@example.com:repo.git
-    ref: main
-    forbidden_entry_field: value
-`)
-	_, errs := loadV3Config(data, userLayer, true)
-	if len(errs) == 0 {
-		t.Fatalf("expected unknown registry entry field to be rejected")
-	}
-	if !strings.Contains(errs[0].Error(), "forbidden_entry_field") {
-		t.Fatalf("expected error to mention forbidden_entry_field, got: %v", errs[0])
-	}
-}
-
-func TestV3OrganizationAllowsFallbackHarnesses(t *testing.T) {
-	data := []byte(`apiVersion: agent-marketplace/v3
-harnesses:
-  - factory
-  - windsurf
-registries: []
-`)
-	cfg, errs := loadV3Config(data, organizationLayer, false)
-	if len(errs) > 0 {
-		t.Fatalf("expected valid organization config, got errors: %v", errs)
-	}
-	if cfg == nil {
-		t.Fatalf("expected parsed config")
-	}
-	if len(cfg.Harnesses) != 2 {
-		t.Fatalf("expected 2 harnesses, got %v", cfg.Harnesses)
-	}
-}
-
-func TestV3UserRequiresHarnesses(t *testing.T) {
-	data := []byte(`apiVersion: agent-marketplace/v3
-registries: []
-`)
-	_, errs := loadV3Config(data, userLayer, true)
-	if len(errs) == 0 {
-		t.Fatalf("expected user config to require harnesses")
-	}
-	if !strings.Contains(errs[0].Error(), "harnesses is required") {
-		t.Fatalf("expected harnesses required error, got: %v", errs[0])
-	}
-}
-
-func TestV3RepoAllowedRegistriesClaimsPolicy(t *testing.T) {
-	data := []byte(`apiVersion: agent-marketplace/v3
-allowed_registries: []
-registries:
-  - url: git@example.com:repo.git
-    ref: main
-`)
-	cfg, errs := loadV3Config(data, repoLayer, false)
-	if len(errs) > 0 {
-		t.Fatalf("expected valid repo config, got errors: %v", errs)
-	}
-	if cfg == nil || cfg.AllowedRegistries == nil || len(*cfg.AllowedRegistries) != 0 {
-		t.Fatalf("expected explicit empty allowed_registries to be preserved")
-	}
-}
-
-func TestV3LocalLoadsValidConfig(t *testing.T) {
-	data := []byte(`apiVersion: agent-marketplace/v3
-registries:
-  - url: git@example.com:repo.git
-    ref: main
-skills:
-  include:
-    - local-skill
-`)
-	cfg, errs := loadV3LocalConfig(data)
-	if len(errs) > 0 {
-		t.Fatalf("expected valid repository personal config, got: %v", errorsJoin(errs))
-	}
-	if cfg == nil {
-		t.Fatal("expected parsed config")
-	}
-	if len(cfg.Registries) != 1 || cfg.Registries[0].URL != "git@example.com:repo.git" {
-		t.Fatalf("expected one registry, got %v", cfg.Registries)
-	}
-	if len(cfg.Skills.Include) != 1 || cfg.Skills.Include[0] != "local-skill" {
-		t.Fatalf("expected local skill include, got %v", cfg.Skills.Include)
-	}
-}
-
-func TestV3LocalAllowsAliasedRequiredAndDefault(t *testing.T) {
-	data := []byte(`apiVersion: agent-marketplace/v3
-registries:
-  - &entry
-    url: git@example.com:repo.git
-    ref: main
-    required: true
-    default: true
-  - *entry
-`)
-	_, errs := loadV3LocalConfig(data)
-	if len(errs) != 0 {
-		t.Fatalf("expected aliased required/default to be accepted, got: %v", errs)
-	}
-}
-
-func TestV3MarketplaceRejectsMalformedSelectionEdgesAndDirectValues(t *testing.T) {
-	digest := "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-	cases := map[string]string{
-		"null selected_by":        "selected_by: null",
-		"scalar selected_by":      "selected_by: invalid",
-		"scalar selection":        "selected_by:\n          - invalid",
-		"missing selection field": "selected_by:\n          - registry_id: source\n            name: review",
-		"extra selection field":   "selected_by:\n          - registry_id: source\n            name: review\n            revision: " + digest + "\n            extra: value",
-		"non-string selection":    "selected_by:\n          - registry_id: true\n            name: review\n            revision: " + digest,
-		"string direct":           "direct: \"true\"",
-		"integer direct":          "direct: 1",
-		"null direct":             "direct: null",
-	}
-	for name, field := range cases {
-		t.Run(name, func(t *testing.T) {
-			data := []byte(`apiVersion: agent-marketplace/v2
-marketplaces:
-  - url: https://market.example
-    instance_id: market
-    resources:
-      - registry_id: source
-        kind: skill
-        name: review
-        revision: revision
-        digest: ` + digest + "\n        " + field + "\n")
-			_, errs := loadV3Config(data, repoLayer, false)
-			if len(errs) == 0 {
-				t.Fatalf("malformed %s was accepted", name)
-			}
-			combined := errorsJoin(errs)
-			if !strings.Contains(combined, "selected_by") && !strings.Contains(combined, "direct") {
-				t.Fatalf("error did not identify malformed field: %v", combined)
+func TestV4LayerFieldsAndUnknownInput(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		kind  layerKind
+		field string
+		code  string
+	}{
+		{"organization unknown", organizationLayer, "unknown_field: value", "v4.unknown-field"},
+		{"user identity", userLayer, "identity: {provider: ldap}", "v4.unknown-field"},
+		{"repo backup", repoLayer, "backup: {enabled: true}", "v4.layer-field"},
+		{"repo logging", repoLayer, "logging: {level: debug}", "v4.layer-field"},
+		{"local allowlist", localLayer, "allowed_registries: []", "v4.layer-field"},
+		{"local harnesses", localLayer, "harnesses: [factory]", "v4.layer-field"},
+		{"source unknown", userLayer, "sources: {agents: {git: https://example.test/agents.git, ref: main, forbidden_entry_field: value}}", "v4.unknown-field"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := readRootLayerIntent("authored.yaml", []byte("apiVersion: agent-marketplace/v4\n"+tc.field+"\n"), tc.kind)
+			var validation *V4ValidationError
+			if !errors.As(err, &validation) || validation.Code != tc.code {
+				t.Fatalf("error = %v, want %s", err, tc.code)
 			}
 		})
+	}
+	for _, kind := range []layerKind{organizationLayer, userLayer, repoLayer, localLayer} {
+		for _, field := range []string{"identity", "team_profiles"} {
+			_, err := readRootLayerIntent("authored.yaml", []byte("apiVersion: agent-marketplace/v4\n"+field+": {}\n"), kind)
+			var validation *V4ValidationError
+			if !errors.As(err, &validation) || validation.Code != "v4.unknown-field" || validation.Path != field {
+				t.Fatalf("%s %s error = %v", kind.name(), field, err)
+			}
+		}
+	}
+}
+
+func TestV4LayerPolicyControls(t *testing.T) {
+	org, err := readRootLayerIntent("org.yaml", []byte("apiVersion: agent-marketplace/v4\nharnesses: [factory, windsurf]\n"), organizationLayer)
+	if err != nil || !equalStrings(org.Settings().Harnesses, []string{"factory", "windsurf"}) {
+		t.Fatalf("organization fallback harnesses = %v, %v", org.Settings().Harnesses, err)
+	}
+	repo, err := readRootLayerIntent("repo.yaml", []byte("apiVersion: agent-marketplace/v4\nharnesses: [factory]\nallowed_registries: []\n"), repoLayer)
+	if err != nil || repo.Settings().AllowedRegistries == nil || len(*repo.Settings().AllowedRegistries) != 0 {
+		t.Fatalf("repository policy = %#v, %v", repo.Settings(), err)
+	}
+	local, err := readRootLayerIntent("local.yaml", []byte(`apiVersion: agent-marketplace/v4
+sources: {agents: {git: https://example.test/agents.git, ref: main}}
+resources: {agents: {include: [skill/local-skill], required: true, all: true}}
+`), localLayer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := local.bind(nil)
+	if err != nil || len(cfg.Registries) != 1 || cfg.Registries[0].URL != "https://example.test/agents.git" || !cfg.Registries[0].Required || !cfg.Registries[0].V4All || !equalStrings(cfg.Registries[0].Skills.Include, []string{"local-skill"}) {
+		t.Fatalf("local selection/policy = %#v, %v", cfg, err)
+	}
+}
+
+func TestV4YAMLAliasRefused(t *testing.T) {
+	_, err := readRootLayerIntent("local.yaml", []byte(`apiVersion: agent-marketplace/v4
+sources:
+  first: &source {git: https://example.test/agents.git, ref: main}
+  second: *source
+resources: {first: {all: true, required: true}}
+`), localLayer)
+	var validation *V4ValidationError
+	if !errors.As(err, &validation) || validation.Code != "v4.alias-forbidden" {
+		t.Fatalf("error = %v, want alias refusal", err)
 	}
 }
 

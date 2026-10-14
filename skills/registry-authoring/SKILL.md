@@ -270,8 +270,9 @@ into the registry ships resources to every consumer. Require review for
   removing a resource is a major release.
 - Consumers pinned to a tag stay on it until they edit `ref:` and run `sync`.
   Consumers on a branch stay on their locked commit until `update`.
-- `update --bump` rewrites refs only in legacy v2/v3 `registries:` configs, and
-  only to tags that differ in the final number. v4 consumers edit the ref.
+- `update --bump` rewrites eligible refs in v4 `sources:` to tags that differ
+  only in the final number. Refs declared by included fragments are reported
+  and left unchanged; consumers edit those fragments deliberately.
 - Document the consumer v4 snippet and contribution rules in the registry
   README.
 

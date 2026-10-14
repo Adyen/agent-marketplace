@@ -27,11 +27,12 @@ func TestPersonalLayerCannotSoftenAnOrgRequiredMemberMiss(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
-	// A local (non-git) monorepo with two disjoint subdirectories. Neither
-	// contains `efficient-go`.
-	monorepo := filepath.Join(t.TempDir(), "awesome-ai")
-	writeSkillAt(t, monorepo, "teams/security", "devsecops", "DevSecOps baseline")
-	writeSkillAt(t, monorepo, "personal/scratch", "scratch-note", "Personal scratch")
+	// A Git monorepo with two disjoint source paths. Neither contains
+	// `efficient-go`; both bindings must retain the same acquisition identity.
+	monorepo, working := createV4GitRegistry(t, "awesome-ai.git")
+	writeSkillAt(t, working, "teams/security", "devsecops", "DevSecOps baseline")
+	writeSkillAt(t, working, "personal/scratch", "scratch-note", "Personal scratch")
+	commitAndPushAll(t, working, "seed disjoint source paths")
 
 	// A separate registry hosting a collection whose member names the
 	// monorepo by URL only — no `path:`.
@@ -48,46 +49,61 @@ skills:
     registry: `+monorepo+`
 `)
 
-	// Org layer: the monorepo's security directory is org-mandated. This is the
-	// externally managed v3 organization config, at the fixed path.
+	// Org layer: the monorepo's security directory is org-mandated.
 	orgCfgPath := filepath.Join(t.TempDir(), "org.yaml")
-	writeConfig(t, orgCfgPath, `apiVersion: agent-marketplace/v3
+	writeConfig(t, orgCfgPath, `apiVersion: agent-marketplace/v4
 harnesses:
   - factory
-registries:
-  - url: `+monorepo+`
+sources:
+  security:
+    git: `+monorepo+`
+    ref: main
     path: teams/security
+resources:
+  security:
+    all: true
     required: true
 `)
 	config.SetTestOrganizationConfigPath(t, orgCfgPath)
 
 	writeConfig(t, filepath.Join(homeDir, ".agents", "config.yaml"), `
-apiVersion: agent-marketplace/v2
+apiVersion: agent-marketplace/v4
 harnesses:
   - factory
-registries: []
+sources: {}
 `)
 
 	// No top-level harnesses: the target set is machine-wide and comes from the
 	// user/org layers above.
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
-apiVersion: agent-marketplace/v2
-registries:
-  - url: `+collectionHost+`
-collections:
-  include:
-    - gotools
+apiVersion: agent-marketplace/v4
+sources:
+  collections:
+    directory: `+collectionHost+`
+resources:
+  collections:
+    include: [collection/gotools]
 `)
 	// The attack lives here: a personal, gitignored layer adding a
 	// non-required entry for the SAME repository at a different path.
 	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.local.yaml"), `
-apiVersion: agent-marketplace/v2
-registries:
-  - url: `+monorepo+`
+apiVersion: agent-marketplace/v4
+sources:
+  scratch:
+    git: `+monorepo+`
+    ref: main
     path: personal/scratch
+resources:
+  scratch:
+    all: true
+    required: false
 `)
 	withWorkingDir(t, repoRoot)
+	if output, err := executeCommand("lock", "--scope", "organization"); err != nil {
+		t.Fatalf("seed organization acquisition evidence: %v\n%s", err, output)
+	}
+	requireExactLocks(t)
 
 	output, err := executeCommand("sync")
 	if err == nil {

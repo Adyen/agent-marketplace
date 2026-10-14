@@ -22,7 +22,7 @@ The current configuration format is v4 (`apiVersion: agent-marketplace/v4`). `in
 - registering a Marketplace and installing Marketplace resources; and
 - TUI toggles for Git and directory sources, and the TUI harness modal (`H`).
 
-v2 and v3 files still work, but they are deprecated, and every change to one prints a `config.legacy-deprecated` warning. The CLI and TUI offer to migrate your personal configuration when they start in a terminal. Repository and personal-local files change only when you run `agent-marketplace migrate`. Read [maintaining and migrating configuration](../how-to/migrate-configuration.md) before you migrate a shared repository.
+Every existing root, including organization and personal-local, must declare exact v4. Included fragments may omit the version or declare exact v4. Versionless roots fail with `v4.api-version-required`; explicit unsupported or invalid versions fail with `v4.api-version`, naming the file and field. There is no shipped `migrate` command, startup prompt, TUI migration modal, or legacy fallback. [Convert writable roots with an older released migrator before upgrading](../how-to/migrate-configuration.md); administrators convert organization configuration externally. Conversion can refuse includes, unrepresentable legacy input, or missing verified Marketplace evidence, and changing only the version string is insufficient.
 
 Some Marketplace cases are not supported: acquiring content offline when the organization lockfile is absent, rebinding hosted pins, and recording snapshots for dynamic selectors. When the CLI can't verify a pin, it refuses and changes nothing.
 :::

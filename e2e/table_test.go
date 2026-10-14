@@ -20,7 +20,7 @@ type TestCase struct {
 	Name       string        // subtest name (e.g. "collision/same_name_different_registries")
 	Desc       string        // Given/When/Then description of the test scenario
 	Registries []RegistryDef // bare repos to seed inside the container
-	GlobalCfg  string        // ~/.agents/config.yaml content ({{REG:name}} placeholders resolved); always written (empty → auto-injected defaults)
+	GlobalCfg  string        // ~/.agents/config.yaml content ({{REG:name}} placeholders resolved); always written (empty → explicit v4 fixture defaults)
 	RepoCfg    string        // .agents/config.yaml content; omitted if empty
 	LocalCfg   string        // .agents/config.local.yaml content; omitted if empty
 	OrgCfg     string        // /etc/agent-marketplace/config.yaml content; omitted if empty
@@ -181,58 +181,55 @@ func TestPathFingerprintDetectsSameByteRewrite(t *testing.T) {
 const handwrittenFactoryHooks = `{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"echo handwritten"}]}]}}`
 
 var testTable = []TestCase{
-	// spec: regression-gates/migrated-selection-workflows-remain-usable
+	// spec: regression-gates/v4-selection-workflows-remain-usable
 	{
-		Name: "migrate/v4_bulk_selection_lifecycle",
-		Desc: "Given a legacy registry selection, When migrating and installing all resources, Then removal persists and unrelated selected output remains",
+		Name: "selection/v4_bulk_selection_lifecycle",
+		Desc: "Given a populated v4 selection, When installing all resources, Then removal persists and unrelated selected output remains",
 		Registries: []RegistryDef{{Name: "migrated-bulk", Skills: []Skill{
 			{Name: "review", Description: "Review fixture"},
 			{Name: "deploy", Description: "Deploy fixture"},
 		}}},
-		GlobalCfg: "apiVersion: agent-marketplace/v2\nharnesses: [factory]\n",
-		RepoCfg:   "apiVersion: agent-marketplace/v2\nregistries:\n  - url: {{REG:migrated-bulk}}\n    ref: main\n    skills: {include: [review]}\n",
+		GlobalCfg: "apiVersion: agent-marketplace/v4\nharnesses: [factory]\n",
+		RepoCfg:   "apiVersion: agent-marketplace/v4\nsources: {team: {git: '{{REG:migrated-bulk}}', ref: main}}\nresources: {team: {include: [skill/review]}}\n",
 		Steps: []Step{
 			{Args: []string{"sync"}, MustPass: true, FilesExist: []string{"/workspace/.factory/skills/review/SKILL.md"}, FilesAbsent: []string{"/workspace/.factory/skills/deploy"}},
-			{Args: []string{"migrate", "--scope", "all"}, MustPass: true, FileContains: map[string]string{"/workspace/.agents/config.yaml": "apiVersion: agent-marketplace/v4", "/root/.agents/config.yaml": "apiVersion: agent-marketplace/v4"}},
 			{Args: []string{"install", "--all"}, MustPass: true, FileContains: map[string]string{"/workspace/.factory/skills/review/SKILL.md": "Review fixture", "/workspace/.factory/skills/deploy/SKILL.md": "Deploy fixture"}},
 			{Args: []string{"remove", "deploy"}, MustPass: true, FilesAbsent: []string{"/workspace/.factory/skills/deploy"}, FilesExist: []string{"/workspace/.factory/skills/review/SKILL.md"}},
 			{Args: []string{"sync"}, MustPass: true, FilesAbsent: []string{"/workspace/.factory/skills/deploy"}, FilesExist: []string{"/workspace/.factory/skills/review/SKILL.md"}},
 			{Args: []string{"sync", "--check"}, MustPass: true},
 		},
 	},
-	// spec: regression-gates/migrated-selection-workflows-remain-usable
+	// spec: regression-gates/v4-selection-workflows-remain-usable
 	{
-		Name: "migrate/v4_tag_selection_lifecycle",
-		Desc: "Given a legacy explicit selection, When migrating and installing by tag, Then only matching additional resources install and removal persists",
+		Name: "selection/v4_tag_selection_lifecycle",
+		Desc: "Given a populated v4 selection, When installing by tag, Then only matching additional resources install and removal persists",
 		Registries: []RegistryDef{{Name: "migrated-tag", Skills: []Skill{
 			{Name: "review", Description: "Review fixture"},
 			{Name: "deploy", Description: "Deploy fixture", Tags: []string{"ops"}},
 			{Name: "unselected", Description: "Unselected fixture"},
 		}}},
-		GlobalCfg: "apiVersion: agent-marketplace/v2\nharnesses: [factory]\n",
-		RepoCfg:   "apiVersion: agent-marketplace/v2\nregistries:\n  - url: {{REG:migrated-tag}}\n    ref: main\n    skills: {include: [review]}\n",
+		GlobalCfg: "apiVersion: agent-marketplace/v4\nharnesses: [factory]\n",
+		RepoCfg:   "apiVersion: agent-marketplace/v4\nsources: {team: {git: '{{REG:migrated-tag}}', ref: main}}\nresources: {team: {include: [skill/review]}}\n",
 		Steps: []Step{
 			{Args: []string{"sync"}, MustPass: true, FilesExist: []string{"/workspace/.factory/skills/review/SKILL.md"}, FilesAbsent: []string{"/workspace/.factory/skills/deploy", "/workspace/.factory/skills/unselected"}},
-			{Args: []string{"migrate", "--scope", "all"}, MustPass: true, FileContains: map[string]string{"/workspace/.agents/config.yaml": "apiVersion: agent-marketplace/v4", "/root/.agents/config.yaml": "apiVersion: agent-marketplace/v4"}},
 			{Args: []string{"install", "--tag", "ops"}, MustPass: true, FileContains: map[string]string{"/workspace/.factory/skills/review/SKILL.md": "Review fixture", "/workspace/.factory/skills/deploy/SKILL.md": "Deploy fixture"}, FilesAbsent: []string{"/workspace/.factory/skills/unselected"}},
 			{Args: []string{"remove", "deploy"}, MustPass: true, FilesAbsent: []string{"/workspace/.factory/skills/deploy"}, FilesExist: []string{"/workspace/.factory/skills/review/SKILL.md"}},
 			{Args: []string{"sync"}, MustPass: true, FilesAbsent: []string{"/workspace/.factory/skills/deploy", "/workspace/.factory/skills/unselected"}, FilesExist: []string{"/workspace/.factory/skills/review/SKILL.md"}},
 			{Args: []string{"sync", "--check"}, MustPass: true},
 		},
 	},
-	// spec: regression-gates/migrated-selection-workflows-remain-usable
+	// spec: regression-gates/v4-selection-workflows-remain-usable
 	{
-		Name: "migrate/v4_ad_hoc_selection_lifecycle",
-		Desc: "Given a legacy explicit selection, When migrating and installing from another registry, Then coordinate-based removal preserves the original resource",
+		Name: "selection/v4_ad_hoc_selection_lifecycle",
+		Desc: "Given a populated v4 selection, When installing from another registry, Then coordinate-based removal preserves the original resource",
 		Registries: []RegistryDef{
 			{Name: "migrated-original", Skills: []Skill{{Name: "review", Description: "Review fixture"}}},
 			{Name: "migrated-ad-hoc", Skills: []Skill{{Name: "deploy", Description: "Deploy fixture"}}},
 		},
-		GlobalCfg: "apiVersion: agent-marketplace/v2\nharnesses: [factory]\n",
-		RepoCfg:   "apiVersion: agent-marketplace/v2\nregistries:\n  - url: {{REG:migrated-original}}\n    ref: main\n    skills: {include: [review]}\n",
+		GlobalCfg: "apiVersion: agent-marketplace/v4\nharnesses: [factory]\n",
+		RepoCfg:   "apiVersion: agent-marketplace/v4\nsources: {team: {git: '{{REG:migrated-original}}', ref: main}}\nresources: {team: {include: [skill/review]}}\n",
 		Steps: []Step{
 			{Args: []string{"sync"}, MustPass: true, FilesExist: []string{"/workspace/.factory/skills/review/SKILL.md"}, FilesAbsent: []string{"/workspace/.factory/skills/deploy"}},
-			{Args: []string{"migrate", "--scope", "all"}, MustPass: true, FileContains: map[string]string{"/workspace/.agents/config.yaml": "apiVersion: agent-marketplace/v4", "/root/.agents/config.yaml": "apiVersion: agent-marketplace/v4"}},
 			{Args: []string{"install", "deploy", "--from", "{{REG:migrated-ad-hoc}}", "--ref", "main", "--scope", "repo"}, MustPass: true, FileContains: map[string]string{"/workspace/.factory/skills/review/SKILL.md": "Review fixture", "/workspace/.factory/skills/deploy/SKILL.md": "Deploy fixture"}},
 			{Args: []string{"remove", "deploy", "--from", "{{REG:migrated-ad-hoc}}", "--ref", "main", "--scope", "repo"}, MustPass: true, FilesAbsent: []string{"/workspace/.factory/skills/deploy"}, FilesExist: []string{"/workspace/.factory/skills/review/SKILL.md"}},
 			{Args: []string{"sync"}, MustPass: true, FilesAbsent: []string{"/workspace/.factory/skills/deploy"}, FilesExist: []string{"/workspace/.factory/skills/review/SKILL.md"}},
@@ -252,24 +249,22 @@ var testTable = []TestCase{
 		},
 	},
 	{
-		Name:      "migration/startup_preserves_legacy_repo_layers",
-		Desc:      "Given a v4 user config and legacy repo/local configs, When listing and explicitly migrating the repo, Then startup preserves both legacy layers and only explicit migration upgrades the repo",
+		Name:      "format/startup_refuses_unsupported_repo_layers",
+		Desc:      "Given a v4 user root and an unsupported repository root, When listing, Then startup refuses without conversion or edits",
 		GlobalCfg: "apiVersion: agent-marketplace/v4\nharnesses: [factory]\n",
-		RepoCfg:   "apiVersion: agent-marketplace/v2\nregistries: []\n",
-		LocalCfg:  "registries: []\n",
+		RepoCfg:   "apiVersion: agent-marketplace/v2\nsources: {}\n",
+		LocalCfg:  "apiVersion: agent-marketplace/v4\n",
 		Steps: []Step{
-			{Args: []string{"list"}, MustPass: true, OutNotContains: []string{"Migrate these configuration files"}, PathsUnchanged: []string{"/workspace/.agents"}},
-			{Args: []string{"migrate", "--scope", "repo"}, MustPass: true, FileContains: map[string]string{"/workspace/.agents/config.yaml": "apiVersion: agent-marketplace/v4"}, PathsUnchanged: []string{"/workspace/.agents/config.local.yaml"}},
+			{Args: []string{"list"}, AssertExitCode: intPtr(1), OutContains: []string{"v4.api-version", "apiVersion"}, OutNotContains: []string{"Migrate these configuration files"}, PathsUnchanged: []string{"/workspace/.agents"}},
 		},
 	},
 	{
 		Name:      "local_registry/v4_portable_directory",
-		Desc:      "Given a repository-local registry, When migrating and syncing v4 dot and nested directory sources, Then live skills materialize without absolute config paths or Git locks",
+		Desc:      "Given repository-local sources, When syncing v4 dot and nested directory sources, Then live skills materialize without absolute config paths or Git locks",
 		GlobalCfg: "apiVersion: agent-marketplace/v4\nharnesses: [factory]\n",
-		RepoCfg:   "apiVersion: agent-marketplace/v2\nregistries:\n  - url: .\n    ref: main\n    path: resources/skills\n    default: true\n",
+		RepoCfg:   "apiVersion: agent-marketplace/v4\nsources: {local: {directory: ./resources/skills}}\nresources: {local: {all: true}}\n",
 		Steps: []Step{
 			{Action: ActionWriteFile, Path: "/workspace/resources/skills/local-skill/SKILL.md", Body: (Skill{Name: "local-skill", Description: "Live local skill"}).SkillFile()},
-			{Args: []string{"migrate", "--scope", "repo"}, MustPass: true, FileContains: map[string]string{"/workspace/.agents/config.yaml": "directory: ./resources/skills"}},
 			{Args: []string{"sync"}, MustPass: true, Symlinks: []string{"/workspace/.factory/skills/local-skill"}, FilesAbsent: []string{"/workspace/.agents/lock.yaml"}},
 			{Args: []string{"sync", "--check"}, MustPass: true},
 			{Action: ActionWriteFile, Path: "/workspace/skills/root-skill/SKILL.md", Body: (Skill{Name: "root-skill", Description: "Repository root skill"}).SkillFile()},
@@ -278,11 +273,11 @@ var testTable = []TestCase{
 	},
 	{
 		Name:      "security/cli_warning_controls",
-		Desc:      "Given a selected missing resource with a control-bearing local registry ref, When syncing and listing, Then warning display is escaped and selection remains unchanged",
-		GlobalCfg: "harnesses: [factory]\nregistries: []\n",
-		RepoCfg:   "harnesses: [factory]\nregistries:\n  - url: ~/.agents/warning-fixture\n    ref: \"REF\\u001b[31m\\u202e\"\n    skills: [missing]\n",
+		Desc:      "Given a selected missing resource with a control-bearing v4 directory source identity, When syncing and listing, Then warning display is escaped and selection remains unchanged",
+		GlobalCfg: "apiVersion: agent-marketplace/v4\nharnesses: [factory]\nsources: {}\n",
+		RepoCfg:   "apiVersion: agent-marketplace/v4\nharnesses: [factory]\nsources: {team: {directory: \"./warning-fixture/REF\\u001b[31m\\u202e\"}}\nresources: {team: {include: [skill/missing]}}\n",
 		Steps: []Step{
-			{Action: ActionWriteFile, Path: "/root/.agents/warning-fixture/skills/control/SKILL.md", Body: "---\nname: control\ndescription: Control\n---\nCONTROL BODY\n"},
+			{Action: ActionWriteFile, Path: "/workspace/warning-fixture/REF\x1b[31m\u202e/skills/control/SKILL.md", Body: "---\nname: control\ndescription: Control\n---\nCONTROL BODY\n"},
 			{Args: []string{"sync"}, MustPass: true, OutContains: []string{"warning:", `REF\x1b[31m\u202e`}, OutNotContains: []string{"\x1b", "\u202e"}, PathsUnchanged: []string{"/workspace/.agents/config.yaml"}},
 			{Args: []string{"list"}, MustPass: true, OutContains: []string{`REF\x1b[31m\u202e`, "control"}, OutNotContains: []string{"\x1b", "\u202e"}, PathsUnchanged: []string{"/workspace/.agents/config.yaml"}},
 		},
@@ -290,7 +285,7 @@ var testTable = []TestCase{
 	{
 		Name:      "security/telemetry_failure_controls",
 		Desc:      "Given a persisted delivery failure containing terminal controls, When displaying telemetry status, Then output is escaped without rewriting the stored record",
-		GlobalCfg: "harnesses: [factory]\nregistries: []\ntelemetry:\n  level: off\n",
+		GlobalCfg: "apiVersion: agent-marketplace/v4\nharnesses: [factory]\nsources: {}\ntelemetry:\n  level: off\n",
 		Steps: []Step{
 			{Action: ActionWriteFile, Path: "/root/.local/state/agent-marketplace/telemetry/last-delivery-failure", Body: `{"time":"2026-09-01T00:00:00Z","error":"SERVER\u001b[31m\r\n\u202e"}`},
 			{Args: []string{"telemetry", "status"}, MustPass: true, OutContains: []string{`SERVER\x1b[31m\r\n\u202e`}, OutNotContains: []string{"\x1b", "\r", "\u202e"}, PathsUnchanged: []string{"/root/.local/state/agent-marketplace/telemetry/last-delivery-failure"}},
@@ -308,12 +303,12 @@ var testTable = []TestCase{
 	{
 		Name:      "security/cli_table_collection_controls",
 		Desc:      "Given local registry and collection metadata containing terminal controls, When listing checking status and installing a collection, Then display is escaped while selection and installation remain intact",
-		GlobalCfg: "harnesses: [factory]\nregistries: []\n",
-		RepoCfg:   "harnesses: [factory]\nregistries:\n  - url: ~/.agents/terminal-fixture\n    ref: \"REF\\u001b[31m\\u202e\"\n    skills: [control]\n",
+		GlobalCfg: "apiVersion: agent-marketplace/v4\nharnesses: [factory]\nsources: {}\n",
+		RepoCfg:   "apiVersion: agent-marketplace/v4\nharnesses: [factory]\nsources: {team: {directory: \"./terminal-fixture/REF\\u001b[31m\\u202e\"}}\nresources: {team: {include: [skill/control]}}\n",
 		Steps: []Step{
-			{Action: ActionWriteFile, Path: "/root/.agents/terminal-fixture/skills/control/SKILL.md", Body: "---\nname: control\ndescription: Control\n---\nCONTROL BODY\n"},
-			{Action: ActionWriteFile, Path: "/root/.agents/terminal-fixture/collections/bundle/COLLECTION.yaml", Body: "name: bundle\nversion: \"VERSION\\u001b[31m\\u202e\"\nresources:\n  - name: control\n"},
-			{Action: ActionWriteFile, Path: "/root/.agents/terminal-fixture/collections/display/COLLECTION.yaml", Body: "name: \"DISPLAY\\u001b[31m\\u202e\"\nresources:\n  - name: control\n"},
+			{Action: ActionWriteFile, Path: "/workspace/terminal-fixture/REF\x1b[31m\u202e/skills/control/SKILL.md", Body: "---\nname: control\ndescription: Control\n---\nCONTROL BODY\n"},
+			{Action: ActionWriteFile, Path: "/workspace/terminal-fixture/REF\x1b[31m\u202e/collections/bundle/COLLECTION.yaml", Body: "name: bundle\nversion: \"VERSION\\u001b[31m\\u202e\"\nresources:\n  - name: control\n"},
+			{Action: ActionWriteFile, Path: "/workspace/terminal-fixture/REF\x1b[31m\u202e/collections/display/COLLECTION.yaml", Body: "name: \"DISPLAY\\u001b[31m\\u202e\"\nresources:\n  - name: control\n"},
 			{Args: []string{"list", "--kind", "collection"}, MustPass: true, OutContains: []string{`DISPLAY\x1b[31m\u202e`}, OutNotContains: []string{"\x1b", "\u202e"}, PathsUnchanged: []string{"/workspace/.agents/config.yaml"}},
 			{Args: []string{"status"}, MustPass: true, OutContains: []string{`REF\x1b[31m\u202e`}, OutNotContains: []string{"\x1b", "\u202e"}, PathsUnchanged: []string{"/workspace/.agents/config.yaml"}},
 			{Args: []string{"install", "bundle", "--kind", "collection", "--scope", "repo"}, MustPass: true, OutContains: []string{`Installed collection bundle@VERSION\x1b[31m\u202e`}, OutNotContains: []string{"\x1b", "\u202e"}, FilesExist: []string{"/workspace/.factory/skills/control/SKILL.md"}},
@@ -359,8 +354,8 @@ var testTable = []TestCase{
 			"commands/marker-command.md": "---\nname: marker-command\ndescription: Marker command\n---\n```yaml\n_managed_by: agent-marketplace\n```\n",
 			"commands/keep.md":           "---\nname: keep\ndescription: Keep\n---\nKeep body\n",
 		}}},
-		GlobalCfg: "harnesses: [factory]\nregistries: []\n",
-		RepoCfg:   "harnesses: [factory]\nregistries:\n  - url: {{REG:marker-body}}\n    ref: main\n    commands: [marker-command, keep]\n",
+		GlobalCfg: "apiVersion: agent-marketplace/v4\nharnesses: [factory]\nsources: {}\n",
+		RepoCfg:   "apiVersion: agent-marketplace/v4\nharnesses: [factory]\nsources: {team: {git: '{{REG:marker-body}}', ref: main}}\nresources: {team: {include: [command/marker-command, command/keep]}}\n",
 		Steps: []Step{
 			{Action: ActionWriteFile, Path: "/workspace/.factory/commands/manual.md", Body: "---\ndescription: Personal\n---\nExample: _managed_by: agent-marketplace\n"},
 			{Args: []string{"sync"}, MustPass: true, RegularFiles: []string{"/workspace/.factory/commands/marker-command.md"}, FileContains: map[string]string{"/workspace/.factory/commands/marker-command.md": "```yaml\n_managed_by: agent-marketplace\n```"}, PathsUnchanged: []string{"/workspace/.factory/commands/manual.md"}},
@@ -373,8 +368,8 @@ var testTable = []TestCase{
 		Name:       "security/hook_merge_opaque_members",
 		Desc:       "Given handwritten hook-container metadata and managed hooks, When sync updates hooks, Then unrelated members survive byte-for-byte while stale managed hooks are removed",
 		Registries: []RegistryDef{{Name: "opaque-hooks", Files: map[string]string{"hooks/hooks.json": `{"hooks":{"PreToolUse":[{"hooks":[{"type":"command","command":"echo generated"}]}]}}`}}},
-		GlobalCfg:  "harnesses: [claude]\nregistries: []\n",
-		RepoCfg:    "harnesses: [claude]\nregistries:\n  - url: {{REG:opaque-hooks}}\n    ref: main\n    default: true\n",
+		GlobalCfg:  "apiVersion: agent-marketplace/v4\nharnesses: [claude]\nsources: {}\n",
+		RepoCfg:    "apiVersion: agent-marketplace/v4\nharnesses: [claude]\nsources: {team: {git: '{{REG:opaque-hooks}}', ref: main}}\nresources: {team: {all: true}}\n",
 		Steps: []Step{
 			{Action: ActionWriteFile, Path: "/workspace/.claude/hooks/hooks.json", Body: "{\n  \"hooks\": {\n    // handwritten metadata\n    \"notes\" : \"keep\",\n    \"options\" : {\"enabled\":false},\n    \"disabled\" : false,\n    \"value\" : 1.2300,\n    \"nothing\" : null,\n    \"empty\" : [],\n    \"PostToolUse\": [{\"type\":\"command\",\"command\":\"manual-hook\"}],\n    \"Stop\": [{\"type\":\"command\",\"command\":\"stale-owned\",\"_managed_by\":\"agent-marketplace\"}]\n  }\n}\n"},
 			{Args: []string{"sync"}, MustPass: true, FileContains: map[string]string{"/workspace/.claude/hooks/hooks.json": "echo generated"}, FileNotContains: map[string]string{"/workspace/.claude/hooks/hooks.json": "stale-owned"}},
@@ -412,7 +407,7 @@ var testTable = []TestCase{
 			"commands/restricted.md": "---\nname: restricted\ndescription: Restricted\nallowed-tools: []\n---\nBody\n",
 			"commands/plain.md":      "---\nname: plain\ndescription: Plain\n---\nBody\n",
 		}}},
-		GlobalCfg: "harnesses: [codex]\nregistries:\n  - url: {{REG:codex-restrictions}}\n    ref: main\n    commands: [restricted, plain]\n",
+		GlobalCfg: "apiVersion: agent-marketplace/v4\nharnesses: [codex]\nsources: {team: {git: '{{REG:codex-restrictions}}', ref: main}}\nresources: {team: {include: [command/restricted, command/plain]}}\n",
 		Steps:     []Step{{Args: []string{"sync"}, AssertExitCode: intPtr(1), OutContains: []string{"skill.codex.security-restriction-unsupported"}, FilesAbsent: []string{"/root/.agents/skills/restricted"}, FileContains: map[string]string{"/root/.agents/skills/plain/SKILL.md": "x-agent-marketplace-kind: command"}}},
 	},
 	{
@@ -442,7 +437,7 @@ var testTable = []TestCase{
 			"plugins/audit/.mcp.json":        `{"mcpServers":{"nested-server":{"command":"fixture-server"}}}`,
 			"plugins/audit/hooks/hooks.json": `{"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"echo audit"}]}]}}`,
 		}}},
-		RepoCfg: "harnesses: [factory]\nregistries:\n  - url: {{REG:nested-inventory}}\n    ref: main\n    source_harness: claude\n    default: true\n",
+		RepoCfg: "apiVersion: agent-marketplace/v4\nharnesses: [factory]\nsources: {team: {git: '{{REG:nested-inventory}}', ref: main, source_harness: claude}}\nresources: {team: {all: true}}\n",
 		Steps: []Step{
 			{Args: []string{"lock"}, MustPass: true, FileContains: map[string]string{"/workspace/.agents/lock.yaml": "kind: hook"}},
 			{Args: []string{"sync", "--locked"}, MustPass: true, FileContains: map[string]string{"/workspace/.agents/lock.yaml": "name: nested-server", "/workspace/.factory/mcp.json": "fixture-server"}},
@@ -451,8 +446,8 @@ var testTable = []TestCase{
 	{
 		Name:      "security/blocked_registry_credentials_redacted",
 		Desc:      "Given a denied credential-bearing registry, When sync loads effective config, Then error output and the persisted log redact credentials without changing the configured identity",
-		GlobalCfg: "harnesses: [factory]\nallowed_registries: []\n",
-		RepoCfg:   "registries:\n  - url: https://YOUR_USER_HERE:YOUR_TOKEN_HERE@example.invalid/repo.git?token=YOUR_QUERY_HERE#YOUR_FRAGMENT_HERE\n    ref: main\n    default: true\n",
+		GlobalCfg: "apiVersion: agent-marketplace/v4\nharnesses: [factory]\nallowed_registries: []\n",
+		RepoCfg:   "apiVersion: agent-marketplace/v4\nsources: {team: {git: 'https://YOUR_USER_HERE:YOUR_TOKEN_HERE@example.invalid/repo.git?token=YOUR_QUERY_HERE#YOUR_FRAGMENT_HERE', ref: main}}\nresources: {team: {all: true}}\n",
 		Steps: []Step{{
 			Args: []string{"sync"}, AssertExitCode: intPtr(1),
 			OutContains:     []string{"blocked by allowed_registries", "example.invalid/repo.git"},
@@ -468,12 +463,12 @@ var testTable = []TestCase{
 		Name:       "security/blocked_command_link_cleanup",
 		Desc:       "Given locked commands with an edited sibling, When one blocked command is removed, Then only its directory link is unlinked",
 		Registries: []RegistryDef{{Name: "blocked-command-links", Commands: []Command{{Name: "remove"}, {Name: "keep"}}}},
-		GlobalCfg:  "apiVersion: agent-marketplace/v2\nharnesses: [devin]\n",
-		RepoCfg:    "apiVersion: agent-marketplace/v2\nharnesses: [devin]\nregistries:\n  - url: {{REG:blocked-command-links}}\n    ref: main\n    default: true\n",
+		GlobalCfg:  "apiVersion: agent-marketplace/v4\nharnesses: [devin]\n",
+		RepoCfg:    "apiVersion: agent-marketplace/v4\nharnesses: [devin]\nsources: {team: {git: '{{REG:blocked-command-links}}', ref: main}}\nresources: {team: {all: true}}\n",
 		Steps: []Step{
 			{Args: []string{"sync"}, MustPass: true, FilesExist: []string{"/workspace/.devin/skills/remove/SKILL.md", "/workspace/.devin/skills/keep/SKILL.md"}},
 			{Action: ActionWriteFile, Path: "/workspace/.devin/skills/keep/SKILL.md", Body: "COMMAND SIBLING EDITED\n"},
-			{Action: ActionWriteGlobalConfig, Body: "apiVersion: agent-marketplace/v2\nharnesses: [devin]\nallowed_registries: []\n"},
+			{Action: ActionWriteGlobalConfig, Body: "apiVersion: agent-marketplace/v4\nharnesses: [devin]\nallowed_registries: []\n"},
 			{Args: []string{"remove", "remove", "--kind", "command", "--from", "{{REG:blocked-command-links}}"}, MustPass: true,
 				FilesAbsent: []string{"/workspace/.devin/skills/remove"}, FileContains: map[string]string{"/workspace/.devin/skills/keep/SKILL.md": "COMMAND SIBLING EDITED"}, PathsUnchanged: []string{"/workspace/.devin/skills/keep/SKILL.md", "/workspace/.agents/lock.yaml"}},
 		},
@@ -482,12 +477,12 @@ var testTable = []TestCase{
 		Name:       "security/blocked_subagent_link_cleanup",
 		Desc:       "Given locked subagents with an edited sibling, When one blocked subagent is removed, Then only its file link is unlinked",
 		Registries: []RegistryDef{{Name: "blocked-subagent-links", Subagents: []Subagent{{Name: "remove"}, {Name: "keep"}}}},
-		GlobalCfg:  "apiVersion: agent-marketplace/v2\nharnesses: [devin]\n",
-		RepoCfg:    "apiVersion: agent-marketplace/v2\nharnesses: [devin]\nregistries:\n  - url: {{REG:blocked-subagent-links}}\n    ref: main\n    default: true\n",
+		GlobalCfg:  "apiVersion: agent-marketplace/v4\nharnesses: [devin]\n",
+		RepoCfg:    "apiVersion: agent-marketplace/v4\nharnesses: [devin]\nsources: {team: {git: '{{REG:blocked-subagent-links}}', ref: main}}\nresources: {team: {all: true}}\n",
 		Steps: []Step{
 			{Args: []string{"sync"}, MustPass: true, FilesExist: []string{"/workspace/.devin/agents/remove.md", "/workspace/.devin/agents/keep.md"}},
 			{Action: ActionWriteFile, Path: "/workspace/.devin/agents/keep.md", Body: "SUBAGENT SIBLING EDITED\n"},
-			{Action: ActionWriteGlobalConfig, Body: "apiVersion: agent-marketplace/v2\nharnesses: [devin]\nallowed_registries: []\n"},
+			{Action: ActionWriteGlobalConfig, Body: "apiVersion: agent-marketplace/v4\nharnesses: [devin]\nallowed_registries: []\n"},
 			{Args: []string{"remove", "remove", "--kind", "subagent", "--from", "{{REG:blocked-subagent-links}}"}, MustPass: true,
 				FilesAbsent: []string{"/workspace/.devin/agents/remove.md"}, FileContains: map[string]string{"/workspace/.devin/agents/keep.md": "SUBAGENT SIBLING EDITED"}, PathsUnchanged: []string{"/workspace/.devin/agents/keep.md", "/workspace/.agents/lock.yaml"}},
 		},
@@ -496,14 +491,14 @@ var testTable = []TestCase{
 		Name:       "security/blocked_skill_link_cleanup",
 		Desc:       "Given locked skill symlinks and an edited installed sibling, When a blocked registry skill is removed, Then only its link is unlinked without rewriting siblings",
 		Registries: []RegistryDef{{Name: "blocked-skill-links", Skills: []Skill{{Name: "remove", Description: "Remove original"}, {Name: "keep", Description: "Keep original"}}}},
-		GlobalCfg:  "apiVersion: agent-marketplace/v2\nharnesses: [factory]\n",
-		RepoCfg:    "apiVersion: agent-marketplace/v2\nharnesses: [factory]\nregistries:\n  - url: {{REG:blocked-skill-links}}\n    ref: main\n    default: true\n",
+		GlobalCfg:  "apiVersion: agent-marketplace/v4\nharnesses: [factory]\n",
+		RepoCfg:    "apiVersion: agent-marketplace/v4\nharnesses: [factory]\nsources: {team: {git: '{{REG:blocked-skill-links}}', ref: main}}\nresources: {team: {all: true}}\n",
 		Steps: []Step{
 			{Args: []string{"sync"}, MustPass: true, FilesExist: []string{"/workspace/.factory/skills/remove/SKILL.md", "/workspace/.factory/skills/keep/SKILL.md"}},
 			{Action: ActionWriteFile, Path: "/workspace/.factory/skills/keep/SKILL.md", Body: "KEEP EDITED BY USER\n"},
 			{Action: ActionWriteFile, Path: "/workspace/.factory/skills/manual/SKILL.md", Body: "HANDWRITTEN\n"},
 			{Action: ActionWriteFile, Path: "/workspace/.gitignore", Body: "handwritten-ignore\n"},
-			{Action: ActionWriteGlobalConfig, Body: "apiVersion: agent-marketplace/v2\nharnesses: [factory]\nallowed_registries: []\n"},
+			{Action: ActionWriteGlobalConfig, Body: "apiVersion: agent-marketplace/v4\nharnesses: [factory]\nallowed_registries: []\n"},
 			{Args: []string{"remove", "remove", "--kind", "skill", "--from", "{{REG:blocked-skill-links}}", "--ref", "main"}, MustPass: true,
 				FilesAbsent:    []string{"/workspace/.factory/skills/remove"},
 				FileContains:   map[string]string{"/workspace/.factory/skills/keep/SKILL.md": "KEEP EDITED BY USER", "/workspace/.factory/skills/manual/SKILL.md": "HANDWRITTEN"},
@@ -519,12 +514,12 @@ var testTable = []TestCase{
 				{Name: "keep", Command: "keep-binary"},
 			}},
 		},
-		GlobalCfg: "apiVersion: agent-marketplace/v2\nharnesses: [devin]\n",
-		RepoCfg:   "apiVersion: agent-marketplace/v2\nharnesses: [devin]\nregistries:\n  - url: {{REG:blocked-owned-mcp}}\n    ref: main\n    default: true\n",
+		GlobalCfg: "apiVersion: agent-marketplace/v4\nharnesses: [devin]\n",
+		RepoCfg:   "apiVersion: agent-marketplace/v4\nharnesses: [devin]\nsources: {team: {git: '{{REG:blocked-owned-mcp}}', ref: main}}\nresources: {team: {all: true}}\n",
 		Steps: []Step{
 			{Args: []string{"sync"}, MustPass: true, FileContains: map[string]string{"/workspace/.devin/mcp_config.json": "keep-binary"}},
 			{Action: ActionWriteFile, Path: "/workspace/.devin/mcp_config.json", Body: "{\n  // retained comment\n  \"custom\": true,\n  \"mcpServers\": {\n    \"handwritten\": {\"command\": \"manual\"},\n    \"keep\": {\"command\": \"keep-edited\"},\n    \"remove\": {\"command\": \"remove-binary\"}\n  }\n}\n"},
-			{Action: ActionWriteGlobalConfig, Body: "apiVersion: agent-marketplace/v2\nharnesses: [devin]\nallowed_registries: []\n"},
+			{Action: ActionWriteGlobalConfig, Body: "apiVersion: agent-marketplace/v4\nharnesses: [devin]\nallowed_registries: []\n"},
 			{Args: []string{"remove", "remove", "--kind", "mcp", "--from", "{{REG:blocked-owned-mcp}}"}, MustPass: true,
 				FileContains: map[string]string{
 					"/workspace/.devin/mcp_config.json": "\"handwritten\": {\"command\": \"manual\"},\n    \"keep\": {\"command\": \"keep-edited\"}",
@@ -533,34 +528,34 @@ var testTable = []TestCase{
 		},
 	},
 	{
-		Name:       "migration/source_free_local_selector_is_refused",
-		Desc:       "Given a source-free personal-local selector that sync honors, When local v4 migration is requested, Then migration refuses without changing selection and the next sync still honors it",
+		Name:       "selection/local_resources_bind_repository_source",
+		Desc:       "Given matching v4 repository and personal-local source declarations, When syncing the local selection, Then the shared provider materializes without editing either root",
 		Registries: []RegistryDef{{Name: "local-selector", Skills: []Skill{{Name: "review", Description: "Review changes"}}}},
-		GlobalCfg:  "harnesses: [factory]\n",
-		RepoCfg:    "registries:\n  - url: {{REG:local-selector}}\n    ref: main\n",
-		LocalCfg:   "apiVersion: agent-marketplace/v2\nskills:\n  include: [review]\n",
+		GlobalCfg:  "apiVersion: agent-marketplace/v4\nharnesses: [factory]\n",
+		RepoCfg:    "apiVersion: agent-marketplace/v4\nsources: {team: {git: '{{REG:local-selector}}', ref: main}}\n",
+		LocalCfg:   "apiVersion: agent-marketplace/v4\nsources: {team: {git: '{{REG:local-selector}}', ref: main}}\nresources: {team: {include: [skill/review]}}\n",
 		Steps: []Step{
 			{Args: []string{"sync"}, MustPass: true, FilesExist: []string{"/workspace/.factory/skills/review/SKILL.md"}},
-			{Args: []string{"migrate", "--scope", "local"}, AssertExitCode: intPtr(1), OutContains: []string{"v4.migration-unsupported"}, PathsUnchanged: []string{"/workspace/.agents/config.local.yaml"}},
+			{Args: []string{"sync"}, MustPass: true, PathsUnchanged: []string{"/workspace/.agents/config.local.yaml", "/workspace/.agents/config.yaml"}},
 			{Args: []string{"sync", "--check"}, MustPass: true, FilesExist: []string{"/workspace/.factory/skills/review/SKILL.md"}},
 		},
 	},
 	{
 		Name:    "security/config_include_size",
 		Desc:    "Given an oversized valid included config, When sync runs, Then it fails without mutating the inputs or materializing output",
-		RepoCfg: "apiVersion: agent-marketplace/v2\nharnesses: [factory]\ninclude: [large.yaml]\nregistries: []\n",
+		RepoCfg: "apiVersion: agent-marketplace/v4\nharnesses: [factory]\ninclude: [large.yaml]\nsources: {}\n",
 		Steps: []Step{
-			{Action: ActionWriteFile, Path: "/workspace/.agents/large.yaml", Body: "registries: []\n#" + strings.Repeat("x", 4*1024*1024) + "\n"},
+			{Action: ActionWriteFile, Path: "/workspace/.agents/large.yaml", Body: "sources: {}\n#" + strings.Repeat("x", 4*1024*1024) + "\n"},
 			{Args: []string{"sync"}, AssertExitCode: intPtr(1), OutContains: []string{"config file exceeds maximum size"}, PathsUnchanged: []string{"/workspace/.agents/config.yaml", "/workspace/.agents/large.yaml"}, FilesAbsent: []string{"/workspace/.factory"}},
 		},
 	},
 	{
 		Name:    "security/config_include_small",
 		Desc:    "Given a small included registry and selector, When sync runs, Then the included skill materializes",
-		RepoCfg: "apiVersion: agent-marketplace/v2\nharnesses: [factory]\ninclude: [small.yaml]\n",
+		RepoCfg: "apiVersion: agent-marketplace/v4\nharnesses: [factory]\ninclude: [small.yaml]\n",
 		Steps: []Step{
-			{Action: ActionWriteFile, Path: "/workspace/registry/skills/bounded-skill/SKILL.md", Body: (Skill{Name: "bounded-skill", Description: "bounded include skill"}).SkillFile()},
-			{Action: ActionWriteFile, Path: "/workspace/.agents/small.yaml", Body: "registries:\n  - url: ./registry\nskills:\n  include: [bounded-skill]\n"},
+			{Action: ActionWriteFile, Path: "/workspace/.agents/registry/skills/bounded-skill/SKILL.md", Body: (Skill{Name: "bounded-skill", Description: "bounded include skill"}).SkillFile()},
+			{Action: ActionWriteFile, Path: "/workspace/.agents/small.yaml", Body: "sources: {team: {directory: ./registry}}\nresources: {team: {include: [skill/bounded-skill]}}\n"},
 			{Args: []string{"sync"}, MustPass: true, FilesExist: []string{"/workspace/.factory/skills/bounded-skill/SKILL.md"}},
 		},
 	},
@@ -568,7 +563,7 @@ var testTable = []TestCase{
 		Name:       "locks/unlocked_organization_sync_parity",
 		Desc:       "Given an organization registry without a lock, when syncing and checking repeatedly, then resources stay synced without creating an organization lock.",
 		Registries: []RegistryDef{{Name: "org-parity", Skills: []Skill{{Name: "review"}}}},
-		OrgCfg:     "apiVersion: agent-marketplace/v2\nharnesses: [factory]\nregistries:\n  - url: {{REG:org-parity}}\n    ref: main\n    required: true\n",
+		OrgCfg:     "apiVersion: agent-marketplace/v4\nharnesses: [factory]\nsources: {team: {git: '{{REG:org-parity}}', ref: main}}\nresources: {team: {all: true, required: true}}\n",
 		Steps: []Step{
 			{Args: []string{"sync"}, MustPass: true, Symlinks: []string{"/root/.factory/skills/review"}},
 			{Args: []string{"sync", "--check"}, MustPass: true, PathsUnchanged: []string{"/root/.factory/skills"}},
@@ -582,13 +577,13 @@ var testTable = []TestCase{
 		Name:       "locks/equivalent_auto_explicit_inspection",
 		Desc:       "Given equivalent auto and explicit registry roots, When lock check, list and status run in either entry order, Then inspection agrees with reconciliation without changing config or locks",
 		Registries: []RegistryDef{{Name: "equivalent-roots", Skills: []Skill{{Name: "review", Description: "Review changes"}}, Files: map[string]string{".claude-plugin/plugin.json": `{"name":"equivalent-roots"}`}}},
-		RepoCfg:    "harnesses: [factory]\nregistries:\n  - url: {{REG:equivalent-roots}}\n    ref: main\n  - url: {{REG:equivalent-roots}}\n    ref: main\n    source_harness: claude\n",
+		RepoCfg:    "apiVersion: agent-marketplace/v4\nharnesses: [factory]\nsources:\n  auto: {git: '{{REG:equivalent-roots}}', ref: main}\n  explicit: {git: '{{REG:equivalent-roots}}', ref: main, source_harness: claude}\n",
 		Steps: []Step{
 			{Args: []string{"lock", "--scope", "repo"}, MustPass: true},
 			{Args: []string{"lock", "--check", "--scope", "repo"}, MustPass: true, PathsUnchanged: []string{"/workspace/.agents/config.yaml", "/workspace/.agents/lock.yaml"}},
 			{Args: []string{"list"}, MustPass: true, OutContains: []string{"review"}, PathsUnchanged: []string{"/workspace/.agents/config.yaml", "/workspace/.agents/lock.yaml"}},
 			{Args: []string{"status"}, MustPass: true, OutContains: []string{"EXACT REGISTRY LOCKS", "available"}, PathsUnchanged: []string{"/workspace/.agents/config.yaml", "/workspace/.agents/lock.yaml"}},
-			{Action: ActionWriteRepoConfig, Body: "harnesses: [factory]\nregistries:\n  - url: {{REG:equivalent-roots}}\n    ref: main\n    source_harness: claude\n  - url: {{REG:equivalent-roots}}\n    ref: main\n"},
+			{Action: ActionWriteRepoConfig, Body: "apiVersion: agent-marketplace/v4\nharnesses: [factory]\nsources:\n  explicit: {git: '{{REG:equivalent-roots}}', ref: main, source_harness: claude}\n  auto: {git: '{{REG:equivalent-roots}}', ref: main}\n"},
 			{Args: []string{"lock", "--check", "--scope", "repo"}, MustPass: true, PathsUnchanged: []string{"/workspace/.agents/config.yaml", "/workspace/.agents/lock.yaml"}},
 			{Args: []string{"list"}, MustPass: true, OutContains: []string{"review"}, PathsUnchanged: []string{"/workspace/.agents/config.yaml", "/workspace/.agents/lock.yaml"}},
 			{Args: []string{"status"}, MustPass: true, OutContains: []string{"EXACT REGISTRY LOCKS", "available"}, PathsUnchanged: []string{"/workspace/.agents/config.yaml", "/workspace/.agents/lock.yaml"}},
@@ -603,14 +598,11 @@ var testTable = []TestCase{
 				{Name: "logging-skill", Description: "Logging test skill", Tags: []string{"ops"}},
 			}},
 		},
-		GlobalCfg: `
+		GlobalCfg: `apiVersion: agent-marketplace/v4
 harnesses:
   - factory
-registries:
-  - url: {{REG:logging-registry}}
-    ref: main
-    skills:
-      - logging-skill
+sources: {team: {git: '{{REG:logging-registry}}', ref: main}}
+resources: {team: {include: [skill/logging-skill]}}
 `,
 		Steps: []Step{
 			{Args: []string{"lock"}, MustPass: true},
@@ -636,14 +628,11 @@ registries:
 			{Name: "first", Files: map[string]string{".factory/hooks/hooks.json": `{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"echo first"}]}]}`}},
 			{Name: "second", Files: map[string]string{".factory/hooks/hooks.json": `{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"echo second"}]}]}`}},
 		},
-		RepoCfg: `harnesses: [factory]
-registries:
-  - url: {{REG:first}}
-    ref: main
-    source_harness: factory
-  - url: {{REG:second}}
-    ref: main
-    source_harness: factory
+		RepoCfg: `apiVersion: agent-marketplace/v4
+harnesses: [factory]
+sources:
+  first: {git: '{{REG:first}}', ref: main, source_harness: factory}
+  second: {git: '{{REG:second}}', ref: main, source_harness: factory}
 `,
 		Steps: []Step{
 			{Args: []string{"install", "--all", "--kind", "hook"}, MustPass: true, OutContains: []string{"PreToolUse-command"}, OutNotContains: []string{"multiple registries"}, FileContains: map[string]string{"/workspace/.factory/hooks/hooks.json": "echo first"}},
@@ -661,14 +650,11 @@ registries:
 			{Name: "first", Files: map[string]string{".devin/hooks.v1.json": `{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"echo first"}]}]}`}},
 			{Name: "second", Files: map[string]string{".devin/hooks.v1.json": `{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"echo second"}]}]}`}},
 		},
-		RepoCfg: `harnesses: [windsurf]
-registries:
-  - url: {{REG:first}}
-    ref: main
-    source_harness: devin
-  - url: {{REG:second}}
-    ref: main
-    source_harness: devin
+		RepoCfg: `apiVersion: agent-marketplace/v4
+harnesses: [windsurf]
+sources:
+  first: {git: '{{REG:first}}', ref: main, source_harness: devin}
+  second: {git: '{{REG:second}}', ref: main, source_harness: devin}
 `,
 		Steps: []Step{
 			{Args: []string{"install", "--all", "--kind", "hook"}, MustPass: true, FileContains: map[string]string{"/workspace/.windsurf/hooks.json": "echo first"}, FilesAbsent: []string{"/workspace/.windsurf/hook-support/hooks.v1.json"}},
@@ -683,12 +669,10 @@ registries:
 		Name:       "hooks/additive_session_start",
 		Desc:       "Given one Factory registry with two SessionStart handlers, when both generated names are selected, then both handlers remain stable across sync and check",
 		Registries: []RegistryDef{{Name: "session-start", Files: map[string]string{".factory/hooks/hooks.json": `{"SessionStart":[{"hooks":[{"type":"command","command":"echo first"}]},{"hooks":[{"type":"command","command":"echo second"}]}]}`}}},
-		RepoCfg: `harnesses: [factory]
-registries:
-  - url: {{REG:session-start}}
-    ref: main
-    source_harness: factory
-    hooks: [SessionStart-command, SessionStart-command-2]
+		RepoCfg: `apiVersion: agent-marketplace/v4
+harnesses: [factory]
+sources: {team: {git: '{{REG:session-start}}', ref: main, source_harness: factory}}
+resources: {team: {include: [hook/SessionStart-command, hook/SessionStart-command-2]}}
 `,
 		Steps: []Step{
 			{Args: []string{"sync"}, MustPass: true, FileContains: map[string]string{"/workspace/.factory/hooks/hooks.json": "echo first"}},
@@ -721,7 +705,7 @@ registries:
 		Name:       "collision/required_machine_prevents_repo_shadow",
 		Desc:       "Given a required user skill and another repository skill with the same installed name, When syncing in the repository, Then the required machine skill remains and the repository cannot shadow it",
 		Registries: []RegistryDef{{Name: "required-user", Skills: []Skill{{Name: "shared", Description: "Mandatory user selection"}}}},
-		GlobalCfg:  "apiVersion: agent-marketplace/v2\nharnesses: [factory]\nregistries:\n  - url: {{REG:required-user}}\n    ref: main\n    required: true\n    skills: [shared]\n",
+		GlobalCfg:  "apiVersion: agent-marketplace/v4\nharnesses: [factory]\nsources: {team: {git: '{{REG:required-user}}', ref: main}}\nresources: {team: {include: [skill/shared], required: true}}\n",
 		RepoCfg:    "apiVersion: agent-marketplace/v4\nsources: {repo: {directory: ./resources}}\nresources: {repo: {include: [skill/shared]}}\n",
 		Steps: []Step{
 			{Action: ActionWriteFile, Path: "/workspace/resources/skills/shared/SKILL.md", Body: (Skill{Name: "shared", Description: "Unreviewed repository selection"}).SkillFile()},
@@ -777,8 +761,8 @@ registries:
 			{Name: "registry-a", Skills: []Skill{{Name: "deploy", Description: "Deploy from registry A"}, {Name: "other", Description: "Other from registry A"}}, Commands: []Command{{Name: "deploy", Description: "Command from registry A", Command: "echo COMMAND A"}}},
 			{Name: "registry-b", Skills: []Skill{{Name: "deploy", Description: "Deploy from registry B"}, {Name: "other", Description: "Other from registry B"}}, Commands: []Command{{Name: "deploy", Description: "Command from registry B", Command: "echo COMMAND B"}}},
 		},
-		GlobalCfg: "harnesses: [factory]\nregistries: []\n",
-		RepoCfg:   "registries:\n  - url: {{REG:registry-a}}\n    ref: main\n    default: true\n  - url: {{REG:registry-b}}\n    ref: main\n    default: true\n",
+		GlobalCfg: "apiVersion: agent-marketplace/v4\nharnesses: [factory]\nsources: {}\n",
+		RepoCfg:   "apiVersion: agent-marketplace/v4\nsources:\n  first: {git: '{{REG:registry-a}}', ref: main}\n  second: {git: '{{REG:registry-b}}', ref: main}\nresources:\n  first: {all: true}\n  second: {all: true}\n",
 		Steps: []Step{
 			{Args: []string{"install", "deploy", "--kind", "skill", "--from", "{{REG:registry-a}}", "--ref", "main", "--scope", "repo"}, MustPass: true,
 				OutContains:    []string{`skill "deploy" is provided by multiple registries`, "registry-a", "registry-b", "agent-marketplace remove", "--from"},
@@ -800,16 +784,13 @@ registries:
 				{Name: "deploy", Description: "Deploy from registry B", Tags: []string{"infra"}},
 			}},
 		},
-		GlobalCfg: `
-registries:
-  - url: {{REG:registry-a}}
-    ref: main
-    skills:
-      - deploy
-  - url: {{REG:registry-b}}
-    ref: main
-    skills:
-      - deploy
+		GlobalCfg: `apiVersion: agent-marketplace/v4
+sources:
+  first: {git: '{{REG:registry-a}}', ref: main}
+  second: {git: '{{REG:registry-b}}', ref: main}
+resources:
+  first: {include: [skill/deploy]}
+  second: {include: [skill/deploy]}
 `,
 		Steps: []Step{
 			{Args: []string{"sync"}, MustPass: true,
@@ -832,18 +813,13 @@ registries:
 				"team-b/skills/skill-b/SKILL.md": Skill{Name: "skill-b", Description: "Skill B", Tags: []string{"team-b"}}.SkillFile(),
 			}},
 		},
-		GlobalCfg: `
-registries:
-  - url: {{REG:mono-registry}}
-    ref: main
-    path: team-a
-    skills:
-      - skill-a
-  - url: {{REG:mono-registry}}
-    ref: main
-    path: team-b
-    skills:
-      - skill-b
+		GlobalCfg: `apiVersion: agent-marketplace/v4
+sources:
+  first: {git: '{{REG:mono-registry}}', ref: main, path: team-a}
+  second: {git: '{{REG:mono-registry}}', ref: main, path: team-b}
+resources:
+  first: {include: [skill/skill-a]}
+  second: {include: [skill/skill-b]}
 `,
 		Steps: []Step{
 			{Args: []string{"sync"}, MustPass: true,
@@ -863,14 +839,9 @@ registries:
 				Skills:   []Skill{{Name: "deploy", Description: "Deploy skill", Tags: []string{"ops"}}},
 				Commands: []Command{{Name: "deploy", Description: "Deploy command", Command: "echo deploy"}}},
 		},
-		GlobalCfg: `
-registries:
-  - url: {{REG:mixed-registry}}
-    ref: main
-    skills:
-      - deploy
-    commands:
-      - deploy
+		GlobalCfg: `apiVersion: agent-marketplace/v4
+sources: {team: {git: '{{REG:mixed-registry}}', ref: main}}
+resources: {team: {include: [skill/deploy, command/deploy]}}
 `,
 		Steps: []Step{
 			{Args: []string{"sync"}, MustPass: true,
@@ -890,15 +861,12 @@ registries:
 				{Name: "universal-skill", Description: "Appears in all harnesses", Tags: []string{"core"}},
 			}},
 		},
-		GlobalCfg: `
+		GlobalCfg: `apiVersion: agent-marketplace/v4
 harnesses:
   - factory
   - windsurf
-registries:
-  - url: {{REG:multi-harness}}
-    ref: main
-    skills:
-      - universal-skill
+sources: {team: {git: '{{REG:multi-harness}}', ref: main}}
+resources: {team: {include: [skill/universal-skill]}}
 `,
 		Steps: []Step{
 			{Args: []string{"sync"}, MustPass: true,
@@ -926,18 +894,15 @@ metadata:
 `,
 			}},
 		},
-		GlobalCfg: `
+		GlobalCfg: `apiVersion: agent-marketplace/v4
 harnesses:
   - claude
   - factory
   - cursor
   - windsurf
   - gemini
-registries:
-  - url: {{REG:metadata-registry}}
-    ref: main
-    skills:
-      - owned-skill
+sources: {team: {git: '{{REG:metadata-registry}}', ref: main}}
+resources: {team: {include: [skill/owned-skill]}}
 `,
 		Steps: []Step{
 			{Args: []string{"sync"}, MustPass: true,
@@ -972,15 +937,12 @@ registries:
 				{Name: "prunable-skill", Description: "Will be pruned from windsurf"},
 			}},
 		},
-		GlobalCfg: `
+		GlobalCfg: `apiVersion: agent-marketplace/v4
 harnesses:
   - factory
   - windsurf
-registries:
-  - url: {{REG:harness-removal}}
-    ref: main
-    skills:
-      - prunable-skill
+sources: {team: {git: '{{REG:harness-removal}}', ref: main}}
+resources: {team: {include: [skill/prunable-skill]}}
 `,
 		Steps: []Step{
 			{Args: []string{"sync"}, MustPass: true,
@@ -988,14 +950,11 @@ registries:
 					"/root/.factory/skills/prunable-skill/SKILL.md",
 					"/root/.codeium/windsurf/skills/prunable-skill/SKILL.md",
 				}},
-			{Action: ActionWriteGlobalConfig, Body: `
+			{Action: ActionWriteGlobalConfig, Body: `apiVersion: agent-marketplace/v4
 harnesses:
   - factory
-registries:
-  - url: {{REG:harness-removal}}
-    ref: main
-    skills:
-      - prunable-skill
+sources: {team: {git: '{{REG:harness-removal}}', ref: main}}
+resources: {team: {include: [skill/prunable-skill]}}
 `},
 			{Args: []string{"sync"}, MustPass: true,
 				FilesExist:  []string{"/root/.factory/skills/prunable-skill/SKILL.md"},
@@ -1010,12 +969,9 @@ registries:
 				{Name: "linked-skill", Description: "Should be a symlink"},
 			}},
 		},
-		GlobalCfg: `
-registries:
-  - url: {{REG:symlink-test}}
-    ref: main
-    skills:
-      - linked-skill
+		GlobalCfg: `apiVersion: agent-marketplace/v4
+sources: {team: {git: '{{REG:symlink-test}}', ref: main}}
+resources: {team: {include: [skill/linked-skill]}}
 `,
 		Steps: []Step{
 			{Args: []string{"sync"}, MustPass: true,
@@ -1028,19 +984,14 @@ registries:
 		Registries: []RegistryDef{
 			{Name: "file-mode-test", Skills: []Skill{{Name: "portable-skill", Description: "Portable skill"}}},
 		},
-		GlobalCfg: `
-	harnesses:
-  - factory
-	`,
-		RepoCfg: `
-	materialization:
-  mode: file
-registries:
-  - url: {{REG:file-mode-test}}
-    ref: main
-    skills:
-      - portable-skill
-	`,
+		GlobalCfg: `apiVersion: agent-marketplace/v4
+harnesses: [factory]
+`,
+		RepoCfg: `apiVersion: agent-marketplace/v4
+materialization: {mode: file}
+sources: {team: {git: '{{REG:file-mode-test}}', ref: main}}
+resources: {team: {include: [skill/portable-skill]}}
+`,
 		Steps: []Step{
 			{Args: []string{"sync"}, MustPass: true,
 				RegularFiles: []string{"/workspace/.factory/skills/portable-skill/SKILL.md"},
@@ -1054,8 +1005,8 @@ registries:
 		Registries: []RegistryDef{
 			{Name: "mixed-mode-test", Skills: []Skill{{Name: "mixed-mode-skill", Description: "Mixed mode skill"}}},
 		},
-		GlobalCfg: "harnesses:\n  - factory\n  - devin\n",
-		RepoCfg:   "materialization:\n  mode: file\n  targets:\n    devin: symlink\nregistries:\n  - url: {{REG:mixed-mode-test}}\n    ref: main\n    skills:\n      - mixed-mode-skill\n",
+		GlobalCfg: "apiVersion: agent-marketplace/v4\nharnesses:\n  - factory\n  - devin\n",
+		RepoCfg:   "apiVersion: agent-marketplace/v4\nmaterialization:\n  mode: file\n  targets:\n    devin: symlink\nsources: {team: {git: '{{REG:mixed-mode-test}}', ref: main}}\nresources: {team: {include: [skill/mixed-mode-skill]}}\n",
 		Steps: []Step{
 			{Args: []string{"sync"}, MustPass: true,
 				RegularFiles: []string{"/workspace/.factory/skills/mixed-mode-skill/SKILL.md"},
@@ -1070,12 +1021,9 @@ registries:
 				{Name: "managed-skill", Description: "Managed by agent-marketplace"},
 			}},
 		},
-		GlobalCfg: `
-registries:
-  - url: {{REG:manual-survive}}
-    ref: main
-    skills:
-      - managed-skill
+		GlobalCfg: `apiVersion: agent-marketplace/v4
+sources: {team: {git: '{{REG:manual-survive}}', ref: main}}
+resources: {team: {include: [skill/managed-skill]}}
 `,
 		Steps: []Step{
 			{Args: []string{"sync"}, MustPass: true},
@@ -1103,12 +1051,9 @@ description: Manually created
 				{Name: "reviewer", Description: "Managed by agent-marketplace", Tools: []string{"Read"}},
 			}},
 		},
-		GlobalCfg: `
-registries:
-  - url: {{REG:droid-survive}}
-    ref: main
-    subagents:
-      - reviewer
+		GlobalCfg: `apiVersion: agent-marketplace/v4
+sources: {team: {git: '{{REG:droid-survive}}', ref: main}}
+resources: {team: {include: [subagent/reviewer]}}
 `,
 		Steps: []Step{
 			// Seed three user-authored droids (regular files, no ownership marker).
@@ -1173,12 +1118,9 @@ description: my hand-written explorer droid
 				{Name: "reviewer", Description: "Managed by agent-marketplace", Tools: []string{"Read"}},
 			}},
 		},
-		GlobalCfg: `
-registries:
-  - url: {{REG:droid-remove-survive}}
-    ref: main
-    subagents:
-      - reviewer
+		GlobalCfg: `apiVersion: agent-marketplace/v4
+sources: {team: {git: '{{REG:droid-remove-survive}}', ref: main}}
+resources: {team: {include: [subagent/reviewer]}}
 `,
 		Steps: []Step{
 			{Action: ActionWriteFile,
@@ -1195,10 +1137,8 @@ description: my hand-written worker droid
 				FilesExist: []string{"/root/.factory/droids/worker.md"}},
 			// Drop the managed droid from config, then re-sync.
 			{Action: ActionWriteGlobalConfig,
-				Body: `
-registries:
-  - url: {{REG:droid-remove-survive}}
-    ref: main
+				Body: `apiVersion: agent-marketplace/v4
+sources: {team: {git: '{{REG:droid-remove-survive}}', ref: main}}
 `},
 			{Args: []string{"sync"}, MustPass: true,
 				FilesAbsent: []string{"/root/.factory/droids/reviewer.md"},
@@ -1219,27 +1159,21 @@ registries:
 				{Name: "new-skill", Description: "Causes drift"},
 			}},
 		},
-		GlobalCfg: `
-registries:
-  - url: {{REG:drift-check}}
-    ref: main
-    skills:
-      - drift-skill
+		GlobalCfg: `apiVersion: agent-marketplace/v4
+sources: {team: {git: '{{REG:drift-check}}', ref: main}}
+resources: {team: {include: [skill/drift-skill]}}
 `,
 		Steps: []Step{
 			{Args: []string{"sync", "--check"}, AssertExitCode: intPtr(1)},
 			{Args: []string{"sync"}, MustPass: true},
 			{Args: []string{"sync", "--check"}, AssertExitCode: intPtr(0)},
-			{Action: ActionWriteGlobalConfig, Body: `
-registries:
-  - url: {{REG:drift-check}}
-    ref: main
-    skills:
-      - drift-skill
-  - url: {{REG:drift-check-2}}
-    ref: main
-    skills:
-      - new-skill
+			{Action: ActionWriteGlobalConfig, Body: `apiVersion: agent-marketplace/v4
+sources:
+  first: {git: '{{REG:drift-check}}', ref: main}
+  second: {git: '{{REG:drift-check-2}}', ref: main}
+resources:
+  first: {include: [skill/drift-skill]}
+  second: {include: [skill/new-skill]}
 `},
 			{Args: []string{"sync", "--check"}, AssertExitCode: intPtr(1)},
 		},
@@ -1254,12 +1188,9 @@ registries:
 				{Name: "python-lint", Description: "Python linting", Tags: []string{"python", "lint"}},
 			}},
 		},
-		GlobalCfg: `
-registries:
-  - url: {{REG:tag-selection}}
-    ref: main
-    tags:
-      - k8s
+		GlobalCfg: `apiVersion: agent-marketplace/v4
+sources: {team: {git: '{{REG:tag-selection}}', ref: main}}
+resources: {team: {tags: [k8s]}}
 `,
 		Steps: []Step{
 			{Args: []string{"sync"}, MustPass: true,
@@ -1273,7 +1204,7 @@ registries:
 	{
 		Name:      "materialize/empty_sync",
 		Desc:      "Given no registries configured, When sync is run, Then it exits cleanly with 'Installed 0'",
-		GlobalCfg: ``,
+		GlobalCfg: "apiVersion: agent-marketplace/v4\nharnesses: [factory]\n",
 		Steps: []Step{
 			{Args: []string{"sync"}, MustPass: true,
 				OutContains: []string{"Installed 0"}},
@@ -1286,12 +1217,9 @@ registries:
 			{Name: "commands-test",
 				Commands: []Command{{Name: "greet", Description: "Greeting command", Command: "echo hello"}}},
 		},
-		GlobalCfg: `
-registries:
-  - url: {{REG:commands-test}}
-    ref: main
-    commands:
-      - greet
+		GlobalCfg: `apiVersion: agent-marketplace/v4
+sources: {team: {git: '{{REG:commands-test}}', ref: main}}
+resources: {team: {include: [command/greet]}}
 `,
 		Steps: []Step{
 			{Args: []string{"sync"}, MustPass: true,
@@ -1310,17 +1238,10 @@ registries:
 				{Name: "skill-c", Description: "Skill C"},
 			}},
 		},
-		GlobalCfg: ``,
-		RepoCfg: `
-registries:
-  - url: {{REG:precedence-registry}}
-    ref: main
-    skills:
-      include:
-        - skill-a
-        - skill-b
-      exclude:
-        - skill-a
+		GlobalCfg: "apiVersion: agent-marketplace/v4\nharnesses: [factory]\n",
+		RepoCfg: `apiVersion: agent-marketplace/v4
+sources: {team: {git: '{{REG:precedence-registry}}', ref: main}}
+resources: {team: {include: [skill/skill-a, skill/skill-b], exclude: [skill/skill-a]}}
 `,
 		Steps: []Step{
 			{Args: []string{"sync"}, MustPass: true,
@@ -1337,20 +1258,14 @@ registries:
 				{Name: "unwanted", Description: "Unwanted skill"},
 			}},
 		},
-		GlobalCfg: ``,
-		RepoCfg: `
-registries:
-  - url: {{REG:local-precedence}}
-    ref: main
-    skills:
-      include:
-        - wanted
-        - unwanted
+		GlobalCfg: "apiVersion: agent-marketplace/v4\nharnesses: [factory]\n",
+		RepoCfg: `apiVersion: agent-marketplace/v4
+sources: {team: {git: '{{REG:local-precedence}}', ref: main}}
+resources: {team: {include: [skill/wanted, skill/unwanted]}}
 `,
-		LocalCfg: `
-skills:
-  exclude:
-    - unwanted
+		LocalCfg: `apiVersion: agent-marketplace/v4
+sources: {team: {git: '{{REG:local-precedence}}', ref: main}}
+resources: {team: {exclude: [skill/unwanted]}}
 `,
 		Steps: []Step{
 			{Args: []string{"sync"}, MustPass: true,
@@ -1366,22 +1281,17 @@ skills:
 				{Name: "security-audit", Description: "Mandatory security audit", Tags: []string{"security"}},
 			}},
 		},
-		GlobalCfg: `
-registries:
-  - url: {{REG:required-registry}}
-    ref: main
-    required: true
-    default: true
+		GlobalCfg: `apiVersion: agent-marketplace/v4
+sources: {team: {git: '{{REG:required-registry}}', ref: main}}
+resources: {team: {all: true, required: true}}
 `,
-		RepoCfg: `
-skills:
-  exclude:
-    - security-audit
+		RepoCfg: `apiVersion: agent-marketplace/v4
+sources: {team: {git: '{{REG:required-registry}}', ref: main}}
+resources: {team: {exclude: [skill/security-audit]}}
 `,
-		LocalCfg: `
-skills:
-  exclude:
-    - security-audit
+		LocalCfg: `apiVersion: agent-marketplace/v4
+sources: {team: {git: '{{REG:required-registry}}', ref: main}}
+resources: {team: {exclude: [skill/security-audit]}}
 `,
 		Steps: []Step{
 			{Args: []string{"sync"}, MustPass: true,
@@ -1397,16 +1307,12 @@ skills:
 			}},
 		},
 		OrgCfg: `
-apiVersion: agent-marketplace/v3
-harnesses:
-  - factory
-registries:
-  - url: {{REG:org-registry}}
-    ref: main
-    required: true
-    default: true
+apiVersion: agent-marketplace/v4
+harnesses: [factory]
+sources: {team: {git: '{{REG:org-registry}}', ref: main}}
+resources: {team: {all: true, required: true}}
 `,
-		GlobalCfg: ``,
+		GlobalCfg: "apiVersion: agent-marketplace/v4\nharnesses: [factory]\n",
 		Steps: []Step{
 			{Args: []string{"sync", "--locked"}, MustPass: true,
 				FilesExist:  []string{"/root/.factory/skills/compliance-check/SKILL.md"},
@@ -1422,16 +1328,9 @@ registries:
 				{Name: "conflicted", Description: "Include and exclude at same level"},
 			}},
 		},
-		GlobalCfg: `
-registries:
-  - url: {{REG:same-level}}
-    ref: main
-    skills:
-      include:
-        - included
-        - conflicted
-      exclude:
-        - conflicted
+		GlobalCfg: `apiVersion: agent-marketplace/v4
+sources: {team: {git: '{{REG:same-level}}', ref: main}}
+resources: {team: {include: [skill/included, skill/conflicted], exclude: [skill/conflicted]}}
 `,
 		Steps: []Step{
 			{Args: []string{"sync"}, MustPass: true,
@@ -1441,7 +1340,7 @@ registries:
 	},
 	{
 		Name: "precedence/default_true_auto_selects_all",
-		Desc: "Given a registry with default:true, When sync is run, Then all discovered resources are auto-selected and materialized",
+		Desc: "Given a registry with all:true, When sync is run, Then all discovered resources are auto-selected and materialized",
 		Registries: []RegistryDef{
 			{Name: "default-registry", Skills: []Skill{
 				{Name: "auto-a", Description: "Auto-selected A"},
@@ -1449,11 +1348,9 @@ registries:
 				{Name: "auto-c", Description: "Auto-selected C"},
 			}},
 		},
-		GlobalCfg: `
-registries:
-  - url: {{REG:default-registry}}
-    ref: main
-    default: true
+		GlobalCfg: `apiVersion: agent-marketplace/v4
+sources: {team: {git: '{{REG:default-registry}}', ref: main}}
+resources: {team: {all: true}}
 `,
 		Steps: []Step{
 			{Args: []string{"sync"}, MustPass: true,
@@ -1466,21 +1363,16 @@ registries:
 	},
 	{
 		Name: "precedence/default_true_with_exclude",
-		Desc: "Given a default:true registry with an explicit exclude, When sync is run, Then excluded resources are skipped while others materialize",
+		Desc: "Given an all:true registry with an explicit exclude, When sync is run, Then excluded resources are skipped while others materialize",
 		Registries: []RegistryDef{
 			{Name: "default-exclude", Skills: []Skill{
 				{Name: "keep-me", Description: "Should stay"},
 				{Name: "drop-me", Description: "Should be excluded"},
 			}},
 		},
-		GlobalCfg: `
-registries:
-  - url: {{REG:default-exclude}}
-    ref: main
-    default: true
-    skills:
-      exclude:
-        - drop-me
+		GlobalCfg: `apiVersion: agent-marketplace/v4
+sources: {team: {git: '{{REG:default-exclude}}', ref: main}}
+resources: {team: {all: true, exclude: [skill/drop-me]}}
 `,
 		Steps: []Step{
 			{Args: []string{"sync"}, MustPass: true,
@@ -1498,10 +1390,8 @@ registries:
 				{Name: "code-review", Tags: []string{"review"}},
 			}},
 		},
-		GlobalCfg: `
-registries:
-  - url: {{REG:install-reg}}
-    ref: main
+		GlobalCfg: `apiVersion: agent-marketplace/v4
+sources: {team: {git: '{{REG:install-reg}}', ref: main}}
 `,
 		Steps: []Step{
 			{Args: []string{"install", "code-review"}, MustPass: true,
@@ -1523,10 +1413,8 @@ registries:
 				{Name: "python-fmt", Tags: []string{"python"}},
 			}},
 		},
-		GlobalCfg: `
-registries:
-  - url: {{REG:tag-install}}
-    ref: main
+		GlobalCfg: `apiVersion: agent-marketplace/v4
+sources: {team: {git: '{{REG:tag-install}}', ref: main}}
 `,
 		Steps: []Step{
 			{Args: []string{"install", "--tag", "k8s"}, MustPass: true,
@@ -1548,16 +1436,9 @@ registries:
 				{Name: "worker", Tools: []string{"Read"}},
 			}},
 		},
-		GlobalCfg: `
-registries:
-  - url: {{REG:multi-kind}}
-    ref: main
-    skills:
-      - deploy-skill
-    commands:
-      - greet
-    subagents:
-      - worker
+		GlobalCfg: `apiVersion: agent-marketplace/v4
+sources: {team: {git: '{{REG:multi-kind}}', ref: main}}
+resources: {team: {include: [skill/deploy-skill, command/greet, subagent/worker]}}
 `,
 		Steps: []Step{
 			{Args: []string{"sync"}, MustPass: true,
@@ -1576,9 +1457,9 @@ registries:
 				{Name: "adhoc-skill"},
 			}},
 		},
-		GlobalCfg: ``,
-		RepoCfg: `
-registries: []
+		GlobalCfg: "apiVersion: agent-marketplace/v4\nharnesses: [factory]\n",
+		RepoCfg: `apiVersion: agent-marketplace/v4
+sources: {}
 `,
 		Steps: []Step{
 			{Args: []string{"install", "adhoc-skill", "--from", "{{REG:adhoc-reg}}", "--ref", "main"}, MustPass: true,
@@ -1600,15 +1481,12 @@ registries: []
 			}},
 			{Name: "multi-other", Skills: []Skill{{Name: "keep"}}},
 		},
-		GlobalCfg: `
+		GlobalCfg: `apiVersion: agent-marketplace/v4
 harnesses: [factory]
 `,
-		RepoCfg: `
-registries:
-  - url: {{REG:multi-other}}
-    ref: main
-    skills:
-      - keep
+		RepoCfg: `apiVersion: agent-marketplace/v4
+sources: {team: {git: '{{REG:multi-other}}', ref: main}}
+resources: {team: {include: [skill/keep]}}
 `,
 		Steps: []Step{
 			{Args: []string{"sync"}, MustPass: true,
@@ -1635,10 +1513,8 @@ registries:
 				{Name: "exists-skill"},
 			}},
 		},
-		GlobalCfg: `
-registries:
-  - url: {{REG:missing-reg}}
-    ref: main
+		GlobalCfg: `apiVersion: agent-marketplace/v4
+sources: {team: {git: '{{REG:missing-reg}}', ref: main}}
 `,
 		Steps: []Step{
 			{Args: []string{"install", "nonexistent-skill"}, AssertExitCode: intPtr(1),
@@ -1648,12 +1524,11 @@ registries:
 	{
 		Name: "install/scope_user_rejects_repo_relative_registry",
 		Desc: "Given a repo-relative local registry, When install --scope user is run, Then it fails without changing the user config",
-		GlobalCfg: `
-registries: []
+		GlobalCfg: `apiVersion: agent-marketplace/v4
+sources: {}
 `,
-		RepoCfg: `
-registries:
-  - url: ./plugins/local
+		RepoCfg: `apiVersion: agent-marketplace/v4
+sources: {team: {directory: ./plugins/local}}
 `,
 		Steps: []Step{
 			{Action: ActionWriteFile, Path: "/workspace/plugins/local/skills/local-skill/SKILL.md", Body: "---\nname: local-skill\ndescription: Local skill\n---\n"},
@@ -1667,9 +1542,9 @@ registries:
 	{
 		Name:      "install/from_local_missing_path_does_not_persist",
 		Desc:      "Given an existing local registry root with a missing bundle path, When ad-hoc install runs, Then it fails before changing repo config",
-		GlobalCfg: ``,
-		RepoCfg: `
-registries: []
+		GlobalCfg: "apiVersion: agent-marketplace/v4\nharnesses: [factory]\n",
+		RepoCfg: `apiVersion: agent-marketplace/v4
+sources: {}
 `,
 		Steps: []Step{
 			{Action: ActionWriteFile, Path: "/workspace/local-registry/README.md", Body: "local registry\n"},
@@ -1688,10 +1563,8 @@ registries: []
 				{Name: "global-skill"},
 			}},
 		},
-		GlobalCfg: `
-registries:
-  - url: {{REG:scope-reg}}
-    ref: main
+		GlobalCfg: `apiVersion: agent-marketplace/v4
+sources: {team: {git: '{{REG:scope-reg}}', ref: main}}
 `,
 		Steps: []Step{
 			{Args: []string{"install", "--scope", "user", "global-skill"}, MustPass: true},
@@ -1707,11 +1580,9 @@ registries:
 				{Name: "local-skill"},
 			}},
 		},
-		GlobalCfg: ``,
-		RepoCfg: `
-registries:
-  - url: {{REG:local-reg}}
-    ref: main
+		GlobalCfg: "apiVersion: agent-marketplace/v4\nharnesses: [factory]\n",
+		RepoCfg: `apiVersion: agent-marketplace/v4
+sources: {team: {git: '{{REG:local-reg}}', ref: main}}
 `,
 		Steps: []Step{
 			{Args: []string{"install", "--scope", "local", "local-skill"}, MustPass: true},
@@ -1729,12 +1600,9 @@ registries:
 				{Name: "roundtrip-skill"},
 			}},
 		},
-		GlobalCfg: `
-registries:
-  - url: {{REG:roundtrip-reg}}
-    ref: main
-    skills:
-      - roundtrip-skill
+		GlobalCfg: `apiVersion: agent-marketplace/v4
+sources: {team: {git: '{{REG:roundtrip-reg}}', ref: main}}
+resources: {team: {include: [skill/roundtrip-skill]}}
 `,
 		Steps: []Step{
 			{Args: []string{"sync"}, MustPass: true,
@@ -1752,12 +1620,9 @@ registries:
 				{Name: "mandatory-skill"},
 			}},
 		},
-		GlobalCfg: `
-registries:
-  - url: {{REG:required-reg}}
-    ref: main
-    required: true
-    default: true
+		GlobalCfg: `apiVersion: agent-marketplace/v4
+sources: {team: {git: '{{REG:required-reg}}', ref: main}}
+resources: {team: {all: true, required: true}}
 `,
 		Steps: []Step{
 			{Args: []string{"sync"}, MustPass: true},
@@ -1767,18 +1632,16 @@ registries:
 	},
 	{
 		Name: "remove/default_true_adds_exclude",
-		Desc: "Given default:true auto-selected skills, When remove --scope user is run for one skill and re-synced, Then that skill is pruned while others remain",
+		Desc: "Given all:true auto-selected skills, When remove --scope user is run for one skill and re-synced, Then that skill is pruned while others remain",
 		Registries: []RegistryDef{
 			{Name: "default-rm", Skills: []Skill{
 				{Name: "keep-skill"},
 				{Name: "drop-skill"},
 			}},
 		},
-		GlobalCfg: `
-registries:
-  - url: {{REG:default-rm}}
-    ref: main
-    default: true
+		GlobalCfg: `apiVersion: agent-marketplace/v4
+sources: {team: {git: '{{REG:default-rm}}', ref: main}}
+resources: {team: {all: true}}
 `,
 		Steps: []Step{
 			{Args: []string{"sync"}, MustPass: true,
@@ -1830,17 +1693,15 @@ resources:
 	},
 	{
 		Name:       "install/from_named_reinstall_clears_legacy_local_exclude",
-		Desc:       "Given a default-selected skill disabled by a legacy local exclude, When named ad-hoc install reinstalls it, Then it materializes and only that exclude is cleared",
+		Desc:       "Given a default-selected skill disabled by a provider-scoped v4 local exclude, When named ad-hoc install reinstalls it, Then it materializes and only that exclude is cleared",
 		Registries: []RegistryDef{{Name: "adhoc-reinstall-named", Skills: []Skill{{Name: "foo"}, {Name: "keep"}}}},
 		RepoCfg: `
-apiVersion: agent-marketplace/v2
+apiVersion: agent-marketplace/v4
 harnesses: [factory]
-registries:
-  - url: {{REG:adhoc-reinstall-named}}
-    ref: main
-    default: true
+sources: {team: {git: '{{REG:adhoc-reinstall-named}}', ref: main}}
+resources: {team: {all: true}}
 `,
-		LocalCfg: "apiVersion: agent-marketplace/v2\nskills: {exclude: [foo, keep]}\n",
+		LocalCfg: "apiVersion: agent-marketplace/v4\nsources: {team: {git: '{{REG:adhoc-reinstall-named}}', ref: main}}\nresources: {team: {exclude: [skill/foo, skill/keep]}}\n",
 		Steps: []Step{
 			{Args: []string{"sync"}, MustPass: true, FilesAbsent: []string{"/workspace/.factory/skills/foo", "/workspace/.factory/skills/keep"}},
 			{Args: []string{"install", "foo", "--from", "{{REG:adhoc-reinstall-named}}", "--ref", "main"}, MustPass: true,
@@ -1882,21 +1743,19 @@ resources:
 	},
 	{
 		Name: "install/reinstall_preserves_default_auto_select",
-		Desc: "Given a default:true registry with one skill excluded, When that skill is re-installed, Then the exclude is dropped WITHOUT adding an explicit include so default auto-select keeps every other skill enabled",
+		Desc: "Given an all:true registry with one skill excluded, When that skill is re-installed, Then the exclude is dropped WITHOUT adding an explicit include so default auto-select keeps every other skill enabled",
 		Registries: []RegistryDef{
 			{Name: "reinstall-default", Skills: []Skill{
 				{Name: "keep-skill"},
 				{Name: "cohort-analysis"},
 			}},
 		},
-		GlobalCfg: `
-registries:
-  - url: {{REG:reinstall-default}}
-    ref: main
-    default: true
+		GlobalCfg: `apiVersion: agent-marketplace/v4
+sources: {team: {git: '{{REG:reinstall-default}}', ref: main}}
+resources: {team: {all: true}}
 `,
 		Steps: []Step{
-			// default:true auto-selects every skill.
+			// all:true auto-selects every skill.
 			{Args: []string{"sync"}, MustPass: true,
 				FilesExist: []string{
 					"/root/.factory/skills/keep-skill/SKILL.md",
@@ -1908,11 +1767,11 @@ registries:
 				FilesExist:  []string{"/root/.factory/skills/keep-skill/SKILL.md"},
 				FilesAbsent: []string{"/root/.factory/skills/cohort-analysis"}},
 			// Re-install the excluded skill. This must simply drop the exclude
-			// and keep default:true — NOT add skills.include (which would flip
+			// and keep all:true — NOT add skills.include (which would flip
 			// the entry out of auto-select-all and silently deselect keep-skill).
 			{Args: []string{"install", "--scope", "user", "cohort-analysis"}, MustPass: true,
 				FileContains: map[string]string{
-					"/root/.agents/config.yaml": "default: true",
+					"/root/.agents/config.yaml": "all: true",
 				},
 				FileNotContains: map[string]string{
 					"/root/.agents/config.yaml": "include",
@@ -1935,13 +1794,9 @@ registries:
 				{Name: "from-skill-b"},
 			}},
 		},
-		GlobalCfg: `
-registries:
-  - url: {{REG:from-rm}}
-    ref: main
-    skills:
-      - from-skill-a
-      - from-skill-b
+		GlobalCfg: `apiVersion: agent-marketplace/v4
+sources: {team: {git: '{{REG:from-rm}}', ref: main}}
+resources: {team: {include: [skill/from-skill-a, skill/from-skill-b]}}
 `,
 		Steps: []Step{
 			{Args: []string{"sync"}, MustPass: true,
@@ -1964,15 +1819,12 @@ registries:
 				{Name: "entry-skill"},
 			}},
 		},
-		GlobalCfg: `
-registries:
-  - url: {{REG:from-entry-rm}}
-    ref: main
-    skills:
-      - entry-skill
+		GlobalCfg: `apiVersion: agent-marketplace/v4
+sources: {team: {git: '{{REG:from-entry-rm}}', ref: main}}
+resources: {team: {include: [skill/entry-skill]}}
 `,
-		RepoCfg: `
-registries: []
+		RepoCfg: `apiVersion: agent-marketplace/v4
+sources: {}
 `,
 		Steps: []Step{
 			{Args: []string{"sync"}, MustPass: true,
@@ -1993,12 +1845,9 @@ registries: []
 				{Name: "worker", Tools: []string{"Read", "Edit"}},
 			}},
 		},
-		GlobalCfg: `
-registries:
-  - url: {{REG:subagent-reg}}
-    ref: main
-    subagents:
-      - worker
+		GlobalCfg: `apiVersion: agent-marketplace/v4
+sources: {team: {git: '{{REG:subagent-reg}}', ref: main}}
+resources: {team: {include: [subagent/worker]}}
 `,
 		Steps: []Step{
 			{Args: []string{"sync"}, MustPass: true,
@@ -2013,12 +1862,9 @@ registries:
 				{Name: "my-server", Command: "npx", Args: []string{"-y", "@my/mcp-server"}},
 			}},
 		},
-		GlobalCfg: `
-registries:
-  - url: {{REG:mcp-reg}}
-    ref: main
-    mcp:
-      - my-server
+		GlobalCfg: `apiVersion: agent-marketplace/v4
+sources: {team: {git: '{{REG:mcp-reg}}', ref: main}}
+resources: {team: {include: [mcp/my-server]}}
 `,
 		Steps: []Step{
 			{Args: []string{"sync"}, MustPass: true,
@@ -2036,12 +1882,9 @@ registries:
 				"mcp_config.json": `{"mcpServers":{"env-server":{"command":"npx","args":["-y","@my/env-server"],"env":{"API_KEY":"${env:MY_API_KEY}","LITERAL_VAL":"keep-me"}}}}`,
 			}},
 		},
-		GlobalCfg: `
-registries:
-  - url: {{REG:windsurf-mcp-reg}}
-    ref: main
-    mcp:
-      - env-server
+		GlobalCfg: `apiVersion: agent-marketplace/v4
+sources: {team: {git: '{{REG:windsurf-mcp-reg}}', ref: main}}
+resources: {team: {include: [mcp/env-server]}}
 `,
 		Steps: []Step{
 			{Args: []string{"sync"}, MustPass: true,
@@ -2064,15 +1907,12 @@ registries:
 				"mcp_config.json": `{"mcpServers":{"rt-server":{"command":"npx","args":["-y","@my/rt-server"],"env":{"TOKEN":"${env:MY_TOKEN}"}}}}`,
 			}},
 		},
-		GlobalCfg: `
+		GlobalCfg: `apiVersion: agent-marketplace/v4
 harnesses:
   - factory
   - windsurf
-registries:
-  - url: {{REG:windsurf-rt-reg}}
-    ref: main
-    mcp:
-      - rt-server
+sources: {team: {git: '{{REG:windsurf-rt-reg}}', ref: main}}
+resources: {team: {include: [mcp/rt-server]}}
 `,
 		Steps: []Step{
 			{Args: []string{"sync"}, MustPass: true,
@@ -2097,12 +1937,9 @@ registries:
 				{Name: "only-this-agent", Tools: []string{"Read"}},
 			}},
 		},
-		GlobalCfg: `
-registries:
-  - url: {{REG:kind-filter}}
-    ref: main
-    subagents:
-      - only-this-agent
+		GlobalCfg: `apiVersion: agent-marketplace/v4
+sources: {team: {git: '{{REG:kind-filter}}', ref: main}}
+resources: {team: {include: [subagent/only-this-agent]}}
 `,
 		Steps: []Step{
 			{Args: []string{"sync"}, MustPass: true,
@@ -2121,12 +1958,9 @@ registries:
 				{Name: "model-agent", Model: "sonnet", Tools: []string{"Read"}},
 			}},
 		},
-		GlobalCfg: `
-registries:
-  - url: {{REG:sub-model}}
-    ref: main
-    subagents:
-      - model-agent
+		GlobalCfg: `apiVersion: agent-marketplace/v4
+sources: {team: {git: '{{REG:sub-model}}', ref: main}}
+resources: {team: {include: [subagent/model-agent]}}
 `,
 		Steps: []Step{
 			{Args: []string{"sync"}, MustPass: true,
@@ -2144,12 +1978,9 @@ registries:
 				{Name: "passthrough-agent", Model: "custom-model-v2", Tools: []string{"Read"}},
 			}},
 		},
-		GlobalCfg: `
-registries:
-  - url: {{REG:sub-model-pt}}
-    ref: main
-    subagents:
-      - passthrough-agent
+		GlobalCfg: `apiVersion: agent-marketplace/v4
+sources: {team: {git: '{{REG:sub-model-pt}}', ref: main}}
+resources: {team: {include: [subagent/passthrough-agent]}}
 `,
 		Steps: []Step{
 			{Args: []string{"sync"}, MustPass: true,
@@ -2167,12 +1998,9 @@ registries:
 				{Name: "write-agent", Tools: []string{"Read", "Write"}},
 			}},
 		},
-		GlobalCfg: `
-registries:
-  - url: {{REG:sub-tools}}
-    ref: main
-    subagents:
-      - write-agent
+		GlobalCfg: `apiVersion: agent-marketplace/v4
+sources: {team: {git: '{{REG:sub-tools}}', ref: main}}
+resources: {team: {include: [subagent/write-agent]}}
 `,
 		Steps: []Step{
 			{Args: []string{"sync"}, MustPass: true,
@@ -2194,13 +2022,9 @@ registries:
 				{Name: "known-tool-agent", Tools: []string{"Read"}},
 			}},
 		},
-		GlobalCfg: `
-registries:
-  - url: {{REG:sub-tool-pt}}
-    ref: main
-    subagents:
-      - unk-tool-agent
-      - known-tool-agent
+		GlobalCfg: `apiVersion: agent-marketplace/v4
+sources: {team: {git: '{{REG:sub-tool-pt}}', ref: main}}
+resources: {team: {include: [subagent/unk-tool-agent, subagent/known-tool-agent]}}
 `,
 		Steps: []Step{
 			{Args: []string{"sync"}, AssertExitCode: intPtr(1),
@@ -2219,12 +2043,9 @@ registries:
 				{Name: "effort-agent", Effort: "high", Tools: []string{"Read"}},
 			}},
 		},
-		GlobalCfg: `
-registries:
-  - url: {{REG:sub-effort}}
-    ref: main
-    subagents:
-      - effort-agent
+		GlobalCfg: `apiVersion: agent-marketplace/v4
+sources: {team: {git: '{{REG:sub-effort}}', ref: main}}
+resources: {team: {include: [subagent/effort-agent]}}
 `,
 		Steps: []Step{
 			{Args: []string{"sync"}, MustPass: true,
@@ -2247,12 +2068,9 @@ registries:
 				{Name: "disallowed-agent", Tools: []string{"Read"}, DisallowedTools: []string{"Bash"}},
 			}},
 		},
-		GlobalCfg: `
-registries:
-  - url: {{REG:sub-disallowed}}
-    ref: main
-    subagents:
-      - disallowed-agent
+		GlobalCfg: `apiVersion: agent-marketplace/v4
+sources: {team: {git: '{{REG:sub-disallowed}}', ref: main}}
+resources: {team: {include: [subagent/disallowed-agent]}}
 `,
 		Steps: []Step{
 			{Args: []string{"sync"}, AssertExitCode: intPtr(1),
@@ -2269,12 +2087,9 @@ registries:
 				{Name: "isolation-agent", Tools: []string{"Read"}, Isolation: "worktree"},
 			}},
 		},
-		GlobalCfg: `
-registries:
-  - url: {{REG:sub-isolation}}
-    ref: main
-    subagents:
-      - isolation-agent
+		GlobalCfg: `apiVersion: agent-marketplace/v4
+sources: {team: {git: '{{REG:sub-isolation}}', ref: main}}
+resources: {team: {include: [subagent/isolation-agent]}}
 `,
 		Steps: []Step{
 			{Args: []string{"sync"}, AssertExitCode: intPtr(1),
@@ -2293,11 +2108,11 @@ registries:
 				{Name: "shared-name", Tools: []string{"Read"}},
 			}},
 		},
-		GlobalCfg: `
-registries: []
+		GlobalCfg: `apiVersion: agent-marketplace/v4
+sources: {}
 `,
-		RepoCfg: `
-registries: []
+		RepoCfg: `apiVersion: agent-marketplace/v4
+sources: {}
 `,
 		Steps: []Step{
 			{Args: []string{"install", "--kind", "subagent", "--scope", "user", "shared-name", "--from", "{{REG:sub-disambig}}", "--ref", "main"}, MustPass: true,
@@ -2315,15 +2130,12 @@ registries: []
 				{Name: "removable-agent", Tools: []string{"Read"}},
 			}},
 		},
-		GlobalCfg: `
-registries:
-  - url: {{REG:sub-remove}}
-    ref: main
-    subagents:
-      - removable-agent
+		GlobalCfg: `apiVersion: agent-marketplace/v4
+sources: {team: {git: '{{REG:sub-remove}}', ref: main}}
+resources: {team: {include: [subagent/removable-agent]}}
 `,
-		RepoCfg: `
-registries: []
+		RepoCfg: `apiVersion: agent-marketplace/v4
+sources: {}
 `,
 		Steps: []Step{
 			{Args: []string{"sync"}, MustPass: true,
@@ -2368,15 +2180,12 @@ resources:
 				{Name: "entry-agent", Tools: []string{"Read"}},
 			}},
 		},
-		GlobalCfg: `
-registries:
-  - url: {{REG:sub-from-entry-rm}}
-    ref: main
-    subagents:
-      - entry-agent
+		GlobalCfg: `apiVersion: agent-marketplace/v4
+sources: {team: {git: '{{REG:sub-from-entry-rm}}', ref: main}}
+resources: {team: {include: [subagent/entry-agent]}}
 `,
-		RepoCfg: `
-registries: []
+		RepoCfg: `apiVersion: agent-marketplace/v4
+sources: {}
 `,
 		Steps: []Step{
 			{Args: []string{"sync"}, MustPass: true,
@@ -2395,15 +2204,12 @@ registries: []
 				{Name: "multi-agent", Model: "sonnet", Tools: []string{"Read", "Write"}},
 			}},
 		},
-		GlobalCfg: `
+		GlobalCfg: `apiVersion: agent-marketplace/v4
 harnesses:
   - factory
   - cursor
-registries:
-  - url: {{REG:sub-multi}}
-    ref: main
-    subagents:
-      - multi-agent
+sources: {team: {git: '{{REG:sub-multi}}', ref: main}}
+resources: {team: {include: [subagent/multi-agent]}}
 `,
 		Steps: []Step{
 			{Args: []string{"sync"}, MustPass: true,
@@ -2431,12 +2237,9 @@ registries:
 				{Name: "full-agent", Model: "sonnet", Tools: []string{"Read", "Write"}, Effort: "high"},
 			}},
 		},
-		GlobalCfg: `
-registries:
-  - url: {{REG:sub-full}}
-    ref: main
-    subagents:
-      - full-agent
+		GlobalCfg: `apiVersion: agent-marketplace/v4
+sources: {team: {git: '{{REG:sub-full}}', ref: main}}
+resources: {team: {include: [subagent/full-agent]}}
 `,
 		Steps: []Step{
 			{Args: []string{"sync"}, MustPass: true,
@@ -2477,13 +2280,9 @@ registries:
 				{Name: "server-b", Command: "node", Args: []string{"server-b.js"}},
 			}},
 		},
-		GlobalCfg: `
-registries:
-  - url: {{REG:mcp-multi}}
-    ref: main
-    mcp:
-      - server-a
-      - server-b
+		GlobalCfg: `apiVersion: agent-marketplace/v4
+sources: {team: {git: '{{REG:mcp-multi}}', ref: main}}
+resources: {team: {include: [mcp/server-a, mcp/server-b]}}
 `,
 		Steps: []Step{
 			{Args: []string{"sync"}, MustPass: true,
@@ -2508,16 +2307,13 @@ registries:
 				{Name: "server-beta", Command: "node", Args: []string{"beta.js"}},
 			}},
 		},
-		GlobalCfg: `
-registries:
-  - url: {{REG:mcp-reg-a}}
-    ref: main
-    mcp:
-      - server-alpha
-  - url: {{REG:mcp-reg-b}}
-    ref: main
-    mcp:
-      - server-beta
+		GlobalCfg: `apiVersion: agent-marketplace/v4
+sources:
+  first: {git: '{{REG:mcp-reg-a}}', ref: main}
+  second: {git: '{{REG:mcp-reg-b}}', ref: main}
+resources:
+  first: {include: [mcp/server-alpha]}
+  second: {include: [mcp/server-beta]}
 `,
 		Steps: []Step{
 			{Args: []string{"sync"}, MustPass: true,
@@ -2539,12 +2335,9 @@ registries:
 				{Name: "managed-server", Command: "npx", Args: []string{"-y", "@my/mcp-server"}},
 			}},
 		},
-		GlobalCfg: `
-registries:
-  - url: {{REG:mcp-preserve}}
-    ref: main
-    mcp:
-      - managed-server
+		GlobalCfg: `apiVersion: agent-marketplace/v4
+sources: {team: {git: '{{REG:mcp-preserve}}', ref: main}}
+resources: {team: {include: [mcp/managed-server]}}
 `,
 		Steps: []Step{
 			// Pre-seed mcp.json with a user-authored server.
@@ -2574,12 +2367,9 @@ registries:
 				}},
 			}},
 		},
-		GlobalCfg: `
-registries:
-  - url: {{REG:mcp-roundtrip}}
-    ref: main
-    mcp:
-      - env-server
+		GlobalCfg: `apiVersion: agent-marketplace/v4
+sources: {team: {git: '{{REG:mcp-roundtrip}}', ref: main}}
+resources: {team: {include: [mcp/env-server]}}
 `,
 		Steps: []Step{
 			{Args: []string{"sync"}, MustPass: true,
@@ -2607,10 +2397,8 @@ registries:
 				{Name: "only-this-mcp", Command: "npx", Args: []string{"-y", "@my/only-mcp"}},
 			}},
 		},
-		GlobalCfg: `
-registries:
-  - url: {{REG:mcp-kind-filter}}
-    ref: main
+		GlobalCfg: `apiVersion: agent-marketplace/v4
+sources: {team: {git: '{{REG:mcp-kind-filter}}', ref: main}}
 `,
 		Steps: []Step{
 			{Args: []string{"install", "--kind", "mcp", "--scope", "user", "only-this-mcp"}, MustPass: true,
@@ -2640,12 +2428,10 @@ registries:
 				},
 			},
 		},
-		GlobalCfg: `
+		GlobalCfg: `apiVersion: agent-marketplace/v4
 harnesses:
   - factory
-registries:
-  - url: {{REG:mcp-prerequisite}}
-    ref: main
+sources: {team: {git: '{{REG:mcp-prerequisite}}', ref: main}}
 `,
 		Steps: []Step{
 			{
@@ -2678,15 +2464,11 @@ registries:
 				},
 			},
 		},
-		GlobalCfg: `
+		GlobalCfg: `apiVersion: agent-marketplace/v4
 harnesses:
   - factory
-registries:
-  - url: {{REG:mcp-prerequisite-excluded}}
-    ref: main
-    mcp:
-      exclude:
-        - genai-atlassian
+sources: {team: {git: '{{REG:mcp-prerequisite-excluded}}', ref: main}}
+resources: {team: {exclude: [mcp/genai-atlassian]}}
 `,
 		Steps: []Step{
 			{
@@ -2722,15 +2504,11 @@ registries:
 				},
 			},
 		},
-		GlobalCfg: `
+		GlobalCfg: `apiVersion: agent-marketplace/v4
 harnesses:
   - factory
-registries:
-  - url: {{REG:mcp-prerequisite-unselected}}
-    ref: main
-    skills:
-      include:
-        - smoke-test-kb
+sources: {team: {git: '{{REG:mcp-prerequisite-unselected}}', ref: main}}
+resources: {team: {include: [skill/smoke-test-kb]}}
 `,
 		Steps: []Step{
 			{
@@ -2782,18 +2560,11 @@ registries:
 				},
 			},
 		},
-		GlobalCfg: `
+		GlobalCfg: `apiVersion: agent-marketplace/v4
 harnesses:
   - factory
-registries:
-  - url: {{REG:mcp-prerequisite-satisfied}}
-    ref: main
-    skills:
-      include:
-        - smoke-test-kb
-    mcp:
-      include:
-        - genai-atlassian
+sources: {team: {git: '{{REG:mcp-prerequisite-satisfied}}', ref: main}}
+resources: {team: {include: [skill/smoke-test-kb, mcp/genai-atlassian]}}
 `,
 		Steps: []Step{
 			{
@@ -2819,15 +2590,11 @@ registries:
 				Skills: []Skill{{Name: "sibling"}},
 			},
 		},
-		GlobalCfg: `
+		GlobalCfg: `apiVersion: agent-marketplace/v4
 harnesses:
   - factory
-registries:
-  - url: {{REG:mcp-prerequisite-invalid}}
-    ref: main
-    skills:
-      include:
-        - sibling
+sources: {team: {git: '{{REG:mcp-prerequisite-invalid}}', ref: main}}
+resources: {team: {include: [skill/sibling]}}
 `,
 		Steps: []Step{
 			{
@@ -2861,15 +2628,11 @@ registries:
 				},
 			},
 		},
-		GlobalCfg: `
+		GlobalCfg: `apiVersion: agent-marketplace/v4
 harnesses:
   - factory
-registries:
-  - url: {{REG:mcp-prerequisite-malformed}}
-    ref: main
-    skills:
-      include:
-        - smoke-test-kb
+sources: {team: {git: '{{REG:mcp-prerequisite-malformed}}', ref: main}}
+resources: {team: {include: [skill/smoke-test-kb]}}
 `,
 		Steps: []Step{
 			{
@@ -2891,10 +2654,8 @@ registries:
 				{Name: "batch-mcp-b", Command: "node", Args: []string{"b.js"}},
 			}},
 		},
-		GlobalCfg: `
-registries:
-  - url: {{REG:mcp-all-kind}}
-    ref: main
+		GlobalCfg: `apiVersion: agent-marketplace/v4
+sources: {team: {git: '{{REG:mcp-all-kind}}', ref: main}}
 `,
 		Steps: []Step{
 			{Args: []string{"install", "--all", "--kind", "mcp"}, MustPass: true,
@@ -2912,12 +2673,9 @@ registries:
 				{Name: "roundtrip-mcp", Command: "npx", Args: []string{"-y", "@rm/mcp"}},
 			}},
 		},
-		GlobalCfg: `
-registries:
-  - url: {{REG:mcp-roundtrip-rm}}
-    ref: main
-    mcp:
-      - roundtrip-mcp
+		GlobalCfg: `apiVersion: agent-marketplace/v4
+sources: {team: {git: '{{REG:mcp-roundtrip-rm}}', ref: main}}
+resources: {team: {include: [mcp/roundtrip-mcp]}}
 `,
 		Steps: []Step{
 			{Args: []string{"sync"}, MustPass: true,
@@ -2939,18 +2697,16 @@ registries:
 	},
 	{
 		Name: "mcp/remove_default_true_adds_exclude",
-		Desc: "Given default:true auto-selected MCP servers, When remove --scope user is run for one MCP server and re-synced, Then that server is pruned while others remain",
+		Desc: "Given all:true auto-selected MCP servers, When remove --scope user is run for one MCP server and re-synced, Then that server is pruned while others remain",
 		Registries: []RegistryDef{
 			{Name: "mcp-default-rm", MCPServers: []MCPServer{
 				{Name: "keep-mcp", Command: "npx", Args: []string{"-y", "@keep/mcp"}},
 				{Name: "drop-mcp", Command: "node", Args: []string{"drop.js"}},
 			}},
 		},
-		GlobalCfg: `
-registries:
-  - url: {{REG:mcp-default-rm}}
-    ref: main
-    default: true
+		GlobalCfg: `apiVersion: agent-marketplace/v4
+sources: {team: {git: '{{REG:mcp-default-rm}}', ref: main}}
+resources: {team: {all: true}}
 `,
 		Steps: []Step{
 			{Args: []string{"sync"}, MustPass: true,
@@ -2977,7 +2733,7 @@ registries:
 				{Name: "adhoc-mcp", Command: "npx", Args: []string{"-y", "@adhoc/mcp"}},
 			}},
 		},
-		GlobalCfg: `
+		GlobalCfg: `apiVersion: agent-marketplace/v4
 harnesses:
   - factory
 `,
@@ -3002,16 +2758,13 @@ harnesses:
 				{Name: "shared-mcp", Command: "node", Args: []string{"b.js"}},
 			}},
 		},
-		GlobalCfg: `
-registries:
-  - url: {{REG:mcp-reg-a}}
-    ref: main
-    mcp:
-      - shared-mcp
-  - url: {{REG:mcp-reg-b}}
-    ref: main
-    mcp:
-      - shared-mcp
+		GlobalCfg: `apiVersion: agent-marketplace/v4
+sources:
+  first: {git: '{{REG:mcp-reg-a}}', ref: main}
+  second: {git: '{{REG:mcp-reg-b}}', ref: main}
+resources:
+  first: {include: [mcp/shared-mcp]}
+  second: {include: [mcp/shared-mcp]}
 `,
 		Steps: []Step{
 			{Args: []string{"sync"}, MustPass: true,
@@ -3030,12 +2783,9 @@ registries:
 					"mcp.json":                    `{"mcpServers":{bad-json`,
 				}},
 		},
-		GlobalCfg: `
-registries:
-  - url: {{REG:mcp-malformed}}
-    ref: main
-    skills:
-      - survivor-skill
+		GlobalCfg: `apiVersion: agent-marketplace/v4
+sources: {team: {git: '{{REG:mcp-malformed}}', ref: main}}
+resources: {team: {include: [skill/survivor-skill]}}
 `,
 		Steps: []Step{
 			{Args: []string{"sync"}, MustPass: true,
@@ -3052,12 +2802,9 @@ registries:
 				{Name: "drift-mcp", Command: "npx", Args: []string{"-y", "@drift/mcp"}},
 			}},
 		},
-		GlobalCfg: `
-registries:
-  - url: {{REG:mcp-drift}}
-    ref: main
-    mcp:
-      - drift-mcp
+		GlobalCfg: `apiVersion: agent-marketplace/v4
+sources: {team: {git: '{{REG:mcp-drift}}', ref: main}}
+resources: {team: {include: [mcp/drift-mcp]}}
 `,
 		Steps: []Step{
 			{Args: []string{"sync", "--check"}, AssertExitCode: intPtr(1)},
@@ -3081,12 +2828,9 @@ registries:
 				{Name: "python-lint", Description: "Python linting", Command: "ruff check", Tags: []string{"python", "lint"}},
 			}},
 		},
-		GlobalCfg: `
-registries:
-  - url: {{REG:cmd-tag-selection}}
-    ref: main
-    tags:
-      - k8s
+		GlobalCfg: `apiVersion: agent-marketplace/v4
+sources: {team: {git: '{{REG:cmd-tag-selection}}', ref: main}}
+resources: {team: {tags: [k8s]}}
 `,
 		Steps: []Step{
 			{Args: []string{"sync"}, MustPass: true,
@@ -3105,10 +2849,8 @@ registries:
 				{Name: "greet", Description: "Greeting command", Command: "echo hello"},
 			}},
 		},
-		GlobalCfg: `
-registries:
-  - url: {{REG:cmd-install}}
-    ref: main
+		GlobalCfg: `apiVersion: agent-marketplace/v4
+sources: {team: {git: '{{REG:cmd-install}}', ref: main}}
 `,
 		Steps: []Step{
 			{Args: []string{"install", "greet"}, MustPass: true,
@@ -3126,12 +2868,9 @@ registries:
 				Skills:   []Skill{{Name: "deploy", Description: "Deploy skill"}},
 				Commands: []Command{{Name: "deploy", Description: "Deploy command", Command: "echo deploy"}}},
 		},
-		GlobalCfg: `
-registries:
-  - url: {{REG:cmd-kind-install}}
-    ref: main
-    commands:
-      - deploy
+		GlobalCfg: `apiVersion: agent-marketplace/v4
+sources: {team: {git: '{{REG:cmd-kind-install}}', ref: main}}
+resources: {team: {include: [command/deploy]}}
 `,
 		Steps: []Step{
 			{Args: []string{"sync"}, MustPass: true,
@@ -3147,10 +2886,8 @@ registries:
 				{Name: "global-cmd", Description: "Global command", Command: "echo global"},
 			}},
 		},
-		GlobalCfg: `
-registries:
-  - url: {{REG:cmd-scope-user}}
-    ref: main
+		GlobalCfg: `apiVersion: agent-marketplace/v4
+sources: {team: {git: '{{REG:cmd-scope-user}}', ref: main}}
 `,
 		Steps: []Step{
 			{Args: []string{"install", "--scope", "user", "global-cmd"}, MustPass: true},
@@ -3166,11 +2903,9 @@ registries:
 				{Name: "local-cmd", Description: "Local command", Command: "echo local"},
 			}},
 		},
-		GlobalCfg: ``,
-		RepoCfg: `
-registries:
-  - url: {{REG:cmd-scope-local}}
-    ref: main
+		GlobalCfg: "apiVersion: agent-marketplace/v4\nharnesses: [factory]\n",
+		RepoCfg: `apiVersion: agent-marketplace/v4
+sources: {team: {git: '{{REG:cmd-scope-local}}', ref: main}}
 `,
 		Steps: []Step{
 			{Args: []string{"install", "--scope", "local", "local-cmd"}, MustPass: true},
@@ -3186,12 +2921,9 @@ registries:
 				{Name: "roundtrip-cmd", Description: "Roundtrip command", Command: "echo roundtrip"},
 			}},
 		},
-		GlobalCfg: `
-registries:
-  - url: {{REG:cmd-roundtrip}}
-    ref: main
-    commands:
-      - roundtrip-cmd
+		GlobalCfg: `apiVersion: agent-marketplace/v4
+sources: {team: {git: '{{REG:cmd-roundtrip}}', ref: main}}
+resources: {team: {include: [command/roundtrip-cmd]}}
 `,
 		Steps: []Step{
 			{Args: []string{"sync"}, MustPass: true,
@@ -3210,13 +2942,9 @@ registries:
 				{Name: "cmd-b", Description: "Command B", Command: "echo b"},
 			}},
 		},
-		GlobalCfg: `
-registries:
-  - url: {{REG:cmd-from-rm}}
-    ref: main
-    commands:
-      - cmd-a
-      - cmd-b
+		GlobalCfg: `apiVersion: agent-marketplace/v4
+sources: {team: {git: '{{REG:cmd-from-rm}}', ref: main}}
+resources: {team: {include: [command/cmd-a, command/cmd-b]}}
 `,
 		Steps: []Step{
 			{Args: []string{"sync"}, MustPass: true,
@@ -3238,22 +2966,17 @@ registries:
 				{Name: "security-scan", Description: "Mandatory security scan", Command: "scan --deep", Tags: []string{"security"}},
 			}},
 		},
-		GlobalCfg: `
-registries:
-  - url: {{REG:cmd-required}}
-    ref: main
-    required: true
-    default: true
+		GlobalCfg: `apiVersion: agent-marketplace/v4
+sources: {team: {git: '{{REG:cmd-required}}', ref: main}}
+resources: {team: {all: true, required: true}}
 `,
-		RepoCfg: `
-commands:
-  exclude:
-    - security-scan
+		RepoCfg: `apiVersion: agent-marketplace/v4
+sources: {team: {git: '{{REG:cmd-required}}', ref: main}}
+resources: {team: {exclude: [command/security-scan]}}
 `,
-		LocalCfg: `
-commands:
-  exclude:
-    - security-scan
+		LocalCfg: `apiVersion: agent-marketplace/v4
+sources: {team: {git: '{{REG:cmd-required}}', ref: main}}
+resources: {team: {exclude: [command/security-scan]}}
 `,
 		Steps: []Step{
 			{Args: []string{"sync"}, MustPass: true,
@@ -3262,18 +2985,16 @@ commands:
 	},
 	{
 		Name: "command/default_true_auto_selects",
-		Desc: "Given a registry with default:true containing commands, When sync is run, Then all commands are auto-selected and materialized",
+		Desc: "Given a registry with all:true containing commands, When sync is run, Then all commands are auto-selected and materialized",
 		Registries: []RegistryDef{
 			{Name: "cmd-default", Commands: []Command{
 				{Name: "auto-cmd-a", Description: "Auto-selected A", Command: "echo a"},
 				{Name: "auto-cmd-b", Description: "Auto-selected B", Command: "echo b"},
 			}},
 		},
-		GlobalCfg: `
-registries:
-  - url: {{REG:cmd-default}}
-    ref: main
-    default: true
+		GlobalCfg: `apiVersion: agent-marketplace/v4
+sources: {team: {git: '{{REG:cmd-default}}', ref: main}}
+resources: {team: {all: true}}
 `,
 		Steps: []Step{
 			{Args: []string{"sync"}, MustPass: true,
@@ -3294,16 +3015,13 @@ registries:
 				{Name: "deploy", Description: "Deploy from registry B", Command: "echo b"},
 			}},
 		},
-		GlobalCfg: `
-registries:
-  - url: {{REG:cmd-registry-a}}
-    ref: main
-    commands:
-      - deploy
-  - url: {{REG:cmd-registry-b}}
-    ref: main
-    commands:
-      - deploy
+		GlobalCfg: `apiVersion: agent-marketplace/v4
+sources:
+  first: {git: '{{REG:cmd-registry-a}}', ref: main}
+  second: {git: '{{REG:cmd-registry-b}}', ref: main}
+resources:
+  first: {include: [command/deploy]}
+  second: {include: [command/deploy]}
 `,
 		Steps: []Step{
 			{Args: []string{"sync"}, MustPass: true,
@@ -3319,15 +3037,12 @@ registries:
 				{Name: "universal-cmd", Description: "Appears in all harnesses", Command: "echo universal"},
 			}},
 		},
-		GlobalCfg: `
+		GlobalCfg: `apiVersion: agent-marketplace/v4
 harnesses:
   - factory
   - claude
-registries:
-  - url: {{REG:cmd-multi-harness}}
-    ref: main
-    commands:
-      - universal-cmd
+sources: {team: {git: '{{REG:cmd-multi-harness}}', ref: main}}
+resources: {team: {include: [command/universal-cmd]}}
 `,
 		Steps: []Step{
 			{Args: []string{"sync"}, MustPass: true,
@@ -3345,12 +3060,9 @@ registries:
 				{Name: "drift-cmd", Description: "Tests drift detection", Command: "echo drift"},
 			}},
 		},
-		GlobalCfg: `
-registries:
-  - url: {{REG:cmd-drift}}
-    ref: main
-    commands:
-      - drift-cmd
+		GlobalCfg: `apiVersion: agent-marketplace/v4
+sources: {team: {git: '{{REG:cmd-drift}}', ref: main}}
+resources: {team: {include: [command/drift-cmd]}}
 `,
 		Steps: []Step{
 			{Args: []string{"sync", "--check"}, AssertExitCode: intPtr(1)},
@@ -3366,12 +3078,9 @@ registries:
 				{Name: "idem-cmd", Description: "Idempotent command", Command: "echo idem"},
 			}},
 		},
-		GlobalCfg: `
-registries:
-  - url: {{REG:cmd-idem}}
-    ref: main
-    commands:
-      - idem-cmd
+		GlobalCfg: `apiVersion: agent-marketplace/v4
+sources: {team: {git: '{{REG:cmd-idem}}', ref: main}}
+resources: {team: {include: [command/idem-cmd]}}
 `,
 		Steps: []Step{
 			{Args: []string{"sync"}, MustPass: true},
@@ -3389,20 +3098,14 @@ registries:
 				{Name: "unwanted-cmd", Description: "Unwanted command", Command: "echo unwanted"},
 			}},
 		},
-		GlobalCfg: ``,
-		RepoCfg: `
-registries:
-  - url: {{REG:cmd-precedence}}
-    ref: main
-    commands:
-      include:
-        - wanted-cmd
-        - unwanted-cmd
+		GlobalCfg: "apiVersion: agent-marketplace/v4\nharnesses: [factory]\n",
+		RepoCfg: `apiVersion: agent-marketplace/v4
+sources: {team: {git: '{{REG:cmd-precedence}}', ref: main}}
+resources: {team: {include: [command/wanted-cmd, command/unwanted-cmd]}}
 `,
-		LocalCfg: `
-commands:
-  exclude:
-    - unwanted-cmd
+		LocalCfg: `apiVersion: agent-marketplace/v4
+sources: {team: {git: '{{REG:cmd-precedence}}', ref: main}}
+resources: {team: {exclude: [command/unwanted-cmd]}}
 `,
 		Steps: []Step{
 			{Args: []string{"sync"}, MustPass: true,
@@ -3418,15 +3121,12 @@ commands:
 				{Name: "prunable-cmd", Description: "Will be pruned from claude", Command: "echo prune"},
 			}},
 		},
-		GlobalCfg: `
+		GlobalCfg: `apiVersion: agent-marketplace/v4
 harnesses:
   - factory
   - claude
-registries:
-  - url: {{REG:cmd-harness-rm}}
-    ref: main
-    commands:
-      - prunable-cmd
+sources: {team: {git: '{{REG:cmd-harness-rm}}', ref: main}}
+resources: {team: {include: [command/prunable-cmd]}}
 `,
 		Steps: []Step{
 			{Args: []string{"sync"}, MustPass: true,
@@ -3434,14 +3134,11 @@ registries:
 					"/root/.factory/commands/prunable-cmd.md",
 					"/root/.claude/commands/prunable-cmd.md",
 				}},
-			{Action: ActionWriteGlobalConfig, Body: `
+			{Action: ActionWriteGlobalConfig, Body: `apiVersion: agent-marketplace/v4
 harnesses:
   - factory
-registries:
-  - url: {{REG:cmd-harness-rm}}
-    ref: main
-    commands:
-      - prunable-cmd
+sources: {team: {git: '{{REG:cmd-harness-rm}}', ref: main}}
+resources: {team: {include: [command/prunable-cmd]}}
 `},
 			{Args: []string{"sync"}, MustPass: true,
 				FilesExist:  []string{"/root/.factory/commands/prunable-cmd.md"},
@@ -3456,9 +3153,9 @@ registries:
 				{Name: "adhoc-cmd", Description: "Ad-hoc command", Command: "echo adhoc"},
 			}},
 		},
-		GlobalCfg: ``,
-		RepoCfg: `
-registries: []
+		GlobalCfg: "apiVersion: agent-marketplace/v4\nharnesses: [factory]\n",
+		RepoCfg: `apiVersion: agent-marketplace/v4
+sources: {}
 `,
 		Steps: []Step{
 			{Args: []string{"install", "adhoc-cmd", "--from", "{{REG:cmd-adhoc}}", "--ref", "main", "--kind", "command"}, MustPass: true,
@@ -3477,13 +3174,9 @@ registries: []
 				{Name: "present-cmd", Description: "Present command", Command: "echo present"},
 			}},
 		},
-		GlobalCfg: `
-registries:
-  - url: {{REG:cmd-strict}}
-    ref: main
-    commands:
-      - present-cmd
-      - absent-cmd
+		GlobalCfg: `apiVersion: agent-marketplace/v4
+sources: {team: {git: '{{REG:cmd-strict}}', ref: main}}
+resources: {team: {include: [command/present-cmd, command/absent-cmd]}}
 `,
 		Steps: []Step{
 			{Args: []string{"sync", "--strict"}, AssertExitCode: intPtr(1),
@@ -3498,12 +3191,9 @@ registries:
 				{Name: "lifecycle-cmd", Description: "Lifecycle command", Command: "echo lifecycle"},
 			}},
 		},
-		GlobalCfg: `
-registries:
-  - url: {{REG:cmd-lifecycle}}
-    ref: main
-    commands:
-      - lifecycle-cmd
+		GlobalCfg: `apiVersion: agent-marketplace/v4
+sources: {team: {git: '{{REG:cmd-lifecycle}}', ref: main}}
+resources: {team: {include: [command/lifecycle-cmd]}}
 `,
 		Steps: []Step{
 			{Args: []string{"sync"}, MustPass: true,
@@ -3526,10 +3216,8 @@ registries:
 				{Name: "exists-cmd", Description: "Exists", Command: "echo exists"},
 			}},
 		},
-		GlobalCfg: `
-registries:
-  - url: {{REG:cmd-missing}}
-    ref: main
+		GlobalCfg: `apiVersion: agent-marketplace/v4
+sources: {team: {git: '{{REG:cmd-missing}}', ref: main}}
 `,
 		Steps: []Step{
 			{Args: []string{"install", "nonexistent-cmd"}, AssertExitCode: intPtr(1),
@@ -3544,12 +3232,9 @@ registries:
 				{Name: "mandatory-cmd", Description: "Mandatory", Command: "echo mandatory"},
 			}},
 		},
-		GlobalCfg: `
-registries:
-  - url: {{REG:cmd-required-rm}}
-    ref: main
-    required: true
-    default: true
+		GlobalCfg: `apiVersion: agent-marketplace/v4
+sources: {team: {git: '{{REG:cmd-required-rm}}', ref: main}}
+resources: {team: {all: true, required: true}}
 `,
 		Steps: []Step{
 			{Args: []string{"sync"}, MustPass: true},
@@ -3559,18 +3244,16 @@ registries:
 	},
 	{
 		Name: "command/remove_default_true_adds_exclude",
-		Desc: "Given default:true auto-selected commands, When remove --scope user is run for one command and re-synced, Then that command is pruned while others remain",
+		Desc: "Given all:true auto-selected commands, When remove --scope user is run for one command and re-synced, Then that command is pruned while others remain",
 		Registries: []RegistryDef{
 			{Name: "cmd-default-rm", Commands: []Command{
 				{Name: "keep-cmd", Description: "Should stay", Command: "echo keep"},
 				{Name: "drop-cmd", Description: "Should be excluded", Command: "echo drop"},
 			}},
 		},
-		GlobalCfg: `
-registries:
-  - url: {{REG:cmd-default-rm}}
-    ref: main
-    default: true
+		GlobalCfg: `apiVersion: agent-marketplace/v4
+sources: {team: {git: '{{REG:cmd-default-rm}}', ref: main}}
+resources: {team: {all: true}}
 `,
 		Steps: []Step{
 			{Args: []string{"sync"}, MustPass: true,
@@ -3592,15 +3275,12 @@ registries:
 				{Name: "entry-cmd", Description: "Entry command", Command: "echo entry"},
 			}},
 		},
-		GlobalCfg: `
-registries:
-  - url: {{REG:cmd-from-entry-rm}}
-    ref: main
-    commands:
-      - entry-cmd
+		GlobalCfg: `apiVersion: agent-marketplace/v4
+sources: {team: {git: '{{REG:cmd-from-entry-rm}}', ref: main}}
+resources: {team: {include: [command/entry-cmd]}}
 `,
-		RepoCfg: `
-registries: []
+		RepoCfg: `apiVersion: agent-marketplace/v4
+sources: {}
 `,
 		Steps: []Step{
 			{Args: []string{"sync"}, MustPass: true,
@@ -3620,17 +3300,10 @@ registries: []
 				{Name: "cmd-b", Description: "Command B", Command: "echo b"},
 			}},
 		},
-		GlobalCfg: ``,
-		RepoCfg: `
-registries:
-  - url: {{REG:cmd-repo-precedence}}
-    ref: main
-    commands:
-      include:
-        - cmd-a
-        - cmd-b
-      exclude:
-        - cmd-a
+		GlobalCfg: "apiVersion: agent-marketplace/v4\nharnesses: [factory]\n",
+		RepoCfg: `apiVersion: agent-marketplace/v4
+sources: {team: {git: '{{REG:cmd-repo-precedence}}', ref: main}}
+resources: {team: {include: [command/cmd-a, command/cmd-b], exclude: [command/cmd-a]}}
 `,
 		Steps: []Step{
 			{Args: []string{"sync"}, MustPass: true,
@@ -3647,16 +3320,9 @@ registries:
 				{Name: "conflicted-cmd", Description: "Include and exclude at same level", Command: "echo conflict"},
 			}},
 		},
-		GlobalCfg: `
-registries:
-  - url: {{REG:cmd-same-level}}
-    ref: main
-    commands:
-      include:
-        - included-cmd
-        - conflicted-cmd
-      exclude:
-        - conflicted-cmd
+		GlobalCfg: `apiVersion: agent-marketplace/v4
+sources: {team: {git: '{{REG:cmd-same-level}}', ref: main}}
+resources: {team: {include: [command/included-cmd, command/conflicted-cmd], exclude: [command/conflicted-cmd]}}
 `,
 		Steps: []Step{
 			{Args: []string{"sync"}, MustPass: true,
@@ -3673,16 +3339,12 @@ registries:
 			}},
 		},
 		OrgCfg: `
-apiVersion: agent-marketplace/v3
-harnesses:
-  - factory
-registries:
-  - url: {{REG:cmd-org}}
-    ref: main
-    required: true
-    default: true
+apiVersion: agent-marketplace/v4
+harnesses: [factory]
+sources: {team: {git: '{{REG:cmd-org}}', ref: main}}
+resources: {team: {all: true, required: true}}
 `,
-		GlobalCfg: ``,
+		GlobalCfg: "apiVersion: agent-marketplace/v4\nharnesses: [factory]\n",
 		Steps: []Step{
 			{Args: []string{"sync"}, MustPass: true,
 				FilesExist: []string{"/root/.factory/commands/compliance-cmd.md"}},
@@ -3699,10 +3361,8 @@ registries:
 				{Name: "python-fmt", Description: "Python formatting", Command: "black .", Tags: []string{"python"}},
 			}},
 		},
-		GlobalCfg: `
-registries:
-  - url: {{REG:cmd-tag-install}}
-    ref: main
+		GlobalCfg: `apiVersion: agent-marketplace/v4
+sources: {team: {git: '{{REG:cmd-tag-install}}', ref: main}}
 `,
 		Steps: []Step{
 			// install --tag discovers all kinds with matching tags
@@ -3723,38 +3383,31 @@ registries:
 				{Name: "only-this-cmd", Description: "Only command", Command: "echo only"},
 			}},
 		},
-		GlobalCfg: `
-registries:
-  - url: {{REG:cmd-all-kind}}
-    ref: main
+		GlobalCfg: `apiVersion: agent-marketplace/v4
+sources: {team: {git: '{{REG:cmd-all-kind}}', ref: main}}
 `,
 		Steps: []Step{
 			{Args: []string{"install", "--all", "--kind", "command"}, MustPass: true,
 				OutContains: []string{"only-this-cmd"}},
 			{Args: []string{"sync"}, MustPass: true},
-			// install --all --kind command creates a default:true entry;
-			// verify the command materialized (skills may also appear due to default:true).
+			// install --all --kind command creates a all:true entry;
+			// verify the command materialized (skills may also appear due to all:true).
 			{Args: []string{"status"}, MustPass: true,
 				OutContains: []string{"only-this-cmd"}},
 		},
 	},
 	{
 		Name: "command/precedence_default_true_with_exclude",
-		Desc: "Given a default:true registry with an explicit command exclude, When sync is run, Then excluded commands are skipped while others materialize",
+		Desc: "Given an all:true registry with an explicit command exclude, When sync is run, Then excluded commands are skipped while others materialize",
 		Registries: []RegistryDef{
 			{Name: "cmd-default-exclude", Commands: []Command{
 				{Name: "keep-cmd", Description: "Should stay", Command: "echo keep"},
 				{Name: "drop-cmd", Description: "Should be excluded", Command: "echo drop"},
 			}},
 		},
-		GlobalCfg: `
-registries:
-  - url: {{REG:cmd-default-exclude}}
-    ref: main
-    default: true
-    commands:
-      exclude:
-        - drop-cmd
+		GlobalCfg: `apiVersion: agent-marketplace/v4
+sources: {team: {git: '{{REG:cmd-default-exclude}}', ref: main}}
+resources: {team: {all: true, exclude: [command/drop-cmd]}}
 `,
 		Steps: []Step{
 			{Args: []string{"sync"}, MustPass: true,
@@ -3770,14 +3423,9 @@ registries:
 				Skills:   []Skill{{Name: "deploy", Description: "Deploy skill"}},
 				Commands: []Command{{Name: "deploy", Description: "Deploy command", Command: "echo deploy"}}},
 		},
-		GlobalCfg: `
-registries:
-  - url: {{REG:cmd-skill-same-name}}
-    ref: main
-    skills:
-      - deploy
-    commands:
-      - deploy
+		GlobalCfg: `apiVersion: agent-marketplace/v4
+sources: {team: {git: '{{REG:cmd-skill-same-name}}', ref: main}}
+resources: {team: {include: [skill/deploy, command/deploy]}}
 `,
 		Steps: []Step{
 			{Args: []string{"sync"}, MustPass: true,
@@ -3797,13 +3445,9 @@ registries:
 				{Name: "present-skill"},
 			}},
 		},
-		GlobalCfg: `
-registries:
-  - url: {{REG:strict-reg}}
-    ref: main
-    skills:
-      - present-skill
-      - absent-skill
+		GlobalCfg: `apiVersion: agent-marketplace/v4
+sources: {team: {git: '{{REG:strict-reg}}', ref: main}}
+resources: {team: {include: [skill/present-skill, skill/absent-skill]}}
 `,
 		Steps: []Step{
 			{Args: []string{"sync", "--strict"}, AssertExitCode: intPtr(1),
@@ -3818,12 +3462,9 @@ registries:
 				{Name: "idem-skill"},
 			}},
 		},
-		GlobalCfg: `
-registries:
-  - url: {{REG:idem-reg}}
-    ref: main
-    skills:
-      - idem-skill
+		GlobalCfg: `apiVersion: agent-marketplace/v4
+sources: {team: {git: '{{REG:idem-reg}}', ref: main}}
+resources: {team: {include: [skill/idem-skill]}}
 `,
 		Steps: []Step{
 			{Args: []string{"sync"}, MustPass: true},
@@ -3850,10 +3491,8 @@ registries:
 				{Name: "visible-skill", Description: "A visible skill"},
 			}},
 		},
-		GlobalCfg: `
-registries:
-  - url: {{REG:list-reg}}
-    ref: main
+		GlobalCfg: `apiVersion: agent-marketplace/v4
+sources: {team: {git: '{{REG:list-reg}}', ref: main}}
 `,
 		Steps: []Step{
 			{Args: []string{"lock"}, MustPass: true},
@@ -3871,10 +3510,8 @@ registries:
 				{Name: "listed-cmd", Command: "echo hi"},
 			}},
 		},
-		GlobalCfg: `
-registries:
-  - url: {{REG:kind-list}}
-    ref: main
+		GlobalCfg: `apiVersion: agent-marketplace/v4
+sources: {team: {git: '{{REG:kind-list}}', ref: main}}
 `,
 		Steps: []Step{
 			{Args: []string{"lock"}, MustPass: true},
@@ -3891,12 +3528,9 @@ registries:
 				{Name: "doc-skill"},
 			}},
 		},
-		GlobalCfg: `
-registries:
-  - url: {{REG:doc-reg}}
-    ref: main
-    skills:
-      - doc-skill
+		GlobalCfg: `apiVersion: agent-marketplace/v4
+sources: {team: {git: '{{REG:doc-reg}}', ref: main}}
+resources: {team: {include: [skill/doc-skill]}}
 `,
 		Steps: []Step{
 			{Args: []string{"sync"}, MustPass: true},
@@ -3914,12 +3548,9 @@ registries:
 				{Name: "lifecycle-skill"},
 			}},
 		},
-		GlobalCfg: `
-registries:
-  - url: {{REG:lifecycle-reg}}
-    ref: main
-    skills:
-      - lifecycle-skill
+		GlobalCfg: `apiVersion: agent-marketplace/v4
+sources: {team: {git: '{{REG:lifecycle-reg}}', ref: main}}
+resources: {team: {include: [skill/lifecycle-skill]}}
 `,
 		Steps: []Step{
 			// Sync materializes
@@ -3949,24 +3580,17 @@ registries:
 				{Name: "local-skill"},
 			}},
 		},
-		GlobalCfg: `
-registries:
-  - url: {{REG:merge-reg}}
-    ref: main
-    skills:
-      - global-skill
+		GlobalCfg: `apiVersion: agent-marketplace/v4
+sources: {team: {git: '{{REG:merge-reg}}', ref: main}}
+resources: {team: {include: [skill/global-skill]}}
 `,
-		RepoCfg: `
-registries:
-  - url: {{REG:merge-reg}}
-    ref: main
-    skills:
-      - repo-skill
+		RepoCfg: `apiVersion: agent-marketplace/v4
+sources: {team: {git: '{{REG:merge-reg}}', ref: main}}
+resources: {team: {include: [skill/repo-skill]}}
 `,
-		LocalCfg: `
-skills:
-  include:
-    - local-skill
+		LocalCfg: `apiVersion: agent-marketplace/v4
+sources: {team: {git: '{{REG:merge-reg}}', ref: main}}
+resources: {team: {include: [skill/local-skill]}}
 `,
 		Steps: []Step{
 			{Args: []string{"sync"}, MustPass: true,
@@ -3985,12 +3609,10 @@ skills:
 				{Name: "blocked-skill"},
 			}},
 		},
-		GlobalCfg: `
+		GlobalCfg: `apiVersion: agent-marketplace/v4
 allowed_registries:
   - internal.company.com
-registries:
-  - url: {{REG:blocked-reg}}
-    ref: main
+sources: {team: {git: '{{REG:blocked-reg}}', ref: main}}
 `,
 		Steps: []Step{
 			{Args: []string{"sync"}, AssertExitCode: intPtr(1),
@@ -4009,9 +3631,9 @@ registries:
 				"collections/shared/COLLECTION.yaml": "name: shared\nversion: '1.0.0'\nresources:\n  - name: optional-member\n",
 			}},
 		},
-		GlobalCfg: "apiVersion: agent-marketplace/v3\nharnesses: [factory]\nregistries: []\n",
-		OrgCfg:    "apiVersion: agent-marketplace/v3\nharnesses: [factory]\nregistries:\n  - url: {{REG:mandatory-collection}}\n    ref: main\n    required: true\n",
-		RepoCfg:   "apiVersion: agent-marketplace/v3\nharnesses: [factory]\nregistries:\n  - url: {{REG:optional-collection}}\n    ref: main\ncollections:\n  include: [shared]\n",
+		GlobalCfg: "apiVersion: agent-marketplace/v4\nharnesses: [factory]\nsources: {}\n",
+		OrgCfg:    "apiVersion: agent-marketplace/v4\nharnesses: [factory]\nsources: {mandatory: {git: '{{REG:mandatory-collection}}', ref: main}}\nresources: {mandatory: {all: true, required: true}}\n",
+		RepoCfg:   "apiVersion: agent-marketplace/v4\nharnesses: [factory]\nsources: {optional: {git: '{{REG:optional-collection}}', ref: main}}\nresources: {optional: {include: [collection/shared]}}\n",
 		Steps: []Step{
 			{Args: []string{"sync"}, MustPass: true, FilesExist: []string{
 				"/root/.factory/skills/mandatory-alpha/SKILL.md",
@@ -4047,13 +3669,9 @@ resources:
 `,
 				}},
 		},
-		GlobalCfg: `
-registries:
-  - url: {{REG:collection-reg}}
-    ref: main
-collections:
-  include:
-    - security
+		GlobalCfg: `apiVersion: agent-marketplace/v4
+sources: {team: {git: '{{REG:collection-reg}}', ref: main}}
+resources: {team: {include: [collection/security]}}
 `,
 		Steps: []Step{
 			{Args: []string{"sync"}, MustPass: true,
@@ -4083,13 +3701,9 @@ resources:
 `,
 				}},
 		},
-		GlobalCfg: `
-registries:
-  - url: {{REG:same-name-reg}}
-    ref: main
-collections:
-  include:
-    - dev
+		GlobalCfg: `apiVersion: agent-marketplace/v4
+sources: {team: {git: '{{REG:same-name-reg}}', ref: main}}
+resources: {team: {include: [collection/dev]}}
 `,
 		Steps: []Step{
 			{Args: []string{"sync"}, MustPass: true,
@@ -4115,13 +3729,9 @@ resources:
 `,
 				}},
 		},
-		GlobalCfg: `
-registries:
-  - url: {{REG:bad-kind-reg}}
-    ref: main
-collections:
-  include:
-    - bad
+		GlobalCfg: `apiVersion: agent-marketplace/v4
+sources: {team: {git: '{{REG:bad-kind-reg}}', ref: main}}
+resources: {team: {include: [collection/bad]}}
 `,
 		Steps: []Step{
 			{Args: []string{"sync"}, AssertExitCode: intPtr(1),
@@ -4141,17 +3751,13 @@ collections:
 				{Name: "beta", Description: "Beta skill"},
 			}},
 		},
-		GlobalCfg: `
-registries:
-  - url: {{REG:first}}
-    ref: main
-    default: true
+		GlobalCfg: `apiVersion: agent-marketplace/v4
+sources: {personal: {git: '{{REG:first}}', ref: main}}
+resources: {personal: {all: true}}
 `,
-		LocalCfg: `
-registries:
-  - url: {{REG:second}}
-    ref: main
-    default: true
+		LocalCfg: `apiVersion: agent-marketplace/v4
+sources: {local: {git: '{{REG:second}}', ref: main}}
+resources: {local: {all: true}}
 `,
 		Steps: []Step{
 			{Args: []string{"sync"}, MustPass: true,
@@ -4176,20 +3782,14 @@ registries:
 				{Name: "dropped", Description: "Dropped skill"},
 			}},
 		},
-		GlobalCfg: ``,
-		RepoCfg: `
-registries:
-  - url: {{REG:exclude-reg}}
-    ref: main
-    default: true
+		GlobalCfg: "apiVersion: agent-marketplace/v4\nharnesses: [factory]\n",
+		RepoCfg: `apiVersion: agent-marketplace/v4
+sources: {team: {git: '{{REG:exclude-reg}}', ref: main}}
+resources: {team: {all: true}}
 `,
-		LocalCfg: `
-registries:
-  - url: {{REG:exclude-reg}}
-    ref: main
-    skills:
-      exclude:
-        - dropped
+		LocalCfg: `apiVersion: agent-marketplace/v4
+sources: {team: {git: '{{REG:exclude-reg}}', ref: main}}
+resources: {team: {exclude: [skill/dropped]}}
 `,
 		Steps: []Step{
 			{Args: []string{"sync"}, MustPass: true,
@@ -4216,27 +3816,14 @@ registries:
 				"hooks/hooks.json": `{"hooks":{"PreToolUse":[{"type":"command","command":"echo repo-hook","matcher":"Bash"}]}}`,
 			}},
 		},
-		GlobalCfg: `
+		GlobalCfg: `apiVersion: agent-marketplace/v4
 harnesses:
   - codex
-registries: []
+sources: {}
 `,
-		RepoCfg: `
-registries:
-  - url: {{REG:codex-repo}}
-    ref: main
-    source_harness: claude
-    skills:
-      - repo-skill
-    commands:
-      - repo-command
-    subagents:
-      - repo-agent
-    hooks:
-      - PreToolUse-command
-    mcp:
-      - zeta-server
-      - alpha-server
+		RepoCfg: `apiVersion: agent-marketplace/v4
+sources: {team: {git: '{{REG:codex-repo}}', ref: main, source_harness: claude}}
+resources: {team: {include: [skill/repo-skill, command/repo-command, subagent/repo-agent, hook/PreToolUse-command, mcp/zeta-server, mcp/alpha-server]}}
 `,
 		Steps: []Step{
 			{Args: []string{"sync"}, MustPass: true,
@@ -4283,20 +3870,14 @@ registries:
 				"hooks/hooks.json": `{"hooks":{"PreToolUse":[{"type":"command","command":"echo generated-hook","matcher":"Bash"}]}}`,
 			}},
 		},
-		GlobalCfg: `
+		GlobalCfg: `apiVersion: agent-marketplace/v4
 harnesses:
   - codex
-registries: []
+sources: {}
 `,
-		RepoCfg: `
-registries:
-  - url: {{REG:codex-collisions}}
-    ref: main
-    source_harness: claude
-    hooks:
-      - PreToolUse-command
-    mcp:
-      - collision-server
+		RepoCfg: `apiVersion: agent-marketplace/v4
+sources: {team: {git: '{{REG:codex-collisions}}', ref: main, source_harness: claude}}
+resources: {team: {include: [hook/PreToolUse-command, mcp/collision-server]}}
 `,
 		Steps: []Step{
 			{Action: ActionWriteFile, Path: "/workspace/.codex/hooks.json",
@@ -4337,25 +3918,12 @@ registries:
 				"hooks/hooks.json": `{"hooks":{"PreToolUse":[{"type":"command","command":"echo machine-hook","matcher":"Bash"}]}}`,
 			}},
 		},
-		GlobalCfg: `
+		GlobalCfg: `apiVersion: agent-marketplace/v4
 harnesses:
   - codex
   - factory
-registries:
-  - url: {{REG:codex-machine}}
-    ref: main
-    source_harness: claude
-    harnesses:
-      - codex
-      - factory
-    skills:
-      - machine-skill
-    subagents:
-      - machine-agent
-    hooks:
-      - PreToolUse-command
-    mcp:
-      - machine-mcp
+sources: {team: {git: '{{REG:codex-machine}}', ref: main, source_harness: claude}}
+resources: {team: {harnesses: [codex, factory], include: [skill/machine-skill, subagent/machine-agent, hook/PreToolUse-command, mcp/machine-mcp]}}
 `,
 		Steps: []Step{
 			{Args: []string{"sync"}, MustPass: true,
@@ -4386,11 +3954,11 @@ registries:
 					"/root/.factory/skills/machine-skill/SKILL.md",
 					"/root/.local/state/agent-marketplace",
 				}},
-			{Action: ActionWriteGlobalConfig, Body: `
+			{Action: ActionWriteGlobalConfig, Body: `apiVersion: agent-marketplace/v4
 harnesses:
   - codex
   - factory
-registries: []
+sources: {}
 `},
 			{Args: []string{"lock"}, MustPass: true},
 			{Args: []string{"sync", "--check"}, AssertExitCode: intPtr(1),
@@ -4421,25 +3989,12 @@ registries: []
 					"/root/.factory/hooks/hooks.json": "echo machine-hook",
 					"/root/.factory/mcp.json":         "machine-mcp-bin",
 				}},
-			{Action: ActionWriteGlobalConfig, Body: `
+			{Action: ActionWriteGlobalConfig, Body: `apiVersion: agent-marketplace/v4
 harnesses:
   - codex
   - factory
-registries:
-  - url: {{REG:codex-machine}}
-    ref: main
-    source_harness: claude
-    harnesses:
-      - codex
-      - factory
-    skills:
-      - machine-skill
-    subagents:
-      - machine-agent
-    hooks:
-      - PreToolUse-command
-    mcp:
-      - machine-mcp
+sources: {team: {git: '{{REG:codex-machine}}', ref: main, source_harness: claude}}
+resources: {team: {harnesses: [codex, factory], include: [skill/machine-skill, subagent/machine-agent, hook/PreToolUse-command, mcp/machine-mcp]}}
 `},
 			{Args: []string{"sync"}, MustPass: true,
 				FilesExist: []string{
@@ -4515,7 +4070,7 @@ registries:
 		Name:       "deinit/manifest_failure_preserves_config_and_output",
 		Desc:       "Given installed output and an invalid manifest, When deinit attempts config purge, Then it reports failure and preserves state until the manifest is repaired",
 		Registries: []RegistryDef{{Name: "deinit-invalid-manifest", Skills: []Skill{{Name: "teardown-skill", Description: "Deinit preservation"}}}},
-		RepoCfg:    "registries:\n  - url: {{REG:deinit-invalid-manifest}}\n    ref: main\n    skills:\n      - teardown-skill\n",
+		RepoCfg:    "apiVersion: agent-marketplace/v4\nsources: {team: {git: '{{REG:deinit-invalid-manifest}}', ref: main}}\nresources: {team: {include: [skill/teardown-skill]}}\n",
 		Steps: []Step{
 			{Args: []string{"sync"}, MustPass: true, FilesExist: []string{"/workspace/.factory/skills/teardown-skill/SKILL.md", "/workspace/.agents/config.yaml", "/workspace/.agents/lock.yaml"}},
 			{Action: ActionWriteFile, Path: "/workspace/.agents/materialization-manifest.yaml", Body: "version: 99\nentries: []\n"},
@@ -4532,19 +4087,13 @@ registries:
 				{Name: "teardown-skill", Description: "Skill for deinit test"},
 			}},
 		},
-		GlobalCfg: `
-registries:
-  - url: {{REG:deinit-reg}}
-    ref: main
-    skills:
-      - teardown-skill
+		GlobalCfg: `apiVersion: agent-marketplace/v4
+sources: {team: {git: '{{REG:deinit-reg}}', ref: main}}
+resources: {team: {include: [skill/teardown-skill]}}
 `,
-		RepoCfg: `
-registries:
-  - url: {{REG:deinit-reg}}
-    ref: main
-    skills:
-      - teardown-skill
+		RepoCfg: `apiVersion: agent-marketplace/v4
+sources: {team: {git: '{{REG:deinit-reg}}', ref: main}}
+resources: {team: {include: [skill/teardown-skill]}}
 `,
 		Steps: []Step{
 			{Args: []string{"sync"}, MustPass: true,
@@ -4562,12 +4111,9 @@ registries:
 				{Name: "cached-skill", Description: "Skill to populate cache"},
 			}},
 		},
-		GlobalCfg: `
-registries:
-  - url: {{REG:deinit-cache-reg}}
-    ref: main
-    skills:
-      - cached-skill
+		GlobalCfg: `apiVersion: agent-marketplace/v4
+sources: {team: {git: '{{REG:deinit-cache-reg}}', ref: main}}
+resources: {team: {include: [skill/cached-skill]}}
 `,
 		Steps: []Step{
 			{Args: []string{"sync"}, MustPass: true},
@@ -4584,12 +4130,9 @@ registries:
 				{Name: "dry-skill", Description: "Skill for dry-run test"},
 			}},
 		},
-		RepoCfg: `
-registries:
-  - url: {{REG:deinit-dry-reg}}
-    ref: main
-    skills:
-      - dry-skill
+		RepoCfg: `apiVersion: agent-marketplace/v4
+sources: {team: {git: '{{REG:deinit-dry-reg}}', ref: main}}
+resources: {team: {include: [skill/dry-skill]}}
 `,
 		Steps: []Step{
 			{Args: []string{"sync"}, MustPass: true,
@@ -4607,12 +4150,9 @@ registries:
 				{Name: "purge-skill", Description: "Skill for purge test"},
 			}},
 		},
-		RepoCfg: `
-registries:
-  - url: {{REG:deinit-purge-reg}}
-    ref: main
-    skills:
-      - purge-skill
+		RepoCfg: `apiVersion: agent-marketplace/v4
+sources: {team: {git: '{{REG:deinit-purge-reg}}', ref: main}}
+resources: {team: {include: [skill/purge-skill]}}
 `,
 		Steps: []Step{
 			{Args: []string{"sync"}, MustPass: true,
@@ -4638,24 +4178,13 @@ registries:
 		// harnesses is required on the global layer and is inherited by the
 		// project layer; the registry itself lives in the repo config so its
 		// Source is repo scope and materialization targets <repo>/.devin.
-		GlobalCfg: `
+		GlobalCfg: `apiVersion: agent-marketplace/v4
 harnesses:
   - devin
 `,
-		RepoCfg: `
-registries:
-  - url: {{REG:devin-reg}}
-    ref: main
-    skills:
-      - devin-skill
-    commands:
-      - devin-command
-    subagents:
-      - devin-agent
-    hooks:
-      - PostToolUse-command
-    mcp:
-      - devin-mcp
+		RepoCfg: `apiVersion: agent-marketplace/v4
+sources: {team: {git: '{{REG:devin-reg}}', ref: main}}
+resources: {team: {include: [skill/devin-skill, command/devin-command, subagent/devin-agent, hook/PostToolUse-command, mcp/devin-mcp]}}
 `,
 		Steps: []Step{
 			{Action: ActionWriteFile, Path: "/workspace/.devin/hooks.v1.json",
@@ -4684,19 +4213,19 @@ registries:
 					// The handwritten entry survives reconciliation.
 					"/workspace/.devin/mcp_config.json": "user-owned-binary",
 				}},
-			{Action: ActionWriteLocalConfig, Body: "materialization:\n  mode: file\n",
+			{Action: ActionWriteLocalConfig, Body: "apiVersion: agent-marketplace/v4\nmaterialization:\n  mode: file\n",
 				Args: []string{"sync"}, MustPass: true,
 				RegularFiles:   []string{"/workspace/.devin/skills/devin-skill/SKILL.md", "/workspace/.devin/skills/devin-command/SKILL.md", "/workspace/.devin/agents/devin-agent.md"},
 				PathsUnchanged: []string{"/workspace/.devin/mcp_config.json", "/workspace/.devin/hooks.v1.json"}},
 			{Args: []string{"sync", "--check"}, MustPass: true,
 				PathsUnchanged: []string{"/workspace/.devin"}},
-			{Action: ActionWriteLocalConfig, Body: "materialization:\n  mode: symlink\n",
+			{Action: ActionWriteLocalConfig, Body: "apiVersion: agent-marketplace/v4\nmaterialization:\n  mode: symlink\n",
 				Args: []string{"sync"}, MustPass: true,
 				Symlinks:       []string{"/workspace/.devin/skills/devin-skill", "/workspace/.devin/skills/devin-command", "/workspace/.devin/agents/devin-agent.md"},
 				PathsUnchanged: []string{"/workspace/.devin/mcp_config.json", "/workspace/.devin/hooks.v1.json"}},
-			{Action: ActionWriteLocalConfig, Body: "materialization:\n  mode: file\n",
+			{Action: ActionWriteLocalConfig, Body: "apiVersion: agent-marketplace/v4\nmaterialization:\n  mode: file\n",
 				Args: []string{"sync"}, MustPass: true},
-			{Action: ActionWriteRepoConfig, Body: "registries: []\n",
+			{Action: ActionWriteRepoConfig, Body: "apiVersion: agent-marketplace/v4\nsources: {}\n",
 				Args: []string{"sync"}, MustPass: true,
 				FilesAbsent: []string{"/workspace/.devin/skills/devin-skill", "/workspace/.devin/skills/devin-command", "/workspace/.devin/agents/devin-agent.md"},
 				FileContains: map[string]string{
@@ -4732,18 +4261,13 @@ registries:
 				},
 			},
 		},
-		GlobalCfg: `
+		GlobalCfg: `apiVersion: agent-marketplace/v4
 harnesses:
   - devin
 `,
-		RepoCfg: `
-registries:
-  - url: {{REG:devin-scoped-reg}}
-    ref: main
-    skills:
-      - openspec-apply-change
-    subagents:
-      - scoped-agent
+		RepoCfg: `apiVersion: agent-marketplace/v4
+sources: {team: {git: '{{REG:devin-scoped-reg}}', ref: main}}
+resources: {team: {include: [skill/openspec-apply-change, subagent/scoped-agent]}}
 `,
 		Steps: []Step{
 			{Args: []string{"sync"}, MustPass: true,
@@ -4790,22 +4314,13 @@ registries:
 		},
 		// A registry declared in ~/.agents/config.yaml carries a machine-scope
 		// Source, which routes materialization to the target's machine root.
-		GlobalCfg: `
+		GlobalCfg: `apiVersion: agent-marketplace/v4
 harnesses:
   - devin
 materialization:
   mode: file
-registries:
-  - url: {{REG:devin-machine-reg}}
-    ref: main
-    skills:
-      - machine-skill
-    commands:
-      - machine-command
-    subagents:
-      - machine-agent
-    mcp:
-      - machine-mcp
+sources: {team: {git: '{{REG:devin-machine-reg}}', ref: main}}
+resources: {team: {include: [skill/machine-skill, command/machine-command, subagent/machine-agent, mcp/machine-mcp]}}
 `,
 		Steps: []Step{
 			{Args: []string{"sync"}, MustPass: true,
@@ -4837,16 +4352,13 @@ registries:
 		// ~/.config/devin, which would leave the handwritten
 		// /workspace/.devin/mcp_config.json below untouched and every assertion
 		// on it vacuous.
-		GlobalCfg: `
+		GlobalCfg: `apiVersion: agent-marketplace/v4
 harnesses:
   - devin
 `,
-		RepoCfg: `
-registries:
-  - url: {{REG:devin-doctor-reg}}
-    ref: main
-    mcp:
-      - devin-doctor-mcp
+		RepoCfg: `apiVersion: agent-marketplace/v4
+sources: {team: {git: '{{REG:devin-doctor-reg}}', ref: main}}
+resources: {team: {include: [mcp/devin-doctor-mcp]}}
 `,
 		Steps: []Step{
 			{Action: ActionWriteFile, Path: "/workspace/.devin/mcp_config.json",
@@ -4905,16 +4417,13 @@ registries:
 		// The registry must be repo-scope so materialization targets
 		// /workspace/.devin, which is where the hand-written aggregate below
 		// lives; harnesses is still required on the global layer.
-		GlobalCfg: `
+		GlobalCfg: `apiVersion: agent-marketplace/v4
 harnesses:
   - devin
 `,
-		RepoCfg: `
-registries:
-  - url: {{REG:devin-conflict-reg}}
-    ref: main
-    mcp:
-      - genai-atlassian
+		RepoCfg: `apiVersion: agent-marketplace/v4
+sources: {team: {git: '{{REG:devin-conflict-reg}}', ref: main}}
+resources: {team: {include: [mcp/genai-atlassian]}}
 `,
 		Steps: []Step{
 			// The tester's exact starting state: same KEY, different VALUE, and
@@ -4976,7 +4485,7 @@ registries:
 	{
 		Name: "init/is_idempotent",
 		Desc: "Given an existing user personal config, When init is run again, Then it exits 0 and does not modify the file",
-		GlobalCfg: `
+		GlobalCfg: `apiVersion: agent-marketplace/v4
 harnesses:
   - factory
 `,
@@ -4996,7 +4505,7 @@ harnesses:
 	{
 		Name: "telemetry/commands",
 		Desc: "Given a minimal user personal config, When the telemetry control commands are exercised, Then status, enable, preview, disable, and purge behave as expected",
-		GlobalCfg: `
+		GlobalCfg: `apiVersion: agent-marketplace/v4
 harnesses:
   - factory
 `,
@@ -5023,7 +4532,7 @@ harnesses:
 		Registries: []RegistryDef{{Name: "bare-bundle-mcp", Skills: []Skill{{Name: "demo"}}, Commands: []Command{{Name: "hi"}}, Files: map[string]string{
 			"mcp.json": (MCPServer{Name: "probe", Command: "npx", Args: []string{"-y", "x"}}).MCPFile(),
 		}}},
-		RepoCfg: "apiVersion: agent-marketplace/v2\nharnesses: [factory]\nregistries:\n  - url: {{REG:bare-bundle-mcp}}\n    ref: main\n    default: true\n",
+		RepoCfg: "apiVersion: agent-marketplace/v4\nharnesses: [factory]\nsources: {team: {git: '{{REG:bare-bundle-mcp}}', ref: main}}\nresources: {team: {all: true}}\n",
 		Steps: []Step{
 			{Args: []string{"lock"}, MustPass: true},
 			{Args: []string{"list", "--kind", "skill"}, MustPass: true, OutContains: []string{"demo"}},
@@ -5045,7 +4554,7 @@ harnesses:
 			"group/.mcp.json":                   `{"mcpServers":{"foreign":{"command":"npx"}}}`,
 			"group/child/skills/demo/SKILL.md":  "---\nname: demo\ndescription: Demo\n---\nDemo\n",
 		}}},
-		RepoCfg: "apiVersion: agent-marketplace/v2\nharnesses: [factory]\nregistries:\n  - url: {{REG:unconsumed-container}}\n    ref: main\n    default: true\n",
+		RepoCfg: "apiVersion: agent-marketplace/v4\nharnesses: [factory]\nsources: {team: {git: '{{REG:unconsumed-container}}', ref: main}}\nresources: {team: {all: true}}\n",
 		Steps: []Step{
 			{Args: []string{"lock"}, MustPass: true},
 			{Args: []string{"list", "--kind", "skill"}, MustPass: true, OutContains: []string{"demo", "ingest.factory.unconsumed-config"}},
@@ -5063,7 +4572,7 @@ harnesses:
 			"mcp.json":                   `{"mcpServers":{"foreign":{"command":"npx"}}}`,
 			"gemini-extension.json":      `{"name":"gemini","mcpServers":{"foreign-gemini":{"command":"npx"}}}`,
 		}}},
-		RepoCfg: "apiVersion: agent-marketplace/v2\nharnesses: [factory]\nregistries:\n  - url: {{REG:unconsumed-config}}\n    ref: main\n    source_harness: claude\n    default: true\n",
+		RepoCfg: "apiVersion: agent-marketplace/v4\nharnesses: [factory]\nsources: {team: {git: '{{REG:unconsumed-config}}', ref: main, source_harness: claude}}\nresources: {team: {all: true}}\n",
 		Steps: []Step{
 			{Args: []string{"lock"}, MustPass: true},
 			{Args: []string{"list"}, MustPass: true, OutContains: []string{"ingest.claude.unconsumed-config", "mcp.json", "gemini-extension.json", "For Claude plugins, rename"}},
@@ -5138,10 +4647,10 @@ harnesses:
 		},
 	},
 	{
-		Name:       "v2_user/telemetry_preferences_and_backup",
-		Desc:       "Given a legacy v2 user config that selects a Git skill, When telemetry is managed and a backup is created, listed, and restored, Then each succeeds, the config stays v2, and restore recovers a changed user-owned skill file",
+		Name:       "v4_user/populated_telemetry_preferences_and_backup",
+		Desc:       "Given a v4 user config that selects a Git skill, When telemetry is managed and a backup is created, listed, and restored, Then each succeeds, the config stays v4, and restore recovers a changed user-owned skill file",
 		Registries: []RegistryDef{{Name: "v2-user-backup", Skills: []Skill{{Name: "review", Description: "Review changes"}}}},
-		GlobalCfg:  "apiVersion: agent-marketplace/v2\nharnesses: [factory]\nregistries:\n  - url: {{REG:v2-user-backup}}\n    ref: main\n    skills:\n      include: [review]\n",
+		GlobalCfg:  "apiVersion: agent-marketplace/v4\nharnesses: [factory]\nsources: {team: {git: '{{REG:v2-user-backup}}', ref: main}}\nresources: {team: {include: [skill/review]}}\n",
 		Steps: []Step{
 			{Args: []string{"sync"}, MustPass: true, FilesExist: []string{"/root/.factory/skills/review/SKILL.md"}},
 			{Args: []string{"telemetry"}, MustPass: true, OutContains: []string{"Usage:"}},
@@ -5150,7 +4659,7 @@ harnesses:
 			{Args: []string{"telemetry", "preview", "--level", "basic"}, MustPass: true},
 			{Args: []string{"telemetry", "reset-id"}, MustPass: true},
 			{Args: []string{"telemetry", "purge"}, MustPass: true},
-			{Args: []string{"telemetry", "disable"}, MustPass: true, FileContains: map[string]string{"/root/.agents/config.yaml": "apiVersion: agent-marketplace/v2"}, FileNotContains: map[string]string{"/root/.agents/config.yaml": "level: basic"}},
+			{Args: []string{"telemetry", "disable"}, MustPass: true, FileContains: map[string]string{"/root/.agents/config.yaml": "apiVersion: agent-marketplace/v4"}, FileNotContains: map[string]string{"/root/.agents/config.yaml": "level: basic"}},
 			{Args: []string{"backup"}, MustPass: true, OutContains: []string{"Usage:"}},
 			{Action: ActionWriteFile, Path: "/root/.factory/skills/handwritten/SKILL.md", Body: "backed up\n", Args: []string{"backup", "create"}, MustPass: true, OutContains: []string{"Backup created for: factory"}},
 			{Args: []string{"backup", "list"}, MustPass: true, OutContains: []string{"factory (1)"}},
@@ -5160,7 +4669,7 @@ harnesses:
 	},
 	{
 		Name:       "v4_repo/install_selectors_list_and_maintenance_flags",
-		Desc:       "Given a v4 user config and a v4 repository config that declares a Git source with nothing selected, When listing the registry ad hoc and installing by tag, by kind with --all and --registry, and by name with --kind and --verbose, Then every selection lands in the v4 repository config, and the sync, migrate, and deinit flags succeed against it",
+		Desc:       "Given a v4 user config and a v4 repository config that declares a Git source with nothing selected, When listing the registry ad hoc and installing by tag, by kind with --all and --registry, and by name with --kind and --verbose, Then every selection lands in the v4 repository config, and the sync and deinit flags succeed against it",
 		Registries: []RegistryDef{{Name: "v4-selectors", Skills: []Skill{{Name: "review", Description: "Review changes", Tags: []string{"k8s"}}, {Name: "deploy", Description: "Deploy"}}, Commands: []Command{{Name: "cmd-one", Description: "Command one", Command: "echo one"}}}},
 		GlobalCfg:  "apiVersion: agent-marketplace/v4\nharnesses: [factory]\n",
 		RepoCfg:    "apiVersion: agent-marketplace/v4\nsources:\n  tools: {git: '{{REG:v4-selectors}}', ref: main}\n",
@@ -5172,36 +4681,34 @@ harnesses:
 			{Args: []string{"list", "--kind", "command"}, MustPass: true, OutContains: []string{"cmd-one"}, OutNotContains: []string{"deploy"}},
 			{Args: []string{"sync", "--verbose", "--no-backup"}, MustPass: true},
 			{Args: []string{"sync", "--check"}, MustPass: true, FileContains: map[string]string{"/workspace/.agents/config.yaml": "apiVersion: agent-marketplace/v4"}, FileNotContains: map[string]string{"/workspace/.agents/config.yaml": "registries:"}},
-			{Args: []string{"migrate", "--dry-run", "--to", "v4", "--scope", "user"}, MustPass: true, PathsUnchanged: []string{"/root/.agents/config.yaml"}},
-			{Args: []string{"migrate", "--harnesses", "factory", "--scope", "user"}, MustPass: true, PathsUnchanged: []string{"/root/.agents/config.yaml"}},
 			{Args: []string{"deinit", "--scope", "repo", "--dry-run"}, MustPass: true, OutContains: []string{"Would remove"}, FilesExist: []string{"/workspace/.factory/skills/review/SKILL.md"}},
 			{Args: []string{"deinit", "--scope", "repo"}, MustPass: true, FilesAbsent: []string{"/workspace/.factory/skills/review"}, FilesExist: []string{"/workspace/.agents/config.yaml"}},
 		},
 	},
 	{
-		Name: "v2_repo/adhoc_path_and_registry_flags",
-		Desc: "Given a legacy v2 user and repository config, When installing everything from one configured registry and installing, listing, and removing a resource from an ad hoc registry path, Then each step succeeds and the repository config stays v2",
+		Name: "v4_repo/adhoc_path_and_registry_flags",
+		Desc: "Given a v4 user and repository config, When installing everything from one configured registry and installing, listing, and removing a resource from an ad hoc registry path, Then each step succeeds and the repository config stays v4",
 		Registries: []RegistryDef{
 			{Name: "v2-flags", Skills: []Skill{{Name: "review", Description: "Review changes"}, {Name: "deploy", Description: "Deploy"}}},
 			{Name: "v2-adhoc", Skills: []Skill{{Name: "adhoc-skill", Description: "Ad hoc skill"}}},
 		},
-		GlobalCfg: "apiVersion: agent-marketplace/v2\nharnesses: [factory]\nregistries: []\n",
-		RepoCfg:   "apiVersion: agent-marketplace/v2\nregistries:\n  - url: {{REG:v2-flags}}\n    ref: main\n",
+		GlobalCfg: "apiVersion: agent-marketplace/v4\nharnesses: [factory]\nsources: {}\n",
+		RepoCfg:   "apiVersion: agent-marketplace/v4\nsources: {team: {git: '{{REG:v2-flags}}', ref: main}}\n",
 		Steps: []Step{
 			{Args: []string{"install", "--all", "--registry", "{{REG:v2-flags}}"}, MustPass: true, FilesExist: []string{"/workspace/.factory/skills/review/SKILL.md", "/workspace/.factory/skills/deploy/SKILL.md"}},
 			{Args: []string{"list", "--from", "{{REG:v2-adhoc}}", "--ref", "main", "--path", "skills"}, MustPass: true, OutContains: []string{"adhoc-skill"}},
 			{Args: []string{"install", "adhoc-skill", "--from", "{{REG:v2-adhoc}}", "--ref", "main", "--path", "skills"}, MustPass: true, FilesExist: []string{"/workspace/.factory/skills/adhoc-skill/SKILL.md"}, FileContains: map[string]string{"/workspace/.agents/config.yaml": "path: skills"}},
 			{Args: []string{"remove", "adhoc-skill", "--from", "{{REG:v2-adhoc}}", "--ref", "main", "--path", "skills"}, MustPass: true, FilesAbsent: []string{"/workspace/.factory/skills/adhoc-skill"}},
 			{Args: []string{"sync", "--verbose"}, MustPass: true, FilesAbsent: []string{"/workspace/.factory/skills/adhoc-skill"}, FilesExist: []string{"/workspace/.factory/skills/review/SKILL.md"}},
-			{Args: []string{"sync", "--check"}, MustPass: true, FileContains: map[string]string{"/workspace/.agents/config.yaml": "apiVersion: agent-marketplace/v2"}},
+			{Args: []string{"sync", "--check"}, MustPass: true, FileContains: map[string]string{"/workspace/.agents/config.yaml": "apiVersion: agent-marketplace/v4"}},
 		},
 	},
 	{
-		Name:       "v2_repo/prune_stale_strict",
-		Desc:       "Given a legacy v2 repository config that selects a skill the registry no longer has, When syncing with --prune-stale --strict --verbose, Then the stale selection is pruned from the config and the remaining skill materializes",
+		Name:       "v4_repo/populated_prune_stale_strict",
+		Desc:       "Given a v4 repository config that selects a skill the registry no longer has, When syncing with --prune-stale --strict --verbose, Then the stale selection is pruned from the config and the remaining skill materializes",
 		Registries: []RegistryDef{{Name: "v2-prune", Skills: []Skill{{Name: "review", Description: "Review changes"}}}},
-		GlobalCfg:  "apiVersion: agent-marketplace/v2\nharnesses: [factory]\nregistries: []\n",
-		RepoCfg:    "apiVersion: agent-marketplace/v2\nregistries:\n  - url: {{REG:v2-prune}}\n    ref: main\n    skills: [review, deleted-skill]\n",
+		GlobalCfg:  "apiVersion: agent-marketplace/v4\nharnesses: [factory]\nsources: {}\n",
+		RepoCfg:    "apiVersion: agent-marketplace/v4\nsources: {team: {git: '{{REG:v2-prune}}', ref: main}}\nresources: {team: {include: [skill/review, skill/deleted-skill]}}\n",
 		Steps: []Step{
 			{Args: []string{"sync", "--prune-stale", "--strict", "--verbose"}, MustPass: true, OutContains: []string{`pruned stale skill "deleted-skill"`}, FilesExist: []string{"/workspace/.factory/skills/review/SKILL.md"}, FileContains: map[string]string{"/workspace/.agents/config.yaml": "review"}, FileNotContains: map[string]string{"/workspace/.agents/config.yaml": "deleted-skill"}},
 			{Args: []string{"sync", "--check"}, MustPass: true},
@@ -5222,7 +4729,7 @@ harnesses:
 		Name:       "update/verbose_registry_summary",
 		Desc:       "Given an unchanged Git registry, When updating with verbose output, Then the CLI reports the configured entry without claiming its revision changed",
 		Registries: []RegistryDef{{Name: "update-output", Skills: []Skill{{Name: "review"}}}},
-		RepoCfg:    "apiVersion: agent-marketplace/v2\nharnesses: [factory]\nregistries:\n  - url: {{REG:update-output}}\n    ref: main\n    skills: [review]\n",
+		RepoCfg:    "apiVersion: agent-marketplace/v4\nharnesses: [factory]\nsources: {team: {git: '{{REG:update-output}}', ref: main}}\nresources: {team: {include: [skill/review]}}\n",
 		Steps: []Step{
 			{Args: []string{"sync"}, MustPass: true, Symlinks: []string{"/workspace/.factory/skills/review"}},
 			{Args: []string{"update", "--verbose"}, MustPass: true, OutContains: []string{"Configured registry entries: 1", "Marketplace pins updated: 0"}, OutNotContains: []string{"Organization-managed Marketplace pins:"}, Symlinks: []string{"/workspace/.factory/skills/review"}},
@@ -5421,10 +4928,14 @@ func TestE2E(t *testing.T) {
 				urls[reg.Name] = env.CreateBareRepo(reg.Name, reg.FilesMap())
 			}
 
-			// Write initial config layers (placeholders resolved).
-			// Global config is always written — even an empty value triggers
-			// auto-injection of apiVersion, harnesses, and allowed_registries.
-			env.WriteGlobalConfig(resolvePlaceholders(tc.GlobalCfg, urls))
+			// Write authored config layers after resolving fixture URLs.
+			// Cases that omit the user fixture get an explicit v4 skeleton; no
+			// authored legacy installation text is translated by setup.
+			globalCfg := resolvePlaceholders(tc.GlobalCfg, urls)
+			if globalCfg == "" {
+				globalCfg = "apiVersion: agent-marketplace/v4\nharnesses: [factory]\n"
+			}
+			env.WriteGlobalConfig(globalCfg)
 			if tc.RepoCfg != "" {
 				env.WriteRepoConfig(resolvePlaceholders(tc.RepoCfg, urls))
 			}

@@ -23,7 +23,7 @@ func TestWindsurfLegacyHookLockRetainedUntilUpgrade(t *testing.T) {
 	writeFile(t, filepath.Join(working, ".windsurf", "hooks.json"), `{"hooks":{"pre_run_command":[{"command":"echo first"},{"command":"echo second"}]}}`)
 	commitAndPushAll(t, working, "add source hooks")
 	repo := filepath.Join(t.TempDir(), "repo")
-	writeConfig(t, filepath.Join(repo, ".agents", "config.yaml"), "harnesses: [windsurf]\nregistries:\n  - url: "+origin+"\n    ref: main\n    source_harness: windsurf\n    default: true\n")
+	writeConfig(t, filepath.Join(repo, ".agents", "config.yaml"), "apiVersion: agent-marketplace/v4\nharnesses: [windsurf]\nsources:\n  origin: {git: file://"+origin+", ref: main, source_harness: windsurf}\nresources:\n  origin: {all: true}\n")
 	withWorkingDir(t, repo)
 	if out, err := executeCommand("lock"); err != nil {
 		t.Fatalf("initial lock: %v\n%s", err, out)

@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"gopkg.in/yaml.v3"
 )
 
 func prepareRequestedRefRegistry(t *testing.T, env *Env) string {
@@ -34,7 +36,7 @@ func prepareRequestedRefRegistry(t *testing.T, env *Env) string {
 }
 
 func requestedRefConfig(regURL string) string {
-	return "apiVersion: agent-marketplace/v2\nharnesses: [factory]\nregistries:\n  - url: " + regURL + "\n    ref: alternate\n  - url: " + regURL + "\n    ref: main\n"
+	return "apiVersion: agent-marketplace/v4\nharnesses: [factory]\nsources:\n  alternate: {git: '" + regURL + "', ref: alternate}\n  main: {git: '" + regURL + "', ref: main}\n"
 }
 
 func TestInstallRequestedRef(t *testing.T) {
@@ -42,7 +44,7 @@ func TestInstallRequestedRef(t *testing.T) {
 		env := newEnv(t)
 		env.InitGitRepo()
 		regURL := prepareRequestedRefRegistry(t, env)
-		env.WriteGlobalConfig("harnesses: [factory]\nregistries: []")
+		env.WriteGlobalConfig("harnesses: [factory]\n")
 		env.WriteRepoConfig(requestedRefConfig(regURL))
 		result := env.RunAM("install", "--from", regURL, "--ref", "main", "--kind", "mcp", "--scope", "repo")
 		if result.ExitCode != 0 {
@@ -53,7 +55,17 @@ func TestInstallRequestedRef(t *testing.T) {
 		if !strings.Contains(generated, "MAIN") || strings.Contains(generated, "ALTERNATE") {
 			t.Fatalf("generated MCP = %s", generated)
 		}
-		if strings.Contains(config, "ref: alternate\n    default: true") {
+		var selection struct {
+			Resources map[string]struct {
+				All     bool     `yaml:"all"`
+				Include []string `yaml:"include"`
+			} `yaml:"resources"`
+		}
+		if err := yaml.Unmarshal([]byte(config), &selection); err != nil {
+			t.Fatal(err)
+		}
+		alternate := selection.Resources["alternate"]
+		if alternate.All || len(alternate.Include) != 0 {
 			t.Fatalf("requested install promoted alternate ref: %s", config)
 		}
 		if strings.Count(config, "ref: main") != 1 || strings.Count(config, "ref: alternate") != 1 {
@@ -65,7 +77,7 @@ func TestInstallRequestedRef(t *testing.T) {
 		env := newEnv(t)
 		env.InitGitRepo()
 		regURL := prepareRequestedRefRegistry(t, env)
-		env.WriteGlobalConfig("harnesses: [factory]\nregistries: []")
+		env.WriteGlobalConfig("harnesses: [factory]\n")
 		env.WriteRepoConfig(requestedRefConfig(regURL))
 		result := env.RunAM("install", "main-server", "--from", regURL, "--ref", "main", "--kind", "mcp", "--scope", "repo")
 		if result.ExitCode != 0 {

@@ -57,6 +57,17 @@ edits only its own entries in them and leaves the rest of the file alone.
 
 ## Installation
 
+### Before upgrading an existing installation
+
+The launch CLI supports only consumer v4 configuration. Before replacing an
+older binary, [convert every writable root and its include tree with an older
+released migrator](https://github.com/Adyen/agent-marketplace/blob/main/site/docs/how-to/migrate-configuration.md).
+Have the externally managed organization configuration converted and deployed
+by its administrator. Conversion can refuse includes, unrepresentable legacy
+input, or missing verified Marketplace evidence; resolve refusals before
+upgrading. Merely changing the version string is not conversion. The new CLI
+has no `migrate` command, startup conversion prompt, or TUI migration modal.
+
 ### From GitHub Releases
 
 Each [release](https://github.com/Adyen/agent-marketplace/releases/latest)
@@ -307,22 +318,27 @@ resources:
     include: [skill/vm-lifecycle, skill/k8s-basics, command/deploy-service, subagent/incident-responder]
 ```
 
-Older v2 and v3 configuration files still load through a compatibility reader.
-The first change the CLI makes to one in a run prints a
-`config.legacy-deprecated` warning, and `agent-marketplace migrate` converts
-them to v4. A v2 file for comparison:
+Every existing root in all four layers, including organization and
+personal-local, must declare exactly `apiVersion: agent-marketplace/v4`.
+A missing root keeps its normal first-run behavior; an existing empty or
+versionless file is not a missing layer. Explicitly included fragments under a
+validated v4 root may omit the version or declare exact v4. This exception does
+not let a root inherit its version and does not relax layer field restrictions,
+include authority, source bindings, or root-owned edits and locks.
 
-```yaml
-# legacy v2 — migrate with `agent-marketplace migrate --scope repo`
-apiVersion: agent-marketplace/v2
-registries:
-  - url: git@gitlab.example.com:example-org/infra-skills.git
-    ref: main
-    path: skills
-    source_harness: claude
-    skills:
-      include: [vm-lifecycle, k8s-basics]
-```
+An omitted root version fails with `v4.api-version-required`; explicit v1/v2/v3,
+unknown, empty/null/non-string, or non-exact versions fail with `v4.api-version`.
+The diagnostic identifies the authored file and `apiVersion` field, with line
+context when available. Explicit non-v4 fragment versions refuse the include
+tree. Unsupported input is never silently skipped or decoded as another schema.
+
+All configuration needed by an operation validates before new acquisition,
+config/lock staging or publication, and harness writes/prunes. A format refusal
+preserves existing config, lock, and harness bytes and metadata and creates no
+missing writable root or lock. Ordinary logs remain allowed. Established safe
+recovery may finish the write set of a pre-existing dependency journal before
+fresh validation; read-only dependency modes instead return
+`dependency.recovery-required` without replay.
 
 ### Monorepos and nested configs
 
@@ -397,12 +413,13 @@ resources:
     all: true
 ```
 
-- `required: true` makes the resources mandatory. No `exclude` in any layer can
-  remove them, which is how an organization enforces security standards.
+- `required: true` protects the group's selected resources but selects nothing
+  by itself. No `exclude` in any layer can remove those selections, which is
+  how an organization enforces security standards.
 - `all: true` selects every resource the source offers. A more specific layer
   can still exclude individual repo-scoped resources.
-- With neither, a resource is selected only when an `include` lists it or a
-  `tags` entry matches it.
+- Without `all: true`, a resource is selected only when an `include` lists it
+  or a `tags` entry matches it, whether or not the group is required.
 
 ### Personal config (without touching the repo config)
 
@@ -448,9 +465,8 @@ agent-marketplace install --from git@gitlab.example.com:my/personal-skills.git -
 agent-marketplace sync   # re-materialize with your local registry included
 ```
 
-In v4, every selector belongs to a named source. In a legacy v2 or v3 local
-configuration, a top-level `exclude` still applies to every eligible
-repo-scoped registry at once; migrate to v4 to exclude per source.
+Every selector belongs to a named source. Personal-local roots require their
+own exact v4 version and source declarations, just like every other root.
 
 After you edit any configuration file by hand, run `agent-marketplace sync` to
 update the generated files, or `agent-marketplace sync --check` to see whether
@@ -802,18 +818,16 @@ resolved against the repository root (the folder that contains `.agents/`); in
 other files it is resolved against the folder of the declaring file. A relative
 path must stay inside that folder. Absolute paths are allowed.
 
-For `--from` arguments and legacy `url:` values, a value counts as a local path
-when it is `.`, starts with `./`, `/`, or `~/`, and does not end in `.git`.
-Legacy entries reject a URL with a `..` component. A hostless `file://` URL is
-local only when its decoded path does not end in `.git`;
-`file:///path/to/registry.git` is a remote Git registry, requires a `ref`, and
-appears in lockfiles. A `ref` on a local folder is ignored.
+For ad-hoc `--from` arguments, a value counts as a local path when it is `.`,
+starts with `./`, `/`, or `~/`, and does not end in `.git`. A hostless `file://`
+URL is local only when its decoded path does not end in `.git`;
+`file:///path/to/registry.git` is a Git source, requires a `ref`, and appears in
+lockfiles. A `ref` on a local folder is ignored. Authored v4 configuration uses
+an explicit `directory:` or `git:` discriminator, not legacy `url:` inference.
 
 The CLI reads local registries straight from disk without cloning or fetching,
 leaves them out of `update` and Git lockfiles, and shows `local` as their cache
-state in `status`. In legacy v2 and v3 configurations, `path` can name the
-registry location when `url` is omitted; when `url` is present, `path` means a
-subdirectory inside that registry.
+state in `status`.
 
 ---
 
@@ -851,11 +865,13 @@ garbage collection cannot delete a new snapshot before the lock refers to it.
 together in one transaction.
 
 Lock v2 (`agent-marketplace-lock/v2`) is the only format the CLI writes, for
-every writable layer, including layers that contain only Git sources. A
-writable v1 lock is upgraded to v2 the next time it is updated. A read-only
-organization v1 lock is still accepted, with a `lock.version-deprecated`
-warning. Lock v2 also records the exact Marketplace endpoint, registry,
-resource, and selection used by v4 layers. Plain local-directory registries
+every writable layer, including layers that contain only Git sources. Consumer
+v4-only loading does not change lock/source-revision compatibility, the internal
+v4 runtime adapter, operator `agent-marketplace.io/marketplace/v1`, API/artifact
+versions, or native hook/harness schemas. A writable v1 lock is upgraded to v2
+the next time it is updated. A read-only organization v1 lock is still accepted,
+with a `lock.version-deprecated` warning. Lock v2 also records the exact
+Marketplace endpoint, registry, resource, and selection used by v4 layers. Plain local-directory registries
 are read live and never locked.
 
 v4.0.8 rejects Git-only v2 locks with `lock.invalid-document`. Every client
@@ -901,10 +917,9 @@ agent-marketplace sync --check                   Report lock or output drift onl
 agent-marketplace sync --offline                 Use only trusted local registry and Marketplace caches
 agent-marketplace sync --strict                  Treat unresolved-selection warnings as errors
 agent-marketplace update                         Advance Git locks and synchronize resources
-agent-marketplace update --bump                  Rewrite eligible legacy registry refs, advance locks, and synchronize
+agent-marketplace update --bump                  Rewrite eligible v4 source refs, advance locks, and synchronize
 agent-marketplace update --scope {user,repo,local,all}      Limit which layers are updated
 agent-marketplace status                         Exact locks, resources, harnesses, refs, source layer, drift
-agent-marketplace migrate [--scope <scope>] [--dry-run]     Convert legacy v2/v3 configs to v4
 agent-marketplace convert --from <h> --to <h> [--out <dir>] <path>   One-shot layout conversion
 agent-marketplace doctor                         Local harness/root diagnostics, Devin CLI detection
 agent-marketplace doctor --repair                Preview (and on a terminal, confirm) Devin/Codex ownership recovery
@@ -963,8 +978,6 @@ would write. Depending on your setup, it prints these sections:
   Here you can see Devin's single root and Codex's split between `.agents` and
   `.codex`. A harness name the CLI does not recognize is still listed, so a typo
   stays visible.
-- LOCALLY EXCLUDED: resources hidden by a legacy v2 or v3
-  `.agents/config.local.yaml`. Exclusions in a v4 local file are not listed.
 - LOCAL REGISTRIES: sources defined in `.agents/config.local.yaml`.
 - ORPHANED FILES: generated files the next `sync` would remove.
 - NAME COLLISIONS: same-kind resources offered by more than one registry.
@@ -994,8 +1007,8 @@ The defaults live in the code, so the generated configuration file has no
 variable overrides the configuration file, which overrides the built-in
 default.
 
-See [`docs/logging.md`](./docs/logging.md) for the full strategy, the keys you
-can override, and the environment variables.
+See the [logging reference](https://github.com/Adyen/agent-marketplace/blob/main/site/docs/reference/logging.md)
+for the strategy, the keys you can override, and the environment variables.
 
 ---
 
@@ -1060,3 +1073,19 @@ There are two kinds of E2E test:
 Define registry contents with the fixture builders (`Skill`, `Command`,
 `Subagent`, `MCPServer`) from `e2e/harness_test.go`, and refer to seeded
 repositories with `{{REG:name}}` placeholders, which resolve to `file://` URLs.
+
+Successful consumer command/flag witnesses are v4-only and require exact v4 in
+every present root, including organization; schema-independent commands retain
+configuration-free success witnesses. Refusals and help-only runs do not count
+as successful operational coverage. The normal Marketplace gate witnesses
+unsupported-root/include refusals with no new acquisition or config/lock/output
+changes, retaining the prior-journal recovery exception. Crash tests exercise
+supported v4 mutations, not consumer migration.
+
+The pre-v4 success `upgrade-gate` and CI job are retired. Keep the dedicated
+`released-client-gate` pinned to checksum-verified stable v4.1.3, with isolated
+actors sharing v4 fixtures; retain healthy lock-byte stability, native-hook
+source verification, and owned-entry upgrade/removal checks. `E2E Gates` remains
+the aggregate status: after successful planning, Marketplace and released-client
+jobs must both succeed when selected or both intentionally skip when unselected.
+Missing witnesses, failures, cancellation, and unexpected skips fail acceptance.

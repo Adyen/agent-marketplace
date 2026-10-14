@@ -11,6 +11,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
+	"gopkg.in/yaml.v3"
 
 	"github.com/Adyen/agent-marketplace/internal/config"
 )
@@ -82,7 +83,7 @@ func writeE2ECommandTree(root *cobra.Command) bool {
 }
 
 // e2eConfigSchemas reports the apiVersion of each configuration layer as the
-// command starts, before it can migrate or create any of them.
+// command starts, before it can edit or create any of them.
 func e2eConfigSchemas() map[string]string {
 	if os.Getenv(e2eInvocationDirEnv) == "" {
 		return nil
@@ -95,10 +96,28 @@ func e2eConfigSchemas() map[string]string {
 		case err != nil:
 			return "unreadable"
 		}
-		if version := config.PeekAPIVersion(data); version != "" {
-			return strings.TrimPrefix(version, "agent-marketplace/")
+		var doc yaml.Node
+		if yaml.Unmarshal(data, &doc) != nil || len(doc.Content) != 1 || doc.Content[0].Kind != yaml.MappingNode {
+			return "invalid"
 		}
-		return "unversioned"
+		root := doc.Content[0]
+		version := "unversioned"
+		found := false
+		for i := 0; i+1 < len(root.Content); i += 2 {
+			key, value := root.Content[i], root.Content[i+1]
+			if key.Value != "apiVersion" {
+				continue
+			}
+			if found || value.Kind != yaml.ScalarNode || value.Tag != "!!str" {
+				return "invalid"
+			}
+			found = true
+			version = "unsupported"
+			if value.Value == "agent-marketplace/v4" {
+				version = "v4"
+			}
+		}
+		return version
 	}
 	schemas := map[string]string{"user": "absent", "repo": "absent", "local": "absent", "org": peek(config.OrganizationConfigPath())}
 	if path, err := config.GlobalConfigPath(); err == nil {

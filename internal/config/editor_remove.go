@@ -21,11 +21,14 @@ func UpdateRegistryRefInConfig(configPath, url, oldRef, newRef string) (int, err
 		return 0, fmt.Errorf("new ref is required")
 	}
 
-	data, err := os.ReadFile(configPath)
+	data, err := readConfigFile(configPath)
 	if err != nil {
 		return 0, fmt.Errorf("read config %q: %w", configPath, err)
 	}
 
+	if err := validateConfigDocumentData(configPath, data); err != nil {
+		return 0, err
+	}
 	info, err := os.Stat(configPath)
 	if err != nil {
 		return 0, fmt.Errorf("stat config %q: %w", configPath, err)
@@ -51,16 +54,6 @@ func UpdateRegistryRefInConfig(configPath, url, oldRef, newRef string) (int, err
 		}
 		refNode.Value = newRef
 		updated++
-	}
-	if _, registriesNode := findTopLevelSequence(root, "registries"); registriesNode != nil {
-		if registriesNode.Kind != yaml.SequenceNode {
-			return 0, fmt.Errorf("update config %q: expected %q to be a sequence", configPath, "registries")
-		}
-		for _, entryNode := range registriesNode.Content {
-			if entryNode.Kind == yaml.MappingNode {
-				bump(findRegistryURLNode(entryNode), findMappingValue(entryNode, "ref"))
-			}
-		}
 	}
 	// v4 roots declare Git sources by name under sources.
 	if sources := findMappingValue(root, "sources"); sources != nil && sources.Kind == yaml.MappingNode {

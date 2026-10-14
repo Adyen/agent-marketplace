@@ -2,12 +2,14 @@ package pipeline
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"time"
 
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/dependencytxn"
+	"github.com/Adyen/agent-marketplace/internal/lockfile"
 	"github.com/Adyen/agent-marketplace/internal/marketplace"
 	"github.com/Adyen/agent-marketplace/internal/marketplacelock"
 	"github.com/Adyen/agent-marketplace/internal/resolver"
@@ -75,10 +77,6 @@ func loadEffective(ctx context.Context, mode ConfigLoadMode, opts config.LoadEff
 			}
 		}
 	}
-	if mode == ConfigLoadCached {
-		return config.Bind(intent, evidence), transientOrganizationMarketplaceLockUnused
-	}
-
 	cacheReads, err := transientMarketplaceReadAssertions(intent, lockPath)
 	if err != nil {
 		return effectiveConfigError(config.Bind(intent, evidence), fmt.Errorf("snapshot transient organization Marketplace inputs: %w", err)), transientOrganizationMarketplaceLockUnused
@@ -87,7 +85,7 @@ func loadEffective(ctx context.Context, mode ConfigLoadMode, opts config.LoadEff
 	if err != nil {
 		return effectiveConfigError(config.Bind(intent, evidence), fmt.Errorf("snapshot transient organization Marketplace inputs: %w", err)), transientOrganizationMarketplaceLockUnused
 	}
-	if provisionalReady != nil || browsingReady != nil {
+	if mode == ConfigLoadOnline && (provisionalReady != nil || browsingReady != nil) {
 		provisional := config.Bind(intent, evidence)
 		if provisional.Merged != nil {
 			merged := provisionalMergedConfig(provisional.Merged, organization.MarketplaceSources())
@@ -99,14 +97,26 @@ func loadEffective(ctx context.Context, mode ConfigLoadMode, opts config.LoadEff
 			}
 		}
 	}
-	slog.Info("transient organization Marketplace lock acquisition started", "config", organization.Path)
-	mpResolver := marketplace.NewResolver()
-	mpResolver.AllowedRegistries = intent.AllowedRegistries()
-	targets, _ := intent.TargetHarnesses()
-	exact, err := marketplacelock.Resolve(ctx, mpResolver, organization, targets, policy)
-	if err != nil {
-		slog.Error("transient organization Marketplace lock acquisition failed", "config", organization.Path, "error", err)
-		return effectiveConfigError(config.Bind(intent, evidence), fmt.Errorf("acquire transient organization Marketplace lock: %w", err)), transientOrganizationMarketplaceLockUnused
+	var exact lockfile.Document
+	if mode == ConfigLoadCached {
+		exact, err = cachedOrganizationMarketplaceLock(ctx, organization)
+		if err != nil {
+			bound := config.Bind(intent, evidence)
+			// Retain the missing-evidence diagnostic as well as its cache cause:
+			// callers must not mistake a failed cached read for an acquired lock.
+			cause := errors.Join(errors.Join(bound.Organization.Errors...), fmt.Errorf("reuse cached organization Marketplace lock evidence: %w", err))
+			return effectiveConfigError(bound, cause), transientOrganizationMarketplaceLockUnused
+		}
+	} else {
+		slog.Info("transient organization Marketplace lock acquisition started", "config", organization.Path)
+		mpResolver := marketplace.NewResolver()
+		mpResolver.AllowedRegistries = intent.AllowedRegistries()
+		targets, _ := intent.TargetHarnesses()
+		exact, err = marketplacelock.Resolve(ctx, mpResolver, organization, targets, policy)
+		if err != nil {
+			slog.Error("transient organization Marketplace lock acquisition failed", "config", organization.Path, "error", err)
+			return effectiveConfigError(config.Bind(intent, evidence), fmt.Errorf("acquire transient organization Marketplace lock: %w", err)), transientOrganizationMarketplaceLockUnused
+		}
 	}
 	if err := dependencytxn.ValidateReadAssertions(reads); err != nil {
 		return effectiveConfigError(config.Bind(intent, evidence), fmt.Errorf("%w: organization Marketplace inputs changed during transient acquisition: %v", dependencytxn.ErrGenerationConflict, err)), transientOrganizationMarketplaceLockUnused
@@ -122,8 +132,78 @@ func loadEffective(ctx context.Context, mode ConfigLoadMode, opts config.LoadEff
 	if cache := transientOrganizationMarketplaceLockCacheFrom(ctx); cache != nil {
 		cache.store(lockPath, exact, cacheReads, inputs)
 	}
+	if mode == ConfigLoadCached {
+		slog.Info("reused verified cached organization Marketplace lock evidence", "config", organization.Path, "resources", marketplaceLockResourceCount(exact))
+		return finalEC, transientOrganizationMarketplaceLockReused
+	}
 	slog.Info("transient organization Marketplace lock acquisition completed", "config", organization.Path, "resources", marketplaceLockResourceCount(exact))
 	return finalEC, transientOrganizationMarketplaceLockAcquired
+}
+
+// cachedOrganizationMarketplaceLock reads only the exact coordinates authored in
+// the organization configuration. Endpoint-scoped revision metadata supplies the
+// previously observed instance identity, and VerifiedMarketplaceLockResource
+// checks it against the requested coordinate/digest and verified artifact bytes.
+// Never scan metadata/discovery namespaces or choose a revision, registry binding,
+// or instance identity that the exact cache lookup cannot prove. Floating requests,
+// slug-to-ID lookup, index-only occurrences, and collection expansion require a
+// deployed lock or already-verified invocation evidence, not an offline bootstrap.
+// The normal cached Marketplace resolver still enforces assessment and revocation
+// policy before these bound resources can become a materialization desired set.
+func cachedOrganizationMarketplaceLock(ctx context.Context, organization config.LayerIntent) (lockfile.Document, error) {
+	doc := lockfile.Document{APIVersion: lockfile.APIVersionV2, Scope: lockfile.ScopeOrganization}
+	cache := marketplace.DefaultCache()
+	for _, source := range organization.MarketplaceSources() {
+		if len(source.Requests) == 0 {
+			// Source-only registrations have no preservation desired set and
+			// cannot authorize discovering an identity from the cache.
+			continue
+		}
+		locked := lockfile.MarketplaceLock{URL: source.URL}
+		bindings := make(map[string]bool)
+		for _, request := range source.Requests {
+			if err := ctx.Err(); err != nil {
+				return lockfile.Document{}, err
+			}
+			digest, err := lockfile.ParseDigest(request.Options.Revision)
+			if err != nil {
+				return lockfile.Document{}, fmt.Errorf("%s requires exact cached revision evidence: %w", request.Locator, err)
+			}
+			if request.MarketplaceKind() == "collection" {
+				return lockfile.Document{}, fmt.Errorf("%s requires existing collection lock evidence", request.Locator)
+			}
+			revision, found, err := cache.ReadResourceRevision(source.URL, request.Registry, request.MarketplaceKind(), request.Name, digest.String())
+			if err != nil {
+				return lockfile.Document{}, fmt.Errorf("read %s cached revision evidence: %w", request.Locator, err)
+			}
+			if !found {
+				return lockfile.Document{}, fmt.Errorf("%s has no exact cached revision evidence", request.Locator)
+			}
+			instanceID := string(revision.Coordinate.Marketplace)
+			if instanceID == "" || (locked.InstanceID != "" && locked.InstanceID != instanceID) {
+				return lockfile.Document{}, fmt.Errorf("%s has missing or conflicting cached Marketplace identity", request.Locator)
+			}
+			entry := config.MarketplaceEntry{URL: source.URL, InstanceID: instanceID, Source: config.Organization}
+			pin := config.MarketplaceResourcePin{
+				RegistryID: request.Registry, RegistrySlug: request.Registry,
+				Kind: request.MarketplaceKind(), Name: request.Name,
+				Revision: digest.String(), Digest: digest.String(),
+				Acquisition: config.MarketplaceAcquisitionMirror,
+			}
+			record, err := cache.VerifiedMarketplaceLockResource(entry, pin)
+			if err != nil {
+				return lockfile.Document{}, fmt.Errorf("verify %s cached lock evidence: %w", request.Locator, err)
+			}
+			locked.InstanceID = instanceID
+			locked.Resources = append(locked.Resources, record)
+			if !bindings[request.Registry] {
+				locked.RegistryBindings = append(locked.RegistryBindings, lockfile.MarketplaceRegistryBinding{Name: request.Registry, RegistryID: request.Registry})
+				bindings[request.Registry] = true
+			}
+		}
+		doc.Marketplaces = append(doc.Marketplaces, locked)
+	}
+	return lockfile.Normalize(doc)
 }
 
 const browsingIdentityTimeout = 5 * time.Second

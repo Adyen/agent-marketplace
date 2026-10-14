@@ -20,7 +20,7 @@ func TestCollectionMemberExclude_LocalScope(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
-	origin, working := createBareRepoWithWorkingClone(t, "local-scope-skills.git")
+	origin, working := createV4GitRegistry(t, "local-scope-skills.git")
 	writeSkill(t, working, "vm-lifecycle", "VM lifecycle", []string{"infra"})
 	writeSkill(t, working, "k8s-basics", "Kubernetes basics", []string{"k8s"})
 	writeCollection(t, working, "bundle", `
@@ -33,20 +33,22 @@ skills:
 
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
-registries:
-  - url: `+origin+`
+apiVersion: agent-marketplace/v4
+sources:
+  registry:
+    git: `+origin+`
     ref: main
-collections:
-  include:
-    - bundle
+resources:
+  registry:
+    include: [collection/bundle]
 `)
 	withWorkingDir(t, repoRoot)
 
 	if _, err := executeCommand("sync"); err != nil {
-		t.Skipf("sync failed (CI may lack git): %v", err)
+		t.Fatalf("sync failed (CI may lack git): %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(repoRoot, ".factory", "skills", "k8s-basics", "SKILL.md")); err != nil {
-		t.Skipf("factory skill missing after sync: %v", err)
+		t.Fatalf("factory skill missing after sync: %v", err)
 	}
 
 	output, err := executeCommand("remove", "--scope", "local", "k8s-basics")
@@ -78,7 +80,7 @@ func TestCollectionMemberExclude_UserScope(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
-	origin, working := createBareRepoWithWorkingClone(t, "user-scope-skills.git")
+	origin, working := createV4GitRegistry(t, "user-scope-skills.git")
 	writeSkill(t, working, "vm-lifecycle", "VM lifecycle", []string{"infra"})
 	writeSkill(t, working, "k8s-basics", "Kubernetes basics", []string{"k8s"})
 	writeCollection(t, working, "bundle", `
@@ -92,27 +94,30 @@ skills:
 	// The collection lives in the global (user) config so that remove
 	// --scope user can find and write to the same config layer.
 	writeConfig(t, filepath.Join(homeDir, ".agents", "config.yaml"), `
-registries:
-  - url: `+origin+`
+apiVersion: agent-marketplace/v4
+sources:
+  registry:
+    git: `+origin+`
     ref: main
-collections:
-  include:
-    - bundle
+resources:
+  registry:
+    include: [collection/bundle]
 `)
 
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
-registries: []
+apiVersion: agent-marketplace/v4
+sources: {}
 `)
 	withWorkingDir(t, repoRoot)
 
 	if _, err := executeCommand("sync"); err != nil {
-		t.Skipf("sync failed: %v", err)
+		t.Fatalf("sync failed: %v", err)
 	}
 	// Collection skills from the global config are machine-scoped;
 	// they materialize to ~/.factory/skills/, not the repo root.
 	if _, err := os.Stat(filepath.Join(homeDir, ".factory", "skills", "k8s-basics", "SKILL.md")); err != nil {
-		t.Skipf("factory skill missing: %v", err)
+		t.Fatalf("factory skill missing: %v", err)
 	}
 
 	output, err := executeCommand("remove", "--scope", "user", "k8s-basics")
@@ -145,7 +150,7 @@ func TestCollectionInstall_UserScope(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
-	origin, working := createBareRepoWithWorkingClone(t, "user-install-skills.git")
+	origin, working := createV4GitRegistry(t, "user-install-skills.git")
 	writeSkill(t, working, "vm-lifecycle", "VM lifecycle", []string{"infra"})
 	writeCollection(t, working, "infra-bundle", `
 name: infra-bundle
@@ -156,8 +161,10 @@ skills:
 
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
-registries:
-  - url: `+origin+`
+apiVersion: agent-marketplace/v4
+sources:
+  registry:
+    git: `+origin+`
     ref: main
 `)
 	withWorkingDir(t, repoRoot)
@@ -192,18 +199,20 @@ func TestCollectionNotFoundInRegistry(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
-	origin, working := createBareRepoWithWorkingClone(t, "no-collection-skills.git")
+	origin, working := createV4GitRegistry(t, "no-collection-skills.git")
 	writeSkill(t, working, "vm-lifecycle", "VM lifecycle", nil)
 	commitAndPushAll(t, working, "setup")
 
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
-registries:
-  - url: `+origin+`
+apiVersion: agent-marketplace/v4
+sources:
+  registry:
+    git: `+origin+`
     ref: main
-collections:
-  include:
-    - does-not-exist
+resources:
+  registry:
+    include: [collection/does-not-exist]
 `)
 	withWorkingDir(t, repoRoot)
 
@@ -225,7 +234,7 @@ func TestCollectionCycleDetection(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
-	origin, working := createBareRepoWithWorkingClone(t, "cycle-skills.git")
+	origin, working := createV4GitRegistry(t, "cycle-skills.git")
 	writeSkill(t, working, "vm-lifecycle", "VM lifecycle", nil)
 	// Collection A includes itself.
 	writeCollection(t, working, "self-referential", `
@@ -239,12 +248,14 @@ includes:
 
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
-registries:
-  - url: `+origin+`
+apiVersion: agent-marketplace/v4
+sources:
+  registry:
+    git: `+origin+`
     ref: main
-collections:
-  include:
-    - self-referential
+resources:
+  registry:
+    include: [collection/self-referential]
 `)
 	withWorkingDir(t, repoRoot)
 
@@ -270,7 +281,7 @@ func TestCollectionExcludePersistsAcrossSync(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
-	origin, working := createBareRepoWithWorkingClone(t, "persist-skills.git")
+	origin, working := createV4GitRegistry(t, "persist-skills.git")
 	writeSkill(t, working, "vm-lifecycle", "VM lifecycle", nil)
 	writeSkill(t, working, "k8s-basics", "Kubernetes basics", nil)
 	writeCollection(t, working, "bundle", `
@@ -283,20 +294,22 @@ skills:
 
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
-registries:
-  - url: `+origin+`
+apiVersion: agent-marketplace/v4
+sources:
+  registry:
+    git: `+origin+`
     ref: main
-collections:
-  include:
-    - bundle
+resources:
+  registry:
+    include: [collection/bundle]
 `)
 	withWorkingDir(t, repoRoot)
 
 	if _, err := executeCommand("sync"); err != nil {
-		t.Skipf("sync failed: %v", err)
+		t.Fatalf("sync failed: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(repoRoot, ".factory", "skills", "k8s-basics", "SKILL.md")); err != nil {
-		t.Skipf("factory skill missing: %v", err)
+		t.Fatalf("factory skill missing: %v", err)
 	}
 
 	// Exclude one member.
@@ -323,7 +336,7 @@ func TestCollectionMemberExclude_StatusReflects(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
-	origin, working := createBareRepoWithWorkingClone(t, "status-reflect-skills.git")
+	origin, working := createV4GitRegistry(t, "status-reflect-skills.git")
 	writeSkill(t, working, "vm-lifecycle", "VM lifecycle", nil)
 	writeSkill(t, working, "k8s-basics", "Kubernetes basics", nil)
 	writeCollection(t, working, "bundle", `
@@ -336,20 +349,22 @@ skills:
 
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
-registries:
-  - url: `+origin+`
+apiVersion: agent-marketplace/v4
+sources:
+  registry:
+    git: `+origin+`
     ref: main
-collections:
-  include:
-    - bundle
+resources:
+  registry:
+    include: [collection/bundle]
 `)
 	withWorkingDir(t, repoRoot)
 
 	if _, err := executeCommand("sync"); err != nil {
-		t.Skipf("sync failed: %v", err)
+		t.Fatalf("sync failed: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(repoRoot, ".factory", "skills", "k8s-basics", "SKILL.md")); err != nil {
-		t.Skipf("factory skill missing: %v", err)
+		t.Fatalf("factory skill missing: %v", err)
 	}
 
 	if _, err := executeCommand("remove", "k8s-basics"); err != nil {
@@ -386,11 +401,11 @@ func TestCollectionMultiRegistry(t *testing.T) {
 	t.Setenv("HOME", homeDir)
 
 	// Registry A: hosts the collection + one skill.
-	originA, workingA := createBareRepoWithWorkingClone(t, "registry-a.git")
+	originA, workingA := createV4GitRegistry(t, "registry-a.git")
 	writeSkill(t, workingA, "skill-a", "Skill from registry A", nil)
 
 	// Registry B: hosts a second skill only (no collection).
-	originB, workingB := createBareRepoWithWorkingClone(t, "registry-b.git")
+	originB, workingB := createV4GitRegistry(t, "registry-b.git")
 	writeSkill(t, workingB, "skill-b", "Skill from registry B", nil)
 	commitAndPushAll(t, workingB, "setup B")
 
@@ -405,19 +420,22 @@ skills:
 
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
-registries:
-  - url: `+originA+`
+apiVersion: agent-marketplace/v4
+sources:
+  registry-a:
+    git: `+originA+`
     ref: main
-  - url: `+originB+`
+  registry-b:
+    git: `+originB+`
     ref: main
-collections:
-  include:
-    - cross-registry-bundle
+resources:
+  registry-a:
+    include: [collection/cross-registry-bundle]
 `)
 	withWorkingDir(t, repoRoot)
 
 	if _, err := executeCommand("sync"); err != nil {
-		t.Skipf("sync failed: %v", err)
+		t.Fatalf("sync failed: %v", err)
 	}
 
 	for _, s := range []string{"skill-a", "skill-b"} {
@@ -440,7 +458,7 @@ func TestDirectSkillAndCollectionOverlap(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
-	origin, working := createBareRepoWithWorkingClone(t, "overlap-skills.git")
+	origin, working := createV4GitRegistry(t, "overlap-skills.git")
 	writeSkill(t, working, "vm-lifecycle", "VM lifecycle", nil)
 	writeSkill(t, working, "k8s-basics", "Kubernetes basics", nil)
 	writeCollection(t, working, "bundle", `
@@ -455,19 +473,19 @@ skills:
 	// vm-lifecycle is both directly listed (registry entry skills:) AND in the collection.
 	// Registry entry skills: is what plain `install` writes; remove checks entry.Skills.
 	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
-registries:
-  - url: `+origin+`
+apiVersion: agent-marketplace/v4
+sources:
+  registry:
+    git: `+origin+`
     ref: main
-    skills:
-      - vm-lifecycle
-collections:
-  include:
-    - bundle
+resources:
+  registry:
+    include: [skill/vm-lifecycle, collection/bundle]
 `)
 	withWorkingDir(t, repoRoot)
 
 	if _, err := executeCommand("sync"); err != nil {
-		t.Skipf("sync failed: %v", err)
+		t.Fatalf("sync failed: %v", err)
 	}
 
 	// Remove vm-lifecycle: should remove from skills list (not write exclude),
@@ -484,7 +502,7 @@ collections:
 
 	// vm-lifecycle should be removed from the skills list in repo config.
 	cfgBytes, _ := os.ReadFile(filepath.Join(repoRoot, ".agents", "config.yaml"))
-	if strings.Contains(string(cfgBytes), "- vm-lifecycle") {
+	if strings.Contains(string(cfgBytes), "skill/vm-lifecycle") {
 		t.Fatalf("vm-lifecycle should be removed from skills list, config:\n%s", cfgBytes)
 	}
 }
@@ -498,7 +516,7 @@ func TestCollectionRemove_DirectSkillSurvives(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
-	origin, working := createBareRepoWithWorkingClone(t, "direct-survives-skills.git")
+	origin, working := createV4GitRegistry(t, "direct-survives-skills.git")
 	writeSkill(t, working, "vm-lifecycle", "VM lifecycle", nil)
 	writeSkill(t, working, "k8s-basics", "Kubernetes basics", nil)
 	writeCollection(t, working, "bundle", `
@@ -511,23 +529,23 @@ skills:
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	// vm-lifecycle: direct (registry entry skills). k8s-basics: via collection only.
 	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
-registries:
-  - url: `+origin+`
+apiVersion: agent-marketplace/v4
+sources:
+  registry:
+    git: `+origin+`
     ref: main
-    skills:
-      - vm-lifecycle
-collections:
-  include:
-    - bundle
+resources:
+  registry:
+    include: [skill/vm-lifecycle, collection/bundle]
 `)
 	withWorkingDir(t, repoRoot)
 
 	if _, err := executeCommand("sync"); err != nil {
-		t.Skipf("sync failed: %v", err)
+		t.Fatalf("sync failed: %v", err)
 	}
 	for _, s := range []string{"vm-lifecycle", "k8s-basics"} {
 		if _, err := os.Stat(filepath.Join(repoRoot, ".factory", "skills", s, "SKILL.md")); err != nil {
-			t.Skipf("factory skill for %q missing: %v", s, err)
+			t.Fatalf("factory skill for %q missing: %v", s, err)
 		}
 	}
 
