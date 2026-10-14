@@ -30,6 +30,8 @@ var ghExec = func(args []string, stdin []byte) ([]byte, string, int) {
 		code = 1
 		if exit, ok := err.(*exec.ExitError); ok {
 			code = exit.ExitCode()
+		} else {
+			stderr.WriteString(err.Error())
 		}
 	}
 	return stdout.Bytes(), stderr.String(), code

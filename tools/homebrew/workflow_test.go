@@ -132,6 +132,11 @@ func TestHomebrewJobPublishesAfterRelease(t *testing.T) {
 	} else if with := mapOf(t, steps[0], "with"); with["persist-credentials"] != false {
 		t.Errorf("checkout must use persist-credentials: false, got %v", with)
 	}
+	if setup, ok := steps[1]["uses"].(string); !ok || !strings.HasPrefix(setup, "actions/setup-go@") {
+		t.Errorf("second step = %v, want actions/setup-go", steps[1])
+	} else if with := mapOf(t, steps[1], "with"); with["cache"] != false {
+		t.Errorf("homebrew setup-go must disable the module cache, got %v", with)
+	}
 	for _, s := range steps {
 		if run, ok := s["run"].(string); ok {
 			if strings.Contains(run, "${{") {
@@ -151,6 +156,50 @@ func TestHomebrewJobPublishesAfterRelease(t *testing.T) {
 			strings.Contains(run, "brew tap") || strings.Contains(run, "brew install")) {
 			t.Errorf("step %q writes a source branch or uses host brew: %s", s["name"], run)
 		}
+	}
+}
+
+// spec: homebrew-packaging/successful-stable-release-publishes-after-binary-upload
+func TestHomebrewStagingUsesRunnerEnvironment(t *testing.T) {
+	doc := loadCI(t)
+	jobs := mapOf(t, doc, "jobs")
+	job := mapOf(t, jobs, "homebrew")
+	for k, v := range mapOf(t, job, "env") {
+		if s, _ := v.(string); strings.Contains(s, "runner.") {
+			t.Errorf("job env %s references the runner context, unavailable in jobs.<id>.env: %q", k, s)
+		}
+	}
+	steps := jobSteps(t, job)
+	var order []string
+	for _, s := range steps {
+		order = append(order, s["name"].(string))
+	}
+	prep := slices.Index(order, "Prepare staging directory")
+	if prep < 0 {
+		t.Fatalf("no staging preparation step: %v", order)
+	}
+	for _, later := range []string{"Fetch release metadata", "Download release binaries", "Generate formula", "Publish formula"} {
+		if idx := slices.Index(order, later); idx < prep {
+			t.Errorf("step %q must run after staging preparation: %v", later, order)
+		}
+	}
+	run := runScript(t, steps, "Prepare staging directory")
+	runnerTemp := filepath.Join(t.TempDir(), "runner-temp")
+	if err := os.MkdirAll(runnerTemp, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	envFile := filepath.Join(t.TempDir(), "github_env")
+	cmd := exec.Command("bash", "-c", run)
+	cmd.Env = []string{"PATH=/usr/bin:/bin", "RUNNER_TEMP=" + runnerTemp, "GITHUB_ENV=" + envFile}
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("staging preparation failed: %v\n%s", err, out)
+	}
+	data, err := os.ReadFile(envFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "STAGING=" + runnerTemp + "/homebrew\n"; string(data) != want {
+		t.Errorf("GITHUB_ENV = %q, want %q", data, want)
 	}
 }
 

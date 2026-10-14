@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -477,6 +478,21 @@ func TestPublishAPIFailuresSurface(t *testing.T) {
 				t.Error("ref moved despite API failure")
 			}
 		})
+	}
+}
+
+// spec: homebrew-packaging/stale-publication-conflict-leaves-the-branch-unchanged
+func TestGHAPIReportsMissingExecutable(t *testing.T) {
+	t.Setenv("PATH", t.TempDir())
+	out, status, err := ghAPI("GET", "repos/o/r", nil)
+	if err == nil {
+		t.Fatalf("ghAPI succeeded with no gh executable: %s", out)
+	}
+	if status != 0 {
+		t.Errorf("status = %d, want 0 (process start failure is not an HTTP status)", status)
+	}
+	if !strings.Contains(err.Error(), exec.ErrNotFound.Error()) {
+		t.Errorf("error %q must report the underlying start failure %q", err, exec.ErrNotFound.Error())
 	}
 }
 

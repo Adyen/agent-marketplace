@@ -1049,7 +1049,6 @@ jobs:
       REPOSITORY: ${{ github.repository }}
       TAG: ${{ github.ref_name }}
       GH_TOKEN: ${{ github.token }}
-      STAGING: ${{ runner.temp }}/homebrew
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -1062,7 +1061,12 @@ jobs:
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
         with:
           go-version-file: go.mod
-          cache: true
+          cache: false
+
+      - name: Prepare staging directory
+        run: |
+          set -euo pipefail
+          printf 'STAGING=%s/homebrew\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
 
       - name: Fetch release metadata
         run: |
