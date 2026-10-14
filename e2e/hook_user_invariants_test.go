@@ -563,6 +563,7 @@ func TestWindsurfHookFixtureIgnoresHostShellStartup(t *testing.T) {
 	}
 }
 
+// spec: hook-resources/whole-word-project-directory-references-keep-the-repository-directory
 func TestHookInvariantProjectDirectoryReferencesKeepRepositoryCWD(t *testing.T) {
 	for _, scope := range []string{"repo", "user"} {
 		for _, mode := range []string{"symlink", "file"} {

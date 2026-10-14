@@ -495,10 +495,21 @@ func rewriteCommand(h *ir.Hook, srcCat, dstCat catalog, event string, scope Scop
 			switch repositoryBaseKind {
 			case repoBaseCwd:
 				// {cwd: repository}: remove the reference and one following
-				// slash so the path becomes repository-relative.
-				if pos < len(command) && command[pos] == '/' {
-					pos++
+				// slash so the path becomes repository-relative. A reference
+				// that is the whole shell word names the repository itself,
+				// so it becomes "."; text joined to it has no relative form.
+				slash := pos < len(command) && command[pos] == '/'
+				next := pos
+				if slash {
+					next++
 				}
+				switch {
+				case projectDirectoryWordEnds(command, next, replacementQuote):
+					out.WriteByte('.')
+				case !slash:
+					return fail(diag.CodeHookEnvUnrepresentable, "A project-directory reference joined to other text has no repository-relative form on the target; hook suppressed", "Separate the reference from following text with / or whitespace")
+				}
+				pos = next
 			case repoBaseLiteral:
 				if replacementQuote == '"' {
 					repositoryBase = withoutOuterDoubleQuotes(repositoryBase)
@@ -543,6 +554,20 @@ func lookupEnv(c catalog, name string) (concept string, plugin, declared bool) {
 		}
 	}
 	return "", false, false
+}
+
+// projectDirectoryWordEnds reports whether the shell word containing a
+// project-directory reference ends at pos. Inside double quotes only the
+// closing quote ends the reference; the word then ends at an unquoted shell
+// separator or the end of the command.
+func projectDirectoryWordEnds(command string, pos int, quote byte) bool {
+	if quote == '"' {
+		if pos >= len(command) || command[pos] != '"' {
+			return false
+		}
+		pos++
+	}
+	return pos >= len(command) || strings.IndexByte(" \t\n;&|()<>", command[pos]) >= 0
 }
 
 // Repository-base replacement kinds for a project-directory reference.

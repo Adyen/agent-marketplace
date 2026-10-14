@@ -376,6 +376,48 @@ func TestCatalogCrossProjectDirectoryReferencesFollowTheTarget(t *testing.T) {
 	}
 }
 
+// spec: hook-resources/whole-word-project-directory-references-keep-the-repository-directory
+func TestCatalogCrossWholeWordProjectDirectoryReferencesKeepTheRepositoryDirectory(t *testing.T) {
+	for _, tc := range []struct{ name, command, want string }{
+		{"bare", `cd $CLAUDE_PROJECT_DIR && pwd -P`, `cd . && pwd -P`},
+		{"braced", `cd ${CLAUDE_PROJECT_DIR} && pwd -P`, `cd . && pwd -P`},
+		{"quoted", `cd "$CLAUDE_PROJECT_DIR" && pwd -P`, `cd "." && pwd -P`},
+		{"quoted trailing slash", `cd "$CLAUDE_PROJECT_DIR"/ && pwd -P`, `cd . && pwd -P`},
+		{"slash inside quotes", `cd "$CLAUDE_PROJECT_DIR/"`, `cd "."`},
+		{"unquoted trailing slash", `ls $CLAUDE_PROJECT_DIR/`, `ls .`},
+		{"subshell", `(cd $CLAUDE_PROJECT_DIR) && pwd -P`, `(cd .) && pwd -P`},
+		{"option value", `tool --root=$CLAUDE_PROJECT_DIR; pwd -P`, `tool --root=.; pwd -P`},
+		{"alone", `$CLAUDE_PROJECT_DIR`, `.`},
+		{"path component control", `"$CLAUDE_PROJECT_DIR"/bin/check`, `bin/check`},
+		{"quoted path component control", `"$CLAUDE_PROJECT_DIR/bin/check"`, `"bin/check"`},
+		{"unquoted path component control", `$CLAUDE_PROJECT_DIR/bin/check`, `bin/check`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			emission := compileHook(t, TargetWindsurf, commandHook("guard", "PreToolUse", "Bash", tc.command))
+			if emission.command != tc.want {
+				t.Fatalf("command = %q, want %q", emission.command, tc.want)
+			}
+		})
+	}
+}
+
+// spec: hook-resources/joined-project-directory-references-refuse-the-hook
+func TestCatalogCrossJoinedProjectDirectoryReferencesRefuseTheHook(t *testing.T) {
+	for _, command := range []string{
+		`cp notes ${CLAUDE_PROJECT_DIR}-backup`,
+		`cp notes $CLAUDE_PROJECT_DIR.bak`,
+		`echo "$CLAUDE_PROJECT_DIR is the root"`,
+		`ls "$CLAUDE_PROJECT_DIR"suffix`,
+	} {
+		t.Run(command, func(t *testing.T) {
+			refuseHook(t, TargetWindsurf, commandHook("guard", "PreToolUse", "Bash", command), "hook.env-unrepresentable")
+			if got := compileHook(t, TargetFactory, commandHook("guard", "PreToolUse", "Bash", command)).command; !strings.Contains(got, "FACTORY_PROJECT_DIR") {
+				t.Fatalf("Factory keeps a variable repository base, so the joined form must still translate: %q", got)
+			}
+		})
+	}
+}
+
 // spec: hook-resources/targets-that-accept-the-claude-spelling-keep-it
 func TestCatalogCrossTargetsAcceptingTheClaudeSpellingKeepIt(t *testing.T) {
 	for _, target := range []Target{TargetCursor, TargetGemini} {
