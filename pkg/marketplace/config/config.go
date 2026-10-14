@@ -13,6 +13,7 @@ import (
 	"net"
 	"net/url"
 	"os"
+	"path"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -628,12 +629,39 @@ func validateInstance(inst Instance) error {
 		return errors.New("instance.canonical_url must not contain path traversal")
 	}
 	if strings.TrimSpace(inst.BrowserBase) != "" {
-		if err := publicurl.ErrorForField("instance.browser_base", inst.BrowserBase); err != nil {
+		if err := validateBrowserBase(inst.BrowserBase); err != nil {
 			return err
 		}
-		if strings.Contains(inst.BrowserBase, "..") {
-			return errors.New("instance.browser_base must not contain path traversal")
+	}
+	return nil
+}
+
+func validateBrowserBase(raw string) error {
+	if err := publicurl.ErrorForField("instance.browser_base", raw); err != nil {
+		return err
+	}
+	parsed, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || parsed.RawQuery != "" || parsed.ForceQuery {
+		return errors.New("instance.browser_base must not contain a query")
+	}
+	if strings.Contains(parsed.EscapedPath(), "%") {
+		return errors.New("instance.browser_base must use an unescaped canonical path")
+	}
+	decoded, err := url.PathUnescape(parsed.EscapedPath())
+	if err != nil {
+		return errors.New("instance.browser_base must use a canonical path")
+	}
+	for _, char := range decoded {
+		if unicode.IsControl(char) || char == '\\' {
+			return errors.New("instance.browser_base must use a canonical path")
 		}
+	}
+	if strings.HasPrefix(decoded, "//") {
+		return errors.New("instance.browser_base must use a canonical path")
+	}
+	candidate := strings.TrimSuffix(decoded, "/")
+	if candidate != "" && path.Clean(candidate) != candidate {
+		return errors.New("instance.browser_base must use a canonical path")
 	}
 	return nil
 }

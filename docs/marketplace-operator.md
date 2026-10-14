@@ -45,7 +45,7 @@ While it is disabled, `/api/v1/catalog` is not routed and the catalog-projection
 
 ## Configuration and secrets
 
-When browser pages are deployed, set `instance.browser_base` to the public Nuxt base, including its path prefix (for example, `https://marketplace.example/marketplace`). Omit it for an API-only deployment. With it set, the well-known document includes separate latest and exact browser route templates.
+When browser pages are deployed, set `instance.browser_base` to the public Nuxt base (for example, `https://marketplace.example`). Omit it for an API-only deployment. With it set, the well-known document includes separate latest and exact browser route templates.
 
 Use `storage.metadata.dsn_file` in production, preferably through a Compose or platform secret integration. Configure exactly one DSN source, and make sure the selected value is not empty. A literal `dsn` and the environment-based `dsn_env` Compose fixture are for local development only. DSN values never appear in configuration errors or application startup logs.
 
@@ -84,7 +84,7 @@ The managed backend can run after explicit adoption, but the admin product as a 
 4. Configure `admin.enabled`, an HTTPS `admin.origin` without a path, and `admin.admin_groups` or `admin.admin_users`, then select exactly one authentication mode.
    - For `admin.authentication.mode: trusted_proxy` (inferred when the complete set of proxy fields is present and no mode is set), also configure `admin.trusted_proxies` with the immediate proxy CIDRs, `admin.issuer`, `admin.subject_header`, and `admin.groups_header`. The proxy must strip identity headers sent by the client and set them itself after authentication. The subject header carries one stable subject. The groups header carries a JSON string array such as `["marketplace-admins"]`, not a comma-separated list. Never trust a forwarded client IP as the immediate peer.
    - For `admin.authentication.mode: oidc`, configure `admin.authentication.oidc` instead: `issuer`, `client_id`, exactly one of `session_secret_env` or `session_secret_file`, and optionally `groups_claim` and `session_ttl`. OIDC mode rejects the trusted-proxy identity fields. [Enable and use the admin panel](../site/docs/how-to/operator/enable-and-use-the-admin-panel.md) describes the native sign-in flow and the Okta client contract.
-5. In trusted-proxy mode, protect both `/api/v1/admin/**` and the browser's `/marketplace/admin/**` routes at the gateway, and block any path around the gateway. In OIDC mode, the gateway only routes admin traffic to the application and must not inject identity headers. Keep admin requests same-origin. Public server-side rendering must not create or forward an admin identity. Admin reads and writes are private and must not be stored in shared caches.
+5. In trusted-proxy mode, protect both `/api/v1/admin/**` and the browser's `/admin/**` routes at the gateway, and block any path around the gateway. In OIDC mode, the gateway only routes admin traffic to the application and must not inject identity headers. Keep admin requests same-origin. Public server-side rendering must not create or forward an admin identity. Admin reads and writes are private and must not be stored in shared caches.
 
 ### Adopt during a maintenance window
 

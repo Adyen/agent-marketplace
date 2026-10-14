@@ -5,18 +5,14 @@ import { fileURLToPath } from 'node:url'
 
 const port = Number(process.env.E2E_SHARED_ORIGIN_PORT || 4323)
 const siteOrigin = process.env.E2E_SITE_ORIGIN || 'http://127.0.0.1:4324'
-const marketplaceOrigin = process.env.E2E_RELATIVE_APP_ORIGIN || 'http://127.0.0.1:4322'
+const marketplaceOrigin = process.env.E2E_ROOT_APP_ORIGIN || 'http://127.0.0.1:4325'
 const apiOrigin = process.env.E2E_API_ORIGIN || 'http://127.0.0.1:4311'
 
 export function createSharedOriginProxy(origins = { siteOrigin, marketplaceOrigin, apiOrigin }) {
   function targetFor(pathname) {
-    if (pathname === '/marketplace' || pathname.startsWith('/marketplace/') || pathname.startsWith('/_fonts/')) {
-      return origins.marketplaceOrigin
-    }
-    if (pathname === '/.well-known/agent-marketplace.json' || pathname.startsWith('/api/')) {
-      return origins.apiOrigin
-    }
-    return origins.siteOrigin
+    if (pathname === '/docs' || pathname.startsWith('/docs/')) return origins.siteOrigin
+    if (pathname === '/.well-known/agent-marketplace.json' || pathname.startsWith('/api/')) return origins.apiOrigin
+    return origins.marketplaceOrigin
   }
 
   return createServer(async (request, response) => {

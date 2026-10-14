@@ -25,13 +25,14 @@ SITE_NGINX_IMAGE ?= nginxinc/nginx-unprivileged:1.29-alpine
 MARKETPLACE_CONTAINER_IMAGE ?= agent-marketplace:$(VERSION)
 WEB_CONTAINER_IMAGE ?= agent-marketplace-web:$(VERSION)
 SITE_CONTAINER_IMAGE ?= agent-marketplace-site:$(VERSION)
+DOCS_CONTAINER_IMAGE ?= agent-marketplace-docs:$(VERSION)
 export GO_BUILD_IMAGE RUNTIME_IMAGE NODE_IMAGE POSTGRES_IMAGE NGINX_IMAGE SITE_NGINX_IMAGE
 
 # Platform targets
 PLATFORMS := darwin-arm64 darwin-amd64 linux-amd64 linux-arm64
 DIST_DIR := dist
 
-.PHONY: build test test-full lint ci-lint lint-common tidy version release clean e2e marketplace-gate upgrade-gate released-client-gate devin-probe tui-qa-check tui-qa tui-qa-contained site-dev site-build secrets-check container container-marketplace container-web container-site container-check compose-config $(PLATFORMS)
+.PHONY: build test test-full lint ci-lint lint-common tidy version release clean e2e marketplace-gate marketplace-proxy-check upgrade-gate released-client-gate devin-probe tui-qa-check tui-qa tui-qa-contained site-dev site-build site-docs-build secrets-check container container-marketplace container-web container-site container-docs container-check compose-config $(PLATFORMS)
 LINT_BASE ?= origin/main
 
 define run_golangci_lint
@@ -130,7 +131,7 @@ spec-check:
 	CGO_ENABLED=0 $(GO) run ./tools/specaudit trace
 	CGO_ENABLED=0 $(GO) run ./tools/specaudit archived
 
-container: container-marketplace container-web container-site
+container: container-marketplace container-web container-site container-docs
 
 container-marketplace:
 	docker build \
@@ -151,7 +152,19 @@ container-site:
 		--build-context design=design \
 		--build-arg NODE_IMAGE="$(NODE_IMAGE)" \
 		--build-arg NGINX_IMAGE="$(SITE_NGINX_IMAGE)" \
+		--build-arg SITE_PROFILE=public \
+		--build-arg SITE_BASE=/ \
 		-t "$(SITE_CONTAINER_IMAGE)" site
+
+container-docs:
+	docker build \
+		--build-context design=design \
+		--build-arg NODE_IMAGE="$(NODE_IMAGE)" \
+		--build-arg NGINX_IMAGE="$(SITE_NGINX_IMAGE)" \
+		--build-arg SITE_PROFILE=docs \
+		--build-arg SITE_BASE=/docs/ \
+		--build-arg MARKETPLACE_BASE=/ \
+		-t "$(DOCS_CONTAINER_IMAGE)" site
 
 secrets-check:
 	@test -n "$$(git check-ignore --no-index deploy/compose/postgres-s3/.env 2>/dev/null)" || { echo "ERROR: deploy .env files must be ignored"; exit 1; }
@@ -166,11 +179,11 @@ container-check: secrets-check
 	@test -s .dockerignore
 	@test -s web/Dockerfile
 	@test -s site/Dockerfile
-	@for path in site/.vitepress/cache site/.vitepress/dist site/node_modules; do grep -Fxq "$$path" .dockerignore || exit 1; done
-	@for path in .vitepress/cache .vitepress/dist node_modules; do grep -Fxq "$$path" site/.dockerignore || exit 1; done
+	@for path in site/.vitepress/cache site/.vitepress/cache-docs site/.vitepress/dist site/.vitepress/dist-docs site/node_modules; do grep -Fxq "$$path" .dockerignore || exit 1; done
+	@for path in .vitepress/cache .vitepress/cache-docs .vitepress/dist .vitepress/dist-docs node_modules; do grep -Fxq "$$path" site/.dockerignore || exit 1; done
 	@awk '/^ARG GO_BUILD_IMAGE=golang:1.26.9-bookworm$$/{goarg=1} /^ARG RUNTIME_IMAGE=gcr.io\/distroless\/static-debian12:nonroot$$/{runtimearg=1} /FROM .*\$$\{GO_BUILD_IMAGE\} AS build/{build=1} /FROM .*\$$\{GO_BUILD_IMAGE\} AS git-runtime/{gitstage=1} /-trimpath -buildvcs=false/{flags=1} /FROM \$$\{RUNTIME_IMAGE\} AS api/{api=1} /FROM \$$\{RUNTIME_IMAGE\} AS worker/{worker=1} /command -v git/{git=1} /command -v ssh/{ssh=1} /\/etc\/ssl\/certs\/ca-certificates\.crt/{debianca=1} /\/etc\/pki\/tls\/certs\/ca-bundle\.crt/{rpmca=1} /cp .*ca_bundle.*\/out\/runtime\/etc\/ssl\/certs\/ca-certificates\.crt/{normalized=1} /no supported CA bundle found/{caerror=1} /COPY --from=build --chown=1000:1000 \/out\/marketplace-healthcheck \/app\/marketplace-healthcheck/{healthchecks++} /BUILD_CA_CERT_PATH/{legacy=1} /USER 1000:1000/{users++} /(apk|apt-get|dnf|yum) (add|install)/{packageadds++} END {if (!goarg || !runtimearg || !build || !gitstage || !flags || !api || !worker || !git || !ssh || !debianca || !rpmca || !normalized || !caerror || healthchecks != 2 || legacy || packageadds != 0 || users < 2) exit 1}' Dockerfile.marketplace
 	@awk '/^ARG NODE_IMAGE=node:24-alpine$$/{arg=1} /^ARG NPM_CONFIG_REGISTRY$$/{registryarg=1} /FROM \$$\{NODE_IMAGE\} AS build/{build=1} /FROM \$$\{NODE_IMAGE\} AS runtime/{runtime=1} /COPY .*package.json pnpm-lock.yaml pnpm-workspace.yaml/{workspace=1} /npm install --global/{pnpm=1} /export PNPM_CONFIG_REGISTRY="\$$\{NPM_CONFIG_REGISTRY\}"/{registrymap=1} /pnpm install --frozen-lockfile --ignore-scripts/{install=1} /USER 1000:1000/{user=1} /HEALTHCHECK/{health=1} END {if (!arg || !registryarg || !build || !runtime || !workspace || !pnpm || !registrymap || !install || !user || !health) exit 1}' web/Dockerfile
-	@awk '/^ARG NODE_IMAGE=node:24-alpine$$/{nodearg=1} /^ARG NGINX_IMAGE=nginxinc\/nginx-unprivileged:1.29-alpine$$/{nginxarg=1} /FROM .*\$\{NODE_IMAGE\} AS build/{build=1} /FROM .*\$\{NGINX_IMAGE\} AS runtime/{runtime=1} /COPY .*package.json pnpm-lock.yaml/{workspace=1} /COPY --from=design .*semantic-colors.css/{colors=1} /USER 1000/{user=1} /ARG SITE_BASE=\//{sitebase=1} /HEALTHCHECK/{health=1} /command -v wget/{wget=1} /command -v curl/{curl=1} END {if (!nodearg || !nginxarg || !build || !runtime || !workspace || !colors || !user || !sitebase || !health || !wget || !curl) exit 1}' site/Dockerfile
+	@awk '/^ARG NODE_IMAGE=node:24-alpine$$/{nodearg=1} /^ARG NGINX_IMAGE=nginxinc\/nginx-unprivileged:1.29-alpine$$/{nginxarg=1} /FROM .*\$$\{NODE_IMAGE\} AS build/{build=1} /FROM .*\$$\{NGINX_IMAGE\} AS runtime/{runtime=1} /COPY .*package.json pnpm-lock.yaml/{workspace=1} /COPY --from=design .*semantic-colors.css/{colors=1} /USER 1000/{user=1} /ARG SITE_BASE=\//{sitebase++} /ARG SITE_PROFILE=public/{profile=1} /ARG MARKETPLACE_BASE=\//{marketplacebase=1} /docs profile requires SITE_BASE=\/docs\//{docsguard=1} /pnpm run build:docs/{docs=1} /pnpm run build && output=\.vitepress\/dist/{public=1} /COPY --from=build \/site\/\.site-dist\//{output=1} /ENV SITE_BASE=\$$\{SITE_BASE\}/{runtimebase=1} /location = \/ \{ return 404; \}/{rootguard=1} /HEALTHCHECK/{health=1} /http:\/\/127\.0\.0\.1:8080\$$\{SITE_BASE\}/{healthbase=1} /command -v wget/{wget=1} /command -v curl/{curl=1} END {if (!nodearg || !nginxarg || !build || !runtime || !workspace || !colors || !user || sitebase != 2 || !profile || !marketplacebase || !docsguard || !docs || !public || !output || !runtimebase || !rootguard || !health || !healthbase || !wget || !curl) exit 1}' site/Dockerfile
 	@test "$$(grep -Fh -- 'GO_BUILD_IMAGE:' deploy/compose/postgres-s3/compose.yaml compose.yaml | wc -l | tr -d ' ')" -eq 2
 	@test "$$(grep -Fh -- 'RUNTIME_IMAGE:' deploy/compose/postgres-s3/compose.yaml compose.yaml | wc -l | tr -d ' ')" -eq 2
 	@test "$$(grep -Fh -- 'NODE_IMAGE:' deploy/compose/postgres-s3/compose.yaml compose.yaml | wc -l | tr -d ' ')" -eq 4
@@ -179,10 +192,10 @@ container-check: secrets-check
 	@test "$$(grep -Fc -- 'POSTGRES_IMAGE' deploy/compose/postgres-s3/compose.yaml)" -eq 1
 	@test "$$(grep -Ec -- '^[[:space:]]*--build-arg GO_BUILD_IMAGE=' Makefile)" -eq 1
 	@test "$$(grep -Ec -- '^[[:space:]]*--build-arg RUNTIME_IMAGE=' Makefile)" -eq 1
-	@test "$$(grep -Ec -- '^[[:space:]]*--build-context design=design' Makefile)" -eq 2
-	@test "$$(grep -Ec -- '^[[:space:]]*--build-arg NODE_IMAGE=' Makefile)" -eq 2
+	@test "$$(grep -Ec -- '^[[:space:]]*--build-context design=design' Makefile)" -eq 3
+	@test "$$(grep -Ec -- '^[[:space:]]*--build-arg NODE_IMAGE=' Makefile)" -eq 3
 	@test "$$(grep -Ec -- '^[[:space:]]*--build-arg NPM_CONFIG_REGISTRY=' Makefile)" -eq 1
-	@test "$$(grep -Ec -- '^[[:space:]]*--build-arg NGINX_IMAGE=' Makefile)" -eq 1
+	@test "$$(grep -Ec -- '^[[:space:]]*--build-arg NGINX_IMAGE=' Makefile)" -eq 2
 	@awk '/^GO_BUILD_IMAGE \?= golang:1.26.9-bookworm$$/{go=1} /^RUNTIME_IMAGE \?= gcr.io\/distroless\/static-debian12:nonroot$$/{runtime=1} /^NODE_IMAGE \?= node:24-alpine$$/{node=1} /^POSTGRES_IMAGE \?= postgres:17.5-alpine$$/{postgres=1} /^NGINX_IMAGE \?= nginx:1.27-alpine$$/{nginx=1} /^SITE_NGINX_IMAGE \?= nginxinc\/nginx-unprivileged:1.29-alpine$$/{site_nginx=1} END {if (!go || !runtime || !node || !postgres || !nginx || !site_nginx) exit 1}' Makefile
 	@if git grep -nE 'is\.adyen\.(com|cloud)' -- Dockerfile.marketplace web/Dockerfile deploy/compose ':!deploy/compose/postgres-s3/README.md'; then \
 		echo "ERROR: tracked public container defaults contain an internal Adyen hostname; use an environment override instead"; exit 1; \
@@ -223,6 +236,9 @@ compose-config:
 
 marketplace-gate:
 	@E2E_SKIP_DOCKER=1 $(MAKE) e2e
+
+marketplace-proxy-check:
+	AM_MARKETPLACE_PROXY_IMAGE="$(NGINX_IMAGE)" CGO_ENABLED=0 $(GO) test -json -count=1 -timeout 2m -run '^TestMarketplaceNginxRedirects$$' ./tools/marketplace-proxy | CGO_ENABLED=0 $(GO) run ./tools/witness-check -require TestMarketplaceNginxRedirects
 
 # Dedicated gates name their scenarios once; witness-check fails the gate when
 # any of them skipped, failed, or never ran (for example after a rename).
@@ -327,11 +343,11 @@ tui-qa: tui-qa-check
 
 # Website.
 #
-# The site is the landing page only. Its harness table and TUI frame
-# (site/.vitepress/data/) are checked-in fixtures: no target in this build
-# regenerates or verifies them, so they are kept in step with
-# pkg/harness-compilation/target by hand. Generation, and the drift check that
-# makes it trustworthy, land with the documentation work.
+# The site builds public landing/documentation and documentation-only profiles.
+# Its harness table and TUI frame (site/.vitepress/data/) are checked-in fixtures:
+# No target in this build regenerates or verifies them, so they are kept in
+# step with pkg/harness-compilation/target by hand. Generation, and the drift
+# check that makes it trustworthy, land with the documentation work.
 SITE_DIR := site
 
 # Requires Node (see $(SITE_DIR)/package.json); no Go toolchain needed.
@@ -344,6 +360,10 @@ site-dev:
 site-build:
 	@command -v pnpm >/dev/null || { echo "ERROR: pnpm is required for website builds" >&2; exit 1; }
 	cd $(SITE_DIR) && pnpm install --frozen-lockfile && pnpm run build
+
+site-docs-build:
+	@command -v pnpm >/dev/null || { echo "ERROR: pnpm is required for documentation builds" >&2; exit 1; }
+	cd $(SITE_DIR) && pnpm install --frozen-lockfile && pnpm run build:docs
 
 # E2E test suite.
 # Runs inside a Docker container for local isolation (doesn't touch host env).

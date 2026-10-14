@@ -76,8 +76,10 @@ after(async () => {
 describe('shared-origin test proxy', () => {
   it('preserves configured routing and query strings', async () => {
     assert.equal(await get('/docs/?q=notes'), 'site:/docs/?q=notes')
-    assert.equal(await get('/marketplace/?q=notes'), 'marketplace:/marketplace/?q=notes')
+    assert.equal(await get('/?q=notes'), 'marketplace:/?q=notes')
+    assert.equal(await get('/registries/example?q=notes'), 'marketplace:/registries/example?q=notes')
     assert.equal(await get('/api/v1/search?q=notes'), 'api:/api/v1/search?q=notes')
+    assert.equal(await get('/.well-known/agent-marketplace.json'), 'api:/.well-known/agent-marketplace.json')
   })
 
   it('does not parse request paths against the Host header', async () => {
@@ -86,7 +88,7 @@ describe('shared-origin test proxy', () => {
 
   it('does not resolve a network-path pathname as a new upstream origin', async () => {
     const path = `//${new URL(attackerOrigin).host}/unexpected?q=1`
-    assert.equal(await get(`http://untrusted.invalid${path}`), `site:${path}`)
+    assert.equal(await get(`http://untrusted.invalid${path}`), `marketplace:${path}`)
     assert.equal(attackerRequests, 0)
   })
 

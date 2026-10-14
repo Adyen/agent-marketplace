@@ -14,7 +14,7 @@
 ---
 {{ include "agent-marketplace.deployment" (dict "root" . "role" "web" "component" .Values.web) }}
 {{- end }}
-{{- if .Values.site.enabled }}
+{{- if .Values.docs.enabled }}
 ---
-{{ include "agent-marketplace.deployment" (dict "root" . "role" "site" "component" .Values.site) }}
+{{ include "agent-marketplace.deployment" (dict "root" . "role" "docs" "component" .Values.docs) }}
 {{- end }}

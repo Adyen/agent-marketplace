@@ -131,7 +131,7 @@ These routes exist on the public listener under `/api/v1/admin/`. When `admin.en
 
 Sign-in routes (OIDC mode only):
 
-- `GET /api/v1/admin/auth/login`: starts sign-in and redirects (`303`) to the identity provider. Optional `next` parameter; only `/marketplace/admin` and paths below it are accepted.
+- `GET /api/v1/admin/auth/login`: starts sign-in and redirects (`303`) to the identity provider. Optional `next` parameter; only the administration path below the configured `instance.browser_base` is accepted. A root browser base uses `/admin`; an omitted browser base retains `/marketplace/admin`.
 - `GET /api/v1/admin/auth/callback`: OIDC callback. Sets the session cookie and redirects (`303`).
 - `POST /api/v1/admin/auth/logout`: expires the admin cookies. Safe to repeat.
 
