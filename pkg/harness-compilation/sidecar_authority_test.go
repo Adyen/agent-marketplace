@@ -187,3 +187,23 @@ func TestModeledMCPFieldsCannotArriveThroughExtensionFields(t *testing.T) {
 		})
 	}
 }
+
+func TestSubagentToolSidecarMayNarrowCanonicalWildcard(t *testing.T) {
+	resource := decodePayload(t, "subagent", `{"name":"reviewer","Description":"Review only","Body":"Inert body.","Tools":["mcp__github__*"],"Ext":{"claude":{"tools":["mcp__github__list_issues"]}}}`)
+	result, err := Compile(resource, TargetClaude)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.HasErrors() {
+		t.Fatalf("sidecar under a canonical wildcard refused: %+v", result.Diagnostics)
+	}
+	for _, a := range result.Artifacts {
+		if a.Path == "agents/reviewer.md" {
+			if tools := subagentFrontmatterTools(t, a.Bytes); !reflect.DeepEqual(tools, []any{"mcp__github__list_issues"}) {
+				t.Fatalf("tools = %#v, want the narrowed MCP tool", tools)
+			}
+			return
+		}
+	}
+	t.Fatalf("subagent missing: %+v", result.Artifacts)
+}

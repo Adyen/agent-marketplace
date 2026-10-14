@@ -25,6 +25,10 @@ func TestSidecarToolsWithinCanonical(t *testing.T) {
 		{"verbatim native entry", TargetCursor, []string{"native_reader"}, []string{"native_reader"}, TargetCursor, nil, true},
 		{"caller override", "", []string{"CustomSource"}, []string{"Read"}, TargetFactory, map[string]string{"CustomSource": "Read"}, true},
 		{"unmapped native entry", "", []string{"Read"}, []string{"native_writer"}, TargetCursor, nil, false},
+		{"tool under a wildcard", TargetClaude, []string{"mcp__github__*"}, []string{"mcp__github__list_issues"}, TargetClaude, nil, true},
+		{"narrower wildcard", TargetClaude, []string{"mcp__github__*"}, []string{"mcp__github__list_*"}, TargetClaude, nil, true},
+		{"other server outside a wildcard", TargetClaude, []string{"mcp__github__*"}, []string{"mcp__gitlab__list_issues"}, TargetClaude, nil, false},
+		{"wider wildcard", TargetClaude, []string{"mcp__github__list_*"}, []string{"mcp__github__*"}, TargetClaude, nil, false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
