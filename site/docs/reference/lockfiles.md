@@ -160,7 +160,7 @@ A current lock does not move when the remote branch or tag moves. `lock --upgrad
 
 ## Errors
 
-Invalid lock files fail with a `lock.invalid` error that wraps one of these codes:
+Invalid lockfiles fail with a `lock.invalid` error that wraps one of these codes:
 
 | Code | Meaning |
 |---|---|
