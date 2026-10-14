@@ -101,7 +101,7 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- $isMarketplace := has $role (list "api" "worker" "all") -}}
 {{- $probePathBase := "/" -}}
 {{- if eq $role "web" -}}
-{{-   $probePathBase = trimSuffix "/" $root.Values.web.basePath -}}
+{{-   $probePathBase = trimSuffix "/" (default "/" $root.Values.web.basePath) -}}
 {{-   if not $probePathBase -}}
 {{-     $probePathBase = "/" -}}
 {{-   end -}}
