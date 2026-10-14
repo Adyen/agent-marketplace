@@ -1308,7 +1308,7 @@ func appendUnavailableSelectionRows(rows []row, cfg *config.Config, localCfg *co
 		}
 	}
 	layerHarnesses := layerHarnessDefaults(cfg)
-	appendCandidate := func(kind ir.ResourceKind, name, url, ref, path string, required bool, reason string) {
+	appendCandidate := func(kind ir.ResourceKind, name, url, ref, path string, required bool, reason string, soft bool) {
 		key := skill.ResourceKey(kind, name)
 		identity := registryIdentityKey(url, ref, path)
 		seenKey := key + "\x01" + identity
@@ -1389,6 +1389,7 @@ func appendUnavailableSelectionRows(rows []row, cfg *config.Config, localCfg *co
 				CatalogKey:     meta.CatalogKey,
 			},
 			UnavailableReason: reason,
+			UnavailableSoft:   soft,
 			DriftItem:         &materialize.DriftItem{Name: key, Reason: materialize.DriftBroken},
 			IsExcluded:        excludedLocally,
 			ExcludedLocally:   excludedLocally,
@@ -1408,7 +1409,7 @@ func appendUnavailableSelectionRows(rows []row, cfg *config.Config, localCfg *co
 		if !errors.As(err, &snf) || snf.Via != "" {
 			continue
 		}
-		appendCandidate(snf.Kind, snf.Name, snf.URL, snf.Ref, snf.Path, snf.Required, snf.Error())
+		appendCandidate(snf.Kind, snf.Name, snf.URL, snf.Ref, snf.Path, snf.Required, snf.Error(), resolver.IsSoftSelectedNotFound(err))
 	}
 	if cfg != nil {
 		failedIdentities := make(map[string]struct{})
@@ -1419,7 +1420,7 @@ func appendUnavailableSelectionRows(rows []row, cfg *config.Config, localCfg *co
 				continue
 			}
 			for _, selected := range resolver.ResourcesSelected(*entry, nil) {
-				appendCandidate(selected.Kind, selected.Name, entry.URL, entry.Ref, entry.Path, entry.Required, unavailableCatalogReason)
+				appendCandidate(selected.Kind, selected.Name, entry.URL, entry.Ref, entry.Path, entry.Required, unavailableCatalogReason, false)
 			}
 			identity := registryIdentityKey(entry.URL, entry.Ref, entry.Path)
 			if _, dup := failedIdentities[identity]; !dup {
@@ -1434,7 +1435,7 @@ func appendUnavailableSelectionRows(rows []row, cfg *config.Config, localCfg *co
 					if _, covered := available[skill.ResourceKey(kind, name)]; covered {
 						continue
 					}
-					appendCandidate(kind, name, entry.URL, entry.Ref, entry.Path, entry.Required, unavailableCatalogReason)
+					appendCandidate(kind, name, entry.URL, entry.Ref, entry.Path, entry.Required, unavailableCatalogReason, false)
 				}
 			}
 		}
