@@ -13,11 +13,11 @@ import (
 // releasedClientArch maps the checksum of each pinned latest-release Linux
 // asset to its architecture. Bump these, the CI download, and the version
 // label after every stable release.
-const releasedClientVersion = "v4.1.3"
+const releasedClientVersion = "v4.1.4"
 
 var releasedClientArch = map[string]string{
-	"f29846a258081d2789d07263a5b5919a770c631f6c8dec69ed5c7e0f0fc59aeb": "amd64",
-	"e4bca90471bd1b8f0cef82c804c9755fd5d27a92065584e837c47cbf227ea02a": "arm64",
+	"7b6f49e7565b9c9ab08ecdf1900cb3228926ae59a9d14d91a27db90a6936adb2": "amd64",
+	"2749c5ede81222d389e2a1043e9397f6fb0c0d753842770363c61a6583486379": "arm64",
 }
 
 // spec: hook-resources/latest-release-still-verifies-after-migration

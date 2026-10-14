@@ -299,7 +299,7 @@ func TestCanonicalArtifactDecodeRejectsPathTraversal(t *testing.T) {
 // spec: marketplace-api/unsafe-entry-name-is-not-echoed
 func TestCanonicalArtifactDecodeRejectionOmitsEntryName(t *testing.T) {
 	for name, reason := range map[string]string{
-		"/etc/unsafe-entry":           "absolute",
+		"/etc/unsafe-entry":          "absolute",
 		"foo/../../etc/unsafe-entry": "traversal",
 	} {
 		raw := writeTarGz(t, func(tw *tar.Writer) {
