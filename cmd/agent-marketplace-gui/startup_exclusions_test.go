@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"cmp"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -124,10 +125,11 @@ type work50HostEvent struct {
 	Sequence   uint64 `json:"sequence"`
 	Generation uint64 `json:"generation"`
 	Payload    struct {
-		Stage  string            `json:"stage"`
-		Drift  string            `json:"drift"`
-		Rows   []work50HostRow   `json:"rows"`
-		Groups []work50HostGroup `json:"groups"`
+		Stage       string                  `json:"stage"`
+		Drift       string                  `json:"drift"`
+		Rows        []work50HostRow         `json:"rows"`
+		Groups      []work50HostGroup       `json:"groups"`
+		Diagnostics []startupHostDiagnostic `json:"diagnostics"`
 	} `json:"payload"`
 }
 
@@ -177,16 +179,23 @@ func readWork50HostStages(t *testing.T, app *App) []work50HostEvent {
 	return nil
 }
 
-func work50HostStages(t *testing.T, required, excludeReview bool) []work50HostEvent {
+func work50HostStages(t *testing.T, required bool, userConfig func(fixture *startupfixture.Fixture, source string) string) []work50HostEvent {
+	t.Helper()
+	return work50HostRun(t, required, func(f *startupfixture.Fixture) []byte { return f.OrganizationConfig(required) }, userConfig, func(app *App) []work50HostEvent {
+		return readWork50HostStages(t, app)
+	})
+}
+
+func work50HostRun(t *testing.T, required bool, orgConfig func(fixture *startupfixture.Fixture) []byte, userConfig func(fixture *startupfixture.Fixture, source string) string, body func(app *App) []work50HostEvent) []work50HostEvent {
 	t.Helper()
 	var fixture *startupfixture.Fixture
-	paths := startupHostFixture(t, func(string) string {
+	paths := startupHostFixture(t, func(source string) string {
 		fixture = startupfixture.New(t, marketplace.DefaultCache())
-		return string(fixture.UserConfig(excludeReview))
+		return userConfig(fixture, source)
 	})
 	orgDir := t.TempDir()
 	orgPath := filepath.Join(orgDir, "config.yaml")
-	if err := os.WriteFile(orgPath, fixture.OrganizationConfig(required), 0o600); err != nil {
+	if err := os.WriteFile(orgPath, orgConfig(fixture), 0o600); err != nil {
 		t.Fatal("write owned mixed-pin organization config")
 	}
 	config.SetTestOrganizationConfigPath(t, orgPath)
@@ -203,7 +212,7 @@ func work50HostStages(t *testing.T, required, excludeReview bool) []work50HostEv
 		t.Fatal("create host GUI for mixed organization pins")
 	}
 	t.Cleanup(app.close)
-	stages := readWork50HostStages(t, app)
+	stages := body(app)
 	app.close()
 	fixture.Server.Close()
 	assertProtectedHostPathsUnchanged(t, paths, before)
@@ -226,6 +235,23 @@ func work50HostIdentities(rows []work50HostRow) []work50HostIdentity {
 		identities[i] = work50HostIdentity{row.ID, row.Name, row.Kind, row.Registry, row.Scope, row.Group, row.Required, row.HarnessOverride, harnesses}
 	}
 	return identities
+}
+
+func work50HostGroupedLayout(rows []work50HostRow, groups []work50HostGroup) [][]work50HostIdentity {
+	layout := make([][]work50HostIdentity, len(groups))
+	for i, group := range groups {
+		var members []work50HostRow
+		for _, row := range rows {
+			if row.Group == group.ID {
+				members = append(members, row)
+			}
+		}
+		slices.SortFunc(members, func(a, b work50HostRow) int {
+			return cmp.Or(strings.Compare(a.Name, b.Name), strings.Compare(a.Kind, b.Kind), strings.Compare(a.Registry, b.Registry), strings.Compare(a.Scope, b.Scope), strings.Compare(a.ID, b.ID))
+		})
+		layout[i] = work50HostIdentities(members)
+	}
+	return layout
 }
 
 func assertWork50HostMixedRows(t *testing.T, stage int, rows []work50HostRow, required, excludeReview, pending bool) {
@@ -292,7 +318,9 @@ func TestGuiHostExcludedOrganizationPinRetainsVerifiedPosition(t *testing.T) {
 		{name: "required-user-exclusion-immunity", excludeReview: true, required: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			stages := work50HostStages(t, tc.required, tc.excludeReview)
+			stages := work50HostStages(t, tc.required, func(f *startupfixture.Fixture, _ string) string {
+				return string(f.UserConfig(tc.excludeReview))
+			})
 			if len(stages) != 4 {
 				t.Fatal("mixed-pin host did not deliver four startup stages")
 			}

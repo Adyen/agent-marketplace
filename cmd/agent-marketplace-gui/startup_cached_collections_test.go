@@ -16,8 +16,8 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/marketplace"
 	"github.com/Adyen/agent-marketplace/internal/session"
+	startupfixture "github.com/Adyen/agent-marketplace/internal/testutil/marketplace/startup"
 	hccartifact "github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact"
-	"github.com/Adyen/agent-marketplace/pkg/marketplace/store"
 )
 
 type work49CacheSeed struct {
@@ -35,41 +35,7 @@ func seedWork49Collection(t *testing.T, cache *marketplace.Cache, marketURL stri
 	for i, name := range seed.members {
 		members[i] = hccartifact.CollectionMemberEntry{Kind: "skill", Name: name, RegistryID: "tools", Revision: "sha256:" + strings.Repeat("a", 64)}
 	}
-	payload, digest, err := hccartifact.EncodeCollectionManifest(hccartifact.CollectionManifest{
-		SchemaVersion: hccartifact.CollectionSchemaV1, Name: seed.name, SupportedSchemas: []string{hccartifact.CollectionSchemaV1}, Members: members,
-	})
-	if err != nil {
-		t.Fatal("encode canonical collection fixture")
-	}
-	coordinate := store.ResourceCoordinate{Marketplace: "mp", Registry: "tools", Kind: "collection", Name: seed.name}
-	content := store.RevisionDigest(digest)
-	assessment, err := store.FinalizeResourceAssessment(store.ResourceAssessment{
-		Coordinate: coordinate, ContentDigest: content, AnalyzerVersion: "gui-host-fixture",
-		PolicyDigest: store.PolicyDigest("sha256:" + strings.Repeat("c", 64)), Decision: store.AssessmentDecisionAllow,
-		InspectionManifestDigest: store.RevisionDigest("sha256:" + strings.Repeat("d", 64)), AssessedAt: time.Unix(1, 0),
-	})
-	if err != nil {
-		t.Fatal("finalize collection fixture assessment")
-	}
-	revision := store.AssessedResourceRevision{
-		ResourceRevision: store.ResourceRevision{Coordinate: coordinate, ContentDigest: content},
-		Assessment:       assessment,
-		Occurrence: store.ResourceOccurrence{Coordinate: coordinate, ContentDigest: content, Commit: strings.Repeat("a", 40),
-			ManifestDigest: store.RevisionDigest("sha256:" + strings.Repeat("b", 64))},
-	}
-	metadataPath, err := cache.WriteResourceRevision(marketURL, "tools", "collection", seed.name, digest, revision)
-	if err != nil {
-		t.Fatal("write collection revision fixture")
-	}
-	manifestPath, err := cache.WriteCollectionManifest(digest, payload)
-	if err != nil {
-		t.Fatal("write canonical collection fixture")
-	}
-	if seed.verified {
-		if err := cache.MarkCollectionVerified(digest); err != nil {
-			t.Fatal("mark collection fixture verified")
-		}
-	}
+	digest, _, _, metadataPath, manifestPath := startupfixture.SeedCollection(t, cache, marketURL, seed.name, members, seed.verified)
 	if err := os.Chtimes(metadataPath, seed.metadataTime, seed.metadataTime); err != nil {
 		t.Fatal("set collection metadata fixture time")
 	}
@@ -80,12 +46,15 @@ func work49LegacyOrganizationConfig(marketURL, collectionName, revision string) 
 	return []byte(fmt.Sprintf("apiVersion: agent-marketplace/v3\nharnesses: [devin]\ntelemetry:\n  level: off\nmarketplaces:\n  - url: %q\n    instance_id: mp\n    resources:\n      - registry_id: tools\n        registry_slug: tools\n        kind: collection\n        name: %q\n        revision: %q\n        digest: %q\n        acquisition: mirror\n        direct: true\n", marketURL, collectionName, revision, revision))
 }
 
-func work49ProvisionalRows(t *testing.T, buildOrg work49OrgConfigBuilder) []acquisitionHostRow {
+func work49ProvisionalRows(t *testing.T, userConfig func(source, marketURL string) string, buildOrg work49OrgConfigBuilder) []acquisitionHostRow {
 	t.Helper()
+	marketURL, _, release, closeMarket := blockedWork47Marketplace(t)
 	paths := startupHostFixture(t, func(source string) string {
+		if userConfig != nil {
+			return userConfig(source, marketURL)
+		}
 		return fmt.Sprintf("apiVersion: agent-marketplace/v4\nharnesses: [devin]\ntelemetry:\n  level: off\nsources:\n  local:\n    directory: %q\nresources:\n  local: {all: true}\n", source)
 	})
-	marketURL, _, release, closeMarket := blockedWork47Marketplace(t)
 	orgDir := t.TempDir()
 	orgPath := filepath.Join(orgDir, "config.yaml")
 	orgConfig := buildOrg(t, marketplace.DefaultCache(), marketURL)
@@ -204,14 +173,14 @@ func TestGuiHostCachedCollectionRevisionChoice(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			assertWork49Rows(t, work49ProvisionalRows(t, tc.build), tc.want)
+			assertWork49Rows(t, work49ProvisionalRows(t, nil, tc.build), tc.want)
 		})
 	}
 }
 
 // spec: session-startup/tampered-cached-manifests-are-rejected
 func TestGuiHostRejectsTamperedCachedCollection(t *testing.T) {
-	rows := work49ProvisionalRows(t, func(t *testing.T, cache *marketplace.Cache, url string) []byte {
+	rows := work49ProvisionalRows(t, nil, func(t *testing.T, cache *marketplace.Cache, url string) []byte {
 		digest, manifestPath := seedWork49Collection(t, cache, url, work49CacheSeed{name: "bundle", members: []string{"lone"}, verified: true, metadataTime: time.Unix(10, 0)})
 		raw, err := os.ReadFile(manifestPath)
 		if err != nil {
@@ -227,4 +196,67 @@ func TestGuiHostRejectsTamperedCachedCollection(t *testing.T) {
 		return work49LegacyOrganizationConfig(url, "bundle", digest)
 	})
 	assertWork49Rows(t, rows, nil)
+}
+
+// spec: session-startup/organization-marketplace-collection-expands-from-the-verified-cached-manifest
+func TestGuiHostExpandsOrganizationCollectionFromVerifiedCache(t *testing.T) {
+	zero := "sha256:" + strings.Repeat("0", 64)
+	rows := work49ProvisionalRows(t, func(source, marketURL string) string {
+		return fmt.Sprintf("apiVersion: agent-marketplace/v4\nharnesses: [devin]\ntelemetry:\n  level: off\nsources:\n  local:\n    directory: %q\n  mp: {marketplace: %q}\nresources:\n  local: {all: true}\n  mp:\n    exclude: [tools/skill/review]\n", source, marketURL)
+	}, func(t *testing.T, cache *marketplace.Cache, url string) []byte {
+		seedWork49Collection(t, cache, url, work49CacheSeed{name: "bundle", members: []string{"audit", "review"}, verified: true, metadataTime: time.Unix(10, 0)})
+		return work49LegacyOrganizationConfig(url, "bundle", zero)
+	})
+	local, organization := make([]string, 0, 2), make([]string, 0, 2)
+	var audit, review acquisitionHostRow
+	for _, row := range rows {
+		if row.Scope == "user" && row.Kind == "skill" && row.Registry == "local" {
+			if !row.Checked || !row.PendingVerification || row.ResourceAction != "none" {
+				t.Fatal("local Directory row did not remain selected and pending")
+			}
+			local = append(local, row.Name)
+		}
+		if row.Scope != "organization" || row.Kind != "skill" {
+			continue
+		}
+		organization = append(organization, row.Name)
+		switch row.Name {
+		case "audit":
+			audit = row
+		case "review":
+			review = row
+		}
+	}
+	slices.Sort(local)
+	if !slices.Equal(local, []string{"alpha", "beta"}) {
+		t.Fatal("provisional host snapshot lost the Directory control rows")
+	}
+	if !slices.Equal(organization, []string{"audit", "review"}) {
+		t.Fatal("organization collection did not expand to its cached members in verified order")
+	}
+	if !audit.Checked || !audit.PendingVerification || audit.ResourceAction != "none" {
+		t.Fatal("cached organization member did not render as selected pending work")
+	}
+	if review.Checked || !review.PendingVerification || review.ResourceAction != "none" || !strings.Contains(review.Status, "excluded") {
+		t.Fatal("user-excluded organization member did not render as excluded pending work")
+	}
+}
+
+// spec: session-startup/optional-collection-member-yields-to-a-configured-selection-of-the-same-resource
+func TestGuiHostCollectionMemberYieldsToConfiguredSelection(t *testing.T) {
+	zero := "sha256:" + strings.Repeat("0", 64)
+	rows := work49ProvisionalRows(t, nil, func(t *testing.T, cache *marketplace.Cache, url string) []byte {
+		seedWork49Collection(t, cache, url, work49CacheSeed{name: "bundle", members: []string{"alpha", "gamma"}, verified: true, metadataTime: time.Unix(10, 0)})
+		return work49LegacyOrganizationConfig(url, "bundle", zero)
+	})
+	assertWork49Rows(t, rows, []string{"gamma"})
+	alphas := 0
+	for _, row := range rows {
+		if row.Name == "alpha" {
+			alphas++
+		}
+	}
+	if alphas != 1 {
+		t.Fatal("colliding collection member did not yield to the configured selection")
+	}
 }
