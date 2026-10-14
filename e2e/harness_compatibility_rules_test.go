@@ -2,7 +2,6 @@ package e2e_test
 
 import (
 	"encoding/json"
-	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -41,7 +40,7 @@ func assertCompatibilityRules(t *testing.T, e *Env, f compatibilityFixture, bina
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := hcc.Materialize(conversion, output, hcc.WithWriteMode(hcc.WriteModeOverwrite)); err != nil && !errors.Is(err, hcc.ErrPartialResult) {
+	if _, err := hcc.Materialize(conversion, output, hcc.WithWriteMode(hcc.WriteModeOverwrite)); err != nil {
 		t.Fatal(err)
 	}
 	unsupported := map[string]string{

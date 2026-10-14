@@ -139,8 +139,9 @@ func TestHarnessConversionSecurity(t *testing.T) {
 				{
 					from: hcc.HarnessCodex, to: hcc.HarnessCodex,
 					source: "source", out: "native",
-					outcome:   conversionSharedRefused,
-					artifacts: map[string]string{".codex/config.toml": "$SYNTHETIC_KEY"},
+					outcome:       conversionSharedRefused,
+					artifacts:     map[string]string{".codex/config.toml": "$SYNTHETIC_KEY"},
+					treeUnchanged: true,
 				},
 			},
 		},
@@ -244,10 +245,10 @@ func TestHarnessConversionSecurity(t *testing.T) {
 func runConversionStep(t *testing.T, workspace string, step conversionStep) {
 	t.Helper()
 	for rel, body := range step.files {
-		writeConversionFile(t, filepath.Join(workspace, filepath.FromSlash(rel)), body)
+		writeConversionFile(t, filepath.Join(workspace, rel), body)
 	}
-	source := filepath.Join(workspace, filepath.FromSlash(step.source))
-	out := filepath.Join(workspace, filepath.FromSlash(step.out))
+	source := filepath.Join(workspace, step.source)
+	out := filepath.Join(workspace, step.out)
 	before := snapshotConversionTree(t, out)
 
 	result, convertErr := hcc.Convert(os.DirFS(source), step.from, step.to, hcc.WithPluginRoot(source))
@@ -309,7 +310,7 @@ func runConversionStep(t *testing.T, workspace string, step conversionStep) {
 		}
 	}
 	for _, rel := range step.unchanged {
-		if got, want := readConversionFile(t, out, rel), before[filepath.ToSlash(rel)]; got != want {
+		if got, want := readConversionFile(t, out, rel), before[rel]; got != want {
 			t.Fatalf("%s changed:\ngot  %q\nwant %q", rel, got, want)
 		}
 	}
@@ -327,7 +328,7 @@ func writeConversionFile(t *testing.T, path, body string) {
 
 func readConversionFile(t *testing.T, root, rel string) string {
 	t.Helper()
-	body, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(rel)))
+	body, err := os.ReadFile(filepath.Join(root, rel))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -357,7 +358,7 @@ func snapshotConversionTree(t *testing.T, root string) map[string]string {
 		if err != nil {
 			return err
 		}
-		tree[filepath.ToSlash(rel)] = string(body)
+		tree[rel] = string(body)
 		return nil
 	})
 	if err != nil {
