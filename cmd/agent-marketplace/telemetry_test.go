@@ -70,6 +70,44 @@ func TestTelemetryEnableEndpoint(t *testing.T) {
 	}
 }
 
+// spec: configuration-settings/telemetry-endpoint-credentials-are-not-logged
+func TestTelemetryEnableRedactsEndpointCredentials(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	setupTelemetryHome(t)
+	if _, err := executeCommand("init", "--harnesses", "factory"); err != nil {
+		t.Fatalf("init failed: %v", err)
+	}
+	logPath := filepath.Join(t.TempDir(), "agent-marketplace.log")
+	t.Setenv("AGENT_MARKETPLACE_LOG_ENABLED", "true")
+	t.Setenv("AGENT_MARKETPLACE_LOG_FILE", logPath)
+	leaks := func(value string) bool {
+		return strings.Contains(value, "am-user") || strings.Contains(value, "am-secret") || strings.Contains(value, "am-query-secret") || strings.Contains(value, "am-space-secret")
+	}
+
+	_, err := executeCommand("telemetry", "enable", "--level", "basic", "--endpoint", "http://am-user:am-secret@203.0.113.10/otlp?token=am-query-secret am-space-secret")
+	if err == nil || leaks(err.Error()) || !strings.Contains(err.Error(), "203.0.113.10/otlp") {
+		t.Fatalf("insecure credentialed endpoint error = %v", err)
+	}
+	endpoint := "https://am-user:am-secret@otel.example.com/otlp?token=am-query-secret"
+	if _, err := executeCommand("telemetry", "enable", "--level", "basic", "--endpoint", endpoint); err != nil {
+		t.Fatalf("enable with credentialed endpoint failed: %v", err)
+	}
+	logs, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if leaks(string(logs)) || !strings.Contains(string(logs), "otel.example.com/otlp") {
+		t.Fatalf("log file does not redact the endpoint:\n%s", logs)
+	}
+	cfgPath, _ := config.GlobalConfigPath()
+	cfg, err := os.ReadFile(cfgPath)
+	if err != nil || !strings.Contains(string(cfg), endpoint) {
+		t.Fatalf("configured endpoint was not persisted unchanged: %v\n%s", err, cfg)
+	}
+}
+
 func TestTelemetryEnableRejectsInsecureEndpoint(t *testing.T) {
 	if isolateCommandTest(t) {
 		return

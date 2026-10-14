@@ -476,6 +476,7 @@ func isSafeInspectionText(data []byte) bool {
 		}
 	}
 	if strings.HasPrefix(text, "#!") || strings.HasPrefix(text, "javascript:") ||
+		strings.HasPrefix(text, "data:") || strings.HasPrefix(text, "vbscript:") ||
 		strings.HasPrefix(text, "function ") || strings.HasPrefix(text, "async function ") ||
 		strings.HasPrefix(text, "const ") || strings.HasPrefix(text, "let ") ||
 		strings.HasPrefix(text, "var ") || strings.HasPrefix(text, "import ") ||

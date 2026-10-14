@@ -1126,10 +1126,10 @@ func toIntPtr(value any) (*int, error) {
 		if math.IsNaN(v) || math.IsInf(v, 0) {
 			return nil, fmt.Errorf("value must be a finite integer")
 		}
-		if v < math.MinInt64 || v > math.MaxInt64 {
+		if v < float64(math.MinInt) || v >= -float64(math.MinInt) {
 			return nil, fmt.Errorf("integer out of range")
 		}
-		if v != float64(int64(v)) {
+		if v != math.Trunc(v) {
 			return nil, fmt.Errorf("value must be an integer")
 		}
 		n = int64(v)
@@ -1142,7 +1142,7 @@ func toIntPtr(value any) (*int, error) {
 	default:
 		return nil, fmt.Errorf("value has unsupported type %T", value)
 	}
-	if int64(int(n)) != n {
+	if n < math.MinInt || n > math.MaxInt {
 		return nil, fmt.Errorf("integer out of range")
 	}
 	return intPtr(int(n)), nil
