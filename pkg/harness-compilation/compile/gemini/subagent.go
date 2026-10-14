@@ -70,9 +70,9 @@ func translateSubagent(sub *ir.Subagent, opts compile.Options) ([]artifact.Artif
 					URL:     replaceEnvTokens(server.URL),
 					Extra:   server.Extra,
 				}
-				diags = append(diags, compile.McpCredentialDiagnosticsForFields(
+				diags = append(diags, compile.McpCredentialDiagnosticsWithExtra(
 					sub.Name(), diag.SourceRef(sub.Source), mapping.TargetGemini,
-					server.Env, nil, "", "mcpServers."+name+".", compile.WithMcpOptions(opts),
+					server.Env, server.Extra, "mcpServers."+name+".", compile.WithMcpOptions(opts),
 				)...)
 			}
 		}

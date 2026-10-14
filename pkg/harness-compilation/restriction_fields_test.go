@@ -118,3 +118,20 @@ func TestDevinRefusesMCPServerWithUnrepresentableArgument(t *testing.T) {
 		t.Fatalf("unrelated server lost: %+v", result.Artifacts)
 	}
 }
+
+func TestGeminiInlineMCPServerPreservedCredentialsAreReported(t *testing.T) {
+	const agent = "---\nname: reviewer\ndescription: Restricted reviewer\nkind: local\nmcpServers:\n  srv:\n    httpUrl: https://example.invalid/mcp\n    headers:\n      Authorization: inert-literal-placeholder\n---\nInert body.\n"
+	result, err := Convert(fstest.MapFS{".gemini/agents/reviewer.md": {Data: []byte(agent)}}, HarnessGemini, TargetGemini)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, d := range result.Diagnostics {
+		if d.Code == diag.CodeMcpLiteralCredential {
+			if strings.Contains(d.Message, "inert-literal-placeholder") {
+				t.Fatalf("credential diagnostic leaks the value: %+v", d)
+			}
+			return
+		}
+	}
+	t.Fatalf("literal credential in a preserved header not reported: %+v", result.Diagnostics)
+}
