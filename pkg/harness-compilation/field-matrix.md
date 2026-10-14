@@ -87,3 +87,11 @@ output. The table states only mappings supported by those sources and fixtures.
 Loaders reject malformed or mixed typed security lists rather than silently filtering them. Explicit empty lists remain empty; permissions maps preserve unknown nested keys and reject non-object/null permission values. MCP and hook map-backed iteration is sorted by resource/event name. Secret values never occur in diagnostics or logs.
 
 Constructors from earlier releases retain their fixed signatures. Rich typed fields use additive `*WithOptions` constructors and documented option functions. Support file bytes and D9 ownership/materialization remain outside this package.
+
+Plugin-root and project-directory tokens in MCP server values, command prompts
+and subagent bodies stay distinct. Gemini ingestion maps only
+`${extensionPath}` to `${CLAUDE_PLUGIN_ROOT}` and preserves
+`${GEMINI_PROJECT_DIR}` and `${CLAUDE_PROJECT_DIR}` as written. Factory MCP
+servers translate `${DROID_PLUGIN_ROOT}` to `${CLAUDE_PLUGIN_ROOT}` on ingestion
+and back on compilation. Hook commands resolve both roots through native hook
+projection instead.

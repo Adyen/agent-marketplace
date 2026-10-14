@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Project and plugin roots stay distinct
+
+Gemini ingestion no longer rewrites `${GEMINI_PROJECT_DIR}` and `${CLAUDE_PROJECT_DIR}` to `${CLAUDE_PLUGIN_ROOT}` in MCP server values, command prompts and subagent bodies. Those project references used to resolve inside the plugin on every target: Gemini emitted `${extensionPath}`, Claude `${CLAUDE_PLUGIN_ROOT}`, and targets with a literal plugin root pointed the server at the installed registry copy. Only `${extensionPath}` maps to the canonical plugin root now; a target that cannot represent a project reference keeps it as an environment reference or refuses the server, as Codex does for interpolated arguments. Factory MCP servers translate `${DROID_PLUGIN_ROOT}` to `${CLAUDE_PLUGIN_ROOT}` on ingestion and back on compilation, so Factory output no longer carries the Claude token and Claude output no longer carries the Factory token.
+
 ### The Claude plugin form no longer drops a root-level SKILL.md
 
 `LoadBundleWithOptions` selects the plugin form for both `.claude-plugin/plugin.json` manifests and bare plugin layouts, and that form only scanned `skills/` subdirectories. A repository that IS a single skill (root `SKILL.md`, no `skills/` tree) therefore ingested zero resources with no diagnostic — the layout Claude Code documents for manifest `"skills": ["./"]` and that `github.com/blader/humanizer` ships. The plugin form now loads a root `SKILL.md` through `bundle.LoadRootSkill` when one exists. A root skill whose frontmatter name duplicates a `skills/` entry is dropped with the new warning `ingest.claude.duplicate-root-skill`; the `skills/` entry wins deterministically because it loads first in sorted order. Skill support files no longer include `.git` directories at any depth: a root skill's directory is the whole checkout, a marketplace clone keeps `.git` on disk, and VCS internals were being published into installable archives and fed to bounded support reads.
