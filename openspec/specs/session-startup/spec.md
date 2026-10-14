@@ -39,7 +39,7 @@ Once the merged configuration validates, an interactive client SHALL render the 
 
 #### Scenario: Excluded configured selections render unchecked in their verified position
 
-- **WHEN** the user-personal configuration contains an optional Marketplace pin that a higher-precedence exclusion disables
+- **WHEN** Consumer organization configuration contains optional Marketplace resource pins and a user-personal exclusion disables one of those pins
 - **THEN** the provisional stage MUST render that pin unchecked with an explicit excluded status in the position verified inventory will give it
 - **AND** non-excluded pins MUST render checked
 - **AND** actions for the excluded pending row MUST remain unavailable until verification
@@ -58,7 +58,7 @@ Once the merged configuration validates, an interactive client SHALL render the 
 
 #### Scenario: Excluded-only configuration publishes no provisional rows
 
-- **WHEN** every user-personal selection is excluded by Consumer organization configuration
+- **WHEN** a validated user-personal configuration selects resources from a non-required local-directory registry with `all: true` and subsequent same-layer exclusions disable every selected resource, with no other configured selections
 - **THEN** the provisional stage MUST publish no rows
 - **AND** no excluded selection MUST appear as a verification-pending row
 
