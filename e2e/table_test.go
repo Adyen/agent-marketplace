@@ -738,6 +738,26 @@ resources: {team: {include: [hook/SessionStart-command, hook/SessionStart-comman
 			{Args: []string{"sync", "--check"}, MustPass: true, PathsUnchanged: []string{"/root/.factory/skills/shared"}, FilesAbsent: []string{"/workspace/.factory/skills/shared"}},
 		},
 	},
+	// spec: resource-selection/required-collection-member-displaces-an-optional-selection-in-the-same-scope
+	{
+		Name: "collision/required_collection_member_displaces_user_selection",
+		Desc: "Given a required organization collection member and a non-required user skill with the same installed name, When syncing in the repository, Then the required member is installed in the machine harness, the user skill is not, and the collision is reported",
+		Registries: []RegistryDef{
+			{Name: "org-bundle", Skills: []Skill{{Name: "shared", Description: "Mandatory collection member"}},
+				Files: map[string]string{"collections/bundle/COLLECTION.yaml": "name: bundle\nversion: \"1.0\"\nresources:\n  - name: shared\n"}},
+			{Name: "user-skill", Skills: []Skill{{Name: "shared", Description: "Optional user selection"}}},
+		},
+		OrgCfg:    "apiVersion: agent-marketplace/v4\nsources: {org: {git: '{{REG:org-bundle}}', ref: main}}\nresources: {org: {include: [collection/bundle], required: true}}\n",
+		GlobalCfg: "apiVersion: agent-marketplace/v4\nharnesses: [factory]\nsources: {user: {git: '{{REG:user-skill}}', ref: main}}\nresources: {user: {include: [skill/shared]}}\n",
+		RepoCfg:   "apiVersion: agent-marketplace/v4\nsources: {}\n",
+		Steps: []Step{
+			{Args: []string{"sync"}, MustPass: true, OutContains: []string{"multiple registries"},
+				Symlinks:     []string{"/root/.factory/skills/shared"},
+				FilesAbsent:  []string{"/workspace/.factory/skills/shared"},
+				FileContains: map[string]string{"/root/.factory/skills/shared/SKILL.md": "Mandatory collection member"}},
+			{Args: []string{"sync", "--check"}, MustPass: true, PathsUnchanged: []string{"/root/.factory/skills/shared"}},
+		},
+	},
 	{
 		Name: "install/collision_warning_scoped",
 		Desc: "Given two selected registries with skill and command collisions, When installing one skill, Then its collision is reported without unrelated warnings and the existing winner is installed",
