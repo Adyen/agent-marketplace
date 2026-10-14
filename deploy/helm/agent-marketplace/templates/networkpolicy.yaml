@@ -14,7 +14,7 @@ spec:
           - api
           - all
           - web
-          - site
+          - docs
   policyTypes:
     - Ingress
   ingress:

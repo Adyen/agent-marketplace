@@ -56,7 +56,7 @@ instance:
   id: tutorial-marketplace
   name: Tutorial Marketplace
   canonical_url: http://localhost:8080
-  browser_base: http://localhost:8080/marketplace
+  browser_base: http://localhost:8080
 listen: 0.0.0.0:8080
 operations_listen: 127.0.0.1:9090
 storage:
@@ -149,7 +149,7 @@ docker compose build
 The first command prints nothing and exits successfully. The build takes a few minutes the first time and ends with lines like these:
 
 ```text
- Image marketplace-tutorial-site Built
+ Image marketplace-tutorial-docs Built
  Image marketplace-tutorial-web Built
  Image marketplace-tutorial-app Built
 ```
@@ -204,7 +204,7 @@ Expected output:
 
 ## 6. Open the admin panel
 
-Open `http://localhost:8080/marketplace/admin` in your browser. Type `localhost` exactly as shown. The browser treats `127.0.0.1` as a different origin, and the admin API rejects changes sent from it.
+Open `http://localhost:8080/admin` in your browser. Type `localhost` exactly as shown. The browser treats `127.0.0.1` as a different origin, and the admin API rejects changes sent from it.
 
 The **Registries** page opens and says there are no registries yet:
 

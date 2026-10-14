@@ -4,6 +4,7 @@ import path from "node:path";
 import { createHash } from "node:crypto";
 
 import { expect, test } from "@microsoft/tui-test";
+import { readRegularFile } from "./process-helpers.js";
 
 import {
   declineLegacyMigration,
@@ -34,7 +35,7 @@ const treeDigest = (root: string): Map<string, string> => {
       } else if (stat.isDirectory()) {
         walk(full);
       } else if (stat.isFile()) {
-        snapshot.set(full, `file:${createHash("sha256").update(fs.readFileSync(full)).digest("hex")}`);
+        snapshot.set(full, `file:${createHash("sha256").update(readRegularFile(full)).digest("hex")}`);
       }
     }
   };

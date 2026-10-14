@@ -43,7 +43,7 @@ instance:
   id: local
   name: Local Agent Marketplace
   canonical_url: http://localhost:8080
-  browser_base: http://localhost:8080/marketplace
+  browser_base: http://localhost:8080
 listen: 0.0.0.0:8080
 operations_listen: 127.0.0.1:9090
 storage:
@@ -107,7 +107,7 @@ The first build takes a few minutes. Check the services with:
 docker compose ps
 ```
 
-After a short startup, `app`, `web`, and `site` show as running and healthy, and `proxy` shows as running. The proxy has no health check of its own; it starts once the other three are healthy.
+After a short startup, `app`, `web`, and `docs` show as running and healthy, and `proxy` shows as running. The proxy has no health check of its own; it starts after the other three are healthy.
 
 ## 5. Wait for the API
 
@@ -180,7 +180,7 @@ rm -rf "$TUTORIAL_ROOT"
 
 ## What happened
 
-The repository's `compose.yaml` started four services: the Marketplace API and worker (`app`), the Nuxt Marketplace UI (`web`), the VitePress landing site (`site`), and an Nginx reverse proxy (`proxy`) that is the only service published on port `8080`. You configured a Marketplace on `localhost`, let it mirror a public registry, and installed one skill pinned to an exact revision.
+The repository's `compose.yaml` started four services: the Marketplace API and worker (`app`), the root-mounted Nuxt Marketplace UI (`web`), the documentation-only VitePress service (`docs`), and an Nginx reverse proxy (`proxy`) that is the only service published on port `8080`. You configured a Marketplace on `localhost`, let it mirror a public registry, and installed one skill pinned to an exact revision.
 
 ## Next steps
 

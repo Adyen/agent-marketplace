@@ -8,6 +8,29 @@ import (
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/store"
 )
 
+// spec: marketplace-api/active-url-schemes-are-metadata-only
+func TestBuildHidesActiveSchemeSupport(t *testing.T) {
+	for _, body := range []string{"javascript:alert(1)", "data:text/plain,active", "vbscript:MsgBox(1)", "  DaTa:text/html,active  ", "VBSCRIPT:active"} {
+		t.Run(body, func(t *testing.T) {
+			projection, err := Build(store.ResourceCoordinate{Marketplace: "mp", Registry: "registry", Kind: "skill", Name: "review"}, "sha256:"+strings.Repeat("a", 64), []byte("# Review\n"), map[string][]byte{"unsafe.txt": []byte(body), "safe.txt": []byte("safe notes")}, 10, 1024, 4096)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, file := range projection.Manifest.Files {
+				if file.Path == "support/unsafe.txt" && (file.InspectionClass != ClassMetadata || len(projection.Bodies[file.ContentDigest]) != 0) {
+					t.Fatalf("active support exposed: %#v", file)
+				}
+				if file.Path == "support/safe.txt" && string(projection.Bodies[file.ContentDigest]) != "safe notes" {
+					t.Fatal("safe support control was not exposed")
+				}
+			}
+			if len(projection.Manifest.Files) != 3 {
+				t.Fatalf("missing inspection files: %#v", projection.Manifest.Files)
+			}
+		})
+	}
+}
+
 func TestBuildCanonicalSkillProjection(t *testing.T) {
 	body := []byte("# Review\nRead carefully.\n")
 	support := map[string][]byte{"notes.md": []byte("notes")}
