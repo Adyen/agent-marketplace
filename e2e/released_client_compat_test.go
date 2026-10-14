@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -67,6 +68,27 @@ func TestReleasedClientReadsCandidateCommittedState(t *testing.T) {
 				}
 				return lock
 			}
+			protectClientFiles := func(executable string) map[string]string {
+				t.Helper()
+				protected := map[string]string{}
+				for _, name := range []string{"config.yaml", "lock.yaml"} {
+					path := filepath.Join(workspaces[executable], ".agents", name)
+					fingerprint, err := pathFingerprint(path)
+					if err != nil {
+						t.Fatal(err)
+					}
+					protected[path] = fingerprint
+				}
+				return protected
+			}
+			assertClientFilesUnchanged := func(protected map[string]string) {
+				t.Helper()
+				for path, fingerprint := range protected {
+					if got, err := pathFingerprint(path); err != nil || got != fingerprint {
+						t.Fatalf("changed client config/lock bytes, mode or mtime at %s: %v", path, err)
+					}
+				}
+			}
 			reviewBody := "Review body"
 			secondSelected := false
 			// Teammates and CI fetch the committed exact snapshot with --locked; the
@@ -80,26 +102,15 @@ func TestReleasedClientReadsCandidateCommittedState(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				protected := map[string]string{}
-				for _, path := range []string{lockPath, filepath.Join(workspace, ".agents", "config.yaml")} {
-					fingerprint, err := pathFingerprint(path)
-					if err != nil {
-						t.Fatal(err)
-					}
-					protected[path] = fingerprint
-				}
-				for _, args := range [][]string{{"sync", "--locked"}, {"sync", "--check"}} {
+				protected := protectClientFiles(released)
+				for _, args := range [][]string{{"sync", "--locked"}, {"sync", "--check"}, {"sync", "--check", "--offline"}} {
 					if output, err := run(released, args...); err != nil {
 						t.Fatalf("%s %v cannot use state committed after candidate %s: %v\n%s", releasedClientVersion, args, after, err, output)
 					}
 					if got, err := os.ReadFile(lockPath); err != nil || !bytes.Equal(got, before) {
 						t.Fatalf("%s %v changed committed lock after %s: %v", releasedClientVersion, args, after, err)
 					}
-					for path, fingerprint := range protected {
-						if got, err := pathFingerprint(path); err != nil || got != fingerprint {
-							t.Fatalf("%s %v changed bytes or metadata of %s after %s: %v", releasedClientVersion, args, path, after, err)
-						}
-					}
+					assertClientFilesUnchanged(protected)
 					reviewPath := filepath.Join(workspace, ".factory", "skills", "review", "SKILL.md")
 					if got, err := os.ReadFile(reviewPath); err != nil || string(got) != skillDocument("review", reviewBody) {
 						t.Fatalf("%s %v did not materialize review after %s: %v\n%s", releasedClientVersion, args, after, err, got)
@@ -135,10 +146,12 @@ func TestReleasedClientReadsCandidateCommittedState(t *testing.T) {
 				t.Helper()
 				(&gitRegistry{t: t, source: candidateWorkspace}).commit("candidate " + after)
 			}
+			candidateProtected := protectClientFiles(candidate)
 			must(candidate, "sync")
 			if got := readLock(); !bytes.Equal(got, committed) {
 				t.Fatalf("plain candidate sync changed a healthy committed lock:\nbefore:\n%s\nafter:\n%s", committed, got)
 			}
+			assertClientFilesUnchanged(candidateProtected)
 			releasedReads("sync")
 
 			must(candidate, "install", "second", "--scope", "repo")
@@ -168,6 +181,58 @@ func TestReleasedClientReadsCandidateCommittedState(t *testing.T) {
 			releasedReads("remove")
 			must(candidate, "sync", "--locked")
 			must(candidate, "sync", "--check")
+			must(candidate, "sync", "--check", "--offline")
+			checkCacheOnly := func(executable string, missing bool) {
+				t.Helper()
+				protected := protectClientFiles(executable)
+				for _, args := range [][]string{{"sync", "--check"}, {"sync", "--check", "--offline"}} {
+					output, err := run(executable, args...)
+					if missing {
+						code := "lock.snapshot-unavailable"
+						if len(args) == 3 {
+							code = "lock.offline-snapshot-missing"
+						}
+						if err == nil || !strings.Contains(output, code) {
+							t.Fatalf("%s %v did not refuse the missing cache despite an accessible origin: %v\n%s", filepath.Base(executable), args, err, output)
+						}
+						cachePath := filepath.Join(homes[executable], ".cache", "agent-marketplace")
+						if absent, err := checkPathAbsent(cachePath); err != nil || !absent {
+							t.Fatalf("read-only %v recreated the missing cache: absent=%t err=%v", args, absent, err)
+						}
+					} else if err != nil {
+						t.Fatalf("%s %v could not use its warm cache: %v\n%s", filepath.Base(executable), args, err, output)
+					}
+					assertClientFilesUnchanged(protected)
+				}
+			}
+			bare, hidden := world.path("registry.git"), world.path("registry-hidden.git")
+			if err := os.Rename(bare, hidden); err != nil {
+				t.Fatal(err)
+			}
+			for _, executable := range []string{candidate, released} {
+				checkCacheOnly(executable, false)
+			}
+			if err := os.Rename(hidden, bare); err != nil {
+				t.Fatal(err)
+			}
+			for _, executable := range []string{candidate, released} {
+				warmHome := homes[executable]
+				coldHome := warmHome + "-cold"
+				config, err := os.ReadFile(filepath.Join(warmHome, ".agents", "config.yaml"))
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := os.MkdirAll(filepath.Join(coldHome, ".agents"), 0o700); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(filepath.Join(coldHome, ".agents", "config.yaml"), config, 0o600); err != nil {
+					t.Fatal(err)
+				}
+				homes[executable] = coldHome
+				checkCacheOnly(executable, true)
+				homes[executable] = warmHome
+				checkCacheOnly(executable, false)
+			}
 		})
 	}
 }

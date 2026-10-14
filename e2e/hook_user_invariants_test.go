@@ -453,6 +453,112 @@ func TestHookInvariantLegacyFileURLWorkingTreeHooksSync(t *testing.T) {
 	}
 }
 
+type windsurfHookFixture struct {
+	Command          string `json:"command"`
+	WorkingDirectory string `json:"working_directory"`
+}
+
+func executeWindsurfHookFixture(e *Env, handler windsurfHookFixture) ([]byte, error) {
+	cwd := handler.WorkingDirectory
+	if cwd == "" {
+		cwd = e.workspace
+	} else if !filepath.IsAbs(cwd) {
+		cwd = filepath.Join(e.workspace, cwd)
+	}
+	cwd, err := filepath.EvalSymlinks(cwd)
+	if err != nil {
+		return nil, err
+	}
+	root, err := filepath.EvalSymlinks(filepath.Dir(e.home))
+	if err != nil {
+		return nil, err
+	}
+	rel, err := filepath.Rel(root, cwd)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return nil, fmt.Errorf("working directory %q is outside fixture sandbox", handler.WorkingDirectory)
+	}
+	ctx, cancel := context.WithTimeout(e.t.Context(), 10*time.Second)
+	defer cancel()
+	command := exec.CommandContext(ctx, "bash", "-c", handler.Command)
+	command.Dir = cwd
+	for _, assignment := range subprocessEnvWithOverrides(e.subprocessEnv(), map[string]string{"CLAUDE_PROJECT_DIR": e.workspace}) {
+		key, _, _ := strings.Cut(assignment, "=")
+		switch key {
+		case "BASH_ENV", "ENV", "POSIXLY_CORRECT", "SHELLOPTS", "BASHOPTS":
+		default:
+			command.Env = append(command.Env, assignment)
+		}
+	}
+	return command.CombinedOutput()
+}
+
+func TestWindsurfHookFixtureUsesNativeExecutionContract(t *testing.T) {
+	t.Parallel()
+	e := newEnv(t)
+	subdir := filepath.Join(e.workspace, "subdir")
+	if err := os.Mkdir(subdir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	outside := t.TempDir()
+	for name, target := range map[string]string{"contained-alias": subdir, "external-alias": outside} {
+		if err := os.Symlink(target, filepath.Join(e.workspace, name)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, tc := range []struct {
+		name    string
+		handler windsurfHookFixture
+		cwd     string
+		refused bool
+	}{
+		{name: "default-repository", handler: windsurfHookFixture{Command: "pwd -P"}, cwd: e.workspace},
+		{name: "relative-directory", handler: windsurfHookFixture{Command: "pwd -P", WorkingDirectory: "subdir"}, cwd: subdir},
+		{name: "contained-alias", handler: windsurfHookFixture{Command: "pwd -P", WorkingDirectory: "contained-alias"}, cwd: subdir},
+		{name: "external-alias-refused", handler: windsurfHookFixture{Command: "pwd -P", WorkingDirectory: "external-alias"}, refused: true},
+		{name: "absolute-home-directory", handler: windsurfHookFixture{Command: "cd . && pwd -P", WorkingDirectory: e.home}, cwd: e.home},
+		{name: "repository-relative-command", handler: windsurfHookFixture{Command: "cd . && pwd -P"}, cwd: e.workspace},
+		{name: "no-operand-cd-reaches-home", handler: windsurfHookFixture{Command: "cd && pwd -P"}, cwd: e.home},
+		{name: "native-bash-not-posix-sh", handler: windsurfHookFixture{Command: "! shopt -qo posix && pwd -P"}, cwd: e.workspace},
+		{name: "outside-sandbox-refused", handler: windsurfHookFixture{Command: "pwd -P", WorkingDirectory: outside}, refused: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			output, err := executeWindsurfHookFixture(e, tc.handler)
+			if tc.refused {
+				if err == nil || !strings.Contains(err.Error(), "outside fixture sandbox") || len(output) != 0 {
+					t.Fatalf("unsafe working directory was not refused before execution: %q / %v", output, err)
+				}
+				return
+			}
+			want, resolveErr := filepath.EvalSymlinks(tc.cwd)
+			if resolveErr != nil {
+				t.Fatal(resolveErr)
+			}
+			if err != nil || strings.TrimSpace(string(output)) != want {
+				t.Fatalf("handler=%+v cwd=%q err=%v; want %q", tc.handler, output, err, want)
+			}
+		})
+	}
+}
+
+func TestWindsurfHookFixtureIgnoresHostShellStartup(t *testing.T) {
+	e := newEnv(t)
+	startup := filepath.Join(e.home, "host-startup.sh")
+	if err := os.WriteFile(startup, []byte("printf 'unexpected-host-startup\\n'\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for key, value := range map[string]string{"BASH_ENV": startup, "ENV": startup, "POSIXLY_CORRECT": "1", "SHELLOPTS": "posix", "BASHOPTS": "extglob"} {
+		t.Setenv(key, value)
+	}
+	output, err := executeWindsurfHookFixture(e, windsurfHookFixture{Command: "! shopt -qo posix && ! shopt -q extglob && pwd -P"})
+	want, resolveErr := filepath.EvalSymlinks(e.workspace)
+	if resolveErr != nil {
+		t.Fatal(resolveErr)
+	}
+	if err != nil || strings.TrimSpace(string(output)) != want {
+		t.Fatalf("host shell settings affected fixture: output=%q err=%v; want %q", output, err, want)
+	}
+}
+
 func TestHookInvariantProjectDirectoryReferencesKeepRepositoryCWD(t *testing.T) {
 	for _, scope := range []string{"repo", "user"} {
 		for _, mode := range []string{"symlink", "file"} {
@@ -492,9 +598,7 @@ func TestHookInvariantProjectDirectoryReferencesKeepRepositoryCWD(t *testing.T) 
 						t.Fatal(err)
 					}
 					var native struct {
-						Hooks map[string][]struct {
-							Command string `json:"command"`
-						} `json:"hooks"`
+						Hooks map[string][]windsurfHookFixture `json:"hooks"`
 					}
 					if err := json.Unmarshal(data, &native); err != nil {
 						t.Fatalf("decode active Windsurf hooks: %v", err)
@@ -503,12 +607,7 @@ func TestHookInvariantProjectDirectoryReferencesKeepRepositoryCWD(t *testing.T) 
 					if len(native.Hooks) != 1 || len(entries) != 1 || entries[0].Command == "" {
 						t.Fatalf("expected exactly one executable pre_run_command handler: %s", data)
 					}
-					ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
-					defer cancel()
-					command := exec.CommandContext(ctx, "sh", "-c", entries[0].Command)
-					command.Dir = e.workspace
-					command.Env = subprocessEnvWithOverrides(e.subprocessEnv(), map[string]string{"CLAUDE_PROJECT_DIR": e.workspace})
-					output, runErr := command.CombinedOutput()
+					output, runErr := executeWindsurfHookFixture(e, entries[0])
 					want, err := filepath.EvalSymlinks(e.workspace)
 					if err != nil {
 						t.Fatal(err)
