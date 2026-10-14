@@ -114,6 +114,7 @@ func TestImpliedPreviewPreservesAggregateIdentityWithoutAdoption(t *testing.T) {
 	report, err := Run(context.Background(), repo, []resolver.ResolvedArtifact{keep})
 	if err != nil || report == nil || len(report.Diags) != 0 {
 		t.Fatalf("seed = %#v err=%v", report, err)
+		return
 	}
 	path := filepath.Join(devinProjectRoot(repo), "mcp_config.json")
 	before, err := os.ReadFile(path)
@@ -191,6 +192,7 @@ func TestImpliedPreviewMalformedAggregateFailsClosed(t *testing.T) {
 	report, err := Run(context.Background(), repo, []resolver.ResolvedArtifact{keep})
 	if err != nil || report == nil || len(report.Diags) != 0 {
 		t.Fatalf("seed = %#v err=%v", report, err)
+		return
 	}
 	path := filepath.Join(devinProjectRoot(repo), "mcp_config.json")
 	malformed := []byte("{ not json")
@@ -202,6 +204,7 @@ func TestImpliedPreviewMalformedAggregateFailsClosed(t *testing.T) {
 	report = runPreview(t, repo, []resolver.ResolvedArtifact{selected}, []resolver.ResolvedArtifact{keep})
 	if report == nil || !hasErrorDiagnostics(report.Diags) {
 		t.Fatalf("malformed aggregate under preview must fail closed, diags = %#v", report.Diags)
+		return
 	}
 	raw, err := os.ReadFile(path)
 	if err != nil {
@@ -222,6 +225,7 @@ func TestImpliedPreviewOwnershipStateFailClosed(t *testing.T) {
 			report, err := Run(context.Background(), repo, []resolver.ResolvedArtifact{keep, sibling})
 			if err != nil || report == nil || hasErrorDiagnostics(report.Diags) {
 				t.Fatalf("seed=%#v err=%v", report, err)
+				return
 			}
 			path := filepath.Join(devinProjectRoot(repo), "mcp_config.json")
 			before := readFileString(t, path)
@@ -296,6 +300,7 @@ func TestImpliedPreviewRetainsKeyedEntryAcrossSiblingUpdate(t *testing.T) {
 	report, err := Run(context.Background(), repo, []resolver.ResolvedArtifact{keep, stale, sibling})
 	if err != nil || report == nil || hasErrorDiagnostics(report.Diags) {
 		t.Fatalf("seed=%#v err=%v", report, err)
+		return
 	}
 	path := filepath.Join(devinProjectRoot(repo), "mcp_config.json")
 	before := readFileString(t, path)
@@ -406,6 +411,7 @@ func TestImpliedPreviewDriftedOwnedEntryKeepsExistingBytes(t *testing.T) {
 	report, err := Run(context.Background(), repo, []resolver.ResolvedArtifact{keep})
 	if err != nil || report == nil || hasErrorDiagnostics(report.Diags) {
 		t.Fatalf("seed=%#v err=%v", report, err)
+		return
 	}
 	path := filepath.Join(devinProjectRoot(repo), "mcp_config.json")
 	drifted := strings.Replace(readFileString(t, path), `"keep-binary"`, `"hand-edited"`, 1)
@@ -437,6 +443,7 @@ func TestImpliedPreviewCodexMCPKeepsOwnedTOMLIdentity(t *testing.T) {
 	report, err := Run(context.Background(), repo, []resolver.ResolvedArtifact{keep, stale, machineKeep})
 	if err != nil || report == nil || hasErrorDiagnostics(report.Diags) {
 		t.Fatalf("seed=%#v err=%v", report, err)
+		return
 	}
 	repoConfig := filepath.Join(repo, ".codex", "config.toml")
 	machineConfig := filepath.Join(home, ".codex", "config.toml")
@@ -478,6 +485,7 @@ func TestImpliedPreviewGeminiNativeRetainsOwnedMCP(t *testing.T) {
 	report, err := Run(context.Background(), repo, []resolver.ResolvedArtifact{keep, stale})
 	if err != nil || report == nil || hasErrorDiagnostics(report.Diags) {
 		t.Fatalf("seed=%#v err=%v", report, err)
+		return
 	}
 	settings := filepath.Join(home, ".gemini", "settings.json")
 	if _, err := os.Stat(settings); err != nil {
@@ -503,6 +511,7 @@ func TestImpliedPreviewMarkerMergeRetainsManagedEntries(t *testing.T) {
 	report, err := Run(context.Background(), repo, []resolver.ResolvedArtifact{keep, stale})
 	if err != nil || report == nil || hasErrorDiagnostics(report.Diags) {
 		t.Fatalf("seed=%#v err=%v", report, err)
+		return
 	}
 	path := filepath.Join(repo, ".factory", "mcp.json")
 	managed := readFileString(t, path)
@@ -526,6 +535,7 @@ func TestImpliedPreviewMarkerMergeRetainsManagedEntries(t *testing.T) {
 	report, err = Run(context.Background(), repo, []resolver.ResolvedArtifact{keep, sibling})
 	if err != nil || report == nil || hasErrorDiagnostics(report.Diags) {
 		t.Fatalf("reseed=%#v err=%v", report, err)
+		return
 	}
 	report = runPreview(t, repo, []resolver.ResolvedArtifact{selected, sibling}, []resolver.ResolvedArtifact{keep, absent})
 	requireNoErrorDiags(t, report.Diags)
@@ -560,6 +570,7 @@ func TestImpliedPreviewMergeSnapshotRefusesUnsafeAggregate(t *testing.T) {
 			report, err := Run(context.Background(), repo, []resolver.ResolvedArtifact{keep, sibling})
 			if err != nil || report == nil || hasErrorDiagnostics(report.Diags) {
 				t.Fatalf("seed=%#v err=%v", report, err)
+				return
 			}
 			path := filepath.Join(repo, ".factory", "mcp.json")
 			seeded := readFileString(t, path)
@@ -749,6 +760,7 @@ func TestImpliedPreviewRetainsCommandDirOutputsAcrossTargets(t *testing.T) {
 			report, err := Run(context.Background(), repo, []resolver.ResolvedArtifact{keep, stale})
 			if err != nil || report == nil || hasErrorDiagnostics(report.Diags) {
 				t.Fatalf("seed=%#v err=%v", report, err)
+				return
 			}
 			root := tc.root(repo, home)
 			keepPath := filepath.Join(root, filepath.FromSlash(tc.rel(t, tc.target, "keep")))
@@ -781,6 +793,7 @@ func TestImpliedPreviewFileModePreservesBytesAndHonestReport(t *testing.T) {
 	report, err := Run(context.Background(), repo, []resolver.ResolvedArtifact{helper, stale}, WithMaterializationModes(modes))
 	if err != nil || report == nil || hasErrorDiagnostics(report.Diags) {
 		t.Fatalf("seed=%#v err=%v", report, err)
+		return
 	}
 	file := filepath.Join(repo, ".devin", "skills", "helper", "SKILL.md")
 	before := readFileString(t, file)
@@ -852,6 +865,7 @@ func TestImpliedPreviewCompileRefusalRetainsOwnedCodexMCP(t *testing.T) {
 			report, err := Run(context.Background(), repo, []resolver.ResolvedArtifact{keep})
 			if err != nil || report == nil || hasErrorDiagnostics(report.Diags) {
 				t.Fatalf("seed=%#v err=%v", report, err)
+				return
 			}
 			path := filepath.Join(repo, ".codex", codexMCPFile)
 			before := readFileString(t, path)
@@ -918,6 +932,7 @@ func TestImpliedPreviewCompileRefusalRetainsOwnedCodexHook(t *testing.T) {
 	report, err := Run(context.Background(), repo, []resolver.ResolvedArtifact{hook, sibling, stale})
 	if err != nil || report == nil || hasErrorDiagnostics(report.Diags) {
 		t.Fatalf("seed=%#v err=%v", report, err)
+		return
 	}
 	hookPath := filepath.Join(repo, ".codex", codexHooksFile)
 	before := readFileString(t, hookPath)
@@ -1033,6 +1048,7 @@ func TestImpliedPreviewNilResourceRetainsOwnedMCP(t *testing.T) {
 			report, err := Run(context.Background(), repo, []resolver.ResolvedArtifact{keep, stale, staleMachine})
 			if err != nil || report == nil || hasErrorDiagnostics(report.Diags) {
 				t.Fatalf("seed=%#v err=%v", report, err)
+				return
 			}
 			repoPath, machinePath := tc.repoFile(repo, home), tc.machineFile(repo, home)
 			seedRepo := readFileString(t, repoPath)
@@ -1109,6 +1125,7 @@ func TestImpliedPreviewMergeErrorSkipsOnlyFailedKey(t *testing.T) {
 	report, err := Run(context.Background(), repo, []resolver.ResolvedArtifact{keep})
 	if err != nil || report == nil || hasErrorDiagnostics(report.Diags) {
 		t.Fatalf("seed=%#v err=%v", report, err)
+		return
 	}
 	mergePath := filepath.Join(repo, ".factory", "mcp.json")
 	before := readFileString(t, mergePath)
@@ -1206,6 +1223,7 @@ func TestImpliedPreviewFactoryHookComponentRetainsManagedEntries(t *testing.T) {
 			report, err := Run(context.Background(), repo, []resolver.ResolvedArtifact{keep, stale})
 			if err != nil || report == nil || hasErrorDiagnostics(report.Diags) {
 				t.Fatalf("seed=%#v err=%v", report, err)
+				return
 			}
 			path := filepath.Join(repo, ".factory", "hooks", "hooks.json")
 			seeded := readFileString(t, path)

@@ -58,6 +58,7 @@ func repoEntrySelector(t *testing.T) (include, exclude []string) {
 	cfg, err := config.LoadRepoConfig()
 	if err != nil || cfg == nil {
 		t.Fatalf("load repo config: cfg=%v err=%v", cfg, err)
+		return
 	}
 	for _, entry := range cfg.Registries {
 		return entry.Skills.Include, entry.Skills.Exclude

@@ -54,6 +54,7 @@ requires: {expand: false}
 	}
 	if v4.Requires == nil || v4.Requires.Expand == nil || *v4.Requires.Expand {
 		t.Fatalf("containing file must override the include: Requires = %#v", v4.Requires)
+		return
 	}
 }
 
@@ -78,6 +79,7 @@ include: fragment.yaml
 	}
 	if v4.Requires == nil || v4.Requires.Expand == nil || !*v4.Requires.Expand {
 		t.Fatalf("include value must be retained when the containing file is silent: Requires = %#v", v4.Requires)
+		return
 	}
 }
 
@@ -177,6 +179,7 @@ func TestRequiresExpandRealLoadersRespectNestedIncludesAndLayers(t *testing.T) {
 	}
 	if user.Requires == nil || user.Requires.Expand == nil || *user.Requires.Expand {
 		t.Fatalf("nested-include explicit false lost through the file loader: %#v", user.Requires)
+		return
 	}
 
 	localPath := write("config.local.yaml", "apiVersion: agent-marketplace/v4\nrequires: {expand: false}\n")
@@ -203,6 +206,7 @@ func TestRequiresExpandRealLoadersRespectNestedIncludesAndLayers(t *testing.T) {
 		}
 		if cfg == nil || cfg.Requires == nil || cfg.Requires.Expand == nil || *cfg.Requires.Expand != wantExpand[layer.Source] {
 			t.Fatalf("layer %s requires = %#v, want expand %v", layer.Source, cfg, wantExpand[layer.Source])
+			return
 		}
 	}
 	if ec.Merged.RequiresExpansionEnabled() {
@@ -234,6 +238,7 @@ sources:
 	}
 	if settings.Requires == nil || settings.Requires.Expand == nil || !*settings.Requires.Expand {
 		t.Fatalf("settings must expose requires.expand without touching acquisition locks: %#v", settings.Requires)
+		return
 	}
 	if _, err := LoadConfigFromPath(path); err == nil {
 		t.Fatal("full layer load must refuse a Marketplace source whose lock is unreadable")
@@ -261,6 +266,7 @@ registries:
 			}
 			if result == nil || !result.UserMigrated {
 				t.Fatal("expected the user config to migrate")
+				return
 			}
 			data, err := os.ReadFile(user)
 			if err != nil {

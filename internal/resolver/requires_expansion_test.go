@@ -62,6 +62,7 @@ func TestResolveDisabledExpansionPreviewsWithoutSelecting(t *testing.T) {
 	}
 	if unmet == nil || unmet.Requirement.Name != "sibling" || unmet.Reason != UnmetReasonNotFound {
 		t.Fatalf("unmet warning = %v, want one not-found warning for skill:sibling", errs)
+		return
 	}
 	if len(preview) != 1 || preview[0].Name != "sibling" {
 		t.Fatalf("preview = %#v, want [sibling]", resolvedNames(preview))
@@ -326,6 +327,7 @@ func TestResolveEnabledExpansionUnhintedUsesRequiringSource(t *testing.T) {
 	}
 	if unmet == nil || unmet.Reason != UnmetReasonNotFound {
 		t.Fatalf("want one not-found unmet warning, got %v", errs)
+		return
 	}
 }
 
@@ -355,6 +357,7 @@ func TestResolveEnabledExpansionUnconfiguredHintNoFallback(t *testing.T) {
 	}
 	if unmet == nil {
 		t.Fatalf("want unmet warning, got %v", errs)
+		return
 	}
 	if unmet.Reason != UnmetReasonSourceNotConfigured {
 		t.Fatalf("unmet reason = %q, want %q", unmet.Reason, UnmetReasonSourceNotConfigured)
@@ -419,6 +422,7 @@ func TestResolveEnabledExpansionExplicitlyExcluded(t *testing.T) {
 	}
 	if unmet == nil || unmet.Reason != UnmetReasonExcluded {
 		t.Fatalf("want excluded-reason unmet warning, got %v", errs)
+		return
 	}
 }
 
@@ -601,6 +605,7 @@ func TestResolveEnabledExpansionCrossScopeExclusionKeepsMachineSelection(t *test
 	}
 	if sibling == nil {
 		t.Fatal("machine-scope implied prerequisite missing")
+		return
 	}
 	if sibling.Source != config.UserPersonal {
 		t.Fatalf("implied prerequisite scope = %v, want machine scope", sibling.Source)
@@ -659,6 +664,7 @@ func TestResolveEnabledExpansionDirectoryHintRequiresAbsoluteConfiguredLocation(
 	}
 	if unmet == nil || unmet.Reason != UnmetReasonSourceNotConfigured {
 		t.Fatalf("want source-not-configured unmet warning, got %v", errs2)
+		return
 	}
 }
 
@@ -691,9 +697,11 @@ func TestResolveEnabledExpansionMalformedCandidateRetainsDiagnostic(t *testing.T
 	}
 	if sme == nil || sme.Name != "broken" {
 		t.Fatalf("typed malformed diagnostic missing, got %v", errs)
+		return
 	}
 	if unmet == nil || unmet.Reason != UnmetReasonNotFound {
 		t.Fatalf("want not-found unmet warning, got %v", errs)
+		return
 	}
 }
 
@@ -733,6 +741,7 @@ func TestResolveEnabledExpansionOccurrenceKeyedLookup(t *testing.T) {
 	}
 	if dep == nil {
 		t.Fatalf("the second occurrence's eligible declaration must still be looked up and admitted: %v", resolvedNames(resolved))
+		return
 	}
 	if dep.Source != config.UserPersonal {
 		t.Fatalf("implied dep scope = %v, want machine scope of the eligible occurrence", dep.Source)
@@ -783,6 +792,7 @@ func TestResolveEnabledExpansionMalformedCandidateAttributesEachRequirer(t *test
 		if errors.As(err, &sme) {
 			if sme.RequiredBy == nil {
 				t.Fatalf("malformed requirement diagnostic must attribute the requiring resource, got %v", sme)
+				return
 			}
 			byRequirer[sme.RequiredBy.Name] = sme
 			if !strings.Contains(sme.Error(), "first") && !strings.Contains(sme.Error(), "second") {
@@ -890,6 +900,7 @@ func TestResolveEnabledExpansionCompetingImpliedFirstWinner(t *testing.T) {
 	}
 	if count != 1 || dep == nil {
 		t.Fatalf("competing requirers must admit exactly one implied dep, got %d", count)
+		return
 	}
 	if dep.RegistryURL != "git@example.com:alpha-hints.git" || dep.Path != "/cache/alpha/dep" {
 		t.Fatalf("first implied winner came from %q at %q, want the first requirer's hinted source", dep.RegistryURL, dep.Path)
@@ -950,6 +961,7 @@ func TestResolveEnabledExpansionExcludeAllSuppressesCandidate(t *testing.T) {
 	}
 	if unmet == nil || unmet.Reason != UnmetReasonExcluded {
 		t.Fatalf("want excluded-reason unmet warning, got %v", errs)
+		return
 	}
 }
 
@@ -989,6 +1001,7 @@ func TestResolveEnabledExpansionImpliedTargetsIntersectEffectiveSet(t *testing.T
 	}
 	if unmet == nil || unmet.Reason != UnmetReasonNotFound {
 		t.Fatalf("want not-found unmet warning for empty target intersection, got %v", errs)
+		return
 	}
 
 	resolved, errs = Resolve(newCfg([]string{}), catalogs(), nil, WithTargetHarnesses([]hcc.Target{hcc.TargetDevin, hcc.TargetClaude}))
@@ -1003,6 +1016,7 @@ func TestResolveEnabledExpansionImpliedTargetsIntersectEffectiveSet(t *testing.T
 	}
 	if unmet == nil || unmet.Reason != UnmetReasonNotFound {
 		t.Fatalf("want not-found unmet warning for explicit-empty harness list, got %v", errs)
+		return
 	}
 
 	resolved, errs = Resolve(newCfg([]string{"claude", "devin"}), catalogs(), nil, WithTargetHarnesses(targets))
