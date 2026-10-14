@@ -12,6 +12,7 @@ import (
 	"io"
 	"net/url"
 	"path"
+	"path/filepath"
 	"reflect"
 	"sort"
 	"strings"
@@ -308,7 +309,7 @@ func validateArchiveMemberPath(p string) error {
 }
 
 func ValidateSupportPath(p string) error {
-	if p == "" || p == "." || strings.Contains(p, "\\") {
+	if !filepath.IsLocal(p) || p == "." || strings.Contains(p, "\\") {
 		return fmt.Errorf("invalid support path: %s", p)
 	}
 	if p == "SKILL.md" {
@@ -433,13 +434,13 @@ func validateTarHeaderPath(p string) (string, error) {
 	if p == "" {
 		return "", errors.New("tar entry has empty name")
 	}
-	if path.IsAbs(p) || strings.HasPrefix(p, "/") {
-		return "", fmt.Errorf("tar entry absolute path: %s", p)
-	}
 	for _, part := range strings.Split(p, "/") {
 		if part == ".." {
 			return "", fmt.Errorf("tar entry path traversal: %s", p)
 		}
+	}
+	if !filepath.IsLocal(p) {
+		return "", fmt.Errorf("tar entry absolute path: %s", p)
 	}
 	return path.Clean(p), nil
 }

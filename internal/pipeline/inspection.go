@@ -96,7 +96,7 @@ func isSoftResolveIssue(err error) bool {
 }
 
 func buildInspection(resolved ResolveResult, report *materialize.Report, matErr error) InspectionResult {
-	issues := make([]InspectionIssue, 0, len(resolved.Warnings)+len(resolved.Errors)+len(resolved.ResolveErrors))
+	issues := make([]InspectionIssue, 0, int64(len(resolved.Warnings))+int64(len(resolved.Errors))+int64(len(resolved.ResolveErrors)))
 	add := func(severity IssueSeverity, category IssueCategory, err error) {
 		if err != nil {
 			issues = append(issues, InspectionIssue{Severity: severity, Category: category, Err: err})
