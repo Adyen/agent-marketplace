@@ -52,7 +52,7 @@
 - [x] 7.2 Run `make validate` once and final `make validate-full` because test/gate infrastructure changed, plus `make spec-check`, the dedicated checksum-verified v4.1.3 `make released-client-gate`, and `make site-build`. Full validation includes combined E2E/configuration-compatibility, shellcheck, and complete TUI QA; do not double-run covered gates after success. Record results and rerun isolated timed-out scenarios before classifying regressions.
 - [x] 7.3 Complete final integrated ordinary and adversarial reviews plus `open-code-review-delegate`; record intended diff/revision and outcome, validate reported findings against code, fix actionable issues, and rerun affected checks before archival and any push.
 - [x] 7.4 Run pinned strict change validation and confirm all implementation tasks and scenario bindings are complete; archive only in the implementation pull request after final validation/review.
-- [ ] 7.5 `npx --yes @fission-ai/openspec@1.12.0 archive launch-v4-only-consumer-config --yes`
+- [x] 7.5 `npx --yes @fission-ai/openspec@1.12.0 archive launch-v4-only-consumer-config --yes`
 
 ## Review checkpoints
 
