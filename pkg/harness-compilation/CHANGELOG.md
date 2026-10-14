@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Restriction-bearing native fields are preserved or refused
+
+Gemini ingestion kept only `command`, `args`, `env` and `url` of a subagent's inline MCP server, so a Gemini→Gemini conversion dropped `includeTools` and `excludeTools` and the server exposed every tool. Every member is now preserved and emitted on Gemini output; preserved members never override the modeled ones. Windsurf ingestion read an undocumented `working_dir` key, so the documented `working_directory` was dropped and a hook ran its relative command from the workspace root. It is now read and round-trips on Windsurf; every other target suppresses such a hook with `hook.windsurf.native-fields-unsupported`. Devin MCP compilation no longer drops a single unrepresentable argument such as `--sandbox=${file:…}`: the server is removed with `mcp.devin.interpolation-unrepresentable`, because a shortened argument list runs a different command line.
+
 ### The Claude plugin form no longer drops a root-level SKILL.md
 
 `LoadBundleWithOptions` selects the plugin form for both `.claude-plugin/plugin.json` manifests and bare plugin layouts, and that form only scanned `skills/` subdirectories. A repository that IS a single skill (root `SKILL.md`, no `skills/` tree) therefore ingested zero resources with no diagnostic — the layout Claude Code documents for manifest `"skills": ["./"]` and that `github.com/blader/humanizer` ships. The plugin form now loads a root `SKILL.md` through `bundle.LoadRootSkill` when one exists. A root skill whose frontmatter name duplicates a `skills/` entry is dropped with the new warning `ingest.claude.duplicate-root-skill`; the `skills/` entry wins deterministically because it loads first in sorted order. Skill support files no longer include `.git` directories at any depth: a root skill's directory is the whole checkout, a marketplace clone keeps `.git` on disk, and VCS internals were being published into installable archives and fed to bounded support reads.

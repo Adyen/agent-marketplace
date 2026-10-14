@@ -3,6 +3,7 @@ package gemini
 import (
 	"fmt"
 	"sort"
+	"strings"
 
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/compile"
@@ -67,6 +68,7 @@ func translateSubagent(sub *ir.Subagent, opts compile.Options) ([]artifact.Artif
 					Args:    replaceEnvTokenSlice(server.Args),
 					Env:     replaceEnvTokenMap(server.Env),
 					URL:     replaceEnvTokens(server.URL),
+					Extra:   server.Extra,
 				}
 				diags = append(diags, compile.McpCredentialDiagnosticsForFields(
 					sub.Name(), diag.SourceRef(sub.Source), mapping.TargetGemini,
@@ -180,6 +182,11 @@ func translateSubagent(sub *ir.Subagent, opts compile.Options) ([]artifact.Artif
 			if server.URL != "" {
 				entry["url"] = server.URL
 			}
+			for key, value := range server.Extra {
+				if !modeledInlineMCPMember(key) {
+					entry[key] = value
+				}
+			}
 			entries[name] = entry
 		}
 		fm.Set("mcpServers", entries)
@@ -204,4 +211,14 @@ type extMCPServer struct {
 	Args    []string
 	Env     map[string]string
 	URL     string
+	Extra   map[string]any
+}
+
+func modeledInlineMCPMember(key string) bool {
+	for _, member := range []string{"command", "args", "env", "url"} {
+		if strings.EqualFold(key, member) {
+			return true
+		}
+	}
+	return false
 }

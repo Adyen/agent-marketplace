@@ -87,3 +87,11 @@ output. The table states only mappings supported by those sources and fixtures.
 Loaders reject malformed or mixed typed security lists rather than silently filtering them. Explicit empty lists remain empty; permissions maps preserve unknown nested keys and reject non-object/null permission values. MCP and hook map-backed iteration is sorted by resource/event name. Secret values never occur in diagnostics or logs.
 
 Constructors from earlier releases retain their fixed signatures. Rich typed fields use additive `*WithOptions` constructors and documented option functions. Support file bytes and D9 ownership/materialization remain outside this package.
+
+Restriction-bearing native fields are preserved or refused. Gemini subagent
+inline MCP servers keep every member, including `includeTools`,
+`excludeTools` and other unmodeled members, on Gemini output. A Windsurf hook's
+`working_directory` round-trips on Windsurf and suppresses the hook on every
+other target with `hook.windsurf.native-fields-unsupported`. Devin removes an
+MCP server whose argument it cannot represent with
+`mcp.devin.interpolation-unrepresentable` instead of dropping the argument.

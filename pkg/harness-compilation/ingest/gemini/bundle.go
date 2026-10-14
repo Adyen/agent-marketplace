@@ -1041,6 +1041,16 @@ func parseInlineMCPServers(value any) (map[string]extpkg.GeminiMCPServer, error)
 				return nil, fmt.Errorf("server %q env: %w", name, err)
 			}
 		}
+		for key, value := range entry {
+			switch key {
+			case "command", "url", "args", "env":
+			default:
+				if server.Extra == nil {
+					server.Extra = make(map[string]any)
+				}
+				server.Extra[key] = value
+			}
+		}
 		server.Command = normalizeEnvTokens(server.Command)
 		server.Args = normalizeStringSlice(server.Args)
 		server.Env = normalizeStringMap(server.Env)
