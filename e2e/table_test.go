@@ -5271,7 +5271,7 @@ func init() {
 			kind, name, sourcePath, source, output, code string
 		}{
 			{"mcp", "child", ".mcp.json", `{"mcpServers":{"child":{"command":"echo","args":["inert-child"],"oauthClientId":"fixture-client"}}}`, "/workspace/.codex/config.toml", "mcp.codex.security-unsupported"},
-			{"hook", "PreToolUse-prompt", "hooks/hooks.json", `{"hooks":{"PreToolUse":[{"type":"prompt","prompt":"inert advisory prompt","matcher":"Bash"}]}}`, "/workspace/.codex/hooks.json", "hook.codex.unsupported"},
+			{"hook", "PreToolUse-prompt", "hooks/hooks.json", `{"hooks":{"PreToolUse":[{"type":"prompt","prompt":"inert advisory prompt","matcher":"Bash"}]}}`, "/workspace/.codex/hooks.json", "hook.prompt.unsupported"},
 		} {
 			config := func(selected bool) string {
 				if version == "agent-marketplace/v4" {
