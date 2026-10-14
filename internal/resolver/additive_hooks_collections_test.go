@@ -10,6 +10,7 @@ import (
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 )
 
+// spec: hook-resources/collections-keep-additive-hook-providers
 func TestResolveAdditiveHooksThroughCollections(t *testing.T) {
 	t.Run("direct and collection providers remain additive", func(t *testing.T) {
 		a := "git@example.com:a.git"

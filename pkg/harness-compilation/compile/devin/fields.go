@@ -1,13 +1,13 @@
 package devin
 
 import (
-	"fmt"
 	"log/slog"
 	"strings"
 
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/compile"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/compile/mapping"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/toolpolicy"
 )
 
 // This file holds the Devin frontmatter field mappers that more than one
@@ -152,7 +152,7 @@ func resolvePluginRootToken(value string, opts compile.Options) (resolved string
 // `Bash(git push --force:*)`, i.e. command strings and permission values that
 // the plan's observability section keeps out of logs and diagnostics. Resource
 // and Source localize the loss instead.
-func resolveAllowedTools(resource string, source diag.SourceRef, canonical []string, canonicalSet bool, extra map[string]any, opts compile.Options, code string) (tools []string, present, fromExtra bool, diags []diag.Diagnostic) {
+func resolveAllowedTools(resource string, source diag.SourceRef, canonical []string, canonicalSet bool, extra map[string]any, opts compile.Options, toolSource, surface, code string) (tools []string, present, fromExtra bool, diags []diag.Diagnostic) {
 	requested := canonical
 	if !canonicalSet {
 		value, ok := extra[allowedToolsKey]
@@ -182,9 +182,11 @@ func resolveAllowedTools(resource string, source diag.SourceRef, canonical []str
 	// author happened to use (bead agent-marketplace-pu6b, adversarial review).
 	requested = normalizeToolEntries(requested)
 
-	mapped := make([]string, 0, len(requested))
-	seen := make(map[string]struct{}, len(requested))
-	scoped, unmappable := 0, 0
+	// Scoped Claude specifiers keep their dedicated pre-pass: toolpolicy
+	// decodes bare names only, and an overridden specifier must still reach
+	// the translation path so the consumer's explicit mapping is honoured.
+	var translatable []string
+	scoped := 0
 	for _, tool := range requested {
 		if _, overridden := opts.ToolOverride()[tool]; !overridden && strings.ContainsAny(tool, "()") {
 			// A scoped Claude specifier such as `Bash(openspec:*)` has no Devin
@@ -211,27 +213,24 @@ func resolveAllowedTools(resource string, source diag.SourceRef, canonical []str
 			})
 			continue
 		}
-		targetTools, ok := mapping.ToolWithOverride(tool, mapping.TargetDevin, opts.ToolOverride())
-		if !ok {
-			unmappable++
-			diags = append(diags, diag.Diagnostic{
-				Code:     code,
-				Severity: diag.SeverityWarning,
-				Target:   string(mapping.TargetDevin),
-				Resource: resource,
-				Message:  allowedToolsDefaultSetMessage("an explicitly allowed tool has no Devin equivalent"),
-				Hint:     "Use one of Devin's allowed tools (read, edit, grep, glob, exec), pass compile.WithToolOverride to map the name yourself, or accept Devin's default tool set",
-				Source:   source,
-			})
-			continue
-		}
-		for _, targetTool := range targetTools {
-			if _, duplicate := seen[targetTool]; duplicate {
-				continue
-			}
-			seen[targetTool] = struct{}{}
-			mapped = append(mapped, targetTool)
-		}
+		translatable = append(translatable, tool)
+	}
+	mapped, uncovered, toolErr := toolpolicy.TranslateToolList(mapping.Target(toolSource), mapping.TargetDevin, surface, translatable, opts.ToolOverride())
+	if toolErr != nil {
+		mapped, uncovered = nil, translatable
+	}
+	unmappable := 0
+	for range uncovered {
+		unmappable++
+		diags = append(diags, diag.Diagnostic{
+			Code:     code,
+			Severity: diag.SeverityWarning,
+			Target:   string(mapping.TargetDevin),
+			Resource: resource,
+			Message:  allowedToolsDefaultSetMessage("an explicitly allowed tool has no Devin equivalent"),
+			Hint:     "Use one of Devin's allowed tools (read, edit, grep, glob, exec), pass compile.WithToolOverride to map the name yourself, or accept Devin's default tool set",
+			Source:   source,
+		})
 	}
 	if len(diags) > 0 {
 		// present=false: the whole key is omitted, not the mappable subset. A
@@ -316,34 +315,4 @@ func normalizeToolEntries(entries []string) []string {
 		}
 	}
 	return tools
-}
-
-// mapModel resolves an explicit model to a stable Devin alias.
-//
-// Plan, loss policy: "Only stable Devin aliases are mapping targets. [...] An
-// unmappable explicit model is omitted and emits a warning." A versioned model
-// ID is never guessed at and never passed through.
-//
-// An empty model returns no diagnostic here. Absence means different things per
-// kind: a skill inherits, while an absent subagent model selects Devin's
-// default subagent model, which the plan gives its own warning. subagent.go
-// owns that case.
-func mapModel(resource string, source diag.SourceRef, model string, opts compile.Options, code string) (string, []diag.Diagnostic) {
-	if model == "" {
-		return "", nil
-	}
-	mapped, ok := mapping.ModelWithOverride(model, mapping.TargetDevin, opts.ModelOverride())
-	if ok {
-		return mapped, nil
-	}
-	slog.Warn("devin model unmappable", "target", mapping.TargetDevin, "resource", resource, "model", model)
-	return "", []diag.Diagnostic{{
-		Code:     code,
-		Severity: diag.SeverityWarning,
-		Target:   string(mapping.TargetDevin),
-		Resource: resource,
-		Message:  fmt.Sprintf("%q is not a stable Devin model alias; the model was omitted", model),
-		Hint:     "Use sonnet, opus, or haiku for a stable Devin model alias",
-		Source:   source,
-	}}
 }

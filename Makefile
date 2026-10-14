@@ -95,6 +95,24 @@ validate-e2e:
 lint: LINT_MODE=fix
 lint: lint-common
 
+.PHONY: model-catalog-check model-catalog-audit
+model-catalog-audit:
+	CGO_ENABLED=0 $(GO) run ./tools/model-catalog-audit check
+
+model-catalog-check:
+	CGO_ENABLED=0 $(GO) test ./pkg/harness-compilation/modelpolicy -count=1
+	CGO_ENABLED=0 $(GO) test ./pkg/harness-compilation -run 'TestModelPolicy|TestMatrix_Subagent' -count=1
+
+.PHONY: catalog-check catalog-docs
+catalog-docs:
+	CGO_ENABLED=0 $(GO) run ./tools/catalog-docs
+
+catalog-check: model-catalog-check
+	CGO_ENABLED=0 $(GO) test ./pkg/harness-compilation/toolpolicy ./pkg/harness-compilation/hookpolicy -count=1
+	CGO_ENABLED=0 $(GO) test ./tools/catalog-docs -count=1
+	CGO_ENABLED=0 $(GO) test ./pkg/harness-compilation -run 'TestMatrix' -count=1
+	CGO_ENABLED=0 $(GO) run ./tools/catalog-docs -check
+
 ci-lint: LINT_MODE=check
 ci-lint: GOLANGCI_LINT_ARGS=--new-from-rev $(LINT_BASE)
 ci-lint: lint-common
@@ -246,8 +264,8 @@ comma := ,
 # The pinned Go build image ships git; override when Docker Hub is unavailable.
 AM_E2E_UPGRADE_IMAGE ?= $(GO_BUILD_IMAGE)
 AM_E2E_RELEASED_IMAGE ?= $(GO_BUILD_IMAGE)
-UPGRADE_GATE_TESTS := TestPreV4ReleaseUpgrade,TestPreV4GitLockUpgrade,TestPreV4AggregateOwnershipUpgrade,TestPreV4LocalLayerUpgrade,TestPreV4DuplicateRefUpgrade
-RELEASED_CLIENT_GATE_TESTS := TestReleasedClientReadsCandidateCommittedState,TestReleasedClientLockVerifiesNativeHookSourceLayouts,TestReleasedClientHookOutputUpgrades
+UPGRADE_GATE_TESTS := TestPreV4ReleaseUpgrade,TestPreV4GitLockUpgrade,TestPreV4AggregateOwnershipUpgrade,TestPreV4LocalLayerUpgrade,TestPreV4DuplicateRefUpgrade,TestPreV4HookOwnershipUpgrade
+RELEASED_CLIENT_GATE_TESTS := TestReleasedClientReadsCandidateCommittedState,TestReleasedClientReadsCandidateIsolatedCommittedState,TestReleasedClientLockVerifiesNativeHookSourceLayouts,TestReleasedClientHookOutputUpgrades
 
 upgrade-gate:
 	@test -n "$(AM_E2E_PRE_V4_BINARY)" || { echo "ERROR: AM_E2E_PRE_V4_BINARY must point to the verified v3.1.1 Linux release" >&2; exit 1; }

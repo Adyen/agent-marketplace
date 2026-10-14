@@ -119,6 +119,7 @@ func parseSkillFromFS(src fs.FS, f fs.File, skillPath, mdPath, defaultName strin
 		options = append(options, ir.WithSkillPermissions(permissions))
 	}
 	skill := ir.NewSkillWithOptions(name, description, body, triggers, extra, source, options...)
+	skill.ModelSource = "claude"
 	supportFiles, err := skillSupportFiles(src, skillPath)
 	if err != nil {
 		return nil, fmt.Errorf("bundle: walk support files %s: %w", skillPath, err)

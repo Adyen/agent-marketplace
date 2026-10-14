@@ -1,0 +1,23 @@
+schema: 1
+harness: gemini
+evidence:
+  checked: "2026-09-21"
+  refs:
+    - https://geminicli.com/docs/core/subagents/
+    - https://github.com/google-gemini/gemini-cli/blob/cfbcaa8df13ea4610bb379b377b56d62980c0032/packages/core/src/agents/agentLoader.ts
+surfaces:
+  subagent:
+    model_field: model
+    omitted_model: inherit
+    inherit_model: inherit
+models:
+  google/gemini-3-preview:
+    model: gemini-3-preview
+  google/gemini-3-pro-preview:
+    model: gemini-3-pro-preview
+  google/gemini-3-flash-preview:
+    model: gemini-3-flash-preview
+  google/gemini-3.1-pro-preview:
+    model: gemini-3.1-pro-preview
+  google/gemini-3.5-flash:
+    model: gemini-3.5-flash

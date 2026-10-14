@@ -16,6 +16,7 @@ function deploymentBase(name: string, value: string): string {
 const base = docsOnly ? '/docs/' : deploymentBase('SITE_BASE', process.env.SITE_BASE ?? '/')
 const marketplaceBase = docsOnly ? deploymentBase('MARKETPLACE_BASE', process.env.MARKETPLACE_BASE ?? '/') : '/'
 const DOCS_PATH = docsOnly ? '/' : PUBLIC_DOCS_PATH
+const publicAsset = (path: string) => `${base}${path}`
 
 const repo = GITHUB_REPOSITORY_URL
 
@@ -42,13 +43,21 @@ export default defineConfig({
   },
 
   head: [
+    ['link', { rel: 'icon', type: 'image/svg+xml', href: publicAsset('brand/favicon.svg') }],
+    ['link', { rel: 'icon', type: 'image/png', sizes: '32x32', href: publicAsset('brand/favicon-32x32.png') }],
+    ['link', { rel: 'icon', type: 'image/png', sizes: '64x64', href: publicAsset('brand/favicon-64x64.png') }],
     ['meta', { property: 'og:type', content: 'website' }],
     ['meta', { property: 'og:site_name', content: 'agent-marketplace' }],
     ['meta', { name: 'twitter:card', content: 'summary_large_image' }]
   ],
 
   themeConfig: {
-    siteTitle: 'agent-marketplace',
+    logo: {
+      light: '/brand/logo-horizontal-black.svg',
+      dark: '/brand/logo-horizontal-white.svg',
+      alt: 'agent-marketplace'
+    },
+    siteTitle: false,
     siteProfile: docsOnly ? 'docs' : 'public',
 
     nav: docsOnly

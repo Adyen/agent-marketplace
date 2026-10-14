@@ -164,10 +164,16 @@ func (s *Store) writeSafetyBackup(rel, absFile string, generation uint64, reason
 		priorAbsent = true
 		raw = nil
 	}
-	if !priorAbsent {
+	return s.writeSafetyBackupSnapshot(rel, absFile, generation, reason, entries, raw, priorAbsent)
+}
+
+func (s *Store) writeSafetyBackupSnapshot(rel, absFile string, generation uint64, reason Reason, entries []Entry, raw []byte, priorAbsent bool) (backupPath, priorDigest string, recordedAbsent bool, attempt *safetyAttempt, err error) {
+	if priorAbsent {
+		raw = nil
+	} else {
 		priorDigest = Digest(raw)
 	}
-
+	recordedAbsent = priorAbsent
 	dir := s.SafetyBackupDir(rel)
 	relative := filepath.Join(safetyDirName, s.rootKey, fileSlug(rel))
 	if err := s.prepareStateDirectory(relative); err != nil {
@@ -284,7 +290,7 @@ func (s *Store) writeSafetyBackup(rel, absFile string, generation uint64, reason
 		Generation:     generation,
 		Reason:         reason,
 		PriorDigest:    priorDigest,
-		PriorAbsent:    priorAbsent,
+		PriorAbsent:    recordedAbsent,
 		PriorSize:      int64(len(raw)),
 		ManagedEntries: append([]Entry(nil), entries...),
 		CreatedAt:      s.now().UTC().Format(time.RFC3339Nano),
@@ -326,8 +332,8 @@ func (s *Store) writeSafetyBackup(rel, absFile string, generation uint64, reason
 	published = true
 	slog.Info("safety backup written",
 		"root_key", s.rootKey, "file", rel, "generation", generation, "reason", string(reason),
-		"prior_digest", priorDigest, "prior_absent", priorAbsent, "prior_size", len(raw), "retain", s.retain)
-	return backupPath, priorDigest, priorAbsent, attempt, nil
+		"prior_digest", priorDigest, "prior_absent", recordedAbsent, "prior_size", len(raw), "retain", s.retain)
+	return backupPath, priorDigest, recordedAbsent, attempt, nil
 }
 
 func metaPathFor(backupPath string) string {

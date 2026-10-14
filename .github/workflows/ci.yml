@@ -512,6 +512,9 @@ jobs:
           go-version-file: go.mod
           cache: true
 
+      - name: Cache dependencies for offline Unix cross-builds
+        run: go mod download
+
       - name: Run tests and verify CLI behavior witnesses
         run: make test-witnessed
 
@@ -707,13 +710,13 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          gh release download v4.1.3 --repo "$GITHUB_REPOSITORY" --pattern agent-marketplace-v4.1.3-linux-amd64 --dir "$RUNNER_TEMP"
-          printf '%s  %s\n' f29846a258081d2789d07263a5b5919a770c631f6c8dec69ed5c7e0f0fc59aeb "$RUNNER_TEMP/agent-marketplace-v4.1.3-linux-amd64" | sha256sum --check
-          chmod u+x "$RUNNER_TEMP/agent-marketplace-v4.1.3-linux-amd64"
+          gh release download v4.1.4 --repo "$GITHUB_REPOSITORY" --pattern agent-marketplace-v4.1.4-linux-amd64 --dir "$RUNNER_TEMP"
+          printf '%s  %s\n' 7b6f49e7565b9c9ab08ecdf1900cb3228926ae59a9d14d91a27db90a6936adb2 "$RUNNER_TEMP/agent-marketplace-v4.1.4-linux-amd64" | sha256sum --check
+          chmod u+x "$RUNNER_TEMP/agent-marketplace-v4.1.4-linux-amd64"
 
       - name: Exercise committed state with the latest release
         env:
-          AM_E2E_RELEASED_BINARY: ${{ runner.temp }}/agent-marketplace-v4.1.3-linux-amd64
+          AM_E2E_RELEASED_BINARY: ${{ runner.temp }}/agent-marketplace-v4.1.4-linux-amd64
         shell: bash
         run: |
           set -o pipefail
@@ -1033,3 +1036,62 @@ jobs:
         with:
           files: dist/*
           generate_release_notes: true
+
+  homebrew:
+    name: Publish Homebrew tap
+    runs-on: ubuntu-latest
+    needs: [release, classify-release-tag]
+    if: needs.classify-release-tag.outputs.stable == 'true'
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    concurrency:
+      group: homebrew-tap
+      cancel-in-progress: false
+    env:
+      REPOSITORY: ${{ github.repository }}
+      TAG: ${{ github.ref_name }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: Prepare staging directory
+        run: |
+          set -euo pipefail
+          printf 'STAGING=%s/homebrew\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
+
+      - name: Fetch release metadata
+        run: |
+          set -euo pipefail
+          mkdir -p "$STAGING"
+          gh api "repos/$REPOSITORY/releases/tags/$TAG" > "$STAGING/release.json"
+          gh api "repos/$REPOSITORY" --jq .visibility > "$STAGING/visibility"
+
+      - name: Download release binaries
+        run: |
+          set -euo pipefail
+          gh release download "$TAG" --repo "$REPOSITORY" --pattern "agent-marketplace-$TAG-*" --dir "$STAGING/dist"
+
+      - name: Generate formula
+        run: |
+          set -euo pipefail
+          go run ./tools/homebrew generate \
+            --repository "$REPOSITORY" --tag "$TAG" \
+            --release-json "$STAGING/release.json" --dist "$STAGING/dist" \
+            --output "$STAGING/tap" --visibility "$(cat "$STAGING/visibility")"
+
+      - name: Publish formula
+        run: |
+          set -euo pipefail
+          go run ./tools/homebrew publish --repository "$REPOSITORY" --input "$STAGING/tap"

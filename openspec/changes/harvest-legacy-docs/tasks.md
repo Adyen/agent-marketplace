@@ -56,7 +56,7 @@
 - [x] 4.14 Harvest and delete `docs/plans/2026-09-07-unified-resource-config-design.md` → config-layering, config-migration, resource-selection; verify the file is gone and every carried claim has a `// spec:` test
 - [ ] 4.15 Harvest and delete `docs/plans/2026-09-08-process-isolated-command-tests.md` → none expected (test infrastructure); verify the file is gone and every carried claim has a `// spec:` test
 - [ ] 4.16 Harvest and delete `docs/plans/2026-09-15-marketplace-api-prometheus-metrics-design.md` → marketplace-operations; verify the file is gone and every carried claim has a `// spec:` test
-- [ ] 4.17 Harvest and delete `docs/plans/2026-09-16-additive-hooks.md` → resource-selection, harness-windsurf; verify the file is gone and every carried claim has a `// spec:` test
+- [x] 4.17 Harvest and delete `docs/plans/2026-09-16-additive-hooks.md` → resource-selection, harness-windsurf; verify the file is gone and every carried claim has a `// spec:` test
 - [ ] 4.18 Harvest and delete `docs/plans/2026-09-17-security-boundaries.md` → harness-ingestion, materialization; verify the file is gone and every carried claim has a `// spec:` test
 - [ ] 4.19 Harvest and delete `docs/plans/2026-09-18-marketplace-admin-interface-design.md` → marketplace-web, marketplace-api; verify the file is gone and every carried claim has a `// spec:` test
 - [ ] 4.20 Harvest and delete `docs/plans/2026-09-18-remaining-security-validation.md` → harness-ingestion, materialization; verify the file is gone and every carried claim has a `// spec:` test
@@ -82,7 +82,7 @@
 - [ ] 6.5 Harvest and delete the `AGENTS.md` appendix section "Known Gaps"; verify the section is gone
 - [ ] 6.6 Harvest and delete the `AGENTS.md` appendix section "Effective config loading"; verify the section is gone
 - [ ] 6.7 Harvest and delete the `AGENTS.md` appendix section "File Layout"; verify the section is gone
-- [ ] 6.8 Harvest and delete the `AGENTS.md` appendix section "Additive hook selection"; verify the section is gone
+- [x] 6.8 Harvest and delete the `AGENTS.md` appendix section "Additive hook selection"; verify the section is gone
 - [ ] 6.9 Harvest and delete the `AGENTS.md` appendix section "Admin discovery preview"; verify the section is gone
 - [ ] 6.10 Harvest and delete the `AGENTS.md` appendix section "v4 TUI selection workflow"; verify the section is gone
 - [ ] 6.11 Harvest and delete the `pkg/harness-compilation/AGENTS.md` appendix, then remove both empty "Unharvested leads" headings; verify neither file contains the heading

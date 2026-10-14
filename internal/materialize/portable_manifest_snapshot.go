@@ -1,6 +1,7 @@
 package materialize
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -14,6 +15,18 @@ type portableManifestSnapshot struct {
 	file   fsboundary.Identity
 	scope  fsboundary.Identity
 	parent fsboundary.Identity
+}
+
+func portableManifestSnapshotMatches(pinned, current portableManifestSnapshot) bool {
+	zero := fsboundary.Identity{}
+	if pinned.scope != zero && !current.scope.SameObject(pinned.scope) ||
+		pinned.parent != zero && !current.parent.SameObject(pinned.parent) {
+		return false
+	}
+	if pinned.data == nil {
+		return current.data == nil && current.file == zero
+	}
+	return current.data != nil && bytes.Equal(current.data, pinned.data) && current.file.SameState(pinned.file)
 }
 
 func readPortableManifestSnapshot(path string) (snapshot portableManifestSnapshot, err error) {

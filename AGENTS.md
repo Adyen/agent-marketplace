@@ -54,7 +54,7 @@ Run direct real-terminal test typechecking with `make tui-qa-check` and all dete
 
 ### Local toolchain
 
-Local toolchain notes: on macOS hosts where the system linker rejects the SDK, run Go tests with `CGO_ENABLED=0` (as the Makefile does). In `web/`, `pnpm run` may refuse to start when `node_modules` is stale; `node scripts/generate-api.mjs` and `./node_modules/.bin/{vitest,eslint,nuxt}` run the same checks directly.
+Local toolchain notes: on macOS hosts where the system linker rejects the SDK, run Go tests with `CGO_ENABLED=0` (as the Makefile does). In `web/`, `pnpm run` may refuse to start when `node_modules` is stale; `node scripts/generate-api.mjs` and `./node_modules/.bin/{vitest,eslint,nuxt}` run the same checks directly. Tests under `tools/homebrew` require a `ruby` executable on PATH and fail rather than skip when it is absent.
 
 Temporary worktrees should use sibling paths rather than paths nested in the repository: `specaudit trace` scans ignored directories, so nested worktrees can contribute unrelated scenario annotations. Remove only task-created worktrees before final gates; leave existing worktrees untouched.
 
@@ -232,12 +232,6 @@ agent-marketplace/
 ```
 
 Full design rationale is in `docs/plans/2026-04-24-harness-compilation-integration.md` (harness-compilation integration design).
-
-### Additive hook selection
-
-Hook support materialization uses `catalog.Entry.SourceHarness` to exclude the primary definition and native aggregate siblings using target metadata; legacy Windsurf `hooks/` JSON definitions are not support files. `catalog.HookSupportFiles` remains unchanged for source-revision hashing, so supported lock manifests retain their historical superset of adjacent files. Current Windsurf ingestion and selection preserve source-array order independently of selector names. Fresh output follows that order, while shared-file reconciliation preserves surviving installed slots and comments; upgrading a legacy lock does not forcibly reorder an installed handler.
-
-Hooks retain registry-local names but resolve additively across independent registry sources; repeated same-source selections deduplicate and competing refs at one location/scope retain precedence. The policy lives in `internal/resolver`, including reconciliation after collection expansion, and install-all consumes `HasAdditiveSources`. Non-hook collisions remain winner-based. Windsurf uses native `hooks.json` event arrays; old `hooks/` directories remain untouched and new support files use `hook-support/`. Source revision v3 enables corrected Windsurf ingestion, while existing v1/v2 locks retain their old inventory until explicit upgrade. `materialize.hook.support-conflict` refuses conflicting support files before aggregate mutation; blocked hooks retain installed entries while valid siblings can still materialize. See `docs/plans/2026-09-16-additive-hooks.md` for the design and verification. Focused CLI E2E: `go test ./e2e -run 'TestE2E/hooks/additive' -count=1`. Host E2E processes build private temporary binaries, so concurrent invocations no longer overwrite or delete each other's executable. Concurrent runs still need distinct `E2E_REPORT` paths and compatibility report directories; Docker `make e2e` invocations share an image/report destination. Prefer `make validate-e2e` for the combined host E2E and configuration-compatibility gate rather than rerunning compatibility boundary tests separately.
 
 ### Admin discovery preview
 
