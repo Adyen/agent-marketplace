@@ -109,14 +109,14 @@ func TestSyncOpenCodeHookReviewAndSupport(t *testing.T) {
 
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
+apiVersion: agent-marketplace/v4
 harnesses: [opencode]
-registries:
-  - url: `+registry+`
-    ref: main
+sources:
+  hooks:
+    directory: `+registry+`
     source_harness: claude
-    default: false
-    hooks:
-      - PreToolUse-command
+resources:
+  hooks: {include: [hook/PreToolUse-command]}
 `)
 	withWorkingDir(t, repoRoot)
 	declaration := filepath.Join(repoRoot, ".opencode", "hooks", "agent-marketplace", "PreToolUse-command.json")

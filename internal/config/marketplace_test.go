@@ -2,11 +2,13 @@ package config
 
 import (
 	"errors"
+	"os"
 	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
 
+	"github.com/Adyen/agent-marketplace/internal/lockfile"
 	"gopkg.in/yaml.v3"
 )
 
@@ -52,6 +54,18 @@ func TestMarketplaceExclusionMatchesExactOptionalPins(t *testing.T) {
 
 // spec: config-layering/marketplace-entries-are-validated
 func TestValidateMarketplaceEntries(t *testing.T) {
+	for _, tc := range []struct{ name, body, code string }{
+		{"missing URL", "sources:\n  public: {marketplace: ''}\n", "v4.source-value"},
+		{"path traversal", "sources:\n  public: {marketplace: https://market.example/../evil}\n", "v4.marketplace-url"},
+		{"invalid kind", "sources:\n  public: {marketplace: https://market.example}\nresources:\n  public: [tools/rule/review]\n", "v4.locator"},
+		{"invalid locator", "sources:\n  public: {marketplace: https://market.example}\nresources:\n  public: [skill/review]\n", "v4.locator"},
+	} {
+		t.Run("authored/"+tc.name, func(t *testing.T) {
+			_, err := ParseV4([]byte("apiVersion: agent-marketplace/v4\n" + tc.body))
+			requireMarketplaceV4Code(t, err, tc.code)
+		})
+	}
+	// Runtime evidence validation remains independent of authored consumer schemas.
 	tests := []struct {
 		name    string
 		entries []MarketplaceEntry
@@ -149,6 +163,13 @@ func TestValidateMarketplaceEntries(t *testing.T) {
 
 // spec: config-layering/duplicate-and-reserved-marketplace-aliases-are-rejected
 func TestValidateMarketplaceEntriesRejectsDuplicateAndReservedAliases(t *testing.T) {
+	for _, tc := range []struct{ body, code string }{
+		{"sources:\n  shared: {marketplace: https://one.example}\n  shared: {marketplace: https://two.example}\n", "v4.duplicate-key"},
+		{"sources:\n  all: {marketplace: https://three.example}\n", "v4.source-name"},
+	} {
+		_, err := ParseV4([]byte("apiVersion: agent-marketplace/v4\n" + tc.body))
+		requireMarketplaceV4Code(t, err, tc.code)
+	}
 	entries := []MarketplaceEntry{
 		{URL: "https://one.example", InstanceID: "one", Alias: "shared"},
 		{URL: "https://two.example", InstanceID: "two", Alias: "shared"},
@@ -169,6 +190,17 @@ func TestValidateMarketplaceEntriesRejectsDuplicateAndReservedAliases(t *testing
 
 // spec: config-layering/layered-alias-accepted-for-one-endpoint-identity
 func TestValidateMarketplaceEntriesAllowsLayeredAliasForSameIdentity(t *testing.T) {
+	repo := marketplaceLayerFixture(t, RepoCommitted, "public", "HTTPS://MARKET.example/base/", "instance", "")
+	local := marketplaceLayerFixture(t, RepoPersonal, "public", "https://market.example/base", "instance", "")
+	merged := MergeLayers([]Layer{{Source: RepoCommitted, Config: repo}, {Source: RepoPersonal, Config: local}})
+	if len(merged.Marketplaces) != 2 || merged.Marketplaces[0].Alias != "public" || merged.Marketplaces[1].Alias != "public" || merged.Marketplaces[0].Source != RepoCommitted || merged.Marketplaces[1].Source != RepoPersonal {
+		t.Fatalf("layered v4 alias/provenance = %#v", merged.Marketplaces)
+	}
+	if errs := ValidateMarketplaceEntries(merged.Marketplaces); len(errs) != 0 {
+		t.Fatalf("verified layered v4 aliases rejected: %v", errs)
+	}
+	_, err := ParseV4([]byte("apiVersion: agent-marketplace/v4\nsources:\n  public: {marketplace: https://market.example}\n  public: {marketplace: https://market.example}\n"))
+	requireMarketplaceV4Code(t, err, "v4.duplicate-key")
 	entries := []MarketplaceEntry{
 		{URL: "HTTPS://MARKET.example/base/", InstanceID: "instance", Alias: "public", Source: RepoCommitted},
 		{URL: "https://market.example/base", InstanceID: "instance", Alias: "public", Source: RepoPersonal},
@@ -219,7 +251,17 @@ func TestValidateMarketplaceEntriesRejectsAliasWithDifferentInstanceIDs(t *testi
 }
 
 // spec: config-layering/unsafe-identity-and-endpoint-fields-are-rejected
+// spec: config-layering/v4-root-rejects-unsafe-marketplace-source-urls
 func TestValidateMarketplaceEntriesRejectsUnsafeIdentityAndEndpointFields(t *testing.T) {
+	for _, endpoint := range []string{"http://market.example?token=secret", "http://user:pass@market.example", "http://market.example/%2funsafe", "http://market.example#fragment"} {
+		_, err := ParseV4([]byte("apiVersion: agent-marketplace/v4\nsources:\n  public: {marketplace: '" + endpoint + "'}\n"))
+		requireMarketplaceV4Code(t, err, "v4.marketplace-url")
+	}
+	_, err := ParseV4([]byte("apiVersion: agent-marketplace/v4\nsources:\n  \"bad\\nname\": {marketplace: https://market.example}\n"))
+	requireMarketplaceV4Code(t, err, "v4.source-name")
+	if _, err := ParseV4([]byte("apiVersion: agent-marketplace/v4\nsources:\n  public: {marketplace: 'HTTPS://MARKET.example/base/'}\n")); err != nil {
+		t.Fatalf("valid normalized source rejected: %v", err)
+	}
 	for _, entry := range []MarketplaceEntry{
 		{URL: "http://market.example?token=secret", InstanceID: "instance"},
 		{URL: "http://user:pass@market.example", InstanceID: "instance"},
@@ -267,58 +309,101 @@ func TestValidateMarketplaceURLs(t *testing.T) {
 	}
 }
 
-// spec: config-layering/v2-and-v3-roots-declare-marketplace-entries
+// spec: config-layering/v4-roots-declare-marketplace-sources-and-resources
 func TestMarketplaceConfigRoundTrip(t *testing.T) {
-	cfg := Config{
-		APIVersion: APIVersionV2,
-		Harnesses:  []string{"factory"},
-		Marketplaces: []MarketplaceEntry{{
-			URL:        "https://market.example",
-			InstanceID: "01JEXAMPLE",
-			Resources: []MarketplaceResourcePin{{
-				RegistryID:  "01JSOURCE",
-				Kind:        "skill",
-				Name:        "review",
-				Revision:    "v1.0.0",
-				Digest:      "sha256:0000000000000000000000000000000000000000000000000000000000000000",
-				Acquisition: "mirror",
-			}},
-		}},
-		AllowedMarketplaces: &[]string{`market\.example\.com`},
-	}
-
-	data, err := yaml.Marshal(cfg)
+	path := filepath.Join(t.TempDir(), ".agents", "config.yaml")
+	writeMarketplaceV4(t, path, `harnesses: [factory]
+sources:
+  public: {marketplace: https://market.example}
+resources:
+  public:
+    include:
+      - source-slug/skill/review: {as: chosen-review, revision: sha256:1111111111111111111111111111111111111111111111111111111111111111}
+allowed_marketplaces: ['market\.example']
+`)
+	// Loading the authored tree must not require acquisition or create a lock.
+	cfg, err := LoadV4ConfigFromPath(path)
 	if err != nil {
-		t.Fatalf("marshal: %v", err)
+		t.Fatal(err)
 	}
-
-	var got Config
-	if err := yaml.Unmarshal(data, &got); err != nil {
-		t.Fatalf("unmarshal: %v", err)
+	if cfg.APIVersion != APIVersionV4 || cfg.Sources["public"].CanonicalURL != "https://market.example" || !slices.Equal(marketplaceRequestLocators(cfg), []string{"source-slug/skill/review"}) || cfg.Requests[0].Options.As != "chosen-review" || cfg.Requests[0].Options.Revision != testMarketplaceRevision || cfg.AllowedMarketplaces == nil || !slices.Equal(*cfg.AllowedMarketplaces, []string{`market\.example`}) {
+		t.Fatalf("authored v4 source/selection/policy = %#v", cfg)
 	}
-
-	if len(got.Marketplaces) != 1 || got.Marketplaces[0].InstanceID != cfg.Marketplaces[0].InstanceID {
-		t.Fatalf("round-trip mismatch: %+v", got)
+	if _, err := os.Stat(filepath.Join(filepath.Dir(path), "lock.yaml")); !os.IsNotExist(err) {
+		t.Fatalf("authored load created/read an acquisition lock: %v", err)
 	}
+	// Round-trip the actual authored YAML tree, never serialize the runtime model.
+	var node yaml.Node
+	if err := yaml.Unmarshal(marketplaceState(t, path).data, &node); err != nil {
+		t.Fatal(err)
+	}
+	data, err := yaml.Marshal(&node)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := ParseV4Config(data, path, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Sources["public"].Kind != V4SourceMarketplace || len(got.Requests) != 1 || got.Requests[0].Options.As != "chosen-review" || got.Requests[0].Options.Revision != testMarketplaceRevision || got.AllowedMarketplaces == nil || !slices.Equal(*got.AllowedMarketplaces, []string{`market\.example`}) {
+		t.Fatalf("v4 round-trip = %#v", got)
+	}
+	_, err = got.ToLegacyConfig(repoLayer)
+	requireMarketplaceV4Code(t, err, "v4.marketplace-lock-required")
+	doc := marketplaceTestEvidence()
+	runtime, err := got.ToLegacyConfigWithLock(repoLayer, &doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pin := runtime.Marketplaces[0].Resources[0]; pin.RegistryID != "source-one" || pin.InstalledName != "chosen-review" || pin.Digest != testMarketplaceDigest || !pin.Direct {
+		t.Fatalf("lock-bound round-trip = %#v", pin)
+	}
+	doc.Scope = lockfile.ScopeUser
+	_, err = got.ToLegacyConfigWithLock(repoLayer, &doc)
+	requireMarketplaceV4Code(t, err, "v4.marketplace-lock-mismatch")
+}
 
-	if got.AllowedMarketplaces == nil || !slices.Equal(*got.AllowedMarketplaces, *cfg.AllowedMarketplaces) {
-		t.Fatalf("AllowedMarketplaces round-trip mismatch: %v", got.AllowedMarketplaces)
+// spec: config-layering/v4-root-rejects-legacy-installation-keys
+func TestMarketplaceV4RootRefusesLegacyInstallationKeys(t *testing.T) {
+	path := filepath.Join(t.TempDir(), ".agents", "config.yaml")
+	writeMarketplaceV4(t, path, "sources:\n  public: {marketplace: https://market.example}\nresources:\n  public: [source-slug/skill/review]\nmarketplaces: []\n")
+	before := marketplaceState(t, path)
+	_, err := LoadV4ConfigFromPath(path)
+	requireMarketplaceV4Code(t, err, "v4.legacy-key")
+	_, _, err = commitMarketplaceEdit(path, RepoCommitted, marketplaceIncludeEdit("https://market.example", testMarketplacePin()))
+	requireMarketplaceV4Code(t, err, "v4.legacy-key")
+	requireMarketplaceUnchanged(t, path, before)
+	if _, err := os.Stat(filepath.Join(filepath.Dir(path), "lock.yaml")); !os.IsNotExist(err) {
+		t.Fatalf("refusal created lock: %v", err)
 	}
 }
 
+func marketplaceLayerFixture(t *testing.T, source Source, name, endpoint, instance, policy string) *Config {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), ".agents", "config.yaml")
+	if source == RepoPersonal {
+		path = filepath.Join(filepath.Dir(path), "config.local.yaml")
+	}
+	writeMarketplaceV4(t, path, "sources:\n  "+name+": {marketplace: "+endpoint+"}\n"+policy)
+	v4, err := LoadV4ConfigIfPresent(path, source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	kind, _, err := v4LayerForSource(source, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc := lockfile.Document{APIVersion: lockfile.APIVersionV2, Scope: lockfile.Scope(source.LockScope()), Marketplaces: []lockfile.MarketplaceLock{{URL: endpoint, InstanceID: instance}}}
+	cfg, err := v4.ToLegacyConfigWithLock(kind, &doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return cfg
+}
+
 func TestMarketplaceMerge(t *testing.T) {
-	base := &Config{
-		AllowedMarketplaces: &[]string{`base\.example`},
-		Marketplaces: []MarketplaceEntry{
-			{URL: "https://base.example", InstanceID: "base"},
-		},
-	}
-	repo := &Config{
-		AllowedMarketplaces: &[]string{`repo\.example`},
-		Marketplaces: []MarketplaceEntry{
-			{URL: "https://repo.example", InstanceID: "repo"},
-		},
-	}
+	base := marketplaceLayerFixture(t, UserPersonal, "base", "https://base.example", "base", "allowed_marketplaces: ['base\\.example']\n")
+	repo := marketplaceLayerFixture(t, RepoCommitted, "repo", "https://repo.example", "repo", "allowed_marketplaces: ['repo\\.example']\n")
 
 	merged := Merge(base, repo)
 
@@ -336,18 +421,18 @@ func TestMarketplaceMerge(t *testing.T) {
 // spec: config-layering/layered-merge-retains-per-layer-provenance-and-first-set-allowlist
 func TestMergeLayersKeepsMarketplaceProvenanceAndFirstAllowlist(t *testing.T) {
 	orgAllow := []string{`org\.example`}
-	userAllow := []string{`.*`}
 	merged := MergeLayers([]Layer{
-		{Source: Organization, Config: &Config{AllowedMarketplaces: &orgAllow, Marketplaces: []MarketplaceEntry{{URL: "https://org.example", InstanceID: "org"}}}},
-		{Source: UserPersonal, Config: &Config{AllowedMarketplaces: &userAllow, Marketplaces: []MarketplaceEntry{{URL: "https://user.example", InstanceID: "user"}}}},
-		{Source: RepoCommitted, Config: &Config{Marketplaces: []MarketplaceEntry{{URL: "https://repo.example", InstanceID: "repo"}}}},
+		{Source: Organization, Config: marketplaceLayerFixture(t, Organization, "org", "https://org.example", "org", "allowed_marketplaces: ['org\\.example']\n")},
+		{Source: UserPersonal, Config: marketplaceLayerFixture(t, UserPersonal, "user", "https://user.example", "user", "allowed_marketplaces: ['.*']\n")},
+		{Source: RepoCommitted, Config: marketplaceLayerFixture(t, RepoCommitted, "repo", "https://repo.example", "repo", "")},
+		{Source: RepoPersonal, Config: marketplaceLayerFixture(t, RepoPersonal, "local", "https://local.example", "local", "")},
 	})
 
 	var got []string
 	for _, entry := range merged.Marketplaces {
 		got = append(got, entry.InstanceID+"@"+entry.Source.String())
 	}
-	want := []string{"org@" + Organization.String(), "user@" + UserPersonal.String(), "repo@" + RepoCommitted.String()}
+	want := []string{"org@" + Organization.String(), "user@" + UserPersonal.String(), "repo@" + RepoCommitted.String(), "local@" + RepoPersonal.String()}
 	if !slices.Equal(got, want) {
 		t.Fatalf("merged marketplaces = %v, want %v", got, want)
 	}
@@ -359,22 +444,39 @@ func TestMergeLayersKeepsMarketplaceProvenanceAndFirstAllowlist(t *testing.T) {
 // spec: config-layering/personal-local-duplicate-aliases-are-rejected-at-load
 func TestLocalMarketplaceValidationCoversAllEntries(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.local.yaml")
-	writeFile(t, path, "marketplaces:\n  - url: https://one.example\n    instance_id: one\n    alias: shared\n  - url: https://two.example\n    instance_id: two\n    alias: shared\n")
-	if _, err := LoadLocalConfigFromPath(path); err == nil || !strings.Contains(err.Error(), "duplicates") {
-		t.Fatalf("local Marketplace alias validation error = %v", err)
-	}
+	writeMarketplaceV4(t, path, "sources:\n  shared: {marketplace: https://one.example}\n  shared: {marketplace: https://two.example}\n")
+	before := marketplaceState(t, path)
+	_, err := LoadLocalConfigFromPath(path)
+	requireMarketplaceV4Code(t, err, "v4.duplicate-key")
+	requireMarketplaceUnchanged(t, path, before)
 }
 
 func TestMarketplaceLayerAllowlist(t *testing.T) {
-	tmp := t.TempDir()
-	path := filepath.Join(tmp, "config.local.yaml")
-	writeFile(t, path, "marketplaces:\n  - url: https://local.example\n    instance_id: 01JLOCAL\n    resources: []\n")
-
+	path := filepath.Join(t.TempDir(), "config.local.yaml")
+	writeMarketplaceV4(t, path, "sources:\n  local: {marketplace: https://local.example}\n")
+	v4, err := LoadV4ConfigIfPresent(path, RepoPersonal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(v4.Sources) != 1 || v4.Sources["local"].CanonicalURL != "https://local.example" {
+		t.Fatalf("personal-local registration = %#v", v4.Sources)
+	}
+	doc := lockfile.Document{APIVersion: lockfile.APIVersionV2, Scope: lockfile.ScopeLocal, Marketplaces: []lockfile.MarketplaceLock{{URL: "https://local.example", InstanceID: "01JLOCAL"}}}
+	data, err := lockfile.Encode(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(filepath.Dir(path), "lock.local.yaml"), data, 0o600); err != nil {
+		t.Fatal(err)
+	}
 	localCfg, err := LoadLocalConfigFromPath(path)
 	if err != nil {
-		t.Fatalf("LoadLocalConfigFromPath: %v", err)
+		t.Fatal(err)
 	}
-	if len(localCfg.Marketplaces) != 1 {
-		t.Fatalf("expected 1 marketplace in local config, got %d", len(localCfg.Marketplaces))
+	if len(localCfg.Marketplaces) != 1 || localCfg.Marketplaces[0].Source != RepoPersonal || localCfg.Marketplaces[0].InstanceID != "01JLOCAL" {
+		t.Fatalf("lock-bound local config = %#v", localCfg.Marketplaces)
 	}
+	writeMarketplaceV4(t, path, "sources:\n  local: {marketplace: https://local.example}\nallowed_marketplaces: ['.*']\n")
+	_, err = LoadV4ConfigIfPresent(path, RepoPersonal)
+	requireMarketplaceV4Code(t, err, "v4.layer-field")
 }

@@ -52,7 +52,7 @@ func TestReadSnapshotPropagatesMaterializationDryRunError(t *testing.T) {
 	restoreOrg := swapLoadOrgConfig(func() (*config.Config, error) { return nil, nil })
 	t.Cleanup(restoreOrg)
 	restoreGlobal := swapLoadGlobalConfig(func() (*config.Config, error) {
-		return &config.Config{APIVersion: config.APIVersionV2, Harnesses: []string{"factory"}}, nil
+		return &config.Config{APIVersion: config.APIVersionV4, Harnesses: []string{"factory"}}, nil
 	})
 	t.Cleanup(restoreGlobal)
 	restoreRepo := swapLoadRepoConfig(func() (*config.Config, error) { return nil, nil })
@@ -75,7 +75,7 @@ func TestReadSnapshotClassifiesMalformedResourceAsWarning(t *testing.T) {
 	homeDir := t.TempDir()
 	registryRoot := t.TempDir()
 	globalCfg := &config.Config{
-		APIVersion: config.APIVersionV2,
+		APIVersion: config.APIVersionV4,
 		Harnesses:  []string{"factory"},
 		Registries: []config.RegistryEntry{
 			{URL: registryRoot, Skills: config.KindSelector{Include: []string{"healthy"}}},
@@ -259,7 +259,7 @@ func TestReadSnapshotRetainsPartialRowsAfterCatalogFailure(t *testing.T) {
 	restoreOrg := swapLoadOrgConfig(func() (*config.Config, error) { return nil, nil })
 	t.Cleanup(restoreOrg)
 	globalCfg := &config.Config{
-		APIVersion: config.APIVersionV2,
+		APIVersion: config.APIVersionV4,
 		Harnesses:  []string{"factory"},
 		Registries: []config.RegistryEntry{
 			{URL: healthyRoot, Skills: config.KindSelector{Include: []string{"healthy"}}},
@@ -479,7 +479,7 @@ func TestReadSnapshotOptionalUnavailableSelectionKeepsAssessment(t *testing.T) {
 	restoreOrg := swapLoadOrgConfig(func() (*config.Config, error) { return nil, nil })
 	t.Cleanup(restoreOrg)
 	globalCfg := &config.Config{
-		APIVersion: config.APIVersionV2,
+		APIVersion: config.APIVersionV4,
 		Harnesses:  []string{"factory"},
 		Registries: []config.RegistryEntry{
 			{URL: registryRoot, Skills: config.KindSelector{Include: []string{"missing"}}},

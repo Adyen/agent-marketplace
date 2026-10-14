@@ -65,7 +65,7 @@ config.yaml  lock.yaml
 `.agents/lock.yaml` records the exact commit that `v1.4.0` resolved to.
 
 ::: tip
-If `~/.agents/config.yaml` does not exist yet, the first `sync` also creates it in an older format, and a later command run in a terminal may offer to migrate it. The repository's `harnesses` list still decides where this repository's output goes.
+If `~/.agents/config.yaml` does not exist yet, first-run creation uses v4. Existing unsupported roots or fragments refuse before new acquisition or writes; [convert them with an older released migrator before upgrading](./migrate-configuration.md). The repository's `harnesses` list still decides where this repository's output goes.
 :::
 
 ## 3. Ignore generated harness output

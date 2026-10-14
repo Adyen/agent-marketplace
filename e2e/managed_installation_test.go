@@ -11,10 +11,8 @@ import (
 func TestDoctorReportsManagedInstallationDiagnostics(t *testing.T) {
 	env := newEnv(t)
 
-	env.WriteOrgConfigWithMode(`apiVersion: agent-marketplace/v3
-harnesses:
-  - factory
-registries: []
+	env.WriteOrgConfigWithMode(`apiVersion: agent-marketplace/v4
+harnesses: [factory]
 `, 0o666)
 
 	r := env.RunAM("doctor")

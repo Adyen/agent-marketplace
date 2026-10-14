@@ -189,7 +189,7 @@ func TestMarketplaceSkillInspectionLoadsExactRevision(t *testing.T) {
 	f := newInspectionFixture(t, nil)
 	repoRoot := t.TempDir()
 	homeDir := t.TempDir()
-	configBytes := []byte("apiVersion: v4\n")
+	configBytes := []byte("apiVersion: agent-marketplace/v4\n")
 	lockBytes := []byte("apiVersion: v4\nresources: []\n")
 	controlled := map[string][]byte{
 		filepath.Join(repoRoot, ".agents", "config.yaml"): configBytes,

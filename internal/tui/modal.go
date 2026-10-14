@@ -37,8 +37,8 @@ type toggleAction struct {
 	scope                   scope
 	enable                  bool   // true = add to config; false = remove from config
 	registryURL             string // for project/global scopes: which registry entry to target
-	registryRef             string // ref of the source registry (for EnsureRegistryInConfig fallback)
-	registryPath            string // path subdirectory of the source registry (for EnsureRegistryWithPathsInConfig fallback)
+	registryRef             string // Git ref used when binding the layer selection
+	registryPath            string // Git source subdirectory used when binding the layer selection
 	registryKind            config.V4SourceKind
 	sourceHarness           string
 	isMarketplace           bool
@@ -284,10 +284,7 @@ func applyToggleAction(m *pipeline.LayerMutation, act toggleAction) error {
 	locator := config.ResourceLocator{Kind: act.kind, Name: act.skillName}
 	if act.scope == scopeLocalExclude {
 		if strings.TrimSpace(act.registryURL) == "" {
-			if act.enable {
-				return m.SetUnboundExclude(locator)
-			}
-			return m.ClearUnboundExclude(locator)
+			return m.SetLayerExclude(locator, nil)
 		}
 		if act.enable {
 			binding, err := m.EnsureRegistry(entry)
@@ -305,7 +302,7 @@ func applyToggleAction(m *pipeline.LayerMutation, act toggleAction) error {
 				return err
 			}
 		}
-		return m.ClearUnboundExclude(locator)
+		return nil
 	}
 	var binding config.SourceBinding
 	var found bool

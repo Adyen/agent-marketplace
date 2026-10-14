@@ -115,7 +115,7 @@ func TestHarnessModalTogglesDevinIntoTheSavedList(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
-	if err := os.WriteFile(configPath, []byte("apiVersion: agent-marketplace/v2\nharnesses:\n  - factory\nregistries: []\n"), 0o644); err != nil {
+	if err := os.WriteFile(configPath, []byte("apiVersion: agent-marketplace/v4\nharnesses:\n  - factory\nsources: {}\nresources: {}\n"), 0o644); err != nil {
 		t.Fatalf("write config: %v", err)
 	}
 
@@ -157,7 +157,7 @@ func TestHarnessModalSwitchScopeToggleAndSaveProject(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
-	if err := os.WriteFile(configPath, []byte("apiVersion: agent-marketplace/v2\nregistries: []\n"), 0o644); err != nil {
+	if err := os.WriteFile(configPath, []byte("apiVersion: agent-marketplace/v4\nsources: {}\nresources: {}\n"), 0o644); err != nil {
 		t.Fatalf("write config: %v", err)
 	}
 
@@ -233,7 +233,7 @@ func TestHarnessModalSwitchScopeToggleAndSaveGlobal(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
-	if err := os.WriteFile(configPath, []byte("apiVersion: agent-marketplace/v2\nharnesses:\n  - factory\nregistries: []\n"), 0o644); err != nil {
+	if err := os.WriteFile(configPath, []byte("apiVersion: agent-marketplace/v4\nharnesses:\n  - factory\nsources: {}\nresources: {}\n"), 0o644); err != nil {
 		t.Fatalf("write config: %v", err)
 	}
 
@@ -278,11 +278,8 @@ func TestHarnessModalSwitchScopeToggleAndSaveGlobal(t *testing.T) {
 	}
 }
 
-// TestHarnessModalSavesGlobalHarnessesToV4Config pins the v4.writer-opt-in
-// regression in the TUI harness modal: after init or the startup migration
-// prompt converts ~/.agents/config.yaml to v4, saving from the harness
-// modal must edit the v4 root instead of failing with "legacy config
-// writers do not edit v4 files".
+// TestHarnessModalSavesGlobalHarnessesToV4Config pins that the harness modal
+// edits the v4 root without losing its existing source/resource selections.
 func TestHarnessModalSavesGlobalHarnessesToV4Config(t *testing.T) {
 	tmpHome := t.TempDir()
 	t.Setenv("HOME", tmpHome)

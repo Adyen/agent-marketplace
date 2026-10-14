@@ -36,14 +36,14 @@ func hookReviewRepo(t *testing.T, registry string) (repoRoot, nativeFile string)
 	t.Helper()
 	repoRoot = filepath.Join(t.TempDir(), "repo")
 	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
+apiVersion: agent-marketplace/v4
 harnesses: [factory]
-registries:
-  - url: `+registry+`
-    ref: main
+sources:
+  hooks:
+    directory: `+registry+`
     source_harness: factory
-    default: false
-    hooks:
-      - PreToolUse-command
+resources:
+  hooks: {include: [hook/PreToolUse-command]}
 `)
 	withWorkingDir(t, repoRoot)
 	return repoRoot, filepath.Join(repoRoot, ".factory", "hooks.json")
@@ -137,12 +137,12 @@ func TestSyncPrintsHookChangesForReview(t *testing.T) {
 	}
 
 	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
+apiVersion: agent-marketplace/v4
 harnesses: [factory]
-registries:
-  - url: `+registry+`
-    ref: main
+sources:
+  hooks:
+    directory: `+registry+`
     source_harness: factory
-    default: false
 `)
 	stateRoot := filepath.Join(homeDir, "state")
 	repoSnap := cliFilesystemSnapshot(t, repoRoot)
@@ -196,14 +196,14 @@ func TestSyncHookReviewClaudeUpdateAndCodexCodes(t *testing.T) {
 
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
+apiVersion: agent-marketplace/v4
 harnesses: [claude, codex]
-registries:
-  - url: `+registry+`
-    ref: main
+sources:
+  hooks:
+    directory: `+registry+`
     source_harness: claude
-    default: false
-    hooks:
-      - PreToolUse-command
+resources:
+  hooks: {include: [hook/PreToolUse-command]}
 `)
 	withWorkingDir(t, repoRoot)
 	claudeFile := filepath.Join(repoRoot, ".claude", "settings.json")
@@ -288,14 +288,14 @@ func TestSyncHookReviewReportsLegacyRemoval(t *testing.T) {
 
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
+apiVersion: agent-marketplace/v4
 harnesses: [factory]
-registries:
-  - url: `+registryDir+`
-    ref: main
+sources:
+  hooks:
+    directory: `+registryDir+`
     source_harness: factory
-    default: false
-    hooks:
-      - PreToolUse-command
+resources:
+  hooks: {include: [hook/PreToolUse-command]}
 `)
 	withWorkingDir(t, repoRoot)
 	nativeFile := filepath.Join(repoRoot, ".factory", "hooks.json")
@@ -470,20 +470,18 @@ func TestSyncHookReviewCommandsNeverReachLogs(t *testing.T) {
 
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
+apiVersion: agent-marketplace/v4
 harnesses: [claude]
-registries:
-  - url: `+registryCmd+`
-    ref: main
+sources:
+  commands:
+    directory: `+registryCmd+`
     source_harness: factory
-    default: false
-    hooks:
-      - PreToolUse-command
-  - url: `+registryPrompt+`
-    ref: main
+  prompts:
+    directory: `+registryPrompt+`
     source_harness: claude
-    default: false
-    hooks:
-      - UserPromptSubmit-prompt
+resources:
+  commands: {include: [hook/PreToolUse-command]}
+  prompts: {include: [hook/UserPromptSubmit-prompt]}
 `)
 	withWorkingDir(t, repoRoot)
 	nativeFile := filepath.Join(repoRoot, ".claude", "settings.json")

@@ -81,21 +81,22 @@ func TestListCommandPrintsCatalogWithStatuses(t *testing.T) {
 	commitAndPushAll(t, securityWorking, "Add security skills")
 
 	writeConfig(t, filepath.Join(homeDir, ".agents", "config.yaml"), `
-registries:
-  - url: `+securityOrigin+`
-    ref: main
+apiVersion: agent-marketplace/v4
+sources:
+  security: {git: file://`+securityOrigin+`, ref: main}
+resources:
+  security:
+    all: true
     required: true
-    skills:
-      - no-curl-bash
 `)
 
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
-registries:
-  - url: `+infraOrigin+`
-    ref: main
-    skills:
-      - vm-lifecycle
+apiVersion: agent-marketplace/v4
+sources:
+  infra: {git: file://`+infraOrigin+`, ref: main}
+resources:
+  infra: [skill/vm-lifecycle]
 `)
 
 	withWorkingDir(t, repoRoot)
@@ -145,19 +146,22 @@ func TestListCommandDeduplicatesRegistriesDifferingOnlyByDotGitSuffix(t *testing
 	// Note: local bare git repos must use the .git suffix convention;
 	// without it, IsLocal() treats the path as a plain directory.
 	writeConfig(t, filepath.Join(homeDir, ".agents", "config.yaml"), `
-registries:
-  - url: `+origin+`
-    ref: main
+apiVersion: agent-marketplace/v4
+sources:
+  origin: {git: file://`+origin+`, ref: main}
+resources:
+  origin:
+    all: true
     required: true
 `)
 
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
-registries:
-  - url: `+origin+`
-    ref: main
-    skills:
-      - efficient-go
+apiVersion: agent-marketplace/v4
+sources:
+  origin: {git: file://`+origin+`, ref: main}
+resources:
+  origin: [skill/efficient-go]
 `)
 
 	withWorkingDir(t, repoRoot)
@@ -204,11 +208,11 @@ metadata:
 
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
-registries:
-  - url: `+origin+`
-    ref: main
-    skills:
-      - valid-skill
+apiVersion: agent-marketplace/v4
+sources:
+  origin: {git: file://`+origin+`, ref: main}
+resources:
+  origin: [skill/valid-skill]
 `)
 
 	withWorkingDir(t, repoRoot)
@@ -245,11 +249,11 @@ func TestListCommandShowsDriftFooterWhenOutOfSync(t *testing.T) {
 
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
-registries:
-  - url: `+origin+`
-    ref: main
-    skills:
-      - valid-skill
+apiVersion: agent-marketplace/v4
+sources:
+  origin: {git: file://`+origin+`, ref: main}
+resources:
+  origin: [skill/valid-skill]
 `)
 
 	withWorkingDir(t, repoRoot)
@@ -444,7 +448,7 @@ func writeConfig(t *testing.T, path, content string) {
 		if isGlobalConfigPath(path) {
 			// Ensure the machine-wide config carries a target harness set.
 			if !strings.Contains(content, "apiVersion:") {
-				content = "apiVersion: agent-marketplace/v2\n" + content
+				content = "apiVersion: agent-marketplace/v4\n" + content
 			}
 			if !strings.Contains(content, "harnesses:") {
 				harnessesBlock := "harnesses:\n  - factory\n"
@@ -460,11 +464,11 @@ func writeConfig(t *testing.T, path, content string) {
 				ensureGlobalConfig(t)
 			}
 			if !strings.Contains(content, "apiVersion:") {
-				content = "apiVersion: agent-marketplace/v2\n" + content
+				content = "apiVersion: agent-marketplace/v4\n" + content
 			}
 		} else if !strings.Contains(content, "apiVersion:") {
-			// Other config.yaml files (e.g. organization fixtures) get the legacy header.
-			content = "apiVersion: agent-marketplace/v2\nharnesses:\n  - factory\n" + content
+			// Other consumer config.yaml files receive the supported root sentinel.
+			content = "apiVersion: agent-marketplace/v4\nharnesses:\n  - factory\n" + content
 		}
 	}
 
@@ -525,7 +529,7 @@ func ensureGlobalConfig(t *testing.T) {
 	if _, err := os.Stat(globalPath); err == nil {
 		return
 	}
-	writeFile(t, globalPath, "apiVersion: agent-marketplace/v2\nharnesses:\n  - factory\nregistries: []\n")
+	writeFile(t, globalPath, "apiVersion: agent-marketplace/v4\nharnesses:\n  - factory\n")
 }
 
 func writeFile(t *testing.T, path, content string) {
@@ -684,7 +688,7 @@ func TestListFromFlagListsResourcesAtAdHocRegistry(t *testing.T) {
 
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
-registries: []
+apiVersion: agent-marketplace/v4
 `)
 	withWorkingDir(t, repoRoot)
 
@@ -719,7 +723,7 @@ func TestListFromFlagUsesRegistryDefaultBranchWhenRefIsOmitted(t *testing.T) {
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	configPath := filepath.Join(repoRoot, ".agents", "config.yaml")
 	writeConfig(t, configPath, `
-registries: []
+apiVersion: agent-marketplace/v4
 `)
 	withWorkingDir(t, repoRoot)
 
@@ -766,7 +770,7 @@ func TestListFromFlagWithKindFilter(t *testing.T) {
 
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
-registries: []
+apiVersion: agent-marketplace/v4
 `)
 	withWorkingDir(t, repoRoot)
 
@@ -792,7 +796,7 @@ func TestListFromFlagRefAndPathRequireFrom(t *testing.T) {
 
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
-registries: []
+apiVersion: agent-marketplace/v4
 `)
 	withWorkingDir(t, repoRoot)
 
@@ -824,7 +828,7 @@ func TestListFromFlagBlockedURLReturnsError(t *testing.T) {
 	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
 allowed_registries:
   - ^git\.internal\.example\.com/
-registries: []
+apiVersion: agent-marketplace/v4
 `)
 	withWorkingDir(t, repoRoot)
 

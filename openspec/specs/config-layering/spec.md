@@ -5,36 +5,16 @@ Defines how consumer configuration layers express, validate, and merge Marketpla
 
 ## Requirements
 
-### Requirement: Consumer Marketplace configuration expression
-
-Consumer configuration SHALL express a Marketplace endpoint registration as a named `marketplace` source in a v4 root and as a `marketplaces` entry in a v2 or v3 root. A `marketplaces` entry MAY also carry Marketplace installations as `resources` pins. A v4 root SHALL reject legacy top-level installation keys.
-
-#### Scenario: v4 root rejects unsafe Marketplace source URLs
-
-- **WHEN** a v4 root declares a `marketplace` source whose URL carries credentials, a query string, a fragment, or an encoded unsafe path
-- **THEN** the root MUST be rejected
-
-#### Scenario: v4 root rejects legacy installation keys
-
-- **WHEN** a v4 root declares a legacy top-level installation key
-- **THEN** the root MUST be rejected with a legacy-installation-key diagnostic
-
-#### Scenario: v2 and v3 roots declare Marketplace entries
-
-- **WHEN** a root declaring `apiVersion: agent-marketplace/v2` or `agent-marketplace/v3` declares `marketplaces` entries with `url`, `instance_id`, and optional `resources` pins, and an `allowed_marketplaces` allowlist
-- **THEN** loading the root MUST retain the entries and the allowlist
-- **AND** a pin with an invalid acquisition value or an unknown field MUST be rejected
-
 ### Requirement: Consumer Marketplace configuration validation
 
-Consumer configuration SHALL validate every Marketplace endpoint registration and Marketplace installation per entry, whether the entry is declared in a v4 source, a v2 or v3 root, or a personal-local root.
+Consumer configuration SHALL validate each Marketplace endpoint registration and authored resource selection declared by accepted v4 roots or fragments, including personal-local roots. Endpoint identity and exact Marketplace installation evidence obtained from deployed or transient acquisition locks SHALL retain their existing validation; the v4-only consumer format SHALL NOT relax digest, resource-kind, acquisition-mode, or identity checks.
 
 #### Scenario: Marketplace entries are validated
 
-- **WHEN** `marketplaces` entries are validated
-- **THEN** entries missing `url` or `instance_id` MUST be rejected
-- **AND** `resources` pins with invalid `digest`, `kind`, or `acquisition` values MUST be rejected
-- **AND** URLs containing `..` MUST be rejected as path traversal
+- **WHEN** v4 Marketplace sources, resource selections, and their required acquisition evidence are validated
+- **THEN** missing or invalid source URLs, invalid resource kinds or locators, and unknown authored source/request fields MUST be rejected
+- **AND** exact installation evidence with missing endpoint identity or invalid digest, kind, or acquisition mode MUST be rejected
+- **AND** URLs containing path traversal MUST be rejected
 
 #### Scenario: Marketplace URL allowlist
 
@@ -45,37 +25,57 @@ Consumer configuration SHALL validate every Marketplace endpoint registration an
 
 #### Scenario: Duplicate and reserved Marketplace aliases are rejected
 
-- **WHEN** two `marketplaces` entries in one file declare the same alias, or one entry declares the alias `all`
-- **THEN** validation MUST reject the configuration
+- **WHEN** one v4 document declares duplicate Marketplace source names or a Marketplace registration uses the reserved alias `all`
+- **THEN** validation MUST reject the configuration rather than silently discard an entry
 
 #### Scenario: Layered alias accepted for one endpoint identity
 
-- **WHEN** two configuration layers declare the same alias for the same canonical endpoint URL and instance ID
-- **THEN** validation MUST accept both entries
-- **AND** two entries in one file MUST be rejected
+- **WHEN** two v4 configuration layers declare the same Marketplace source name for the same canonical endpoint URL and verified instance ID
+- **THEN** validation MUST accept both registrations with their layer provenance
+- **AND** duplicate source declarations within one document MUST be rejected
 
 #### Scenario: Unsafe identity and endpoint fields are rejected
 
-- **WHEN** an entry declares a URL carrying credentials, a query, or an encoded unsafe path, an instance ID containing whitespace or a slash, an alias containing a control character, or a pin with an invalid registry slug
-- **THEN** validation MUST reject the entry
-- **AND** an equivalent endpoint declared with different case and a trailing slash MUST be accepted
+- **WHEN** a v4 Marketplace source declares a URL carrying credentials, a query, or an encoded unsafe path, or acquired installation evidence declares an instance ID containing whitespace or a slash or an invalid registry slug, or a source name contains a control character
+- **THEN** validation MUST reject the unsafe input
+- **AND** an otherwise valid equivalent endpoint declared with different case and a trailing slash MUST be accepted
 
 #### Scenario: Personal-local duplicate aliases are rejected at load
 
-- **WHEN** a personal-local root declares two Marketplace entries with the same alias
-- **THEN** loading the root MUST fail with a duplicate-alias diagnostic
+- **WHEN** an exact-v4 personal-local root declares duplicate Marketplace source names
+- **THEN** loading the root MUST fail with a coded duplicate-declaration diagnostic
 
 ### Requirement: Consumer Marketplace configuration merge
 
-Consumer configuration SHALL merge Marketplace endpoint registrations and the `allowed_marketplaces` allowlist across the organization, user-personal, repository-committed, and personal-local layers, and across a layer's include tree, preserving per-layer provenance.
+Consumer configuration SHALL merge Marketplace endpoint registrations and the `allowed_marketplaces` allowlist across valid organization, user-personal, repository-committed, and personal-local layers, and across a layer's accepted v4 include tree, preserving per-layer provenance and layer-specific field restrictions. Sources and resource requests SHALL retain their layer bindings and existing ordered selection decisions; the format restriction SHALL NOT change include or allowlist authority.
 
 #### Scenario: Layered merge retains per-layer provenance and first-set allowlist
 
-- **WHEN** configuration layers are merged in precedence order
-- **THEN** Marketplace entries from every layer MUST be retained in layer order, each recording the layer it came from
-- **AND** the first layer that sets `allowed_marketplaces` MUST determine the effective allowlist, so a higher-precedence layer cannot relax it
+- **WHEN** accepted v4 configuration layers are merged in precedence order
+- **THEN** Marketplace registrations from every layer MUST be retained in layer order, each recording the layer it came from
+- **AND** the first permitted layer that sets `allowed_marketplaces` MUST determine the effective allowlist, so a higher-precedence layer cannot relax it
 
 #### Scenario: Allowed Marketplace patterns follow include authority in a v4 root
 
-- **WHEN** a v4 root and an included fragment both declare `allowed_marketplaces`
+- **WHEN** a v4 root and an accepted included fragment both declare `allowed_marketplaces`
 - **THEN** the fragment's declaration MUST determine the layer's allowlist, and the containing root MUST NOT override it
+
+### Requirement: v4 Marketplace sources express consumer selections
+
+Consumer configuration SHALL express a Marketplace endpoint registration as a named `marketplace` source in an exact-v4 root or its accepted include tree. Authored selections SHALL use v4 `resources` bound to that source; exact Marketplace installations and their acquisition evidence SHALL be recorded in the owning acquisition lock, not legacy top-level `marketplaces` or installation keys. Consumer roots and explicit fragment versions SHALL follow `consumer-config-format`.
+
+#### Scenario: v4 root rejects unsafe Marketplace source URLs
+
+- **WHEN** a v4 root declares a `marketplace` source whose URL carries credentials, a query string, a fragment, or an encoded unsafe path
+- **THEN** the root MUST be rejected
+
+#### Scenario: v4 root rejects legacy installation keys
+
+- **WHEN** a v4 root declares a legacy top-level installation key
+- **THEN** the root MUST be rejected with a legacy-installation-key diagnostic without conversion or legacy interpretation
+
+#### Scenario: v4 roots declare Marketplace sources and resources
+
+- **WHEN** an exact-v4 root declares a named `marketplace` source, resource selections bound to that source, and a permitted `allowed_marketplaces` allowlist
+- **THEN** loading authored configuration MUST retain the source, selections, and allowlist without requiring remote acquisition
+- **AND** exact installation evidence MUST be validated in the owning acquisition lock when acquired resources are used

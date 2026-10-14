@@ -48,7 +48,7 @@ func TestConfigPathLockCanonicalizesSymlinkAliases(t *testing.T) {
 	dir := t.TempDir()
 	target := filepath.Join(dir, "shared.yaml")
 	link := filepath.Join(dir, "config.yaml")
-	if err := os.WriteFile(target, []byte("apiVersion: agent-marketplace/v2\n"), 0o644); err != nil {
+	if err := os.WriteFile(target, []byte("apiVersion: agent-marketplace/v4\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.Symlink(filepath.Base(target), link); err != nil {

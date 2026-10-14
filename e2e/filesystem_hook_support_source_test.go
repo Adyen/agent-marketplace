@@ -10,8 +10,11 @@ import (
 
 // spec: materialization/hook-support-source-refusal-preserves-installed-native-content
 func TestFilesystemHookSupportSourceAdmission(t *testing.T) {
-	for _, version := range []string{"agent-marketplace/v2", "agent-marketplace/v4"} {
-		t.Run(version, func(t *testing.T) {
+	for _, fixture := range []struct{ name, root string }{
+		{"ad-hoc", "apiVersion: agent-marketplace/v4\n"},
+		{"configured", "apiVersion: agent-marketplace/v4\nsources: {local: {directory: ./vendor/registry}}\nresources: {local: {include: [hook/PostToolUse-command]}}\n"},
+	} {
+		t.Run(fixture.name, func(t *testing.T) {
 			env := newEnv(t)
 			env.InitGitRepo()
 			env.MustRunAM("init", "--harnesses", "factory")
@@ -30,7 +33,7 @@ func TestFilesystemHookSupportSourceAdmission(t *testing.T) {
 			sourceDefinitionInitial := captureDest(t, definitionPath)
 			sourceHelperInitial := captureDest(t, helperSource)
 			sourceAliasInitial := captureDest(t, aliasSource)
-			env.WriteRepoConfig("apiVersion: " + version + "\n")
+			env.WriteRepoConfig(fixture.root)
 			env.MustRunAM("install", "PostToolUse-command", "--kind", "hook", "--from", "./vendor/registry", "--scope", "repo")
 			requireDestUntouched(t, sourceDefinitionInitial, captureDest(t, definitionPath))
 			requireDestUntouched(t, sourceHelperInitial, captureDest(t, helperSource))

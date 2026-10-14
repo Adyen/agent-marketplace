@@ -746,13 +746,13 @@ func (e *Env) ReadFile(path string) string {
 }
 
 // WriteGlobalConfig writes ~/.agents/config.yaml inside the sandbox.
-// Automatically injects apiVersion if missing and harnesses if missing
-// (required on global config per v2 schema).
+// Supplies v4 and a test harness for omitted fixture defaults; it never
+// translates authored installation fields. Refusal tests use WriteFile.
 func (e *Env) WriteGlobalConfig(content string) {
 	e.t.Helper()
 	content = strings.TrimSpace(content)
 	if !strings.Contains(content, "apiVersion:") {
-		content = "apiVersion: agent-marketplace/v2\n" + content
+		content = "apiVersion: agent-marketplace/v4\n" + content
 	}
 	if !strings.Contains(content, "harnesses:") {
 		content = "harnesses:\n  - factory\n" + content
@@ -766,7 +766,7 @@ func (e *Env) WriteRepoConfig(content string) {
 	e.t.Helper()
 	content = strings.TrimSpace(content)
 	if !strings.Contains(content, "apiVersion:") {
-		content = "apiVersion: agent-marketplace/v2\n" + content
+		content = "apiVersion: agent-marketplace/v4\n" + content
 	}
 	e.WriteFile("/workspace/.agents/config.yaml", content)
 }
@@ -774,16 +774,20 @@ func (e *Env) WriteRepoConfig(content string) {
 // WriteLocalConfig writes .agents/config.local.yaml in the workspace.
 func (e *Env) WriteLocalConfig(content string) {
 	e.t.Helper()
-	e.WriteFile("/workspace/.agents/config.local.yaml", strings.TrimSpace(content))
+	content = strings.TrimSpace(content)
+	if !strings.Contains(content, "apiVersion:") {
+		content = "apiVersion: agent-marketplace/v4\n" + content
+	}
+	e.WriteFile("/workspace/.agents/config.local.yaml", content)
 }
 
-// WriteOrgConfig writes the canonical v2 organization config to the managed
+// WriteOrgConfig writes the canonical v4 organization config to the managed
 // location (/etc/agent-marketplace/config.yaml in the sandbox).
 func (e *Env) WriteOrgConfig(content string) {
 	e.t.Helper()
 	content = strings.TrimSpace(content)
 	if !strings.Contains(content, "apiVersion:") {
-		content = "apiVersion: agent-marketplace/v2\n" + content
+		content = "apiVersion: agent-marketplace/v4\n" + content
 	}
 	if !strings.Contains(content, "harnesses:") {
 		content = "harnesses:\n  - factory\n" + content

@@ -21,7 +21,7 @@ A resource group is one entry under `resources:`, and it selects from the source
 
 A group with only `required: true` and no include, tags, or `all` selects nothing. Within one file, excludes apply after includes regardless of the order you write them in. [Sources and resources](./sources-and-resources.md#how-a-group-picks-resources) covers the fields in detail, including how included fragments merge.
 
-Older v2 and v3 configuration files express the same ideas with different fields: `default: true` or a `required: true` entry without selectors selects everything, and `exclude_all` removes everything. The CLI still reads those files and translates them into the steps above.
+Every existing consumer root must declare exact v4. There is no legacy reader or implicit select-all interpretation of `required: true`; use explicit selections and, for Git or directory sources, `all: true` when you intend to select everything. [Convert older configurations with an older released migrator before upgrading](../how-to/migrate-configuration.md).
 
 ## Which file wins
 

@@ -135,14 +135,14 @@ func TestMergePreservesExplicitEmptyPerEntryHarnessesOverride(t *testing.T) {
 
 func TestMergeRepoNilHarnessesInheritsFromGlobal(t *testing.T) {
 	global := &Config{
-		APIVersion: APIVersionV2,
+		APIVersion: APIVersionV4,
 		Harnesses:  []string{"factory", "windsurf"},
 		Registries: []RegistryEntry{
 			{URL: "git@example.com:org.git", Ref: "main"},
 		},
 	}
 	repo := &Config{
-		APIVersion: APIVersionV2,
+		APIVersion: APIVersionV4,
 		// Harnesses intentionally nil — project config inherits from global.
 		Registries: []RegistryEntry{
 			{URL: "git@example.com:repo.git", Ref: "main"},
@@ -157,14 +157,14 @@ func TestMergeRepoNilHarnessesInheritsFromGlobal(t *testing.T) {
 
 func TestMergeRepoWithHarnessesOverridesGlobal(t *testing.T) {
 	global := &Config{
-		APIVersion: APIVersionV2,
+		APIVersion: APIVersionV4,
 		Harnesses:  []string{"factory", "windsurf"},
 		Registries: []RegistryEntry{
 			{URL: "git@example.com:org.git", Ref: "main"},
 		},
 	}
 	repo := &Config{
-		APIVersion: APIVersionV2,
+		APIVersion: APIVersionV4,
 		Harnesses:  []string{"factory"},
 		Registries: []RegistryEntry{
 			{URL: "git@example.com:repo.git", Ref: "main"},
@@ -474,7 +474,7 @@ func TestMergeLayers_LoggingIgnoresRepoScopedConfig(t *testing.T) {
 func TestValidateLoggingOnlyAppliesToUserConfig(t *testing.T) {
 	invalidMaxSize := -1
 	cfg := Config{
-		APIVersion: APIVersionV2,
+		APIVersion: APIVersionV4,
 		Harnesses:  []string{"factory"},
 		Logging: &LoggingConfig{
 			MaxSizeMB: &invalidMaxSize,
@@ -525,9 +525,9 @@ func TestLocalConfigAsLayer_WithRegistriesReturnsLayer(t *testing.T) {
 		t.Fatal("expected non-nil Config in layer")
 	}
 
-	// Verify APIVersion is set to V2.
-	if layer.Config.APIVersion != APIVersionV2 {
-		t.Fatalf("expected APIVersion %q, got %q", APIVersionV2, layer.Config.APIVersion)
+	// Verify APIVersion carries the v4 runtime sentinel.
+	if layer.Config.APIVersion != "agent-marketplace/v4" {
+		t.Fatalf("expected APIVersion %q, got %q", "agent-marketplace/v4", layer.Config.APIVersion)
 	}
 
 	// Verify registry entries are carried through.
@@ -558,7 +558,7 @@ func TestLocalConfigAsLayer_WithRegistriesReturnsLayer(t *testing.T) {
 	}
 }
 
-func TestLocalConfigAsLayer_ConfigHasAPIVersionV2(t *testing.T) {
+func TestLocalConfigAsLayer_ConfigHasAPIVersionV4Sentinel(t *testing.T) {
 	localCfg := &LocalConfig{
 		Registries: []RegistryEntry{
 			{URL: "/local/path"},
@@ -569,8 +569,23 @@ func TestLocalConfigAsLayer_ConfigHasAPIVersionV2(t *testing.T) {
 	if layer == nil || layer.Config == nil {
 		t.Fatal("expected non-nil layer with Config")
 	}
-	if layer.Config.APIVersion != APIVersionV2 {
-		t.Fatalf("expected Config.APIVersion %q, got %q", APIVersionV2, layer.Config.APIVersion)
+	const wantVersion = "agent-marketplace/v4"
+	if layer.Config.APIVersion != wantVersion {
+		t.Fatalf("expected Config.APIVersion %q, got %q", wantVersion, layer.Config.APIVersion)
+	}
+	// The synthetic runtime layer must satisfy the same exact-v4 gate as every
+	// other bound layer; a historical sentinel would be refused here.
+	if err := layer.Config.ValidateWithoutHarnesses(); err != nil {
+		t.Fatalf("personal-local runtime layer must pass exact-v4 validation: %v", err)
+	}
+	// The lower layer declares no version, so the merged runtime version can
+	// only come from the personal-local sentinel.
+	merged := MergeLayers([]Layer{
+		{Source: RepoCommitted, Config: &Config{}},
+		*layer,
+	})
+	if merged.APIVersion != wantVersion {
+		t.Fatalf("expected merged APIVersion %q, got %q", wantVersion, merged.APIVersion)
 	}
 }
 

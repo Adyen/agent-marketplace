@@ -1,5 +1,12 @@
 # Telemetry
 
+> **Historical, non-normative lead — pending harvest.** This document retains
+> pre-launch guidance and obsolete consumer configuration examples. It is not
+> current launch usage or a normative contract. Use the current
+> [telemetry reference](../site/docs/reference/telemetry.md),
+> [telemetry configuration guide](../site/docs/how-to/configure-telemetry.md), and
+> [consumer configuration reference](../site/docs/reference/configuration.md) instead.
+
 `agent-marketplace` can send telemetry about command usage and health over
 vendor-neutral OTLP/HTTP. Telemetry is off until a user opts in, and an
 organization config can set it for every user of a managed installation. The

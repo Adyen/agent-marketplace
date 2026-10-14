@@ -4,7 +4,7 @@ import path from "node:path";
 
 import { expect, test } from "@microsoft/tui-test";
 
-import { declineLegacyMigration, defineFixture, step, waitForExit } from "./helpers.js";
+import { defineFixture, step, waitForExit } from "./helpers.js";
 
 // spec: tui-interactions/filtered-folded-descendants-and-skipped-rows
 // spec: tui-startup/confirmed-preferences-survive-restart-without-config-writes
@@ -15,7 +15,6 @@ test.afterAll(journey.cleanup);
 
 test("Source → Kind grouping bulk-disables a folded section at project scope and persists", async ({ terminal }) => {
   const fixture = journey.current();
-  await declineLegacyMigration(terminal);
 
   await step("settled fixture baseline", () => {}, async () => {
     await expect(terminal.getByText("beta-skill", { strict: false })).toBeVisible();
@@ -67,7 +66,7 @@ test("Source → Kind grouping bulk-disables a folded section at project scope a
     await expect(terminal.getByText("Disabled 1 resources", { strict: false })).toBeVisible();
   });
   const config = fs.readFileSync(path.join(fixture.repo, ".agents", "config.yaml"), "utf8");
-  assert.match(config, /      exclude:\n        - beta-skill\n/);
+  assert.match(config, /    exclude:\n      - skill\/beta-skill\n/);
   await step("wait for authoritative pending drift", () => {}, async () => {
     await expect(terminal.getByText("~ 1 out of sync")).toBeVisible();
   });
@@ -81,7 +80,6 @@ test("Source → Kind grouping bulk-disables a folded section at project scope a
 });
 
 test("the accepted Source → Kind grouping survives restart", async ({ terminal }) => {
-  await declineLegacyMigration(terminal);
   await step("restored grouping without status buckets", () => {}, async () => {
     // The persisted Source → Kind grouping is restored: the source header
     // carries its kind sub-section and each resource renders exactly once.

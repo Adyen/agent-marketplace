@@ -72,12 +72,9 @@ func (m Model) currentTheme() theme {
 // Style factories for the background-dependent roles. Every color decision
 // lives here so renderers share the semantic theme instead of restating
 // inline colors.
-func textStyle(t theme) lipgloss.Style   { return lipgloss.NewStyle().Foreground(t.text) }
-func accentStyle(t theme) lipgloss.Style { return lipgloss.NewStyle().Foreground(t.accent) }
-func titleStyle(t theme) lipgloss.Style  { return lipgloss.NewStyle().Bold(true).Foreground(t.accent) }
-func warnTitleStyle(t theme) lipgloss.Style {
-	return lipgloss.NewStyle().Bold(true).Foreground(t.warn)
-}
+func textStyle(t theme) lipgloss.Style    { return lipgloss.NewStyle().Foreground(t.text) }
+func accentStyle(t theme) lipgloss.Style  { return lipgloss.NewStyle().Foreground(t.accent) }
+func titleStyle(t theme) lipgloss.Style   { return lipgloss.NewStyle().Bold(true).Foreground(t.accent) }
 func markKeyStyle(t theme) lipgloss.Style { return lipgloss.NewStyle().Foreground(t.mark).Bold(true) }
 func okStyle(t theme) lipgloss.Style      { return lipgloss.NewStyle().Foreground(t.ok) }
 func okBoldStyle(t theme) lipgloss.Style  { return lipgloss.NewStyle().Bold(true).Foreground(t.ok) }

@@ -6,19 +6,13 @@ import (
 	"testing"
 )
 
-// newSelectionEnv is a workspace whose user config, and for v2 its repository
-// root too, use schema, with a registry offering a k8s-tagged review skill, a
-// deploy skill, and a command.
+// newSelectionEnv is a v4 workspace with a registry offering a k8s-tagged
+// review skill, a deploy skill, and a command.
 func newSelectionEnv(t *testing.T, schema string) (*Env, string) {
 	t.Helper()
 	env := newEnv(t)
 	env.InitGitRepo()
-	if schema == "v2" {
-		env.WriteGlobalConfig("apiVersion: agent-marketplace/v2\nharnesses: [factory]\nregistries: []\n")
-		env.WriteRepoConfig("apiVersion: agent-marketplace/v2\nregistries: []\n")
-	} else {
-		env.WriteGlobalConfig("apiVersion: agent-marketplace/v4\nharnesses: [factory]\n")
-	}
+	env.WriteGlobalConfig("apiVersion: agent-marketplace/v4\nharnesses: [factory]\n")
 	url := env.CreateBareRepo("selection-"+schema, RegistryFiles(
 		[]Skill{{Name: "review", Description: "Review changes", Tags: []string{"k8s"}}, {Name: "deploy", Description: "Deploy"}},
 		[]Command{{Name: "cmd-one", Description: "Command one", Command: "echo one"}},
@@ -31,7 +25,7 @@ func newSelectionEnv(t *testing.T, schema string) (*Env, string) {
 // its selection, exactly like plain remove, instead of also recording an
 // exclusion that later tag or bundle installs silently obey.
 func TestRemoveFromDropsAnExplicitSelectionWithoutExcluding(t *testing.T) {
-	for _, schema := range []string{"v2", "v4"} {
+	for _, schema := range []string{"v4"} {
 		for _, withRef := range []bool{false, true} {
 			t.Run(fmt.Sprintf("%s/ref=%t", schema, withRef), func(t *testing.T) {
 				env, url := newSelectionEnv(t, schema)
@@ -63,7 +57,7 @@ func TestRemoveFromDropsAnExplicitSelectionWithoutExcluding(t *testing.T) {
 // installs keep the exclusion and say so instead of reporting the resource
 // as installed.
 func TestInstallReportsResourcesTheConfigurationStillExcludes(t *testing.T) {
-	for _, schema := range []string{"v2", "v4"} {
+	for _, schema := range []string{"v4"} {
 		for _, tc := range []struct {
 			name, installed string
 			args            func(url string) []string
@@ -74,11 +68,7 @@ func TestInstallReportsResourcesTheConfigurationStillExcludes(t *testing.T) {
 		} {
 			t.Run(schema+"/"+tc.name, func(t *testing.T) {
 				env, url := newSelectionEnv(t, schema)
-				if schema == "v2" {
-					env.WriteRepoConfig(fmt.Sprintf("apiVersion: agent-marketplace/v2\nregistries:\n  - url: %s\n    ref: main\n    skills: {exclude: [review]}\n", url))
-				} else {
-					env.WriteRepoConfig(fmt.Sprintf("apiVersion: agent-marketplace/v4\nsources:\n  tools: {git: '%s', ref: main}\nresources:\n  tools: {exclude: [skill/review]}\n", url))
-				}
+				env.WriteRepoConfig(fmt.Sprintf("apiVersion: agent-marketplace/v4\nsources:\n  tools: {git: '%s', ref: main}\nresources:\n  tools: {exclude: [skill/review]}\n", url))
 				result := env.RunAM(tc.args(url)...)
 				if result.ExitCode != 0 || strings.Contains(result.Combined, "Installed review") || !strings.Contains(result.Combined, "Not installed: review;") || !strings.Contains(result.Combined, tc.installed) {
 					t.Fatalf("install reported an excluded resource as installed (exit %d):\n%s", result.ExitCode, result.Combined)
@@ -101,7 +91,7 @@ func TestInstallReportsResourcesTheConfigurationStillExcludes(t *testing.T) {
 // only the direct selection and the collection keeps providing it, as for
 // hosted pins; removing it again excludes the collection member.
 func TestRemoveOfACollectionMemberIsTwoStepOnBothPaths(t *testing.T) {
-	for _, schema := range []string{"v2", "v4"} {
+	for _, schema := range []string{"v4"} {
 		for _, viaFrom := range []bool{false, true} {
 			t.Run(fmt.Sprintf("%s/from=%t", schema, viaFrom), func(t *testing.T) {
 				env := newEnv(t)
@@ -109,13 +99,8 @@ func TestRemoveOfACollectionMemberIsTwoStepOnBothPaths(t *testing.T) {
 				files := RegistryFiles([]Skill{{Name: "review", Description: "Review"}, {Name: "other", Description: "Other"}}, nil, nil)
 				files["collections/bundle/COLLECTION.yaml"] = "name: bundle\nversion: \"1.0\"\nresources:\n  - name: review\n  - name: other\n"
 				url := env.CreateBareRepo("collection-overlap-"+schema, files)
-				if schema == "v2" {
-					env.WriteGlobalConfig("apiVersion: agent-marketplace/v2\nharnesses: [factory]\nregistries: []\n")
-					env.WriteRepoConfig(fmt.Sprintf("apiVersion: agent-marketplace/v2\nregistries:\n  - url: %s\n    ref: main\n    skills: {include: [review]}\n    collections: {include: [bundle]}\n", url))
-				} else {
-					env.WriteGlobalConfig("apiVersion: agent-marketplace/v4\nharnesses: [factory]\n")
-					env.WriteRepoConfig(fmt.Sprintf("apiVersion: agent-marketplace/v4\nsources:\n  tools: {git: '%s', ref: main}\nresources:\n  tools: {include: [skill/review, collection/bundle]}\n", url))
-				}
+				env.WriteGlobalConfig("apiVersion: agent-marketplace/v4\nharnesses: [factory]\n")
+				env.WriteRepoConfig(fmt.Sprintf("apiVersion: agent-marketplace/v4\nsources:\n  tools: {git: '%s', ref: main}\nresources:\n  tools: {include: [skill/review, collection/bundle]}\n", url))
 				env.AssertExitCode(env.RunAM("sync"), 0)
 				remove := []string{"remove", "review"}
 				if viaFrom {

@@ -139,7 +139,7 @@ func runCompatibilityScenario(t *testing.T, results []compatibilityResult, nativ
 	}
 	config := fmt.Sprintf("harnesses: [%s]\nmaterialization:\n  mode: %s\n", first.Harness, first.Mode)
 	e.WriteGlobalConfig(config)
-	config += fmt.Sprintf("registries:\n  - url: %q\n    source_harness: claude\n", f.registry)
+	config += fmt.Sprintf("sources: {fixture: {directory: %q, source_harness: claude}}\n", f.registry)
 	if first.Scope == "user" {
 		e.WriteGlobalConfig(config)
 	} else {

@@ -4,7 +4,7 @@ Agent Marketplace reads up to four configuration files on every run and combines
 
 ## Layer order
 
-Layers merge from lowest to highest precedence. A higher layer overrides a lower layer where the rules below allow it. All four files use the same v4 schema.
+Layers merge from lowest to highest precedence. A higher layer overrides a lower layer where the rules below allow it. Every existing root in all four layers, including organization and personal-local, must declare exactly `apiVersion: agent-marketplace/v4`. Included fragments may omit the field or declare exact v4; a root cannot inherit its version. Unsupported input refuses the operation rather than being skipped. See [schema versions](./configuration.md#schema-versions) for diagnostics and [pre-upgrade conversion](../how-to/migrate-configuration.md) for older installations.
 
 | Order | Layer | Configuration file | Generated lock | Purpose |
 |---|---|---|---|---|

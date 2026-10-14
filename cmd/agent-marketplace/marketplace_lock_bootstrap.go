@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
 
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/dependencytxn"
@@ -57,8 +58,14 @@ func bootstrapMissingMarketplaceLocks(ctx context.Context, repoRoot, localDir st
 		if err != nil {
 			return 0, err
 		}
-		if exists && current.APIVersion != lockfile.APIVersionV1 && len(current.Marketplaces) > 0 {
-			continue
+		// An existing v2 lock with Marketplace records keeps every record it
+		// has; it only gains identities for registrations it does not record.
+		var unrecorded []string
+		existingMarketplaceLock := exists && current.APIVersion != lockfile.APIVersionV1 && len(current.Marketplaces) > 0
+		if existingMarketplaceLock {
+			if unrecorded = unrecordedRegistrations(layer, current); len(unrecorded) == 0 {
+				continue
+			}
 		}
 		var registries []lockfile.GitRegistry
 		var expectedMode os.FileMode
@@ -68,8 +75,13 @@ func bootstrapMissingMarketplaceLocks(ctx context.Context, repoRoot, localDir st
 				return 0, err
 			}
 		}
-		doc, err := marketplacelock.Resolve(ctx, resolver, layer, targets, policy)
-		if err != nil {
+		var doc lockfile.Document
+		if existingMarketplaceLock {
+			if doc, err = appendRegistrationIdentities(ctx, *current, unrecorded); err != nil {
+				return 0, fmt.Errorf("record Marketplace registrations in lock %q: %w", lockPath, err)
+			}
+			slog.Info("marketplace registration identities recorded", "scope", scope, "count", len(unrecorded))
+		} else if doc, err = marketplacelock.Resolve(ctx, resolver, layer, targets, policy); err != nil {
 			return 0, fmt.Errorf("create Marketplace lock %q: %w", lockPath, err)
 		}
 		data, err := encodeWithGitRegistries(doc, registries)
@@ -101,6 +113,43 @@ func bootstrapMissingMarketplaceLocks(ctx context.Context, repoRoot, localDir st
 	}
 	slog.Info("missing Marketplace locks created", "count", len(desired))
 	return len(desired), nil
+}
+
+// unrecordedRegistrations returns the canonical endpoints of the layer's
+// resource-free registrations that an existing lock does not identify yet.
+// A lock that does not bind to the layer gains nothing here, so the reload
+// that follows reports its binding error unchanged.
+func unrecordedRegistrations(layer config.LayerIntent, current *lockfile.Document) []string {
+	if err := layer.ValidateDeployedMarketplaceLock(current); err != nil {
+		slog.Debug("existing Marketplace lock does not bind; registration identities not recorded", "scope", current.Scope, "error", err)
+		return nil
+	}
+	recorded := make(map[string]bool, len(current.Marketplaces))
+	for _, locked := range current.Marketplaces {
+		recorded[locked.URL] = true
+	}
+	var endpoints []string
+	for _, source := range layer.MarketplaceSources() {
+		if len(source.Requests) == 0 && !recorded[source.URL] {
+			endpoints = append(endpoints, source.URL)
+		}
+	}
+	return endpoints
+}
+
+// appendRegistrationIdentities adds one identity-only record per endpoint,
+// leaving every existing record of current untouched.
+func appendRegistrationIdentities(ctx context.Context, current lockfile.Document, endpoints []string) (lockfile.Document, error) {
+	doc := current
+	doc.Marketplaces = slices.Clone(current.Marketplaces)
+	for _, endpoint := range endpoints {
+		instanceID, err := marketplacelock.EndpointInstanceID(ctx, endpoint)
+		if err != nil {
+			return lockfile.Document{}, fmt.Errorf("identify Marketplace endpoint %s: %w", endpoint, err)
+		}
+		doc.Marketplaces = append(doc.Marketplaces, lockfile.MarketplaceLock{URL: endpoint, InstanceID: instanceID})
+	}
+	return doc, nil
 }
 
 func encodeWithGitRegistries(doc lockfile.Document, registries []lockfile.GitRegistry) ([]byte, error) {
