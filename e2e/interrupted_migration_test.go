@@ -10,80 +10,178 @@ import (
 	"testing"
 )
 
-// The obsolete migration fixture now exercises a supported multi-destination
-// journaled purge. Its independently expected final state is absence of the
-// repository config and lock, while the user config and handwritten output stay.
+// The obsolete migration crash fixtures now exercise a supported
+// multi-destination journaled purge. Every crash window must leave read-only
+// commands refusing pending work without changes, and the next mutating
+// command must finish the admitted write set: the repository config and lock
+// are absent, while the user config and handwritten output stay.
 func TestInterruptedPurgeRecoversOnNextMutation(t *testing.T) {
-	env := newEnv(t)
-	env.InitGitRepo()
-	env.WriteGlobalConfig("apiVersion: agent-marketplace/v4\nharnesses: [factory]\n")
-	url := env.CreateBareRepo("interrupted-purge", SkillsOnly(Skill{Name: "review"}))
-	env.WriteRepoConfig("apiVersion: agent-marketplace/v4\nsources: {team: {git: '" + url + "', ref: main}}\nresources: {team: {include: [skill/review]}}\n")
-	env.MustRunAM("sync")
-	env.WriteFile("/workspace/.factory/skills/handwritten/SKILL.md", "HANDWRITTEN\n")
-	user := env.ReadFile("/root/.agents/config.yaml")
-	paths := []string{"/workspace/.agents/config.yaml", "/workspace/.agents/lock.yaml"}
+	for _, tc := range []struct {
+		name, fault, recoveryFault string
+		remaining                  int
+		finalized                  bool
+	}{
+		{name: "journal-before-publication", fault: "after-journal:-1", remaining: 2},
+		{name: "first-publication", fault: "after-publish:0", remaining: 1},
+		{name: "all-published-with-journal", fault: "after-publish:1", remaining: 0},
+		{name: "finalized-before-exit", fault: "after-finalize:-1", remaining: 0, finalized: true},
+		{name: "interrupted-recovery", fault: "after-publish:0", remaining: 1, recoveryFault: "before-publish:1"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			env := newEnv(t)
+			env.InitGitRepo()
+			env.WriteGlobalConfig("apiVersion: agent-marketplace/v4\nharnesses: [factory]\n")
+			url := env.CreateBareRepo("interrupted-purge", SkillsOnly(Skill{Name: "review"}))
+			env.WriteRepoConfig("apiVersion: agent-marketplace/v4\nsources: {team: {git: '" + url + "', ref: main}}\nresources: {team: {include: [skill/review]}}\n")
+			env.MustRunAM("sync")
+			env.WriteFile("/workspace/.factory/skills/handwritten/SKILL.md", "HANDWRITTEN\n")
+			user := env.ReadFile("/root/.agents/config.yaml")
+			paths := []string{"/workspace/.agents/config.yaml", "/workspace/.agents/lock.yaml"}
+			const journalRoot = "/root/.local/state/agent-marketplace/dependencies"
+			journalPattern := filepath.Join(env.mustResolvePath(journalRoot), ".dependencytxn-*.json")
+			journals := func() []string {
+				t.Helper()
+				matches, err := filepath.Glob(journalPattern)
+				if err != nil {
+					t.Fatal(err)
+				}
+				return matches
+			}
+			present := func() map[string]string {
+				t.Helper()
+				files := map[string]string{}
+				for _, path := range paths {
+					if _, err := os.Lstat(env.mustResolvePath(path)); err == nil {
+						fingerprint, err := pathFingerprint(env.mustResolvePath(path))
+						if err != nil {
+							t.Fatal(err)
+						}
+						files[path] = fingerprint
+					} else if !os.IsNotExist(err) {
+						t.Fatal(err)
+					}
+				}
+				return files
+			}
+			protected := []string{env.mustResolvePath("/root/.agents"), env.mustResolvePath("/workspace/.agents"), env.mustResolvePath("/workspace/.factory"), env.mustResolvePath(journalRoot)}
+			snapshot := func() map[string]string {
+				t.Helper()
+				trees := map[string]string{}
+				for _, root := range protected {
+					fingerprint, err := pathFingerprint(root)
+					if err != nil {
+						t.Fatal(err)
+					}
+					trees[root] = fingerprint
+				}
+				return trees
+			}
+			assertReadOnly := func(pending bool) {
+				t.Helper()
+				before := snapshot()
+				for _, args := range [][]string{{"sync", "--check"}, {"status"}} {
+					result := env.RunAM(args...)
+					if pending {
+						if result.ExitCode == 0 || !strings.Contains(result.Combined, "dependency.recovery-required") {
+							t.Fatalf("read-only %v did not refuse pending work: exit=%d\n%s", args, result.ExitCode, result.Combined)
+						}
+					} else {
+						env.AssertOutputNotContains(result, "dependency.recovery-required")
+					}
+					for root, want := range before {
+						if got, err := pathFingerprint(root); err != nil || got != want {
+							t.Fatalf("read-only %v changed bytes, mode, mtime or entries under %s: %v", args, root, err)
+						}
+					}
+				}
+			}
 
-	crash := env.RunAMWithEnv(map[string]string{"AGENT_MARKETPLACE_E2E_CRASH_AT": "after-publish:0"}, "deinit", "--scope", "repo", "--purge-config")
-	if crash.ExitCode != 137 {
-		t.Fatalf("fault injection did not terminate journaled purge (exit %d):\n%s", crash.ExitCode, crash.Combined)
-	}
-	remaining := 0
-	interrupted := map[string]string{}
-	for _, path := range paths {
-		if _, err := os.Lstat(env.mustResolvePath(path)); err == nil {
-			remaining++
-			fingerprint, err := pathFingerprint(env.mustResolvePath(path))
-			if err != nil {
-				t.Fatal(err)
+			participants := map[string]bool{}
+			for _, path := range paths {
+				canonical, err := filepath.EvalSymlinks(env.mustResolvePath(path))
+				if err != nil {
+					t.Fatal(err)
+				}
+				participants[canonical] = true
 			}
-			interrupted[path] = fingerprint
-		} else if !os.IsNotExist(err) {
-			t.Fatal(err)
-		}
-	}
-	if remaining != 1 {
-		t.Fatalf("interruption left %d destinations, want exactly one of two published", remaining)
-	}
-	const journalRoot = "/root/.local/state/agent-marketplace/dependencies"
-	journalPattern := filepath.Join(env.mustResolvePath(journalRoot), ".dependencytxn-*.json")
-	if journals, err := filepath.Glob(journalPattern); err != nil || len(journals) != 1 {
-		t.Fatalf("interruption did not retain one pending journal: %v %v", journals, err)
-	}
-	journalBefore, err := pathFingerprint(env.mustResolvePath(journalRoot))
-	if err != nil {
-		t.Fatal(err)
-	}
-	check := env.RunAM("sync", "--check")
-	if check.ExitCode == 0 || !strings.Contains(check.Combined, "dependency.recovery-required") {
-		t.Fatalf("read-only sync did not refuse pending work:\n%s", check.Combined)
-	}
-	for _, path := range paths {
-		if want, exists := interrupted[path]; exists {
-			if got, err := pathFingerprint(env.mustResolvePath(path)); err != nil || got != want {
-				t.Fatalf("read-only check changed %s: %v", path, err)
+			crash := env.RunAMWithEnv(map[string]string{"AGENT_MARKETPLACE_E2E_CRASH_AT": tc.fault}, "deinit", "--scope", "repo", "--purge-config")
+			if crash.ExitCode != 137 {
+				t.Fatalf("fault %s did not terminate journaled purge (exit %d):\n%s", tc.fault, crash.ExitCode, crash.Combined)
 			}
-		} else {
-			env.AssertFileAbsent(path)
-		}
+			if got := len(present()); got != tc.remaining {
+				t.Fatalf("fault %s left %d destinations, want %d", tc.fault, got, tc.remaining)
+			}
+			wantJournals := 1
+			if tc.finalized {
+				wantJournals = 0
+			}
+			pending := journals()
+			if len(pending) != wantJournals {
+				t.Fatalf("fault %s left journals %v, want %d", tc.fault, pending, wantJournals)
+			}
+			if !tc.finalized {
+				var journal struct {
+					Files []struct {
+						Path string `json:"path"`
+					} `json:"files"`
+				}
+				data, err := os.ReadFile(pending[0])
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := json.Unmarshal(data, &journal); err != nil {
+					t.Fatal(err)
+				}
+				got := map[string]bool{}
+				for _, file := range journal.Files {
+					got[file.Path] = true
+				}
+				if len(journal.Files) != len(participants) || !reflect.DeepEqual(got, participants) {
+					t.Fatalf("journal participants = %v, want exactly the repository config and lock %v", got, participants)
+				}
+			}
+			assertReadOnly(!tc.finalized)
+			if tc.recoveryFault != "" {
+				crash = env.RunAMWithEnv(map[string]string{"AGENT_MARKETPLACE_E2E_CRASH_AT": tc.recoveryFault}, "sync")
+				if crash.ExitCode != 137 || len(journals()) != 1 || len(present()) != tc.remaining {
+					t.Fatalf("second crash did not interrupt recovery: exit=%d journals=%v remaining=%v\n%s", crash.ExitCode, journals(), present(), crash.Combined)
+				}
+				assertReadOnly(true)
+			}
+
+			env.MustRunAM("sync")
+			for _, path := range paths {
+				env.AssertFileAbsent(path)
+			}
+			if got := journals(); len(got) != 0 {
+				t.Fatalf("recovery did not finalize the pending journal: %v", got)
+			}
+			if got := env.ReadFile("/root/.agents/config.yaml"); got != user {
+				t.Fatal("recovery changed the independent user configuration")
+			}
+			if got := env.ReadFile("/workspace/.factory/skills/handwritten/SKILL.md"); got != "HANDWRITTEN\n" {
+				t.Fatalf("purge/recovery changed unowned output: %q", got)
+			}
+			for _, root := range []string{env.mustResolvePath("/workspace/.agents"), env.mustResolvePath(journalRoot)} {
+				if err := filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
+					if err != nil {
+						if os.IsNotExist(err) {
+							return nil
+						}
+						return err
+					}
+					if strings.HasPrefix(entry.Name(), ".dependencytxn-") {
+						t.Errorf("recovery left transaction residue: %s", path)
+					}
+					return nil
+				}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			env.MustRunAM("sync", "--check")
+		})
 	}
-	if after, err := pathFingerprint(env.mustResolvePath(journalRoot)); err != nil || after != journalBefore {
-		t.Fatalf("read-only check changed pending journal evidence: %v", err)
-	}
-	env.MustRunAM("sync")
-	for _, path := range paths {
-		env.AssertFileAbsent(path)
-	}
-	if journals, err := filepath.Glob(journalPattern); err != nil || len(journals) != 0 {
-		t.Fatalf("recovery did not finalize the pending journal: %v %v", journals, err)
-	}
-	if got := env.ReadFile("/root/.agents/config.yaml"); got != user {
-		t.Fatal("recovery changed the independent user configuration")
-	}
-	if got := env.ReadFile("/workspace/.factory/skills/handwritten/SKILL.md"); got != "HANDWRITTEN\n" {
-		t.Fatalf("purge/recovery changed unowned output: %q", got)
-	}
-	env.MustRunAM("sync", "--check")
 }
 
 type nativeHookMigrationFileSnapshot struct {

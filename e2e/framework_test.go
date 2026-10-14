@@ -861,11 +861,21 @@ func (e *Env) AssertFileExists(path string) {
 	}
 }
 
+func checkPathAbsent(path string) (bool, error) {
+	_, err := os.Lstat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return true, nil
+	}
+	return false, err
+}
+
 // AssertFileAbsent checks that a file does NOT exist inside the sandbox.
 func (e *Env) AssertFileAbsent(path string) {
 	e.t.Helper()
 	localPath := e.mustResolvePath(path)
-	if _, err := os.Stat(localPath); err == nil {
+	if absent, err := checkPathAbsent(localPath); err != nil {
+		e.t.Errorf("cannot inspect %q: %v", path, err)
+	} else if !absent {
 		e.t.Errorf("file %q unexpectedly exists in sandbox", path)
 	}
 }

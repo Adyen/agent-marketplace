@@ -32,3 +32,20 @@ func BenchmarkResolveNativePluginReferences(b *testing.B) {
 		})
 	}
 }
+
+func BenchmarkResolveWindsurfProjectDirectoryReferences(b *testing.B) {
+	for _, tc := range []struct{ name, command string }{
+		{"whole-word", `cd "$CLAUDE_PROJECT_DIR" && pwd -P`},
+		{"path-component", `"$CLAUDE_PROJECT_DIR"/bin/check`},
+	} {
+		b.Run(tc.name, func(b *testing.B) {
+			hook := ir.NewHookWithMatcherOptions("guard", "PreToolUse", "Bash", tc.command, "command", nil, ir.SourceRef{}, ir.WithHookSource(string(target.TargetClaude)))
+			Resolve(hook, target.TargetWindsurf, ScopeRepository, "")
+			b.ReportAllocs()
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				resolveBenchmarkResult = Resolve(hook, target.TargetWindsurf, ScopeRepository, "")
+			}
+		})
+	}
+}
