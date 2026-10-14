@@ -682,7 +682,7 @@ func rowPresentationForUser(row session.Row, userOnly bool) rowDTO {
 		Scope:               scope,
 		Required:            row.Artifact.Required,
 		PendingVerification: row.PendingVerification,
-		Checked:             row.EnabledGlobal || row.EnabledProject || row.EnabledLocal || row.Artifact.Required,
+		Checked:             row.Artifact.Required || (!row.IsAvailable && (row.EnabledGlobal || row.EnabledProject || row.EnabledLocal)),
 		HarnessOverride:     row.HarnessSource == "registry override",
 		Harnesses:           harnesses,
 		Status:              status,
