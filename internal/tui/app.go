@@ -192,6 +192,11 @@ func (m *Model) applySnapshotStatus(msg snapshotLoadedMsg) {
 	m.pendingToggleOperation = 0
 	m.pendingToggleReload = 0
 	slog.Info("tui toggle authoritative reload completed", "generation", msg.generation, "healthy", !m.rowsStale)
+	for _, note := range prerequisiteToggleNotes(m.pendingToggle, msg, m.pendingTogglePreexisting) {
+		m.pushToast(note, 5*time.Second)
+	}
+	m.pendingToggle = nil
+	m.pendingTogglePreexisting = nil
 	if !m.rowsStale {
 		m.recordOperationSuccess(operationMutation)
 		return
@@ -347,6 +352,7 @@ func (m *Model) applySnapshotData(msg snapshotLoadedMsg) {
 	m.driftReport = msg.driftReport
 	m.mergedCfg = msg.mergedCfg
 	m.resolved = msg.resolved
+	m.impliedPreview = msg.impliedPreview
 	m.localExcludes = msg.localExcludes
 	m.globalHarnesses = msg.globalHarnesses
 	m.projectHarnesses = msg.projectHarnesses
@@ -713,6 +719,8 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.finishOperation(msg.operation)
 			m.recordOperationFailure(operationMutation, diagnosticMutation, msg.err)
 			m.pendingExcludeAction = nil
+			m.pendingToggle = nil
+			m.pendingTogglePreexisting = nil
 			m.pushToast(fmt.Sprintf("error: %v", msg.err), 5*time.Second)
 			slog.Error("config write failed", "resource", msg.skillName, "enabled", msg.enabled, "err", msg.err)
 			action := "remove"

@@ -94,6 +94,13 @@ type row struct {
 
 	PendingVerification bool
 
+	// Prerequisites holds the row's valid declared prerequisites with their
+	// resolved markers, precomputed by annotatePrerequisiteRows for the detail
+	// pane's "Requires" section. HasUnmetPrerequisite drives the row warning
+	// marker.
+	Prerequisites        []prerequisiteEntry
+	HasUnmetPrerequisite bool
+
 	// searchWords is the cached, sorted and deduplicated set of lowercased
 	// words from the name and metadata that query terms prefix-match.
 	// Populated lazily by ensureSearchable so applyFilter does not rebuild
@@ -310,6 +317,7 @@ type Model struct {
 	// Cached config state for toggle/sync
 	mergedCfg        *config.Config
 	resolved         []resolver.ResolvedArtifact
+	impliedPreview   []resolver.ResolvedArtifact
 	localExcludes    []string
 	globalHarnesses  []string
 	projectHarnesses []string
@@ -372,6 +380,13 @@ type Model struct {
 	operations                  operationState
 	pendingToggleOperation      operationID
 	pendingToggleReload         requestGeneration
+	// pendingToggle is the single-row toggle action awaiting its authoritative
+	// reload; the accepted snapshot turns it into prerequisite footer notes.
+	pendingToggle *toggleAction
+	// pendingTogglePreexisting is the implied prerequisite set captured when
+	// pendingToggle started; those resources did not come along with the
+	// toggle and are excluded from its footer notes.
+	pendingTogglePreexisting map[string]struct{}
 	// updateReload is the superseding snapshot generation that must be
 	// accepted (or fail) before a stale updateDoneMsg's operation ends;
 	// updatePendingErr retains that update's own error for the verdict.

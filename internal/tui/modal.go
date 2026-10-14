@@ -103,6 +103,12 @@ func scopedToggleAction(r row, s scope) toggleAction {
 	if act.isMarketplace {
 		act.marketplaceSelection, act.hasMarketplaceSelection = marketplaceSelectionForToggle(r, s)
 	}
+	if impliedScope, implied := impliedToggleScope(r); implied && impliedScope == s {
+		// An implied row has no direct enabled state of its own; toggling it
+		// in its owning scope always writes the effective exclusion.
+		act.enable = false
+		return act
+	}
 	switch s {
 	case scopeGlobal:
 		act.enable = !r.EnabledGlobal
@@ -615,6 +621,8 @@ func (m Model) startToggleOperation(act toggleAction) (tea.Model, tea.Cmd) {
 	if act.enable && !act.isMarketplace && (act.scope == scopeGlobal || act.scope == scopeProject) && hasCollisionError(m.errs, m.modalSkill.Artifact.Kind, m.modalSkill.Artifact.Name) {
 		m.pendingExcludeAction = &act
 	}
+	m.pendingToggle = &act
+	m.pendingTogglePreexisting = preexistingImpliedKeys(m.resolved, m.impliedPreview)
 	return m, correlateOperation(runDependencyScopedToggle(ctxOrBackground(m.ctx), m.workspace, act, m.dependencyLifecycle.Mutate), operation, false)
 }
 

@@ -188,7 +188,7 @@ func formatFlatItem(it flatItem, width int, compact bool) string {
 		if hb := harnessBadge(r); hb != "" {
 			harnessSuffix = " " + hb
 		}
-		return fmt.Sprintf("%s%s %s %s%s", indent, g, badge, name, harnessSuffix)
+		return fmt.Sprintf("%s%s %s %s%s%s", indent, g, badge, name, prerequisiteBadges(r), harnessSuffix)
 	}
 	return ""
 }
@@ -215,11 +215,18 @@ func stylizeFlatItem(it flatItem, width int, compact bool) string {
 		}
 		glyphRendered := glyphStyle(g).Render(g)
 		badge := badgeStyle(originBadge(r)).Render(scopeBadgeColumn(r))
+		prereqSuffix := ""
+		if impliedSelection(r) {
+			prereqSuffix = " " + styleDim.Render("req")
+		}
+		if r.HasUnmetPrerequisite {
+			prereqSuffix += " " + styleBadgeWarn.Render("⚠")
+		}
 		harnessSuffix := ""
 		if hb := harnessBadge(r); hb != "" {
 			harnessSuffix = " " + harnessBadgeStyle().Render(hb)
 		}
-		return fmt.Sprintf("%s%s %s %s%s", indent, glyphRendered, badge, name, harnessSuffix)
+		return fmt.Sprintf("%s%s %s %s%s%s", indent, glyphRendered, badge, name, prereqSuffix, harnessSuffix)
 	}
 	return formatFlatItem(it, width, compact)
 }
