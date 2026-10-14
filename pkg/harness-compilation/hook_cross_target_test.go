@@ -391,6 +391,8 @@ func TestCatalogCrossWholeWordProjectDirectoryReferencesKeepTheRepositoryDirecto
 		{"path component control", `"$CLAUDE_PROJECT_DIR"/bin/check`, `bin/check`},
 		{"quoted path component control", `"$CLAUDE_PROJECT_DIR/bin/check"`, `"bin/check"`},
 		{"unquoted path component control", `$CLAUDE_PROJECT_DIR/bin/check`, `bin/check`},
+		{"repeated slash stays relative", `"$CLAUDE_PROJECT_DIR"//bin/check`, `./bin/check`},
+		{"unquoted repeated slash stays relative", `$CLAUDE_PROJECT_DIR//bin/check`, `./bin/check`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			emission := compileHook(t, TargetWindsurf, commandHook("guard", "PreToolUse", "Bash", tc.command))

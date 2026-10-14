@@ -414,13 +414,13 @@ When a harness target's hook catalog declares that repository hooks run from the
 - A reference followed by `/` and a further path component SHALL become that repository-relative path.
 - A reference joined to following text without `/` has no repository-relative form. The hook SHALL be suppressed with the error `hook.env-unrepresentable` and no artifact, and the diagnostic SHALL NOT quote the command.
 
-The generated command SHALL never contain an empty shell word in place of the repository directory.
+The generated command SHALL never replace the repository directory with an empty shell word or with a path that starts at the filesystem root; a reference followed by more than one `/` SHALL become `./` followed by the rest of the path.
 
 #### Scenario: Whole-word project-directory references keep the repository directory
 
 - **WHEN** Claude Code hooks whose commands are `cd $CLAUDE_PROJECT_DIR && pwd -P`, `cd ${CLAUDE_PROJECT_DIR} && pwd -P`, `cd "$CLAUDE_PROJECT_DIR" && pwd -P`, and `cd "$CLAUDE_PROJECT_DIR"/ && pwd -P` are compiled for Windsurf
 - **THEN** the commands MUST be `cd . && pwd -P`, `cd . && pwd -P`, `cd "." && pwd -P`, and `cd . && pwd -P`, respectively
-- **AND** a command of `"$CLAUDE_PROJECT_DIR"/bin/check` MUST still be `bin/check`
+- **AND** a command of `"$CLAUDE_PROJECT_DIR"/bin/check` MUST still be `bin/check`, and `"$CLAUDE_PROJECT_DIR"//bin/check` MUST be `./bin/check`
 - **AND** when each installed handler is run from its native working directory at repository and user scope in both materialization modes, it MUST print the repository directory, never HOME
 
 #### Scenario: Joined project-directory references refuse the hook

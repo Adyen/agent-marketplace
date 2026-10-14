@@ -496,15 +496,16 @@ func rewriteCommand(h *ir.Hook, srcCat, dstCat catalog, event string, scope Scop
 			case repoBaseCwd:
 				// {cwd: repository}: remove the reference and one following
 				// slash so the path becomes repository-relative. A reference
-				// that is the whole shell word names the repository itself,
-				// so it becomes "."; text joined to it has no relative form.
+				// that is the whole shell word, or whose remaining path would
+				// start at the filesystem root, names the repository itself
+				// as "."; text joined to it has no relative form.
 				slash := pos < len(command) && command[pos] == '/'
 				next := pos
 				if slash {
 					next++
 				}
 				switch {
-				case projectDirectoryWordEnds(command, next, replacementQuote):
+				case projectDirectoryWordEnds(command, next, replacementQuote) || slash && next < len(command) && command[next] == '/':
 					out.WriteByte('.')
 				case !slash:
 					return fail(diag.CodeHookEnvUnrepresentable, "A project-directory reference joined to other text has no repository-relative form on the target; hook suppressed", "Separate the reference from following text with / or whitespace")
