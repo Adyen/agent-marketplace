@@ -33,18 +33,21 @@ model calls, hook firing, or MCP connections.
 
 ## Additive native hooks
 
-Hooks are written to `.windsurf/hooks.json` at repository scope and
+Hooks are written to `.devin/hooks.json` at repository scope and
 `~/.codeium/windsurf/hooks.json` at user scope. The documented
 [Cascade hook format](https://docs.devin.ai/desktop/cascade/hooks) is a
 `hooks` object that maps event names to handler arrays. Contributions for the
 same event append to that event's array, so named resources do not need
-separate native files.
+separate native files. This is separate from Devin CLI's project-scope
+`.devin/hooks.v1.json`.
 
 Shared-file reconciliation preserves handwritten handlers, comments, unrelated
-settings, and permissions. New supporting files go under `hook-support/`.
-Legacy `hooks/` directories, including file-mode entries Agent Marketplace
-owned before, stay untouched; they are neither migrated nor pruned
-implicitly. Conflicting support-file bytes or modes are refused with
+settings, and permissions. New support files go under repository-scope
+`hook-support/` or user-scope `~/.codeium/windsurf/hook-support/`, in a
+`<source>/<hook>/` directory. Legacy `.windsurf/hooks/` per-event directories
+and the user-scope `hooks/` directory stay untouched. A marked entry in legacy
+repository `.windsurf/hooks.json` migrates to `.devin/hooks.json`; handwritten
+entries remain. Conflicting support-file bytes or modes are refused with
 `materialize.hook.support-conflict` before any hook output changes. A skipped
 hook keeps its previously managed aggregate entries, and valid sibling hooks
 can still materialize.
@@ -54,12 +57,10 @@ one produces `hook.windsurf.timeout-unsupported`. Conflicting canonical and
 native fields produce `hook.windsurf.native-fields-unsupported`. Both are
 errors that suppress the unsafe hook artifact.
 
-Source revisions v1 and v2 keep their historical ingestion for existing
-locks. Inventories at source revision v3 and later (new locks use v4) prefer
-native `hooks.json`, preserve all handlers,
-and keep the selector of the handler that survived under the old
-last-handler rule. Upgrade locks explicitly to get the corrected inventory; a
-normal sync does not reinterpret old locks.
+Existing source revisions v1-v4 preserve their historical digest projections,
+identities, and locked revisions. A normal sync does not upgrade or reinterpret
+old locks; an explicit update changes inventories. Native ingestion supports
+the documented `.devin/hooks.json` path separately.
 
 ## Enabling native validation later
 

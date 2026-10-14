@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -90,6 +91,40 @@ func staticProbe(probe devincli.Probe) func(context.Context) devincli.Probe {
 // rather than against whatever a cloned registry happens to provide.
 func staticResolve(selection []resolver.ResolvedArtifact) func(context.Context, string) ([]resolver.ResolvedArtifact, error) {
 	return func(context.Context, string) ([]resolver.ResolvedArtifact, error) { return selection, nil }
+}
+
+func sourceBackedDoctorHook(t *testing.T, name, event, matcher, command string, target hcc.Target) resolver.ResolvedArtifact {
+	t.Helper()
+	sourceRoot := t.TempDir()
+	handler := map[string]any{"type": "command", "command": command}
+	group := map[string]any{"hooks": []any{handler}}
+	if matcher != "" {
+		group["matcher"] = matcher
+	}
+	definition := map[string]any{"hooks": map[string]any{event: []any{group}}}
+	data, err := json.Marshal(definition)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(sourceRoot, "hooks", "hooks.json"), string(data))
+	loaded, err := catalog.Load(sourceRoot, "claude")
+	if err != nil || len(loaded.Entries) != 1 || loaded.Entries[0].Kind != ir.KindHook {
+		t.Fatalf("Claude source hook ingest = %+v / %v", loaded.Entries, err)
+	}
+	entry := loaded.Entries[0]
+	hook, ok := entry.Resource.(*ir.Hook)
+	if !ok || hook.SourceDefinitionDigest() == "" {
+		t.Fatalf("source-backed doctor hook has no definition digest: %#v", entry.Resource)
+	}
+	entry.Name = name
+	return resolver.ResolvedArtifact{
+		Entry:       entry,
+		RegistryURL: sourceRoot,
+		CatalogKey:  sourceRoot,
+		V4Kind:      config.V4SourceDirectory,
+		Source:      config.RepoCommitted,
+		Harnesses:   []hcc.Target{target},
+	}
 }
 
 // A Workspace construction failure must reach runDoctor with its wrapped
@@ -661,11 +696,7 @@ func TestWriteRepairDiagnosticsKeepsTwoResourcesWithOneMessage(t *testing.T) {
 func prepareDevinTwoAggregateRepairFixture(t *testing.T, repoRoot string) (outDir string, selection []resolver.ResolvedArtifact) {
 	t.Helper()
 	selection = []resolver.ResolvedArtifact{
-		{
-			Entry:     catalog.Entry{Name: "my-hook", Resource: ir.NewHook("my-hook", "PostToolUse", "echo hi", "command", nil, ir.SourceRef{})},
-			Source:    config.RepoCommitted,
-			Harnesses: []hcc.Target{hcc.TargetDevin},
-		},
+		sourceBackedDoctorHook(t, "my-hook", "PostToolUse", "", "echo hi", hcc.TargetDevin),
 		{
 			Entry:     catalog.Entry{Name: "managed", Resource: ir.NewMcpServer("managed", "managed-binary", nil, nil, nil, ir.SourceRef{})},
 			Source:    config.RepoCommitted,

@@ -93,34 +93,39 @@ func TestLoadHooksRejectsDuplicateNestedKeys(t *testing.T) {
 	}
 }
 
-func TestLoadHooks_CanonicalizesEvents(t *testing.T) {
+func TestLoadHooks_PreservesNativeEvents(t *testing.T) {
 	hooks, diags, err := LoadHooks(testWorkspaceFS, ".windsurf/hooks")
 	if err != nil {
 		t.Fatalf("LoadHooks: %v", err)
 	}
+	// Both events are declared in the Windsurf catalog, so ingestion keeps the
+	// authored event names verbatim and emits no diagnostics.
 	if len(hooks) != 2 {
-		t.Fatalf("len(hooks) = %d, want 2 including preserved native hook", len(hooks))
+		t.Fatalf("len(hooks) = %d, want 2 native hooks", len(hooks))
 	}
-	var canonical, native = -1, -1
+	var read, native = -1, -1
 	for i, hook := range hooks {
+		if hook.HookSource != "windsurf" {
+			t.Fatalf("hook %q HookSource = %q, want windsurf", hook.Name(), hook.HookSource)
+		}
 		switch hook.Event {
-		case "PreToolUse":
-			canonical = i
+		case "pre_read_code":
+			read = i
 		case "post_setup_worktree":
 			native = i
 		}
 	}
-	if canonical < 0 || hooks[canonical].Matcher != "Read" {
-		t.Fatalf("canonical hooks = %#v, want PreToolUse/Read", hooks)
+	if read < 0 || native < 0 {
+		t.Fatalf("hooks = %#v, want pre_read_code and post_setup_worktree preserved", hooks)
 	}
-	if native < 0 || hooks[native].Ext.Windsurf == nil || hooks[native].Ext.Windsurf.OriginalHookEvent != "post_setup_worktree" {
-		t.Fatalf("unmappable hook = %#v, want native event sidecar", hooks)
+	if hooks[read].Matcher != "" {
+		t.Fatalf("matcher = %q, want none (Windsurf events carry tool selection)", hooks[read].Matcher)
 	}
-	if hooks[native].Ext.Windsurf.HookPowerShell != "Write-Host setup" || hooks[native].Ext.Windsurf.HookShowOutput == nil || *hooks[native].Ext.Windsurf.HookShowOutput || hooks[native].Ext.Windsurf.HookWorkingDir != "/tmp/project" {
+	if hooks[native].Ext.Windsurf == nil || hooks[native].Ext.Windsurf.HookPowerShell != "Write-Host setup" || hooks[native].Ext.Windsurf.HookShowOutput == nil || *hooks[native].Ext.Windsurf.HookShowOutput || hooks[native].Ext.Windsurf.HookWorkingDir != "/tmp/project" {
 		t.Fatalf("native hook fields = %#v", hooks[native].Ext.Windsurf)
 	}
-	if len(diags) != 1 || diags[0].Code != diag.CodeIngestWindsurfHookEventUnmappable {
-		t.Fatalf("LoadHooks diags = %#v, want ingest.windsurf.hook-event-unmappable", diags)
+	if len(diags) != 0 {
+		t.Fatalf("LoadHooks diags = %#v, want none for declared native events", diags)
 	}
 }
 
@@ -181,7 +186,6 @@ func TestLoadWorkspace_SynthesizesManifestAndLoadsResources(t *testing.T) {
 	sort.Strings(codes)
 	want := []string{
 		diag.CodeIngestWindsurfManifestSynthesized,
-		diag.CodeIngestWindsurfHookEventUnmappable,
 		diag.CodeIngestWindsurfLiteralPathPreserved,
 		diag.CodeIngestWindsurfMcpEnvNormalized,
 		diag.CodeIngestWindsurfSubagentViaAgentsMDSkipped,

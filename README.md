@@ -1083,7 +1083,7 @@ changes, retaining the prior-journal recovery exception. Crash tests exercise
 supported v4 mutations, not consumer migration.
 
 The pre-v4 success `upgrade-gate` and CI job are retired. Keep the dedicated
-`released-client-gate` pinned to checksum-verified stable v4.1.3, with isolated
+`released-client-gate` pinned to checksum-verified stable v4.1.4, with isolated
 actors sharing v4 fixtures; retain healthy lock-byte stability, native-hook
 source verification, and owned-entry upgrade/removal checks. `E2E Gates` remains
 the aggregate status: after successful planning, Marketplace and released-client

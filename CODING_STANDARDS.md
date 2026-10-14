@@ -97,7 +97,7 @@ Every public command and flag that interprets consumer configuration must have a
 
 The normal Marketplace E2E launch gate must execute required refusal witnesses for unsupported/versionless roots in every layer and explicit non-v4 included fragments. Seed valid selections, existing locks and owned output, and acquisition counters so no-write/no-acquisition claims are non-vacuous. Pending-journal tests must distinguish safe replay of already-admitted writes from refusal of new work; crash-recovery success tests exercise supported v4 mutations, not consumer migration.
 
-The pre-v4 success `upgrade-gate` and CI job are retired. Preserve their independent lock-byte/source-revision, scope, collision, and ownership assertions using v4 fixtures. Keep `released-client-gate` pinned to checksum-verified stable v4.1.3 with a shared v4 fixture and isolated actors. `E2E Gates` passes only after successful planning and both Marketplace/released-client jobs succeeding when selected, or both intentionally skipping when unselected; failures, cancellation, missing witnesses, and unexpected skips fail acceptance.
+The pre-v4 success `upgrade-gate` and CI job are retired. Preserve their independent lock-byte/source-revision, scope, collision, and ownership assertions using v4 fixtures. Keep `released-client-gate` pinned to checksum-verified stable v4.1.4 with a shared v4 fixture and isolated actors. `E2E Gates` passes only after successful planning and both Marketplace/released-client jobs succeeding when selected, or both intentionally skipping when unselected; failures, cancellation, missing witnesses, and unexpected skips fail acceptance.
 
 ### TUI test ownership
 

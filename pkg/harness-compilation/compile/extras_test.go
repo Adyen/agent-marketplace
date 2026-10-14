@@ -50,3 +50,18 @@ func TestHookExtraKeysReservesCaseAliasesWithoutMutatingCanonical(t *testing.T) 
 		}
 	}
 }
+
+func TestProvenanceExtraKeysReserved(t *testing.T) {
+	keys, diagnostics := HookExtraKeys(map[string]any{"hooksource": "codex", "kept": 1}, nil, TargetClaude, "p", diag.SourceRef{})
+	if !reflect.DeepEqual(keys, []string{"kept"}) || !diag.HasCode(diagnostics, diag.CodeCanonicalFieldOverridesExtra) {
+		t.Fatalf("hooksource extra: keys=%#v diagnostics=%#v", keys, diagnostics)
+	}
+	keys, diagnostics = ModelExtraKeys(map[string]any{"ToolSource": "devin"}, nil, TargetClaude, "p", diag.SourceRef{})
+	if len(keys) != 0 || !diag.HasCode(diagnostics, diag.CodeCanonicalFieldOverridesExtra) {
+		t.Fatalf("ToolSource extra on subagent: keys=%#v diagnostics=%#v", keys, diagnostics)
+	}
+	keys, diagnostics = SkillModelExtraKeys(map[string]any{"toolsource": "gemini"}, nil, TargetClaude, "p", diag.SourceRef{})
+	if len(keys) != 0 || !diag.HasCode(diagnostics, diag.CodeCanonicalFieldOverridesExtra) {
+		t.Fatalf("toolsource extra on skill: keys=%#v diagnostics=%#v", keys, diagnostics)
+	}
+}

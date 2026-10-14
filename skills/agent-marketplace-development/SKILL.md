@@ -514,7 +514,7 @@ crash tests interrupt supported v4 mutations, not consumer migration. The
 pre-v4 success `upgrade-gate` and CI job are retired; preserve independent lock,
 source-revision, scope, collision, and ownership evidence in v4 fixtures.
 
-Keep `released-client-gate` pinned to checksum-verified stable v4.1.3 and a
+Keep `released-client-gate` pinned to checksum-verified stable v4.1.4 and a
 shared v4 repository fixture, with separate actors and healthy lock-byte/native
 hook/owned-entry checks. After successful planning, aggregate `E2E Gates` must
 require both Marketplace/released-client jobs to succeed when selected or both

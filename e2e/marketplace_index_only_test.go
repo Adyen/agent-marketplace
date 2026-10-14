@@ -123,9 +123,11 @@ resources:
 			t.Fatalf("lock omitted advertised revision for %s: %s", revision.Coordinate, lockBefore)
 		}
 	}
-	for _, path := range []string{"/workspace/.factory/skills/skill-one/SKILL.md", "/workspace/.factory/commands/command-one.md", "/workspace/.factory/droids/agent-one.md", "/workspace/.factory/hooks/hooks.json", "/workspace/.factory/mcp.json"} {
+	for _, path := range []string{"/workspace/.factory/skills/skill-one/SKILL.md", "/workspace/.factory/commands/command-one.md", "/workspace/.factory/droids/agent-one.md", "/workspace/.factory/mcp.json"} {
 		env.AssertFileExists(path)
 	}
+	assertFactoryNativeHookFile(t, env, "/workspace/.factory/hooks.json", "Read", "echo hook")
+	env.AssertFileAbsent("/workspace/.factory/hooks/hooks.json")
 
 	// Remove the old origin before the next online sync. Success proves the
 	// resolver used only the occurrence's current origin, not origin history.
@@ -149,9 +151,11 @@ resources:
 	if env.ReadFile("/workspace/.agents/lock.yaml") != lockBefore {
 		t.Fatal("registry move or offline reuse rewrote the exact acquisition lock")
 	}
-	for _, path := range []string{"/workspace/.factory/skills/skill-one/SKILL.md", "/workspace/.factory/commands/command-one.md", "/workspace/.factory/droids/agent-one.md", "/workspace/.factory/hooks/hooks.json", "/workspace/.factory/mcp.json"} {
+	for _, path := range []string{"/workspace/.factory/skills/skill-one/SKILL.md", "/workspace/.factory/commands/command-one.md", "/workspace/.factory/droids/agent-one.md", "/workspace/.factory/mcp.json"} {
 		env.AssertFileExists(path)
 	}
+	assertFactoryNativeHookFile(t, env, "/workspace/.factory/hooks.json", "Read", "echo hook")
+	env.AssertFileAbsent("/workspace/.factory/hooks/hooks.json")
 }
 
 func writeMarketplaceAllKindsSource(t *testing.T, root string) {

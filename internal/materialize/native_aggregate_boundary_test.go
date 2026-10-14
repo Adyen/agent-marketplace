@@ -19,6 +19,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/fsboundary"
 	"github.com/Adyen/agent-marketplace/internal/harness"
+	"github.com/Adyen/agent-marketplace/internal/ownership"
 	"github.com/Adyen/agent-marketplace/internal/resolver"
 	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
@@ -41,7 +42,7 @@ func TestRunNativeMarkerAggregateRefusesReplacedLeaf(t *testing.T) {
 			if err := os.WriteFile(file, []byte("{\n // handwritten comment\n \"custom\": true,\n \"mcpServers\": {\"user\": {\"command\": \"inert\"}}\n}\n"), 0o640); err != nil {
 				t.Fatal(err)
 			}
-			desired := nativeMCPResources(hcc.TargetClaude, source)
+			desired := nativeSourceBackedMCPResources(t, hcc.TargetClaude, source)
 			initial, err := Run(t.Context(), repo, desired)
 			if err != nil || diag.HasErrors(initial.Diags) {
 				t.Fatalf("native aggregate install failed: %+v %v", initial, err)
@@ -201,9 +202,10 @@ func TestRunNativeAggregateEmptyDesiredRefusesUnsafeInventory(t *testing.T) {
 							t.Fatalf("native installation control: %+v %v", installed, err)
 						}
 						before, err := os.ReadFile(file)
-						if err != nil || !bytes.Contains(before, []byte(`"_managed_by"`)) {
-							t.Fatalf("managed native control missing: %q %v", before, err)
+						if err != nil {
+							t.Fatal(err)
 						}
+						assertNativeAggregateManagedControl(t, target, file, before)
 						retained := filepath.Join(t.TempDir(), "retained.json")
 						if shape == "hardlink" {
 							if err := os.Link(file, retained); err != nil {
@@ -292,9 +294,10 @@ func TestRunNativeAggregateEmptyDesiredControls(t *testing.T) {
 					t.Fatalf("native install control: %+v %v", installed, err)
 				}
 				managed, err := os.ReadFile(file)
-				if err != nil || !bytes.Contains(managed, []byte(`"_managed_by"`)) {
-					t.Fatalf("native control lacks ownership: %q %v", managed, err)
+				if err != nil {
+					t.Fatal(err)
 				}
+				assertNativeAggregateManagedControl(t, target, file, managed)
 				managedInfo, err := os.Stat(file)
 				if err != nil {
 					t.Fatal(err)
@@ -313,8 +316,12 @@ func TestRunNativeAggregateEmptyDesiredControls(t *testing.T) {
 					t.Fatalf("native prune failed or lost comment: %q %v", got, err)
 				}
 				doc := nativeMCPDocument(t, got)
-				if doc["custom"] != true || doc["mcpServers"].(map[string]any)["user"].(map[string]any)["command"] != "inert" {
+				servers := doc["mcpServers"].(map[string]any)
+				if doc["custom"] != true || servers["user"].(map[string]any)["command"] != "inert" {
 					t.Fatalf("prune lost handwritten settings: %v", doc)
+				}
+				if target == hcc.TargetGemini && (servers["first"] != nil || servers["second"] != nil) {
+					t.Fatalf("prune retained owned Gemini MCP servers: %v", servers)
 				}
 				info, err := os.Stat(file)
 				if err != nil || info.Mode().Perm() != 0o640 {
@@ -339,9 +346,10 @@ func TestRunNativeAggregateInventoryRefusesBadParent(t *testing.T) {
 				t.Fatalf("native installation control: %+v %v", installed, err)
 			}
 			before, err := os.ReadFile(file)
-			if err != nil || !bytes.Contains(before, []byte(`"_managed_by"`)) {
-				t.Fatalf("managed native control missing: %q %v", before, err)
+			if err != nil {
+				t.Fatal(err)
 			}
+			assertNativeAggregateManagedControl(t, hcc.TargetGemini, file, before)
 			retained := filepath.Join(t.TempDir(), "admitted-gemini")
 			if err := os.Rename(filepath.Dir(file), retained); err != nil {
 				t.Fatal(err)
@@ -567,6 +575,40 @@ func TestNativeAggregateSnapshotParentDisappearanceIsGenerationConflict(t *testi
 	assertNativeAggregateFilePreserved(t, filepath.Join(retained, "native.json"), data, observed)
 }
 
+func assertNativeAggregateManagedControl(t *testing.T, target hcc.Target, file string, data []byte) {
+	t.Helper()
+	if target != hcc.TargetGemini {
+		if !bytes.Contains(data, []byte(`"_managed_by"`)) {
+			t.Fatalf("%s managed native control missing in %s: %q", target, file, data)
+		}
+		return
+	}
+	document := nativeMCPDocument(t, data)
+	servers, ok := document["mcpServers"].(map[string]any)
+	if !ok || servers["first"] == nil || servers["second"] == nil {
+		t.Fatalf("Gemini MCP control missing in %s: %v", file, document)
+	}
+	store, err := ownership.Open(filepath.Dir(file))
+	if err != nil {
+		t.Fatal(err)
+	}
+	proof, err := store.Proof(filepath.Base(file))
+	if err != nil {
+		t.Fatal(err)
+	}
+	seen := map[string]bool{}
+	for _, id := range proof.OwnedIDs() {
+		entry, ok := proof.Entry(id)
+		if !ok || id.Kind != ownership.KindMcpServer || id.Container != "mcpServers" || seen[entry.Resource] {
+			t.Fatalf("Gemini MCP ownership entry = %+v / %t", entry, ok)
+		}
+		seen[entry.Resource] = true
+	}
+	if len(seen) != 2 || !seen["first"] || !seen["second"] {
+		t.Fatalf("Gemini MCP proof entries = %+v", seen)
+	}
+}
+
 func nativeAggregateInventoryFixture(t *testing.T, target hcc.Target, machine bool) (string, string, []resolver.ResolvedArtifact) {
 	t.Helper()
 	home, repo := t.TempDir(), t.TempDir()
@@ -581,10 +623,7 @@ func nativeAggregateInventoryFixture(t *testing.T, target hcc.Target, machine bo
 	if target == hcc.TargetGemini {
 		rel = filepath.Join(".gemini", "settings.json")
 	}
-	desired := nativeMCPResources(target, source)
-	if target == hcc.TargetGemini {
-		desired = desired[2:]
-	}
+	desired := nativeMCPServerResources(t, target, source)
 	return repo, filepath.Join(root, rel), desired
 }
 

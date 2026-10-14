@@ -20,7 +20,7 @@ func init() {
 				selection := "mcp/native-first, mcp/native-second"
 				fixture := RegistryDef{Name: "native-mcp", MCPServers: []MCPServer{{Name: "native-first", Command: "echo", Args: []string{"first"}}, {Name: "native-second", Command: "echo", Args: []string{"second"}}}}
 				if target == "gemini" {
-					fixture.Files = map[string]string{"hooks/hooks.json": `{"hooks":{"PostToolUse":[{"matcher":".*","hooks":[{"type":"command","command":"echo generated-audit"}]}]}}`}
+					fixture.Files = map[string]string{"hooks/hooks.json": `{"hooks":{"PostToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"echo generated-audit"}]}]}}`}
 					selection += ", hook/PostToolUse-command"
 				}
 				cfg += "resources: {team: {include: [" + selection + "]}}\n"

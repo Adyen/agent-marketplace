@@ -48,11 +48,16 @@ func newCompatibilityFixture(e *Env, target, server string) compatibilityFixture
 			{Name: f.name("mcp-b"), Command: server, Args: []string{"--label=" + f.name("mcp-b")}, Env: map[string]string{"AMCOMPAT_SETTING": "beta"}},
 		},
 	)
-	files[".claude-plugin/plugin.json"] = fmt.Sprintf(`{"name":%q,"version":"1.0.0"}`, f.name("registry"))
-	files["skills/"+f.name("skill")+"/SKILL.md"] += "\nRead [reference](assets/reference.txt).\n"
-	files["skills/"+f.name("skill")+"/assets/reference.txt"] = f.name("support") + "\n"
-	files["skills/"+f.name("skill")+"/scripts/check.sh"] = "printf 'compatibility-support\\n'\n"
-	files["hooks/hooks.json"] = fmt.Sprintf(`{"hooks":{"PreToolUse":[{"type":"command","matcher":"Bash","command":%q}],"UserPromptSubmit":[{"type":"command","command":%q}]}}`, f.hookCommand("hook-a"), f.hookCommand("hook-b"))
+	skillSource := ".claude/skills/" + f.name("skill")
+	files[skillSource+"/SKILL.md"] = files["skills/"+f.name("skill")+"/SKILL.md"] + "\nRead [reference](assets/reference.txt).\n"
+	files[skillSource+"/assets/reference.txt"] = f.name("support") + "\n"
+	files[skillSource+"/scripts/check.sh"] = "printf 'compatibility-support\\n'\n"
+	delete(files, "skills/"+f.name("skill")+"/SKILL.md")
+	files[".claude/commands/"+f.name("command")+".md"] = files["commands/"+f.name("command")+".md"]
+	delete(files, "commands/"+f.name("command")+".md")
+	files[".claude/agents/"+f.name("subagent")+".md"] = files["agents/"+f.name("subagent")+".md"]
+	delete(files, "agents/"+f.name("subagent")+".md")
+	files[".claude/settings.json"] = fmt.Sprintf(`{"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":%q}]}],"UserPromptSubmit":[{"hooks":[{"type":"command","command":%q}]}]}}`, f.hookCommand("hook-a"), f.hookCommand("hook-b"))
 	files["collections/"+f.name("collection")+"/COLLECTION.yaml"] = fmt.Sprintf(`name: %s
 version: "1.0"
 description: Compatibility fixture collection
@@ -77,6 +82,75 @@ resources:
 		e.WriteFile(filepath.Join(f.registry, filepath.FromSlash(path)), content)
 	}
 	return f
+}
+
+func assertCompatibilityHookSource(t *testing.T, f compatibilityFixture) {
+	t.Helper()
+	for _, path := range []string{".claude-plugin/plugin.json", "hooks/hooks.json"} {
+		if _, err := os.Lstat(filepath.Join(f.registry, filepath.FromSlash(path))); !os.IsNotExist(err) {
+			t.Fatalf("registry still carries plugin-layout source %s: %v", path, err)
+		}
+	}
+	for _, path := range []string{
+		".claude/skills/" + f.name("skill") + "/SKILL.md",
+		".claude/commands/" + f.name("command") + ".md",
+		".claude/agents/" + f.name("subagent") + ".md",
+	} {
+		if _, err := os.Lstat(filepath.Join(f.registry, filepath.FromSlash(path))); err != nil {
+			t.Fatalf("registry missing native workspace source %s: %v", path, err)
+		}
+	}
+	data, err := os.ReadFile(filepath.Join(f.registry, ".claude", "settings.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var settings struct {
+		Hooks map[string][]struct {
+			Matcher string `json:"matcher"`
+			Hooks   []struct {
+				Type    string `json:"type"`
+				Command string `json:"command"`
+			} `json:"hooks"`
+		} `json:"hooks"`
+	}
+	if err := json.Unmarshal(data, &settings); err != nil {
+		t.Fatalf("source .claude/settings.json is not grouped hook JSON: %v", err)
+	}
+	for event, command := range map[string]string{"PreToolUse": f.hookCommand("hook-a"), "UserPromptSubmit": f.hookCommand("hook-b")} {
+		groups := settings.Hooks[event]
+		if len(groups) != 1 || len(groups[0].Hooks) != 1 {
+			t.Fatalf("source event %s is not one matcher group with one handler: %s", event, data)
+		}
+		if groups[0].Hooks[0].Type != "command" || groups[0].Hooks[0].Command != command {
+			t.Fatalf("source event %s lost its command handler: %s", event, data)
+		}
+	}
+	if settings.Hooks["PreToolUse"][0].Matcher != "Bash" {
+		t.Fatalf("source PreToolUse group lost matcher Bash: %s", data)
+	}
+}
+
+func assertFactoryNativeHookFile(t *testing.T, e *Env, path, matcher, command string) {
+	t.Helper()
+	var document map[string][]struct {
+		Matcher string `json:"matcher"`
+		Hooks   []struct {
+			Type    string `json:"type"`
+			Command string `json:"command"`
+		} `json:"hooks"`
+	}
+	text := e.ReadFile(path)
+	if err := json.Unmarshal([]byte(text), &document); err != nil {
+		t.Fatalf("decode Factory native hook file %s: %v", path, err)
+	}
+	groups, ok := document["PreToolUse"]
+	if len(document) != 1 || !ok || len(groups) != 1 || groups[0].Matcher != matcher || len(groups[0].Hooks) != 1 ||
+		groups[0].Hooks[0].Type != "command" || groups[0].Hooks[0].Command != command {
+		t.Fatalf("Factory native hook file %s = %s, want one %s PreToolUse command %q", path, text, matcher, command)
+	}
+	if strings.Contains(text, "_managed_by") {
+		t.Fatalf("Factory native hook file %s contains an in-file marker", path)
+	}
 }
 
 func (f compatibilityFixture) name(kind string) string { return f.prefix + "-" + kind }
@@ -108,12 +182,16 @@ func compatibilityPaths(e *Env, target, scope string, f compatibilityFixture) ma
 	}
 	switch target {
 	case "claude":
+		paths["hook"] = []string{root + "/settings.json"}
 		paths["mcp"] = []string{".mcp.json"}
 		if scope == "user" {
 			paths["mcp"] = []string{".claude.json"}
 		}
 	case "factory":
+		paths["hook"] = []string{root + "/hooks.json"}
 		paths["subagent"] = []string{root + "/droids/" + f.name("subagent") + ".md"}
+	case "cursor":
+		paths["hook"] = []string{root + "/hooks.json"}
 	case "gemini":
 		paths["command"] = []string{root + "/commands/" + f.name("command") + ".toml"}
 		paths["hook"] = []string{root + "/settings.json"}
@@ -125,7 +203,11 @@ func compatibilityPaths(e *Env, target, scope string, f compatibilityFixture) ma
 		}
 		paths["command"] = []string{root + "/" + workflow + "/" + f.name("command") + ".md"}
 		paths["subagent"] = nil
-		paths["hook"] = []string{root + "/hooks.json"}
+		if scope == "user" {
+			paths["hook"] = []string{root + "/hooks.json"}
+		} else {
+			paths["hook"] = []string{".devin/hooks.json"}
+		}
 		paths["mcp"] = []string{root + "/mcp_config.json"}
 	case "devin":
 		paths["command"] = []string{root + "/skills/" + f.name("command") + "/SKILL.md"}

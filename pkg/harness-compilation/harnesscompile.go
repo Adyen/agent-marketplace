@@ -274,7 +274,7 @@ func IngestBundle(srcFS fs.FS, from Harness) (*ingest.Bundle, error) {
 	if !ok {
 		return nil, fmt.Errorf("harnesscompile.IngestBundle: source %q: %w", from, errSourceNotImplemented)
 	}
-	bundle, err := ing.LoadBundle(srcFS)
+	bundle, err := IngestBundleWithLoader(srcFS, ing.LoadBundle)
 	if err != nil {
 		slog.Error("harness ingest failed", "from", from, "error", err)
 		return nil, err
@@ -1662,7 +1662,7 @@ type MergeFileReport struct {
 // options. Compile and compileBundleFromIR share it so a newly added option can
 // never be wired into one entry point and forgotten in the other.
 func compileOptions(cfg *config) []compile.Option {
-	copts := make([]compile.Option, 0, 5)
+	copts := make([]compile.Option, 0, 6)
 	if cfg.modelOverride != nil {
 		copts = append(copts, compile.WithModelOverride(cfg.modelOverride))
 	}
@@ -1675,6 +1675,9 @@ func compileOptions(cfg *config) []compile.Option {
 	if cfg.managedByField != "" {
 		copts = append(copts, compile.WithManagedBy(cfg.managedByField, cfg.managedByValue))
 	}
+	if cfg.nativeHookOutput {
+		copts = append(copts, compile.WithNativeHookOutput())
+	}
 	if cfg.scope != "" {
 		copts = append(copts, compile.WithScope(cfg.scope))
 	}
@@ -1685,12 +1688,13 @@ func compileOptions(cfg *config) []compile.Option {
 type Option func(*config)
 
 type config struct {
-	modelOverride  map[string]string
-	toolOverride   map[string]string
-	pluginRoot     string
-	managedByField string
-	managedByValue string
-	scope          Scope
+	modelOverride    map[string]string
+	toolOverride     map[string]string
+	pluginRoot       string
+	managedByField   string
+	managedByValue   string
+	nativeHookOutput bool
+	scope            Scope
 }
 
 // Scope is the installation scope a caller compiles for. It is re-exported
@@ -1733,4 +1737,8 @@ func WithManagedBy(field, value string) Option {
 		c.managedByField = field
 		c.managedByValue = value
 	}
+}
+
+func WithNativeHookOutput() Option {
+	return func(c *config) { c.nativeHookOutput = true }
 }
