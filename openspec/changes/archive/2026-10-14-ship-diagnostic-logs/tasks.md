@@ -7,4 +7,4 @@
 - [x] Export the records via `otlploghttp` through the capture transport and replay `/v1/logs` with the other signals.
 - [x] Document diagnostic logs in `docs/telemetry.md`.
 - [x] Verify scoped tests, `make validate`, and `make spec-check`.
-- [ ] Adversarially review every changed entry.
+- [x] Adversarially review every changed entry.
