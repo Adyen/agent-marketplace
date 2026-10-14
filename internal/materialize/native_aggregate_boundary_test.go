@@ -39,7 +39,7 @@ func TestRunNativeMarkerAggregateRefusesReplacedLeaf(t *testing.T) {
 			if err := os.WriteFile(file, []byte("{\n // handwritten comment\n \"custom\": true,\n \"mcpServers\": {\"user\": {\"command\": \"inert\"}}\n}\n"), 0o640); err != nil {
 				t.Fatal(err)
 			}
-			desired := nativeMCPResources(t, hcc.TargetClaude, source)
+			desired := nativeSourceBackedMCPResources(t, hcc.TargetClaude, source)
 			initial, err := Run(t.Context(), repo, desired)
 			if err != nil || diag.HasErrors(initial.Diags) {
 				t.Fatalf("native aggregate install failed: %+v %v", initial, err)

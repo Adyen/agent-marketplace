@@ -52,7 +52,23 @@ func nativeMCPServerResources(t testing.TB, target hcc.Target, source config.Sou
 	return resources
 }
 
-func nativeMCPResources(t testing.TB, target hcc.Target, source config.Source) []resolver.ResolvedArtifact {
+func nativeMCPResources(target hcc.Target, source config.Source) []resolver.ResolvedArtifact {
+	resources := make([]resolver.ResolvedArtifact, 0, 2)
+	for _, name := range []string{"first", "second"} {
+		resources = append(resources, resolver.ResolvedArtifact{
+			Entry: catalog.Entry{
+				Name:     name,
+				Kind:     ir.KindMcpServer,
+				Resource: ir.NewMcpServer(name, "echo", []string{name}, nil, nil, ir.SourceRef{}),
+			},
+			Source:    source,
+			Harnesses: []hcc.Target{target},
+		})
+	}
+	return resources
+}
+
+func nativeSourceBackedMCPResources(t testing.TB, target hcc.Target, source config.Source) []resolver.ResolvedArtifact {
 	resources := nativeMCPServerResources(t, target, source)
 	if target == hcc.TargetGemini {
 		hook := ir.NewHook("audit", "PostToolUse", "echo audit", "command", nil, ir.SourceRef{})
@@ -129,7 +145,7 @@ func TestGeminiMixedPrivateAggregateMode(t *testing.T) {
 			t.Setenv("XDG_STATE_HOME", t.TempDir())
 			t.Setenv("XDG_CACHE_HOME", t.TempDir())
 			t.Setenv("CODEX_HOME", filepath.Join(home, ".codex"))
-			desired := nativeMCPResources(t, hcc.TargetGemini, config.RepoCommitted)
+			desired := nativeSourceBackedMCPResources(t, hcc.TargetGemini, config.RepoCommitted)
 			if reversed {
 				desired[0], desired[1] = desired[1], desired[0]
 			}
@@ -168,7 +184,7 @@ func TestGeminiNativeMCPUsesStrictFieldsAndDurableOwnership(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	t.Setenv("XDG_CACHE_HOME", t.TempDir())
 	t.Setenv("CODEX_HOME", filepath.Join(home, ".codex"))
-	desired := nativeMCPResources(t, hcc.TargetGemini, config.RepoCommitted)
+	desired := nativeSourceBackedMCPResources(t, hcc.TargetGemini, config.RepoCommitted)
 	report, err := Run(context.Background(), repo, desired)
 	if err != nil || hasErrorDiagnostics(report.Diags) {
 		t.Fatalf("sync: %v %+v", err, report)
@@ -306,7 +322,7 @@ func TestGeminiNativeMCPResumesAfterMalformedFileIsFixed(t *testing.T) {
 	if err := os.WriteFile(file, original, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	desired := nativeMCPResources(t, hcc.TargetGemini, config.RepoCommitted)
+	desired := nativeSourceBackedMCPResources(t, hcc.TargetGemini, config.RepoCommitted)
 	report, err := Run(context.Background(), repo, desired)
 	if err != nil || !hasDiagCode(report.Diags, "json.malformed") {
 		t.Fatalf("malformed file not refused: %v %+v", err, report)
@@ -385,7 +401,7 @@ func TestNativeMCPLifecycle(t *testing.T) {
 					}
 					modes := config.MaterializationModes{Machine: mode, Project: mode}
 					opts := []RunOption{WithMaterializationModes(modes)}
-					desired := nativeMCPResources(t, target, source)
+					desired := nativeSourceBackedMCPResources(t, target, source)
 					report, err := Run(context.Background(), repo, desired, opts...)
 					if err != nil || hasErrorDiagnostics(report.Diags) {
 						t.Fatalf("sync: %v, %+v", err, report)
@@ -486,7 +502,7 @@ func TestNativeMCPSymlinksAndLegacyFiles(t *testing.T) {
 				if dry {
 					opts = append(opts, WithDryRun())
 				}
-				report, err := Run(context.Background(), repo, nativeMCPResources(t, target, config.RepoCommitted), opts...)
+				report, err := Run(context.Background(), repo, nativeSourceBackedMCPResources(t, target, config.RepoCommitted), opts...)
 				if err != nil || !hasDiagCode(report.Diags, "materialize.write.error") {
 					t.Fatalf("symlink not refused: %v %+v", err, report)
 				}
@@ -505,7 +521,7 @@ func TestNativeMCPSymlinksAndLegacyFiles(t *testing.T) {
 			if err := os.Remove(native); err != nil {
 				t.Fatal(err)
 			}
-			report, err := Run(context.Background(), repo, nativeMCPResources(t, target, config.RepoCommitted))
+			report, err := Run(context.Background(), repo, nativeSourceBackedMCPResources(t, target, config.RepoCommitted))
 			if err != nil || hasErrorDiagnostics(report.Diags) {
 				t.Fatalf("safe native install failed: %v %+v", err, report)
 			}
@@ -541,7 +557,7 @@ func TestNativeMCPCompileFailureWritesValidSiblingsWithoutPruning(t *testing.T) 
 					rel = ".gemini/settings.json"
 				}
 				destination := filepath.Join(base, rel)
-				prior := nativeMCPResources(t, target, source)
+				prior := nativeSourceBackedMCPResources(t, target, source)
 				report, err := Run(context.Background(), repo, prior)
 				if err != nil || hasErrorDiagnostics(report.Diags) {
 					t.Fatalf("initial sync: %v %+v", err, report)
@@ -634,7 +650,7 @@ func TestNativeMCPUnmanagedFilesDoNotAffectOtherTargets(t *testing.T) {
 					if err := os.WriteFile(native, []byte(original), 0o600); err != nil {
 						t.Fatal(err)
 					}
-					wanted := nativeMCPResources(t, hcc.TargetFactory, source)
+					wanted := nativeSourceBackedMCPResources(t, hcc.TargetFactory, source)
 					for _, dry := range []bool{true, false, true} {
 						var opts []RunOption
 						if dry {
@@ -694,7 +710,7 @@ func TestNativeMCPManagedFilesPruneDuringOtherTargetSync(t *testing.T) {
 			t.Setenv("XDG_STATE_HOME", t.TempDir())
 			t.Setenv("XDG_CACHE_HOME", t.TempDir())
 			t.Setenv("CODEX_HOME", filepath.Join(home, ".codex"))
-			report, err := Run(context.Background(), repo, nativeMCPResources(t, target, config.UserPersonal))
+			report, err := Run(context.Background(), repo, nativeSourceBackedMCPResources(t, target, config.UserPersonal))
 			if err != nil || hasErrorDiagnostics(report.Diags) {
 				t.Fatalf("initial sync: %v %+v", err, report)
 			}
@@ -704,7 +720,7 @@ func TestNativeMCPManagedFilesPruneDuringOtherTargetSync(t *testing.T) {
 			} else if err := os.Remove(filepath.Join(home, ".claude")); err != nil {
 				t.Fatal(err)
 			}
-			report, err = Run(context.Background(), repo, nativeMCPResources(t, hcc.TargetFactory, config.UserPersonal))
+			report, err = Run(context.Background(), repo, nativeSourceBackedMCPResources(t, hcc.TargetFactory, config.UserPersonal))
 			if err != nil || hasErrorDiagnostics(report.Diags) {
 				t.Fatalf("unrelated sync: %v %+v", err, report)
 			}

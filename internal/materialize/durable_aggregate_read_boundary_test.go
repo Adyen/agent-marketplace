@@ -19,7 +19,7 @@ func TestRunDurableAggregateReadRefusesRetargetedRoot(t *testing.T) {
 	t.Setenv("CODEX_HOME", filepath.Join(home, ".codex"))
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	t.Setenv("XDG_CACHE_HOME", t.TempDir())
-	desired := nativeMCPResources(t, hcc.TargetGemini, config.RepoCommitted)
+	desired := nativeSourceBackedMCPResources(t, hcc.TargetGemini, config.RepoCommitted)
 	installed, err := Run(t.Context(), repo, desired)
 	if err != nil || diag.HasErrors(installed.Diags) {
 		t.Fatalf("native Gemini control failed: %+v %v", installed, err)
@@ -67,7 +67,7 @@ func TestRunDurableAggregateReadRefusesClonedRootIdentity(t *testing.T) {
 	t.Setenv("CODEX_HOME", filepath.Join(home, ".codex"))
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	t.Setenv("XDG_CACHE_HOME", t.TempDir())
-	desired := nativeMCPResources(t, hcc.TargetGemini, config.RepoCommitted)
+	desired := nativeSourceBackedMCPResources(t, hcc.TargetGemini, config.RepoCommitted)
 	installed, err := Run(t.Context(), repo, desired)
 	if err != nil || diag.HasErrors(installed.Diags) {
 		t.Fatalf("native Gemini control failed: %+v %v", installed, err)
