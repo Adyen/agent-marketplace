@@ -33,11 +33,17 @@ type matrixSpec struct {
 }
 
 type matrixCell struct {
-	From          Harness  `yaml:"from"`
-	To            Harness  `yaml:"to"`
-	Class         string   `yaml:"class"`
-	Diagnostics   []string `yaml:"diagnostics"`
-	AllowedLosses []string `yaml:"allowedLosses"`
+	From            Harness  `yaml:"from"`
+	To              Harness  `yaml:"to"`
+	Class           string   `yaml:"class"`
+	Diagnostics     []string `yaml:"diagnostics"`
+	AllowedLosses   []string `yaml:"allowedLosses"`
+	RoundTripLosses []string `yaml:"roundTripLosses"`
+	ExpectedModel   *string  `yaml:"expectedModel"`
+	ExpectedEffort  *string  `yaml:"expectedEffort"`
+	ExpectedTools   []string `yaml:"expectedTools"`
+	ExpectedEvent   *string  `yaml:"expectedEvent"`
+	ExpectedMatcher *string  `yaml:"expectedMatcher"`
 }
 
 type canonicalFixture struct {
@@ -128,7 +134,7 @@ func TestMatrix_RoundTripSameHarness(t *testing.T) {
 				}
 				got := requireSingleResource(t, kind, harness, reingested.Resources)
 
-				assertCanonicalEqual(t, normalizeResource(resource), normalizeResource(got), nil)
+				assertCanonicalEqual(t, normalizeResource(resource), normalizeResource(got), cell.RoundTripLosses)
 			})
 		}
 	}
@@ -171,7 +177,29 @@ func TestMatrix_CrossHarnessLossProfile(t *testing.T) {
 					t.Fatalf("re-ingest %s %s→%s: %v", kind, cell.From, cell.To, err)
 				}
 				got := requireSingleResource(t, kind, cell.To, reingested.Resources)
-				assertCanonicalEqual(t, want, normalizeResource(got), cell.AllowedLosses)
+				expected := want
+				losses := append([]string(nil), cell.AllowedLosses...)
+				if cell.ExpectedModel != nil {
+					expected.Model = *cell.ExpectedModel
+					losses = slices.DeleteFunc(losses, func(field string) bool { return field == "model" })
+				}
+				if cell.ExpectedEffort != nil {
+					expected.Effort = *cell.ExpectedEffort
+					losses = slices.DeleteFunc(losses, func(field string) bool { return field == "effort" })
+				}
+				if cell.ExpectedTools != nil {
+					expected.Tools = cell.ExpectedTools
+					losses = slices.DeleteFunc(losses, func(field string) bool { return field == "tools" })
+				}
+				if cell.ExpectedEvent != nil {
+					expected.Event = *cell.ExpectedEvent
+					losses = slices.DeleteFunc(losses, func(field string) bool { return field == "event" })
+				}
+				if cell.ExpectedMatcher != nil {
+					expected.Matcher = *cell.ExpectedMatcher
+					losses = slices.DeleteFunc(losses, func(field string) bool { return field == "matcher" })
+				}
+				assertCanonicalEqual(t, expected, normalizeResource(got), losses)
 			})
 		}
 	}

@@ -467,6 +467,43 @@ func openFIFOWriter(t *testing.T, path string, processDone <-chan struct{}, resu
 	}
 }
 
+func openOwnershipProofFIFOWriter(t *testing.T, proofPath string, proofBytes []byte, processDone <-chan struct{}, result *ExecResult) *os.File {
+	t.Helper()
+	rootKey := filepath.Base(filepath.Dir(proofPath))
+	stateRoot := filepath.Dir(filepath.Dir(filepath.Dir(proofPath)))
+	lock, err := os.OpenFile(filepath.Join(stateRoot, "locks", rootKey+".lock"), os.O_RDWR, 0o600)
+	if err != nil {
+		t.Fatalf("open seeded ownership lock: %v", err)
+	}
+	defer func() { _ = lock.Close() }()
+	deadline := time.Now().Add(concurrencyHandshakeTimeout)
+	for {
+		writer := openFIFOWriter(t, proofPath, processDone, result)
+		lockErr := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
+		if errors.Is(lockErr, syscall.EWOULDBLOCK) || errors.Is(lockErr, syscall.EAGAIN) {
+			return writer
+		}
+		if lockErr != nil {
+			_ = writer.Close()
+			t.Fatalf("inspect seeded ownership lock: %v", lockErr)
+		}
+		if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_UN); err != nil {
+			_ = writer.Close()
+			t.Fatalf("release fixture lock inspection: %v", err)
+		}
+		if _, err := writer.Write(proofBytes); err != nil && !errors.Is(err, syscall.EPIPE) {
+			_ = writer.Close()
+			t.Fatalf("supply read-only ownership proof: %v", err)
+		}
+		if err := writer.Close(); err != nil {
+			t.Fatalf("finish read-only ownership proof: %v", err)
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("no ownership-critical proof read before the handshake deadline")
+		}
+	}
+}
+
 // waitForProcess bounds the completion half of a concurrency handshake.
 func waitForProcess(t *testing.T, name string, done <-chan struct{}) {
 	t.Helper()

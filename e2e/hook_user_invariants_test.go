@@ -141,6 +141,7 @@ func TestHookInvariantBareRegistryWithClaudeSettingsKeepsResources(t *testing.T)
 	e.AssertExitCode(e.RunAM("sync", "--check"), 0)
 }
 
+// spec: hook-resources/match-all-regex-syncs-like-star
 // `.*` and `*` both select every tool. A hook must produce the same outcome
 // on every target whichever of the two spellings its author used.
 func TestHookInvariantMatchAllRegexMatcherSyncsLikeStar(t *testing.T) {
@@ -183,6 +184,7 @@ func TestHookInvariantMatchAllRegexMatcherSyncsLikeStar(t *testing.T) {
 	}
 }
 
+// spec: hook-resources/refused-sibling-does-not-block-deselection
 // Deselecting a hook removes it even when another selected hook for the
 // same target cannot be represented there.
 func TestHookInvariantRefusedSiblingDoesNotBlockDeselection(t *testing.T) {
@@ -323,6 +325,7 @@ func hookInvariantCommands(t *testing.T, data []byte) []string {
 	return commands
 }
 
+// spec: hook-resources/repository-local-support-paths-survive-teammate-checkout
 // Teammates check a repository out at different paths. A teammate's sync of
 // a healthy committed tree, with an in-repository directory source whose
 // hook ships a support script, must not duplicate the hook, leave it
@@ -394,6 +397,7 @@ func TestHookInvariantTeammateCheckoutPathDoesNotDuplicateHooks(t *testing.T) {
 	}
 }
 
+// spec: hook-resources/handwritten-windsurf-fallback-hooks-remain-active
 // Devin Desktop stops reading the workspace's .windsurf/hooks.json once
 // .devin/hooks.json defines any hook (documented in the native-hook
 // integration design, PR #451, D10). Syncing a Windsurf hook must therefore

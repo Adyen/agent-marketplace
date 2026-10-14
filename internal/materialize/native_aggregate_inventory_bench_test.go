@@ -19,10 +19,7 @@ func BenchmarkNativeAggregateStaleCheckDisk(b *testing.B) {
 			b.Setenv("CODEX_HOME", filepath.Join(home, ".codex"))
 			b.Setenv("XDG_STATE_HOME", b.TempDir())
 			b.Setenv("XDG_CACHE_HOME", b.TempDir())
-			desired := nativeMCPResources(target, config.UserPersonal)
-			if target == hcc.TargetGemini {
-				desired = desired[2:]
-			}
+			desired := nativeMCPServerResources(b, target, config.UserPersonal)
 			installed, err := Run(context.Background(), repo, desired)
 			if err != nil || diag.HasErrors(installed.Diags) {
 				b.Fatalf("native install: %+v %v", installed, err)

@@ -63,20 +63,20 @@ type devinPruneFixtures struct {
 	agentLinkRel string
 }
 
-func devinPruneCaseFixtures() devinPruneFixtures {
+func devinPruneCaseFixtures(t *testing.T) devinPruneFixtures {
 	f := devinPruneFixtures{
-		keepSkill:  devinResolved("keep-skill", ir.NewSkill("keep-skill", "kept", "Body\n", nil, nil, ir.SourceRef{}), false),
-		keepHook:   devinResolved("keep-hook", ir.NewHook("keep-hook", "PostToolUse", "echo keep", "command", nil, ir.SourceRef{}), false),
-		staleSkill: devinResolved("stale-skill", ir.NewSkill("stale-skill", "stale", "Body\n", nil, nil, ir.SourceRef{}), false),
-		staleAgent: devinResolved("stale-agent", ir.NewSubagent("stale-agent", "stale", "Body\n", "sonnet", nil, "", nil, "", nil, ir.SourceRef{}), false),
-		staleHook:  devinResolved("stale-hook", ir.NewHook("stale-hook", "PostToolUse", "echo stale", "command", nil, ir.SourceRef{}), false),
-		staleMcp:   devinResolved("stale-mcp", ir.NewMcpServer("stale-mcp", "stale-bin", nil, nil, nil, ir.SourceRef{}), false),
+		keepSkill:  devinResolved(t, "keep-skill", ir.NewSkill("keep-skill", "kept", "Body\n", nil, nil, ir.SourceRef{}), false),
+		keepHook:   devinResolved(t, "keep-hook", ir.NewHook("keep-hook", "PostToolUse", "echo keep", "command", nil, ir.SourceRef{}), false),
+		staleSkill: devinResolved(t, "stale-skill", ir.NewSkill("stale-skill", "stale", "Body\n", nil, nil, ir.SourceRef{}), false),
+		staleAgent: devinResolved(t, "stale-agent", ir.NewSubagent("stale-agent", "stale", "Body\n", "sonnet", nil, "", nil, "", nil, ir.SourceRef{}), false),
+		staleHook:  devinResolved(t, "stale-hook", ir.NewHook("stale-hook", "PostToolUse", "echo stale", "command", nil, ir.SourceRef{}), false),
+		staleMcp:   devinResolved(t, "stale-mcp", ir.NewMcpServer("stale-mcp", "stale-bin", nil, nil, nil, ir.SourceRef{}), false),
 
 		// hook.devin.event-unmappable: Devin documents no SubagentStop event,
 		// so the entry is skipped and (since .20) reported as an error.
-		badHook: devinResolved("bad-hook", ir.NewHook("bad-hook", "SubagentStop", "echo never", "command", nil, ir.SourceRef{}), false),
+		badHook: devinResolved(t, "bad-hook", ir.NewHook("bad-hook", "SubagentStop", "echo never", "command", nil, ir.SourceRef{}), false),
 		// mcp.devin.transport-unsupported.
-		badMcp: devinResolved("bad-mcp", ir.NewMcpServerWithOptions("bad-mcp", "", nil, nil, nil, ir.SourceRef{},
+		badMcp: devinResolved(t, "bad-mcp", ir.NewMcpServerWithOptions("bad-mcp", "", nil, nil, nil, ir.SourceRef{},
 			ir.WithMcpURL("https://example.invalid/mcp"), ir.WithMcpTransport("websocket")), false),
 		// subagent.security-restriction-unsupported: an error that writes into a
 		// component DIRECTORY rather than an aggregate file, which is the
@@ -89,7 +89,7 @@ func devinPruneCaseFixtures() devinPruneFixtures {
 		// profile, so it no longer suppresses anything and cannot exercise this
 		// test. `isolation` is used instead: Devin has no isolation field at all,
 		// so that suppression is unchanged and still fails closed.
-		badSubagent: devinResolved("bad-agent", ir.NewSubagent("bad-agent", "bad", "Body\n", "sonnet",
+		badSubagent: devinResolved(t, "bad-agent", ir.NewSubagent("bad-agent", "bad", "Body\n", "sonnet",
 			nil, "", nil, "worktree", nil, ir.SourceRef{}), false),
 
 		hooksAbsRel:  harness.DevinProjectHooksFile,
@@ -106,7 +106,7 @@ func devinPruneCaseFixtures() devinPruneFixtures {
 func TestDevinEscalatedSkipPrunesEverythingItDidNotTouch(t *testing.T) {
 	tests := []devinStalePruneCase{
 		{
-			name: "an erroring hook holds back hooks.v1.json only",
+			name: "an erroring hook prunes stale hooks it does not select",
 			second: func(f devinPruneFixtures) []resolver.ResolvedArtifact {
 				return []resolver.ResolvedArtifact{f.keepSkill, f.keepHook, f.badHook}
 			},
@@ -114,11 +114,9 @@ func TestDevinEscalatedSkipPrunesEverythingItDidNotTouch(t *testing.T) {
 			// The skipped hook writes to no component directory, so the
 			// symlink components prune exactly as they would on a clean run.
 			wantPruned: []string{filepath.Join("skills", "stale-skill"), filepath.Join("agents", "stale-agent.md")},
-			wantAggregateRetains: map[string]string{
-				harness.DevinProjectHooksFile: "echo stale",
-			},
 			wantAggregatePrunes: map[string]string{
-				harness.DevinMcpConfigFile: "stale-mcp",
+				harness.DevinProjectHooksFile: "echo stale",
+				harness.DevinMcpConfigFile:    "stale-mcp",
 			},
 		},
 		{
@@ -154,7 +152,7 @@ func TestDevinEscalatedSkipPrunesEverythingItDidNotTouch(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			repoRoot, _ := devinEnv(t)
 			root := devinProjectRoot(repoRoot)
-			f := devinPruneCaseFixtures()
+			f := devinPruneCaseFixtures(t)
 
 			if _, err := Run(context.Background(), repoRoot, f.firstRunSet); err != nil {
 				t.Fatalf("first Run: %v", err)

@@ -58,6 +58,7 @@ import (
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ingest"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/toolpolicy"
 )
 
 // Canonical Devin 3000.3 path components, relative to a Devin root. They mirror
@@ -292,7 +293,10 @@ func localOverrideDiagnostics(src fs.FS, r root) []diag.Diagnostic {
 	return diags
 }
 
-// reverseTools maps a Devin allowed-tools list back to canonical tool IDs.
+// validateDevinTools enforces Devin's closed allowed-tools vocabulary against
+// the shipped tool catalog. The names themselves are kept verbatim and the
+// resource records ToolSource=devin; translation to other vocabularies is the
+// compiler's toolpolicy pass, not ingestion.
 //
 // Devin's vocabulary is CLOSED (read, edit, grep, glob, exec), so a name
 // outside it is not "an unknown tool to pass through" — it is a restriction
@@ -307,22 +311,18 @@ func localOverrideDiagnostics(src fs.FS, r root) []diag.Diagnostic {
 // Claude-style scoped permission strings such as `Bash(git push --force:*)`,
 // i.e. command strings the plan keeps out of diagnostics and logs. The resource
 // name and source location localize the failure instead.
-func reverseTools(tools []string, resource, file string) ([]string, []diag.Diagnostic) {
+func validateDevinTools(tools []string, surface, resource, file string) ([]string, []diag.Diagnostic) {
 	if tools == nil {
 		return nil, nil
 	}
-	canonical := make([]string, 0, len(tools))
 	unreversible := 0
 	for _, tool := range tools {
-		mapped, ok := mapping.ReverseTool(tool, mapping.TargetDevin)
-		if !ok {
+		if !toolpolicy.IsToolOnSurface(mapping.TargetDevin, surface, tool) {
 			unreversible++
-			continue
 		}
-		canonical = append(canonical, mapped)
 	}
 	if unreversible == 0 {
-		return canonical, nil
+		return tools, nil
 	}
 	slog.Warn("devin allowed-tools entry unreversible", "source", ingest.HarnessDevin,
 		"resource", resource, "unreversible_count", unreversible)
@@ -332,38 +332,6 @@ func reverseTools(tools []string, resource, file string) ([]string, []diag.Diagn
 		Resource: resource,
 		Message:  "an allowed-tools entry is outside Devin's closed read/edit/grep/glob/exec vocabulary; the resource was not ingested",
 		Hint:     "Devin silently ignores unknown tool names, so the restriction is not enforced; fix the allowed-tools list rather than letting an unenforced restriction become canonical IR",
-		Source:   diag.SourceRef{File: file, Line: 1},
-	}}
-}
-
-// reverseModel maps a Devin model alias back to its canonical value.
-//
-// Only the aliases the mapping table actually carries reverse
-// (sonnet/opus/haiku, plus gemini). Devin publishes other stable aliases
-// (`swe`, `gpt`, `codex`, `claude`) that no canonical model corresponds to;
-// those are preserved VERBATIM rather than dropped, because dropping a model
-// silently changes which model runs, and a warning records that the value will
-// not survive a later compile.
-//
-// The model identifier is safe to name: it is a published alias, not a secret,
-// a payload, or a permission value.
-func reverseModel(model, resource, file string) (string, []diag.Diagnostic) {
-	if model == "" {
-		// Plan, models: "Reverse ingestion leaves an absent model empty."
-		// Absence is never replaced with a guess, on any kind.
-		return "", nil
-	}
-	canonical, ok := mapping.ReverseModel(model, mapping.TargetDevin)
-	if ok {
-		return canonical, nil
-	}
-	slog.Warn("devin model not canonical", "source", ingest.HarnessDevin, "resource", resource, "model", model)
-	return model, []diag.Diagnostic{{
-		Code:     diag.CodeIngestDevinModelNotCanonical,
-		Severity: diag.SeverityWarning,
-		Resource: resource,
-		Message:  fmt.Sprintf("%q is a Devin model alias with no canonical equivalent; the value was preserved verbatim", model),
-		Hint:     "Use sonnet, opus, or haiku so the model round-trips; other Devin aliases are dropped when the resource is compiled again",
 		Source:   diag.SourceRef{File: file, Line: 1},
 	}}
 }

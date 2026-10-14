@@ -2,13 +2,18 @@ package materialize
 
 import (
 	"bytes"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/Adyen/agent-marketplace/internal/cache"
 	"github.com/Adyen/agent-marketplace/internal/config"
+	"github.com/Adyen/agent-marketplace/internal/fsboundary"
+	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
+	targetmeta "github.com/Adyen/agent-marketplace/pkg/harness-compilation/target"
 )
 
 // spec: materialization/portable-manifest-removal-preserves-a-replaced-generation
@@ -310,6 +315,158 @@ func TestRunPortableManifestStagingRefusesNamespaceReplacement(t *testing.T) {
 
 // spec: materialization/missing-captured-manifest-parent-stays-absent-on-refusal
 func TestRunPortableManifestMissingParentDoesNotRecreate(t *testing.T) {
+	t.Run("known-created-parent-is-captured", func(t *testing.T) {
+		repo := t.TempDir()
+		state, err := loadPortableState(repo, false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if state.pin.parent != (fsboundary.Identity{}) {
+			t.Fatalf("initial parent pin = %+v, want absent", state.pin.parent)
+		}
+		if err := state.prepareManifestParentForOutput(filepath.Join(repo, ".agents", "skills")); err != nil {
+			t.Fatal(err)
+		}
+		if state.pin.parent == (fsboundary.Identity{}) {
+			t.Fatal("known-created parent was not retained in the manifest pin")
+		}
+		parent, err := state.captureManifestParent(false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		namespace, err := state.manifestNamespaceExpectation(parent)
+		if err != nil {
+			_ = parent.Close()
+			t.Fatal(err)
+		}
+		identity := parent.Identity()
+		if namespace.ParentDevice != identity.Device || namespace.ParentInode != identity.Inode || identity.Inode == 0 || !identity.SameObject(state.pin.parent) {
+			t.Fatalf("created namespace = %+v, parent=%+v, pin=%+v", namespace, identity, state.pin.parent)
+		}
+		if err := parent.Close(); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := os.Lstat(state.path); !os.IsNotExist(err) {
+			t.Fatalf("known-created parent gained a manifest: %v", err)
+		}
+		if _, err := os.Lstat(filepath.Join(filepath.Dir(state.path), "skills")); !os.IsNotExist(err) {
+			t.Fatalf("parent preparation created the output directory: %v", err)
+		}
+	})
+	t.Run("appeared-parent-is-not-adopted", func(t *testing.T) {
+		repo := t.TempDir()
+		state, err := loadPortableState(repo, false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		parentPath := filepath.Dir(state.path)
+		if err := os.Mkdir(parentPath, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		manifest := []byte("version: 1\nentries: []\n")
+		if err := os.WriteFile(state.path, manifest, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chmod(state.path, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		before, mode, mtime := fileSnapshot(t, state.path)
+		parentBefore, err := os.Stat(parentPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		err = state.prepareManifestParentForOutput(filepath.Join(parentPath, "skills"))
+		if !errors.Is(err, fsboundary.ErrGenerationConflict) {
+			t.Fatalf("captured-absent parent adoption = %v, want ErrGenerationConflict", err)
+		}
+		assertFileUnchanged(t, state.path, before, mode, mtime)
+		parentAfter, err := os.Stat(parentPath)
+		if err != nil || !os.SameFile(parentBefore, parentAfter) || parentBefore.Mode() != parentAfter.Mode() || !parentBefore.ModTime().Equal(parentAfter.ModTime()) {
+			t.Fatalf("appeared parent identity changed: %v", err)
+		}
+		if _, err := os.Lstat(filepath.Join(parentPath, "skills")); !os.IsNotExist(err) {
+			t.Fatalf("refused parent preparation created output directory: %v", err)
+		}
+		if state.pin.parent != (fsboundary.Identity{}) {
+			t.Fatalf("state adopted appeared parent: %+v", state.pin.parent)
+		}
+	})
+	t.Run("native-cleanup-dry-run-does-not-create-parent", func(t *testing.T) {
+		home, repo := t.TempDir(), t.TempDir()
+		t.Setenv("HOME", home)
+		t.Setenv("XDG_CACHE_HOME", filepath.Join(home, "cache"))
+		t.Setenv("XDG_STATE_HOME", filepath.Join(home, "state"))
+		state, err := loadPortableState(repo, false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		manifestParent := filepath.Dir(state.path)
+		key := outputKey{target: hcc.TargetFactory}
+		declaration, err := nativeHookAggregateForScope(targetmeta.Target(key.target), false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		supportDirs := nativeHookLegacySupportDirs(key, declaration)
+		if len(supportDirs) == 0 {
+			t.Fatal("Factory legacy support directory missing")
+		}
+		nativeRoot := filepath.Join(repo, ".factory")
+		supportDir := filepath.Join(nativeRoot, filepath.FromSlash(supportDirs[0]))
+		if err := os.MkdirAll(supportDir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		cacheRoot := cache.CacheDir()
+		if err := os.MkdirAll(cacheRoot, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		cacheFile := filepath.Join(cacheRoot, "retained-support.txt")
+		if err := os.WriteFile(cacheFile, []byte("cached support bytes"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		link := filepath.Join(supportDir, "cached-support.txt")
+		if err := os.Symlink(cacheFile, link); err != nil {
+			t.Fatal(err)
+		}
+		linkBefore, err := os.Lstat(link)
+		if err != nil {
+			t.Fatal(err)
+		}
+		linkTarget, err := os.Readlink(link)
+		if err != nil {
+			t.Fatal(err)
+		}
+		cacheBefore, cacheMode, cacheMtime := fileSnapshot(t, cacheFile)
+		cacheIdentity, err := os.Stat(cacheFile)
+		if err != nil {
+			t.Fatal(err)
+		}
+		extras, err := nativeHookSupportCleanup(key, repo, nativeRoot, declaration, state, true)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !extras.pending || len(extras.participants) != 1 || len(extras.manifestCommits) != 0 {
+			t.Fatalf("dry-run cleanup plan = %+v", extras)
+		}
+		if len(extras.assertions) != 1 || extras.assertions[0].Path != state.path || extras.assertions[0].Namespace != nil || !extras.assertions[0].Delete {
+			t.Fatalf("dry-run manifest assertion = %+v", extras.assertions)
+		}
+		if state.pin.parent != (fsboundary.Identity{}) {
+			t.Fatalf("dry-run captured an absent manifest parent: %+v", state.pin.parent)
+		}
+		assertPathAbsent(t, manifestParent)
+		assertPathAbsent(t, state.path)
+		linkAfter, err := os.Lstat(link)
+		if err != nil || !os.SameFile(linkBefore, linkAfter) || linkBefore.Mode() != linkAfter.Mode() || !linkBefore.ModTime().Equal(linkAfter.ModTime()) {
+			t.Fatalf("dry-run cleanup changed contained alias: %v", err)
+		}
+		if target, err := os.Readlink(link); err != nil || target != linkTarget {
+			t.Fatalf("dry-run cleanup changed alias target: %q %v", target, err)
+		}
+		assertFileUnchanged(t, cacheFile, cacheBefore, cacheMode, cacheMtime)
+		if after, err := os.Stat(cacheFile); err != nil || !os.SameFile(cacheIdentity, after) {
+			t.Fatalf("dry-run cleanup changed cached target identity: %v", err)
+		}
+	})
 	repo, root, resolved := rootBoundaryFixture(t, rootBoundaryCases[1], false)
 	retained := resolved[0]
 	retained.Name = "retained-probe"
