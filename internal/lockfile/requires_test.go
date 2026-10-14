@@ -54,6 +54,7 @@ func TestRequiresEdgeRoundTripsCanonically(t *testing.T) {
 	}
 	if lint == nil {
 		t.Fatal("locked lint resource missing")
+		return
 	}
 	selectedBy := lint.SelectedBy
 	if len(selectedBy) != 1 || selectedBy[0] != edge {

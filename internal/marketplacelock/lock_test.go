@@ -241,6 +241,7 @@ func TestReachableResourcesKeepsValidRequiresEdges(t *testing.T) {
 	}
 	if helper == nil {
 		t.Fatalf("requires edge with a live parent must keep its record, retained = %#v", retained)
+		return
 	}
 	if !reflect.DeepEqual(helper.SelectedBy, []lockfile.MarketplaceSelectionLock{validEdge}) {
 		t.Fatalf("dangling requires edges must drop while valid ones stay, got %#v", helper.SelectedBy)

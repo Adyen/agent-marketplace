@@ -165,6 +165,7 @@ func TestV4MarketplaceRequiresEdgeAdmitsRequiresHeldPin(t *testing.T) {
 	}
 	if lintPin == nil {
 		t.Fatalf("lint pin missing: %#v", cfg.Marketplaces[0].Resources)
+		return
 	}
 	if lintPin.Direct || len(lintPin.SelectedBy.List()) != 0 {
 		t.Fatalf("requires edge leaked into collection selected_by: %#v", lintPin)
