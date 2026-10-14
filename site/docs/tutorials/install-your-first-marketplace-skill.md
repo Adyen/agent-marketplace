@@ -186,7 +186,7 @@ agent-marketplace sync --check
 echo $?
 ```
 
-`echo $?` prints `0`; `sync --check` itself prints nothing. If it prints `1` instead, the [sync drift guide](../how-to/troubleshoot-sync-drift.md) shows how to repair the drift.
+`echo $?` prints `0`. `sync --check` itself prints nothing apart from any `warning:` lines, which don't change the exit status. If `echo $?` prints `1` instead, the [sync drift guide](../how-to/troubleshoot-sync-drift.md) shows how to repair the drift.
 
 ## 6. Use the skill in Claude Code
 
