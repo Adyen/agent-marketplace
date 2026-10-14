@@ -5,6 +5,7 @@ package main
 import (
 	"context"
 	"embed"
+	"sync/atomic"
 
 	"github.com/Adyen/agent-marketplace/internal/session"
 	"github.com/wailsapp/wails/v2"
@@ -30,6 +31,14 @@ func (w nativeWindow) Emit(event string, args ...string) {
 	wailsruntime.EventsEmit(w.ctx, event, data...)
 }
 
+type nativeState struct {
+	closeApproved atomic.Bool
+}
+
+func (s *nativeState) approveClose() {
+	s.closeApproved.Store(true)
+}
+
 type lifecycleHooks struct {
 	onStartup  func(context.Context)
 	onDomReady func(context.Context)
@@ -38,7 +47,6 @@ type lifecycleHooks struct {
 func (app *App) appOptions(hooks lifecycleHooks) *options.App {
 	var windowCtx context.Context
 	app.quit = func() {
-		app.closeApproved.Store(true)
 		wailsruntime.Quit(windowCtx)
 	}
 	return &options.App{
