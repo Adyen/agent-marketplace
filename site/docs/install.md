@@ -25,13 +25,13 @@ Before replacing your binary with the v4-only CLI, [convert every writable root 
    | `Linux x86_64` | `linux-amd64` |
    | `Linux aarch64` | `linux-arm64` |
 
-2. Download that file from the [latest release](https://github.com/Adyen/agent-marketplace/releases/latest). Files are named `agent-marketplace-<version>-<os>-<arch>`. For v4.0.9 they are:
+2. Download that file from the [latest release](https://github.com/Adyen/agent-marketplace/releases/latest). Files are named `agent-marketplace-<version>-<os>-<arch>`. For v4.1.4 they are:
 
    ```text
-   agent-marketplace-v4.0.9-darwin-arm64
-   agent-marketplace-v4.0.9-darwin-amd64
-   agent-marketplace-v4.0.9-linux-amd64
-   agent-marketplace-v4.0.9-linux-arm64
+   agent-marketplace-v4.1.4-darwin-arm64
+   agent-marketplace-v4.1.4-darwin-amd64
+   agent-marketplace-v4.1.4-linux-amd64
+   agent-marketplace-v4.1.4-linux-arm64
    ```
 
 3. Put the file on your `PATH`. The `PATH` is the list of folders your terminal searches when you type a command name; [Terminal basics](./terminal-basics.md#make-a-command-available-everywhere) explains it. Choose one of the two options below. In both, replace the file name with the one you downloaded, and run the commands from the folder that contains it (usually `cd ~/Downloads`).
@@ -41,9 +41,9 @@ Before replacing your binary with the v4-only CLI, [convert every writable root 
 `/usr/local/bin` is on the `PATH` on macOS and most Linux systems. Writing to it needs administrator rights, so the last two commands start with `sudo`, which asks for your computer password:
 
 ```bash
-chmod +x agent-marketplace-v4.0.9-darwin-arm64
+chmod +x agent-marketplace-v4.1.4-darwin-arm64
 sudo mkdir -p /usr/local/bin
-sudo mv agent-marketplace-v4.0.9-darwin-arm64 /usr/local/bin/agent-marketplace
+sudo mv agent-marketplace-v4.1.4-darwin-arm64 /usr/local/bin/agent-marketplace
 ```
 
 `chmod +x` marks the file as a program. `mv` moves it and renames it to `agent-marketplace` at the same time.
@@ -53,9 +53,9 @@ sudo mv agent-marketplace-v4.0.9-darwin-arm64 /usr/local/bin/agent-marketplace
 This option doesn't need `sudo`:
 
 ```bash
-chmod +x agent-marketplace-v4.0.9-darwin-arm64
+chmod +x agent-marketplace-v4.1.4-darwin-arm64
 mkdir -p ~/.local/bin
-mv agent-marketplace-v4.0.9-darwin-arm64 ~/.local/bin/agent-marketplace
+mv agent-marketplace-v4.1.4-darwin-arm64 ~/.local/bin/agent-marketplace
 ```
 
 Many Linux systems already have `~/.local/bin` on the `PATH`. If yours doesn't (macOS doesn't by default), add it to your shell's startup file and open a new terminal window:
@@ -93,12 +93,12 @@ Go places the program in `$(go env GOPATH)/bin`, usually `~/go/bin`. Add that fo
 Clone the release tag and build it with `make`. This also requires Go 1.26.9 or newer:
 
 ```bash
-git clone --branch v4.0.9 https://github.com/Adyen/agent-marketplace.git
+git clone --branch v4.1.4 https://github.com/Adyen/agent-marketplace.git
 cd agent-marketplace
 make build
 ```
 
-Leave out `--branch v4.0.9` to build the main branch instead. `make build` writes the program to `./agent-marketplace` in the repository folder. Copy it onto your `PATH` as described above. `make release` builds all four release platforms into `dist/`.
+Leave out `--branch v4.1.4` to build the main branch instead. `make build` writes the program to `./agent-marketplace` in the repository folder. Copy it onto your `PATH` as described above. `make release` builds all four release platforms into `dist/`.
 
 ## Verify
 
@@ -112,18 +112,16 @@ The output depends on how you installed it:
 
 | Installed with | Prints, for example |
 |---|---|
-| A release download | `v4.0.9` |
+| A release download | `v4.1.4` |
 | `go install ...@latest` | a Go pseudo-version such as `v0.0.0-20260927180313-baeda4e602ab` |
-| `make build` | the output of `git describe`: `v4.0.9` on the release tag, or something like `v4.0.9-3-gbaeda4e` on a later commit |
+| `make build` | the output of `git describe`: `v4.1.4` on the release tag, or something like `v4.1.4-3-gbaeda4e` on a later commit |
 | A plain `go build` without version flags | a Go pseudo-version such as `v0.0.0-2026...`, or `dev` when Go recorded no version |
 
 If the terminal answers `command not found`, the folder that holds the program isn't on your `PATH`. Run `echo $PATH` to see the list, and check that you opened a new terminal window after changing it. If it answers `permission denied`, the file isn't marked as a program yet: run `chmod +x` on it.
 
 Teams that commit a lockfile need v4.0.9 or newer on every machine and CI runner that reads it. Earlier releases, including v4.0.8, reject the lockfile format that v4.0.9 writes.
 
-## Supported harnesses
-
-`agent-marketplace` supports seven coding [harnesses](./glossary.md#harness): `claude`, `codex`, `cursor`, `devin`, `factory`, `gemini`, and `windsurf`. The [harnesses and output paths reference](./reference/harnesses-and-output-paths.md) lists where each one's files go.
+`agent-marketplace` supports seven coding [harnesses](./glossary.md#harness). The [harnesses and output paths reference](./reference/harnesses-and-output-paths.md) lists them and where each one's files go.
 
 ## Next
 
