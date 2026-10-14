@@ -523,6 +523,70 @@ func TestNativeHookSourceIdentity(t *testing.T) {
 	}
 }
 
+func TestLocalRegistryRootDecodesFileURLs(t *testing.T) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name string
+		url  string
+		want string
+	}{
+		{name: "file URL percent escape", url: "file:///srv/my%20registry", want: "/srv/my registry"},
+		{name: "home-relative", url: "~/registry", want: filepath.Join(home, "registry")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := localRegistryRoot(resolver.ResolvedArtifact{RegistryURL: tc.url, V4Kind: config.V4SourceDirectory})
+			if err != nil || got != tc.want {
+				t.Fatalf("localRegistryRoot(%q) = %q, %v; want %q", tc.url, got, err, tc.want)
+			}
+		})
+	}
+}
+
+func TestNativeHookSourceIdentityLocalURLs(t *testing.T) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name    string
+		url     string
+		want    string
+		wantErr bool
+	}{
+		{name: "absolute path control", url: "/srv/registry", want: "local:/srv/registry"},
+		{name: "file URL percent escape", url: "file:///srv/my%20registry", want: "local:/srv/my registry"},
+		{name: "home-relative control", url: "~/registry", want: "local:" + filepath.Join(home, "registry")},
+		{name: "relative inside working directory", url: "./reg", want: "local:" + filepath.Join(cwd, "reg")},
+		{name: "relative escaping working directory refuses", url: "../escape", wantErr: true},
+		{name: "malformed remote file URL refuses", url: "file://remote-host/srv/registry", wantErr: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			res := resolver.ResolvedArtifact{
+				Entry:       catalog.Entry{Name: "deploy"},
+				RegistryURL: tc.url,
+				V4Kind:      config.V4SourceDirectory,
+			}
+			got, err := nativeHookSourceIdentity(res)
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("identity = %q, want error", got)
+				}
+				return
+			}
+			if err != nil || got != tc.want {
+				t.Fatalf("identity = %q, %v; want %q", got, err, tc.want)
+			}
+		})
+	}
+}
+
 // nativeSeed describes one target's documented PR #403-native hook output for
 // the fixture hook. The shapes are hand-authored to what the catalog-driven
 // native writer emits: target-native event names (Cursor's camelCase

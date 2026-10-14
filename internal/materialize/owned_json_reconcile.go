@@ -390,7 +390,16 @@ func reconcileOwnedJSONAggregateFile(ctx context.Context, store *ownership.Store
 				out.diags = append(out.diags, nativeHookProofUnavailableDiagnostic(key, rel))
 				return out
 			}
-			legacyRemovals, shapeErr = nativeHookLegacyMarkedFlatPatch(doc, file)
+			var expectedCommands map[string]map[string]bool
+			if file.hookShape == targetmeta.HookShapeMatcherGroups {
+				var expectedErr error
+				expectedCommands, expectedErr = nativeHookExpectedCommands(rel, desired)
+				if expectedErr != nil {
+					out.diags = append(out.diags, ownedJSONShapeDiag(options.shapeCode, key, outDir, rel, expectedErr))
+					return out
+				}
+			}
+			legacyRemovals, shapeErr = nativeHookLegacyMarkedFlatPatch(doc, file, expectedCommands)
 			if shapeErr != nil {
 				out.diags = append(out.diags, ownedJSONShapeDiag(options.shapeCode, key, outDir, rel, shapeErr))
 				return out
@@ -405,6 +414,26 @@ func reconcileOwnedJSONAggregateFile(ctx context.Context, store *ownership.Store
 			out.diags = append(out.diags, ownedJSONShapeDiag(options.shapeCode, key, outDir, rel, shapeErr))
 			return out
 		}
+	}
+	var fallbackSnapshots []nativeHookAggregateSnapshot
+	if len(options.legacyHandwrittenFiles) > 0 {
+		imported, snapshots, importErr := importLegacyHandwrittenFallbacks(outDir, file, options.legacyHandwrittenFiles, existing, len(desired) > 0)
+		if importErr != nil {
+			var fallbackErr legacyFallbackError
+			switch {
+			case errors.As(importErr, &fallbackErr):
+				refusal := nativeHookLegacyRefusal(key)
+				refusal.Source = diag.SourceRef{File: fallbackErr.rel}
+				out.diags = append(out.diags, refusal)
+			case errors.Is(importErr, dependencytxn.ErrGenerationConflict):
+				out.diags = append(out.diags, ownedAggregateCodedDiag(key, outDir, rel, importErr, options.writeCode))
+			default:
+				out.diags = append(out.diags, ownedJSONShapeDiag(options.shapeCode, key, outDir, rel, importErr))
+			}
+			return out
+		}
+		existing = append(existing, imported...)
+		fallbackSnapshots = snapshots
 	}
 
 	if !proofReady {
@@ -431,7 +460,7 @@ func reconcileOwnedJSONAggregateFile(ctx context.Context, store *ownership.Store
 	}
 	drift := ownership.Classify(proof, existingValues, desiredValues)
 
-	plan := ownedJSONPatchPlan(outDir, file, desired, existing, drift, proof, incomplete)
+	plan := ownedJSONPatchPlan(outDir, file, desired, existing, drift, proof, incomplete, options.selectedHookResources)
 	out.diags = append(out.diags, plan.diags(key, options)...)
 
 	if applyErr := applyOwnedJSONPatch(doc, container, containerMember, file, plan); applyErr != nil {
@@ -465,6 +494,10 @@ func reconcileOwnedJSONAggregateFile(ctx context.Context, store *ownership.Store
 		}
 	}
 	if file.hookShape != "" {
+		if appendErr := appendLegacyFallbackAssertions(&extras, fallbackSnapshots); appendErr != nil {
+			out.diags = append(out.diags, ownedAggregateCodedDiag(key, outDir, rel, appendErr, options.writeCode))
+			return out
+		}
 		var changes []HookChange
 		if changed {
 			changes = nativeHookReviewDelta(key, file, abs, existing, proof, plan)
@@ -1122,7 +1155,11 @@ type ownedJSONPatch struct {
 //     hooks."
 //   - "A partial run does not prune" — when incomplete is set, the prune list is
 //     emptied for this file.
-func ownedJSONPatchPlan(outDir string, file ownedJSONFileSpec, desired []ownedJSONEntry, existing []ownedJSONExistingEntry, drift ownership.DriftReport, proof ownership.Proof, incomplete bool) ownedJSONPatch {
+func ownedJSONPatchPlan(outDir string, file ownedJSONFileSpec, desired []ownedJSONEntry, existing []ownedJSONExistingEntry, drift ownership.DriftReport, proof ownership.Proof, incomplete bool, selected ...map[string]bool) ownedJSONPatch {
+	var selection map[string]bool
+	if len(selected) > 0 {
+		selection = selected[0]
+	}
 	rel := file.rel
 	patch := ownedJSONPatch{outDir: outDir, rel: rel, writeMcp: map[string][]byte{}, hookElements: map[string][][]byte{}}
 
@@ -1135,13 +1172,20 @@ func ownedJSONPatchPlan(outDir string, file ownedJSONFileSpec, desired []ownedJS
 		drifted[ownedAggregateIDKey(id)] = true
 	}
 	stale := make(map[string]bool, len(drift.Stale))
+	postponedStale := drift.Stale
 	for _, id := range drift.Stale {
 		stale[ownedAggregateIDKey(id)] = true
 	}
 	if incomplete {
-		patch.pruneSuppressed = true
-		patch.prunePostponed = drift.Stale
-		stale = map[string]bool{}
+		allowed, postponed := partitionIncompleteStale(drift.Stale, proof, selection)
+		patch.prune = allowed
+		patch.prunePostponed = postponed
+		patch.pruneSuppressed = len(postponed) > 0
+		postponedStale = postponed
+		stale = make(map[string]bool, len(allowed))
+		for _, id := range allowed {
+			stale[ownedAggregateIDKey(id)] = true
+		}
 	} else {
 		patch.prune = drift.Stale
 	}
@@ -1168,7 +1212,7 @@ func ownedJSONPatchPlan(outDir string, file ownedJSONFileSpec, desired []ownedJS
 				patch.deleteMcp = append(patch.deleteMcp, id.Key)
 			}
 		}
-		retainPostponedOwnership(&patch, existing, drift.Stale, proof, incomplete)
+		retainPostponedOwnership(&patch, existing, postponedStale, proof, incomplete)
 		return patch
 	}
 
@@ -1259,7 +1303,7 @@ func ownedJSONPatchPlan(outDir string, file ownedJSONFileSpec, desired []ownedJS
 		a, b := patch.satisfactions[i], patch.satisfactions[j]
 		return a.Container < b.Container || a.Container == b.Container && a.IdentityDigest < b.IdentityDigest
 	})
-	retainPostponedOwnership(&patch, existing, drift.Stale, proof, incomplete)
+	retainPostponedOwnership(&patch, existing, postponedStale, proof, incomplete)
 	return patch
 }
 
@@ -1366,6 +1410,36 @@ func mergeRetainedHookSatisfactions(current, prior []ownership.HookSatisfaction,
 		out = append(out, merged)
 	}
 	return out
+}
+
+func partitionIncompleteStale(stale []ownership.EntryID, proof ownership.Proof, selected map[string]bool) (allowed, postponed []ownership.EntryID) {
+	for _, id := range stale {
+		if selectivePruneProven(id, proof, selected) {
+			allowed = append(allowed, id)
+			continue
+		}
+		postponed = append(postponed, id)
+	}
+	return allowed, postponed
+}
+
+func selectivePruneProven(id ownership.EntryID, proof ownership.Proof, selected map[string]bool) bool {
+	if len(selected) == 0 || id.Kind != ownership.KindHook {
+		return false
+	}
+	entry, ok := proof.Entry(id)
+	if !ok || entry.Resource == "" {
+		return false
+	}
+	if selected[entry.Resource] {
+		return false
+	}
+	for _, evidence := range entry.SourceEvidence {
+		if evidence.Resource == "" || selected[evidence.Resource] {
+			return false
+		}
+	}
+	return true
 }
 
 func retainPostponedOwnership(patch *ownedJSONPatch, existing []ownedJSONExistingEntry, stale []ownership.EntryID, proof ownership.Proof, incomplete bool) {

@@ -381,6 +381,8 @@ type ownedJSONReconcileOptions struct {
 	allowOwnedLegacyFlatHooks bool
 	onWrite                   func(*Report, outputKey, string, bool)
 	nativeHookFinalize        nativeHookFinalizer
+	selectedHookResources     map[string]bool
+	legacyHandwrittenFiles    []string
 }
 
 type nativeHookReconcileOptionsProvider interface {

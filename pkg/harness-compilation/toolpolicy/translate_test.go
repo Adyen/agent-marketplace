@@ -116,6 +116,48 @@ func TestMatcherFixtures(t *testing.T) {
 	}
 }
 
+func TestMatchAllDecode(t *testing.T) {
+	for _, tc := range []struct {
+		matcher string
+		wantAll bool
+		wantErr bool
+	}{
+		{matcher: "*", wantAll: true},
+		{matcher: ".*", wantAll: true},
+		{matcher: " .* ", wantAll: true},
+		{matcher: "Bash.*", wantErr: true},
+		{matcher: ".+", wantErr: true},
+		{matcher: "^.*$", wantErr: true},
+		{matcher: "mcp__.*"},
+	} {
+		t.Run(tc.matcher, func(t *testing.T) {
+			got, err := DecodeMatcher(target.TargetClaude, tc.matcher, matcherSpecs[target.TargetClaude])
+			if tc.wantErr {
+				if !errors.Is(err, ErrUntranslatable) {
+					t.Fatalf("err = %v, want %v", err, ErrUntranslatable)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("DecodeMatcher: %v", err)
+			}
+			if got.All != tc.wantAll {
+				t.Fatalf("All = %v, want %v (decoded %#v)", got.All, tc.wantAll, got)
+			}
+		})
+	}
+}
+
+func TestMatchAllDecodeRefusesRegexlessSyntax(t *testing.T) {
+	none := MatcherSpec{Syntax: MatcherNone}
+	if got, err := DecodeMatcher(target.TargetClaude, "*", none); err != nil || !got.All {
+		t.Fatalf("star with no regex syntax = %#v, %v; want All", got, err)
+	}
+	if got, err := DecodeMatcher(target.TargetClaude, ".*", none); !errors.Is(err, ErrUntranslatable) {
+		t.Fatalf("regex .* with no regex syntax = %#v, %v; want %v", got, err, ErrUntranslatable)
+	}
+}
+
 // TestAllowListFixtures runs the allow-list fixtures against
 // TranslateToolList: subset-only coverage, uncovered names reported for the
 // caller's diagnostic, and ErrNoSurface where the target cannot restrict.

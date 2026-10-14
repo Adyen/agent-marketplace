@@ -80,7 +80,7 @@ func prepareNativeHookProjection(w skillTarget, repoRoot string) (nativeHookProj
 	if err != nil {
 		return nativeHookProjection{}, errors.Join(errNativeHookSourceUnavailable, err)
 	}
-	sourceKey, err := hookSupportSourceKey(res)
+	sourceKey, err := hookSupportSourceKeyForScope(w, repoRoot)
 	if err != nil {
 		return nativeHookProjection{}, err
 	}

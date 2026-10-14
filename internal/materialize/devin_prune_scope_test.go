@@ -106,7 +106,7 @@ func devinPruneCaseFixtures(t *testing.T) devinPruneFixtures {
 func TestDevinEscalatedSkipPrunesEverythingItDidNotTouch(t *testing.T) {
 	tests := []devinStalePruneCase{
 		{
-			name: "an erroring hook holds back hooks.v1.json only",
+			name: "an erroring hook prunes stale hooks it does not select",
 			second: func(f devinPruneFixtures) []resolver.ResolvedArtifact {
 				return []resolver.ResolvedArtifact{f.keepSkill, f.keepHook, f.badHook}
 			},
@@ -114,11 +114,9 @@ func TestDevinEscalatedSkipPrunesEverythingItDidNotTouch(t *testing.T) {
 			// The skipped hook writes to no component directory, so the
 			// symlink components prune exactly as they would on a clean run.
 			wantPruned: []string{filepath.Join("skills", "stale-skill"), filepath.Join("agents", "stale-agent.md")},
-			wantAggregateRetains: map[string]string{
-				harness.DevinProjectHooksFile: "echo stale",
-			},
 			wantAggregatePrunes: map[string]string{
-				harness.DevinMcpConfigFile: "stale-mcp",
+				harness.DevinProjectHooksFile: "echo stale",
+				harness.DevinMcpConfigFile:    "stale-mcp",
 			},
 		},
 		{

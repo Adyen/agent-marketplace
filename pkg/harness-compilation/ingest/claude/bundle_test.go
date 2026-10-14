@@ -681,6 +681,34 @@ func TestClaudeIngester_LoadBundle_BarePluginFormWithRootSkill(t *testing.T) {
 	}
 }
 
+func TestClaudeIngester_SettingsOnlyWorkspaceYieldsToBareResources(t *testing.T) {
+	ing, ok := ingest.For(ingest.HarnessClaude)
+	if !ok {
+		t.Fatal("Claude ingester not registered")
+	}
+	skill := []byte("---\nname: review\ndescription: Review changes\n---\nBody")
+
+	bare := fstest.MapFS{
+		"skills/review/SKILL.md": {Data: skill},
+		".claude/settings.json":  {Data: []byte("{}")},
+	}
+	b, err := ing.LoadBundle(bare)
+	if err != nil {
+		t.Fatalf("LoadBundle: %v", err)
+	}
+	if len(b.Resources) != 1 {
+		t.Fatalf("LoadBundle: got %d resources, want 1 (the bare skill): %#v", len(b.Resources), b.Resources)
+	}
+	if _, ok := b.Resources[0].(*ir.Skill); !ok {
+		t.Fatalf("resource kind = %v, want Skill", b.Resources[0].Kind())
+	}
+
+	settingsOnly := fstest.MapFS{".claude/settings.json": {Data: []byte("{}")}}
+	if !ing.Detect(settingsOnly) {
+		t.Fatal("settings-only .claude/settings.json must still detect as workspace form")
+	}
+}
+
 func TestClaudeIngester_LoadBundle_PluginFormRootSkillDuplicateName(t *testing.T) {
 	ing, ok := ingest.For(ingest.HarnessClaude)
 	if !ok {

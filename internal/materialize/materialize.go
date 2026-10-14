@@ -529,6 +529,8 @@ type compilePhaseResult struct {
 	hookSupportPaths        map[outputKey]map[string]bool
 	hookSupportOwners       map[outputKey]map[string][]hookSupportOwner
 	hookResources           map[outputKey][]BlockedResource
+	selectedHookNames       map[outputKey]map[string]bool
+	unknownHookSelection    map[outputKey]bool
 	mcpResources            map[outputKey][]BlockedResource
 	// artifactMeta maps (outputKey → artifact relative path → skillLink metadata)
 	// for artifacts that remain in result.Artifacts (not extracted into skillLinks).
@@ -924,8 +926,15 @@ func compileWorkItems(work []skillTarget, allDiags []diag.Diagnostic, allOutputs
 	hookSupportPaths := make(map[outputKey]map[string]bool)
 	hookSupportOwners := make(map[outputKey]map[string][]hookSupportOwner)
 	hookResources := make(map[outputKey][]BlockedResource)
+	selectedHookNames := make(map[outputKey]map[string]bool)
+	unknownHookSelection := make(map[outputKey]bool)
+	for key := range blocked {
+		if blocked.componentsFor(key)[blockedAllComponents] {
+			unknownHookSelection[key] = true
+		}
+	}
 	mcpResources := make(map[outputKey][]BlockedResource)
-	hookSupport, supportConflicts := prepareHookSupport(work)
+	hookSupport, supportConflicts := prepareHookSupport(work, repoRoot)
 	for key := range allOutputs {
 		if nativeHookOutputPresent(key, repoRoot) {
 			nativeHooks[key] = &ownedJSONAggregateWork{}
@@ -991,6 +1000,13 @@ func compileWorkItems(work []skillTarget, allDiags []diag.Diagnostic, allOutputs
 				resourceName = w.skill.InstalledName
 			}
 			hookResources[key] = append(hookResources[key], BlockedResource{Kind: ir.KindHook, Name: resourceName, Target: key.target, MachineScope: key.machineScope})
+			if selectedHookNames[key] == nil {
+				selectedHookNames[key] = make(map[string]bool)
+			}
+			selectedHookNames[key][resourceName] = true
+			if _, err := nativeHookSourceIdentity(w.skill); err != nil {
+				unknownHookSelection[key] = true
+			}
 		} else if resourceKind == ir.KindMcpServer && nativeHookSharesMCPRoute(key, repoRoot) {
 			nativeHookWork(key)
 			resourceName := w.skill.Name
@@ -1000,12 +1016,14 @@ func compileWorkItems(work []skillTarget, allDiags []diag.Diagnostic, allOutputs
 			mcpResources[key] = append(mcpResources[key], BlockedResource{Kind: ir.KindMcpServer, Name: resourceName, Target: key.target, MachineScope: key.machineScope})
 		}
 		if paths := supportConflicts[index]; len(paths) > 0 {
+			unknownHookSelection[key] = true
 			blockResource(key, w)
 			markResourceIncomplete(key, w, aggregateHandler)
 			allDiags = append(allDiags, diag.Diagnostic{Code: diag.CodeMaterializeHookSupportConflict, Severity: diag.SeverityError, Target: string(w.target), Resource: w.skill.Name, Message: fmt.Sprintf("hook support paths conflict across selected sources: %s; affected hooks were not emitted", strings.Join(paths, ", ")), Hint: "Rename the conflicting support files or exclude one hook provider", Source: compilepkg.SourceOf(w.skill.Resource)})
 			continue
 		}
 		if isHook && plan.err != nil {
+			unknownHookSelection[key] = true
 			blockResource(key, w)
 			markResourceIncomplete(key, w, aggregateHandler)
 			source := compilepkg.SourceOf(w.skill.Resource)
@@ -1030,6 +1048,7 @@ func compileWorkItems(work []skillTarget, allDiags []diag.Diagnostic, allOutputs
 			continue
 		}
 		if isHook && plan.sourceDigest == "" {
+			unknownHookSelection[key] = true
 			blockResource(key, w)
 			markResourceIncomplete(key, w, aggregateHandler)
 			allDiags = append(allDiags, diag.Diagnostic{
@@ -1185,6 +1204,9 @@ func compileWorkItems(work []skillTarget, allDiags []diag.Diagnostic, allOutputs
 			}
 			entries, hookErr := nativeHookEntriesForArtifacts(key, repoRoot, resourceName, plan.sourceDigest, result.Artifacts)
 			if hookErr != nil {
+				if plan.sourceDigest == "" {
+					unknownHookSelection[key] = true
+				}
 				blockResource(key, w)
 				markResourceIncomplete(key, w, aggregateHandler)
 				allDiags = append(allDiags, diag.Diagnostic{
@@ -1327,22 +1349,24 @@ func compileWorkItems(work []skillTarget, allDiags []diag.Diagnostic, allOutputs
 	}
 
 	return compilePhaseResult{
-		allDiags:            allDiags,
-		byTarget:            byTarget,
-		skillLinks:          skillLinks,
-		allOutputs:          allOutputs,
-		blocked:             blocked,
-		blockedResources:    blockedResources,
-		nativeHooks:         nativeHooks,
-		nativeMCPEntries:    nativeMCPEntries,
-		nativeMCPConflicts:  nativeMCPConflicts,
-		nativeMCPIncomplete: nativeMCPIncomplete,
-		hookSupportPaths:    hookSupportPaths,
-		hookSupportOwners:   hookSupportOwners,
-		hookResources:       hookResources,
-		mcpResources:        mcpResources,
-		artifactMeta:        artifactMeta,
-		ownedState:          ownedState,
+		allDiags:             allDiags,
+		byTarget:             byTarget,
+		skillLinks:           skillLinks,
+		allOutputs:           allOutputs,
+		blocked:              blocked,
+		blockedResources:     blockedResources,
+		nativeHooks:          nativeHooks,
+		nativeMCPEntries:     nativeMCPEntries,
+		nativeMCPConflicts:   nativeMCPConflicts,
+		nativeMCPIncomplete:  nativeMCPIncomplete,
+		hookSupportPaths:     hookSupportPaths,
+		hookSupportOwners:    hookSupportOwners,
+		hookResources:        hookResources,
+		selectedHookNames:    selectedHookNames,
+		unknownHookSelection: unknownHookSelection,
+		mcpResources:         mcpResources,
+		artifactMeta:         artifactMeta,
+		ownedState:           ownedState,
 	}
 }
 
@@ -1697,6 +1721,9 @@ func executeMaterializePlans(ctx context.Context, compileResult compilePhaseResu
 			}
 			if hasNativeWork {
 				nativeOptions := nativeHookReconcileOptionsFor(nativeHandler)
+				if selected, complete := nativeHookSelectionAuthority(compileResult, geminiCoalescence.supportKeys(key)); complete {
+					nativeOptions.selectedHookResources = selected
+				}
 				if sharedSession != nil {
 					nativeOptions.store = sharedSession.store
 					nativeOptions.lockReport = sharedSession.lockReport
@@ -3260,6 +3287,10 @@ func preflightHookSupportDestinations(result *compilePhaseResult, key outputKey,
 	diagnostics := make([]diag.Diagnostic, 0, len(ownerOrder))
 	for _, id := range ownerOrder {
 		owner := owners[id]
+		if result.unknownHookSelection == nil {
+			result.unknownHookSelection = make(map[outputKey]bool)
+		}
+		result.unknownHookSelection[key] = true
 		result.blocked.blockResource(key, owner.skill)
 		resource := blockedResourceFor(key, owner.skill)
 		if !blockedResourcesByValue[resource] {

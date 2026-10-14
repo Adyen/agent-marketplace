@@ -287,8 +287,9 @@ func markdownBody(content string) string {
 }
 
 type IngestOptions struct {
-	LegacyWindsurfHooks bool
-	LegacyBareMCP       bool
+	LegacyWindsurfHooks       bool
+	LegacyBareMCP             bool
+	LegacyNativeHookInventory bool
 }
 
 func (c *Catalog) SourceRefusal() error { return c.sourceRefusal }
@@ -352,6 +353,9 @@ func LoadFS(srcFS fs.FS, sourceHarness string) (*Catalog, error) {
 }
 
 func LoadFSWithOptions(srcFS fs.FS, sourceHarness string, opts IngestOptions) (*Catalog, error) {
+	if opts.LegacyNativeHookInventory {
+		srcFS = legacyNativeInventoryFS{fsys: srcFS}
+	}
 	from := ingest.Harness(sourceHarness)
 	var autodetectDiag diag.Diagnostic
 

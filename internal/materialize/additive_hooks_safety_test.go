@@ -481,8 +481,11 @@ func TestWindsurfIncompleteHooksRetainManagedSiblings(t *testing.T) {
 		t.Fatalf("missing timeout refusal: %v", report.Diags)
 	}
 	assertFileUnchanged(t, legacyFile, legacyBefore, legacyMode, legacyMtime)
-	if got := additiveSafetyCommands(t, nativeFile, "hooks", "pre_run_command"); !reflect.DeepEqual(got, []string{"echo old", "echo new"}) {
+	if got := additiveSafetyCommands(t, nativeFile, "hooks", "pre_run_command"); !reflect.DeepEqual(got, []string{"echo handwritten", "echo old", "echo new"}) {
 		t.Fatalf("incomplete native output = %v", got)
+	}
+	if windsurfProofOwns(windsurfNativeProof(t, repo), windsurfHookIdentity(t, "pre_run_command", `{"command":"echo handwritten"}`)) {
+		t.Fatal("imported handwritten fallback handler became owned")
 	}
 	if data, err := os.ReadFile(nativeFile); err != nil || bytes.Contains(data, []byte("_managed_by")) {
 		t.Fatalf("native hook marker/output error: %v / %s", err, data)

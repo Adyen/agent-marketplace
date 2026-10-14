@@ -129,7 +129,9 @@ type NativeAggregateFile struct {
 	// root as Path and must be clean, non-empty, and distinct from Path.
 	// Consumers reconcile owned entries out of them; the declaration never
 	// makes them write targets.
-	Legacy []string
+	Legacy                    []string
+	PreserveLegacyHandwritten bool
+	LegacyMarkedFlatHooks     bool
 }
 
 // NativeAggregate identifies a shared target file produced for one resource
@@ -273,8 +275,8 @@ var nativeLayouts = map[Target]NativeLayout{
 					Kind:       ir.KindHook,
 					Shape:      HookShapeEventHandlers,
 					SupportDir: "hook-support",
-					Project:    NativeAggregateFile{Path: ".devin/hooks.json", Member: "hooks", Legacy: []string{".windsurf/hooks.json"}},
-					User:       NativeAggregateFile{Path: "hooks.json", Member: "hooks"},
+					Project:    NativeAggregateFile{Path: ".devin/hooks.json", Member: "hooks", Legacy: []string{".windsurf/hooks.json"}, PreserveLegacyHandwritten: true},
+					User:       NativeAggregateFile{Path: "hooks.json", Member: "hooks", LegacyMarkedFlatHooks: true},
 				},
 				{
 					Kind:    ir.KindMcpServer,
@@ -759,8 +761,19 @@ func validatePartitionContent(t Target, partition NativePartition, resourceKinds
 		case aggregate.Kind != ir.KindHook && aggregate.SupportDir != "":
 			errs = append(errs, fmt.Errorf("target %q partition %q aggregate for %s declares support directory %q; support directories belong to hooks", t, partition.ID, aggregate.Kind, aggregate.SupportDir))
 		}
-		if aggregate.LegacyMarkedFlatHooks && (aggregate.Kind != ir.KindHook || aggregate.Shape != HookShapeMatcherGroups) {
-			errs = append(errs, fmt.Errorf("target %q partition %q aggregate for %s declares legacy marked flat hooks; the transition applies only to hook matcher-groups aggregates", t, partition.ID, aggregate.Kind))
+		if aggregate.LegacyMarkedFlatHooks && (aggregate.Kind != ir.KindHook || (aggregate.Shape != HookShapeMatcherGroups && aggregate.Shape != HookShapeEventHandlers)) {
+			errs = append(errs, fmt.Errorf("target %q partition %q aggregate for %s declares legacy marked flat hooks; the transition applies only to hook matcher-groups or event-handlers aggregates", t, partition.ID, aggregate.Kind))
+		}
+		for _, scope := range []struct {
+			name string
+			file NativeAggregateFile
+		}{{"project", aggregate.Project}, {"user", aggregate.User}} {
+			if scope.file.LegacyMarkedFlatHooks && (aggregate.Kind != ir.KindHook || (aggregate.Shape != HookShapeMatcherGroups && aggregate.Shape != HookShapeEventHandlers)) {
+				errs = append(errs, fmt.Errorf("target %q partition %q %s-scope aggregate for %s declares legacy marked flat hooks on a file; the transition applies only to hook matcher-groups or event-handlers files", t, partition.ID, scope.name, aggregate.Kind))
+			}
+			if scope.file.PreserveLegacyHandwritten && (aggregate.Kind != ir.KindHook || aggregate.Shape != HookShapeEventHandlers || len(scope.file.Legacy) == 0) {
+				errs = append(errs, fmt.Errorf("target %q partition %q %s-scope aggregate for %s preserves legacy handwritten entries; it requires a hook event-handlers aggregate with legacy paths", t, partition.ID, scope.name, aggregate.Kind))
+			}
 		}
 		for _, scope := range []struct {
 			name string

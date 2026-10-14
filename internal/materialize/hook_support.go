@@ -57,7 +57,11 @@ type hookSupportClaim struct {
 	conflict  bool
 }
 
-func prepareHookSupport(work []skillTarget) (map[int]hookSupportPlan, map[int][]string) {
+func prepareHookSupport(work []skillTarget, repoRoots ...string) (map[int]hookSupportPlan, map[int][]string) {
+	var repoRoot string
+	if len(repoRoots) > 0 {
+		repoRoot = repoRoots[0]
+	}
 	plans := make(map[int]hookSupportPlan)
 	type captureKey struct {
 		sourceKey, root, definition, definitionDir, harness string
@@ -75,7 +79,7 @@ func prepareHookSupport(work []skillTarget) (map[int]hookSupportPlan, map[int][]
 		plan := hookSupportPlan{}
 		var files []artifact.Artifact
 		if w.skill.IsMarketplace && w.skill.MarketplaceAcquisition == config.MarketplaceAcquisitionMirror && w.skill.MarketplaceHookSupport != nil {
-			sourceKey, err := hookSupportSourceKey(w.skill)
+			sourceKey, err := hookSupportSourceKeyForScope(w, repoRoot)
 			if err != nil {
 				plan.err = err
 				plans[i] = plan
@@ -112,7 +116,7 @@ func prepareHookSupport(work []skillTarget) (map[int]hookSupportPlan, map[int][]
 				plans[i] = plan
 				continue
 			}
-			sourceKey, err := hookSupportSourceKey(w.skill)
+			sourceKey, err := hookSupportSourceKeyForScope(w, repoRoot)
 			if err != nil {
 				plan.err = err
 				plans[i] = plan
@@ -233,8 +237,53 @@ func hookSupportSourceKey(res resolver.ResolvedArtifact) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	return hookSupportSourceKeyFromIdentity(res, identity), nil
+}
+
+func hookSupportSourceKeyFromIdentity(res resolver.ResolvedArtifact, identity string) string {
 	sum := sha256.Sum256([]byte(identity))
-	return hookSupportSlug(res) + "-" + hex.EncodeToString(sum[:]), nil
+	return hookSupportSlug(res) + "-" + hex.EncodeToString(sum[:])
+}
+
+func hookSupportSourceKeyForScope(w skillTarget, repoRoot string) (string, error) {
+	if w.machineScope || repoRoot == "" || !w.skill.IsLocal() {
+		return hookSupportSourceKey(w.skill)
+	}
+	rel, ok, err := repositoryLocalSourceRel(w.skill, repoRoot)
+	if err != nil {
+		return "", err
+	}
+	if !ok {
+		return hookSupportSourceKey(w.skill)
+	}
+	return hookSupportSourceKeyFromIdentity(w.skill, "repository-local:"+rel), nil
+}
+
+func repositoryLocalSourceRel(res resolver.ResolvedArtifact, repoRoot string) (string, bool, error) {
+	source, err := localRegistryRoot(res)
+	if err != nil {
+		return "", false, err
+	}
+	if res.RegistryPath != "" {
+		rel := filepath.ToSlash(filepath.Clean(filepath.FromSlash(res.RegistryPath)))
+		if rel != "." && !fs.ValidPath(rel) {
+			return "", false, nil
+		}
+		source = filepath.Join(source, filepath.FromSlash(rel))
+	}
+	canonicalRepo, err := ownership.CanonicalRoot(repoRoot)
+	if err != nil {
+		return "", false, err
+	}
+	canonicalSource, err := ownership.CanonicalRoot(source)
+	if err != nil {
+		return "", false, err
+	}
+	rel, err := filepath.Rel(canonicalRepo, canonicalSource)
+	if err != nil || filepath.IsAbs(rel) || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return "", false, nil
+	}
+	return filepath.ToSlash(rel), true, nil
 }
 
 func hookSupportSlug(res resolver.ResolvedArtifact) string {
@@ -340,6 +389,18 @@ func hookSupportCommandBase(w skillTarget, repoRoot, relBase string) (string, er
 	return "", fmt.Errorf("target %s has no hook support destination in this scope", w.target)
 }
 
+func localRegistryRoot(res resolver.ResolvedArtifact) (string, error) {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return "", err
+	}
+	root, err := config.RegistryEntry{URL: res.RegistryURL, Ref: res.Ref, V4Kind: res.V4Kind}.ResolveLocalPath(cwd)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Abs(root)
+}
+
 func hookSupportSource(res resolver.ResolvedArtifact) (root, definition, definitionDir string, ok bool, err error) {
 	if res.IsMarketplace {
 		switch res.MarketplaceAcquisition {
@@ -396,7 +457,11 @@ func hookSupportSource(res resolver.ResolvedArtifact) (root, definition, definit
 	}
 	root = ""
 	if res.IsLocal() {
-		root = res.RegistryURL
+		local, err := localRegistryRoot(res)
+		if err != nil {
+			return "", "", "", false, err
+		}
+		root = local
 	} else if res.RegistryURL != "" {
 		if res.CatalogKey == "" {
 			return "", "", "", false, fmt.Errorf("configured hook source has no cache root")

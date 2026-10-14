@@ -21,6 +21,7 @@ import (
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/jsonc"
+	targetmeta "github.com/Adyen/agent-marketplace/pkg/harness-compilation/target"
 )
 
 func nativeHookLegacyEntry(target hcc.Target, event, matcher, command string, marked bool) string {
@@ -151,8 +152,12 @@ func TestNativeHookLegacyMigrationMovesOwnedRules(t *testing.T) {
 			if err != nil || hasErrorDiagnostics(report.Diags) {
 				t.Fatalf("Run: %v / %v", err, report)
 			}
-			if got := additiveSafetyCommands(t, nativePath, layout.container, layout.event); !equalStrings(got, []string{"echo migrate"}) {
-				t.Fatalf("native commands = %v", got)
+			wantCommands := []string{"echo migrate"}
+			if declaration, err := nativeHookAggregateForScope(targetmeta.Target(tc.target), tc.machine); err == nil && declaration.file.PreserveLegacyHandwritten {
+				wantCommands = []string{"echo handwritten", "echo migrate"}
+			}
+			if got := additiveSafetyCommands(t, nativePath, layout.container, layout.event); !equalStrings(got, wantCommands) {
+				t.Fatalf("native commands = %v, want %v", got, wantCommands)
 			}
 			nativeBytes, err := os.ReadFile(nativePath)
 			if err != nil || bytes.Contains(nativeBytes, []byte("_managed_by")) {

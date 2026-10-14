@@ -200,8 +200,21 @@ func nativeHookJSONLayout(key outputKey, repoRoot string) (harness.Destination, 
 		container:             declaration.file.Member,
 		envelope:              declaration.file.Envelope,
 		hookShape:             declaration.aggregate.Shape,
-		legacyMarkedFlatHooks: declaration.aggregate.LegacyMarkedFlatHooks,
+		legacyMarkedFlatHooks: declaration.aggregate.LegacyMarkedFlatHooks || declaration.file.LegacyMarkedFlatHooks,
 	}, nil
+}
+
+func nativeHookSelectionAuthority(result compilePhaseResult, keys []outputKey) (map[string]bool, bool) {
+	union := make(map[string]bool)
+	for _, key := range keys {
+		if result.unknownHookSelection[key] || result.nativeMCPIncomplete[key] {
+			return nil, false
+		}
+		for name := range result.selectedHookNames[key] {
+			union[name] = true
+		}
+	}
+	return union, true
 }
 
 func defaultNativeHookReconcileOptions() ownedJSONReconcileOptions {
@@ -242,6 +255,15 @@ func reconcileNativeHookJSON(ctx context.Context, report *Report, key outputKey,
 	}
 	destination.Root = root
 	options.rootID = destination.ID
+	declaration, err := nativeHookAggregateForScope(targetmeta.Target(key.target), key.machineScope)
+	if err != nil {
+		return nativeHookDestinationError(report, key)
+	}
+	if declaration.file.PreserveLegacyHandwritten {
+		for _, legacyRel := range declaration.file.Legacy {
+			options.legacyHandwrittenFiles = append(options.legacyHandwrittenFiles, path.Join(declaration.partition.Prefix, legacyRel))
+		}
+	}
 	file.rawValueDigest = options.rawValueDigest
 	return reconcileOwnedJSONAggregates(ctx, report, key, destination.Root, []ownedJSONFileSpec{file}, work, options, dryRun)
 }

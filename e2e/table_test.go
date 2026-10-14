@@ -631,6 +631,7 @@ registries:
 		},
 	},
 
+	// spec: hook-resources/native-only-git-hook-sources-retain-frozen-projection
 	{
 		Name: "hooks/additive_cross_registry",
 		Desc: "Given two Factory registries with same-named hooks, when install-all and removal run, then both providers materialize additively and removing one preserves the other",
@@ -656,6 +657,7 @@ registries:
 			{Args: []string{"sync", "--check"}, MustPass: true, PathsUnchanged: []string{"/workspace/.factory/hooks.json", "/workspace/.agents/lock.yaml"}},
 		},
 	},
+	// spec: hook-resources/native-only-git-hook-sources-retain-frozen-projection
 	{
 		Name:       "hooks/additive_session_start",
 		Desc:       "Given one Factory registry with two SessionStart handlers, when both generated names are selected, then both handlers remain stable across sync and check",

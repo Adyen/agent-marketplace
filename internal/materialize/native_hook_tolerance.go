@@ -40,11 +40,11 @@ func nativeHookSourceIdentity(res resolver.ResolvedArtifact) (string, error) {
 		return "", fmt.Errorf("hook native tolerance: %q has no configured source identity", res.Name)
 	}
 	if res.IsLocal() {
-		abs, err := filepath.Abs(url)
+		root, err := localRegistryRoot(res)
 		if err != nil {
 			return "", fmt.Errorf("hook native tolerance: canonicalize local source %q: %w", url, err)
 		}
-		return "local:" + filepath.Clean(abs), nil
+		return "local:" + filepath.Clean(root), nil
 	}
 	return "git:" + config.NormalizeGitURL(url) + "@" + strings.TrimSpace(res.Ref) + ":" + config.NormalizeRegistryPath(res.RegistryPath), nil
 }

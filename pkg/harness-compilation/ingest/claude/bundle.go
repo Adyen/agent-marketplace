@@ -87,7 +87,7 @@ func hasClaudeWorkspaceForm(src fs.FS) bool {
 		if _, err := fs.Stat(src, ".mcp.json"); err == nil {
 			return true
 		}
-		if _, err := fs.Stat(src, ".claude/settings.json"); err == nil {
+		if _, err := fs.Stat(src, ".claude/settings.json"); err == nil && !hasBarePluginForm(src) {
 			return true
 		}
 	}

@@ -971,8 +971,8 @@ func TestHookAggregateTopologyIsDeclaredForEveryTarget(t *testing.T) {
 		{
 			target:      TargetWindsurf,
 			shape:       HookShapeEventHandlers,
-			projectFile: NativeAggregateFile{Path: ".devin/hooks.json", Member: "hooks", Legacy: []string{".windsurf/hooks.json"}},
-			userFile:    NativeAggregateFile{Path: "hooks.json", Member: "hooks"},
+			projectFile: NativeAggregateFile{Path: ".devin/hooks.json", Member: "hooks", Legacy: []string{".windsurf/hooks.json"}, PreserveLegacyHandwritten: true},
+			userFile:    NativeAggregateFile{Path: "hooks.json", Member: "hooks", LegacyMarkedFlatHooks: true},
 		},
 		{
 			target:      TargetGemini,
@@ -1010,7 +1010,7 @@ func TestHookAggregateTopologyIsDeclaredForEveryTarget(t *testing.T) {
 			t.Fatalf("%s declares no hook aggregate", tt.target)
 		}
 		if aggregate.LegacyMarkedFlatHooks != (tt.target == TargetGemini) {
-			t.Errorf("%s hook aggregate LegacyMarkedFlatHooks = %v; only Gemini declares the marked legacy flat transition", tt.target, aggregate.LegacyMarkedFlatHooks)
+			t.Errorf("%s hook aggregate LegacyMarkedFlatHooks = %v; only Gemini declares the aggregate marked legacy flat transition", tt.target, aggregate.LegacyMarkedFlatHooks)
 		}
 		for i := range layout.Partitions {
 			for j := range layout.Partitions[i].Aggregates {
@@ -1284,6 +1284,13 @@ func TestValidateNativeLayoutRejectsInvalidHookDeclarations(t *testing.T) {
 			name: "legacy marked flat hooks on event-handlers hook",
 			mutate: func(a *NativeAggregate) {
 				a.Shape = HookShapeEventHandlers
+				a.LegacyMarkedFlatHooks = true
+			},
+		},
+		{
+			name: "legacy marked flat hooks on unknown hook shape",
+			mutate: func(a *NativeAggregate) {
+				a.Shape = HookShape("unknown-shape")
 				a.LegacyMarkedFlatHooks = true
 			},
 			wantErrContains: "legacy marked flat",
