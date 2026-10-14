@@ -22,13 +22,15 @@ Open a result and use the detail tabs:
 | Registry | See who published the resource and where it came from. You can also browse the registry's other resources and its history. |
 | Technical details | Check the full content digest, the acquisition evidence, and the declared license. Use these to confirm where the resource came from or to report a problem. |
 
+Below the install panel, the latest resource page can also show **Requires** and **Required by** lists for the resource's declared [prerequisites](../reference/resource-prerequisites.md). **Requires** lists each prerequisite with one badge: `resolved` when the Marketplace can link it to a resource page, `external` when it carries a registry hint the Marketplace cannot resolve, and `unresolved` otherwise. **Required by** links each resource that depends on this one, shows "none" when there are no dependents, and states that dependents are unknown when some revisions are not yet indexed. A page whose revision has no indexed prerequisite data, such as a revision pinned by digest, shows neither list.
+
 The browser previews only the files that were made available for safe inspection. If it cannot show a file, do not assume the file is empty or harmless.
 
 You can still inspect a revoked or policy-rejected revision, but its install action is disabled. A revision can also lack the artifact that installation needs. The availability notice on the page explains why you cannot install it.
 
 ## 3. Choose a revision and copy its command
 
-The command under **Install with the CLI** pins the revision you are viewing. Copy it to install exactly that revision, or share the revision's page URL so someone else can inspect the same content. If you use a resource URL without a revision, the CLI can pick a newer usable revision later.
+The command under **Install with the CLI** pins the revision you are viewing. Copy it to install exactly that revision, or share the revision's page URL so someone else can inspect the same content. If you use a resource URL without a revision, the CLI can pick a newer usable revision later. When the resource declares prerequisites, the install panel adds a note with their count; the copied command is unchanged, and the CLI selects prerequisites automatically only when [`requires.expand`](../reference/resource-prerequisites.md#requirement-expansion) is enabled (it is off by default).
 
 Before you run the command, [install the CLI](../install.md), choose your target [harnesses](../glossary.md#harness), and check that the CLI can edit the configuration file it will write to. You do not need to register the Marketplace endpoint first to install from a browser URL. See the [configuration compatibility note](../explanation/user-journeys.md#before-following-a-journey).
 

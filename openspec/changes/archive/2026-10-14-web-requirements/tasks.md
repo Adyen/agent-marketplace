@@ -9,5 +9,5 @@
 
 ## 3. Verify and document
 
-- [ ] 3.1 Reconcile published web UI documentation.
-- [ ] 3.2 Run `openspec archive web-requirements --yes` in the same pull request as the implementation.
+- [x] 3.1 Reconcile published web UI documentation.
+- [x] 3.2 Run `openspec archive web-requirements --yes` in the same pull request as the implementation.
