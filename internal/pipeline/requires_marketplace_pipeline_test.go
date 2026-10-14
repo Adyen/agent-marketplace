@@ -236,6 +236,37 @@ func TestTransientOrganizationResolverForwardsRequirementLookup(t *testing.T) {
 	}
 }
 
+func TestTransientOrganizationResolverSkipsRequirementLookupForOrganizationRequirer(t *testing.T) {
+	fake := newLayerMarketplaceServer(t)
+	registry := fake.addRegistry(t, "source")
+	fake.addSkill(t, registry, "helper")
+	wrapped := transientOrganizationMarketplaceResolver{delegate: &marketplace.Resolver{Cache: marketplace.NewCache(t.TempDir())}}
+	query := resolver.MarketplaceRequirementQuery{
+		Entry:        config.MarketplaceEntry{URL: fake.URL, InstanceID: fake.instanceID, Source: config.Organization},
+		RegistryID:   string(registry.ID),
+		RegistrySlug: registry.Slug,
+		Kind:         "skill",
+		Name:         "helper",
+	}
+
+	result, err := wrapped.LookupMarketplaceRequirement(context.Background(), query)
+	if err != nil || result.Found {
+		t.Fatalf("organization requirer lookup = %+v, %v; want not found without error", result, err)
+	}
+	if n := fake.requests.Load(); n != 0 {
+		t.Fatalf("organization requirer reached the Marketplace with %d requests", n)
+	}
+
+	query.Entry.Source = config.RepoCommitted
+	result, err = wrapped.LookupMarketplaceRequirement(context.Background(), query)
+	if err != nil || !result.Found {
+		t.Fatalf("non-organization lookup = %+v, %v; want forwarded found", result, err)
+	}
+	if fake.requests.Load() == 0 {
+		t.Fatal("non-organization requirer lookup must reach the Marketplace")
+	}
+}
+
 // spec: resource-prerequisites/lookup-candidate-is-previewed-not-recorded
 func TestPreviewOnlyCandidateDoesNotBlockPruning(t *testing.T) {
 	home := t.TempDir()

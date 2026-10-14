@@ -354,7 +354,7 @@ func (r transientOrganizationMarketplaceResolver) ResolveWithPolicy(ctx context.
 // extension so the wrapper does not hide it from resolution.
 func (r transientOrganizationMarketplaceResolver) LookupMarketplaceRequirement(ctx context.Context, q resolver.MarketplaceRequirementQuery) (resolver.MarketplaceRequirementResult, error) {
 	lookup, ok := any(r.delegate).(resolver.MarketplaceRequirementLookup)
-	if !ok {
+	if !ok || q.Entry.Source == config.Organization {
 		return resolver.MarketplaceRequirementResult{}, nil
 	}
 	return lookup.LookupMarketplaceRequirement(ctx, q)
