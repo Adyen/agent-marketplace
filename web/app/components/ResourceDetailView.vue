@@ -5,8 +5,8 @@ import { useCopyText } from '~/composables/useCopyText'
 import { useResourceInspectionPreview } from '~/composables/useResourceInspectionPreview'
 import { isResourceKind } from '~/lib/api'
 import { DOCS_PATH } from '~/lib/site'
-import { installCommand, kindLabel, resourceAvailability, resourceAvailabilityCopy, resourceLatestRoute, resourceRoute, shortDigest } from '~/lib/presentation'
-import type { InspectionFile, InspectionManifest, Marketplace, Registry, ResourceKind, ResourceListItem, ResourceRevision } from '~/types/marketplace'
+import { installCommand, kindLabel, requirementBadge, resourceAvailability, resourceAvailabilityCopy, resourceLatestRoute, resourceRelationRoute, resourceRoute, shortDigest } from '~/lib/presentation'
+import type { InspectionFile, InspectionManifest, Marketplace, Registry, ResourceKind, ResourceListItem, ResourceRequirement, ResourceRevision } from '~/types/marketplace'
 
 type Props = {
   resource: ResourceRevision
@@ -64,6 +64,9 @@ const unavailableReason = computed(() => {
     default: return commandAvailable.value ? '' : 'An install command is not available for this revision.'
   }
 })
+const hasPrerequisiteData = computed(() => props.resource.requires !== undefined)
+const requirementCount = computed(() => props.resource.requires?.length ?? 0)
+const showRequirementNote = computed(() => commandAvailable.value && requirementCount.value > 0)
 const descriptionCharacters = computed(() => Array.from(props.resource.description ?? ''))
 const descriptionOverflows = computed(() => descriptionCharacters.value.length > DESCRIPTION_PREVIEW_LENGTH)
 const visibleDescription = computed(() => {
@@ -162,6 +165,10 @@ function parseCollectionMembers(content: string | undefined): CollectionMember[]
   } catch {
     return undefined
   }
+}
+
+function resolvedRequirementRoute(requirement: ResourceRequirement): string {
+  return requirement.resolved ? resourceRelationRoute(requirement.resolved) : ''
 }
 
 function formatDate(value: string): string {
@@ -265,7 +272,10 @@ function formatValue(value: unknown): string {
         <h2 id="installation-heading" class="text-sm font-semibold text-highlighted">Install</h2>
         <a v-if="commandAvailable" :href="DOCS_PATH" target="_blank" rel="noopener noreferrer" aria-label="Set up CLI (opens in a new tab)" class="inline-flex items-center gap-1 text-sm font-medium text-primary underline-offset-4 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary">Set up CLI<UIcon name="i-lucide-external-link" class="size-3.5" data-testid="setup-external-icon" aria-hidden="true" /></a>
       </div>
-      <CommandBlock v-if="commandAvailable" :command="command" :label="`pinned CLI install command for ${name}`" />
+      <template v-if="commandAvailable">
+        <CommandBlock :command="command" :label="`pinned CLI install command for ${name}`" />
+        <p v-if="showRequirementNote" data-testid="requires-note" class="mt-2 text-sm text-muted">Requires {{ requirementCount }} resource{{ requirementCount === 1 ? '' : 's' }}. agent-marketplace selects them automatically when <code class="font-mono">requires.expand</code> is enabled.</p>
+      </template>
       <div v-else data-testid="unavailable-notice" role="status" aria-labelledby="unavailable-title" class="flex gap-2.5 rounded border border-default bg-(--am-color-bg-subtle) p-3 text-sm text-toned">
         <UIcon name="i-lucide-circle-alert" class="mt-0.5 size-4 shrink-0" :class="availability === 'no-artifact' ? 'text-warning' : 'text-error'" data-testid="unavailable-status-icon" aria-hidden="true" />
         <div class="min-w-0">
@@ -276,6 +286,36 @@ function formatValue(value: unknown): string {
       </div>
       <p class="sr-only" aria-live="polite">{{ copied === 'url' ? 'Detail URL copied.' : '' }}</p>
     </section>
+
+    <div v-if="hasPrerequisiteData" class="mt-7 grid gap-6 sm:grid-cols-2">
+      <section data-testid="requires-section" aria-labelledby="requires-heading">
+        <h2 id="requires-heading" class="text-sm font-semibold text-highlighted">Requires</h2>
+        <ul v-if="resource.requires?.length" class="mt-3 border-y border-default [&>*:not(:last-child)]:border-b [&>*:not(:last-child)]:border-default">
+          <li v-for="requirement in resource.requires" :key="`${requirement.kind}:${requirement.name}`" class="py-3">
+            <div class="flex min-w-0 items-baseline gap-3">
+              <span class="shrink-0 text-xs font-medium text-muted">{{ kindLabel(requirement.kind) }}</span>
+              <NuxtLink v-if="resolvedRequirementRoute(requirement)" :to="resolvedRequirementRoute(requirement)" class="min-w-0 truncate font-mono text-sm font-semibold text-primary underline-offset-4 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary">{{ requirement.name }}</NuxtLink>
+              <span v-else class="min-w-0 truncate font-mono text-sm font-semibold text-highlighted">{{ requirement.name }}</span>
+              <span data-testid="requirement-badge" class="ml-auto inline-flex shrink-0 rounded border border-default bg-(--am-color-bg-subtle) px-2 py-0.5 text-xs font-medium text-muted">{{ requirementBadge(requirement) }}</span>
+            </div>
+            <p v-if="requirement.registry || requirement.path" class="mt-1 break-all font-mono text-xs text-muted"><template v-if="requirement.registry">{{ requirement.registry }}</template><template v-if="requirement.registry && requirement.path"> · </template>{{ requirement.path }}</p>
+          </li>
+        </ul>
+        <p v-else class="mt-3 text-sm text-muted">This resource declares no requirements.</p>
+      </section>
+      <section data-testid="required-by-section" aria-labelledby="required-by-heading">
+        <h2 id="required-by-heading" class="text-sm font-semibold text-highlighted">Required by</h2>
+        <ul v-if="resource.required_by?.length" class="mt-3 border-y border-default [&>*:not(:last-child)]:border-b [&>*:not(:last-child)]:border-default">
+          <li v-for="dependent in resource.required_by" :key="`${dependent.registry}:${dependent.kind}:${dependent.name}`" class="flex min-w-0 items-baseline gap-3 py-3">
+            <span class="shrink-0 text-xs font-medium text-muted">{{ kindLabel(dependent.kind) }}</span>
+            <NuxtLink v-if="resourceRelationRoute(dependent)" :to="resourceRelationRoute(dependent)" class="min-w-0 truncate font-mono text-sm font-semibold text-primary underline-offset-4 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary">{{ dependent.name }}</NuxtLink>
+            <span v-else class="min-w-0 truncate font-mono text-sm font-semibold text-highlighted">{{ dependent.name }}</span>
+          </li>
+        </ul>
+        <p v-else-if="resource.required_by" class="mt-3 text-sm text-muted">None.</p>
+        <p v-else class="mt-3 text-sm text-muted">Dependents are unknown because some revisions are not yet indexed.</p>
+      </section>
+    </div>
 
     <div class="mt-7 border-b border-default">
       <div role="tablist" aria-label="Resource details" class="flex gap-1 overflow-x-auto">

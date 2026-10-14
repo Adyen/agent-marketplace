@@ -1,4 +1,4 @@
-import type { ResourceKind, ResourceListItem, ResourceRevision } from '~/types/marketplace'
+import type { ResourceKind, ResourceListItem, ResourceRelation, ResourceRequirement, ResourceRevision } from '~/types/marketplace'
 import { isSafeRouteToken, isSafeResourceRoute } from '~/lib/routes'
 import { isSha256Digest } from '~/lib/validation'
 
@@ -59,6 +59,18 @@ export function resourceLatestLocator(item: ResourceListItem, browserBase: strin
   const canonical = safeCanonicalUrl(browserBase)
   const route = resourceLatestRoute(item)
   return canonical && route ? `${canonical}${route}` : ''
+}
+
+export function resourceRelationRoute(relation: ResourceRelation): string {
+  return resourceLatestRoute({ registry_id: relation.registry, kind: relation.kind, name: relation.name, revision: '', content_digest: '' })
+}
+
+export type RequirementBadge = 'resolved' | 'external' | 'unresolved'
+
+export function requirementBadge(requirement: ResourceRequirement): RequirementBadge {
+  if (requirement.resolved) return 'resolved'
+  if (requirement.registry) return 'external'
+  return 'unresolved'
 }
 
 export function resourceRoute(item: ResourceListItem): string {

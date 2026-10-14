@@ -1,11 +1,11 @@
 ## 1. Prove web prerequisite behavior
 
-- [ ] 1.1 Add spec-annotated vitest tests for every delta scenario and observe them fail on the unchanged base.
+- [x] 1.1 Add spec-annotated vitest tests for every delta scenario and observe them fail on the unchanged base.
 
 ## 2. Implement
 
-- [ ] 2.1 Add the badge classification helper and the Requires and Required by sections.
-- [ ] 2.2 Add the conditional install note.
+- [x] 2.1 Add the badge classification helper and the Requires and Required by sections.
+- [x] 2.2 Add the conditional install note.
 
 ## 3. Verify and document
 

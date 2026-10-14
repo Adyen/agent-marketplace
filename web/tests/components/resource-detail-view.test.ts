@@ -466,4 +466,199 @@ describe('ResourceDetailView', () => {
     expect(wrapper.findAll('[aria-label="Security findings"] > li')).toHaveLength(1)
     expect(wrapper.get('[aria-label="Security findings"]').text()).toContain('SKILL.md:1-2')
   })
+
+  // spec: marketplace-web-ui/requires-entries-carry-one-badge-each
+  it('lists prerequisites in response order with resolved, external, and unresolved badges', () => {
+    const wrapper = mount(ResourceDetailView, {
+      props: {
+        resource: {
+          ...resource,
+          requires: [
+            { kind: 'skill', name: 'lint', resolved: { kind: 'skill', name: 'lint', registry: 'team-tools' } },
+            { kind: 'command', name: 'fmt', registry: 'upstream/tools' },
+            { kind: 'subagent', name: 'helper' },
+          ],
+          required_by: [],
+        },
+        registry: 'team-tools', kind: 'skill', name: 'review', canonicalUrl: 'https://market.example', browserBase: 'https://market.example',
+      },
+      global: { stubs },
+    })
+
+    const section = wrapper.get('[data-testid="requires-section"]')
+    expect(section.get('h2').text()).toBe('Requires')
+    const entries = section.findAll('li')
+    expect(entries).toHaveLength(3)
+    expect(entries[0]!.text()).toContain('lint')
+    expect(entries[0]!.text()).toContain('Skill')
+    expect(entries[0]!.get('a').attributes('href')).toBe('/r/team-tools/skill/lint')
+    expect(entries[1]!.text()).toContain('fmt')
+    expect(entries[1]!.find('a').exists()).toBe(false)
+    expect(entries[2]!.text()).toContain('helper')
+    expect(entries[2]!.find('a').exists()).toBe(false)
+    expect(entries.map(entry => {
+      const badges = entry.findAll('[data-testid="requirement-badge"]')
+      expect(badges).toHaveLength(1)
+      return badges[0]!.text()
+    })).toEqual(['resolved', 'external', 'unresolved'])
+  })
+
+  it('states that an indexed resource declares no requirements', () => {
+    const wrapper = mount(ResourceDetailView, {
+      props: {
+        resource: { ...resource, requires: [], required_by: [] },
+        registry: 'team-tools', kind: 'skill', name: 'review', canonicalUrl: 'https://market.example', browserBase: 'https://market.example',
+      },
+      global: { stubs },
+    })
+
+    const section = wrapper.get('[data-testid="requires-section"]')
+    expect(section.findAll('li')).toHaveLength(0)
+    expect(section.text()).toContain('no requirements')
+  })
+
+  // spec: marketplace-web-ui/hint-text-renders-as-plain-text
+  it('renders registry and path hints as literal text without markup or links', () => {
+    const registryHint = 'evil<img src=x onerror=alert(1)>'
+    const pathHint = 'skills/<a href="https://evil.invalid">x</a>'
+    const wrapper = mount(ResourceDetailView, {
+      props: {
+        resource: {
+          ...resource,
+          requires: [{ kind: 'skill', name: 'lint', registry: registryHint, path: pathHint }],
+          required_by: [],
+        },
+        registry: 'team-tools', kind: 'skill', name: 'review', canonicalUrl: 'https://market.example', browserBase: 'https://market.example',
+      },
+      global: { stubs },
+    })
+
+    const section = wrapper.get('[data-testid="requires-section"]')
+    expect(section.text()).toContain(registryHint)
+    expect(section.text()).toContain(pathHint)
+    expect(section.find('img').exists()).toBe(false)
+    expect(section.find('a').exists()).toBe(false)
+    expect(section.html()).not.toContain('<img')
+    expect(section.html()).toContain('&lt;a href=')
+  })
+
+  // spec: marketplace-web-ui/required-by-shows-dependents-none-or-unknown
+  it('links each dependent, shows none for an empty set, and explains unknown dependents', () => {
+    const withDependents = mount(ResourceDetailView, {
+      props: {
+        resource: {
+          ...resource,
+          requires: [],
+          required_by: [
+            { kind: 'skill', name: 'lint', registry: 'team-tools' },
+            { kind: 'collection', name: 'bundle', registry: 'other-registry' },
+          ],
+        },
+        registry: 'team-tools', kind: 'skill', name: 'review', canonicalUrl: 'https://market.example', browserBase: 'https://market.example',
+      },
+      global: { stubs },
+    })
+    const requiredBy = withDependents.get('[data-testid="required-by-section"]')
+    expect(requiredBy.get('h2').text()).toBe('Required by')
+    expect(requiredBy.get('a[href="/r/team-tools/skill/lint"]').text()).toContain('lint')
+    expect(requiredBy.get('a[href="/r/other-registry/collection/bundle"]').text()).toContain('bundle')
+
+    const empty = mount(ResourceDetailView, {
+      props: {
+        resource: { ...resource, requires: [], required_by: [] },
+        registry: 'team-tools', kind: 'skill', name: 'review', canonicalUrl: 'https://market.example', browserBase: 'https://market.example',
+      },
+      global: { stubs },
+    })
+    const emptySection = empty.get('[data-testid="required-by-section"]')
+    expect(emptySection.findAll('li')).toHaveLength(0)
+    expect(emptySection.text().toLowerCase()).toContain('none')
+
+    const unknown = mount(ResourceDetailView, {
+      props: {
+        resource: { ...resource, requires: [] },
+        registry: 'team-tools', kind: 'skill', name: 'review', canonicalUrl: 'https://market.example', browserBase: 'https://market.example',
+      },
+      global: { stubs },
+    })
+    const unknownSection = unknown.get('[data-testid="required-by-section"]')
+    expect(unknownSection.findAll('li')).toHaveLength(0)
+    expect(unknownSection.text().toLowerCase()).toContain('unknown')
+    expect(unknownSection.text().toLowerCase()).toContain('not yet indexed')
+  })
+
+  // spec: marketplace-web-ui/absent-prerequisite-data-shows-no-sections
+  it('shows neither prerequisite section when the response carries no requires field', () => {
+    const wrapper = mount(ResourceDetailView, {
+      props: {
+        resource: { ...resource, required_by: [{ kind: 'skill', name: 'lint', registry: 'team-tools' }] },
+        registry: 'team-tools', kind: 'skill', name: 'review', canonicalUrl: 'https://market.example', browserBase: 'https://market.example',
+      },
+      global: { stubs },
+    })
+
+    expect(wrapper.find('[data-testid="requires-section"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="required-by-section"]').exists()).toBe(false)
+    expect(wrapper.text()).not.toContain('Requires')
+    expect(wrapper.text()).not.toContain('Required by')
+  })
+
+  // spec: marketplace-web-ui/installable-resource-with-prerequisites-shows-the-note
+  it('adds a prerequisite note to the install panel and keeps the copied command unchanged', () => {
+    const single = mount(ResourceDetailView, {
+      props: {
+        resource: { ...resource, requires: [{ kind: 'skill', name: 'lint' }], required_by: [] },
+        registry: 'team-tools', kind: 'skill', name: 'review', canonicalUrl: 'https://market.example', browserBase: 'https://market.example',
+      },
+      global: { stubs },
+    })
+    expect(single.get('[data-testid="requires-note"]').text()).toContain('Requires 1 resource.')
+    expect(single.get('[data-testid="requires-note"]').text()).toContain('requires.expand')
+
+    const several = mount(ResourceDetailView, {
+      props: {
+        resource: { ...resource, requires: [{ kind: 'skill', name: 'lint' }, { kind: 'command', name: 'fmt' }], required_by: [] },
+        registry: 'team-tools', kind: 'skill', name: 'review', canonicalUrl: 'https://market.example', browserBase: 'https://market.example',
+      },
+      global: { stubs },
+    })
+    const note = several.get('[data-testid="requires-note"]')
+    expect(note.text()).toContain('Requires 2 resources.')
+    expect(note.text()).toContain('agent-marketplace selects them automatically when')
+    expect(note.text()).toContain('is enabled.')
+    expect(several.get('code').text()).toBe(`agent-marketplace install "https://market.example/r/team-tools/skill/review/revisions/${encodeURIComponent(digest)}"`)
+  })
+
+  // spec: marketplace-web-ui/no-note-without-prerequisites-or-installation
+  it('shows no prerequisite note without declared requirements or when installation is unavailable', () => {
+    const none = mount(ResourceDetailView, {
+      props: {
+        resource: { ...resource, requires: [], required_by: [] },
+        registry: 'team-tools', kind: 'skill', name: 'review', canonicalUrl: 'https://market.example', browserBase: 'https://market.example',
+      },
+      global: { stubs },
+    })
+    expect(none.find('[data-testid="requires-note"]').exists()).toBe(false)
+
+    const unindexed = mount(ResourceDetailView, {
+      props: {
+        resource,
+        registry: 'team-tools', kind: 'skill', name: 'review', canonicalUrl: 'https://market.example', browserBase: 'https://market.example',
+      },
+      global: { stubs },
+    })
+    expect(unindexed.find('[data-testid="requires-note"]').exists()).toBe(false)
+
+    const unavailable = mount(ResourceDetailView, {
+      props: {
+        resource: { ...resource, requires: [{ kind: 'skill', name: 'lint' }], revocation },
+        registry: 'team-tools', kind: 'skill', name: 'review', canonicalUrl: 'https://market.example', browserBase: 'https://market.example',
+      },
+      global: { stubs },
+    })
+    expect(unavailable.find('[data-testid="requires-note"]').exists()).toBe(false)
+    const notice = unavailable.get('[data-testid="unavailable-notice"]')
+    expect(notice.text()).toContain('Not available')
+    expect(notice.text()).toContain('This revision has been revoked and can no longer be installed.')
+  })
 })
