@@ -102,7 +102,7 @@ describe('shared-origin test proxy', () => {
         ...process.env,
         E2E_SHARED_ORIGIN_PORT: String(port),
         E2E_SITE_ORIGIN: origins.siteOrigin,
-        E2E_RELATIVE_APP_ORIGIN: origins.marketplaceOrigin,
+        E2E_ROOT_APP_ORIGIN: origins.marketplaceOrigin,
         E2E_API_ORIGIN: origins.apiOrigin,
       },
       stdio: 'ignore',
@@ -120,6 +120,7 @@ describe('shared-origin test proxy', () => {
         }
       }
       assert.equal(body, 'site:/docs/')
+      assert.equal(await get('/', { origin: `http://127.0.0.1:${port}` }), 'marketplace:/')
     }
     finally {
       if (child.exitCode === null) {
