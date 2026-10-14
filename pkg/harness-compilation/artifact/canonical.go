@@ -436,11 +436,11 @@ func validateTarHeaderPath(p string) (string, error) {
 	}
 	for _, part := range strings.Split(p, "/") {
 		if part == ".." {
-			return "", fmt.Errorf("tar entry path traversal: %s", p)
+			return "", errors.New("tar entry path traversal")
 		}
 	}
 	if !filepath.IsLocal(p) {
-		return "", fmt.Errorf("tar entry absolute path: %s", p)
+		return "", errors.New("tar entry absolute path")
 	}
 	return path.Clean(p), nil
 }
