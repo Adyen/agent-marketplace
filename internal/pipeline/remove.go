@@ -174,7 +174,7 @@ func Remove(ctx context.Context, opts RemoveOptions) (result *RemoveResult, retE
 	}
 
 	if pin, entry, matches := marketplaceDirectPinMatches(mergedCfg, name, opts.Kind, opts.HasKind); matches > 1 {
-		return nil, fmt.Errorf("%q matches %d Marketplace pins by local or canonical name; remove by an unambiguous installed name", name, matches)
+		return nil, marketplacePinAmbiguousError(name, matches)
 	} else if matches == 1 {
 		if entry.Source == config.Organization {
 			if entry.Required {
@@ -203,7 +203,9 @@ func Remove(ctx context.Context, opts RemoveOptions) (result *RemoveResult, retE
 		return &RemoveResult{RemovedName: name}, nil
 	}
 
-	if pin, entry, ok := marketplaceRequiresHeldPinByName(mergedCfg, name, opts.Kind, opts.HasKind); ok {
+	if pin, entry, matches := marketplaceRequiresHeldPinMatches(mergedCfg, name, opts.Kind, opts.HasKind); matches > 1 {
+		return nil, marketplacePinAmbiguousError(name, matches)
+	} else if matches == 1 {
 		if entry.Source == config.Organization {
 			if entry.Required {
 				return nil, fmt.Errorf("%s %q is required and managed externally", skill.KindLabel(opts.Kind), name)
@@ -1633,6 +1635,10 @@ func marketplaceDirectPinByName(cfg *config.Config, name string, kind ir.Resourc
 	return pin, entry, count == 1
 }
 
+func marketplacePinAmbiguousError(name string, matches int) error {
+	return fmt.Errorf("%q matches %d Marketplace pins by local or canonical name; remove by an unambiguous installed name", name, matches)
+}
+
 func marketplaceDirectPinMatches(cfg *config.Config, name string, kind ir.ResourceKind, hasKind bool) (config.MarketplaceResourcePin, config.MarketplaceEntry, int) {
 	if cfg == nil {
 		return config.MarketplaceResourcePin{}, config.MarketplaceEntry{}, 0
@@ -1682,13 +1688,16 @@ func marketplaceCollectionOnlyPinByName(cfg *config.Config, name string, kind ir
 	return config.MarketplaceResourcePin{}, false
 }
 
-// marketplaceRequiresHeldPinByName returns the pin held only through
+// marketplaceRequiresHeldPinMatches counts the pins held only through
 // requires edges whose name or installed name matches. Such pins are
 // lock-derived prerequisite selections, never collection members.
-func marketplaceRequiresHeldPinByName(cfg *config.Config, name string, kind ir.ResourceKind, hasKind bool) (config.MarketplaceResourcePin, config.MarketplaceEntry, bool) {
+func marketplaceRequiresHeldPinMatches(cfg *config.Config, name string, kind ir.ResourceKind, hasKind bool) (config.MarketplaceResourcePin, config.MarketplaceEntry, int) {
 	if cfg == nil {
-		return config.MarketplaceResourcePin{}, config.MarketplaceEntry{}, false
+		return config.MarketplaceResourcePin{}, config.MarketplaceEntry{}, 0
 	}
+	var found config.MarketplaceResourcePin
+	var foundEntry config.MarketplaceEntry
+	count := 0
 	for _, entry := range cfg.Marketplaces {
 		for _, pin := range entry.Resources {
 			if pin.Kind == "collection" || !marketplacePinNamed(pin, name) {
@@ -1698,11 +1707,11 @@ func marketplaceRequiresHeldPinByName(cfg *config.Config, name string, kind ir.R
 				continue
 			}
 			if pin.RequiresHeld() {
-				return pin, entry, true
+				found, foundEntry, count = pin, entry, count+1
 			}
 		}
 	}
-	return config.MarketplaceResourcePin{}, config.MarketplaceEntry{}, false
+	return found, foundEntry, count
 }
 
 func inferMarketplaceRemoveScope(source config.Source) Scope {
