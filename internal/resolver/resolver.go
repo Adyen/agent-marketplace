@@ -2261,7 +2261,7 @@ func newSkillOccurrence(entry config.RegistryEntry, entryIndex int, candidate ca
 func buildOccurrences(cfg *config.Config, catalogs map[string][]catalog.Entry, resources map[string]map[string]ir.Resource, malformed *malformedIndex, targetSet []hcc.Target) (map[resourceSelection][]skillOccurrence, []error) {
 	var errs []error
 	occurrencesByName := make(map[resourceSelection][]skillOccurrence)
-	reportedNotFound := make(map[missingResource]struct{})
+	reportedNotFound := make(map[missingResource]error)
 	// Track per-registry collection not-found errors separately so they
 	// can be suppressed when the collection is found in another registry.
 	// propagateTopLevelCollections adds collection includes to every entry,
@@ -2304,7 +2304,6 @@ func buildOccurrences(cfg *config.Config, catalogs map[string][]catalog.Entry, r
 			if !found {
 				notFoundKey := missingResource{resourceSelection: selected, url: entry.URL, path: entry.Path, ref: entry.Ref}
 				if _, reported := reportedNotFound[notFoundKey]; !reported {
-					reportedNotFound[notFoundKey] = struct{}{}
 					// Correlate before blaming. The resource may be absent from
 					// the catalog because the ingester could not load it, in
 					// which case the exact validation failure is already known
@@ -2328,6 +2327,7 @@ func buildOccurrences(cfg *config.Config, catalogs map[string][]catalog.Entry, r
 						}
 						selErr = snf
 					}
+					reportedNotFound[notFoundKey] = selErr
 					// Defer collection errors: they may be false positives if
 					// the collection exists in another registry.
 					if selected.kind == ir.KindCollection {
@@ -2335,6 +2335,8 @@ func buildOccurrences(cfg *config.Config, catalogs map[string][]catalog.Entry, r
 					} else {
 						errs = append(errs, selErr)
 					}
+				} else if entry.Required {
+					markSelectionRequired(reportedNotFound[notFoundKey])
 				}
 				continue
 			}
@@ -2877,6 +2879,18 @@ func resolvedInEitherScope(resolved map[scopedSelection]struct{}, kind ir.Resour
 	_, machine := resolved[scopedSelection{selection, true}]
 	_, repo := resolved[scopedSelection{selection, false}]
 	return machine || repo
+}
+
+// markSelectionRequired upgrades a not-found or malformed selection error that
+// a later entry for the same location requires, so the miss stays hard
+// regardless of layer order.
+func markSelectionRequired(err error) {
+	switch e := err.(type) {
+	case *SelectedNotFoundError:
+		e.Required = true
+	case *SelectedMalformedError:
+		e.Required = true
+	}
 }
 
 type missingResource struct {
