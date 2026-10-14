@@ -2,7 +2,7 @@
 
 In this tutorial you deploy a Marketplace on a Kubernetes cluster with the repository's Helm chart, let it index one public registry, open the web UI in your browser, and install a resource from it with the `agent-marketplace` CLI.
 
-The deployment runs one all-in-one Marketplace pod with SQLite on a persistent volume, plus the Nuxt web UI, both behind one ingress. At the end you delete the namespace and the throwaway checkout, so nothing on your machine or cluster survives the tutorial. [Deploy a production Marketplace](../how-to/operator/deploy-a-production-marketplace.md) shows the split mode with PostgreSQL and S3 that you grow into when you need more than one replica.
+The deployment runs one all-in-one Marketplace pod with SQLite on a persistent volume, plus the Nuxt web UI, both behind one ingress. At the end you delete the namespace and the throwaway checkout. [Deploy a production Marketplace](../how-to/operator/deploy-a-production-marketplace.md) shows the split mode with PostgreSQL and S3 that you grow into when you need more than one replica.
 
 ::: danger No authentication on the public routes
 The Marketplace has no built-in authentication, authorization, or TLS. This tutorial uses a placeholder hostname that resolves only on your machine, but anyone who can reach your cluster's ingress and guesses that host header can still browse the deployment. Run the tutorial on a cluster you control, and put an authenticating TLS boundary in front of the public routes before the Marketplace matters; see [How to configure a reverse proxy](../how-to/operator/configure-a-reverse-proxy.md).
@@ -13,6 +13,7 @@ The Marketplace has no built-in authentication, authorization, or TLS. This tuto
 You need:
 
 - `kubectl` connected to a Kubernetes cluster you control, and Helm 3. A local [kind](https://kind.sigs.k8s.io/) cluster works if you created it with the [ingress port mappings](https://kind.sigs.k8s.io/docs/user/ingress/) that publish port 80 on `127.0.0.1`.
+- Cluster nodes that run `linux/amd64` images. The release images are built for `linux/amd64` only; a kind cluster on an Apple silicon Mac has `arm64` nodes.
 - An ingress controller in the cluster. The examples use the class `nginx`; change `ingress.className` if yours differs.
 - The `agent-marketplace` CLI on your `PATH` (see [Install](../install.md)).
 - The latest release tag from the [releases page](https://github.com/Adyen/agent-marketplace/releases). Every release publishes the Marketplace `worker` and `api` images and the `web` image to GHCR; releases that predate image publishing have none.
@@ -302,6 +303,8 @@ rm -rf "$TUTORIAL_ROOT"
 ```
 
 Then remove the `marketplace.example.com` line you added to `/etc/hosts`.
+
+Deleting the namespace deletes the persistent volume claim. Whether the persistent volume and its data go with it depends on the reclaim policy of the cluster's default StorageClass: kind's default deletes them, but a `Retain` policy keeps them. Run `kubectl get pv` to check for a `Released` volume, and remove it and its backing storage yourself if you need to.
 
 ## What happened
 
