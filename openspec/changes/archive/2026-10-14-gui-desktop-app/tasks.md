@@ -28,4 +28,4 @@
 
 - [x] 4.1 Add GUI test annotations and GUI-surface witnesses for every `session-*` scenario; implement the `specaudit` parity check and verify a missing TUI or GUI witness fails with that surface named.
 - [x] 4.2 Run host Go tests, Vitest, Playwright, `make spec-check`, and the affected `make validate`; require zero trace findings, no unbound scenarios, and no dangling annotations for this layer.
-- [ ] 4.3 Run `openspec archive gui-desktop-app --yes` in this layer's pull request.
+- [x] 4.3 Run `openspec archive gui-desktop-app --yes` in this layer's pull request.
