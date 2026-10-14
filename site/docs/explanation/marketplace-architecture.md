@@ -8,9 +8,16 @@ A deployment has a few parts, each with one job:
 
 - The worker clones each approved registry, reads the resources in it, runs the security analyzers and license and size policy, and stores the results. In `database` management mode it also runs discovery previews that the admin panel requests.
 - The API answers HTTP requests: the well-known identity document, search, resource and revision metadata, assessments, inspection content, artifacts, health, and the optional admin routes.
-- The Nuxt UI serves the Marketplace pages you see in a browser, including the admin panel.
-- The VitePress site serves the static landing page and these docs.
-- A reverse proxy in front of everything terminates TLS and routes each request to the API, the UI, or the static site.
+- The Nuxt UI serves the Marketplace at the deployment root, including the admin panel.
+- The documentation-only VitePress image serves these docs below `/docs/`.
+- A reverse proxy terminates TLS and routes API paths, `/docs/`, and the remaining UI paths to their owning services.
+
+The public project website is a separate deployment profile. It does not run a Marketplace API, worker, or UI.
+
+| Profile | Root route | Documentation |
+|---|---|---|
+| Public project website | `https://agent-marketplace.io/` serves the landing page | `https://agent-marketplace.io/docs/` |
+| Self-hosted Marketplace | The deployment origin serves the Nuxt UI, for example `https://marketplace.example.com/` | The same origin below `/docs/` |
 
 The worker and the API are the same `agent-marketplace serve` program. The `--role` flag runs one of them or both in one process.
 

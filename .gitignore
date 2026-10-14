@@ -49,7 +49,9 @@ testdata/rapid/
 # Website
 /site/node_modules/
 /site/.vitepress/dist/
+/site/.vitepress/dist-docs/
 /site/.vitepress/cache/
+/site/.vitepress/cache-docs/
 /.pnpm-store
 /.playwright-mcp
 

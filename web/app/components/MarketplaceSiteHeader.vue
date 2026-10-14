@@ -2,6 +2,8 @@
 import { DOCS_PATH } from '~/lib/site'
 
 const route = useRoute()
+const config = useRuntimeConfig()
+const marketplacePath = config.app.baseURL
 const menuOpen = ref(false)
 const menuButton = ref<HTMLButtonElement | null>(null)
 
@@ -18,7 +20,7 @@ function closeMenu(returnFocus = false) {
 <template>
   <header class="am-site-header">
     <nav class="am-site-nav" aria-label="Product navigation" @keydown.esc="closeMenu(true)">
-      <a href="/" class="am-site-nav__brand" @click="closeMenu()">
+      <a :href="marketplacePath" class="am-site-nav__brand" @click="closeMenu()">
         agent-marketplace
       </a>
 
@@ -39,7 +41,7 @@ function closeMenu(returnFocus = false) {
           <NuxtLink to="/" class="am-site-nav__link" @click="closeMenu()">
             Marketplace
           </NuxtLink>
-          <a :href="DOCS_PATH" class="am-site-nav__link" @click="closeMenu()">Docs</a>
+          <NuxtLink :to="DOCS_PATH" external class="am-site-nav__link" @click="closeMenu()">Docs</NuxtLink>
         </div>
 
         <div class="am-site-nav__utilities">

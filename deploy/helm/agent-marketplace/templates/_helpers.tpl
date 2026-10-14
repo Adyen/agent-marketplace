@@ -57,7 +57,7 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- define "agent-marketplace.servicePort" -}}
 {{- if eq .component "api" }}{{ .root.Values.service.api.port }}
 {{- else if eq .component "web" }}{{ .root.Values.service.web.port }}
-{{- else }}{{ .root.Values.service.site.port }}{{ end }}
+{{- else }}{{ .root.Values.service.docs.port }}{{ end }}
 {{- end }}
 
 {{- define "agent-marketplace.image" -}}
@@ -71,6 +71,12 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end }}
 
 {{- define "agent-marketplace.validate" -}}
+{{- if hasKey .Values "site" }}
+{{- fail "values.site was renamed to values.docs; update the values file before upgrading" }}
+{{- end }}
+{{- if and (hasKey .Values "service") (hasKey .Values.service "site") }}
+{{- fail "values.service.site was renamed to values.service.docs; update the values file before upgrading" }}
+{{- end }}
 {{- if not (has .Values.mode (list "split" "all")) }}
 {{- fail "mode must be either split or all" }}
 {{- end }}
@@ -168,7 +174,7 @@ spec:
           args:
             {{- toYaml . | nindent 12 }}
           {{- end }}
-          {{- if or $isMarketplace (eq $role "web") (eq $role "site") }}
+          {{- if or $isMarketplace (eq $role "web") (eq $role "docs") }}
           {{- if or (eq $role "api") (eq $role "all") }}
           ports:
             - name: http
@@ -182,7 +188,7 @@ spec:
             - name: http
               containerPort: 3000
               protocol: TCP
-          {{- else if eq $role "site" }}
+          {{- else if eq $role "docs" }}
           ports:
             - name: http
               containerPort: 8080
