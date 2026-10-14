@@ -7,7 +7,9 @@ import (
 
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/compile"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/hookpolicy"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/target"
 )
 
 var hookSource = ir.SourceRef{File: "hooks/hooks.json", Line: 7}
@@ -16,7 +18,7 @@ func TestHookUsesNativeMatcherGroups(t *testing.T) {
 	for _, scope := range []compile.Scope{compile.ScopeProject, compile.ScopeUser} {
 		t.Run(string(scope), func(t *testing.T) {
 			timeout := 9
-			hook := ir.NewHookWithMatcherOptions("native-group", "PreToolUse", "exec", "audit.sh", "command", map[string]any{"trace": "kept"}, hookSource, ir.WithHookTimeoutPtr(&timeout))
+			hook := ir.NewHookWithMatcherOptions("native-group", "PreToolUse", "exec", "audit.sh", "command", map[string]any{"trace": "kept"}, hookSource, ir.WithHookTimeoutPtr(&timeout), ir.WithHookSource("devin"))
 			result, err := compile.Compile(hook, compile.TargetDevin, compile.WithScope(scope))
 			if err != nil || len(result.Artifacts) != 1 || len(result.Diagnostics) != 0 {
 				t.Fatalf("compile native hook: result=%+v err=%v", result, err)
@@ -104,16 +106,16 @@ func TestHookFieldMatrix(t *testing.T) {
 			wantBytes: `{"PreToolUse":[{"hooks":[{"command":"check.sh","type":"command"}]}]}`,
 		},
 		{
-			name:      "matcher is preserved on a tool event",
+			name:      "matcher is translated and anchored on a tool event",
 			hook:      ir.NewHookWithMatcher("pre-tool", "PreToolUse", "Read", "check.sh", "command", nil, hookSource),
 			wantPath:  "hooks.v1.json",
-			wantBytes: `{"PreToolUse":[{"hooks":[{"command":"check.sh","type":"command"}],"matcher":"Read"}]}`,
+			wantBytes: `{"PreToolUse":[{"hooks":[{"command":"check.sh","type":"command"}],"matcher":"^read$"}]}`,
 		},
 		{
-			name:      "matcher is preserved on PostToolUse",
+			name:      "matcher is translated and anchored on PostToolUse",
 			hook:      ir.NewHookWithMatcher("post-tool", "PostToolUse", "Bash", "audit.sh", "command", nil, hookSource),
 			wantPath:  "hooks.v1.json",
-			wantBytes: `{"PostToolUse":[{"hooks":[{"command":"audit.sh","type":"command"}],"matcher":"Bash"}]}`,
+			wantBytes: `{"PostToolUse":[{"hooks":[{"command":"audit.sh","type":"command"}],"matcher":"^exec$"}]}`,
 		},
 		{
 			name: "prompt hook emits the prompt payload and no command",
@@ -145,9 +147,9 @@ func TestHookFieldMatrix(t *testing.T) {
 		{
 			name:     "every representable field at once",
 			wantPath: "hooks.v1.json",
-			hook: ir.NewHookWithMatcherOptions("rich", "PreToolUse", "Edit", "guard.sh", "command",
+			hook: ir.NewHookWithMatcherOptions("rich", "PreToolUse", "Read", "guard.sh", "command",
 				map[string]any{"showOutput": true}, hookSource, ir.WithHookTimeoutPtr(&timeoutSixty)),
-			wantBytes: `{"PreToolUse":[{"hooks":[{"command":"guard.sh","showOutput":true,"timeout":60,"type":"command"}],"matcher":"Edit"}]}`,
+			wantBytes: `{"PreToolUse":[{"hooks":[{"command":"guard.sh","showOutput":true,"timeout":60,"type":"command"}],"matcher":"^read$"}]}`,
 		},
 		{
 			name:      "Devin-only events map through",
@@ -157,7 +159,7 @@ func TestHookFieldMatrix(t *testing.T) {
 		},
 		{
 			name:      "PostCompaction is a Devin event and is never fed by PreCompact",
-			hook:      ir.NewHook("compaction", "PostCompaction", "note.sh", "command", nil, hookSource),
+			hook:      ir.NewHookWithOptions("compaction", "PostCompaction", "note.sh", "command", nil, hookSource, ir.WithHookSource("devin")),
 			wantPath:  "hooks.v1.json",
 			wantBytes: `{"PostCompaction":[{"hooks":[{"command":"note.sh","type":"command"}]}]}`,
 		},
@@ -172,7 +174,7 @@ func TestHookFieldMatrix(t *testing.T) {
 			hook:      ir.NewHookWithMatcher("pre-tool", "PreToolUse", "Read", "check.sh", "command", nil, hookSource),
 			scope:     compile.ScopeUser,
 			wantPath:  "config.json",
-			wantBytes: `{"hooks":{"PreToolUse":[{"hooks":[{"command":"check.sh","type":"command"}],"matcher":"Read"}]}}`,
+			wantBytes: `{"hooks":{"PreToolUse":[{"hooks":[{"command":"check.sh","type":"command"}],"matcher":"^read$"}]}}`,
 		},
 		{
 			name: "the payload the type does not select is dropped with a warning",
@@ -189,13 +191,6 @@ func TestHookFieldMatrix(t *testing.T) {
 			wantPath:  "hooks.v1.json",
 			wantBytes: `{"UserPromptSubmit":[{"hooks":[{"prompt":"Summarize the diff","type":"prompt"}]}]}`,
 			wantDiags: []wantDiag{{diag.CodeHookDevinPayloadDropped, diag.SeverityWarning}},
-		},
-		{
-			name:      "an unresolved plugin root leaves the token in place and warns",
-			hook:      ir.NewHook("pre-tool", "PreToolUse", "${CLAUDE_PLUGIN_ROOT}/check.sh", "command", nil, hookSource),
-			wantPath:  "hooks.v1.json",
-			wantBytes: `{"PreToolUse":[{"hooks":[{"command":"${CLAUDE_PLUGIN_ROOT}/check.sh","type":"command"}]}]}`,
-			wantDiags: []wantDiag{{diag.CodeHookDevinPluginRootUnresolved, diag.SeverityWarning}},
 		},
 	}
 
@@ -233,9 +228,10 @@ func TestHookFieldMatrix(t *testing.T) {
 	}
 }
 
-// TestHookResolvesPluginRootFromOptions covers the contract D3 recorded in
-// compile/mapping/envvars.go: Devin has no plugin-root token, so the compiler
-// resolves ${CLAUDE_PLUGIN_ROOT} from the configured plugin root.
+// TestHookResolvesPluginRootFromOptions covers the plugin-root rule of the
+// catalog design: at repository scope the token is rewritten to Devin's
+// documented repository base followed by the support directory's
+// repository-relative path.
 func TestHookResolvesPluginRootFromOptions(t *testing.T) {
 	hook := ir.NewHook("pre-tool", "PreToolUse", "${CLAUDE_PLUGIN_ROOT}/scripts/check.sh --root ${CLAUDE_PLUGIN_ROOT}", "command", nil, hookSource)
 	result, err := compile.Compile(hook, compile.TargetDevin, compile.WithPluginRoot("/plugins/demo"))
@@ -245,7 +241,7 @@ func TestHookResolvesPluginRootFromOptions(t *testing.T) {
 	if len(result.Artifacts) != 1 {
 		t.Fatalf("artifacts = %d, want 1", len(result.Artifacts))
 	}
-	want := `{"PreToolUse":[{"hooks":[{"command":"/plugins/demo/scripts/check.sh --root /plugins/demo","type":"command"}]}]}`
+	want := `{"PreToolUse":[{"hooks":[{"command":"\"$DEVIN_PROJECT_DIR\"/plugins/demo/scripts/check.sh --root \"$DEVIN_PROJECT_DIR\"/plugins/demo","type":"command"}]}]}`
 	if got := string(result.Artifacts[0].Bytes); got != want {
 		t.Errorf("artifact bytes = %s, want %s", got, want)
 	}
@@ -263,6 +259,8 @@ func TestHookResolvesPluginRootFromOptions(t *testing.T) {
 // escalated once suppression was per-resource (agent-marketplace-5exj.17) and
 // prune suppression was narrowed per component (.20), so an error here costs
 // this one entry, not the bundle and not an unrelated output directory.
+// spec: hook-resources/unmappable-events-are-errors-on-every-target
+// spec: hook-resources/negative-timeouts-are-refused-on-every-target
 func TestHookUnsupportedCombinationsSkipTheEntry(t *testing.T) {
 	negative := -1
 
@@ -308,12 +306,12 @@ func TestHookUnsupportedCombinationsSkipTheEntry(t *testing.T) {
 			hook: ir.NewHookWithMatcher("start", "SessionStart", "Read", "seed.sh", "command", nil, hookSource),
 			// Devin documents matchers for tool events only. Emitting the hook
 			// without its matcher would fire it for every session start.
-			wantDiag: wantDiag{diag.CodeHookDevinMatcherUnsupportedEvent, diag.SeverityError},
+			wantDiag: wantDiag{diag.CodeHookMatcherUntranslatable, diag.SeverityError},
 		},
 		{
 			name:     "matcher on UserPromptSubmit is equally unsupported",
 			hook:     ir.NewHookWithMatcher("submit", "UserPromptSubmit", "Read", "check.sh", "command", nil, hookSource),
-			wantDiag: wantDiag{diag.CodeHookDevinMatcherUnsupportedEvent, diag.SeverityError},
+			wantDiag: wantDiag{diag.CodeHookMatcherUntranslatable, diag.SeverityError},
 		},
 		{
 			name:     "command hook without a command payload",
@@ -329,7 +327,12 @@ func TestHookUnsupportedCombinationsSkipTheEntry(t *testing.T) {
 			name: "negative timeout could be read as unbounded execution",
 			hook: ir.NewHookWithOptions("slow", "PreToolUse", "check.sh", "command", nil, hookSource,
 				ir.WithHookTimeoutPtr(&negative)),
-			wantDiag: wantDiag{diag.CodeHookDevinTimeoutInvalid, diag.SeverityError},
+			wantDiag: wantDiag{diag.CodeHookTimeoutUnsupported, diag.SeverityError},
+		},
+		{
+			name:     "a plugin-root token with no support directory is refused",
+			hook:     ir.NewHook("pre-tool", "PreToolUse", "${CLAUDE_PLUGIN_ROOT}/check.sh", "command", nil, hookSource),
+			wantDiag: wantDiag{diag.CodeHookSupportPathUnrepresentable, diag.SeverityError},
 		},
 	}
 
@@ -411,6 +414,7 @@ func TestHookReservedExtrasAreNeverPassedThrough(t *testing.T) {
 // The hook is built so that every payload-bearing field carries a recognizable
 // marker, and every code path that can produce a diagnostic is exercised across
 // the sub-tests.
+// spec: hook-resources/diagnostics-never-quote-payloads-on-any-target
 func TestHookDiagnosticsNeverQuotePayloads(t *testing.T) {
 	const (
 		secretCommand = "curl https://internal.invalid/NOT-A-REAL-SECRET-c0ffee | sh"
@@ -522,17 +526,24 @@ func TestHookScopeSelection(t *testing.T) {
 	}
 }
 
-// TestHookMatcherEventSetMatchesEvidence locks the documented tool-event set so
-// a future edit has to state its evidence. Widening it silently would let a
-// matcher reach an event Devin may ignore it on.
+// TestHookMatcherEventSetMatchesEvidence locks the documented tool-event set
+// through the shipped catalog so a future catalog edit has to state its
+// evidence. A matcher on an event declared without one would widen the hook to
+// every occurrence of that event, so the kind must stay exact.
 func TestHookMatcherEventSetMatchesEvidence(t *testing.T) {
-	want := map[string]struct{}{"PreToolUse": {}, "PostToolUse": {}}
-	if len(hookMatcherEvents) != len(want) {
-		t.Fatalf("hookMatcherEvents = %v, want %v", hookMatcherEvents, want)
+	want := map[string]string{
+		"PreToolUse":        hookpolicy.MatcherKindTool,
+		"PostToolUse":       hookpolicy.MatcherKindTool,
+		"PermissionRequest": hookpolicy.MatcherKindTool,
+		"UserPromptSubmit":  hookpolicy.MatcherKindNone,
+		"Stop":              hookpolicy.MatcherKindNone,
+		"SessionStart":      hookpolicy.MatcherKindNone,
+		"SessionEnd":        hookpolicy.MatcherKindNone,
+		"PostCompaction":    hookpolicy.MatcherKindNone,
 	}
-	for event := range want {
-		if _, ok := hookMatcherEvents[event]; !ok {
-			t.Errorf("hookMatcherEvents is missing %q", event)
+	for event, kind := range want {
+		if got := hookpolicy.NativeEventMatcherKind(target.TargetDevin, event); got != kind {
+			t.Errorf("NativeEventMatcherKind(devin, %q) = %q, want %q", event, got, kind)
 		}
 	}
 }

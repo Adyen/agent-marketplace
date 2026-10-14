@@ -2,8 +2,6 @@ package materialize
 
 import (
 	"bytes"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -11,20 +9,20 @@ import (
 	"path/filepath"
 	"strings"
 
-	"slices"
-
 	"github.com/Adyen/agent-marketplace/internal/cache"
 	"github.com/Adyen/agent-marketplace/internal/config"
-	"github.com/Adyen/agent-marketplace/internal/fsboundary"
 	"github.com/Adyen/agent-marketplace/internal/resolver"
 	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
-	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact"
 	compilepkg "github.com/Adyen/agent-marketplace/pkg/harness-compilation/compile"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ingest"
 	factoryingest "github.com/Adyen/agent-marketplace/pkg/harness-compilation/ingest/factory"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 )
+
+var capturedNativeHookSourceLoaders = map[hcc.Harness]func(fs.FS, string) ([]*ir.Hook, []diag.Diagnostic, error){
+	hcc.Harness(hcc.TargetFactory): factoryingest.LoadHooksForNativeProjection,
+}
 
 // nativeHookProjectionSource resolves the verified source layout root and the
 // hook definition's root-relative path for one selected non-mirror hook,
@@ -42,7 +40,7 @@ func nativeHookProjectionSource(res resolver.ResolvedArtifact) (root, definition
 				!filepath.IsAbs(res.StagedSourceDir) || !filepath.IsAbs(res.Path) {
 				return "", "", "", fmt.Errorf("index-only hook source is incomplete")
 			}
-			return hookSupportSourceLocation(res.StagedSourceDir, res.Path)
+			return nativeHookProjectionSourceLocation(res.StagedSourceDir, res.Path)
 		default:
 			return "", "", "", fmt.Errorf("marketplace hook source mode is unavailable")
 		}
@@ -84,98 +82,18 @@ func nativeHookProjectionSource(res resolver.ResolvedArtifact) (root, definition
 			root = filepath.Join(root, filepath.FromSlash(rel))
 		}
 	}
-	return hookSupportSourceLocation(root, definition)
+	return nativeHookProjectionSourceLocation(root, definition)
 }
 
-func hookSupportSourceLocation(sourceRoot, definitionPath string) (root, definition, definitionDir string, err error) {
-	root, err = filepath.Abs(sourceRoot)
+func nativeHookProjectionSourceLocation(sourceRoot, definitionPath string) (root, definition, definitionDir string, err error) {
+	root, definition, definitionDir, ok, err := hookSupportSourceLocation(sourceRoot, definitionPath)
 	if err != nil {
 		return "", "", "", err
 	}
-	if filepath.IsAbs(definitionPath) {
-		if filepath.Clean(definitionPath) != definitionPath {
-			return "", "", "", fmt.Errorf("hook definition path is not clean")
-		}
-	} else {
-		rel := filepath.ToSlash(filepath.FromSlash(definitionPath))
-		if !fs.ValidPath(rel) {
-			return "", "", "", fmt.Errorf("hook definition path is invalid")
-		}
-		definitionPath = filepath.Join(root, filepath.FromSlash(rel))
+	if !ok {
+		return "", "", "", errors.New("hook source location is unavailable")
 	}
-	definitionPath, err = filepath.Abs(definitionPath)
-	if err != nil {
-		return "", "", "", err
-	}
-	rel, err := filepath.Rel(root, definitionPath)
-	if err != nil {
-		return "", "", "", err
-	}
-	definition = filepath.ToSlash(filepath.Clean(rel))
-	if definition == "." || !fs.ValidPath(definition) {
-		return "", "", "", fmt.Errorf("hook definition is outside its configured source root")
-	}
-	return filepath.Clean(root), definition, path.Dir(definition), nil
-}
-
-// hookSupportSourceKey derives the stable per-source namespace component the
-// native writer installs support under: the configured-source slug plus the
-// sha256 of the version-1 stable source identity, so two configured sources
-// can never share a namespace.
-func hookSupportSourceKey(res resolver.ResolvedArtifact) (string, error) {
-	identity, err := nativeHookSourceIdentity(res)
-	if err != nil {
-		return "", err
-	}
-	sum := sha256.Sum256([]byte(identity))
-	return hookSupportSlug(res) + "-" + hex.EncodeToString(sum[:]), nil
-}
-
-func hookSupportSlug(res resolver.ResolvedArtifact) string {
-	raw := ""
-	if res.IsMarketplace {
-		raw = strings.TrimSpace(res.MarketplaceRegistryID)
-		if name := strings.TrimSpace(res.MarketplaceResourceName); name != "" {
-			if raw != "" {
-				raw += "-" + name
-			} else {
-				raw = name
-			}
-		}
-	} else {
-		raw = strings.TrimSpace(res.RegistryURL)
-	}
-	raw = strings.TrimRight(raw, "/")
-	raw = strings.TrimSuffix(raw, ".git")
-	if i := strings.LastIndexAny(raw, "/\\"); i >= 0 {
-		raw = raw[i+1:]
-	}
-	var b strings.Builder
-	lastDash := false
-	for _, r := range raw {
-		ok := (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '.' || r == '_' || r == '-'
-		if !ok {
-			if lastDash {
-				continue
-			}
-			b.WriteByte('-')
-			lastDash = true
-			continue
-		}
-		b.WriteRune(r)
-		lastDash = r == '-'
-	}
-	slug := strings.Trim(b.String(), "-.")
-	if slug == "" {
-		return "source"
-	}
-	if len(slug) > 64 {
-		slug = strings.Trim(slug[:64], "-.")
-	}
-	if slug == "" {
-		return "source"
-	}
-	return slug
+	return root, definition, definitionDir, nil
 }
 
 // capturedHookSourceHarness reports the harness the captured definition is
@@ -240,41 +158,20 @@ func verifyCapturedSourceHook(res resolver.ResolvedArtifact, hook *ir.Hook, snap
 	if !bytes.Equal(want, got) {
 		return nil, errors.New("captured hook definition differs from the selected resource")
 	}
-	if sourceHarness != hcc.Harness(hcc.TargetFactory) {
+	nativeLoader, ok := capturedNativeHookSourceLoaders[sourceHarness]
+	if !ok {
 		return legacyHook, nil
 	}
 
-	nativeHooks, nativeDiagnostics, err := factoryingest.LoadHooksForNativeProjection(snapshotFS, sourceFile)
+	nativeHooks, nativeDiagnostics, err := nativeLoader(snapshotFS, sourceFile)
 	if err != nil {
-		return nil, errors.New("captured native Factory hook definition could not be re-ingested")
+		return nil, errors.New("captured native hook definition could not be re-ingested")
 	}
 	nativeBundle := &ingest.Bundle{Diagnostics: nativeDiagnostics, Resources: make([]ir.Resource, 0, len(nativeHooks))}
 	for _, nativeHook := range nativeHooks {
 		nativeBundle.Resources = append(nativeBundle.Resources, nativeHook)
 	}
 	return selectCapturedSourceHook(nativeBundle, hook.Name())
-}
-
-// marketplaceHookSupportArtifacts validates and immutably copies the verified
-// mirror support inventory into projected support artifacts: each path must
-// be a clean support-relative file path, duplicates refuse, and the copy is
-// sorted so callers see a deterministic inventory.
-func marketplaceHookSupportArtifacts(support []artifact.Artifact) ([]artifact.Artifact, error) {
-	files := make([]artifact.Artifact, 0, len(support))
-	seen := make(map[string]struct{}, len(support))
-	for _, source := range support {
-		file := artifact.Artifact{Path: source.Path, Bytes: bytes.Clone(source.Bytes), Mode: source.Mode.Perm()}
-		if err := file.Validate(); err != nil {
-			return nil, fmt.Errorf("%w: mirror hook support path is invalid: %v", fsboundary.ErrUnsafePath, err)
-		}
-		if _, ok := seen[file.Path]; ok {
-			return nil, fmt.Errorf("%w: mirror hook support contains a duplicate path", fsboundary.ErrUnsafePath)
-		}
-		seen[file.Path] = struct{}{}
-		files = append(files, file)
-	}
-	slices.SortFunc(files, func(a, b artifact.Artifact) int { return strings.Compare(a.Path, b.Path) })
-	return files, nil
 }
 
 func selectCapturedSourceHook(bundle *ingest.Bundle, name string) (*ir.Hook, error) {

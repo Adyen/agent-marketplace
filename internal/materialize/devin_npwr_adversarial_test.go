@@ -59,7 +59,7 @@ func prepareDevinHookIdentityTwins(t *testing.T, repoRoot string) (hooksPath str
 	t.Helper()
 	root := devinProjectRoot(repoRoot)
 	selection := []resolver.ResolvedArtifact{
-		devinResolved("beta", ir.NewHook("beta", "PostToolUse", "echo beta", "command", nil, ir.SourceRef{}), false),
+		devinResolved(t, "beta", ir.NewHook("beta", "PostToolUse", "echo beta", "command", nil, ir.SourceRef{}), false),
 	}
 	if _, err := Run(context.Background(), repoRoot, selection); err != nil {
 		t.Fatalf("seed sync: %v", err)
@@ -148,7 +148,7 @@ func TestAdversarialOrphanRemovalStillRemovesExactlyOneOfTwoIdenticalHooks(t *te
 	repoRoot, _ := devinEnv(t)
 	root := devinProjectRoot(repoRoot)
 	selection := []resolver.ResolvedArtifact{
-		devinResolved("beta", ir.NewHook("beta", "PostToolUse", "echo beta", "command", nil, ir.SourceRef{}), false),
+		devinResolved(t, "beta", ir.NewHook("beta", "PostToolUse", "echo beta", "command", nil, ir.SourceRef{}), false),
 	}
 	if _, err := Run(context.Background(), repoRoot, selection); err != nil {
 		t.Fatalf("seed sync: %v", err)

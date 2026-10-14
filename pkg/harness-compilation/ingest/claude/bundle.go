@@ -87,6 +87,9 @@ func hasClaudeWorkspaceForm(src fs.FS) bool {
 		if _, err := fs.Stat(src, ".mcp.json"); err == nil {
 			return true
 		}
+		if _, err := fs.Stat(src, ".claude/settings.json"); err == nil && !hasBarePluginForm(src) {
+			return true
+		}
 	}
 	if _, err := fs.Stat(src, ".claude.json"); err == nil {
 		return true
@@ -387,8 +390,13 @@ func loadWorkspaceForm(src fs.FS) (*ingest.Bundle, error) {
 		resources = append(resources, sub)
 	}
 
-	// 4. Hooks
-	hooks, hookDiags, err := bundle.LoadHooks(src, ".claude/hooks/hooks.json")
+	// 4. Hooks: the legacy .claude/hooks/hooks.json plugin layout keeps canonical
+	// provenance, while the hooks member of the native .claude/settings.json is
+	// recorded with Claude provenance so the resolver sees the native file's
+	// vocabulary. Only the hooks member is read; unrelated settings (for
+	// example permissions) never become resources.
+	var hooks []*ir.Hook
+	legacyHooks, hookDiags, err := bundle.LoadHooks(src, ".claude/hooks/hooks.json")
 	if err != nil && !isNotExist(err) {
 		return nil, fmt.Errorf("ingest/claude: load .claude/hooks: %w", err)
 	}
@@ -396,9 +404,24 @@ func loadWorkspaceForm(src fs.FS) (*ingest.Bundle, error) {
 		for _, d := range hookDiags {
 			diags = append(diags, *d)
 		}
-		for _, h := range hooks {
-			resources = append(resources, h)
+		hooks = append(hooks, legacyHooks...)
+	}
+	settingsHooks, settingsDiags, err := bundle.LoadHooksMember(src, ".claude/settings.json")
+	if err != nil && !isNotExist(err) {
+		return nil, fmt.Errorf("ingest/claude: load .claude/settings.json: %w", err)
+	}
+	if err == nil {
+		for _, d := range settingsDiags {
+			diags = append(diags, *d)
 		}
+		for _, h := range settingsHooks {
+			h.HookSource = string(ingest.HarnessClaude)
+			hooks = append(hooks, h)
+		}
+	}
+	bundle.DistinctHookNames(hooks)
+	for _, h := range hooks {
+		resources = append(resources, h)
 	}
 
 	// 5. MCP servers
@@ -433,7 +456,7 @@ func loadWorkspaceForm(src fs.FS) (*ingest.Bundle, error) {
 		})
 	}
 
-	diags = append(diags, ingest.UnconsumedConfigs(src, diag.CodeIngestClaudeUnconsumedConfig, "claude workspace", ".claude/hooks/hooks.json", mcpPath)...)
+	diags = append(diags, ingest.UnconsumedConfigs(src, diag.CodeIngestClaudeUnconsumedConfig, "claude workspace", ".claude/hooks/hooks.json", ".claude/settings.json", mcpPath)...)
 	return &ingest.Bundle{
 		Manifest:    manifest,
 		Resources:   resources,
@@ -524,7 +547,7 @@ func isNotExist(err error) bool {
 
 // listSubdirs returns the immediate subdirectories of root within src.
 func listSubdirs(src fs.FS, root string) ([]string, error) {
-	entries, err := fs.ReadDir(src, root)
+	entries, err := ingest.ReadSkillEntries(src, root)
 	if err != nil {
 		return nil, err
 	}

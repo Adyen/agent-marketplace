@@ -287,8 +287,9 @@ func markdownBody(content string) string {
 }
 
 type IngestOptions struct {
-	LegacyWindsurfHooks bool
-	LegacyBareMCP       bool
+	LegacyWindsurfHooks       bool
+	LegacyBareMCP             bool
+	LegacyNativeHookInventory bool
 }
 
 func (c *Catalog) SourceRefusal() error { return c.sourceRefusal }
@@ -352,6 +353,9 @@ func LoadFS(srcFS fs.FS, sourceHarness string) (*Catalog, error) {
 }
 
 func LoadFSWithOptions(srcFS fs.FS, sourceHarness string, opts IngestOptions) (*Catalog, error) {
+	if opts.LegacyNativeHookInventory {
+		srcFS = legacyNativeInventoryFS{fsys: srcFS}
+	}
 	from := ingest.Harness(sourceHarness)
 	var autodetectDiag diag.Diagnostic
 
@@ -374,9 +378,13 @@ func LoadFSWithOptions(srcFS fs.FS, sourceHarness string, opts IngestOptions) (*
 	var bundle *ingest.Bundle
 	var err error
 	if opts.LegacyBareMCP && from == ingest.HarnessClaude {
-		bundle, err = claude.LoadBundleWithOptions(srcFS, claude.LoadOptions{LegacyBareMCP: true})
+		bundle, err = hcc.IngestBundleWithLoader(srcFS, func(observed fs.FS) (*ingest.Bundle, error) {
+			return claude.LoadBundleWithOptions(observed, claude.LoadOptions{LegacyBareMCP: true})
+		})
 	} else if opts.LegacyWindsurfHooks && from == ingest.HarnessWindsurf {
-		bundle, err = (windsurf.Ingester{}).LoadBundleWithOptions(srcFS, windsurf.LoadOptions{LegacyHookInventory: true})
+		bundle, err = hcc.IngestBundleWithLoader(srcFS, func(observed fs.FS) (*ingest.Bundle, error) {
+			return (windsurf.Ingester{}).LoadBundleWithOptions(observed, windsurf.LoadOptions{LegacyHookInventory: true})
+		})
 	} else {
 		bundle, err = hcc.IngestBundle(srcFS, hcc.Harness(from))
 	}

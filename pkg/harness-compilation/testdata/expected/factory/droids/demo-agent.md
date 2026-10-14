@@ -1,7 +1,7 @@
 ---
 name: demo-agent
 description: Demo agent for golden testing
-model: claude-sonnet-4-5-20250929
+model: claude-sonnet-5
 tools:
   - Read
   - Grep

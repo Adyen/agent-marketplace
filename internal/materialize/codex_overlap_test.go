@@ -236,8 +236,8 @@ func TestRunCoalescesCodexSharedAggregateEntries(t *testing.T) {
 	repoHook := ir.NewHookWithMatcher("repo-hook", "PreToolUse", "Bash", "./repo-hook", "command", nil, ir.SourceRef{})
 	machineHook := ir.NewHookWithMatcher("machine-hook", "PostToolUse", "Bash", "./machine-hook", "command", nil, ir.SourceRef{})
 	selection := []resolver.ResolvedArtifact{
-		codexResource("repo-hook", repoHook, config.RepoCommitted),
-		codexResource("machine-hook", machineHook, config.UserPersonal),
+		codexHookResolved(t, "repo-hook", repoHook, config.RepoCommitted),
+		codexHookResolved(t, "machine-hook", machineHook, config.UserPersonal),
 		codexResource("repo-mcp", ir.NewMcpServer("repo-mcp", "npx", []string{"repo"}, nil, nil, ir.SourceRef{}), config.RepoCommitted),
 		codexResource("machine-mcp", ir.NewMcpServer("machine-mcp", "npx", []string{"machine"}, nil, nil, ir.SourceRef{}), config.UserPersonal),
 	}

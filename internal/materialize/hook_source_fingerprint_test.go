@@ -3,6 +3,7 @@ package materialize
 import (
 	"encoding/base64"
 	"encoding/json"
+	"io"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -117,6 +118,85 @@ func fingerprintVectorInput(c hookSourceFingerprintVector, sourceRoot string) Ho
 	}
 }
 
+func newFingerprintAliasSource(t *testing.T, base hookSourceFingerprintVector) (HookSourceFingerprintInput, string) {
+	t.Helper()
+	root, definition := writeFingerprintSource(t, base)
+	return fingerprintVectorInput(base, root), filepath.Dir(definition)
+}
+
+func writeFingerprintAliasFile(t *testing.T, dir, rel string, data []byte, mode os.FileMode) string {
+	t.Helper()
+	fullPath := filepath.Join(dir, filepath.FromSlash(rel))
+	if err := os.MkdirAll(filepath.Dir(fullPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(fullPath, data, mode); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(fullPath, mode); err != nil {
+		t.Fatal(err)
+	}
+	return fullPath
+}
+
+func fingerprintSupportDirectoryFD(t *testing.T, dir string) int {
+	t.Helper()
+	fd, err := unix.Open(dir, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := unix.Close(fd); err != nil {
+			t.Errorf("close fingerprint support root: %v", err)
+		}
+	})
+	return fd
+}
+
+func readFingerprintSupportCapture(dirFD int, rel string) ([]byte, os.FileMode, error) {
+	file, mode, _, err := openHookSupportFileAt(dirFD, rel, 0)
+	if err != nil {
+		return nil, 0, err
+	}
+	data, readErr := io.ReadAll(file)
+	closeErr := file.Close()
+	if readErr != nil {
+		return nil, 0, readErr
+	}
+	if closeErr != nil {
+		return nil, 0, closeErr
+	}
+	return data, mode.Perm(), nil
+}
+
+func requireFingerprintAliasRefusal(t *testing.T, in HookSourceFingerprintInput, defDir, rel string) {
+	t.Helper()
+	fingerprint, publicErr := HookSourceFingerprint(in)
+	if publicErr == nil || fingerprint != "" {
+		t.Errorf("public fingerprint for %s = %q / %v, want refusal", rel, fingerprint, publicErr)
+	}
+	data, mode, captureErr := readFingerprintSupportCapture(fingerprintSupportDirectoryFD(t, defDir), rel)
+	if captureErr == nil {
+		t.Errorf("direct support capture accepted %s: %q mode=%#o", rel, data, mode.Perm())
+	}
+}
+
+func requireFingerprintAliasCapture(t *testing.T, in HookSourceFingerprintInput, defDir, rel string, want []byte, wantMode os.FileMode) string {
+	t.Helper()
+	fingerprint, err := HookSourceFingerprint(in)
+	if err != nil || fingerprint == "" {
+		t.Fatalf("public fingerprint for %s: %q / %v", rel, fingerprint, err)
+	}
+	data, mode, err := readFingerprintSupportCapture(fingerprintSupportDirectoryFD(t, defDir), rel)
+	if err != nil {
+		t.Fatalf("direct support capture for %s: %v", rel, err)
+	}
+	if string(data) != string(want) || mode.Perm() != wantMode.Perm() {
+		t.Fatalf("direct support capture for %s = %q mode=%#o, want %q mode=%#o", rel, data, mode.Perm(), want, wantMode.Perm())
+	}
+	return fingerprint
+}
+
 // spec: hook-native-location-tolerance/source-and-support-changes-invalidate-the-fingerprint
 // spec: hook-native-location-tolerance/different-ir-provenance-keeps-the-same-fingerprint
 func TestHookSourceFingerprintVectors(t *testing.T) {
@@ -147,6 +227,213 @@ func TestHookSourceFingerprintVectors(t *testing.T) {
 			t.Fatalf("cases %s and %s must share the fingerprint (IR provenance is not hashed): %s != %s", pair[0], pair[1], a, b)
 		}
 	}
+}
+
+// spec: hook-native-location-tolerance/source-and-support-changes-invalidate-the-fingerprint
+func TestHookSourceFingerprintContainedFileAlias(t *testing.T) {
+	vectors := loadHookSourceFingerprintVectors(t)
+	base := vectors.Cases[0]
+	const support = "contained hook support bytes"
+
+	writeSupport := func(root string, symlink bool) string {
+		t.Helper()
+		defDir := filepath.Dir(filepath.Join(root, filepath.FromSlash(base.Definition.Path)))
+		helperPath := filepath.Join(defDir, "helper.txt")
+		if err := os.WriteFile(helperPath, []byte(support), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chmod(helperPath, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		aliasPath := filepath.Join(defDir, "alias.txt")
+		if symlink {
+			if err := os.Symlink("helper.txt", aliasPath); err != nil {
+				t.Fatal(err)
+			}
+		} else {
+			if err := os.WriteFile(aliasPath, []byte(support), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Chmod(aliasPath, 0o755); err != nil {
+				t.Fatal(err)
+			}
+		}
+		return aliasPath
+	}
+
+	linkedRoot, _ := writeFingerprintSource(t, base)
+	writeSupport(linkedRoot, true)
+	linkedDefDir := filepath.Dir(filepath.Join(linkedRoot, filepath.FromSlash(base.Definition.Path)))
+	directData, directMode, directErr := readFingerprintSupportCapture(fingerprintSupportDirectoryFD(t, linkedDefDir), "alias.txt")
+	if directErr != nil || string(directData) != support || directMode.Perm() != 0o755 {
+		t.Fatalf("direct simple alias capture = %q mode=%#o / %v", directData, directMode.Perm(), directErr)
+	}
+	linked, err := HookSourceFingerprint(fingerprintVectorInput(base, linkedRoot))
+	if err != nil {
+		t.Fatalf("contained relative file alias: %v", err)
+	}
+	if !strings.HasPrefix(linked, "sha256:") || len(linked) != len("sha256:")+64 {
+		t.Fatalf("contained alias fingerprint = %q, want sha256 digest", linked)
+	}
+
+	regularRoot, _ := writeFingerprintSource(t, base)
+	writeSupport(regularRoot, false)
+	regular, err := HookSourceFingerprint(fingerprintVectorInput(base, regularRoot))
+	if err != nil {
+		t.Fatalf("regular alias-equivalent source: %v", err)
+	}
+	if linked != regular {
+		t.Fatalf("contained alias fingerprint = %q, regular logical copy = %q", linked, regular)
+	}
+	t.Run("relative_escape_refuses", func(t *testing.T) {
+		in, defDir := newFingerprintAliasSource(t, base)
+		if err := os.Symlink("../../outside.txt", filepath.Join(defDir, "escape.txt")); err != nil {
+			t.Fatal(err)
+		}
+		requireFingerprintAliasRefusal(t, in, defDir, "escape.txt")
+	})
+	t.Run("cycle_refuses", func(t *testing.T) {
+		in, defDir := newFingerprintAliasSource(t, base)
+		if err := os.Symlink("cycle-b.txt", filepath.Join(defDir, "cycle-a.txt")); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink("cycle-a.txt", filepath.Join(defDir, "cycle-b.txt")); err != nil {
+			t.Fatal(err)
+		}
+		requireFingerprintAliasRefusal(t, in, defDir, "cycle-a.txt")
+	})
+	t.Run("missing_component_before_dotdot_refuses", func(t *testing.T) {
+		in, defDir := newFingerprintAliasSource(t, base)
+		writeFingerprintAliasFile(t, defDir, "helper.txt", []byte("helper payload"), 0o755)
+		if err := os.Symlink("missing/../helper.txt", filepath.Join(defDir, "a-alias.txt")); err != nil {
+			t.Fatal(err)
+		}
+		requireFingerprintAliasRefusal(t, in, defDir, "a-alias.txt")
+	})
+	t.Run("file_component_before_dotdot_refuses", func(t *testing.T) {
+		in, defDir := newFingerprintAliasSource(t, base)
+		writeFingerprintAliasFile(t, defDir, "file", []byte("not a directory"), 0o644)
+		writeFingerprintAliasFile(t, defDir, "helper.txt", []byte("helper payload"), 0o755)
+		if err := os.Symlink("file/../helper.txt", filepath.Join(defDir, "a-alias.txt")); err != nil {
+			t.Fatal(err)
+		}
+		requireFingerprintAliasRefusal(t, in, defDir, "a-alias.txt")
+	})
+	t.Run("symlink_directory_before_dotdot_refuses_without_foreign_changes", func(t *testing.T) {
+		in, defDir := newFingerprintAliasSource(t, base)
+		writeFingerprintAliasFile(t, defDir, "helper.txt", []byte("helper payload"), 0o755)
+		outsideDir := t.TempDir()
+		foreignPath := writeFingerprintAliasFile(t, outsideDir, "foreign.txt", []byte("foreign payload"), 0o640)
+		foreignBefore, foreignMode, foreignMtime := fileSnapshot(t, foreignPath)
+		foreignInfo, err := os.Stat(foreignPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		outsideInfo, err := os.Stat(outsideDir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		linkPath := filepath.Join(defDir, "linked-dir")
+		if err := os.Symlink(outsideDir, linkPath); err != nil {
+			t.Fatal(err)
+		}
+		linkBefore, err := os.Lstat(linkPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		linkTarget, err := os.Readlink(linkPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink("linked-dir/../helper.txt", filepath.Join(defDir, "a-alias.txt")); err != nil {
+			t.Fatal(err)
+		}
+		requireFingerprintAliasRefusal(t, in, defDir, "a-alias.txt")
+		assertFileUnchanged(t, foreignPath, foreignBefore, foreignMode, foreignMtime)
+		foreignAfter, err := os.Stat(foreignPath)
+		if err != nil || !os.SameFile(foreignInfo, foreignAfter) {
+			t.Fatalf("foreign file identity changed: %v", err)
+		}
+		outsideAfter, err := os.Stat(outsideDir)
+		if err != nil || !os.SameFile(outsideInfo, outsideAfter) || outsideInfo.Mode() != outsideAfter.Mode() || !outsideInfo.ModTime().Equal(outsideAfter.ModTime()) {
+			t.Fatalf("foreign directory identity changed: %v", err)
+		}
+		linkAfter, err := os.Lstat(linkPath)
+		if err != nil || !os.SameFile(linkBefore, linkAfter) || linkBefore.Mode() != linkAfter.Mode() || !linkBefore.ModTime().Equal(linkAfter.ModTime()) {
+			t.Fatalf("foreign directory link changed: %v", err)
+		}
+		linkTargetAfter, err := os.Readlink(linkPath)
+		if err != nil || linkTargetAfter != linkTarget {
+			t.Fatalf("foreign directory link target = %q / %v, want %q", linkTargetAfter, err, linkTarget)
+		}
+	})
+	t.Run("nested_sub_dotdot_resolves_same_regular_payload", func(t *testing.T) {
+		in, defDir := newFingerprintAliasSource(t, base)
+		want := []byte("nested helper payload")
+		writeFingerprintAliasFile(t, defDir, "nested/helper.txt", want, 0o751)
+		if err := os.MkdirAll(filepath.Join(defDir, "nested", "sub"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink("sub/../helper.txt", filepath.Join(defDir, "nested", "alias.txt")); err != nil {
+			t.Fatal(err)
+		}
+		aliasDigest := requireFingerprintAliasCapture(t, in, defDir, "nested/alias.txt", want, 0o751)
+
+		regularIn, regularDir := newFingerprintAliasSource(t, base)
+		writeFingerprintAliasFile(t, regularDir, "nested/helper.txt", want, 0o751)
+		if err := os.MkdirAll(filepath.Join(regularDir, "nested", "sub"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		writeFingerprintAliasFile(t, regularDir, "nested/alias.txt", want, 0o751)
+		regularDigest, err := HookSourceFingerprint(regularIn)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if aliasDigest != regularDigest {
+			t.Fatalf("normalized nested alias fingerprint = %q, regular logical copy = %q", aliasDigest, regularDigest)
+		}
+	})
+	t.Run("sub_alias_parent_resolves_to_contained_helper", func(t *testing.T) {
+		in, defDir := newFingerprintAliasSource(t, base)
+		want := []byte("parent helper payload")
+		writeFingerprintAliasFile(t, defDir, "helper.txt", want, 0o751)
+		if err := os.MkdirAll(filepath.Join(defDir, "sub"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink("../helper.txt", filepath.Join(defDir, "sub", "alias.txt")); err != nil {
+			t.Fatal(err)
+		}
+		aliasDigest := requireFingerprintAliasCapture(t, in, defDir, "sub/alias.txt", want, 0o751)
+
+		regularIn, regularDir := newFingerprintAliasSource(t, base)
+		writeFingerprintAliasFile(t, regularDir, "helper.txt", want, 0o751)
+		if err := os.MkdirAll(filepath.Join(regularDir, "sub"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		writeFingerprintAliasFile(t, regularDir, "sub/alias.txt", want, 0o751)
+		regularDigest, err := HookSourceFingerprint(regularIn)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if aliasDigest != regularDigest {
+			t.Fatalf("parent alias fingerprint = %q, regular logical copy = %q", aliasDigest, regularDigest)
+		}
+	})
+	t.Run("more_than_40_active_aliases_refuse", func(t *testing.T) {
+		in, defDir := newFingerprintAliasSource(t, base)
+		writeFingerprintAliasFile(t, defDir, "helper.txt", []byte("chain target"), 0o644)
+		for i := 0; i <= maxContainedFingerprintAliasExpansions; i++ {
+			name := "chain-" + strconv.Itoa(i) + ".txt"
+			target := "helper.txt"
+			if i < maxContainedFingerprintAliasExpansions {
+				target = "chain-" + strconv.Itoa(i+1) + ".txt"
+			}
+			if err := os.Symlink(target, filepath.Join(defDir, name)); err != nil {
+				t.Fatal(err)
+			}
+		}
+		requireFingerprintAliasRefusal(t, in, defDir, "chain-0.txt")
+	})
 }
 
 // spec: hook-native-location-tolerance/source-and-support-changes-invalidate-the-fingerprint

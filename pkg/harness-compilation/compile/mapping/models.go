@@ -18,8 +18,8 @@ const (
 	modelUnmappable = "unmappable"
 )
 
-// modelTable is the curated translation table for Claude model families.
-//
+// modelTable is frozen compatibility data for legacy source-revision hashes.
+// Active model conversion uses modelpolicy/catalogs; add new releases there.
 // Each entry maps a Claude model family name or specific model ID to the
 // equivalent model ID for each target harness. When a target maps a model
 // to modelInherit, the target inherits the original Claude model ID unchanged;

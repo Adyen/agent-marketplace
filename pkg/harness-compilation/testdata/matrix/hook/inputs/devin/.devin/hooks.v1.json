@@ -2,7 +2,7 @@
   "PreToolUse": [
     {
       "command": "/plugins/demo/scripts/check.sh",
-      "matcher": "Read",
+      "matcher": "^exec$",
       "type": "command"
     }
   ]

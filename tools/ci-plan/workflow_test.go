@@ -285,6 +285,136 @@ func TestE2EGatesDriver(t *testing.T) {
 	}
 }
 
+func TestTestJobWarmsModulesBeforeWitnessedTests(t *testing.T) {
+	job := getMap(t, getMap(t, loadCIWorkflow(t), "jobs"), "test")
+	steps := getSlice(t, job, "steps")
+	setupIndex, cacheIndex, testIndex := -1, -1, -1
+	var witnessedTests map[string]any
+	for i, raw := range steps {
+		step := stepMap(t, raw)
+		name, _ := step["name"].(string)
+		switch name {
+		case "Set up Go":
+			setupIndex = i
+		case "Cache dependencies for offline Unix cross-builds":
+			cacheIndex = i
+			if got := step["run"]; got != "go mod download" {
+				t.Errorf("module cache step run = %v, want %q", got, "go mod download")
+			}
+			if _, ok := step["env"]; ok {
+				t.Errorf("module cache step must not override the environment: %v", step["env"])
+			}
+		case "Run tests and verify CLI behavior witnesses":
+			testIndex = i
+			witnessedTests = step
+		}
+	}
+	if setupIndex < 0 || cacheIndex < 0 || testIndex < 0 {
+		t.Fatalf("Test job steps omit Go setup, cache warm, or witnessed tests: %+v", steps)
+	}
+	if cacheIndex != setupIndex+1 || cacheIndex >= testIndex {
+		t.Fatalf("module cache warm step index = %d, Set up Go = %d, witnessed tests = %d", cacheIndex, setupIndex, testIndex)
+	}
+	if got := witnessedTests["run"]; got != "make test-witnessed" {
+		t.Errorf("witnessed test step run = %v, want %q", got, "make test-witnessed")
+	}
+}
+
+func TestHarnessImageAuditUsesRunnerStepDirectory(t *testing.T) {
+	doc := loadWorkflow(t, "harness-images.yml")
+	on := getMap(t, doc, "on")
+	if len(on) != 2 {
+		t.Fatalf("harness image workflow triggers = %v, want only schedule and workflow_dispatch", on)
+	}
+	if _, ok := on["schedule"]; !ok {
+		t.Fatal("harness image workflow lost its schedule")
+	}
+	if _, ok := on["workflow_dispatch"]; !ok {
+		t.Fatal("harness image workflow lost manual dispatch")
+	}
+
+	job := getMap(t, getMap(t, doc, "jobs"), "model-catalog-audit")
+	if got := job["if"]; got != "github.ref == format('refs/heads/{0}', github.event.repository.default_branch)" {
+		t.Fatalf("model audit condition = %v", got)
+	}
+	permissions := getMap(t, job, "permissions")
+	if len(permissions) != 1 || permissions["contents"] != "read" {
+		t.Fatalf("model audit permissions = %v, want only contents: read", permissions)
+	}
+	if _, ok := job["env"]; ok {
+		t.Fatal("model audit job-level env cannot use the runner context")
+	}
+
+	steps := getSlice(t, job, "steps")
+	if len(steps) != 7 {
+		t.Fatalf("model audit steps = %d, want checkout, setup, and five named steps", len(steps))
+	}
+	wantNames := []string{
+		"Prepare model audit diagnostics",
+		"Verify offline audit contracts",
+		"Audit public model evidence without modifying catalogs",
+		"Publish model drift summary",
+		"Upload model audit evidence",
+	}
+	setupGoIndex, prepareIndex, verifyIndex := -1, -1, -1
+	stepsByName := make(map[string]map[string]any, len(wantNames))
+	gotNames := make([]string, 0, len(wantNames))
+	for i, raw := range steps {
+		step := stepMap(t, raw)
+		if uses, ok := step["uses"].(string); ok && strings.HasPrefix(uses, "actions/setup-go@") {
+			setupGoIndex = i
+		}
+		name, ok := step["name"].(string)
+		if !ok {
+			continue
+		}
+		gotNames = append(gotNames, name)
+		stepsByName[name] = step
+		if name == "Prepare model audit diagnostics" {
+			prepareIndex = i
+		}
+		if name == "Verify offline audit contracts" {
+			verifyIndex = i
+		}
+	}
+	if !slices.Equal(gotNames, wantNames) {
+		t.Fatalf("model audit named steps = %v, want %v", gotNames, wantNames)
+	}
+	if setupGoIndex < 0 || prepareIndex != setupGoIndex+1 || verifyIndex != prepareIndex+1 {
+		t.Fatalf("model audit runner step positions: Set up Go=%d prepare=%d verify=%d", setupGoIndex, prepareIndex, verifyIndex)
+	}
+	prepare := stepsByName["Prepare model audit diagnostics"]
+	if got := prepare["if"]; got != "always()" {
+		t.Fatalf("prepare model audit diagnostics if = %v, want %q", got, "always()")
+	}
+	if got := prepare["run"]; got != `echo "AUDIT_REPORT_DIR=$RUNNER_TEMP/model-catalog-audit" >> "$GITHUB_ENV"` {
+		t.Fatalf("prepare model audit diagnostics run = %v", got)
+	}
+	if _, ok := prepare["env"]; ok {
+		t.Fatalf("runner step must not add step-level env: %v", prepare["env"])
+	}
+	if got := stepsByName["Verify offline audit contracts"]["run"]; got != "go test ./tools/model-catalog-audit -count=1" {
+		t.Fatalf("offline audit contract command = %v", got)
+	}
+	if got := strings.TrimSpace(stepsByName["Audit public model evidence without modifying catalogs"]["run"].(string)); got != `set -euo pipefail
+mkdir -p "$AUDIT_REPORT_DIR"
+go run ./tools/model-catalog-audit check > "$AUDIT_REPORT_DIR/report.json" 2> "$AUDIT_REPORT_DIR/audit.log"` {
+		t.Fatalf("model audit command changed: %s", got)
+	}
+	if got := strings.TrimSpace(stepsByName["Publish model drift summary"]["run"].(string)); got != `set -euo pipefail
+if [[ -s "$AUDIT_REPORT_DIR/report.json" ]]; then
+  go run ./tools/model-catalog-audit summary < "$AUDIT_REPORT_DIR/report.json" >> "$GITHUB_STEP_SUMMARY"
+else
+  echo '## Model catalog audit failed before producing evidence' >> "$GITHUB_STEP_SUMMARY"
+  echo 'No freshness conclusion is available. Inspect the failed step and audit log.' >> "$GITHUB_STEP_SUMMARY"
+fi` {
+		t.Fatalf("model audit summary command changed: %s", got)
+	}
+	if got := getMap(t, stepsByName["Upload model audit evidence"], "with")["path"]; got != "${{ runner.temp }}/model-catalog-audit/" {
+		t.Fatalf("model audit artifact path = %v", got)
+	}
+}
+
 func TestPullRequestTrigger(t *testing.T) {
 	doc := loadCIWorkflow(t)
 
