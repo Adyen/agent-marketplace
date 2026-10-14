@@ -57,6 +57,47 @@ func lstatOf(t *testing.T, path string) os.FileInfo {
 	return info
 }
 
+func TestDirOpenFileReturnsBlockingCloseOnExecHandle(t *testing.T) {
+	root, path := tempRoot(t)
+	mustWrite(t, filepath.Join(path, "payload"), []byte("inert regular control"), 0o640)
+	before := identityFromFileInfo(t, statOf(t, filepath.Join(path, "payload")))
+	file, identity, err := root.OpenFile("payload")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := file.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
+	raw, err := file.SyscallConn()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var statusFlags, descriptorFlags int
+	var inspectErr error
+	if err := raw.Control(func(fd uintptr) {
+		statusFlags, inspectErr = unix.FcntlInt(fd, unix.F_GETFL, 0)
+		if inspectErr == nil {
+			descriptorFlags, inspectErr = unix.FcntlInt(fd, unix.F_GETFD, 0)
+		}
+	}); err != nil || inspectErr != nil {
+		t.Fatalf("inspect admitted descriptor: %v %v", err, inspectErr)
+	}
+	if statusFlags&unix.O_NONBLOCK != 0 || descriptorFlags&unix.FD_CLOEXEC == 0 {
+		t.Fatalf("wrong admitted flags: status=%#x descriptor=%#x", statusFlags, descriptorFlags)
+	}
+	if !identity.SameState(before) {
+		t.Fatalf("opened identity differs from regular control: %+v %+v", identity, before)
+	}
+	if data, err := io.ReadAll(file); err != nil || string(data) != "inert regular control" {
+		t.Fatalf("admitted regular read failed: %q %v", data, err)
+	}
+	if after := identityFromFileInfo(t, statOf(t, filepath.Join(path, "payload"))); !after.SameState(before) {
+		t.Fatal("regular open/read changed payload state")
+	}
+}
+
 func TestOpenDirValidation(t *testing.T) {
 	t.Run("relative path refused", func(t *testing.T) {
 		if _, err := OpenDir("relative/path"); !errors.Is(err, ErrUnsafePath) {
