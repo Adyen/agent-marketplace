@@ -167,7 +167,7 @@ func refreshNativeHookManifestCommit(commit nativeHookManifestCommit) error {
 	} else if snapshot.data != nil || snapshot.file != zero {
 		return fmt.Errorf("%w: portable manifest absence assertion no longer holds", dependencytxn.ErrGenerationConflict)
 	}
-	entries, err := decodePortableManifestEntries(state.path, snapshot.data)
+	entries, err := decodePortableManifestEntries(state.path, snapshot.data, state.machineScope)
 	if err != nil {
 		return err
 	}

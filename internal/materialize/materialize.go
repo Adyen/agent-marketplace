@@ -234,14 +234,14 @@ func loadPortableState(repoRoot string, machineScope bool) (*portableState, erro
 	state.raw = append([]byte(nil), state.pin.data...)
 	state.exists = state.pin.data != nil
 	state.mode = state.pin.file.Mode.Perm()
-	state.entries, err = decodePortableManifestEntries(path, state.pin.data)
+	state.entries, err = decodePortableManifestEntries(path, state.pin.data, machineScope)
 	if err != nil {
 		return nil, err
 	}
 	return state, nil
 }
 
-func decodePortableManifestEntries(path string, data []byte) (map[string]portableManifestEntry, error) {
+func decodePortableManifestEntries(path string, data []byte, machineScope bool) (map[string]portableManifestEntry, error) {
 	entries := make(map[string]portableManifestEntry)
 	if data == nil {
 		return entries, nil
