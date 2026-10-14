@@ -67,17 +67,7 @@ From the registry root, list what `agent-marketplace` discovers:
 agent-marketplace list --from .
 ```
 
-The new resource appears with the status `available`. Then convert it to another harness to catch translation problems:
-
-```bash
-agent-marketplace convert \
-  --from claude \
-  --to factory \
-  --out /tmp/code-review-factory \
-  skills/code-review
-```
-
-A clean conversion ends with a line such as `Written 1, Skipped 0, Removed 0, Diagnostics 0`. Fix any reported diagnostic before you commit. To check every harness in CI, see [How to validate a registry in CI](./validate-a-registry-in-ci.md).
+The new resource appears with the status `available`. To check every harness in CI, see [How to validate a registry in CI](./validate-a-registry-in-ci.md).
 
 ## 4. Commit, tag, and push
 

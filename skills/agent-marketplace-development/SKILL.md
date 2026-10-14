@@ -427,7 +427,7 @@ tests open with the `isolateCommandTest` guard described in `AGENTS.md`.
 | `migrate` | v2/v3 → v4 configs (and lock/v2 for proven Marketplace pins) | no |
 | `status` / `doctor` | no (`doctor --repair` adopts ownership state) | no |
 | `gc` | no | no (cleans only entries inactive in validated config and locks) |
-| `backup`, `deinit`, `telemetry`, `convert` | own state only | no |
+| `backup`, `deinit`, `telemetry` | own state only | no |
 | `serve` | Marketplace operator state | no |
 | `tui` (or bare invocation on TTY) | config and its layer lock for mutations | on demand (`s`) |
 

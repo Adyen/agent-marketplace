@@ -525,14 +525,10 @@ under `~/.agents`.
 | Hook | `.codex/hooks.json` |
 | MCP server | `[mcp_servers.<name>]` in `.codex/config.toml` |
 
-Codex works in both directions: `convert --from codex`, `convert --to codex`,
-and `source_harness: codex` are all valid. Autodetection requires a `.codex`
-folder, because `.agents/skills` on its own is a layout several tools share. In
-the default symlink mode, each skill or command folder is a link into the
-cache; file mode writes a regular folder instead. `convert --to codex` refuses
-a destination that already contains `.codex/hooks.json` or
-`.codex/config.toml`. Choose a new or empty destination, so conversion never
-takes over or overwrites existing shared configuration.
+Codex works in both directions and as `source_harness: codex`. Autodetection
+requires a `.codex` folder, because `.agents/skills` on its own is a layout
+several tools share. In the default symlink mode, each skill or command folder
+is a link into the cache; file mode writes a regular folder instead.
 
 You may also edit `hooks.json` and `config.toml` by hand, so `sync` changes only
 the entries its ownership records show it wrote. Those records live under
@@ -584,12 +580,11 @@ the machine, and supports all five resource kinds:
 Rules are out of scope for this harness. A rule produces a
 `rule.devin.unsupported` warning instead of a file, and the run continues.
 
-Devin also works as a conversion source and target, so `convert --from devin`,
-`convert --to devin`, and `source_harness: devin` on a source all work.
+Devin also works as a conversion source and target, and as `source_harness: devin`.
 Autodetection prefers a `.devin` workspace folder over any other layout at the
 same root. A user-style root, with `skills/`, `agents/`, `config.json`, and
-`mcp_config.json` at its top level, is never autodetected; pass `--from devin`
-for it.
+`mcp_config.json` at its top level, is never autodetected; set
+`source_harness: devin` for it.
 
 ### Shared Devin files are never overwritten
 
@@ -905,7 +900,6 @@ agent-marketplace update --bump                  Rewrite eligible legacy registr
 agent-marketplace update --scope {user,repo,local,all}      Limit which layers are updated
 agent-marketplace status                         Exact locks, resources, harnesses, refs, source layer, drift
 agent-marketplace migrate [--scope <scope>] [--dry-run]     Convert legacy v2/v3 configs to v4
-agent-marketplace convert --from <h> --to <h> [--out <dir>] <path>   One-shot layout conversion
 agent-marketplace doctor                         Local harness/root diagnostics, Devin CLI detection
 agent-marketplace doctor --repair                Preview (and on a terminal, confirm) Devin/Codex ownership recovery
 agent-marketplace doctor --repair --yes          Adopt exact matches without prompting; never removes or replaces entries
@@ -918,9 +912,7 @@ agent-marketplace tui                            Launch the interactive browser 
 agent-marketplace completion <shell>             Generate a shell completion script
 ```
 
-`--from` and `--to` on `convert` accept `claude`, `factory`, `cursor`,
-`windsurf`, `gemini`, `devin`, and `codex`; without `--out`, output goes to
-`<path>-<to>`. `--yes` on `doctor` is valid only together with `--repair`. Run
+`--yes` on `doctor` is valid only together with `--repair`. Run
 any command with `--help` for its full flag list, or see the
 [CLI reference](https://github.com/Adyen/agent-marketplace/blob/main/site/docs/reference/cli.md).
 

@@ -24,7 +24,7 @@ A registry can be written in any harness's layout. The CLI recognizes each layou
 
 ## Why resources pass through a neutral description
 
-The CLI supports seven harnesses. Converting directly from each one to each other one would take 42 separate converters. With a harness-neutral description in the middle, each harness needs only two pieces: one that reads its format into the description, and one that writes the description back out in its format. Any harness can then be a source or a target. The `convert` command uses the same machinery to convert a folder from one layout to another.
+The CLI supports seven harnesses. Converting directly from each one to each other one would take 42 separate converters. With a harness-neutral description in the middle, each harness needs only two pieces: one that reads its format into the description, and one that writes the description back out in its format. Any harness can then be a source or a target.
 
 The conversion keeps meaning, not exact bytes. A Claude skill converted back to Claude comes out unchanged. Some conversions lose information because the target has no equivalent: Windsurf has no subagents, and Codex hooks support only some events. The CLI reports every such loss as a diagnostic (codes such as `compile.*`, `skill.*`, and `hook.*`) instead of dropping it silently. See the [diagnostics reference](../reference/diagnostics.md).
 

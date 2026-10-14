@@ -126,7 +126,6 @@ func newRootCmd() *cobra.Command {
 		newInstallCmd(),
 		newRemoveCmd(),
 		newMigrateCmd(),
-		newConvertCmd(),
 		newDoctorCmd(),
 		newGCCmd(),
 		newUpdateCmd(),
@@ -165,7 +164,7 @@ func maybePromptV4Migration(cmd *cobra.Command, rootTUI, showVersion bool) error
 func skipV4MigrationPrompt(cmd *cobra.Command) bool {
 	for current := cmd; current != nil; current = current.Parent() {
 		switch current.Name() {
-		case "init", "migrate", "convert", "serve", "telemetry", "tui", "doctor":
+		case "init", "migrate", "serve", "telemetry", "tui", "doctor":
 			return true
 		}
 	}

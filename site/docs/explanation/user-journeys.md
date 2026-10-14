@@ -75,7 +75,7 @@ Once one resource works, you can add more resources or harnesses and decide whic
 
 Check that each harness received the files it supports, and that another checkout can reproduce the shared setup without your personal configuration.
 
-For resources on your own disk, you can use [live local directories](../how-to/use-a-local-registry.md), which have no lockfile. If symlinks don't work in your environment, choose [regular files instead of symlinks](../how-to/write-regular-files-instead-of-symlinks.md). To copy an existing harness layout once, without ongoing sync, use [one-shot conversion](../how-to/convert-a-harness-layout.md).
+For resources on your own disk, you can use [live local directories](../how-to/use-a-local-registry.md), which have no lockfile. If symlinks don't work in your environment, choose [regular files instead of symlinks](../how-to/write-regular-files-instead-of-symlinks.md).
 
 ## 4. Check or update an existing setup
 

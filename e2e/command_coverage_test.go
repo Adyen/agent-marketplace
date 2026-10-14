@@ -39,7 +39,6 @@ var schemaIndependentCommands = map[string]string{
 	"completion powershell": "prints a generated shell script",
 	"completion zsh":        "prints a generated shell script",
 	"help":                  "prints command help",
-	"convert":               "converts the plugin directories named by its flags",
 	"serve":                 "runs the Marketplace server from its own --config",
 	"serve adopt":           "maintains the Marketplace server from its own --config",
 	"serve reindex":         "maintains the Marketplace server from its own --config",

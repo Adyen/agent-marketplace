@@ -320,39 +320,6 @@ var testTable = []TestCase{
 		},
 	},
 	{
-		Name: "security/mcp_parse_error_not_absence",
-		Desc: "Given an MCP duplicate key whose text resembles a missing-file error, When converting, Then malformed input is refused without changing output and a repaired file converts normally",
-		Steps: []Step{
-			{Action: ActionWriteFile, Path: "/workspace/source/.windsurf/skills/control/SKILL.md", Body: "---\nname: control\ndescription: Control\n---\nCONTROL BODY\n"},
-			{Action: ActionWriteFile, Path: "/workspace/source/.windsurf/mcp_config.json", Body: `{"mcpServers":{"fixture":{"command":"fixture","file does not exist":1,"file does not exist":2}}}`},
-			{Action: ActionWriteFile, Path: "/workspace/output/keep.txt", Body: "HANDWRITTEN OUTPUT\n"},
-			{Args: []string{"convert", "--from", "windsurf", "--to", "factory", "--out", "./output", "./source"}, AssertExitCode: intPtr(1), OutContains: []string{"json.duplicate-key"}, PathsUnchanged: []string{"/workspace/output"}},
-			{Action: ActionWriteFile, Path: "/workspace/source/.windsurf/mcp_config.json", Body: `{"mcpServers":{"fixture":{"command":"fixture"}}}`},
-			{Args: []string{"convert", "--from", "windsurf", "--to", "factory", "--out", "./output", "./source"}, MustPass: true, FileContains: map[string]string{"/workspace/output/mcp.json": "fixture", "/workspace/output/skills/control/SKILL.md": "CONTROL BODY"}, PathsUnchanged: []string{"/workspace/output/keep.txt"}},
-		},
-	},
-	{
-		Name: "security/windsurf_direct_root_layout",
-		Desc: "Given direct-root Windsurf resources with root agent notes and MCP configuration, When converting, Then resource output is not hidden by a nonexistent workspace layout",
-		Steps: []Step{
-			{Action: ActionWriteFile, Path: "/workspace/source/AGENTS.md", Body: "# Notes\n"},
-			{Action: ActionWriteFile, Path: "/workspace/source/workflows/deploy.md", Body: "---\ndescription: Deploy\n---\nWORKFLOW BODY\n"},
-			{Action: ActionWriteFile, Path: "/workspace/source/hooks.json", Body: `{"hooks":{"pre_run_command":[{"command":"guard-command"}]}}`},
-			{Action: ActionWriteFile, Path: "/workspace/source/mcp_config.json", Body: `{"mcpServers":{"native-server":{"command":"fixture-server"}}}`},
-			{Args: []string{"convert", "--from", "windsurf", "--to", "windsurf", "--out", "./converted", "./source"}, MustPass: true, FileContains: map[string]string{"/workspace/converted/.windsurf/workflows/deploy.md": "WORKFLOW BODY", "/workspace/converted/.windsurf/hooks.json": "guard-command", "/workspace/converted/.windsurf/mcp_config.json": "fixture-server"}},
-		},
-	},
-	{
-		Name: "security/factory_declared_identity",
-		Desc: "Given mixed Factory layouts with colliding declared names and a distinct filename collision, When converting, Then the first resource survives and the distinct resource is retained",
-		Steps: []Step{
-			{Action: ActionWriteFile, Path: "/workspace/source/commands/source.md", Body: "---\nname: review\ndescription: First\n---\nFIRST RESOURCE\n"},
-			{Action: ActionWriteFile, Path: "/workspace/source/.factory/commands/alias.md", Body: "---\nname: review\ndescription: Shadow\n---\nSHADOW RESOURCE\n"},
-			{Action: ActionWriteFile, Path: "/workspace/source/.factory/commands/review.md", Body: "---\nname: other\ndescription: Unique\n---\nUNIQUE RESOURCE\n"},
-			{Args: []string{"convert", "--from", "factory", "--to", "factory", "--out", "./converted", "./source"}, MustPass: true, FileContains: map[string]string{"/workspace/converted/commands/review.md": "FIRST RESOURCE", "/workspace/converted/commands/other.md": "UNIQUE RESOURCE"}, FileNotContains: map[string]string{"/workspace/converted/commands/review.md": "SHADOW RESOURCE"}},
-		},
-	},
-	{
 		Name: "security/command_marker_body_lifecycle",
 		Desc: "Given a Factory command with marker text in its body and a handwritten sibling, When installing removing and reinstalling, Then real frontmatter ownership enables cleanup without adopting the handwritten file",
 		Registries: []RegistryDef{{Name: "marker-body", Files: map[string]string{
@@ -385,27 +352,6 @@ var testTable = []TestCase{
 		},
 	},
 	{
-		Name: "security/codex_literal_header",
-		Desc: "Given a Codex literal that resembles a bare environment reference and a safe sibling, When converting to Windsurf, Then the unsafe reinterpretation is refused while literal-preserving conversion remains available",
-		Steps: []Step{
-			{Action: ActionWriteFile, Path: "/workspace/source/.codex/config.toml", Body: "[mcp_servers.literal]\nurl = 'https://example.invalid/mcp'\n[mcp_servers.literal.http_headers]\nX-Literal = '$SYNTHETIC_KEY'\n[mcp_servers.safe]\nurl = 'https://example.invalid/mcp'\n[mcp_servers.safe.http_headers]\nX-Literal = 'ordinary'\n"},
-			{Args: []string{"convert", "--from", "codex", "--to", "windsurf", "--out", "./converted", "./source"}, AssertExitCode: intPtr(1), OutContains: []string{"mcp.security-restriction-unsupported"}, FileContains: map[string]string{"/workspace/converted/.windsurf/mcp_config.json": "ordinary"}, FileNotContains: map[string]string{"/workspace/converted/.windsurf/mcp_config.json": "SYNTHETIC_KEY"}},
-			{Args: []string{"convert", "--from", "codex", "--to", "codex", "--out", "./native", "./source"}, MustPass: true, FileContains: map[string]string{"/workspace/native/.codex/config.toml": "$SYNTHETIC_KEY"}},
-		},
-	},
-	{
-		Name: "security/native_metadata_authority",
-		Desc: "Given foreign execution metadata and native workflow controls, When converting harnesses, Then only typed native controls remain active and ordinary metadata is preserved",
-		Steps: []Step{
-			{Action: ActionWriteFile, Path: "/workspace/agent-source/droids/guard.md", Body: "---\nname: guard\ndescription: Guard\nx-note: preserved\nmcpServers:\n  hidden:\n    command: must-not-activate\n---\nBody\n"},
-			{Args: []string{"convert", "--from", "factory", "--to", "gemini", "--out", "./gemini-output", "./agent-source"}, MustPass: true, FileContains: map[string]string{"/workspace/gemini-output/.gemini/agents/guard.md": "x-note: preserved"}, FileNotContains: map[string]string{"/workspace/gemini-output/.gemini/agents/guard.md": "mcpServers:"}},
-			{Action: ActionWriteFile, Path: "/workspace/command-source/commands/guard.md", Body: "---\nname: guard\ndescription: Guard\nx-note: preserved\nauto_execution_mode: always\n---\nBody\n"},
-			{Args: []string{"convert", "--from", "factory", "--to", "windsurf", "--out", "./windsurf-output", "./command-source"}, MustPass: true, FileContains: map[string]string{"/workspace/windsurf-output/.windsurf/workflows/guard.md": "x-note: preserved"}, FileNotContains: map[string]string{"/workspace/windsurf-output/.windsurf/workflows/guard.md": "auto_execution_mode:"}},
-			{Action: ActionWriteFile, Path: "/workspace/native/.windsurf/workflows/guard.md", Body: "---\ndescription: Guard\nauto_execution_mode: always\n---\nBody\n"},
-			{Args: []string{"convert", "--from", "windsurf", "--to", "windsurf", "--out", "./native-output", "./native"}, MustPass: true, FileContains: map[string]string{"/workspace/native-output/.windsurf/workflows/guard.md": "auto_execution_mode: always"}},
-		},
-	},
-	{
 		Name: "security/codex_command_restriction",
 		Desc: "Given a restricted command and an unrestricted sibling, When syncing to Codex, Then the unsupported restriction suppresses only that command",
 		Registries: []RegistryDef{{Name: "codex-restrictions", Files: map[string]string{
@@ -414,25 +360,6 @@ var testTable = []TestCase{
 		}}},
 		GlobalCfg: "harnesses: [codex]\nregistries:\n  - url: {{REG:codex-restrictions}}\n    ref: main\n    commands: [restricted, plain]\n",
 		Steps:     []Step{{Args: []string{"sync"}, AssertExitCode: intPtr(1), OutContains: []string{"skill.codex.security-restriction-unsupported"}, FilesAbsent: []string{"/root/.agents/skills/restricted"}, FileContains: map[string]string{"/root/.agents/skills/plain/SKILL.md": "x-agent-marketplace-kind: command"}}},
-	},
-	{
-		Name: "security/factory_hook_event",
-		Desc: "Given a Devin permission hook and a valid tool hook, When converting to Factory, Then unsupported authorization behavior is reported and omitted without suppressing the valid sibling",
-		Steps: []Step{
-			{Action: ActionWriteFile, Path: "/workspace/source/.devin/hooks.v1.json", Body: `{"PermissionRequest":[{"hooks":[{"type":"command","command":"permission-check"}]}],"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"valid-check"}]}]}`},
-			{Args: []string{"convert", "--from", "devin", "--to", "factory", "--out", "./converted", "./source"}, AssertExitCode: intPtr(1), OutContains: []string{"hook.event-unmappable"}, FileContains: map[string]string{"/workspace/converted/hooks/hooks.json": "valid-check"}, FileNotContains: map[string]string{"/workspace/converted/hooks/hooks.json": "PermissionRequest"}},
-		},
-	},
-	{
-		Name: "security/windsurf_hook_scope_conversion",
-		Desc: "Given scoped hooks, When converting between Windsurf and Claude, Then Write and Edit coverage survives and subagent hooks do not become global response hooks",
-		Steps: []Step{
-			{Action: ActionWriteFile, Path: "/workspace/source/.windsurf/hooks.json", Body: `{"hooks":{"pre_write_code":[{"command":"guard-write-and-edit"}]}}`},
-			{Args: []string{"convert", "--from", "windsurf", "--to", "claude", "--out", "./converted", "./source"}, MustPass: true, FileContains: map[string]string{"/workspace/converted/hooks/hooks.json": "Write|Edit"}},
-			{Args: []string{"convert", "--from", "claude", "--to", "windsurf", "--out", "./roundtrip", "./converted"}, MustPass: true, FileContains: map[string]string{"/workspace/roundtrip/.windsurf/hooks.json": "pre_write_code"}},
-			{Action: ActionWriteFile, Path: "/workspace/scoped/hooks/hooks.json", Body: `{"Stop":[{"hooks":[{"type":"command","command":"global-stop"}]}],"SubagentStop":[{"hooks":[{"type":"command","command":"subagent-only"}]}]}`},
-			{Args: []string{"convert", "--from", "claude", "--to", "windsurf", "--out", "./scope-output", "./scoped"}, MustPass: true, OutContains: []string{"Diagnostics 1"}, FileContains: map[string]string{"/workspace/scope-output/.windsurf/hooks.json": "global-stop"}, FileNotContains: map[string]string{"/workspace/scope-output/.windsurf/hooks.json": "subagent-only"}},
-		},
 	},
 	{
 		Name: "security/nested_bundle_lock_inventory",

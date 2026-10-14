@@ -16,7 +16,7 @@ The roots and per-kind paths come from `pkg/harness-compilation/target` and `int
 | Devin CLI | `devin` |
 | Codex | `codex` |
 
-Use these identifiers in `harnesses:` lists, in `source_harness:`, and with `convert --from` and `convert --to`. Identifiers are lowercase. An unknown identifier in a v4 configuration fails with `v4.harness`, and `convert` rejects one with an error that lists the valid names.
+Use these identifiers in `harnesses:` lists and in `source_harness:`. Identifiers are lowercase. An unknown identifier in a v4 configuration fails with `v4.harness`.
 
 ## Roots
 

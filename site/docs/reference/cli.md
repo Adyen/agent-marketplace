@@ -15,7 +15,7 @@ agent-marketplace <command> [arguments] [flags]
 
 Running `agent-marketplace` with no command starts the terminal UI when standard input is a terminal. Otherwise it prints help. Setting `AGENT_MARKETPLACE_NO_TUI` to any non-empty value also makes a bare invocation print help.
 
-Before most commands run, the CLI checks whether the user config (`~/.agents/config.yaml`) still uses a legacy v2 or v3 schema. When standard input is a terminal, it lists the file and asks `Migrate these configuration files to v4 now? [Y/n]:`. Pressing Enter or answering `y` migrates. Answering `n` continues with the legacy reader, and any other answer stops the command with `unknown response`. A refused migration prints a warning and also continues. Without a terminal, the CLI logs a warning and changes nothing. The check does not run for `init`, `migrate`, `convert`, `serve`, `telemetry`, `tui`, `doctor`, or `--version`. The bare terminal UI shows its own migration prompt instead. Repository and personal-local configs are migrated only by an explicit [`migrate`](#migrate).
+Before most commands run, the CLI checks whether the user config (`~/.agents/config.yaml`) still uses a legacy v2 or v3 schema. When standard input is a terminal, it lists the file and asks `Migrate these configuration files to v4 now? [Y/n]:`. Pressing Enter or answering `y` migrates. Answering `n` continues with the legacy reader, and any other answer stops the command with `unknown response`. A refused migration prints a warning and also continues. Without a terminal, the CLI logs a warning and changes nothing. The check does not run for `init`, `migrate`, `serve`, `telemetry`, `tui`, `doctor`, or `--version`. The bare terminal UI shows its own migration prompt instead. Repository and personal-local configs are migrated only by an explicit [`migrate`](#migrate).
 
 ## Global flags
 
@@ -368,35 +368,6 @@ agent-marketplace migrate [flags]
 `--to v4` is accepted as an explicit spelling of the default. V4 migration refuses input that would lose information, include trees, and Marketplace entries without complete verified cache evidence, and it changes no files when it refuses. Migration does not promise to keep comments or formatting. Git and directory-only conversion leaves locks unchanged. A Marketplace entry with verified evidence creates or upgrades the owning layer lock to `agent-marketplace-lock/v2`, published together with the migrated config in one transaction. Organization configuration is never edited.
 
 The output names each migrated file, for example `Migrated user personal config: <path>` (or `Would migrate ...` with `--dry-run`). When nothing needs migrating, it prints `No legacy config files require v4 migration`.
-
-## `convert`
-
-Reads one harness layout and writes an equivalent layout for another harness. It does not edit Agent Marketplace configuration.
-
-```text
-agent-marketplace convert --from <harness> --to <harness> <path> [flags]
-agent-marketplace convert --autodetect --to <harness> <path> [flags]
-```
-
-| Flag | Type | Required | Default | Description |
-|---|---|:---:|---|---|
-| `--from` | string | unless `--autodetect` | none | Source harness: `claude`, `codex`, `cursor`, `devin`, `factory`, `gemini`, or `windsurf`. |
-| `--autodetect` | boolean | no | `false` | Detects the source harness from layout markers instead of requiring `--from`. |
-| `--to` | string | yes | none | Target harness. Accepts the same seven values as `--from`. |
-| `--out` | path | no | `<path>-<to>` | Output directory. |
-| `--sync` | boolean | no | `false` | Uses sync write mode and deletes stale output files. Without it, conversion overwrites files and deletes nothing. |
-| `--dry-run` | boolean | no | `false` | Reports planned writes without changing output files. |
-
-The output names the source, target, output directory, and operation counts:
-
-```text
-Converted claude -> factory into plugin-factory
-Written 4, Skipped 0, Removed 0, Diagnostics 0
-```
-
-A partial conversion writes the resources that converted completely, prints `skipped <kind> "<name>" (<codes>)` for each skipped resource, skips pruning (`pruning was skipped because the conversion was partial`), and returns exit status 1. The command resolves source and output paths, including existing symlinks, and refuses when they are equal or one contains the other. It checks this before reading or changing either tree, including with `--sync`.
-
-Codex conversion refuses a destination that already contains shared `.codex/hooks.json` or `.codex/config.toml` files. Devin conversion also refuses a destination that already contains `mcp_config.json`, `hooks.v1.json`, or `config.json`, instead of merging into it. For both targets the command stages every file, validates the staged shared files, publishes them, and on failure rolls back only the files that this run published. One-shot conversion creates no [ownership state](../glossary.md#ownership-state) and never takes ownership of existing entries. `sync` does not take ownership of pre-existing entries either. Only an explicit `doctor --repair` can, and only when an entry's bytes exactly match the value sync would generate. Missing or corrupt ownership state makes sync refuse to change shared entries.
 
 ## `doctor`
 
