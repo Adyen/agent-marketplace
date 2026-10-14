@@ -100,7 +100,7 @@ Leave out `--branch v4.0.9` to build the main branch instead. `make build` write
 
 About once a day the program checks GitHub for a newer release. When one exists, a command run in a terminal prints one `info:` line after it finishes, and the TUI shows the same notice once. The check never changes a command's output or exit status, and failed checks stay silent. Builds from `go install ...@latest` are compared by commit date, so the notice says a release came out after your build.
 
-The check is skipped in CI (when `CI` is set), when standard error is not a terminal, and for `serve`, shell completion, and `--version`. To turn it off, set `AGENT_MARKETPLACE_NO_UPDATE_CHECK=1`. Development builds never check.
+The check is skipped in CI (when `CI` is set), when standard error is not a terminal, and for `serve`, shell completion, and `--version`. To turn it off, set `AGENT_MARKETPLACE_NO_UPDATE_CHECK=1`, or add `update_check: {enabled: false}` to `~/.agents/config.yaml` (a v4 config; run `agent-marketplace migrate --scope user` first if yours is older). Development builds never check.
 
 ## Verify
 

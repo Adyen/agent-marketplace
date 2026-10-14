@@ -181,3 +181,24 @@ func TestUpgradeNoticeExcludedCommandsAreSilent(t *testing.T) {
 		t.Fatalf("excluded commands made %d requests, want 0", n)
 	}
 }
+
+// spec: upgrade-notice/user-configuration-disables-the-check
+func TestUpgradeNoticeConfigOptOut(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	hits := upgradeNoticeFixture(t)
+	seedUpgradeNotice(t)
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+	writeConfig(t, filepath.Join(homeDir, ".agents", "config.yaml"), "apiVersion: agent-marketplace/v4\nupdate_check:\n  enabled: false\n")
+	cmd := newRootCmd()
+	cmd.SetContext(t.Context())
+
+	if got := runUpgradeNotice(cmd, false, false); got != "" {
+		t.Fatalf("stderr = %q, want none", got)
+	}
+	if n := hits.Load(); n != 0 {
+		t.Fatalf("opted-out run made %d requests, want 0", n)
+	}
+}

@@ -12,6 +12,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/ownership"
 	"github.com/Adyen/agent-marketplace/internal/updatecheck"
 )
@@ -25,9 +26,17 @@ var (
 )
 
 // newUpgradeChecker returns the release checker for this process, or nil when
-// the environment opts out or the state root is unavailable.
+// the environment or configuration opts out or the state root is unavailable.
 func newUpgradeChecker() *updatecheck.Checker {
 	if !updatecheck.Enabled(os.Getenv) {
+		return nil
+	}
+	enabled, err := config.UpdateCheckEnabled()
+	if err != nil {
+		slog.Debug("upgrade check disabled", "error", err)
+		return nil
+	}
+	if !enabled {
 		return nil
 	}
 	stateRoot, err := ownership.StateRoot()

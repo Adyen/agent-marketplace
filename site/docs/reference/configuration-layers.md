@@ -27,6 +27,7 @@ Every layer may declare `sources`, `resources`, and `include`. The other top-lev
 | `allowed_registries`, `allowed_marketplaces` | yes | yes | yes | no |
 | `backup` | yes | yes | no | no |
 | `logging` | accepted, not used | yes | no | no |
+| `update_check` | yes | yes | no | no |
 | `telemetry` | yes | yes | no | no |
 | `materialization` | no | yes | yes | yes |
 | Exclusion-only Marketplace source | no | yes | no | no |
@@ -64,6 +65,7 @@ These fields control machine-wide behavior, so repository files cannot change th
 
 - `backup` merges field by field from the organization file and then the user file. A value set in the user file wins over the organization value for the same field.
 - `logging` comes from the user file only.
+- `update_check` is read from the organization and user files. A value set in the user file wins over the organization value.
 - `telemetry` is read from the organization and user files. See the [telemetry reference](./telemetry.md) for how the two combine.
 
 ### Materialization

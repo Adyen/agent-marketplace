@@ -137,7 +137,15 @@ cached in `update-check.json` under the state directory, which is
 
 The check is skipped in CI (when `CI` is set), when standard error is not a
 terminal, and for `serve`, shell completion, and `--version`. To turn it off,
-set `AGENT_MARKETPLACE_NO_UPDATE_CHECK=1`.
+set `AGENT_MARKETPLACE_NO_UPDATE_CHECK=1`, or add this to `~/.agents/config.yaml`:
+
+```yaml
+update_check:
+  enabled: false
+```
+
+The setting needs an `agent-marketplace/v4` config; run
+`agent-marketplace migrate --scope user` first if yours is older.
 
 ---
 
