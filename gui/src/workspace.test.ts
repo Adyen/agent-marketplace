@@ -476,10 +476,13 @@ describe('WorkspaceView', () => {
       push(work38SnapshotEvent(3, 7, 'inventory', [work38Row('stale-row')], null, operation))
       push(work38SnapshotEvent(4, 7, 'final', [work38Row('stale-final')], null, operation))
       await tick()
-      expect(controller.state.stage).toBe('config')
-      expect(controller.state.drift).toBe('pending')
+      // Ordinary reloads keep the last accepted final view until the generation-8 final (openspec/specs/session-startup/spec.md:221-225; c73bdab0).
+      expect(controller.state.stage).toBe('final')
+      expect(controller.state.drift).toBe('ready')
       expect(controller.state.operation).toEqual(operation)
       expect(controller.state.rows.map((candidate) => candidate.id)).toEqual(initialRows.map((candidate) => candidate.id))
+      expect(controller.state.rows.map((candidate) => candidate.id)).not.toContain('stale-row')
+      expect(controller.state.rows.map((candidate) => candidate.id)).not.toContain('stale-final')
 
       push(work38SnapshotEvent(5, 8, 'inventory', initialRows, operation))
       await tick()
