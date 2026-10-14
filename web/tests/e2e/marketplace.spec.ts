@@ -715,6 +715,30 @@ test.describe('Marketplace browser discovery', () => {
     await expect(page.getByTestId('unavailable-notice')).toContainText('This revision has been revoked and can no longer be installed.')
   })
 
+  // spec: marketplace-web-ui/requires-entries-carry-one-badge-each
+  test('renders prerequisites and dependents from the latest detail response', async ({ page }) => {
+    await page.goto('/r/team-tools/skill/secure-review')
+
+    const requires = page.getByTestId('requires-section')
+    await expect(requires.getByRole('heading', { name: 'Requires', exact: true })).toBeVisible()
+    const entries = requires.locator('li')
+    await expect(entries).toHaveCount(3)
+    await expect(entries.nth(0).getByRole('link', { name: /base-checks/ })).toHaveAttribute('href', '/r/team-tools/skill/base-checks')
+    await expect(entries.nth(0).getByTestId('requirement-badge')).toHaveText('resolved')
+    await expect(entries.nth(1)).toContainText('audit-export')
+    await expect(entries.nth(1).getByTestId('requirement-badge')).toHaveText('external')
+    await expect(entries.nth(1).getByRole('link')).toHaveCount(0)
+    await expect(entries.nth(2)).toContainText('missing-helper')
+    await expect(entries.nth(2).getByTestId('requirement-badge')).toHaveText('unresolved')
+
+    const requiredBy = page.getByTestId('required-by-section')
+    await expect(requiredBy.getByRole('heading', { name: 'Required by', exact: true })).toBeVisible()
+    await expect(requiredBy.getByRole('link', { name: /security-starter/ })).toHaveAttribute('href', '/r/team-tools/collection/security-starter')
+
+    await expect(page.getByTestId('requires-note')).toContainText('Requires 3 resources.')
+    await expect(page.getByTestId('requires-note')).toContainText('requires.expand')
+  })
+
   test('follows an exact digest-pinned browser route to safely render hostile primary Markdown', async ({ page }) => {
     const remoteRequests: string[] = []
     page.on('request', request => {

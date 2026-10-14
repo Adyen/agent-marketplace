@@ -1,5 +1,5 @@
 import { RESOURCE_KINDS } from '~/types/marketplace'
-import type { Capabilities, InspectionFile, InspectionManifest, Marketplace, ResourceKind, ResourceListItem, ResourceRevision, SearchResult, Registry, RegistryOccurrence, RegistrySummary, WellKnown } from '~/types/marketplace'
+import type { Capabilities, InspectionFile, InspectionManifest, Marketplace, ResourceKind, ResourceListItem, ResourceRelation, ResourceRequirement, ResourceRevision, SearchResult, Registry, RegistryOccurrence, RegistrySummary, WellKnown } from '~/types/marketplace'
 
 const MAX_STRING_LENGTH = 4096
 const MAX_ARRAY_LENGTH = 100
@@ -24,6 +24,10 @@ export const MAX_RESOURCE_REVISION_ENTRIES = 100
 // The analyzer emits at most 1,000 findings by default. Keep that complete
 // security record renderable while still bounding an untrusted API response.
 export const MAX_ASSESSMENT_FINDINGS = 1_000
+
+// The API does not bound prerequisite or dependent lists. Cap them client-side
+// so a hostile response cannot make the browser render an unbounded list.
+export const MAX_RESOURCE_REQUIREMENTS = 256
 
 export function isSha256Digest(value: string): boolean {
   return DIGEST_PATTERN.test(value)
@@ -254,6 +258,8 @@ function normalizeResourceRevisionValue(input: unknown, expected: ExpectedResour
   const revocationObject = object.revocation === undefined ? undefined : asObject(object.revocation, 'revocation')
   const revocationKind = revocationObject === undefined ? undefined : requiredString(revocationObject.kind, 'revocation.kind')
   if (revocationKind !== undefined && !['registry', 'coordinate', 'revision'].includes(revocationKind)) throw new ApiValidationError('revocation.kind is unsupported')
+  const requires = object.requires === undefined ? undefined : boundedArray(object.requires, 'requires', MAX_RESOURCE_REQUIREMENTS).map((value, index) => normalizeResourceRequirement(value, `requires[${index}]`))
+  const requiredBy = object.required_by === undefined ? undefined : boundedArray(object.required_by, 'required_by', MAX_RESOURCE_REQUIREMENTS).map((value, index) => normalizeResourceRelation(value, `required_by[${index}]`))
   return {
     coordinate,
     content_digest: digest,
@@ -262,6 +268,8 @@ function normalizeResourceRevisionValue(input: unknown, expected: ExpectedResour
     ...optionalString(object, 'description'),
     assessment,
     occurrence,
+    ...(requires === undefined ? {} : { requires }),
+    ...(requiredBy === undefined ? {} : { required_by: requiredBy }),
     ...(currentAvailability === undefined ? {} : { current_availability: { availability: currentAvailability } }),
     ...(revocationObject === undefined ? {} : { revocation: {
       kind: revocationKind as NonNullable<ResourceRevision['revocation']>['kind'],
@@ -269,6 +277,34 @@ function normalizeResourceRevisionValue(input: unknown, expected: ExpectedResour
       reason: requiredString(revocationObject.reason, 'revocation.reason'),
       applied_at: dateTimeString(revocationObject.applied_at, 'revocation.applied_at'),
     } }),
+  }
+}
+
+// ResourceRequirement.kind excludes collection; ResourceRelation.kind admits
+// every resource kind.
+const REQUIREMENT_KINDS = RESOURCE_KINDS.filter(kind => kind !== 'collection')
+
+function normalizeResourceRelation(input: unknown, label: string): ResourceRelation {
+  const object = asObject(input, label)
+  const kind = requiredString(object.kind, `${label}.kind`)
+  if (!isResourceKind(kind)) throw new ApiValidationError(`${label}.kind is unsupported`)
+  return {
+    registry: requiredString(object.registry, `${label}.registry`),
+    kind,
+    name: requiredString(object.name, `${label}.name`),
+  }
+}
+
+function normalizeResourceRequirement(input: unknown, label: string): ResourceRequirement {
+  const object = asObject(input, label)
+  const kind = requiredString(object.kind, `${label}.kind`)
+  if (!(REQUIREMENT_KINDS as readonly string[]).includes(kind)) throw new ApiValidationError(`${label}.kind is unsupported`)
+  return {
+    kind: kind as ResourceRequirement['kind'],
+    name: requiredString(object.name, `${label}.name`),
+    ...(object.registry === undefined ? {} : { registry: boundedString(object.registry, `${label}.registry`) }),
+    ...(object.path === undefined ? {} : { path: boundedString(object.path, `${label}.path`) }),
+    ...(object.resolved === undefined ? {} : { resolved: normalizeResourceRelation(object.resolved, `${label}.resolved`) }),
   }
 }
 
