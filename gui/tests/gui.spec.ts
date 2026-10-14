@@ -83,14 +83,14 @@ test('built GUI drives the real user-scope core', async ({ page }) => {
     await page.goto(bootstrap.url, { waitUntil: 'domcontentloaded' })
     await expect(page.getByRole('option').filter({ hasText: 'skill/solo' }).first()).toBeVisible({ timeout: 60_000 })
     await expect(page.getByRole('button', { name: 'Refresh' })).toBeEnabled()
-    await expect(page.getByRole('button', { name: 'Sync' })).toBeEnabled()
+    await expect(page.getByRole('button', { name: 'Sync', exact: true })).toBeEnabled()
 
     await page.getByRole('button', { name: 'Refresh' }).focus()
     await page.keyboard.press('Enter')
     await expect(page.getByRole('option').filter({ hasText: 'skill/solo' }).first()).toBeVisible()
 
-    await expect(page.getByRole('button', { name: 'Sync' })).toBeEnabled()
-    await page.getByRole('button', { name: 'Sync' }).focus()
+    await expect(page.getByRole('button', { name: 'Sync', exact: true })).toBeEnabled()
+    await page.getByRole('button', { name: 'Sync', exact: true }).focus()
     await page.keyboard.press('Enter')
     await expect(page.getByText('sync complete')).toBeVisible({ timeout: 60_000 })
     const body = await readFile(materialized, 'utf8')
@@ -183,7 +183,7 @@ test('built GUI saves Harness targets through the real user-scope core', async (
     const saved = await readFile(userConfigPath, 'utf8')
     expect(saved).toBe(fixtureConfig('[e2e-future-harness]'))
 
-    await expect(page.getByRole('button', { name: 'Sync' })).toBeDisabled()
+    await expect(page.getByRole('button', { name: 'Sync', exact: true })).toBeDisabled()
     expect(await readFile(userConfigPath, 'utf8')).toBe(saved)
     expect(existsSync(join(home, '.e2e-future-harness'))).toBe(false)
   } finally {

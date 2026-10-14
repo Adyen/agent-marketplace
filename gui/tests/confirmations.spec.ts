@@ -184,7 +184,7 @@ test('built GUI drives ordinary quit choices through the native Quit bridge', as
     await expect(migration).not.toBeVisible()
     await expect(page.getByRole('option').filter({ hasText: 'skill/solo' }).first()).toBeVisible()
 
-    await page.getByRole('button', { name: 'Sync' }).press('Enter')
+    await page.getByRole('button', { name: 'Sync', exact: true }).press('Enter')
     await expect(page.getByText('sync complete')).toBeVisible({ timeout: 60_000 })
     await expect.poll(() => actionBodies.filter((b) => JSON.parse(b).action === 'sync').length).toBe(1)
 
@@ -292,7 +292,7 @@ test('built GUI attaches native close to a running sync and quits on its settlem
     await launchWithNativeBridge(page, bootstrap)
     await expect(page.getByRole('option').filter({ hasText: 'skill/solo' }).first()).toBeVisible({ timeout: 60_000 })
 
-    await page.getByRole('button', { name: 'Sync' }).press('Enter')
+    await page.getByRole('button', { name: 'Sync', exact: true }).press('Enter')
     await expect.poll(() => actionBodies.filter((b) => JSON.parse(b).action === 'sync').length).toBe(1)
     await expect.poll(() => existsSync(syncStarted)).toBe(true)
 
