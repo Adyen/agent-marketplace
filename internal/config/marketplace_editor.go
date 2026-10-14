@@ -181,7 +181,7 @@ func updateMarketplacePinInConfig(configPath, marketplaceURL, instanceID string,
 }
 
 func sameMarketplacePinCASValue(a, b MarketplaceResourcePin) bool {
-	return a.RegistryID == b.RegistryID && a.RegistrySlug == b.RegistrySlug && a.Kind == b.Kind && a.Name == b.Name && a.Revision == b.Revision && a.Digest == b.Digest && a.Acquisition == b.Acquisition && a.RegistryCommit == b.RegistryCommit && a.RegistryManifestDigest == b.RegistryManifestDigest && a.InstalledName == b.InstalledName && a.Direct == b.Direct && a.SelectedBy == b.SelectedBy
+	return a.RegistryID == b.RegistryID && a.RegistrySlug == b.RegistrySlug && a.Kind == b.Kind && a.Name == b.Name && a.Revision == b.Revision && a.Digest == b.Digest && a.Acquisition == b.Acquisition && a.RegistryCommit == b.RegistryCommit && a.RegistryManifestDigest == b.RegistryManifestDigest && a.InstalledName == b.InstalledName && a.Direct == b.Direct && a.SelectedBy == b.SelectedBy && a.RequiresEdges == b.RequiresEdges
 }
 
 func replaceMarketplacePinNode(node *yaml.Node, pin MarketplaceResourcePin) {

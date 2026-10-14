@@ -1648,6 +1648,60 @@ components:
           required: [availability]
           properties:
             availability: { type: string, enum: [available, blocked, policy-blocked, operator-exposed, no-artifact, revoked] }
+        requires:
+          type: array
+          items:
+            $ref: "#/components/schemas/ResourceRequirement"
+          description: >-
+            Optional; populated only by the latest resource detail response.
+            The prerequisites this revision declared at publication, in
+            declaration order. Registry and path hints are credential-redacted
+            before storage and are echoed redacted. An absent field means the
+            revision predates prerequisite indexing; an empty array means it
+            was indexed and declares none.
+        required_by:
+          type: array
+          items:
+            $ref: "#/components/schemas/ResourceRelation"
+          description: >-
+            Optional; populated only by the latest resource detail response.
+            The visible, in-scope current-head resources of this Marketplace
+            whose indexed prerequisites resolve to this resource, sorted by
+            registry slug, kind, and name. Absent when a visible in-scope
+            unindexed revision leaves the dependent set unknown.
+
+    ResourceRelation:
+      type: object
+      additionalProperties: false
+      required: [registry, kind, name]
+      properties:
+        registry:
+          type: string
+          description: Registry slug within this Marketplace.
+        kind:
+          type: string
+          enum: [skill, command, subagent, hook, mcpserver, collection]
+        name:
+          type: string
+
+    ResourceRequirement:
+      type: object
+      additionalProperties: false
+      required: [kind, name]
+      properties:
+        kind:
+          type: string
+          enum: [skill, command, subagent, hook, mcpserver]
+        name:
+          type: string
+        registry:
+          type: string
+          description: Credential-redacted registry hint.
+        path:
+          type: string
+          description: Credential-redacted source-root path hint.
+        resolved:
+          $ref: "#/components/schemas/ResourceRelation"
 
     ResourceAssessment:
       type: object

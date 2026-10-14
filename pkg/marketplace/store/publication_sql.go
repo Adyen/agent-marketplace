@@ -35,7 +35,7 @@ func legacyPublicationAlreadyCurrent(ctx context.Context, q ManagedSQLQueries, m
 	}
 	for _, expected := range req.Resources {
 		var matches bool
-		err := q.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM resource_revisions WHERE marketplace_id=$1 AND registry_id=$2 AND kind=$3 AND name=$4 AND content_digest=$5 AND COALESCE(archive_digest,'')=$6 AND COALESCE(license,'')=$7 AND COALESCE(description,'')=$8)`, expected.Coordinate.Marketplace, expected.Coordinate.Registry, expected.Coordinate.Kind, expected.Coordinate.Name, expected.ContentDigest, expected.ArchiveDigest, expected.License, BoundDescription(expected.Description)).Scan(&matches)
+		err := q.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM resource_revisions WHERE marketplace_id=$1 AND registry_id=$2 AND kind=$3 AND name=$4 AND content_digest=$5 AND COALESCE(archive_digest,'')=$6 AND COALESCE(license,'')=$7 AND COALESCE(description,'')=$8 AND COALESCE(requires,'')=$9)`, expected.Coordinate.Marketplace, expected.Coordinate.Registry, expected.Coordinate.Kind, expected.Coordinate.Name, expected.ContentDigest, expected.ArchiveDigest, expected.License, BoundDescription(expected.Description), expected.Requires).Scan(&matches)
 		if err != nil || !matches {
 			return false, err
 		}

@@ -1980,13 +1980,6 @@ func (c *V4Config) marketplaceEntryForLock(name string, src V4Source, group V4Re
 		direct[index] = request
 	}
 
-	collections := make(map[string]int)
-	for i := range mp.Resources {
-		if mp.Resources[i].Kind == api.KindCollection {
-			r := &mp.Resources[i]
-			collections[r.RegistryID+"\x00"+r.Name] = i
-		}
-	}
 	reachable := make([]bool, len(mp.Resources))
 	for i := range direct {
 		reachable[i] = true
@@ -1998,7 +1991,13 @@ func (c *V4Config) marketplaceEntryForLock(name string, src V4Source, group V4Re
 				continue
 			}
 			for _, edge := range mp.Resources[i].SelectedBy {
-				parent, ok := collections[edge.RegistryID+"\x00"+edge.Name]
+				var parent int
+				var ok bool
+				if edge.Kind == "" {
+					parent, ok = resources[edge.RegistryID+"\x00"+api.KindCollection+"\x00"+edge.Name]
+				} else {
+					parent, ok = resources[edge.RegistryID+"\x00"+edge.Kind+"\x00"+edge.Name]
+				}
 				if ok && reachable[parent] && mp.Resources[parent].ContentDigest == edge.Revision {
 					reachable[i] = true
 					changed = true
@@ -2029,10 +2028,16 @@ func (c *V4Config) marketplaceEntryForLock(name string, src V4Source, group V4Re
 			LockSourcePath:               r.SourcePath,
 		}
 		selections := make([]MarketplaceSelection, 0, len(r.SelectedBy))
+		var requiresEdges []MarketplaceRequirementEdge
 		for _, edge := range r.SelectedBy {
-			selections = append(selections, MarketplaceSelection{RegistryID: edge.RegistryID, Name: edge.Name, Revision: edge.Revision.String()})
+			if edge.Kind == "" {
+				selections = append(selections, MarketplaceSelection{RegistryID: edge.RegistryID, Name: edge.Name, Revision: edge.Revision.String()})
+			} else {
+				requiresEdges = append(requiresEdges, MarketplaceRequirementEdge{RegistryID: edge.RegistryID, Kind: edge.Kind, Name: edge.Name, Revision: edge.Revision.String()})
+			}
 		}
 		pin.SelectedBy = MarketplaceSelectionsFrom(selections)
+		pin.RequiresEdges = MarketplaceRequirementEdgesFrom(requiresEdges)
 		if request, ok := direct[i]; ok {
 			pin.Direct = true
 			if request.Options.HasAs {

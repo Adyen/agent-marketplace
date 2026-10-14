@@ -27,6 +27,14 @@ func (m *availabilityMetadata) CurrentManagedConfiguration(context.Context, stor
 	return m.change, m.err
 }
 
+func (m *availabilityMetadata) ListCurrentRequirementCandidates(context.Context, store.MarketplaceID, store.RegistryID) ([]store.RequirementCandidate, error) {
+	return nil, nil
+}
+
+func (m *availabilityMetadata) GetCurrentOccurrenceRoots(context.Context, store.ResourceCoordinate) (store.CurrentOccurrenceRoots, error) {
+	return store.CurrentOccurrenceRoots{}, store.ErrNotFound
+}
+
 func availabilityFixture(t testing.TB) (*Server, *availabilityMetadata, admin.Snapshot, store.AssessedResourceRevision) {
 	t.Helper()
 	snapshot := admin.Snapshot{Version: 1, PolicyRevision: 3, LicensePolicy: admin.LicensePolicy{Allowlist: []string{"MIT"}, Undeclared: "reject"}, Registries: []admin.Registry{{ID: "reg", Generation: 2, Lifecycle: "active", Acquisition: store.AcquisitionMirror, License: "Apache-2.0"}}}
@@ -151,6 +159,7 @@ func TestAvailabilityRequestSnapshotAndCache(t *testing.T) {
 		view := availabilityFromContext(r.Context())
 		if view == nil {
 			t.Fatal("missing view")
+			return
 		}
 		first := server.evaluateAvailability(view, rev)
 		meta.err = errors.New("database changed after request snapshot")

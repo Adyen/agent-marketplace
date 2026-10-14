@@ -166,6 +166,10 @@ type MetadataStore interface {
 	// coordinate order. The cursor is stateless and is never retained.
 	ReadCatalogProjectionPage(ctx context.Context, req CatalogProjectionPageRequest) (CatalogProjectionPage, error)
 
+	// Requirement lookups.
+	ListCurrentRequirementCandidates(ctx context.Context, marketplace MarketplaceID, registry RegistryID) ([]RequirementCandidate, error)
+	GetCurrentOccurrenceRoots(ctx context.Context, coord ResourceCoordinate) (CurrentOccurrenceRoots, error)
+
 	// Registry occurrences.
 	GetRegistryOccurrence(ctx context.Context, registry RegistryID, commit string) (RegistryOccurrence, error)
 	PutRegistryOccurrence(ctx context.Context, occ RegistryOccurrence) error

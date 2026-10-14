@@ -1100,6 +1100,23 @@ export interface components {
             coordinate: components["schemas"]["ResourceCoordinate"];
             manifest_digest: string;
         };
+        ResourceRelation: {
+            /** @enum {string} */
+            kind: "skill" | "command" | "subagent" | "hook" | "mcpserver" | "collection";
+            name: string;
+            /** @description Registry slug within this Marketplace. */
+            registry: string;
+        };
+        ResourceRequirement: {
+            /** @enum {string} */
+            kind: "skill" | "command" | "subagent" | "hook" | "mcpserver";
+            name: string;
+            /** @description Credential-redacted source-root path hint. */
+            path?: string;
+            /** @description Credential-redacted registry hint. */
+            registry?: string;
+            resolved?: components["schemas"]["ResourceRelation"];
+        };
         ResourceRevision: {
             archive_digest?: string;
             assessment: components["schemas"]["ResourceAssessment"];
@@ -1115,6 +1132,10 @@ export interface components {
             description?: string;
             license?: string;
             occurrence: components["schemas"]["ResourceOccurrence"];
+            /** @description Optional; populated only by the latest resource detail response. The visible, in-scope current-head resources of this Marketplace whose indexed prerequisites resolve to this resource, sorted by registry slug, kind, and name. Absent when a visible in-scope unindexed revision leaves the dependent set unknown. */
+            required_by?: components["schemas"]["ResourceRelation"][];
+            /** @description Optional; populated only by the latest resource detail response. The prerequisites this revision declared at publication, in declaration order. Registry and path hints are credential-redacted before storage and are echoed redacted. An absent field means the revision predates prerequisite indexing; an empty array means it was indexed and declares none. */
+            requires?: components["schemas"]["ResourceRequirement"][];
             revocation?: components["schemas"]["Revocation"];
         };
         Revocation: {

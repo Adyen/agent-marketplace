@@ -24,6 +24,7 @@ type MarketplaceLayerMutation struct {
 	endpointS bool
 	pins      []config.MarketplaceResourcePin
 	pinsS     bool
+	strip     []config.MarketplaceResourcePin
 	removal   *marketplaceRemoval
 }
 
@@ -90,6 +91,47 @@ func (m *MarketplaceLayerMutation) RemoveDirectPin(entry config.MarketplaceEntry
 
 func (m *MarketplaceLayerMutation) RemoveCollection(entry config.MarketplaceEntry, collection config.MarketplaceResourcePin) error {
 	return m.removeMarketplacePin(entry, collection, true)
+}
+
+// RemoveRequiresHeldPin removes a lock-only pin held only through requires
+// edges. The record, and the requires edges it alone carries, is stripped
+// from the merged lock. When exclude is true the exact Marketplace exclusion
+// ("registry/kind/name") is written into the same layer, which acquires the
+// Marketplace whose lock held the pin.
+func (m *MarketplaceLayerMutation) RemoveRequiresHeldPin(entry config.MarketplaceEntry, pin config.MarketplaceResourcePin, exclude bool) error {
+	if m == nil {
+		return errors.New("marketplace layer mutation is nil")
+	}
+	if m.legacy {
+		return errors.New("requires-held Marketplace pins require a v4 configuration layer")
+	}
+	if m.editor == nil {
+		return errors.New("marketplace layer mutation has no open editor")
+	}
+	if exclude {
+		binding, found, err := m.editor.LookupMarketplaceSource(entry.URL)
+		if err != nil {
+			return err
+		}
+		if !found {
+			return fmt.Errorf("marketplace endpoint %q has no v4 source in this layer", entry.URL)
+		}
+		kind := pin.Kind
+		if kind == "mcpserver" {
+			kind = "mcp"
+		}
+		registry := pin.RegistrySlug
+		if registry == "" {
+			registry = pin.RegistryID
+		}
+		if err := m.editor.ExcludeMarketplaceLocator(binding, registry+"/"+kind+"/"+pin.Name); err != nil {
+			return err
+		}
+	}
+	m.strip = append(m.strip, pin)
+	m.endpoint = entry
+	m.endpointS = true
+	return nil
 }
 
 func (m *MarketplaceLayerMutation) removeMarketplacePin(entry config.MarketplaceEntry, pin config.MarketplaceResourcePin, collection bool) error {
@@ -303,6 +345,12 @@ func mutateV4MarketplaceLayer(ctx context.Context, repoRoot, localConfigDir, con
 
 	mergeEntry := m.endpoint
 	mergeEntry.Source = source
+	if len(m.strip) > 0 {
+		lockDoc, err = marketplacelock.RemoveRequiresHeldRecords(lockDoc, mergeEntry, m.strip)
+		if err != nil {
+			return nil, err
+		}
+	}
 	exact, err := marketplacelock.MergePinsToV4(candidateV4, lockDoc, mergeEntry, m.pins, marketplace.DefaultCache())
 	if err != nil {
 		return nil, err

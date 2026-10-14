@@ -913,7 +913,7 @@ func Sync(ctx context.Context, opts ResolveOptions) SyncResult {
 			"resolved.count": strconv.Itoa(len(resolved.Resolved)),
 		})
 	}
-	report, err := materialize.Run(ctx, matRoot, resolved.Resolved, materialize.WithMaterializationModes(resolved.MaterializationModes), materialize.WithImpliedPreview(resolved.ImpliedPreview))
+	report, err := materialize.Run(ctx, matRoot, resolved.Resolved, materialize.WithMaterializationModes(resolved.MaterializationModes), materialize.WithImpliedPreview(materializableImpliedPreview(resolved.ImpliedPreview)))
 	if materializeSpan != (telemetry.Span{}) {
 		materializeSpan.SetAttributes(materializationResultAttrs(report, err))
 		materializeSpan.End()

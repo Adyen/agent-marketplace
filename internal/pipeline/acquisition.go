@@ -350,6 +350,16 @@ func (r transientOrganizationMarketplaceResolver) ResolveWithPolicy(ctx context.
 	return artifacts, errs
 }
 
+// LookupMarketplaceRequirement forwards the optional requirement-lookup
+// extension so the wrapper does not hide it from resolution.
+func (r transientOrganizationMarketplaceResolver) LookupMarketplaceRequirement(ctx context.Context, q resolver.MarketplaceRequirementQuery) (resolver.MarketplaceRequirementResult, error) {
+	lookup, ok := any(r.delegate).(resolver.MarketplaceRequirementLookup)
+	if !ok || q.Entry.Source == config.Organization {
+		return resolver.MarketplaceRequirementResult{}, nil
+	}
+	return lookup.LookupMarketplaceRequirement(ctx, q)
+}
+
 func effectiveConfigError(ec config.EffectiveConfig, err error) config.EffectiveConfig {
 	rest := ec.Errors[min(len(ec.Organization.Errors), len(ec.Errors)):]
 	ec.Organization.Errors = []error{err}

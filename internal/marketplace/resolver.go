@@ -1387,3 +1387,140 @@ func descriptionFromResource(r ir.Resource) string {
 	}
 	return ""
 }
+
+// LookupMarketplaceRequirement implements resolver.MarketplaceRequirementLookup.
+// It answers whether one prerequisite resolves inside the requiring pin's
+// configured Marketplace entry. The result is an identity only. Lookup
+// candidates are never recorded into configuration or lock.
+//
+// A requirement in the requiring pin's own registry honors the pin's
+// registry_commit when recorded, resolving through the exact registry
+// occurrence manifest; every other case asks the registry's latest resource
+// revision, with the path hint checked against that revision's registry
+// occurrence roots. A missing, blocked, or revoked candidate means "not
+// found"; other failures surface through the Marketplace error path.
+func (r *Resolver) LookupMarketplaceRequirement(ctx context.Context, q resolver.MarketplaceRequirementQuery) (resolver.MarketplaceRequirementResult, error) {
+	if err := ctx.Err(); err != nil {
+		return resolver.MarketplaceRequirementResult{}, err
+	}
+	client, err := r.clientForEntry(q.Entry)
+	if err != nil {
+		return resolver.MarketplaceRequirementResult{}, err
+	}
+
+	routeRegistry := q.RegistrySlug
+	if routeRegistry == "" {
+		routeRegistry = q.RegistryID
+	}
+	if q.SameRegistry && q.RegistryCommit != "" {
+		occurrence, err := client.GetRegistryOccurrence(ctx, q.RegistryID, q.RegistryCommit)
+		if err != nil {
+			if isMarketplaceNotFound(err) {
+				return resolver.MarketplaceRequirementResult{}, nil
+			}
+			return resolver.MarketplaceRequirementResult{}, fmt.Errorf("marketplace requirement occurrence %s@%s: %w", q.RegistryID, q.RegistryCommit, err)
+		}
+		return r.requirementInManifest(ctx, client, string(occurrence.RegistryRevisionManifestDigest), routeRegistry, q.RegistryCommit, q)
+	}
+	rev, err := client.GetLatestResourceRevisionForRegistry(ctx, routeRegistry, q.RegistryID, q.Kind, q.Name)
+	if err != nil {
+		if isMarketplaceUnavailable(err) {
+			return resolver.MarketplaceRequirementResult{}, nil
+		}
+		return resolver.MarketplaceRequirementResult{}, fmt.Errorf("marketplace requirement %s/%s/%s: %w", q.RegistryID, q.Kind, q.Name, err)
+	}
+	ok, err := r.requirementPathMatches(ctx, client, q, rev.Occurrence, "")
+	if err != nil || !ok {
+		return resolver.MarketplaceRequirementResult{}, err
+	}
+	return resolver.MarketplaceRequirementResult{Found: true, ContentDigest: string(rev.ContentDigest)}, nil
+}
+
+// requirementInManifest fetches the content-addressed registry revision
+// manifest and reports whether it lists the requirement coordinate. A matched
+// candidate still passes the path-hint check against its exact registry
+// occurrence (expectCommit), whose roots derive its source root.
+func (r *Resolver) requirementInManifest(ctx context.Context, client *Client, manifestDigest, routeRegistry, expectCommit string, q resolver.MarketplaceRequirementQuery) (resolver.MarketplaceRequirementResult, error) {
+	if manifestDigest == "" {
+		return resolver.MarketplaceRequirementResult{}, nil
+	}
+	var digest string
+	found := false
+	manifest, _, err := client.GetRegistryRevisionManifest(ctx, manifestDigest)
+	if err != nil {
+		if isMarketplaceNotFound(err) {
+			return resolver.MarketplaceRequirementResult{}, nil
+		}
+		return resolver.MarketplaceRequirementResult{}, fmt.Errorf("marketplace requirement manifest %s: %w", manifestDigest, err)
+	}
+	for _, resource := range manifest.Resources {
+		if resource.Kind == q.Kind && resource.Name == q.Name {
+			found, digest = true, resource.ContentDigest
+			break
+		}
+	}
+	if !found {
+		return resolver.MarketplaceRequirementResult{}, nil
+	}
+	if q.Path == "" {
+		return resolver.MarketplaceRequirementResult{Found: true, ContentDigest: digest}, nil
+	}
+	// The manifest carries no source path: fetch the candidate revision's own
+	// occurrence to derive its source root. A mismatch between the served
+	// occurrence and the looked-up commit leaves the root unestablished.
+	rev, err := client.GetResourceRevisionForRegistry(ctx, routeRegistry, q.RegistryID, q.Kind, q.Name, digest)
+	if err != nil {
+		if isMarketplaceUnavailable(err) {
+			return resolver.MarketplaceRequirementResult{}, nil
+		}
+		return resolver.MarketplaceRequirementResult{}, fmt.Errorf("marketplace requirement %s/%s/%s@%s: %w", q.RegistryID, q.Kind, q.Name, digest, err)
+	}
+	ok, err := r.requirementPathMatches(ctx, client, q, rev.Occurrence, expectCommit)
+	if err != nil || !ok {
+		return resolver.MarketplaceRequirementResult{}, err
+	}
+	return resolver.MarketplaceRequirementResult{Found: true, ContentDigest: digest}, nil
+}
+
+// requirementPathMatches reports whether the candidate's source root, the
+// single root of its exact registry occurrence that contains its source
+// path, equals the path hint. An empty hint always matches. expectCommit,
+// when set, rejects a served occurrence that is not the looked-up commit,
+// because the source root of a different occurrence cannot establish the
+// hint.
+func (r *Resolver) requirementPathMatches(ctx context.Context, client *Client, q resolver.MarketplaceRequirementQuery, occ store.ResourceOccurrence, expectCommit string) (bool, error) {
+	if q.Path == "" {
+		return true, nil
+	}
+	if expectCommit != "" && occ.Commit != expectCommit {
+		return false, nil
+	}
+	occurrence, err := client.GetRegistryOccurrence(ctx, q.RegistryID, occ.Commit)
+	if err != nil {
+		if isMarketplaceNotFound(err) {
+			return false, nil
+		}
+		return false, fmt.Errorf("marketplace requirement occurrence %s@%s: %w", q.RegistryID, occ.Commit, err)
+	}
+	return store.SourceRootMatches(occurrence.Roots, occ.SourcePath, q.Path), nil
+}
+
+func isMarketplaceNotFound(err error) bool {
+	var apiErr *APIError
+	return errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusNotFound
+}
+
+// isMarketplaceUnavailable reports a candidate the Marketplace refuses to
+// serve: missing (404), blocked (403), or revoked (410). It applies to
+// resource revision fetches; occurrence and manifest fetches stay 404-only.
+func isMarketplaceUnavailable(err error) bool {
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) {
+		return false
+	}
+	switch apiErr.StatusCode {
+	case http.StatusNotFound, http.StatusForbidden, http.StatusGone:
+		return true
+	}
+	return false
+}

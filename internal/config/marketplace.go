@@ -132,6 +132,43 @@ func (s *MarketplaceSelections) UnmarshalYAML(node *yaml.Node) error {
 	return nil
 }
 
+// MarketplaceRequirementEdge records the requiring locked resource that keeps
+// a requires-held pin. It is runtime-only: requires edges live in the
+// acquisition lock and are never serialized into configuration.
+type MarketplaceRequirementEdge struct {
+	RegistryID string
+	Kind       string
+	Name       string
+	Revision   string
+}
+
+// MarketplaceRequirementEdges is a comparable packed form mirroring
+// MarketplaceSelections, one line per edge as
+// registry_id, kind, name, revision separated by NUL.
+type MarketplaceRequirementEdges string
+
+func MarketplaceRequirementEdgesFrom(values []MarketplaceRequirementEdge) MarketplaceRequirementEdges {
+	parts := make([]string, 0, len(values))
+	for _, value := range values {
+		parts = append(parts, value.RegistryID+"\x00"+value.Kind+"\x00"+value.Name+"\x00"+value.Revision)
+	}
+	return MarketplaceRequirementEdges(strings.Join(parts, "\n"))
+}
+
+func (s MarketplaceRequirementEdges) List() []MarketplaceRequirementEdge {
+	if s == "" {
+		return nil
+	}
+	var values []MarketplaceRequirementEdge
+	for _, part := range strings.Split(string(s), "\n") {
+		fields := strings.Split(part, "\x00")
+		if len(fields) == 4 {
+			values = append(values, MarketplaceRequirementEdge{RegistryID: fields[0], Kind: fields[1], Name: fields[2], Revision: fields[3]})
+		}
+	}
+	return values
+}
+
 type MarketplaceResourcePin struct {
 	RegistryID             string                `yaml:"registry_id"`
 	RegistrySlug           string                `yaml:"registry_slug,omitempty"`
@@ -151,6 +188,18 @@ type MarketplaceResourcePin struct {
 	LockArchiveDigest            string `yaml:"-"`
 	LockCollectionManifestDigest string `yaml:"-"`
 	LockSourcePath               string `yaml:"-"`
+	// RequiresEdges carries the requires edges this pin's lock record holds.
+	// It is runtime-only and always empty for configuration-authored pins:
+	// selected_by in configuration stays collection-only.
+	RequiresEdges MarketplaceRequirementEdges `yaml:"-"`
+}
+
+// RequiresHeld reports whether the pin is selected only through requires
+// edges, never a direct user selection and never collection-held. The
+// resolver treats requires-held pins as prerequisite candidates instead of
+// ordinary selections.
+func (p MarketplaceResourcePin) RequiresHeld() bool {
+	return !p.Direct && len(p.SelectedBy.List()) == 0 && len(p.RequiresEdges.List()) > 0
 }
 
 const (
