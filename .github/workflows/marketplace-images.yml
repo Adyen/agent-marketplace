@@ -45,13 +45,18 @@ jobs:
           # roles; the api target serves the API-only role in split mode.
           for role in worker api; do
             image="${namespace}/${role}:${VERSION}"
-            docker build --platform linux/amd64 --pull \
+            docker build --platform linux/amd64 --pull --target "$role" \
               --build-arg "VERSION=${VERSION}" \
               "${labels[@]}" \
               --tag "$image" -f Dockerfile.marketplace .
             version_output="$(docker run --rm --network none --cap-drop ALL \
               --security-opt no-new-privileges --env HOME=/tmp "$image" --version)"
             test "$version_output" = "$VERSION"
+            image_cmd="$(docker image inspect --format '{{json .Config.Cmd}}' "$image")"
+            if [[ "$image_cmd" != *'"--role","'"$role"'"]' ]]; then
+              echo "::error::${image} runs ${image_cmd}, not the ${role} role" >&2
+              exit 1
+            fi
             docker push "$image"
           done
 
