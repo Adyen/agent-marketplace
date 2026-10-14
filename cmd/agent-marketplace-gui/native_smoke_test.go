@@ -134,6 +134,7 @@ func TestNativeLaunchSmoke(t *testing.T) {
 	case <-deadline:
 		t.Fatal("native window startup deadline exceeded")
 	}
+	t.Cleanup(app.Quit)
 	select {
 	case <-nativeSmokeDomReady:
 	case err := <-nativeSmokeRunDone:
@@ -151,15 +152,13 @@ func TestNativeLaunchSmoke(t *testing.T) {
 	case <-deadline:
 		t.Fatal("native window probe deadline exceeded")
 	}
-	wailsruntime.Quit(windowCtx)
-
 	if message, _ := report["error"].(string); message != "" {
 		t.Fatalf("in-window probe failed: %s", message)
 	}
 	if report["bootstrap"] != true {
 		t.Fatalf("bound Bootstrap did not return a credential payload: %v", report)
 	}
-	if methods, _ := report["boundMethods"].([]any); !slices.Equal(methods, []any{"Bootstrap"}) {
+	if methods, _ := report["boundMethods"].([]any); !slices.Equal(methods, []any{"Bootstrap", "Quit"}) {
 		t.Fatalf("unexpected bound method set: %v", methods)
 	}
 	if report["status"] != float64(200) || report["stage"] != "final" || report["apiRow"] != true {
@@ -174,6 +173,7 @@ func TestNativeLaunchSmoke(t *testing.T) {
 		t.Logf("native window origin: %s", origin)
 	}
 
+	app.Quit()
 	select {
 	case err := <-nativeSmokeRunDone:
 		if err != nil {
