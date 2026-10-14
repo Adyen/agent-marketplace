@@ -71,6 +71,6 @@ The CLI generates the lockfile. Editing it by hand bypasses the checks the CLI m
 
 - If `sync --check` reports `lock.snapshot-unavailable`, the exact snapshot is not in the cache. Run `agent-marketplace sync --locked` to fetch it without touching configuration or locks. If updating the lock is acceptable, run a writing `agent-marketplace sync` or `agent-marketplace lock` instead.
 - If the lock changes although nobody changed the configuration, someone ran `agent-marketplace lock --upgrade` or `agent-marketplace update`. A healthy lock never moves on its own when `main` moves. Commit the result if the change was intended.
-- If CI fails with `lock.invalid-document`, check `agent-marketplace --version` (it prints the installed version, such as `v4.1.3`) in the CI job first. Versions older than v4.0.9 cannot read the lock, so upgrade the job. If the version is current, the lockfile itself is damaged; see the [lockfile reference](../reference/lockfiles.md).
+- If CI fails with `lock.invalid-document`, check `agent-marketplace --version` (it prints the installed version) in the CI job first. Versions older than v4.0.9 cannot read the lock, so upgrade the job. If the version is current, the lockfile itself is damaged; see the [lockfile reference](../reference/lockfiles.md).
 
 For the lock format and every lock error, see the [lockfiles reference](../reference/lockfiles.md).

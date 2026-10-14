@@ -95,4 +95,4 @@ A teammate who clones the repository runs `agent-marketplace sync` and gets the 
 
 - If sync reports `no machine-wide target harness set configured`, add `harnesses` to `.agents/config.yaml` or to `~/.agents/config.yaml`.
 - If the `ref` does not resolve, check that the tag or branch exists in the registry and that you can clone it. For private registries, see [configure private Git registries](./configure-private-git-registries.md).
-- If a teammate or CI job fails with `lock.invalid-document`, check its version with `agent-marketplace --version`, which prints the installed version such as `v4.1.3`. Versions older than v4.0.9 cannot read the lock; upgrade them.
+- If a teammate or CI job fails with `lock.invalid-document`, check its version with `agent-marketplace --version`, which prints the installed version. Versions older than v4.0.9 cannot read the lock; upgrade them.
