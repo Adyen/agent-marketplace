@@ -492,3 +492,59 @@ SDK live Removed entries MUST be backed by successful validated stale-payload un
 
 - **WHEN** public SDK sync discovers sorted safe A and unsafe B and A is genuinely pruned while B is replaced/refused or disappears before rename
 - **THEN** live Removed MUST contain only actual A while the complete A+B candidate plan remains, conflict/original/foreign bytes and metadata/output members/staging guarantees remain intact, dry-run MUST prospectively report A+B without mutation, and healthy controls MUST perform the exact deletion(s) their receipts claim
+
+### Requirement: Repository Windsurf portable nominations stay within native output
+
+Repository-scoped Windsurf portable manifest nominations MUST identify descendants of the native `.windsurf/` output namespace. The namespace root itself and unrelated repository paths MUST NOT authorize payload reads, replacement, or pruning through a matching ownership digest. Refused nominations MUST report `materialize.manifest.error`, preserve nominated bytes, identity, permissions, modification time and manifest evidence, and MUST NOT report the refused entry as removed. Genuine Windsurf portable installation and pruning, machine-scope output, and supported initial root and scope aliases MUST remain usable. This requirement does not authenticate manifest provenance, change ownership semantics within authorized output roots, or change SDK explicit-output pruning.
+
+#### Scenario: Windsurf manifest cannot nominate unrelated repository files
+
+- **WHEN** repository file-mode materialization encounters an independently authored Windsurf portable manifest nomination of the native namespace root or an unrelated repository file outside `.windsurf/`, with a matching ownership digest, in a mutating or read-only run
+- **THEN** it MUST refuse with `materialize.manifest.error`, preserve the unrelated file bytes, identity, permissions, modification time and manifest evidence, report no removal for that entry, and continue to support actual installation and pruning of native Windsurf portable output
+
+### Requirement: Marker merge publication retains its input generation
+
+SDK marker-based aggregate merging MUST read existing payloads through captured regular singly linked nonblocking file authority, with captured-size and opened/named generation validation. The original input state or genuine absence MUST remain the authority for later comparison and publication. A newer destination MUST NOT authorize stale merged bytes, even when replacement bytes are identical; observed changes MUST refuse with the existing generation-conflict identity before staging or publication. Native consumers MUST expose their established coded refusal and preserve concurrent and retained original bytes, identity, permissions and modification time while cleaning only attempt-owned staging. Valid merges, shared permissions, comments, no-ops, private new creation, read-only planning and supported initial native aliases MUST remain usable. This is not an atomic hostile-writer exclusion, new processing ceiling, automatic retry or whole-operation transaction.
+
+#### Scenario: Native marker merge preserves a concurrent input generation
+
+- **WHEN** actual native MCP synchronization replaces the aggregate after its merge input is captured but before artifact comparison
+- **THEN** it MUST refuse with `materialize.write.error`, preserve the concurrent and retained original generations without attempt staging, and a healthy retry MUST actually merge desired entries while preserving concurrent handwritten content
+
+#### Scenario: SDK merge comparison retains original state and absence
+
+- **WHEN** public SDK marker merging observes an input generation or absence and that state changes before comparison in a mutating or read-only operation
+- **THEN** it MUST refuse with generation-conflict identity without consuming or changing the new generation or producing staging, while valid existing and absent input controls MUST still perform the intended merge or nonmutating plan
+
+### Requirement: Portable manifest nominations name one resource inside a native component
+
+Every portable manifest nomination for a harness target, in repository and machine scope, MUST name one resource below a component directory of that harness target's native output: relative to the harness target root, the repository Windsurf `.windsurf/` namespace, or the Codex partition, the path MUST consist of a component directory followed by at least one further element, and MUST NOT be or contain a shared aggregate file that the harness target declares for that scope. A Codex nomination MUST additionally use a component that its partition declares. Nominations of a harness target root, a component directory itself, a root-level file such as a shared harness configuration file, a shared aggregate file inside a component directory such as `hooks/hooks.json`, or Codex partition content outside its declared components, including Agent Marketplace configuration and lockfiles in the `.agents` partition, MUST NOT authorize payload reads, replacement, or pruning through a matching ownership digest or partition root identity. Refused nominations MUST report `materialize.manifest.error`, preserve nominated bytes, identity, permissions, modification time and manifest evidence, and MUST NOT report the refused entry as removed. Genuine portable installation and pruning for every harness target in both scopes MUST remain usable. This requirement does not authenticate manifest provenance, change ownership semantics for other resources inside component directories, or change SDK explicit-output pruning.
+
+#### Scenario: Portable manifest cannot nominate root files or component directories
+
+- **WHEN** file-mode materialization in repository or machine scope encounters an independently authored portable manifest nomination, with a matching ownership digest, of a harness target's root-level file such as a shared harness configuration file, of a shared aggregate file inside a component directory, or of a whole component directory, in a mutating or read-only run
+- **THEN** it MUST refuse with `materialize.manifest.error`, preserve the nominated bytes, identity, permissions, modification time and manifest evidence, report no removal for that entry, and continue to support actual installation and pruning of that harness target's portable output
+
+#### Scenario: Codex manifest cannot nominate shared partition content
+
+- **WHEN** file-mode materialization in repository or machine scope encounters an independently authored Codex portable manifest nomination, with a matching ownership digest and partition root identity, of Agent Marketplace configuration or a lockfile in the `.agents` partition, or of content outside a partition's declared components, in a mutating or read-only run
+- **THEN** it MUST refuse with `materialize.manifest.error`, preserve the nominated bytes, identity, permissions, modification time and manifest evidence, report no removal for that entry, and continue to support actual installation and pruning of Codex skills and subagents
+
+### Requirement: Native marker alias detachment retains captured generation
+
+Native marker aggregate alias detachment MUST retain the admitted parent identity, logical alias and target generation that supplied its payload until replacement or removal. Observed named-parent replacement, alias or target generation changes MUST refuse with the existing generation-conflict identity and native `materialize.write.error` diagnostic, including same-text alias replacement, byte-identical target replacement, retargeted source-directory aliases and empty captured targets. Read-only operations MUST refuse observed drift without mutation. Replacement staging, logical publication and attempt-owned cleanup MUST remain bound to the captured parent; foreign staged replacements MUST NOT be published or deleted. Supported initial aliases, original target preservation, handwritten native merges, existing shared-file permissions, empty-target private creation and repeat no-ops MUST remain compatible. This does not introduce atomic hostile-writer exclusion after the last check, automatic retry, a new ownership policy, processing ceilings or whole-operation rollback.
+
+#### Scenario: Native marker alias detachment preserves concurrent generations
+
+- **WHEN** an admitted native marker aggregate alias or its effective target changes, or its named parent is replaced, after payload capture or replacement staging in a mutating or read-only operation
+- **THEN** synchronization MUST refuse with its existing generation-conflict identity and `materialize.write.error`, preserve concurrent and retained original bytes, identity, permissions and modification time without attempt-owned staging, and restoring valid authority MUST permit actual native merging
+
+#### Scenario: Native marker alias staging preserves foreign replacements
+
+- **WHEN** an admitted native marker aggregate alias has its prepared replacement stage replaced by an independently authored file before publication
+- **THEN** synchronization MUST refuse, preserve the original alias and target and the foreign stage, publish no foreign stage bytes, and valid retry MUST still perform the desired native merge
+
+#### Scenario: Empty native marker aliases retain private creation and no-ops
+
+- **WHEN** an unchanged admitted native marker aggregate alias points to an empty regular target and synchronization installs a selected MCP server
+- **THEN** synchronization MUST create private regular native output containing the selected server without changing the original target, and repeat synchronization MUST preserve output bytes, identity and modification time

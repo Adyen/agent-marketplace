@@ -664,7 +664,8 @@ func Materialize(r *Result, outDir string, opts ...WriteOption) (report *WriteRe
 	}
 
 	report = &WriteReport{OutDir: outDir, Partial: partial, SkippedResources: r.Skipped}
-	regularArtifacts, mergeArtifacts, err := prepareMergeArtifacts(artifacts, outDir, report)
+	originalFiles := make(map[string]*fsboundary.Identity, len(artifacts))
+	regularArtifacts, mergeArtifacts, err := prepareMergeArtifacts(artifacts, outDir, report, originalFiles)
 	if err != nil {
 		return nil, err
 	}
@@ -675,17 +676,19 @@ func Materialize(r *Result, outDir string, opts ...WriteOption) (report *WriteRe
 
 	// Determine which artifacts to write vs skip.
 	existingModes := make(map[string]fs.FileMode)
-	originalFiles := make(map[string]*fsboundary.Identity, len(artifacts))
 	for _, a := range artifacts {
 		destPath := filepath.Join(outDir, filepath.FromSlash(a.Path))
 
 		var original fsboundary.Identity
 		matches, exists, err := fileMatchesBytes(destPath, a.Bytes, &original)
-		if exists {
-			originalFiles[a.Path] = &original
-		}
 		if err != nil {
 			return nil, fmt.Errorf("harnesscompile.Materialize: stat %s: %w", a.Path, err)
+		}
+		if input, merged := originalFiles[a.Path]; merged && (exists != (input != nil) || exists && !original.SameState(*input)) {
+			return nil, fmt.Errorf("%w: merge input changed before comparison: %s", fsboundary.ErrGenerationConflict, a.Path)
+		}
+		if exists {
+			originalFiles[a.Path] = &original
 		}
 		if exists && a.MergeWithExisting {
 			existingModes[a.Path] = original.Mode.Perm()
@@ -1076,7 +1079,7 @@ func sameArtifact(a, b Artifact) bool {
 		a.DedupeFragmentEntries == b.DedupeFragmentEntries
 }
 
-func prepareMergeArtifacts(artifacts []Artifact, outDir string, report *WriteReport) ([]Artifact, []Artifact, error) {
+func prepareMergeArtifacts(artifacts []Artifact, outDir string, report *WriteReport, originalFiles map[string]*fsboundary.Identity) ([]Artifact, []Artifact, error) {
 	var regular []Artifact
 	var merged []Artifact
 	for _, a := range artifacts {
@@ -1089,10 +1092,12 @@ func prepareMergeArtifacts(artifacts []Artifact, outDir string, report *WriteRep
 			continue
 		}
 		destPath := filepath.Join(outDir, filepath.FromSlash(a.Path))
-		existing, err := os.ReadFile(destPath)
-		if err != nil && !os.IsNotExist(err) {
+		existing, input, err := readMaterializeFile(destPath)
+		if err != nil {
 			return nil, nil, fmt.Errorf("harnesscompile.Materialize: read %s: %w", a.Path, err)
 		}
+		originalFiles[a.Path] = input
+		slog.Debug("SDK aggregate merge input captured", "path", destPath, "phase", "sdk-merge-input")
 		result, mergeReport, err := artifact.MergeWithExistingJSON(existing, a.Bytes, policy.MarkerField, policy.MarkerValue)
 		if err != nil {
 			// The merge layer only sees bytes, so the destination path is added
@@ -1212,16 +1217,25 @@ func validateArtifactPath(p, outDir string) error {
 // fileMatchesBytes reports whether path exists and has identical contents to
 // expected.
 func fileMatchesBytes(path string, expected []byte, observed *fsboundary.Identity) (matches, exists bool, err error) {
+	data, identity, err := readMaterializeFile(path)
+	if err != nil || identity == nil {
+		return false, false, err
+	}
+	*observed = *identity
+	return bytes.Equal(data, expected), true, nil
+}
+
+func readMaterializeFile(path string) (data []byte, identity *fsboundary.Identity, err error) {
 	absolute, err := filepath.Abs(path)
 	if err != nil {
-		return false, false, err
+		return nil, nil, err
 	}
 	root, err := fsboundary.OpenDir(filepath.Dir(absolute))
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) && !errors.Is(err, fsboundary.ErrUnsafePath) {
-			return false, false, nil
+			return nil, nil, nil
 		}
-		return false, false, err
+		return nil, nil, err
 	}
 	defer func() {
 		if closeErr := root.Close(); closeErr != nil {
@@ -1230,33 +1244,53 @@ func fileMatchesBytes(path string, expected []byte, observed *fsboundary.Identit
 	}()
 	native, err := root.NativeRoot()
 	if err != nil {
-		return false, false, err
+		return nil, nil, err
 	}
 	defer func() {
 		if closeErr := native.Close(); closeErr != nil {
 			err = errors.Join(err, closeErr)
 		}
 	}()
-	info, err := native.Lstat(filepath.Base(absolute))
+	name := filepath.Base(absolute)
+	info, err := native.Lstat(name)
 	if errors.Is(err, fs.ErrNotExist) {
-		return false, false, nil
+		return nil, nil, nil
 	}
 	if err != nil {
-		return false, false, err
+		return nil, nil, err
 	}
 	original, err := fsboundary.FileInfoIdentity(info)
 	if err != nil {
-		return false, false, err
+		return nil, nil, err
 	}
-	data, identity, err := root.ReadFile(filepath.Base(absolute), info.Size())
+	file, opened, err := root.OpenFile(name)
 	if err != nil {
-		return false, false, err
+		return nil, nil, err
 	}
-	if !identity.SameState(original) {
-		return false, false, fsboundary.ErrGenerationConflict
+	defer func() {
+		if closeErr := file.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
+	if !opened.SameState(original) {
+		return nil, nil, fsboundary.ErrGenerationConflict
 	}
-	*observed = identity
-	return bytes.Equal(data, expected), true, nil
+	data, read, err := fsboundary.ReadFile(file, opened.Size)
+	if err != nil {
+		return nil, nil, err
+	}
+	after, err := native.Lstat(name)
+	if err != nil {
+		return nil, nil, errors.Join(fsboundary.ErrGenerationConflict, err)
+	}
+	named, err := fsboundary.FileInfoIdentity(after)
+	if err != nil {
+		return nil, nil, err
+	}
+	if !read.SameState(original) || !named.SameState(original) {
+		return nil, nil, fsboundary.ErrGenerationConflict
+	}
+	return data, &read, nil
 }
 
 type materializeRootSnapshot struct {
