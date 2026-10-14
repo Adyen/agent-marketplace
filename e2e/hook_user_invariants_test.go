@@ -453,6 +453,84 @@ func TestHookInvariantLegacyFileURLWorkingTreeHooksSync(t *testing.T) {
 	}
 }
 
+func TestHookInvariantProjectDirectoryReferencesKeepRepositoryCWD(t *testing.T) {
+	for _, scope := range []string{"repo", "user"} {
+		for _, mode := range []string{"symlink", "file"} {
+			for _, reference := range []struct{ name, word string }{
+				{"bare", "$CLAUDE_PROJECT_DIR"},
+				{"braced", "${CLAUDE_PROJECT_DIR}"},
+				{"quoted", `"$CLAUDE_PROJECT_DIR"`},
+				{"path-suffix", `"$CLAUDE_PROJECT_DIR"/.`},
+			} {
+				t.Run(scope+"/"+mode+"/"+reference.name, func(t *testing.T) {
+					t.Parallel()
+					e := newEnv(t)
+					e.InitGitRepo()
+					authored := "cd " + reference.word + " && pwd -P"
+					hooks := fmt.Sprintf(`{"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":%q}]}]}}`, authored)
+					registry := hookInvariantRegistry(e, "project-directory", hooks)
+					config := hookInvariantV4Config("windsurf", registry, "hook/PreToolUse-command") + "materialization: {mode: " + mode + "}\n"
+					base := "apiVersion: agent-marketplace/v4\nharnesses: [windsurf]\n"
+					if scope == "user" {
+						e.WriteGlobalConfig(config)
+						e.WriteRepoConfig(base)
+					} else {
+						e.WriteGlobalConfig(base)
+						e.WriteRepoConfig(config)
+					}
+					e.MustRunAM("sync")
+					path := filepath.Join(e.workspace, ".devin", "hooks.json")
+					if scope == "user" {
+						path = filepath.Join(e.home, ".codeium", "windsurf", "hooks.json")
+					}
+					data, err := os.ReadFile(path)
+					if errors.Is(err, os.ErrNotExist) && scope == "repo" {
+						path = filepath.Join(e.workspace, ".windsurf", "hooks.json")
+						data, err = os.ReadFile(path)
+					}
+					if err != nil {
+						t.Fatal(err)
+					}
+					var native struct {
+						Hooks map[string][]struct {
+							Command string `json:"command"`
+						} `json:"hooks"`
+					}
+					if err := json.Unmarshal(data, &native); err != nil {
+						t.Fatalf("decode active Windsurf hooks: %v", err)
+					}
+					entries := native.Hooks["pre_run_command"]
+					if len(native.Hooks) != 1 || len(entries) != 1 || entries[0].Command == "" {
+						t.Fatalf("expected exactly one executable pre_run_command handler: %s", data)
+					}
+					ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+					defer cancel()
+					command := exec.CommandContext(ctx, "sh", "-c", entries[0].Command)
+					command.Dir = e.workspace
+					command.Env = subprocessEnvWithOverrides(e.subprocessEnv(), map[string]string{"CLAUDE_PROJECT_DIR": e.workspace})
+					output, runErr := command.CombinedOutput()
+					want, err := filepath.EvalSymlinks(e.workspace)
+					if err != nil {
+						t.Fatal(err)
+					}
+					if runErr != nil || strings.TrimSpace(string(output)) != want {
+						t.Fatalf("authored %q became %q: cwd=%q err=%v; want repository %q", authored, entries[0].Command, output, runErr, want)
+					}
+					before, err := pathFingerprint(path)
+					if err != nil {
+						t.Fatal(err)
+					}
+					e.MustRunAM("sync", "--check")
+					e.MustRunAM("sync")
+					if after, err := pathFingerprint(path); err != nil || after != before {
+						t.Fatalf("repeat sync or check changed the active hook: %v", err)
+					}
+				})
+			}
+		}
+	}
+}
+
 // A teammate with their own HOME must be able to deselect a hook another
 // teammate installed and committed.
 func TestHookInvariantTeammateCanRemoveCommittedHook(t *testing.T) {

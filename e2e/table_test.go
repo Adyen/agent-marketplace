@@ -5203,6 +5203,53 @@ harnesses:
 	},
 }
 
+func init() {
+	for _, version := range []string{"agent-marketplace/v2", "agent-marketplace/v4"} {
+		for _, prerequisite := range []struct {
+			kind, name, sourcePath, source, output, code string
+		}{
+			{"mcp", "child", ".mcp.json", `{"mcpServers":{"child":{"command":"echo","args":["inert-child"],"oauthClientId":"fixture-client"}}}`, "/workspace/.codex/config.toml", "mcp.codex.security-unsupported"},
+			{"hook", "PreToolUse-prompt", "hooks/hooks.json", `{"hooks":{"PreToolUse":[{"type":"prompt","prompt":"inert advisory prompt","matcher":"Bash"}]}}`, "/workspace/.codex/hooks.json", "hook.codex.unsupported"},
+		} {
+			config := func(selected bool) string {
+				if version == "agent-marketplace/v4" {
+					include := "skill/parent"
+					if selected {
+						include += ", " + prerequisite.kind + "/" + prerequisite.name
+					}
+					return "apiVersion: " + version + "\nharnesses: [codex]\nsources:\n  tools: {git: '{{REG:advisory}}', ref: main}\nresources:\n  tools: {include: [" + include + "]}\n"
+				}
+				selection := ""
+				if selected {
+					kind := prerequisite.kind
+					if kind == "hook" {
+						kind = "hooks"
+					}
+					selection = "    " + kind + ": [" + prerequisite.name + "]\n"
+				}
+				return "apiVersion: " + version + "\nharnesses: [codex]\nregistries:\n  - url: {{REG:advisory}}\n    ref: main\n    skills: [parent]\n" + selection
+			}
+			warning := `warning: skill "parent" requires ` + prerequisite.kind + ` "` + prerequisite.name + `", but it is not selected`
+			unchanged := []string{"/workspace/.agents/config.yaml", "/workspace/.agents/lock.yaml", "/workspace/.agents/skills/parent"}
+			testTable = append(testTable, TestCase{
+				Name:       "requires/advisory_unsupported_" + prerequisite.kind + "/" + strings.TrimPrefix(version, "agent-marketplace/"),
+				Desc:       "Given an unselected prerequisite that Codex cannot represent, When ordinary, locked and check synchronization run, Then the parent installs without compilation errors or prerequisite output; explicitly selecting the prerequisite exercises the refusal",
+				Registries: []RegistryDef{{Name: "advisory", Skills: []Skill{{Name: "parent", Requires: []string{prerequisite.kind + ":" + prerequisite.name}}}, Files: map[string]string{prerequisite.sourcePath: prerequisite.source}}},
+				GlobalCfg:  "apiVersion: " + version + "\nharnesses: [codex]\n",
+				RepoCfg:    config(false),
+				Steps: []Step{
+					{Args: []string{"sync"}, MustPass: true, OutContains: []string{warning}, OutNotContains: []string{prerequisite.code}, FileContains: map[string]string{"/workspace/.agents/skills/parent/SKILL.md": "# parent"}, FileNotContains: map[string]string{"/workspace/.agents/config.yaml": prerequisite.name}, FilesAbsent: []string{prerequisite.output}},
+					{Args: []string{"sync"}, MustPass: true, OutContains: []string{warning}, OutNotContains: []string{prerequisite.code}, PathsUnchanged: unchanged, FilesAbsent: []string{prerequisite.output}},
+					{Args: []string{"sync", "--locked"}, MustPass: true, OutContains: []string{warning}, OutNotContains: []string{prerequisite.code}, PathsUnchanged: unchanged, FilesAbsent: []string{prerequisite.output}},
+					{Args: []string{"sync", "--check"}, MustPass: true, OutContains: []string{warning}, OutNotContains: []string{prerequisite.code}, PathsUnchanged: unchanged, FilesAbsent: []string{prerequisite.output}},
+					{Args: []string{"sync", "--strict", "--check"}, AssertExitCode: intPtr(1), OutContains: []string{warning}, OutNotContains: []string{prerequisite.code}, PathsUnchanged: unchanged, FilesAbsent: []string{prerequisite.output}},
+					{Action: ActionWriteRepoConfig, Body: config(true), Args: []string{"sync"}, AssertExitCode: intPtr(1), OutContains: []string{prerequisite.code}, FilesAbsent: []string{prerequisite.output}, FileContains: map[string]string{"/workspace/.agents/skills/parent/SKILL.md": "# parent"}},
+				},
+			})
+		}
+	}
+}
+
 // ---------- parallelism configuration ----------
 
 // e2eParallelism returns the maximum number of concurrent test containers.
@@ -5479,8 +5526,12 @@ func TestE2E(t *testing.T) {
 					}
 				}
 				for _, p := range step.FilesAbsent {
-					if env.CheckFileExists(p) {
+					absent, err := checkPathAbsent(env.mustResolvePath(p))
+					if !absent || err != nil {
 						errMsg := fmt.Sprintf("step %d: file %q unexpectedly exists", i, p)
+						if err != nil {
+							errMsg = fmt.Sprintf("step %d: cannot inspect %q: %v", i, p, err)
+						}
 						if firstErr == "" {
 							firstErr = errMsg
 						}
