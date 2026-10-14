@@ -29,7 +29,7 @@ Every command accepts these flags.
 | `--diagnostic` | boolean | no | `false` | Captures a diagnostic telemetry payload for this invocation so you can review it before it is sent. Capture needs the effective telemetry level `detailed`; at other levels it is turned off. See the [telemetry reference](telemetry.md#diagnostic-payloads). |
 | `--diagnostic-accept-sensitive-data` | boolean | no | `false` | Acknowledges that a diagnostic payload may contain sensitive data. Without a terminal, diagnostic export and `telemetry preview --level diagnostic` require it. |
 | `-h`, `--help` | boolean | no | `false` | Prints help for the selected command. |
-| `--version` | boolean | no | `false` | Prints the CLI version, for example `v4.0.9`. This flag belongs to the root command only. |
+| `--version` | boolean | no | `false` | Prints the CLI version. This flag belongs to the root command only. |
 
 ## Resource kinds
 
