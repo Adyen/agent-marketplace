@@ -35,16 +35,13 @@ func TestStatusCommandPrintsSyncedSkillsOrphansAndCollisions(t *testing.T) {
 
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
-registries:
-  - url: `+infraOrigin+`
-    ref: main
-    skills:
-      - vm-lifecycle
-      - shared-skill
-  - url: `+securityOrigin+`
-    ref: main
-    skills:
-      - shared-skill
+apiVersion: agent-marketplace/v4
+sources:
+  infra: {git: file://`+infraOrigin+`, ref: main}
+  security: {git: file://`+securityOrigin+`, ref: main}
+resources:
+  infra: [skill/vm-lifecycle, skill/shared-skill]
+  security: [skill/shared-skill]
 `)
 
 	// Create an orphaned skill as a managed SYMLINK (pointing to the cache so
@@ -112,10 +109,11 @@ func TestStatusKeepsExactLeaseThroughDryRunConsumption(t *testing.T) {
 	commitAndPushAll(t, working, "keeper")
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
-registries:
-  - url: `+origin+`
-    ref: main
-    skills: [keeper]
+apiVersion: agent-marketplace/v4
+sources:
+  hosted: {git: file://`+origin+`, ref: main}
+resources:
+  hosted: [skill/keeper]
 `)
 	withWorkingDir(t, repoRoot)
 	requireExactLocks(t)
@@ -168,15 +166,13 @@ func TestStatusCommandMarksLockedCaches(t *testing.T) {
 
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
-registries:
-  - url: `+freshOrigin+`
-    ref: main
-    skills:
-      - fresh-skill
-  - url: `+staleOrigin+`
-    ref: main
-    skills:
-      - stale-skill
+apiVersion: agent-marketplace/v4
+sources:
+  fresh: {git: file://`+freshOrigin+`, ref: main}
+  stale: {git: file://`+staleOrigin+`, ref: main}
+resources:
+  fresh: [skill/fresh-skill]
+  stale: [skill/stale-skill]
 `)
 
 	withWorkingDir(t, repoRoot)
@@ -207,12 +203,11 @@ func TestStatusCommandCacheFreshnessWithPathSpecificEntry(t *testing.T) {
 
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
-registries:
-  - url: `+origin+`
-    ref: main
-    path: skills
-    skills:
-      - vm-lifecycle
+apiVersion: agent-marketplace/v4
+sources:
+  hosted: {git: file://`+origin+`, ref: main, path: skills}
+resources:
+  hosted: [skill/vm-lifecycle]
 `)
 
 	withWorkingDir(t, repoRoot)
@@ -245,17 +240,18 @@ func TestStatusCommandShowsLocallyExcludedSkills(t *testing.T) {
 
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
-registries:
-  - url: `+origin+`
-    ref: main
-    skills:
-      - vm-lifecycle
-      - log-triage
+apiVersion: agent-marketplace/v4
+sources:
+  hosted: {git: file://`+origin+`, ref: main}
+resources:
+  hosted: [skill/vm-lifecycle, skill/log-triage]
 `)
 	writeFile(t, filepath.Join(repoRoot, ".agents", "config.local.yaml"), `
-skills:
-  exclude:
-    - log-triage
+apiVersion: agent-marketplace/v4
+sources:
+  hosted: {git: file://`+origin+`, ref: main}
+resources:
+  hosted: {exclude: [skill/log-triage]}
 `)
 
 	withWorkingDir(t, repoRoot)
@@ -309,11 +305,11 @@ metadata:
 
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
-registries:
-  - url: `+origin+`
-    ref: main
-    skills:
-      - valid-skill
+apiVersion: agent-marketplace/v4
+sources:
+  hosted: {git: file://`+origin+`, ref: main}
+resources:
+  hosted: [skill/valid-skill]
 `)
 
 	withWorkingDir(t, repoRoot)
@@ -352,11 +348,11 @@ func TestStatusDriftSectionInSync(t *testing.T) {
 
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
-registries:
-  - url: `+origin+`
-    ref: main
-    skills:
-      - vm-lifecycle
+apiVersion: agent-marketplace/v4
+sources:
+  hosted: {git: file://`+origin+`, ref: main}
+resources:
+  hosted: [skill/vm-lifecycle]
 `)
 
 	withWorkingDir(t, repoRoot)
@@ -394,11 +390,11 @@ func TestStatusDriftSectionOutOfSync(t *testing.T) {
 
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
-registries:
-  - url: `+origin+`
-    ref: main
-    skills:
-      - vm-lifecycle
+apiVersion: agent-marketplace/v4
+sources:
+  hosted: {git: file://`+origin+`, ref: main}
+resources:
+  hosted: [skill/vm-lifecycle]
 `)
 
 	withWorkingDir(t, repoRoot)
@@ -440,14 +436,14 @@ func TestStatusDriftNestedLocalConfig(t *testing.T) {
 
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
-registries:
-  - url: `+origin+`
-    ref: main
-    skills:
-      - nested-skill
+apiVersion: agent-marketplace/v4
+sources:
+  hosted: {git: file://`+origin+`, ref: main}
+resources:
+  hosted: [skill/nested-skill]
 `)
 	nestedDir := filepath.Join(repoRoot, "nested")
-	writeFile(t, filepath.Join(nestedDir, ".agents", "config.local.yaml"), "registries: []\n")
+	writeFile(t, filepath.Join(nestedDir, ".agents", "config.local.yaml"), "apiVersion: agent-marketplace/v4\n")
 
 	cacheDir := cache.CacheDir()
 	if err := os.MkdirAll(filepath.Join(cacheDir, "compiled"), 0o755); err != nil {
@@ -531,11 +527,11 @@ func TestStatusDriftRootLevelAndExactLockFailureReadOnly(t *testing.T) {
 
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
-registries:
-  - url: `+origin+`
-    ref: main
-    skills:
-      - root-skill
+apiVersion: agent-marketplace/v4
+sources:
+  hosted: {git: file://`+origin+`, ref: main}
+resources:
+  hosted: [skill/root-skill]
 `)
 	withWorkingDir(t, repoRoot)
 
@@ -583,10 +579,10 @@ func TestStatusCommandBlockedRegistryReturnsError(t *testing.T) {
 
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
+apiVersion: agent-marketplace/v4
 allowed_registries: []
-registries:
-  - url: https://example.com/blocked.git
-    ref: main
+sources:
+  blocked: {git: https://example.com/blocked.git, ref: main}
 `)
 
 	withWorkingDir(t, repoRoot)
@@ -612,15 +608,13 @@ func TestStatusReportsManagedInstallation(t *testing.T) {
 	t.Setenv("HOME", homeDir)
 
 	orgPath := filepath.Join(t.TempDir(), "org.yaml")
-	writeFile(t, orgPath, `apiVersion: agent-marketplace/v3
+	writeFile(t, orgPath, `apiVersion: agent-marketplace/v4
 harnesses:
   - factory
-registries:
-  - url: https://example.com/org.git
-    ref: main
-    skills:
-      include:
-        - managed-skill
+sources:
+  organization: {git: https://example.com/org.git, ref: main}
+resources:
+  organization: [skill/managed-skill]
 `)
 	if err := os.Chmod(orgPath, 0o664); err != nil {
 		t.Fatalf("chmod: %v", err)
@@ -628,7 +622,7 @@ registries:
 	config.SetTestOrganizationConfigPath(t, orgPath)
 
 	repoRoot := filepath.Join(t.TempDir(), "repo")
-	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), "registries: []\n")
+	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), "apiVersion: agent-marketplace/v4\n")
 	withWorkingDir(t, repoRoot)
 
 	output, err := executeCommand("status")

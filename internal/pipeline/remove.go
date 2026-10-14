@@ -106,6 +106,12 @@ func Remove(ctx context.Context, opts RemoveOptions) (result *RemoveResult, retE
 	if err != nil {
 		return nil, err
 	}
+	if err := RecoverDependencyTransactions(ctx); err != nil {
+		return nil, err
+	}
+	if err := ValidateConsumerIntent(ctx, ws.RepoRoot(), ws.LocalConfigDir()); err != nil {
+		return nil, err
+	}
 	opts.workspace = &ws
 	defer func() {
 		if result != nil {
@@ -230,10 +236,6 @@ func Remove(ctx context.Context, opts RemoveOptions) (result *RemoveResult, retE
 				}
 				return nil, err
 			}
-			destination, err := scopedConfigPath(opts.RepoRoot, effective)
-			if err != nil {
-				return nil, fmt.Errorf("resolve config path: %w", err)
-			}
 			if selection.RegistryScoped {
 				registryURL, registryPath := collectionRegistryLocation(selection)
 				entry := config.RegistryEntry{
@@ -243,29 +245,15 @@ func Remove(ctx context.Context, opts RemoveOptions) (result *RemoveResult, retE
 					V4Kind:        selection.V4Kind,
 					SourceHarness: strings.TrimSpace(selection.SourceHarness),
 				}
+				// Removing an explicitly selected collection drops its include
+				// and records a source-scoped exclusion, matching --from removal.
 				if err := editRemovalSelection(opts.RepoRoot, effective, opts.configStaging, entry, ir.KindCollection, name, config.SelectionExclude); err != nil {
 					return nil, err
 				}
 			} else {
-				rootCfg, err := config.LoadRootConfigFromPath(destination)
-				if err != nil {
-					return nil, fmt.Errorf("load root config %q: %w", destination, err)
-				}
-				rootSelected := hasTopLevelCollectionSelection(rootCfg, name)
 				providers := collectionProviderEntries(mergedCfg, name)
 				if err := editRemovalLayer(opts.RepoRoot, effective, opts.configStaging, func(m *LayerMutation) error {
-					locator := config.ResourceLocator{Kind: ir.KindCollection, Name: name}
-					inherited, err := m.UnboundIncludeInherited(locator)
-					if err != nil {
-						return err
-					}
-					if err := m.RemoveUnboundInclude(locator); err != nil {
-						return err
-					}
-					if !rootSelected || inherited {
-						return m.SetLayerExclude(locator, providers)
-					}
-					return nil
+					return m.SetLayerExclude(config.ResourceLocator{Kind: ir.KindCollection, Name: name}, providers)
 				}); err != nil {
 					return nil, err
 				}
@@ -337,11 +325,6 @@ func Remove(ctx context.Context, opts RemoveOptions) (result *RemoveResult, retE
 		return nil, err
 	}
 	return &RemoveResult{RemovedName: name, InferredUserScope: inferredUserScope}, nil
-}
-
-func isEditUnsupported(err error) bool {
-	var validation *config.V4ValidationError
-	return errors.As(err, &validation) && validation.Code == "config.edit.unsupported-operation"
 }
 
 func hasTopLevelCollectionSelection(cfg *config.Config, name string) bool {
@@ -676,29 +659,8 @@ func editRemovalSelection(repoRoot string, scope Scope, staging *configStagingMa
 	})
 }
 
-func excludeWithUnboundCompatibility(repoRoot string, scope Scope, staging *configStagingManager, entry config.RegistryEntry, kind ir.ResourceKind, name string, clearStale bool) error {
-	locator := config.ResourceLocator{Kind: kind, Name: name}
-	return editRemovalLayer(repoRoot, scope, staging, func(m *LayerMutation) error {
-		if clearStale {
-			if err := m.ClearUnboundExclude(locator); err != nil {
-				return err
-			}
-			if err := m.RemoveUnboundInclude(locator); err != nil {
-				return err
-			}
-		}
-		binding, err := bindRemovalRegistry(m, entry)
-		if err != nil {
-			return err
-		}
-		if err := m.Apply(binding, config.SelectionChange{Operation: config.SelectionExclude, Locators: []config.ResourceLocator{locator}}); err != nil {
-			return err
-		}
-		if err := m.SetUnboundExclude(locator); err != nil && !isEditUnsupported(err) {
-			return err
-		}
-		return nil
-	})
+func excludeBoundResource(repoRoot string, scope Scope, staging *configStagingManager, entry config.RegistryEntry, kind ir.ResourceKind, name string) error {
+	return editRemovalSelection(repoRoot, scope, staging, entry, kind, name, config.SelectionExclude)
 }
 
 // removalDropsInclude reports whether removing name from entry can delete the
@@ -724,7 +686,7 @@ func removalSelectionOperation(destination string, entry config.RegistryEntry, k
 	var rootEntry *config.RegistryEntry
 	for i := range rootCfg.Registries {
 		candidate := &rootCfg.Registries[i]
-		if adHocRegistryEntryMatches(*candidate, entry.URL, entry.Path, "", "") {
+		if adHocRegistryEntryMatches(*candidate, entry.URL, entry.Path, entry.Ref, "") {
 			rootEntry = candidate
 			break
 		}
@@ -736,10 +698,52 @@ func removalSelectionOperation(destination string, entry config.RegistryEntry, k
 	if err != nil {
 		return config.SelectionExclude, err
 	}
-	if expanded != nil && countAdHocRegistryEntries(expanded.Registries, entry.URL, entry.Path, "", "") > countAdHocRegistryEntries(rootCfg.Registries, entry.URL, entry.Path, "", "") {
-		return config.SelectionExclude, nil
+	if expanded != nil {
+		if countAdHocRegistryEntries(expanded.Registries, entry.URL, entry.Path, entry.Ref, "") > countAdHocRegistryEntries(rootCfg.Registries, entry.URL, entry.Path, entry.Ref, "") {
+			return config.SelectionExclude, nil
+		}
+		canonical, err := canonicalConfigDestination(destination)
+		if err != nil {
+			return config.SelectionExclude, err
+		}
+		// Publication preserves logical layer ownership; loader provenance
+		// resolves contained intermediate aliases as well as the final link.
+		canonical, err = filepath.EvalSymlinks(canonical)
+		if err != nil {
+			return config.SelectionExclude, err
+		}
+		for _, candidate := range expanded.Registries {
+			if !adHocRegistryEntryMatches(candidate, entry.URL, entry.Path, entry.Ref, "") {
+				continue
+			}
+			if v4EntryHasIncludedDecision(candidate, canonical, name, kind) {
+				return config.SelectionExclude, nil
+			}
+		}
 	}
 	return config.SelectionRemoveInclude, nil
+}
+
+// v4 merges repeated source bindings, so entry counts alone cannot identify a
+// selection that removing the root declaration would reveal from an include.
+func v4EntryHasIncludedDecision(entry config.RegistryEntry, canonical, name string, kind ir.ResourceKind) bool {
+	for _, decision := range entry.V4Decisions {
+		request := decision.Request
+		if name != "" && (request == nil || request.Name != name || request.MarketplaceKind() != marketplaceProtocolKind(kind)) {
+			continue
+		}
+		if decision.Provenance.File != "" && decision.Provenance.File != canonical {
+			return true
+		}
+		if request != nil {
+			for _, provenance := range request.Provenance {
+				if provenance.File != "" && provenance.File != canonical {
+					return true
+				}
+			}
+		}
+	}
+	return false
 }
 
 func excludeCollectionMember(repoRoot string, scope Scope, staging *configStagingManager, target *resolver.ResolvedArtifact, name string) error {
@@ -761,35 +765,14 @@ func removeResource(repoRoot string, scope Scope, staging *configStagingManager,
 		return editRemovalSelection(repoRoot, scope, staging, entry, target.Kind, name, operation)
 
 	case ScopeLocal:
-		if target.Source == config.RepoPersonal {
-			destination, err := ScopedConfigPath(repoRoot, scope)
-			if err != nil {
-				return err
-			}
-			rootCfg, err := config.LoadRootConfigFromPath(destination)
-			if err != nil {
-				return fmt.Errorf("load local root config: %w", err)
-			}
-			if rootCfg != nil && registryEntryInList(rootCfg.Registries, target.RegistryURL, target.RegistryPath) {
-				return editRemovalSelection(repoRoot, scope, staging, entry, target.Kind, name, config.SelectionExclude)
-			}
-			localCfg, err := config.LoadLocalConfigFromPath(destination)
-			if err != nil {
-				return fmt.Errorf("load local config: %w", err)
-			}
-			if localCfg != nil && localRegistryEntryExists(localCfg, target.RegistryURL, target.RegistryPath) {
-				return excludeWithUnboundCompatibility(repoRoot, scope, staging, entry, target.Kind, name, false)
-			}
-			return excludeWithUnboundCompatibility(repoRoot, scope, staging, entry, target.Kind, name, true)
-		}
-		return excludeWithUnboundCompatibility(repoRoot, scope, staging, entry, target.Kind, name, false)
+		return excludeBoundResource(repoRoot, scope, staging, entry, target.Kind, name)
 
 	default:
 		if repoCfg == nil {
 			return fmt.Errorf("no repo config found; cannot remove %q", name)
 		}
 		if (!scopeSpecified || target.Source.IsMachineScope()) && !projectExplicitlySelects(repoCfg, *target) && !projectSelectsByTag(repoCfg, *target) {
-			return excludeWithUnboundCompatibility(repoRoot, ScopeLocal, staging, entry, target.Kind, name, false)
+			return excludeBoundResource(repoRoot, ScopeLocal, staging, entry, target.Kind, name)
 		}
 		destination, err := ScopedConfigPath(repoRoot, scope)
 		if err != nil {
@@ -851,18 +834,6 @@ func stageConfigPath(staging *configStagingManager, path string) (string, error)
 		return path, nil
 	}
 	return staging.Path(path)
-}
-
-// registryEntryInList reports whether the list contains an entry that exactly
-// matches url and path (the same exact-match rule the editor uses when writing
-// to a specific scope's config).
-func registryEntryInList(entries []config.RegistryEntry, url, registryPath string) bool {
-	for _, entry := range entries {
-		if config.NormalizeGitURL(entry.URL) == config.NormalizeGitURL(url) && config.NormalizeRegistryPath(entry.Path) == config.NormalizeRegistryPath(registryPath) {
-			return true
-		}
-	}
-	return false
 }
 
 // selectAdHocRegistryEntry resolves one configured entry for --from. An
@@ -1201,7 +1172,7 @@ func resolvedResourceInRegistryWithRef(resolved []resolver.ResolvedArtifact, nam
 // the entry when its path equals entryPath or lives beneath it — the resolver
 // records the discovered sub-bundle path on an artifact, which can be deeper
 // than the configured entry path (e.g. entry "teams/pm/plugins" discovers
-// "teams/pm/plugins/pm-data-analytics"). Mirrors localRegistryEntryExists.
+// "teams/pm/plugins/pm-data-analytics").
 func registryPathOwns(entryPath, artifactPath string) bool {
 	ep := config.NormalizeRegistryPath(entryPath)
 	if ep == "" {
@@ -1262,32 +1233,6 @@ func stringListContains(values []string, wanted string) bool {
 		if strings.TrimSpace(value) == strings.TrimSpace(wanted) {
 			return true
 		}
-	}
-	return false
-}
-
-// localRegistryEntryExists reports whether a registry entry matching the
-// given URL and path exists in the local config. Used to determine whether
-// a RepoPersonal-sourced resource was installed into a registry entry's
-// include list or the top-level kind selector.
-func localRegistryEntryExists(localCfg *config.LocalConfig, registryURL, registryPath string) bool {
-	for _, entry := range localCfg.Registries {
-		if config.NormalizeGitURL(entry.URL) != config.NormalizeGitURL(registryURL) {
-			continue
-		}
-		if registryPath != "" {
-			ep := config.NormalizeRegistryPath(entry.Path)
-			rp := config.NormalizeRegistryPath(registryPath)
-			// The resolved artifact's RegistryPath may include a sub-bundle
-			// directory below the entry's configured Path (e.g. entry.Path="plugins"
-			// but RegistryPath="plugins/personal"). Use prefix match so that
-			// a registry entry with path=plugins correctly owns resources at
-			// plugins/personal, plugins/memory, etc.
-			if ep != rp && !strings.HasPrefix(rp, ep+"/") {
-				continue
-			}
-		}
-		return true
 	}
 	return false
 }
@@ -1363,6 +1308,22 @@ func removeFromAdHoc(ctx context.Context, opts RemoveOptions, fromURL string) (*
 		selectedPath = strings.TrimSpace(targetEntry.Path)
 	}
 	requiresShadow := entryInMerged && countAdHocRegistryEntries(mergedCfg.Registries, fromURL, fromPath, fromRef, localDir) > countAdHocRegistryEntries(rootEntries, fromURL, fromPath, fromRef, localDir)
+	if entryInMerged && !requiresShadow {
+		canonical, err := canonicalConfigDestination(configPath)
+		if err != nil {
+			return nil, err
+		}
+		canonical, err = filepath.EvalSymlinks(canonical)
+		if err != nil {
+			return nil, err
+		}
+		for _, entry := range mergedCfg.Registries {
+			if adHocRegistryEntryMatches(entry, fromURL, fromPath, fromRef, localDir) && v4EntryHasIncludedDecision(entry, canonical, "", ir.KindSkill) {
+				requiresShadow = true
+				break
+			}
+		}
+	}
 	// Prefer the defining layer's ref when writing a shadow entry, so git
 	// shadow entries pass ref-required validation even if the user omitted --ref.
 	shadowRef := fromRef

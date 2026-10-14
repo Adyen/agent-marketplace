@@ -48,14 +48,14 @@ func TestSyncHookMatcherRefusalNamesTargetAndStage(t *testing.T) {
 
 			repoRoot := filepath.Join(t.TempDir(), "repo")
 			writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
+apiVersion: agent-marketplace/v4
 harnesses: [devin, factory, cursor]
-registries:
-  - url: `+registry+`
-    ref: main
+sources:
+  hooks:
+    directory: `+registry+`
     source_harness: devin
-    default: false
-    hooks:
-      - PreToolUse-command
+resources:
+  hooks: {include: [hook/PreToolUse-command]}
 `)
 			withWorkingDir(t, repoRoot)
 

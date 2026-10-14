@@ -23,7 +23,7 @@ func TestV4RepositoryDirectorySources(t *testing.T) {
 			t.Run(filename+"/"+directory, func(t *testing.T) {
 				repo := canonicalDirectoryTestRoot(t)
 				file := filepath.Join(repo, ".agents", filename)
-				writeV2Config(t, file, "apiVersion: agent-marketplace/v4\nsources: {registry: {directory: "+directory+"}}\nresources: {registry: {all: true}}\n")
+				writeIncludeConfig(t, file, "apiVersion: agent-marketplace/v4\nsources: {registry: {directory: "+directory+"}}\nresources: {registry: {all: true}}\n")
 				want := filepath.Join(repo, directory)
 				cfg, err := LoadV4ConfigFromPath(file)
 				if err != nil {
@@ -51,7 +51,7 @@ func TestV4DirectoryPreservesMachineAndFragmentBases(t *testing.T) {
 	t.Setenv("HOME", home)
 	for _, kind := range []layerKind{userLayer, organizationLayer} {
 		file := filepath.Join(home, ".agents", "config.yaml")
-		writeV2Config(t, file, "apiVersion: agent-marketplace/v4\nsources: {registry: {directory: ./resources/skills}}\nresources: {registry: {all: true}}\n")
+		writeIncludeConfig(t, file, "apiVersion: agent-marketplace/v4\nsources: {registry: {directory: ./resources/skills}}\nresources: {registry: {all: true}}\n")
 		data, err := readConfigFile(file)
 		if err != nil {
 			t.Fatal(err)
@@ -70,8 +70,8 @@ func TestV4DirectoryPreservesMachineAndFragmentBases(t *testing.T) {
 	}
 	repo := canonicalDirectoryTestRoot(t)
 	file := filepath.Join(repo, ".agents", "config.yaml")
-	writeV2Config(t, file, "apiVersion: agent-marketplace/v4\ninclude: fragments/sources.yaml\n")
-	writeV2Config(t, filepath.Join(repo, ".agents", "fragments", "sources.yaml"), "sources: {registry: {directory: ./resources/skills}}\nresources: {registry: {all: true}}\n")
+	writeIncludeConfig(t, file, "apiVersion: agent-marketplace/v4\ninclude: fragments/sources.yaml\n")
+	writeIncludeConfig(t, filepath.Join(repo, ".agents", "fragments", "sources.yaml"), "sources: {registry: {directory: ./resources/skills}}\nresources: {registry: {all: true}}\n")
 	cfg, err := LoadConfigFromPath(file)
 	if err != nil {
 		t.Fatal(err)
@@ -84,7 +84,7 @@ func TestV4DirectoryPreservesMachineAndFragmentBases(t *testing.T) {
 func TestV4DirectoryOverlayUsesRepositoryRoot(t *testing.T) {
 	repo := canonicalDirectoryTestRoot(t)
 	file := filepath.Join(repo, ".agents", "config.yaml")
-	writeV2Config(t, file, "apiVersion: agent-marketplace/v4\n")
+	writeIncludeConfig(t, file, "apiVersion: agent-marketplace/v4\n")
 	data := []byte("apiVersion: agent-marketplace/v4\nsources: {registry: {directory: ./resources/skills}}\nresources: {registry: {all: true}}\n")
 	li, err := readLayerIntent(file, file, data, repoLayer, map[string][]byte{file: data})
 	if err != nil {
@@ -112,13 +112,13 @@ func TestV4RepositoryDirectoryContainment(t *testing.T) {
 		t.Fatal(err)
 	}
 	file := filepath.Join(repo, ".agents", "config.yaml")
-	writeV2Config(t, file, "apiVersion: agent-marketplace/v4\nsources: {registry: {directory: ./inside}}\nresources: {registry: {all: true}}\n")
+	writeIncludeConfig(t, file, "apiVersion: agent-marketplace/v4\nsources: {registry: {directory: ./inside}}\nresources: {registry: {all: true}}\n")
 	if _, err := LoadConfigFromPath(file); err != nil {
 		t.Fatalf("in-repository symlink rejected: %v", err)
 	}
 	for _, directory := range []string{"../outside", "./escape", "./escape/missing"} {
 		file := filepath.Join(repo, ".agents", "config.yaml")
-		writeV2Config(t, file, "apiVersion: agent-marketplace/v4\nsources: {registry: {directory: "+directory+"}}\n")
+		writeIncludeConfig(t, file, "apiVersion: agent-marketplace/v4\nsources: {registry: {directory: "+directory+"}}\n")
 		_, err := LoadConfigFromPath(file)
 		var validation *V4ValidationError
 		if !errors.As(err, &validation) || validation.Code != "v4.directory-path" {
@@ -127,48 +127,58 @@ func TestV4RepositoryDirectoryContainment(t *testing.T) {
 	}
 }
 
-func TestV4MigrationWithRelativeConfigPathKeepsRepositoryDirectoriesPortable(t *testing.T) {
-	t.Setenv("XDG_STATE_HOME", filepath.Join(t.TempDir(), "state"))
+func TestV4EditorWithRelativeConfigPathKeepsRepositoryDirectoriesPortable(t *testing.T) {
 	root := canonicalDirectoryTestRoot(t)
 	repo := filepath.Join(root, "repo")
 	file := filepath.Join(repo, ".agents", "config.yaml")
-	writeV2Config(t, file, "apiVersion: agent-marketplace/v2\nregistries:\n  - url: ./resources/skills\n    default: true\n")
+	writeIncludeConfig(t, file, "apiVersion: agent-marketplace/v4\n")
 	withWorkingDir(t, root)
-
 	relativeFile := filepath.Join("repo", ".agents", "config.yaml")
-	if _, err := MigrateConfigFilesToV4(MigratePaths{Repo: relativeFile}, V4MigrationRepo, false); err != nil {
+	editor, err := OpenLayerEditor(LayerTarget{Source: RepoCommitted, StagedPath: relativeFile, DeclaringPath: relativeFile})
+	if err != nil {
 		t.Fatal(err)
 	}
-	data := readConfigString(t, file)
-	if strings.Contains(data, repo) || !strings.Contains(data, "directory: ./resources/skills") {
-		t.Fatalf("migration did not preserve a portable directory: %s", data)
+	binding, err := editor.EnsureRegistry(RegistryEntry{URL: "./resources/skills", V4Kind: V4SourceDirectory})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := editor.Apply(binding, SelectionChange{Operation: SelectionSelectAll}); err != nil {
+		t.Fatal(err)
+	}
+	candidate, err := editor.Render()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !candidate.Changed || strings.Contains(string(candidate.Bytes), repo) || !strings.Contains(string(candidate.Bytes), "directory: ./resources/skills") {
+		t.Fatalf("edit did not preserve a portable directory: %s", candidate.Bytes)
 	}
 }
 
-func TestV4MigrationKeepsRepositoryDirectoriesPortable(t *testing.T) {
+func TestV4RepositoryDirectoriesRemainPortableAfterRelocation(t *testing.T) {
 	for _, directory := range []string{".", "./resources/skills"} {
 		for _, subpath := range []string{"", "skills"} {
 			t.Run(directory+"/"+subpath, func(t *testing.T) {
-				t.Setenv("XDG_STATE_HOME", filepath.Join(t.TempDir(), "state"))
 				repo := canonicalDirectoryTestRoot(t)
 				file := filepath.Join(repo, ".agents", "config.yaml")
-				writeV2Config(t, file, "apiVersion: agent-marketplace/v2\nregistries:\n  - url: "+directory+"\n    path: "+subpath+"\n    default: true\n")
-				if _, err := MigrateConfigFilesToV4(MigratePaths{Repo: file}, V4MigrationRepo, false); err != nil {
-					t.Fatal(err)
-				}
-				data := readConfigString(t, file)
-				if strings.Contains(data, repo) {
-					t.Fatalf("migration serialized checkout path: %s", data)
+				authored := "./" + filepath.ToSlash(filepath.Join(directory, subpath))
+				data := "apiVersion: agent-marketplace/v4\nsources: {local: {directory: " + authored + "}}\nresources: {local: {all: true}}\n"
+				writeIncludeConfig(t, file, data)
+				cfg, err := LoadConfigFromPath(file)
+				if err != nil || cfg == nil || len(cfg.Registries) != 1 || cfg.Registries[0].URL != filepath.Join(repo, directory, subpath) {
+					t.Fatalf("original directory = %#v, %v", cfg, err)
 				}
 				moved := canonicalDirectoryTestRoot(t)
 				movedFile := filepath.Join(moved, ".agents", "config.yaml")
-				writeV2Config(t, movedFile, data)
-				cfg, err := LoadConfigFromPath(movedFile)
+				writeIncludeConfig(t, movedFile, data)
+				cfg, err = LoadConfigFromPath(movedFile)
 				if err != nil {
 					t.Fatal(err)
 				}
 				if got, want := cfg.Registries[0].URL, filepath.Join(moved, directory, subpath); got != want {
 					t.Fatalf("relocated directory = %q, want %q", got, want)
+				}
+				if got := readConfigString(t, movedFile); got != data || strings.Contains(got, repo) || strings.Contains(got, moved) {
+					t.Fatalf("read rewrote portable configuration: %s", got)
 				}
 			})
 		}

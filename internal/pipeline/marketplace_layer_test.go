@@ -661,7 +661,7 @@ func TestMutateMarketplaceLayerV4IncludeRootOnly(t *testing.T) {
 	}
 }
 
-func TestMutateMarketplaceLayerLegacyEnsureEndpoint(t *testing.T) {
+func TestMutateMarketplaceLayerRefusesUnsupportedEndpointRoot(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	repo := t.TempDir()
@@ -669,13 +669,21 @@ func TestMutateMarketplaceLayerLegacyEnsureEndpoint(t *testing.T) {
 	writeFileMode(t, configPath, "apiVersion: agent-marketplace/v2\nharnesses: [devin]\n", 0o600)
 	fake := newLayerMarketplaceServer(t)
 
-	if _, err := MutateMarketplaceLayer(context.Background(), repo, repo, configPath, config.UserPersonal, func(m *MarketplaceLayerMutation) error {
+	before, _ := os.ReadFile(configPath)
+	called := false
+	_, err := MutateMarketplaceLayer(context.Background(), repo, repo, configPath, config.UserPersonal, func(m *MarketplaceLayerMutation) error {
+		called = true
 		return m.EnsureEndpoint(config.MarketplaceEntry{URL: fake.URL, InstanceID: fake.instanceID})
-	}, nil); err != nil {
-		t.Fatalf("MutateMarketplaceLayer: %v", err)
+	}, nil)
+	var validation *config.V4ValidationError
+	if !errors.As(err, &validation) || validation.Code != "v4.api-version" || validation.Path != configPath {
+		t.Fatalf("format refusal: %v", err)
+	}
+	if called || fake.requests.Load() != 0 {
+		t.Fatalf("new work started: callback=%t, requests=%d", called, fake.requests.Load())
 	}
 	configData, _ := os.ReadFile(configPath)
-	if !strings.Contains(string(configData), "marketplaces:") {
-		t.Fatalf("legacy config missing marketplaces key:\n%s", configData)
+	if string(configData) != string(before) {
+		t.Fatal("refusal changed root")
 	}
 }

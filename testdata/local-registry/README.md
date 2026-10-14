@@ -15,15 +15,16 @@ testdata/local-registry/
 
 ## Using it
 
-Point a local config at this directory (no `ref:` — local registries skip git):
+Point a personal-local config at this directory as a `directory` source (no `ref:` — directory sources skip git). In repository `.agents/` files, relative paths resolve from the repository root:
 
 ```yaml
 # .agents/config.local.yaml  (gitignored, personal)
-apiVersion: agent-marketplace/v2
-registries:
-  - url: ../testdata/local-registry
-collections:
-  include: [agent-marketplace-tools]
+apiVersion: agent-marketplace/v4
+sources:
+  local-tools:
+    directory: ./testdata/local-registry
+resources:
+  local-tools: [collection/agent-marketplace-tools]
 ```
 
 Then:

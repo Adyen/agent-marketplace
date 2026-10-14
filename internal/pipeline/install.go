@@ -134,6 +134,12 @@ func Install(ctx context.Context, opts InstallOptions) (result *InstallResult, r
 	if err != nil {
 		return nil, err
 	}
+	if err := RecoverDependencyTransactions(ctx); err != nil {
+		return nil, err
+	}
+	if err := ValidateConsumerIntent(ctx, workspace.RepoRoot(), workspace.LocalConfigDir()); err != nil {
+		return nil, err
+	}
 	opts.workspace = &workspace
 	marketplaceInstallRequested := isMarketplaceInstall(opts) && !marketplaceEndpointRequested
 	if marketplaceInstallRequested {
@@ -528,6 +534,9 @@ func planNamedInstalls(args []string, catalogs map[string]catalog.LoadedCatalog,
 				if !found {
 					return nil, nil, fmt.Errorf("collection %q was found but no providing registry entry could be identified", col.Name)
 				}
+			}
+			if err := validateRegistryWriteScope(scope, providerEntry); err != nil {
+				return nil, nil, err
 			}
 			plan = append(plan, namedInstallSelection{
 				locator:    config.ResourceLocator{Kind: ir.KindCollection, Name: col.Name},

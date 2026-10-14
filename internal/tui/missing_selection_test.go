@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -24,11 +25,11 @@ func writeMissingSelectionFixture(t *testing.T, requiredRegistry bool) (repoRoot
 	homeDir = t.TempDir()
 	t.Setenv("HOME", homeDir)
 
-	registry := "  - url: ./local-skills\n    path: skills\n"
+	group := "include: [skill/audit, skill/missing-skill]"
 	if requiredRegistry {
-		registry += "    required: true\n"
+		group += ", required: true"
 	}
-	projectConfig := repoV2Header + "registries:\n" + registry + "skills:\n  - audit\n  - missing-skill\n"
+	projectConfig := repoV4Header + "sources:\n  local: {directory: ./local-skills/skills}\nresources:\n  local: {" + group + "}\n"
 	auditDir := filepath.Join(repoRoot, "local-skills", "skills", "audit")
 	for _, dir := range []string{filepath.Join(repoRoot, ".agents"), filepath.Join(homeDir, ".agents"), auditDir} {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -36,7 +37,7 @@ func writeMissingSelectionFixture(t *testing.T, requiredRegistry bool) (repoRoot
 		}
 	}
 	mustWriteFile(t, filepath.Join(repoRoot, ".agents", "config.yaml"), []byte(projectConfig))
-	mustWriteFile(t, filepath.Join(homeDir, ".agents", "config.yaml"), []byte(v2Header))
+	mustWriteFile(t, filepath.Join(homeDir, ".agents", "config.yaml"), []byte(v4Header))
 	mustWriteFile(t, filepath.Join(auditDir, "SKILL.md"), []byte("# Audit\n"))
 
 	t.Cleanup(swapCloneOrPull(func(url, ref string) (string, error) { return url, nil }))
@@ -68,10 +69,11 @@ func TestOptionalEntryBeforeRequiredEntryKeepsMissAsHard(t *testing.T) {
 	}
 	mustWriteFile(t, filepath.Join(auditDir, "SKILL.md"), []byte("# Audit\n"))
 	orgPath := filepath.Join(homeDir, "org.yaml")
-	mustWriteFile(t, orgPath, []byte(repoV2Header+"registries:\n  - url: "+registryRoot+"\n    path: skills\nskills:\n  - missing-skill\n"))
+	skillsRoot := filepath.Join(registryRoot, "skills")
+	mustWriteFile(t, orgPath, []byte(fmt.Sprintf("%ssources:\n  local: {directory: %q}\nresources:\n  local: [skill/missing-skill]\n", repoV4Header, skillsRoot)))
 	mustWriteFile(t, filepath.Join(repoRoot, ".agents", "config.yaml"),
-		[]byte(repoV2Header+"registries:\n  - url: "+registryRoot+"\n    path: skills\n    required: true\nskills:\n  - audit\n  - missing-skill\n"))
-	mustWriteFile(t, filepath.Join(homeDir, ".agents", "config.yaml"), []byte(v2Header))
+		[]byte(fmt.Sprintf("%ssources:\n  local: {directory: %q}\nresources:\n  local: {include: [skill/audit, skill/missing-skill], required: true}\n", repoV4Header, skillsRoot)))
+	mustWriteFile(t, filepath.Join(homeDir, ".agents", "config.yaml"), []byte(v4Header))
 
 	t.Cleanup(swapCloneOrPull(func(url, ref string) (string, error) { return url, nil }))
 	t.Cleanup(swapDiscoverSkills(func(dir string) ([]catalog.Entry, []skill.MalformedSkill, error) {

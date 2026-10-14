@@ -450,13 +450,13 @@ func resolve(ctx context.Context, opts ResolveOptions) (ResolveResult, func()) {
 		slog.Error("effective config error", "error", err)
 	}
 
-	if opts.Gitignore {
-		EnsureLocalConfigGitignored(opts.Workspace.LocalConfigDir())
-	}
 	if len(ec.Errors) > 0 {
 		result.ConfigErrors = ec.Errors
 		result.Errors = ec.Errors
 		return result, releaseExactLease
+	}
+	if opts.Gitignore {
+		EnsureLocalConfigGitignored(opts.Workspace.LocalConfigDir())
 	}
 
 	result.TargetHarnesses, result.TargetHarnessSource = targetHarnessSetFromEC(ec)

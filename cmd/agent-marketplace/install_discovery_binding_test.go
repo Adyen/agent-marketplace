@@ -47,8 +47,8 @@ func newInstallBindingFixture(t *testing.T) installBindingFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	writeConfig(t, filepath.Join(home, ".agents", "config.yaml"), "\nharnesses: [factory]\n")
-	writeConfig(t, filepath.Join(repo, ".agents", "config.yaml"), "\nharnesses: [factory]\n")
+	writeConfig(t, filepath.Join(home, ".agents", "config.yaml"), "apiVersion: agent-marketplace/v4\nharnesses: [factory]\n")
+	writeConfig(t, filepath.Join(repo, ".agents", "config.yaml"), "apiVersion: agent-marketplace/v4\nharnesses: [factory]\n")
 	withWorkingDir(t, repo)
 	return installBindingFixture{base, home, repo, origin, working, strings.TrimSpace(string(commit))}
 }
@@ -66,7 +66,7 @@ func (f installBindingFixture) advance(t *testing.T) {
 
 func (f installBindingFixture) seedLock(t *testing.T) {
 	t.Helper()
-	writeConfig(t, config.ProjectConfigPath(f.repo), "\nharnesses: [factory]\nregistries:\n  - url: "+f.origin+"\n    ref: main\n")
+	writeConfig(t, config.ProjectConfigPath(f.repo), "apiVersion: agent-marketplace/v4\nharnesses: [factory]\nsources:\n  hosted: {git: file://"+f.origin+", ref: main}\n")
 	if out, err := executeCommand("sync"); err != nil {
 		t.Fatalf("seed: %v\n%s", err, out)
 	}
@@ -91,7 +91,7 @@ func TestConfiguredInstallFreezesDiscoveryBeforePublication(t *testing.T) {
 			if promote {
 				path = filepath.Join(f.home, ".agents", "config.yaml")
 			}
-			writeConfig(t, path, "\nharnesses: [factory]\nregistries:\n  - url: "+f.origin+"\n    ref: main\n")
+			writeConfig(t, path, "apiVersion: agent-marketplace/v4\nharnesses: [factory]\nsources:\n  hosted: {git: file://"+f.origin+", ref: main}\n")
 			opts := f.options()
 			opts.FromURL, opts.FromRef = "", ""
 			calls := 0
@@ -163,7 +163,7 @@ func TestConfiguredInstallSelectorsAndScopesKeepPreparedPins(t *testing.T) {
 				t.Fatal(err)
 			}
 			f.commit = strings.TrimSpace(string(commit))
-			writeConfig(t, sourcePath, "apiVersion: agent-marketplace/v2\nharnesses: [factory]\nregistries:\n  - url: "+f.origin+"\n    ref: main\n")
+			writeConfig(t, sourcePath, "apiVersion: agent-marketplace/v4\nharnesses: [factory]\nsources:\n  hosted: {git: file://"+f.origin+", ref: main}\n")
 			beforeSource := ownedCommandRead(t, sourcePath)
 			calls := 0
 			opts.PrepareDependencies = func(ctx context.Context, root, local string, edits []pipeline.StagedConfigEdit) (pipeline.PreparedInstallDependencies, error) {
@@ -233,7 +233,7 @@ func TestConfiguredInstallRejectsIncompatibleScopePins(t *testing.T) {
 	}
 	f := newInstallBindingFixture(t)
 	userPath := filepath.Join(f.home, ".agents", "config.yaml")
-	body := "\nharnesses: [factory]\nregistries:\n  - url: " + f.origin + "\n    ref: main\n"
+	body := "apiVersion: agent-marketplace/v4\nharnesses: [factory]\nsources:\n  hosted: {git: file://" + f.origin + ", ref: main}\n"
 	writeConfig(t, userPath, body)
 	if out, err := executeCommand("lock", "--scope", "user"); err != nil {
 		t.Fatalf("lock user A: %v\n%s", err, out)
@@ -276,7 +276,7 @@ func TestConfiguredInstallPinsDiscoveredSubBundle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	writeConfig(t, filepath.Join(f.home, ".agents", "config.yaml"), "\nharnesses: [factory]\nregistries:\n  - url: "+f.origin+"\n    ref: main\n    path: entries\n")
+	writeConfig(t, filepath.Join(f.home, ".agents", "config.yaml"), "apiVersion: agent-marketplace/v4\nharnesses: [factory]\nsources:\n  hosted: {git: file://"+f.origin+", ref: main, path: entries}\n")
 	opts := f.options()
 	opts.FromURL, opts.FromRef, opts.Args = "", "", []string{"nested"}
 	calls := 0
@@ -315,7 +315,7 @@ func TestConfiguredInstallUnlockedOrganizationOutputSurvivesGC(t *testing.T) {
 	writeSkill(t, f.working, "review", "Content A", []string{"chosen"})
 	commitAndPushAll(t, f.working, "tagged organization resource")
 	orgPath := filepath.Join(f.base, "org", "config.yaml")
-	writeConfig(t, orgPath, "apiVersion: agent-marketplace/v2\nharnesses: [factory]\nregistries:\n  - url: "+f.origin+"\n    ref: main\n    required: true\n")
+	writeConfig(t, orgPath, "apiVersion: agent-marketplace/v4\nharnesses: [factory]\nsources:\n  hosted: {git: file://"+f.origin+", ref: main}\nresources:\n  hosted: {all: true, required: true}\n")
 	config.SetTestOrganizationConfigPath(t, orgPath)
 	if out, err := executeCommand("install", "--tag", "chosen"); err != nil {
 		t.Fatalf("install: %v\n%s", err, out)
@@ -457,7 +457,7 @@ func testInstallPreparedReadsRejectConcurrentChanges(t *testing.T, configured bo
 			f.seedLock(t)
 			fragment := filepath.Join(f.repo, ".agents", "fragment.yaml")
 			if scenario == "include" || scenario == "late include" {
-				writeFile(t, fragment, "tags: [before]\n")
+				writeFile(t, fragment, "resources:\n  hosted: {tags: [before]}\n")
 				path := config.ProjectConfigPath(f.repo)
 				writeFile(t, path, string(ownedCommandRead(t, path))+"\ninclude: [fragment.yaml]\n")
 			}
@@ -487,15 +487,15 @@ func testInstallPreparedReadsRejectConcurrentChanges(t *testing.T, configured bo
 					calls++
 					switch scenario {
 					case "include":
-						writeFile(t, fragment, "tags: [after]\n")
+						writeFile(t, fragment, "resources:\n  hosted: {tags: [after]}\n")
 					case "late include":
 						commitDependencyTransaction = func(ctx context.Context, state string, desired []dependencytxn.DesiredFile, options ...dependencytxn.Option) (dependencytxn.Result, error) {
-							writeFile(t, fragment, "tags: [after]\n")
+							writeFile(t, fragment, "resources:\n  hosted: {tags: [after]}\n")
 							capture()
 							return originalCommit(ctx, state, desired, options...)
 						}
 					case "local":
-						writeFile(t, config.LocalConfigPath(f.repo), "skills: {exclude: [review]}\n")
+						writeFile(t, config.LocalConfigPath(f.repo), "apiVersion: agent-marketplace/v4\nsources:\n  hosted: {git: file://"+f.origin+", ref: main}\nresources:\n  hosted: {exclude: [skill/review]}\n")
 					case "lock":
 						path := filepath.Join(f.repo, ".agents", "lock.yaml")
 						writeFile(t, path, string(ownedCommandRead(t, path))+"\n")
@@ -553,7 +553,7 @@ func testInstallMissingSelectionDoesNotPublishOrLeakLease(t *testing.T, configur
 	opts := f.options()
 	opts.Args = []string{"absent"}
 	if configured {
-		writeConfig(t, config.ProjectConfigPath(f.repo), "\nharnesses: [factory]\nregistries:\n  - url: "+f.origin+"\n    ref: main\n")
+		writeConfig(t, config.ProjectConfigPath(f.repo), "apiVersion: agent-marketplace/v4\nharnesses: [factory]\nsources:\n  hosted: {git: file://"+f.origin+", ref: main}\n")
 		opts.FromURL, opts.FromRef = "", ""
 	}
 	before := ownedCommandSnapshot(t, f.repo)

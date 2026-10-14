@@ -9,8 +9,6 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
-
-	"github.com/Adyen/agent-marketplace/internal/config"
 )
 
 // AC4: scope switching and Space selection inside the harness Huh
@@ -148,38 +146,6 @@ func TestSyncQuitFormConfirmAndDecline(t *testing.T) {
 	}
 	if m.quitAfterSync {
 		t.Fatal("declined sync+quit must not arm quitAfterSync")
-	}
-}
-
-// spec: tui-interactions/cancel-or-stale-completion
-func TestMigrationFormResetsAfterCompletion(t *testing.T) {
-	home := t.TempDir()
-	m := NewModel(t.TempDir(), home)
-	m.pane = paneMigrationModal
-	m.migrationPrompt = migrationPrompt{configs: []migrationConfig{{
-		label: "User",
-		path:  filepath.Join(home, ".agents", "config.yaml"),
-		scope: config.V4MigrationUser,
-	}}}
-	mi, cmd := m.Update(tea.KeyPressMsg{Code: 'm', Text: "m"})
-	m = mi.(Model)
-	if cmd == nil {
-		t.Fatal("'m' should dispatch the migration command")
-	}
-
-	m.pane = paneMigrationModal
-	mi, cmd = m.Update(tea.KeyPressMsg{Code: 'n', Text: "n"})
-	m = mi.(Model)
-	if cmd != nil {
-		t.Fatal("stale completed form re-dispatched the migration")
-	}
-	if m.pane != paneMigrationModal {
-		t.Fatalf("unbound 'n' should keep the migration modal open, got pane=%v", m.pane)
-	}
-	mi, _ = m.Update(tea.KeyPressMsg{Code: 'l', Text: "l"})
-	m = mi.(Model)
-	if !m.migrationDismissed {
-		t.Fatal("declining a re-presented migration must mark it dismissed")
 	}
 }
 

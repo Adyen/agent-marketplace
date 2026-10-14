@@ -1,5 +1,11 @@
 # Logging
 
+> **Historical, non-normative lead — pending harvest.** This document retains
+> pre-launch behavior, including the obsolete claim that first-run sync writes
+> a v2 consumer configuration. It is not current launch usage or a normative
+> contract. Use the current [logging reference](../site/docs/reference/logging.md)
+> and [consumer configuration reference](../site/docs/reference/configuration.md) instead.
+
 `agent-marketplace` writes operational logs to a rotating file so you can
 inspect a run after it finishes. Logging needs no configuration. The defaults
 live in code, and the generated user config does not contain a `logging:`

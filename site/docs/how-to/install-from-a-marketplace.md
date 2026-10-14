@@ -10,7 +10,7 @@ You need:
 - At least one target harness selected in your effective configuration.
 - The Marketplace endpoint URL.
 
-The destination config can be v4, v2, or v3. If it does not exist yet, the install creates a v4 file. Editing a v2 or v3 file works but prints a `config.legacy-deprecated` warning.
+Every existing consumer root, including organization and personal-local, must declare exact `apiVersion: agent-marketplace/v4`. Included fragments may omit the field or declare exact v4. If the destination is absent, install creates v4 only after validating every required root/include tree. Unsupported input refuses before Marketplace acquisition or new config/lock/harness changes. [Convert older configurations with an older released migrator before upgrading](./migrate-configuration.md); the new CLI has no migration command or prompt.
 
 Replace `https://marketplace.example.com`, `shared-agents`, and `review` in the examples with values from your Marketplace.
 
