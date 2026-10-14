@@ -8,7 +8,6 @@ import (
 	"os"
 	"strconv"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/Adyen/agent-marketplace/internal/localapi"
@@ -48,7 +47,7 @@ type App struct {
 	rootSpan         telemetry.Span
 	quit             func()
 	closeOnce        sync.Once
-	closeApproved    atomic.Bool
+	nativeState
 }
 
 func NewApp(ctx context.Context, lifecycle session.DependencyLifecycle) (*App, error) {
@@ -142,6 +141,7 @@ func (a *App) secondLaunch(window Window, args []string) {
 }
 
 func (a *App) Quit() {
+	a.approveClose()
 	if a.quit != nil {
 		a.quit()
 	}
