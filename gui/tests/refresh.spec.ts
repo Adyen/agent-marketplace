@@ -62,7 +62,7 @@ test('built GUI loads external user-config changes only on refresh triggers', as
     const dialog = page.getByRole('dialog', { name: 'Harness targets' })
     const saveTargets = dialog.getByRole('button', { name: 'Save targets' })
     const detail = page.locator('.workspace__detail')
-    const sync = page.getByRole('button', { name: 'Sync' })
+    const sync = page.getByRole('button', { name: 'Sync', exact: true })
     const devin = dialog.getByRole('checkbox', { name: 'Target devin' })
     const claude = dialog.getByRole('checkbox', { name: 'Target claude' })
 
