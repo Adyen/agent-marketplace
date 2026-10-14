@@ -1,0 +1,107 @@
+name: Marketplace Helm Chart
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Published stable release tag to backfill
+        required: true
+        type: string
+
+permissions: {}
+
+concurrency:
+  group: marketplace-chart-${{ github.event.release.tag_name || inputs.release_tag }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    if: >-
+      github.repository == 'Adyen/agent-marketplace' &&
+      ((github.event_name == 'release' && !github.event.release.draft && !github.event.release.prerelease) ||
+      (github.event_name == 'workflow_dispatch' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)))
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      packages: write
+    env:
+      RELEASE_TAG: ${{ github.event.release.tag_name || inputs.release_tag }}
+      CHART_DESTINATION: oci://ghcr.io/adyen/charts
+    steps:
+      - name: Resolve published release
+        id: release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ ! "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo 'A stable vMAJOR.MINOR.PATCH release tag is required' >&2
+            exit 1
+          fi
+          release="$(gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json tagName,isDraft,isPrerelease)"
+          jq -e --arg tag "$RELEASE_TAG" '.tagName == $tag and .isDraft == false and .isPrerelease == false' <<< "$release"
+          printf 'tag=%s\n' "$RELEASE_TAG" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ steps.release.outputs.tag }}
+          persist-credentials: false
+      - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310
+        with:
+          version: v3.18.4
+      - name: Package release chart
+        shell: bash
+        run: |
+          set -euo pipefail
+          chart_dir="$(mktemp -d)/agent-marketplace"
+          cp -R deploy/helm/agent-marketplace "$chart_dir"
+          if grep -q '^annotations:' "$chart_dir/Chart.yaml"; then
+            echo 'Chart annotations already exist; merge provenance explicitly before publishing' >&2
+            exit 1
+          fi
+          source_revision="$(git rev-parse HEAD)"
+          printf '\nannotations:\n  org.opencontainers.image.source: "%s"\n  org.opencontainers.image.revision: "%s"\n  org.opencontainers.image.version: "%s"\n' \
+            "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY" "$source_revision" "$RELEASE_TAG" >> "$chart_dir/Chart.yaml"
+          helm lint --strict "$chart_dir"
+          mkdir -p "$RUNNER_TEMP/marketplace-chart"
+          helm package "$chart_dir" --destination "$RUNNER_TEMP/marketplace-chart" --version "${RELEASE_TAG#v}" --app-version "$RELEASE_TAG"
+          package="$RUNNER_TEMP/marketplace-chart/agent-marketplace-${RELEASE_TAG#v}.tgz"
+          helm template marketplace "$package" --namespace marketplace > "$RUNNER_TEMP/marketplace-chart/rendered.yaml"
+          helm show chart "$package" > "$RUNNER_TEMP/marketplace-chart/Chart.yaml"
+      - name: Authenticate chart publisher
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          HELM_REGISTRY_CONFIG: ${{ runner.temp }}/marketplace-helm-registry.json
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf '%s' "$GH_TOKEN" | helm registry login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+      - name: Publish immutable chart version
+        env:
+          HELM_REGISTRY_CONFIG: ${{ runner.temp }}/marketplace-helm-registry.json
+        shell: bash
+        run: |
+          set -euo pipefail
+          if helm show chart "$CHART_DESTINATION/agent-marketplace" --version "${RELEASE_TAG#v}" > "$RUNNER_TEMP/marketplace-chart/existing-chart.yaml" 2> "$RUNNER_TEMP/marketplace-chart/existing-chart-error.txt"; then
+            echo 'Chart version already exists; refusing to overwrite it' >&2
+            exit 1
+          fi
+          if ! grep -Eq 'not found|404 Not Found' "$RUNNER_TEMP/marketplace-chart/existing-chart-error.txt"; then
+            cat "$RUNNER_TEMP/marketplace-chart/existing-chart-error.txt" >&2
+            exit 1
+          fi
+          helm push "$RUNNER_TEMP/marketplace-chart/agent-marketplace-${RELEASE_TAG#v}.tgz" "$CHART_DESTINATION" 2>&1 | tee "$RUNNER_TEMP/marketplace-chart/push.txt"
+          digest="$(sed -n 's/^Digest: //p' "$RUNNER_TEMP/marketplace-chart/push.txt")"
+          [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]
+          printf 'Chart: %s/agent-marketplace:%s\nDigest: %s\n' "$CHART_DESTINATION" "${RELEASE_TAG#v}" "$digest" >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload chart evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: marketplace-chart-${{ github.run_id }}
+          path: ${{ runner.temp }}/marketplace-chart/
+          if-no-files-found: warn
+          retention-days: 7
