@@ -129,7 +129,7 @@ func BenchmarkDiagnosticPayloadSerialization(b *testing.B) {
 	redactedSpans := redactSpans(context.Background(), spans, redactedRes)
 	traceID := rootSpan.TraceID()
 
-	payload, err := buildDiagnosticPayload(state, tel.InstallationID(), traceID, rmRedacted, redactedSpans, nil)
+	payload, err := buildDiagnosticPayload(state, tel.InstallationID(), traceID, rmRedacted, redactedSpans, nil, nil, 0)
 	if err != nil {
 		b.Fatal(err)
 	}

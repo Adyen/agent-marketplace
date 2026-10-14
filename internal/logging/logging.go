@@ -36,6 +36,9 @@ type Options struct {
 	MaxAgeDays *int
 	Compress   *bool
 	Stderr     io.Writer
+	// Capture, when non-nil, receives every record of the process logger and
+	// keeps its own level filter. Log file and stderr output are unchanged.
+	Capture slog.Handler
 }
 
 // Init configures the process-wide slog default logger. File output uses JSON
@@ -47,9 +50,10 @@ func Init(opts Options) (*slog.Logger, func() error, error) {
 	}
 
 	level := resolveLevel(opts)
+	attrs := baseAttrs(opts)
 	if !resolveEnabled(opts) {
-		recordManagedTerminalHandler(nil)
-		logger := slog.New(disabledHandler(level, opts.Debug || envBool("AGENT_MARKETPLACE_DEBUG"), stderr)).With(baseAttrs(opts)...)
+		recordManagedTerminalHandler(terminalHandler(nil, opts.Capture, attrs))
+		logger := slog.New(withCapture(disabledHandler(level, opts.Debug || envBool("AGENT_MARKETPLACE_DEBUG"), stderr), opts.Capture)).With(attrs...)
 		slog.SetDefault(logger)
 		return logger, func() error { return nil }, nil
 	}
@@ -58,15 +62,15 @@ func Init(opts Options) (*slog.Logger, func() error, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		wrapped := fmt.Errorf("initialize log directory %q: %w", filepath.Dir(path), err)
 		_, writeErr := fmt.Fprintf(stderr, "agent-marketplace: %v; using stderr fallback\n", wrapped)
-		logger := fallbackLogger(stderr, level, opts)
-		recordManagedTerminalHandler(nil)
+		logger := fallbackLogger(stderr, level, opts.Capture, attrs)
+		recordManagedTerminalHandler(terminalHandler(nil, opts.Capture, attrs))
 		slog.SetDefault(logger)
 		return logger, func() error { return nil }, errors.Join(wrapped, writeErr)
 	}
 	if err := verifyWritable(path); err != nil {
 		_, writeErr := fmt.Fprintf(stderr, "agent-marketplace: %v; using stderr fallback\n", err)
-		logger := fallbackLogger(stderr, level, opts)
-		recordManagedTerminalHandler(nil)
+		logger := fallbackLogger(stderr, level, opts.Capture, attrs)
+		recordManagedTerminalHandler(terminalHandler(nil, opts.Capture, attrs))
 		slog.SetDefault(logger)
 		return logger, func() error { return nil }, errors.Join(err, writeErr)
 	}
@@ -79,15 +83,17 @@ func Init(opts Options) (*slog.Logger, func() error, error) {
 		Compress:   resolveCompress(opts),
 	}
 
-	handlers := []slog.Handler{
-		slog.NewJSONHandler(writer, &slog.HandlerOptions{Level: level}),
-	}
+	fileHandler := slog.NewJSONHandler(writer, &slog.HandlerOptions{Level: level})
+	handlers := []slog.Handler{fileHandler}
 	if opts.Debug || envBool("AGENT_MARKETPLACE_DEBUG") {
 		handlers = append(handlers, slog.NewTextHandler(stderr, &slog.HandlerOptions{Level: level}))
 	}
+	if opts.Capture != nil {
+		handlers = append(handlers, opts.Capture)
+	}
 
-	recordManagedTerminalHandler(slog.New(handlers[0]).With(baseAttrs(opts)...).Handler())
-	logger := slog.New(multiHandler{handlers: handlers}).With(baseAttrs(opts)...)
+	recordManagedTerminalHandler(terminalHandler(fileHandler, opts.Capture, attrs))
+	logger := slog.New(multiHandler{handlers: handlers}).With(attrs...)
 	slog.SetDefault(logger)
 	return logger, writer.Close, nil
 }
@@ -128,8 +134,28 @@ func BeginTerminalSession() (restore func()) {
 	return func() { slog.SetDefault(previous) }
 }
 
-func fallbackLogger(stderr io.Writer, level slog.Level, opts Options) *slog.Logger {
-	return slog.New(slog.NewTextHandler(stderr, &slog.HandlerOptions{Level: level})).With(baseAttrs(opts)...)
+// terminalHandler returns the handler a terminal session logs to: the managed
+// file handler when one exists, plus the capture. It is nil when neither exists.
+func terminalHandler(file, capture slog.Handler, attrs []any) slog.Handler {
+	handler := capture
+	if file != nil {
+		handler = withCapture(file, capture)
+	}
+	if handler == nil {
+		return nil
+	}
+	return slog.New(handler).With(attrs...).Handler()
+}
+
+func withCapture(handler, capture slog.Handler) slog.Handler {
+	if capture == nil {
+		return handler
+	}
+	return multiHandler{handlers: []slog.Handler{handler, capture}}
+}
+
+func fallbackLogger(stderr io.Writer, level slog.Level, capture slog.Handler, attrs []any) *slog.Logger {
+	return slog.New(withCapture(slog.NewTextHandler(stderr, &slog.HandlerOptions{Level: level}), capture)).With(attrs...)
 }
 
 func disabledHandler(level slog.Level, debug bool, stderr io.Writer) slog.Handler {

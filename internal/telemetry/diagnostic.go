@@ -11,9 +11,11 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"maps"
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -24,19 +26,24 @@ import (
 
 	otelattribute "go.opentelemetry.io/otel/attribute"
 	otelcodes "go.opentelemetry.io/otel/codes"
+	otlploghttp "go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploghttp"
 	otlpmetrichttp "go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetrichttp"
 	otlptracehttp "go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp"
+	otellog "go.opentelemetry.io/otel/log"
 	otelmetric "go.opentelemetry.io/otel/metric"
+	sdklog "go.opentelemetry.io/otel/sdk/log"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 	otelresource "go.opentelemetry.io/otel/sdk/resource"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	oteltrace "go.opentelemetry.io/otel/trace"
 )
 
 const (
 	diagnosticFilePerm      = 0o600
 	diagnosticDirPerm       = 0o700
 	diagnosticExportTimeout = 5 * time.Second
+	signalLogs              = "logs"
 )
 
 // writeDiagnosticInfo writes a formatted diagnostic message to w. It logs a
@@ -80,6 +87,19 @@ type DiagnosticPayload struct {
 	Metrics            []DiagnosticMetric `json:"metrics,omitempty"`
 	Spans              []DiagnosticSpan   `json:"spans,omitempty"`
 	DiagnosticEvents   []DiagnosticEvent  `json:"diagnostic_events,omitempty"`
+	Logs               []DiagnosticLog    `json:"logs,omitempty"`
+	LogsDropped        int                `json:"logs_dropped,omitempty"`
+}
+
+// DiagnosticLog is a captured log record. Its message and attribute values are
+// redacted before being written to the payload or exported.
+type DiagnosticLog struct {
+	Timestamp  time.Time         `json:"timestamp"`
+	Severity   string            `json:"severity"`
+	Message    string            `json:"message"`
+	TraceID    string            `json:"trace_id"`
+	SpanID     string            `json:"span_id,omitempty"`
+	Attributes map[string]string `json:"attributes,omitempty"`
 }
 
 // DiagnosticMetric is a JSON-friendly representation of a single metric data
@@ -238,7 +258,19 @@ func (t *Telemetry) FinishDiagnostic(ctx context.Context, out io.Writer, in io.R
 		diagnosticEvents[i].Message = redact.URL(diagnosticEvents[i].Message)
 	}
 
-	payload, err := buildDiagnosticPayload(t.state, t.id, traceID, rmRedacted, redactedSpans, diagnosticEvents)
+	logTraceID, rootSpanID := traceID, ""
+	if root, ok := diagnosticRootSpan(redactedSpans); ok {
+		logTraceID = root.SpanContext().TraceID().String()
+		rootSpanID = root.SpanContext().SpanID().String()
+	}
+	var records []capturedLog
+	var logsDropped int
+	if t.logCapture != nil {
+		records, logsDropped = t.logCapture.snapshot()
+	}
+	logs := diagnosticLogs(records, logTraceID, rootSpanID)
+
+	payload, err := buildDiagnosticPayload(t.state, t.id, traceID, rmRedacted, redactedSpans, diagnosticEvents, logs, logsDropped)
 	if err != nil {
 		return fmt.Errorf("build diagnostic payload: %w", err)
 	}
@@ -279,7 +311,7 @@ func (t *Telemetry) FinishDiagnostic(ctx context.Context, out io.Writer, in io.R
 	}
 
 	slog.Info("exporting diagnostic payload", "trace_id", traceID, "endpoint_hostname", t.state.PrimaryEndpointHostname)
-	if err := exportDiagnosticPayload(ctx, t.state, rmRedacted, redactedSpans); err != nil {
+	if err := exportDiagnosticPayload(ctx, t.state, rmRedacted, redactedSpans, logs); err != nil {
 		writeDiagnosticInfo(out, "\nDiagnostic export failed: %v\n", err)
 		writeDiagnosticInfo(out, "  trace id:        %s\n", traceID)
 		writeDiagnosticInfo(out, "  installation id: %s\n", t.id)
@@ -293,6 +325,17 @@ func (t *Telemetry) FinishDiagnostic(ctx context.Context, out io.Writer, in io.R
 	writeDiagnosticInfo(out, "  installation id: %s\n", t.id)
 	slog.Info("diagnostic payload exported", "trace_id", traceID, "path", path)
 	return nil
+}
+
+// diagnosticRootSpan returns the invocation's root command span, the span with
+// no parent.
+func diagnosticRootSpan(spans []sdktrace.ReadOnlySpan) (sdktrace.ReadOnlySpan, bool) {
+	for _, span := range spans {
+		if span.Name() == "agent_marketplace.command" && !span.Parent().IsValid() {
+			return span, true
+		}
+	}
+	return nil, false
 }
 
 func emptyOr(v, fallback string) string {
@@ -310,7 +353,7 @@ func generateDiagnosticTraceID() string {
 
 // buildDiagnosticPayload converts redacted metrics and spans into the JSON
 // review format.
-func buildDiagnosticPayload(state TelemetryState, installationID, traceID string, rm *metricdata.ResourceMetrics, spans []sdktrace.ReadOnlySpan, diagnosticEvents []DiagnosticEvent) (*DiagnosticPayload, error) {
+func buildDiagnosticPayload(state TelemetryState, installationID, traceID string, rm *metricdata.ResourceMetrics, spans []sdktrace.ReadOnlySpan, diagnosticEvents []DiagnosticEvent, logs []DiagnosticLog, logsDropped int) (*DiagnosticPayload, error) {
 	p := &DiagnosticPayload{
 		SchemaVersion:      tmcfg.SchemaVersion,
 		Level:              tmcfg.LevelDiagnostic,
@@ -321,6 +364,8 @@ func buildDiagnosticPayload(state TelemetryState, installationID, traceID string
 		Timestamp:          time.Now().UTC(),
 		SensitiveWarning:   "Diagnostic payloads may contain URLs (with credentials removed), filesystem paths, and error messages. Review before sharing.",
 		DiagnosticEvents:   diagnosticEvents,
+		Logs:               logs,
+		LogsDropped:        logsDropped,
 	}
 
 	if rm != nil && rm.Resource != nil {
@@ -650,10 +695,10 @@ func redactEvents(events []sdktrace.Event) []sdktrace.Event {
 	return out
 }
 
-// exportDiagnosticPayload serializes the redacted metrics and spans using the
-// official OTLP/HTTP exporters and a capture transport, then replays the
+// exportDiagnosticPayload serializes the redacted metrics, spans, and logs using
+// the official OTLP/HTTP exporters and a capture transport, then replays the
 // captured requests to the primary endpoint with a 5-second timeout.
-func exportDiagnosticPayload(ctx context.Context, state TelemetryState, rm *metricdata.ResourceMetrics, spans []sdktrace.ReadOnlySpan) error {
+func exportDiagnosticPayload(ctx context.Context, state TelemetryState, rm *metricdata.ResourceMetrics, spans []sdktrace.ReadOnlySpan, logs []DiagnosticLog) error {
 	if state.PrimaryEndpoint == "" {
 		return fmt.Errorf("no primary telemetry endpoint configured")
 	}
@@ -686,6 +731,19 @@ func exportDiagnosticPayload(ctx context.Context, state TelemetryState, rm *metr
 			return fmt.Errorf("serialize diagnostic traces: %w", err)
 		}
 	}
+	if len(logs) > 0 {
+		var res *otelresource.Resource
+		if rm != nil {
+			res = rm.Resource
+		}
+		logExp, err := buildCaptureLogExporter(ctx, captureClient, state.PrimaryEndpoint, headers)
+		if err != nil {
+			return fmt.Errorf("build diagnostic log exporter: %w", err)
+		}
+		if err := exportCaptureLogs(ctx, logExp, res, logs); err != nil {
+			return fmt.Errorf("serialize diagnostic logs: %w", err)
+		}
+	}
 
 	_, send, err := buildRouteClients(state.PrimaryEndpoint, headers, state.PrimaryCAFile, state.PrimaryAllowInsecure, "primary", queueSubdirMetrics, nil, nil)
 	if err != nil {
@@ -699,17 +757,15 @@ func exportDiagnosticPayload(ctx context.Context, state TelemetryState, rm *metr
 	defer cancel()
 
 	capture.mu.Lock()
-	metric, trace := capture.metric, capture.trace
+	metric, trace, logReq := capture.metric, capture.trace, capture.logs
 	capture.mu.Unlock()
 
 	var exportErrs []error
-	if metric != nil {
-		if err := sendCapturedRequest(exportCtx, send, metric); err != nil {
-			exportErrs = append(exportErrs, err)
+	for _, cr := range []*capturedRequest{metric, trace, logReq} {
+		if cr == nil {
+			continue
 		}
-	}
-	if trace != nil {
-		if err := sendCapturedRequest(exportCtx, send, trace); err != nil {
+		if err := sendCapturedRequest(exportCtx, send, cr); err != nil {
 			exportErrs = append(exportErrs, err)
 		}
 	}
@@ -751,6 +807,92 @@ func buildCaptureTraceExporter(ctx context.Context, client *http.Client, endpoin
 	)
 }
 
+func buildCaptureLogExporter(ctx context.Context, client *http.Client, endpoint string, headers map[string]string) (sdklog.Exporter, error) {
+	ep, err := buildSignalEndpoint(endpoint, signalLogs)
+	if err != nil {
+		return nil, err
+	}
+	return otlploghttp.New(ctx,
+		otlploghttp.WithHTTPClient(client),
+		otlploghttp.WithEndpointURL(ep),
+		otlploghttp.WithHeaders(headers),
+		otlploghttp.WithCompression(otlploghttp.NoCompression),
+		otlploghttp.WithRetry(otlploghttp.RetryConfig{Enabled: false}),
+		otlploghttp.WithTimeout(30*time.Second),
+	)
+}
+
+// exportCaptureLogs sends logs through exp in a single batch so the capture
+// transport holds one /v1/logs request for the whole payload.
+func exportCaptureLogs(ctx context.Context, exp sdklog.Exporter, res *otelresource.Resource, logs []DiagnosticLog) error {
+	n := len(logs)
+	provider := sdklog.NewLoggerProvider(
+		sdklog.WithResource(res),
+		sdklog.WithProcessor(sdklog.NewBatchProcessor(exp,
+			sdklog.WithMaxQueueSize(n),
+			sdklog.WithExportMaxBatchSize(n),
+			sdklog.WithExportInterval(time.Hour),
+		)),
+	)
+	logger := provider.Logger("agent_marketplace")
+
+	var errs []error
+	for _, entry := range logs {
+		sc, err := diagnosticSpanContext(entry)
+		if err != nil {
+			errs = append(errs, err)
+			continue
+		}
+		logger.Emit(oteltrace.ContextWithSpanContext(ctx, sc), diagnosticLogRecord(entry))
+	}
+	errs = append(errs, provider.ForceFlush(ctx), provider.Shutdown(ctx))
+	return errors.Join(errs...)
+}
+
+func diagnosticSpanContext(entry DiagnosticLog) (oteltrace.SpanContext, error) {
+	traceID, err := oteltrace.TraceIDFromHex(entry.TraceID)
+	if err != nil {
+		return oteltrace.SpanContext{}, fmt.Errorf("parse log trace id: %w", err)
+	}
+	cfg := oteltrace.SpanContextConfig{TraceID: traceID, TraceFlags: oteltrace.FlagsSampled}
+	if entry.SpanID != "" {
+		spanID, err := oteltrace.SpanIDFromHex(entry.SpanID)
+		if err != nil {
+			return oteltrace.SpanContext{}, fmt.Errorf("parse log span id: %w", err)
+		}
+		cfg.SpanID = spanID
+	}
+	return oteltrace.NewSpanContext(cfg), nil
+}
+
+func diagnosticLogRecord(entry DiagnosticLog) otellog.Record {
+	var rec otellog.Record
+	rec.SetTimestamp(entry.Timestamp)
+	rec.SetSeverity(logSeverity(entry.Severity))
+	rec.SetSeverityText(entry.Severity)
+	rec.SetBody(otelattribute.StringValue(entry.Message))
+	keys := slices.Sorted(maps.Keys(entry.Attributes))
+	attrs := make([]otelattribute.KeyValue, 0, len(keys))
+	for _, k := range keys {
+		attrs = append(attrs, otelattribute.String(k, entry.Attributes[k]))
+	}
+	rec.AddAttributes(attrs...)
+	return rec
+}
+
+func logSeverity(text string) otellog.Severity {
+	switch text {
+	case "ERROR":
+		return otellog.SeverityError
+	case "WARN":
+		return otellog.SeverityWarn
+	case "INFO":
+		return otellog.SeverityInfo
+	default:
+		return otellog.SeverityDebug
+	}
+}
+
 // diagnosticCaptureTransport intercepts OTLP/HTTP requests from the SDK
 // exporters, stores the serialized request, and returns a synthetic success
 // response so the SDK believes the export succeeded.
@@ -758,6 +900,7 @@ type diagnosticCaptureTransport struct {
 	mu     sync.Mutex
 	metric *capturedRequest
 	trace  *capturedRequest
+	logs   *capturedRequest
 }
 
 type capturedRequest struct {
@@ -785,6 +928,8 @@ func (ct *diagnosticCaptureTransport) RoundTrip(req *http.Request) (*http.Respon
 		ct.metric = cr
 	case strings.HasSuffix(req.URL.Path, "/v1/traces"):
 		ct.trace = cr
+	case strings.HasSuffix(req.URL.Path, "/v1/logs"):
+		ct.logs = cr
 	}
 	ct.mu.Unlock()
 
