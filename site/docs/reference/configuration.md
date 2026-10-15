@@ -117,7 +117,7 @@ An included fragment has lower precedence than the file that includes it. In a l
 - A source name declared in more than one file must have identical values everywhere. Different values fail with `v4.source-conflict`.
 - Resource groups with the same name are combined. Their `include` and `exclude` lists are concatenated in merge order. `tags`, `all`, `registries`, `required`, and `harnesses` take the value from the last file that sets them.
 - `allowed_registries` and `allowed_marketplaces` take the first declaration in merge order. A fragment that sets an allowlist cannot be relaxed by a later fragment or by the including file.
-- `harnesses` takes the value from the last file that sets it. `backup`, `logging`, `telemetry`, and `materialization` merge field by field, with later files winning.
+- `harnesses` takes the value from the last file that sets it. `backup`, `logging`, `update_check`, `telemetry`, and `materialization` merge field by field, with later files winning.
 
 The loader rejects the whole layer when an include is missing, unreadable, malformed, not allowed in that layer, or part of a cycle. Fragments must use only the fields their layer allows. Organization fragments have extra ownership and permission requirements; see the [configuration layers reference](configuration-layers.md#include).
 
@@ -136,6 +136,7 @@ Unknown top-level fields are rejected.
 | `allowed_registries` | list of regular expressions | no | Restricts remote Git origins. |
 | `backup` | mapping | no | Pre-sync backups of machine-scope harness folders: `enabled` (default `true`), `max_days` (default `14`), `max_per_day` (default `10`). Both limits must be positive. Organization and user files only. |
 | `logging` | mapping | no | Log file settings: `enabled`, `level`, `file`, `max_size_mb`, `max_backups`, `max_age_days`, `compress`. See the [logging reference](logging.md). |
+| `update_check` | mapping | no | Release upgrade notice: `enabled` (default `true`). Organization and user files only; the user value wins. |
 | `telemetry` | mapping | no | Machine telemetry policy: `level`, `endpoint`, `community_reporting`, `retention_policy`, `ca_file`, `allow_insecure`, `headers`. See the [telemetry reference](telemetry.md). Organization and user files only. |
 | `materialization` | mapping | no | Whether generated resources are symlinks or regular files: `mode` and `targets`. See [Materialization](#materialization). |
 
