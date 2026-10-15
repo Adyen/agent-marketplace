@@ -70,6 +70,12 @@ func (m *MarketplaceLayerMutation) RemoveDirectPin(entry config.MarketplaceEntry
 	return m.removeMarketplacePin(entry, pin)
 }
 
+// RemoveCollection drops the collection's exact pin and records no
+// collection/<name> exclusion, unlike Git-source collection removal
+// (remove.go, SetLayerExclude). Marketplace sources support only explicit
+// include requests at runtime (marketplaceEntryForLock refuses all, tags, and
+// registries with v4.marketplace-runtime-unsupported), so no dynamic selection
+// can re-select the removed collection.
 func (m *MarketplaceLayerMutation) RemoveCollection(entry config.MarketplaceEntry, collection config.MarketplaceResourcePin) error {
 	return m.removeMarketplacePin(entry, collection)
 }

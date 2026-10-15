@@ -40,7 +40,6 @@ func writeMissingSelectionFixture(t *testing.T, requiredRegistry bool) (repoRoot
 	mustWriteFile(t, filepath.Join(homeDir, ".agents", "config.yaml"), []byte(v4Header))
 	mustWriteFile(t, filepath.Join(auditDir, "SKILL.md"), []byte("# Audit\n"))
 
-	t.Cleanup(swapCloneOrPull(func(url, ref string) (string, error) { return url, nil }))
 	t.Cleanup(swapDiscoverSkills(func(dir string) ([]catalog.Entry, []skill.MalformedSkill, error) {
 		return []catalog.Entry{{Name: "audit", Path: filepath.Join(dir, "audit")}}, nil, nil
 	}))
@@ -75,7 +74,6 @@ func TestOptionalEntryBeforeRequiredEntryKeepsMissAsHard(t *testing.T) {
 		[]byte(fmt.Sprintf("%ssources:\n  local: {directory: %q}\nresources:\n  local: {include: [skill/audit, skill/missing-skill], required: true}\n", repoV4Header, skillsRoot)))
 	mustWriteFile(t, filepath.Join(homeDir, ".agents", "config.yaml"), []byte(v4Header))
 
-	t.Cleanup(swapCloneOrPull(func(url, ref string) (string, error) { return url, nil }))
 	t.Cleanup(swapDiscoverSkills(func(dir string) ([]catalog.Entry, []skill.MalformedSkill, error) {
 		return []catalog.Entry{{Name: "audit", Path: filepath.Join(dir, "audit")}}, nil, nil
 	}))

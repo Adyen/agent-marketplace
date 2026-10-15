@@ -36,14 +36,14 @@ func (s TerminalString) MarshalJSON() ([]byte, error) {
 		case r == '\t':
 			quoted.WriteString("\\t")
 		case r < 0x20 || r == 0x7f:
-			quoted.WriteString(fmt.Sprintf("\\u%04x", r))
+			fmt.Fprintf(&quoted, "\\u%04x", r)
 		case r < 0x80:
 			quoted.WriteRune(r)
 		case r <= 0xffff:
-			quoted.WriteString(fmt.Sprintf("\\u%04x", r))
+			fmt.Fprintf(&quoted, "\\u%04x", r)
 		default:
 			r -= 0x10000
-			quoted.WriteString(fmt.Sprintf("\\u%04x\\u%04x", 0xd800+(r>>10), 0xdc00+(r&0x3ff)))
+			fmt.Fprintf(&quoted, "\\u%04x\\u%04x", 0xd800+(r>>10), 0xdc00+(r&0x3ff))
 		}
 	}
 	quoted.WriteByte('"')
