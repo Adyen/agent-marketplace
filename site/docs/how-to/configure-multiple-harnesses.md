@@ -15,7 +15,7 @@ Launch the TUI:
 agent-marketplace
 ```
 
-Press `H` to open the harness modal. It opens on your personal list in `~/.agents/config.yaml`; press `p` to edit the repository list in `.agents/config.yaml` instead, or `g` to go back. Move with the arrow keys, toggle each harness with `space`, and press `enter` to save. Press `esc` to close without saving.
+This opens the interactive TUI. Press `H` to open the harness modal. It opens on your personal list in `~/.agents/config.yaml`; press `p` to edit the repository list in `.agents/config.yaml` instead, or `g` to go back. Move with the arrow keys, toggle each harness with `space`, and press `enter` to save. Press `esc` to close without saving.
 
 ## 2. Or edit the configuration directly
 
@@ -56,9 +56,15 @@ Sync writes this group only to harnesses that appear in both lists. With the con
 agent-marketplace sync
 ```
 
-The summary line starts with `Installed <n>`, where `n` counts the files and entries sync wrote across all harnesses. It changes with your selection and your harnesses, so it is not a resource count.
+The summary line starts with `Installed <n>  Removed <n>  Malformed <n>  Errors <n>`, followed, only when sync writes or removes output, by a single `→` line that lists the output roots it changed, separated by commas, each with its own counts in parentheses, for example `→ /path/.claude/skills (1 written), /path/.cursor/skills (1 written)`. `n` counts the files and entries sync wrote across all harnesses, so it changes with your selection and your harnesses and is not a resource count.
 
-Each selected resource now appears in the folders of every harness it applies to. Run `agent-marketplace status` to check: the `HARNESS` column under `SYNCED RESOURCES` lists every harness a resource goes to, for example `claude,cursor`, and `HARNESS TARGETS` shows each harness's folders.
+Each selected resource now appears in the folders of every harness it applies to. Check with:
+
+```bash
+agent-marketplace status
+```
+
+The `HARNESS` column under `SYNCED RESOURCES` lists every harness a resource goes to, for example `claude,cursor`, and `HARNESS TARGETS` shows each harness's folders.
 
 ## Troubleshooting
 

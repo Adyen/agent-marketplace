@@ -9,10 +9,7 @@ import (
 	"testing"
 
 	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
-	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 
-	"github.com/Adyen/agent-marketplace/internal/catalog"
-	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/devincli"
 	"github.com/Adyen/agent-marketplace/internal/harness"
 	"github.com/Adyen/agent-marketplace/internal/materialize"
@@ -43,14 +40,11 @@ const doctorTwinHandMarker = "USER-WROTE-THIS"
 // ("handwritten hooks precede generated ones").
 func prepareDoctorHookIdentityTwins(t *testing.T, repoRoot string) (hooksPath string, selection []resolver.ResolvedArtifact) {
 	t.Helper()
-	selection = []resolver.ResolvedArtifact{{
-		Entry: catalog.Entry{Name: "beta",
-			Resource: ir.NewHook("beta", "PostToolUse", "echo beta", "command", nil, ir.SourceRef{})},
-		Source:    config.RepoCommitted,
-		Harnesses: []hcc.Target{hcc.TargetDevin},
-	}}
-	if _, err := materialize.Run(context.Background(), repoRoot, selection); err != nil {
-		t.Fatalf("seed sync: %v", err)
+	selection = []resolver.ResolvedArtifact{
+		sourceBackedDoctorHook(t, "beta", "PostToolUse", "", "echo beta", hcc.TargetDevin),
+	}
+	if report, err := materialize.Run(context.Background(), repoRoot, selection); err != nil || diagHasErrors(report) {
+		t.Fatalf("seed sync: report=%#v err=%v", report, err)
 	}
 	outDir := filepath.Join(repoRoot, ".devin")
 	hooksPath = filepath.Join(outDir, harness.DevinProjectHooksFile)

@@ -52,6 +52,8 @@ To change only the level and keep an endpoint that is already configured, leave 
 agent-marketplace telemetry enable --level basic
 ```
 
+It prints `Telemetry enabled at "basic"` (without an endpoint suffix) and keeps the configured endpoint.
+
 ## 3. Disable telemetry
 
 ```bash
@@ -70,7 +72,7 @@ AGENT_MARKETPLACE_TELEMETRY_ENDPOINT=https://otel.example.com \
   agent-marketplace sync
 ```
 
-`AGENT_MARKETPLACE_TELEMETRY_COMMUNITY_REPORTING=true` turns on community reporting for the run. Community reporting only sends anything when the binary was built with a project endpoint and the effective level is not `off`, so it has no effect on release binaries.
+On a successful run the command prints the usual `Installed ... Removed ...` sync summary and exits `0`; the environment values apply only to that run and are not written to the config. `AGENT_MARKETPLACE_TELEMETRY_COMMUNITY_REPORTING=true` turns on community reporting for the run. Community reporting only sends anything when the binary was built with a project endpoint and the effective level is not `off`, so it has no effect on release binaries.
 
 The CLI ignores the standard `OTEL_*` environment variables when it works out telemetry settings, and logs a warning for each one it finds.
 
@@ -80,7 +82,17 @@ The CLI ignores the standard `OTEL_*` environment variables when it works out te
 agent-marketplace telemetry preview --level detailed
 ```
 
-This writes a representative JSON payload to a file under the state directory (by default `~/.local/state/agent-marketplace/telemetry/preview/`) and prints its path, together with the endpoint host, retention policy, and headers that would apply. Nothing is sent.
+This writes a representative JSON payload to a file under the state directory (by default `~/.local/state/agent-marketplace/telemetry/preview/`) and prints its path, together with the endpoint host, retention policy, and headers that would apply:
+
+```text
+Preview payload written to /home/you/.local/state/agent-marketplace/telemetry/preview/<file>.json
+  level:         detailed
+  endpoint host: otel.example.com
+  retention:     none
+  headers:       none
+```
+
+Nothing is sent.
 
 The level can be `basic`, `detailed`, or `diagnostic`. A `diagnostic` preview may include sensitive data, so the command asks for confirmation. In a non-interactive shell, add `--diagnostic-accept-sensitive-data` instead.
 
@@ -88,8 +100,8 @@ The level can be `basic`, `detailed`, or `diagnostic`. A `diagnostic` preview ma
 
 Two commands remove local data:
 
-- `agent-marketplace telemetry purge` removes queued records that have not been delivered yet and any retained diagnostic payloads.
-- `agent-marketplace telemetry reset-id` creates a new installation ID and purges pending telemetry.
+- `agent-marketplace telemetry purge` removes queued records that have not been delivered yet and any retained diagnostic payloads, and prints `Purged <n> queued record(s) and <n> diagnostic payload(s).`
+- `agent-marketplace telemetry reset-id` creates a new installation ID and purges pending telemetry, and prints `Installation ID reset. New ID: <id>`
 
 ## Organization policy
 

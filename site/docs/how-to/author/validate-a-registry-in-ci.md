@@ -10,30 +10,36 @@ Make a registry's CI job fail when a resource it ships is malformed, missing fro
 
 ## 1. Install a pinned CLI
 
-Pin the version so CI results are reproducible and match what consumers run. Use v4.0.9 or newer, because consumers need at least that release to read the lockfiles current releases write (v4.0.8 rejects them). Download the release asset for that version:
+Pin the version so CI results are reproducible and match what consumers run. Choose the release your consumers use and pin that exact tag; do not track the newest release automatically, because a new release can change diagnostics and make an unchanged registry fail. The examples pin v4.1.3. Run these blocks in one Bash script or one GitHub Actions `run` step, choosing one installation option. Later blocks reuse `BIN_DIR`, `PATH`, `CONSUMER`, and the working directory. Run the job in bash and prepare a job-owned bin directory first, so either installation path below works:
+
+```bash
+set -euo pipefail
+BIN_DIR="$(mktemp -d)"
+export PATH="$BIN_DIR:$PATH"
+```
+
+The three prep commands succeed silently. Then download the release asset for the pinned version:
 
 ```bash
 # Download a pinned release binary (Linux runner example)
-VERSION="v4.0.9"
+VERSION="v4.1.3"
 ARCH="linux-amd64" # or linux-arm64, darwin-arm64, darwin-amd64
-curl -fsSL "https://github.com/Adyen/agent-marketplace/releases/download/${VERSION}/agent-marketplace-${VERSION}-${ARCH}" -o /usr/local/bin/agent-marketplace
-chmod +x /usr/local/bin/agent-marketplace
+curl -fsSL "https://github.com/Adyen/agent-marketplace/releases/download/${VERSION}/agent-marketplace-${VERSION}-${ARCH}" -o "$BIN_DIR/agent-marketplace"
+chmod +x "$BIN_DIR/agent-marketplace"
 agent-marketplace --version
 ```
 
-The last command prints `v4.0.9`. If writing to `/usr/local/bin` fails with `permission denied`, put `sudo` in front of the `curl` and `chmod` commands, or download into a directory on the runner's `PATH` that the job owns. There is no Windows build.
-
-To build from source at the pinned tag instead:
+Or build from source at the pinned tag:
 
 ```bash
-git clone --depth 1 --branch v4.0.9 https://github.com/Adyen/agent-marketplace.git /tmp/agent-marketplace
-(cd /tmp/agent-marketplace && CGO_ENABLED=0 go build -ldflags "-X main.version=v4.0.9" -o /usr/local/bin/agent-marketplace ./cmd/agent-marketplace)
-rm -rf /tmp/agent-marketplace
+SOURCE_DIR="$(mktemp -d)"
+git clone --depth 1 --branch v4.1.3 https://github.com/Adyen/agent-marketplace.git "$SOURCE_DIR"
+(cd "$SOURCE_DIR" && CGO_ENABLED=0 go build -ldflags "-X main.version=v4.1.3" -o "$BIN_DIR/agent-marketplace" ./cmd/agent-marketplace)
+rm -rf -- "$SOURCE_DIR"
+agent-marketplace --version
 ```
 
-The `-ldflags` value makes `agent-marketplace --version` print the tag. Without it, the binary prints a Go pseudo-version.
-
-Avoid unpinned builds or `@latest` in CI. A new release can change diagnostics and make an unchanged registry fail.
+`curl`, `chmod`, `go build`, and the `rm -rf` cleanup succeed silently; `git clone` prints progress lines. Either way, the last command prints `v4.1.3`. The `-ldflags` value makes `agent-marketplace --version` print the tag. Remove the remaining `mktemp` directories at the end of the job unless your runner cleans its workspace; they hold only files this job created. There is no Windows build.
 
 ## 2. Point a throwaway consumer at the checkout
 
@@ -53,13 +59,15 @@ harnesses:
   - codex
 sources:
   checkout:
-    directory: ${REGISTRY_PATH}
+    directory: "${REGISTRY_PATH}"
 resources:
   checkout:
     all: true
     required: true
 EOF
 ```
+
+The commands succeed silently and write the throwaway consumer config at `"$CONSUMER/.agents/config.yaml"`.
 
 - List every harness your consumers target. A resource that compiles for Claude Code can still produce an error for Codex or a warning for Windsurf.
 - A `directory` source reads the checkout directly and creates no lockfile, which is what you want in CI.
@@ -68,18 +76,19 @@ EOF
 ## 3. Sync strictly and check the summary
 
 ```bash
-set -o pipefail
 cd "$CONSUMER"
 agent-marketplace sync --strict -v | tee sync.log
 grep -q 'Malformed 0  Errors' sync.log || { echo "registry has malformed resources" >&2; exit 1; }
 agent-marketplace sync --check
 ```
 
+A clean sync ends with a summary such as `Installed 12  Removed 0  Malformed 0  Errors 0` (counts vary with the registry). `sync --check` exits with status `0` when there is no drift; warnings may still print.
+
 - `sync` exits with status `1` when any resource fails to compile for a selected harness (`Errors` greater than `0`). Warnings, such as a subagent that Windsurf cannot represent, do not fail the run.
 - `--strict` makes sync exit with status `1` when a resource named in a configuration or a collection is missing or fails to load. `all: true` also selects every collection, so this checks that every collection member exists.
-- With `all: true`, a resource that fails to load is left out of the catalog and counted under `Malformed` without failing the run, even with `--strict`. The `grep` line catches it. `-v` lists each malformed resource with its path, diagnostic code, and reason.
+- With `all: true`, a resource that fails to load is left out of the catalog and counted under `Malformed` without failing the run, even with `--strict`. The `grep` line catches it. `-v` lists each malformed resource with its path and error.
 - `sync --check` then exits with status `1` if the output on disk does not match what sync would write, which would mean the result is not stable.
-- `set -o pipefail` keeps a failing `sync` from being hidden by `tee`, which exits with status `0` on its own. Run these steps with bash. dash, which is `/bin/sh` on Debian and Ubuntu, rejects `set -o pipefail`.
+- `pipefail`, set at the start of the job, keeps a failing `sync` from being hidden by `tee`, which exits with status `0` on its own. Run the job with bash (`shell: bash` in GitHub Actions); dash, which is `/bin/sh` on Debian and Ubuntu, rejects `set -o pipefail`.
 
 ## 4. Confirm what was discovered
 
@@ -94,11 +103,14 @@ agent-marketplace list --kind mcp
 agent-marketplace list --kind collection
 ```
 
-Compare the output against a checked-in expectation, for example by counting rows with `grep -c`. A resource placed in a directory that the layout does not read then fails CI instead of silently disappearing.
+Each command prints a `REGISTRY  KIND  NAME  TAGS (metadata)  STATUS` table. `REGISTRY` shows the registry directory's base name, not the source key; typical output:
 
-## 5. Stop on the first failure
+```text
+REGISTRY               KIND   NAME         TAGS (metadata)  STATUS
+<registry-directory>   skill  code-review  review,quality   available
+```
 
-Start the job script with `set -euo pipefail` so that any failing command, including one in a pipeline such as `sync | tee`, stops the job. The job must run in bash (in GitHub Actions, `shell: bash`); a plain `sh` job on Debian or Ubuntu stops at that line.
+Check a row for every resource you expect: compare the printed `NAME` and `KIND` values against a checked-in list of expected resources, and make that comparison exit nonzero when an expected resource is missing. `list` exits `0` whether or not the table contains the row, so without the check a resource placed in a directory the layout does not read would silently ship missing.
 
 ## Troubleshooting
 

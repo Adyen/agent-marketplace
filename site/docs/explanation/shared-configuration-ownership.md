@@ -1,6 +1,6 @@
 # Shared configuration ownership
 
-Some harnesses keep hooks and MCP servers in one shared file instead of one file per resource. Devin uses `mcp_config.json`, Codex uses `.codex/hooks.json` and `.codex/config.toml`, and Gemini keeps MCP servers in `.gemini/settings.json`. You may have written entries in those files yourself. `agent-marketplace` adds and updates its own entries there, and it must never delete or overwrite yours. To tell the two apart, it keeps a record of the entries it wrote. The docs call that record [ownership state](../glossary.md#ownership-state).
+Some harnesses keep hooks and MCP servers in one shared file instead of one file per resource. Devin uses `mcp_config.json`, Codex uses `.codex/hooks.json` and `.codex/config.toml`, and Gemini keeps MCP servers in `.gemini/settings.json`. You may have written entries in those files yourself. `agent-marketplace` adds and updates its own entries there, and on its own it never deletes or overwrites yours; only an explicit repair, which asks first, can replace one. To tell the two apart, it keeps a record of the entries it wrote. The docs call that record [ownership state](../glossary.md#ownership-state).
 
 This page covers Devin, Codex, and Gemini MCP servers. Other harnesses mark managed entries inside the file instead; [native harness materialization](./native-harness-materialization.md#shared-configuration-files) explains the difference.
 
@@ -16,13 +16,9 @@ Before each change to one of these files, the CLI saves a copy of the file as it
 
 ## When the state is missing or damaged
 
-If the ownership state is missing or cannot be read, the CLI has no proof that it wrote anything. It then treats every existing entry as yours, and during `sync` it:
+If the ownership state is missing or cannot be read, the CLI has no proof that it wrote anything. It then treats every existing entry as yours, and during `sync` it keeps every existing entry, removes nothing, and refuses any generated entry whose name is already taken. That collision fails only the generated entry; the run reports it rather than writing over your entry, and valid entries in other files still update.
 
-- keeps every existing entry,
-- refuses to write an entry whose name is already taken, and
-- removes nothing.
-
-The worst result is a stale entry you delete by hand. A handwritten entry is never lost. A problem in one file, such as invalid JSON in `mcp_config.json`, blocks only that file; the other files are still updated.
+The preservation is fail-closed, not free of cost. Unreadable state and a journal left by an interrupted write can block later operations on the affected files until the state is inspected or repaired, and a recovery that cannot prove its recorded authority is refused rather than silently completing or rolling back. An explicit repair can replace a handwritten entry after asking, and it works only from verified acquisition evidence: without it, repair refuses and changes nothing. A problem in one file, such as invalid JSON in `mcp_config.json`, blocks only that file; the other files are still updated.
 
 ## Repairing ownership
 

@@ -2,6 +2,8 @@ package materialize
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -19,10 +21,11 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/dependencytxn"
 	"github.com/Adyen/agent-marketplace/internal/fsboundary"
 	"github.com/Adyen/agent-marketplace/internal/resolver"
+	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact"
-	compilepkg "github.com/Adyen/agent-marketplace/pkg/harness-compilation/compile"
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ingest"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
-	targetmeta "github.com/Adyen/agent-marketplace/pkg/harness-compilation/target"
 )
 
 type hookSourceSnapshot struct {
@@ -33,7 +36,18 @@ type hookSourceSnapshot struct {
 	files          []hookSourceFingerprintFile
 }
 
+type hookSourceSnapshotReadFunc func(int, string, *int64) ([]byte, os.FileMode, error)
+type hookSourceSnapshotOpenFunc func(int, string, int64) (*os.File, fs.FileMode, int64, error)
+
 func captureHookSourceSnapshot(sourceRoot, definition, definitionDir string, excludedPeers ...string) (*hookSourceSnapshot, error) {
+	return captureHookSourceSnapshotWithIO(sourceRoot, definition, definitionDir, readHookSourceSnapshotFile, openHookSupportFileAt, excludedPeers...)
+}
+
+func captureHookSourceSnapshotForReader(sourceRoot, definition, definitionDir string, excludedPeers ...string) (*hookSourceSnapshot, error) {
+	return captureHookSourceSnapshotWithIO(sourceRoot, definition, definitionDir, readHookSourceSnapshotFileNoAliases, openHookSupportFileAtNoAliases, excludedPeers...)
+}
+
+func captureHookSourceSnapshotWithIO(sourceRoot, definition, definitionDir string, readFile hookSourceSnapshotReadFunc, openFile hookSourceSnapshotOpenFunc, excludedPeers ...string) (*hookSourceSnapshot, error) {
 	if !filepath.IsAbs(sourceRoot) {
 		return nil, fmt.Errorf("hook support source root is not absolute")
 	}
@@ -59,7 +73,7 @@ func captureHookSourceSnapshot(sourceRoot, definition, definitionDir string, exc
 	if definition != "" {
 		definitionName = path.Base(definition)
 	}
-	if err := validateHookSupportPeersAt(dirFD, excludedPeers, definitionName); err != nil {
+	if err := validateHookSupportPeersAtWithOpener(dirFD, excludedPeers, definitionName, openFile); err != nil {
 		return nil, err
 	}
 	snapshot := &hookSourceSnapshot{
@@ -70,7 +84,7 @@ func captureHookSourceSnapshot(sourceRoot, definition, definitionDir string, exc
 	}
 	var total int64
 	if definition != "" {
-		data, _, err := readHookSourceSnapshotFile(dirFD, definitionName, &total)
+		data, _, err := readFile(dirFD, definitionName, &total)
 		if err != nil {
 			return nil, err
 		}
@@ -80,7 +94,7 @@ func captureHookSourceSnapshot(sourceRoot, definition, definitionDir string, exc
 		if relative == definitionName && definitionName != "" {
 			return nil
 		}
-		data, mode, err := readHookSourceSnapshotFile(dirFD, relative, &total)
+		data, mode, err := readFile(dirFD, relative, &total)
 		if err != nil {
 			return err
 		}
@@ -89,11 +103,31 @@ func captureHookSourceSnapshot(sourceRoot, definition, definitionDir string, exc
 	}); err != nil {
 		return nil, err
 	}
-	if err := validateHookSupportPeersAt(dirFD, excludedPeers, definitionName); err != nil {
+	if err := validateHookSupportPeersAtWithOpener(dirFD, excludedPeers, definitionName, openFile); err != nil {
 		return nil, err
 	}
 	sort.Slice(snapshot.files, func(i, j int) bool { return snapshot.files[i].rel < snapshot.files[j].rel })
 	return snapshot, nil
+}
+
+func revalidateHookSourceSnapshot(original *hookSourceSnapshot, excludedPeers []string) error {
+	if original == nil {
+		return nil
+	}
+	current, err := captureHookSourceSnapshot(original.root, original.definitionRel, original.definitionDir, excludedPeers...)
+	if err != nil {
+		return fmt.Errorf("hook source changed after capture: %w", err)
+	}
+	if !bytes.Equal(original.definitionData, current.definitionData) || len(original.files) != len(current.files) {
+		return errors.New("hook source changed after capture")
+	}
+	for i, file := range original.files {
+		live := current.files[i]
+		if file.rel != live.rel || file.mode.Perm() != live.mode.Perm() || !bytes.Equal(file.data, live.data) {
+			return errors.New("hook source changed after capture")
+		}
+	}
+	return nil
 }
 
 func readHookSourceSnapshotFile(dirFD int, relative string, total *int64) ([]byte, os.FileMode, error) {
@@ -107,7 +141,15 @@ func readHookSourceSnapshotFile(dirFD int, relative string, total *int64) ([]byt
 // deterministic test seam that runs after descriptor validation and before
 // its bytes are read.
 func readHookSourceSnapshotFileChecked(dirFD int, relative string, total *int64, between func(*os.File)) ([]byte, os.FileMode, error) {
-	file, mode, size, err := openHookSupportFileAt(dirFD, relative, *total)
+	return readHookSourceSnapshotFileCheckedWithOpener(dirFD, relative, total, between, openHookSupportFileAt)
+}
+
+func readHookSourceSnapshotFileNoAliases(dirFD int, relative string, total *int64) ([]byte, os.FileMode, error) {
+	return readHookSourceSnapshotFileCheckedWithOpener(dirFD, relative, total, nil, openHookSupportFileAtNoAliases)
+}
+
+func readHookSourceSnapshotFileCheckedWithOpener(dirFD int, relative string, total *int64, between func(*os.File), openFile hookSourceSnapshotOpenFunc) ([]byte, os.FileMode, error) {
+	file, mode, size, err := openFile(dirFD, relative, *total)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -146,12 +188,12 @@ func readHookSourceSnapshotFileChecked(dirFD int, relative string, total *int64,
 	return data, mode.Perm(), nil
 }
 
-func validateHookSupportPeersAt(dirFD int, peers []string, definitionName string) error {
+func validateHookSupportPeersAtWithOpener(dirFD int, peers []string, definitionName string, openFile hookSourceSnapshotOpenFunc) error {
 	for _, peer := range peers {
 		if peer == definitionName {
 			continue
 		}
-		file, _, _, err := openHookSupportFileAt(dirFD, peer, 0)
+		file, _, _, err := openFile(dirFD, peer, 0)
 		if errors.Is(err, unix.ENOENT) {
 			continue
 		}
@@ -165,76 +207,11 @@ func validateHookSupportPeersAt(dirFD int, peers []string, definitionName string
 	return nil
 }
 
-func openHookSupportDirAt(rootFD int, relative string) (int, error) {
-	if relative == "" || relative == "." {
-		return unix.FcntlInt(uintptr(rootFD), unix.F_DUPFD_CLOEXEC, 0)
-	}
-	if !fs.ValidPath(relative) {
-		return -1, fmt.Errorf("hook support directory path is invalid")
-	}
-	currentFD := rootFD
-	ownedFD := -1
-	for _, component := range strings.Split(relative, "/") {
-		nextFD, err := openFingerprintDir(currentFD, component)
-		if ownedFD >= 0 {
-			_ = unix.Close(ownedFD)
-		}
-		if err != nil {
-			return -1, err
-		}
-		currentFD = nextFD
-		ownedFD = nextFD
-	}
-	return ownedFD, nil
-}
-
-func openHookSupportFileAt(dirFD int, relative string, total int64) (*os.File, fs.FileMode, int64, error) {
-	if !fs.ValidPath(relative) {
-		return nil, 0, 0, fmt.Errorf("hook support file path is invalid")
-	}
-	components := strings.Split(relative, "/")
-	currentFD := dirFD
-	ownedFD := -1
-	for _, component := range components[:len(components)-1] {
-		nextFD, err := openFingerprintDir(currentFD, component)
-		if ownedFD >= 0 {
-			_ = unix.Close(ownedFD)
-		}
-		if err != nil {
-			return nil, 0, 0, err
-		}
-		currentFD = nextFD
-		ownedFD = nextFD
-	}
-	if ownedFD >= 0 {
-		defer func() { _ = unix.Close(ownedFD) }()
-	}
-	file, _, err := openFingerprintFile(currentFD, components[len(components)-1])
-	if err != nil {
-		return nil, 0, 0, err
-	}
-	var stat unix.Stat_t
-	if err := unix.Fstat(int(file.Fd()), &stat); err != nil {
-		_ = file.Close()
-		return nil, 0, 0, fmt.Errorf("stat hook support file: %w", err)
-	}
-	if stat.Nlink != 1 {
-		_ = file.Close()
-		return nil, 0, 0, fmt.Errorf("%w: hook support file has multiple hard links", fsboundary.ErrUnsafeFile)
-	}
-	remaining := int64(hookSourceFingerprintMaxBytes) - total
-	if stat.Size < 0 || remaining < 0 || stat.Size > remaining {
-		_ = file.Close()
-		return nil, 0, 0, fmt.Errorf("%w: hook support source exceeds the existing size limit", fsboundary.ErrTooLarge)
-	}
-	return file, fs.FileMode(stat.Mode & 0o777), stat.Size, nil
-}
-
 func hookSupportArtifactsFromSnapshot(res resolver.ResolvedArtifact, snapshot *hookSourceSnapshot) ([]artifact.Artifact, error) {
 	if snapshot == nil {
 		return nil, errors.New("hook source snapshot is unavailable")
 	}
-	excluded, inventoryDir := nativeHookSourceExclusions(res, snapshot.definitionDir)
+	excluded, inventoryDir := hookSupportExclusions(res, snapshot.definitionDir)
 	definitionName := ""
 	if snapshot.definitionRel != "" {
 		definitionName = path.Base(snapshot.definitionRel)
@@ -262,73 +239,6 @@ func hookSupportArtifactsFromSnapshot(res resolver.ResolvedArtifact, snapshot *h
 	return files, nil
 }
 
-// nativeHookSourceExclusions lists the source-harness aggregate basenames the
-// captured definition directory must not re-emit as hook support: the
-// definition itself plus its declared aggregate siblings. The second result
-// marks a Windsurf hooks inventory directory, whose flat .json siblings are
-// per-hook definitions rather than support.
-func nativeHookSourceExclusions(res resolver.ResolvedArtifact, definitionDir string) (map[string]bool, bool) {
-	excluded := make(map[string]bool)
-	if res.SourceHarness == "" {
-		return excluded, false
-	}
-	if res.SourceHarness == "windsurf" && (definitionDir == ".windsurf/hooks" || definitionDir == "hooks") {
-		return excluded, true
-	}
-	lookupDir := definitionDir
-	sourceFile := filepath.Clean(filepath.FromSlash(compilepkg.SourceOf(res.Resource).File))
-	rawRegistryPath := filepath.ToSlash(filepath.FromSlash(res.RegistryPath))
-	registryPath := filepath.ToSlash(filepath.Clean(filepath.FromSlash(res.RegistryPath)))
-	if res.IsMarketplace && res.MarketplaceAcquisition == config.MarketplaceAcquisitionIndexOnly {
-		sourceFileRel := filepath.ToSlash(sourceFile)
-		if sourceFileRel != "." && !filepath.IsAbs(sourceFile) && sourceFile != ".." &&
-			!strings.HasPrefix(sourceFileRel, "../") && fs.ValidPath(sourceFileRel) {
-			lookupDir = path.Dir(sourceFileRel)
-		}
-	} else if !res.IsLocal() && filepath.IsAbs(sourceFile) && sourceFile != filepath.Clean(res.Path) &&
-		rawRegistryPath == registryPath && registryPath != "." && fs.ValidPath(registryPath) {
-		if lookupDir == registryPath {
-			lookupDir = "."
-		} else if strings.HasPrefix(lookupDir, registryPath+"/") {
-			lookupDir = strings.TrimPrefix(lookupDir, registryPath+"/")
-		}
-	}
-	for _, aggregatePath := range hookSourceAggregatePaths(res.SourceHarness) {
-		dir, name := path.Split(aggregatePath)
-		dir = strings.TrimSuffix(dir, "/")
-		if dir == "" {
-			dir = "."
-		}
-		if dir == lookupDir {
-			excluded[name] = true
-		}
-	}
-	return excluded, false
-}
-
-// hookSourceAggregatePaths returns the source-harness native aggregate
-// locations for project and user scopes relative to the source root, resolved
-// through the source target's registered native layout.
-func hookSourceAggregatePaths(sourceHarness string) []string {
-	definition, ok := targetmeta.Lookup(sourceHarness)
-	if !ok {
-		return nil
-	}
-	layout, ok := targetmeta.LookupNativeLayout(definition.Target)
-	if !ok {
-		return nil
-	}
-	var paths []string
-	for _, partition := range layout.Partitions {
-		for _, aggregate := range partition.Aggregates {
-			for _, file := range []targetmeta.NativeAggregateFile{aggregate.Project, aggregate.User} {
-				paths = append(paths, path.Join(definition.RepoRoot, partition.Prefix, file.Path))
-			}
-		}
-	}
-	return paths
-}
-
 func hookSourceFingerprintFromSnapshot(input HookSourceFingerprintInput, snapshot *hookSourceSnapshot) (string, error) {
 	if err := validateHookSourceFingerprintInput(input); err != nil {
 		return "", err
@@ -351,6 +261,117 @@ func hookSourceFingerprintFromSnapshot(input HookSourceFingerprintInput, snapsho
 		return "", errors.New("hook source fingerprint definition differs from captured source")
 	}
 	return serializeHookSourceFingerprint(input, snapshot.definitionData, snapshot.files), nil
+}
+
+func preparedHookSourceDigest(res resolver.ResolvedArtifact, target hcc.Target, machineScope bool, snapshot *hookSourceSnapshot) (string, error) {
+	hook, ok := res.Resource.(*ir.Hook)
+	if !ok {
+		return "", errors.New("hook source proof requires a hook resource")
+	}
+	if res.IsMarketplace && res.MarketplaceAcquisition == config.MarketplaceAcquisitionMirror {
+		return "", nil
+	}
+	binding := hook.SourceDefinitionDigest()
+	if binding != "" {
+		if snapshot == nil || snapshot.definitionRel == "" {
+			return "", errors.New("hook source definition snapshot is unavailable")
+		}
+		sum := sha256.Sum256(snapshot.definitionData)
+		if binding != "sha256:"+hex.EncodeToString(sum[:]) {
+			return "", errors.New("hook source definition changed after ingestion")
+		}
+		input, err := nativeHookFingerprintInput(res, target, machineScope)
+		if err != nil {
+			return "", err
+		}
+		return hookSourceFingerprintFromSnapshot(input, snapshot)
+	}
+	if res.IsMarketplace && res.MarketplaceAcquisition == config.MarketplaceAcquisitionIndexOnly {
+		if err := verifyIndexOnlyHookDefinition(res, snapshot); err != nil {
+			return "", err
+		}
+		input, err := nativeHookFingerprintInput(res, target, machineScope)
+		if err != nil {
+			return "", err
+		}
+		return hookSourceFingerprintFromSnapshot(input, snapshot)
+	}
+	return "", nil
+}
+
+func verifyIndexOnlyHookDefinition(res resolver.ResolvedArtifact, snapshot *hookSourceSnapshot) error {
+	original, ok := res.Resource.(*ir.Hook)
+	if !ok || snapshot == nil || snapshot.definitionRel == "" {
+		return errors.New("index-only hook definition snapshot is unavailable")
+	}
+	sourceFile := original.Source.File
+	if sourceFile == "" || sourceFile == "." || strings.Contains(sourceFile, "\\") || filepath.IsAbs(sourceFile) || path.IsAbs(sourceFile) || !fs.ValidPath(sourceFile) || path.Clean(sourceFile) != sourceFile {
+		return errors.New("index-only hook source file is unavailable")
+	}
+	sourceHarness, err := indexOnlyHookSourceHarness(res, original)
+	if err != nil {
+		return err
+	}
+	bundle, err := hcc.IngestBundle(hookDefinitionSnapshotFS{definition: sourceFile, data: snapshot.definitionData}, sourceHarness)
+	if err != nil {
+		return errors.New("index-only hook definition could not be re-ingested")
+	}
+	ingested, err := selectIndexOnlyHook(bundle, original.Name())
+	if err != nil {
+		return err
+	}
+	want, err := canonicalHookPayload(original)
+	if err != nil {
+		return errors.New("index-only hook payload could not be canonicalized")
+	}
+	got, err := canonicalHookPayload(ingested)
+	if err != nil {
+		return errors.New("re-ingested index-only hook payload could not be canonicalized")
+	}
+	if !bytes.Equal(want, got) {
+		return errors.New("captured index-only hook definition differs from the decoded resource")
+	}
+	return nil
+}
+
+func indexOnlyHookSourceHarness(res resolver.ResolvedArtifact, hook *ir.Hook) (hcc.Harness, error) {
+	source := hook.HookSource
+	if source == "" {
+		source = string(hcc.TargetClaude)
+	}
+	if res.SourceHarness != "" && res.SourceHarness != source {
+		return "", errors.New("index-only hook source harness conflicts with canonical provenance")
+	}
+	if _, ok := ingest.For(ingest.Harness(source)); !ok {
+		return "", errors.New("index-only hook source harness is unavailable")
+	}
+	return hcc.Harness(source), nil
+}
+
+func selectIndexOnlyHook(bundle *ingest.Bundle, name string) (*ir.Hook, error) {
+	if bundle == nil {
+		return nil, errors.New("index-only hook ingestion returned no bundle")
+	}
+	for _, diagnostic := range bundle.Diagnostics {
+		if diagnostic.Severity == diag.SeverityError {
+			return nil, errors.New("index-only hook ingestion reported an error")
+		}
+	}
+	var match *ir.Hook
+	for _, resource := range bundle.Resources {
+		hook, ok := resource.(*ir.Hook)
+		if !ok || hook.Name() != name {
+			continue
+		}
+		if match != nil {
+			return nil, errors.New("index-only hook source name is ambiguous")
+		}
+		match = hook
+	}
+	if match == nil {
+		return nil, errors.New("index-only hook source name is missing")
+	}
+	return match, nil
 }
 
 func canonicalHookPayload(hook *ir.Hook) ([]byte, error) {

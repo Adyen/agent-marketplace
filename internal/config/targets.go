@@ -9,34 +9,6 @@ import (
 	targetmeta "github.com/Adyen/agent-marketplace/pkg/harness-compilation/target"
 )
 
-func normalizeConfigHarnessTargets(c *Config) {
-	if c == nil {
-		return
-	}
-	normalizeHarnesses(c.Harnesses)
-	normalizeRegistryHarnessTargets(c.Registries)
-}
-
-func normalizeLocalConfigHarnessTargets(c *LocalConfig) {
-	if c == nil {
-		return
-	}
-	normalizeRegistryHarnessTargets(c.Registries)
-}
-
-func normalizeRegistryHarnessTargets(registries []RegistryEntry) {
-	for i := range registries {
-		registries[i].SourceHarness = strings.TrimSpace(registries[i].SourceHarness)
-		normalizeHarnesses(registries[i].Harnesses)
-	}
-}
-
-func normalizeHarnesses(harnesses []string) {
-	for i := range harnesses {
-		harnesses[i] = strings.TrimSpace(harnesses[i])
-	}
-}
-
 // canonicalCompilerHarnesses normalizes values accepted from config mutation
 // APIs, removes duplicates, and validates them before any file is written.
 func canonicalCompilerHarnesses(field string, harnesses []string) ([]string, error) {

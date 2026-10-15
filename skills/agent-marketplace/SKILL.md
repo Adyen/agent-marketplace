@@ -6,7 +6,8 @@ description: >
   native harness layouts. Use when setting up a repo, writing
   `.agents/config.yaml`, installing/removing skills, commands, subagents,
   hooks, MCP servers, or collections, checking sync drift, updating locks,
-  migrating legacy configs, or repairing shared harness config ownership.
+  preparing pre-upgrade configuration conversion, or repairing shared harness
+  config ownership.
 metadata:
   tags:
     - cli
@@ -24,6 +25,10 @@ This skill caches what an agent needs most often; the
 and `agent-marketplace <command> --help` own the exhaustive detail.
 
 ## Quick Start
+
+For a new setup, use the example below. For an existing installation, first
+follow [Convert before upgrading](#convert-before-upgrading); do not overwrite
+authored configuration or relabel legacy fields as v4.
 
 ```bash
 agent-marketplace init --harnesses claude,codex   # ~/.agents/config.yaml (v4, targets only)
@@ -54,10 +59,20 @@ one with `harnesses: [factory, windsurf]`, so declare targets first.
 
 ## Configuration
 
-`apiVersion: agent-marketplace/v4` is the canonical schema; `init`, `install`,
-`remove`, and the TUI create v4 files. v2/v3 files (`registries:`, top-level
-`skills:`) are still read but deprecated: every write to one warns with
-`config.legacy-deprecated`. A root without `apiVersion` is rejected.
+`apiVersion: agent-marketplace/v4` is the only supported consumer schema;
+`init`, `install`, `remove`, and the TUI create v4 files. Every existing root,
+including organization and personal-local, requires that exact string. An
+omitted root version fails with `v4.api-version-required`; explicit unsupported
+or invalid values fail with `v4.api-version`, naming the authored file and
+`apiVersion` field. Included fragments under a validated v4 root may omit the
+field or declare exact v4. An existing empty/versionless file is not absent.
+
+Unsupported input refuses before new acquisition, config/lock staging or
+publication, or harness writes/prunes, preserving bytes and metadata and
+creating no missing writable root or lock. Ordinary logs remain allowed. Safe
+recovery of a pre-existing journal may finish already-admitted writes before
+fresh validation; read-only dependency modes refuse pending work without replay.
+The v4 runtime adapter remains independent of on-disk consumer syntax.
 
 ### Layers
 
@@ -200,7 +215,6 @@ agent-marketplace sync --strict -v     # missing/unloadable selections become er
 agent-marketplace status               # targets, locks, synced resources, drift
 agent-marketplace update [--scope S] [--registry URL]   # advance Git locks, then sync
 agent-marketplace lock [--check|--upgrade] [--scope S]
-agent-marketplace migrate [--scope all|user|repo|local] [--dry-run]
 agent-marketplace convert --from claude --to codex --out ./out ./plugin
 agent-marketplace doctor [--repair [--yes]]
 agent-marketplace gc --dry-run         # cache cleanup sees only the current repo
@@ -215,8 +229,9 @@ agent-marketplace deinit               # remove managed artifacts and cache
   never falls back to another, and repo/local scope cannot hide machine
   resources.
 - `--kind` disambiguates a name used by more than one kind.
-- `update --bump` rewrites refs only in legacy v2/v3 `registries:`; for v4,
-  edit `ref:` and run `sync`.
+- `update --bump` rewrites eligible refs in v4 `sources:` to newer tags that
+  differ only in the final number, then updates locks and syncs. Refs declared
+  by included fragments are reported and left unchanged.
 - Read-only commands (`sync --check/--locked/--offline`, `lock --check`,
   `list`, `status`) fail with `dependency.recovery-required` after an
   interrupted write; a plain `sync` or `lock` completes the recovery.
@@ -250,21 +265,23 @@ Unmet prerequisites warn during `install`, `sync`, `sync --check`, and `doctor`,
 and appear under `UNMET REQUIREMENTS` in `status`; they never install anything,
 never override an exclude, and never fail `sync --check`.
 
-## Migrating legacy configs
+## Convert before upgrading
 
-`migrate` converts representable v2/v3 user, repo, and personal configs to v4
-in one transaction and changes nothing when it refuses (include trees, lossy
-input, Marketplace entries without verified cache evidence). It never edits the
-organization file or uses the network. Interactive commands offer to migrate
-only the user config; migrate repo and personal configs explicitly:
+The shipped CLI has no `migrate` command, startup conversion prompt, TUI
+migration modal, or legacy reader/editor. Before replacing an older binary,
+use an **older released migrator** to convert every writable user, repo, and
+personal-local root and verify its entire include tree. Have the externally
+owned organization configuration converted and deployed by its administrator.
 
-```bash
-agent-marketplace migrate --scope repo --dry-run
-agent-marketplace migrate --scope repo
-agent-marketplace sync
-```
-
-`--to v2` selects the legacy structural-remediation flow.
+Conversion can refuse include trees, unrepresentable legacy input, or exact
+Marketplace pins without verified cache evidence. Resolve refusals before
+upgrading; never advise merely changing the version string, flattening away
+policy, or fabricating evidence. See the
+[pre-upgrade guide](https://github.com/Adyen/agent-marketplace/blob/main/site/docs/how-to/migrate-configuration.md).
+Keep backups and a compatible older binary for rollback. Lock v1 reads/v2
+writes, source-revision compatibility, Marketplace operator
+`agent-marketplace.io/marketplace/v1`, APIs/artifacts, and native harness schemas
+are independent and remain supported.
 
 ## Gotchas
 

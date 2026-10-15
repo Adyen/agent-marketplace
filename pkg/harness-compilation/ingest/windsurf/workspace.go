@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/bundle"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ingest"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
@@ -37,6 +38,7 @@ func loadWorkspace(src fs.FS, opts LoadOptions, sourceBase string) (*ingest.Bund
 	rules := map[string]*ir.Rule{}
 	var diags []diag.Diagnostic
 	var currentHooks []*ir.Hook
+	consumedDevinHooks := false
 
 	for _, root := range roots {
 		loadedSkills, err := loadSkills(root)
@@ -69,6 +71,15 @@ func loadWorkspace(src fs.FS, opts LoadOptions, sourceBase string) (*ingest.Bund
 			return nil, err
 		}
 		diags = append(diags, hookDiags...)
+		if root.isBundle && !opts.LegacyHookInventory && devinHooksClaimable(root.fs) {
+			devinHooks, devinDiags, err := loadHooksWithOptions(root.fs, devinHooksFile, opts)
+			if err != nil {
+				return nil, fmt.Errorf("ingest/windsurf: load %s: %w", devinHooksFile, err)
+			}
+			diags = append(diags, devinDiags...)
+			loadedHooks = append(loadedHooks, devinHooks...)
+			consumedDevinHooks = true
+		}
 		if opts.LegacyHookInventory {
 			for _, hook := range loadedHooks {
 				hooks[hook.Name()] = hook
@@ -108,6 +119,9 @@ func loadWorkspace(src fs.FS, opts LoadOptions, sourceBase string) (*ingest.Bund
 				consumed = append(consumed, "hooks/hooks.json")
 			}
 		}
+		if consumedDevinHooks {
+			consumed = append(consumed, devinHooksFile)
+		}
 		if mcpPath != "" {
 			consumed = append(consumed, mcpPath)
 		}
@@ -120,7 +134,7 @@ func loadWorkspace(src fs.FS, opts LoadOptions, sourceBase string) (*ingest.Bund
 	if opts.LegacyHookInventory {
 		currentHooks = sortHooks(hooks)
 	} else {
-		distinctHookNames(currentHooks)
+		bundle.DistinctHookNames(currentHooks)
 	}
 
 	var resources []ir.Resource
@@ -287,7 +301,7 @@ func isNotExist(err error) bool {
 }
 
 func listSubdirs(src fs.FS, root string) ([]string, error) {
-	entries, err := fs.ReadDir(src, root)
+	entries, err := ingest.ReadSkillEntries(src, root)
 	if err != nil {
 		return nil, err
 	}

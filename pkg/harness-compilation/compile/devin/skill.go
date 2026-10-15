@@ -10,6 +10,7 @@ import (
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/compile/mapping"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/toolpolicy"
 )
 
 const (
@@ -51,14 +52,18 @@ func translateSkill(s *ir.Skill, opts compile.Options) ([]artifact.Artifact, []d
 	// present=false with warnings, the key is omitted, and the skill is still
 	// published. The diagnostics come first so the loss the user most needs to
 	// see is the first one reported.
-	tools, toolsPresent, toolsFromExtra, toolDiags := resolveAllowedTools(s.Name(), source, s.AllowedTools, s.AllowedTools != nil, s.Extra, opts, diag.CodeSkillDevinToolUnknown)
+	tools, toolsPresent, toolsFromExtra, toolDiags := resolveAllowedTools(s.Name(), source, s.AllowedTools, s.AllowedTools != nil, s.Extra, opts, s.ToolSource, toolpolicy.SurfaceSkillAllowedTools, diag.CodeSkillDevinToolUnknown)
 
 	var diags []diag.Diagnostic
 	diags = append(diags, toolDiags...)
 	triggers, triggersPresent, triggerDiags := mapTriggers(s.Name(), source, s.Triggers)
 	diags = append(diags, triggerDiags...)
 
-	model, modelDiags := mapModel(s.Name(), source, s.Model, opts, diag.CodeSkillDevinModelUnmappable)
+	selection, modelDiags, err := compile.SkillModel(s, mapping.TargetDevin, opts)
+	if err != nil {
+		return nil, nil, err
+	}
+	model := selection.Model
 	diags = append(diags, modelDiags...)
 
 	permissions := compile.SkillPermissionsValueWithExtra(s.Permissions.Allow, s.Permissions.Ask, s.Permissions.Deny, s.Permissions.Extra, s.PermissionsSet)
@@ -116,7 +121,7 @@ func translateSkill(s *ir.Skill, opts compile.Options) ([]artifact.Artifact, []d
 		"agent":          s.Agent != "",
 		kindExtensionKey: true, // reserved: a skill never carries command provenance
 	})
-	extraKeys, extraDiags := compile.ExtraKeys(s.Extra, canonical, mapping.TargetDevin, s.Name(), source)
+	extraKeys, extraDiags := compile.SkillModelExtraKeys(s.Extra, canonical, mapping.TargetDevin, s.Name(), source)
 	diags = append(diags, extraDiags...)
 	diags = append(diags, compile.SupportFileDiagnostics(s, mapping.TargetDevin)...)
 	appendExtras(fm, s.Extra, extraKeys, toolsFromExtra)
@@ -140,7 +145,7 @@ func translateCommand(c *ir.Command, opts compile.Options) ([]artifact.Artifact,
 	// instead of suppressing the command (bead agent-marketplace-pu6b). This is
 	// the path the openspec commands and skills take: `Bash(openspec:*)` is a
 	// scoped specifier Devin cannot express.
-	tools, toolsPresent, toolsFromExtra, toolDiags := resolveAllowedTools(c.Name(), source, nil, false, c.Extra, opts, diag.CodeSkillDevinToolUnknown)
+	tools, toolsPresent, toolsFromExtra, toolDiags := resolveAllowedTools(c.Name(), source, nil, false, c.Extra, opts, "", toolpolicy.SurfaceSkillAllowedTools, diag.CodeSkillDevinToolUnknown)
 
 	fm := &compile.Frontmatter{}
 	fm.Set("name", c.Name())
@@ -162,6 +167,8 @@ func translateCommand(c *ir.Command, opts compile.Options) ([]artifact.Artifact,
 		// command has no typed permissions field, so an extension field must
 		// never pass a permissions block through verbatim.
 		"permissions": true,
+		"agent":       true,
+		"subagent":    true,
 		// allowed-tools is deliberately NOT reserved here. A command has no
 		// typed allowed-tools field, so any restriction necessarily comes from
 		// the extension field, is consumed by resolveAllowedTools, and is

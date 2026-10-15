@@ -26,6 +26,8 @@ resources:
 EOF
 ```
 
+The commands succeed silently and create `collections/platform-onboarding/COLLECTION.yaml`.
+
 Consumers install the collection by its `name`. Members without a `registry` field come from the same registry as the collection. `kind` defaults to `skill` and accepts `skill`, `command`, `subagent`, `hook`, or `mcp`. The CLI skips a flat file such as `collections/platform-onboarding.yaml`.
 
 ## 2. Add members from another registry (optional)
@@ -74,7 +76,7 @@ REGISTRY  KIND        NAME                 TAGS (metadata)  STATUS
 .         collection  platform-onboarding                   available
 ```
 
-If a `COLLECTION.yaml` has no `name`, is not valid YAML, or uses an unsupported member `kind`, the command fails and names the file or member. `list` does not check that members exist. A missing member shows up when a consumer syncs.
+If a `COLLECTION.yaml` has no `name`, is not valid YAML, or uses an unsupported member `kind`, the command fails and names the collection or member. `list` does not check that members exist or that their registries are configured; a missing member or unconfigured registry shows up when a consumer syncs or installs the collection.
 
 ## 5. Install the collection
 
@@ -82,11 +84,16 @@ In a consumer project:
 
 ```bash
 agent-marketplace install platform-onboarding \
+  --kind collection \
   --from https://github.com/example-org/agent-resources.git \
   --ref v1.4.0
 ```
 
-This adds `collection/platform-onboarding` to the `include` list of that source in the consumer's configuration, then installs the members.
+This adds `collection/platform-onboarding` to the `include` list of that source in the consumer's configuration, then installs the members. Typical output:
+
+```text
+Installed collection platform-onboarding in this repo
+```
 
 ## Boundaries
 
@@ -96,5 +103,5 @@ This adds `collection/platform-onboarding` to the `include` list of that source 
 
 ## Troubleshooting
 
-- `collection "platform-onboarding" not found in configured registries`: check that `collections/` sits at the root of the consumer's source, inside its `path` if it has one.
+- `resource or collection "platform-onboarding" not found in configured registries` (or `not found in registry <registry-url>` when installing with `--from`): check that `collections/` sits at the root of the consumer's source, inside its `path` if it has one.
 - A member does not install: sync prints `warning: <kind> "<name>" was selected but not found`, with a note that the collection references it. Check that the member's `kind` and `name` match a real resource and that the consumer has not excluded it.

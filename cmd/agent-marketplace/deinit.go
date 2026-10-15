@@ -337,8 +337,8 @@ func removeEmptyDir(dir string) {
 // mandatory policy output).
 //
 // It uses the read-only exact lock view. A present organization lock is exact
-// and fail-closed; an intentionally absent organization lock follows unlocked
-// mutable acquisition/cache rules so organization output can still be preserved.
+// and fail-closed; an intentionally absent organization Marketplace lock may
+// reuse verified exact local evidence, never acquire or bootstrap it online.
 // When no machine-wide target harness set is configured, there is no organization-
 // owned output to preserve, so the function returns an empty slice rather than
 // defaulting artifacts to a target the user never requested.
@@ -360,6 +360,7 @@ func resolveOrgOwnedArtifactsMode(ctx context.Context, repoRoot string, mode cat
 		RequireTargetSet:   true,
 		SkipInventory:      true,
 		ReadOnlyExactLocks: true,
+		ConfigLoadMode:     pipeline.ConfigLoadCached,
 		MarketplaceMode:    &marketplaceMode,
 		MarketplaceSourceFilter: func(source config.Source) bool {
 			return source == config.Organization

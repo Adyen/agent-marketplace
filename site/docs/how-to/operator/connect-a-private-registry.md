@@ -67,7 +67,7 @@ The worker must be able to reach the registry origin. Limit the worker's outboun
 agent-marketplace serve reindex private-agents --config /app/marketplace.yaml
 ```
 
-The worker also refreshes every configured registry on startup and at each `refresh.interval`, so this step only forces an immediate refresh.
+The command prints nothing on success and exits `0`; the [log file](../../reference/logging.md) records the refresh and ends with `reindex complete`. The worker also refreshes every configured registry on startup and at each `refresh.interval`, so this step only forces an immediate refresh.
 
 ## 6. Verify
 

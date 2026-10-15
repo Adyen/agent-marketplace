@@ -13,6 +13,10 @@ You need:
 
 If you rarely use a terminal, [Terminal basics](./terminal-basics.md) explains how to run the commands on this page.
 
+::: warning Existing configurations
+Every existing consumer root, including organization and personal-local, must declare exact `apiVersion: agent-marketplace/v4`; included fragments may omit the field or declare exact v4. If you already have older configuration, [convert it with an older released migrator before upgrading](./how-to/migrate-configuration.md), and have organization configuration converted externally. Conversion may refuse includes, unrepresentable input, or missing verified Marketplace evidence. Do not overwrite an existing configuration with the tutorial or merely change its sentinel: the new CLI/TUI refuses unsupported input without a migration command or prompt.
+:::
+
 Open a terminal and move into your project folder. Replace the path with your own:
 
 ```bash
@@ -81,8 +85,6 @@ Installed 2  Removed 0  Malformed 0  Errors 0
 ```
 
 "Installed" counts files written. The skill itself is one of them; the other is a Claude Code manifest that lists the installed skills.
-
-If you had no user configuration yet, this first sync also creates `~/.agents/config.yaml` with `harnesses: [factory, windsurf]`. The project's own `harnesses:` list takes precedence, so this sync still writes only for Claude Code. To change your personal harness list, press `H` in the TUI or edit that file.
 
 If sync fails:
 
@@ -177,7 +179,7 @@ On a fresh CI runner, run `agent-marketplace sync --locked`. It downloads the ex
 - [Configure multiple harnesses](./how-to/configure-multiple-harnesses.md): add Cursor, Codex, Devin, or others alongside Claude Code.
 - [Install your first skill for Claude Code](./tutorials/install-your-first-skill.md): the same flow using only commands, installed for your user instead of one project.
 - [Install from a hosted Marketplace](./how-to/install-from-a-marketplace.md): connect a Marketplace, or install from a browser URL.
-- [User journeys](./explanation/user-journeys.md): share your setup with a team, keep it updated, or remove resources and recover from errors.
+- [User journeys](./explanation/user-journeys.md): what each stage of a resource's life decides, from finding it to removing it.
 - [TUI reference](./reference/tui.md): every key and modal action.
 - [Command-line reference](./reference/cli.md): `list`, `install`, `remove`, `sync`, `update`, `status`, and every flag.
 - [Sources and resources](./explanation/sources-and-resources.md): what the `sources` and `resources` parts of the configuration do.

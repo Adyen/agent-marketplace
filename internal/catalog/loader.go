@@ -627,7 +627,11 @@ func scanSubBundlesWalk(source *fsboundary.SourceFS, dir, sourceHarness string, 
 					recordSubBundleCloseError(bundles, recorded, subDir, err)
 				}
 			}()
-			if hasBundleRootFS(subSource) || subSource.Refusal() != nil {
+			var detectionSource fs.FS = subSource
+			if opts.LegacyNativeHookInventory {
+				detectionSource = legacyNativeInventoryFS{fsys: subSource}
+			}
+			if hasBundleRootFS(detectionSource) || subSource.Refusal() != nil {
 				cat, err := LoadSourceWithOptions(subSource, subDir, sourceHarness, opts)
 				candidate := subBundle{path: subDir, catalog: cat, err: err}
 				if cat != nil {

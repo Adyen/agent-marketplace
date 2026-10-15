@@ -135,6 +135,21 @@ func TestStableConstructorsKeepFixedSignatures(t *testing.T) {
 	}
 }
 
+func TestProvenanceOptions(t *testing.T) {
+	hook := NewHookWithOptions("h", "SessionEnd", "x", "command", nil, SourceRef{}, WithHookSource("codex"))
+	if hook.HookSource != "codex" {
+		t.Fatalf("HookSource = %q, want codex", hook.HookSource)
+	}
+	sub := NewSubagentWithOptions("a", "", "", "", nil, "", nil, "", nil, SourceRef{}, WithSubagentToolSource("devin"))
+	if sub.ToolSource != "devin" {
+		t.Fatalf("Subagent.ToolSource = %q, want devin", sub.ToolSource)
+	}
+	skill := NewSkillWithOptions("s", "", "", nil, nil, SourceRef{}, WithSkillToolSource("gemini"))
+	if skill.ToolSource != "gemini" {
+		t.Fatalf("Skill.ToolSource = %q, want gemini", skill.ToolSource)
+	}
+}
+
 func TestSourceRefZero(t *testing.T) {
 	s := SourceRef{}
 	if s.File != "" {

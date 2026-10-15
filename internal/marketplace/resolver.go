@@ -138,8 +138,9 @@ func (r *Resolver) ResolveWithPolicy(ctx context.Context, cfg *config.Config, ta
 			errs = append(errs, fmt.Errorf("marketplace %s: %w", configuredEntry.URL, err))
 			continue
 		}
-		if strings.TrimSpace(entry.InstanceID) == "" {
-			errs = append(errs, fmt.Errorf("marketplace %s: configured marketplace instance ID is required", entry.URL))
+		if unacquiredMarketplaceRegistration(entry) && mode == resolver.MarketplaceResolveModeCachedNoFetch {
+			// No exact resources are selected, and an offline read must not
+			// discover or adopt an endpoint identity from untrusted cache data.
 			continue
 		}
 		var client *Client
@@ -149,13 +150,9 @@ func (r *Resolver) ResolveWithPolicy(ctx context.Context, cfg *config.Config, ta
 				errs = append(errs, fmt.Errorf("marketplace %s: %w", entry.URL, err))
 				continue
 			}
-			wellKnown, err := client.WellKnown(ctx)
+			entry, err = acquireMarketplaceIdentity(ctx, client, entry)
 			if err != nil {
-				errs = append(errs, fmt.Errorf("marketplace %s well-known document: %w", entry.URL, err))
-				continue
-			}
-			if wellKnown.InstanceID != entry.InstanceID {
-				errs = append(errs, fmt.Errorf("marketplace %s instance ID mismatch: endpoint %q, configured %q", entry.URL, wellKnown.InstanceID, entry.InstanceID))
+				errs = append(errs, fmt.Errorf("marketplace %s: %w", configuredEntry.URL, err))
 				continue
 			}
 		} else {
@@ -354,10 +351,42 @@ func (r *Resolver) enforceNestedCollectionRevocations(ctx context.Context, clien
 	return nil
 }
 
+// An authored registration has no acquired identity or exact resource evidence.
+// Missing identity on an entry with pins is never a discovery request.
+func unacquiredMarketplaceRegistration(entry config.MarketplaceEntry) bool {
+	return entry.InstanceID == "" && len(entry.Resources) == 0
+}
+
+// acquireMarketplaceIdentity uses validated live metadata only. It may bind a
+// resource-free declaration, but must never rebind an existing exact identity.
+func acquireMarketplaceIdentity(ctx context.Context, client *Client, entry config.MarketplaceEntry) (config.MarketplaceEntry, error) {
+	if strings.TrimSpace(entry.InstanceID) == "" && !unacquiredMarketplaceRegistration(entry) {
+		return entry, fmt.Errorf("configured marketplace instance ID is required")
+	}
+	wellKnown, err := client.WellKnown(ctx)
+	if err != nil {
+		return entry, fmt.Errorf("well-known document: %w", err)
+	}
+	if unacquiredMarketplaceRegistration(entry) {
+		entry.InstanceID = wellKnown.InstanceID
+		if errs := config.ValidateMarketplaceEntries([]config.MarketplaceEntry{entry}); len(errs) > 0 {
+			return entry, fmt.Errorf("invalid discovered Marketplace identity: %w", errors.Join(errs...))
+		}
+		slog.Debug("marketplace registration identity discovered", "url", entry.URL, "instance_id", entry.InstanceID)
+	} else if wellKnown.InstanceID != entry.InstanceID {
+		slog.Warn("marketplace endpoint instance ID mismatch", "url", entry.URL, "endpoint_instance_id", wellKnown.InstanceID, "configured_instance_id", entry.InstanceID)
+		return entry, fmt.Errorf("instance ID mismatch: endpoint %q, configured %q", wellKnown.InstanceID, entry.InstanceID)
+	}
+	return entry, nil
+}
+
 func canonicalMarketplaceEntry(entry config.MarketplaceEntry) (config.MarketplaceEntry, error) {
 	canonicalURL, err := urlutil.NormalizeEndpointURL(entry.URL)
 	if err != nil {
 		return config.MarketplaceEntry{}, err
+	}
+	if strings.TrimSpace(entry.InstanceID) == "" && !unacquiredMarketplaceRegistration(entry) {
+		return config.MarketplaceEntry{}, fmt.Errorf("configured marketplace instance ID is required")
 	}
 	entry.URL = canonicalURL
 	return entry, nil
@@ -896,22 +925,22 @@ func (r *Resolver) resolveIndexOnlyPin(ctx context.Context, client *Client, cach
 	}
 	var resourcePath string
 	if checkoutDir != "" {
-		resourcePath, err = stageReconstructedResource(cache, identity, checkoutDir, registry, pin.Kind, pin.Name, supportFiles)
+		resourcePath, err = stageReconstructedResource(cache, identity, checkoutDir, registry, resource, supportFiles)
 	} else {
 		dir := cachedReconstructedResourcePath(cache, identity, pin.Kind, pin.Name)
 		if err = validateCachedReconstructedResource(cache, dir); err != nil {
 			resourcePath = dir
-		} else if pin.Kind == "hook" {
-			if _, statErr := os.Stat(filepath.Join(dir, "hooks.json")); statErr == nil {
-				resourcePath = filepath.Join(dir, "hooks.json")
-			} else {
-				resourcePath = filepath.Join(dir, "SKILL.md")
-			}
+		} else if hook, ok := resource.(*ir.Hook); ok {
+			resourcePath, err = cachedHookDefinitionPath(dir, hook.Source.File)
 		} else {
 			resourcePath = filepath.Join(dir, "SKILL.md")
 		}
 		if err != nil {
-			err = fmt.Errorf("cached reconstructed source is not within the Marketplace cache: %w", err)
+			if errors.Is(err, ErrArtifactSourcePath) {
+				err = fmt.Errorf("validate cached hook definition: %w", err)
+			} else {
+				err = fmt.Errorf("cached reconstructed source is not within the Marketplace cache: %w", err)
+			}
 		}
 	}
 	if err != nil {
@@ -936,8 +965,16 @@ func (r *Resolver) resolveIndexOnlyPin(ctx context.Context, client *Client, cach
 // from the checked-out commit; the artifact cache directory itself is never used
 // as a source tree, so artifact.tar.gz and verified.marker cannot leak into an
 // installed skill directory.
-func stageReconstructedResource(cache *Cache, identity IndexOnlyIdentity, checkoutDir string, registry store.Registry, kind, name string, supportFiles []string) (string, error) {
+func stageReconstructedResource(cache *Cache, identity IndexOnlyIdentity, checkoutDir string, registry store.Registry, resource ir.Resource, supportFiles []string) (string, error) {
+	if resource == nil {
+		return "", fmt.Errorf("%w: decoded resource is unavailable", ErrArtifactIdentityMismatch)
+	}
+	kind, name := mpapi.FromIR(resource.Kind()), resource.Name()
+	if kind == "" || name == "" {
+		return "", fmt.Errorf("%w: decoded resource identity is incomplete", ErrArtifactIdentityMismatch)
+	}
 	var sourceDir string
+	var definitionBase string
 	for _, root := range registry.Roots {
 		rootDir := filepath.Join(checkoutDir, filepath.Clean(root.Path))
 		rel, err := filepath.Rel(checkoutDir, rootDir)
@@ -966,6 +1003,13 @@ func stageReconstructedResource(cache *Cache, identity IndexOnlyIdentity, checko
 			info, err := os.Stat(resourcePath)
 			if err != nil {
 				return "", err
+			}
+			definitionBase = filepath.Base(resourcePath)
+			if kind == "hook" {
+				definitionBase, err = hookDefinitionBasename(definitionBase)
+				if err != nil {
+					return "", err
+				}
 			}
 			sourceDir = resourcePath
 			if !info.IsDir() {
@@ -1011,11 +1055,53 @@ func stageReconstructedResource(cache *Cache, identity IndexOnlyIdentity, checko
 	}
 	slog.Debug("staged reconstructed resource support files", "source_dir", sourceDir, "files", len(supportFiles), "path", stagedDir)
 	if kind == "hook" {
-		if _, err := os.Stat(filepath.Join(stagedDir, "hooks.json")); err == nil {
-			return filepath.Join(stagedDir, "hooks.json"), nil
-		}
+		return stagedHookDefinitionPath(stagedDir, definitionBase)
 	}
 	return filepath.Join(stagedDir, "SKILL.md"), nil
+}
+
+func hookDefinitionBasename(sourceFile string) (string, error) {
+	if sourceFile == "" || strings.Contains(sourceFile, `\`) || filepath.IsAbs(filepath.FromSlash(sourceFile)) {
+		return "", ErrArtifactSourcePath
+	}
+	for _, component := range strings.Split(filepath.ToSlash(sourceFile), "/") {
+		if component == ".." {
+			return "", ErrArtifactSourcePath
+		}
+	}
+	clean := filepath.Clean(filepath.FromSlash(sourceFile))
+	if clean == "." || clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
+		return "", ErrArtifactSourcePath
+	}
+	base := filepath.Base(clean)
+	if base == "" || base == "." || base == ".." {
+		return "", ErrArtifactSourcePath
+	}
+	return base, nil
+}
+
+func cachedHookDefinitionPath(stagedDir, sourceFile string) (string, error) {
+	base, err := hookDefinitionBasename(sourceFile)
+	if err != nil {
+		return "", err
+	}
+	return stagedHookDefinitionPath(stagedDir, base)
+}
+
+func stagedHookDefinitionPath(stagedDir, basename string) (string, error) {
+	if basename == "" || basename == "." || basename == ".." || filepath.IsAbs(basename) || filepath.Base(basename) != basename {
+		return "", ErrArtifactSourcePath
+	}
+	path := filepath.Join(stagedDir, basename)
+	rel, err := filepath.Rel(stagedDir, path)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
+		return "", ErrArtifactSourcePath
+	}
+	info, err := os.Lstat(path)
+	if err != nil || !info.Mode().IsRegular() {
+		return "", ErrArtifactSourcePath
+	}
+	return path, nil
 }
 
 func cachedReconstructedResourcePath(cache *Cache, identity IndexOnlyIdentity, kind, name string) string {

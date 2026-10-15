@@ -15,7 +15,9 @@ agent-marketplace <command> [arguments] [flags]
 
 Running `agent-marketplace` with no command starts the terminal UI when standard input is a terminal. Otherwise it prints help. Setting `AGENT_MARKETPLACE_NO_TUI` to any non-empty value also makes a bare invocation print help.
 
-Before most commands run, the CLI checks whether the user config (`~/.agents/config.yaml`) still uses a legacy v2 or v3 schema. When standard input is a terminal, it lists the file and asks `Migrate these configuration files to v4 now? [Y/n]:`. Pressing Enter or answering `y` migrates. Answering `n` continues with the legacy reader, and any other answer stops the command with `unknown response`. A refused migration prints a warning and also continues. Without a terminal, the CLI logs a warning and changes nothing. The check does not run for `init`, `migrate`, `convert`, `serve`, `telemetry`, `tui`, `doctor`, or `--version`. The bare terminal UI shows its own migration prompt instead. Repository and personal-local configs are migrated only by an explicit [`migrate`](#migrate).
+Consumer operations require exact `apiVersion: agent-marketplace/v4` in every existing root, including organization and personal-local. Included fragments may omit the field or declare exact v4. Missing root versions fail with `v4.api-version-required`; unsupported or invalid explicit values fail with `v4.api-version`, identifying the authored file and `apiVersion` field. No consumer operation falls back to a legacy reader, and neither CLI startup nor the TUI offers conversion. There is no shipped `migrate` command. [Convert with an older released migrator before upgrading](../how-to/migrate-configuration.md); organization configuration must be converted externally.
+
+All roots and includes needed by an operation validate before new acquisition, config/lock staging or publication, or harness writes/prunes, including ad-hoc `--from` operations. A format refusal preserves existing bytes and metadata and creates no missing writable root or lock. Ordinary logs remain allowed. Pre-existing dependency journals retain command-specific handling: read-only modes report `dependency.recovery-required` without replay; recovery-capable commands may finish already-admitted writes before validation, but start no new work on unsupported input. Schema-independent commands such as harness `convert`, Marketplace `serve`, help, and completion do not require a consumer root.
 
 ## Global flags
 
@@ -27,7 +29,7 @@ Every command accepts these flags.
 | `--diagnostic` | boolean | no | `false` | Captures a diagnostic telemetry payload for this invocation so you can review it before it is sent. Capture needs the effective telemetry level `detailed`; at other levels it is turned off. See the [telemetry reference](telemetry.md#diagnostic-payloads). |
 | `--diagnostic-accept-sensitive-data` | boolean | no | `false` | Acknowledges that a diagnostic payload may contain sensitive data. Without a terminal, diagnostic export and `telemetry preview --level diagnostic` require it. |
 | `-h`, `--help` | boolean | no | `false` | Prints help for the selected command. |
-| `--version` | boolean | no | `false` | Prints the CLI version, for example `v4.0.9`. This flag belongs to the root command only. |
+| `--version` | boolean | no | `false` | Prints the CLI version. This flag belongs to the root command only. |
 
 ## Resource kinds
 
@@ -58,7 +60,7 @@ Installing a resource defaults to `repo`, and registering a Marketplace endpoint
 
 ## `init`
 
-Creates a minimal v4 user config (`~/.agents/config.yaml`) with an explicit harness list. It adds no sources or resources. If the file already exists, `init` leaves it unchanged and prints `User personal config already initialized.` You can later edit named Git and directory resource selections with the v4-aware CLI and TUI paths. Other legacy-only editors still refuse edits they cannot make to a v4 file.
+Creates a minimal v4 user config (`~/.agents/config.yaml`) with an explicit harness list. It adds no sources or resources. If a valid user file already exists, `init` leaves it unchanged and prints `User personal config already initialized.` Existing unsupported roots or fragments produce the path-specific format refusal instead of being treated as initialized or overwritten. CLI and TUI edits use the v4 source/resource model.
 
 ```text
 agent-marketplace init [flags]
@@ -121,7 +123,7 @@ Table output has `MARKETPLACE`, `SOURCE`, `KIND`, `NAME`, and `DESCRIPTION` colu
 
 Adds selections to one writable config layer, then syncs harness output.
 
-You can select a named resource from a configured Git or directory source, or from `--from <registry>` with optional `--ref` and `--path`. In a v4 destination, an ad hoc registry becomes a named v4 `git` or `directory` source. A relative directory stays relative in repository and personal-local configs, so committed sources keep working on other machines. Installing every resource from an ad hoc registry into a v4 destination declares the source with an `all: true` resource group. `install` edits both v4 and legacy (v2 or v3) destinations. A change to a legacy destination prints a `config.legacy-deprecated` warning. If an edit is refused, your configuration stays unchanged. See [configuration compatibility](../explanation/user-journeys.md#before-following-a-journey).
+You can select a named resource from a configured Git or directory source, or from `--from <registry>` with optional `--ref` and `--path`. An ad hoc registry becomes a named v4 `git` or `directory` source. A relative directory stays relative in repository and personal-local configs, so committed sources keep working on other machines. Installing every resource from an ad hoc registry declares the source with an `all: true` resource group. Named, bulk, tag, and ad-hoc installs use v4 edits. Unsupported roots or fragments refuse before acquisition or new writes; a valid destination cannot bypass another required invalid layer. See [configuration requirements and current limits](../explanation/user-journeys.md#before-following-a-journey).
 
 ```text
 agent-marketplace install <resource-name>... [flags]
@@ -166,11 +168,11 @@ https://host/r/registry/kind/name[/revisions/sha256:<64 lowercase hex>]
 | `--yes` | boolean | no | `false` | Same as `--accept-risk`, for automation. |
 | `-v`, `--verbose` | boolean | no | `false` | Shows every collection member and the technical Marketplace preview: revisions, digests, acquisition details, and provenance (where the artifact came from). |
 
-`--as`, `--accept-risk`, and `--yes` work only with a single Marketplace resource. With `--marketplace <url>`, pass the full resource URL as the locator. In the current release, a short `registry/kind/name` locator combined with an endpoint URL fails with an `invalid browser locator` error, so use the full URL or an alias. If you pass a GitHub or GitLab web URL that names a branch or tag as the resource name, the command stops and tells you to use `--from` instead.
+`--as`, `--accept-risk`, and `--yes` work only with a single Marketplace resource. With `--marketplace <url>`, pass the full resource URL as the locator. In the current release, a short `registry/kind/name` locator combined with an endpoint URL fails with an `invalid browser locator` error, so the full URL or an alias is required. If you pass a GitHub or GitLab web URL that names a branch or tag as the resource name, the command stops and tells you to use `--from` instead.
 
-Registering a Marketplace endpoint checks the endpoint's well-known identity and canonical URL, then prints `Added Marketplace <url> to <config path>`, or `Marketplace <url> is already configured in <config path>` when the same identity is already present in that scope or a broader one. In a v4 configuration, registering the endpoint adds a named `marketplace` source for it. Installing a resource from that endpoint adds an exact request to the source's `resources` group and records the verified revision in the lock file of the same layer.
+Registering a Marketplace endpoint checks the endpoint's well-known identity and canonical URL, then prints `Added Marketplace <url> to <config path>`, or `Marketplace <url> is already configured in <config path>` when the same identity is already present in that scope or a broader one. In a v4 configuration, registering the endpoint adds a named `marketplace` source for it. Installing a resource from that endpoint adds an exact request to the source's `resources` group and records the verified revision in the lockfile of the same layer.
 
-A Marketplace install resolves and verifies the exact artifact before it changes any config. The default output summarizes the source, security findings, capabilities, and up to ten collection members. Add `--verbose` to see all members, the digest, license, provenance, and acquisition mode. Rejected and revoked resources cannot be installed.
+A Marketplace install resolves and verifies the exact artifact before it changes any config. The default output summarizes the source, security findings, capabilities, and up to ten collection members. `--verbose` shows all members, the digest, license, provenance, and acquisition mode. Rejected and revoked resources cannot be installed.
 
 When the verified artifact has security findings and standard input is a terminal, the command prints the preview and asks `Install despite these risks? [y/N]:`. Accepting installs the exact prepared revision. Without a terminal, pass `--accept-risk` or `--yes` to accept the findings for that one invocation. Capabilities are shown, but on their own they never require consent.
 
@@ -193,7 +195,7 @@ Removes an explicit selection, or records an exclusion when the resource was sel
 
 For hosted Marketplace pins, removing a direct resource clears its direct selection but keeps it if a collection still includes it. Removing a collection clears that collection and removes the members no longer kept by anything else. You can remove a resource installed with `--as` by either its local name or its canonical Marketplace name. A name that matches more than one direct pin is refused.
 
-When the destination layer is v4, named removals and collection-member exclusions of Git or directory resources use the v4-aware editor, including resources declared by a legacy organization, repository, or local layer. Other legacy-only removal paths can still refuse a v4 destination; the refusal names the real config file. Hosted sources have further restrictions; see [configuration compatibility](../explanation/user-journeys.md#before-following-a-journey).
+Named removals, collection-member exclusions, removals of bulk/tag-selected resources, and ad-hoc removals use the v4 editor and preserve unrelated selections and scopes. Included-fragment ownership and required-resource policy still apply. Hosted sources retain their supported explicit-selection and lock rules; unsupported hosted options still refuse. See [configuration requirements and current limits](../explanation/user-journeys.md#before-following-a-journey).
 
 ```text
 agent-marketplace remove <resource-name> [flags]
@@ -271,13 +273,13 @@ A normal sync prints counts for installed, removed, malformed, and failed resour
 Installed 3  Removed 1  Malformed 0  Errors 0
 ```
 
-The counts are colored on a terminal. Set `NO_COLOR`, `CLICOLOR=0`, or `TERM=dumb` to turn color off.
+The counts are colored on a terminal; `NO_COLOR`, `CLICOLOR=0`, or `TERM=dumb` turns color off.
 
-If `~/.agents/config.yaml` does not exist, a plain `sync` creates it the way `agent-marketplace init --harnesses factory,windsurf` would: a v4 config with only `apiVersion` and `harnesses: [factory, windsurf]`. An existing user config is never read or changed by this step, and `--check`, `--locked`, and `--offline` skip it.
+If `~/.agents/config.yaml` does not exist, a plain `sync` creates it the way `agent-marketplace init --harnesses factory,windsurf` would: a v4 config with only `apiVersion` and `harnesses: [factory, windsurf]`. Creation first validates every required root/include tree and cannot bypass unsupported input. This step does not overwrite an existing user config; sync still validates it. `--check`, `--locked`, and `--offline` skip first-run creation.
 
 With `--check`, an in-sync result prints no verdict and returns exit status 0. Drift prints a summary such as `sync: 2 out of sync (1 missing, 1 orphaned)`, lists the planned changes, and returns exit status 1. Materialization and configuration errors also return exit status 1, including a dry-run materialization failure, which is printed as an `error:` line alongside the run's warnings. Warning-severity materialization diagnostics are printed as `warning:` lines and do not affect the exit status. `--check` writes nothing: not config, locks, transaction state, or harness output. It does not recover pending transactions or fetch a cold exact snapshot, and it reports `lock.snapshot-unavailable` when snapshot files it needs are missing.
 
-If an earlier write was interrupted and left a dependency transaction pending, `sync --locked`, `sync --offline`, `sync --check`, `lock --check`, `list`, and `status` fail with `dependency.recovery-required` before reading configuration or registries. They leave config, locks, recovery records, and permissions unchanged. Run a plain `sync` or `lock` (without those flags) to finish the recovery, then retry. A missing transaction-state directory needs no recovery, and these commands do not create it.
+If an earlier write was interrupted and left a dependency transaction pending, `sync --locked`, `sync --offline`, `sync --check`, `lock --check`, `list`, and `status` fail with `dependency.recovery-required` before reading configuration or registries. They leave config, locks, recovery records, and permissions unchanged. A plain `sync` or `lock` (without those flags) attempts recovery before continuing. The failed command can be retried after recovery succeeds; blocked recovery leaves it incomplete. A missing transaction-state directory needs no recovery, and these commands do not create it.
 
 ## `update`
 
@@ -289,7 +291,7 @@ agent-marketplace update [resource ...] [flags]
 
 | Flag | Type | Required | Default | Description |
 |---|---|:---:|---|---|
-| `--bump` | boolean | no | `false` | Rewrites eligible refs to newer matching tags before updating locks, in legacy `registries:` entries and in v4 `sources:`. A ref that an included config file declares is reported and left unchanged. |
+| `--bump` | boolean | no | `false` | Rewrites eligible refs in v4 `sources:` to newer matching tags before updating locks. A ref that an included config file declares is reported and left unchanged. |
 | `--scope` | string | no | `all` | Update scope: `user`, `repo`, `local`, or `all`. `organization` is refused. |
 | `--registry` | string | no | none | Targets one configured Git registry. |
 | `--ref` | string | no | none | Narrows `--registry` to a declared ref. |
@@ -327,7 +329,6 @@ The report prints these sections in this order. Sections other than `TARGET HARN
 | `SYNCED RESOURCES` | Resource kind, name, harness, source, collection origin (`VIA`), target path, registry, ref, and cache state. |
 | `MARKETPLACE PINS` | Endpoint identity, registry, resource coordinate, installed name, exact revision and digest, acquisition mode, source layer, revocation and current state, cache state, and update availability. |
 | `HARNESS TARGETS` | Target capabilities and resolved repository and machine roots. |
-| `LOCALLY EXCLUDED` | Resources removed by exclusions in a legacy v2 or v3 `.agents/config.local.yaml`. Exclusions in a v4 local file do not appear here. |
 | `LOCAL REGISTRIES` | Registry entries declared in repository-personal configuration. |
 | `ORPHANED FILES` | Generated files that a sync would remove. |
 | `NAME COLLISIONS` | Registry overlap and resource-name collision diagnostics. |
@@ -348,26 +349,7 @@ Each source declares its kind:
 - `directory` sources are read live and never get a Git lock. Relative paths in the repository `.agents/config.yaml` and `.agents/config.local.yaml` roots are resolved from the repository root. User and organization configs and included fragments resolve them from the directory of the file that declares them.
 - `marketplace` sources require a matching verified layer lock for explicit requests.
 
-Use the [configuration reference](configuration.md) to write source declarations and resource groups by hand. Named Git and directory selections also have v4-aware CLI and TUI editors; editors that cannot handle v4 refuse and change nothing. The CLI rejects unknown fields, mixed source kinds, invalid locators, and Marketplace lock evidence that does not match. Writable-layer locks can be generated online for explicit hosted requests. When the organization lock is intentionally absent, the CLI fetches and verifies organization Marketplace requests online without writing an organization lock. Offline acquisition without a lock, hosted update or rebind, dynamic-selector snapshots, and general hosted editing are not supported.
-
-## `migrate`
-
-Converts legacy user, repository, and repository-personal configuration to the v4 source/resource schema, where the old file can be represented in v4. Migration is transactional: it validates every selected file before writing any. If you decline or migration refuses, the v2/v3 files stay readable. It uses verified local Marketplace cache evidence and never uses the network. Use `--to v2` only for the legacy structural-remediation flow.
-
-```text
-agent-marketplace migrate [flags]
-```
-
-| Flag | Type | Required | Default | Description |
-|---|---|:---:|---|---|
-| `--to` | string | no | `v4` | Target schema: `v4` or `v2`. |
-| `--scope` | string | no | `all` | Writable layer for v4 migration: `all`, `user`, `repo`, or `local`. `--to v2` rejects it, because that flow always covers every layer. |
-| `--dry-run` | boolean | no | `false` | Previews v4 migration without writing config or lock files. `--to v2` rejects it, because that flow always writes. |
-| `--harnesses` | comma-separated strings | no | none | Target harnesses for the user config. Both migration paths write them only into a user config that has no list, accept a list equal to the existing one, and refuse a different one. V4 migration also refuses them when `--scope` leaves out the user config or no user config exists. Without a terminal, `--to v2` requires it when the user config needs a harness list. |
-
-`--to v4` is accepted as an explicit spelling of the default. V4 migration refuses input that would lose information, include trees, and Marketplace entries without complete verified cache evidence, and it changes no files when it refuses. Migration does not promise to keep comments or formatting. Git and directory-only conversion leaves locks unchanged. A Marketplace entry with verified evidence creates or upgrades the owning layer lock to `agent-marketplace-lock/v2`, published together with the migrated config in one transaction. Organization configuration is never edited.
-
-The output names each migrated file, for example `Migrated user personal config: <path>` (or `Would migrate ...` with `--dry-run`). When nothing needs migrating, it prints `No legacy config files require v4 migration`.
+The [configuration reference](configuration.md) documents writing source declarations and resource groups by hand. Named Git and directory selections and harness changes use the v4 CLI and TUI editors. The CLI rejects unknown fields, mixed source kinds, invalid locators, and Marketplace lock evidence that does not match. Writable-layer locks can be generated online for explicit hosted requests. When the organization lock is intentionally absent, the CLI fetches and verifies organization Marketplace requests online without writing an organization lock. Offline acquisition without a lock, hosted rebind, and dynamic-selector snapshots remain unsupported; v4-only loading does not enable new hosted options.
 
 ## `convert`
 
@@ -470,7 +452,7 @@ What `gc` keeps:
 
 It removes unreferenced object stores and abandoned staging directories.
 
-The cache is shared by all your repositories, but `gc` only looks at the current one. Running it in repository A can delete a source that only repository B uses. B then has to fetch it again, which fails offline or when the remote no longer has the locked commit. Run `--dry-run` first to see what would be deleted.
+The cache is shared by all your repositories, but `gc` only looks at the current one. Running it in repository A can delete a source that only repository B uses. B then has to fetch it again, which fails offline or when the remote no longer has the locked commit. `--dry-run` reports what would be deleted without deleting it.
 
 `gc` first finishes any pending dependency-transaction recovery, holding the shared exact-cache lease while it publishes the recovered config and lock state. It then takes the exclusive exact-cache lease and reloads every applicable configuration layer and lock before deciding what is reachable. Missing required locks, malformed configuration or locks, and untrusted locks block deletion. A present organization lock must also match its configuration.
 
@@ -557,7 +539,7 @@ agent-marketplace serve adopt --config <path> --actor <id> --reason <text> --ide
 | `--idempotency-key` | string | yes | none | Stable key reused when retrying this adoption. |
 | `--reason` | string | yes | none | Reason recorded in the adoption audit. |
 
-Before running adoption, stop every API and worker process and back up the database and blob storage. The command does not check either. The configuration file must set `management.mode: database`. On success it prints `Adopted marketplace configuration at revision <n>.`
+Adoption requires a controlled maintenance window: every API and worker process stopped, the database and blob storage backed up, and controllable shared caches invalidated. The command does not verify external process shutdown or cache invalidation. The configuration file must set `management.mode: database`. On success it prints `Adopted marketplace configuration at revision <n>. Database authority is durable; runtime safety checks still apply.`
 
 ## `deinit`
 

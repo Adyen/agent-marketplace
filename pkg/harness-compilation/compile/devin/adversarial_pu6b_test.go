@@ -164,7 +164,7 @@ func TestNoPartialRestrictionIsEverEmitted(t *testing.T) {
 		{"WebSearch", "Read"},
 		{"Read", "Bash(openspec:*)"},
 		{"Bash", "Write", "Grep"},
-		{"Read", "Grep", "Glob", "Bash", "MultiEdit"},
+		{"Read", "Grep", "Glob", "Bash", "TodoWrite"},
 	}
 	for _, tools := range mixed {
 		skill := ir.NewSkillWithOptions("demo", "Demo skill", "Body\n", nil, nil, testSource,

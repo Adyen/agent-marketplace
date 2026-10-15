@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"maps"
 	"os"
 	"path/filepath"
@@ -57,7 +58,6 @@ type snapshotLoadedMsg struct {
 	warnings             []error
 	diagnostics          []tuiDiagnostic
 	refreshAfterLoad     bool
-	pendingMigration     migrationPrompt
 }
 
 type reloadMsg snapshotLoadedMsg
@@ -344,7 +344,6 @@ func readSnapshotStaged(ctx context.Context, ws pipeline.Workspace, homeDir stri
 			projectHarnesses:     configHarnesses(resolvedResult.RepoCfg),
 			targetHarnesses:      resolvedResult.TargetHarnesses,
 			targetHarnessSource:  resolvedResult.TargetHarnessSource,
-			pendingMigration:     pendingMigrationFor(repoRoot, ws.LocalConfigDir(), homeDir),
 			driftAssessment:      driftFailed,
 			refreshAfterLoad:     resolvedResult.CatalogLoad.RefreshAfterLoad,
 		}
@@ -356,7 +355,13 @@ func readSnapshotStaged(ctx context.Context, ws pipeline.Workspace, homeDir stri
 			if issue.Severity == pipeline.IssueError {
 				severity = diagnosticError
 			}
-			base.diagnostics = appendSnapshotDiagnostics(base.diagnostics, severity, diagnosticCategoryFor(issue.Category), issue.Err)
+			err := issue.Err
+			if issue.Category == pipeline.IssueCatalog && errors.Is(err, cache.ErrExactGitSnapshotUnavailable) {
+				severity = diagnosticWarning
+				err = fmt.Errorf("locked exact snapshot is not cached; press s to sync or run agent-marketplace sync --locked: %w", err)
+				slog.Debug("TUI exact snapshot requires synchronization", "diagnostic", "lock.snapshot-unavailable")
+			}
+			base.diagnostics = appendSnapshotDiagnostics(base.diagnostics, severity, diagnosticCategoryFor(issue.Category), err)
 		}
 		base.diagnostics = deduplicateDiagnostics(base.diagnostics)
 		base.errs = diagnosticValues(base.diagnostics, diagnosticError)

@@ -1,6 +1,7 @@
 package config
 
 import (
+	"bytes"
 	"fmt"
 	"io/fs"
 	"os"
@@ -54,7 +55,6 @@ type LayerCandidate struct {
 	Bytes   []byte
 	Mode    fs.FileMode
 	Changed bool
-	Legacy  bool
 }
 
 type LayerEditor struct {
@@ -66,13 +66,10 @@ type LayerEditor struct {
 	mode             fs.FileMode
 	doc              *yaml.Node
 	root             *yaml.Node
-	legacy           bool
 	loaded           *V4Config
 	changed          bool
 	addedV4          map[string]v4EditIdentity
 	bindings         map[string]SourceBinding
-	legacyNodes      map[string]*yaml.Node
-	includedFiles    []*Config
 	rendered         *V4Config
 }
 
@@ -98,6 +95,9 @@ func OpenLayerEditor(target LayerTarget) (*LayerEditor, error) {
 	if err != nil {
 		return nil, fmt.Errorf("read staged config %q: %w", target.StagedPath, err)
 	}
+	if data == nil {
+		data = []byte{}
+	}
 	canonical, err := canonicalConfigPathTolerateMissing(target.DeclaringPath)
 	if err != nil {
 		return nil, err
@@ -121,30 +121,19 @@ func OpenLayerEditor(target LayerTarget) (*LayerEditor, error) {
 		root:             root,
 		bindings:         map[string]SourceBinding{},
 	}
-	if PeekAPIVersion(data) == APIVersionV4 {
-		loaded, err := loadV4TreeWithOverlays(target.DeclaringPath, true, map[string]bool{}, nil, data, organizationPath, kind)
-		if err != nil {
-			return nil, err
-		}
-		if err := loaded.validateLayerFields(kind); err != nil {
-			return nil, err
-		}
-		editor.loaded = loaded
-		return editor, nil
-	}
-	editor.legacy = true
-	_, files, err := loadConfigTreeFromRootDataWithFiles(canonical, data, kind)
+	loaded, err := loadV4TreeWithOverlays(target.DeclaringPath, true, map[string]bool{}, nil, data, organizationPath, kind)
 	if err != nil {
 		return nil, err
 	}
-	if len(files) > 0 {
-		editor.includedFiles = files[:len(files)-1]
+	if err := loaded.validateLayerFields(kind); err != nil {
+		return nil, err
 	}
+	editor.loaded = loaded
 	return editor, nil
 }
 
 func (e *LayerEditor) Render() (LayerCandidate, error) {
-	candidate := LayerCandidate{Mode: e.mode, Legacy: e.legacy}
+	candidate := LayerCandidate{Mode: e.mode}
 	if !e.changed {
 		candidate.Bytes = append([]byte(nil), e.original...)
 		return candidate, nil
@@ -153,29 +142,20 @@ func (e *LayerEditor) Render() (LayerCandidate, error) {
 	if err != nil {
 		return LayerCandidate{}, err
 	}
-	if e.legacy {
-		if _, err := loadConfigTreeFromRootData(e.canonical, data, e.kind); err != nil {
-			return LayerCandidate{}, err
-		}
-	} else {
-		loaded, err := loadV4TreeWithOverlays(e.target.DeclaringPath, true, map[string]bool{}, nil, data, e.organizationPath, e.kind)
-		if err != nil {
-			return LayerCandidate{}, err
-		}
-		if err := loaded.validateLayerFields(e.kind); err != nil {
-			return LayerCandidate{}, err
-		}
-		e.rendered = loaded
+	loaded, err := loadV4TreeWithOverlays(e.target.DeclaringPath, true, map[string]bool{}, nil, data, e.organizationPath, e.kind)
+	if err != nil {
+		return LayerCandidate{}, err
 	}
+	if err := loaded.validateLayerFields(e.kind); err != nil {
+		return LayerCandidate{}, err
+	}
+	e.rendered = loaded
 	candidate.Bytes = append([]byte(nil), data...)
-	candidate.Changed = true
+	candidate.Changed = !bytes.Equal(data, e.original)
 	return candidate, nil
 }
 
 func (e *LayerEditor) RenderedV4() *V4Config {
-	if e.legacy {
-		return nil
-	}
 	if e.rendered != nil {
 		return e.rendered
 	}
@@ -204,13 +184,13 @@ func registryEntryKind(entry RegistryEntry) V4SourceKind {
 	return V4SourceGit
 }
 
-func (e *LayerEditor) occupiedSourceNames() map[string]v4MigrationSource {
-	occupied := make(map[string]v4MigrationSource, len(e.loaded.Sources)+len(e.addedV4))
+func (e *LayerEditor) occupiedSourceNames() map[string]struct{} {
+	occupied := make(map[string]struct{}, len(e.loaded.Sources)+len(e.addedV4))
 	for name := range e.loaded.Sources {
-		occupied[name] = v4MigrationSource{}
+		occupied[name] = struct{}{}
 	}
 	for name := range e.addedV4 {
-		occupied[name] = v4MigrationSource{}
+		occupied[name] = struct{}{}
 	}
 	return occupied
 }
@@ -223,7 +203,7 @@ func (e *LayerEditor) checkBinding(binding SourceBinding) error {
 }
 
 func (e *LayerEditor) normalizeRegistryEntry(entry RegistryEntry, create bool) (RegistryEntry, V4SourceKind, error) {
-	if !e.legacy && registryEntryKind(entry) == V4SourceGit {
+	if registryEntryKind(entry) == V4SourceGit {
 		normalized, err := v4GitOriginForEdit(entry.URL, e.target.DeclaringPath, e.kind)
 		if err != nil {
 			return RegistryEntry{}, "", err
@@ -241,9 +221,6 @@ func (e *LayerEditor) ensureRegistry(entry RegistryEntry, create bool) (SourceBi
 	entry, kind, err := e.normalizeRegistryEntry(entry, create)
 	if err != nil {
 		return SourceBinding{}, err
-	}
-	if e.legacy {
-		return e.ensureLegacyRegistry(entry, kind, create)
 	}
 	return e.ensureV4Registry(entry, kind, create)
 }
@@ -268,10 +245,8 @@ func (e *LayerEditor) validateRegistryEntry(entry RegistryEntry, create bool) (V
 		if err := giturl.ValidateRef(strings.TrimSpace(entry.Ref)); err != nil {
 			return "", v4err("v4.edit-source", "registry.ref", 0, "%v", err)
 		}
-		if !e.legacy {
-			if err := validateV4GitOrigin(strings.TrimSpace(entry.URL)); err != nil {
-				return "", v4err("v4.edit-source", "registry.url", 0, "%v", err)
-			}
+		if err := validateV4GitOrigin(strings.TrimSpace(entry.URL)); err != nil {
+			return "", v4err("v4.edit-source", "registry.url", 0, "%v", err)
 		}
 	}
 	if harness := strings.TrimSpace(entry.SourceHarness); harness != "" {
@@ -300,7 +275,7 @@ func v4GitOriginForEdit(raw, declaringPath string, kind layerKind) (string, erro
 		expanded = filepath.Join(home, expanded[2:])
 	}
 	if !filepath.IsAbs(expanded) {
-		expanded = filepath.Join(legacyLocalBase(declaringPath, kind), expanded)
+		expanded = filepath.Join(layerDirectoryBase(declaringPath, kind), expanded)
 	}
 	absolute, err := filepath.Abs(expanded)
 	if err != nil {
@@ -348,7 +323,7 @@ func (e *LayerEditor) ensureV4Registry(entry RegistryEntry, kind V4SourceKind, c
 		if !create {
 			return SourceBinding{}, nil
 		}
-		name := v4MigrationRegistrySourceName(e.occupiedSourceNames(), entry.URL)
+		name := registrySourceName(e.occupiedSourceNames(), entry.URL)
 		if err := addV4EditSource(e.root, name, entry, identity, kind); err != nil {
 			return SourceBinding{}, err
 		}
@@ -376,116 +351,6 @@ func v4BindingEntry(entry RegistryEntry, identity v4EditIdentity, kind V4SourceK
 	return RegistryEntry{URL: strings.TrimSpace(entry.URL), Ref: strings.TrimSpace(entry.Ref), Path: NormalizeRegistryPath(entry.Path), SourceHarness: strings.TrimSpace(entry.SourceHarness), V4Kind: V4SourceGit}
 }
 
-func (e *LayerEditor) ensureLegacyRegistry(entry RegistryEntry, kind V4SourceKind, create bool) (SourceBinding, error) {
-	bound := RegistryEntry{URL: strings.TrimSpace(entry.URL), Ref: strings.TrimSpace(entry.Ref), Path: NormalizeRegistryPath(entry.Path), SourceHarness: strings.TrimSpace(entry.SourceHarness), V4Kind: kind}
-	if kind == V4SourceDirectory {
-		localPath, err := entry.ResolveLocalPath(legacyLocalBase(e.target.DeclaringPath, e.kind))
-		if err != nil {
-			return SourceBinding{}, v4err("config.edit.unsafe-directory", e.target.DeclaringPath, 0, "%v", err)
-		}
-		bound.URL = entry.BundlePath(localPath)
-	}
-	_, seq := findTopLevelSequence(e.root, "registries")
-	if seq != nil && seq.Kind == yaml.SequenceNode {
-		var physical, exact []*yaml.Node
-		for _, item := range seq.Content {
-			if item.Kind != yaml.MappingNode || !legacyEntryNodePhysicalMatches(item, entry) {
-				continue
-			}
-			physical = append(physical, item)
-			if legacyEntryNodeHarness(item) == strings.TrimSpace(entry.SourceHarness) {
-				exact = append(exact, item)
-			}
-		}
-		var item *yaml.Node
-		switch {
-		case len(exact) == 1:
-			item = exact[0]
-		case len(exact) > 1 || len(physical) > 1:
-			return SourceBinding{}, v4err("config.edit.ambiguous-source", e.target.DeclaringPath, 0, "registry identity matches multiple occurrences")
-		case len(physical) == 1:
-			item = physical[0]
-		}
-		if item != nil {
-			return e.issueLegacyBinding(item, bound), nil
-		}
-	}
-	if !create {
-		return SourceBinding{}, nil
-	}
-	if err := validateRegistryWrite(e.target.DeclaringPath, entry); err != nil {
-		return SourceBinding{}, err
-	}
-	registries, err := ensureTopLevelSequence(e.root, "registries")
-	if err != nil {
-		return SourceBinding{}, fmt.Errorf("update config %q: %w", e.target.DeclaringPath, err)
-	}
-	item := legacySourceEntryNode(entry)
-	registries.Content = append(registries.Content, item)
-	e.changed = true
-	return e.issueLegacyBinding(item, bound), nil
-}
-
-func (e *LayerEditor) issueLegacyBinding(item *yaml.Node, bound RegistryEntry) SourceBinding {
-	id := fmt.Sprintf("legacy:%p", item)
-	binding := SourceBinding{Entry: bound, id: id, root: true}
-	e.bindings[id] = binding
-	if e.legacyNodes == nil {
-		e.legacyNodes = map[string]*yaml.Node{}
-	}
-	e.legacyNodes[id] = item
-	return binding
-}
-
-func legacyEntryNodePhysicalMatches(item *yaml.Node, entry RegistryEntry) bool {
-	urlNode := findRegistryURLNode(item)
-	if urlNode == nil || NormalizeGitURL(strings.TrimSpace(urlNode.Value)) != NormalizeGitURL(strings.TrimSpace(entry.URL)) {
-		return false
-	}
-	if NormalizeRegistryPath(yamlEntryPath(item)) != NormalizeRegistryPath(entry.Path) {
-		return false
-	}
-	if strings.TrimSpace(entry.Ref) != "" {
-		refNode := findMappingValue(item, "ref")
-		if refNode == nil || strings.TrimSpace(refNode.Value) != strings.TrimSpace(entry.Ref) {
-			return false
-		}
-	}
-	return true
-}
-
-func legacyEntryNodeHarness(item *yaml.Node) string {
-	if harnessNode := findMappingValue(item, "source_harness"); harnessNode != nil {
-		return strings.TrimSpace(harnessNode.Value)
-	}
-	return ""
-}
-
-func legacySourceEntryNode(entry RegistryEntry) *yaml.Node {
-	str := func(v string) *yaml.Node {
-		return &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: v}
-	}
-	item := &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
-	item.Content = append(item.Content, str("url"), str(strings.TrimSpace(entry.URL)))
-	if ref := strings.TrimSpace(entry.Ref); ref != "" {
-		item.Content = append(item.Content, str("ref"), str(ref))
-	}
-	if p := strings.TrimSpace(entry.Path); p != "" {
-		item.Content = append(item.Content, str("path"), str(p))
-	}
-	if h := strings.TrimSpace(entry.SourceHarness); h != "" {
-		item.Content = append(item.Content, str("source_harness"), str(h))
-	}
-	if len(entry.Harnesses) > 0 {
-		seq := &yaml.Node{Kind: yaml.SequenceNode, Tag: "!!seq"}
-		for _, h := range entry.Harnesses {
-			seq.Content = append(seq.Content, str(h))
-		}
-		item.Content = append(item.Content, str("harnesses"), seq)
-	}
-	return item
-}
-
 func (e *LayerEditor) Apply(binding SourceBinding, change SelectionChange) error {
 	if err := e.checkBinding(binding); err != nil {
 		return err
@@ -507,9 +372,6 @@ func (e *LayerEditor) Apply(binding SourceBinding, change SelectionChange) error
 	if err != nil {
 		return err
 	}
-	if e.legacy {
-		return e.applyLegacy(binding, op, locators, change.Tag)
-	}
 	return e.applyV4(binding, op, locators, change.Tag)
 }
 
@@ -518,11 +380,7 @@ func (e *LayerEditor) validateLocators(binding SourceBinding, input []ResourceLo
 	out := make([]ResourceLocator, 0, len(input))
 	for _, l := range input {
 		key := v4ResourceKindName(l.Kind) + "/" + l.Name
-		if e.legacy {
-			if skill.ConfigKeyForKind(l.Kind) == "" || strings.TrimSpace(l.Name) == "" {
-				return nil, v4err("v4.locator", "registries", 0, "invalid resource locator %q", key)
-			}
-		} else if _, _, _, err := parseV4Locator(key, binding.Name); err != nil {
+		if _, _, _, err := parseV4Locator(key, binding.Name); err != nil {
 			return nil, v4err("v4.locator", "resources."+binding.Name, 0, "%v", err)
 		}
 		if seen[key] {
@@ -769,7 +627,7 @@ func (e *LayerEditor) v4ApplyClearExclude(name string, group *yaml.Node, locator
 			removals = append(removals, locator)
 			continue
 		}
-		if v4EditLoadedSelectionSuppressed(loadedGroup, locator, e.canonical, false) {
+		if exclude != nil && v4EditSequenceHasWildcard(exclude, l.Kind, l.Name) || v4EditLoadedSelectionSuppressed(loadedGroup, locator, e.canonical, true) {
 			return v4err("v4.edit-exclusion", "resources."+name+".exclude", 0, "an inherited or wildcard exclusion still suppresses %q", locator)
 		}
 	}
@@ -862,143 +720,7 @@ func (e *LayerEditor) v4ApplyTag(name string, group *yaml.Node, tag string) erro
 	return nil
 }
 
-func (e *LayerEditor) applyLegacy(binding SourceBinding, op SelectionOperation, locators []ResourceLocator, tag string) error {
-	entryNode := e.legacyNodes[binding.id]
-	if entryNode == nil {
-		return v4err("config.edit.invalid-binding", e.target.DeclaringPath, 0, "source binding was not issued by this editor")
-	}
-	changed := false
-	for _, l := range locators {
-		key := skill.ConfigKeyForKind(l.Kind)
-		switch op {
-		case SelectionInclude:
-			if kindMap := findMappingValue(entryNode, key); kindMap != nil && kindMap.Kind == yaml.MappingNode {
-				if _, exc := findEntrySequence(kindMap, "exclude"); exc != nil {
-					changed = legacySeqRemove(exc, l.Name) || changed
-				}
-			}
-			if entryNodeAutoSelectsKind(entryNode, l.Kind) {
-				continue
-			}
-			kindMap := ensureEntryMapping(entryNode, key)
-			if kindMap == nil {
-				return fmt.Errorf("update config %q: registry has invalid %q selector type", e.target.DeclaringPath, key)
-			}
-			inc, err := ensureMappingSequence(kindMap, "include")
-			if err != nil {
-				return fmt.Errorf("update config %q: %w", e.target.DeclaringPath, err)
-			}
-			changed = legacySeqAppend(inc, l.Name) || changed
-			if boolMappingValue(entryNode, "exclude_all") || boolMappingValue(kindMap, "exclude_all") {
-				clearEntryExcludeAll(entryNode, key)
-				changed = true
-			}
-		case SelectionExclude:
-			kindMap := ensureEntryMapping(entryNode, key)
-			if kindMap == nil {
-				return fmt.Errorf("update config %q: registry has invalid %q selector type", e.target.DeclaringPath, key)
-			}
-			if _, inc := findEntrySequence(kindMap, "include"); inc != nil {
-				changed = legacySeqRemove(inc, l.Name) || changed
-			}
-			exc, err := ensureMappingSequence(kindMap, "exclude")
-			if err != nil {
-				return fmt.Errorf("update config %q: %w", e.target.DeclaringPath, err)
-			}
-			changed = legacySeqAppend(exc, l.Name) || changed
-		case SelectionRemoveInclude:
-			changed = legacyKindSeqRemove(entryNode, key, "include", l.Name) || changed
-		case SelectionClearExclude:
-			changed = legacyKindSeqRemove(entryNode, key, "exclude", l.Name) || changed
-		}
-	}
-	switch op {
-	case SelectionSelectAll:
-		if !boolMappingValue(entryNode, "default") {
-			setMappingValue(entryNode, "default", &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!bool", Value: "true"})
-			changed = true
-		}
-		if findMappingValue(entryNode, "exclude_all") != nil {
-			removeMappingKeyByName(entryNode, "exclude_all")
-			changed = true
-		}
-	case SelectionExcludeAll:
-		changed = clearEntrySelectionsForExcludeAll(entryNode) || changed
-		changed = removeMappingKeyByName(entryNode, "tags") || changed
-		if !boolMappingValue(entryNode, "exclude_all") {
-			setMappingValue(entryNode, "exclude_all", &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!bool", Value: "true"})
-			changed = true
-		}
-	case SelectionAddTag:
-		seq := findMappingValue(entryNode, "tags")
-		if seq == nil {
-			seq = &yaml.Node{Kind: yaml.SequenceNode, Tag: "!!seq"}
-			setMappingValue(entryNode, "tags", seq)
-		}
-		if seq.Kind != yaml.SequenceNode {
-			return fmt.Errorf("update config %q: expected %q to be a sequence", e.target.DeclaringPath, "tags")
-		}
-		changed = legacySeqAppend(seq, tag) || changed
-	}
-	if changed {
-		e.changed = true
-	}
-	return nil
-}
-
-func legacyKindSeqRemove(entryNode *yaml.Node, kindKey, subKey, value string) bool {
-	kindMap := findMappingValue(entryNode, kindKey)
-	if kindMap == nil {
-		return false
-	}
-	if kindMap.Kind == yaml.SequenceNode {
-		if subKey == "include" {
-			return legacySeqRemoveAll(kindMap, value)
-		}
-		return false
-	}
-	if kindMap.Kind != yaml.MappingNode {
-		return false
-	}
-	_, seq := findEntrySequence(kindMap, subKey)
-	if seq == nil || seq.Kind != yaml.SequenceNode {
-		return false
-	}
-	return legacySeqRemoveAll(seq, value)
-}
-
-func legacySeqRemove(seq *yaml.Node, value string) bool {
-	for i, item := range seq.Content {
-		if item.Kind == yaml.ScalarNode && strings.TrimSpace(item.Value) == value {
-			seq.Content = append(seq.Content[:i], seq.Content[i+1:]...)
-			return true
-		}
-	}
-	return false
-}
-
-func legacySeqRemoveAll(seq *yaml.Node, value string) bool {
-	removed := false
-	for legacySeqRemove(seq, value) {
-		removed = true
-	}
-	return removed
-}
-
-func legacySeqAppend(seq *yaml.Node, value string) bool {
-	for _, item := range seq.Content {
-		if item.Kind == yaml.ScalarNode && strings.TrimSpace(item.Value) == value {
-			return false
-		}
-	}
-	seq.Content = append(seq.Content, &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: value})
-	return true
-}
-
 func (e *LayerEditor) ClearInstallExclude(entry RegistryEntry, locator ResourceLocator) error {
-	if e.legacy {
-		return e.ClearUnboundExclude(locator)
-	}
 	binding, found, err := e.LookupRegistry(entry)
 	if err != nil || !found {
 		return err
@@ -1006,129 +728,11 @@ func (e *LayerEditor) ClearInstallExclude(entry RegistryEntry, locator ResourceL
 	return e.Apply(binding, SelectionChange{Operation: SelectionClearExclude, Locators: []ResourceLocator{locator}})
 }
 
-func (e *LayerEditor) ClearUnboundExclude(locator ResourceLocator) error {
-	key := skill.ConfigKeyForKind(locator.Kind)
-	name := strings.TrimSpace(locator.Name)
-	if key == "" || name == "" {
-		return v4err("v4.locator", "registries", 0, "invalid resource locator %q", v4ResourceKindName(locator.Kind)+"/"+locator.Name)
-	}
-	if !e.legacy {
-		return nil
-	}
-	kindMap := findMappingValue(e.root, key)
-	if kindMap == nil || kindMap.Kind != yaml.MappingNode {
-		return nil
-	}
-	_, seq := findEntrySequence(kindMap, "exclude")
-	if seq == nil || seq.Kind != yaml.SequenceNode {
-		return nil
-	}
-	if !legacySeqRemoveAll(seq, name) {
-		return nil
-	}
-	if len(seq.Content) == 0 {
-		removeMappingKeyByName(kindMap, "exclude")
-	}
-	if len(kindMap.Content) == 0 {
-		removeMappingKeyByName(e.root, key)
-	}
-	e.changed = true
-	return nil
-}
-
-func (e *LayerEditor) RemoveUnboundInclude(locator ResourceLocator) error {
-	key := skill.ConfigKeyForKind(locator.Kind)
-	name := strings.TrimSpace(locator.Name)
-	if key == "" || name == "" {
-		return v4err("v4.locator", "registries", 0, "invalid resource locator %q", v4ResourceKindName(locator.Kind)+"/"+locator.Name)
-	}
-	if !e.legacy {
-		return nil
-	}
-	kindMap := findMappingValue(e.root, key)
-	if kindMap == nil {
-		return nil
-	}
-	if kindMap.Kind == yaml.SequenceNode {
-		if !legacySeqRemoveAll(kindMap, name) {
-			return nil
-		}
-		if len(kindMap.Content) == 0 {
-			removeMappingKeyByName(e.root, key)
-		}
-		e.changed = true
-		return nil
-	}
-	if kindMap.Kind != yaml.MappingNode {
-		return nil
-	}
-	_, seq := findEntrySequence(kindMap, "include")
-	if seq == nil || seq.Kind != yaml.SequenceNode {
-		return nil
-	}
-	if !legacySeqRemoveAll(seq, name) {
-		return nil
-	}
-	if len(seq.Content) == 0 {
-		removeMappingKeyByName(kindMap, "include")
-	}
-	if len(kindMap.Content) == 0 {
-		removeMappingKeyByName(e.root, key)
-	}
-	e.changed = true
-	return nil
-}
-
-func (e *LayerEditor) UnboundIncludeInherited(locator ResourceLocator) (bool, error) {
-	key := skill.ConfigKeyForKind(locator.Kind)
-	name := strings.TrimSpace(locator.Name)
-	if key == "" || name == "" {
-		return false, v4err("v4.locator", "registries", 0, "invalid resource locator %q", v4ResourceKindName(locator.Kind)+"/"+locator.Name)
-	}
-	if !e.legacy {
-		return false, nil
-	}
-	for _, file := range e.includedFiles {
-		for _, selected := range file.SelectorForKind(locator.Kind).Include {
-			if strings.TrimSpace(selected) == name {
-				return true, nil
-			}
-		}
-	}
-	return false, nil
-}
-
-func (e *LayerEditor) SetUnboundExclude(locator ResourceLocator) error {
-	key := skill.ConfigKeyForKind(locator.Kind)
-	name := strings.TrimSpace(locator.Name)
-	if key == "" || name == "" {
-		return v4err("v4.locator", "registries", 0, "invalid resource locator %q", v4ResourceKindName(locator.Kind)+"/"+locator.Name)
-	}
-	if !e.legacy {
-		return v4err("config.edit.unsupported-operation", e.target.DeclaringPath, 0, "v4 has no source-free selector for %q", v4ResourceKindName(locator.Kind)+"/"+name)
-	}
-	kindMap := ensureEntryMapping(e.root, key)
-	if kindMap == nil {
-		return fmt.Errorf("update config %q: top-level %q selector has invalid type", e.target.DeclaringPath, key)
-	}
-	seq, err := ensureMappingSequence(kindMap, "exclude")
-	if err != nil {
-		return fmt.Errorf("update config %q: %w", e.target.DeclaringPath, err)
-	}
-	if legacySeqAppend(seq, name) {
-		e.changed = true
-	}
-	return nil
-}
-
 func (e *LayerEditor) SetLayerExclude(locator ResourceLocator, entries []RegistryEntry) error {
 	key := skill.ConfigKeyForKind(locator.Kind)
 	name := strings.TrimSpace(locator.Name)
 	if key == "" || name == "" {
 		return v4err("v4.locator", "registries", 0, "invalid resource locator %q", v4ResourceKindName(locator.Kind)+"/"+locator.Name)
-	}
-	if e.legacy {
-		return e.SetUnboundExclude(locator)
 	}
 	if len(entries) == 0 {
 		return v4err("config.edit.unsupported-operation", e.target.DeclaringPath, 0, "v4 has no source-free selector for %q", v4ResourceKindName(locator.Kind)+"/"+name)
@@ -1163,25 +767,6 @@ func (e *LayerEditor) RemoveSource(binding SourceBinding) error {
 	}
 	if !binding.root {
 		return v4err("config.edit.include-owned", e.target.DeclaringPath, 0, "source %q is declared in an included fragment", binding.Name)
-	}
-	if e.legacy {
-		keyIndex, seq := findTopLevelSequence(e.root, "registries")
-		if seq == nil || seq.Kind != yaml.SequenceNode {
-			return nil
-		}
-		target := e.legacyNodes[binding.id]
-		for i, item := range seq.Content {
-			if item != target {
-				continue
-			}
-			seq.Content = append(seq.Content[:i], seq.Content[i+1:]...)
-			e.changed = true
-			break
-		}
-		if e.changed && len(seq.Content) == 0 && keyIndex >= 0 {
-			removeTopLevelKey(e.root, keyIndex)
-		}
-		return nil
 	}
 	changed := false
 	if sources := findMappingValue(e.root, "sources"); sources != nil && sources.Kind == yaml.MappingNode {

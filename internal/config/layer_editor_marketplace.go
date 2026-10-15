@@ -34,9 +34,6 @@ func (e *LayerEditor) marketplaceSourceBinding(name string) SourceBinding {
 }
 
 func (e *LayerEditor) LookupMarketplaceSource(marketplaceURL string) (SourceBinding, bool, error) {
-	if e.legacy {
-		return SourceBinding{}, false, v4err("config.edit.unsupported-operation", e.target.DeclaringPath, 0, "Marketplace endpoints require a v4 configuration layer")
-	}
 	canonical, err := NormalizeMarketplaceURL(marketplaceURL)
 	if err != nil {
 		return SourceBinding{}, false, err
@@ -53,9 +50,6 @@ func (e *LayerEditor) LookupMarketplaceSource(marketplaceURL string) (SourceBind
 }
 
 func (e *LayerEditor) EnsureMarketplaceSource(marketplaceURL string) (SourceBinding, error) {
-	if e.legacy {
-		return SourceBinding{}, v4err("config.edit.unsupported-operation", e.target.DeclaringPath, 0, "Marketplace endpoints require a v4 configuration layer")
-	}
 	canonical, err := NormalizeMarketplaceURL(marketplaceURL)
 	if err != nil {
 		return SourceBinding{}, err
@@ -66,7 +60,7 @@ func (e *LayerEditor) EnsureMarketplaceSource(marketplaceURL string) (SourceBind
 		return SourceBinding{}, v4err("config.edit.ambiguous-source", e.target.DeclaringPath, 0, "Marketplace endpoint matches multiple sources: %s", strings.Join(matches, ", "))
 	}
 	if len(matches) == 0 {
-		name := v4MigrationMarketplaceSourceName(e.occupiedSourceNames(), "")
+		name := uniqueSourceName(e.occupiedSourceNames(), "marketplace")
 		sources, err := ensureV4EditMapping(e.root, "sources")
 		if err != nil {
 			return SourceBinding{}, err
@@ -101,7 +95,7 @@ func marketplacePinV4Request(pin MarketplaceResourcePin) (v4MarketplaceRequest, 
 	if pin.RegistrySlug == "" {
 		return v4MarketplaceRequest{}, false, v4err("v4.registry-slug", "resources", 0, "Marketplace request requires a verified registry slug")
 	}
-	locator := pin.RegistrySlug + "/" + v4MigrationMarketplaceKind(pin.Kind) + "/" + pin.Name
+	locator := pin.RegistrySlug + "/" + marketplaceKindName(pin.Kind) + "/" + pin.Name
 	if _, _, _, err := parseV4Locator(locator, "resources"); err != nil {
 		return v4MarketplaceRequest{}, false, v4err("v4.locator", locator, 0, "%v", err)
 	}
@@ -161,9 +155,6 @@ func v4MarketplaceItemMatches(item *yaml.Node, request v4MarketplaceRequest) (bo
 }
 
 func (e *LayerEditor) IncludeMarketplacePins(binding SourceBinding, pins []MarketplaceResourcePin) error {
-	if e.legacy {
-		return v4err("config.edit.unsupported-operation", e.target.DeclaringPath, 0, "Marketplace endpoints require a v4 configuration layer")
-	}
 	if err := e.checkBinding(binding); err != nil {
 		return err
 	}
@@ -212,6 +203,9 @@ func (e *LayerEditor) IncludeMarketplacePins(binding SourceBinding, pins []Marke
 			if v4EditSequenceContains(excludes, request.locator) {
 				clearExact = append(clearExact, request.locator)
 			}
+		}
+		if e.v4InheritedSuppression(name, request.locator) {
+			return v4err("v4.edit-exclusion", "resources."+name+".exclude", 0, "an inherited exclusion suppresses %q", request.locator)
 		}
 		conflict := false
 		if includes != nil {
@@ -273,9 +267,6 @@ func (e *LayerEditor) v4MarketplaceResourceGroup(name string) (*yaml.Node, *yaml
 }
 
 func (e *LayerEditor) RemoveMarketplacePins(binding SourceBinding, pins []MarketplaceResourcePin) error {
-	if e.legacy {
-		return v4err("config.edit.unsupported-operation", e.target.DeclaringPath, 0, "Marketplace endpoints require a v4 configuration layer")
-	}
 	if err := e.checkBinding(binding); err != nil {
 		return err
 	}

@@ -4,11 +4,13 @@
 
 ## Installed resources
 
-Skills, commands, and subagent definitions are installed below the scope's
-`.claude` directory. MCP servers are installed at `<repo>/.mcp.json` or
-`~/.claude.json#mcpServers`. Native installation is distinct from compiling a
-plugin bundle. Validation does not register an alternate plugin or inject
-replacement definitions to make discovery succeed.
+Skills, commands, subagent definitions, and hooks are installed below the
+scope's `.claude` directory. Hooks merge into `settings.json` under `hooks`, in
+the native event, matcher-group, and handler-array shape. MCP servers are
+installed at `<repo>/.mcp.json` or `~/.claude.json#mcpServers`. Native
+installation is distinct from compiling a plugin bundle. Validation does not
+register an alternate plugin or inject replacement definitions to make
+discovery succeed.
 
 ## Skills, commands, and subagents: CLI initialization
 
@@ -61,6 +63,19 @@ no fixture connection is established. It then trusts only the disposable
 workspace in its isolated user config and adds only the two fixture server
 names to untracked workspace settings. User-scope MCP entries skip this
 project approval step. Agent Marketplace itself never grants trust.
+
+## Hooks
+
+Repository hooks are in `<repo>/.claude/settings.json#hooks`; user hooks are in
+`~/.claude/settings.json#hooks`. Support files install below the scope's
+`.claude/hook-support/<source>/<hook>/` directory. The fixture checks the
+settings content, preservation of unrelated settings and handwritten hooks, and
+support-file bytes. It does not run Claude through a tool call that would fire
+a hook.
+
+A legacy `.claude/hooks/hooks.json` may remain as a conversion artifact or a
+source layout. During sync migration, only entries already marked
+`_managed_by: agent-marketplace` move from that file; handwritten entries stay.
 
 ## Remaining limits
 

@@ -27,7 +27,7 @@ Would remove 1 marketplace artifact directories
 agent-marketplace gc
 ```
 
-`gc` checks every entry again before it deletes anything, and stops without deleting if that check fails.
+The real run prints the same report with `Removed` instead of `Would remove`, for example `Removed 3 cache entries` and `Removed 1 marketplace artifact directories`. `gc` checks every entry again before it deletes anything, and stops without deleting if that check fails.
 
 ## What `gc` deletes
 

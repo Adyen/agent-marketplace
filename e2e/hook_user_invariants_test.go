@@ -141,6 +141,7 @@ func TestHookInvariantBareRegistryWithClaudeSettingsKeepsResources(t *testing.T)
 	e.AssertExitCode(e.RunAM("sync", "--check"), 0)
 }
 
+// spec: hook-resources/match-all-regex-syncs-like-star
 // `.*` and `*` both select every tool. A hook must produce the same outcome
 // on every target whichever of the two spellings its author used.
 func TestHookInvariantMatchAllRegexMatcherSyncsLikeStar(t *testing.T) {
@@ -183,6 +184,7 @@ func TestHookInvariantMatchAllRegexMatcherSyncsLikeStar(t *testing.T) {
 	}
 }
 
+// spec: hook-resources/refused-sibling-does-not-block-deselection
 // Deselecting a hook removes it even when another selected hook for the
 // same target cannot be represented there.
 func TestHookInvariantRefusedSiblingDoesNotBlockDeselection(t *testing.T) {
@@ -323,6 +325,7 @@ func hookInvariantCommands(t *testing.T, data []byte) []string {
 	return commands
 }
 
+// spec: hook-resources/repository-local-support-paths-survive-teammate-checkout
 // Teammates check a repository out at different paths. A teammate's sync of
 // a healthy committed tree, with an in-repository directory source whose
 // hook ships a support script, must not duplicate the hook, leave it
@@ -394,6 +397,7 @@ func TestHookInvariantTeammateCheckoutPathDoesNotDuplicateHooks(t *testing.T) {
 	}
 }
 
+// spec: hook-resources/handwritten-windsurf-fallback-hooks-remain-active
 // Devin Desktop stops reading the workspace's .windsurf/hooks.json once
 // .devin/hooks.json defines any hook (documented in the native-hook
 // integration design, PR #451, D10). Syncing a Windsurf hook must therefore
@@ -445,11 +449,189 @@ func TestHookInvariantLegacyFileURLWorkingTreeHooksSync(t *testing.T) {
 	e.WriteFile("/repos/working-tree-registry/.claude-plugin/plugin.json", `{"name":"working-tree","version":"1.0.0"}`)
 	e.WriteFile("/repos/working-tree-registry/hooks/hooks.json", fmt.Sprintf(`{"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"echo %s"}]}]}}`, token))
 	e.MustRun(fmt.Sprintf(`cd %q && git init -q -b main && git add -A && git -c user.name='E2E Test' -c user.email='e2e@test.local' commit -q -m seed`, checkout))
-	e.WriteRepoConfig(fmt.Sprintf("apiVersion: agent-marketplace/v2\nharnesses: [claude]\nregistries:\n  - url: file://%s\n    ref: main\n    hooks: [PreToolUse-command]\n", checkout))
+	e.WriteRepoConfig(fmt.Sprintf("apiVersion: agent-marketplace/v4\nharnesses: [claude]\nsources: {team: {git: 'file://%s', ref: main}}\nresources: {team: {include: [hook/PreToolUse-command]}}\n", checkout))
 
 	e.AssertExitCode(e.RunAM("sync"), 0)
 	if got := hookInvariantCount(t, e.workspace, hookInvariantHookFiles("claude", false), token); got != 1 {
 		t.Errorf("hook from a file:// working tree installed %d times, want 1", got)
+	}
+}
+
+type windsurfHookFixture struct {
+	Command          string `json:"command"`
+	WorkingDirectory string `json:"working_directory"`
+}
+
+func executeWindsurfHookFixture(e *Env, handler windsurfHookFixture) ([]byte, error) {
+	cwd := handler.WorkingDirectory
+	if cwd == "" {
+		cwd = e.workspace
+	} else if !filepath.IsAbs(cwd) {
+		cwd = filepath.Join(e.workspace, cwd)
+	}
+	cwd, err := filepath.EvalSymlinks(cwd)
+	if err != nil {
+		return nil, err
+	}
+	root, err := filepath.EvalSymlinks(filepath.Dir(e.home))
+	if err != nil {
+		return nil, err
+	}
+	rel, err := filepath.Rel(root, cwd)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return nil, fmt.Errorf("working directory %q is outside fixture sandbox", handler.WorkingDirectory)
+	}
+	ctx, cancel := context.WithTimeout(e.t.Context(), 10*time.Second)
+	defer cancel()
+	command := exec.CommandContext(ctx, "bash", "-c", handler.Command)
+	command.Dir = cwd
+	for _, assignment := range subprocessEnvWithOverrides(e.subprocessEnv(), map[string]string{"CLAUDE_PROJECT_DIR": e.workspace}) {
+		key, _, _ := strings.Cut(assignment, "=")
+		switch key {
+		case "BASH_ENV", "ENV", "POSIXLY_CORRECT", "SHELLOPTS", "BASHOPTS":
+		default:
+			command.Env = append(command.Env, assignment)
+		}
+	}
+	return command.CombinedOutput()
+}
+
+func TestWindsurfHookFixtureUsesNativeExecutionContract(t *testing.T) {
+	t.Parallel()
+	e := newEnv(t)
+	subdir := filepath.Join(e.workspace, "subdir")
+	if err := os.Mkdir(subdir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	outside := t.TempDir()
+	for name, target := range map[string]string{"contained-alias": subdir, "external-alias": outside} {
+		if err := os.Symlink(target, filepath.Join(e.workspace, name)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, tc := range []struct {
+		name    string
+		handler windsurfHookFixture
+		cwd     string
+		refused bool
+	}{
+		{name: "default-repository", handler: windsurfHookFixture{Command: "pwd -P"}, cwd: e.workspace},
+		{name: "relative-directory", handler: windsurfHookFixture{Command: "pwd -P", WorkingDirectory: "subdir"}, cwd: subdir},
+		{name: "contained-alias", handler: windsurfHookFixture{Command: "pwd -P", WorkingDirectory: "contained-alias"}, cwd: subdir},
+		{name: "external-alias-refused", handler: windsurfHookFixture{Command: "pwd -P", WorkingDirectory: "external-alias"}, refused: true},
+		{name: "absolute-home-directory", handler: windsurfHookFixture{Command: "cd . && pwd -P", WorkingDirectory: e.home}, cwd: e.home},
+		{name: "repository-relative-command", handler: windsurfHookFixture{Command: "cd . && pwd -P"}, cwd: e.workspace},
+		{name: "no-operand-cd-reaches-home", handler: windsurfHookFixture{Command: "cd && pwd -P"}, cwd: e.home},
+		{name: "native-bash-not-posix-sh", handler: windsurfHookFixture{Command: "! shopt -qo posix && pwd -P"}, cwd: e.workspace},
+		{name: "outside-sandbox-refused", handler: windsurfHookFixture{Command: "pwd -P", WorkingDirectory: outside}, refused: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			output, err := executeWindsurfHookFixture(e, tc.handler)
+			if tc.refused {
+				if err == nil || !strings.Contains(err.Error(), "outside fixture sandbox") || len(output) != 0 {
+					t.Fatalf("unsafe working directory was not refused before execution: %q / %v", output, err)
+				}
+				return
+			}
+			want, resolveErr := filepath.EvalSymlinks(tc.cwd)
+			if resolveErr != nil {
+				t.Fatal(resolveErr)
+			}
+			if err != nil || strings.TrimSpace(string(output)) != want {
+				t.Fatalf("handler=%+v cwd=%q err=%v; want %q", tc.handler, output, err, want)
+			}
+		})
+	}
+}
+
+func TestWindsurfHookFixtureIgnoresHostShellStartup(t *testing.T) {
+	e := newEnv(t)
+	startup := filepath.Join(e.home, "host-startup.sh")
+	if err := os.WriteFile(startup, []byte("printf 'unexpected-host-startup\\n'\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for key, value := range map[string]string{"BASH_ENV": startup, "ENV": startup, "POSIXLY_CORRECT": "1", "SHELLOPTS": "posix", "BASHOPTS": "extglob"} {
+		t.Setenv(key, value)
+	}
+	output, err := executeWindsurfHookFixture(e, windsurfHookFixture{Command: "! shopt -qo posix && ! shopt -q extglob && pwd -P"})
+	want, resolveErr := filepath.EvalSymlinks(e.workspace)
+	if resolveErr != nil {
+		t.Fatal(resolveErr)
+	}
+	if err != nil || strings.TrimSpace(string(output)) != want {
+		t.Fatalf("host shell settings affected fixture: output=%q err=%v; want %q", output, err, want)
+	}
+}
+
+// spec: hook-resources/whole-word-project-directory-references-keep-the-repository-directory
+func TestHookInvariantProjectDirectoryReferencesKeepRepositoryCWD(t *testing.T) {
+	for _, scope := range []string{"repo", "user"} {
+		for _, mode := range []string{"symlink", "file"} {
+			for _, reference := range []struct{ name, word string }{
+				{"bare", "$CLAUDE_PROJECT_DIR"},
+				{"braced", "${CLAUDE_PROJECT_DIR}"},
+				{"quoted", `"$CLAUDE_PROJECT_DIR"`},
+				{"path-suffix", `"$CLAUDE_PROJECT_DIR"/.`},
+			} {
+				t.Run(scope+"/"+mode+"/"+reference.name, func(t *testing.T) {
+					t.Parallel()
+					e := newEnv(t)
+					e.InitGitRepo()
+					authored := "cd " + reference.word + " && pwd -P"
+					hooks := fmt.Sprintf(`{"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":%q}]}]}}`, authored)
+					registry := hookInvariantRegistry(e, "project-directory", hooks)
+					config := hookInvariantV4Config("windsurf", registry, "hook/PreToolUse-command") + "materialization: {mode: " + mode + "}\n"
+					base := "apiVersion: agent-marketplace/v4\nharnesses: [windsurf]\n"
+					if scope == "user" {
+						e.WriteGlobalConfig(config)
+						e.WriteRepoConfig(base)
+					} else {
+						e.WriteGlobalConfig(base)
+						e.WriteRepoConfig(config)
+					}
+					e.MustRunAM("sync")
+					path := filepath.Join(e.workspace, ".devin", "hooks.json")
+					if scope == "user" {
+						path = filepath.Join(e.home, ".codeium", "windsurf", "hooks.json")
+					}
+					data, err := os.ReadFile(path)
+					if errors.Is(err, os.ErrNotExist) && scope == "repo" {
+						path = filepath.Join(e.workspace, ".windsurf", "hooks.json")
+						data, err = os.ReadFile(path)
+					}
+					if err != nil {
+						t.Fatal(err)
+					}
+					var native struct {
+						Hooks map[string][]windsurfHookFixture `json:"hooks"`
+					}
+					if err := json.Unmarshal(data, &native); err != nil {
+						t.Fatalf("decode active Windsurf hooks: %v", err)
+					}
+					entries := native.Hooks["pre_run_command"]
+					if len(native.Hooks) != 1 || len(entries) != 1 || entries[0].Command == "" {
+						t.Fatalf("expected exactly one executable pre_run_command handler: %s", data)
+					}
+					output, runErr := executeWindsurfHookFixture(e, entries[0])
+					want, err := filepath.EvalSymlinks(e.workspace)
+					if err != nil {
+						t.Fatal(err)
+					}
+					if runErr != nil || strings.TrimSpace(string(output)) != want {
+						t.Fatalf("authored %q became %q: cwd=%q err=%v; want repository %q", authored, entries[0].Command, output, runErr, want)
+					}
+					before, err := pathFingerprint(path)
+					if err != nil {
+						t.Fatal(err)
+					}
+					e.MustRunAM("sync", "--check")
+					e.MustRunAM("sync")
+					if after, err := pathFingerprint(path); err != nil || after != before {
+						t.Fatalf("repeat sync or check changed the active hook: %v", err)
+					}
+				})
+			}
+		}
 	}
 }
 

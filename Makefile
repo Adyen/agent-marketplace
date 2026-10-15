@@ -32,7 +32,7 @@ export GO_BUILD_IMAGE RUNTIME_IMAGE NODE_IMAGE POSTGRES_IMAGE NGINX_IMAGE SITE_N
 PLATFORMS := darwin-arm64 darwin-amd64 linux-amd64 linux-arm64
 DIST_DIR := dist
 
-.PHONY: build test test-full lint ci-lint lint-common tidy version release clean e2e marketplace-gate marketplace-proxy-check upgrade-gate released-client-gate devin-probe tui-qa-check tui-qa tui-qa-contained site-dev site-build site-docs-build secrets-check container container-marketplace container-web container-site container-docs container-check compose-config $(PLATFORMS)
+.PHONY: build test test-full lint ci-lint lint-full lint-common tidy version release clean e2e marketplace-gate marketplace-proxy-check released-client-gate devin-probe tui-qa-check tui-qa tui-qa-contained site-dev site-build site-docs-build secrets-check container container-marketplace container-web container-site container-docs container-check compose-config $(PLATFORMS)
 LINT_BASE ?= origin/main
 
 define run_golangci_lint
@@ -89,15 +89,36 @@ validate-full:
 validate-e2e:
 	CGO_ENABLED=0 HARNESS_COMPAT_TARGET=all HARNESS_COMPAT_NATIVE_MODE=unavailable \
 		HARNESS_COMPAT_NATIVE_REASON="Configuration-only verification; native probes run in CI" \
-		$(GO) -C e2e test -count=1 -timeout 20m ./...
+		$(GO) -C e2e test -json -count=1 -timeout 20m ./... | CGO_ENABLED=0 $(GO) run ./tools/witness-check -require $(E2E_REQUIRED_TESTS)
 	shellcheck tools/harness-compat/*.sh
 
 lint: LINT_MODE=fix
 lint: lint-common
 
+.PHONY: model-catalog-check model-catalog-audit
+model-catalog-audit:
+	CGO_ENABLED=0 $(GO) run ./tools/model-catalog-audit check
+
+model-catalog-check:
+	CGO_ENABLED=0 $(GO) test ./pkg/harness-compilation/modelpolicy -count=1
+	CGO_ENABLED=0 $(GO) test ./pkg/harness-compilation -run 'TestModelPolicy|TestMatrix_Subagent' -count=1
+
+.PHONY: catalog-check catalog-docs
+catalog-docs:
+	CGO_ENABLED=0 $(GO) run ./tools/catalog-docs
+
+catalog-check: model-catalog-check
+	CGO_ENABLED=0 $(GO) test ./pkg/harness-compilation/toolpolicy ./pkg/harness-compilation/hookpolicy -count=1
+	CGO_ENABLED=0 $(GO) test ./tools/catalog-docs -count=1
+	CGO_ENABLED=0 $(GO) test ./pkg/harness-compilation -run 'TestMatrix' -count=1
+	CGO_ENABLED=0 $(GO) run ./tools/catalog-docs -check
+
 ci-lint: LINT_MODE=check
 ci-lint: GOLANGCI_LINT_ARGS=--new-from-rev $(LINT_BASE)
 ci-lint: lint-common
+
+lint-full: LINT_MODE=check
+lint-full: lint-common
 
 lint-common:
 	@if [ "$(LINT_MODE)" = "fix" ]; then \
@@ -244,14 +265,9 @@ marketplace-proxy-check:
 # any of them skipped, failed, or never ran (for example after a rename).
 comma := ,
 # The pinned Go build image ships git; override when Docker Hub is unavailable.
-AM_E2E_UPGRADE_IMAGE ?= $(GO_BUILD_IMAGE)
 AM_E2E_RELEASED_IMAGE ?= $(GO_BUILD_IMAGE)
-UPGRADE_GATE_TESTS := TestPreV4ReleaseUpgrade,TestPreV4GitLockUpgrade,TestPreV4AggregateOwnershipUpgrade,TestPreV4LocalLayerUpgrade,TestPreV4DuplicateRefUpgrade
-RELEASED_CLIENT_GATE_TESTS := TestReleasedClientReadsCandidateCommittedState,TestReleasedClientLockVerifiesNativeHookSourceLayouts,TestReleasedClientHookOutputUpgrades
-
-upgrade-gate:
-	@test -n "$(AM_E2E_PRE_V4_BINARY)" || { echo "ERROR: AM_E2E_PRE_V4_BINARY must point to the verified v3.1.1 Linux release" >&2; exit 1; }
-	AM_E2E_PRE_V4_BINARY="$(abspath $(AM_E2E_PRE_V4_BINARY))" AM_E2E_UPGRADE_IMAGE="$(AM_E2E_UPGRADE_IMAGE)" CGO_ENABLED=0 $(GO) -C e2e test -json -count=1 -timeout 10m -run '^($(subst $(comma),|,$(UPGRADE_GATE_TESTS)))$$' . | CGO_ENABLED=0 $(GO) run ./tools/witness-check -require $(UPGRADE_GATE_TESTS)
+E2E_REQUIRED_TESTS := TestUnsupportedConsumerRootsRefuseBeforeWork,TestUnsupportedConsumerIncludesRefuseBeforeWork,TestUnsupportedConsumerConfigPreventsMissingDestinations
+RELEASED_CLIENT_GATE_TESTS := TestReleasedClientReadsCandidateCommittedState,TestReleasedClientReadsCandidateIsolatedCommittedState,TestReleasedClientLockVerifiesNativeHookSourceLayouts,TestReleasedClientHookOutputUpgrades
 
 released-client-gate:
 	@test -n "$(AM_E2E_RELEASED_BINARY)" || { echo "ERROR: AM_E2E_RELEASED_BINARY must point to the verified latest Linux release" >&2; exit 1; }
@@ -380,9 +396,9 @@ E2E_BUILD_ARGS := --build-arg BASE_IMAGE=$(E2E_BASE_IMAGE)
 endif
 
 e2e:
-	@if [ "$(E2E_SKIP_DOCKER)" = "1" ]; then \
+	@set -e; if [ "$(E2E_SKIP_DOCKER)" = "1" ]; then \
 		echo "Running E2E tests directly on host (E2E_SKIP_DOCKER=1) ..."; \
-		cd e2e && CGO_ENABLED=0 go test -v -count=1 -timeout 20m ./...; \
+		CGO_ENABLED=0 $(GO) -C e2e test -json -count=1 -timeout 20m ./... | CGO_ENABLED=0 $(GO) run ./tools/witness-check -require $(E2E_REQUIRED_TESTS); \
 	else \
 		echo "Building E2E runner image ..."; \
 		docker build -t $(E2E_IMAGE) $(E2E_BUILD_ARGS) -f e2e/Dockerfile.runner .; \
@@ -393,6 +409,7 @@ e2e:
 		docker run --rm \
 			-e E2E_PARALLEL=$${E2E_PARALLEL:-4} \
 			-e E2E_REPORT=/src/e2e/e2e-report.json \
+			-e E2E_REQUIRED_TESTS=$(E2E_REQUIRED_TESTS) \
 			-v $$(pwd)/e2e/e2e-report.json:/src/e2e/e2e-report.json \
-			$(E2E_IMAGE); \
+			$(E2E_IMAGE) sh -c 'go test -json -count=1 -timeout 20m ./... | go -C /src run ./tools/witness-check -require "$$E2E_REQUIRED_TESTS"'; \
 	fi

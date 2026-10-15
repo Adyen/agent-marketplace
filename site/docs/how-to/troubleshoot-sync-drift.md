@@ -40,6 +40,8 @@ To apply the changes, and update a lock that no longer matches the configuration
 agent-marketplace sync
 ```
 
+It prints the `Installed <n>  Removed <n>  Malformed <n>  Errors <n>` summary and, only when sync writes or removes output, a single `→` line listing the output roots it changed, separated by commas.
+
 ## 3. Common causes and fixes
 
 | Symptom | Cause | Fix |
@@ -64,7 +66,7 @@ If a `sync` stopped partway, run a writing `sync` again:
 agent-marketplace sync
 ```
 
-An unfinished change blocks `sync --check`, `sync --locked`, `sync --offline`, and `lock --check` with `dependency.recovery-required`. A writing `sync` or `lock` recovers the unfinished change first.
+The retried run completes the pending work and prints the usual `Installed ... Removed ...` summary. An unfinished change blocks `sync --check`, `sync --locked`, `sync --offline`, and `lock --check` with `dependency.recovery-required`. A writing `sync` or `lock` recovers the unfinished change first.
 
 ## Related documentation
 

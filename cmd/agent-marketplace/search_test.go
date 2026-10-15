@@ -70,10 +70,9 @@ func TestSearchCommandJSONOutput(t *testing.T) {
 	defer server.Close()
 
 	writeConfig(t, filepath.Join(homeDir, ".agents", "config.yaml"), fmt.Sprintf(`
-marketplaces:
-  - url: %s
-    instance_id: mp-public
-    alias: public
+apiVersion: agent-marketplace/v4
+sources:
+  public: {marketplace: %s}
 `, server.URL))
 
 	output, err := executeCommand("search", "--marketplace", "public", "--output", "json", "review")
@@ -122,9 +121,9 @@ func TestSearchCommandWithoutKindReturnsEveryResourceKind(t *testing.T) {
 	defer server.Close()
 
 	writeConfig(t, filepath.Join(homeDir, ".agents", "config.yaml"), fmt.Sprintf(`
-marketplaces:
-  - url: %s
-    instance_id: mp-public
+apiVersion: agent-marketplace/v4
+sources:
+  public: {marketplace: %s}
 `, server.URL))
 
 	output, err := executeCommand("search", "--output", "json", "architect")
@@ -151,7 +150,7 @@ func TestSearchCommandLimitOffsetBounds(t *testing.T) {
 	withWorkingDir(t, t.TempDir())
 	server := searchCommandServer(t, false)
 	defer server.Close()
-	writeConfig(t, filepath.Join(home, ".agents", "config.yaml"), fmt.Sprintf("marketplaces:\n  - url: %s\n    instance_id: mp-public\n    alias: public\n", server.URL))
+	writeConfig(t, filepath.Join(home, ".agents", "config.yaml"), fmt.Sprintf("apiVersion: agent-marketplace/v4\nsources:\n  public: {marketplace: %s}\n", server.URL))
 	positive, err := executeCommand("search", "--marketplace", "public", "--output", "json", "--limit", "1")
 	if err != nil || !strings.Contains(positive, `"name": "review"`) {
 		t.Fatalf("limited search failed to return the fixture: %q, %v", positive, err)
@@ -210,10 +209,9 @@ func TestSearchCommandTableOutput(t *testing.T) {
 	defer server.Close()
 
 	writeConfig(t, filepath.Join(homeDir, ".agents", "config.yaml"), fmt.Sprintf(`
-marketplaces:
-  - url: %s
-    instance_id: mp-public
-    alias: public
+apiVersion: agent-marketplace/v4
+sources:
+  public: {marketplace: %s}
 `, server.URL))
 
 	output, err := executeCommand("search", "--marketplace", "public", "review")
@@ -281,13 +279,10 @@ func TestSearchCommandPartialFailure(t *testing.T) {
 	defer bad.Close()
 
 	writeConfig(t, filepath.Join(homeDir, ".agents", "config.yaml"), fmt.Sprintf(`
-marketplaces:
-  - url: %s
-    instance_id: mp-good
-    alias: good
-  - url: %s
-    instance_id: mp-bad
-    alias: bad
+apiVersion: agent-marketplace/v4
+sources:
+  good: {marketplace: %s}
+  bad: {marketplace: %s}
 `, good.URL, bad.URL))
 
 	output, err := executeCommand("search", "--output", "json", "review")
@@ -316,11 +311,10 @@ func TestSearchCommandAllowlistBlock(t *testing.T) {
 	defer server.Close()
 
 	writeConfig(t, filepath.Join(homeDir, ".agents", "config.yaml"), fmt.Sprintf(`
+apiVersion: agent-marketplace/v4
 allowed_marketplaces: ['^other\.com$']
-marketplaces:
-  - url: %s
-    instance_id: mp-public
-    alias: public
+sources:
+  public: {marketplace: %s}
 `, server.URL))
 
 	output, err := executeCommand("search", "--marketplace", "public", "--output", "json", "review")

@@ -8,14 +8,17 @@ import (
 )
 
 func TestFilesystemPortableManifestPublicationKeepsNoopAndMode(t *testing.T) {
-	for _, version := range []string{"agent-marketplace/v2", "agent-marketplace/v4"} {
-		t.Run(version, func(t *testing.T) {
+	for _, fixture := range []struct{ name, root string }{
+		{"ad-hoc", "apiVersion: agent-marketplace/v4\nmaterialization: {mode: file}\n"},
+		{"configured", "apiVersion: agent-marketplace/v4\nmaterialization: {mode: file}\nsources: {local: {directory: ./vendor/registry}}\nresources: {local: {include: [skill/portable-probe]}}\n"},
+	} {
+		t.Run(fixture.name, func(t *testing.T) {
 			env := newEnv(t)
 			env.InitGitRepo()
 			env.MustRunAM("init", "--harnesses", "factory")
 			source := filepath.Join(env.workspace, "vendor", "registry", "skills", "portable-probe", "SKILL.md")
 			env.WriteFile(source, "---\nname: portable-probe\ndescription: portable\n---\n\noriginal inert content\n")
-			env.WriteRepoConfig("apiVersion: " + version + "\nmaterialization:\n  mode: file\n")
+			env.WriteRepoConfig(fixture.root)
 			env.MustRunAM("install", "portable-probe", "--from", "./vendor/registry", "--scope", "repo")
 			manifest := filepath.Join(env.workspace, ".agents", "materialization-manifest.yaml")
 			if err := os.Chmod(manifest, 0o640); err != nil {

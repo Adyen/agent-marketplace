@@ -207,7 +207,7 @@ func (m *Model) dismissInvalidConfigMutationPane() bool {
 		return false
 	}
 	switch m.pane {
-	case paneToggleModal, paneHarnessModal, paneMigrationModal, paneInitModal, paneBulkToggle:
+	case paneToggleModal, paneHarnessModal, paneInitModal, paneBulkToggle:
 		m.pane = paneList
 		return true
 	case paneMarketplaceConsent:
@@ -320,7 +320,7 @@ func snapshotAcceptanceError(msg snapshotLoadedMsg) error {
 		return errors.Join(hardErrors...)
 	}
 	if msg.driftAssessment != driftReady {
-		return errors.New("authoritative state could not be verified")
+		return errResourceStateUnverified
 	}
 	return nil
 }
@@ -369,7 +369,7 @@ func (m *Model) applySnapshotData(msg snapshotLoadedMsg) {
 }
 
 // Update delegates to update and closes the palette whenever the pane
-// leaves the list, so async snapshot, migration, and consent transitions the
+// leaves the list, so async snapshot and consent transitions the
 // palette cannot intercept never resurrect the overlay or its input.
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	next, cmd := m.update(msg)
@@ -513,14 +513,6 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.applySnapshotStatus(msg)
 		updateCmd := m.finishUpdateReload(msg.generation, snapshotAcceptanceError(msg))
 		syncCmd := m.finishSyncReload(msg.generation, snapshotAcceptanceError(msg))
-		if msg.pendingMigration.hasConfigs() && !m.migrationDismissed {
-			m.applySnapshotData(msg)
-			m.migrationPrompt = msg.pendingMigration
-			m.pane = paneMigrationModal
-			m.refreshing = false
-			m.clearMarketplaceDiscovery(true)
-			return m, tea.Batch(m.finishMarketplaceInstallReload(msg.generation, snapshotAcceptanceError(msg)), updateCmd, syncCmd)
-		}
 		if msg.mergedCfg == nil && len(m.errs) > 0 {
 			m.provisionalRows = nil
 			m.refreshing = false
@@ -547,13 +539,6 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.applySnapshotStatus(msg.snapshotLoadedMsg)
 		updateCmd := m.finishUpdateReload(msg.generation, snapshotAcceptanceError(msg.snapshotLoadedMsg))
 		syncCmd := m.finishSyncReload(msg.generation, snapshotAcceptanceError(msg.snapshotLoadedMsg))
-		if msg.pendingMigration.hasConfigs() && !m.migrationDismissed {
-			m.applySnapshotData(msg.snapshotLoadedMsg)
-			m.migrationPrompt = msg.pendingMigration
-			m.pane = paneMigrationModal
-			m.clearMarketplaceDiscovery(true)
-			return m, tea.Batch(m.finishMarketplaceInstallReload(msg.generation, snapshotAcceptanceError(msg.snapshotLoadedMsg)), updateCmd, syncCmd)
-		}
 		if msg.mergedCfg == nil && len(m.errs) > 0 {
 			m.provisionalRows = nil
 			m.clearMarketplaceDiscovery(true)
@@ -583,13 +568,6 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.applySnapshotStatus(snapshot)
 		updateCmd := m.finishUpdateReload(snapshot.generation, snapshotAcceptanceError(snapshot))
 		syncCmd := m.finishSyncReload(snapshot.generation, snapshotAcceptanceError(snapshot))
-		if snapshot.pendingMigration.hasConfigs() && !m.migrationDismissed {
-			m.applySnapshotData(snapshot)
-			m.migrationPrompt = snapshot.pendingMigration
-			m.pane = paneMigrationModal
-			m.clearMarketplaceDiscovery(true)
-			return m, tea.Batch(m.finishMarketplaceInstallReload(snapshot.generation, snapshotAcceptanceError(snapshot)), updateCmd, syncCmd)
-		}
 		if snapshot.mergedCfg == nil && len(m.errs) > 0 {
 			m.provisionalRows = nil
 			m.clearMarketplaceDiscovery(true)
@@ -814,11 +792,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.snapshot.generation != 0 {
 			m.applySnapshotStatus(msg.snapshot)
 			m.applySnapshotData(msg.snapshot)
-			if msg.snapshot.pendingMigration.hasConfigs() && !m.migrationDismissed {
-				m.migrationPrompt = msg.snapshot.pendingMigration
-				m.pane = paneMigrationModal
-				m.clearMarketplaceDiscovery(true)
-			} else if msg.snapshot.mergedCfg == nil && len(m.errs) > 0 {
+			if msg.snapshot.mergedCfg == nil && len(m.errs) > 0 {
 				m.clearMarketplaceDiscovery(true)
 			}
 		}
@@ -846,22 +820,6 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			installCmd = m.finishMarketplaceInstallReload(msg.generation, snapshotAcceptanceError(msg.snapshot))
 		}
 		return m, tea.Batch(toastExpiryCmd(2*time.Second), installCmd)
-
-	case migrationDoneMsg:
-		if msg.err != nil {
-			m.recordOperationFailure(operationMigration, diagnosticMigration, msg.err)
-			m.migrationPrompt = migrationPrompt{}
-			m.pane = paneList
-			m.pushToast(fmt.Sprintf("v4 migration skipped: %v", msg.err), 5*time.Second)
-			slog.Warn("migration refused; continuing with legacy configuration", "count", msg.count, "err", msg.err)
-			recordControlledErrorSpan(m.ctx, "migrate", msg.err)
-			return m, toastExpiryCmd(5 * time.Second)
-		}
-		m.recordOperationSuccess(operationMigration)
-		m.pushToast(fmt.Sprintf("Migrated %d config file(s)", msg.count), 2*time.Second)
-		m.migrationPrompt = migrationPrompt{}
-		generation := m.beginRequest(requestSnapshot)
-		return m, tea.Batch(loadSnapshot(ctxOrBackground(m.ctx), m.workspace, m.homeDir, generation), toastExpiryCmd(2*time.Second))
 
 	case editConfigPathMsg:
 		if !m.acceptsOperation(msg.operation) {
@@ -1105,8 +1063,6 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 
 	case paneInitModal:
 		return m.handleInitModalKey(msg)
-	case paneMigrationModal:
-		return m.handleMigrationModalKey(msg)
 	case paneHarnessModal:
 		return m.handleHarnessModalKey(msg)
 	case paneEditConfigModal:
@@ -1957,8 +1913,6 @@ func (m Model) viewContent() string {
 		modal = renderToggleModal(m)
 	case paneInitModal:
 		modal = renderInitModal(m)
-	case paneMigrationModal:
-		modal = renderMigrationModal(m)
 	case paneHarnessModal:
 		modal = renderHarnessModal(m)
 	case paneEditConfigModal:

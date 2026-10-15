@@ -4,13 +4,17 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 
 	"github.com/Adyen/agent-marketplace/internal/config"
+	"github.com/Adyen/agent-marketplace/internal/ownership"
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/jsonc"
 )
 
 // spec: hook-native-independent-satisfaction/independent-clients-recognize-complete-repository-projection
@@ -38,6 +42,7 @@ func TestSyncIndependentNativeHookPreservesCommittedLock(t *testing.T) {
 	sourceKey := syncIndependentNativeSourceKey(registryOrigin, sourceURL)
 	_, repoRoot := createBareRepoWithWorkingClone(t, "independent-native-consumer.git")
 	configPath := filepath.Join(repoRoot, ".agents", "config.yaml")
+	lockPath := filepath.Join(repoRoot, ".agents", "lock.yaml")
 	configBody := fmt.Sprintf(`apiVersion: agent-marketplace/v4
 harnesses: [factory]
 sources:
@@ -63,8 +68,15 @@ resources:
 	}
 	assertSyncIndependentNativeFileUnchanged(t, "lock --scope repo", configBeforeLock)
 	assertSyncIndependentNativeStateAbsent(t, "lock --scope repo", actorA, actorB)
+	lockBeforeActorBLock := snapshotSyncIndependentNativeFile(t, lockPath)
+	activateSyncIndependentNativeActor(t, actorB)
+	if output, err := executeCommand("lock", "--scope", "repo"); err != nil {
+		t.Fatalf("actor B lock --scope repo: %v\n%s", err, output)
+	}
+	assertSyncIndependentNativeFileUnchanged(t, "actor B lock --scope repo", configBeforeLock)
+	assertSyncIndependentNativeFileUnchanged(t, "actor B lock --scope repo", lockBeforeActorBLock)
+	assertSyncIndependentNativeStateAbsent(t, "actor B lock --scope repo", actorA, actorB)
 
-	lockPath := filepath.Join(repoRoot, ".agents", "lock.yaml")
 	lockDoc := readLockDocument(t, lockPath)
 	if lockDoc.Scope != "repo" || len(lockDoc.Registries) != 1 {
 		t.Fatalf("healthy repository lock = %#v", lockDoc)
@@ -92,7 +104,12 @@ resources:
 	}
 	nativeCommand := `\"$FACTORY_PROJECT_DIR\"/.factory/hook-support/` + sourceKey + `/PreToolUse-command/scripts/run.sh`
 	nativeGroup := `{"hooks":[{"type":"command","command":"` + nativeCommand + `"}],"matcher":"Execute","commandRegex":"^make.*$"}`
-	nativeBytes := []byte(`{"PostToolUse":[{"matcher":"Edit","hooks":[{"type":"command","command":"echo handwritten"}]}],"PreToolUse":[` + nativeGroup + `]}` + "\n")
+	handwrittenGroup := `{"matcher":"Edit","hooks":[{"type":"command","command":"echo handwritten"}]}`
+	nativeBytes := []byte(`{"PostToolUse":[` + handwrittenGroup + `],"PreToolUse":[` + nativeGroup + `]}` + "\n")
+	expectedNativeEntries := []ownership.EntryValue{
+		syncIndependentNativeHookEntryValue(t, "PreToolUse", nativeGroup),
+		syncIndependentNativeHookEntryValue(t, "PostToolUse", handwrittenGroup),
+	}
 	if err := os.WriteFile(nativePath, nativeBytes, 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -132,13 +149,40 @@ resources:
 			assertSyncIndependentNativeFileUnchanged(t, stage, file)
 		}
 		assertSyncIndependentNativeLegacyAbsent(t, stage, legacyPath)
-		assertSyncIndependentNativeStateAbsent(t, stage, actorA, actorB)
 	}
+
+	run(actorA, "actor A sync --check before mutation", "sync", "--check")
+	assertSyncIndependentNativeStateAbsent(t, "actor A sync --check before mutation", actorA, actorB)
+	run(actorB, "actor B sync --check before mutation", "sync", "--check")
+	assertSyncIndependentNativeStateAbsent(t, "actor B sync --check before mutation", actorA, actorB)
+
 	run(actorA, "actor A sync", "sync")
+	assertSyncIndependentNativeHookProof(t, "actor A sync", actorA, nativeRoot, resource.Name, expectedNativeEntries)
+	assertSyncIndependentNativeStateAbsent(t, "actor A sync for actor B", actorB)
+	assertSyncIndependentNativeSafetyBackupsAbsent(t, "actor A sync", actorA, actorB)
 	run(actorB, "actor B sync --locked", "sync", "--locked")
+	assertSyncIndependentNativeHookProof(t, "actor B sync --locked", actorA, nativeRoot, resource.Name, expectedNativeEntries)
+	assertSyncIndependentNativeHookProof(t, "actor B sync --locked", actorB, nativeRoot, resource.Name, expectedNativeEntries)
+	assertSyncIndependentNativeSafetyBackupsAbsent(t, "actor B sync --locked", actorA, actorB)
+
+	actorAStateBeforeActorBCheck := snapshotSyncIndependentNativeStateTree(t, actorA)
+	actorBStateBeforeActorBCheck := snapshotSyncIndependentNativeStateTree(t, actorB)
 	run(actorB, "actor B sync --check", "sync", "--check")
+	assertSyncIndependentNativeStateTreeUnchanged(t, "actor B sync --check", actorA, actorAStateBeforeActorBCheck)
+	assertSyncIndependentNativeStateTreeUnchanged(t, "actor B sync --check", actorB, actorBStateBeforeActorBCheck)
+	assertSyncIndependentNativeSafetyBackupsAbsent(t, "actor B sync --check", actorA, actorB)
+
 	run(actorA, "actor A sync --locked", "sync", "--locked")
+	assertSyncIndependentNativeHookProof(t, "actor A sync --locked", actorA, nativeRoot, resource.Name, expectedNativeEntries)
+	assertSyncIndependentNativeHookProof(t, "actor A sync --locked", actorB, nativeRoot, resource.Name, expectedNativeEntries)
+	assertSyncIndependentNativeSafetyBackupsAbsent(t, "actor A sync --locked", actorA, actorB)
+
+	actorAStateBeforeActorACheck := snapshotSyncIndependentNativeStateTree(t, actorA)
+	actorBStateBeforeActorACheck := snapshotSyncIndependentNativeStateTree(t, actorB)
 	run(actorA, "actor A sync --check", "sync", "--check")
+	assertSyncIndependentNativeStateTreeUnchanged(t, "actor A sync --check", actorA, actorAStateBeforeActorACheck)
+	assertSyncIndependentNativeStateTreeUnchanged(t, "actor A sync --check", actorB, actorBStateBeforeActorACheck)
+	assertSyncIndependentNativeSafetyBackupsAbsent(t, "actor A sync --check", actorA, actorB)
 }
 
 type syncIndependentNativeActor struct {
@@ -227,6 +271,159 @@ func assertSyncIndependentNativeStateAbsent(t *testing.T, stage string, actors .
 			stateRoot := filepath.Join(actor.xdgState, "agent-marketplace", area)
 			if _, err := os.Lstat(stateRoot); err == nil || !os.IsNotExist(err) {
 				t.Fatalf("%s created %s for %s: %v", stage, stateRoot, actor.home, err)
+			}
+		}
+	}
+}
+
+type syncIndependentNativeStateEntrySnapshot struct {
+	info       os.FileInfo
+	data       []byte
+	linkTarget string
+}
+
+type syncIndependentNativeStateTreeSnapshot struct {
+	exists  bool
+	entries map[string]syncIndependentNativeStateEntrySnapshot
+}
+
+func snapshotSyncIndependentNativeStateTree(t *testing.T, actor syncIndependentNativeActor) syncIndependentNativeStateTreeSnapshot {
+	t.Helper()
+	root := filepath.Join(actor.xdgState, "agent-marketplace")
+	rootInfo, err := os.Lstat(root)
+	if errors.Is(err, os.ErrNotExist) {
+		return syncIndependentNativeStateTreeSnapshot{}
+	}
+	if err != nil {
+		t.Fatalf("lstat state root %s: %v", root, err)
+	}
+	if !rootInfo.IsDir() {
+		t.Fatalf("state root %s is not a directory: %v", root, rootInfo.Mode())
+	}
+	snapshot := syncIndependentNativeStateTreeSnapshot{exists: true, entries: make(map[string]syncIndependentNativeStateEntrySnapshot)}
+	add := func(path, relative string, info os.FileInfo) error {
+		entry := syncIndependentNativeStateEntrySnapshot{info: info}
+		if info.Mode().IsRegular() {
+			data, err := os.ReadFile(path)
+			if err != nil {
+				return err
+			}
+			entry.data = data
+		} else if info.Mode()&os.ModeSymlink != 0 {
+			linkTarget, err := os.Readlink(path)
+			if err != nil {
+				return err
+			}
+			entry.linkTarget = linkTarget
+		}
+		snapshot.entries[relative] = entry
+		return nil
+	}
+	if err := add(root, ".", rootInfo); err != nil {
+		t.Fatalf("snapshot state root %s: %v", root, err)
+	}
+	if err := filepath.WalkDir(root, func(path string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if path == root {
+			return nil
+		}
+		info, err := os.Lstat(path)
+		if err != nil {
+			return err
+		}
+		relative, err := filepath.Rel(root, path)
+		if err != nil {
+			return err
+		}
+		return add(path, filepath.ToSlash(relative), info)
+	}); err != nil {
+		t.Fatalf("walk state root %s: %v", root, err)
+	}
+	return snapshot
+}
+
+func assertSyncIndependentNativeStateTreeUnchanged(t *testing.T, stage string, actor syncIndependentNativeActor, before syncIndependentNativeStateTreeSnapshot) {
+	t.Helper()
+	after := snapshotSyncIndependentNativeStateTree(t, actor)
+	if before.exists != after.exists {
+		t.Fatalf("%s changed state-root existence for %s", stage, actor.home)
+	}
+	if len(before.entries) != len(after.entries) {
+		t.Fatalf("%s changed state paths for %s: before=%v after=%v", stage, actor.home, sortedSyncIndependentNativeStatePaths(before.entries), sortedSyncIndependentNativeStatePaths(after.entries))
+	}
+	for _, relative := range sortedSyncIndependentNativeStatePaths(before.entries) {
+		prior := before.entries[relative]
+		current, ok := after.entries[relative]
+		if !ok || !os.SameFile(prior.info, current.info) || prior.info.Mode() != current.info.Mode() ||
+			!prior.info.ModTime().Equal(current.info.ModTime()) || !bytes.Equal(prior.data, current.data) || prior.linkTarget != current.linkTarget {
+			t.Fatalf("%s changed state entry %s for %s", stage, relative, actor.home)
+		}
+	}
+}
+
+func sortedSyncIndependentNativeStatePaths(entries map[string]syncIndependentNativeStateEntrySnapshot) []string {
+	paths := make([]string, 0, len(entries))
+	for path := range entries {
+		paths = append(paths, path)
+	}
+	sort.Strings(paths)
+	return paths
+}
+
+func assertSyncIndependentNativeSafetyBackupsAbsent(t *testing.T, stage string, actors ...syncIndependentNativeActor) {
+	t.Helper()
+	for _, actor := range actors {
+		path := filepath.Join(actor.xdgState, "agent-marketplace", "safety-backups")
+		if _, err := os.Lstat(path); err == nil || !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("%s created safety backups for %s: %v", stage, actor.home, err)
+		}
+	}
+}
+
+func syncIndependentNativeHookEntryValue(t *testing.T, event, raw string) ownership.EntryValue {
+	t.Helper()
+	canonical, err := jsonc.Canonicalize("hooks.json", []byte(raw))
+	if err != nil {
+		t.Fatalf("canonicalize expected %s hook: %v", event, err)
+	}
+	valueDigest := ownership.Digest(canonical)
+	return ownership.EntryValue{
+		ID:          ownership.EntryID{Kind: ownership.KindHook, Container: event, IdentityDigest: ownership.HookIdentityDigest(event, valueDigest)},
+		ValueDigest: valueDigest,
+	}
+}
+
+func assertSyncIndependentNativeHookProof(t *testing.T, stage string, actor syncIndependentNativeActor, nativeRoot, selectedResource string, expected []ownership.EntryValue) {
+	t.Helper()
+	activateSyncIndependentNativeActor(t, actor)
+	store, err := ownership.Open(nativeRoot)
+	if err != nil {
+		t.Fatalf("%s open ownership proof for %s: %v", stage, actor.home, err)
+	}
+	proof, err := store.Proof("hooks.json")
+	if err != nil && !errors.Is(err, ownership.ErrStateMissing) {
+		t.Fatalf("%s read ownership proof for %s: %v", stage, actor.home, err)
+	}
+	if err != nil {
+		proof = ownership.Proof{}
+	}
+	if proof.OwnedCount() != 0 || len(proof.OwnedIDs()) != 0 {
+		t.Fatalf("%s adopted native hooks for %s: owned=%v", stage, actor.home, proof.OwnedIDs())
+	}
+	for _, entry := range expected {
+		if status := proof.Classify(entry.ID, entry.ValueDigest); status != ownership.StatusUnmanaged {
+			t.Fatalf("%s classified native hook %s/%s as %v for %s", stage, entry.ID.Container, entry.ID.IdentityDigest, status, actor.home)
+		}
+	}
+	for _, satisfaction := range proof.HookSatisfactions() {
+		if satisfaction.Container != "PreToolUse" || len(satisfaction.Sources) == 0 {
+			t.Fatalf("%s recorded unexpected satisfaction for %s: %+v", stage, actor.home, satisfaction)
+		}
+		for _, source := range satisfaction.Sources {
+			if source.Resource != selectedResource {
+				t.Fatalf("%s recorded satisfaction for unrelated resource %q for %s", stage, source.Resource, actor.home)
 			}
 		}
 	}

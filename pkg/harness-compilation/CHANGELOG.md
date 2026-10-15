@@ -2,11 +2,44 @@
 
 ## Unreleased
 
+### Devin converted command skills keep their restrictions
+
+Devin ingestion no longer recovers a skill marked `x-agent-marketplace-kind: command` as a command when the skill declares `permissions`, an `agent` or `subagent` selector, or triggers that do not include `user`. Those controls used to be dropped with `ingest.devin.command-field-dropped`, so a Devin-to-Devin round trip lost a deny policy and made a model-only resource user-invocable. The resource is now refused with the new error `ingest.devin.command-security-unsupported`, which names the fields but never their values; removing the marker ingests it as a skill with its controls intact. `model`, and extra activation next to `user`, are still dropped with the existing warning: a converted command is user-only, so dropping them only narrows it.
+
+Devin command compilation now reserves `agent` and `subagent` alongside `permissions`, so command extension fields cannot select the execution agent of a converted command skill. The selectors are omitted with `compile.canonical-field-overrides-extra` and the mapped `allowed-tools` restriction is kept. Ordinary Devin skills keep their typed `agent` and `subagent` fields.
+
 ### The Claude plugin form no longer drops a root-level SKILL.md
 
 `LoadBundleWithOptions` selects the plugin form for both `.claude-plugin/plugin.json` manifests and bare plugin layouts, and that form only scanned `skills/` subdirectories. A repository that IS a single skill (root `SKILL.md`, no `skills/` tree) therefore ingested zero resources with no diagnostic — the layout Claude Code documents for manifest `"skills": ["./"]` and that `github.com/blader/humanizer` ships. The plugin form now loads a root `SKILL.md` through `bundle.LoadRootSkill` when one exists. A root skill whose frontmatter name duplicates a `skills/` entry is dropped with the new warning `ingest.claude.duplicate-root-skill`; the `skills/` entry wins deterministically because it loads first in sorted order. Skill support files no longer include `.git` directories at any depth: a root skill's directory is the whole checkout, a marketplace clone keeps `.git` on disk, and VCS internals were being published into installable archives and fed to bounded support reads.
 
 The consumer-side materializer walkers (`copySupportFilesExcluding` and the `--check` virtual digest in `internal/materialize`) now skip `.git` directories the same way. Previously a root skill's compiled cache copy contained the registry's entire `.git` object database, exposed to every workspace through the harness symlink and copied again by file-mode materialization; stale copies are pruned on the next sync's existing reconcile pass.
+
+### Shipped model catalogs and joint reasoning conversion
+
+Subagent compilers now share a source-aware model/reasoning resolver backed by
+`modelpolicy/catalogs/<harness>.yaml`. Unknown cross-harness models warn and omit
+only the model field; unsupported reasoning also warns without suppressing the
+resource. Automatic cross-provider approximations are removed. Floating-family
+pins are explicit catalog entries and produce informational diagnostics.
+
+Cursor reasoning uses cataloged model-parameter encodings; Gemini no longer emits
+an unsupported agent `effort` field. Devin native model strings round-trip without
+requiring a Claude alias, and native default selection is distinct from parent
+inheritance. Devin forward variant mappings are enabled from the captured
+`devin models list` CLI inventory plus the documented custom-profile `model`
+override; live acceptance in a real custom profile remains untested and is not
+claimed.
+
+Ingestion preserves native model/effort strings with `ModelSource` provenance.
+Existing constructors and legacy sidecars remain readable; source-aware editable
+fields take precedence over stale sidecars. The application adds source-revision
+v4 for provenance-bearing IR fallback hashes while retaining frozen v1/v2/v3
+projection and original-file hashing for existing exact locks.
+
+Model updates use a harness catalog plus an independent YAML conversion fixture;
+`make model-catalog-check` runs the offline maintenance gate. See the update recipe
+in the library README. No runtime catalog configuration or vendor CLI dependency
+is added.
 
 ### Validated native-layout descriptors now cover Codex, Devin, and Claude
 

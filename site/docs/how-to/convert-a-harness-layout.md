@@ -1,6 +1,6 @@
 # How to convert a harness layout
 
-Convert a folder of resources written for one [harness](../glossary.md#harness) into the layout another harness expects, for inspection or migration.
+Convert a folder of resources written for one [harness](../glossary.md#harness) into the layout another harness expects, for inspection or moving between harnesses. This is not consumer configuration conversion: `convert --from`/`--to` remains available, but the CLI has no `migrate` command. For older consumer configuration, see [conversion before upgrading](./migrate-configuration.md).
 
 ## Prerequisites
 
@@ -42,7 +42,7 @@ agent-marketplace convert \
   ./claude-plugin
 ```
 
-By default the command replaces files at the paths it writes and leaves every other file in the output folder alone.
+It prints the same `Converted claude -> factory into <dir>` and `Written n, Skipped n, Removed n, Diagnostics n` summary as the dry run. By default the command replaces files at the paths it writes and leaves every other file in the output folder alone.
 
 ::: warning `--sync` deletes other files in the output folder
 With `--sync`, the command also deletes every file in the output folder that this conversion did not produce, including files you added by hand. Use it only on a folder that holds nothing but conversion output, and preview with `--sync --dry-run` first: the `Removed` count shows how many files would be deleted. When a resource fails to convert, the command skips the deletions.

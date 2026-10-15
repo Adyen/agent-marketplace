@@ -122,7 +122,7 @@ func (c *Cache) VerifiedMarketplaceLockResource(entry config.MarketplaceEntry, p
 		}
 		record.CollectionManifestDigest = lockfile.Digest(pin.Digest)
 	} else {
-		if rev.ArchiveDigest == "" {
+		if acquisition != config.MarketplaceAcquisitionIndexOnly && rev.ArchiveDigest == "" {
 			return lockfile.MarketplaceResourceLock{}, fmt.Errorf("cached revision metadata has no archive digest")
 		}
 		var raw []byte
@@ -148,6 +148,13 @@ func (c *Cache) VerifiedMarketplaceLockResource(entry config.MarketplaceEntry, p
 		if err := ca.VerifyContentDigest(); err != nil {
 			return lockfile.MarketplaceResourceLock{}, fmt.Errorf("verify content digest: %w", err)
 		}
+		// Index-only metadata need not advertise an archive digest: its archive
+		// is reconstructed locally and trusted only for this exact occurrence.
+		// Derive absent encoding evidence only after verifying the cached archive;
+		// any advertised digest must still match through manifest validation.
+		if acquisition == config.MarketplaceAcquisitionIndexOnly && rev.ArchiveDigest == "" {
+			rev.ArchiveDigest = store.ArchiveDigest(ca.Manifest.ArchiveDigest)
+		}
 		if err := validateArtifactManifest(entry, pin, rev, ca); err != nil {
 			return lockfile.MarketplaceResourceLock{}, err
 		}
@@ -157,7 +164,7 @@ func (c *Cache) VerifiedMarketplaceLockResource(entry config.MarketplaceEntry, p
 		if ca.Manifest.Revision != "" && ca.Manifest.Revision != pin.Revision {
 			return lockfile.MarketplaceResourceLock{}, fmt.Errorf("artifact manifest revision mismatch: got %q, want %q", ca.Manifest.Revision, pin.Revision)
 		}
-		record.ArchiveDigest = lockfile.Digest(rev.ArchiveDigest)
+		record.ArchiveDigest = lockfile.Digest(ca.Manifest.ArchiveDigest)
 	}
 
 	// Validate scalar/acquisition/integrity fields through the lock codec on a

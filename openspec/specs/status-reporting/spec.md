@@ -68,4 +68,3 @@ The `status` command SHALL include Marketplace selections from every configurati
 - **WHEN** `status` runs for a configuration with Marketplace selections
 - **THEN** it MUST NOT download resource artifacts from the Marketplace endpoint
 - **AND** it MUST leave configuration and lock files byte-identical
-
