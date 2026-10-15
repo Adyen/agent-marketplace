@@ -4305,42 +4305,26 @@ func pruneUncoveredManagedMergeFiles(outDir string, dirsCoveredByMergePlans map[
 	return report, diags
 }
 
-// retiredLocations returns the target's declared retired locations split
-// into reconciled files and left-alone directories (trailing slash).
-func retiredLocations(t hcc.Target) (files, dirs []string) {
-	info, ok := harness.TargetInfoFor(t)
-	if !ok {
-		return nil, nil
-	}
-	for _, rel := range info.RetiredLocations {
-		if strings.HasSuffix(rel, "/") {
-			dirs = append(dirs, rel)
-		} else {
-			files = append(files, rel)
-		}
-	}
-	return files, dirs
-}
-
 // extendRetiredPruneFence adds the target's retired locations to the prune
 // walk's fence so the generic marker strip never touches them: retired
-// directories are left entirely alone and retired files are reconciled by
-// reconcileRetiredManagedFiles. It returns the fence and the retired file
-// list.
+// directories (trailing slash) are left entirely alone and retired files
+// are reconciled by reconcileRetiredManagedFiles. It returns the fence and
+// the retired file list.
 func extendRetiredPruneFence(t hcc.Target, protected map[string]bool) (map[string]bool, []string) {
-	files, dirs := retiredLocations(t)
-	if len(files) == 0 && len(dirs) == 0 {
+	info, ok := harness.TargetInfoFor(t)
+	if !ok || len(info.RetiredLocations) == 0 {
 		return protected, nil
 	}
-	fence := make(map[string]bool, len(protected)+len(files)+len(dirs))
+	fence := make(map[string]bool, len(protected)+len(info.RetiredLocations))
 	for k := range protected {
 		fence[k] = true
 	}
-	for _, rel := range files {
+	var files []string
+	for _, rel := range info.RetiredLocations {
 		fence[rel] = true
-	}
-	for _, rel := range dirs {
-		fence[rel] = true
+		if !strings.HasSuffix(rel, "/") {
+			files = append(files, rel)
+		}
 	}
 	return fence, files
 }
