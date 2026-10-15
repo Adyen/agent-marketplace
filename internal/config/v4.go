@@ -357,9 +357,9 @@ func parseV4Document(data []byte, file string, root bool, kinds ...layerKind) (*
 		key := raw.Content[i]
 		if _, ok := v4RootKeys[key.Value]; !ok {
 			if _, legacy := v4LegacyKeys[key.Value]; legacy {
-				return nil, v4err("v4.legacy-key", key.Value, key.Line, "legacy installation key %q is not valid in v4; migrate selections to sources/resources", key.Value)
+				return nil, v4DocumentError(file, raw, v4err("v4.legacy-key", key.Value, key.Line, "legacy installation key %q is not valid in v4; migrate selections to sources/resources", key.Value), !root)
 			}
-			return nil, v4err("v4.unknown-field", key.Value, key.Line, "unknown top-level field")
+			return nil, v4DocumentError(file, raw, v4err("v4.unknown-field", key.Value, key.Line, "unknown top-level field"), !root)
 		}
 	}
 	if err := validateV4AuxiliaryFields(raw); err != nil {
@@ -377,20 +377,20 @@ func parseV4Document(data []byte, file string, root bool, kinds ...layerKind) (*
 	}
 	if inc := mappingValue(raw, "include"); inc != nil {
 		if err := validateV4Includes(inc, file); err != nil {
-			return nil, err
+			return nil, v4DocumentError(file, raw, err, !root)
 		}
 	}
 	if sources := mappingValue(raw, "sources"); sources != nil {
 		parsed, err := parseV4Sources(sources, file, v4DirectoryBase(file, root, kinds...))
 		if err != nil {
-			return nil, err
+			return nil, v4DocumentError(file, raw, err, !root)
 		}
 		doc.sources = parsed
 	}
 	if resources := mappingValue(raw, "resources"); resources != nil {
 		groups, err := parseV4Groups(resources, file)
 		if err != nil {
-			return nil, err
+			return nil, v4DocumentError(file, raw, err, !root)
 		}
 		doc.groups = groups
 	}
