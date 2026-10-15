@@ -347,16 +347,16 @@ func TestCommandProvenanceIsRecovered(t *testing.T) {
 			wantCodes: []string{diag.CodeIngestDevinReservedFieldDropped},
 		},
 		{
-			name:      "a command with a non-user trigger reports the dropped field",
-			doc:       "---\nname: demo-cmd\ndescription: A demo command\nx-agent-marketplace-kind: command\ntriggers:\n  - model\n---\nRun it\n",
+			name:      "activation that includes user narrows to the command and is reported",
+			doc:       "---\nname: demo-cmd\ndescription: A demo command\nx-agent-marketplace-kind: command\ntriggers:\n  - user\n  - model\n---\nRun it\n",
 			wantKind:  ir.KindCommand,
 			wantCodes: []string{diag.CodeIngestDevinCommandFieldDropped},
 		},
 		{
-			name:      "a command with skill-only fields reports each one",
-			doc:       "---\nname: demo-cmd\ndescription: A demo command\nx-agent-marketplace-kind: command\nmodel: sonnet\nsubagent: explore\nagent: reviewer\npermissions:\n  allow:\n    - Read\n---\nRun it\n",
+			name:      "a command model is reported as dropped",
+			doc:       "---\nname: demo-cmd\ndescription: A demo command\nx-agent-marketplace-kind: command\nmodel: sonnet\n---\nRun it\n",
 			wantKind:  ir.KindCommand,
-			wantCodes: []string{diag.CodeIngestDevinCommandFieldDropped, diag.CodeIngestDevinCommandFieldDropped, diag.CodeIngestDevinCommandFieldDropped, diag.CodeIngestDevinCommandFieldDropped},
+			wantCodes: []string{diag.CodeIngestDevinCommandFieldDropped},
 		},
 	}
 	for _, tt := range tests {
@@ -388,6 +388,65 @@ func TestCommandProvenanceIsRecovered(t *testing.T) {
 				t.Errorf("Extra = %#v, want %#v", extra, tt.wantExtra)
 			}
 		})
+	}
+}
+
+func TestCommandProvenanceRefusesUnholdableControls(t *testing.T) {
+	tests := []struct {
+		name        string
+		fields      string
+		wantMessage string
+	}{
+		{"model-only trigger", "triggers:\n  - model\n", `declares triggers,`},
+		{"empty triggers", "triggers: []\n", `declares triggers,`},
+		{"permissions", "permissions:\n  deny:\n    - exec\n", `declares permissions,`},
+		{"every unholdable control in a fixed order", "model: sonnet\ntriggers:\n  - model\nsubagent: explore\nagent: reviewer\npermissions:\n  allow:\n    - read\n", `declares triggers, permissions, subagent, agent,`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			doc := "---\nname: demo-cmd\ndescription: A demo command\nx-agent-marketplace-kind: command\n" + tt.fields + "---\nRun it\n"
+			bundle := mustLoad(t, fstest.MapFS{".devin/skills/demo/SKILL.md": file(doc)})
+			if len(bundle.Resources) != 0 {
+				t.Fatalf("resources = %d, want the marked command refused", len(bundle.Resources))
+			}
+			if got, want := warningCodes(bundle), []string{diag.CodeIngestDevinCommandSecurityUnsupported}; !reflect.DeepEqual(got, want) {
+				t.Fatalf("codes = %v, want %v", got, want)
+			}
+			for _, d := range bundle.Diagnostics {
+				if d.Code != diag.CodeIngestDevinCommandSecurityUnsupported {
+					continue
+				}
+				if d.Severity != diag.SeverityError || d.Resource != "demo-cmd" || d.Source.File != ".devin/skills/demo/SKILL.md" {
+					t.Fatalf("refusal diagnostic = %+v", d)
+				}
+				if !strings.Contains(d.Message, tt.wantMessage) {
+					t.Fatalf("message = %q, want field list %q", d.Message, tt.wantMessage)
+				}
+				for _, value := range []string{"exec", "explore", "reviewer", "sonnet"} {
+					if strings.Contains(d.Message+d.Hint, value) {
+						t.Fatalf("diagnostic quotes the value %q: %+v", value, d)
+					}
+				}
+			}
+		})
+	}
+}
+
+func TestCommandProvenanceReportsControlRefusalWithUnreversibleTools(t *testing.T) {
+	doc := "---\nname: demo-cmd\ndescription: A demo command\nx-agent-marketplace-kind: command\nallowed-tools:\n  - mystery\npermissions:\n  deny:\n    - exec\n---\nRun it\n"
+	bundle := mustLoad(t, fstest.MapFS{".devin/skills/demo/SKILL.md": file(doc)})
+	if len(bundle.Resources) != 0 {
+		t.Fatalf("resources = %d, want the marked command refused", len(bundle.Resources))
+	}
+	want := []string{diag.CodeIngestDevinCommandSecurityUnsupported, diag.CodeIngestDevinToolUnreversible}
+	if got := warningCodes(bundle); !reflect.DeepEqual(got, want) {
+		t.Fatalf("codes = %v, want %v", got, want)
+	}
+
+	plain := "---\nname: demo-skill\ndescription: A demo skill\nallowed-tools:\n  - mystery\npermissions:\n  deny:\n    - exec\n---\nBody\n"
+	bundle = mustLoad(t, fstest.MapFS{".devin/skills/demo/SKILL.md": file(plain)})
+	if got, want := warningCodes(bundle), []string{diag.CodeIngestDevinToolUnreversible}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("unmarked skill codes = %v, want %v", got, want)
 	}
 }
 

@@ -236,3 +236,72 @@ func TestRootPackageValidatesItsOwnRegistrations(t *testing.T) {
 		t.Fatalf("hcc.ValidateTargetRegistrations: %v", err)
 	}
 }
+
+func TestRootMappingOverrides(t *testing.T) {
+	const source = "---\nname: override-agent\ndescription: Agent\nmodel: claude-sonnet-4-5-20250929\ntools:\n  - Read\n  - Bash\n---\nWork\n"
+	src := fstest.MapFS{"agents/override-agent.md": {Data: []byte(source)}}
+	want := func(model, executeTool string) string {
+		return "---\nname: override-agent\ndescription: Agent\nmodel: " + model + "\ntools:\n  - Read\n  - " + executeTool + "\n---\nWork\n"
+	}
+	const (
+		defaultModel = "claude-sonnet-4-5-20250929"
+		defaultTool  = "Execute"
+	)
+	runners := []struct {
+		name string
+		run  func(...hcc.Option) (*hcc.Result, error)
+	}{
+		{"Compile", func(opts ...hcc.Option) (*hcc.Result, error) {
+			resource, err := hcc.LoadSubagent(src, "agents/override-agent.md")
+			if err != nil {
+				return nil, err
+			}
+			return hcc.Compile(resource, hcc.TargetFactory, opts...)
+		}},
+		{"CompileBundle", func(opts ...hcc.Option) (*hcc.Result, error) {
+			return hcc.CompileBundle(src, hcc.TargetFactory, opts...)
+		}},
+		{"Convert", func(opts ...hcc.Option) (*hcc.Result, error) {
+			return hcc.Convert(src, hcc.HarnessClaude, hcc.HarnessFactory, opts...)
+		}},
+	}
+	model := map[string]string{defaultModel: "custom-model"}
+	tool := map[string]string{"Bash": "CustomExecute"}
+	cases := []struct {
+		name        string
+		opts        []hcc.Option
+		model, tool string
+	}{
+		{"none", nil, defaultModel, defaultTool},
+		{"model_only", []hcc.Option{hcc.WithModelOverride(model)}, "custom-model", defaultTool},
+		{"tool_only", []hcc.Option{hcc.WithToolOverride(tool)}, defaultModel, "CustomExecute"},
+		{"both", []hcc.Option{hcc.WithModelOverride(model), hcc.WithToolOverride(tool)}, "custom-model", "CustomExecute"},
+		{"nil_maps", []hcc.Option{hcc.WithModelOverride(nil), hcc.WithToolOverride(nil)}, defaultModel, defaultTool},
+		{"empty_maps", []hcc.Option{hcc.WithModelOverride(map[string]string{}), hcc.WithToolOverride(map[string]string{})}, defaultModel, defaultTool},
+	}
+	check := func(t *testing.T, res *hcc.Result, err error, wantBytes string) {
+		t.Helper()
+		if err != nil {
+			t.Fatalf("compile: %v", err)
+		}
+		if len(res.Diagnostics) != 0 {
+			t.Fatalf("diagnostics = %+v, want none", res.Diagnostics)
+		}
+		if len(res.Artifacts) != 1 || res.Artifacts[0].Path != "droids/override-agent.md" {
+			t.Fatalf("artifacts = %+v, want only droids/override-agent.md", res.Artifacts)
+		}
+		if got := string(res.Artifacts[0].Bytes); got != wantBytes {
+			t.Fatalf("bytes = %q, want %q", got, wantBytes)
+		}
+	}
+	for _, r := range runners {
+		for _, c := range cases {
+			t.Run(r.name+"/"+c.name, func(t *testing.T) {
+				res, err := r.run(c.opts...)
+				check(t, res, err, want(c.model, c.tool))
+				res, err = r.run()
+				check(t, res, err, want(defaultModel, defaultTool))
+			})
+		}
+	}
+}
