@@ -1,6 +1,7 @@
 package pipeline
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -9,6 +10,7 @@ import (
 	"os/exec"
 	pathpkg "path"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -22,6 +24,7 @@ import (
 	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
 	mpapi "github.com/Adyen/agent-marketplace/pkg/marketplace/api"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/store"
+	"gopkg.in/yaml.v3"
 )
 
 var dottedVersionRefPattern = regexp.MustCompile(`^(.*?)(\d+)$`)
@@ -105,6 +108,9 @@ func Update(ctx context.Context, opts UpdateOptions) (result *UpdateResult, retE
 	if err != nil {
 		return nil, err
 	}
+	if err := RecoverDependencyTransactions(ctx); err != nil {
+		return nil, err
+	}
 	slog.Info("update start", "repo_root", repoRoot, "bump", opts.Bump)
 	ec := LoadEffective(ctx, ConfigLoadOnline, config.LoadEffectiveOptions{RepoRoot: ws.RepoRoot(), LocalConfigDir: ws.LocalConfigDir()}, nil)
 	if len(ec.Errors) > 0 {
@@ -139,7 +145,6 @@ func Update(ctx context.Context, opts UpdateOptions) (result *UpdateResult, retE
 	defer closeConfigStaging(staging, "update", &retErr)
 	lockEdits := make(map[string]StagedLockEdit)
 	var lockEditOrder []string
-	warnedLegacyPaths := make(map[string]bool)
 	for i := range plans {
 		if err := ctx.Err(); err != nil {
 			return nil, err
@@ -152,32 +157,13 @@ func Update(ctx context.Context, opts UpdateOptions) (result *UpdateResult, retE
 		if err != nil {
 			return nil, err
 		}
-		if v4 != nil {
-			if err := stageV4MarketplaceLockUpdate(plan, v4, lockEdits, &lockEditOrder); err != nil {
-				updateErr := fmt.Errorf("update Marketplace pin %s/%s/%s: %w", plan.OldPin.RegistryID, plan.OldPin.Kind, plan.OldPin.Name, err)
-				slog.Error("update aborted on Marketplace lock conflict", "config_path", plan.ConfigPath, "registry_id", plan.OldPin.RegistryID, "kind", plan.OldPin.Kind, "name", plan.OldPin.Name, "error", updateErr)
-				return nil, updateErr
-			}
-			plan.Updated = true
-			continue
+		if v4 == nil {
+			return nil, fmt.Errorf("v4 Marketplace configuration disappeared: %s", plan.ConfigPath)
 		}
-		configPath, err := staging.Path(plan.ConfigPath)
-		if err != nil {
-			return nil, err
-		}
-		if plan.CollectionUpdate {
-			_, _, err = config.EnsureMarketplaceCollectionWithSnapshotAndCommit(configPath, plan.Entry.URL, plan.Entry.InstanceID, plan.OldPin, plan.ReplacementPins)
-		} else {
-			err = config.UpdateMarketplacePinInConfig(configPath, plan.Entry.URL, plan.Entry.InstanceID, plan.OldPin, plan.NewPin)
-		}
-		if err != nil {
+		if err := stageV4MarketplaceLockUpdate(plan, v4, lockEdits, &lockEditOrder); err != nil {
 			updateErr := fmt.Errorf("update Marketplace pin %s/%s/%s: %w", plan.OldPin.RegistryID, plan.OldPin.Kind, plan.OldPin.Name, err)
-			slog.Error("update aborted on Marketplace config conflict", "config_path", plan.ConfigPath, "registry_id", plan.OldPin.RegistryID, "kind", plan.OldPin.Kind, "name", plan.OldPin.Name, "error", updateErr)
+			slog.Error("update aborted on Marketplace lock conflict", "config_path", plan.ConfigPath, "registry_id", plan.OldPin.RegistryID, "kind", plan.OldPin.Kind, "name", plan.OldPin.Name, "error", updateErr)
 			return nil, updateErr
-		}
-		if !warnedLegacyPaths[plan.ConfigPath] {
-			warnedLegacyPaths[plan.ConfigPath] = true
-			warnLegacyLayerMutation(plan.Source, plan.ConfigPath)
 		}
 		plan.Updated = true
 	}
@@ -198,11 +184,21 @@ func Update(ctx context.Context, opts UpdateOptions) (result *UpdateResult, retE
 			if err := config.ValidateRegistryURLs(registries, ec.Allowed); err != nil {
 				return nil, err
 			}
+			// Includes and source ownership belong to the declaring root, not
+			// the private shadow used for dependency publication.
+			v4, err := config.LoadV4ConfigIfPresent(layer.Path, layer.Source)
+			if err != nil {
+				return nil, err
+			}
+			if v4 == nil {
+				return nil, fmt.Errorf("configuration disappeared: %s", layer.Path)
+			}
 			configPath, err := staging.Path(layer.Path)
 			if err != nil {
 				return nil, err
 			}
-			layerBumps, layerSkipped, err := bumpRepoRegistryRefs(ctx, configPath, &config.Config{Registries: registries}, opts.BumpTarget)
+			layerTarget := config.LayerTarget{Source: layer.Source, StagedPath: configPath, DeclaringPath: layer.Path}
+			layerBumps, layerSkipped, err := bumpRepoRegistryRefs(ctx, layerTarget, v4, &config.Config{Registries: registries}, opts.BumpTarget)
 			if err != nil {
 				return nil, err
 			}
@@ -594,7 +590,7 @@ func bumpScopeSelected(scopes map[lockfile.Scope]bool, scope lockfile.Scope) boo
 	return scopes[scope]
 }
 
-func bumpRepoRegistryRefs(ctx context.Context, configPath string, repoCfg *config.Config, target *UpdateTarget) (bumps, skipped []RefBump, retErr error) {
+func bumpRepoRegistryRefs(ctx context.Context, layerTarget config.LayerTarget, v4 *config.V4Config, repoCfg *config.Config, target *UpdateTarget) (bumps, skipped []RefBump, retErr error) {
 	if repoCfg == nil || len(repoCfg.Registries) == 0 {
 		return nil, nil, nil
 	}
@@ -657,20 +653,92 @@ func bumpRepoRegistryRefs(ctx context.Context, configPath string, repoCfg *confi
 	}
 
 	applied := bumps[:0]
+	rootRefs := make(map[string]RefBump)
 	for _, bump := range bumps {
-		updated, err := config.UpdateRegistryRefInConfig(configPath, bump.URL, bump.OldRef, bump.NewRef)
-		if err != nil {
-			return nil, nil, err
+		owned := false
+		for name, source := range v4.Sources {
+			// A source declared identically in an included fragment is not
+			// root-owned: advancing only the root copy would leave the tree
+			// with conflicting declarations.
+			if source.Kind == config.V4SourceGit && source.File == v4.Files[len(v4.Files)-1] && len(source.AlsoDeclaredIn) == 0 &&
+				config.NormalizeGitURL(source.URL) == config.NormalizeGitURL(bump.URL) && source.Ref == bump.OldRef {
+				rootRefs[name] = bump
+				owned = true
+			}
 		}
-		if updated == 0 {
-			slog.Warn("update bump skipped: ref is declared outside the root config file", "url", bump.URL, "old_ref", bump.OldRef, "new_ref", bump.NewRef)
+		if !owned {
+			slog.Warn("update bump skipped: ref is not owned by the root config file alone", "url", bump.URL, "old_ref", bump.OldRef, "new_ref", bump.NewRef)
 			skipped = append(skipped, bump)
 			continue
 		}
 		applied = append(applied, bump)
 	}
+	if len(rootRefs) > 0 {
+		if err := stageRootRegistryRefs(layerTarget, rootRefs); err != nil {
+			return nil, nil, err
+		}
+	}
 
 	return applied, skipped, nil
+}
+
+// stageRootRegistryRefs changes only root-owned scalar refs. LayerEditor keeps
+// full-tree validation anchored to the authored path before and after the edit;
+// only the private shadow changes here, and dependency reconciliation publishes it.
+func stageRootRegistryRefs(target config.LayerTarget, refs map[string]RefBump) error {
+	editor, err := config.OpenLayerEditor(target)
+	if err != nil {
+		return err
+	}
+	candidate, err := editor.Render()
+	if err != nil {
+		return err
+	}
+	var doc yaml.Node
+	if err := yaml.Unmarshal(candidate.Bytes, &doc); err != nil {
+		return fmt.Errorf("parse staged config %s: %w", target.DeclaringPath, err)
+	}
+	sources := updateMappingValue(doc.Content[0], "sources")
+	names := make([]string, 0, len(refs))
+	for name := range refs {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		bump := refs[name]
+		source := updateMappingValue(sources, name)
+		gitNode, refNode := updateMappingValue(source, "git"), updateMappingValue(source, "ref")
+		if gitNode == nil || refNode == nil || config.NormalizeGitURL(gitNode.Value) != config.NormalizeGitURL(bump.URL) || strings.TrimSpace(refNode.Value) != bump.OldRef {
+			return fmt.Errorf("%w: source %s changed while staging %s", dependencytxn.ErrGenerationConflict, name, target.DeclaringPath)
+		}
+		refNode.Value = bump.NewRef
+	}
+	var data bytes.Buffer
+	encoder := yaml.NewEncoder(&data)
+	encoder.SetIndent(2)
+	if err := encoder.Encode(&doc); err != nil {
+		return fmt.Errorf("encode staged config %s: %w", target.DeclaringPath, err)
+	}
+	if err := encoder.Close(); err != nil {
+		return fmt.Errorf("close staged config encoder %s: %w", target.DeclaringPath, err)
+	}
+	if err := os.WriteFile(target.StagedPath, data.Bytes(), candidate.Mode); err != nil {
+		return fmt.Errorf("write staged config %s: %w", target.DeclaringPath, err)
+	}
+	_, err = config.OpenLayerEditor(target)
+	return err
+}
+
+func updateMappingValue(node *yaml.Node, key string) *yaml.Node {
+	if node == nil || node.Kind != yaml.MappingNode {
+		return nil
+	}
+	for i := 0; i+1 < len(node.Content); i += 2 {
+		if node.Content[i].Value == key {
+			return node.Content[i+1]
+		}
+	}
+	return nil
 }
 
 func canonicalUpdateRegistryURL(raw string) (string, error) {

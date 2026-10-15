@@ -71,9 +71,9 @@ func setupDependencyInspection(t *testing.T) (string, string, string) {
 	t.Setenv("HOME", home)
 	t.Setenv("XDG_CACHE_HOME", filepath.Join(root, "cache"))
 	t.Setenv("XDG_STATE_HOME", filepath.Join(root, "state"))
-	writeConfig(t, filepath.Join(home, ".agents", "config.yaml"), "\nregistries: []\n")
+	writeFile(t, filepath.Join(home, ".agents", "config.yaml"), "apiVersion: agent-marketplace/v4\nharnesses: [factory]\n")
 	repo := filepath.Join(root, "repo")
-	writeConfig(t, filepath.Join(repo, ".agents", "config.yaml"), "\nharnesses: [factory]\nregistries: []\n")
+	writeFile(t, filepath.Join(repo, ".agents", "config.yaml"), "apiVersion: agent-marketplace/v4\nharnesses: [factory]\n")
 	withWorkingDir(t, repo)
 	config.ResetRepoRootCache()
 	t.Cleanup(config.ResetRepoRootCache)
@@ -84,6 +84,7 @@ func setupDependencyInspection(t *testing.T) (string, string, string) {
 	return root, repo, state
 }
 
+// spec: consumer-config-format/read-only-commands-preserve-pending-transactions
 func TestReadOnlyDependencyEntrypointsPreservePendingTransactions(t *testing.T) {
 	if isolateCommandTest(t) {
 		return
@@ -174,7 +175,7 @@ func TestLockPublicationHoldsExactLeaseFromSnapshotThroughCommit(t *testing.T) {
 	writeSkill(t, working, "review", "Review", nil)
 	commitAndPushAll(t, working, "review")
 	repo := filepath.Join(t.TempDir(), "repo")
-	writeConfig(t, filepath.Join(repo, ".agents", "config.yaml"), "\nregistries:\n  - url: "+origin+"\n    ref: main\n")
+	writeConfig(t, filepath.Join(repo, ".agents", "config.yaml"), "apiVersion: agent-marketplace/v4\nsources:\n  origin: {git: file://"+origin+", ref: main}\n")
 	withWorkingDir(t, repo)
 
 	gcDone := make(chan error, 1)
@@ -273,7 +274,7 @@ func TestDeinitOrganizationResolutionReturnsHeldExactLease(t *testing.T) {
 	writeConfig(t, filepath.Join(home, ".agents", "config.yaml"), "\nharnesses: [factory]\n")
 	orgConfig := filepath.Join(t.TempDir(), "config.yaml")
 	config.SetTestOrganizationConfigPath(t, orgConfig)
-	writeConfig(t, orgConfig, "\nregistries:\n  - url: "+origin+"\n    ref: main\n    skills: [review]\n")
+	writeConfig(t, orgConfig, "apiVersion: agent-marketplace/v4\nsources:\n  origin: {git: file://"+origin+", ref: main}\nresources:\n  origin: [skill/review]\n")
 	if output, err := executeCommand("lock", "--scope", "organization"); err != nil {
 		t.Fatalf("seed organization exact lock: %v\n%s", err, output)
 	}
@@ -319,10 +320,10 @@ func TestSyncCheckExactConsumerLeasePreventsSnapshotDeletion(t *testing.T) {
 	commitAndPushAll(t, working, "seed")
 	repo := filepath.Join(t.TempDir(), "repo")
 	writeConfig(t, filepath.Join(repo, ".agents", "config.yaml"), `
+apiVersion: agent-marketplace/v4
 harnesses: [factory]
-registries:
-  - url: `+origin+`
-    ref: main
+sources:
+  origin: {git: file://`+origin+`, ref: main}
 `)
 	withWorkingDir(t, repo)
 	if output, err := executeCommand("lock", "--scope", "repo"); err != nil {
@@ -395,10 +396,11 @@ func TestSyncLocalRegistryDoesNotCreateLock(t *testing.T) {
 	writeSkill(t, registry, "review", "Review", nil)
 	repo := filepath.Join(t.TempDir(), "repo")
 	writeConfig(t, filepath.Join(repo, ".agents", "config.yaml"), `
-registries:
-  - url: `+registry+`
-    skills:
-      include: [review]
+apiVersion: agent-marketplace/v4
+sources:
+  local: {directory: `+registry+`}
+resources:
+  local: [skill/review]
 `)
 	withWorkingDir(t, repo)
 	if output, err := executeCommand("sync"); err != nil {
@@ -422,7 +424,7 @@ func TestLockOmitsUnsupportedRuleAndPrintsWarning(t *testing.T) {
 	writeFile(t, filepath.Join(working, ".factory", "rules", "end-of-response-ask-user-question.md"), "Ask the user a question.\n")
 	commitAndPushAll(t, working, "skill and rule")
 	repo := filepath.Join(t.TempDir(), "repo")
-	writeConfig(t, filepath.Join(repo, ".agents", "config.yaml"), "\nregistries:\n  - url: "+origin+"\n    ref: main\n    source_harness: factory\n")
+	writeConfig(t, filepath.Join(repo, ".agents", "config.yaml"), "apiVersion: agent-marketplace/v4\nsources:\n  origin: {git: file://"+origin+", ref: main, source_harness: factory}\n")
 	withWorkingDir(t, repo)
 
 	output, err := executeCommand("lock", "--scope", "repo")
@@ -462,7 +464,7 @@ func TestRuntimeRecoversDependencyTransactionBeforeLoadingConfig(t *testing.T) {
 	commitAndPushAll(t, working, "review")
 	repo := filepath.Join(t.TempDir(), "repo")
 	configPath := filepath.Join(repo, ".agents", "config.yaml")
-	newConfig := []byte("apiVersion: agent-marketplace/v2\nharnesses: [factory]\nregistries:\n  - url: " + origin + "\n    ref: main\n")
+	newConfig := []byte("apiVersion: agent-marketplace/v4\nharnesses: [factory]\nsources:\n  origin: {git: file://" + origin + ", ref: main}\n")
 	writeFile(t, configPath, string(newConfig))
 	withWorkingDir(t, repo)
 	if output, err := executeCommand("lock", "--scope", "repo"); err != nil {
@@ -473,7 +475,7 @@ func TestRuntimeRecoversDependencyTransactionBeforeLoadingConfig(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	writeConfig(t, configPath, "\nregistries: []\n")
+	writeConfig(t, configPath, "apiVersion: agent-marketplace/v4\nsources: {}\n")
 	if err := os.Remove(lockPath); err != nil {
 		t.Fatal(err)
 	}
@@ -532,7 +534,7 @@ func TestConfiguredCommandsHandlePendingRecoveryBeforeLoadingConfig(t *testing.T
 			home := t.TempDir()
 			t.Setenv("HOME", home)
 			t.Setenv("XDG_STATE_HOME", filepath.Join(home, "state"))
-			writeConfig(t, filepath.Join(home, ".agents", "config.yaml"), "\nregistries: []\n")
+			writeFile(t, filepath.Join(home, ".agents", "config.yaml"), "apiVersion: agent-marketplace/v4\nharnesses: [factory]\n")
 			stateDir, err := dependencyStateDir()
 			if err != nil {
 				t.Fatal(err)
@@ -555,7 +557,7 @@ func TestConfiguredListDoesNotCreateDependencyState(t *testing.T) {
 	t.Setenv("HOME", home)
 	t.Setenv("XDG_STATE_HOME", filepath.Join(home, "state"))
 	t.Chdir(t.TempDir())
-	writeConfig(t, filepath.Join(home, ".agents", "config.yaml"), "\nregistries: []\n")
+	writeFile(t, filepath.Join(home, ".agents", "config.yaml"), "apiVersion: agent-marketplace/v4\nharnesses: [factory]\n")
 	if output, err := executeCommand("list"); err != nil {
 		t.Fatalf("list: %v\n%s", err, output)
 	}
@@ -581,12 +583,12 @@ func TestLockCommitRejectsConcurrentConfigEdit(t *testing.T) {
 	commitAndPushAll(t, working, "review")
 	repo := filepath.Join(t.TempDir(), "repo")
 	configPath := filepath.Join(repo, ".agents", "config.yaml")
-	writeConfig(t, configPath, "\nregistries:\n  - url: "+origin+"\n    ref: main\n")
+	writeConfig(t, configPath, "apiVersion: agent-marketplace/v4\nsources:\n  origin: {git: file://"+origin+", ref: main}\n")
 	withWorkingDir(t, repo)
 
 	originalCommit := commitDependencyTransaction
 	commitDependencyTransaction = func(ctx context.Context, stateDir string, desired []dependencytxn.DesiredFile, opts ...dependencytxn.Option) (dependencytxn.Result, error) {
-		writeConfig(t, configPath, "\nregistries: []\n")
+		writeConfig(t, configPath, "apiVersion: agent-marketplace/v4\nsources: {}\n")
 		return dependencytxn.Commit(ctx, stateDir, desired, opts...)
 	}
 	t.Cleanup(func() { commitDependencyTransaction = originalCommit })
@@ -612,11 +614,11 @@ func TestSyncMalformedExistingLockIsNotOverwritten(t *testing.T) {
 	repo := filepath.Join(t.TempDir(), "repo")
 	configPath := filepath.Join(repo, ".agents", "config.yaml")
 	writeConfig(t, configPath, `
-registries:
-  - url: `+origin+`
-    ref: main
-    skills:
-      include: [review]
+apiVersion: agent-marketplace/v4
+sources:
+  origin: {git: file://`+origin+`, ref: main}
+resources:
+  origin: [skill/review]
 `)
 	lockPath := filepath.Join(repo, ".agents", "lock.yaml")
 	bad := []byte("apiVersion: future/v9\nscope: repo\n")

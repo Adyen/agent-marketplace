@@ -117,9 +117,9 @@ func TestInstallScopeLocalFromSubdirNoFrom(t *testing.T) {
 
 	// Write a global config with the registry.
 	env.WriteGlobalConfig(strings.TrimSpace(`
-registries:
-  - url: ` + regURL + `
-    ref: main
+apiVersion: agent-marketplace/v4
+sources:
+  provider: {git: ` + regURL + `, ref: main}
 `))
 
 	// Run install --scope local from the subdirectory (no --from).
@@ -136,8 +136,12 @@ registries:
 	env.AssertFileExists("/workspace/subdir/.agents/config.local.yaml")
 	env.AssertFileContains("/workspace/subdir/.agents/config.local.yaml", "global-reg-skill")
 
-	// Skill should materialize at the subdir.
+	// The installed scope's skill and acquisition evidence must live beside the
+	// subdirectory local config, not in the parent repository's local layer.
 	env.AssertFileExists("/workspace/subdir/.factory/skills/global-reg-skill/SKILL.md")
+	env.AssertFileContains("/workspace/subdir/.agents/lock.local.yaml", "scope: local")
+	env.AssertFileContains("/workspace/subdir/.agents/lock.local.yaml", "url: "+strings.TrimSuffix(regURL, ".git"))
+	env.AssertFileAbsent("/workspace/.agents/lock.local.yaml")
 }
 
 // TestSyncFromSubdirInheritsParentConfig verifies that sync from a
@@ -157,21 +161,23 @@ func TestSyncFromSubdirInheritsParentConfig(t *testing.T) {
 		Skill{Name: "subdir-skill", Description: "Skill from subdir local config"},
 	))
 
-	// Write parent's repo config with a registry and default:true.
+	// Write parent's repo config with a registry and all:true.
 	env.WriteRepoConfig(strings.TrimSpace(`
-registries:
-  - url: ` + parentRegURL + `
-    ref: main
-    default: true
+apiVersion: agent-marketplace/v4
+sources:
+  parent: {git: ` + parentRegURL + `, ref: main}
+resources:
+  parent: {all: true}
 `))
 
 	// Create a subdirectory with a local config that adds another registry.
 	env.WriteFile("/workspace/subdir/.gitkeep", "")
 	env.WriteFile("/workspace/subdir/.agents/config.local.yaml", strings.TrimSpace(`
-registries:
-  - url: `+subdirRegURL+`
-    ref: main
-    default: true
+apiVersion: agent-marketplace/v4
+sources:
+  package: {git: `+subdirRegURL+`, ref: main}
+resources:
+  package: {all: true}
 `))
 
 	// Run sync from the subdirectory.
@@ -188,6 +194,12 @@ registries:
 	// Neither should materialize at the parent.
 	env.AssertFileAbsent("/workspace/.factory/skills/parent-skill")
 	env.AssertFileAbsent("/workspace/.factory/skills/subdir-skill")
+	env.AssertFileContains("/workspace/.agents/lock.yaml", "scope: repo")
+	env.AssertFileContains("/workspace/.agents/lock.yaml", "url: "+strings.TrimSuffix(parentRegURL, ".git"))
+	env.AssertFileContains("/workspace/subdir/.agents/lock.local.yaml", "scope: local")
+	env.AssertFileContains("/workspace/subdir/.agents/lock.local.yaml", "url: "+strings.TrimSuffix(subdirRegURL, ".git"))
+	env.AssertFileAbsent("/workspace/.agents/lock.local.yaml")
+	env.AssertFileAbsent("/workspace/subdir/.agents/lock.yaml")
 }
 
 // TestUpdateFromSubdirMaterializesAtSubdir verifies that update preserves
@@ -200,16 +212,18 @@ func TestUpdateFromSubdirMaterializesAtSubdir(t *testing.T) {
 		Skill{Name: "update-subdir-skill", Description: "Skill for update subdir test"},
 	))
 	env.WriteRepoConfig(strings.TrimSpace(`
-registries:
-  - url: ` + regURL + `
-    ref: main
-    default: true
+apiVersion: agent-marketplace/v4
+sources:
+  tools: {git: ` + regURL + `, ref: main}
+resources:
+  tools: {all: true}
 `))
 	env.WriteFile("/workspace/subdir/.agents/config.local.yaml", strings.TrimSpace(`
-registries:
-  - url: `+regURL+`
-    ref: main
-    default: true
+apiVersion: agent-marketplace/v4
+sources:
+  local: {git: `+regURL+`, ref: main}
+resources:
+  local: {all: true}
 `))
 	env.WriteGlobalConfig(``)
 
@@ -238,23 +252,23 @@ func TestSyncFromSubdirLocalExcludeParent(t *testing.T) {
 		Skill{Name: "exclude-skill", Description: "Skill to exclude"},
 	))
 
-	// Write parent's repo config with the registry (default:true).
+	// Write parent's repo config with the registry (all:true).
 	env.WriteRepoConfig(strings.TrimSpace(`
-registries:
-  - url: ` + regURL + `
-    ref: main
-    default: true
+apiVersion: agent-marketplace/v4
+sources:
+  tools: {git: ` + regURL + `, ref: main}
+resources:
+  tools: {all: true}
 `))
 
 	// Create a subdirectory with a local config that excludes one skill.
 	env.WriteFile("/workspace/subdir/.gitkeep", "")
 	env.WriteFile("/workspace/subdir/.agents/config.local.yaml", strings.TrimSpace(`
-registries:
-  - url: `+regURL+`
-    ref: main
-    skills:
-      exclude:
-        - exclude-skill
+apiVersion: agent-marketplace/v4
+sources:
+  overlay: {git: `+regURL+`, ref: main}
+resources:
+  overlay: {exclude: [skill/exclude-skill]}
 `))
 
 	// Run sync from the subdirectory.

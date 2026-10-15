@@ -17,6 +17,7 @@ import (
 
 	"github.com/Adyen/agent-marketplace/internal/cache"
 	"github.com/Adyen/agent-marketplace/internal/config"
+	"github.com/Adyen/agent-marketplace/internal/lockfile"
 	"github.com/Adyen/agent-marketplace/internal/pipeline"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 	mpapi "github.com/Adyen/agent-marketplace/pkg/marketplace/api"
@@ -194,8 +195,17 @@ func TestInstallMarketplaceEndpointIsIdempotentInBroaderScope(t *testing.T) {
 	t.Setenv("HOME", homeDir)
 	server := newMarketplaceEndpointServer(t, "marketplace-instance", "", nil)
 	defer server.Close()
-	organizationPath := filepath.Join(t.TempDir(), "organization.yaml")
-	writeFile(t, organizationPath, "apiVersion: agent-marketplace/v2\nmarketplaces:\n  - url: "+server.URL+"\n    instance_id: marketplace-instance\n")
+	organizationPath := filepath.Join(t.TempDir(), "config.yaml")
+	writeFile(t, organizationPath, "apiVersion: agent-marketplace/v4\nsources:\n  hosted:\n    marketplace: "+server.URL+"\n")
+	locked, err := lockfile.Encode(lockfile.Document{
+		APIVersion:   lockfile.APIVersionV2,
+		Scope:        lockfile.ScopeOrganization,
+		Marketplaces: []lockfile.MarketplaceLock{{URL: server.URL, InstanceID: "marketplace-instance"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(filepath.Dir(organizationPath), "lock.yaml"), string(locked))
 	config.SetTestOrganizationConfigPath(t, organizationPath)
 	withWorkingDir(t, t.TempDir())
 
@@ -221,7 +231,16 @@ func TestInstallMarketplaceEndpointPromotesFromNarrowerScope(t *testing.T) {
 	defer server.Close()
 	workspace := t.TempDir()
 	repoPath := filepath.Join(workspace, ".agents", "config.yaml")
-	writeConfig(t, repoPath, "marketplaces:\n  - url: "+server.URL+"\n    instance_id: marketplace-instance")
+	writeConfig(t, repoPath, "sources:\n  hosted:\n    marketplace: "+server.URL)
+	locked, err := lockfile.Encode(lockfile.Document{
+		APIVersion:   lockfile.APIVersionV2,
+		Scope:        lockfile.ScopeRepo,
+		Marketplaces: []lockfile.MarketplaceLock{{URL: server.URL, InstanceID: "marketplace-instance"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(workspace, ".agents", "lock.yaml"), string(locked))
 	withWorkingDir(t, workspace)
 
 	output, err := executeCommand("install", server.URL)
@@ -247,8 +266,8 @@ func TestInstallMarketplaceEndpointRejectsPolicyBeforeNetwork(t *testing.T) {
 	requests := 0
 	server := newMarketplaceEndpointServer(t, "marketplace-instance", "", &requests)
 	defer server.Close()
-	organizationPath := filepath.Join(t.TempDir(), "organization.yaml")
-	writeFile(t, organizationPath, "apiVersion: agent-marketplace/v2\nallowed_marketplaces: ['^https://allowed\\.example$']\n")
+	organizationPath := filepath.Join(t.TempDir(), "config.yaml")
+	writeFile(t, organizationPath, "apiVersion: agent-marketplace/v4\nallowed_marketplaces: ['^https://allowed\\.example$']\n")
 	config.SetTestOrganizationConfigPath(t, organizationPath)
 	withWorkingDir(t, t.TempDir())
 
@@ -345,7 +364,18 @@ func TestInstallMarketplaceEndpointRejectsIdentityConflictsWithoutMutation(t *te
 				configuredURL = server.URL
 			}
 			configPath := filepath.Join(homeDir, ".agents", "config.yaml")
-			writeConfig(t, configPath, "marketplaces:\n  - url: "+configuredURL+"\n    instance_id: "+tc.configuredID)
+			writeConfig(t, configPath, "sources:\n  hosted:\n    marketplace: "+configuredURL)
+			locked, err := lockfile.Encode(lockfile.Document{
+				APIVersion: lockfile.APIVersionV2,
+				Scope:      lockfile.ScopeUser,
+				Marketplaces: []lockfile.MarketplaceLock{{
+					URL: configuredURL, InstanceID: tc.configuredID,
+				}},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			writeFile(t, filepath.Join(homeDir, ".agents", "lock.yaml"), string(locked))
 			before, err := os.ReadFile(configPath)
 			if err != nil {
 				t.Fatal(err)
@@ -648,8 +678,9 @@ func TestInstallCommandAddsSkillToRepoConfigAndSyncsIt(t *testing.T) {
 
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
-registries:
-  - url: `+origin+`
+sources:
+  skills:
+    git: file://`+origin+`
     ref: main
 `)
 
@@ -690,11 +721,13 @@ func TestInstallCommandAddsSkillToExistingRegistrySpecificList(t *testing.T) {
 
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
-registries:
-  - url: `+origin+`
+sources:
+  skills:
+    git: file://`+origin+`
     ref: main
-    skills:
-      - vm-lifecycle
+resources:
+  skills:
+    include: [skill/vm-lifecycle]
 `)
 
 	withWorkingDir(t, repoRoot)
@@ -709,7 +742,7 @@ registries:
 		t.Fatalf("expected repo config to load after install: %v", err)
 	}
 
-	if !reflect.DeepEqual(cfg.Registries[0].Skills.Include, []string{"vm-lifecycle", "k8s-onboarding"}) {
+	if !reflect.DeepEqual(cfg.Registries[0].Skills.Include, []string{"k8s-onboarding", "vm-lifecycle"}) {
 		t.Fatalf("expected registry-specific skills to include installed skill, got %#v", cfg.Registries[0].Skills)
 	}
 
@@ -731,8 +764,9 @@ func TestInstallCommandAddsTagToRepoConfigAndSyncsMatchingSkills(t *testing.T) {
 
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
-registries:
-  - url: `+origin+`
+sources:
+  skills:
+    git: file://`+origin+`
     ref: main
 `)
 
@@ -777,8 +811,9 @@ func TestInstallCommandAddsAllDiscoveredSkillsToRepoConfigAndSyncsThem(t *testin
 
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
-registries:
-  - url: `+origin+`
+sources:
+  skills:
+    git: file://`+origin+`
     ref: main
 `)
 
@@ -824,10 +859,12 @@ func TestInstallCommandAddsAllDiscoveredSkillsForSingleRegistryWhenRegistryFlagI
 
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
-registries:
-  - url: `+infraOrigin+`
+sources:
+  infra:
+    git: file://`+infraOrigin+`
     ref: main
-  - url: `+securityOrigin+`
+  security:
+    git: file://`+securityOrigin+`
     ref: main
 `)
 
@@ -879,10 +916,12 @@ func TestInstallCommandFailsWhenInstallAllFindsCrossRegistryNameCollision(t *tes
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	configPath := filepath.Join(repoRoot, ".agents", "config.yaml")
 	writeConfig(t, configPath, `
-registries:
-  - url: `+infraOrigin+`
+sources:
+  infra:
+    git: file://`+infraOrigin+`
     ref: main
-  - url: `+securityOrigin+`
+  security:
+    git: file://`+securityOrigin+`
     ref: main
 `)
 
@@ -926,8 +965,9 @@ func TestInstallCommandFailsWhenSkillDoesNotExist(t *testing.T) {
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	configPath := filepath.Join(repoRoot, ".agents", "config.yaml")
 	writeConfig(t, configPath, `
-registries:
-  - url: `+origin+`
+sources:
+  skills:
+    git: file://`+origin+`
     ref: main
 `)
 
@@ -980,8 +1020,9 @@ metadata:
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	configPath := filepath.Join(repoRoot, ".agents", "config.yaml")
 	writeConfig(t, configPath, `
-registries:
-  - url: `+origin+`
+sources:
+  skills:
+    git: file://`+origin+`
     ref: main
 `)
 
@@ -1032,8 +1073,9 @@ func TestInstallCommandFailsWhenTagDoesNotExist(t *testing.T) {
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	configPath := filepath.Join(repoRoot, ".agents", "config.yaml")
 	writeConfig(t, configPath, `
-registries:
-  - url: `+origin+`
+sources:
+  skills:
+    git: file://`+origin+`
     ref: main
 `)
 
@@ -1076,11 +1118,12 @@ func TestInstallSubagentWithWindsurfTargetReturnsSuccess(t *testing.T) {
 
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
-apiVersion: agent-marketplace/v2
+apiVersion: agent-marketplace/v4
 harnesses:
   - windsurf
-registries:
-  - url: `+origin+`
+sources:
+  skills:
+    git: file://`+origin+`
     ref: main
 `)
 
@@ -1117,7 +1160,7 @@ func TestInstallFromFlagUsesRegistryDefaultBranchWhenRefIsOmitted(t *testing.T) 
 
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
-registries: []
+sources: {}
 `)
 
 	withWorkingDir(t, repoRoot)
@@ -1157,7 +1200,7 @@ func TestInstallFromFlagInstallsNamedResourceFromAdHocRegistry(t *testing.T) {
 	// Start with a minimal config so FindRepoRoot can locate the repo.
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
-registries: []
+sources: {}
 `)
 
 	withWorkingDir(t, repoRoot)
@@ -1179,7 +1222,7 @@ registries: []
 	if len(cfg.Registries) != 1 {
 		t.Fatalf("expected 1 registry entry, got %d", len(cfg.Registries))
 	}
-	if cfg.Registries[0].URL != origin {
+	if cfg.Registries[0].URL != "file://"+origin {
 		t.Fatalf("expected registry URL %q, got %q", origin, cfg.Registries[0].URL)
 	}
 	if !reflect.DeepEqual(cfg.Registries[0].Skills.Include, []string{"vm-lifecycle"}) {
@@ -1204,7 +1247,7 @@ func TestInstallFromFlagWithoutNameInstallsAllResources(t *testing.T) {
 
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
-registries: []
+sources: {}
 `)
 
 	withWorkingDir(t, repoRoot)
@@ -1242,7 +1285,7 @@ func TestInstallFromFlagWithKindFilter(t *testing.T) {
 
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
-registries: []
+sources: {}
 `)
 
 	withWorkingDir(t, repoRoot)
@@ -1283,7 +1326,7 @@ func TestInstallFromFlagWithWebURLInfersResourceName(t *testing.T) {
 
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
-registries: []
+sources: {}
 `)
 	withWorkingDir(t, repoRoot)
 
@@ -1320,7 +1363,7 @@ func TestInstallFromFlagIncompatibleWithTagAndAll(t *testing.T) {
 
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
-registries: []
+sources: {}
 `)
 	withWorkingDir(t, repoRoot)
 
@@ -1350,7 +1393,7 @@ func TestInstallFromFlagRefAndPathRequireFrom(t *testing.T) {
 
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
-registries: []
+sources: {}
 `)
 	withWorkingDir(t, repoRoot)
 
@@ -1382,7 +1425,7 @@ func TestInstallFromFlagBlockedURLReturnsError(t *testing.T) {
 	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
 allowed_registries:
   - ^gitlab\.example\.com/
-registries: []
+sources: {}
 `)
 	withWorkingDir(t, repoRoot)
 
@@ -1409,7 +1452,7 @@ func TestInstallFromFlagAcceptsScopeLocal(t *testing.T) {
 	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
 allowed_registries:
   - ^gitlab\.example\.com/
-registries: []
+sources: {}
 `)
 	withWorkingDir(t, repoRoot)
 
@@ -1441,8 +1484,9 @@ func TestInstallAllDiscoversAllResourceKinds(t *testing.T) {
 
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
-registries:
-  - url: `+origin+`
+sources:
+  skills:
+    git: file://`+origin+`
     ref: main
 `)
 
@@ -1491,17 +1535,15 @@ func TestInstallAllPreservesExistingRepoConfigFields(t *testing.T) {
 
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
-apiVersion: agent-marketplace/v2
-tags:
-  - existing-tag
-registries:
-  - url: `+origin+`
+apiVersion: agent-marketplace/v4
+sources:
+  skills:
+    git: file://`+origin+`
     ref: main
-    skills:
-      - already-installed-skill
-    commands:
-      include:
-        - already-installed-cmd
+resources:
+  skills:
+    tags: [existing-tag]
+    include: [skill/already-installed-skill, command/already-installed-cmd]
 `)
 
 	withWorkingDir(t, repoRoot)
@@ -1517,8 +1559,8 @@ registries:
 	}
 
 	// Tags must be preserved.
-	if !reflect.DeepEqual(cfg.Tags, []string{"existing-tag"}) {
-		t.Fatalf("expected tags [existing-tag], got %v", cfg.Tags)
+	if len(cfg.Registries) != 1 || !reflect.DeepEqual(cfg.Registries[0].Tags, []string{"existing-tag"}) {
+		t.Fatalf("expected source-group tags [existing-tag], got %#v", cfg.Registries)
 	}
 
 	// Existing skills must be preserved alongside new ones.
@@ -1564,8 +1606,9 @@ func TestInstallAllWithKindFlagFiltersToSingleKind(t *testing.T) {
 
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
-registries:
-  - url: `+origin+`
+sources:
+  skills:
+    git: file://`+origin+`
     ref: main
 `)
 
@@ -1606,7 +1649,7 @@ func TestInstallFromBundleModeDiscoversAllResourceKinds(t *testing.T) {
 
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
-registries: []
+sources: {}
 `)
 
 	withWorkingDir(t, repoRoot)
@@ -1647,7 +1690,7 @@ func TestInstallFromBundleModeWithKindFilter(t *testing.T) {
 
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
-registries: []
+sources: {}
 `)
 
 	withWorkingDir(t, repoRoot)
@@ -1683,8 +1726,9 @@ func TestInstallAllWithNonexistentRegistryStillErrors(t *testing.T) {
 
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
-registries:
-  - url: `+origin+`
+sources:
+  skills:
+    git: file://`+origin+`
     ref: main
 `)
 	withWorkingDir(t, repoRoot)
@@ -1734,7 +1778,7 @@ metadata:
 
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
-registries: []
+sources: {}
 `)
 
 	withWorkingDir(t, repoRoot)
@@ -1797,7 +1841,7 @@ metadata:
 
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
-registries: []
+sources: {}
 `)
 
 	withWorkingDir(t, repoRoot)
@@ -1833,7 +1877,7 @@ func TestInstallPositionalURLSuggestsFromFlag(t *testing.T) {
 
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
-registries: []
+sources: {}
 `)
 	withWorkingDir(t, repoRoot)
 
@@ -1866,8 +1910,9 @@ func TestInstallCommandRejectsUserScopeForRepoRelativeRegistry(t *testing.T) {
 	}
 
 	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
-registries:
-  - url: ./plugins/gitlab-mr
+sources:
+  local:
+    directory: ./plugins/gitlab-mr
 `)
 
 	withWorkingDir(t, repoRoot)
@@ -1914,9 +1959,9 @@ func TestInstallCommandRejectsUserScopeCollectionFromRepoRelativeRegistry(t *tes
 		t.Fatalf("write collection: %v", err)
 	}
 	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
-registries:
-  - url: ./local-registry
-    path: skills
+sources:
+  local:
+    directory: ./local-registry/skills
 `)
 	withWorkingDir(t, repoRoot)
 
@@ -1946,7 +1991,7 @@ func TestInstallCommandFailsFastOnMissingLocalRegistry(t *testing.T) {
 
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
-registries: []
+sources: {}
 `)
 
 	withWorkingDir(t, repoRoot)
@@ -1985,7 +2030,7 @@ func TestInstallCommandRejectsTraversingLocalRegistryPathBeforeWrite(t *testing.
 	}
 	repoConfig := filepath.Join(repoRoot, ".agents", "config.yaml")
 	writeConfig(t, repoConfig, `
-registries: []
+sources: {}
 `)
 	withWorkingDir(t, repoRoot)
 
@@ -2011,7 +2056,7 @@ func TestInstallCommandFailsFastOnMissingLocalRegistryPath(t *testing.T) {
 	}
 	repoConfig := filepath.Join(repoRoot, ".agents", "config.yaml")
 	writeConfig(t, repoConfig, `
-registries: []
+sources: {}
 `)
 	withWorkingDir(t, repoRoot)
 

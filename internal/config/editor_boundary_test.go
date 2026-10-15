@@ -74,7 +74,7 @@ func TestWriteConfigDocumentPreservesUserDotfileLink(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(target), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(target, []byte("apiVersion: agent-marketplace/v2\n"), 0o600); err != nil {
+	if err := os.WriteFile(target, []byte("apiVersion: agent-marketplace/v4\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	link := filepath.Join(agents, "config.yaml")
@@ -125,7 +125,7 @@ func TestWriteConfigDocumentPreservesContainedRepositoryLink(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(target), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(target, []byte("apiVersion: agent-marketplace/v2\n"), 0o644); err != nil {
+	if err := os.WriteFile(target, []byte("apiVersion: agent-marketplace/v4\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	link := filepath.Join(agents, "config.yaml")
@@ -188,7 +188,7 @@ func TestWriteConfigDocumentRejectsEscapingRepositoryLink(t *testing.T) {
 // tree and the captured tree untouched.
 // spec: config-mutation/replaced-publication-parents-and-leaves-are-refused
 func TestConfigDescriptorParentReplacement(t *testing.T) {
-	const oldContent = "apiVersion: agent-marketplace/v2\nharnesses: [factory]\n"
+	const oldContent = "apiVersion: agent-marketplace/v4\nharnesses: [factory]\n"
 
 	swapAgents := func(t *testing.T, repo string) (live, aside string) {
 		t.Helper()

@@ -99,21 +99,28 @@ func TestCheckFailsWhenAPackageNeverFinishes(t *testing.T) {
 	}
 }
 
+// spec: regression-gates/unsupported-roots-are-witnessed-by-the-launch-gate
 func TestCheckRequireModeNeedsEveryNamedTest(t *testing.T) {
 	run := func(events ...event) error {
 		t.Helper()
-		return check(strings.NewReader(stream(t, events...)), &strings.Builder{}, []string{"TestUpgrade", "TestLocks"})
+		return check(strings.NewReader(stream(t, events...)), &strings.Builder{}, []string{"TestUnsupportedRoots", "TestLocks"})
 	}
 	pkg := "github.com/Adyen/agent-marketplace/e2e"
 	start := event{Action: "start", Package: pkg}
 	done := event{Action: "pass", Package: pkg}
-	if err := run(start, event{Action: "pass", Package: pkg, Test: "TestUpgrade"}, event{Action: "pass", Package: pkg, Test: "TestLocks"}, done); err != nil {
+	if err := run(start, event{Action: "pass", Package: pkg, Test: "TestUnsupportedRoots"}, event{Action: "pass", Package: pkg, Test: "TestLocks"}, done); err != nil {
 		t.Fatalf("both required tests passed: %v", err)
 	}
-	if err := run(start, event{Action: "pass", Package: pkg, Test: "TestUpgrade"}, done); err == nil || !strings.Contains(err.Error(), "TestLocks: never ran") {
+	if err := run(start, event{Action: "pass", Package: pkg, Test: "TestUnsupportedRoots"}, done); err == nil || !strings.Contains(err.Error(), "TestLocks: never ran") {
 		t.Fatalf("renamed or filtered test error = %v", err)
 	}
-	if err := run(start, event{Action: "pass", Package: pkg, Test: "TestUpgrade"}, event{Action: "skip", Package: pkg, Test: "TestLocks"}, done); err == nil || !strings.Contains(err.Error(), "TestLocks: skip") {
+	if err := run(start, event{Action: "pass", Package: pkg, Test: "TestUnsupportedRoots"}, event{Action: "skip", Package: pkg, Test: "TestLocks"}, done); err == nil || !strings.Contains(err.Error(), "TestLocks: skip") {
 		t.Fatalf("skipped required test error = %v", err)
+	}
+	if err := run(start, event{Action: "fail", Package: pkg, Test: "TestUnsupportedRoots"}, event{Action: "pass", Package: pkg, Test: "TestLocks"}, done); err == nil {
+		t.Fatal("failed required refusal witness was accepted")
+	}
+	if err := run(start, event{Action: "pass", Package: pkg, Test: "TestRenamedRoots"}, event{Action: "pass", Package: pkg, Test: "TestLocks"}, done); err == nil || !strings.Contains(err.Error(), "TestUnsupportedRoots: never ran") {
+		t.Fatalf("renamed required refusal witness error = %v", err)
 	}
 }

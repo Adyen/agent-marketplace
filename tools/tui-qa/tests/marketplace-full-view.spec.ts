@@ -7,7 +7,6 @@ import { expect, test } from "@microsoft/tui-test";
 import { readRegularFile } from "./process-helpers.js";
 
 import {
-  declineLegacyMigration,
   defineFixture,
   findTextRun,
   osc52Capture,
@@ -57,7 +56,6 @@ test("marketplace full view browses inspection content, selects preview text, an
   const before = new Map(controlledPaths.map((root) => [root, treeDigest(root)]));
 
   const osc52 = osc52Capture(terminal);
-  await declineLegacyMigration(terminal);
 
   const longName = "pack-notes-with-a-much-longer-catalog-row-label";
   await step("settled baseline without the discovery row", () => {}, async () => {

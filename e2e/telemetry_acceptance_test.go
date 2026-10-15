@@ -277,7 +277,7 @@ func TestTelemetryManagedOrganizationLevel(t *testing.T) {
 	env := telemetryEnv(t, srv)
 
 	env.WriteOrgConfig(`
-apiVersion: agent-marketplace/v3
+apiVersion: agent-marketplace/v4
 harnesses:
   - factory
 telemetry:

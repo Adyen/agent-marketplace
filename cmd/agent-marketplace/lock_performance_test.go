@@ -168,15 +168,15 @@ func testSyncWarmLockVerifiesSnapshotOnce(t *testing.T, alias bool) {
 	_, repo, _ := setupDependencyInspection(t)
 	origin, working := createBareRepoWithWorkingClone(t, "warm-performance.git")
 	writeSkill(t, working, "review", "Review", nil)
-	rootPath := "."
+	sourcePath := ""
 	if alias {
-		rootPath = "alias"
-		if err := os.Symlink("skills", filepath.Join(working, rootPath)); err != nil {
+		sourcePath = ", path: alias"
+		if err := os.Symlink("skills", filepath.Join(working, "alias")); err != nil {
 			t.Fatal(err)
 		}
 	}
 	commitAndPushAll(t, working, "review")
-	writeConfig(t, filepath.Join(repo, ".agents", "config.yaml"), "\nharnesses: [factory]\nregistries:\n  - url: "+origin+"\n    ref: main\n    path: "+rootPath+"\n    skills:\n      include: [review]\n")
+	writeConfig(t, filepath.Join(repo, ".agents", "config.yaml"), "apiVersion: agent-marketplace/v4\nharnesses: [factory]\nsources:\n  origin: {git: file://"+origin+", ref: main"+sourcePath+"}\nresources:\n  origin: [skill/review]\n")
 	if output, err := executeCommand("sync"); err != nil {
 		t.Fatalf("seed sync: %v\n%s", err, output)
 	}

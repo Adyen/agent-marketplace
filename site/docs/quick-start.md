@@ -13,6 +13,10 @@ You need:
 
 If you rarely use a terminal, [Terminal basics](./terminal-basics.md) explains how to run the commands on this page.
 
+::: warning Existing configurations
+Every existing consumer root, including organization and personal-local, must declare exact `apiVersion: agent-marketplace/v4`; included fragments may omit the field or declare exact v4. If you already have older configuration, [convert it with an older released migrator before upgrading](./how-to/migrate-configuration.md), and have organization configuration converted externally. Conversion may refuse includes, unrepresentable input, or missing verified Marketplace evidence. Do not overwrite an existing configuration with the tutorial or merely change its sentinel: the new CLI/TUI refuses unsupported input without a migration command or prompt.
+:::
+
 Open a terminal and move into your project folder. Replace the path with your own:
 
 ```bash

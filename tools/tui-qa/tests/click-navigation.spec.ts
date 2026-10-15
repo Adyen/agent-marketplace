@@ -3,7 +3,6 @@ import assert from "node:assert/strict";
 import { expect, test } from "@microsoft/tui-test";
 
 import {
-  declineLegacyMigration,
   defineFixture,
   findTextRun,
   osc52Capture,
@@ -23,7 +22,6 @@ const click = (x: number, y: number): string => sgr(0, x, y, "M") + sgr(0, x, y,
 // spec: tui-mouse-navigation/terminal-clicks-navigate-the-running-tui
 test("list clicks select and open resources while list drags stay inert", async ({ terminal }) => {
   const osc52 = osc52Capture(terminal);
-  await declineLegacyMigration(terminal);
 
   await step("settled overflowing catalog", () => {}, async () => {
     await expect(terminal.getByText("beta-skill", { strict: false })).toBeVisible();

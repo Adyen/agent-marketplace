@@ -50,7 +50,7 @@ func updateModalForm(form *huh.Form, msg tea.Msg) *huh.Form {
 
 // modalSelectKeyMap adapts the default Huh keymap to the modal letter
 // accelerators this TUI owns: 'g' switches harness scope or edits the
-// global config, 'l' leaves a migration or edits the local config, so
+// global config, 'l' edits the local config, so
 // those letters never reach the form's own navigation bindings.
 func modalFormKeyMap() *huh.KeyMap {
 	km := huh.NewDefaultKeyMap()
@@ -65,16 +65,6 @@ func modalFormKeyMap() *huh.KeyMap {
 func fixedChoiceFormKeyMap() *huh.KeyMap {
 	km := modalFormKeyMap()
 	km.Select.Filter.Unbind()
-	return km
-}
-
-// migrationFormKeyMap keeps 'm' as the migrate accelerator and 'l' as the
-// leave accelerator by moving the confirm toggle off 'l'.
-func migrationFormKeyMap() *huh.KeyMap {
-	km := modalFormKeyMap()
-	km.Confirm.Toggle = key.NewBinding(key.WithKeys("h", "left", "right"), key.WithHelp("←/→", "toggle"), key.WithDisabled())
-	km.Confirm.Accept = key.NewBinding(key.WithKeys("m"), key.WithHelp("m", "migrate"))
-	km.Confirm.Reject = key.NewBinding(key.WithKeys("l"), key.WithHelp("l", "leave"))
 	return km
 }
 
@@ -259,23 +249,6 @@ func (m *Model) buildToggleForm() {
 func (m *Model) ensureToggleForm() {
 	if m.toggleForm == nil || m.toggleFormFor != rowKey(m.modalSkill) {
 		m.buildToggleForm()
-	}
-}
-
-func (m *Model) buildMigrationForm() {
-	value := true
-	confirm := huh.NewConfirm().
-		Key("migrate").
-		Value(&value).
-		Affirmative("migrate to v4").
-		Negative("leave unchanged")
-	m.migrationForm = newModalForm(confirm, migrationFormKeyMap(), m.currentTheme(), modalInnerWidth(*m))
-	m.migrationValue = &value
-}
-
-func (m *Model) ensureMigrationForm() {
-	if m.migrationForm == nil {
-		m.buildMigrationForm()
 	}
 }
 

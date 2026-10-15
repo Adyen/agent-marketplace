@@ -38,7 +38,7 @@ func testSyncAllowsOrganizationRequirementsWithoutLock(t *testing.T, withRepoReg
 
 	authority := canonicalTempDir(t)
 	orgPath := filepath.Join(authority, "config.yaml")
-	writeConfig(t, orgPath, "registries:\n  - url: "+origin+"\n    ref: main\n    required: true\n")
+	writeConfig(t, orgPath, "apiVersion: agent-marketplace/v4\nsources:\n  organization: {git: file://"+origin+", ref: main}\nresources:\n  organization: {all: true, required: true}\n")
 	if err := os.Chmod(authority, 0o555); err != nil {
 		t.Fatal(err)
 	}
@@ -46,7 +46,7 @@ func testSyncAllowsOrganizationRequirementsWithoutLock(t *testing.T, withRepoReg
 	config.SetTestOrganizationConfigPath(t, orgPath)
 	if withRepoRegistry {
 		repo := filepath.Join(canonicalTempDir(t), "repo")
-		writeConfig(t, filepath.Join(repo, ".agents", "config.yaml"), "harnesses: [factory]\nregistries:\n  - url: "+origin+"\n    ref: main\n")
+		writeConfig(t, filepath.Join(repo, ".agents", "config.yaml"), "apiVersion: agent-marketplace/v4\nharnesses: [factory]\nsources:\n  origin: {git: file://"+origin+", ref: main}\n")
 		withWorkingDir(t, repo)
 	} else {
 		writeConfig(t, filepath.Join(home, ".agents", "config.yaml"), "harnesses: [factory]\n")
@@ -79,7 +79,7 @@ func TestReadOnlyViewsDiscoverUnlockedOrganizationRegistry(t *testing.T) {
 
 	authority := canonicalTempDir(t)
 	orgPath := filepath.Join(authority, "config.yaml")
-	writeConfig(t, orgPath, "registries:\n  - url: "+origin+"\n    ref: main\n    required: true\n")
+	writeConfig(t, orgPath, "apiVersion: agent-marketplace/v4\nsources:\n  organization: {git: file://"+origin+", ref: main}\nresources:\n  organization: {all: true, required: true}\n")
 	if err := os.Chmod(authority, 0o555); err != nil {
 		t.Fatal(err)
 	}
@@ -87,7 +87,7 @@ func TestReadOnlyViewsDiscoverUnlockedOrganizationRegistry(t *testing.T) {
 	config.SetTestOrganizationConfigPath(t, orgPath)
 	writeConfig(t, filepath.Join(home, ".agents", "config.yaml"), "harnesses: [factory]\n")
 	withWorkingDir(t, t.TempDir())
-	if _, err := cache.CloneOrPull(origin, "main"); err != nil {
+	if _, err := cache.CloneOrPull("file://"+origin, "main"); err != nil {
 		t.Fatalf("prime unlocked mutable cache: %v", err)
 	}
 
@@ -119,7 +119,7 @@ func TestDeinitPreservesUnlockedOrganizationOutputAndCache(t *testing.T) {
 
 	authority := canonicalTempDir(t)
 	orgPath := filepath.Join(authority, "config.yaml")
-	writeConfig(t, orgPath, "registries:\n  - url: "+origin+"\n    ref: main\n    required: true\n")
+	writeConfig(t, orgPath, "apiVersion: agent-marketplace/v4\nsources:\n  organization: {git: file://"+origin+", ref: main}\nresources:\n  organization: {all: true, required: true}\n")
 	if err := os.Chmod(authority, 0o555); err != nil {
 		t.Fatal(err)
 	}
@@ -161,7 +161,7 @@ func TestDeinitBlocksOnPresentInvalidOrganizationLock(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", filepath.Join(home, "state"))
 	authority := canonicalTempDir(t)
 	orgPath := filepath.Join(authority, "config.yaml")
-	writeConfig(t, orgPath, "registries:\n  - url: https://example.invalid/org.git\n    ref: main\n    required: true\n")
+	writeConfig(t, orgPath, "apiVersion: agent-marketplace/v4\nsources:\n  organization: {git: https://example.invalid/org.git, ref: main}\nresources:\n  organization: {all: true, required: true}\n")
 	writeFile(t, filepath.Join(authority, "lock.yaml"), "not: [valid")
 	if err := os.Chmod(authority, 0o555); err != nil {
 		t.Fatal(err)
@@ -194,7 +194,7 @@ func TestExplicitOrganizationLockCreatesTrustedRegularFile(t *testing.T) {
 
 	authority := canonicalTempDir(t)
 	orgPath := filepath.Join(authority, "config.yaml")
-	writeConfig(t, orgPath, "registries:\n  - url: "+origin+"\n    ref: main\n    required: true\n")
+	writeConfig(t, orgPath, "apiVersion: agent-marketplace/v4\nsources:\n  organization: {git: file://"+origin+", ref: main}\nresources:\n  organization: {all: true, required: true}\n")
 	config.SetTestOrganizationConfigPath(t, orgPath)
 	withWorkingDir(t, t.TempDir())
 

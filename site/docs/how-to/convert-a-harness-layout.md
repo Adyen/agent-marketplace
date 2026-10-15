@@ -1,6 +1,6 @@
 # How to convert a harness layout
 
-Convert a folder of resources written for one [harness](../glossary.md#harness) into the layout another harness expects, for inspection or migration.
+Convert a folder of resources written for one [harness](../glossary.md#harness) into the layout another harness expects, for inspection or moving between harnesses. This is not consumer configuration conversion: `convert --from`/`--to` remains available, but the CLI has no `migrate` command. For older consumer configuration, see [conversion before upgrading](./migrate-configuration.md).
 
 ## Prerequisites
 

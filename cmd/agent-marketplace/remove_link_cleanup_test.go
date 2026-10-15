@@ -36,13 +36,13 @@ func TestRemoveBlockedManagedSkillPreservesSiblings(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", filepath.Join(home, ".local", "state"))
 	t.Setenv("CODEX_HOME", filepath.Join(home, ".codex"))
 	t.Setenv("TMPDIR", filepath.Join(base, "tmp"))
-	origin, working := createBareRepoWithWorkingClone(t, "blocked-skills.git")
+	origin, working := createV4GitRegistry(t, "blocked-skills.git")
 	writeSkill(t, working, "remove", "REMOVE ORIGINAL", nil)
 	writeSkill(t, working, "keep", "KEEP ORIGINAL", nil)
 	commitAndPushAll(t, working, "seed skills")
 	writeConfig(t, filepath.Join(home, ".agents", "config.yaml"), "\nharnesses: [factory]\n")
 	configPath := filepath.Join(repo, ".agents", "config.yaml")
-	writeConfig(t, configPath, "\nharnesses: [factory]\nregistries:\n  - url: "+origin+"\n    ref: main\n    default: true\n")
+	writeConfig(t, configPath, "\nharnesses: [factory]\nsources:\n  registry:\n    git: "+origin+"\n    ref: main\nresources:\n  registry:\n    all: true\n")
 	withWorkingDir(t, repo)
 	if out, err := executeCommand("sync"); err != nil {
 		t.Fatalf("seed sync: %v\n%s", err, out)
@@ -116,13 +116,13 @@ func TestRemoveBlockedManagedSkillFromNestedLocalUsesNestedMaterializationRoot(t
 	t.Setenv("XDG_STATE_HOME", filepath.Join(home, ".local", "state"))
 	t.Setenv("CODEX_HOME", filepath.Join(home, ".codex"))
 	t.Setenv("TMPDIR", filepath.Join(base, "tmp"))
-	origin, working := createBareRepoWithWorkingClone(t, "nested-blocked-skills.git")
+	origin, working := createV4GitRegistry(t, "nested-blocked-skills.git")
 	writeSkill(t, working, "remove", "REMOVE ORIGINAL", nil)
 	writeSkill(t, working, "keep", "KEEP ORIGINAL", nil)
 	commitAndPushAll(t, working, "seed skills")
 	writeConfig(t, filepath.Join(home, ".agents", "config.yaml"), "\nharnesses: [factory]\n")
-	writeConfig(t, filepath.Join(repo, ".agents", "config.yaml"), "\nharnesses: [factory]\nregistries:\n  - url: "+origin+"\n    ref: main\n    default: true\n")
-	writeConfig(t, filepath.Join(nested, ".agents", "config.local.yaml"), "registries: []\n")
+	writeConfig(t, filepath.Join(repo, ".agents", "config.yaml"), "\nharnesses: [factory]\nsources:\n  registry:\n    git: "+origin+"\n    ref: main\nresources:\n  registry:\n    all: true\n")
+	writeConfig(t, filepath.Join(nested, ".agents", "config.local.yaml"), "apiVersion: agent-marketplace/v4\nsources: {}\n")
 	withWorkingDir(t, nested)
 	if out, err := executeCommand("sync"); err != nil {
 		t.Fatalf("seed nested sync: %v\n%s", err, out)
@@ -178,7 +178,7 @@ func newManagedResourceLinkFixture(t *testing.T, target, scope, kind string) man
 	if target == "codex" && scope == "user" && kind == "subagent" {
 		t.Setenv("CODEX_HOME", filepath.Join(base, "external-codex"))
 	}
-	origin, working := createBareRepoWithWorkingClone(t, "blocked-resources-"+target+"-"+scope+"-"+kind+".git")
+	origin, working := createV4GitRegistry(t, "blocked-resources-"+target+"-"+scope+"-"+kind+".git")
 	if kind == "skill" {
 		writeSkill(t, working, "remove", "REMOVE ORIGINAL", nil)
 		writeSkill(t, working, "keep", "KEEP ORIGINAL", nil)
@@ -192,7 +192,7 @@ func newManagedResourceLinkFixture(t *testing.T, target, scope, kind string) man
 	harnesses := "[" + target + "]"
 	userPath := filepath.Join(home, ".agents", "config.yaml")
 	repoPath := filepath.Join(repo, ".agents", "config.yaml")
-	registry := "\nregistries:\n  - url: " + origin + "\n    ref: main\n    default: true\n"
+	registry := "\nsources:\n  registry:\n    git: " + origin + "\n    ref: main\nresources:\n  registry:\n    all: true\n"
 	if scope == "user" {
 		writeConfig(t, userPath, "\nharnesses: "+harnesses+registry)
 		writeConfig(t, repoPath, "\nharnesses: "+harnesses+"\n")
@@ -540,7 +540,7 @@ func TestRemoveBlockedManagedResourceAuthorizationChanges(t *testing.T) {
 			f := newManagedResourceLinkFixture(t, target, "repo", tc.kind)
 			if scenario == "include" {
 				fragment := filepath.Join(f.repo, ".agents", "fragment.yaml")
-				if err := os.WriteFile(fragment, []byte("tags: [before]\n"), 0o600); err != nil {
+				if err := os.WriteFile(fragment, []byte("resources:\n  registry:\n    tags: [before]\n"), 0o600); err != nil {
 					t.Fatal(err)
 				}
 				raw, err := os.ReadFile(f.configPath)
@@ -575,7 +575,7 @@ func TestRemoveBlockedManagedResourceAuthorizationChanges(t *testing.T) {
 				}))
 				switch scenario {
 				case "include":
-					if err := os.WriteFile(filepath.Join(f.repo, ".agents", "fragment.yaml"), []byte("tags: [after]\n"), 0o600); err != nil {
+					if err := os.WriteFile(filepath.Join(f.repo, ".agents", "fragment.yaml"), []byte("resources:\n  registry:\n    tags: [after]\n"), 0o600); err != nil {
 						return dependencytxn.Result{}, err
 					}
 				case "lock":
@@ -898,7 +898,7 @@ func TestRemoveBlockedManagedSkillFIFOAuthorization(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(fragment, []byte("tags: [before]\n"), 0o600); err != nil {
+	if err := os.WriteFile(fragment, []byte("resources:\n  registry:\n    tags: [before]\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(f.configPath, append(raw, []byte("\ninclude: [fragment.yaml]\n")...), 0o600); err != nil {

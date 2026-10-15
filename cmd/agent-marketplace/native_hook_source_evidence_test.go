@@ -150,8 +150,8 @@ func statSnapshot(t *testing.T, path string) (data []byte, info os.FileInfo) {
 func assertStatUnchanged(t *testing.T, phase, path string, before []byte, info os.FileInfo) {
 	t.Helper()
 	data, after := statSnapshot(t, path)
-	if !bytes.Equal(data, before) || after.Mode() != info.Mode() || !after.ModTime().Equal(info.ModTime()) {
-		t.Fatalf("%s changed %s (bytes, mode, or mtime)", phase, path)
+	if !bytes.Equal(data, before) || after.Mode() != info.Mode() || !after.ModTime().Equal(info.ModTime()) || !os.SameFile(after, info) {
+		t.Fatalf("%s changed %s (bytes, mode, mtime, or file identity)", phase, path)
 	}
 }
 
@@ -271,7 +271,7 @@ func cliSharedHookFingerprints(t *testing.T, repoRoot, home string, d cliNativeD
 		configPath = filepath.Join(home, ".agents", "config.yaml")
 		lockArgs = []string{"lock", "--scope", "user"}
 	}
-	writeConfig(t, configPath, "harnesses: ["+d.target+"]\nregistries:\n  - url: "+origin+"\n    ref: main\n    source_harness: claude\n    default: true\n")
+	writeConfig(t, configPath, "apiVersion: agent-marketplace/v4\nharnesses: ["+d.target+"]\nsources:\n  hooks:\n    git: file://"+origin+"\n    ref: main\n    source_harness: claude\nresources:\n  hooks: {all: true}\n")
 	withWorkingDir(t, repoRoot)
 
 	if output, err := executeCommand(lockArgs...); err != nil {

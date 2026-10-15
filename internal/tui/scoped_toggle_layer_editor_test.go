@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -57,12 +58,11 @@ func registrySelectorExcludes(cfg *config.Config, kind ir.ResourceKind, name str
 	return false
 }
 
-func TestScopedToggleUsesLayerEditorAcrossSchemas(t *testing.T) {
+func TestScopedToggleUsesV4LayerEditorAcrossScopes(t *testing.T) {
 	schemas := map[string]string{
-		"v2": "apiVersion: agent-marketplace/v2\nregistries:\n  - url: https://example.test/repo.git\n    ref: main\n",
 		"v4": "apiVersion: agent-marketplace/v4\nsources:\n  main: {git: https://example.test/repo.git, ref: main}\n",
 	}
-	for _, schema := range []string{"v2", "v4"} {
+	for _, schema := range []string{"v4"} {
 		for _, s := range []scope{scopeGlobal, scopeProject, scopeLocal} {
 			t.Run(schema+"/"+scopeName(s), func(t *testing.T) {
 				repoRoot := t.TempDir()
@@ -123,11 +123,49 @@ func TestScopedToggleUsesLayerEditorAcrossSchemas(t *testing.T) {
 				if schema == "v4" && strings.Contains(string(data), "registries:") {
 					t.Fatalf("legacy keys in v4 config:\n%s", data)
 				}
-				if schema == "v2" && strings.Contains(string(data), "sources:") {
-					t.Fatalf("v4 keys in v2 config:\n%s", data)
-				}
 			})
 		}
+	}
+}
+
+// spec: tui-interactions/guarded-submission
+func TestScopedToggleSourceFreeExclusionRefusesWithoutWrite(t *testing.T) {
+	for _, enable := range []bool{true, false} {
+		t.Run(map[bool]string{true: "exclude", false: "clear-exclude"}[enable], func(t *testing.T) {
+			repo := t.TempDir()
+			t.Setenv("HOME", t.TempDir())
+			t.Chdir(repo)
+			path := config.LocalConfigPath(repo)
+			if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			const original = "apiVersion: agent-marketplace/v4\n"
+			mustWriteFile(t, path, []byte(original))
+			act := toggleAction{skillName: "audit", kind: ir.KindSkill, scope: scopeLocalExclude, enable: enable}
+			var validation *config.V4ValidationError
+			if err := runToggleAndErr(t, repo, act); !errors.As(err, &validation) || validation.Code != "config.edit.unsupported-operation" {
+				t.Fatalf("source-free exclusion = %v, want coded unsupported operation", err)
+			}
+			data, err := os.ReadFile(path)
+			if err != nil || string(data) != original {
+				t.Fatalf("source-free refusal changed config: %q, %v", data, err)
+			}
+			act.registryURL, act.registryRef = "https://example.test/source.git", "main"
+			act.enable = true
+			if err := runToggleAndErr(t, repo, act); err != nil {
+				t.Fatalf("source-bound exclusion control refused: %v", err)
+			}
+			if !enable {
+				act.enable = false
+				if err := runToggleAndErr(t, repo, act); err != nil {
+					t.Fatalf("source-bound clear control refused: %v", err)
+				}
+			}
+			cfg, err := config.LoadRootConfigFromPath(path)
+			if err != nil || registrySelectorExcludes(cfg, ir.KindSkill, "audit") != enable {
+				t.Fatalf("source-bound control exclusion = %v, %v, want %t", cfg, err, enable)
+			}
+		})
 	}
 }
 
