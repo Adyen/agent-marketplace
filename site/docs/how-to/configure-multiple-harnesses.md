@@ -15,7 +15,7 @@ Launch the TUI:
 agent-marketplace
 ```
 
-This opens the interactive TUI. Press `H` to open the harness modal. It opens on your personal list in `~/.agents/config.yaml`; press `p` to edit the repository list in `.agents/config.yaml` instead, or `g` to go back. Move with the arrow keys, toggle each harness with `space`, and press `enter` to save. Press `esc` to close without saving.
+Press `H` to open the harness modal. It opens on your personal list in `~/.agents/config.yaml`. Press `p` to edit the repository list in `.agents/config.yaml` instead, or `g` to go back. Use the arrow keys to move, `space` to toggle a harness, and `enter` to save. `esc` closes the modal without saving.
 
 ## 2. Or edit the configuration directly
 
@@ -29,9 +29,9 @@ harnesses:
   - devin
 ```
 
-The lists do not merge. When you sync inside a repository whose `.agents/config.yaml` sets `harnesses`, that list is used for the whole run. Otherwise sync uses your personal list, and then the organization's.
+The lists do not merge. Inside a repository whose `.agents/config.yaml` sets `harnesses`, sync uses that list for the whole run. Otherwise it uses your personal list, and then the organization's.
 
-Each file's resources also keep that file's own `harnesses` list as a limit. Resources from your personal configuration therefore go only to harnesses that are in both your list and the repository's list. If the two lists do not overlap, a sync inside that repository leaves out your personal resources and removes their machine-wide files until you sync somewhere else.
+Each file's resources also keep that file's own `harnesses` list as a limit. Resources from your personal configuration go only to harnesses in both your list and the repository's list. If the two lists do not overlap, a sync inside that repository leaves out your personal resources and removes their machine-wide files until you sync somewhere else.
 
 ## 3. Narrow a registry to specific harnesses
 
@@ -56,9 +56,9 @@ Sync writes this group only to harnesses that appear in both lists. With the con
 agent-marketplace sync
 ```
 
-The summary line starts with `Installed <n>  Removed <n>  Malformed <n>  Errors <n>`, followed, only when sync writes or removes output, by a single `→` line that lists the output roots it changed, separated by commas, each with its own counts in parentheses, for example `→ /path/.claude/skills (1 written), /path/.cursor/skills (1 written)`. `n` counts the files and entries sync wrote across all harnesses, so it changes with your selection and your harnesses and is not a resource count.
+The summary line starts with `Installed <n>  Removed <n>  Malformed <n>  Errors <n>`. When sync writes or removes output, it adds one `→` line. That line lists the changed output roots, separated by commas, each with its own counts in parentheses, for example `→ /path/.claude/skills (1 written), /path/.cursor/skills (1 written)`. `n` counts the files and entries written across all harnesses. It depends on your selection and harnesses, not on the number of resources.
 
-Each selected resource now appears in the folders of every harness it applies to. Check with:
+Check that each selected resource appears in every harness it applies to:
 
 ```bash
 agent-marketplace status
