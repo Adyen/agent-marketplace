@@ -52,7 +52,7 @@ The command copies the newest archive for that harness back into the machine-wid
 
 ## Back up configuration, lock, and durable state
 
-`backup` does not cover these. This shell snippet (for bash or zsh) packs whichever of them exist into one archive in the current folder:
+`backup` does not cover these. This snippet (bash or zsh) packs the ones that exist into one archive in the current folder:
 
 ```bash
 state_dir="${XDG_STATE_HOME:-$HOME/.local/state}/agent-marketplace"

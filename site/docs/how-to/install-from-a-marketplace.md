@@ -1,6 +1,6 @@
 # How to install a resource from a hosted Marketplace
 
-This guide shows how to find a resource on a hosted [Marketplace](../glossary.md#marketplace) and install one exact revision of it. The CLI verifies the revision and shows you a preview before it changes any configuration.
+Find a resource on a hosted [Marketplace](../glossary.md#marketplace) and install one exact revision of it. The CLI verifies the revision and shows a preview before it changes any configuration.
 
 ## Prerequisites
 
@@ -36,7 +36,7 @@ Search the configured Marketplaces:
 agent-marketplace search review --kind skill --marketplace https://marketplace.example.com
 ```
 
-The results have the columns `MARKETPLACE`, `SOURCE`, `KIND`, `NAME`, and `DESCRIPTION`. Typical output:
+Typical output:
 
 ```text
 MARKETPLACE                     SOURCE         KIND   NAME    DESCRIPTION
@@ -131,7 +131,7 @@ In the `MARKETPLACE PINS` table, check that the row for the resource shows:
 - A `sha256:` digest in `CONTENT_DIGEST`.
 - The intended configuration layer in `LAYER`.
 
-Then confirm that the configuration and the generated output match:
+Then confirm the config and output match:
 
 ```bash
 agent-marketplace sync --check
