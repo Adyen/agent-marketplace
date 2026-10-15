@@ -24,11 +24,11 @@
 
 ## 7. Top-level pages
 
-- [ ] 7.1 Shorten `index.md`, `install.md`, `quick-start.md`, and `terminal-basics.md`.
+- [x] 7.1 Shorten `index.md`, `install.md`, `quick-start.md`, and `terminal-basics.md`.
 
 ## 8. Verify
 
-- [ ] 8.1 Run the code-block invariant check against the base commit for every changed page.
-- [ ] 8.2 Run the site build without dead links.
-- [ ] 8.3 Run `make spec-check` and `TestDocsContract`.
-- [ ] 8.4 Archive with `openspec archive plain-language-docs-pass --yes`.
+- [x] 8.1 Run the code-block invariant check against the base commit for every changed page.
+- [x] 8.2 Run the site build without dead links.
+- [x] 8.3 Run `make spec-check` and `TestDocsContract`.
+- [ ] 8.4 Archive with `openspec archive plain-language-docs-pass --yes` once every area above is done.
