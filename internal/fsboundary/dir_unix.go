@@ -119,60 +119,72 @@ func splitRelative(rel string) ([]string, error) {
 // openComponent opens one intermediate directory below parent without
 // following symlinks.
 func openComponent(parent *os.File, name string) (*os.File, error) {
+	path := filepath.Join(parent.Name(), name)
 	fd, err := unix.Openat(int(parent.Fd()), name, componentOpenFlags, 0)
 	if err != nil {
 		switch {
 		case errors.Is(err, unix.ELOOP), errors.Is(err, unix.ENOTDIR):
-			return nil, fmt.Errorf("%w: unsafe path component %s", ErrUnsafePath, name)
+			return nil, unsafeComponentError(parent, name, path)
 		case errors.Is(err, unix.ENOENT):
-			return nil, fmt.Errorf("open path component %s: %w", name, fs.ErrNotExist)
+			return nil, fmt.Errorf("open path component %s: %w", path, fs.ErrNotExist)
 		default:
-			return nil, fmt.Errorf("open path component %s: %w", name, err)
+			return nil, fmt.Errorf("open path component %s: %w", path, err)
 		}
 	}
-	file := os.NewFile(uintptr(fd), name)
+	file := os.NewFile(uintptr(fd), path)
 	return file, nil
+}
+
+// unsafeComponentError classifies a refused intermediate component by its
+// no-follow shape: open errnos for symlinks differ between Linux and macOS.
+func unsafeComponentError(parent *os.File, name, path string) error {
+	var st unix.Stat_t
+	if err := unix.Fstatat(int(parent.Fd()), name, &st, unix.AT_SYMLINK_NOFOLLOW); err == nil && st.Mode&unix.S_IFMT == unix.S_IFLNK {
+		return fmt.Errorf("%w: %s is a symbolic link; intermediate path components must be real directories", ErrUnsafePath, path)
+	}
+	return fmt.Errorf("%w: %s is not a directory", ErrUnsafePath, path)
 }
 
 // openLeaf opens the final component below parent with no-follow and
 // nonblocking flags and validates that the opened object is a singly linked
 // regular file.
 func openLeaf(parent *os.File, name string) (*os.File, Identity, error) {
+	path := filepath.Join(parent.Name(), name)
 	fd, err := unix.Openat(int(parent.Fd()), name, leafOpenFlags, 0)
 	if err != nil {
 		switch {
 		case errors.Is(err, unix.ELOOP):
-			return nil, Identity{}, fmt.Errorf("%w: %s: %w", ErrUnsafePath, name, errLeafSymlink)
+			return nil, Identity{}, fmt.Errorf("%w: %s: %w", ErrUnsafePath, path, errLeafSymlink)
 		case errors.Is(err, unix.ENXIO), errors.Is(err, unix.ENOTSOCK), errors.Is(err, unix.EOPNOTSUPP):
 			// Linux reports ENXIO and macOS EOPNOTSUPP when a socket path is
 			// opened; both are object-shape violations, not path violations.
-			return nil, Identity{}, fmt.Errorf("%w: leaf is a special device or socket: %s", ErrUnsafeFile, name)
+			return nil, Identity{}, fmt.Errorf("%w: leaf is a special device or socket: %s", ErrUnsafeFile, path)
 		case errors.Is(err, unix.ENOENT):
-			return nil, Identity{}, fmt.Errorf("open leaf %s: %w", name, fs.ErrNotExist)
+			return nil, Identity{}, fmt.Errorf("open leaf %s: %w", path, fs.ErrNotExist)
 		default:
-			return nil, Identity{}, fmt.Errorf("open leaf %s: %w", name, err)
+			return nil, Identity{}, fmt.Errorf("open leaf %s: %w", path, err)
 		}
 	}
 	var st unix.Stat_t
 	if err := unix.Fstat(fd, &st); err != nil {
-		return nil, Identity{}, errors.Join(fmt.Errorf("inspect leaf %s: %w", name, err), unix.Close(fd))
+		return nil, Identity{}, errors.Join(fmt.Errorf("inspect leaf %s: %w", path, err), unix.Close(fd))
 	}
 	if st.Mode&unix.S_IFMT != unix.S_IFREG {
-		return nil, Identity{}, errors.Join(fmt.Errorf("%w: leaf is not a regular file: %s", ErrUnsafeFile, name), unix.Close(fd))
+		return nil, Identity{}, errors.Join(fmt.Errorf("%w: leaf is not a regular file: %s", ErrUnsafeFile, path), unix.Close(fd))
 	}
 	if st.Nlink != 1 {
-		return nil, Identity{}, errors.Join(fmt.Errorf("%w: leaf has %d links: %s", ErrUnsafeFile, st.Nlink, name), unix.Close(fd))
+		return nil, Identity{}, errors.Join(fmt.Errorf("%w: leaf has %d links: %s", ErrUnsafeFile, st.Nlink, path), unix.Close(fd))
 	}
 	if err := unix.SetNonblock(fd, false); err != nil {
-		return nil, Identity{}, errors.Join(fmt.Errorf("restore blocking reads on %s: %w", name, err), unix.Close(fd))
+		return nil, Identity{}, errors.Join(fmt.Errorf("restore blocking reads on %s: %w", path, err), unix.Close(fd))
 	}
-	file := os.NewFile(uintptr(fd), name)
+	file := os.NewFile(uintptr(fd), path)
 	id, err := identityOf(file)
 	if err != nil {
 		_ = file.Close()
-		return nil, Identity{}, fmt.Errorf("inspect leaf %s: %w", name, err)
+		return nil, Identity{}, fmt.Errorf("inspect leaf %s: %w", path, err)
 	}
-	if err := validateLeafIdentity(id, name); err != nil {
+	if err := validateLeafIdentity(id, path); err != nil {
 		_ = file.Close()
 		return nil, Identity{}, err
 	}
