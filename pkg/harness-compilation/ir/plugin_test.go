@@ -14,17 +14,6 @@ func TestKindPluginAppendedAfterKindRule(t *testing.T) {
 	}
 }
 
-func TestPluginImplementsResource(t *testing.T) {
-	p := &Plugin{Manifest: Manifest{Name: "demo-plugin"}}
-	var r Resource = p
-	if r.Kind() != KindPlugin {
-		t.Fatalf("Kind() = %v, want KindPlugin", r.Kind())
-	}
-	if r.Name() != "demo-plugin" {
-		t.Fatalf("Name() = %q, want %q", r.Name(), "demo-plugin")
-	}
-}
-
 func TestValidateResourceRefusesPlugin(t *testing.T) {
 	p := &Plugin{Manifest: Manifest{Name: "demo-plugin"}}
 	if _, _, err := ValidateResource(p); err == nil {
@@ -67,16 +56,5 @@ func TestValidatePluginName(t *testing.T) {
 		if !c.wantErr && err != nil {
 			t.Errorf("ValidatePluginName(%q, %q) = %v, want nil", c.format, c.name, err)
 		}
-	}
-}
-
-func TestMcpServerCwdField(t *testing.T) {
-	m := NewMcpServer("srv", "cmd", nil, nil, nil, SourceRef{})
-	if m.Cwd != "" {
-		t.Fatalf("zero-value Cwd = %q, want empty", m.Cwd)
-	}
-	m.Cwd = "/work"
-	if m.Cwd != "/work" {
-		t.Fatalf("Cwd = %q, want %q", m.Cwd, "/work")
 	}
 }

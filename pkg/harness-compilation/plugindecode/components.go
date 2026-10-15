@@ -1,6 +1,7 @@
 package plugindecode
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -212,7 +213,7 @@ func (d *decoder) loadInlineComponent(kind ir.ResourceKind, component string, va
 	default:
 		return
 	}
-	data, err := jsonMarshal(payload)
+	data, err := json.Marshal(payload)
 	if err != nil {
 		return
 	}

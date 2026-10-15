@@ -121,7 +121,7 @@ func TestDecodeAgentPluginInvalidSkillSkipped(t *testing.T) {
 	if len(plugin.Invalid) == 0 {
 		t.Fatal("the invalid skill must be recorded in Invalid")
 	}
-	if !hasCode(diags, "") && len(diags) == 0 {
+	if len(diags) == 0 {
 		t.Fatal("the invalid skill must be reported with a diagnostic")
 	}
 }
