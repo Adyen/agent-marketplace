@@ -39,7 +39,7 @@ func CaptureDestinationPath(machineScope bool, repoRoot, homeDir, root, sub stri
 		if info, err := os.Lstat(root); err == nil && info.Mode()&os.ModeSymlink != 0 {
 			canonical, err := filepath.EvalSymlinks(root)
 			if err != nil {
-				return nil, fmt.Errorf("%w: resolve machine harness alias: %w", fsboundary.ErrUnsafePath, err)
+				return nil, fmt.Errorf("%w: resolve machine harness alias %s: %w", fsboundary.ErrUnsafePath, root, err)
 			}
 			root = canonical
 		}
@@ -76,7 +76,7 @@ func CaptureDestinationPath(machineScope bool, repoRoot, homeDir, root, sub stri
 		rel, err = filepath.Rel(base.Path(), root)
 	}
 	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
-		return nil, fmt.Errorf("%w: harness root escapes its authorized scope", fsboundary.ErrUnsafePath)
+		return nil, fmt.Errorf("%w: harness root %s escapes its authorized scope %s", fsboundary.ErrUnsafePath, root, base.Path())
 	}
 	var directory *fsboundary.Dir
 	if create {
