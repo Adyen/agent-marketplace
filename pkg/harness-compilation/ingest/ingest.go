@@ -104,15 +104,41 @@ func RegisteredSources() []Harness {
 //  9. .gemini/ → Gemini
 //  10. .windsurf/ → Windsurf
 //  11. Bare skills directory (subdirs with SKILL.md, or SKILL.md at root) → Claude
+//
+// An OpenCode marker (.opencode/ holding OpenCode resources or configuration)
+// is weighed against steps 5-11: a source whose winning layout carries its
+// own workspace marker keeps that layout, and otherwise OpenCode wins over
+// shared skills locations. See resolveOpenCodePrecedence.
 func Autodetect(src fs.FS) (Harness, bool) {
+	h, ok, _ := autodetectInternal(src, false)
+	return h, ok
+}
+
+// AutodetectWithDiagnostics is Autodetect plus the warning reported when the
+// selected layout coexists with another layout whose resources it ignores.
+func AutodetectWithDiagnostics(src fs.FS) (Harness, bool, []diag.Diagnostic) {
 	return autodetectInternal(src, false)
+}
+
+// AutodetectExcludingOpenCode reports the layout autodetection selects when the
+// OpenCode marker is disregarded: the result a source had before OpenCode was
+// registered. Callers use it to keep pre-existing interpretations of a source.
+func AutodetectExcludingOpenCode(src fs.FS) (Harness, bool) {
+	if devinWinsOverCompatibilityLayouts(src) {
+		return HarnessDevin, true
+	}
+	if h, ok := explicitManifest(src); ok {
+		return h, true
+	}
+	return detectInOrder(src, false)
 }
 
 // AutodetectStrict is like Autodetect but excludes the "bare skills directory"
 // detection form. This is used by sub-bundle scanning where individual skill
 // directories should not be treated as independent bundle roots.
 func AutodetectStrict(src fs.FS) (Harness, bool) {
-	return autodetectInternal(src, true)
+	h, ok, _ := autodetectInternal(src, true)
+	return h, ok
 }
 
 // devinWinsOverCompatibilityLayouts documents why Devin is probed before every
@@ -147,13 +173,22 @@ func devinWinsOverCompatibilityLayouts(src fs.FS) bool {
 	return ok && ing.Detect(src)
 }
 
-func autodetectInternal(src fs.FS, strict bool) (Harness, bool) {
+func autodetectInternal(src fs.FS, strict bool) (Harness, bool, []diag.Diagnostic) {
 	if devinWinsOverCompatibilityLayouts(src) {
-		return logAutodetectedHarness(HarnessDevin)
+		h, ok := logAutodetectedHarness(HarnessDevin)
+		return h, ok, nil
 	}
 
 	// Prefer explicit manifest markers before asking ingesters, so root-level
 	// resource directories do not overshadow a more specific harness marker.
+	if h, ok := explicitManifest(src); ok {
+		h, ok := logAutodetectedHarness(h)
+		return h, ok, nil
+	}
+	return resolveOpenCodePrecedence(src, strict)
+}
+
+func explicitManifest(src fs.FS) (Harness, bool) {
 	explicit := []struct {
 		path    string
 		harness Harness
@@ -165,11 +200,67 @@ func autodetectInternal(src fs.FS, strict bool) (Harness, bool) {
 	}
 	for _, candidate := range explicit {
 		if _, err := fs.ReadFile(src, candidate.path); err == nil {
-			return logAutodetectedHarness(candidate.harness)
+			return candidate.harness, true
 		}
 	}
+	return "", false
+}
 
-	// Check in priority order.
+// workspaceMarkers are the directories only a harness's own workspace layout
+// creates. Shared locations (.agents/skills, a bare skills directory) are not
+// workspace markers.
+var workspaceMarkers = map[Harness]string{
+	HarnessCodex:    ".codex",
+	HarnessClaude:   ".claude",
+	HarnessFactory:  ".factory",
+	HarnessCursor:   ".cursor",
+	HarnessGemini:   ".gemini",
+	HarnessWindsurf: ".windsurf",
+}
+
+// resolveOpenCodePrecedence registers OpenCode without changing the layout
+// any source detected before OpenCode existed, when that layout carries its
+// own workspace marker. OpenCode wins only over shared skills locations. Every
+// coexistence is reported, because the unselected layout's resources are not
+// ingested.
+func resolveOpenCodePrecedence(src fs.FS, strict bool) (Harness, bool, []diag.Diagnostic) {
+	legacy, legacyOK := detectInOrder(src, strict)
+	openCode, registered := registry[HarnessOpenCode]
+	if !registered || !openCode.Detect(src) {
+		if !legacyOK {
+			return "", false, nil
+		}
+		h, ok := logAutodetectedHarness(legacy)
+		return h, ok, nil
+	}
+	if !legacyOK {
+		h, ok := logAutodetectedHarness(HarnessOpenCode)
+		return h, ok, nil
+	}
+	if marker, ok := workspaceMarkers[legacy]; ok {
+		if info, err := fs.Stat(src, marker); err == nil && info.IsDir() {
+			h, ok := logAutodetectedHarness(legacy)
+			return h, ok, []diag.Diagnostic{ambiguousLayout(legacy, HarnessOpenCode, ".opencode")}
+		}
+	}
+	h, ok := logAutodetectedHarness(HarnessOpenCode)
+	return h, ok, []diag.Diagnostic{ambiguousLayout(HarnessOpenCode, legacy, ".")}
+}
+
+// ambiguousLayout reports a coexisting layout whose resources autodetection
+// does not ingest. The source location points at the ignored layout.
+func ambiguousLayout(selected, ignored Harness, ignoredLocation string) diag.Diagnostic {
+	return diag.Diagnostic{
+		Code:     diag.CodeIngestAutodetectAmbiguous,
+		Severity: diag.SeverityWarning,
+		Message:  fmt.Sprintf("source carries both %s and %s layouts; autodetection selected %s and does not ingest the %s resources", selected, ignored, selected, ignored),
+		Hint:     fmt.Sprintf("Set source_harness to %s or %s to choose the layout explicitly", selected, ignored),
+		Source:   diag.SourceRef{File: ignoredLocation},
+	}
+}
+
+// detectInOrder applies the ordered ingester detectors that predate OpenCode.
+func detectInOrder(src fs.FS, strict bool) (Harness, bool) {
 	for _, h := range autodetectOrder {
 		ing, ok := registry[h]
 		if !ok {
@@ -182,13 +273,13 @@ func autodetectInternal(src fs.FS, strict bool) (Harness, bool) {
 		if strict {
 			if strictIng, ok := ing.(StrictDetector); ok {
 				if strictIng.DetectStrict(src) {
-					return logAutodetectedHarness(h)
+					return h, true
 				}
 				continue
 			}
 		}
 		if ing.Detect(src) {
-			return logAutodetectedHarness(h)
+			return h, true
 		}
 	}
 	return "", false
@@ -214,9 +305,9 @@ type StrictDetector interface {
 //
 // Devin is deliberately absent: it is probed BEFORE the explicit manifest
 // markers by devinWinsOverCompatibilityLayouts, which is strictly earlier than
-// anything this list can express.
+// anything this list can express. OpenCode is weighed against this list by
+// resolveOpenCodePrecedence rather than slotted into it.
 var autodetectOrder = []Harness{
-	HarnessOpenCode,
 	HarnessCodex,
 	HarnessClaude,
 	HarnessFactory,

@@ -945,6 +945,7 @@ source-aware shape as `json.duplicate-key`.
 | `ingest.opencode.duplicate-identity` | error | Distinct native files claim the same resource identity; resources omitted |
 | `ingest.opencode.read-refused` | error | Native resource is not an admitted bounded regular file; resource omitted |
 | `ingest.opencode.plugin-unsupported` | error | Arbitrary or altered executable plugin cannot be ingested |
+| `ingest.autodetect.ambiguous` | warning | Source carries two harness layouts; the unselected layout's resources are not ingested |
 | `compile.opencode.native-semantics-unsupported` | error | Native execution or reference semantics cannot be preserved by the destination |
 | `materialize.opencode.aggregate-write` | error | Native MCP configuration could not be published |
 | `materialize.opencode.aggregate-malformed` | error | Native MCP configuration is malformed or ambiguous; existing bytes preserved |

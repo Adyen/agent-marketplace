@@ -514,6 +514,7 @@ const (
 	CodeIngestOpenCodeDuplicateIdentity            = "ingest.opencode.duplicate-identity"
 	CodeIngestOpenCodeReadRefused                  = "ingest.opencode.read-refused"
 	CodeIngestOpenCodePluginUnsupported            = "ingest.opencode.plugin-unsupported"
+	CodeIngestAutodetectAmbiguous                  = "ingest.autodetect.ambiguous"
 	CodeOpenCodeNativeSemanticsUnsupported         = "compile.opencode.native-semantics-unsupported"
 	CodeMaterializeOpenCodeAggregateWrite          = "materialize.opencode.aggregate-write"
 	CodeMaterializeOpenCodeAggregateMalformed      = "materialize.opencode.aggregate-malformed"
@@ -535,6 +536,7 @@ var codeCatalog = []CodeDoc{
 	{CodeIngestOpenCodeDuplicateIdentity, SeverityError, "Distinct native files claim the same resource identity; resources omitted", "Choose distinct resource names"},
 	{CodeIngestOpenCodeReadRefused, SeverityError, "Native resource is not an admitted bounded regular file; resource omitted", "See the OpenCode supported-field and hook compatibility documentation"},
 	{CodeIngestOpenCodePluginUnsupported, SeverityError, "Arbitrary or altered executable plugin cannot be ingested", "See the OpenCode supported-field and hook compatibility documentation"},
+	{CodeIngestAutodetectAmbiguous, SeverityWarning, "Source carries two harness layouts; the unselected layout's resources are not ingested", "Set source_harness to choose the layout explicitly"},
 	{CodeOpenCodeNativeSemanticsUnsupported, SeverityError, "Native execution or reference semantics cannot be preserved by the destination", "See the OpenCode supported-field and hook compatibility documentation"},
 	{CodeMaterializeOpenCodeAggregateWrite, SeverityError, "Native MCP configuration could not be published", "See the OpenCode supported-field and hook compatibility documentation"},
 	{CodeMaterializeOpenCodeAggregateMalformed, SeverityError, "Native MCP configuration is malformed or ambiguous; existing bytes preserved", "See the OpenCode supported-field and hook compatibility documentation"},

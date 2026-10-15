@@ -79,6 +79,7 @@ source's `path`.
 | `gemini` | `.gemini/skills/<name>/SKILL.md` or `.agents/skills/…` | `commands/<name>.toml` | `.gemini/agents/<name>.md` | `.gemini/settings.json#hooks` | `.gemini/settings.json#mcpServers` |
 | `devin` | `skills/<name>/SKILL.md` | skill dir + `x-agent-marketplace-kind: command` | `agents/<name>.md` | `hooks.v1.json` | `mcp_config.json` |
 | `codex` | `.agents/skills/<name>/SKILL.md` | skill dir + `x-agent-marketplace-kind: command` | `.codex/agents/<name>.toml` | `.codex/hooks.json#hooks` | `.codex/config.toml#mcp_servers` |
+| `opencode` | `.opencode/skills/<name>/SKILL.md` | `.opencode/commands/<name>.md` | `.opencode/agents/<name>.md` | `.opencode/hooks/agent-marketplace/<name>.json` | `opencode.json[c]#mcp` |
 
 There are no generic `subagents/` or `mcp/` roots: a Claude subagent ships as
 `agents/<name>.md`, and Claude MCP servers ship in a root `.mcp.json`. Files in
@@ -99,6 +100,7 @@ A registry may instead be an explicit native workspace root. Its hook file is:
 | `gemini` | `.gemini/settings.json#hooks` |
 | `devin` | `.devin/hooks.v1.json` |
 | `codex` | `.codex/hooks.json#hooks` |
+| `opencode` | `.opencode/hooks/agent-marketplace/<name>.json` beside the fixed adapter |
 
 Use the source harness's documented workspace directories for its other
 resources. A Claude workspace source uses `.claude/skills/`, `.claude/commands/`, `.claude/agents/`, and
@@ -157,9 +159,15 @@ roots, and so on. Root-level Cursor, Windsurf, Factory, and Gemini layouts share
 folder names with Claude, and a root-level Devin layout (no `.devin/`) is never
 detected. `.devin/hooks.json` is Windsurf's workspace hook file, while
 `.devin/hooks.v1.json` is Devin CLI's; set `source_harness` explicitly when that
-context could be ambiguous. Tell consumers to set `source_harness` for the other
-ambiguous registries too. An undetected registry falls back to Claude with
-`catalog.autodetect.fallback`.
+context could be ambiguous. An `.opencode/` folder with OpenCode resources or
+`opencode.json` selects OpenCode only when the otherwise-detected layout has no
+workspace folder of its own (`.codex/`, `.claude/`, `.factory/`, `.cursor/`,
+`.gemini/`, `.windsurf/`); `.opencode/package.json` alone is not a marker. When
+both layouts are present the catalog warns `ingest.autodetect.ambiguous`, and
+the unselected layout is not read; a container of bundles with a top-level
+`.opencode/` stays a container. Tell consumers to set `source_harness` for
+these and the other ambiguous registries. An undetected registry falls back to
+Claude with `catalog.autodetect.fallback`.
 
 ### Root shapes
 

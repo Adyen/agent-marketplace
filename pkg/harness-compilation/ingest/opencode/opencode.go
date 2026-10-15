@@ -10,6 +10,7 @@ import (
 	"io"
 	"io/fs"
 	"path"
+	"slices"
 	"sort"
 	"strings"
 
@@ -35,7 +36,50 @@ func init() { ingest.Register(Ingester{}) }
 func (Ingester) Source() ingest.Harness                       { return "opencode" }
 func (Ingester) Detect(src fs.FS) bool                        { return Detect(src) }
 func (Ingester) LoadBundle(src fs.FS) (*ingest.Bundle, error) { return LoadBundle(src) }
+
+// markerEntries are the .opencode entries that only OpenCode content creates.
+// OpenCode itself writes dependency manifests such as package.json into a
+// configuration directory, so the directory alone is not a source marker.
+var markerEntries = []string{"skills", "skill", "commands", "command", "agents", "agent", "plugins", "plugin", "opencode.json", "opencode.jsonc"}
+
+// Detect reports whether src carries an OpenCode source marker: an .opencode
+// directory holding an OpenCode resource location, hook declarations, or a
+// configuration file. Detection reads directory listings only and never
+// follows a link, so probing a source that another layout claims cannot
+// refuse that source on a link inside, or at, .opencode.
 func Detect(src fs.FS) bool {
+	if !listedDir(src, ".", ".opencode") {
+		return false
+	}
+	entries, err := fs.ReadDir(src, ".opencode")
+	if err != nil {
+		return false
+	}
+	for _, entry := range entries {
+		if slices.Contains(markerEntries, entry.Name()) {
+			return true
+		}
+	}
+	return listedDir(src, ".opencode", "hooks") && listedDir(src, ".opencode/hooks", "agent-marketplace")
+}
+
+// listedDir reports whether dir lists name as a directory, not a link to one.
+func listedDir(src fs.FS, dir, name string) bool {
+	entries, err := fs.ReadDir(src, dir)
+	if err != nil {
+		return false
+	}
+	for _, entry := range entries {
+		if entry.Name() == name {
+			return entry.IsDir()
+		}
+	}
+	return false
+}
+
+// hasWorkspaceRoot reports whether src nests its native files under .opencode
+// rather than being a direct configuration directory.
+func hasWorkspaceRoot(src fs.FS) bool {
 	info, err := fs.Stat(src, ".opencode")
 	return err == nil && info.IsDir()
 }
@@ -93,7 +137,7 @@ func (f *boundedFile) Read(p []byte) (int, error) {
 
 func LoadBundle(src fs.FS) (*ingest.Bundle, error) {
 	root := "."
-	if Detect(src) {
+	if hasWorkspaceRoot(src) {
 		root = ".opencode"
 	}
 	limited := boundedFS{src}

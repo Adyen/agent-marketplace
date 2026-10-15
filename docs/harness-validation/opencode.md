@@ -16,6 +16,14 @@ executable checksums are in [the probe guide](../../tools/opencode-probe/README.
 | Hook | Fixed plugin plus versioned JSON command declarations | Only the command `PreToolUse` subset below |
 | Rule | No output | `rule.opencode.unsupported` warning |
 
+Autodetection treats `.opencode/` as a source marker only when it holds
+OpenCode resources, plugins, hook declarations, or `opencode.json[c]`; a
+dependency-only directory is ignored. A source whose otherwise-detected layout
+has its own workspace folder (`.claude/`, `.codex/`, `.factory/`, `.cursor/`,
+`.gemini/`, `.windsurf/`) keeps that layout, and OpenCode wins over shared
+skills locations. Coexisting layouts report `ingest.autodetect.ambiguous`;
+`source_harness` chooses explicitly.
+
 Plural native directories win over singular legacy aliases for the same file.
 Distinct files with ambiguous resource identities are refused. YAML and JSONC
 reject duplicate or malformed modeled fields and unsupported YAML merge fields.
