@@ -23,6 +23,27 @@ components:
 dependencies: refuse-package
 `
 
+var validAgentFormat = strings.Replace(validFormat,
+	"format: claude-plugin", "format: agent-plugin", 1)
+
+const validCatalogFormat = `schema: 1
+format: agent-marketplace
+role: catalog
+evidence:
+  checked: "2026-10-15"
+  refs: [synthetic-test-fixture]
+versions: []
+manifest:
+  fields:
+    name: {required: true, type: string, invalid: refuse-package}
+components:
+  skills: immediate-children
+catalog:
+  sources:
+    path: acquire
+dependencies: refuse-package
+`
+
 const validHarness = `schema: 1
 harness: devin
 evidence:
@@ -35,10 +56,18 @@ delivery:
 `
 
 func loadAll(t *testing.T, format, harness string, probes []string) error {
+	formats := map[string]string{}
+	if format != "" {
+		formats["claude-plugin"] = format
+	}
+	return loadAllFormats(t, formats, harness, probes)
+}
+
+func loadAllFormats(t *testing.T, formats map[string]string, harness string, probes []string) error {
 	t.Helper()
 	files := fstest.MapFS{}
-	if format != "" {
-		files["formats/claude-plugin.yaml"] = &fstest.MapFile{Data: []byte(format)}
+	for name, data := range formats {
+		files["formats/"+name+".yaml"] = &fstest.MapFile{Data: []byte(data)}
 	}
 	if harness != "" {
 		files["catalogs/devin.yaml"] = &fstest.MapFile{Data: []byte(harness)}
@@ -227,11 +256,35 @@ func TestVerifiedNativeDeliveryProbeRequired(t *testing.T) {
 
 // spec: plugin-policy-catalogs/verified-native-delivery-for-an-unaccepted-format-fails-the-check
 func TestVerifiedNativeDeliveryForUnacceptedFormatFails(t *testing.T) {
-	harness := strings.Replace(validHarness,
-		"native: {status: unverified}",
-		"native: {status: verified, format: agent-plugin, probe: probe-x}", 1)
-	err := loadAll(t, validFormat, harness, []string{"probe-x"})
-	if err == nil || !strings.Contains(err.Error(), "agent-plugin") {
-		t.Fatalf("error = %v, want an agent-plugin failure", err)
+	native := func(format string) string {
+		return strings.Replace(validHarness,
+			"native: {status: unverified}",
+			"native: {status: verified, format: "+format+", probe: probe-x}", 1)
+	}
+	for _, tc := range []struct {
+		name    string
+		formats map[string]string
+		format  string
+	}{
+		{
+			name:    "package format outside accepts",
+			formats: map[string]string{"claude-plugin": validFormat, "agent-plugin": validAgentFormat},
+			format:  "agent-plugin",
+		},
+		{
+			name:    "catalog-role format",
+			formats: map[string]string{"claude-plugin": validFormat, "agent-marketplace": validCatalogFormat},
+			format:  "agent-marketplace",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := loadAllFormats(t, tc.formats, native(tc.format), []string{"probe-x"})
+			if err == nil || !strings.Contains(err.Error(), "does not accept") {
+				t.Fatalf("error = %v, want a does-not-accept failure", err)
+			}
+			if !strings.Contains(err.Error(), tc.format) {
+				t.Fatalf("error = %v, want mention of %q", err, tc.format)
+			}
+		})
 	}
 }
