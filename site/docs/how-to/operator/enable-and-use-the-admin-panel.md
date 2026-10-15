@@ -110,7 +110,7 @@ In OIDC mode the reverse proxy only routes `/api/v1/admin/`, `/admin`, and the `
 
 ## 3. Configure the reverse proxy
 
-This step applies to `trusted_proxy` mode, where the API trusts identity headers from your authenticated reverse proxy or SSO gateway.
+This step applies to `trusted_proxy` mode, where the API trusts identity headers from your authenticated reverse proxy or SSO gateway. With `authentication.mode: oidc`, the application authenticates administrators itself, and the proxy only routes traffic.
 
 Your reverse proxy must:
 
