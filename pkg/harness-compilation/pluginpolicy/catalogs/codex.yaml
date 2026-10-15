@@ -1,0 +1,13 @@
+# Catalog data for pkg/harness-compilation/pluginpolicy/catalogs/codex.yaml.
+schema: 1
+harness: codex
+evidence:
+  checked: "2026-10-15"
+  refs:
+    - https://developers.openai.com/plugins/build/plugins
+    - https://developers.openai.com/codex/plugins
+accepts: [codex-plugin, agent-plugin]
+delivery:
+  decompose: {status: verified}
+  native: {status: unverified}
+root_token: plugin_root

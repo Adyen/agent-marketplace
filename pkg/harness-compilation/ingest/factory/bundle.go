@@ -61,6 +61,22 @@ func (l *Loader) LoadBundle(src fs.FS) (*ingest.Bundle, error) {
 	seenDroids := map[string]bool{}
 	seenRules := map[string]bool{}
 
+	if hasPlugin {
+		// Factory plugins load skills only from skills/<name>/SKILL.md; a
+		// SKILL.md at the plugin root is never read, so report it instead of
+		// letting it pass silently.
+		if _, err := fs.Stat(src, "SKILL.md"); err == nil {
+			diags = append(diags, diag.Diagnostic{
+				Code:     diag.CodeIngestFactoryRootSkillIgnored,
+				Severity: diag.SeverityWarning,
+				Target:   "factory",
+				Message:  "SKILL.md at the Factory plugin root was not ingested; Factory plugins load skills only from skills/<name>/",
+				Hint:     "Move the skill into skills/<name>/SKILL.md or remove the root file",
+				Source:   diag.SourceRef{File: "SKILL.md", Line: 1},
+			})
+		}
+	}
+
 	if hasPlugin || hasBare {
 		consumed = append(consumed, "hooks/hooks.json", "mcp.json")
 		added, addedDiags, err := loadSkillsFromRoot(src, "skills", skillMeta, seenSkills)

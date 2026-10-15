@@ -1,0 +1,25 @@
+# Catalog data for pkg/harness-compilation/pluginpolicy/formats/factory-marketplace.yaml.
+schema: 1
+format: factory-marketplace
+role: catalog
+evidence:
+  checked: "2026-10-15"
+  refs:
+    - https://docs.factory.ai/harness/plugins
+    - https://docs.factory.ai/enterprise/internal-plugin-marketplaces
+  notes: "Droid reads .factory-plugin/marketplace.json first and falls back to .claude-plugin/marketplace.json for Claude Code compatibility."
+versions: []
+manifest:
+  fields:
+    name: {required: true, type: string, invalid: refuse-package}
+    owner: {required: false, type: object, invalid: ignore-with-warning}
+    plugins: {required: true, type: array, invalid: refuse-package}
+catalog:
+  sources:
+    path: acquire
+    github: acquire
+    git: refuse
+    npm: refuse
+    url: refuse
+    command: refuse
+dependencies: refuse-package

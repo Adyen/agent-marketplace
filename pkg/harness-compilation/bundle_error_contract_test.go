@@ -141,10 +141,8 @@ func bundleErrorCases() []bundleErrorCase {
 		},
 		{
 			// A bundle-level conflict rather than a single resource. Both named
-			// producers lose everything they emitted, including their fragment
-			// of the shared .claude-plugin/plugin.json manifest, so the manifest
-			// cannot advertise an agent whose file was never written. The third
-			// subagent's fragment still merges.
+			// producers lose everything they emitted; only the third
+			// subagent's output survives.
 			name:   "a bundle-level path conflict drops both producers and their aggregate fragments",
 			target: TargetClaude,
 			resources: []ir.Resource{
@@ -153,15 +151,6 @@ func bundleErrorCases() []bundleErrorCase {
 				ir.NewSubagent("keeper", "Unrelated agent", "Body K\n", "sonnet", nil, "", nil, "", nil, ir.SourceRef{File: "agents/keeper.md", Line: 1}),
 			},
 			wantArtifacts: map[string]string{
-				".claude-plugin/plugin.json": `{
-  "agents": [
-    {
-      "description": "Unrelated agent",
-      "model": "sonnet",
-      "name": "keeper"
-    }
-  ]
-}`,
 				"agents/keeper.md": "---\nname: keeper\ndescription: Unrelated agent\nmodel: sonnet\n---\nBody K\n",
 			},
 			wantAbsent: []string{"agents/reviewer.md"},

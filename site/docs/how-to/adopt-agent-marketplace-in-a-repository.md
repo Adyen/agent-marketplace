@@ -48,11 +48,11 @@ agent-marketplace sync
 Sync resolves the tag to an exact [commit](../glossary.md#commit), writes the lock, and installs the skill into the Claude Code folders. Output:
 
 ```text
-Installed 2  Removed 0  Malformed 0  Errors 0
-  → /path/to/repo/.claude/.claude-plugin (1 written), /path/to/repo/.claude/skills (1 written)
+Installed 1  Removed 0  Malformed 0  Errors 0
+  → /path/to/repo/.claude/skills (1 written)
 ```
 
-`Installed` counts the files and entries sync wrote, so it can be higher than the number of resources. For Claude Code, sync writes the skill under `.claude/skills/` and lists it in `.claude/.claude-plugin/plugin.json`.
+`Installed` counts the files and entries sync wrote, so it can be higher than the number of resources. For Claude Code, sync writes the skill under `.claude/skills/`.
 
 Check that the lock was created:
 
@@ -75,7 +75,7 @@ If `~/.agents/config.yaml` does not exist yet, the first `sync` also creates it,
 Sync recreates the harness folders from the configuration and the lock, so most teams keep them out of Git. The exact paths depend on your harnesses ([harnesses and output paths](../reference/harnesses-and-output-paths.md)). For Claude Code, add them to `.gitignore`:
 
 ```bash
-printf '%s\n' '.claude/skills/' '.claude/.claude-plugin/' >> .gitignore
+printf '%s\n' '.claude/skills/' >> .gitignore
 ```
 
 The command prints nothing.

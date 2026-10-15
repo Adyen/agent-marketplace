@@ -77,6 +77,7 @@ comparison in non-test code.
 | `ingest.devin.unconsumed-config` | A recognized MCP or hook configuration file was not read by the selected Devin layout | Follow the file-specific hint to select the matching source layout or merge definitions into the selected layout without overwriting entries. |
 | `ingest.codex.unconsumed-config` | A recognized MCP or hook configuration file was not read by the selected Codex layout | Follow the file-specific hint to select the matching source layout or merge definitions into the selected layout without overwriting entries. |
 | `ingest.factory.resource-shadowed` | Factory resource was shadowed by an earlier resource of the same kind and name | Use distinct resource names or remove the lower-priority definition |
+| `ingest.factory.root-skill-ignored` | A root SKILL.md was found and not ingested; Factory plugins load skills only from skills/<name>/ | Move the skill into skills/<name>/SKILL.md or remove the root file |
 | `subagent.windsurf.no-primitive` | Windsurf has no subagent primitive; resource dropped | Consider expressing the subagent as a Windsurf workflow instead |
 | `hook.claude.unsupported-type` | Unsupported hook type in Claude format; only command-type is universally supported in v0 | Convert the hook to a command type or remove it |
 | `hook.windsurf.env-token-expanded` | Windsurf expanded env token to a literal path | Verify the expanded path is correct for the target environment |

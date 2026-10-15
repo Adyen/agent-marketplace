@@ -372,7 +372,6 @@ func TestIngestCompile_FactoryWorkspaceFormClaudeOutput(t *testing.T) {
 		"agents/reviewer.md",
 		"hooks/hooks.json",
 		".mcp.json",
-		".claude-plugin/plugin.json",
 	}
 	for _, path := range expected {
 		if !pathSet[path] {

@@ -65,7 +65,7 @@ In the tables below, a skill path ending in `SKILL.md` means the skill is a fold
 | hook | `.claude/settings.json` under `hooks` | `~/.claude/settings.json` under `hooks` |
 | mcp | `<repo>/.mcp.json` | `~/.claude.json` under `mcpServers` |
 
-Sync also lists installed skills and subagents in `.claude/.claude-plugin/plugin.json` (machine: `~/.claude/.claude-plugin/plugin.json`), under `skills` and `agents`.
+Sync does not write a Claude plugin manifest: `.claude/.claude-plugin/plugin.json` is retired output. If an earlier version wrote one, sync strips its managed `skills` and `agents` entries (keeping anything it does not own) and deletes the file and its `.claude-plugin` directory once nothing but empty members remain.
 
 The machine paths in this table show the default layout. With a nonempty
 `CLAUDE_CONFIG_DIR`, replace `~/.claude` with that directory and

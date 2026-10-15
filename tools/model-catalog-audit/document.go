@@ -96,6 +96,10 @@ func documentText(body []byte) (string, error) {
 }
 
 func auditDocumentSource(ctx context.Context, files fs.FS, s source, r *sourceReport, fetch fetchFunc) {
+	if s.Domain == "pluginpolicy" {
+		auditPluginDocumentSource(ctx, files, s, r, fetch)
+		return
+	}
 	if s.Domain != "hookpolicy" && s.Domain != "toolpolicy" {
 		r.add("unknown", "catalog.invalid", "", "Unsupported catalog domain; no evidence conclusion.")
 		return
@@ -114,6 +118,36 @@ func auditDocumentSource(ctx context.Context, files fs.FS, s source, r *sourceRe
 	if err != nil || yaml.Unmarshal(body, &c) != nil || c.Schema != 1 || c.Harness != s.Harness || !slices.Contains(c.Evidence.Refs, s.URL) ||
 		s.Domain == "hookpolicy" && len(c.Events) == 0 || s.Domain == "toolpolicy" && (c.Tools == nil || c.Surfaces == nil) {
 		r.add("unknown", "catalog.invalid", "", "Cannot read the declared hook or tool catalog with matching first-party evidence.")
+		return
+	}
+	r.CatalogSHA256 = digest(body)
+	auditSource(ctx, s, catalog{}, r, fetch)
+}
+
+// auditPluginDocumentSource verifies a pluginpolicy evidence source against
+// the shipped catalog it belongs to: a harness catalog when the source names
+// a harness, a format catalog when it names Format.
+func auditPluginDocumentSource(ctx context.Context, files fs.FS, s source, r *sourceReport, fetch fetchFunc) {
+	var c struct {
+		Schema   int    `yaml:"schema"`
+		Harness  string `yaml:"harness"`
+		Format   string `yaml:"format"`
+		Evidence struct {
+			Refs []string `yaml:"refs"`
+		}
+	}
+	var body []byte
+	var err error
+	ok := false
+	if s.Format != "" {
+		body, err = readBounded(files, "pkg/harness-compilation/pluginpolicy/formats/"+s.Format+".yaml")
+		ok = err == nil && yaml.Unmarshal(body, &c) == nil && c.Schema == 1 && c.Format == s.Format
+	} else {
+		body, err = readBounded(files, "pkg/harness-compilation/pluginpolicy/catalogs/"+s.Harness+".yaml")
+		ok = err == nil && yaml.Unmarshal(body, &c) == nil && c.Schema == 1 && c.Harness == s.Harness
+	}
+	if !ok || !slices.Contains(c.Evidence.Refs, s.URL) {
+		r.add("unknown", "catalog.invalid", "", "Cannot read the declared plugin catalog with matching first-party evidence.")
 		return
 	}
 	r.CatalogSHA256 = digest(body)
