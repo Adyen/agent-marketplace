@@ -358,7 +358,7 @@ OIDC sign-in failures use these stable codes:
 | 403 | `forbidden` | The verified identity matches neither `admin.admin_groups` nor `admin.admin_users`. Check the groups claim and the configured lists. |
 | 403 | `origin_rejected` | The request's `Origin` header does not match `admin.origin`. Check `admin.origin` and any proxy header rewriting. |
 
-Browser navigations, whose `Accept` header prefers `text/html`, get a `303` redirect to `/auth/error`, which shows only an allowlisted subset of these codes. Other codes, including `unauthenticated`, appear as the generic `sign_in_failed`, and the page never reflects provider descriptions, tokens, or claims. A JSON, missing, or wildcard `Accept` gets the JSON status and error body instead, so automation that checks failure statuses should send `Accept: application/json`.
+Browser navigations, whose `Accept` header prefers `text/html`, get a `303` redirect to `/auth/error`, which shows only an allowlisted subset of these codes. Other codes, including `unauthenticated`, appear as the generic `sign_in_failed`, and the page never reflects provider descriptions, tokens, or claims. A JSON-preferring, missing, wildcard-only, or tied `Accept` header gets the JSON status and error body instead, so automation that checks failure statuses should send `Accept: application/json`.
 
 Each signed admin cookie value is limited to 3900 bytes, so an authorized identity whose claims, typically a very large groups claim, exceed it is rejected with `401 authentication_rejected` and gets no session cookie. Shrink the claim at the provider.
 
