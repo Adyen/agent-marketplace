@@ -232,7 +232,7 @@ Your form now looks like this:
 
 ![The Add registry form filled in with the superpowers registry values](../images/add-registry/02-registry-form.png)
 
-**Acquisition** starts as **Index only** in a new form; **Mirror** makes the Marketplace keep its own copy of every published resource. **Root 1 path** names the repository directory to scan; here the skills live under `skills/`. **Default license** applies to resources that declare none. These resources declare none, and the Marketplace rejects unlicensed resources by default, so the form uses the repository's license, `MIT`.
+**Acquisition** starts as **Index only** in a new form; **Mirror** makes the Marketplace keep its own copy of every published resource. **Root 1 path** names the repository directory to scan; here the skills live under `skills/`. **Default license** applies to resources that declare none. The Marketplace rejects unlicensed resources by default, so the form uses the repository's license, `MIT`.
 
 ## 8. Preview what the Marketplace will find
 
@@ -308,8 +308,6 @@ Expected output:
 ```
 
 ![Terminal showing the registries response and 15 available resources](../images/add-registry/10-verify-api.png)
-
-All 15 skills are available for installation.
 
 ## 12. Clean up
 

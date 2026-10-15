@@ -18,7 +18,7 @@ You do not need Claude Code installed. The tutorial only checks that the files a
 cd $(mktemp -d)
 ```
 
-`mktemp -d` creates a new empty folder with a random name, and `cd` moves you into it. Your operating system deletes temporary folders from time to time, which is fine for a tutorial.
+`mktemp -d` creates an empty folder with a random name, and `cd` moves you into it. The operating system may delete temporary folders later, which is fine here.
 
 ## 2. Create the registry repository
 
@@ -78,7 +78,7 @@ REGISTRY_PATH=$(pwd)
 echo "$REGISTRY_PATH"
 ```
 
-`pwd` prints the full path of the current folder, and the first line stores it in a variable named `REGISTRY_PATH`. The next step uses the variable. It exists only in this terminal window, so if you open a new window, go back to the `agent-skills` folder and run these commands again.
+`pwd` prints the full path of the folder, and the first line stores it in `REGISTRY_PATH`. The variable exists only in this terminal window. In a new window, go back to the `agent-skills` folder and run these commands again.
 
 ## 6. Create a test project that uses the registry
 
