@@ -24,6 +24,7 @@ const (
 	KindMcpServer                      // An MCP server resource
 	KindCollection                     // A collection (virtual) resource
 	KindRule                           // A rule / coding-convention resource
+	KindPlugin                         // A plugin package resource
 )
 
 // String returns a human-readable name for the resource kind.
@@ -43,6 +44,8 @@ func (k ResourceKind) String() string {
 		return "collection"
 	case KindRule:
 		return "rule"
+	case KindPlugin:
+		return "plugin"
 	default:
 		return "unknown"
 	}
@@ -444,6 +447,7 @@ type McpServer struct {
 	name              string            // Unique kebab-case name
 	Command           string            // Executable command (stdio)
 	Args              []string          // Command arguments (stdio)
+	Cwd               string            // Working directory for the process (stdio)
 	Env               map[string]string // Environment variables
 	URL               string            // Remote HTTP/SSE endpoint
 	Transport         string            // Explicit remote transport
