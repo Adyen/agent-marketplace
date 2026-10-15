@@ -27,4 +27,4 @@
 ## 5. Verification
 
 - [x] 5.1 Spec scenarios bound with // spec: annotations; make spec-check passes
-- [ ] 5.2 Archive the change with `openspec archive verify-archives-by-received-bytes --yes` as the final commit of the pull request
+- [x] 5.2 Archive the change with `openspec archive verify-archives-by-received-bytes --yes` as the final commit of the pull request
