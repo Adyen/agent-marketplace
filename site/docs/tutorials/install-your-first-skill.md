@@ -2,7 +2,7 @@
 
 In this tutorial you install Anthropic's `frontend-design` skill for Claude Code. You install it for your user, so it is available in every project where Claude Code uses your personal setup.
 
-You will use a public GitHub repository as the [registry](../glossary.md#registry), save the selection in your personal configuration file, and check the skill that `agent-marketplace` writes for Claude Code. Everything happens on the command line.
+You will use a public GitHub repository as the [registry](../glossary.md#registry), save the selection in your personal configuration file, and check the skill that `agent-marketplace` writes for Claude Code.
 
 ## Before you begin
 
@@ -77,7 +77,7 @@ claude            USER
 
 ## 2. Browse the skill
 
-List what the registry offers without changing your configuration. The command uses the repository's public HTTPS address:
+This lists the registry without changing your configuration:
 
 ```bash
 agent-marketplace list \
@@ -86,7 +86,7 @@ agent-marketplace list \
   --path skills/frontend-design
 ```
 
-`--ref main` reads the `main` branch. `--path` limits the search to the folder that holds this skill. The command downloads the repository into a local [cache](../glossary.md#cache) the first time, which can take a few seconds. The result should contain an available skill named `frontend-design`:
+`--ref main` reads the `main` branch, and `--path` limits the search to the skill's folder. The first run downloads the repository into a local [cache](../glossary.md#cache), which can take a few seconds. The result should show an available skill named `frontend-design`:
 
 ```text
 REGISTRY  KIND   NAME             TAGS (metadata)  STATUS

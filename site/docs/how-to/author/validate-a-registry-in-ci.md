@@ -10,7 +10,7 @@ Make a registry's CI job fail when a resource it ships is malformed, missing fro
 
 ## 1. Install a pinned CLI
 
-Pin the version so CI results are reproducible and match what consumers run. Choose the release your consumers use and pin that exact tag; do not track the newest release automatically, because a new release can change diagnostics and make an unchanged registry fail. The examples pin v4.1.3. Run these blocks in one Bash script or one GitHub Actions `run` step, choosing one installation option. Later blocks reuse `BIN_DIR`, `PATH`, `CONSUMER`, and the working directory. Run the job in bash and prepare a job-owned bin directory first, so either installation path below works:
+Pin the release your consumers use, so CI results match what they run. Don't track the newest release. A new release can change diagnostics and make an unchanged registry fail. The examples pin v4.1.3. Run these blocks in one Bash script or one GitHub Actions `run` step, and choose one installation option. Later blocks reuse `BIN_DIR`, `PATH`, `CONSUMER`, and the working directory. Prepare a job-owned bin directory first, so either installation path below works:
 
 ```bash
 set -euo pipefail
@@ -18,7 +18,7 @@ BIN_DIR="$(mktemp -d)"
 export PATH="$BIN_DIR:$PATH"
 ```
 
-The three prep commands succeed silently. Then download the release asset for the pinned version:
+The prep commands print nothing. Next, download the release asset for the pinned version:
 
 ```bash
 # Download a pinned release binary (Linux runner example)
@@ -39,7 +39,7 @@ rm -rf -- "$SOURCE_DIR"
 agent-marketplace --version
 ```
 
-`curl`, `chmod`, `go build`, and the `rm -rf` cleanup succeed silently; `git clone` prints progress lines. Either way, the last command prints `v4.1.3`. The `-ldflags` value makes `agent-marketplace --version` print the tag. Remove the remaining `mktemp` directories at the end of the job unless your runner cleans its workspace; they hold only files this job created. There is no Windows build.
+`curl`, `chmod`, `go build`, and the `rm -rf` cleanup print nothing. `git clone` prints progress lines. Either way, the last command prints `v4.1.3`. The `-ldflags` value makes `--version` print the tag. Remove the `mktemp` directories at the end of the job unless your runner cleans its workspace; they hold only files this job created. There is no Windows build.
 
 ## 2. Point a throwaway consumer at the checkout
 
@@ -67,7 +67,7 @@ resources:
 EOF
 ```
 
-The commands succeed silently and write the throwaway consumer config at `"$CONSUMER/.agents/config.yaml"`.
+The commands print nothing and write the throwaway config to `"$CONSUMER/.agents/config.yaml"`.
 
 - List every harness your consumers target. A resource that compiles for Claude Code can still produce an error for Codex or a warning for Windsurf.
 - A `directory` source reads the checkout directly and creates no lockfile, which is what you want in CI.

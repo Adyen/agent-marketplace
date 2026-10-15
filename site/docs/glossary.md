@@ -1,10 +1,10 @@
 # Glossary
 
-Plain-language definitions of the words these docs use. Each entry links to the page with the full details.
+Definitions of the terms these docs use. Each entry links to the full details.
 
 ## Cache
 
-The copies of registries that `agent-marketplace` downloads to your computer, stored under `~/.cache/agent-marketplace/`. Installed skills are [symlinks](#symlink) into the cache, so deleting it breaks them until the next [sync](#sync) downloads everything again, which requires a network connection. To free space safely, run `agent-marketplace gc`. See [Clean the cache safely](./how-to/clean-the-cache-safely.md).
+The copies of registries that `agent-marketplace` downloads to your computer, stored under `~/.cache/agent-marketplace/`. Installed skills are [symlinks](#symlink) into the cache, so deleting it breaks them until the next [sync](#sync) downloads everything again over the network. To free space safely, run `agent-marketplace gc`. See [Clean the cache safely](./how-to/clean-the-cache-safely.md).
 
 ## Collection
 
@@ -60,7 +60,7 @@ A shell command that your [harness](#harness) runs automatically when something 
 
 ## Lockfile
 
-A generated file, `lock.yaml`, that records the exact [commit](#commit) and a fingerprint of the content for each Git or Marketplace [source](#source). It makes sure that everyone who runs [sync](#sync) gets identical files, even after a branch moves on. Commit `.agents/lock.yaml` together with `.agents/config.yaml`, and do not edit it by hand. `agent-marketplace update` moves it forward on purpose. See [Reproducibility and lockfiles](./explanation/reproducibility-and-lockfiles.md).
+A generated file, `lock.yaml`, that records the exact [commit](#commit) and a fingerprint of the content for each Git or Marketplace [source](#source). Everyone who runs [sync](#sync) gets identical files, even after a branch moves on. Commit `.agents/lock.yaml` together with `.agents/config.yaml`, and do not edit it by hand. `agent-marketplace update` moves it forward on purpose. See [Reproducibility and lockfiles](./explanation/reproducibility-and-lockfiles.md).
 
 ## Locator
 

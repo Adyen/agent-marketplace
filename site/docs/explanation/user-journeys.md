@@ -1,6 +1,6 @@
 # User journeys
 
-This page describes the lifecycle a resource goes through for the people who use it: how it is found, installed, kept up to date, and removed. It explains what each stage decides rather than giving commands to copy. Each stage links to the guide that walks through it. Publishing resources and running a Marketplace are outside this lifecycle and have their own guides.
+This page covers the lifecycle of a resource for its users: finding, installing, updating, and removing it. Each stage says what it decides and links to its guide. Publishing resources and running a Marketplace have their own guides.
 
 ```text
 Find → Inspect → Choose scope and harnesses → Install → Use
@@ -22,9 +22,9 @@ Before anything is installed, the [scope](../glossary.md#scope) decides which co
 
 ## Finding and choosing a resource
 
-Resources come from three kinds of place: a Git registry address, a hosted Marketplace, or a source already in the configuration. `list` shows configured Git and directory sources, `search` queries hosted Marketplaces, and the TUI and the Marketplace browser offer the same discovery visually. Inspection before install matters: the resource kind, its declared prerequisites, its source, and its license all decide whether it belongs in your setup, and an automated scan cannot prove a resource is safe.
+Resources come from three kinds of place: a Git registry address, a hosted Marketplace, or a source already in the configuration. `list` shows configured Git and directory sources, `search` queries hosted Marketplaces, and the TUI and the Marketplace browser offer the same discovery visually. Inspect a resource before you install it. Its kind, prerequisites, source, and license decide whether it fits your setup. An automated scan cannot prove a resource is safe.
 
-Two selection details are worth knowing early. A bare name can match more than one resource. Installation accepts a kind or a full [locator](../glossary.md#locator) to disambiguate; `remove` uses `--kind` and refuses ambiguous names. And `agent-marketplace` reports a resource's prerequisites but does not install them; the resource's own setup instructions apply. [Sources and resources](./sources-and-resources.md) explains how groups select resources once a source exists.
+A bare name can match more than one resource. Installation accepts a kind or a full [locator](../glossary.md#locator) to disambiguate; `remove` uses `--kind` and refuses ambiguous names. And `agent-marketplace` reports a resource's prerequisites but does not install them; the resource's own setup instructions apply. [Sources and resources](./sources-and-resources.md) explains how groups select resources once a source exists.
 
 ## Installing and checking
 
@@ -44,7 +44,7 @@ Removal edits the selection, not your files by hand: `remove` drops a direct sel
 
 ## Recovery and offline work
 
-The lifecycle's failure paths are part of the design. A failed drift check or missing output is a signal to diagnose before rewriting configuration or lockfiles; [troubleshoot sync drift](../how-to/troubleshoot-sync-drift.md) starts there. Handwritten entries that conflict with generated output are reconciled by [repair](../how-to/repair-owned-shared-configuration.md), which can adopt exact matches and asks before removing or replacing anything. Offline work uses cached content through `sync --offline`, which cannot check for new revocations published after the cache was filled. Machine-scope output has its own [backup and restore](../how-to/back-up-and-restore-machine-resources.md) path, an overgrown cache can be [cleaned safely](../how-to/clean-the-cache-safely.md), and private Git registries need [their own credentials](../how-to/configure-private-git-registries.md). [Shared configuration ownership](./shared-configuration-ownership.md) explains why these guarantees hold.
+A failed drift check or missing output is a signal to diagnose before you rewrite configuration or lockfiles; [troubleshoot sync drift](../how-to/troubleshoot-sync-drift.md) starts there. Handwritten entries that conflict with generated output are reconciled by [repair](../how-to/repair-owned-shared-configuration.md), which can adopt exact matches and asks before removing or replacing anything. Offline work uses cached content through `sync --offline`, which cannot check for new revocations published after the cache was filled. Machine-scope output has its own [backup and restore](../how-to/back-up-and-restore-machine-resources.md) path, an overgrown cache can be [cleaned safely](../how-to/clean-the-cache-safely.md), and private Git registries need [their own credentials](../how-to/configure-private-git-registries.md). [Shared configuration ownership](./shared-configuration-ownership.md) explains why these guarantees hold.
 
 ## Current limits
 

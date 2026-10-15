@@ -1,6 +1,6 @@
 # Configuration layers reference
 
-Agent Marketplace reads up to four configuration files on every run and combines them. Each file is a layer. This page lists the layers, where each file lives, which fields each layer may set, and how the CLI decides between layers when they disagree. For the fields themselves, see the [repository configuration reference](./configuration.md).
+The CLI reads up to four configuration files on every run and combines them. Each file is a layer. This page lists the layers, where each file lives, which fields each may set, and how layers that disagree are resolved. For the fields themselves, see the [repository configuration reference](./configuration.md).
 
 ## Layer order
 

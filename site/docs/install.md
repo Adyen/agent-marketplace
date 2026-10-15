@@ -1,13 +1,13 @@
 # Install
 
-`agent-marketplace` is a single program file with no other runtime dependencies. Builds exist for macOS and Linux on Intel (`amd64`) and ARM (`arm64`) processors. There is no Windows build.
+`agent-marketplace` is one program file with no other runtime dependencies. It runs on macOS and Linux, on Intel (`amd64`) and ARM (`arm64`) processors. There is no Windows build.
 
-Pick one of the methods below, then [check that it works](#verify). Most people should download a release. If you rarely use a terminal, read [Terminal basics](./terminal-basics.md) first.
+Pick a method below, then [check that it works](#verify). Most people should download a release. If you rarely use a terminal, read [Terminal basics](./terminal-basics.md) first.
 
 You also need [Git](./glossary.md#git) to install resources from Git registries. Run `git --version` to check; [Terminal basics](./terminal-basics.md#install-git) explains how to install it.
 
 ::: warning Upgrading an existing installation
-Before replacing your binary with the v4-only CLI, [convert every writable root and its include tree](./how-to/migrate-configuration.md) using an older released migrator. Existing organization, user, repository, and personal-local roots all require exact `apiVersion: agent-marketplace/v4`; organization configuration must be converted and deployed externally by its administrator. Conversion can refuse includes, unrepresentable legacy input, or missing verified Marketplace evidence. Do not merely change the version string. The new CLI has no `migrate` command or automatic startup/TUI conversion.
+Before you replace your binary with the v4-only CLI, [convert every writable root and its include tree](./how-to/migrate-configuration.md) with an older released migrator. Existing organization, user, repository, and personal-local roots must declare exact `apiVersion: agent-marketplace/v4`. The organization administrator converts organization configuration. Conversion can refuse includes, unrepresentable legacy input, or missing verified Marketplace evidence. Changing the version string alone is not conversion. The new CLI has no `migrate` command and does no automatic conversion at startup or in the TUI.
 :::
 
 ## From GitHub Releases
@@ -34,11 +34,11 @@ Before replacing your binary with the v4-only CLI, [convert every writable root 
    agent-marketplace-v4.1.4-linux-arm64
    ```
 
-3. Put the file on your `PATH`. The `PATH` is the list of folders your terminal searches when you type a command name; [Terminal basics](./terminal-basics.md#make-a-command-available-everywhere) explains it. Choose one of the two options below. In both, replace the file name with the one you downloaded, and run the commands from the folder that contains it (usually `cd ~/Downloads`).
+3. Put the file on your `PATH`, the list of folders your terminal searches for commands ([Terminal basics](./terminal-basics.md#make-a-command-available-everywhere) explains it). Pick one option below. In both, replace the file name with yours and run the commands in the folder that holds the download (usually `cd ~/Downloads`).
 
 ### Option A: install for every user in `/usr/local/bin`
 
-`/usr/local/bin` is on the `PATH` on macOS and most Linux systems. Writing to it needs administrator rights, so the last two commands start with `sudo`, which asks for your computer password:
+`/usr/local/bin` is on the `PATH` on macOS and most Linux systems. Writing there needs administrator rights, so the last two commands start with `sudo`, which asks for your password:
 
 ```bash
 chmod +x agent-marketplace-v4.1.4-darwin-arm64
@@ -68,7 +68,7 @@ That line is for zsh, the default shell on macOS. If you use bash, write to `~/.
 
 ### If macOS refuses to open the file
 
-If macOS says it cannot open `agent-marketplace` because it cannot verify the developer, it has quarantined the downloaded file. You can remove that flag from the installed file:
+If macOS says it cannot open `agent-marketplace` because it cannot verify the developer, the download is quarantined. Remove the flag:
 
 ```bash
 xattr -d com.apple.quarantine /usr/local/bin/agent-marketplace
@@ -84,9 +84,9 @@ If you have Go 1.26.9 or newer, you can build and install the newest code from t
 go install github.com/Adyen/agent-marketplace/cmd/agent-marketplace@latest
 ```
 
-This builds the latest commit on the main branch, which may be newer than the latest release. Go can't select the `v4.x.x` release tags for this module, so `@latest` never means a release. To install a release with Go, build it from source as described in the next section.
+This builds the latest commit on `main`, which may be newer than the latest release. Go can't select `v4.x.x` release tags for this module, so `@latest` never means a release. To install a release, build it from source (next section).
 
-Go places the program in `$(go env GOPATH)/bin`, usually `~/go/bin`. Add that folder to your `PATH` if it isn't there already, the same way as in option B above. If Go reports a `404` or an authentication error while downloading, run `export GOPRIVATE=github.com/Adyen/agent-marketplace` and try again, so Go downloads directly from GitHub with your Git credentials.
+Go puts the program in `$(go env GOPATH)/bin`, usually `~/go/bin`. Add that folder to your `PATH` if it isn't there, as in option B. If Go reports a `404` or an authentication error during download, run `export GOPRIVATE=github.com/Adyen/agent-marketplace` and try again. Go then downloads directly from GitHub with your Git credentials.
 
 ## From source
 

@@ -60,7 +60,7 @@ This file chooses the [harness](../glossary.md#harness) that receives resources,
 
 ## 2. Connect the online Marketplace
 
-Register the Marketplace address in this repository. Replace the example address before you run the command:
+Register the Marketplace address in this repository. Replace the example address first:
 
 ```bash
 agent-marketplace install https://marketplace.example.com --scope repo

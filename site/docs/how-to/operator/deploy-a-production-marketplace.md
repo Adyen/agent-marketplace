@@ -1,6 +1,6 @@
 # How to deploy a production Marketplace
 
-Run the hosted Marketplace with separate API and worker processes, external storage, and a private operations listener. This page covers the order of steps and the decisions to make. Each of the two supported packagings has its own detailed guide.
+Run the hosted Marketplace with separate API and worker processes, external storage, and a private operations listener. Each supported packaging has its own guide. This page gives the order of steps.
 
 ## Prerequisites
 
@@ -92,7 +92,7 @@ curl -fsS https://marketplace.example.com/.well-known/agent-marketplace.json
 curl -fsS http://<api-host>:9090/readyz
 ```
 
-Exact output for the first and last calls; typical output (truncated) for the well-known document:
+Output (the well-known document is truncated):
 
 ```text
 {"status":"ok"}
@@ -102,7 +102,7 @@ Exact output for the first and last calls; typical output (truncated) for the we
 
 `/healthz` shows that the process is running. `/readyz` returns `{"status":"ready"}` only when the database's recorded configuration authority matches `management.mode`, the stored revocations match the process's configuration, the metadata store is readable, and the blob store responds. The [health and metrics reference](../../reference/marketplace-health-and-metrics.md#readyz) describes each check.
 
-The worker queues a refresh for every configured registry when it starts. To run the first ingestion yourself and watch it finish, run this from the worker image:
+When it starts, the worker queues a refresh for every registry in the YAML `registries:` list (`file` mode) or for every active admin-managed registry (`database` mode, which ignores the YAML list). To run the first ingestion yourself and watch it finish, run this from the worker image:
 
 ```bash
 agent-marketplace serve reindex --config /app/marketplace.yaml

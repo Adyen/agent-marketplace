@@ -1,6 +1,6 @@
 # How to install a resource from a hosted Marketplace
 
-This guide shows how to find a resource on a hosted [Marketplace](../glossary.md#marketplace) and install one exact revision of it. The CLI verifies the revision and shows you a preview before it changes any configuration.
+Find a resource on a hosted [Marketplace](../glossary.md#marketplace) and install one exact revision of it. The CLI verifies the revision and shows a preview before it changes any configuration.
 
 ## Prerequisites
 
@@ -10,7 +10,7 @@ You need:
 - At least one target harness selected in your effective configuration.
 - The Marketplace endpoint URL.
 
-Every existing consumer root, including organization and personal-local, must declare exact `apiVersion: agent-marketplace/v4`. Included fragments may omit the field or declare exact v4. If the destination is absent, install creates v4 only after validating every required root/include tree. Unsupported input refuses before Marketplace acquisition or new config/lock/harness changes. [Convert older configurations with an older released migrator before upgrading](./migrate-configuration.md); the new CLI has no migration command or prompt.
+Every existing config root, including organization and personal-local, must declare exact `apiVersion: agent-marketplace/v4`. Included fragments may omit the field or declare exact v4. If the destination file doesn't exist, `install` creates it as v4, but only after every other config file it needs passes this check. Otherwise it refuses before it downloads from the Marketplace or changes config, locks, or harness files. [Convert older configurations with an older released migrator before upgrading](./migrate-configuration.md); the new CLI has no migration command or prompt.
 
 Replace `https://marketplace.example.com`, `shared-agents`, and `review` in the examples with values from your Marketplace.
 
@@ -36,7 +36,7 @@ Search the configured Marketplaces:
 agent-marketplace search review --kind skill --marketplace https://marketplace.example.com
 ```
 
-The results have the columns `MARKETPLACE`, `SOURCE`, `KIND`, `NAME`, and `DESCRIPTION`. Typical output:
+Typical output:
 
 ```text
 MARKETPLACE                     SOURCE         KIND   NAME    DESCRIPTION
@@ -131,7 +131,7 @@ In the `MARKETPLACE PINS` table, check that the row for the resource shows:
 - A `sha256:` digest in `CONTENT_DIGEST`.
 - The intended configuration layer in `LAYER`.
 
-Then confirm that the configuration and the generated output match:
+Then confirm the config and output match:
 
 ```bash
 agent-marketplace sync --check

@@ -2,14 +2,14 @@
 
 Fix Devin or Codex shared configuration files when `agent-marketplace` cannot prove that it wrote an entry that is already there.
 
-Several sources can write entries into the same Devin or Codex configuration file (for example `mcp_config.json` or `.codex/config.toml`). `agent-marketplace` keeps a record of the entries it wrote, called [ownership state](../glossary.md#ownership-state), and only changes or removes those. When an entry it wants to write already exists without that record, `sync` leaves the entry alone and reports it, as a warning for Devin files and as an error for Codex files. `doctor --repair` lets you resolve those cases one by one.
+Several sources can write entries into the same Devin or Codex file, such as `mcp_config.json` or `.codex/config.toml`. `agent-marketplace` records the entries it wrote as [ownership state](../glossary.md#ownership-state), and it changes or removes only those. When an entry it wants to write already exists without that record, `sync` leaves the entry alone and reports it: a warning for Devin files, an error for Codex files. `doctor --repair` resolves those cases one by one.
 
 ## Prerequisites
 
 - `agent-marketplace` on your `PATH`.
 - A `sync` run that reported an `ownership.*` diagnostic, such as `ownership.state-missing` or `ownership.unmanaged-key`.
 
-`materialize.codex.trust-review` is a different message: it reminds you to review the repository's trust setting in Codex after its hooks or MCP configuration changed. It is not an ownership problem, and `--repair` has nothing to do for it.
+`materialize.codex.trust-review` is a different message. It reminds you to review the repository's trust setting in Codex after its hooks or MCP configuration changed. It is not an ownership problem, and `--repair` does nothing for it.
 
 ## 1. Preview the repairs
 
@@ -17,7 +17,7 @@ Several sources can write entries into the same Devin or Codex configuration fil
 agent-marketplace doctor --repair
 ```
 
-After the normal `doctor` report, the command lists every Devin and Codex shared file it inspected, including files with nothing to repair. For each entry it can act on, it shows one of three actions:
+After the normal `doctor` report, the command lists each Devin and Codex shared file it inspects, even files with nothing to repair. For each entry it can act on, it shows one of three actions:
 
 - `adopt`: the existing entry is identical to what `agent-marketplace` would write. Adopting records it as owned and does not change the file.
 - `replace`: the existing entry has the same key but a different value. Replacing overwrites your value with the generated one.
@@ -31,7 +31,7 @@ repair: devin shared-aggregate ownership
   nothing to repair
 ```
 
-If standard input is not a terminal (for example in a script), the command stops after the preview, printing `preview only: not a terminal; re-run on a terminal to confirm, or use --repair --yes to adopt exact matches` when there is something to confirm. `--yes` is described in the next step.
+If standard input is not a terminal (for example in a script), the command stops after the preview. It prints `preview only: not a terminal; re-run on a terminal to confirm, or use --repair --yes to adopt exact matches` when there is something to confirm. `--yes` is described in the next step.
 
 ## 2. Confirm each repair
 
@@ -43,7 +43,7 @@ To adopt every exact match without being asked:
 agent-marketplace doctor --repair --yes
 ```
 
-`--yes` covers adoption only. Each adopted file is reported as `adopted <n> entr(y/ies) in <file>`. Replacing a conflicting entry or removing an orphan still asks you on a terminal, and is skipped when there is no terminal; each skipped entry is printed as `left unchanged`.
+`--yes` covers adoption only. Each adopted file is reported as `adopted <n> entr(y/ies) in <file>`. Replacing a conflicting entry or removing an orphan still asks you on a terminal, and is skipped when there is no terminal. Each skipped entry is printed as `left unchanged`.
 
 ## 3. Verify
 

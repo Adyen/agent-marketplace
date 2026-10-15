@@ -21,8 +21,6 @@ A Marketplace adds things plain Git cannot give you:
 - Review before install: the CLI shows the verified revision (digest, license, security findings, capabilities, and where it came from) before it installs. Security findings need your consent. Capabilities are shown but do not require consent on their own.
 - Availability: in `mirror` mode you never need access to the registry itself.
 
-The [Marketplace trust model](./marketplace-trust-model.md) explains these checks in more detail.
-
 ### Endpoint identity
 
 A Marketplace endpoint is identified by its canonical URL and by an `instance_id` published at `/.well-known/agent-marketplace.json`. `agent-marketplace install <url>` reads that document, checks both values, and records them. Later commands check the `instance_id` again, so if the URL starts pointing at a different deployment, the CLI refuses it. An alias gives the endpoint a short name for locators.

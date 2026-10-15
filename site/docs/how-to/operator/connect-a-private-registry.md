@@ -36,7 +36,7 @@ The configuration also accepts an `ssh_key` credential, which cannot be combined
         file: /run/secrets/registry-ssh-key
 ```
 
-The worker passes the key to `ssh` (with `BatchMode=yes`) only when Git uses the SSH transport. Because a `file`-mode origin must use HTTP or HTTPS, a `token` is the credential that works here.
+The worker passes the key to `ssh` (with `BatchMode=yes`) only when Git uses the SSH transport.
 
 ## 2. Trust a private certificate authority (optional)
 

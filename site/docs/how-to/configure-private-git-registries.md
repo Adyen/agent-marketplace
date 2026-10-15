@@ -10,11 +10,10 @@ Let `agent-marketplace` read a private Git [registry](../glossary.md#registry) u
 
 ## 1. Prepare your credentials
 
-`agent-marketplace` runs your `git` program with a restricted setup: Git never prompts for a username or password, and only a limited set of your Git environment and configuration is applied. The full list of passed-through variables and copied credential settings is in the [environment variables reference](../reference/environment-variables.md). Prepare one transport below; SSH with the standard SSH agent is the most portable option.
+`agent-marketplace` runs your `git` program with a restricted setup. Git never prompts for a username or password. Credentials come from an SSH agent, an SSH key, or a credential helper. Only a limited set of your Git environment and configuration applies; the [environment variables reference](../reference/environment-variables.md) lists what passes through. Pick one transport below. SSH with the standard SSH agent is the most portable.
 
-- Git never prompts for a username or password. Credentials must come from an SSH agent, an SSH key, or a credential helper.
 - Your personal and system Git configuration files are not loaded as a whole. For HTTPS registries, `agent-marketplace` copies only the credential, TLS and redirect settings from them: `credential.helper`, `credential.username`, `credential.useHttpPath`, `http.extraHeader`, the `http.ssl*` certificate settings, and `http.followRedirects`. Other settings, such as `url.<base>.insteadOf` rewrites or `core.sshCommand`, are not applied.
-- Redirects follow Git's rules. By default (`http.followRedirects=initial`), Git follows a redirect of the first request and sends the rest of the fetch, including your credentials, to the redirected URL, exactly as `git clone` does. To refuse redirects, set `http.followRedirects=false` in your Git configuration, for all hosts or for one URL (`[http "https://git.example.com/"]`). Redirect failures are reported as `git.auth-transport-failed`.
+- Redirects follow Git's rules. By default (`http.followRedirects=initial`), Git follows a redirect of the first request and sends the rest of the fetch, including your credentials, to the redirected URL, as `git clone` does. To refuse redirects, set `http.followRedirects=false` in your Git configuration, for all hosts or for one URL (`[http "https://git.example.com/"]`). Redirect failures are reported as `git.auth-transport-failed`.
 - Most `GIT_*` environment variables are dropped. `GIT_SSH`, `GIT_SSH_COMMAND`, `GIT_ASKPASS`, `GIT_SSL_CERT`, `GIT_SSL_KEY`, `GIT_SSL_CAINFO`, `GIT_SSL_CAPATH`, `GIT_HTTP_PROXY`, `GIT_HTTPS_PROXY`, and `GIT_NO_PROXY` pass through. `GIT_SSL_NO_VERIFY` is removed. Your SSH agent (`SSH_AUTH_SOCK`) and `~/.ssh/config` work as usual.
 
 ### SSH key authentication
@@ -27,13 +26,13 @@ ssh-add ~/.ssh/id_agent_marketplace
 
 `ssh-add` prints `Identity added: <path>` on success.
 
-Check that Git can read the repository. This command only reads; it changes no configuration:
+Check that Git can read the repository. The command only reads:
 
 ```bash
 git ls-remote git@github.com:example-org/private-skills.git
 ```
 
-It prints one line per ref, for example `a1b2c3d4...	HEAD`. If it fails, fix the SSH key, agent, or `~/.ssh/known_hosts` entry before configuring the source.
+It prints one line per ref, for example `a1b2c3d4...	HEAD`. If it fails, fix the SSH key, agent, or `~/.ssh/known_hosts` entry before you configure the source.
 
 ### HTTPS with a credential helper
 
@@ -43,13 +42,13 @@ If you normally sign in to the host through a credential manager or a personal a
 git ls-remote https://github.com/example-org/private-skills.git
 ```
 
-It prints the same ref listing as the SSH check. If it prompts or fails, fix the credential helper first. `agent-marketplace` copies credential and TLS settings only from trusted Git configuration files and their ordinary `[include]` chains; conditional `[includeIf]` sections and repository-local authentication settings are never used. The trust rules and include limits are documented in the [environment variables reference](../reference/environment-variables.md).
+It prints the same ref listing as the SSH check. If it prompts or fails, fix the credential helper first. `agent-marketplace` copies credential and TLS settings only from trusted Git configuration files and their ordinary `[include]` chains. Conditional `[includeIf]` sections and repository-local authentication settings are never used. The [environment variables reference](../reference/environment-variables.md) documents the trust rules and include limits.
 
 Do not run `git config credential.helper store` or change other global Git settings just for `agent-marketplace`.
 
 ## 2. Declare the source
 
-Configure the registry with the same URL form you just checked:
+Use the same URL form you checked:
 
 ```yaml
 apiVersion: agent-marketplace/v4
@@ -76,7 +75,7 @@ Includes expand in declaration order, preserving credential-helper resets and UR
 agent-marketplace sync
 ```
 
-Sync fetches through your Git credentials and prints the usual `Installed <n>  Removed <n>  Malformed <n>  Errors <n>` summary, followed by a single `→` line listing the output roots it changed, separated by commas; that line appears only when sync writes or removes output. Check the locked commit and the selected resources:
+Sync fetches through your Git credentials and prints the usual `Installed <n>  Removed <n>  Malformed <n>  Errors <n>` summary. When sync writes or removes output, it adds one `→` line listing the output roots it changed, separated by commas. Check the locked commit and the selected resources:
 
 ```bash
 agent-marketplace status
@@ -98,13 +97,13 @@ Each line should show only a host and a repository path, such as `https://github
 
 ## Boundaries
 
-- Never put credentials in a registry URL, a query parameter, or `~/.agents/config.yaml`. Even though the lock does not store them, they stay readable in the configuration file.
+- Never put credentials in a registry URL, a query parameter, or `~/.agents/config.yaml`. The lock does not store them, but they stay readable in the configuration file.
 - The lock contains exact commits, not credentials.
-- Your credential manager is responsible for how long credentials last and for rotating them.
+- Your credential manager controls how long credentials last and when they rotate.
 
 ## Troubleshooting
 
 - `git.auth-transport-failed: Git SSH connection failed. Verify your SSH agent and repository access`: check that `ssh-add -l` lists your key, that the key has read access to the repository, and that the host is in `~/.ssh/known_hosts`.
 - `git.auth-transport-failed: transport diagnostics withheld to protect authentication data`: an HTTPS fetch failed. `agent-marketplace` hides Git's message because it can contain credentials. Run the `git ls-remote` command above to see the real error, then check that your credential helper is current and has read access.
-- `git.auth-config-untrusted`: check the system/global files and their ordinary include chains for conditional includes, unsafe ownership or write permissions, non-regular or hard-linked files, malformed configuration, cycles, or the include limits listed in the [environment variables reference](../reference/environment-variables.md). Repository-local authentication settings are also refused. Do not remove company-managed includes or disable TLS verification to work around a trust failure.
+- `git.auth-config-untrusted`: check the system and global files and their ordinary include chains for conditional includes, unsafe ownership or write permissions, non-regular or hard-linked files, malformed configuration, cycles, or the include limits listed in the [environment variables reference](../reference/environment-variables.md). Repository-local authentication settings are also refused. Do not remove company-managed includes or disable TLS verification to work around a trust failure.
 - The registry works in your shell but not in `agent-marketplace`: your setup may depend on a setting that is not applied, such as a global `url.<base>.insteadOf` rewrite or `core.sshCommand`. Put the real URL in the configuration, or set `GIT_SSH_COMMAND` in the environment instead of `core.sshCommand`.

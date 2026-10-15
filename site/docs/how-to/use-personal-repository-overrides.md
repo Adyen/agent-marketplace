@@ -9,7 +9,7 @@ Keep the team's configuration committed while you add or hide resources in your 
 
 ## 1. Create a personal override file
 
-Suppose the committed configuration is:
+The committed configuration:
 
 ```yaml
 # .agents/config.yaml
@@ -26,7 +26,7 @@ resources:
       - skill/some-team-skill
 ```
 
-Create `.agents/config.local.yaml` next to it. Start it with `apiVersion: agent-marketplace/v4`, and repeat the source declaration so the CLI knows which registry your additions and exclusions refer to:
+Create `.agents/config.local.yaml` next to it. Set `apiVersion: agent-marketplace/v4`, and repeat the source declaration so the CLI knows which registry your changes apply to:
 
 ```yaml
 # .agents/config.local.yaml
@@ -43,9 +43,9 @@ resources:
       - skill/some-team-skill
 ```
 
-The local file is applied on top of the committed one. In this checkout, `my-personal-skill` is added and `some-team-skill` is hidden. Without its own exact `apiVersion: agent-marketplace/v4`, this root fails with `v4.api-version-required` (omitted field) or `v4.api-version` (unsupported or invalid value), identifying the local file and field. The fragment version exception does not apply to this root. Without the repeated source it reports `v4.undefined-source`. The local file cannot contain `harnesses`. Put only resources here that the team does not need.
+The local file applies on top of the committed one. In this checkout, `my-personal-skill` is added and `some-team-skill` is hidden. Without its own exact `apiVersion: agent-marketplace/v4`, this root fails with `v4.api-version-required` (field omitted) or `v4.api-version` (unsupported or invalid value), naming the local file and field. The fragment version exception does not apply to this root. Without the repeated source, the CLI reports `v4.undefined-source`. The local file cannot contain `harnesses`. Keep only personal resources in it.
 
-You can also let the CLI write this file: `agent-marketplace install <name> --scope local` prints `Installed <name> locally`, and `agent-marketplace remove <name> --scope local` prints `Removed <name>`; both edit `.agents/config.local.yaml` for you.
+You can also let the CLI write this file: `agent-marketplace install <name> --scope local` prints `Installed <name> locally`, and `agent-marketplace remove <name> --scope local` prints `Removed <name>`. Both edit `.agents/config.local.yaml` for you.
 
 ## 2. Sync
 
@@ -53,7 +53,7 @@ You can also let the CLI write this file: `agent-marketplace install <name> --sc
 agent-marketplace sync
 ```
 
-It prints the usual `Installed <n>  Removed <n>  Malformed <n>  Errors <n>` summary, followed by a single `→` line listing the output roots it changed, separated by commas; that line appears only when sync writes or removes output. When `.agents/config.local.yaml` exists, the CLI adds `.agents/config.local.yaml` and `.agents/lock.local.yaml` to the repository's `.gitignore` if they are not listed yet. Sync writes `.agents/lock.local.yaml` for the Git registries in your local file.
+Sync prints the usual `Installed <n>  Removed <n>  Malformed <n>  Errors <n>` summary, and a `→` line when it writes or removes output. When `.agents/config.local.yaml` exists, the CLI adds it and `.agents/lock.local.yaml` to the repository's `.gitignore` if they are not listed. Sync writes `.agents/lock.local.yaml` for the Git registries in your local file.
 
 ## 3. Verify the override
 

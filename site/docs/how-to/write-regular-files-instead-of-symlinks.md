@@ -35,7 +35,7 @@ materialization:
 agent-marketplace sync
 ```
 
-It prints the usual `Installed <n>  Removed <n>  Malformed <n>  Errors <n>` summary, followed by a single `→` line listing the output roots it changed, separated by commas; that line appears only when sync writes or removes output. For the harnesses in file mode, sync writes regular folders and files where it would otherwise create links. It records the paths it wrote in `.agents/materialization-manifest.yaml` (for machine-wide output, `~/.agent-marketplace/materialization-manifest.yaml`), so a later sync removes only files it wrote. If you edit one of those files and the resource is later deselected, sync keeps your edited copy and prints a `materialize.collision.user-owned` warning.
+Sync prints the usual `Installed <n>  Removed <n>  Malformed <n>  Errors <n>` summary. When it writes or removes output, it also prints one `→` line listing the changed output roots. For harnesses in file mode, sync writes regular folders and files where it would otherwise create links. It records the paths it wrote in `.agents/materialization-manifest.yaml` (for machine-wide output, `~/.agent-marketplace/materialization-manifest.yaml`), so a later sync removes only files it wrote. If you edit one of those files and the resource is later deselected, sync keeps your edited copy and prints a `materialize.collision.user-owned` warning.
 
 ## When to use file mode
 

@@ -5,8 +5,8 @@ Add `agent-marketplace` to a repository so everyone on the team gets the same sk
 ## Prerequisites
 
 - `agent-marketplace` is installed and on your `PATH` (see [Install](../install.md)). Everyone who syncs the repository, including CI, needs version v4.0.9 or newer, because older versions cannot read the lockfile this guide creates.
-- You have the URL of a Git [registry](../glossary.md#registry) that contains the resources you want.
-- You know which [harnesses](../glossary.md#harness) the project uses.
+- The URL of a Git [registry](../glossary.md#registry) that contains the resources you want.
+- The [harnesses](../glossary.md#harness) the project uses.
 - A terminal open at the repository's root folder.
 
 ## 1. Create the repository configuration
@@ -19,7 +19,7 @@ mkdir -p .agents
 
 `mkdir -p` prints nothing on success.
 
-Create `.agents/config.yaml` with a text editor and add a minimal configuration:
+Create `.agents/config.yaml` with a minimal configuration:
 
 ```yaml
 # .agents/config.yaml
@@ -37,7 +37,7 @@ resources:
       - skill/code-review
 ```
 
-Replace `https://github.com/example-org/agent-resources.git` with a registry you control or a public example, `v1.4.0` with a tag or branch in that registry, and `skill/code-review` with the resources you want. The `harnesses` list in this file applies to everyone who works in the repository and takes precedence over each person's own list. A teammate's personal resources then go only to harnesses that are in both lists; see [configure multiple harnesses](./configure-multiple-harnesses.md).
+Replace the Git URL with a registry you control or a public example, `v1.4.0` with a tag or branch in that registry, and `skill/code-review` with the resources you want. The `harnesses` list here applies to everyone in the repository and takes precedence over each person's own list. A teammate's personal resources then go only to harnesses in both lists. See [configure multiple harnesses](./configure-multiple-harnesses.md).
 
 ## 2. Sync and verify
 
@@ -45,7 +45,7 @@ Replace `https://github.com/example-org/agent-resources.git` with a registry you
 agent-marketplace sync
 ```
 
-Sync resolves the tag to an exact [commit](../glossary.md#commit), writes the lock, and puts the skill into the Claude Code folders. With the configuration above, the output looks like this:
+Sync resolves the tag to an exact [commit](../glossary.md#commit), writes the lock, and installs the skill into the Claude Code folders. Output:
 
 ```text
 Installed 2  Removed 0  Malformed 0  Errors 0
@@ -72,13 +72,13 @@ If `~/.agents/config.yaml` does not exist yet, the first `sync` also creates it,
 
 ## 3. Ignore generated harness output
 
-Sync recreates the harness folders from the configuration and the lock, so most teams keep them out of Git. Add them to `.gitignore`. The exact paths depend on your harnesses (see [harnesses and output paths](../reference/harnesses-and-output-paths.md)). For Claude Code:
+Sync recreates the harness folders from the configuration and the lock, so most teams keep them out of Git. The exact paths depend on your harnesses ([harnesses and output paths](../reference/harnesses-and-output-paths.md)). For Claude Code, add them to `.gitignore`:
 
 ```bash
 printf '%s\n' '.claude/skills/' '.claude/.claude-plugin/' >> .gitignore
 ```
 
-This appends the two lines to `.gitignore` and prints nothing.
+The command prints nothing.
 
 ## 4. Commit the configuration
 
