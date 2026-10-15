@@ -261,9 +261,14 @@ func TestResolverMigratesStaleCachedFinalArchive(t *testing.T) {
 			if len(errs) != 0 || len(resolved) != 1 {
 				t.Fatalf("refresh over stale cache: artifacts=%d errors=%v", len(resolved), errs)
 			}
-			cached, verified, err := cache.ReadArtifact(manifest.ArchiveDigest)
+			cached, verified, err := cache.readArchive(placeholderForm, manifest.ArchiveDigest)
 			if err != nil || !verified || !bytes.Equal(cached, placeholder) {
-				t.Fatalf("cache after refresh: verified=%v err=%v, want the placeholder bytes", verified, err)
+				t.Fatalf("placeholder cache after refresh: verified=%v err=%v, want the placeholder bytes", verified, err)
+			}
+			if legacy, legacyVerified, err := cache.ReadArtifact(manifest.ArchiveDigest); err != nil || legacyVerified {
+				t.Fatalf("legacy artifact cache after refresh: verified=%v err=%v, want the stale copy not verified", legacyVerified, err)
+			} else if legacy != nil && bytes.Equal(legacy, placeholder) {
+				t.Fatal("placeholder bytes were written to the legacy artifact path")
 			}
 
 			// Seed the revision metadata online, then replace the artifact with the stale
@@ -271,6 +276,9 @@ func TestResolverMigratesStaleCachedFinalArchive(t *testing.T) {
 			offline := NewCache(t.TempDir())
 			if _, errs := (&Resolver{Cache: offline}).Resolve(context.Background(), cfg, []hcc.Target{hcc.TargetClaude}, resolver.MarketplaceResolveModeRefresh); len(errs) != 0 {
 				t.Fatalf("seed offline cache: %v", errs)
+			}
+			if err := os.RemoveAll(filepath.Dir(offline.archivePath(placeholderForm, manifest.ArchiveDigest))); err != nil {
+				t.Fatal(err)
 			}
 			if _, err := offline.WriteArtifact(manifest.ArchiveDigest, raw); err != nil {
 				t.Fatal(err)

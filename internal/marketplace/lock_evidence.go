@@ -130,7 +130,7 @@ func (c *Cache) VerifiedMarketplaceLockResource(entry config.MarketplaceEntry, p
 		if acquisition == config.MarketplaceAcquisitionIndexOnly {
 			raw, verified, err = c.ReadIndexOnlyArtifact(identity, pin.Digest)
 		} else {
-			raw, verified, err = c.ReadArtifact(string(rev.ArchiveDigest))
+			raw, verified, _, err = cachedMirrorArchive(c, string(rev.ArchiveDigest))
 		}
 		if err != nil {
 			return lockfile.MarketplaceResourceLock{}, fmt.Errorf("read cached artifact: %w", err)

@@ -126,3 +126,30 @@ verification.
 - **WHEN** each placeholder-form archive is verified by hashing its bytes against its digest under either toolchain
 - **THEN** verification MUST succeed
 - **AND** a final archive recorded by the other toolchain MUST fail with an encoding mismatch, while tampered final content MUST fail as an integrity error
+
+### Requirement: Placeholder-form archives are cached apart from legacy artifacts
+
+A client SHALL cache placeholder-form archives under a location separate from the
+legacy artifact path, so that a client built before this change, which validates
+whatever it finds at the legacy path, never reads placeholder bytes there. Final-form
+archives SHALL be written to the legacy path only when the legacy artifact route was
+used. The garbage collector SHALL treat both locations with the same reachability
+rules, and SHALL preserve entries it does not recognize.
+
+#### Scenario: Placeholder-form archives stay out of the legacy artifact path
+
+- **WHEN** a client fetches a placeholder-form archive for a locked digest
+- **THEN** the client MUST store the placeholder bytes only under the placeholder location
+- **AND** the legacy artifact path MUST NOT receive placeholder bytes, so a client that predates this change finds nothing there to validate or refetches
+
+#### Scenario: Cached placeholder-form archive serves offline resolution
+
+- **GIVEN** a verified placeholder-form archive in the cache
+- **WHEN** a resolution runs in cached or cached-no-fetch mode
+- **THEN** the client MUST resolve the resource from the placeholder location without contacting the Marketplace
+
+#### Scenario: Placeholder-form archive is collected with its archive
+
+- **WHEN** garbage collection runs and a digest is unreferenced
+- **THEN** it MUST remove the placeholder-form and legacy entries for that digest together
+- **AND** it MUST keep both entries for a referenced digest, and MUST preserve malformed or unrecognized placeholder entries and fail closed on symlinked ones

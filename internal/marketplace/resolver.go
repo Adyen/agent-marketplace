@@ -580,7 +580,7 @@ func (r *Resolver) resolvePinWithArtifactPolicy(ctx context.Context, client *Cli
 	}
 
 	archiveDigest := string(rev.ArchiveDigest)
-	raw, verified, err := cache.ReadArtifact(archiveDigest)
+	raw, verified, form, err := cachedMirrorArchive(cache, archiveDigest)
 	fetched := false
 	if err != nil {
 		return resolver.ResolvedArtifact{}, hccartifact.CanonicalArtifact{}, fmt.Errorf("read cached artifact: %w", err)
@@ -596,7 +596,7 @@ func (r *Resolver) resolvePinWithArtifactPolicy(ctx context.Context, client *Cli
 			return resolver.ResolvedArtifact{}, hccartifact.CanonicalArtifact{}, fmt.Errorf("artifact not in cache")
 		}
 		slog.Debug("marketplace fetching artifact", "url", entry.URL, "registry", pin.RegistryID, "kind", pin.Kind, "name", pin.Name, "archive_digest", rev.ArchiveDigest)
-		raw, err = fetchMirrorArchive(ctx, client, cache, archiveDigest)
+		raw, form, err = fetchMirrorArchive(ctx, client, cache, archiveDigest)
 		if err != nil {
 			return resolver.ResolvedArtifact{}, hccartifact.CanonicalArtifact{}, err
 		}
@@ -612,11 +612,11 @@ func (r *Resolver) resolvePinWithArtifactPolicy(ctx context.Context, client *Cli
 	if errors.As(err, &mismatch) && !fetched {
 		// A cached copy from another encoder is stale, not corrupt. Cached modes
 		// cannot replace it; online modes fetch once and verify the new bytes.
-		cache.InvalidateArtifactVerified(archiveDigest)
+		cache.invalidateArchiveVerified(form, archiveDigest)
 		if mode == resolver.MarketplaceResolveModeCached || mode == resolver.MarketplaceResolveModeCachedNoFetch {
 			return resolver.ResolvedArtifact{}, hccartifact.CanonicalArtifact{}, archiveVerifyError(err, pin.Kind, pin.Name, entry.URL, true)
 		}
-		raw, err = fetchMirrorArchive(ctx, client, cache, archiveDigest)
+		raw, form, err = fetchMirrorArchive(ctx, client, cache, archiveDigest)
 		if err != nil {
 			return resolver.ResolvedArtifact{}, hccartifact.CanonicalArtifact{}, err
 		}
@@ -624,18 +624,18 @@ func (r *Resolver) resolvePinWithArtifactPolicy(ctx context.Context, client *Cli
 		ca, err = hccartifact.VerifyArchiveBytes(raw, archiveDigest)
 	}
 	if err != nil {
-		cache.InvalidateArtifactVerified(archiveDigest)
+		cache.invalidateArchiveVerified(form, archiveDigest)
 		if errors.As(err, &mismatch) {
 			return resolver.ResolvedArtifact{}, hccartifact.CanonicalArtifact{}, archiveVerifyError(err, pin.Kind, pin.Name, entry.URL, false)
 		}
 		return resolver.ResolvedArtifact{}, hccartifact.CanonicalArtifact{}, fmt.Errorf("validate artifact archive: %w", err)
 	}
 	if err := ca.VerifyContentDigest(); err != nil {
-		cache.InvalidateArtifactVerified(archiveDigest)
+		cache.invalidateArchiveVerified(form, archiveDigest)
 		return resolver.ResolvedArtifact{}, hccartifact.CanonicalArtifact{}, fmt.Errorf("verify content digest: %w", err)
 	}
 	if err := validateArtifactManifest(entry, pin, rev, ca); err != nil {
-		cache.InvalidateArtifactVerified(archiveDigest)
+		cache.invalidateArchiveVerified(form, archiveDigest)
 		return resolver.ResolvedArtifact{}, hccartifact.CanonicalArtifact{}, err
 	}
 
@@ -644,27 +644,27 @@ func (r *Resolver) resolvePinWithArtifactPolicy(ctx context.Context, client *Cli
 		return resolver.ResolvedArtifact{}, hccartifact.CanonicalArtifact{}, fmt.Errorf("decode resource: %w", err)
 	}
 	if err := validateDecodedArtifactIdentity(pin, resource); err != nil {
-		cache.InvalidateArtifactVerified(archiveDigest)
+		cache.invalidateArchiveVerified(form, archiveDigest)
 		return resolver.ResolvedArtifact{}, hccartifact.CanonicalArtifact{}, err
 	}
 	if err := validateMirrorSourcePath(resource); err != nil {
-		cache.InvalidateArtifactVerified(archiveDigest)
+		cache.invalidateArchiveVerified(form, archiveDigest)
 		return resolver.ResolvedArtifact{}, hccartifact.CanonicalArtifact{}, err
 	}
 	stagedDir, err := stageMirrorResource(cache, archiveDigest, resource, ca)
 	if err != nil {
-		cache.InvalidateArtifactVerified(archiveDigest)
+		cache.invalidateArchiveVerified(form, archiveDigest)
 		return resolver.ResolvedArtifact{}, hccartifact.CanonicalArtifact{}, err
 	}
 	artifact.Resource = resource
 	artifact.Description = descriptionFromResource(resource)
-	artifact.Path = cache.ArtifactPath(archiveDigest)
+	artifact.Path = cache.archivePath(form, archiveDigest)
 	if stagedDir != "" {
 		artifact.Path = stagedDir
 	}
 
 	if !verified {
-		if err := cache.MarkArtifactVerified(archiveDigest); err != nil {
+		if err := cache.markArchiveVerified(form, archiveDigest); err != nil {
 			return resolver.ResolvedArtifact{}, hccartifact.CanonicalArtifact{}, fmt.Errorf("mark artifact verified: %w", err)
 		}
 	}

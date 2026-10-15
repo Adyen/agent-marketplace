@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -76,6 +77,21 @@ func newPlaceholderTestServer(t *testing.T) (store.MetadataStore, store.BlobStor
 }
 
 // publishToolchainArchive publishes the archive's mcpserver revision, uploading extra with it.
+// failingPutBlobStore rejects every write so a best-effort store cannot succeed.
+type failingPutBlobStore struct {
+	store.BlobStore
+}
+
+var errReadOnlyBlobStore = errors.New("blob store is read-only")
+
+func (failingPutBlobStore) Put(context.Context, store.ArchiveDigest, []byte) error {
+	return errReadOnlyBlobStore
+}
+
+func (failingPutBlobStore) PutImmutable(context.Context, store.ArchiveDigest, []byte) error {
+	return errReadOnlyBlobStore
+}
+
 func publishToolchainArchive(t *testing.T, meta store.MetadataStore, blobs store.BlobStore, cfg config.Config, archive toolchainArchive, extra []store.BlobUpload) {
 	t.Helper()
 	ctx := context.Background()
@@ -189,6 +205,27 @@ func TestPlaceholderArchiveRouteServesVerifiedBytes(t *testing.T) {
 				}
 				if status != http.StatusOK || archiveDigestOf(body) != archive.digest || !bytes.Equal(body, archive.placeholder) {
 					t.Fatalf("derived placeholder status %d, digest match %v", status, archiveDigestOf(body) == archive.digest)
+				}
+			})
+
+			t.Run("derived placeholder still serves when storing it fails", func(t *testing.T) {
+				meta, blobs, cfg := newPlaceholderTestServer(t)
+				publishToolchainArchive(t, meta, blobs, cfg, archive, nil)
+				if err := blobs.Put(context.Background(), archive.digest, archive.final); err != nil {
+					t.Fatal(err)
+				}
+				public := httptest.NewServer(NewServer(cfg, meta, failingPutBlobStore{BlobStore: blobs}).PublicHandler())
+				defer public.Close()
+
+				status, body := getBytes(t, public.URL+"/api/v1/placeholder-archives/"+strings.Replace(string(archive.digest), ":", "/", 1))
+				if !native {
+					if status != http.StatusNotFound {
+						t.Fatalf("foreign placeholder status %d, want 404", status)
+					}
+					return
+				}
+				if status != http.StatusOK || archiveDigestOf(body) != archive.digest {
+					t.Fatalf("placeholder route with failing store status %d, digest match %v", status, archiveDigestOf(body) == archive.digest)
 				}
 			})
 		})

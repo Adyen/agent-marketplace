@@ -1664,8 +1664,10 @@ func (s *Server) placeholderArchive(ctx context.Context, digest store.ArchiveDig
 	if err != nil {
 		return nil, err
 	}
+	// Storing the derived copy is best effort: the caller verifies the bytes by hash
+	// before serving them, so a read-only or failing blob store must not fail the request.
 	if err := store.PutImmutableBlob(ctx, s.blobs, store.PlaceholderArchiveKey(digest), derived); err != nil {
-		return nil, err
+		slog.Warn("derived placeholder archive could not be stored; serving it unstored", "digest", logvalue.Safe(digest), "err", logvalue.Safe(err))
 	}
 	return derived, nil
 }

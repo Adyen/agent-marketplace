@@ -60,32 +60,55 @@ func normalizedRegistryResources(manifest marketplaceartifact.RegistryRevisionMa
 	return raw, nil
 }
 
-// fetchArchiveBytes returns the archive bytes served for digest. It requests the
-// placeholder-form archive, which hashes to digest, and falls back to the final
-// artifact route only when the Marketplace answers 404 for the placeholder form.
-func fetchArchiveBytes(ctx context.Context, client *Client, digest string) ([]byte, error) {
+// fetchArchiveBytes returns the archive bytes served for digest and the cache form
+// they belong to. It requests the placeholder-form archive, which hashes to digest,
+// and falls back to the final artifact route only when the Marketplace answers 404
+// for the placeholder form.
+func fetchArchiveBytes(ctx context.Context, client *Client, digest string) ([]byte, archiveForm, error) {
 	raw, err := client.GetPlaceholderArchive(ctx, digest)
 	if err == nil {
-		return raw, nil
+		return raw, placeholderForm, nil
 	}
 	var apiErr *APIError
 	if !errors.As(err, &apiErr) || apiErr.StatusCode != http.StatusNotFound {
-		return nil, err
+		return nil, finalForm, err
 	}
-	return client.GetArtifact(ctx, digest)
+	raw, err = client.GetArtifact(ctx, digest)
+	return raw, finalForm, err
 }
 
-// fetchMirrorArchive fetches the archive for digest and caches the bytes served
-// under that digest.
-func fetchMirrorArchive(ctx context.Context, client *Client, cache *Cache, digest string) ([]byte, error) {
-	raw, err := fetchArchiveBytes(ctx, client, digest)
+// fetchMirrorArchive fetches the archive for digest and caches the bytes under the
+// location matching their form. Placeholder bytes never reach the legacy path.
+func fetchMirrorArchive(ctx context.Context, client *Client, cache *Cache, digest string) ([]byte, archiveForm, error) {
+	raw, form, err := fetchArchiveBytes(ctx, client, digest)
 	if err != nil {
-		return nil, fmt.Errorf("fetch artifact: %w", err)
+		return nil, finalForm, fmt.Errorf("fetch artifact: %w", err)
 	}
-	if _, err := cache.WriteArtifact(digest, raw); err != nil {
-		return nil, fmt.Errorf("write artifact cache: %w", err)
+	if _, err := cache.writeArchive(form, digest, raw); err != nil {
+		return nil, finalForm, fmt.Errorf("write artifact cache: %w", err)
 	}
-	return raw, nil
+	return raw, form, nil
+}
+
+// cachedMirrorArchive returns the cached archive for digest. A verified placeholder-
+// form copy is preferred over the legacy final-form copy. Without a verified copy,
+// an unverified one is returned so the caller can refetch it.
+func cachedMirrorArchive(cache *Cache, digest string) ([]byte, bool, archiveForm, error) {
+	raw, verified, err := cache.readArchive(placeholderForm, digest)
+	if err != nil {
+		return nil, false, finalForm, err
+	}
+	if verified {
+		return raw, true, placeholderForm, nil
+	}
+	legacy, legacyVerified, err := cache.readArchive(finalForm, digest)
+	if err != nil {
+		return nil, false, finalForm, err
+	}
+	if legacyVerified || legacy != nil {
+		return legacy, legacyVerified, finalForm, nil
+	}
+	return raw, false, placeholderForm, nil
 }
 
 // ArchiveEncodingMismatchError reports a resource whose content is intact but

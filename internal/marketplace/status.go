@@ -416,7 +416,7 @@ func populateCacheFacts(status *PinStatus, cache *Cache, entry config.Marketplac
 		identity := IndexOnlyIdentity{Marketplace: entry.InstanceID, RegistryID: pin.RegistryID, Commit: pin.RegistryCommit, ManifestDigest: pin.RegistryManifestDigest}
 		raw, verified, err = cache.ReadIndexOnlyArtifact(identity, pin.Digest)
 	} else {
-		raw, verified, err = cache.ReadArtifact(string(rev.ArchiveDigest))
+		raw, verified, _, err = cachedMirrorArchive(cache, string(rev.ArchiveDigest))
 	}
 	if err != nil {
 		status.Cache = CacheStateError
