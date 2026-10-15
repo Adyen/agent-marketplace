@@ -22,15 +22,14 @@ func TestE2E002003ManualSkillsSurviveSync(t *testing.T) {
 
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
-apiVersion: agent-marketplace/v2
+apiVersion: agent-marketplace/v4
 harnesses:
   - factory
   - windsurf
-registries:
-  - url: `+origin+`
-    ref: main
-    skills:
-      - managed-skill
+sources:
+  hosted: {git: file://`+origin+`, ref: main}
+resources:
+  hosted: [skill/managed-skill]
 `)
 	withWorkingDir(t, repoRoot)
 
@@ -75,15 +74,14 @@ func TestE2E019HarnessRemovalPrunesArtifacts(t *testing.T) {
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	configPath := filepath.Join(repoRoot, ".agents", "config.yaml")
 	writeConfig(t, configPath, `
-apiVersion: agent-marketplace/v2
+apiVersion: agent-marketplace/v4
 harnesses:
   - factory
   - windsurf
-registries:
-  - url: `+origin+`
-    ref: main
-    skills:
-      - shared-skill
+sources:
+  hosted: {git: file://`+origin+`, ref: main}
+resources:
+  hosted: [skill/shared-skill]
 `)
 	withWorkingDir(t, repoRoot)
 
@@ -101,14 +99,13 @@ registries:
 	}
 
 	writeConfig(t, configPath, `
-apiVersion: agent-marketplace/v2
+apiVersion: agent-marketplace/v4
 harnesses:
   - factory
-registries:
-  - url: `+origin+`
-    ref: main
-    skills:
-      - shared-skill
+sources:
+  hosted: {git: file://`+origin+`, ref: main}
+resources:
+  hosted: [skill/shared-skill]
 `)
 
 	if output, err := executeCommand("sync"); err != nil {
@@ -140,16 +137,12 @@ func TestE2E006014033DuplicateURLInstallRemoveWithPathDisambiguation(t *testing.
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	configPath := filepath.Join(repoRoot, ".agents", "config.yaml")
 	writeConfig(t, configPath, `
-apiVersion: agent-marketplace/v2
+apiVersion: agent-marketplace/v4
 harnesses:
   - factory
-registries:
-  - url: `+origin+`
-    ref: main
-    path: skills
-  - url: `+origin+`
-    ref: main
-    path: openspec
+sources:
+  skills: {git: file://`+origin+`, ref: main, path: skills}
+  openspec: {git: file://`+origin+`, ref: main, path: openspec}
 `)
 	withWorkingDir(t, repoRoot)
 
@@ -215,24 +208,22 @@ func TestE2E009WindsurfMachineScopePrunesOnUserScopeRemove(t *testing.T) {
 	commitAndPushAll(t, working, "Add user skill")
 
 	writeConfig(t, filepath.Join(homeDir, ".agents", "config.yaml"), `
-apiVersion: agent-marketplace/v2
+apiVersion: agent-marketplace/v4
 harnesses:
   - factory
   - windsurf
-registries:
-  - url: `+origin+`
-    ref: main
+sources:
+  hosted: {git: file://`+origin+`, ref: main}
 `)
 
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
-apiVersion: agent-marketplace/v2
+apiVersion: agent-marketplace/v4
 harnesses:
   - factory
   - windsurf
-registries:
-  - url: `+origin+`
-    ref: main
+sources:
+  hosted: {git: file://`+origin+`, ref: main}
 `)
 	withWorkingDir(t, repoRoot)
 

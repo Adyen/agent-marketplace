@@ -242,7 +242,7 @@ On the resource side, a resource is one installable item, a resource group is th
 | `all`, `tags`, `registries`, or `harnesses` on a Marketplace group | `v4.marketplace-runtime-unsupported` |
 | Exclusion-only Marketplace group outside the user configuration | `v4.layer-field` |
 | A Marketplace group without a matching lock record | `v4.marketplace-lock-required` or `v4.marketplace-lock-mismatch` |
-| Renaming a Git or directory resource with `as` | `v4.runtime-option: installed aliases are not supported by the legacy runtime` |
+| Renaming a Git or directory resource with `as` | `v4.runtime-option`; the runtime adapter does not support installed aliases for these sources |
 | Expecting a new upstream commit after `sync` | `sync` keeps the locked commit; run `update` |
 | Expecting a source to install something by itself | Nothing is installed until a group selects it |
 | Expecting a directory source to be pinned | It is read live; only Git and Marketplace sources lock |

@@ -6,8 +6,6 @@ import (
 	"strings"
 	"testing"
 
-	"gopkg.in/yaml.v3"
-
 	"github.com/Adyen/agent-marketplace/internal/cache"
 	"github.com/Adyen/agent-marketplace/internal/config"
 )
@@ -32,9 +30,9 @@ func TestManualRegressionMatrix(t *testing.T) {
 
 		repoRoot := filepath.Join(t.TempDir(), "repo")
 		writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
-registries:
-  - url: `+origin+`
-    ref: main
+apiVersion: agent-marketplace/v4
+sources:
+  hosted: {git: file://`+origin+`, ref: main}
 `)
 		withWorkingDir(t, repoRoot)
 
@@ -43,9 +41,9 @@ registries:
 		}
 
 		writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
-registries:
-  - url: `+origin+`
-    ref: feature/ref-test
+apiVersion: agent-marketplace/v4
+sources:
+  hosted: {git: file://`+origin+`, ref: feature/ref-test}
 `)
 		if out, err := executeCommand("install", "feature-only"); err != nil {
 			t.Fatalf("expected feature-only to install on feature ref: %v\n%s", err, out)
@@ -53,7 +51,7 @@ registries:
 		assertFactorySkillExists(t, repoRoot, "feature-only")
 	})
 
-	t.Run("multi-registry explicit install fails when skill missing in one registry", func(t *testing.T) {
+	t.Run("multi-registry explicit install binds the registry that provides the skill", func(t *testing.T) {
 		homeDir := t.TempDir()
 		t.Setenv("HOME", homeDir)
 
@@ -68,11 +66,10 @@ registries:
 		repoRoot := filepath.Join(t.TempDir(), "repo")
 		configPath := filepath.Join(repoRoot, ".agents", "config.yaml")
 		writeConfig(t, configPath, `
-registries:
-  - url: `+originA+`
-    ref: main
-  - url: `+originB+`
-    ref: main
+apiVersion: agent-marketplace/v4
+sources:
+  alpha: {git: file://`+originA+`, ref: main}
+  beta: {git: file://`+originB+`, ref: main}
 `)
 		withWorkingDir(t, repoRoot)
 
@@ -89,16 +86,16 @@ registries:
 			t.Fatalf("read config after install: %v", err)
 		}
 
-		// Parse the config and verify alpha-tool is in originA's skills.include
-		var cfg config.Config
-		if err := yaml.Unmarshal(after, &cfg); err != nil {
-			t.Fatalf("parse config after install: %v", err)
+		// Read the authored v4 selection through the consumer runtime adapter.
+		cfg, err := config.LoadRepoConfig()
+		if err != nil {
+			t.Fatalf("parse config after install: %v\n%s", err, after)
 		}
 
 		// Find the originA registry entry
 		var foundOriginA bool
 		for _, reg := range cfg.Registries {
-			if reg.URL == originA {
+			if reg.URL == "file://"+originA {
 				foundOriginA = true
 				// Verify alpha-tool is in the include list
 				found := false
@@ -124,7 +121,7 @@ registries:
 
 		// Verify originB (if present) doesn't have alpha-tool selector
 		for _, reg := range cfg.Registries {
-			if reg.URL == originB {
+			if reg.URL == "file://"+originB {
 				for _, skill := range reg.Skills.Include {
 					if skill == "alpha-tool" {
 						t.Fatalf("expected alpha-tool NOT to be in originB's skills.include, got: %v", reg.Skills.Include)
@@ -145,21 +142,20 @@ registries:
 		commitAndPushAll(t, working, "add security skill")
 
 		writeConfig(t, filepath.Join(homeDir, ".agents", "config.yaml"), `
-registries:
-  - url: `+origin+`
-    ref: main
-    skills:
-      - secret-scan
+apiVersion: agent-marketplace/v4
+sources:
+  hosted: {git: file://`+origin+`, ref: main}
+resources:
+  hosted: [skill/secret-scan]
 `)
 
 		repoRoot := filepath.Join(t.TempDir(), "repo")
 		writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
-registries:
-  - url: `+origin+`
-    ref: main
-    skills:
-      exclude:
-        - secret-scan
+apiVersion: agent-marketplace/v4
+sources:
+  hosted: {git: file://`+origin+`, ref: main}
+resources:
+  hosted: {exclude: [skill/secret-scan]}
 `)
 		withWorkingDir(t, repoRoot)
 

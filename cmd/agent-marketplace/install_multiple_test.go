@@ -60,11 +60,11 @@ func TestInstallMultipleNamesFromConfiguredSources(t *testing.T) {
 	commitAndPushAll(t, working, "add skills")
 
 	repoRoot := multiNameRepo(t, `
-registries:
-  - url: `+origin+`
-    ref: main
-    skills:
-      - gamma
+apiVersion: agent-marketplace/v4
+sources:
+  hosted: {git: file://`+origin+`, ref: main}
+resources:
+  hosted: [skill/gamma]
 `)
 
 	output, err := executeCommand("install", "beta", "alpha", "beta")
@@ -78,28 +78,32 @@ registries:
 	if err != nil {
 		t.Fatalf("load repo config: %v", err)
 	}
-	if got := cfg.Registries[0].Skills.Include; !slices.Equal(got, []string{"gamma", "beta", "alpha"}) {
-		t.Fatalf("registry include = %#v, want unrelated gamma retained and deduped first-request order", got)
+	if got := cfg.Registries[0].Skills.Include; !slices.Equal(got, []string{"alpha", "beta", "gamma"}) {
+		t.Fatalf("runtime include = %#v, want all three selections", got)
+	}
+	authored, err := config.LoadV4ConfigFromPath(filepath.Join(repoRoot, ".agents", "config.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var locators []string
+	for _, request := range authored.Groups["hosted"].Include {
+		locators = append(locators, request.Locator)
+	}
+	if !slices.Equal(locators, []string{"skill/gamma", "skill/beta", "skill/alpha"}) {
+		t.Fatalf("authored include = %#v, want unrelated gamma retained and deduped first-request order", locators)
 	}
 	for _, name := range []string{"alpha", "beta", "gamma"} {
 		assertSymlinkTarget(t, filepath.Join(repoRoot, ".agents", "skills", name), filepath.Join(cache.RegistryCachePath(origin, "main"), name))
 	}
 }
 
-func batchSourceURL(schema, origin string) string {
-	if schema == "v4" {
-		return "file://" + origin
-	}
-	return origin
+func batchSourceURL(origin string) string {
+	return "file://" + origin
 }
 
-func batchSourceYAML(schema, source string) (configBody, localBody string) {
-	if schema == "v4" {
-		return "apiVersion: agent-marketplace/v4\nharnesses: [factory]\nsources:\n  hosted: {git: " + source + ", ref: main}\nresources:\n  hosted: [skill/keep]\n",
-			"apiVersion: agent-marketplace/v4\nsources:\n  hosted: {git: " + source + ", ref: main}\nresources:\n  hosted: {exclude: [skill/good]}\n"
-	}
-	return "harnesses: [factory]\nregistries:\n  - url: " + source + "\n    ref: main\n    skills: [keep]\n",
-		"skills: {exclude: [good]}\n"
+func batchSourceYAML(source string) (configBody, localBody string) {
+	return "apiVersion: agent-marketplace/v4\nharnesses: [factory]\nsources:\n  hosted: {git: " + source + ", ref: main}\nresources:\n  hosted: [skill/keep]\n",
+		"apiVersion: agent-marketplace/v4\nsources:\n  hosted: {git: " + source + ", ref: main}\nresources:\n  hosted: {exclude: [skill/good]}\n"
 }
 
 // spec: resource-installation/install-several-names-from-one-explicit-source
@@ -107,15 +111,8 @@ func TestInstallMultipleNamesFromExplicitSource(t *testing.T) {
 	if isolateCommandTest(t) {
 		return
 	}
-	for _, tc := range []struct {
-		schema string
-		scope  string
-	}{
-		{schema: "v2", scope: "repo"},
-		{schema: "v4", scope: "repo"},
-		{schema: "v4", scope: "local"},
-	} {
-		t.Run(tc.schema+"/"+tc.scope, func(t *testing.T) {
+	for _, scope := range []string{"repo", "local"} {
+		t.Run(scope, func(t *testing.T) {
 			setupMultiNameInstall(t)
 			origin, working := createBareRepoWithWorkingClone(t, "multi-adhoc.git")
 			writeSkill(t, filepath.Join(working, "bundles"), "first", "First", nil)
@@ -127,14 +124,14 @@ func TestInstallMultipleNamesFromExplicitSource(t *testing.T) {
 			writeSkill(t, keepWorking, "keep", "Keep", nil)
 			commitAndPushAll(t, keepWorking, "add keep")
 
-			configBody, _ := batchSourceYAML(tc.schema, batchSourceURL(tc.schema, keepOrigin))
+			configBody, _ := batchSourceYAML(batchSourceURL(keepOrigin))
 			repoRoot := multiNameRepo(t, configBody)
 			if output, err := executeCommand("sync"); err != nil {
 				t.Fatalf("seed sync: %v\n%s", err, output)
 			}
 			keepBefore := string(readTestFile(t, filepath.Join(repoRoot, ".factory", "skills", "keep", "SKILL.md")))
 
-			output, err := executeCommand("install", "first", "second", "--from", batchSourceURL(tc.schema, origin), "--ref", "main", "--path", "bundles", "--scope", tc.scope)
+			output, err := executeCommand("install", "first", "second", "--from", batchSourceURL(origin), "--ref", "main", "--path", "bundles", "--scope", scope)
 			if err != nil {
 				t.Fatalf("install first second --from: %v\n%s", err, output)
 			}
@@ -144,7 +141,7 @@ func TestInstallMultipleNamesFromExplicitSource(t *testing.T) {
 
 			targetConfig := filepath.Join(repoRoot, ".agents", "config.yaml")
 			lockPath := filepath.Join(repoRoot, ".agents", "lock.yaml")
-			if tc.scope == "local" {
+			if scope == "local" {
 				targetConfig = filepath.Join(repoRoot, ".agents", "config.local.yaml")
 				lockPath = filepath.Join(repoRoot, ".agents", "lock.local.yaml")
 			}
@@ -202,10 +199,10 @@ func TestInstallMultipleMixedKindsNeedKindFlag(t *testing.T) {
 	writeCommand(t, working, "dup", "Duplicate command", "echo dup")
 	commitAndPushAll(t, working, "add mixed kinds")
 
-	multiNameRepo(t, `
-registries:
-  - url: `+origin+`
-    ref: main
+	repoRoot := multiNameRepo(t, `
+apiVersion: agent-marketplace/v4
+sources:
+  hosted: {git: file://`+origin+`, ref: main}
 `)
 
 	output, err := executeCommand("install", "solo", "dup", "--kind", "skill")
@@ -219,8 +216,19 @@ registries:
 	if err != nil {
 		t.Fatalf("load repo config: %v", err)
 	}
-	if got := cfg.Registries[0].Skills.Include; !slices.Equal(got, []string{"solo", "dup"}) {
-		t.Fatalf("registry include = %#v", got)
+	if got := cfg.Registries[0].Skills.Include; !slices.Equal(got, []string{"dup", "solo"}) {
+		t.Fatalf("runtime include = %#v", got)
+	}
+	authored, err := config.LoadV4ConfigFromPath(config.ProjectConfigPath(repoRoot))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var locators []string
+	for _, request := range authored.Groups["hosted"].Include {
+		locators = append(locators, request.Locator)
+	}
+	if !slices.Equal(locators, []string{"skill/solo", "skill/dup"}) {
+		t.Fatalf("authored include = %#v, want first-request order", locators)
 	}
 	if len(cfg.Registries[0].Commands.Include) != 0 {
 		t.Fatalf("commands include = %#v, want empty", cfg.Registries[0].Commands.Include)
@@ -251,9 +259,9 @@ skills:
 	commitAndPushAll(t, working, "add collection")
 
 	repoRoot := multiNameRepo(t, `
-registries:
-  - url: `+origin+`
-    ref: main
+apiVersion: agent-marketplace/v4
+sources:
+  hosted: {git: file://`+origin+`, ref: main}
 `)
 
 	output, err := executeCommand("install", "bundle", "extra")
@@ -293,13 +301,14 @@ func TestInstallMultipleClearsLocalExcludes(t *testing.T) {
 	commitAndPushAll(t, working, "add skills")
 
 	repoRoot := multiNameRepo(t, `
-registries:
-  - url: `+origin+`
-    ref: main
-    default: true
+apiVersion: agent-marketplace/v4
+sources:
+  hosted: {git: file://`+origin+`, ref: main}
+resources:
+  hosted: {all: true}
 `)
 	localConfig := filepath.Join(repoRoot, ".agents", "config.local.yaml")
-	writeFile(t, localConfig, "skills: {exclude: [exone, extwo, keep]}\n")
+	writeFile(t, localConfig, "apiVersion: agent-marketplace/v4\nsources:\n  hosted: {git: file://"+origin+", ref: main}\nresources:\n  hosted: {exclude: [skill/exone, skill/extwo, skill/keep]}\n")
 
 	output, err := executeCommand("install", "exone", "extwo")
 	if err != nil {
@@ -332,9 +341,9 @@ type batchFixture struct {
 	local    string
 }
 
-func seedBatchFixture(t *testing.T, schema, source string) batchFixture {
+func seedBatchFixture(t *testing.T, source string) batchFixture {
 	t.Helper()
-	configBody, localBody := batchSourceYAML(schema, source)
+	configBody, localBody := batchSourceYAML(source)
 	repoRoot := multiNameRepo(t, configBody)
 	writeFile(t, filepath.Join(repoRoot, ".agents", "config.local.yaml"), localBody)
 	if output, err := executeCommand("sync"); err != nil {
@@ -386,7 +395,7 @@ func TestInstallMultipleInvalidLaterNamePublishesNothing(t *testing.T) {
 	writeFile(t, filepath.Join(working, "skills", "broken", "SKILL.md"), "---\nname: broken\ndescription: [unterminated\n---\n")
 	commitAndPushAll(t, working, "add skills")
 
-	for _, schema := range []string{"v2", "v4"} {
+	for _, schema := range []string{"v4"} {
 		for _, mode := range []string{"configured", "from"} {
 			for _, tc := range []struct {
 				name    string
@@ -401,7 +410,7 @@ func TestInstallMultipleInvalidLaterNamePublishesNothing(t *testing.T) {
 			} {
 				t.Run(schema+"/"+mode+"/"+tc.name, func(t *testing.T) {
 					setupMultiNameInstall(t)
-					fixture := seedBatchFixture(t, schema, batchSourceURL(schema, origin))
+					fixture := seedBatchFixture(t, batchSourceURL(origin))
 					batchArgs := []string{"good", tc.bad}
 					if mode == "from" {
 						batchArgs = append(batchArgs, "--from", fixture.source, "--ref", "main")
@@ -443,10 +452,10 @@ func TestInstallMultipleScopeIneligibleLaterNamePublishesNothing(t *testing.T) {
 	commitAndPushAll(t, working, "add skills")
 
 	repoRoot := multiNameRepo(t, `
-registries:
-  - url: `+origin+`
-    ref: main
-  - url: ./plugins/local
+apiVersion: agent-marketplace/v4
+sources:
+  hosted: {git: file://`+origin+`, ref: main}
+  local: {directory: ./plugins/local}
 `)
 	writeFile(t, filepath.Join(repoRoot, "plugins", "local", "skills", "local-skill", "SKILL.md"), "---\nname: local-skill\ndescription: Local\n---\n")
 
@@ -482,7 +491,7 @@ func TestInstallMultipleInvalidNameLeavesMissingRootAbsent(t *testing.T) {
 	writeSkill(t, working, "keep", "Keep", nil)
 	commitAndPushAll(t, working, "add skills")
 
-	writeConfig(t, filepath.Join(home, ".agents", "config.yaml"), "\nharnesses: [factory]\nregistries:\n  - url: "+origin+"\n    ref: main\n")
+	writeConfig(t, filepath.Join(home, ".agents", "config.yaml"), "apiVersion: agent-marketplace/v4\nharnesses: [factory]\nsources:\n  hosted: {git: file://"+origin+", ref: main}\n")
 
 	repo := filepath.Join(t.TempDir(), "repo")
 	if err := os.MkdirAll(repo, 0o755); err != nil {
@@ -538,7 +547,7 @@ func TestInstallMultipleStagesOnePublication(t *testing.T) {
 	writeSkill(t, working, "beta", "Beta", nil)
 	commitAndPushAll(t, working, "add skills")
 
-	writeConfig(t, filepath.Join(home, ".agents", "config.yaml"), "\nharnesses: [factory]\nregistries:\n  - url: "+origin+"\n    ref: main\n")
+	writeConfig(t, filepath.Join(home, ".agents", "config.yaml"), "apiVersion: agent-marketplace/v4\nharnesses: [factory]\nsources:\n  hosted: {git: file://"+origin+", ref: main}\n")
 
 	repo := filepath.Join(t.TempDir(), "repo")
 	if err := os.MkdirAll(repo, 0o755); err != nil {

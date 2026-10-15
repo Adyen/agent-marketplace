@@ -3,7 +3,6 @@ import assert from "node:assert/strict";
 import { expect, test } from "@microsoft/tui-test";
 
 import {
-  declineLegacyMigration,
   defineFixture,
   findTextRun,
   osc52Capture,
@@ -21,7 +20,6 @@ test.afterAll(journey.cleanup);
 // spec: tui-mouse-navigation/terminal-gestures-deliver-only-the-selected-text
 test("right-pane drag highlights, copies on release, and leaves wheel and clicks untouched", async ({ terminal }) => {
   const osc52 = osc52Capture(terminal);
-  await declineLegacyMigration(terminal);
 
   await step("settled overflowing catalog", () => {}, async () => {
     await expect(terminal.getByText("beta-skill", { strict: false })).toBeVisible();

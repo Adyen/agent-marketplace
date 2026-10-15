@@ -165,22 +165,10 @@ func runStatus(ctx context.Context, out io.Writer, now time.Time) error {
 	var secondResolveRealErrs []error
 	localCfg := result.LocalCfg
 	if localCfg != nil {
-		anyExcludes := len(localCfg.Skills.Exclude) > 0 ||
-			len(localCfg.Commands.Exclude) > 0 ||
-			len(localCfg.Subagents.Exclude) > 0 ||
-			len(localCfg.Hooks.Exclude) > 0 ||
-			len(localCfg.MCP.Exclude) > 0 ||
-			len(localCfg.Collections.Exclude) > 0
-		if anyExcludes && result.LoadedCfg != nil {
-			// Re-resolve keeping local Skills but dropping Excludes to compute the diff.
-			localNoExclude := &config.LocalConfig{
-				Skills:      config.KindSelector{Include: localCfg.Skills.Include},
-				Commands:    config.KindSelector{Include: localCfg.Commands.Include},
-				Subagents:   config.KindSelector{Include: localCfg.Subagents.Include},
-				Hooks:       config.KindSelector{Include: localCfg.Hooks.Include},
-				MCP:         config.KindSelector{Include: localCfg.MCP.Include},
-				Collections: config.KindSelector{Include: localCfg.Collections.Include},
-			}
+		if withoutLocalExcludes, changed := statusWithoutLocalExclusions(result.LoadedCfg); changed {
+			// Probe the same admitted catalogs and locks, changing only the
+			// personal-local source exclusions. Keep includes, dynamic selection,
+			// required policy, and every other layer's exclusions intact.
 			secondResolveOpts := []resolver.ResolveOption{
 				resolver.WithContext(ctx),
 				resolver.WithResources(result.CatalogLoad.ResourceCatalogs),
@@ -197,7 +185,7 @@ func runStatus(ctx context.Context, out io.Writer, now time.Time) error {
 			} else if result.MarketplaceInspection != nil {
 				secondResolveOpts = append(secondResolveOpts, resolver.WithMarketplaceResolver(*result.MarketplaceInspection))
 			}
-			resolvedWithoutExcludes, secondResolveErrs := resolver.Resolve(result.LoadedCfg, catalogEntries, localNoExclude, secondResolveOpts...)
+			resolvedWithoutExcludes, secondResolveErrs := resolver.Resolve(withoutLocalExcludes, catalogEntries, localCfg, secondResolveOpts...)
 			for _, e := range secondResolveErrs {
 				if !resolver.IsWarning(e) && !resolver.IsSoftSelectedNotFound(e) && !resolver.IsSoftSelectedMalformed(e) &&
 					!pipeline.IsMarketplaceCacheMetadataMissingWarning(e) {
@@ -599,15 +587,66 @@ func buildErrorRows(groups ...[]error) []errorRow {
 	return rows
 }
 
+// statusWithoutLocalExclusions copies the already-loaded resolver input rather
+// than loading configuration or acquiring catalogs again. V4 retains exclusions
+// both as per-kind selectors (for cross-entry/collection filtering) and in its
+// ordered stream (for the source's own selections); remove only those decisions.
+func statusWithoutLocalExclusions(cfg *config.Config) (*config.Config, bool) {
+	if cfg == nil {
+		return nil, false
+	}
+	probe := *cfg
+	probe.Registries = slices.Clone(cfg.Registries)
+	changed := false
+	for i := range probe.Registries {
+		entry := &probe.Registries[i]
+		if entry.Source != config.RepoPersonal {
+			continue
+		}
+		changed = changed || entry.ExcludeAll
+		entry.ExcludeAll = false
+		for _, kind := range config.AllKinds {
+			selector := entry.SelectorForKindPtr(kind)
+			changed = changed || len(selector.Exclude) > 0 || selector.ExcludeAll
+			selector.Exclude = nil
+			selector.ExcludeAll = false
+		}
+		entry.V4Decisions = slices.DeleteFunc(slices.Clone(entry.V4Decisions), func(decision config.V4SelectionDecision) bool {
+			if decision.Action == config.V4SelectionExclude {
+				changed = true
+				return true
+			}
+			return false
+		})
+	}
+	return &probe, changed
+}
+
 func buildExcludedRows(withoutExcludes, withExcludes []resolver.ResolvedArtifact) []excludedRow {
-	included := make(map[string]struct{}, len(withExcludes))
+	// A surviving same-named resource in another source or install scope does
+	// not satisfy the excluded selection. Ignore the owning config layer within
+	// one install scope: a higher-precedence include can satisfy the same source.
+	type identity struct {
+		resource, registry, path, ref string
+		machineScope                  bool
+	}
+	key := func(artifact resolver.ResolvedArtifact) identity {
+		return identity{
+			resource:     resolver.ViaMapKey(artifact.Kind, artifact.Name),
+			registry:     config.NormalizeGitURL(strings.TrimSpace(artifact.RegistryURL)),
+			path:         config.NormalizeRegistryPath(artifact.RegistryPath),
+			ref:          artifact.Ref,
+			machineScope: artifact.Source.IsMachineScope(),
+		}
+	}
+	included := make(map[identity]struct{}, len(withExcludes))
 	for _, s := range withExcludes {
-		included[resolver.ViaMapKey(s.Kind, s.Name)] = struct{}{}
+		included[key(s)] = struct{}{}
 	}
 
 	var rows []excludedRow
 	for _, s := range withoutExcludes {
-		if _, ok := included[resolver.ViaMapKey(s.Kind, s.Name)]; !ok {
+		if _, ok := included[key(s)]; !ok {
 			rows = append(rows, excludedRow{
 				Name:     s.Name,
 				Registry: s.RegistryURL,

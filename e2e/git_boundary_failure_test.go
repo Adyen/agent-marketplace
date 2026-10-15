@@ -10,9 +10,9 @@ import (
 func TestBrokenGitChildDoesNotSyncParent(t *testing.T) {
 	env := newEnv(t)
 	env.InitGitRepo()
-	env.WriteGlobalConfig("harnesses: [factory]\nregistries: []")
+	env.WriteGlobalConfig("harnesses: [factory]\n")
 	url := env.CreateBareRepo("parent-boundary", SkillsOnly(Skill{Name: "parent-only"}))
-	env.WriteRepoConfig(fmt.Sprintf("harnesses: [factory]\nregistries:\n  - url: %s\n    ref: main\n    skills: [parent-only]\n", url))
+	env.WriteRepoConfig(fmt.Sprintf("harnesses: [factory]\nsources: {team: {git: %q, ref: main}}\nresources: {team: {include: [skill/parent-only]}}\n", url))
 	child := filepath.Join(env.workspace, "child")
 	if err := os.Mkdir(child, 0755); err != nil {
 		t.Fatal(err)

@@ -12,16 +12,16 @@ func TestLoadEffectiveFileOverlaysRetainRealPaths(t *testing.T) {
 	user := filepath.Join(dir, "user.yaml")
 	repo := filepath.Join(dir, "repo.yaml")
 	local := filepath.Join(dir, "local.yaml")
-	if err := os.WriteFile(user, []byte("apiVersion: agent-marketplace/v2\nskills: [old]\n"), 0o600); err != nil {
+	if err := os.WriteFile(user, []byte("apiVersion: agent-marketplace/v4\nsources: {shared: {git: https://example.test/shared.git, ref: main}}\nresources: {shared: [skill/old]}\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	ec := loadEffectiveForTest(context.Background(), LoadEffectiveOptions{
 		OrganizationPath: filepath.Join(dir, "missing-org.yaml"),
 		GlobalPath:       user, RepoPath: repo, LocalPath: local,
 		FileOverlays: map[string][]byte{
-			user:  []byte("apiVersion: agent-marketplace/v2\nskills: [user-new]\n"),
-			repo:  []byte("apiVersion: agent-marketplace/v2\nskills: [repo-new]\n"),
-			local: []byte("skills: [local-new]\n"),
+			user:  []byte("apiVersion: agent-marketplace/v4\nsources: {shared: {git: https://example.test/shared.git, ref: main}}\nresources: {shared: [skill/user-new]}\n"),
+			repo:  []byte("apiVersion: agent-marketplace/v4\nsources: {shared: {git: https://example.test/shared.git, ref: main}}\nresources: {shared: [skill/repo-new]}\n"),
+			local: []byte("apiVersion: agent-marketplace/v4\nsources: {shared: {git: https://example.test/shared.git, ref: main}}\nresources: {shared: [skill/local-new]}\n"),
 		},
 	})
 	if len(ec.Errors) != 0 {
@@ -33,8 +33,18 @@ func TestLoadEffectiveFileOverlaysRetainRealPaths(t *testing.T) {
 	if ec.User.Config == nil || ec.Repo.Config == nil || ec.Local == nil {
 		t.Fatalf("overlaid layers missing: %#v", ec)
 	}
+	for _, layer := range []struct {
+		entries []RegistryEntry
+		skill   string
+	}{
+		{ec.User.Config.Registries, "user-new"}, {ec.Repo.Config.Registries, "repo-new"}, {ec.Local.Registries, "local-new"},
+	} {
+		if len(layer.entries) != 1 || len(layer.entries[0].Skills.Include) != 1 || layer.entries[0].Skills.Include[0] != layer.skill {
+			t.Fatalf("overlaid selections missing: entries=%#v want=%s", layer.entries, layer.skill)
+		}
+	}
 	raw, err := os.ReadFile(user)
-	if err != nil || string(raw) != "apiVersion: agent-marketplace/v2\nskills: [old]\n" {
+	if err != nil || string(raw) != "apiVersion: agent-marketplace/v4\nsources: {shared: {git: https://example.test/shared.git, ref: main}}\nresources: {shared: [skill/old]}\n" {
 		t.Fatalf("real user config changed: %q, %v", raw, err)
 	}
 	if _, err := os.Stat(repo); !os.IsNotExist(err) {
@@ -117,7 +127,7 @@ func TestLoadEffectiveNeverOverlaysOrganization(t *testing.T) {
 		GlobalPath:       filepath.Join(dir, "missing-user.yaml"),
 		RepoPath:         filepath.Join(dir, "missing-repo.yaml"),
 		LocalPath:        filepath.Join(dir, "missing-local.yaml"),
-		FileOverlays:     map[string][]byte{org: []byte("apiVersion: agent-marketplace/v2\nregistries:\n  - url: https://example.com/x.git\n    ref: main\n")},
+		FileOverlays:     map[string][]byte{org: []byte("apiVersion: agent-marketplace/v4\nsources: {shared: {git: https://example.com/x.git, ref: main}}\nresources: {shared: [skill/review]}\n")},
 	})
 	if ec.Organization.Config != nil || ec.Managed {
 		t.Fatalf("organization overlay bypassed trust: %#v", ec.Organization)

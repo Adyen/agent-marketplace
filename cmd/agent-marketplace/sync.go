@@ -109,6 +109,12 @@ func runSyncWithLocks(ctx context.Context, out io.Writer, noBackup bool, strict 
 	if err != nil {
 		return err
 	}
+	if err := prepareDependencyTransactions(ctx, (lockMode{locked: locked, offline: offline}).readOnlyDependencies()); err != nil {
+		return err
+	}
+	if err := pipeline.ValidateConsumerIntent(ctx, ws.RepoRoot(), ws.LocalConfigDir()); err != nil {
+		return err
+	}
 	if !offline && !locked {
 		if err := ensureGlobalConfigForSync(); err != nil {
 			slog.Warn("failed to create global config skeleton", "error", err)
@@ -913,15 +919,20 @@ type prunedStale struct {
 	Name string
 }
 
-// dedupStaleSelections drops repeats of the same kind+name selection while
-// preserving order. One stale selection can be reported once per registry
-// entry, and both the prune path and the skipped-prune message must count and
-// name it once — so they share this helper rather than each keeping a map.
+// dedupStaleSelections drops repeated warnings for the same source-bound
+// selection while preserving order. Identically named requests at distinct
+// registry URLs, refs, or paths must each reach the editor (and be counted when
+// pruning is skipped). Keep the runtime URL spelling: without a source-kind
+// discriminator, Git normalization could conflate directories named x and x.git.
 func dedupStaleSelections(stale []*resolver.SelectedNotFoundError) []*resolver.SelectedNotFoundError {
+	type selectionKey struct {
+		kind                 ir.ResourceKind
+		name, url, ref, path string
+	}
 	unique := make([]*resolver.SelectedNotFoundError, 0, len(stale))
-	seen := make(map[string]struct{}, len(stale))
+	seen := make(map[selectionKey]struct{}, len(stale))
 	for _, snf := range stale {
-		key := skill.ResourceKey(snf.Kind, snf.Name)
+		key := selectionKey{snf.Kind, snf.Name, strings.TrimSpace(snf.URL), strings.TrimSpace(snf.Ref), config.NormalizeRegistryPath(snf.Path)}
 		if _, dup := seen[key]; dup {
 			continue
 		}
@@ -1038,18 +1049,9 @@ func pruneStaleSelections(ctx context.Context, repoRoot string, stale []*resolve
 		for _, snf := range dedupStaleSelections(stale) {
 			label := skill.KindLabel(snf.Kind)
 			locator := config.ResourceLocator{Kind: snf.Kind, Name: snf.Name}
-			topLevel, entry, inEntry, siteErr := selectionSites(configPath, snf)
+			entry, inEntry, siteErr := selectionSites(configPath, snf)
 			if siteErr != nil {
 				errs = append(errs, fmt.Errorf("prune %s %q: %w", label, snf.Name, siteErr))
-				continue
-			}
-			inherited, inhErr := m.UnboundIncludeInherited(locator)
-			if inhErr != nil {
-				errs = append(errs, fmt.Errorf("prune %s %q: %w", label, snf.Name, inhErr))
-				continue
-			}
-			if inherited {
-				errs = append(errs, fmt.Errorf("prune %s %q: config.edit.include-owned: selection is declared in an included fragment", label, snf.Name))
 				continue
 			}
 			removed := false
@@ -1067,11 +1069,9 @@ func pruneStaleSelections(ctx context.Context, repoRoot string, stale []*resolve
 					removed = true
 				}
 			} else if strings.TrimSpace(snf.URL) != "" {
-				// The root file does not select this resource under a registry
-				// entry, so there is nothing here to remove: selectionSites
-				// would have reported inEntry. The edit is still attempted so
-				// that a selection owned by an included fragment is refused by
-				// name instead of being reported as undeclared.
+				// Ask the bound editor for an authoritative include-ownership
+				// refusal. A successful no-op is not a prune: the selection may
+				// belong only to the user or personal-local config.
 				binding, found, bindErr := m.LookupRegistry(config.RegistryEntry{URL: snf.URL, Ref: snf.Ref, Path: snf.Path})
 				if bindErr != nil {
 					errs = append(errs, fmt.Errorf("prune %s %q: %w", label, snf.Name, bindErr))
@@ -1083,13 +1083,6 @@ func pruneStaleSelections(ctx context.Context, repoRoot string, stale []*resolve
 						continue
 					}
 				}
-			}
-			if topLevel {
-				if err := m.RemoveUnboundInclude(locator); err != nil {
-					errs = append(errs, fmt.Errorf("prune %s %q: %w", label, snf.Name, err))
-					continue
-				}
-				removed = true
 			}
 			if !removed {
 				errs = append(errs, fmt.Errorf("prune %s %q: selection is not declared in %s", label, snf.Name, configPath))
@@ -1105,44 +1098,39 @@ func pruneStaleSelections(ctx context.Context, repoRoot string, stale []*resolve
 	return pruned, errs, nil
 }
 
-// selectionSites reports where a direct selection is actually written in the
-// repo config ROOT file: in the TOP-LEVEL per-kind include list, in the
-// include list of a registry entry matching the blamed URL, or both. The
-// registry-scoped editors can only see the second, so the prune has to ask
-// before deciding which edit to make.
-func selectionSites(configPath string, snf *resolver.SelectedNotFoundError) (topLevel bool, entry config.RegistryEntry, inEntry bool, err error) {
+// selectionSites finds a direct selection in the repo config root, preserving
+// its source kind for the bound editor. An empty path identifies the registry
+// root, not any subdirectory; refs likewise match exactly, including emptiness.
+func selectionSites(configPath string, snf *resolver.SelectedNotFoundError) (entry config.RegistryEntry, inEntry bool, err error) {
 	cfg, err := config.LoadRootConfigFromPath(configPath)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return false, config.RegistryEntry{}, false, nil
+			return config.RegistryEntry{}, false, nil
 		}
-		return false, config.RegistryEntry{}, false, err
+		return config.RegistryEntry{}, false, err
 	}
 	if cfg == nil {
-		return false, config.RegistryEntry{}, false, nil
+		return config.RegistryEntry{}, false, nil
 	}
-	for _, candidate := range cfg.SelectorForKind(snf.Kind).Include {
-		if strings.TrimSpace(candidate) == snf.Name {
-			topLevel = true
-			break
-		}
-	}
-	wantURL := config.NormalizeGitURL(strings.TrimSpace(snf.URL))
 	for _, candidate := range cfg.Registries {
-		if config.NormalizeGitURL(strings.TrimSpace(candidate.URL)) != wantURL {
+		if candidate.IsLocal() {
+			if filepath.Clean(candidate.URL) != filepath.Clean(strings.TrimSpace(snf.URL)) {
+				continue
+			}
+		} else if config.NormalizeGitURL(candidate.URL) != config.NormalizeGitURL(snf.URL) {
 			continue
 		}
-		if p := strings.TrimSpace(snf.Path); p != "" && config.NormalizeRegistryPath(candidate.Path) != config.NormalizeRegistryPath(p) {
+		if config.NormalizeRegistryPath(candidate.Path) != config.NormalizeRegistryPath(snf.Path) {
 			continue
 		}
-		if r := strings.TrimSpace(snf.Ref); r != "" && strings.TrimSpace(candidate.Ref) != r {
+		if strings.TrimSpace(candidate.Ref) != strings.TrimSpace(snf.Ref) {
 			continue
 		}
 		for _, selected := range candidate.SelectorForKind(snf.Kind).Include {
 			if strings.TrimSpace(selected) == snf.Name {
-				return topLevel, candidate, true, nil
+				return candidate, true, nil
 			}
 		}
 	}
-	return topLevel, config.RegistryEntry{}, false, nil
+	return config.RegistryEntry{}, false, nil
 }

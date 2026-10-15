@@ -39,7 +39,7 @@ func TestDiagnosticFlagExportsPayload(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	writeTelemetryTestFile(t, cfgPath, "apiVersion: agent-marketplace/v3\nharnesses:\n  - factory\ntelemetry:\n  level: detailed\n  endpoint: "+srv.URL+"\n")
+	writeTelemetryTestFile(t, cfgPath, "apiVersion: agent-marketplace/v4\nharnesses:\n  - factory\ntelemetry:\n  level: detailed\n  endpoint: "+srv.URL+"\n")
 
 	output, err := executeCommand("--diagnostic", "--diagnostic-accept-sensitive-data", "--version")
 	if err != nil {
@@ -95,7 +95,7 @@ func TestDiagnosticFlagRequiresAcknowledgement(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	writeTelemetryTestFile(t, cfgPath, "apiVersion: agent-marketplace/v3\nharnesses:\n  - factory\ntelemetry:\n  level: detailed\n  endpoint: "+srv.URL+"\n")
+	writeTelemetryTestFile(t, cfgPath, "apiVersion: agent-marketplace/v4\nharnesses:\n  - factory\ntelemetry:\n  level: detailed\n  endpoint: "+srv.URL+"\n")
 
 	output, err := executeCommand("--diagnostic", "--version")
 	if err != nil {
@@ -134,7 +134,7 @@ func TestDiagnosticFlagIgnoredWhenTelemetryBasic(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	writeTelemetryTestFile(t, cfgPath, "apiVersion: agent-marketplace/v3\nharnesses:\n  - factory\ntelemetry:\n  level: basic\n  endpoint: "+srv.URL+"\n")
+	writeTelemetryTestFile(t, cfgPath, "apiVersion: agent-marketplace/v4\nharnesses:\n  - factory\ntelemetry:\n  level: basic\n  endpoint: "+srv.URL+"\n")
 
 	output, err := executeCommand("--diagnostic", "--diagnostic-accept-sensitive-data", "--version")
 	if err != nil {

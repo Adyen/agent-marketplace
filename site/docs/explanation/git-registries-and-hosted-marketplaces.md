@@ -78,7 +78,7 @@ A Marketplace can repair a mirrored archive without changing the resource: the c
 | What infrastructure is needed? | Git only | An API, a worker, a database, a blob store, and a reverse proxy |
 | Can content be withdrawn later? | No; a locked commit stays installable while the Git server still has it | Yes; revocation blocks installs and makes `sync --check` fail |
 
-In a v4 configuration, both are named entries under `sources:`: a Git registry uses a `git:` URL and a Marketplace uses a `marketplace:` URL. The resources you pick from each go under `resources:`, and each configuration layer's lockfile records the exact commits and revisions. Older v2 and v3 configurations list Git registries under `registries` and store Marketplace pins in the configuration file under `marketplaces`. See [Sources and resources](./sources-and-resources.md) for the v4 format.
+In a v4 configuration, both are named entries under `sources:`: a Git registry uses a `git:` URL and a Marketplace uses a `marketplace:` URL. The resources you pick from each go under `resources:`, and each configuration layer's lockfile records the exact commits and revisions. Older v2/v3 consumer roots are unsupported; [convert them with an older released migrator before upgrading](../how-to/migrate-configuration.md) rather than using legacy `registries` or `marketplaces` installation keys. See [Sources and resources](./sources-and-resources.md) for the v4 format.
 
 ## Related documentation
 
