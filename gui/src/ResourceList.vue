@@ -40,6 +40,10 @@ const emit = defineEmits<{
   activate: [row: Row]
   move: [direction: 1 | -1]
 }>()
+
+function scopeIsTag(scope: string): boolean {
+  return scope === 'organization' || scope === 'project' || scope === 'local'
+}
 </script>
 
 <template>
@@ -83,14 +87,11 @@ const emit = defineEmits<{
           @keydown.down.prevent="emit('move', 1)"
           @keydown.up.prevent="emit('move', -1)"
         >
-          <span class="workspace__check" :class="{ 'workspace__check--on': row.checked }" aria-hidden="true">{{ row.checked ? '[x]' : '[ ]' }}</span>
-          <span class="workspace__name">
-            <span>{{ row.registry }}/{{ row.kind }}/</span><template v-for="(part, index) in nameParts(row)" :key="index">
-              <mark v-if="part.matched" class="workspace__name-match">{{ part.text }}</mark>
-              <template v-else>{{ part.text }}</template>
-            </template>
-          </span>
-          <span class="workspace__scope">{{ row.scope }}</span>
+          <span class="workspace__check" :class="{ 'workspace__check--on': row.checked }" aria-hidden="true">[<span class="workspace__check-mark">{{ row.checked ? '*' : ' ' }}</span>]</span>
+          <span class="workspace__kind">{{ row.kind }}</span>
+          <span class="workspace__name"><template v-for="(part, index) in nameParts(row)" :key="index"><mark v-if="part.matched" class="workspace__name-match">{{ part.text }}</mark><template v-else>{{ part.text }}</template></template></span>
+          <span class="workspace__registry" :title="row.registry">{{ row.registry }}</span>
+          <span class="workspace__scope" :class="{ 'workspace__scope--tag': scopeIsTag(row.scope) }">{{ row.scope }}</span>
           <span v-if="row.harnessOverride" class="workspace__badge" title="Registry-level harness override">harnesses: {{ row.harnesses.join(', ') }}</span>
         </li>
       </ul>

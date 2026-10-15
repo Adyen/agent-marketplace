@@ -118,7 +118,7 @@ defineExpose({
         Sync
         <span v-if="pendingCount > 0" class="gui-badge mono">~{{ pendingCount }}</span>
       </UButton>
-      <UButton aria-label="Update" color="neutral" variant="outline" :disabled="!ready" @click="emit('update')">
+      <UButton aria-label="Update" class="gui-button--secondary" color="neutral" variant="soft" :disabled="!ready" @click="emit('update')">
         <GuiIcon name="update" />
         Update
       </UButton>

@@ -7,7 +7,7 @@ import { closeRequestEvent } from './bootstrap'
 import { RequestError, type OperationRef } from './api/client'
 import Confirmations from './Confirmations.vue'
 import { WorkspaceController } from './controller'
-import { event, fakeClient, mountWorkspace, row, snapshot, tick } from './test-support'
+import { event, fakeClient, mountWorkspace, row, rowNames, snapshot, tick } from './test-support'
 
 function snapshotEvent(sequence: number, overrides: Parameters<typeof snapshot>[1] = {}, generation = 1) {
   return event({ sequence, generation, payload: snapshot([row('solo')], overrides) })
@@ -52,7 +52,7 @@ describe('migration confirmation', () => {
     expect(client.action).not.toHaveBeenCalled()
     expect(client.configure).not.toHaveBeenCalled()
     expect(dialog()).toBeNull()
-    expect(wrapper.text()).toContain('skill/solo')
+    expect(rowNames(wrapper)).toContain('solo')
 
     push(snapshotEvent(2, { migrationOffered: true }))
     await tick()
@@ -98,7 +98,7 @@ describe('migration confirmation', () => {
     await tick()
     expect(client.action).not.toHaveBeenCalled()
     expect(dialog()).toBeNull()
-    expect(wrapper.text()).toContain('skill/solo')
+    expect(rowNames(wrapper)).toContain('solo')
   })
 
   // spec: session-interactions/accepting-the-offer-migrates-the-user-personal-root

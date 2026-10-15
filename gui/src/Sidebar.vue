@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import type { SourceDescription } from './api/client'
-import GuiIcon from './GuiIcon.vue'
+import GuiIcon, { type IconName } from './GuiIcon.vue'
+import { sourceLabel } from './source-label'
 
 export interface SidebarGroup {
   id: string
@@ -50,6 +51,29 @@ const harnessSummary = computed(() => {
   const hidden = props.harnesses.length - 2
   return hidden > 0 ? `${shown} +${hidden}` : shown
 })
+
+const sourceIcons: Record<SourceDescription['kind'], IconName> = {
+  directory: 'folder',
+  git: 'branch',
+  marketplace: 'globe',
+}
+
+function groupTone(group: SidebarGroup): 'warning' | 'danger' | 'signal' | null {
+  if (group.count === 0) {
+    return null
+  }
+  switch (group.id) {
+    case 'malformed':
+    case 'stale':
+      return 'warning'
+    case 'broken':
+      return 'danger'
+    case 'pending':
+      return 'signal'
+    default:
+      return null
+  }
+}
 </script>
 
 <template>
@@ -97,6 +121,7 @@ const harnessSummary = computed(() => {
             :aria-label="`Show ${group.title} group`"
             @click="emit('selectGroup', group.id)"
           >
+            <span v-if="groupTone(group)" :class="`gui-dot gui-dot--${groupTone(group)}`" aria-hidden="true" />
             <span class="gui-nav-row__label">{{ group.title }}</span>
             <span class="gui-nav-row__count">{{ group.count }}</span>
           </button>
@@ -124,8 +149,8 @@ const harnessSummary = computed(() => {
             :aria-label="`Open source ${entry.source.location}`"
             @click="emit('openSources')"
           >
-            <GuiIcon name="folder" />
-            <span class="gui-source-row__location">{{ entry.source.location }}</span>
+            <GuiIcon :name="sourceIcons[entry.source.kind]" />
+            <span class="gui-source-row__location">{{ sourceLabel(entry.source) }}</span>
             <span v-if="entry.organization" class="gui-tag">ORG</span>
           </button>
         </li>
@@ -133,22 +158,30 @@ const harnessSummary = computed(() => {
     </section>
 
     <footer class="gui-sidebar__footer">
-      <p class="gui-sidebar__harnesses mono">{{ harnessSummary || 'No harnesses' }}</p>
       <p v-if="latestVersion !== ''" class="gui-sidebar__update">
         <span class="gui-dot" aria-hidden="true" />
         <span>v{{ latestVersion }} available</span>
       </p>
-      <div class="gui-sidebar__footer-actions">
-        <button
-          ref="settingsButton"
-          type="button"
-          class="gui-icon-button"
-          aria-label="Settings"
-          @click="emit('openSettings')"
-        ><GuiIcon name="gear" /></button>
-        <button type="button" class="gui-icon-button" aria-label="Quit" @click="emit('quit')">
-          <GuiIcon name="quit" />
-        </button>
+      <div class="gui-sidebar__footer-row">
+        <p class="gui-sidebar__harnesses mono">
+          <template v-if="harnessSummary !== ''">
+            <span class="gui-dot" aria-hidden="true" />
+            <span class="gui-sidebar__harnesses-prefix">targets</span> {{ harnessSummary }}
+          </template>
+          <template v-else>No harnesses</template>
+        </p>
+        <div class="gui-sidebar__footer-actions">
+          <button
+            ref="settingsButton"
+            type="button"
+            class="gui-icon-button"
+            aria-label="Settings"
+            @click="emit('openSettings')"
+          ><GuiIcon name="gear" /></button>
+          <button type="button" class="gui-icon-button" aria-label="Quit" @click="emit('quit')">
+            <GuiIcon name="quit" />
+          </button>
+        </div>
       </div>
     </footer>
   </aside>

@@ -1,5 +1,5 @@
 import { afterEach, vi } from 'vitest'
-import { flushPromises, mount } from '@vue/test-utils'
+import { flushPromises, mount, type DOMWrapper } from '@vue/test-utils'
 import { nextTick } from 'vue'
 import ui from '@nuxt/ui/vue-plugin'
 import WorkspaceView from './WorkspaceView.vue'
@@ -193,4 +193,8 @@ export function mountWorkspace(client: Client, notifyTtl = 60_000, onQuit?: () =
     document.body.innerHTML = ''
   })
   return { controller, wrapper }
+}
+
+export function rowNames(wrapper: { findAll(selector: string): DOMWrapper<Element>[] }): string[] {
+  return wrapper.findAll('.workspace__name').map((name) => name.text())
 }

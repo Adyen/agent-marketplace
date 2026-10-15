@@ -57,7 +57,7 @@ describe('startup exclusion consumers', () => {
     const options = wrapper.findAll('[role="option"]')
     expect(options).toHaveLength(2)
     for (const option of options) {
-      expect(option.find('.workspace__check').text()).toBe('[x]')
+      expect(option.find('.workspace__check').text()).toBe('[*]')
       expect(option.find('.workspace__scope').text()).toBe('user')
     }
     expectNoMutations(client)
@@ -98,7 +98,7 @@ describe('startup exclusion consumers', () => {
     expect(wrapper.findAll('[role="option"]').map((option) => option.attributes('id'))).toEqual([
       'row-organization-audit', 'row-organization-review',
     ])
-    expect(audit.find('.workspace__check').text()).toBe('[x]')
+    expect(audit.find('.workspace__check').text()).toBe('[*]')
     expect(review.find('.workspace__check').text()).toBe('[ ]')
     expect(review.find('.workspace__scope').text()).toBe('organization')
     expect(controller.state.rows[1]?.checked).toBe(false)
@@ -132,7 +132,7 @@ describe('startup exclusion consumers', () => {
     expect(controller.state.rows[1]?.pendingVerification).toBe(false)
     expect(wrapper.get('[role="option"][id="row-organization-review"]').attributes('aria-selected')).toBe('true')
     expect(wrapper.find('button[aria-label="Restore Resource"]').exists()).toBe(true)
-    expect(wrapper.get('[role="option"][id="row-organization-audit"]').find('.workspace__check').text()).toBe('[x]')
+    expect(wrapper.get('[role="option"][id="row-organization-audit"]').find('.workspace__check').text()).toBe('[*]')
     expect(wrapper.get('[role="option"][id="row-organization-review"]').find('.workspace__check').text()).toBe('[ ]')
     expectNoMutations(client)
   })
@@ -144,7 +144,7 @@ describe('startup exclusion consumers', () => {
     await pushInitialStages(push, 10, rows)
     expect(controller.state.rows.every((item) => item.required && item.checked && item.group === 'required')).toBe(true)
     const review = wrapper.get('[role="option"][id="row-organization-review"]')
-    expect(review.find('.workspace__check').text()).toBe('[x]')
+    expect(review.find('.workspace__check').text()).toBe('[*]')
     expect(review.find('.workspace__scope').text()).toBe('organization')
     await review.trigger('click')
     await tick()

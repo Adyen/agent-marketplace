@@ -87,7 +87,7 @@ test('built GUI adds and removes a user directory source against the real user-s
       [bootstrap.credential] as const,
     )
     await page.goto(bootstrap.url, { waitUntil: 'domcontentloaded' })
-    await expect(page.getByText('skill/solo').first()).toBeVisible({ timeout: 60_000 })
+    await expect(page.getByText('solo', { exact: true }).first()).toBeVisible({ timeout: 60_000 })
 
     const original = await readFile(userConfigPath, 'utf8')
     const fragment = await readFile(fragmentPath, 'utf8')
@@ -248,7 +248,7 @@ test('built GUI adds and removes a Marketplace endpoint registration in the open
       [bootstrap.credential] as const,
     )
     await page.goto(bootstrap.url, { waitUntil: 'domcontentloaded' })
-    await expect(page.getByText('skill/solo').first()).toBeVisible({ timeout: 60_000 })
+    await expect(page.getByText('solo', { exact: true }).first()).toBeVisible({ timeout: 60_000 })
 
     const original = await readFile(userConfigPath, 'utf8')
     const fragment = await readFile(fragmentPath, 'utf8')
@@ -468,7 +468,7 @@ test('built GUI adds and removes a user Git source with ref and subpath by keybo
       [bootstrap.credential] as const,
     )
     await page.goto(bootstrap.url, { waitUntil: 'domcontentloaded' })
-    await expect(page.getByText('skill/solo').first()).toBeVisible({ timeout: 60_000 })
+    await expect(page.getByText('solo', { exact: true }).first()).toBeVisible({ timeout: 60_000 })
 
     const original = await readFile(userConfigPath, 'utf8')
     const fragment = await readFile(fragmentPath, 'utf8')

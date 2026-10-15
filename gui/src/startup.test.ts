@@ -386,6 +386,6 @@ describe('startup stage consumers', () => {
     expect(controller.state.diagnostics).toEqual([finalWarning])
     expect(wrapper.find(`[role="option"][id="row-${owned.id}"]`).exists()).toBe(false)
     expect(wrapper.get('ul[aria-label="Diagnostics"]').text()).toContain('Final assessment warning')
-    expect(wrapper.get('aside[aria-label="Detail"]').find('p').text()).toBe('Verified replacement detail')
+    expect(wrapper.get('aside[aria-label="Detail"]').find('.gui-inspector__description').text()).toBe('Verified replacement detail')
   })
 })

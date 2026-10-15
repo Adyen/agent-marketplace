@@ -118,7 +118,7 @@ test('built GUI traverses shell, resource, sources, settings, and quit controls 
 
     await page.setViewportSize({ width: 1280, height: 800 })
     await launchBuiltUserApp(page, bootstrap)
-    await expect(page.getByText('skill/solo').first()).toBeVisible({ timeout: 60_000 })
+    await expect(page.getByText('solo', { exact: true }).first()).toBeVisible({ timeout: 60_000 })
     await page.screenshot({ path: evidencePath(testInfo, 'sources-start.png'), fullPage: true, animations: 'disabled' })
 
     const refresh = page.getByRole('button', { name: 'Refresh', exact: true })
@@ -138,7 +138,7 @@ test('built GUI traverses shell, resource, sources, settings, and quit controls 
     const refreshResponse = armPost(page, '/api/snapshot')
     await pressKey(page, 'Enter', 'Refresh', actions)
     await completeResponse(refreshResponse, 200)
-    await expect(page.getByText('skill/solo').first()).toBeVisible()
+    await expect(page.getByText('solo', { exact: true }).first()).toBeVisible()
     await expect(sync).toBeEnabled({ timeout: 60_000 })
 
     await tabTo(page, sync, 'Sync button', actions)
@@ -156,11 +156,11 @@ test('built GUI traverses shell, resource, sources, settings, and quit controls 
     await waitForOperationCompletion(page, 'update')
     actions.push('Update reached authoritative final state')
 
-    const resource = page.getByRole('option', { name: /skill\/solo/ })
-    await tabTo(page, resource, 'Resource option skill/solo', actions)
+    const resource = page.getByRole('option', { name: /solo/ })
+    await tabTo(page, resource, 'Resource option solo', actions)
     await pressKey(page, 'Enter', 'Inspect resource', actions)
     const detail = page.getByRole('complementary', { name: 'Detail' })
-    await expect(detail).toContainText('skill/solo')
+    await expect(detail).toContainText('solo')
     await expect(detail).toContainText('Solo skill')
 
     await tabTo(page, sourcesButton, 'Sources button', actions)
@@ -510,7 +510,7 @@ test('built GUI cancels and completes first-run setup using keyboard only', asyn
     expect(writtenRoot).toContain('factory')
     expect(writtenRoot).toContain('devin')
     expect(writtenRoot).not.toContain('level: basic')
-    await expect(page.getByRole('option', { name: /optional-directory\/skill\/solo/ })).toBeVisible({ timeout: 60_000 })
+    await expect(page.getByRole('option', { name: /solo/ })).toBeVisible({ timeout: 60_000 })
     expect((await readFile(repoConfigPath)).equals(repoBefore)).toBe(true)
     expect((await readFile(repoLocalPath)).equals(repoLocalBefore)).toBe(true)
     await expectOptionalFileUnchanged(personalLocalPath, personalLocalBefore)

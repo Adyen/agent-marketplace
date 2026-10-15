@@ -349,6 +349,118 @@ and the new shortcuts are additional presentation controls under the existing
 `gui-shell` keyboard and accessible-name requirement. Commits that only
 restyle carry `Spec-Impact: none — presentation-only GUI restyle`.
 
+## Refinements from the first review
+
+A review of the first shell build (1280×832, light theme, 83 enabled rows,
+9 sources, 7 diagnostics) found the problems below. Each entry names the
+observed defect and the rule that replaces the earlier text. Where a rule
+here conflicts with an earlier section, this section wins.
+
+### Window chrome
+
+- *Observed*: the window keeps the native macOS title bar, so the title
+  "Agent Marketplace" takes a 28 px band above the app, and the sidebar's
+  72 px traffic-light inset pushes the "Toggle sidebar" button into empty
+  space.
+- *Rule*: on macOS the window uses a hidden-inset title bar with full-size
+  content (Wails `mac.TitleBarHiddenInset()`). The traffic lights sit inside
+  the sidebar's 44 px top bar, and the toggle follows them after the 72 px
+  inset, as in Codex. The window title stays set for the Dock, the window
+  menu, and accessibility. Linux keeps its native decorations.
+
+### Resource rows: a name-first ledger
+
+- *Observed*: each row prints `registry/kind/name` as one string, so the
+  registry prefix varies from row to row, the alphabetical order of names is
+  invisible, and the eye cannot find a name without reading the whole line.
+  The kind column from the layout above was never built. The check glyph is
+  `[x]`, not `[*]`.
+- *Rule*: a row is a grid of fixed columns:
+  `check 3ch · kind 9ch · name 1fr · registry minmax(0, 16ch) · scope 6ch · override auto`.
+  - **check**: `[*]` when on, `[ ]` when off. The brackets are
+    `--gui-ink-3`; only the `*` takes `--gui-signal`, in both themes. A
+    column of black `[x]` read as noise; a column of green stars reads as
+    "these are on".
+  - **kind**: the kind ID in `--gui-ink-2` (`skill`, `command`, `subagent`,
+    `hook`, `mcpserver`). Kind, registry, and scope use `--gui-ink-2`, not
+    `--gui-ink-3`: at 11–12 px, ink-3 measures about 3.3:1 on white, below
+    the 4.5:1 rule.
+  - **name**: the display name in `--gui-ink`, weight 500, with search
+    highlighting. It is the only element that carries weight.
+  - **registry**: ellipsis, right-aligned before the scope.
+  - **scope**: a quiet lowercase label for `user`, the default
+    scope. `organization`, `project`, and `local` render as a tag
+    (`--gui-s0200`), because they are the exceptions worth seeing. The
+    element keeps its full scope text.
+- Selection uses `--gui-s0200`, one step above hover (`--gui-layer`); before
+  this change both used the same tone, and the selected row disappeared
+  under the pointer. The 2 px signal bar stays.
+- The sticky group header gets a hairline (`--gui-s0200`) on its bottom edge
+  so that rows scrolling under it don't run into the caps title.
+
+### Sidebar
+
+- *Observed*: source rows print absolute paths that are cut at the end
+  (`/Users/alexandergr/code/ai…`), so every row starts with the same prefix
+  and the part that identifies the source is hidden. The folder icons
+  shrink by different amounts as the label grows, so they don't line up.
+- *Rule*: a source row shows a short label: the last two path segments for
+  directories (`resources/skills`), the host for Marketplace sources, and
+  the host and repository name for Git sources (`github.com/org/repo` →
+  `org/repo`). The full location stays in the tooltip and the accessible
+  name. The leading icon matches the source kind: folder for directories,
+  branch for Git, globe for Marketplace. No icon may shrink: `GuiIcon` is
+  `flex: none` everywhere.
+- Group rows show a 6 px dot before the label in the group's tone:
+  `--am-color-status-warning` for Malformed and Stale, danger for Broken, and
+  `--gui-signal` for Pending when its count is above zero. Other groups have
+  no dot. A dot appears only when the count is above zero.
+- The footer collapses into one 32 px row: a signal dot and the harness
+  summary in mono on the left, and the Settings and Quit icon buttons on the
+  right. The summary has the visible prefix `targets` in `--gui-ink-3`, so
+  `devin · factory` no longer floats unlabeled. The newer-version notice, when
+  present, sits above that row.
+
+### Toolbar and status bar
+
+- *Observed*: Update is an outlined button beside the solid Sync button, so
+  the toolbar has two heavy shapes competing for attention.
+- *Rule*: Update uses the secondary button style from the Controls table
+  (`--gui-s0200` fill, no border). Sync stays the only solid control in the
+  window. Nuxt UI's soft neutral variant fills with `--ui-bg-elevated`, which
+  is the canvas, so secondary buttons add the shared
+  `.gui-button--secondary` class rather than remapping that token, which
+  menus and popovers also read.
+- The status bar's `✓` takes `--gui-signal` in both themes; the words
+  `in sync` keep `--gui-signal-ink`. A pending count shows `~` in
+  `--am-color-status-warning`.
+
+### Inspector
+
+- *Observed*: the resource title repeats the row's `registry/kind/name`
+  string; the Session section is two loose sentences; and the Diagnostics
+  section prints full raw messages, so seven warnings fill the whole
+  inspector and push the rest out of view.
+- *Rule — resource header*: a caps eyebrow `kind · registry`, then the
+  display name as the title (mono 14 px / 500), then the description. The
+  `dl` keeps Registry, Scope, Status, and Harnesses; Status leads with a 6 px
+  dot (signal when enabled or installed, warning otherwise).
+- *Rule — session*: each line is a key/value row with the key in
+  `--gui-ink-2` and the value in mono, keeping the text "Drift: ready". Drift
+  shows a status dot: signal for `ready`, warning for `pending`, danger for
+  `failed`.
+- *Rule — discovery*: each endpoint is a compact row: the label in 500
+  weight, then `cache state · N results · truncated` in mono `--gui-ink-3`.
+- *Rule — diagnostics*: the caps label carries the count. Each diagnostic is
+  a disclosure row: the severity icon and the message clamped to two lines
+  in mono 11.5 px, since the messages are tool output with paths. Selecting
+  the row (click, Enter, or Space; it is a `button` with `aria-expanded`)
+  shows the whole message. The full text stays in the DOM when clamped.
+- The empty state shows the `file` icon above "Select a resource to inspect
+  it."
+- When the selection changes, the resource section fades in and rises 2 px
+  over 150 ms. Nothing else animates on selection.
+
 ## Implementation plan
 
 1. **Tokens and theme**: add `design-tokens.css`, the before-paint theme
