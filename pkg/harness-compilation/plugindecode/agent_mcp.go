@@ -1,7 +1,6 @@
 package plugindecode
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -223,5 +222,3 @@ func stringMap(raw any) (map[string]string, bool) {
 	}
 	return out, true
 }
-
-func jsonMarshal(v any) ([]byte, error) { return json.Marshal(v) }
