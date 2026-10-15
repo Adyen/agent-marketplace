@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import type { WorkspaceController } from './controller'
+import GuiModal from './GuiModal.vue'
 
 const props = defineProps<{ controller: WorkspaceController }>()
 const quitOpen = defineModel<boolean>('quitOpen', { default: false })
@@ -121,46 +122,46 @@ function cancelQuit() {
 </script>
 
 <template>
-  <UModal v-model:open="migrationOpen" title="Migrate configuration" aria-label="Migrate configuration" :dismissible="!migrationPending">
-    <template #content>
-      <section class="settings" aria-label="Migrate configuration">
-        <h2 class="settings__heading">Migrate configuration</h2>
-        <p>Your user configuration uses an older format. Migrate it to the current format? Other configuration layers are left unchanged.</p>
-        <p v-if="migrationError != null" role="alert">{{ migrationError }}</p>
-        <p v-for="d in migrationDiagnostics" :key="d.code + d.message" role="alert">{{ d.message }}</p>
-        <div class="settings__actions">
-          <UButton
-            label="Migrate"
-            aria-label="Migrate"
-            :disabled="migrationPending || state.operation != null || state.requesting"
-            @click="migrate"
-          />
-          <UButton label="Leave unchanged" color="neutral" variant="outline" aria-label="Leave unchanged" :disabled="migrationPending" @click="dismissMigration" />
-          <UButton label="Cancel" color="neutral" variant="outline" aria-label="Cancel migration offer" :disabled="migrationPending" @click="dismissMigration" />
-        </div>
-      </section>
+  <GuiModal
+    v-model:open="migrationOpen"
+    title="Migrate configuration"
+    icon="sync"
+    :dismissible="!migrationPending"
+  >
+    <p>Your user configuration uses an older format. Migrate it to the current format? Other configuration layers are left unchanged.</p>
+    <p v-if="migrationError != null" role="alert">{{ migrationError }}</p>
+    <p v-for="d in migrationDiagnostics" :key="d.code + d.message" role="alert">{{ d.message }}</p>
+    <template #footer>
+      <UButton
+        label="Migrate"
+        aria-label="Migrate"
+        :disabled="migrationPending || state.operation != null || state.requesting"
+        @click="migrate"
+      />
+      <UButton label="Leave unchanged" color="neutral" variant="outline" aria-label="Leave unchanged" :disabled="migrationPending" @click="dismissMigration" />
+      <UButton label="Cancel" color="neutral" variant="outline" aria-label="Cancel migration offer" :disabled="migrationPending" @click="dismissMigration" />
     </template>
-  </UModal>
+  </GuiModal>
 
-  <UModal v-model:open="quitOpen" title="Quit Agent Marketplace" aria-label="Quit Agent Marketplace" :dismissible="!quitPending">
-    <template #content>
-      <section class="settings" aria-label="Quit Agent Marketplace">
-        <h2 class="settings__heading">Quit Agent Marketplace</h2>
-        <p v-if="syncRunning">A sync is running. Sync and quit when it finishes, quit now, or stay?</p>
-        <p v-else-if="state.pendingChanges > 0">{{ state.pendingChanges }} change(s) not synced. Sync before quitting?</p>
-        <div class="settings__actions">
-          <template v-if="showSyncChoices">
-            <UButton label="Sync and quit" aria-label="Sync and quit" :disabled="syncQuitBlocked" @click="syncAndQuit" />
-            <UButton label="Quit without syncing" color="neutral" variant="outline" aria-label="Quit without syncing" :disabled="quitPending" @click="quitNow" />
-            <UButton label="Cancel" color="neutral" variant="outline" aria-label="Cancel quit" @click="cancelQuit" />
-          </template>
-          <template v-else>
-            <UButton label="Quit" aria-label="Quit now" :disabled="quitPending" @click="quitNow" />
-            <UButton label="Stay" color="neutral" variant="outline" aria-label="Stay" @click="cancelQuit" />
-            <UButton label="Cancel" color="neutral" variant="outline" aria-label="Cancel quit" @click="cancelQuit" />
-          </template>
-        </div>
-      </section>
+  <GuiModal
+    v-model:open="quitOpen"
+    title="Quit Agent Marketplace"
+    icon="quit"
+    :dismissible="!quitPending"
+  >
+    <p v-if="syncRunning">A sync is running. Sync and quit when it finishes, quit now, or stay?</p>
+    <p v-else-if="state.pendingChanges > 0">{{ state.pendingChanges }} change(s) not synced. Sync before quitting?</p>
+    <template #footer>
+      <template v-if="showSyncChoices">
+        <UButton label="Sync and quit" aria-label="Sync and quit" :disabled="syncQuitBlocked" @click="syncAndQuit" />
+        <UButton label="Quit without syncing" color="neutral" variant="outline" aria-label="Quit without syncing" :disabled="quitPending" @click="quitNow" />
+        <UButton label="Cancel" color="neutral" variant="outline" aria-label="Cancel quit" @click="cancelQuit" />
+      </template>
+      <template v-else>
+        <UButton label="Quit" aria-label="Quit now" :disabled="quitPending" @click="quitNow" />
+        <UButton label="Stay" color="neutral" variant="outline" aria-label="Stay" @click="cancelQuit" />
+        <UButton label="Cancel" color="neutral" variant="outline" aria-label="Cancel quit" @click="cancelQuit" />
+      </template>
     </template>
-  </UModal>
+  </GuiModal>
 </template>
