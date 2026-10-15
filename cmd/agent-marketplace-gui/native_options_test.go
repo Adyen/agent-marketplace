@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/Adyen/agent-marketplace/internal/session"
+	"github.com/wailsapp/wails/v2/pkg/options/mac"
 )
 
 func TestNativeAppOptionsWiring(t *testing.T) {
@@ -44,6 +45,9 @@ func TestNativeAppOptionsWiring(t *testing.T) {
 	}
 	if opts.OnBeforeClose == nil {
 		t.Fatal("before-close hook missing")
+	}
+	if opts.Mac == nil || !reflect.DeepEqual(opts.Mac.TitleBar, mac.TitleBarHiddenInset()) {
+		t.Fatalf("mac title bar = %+v, want hidden-inset", opts.Mac)
 	}
 	if app.quit == nil {
 		t.Fatal("native quit callback not installed")

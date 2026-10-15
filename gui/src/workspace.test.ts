@@ -14,7 +14,7 @@ import {
   EVENT_RETRY_DELAY_MS,
   WorkspaceController,
 } from './controller'
-import { event, fakeClient, mountWorkspace, row, snapshot, tick } from './test-support'
+import { event, fakeClient, mountWorkspace, row, rowNames, snapshot, tick } from './test-support'
 
 function testRect(left: number, top: number, width: number, height: number): DOMRect {
   return { x: left, y: top, left, top, right: left + width, bottom: top + height, width, height, toJSON: () => ({}) } as DOMRect
@@ -212,11 +212,48 @@ describe('WorkspaceView', () => {
     const groups = wrapper.findAll('.workspace__group-toggle').map((button) => button.attributes('aria-label'))
     expect(groups).toEqual(['Required', 'Enabled', 'Available', 'Malformed'])
 
-    const text = wrapper.text()
-    expect(text).toContain('corp/skill/needed')
-    expect(text).toContain('local/skill/broken')
+    const names = wrapper.findAll('.workspace__name').map((name) => name.text())
+    expect(names).toEqual(expect.arrayContaining(['needed', 'broken']))
+    expect(wrapper.findAll('.workspace__registry').map((registry) => registry.text())).toEqual(expect.arrayContaining(['corp', 'local']))
+    expect(wrapper.findAll('.workspace__kind').map((kind) => kind.text())).toContain('skill')
     expect(wrapper.findAll('.workspace__scope').map((s) => s.text())).toContain('organization')
     expect(wrapper.find('.workspace__badge').text()).toContain('claude')
+  })
+
+  it('marks a sidebar group with a tone dot only when it has rows', async () => {
+    const { client, push } = fakeClient()
+    const { wrapper } = mountWorkspace(client)
+    push(
+      event({
+        sequence: 1,
+        payload: snapshot([row('broken', { group: 'malformed', checked: false, status: 'malformed: bad frontmatter' })]),
+      }),
+    )
+    await tick()
+
+    expect(wrapper.find('button[aria-label="Show Malformed group"] .gui-dot--warning').exists()).toBe(true)
+    expect(wrapper.find('button[aria-label="Show Stale group"] .gui-dot').exists()).toBe(false)
+  })
+
+  it('toggles a diagnostic row between clamped and expanded on activation', async () => {
+    const { client, push } = fakeClient()
+    const { wrapper } = mountWorkspace(client)
+    const message = 'Long diagnostic message with a full tool path'
+    push(
+      event({
+        sequence: 1,
+        payload: snapshot([row('a')], { diagnostics: [{ severity: 'warning', category: 'catalog', code: 'long', message }] }),
+      }),
+    )
+    await tick()
+
+    const toggle = wrapper.get('ul[aria-label="Diagnostics"] button')
+    expect(toggle.attributes('aria-expanded')).toBe('false')
+    expect(toggle.text()).toContain(message)
+    await toggle.trigger('click')
+    expect(toggle.attributes('aria-expanded')).toBe('true')
+    await toggle.trigger('click')
+    expect(toggle.attributes('aria-expanded')).toBe('false')
   })
 
   it('rejects stale generations and retains the accepted list until final', async () => {
@@ -224,12 +261,12 @@ describe('WorkspaceView', () => {
     const { controller, wrapper } = mountWorkspace(client)
     push(event({ sequence: 1, generation: 1, payload: snapshot([row('first')]) }))
     await tick()
-    expect(wrapper.text()).toContain('skill/first')
+    expect(rowNames(wrapper)).toContain('first')
 
     push(event({ sequence: 2, generation: 0, payload: snapshot([row('stale')]) }))
     push(event({ sequence: 2, generation: 1, payload: snapshot([row('stale')]) }))
     await tick()
-    expect(wrapper.text()).not.toContain('skill/stale')
+    expect(rowNames(wrapper)).not.toContain('stale')
 
     push(
       event({
@@ -239,13 +276,13 @@ describe('WorkspaceView', () => {
       }),
     )
     await tick()
-    expect(wrapper.text()).toContain('skill/first')
-    expect(wrapper.text()).not.toContain('skill/provisional')
+    expect(rowNames(wrapper)).toContain('first')
+    expect(rowNames(wrapper)).not.toContain('provisional')
 
     push(event({ sequence: 4, generation: 2, payload: snapshot([row('second')]) }))
     await tick()
-    expect(wrapper.text()).toContain('skill/second')
-    expect(wrapper.text()).not.toContain('skill/first')
+    expect(rowNames(wrapper)).toContain('second')
+    expect(rowNames(wrapper)).not.toContain('first')
     expect(controller.state.operation).toBeNull()
   })
 
@@ -268,8 +305,8 @@ describe('WorkspaceView', () => {
     await refreshDone
     await tick()
 
-    expect(wrapper.text()).toContain('skill/streamed')
-    expect(wrapper.text()).not.toContain('skill/stale-http')
+    expect(rowNames(wrapper)).toContain('streamed')
+    expect(rowNames(wrapper)).not.toContain('stale-http')
     expect(controller.state.drift).toBe('ready')
     expect(controller.state.stage).toBe('final')
   })
@@ -529,10 +566,7 @@ describe('WorkspaceView', () => {
     await tick()
 
     const options = wrapper.findAll('[role="option"]')
-    expect(options.map((el) => el.text())).toEqual([
-      expect.stringContaining('skill/req'),
-      expect.stringContaining('skill/avail'),
-    ])
+    expect(rowNames(wrapper)).toEqual(['req', 'avail'])
     expect(options[0].attributes('aria-selected')).toBe('true')
 
     await options[0].trigger('keydown', { key: 'ArrowDown' })
@@ -615,7 +649,7 @@ describe('WorkspaceView', () => {
 
     expect(client.telemetry).toHaveBeenCalledWith({ action: 'browse', rowId: selected.id })
     expect(wrapper.findAll('[role="option"]')[1].attributes('aria-selected')).toBe('true')
-    expect(wrapper.text()).toContain('skill/solo')
+    expect(rowNames(wrapper)).toContain('solo')
     expect(controller.state.error).toBeNull()
     expect(controller.state.requesting).toBe(false)
     expect(controller.state.operation).toBeNull()
@@ -828,7 +862,7 @@ describe('WorkspaceView', () => {
     expect(controller.state.operation).toBeNull()
     expect(controller.state.error).toBe('The action could not be started')
     expect(wrapper.text()).toContain('The action could not be started')
-    expect(wrapper.text()).toContain('skill/a')
+    expect(rowNames(wrapper)).toContain('a')
   })
 
   it('reports a failed refresh while keeping the accepted rows', async () => {
@@ -842,7 +876,7 @@ describe('WorkspaceView', () => {
     await tick()
     expect(controller.state.error).toBe('Refresh failed')
     expect(wrapper.text()).toContain('Refresh failed')
-    expect(wrapper.text()).toContain('skill/a')
+    expect(rowNames(wrapper)).toContain('a')
   })
 
   // spec: session-feedback/notification-overflow

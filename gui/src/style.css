@@ -76,9 +76,14 @@ textarea:focus-visible,
   color: var(--gui-ink-3);
   font-size: 11px;
   font-weight: 500;
-  letter-spacing: 0.04em;
+  letter-spacing: 0.06em;
   margin: 12px 0 4px;
   text-transform: uppercase;
+}
+
+.gui-caps__count {
+  color: var(--gui-ink-2);
+  margin-left: 6px;
 }
 
 .gui-kbd {
@@ -121,6 +126,22 @@ textarea:focus-visible,
   height: 6px;
   margin-right: 6px;
   width: 6px;
+}
+
+.gui-dot--signal {
+  background: var(--gui-signal);
+}
+
+.gui-dot--warning {
+  background: var(--am-color-status-warning);
+}
+
+.gui-dot--danger {
+  background: var(--am-color-status-danger);
+}
+
+.gui-icon {
+  flex: none;
 }
 
 .gui-icon-button {
@@ -271,6 +292,10 @@ textarea:focus-visible,
   padding-left: 12px;
 }
 
+.gui-nav-row .gui-dot {
+  margin: 0;
+}
+
 .gui-source-row__location {
   flex: 1 1 auto;
   font-family: var(--gui-mono);
@@ -291,10 +316,26 @@ textarea:focus-visible,
   --wails-draggable: no-drag;
 }
 
+.gui-sidebar__footer-row {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+  height: 32px;
+}
+
 .gui-sidebar__harnesses {
   color: var(--gui-ink-2);
-  font-size: 12px;
-  margin: 0 4px;
+  flex: 1 1 auto;
+  font-size: 11px;
+  margin: 0 0 0 4px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gui-sidebar__harnesses-prefix {
+  color: var(--gui-ink-3);
 }
 
 .gui-sidebar__update {
@@ -339,6 +380,14 @@ textarea:focus-visible,
   gap: 8px;
   min-width: 0;
   --wails-draggable: no-drag;
+}
+
+.gui-button--secondary {
+  background: var(--gui-s0200);
+}
+
+.gui-button--secondary:hover:not(:disabled) {
+  background: var(--gui-s0400);
 }
 
 .gui-search-pill {
@@ -416,6 +465,7 @@ textarea:focus-visible,
 
 .workspace__group h2 {
   background: var(--gui-canvas);
+  box-shadow: 0 1px 0 var(--gui-s0200);
   margin: 0;
   position: sticky;
   top: 0;
@@ -475,13 +525,15 @@ textarea:focus-visible,
   border-radius: 4px;
   color: var(--gui-ink-2);
   cursor: pointer;
-  display: flex;
+  display: grid;
   font-family: var(--gui-mono);
   font-size: 12px;
   gap: 8px;
+  grid-template-columns: 3ch 9ch minmax(0, 1fr) minmax(0, 16ch) auto auto;
   height: 32px;
   padding: 0 8px;
   position: relative;
+  transition: background-color var(--gui-fade);
 }
 
 .workspace__row:hover {
@@ -489,7 +541,7 @@ textarea:focus-visible,
 }
 
 .workspace__row--selected {
-  background: var(--gui-layer);
+  background: var(--gui-s0200);
   color: var(--gui-ink);
 }
 
@@ -506,16 +558,29 @@ textarea:focus-visible,
 
 .workspace__check {
   color: var(--gui-ink-3);
-  flex: 0 0 auto;
+  white-space: pre;
 }
 
-.workspace__check--on {
-  color: var(--gui-signal-ink);
+.workspace__check--on .workspace__check-mark {
+  color: var(--gui-signal);
+}
+
+.workspace__kind,
+.workspace__registry {
+  color: var(--gui-ink-2);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workspace__registry {
+  text-align: end;
 }
 
 .workspace__name {
   color: var(--gui-ink);
-  flex: 1 1 auto;
+  font-weight: 500;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -530,10 +595,18 @@ textarea:focus-visible,
 }
 
 .workspace__scope {
-  color: var(--gui-ink-3);
+  color: var(--gui-ink-2);
   font-size: 11px;
-  margin-left: auto;
-  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.workspace__scope--tag {
+  align-items: center;
+  background: var(--gui-s0200);
+  border-radius: 4px;
+  display: inline-flex;
+  height: 20px;
+  padding: 0 6px;
 }
 
 .workspace__badge {
@@ -565,6 +638,14 @@ textarea:focus-visible,
 
 .gui-statusbar__synced {
   color: var(--gui-signal-ink);
+}
+
+.gui-statusbar__glyph {
+  color: var(--gui-signal);
+}
+
+.gui-statusbar__pending-glyph {
+  color: var(--am-color-status-warning);
 }
 
 .gui-statusbar__hints {
@@ -665,8 +746,24 @@ textarea:focus-visible,
   border-bottom: 0;
 }
 
+.gui-inspector__resource {
+  animation: gui-rise 150ms var(--gui-ease);
+}
+
+@keyframes gui-rise {
+  from {
+    opacity: 0;
+    transform: translateY(2px);
+  }
+
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
 .gui-inspector__title {
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 500;
   margin: 8px 0 4px;
   overflow-wrap: anywhere;
@@ -685,9 +782,34 @@ textarea:focus-visible,
 }
 
 .gui-inspector__empty {
+  align-items: center;
   color: var(--gui-ink-2);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
   margin: 48px 0;
   text-align: center;
+}
+
+.gui-inspector__empty p {
+  margin: 0;
+}
+
+.gui-inspector__meta {
+  color: var(--gui-ink-2);
+}
+
+.gui-kv {
+  color: var(--gui-ink-2);
+  margin: 0 0 4px;
+}
+
+.gui-kv .gui-dot {
+  vertical-align: middle;
+}
+
+.gui-kv .mono {
+  color: var(--gui-ink);
 }
 
 .workspace__detail dl {
@@ -724,6 +846,10 @@ textarea:focus-visible,
   margin: 2px 0;
 }
 
+.workspace__discovery-health strong {
+  font-weight: 500;
+}
+
 .gui-diagnostics {
   list-style: none;
   margin: 0;
@@ -731,11 +857,28 @@ textarea:focus-visible,
 }
 
 .gui-diagnostics li {
-  align-items: flex-start;
-  display: flex;
   font-size: 13px;
+}
+
+.gui-diagnostics__row {
+  align-items: flex-start;
+  background: transparent;
+  border: 0;
+  border-radius: 4px;
+  color: inherit;
+  cursor: pointer;
+  display: flex;
+  font: inherit;
   gap: 6px;
-  padding: 2px 0;
+  padding: 4px 6px;
+  text-align: left;
+  transition: background-color var(--gui-fade);
+  width: 100%;
+  --wails-draggable: no-drag;
+}
+
+.gui-diagnostics__row:hover {
+  background: var(--gui-layer);
 }
 
 .gui-diagnostics__icon {
@@ -743,9 +886,19 @@ textarea:focus-visible,
   margin-top: 2px;
 }
 
-.gui-diagnostics li > span {
+.gui-diagnostics__message {
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  display: -webkit-box;
+  font-family: var(--gui-mono);
+  font-size: 11.5px;
   min-width: 0;
+  overflow: hidden;
   overflow-wrap: anywhere;
+}
+
+.gui-diagnostics__row[aria-expanded="true"] .gui-diagnostics__message {
+  display: block;
 }
 
 .diag--error .gui-diagnostics__icon {
@@ -1198,8 +1351,14 @@ textarea:focus-visible,
   .gui-icon-button,
   .gui-nav-row,
   .gui-search-pill,
+  .workspace__row,
+  .gui-diagnostics__row,
   .resource-actions__risk input[type="checkbox"],
   .resource-actions__risk input[type="checkbox"]::after {
     transition: none;
+  }
+
+  .gui-inspector__resource {
+    animation: none;
   }
 }

@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { RequestError, type Snapshot } from './api/client'
-import { configuration, event, fakeClient, mountWorkspace, row, snapshot, tick } from './test-support'
+import { configuration, event, fakeClient, mountWorkspace, row, rowNames, snapshot, tick } from './test-support'
 
 const originalRuntime = window.runtime
 
@@ -34,7 +34,7 @@ describe('workspace refresh', () => {
     const { controller, wrapper } = mountWorkspace(client)
     push(event({ sequence: 1, payload: snapshot([row('accepted')]) }))
     await tick()
-    expect(wrapper.text()).toContain('skill/accepted')
+    expect(rowNames(wrapper)).toContain('accepted')
 
     for (const [index, stage] of ['provisional', 'config', 'inventory'].entries()) {
       push(
@@ -45,14 +45,14 @@ describe('workspace refresh', () => {
         }),
       )
       await tick()
-      expect(wrapper.text()).toContain('skill/accepted')
-      expect(wrapper.text()).not.toContain('skill/reloading')
+      expect(rowNames(wrapper)).toContain('accepted')
+      expect(rowNames(wrapper)).not.toContain('reloading')
     }
 
     push(event({ sequence: 5, generation: 2, payload: snapshot([row('reloaded')]) }))
     await tick()
-    expect(wrapper.text()).toContain('skill/reloaded')
-    expect(wrapper.text()).not.toContain('skill/accepted')
+    expect(rowNames(wrapper)).toContain('reloaded')
+    expect(rowNames(wrapper)).not.toContain('accepted')
     expect(controller.state.stage).toBe('final')
   })
 
@@ -68,7 +68,7 @@ describe('workspace refresh', () => {
     await tick()
 
     expect(controller.state.error).toBe('Refresh failed')
-    expect(wrapper.text()).toContain('skill/a')
+    expect(rowNames(wrapper)).toContain('a')
     expect(controller.state.configuration).toBe(loaded)
   })
 

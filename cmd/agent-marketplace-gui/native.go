@@ -11,6 +11,7 @@ import (
 	"github.com/wailsapp/wails/v2"
 	"github.com/wailsapp/wails/v2/pkg/options"
 	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
+	"github.com/wailsapp/wails/v2/pkg/options/mac"
 	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
@@ -53,6 +54,9 @@ func (app *App) appOptions(hooks lifecycleHooks) *options.App {
 		Title:  "Agent Marketplace",
 		Width:  1280,
 		Height: 832,
+		Mac: &mac.Options{
+			TitleBar: mac.TitleBarHiddenInset(),
+		},
 		AssetServer: &assetserver.Options{
 			Assets:  assets,
 			Handler: app.handler(),

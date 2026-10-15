@@ -56,7 +56,7 @@ test('built GUI loads external user-config changes only on refresh triggers', as
   try {
     const snapshotRequests = countSnapshotRequests(page)
     await launchBuiltUserApp(page, bootstrap)
-    await expect(page.getByRole('option').filter({ hasText: 'skill/solo' }).first()).toBeVisible({ timeout: 60_000 })
+    await expect(page.getByRole('option').filter({ hasText: 'solo' }).first()).toBeVisible({ timeout: 60_000 })
 
     const settingsButton = page.getByRole('button', { name: 'Settings' })
     const dialog = page.getByRole('dialog', { name: 'Harness targets' })
@@ -73,7 +73,7 @@ test('built GUI loads external user-config changes only on refresh triggers', as
     await writeFile(userConfigPath, userConfig('[devin, claude]'))
     await page.waitForTimeout(1000)
     expect(snapshotRequests()).toBe(0)
-    await expect(page.getByRole('option').filter({ hasText: 'skill/solo' }).first()).toBeVisible()
+    await expect(page.getByRole('option').filter({ hasText: 'solo' }).first()).toBeVisible()
     await expect(detail).toContainText('Drift: ready')
     await expect(detail).not.toContainText('claude')
     await page.screenshot({ path: artifactPath(testInfo, 'refresh-workspace-before-trigger.png'), fullPage: true })

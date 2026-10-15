@@ -149,7 +149,9 @@ describe('local resource search', () => {
 
     expect(wrapper.findAll('img, script, b, [onerror], [onload]')).toHaveLength(0)
     const hostileOption = optionFor(wrapper, 'row-hostile')
-    expect(hostileOption.find('.workspace__name').text()).toBe(`${registryDisplay}/skill/${displayName}`)
+    expect(hostileOption.find('.workspace__name').text()).toBe(displayName)
+    expect(hostileOption.find('.workspace__kind').text()).toBe('skill')
+    expect(hostileOption.find('.workspace__registry').text()).toBe(registryDisplay)
     expect(hostileOption.findAll('mark').map((mark) => mark.text()).join('')).toBe('img')
     expect(optionFor(wrapper, 'row-metadata').findAll('mark')).toHaveLength(0)
     const detailText = wrapper.find('[aria-label="Detail"]').text()

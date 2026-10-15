@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import { describe, expect, it, vi } from 'vitest'
-import { event, fakeClient, mountWorkspace, row, snapshot, tick } from './test-support'
+import { event, fakeClient, mountWorkspace, row, rowNames, snapshot, tick } from './test-support'
 
 function deferred<T>() {
   let resolve!: (value: T) => void
@@ -64,7 +64,7 @@ describe('release notice', () => {
     await tick()
     expect(wrapper.text()).not.toContain('is available.')
     expect(controller.state.latestVersion).toBe('')
-    expect(wrapper.text()).toContain('skill/kept')
+    expect(rowNames(wrapper)).toContain('kept')
     expect(wrapper.find(`#row-${CSS.escape(rowId)}`).attributes('aria-selected')).toBe('true')
     expect(controller.state.error).toBeNull()
   })
