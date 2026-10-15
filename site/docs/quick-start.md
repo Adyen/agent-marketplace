@@ -14,7 +14,7 @@ You need:
 If you rarely use a terminal, [Terminal basics](./terminal-basics.md) explains how to run the commands on this page.
 
 ::: warning Existing configurations
-Every existing consumer root, including organization and personal-local, must declare exact `apiVersion: agent-marketplace/v4`; included fragments may omit the field or declare exact v4. If you already have older configuration, [convert it with an older released migrator before upgrading](./how-to/migrate-configuration.md), and have organization configuration converted externally. Conversion may refuse includes, unrepresentable input, or missing verified Marketplace evidence. Do not overwrite an existing configuration with the tutorial or merely change its sentinel: the new CLI/TUI refuses unsupported input without a migration command or prompt.
+Every existing consumer root, including organization and personal-local, must declare exact `apiVersion: agent-marketplace/v4`. Included fragments may omit the field or declare exact v4. If you have older configuration, [convert it with an older released migrator before upgrading](./how-to/migrate-configuration.md), and have an administrator convert organization configuration. Conversion may refuse includes, unrepresentable input, or missing verified Marketplace evidence. Don't overwrite an existing configuration with this tutorial, and don't only change its version: the new CLI and TUI refuse unsupported input and have no migration command or prompt.
 :::
 
 Open a terminal and move into your project folder. Replace the path with your own:
@@ -23,7 +23,7 @@ Open a terminal and move into your project folder. Replace the path with your ow
 cd ~/code/my-project
 ```
 
-This quick start uses Claude Code so that every path and screenshot matches what you see. The same steps work for the other six supported [harnesses](./glossary.md#harness) (a harness is a coding tool such as Claude Code or Cursor). The [harnesses and output paths reference](./reference/harnesses-and-output-paths.md) lists where each one keeps its files, and [How to configure multiple harnesses](./how-to/configure-multiple-harnesses.md) covers switching later.
+This quick start uses Claude Code so the paths and screenshots match. The same steps work for the other six supported [harnesses](./glossary.md#harness), which are coding tools such as Claude Code or Cursor. The [harnesses and output paths reference](./reference/harnesses-and-output-paths.md) lists where each keeps its files, and [How to configure multiple harnesses](./how-to/configure-multiple-harnesses.md) covers switching later.
 
 ## Launch
 
@@ -118,7 +118,7 @@ Press `q` to quit. If you selected something and didn't sync it yet, the TUI ask
 agent-marketplace status
 ```
 
-`status` prints several tables. The ones that matter here look like this (your commit and paths differ):
+`status` prints several tables. These matter here (your commit and paths differ):
 
 ```text
 TARGET HARNESS SET

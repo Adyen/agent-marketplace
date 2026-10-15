@@ -1,24 +1,22 @@
 # Documentation
 
-`agent-marketplace` is a command-line tool that installs shared AI agent resources into the coding tools you use. A resource is a skill, command, subagent, hook, or MCP server. The tool downloads them from Git registries or a hosted Marketplace and writes each one into the folders that your coding tool reads. These docs call each coding tool a [harness](./glossary.md#harness). Seven are supported: Claude Code, Codex, Cursor, Devin, Factory Droid, Gemini CLI, and Windsurf.
+`agent-marketplace` is a command-line tool that installs shared AI agent resources into your coding tools. A resource is a skill, command, subagent, hook, or MCP server. The tool downloads resources from Git registries or a hosted Marketplace and writes each one into the folders your coding tool reads. These docs call each coding tool a [harness](./glossary.md#harness). Seven are supported: Claude Code, Codex, Cursor, Devin, Factory Droid, Gemini CLI, and Windsurf.
 
 ## Start here
 
-If you are new to the tool, follow these steps in order:
+New to the tool? Follow these steps in order:
 
-1. If you rarely use a terminal, read [Terminal basics](./terminal-basics.md) first. It covers opening a terminal, running commands, and what to do when one fails.
+1. If you rarely use a terminal, read [Terminal basics](./terminal-basics.md) first.
 2. [Install](./install.md) the binary.
 3. Follow the [quick start](./quick-start.md). In about ten minutes you select a skill from a public registry, look at it in the terminal UI, and commit the configuration so teammates can reproduce the setup.
 
-When you meet a word you don't know, look it up in the [glossary](./glossary.md).
-
-Then pick the section below that matches what you want to do.
+Look up unfamiliar words in the [glossary](./glossary.md). Then pick the section that matches your goal.
 
 ## I use agent resources in my projects
 
 You want skills and other resources in your editor, and you want them to stay the same for everyone on the team.
 
-The [user-journey map](./explanation/user-journeys.md) follows a resource from finding and inspecting it, through installing and sharing it, to updating, removing, and recovering it. It explains what each stage decides and links to the guide that walks through it.
+The [user-journey map](./explanation/user-journeys.md) follows a resource from finding it to recovering it. It links to the guide for each stage.
 
 | Goal | Read |
 |---|---|
@@ -77,7 +75,7 @@ Exact descriptions of commands, files, and fields.
 
 ## Explanation
 
-Why it is designed this way.
+Why it works this way.
 
 - [How agent-marketplace works](./explanation/how-agent-marketplace-works.md)
 - [Sources and resources](./explanation/sources-and-resources.md)
