@@ -10,7 +10,7 @@ You need:
 - At least one target harness selected in your effective configuration.
 - The Marketplace endpoint URL.
 
-Every existing consumer root, including organization and personal-local, must declare exact `apiVersion: agent-marketplace/v4`. Included fragments may omit the field or declare exact v4. If the destination is absent, install creates v4 only after validating every required root/include tree. Unsupported input refuses before Marketplace acquisition or new config/lock/harness changes. [Convert older configurations with an older released migrator before upgrading](./migrate-configuration.md); the new CLI has no migration command or prompt.
+Every existing config root, including organization and personal-local, must declare exact `apiVersion: agent-marketplace/v4`. Included fragments may omit the field or declare exact v4. If the destination file doesn't exist, `install` creates it as v4, but only after every other config file it needs passes this check. Otherwise it refuses before it downloads from the Marketplace or changes config, locks, or harness files. [Convert older configurations with an older released migrator before upgrading](./migrate-configuration.md); the new CLI has no migration command or prompt.
 
 Replace `https://marketplace.example.com`, `shared-agents`, and `review` in the examples with values from your Marketplace.
 

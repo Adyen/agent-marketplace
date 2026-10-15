@@ -79,7 +79,7 @@ agent-marketplace --version > "/backups/version-$(date +%F).txt"
 systemctl start agent-marketplace
 ```
 
-Expected result: `/backups/` holds the same three files.
+Expected result: `/backups/` holds `marketplace-<date>.db`, `blobs-<date>.tar.gz`, and `version-<date>.txt`. The `sqlite3` and `tar` steps print nothing on success.
 
 Use SQLite's `.backup` command instead of `cp` on a live database file. If you snapshot the whole volume instead, capture the database and `blobs/` in the same snapshot.
 

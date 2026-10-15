@@ -7,7 +7,7 @@ Remove a resource you selected, turn off one that was selected for you, or overr
 - A configured `.agents/config.yaml` or `~/.agents/config.yaml`.
 - `agent-marketplace` on your `PATH`.
 
-`remove` edits v4 source/resource selections. Every existing consumer root, including organization and personal-local, must declare exact v4; fragments may omit the version or declare exact v4. Unsupported input refuses before new acquisition, config/lock publication, or harness changes. [Convert older configurations before upgrading](./migrate-configuration.md). Removing hosted Marketplace resources also involves the owning layer's lock; see [current limits](../explanation/user-journeys.md#before-following-a-journey).
+`remove` edits v4 selections. Every existing config root, including organization and personal-local, must declare exact v4; included fragments may omit the version or declare exact v4. Otherwise `remove` refuses before it downloads anything or changes config, locks, or harness files. [Convert older configurations before upgrading](./migrate-configuration.md). Removing hosted Marketplace resources also involves the owning layer's lock; see [current limits](../explanation/user-journeys.md#before-following-a-journey).
 
 After each change, `remove` syncs and reconciles the remaining selection in the harness folders.
 
