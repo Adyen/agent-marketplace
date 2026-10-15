@@ -12,6 +12,15 @@ The worker refreshes every configured registry when it starts and again at each 
 docker compose exec app /app/agent-marketplace serve reindex --config /app/marketplace.yaml
 ```
 
+## Upgrade the Go toolchain
+
+Archive digests are computed over gzip output, which changes between Go releases. Until every placeholder archive is stored, a server built with a different Go release than the one that published an archive cannot verify that archive by re-compressing it, and clients see `cannot verify archive digest` for it. To move the server to a newer Go release without that gap:
+
+1. Deploy this release while the Marketplace is still built with Go 1.26.
+2. The worker derives and stores the placeholder archive for each stored artifact at startup, and `serve reindex` does the same after it runs.
+3. Check the `placeholder archive backfill finished` log line for `unreproducible=0`. An unreproducible archive has no placeholder form, so its clients keep the diagnostic until the resource changes. Keep the server on the Go release that published that archive, or publish a new revision of the resource with changed content.
+4. Only then build the server with the newer Go release.
+
 ## Reindex one registry
 
 Pass a registry ID or slug:
@@ -74,6 +83,8 @@ Read the log file or collect it with your container tooling. Alert or investigat
 - `license policy rejected resource` and other records whose `code` attribute starts with `marketplace.policy.`: ingestion policy rejected a resource. See [How to manage ingestion policy](./manage-ingestion-policy.md) for the finding codes.
 - `marketplace.ingest.duplicate-resource` in the `code` attribute: two paths in one registry publish the same kind and name; the first wins.
 - `resource revision archive digest repaired`: a refresh staged unchanged content under a different archive digest. The stored digest was repaired and the previous artifact stays downloadable, but locks that reference the old digest fail `sync --locked` or `sync --check`. [How to reset and reindex a registry](./reset-and-reindex-a-registry.md) explains how consumers recover.
+- `placeholder archive backfill finished`: the startup backfill and `serve reindex` completed. Its `derived`, `present`, and `unreproducible` counts show how many placeholder archives the server now stores.
+- `placeholder archives are not reproducible from their stored archives`: these digests have no placeholder form. Keep the Go release that published them, or publish a new revision with changed content, as described in [Upgrade the Go toolchain](#upgrade-the-go-toolchain).
 - `worker configuration authority rejected`: a process opened stores whose recorded authority mode conflicts with its `management.mode`, for example after adoption or a rollback.
 
 ## Alert on metrics

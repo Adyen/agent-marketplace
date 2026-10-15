@@ -581,6 +581,7 @@ func (r *Resolver) resolvePinWithArtifactPolicy(ctx context.Context, client *Cli
 
 	archiveDigest := string(rev.ArchiveDigest)
 	raw, verified, err := cache.ReadArtifact(archiveDigest)
+	fetched := false
 	if err != nil {
 		return resolver.ResolvedArtifact{}, hccartifact.CanonicalArtifact{}, fmt.Errorf("read cached artifact: %w", err)
 	}
@@ -595,30 +596,39 @@ func (r *Resolver) resolvePinWithArtifactPolicy(ctx context.Context, client *Cli
 			return resolver.ResolvedArtifact{}, hccartifact.CanonicalArtifact{}, fmt.Errorf("artifact not in cache")
 		}
 		slog.Debug("marketplace fetching artifact", "url", entry.URL, "registry", pin.RegistryID, "kind", pin.Kind, "name", pin.Name, "archive_digest", rev.ArchiveDigest)
-		raw, err = client.GetArtifact(ctx, archiveDigest)
+		raw, err = fetchMirrorArchive(ctx, client, cache, archiveDigest)
 		if err != nil {
-			return resolver.ResolvedArtifact{}, hccartifact.CanonicalArtifact{}, fmt.Errorf("fetch artifact: %w", err)
+			return resolver.ResolvedArtifact{}, hccartifact.CanonicalArtifact{}, err
 		}
-		if _, err := cache.WriteArtifact(archiveDigest, raw); err != nil {
-			return resolver.ResolvedArtifact{}, hccartifact.CanonicalArtifact{}, fmt.Errorf("write artifact cache: %w", err)
-		}
+		fetched = true
 		verified = false
 	}
 
-	ca, caRaw, err := hccartifact.Decode(bytes.NewReader(raw))
+	// Verify the bytes held for this digest. Validation covers schema, finding
+	// severity, policy outcome, and content before any metadata can reach install
+	// consent/preview or the cache can be marked verified.
+	ca, err := hccartifact.VerifyArchiveBytes(raw, archiveDigest)
+	var mismatch *hccartifact.EncodingMismatchError
+	if errors.As(err, &mismatch) && !fetched {
+		// A cached copy from another encoder is stale, not corrupt. Cached modes
+		// cannot replace it; online modes fetch once and verify the new bytes.
+		cache.InvalidateArtifactVerified(archiveDigest)
+		if mode == resolver.MarketplaceResolveModeCached || mode == resolver.MarketplaceResolveModeCachedNoFetch {
+			return resolver.ResolvedArtifact{}, hccartifact.CanonicalArtifact{}, archiveVerifyError(err, pin.Kind, pin.Name, entry.URL, true)
+		}
+		raw, err = fetchMirrorArchive(ctx, client, cache, archiveDigest)
+		if err != nil {
+			return resolver.ResolvedArtifact{}, hccartifact.CanonicalArtifact{}, err
+		}
+		verified = false
+		ca, err = hccartifact.VerifyArchiveBytes(raw, archiveDigest)
+	}
 	if err != nil {
-		return resolver.ResolvedArtifact{}, hccartifact.CanonicalArtifact{}, fmt.Errorf("decode artifact: %w", err)
-	}
-	// Decode only parses the archive. Validate the complete decoded artifact
-	// before any metadata can reach install consent/preview or the cache can be
-	// marked verified; this includes schema, finding severity, and policy outcome.
-	if err := ca.ValidateArchive(nil); err != nil {
 		cache.InvalidateArtifactVerified(archiveDigest)
+		if errors.As(err, &mismatch) {
+			return resolver.ResolvedArtifact{}, hccartifact.CanonicalArtifact{}, archiveVerifyError(err, pin.Kind, pin.Name, entry.URL, false)
+		}
 		return resolver.ResolvedArtifact{}, hccartifact.CanonicalArtifact{}, fmt.Errorf("validate artifact archive: %w", err)
-	}
-	if err := ca.VerifyArchiveDigest(caRaw); err != nil {
-		cache.InvalidateArtifactVerified(archiveDigest)
-		return resolver.ResolvedArtifact{}, hccartifact.CanonicalArtifact{}, fmt.Errorf("verify archive digest: %w", err)
 	}
 	if err := ca.VerifyContentDigest(); err != nil {
 		cache.InvalidateArtifactVerified(archiveDigest)
@@ -794,7 +804,6 @@ func (r *Resolver) resolveIndexOnlyPin(ctx context.Context, client *Client, cach
 		return artifact, hccartifact.CanonicalArtifact{}, err
 	}
 	var origin string
-	var archiveDigest string
 	var raw []byte
 	var registry store.Registry
 	var checkoutDir string
@@ -860,17 +869,20 @@ func (r *Resolver) resolveIndexOnlyPin(ctx context.Context, client *Client, cach
 		if err != nil {
 			return resolver.ResolvedArtifact{}, hccartifact.CanonicalArtifact{}, fmt.Errorf("re-ingest exact registry commit: %w", err)
 		}
-		if built.ManifestDigest != occ.RegistryRevisionManifestDigest {
-			return resolver.ResolvedArtifact{}, hccartifact.CanonicalArtifact{}, fmt.Errorf("registry manifest digest mismatch after re-ingestion: got %q, want %q", built.ManifestDigest, occ.RegistryRevisionManifestDigest)
+		// The occurrence's registry revision manifest is the attested record of the
+		// commit's resources. Its payload must hash to the occurrence digest, and the
+		// locally rebuilt resources must match its content and support digests.
+		manifest, err := client.GetRegistryRevisionManifest(ctx, string(occ.RegistryRevisionManifestDigest))
+		if err != nil {
+			return resolver.ResolvedArtifact{}, hccartifact.CanonicalArtifact{}, fmt.Errorf("fetch registry revision manifest: %w", err)
+		}
+		if err := requireMatchingRegistryResources(manifest, built.ManifestPayload); err != nil {
+			return resolver.ResolvedArtifact{}, hccartifact.CanonicalArtifact{}, err
 		}
 		key := pin.Kind + "/" + pin.Name
 		raw = built.ResourceArchives[key]
 		if len(raw) == 0 {
 			return resolver.ResolvedArtifact{}, hccartifact.CanonicalArtifact{}, fmt.Errorf("exact registry commit did not contain an accepted %s %q", pin.Kind, pin.Name)
-		}
-		archiveDigest = built.ResourceArchiveDigest[key]
-		if archiveDigest == "" {
-			archiveDigest = hccartifact.ArchiveDigest(raw)
 		}
 	} else {
 		var verified bool
@@ -885,18 +897,11 @@ func (r *Resolver) resolveIndexOnlyPin(ctx context.Context, client *Client, cach
 			return resolver.ResolvedArtifact{}, hccartifact.CanonicalArtifact{}, errCachedIndexOnlyArtifactUnverified
 		}
 	}
-	ca, caRaw, err := hccartifact.Decode(bytes.NewReader(raw))
+	// Index-only archives carry no attested archive digest, so the local archive
+	// is verified by its decoded content alone, without re-encoding.
+	ca, err := hccartifact.DecodeContentArchive(raw)
 	if err != nil {
-		return resolver.ResolvedArtifact{}, hccartifact.CanonicalArtifact{}, fmt.Errorf("decode re-ingested artifact: %w", err)
-	}
-	if err := ca.ValidateArchive(nil); err != nil {
 		return resolver.ResolvedArtifact{}, hccartifact.CanonicalArtifact{}, fmt.Errorf("validate re-ingested artifact: %w", err)
-	}
-	if err := ca.VerifyArchiveDigest(caRaw); err != nil {
-		return resolver.ResolvedArtifact{}, hccartifact.CanonicalArtifact{}, fmt.Errorf("verify re-ingested archive: %w", err)
-	}
-	if archiveDigest != "" && ca.Manifest.ArchiveDigest != archiveDigest {
-		return resolver.ResolvedArtifact{}, hccartifact.CanonicalArtifact{}, fmt.Errorf("cached index-only artifact digest mismatch: metadata %q, archive %q", archiveDigest, ca.Manifest.ArchiveDigest)
 	}
 	if err := ca.VerifyContentDigest(); err != nil {
 		return resolver.ResolvedArtifact{}, hccartifact.CanonicalArtifact{}, fmt.Errorf("verify re-ingested content: %w", err)

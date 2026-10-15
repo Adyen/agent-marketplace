@@ -111,6 +111,7 @@ func NewServer(cfg config.Config, meta store.MetadataStore, blobs store.BlobStor
 	publicMux.Handle("/api/v1/inspection/", s.methodGet(s.handleInspectionDigest))
 	publicMux.Handle("/api/v1/content/", s.methodGet(s.handleContentDigest))
 	publicMux.Handle("/api/v1/artifacts/", s.methodGet(s.handleArtifacts))
+	publicMux.Handle("/api/v1/placeholder-archives/", s.methodGet(s.handlePlaceholderArchives))
 	publicMux.Handle("/healthz", s.methodGet(s.handleHealthz))
 	// Keep operations endpoints private even when a caller reaches the public
 	// listener directly; the operations listener remains the only route.
@@ -1503,39 +1504,68 @@ func (s *Server) handleManifests(w http.ResponseWriter, r *http.Request) {
 	writeImmutable(w, "application/json", data)
 }
 
-func (s *Server) handleArtifacts(w http.ResponseWriter, r *http.Request) {
-	path := strings.TrimPrefix(r.URL.Path, "/api/v1/artifacts/")
-	parts := strings.Split(path, "/")
-	if len(parts) != 2 || parts[0] != "sha256" || !isLowerHexDigest(parts[1]) {
-		writeError(w, http.StatusBadRequest, "invalid artifact digest")
-		return
-	}
+const artifactMediaType = "application/vnd.agent-marketplace.artifact.v1.tar+gzip"
 
-	digest := store.ArchiveDigest("sha256:" + parts[1])
+// archiveDigestFromPath parses the sha256 archive digest that ends a route path.
+func archiveDigestFromPath(path, prefix string) (store.ArchiveDigest, bool) {
+	parts := strings.Split(strings.TrimPrefix(path, prefix), "/")
+	if len(parts) != 2 || parts[0] != "sha256" || !isLowerHexDigest(parts[1]) {
+		return "", false
+	}
+	return store.ArchiveDigest("sha256:" + parts[1]), true
+}
+
+// writeArchiveAvailability refuses archives no owned revision serves. It reports
+// whether the archive may be served; unowned digests are refused before blob
+// storage is touched, so an orphaned blob at the address is never returned.
+func (s *Server) writeArchiveAvailability(w http.ResponseWriter, r *http.Request, digest store.ArchiveDigest) bool {
 	revisions, err := s.meta.ListResourceRevisionsByArchiveDigest(r.Context(), s.mpID, digest)
 	if err != nil {
 		slog.Error("artifact ownership lookup failed", "digest", logvalue.Safe(digest), "err", logvalue.Safe(err))
 		writeError(w, http.StatusInternalServerError, "failed to fetch artifact")
-		return
+		return false
 	}
-	// The digest address is not itself authorization to read a blob. Refuse an
-	// unowned digest before touching blob storage, including when an orphaned
-	// blob happens to exist at the requested address.
 	if len(revisions) == 0 {
 		writeError(w, http.StatusNotFound, "artifact not found")
-		return
+		return false
 	}
 	restriction, err := s.managedOwnerRestriction(r.Context(), revisions)
 	if err != nil {
 		writeAvailabilityRestriction(w, restriction, err)
-		return
+		return false
 	}
 	switch restriction {
 	case AvailabilityRevoked:
 		writeError(w, http.StatusGone, "artifact is revoked")
-		return
+		return false
 	case AvailabilityBlocked:
 		writeError(w, http.StatusForbidden, "artifact is blocked by assessment")
+		return false
+	}
+	return true
+}
+
+// archiveWithinLimit reports whether data fits the configured artifact size limit,
+// writing the refusal when it does not.
+func (s *Server) archiveWithinLimit(w http.ResponseWriter, data []byte) bool {
+	artifactLimit := s.cfg.Policy.Limits.ArtifactBytes
+	if artifactLimit <= 0 {
+		artifactLimit = config.DefaultArtifactBytes
+	}
+	if int64(len(data)) > artifactLimit {
+		writeError(w, http.StatusRequestEntityTooLarge, "artifact exceeds size limit")
+		return false
+	}
+	return true
+}
+
+func (s *Server) handleArtifacts(w http.ResponseWriter, r *http.Request) {
+	digest, ok := archiveDigestFromPath(r.URL.Path, "/api/v1/artifacts/")
+	if !ok {
+		writeError(w, http.StatusBadRequest, "invalid artifact digest")
+		return
+	}
+	if !s.writeArchiveAvailability(w, r, digest) {
 		return
 	}
 	data, err := s.blobs.Get(r.Context(), digest)
@@ -1548,13 +1578,32 @@ func (s *Server) handleArtifacts(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to fetch artifact")
 		return
 	}
-	artifactLimit := s.cfg.Policy.Limits.ArtifactBytes
-	if artifactLimit <= 0 {
-		artifactLimit = config.DefaultArtifactBytes
-	}
-	if int64(len(data)) > artifactLimit {
-		writeError(w, http.StatusRequestEntityTooLarge, "artifact exceeds size limit")
+	if !s.archiveWithinLimit(w, data) {
 		return
+	}
+	if err := s.verifyFinalArchive(r.Context(), digest, data); err != nil {
+		slog.Error("artifact blob digest mismatch", "digest", logvalue.Safe(digest), "error", logvalue.Safe(err))
+		writeError(w, http.StatusInternalServerError, "artifact digest mismatch")
+		return
+	}
+	writeImmutable(w, artifactMediaType, data)
+}
+
+// verifyFinalArchive checks a stored final archive against its digest. When the
+// placeholder-form archive is stored, the final bytes are checked by content
+// against it and never re-compressed; otherwise the archive is re-encoded.
+func (s *Server) verifyFinalArchive(ctx context.Context, digest store.ArchiveDigest, data []byte) error {
+	placeholder, err := s.blobs.Get(ctx, store.PlaceholderArchiveKey(digest))
+	if err == nil {
+		verified, err := hccartifact.VerifyPlaceholderArchive(placeholder, string(digest))
+		if err != nil {
+			return err
+		}
+		_, err = hccartifact.VerifyFinalAgainstPlaceholder(data, verified)
+		return err
+	}
+	if !errors.Is(err, store.ErrNotFound) {
+		return err
 	}
 	artifact, rawArchive, err := hccartifact.Decode(bytes.NewReader(data))
 	if err == nil && artifact.Manifest.ArchiveDigest != string(digest) {
@@ -1563,13 +1612,62 @@ func (s *Server) handleArtifacts(w http.ResponseWriter, r *http.Request) {
 	if err == nil {
 		err = artifact.VerifyArchiveDigest(rawArchive)
 	}
-	if err != nil {
-		slog.Error("artifact blob digest mismatch", "digest", logvalue.Safe(digest), "error", logvalue.Safe(err))
-		writeError(w, http.StatusInternalServerError, "artifact digest mismatch")
+	return err
+}
+
+func (s *Server) handlePlaceholderArchives(w http.ResponseWriter, r *http.Request) {
+	digest, ok := archiveDigestFromPath(r.URL.Path, "/api/v1/placeholder-archives/")
+	if !ok {
+		writeError(w, http.StatusBadRequest, "invalid placeholder archive digest")
 		return
 	}
+	if !s.writeArchiveAvailability(w, r, digest) {
+		return
+	}
+	data, err := s.placeholderArchive(r.Context(), digest)
+	switch {
+	case errors.Is(err, store.ErrNotFound), errors.Is(err, hccartifact.ErrPlaceholderNotReproducible):
+		writeError(w, http.StatusNotFound, "placeholder archive not available")
+		return
+	case err != nil:
+		slog.Error("placeholder archive fetch failed", "digest", logvalue.Safe(digest), "err", logvalue.Safe(err))
+		writeError(w, http.StatusInternalServerError, "failed to fetch placeholder archive")
+		return
+	}
+	if _, err := hccartifact.VerifyPlaceholderArchive(data, string(digest)); err != nil {
+		slog.Error("placeholder archive digest mismatch", "digest", logvalue.Safe(digest), "error", logvalue.Safe(err))
+		writeError(w, http.StatusInternalServerError, "placeholder archive digest mismatch")
+		return
+	}
+	if !s.archiveWithinLimit(w, data) {
+		return
+	}
+	writeImmutable(w, artifactMediaType, data)
+}
 
-	writeImmutable(w, "application/vnd.agent-marketplace.artifact.v1.tar+gzip", data)
+// placeholderArchive returns the stored placeholder-form archive for digest. A
+// missing one is derived from the final archive and stored only when the derived
+// bytes hash to digest; otherwise it returns ErrPlaceholderNotReproducible.
+func (s *Server) placeholderArchive(ctx context.Context, digest store.ArchiveDigest) ([]byte, error) {
+	data, err := s.blobs.Get(ctx, store.PlaceholderArchiveKey(digest))
+	if err == nil {
+		return data, nil
+	}
+	if !errors.Is(err, store.ErrNotFound) {
+		return nil, err
+	}
+	final, err := s.blobs.Get(ctx, digest)
+	if err != nil {
+		return nil, err
+	}
+	derived, err := hccartifact.DerivePlaceholderArchive(final, string(digest))
+	if err != nil {
+		return nil, err
+	}
+	if err := store.PutImmutableBlob(ctx, s.blobs, store.PlaceholderArchiveKey(digest), derived); err != nil {
+		return nil, err
+	}
+	return derived, nil
 }
 
 var errManifestUnsupported = errors.New("unsupported manifest payload")

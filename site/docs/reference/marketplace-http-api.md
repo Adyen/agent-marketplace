@@ -33,7 +33,7 @@ Errors that public and operations route handlers return are JSON objects with on
 
 Every public route except `/healthz` first checks configuration authority (see `management.mode`). If that check fails, the route returns `503` with `{"error":"configuration authority unavailable"}` and `Cache-Control: private, no-store`. In `database` management mode, public routes other than `/healthz` and the admin routes also load current availability; if that fails they return `503` with `{"error":"availability unavailable"}`.
 
-Digest-addressed routes (assessments, inspection manifests, inspection content, manifests, and artifacts) return `Cache-Control: public, max-age=31536000, immutable` and `X-Content-Type-Options: nosniff`.
+Digest-addressed routes (assessments, inspection manifests, inspection content, manifests, artifacts, and placeholder archives) return `Cache-Control: public, max-age=31536000, immutable` and `X-Content-Type-Options: nosniff`.
 
 ## Public routes
 
@@ -111,6 +111,7 @@ The response has `api_version` (`agent-marketplace.io/catalog/v1alpha1`), `marke
 - `GET /api/v1/inspection/sha256/{digest}`: immutable inspection manifest.
 - `GET /api/v1/content/sha256/{digest}`: one allowlisted inspection file, returned as `text/plain`, `application/json`, or a PNG, JPEG, GIF, or WebP image. Other content returns `415`.
 - `GET /api/v1/artifacts/sha256/{digest}`: artifact bytes with content type `application/vnd.agent-marketplace.artifact.v1.tar+gzip`. A digest that no published revision owns returns `404`, even if a blob exists at that address. Returns `410` when revoked, `403` when blocked by assessment, and `413` above `policy.limits.artifact_bytes`.
+- `GET /api/v1/placeholder-archives/sha256/{digest}`: the placeholder-form archive for the same digest, with the same content type and the same `404`, `410`, `403`, and `413` rules. Its bytes hash to `{digest}`, so clients verify them without re-compressing. The server stores it on first request, deriving it from the stored artifact; it returns `404` with `placeholder archive not available` when the stored artifact does not reproduce the digest.
 
 In these `sha256/{digest}` routes, `{digest}` is exactly 64 lowercase hexadecimal characters; the `sha256` part is a path segment. In `database` management mode, the inspection and content routes also refuse objects that no available revision owns (`404`, `403`, or `410`).
 

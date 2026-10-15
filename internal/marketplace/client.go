@@ -18,6 +18,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/cache"
 	hccartifact "github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact"
 	mpapi "github.com/Adyen/agent-marketplace/pkg/marketplace/api"
+	marketplaceartifact "github.com/Adyen/agent-marketplace/pkg/marketplace/artifact"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/inspection"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/publicurl"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/store"
@@ -526,6 +527,37 @@ func (c *Client) GetArtifact(ctx context.Context, archiveDigest string) ([]byte,
 	hexDigest := strings.TrimPrefix(archiveDigest, "sha256:")
 	path := c.requestURL([]string{"api", "v1", "artifacts", "sha256", hexDigest}, nil)
 	return c.getRaw(ctx, path)
+}
+
+// GetPlaceholderArchive downloads the placeholder-form archive whose bytes hash to
+// archiveDigest. Callers verify it by hash rather than by re-encoding.
+func (c *Client) GetPlaceholderArchive(ctx context.Context, archiveDigest string) ([]byte, error) {
+	if err := validateSHA256Digest(archiveDigest); err != nil {
+		return nil, fmt.Errorf("archive digest %q: %w", archiveDigest, err)
+	}
+	hexDigest := strings.TrimPrefix(archiveDigest, "sha256:")
+	path := c.requestURL([]string{"api", "v1", "placeholder-archives", "sha256", hexDigest}, nil)
+	return c.getRaw(ctx, path)
+}
+
+// GetRegistryRevisionManifest downloads a registry revision manifest and verifies
+// that its payload hashes to manifestDigest before decoding it.
+func (c *Client) GetRegistryRevisionManifest(ctx context.Context, manifestDigest string) (marketplaceartifact.RegistryRevisionManifest, error) {
+	if err := validateSHA256Digest(manifestDigest); err != nil {
+		return marketplaceartifact.RegistryRevisionManifest{}, fmt.Errorf("manifest digest %q: %w", manifestDigest, err)
+	}
+	raw, err := c.getRaw(ctx, c.requestURL([]string{"api", "v1", "manifests", manifestDigest}, nil))
+	if err != nil {
+		return marketplaceartifact.RegistryRevisionManifest{}, err
+	}
+	manifest, payload, err := marketplaceartifact.DecodeRegistryRevisionManifest(bytes.NewReader(raw))
+	if err != nil {
+		return marketplaceartifact.RegistryRevisionManifest{}, fmt.Errorf("decode registry revision manifest: %w", err)
+	}
+	if got := marketplaceartifact.RevisionDigest(payload); got != manifestDigest {
+		return marketplaceartifact.RegistryRevisionManifest{}, fmt.Errorf("registry revision manifest digest mismatch: got %s, want %s", got, manifestDigest)
+	}
+	return manifest, nil
 }
 
 // getRaw performs a GET and returns the response body bytes for non-JSON endpoints.

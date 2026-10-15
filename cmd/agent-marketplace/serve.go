@@ -77,6 +77,7 @@ are "worker" (background indexing), "api" (HTTP API), and "all" (both).`,
 			errCh := make(chan error, 2)
 
 			if role == "worker" || role == "all" {
+				worker.StartPlaceholderBackfill(ctx, deps)
 				wg.Add(1)
 				go func() {
 					defer wg.Done()
@@ -192,6 +193,10 @@ registry is provided, all configured registries are reindexed.`,
 				}
 			}
 
+			if err := worker.BackfillPlaceholders(ctx, deps); err != nil {
+				slog.Error("reindex failed", "reason", "placeholder archive backfill", "error", err)
+				reindexErrs = append(reindexErrs, fmt.Errorf("backfill placeholder archives: %w", err))
+			}
 			if err := meta.CheckIntegrity(ctx, blobs); err != nil {
 				slog.Error("reindex failed", "reason", "integrity check", "error", err)
 				reindexErrs = append(reindexErrs, err)

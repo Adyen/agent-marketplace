@@ -411,6 +411,9 @@ func refreshManaged(ctx context.Context, deps Deps, j store.Job, worker string, 
 	if err != nil {
 		return managedWorkFailure(workCtx, ErrManagedRefresh)
 	}
+	if err := ingest.ReuseStoredArchives(workCtx, deps.MetadataStore, deps.BlobStore, &revision); err != nil {
+		return managedWorkFailure(workCtx, ErrManagedRefresh)
+	}
 	if _, _, err := managedPreflight(workCtx, deps, j, worker, p); err != nil {
 		if workCtx.Err() != nil {
 			return managedWorkFailure(workCtx, ErrManagedRefresh)
