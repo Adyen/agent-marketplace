@@ -74,18 +74,18 @@ Each [release](https://github.com/Adyen/agent-marketplace/releases/latest)
 publishes one binary per platform:
 
 ```text
-agent-marketplace-<version>-darwin-arm64    # macOS, Apple silicon
-agent-marketplace-<version>-darwin-amd64    # macOS, Intel
-agent-marketplace-<version>-linux-amd64     # Linux, x86-64
-agent-marketplace-<version>-linux-arm64     # Linux, ARM64
+agent-marketplace-vX.Y.Z-darwin-arm64    # macOS, Apple silicon
+agent-marketplace-vX.Y.Z-darwin-amd64    # macOS, Intel
+agent-marketplace-vX.Y.Z-linux-amd64     # Linux, x86-64
+agent-marketplace-vX.Y.Z-linux-arm64     # Linux, ARM64
 ```
 
 There is no Windows build. Download the file for your platform, make it
 executable, and move it to a folder on your `PATH`:
 
 ```bash
-chmod +x agent-marketplace-<version>-darwin-arm64
-mv agent-marketplace-<version>-darwin-arm64 /usr/local/bin/agent-marketplace
+chmod +x agent-marketplace-vX.Y.Z-darwin-arm64
+mv agent-marketplace-vX.Y.Z-darwin-arm64 /usr/local/bin/agent-marketplace
 ```
 
 If `mv` reports "permission denied", or `/usr/local/bin` does not exist, see
@@ -110,7 +110,7 @@ select the `v4.x.x` tags for this module path. Go places the binary in
 ### Build from source
 
 Building from source also requires Go 1.26.9 or newer. To build a release,
-check out its tag first (for example `git checkout <version>`).
+check out its tag first (for example `git checkout vX.Y.Z`).
 
 ```bash
 # Build the local binary (./agent-marketplace)
