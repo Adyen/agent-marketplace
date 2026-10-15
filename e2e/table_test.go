@@ -720,6 +720,61 @@ resources: {team: {include: [hook/SessionStart-command, hook/SessionStart-comman
 			{Args: []string{"sync", "--check"}, MustPass: true, OutNotContains: []string{"multiple registries"}, PathsUnchanged: []string{"/root/.factory/skills/shared", "/workspace/.factory/skills/shared"}},
 		},
 	},
+	// spec: resource-selection/unqualified-member-retains-the-collection-owner
+	{
+		Name: "collection/unqualified_repo_member_keeps_scope",
+		Desc: "Given an unselected user entry and a repository collection at the same registry location, When syncing, Then the member is installed only in the repository",
+		Registries: []RegistryDef{{Name: "shared-bundle", Skills: []Skill{{Name: "shared", Description: "Repository collection member"}},
+			Files: map[string]string{"collections/bundle/COLLECTION.yaml": "name: bundle\nresources:\n  - name: shared\n"}}},
+		GlobalCfg: "apiVersion: agent-marketplace/v4\nharnesses: [factory]\nsources: {user: {git: '{{REG:shared-bundle}}', ref: main}}\n",
+		RepoCfg:   "apiVersion: agent-marketplace/v4\nsources: {repo: {git: '{{REG:shared-bundle}}', ref: main}}\nresources: {repo: {include: [collection/bundle]}}\n",
+		Steps: []Step{
+			{Args: []string{"sync"}, MustPass: true, OutNotContains: []string{"multiple registries"},
+				Symlinks:     []string{"/workspace/.factory/skills/shared"},
+				FilesAbsent:  []string{"/root/.factory/skills/shared"},
+				FileContains: map[string]string{"/workspace/.factory/skills/shared/SKILL.md": "Repository collection member"}},
+			{Args: []string{"sync", "--check"}, MustPass: true, PathsUnchanged: []string{"/workspace/.factory/skills/shared"},
+				FilesAbsent: []string{"/root/.factory/skills/shared"}},
+		},
+	},
+	// spec: resource-selection/same-collection-remains-selected-in-both-install-scopes
+	{
+		Name: "collection/unqualified_members_keep_both_scopes",
+		Desc: "Given the same collection selected in user and repository configuration, When syncing, Then both scopes materialize its member without collisions",
+		Registries: []RegistryDef{{Name: "shared-bundle", Skills: []Skill{{Name: "shared", Description: "Shared collection member"}},
+			Files: map[string]string{"collections/bundle/COLLECTION.yaml": "name: bundle\nresources:\n  - name: shared\n"}}},
+		GlobalCfg: "apiVersion: agent-marketplace/v4\nharnesses: [factory]\nsources: {user: {git: '{{REG:shared-bundle}}', ref: main}}\nresources: {user: {include: [collection/bundle]}}\n",
+		RepoCfg:   "apiVersion: agent-marketplace/v4\nsources: {repo: {git: '{{REG:shared-bundle}}', ref: main}}\nresources: {repo: {include: [collection/bundle]}}\n",
+		Steps: []Step{
+			{Args: []string{"sync"}, MustPass: true, OutNotContains: []string{"multiple registries"},
+				Symlinks: []string{"/root/.factory/skills/shared", "/workspace/.factory/skills/shared"},
+				FileContains: map[string]string{
+					"/root/.factory/skills/shared/SKILL.md":      "Shared collection member",
+					"/workspace/.factory/skills/shared/SKILL.md": "Shared collection member",
+				}},
+			{Args: []string{"sync", "--check"}, MustPass: true, OutNotContains: []string{"multiple registries"},
+				PathsUnchanged: []string{"/root/.factory/skills/shared", "/workspace/.factory/skills/shared"}},
+		},
+	},
+	// spec: resource-selection/unqualified-required-member-retains-required-policy
+	{
+		Name: "collection/unqualified_required_member_keeps_policy",
+		Desc: "Given an optional organization entry and a required user collection at the same location, When syncing with a competing repository resource, Then required policy prevents repository shadowing",
+		Registries: []RegistryDef{{Name: "shared-bundle", Skills: []Skill{{Name: "shared", Description: "Required collection member"}},
+			Files: map[string]string{"collections/bundle/COLLECTION.yaml": "name: bundle\nresources:\n  - name: shared\n"}}},
+		OrgCfg:    "apiVersion: agent-marketplace/v4\nsources: {org: {git: '{{REG:shared-bundle}}', ref: main}}\n",
+		GlobalCfg: "apiVersion: agent-marketplace/v4\nharnesses: [factory]\nsources: {user: {git: '{{REG:shared-bundle}}', ref: main}}\nresources: {user: {include: [collection/bundle], required: true}}\n",
+		RepoCfg:   "apiVersion: agent-marketplace/v4\nsources: {repo: {directory: ./resources}}\nresources: {repo: {include: [skill/shared]}}\n",
+		Steps: []Step{
+			{Action: ActionWriteFile, Path: "/workspace/resources/skills/shared/SKILL.md", Body: (Skill{Name: "shared", Description: "Optional repository selection"}).SkillFile()},
+			{Args: []string{"sync"}, MustPass: true, OutContains: []string{"multiple registries"},
+				Symlinks:     []string{"/root/.factory/skills/shared"},
+				FilesAbsent:  []string{"/workspace/.factory/skills/shared"},
+				FileContains: map[string]string{"/root/.factory/skills/shared/SKILL.md": "Required collection member"}},
+			{Args: []string{"sync", "--check"}, MustPass: true, PathsUnchanged: []string{"/root/.factory/skills/shared"},
+				FilesAbsent: []string{"/workspace/.factory/skills/shared"}},
+		},
+	},
 	// spec: resource-selection/required-selection-through-a-collection-suppresses-a-repository-selection
 	{
 		Name: "collision/required_collection_member_prevents_repo_shadow",
