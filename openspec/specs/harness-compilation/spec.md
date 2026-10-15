@@ -1,9 +1,7 @@
 # harness-compilation Specification
 
 ## Purpose
-Defines faithful native serialization and ingestion of canonical agent resources, keeping scalar metadata, unmodeled fields and target sidecars from granting authority beyond the explicit typed canonical resource.
-
-Defines faithful native serialization of canonical agent resources, keeping scalar metadata, target sidecars and extension fields from granting authority beyond the explicit canonical resource.
+Defines faithful native serialization and ingestion of canonical agent resources, keeping scalar metadata, unmodeled fields, target sidecars and extension fields from granting authority beyond the explicit typed canonical resource.
 
 ## Requirements
 
