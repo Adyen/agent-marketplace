@@ -9,7 +9,7 @@ Remove a resource you selected, turn off one that was selected for you, or overr
 
 `remove` edits v4 source/resource selections. Every existing consumer root, including organization and personal-local, must declare exact v4; fragments may omit the version or declare exact v4. Unsupported input refuses before new acquisition, config/lock publication, or harness changes. [Convert older configurations before upgrading](./migrate-configuration.md). Removing hosted Marketplace resources also involves the owning layer's lock; see [current limits](../explanation/user-journeys.md#before-following-a-journey).
 
-After each change, `remove` syncs, so the resource's files disappear from the harness folders right away.
+After each change, `remove` syncs and reconciles the remaining selection in the harness folders.
 
 ## 1. Remove an explicit selection
 
@@ -56,6 +56,8 @@ Remove only the repository occurrence:
 ```bash
 agent-marketplace remove code-review --scope repo
 ```
+
+Each prints `Removed code-review` and syncs the remaining selection. Another scope or a hosted collection can keep the resource installed, so verify the harness folders with `agent-marketplace status` rather than assuming every file vanished.
 
 When a resource comes from your user or organization configuration and you omit `--scope`, the CLI writes the change to `~/.agents/config.yaml` and says that it applies across all repositories. You cannot exclude such a resource with `--scope repo` or `--scope local`; the CLI refuses and suggests the scope that works.
 

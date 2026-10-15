@@ -44,12 +44,22 @@ The command creates `~/.agents/config.yaml` and prints its path:
 Initialized user personal config: <home>/.agents/config.yaml
 ```
 
-If it prints `User personal config already initialized.` instead, you already have a personal configuration. Step 3 replaces that file, and the `sync` after it removes anything your old configuration installed into your personal harness folders. Copy the configuration and its lockfile first so you can [put them back](#restore-your-previous-configuration) later. The second command prints an error if you have no lockfile, which is fine:
+If it prints `User personal config already initialized.` instead, you already have a personal configuration. Step 3 replaces that file, and the `sync` after it removes anything your old configuration installed into your personal harness folders. Copy the configuration first, and its lockfile if you have one:
 
 ```bash
 cp ~/.agents/config.yaml ~/.agents/config.yaml.bak
-cp ~/.agents/lock.yaml ~/.agents/lock.yaml.bak
+if [ -f ~/.agents/lock.yaml ]; then cp ~/.agents/lock.yaml ~/.agents/lock.yaml.bak; fi
 ```
+
+If you made these copies, you can undo the tutorial afterwards. Restore the configuration, then restore your lockfile, or remove the tutorial's lockfile if you had none, and sync:
+
+```bash
+cp ~/.agents/config.yaml.bak ~/.agents/config.yaml
+if [ -f ~/.agents/lock.yaml.bak ]; then cp ~/.agents/lock.yaml.bak ~/.agents/lock.yaml; else rm -f ~/.agents/lock.yaml; fi
+agent-marketplace sync
+```
+
+[Back up and restore machine resources](../how-to/back-up-and-restore-machine-resources.md) covers the fuller procedure.
 
 Check which harness is selected:
 
@@ -163,19 +173,7 @@ You did three things:
 2. added Anthropic's repository and the `frontend-design` selection to your personal configuration; and
 3. ran `sync`, which wrote the skill into Claude Code's personal folder and recorded the commit in `~/.agents/lock.yaml`.
 
-This tutorial follows the repository's `main` branch to keep the first installation simple. The [lockfile](../glossary.md#lockfile) keeps you on the recorded commit until you run `agent-marketplace update`. For setups that other people reproduce, set the registry ref to a release tag or a commit. The [reproducibility and lockfiles explanation](../explanation/reproducibility-and-lockfiles.md) describes how the lockfile works.
-
-## Restore your previous configuration
-
-If you made copies in step 1, put them back and sync:
-
-```bash
-cp ~/.agents/config.yaml.bak ~/.agents/config.yaml
-cp ~/.agents/lock.yaml.bak ~/.agents/lock.yaml
-agent-marketplace sync
-```
-
-This reinstalls what your old configuration selected. It also removes `frontend-design` again, unless your old configuration selected it too.
+This tutorial follows the repository's `main` branch. The [lockfile](../glossary.md#lockfile) keeps you on the recorded commit until you run `agent-marketplace update`; the [reproducibility and lockfiles explanation](../explanation/reproducibility-and-lockfiles.md) describes how that works and when to pin a tag or commit instead.
 
 ## Next steps
 

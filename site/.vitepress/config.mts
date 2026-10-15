@@ -75,7 +75,6 @@ export default defineConfig({
         { text: 'Terminal basics', link: `${DOCS_PATH}terminal-basics` },
         { text: 'Install', link: `${DOCS_PATH}install` },
         { text: 'Quick start', link: `${DOCS_PATH}quick-start` },
-        { text: 'User journeys', link: `${DOCS_PATH}explanation/user-journeys` },
         { text: 'Glossary', link: `${DOCS_PATH}glossary` },
         {
           text: 'Tutorials',
@@ -184,6 +183,7 @@ export default defineConfig({
         {
           text: 'Explanation',
           items: [
+            { text: 'User journeys', link: `${DOCS_PATH}explanation/user-journeys` },
             { text: 'How agent-marketplace works', link: `${DOCS_PATH}explanation/how-agent-marketplace-works` },
             { text: 'Sources and resources', link: `${DOCS_PATH}explanation/sources-and-resources` },
             { text: 'Scopes, selection, and precedence', link: `${DOCS_PATH}explanation/scopes-selection-and-precedence` },

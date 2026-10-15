@@ -86,8 +86,6 @@ Installed 2  Removed 0  Malformed 0  Errors 0
 
 "Installed" counts files written. The skill itself is one of them; the other is a Claude Code manifest that lists the installed skills.
 
-If you had no user configuration yet, this first sync also creates `~/.agents/config.yaml` with `harnesses: [factory, windsurf]`. The project's own `harnesses:` list takes precedence, so this sync still writes only for Claude Code. To change your personal harness list, press `H` in the TUI or edit that file.
-
 If sync fails:
 
 - An error that mentions `git` usually means Git isn't installed or can't reach GitHub. Check `git --version` and your network connection.
@@ -181,7 +179,7 @@ On a fresh CI runner, run `agent-marketplace sync --locked`. It downloads the ex
 - [Configure multiple harnesses](./how-to/configure-multiple-harnesses.md): add Cursor, Codex, Devin, or others alongside Claude Code.
 - [Install your first skill for Claude Code](./tutorials/install-your-first-skill.md): the same flow using only commands, installed for your user instead of one project.
 - [Install from a hosted Marketplace](./how-to/install-from-a-marketplace.md): connect a Marketplace, or install from a browser URL.
-- [User journeys](./explanation/user-journeys.md): share your setup with a team, keep it updated, or remove resources and recover from errors.
+- [User journeys](./explanation/user-journeys.md): what each stage of a resource's life decides, from finding it to removing it.
 - [TUI reference](./reference/tui.md): every key and modal action.
 - [Command-line reference](./reference/cli.md): `list`, `install`, `remove`, `sync`, `update`, `status`, and every flag.
 - [Sources and resources](./explanation/sources-and-resources.md): what the `sources` and `resources` parts of the configuration do.

@@ -26,7 +26,7 @@ metadata:
 Validate and sanitize user input.
 ```
 
-Consumers select every resource with a tag through `tags:` in a resource group. Commands and subagents written as Markdown with front matter take `metadata.tags` in the same place. `agent-marketplace list --from .` shows the tags in the `TAGS (metadata)` column.
+Consumers select every resource with a tag through `tags:` in a resource group. Commands and subagents written as Markdown with front matter take `metadata.tags` in the same place.
 
 ## 2. Add a license
 
@@ -40,12 +40,24 @@ license: Apache-2.0
 metadata:
   tags:
     - security
+    - frontend
 ---
 ```
 
 ## 3. Declare prerequisites
 
 If the resource needs another resource installed, declare it under `metadata.requires`. See [Declare resource prerequisites](./declare-resource-prerequisites.md) and the [resource prerequisites reference](../../reference/resource-prerequisites.md).
+
+## 4. Verify the metadata
+
+From the registry root, run `agent-marketplace list --from .`. The command prints a table whose `TAGS (metadata)` column shows the declared tags; typical output:
+
+```text
+REGISTRY  KIND   NAME           TAGS (metadata)    STATUS
+.         skill  secure-inputs  security,frontend  available
+```
+
+The `license` field does not appear in `list` output; inspect the file's front matter to check it. The [resource metadata reference](../../reference/resource-metadata.md) lists the accepted fields.
 
 ## Boundaries
 

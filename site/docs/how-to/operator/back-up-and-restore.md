@@ -38,6 +38,8 @@ docker compose run --rm --no-deps --entrypoint /app/agent-marketplace app --vers
 docker compose start app
 ```
 
+Expected result: `./backups/` holds `marketplace-<date>.db`, `blobs-<date>.tar.gz`, and `version-<date>.txt`. The `sqlite3` and `tar` steps print nothing on success.
+
 The helper mounts the volume read-write. The database uses SQLite's write-ahead log (WAL), and SQLite must be able to create its `-wal` and `-shm` files next to the database even to read it. The final `chown` gives any file the helper created back to the container user.
 
 The volume name comes from the Compose project name (`agent-marketplace-sqlite` in the repository's `compose.yaml`). If your project uses a different name, find the volume with `docker volume ls -f name=marketplace-data` and adjust the commands.
@@ -61,6 +63,8 @@ docker run --rm \
 docker compose start app
 ```
 
+Expected result: the restore commands print nothing on success, and `docker compose start` reports the `app` container started.
+
 The container images run as UID and GID 1000, which is why the restore sets that owner. The restore deletes any leftover `-wal` and `-shm` files first, because SQLite would otherwise apply them to the restored database.
 
 ### Native service (systemd)
@@ -75,6 +79,8 @@ agent-marketplace --version > "/backups/version-$(date +%F).txt"
 systemctl start agent-marketplace
 ```
 
+Expected result: `/backups/` holds `marketplace-<date>.db`, `blobs-<date>.tar.gz`, and `version-<date>.txt`. The `sqlite3` and `tar` steps print nothing on success.
+
 Use SQLite's `.backup` command instead of `cp` on a live database file. If you snapshot the whole volume instead, capture the database and `blobs/` in the same snapshot.
 
 #### Restore
@@ -88,6 +94,8 @@ tar -C /var/lib/agent-marketplace -xzf /backups/blobs-<date>.tar.gz
 chown -R 1000:1000 /var/lib/agent-marketplace
 systemctl start agent-marketplace
 ```
+
+Expected result: the restore commands print nothing on success.
 
 Change the `chown` owner to the account your service runs as.
 

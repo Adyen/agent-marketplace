@@ -50,7 +50,7 @@ Commands and subagents written as Markdown with front matter read `metadata.tags
 
 ## `requires` item
 
-Each `metadata.requires` item is a map with `name` and optional `kind`, `registry`, and `path`, or a string shorthand (`mcp:docs-server`, or a bare name for a skill). An unmet prerequisite produces an advisory warning, never an error. The full declaration grammar, satisfaction rule, warning format, and exit status live in the [resource prerequisites reference](./resource-prerequisites.md).
+Each `metadata.requires` item is a map with `name` and optional `kind`, `registry`, and `path`, or a string shorthand (`mcp:docs-server`, or a bare name for a skill). An unmet prerequisite produces an advisory warning; only `sync --strict` (including `sync --strict --check`) fails on it. The full declaration grammar, satisfaction rule, warning format, and exit status live in the [resource prerequisites reference](./resource-prerequisites.md).
 
 ## Command marker
 
