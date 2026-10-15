@@ -4,7 +4,7 @@
 
 ### Ambiguous Windsurf identities and repeated rule keys are refused
 
-Windsurf ingestion collected workflows and rules into a map keyed by name, so a later file claiming the same name silently replaced an earlier one, for example a `deploy` workflow in `zzz.md` replacing the reviewed `deploy.md`. Every claimant of a repeated name within one workspace root is now suppressed with the new error `ingest.windsurf.duplicate-identity`; unrelated resources still convert, and the workspace root still overrides the user root. The tolerant `.mdc` frontmatter parser, used when strict YAML rejects Cursor's unquoted globs, kept the last value of a repeated key, so `alwaysApply: false` followed by `alwaysApply: true` applied the rule everywhere. It now rejects repeated keys, and the rule fails to load with the strict parser's error.
+Windsurf ingestion collected workflows and rules into a map keyed by name, so a later file claiming the same name silently replaced an earlier one, for example a `deploy` workflow in `zzz.md` replacing the reviewed `deploy.md`. Every claimant of a repeated name within one workspace root is now suppressed with the new error `ingest.windsurf.duplicate-identity`; unrelated resources still convert, the workspace root still overrides the user root, and a refused workspace name does not fall back to the user root's resource. The tolerant `.mdc` frontmatter parser, used when strict YAML rejects Cursor's unquoted globs, kept the last value of a repeated key, so `alwaysApply: false` followed by `alwaysApply: true` applied the rule everywhere. It now rejects repeated keys, and the rule fails to load with the strict parser's error.
 
 ### The Claude plugin form no longer drops a root-level SKILL.md
 

@@ -58,7 +58,6 @@ comparison in non-test code.
 | `ingest.windsurf.literal-path-preserved` | Literal Windsurf path preserved during MCP ingestion | Literal path values remain unchanged because there is no Claude-side canonical token for them |
 | `ingest.windsurf.mcp-env-normalized` | Windsurf MCP env interpolation normalized to canonical form | Windsurf ${env:VAR} was converted to canonical ${VAR} during ingestion so the IR is harness-neutral |
 | `ingest.windsurf.subagent-via-agents-md-skipped` | AGENTS.md was not synthesized into a Windsurf subagent | Windsurf has no subagent primitive; AGENTS.md remains external project guidance |
-| `ingest.windsurf.duplicate-identity` | Two Windsurf workflows or rules in one workspace root claim the same name; all of them were suppressed without choosing a winner | Give each workflow and rule a unique name |
 | `ingest.devin.bundle-manifest-synthesized` | Devin has no bundle manifest file; manifest synthesized | Devin roots carry no plugin manifest; bundle metadata is synthesized from the layout during ingestion |
 | `ingest.devin.local-override-ignored` | A Devin project-local personal override file was found and not ingested | Agent Marketplace neither reads nor writes .devin/config.local.json or .devin/mcp_config.local.json; move shared configuration into the non-local file |
 | `ingest.devin.mcp-env-normalized` | Devin MCP env interpolation normalized to canonical form | Devin ${env:VAR} was converted to canonical ${VAR} during ingestion so the IR is harness-neutral; compiling back to Devin restores ${env:VAR} |
@@ -602,6 +601,7 @@ key or a hook event name), the resource name, and content digests are reported.
 | `mcp.codex.security-unsupported` | Codex MCP output cannot preserve the requested authentication or transport semantics; server suppressed | Use documented Codex MCP fields or remove the unsupported setting explicitly |
 | `ingest.codex.load-resource-failed` | One malformed Codex resource or aggregate was skipped | Fix the reported native file; independent valid resources were retained |
 | `ingest.codex.duplicate-identity` | Duplicate Codex resource identity was suppressed without choosing a winner | Rename one duplicate native resource |
+| `ingest.windsurf.duplicate-identity` | Two Windsurf workflows or rules in one workspace root claim the same name; all of them were suppressed without choosing a winner | Give each workflow and rule a unique name |
 | `ingest.codex.hook-unsupported` | An unsupported native Codex hook event or handler was skipped | Use a documented Codex event with a command handler |
 | `ingest.codex.mcp-security-unsupported` | Security-sensitive native Codex MCP fields cannot be represented safely | Remove the unsupported restriction or keep the server in Codex format |
 | `ingest.codex.subagent-security-unsupported` | Authority-bearing native Codex subagent fields cannot be represented safely | Remove the unsupported restriction or keep the subagent in Codex format |

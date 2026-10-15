@@ -57,6 +57,7 @@ func loadWorkspace(src fs.FS, opts LoadOptions, sourceBase string) (*ingest.Bund
 		for name, rule := range loadedRules {
 			rules[name] = rule
 		}
+		dropDuplicateIdentities(rules, ruleDiags)
 
 		loadedCommands, workflowDiags, err := loadWorkflows(root)
 		if err != nil {
@@ -66,6 +67,7 @@ func loadWorkspace(src fs.FS, opts LoadOptions, sourceBase string) (*ingest.Bund
 		for name, command := range loadedCommands {
 			commands[name] = command
 		}
+		dropDuplicateIdentities(commands, workflowDiags)
 
 		loadedHooks, hookDiags, hookPath, err := loadHooksRoot(root, opts)
 		if err != nil {
@@ -220,11 +222,22 @@ func loadWorkflows(root workspaceRoot) (map[string]*ir.Command, []diag.Diagnosti
 // root already claimed it; a claimed name is marked so every claimant is
 // dropped rather than letting the later file win.
 func addUnique[T any](resources map[string]T, duplicates map[string]bool, name string, resource T) {
-	if _, claimed := resources[name]; claimed || duplicates[name] {
+	if _, claimed := resources[name]; claimed {
 		duplicates[name] = true
 		return
 	}
 	resources[name] = resource
+}
+
+// dropDuplicateIdentities removes a name refused in this root from the merged
+// map too, so an earlier root's resource cannot take the place of the
+// ambiguous override.
+func dropDuplicateIdentities[T any](merged map[string]T, diags []diag.Diagnostic) {
+	for _, d := range diags {
+		if d.Code == diag.CodeIngestWindsurfDuplicateIdentity {
+			delete(merged, d.Resource)
+		}
+	}
 }
 
 func duplicateIdentityDiagnostics[T any](resources map[string]T, duplicates map[string]bool) []diag.Diagnostic {
