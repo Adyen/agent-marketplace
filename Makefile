@@ -306,7 +306,7 @@ build-release:
 	CGO_ENABLED=0 $(GO) build -trimpath -ldflags "$(RELEASE_EXTRA_LDFLAGS)" -o $(BINARY) $(CMD)
 
 clean:
-	rm -rf $(DIST_DIR) $(BINARY)
+	rm -rf $(DIST_DIR) $(BINARY) $(GUI_BINARY)
 
 # Devin runtime probe suite (internal/devinprobe).
 #
@@ -387,9 +387,12 @@ site-docs-build:
 	@command -v pnpm >/dev/null || { echo "ERROR: pnpm is required for documentation builds" >&2; exit 1; }
 	cd $(SITE_DIR) && pnpm install --frozen-lockfile && pnpm run build:docs
 GUI_DIR := gui
+GUI_BINARY := agent-marketplace-gui
+GUI_CMD := ./cmd/agent-marketplace-gui
 gui-build:
 	@command -v pnpm >/dev/null || { echo "ERROR: pnpm is required for GUI builds" >&2; exit 1; }
 	cd $(GUI_DIR) && pnpm install --frozen-lockfile --ignore-scripts && pnpm run build
+	CGO_ENABLED=1 $(GO) build -tags desktop,production $(LDFLAGS) -o $(GUI_BINARY) $(GUI_CMD)
 
 # E2E test suite.
 # Runs inside a Docker container for local isolation (doesn't touch host env).

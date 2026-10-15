@@ -1,4 +1,5 @@
 /agent-marketplace
+/agent-marketplace-gui
 /.agents/skills/
 /.agents/config.local.yaml
 /.agents/*.dependencytxn.lock
