@@ -77,24 +77,7 @@ REGISTRY  KIND     NAME         TAGS (metadata)  STATUS
 .         command  release                       available
 ```
 
-The new resource shows `available`. To catch translation problems, convert the whole registry to another harness. `convert` takes the bundle root, not one resource folder:
-
-```bash
-agent-marketplace convert \
-  --from claude \
-  --to factory \
-  --out /tmp/my-registry-factory \
-  .
-```
-
-Typical output when the registry holds the example skill and command above:
-
-```text
-Converted claude -> factory into /tmp/my-registry-factory
-Written 2, Skipped 0, Removed 0, Diagnostics 0
-```
-
-When one resource fails, the command still writes the resources that converted cleanly. It prints a `skipped <kind> "<name>" (<codes>)` line for each failure and exits nonzero. Fix every reported diagnostic before you commit. To check every harness in CI, see [How to validate a registry in CI](./validate-a-registry-in-ci.md).
+The new resource shows `available`. To check every harness in CI, see [How to validate a registry in CI](./validate-a-registry-in-ci.md).
 
 ## 4. Commit, tag, and push
 

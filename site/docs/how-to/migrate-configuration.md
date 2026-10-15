@@ -2,7 +2,7 @@
 
 The v4-only CLI requires exact `apiVersion: agent-marketplace/v4` in every existing consumer root: organization, user-personal, repository, and personal-local. It has no `migrate` command, startup conversion prompt, TUI migration modal, or legacy reader/editor. Convert your complete installation **before replacing the older binary**.
 
-This page keeps its original URL for upgrade guidance. The migration commands below belong to an **older released binary that provides the migrator**, not the new CLI. The harness layout [`convert`](./convert-a-harness-layout.md) command is independent and stays in the new CLI.
+This page keeps its original URL for upgrade guidance. The migration commands below belong to an **older released binary that provides the migrator**, not the new CLI.
 
 ## 1. Inventory and back up every layer
 

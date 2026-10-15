@@ -17,7 +17,7 @@ Running `agent-marketplace` with no command starts the terminal UI when standard
 
 Consumer operations require exact `apiVersion: agent-marketplace/v4` in every existing root, including organization and personal-local. Included fragments may omit the field or declare exact v4. Missing root versions fail with `v4.api-version-required`; unsupported or invalid explicit values fail with `v4.api-version`, identifying the authored file and `apiVersion` field. No consumer operation falls back to a legacy reader, and neither CLI startup nor the TUI offers conversion. There is no shipped `migrate` command. [Convert with an older released migrator before upgrading](../how-to/migrate-configuration.md); organization configuration must be converted externally.
 
-Every command checks all the config files and includes it needs, including for ad hoc `--from` operations, before it downloads anything or writes config, locks, or harness files. If an earlier command was interrupted mid-write, read-only commands report `dependency.recovery-required` and do not replay it. Commands that can recover may finish that earlier write first, which changes the files it recorded, but start no new work on unsupported input. Apart from that recovery, a refused command leaves existing files and their metadata untouched and creates no missing config file or lock; it may still write logs. Commands that don't use consumer config, such as `convert`, `serve`, help, and completion, need no config file.
+Every command checks all the config files and includes it needs, including for ad hoc `--from` operations, before it downloads anything or writes config, locks, or harness files. If an earlier command was interrupted mid-write, read-only commands report `dependency.recovery-required` and do not replay it. Commands that can recover may finish that earlier write first, which changes the files it recorded, but start no new work on unsupported input. Apart from that recovery, a refused command leaves existing files and their metadata untouched and creates no missing config file or lock; it may still write logs. Commands that don't use consumer config, such as `serve`, help, and completion, need no config file.
 
 ## Global flags
 
@@ -350,35 +350,6 @@ Each source declares its kind:
 - `marketplace` sources require a matching verified layer lock for explicit requests.
 
 The [configuration reference](configuration.md) documents writing source declarations and resource groups by hand. Named Git and directory selections and harness changes use the v4 CLI and TUI editors. The CLI rejects unknown fields, mixed source kinds, invalid locators, and Marketplace lock evidence that does not match. Writable-layer locks can be generated online for explicit hosted requests. When the organization lock is intentionally absent, the CLI fetches and verifies organization Marketplace requests online without writing an organization lock. Offline acquisition without a lock, hosted rebind, and dynamic-selector snapshots remain unsupported; v4-only loading does not enable new hosted options.
-
-## `convert`
-
-Reads one harness layout and writes an equivalent layout for another harness. It does not edit Agent Marketplace configuration.
-
-```text
-agent-marketplace convert --from <harness> --to <harness> <path> [flags]
-agent-marketplace convert --autodetect --to <harness> <path> [flags]
-```
-
-| Flag | Type | Required | Default | Description |
-|---|---|:---:|---|---|
-| `--from` | string | unless `--autodetect` | none | Source harness: `claude`, `codex`, `cursor`, `devin`, `factory`, `gemini`, or `windsurf`. |
-| `--autodetect` | boolean | no | `false` | Detects the source harness from layout markers instead of requiring `--from`. |
-| `--to` | string | yes | none | Target harness. Accepts the same seven values as `--from`. |
-| `--out` | path | no | `<path>-<to>` | Output directory. |
-| `--sync` | boolean | no | `false` | Uses sync write mode and deletes stale output files. Without it, conversion overwrites files and deletes nothing. |
-| `--dry-run` | boolean | no | `false` | Reports planned writes without changing output files. |
-
-The output names the source, target, output directory, and operation counts:
-
-```text
-Converted claude -> factory into plugin-factory
-Written 4, Skipped 0, Removed 0, Diagnostics 0
-```
-
-A partial conversion writes the resources that converted completely, prints `skipped <kind> "<name>" (<codes>)` for each skipped resource, skips pruning (`pruning was skipped because the conversion was partial`), and returns exit status 1. The command resolves source and output paths, including existing symlinks, and refuses when they are equal or one contains the other. It checks this before reading or changing either tree, including with `--sync`.
-
-Codex conversion refuses a destination that already contains shared `.codex/hooks.json` or `.codex/config.toml` files. Devin conversion also refuses a destination that already contains `mcp_config.json`, `hooks.v1.json`, or `config.json`, instead of merging into it. For both targets the command stages every file, validates the staged shared files, publishes them, and on failure rolls back only the files that this run published. One-shot conversion creates no [ownership state](../glossary.md#ownership-state) and never takes ownership of existing entries. `sync` does not take ownership of pre-existing entries either. Only an explicit `doctor --repair` can, and only when an entry's bytes exactly match the value sync would generate. Missing or corrupt ownership state makes sync refuse to change shared entries.
 
 ## `doctor`
 
