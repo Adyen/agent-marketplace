@@ -1116,6 +1116,8 @@ export interface components {
             license?: string;
             occurrence: components["schemas"]["ResourceOccurrence"];
             revocation?: components["schemas"]["Revocation"];
+            /** @description Immutable source provenance. It is omitted when the occurrence lacks trustworthy source provenance. */
+            source?: components["schemas"]["CatalogSource"];
         };
         Revocation: {
             /** Format: date-time */
