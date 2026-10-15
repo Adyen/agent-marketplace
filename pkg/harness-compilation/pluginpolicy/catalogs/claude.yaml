@@ -7,6 +7,10 @@ evidence:
     - https://code.claude.com/docs/en/plugins/manifest-reference
     - https://code.claude.com/docs/en/plugin-marketplaces
 accepts: [claude-plugin, agent-plugin]
+surfaces:
+  plugin:
+    subagent:
+      permissionMode: {block-member: true, code: plugin.member.restriction-unsupported}
 delivery:
   decompose: {status: verified}
   native: {status: unverified}

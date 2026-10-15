@@ -140,6 +140,10 @@ comparison in non-test code.
 | `doctor.devin.version-unsupported` | The installed Devin CLI is older than the 3000.3 compatibility floor | Sync does not require a Devin binary and is not blocked; upgrade the Devin CLI to 3000.3 or newer before relying on the generated output |
 | `doctor.devin.version-unknown` | A Devin CLI is installed but its version could not be established | The version probe failed, timed out, or printed no recognizable version; nothing is blocked, but 3000.3 compatibility could not be confirmed |
 | `doctor.repair.conflict-replaceable` | An existing unmanaged aggregate entry has the same key as a desired entry but a different value, so it is neither an exact adoption match nor an evidence-backed orphan | Run doctor --repair on a terminal to confirm replacing it with the generated entry; the existing entry is preserved until you confirm, a fresh safety backup is taken first, and --yes never replaces it |
+| `plugin.format.field-ignored` | A manifest field the plugin format does not model was reported and ignored; the package still loads | Remove the field, or move client-specific data under the extensions namespace |
+| `plugin.format.component-invalid` | A fixed plugin component location is not present in its expected form; that component type is skipped while other component types load | Restore the documented component location or remove the stray entry |
+| `plugin.member.invalid` | A plugin member or entry failed validation and was skipped while its siblings loaded | Fix the reported member; the package keeps the members that are valid |
+| `plugin.member.field-omitted` | A plugin member field the harness plugin surface marks omit-field was dropped before lowering; the member still installs | Remove the field, or deliver to a target that can represent it |
 
 ### Hook review output
 
@@ -663,6 +667,17 @@ key or a hook event name), the resource name, and content digests are reported.
 | `materialize.devin.symlink-required` | Retired; older versions refused file mode for Devin | No longer emitted; Devin supports both file and symlink modes through the generic materializer |
 | `doctor.repair.failed` | An authorized `doctor --repair` action failed; the aggregate was left exactly as found | This is the "partial repair failure" half of the repair contract and exits 1; nothing was partially written, so re-running the repair is safe |
 | `hook.native-tolerance-refused` | A native hook file was malformed, ambiguous, or unsafe to inspect, so the affected target was left exactly as found | Fix the reported native hook file by hand; no native or legacy hook bytes were changed |
+| `plugin.format.unsupported` | The source is not a recognized plugin package format, or the destination harness does not accept it | Use a supported package format and a harness whose plugin catalog accepts it |
+| `plugin.format.version-unsupported` | The plugin package declares a format version no decoder supports; the package is not installable | Pin the package to a supported format version |
+| `plugin.format.manifest-invalid` | Required plugin manifest data is missing or invalid; the package was rejected before component discovery | Fix the manifest's required fields |
+| `plugin.package.path-escape` | A plugin package path resolves outside the package root or a symlink cannot be resolved inside it (escape, dangling, or cyclic link); the package was rejected | Remove the escaping or unresolvable path or symlink; package content must stay inside the plugin root |
+| `plugin.package.symlink-cycle` | A plugin package symlinked directory resolves to the package root or an ancestor directory of the link; the package was rejected | Remove the cyclic symlink; links resolving elsewhere inside the root are allowed |
+| `plugin.package.special-file` | A plugin package entry is a device, socket, or FIFO rather than a regular file or directory; the package was rejected | Remove the special file; a plugin package carries regular files and directories only |
+| `plugin.package.case-collision` | Two plugin package paths differ only by letter case and cannot coexist on case-insensitive filesystems; the package was rejected | Rename one of the colliding paths |
+| `plugin.package.oversized` | A plugin package file exceeds the bounded-read limit; the package was rejected | Reduce the file below the read limit |
+| `plugin.member.literal-unrepresentable` | A plugin MCP member carries placeholder-like text the destination harness would reinterpret, and no literal escape exists; the member was blocked | Rewrite the value without placeholder-like text, or deliver to a target that can carry it literally |
+| `plugin.member.restriction-unsupported` | A plugin member field is a restriction the destination plugin surface cannot enforce; the member was blocked rather than installed without it | Remove the restricted field, or deliver to a target that enforces it |
+| `plugin.compile.package-required` | A plugin resource reached the per-resource Compile boundary; plugins compile through the package compile entry point | Call the package compile entry point instead of Compile |
 
 ### Devin doctor and repair codes
 
