@@ -422,8 +422,11 @@ func TestRemoveBlockedManagedSkillRefusals(t *testing.T) {
 		{"regular", "factory", "regular", materialize.ErrManagedLinkCleanupConflict},
 		{"parent", "factory", "parent", materialize.ErrManagedLinkCleanupConflict},
 		{"file mode", "factory", "file", materialize.ErrOwnedCleanupUnsupported},
-		{"mixed", "factory", "mixed", materialize.ErrOwnedCleanupUnsupported},
-		{"claude", "claude", "claude", materialize.ErrOwnedCleanupUnsupported},
+		// Claude skills now produce only a resource link — no shared
+		// manifest — so a blocked mixed or Claude-only removal is plain
+		// link cleanup and succeeds.
+		{"mixed", "factory", "mixed", nil},
+		{"claude", "claude", "claude", nil},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -514,7 +517,11 @@ func TestRemoveBlockedManagedSkillRefusals(t *testing.T) {
 				t.Fatalf("error=%v want=%v output=%s", err, tc.want, out)
 			}
 			after := ownedCommandSnapshot(t, f.base)
-			if !reflect.DeepEqual(before, after) {
+			if tc.want == nil {
+				if _, statErr := os.Lstat(f.removePath); !os.IsNotExist(statErr) {
+					t.Fatalf("remove link remains: %v", statErr)
+				}
+			} else if !reflect.DeepEqual(before, after) {
 				t.Fatalf("refusal changed state: before=%v after=%v", before, after)
 			}
 		})
@@ -710,7 +717,9 @@ func TestRemoveBlockedManagedResourceRefusals(t *testing.T) {
 		want                       error
 	}{
 		{"factory", "repo", "command", "copy", materialize.ErrOwnedCleanupUnsupported},
-		{"claude", "repo", "subagent", "shared", materialize.ErrOwnedCleanupUnsupported},
+		// A Claude subagent now produces only a resource link — no shared
+		// manifest — so removal is plain link cleanup and succeeds.
+		{"claude", "repo", "subagent", "shared", nil},
 		{"gemini", "repo", "subagent", "generic", materialize.ErrOwnedCleanupUnsupported},
 		{"codex", "repo", "subagent", "generic", materialize.ErrOwnedCleanupUnsupported},
 		{"codex", "user", "subagent", "custom-root", materialize.ErrOwnedCleanupUnsupported},
@@ -776,7 +785,11 @@ func TestRemoveBlockedManagedResourceRefusals(t *testing.T) {
 			if !errors.Is(err, tc.want) {
 				t.Fatalf("error=%v want=%v output=%s", err, tc.want, out)
 			}
-			if after := ownedCommandSnapshot(t, f.base); !reflect.DeepEqual(before, after) {
+			if tc.want == nil {
+				if _, statErr := os.Lstat(f.removePath); !os.IsNotExist(statErr) {
+					t.Fatalf("remove link remains: %v", statErr)
+				}
+			} else if after := ownedCommandSnapshot(t, f.base); !reflect.DeepEqual(before, after) {
 				t.Fatal("refused resource cleanup mutated fixture")
 			}
 		})

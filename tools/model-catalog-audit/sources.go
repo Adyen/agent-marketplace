@@ -33,4 +33,4 @@ var sources = append([]source{
 	{Name: "gemini-subagents", Harness: "gemini", URL: "https://raw.githubusercontent.com/google-gemini/gemini-cli/main/docs/core/subagents.md", Kind: "watch", Fields: []string{"model"}},
 	{Name: "opencode-agents", Harness: "opencode", URL: "https://opencode.ai/docs/agents.md", Kind: "watch", Sections: []string{"Model"}},
 	{Name: "opencode-models", Harness: "opencode", URL: "https://opencode.ai/docs/models.md", Kind: "watch", Sections: []string{"Set a default"}},
-}, hookToolSources...)
+}, append(hookToolSources, pluginSources...)...)

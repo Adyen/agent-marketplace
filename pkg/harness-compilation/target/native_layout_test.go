@@ -94,30 +94,21 @@ func TestNativeAggregatePathRefusesScopeVariant(t *testing.T) {
 }
 
 // TestClaudeNativeLayoutIsAvailable pins the Claude descriptor: one
-// whole-root partition whose aggregates include the plugin manifest shared by
-// skills and subagents.
+// whole-root partition that retires the plugin manifest rather than writing
+// it for skills and subagents.
 func TestClaudeNativeLayoutIsAvailable(t *testing.T) {
 	want := NativeLayout{Partitions: []NativePartition{
 		{
 			ID:         "default",
 			Prefix:     ".",
-			Components: []string{"skills", "commands", "agents", "hooks", "hook-support", ".claude-plugin"},
+			Components: []string{"skills", "commands", "agents", "hooks", "hook-support"},
+			Retired:    []string{".claude-plugin/plugin.json"},
 			ResourcePaths: map[ir.ResourceKind]string{
 				ir.KindSkill:    "skills/%s/SKILL.md",
 				ir.KindCommand:  "commands/%s.md",
 				ir.KindSubagent: "agents/%s.md",
 			},
 			Aggregates: []NativeAggregate{
-				{
-					Kind:    ir.KindSkill,
-					Project: NativeAggregateFile{Path: ".claude-plugin/plugin.json", Member: "skills"},
-					User:    NativeAggregateFile{Path: ".claude-plugin/plugin.json", Member: "skills"},
-				},
-				{
-					Kind:    ir.KindSubagent,
-					Project: NativeAggregateFile{Path: ".claude-plugin/plugin.json", Member: "agents"},
-					User:    NativeAggregateFile{Path: ".claude-plugin/plugin.json", Member: "agents"},
-				},
 				{
 					Kind:       ir.KindHook,
 					Shape:      HookShapeMatcherGroups,
@@ -144,8 +135,8 @@ func TestClaudeNativeLayoutIsAvailable(t *testing.T) {
 	if got, ok := NativeResourcePath(TargetClaude, ir.KindCommand, "ship"); !ok || got != "commands/ship.md" {
 		t.Errorf("NativeResourcePath(claude, command, ship) = %q, %v; want commands/ship.md, true", got, ok)
 	}
-	if got, ok := NativeAggregatePath(TargetClaude, ir.KindSubagent); !ok || got != ".claude-plugin/plugin.json" {
-		t.Errorf("NativeAggregatePath(claude, subagent) = %q, %v; want .claude-plugin/plugin.json, true", got, ok)
+	if got, ok := NativeAggregatePath(TargetClaude, ir.KindSubagent); ok || got != "" {
+		t.Errorf("NativeAggregatePath(claude, subagent) = %q, %v; want no aggregate", got, ok)
 	}
 }
 

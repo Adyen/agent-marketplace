@@ -260,7 +260,6 @@ func TestLoadBundle_WorkspaceFormCompilesToClaude(t *testing.T) {
 	}
 
 	expectedPaths := []string{
-		".claude-plugin/plugin.json",
 		".mcp.json",
 		"agents/reviewer.md",
 		"commands/my-cmd.md",

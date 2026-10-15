@@ -1,9 +1,0 @@
-{
-  "agents": [
-    {
-      "description": "Demo agent for golden testing",
-      "effort": "high",
-      "name": "demo-agent"
-    }
-  ]
-}
