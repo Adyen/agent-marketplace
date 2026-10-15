@@ -128,7 +128,7 @@ The [TUI reference](./reference/tui.md) lists every key.
 - `command not found` means the program is not on your `PATH`. See [Make a command available everywhere](#make-a-command-available-everywhere).
 - `permission denied` usually means one of two things. The file is not marked as a program yet (run `chmod +x` on it), or you are writing to a system folder, which needs `sudo` in front of the command. `sudo` asks for your computer password. Nothing appears on screen while you type it, which is normal.
 - Some commands report a problem through their exit status without printing much. Run `echo $?` right after a command: `0` means it succeeded, anything else means it did not. For example, `agent-marketplace sync --check` exits with `1` when the files on disk are out of date.
-- Add `--debug` to any `agent-marketplace` command to print detailed logs to the terminal while it runs. By default, logs also go to `~/.agent-marketplace/logs/agent-marketplace.log`. The [logging reference](./reference/logging.md) covers log levels and rotation.
+- Add `--debug` to any `agent-marketplace` command to print detailed logs to the terminal while it runs; while the TUI is on screen they go only to the log file. By default, logs also go to `~/.agent-marketplace/logs/agent-marketplace.log`. The [logging reference](./reference/logging.md) covers log levels and rotation.
 
 ## Next
 
