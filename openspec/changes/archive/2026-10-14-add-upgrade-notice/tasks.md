@@ -5,5 +5,5 @@
 - [x] Show the notice as a bounded TUI notification without delaying the first frame.
 - [x] Keep command-test and E2E sandboxes offline by setting `AGENT_MARKETPLACE_NO_UPDATE_CHECK`.
 - [x] Document the notice and opt-out in `README.md`, `site/docs/install.md`, and the environment reference.
-- [x] Verify scoped tests, `make validate`, `make spec-check`, and `make tui-qa`.
+- [x] Verify scoped tests, `make spec-check`, and `make tui-qa`. Locally, `make validate` hit the 120-second child-process limit in two unrelated heavy command tests that pass alone; CI's full test run is authoritative.
 - [x] Adversarially review the change and archive it.
