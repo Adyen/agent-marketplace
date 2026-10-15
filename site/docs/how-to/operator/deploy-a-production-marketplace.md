@@ -102,7 +102,7 @@ Output (the well-known document is truncated):
 
 `/healthz` shows that the process is running. `/readyz` returns `{"status":"ready"}` only when the database's recorded configuration authority matches `management.mode`, the stored revocations match the process's configuration, the metadata store is readable, and the blob store responds. The [health and metrics reference](../../reference/marketplace-health-and-metrics.md#readyz) describes each check.
 
-The worker queues a refresh for every registry when it starts. To run the first ingestion yourself and watch it finish, run this from the worker image:
+When it starts, the worker queues a refresh for every registry in the YAML `registries:` list (`file` mode) or for every active admin-managed registry (`database` mode, which ignores the YAML list). To run the first ingestion yourself and watch it finish, run this from the worker image:
 
 ```bash
 agent-marketplace serve reindex --config /app/marketplace.yaml

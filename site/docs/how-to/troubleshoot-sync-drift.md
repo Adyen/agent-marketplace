@@ -42,8 +42,8 @@ It prints the `Installed <n>  Removed <n>  Malformed <n>  Errors <n>` summary. W
 
 ## 3. Common causes and fixes
 
-|| Symptom | Cause | Fix |
-||---|---|---|
+| Symptom | Cause | Fix |
+|---|---|---|
 | `missing` in `sync --check` | Sync would write files that are absent or out of date, for example after you added a resource or deleted a generated folder | Run `agent-marketplace sync` |
 | `orphaned` in `sync --check`, or an `ORPHANED FILES` section | Generated files remain for resources that are no longer selected | Run `agent-marketplace sync` to remove them |
 | A `resources are provided by multiple registries` warning, or a `NAME COLLISIONS` section | Two registries provide a resource with the same name, and only one of them is written | Use `remove` with `--from` and `--path`, or add an `exclude` to the source you do not want |

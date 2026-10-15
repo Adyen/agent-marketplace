@@ -2,8 +2,8 @@
 
 Remove the files `agent-marketplace` generated in a repository or on your machine, without deleting your own files. The `deinit` command does the removal. `--scope` chooses what it covers:
 
-|| Scope | What `deinit` removes | What `--purge-config` also deletes |
-||---|---|---|
+| Scope | What `deinit` removes | What `--purge-config` also deletes |
+|---|---|---|
 | `user` (the default) | Machine-wide generated output, plus cached registry clones that your organization's configuration does not use | `~/.agents/config.yaml` and `~/.agents/lock.yaml` |
 | `repo` | Generated output in the current repository | `.agents/config.yaml` and `.agents/lock.yaml` |
 | `local` | The same repository output as `repo` | `.agents/config.local.yaml` and `.agents/lock.local.yaml` |
