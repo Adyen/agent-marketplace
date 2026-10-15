@@ -52,6 +52,7 @@ type lockMode struct {
 	reuseInstall         *preparedInstallLocks
 	warningSink          *[]error
 	marketplacePolicy    resolver.MarketplaceRevocationPolicy
+	selectionGuard       bool
 
 	allowTransientOrganization bool
 }
@@ -111,6 +112,12 @@ type exactLockSet struct {
 	bySource   map[string]lockedGit
 	byIdentity map[string][]lockedGit
 	catalogs   map[string]map[string]*catalog.Catalog
+}
+
+type snapshotJob struct {
+	source  config.Source
+	entries []config.RegistryEntry
+	doc     lockfile.Document
 }
 
 type lockedGit struct {
@@ -821,12 +828,8 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 	lockExpectations := map[string]dependencytxn.Generation{}
 	lockModes := map[string]os.FileMode{}
 	lockDesired := map[string][]byte{}
-	type snapshotJob struct {
-		source  config.Source
-		entries []config.RegistryEntry
-		doc     lockfile.Document
-	}
 	var snapshots []snapshotJob
+	var priorSnapshots []snapshotJob
 	var desiredFiles []dependencytxn.DesiredFile
 	configDesired := make(map[config.Source][]byte)
 	for source, snapshot := range configSnapshots {
@@ -891,6 +894,9 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 		stagedLock, hasStagedLock := stagedLocks[lockPath]
 		if hasStagedLock && !layer.Source.IsWritable() {
 			hasStagedLock = false
+		}
+		if exists && current != nil {
+			priorSnapshots = append(priorSnapshots, snapshotJob{source: layer.Source, entries: remote, doc: *current})
 		}
 		if len(remote) > 0 || exists || hasStagedLock {
 			lockExpectations[lockPath] = generation
@@ -1028,6 +1034,41 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 			return nil, changed, nil, err
 		}
 	}
+	exactSnapshot := func(target *exactLockSet, validate func() error) catalog.ExactSnapshotFunc {
+		return func(entry config.RegistryEntry) (string, string, error) {
+			if validate != nil {
+				if err := validate(); err != nil {
+					return "", "", err
+				}
+			}
+			canonical, err := canonicalRegistryURL(entry.URL)
+			if err != nil {
+				return "", "", err
+			}
+			key := sourceLockKey(entry.Source, canonical, entry.Ref)
+			locked, ok := target.bySource[key]
+			if !ok {
+				candidates := target.byIdentity[gitLockIdentity(canonical, entry.Ref)]
+				if len(candidates) != 1 {
+					return "", "", &lockLifecycleError{Code: "lock.lookup", Err: fmt.Errorf("no unambiguous lock for %s@%s", canonical, entry.Ref)}
+				}
+				locked = candidates[0]
+			}
+			if locked.unlocked {
+				return "", "", nil
+			}
+			catalogKey := canonical + "@" + locked.commit.String() + ":" + entry.Path
+			return locked.snapshot, catalogKey, nil
+		}
+	}
+	if mode.upgrade && mode.selectionGuard && len(lockDesired) > 0 {
+		if err := ensureSnapshotLease(); err != nil {
+			return nil, changed, nil, err
+		}
+		if err := guardNewlyMissingSelections(ctx, ws, mode.offline, priorSnapshots, overlays, lockDesired, &set, exactSnapshot); err != nil {
+			return nil, changed, nil, err
+		}
+	}
 	if !mode.check {
 		for _, layer := range ec.PresentLayers() {
 			snapshot, ok := configSnapshots[layer.Source]
@@ -1123,29 +1164,7 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 		return nil
 	}
 
-	option := catalog.WithVerifiedExactSnapshots(func(entry config.RegistryEntry) (string, string, error) {
-		if err := validateExactLocks(); err != nil {
-			return "", "", err
-		}
-		canonical, err := canonicalRegistryURL(entry.URL)
-		if err != nil {
-			return "", "", err
-		}
-		key := sourceLockKey(entry.Source, canonical, entry.Ref)
-		locked, ok := set.bySource[key]
-		if !ok {
-			candidates := set.byIdentity[gitLockIdentity(canonical, entry.Ref)]
-			if len(candidates) != 1 {
-				return "", "", &lockLifecycleError{Code: "lock.lookup", Err: fmt.Errorf("no unambiguous lock for %s@%s", canonical, entry.Ref)}
-			}
-			locked = candidates[0]
-		}
-		if locked.unlocked {
-			return "", "", nil
-		}
-		catalogKey := canonical + "@" + locked.commit.String() + ":" + entry.Path
-		return locked.snapshot, catalogKey, nil
-	}, set.catalogs)
+	option := catalog.WithVerifiedExactSnapshots(exactSnapshot(&set, validateExactLocks), set.catalogs)
 	hasExactConsumers := len(set.byIdentity) > 0
 	resultLease = func(ctx context.Context) (func(), error) {
 		if !hasExactConsumers {
