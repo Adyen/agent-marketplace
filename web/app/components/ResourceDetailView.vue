@@ -244,13 +244,15 @@ function formatValue(value: unknown): string {
       </div>
       <div data-testid="revision-row" class="mt-4 flex flex-col items-start gap-3 text-sm sm:flex-row sm:gap-9">
         <div v-if="sourceLink" data-testid="source-group" class="min-w-0 max-w-full">
-          <span data-testid="source-label" class="text-xs font-medium text-highlighted">Source</span>
-          <div class="mt-1 flex min-h-8 min-w-0 items-center gap-2">
+          <div class="flex items-center gap-2">
+            <span data-testid="source-label" class="text-xs font-medium text-highlighted">Source</span>
+          </div>
+          <div class="mt-1 flex min-h-8 min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5">
             <a data-testid="source-link" :href="sourceLink" target="_blank" rel="noopener noreferrer" :aria-label="`View source of ${name} in ${sourceLabel} (opens in a new tab)`" class="inline-flex min-w-0 items-center gap-1 text-sm font-medium text-primary underline-offset-4 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary">
-              <span class="truncate">{{ sourceLabel }}</span>
+              <span class="break-all">{{ sourceLabel }}</span>
               <UIcon name="i-lucide-external-link" class="size-3.5 shrink-0" data-testid="source-external-icon" aria-hidden="true" />
             </a>
-            <span data-testid="source-path" class="min-w-0 truncate font-mono text-xs text-muted" :title="resource.source?.path">{{ resource.source?.path }}</span>
+            <span data-testid="source-path" class="min-w-0 break-all font-mono text-xs text-muted" :title="resource.source?.path">{{ resource.source?.path }}</span>
           </div>
         </div>
         <div data-testid="revision-group" class="min-w-0">
