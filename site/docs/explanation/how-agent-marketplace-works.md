@@ -2,7 +2,7 @@
 
 `agent-marketplace` installs shared AI agent [resources](../glossary.md#resource), such as skills, commands, and MCP servers, into the coding tools you use. The docs call each of those tools a [harness](../glossary.md#harness): Claude Code, Cursor, Codex, and so on. You list the resources you want in a configuration file. The CLI finds them in a [registry](../glossary.md#registry) (a Git repository or a folder), pins each Git registry to one exact [commit](../glossary.md#commit), converts every resource into the format each harness reads, and writes the result into the folders where that harness looks.
 
-This page follows one `sync` from start to finish, then explains the design choices behind it.
+This page follows one `sync` from start to finish, then explains why it works this way.
 
 ## A worked example
 
@@ -14,7 +14,7 @@ Suppose `.agents/config.yaml` in your project selects the `frontend-design` skil
 4. It finds the resources. The CLI searches the downloaded files for the folder layout a harness uses, here Claude's `skills/<name>/SKILL.md`. Your selections, tags, collections, and excludes, plus the priority between configuration files, then decide that `frontend-design` is the one skill to install.
 5. It reads each selected resource into a harness-neutral description. `SKILL.md` becomes, in memory, "a skill named `frontend-design` with this description, this body, and these support files", with no trace of which harness's format it came from. Commands, subagents, hooks, and MCP servers each have their own description of this kind.
 6. It converts that description for each target. The skill becomes Claude Code's `.claude/skills/frontend-design/SKILL.md` and Cursor's `.cursor/skills/frontend-design/SKILL.md`. When a target has no way to express something (a field, a hook event, or a whole resource kind), the CLI reports a [diagnostic](../glossary.md#diagnostic) with a fixed code and leaves that part out. It does not guess.
-7. It writes the files into the harness folders. The product calls this step [materialize](../glossary.md#materialize). By default each skill, command, and subagent is a [symlink](../glossary.md#symlink) (a shortcut) to a converted copy in the cache; Factory commands are the exception and are written as regular files. Shared configuration files such as `.mcp.json` hold entries from several places, so the CLI edits only its own entries in them. Output that the CLI generated earlier, and that the configuration no longer selects, is removed.
+7. It writes the files into the harness folders. This step is called [materialize](../glossary.md#materialize). By default each skill, command, and subagent is a [symlink](../glossary.md#symlink) (a shortcut) to a converted copy in the cache; Factory commands are the exception and are written as regular files. Shared configuration files such as `.mcp.json` hold entries from several places, so the CLI edits only its own entries in them. Output that the CLI generated earlier, and that the configuration no longer selects, is removed.
 
 `install` edits a configuration file and then runs the same steps. `sync --check` resolves the selected content and runs conversion and materialization in dry-run mode to report drift. It does not update configuration or lockfiles or materialize harness files. An online check can contact a Marketplace; for locked Git sources, the exact snapshot must already be cached.
 
@@ -24,7 +24,7 @@ A registry can be written in any harness's layout. The CLI recognizes each layou
 
 ## Why resources pass through a neutral description
 
-The CLI supports seven harnesses. Converting directly from each one to each other one would take 42 separate converters. With a harness-neutral description in the middle, each harness needs only two pieces: one that reads its format into the description, and one that writes the description back out in its format. Any harness can then be a source or a target. The `convert` command uses the same machinery to convert a folder from one layout to another.
+The CLI supports seven harnesses. Direct conversion between every pair would need 42 converters. With a harness-neutral description in the middle, each harness needs two pieces: one that reads its format into the description, and one that writes the description back out. Any harness can then be a source or a target. The `convert` command uses the same machinery to convert a folder from one layout to another.
 
 The conversion keeps meaning, not exact bytes. A resource converted back to its own harness keeps the same content, though the written bytes need not be identical. Some conversions lose information because the target has no equivalent: Windsurf has no subagents, and Codex hooks support only some events. The CLI reports the loss as a diagnostic (codes such as `compile.*`, `skill.*`, and `hook.*`) instead of dropping it silently. See the [diagnostics reference](../reference/diagnostics.md).
 
