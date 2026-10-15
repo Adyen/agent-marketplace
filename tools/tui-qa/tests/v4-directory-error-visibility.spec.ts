@@ -45,12 +45,14 @@ test("keeps the v4 mutation error visible at narrow widths", async ({ terminal }
     await expect(terminal.getByText("r reload", { strict: false })).toBeVisible();
     await expect(terminal.getByText("q quit", { strict: false })).toBeVisible();
   });
-  // The diagnostic names the authored file, so at 50 columns the message wraps
-  // at a path-dependent position; assert on tokens that wrapping cannot split.
+  // The diagnostic names the authored file, so at 50x12 the message wraps at a
+  // path-dependent position and a long path can push the trailing hint below
+  // the viewport; assert on the title, a token wrapping cannot split, and the
+  // footer row that is always on screen.
   await step("open complete error diagnostic", () => terminal.write("e"), async () => {
     await expect(terminal.getByText("Errors (1)")).toBeVisible();
     await expect(terminal.getByText("unknown_field", { strict: false })).toBeVisible();
-    await expect(terminal.getByText("Press esc to close")).toBeVisible();
+    await expect(terminal.getByText("esc/e close", { strict: false })).toBeVisible();
   });
   assert.equal(fs.readFileSync(globalConfig, "utf8"), invalidConfig);
   await step("close error diagnostic", () => terminal.write("e"), async () => {
