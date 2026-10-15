@@ -2785,7 +2785,7 @@ func retireDisplacedWinnerWarnings(errs []error, displaced []skillOccurrence, in
 			continue
 		}
 		for _, runnerUp := range warning.RunnersUp {
-			if !slices.Contains(into.RunnersUp, runnerUp) {
+			if runnerUp != into.Winner && !slices.Contains(into.RunnersUp, runnerUp) {
 				into.RunnersUp = append(into.RunnersUp, runnerUp)
 			}
 		}

@@ -360,6 +360,22 @@ func TestResolveRequiredCollectionMemberDisplacesOptionalSameScopeSelection(t *t
 		assertMachineOutputIndependentOfRepository(t, sources, describeShared(got))
 	})
 
+	t.Run("carried runner-up from the required location is not reported", func(t *testing.T) {
+		sources := []sharedSource{
+			{url: mandatory, source: config.Organization, required: true, collection: true},
+			{url: "git@example.com:aaa.git", source: config.UserPersonal},
+			{url: mandatory, source: config.UserPersonal},
+		}
+		got, errs := resolveSharedSources(t, sources)
+		if described, want := describeShared(got), []string{requiredMember}; !slices.Equal(described, want) {
+			t.Fatalf("resolved %q, want %q", described, want)
+		}
+		if warnings, want := collisionWarnings(t, errs), []string{mandatory + " <- git@example.com:aaa"}; !slices.Equal(warnings, want) {
+			t.Fatalf("warnings %q, want %q", warnings, want)
+		}
+		assertMachineOutputIndependentOfRepository(t, sources, describeShared(got))
+	})
+
 	t.Run("same-source direct selection yields to the required member", func(t *testing.T) {
 		sources := []sharedSource{
 			{url: mandatory, source: config.Organization, required: true, collection: true},
