@@ -6,12 +6,12 @@ import (
 	"testing"
 )
 
-// TestE2E007_ConfigMergeUserRepoLayers verifies that user and repo configs
-// merge correctly, with repo taking precedence for conflicts. Specifically:
+// TestE2E007_ConfigMergeUserRepoLayers verifies that user and repo selections
+// retain scope-local authority even when both bind the same source:
 //   - User includes skill-a and skill-b from a registry.
 //   - Repo includes skill-b and skill-c from the same registry, but excludes skill-a.
-//   - After sync: skill-a should be excluded (repo exclude wins), skill-b and
-//     skill-c should be installed.
+//   - After sync: skill-a remains user-scoped but is absent from repo output;
+//     skill-b and skill-c are installed in the repo.
 func TestE2E007_ConfigMergeUserRepoLayers(t *testing.T) {
 	if isolateCommandTest(t) {
 		return
@@ -27,32 +27,27 @@ func TestE2E007_ConfigMergeUserRepoLayers(t *testing.T) {
 
 	// User config includes skill-a and skill-b.
 	writeConfig(t, filepath.Join(homeDir, ".agents", "config.yaml"), `
-apiVersion: agent-marketplace/v2
+apiVersion: agent-marketplace/v4
 harnesses:
   - factory
-registries:
-  - url: `+origin+`
-    ref: main
-    skills:
-      - skill-a
-      - skill-b
+sources:
+  hosted: {git: file://`+origin+`, ref: main}
+resources:
+  hosted: [skill/skill-a, skill/skill-b]
 `)
 
 	// Repo config includes skill-b and skill-c, excludes skill-a.
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
-apiVersion: agent-marketplace/v2
+apiVersion: agent-marketplace/v4
 harnesses:
   - factory
-registries:
-  - url: `+origin+`
-    ref: main
-    skills:
-      include:
-        - skill-b
-        - skill-c
-      exclude:
-        - skill-a
+sources:
+  hosted: {git: file://`+origin+`, ref: main}
+resources:
+  hosted:
+    include: [skill/skill-b, skill/skill-c]
+    exclude: [skill/skill-a]
 `)
 	withWorkingDir(t, repoRoot)
 
@@ -69,11 +64,13 @@ registries:
 	assertFactorySkillExists(t, repoRoot, "skill-b")
 	assertFactorySkillExists(t, repoRoot, "skill-c")
 
-	// skill-a should be excluded by repo's cross-layer exclude.
+	// The repo exclusion must not suppress the user's independently bound source.
 	assertFactorySkillAbsent(t, repoRoot, "skill-a")
+	assertFactorySkillExists(t, homeDir, "skill-a")
+	assertFactorySkillExists(t, homeDir, "skill-b")
 
-	// Status should show skill-a as excluded.
+	// Status must retain the user-scoped resource rather than dropping it.
 	if !strings.Contains(status, "skill-a") {
-		t.Fatalf("expected status to mention skill-a (excluded), got:\n%s", status)
+		t.Fatalf("expected status to mention user-scoped skill-a, got:\n%s", status)
 	}
 }

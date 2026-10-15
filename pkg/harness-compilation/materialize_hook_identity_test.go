@@ -171,6 +171,7 @@ func writeHookFixture(t *testing.T, outDir, file, contents string) string {
 // at the end of the array, which shuffled the user's entries forward and, since
 // a comment binds to the element that follows it, moved the user's comments
 // onto our generated entries.
+// spec: hook-resources/repeat-sync-is-byte-identical
 func TestMaterialize_NoOpHookSyncIsByteIdentical(t *testing.T) {
 	for _, tt := range hookNoOpCases {
 		t.Run(tt.name, func(t *testing.T) {

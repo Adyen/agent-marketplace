@@ -167,7 +167,7 @@ func TestConfiguredInstallUsesLockedInventoryWhenMutableRefMoves(t *testing.T) {
 
 	repo := filepath.Join(t.TempDir(), "repo")
 	configPath := filepath.Join(repo, ".agents", "config.yaml")
-	writeConfig(t, configPath, "\nharnesses: [claude]\nregistries:\n  - url: "+origin+"\n    ref: main\n")
+	writeConfig(t, configPath, "apiVersion: agent-marketplace/v4\nharnesses: [claude]\nsources:\n  origin: {git: file://"+origin+", ref: main}\n")
 	withWorkingDir(t, repo)
 	if output, err := executeCommand("sync"); err != nil {
 		t.Fatalf("seed sync: %v\n%s", err, output)
@@ -220,7 +220,7 @@ func TestAdHocInstallUsesLockedInventoryWhenMutableRefMoves(t *testing.T) {
 	commitAndPushAll(t, working, "inventory A")
 	repo := filepath.Join(t.TempDir(), "repo")
 	configPath := filepath.Join(repo, ".agents", "config.yaml")
-	writeConfig(t, configPath, "\nharnesses: [claude]\nregistries:\n  - url: "+origin+"\n    ref: main\n")
+	writeConfig(t, configPath, "apiVersion: agent-marketplace/v4\nharnesses: [claude]\nsources:\n  origin: {git: file://"+origin+", ref: main}\n")
 	withWorkingDir(t, repo)
 	if output, err := executeCommand("sync"); err != nil {
 		t.Fatalf("seed sync: %v\n%s", err, output)
@@ -280,7 +280,7 @@ func TestRemoveUsesLockedInventoryWhenMutableRefMoves(t *testing.T) {
 
 			repo := filepath.Join(t.TempDir(), "repo")
 			configPath := filepath.Join(repo, ".agents", "config.yaml")
-			writeConfig(t, configPath, "\nharnesses: [factory]\nregistries:\n  - url: "+origin+"\n    ref: main\n    commands: [review, keep]\n")
+			writeConfig(t, configPath, "apiVersion: agent-marketplace/v4\nharnesses: [factory]\nsources:\n  origin: {git: file://"+origin+", ref: main}\nresources:\n  origin: [command/review, command/keep]\n")
 			userPath := filepath.Join(home, ".agents", "config.yaml")
 			writeConfig(t, userPath, "\nharnesses: [factory]\n")
 			withWorkingDir(t, repo)
@@ -397,7 +397,7 @@ func TestInstallFromV4UserRefPathUsesCanonicalEditor(t *testing.T) {
 	}
 
 	repoRoot := filepath.Join(t.TempDir(), "repo")
-	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), "registries: []\n")
+	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), "apiVersion: agent-marketplace/v4\nsources: {}\n")
 	withWorkingDir(t, repoRoot)
 
 	output, err := executeCommand("install", "daily-sync", "--from", origin, "--ref", "add-skill-daily-sync", "--path", "teams/unified_platform/plugins/identity_platform/skills/daily-sync", "--scope", "user")

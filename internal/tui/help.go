@@ -1,15 +1,12 @@
 package tui
 
 import (
-	"errors"
 	"fmt"
 	"strings"
 
 	"charm.land/bubbles/v2/key"
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/cellbuf"
-
-	"github.com/Adyen/agent-marketplace/internal/resolver"
 )
 
 // helpSection groups a titled set of key bindings for the help overlay.
@@ -73,15 +70,28 @@ func renderErrors(m Model) string {
 		b.WriteString("\n")
 	}
 
+	writeRecovery := func(style lipgloss.Style, err error, category diagnosticCategory) {
+		if hint := diagnosticRemediation(err, category); hint != "" {
+			writeDiagnostic(style, "  → ", hint)
+		}
+	}
+	categories := m.diagnosticCategories()
+	categoryFor := func(severity diagnosticSeverity, err error) diagnosticCategory {
+		key := diagnosticCategoryKey{severity: severity, stableKey: stableDiagnosticKey(err)}
+		queue := categories[key]
+		if len(queue) == 0 {
+			return ""
+		}
+		categories[key] = queue[1:]
+		return queue[0]
+	}
+
 	if len(m.errs) > 0 {
 		b.WriteString(styleErrorTitle.Render(fmt.Sprintf("Errors (%d)", len(m.errs))))
 		b.WriteString("\n\n")
 		for _, err := range m.errs {
 			writeDiagnostic(textStyle(m.currentTheme()), "• ", err.Error())
-			var r resolver.Remediable
-			if errors.As(err, &r) {
-				writeDiagnostic(textStyle(m.currentTheme()), "  → ", r.Remediation())
-			}
+			writeRecovery(textStyle(m.currentTheme()), err, categoryFor(diagnosticError, err))
 		}
 	}
 
@@ -93,6 +103,7 @@ func renderErrors(m Model) string {
 		b.WriteString("\n\n")
 		for _, discoveryErr := range m.discoveryErrs {
 			writeDiagnostic(styleWarningMsg, "• ", discoveryErr.Error())
+			writeRecovery(styleWarningMsg, discoveryErr, diagnosticCatalog)
 		}
 	}
 
@@ -105,10 +116,7 @@ func renderErrors(m Model) string {
 		for _, w := range m.warnings {
 			writeDiagnostic(styleWarningMsg, "• ", w.Error())
 			// Print remediation hint for remediable warnings
-			var r resolver.Remediable
-			if errors.As(w, &r) {
-				writeDiagnostic(styleWarningMsg, "  → ", r.Remediation())
-			}
+			writeRecovery(styleWarningMsg, w, categoryFor(diagnosticWarning, w))
 		}
 	}
 

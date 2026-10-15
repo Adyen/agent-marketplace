@@ -31,19 +31,17 @@ const (
 	diagnosticMutation        diagnosticCategory = "mutation"
 	diagnosticSync            diagnosticCategory = "sync"
 	diagnosticUpdate          diagnosticCategory = "update"
-	diagnosticMigration       diagnosticCategory = "migration"
 	diagnosticEditor          diagnosticCategory = "editor"
 )
 
 type operationKind string
 
 const (
-	operationMutation  operationKind = "mutation"
-	operationTargets   operationKind = "targets"
-	operationSync      operationKind = "sync"
-	operationUpdate    operationKind = "update"
-	operationMigration operationKind = "migration"
-	operationEditor    operationKind = "editor"
+	operationMutation operationKind = "mutation"
+	operationTargets  operationKind = "targets"
+	operationSync     operationKind = "sync"
+	operationUpdate   operationKind = "update"
+	operationEditor   operationKind = "editor"
 )
 
 type tuiDiagnostic struct {

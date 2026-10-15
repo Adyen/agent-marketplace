@@ -1,29 +1,54 @@
-# Maintain v4 configuration
+# Convert configuration before upgrading
 
-This guide covers converting older configuration files to v4 and then keeping a v4 configuration valid and reproducible. V4 is the current schema, and `init` creates new user configs in it. The CLI still reads v2 and v3 files, so you can migrate when it suits you. If you only need to repair the structure of a v2 or v3 file, use `agent-marketplace migrate --to v2` instead (see [Legacy structural remediation](#legacy-structural-remediation)).
+The v4-only CLI requires exact `apiVersion: agent-marketplace/v4` in every existing consumer root: organization, user-personal, repository, and personal-local. It has no `migrate` command, startup conversion prompt, TUI migration modal, or legacy reader/editor. Convert your complete installation **before replacing the older binary**.
 
-::: warning What changes after migration
-Discovery, `status`, and `sync` all read v4. Named installs and removals, TUI resource toggles, Marketplace installs, and the TUI harness modal (`H`) all edit v4 files. If a command reports `v4.writer-opt-in`, it tried to use an older editor that only handles v2 and v3. Edit `sources` and `resources` directly in that case, then run `sync`.
+This page keeps its original URL for upgrade guidance. The migration commands below belong to an **older released binary that provides the migrator**, not the new CLI.
 
-A few Marketplace features are not implemented for any schema: offline acquisition when the organization lock is absent, rebinding a hosted pin, and snapshots for dynamic selectors.
-:::
+## 1. Inventory and back up every layer
 
-## Prerequisites
+Check each applicable root and its recursive local-file `include` tree:
 
-- `agent-marketplace` on your `PATH`.
-- A root configuration at `.agents/config.yaml`, `.agents/config.local.yaml`, or `~/.agents/config.yaml`.
-- To convert to v4: a writable v2 or v3 root. A v1 file (one with no `apiVersion`) must first be converted to v2 by hand, as described in [Convert v1 by hand](#convert-v1-by-hand).
-- If the config contains exact Marketplace pins: verified local cache data for every pin, including the assessed revision record and the artifact or collection manifest. A normal `sync` with the legacy config fills in this data. Migration makes no network requests and refuses the file if any pin's data is missing.
+| Layer | Root | Who converts it |
+|---|---|---|
+| Organization | `/etc/agent-marketplace/config.yaml` | Its administrator, externally |
+| User-personal | `~/.agents/config.yaml` | You, using the older released migrator |
+| Repository | `<repo>/.agents/config.yaml` | The team, using the older released migrator |
+| Personal-local | `<repo>/.agents/config.local.yaml` | You, using the older released migrator |
 
-## 1. Inspect the current configuration
+Repeat the repository and local check for each checkout or independently configured subtree you use. Back up authored configs, included fragments, and their layer-owned locks, and keep a compatible earlier binary for rollback. Don't confuse the consumer organization root with the Marketplace operator configuration: `agent-marketplace.io/marketplace/v1` remains supported by `serve`.
 
-Open the root file and check its first line. A v4 file declares:
+An absent layer keeps its normal first-run behavior. An existing empty or versionless file is not absent, and a personal-local root has no versionless exception. Every root must declare its own exact version. A fragment cannot supply the root's version.
 
-```yaml
-apiVersion: agent-marketplace/v4
+## 2. Use the older released migrator
+
+Keep or obtain an older released binary whose help exposes `migrate --to v4`. Store it apart from the new binary and verify the release artifact. In the examples, `./agent-marketplace-older` is that retained executable. The v4-only release does not ship it.
+
+From the repository, inspect the old binary's help and preview the conversion:
+
+```bash
+./agent-marketplace-older migrate --help
+./agent-marketplace-older migrate --to v4 --scope all --dry-run
 ```
 
-The `sources` map declares where resources come from: a Git repository, a local directory, or a Marketplace. The `resources` map, keyed by the same names, selects items from each source:
+Review the planned changes, then run the older migrator:
+
+```bash
+./agent-marketplace-older migrate --to v4 --scope all
+```
+
+Use `--scope user`, `--scope repo`, or `--scope local` to target one writable root, if the older release supports those flags. The migrator never converts the externally owned organization file. Ask its administrator to convert and deploy that root and its fragments before you upgrade.
+
+### Conversion is not unconditional
+
+The older migrator can refuse a root that uses `include`, unrepresentable or lossy legacy input, or exact Marketplace pins without complete verified local cache evidence. Follow that release's diagnostics and resolve the refusal before you upgrade. Include trees may need a reviewed manual conversion of the full source/resource structure. Don't flatten away include authority, relative path bases, exclusions, required policy, or layer ownership just to make a converter accept them.
+
+Exact Marketplace pins need verified revision and artifact or collection evidence. If evidence is missing, use the older compatible client's supported acquisition workflow and retry its migrator. Don't fabricate trust data, digests, or lock records. The older migrator makes no network requests. For Git and directory-only conversion, it leaves locks unchanged. Conversion of evidenced Marketplace pins can publish a v2 lock with the converted config.
+
+Versionless or v1 input may need manual structural work under the older release's rules before its migrator can handle it. **Merely changing or adding `apiVersion` is not conversion.** Legacy `registries`, top-level installation lists, and `marketplaces` must become valid v4 `sources` and source-bound `resources`, keeping the intended selection and scope. A v4-validated root or included fragment that still has legacy installation keys fails with `v4.legacy-key`.
+
+## 3. Verify the complete v4 installation
+
+A root selects resources through named sources:
 
 ```yaml
 apiVersion: agent-marketplace/v4
@@ -37,166 +62,43 @@ resources:
     include: [skill/code-review]
 ```
 
-## 2. Migrate a legacy configuration
+Git sources require `ref`. Directory sources are live and do not use Git locks. Relative directory paths in repository and personal-local roots resolve from the repository root. In user and organization files and included fragments, they resolve from the declaring file's directory. See the [configuration reference](../reference/configuration.md) for fields and [layer restrictions](../reference/configuration-layers.md) before you publish converted files.
 
-By default, `migrate` converts v2 and v3 roots to v4. It keeps the same resource selection, but it does not keep comments or formatting. It is transactional: it validates every selected file before it writes any of them.
+An explicitly included fragment under a validated v4 root may omit `apiVersion` or declare exactly `agent-marketplace/v4`. An explicit v1, v2, v3, unknown, or invalid fragment version refuses the include tree. Fragments keep their layer restrictions, merge order, source bindings, and authority. Supported edits target the owning root, not the fragment, and locks stay in the logical layer.
 
-Preview the change without writing anything:
-
-```bash
-agent-marketplace migrate --dry-run
-```
-
-The output lists each file that would change, for example `Would migrate user personal config: /home/you/.agents/config.yaml`. If nothing needs converting, it prints `No legacy config files require v4 migration`.
-
-When you are ready, run the migration. `--to v4` is the default, so you can leave it out:
+Check that the externally deployed organization root is also v4. With a v4-capable client, synchronize and inspect the intended selections, harnesses, and lock and output state before you replace the old binary:
 
 ```bash
-agent-marketplace migrate
+./agent-marketplace-older sync
+./agent-marketplace-older status
+./agent-marketplace-older lock --check
+./agent-marketplace-older sync --check
 ```
 
-Each converted file is reported as `Migrated <layer> config: <path>`. Before it replaces a file, the CLI saves the original next to it as `<file>.pre-v4.<timestamp>.bak`, readable only by you.
+Review and commit the shared v4 configuration and repository lock together. Keep personal-local files and generated harness output out of Git. Keep backups for rollback. Rolling back means using a compatible older binary with the backed-up configuration. It does not mean asking the new binary to write legacy syntax.
 
-Things to know about the migration:
+Normal v4 installs and removals, bulk, tag, and ad-hoc selections, TUI toggles, harness edits, and `update --bump` all stay supported. Conversion does not enable unsupported hosted features. Offline acquisition without an organization lock, hosted rebind, Marketplace dynamic-selector snapshots, and other unsupported runtime options still refuse.
 
-- It covers the user, repository, and repository-personal [configuration layers](../glossary.md#configuration-layer). Use `--scope user`, `--scope repo`, or `--scope local` to convert just one. The default is `--scope all`.
-- Add `--harnesses claude,factory` to give a migrated user config without a `harnesses` list its target set. The command also accepts a list equal to the one the user config already declares. If the user config declares a different list, is outside `--scope`, or does not exist, the command fails before writing anything.
-- It never edits the organization configuration.
-- It refuses, without changing any file, when a root uses `include`, when a Marketplace pin has no verified cache data, when a Marketplace resource that a collection brought in has its own local name (`installed_name`), and when some other part of the file cannot be represented in v4.
-- For Git and directory sources, it leaves lockfiles unchanged. For Marketplace pins, it creates or upgrades the lockfile for the same layer to `agent-marketplace-lock/v2` and writes it together with the config in one transaction.
+## 4. Upgrade and check
 
-When you start the CLI or the TUI interactively and your user config is still v2 or v3, it asks whether to migrate that file. The CLI prompt ends in `[Y/n]`, so pressing Enter migrates. It asks only about the user config. Repository and personal-local files stay as they are until you run `migrate` yourself. If you decline, or the run is non-interactive, the CLI keeps reading the old file.
-
-If the legacy config had Marketplace pins, open the lockfile next to it afterward (for example `.agents/lock.yaml` next to `.agents/config.yaml`). It declares `apiVersion: agent-marketplace-lock/v2` and records the endpoint, registry bindings, resource digests, and selections behind the new `marketplace` source.
-
-### Legacy structural remediation
-
-Use `--to v2` to repair a v2 or v3 configuration without converting it to v4. The command makes one transactional pass over `~/.agents/config.yaml`, `.agents/config.yaml`, and `.agents/config.local.yaml`:
-
-| Remediation | Layer | Behavior |
-|---|---|---|
-| Adds a `harnesses` list to the user config | user | Uses the existing user list, else `--harnesses`, else prompts on a terminal |
-| Rewrites legacy `collections` sequences (`- name: x` or `- x`) to `collections: {include: [x]}` | all | Comments are preserved |
-| Removes `backup:` and `logging:` | repo | These keys are user-level only |
-| Removes `harnesses:`, `backup:`, `logging:`, `allowed_registries:`, `allowed_marketplaces:` | local | These keys are not allowed in the personal-local layer |
-
-A file that is already valid v2 or v3 stays byte-for-byte unchanged. The command never adds `devin` or `codex` to a harness list on its own:
+After every applicable root and include tree is valid v4, [install the new CLI](../install.md), then run:
 
 ```bash
-agent-marketplace migrate --to v2 --harnesses claude,factory
-```
-
-`--harnesses` is only used when the user config has no harness list. If the user config already declares a different list, the command fails; an identical list is fine. `--to v2` rejects `--dry-run` and `--scope`, because this flow always writes every layer. Without `--harnesses`, the command prompts on a terminal and fails in a non-interactive run instead of guessing.
-
-### Convert v1 by hand
-
-The CLI rejects a user or repository root that has no `apiVersion`, reporting that v1 input is not supported. Convert such a file to v2 yourself, then run `migrate`:
-
-```yaml
-# .agents/config.yaml (v2)
-apiVersion: agent-marketplace/v2
-harnesses:
-  - claude
-registries:
-  - url: https://github.com/example-org/infra-skills.git
-    ref: main
-    skills:
-      include:
-        - vm-lifecycle
-collections:
-  include:
-    - platform-onboarding
-```
-
-Add `apiVersion`, add `harnesses` if the file needs one, use the map form of selectors (`include:`), and remove `identity` and `team_profiles`, which have no v2 equivalent.
-
-A personal-local file (`.agents/config.local.yaml`) may leave out `apiVersion` during normal loading, but `migrate` treats an unversioned local file as a legacy file to convert.
-
-## 3. Change sources and resource selection
-
-Give each source exactly one of `git`, `directory`, or `marketplace`. Use `directory` for live local content, even when the directory name ends in `.git`:
-
-```yaml
-sources:
-  shared:
-    git: https://github.com/example-org/agent-resources.git
-    ref: v1.4.0
-    path: resources
-  local:
-    directory: ./local-resources
-```
-
-Git sources must set `ref`. In `.agents/config.yaml` and `.agents/config.local.yaml`, a relative `directory` path starts from the repository root. In the user and organization configs, and in included fragments, it starts from the folder of the file that declares it. Directory sources never use a Git lock.
-
-Migration keeps repository-relative local paths relative and folds a legacy `path` into `directory`. For example, `url: .` with `path: skills` becomes `directory: ./skills`, without writing the checkout's absolute path into the file.
-
-Select resources under the same name as the source:
-
-```yaml
-resources:
-  shared:
-    include:
-      - skill/code-review
-      - command/release
-    exclude:
-      - skill/obsolete-review
-    harnesses: [claude, cursor]
-  local:
-    all: true
-```
-
-Use `tags` or `all` to select resources dynamically. A Marketplace group that uses `tags` or `all` must also list its `registries`. `required: true` protects the selected resources from being excluded, but it does not select anything by itself.
-
-## 4. Validate without changing files
-
-Check the Git locks and the generated harness output before you publish a change:
-
-```bash
-agent-marketplace lock --check
+agent-marketplace status
+agent-marketplace sync --locked
 agent-marketplace sync --check
 ```
 
-Neither command writes anything. A non-zero exit means the lock or the generated output has drifted and needs reconciling before the configuration is reproducible.
+Consumer configuration versioning is independent of acquisition-lock v1 reads and v2 writes, historical source-revision verification, API and artifact versions, and native hook and harness schemas. Don't rewrite those formats just because their version number is not v4.
 
-After a structural remediation, `agent-marketplace status` should show no `ERRORS` table and the intended harnesses in the `TARGET HARNESS SET` table.
+## Troubleshooting a refusal
 
-## 5. Publish the change
+- `v4.api-version-required`: the diagnostic's root file omits `apiVersion`. Convert and validate its complete structure with the older workflow. Don't just add a sentinel to legacy fields.
+- `v4.api-version`: the diagnostic's root or explicitly versioned fragment has an unsupported or invalid value. The string must match `agent-marketplace/v4` exactly, with no whitespace or case variations.
+- `v4.legacy-key`: the version is v4 but old installation keys remain. Complete the source/resource conversion.
+- `config.edit.include-owned`: the requested edit belongs to a fragment. Review the fragment directly. Normal CLI edits do not rewrite it.
+- `v4.layer-field`: move fields to a permitted layer, for example `harnesses` out of personal-local configuration.
+- `v4.marketplace-runtime-unsupported`: use explicit supported Marketplace requests rather than dynamic selectors or unsupported group options.
+- `dependency.recovery-required`: a read-only command found an earlier interrupted write and will not replay it. A command that can recover finishes only that earlier write before it checks the configuration. If recovery is blocked, its records are kept.
 
-Commit the v4 configuration and the repository lock together:
-
-```bash
-git add .agents/config.yaml .agents/lock.yaml
-git commit -m "Update agent resource selection"
-```
-
-Do not commit generated harness output. If you use checkout-only overrides, keep `.agents/config.local.yaml` and `.agents/lock.local.yaml` out of Git.
-
-## Includes
-
-Use `include` to reuse local fragments:
-
-```yaml
-apiVersion: agent-marketplace/v4
-include:
-  - profiles/company.yaml
-  - profiles/team.yaml
-```
-
-Included fragments may leave out `apiVersion` and inherit v4 from the root. They merge in the order listed, and the file that includes them takes precedence over all of them. The loader rejects includes that are missing, malformed, unreadable, or circular.
-
-## Troubleshooting
-
-- `v4.api-version-required`: Add `apiVersion: agent-marketplace/v4` to the root.
-- `v4.source-discriminator`: Keep exactly one of `git`, `directory`, or `marketplace` in each source.
-- `v4.git-ref-required`: Add a `ref` to the Git source.
-- `v4.dynamic-unbounded`: A Marketplace group uses `all` or `tags` without a `registries` list. Add one.
-- `v4.layer-field`: The file sets a field that its layer does not allow, for example `harnesses` in `.agents/config.local.yaml`, or `backup`, `logging`, or `telemetry` in a repository config. Move the field to a layer that allows it, usually the user config.
-- `v4.runtime-option`: Remove the unsupported option, such as an `as` alias that differs from the resource name on a Git or directory resource.
-- `v4.migration-harnesses`: The command could not apply `--harnesses`. Edit the user config's existing `harnesses` list directly, include the user config in `--scope`, or create a user config with `agent-marketplace init --harnesses …`.
-- `v4.migration-unsupported`: Part of the file cannot be converted, for example a root that uses `include`. The message names the part. Edit the file by hand, or keep it on v2 or v3.
-- `v4.migration-marketplace-evidence`: The verified cache data for a Marketplace pin is missing or inconsistent. Run a normal `sync` to fetch and verify the endpoint's metadata and artifacts, then run `migrate` again. Do not write lock or trust data by hand.
-- `lock.snapshot-unavailable`: Restore the exact Git snapshot, or run a command that writes the lock, then check again.
-- No startup migration prompt: The CLI only asks about the user config, and only in an interactive session. Run `agent-marketplace migrate --dry-run` to preview a conversion of any layer.
-- A local config still contains `harnesses`: The `--to v2` remediation removes it, because the target harness set belongs in the user or repository config.
-
-See the [configuration reference](../reference/configuration.md) for every field and the full precedence rules.
+Format diagnostics name the file and its `apiVersion` field, with the line when known. A refused command downloads nothing and writes no config, lock, or harness files. Existing files and their metadata are untouched, and no missing config file or lock is created. It may still write logs or finish an earlier interrupted write. The new CLI and TUI never offer to convert anything.

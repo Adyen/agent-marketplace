@@ -225,6 +225,9 @@ func TestDecodeResourceRejectsCaseCollidingKnownAliases(t *testing.T) {
 		{name: "nested source", kind: "hook", data: `{"name":"probe","Source":{"File":"safe","file":"source-secret"}}`, secret: "source-secret"},
 		{name: "nested permissions", kind: "skill", data: `{"name":"probe","Permissions":{"allow":["safe"],"Allow":["permissions-secret"]}}`, secret: "permissions-secret"},
 		{name: "name alias", kind: "hook", data: `{"name":"probe","Name":"name-secret"}`, secret: "name-secret"},
+		{name: "hook source alias", kind: "hook", data: `{"name":"probe","HookSource":"safe","hooksource":"source-secret"}`, secret: "source-secret"},
+		{name: "tool source alias", kind: "subagent", data: `{"name":"probe","ToolSource":"safe","toolsource":"source-secret"}`, secret: "source-secret"},
+		{name: "skill tool source alias", kind: "skill", data: `{"name":"probe","ToolSource":"safe","toolsource":"source-secret"}`, secret: "source-secret"},
 	}
 	for _, tt := range cases {
 		t.Run(tt.name, func(t *testing.T) {

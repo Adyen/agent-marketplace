@@ -3,6 +3,7 @@ package materialize
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -199,8 +200,8 @@ func TestDevinConcurrentRunsKeepTheRecordDescribingTheFile(t *testing.T) {
 		repoRoot := t.TempDir()
 		root := devinProjectRoot(repoRoot)
 		resolved := []resolver.ResolvedArtifact{
-			devinResolved("alpha", ir.NewMcpServer("alpha", "alpha-binary", nil, nil, nil, ir.SourceRef{}), false),
-			devinResolved("beta", ir.NewHook("beta", "PostToolUse", "echo beta", "command", nil, ir.SourceRef{}), false),
+			devinResolved(t, "alpha", ir.NewMcpServer("alpha", "alpha-binary", nil, nil, nil, ir.SourceRef{}), false),
+			additiveSafetyProvider(t, hcc.TargetDevin, false, "echo beta", ""),
 		}
 
 		start := make(chan struct{})
@@ -328,8 +329,8 @@ func TestDevinLockTimeoutSkipsExactlyThatRoot(t *testing.T) {
 	defer letGo()
 
 	resolved := []resolver.ResolvedArtifact{
-		devinResolved("alpha", ir.NewMcpServer("alpha", "alpha-binary", nil, nil, nil, ir.SourceRef{}), false),
-		devinResolved("machine", ir.NewMcpServer("machine", "machine-binary", nil, nil, nil, ir.SourceRef{}), true),
+		devinResolved(t, "alpha", ir.NewMcpServer("alpha", "alpha-binary", nil, nil, nil, ir.SourceRef{}), false),
+		devinResolved(t, "machine", ir.NewMcpServer("machine", "machine-binary", nil, nil, nil, ir.SourceRef{}), true),
 	}
 	report, err := Run(context.Background(), repoRoot, resolved)
 	if err != nil {
@@ -426,8 +427,8 @@ func TestDevinContendedRootWaitsOnceNotOncePerFile(t *testing.T) {
 	// Work for BOTH aggregate files of the root, so a per-file section would have
 	// two independent waits to spend.
 	resolved := []resolver.ResolvedArtifact{
-		devinResolved("alpha", ir.NewMcpServer("alpha", "alpha-binary", nil, nil, nil, ir.SourceRef{}), false),
-		devinResolved("beta", ir.NewHook("beta", "PostToolUse", "echo beta", "command", nil, ir.SourceRef{}), false),
+		devinResolved(t, "alpha", ir.NewMcpServer("alpha", "alpha-binary", nil, nil, nil, ir.SourceRef{}), false),
+		additiveSafetyProvider(t, hcc.TargetDevin, false, "echo beta", ""),
 	}
 
 	started := time.Now()
@@ -487,8 +488,8 @@ func TestDevinRunAcquiresOncePerRootNotOncePerFile(t *testing.T) {
 	t.Cleanup(func() { ownedAggregateLockAcquisitionHook = nil })
 
 	resolved := []resolver.ResolvedArtifact{
-		devinResolved("alpha", ir.NewMcpServer("alpha", "alpha-binary", nil, nil, nil, ir.SourceRef{}), false),
-		devinResolved("beta", ir.NewHook("beta", "PostToolUse", "echo beta", "command", nil, ir.SourceRef{}), false),
+		devinResolved(t, "alpha", ir.NewMcpServer("alpha", "alpha-binary", nil, nil, nil, ir.SourceRef{}), false),
+		additiveSafetyProvider(t, hcc.TargetDevin, false, "echo beta", ""),
 	}
 	report, err := Run(context.Background(), repoRoot, resolved)
 	if err != nil {
@@ -510,6 +511,42 @@ func TestDevinRunAcquiresOncePerRootNotOncePerFile(t *testing.T) {
 	}
 	if maxDepth != 2 {
 		t.Fatalf("maximum lock depth = %d, want 2: the session plus one sequential mutation at a time", maxDepth)
+	}
+}
+
+func TestOwnedAggregateWriteSessionRegistrationExpiresAfterCallback(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", filepath.Join(t.TempDir(), "state"))
+	root := t.TempDir()
+	canonical, err := ownership.CanonicalRoot(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, err := ownership.Open(canonical)
+	if err != nil {
+		t.Fatal(err)
+	}
+	session := ownedAggregateWriteSession{root: canonical, store: store, lockReport: newOwnedAggregateLockReporter(outputKey{target: hcc.TargetDevin}, canonical)}
+	callbackFailure := errors.New("adapter failed after session entry")
+	for _, tc := range []struct {
+		name string
+		err  error
+	}{{name: "complete"}, {name: "callback error", err: callbackFailure}} {
+		t.Run(tc.name, func(t *testing.T) {
+			state := ownedAggregateState{}
+			err := withOwnedAggregateWriteSession(context.Background(), &state, session, "test-shared-root-session", func() error {
+				registered, ok := state.writeSession(root)
+				if !ok || registered != session {
+					return fmt.Errorf("session lookup inside callback = %#v, %v", registered, ok)
+				}
+				return tc.err
+			})
+			if tc.err == nil && err != nil || tc.err != nil && !errors.Is(err, tc.err) {
+				t.Fatalf("session callback error = %v, want %v", err, tc.err)
+			}
+			if registered, ok := state.writeSession(root); ok {
+				t.Fatalf("session survived callback completion: %#v", registered)
+			}
+		})
 	}
 }
 
@@ -536,7 +573,7 @@ func TestDevinDryRunNeitherLocksNorBlocks(t *testing.T) {
 			t.Fatal(err)
 		}
 		resolved := []resolver.ResolvedArtifact{
-			devinResolved("alpha", ir.NewMcpServer("alpha", "alpha-binary", nil, nil, nil, ir.SourceRef{}), false),
+			devinResolved(t, "alpha", ir.NewMcpServer("alpha", "alpha-binary", nil, nil, nil, ir.SourceRef{}), false),
 		}
 		if _, err := Run(context.Background(), repoRoot, resolved, WithDryRun()); err != nil {
 			t.Fatalf("dry run: %v", err)
@@ -556,7 +593,7 @@ func TestDevinDryRunNeitherLocksNorBlocks(t *testing.T) {
 		// Seed a real generation so the dry run has a record to read, which is the
 		// realistic shape of `status` on a synced repo.
 		resolved := []resolver.ResolvedArtifact{
-			devinResolved("alpha", ir.NewMcpServer("alpha", "alpha-binary", nil, nil, nil, ir.SourceRef{}), false),
+			devinResolved(t, "alpha", ir.NewMcpServer("alpha", "alpha-binary", nil, nil, nil, ir.SourceRef{}), false),
 		}
 		if _, err := Run(context.Background(), repoRoot, resolved); err != nil {
 			t.Fatalf("seed run: %v", err)
@@ -569,7 +606,7 @@ func TestDevinDryRunNeitherLocksNorBlocks(t *testing.T) {
 		// The DEFAULT timeout: blocking would take 30s and then fail.
 		deadline := time.Now().Add(10 * time.Second)
 		report, err := Run(context.Background(), repoRoot,
-			append(resolved, devinResolved("beta", ir.NewHook("beta", "PostToolUse", "echo beta", "command", nil, ir.SourceRef{}), false)),
+			append(resolved, devinResolved(t, "beta", ir.NewHook("beta", "PostToolUse", "echo beta", "command", nil, ir.SourceRef{}), false)),
 			WithDryRun())
 		if err != nil {
 			t.Fatalf("dry run while the lock was held: %v", err)

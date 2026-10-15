@@ -1,7 +1,7 @@
 # Pre-v4 to v4 Regression Gates
 
 **Date:** 2026-09-24
-**Status:** Implemented; final regression-gate verification tracked in #326
+**Status:** Implemented for the pre-v4 compatibility window; final regression-gate verification was tracked in #326. The v4-only launch (#647, #668) retired startup migration, the `migrate` command, and the pre-v4 upgrade gate, so the migration and upgrade-gate tests cited below no longer exist. Historical record, not current coverage.
 **Worktree branch:** `docs/pre-v4-regression-gates`
 **Implementation base:** `67b9eb87c4d739b75e2b3d4551c9bbce78392c20` (main, including PR #302)
 
@@ -28,7 +28,7 @@ The initial audit used main at `e31280ca82741dc173f8e2a0c8e13b32d2acb4b4`. PR [#
 |---|---|
 | [Public Marketplace gate](../../e2e/public_gate_test.go) indexes a real registry, uses production server code, and installs every materialized resource kind | Its consumer round-trip starts with v2 configuration; this is not a complete migrated-v4 lifecycle gate |
 | [Marketplace lifecycle tests](../../e2e/marketplace_lifecycle_test.go) cover exact pins, offline use, failures, identity, policy, revocation, and collections | Most share a legacy consumer fixture; extend rather than duplicate their real-server machinery |
-| [Migration E2E](../../e2e/migrate_v4_test.go), [v4 runtime E2E](../../e2e/v4_runtime_test.go), and extensive package tests exist | No discovered historical-executable upgrade gate proves the complete before/after workflow contract |
+| [Migration E2E](../../e2e/v4_included_selection_test.go), [v4 runtime E2E](../../e2e/v4_runtime_test.go), and extensive package tests exist | No discovered historical-executable upgrade gate proves the complete before/after workflow contract |
 | [Organization Marketplace PTY journey](../../tools/tui-qa/tests/org-marketplace-lock-failure.spec.ts) counts acquisition requests across startup, sync, and update | It does not edit a selection in that session, which is the cache-invalidating transition behind #302 |
 | [PTY fixture](../../tools/tui-qa/tests/fixture.ts) has two local skills; the [runner](../../tools/tui-qa/tui-test.config.ts) permits five-second ordinary assertions | No overflowing-list fixture for the scroll regression; a three-second toggle can still pass |
 | [CI](../../.github/workflows/ci.yml) compares a fixed benchmark selection | Results are explicitly informational; #302's new acquisition-after-edit benchmark is not in that selection |
@@ -142,8 +142,8 @@ A refusal test must prove a useful legacy operation still succeeds. A preservati
 |---|---|---|
 | B01 | upgrade-gate `TestPreV4ReleaseUpgrade` (list/sync/install/remove before migration); `TestPreV4GitLockUpgrade` (v3.1.1 exact revision retained; `sync --locked` preserves v1 bytes, plain `sync` upgrades only the lock version to v2, subsequent sync/check preserve that lock) | — |
 | B02 | cmd `TestPromptForV4MigrationNonInteractiveWarnsAndLeavesBytes`; tui-qa `non-tty.test.ts` | — |
-| B03 | cmd `TestPendingV4MigrationPathsOnlyOffersUserConfig`, `TestInteractiveStartupPromptMigratesLegacyConfig`; tui-qa `accept-user-migration.spec.ts` | — |
-| B04 | tui-qa `accept-user-migration.spec.ts` (global selection from a legacy repository source); e2e `TestV4UserLayerOptsOutOfLegacyOrganizationResource`, `TestV4UserLayerExcludesLegacyOrganizationCollectionMember`; upgrade-gate repository-first migration; `TestPreV4LocalLayerUpgrade` (v3.1.1-written local root keeps working beside a migrated user root) | — |
+| B03 | cmd `TestPendingV4MigrationPathsOnlyOffersUserConfig`, `TestInteractiveStartupPromptMigratesLegacyConfig`; tui-qa `accept-user-migration.spec.ts` (retired with startup migration; its successor `v4-global-selection.spec.ts` covers only global selection on a v4 root) | — |
+| B04 | tui-qa `v4-global-selection.spec.ts` (global selection from a repository-declared source; the legacy-repository variant was retired with migration); e2e `TestV4UserLayerOptsOutOfLegacyOrganizationResource`, `TestV4UserLayerExcludesLegacyOrganizationCollectionMember`; upgrade-gate repository-first migration; `TestPreV4LocalLayerUpgrade` (v3.1.1-written local root keeps working beside a migrated user root) | — |
 | B05 | upgrade-gate repo then user migration with install/remove; `TestPreV4LocalLayerUpgrade` (`migrate --scope all`, local and repository install/remove, idempotent repeat); config `TestMigrateLocalConfig`, `TestMigrateConfigFilesToV4AllScopePublishesNothingWhenOneLayerIsUnsupported`; declarative E2E `migrate/v4_{bulk,tag,ad_hoc}_selection_lifecycle` (populated legacy installation, actual migration, install/remove, preserved sibling, resync and drift check) | — |
 | B06 | upgrade-gate include-owned refusal leaves bytes and legacy install usable; cmd `TestPromptForV4MigrationDeclineLeavesBytesUnchanged`, `TestMigrateCommandToV4IsExplicitAndSupportsDryRun`; tui-qa decline path in every other journey | — |
 | B07 | config `TestMigrateConfigFilesToV4PreservesLegacySelectorsAndPolicies`, `TestMigrateConfigFilesToV4RefusesIncludeWithoutWrites`, `TestV4VersionBoundaryRejectsExplicitNonV4Include`, `TestMigrateSkipsDuplicatePaths`; upgrade-gate `TestPreV4LocalLayerUpgrade` (relative in-repository directory and v3.1.1-written local selector), `TestPreV4DuplicateRefUpgrade` (same registry at two refs: collision winner and both locked refs retained through the v1-to-v2 lock-version upgrade; migration keeps both refs or refuses unchanged); e2e `TestAdHocRelativeDirectoryParityAcrossSchemas` | — |

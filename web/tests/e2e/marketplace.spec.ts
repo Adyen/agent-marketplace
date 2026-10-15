@@ -207,7 +207,8 @@ test.describe('Marketplace browser discovery', () => {
     expect((await discovery.json()).instance_id).toBe('e2e-marketplace')
   })
 
-  test('shares navigation and appearance across Marketplace and documentation', async ({ page }) => {
+  // spec: marketplace-web-ui/browser-surfaces-present-accessible-adaptive-branding
+  test('shares navigation, appearance, and branding across browser surfaces', async ({ page }) => {
     const fontStatus = () => page.evaluate(() => {
       const bodyStyle = getComputedStyle(document.body)
       return {
@@ -220,12 +221,32 @@ test.describe('Marketplace browser discovery', () => {
       }
     })
 
+    await page.goto(publicSiteURL)
+    const landingBrand = page.locator('.VPNavBarTitle').getByRole('link', { name: 'agent-marketplace', exact: true })
+    await expect(landingBrand).toHaveAttribute('href', '/')
+    await expect(landingBrand.locator('img.light')).toHaveAttribute('src', '/brand/logo-horizontal-black.svg')
+    await expect(landingBrand.locator('img.light')).toBeVisible()
+    await expect(landingBrand.locator('img.dark')).toHaveAttribute('src', '/brand/logo-horizontal-white.svg')
+    await expect(landingBrand.locator('img.dark')).toBeHidden()
+    const sharedLogoWidth = await landingBrand.locator('img.light').evaluate(element => element.getBoundingClientRect().width)
+    const sharedLogoTransform = await landingBrand.locator('img.light').evaluate(element => getComputedStyle(element).transform)
+    expect(sharedLogoTransform).not.toBe('none')
+    await expect(page.locator('link[rel="icon"][type="image/svg+xml"]')).toHaveAttribute('href', '/brand/favicon.svg')
+
     await page.goto(sharedOriginURL)
     await page.evaluate(key => localStorage.setItem(key, 'light'), sharedAppearanceKey)
     await page.reload()
 
     const marketplaceNav = page.getByRole('navigation', { name: 'Product navigation' })
-    await expect(marketplaceNav.getByRole('link', { name: 'agent-marketplace', exact: true })).toHaveAttribute('href', '/')
+    const marketplaceBrand = marketplaceNav.getByRole('link', { name: 'agent-marketplace', exact: true })
+    await expect(marketplaceBrand).toHaveAttribute('href', '/')
+    await expect(marketplaceBrand.locator('.am-site-nav__brand-logo--light')).toHaveAttribute('src', '/brand/logo-horizontal-black.svg')
+    await expect(marketplaceBrand.locator('.am-site-nav__brand-logo--light')).toBeVisible()
+    await expect(marketplaceBrand.locator('.am-site-nav__brand-logo--light')).toHaveCSS('width', `${sharedLogoWidth}px`)
+    await expect(marketplaceBrand.locator('.am-site-nav__brand-logo--light')).toHaveCSS('transform', sharedLogoTransform)
+    await expect(marketplaceBrand.locator('.am-site-nav__brand-logo--dark')).toHaveAttribute('src', '/brand/logo-horizontal-white.svg')
+    await expect(marketplaceBrand.locator('.am-site-nav__brand-logo--dark')).toBeHidden()
+    await expect(page.locator('link[rel="icon"][type="image/svg+xml"]')).toHaveAttribute('href', '/brand/favicon.svg')
     await expect(marketplaceNav.getByRole('link', { name: 'Marketplace', exact: true })).toHaveAttribute('href', '/')
     await expect(marketplaceNav.getByRole('link', { name: 'Marketplace', exact: true })).toHaveAttribute('aria-current', 'page')
     await expect(marketplaceNav.getByRole('link', { name: 'Docs', exact: true })).toHaveAttribute('href', '/docs/')
@@ -240,12 +261,23 @@ test.describe('Marketplace browser discovery', () => {
     const marketplaceSwitch = marketplaceNav.getByRole('switch', { name: 'Switch to dark theme' })
     await marketplaceSwitch.click()
     await expect(page.locator('html')).toHaveClass(/\bdark\b/)
+    await expect(marketplaceBrand.locator('.am-site-nav__brand-logo--light')).toBeHidden()
+    await expect(marketplaceBrand.locator('.am-site-nav__brand-logo--dark')).toBeVisible()
     await expect.poll(() => page.evaluate(key => localStorage.getItem(key), sharedAppearanceKey)).toBe('dark')
 
     await marketplaceNav.getByRole('link', { name: 'Docs', exact: true }).click()
     await expect(page).toHaveURL(`${sharedOriginURL}/docs/`)
     await expect(page.getByRole('heading', { name: /Documentation/ })).toBeVisible()
     const docsNav = page.getByRole('navigation', { name: 'Main Navigation' })
+    const docsBrand = page.locator('.VPNavBarTitle').getByRole('link', { name: 'agent-marketplace', exact: true })
+    await expect(docsBrand).toHaveAttribute('href', '/docs/')
+    await expect(docsBrand.locator('img.light')).toHaveAttribute('src', '/docs/brand/logo-horizontal-black.svg')
+    await expect(docsBrand.locator('img.light')).toBeHidden()
+    await expect(docsBrand.locator('img.dark')).toHaveAttribute('src', '/docs/brand/logo-horizontal-white.svg')
+    await expect(docsBrand.locator('img.dark')).toBeVisible()
+    await expect(docsBrand.locator('img.dark')).toHaveCSS('width', `${sharedLogoWidth}px`)
+    await expect(docsBrand.locator('img.dark')).toHaveCSS('transform', sharedLogoTransform)
+    await expect(page.locator('link[rel="icon"][type="image/svg+xml"]')).toHaveAttribute('href', '/docs/brand/favicon.svg')
     await expect(docsNav.getByRole('link', { name: 'Marketplace', exact: true })).toHaveAttribute('href', '/')
     await expect(docsNav.getByRole('link', { name: 'Docs', exact: true })).toHaveAttribute('href', '/docs/')
     await expect(page.locator('html')).toHaveClass(/\bdark\b/)
@@ -259,6 +291,8 @@ test.describe('Marketplace browser discovery', () => {
     const docsSwitch = page.locator('.VPNavBarAppearance .VPSwitchAppearance')
     await docsSwitch.click()
     await expect(page.locator('html')).not.toHaveClass(/\bdark\b/)
+    await expect(docsBrand.locator('img.light')).toBeVisible()
+    await expect(docsBrand.locator('img.dark')).toBeHidden()
     await expect.poll(() => page.evaluate(key => localStorage.getItem(key), sharedAppearanceKey)).toBe('auto')
 
     await docsNav.getByRole('link', { name: 'Marketplace', exact: true }).click()
@@ -687,8 +721,10 @@ test.describe('Marketplace browser discovery', () => {
     const copyRevision = revisionRow.getByRole('button')
     await expect(revisionRow.getByTestId('revision-label')).toHaveText('Revision (latest)')
     await expect(revisionRow.getByTestId('revision-id')).toHaveText('a'.repeat(12))
-    await expect(revisionRow.getByTestId('scanned-label')).toHaveText('Scanned')
-    await expect(revisionRow.getByTestId('revision-scanned-at')).toHaveText('Jan 2, 2026')
+    await expect(revisionRow.getByTestId('scanned-group')).toHaveCount(0)
+    await expect(revisionRow.getByTestId('source-link')).toHaveText('Adyen/agent-skills')
+    await expect(revisionRow.getByTestId('source-link')).toHaveAttribute('href', `https://github.com/Adyen/agent-skills/blob/${'8'.repeat(40)}/skills/secure-review/SKILL.md`)
+    await expect(revisionRow.getByTestId('source-path')).toHaveText('skills/secure-review/SKILL.md')
     await expect(copyRevision).toHaveAttribute('aria-label', /Copy revision/)
     await expect(copyRevision).toBeEnabled()
     await copyRevision.click()
@@ -700,6 +736,7 @@ test.describe('Marketplace browser discovery', () => {
 
     await page.getByRole('tab', { name: 'Security', exact: true }).click()
     await expect(page.getByRole('heading', { name: 'Automated scan', exact: true })).toBeVisible()
+    await expect(page.getByText('Scanned Jan 2, 2026', { exact: true })).toBeVisible()
     await page.getByText('Analyzer and assessment parameters', { exact: true }).click()
     await expect(page.getByText('e2e-analyzer-2', { exact: true })).toBeVisible()
     await expect(page.getByText(`${'6'.repeat(12)}…`, { exact: true })).toBeVisible()

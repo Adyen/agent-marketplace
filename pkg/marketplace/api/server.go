@@ -608,6 +608,42 @@ func publicCatalogSource(source store.CatalogProjectionSource) (CatalogSource, b
 	return CatalogSource{RepositoryURL: repositoryURL, Path: sourcePath, Commit: source.Commit}, true
 }
 
+// resourceSourceResolver returns a request-scoped resolver for optional source
+// provenance, memoizing the registry origin lookup per occurrence commit.
+func (s *Server) resourceSourceResolver(ctx context.Context) func(store.AssessedResourceRevision) *CatalogSource {
+	type occurrenceKey struct {
+		registry store.RegistryID
+		commit   string
+	}
+	origins := make(map[occurrenceKey]string)
+	return func(rev store.AssessedResourceRevision) *CatalogSource {
+		if rev.Occurrence.SourcePath == "" {
+			return nil
+		}
+		key := occurrenceKey{registry: rev.Coordinate.Registry, commit: rev.Occurrence.Commit}
+		origin, cached := origins[key]
+		if !cached {
+			occurrence, err := s.meta.GetRegistryOccurrence(ctx, key.registry, key.commit)
+			switch {
+			case errors.Is(err, store.ErrNotFound):
+			case err != nil:
+				slog.Warn("resource source origin unavailable", "registry", logvalue.Safe(key.registry), "commit", logvalue.Safe(key.commit), "err", logvalue.Safe(err))
+			default:
+				origin = occurrence.SourceOrigin
+			}
+			origins[key] = origin
+		}
+		if origin == "" {
+			return nil
+		}
+		source, ok := publicCatalogSource(store.CatalogProjectionSource{RepositoryURL: origin, Path: rev.Occurrence.SourcePath, Commit: rev.Occurrence.Commit})
+		if !ok {
+			return nil
+		}
+		return &source
+	}
+}
+
 func catalogCollectionDTO(collection *store.CatalogCollectionProjection, marketplace store.MarketplaceID) (CatalogCollection, error) {
 	out := CatalogCollection{
 		Resources:            make([]CatalogCollectionResourceReference, 0),
@@ -1060,7 +1096,7 @@ func (s *Server) handleResourceDetail(w http.ResponseWriter, r *http.Request, re
 	if !s.managedResourceAllowed(w, r.Context(), rev) {
 		return
 	}
-	writeJSON(w, http.StatusOK, s.availabilityResourceDTO(r.Context(), rev))
+	writeJSON(w, http.StatusOK, s.availabilityResourceDTO(r.Context(), rev, s.resourceSourceResolver(r.Context())))
 }
 
 func (s *Server) handleResourceRevisions(w http.ResponseWriter, r *http.Request, registrySlug, kind, name string) {
@@ -1097,8 +1133,9 @@ func (s *Server) handleResourceRevisions(w http.ResponseWriter, r *http.Request,
 		revs[i] = s.applyEffectiveRevocation(rev)
 	}
 	items := make([]any, len(revs))
+	resolveSource := s.resourceSourceResolver(r.Context())
 	for i, rev := range revs {
-		items[i] = s.availabilityResourceDTO(r.Context(), rev)
+		items[i] = s.availabilityResourceDTO(r.Context(), rev, resolveSource)
 	}
 	writeJSON(w, http.StatusOK, items)
 }
@@ -1141,7 +1178,7 @@ func (s *Server) handleResourceRevision(w http.ResponseWriter, r *http.Request, 
 	if !s.managedResourceAllowed(w, r.Context(), rev) {
 		return
 	}
-	writeJSON(w, http.StatusOK, s.availabilityResourceDTO(r.Context(), rev))
+	writeJSON(w, http.StatusOK, s.availabilityResourceDTO(r.Context(), rev, s.resourceSourceResolver(r.Context())))
 }
 
 func (s *Server) handleResourceInspection(w http.ResponseWriter, r *http.Request, registrySlug, kind, name, digest string) {

@@ -624,7 +624,7 @@ func TestReadSnapshotResourcesMaterializeThroughTUISync(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(repoRoot, ".agents"), 0o755); err != nil {
 		t.Fatalf("mkdir repo agents: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(repoRoot, ".agents", "config.yaml"), []byte(repoV2Header), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(repoRoot, ".agents", "config.yaml"), []byte(repoV4Header), 0o644); err != nil {
 		t.Fatalf("write project config: %v", err)
 	}
 
@@ -636,10 +636,10 @@ func TestReadSnapshotResourcesMaterializeThroughTUISync(t *testing.T) {
 		t.Fatalf("write skill: %v", err)
 	}
 
-	globalConfig := v2Header + `registries:
-  - url: ` + registryRoot + `
-    skills:
-      - audit
+	globalConfig := v4Header + `sources:
+  local: {directory: ` + registryRoot + `}
+resources:
+  local: [skill/audit]
 `
 	if err := os.MkdirAll(filepath.Join(homeDir, ".agents"), 0o755); err != nil {
 		t.Fatalf("mkdir home agents: %v", err)
@@ -699,7 +699,7 @@ func TestReadSnapshotRowsIncludeAllFactoryResourceKinds(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(repoRoot, ".agents"), 0o755); err != nil {
 		t.Fatalf("mkdir repo agents: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(repoRoot, ".agents", "config.yaml"), []byte(repoV2Header), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(repoRoot, ".agents", "config.yaml"), []byte(repoV4Header), 0o644); err != nil {
 		t.Fatalf("write project config: %v", err)
 	}
 
@@ -719,20 +719,12 @@ func TestReadSnapshotRowsIncludeAllFactoryResourceKinds(t *testing.T) {
 		}
 	}
 
-	globalConfig := v2Header + `registries:
-  - url: ` + registryRoot + `
-    path: .agents
+	globalConfig := v4Header + `sources:
+  local:
+    directory: ` + filepath.Join(registryRoot, ".agents") + `
     source_harness: factory
-    skills:
-      - audit
-    commands:
-      - continue
-    subagents:
-      - worker
-    hooks:
-      - PreToolUse-command
-    mcp:
-      - memory
+resources:
+  local: [skill/audit, command/continue, subagent/worker, hook/PreToolUse-command, mcp/memory]
 `
 	if err := os.MkdirAll(filepath.Join(homeDir, ".agents"), 0o755); err != nil {
 		t.Fatalf("mkdir home agents: %v", err)
@@ -794,7 +786,7 @@ func TestRunUpdateCmdRefreshesAndMaterializes(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(repoRoot, ".agents"), 0o755); err != nil {
 		t.Fatalf("mkdir repo agents: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(repoRoot, ".agents", "config.yaml"), []byte(repoV2Header), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(repoRoot, ".agents", "config.yaml"), []byte(repoV4Header), 0o644); err != nil {
 		t.Fatalf("write project config: %v", err)
 	}
 
@@ -806,10 +798,10 @@ func TestRunUpdateCmdRefreshesAndMaterializes(t *testing.T) {
 		t.Fatalf("write skill: %v", err)
 	}
 
-	globalConfig := v2Header + `registries:
-  - url: ` + registryRoot + `
-    skills:
-      - refresh-me
+	globalConfig := v4Header + `sources:
+  local: {directory: ` + registryRoot + `}
+resources:
+  local: [skill/refresh-me]
 `
 	if err := os.MkdirAll(filepath.Join(homeDir, ".agents"), 0o755); err != nil {
 		t.Fatalf("mkdir home agents: %v", err)

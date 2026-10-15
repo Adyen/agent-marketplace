@@ -58,6 +58,7 @@ func TestLoadMcpServersRejectsDuplicateKeys(t *testing.T) {
 	}
 }
 
+// spec: hook-resources/duplicate-json-keys-reject-the-hook-file
 func TestLoadHooksRejectsDuplicateKeys(t *testing.T) {
 	tests := []struct {
 		name    string

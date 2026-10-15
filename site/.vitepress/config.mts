@@ -16,6 +16,7 @@ function deploymentBase(name: string, value: string): string {
 const base = docsOnly ? '/docs/' : deploymentBase('SITE_BASE', process.env.SITE_BASE ?? '/')
 const marketplaceBase = docsOnly ? deploymentBase('MARKETPLACE_BASE', process.env.MARKETPLACE_BASE ?? '/') : '/'
 const DOCS_PATH = docsOnly ? '/' : PUBLIC_DOCS_PATH
+const publicAsset = (path: string) => `${base}${path}`
 
 const repo = GITHUB_REPOSITORY_URL
 
@@ -42,13 +43,21 @@ export default defineConfig({
   },
 
   head: [
+    ['link', { rel: 'icon', type: 'image/svg+xml', href: publicAsset('brand/favicon.svg') }],
+    ['link', { rel: 'icon', type: 'image/png', sizes: '32x32', href: publicAsset('brand/favicon-32x32.png') }],
+    ['link', { rel: 'icon', type: 'image/png', sizes: '64x64', href: publicAsset('brand/favicon-64x64.png') }],
     ['meta', { property: 'og:type', content: 'website' }],
     ['meta', { property: 'og:site_name', content: 'agent-marketplace' }],
     ['meta', { name: 'twitter:card', content: 'summary_large_image' }]
   ],
 
   themeConfig: {
-    siteTitle: 'agent-marketplace',
+    logo: {
+      light: '/brand/logo-horizontal-black.svg',
+      dark: '/brand/logo-horizontal-white.svg',
+      alt: 'agent-marketplace'
+    },
+    siteTitle: false,
     siteProfile: docsOnly ? 'docs' : 'public',
 
     nav: docsOnly
@@ -66,7 +75,6 @@ export default defineConfig({
         { text: 'Terminal basics', link: `${DOCS_PATH}terminal-basics` },
         { text: 'Install', link: `${DOCS_PATH}install` },
         { text: 'Quick start', link: `${DOCS_PATH}quick-start` },
-        { text: 'User journeys', link: `${DOCS_PATH}explanation/user-journeys` },
         { text: 'Glossary', link: `${DOCS_PATH}glossary` },
         {
           text: 'Tutorials',
@@ -109,7 +117,7 @@ export default defineConfig({
                 { text: 'Configure multiple harnesses', link: `${DOCS_PATH}how-to/configure-multiple-harnesses` },
                 { text: 'Write regular files instead of symlinks', link: `${DOCS_PATH}how-to/write-regular-files-instead-of-symlinks` },
                 { text: 'Use a local registry', link: `${DOCS_PATH}how-to/use-a-local-registry` },
-                { text: 'Maintain v4 configuration', link: `${DOCS_PATH}how-to/migrate-configuration` },
+                { text: 'Convert configuration before upgrading', link: `${DOCS_PATH}how-to/migrate-configuration` },
                 { text: 'Repair owned shared configuration', link: `${DOCS_PATH}how-to/repair-owned-shared-configuration` },
                 { text: 'Back up and restore machine resources', link: `${DOCS_PATH}how-to/back-up-and-restore-machine-resources` },
                 { text: 'Remove agent-marketplace safely', link: `${DOCS_PATH}how-to/remove-agent-marketplace-safely` },
@@ -174,6 +182,7 @@ export default defineConfig({
         {
           text: 'Explanation',
           items: [
+            { text: 'User journeys', link: `${DOCS_PATH}explanation/user-journeys` },
             { text: 'How agent-marketplace works', link: `${DOCS_PATH}explanation/how-agent-marketplace-works` },
             { text: 'Sources and resources', link: `${DOCS_PATH}explanation/sources-and-resources` },
             { text: 'Scopes, selection, and precedence', link: `${DOCS_PATH}explanation/scopes-selection-and-precedence` },

@@ -50,6 +50,7 @@ func TestSubagentAnalyzer(t *testing.T) {
 	}
 }
 
+// spec: hook-resources/hook-resource-yields-the-capability-finding
 func TestHookAnalyzer(t *testing.T) {
 	h := ir.NewHook("pre-tool", "PreToolUse", "echo", "command", nil, ir.SourceRef{})
 	a := hookAnalyzer{}

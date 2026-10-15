@@ -1,5 +1,12 @@
 # Adopting agent-marketplace
 
+> **Historical, non-normative lead — pending harvest.** This document retains
+> pre-launch guidance, including obsolete v2/v3 reader/writer and startup
+> migration claims. It is not current launch usage or a normative contract.
+> Use the current [repository adoption guide](../site/docs/how-to/adopt-agent-marketplace-in-a-repository.md),
+> [configuration reference](../site/docs/reference/configuration.md), and
+> [conversion-before-upgrade guide](../site/docs/how-to/migrate-configuration.md) instead.
+
 This guide covers setting up `agent-marketplace` in a repository and on a workstation, and the day-to-day configuration tasks that follow.
 
 V4 (`apiVersion: agent-marketplace/v4`) is the canonical writable schema, built on `sources` and `resources`. Every new config root is v4. The v2 schema (`apiVersion: agent-marketplace/v2`) and its v3 compatibility alias are deprecated but stay fully readable and writable. Every mutation of a v2/v3 layer emits a `config.legacy-deprecated` warning naming the `agent-marketplace migrate` command for that scope.

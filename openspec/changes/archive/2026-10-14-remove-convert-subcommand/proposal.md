@@ -18,6 +18,7 @@ None.
 ### Modified Capabilities
 
 - `registry-symlink-containment`: the requirement covering direct conversion primary reads is removed, since direct conversion no longer exists in Agent Marketplace.
+- `consumer-config-format`: the clause keeping harness source-layout `convert` available alongside the removed migration surface is dropped.
 
 ## Impact
 

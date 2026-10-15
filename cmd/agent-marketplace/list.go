@@ -222,7 +222,7 @@ func runListFrom(ctx context.Context, out io.Writer, errOut io.Writer, fromURL, 
 
 	// Build a synthetic config with just the --from entry to load catalogs.
 	syntheticCfg := &config.Config{
-		APIVersion: config.APIVersionV2,
+		APIVersion: config.APIVersionV4,
 		Registries: []config.RegistryEntry{syntheticEntry},
 	}
 

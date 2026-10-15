@@ -1,11 +1,14 @@
 package config
 
 import (
+	"errors"
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
 
-	"gopkg.in/yaml.v3"
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 )
 
 // ks is a shorthand for constructing KindSelector with includes only.
@@ -21,28 +24,39 @@ func kse(include, exclude []string) KindSelector {
 	return KindSelector{Include: include, Exclude: exclude}
 }
 
-func TestUnmarshalRepoConfig(t *testing.T) {
+// parseRuntimeV4 exercises the supported authored parser and runtime adapter.
+// Expected selections in callers remain independently authored.
+func parseRuntimeV4(t *testing.T, input string) *Config {
+	t.Helper()
+	parsed, err := ParseV4Config([]byte(input), "", true)
+	if err != nil {
+		t.Fatalf("parse v4 config: %v", err)
+	}
+	cfg, err := parsed.ToLegacyConfig(repoLayer)
+	if err != nil {
+		t.Fatalf("adapt v4 runtime config: %v", err)
+	}
+	return cfg
+}
+
+func TestParseRepoConfig(t *testing.T) {
 	const input = `
-registries:
-  - url: git@gitlab.example.com:example-org/example-infra-skills.git
+apiVersion: agent-marketplace/v4
+sources:
+  infra:
+    git: git@gitlab.example.com:example-org/example-infra-skills.git
     ref: main
-    skills:
-      include:
-        - vm-lifecycle
-      exclude:
-        - firewall-rule-lifecycle
-    tags:
-      - k8s
-  - url: git@gitlab.example.com:example-org/example-other-skills.git
+  other:
+    git: git@gitlab.example.com:example-org/example-other-skills.git
     ref: v1.2.3
-tags:
-  - network
+resources:
+  infra:
+    include: [skill/vm-lifecycle]
+    exclude: [skill/firewall-rule-lifecycle]
+    tags: [k8s]
 `
 
-	var cfg Config
-	if err := yaml.Unmarshal([]byte(input), &cfg); err != nil {
-		t.Fatalf("expected repo config to unmarshal: %v", err)
-	}
+	cfg := parseRuntimeV4(t, input)
 
 	if len(cfg.Registries) != 2 {
 		t.Fatalf("expected 2 registries, got %d", len(cfg.Registries))
@@ -80,45 +94,45 @@ tags:
 		t.Fatalf("expected absent per-entry tags to remain nil, got %#v", cfg.Registries[1].Tags)
 	}
 
-	if !reflect.DeepEqual(cfg.Tags, []string{"network"}) {
-		t.Fatalf("expected top-level tags to be parsed, got %#v", cfg.Tags)
+	if cfg.Tags != nil {
+		t.Fatalf("source-local tags must not become top-level defaults, got %#v", cfg.Tags)
 	}
 }
 
-func TestUnmarshalLegacyListForm(t *testing.T) {
-	// The legacy flat list form `skills: [a, b]` should be accepted as
-	// KindSelector{Include: [a, b]} on registry entries.
-	const input = `
-registries:
-  - url: git@example.com:infra.git
-    ref: main
-    skills:
-      - entry-skill
-`
-	var cfg Config
-	if err := yaml.Unmarshal([]byte(input), &cfg); err != nil {
-		t.Fatalf("expected legacy config to unmarshal: %v", err)
-	}
-
+func TestParseResourceListForm(t *testing.T) {
+	cfg := parseRuntimeV4(t, `
+apiVersion: agent-marketplace/v4
+sources:
+  infra: {git: "git@example.com:infra.git", ref: main}
+resources:
+  infra: [skill/entry-skill]
+`)
 	if !reflect.DeepEqual(cfg.Registries[0].Skills.Include, []string{"entry-skill"}) {
-		t.Fatalf("expected legacy registry skills list to map to Include, got %#v", cfg.Registries[0].Skills)
+		t.Fatalf("resource shorthand did not map to runtime includes: %#v", cfg.Registries[0].Skills)
+	}
+	_, err := ParseV4([]byte("apiVersion: agent-marketplace/v4\nskills: [entry-skill]\n"))
+	var validation *V4ValidationError
+	if !errors.As(err, &validation) || validation.Code != "v4.legacy-key" {
+		t.Fatalf("legacy selector key error = %v, want v4.legacy-key", err)
 	}
 }
 
-func TestUnmarshalGlobalConfig(t *testing.T) {
+func TestParseRequiredConfig(t *testing.T) {
 	const input = `
-registries:
-  - url: git@gitlab.example.com:example-org/example-security-skills.git
+apiVersion: agent-marketplace/v4
+harnesses: [factory]
+sources:
+  a-security:
+    git: git@gitlab.example.com:example-org/example-security-skills.git
     ref: main
-    required: true
-  - url: git@gitlab.example.com:example-org/example-infra-skills.git
+  b-infra:
+    git: git@gitlab.example.com:example-org/example-infra-skills.git
     ref: stable
+resources:
+  a-security: {all: true, required: true}
 `
 
-	var cfg Config
-	if err := yaml.Unmarshal([]byte(input), &cfg); err != nil {
-		t.Fatalf("expected global config to unmarshal: %v", err)
-	}
+	cfg := parseRuntimeV4(t, input)
 
 	if len(cfg.Registries) != 2 {
 		t.Fatalf("expected 2 registries, got %d", len(cfg.Registries))
@@ -142,6 +156,8 @@ func TestConfigValidateRequiresRegistryURLAndRef(t *testing.T) {
 		{
 			name: "missing url",
 			config: Config{
+				APIVersion: APIVersionV4,
+				Harnesses:  []string{"factory"},
 				Registries: []RegistryEntry{{Ref: "main"}},
 			},
 			wantMessage: "registries[0].url is required",
@@ -149,6 +165,8 @@ func TestConfigValidateRequiresRegistryURLAndRef(t *testing.T) {
 		{
 			name: "missing ref",
 			config: Config{
+				APIVersion: APIVersionV4,
+				Harnesses:  []string{"factory"},
 				Registries: []RegistryEntry{{URL: "git@gitlab.example.com:example-org/example-infra-skills.git"}},
 			},
 			wantMessage: "registries[0].ref is required",
@@ -171,7 +189,7 @@ func TestConfigValidateRequiresRegistryURLAndRef(t *testing.T) {
 
 func TestConfigValidateAcceptsValidConfig(t *testing.T) {
 	cfg := Config{
-		APIVersion: APIVersionV2,
+		APIVersion: APIVersionV4,
 		Harnesses:  []string{"factory"},
 		Registries: []RegistryEntry{
 			{URL: "git@gitlab.example.com:example-org/example-security-skills.git", Ref: "main", Required: true},
@@ -186,27 +204,32 @@ func TestConfigValidateAcceptsValidConfig(t *testing.T) {
 	}
 }
 
-func TestConfigValidateAcceptsV3(t *testing.T) {
-	cfg := Config{
-		APIVersion: APIVersionV3,
-		Harnesses:  []string{"factory"},
-		Registries: []RegistryEntry{
-			{URL: "git@example.com:repo.git", Ref: "main"},
-		},
-	}
-
-	if err := cfg.Validate(); err != nil {
-		t.Fatalf("expected v3 config to pass Validate: %v", err)
-	}
-
-	if err := cfg.ValidateWithoutHarnesses(); err != nil {
-		t.Fatalf("expected v3 config to pass ValidateWithoutHarnesses: %v", err)
+func TestConfigValidateRejectsUnsupportedVersions(t *testing.T) {
+	for _, version := range []string{"agent-marketplace/v2", "agent-marketplace/v3", "agent-marketplace/v1", "agent-marketplace/v5"} {
+		t.Run(version, func(t *testing.T) {
+			cfg := Config{
+				APIVersion: version,
+				Harnesses:  []string{"factory"},
+				Registries: []RegistryEntry{{URL: "git@example.com:repo.git", Ref: "main"}},
+			}
+			for _, validate := range []func() error{cfg.Validate, cfg.ValidateWithoutHarnesses} {
+				err := validate()
+				var validation *V4ValidationError
+				if !errors.As(err, &validation) || validation.Code != "v4.api-version" || validation.Path != "apiVersion" {
+					t.Fatalf("version %q error = %v, want v4.api-version for apiVersion", version, err)
+				}
+			}
+			cfg.APIVersion = APIVersionV4
+			if err := cfg.Validate(); err != nil {
+				t.Fatalf("otherwise-identical v4 control: %v", err)
+			}
+		})
 	}
 }
 
 func TestConfigValidateRejectsPathTraversal(t *testing.T) {
 	base := Config{
-		APIVersion: APIVersionV2,
+		APIVersion: APIVersionV4,
 		Harnesses:  []string{"factory"},
 	}
 
@@ -266,7 +289,7 @@ func TestConfigValidateRejectsLocalURLTraversal(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			cfg := Config{
-				APIVersion: APIVersionV2,
+				APIVersion: APIVersionV4,
 				Harnesses:  []string{"factory"},
 				Registries: []RegistryEntry{{URL: tc.url}},
 			}
@@ -551,7 +574,7 @@ func TestResolveLocalPath(t *testing.T) {
 
 func TestConfigValidateLocalRegistryDoesNotRequireRef(t *testing.T) {
 	cfg := Config{
-		APIVersion: APIVersionV2,
+		APIVersion: APIVersionV4,
 		Harnesses:  []string{"factory"},
 		Registries: []RegistryEntry{
 			{URL: "/local/skills", Skills: ks("my-skill")},
@@ -565,7 +588,7 @@ func TestConfigValidateLocalRegistryDoesNotRequireRef(t *testing.T) {
 
 func TestConfigValidateLocalRegistryWithRefAccepted(t *testing.T) {
 	cfg := Config{
-		APIVersion: APIVersionV2,
+		APIVersion: APIVersionV4,
 		Harnesses:  []string{"factory"},
 		Registries: []RegistryEntry{
 			{URL: "/local/skills", Ref: "main", Skills: ks("my-skill")},
@@ -592,7 +615,7 @@ func TestConfigValidateFileURLRegistryClassification(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			cfg := Config{
-				APIVersion: APIVersionV2,
+				APIVersion: APIVersionV4,
 				Harnesses:  []string{"factory"},
 				Registries: []RegistryEntry{{URL: tc.url, Ref: tc.ref, Skills: ks("my-skill")}},
 			}
@@ -612,7 +635,7 @@ func TestConfigValidateFileURLRegistryClassification(t *testing.T) {
 
 func TestConfigValidateHomeLocalRegistryWithoutRefAccepted(t *testing.T) {
 	cfg := Config{
-		APIVersion: APIVersionV2,
+		APIVersion: APIVersionV4,
 		Harnesses:  []string{"factory"},
 		Registries: []RegistryEntry{
 			{URL: "~/skills", Skills: ks("my-skill")},
@@ -626,7 +649,7 @@ func TestConfigValidateHomeLocalRegistryWithoutRefAccepted(t *testing.T) {
 
 func TestConfigValidateRelativeLocalRegistryWithRef(t *testing.T) {
 	cfg := Config{
-		APIVersion: APIVersionV2,
+		APIVersion: APIVersionV4,
 		Harnesses:  []string{"factory"},
 		Registries: []RegistryEntry{
 			{URL: ".", Ref: "main", Path: "skills", Skills: ks("my-skill")},
@@ -638,20 +661,19 @@ func TestConfigValidateRelativeLocalRegistryWithRef(t *testing.T) {
 	}
 }
 
-func TestUnmarshalLocalRegistryConfig(t *testing.T) {
+func TestParseLocalRegistryConfig(t *testing.T) {
 	const input = `
-registries:
-  - url: /home/user/my-skills
-    skills:
-      - local-skill
-  - url: git@gitlab.example.com:example-org/example-infra-skills.git
+apiVersion: agent-marketplace/v4
+sources:
+  a-local: {directory: /home/user/my-skills}
+  b-remote:
+    git: git@gitlab.example.com:example-org/example-infra-skills.git
     ref: main
+resources:
+  a-local: [skill/local-skill]
 `
 
-	var cfg Config
-	if err := yaml.Unmarshal([]byte(input), &cfg); err != nil {
-		t.Fatalf("expected config with local registry to unmarshal: %v", err)
-	}
+	cfg := parseRuntimeV4(t, input)
 
 	if len(cfg.Registries) != 2 {
 		t.Fatalf("expected 2 registries, got %d", len(cfg.Registries))
@@ -712,7 +734,7 @@ func TestBundlePath(t *testing.T) {
 	}
 }
 
-func TestPathAliasesToURL(t *testing.T) {
+func TestSourceDiscriminatorsNormalizeURLAndPath(t *testing.T) {
 	tests := []struct {
 		name      string
 		input     string
@@ -722,33 +744,36 @@ func TestPathAliasesToURL(t *testing.T) {
 		wantLocal bool
 	}{
 		{
-			name: "path as alias for url (no url key)",
+			name: "directory discriminator supplies local URL",
 			input: `
-registries:
-  - path: /local/skills
+apiVersion: agent-marketplace/v4
+sources:
+  local: {directory: /local/skills}
 `,
 			wantURL:   "/local/skills",
 			wantPath:  "",
 			wantLocal: true,
 		},
 		{
-			name: "path as alias with ref",
+			name: "git discriminator retains ref",
 			input: `
-registries:
-  - path: git@example.com:infra.git
-    ref: main
+apiVersion: agent-marketplace/v4
+sources:
+  infra: {git: "git@example.com:infra.git", ref: main}
 `,
 			wantURL:  "git@example.com:infra.git",
 			wantPath: "",
 			wantRef:  "main",
 		},
 		{
-			name: "url takes precedence when both url and path present (backward compat)",
+			name: "git subpath normalizes independently of URL",
 			input: `
-registries:
-  - url: git@example.com:infra.git
+apiVersion: agent-marketplace/v4
+sources:
+  infra:
+    git: git@example.com:infra.git
     ref: main
-    path: skills
+    path: " skills "
 `,
 			wantURL:  "git@example.com:infra.git",
 			wantPath: "skills",
@@ -758,10 +783,7 @@ registries:
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			var cfg Config
-			if err := yaml.Unmarshal([]byte(tc.input), &cfg); err != nil {
-				t.Fatalf("expected config to unmarshal: %v", err)
-			}
+			cfg := parseRuntimeV4(t, tc.input)
 			if len(cfg.Registries) != 1 {
 				t.Fatalf("expected 1 registry, got %d", len(cfg.Registries))
 			}
@@ -782,9 +804,21 @@ registries:
 	}
 }
 
-func TestPathAliasValidatesCorrectly(t *testing.T) {
+func TestSourcePathDoesNotAliasOrigin(t *testing.T) {
+	_, err := ParseV4([]byte("apiVersion: agent-marketplace/v4\nsources:\n  local: {path: /local/skills}\n"))
+	var validation *V4ValidationError
+	if !errors.As(err, &validation) || validation.Code != "v4.source-discriminator" || validation.Path != "sources.local" {
+		t.Fatalf("path-only source error = %v, want v4.source-discriminator", err)
+	}
+	cfg := parseRuntimeV4(t, "apiVersion: agent-marketplace/v4\nsources:\n  local: {directory: /local/skills}\n")
+	if len(cfg.Registries) != 1 || cfg.Registries[0].URL != "/local/skills" || cfg.Registries[0].Path != "" || !cfg.Registries[0].IsLocal() {
+		t.Fatalf("explicit directory control = %#v", cfg.Registries)
+	}
+}
+
+func TestRuntimeLocalPathValidatesCorrectly(t *testing.T) {
 	cfg := Config{
-		APIVersion: APIVersionV2,
+		APIVersion: APIVersionV4,
 		Harnesses:  []string{"factory"},
 		Registries: []RegistryEntry{
 			{URL: "/local/skills", Skills: ks("my-skill")},
@@ -796,70 +830,67 @@ func TestPathAliasValidatesCorrectly(t *testing.T) {
 	}
 }
 
-func TestPathRoundTrip(t *testing.T) {
-	original := Config{
-		APIVersion: APIVersionV2,
-		Harnesses:  []string{"factory"},
-		Registries: []RegistryEntry{
-			{
-				URL:  "git@example.com:infra.git",
-				Ref:  "main",
-				Path: ".factory",
-			},
-		},
+func TestEditorRoundTripPreservesConfigStructureAndPath(t *testing.T) {
+	const input = `apiVersion: agent-marketplace/v4
+harnesses: [factory, cursor]
+sources:
+  security:
+    git: git@gitlab.example.com:example-org/example-security-skills.git
+    ref: main
+    path: .factory
+  infra:
+    git: git@gitlab.example.com:example-org/example-infra-skills.git
+    ref: v2.0.0
+resources:
+  security:
+    required: true
+    include: [skill/no-curl-bash]
+    exclude: [skill/legacy-skill]
+    tags: [security]
+`
+	configPath := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(configPath, []byte(input), 0o640); err != nil {
+		t.Fatal(err)
 	}
-
-	data, err := yaml.Marshal(original)
+	editor, err := OpenLayerEditor(LayerTarget{Source: RepoCommitted, StagedPath: configPath, DeclaringPath: configPath})
 	if err != nil {
-		t.Fatalf("marshal: %v", err)
+		t.Fatal(err)
 	}
-
-	// The struct tag serializes Path as "path:".
-	if !strings.Contains(string(data), "path:") {
-		t.Fatalf("expected serialized YAML to contain 'path:', got:\n%s", data)
-	}
-
-	var roundTripped Config
-	if err := yaml.Unmarshal(data, &roundTripped); err != nil {
-		t.Fatalf("unmarshal: %v", err)
-	}
-	if roundTripped.Registries[0].Path != ".factory" {
-		t.Fatalf("expected Path=.factory after round-trip, got %q", roundTripped.Registries[0].Path)
-	}
-}
-
-func TestRoundTripPreservesConfigStructure(t *testing.T) {
-	original := Config{
-		APIVersion: APIVersionV2,
-		Harnesses:  []string{"factory", "cursor"},
-		Registries: []RegistryEntry{
-			{
-				URL:      "git@gitlab.example.com:example-org/example-security-skills.git",
-				Ref:      "main",
-				Required: true,
-				Skills:   kse([]string{"no-curl-bash"}, []string{"legacy-skill"}),
-				Tags:     []string{"security"},
-			},
-			{
-				URL: "git@gitlab.example.com:example-org/example-infra-skills.git",
-				Ref: "v2.0.0",
-			},
-		},
-		Tags: []string{"k8s"},
-	}
-
-	data, err := yaml.Marshal(original)
+	candidate, err := editor.Render()
 	if err != nil {
-		t.Fatalf("expected config to marshal: %v", err)
+		t.Fatal(err)
 	}
-
-	var roundTripped Config
-	if err := yaml.Unmarshal(data, &roundTripped); err != nil {
-		t.Fatalf("expected marshaled config to unmarshal: %v", err)
+	if candidate.Changed || string(candidate.Bytes) != input || candidate.Mode != 0o640 {
+		t.Fatalf("no-op render changed bytes/mode: %+v", candidate)
 	}
-
-	if !reflect.DeepEqual(roundTripped, original) {
-		t.Fatalf("expected round-trip config to match original\noriginal: %#v\nround-tripped: %#v", original, roundTripped)
+	binding, found, err := editor.LookupRegistry(RegistryEntry{URL: "git@gitlab.example.com:example-org/example-security-skills.git", Ref: "main", Path: ".factory"})
+	if err != nil || !found {
+		t.Fatalf("lookup source: found=%v, err=%v", found, err)
+	}
+	if err := editor.Apply(binding, SelectionChange{Operation: SelectionInclude, Locators: []ResourceLocator{{Kind: ir.KindCommand, Name: "audit"}}}); err != nil {
+		t.Fatal(err)
+	}
+	candidate, err = editor.Render()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !candidate.Changed || candidate.Mode != 0o640 {
+		t.Fatalf("real edit did not render with existing mode: %+v", candidate)
+	}
+	cfg := parseRuntimeV4(t, string(candidate.Bytes))
+	if cfg.APIVersion != APIVersionV4 || !reflect.DeepEqual(cfg.Harnesses, []string{"factory", "cursor"}) || len(cfg.Registries) != 2 {
+		t.Fatalf("config settings/structure changed: %#v", cfg)
+	}
+	infra, security := cfg.Registries[0], cfg.Registries[1]
+	if infra.URL != "git@gitlab.example.com:example-org/example-infra-skills.git" || infra.Ref != "v2.0.0" || !infra.Skills.IsZero() {
+		t.Fatalf("unrelated source changed: %#v", infra)
+	}
+	if security.URL != "git@gitlab.example.com:example-org/example-security-skills.git" || security.Ref != "main" || security.Path != ".factory" || !security.Required || !reflect.DeepEqual(security.Skills, kse([]string{"no-curl-bash"}, []string{"legacy-skill"})) || !reflect.DeepEqual(security.Tags, []string{"security"}) || !reflect.DeepEqual(security.Commands.Include, []string{"audit"}) {
+		t.Fatalf("selection edit lost existing structure/path: %#v", security)
+	}
+	stored, err := os.ReadFile(configPath)
+	if err != nil || string(stored) != input {
+		t.Fatalf("render must not publish: bytes=%q, err=%v", stored, err)
 	}
 }
 
@@ -896,7 +927,7 @@ func TestResolveMaterializationModesScopePrecedence(t *testing.T) {
 	}
 }
 
-func TestMaterializationTargetsComposeAcrossLegacyLayersAndLocalIncludes(t *testing.T) {
+func TestMaterializationTargetsComposeAcrossRuntimeLayersAndV4LocalIncludes(t *testing.T) {
 	global := &Config{Materialization: &MaterializationConfig{
 		Mode:    "file",
 		Targets: map[string]string{"factory": "file", "devin": "symlink"},
@@ -913,21 +944,30 @@ func TestMaterializationTargetsComposeAcrossLegacyLayersAndLocalIncludes(t *test
 		*LocalConfigAsLayer(local),
 	})
 	if merged.Materialization == nil || len(merged.Materialization.Targets) != 3 || merged.Materialization.Targets["factory"] != "symlink" || merged.Materialization.Targets["devin"] != "symlink" || merged.Materialization.Targets["claude"] != "file" {
-		t.Fatalf("legacy layer target map = %#v", merged.Materialization)
+		t.Fatalf("runtime layer target map = %#v", merged.Materialization)
 	}
-	included := mergeLocalIncludeLayers([]Layer{
-		{Config: &Config{Materialization: &MaterializationConfig{Targets: map[string]string{"devin": "file"}}}},
-		{Config: &Config{Materialization: &MaterializationConfig{Targets: map[string]string{"factory": "symlink", "devin": "symlink"}}}},
-	})
-	if included.Materialization == nil || len(included.Materialization.Targets) != 2 || included.Materialization.Targets["devin"] != "symlink" || included.Materialization.Targets["factory"] != "symlink" {
-		t.Fatalf("legacy include target map = %#v", included.Materialization)
+	dir := t.TempDir()
+	fragment := filepath.Join(dir, "materialization.yaml")
+	root := filepath.Join(dir, "config.local.yaml")
+	if err := os.WriteFile(fragment, []byte("materialization:\n  targets: {devin: file, claude: file}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(root, []byte("apiVersion: agent-marketplace/v4\ninclude: materialization.yaml\nmaterialization:\n  targets: {factory: symlink, devin: symlink}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	included, err := LoadLocalConfigFromPath(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if included.Materialization == nil || len(included.Materialization.Targets) != 3 || included.Materialization.Targets["devin"] != "symlink" || included.Materialization.Targets["factory"] != "symlink" || included.Materialization.Targets["claude"] != "file" {
+		t.Fatalf("v4 include target map = %#v", included.Materialization)
 	}
 	modes, err := ResolveMaterializationModes(global, repo, local)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if modes.For("factory", false) != MaterializationModeSymlink || modes.For("devin", false) != MaterializationModeSymlink || modes.For("claude", false) != MaterializationModeFile {
-		t.Fatalf("resolved legacy target modes = %+v", modes)
+		t.Fatalf("resolved runtime target modes = %+v", modes)
 	}
 }
 

@@ -66,9 +66,6 @@ func newRootCmd() *cobra.Command {
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
 			cmd.SetContext(pipeline.WithTransientOrganizationMarketplaceLockCache(cmd.Context()))
 			rootTUI := cmd == rootCmd && !showVersion && !noTUI && os.Getenv("AGENT_MARKETPLACE_NO_TUI") == "" && term.IsTerminal(os.Stdin.Fd())
-			if err := maybePromptV4Migration(cmd, rootTUI, showVersion); err != nil {
-				return err
-			}
 			if err := prepareCommandDependencies(cmd, rootTUI); err != nil {
 				return err
 			}
@@ -125,7 +122,6 @@ func newRootCmd() *cobra.Command {
 		newSearchCmd(),
 		newInstallCmd(),
 		newRemoveCmd(),
-		newMigrateCmd(),
 		newDoctorCmd(),
 		newGCCmd(),
 		newUpdateCmd(),
@@ -141,47 +137,12 @@ func newRootCmd() *cobra.Command {
 	return rootCmd
 }
 
-func maybePromptV4Migration(cmd *cobra.Command, rootTUI, showVersion bool) error {
-	if rootTUI || showVersion || skipV4MigrationPrompt(cmd) {
-		return nil
-	}
-	paths, err := currentMigratePaths()
-	if err != nil {
-		slog.Warn("v4 migration check skipped", "error", err)
-		return nil
-	}
-	pending, err := pendingV4MigrationPaths(paths)
-	if err != nil {
-		slog.Warn("v4 migration check skipped", "error", err)
-		return nil
-	}
-	if pending.User == "" && pending.Repo == "" && pending.Local == "" {
-		return nil
-	}
-	return runV4MigrationPrompt(cmd.Context(), cmd.OutOrStdout(), cmd.InOrStdin(), commandInputIsTerminal(cmd.InOrStdin()), pending)
-}
-
-func skipV4MigrationPrompt(cmd *cobra.Command) bool {
-	for current := cmd; current != nil; current = current.Parent() {
-		switch current.Name() {
-		case "init", "migrate", "serve", "telemetry", "tui", "doctor":
-			return true
-		}
-	}
-	return false
-}
-
-func commandInputIsTerminal(in io.Reader) bool {
-	fdReader, ok := in.(interface{ Fd() uintptr })
-	return ok && isTerminal(fdReader.Fd())
-}
-
 func prepareCommandDependencies(cmd *cobra.Command, rootTUI bool) error {
 	if rootTUI {
 		return prepareDependencyTransactions(cmd.Context(), false)
 	}
 	switch cmd.Name() {
-	case "tui", "gc":
+	case "tui", "gc", "install", "remove", "update", "init":
 		return prepareDependencyTransactions(cmd.Context(), false)
 	case "list", "status":
 		return prepareDependencyTransactions(cmd.Context(), true)

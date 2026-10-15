@@ -1640,6 +1640,10 @@ components:
           $ref: "#/components/schemas/ResourceAssessment"
         occurrence:
           $ref: "#/components/schemas/ResourceOccurrence"
+        source:
+          description: Immutable source provenance. It is omitted when the occurrence lacks trustworthy source provenance.
+          allOf:
+            - $ref: "#/components/schemas/CatalogSource"
         revocation:
           $ref: "#/components/schemas/Revocation"
         current_availability:

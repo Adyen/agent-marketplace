@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/Adyen/agent-marketplace/internal/config"
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 )
 
 type LayerMutationTarget struct {
@@ -28,6 +29,23 @@ func (m *LayerMutation) EnsureRegistry(entry config.RegistryEntry) (config.Sourc
 }
 
 func (m *LayerMutation) Apply(binding config.SourceBinding, change config.SelectionChange) error {
+	if change.Operation == config.SelectionInclude && change.Tag == "" && len(change.Locators) > 0 {
+		group := m.editor.RenderedV4().Groups[binding.Name]
+		selectedByAll := group.All != nil && *group.All
+		for _, locator := range change.Locators {
+			// Collections require explicit requests even in an all:true group.
+			selectedByAll = selectedByAll && locator.Kind != ir.KindCollection
+		}
+		if selectedByAll {
+			err := m.editor.Apply(binding, config.SelectionChange{Operation: config.SelectionClearExclude, Locators: change.Locators})
+			var validation *config.V4ValidationError
+			if !errors.As(err, &validation) || validation.Code != "v4.edit-exclusion" {
+				return err
+			}
+			// An inherited exclusion may need a later explicit request. Let
+			// the v4 editor retain its existing ordered-decision authority.
+		}
+	}
 	return m.editor.Apply(binding, change)
 }
 
@@ -44,22 +62,6 @@ func (m *LayerMutation) ClearInstallExclude(entry config.RegistryEntry, locator 
 		return errors.New("layer mutation has no open editor")
 	}
 	return m.editor.ClearInstallExclude(entry, locator)
-}
-
-func (m *LayerMutation) ClearUnboundExclude(locator config.ResourceLocator) error {
-	return m.editor.ClearUnboundExclude(locator)
-}
-
-func (m *LayerMutation) UnboundIncludeInherited(locator config.ResourceLocator) (bool, error) {
-	return m.editor.UnboundIncludeInherited(locator)
-}
-
-func (m *LayerMutation) RemoveUnboundInclude(locator config.ResourceLocator) error {
-	return m.editor.RemoveUnboundInclude(locator)
-}
-
-func (m *LayerMutation) SetUnboundExclude(locator config.ResourceLocator) error {
-	return m.editor.SetUnboundExclude(locator)
 }
 
 func (m *LayerMutation) SetLayerExclude(locator config.ResourceLocator, entries []config.RegistryEntry) error {
@@ -98,6 +100,12 @@ func MutateLayer(ctx context.Context, target LayerMutationTarget, mutate func(*L
 	if target.ConfigPath == "" {
 		return errors.New("layer mutation config path is required")
 	}
+	if err := RecoverDependencyTransactions(ctx); err != nil {
+		return err
+	}
+	if _, err := config.LoadV4ConfigIfPresent(target.ConfigPath, target.Source); err != nil {
+		return err
+	}
 	return MutateConfigWithDependencies(ctx, target.RepoRoot, target.LocalConfigDir, func(mapper ConfigPathMapper) error {
 		staged, err := mapper(target.ConfigPath)
 		if err != nil {
@@ -110,6 +118,20 @@ func MutateLayer(ctx context.Context, target LayerMutationTarget, mutate func(*L
 func EditLayerAtPath(target config.LayerTarget, mutate func(*LayerMutation) error) error {
 	if mutate == nil {
 		return errors.New("layer mutation callback is required")
+	}
+	if target.StagedPath == target.DeclaringPath {
+		ctx := context.Background()
+		if err := RecoverDependencyTransactions(ctx); err != nil {
+			return err
+		}
+		repoRoot, localDir := config.FindRepoRoot(), config.FindLocalConfigDir()
+		if target.Source == config.RepoCommitted || target.Source == config.RepoPersonal {
+			repoRoot = filepath.Dir(filepath.Dir(target.DeclaringPath))
+			localDir = repoRoot
+		}
+		if err := ValidateConsumerIntent(ctx, repoRoot, localDir); err != nil {
+			return err
+		}
 	}
 	_, statErr := os.Stat(target.StagedPath)
 	seeded := errors.Is(statErr, os.ErrNotExist)
@@ -134,9 +156,6 @@ func EditLayerAtPath(target config.LayerTarget, mutate func(*LayerMutation) erro
 			}
 		}
 		return nil
-	}
-	if candidate.Legacy {
-		warnLegacyLayerMutation(target.Source, target.DeclaringPath)
 	}
 	if err := os.WriteFile(target.StagedPath, candidate.Bytes, candidate.Mode); err != nil {
 		return fmt.Errorf("write staged config %s: %w", target.StagedPath, err)

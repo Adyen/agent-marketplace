@@ -21,9 +21,17 @@ func TestDeinitManifestFailurePreservesLaterPhases(t *testing.T) {
 			if scope == "local" {
 				fixtureScope = "repo"
 			}
-			f := newManagedSkillLinkFixture(t, "factory", fixtureScope)
+			f := newInstallBindingFixture(t)
+			if out, err := executeCommand("install", "review", "--from", "file://"+f.origin, "--ref", "main", "--scope", fixtureScope); err != nil {
+				t.Fatalf("seed owned skill: %v\n%s", err, out)
+			}
+			outputRoot := f.repo
+			if fixtureScope == "user" {
+				outputRoot = f.home
+			}
+			assertFactorySkillExists(t, outputRoot, "review")
 			if scope == "local" {
-				writeConfig(t, filepath.Join(f.repo, ".agents", "config.local.yaml"), "skills: []\n")
+				writeConfig(t, filepath.Join(f.repo, ".agents", "config.local.yaml"), "apiVersion: agent-marketplace/v4\n")
 				writeFile(t, filepath.Join(f.repo, ".agents", "lock.local.yaml"), "apiVersion: agent-marketplace-lock/v1\nscope: local\nregistries: []\n")
 			}
 			manifest := filepath.Join(f.repo, ".agents", "materialization-manifest.yaml")

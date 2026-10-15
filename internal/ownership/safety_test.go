@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -63,6 +64,174 @@ func TestSafetyBackupIsMandatoryEvenWhenConfiguredBackupsAreDisabled(t *testing.
 	// It lives under the XDG state root, not under the repository or the cache.
 	if !strings.HasPrefix(res.BackupPath, filepath.Join(st.StateRoot(), safetyDirName)) {
 		t.Fatalf("safety backup %q is not under the XDG state safety-backups root", res.BackupPath)
+	}
+}
+
+type retainedSafetyBackupSnapshot struct {
+	path         string
+	bytes        []byte
+	info         os.FileInfo
+	manifest     []byte
+	manifestInfo os.FileInfo
+}
+
+func snapshotRetainedSafetyBackups(t *testing.T, st *Store, rel string) []retainedSafetyBackupSnapshot {
+	t.Helper()
+	backups, err := st.SafetyBackups(rel)
+	if err != nil {
+		t.Fatalf("SafetyBackups: %v", err)
+	}
+	snapshots := make([]retainedSafetyBackupSnapshot, 0, len(backups))
+	for _, backup := range backups {
+		data, info := fileSnapshot(t, backup.Path)
+		manifest, manifestInfo := fileSnapshot(t, metaPathFor(backup.Path))
+		snapshots = append(snapshots, retainedSafetyBackupSnapshot{
+			path: backup.Path, bytes: data, info: info, manifest: manifest, manifestInfo: manifestInfo,
+		})
+	}
+	return snapshots
+}
+
+func assertRetainedSafetyBackupsUnchanged(t *testing.T, st *Store, rel string, before []retainedSafetyBackupSnapshot) {
+	t.Helper()
+	after := snapshotRetainedSafetyBackups(t, st, rel)
+	if len(after) != len(before) {
+		t.Fatalf("retained backup count = %d, want unchanged count %d", len(after), len(before))
+	}
+	for i := range before {
+		if after[i].path != before[i].path {
+			t.Fatalf("retained backup[%d] path = %q, want unchanged %q", i, after[i].path, before[i].path)
+		}
+		assertOwnershipFileUnchanged(t, before[i].path, before[i].bytes, before[i].info)
+		assertOwnershipFileUnchanged(t, metaPathFor(before[i].path), before[i].manifest, before[i].manifestInfo)
+	}
+}
+
+func preparedHookEntry() Entry {
+	entry := hookEntry("PreToolUse", "guard", `{"hooks":[{"type":"command","command":"echo safe"}]}`)
+	entry.SourceDigest = "sha256:" + strings.Repeat("a", 64)
+	return entry
+}
+
+func TestBackupPreparedMutationRecordsNextOwnedEntriesWithoutPublishing(t *testing.T) {
+	f := newFixture(t)
+	f.writeAggregate(priorContent)
+	st := f.store()
+	aggregateBefore, aggregateInfo := fileSnapshot(t, f.absFile)
+	entry := preparedHookEntry()
+	mutation := Mutation{
+		Rel: f.rel, AbsFile: f.absFile, NextBytes: []byte(nextContent), Entries: []Entry{entry}, Reason: ReasonSync,
+		ExpectPriorGeneration: 0, ExpectPriorDigest: Digest(aggregateBefore),
+	}
+
+	backupPath, err := st.BackupPreparedMutation(mutation)
+	if err != nil {
+		t.Fatalf("BackupPreparedMutation: %v", err)
+	}
+	backups, err := st.SafetyBackups(f.rel)
+	if err != nil || len(backups) != 1 {
+		t.Fatalf("SafetyBackups = %d / %v, want one backup", len(backups), err)
+	}
+	backup := backups[0]
+	if backup.Path != backupPath {
+		t.Fatalf("backup path = %q, want %q", backup.Path, backupPath)
+	}
+	raw, err := backup.RawBytes()
+	if err != nil || string(raw) != priorContent {
+		t.Fatalf("prepared backup bytes = %q / %v, want exact prior bytes", raw, err)
+	}
+	if backup.Manifest.Generation != 1 || backup.Manifest.PriorDigest != Digest(aggregateBefore) ||
+		backup.Manifest.PriorAbsent || !reflect.DeepEqual(backup.Manifest.ManagedEntries, []Entry{entry}) {
+		t.Fatalf("prepared backup manifest = %+v", backup.Manifest)
+	}
+	backupInfo, err := os.Stat(backup.Path)
+	if err != nil || backupInfo.Mode().Perm() != 0o600 {
+		t.Fatalf("prepared backup mode = %v / %v, want 0600", backupInfo, err)
+	}
+	manifestInfo, err := os.Stat(metaPathFor(backup.Path))
+	if err != nil || manifestInfo.Mode().Perm() != 0o600 {
+		t.Fatalf("prepared backup manifest mode = %v / %v, want 0600", manifestInfo, err)
+	}
+	assertOwnershipFileUnchanged(t, f.absFile, aggregateBefore, aggregateInfo)
+	if fileExists(t, st.StateFile()) || fileExists(t, st.JournalFile()) {
+		t.Fatal("BackupPreparedMutation published ownership state or a journal")
+	}
+}
+
+func TestBackupOnlyDoesNotRecordManagedEntries(t *testing.T) {
+	f := newFixture(t)
+	f.writeAggregate(priorContent)
+	st := f.store()
+	if _, err := st.BackupOnly(f.rel, f.absFile, ReasonSync); err != nil {
+		t.Fatalf("BackupOnly: %v", err)
+	}
+	backups, err := st.SafetyBackups(f.rel)
+	if err != nil || len(backups) != 1 {
+		t.Fatalf("SafetyBackups = %d / %v, want one backup", len(backups), err)
+	}
+	if len(backups[0].Manifest.ManagedEntries) != 0 {
+		t.Fatalf("BackupOnly managed entries = %+v, want none", backups[0].Manifest.ManagedEntries)
+	}
+}
+
+func TestBackupPreparedMutationRefusesInvalidInputsWithoutRetentionChanges(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+	}{
+		{name: "expected_generation"},
+		{name: "expected_digest"},
+		{name: "invalid_entry"},
+		{name: "duplicate_entries"},
+		{name: "root_mismatch"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newFixture(t)
+			f.writeAggregate(priorContent)
+			st := f.store()
+			for i := 0; i < SafetyBackupRetention; i++ {
+				if _, err := st.BackupOnly(f.rel, f.absFile, ReasonSync); err != nil {
+					t.Fatalf("seed BackupOnly %d: %v", i, err)
+				}
+			}
+			aggregateBefore, aggregateInfo := fileSnapshot(t, f.absFile)
+			backupsBefore := snapshotRetainedSafetyBackups(t, st, f.rel)
+			mutation := Mutation{
+				Rel: f.rel, AbsFile: f.absFile, NextBytes: []byte(nextContent), Entries: []Entry{preparedHookEntry()}, Reason: ReasonSync,
+				ExpectPriorGeneration: 0, ExpectPriorDigest: Digest(aggregateBefore),
+			}
+			switch tc.name {
+			case "expected_generation":
+				mutation.ExpectPriorGeneration = 1
+			case "expected_digest":
+				mutation.ExpectPriorDigest = Digest([]byte("different prior bytes"))
+			case "invalid_entry":
+				mutation.Entries[0].SourceDigest = "not-a-digest"
+			case "duplicate_entries":
+				mutation.Entries = append(mutation.Entries, mutation.Entries[0])
+			case "root_mismatch":
+				mutation.AbsFile = filepath.Join(t.TempDir(), "outside.json")
+			}
+			_, err := st.BackupPreparedMutation(mutation)
+			if err == nil {
+				t.Fatal("BackupPreparedMutation accepted an invalid mutation")
+			}
+			if tc.name == "expected_generation" || tc.name == "expected_digest" {
+				if !errors.Is(err, ErrGenerationConflict) {
+					t.Fatalf("error = %v, want ErrGenerationConflict", err)
+				}
+			}
+			if tc.name == "invalid_entry" || tc.name == "duplicate_entries" {
+				coded, ok := diag.AsCodedError(err)
+				if !ok || coded.Code != diag.CodeOwnershipStateUnsafeValue {
+					t.Fatalf("error = %v, want %s", err, diag.CodeOwnershipStateUnsafeValue)
+				}
+			}
+			assertOwnershipFileUnchanged(t, f.absFile, aggregateBefore, aggregateInfo)
+			assertRetainedSafetyBackupsUnchanged(t, st, f.rel, backupsBefore)
+			if fileExists(t, st.StateFile()) || fileExists(t, st.JournalFile()) {
+				t.Fatal("refused BackupPreparedMutation published ownership state or a journal")
+			}
+		})
 	}
 }
 

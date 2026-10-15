@@ -186,7 +186,7 @@ func TestHarnessConversionSecurity(t *testing.T) {
 			steps: []conversionStep{
 				{
 					files: map[string]string{
-						"source/.devin/hooks.v1.json": `{"PermissionRequest":[{"hooks":[{"type":"command","command":"permission-check"}]}],"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"valid-check"}]}]}`,
+						"source/.devin/hooks.v1.json": `{"PermissionRequest":[{"hooks":[{"type":"command","command":"permission-check"}]}],"PreToolUse":[{"matcher":"^exec$","hooks":[{"type":"command","command":"valid-check"}]}]}`,
 					},
 					from: hcc.HarnessDevin, to: hcc.HarnessFactory,
 					source: "source", out: "converted",
@@ -222,8 +222,8 @@ func TestHarnessConversionSecurity(t *testing.T) {
 					},
 					from: hcc.HarnessClaude, to: hcc.HarnessWindsurf,
 					source: "scoped", out: "scope-output",
-					outcome:     conversionClean,
-					diagnostics: 1,
+					outcome:     conversionPartial,
+					diagnostic:  "hook.windsurf.event-unmappable",
 					contains:    map[string]string{".windsurf/hooks.json": "global-stop"},
 					notContains: map[string]string{".windsurf/hooks.json": "subagent-only"},
 				},
