@@ -52,6 +52,12 @@ type NativePartition struct {
 	// first path element only, so a multi-element component could never be
 	// populated and "." would claim the whole partition root as prunable.
 	Components []string
+	// Retired lists locations, relative to the partition root, that earlier
+	// output claimed but the layout no longer writes. A file entry names a
+	// shared file consumers reconcile owned entries out of and delete when
+	// nothing but empty members remain; a directory entry (trailing slash)
+	// is left entirely alone. Consumers never write a retired location.
+	Retired []string
 	// ResourcePaths maps a resource kind to the root-relative path pattern
 	// emitted for a named resource. Every pattern contains exactly one %s name
 	// placeholder; when the placeholder is itself a directory element
@@ -163,23 +169,17 @@ var nativeLayouts = map[Target]NativeLayout{
 		{
 			ID:         "default",
 			Prefix:     ".",
-			Components: []string{"skills", "commands", "agents", "hooks", "hook-support", ".claude-plugin"},
+			Components: []string{"skills", "commands", "agents", "hooks", "hook-support"},
+			// The plugin manifest is retired: consumers strip marked entries
+			// out of an existing file and delete it once only empty
+			// skills/agents members remain; nothing writes it.
+			Retired: []string{".claude-plugin/plugin.json"},
 			ResourcePaths: map[ir.ResourceKind]string{
 				ir.KindSkill:    "skills/%s/SKILL.md",
 				ir.KindCommand:  "commands/%s.md",
 				ir.KindSubagent: "agents/%s.md",
 			},
 			Aggregates: []NativeAggregate{
-				{
-					Kind:    ir.KindSkill,
-					Project: NativeAggregateFile{Path: ".claude-plugin/plugin.json", Member: "skills"},
-					User:    NativeAggregateFile{Path: ".claude-plugin/plugin.json", Member: "skills"},
-				},
-				{
-					Kind:    ir.KindSubagent,
-					Project: NativeAggregateFile{Path: ".claude-plugin/plugin.json", Member: "agents"},
-					User:    NativeAggregateFile{Path: ".claude-plugin/plugin.json", Member: "agents"},
-				},
 				{
 					Kind:       ir.KindHook,
 					Shape:      HookShapeMatcherGroups,
@@ -199,7 +199,10 @@ var nativeLayouts = map[Target]NativeLayout{
 		{
 			ID:         "default",
 			Prefix:     ".",
-			Components: []string{"skills", "commands", "droids", "hooks", "hook-support", ".factory-plugin"},
+			Components: []string{"skills", "commands", "droids", "hooks", "hook-support"},
+			// The Factory layout never claimed .factory-plugin output; an
+			// existing directory under the target root is left alone.
+			Retired: []string{".factory-plugin/"},
 			ResourcePaths: map[ir.ResourceKind]string{
 				ir.KindSkill:    "skills/%s/SKILL.md",
 				ir.KindCommand:  "commands/%s.md",
@@ -407,6 +410,7 @@ func LookupNativeLayout(target Target) (NativeLayout, bool) {
 	cloned := NativeLayout{Partitions: make([]NativePartition, len(layout.Partitions))}
 	for i, partition := range layout.Partitions {
 		partition.Components = slices.Clone(partition.Components)
+		partition.Retired = slices.Clone(partition.Retired)
 		partition.ResourcePaths = maps.Clone(partition.ResourcePaths)
 		partition.SkillDirKinds = maps.Clone(partition.SkillDirKinds)
 		partition.Aggregates = slices.Clone(partition.Aggregates)
@@ -660,6 +664,33 @@ func validatePartitionContent(t Target, partition NativePartition, resourceKinds
 		seenComponents[component] = true
 		dirClaims[component] = true
 	}
+	// retiredClaims tracks retired entries so a duplicate or an entry that
+	// nests inside another retired location is rejected, and so an aggregate
+	// or resource path that collides with a retired location is caught below.
+	retiredClaims := make(map[string]bool, len(partition.Retired))
+	for _, retired := range partition.Retired {
+		cleaned := strings.TrimSuffix(retired, "/")
+		switch {
+		case !fs.ValidPath(cleaned) || cleaned == ".":
+			errs = append(errs, fmt.Errorf("target %q partition %q has invalid retired path %q", t, partition.ID, retired))
+			continue
+		case retiredClaims[retired]:
+			errs = append(errs, fmt.Errorf("target %q partition %q declares retired path %q more than once", t, partition.ID, retired))
+		}
+		retiredClaims[retired] = true
+		if dirClaims[cleaned] {
+			errs = append(errs, fmt.Errorf("target %q partition %q retires %q which is still a declared component", t, partition.ID, retired))
+		}
+		for other := range retiredClaims {
+			if other == retired {
+				continue
+			}
+			otherClean := strings.TrimSuffix(other, "/")
+			if isPathPrefix(otherClean, cleaned) || isPathPrefix(cleaned, otherClean) {
+				errs = append(errs, fmt.Errorf("target %q partition %q retired paths %q and %q nest inside each other", t, partition.ID, other, retired))
+			}
+		}
+	}
 	for _, kind := range slices.Sorted(maps.Keys(partition.ResourcePaths)) {
 		pattern := partition.ResourcePaths[kind]
 		if !compilableKind(kind) {
@@ -787,6 +818,13 @@ func validatePartitionContent(t Target, partition NativePartition, resourceKinds
 				for _, dir := range slices.Sorted(maps.Keys(dirClaims)) {
 					if dir == scope.file.Path || isPathPrefix(scope.file.Path, dir) {
 						errs = append(errs, fmt.Errorf("target %q partition %q %s-scope aggregate for %s has path %q that is or contains the declared directory %q", t, partition.ID, scope.name, aggregate.Kind, scope.file.Path, dir))
+						break
+					}
+				}
+				for retired := range retiredClaims {
+					cleaned := strings.TrimSuffix(retired, "/")
+					if scope.file.Path == cleaned || isPathPrefix(cleaned, scope.file.Path) || isPathPrefix(scope.file.Path, cleaned) {
+						errs = append(errs, fmt.Errorf("target %q partition %q %s-scope aggregate for %s has path %q that overlaps retired location %q", t, partition.ID, scope.name, aggregate.Kind, scope.file.Path, retired))
 						break
 					}
 				}

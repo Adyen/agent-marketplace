@@ -1,0 +1,237 @@
+package pluginpolicy
+
+import (
+	"strings"
+	"testing"
+	"testing/fstest"
+
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/target"
+)
+
+const validFormat = `schema: 1
+format: claude-plugin
+role: package
+evidence:
+  checked: "2026-10-15"
+  refs: [synthetic-test-fixture]
+versions: []
+manifest:
+  fields:
+    name: {required: true, type: string, invalid: refuse-package}
+components:
+  skills: immediate-children
+dependencies: refuse-package
+`
+
+const validHarness = `schema: 1
+harness: devin
+evidence:
+  checked: "2026-10-15"
+  refs: [synthetic-test-fixture]
+accepts: [claude-plugin]
+delivery:
+  decompose: {status: verified}
+  native: {status: unverified}
+`
+
+func loadAll(t *testing.T, format, harness string, probes []string) error {
+	t.Helper()
+	files := fstest.MapFS{}
+	if format != "" {
+		files["formats/claude-plugin.yaml"] = &fstest.MapFile{Data: []byte(format)}
+	}
+	if harness != "" {
+		files["catalogs/devin.yaml"] = &fstest.MapFile{Data: []byte(harness)}
+	}
+	_, err := loadCatalogs(files, "formats/*.yaml", "catalogs/*.yaml", probes)
+	return err
+}
+
+// spec: plugin-policy-catalogs/every-harness-target-and-package-format-ships-a-plugin-catalog
+func TestShippedCatalogsValidate(t *testing.T) {
+	if err := ValidateCatalogs(nil); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// spec: plugin-policy-catalogs/every-harness-target-and-package-format-ships-a-plugin-catalog
+func TestEveryTargetShipsACatalog(t *testing.T) {
+	r, err := loadCatalogs(catalogFiles, "formats/*.yaml", "catalogs/*.yaml", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tg := range target.Targets() {
+		if _, ok := r.catalogs[tg]; !ok {
+			t.Fatalf("no plugin catalog for target %s", tg)
+		}
+	}
+	want := map[string]bool{
+		"claude-plugin": true, "factory-plugin": true, "codex-plugin": true,
+		"agent-plugin": true, "claude-marketplace": true,
+		"factory-marketplace": true, "codex-marketplace": true,
+	}
+	for format := range want {
+		if _, ok := r.formats[format]; !ok {
+			t.Fatalf("no plugin catalog for format %s", format)
+		}
+	}
+	if len(r.formats) != len(want) {
+		t.Fatalf("formats = %v, want exactly %d", r.formats, len(want))
+	}
+	layouts := target.PackageLayouts()
+	if len(layouts) != len(r.formats) {
+		t.Fatalf("package layouts = %v, want one per format %v", layouts, r.formats)
+	}
+	for format := range r.formats {
+		if _, ok := layouts[format]; !ok {
+			t.Fatalf("no package layout for format %s", format)
+		}
+	}
+}
+
+// spec: plugin-policy-catalogs/every-harness-target-and-package-format-ships-a-plugin-catalog
+func TestDecomposeDeliveryVerifiedEverywhere(t *testing.T) {
+	r, err := loadCatalogs(catalogFiles, "formats/*.yaml", "catalogs/*.yaml", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tg := range target.Targets() {
+		c := r.catalogs[tg]
+		if c.Delivery.Decompose.Status != DeliveryVerified {
+			t.Fatalf("%s decompose status = %q, want verified", tg, c.Delivery.Decompose.Status)
+		}
+		if c.Delivery.Native.Status != DeliveryUnverified {
+			t.Fatalf("%s native status = %q, want unverified", tg, c.Delivery.Native.Status)
+		}
+	}
+}
+
+// spec: plugin-policy-catalogs/malformed-plugin-catalogs-fail-the-check
+func TestMalformedCatalogsRejected(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		format  string
+		harness string
+		want    string
+	}{
+		{
+			name:    "unknown key in format catalog",
+			format:  strings.Replace(validFormat, "versions: []", "bogus_field: 1\nversions: []", 1),
+			harness: validHarness,
+			want:    "bogus_field",
+		},
+		{
+			name:    "duplicate key in format catalog",
+			format:  strings.Replace(validFormat, "schema: 1", "schema: 1\nschema: 1", 1),
+			harness: validHarness,
+			want:    "duplicate",
+		},
+		{
+			name:    "field outcome outside the allowed set",
+			format:  strings.Replace(validFormat, "invalid: refuse-package", "invalid: shred-package", 1),
+			harness: validHarness,
+			want:    "shred-package",
+		},
+		{
+			name:    "blocking outcome without a diagnostic code",
+			harness: strings.Replace(validHarness, "delivery:", "surfaces:\n  plugin:\n    skill:\n      permissions: {block-member: true}\ndelivery:", 1),
+			format:  validFormat,
+			want:    "block-member",
+		},
+		{
+			name: "unknown policy reference",
+			format: strings.Replace(strings.Replace(validFormat,
+				"role: package", "role: catalog", 1),
+				"dependencies: refuse-package", "catalog:\n  entry_overlay: entry-overlay.bogus\n  sources:\n    path: acquire\ndependencies: refuse-package", 1),
+			harness: validHarness,
+			want:    "entry-overlay.bogus",
+		},
+		{
+			name:    "unknown format reference in accepts",
+			format:  validFormat,
+			harness: strings.Replace(validHarness, "accepts: [claude-plugin]", "accepts: [bogus-plugin]", 1),
+			want:    "bogus-plugin",
+		},
+		{
+			name:    "missing evidence refs",
+			format:  strings.Replace(validFormat, "  refs: [synthetic-test-fixture]\n", "", 1),
+			harness: validHarness,
+			want:    "evidence",
+		},
+		{
+			name:    "catalog role without catalog block",
+			format:  strings.Replace(validFormat, "role: package", "role: catalog", 1),
+			harness: validHarness,
+			want:    "catalog",
+		},
+		{
+			name:    "unknown component discovery rule",
+			format:  strings.Replace(validFormat, "skills: immediate-children", "skills: recursively", 1),
+			harness: validHarness,
+			want:    "recursively",
+		},
+		{
+			name:    "dependencies outcome outside refuse-package",
+			format:  strings.Replace(validFormat, "dependencies: refuse-package", "dependencies: install", 1),
+			harness: validHarness,
+			want:    "dependencies",
+		},
+		{
+			name:    "unknown surface outcome",
+			format:  validFormat,
+			harness: strings.Replace(validHarness, "delivery:", "surfaces:\n  plugin:\n    skill:\n      name: erase\ndelivery:", 1),
+			want:    "erase",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := loadAll(t, tc.format, tc.harness, nil)
+			if err == nil {
+				t.Fatalf("invalid catalog accepted; want failure containing %q", tc.want)
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("error = %v, want mention of %q", err, tc.want)
+			}
+		})
+	}
+}
+
+// spec: plugin-policy-catalogs/verified-native-delivery-without-a-probe-fails-the-check
+func TestVerifiedNativeDeliveryProbeRequired(t *testing.T) {
+	t.Run("verified without a probe", func(t *testing.T) {
+		harness := strings.Replace(validHarness,
+			"native: {status: unverified}",
+			"native: {status: verified, format: claude-plugin}", 1)
+		err := loadAll(t, validFormat, harness, []string{"probe-x"})
+		if err == nil || !strings.Contains(err.Error(), "probe") {
+			t.Fatalf("error = %v, want a probe failure", err)
+		}
+	})
+	t.Run("verified with an undefined probe", func(t *testing.T) {
+		harness := strings.Replace(validHarness,
+			"native: {status: unverified}",
+			"native: {status: verified, format: claude-plugin, probe: probe-undefined}", 1)
+		err := loadAll(t, validFormat, harness, []string{"probe-x"})
+		if err == nil || !strings.Contains(err.Error(), "probe-undefined") {
+			t.Fatalf("error = %v, want a probe-undefined failure", err)
+		}
+	})
+	t.Run("verified with a defined probe passes", func(t *testing.T) {
+		harness := strings.Replace(validHarness,
+			"native: {status: unverified}",
+			"native: {status: verified, format: claude-plugin, probe: probe-x}", 1)
+		if err := loadAll(t, validFormat, harness, []string{"probe-x"}); err != nil {
+			t.Fatalf("defined probe rejected: %v", err)
+		}
+	})
+}
+
+// spec: plugin-policy-catalogs/verified-native-delivery-for-an-unaccepted-format-fails-the-check
+func TestVerifiedNativeDeliveryForUnacceptedFormatFails(t *testing.T) {
+	harness := strings.Replace(validHarness,
+		"native: {status: unverified}",
+		"native: {status: verified, format: agent-plugin, probe: probe-x}", 1)
+	err := loadAll(t, validFormat, harness, []string{"probe-x"})
+	if err == nil || !strings.Contains(err.Error(), "agent-plugin") {
+		t.Fatalf("error = %v, want an agent-plugin failure", err)
+	}
+}

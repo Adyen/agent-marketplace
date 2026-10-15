@@ -111,43 +111,13 @@ func (c *claudeCompiler) translateSkill(s *ir.Skill, opts compile.Options) ([]ar
 	}
 	content := frontmatter + s.Body
 
-	// Skill body artifact at skills/<name>/SKILL.md
+	// Skill body artifact at skills/<name>/SKILL.md.
 	bodyArt := artifact.Artifact{
 		Path:  fmt.Sprintf("skills/%s/SKILL.md", s.Name()),
 		Bytes: []byte(content),
 	}
 
-	// plugin.json fragment with skills entry
-	skillEntry := map[string]any{
-		"name":        s.Name(),
-		"description": s.Description,
-	}
-	if s.Triggers != nil {
-		skillEntry["triggers"] = s.Triggers
-	}
-	// Merge in Extra fields
-	for _, k := range extraKeys {
-		skillEntry[k] = s.Extra[k]
-	}
-
-	pluginFragment := map[string]any{
-		"skills": []any{skillEntry},
-	}
-	pluginBytes, err := json.Marshal(pluginFragment)
-	if err != nil {
-		return nil, nil, fmt.Errorf("claude: marshal plugin.json: %w", err)
-	}
-
-	pluginArt := artifact.Artifact{
-		Path:        ".claude-plugin/plugin.json",
-		Bytes:       pluginBytes,
-		Fragment:    true,
-		FragmentKey: "plugin.json",
-	}
-	pluginArt.ManagedByField, pluginArt.ManagedByValue = opts.ManagedBy()
-	pluginArt.MergeWithExisting = pluginArt.ManagedByField != ""
-
-	return []artifact.Artifact{bodyArt, pluginArt}, extraDiags, nil
+	return []artifact.Artifact{bodyArt}, extraDiags, nil
 }
 
 func (c *claudeCompiler) translateCommand(cmd *ir.Command) ([]artifact.Artifact, []diag.Diagnostic, error) {
@@ -257,42 +227,7 @@ func (c *claudeCompiler) translateSubagent(s *ir.Subagent, opts compile.Options)
 		Bytes: []byte(content),
 	}
 
-	// plugin.json fragment with agents entry
-	agentEntry := map[string]any{
-		"name":        s.Name(),
-		"description": s.Description,
-	}
-	if model != "" {
-		agentEntry["model"] = model
-	}
-	if tools != nil {
-		agentEntry["tools"] = tools
-	}
-	if effort != "" {
-		agentEntry["effort"] = effort
-	}
-	for _, k := range extraKeys {
-		agentEntry[k] = s.Extra[k]
-	}
-
-	pluginFragment := map[string]any{
-		"agents": []any{agentEntry},
-	}
-	pluginBytes, err := json.Marshal(pluginFragment)
-	if err != nil {
-		return nil, nil, fmt.Errorf("claude: marshal plugin.json: %w", err)
-	}
-
-	pluginArt := artifact.Artifact{
-		Path:        ".claude-plugin/plugin.json",
-		Bytes:       pluginBytes,
-		Fragment:    true,
-		FragmentKey: "plugin.json",
-	}
-	pluginArt.ManagedByField, pluginArt.ManagedByValue = opts.ManagedBy()
-	pluginArt.MergeWithExisting = pluginArt.ManagedByField != ""
-
-	return []artifact.Artifact{agentArt, pluginArt}, append(diags, append(modelDiags, extraDiags...)...), nil
+	return []artifact.Artifact{agentArt}, append(diags, append(modelDiags, extraDiags...)...), nil
 }
 
 func (c *claudeCompiler) translateHook(h *ir.Hook, opts compile.Options) ([]artifact.Artifact, []diag.Diagnostic, error) {

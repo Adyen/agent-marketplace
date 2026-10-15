@@ -55,33 +55,9 @@ func TestClaudeSkill_FrontmatterRendered(t *testing.T) {
 		t.Errorf("skill artifact missing body content after frontmatter, got: %q", body)
 	}
 
-	// Expect: .claude-plugin/plugin.json fragment
-	pluginArt := findArtifactByPath(arts, ".claude-plugin/plugin.json")
-	if pluginArt == nil {
-		t.Fatal("missing artifact .claude-plugin/plugin.json")
-	}
-	if !pluginArt.Fragment {
-		t.Error("plugin.json artifact should be a fragment")
-	}
-	if pluginArt.FragmentKey != "plugin.json" {
-		t.Errorf("plugin.json FragmentKey = %q, want %q", pluginArt.FragmentKey, "plugin.json")
-	}
-
-	// Verify plugin.json content has skills entry
-	var pluginData map[string]any
-	if err := json.Unmarshal(pluginArt.Bytes, &pluginData); err != nil {
-		t.Fatalf("plugin.json is not valid JSON: %v", err)
-	}
-	skillsArr, ok := pluginData["skills"].([]any)
-	if !ok || len(skillsArr) != 1 {
-		t.Fatalf("plugin.json skills = %v, want array of 1", pluginData["skills"])
-	}
-	skillEntry, ok := skillsArr[0].(map[string]any)
-	if !ok {
-		t.Fatal("skill entry is not a map")
-	}
-	if skillEntry["name"] != "my-skill" {
-		t.Errorf("skill entry name = %v, want %q", skillEntry["name"], "my-skill")
+	// Claude Code resources produce no plugin manifest entries.
+	if pluginArt := findArtifactByPath(arts, ".claude-plugin/plugin.json"); pluginArt != nil {
+		t.Fatalf("unexpected .claude-plugin/plugin.json artifact: %s", pluginArt.Bytes)
 	}
 }
 
@@ -175,13 +151,9 @@ func TestClaudeSubagent_Passthrough(t *testing.T) {
 		t.Errorf("subagent frontmatter missing effort, got: %q", body)
 	}
 
-	// Should also have a plugin.json fragment
-	pluginArt := findArtifactByPath(arts, ".claude-plugin/plugin.json")
-	if pluginArt == nil {
-		t.Fatal("missing artifact .claude-plugin/plugin.json")
-	}
-	if !pluginArt.Fragment {
-		t.Error("plugin.json artifact should be a fragment")
+	// Claude Code resources produce no plugin manifest entries.
+	if pluginArt := findArtifactByPath(arts, ".claude-plugin/plugin.json"); pluginArt != nil {
+		t.Fatalf("unexpected .claude-plugin/plugin.json artifact: %s", pluginArt.Bytes)
 	}
 }
 

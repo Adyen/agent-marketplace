@@ -78,6 +78,12 @@ func TestV4AggregateOwnedAndHandwrittenPreservation(t *testing.T) {
 			t.Fatalf("%s Codex owned entry presence is wrong:\n%s", stage, codex)
 		}
 		for path, want := range pluginOutputs {
+			// The Claude plugin manifest is retired output: sync strips
+			// managed entries from it (keeping unmarked members like
+			// "name") and never writes it again.
+			if strings.HasSuffix(path, ".claude-plugin/plugin.json") {
+				want = `{"name":"historical-review-plugin"}`
+			}
 			if got := env.ReadFile(path); got != want {
 				t.Fatalf("%s changed historical plugin output %s:\nbefore:\n%s\nafter:\n%s", stage, path, want, got)
 			}

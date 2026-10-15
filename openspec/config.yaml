@@ -48,8 +48,36 @@ context: |
   _Avoid_: Cache, ownership marker
 
   **Resource**:
-  A first-class agent capability distributed by Agent Marketplace. Materialized resource kinds include skill, command, subagent, hook, and MCP server; collection is a virtual resource kind.
+  A first-class agent capability distributed by Agent Marketplace. Materialized resource kinds include skill, command, subagent, hook, MCP server, and plugin; collection is a virtual resource kind.
   _Avoid_: Skill, when referring to resources of every kind
+
+  **Plugin**:
+  A self-contained package of plugin members distributed and installed as one unit under a package format.
+  _Avoid_: Bundle, extension
+
+  **Plugin member**:
+  A resource contained inside a plugin, addressed within the package by kind and name.
+  _Avoid_: Resource artifact, bundled resource
+
+  **Package format**:
+  The recognized manifest and directory contract a plugin is written in, such as claude-plugin or agent-plugin.
+  _Avoid_: Source layout, harness target
+
+  **Native plugin catalog**:
+  A catalog format, such as a marketplace manifest, that lists plugins and where each is acquired from.
+  _Avoid_: Registry repository, index
+
+  **Package generation**:
+  An immutable, complete plugin tree published atomically under the state root for a plugin instance.
+  _Avoid_: Resource revision, cache entry
+
+  **Plugin instance**:
+  One installed plugin binding a package generation, a harness target, a delivery mode, and a scope.
+  _Avoid_: Resource occurrence, installation
+
+  **Native registration**:
+  The harness-owned entries that activate a plugin for native delivery.
+  _Avoid_: Ownership state, manifest entry
 
   **Marketplace**:
   A browsable service through which Agent Marketplace users discover and acquire resources indexed from approved registries.

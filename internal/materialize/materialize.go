@@ -2753,6 +2753,7 @@ func executeTargetPlans(report *Report, key outputKey, outDir string, destinatio
 	}
 	protected := nativeAggregatePruneFence(key.target, key.machineScope)
 	protected = extendNativeHookProjectionPruneFence(key.target, key.machineScope, pruneOutDir, destinations, protected)
+	protected, retiredFiles := extendRetiredPruneFence(key.target, protected)
 
 	plans := materializePlans(key.target, outDir, artifacts, linkedComponents(skillLinks[key]), key.machineScope)
 	if info, ok := harness.TargetInfoFor(key.target); ok {
@@ -2961,6 +2962,10 @@ func executeTargetPlans(report *Report, key outputKey, outDir string, destinatio
 		pruneReport = &hcc.WriteReport{OutDir: pruneOutDir}
 	} else if !componentBlocked(blocked, "") {
 		pruneReport, pruneDiags = pruneUncoveredManagedMergeFiles(pruneOutDir, dirsCoveredByMergePlans, dryRun, protected)
+		retiredReport, retiredDiags := reconcileRetiredManagedFiles(pruneOutDir, retiredFiles, dryRun)
+		pruneReport.Written = append(pruneReport.Written, retiredReport.Written...)
+		pruneReport.Removed = append(pruneReport.Removed, retiredReport.Removed...)
+		pruneDiags = append(pruneDiags, retiredDiags...)
 	} else {
 		pruneReport = &hcc.WriteReport{OutDir: pruneOutDir}
 	}
@@ -4298,6 +4303,132 @@ func pruneUncoveredManagedMergeFiles(outDir string, dirsCoveredByMergePlans map[
 		return nil
 	})
 	return report, diags
+}
+
+// retiredLocations returns the target's declared retired locations split
+// into reconciled files and left-alone directories (trailing slash).
+func retiredLocations(t hcc.Target) (files, dirs []string) {
+	info, ok := harness.TargetInfoFor(t)
+	if !ok {
+		return nil, nil
+	}
+	for _, rel := range info.RetiredLocations {
+		if strings.HasSuffix(rel, "/") {
+			dirs = append(dirs, rel)
+		} else {
+			files = append(files, rel)
+		}
+	}
+	return files, dirs
+}
+
+// extendRetiredPruneFence adds the target's retired locations to the prune
+// walk's fence so the generic marker strip never touches them: retired
+// directories are left entirely alone and retired files are reconciled by
+// reconcileRetiredManagedFiles. It returns the fence and the retired file
+// list.
+func extendRetiredPruneFence(t hcc.Target, protected map[string]bool) (map[string]bool, []string) {
+	files, dirs := retiredLocations(t)
+	if len(files) == 0 && len(dirs) == 0 {
+		return protected, nil
+	}
+	fence := make(map[string]bool, len(protected)+len(files)+len(dirs))
+	for k := range protected {
+		fence[k] = true
+	}
+	for _, rel := range files {
+		fence[rel] = true
+	}
+	for _, rel := range dirs {
+		fence[rel] = true
+	}
+	return fence, files
+}
+
+// reconcileRetiredManagedFiles strips managed entries from a target's
+// retired shared files and deletes a file — and its then-empty directory —
+// once only empty skills/agents members remain. dryRun reports the same
+// outcome without writing.
+func reconcileRetiredManagedFiles(outDir string, files []string, dryRun bool) (*hcc.WriteReport, []diag.Diagnostic) {
+	report := &hcc.WriteReport{OutDir: outDir}
+	var diags []diag.Diagnostic
+	for _, rel := range files {
+		if !retiredFileTargetSafe(outDir, rel) {
+			continue
+		}
+		path := filepath.Join(outDir, filepath.FromSlash(rel))
+		cleaned, removed, err := stripManagedEntriesFromFile(path, dryRun)
+		if err != nil {
+			diags = append(diags, managedMergePruneDiag(rel, path, err))
+			continue
+		}
+		if len(removed) == 0 {
+			continue
+		}
+		if retiredFileEmptied(cleaned) {
+			if !dryRun {
+				if removeErr := os.Remove(path); removeErr != nil {
+					diags = append(diags, managedMergePruneDiag(rel, path, removeErr))
+					continue
+				}
+				// The directory goes only when the deletion emptied it;
+				// os.Remove fails on a directory that still holds files.
+				_ = os.Remove(filepath.Dir(path))
+			}
+			report.Removed = append(report.Removed, rel)
+			continue
+		}
+		report.Written = append(report.Written, rel)
+	}
+	return report, diags
+}
+
+// retiredFileTargetSafe reports whether every path element between outDir and
+// the retired file is a real directory and the file itself is a regular file.
+// A symlink anywhere in the chain — a symlinked .claude-plugin directory or a
+// symlinked plugin.json — would let the reconcile read, rewrite, or delete
+// files outside the harness root, so the location is left completely alone:
+// no read, no write, no delete, no drift.
+func retiredFileTargetSafe(outDir, rel string) bool {
+	current := outDir
+	parts := strings.Split(filepath.FromSlash(rel), string(filepath.Separator))
+	for i, part := range parts {
+		current = filepath.Join(current, part)
+		info, err := os.Lstat(current)
+		if err != nil || info.Mode()&os.ModeSymlink != 0 {
+			return false
+		}
+		if i == len(parts)-1 {
+			return info.Mode().IsRegular()
+		}
+		if !info.IsDir() {
+			return false
+		}
+	}
+	return false
+}
+
+// retiredFileEmptied reports whether a stripped retired manifest carries
+// nothing but empty skills/agents members, so the file itself can go.
+func retiredFileEmptied(cleaned []byte) bool {
+	doc, err := jsonc.Parse("retired", cleaned)
+	if err != nil {
+		return false
+	}
+	root := doc.Root()
+	if root.Kind() != jsonc.KindObject {
+		return false
+	}
+	for _, key := range root.Keys() {
+		if key != "skills" && key != "agents" {
+			return false
+		}
+		member, ok := root.Member(key)
+		if !ok || member.Kind() != jsonc.KindArray || member.Len() != 0 {
+			return false
+		}
+	}
+	return true
 }
 
 // managedMergePruneDiag turns a single file's prune failure into a keyed,

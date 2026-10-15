@@ -127,6 +127,11 @@ func ValidateTargetRegistrations() error {
 	if err := targetmeta.ValidateHookProjections(); err != nil {
 		errs = append(errs, err)
 	}
+	// Validate the plugin package layouts at the same boundary for the same
+	// reason.
+	if err := targetmeta.ValidatePackageLayouts(); err != nil {
+		errs = append(errs, err)
+	}
 	// Reverse direction: a registration for an undeclared target, or for a
 	// target that does not declare the capability, is a wiring bug.
 	for _, t := range compile.RegisteredTargets() {
@@ -373,10 +378,9 @@ func errorDiagnosticCodes(diagnostics []Diagnostic) []string {
 // silently wins", so both producers are suppressed as whole resources — every
 // artifact they emitted, fragments included.
 //
-// Suppressing the fragments too is what keeps a shared aggregate honest. A
-// Claude subagent emits both agents/<name>.md and a .claude-plugin/plugin.json
-// fragment; dropping only the colliding .md would leave the manifest
-// advertising an agent whose file was never written.
+// Suppressing the fragments too is what keeps a shared aggregate honest:
+// dropping only the colliding artifact while keeping the resource's fragment
+// would leave an aggregate advertising an entry that was never installed.
 //
 // Ordering is the bundle resource order, so diagnostics, artifacts, and the
 // returned skip list are deterministic.

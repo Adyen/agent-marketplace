@@ -80,11 +80,11 @@ agent-marketplace sync
 [Sync](./glossary.md#sync) downloads the registry, writes the skill into Claude Code's folders, and records the exact [commit](./glossary.md#commit) it used in a new [lockfile](./glossary.md#lockfile), `.agents/lock.yaml`. You should see a summary like this:
 
 ```text
-Installed 2  Removed 0  Malformed 0  Errors 0
-  → ~/code/my-project/.claude/.claude-plugin (1 written), ~/code/my-project/.claude/skills (1 written)
+Installed 1  Removed 0  Malformed 0  Errors 0
+  → ~/code/my-project/.claude/skills (1 written)
 ```
 
-"Installed" counts files written. The skill itself is one of them; the other is a Claude Code manifest that lists the installed skills.
+"Installed" counts files written. The skill itself is one of them.
 
 If sync fails:
 
@@ -161,7 +161,7 @@ Start a new Claude Code session in the project, and it picks up the skill.
 Commit the configuration and the lockfile. Keep the generated Claude Code files out of Git, because sync recreates them from the lockfile. Other harnesses write to different folders; the [output paths reference](./reference/harnesses-and-output-paths.md) lists them.
 
 ```bash
-printf '%s\n' '.claude/skills/' '.claude/.claude-plugin/' >> .gitignore
+printf '%s\n' '.claude/skills/' >> .gitignore
 git add .agents/config.yaml .agents/lock.yaml .gitignore
 git commit -m "Add agent-marketplace skills"
 ```

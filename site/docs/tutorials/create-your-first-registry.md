@@ -118,11 +118,11 @@ agent-marketplace sync
 [Sync](../glossary.md#sync) reads the configuration and writes the skill into Claude Code's folders. You should see output like this, with your test project's path in the second line:
 
 ```text
-Installed 2  Removed 0  Malformed 0  Errors 0
-  → /tmp/tmp.k3J9x2Qp/.claude/.claude-plugin (1 written), /tmp/tmp.k3J9x2Qp/.claude/skills (1 written)
+Installed 1  Removed 0  Malformed 0  Errors 0
+  → /tmp/tmp.k3J9x2Qp/.claude/skills (1 written)
 ```
 
-`Installed` counts files written: the skill, and a Claude Code manifest that lists installed skills. If your organization's configuration also installs resources on this computer, the numbers are higher and more folders appear.
+`Installed` counts files written: the skill. If your organization's configuration also installs resources on this computer, the numbers are higher and more folders appear.
 
 If you had no user configuration yet, this first sync also creates `~/.agents/config.yaml` with `harnesses: [factory, windsurf]`; the test project's `harnesses:` list still limits this sync to Claude Code.
 

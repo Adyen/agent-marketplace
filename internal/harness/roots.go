@@ -174,6 +174,12 @@ type TargetInfo struct {
 	// internal/materialize (syncCommandFiles + injectManagedByFrontmatter +
 	// isManagedCommandFile) once Factory resolves symlink loading for commands.
 	FileCopyKinds map[ir.ResourceKind]bool
+
+	// RetiredLocations lists paths, relative to the install root, that the
+	// target no longer writes. A file entry is reconciled: owned entries are
+	// stripped and the file is deleted when nothing but empty members
+	// remain; a directory entry (trailing slash) is left entirely alone.
+	RetiredLocations []string
 }
 
 // UsesFileCopy reports whether the given resource kind must be materialized as
@@ -351,8 +357,7 @@ func MakeInstallRoots() map[hcc.Target]Roots {
 }
 
 // appendUnique appends rel to list unless already present, keeping declaration
-// order deterministic while collapsing kinds that share one aggregate file
-// (Claude skills and subagents both contribute to .claude-plugin/plugin.json).
+// order deterministic while collapsing kinds that share one aggregate file.
 func appendUnique(list []string, rel string) []string {
 	if slices.Contains(list, rel) {
 		return list
@@ -417,9 +422,10 @@ func targetInfoFromLayout(t targetmeta.Target) (TargetInfo, error) {
 // one whole-root native-layout partition.
 func targetInfoFromPartition(partition targetmeta.NativePartition) TargetInfo {
 	info := TargetInfo{
-		Components:    slices.Clone(partition.Components),
-		PlanStrategy:  PlanSubtree,
-		SkillDirKinds: maps.Clone(partition.SkillDirKinds),
+		Components:       slices.Clone(partition.Components),
+		RetiredLocations: slices.Clone(partition.Retired),
+		PlanStrategy:     PlanSubtree,
+		SkillDirKinds:    maps.Clone(partition.SkillDirKinds),
 	}
 	// A kind whose name placeholder is a directory element (skills/%s/SKILL.md)
 	// materializes as a resource directory, not under a flat install dir, so it
@@ -505,8 +511,8 @@ func MakeTargetInfo() (map[hcc.Target]TargetInfo, error) {
 	// symlinked command files, so commands must be materialized as
 	// real files. Remove this once Factory resolves symlink loading.
 	factoryInfo.FileCopyKinds = map[ir.ResourceKind]bool{ir.KindCommand: true}
-	// The Factory compiler emits no .factory-plugin/plugin.json or
-	// settings.json; hooks and MCP servers are its merge artifacts.
+	// The Factory compiler emits no settings.json; hooks and MCP servers are
+	// its merge artifacts.
 
 	cursorInfo, err := targetInfoFromLayout(targetmeta.TargetCursor)
 	if err != nil {

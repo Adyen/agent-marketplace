@@ -1,0 +1,12 @@
+# Catalog data for pkg/harness-compilation/pluginpolicy/catalogs/gemini.yaml.
+schema: 1
+harness: gemini
+evidence:
+  checked: "2026-10-15"
+  refs:
+    - https://github.com/google-gemini/gemini-cli/blob/main/docs/extensions/reference.md
+  notes: "Gemini CLI extensions are not a recognized plugin package format in this change; no accepted formats are declared."
+accepts: []
+delivery:
+  decompose: {status: verified}
+  native: {status: unverified}

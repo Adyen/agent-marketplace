@@ -1,0 +1,24 @@
+# Catalog data for pkg/harness-compilation/pluginpolicy/formats/codex-marketplace.yaml.
+schema: 1
+format: codex-marketplace
+role: catalog
+evidence:
+  checked: "2026-10-15"
+  refs:
+    - https://developers.openai.com/plugins/build/plugins
+  notes: "The catalog manifest is .agents/plugins/marketplace.json; entry sources are local paths, Git, and npm descriptors."
+versions: []
+manifest:
+  fields:
+    name: {required: true, type: string, invalid: refuse-package}
+    interface: {required: false, type: object, invalid: ignore-with-warning}
+    plugins: {required: true, type: array, invalid: refuse-package}
+catalog:
+  sources:
+    path: acquire
+    github: refuse
+    git: acquire
+    npm: refuse
+    url: refuse
+    command: refuse
+dependencies: refuse-package
