@@ -61,7 +61,7 @@ agent_marketplace_active_requests{listener="operations"} 1
 ...
 ```
 
-`/readyz` returns `503` when the recorded configuration authority does not match `management.mode`, the stored revocations do not match the process's configuration, or the metadata or blob store does not respond. The [health and metrics reference](../../reference/marketplace-health-and-metrics.md) describes each check.
+`/readyz` returns `503` when the recorded configuration authority does not match `management.mode`, the stored revocations do not match the process's configuration, the metadata or blob store does not respond, or the instance record is missing from the metadata store. The [health and metrics reference](../../reference/marketplace-health-and-metrics.md) describes each check.
 
 Only processes that run the API (`--role api` or `--role all`) serve these endpoints. A `--role worker` process has no HTTP listener. Do not expose `/readyz` or `/metrics` through the public reverse proxy.
 
