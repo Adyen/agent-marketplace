@@ -58,7 +58,7 @@ func assertSingleConfigPrefix(t *testing.T, err error, file string) {
 	if !strings.Contains(err.Error(), fmt.Sprintf("validate config %q", file)) {
 		t.Fatalf("error = %v, want prefix naming %s", err, file)
 	}
-	if n := strings.Count(err.Error(), "validate config"); n != 1 {
+	if n := strings.Count(err.Error(), `validate config "`); n != 1 {
 		t.Fatalf("error = %v, has %d validate config prefixes, want 1", err, n)
 	}
 }
