@@ -468,7 +468,7 @@ archives that have no placeholder form.
 
 - **GIVEN** a resource revision owned by the Marketplace with a stored or
   derivable placeholder-form archive
-- **WHEN** `GET /api/v1/placeholder-archives/sha256/{hex}` is requested for its archive digest
+- **WHEN** `GET /api/v1/archives/sha256/{hex}` is requested for its archive digest
 - **THEN** the response MUST carry bytes whose SHA-256 equals the requested digest
 - **AND** the response MUST use the artifact media type
 - **AND** an unowned digest MUST return 404, a revoked revision MUST return 410, and a blocked revision MUST return 403
@@ -496,7 +496,7 @@ archives that have no placeholder form.
 
 ### Requirement: Placeholder archive route is served in the OpenAPI contract
 
-The OpenAPI contract SHALL document `GET /api/v1/placeholder-archives/sha256/{hex}`
+The OpenAPI contract SHALL document `GET /api/v1/archives/sha256/{hex}`
 with the artifact media type and the same availability responses as the artifact route.
 
 #### Scenario: Placeholder archive route is documented
@@ -508,7 +508,7 @@ with the artifact media type and the same availability responses as the artifact
 ### Requirement: Clients verify archives by received bytes
 
 A client SHALL verify a resource archive by hashing the placeholder-form archive
-it receives from `GET /api/v1/placeholder-archives/sha256/{hex}`, so that locks
+it receives from `GET /api/v1/archives/sha256/{hex}`, so that locks
 and caches written under any Go toolchain verify under any other. A client SHALL
 fall back to the final artifact route only when the placeholder route answers
 404, and it SHALL treat every other failure from the placeholder route as

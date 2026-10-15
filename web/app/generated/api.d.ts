@@ -391,7 +391,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/placeholder-archives/sha256/{digest}": {
+    "/api/v1/archives/sha256/{digest}": {
         parameters: {
             query?: never;
             header?: never;

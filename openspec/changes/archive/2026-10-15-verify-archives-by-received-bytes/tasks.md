@@ -13,7 +13,7 @@
 
 ## 3. API
 
-- [x] 3.1 GET /api/v1/placeholder-archives/sha256/{hex} with shared availability gates
+- [x] 3.1 GET /api/v1/archives/sha256/{hex} with shared availability gates
 - [x] 3.2 Artifact route verifies against the placeholder when present
 - [x] 3.3 OpenAPI document and generated web types (web/app/generated/api.d.ts)
 

@@ -177,7 +177,7 @@ func TestPlaceholderArchiveRouteServesVerifiedBytes(t *testing.T) {
 				public := httptest.NewServer(NewServer(cfg, meta, blobs).PublicHandler())
 				defer public.Close()
 
-				status, body := getBytes(t, public.URL+"/api/v1/placeholder-archives/"+strings.Replace(string(archive.digest), ":", "/", 1))
+				status, body := getBytes(t, public.URL+"/api/v1/archives/"+strings.Replace(string(archive.digest), ":", "/", 1))
 				if status != http.StatusOK || archiveDigestOf(body) != archive.digest {
 					t.Fatalf("placeholder route status %d, digest match %v", status, archiveDigestOf(body) == archive.digest)
 				}
@@ -196,7 +196,7 @@ func TestPlaceholderArchiveRouteServesVerifiedBytes(t *testing.T) {
 				public := httptest.NewServer(NewServer(cfg, meta, blobs).PublicHandler())
 				defer public.Close()
 
-				status, body := getBytes(t, public.URL+"/api/v1/placeholder-archives/"+strings.Replace(string(archive.digest), ":", "/", 1))
+				status, body := getBytes(t, public.URL+"/api/v1/archives/"+strings.Replace(string(archive.digest), ":", "/", 1))
 				if !native {
 					if status != http.StatusNotFound {
 						t.Fatalf("foreign placeholder status %d, want 404", status)
@@ -217,7 +217,7 @@ func TestPlaceholderArchiveRouteServesVerifiedBytes(t *testing.T) {
 				public := httptest.NewServer(NewServer(cfg, meta, failingPutBlobStore{BlobStore: blobs}).PublicHandler())
 				defer public.Close()
 
-				status, body := getBytes(t, public.URL+"/api/v1/placeholder-archives/"+strings.Replace(string(archive.digest), ":", "/", 1))
+				status, body := getBytes(t, public.URL+"/api/v1/archives/"+strings.Replace(string(archive.digest), ":", "/", 1))
 				if !native {
 					if status != http.StatusNotFound {
 						t.Fatalf("foreign placeholder status %d, want 404", status)

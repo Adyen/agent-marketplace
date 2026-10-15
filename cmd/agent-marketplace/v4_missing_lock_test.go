@@ -1341,8 +1341,8 @@ func newV4MarketplaceServer(t testing.TB, instanceID, resourceName string, selfC
 			_ = json.NewEncoder(w).Encode(registry)
 		case strings.HasPrefix(r.URL.Path, "/api/v1/resources/tools/skill/"+resourceName) || strings.HasPrefix(r.URL.Path, "/api/v1/resources/src/skill/"+resourceName):
 			_ = json.NewEncoder(w).Encode(revision)
-		case strings.HasPrefix(r.URL.Path, "/api/v1/placeholder-archives/sha256/"):
-			digest := "sha256:" + strings.TrimPrefix(r.URL.Path, "/api/v1/placeholder-archives/sha256/")
+		case strings.HasPrefix(r.URL.Path, "/api/v1/archives/sha256/"):
+			digest := "sha256:" + strings.TrimPrefix(r.URL.Path, "/api/v1/archives/sha256/")
 			placeholder, err := hccartifact.DerivePlaceholderArchive(raw, digest)
 			if digest != string(revision.ArchiveDigest) || err != nil {
 				http.NotFound(w, r)

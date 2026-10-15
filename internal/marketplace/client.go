@@ -536,7 +536,7 @@ func (c *Client) GetPlaceholderArchive(ctx context.Context, archiveDigest string
 		return nil, fmt.Errorf("archive digest %q: %w", archiveDigest, err)
 	}
 	hexDigest := strings.TrimPrefix(archiveDigest, "sha256:")
-	path := c.requestURL([]string{"api", "v1", "placeholder-archives", "sha256", hexDigest}, nil)
+	path := c.requestURL([]string{"api", "v1", "archives", "sha256", hexDigest}, nil)
 	return c.getRaw(ctx, path)
 }
 

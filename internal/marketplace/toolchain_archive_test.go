@@ -49,7 +49,7 @@ func currentToolchain() string {
 
 // servePlaceholderRoute answers the placeholder route for archiveDigest only.
 func servePlaceholderRoute(mux *http.ServeMux, placeholder []byte, archiveDigest string) {
-	mux.HandleFunc("/api/v1/placeholder-archives/", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/api/v1/archives/", func(w http.ResponseWriter, r *http.Request) {
 		if !strings.HasSuffix(r.URL.Path, "/"+strings.TrimPrefix(archiveDigest, "sha256:")) {
 			http.NotFound(w, r)
 			return
@@ -311,7 +311,7 @@ func TestResolverDoesNotFallBackFromGonePlaceholderRoute(t *testing.T) {
 			ArchiveDigest: store.ArchiveDigest(manifest.ArchiveDigest),
 		}))
 	})
-	mux.HandleFunc("/api/v1/placeholder-archives/", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/api/v1/archives/", func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "revoked", http.StatusGone)
 	})
 	mux.HandleFunc("/api/v1/artifacts/", func(w http.ResponseWriter, r *http.Request) {

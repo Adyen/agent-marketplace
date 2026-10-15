@@ -12,7 +12,7 @@ has the same dependency and returns 500 for foreign-encoded archives.
 - The Marketplace stores the placeholder-form archive alongside the final
   archive under a placeholder blob key. Its bytes hash to the archive digest,
   so they are verified by hash, not by re-encoding.
-- New route `GET /api/v1/placeholder-archives/sha256/{hex}` serves the
+- New route `GET /api/v1/archives/sha256/{hex}` serves the
   placeholder archive under the same ownership, revocation, and assessment gates
   as the artifact route. A missing placeholder is derived from the stored final
   archive only when re-encoding reproduces the digest.

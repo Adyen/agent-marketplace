@@ -111,7 +111,7 @@ func NewServer(cfg config.Config, meta store.MetadataStore, blobs store.BlobStor
 	publicMux.Handle("/api/v1/inspection/", s.methodGet(s.handleInspectionDigest))
 	publicMux.Handle("/api/v1/content/", s.methodGet(s.handleContentDigest))
 	publicMux.Handle("/api/v1/artifacts/", s.methodGet(s.handleArtifacts))
-	publicMux.Handle("/api/v1/placeholder-archives/", s.methodGet(s.handlePlaceholderArchives))
+	publicMux.Handle("/api/v1/archives/", s.methodGet(s.handlePlaceholderArchives))
 	publicMux.Handle("/healthz", s.methodGet(s.handleHealthz))
 	// Keep operations endpoints private even when a caller reaches the public
 	// listener directly; the operations listener remains the only route.
@@ -1616,7 +1616,7 @@ func (s *Server) verifyFinalArchive(ctx context.Context, digest store.ArchiveDig
 }
 
 func (s *Server) handlePlaceholderArchives(w http.ResponseWriter, r *http.Request) {
-	digest, ok := archiveDigestFromPath(r.URL.Path, "/api/v1/placeholder-archives/")
+	digest, ok := archiveDigestFromPath(r.URL.Path, "/api/v1/archives/")
 	if !ok {
 		writeError(w, http.StatusBadRequest, "invalid placeholder archive digest")
 		return
