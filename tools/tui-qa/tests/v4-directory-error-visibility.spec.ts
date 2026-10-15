@@ -45,12 +45,16 @@ test("keeps the v4 mutation error visible at narrow widths", async ({ terminal }
     await expect(terminal.getByText("r reload", { strict: false })).toBeVisible();
     await expect(terminal.getByText("q quit", { strict: false })).toBeVisible();
   });
+  // The diagnostic names the authored file, so at 50 columns the message wraps
+  // at a path-dependent position; assert on tokens that wrapping cannot split.
   await step("open complete error diagnostic", () => terminal.write("e"), async () => {
-    await expect(terminal.getByText("unknown top-level field", { strict: false })).toBeVisible();
+    await expect(terminal.getByText("Errors (1)")).toBeVisible();
+    await expect(terminal.getByText("unknown_field", { strict: false })).toBeVisible();
+    await expect(terminal.getByText("Press esc to close")).toBeVisible();
   });
   assert.equal(fs.readFileSync(globalConfig, "utf8"), invalidConfig);
   await step("close error diagnostic", () => terminal.write("e"), async () => {
-    await expect(terminal.getByText("unknown top-level field", { strict: false })).not.toBeVisible();
+    await expect(terminal.getByText("unknown_field", { strict: false })).not.toBeVisible();
   });
   await step("quit after error", () => terminal.write("q"), async () => {
     assert.equal((await waitForExit(terminal)).exitCode, 0);
