@@ -198,7 +198,7 @@ agent-marketplace sync --check
 ls .claude/skills/frontend-design/SKILL.md
 ```
 
-`status` lists a `MARKETPLACE PINS` row for the `http://localhost:8080` endpoint and the installed skill with `STATE` `current`, and a `DRIFT` section that says `In sync`. `sync --check` exits with status `0` and prints nothing apart from any `warning:` lines, which don't change the exit status. `ls` prints the path of the skill's `SKILL.md`.
+`status` lists a `MARKETPLACE PINS` row for the `http://localhost:8080` endpoint and the installed skill with `STATE` `current`, and a `DRIFT` section that says `In sync`. `sync --check` exits with status `0` and prints nothing apart from any `warning:` lines and the indented `→` lines that follow them, none of which change the exit status. `ls` prints the path of the skill's `SKILL.md`.
 
 ## 9. Clean up
 
