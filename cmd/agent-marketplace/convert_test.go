@@ -78,6 +78,77 @@ func TestConvertCommandRejectsMissingFrom(t *testing.T) {
 	}
 }
 
+func TestConvertCommandRefusesInvalidSourcesWithoutChangingSyncDestination(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	tests := []struct {
+		name  string
+		setup func(t *testing.T) string
+	}{
+		{
+			name: "missing source path",
+			setup: func(t *testing.T) string {
+				return filepath.Join(t.TempDir(), "missing-source")
+			},
+		},
+		{
+			name: "unrecognized source layout",
+			setup: func(t *testing.T) string {
+				src := t.TempDir()
+				writeFile(t, filepath.Join(src, "README.md"), "not a harness\n")
+				return src
+			},
+		},
+		{
+			name: "empty source layout",
+			setup: func(t *testing.T) string {
+				src := t.TempDir()
+				writeFile(t, filepath.Join(src, ".claude-plugin", "plugin.json"), `{"name":"empty-plugin"}`)
+				return src
+			},
+		},
+		{
+			name: "empty recognized Claude workspace with synthesized diagnostic",
+			setup: func(t *testing.T) string {
+				src := t.TempDir()
+				writeFile(t, filepath.Join(src, ".claude", ".mcp.json"), `{"mcpServers":{}}`)
+				return src
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			srcDir := tt.setup(t)
+			outDir := filepath.Join(t.TempDir(), "factory-out")
+			const sentinel = "handwritten destination bytes\x00\xff\n"
+			sentinelPath := filepath.Join(outDir, "existing.txt")
+			writeFile(t, sentinelPath, sentinel)
+
+			output, err := executeCommand("convert", "--from", "claude", "--to", "factory", "--out", outDir, "--sync", srcDir)
+			if err == nil {
+				t.Fatalf("expected invalid source to refuse conversion, got:\n%s", output)
+			}
+			got, readErr := os.ReadFile(sentinelPath)
+			if readErr != nil {
+				t.Fatalf("read preserved destination: %v", readErr)
+			}
+			if string(got) != sentinel {
+				t.Fatalf("destination bytes changed: got %q, want %q", got, sentinel)
+			}
+			assertPathExistence(t, filepath.Join(outDir, "skills"), false)
+			entries, readErr := os.ReadDir(outDir)
+			if readErr != nil {
+				t.Fatalf("read destination entries: %v", readErr)
+			}
+			if len(entries) != 1 || entries[0].Name() != "existing.txt" {
+				t.Fatalf("unexpected conversion residue: %#v", entries)
+			}
+		})
+	}
+}
+
 func TestConvertCommandCanonicalizesHarnessFlags(t *testing.T) {
 	if isolateCommandTest(t) {
 		return
@@ -1021,12 +1092,16 @@ func TestConvertCommandToDevinSyncPrunesStaleOutput(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	srcDir := t.TempDir()
 	writeClaudePluginSkill(t, srcDir, "stale-skill")
+	writeClaudePluginSkill(t, srcDir, "kept-skill")
 	outDir := filepath.Join(t.TempDir(), "devin-out")
 	if output, err := executeCommand("convert", "--from", "claude", "--to", "devin", "--out", outDir, srcDir); err != nil {
 		t.Fatalf("initial Devin conversion: %v\\n%s", err, output)
 	}
 	stale := filepath.Join(outDir, "stale.txt")
 	writeFile(t, stale, "stale\\n")
+	// Conversion fails closed on a recognized source with zero resources, so
+	// stale pruning is exercised with a surviving skill keeping the source
+	// non-empty while stale-skill becomes stale.
 	if err := os.RemoveAll(filepath.Join(srcDir, "skills", "stale-skill")); err != nil {
 		t.Fatalf("remove source skill: %v", err)
 	}
@@ -1034,6 +1109,7 @@ func TestConvertCommandToDevinSyncPrunesStaleOutput(t *testing.T) {
 	if err != nil {
 		t.Fatalf("sync Devin conversion: %v\\n%s", err, output)
 	}
+	assertFileExists(t, filepath.Join(outDir, "skills", "kept-skill", "SKILL.md"))
 	assertPathExistence(t, filepath.Join(outDir, "skills", "stale-skill", "SKILL.md"), false)
 	assertPathExistence(t, stale, false)
 }

@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"errors"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -161,6 +163,135 @@ func TestConvert_UnregisteredSource_ReturnsNotImplementedError(t *testing.T) {
 	}
 	if !errors.Is(err, errSourceNotImplemented) {
 		t.Fatalf("Convert from unregistered harness error = %v, want errSourceNotImplemented", err)
+	}
+}
+
+func TestConvert_RefusesMissingOrUnrecognizedSource(t *testing.T) {
+	tests := []struct {
+		name string
+		src  fstest.MapFS
+	}{
+		{name: "missing layout", src: fstest.MapFS{}},
+		{name: "unrecognized layout", src: fstest.MapFS{"README.md": {Data: []byte("not a harness")}}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := Convert(tt.src, HarnessClaude, HarnessFactory)
+			if err == nil {
+				t.Fatal("Convert should refuse a source without a recognized layout")
+			}
+			if !errors.Is(err, errSourceLayoutNotFound) {
+				t.Fatalf("Convert error = %v, want errSourceLayoutNotFound", err)
+			}
+		})
+	}
+}
+
+func TestConvert_RefusesEmptySource(t *testing.T) {
+	src := fstest.MapFS{
+		".claude-plugin/plugin.json": {Data: []byte(`{"name":"empty-plugin"}`)},
+	}
+	_, err := Convert(src, HarnessClaude, HarnessFactory)
+	if err == nil {
+		t.Fatal("Convert should refuse a recognized source with no resources")
+	}
+	if !errors.Is(err, errSourceEmpty) {
+		t.Fatalf("Convert error = %v, want errSourceEmpty", err)
+	}
+}
+
+func TestConvert_RefusesEmptyWorkspaceWithInformationalDiagnostic(t *testing.T) {
+	src := fstest.MapFS{
+		".claude/.mcp.json": {Data: []byte(`{"mcpServers":{}}`)},
+	}
+
+	bundle, err := IngestBundle(src, HarnessClaude)
+	if err != nil {
+		t.Fatalf("IngestBundle(Claude workspace): %v", err)
+	}
+	if len(bundle.Resources) != 0 {
+		t.Fatalf("empty workspace resources = %d, want 0", len(bundle.Resources))
+	}
+	if len(bundle.Diagnostics) != 1 || bundle.Diagnostics[0].Code != diag.CodeIngestClaudeManifestSynthesized || bundle.Diagnostics[0].Severity != SeverityInfo {
+		t.Fatalf("empty workspace diagnostics = %#v, want one informational synthesized-manifest diagnostic", bundle.Diagnostics)
+	}
+
+	_, err = Convert(src, HarnessClaude, HarnessFactory)
+	if err == nil {
+		t.Fatal("Convert should refuse an empty recognized workspace even with informational diagnostics")
+	}
+	if !errors.Is(err, errSourceEmpty) {
+		t.Fatalf("Convert error = %v, want errSourceEmpty", err)
+	}
+}
+
+func TestConvert_PreservesInvalidOnlyDiagnosticsAndSuppressesPrune(t *testing.T) {
+	src := fstest.MapFS{
+		".claude-plugin/plugin.json": {Data: []byte(`{"name":"invalid-only"}`)},
+		"skills/broken/SKILL.md":     {Data: []byte("---\ntriggers: 42\n---\ninvalid\n")},
+	}
+
+	result, err := Convert(src, HarnessClaude, HarnessFactory)
+	if err != nil {
+		t.Fatalf("Convert(invalid-only): %v", err)
+	}
+	if result == nil {
+		t.Fatal("Convert(invalid-only) returned nil result")
+	}
+	if len(result.Artifacts) != 0 {
+		t.Fatalf("invalid-only artifacts = %d, want 0", len(result.Artifacts))
+	}
+	if !diag.HasErrors(result.Diagnostics) || !diag.HasCode(result.Diagnostics, diag.CodeIngestClaudeLoadSkillFailed) {
+		t.Fatalf("invalid-only diagnostics = %#v, want the load failure", result.Diagnostics)
+	}
+
+	outDir := t.TempDir()
+	outputPath := filepath.Join(outDir, "existing-output.txt")
+	original := []byte("previous successful conversion")
+	if err := os.WriteFile(outputPath, original, 0o644); err != nil {
+		t.Fatalf("seed previous output: %v", err)
+	}
+	report, err := Materialize(result, outDir, WithWriteMode(WriteModeSync), WithPruneStale(true))
+	if !errors.Is(err, ErrPartialResult) {
+		t.Fatalf("Materialize(invalid-only) error = %v, want ErrPartialResult", err)
+	}
+	if report == nil || !report.Partial || !report.PruneSuppressed {
+		t.Fatalf("Materialize(invalid-only) report = %#v, want partial result with pruning suppressed", report)
+	}
+	got, err := os.ReadFile(outputPath)
+	if err != nil {
+		t.Fatalf("read previous output: %v", err)
+	}
+	if string(got) != string(original) {
+		t.Fatalf("previous output changed from %q to %q", original, got)
+	}
+}
+
+func TestConvert_AllowsIntentionalWindsurfAgentsMDDrop(t *testing.T) {
+	src := fstest.MapFS{
+		"AGENTS.md": {Data: []byte("# Existing project guidance\n")},
+	}
+
+	bundle, err := IngestBundle(src, HarnessWindsurf)
+	if err != nil {
+		t.Fatalf("IngestBundle(Windsurf AGENTS.md): %v", err)
+	}
+	if len(bundle.Resources) != 0 {
+		t.Fatalf("Windsurf AGENTS.md resources = %d, want 0", len(bundle.Resources))
+	}
+	if !diag.HasCode(bundle.Diagnostics, diag.CodeIngestWindsurfSubagentViaAgentsMDSkipped) {
+		t.Fatalf("Windsurf AGENTS.md diagnostics = %#v, want intentional-drop diagnostic", bundle.Diagnostics)
+	}
+
+	result, err := Convert(src, HarnessWindsurf, HarnessFactory)
+	if err != nil {
+		t.Fatalf("Convert(Windsurf AGENTS.md): %v", err)
+	}
+	if len(result.Artifacts) != 0 {
+		t.Fatalf("Convert(Windsurf AGENTS.md) artifacts = %d, want 0", len(result.Artifacts))
+	}
+	if !diag.HasCode(result.Diagnostics, diag.CodeIngestWindsurfSubagentViaAgentsMDSkipped) {
+		t.Fatalf("Convert(Windsurf AGENTS.md) diagnostics = %#v, want intentional-drop diagnostic", result.Diagnostics)
 	}
 }
 

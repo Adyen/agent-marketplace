@@ -1,6 +1,7 @@
 package harnesscompile
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -132,16 +133,49 @@ func TestCompileBundle_AllTargets(t *testing.T) {
 	}
 }
 
-func TestCompileBundle_EmptyFS(t *testing.T) {
-	// An FS with no skill/command/agent/hook/mcp files should return
-	// an empty result without error.
-	emptyFS := fstest.MapFS{}
-	result, err := CompileBundle(emptyFS, TargetClaude)
-	if err != nil {
-		t.Fatalf("CompileBundle(empty): %v", err)
+func TestCompileBundle_RefusesMissingOrUnrecognizedLayout(t *testing.T) {
+	tests := []struct {
+		name string
+		src  fstest.MapFS
+	}{
+		{name: "empty", src: fstest.MapFS{}},
+		{name: "unrecognized", src: fstest.MapFS{
+			"README.md": &fstest.MapFile{Data: []byte("not a harness source")},
+		}},
 	}
-	if len(result.Artifacts) != 0 {
-		t.Fatalf("expected 0 artifacts, got %d", len(result.Artifacts))
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			outDir := t.TempDir()
+			outputPath := filepath.Join(outDir, "previous-output.txt")
+			original := []byte("previous successful conversion")
+			if err := os.WriteFile(outputPath, original, 0o644); err != nil {
+				t.Fatalf("seed previous output: %v", err)
+			}
+
+			result, err := CompileBundle(tt.src, TargetClaude)
+			if err == nil {
+				// An empty successful result could prune existing output during sync materialization.
+				if _, materializeErr := Materialize(result, outDir, WithWriteMode(WriteModeSync)); materializeErr != nil {
+					t.Fatalf("Materialize refused the empty result: %v", materializeErr)
+				}
+				t.Errorf("CompileBundle(%s) returned success for a refused source", tt.name)
+			}
+			if !errors.Is(err, errSourceLayoutNotFound) {
+				t.Errorf("CompileBundle(%s) error = %v, want errSourceLayoutNotFound", tt.name, err)
+			}
+			if result != nil {
+				t.Errorf("CompileBundle(%s) result = %#v, want nil on refusal", tt.name, result)
+			}
+
+			got, readErr := os.ReadFile(outputPath)
+			if readErr != nil {
+				t.Fatalf("read previous output: %v", readErr)
+			}
+			if string(got) != string(original) {
+				t.Fatalf("previous output changed from %q to %q", original, got)
+			}
+		})
 	}
 }
 
