@@ -178,7 +178,7 @@ Active capabilities: skill
 Install despite these risks? [y/N]:
 ```
 
-The finding means the skill's files reference a resource at an `http://` address, which is not encrypted. For this public example skill that is acceptable, so type `y` and press Enter:
+The finding means the skill's files reference a resource at an `http://` address, which is not encrypted. Outside this tutorial, inspect the flagged reference and consent only if you accept that risk. For this tutorial's public example skill, type `y` and press Enter:
 
 ```text
 ✓ Installed frontend-design
