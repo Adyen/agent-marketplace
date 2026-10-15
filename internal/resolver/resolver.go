@@ -2757,11 +2757,40 @@ func removeDisplacedSelections(artifacts []ResolvedArtifact, displaced map[scope
 	for _, key := range order {
 		winner := displaced[key]
 		warning := newNameCollisionWarning(winner, append([]skillOccurrence{winner}, removed[key]...))
+		errs = retireDisplacedWinnerWarnings(errs, removed[key], warning)
 		if len(warning.RunnersUp) > 0 {
 			errs = addNameCollision(errs, warning)
 		}
 	}
 	return kept, errs
+}
+
+// retireDisplacedWinnerWarnings removes earlier name-collision warnings won by
+// a displaced selection, which would otherwise report a winner that is not
+// installed, and carries their runners-up into the member's warning so every
+// competing source is still named once. Only unwrapped warnings are retired;
+// winner selection reports them unwrapped, and removing a wrapper could drop
+// unrelated errors.
+func retireDisplacedWinnerWarnings(errs []error, displaced []skillOccurrence, into *NameCollisionWarning) []error {
+	kept := make([]error, 0, len(errs))
+	for _, err := range errs {
+		warning, ok := err.(*NameCollisionWarning)
+		if !ok || warning == nil || warning.Kind != into.Kind || warning.Name != into.Name ||
+			!slices.ContainsFunc(displaced, func(occ skillOccurrence) bool {
+				return warning.WinnerURL == strings.TrimSpace(occ.url) &&
+					warning.WinnerPath == strings.TrimSpace(occ.resolved.RegistryPath) &&
+					warning.WinnerRef == strings.TrimSpace(occ.resolved.Ref)
+			}) {
+			kept = append(kept, err)
+			continue
+		}
+		for _, runnerUp := range warning.RunnersUp {
+			if !slices.Contains(into.RunnersUp, runnerUp) {
+				into.RunnersUp = append(into.RunnersUp, runnerUp)
+			}
+		}
+	}
+	return kept
 }
 
 // addNameCollision appends warning, or adds its runners-up to an earlier

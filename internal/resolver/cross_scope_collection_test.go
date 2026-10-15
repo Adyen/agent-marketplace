@@ -344,6 +344,22 @@ func TestResolveRequiredCollectionMemberDisplacesOptionalSameScopeSelection(t *t
 		}
 	})
 
+	t.Run("two non-required machine selections displaced", func(t *testing.T) {
+		sources := []sharedSource{
+			{url: mandatory, source: config.Organization, required: true, collection: true},
+			{url: other, source: config.UserPersonal},
+			{url: "git@example.com:third.git", source: config.UserPersonal},
+		}
+		got, errs := resolveSharedSources(t, sources)
+		if described, want := describeShared(got), []string{requiredMember}; !slices.Equal(described, want) {
+			t.Fatalf("resolved %q, want %q", described, want)
+		}
+		if warnings, want := collisionWarnings(t, errs), []string{mandatory + " <- git@example.com:other,git@example.com:third"}; !slices.Equal(warnings, want) {
+			t.Fatalf("warnings %q, want %q", warnings, want)
+		}
+		assertMachineOutputIndependentOfRepository(t, sources, describeShared(got))
+	})
+
 	t.Run("same-source direct selection yields to the required member", func(t *testing.T) {
 		sources := []sharedSource{
 			{url: mandatory, source: config.Organization, required: true, collection: true},
