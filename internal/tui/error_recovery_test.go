@@ -64,7 +64,6 @@ func TestErrorRecoveryCategoryDefaultsRenderBesideCauses(t *testing.T) {
 		{"mutation", diagnosticMutation, recoveryOperationCopy},
 		{"sync", diagnosticSync, recoveryOperationCopy},
 		{"update", diagnosticUpdate, recoveryOperationCopy},
-		{"migration", diagnosticMigration, recoveryOperationCopy},
 		{"editor", diagnosticEditor, recoveryEditorCopy},
 	}
 	for _, tc := range cases {

@@ -132,7 +132,7 @@ func categoryRecoveryRemediation(category diagnosticCategory) string {
 		return resolutionRecoveryCopy
 	case diagnosticMaterialization:
 		return materializationRecoveryCopy
-	case diagnosticMutation, diagnosticSync, diagnosticUpdate, diagnosticMigration:
+	case diagnosticMutation, diagnosticSync, diagnosticUpdate:
 		return operationRecoveryCopy
 	case diagnosticEditor:
 		return editorRecoveryCopy
