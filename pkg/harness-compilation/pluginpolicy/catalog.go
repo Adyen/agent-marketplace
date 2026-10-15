@@ -10,6 +10,7 @@ import (
 	"embed"
 	"fmt"
 	"io/fs"
+	"maps"
 	"path"
 	"regexp"
 	"slices"
@@ -268,7 +269,7 @@ func (c *formatCatalog) validate(name string) error {
 			return fmt.Errorf("%s: invalid version %q", file, version)
 		}
 	}
-	for _, field := range sortedKeys(c.Manifest.Fields) {
+	for _, field := range slices.Sorted(maps.Keys(c.Manifest.Fields)) {
 		f := c.Manifest.Fields[field]
 		if !validName(field) {
 			return fmt.Errorf("%s: invalid manifest field name %q", file, field)
@@ -280,7 +281,7 @@ func (c *formatCatalog) validate(name string) error {
 			return fmt.Errorf("%s: manifest field %q has invalid outcome %q", file, field, f.Invalid)
 		}
 	}
-	for _, kind := range sortedKeys(c.Components) {
+	for _, kind := range slices.Sorted(maps.Keys(c.Components)) {
 		rule := c.Components[kind]
 		if !validName(kind) {
 			return fmt.Errorf("%s: invalid component kind %q", file, kind)
@@ -303,7 +304,7 @@ func (c *formatCatalog) validate(name string) error {
 		if c.Catalog.EntryOverlay != "" && !slices.Contains(knownPolicyIDs, c.Catalog.EntryOverlay) {
 			return fmt.Errorf("%s: catalog.entry_overlay names unknown policy %q", file, c.Catalog.EntryOverlay)
 		}
-		for _, source := range sortedKeys(c.Catalog.Sources) {
+		for _, source := range slices.Sorted(maps.Keys(c.Catalog.Sources)) {
 			outcome := c.Catalog.Sources[source]
 			if !slices.Contains(knownSourceTypes, source) {
 				return fmt.Errorf("%s: catalog.sources names unknown source type %q", file, source)
@@ -359,11 +360,11 @@ func (c *harnessCatalog) validate(name string, formats map[string]formatCatalog,
 			return fmt.Errorf("%s: delivery.native verified for format %q the harness does not accept", file, native.Format)
 		}
 	}
-	for _, kind := range sortedKeys(c.Surfaces.Plugin) {
+	for _, kind := range slices.Sorted(maps.Keys(c.Surfaces.Plugin)) {
 		if !validName(kind) {
 			return fmt.Errorf("%s: invalid plugin surface kind %q", file, kind)
 		}
-		for _, field := range sortedKeys(c.Surfaces.Plugin[kind]) {
+		for _, field := range slices.Sorted(maps.Keys(c.Surfaces.Plugin[kind])) {
 			outcome := c.Surfaces.Plugin[kind][field]
 			if !validName(field) {
 				return fmt.Errorf("%s: invalid plugin surface field %q", file, field)
@@ -387,13 +388,4 @@ func (c *harnessCatalog) validate(name string, formats map[string]formatCatalog,
 		return fmt.Errorf("%s: root_token names unknown plugin_env concept %q", file, c.RootToken)
 	}
 	return nil
-}
-
-func sortedKeys[V any](m map[string]V) []string {
-	keys := make([]string, 0, len(m))
-	for k := range m {
-		keys = append(keys, k)
-	}
-	slices.Sort(keys)
-	return keys
 }
