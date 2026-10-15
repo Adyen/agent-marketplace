@@ -31,7 +31,7 @@ git tag v1.5.0
 git push origin main v1.5.0
 ```
 
-`git add` and `git tag` succeed silently. The commit prints a summary such as `[main 1a2b3c4] Release 1.5.0` followed by the changed-file count. The push prints the updated remote refs, for example `main -> main` and `v1.5.0 -> v1.5.0`.
+`git add` and `git tag` print nothing. The commit prints a summary such as `[main 1a2b3c4] Release 1.5.0` followed by the changed-file count. The push prints the updated remote refs, for example `main -> main` and `v1.5.0 -> v1.5.0`.
 
 Consumers can only use a tag after you push it.
 

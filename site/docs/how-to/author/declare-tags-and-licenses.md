@@ -1,6 +1,6 @@
 # How to declare tags and a license
 
-Add [tags](../../glossary.md#tag) and a license to the front matter of a `SKILL.md`. Tags let consumers install related resources in one step. To name resources a resource needs, see [Declare resource prerequisites](./declare-resource-prerequisites.md).
+Add [tags](../../glossary.md#tag) and a license to the front matter of a `SKILL.md`. Tags let consumers install related resources in one step.
 
 ## Prerequisites
 

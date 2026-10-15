@@ -70,7 +70,7 @@ agent-marketplace sync
 agent-marketplace status
 ```
 
-Sync prints a summary (counts vary with what changed) plus the same warning. A typical excerpt after the install above:
+Sync prints a summary and the same warning. After the install above, the output looks like this:
 
 ```text
 Installed 0  Removed 0  Malformed 0  Errors 0

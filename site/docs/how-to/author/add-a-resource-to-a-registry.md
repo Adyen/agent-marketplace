@@ -1,6 +1,6 @@
 # How to add a resource to a registry
 
-Add a new skill or command to a Git [registry](../../glossary.md#registry), check it locally, and publish it. Subagents, hooks, and MCP servers use each harness's own file formats; the [registry layout reference](../../reference/registry-layout.md) lists where they go.
+Add a skill or command to a Git [registry](../../glossary.md#registry), check it locally, and publish it. For subagents, hooks, and MCP servers, the [registry layout reference](../../reference/registry-layout.md) lists each harness's file formats and paths.
 
 ## Prerequisites
 
@@ -10,7 +10,7 @@ Add a new skill or command to a Git [registry](../../glossary.md#registry), chec
 
 ## 1. Choose the directory
 
-`agent-marketplace` reads a registry in the native layout of one [harness](../../glossary.md#harness), called the source harness. A registry with `skills/` or `commands/` at its root is read as the Claude Code layout, which the examples below use:
+`agent-marketplace` reads a registry in the native layout of one [harness](../../glossary.md#harness), its source harness. A registry with `skills/` or `commands/` at its root uses the Claude Code layout, which these examples use:
 
 | Kind | Path in a Claude-layout registry |
 |---|---|
@@ -42,7 +42,7 @@ Review code changes and suggest improvements.
 EOF
 ```
 
-Both commands succeed silently and leave the file at `skills/code-review/SKILL.md`. Use a name containing only lowercase letters, digits, and hyphens, starting with a letter, as the [resource metadata reference](../../reference/resource-metadata.md) requires.
+Both commands succeed silently and leave the file at `skills/code-review/SKILL.md`. Use a name with only lowercase letters, digits, and hyphens, starting with a letter, as the [resource metadata reference](../../reference/resource-metadata.md) requires.
 
 In the Claude Code layout, a command is a Markdown file under `commands/`. Its name comes from the file name:
 
@@ -55,11 +55,11 @@ Run the release checklist.
 EOF
 ```
 
-These commands succeed silently and leave the file at `commands/release.md`. The rest of this guide releases both `skills/code-review` and `commands/release`.
+These commands print nothing and create `commands/release.md`. This guide releases both `skills/code-review` and `commands/release`.
 
 Consumers can set `source_harness: claude` on their source to state the layout explicitly instead of relying on detection.
 
-Devin and Codex have no separate command format, so in those layouts a command is a skill-shaped `SKILL.md` with the top-level marker `x-agent-marketplace-kind: command`. Other layouts do not use the marker.
+Devin and Codex have no separate command format. In those layouts, a command is a skill-shaped `SKILL.md` with the top-level marker `x-agent-marketplace-kind: command`. Other layouts do not use the marker.
 
 ## 3. Check it locally
 
@@ -77,7 +77,7 @@ REGISTRY  KIND     NAME         TAGS (metadata)  STATUS
 .         command  release                       available
 ```
 
-The new resource appears with the status `available`. Then convert the whole registry bundle to another harness to catch translation problems. `convert` takes the root of a source-layout bundle, not an individual resource directory:
+The new resource shows `available`. To catch translation problems, convert the whole registry to another harness. `convert` takes the bundle root, not one resource folder:
 
 ```bash
 agent-marketplace convert \
@@ -94,7 +94,7 @@ Converted claude -> factory into /tmp/my-registry-factory
 Written 2, Skipped 0, Removed 0, Diagnostics 0
 ```
 
-When one resource fails, the command still writes the resources that converted cleanly, prints a `skipped <kind> "<name>" (<codes>)` line for each failure, and exits nonzero. Fix every reported diagnostic before you commit. To check every harness in CI, see [How to validate a registry in CI](./validate-a-registry-in-ci.md).
+When one resource fails, the command still writes the resources that converted cleanly. It prints a `skipped <kind> "<name>" (<codes>)` line for each failure and exits nonzero. Fix every reported diagnostic before you commit. To check every harness in CI, see [How to validate a registry in CI](./validate-a-registry-in-ci.md).
 
 ## 4. Commit, tag, and push
 
