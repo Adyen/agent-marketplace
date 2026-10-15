@@ -4,9 +4,9 @@ import path from "node:path";
 import { createHash } from "node:crypto";
 
 import { expect, test } from "@microsoft/tui-test";
+import { readRegularFile } from "./process-helpers.js";
 
 import {
-  declineLegacyMigration,
   defineFixture,
   findTextRun,
   osc52Capture,
@@ -34,7 +34,7 @@ const treeDigest = (root: string): Map<string, string> => {
       } else if (stat.isDirectory()) {
         walk(full);
       } else if (stat.isFile()) {
-        snapshot.set(full, `file:${createHash("sha256").update(fs.readFileSync(full)).digest("hex")}`);
+        snapshot.set(full, `file:${createHash("sha256").update(readRegularFile(full)).digest("hex")}`);
       }
     }
   };
@@ -56,7 +56,6 @@ test("marketplace full view browses inspection content, selects preview text, an
   const before = new Map(controlledPaths.map((root) => [root, treeDigest(root)]));
 
   const osc52 = osc52Capture(terminal);
-  await declineLegacyMigration(terminal);
 
   const longName = "pack-notes-with-a-much-longer-catalog-row-label";
   await step("settled baseline without the discovery row", () => {}, async () => {

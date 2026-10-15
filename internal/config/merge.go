@@ -138,14 +138,16 @@ func MergeLayers(layers []Layer) *Config {
 // inheritance defaults (surprising) and once as global post-hoc filters
 // (expected). For per-registry selectors inside a registries entry, the
 // RegistryEntry.SelectorForKind fields are already populated from YAML
-// and flow through merge/resolve normally.
+// and flow through merge/resolve normally. The layer carries the
+// APIVersionV4 runtime sentinel; the authored v4 parser owns version
+// validation of the personal-local root and its includes.
 func LocalConfigAsLayer(localCfg *LocalConfig) *Layer {
 	if localCfg == nil || (len(localCfg.Registries) == 0 && len(localCfg.Marketplaces) == 0 && localCfg.Materialization == nil) {
 		return nil
 	}
 
 	cfg := Config{
-		APIVersion:      APIVersionV2,
+		APIVersion:      APIVersionV4,
 		Registries:      localCfg.Registries,
 		Marketplaces:    localCfg.Marketplaces,
 		Materialization: localCfg.Materialization,
@@ -203,18 +205,19 @@ func (s Source) CanConfigureLogging() bool {
 
 func resolveRegistryEntry(cfg *Config, entry RegistryEntry) RegistryEntry {
 	resolved := RegistryEntry{
-		URL:            entry.URL,
-		Ref:            entry.Ref,
-		Path:           entry.Path,
-		Required:       entry.Required,
-		Default:        entry.Default,
-		SourceHarness:  entry.SourceHarness,
-		V4Kind:         entry.V4Kind,
-		V4All:          entry.V4All,
-		V4Decisions:    entry.V4Decisions,
-		FilePrecedence: entry.FilePrecedence,
-		Tags:           resolveInheritedList(cfg.Tags, entry.Tags),
-		Harnesses:      resolveInheritedList(cfg.Harnesses, entry.Harnesses),
+		URL:               entry.URL,
+		Ref:               entry.Ref,
+		Path:              entry.Path,
+		AuthoredDirectory: entry.AuthoredDirectory,
+		Required:          entry.Required,
+		Default:           entry.Default,
+		SourceHarness:     entry.SourceHarness,
+		V4Kind:            entry.V4Kind,
+		V4All:             entry.V4All,
+		V4Decisions:       entry.V4Decisions,
+		FilePrecedence:    entry.FilePrecedence,
+		Tags:              resolveInheritedList(cfg.Tags, entry.Tags),
+		Harnesses:         resolveInheritedList(cfg.Harnesses, entry.Harnesses),
 	}
 	// Resolve per-kind selectors with top-level inheritance (entry-specific wins).
 	for _, kind := range AllKinds {

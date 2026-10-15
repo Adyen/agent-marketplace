@@ -2,7 +2,6 @@ package e2e_test
 
 import (
 	"fmt"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -49,13 +48,13 @@ func TestMarketplaceInstallAndSearchFlagsAgainstV4UserConfig(t *testing.T) {
 	}
 }
 
-// A legacy configuration accepts Marketplace findings with --accept-risk.
-func TestMarketplaceInstallAcceptRiskAgainstLegacyConfig(t *testing.T) {
+// A repository v4 configuration accepts Marketplace findings with --accept-risk.
+func TestMarketplaceInstallAcceptRiskAgainstV4RepositoryConfig(t *testing.T) {
 	fixture := newMarketplaceBehaviorFixture(t, marketplaceBehaviorFiles("Accepted risk", false))
 	consumer := fixture.newConsumer(t, fixture.server.URL)
 	result := consumer.RunAM("install", "behavior:behavior-source/skill/skill-one", "--accept-risk")
 	if result.ExitCode != 0 {
-		t.Fatalf("install --accept-risk into a legacy config failed (exit %d):\n%s", result.ExitCode, result.Combined)
+		t.Fatalf("install --accept-risk into a v4 repository config failed (exit %d):\n%s", result.ExitCode, result.Combined)
 	}
 	consumer.AssertFileContains("/workspace/.factory/skills/skill-one/SKILL.md", "Accepted risk")
 	consumer.AssertExitCode(consumer.RunAM("sync", "--check"), 0)
@@ -85,31 +84,4 @@ func TestMarketplaceRevocationOverrideAgainstV4UserConfig(t *testing.T) {
 	if result := consumer.RunAM("sync", "--allow-revoked", coordinate); result.ExitCode != 0 {
 		t.Fatalf("exact revocation override failed (exit %d):\n%s", result.ExitCode, result.Combined)
 	}
-}
-
-// convert previews with --dry-run, autodetects the source harness, and with
-// --sync replaces stale output.
-func TestConvertFlagsThroughTheBinary(t *testing.T) {
-	env := newEnv(t)
-	source := filepath.Join(env.workspace, "plugin")
-	for path, content := range map[string]string{
-		".claude-plugin/plugin.json": `{"name":"demo-plugin","version":"1.0.0"}`,
-		"skills/demo-skill/SKILL.md": "---\nname: demo-skill\ndescription: Demo skill\n---\n\n# Demo skill\n",
-	} {
-		env.WriteFile(filepath.Join("/workspace/plugin", path), content)
-	}
-	out := filepath.Join(env.workspace, "factory-out")
-
-	preview := env.RunAM("convert", "--autodetect", "--to", "factory", "--out", out, "--dry-run", source)
-	if preview.ExitCode != 0 {
-		t.Fatalf("convert --autodetect --dry-run failed (exit %d):\n%s", preview.ExitCode, preview.Combined)
-	}
-	env.AssertFileAbsent("/workspace/factory-out")
-	env.WriteFile("/workspace/factory-out/stale.txt", "stale")
-	converted := env.RunAM("convert", "--autodetect", "--to", "factory", "--out", out, "--sync", source)
-	if converted.ExitCode != 0 || !strings.Contains(converted.Combined, "Converted claude -> factory") {
-		t.Fatalf("convert --autodetect --sync failed (exit %d):\n%s", converted.ExitCode, converted.Combined)
-	}
-	env.AssertFileExists("/workspace/factory-out/skills/demo-skill/SKILL.md")
-	env.AssertFileAbsent("/workspace/factory-out/stale.txt")
 }

@@ -23,11 +23,13 @@ func setupReadOnlyExactRegistry(t *testing.T) (repo, origin, working, lockPath s
 	commitAndPushAll(t, working, "locked")
 	repo = filepath.Join(t.TempDir(), "repo")
 	writeConfig(t, filepath.Join(repo, ".agents", "config.yaml"), `
-registries:
-  - url: `+origin+`
+sources:
+  locked:
+    git: file://`+origin+`
     ref: main
-    skills:
-      include: [locked-skill]
+resources:
+  locked:
+    include: [skill/locked-skill]
 `)
 	withWorkingDir(t, repo)
 	if output, err := executeCommand("lock", "--scope", "repo"); err != nil {
@@ -105,13 +107,15 @@ func TestDoctorRepairReplacesConflictFromLockedGitRevision(t *testing.T) {
 	writeFile(t, filepath.Join(working, ".mcp.json"), `{"mcpServers":{"managed":{"command":"locked-binary"}}}`)
 	commitAndPushAll(t, working, "locked MCP")
 	repo := t.TempDir()
-	writeConfig(t, filepath.Join(repo, ".agents", "config.yaml"), `apiVersion: agent-marketplace/v2
+	writeConfig(t, filepath.Join(repo, ".agents", "config.yaml"), `apiVersion: agent-marketplace/v4
 harnesses: [devin]
-registries:
-  - url: `+origin+`
+sources:
+  locked:
+    git: file://`+origin+`
     ref: main
-    mcp:
-      include: [managed]
+resources:
+  locked:
+    include: [mcp/managed]
 `)
 	withWorkingDir(t, repo)
 	if output, err := executeCommand("lock", "--scope", "repo"); err != nil {
@@ -190,8 +194,9 @@ func TestConfiguredListMissingLockNamesAffectedLayer(t *testing.T) {
 	commitAndPushAll(t, working, "review")
 	repo := filepath.Join(t.TempDir(), "repo")
 	writeConfig(t, filepath.Join(repo, ".agents", "config.yaml"), `
-registries:
-  - url: `+origin+`
+sources:
+  locked:
+    git: file://`+origin+`
     ref: main
 `)
 	withWorkingDir(t, repo)
@@ -250,14 +255,18 @@ func TestDeinitDryRunUsesOrganizationExactLockWithoutReconciliation(t *testing.T
 	commitAndPushAll(t, working, "locked org")
 	orgPath := filepath.Join(t.TempDir(), "config.yaml")
 	writeConfig(t, orgPath, `
-registries:
-  - url: `+origin+`
+sources:
+  locked:
+    git: file://`+origin+`
     ref: main
+resources:
+  locked:
     required: true
+    all: true
 `)
 	config.SetTestOrganizationConfigPath(t, orgPath)
 	repo := filepath.Join(t.TempDir(), "repo")
-	writeConfig(t, filepath.Join(repo, ".agents", "config.yaml"), "registries: []\n")
+	writeConfig(t, filepath.Join(repo, ".agents", "config.yaml"), "sources: {}\n")
 	withWorkingDir(t, repo)
 	if output, err := executeCommand("lock", "--scope", "organization"); err != nil {
 		t.Fatalf("create organization lock: %v\n%s", err, output)
@@ -298,8 +307,9 @@ func TestConfiguredListKeepsLocalRegistryLiveWithoutLock(t *testing.T) {
 	writeSkill(t, registry, "first", "First", nil)
 	repo := filepath.Join(t.TempDir(), "repo")
 	writeConfig(t, filepath.Join(repo, ".agents", "config.yaml"), `
-registries:
-  - url: `+registry+`
+sources:
+  live:
+    directory: `+registry+`
 `)
 	withWorkingDir(t, repo)
 	writeSkill(t, registry, "second", "Second", nil)

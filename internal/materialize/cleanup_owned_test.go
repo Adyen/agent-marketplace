@@ -606,11 +606,11 @@ func TestRemoveOwnedSequentialHooksAndDuplicate(t *testing.T) {
 		t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
 		t.Setenv("CODEX_HOME", filepath.Join(home, ".codex"))
 		selection := []resolver.ResolvedArtifact{
-			devinResolved("first", ir.NewHook("first", "PostToolUse", "echo first", "command", nil, ir.SourceRef{}), false),
-			devinResolved("second", ir.NewHook("second", "PostToolUse", "echo second", "command", nil, ir.SourceRef{}), false),
+			devinResolved(t, "first", ir.NewHook("first", "PostToolUse", "echo first", "command", nil, ir.SourceRef{}), false),
+			devinResolved(t, "second", ir.NewHook("second", "PostToolUse", "echo second", "command", nil, ir.SourceRef{}), false),
 		}
 		report, err := Run(context.Background(), repoRoot, selection)
-		if err != nil || report == nil || len(report.Diags) != 0 {
+		if err != nil || report == nil || len(nonReviewDiags(report)) != 0 {
 			t.Fatalf("seed Run = %#v err=%v", report, err)
 		}
 		preview, err := DevinRepairPreview(context.Background(), repoRoot, nil)
@@ -645,9 +645,9 @@ func TestRemoveOwnedSequentialHooksAndDuplicate(t *testing.T) {
 		repoRoot, home := devinEnv(t)
 		t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
 		t.Setenv("CODEX_HOME", filepath.Join(home, ".codex"))
-		selection := []resolver.ResolvedArtifact{devinResolved("hook", ir.NewHook("hook", "PostToolUse", "echo duplicate", "command", nil, ir.SourceRef{}), false)}
+		selection := []resolver.ResolvedArtifact{devinResolved(t, "hook", ir.NewHook("hook", "PostToolUse", "echo duplicate", "command", nil, ir.SourceRef{}), false)}
 		report, err := Run(context.Background(), repoRoot, selection)
-		if err != nil || report == nil || len(report.Diags) != 0 {
+		if err != nil || report == nil || len(nonReviewDiags(report)) != 0 {
 			t.Fatalf("seed Run = %#v err=%v", report, err)
 		}
 		path := filepath.Join(devinProjectRoot(repoRoot), harness.DevinProjectHooksFile)
@@ -733,11 +733,42 @@ func TestRemoveOwnedRefusesForeignCASMutation(t *testing.T) {
 	}
 }
 
-func cleanupCodexHookSelection(commands ...string) []resolver.ResolvedArtifact {
+func cleanupCodexHookSelection(t testing.TB, commands ...string) []resolver.ResolvedArtifact {
+	t.Helper()
 	selection := make([]resolver.ResolvedArtifact, 0, len(commands))
 	for i, command := range commands {
 		name := fmt.Sprintf("hook-%d", i)
-		selection = append(selection, resolver.ResolvedArtifact{Entry: catalog.Entry{Name: name, Resource: ir.NewHookWithMatcher(name, "PreToolUse", "Bash", command, "command", nil, ir.SourceRef{})}, Source: config.UserPersonal, Harnesses: []hcc.Target{hcc.TargetCodex}})
+		sourceRoot := t.TempDir()
+		definitionPath := filepath.Join(sourceRoot, "hooks", "hooks.json")
+		definition := fmt.Sprintf(`{"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":%q}]}]}}`, command)
+		if err := os.MkdirAll(filepath.Dir(definitionPath), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(definitionPath, []byte(definition), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		loaded, err := catalog.Load(sourceRoot, "claude")
+		if err != nil {
+			t.Fatalf("Claude hook catalog: %v", err)
+		}
+		if len(loaded.Entries) != 1 || loaded.Entries[0].Kind != ir.KindHook {
+			t.Fatalf("Claude source hooks = %+v, want one hook", loaded.Entries)
+		}
+		entry := loaded.Entries[0]
+		hook, ok := entry.Resource.(*ir.Hook)
+		if !ok || hook.Source.File != "hooks/hooks.json" || hook.SourceDefinitionDigest() == "" {
+			t.Fatalf("Claude source hook is not bound to its written definition: %#v", entry.Resource)
+		}
+		entry.Name = name
+		entry.Path = definitionPath
+		selection = append(selection, resolver.ResolvedArtifact{
+			Entry:       entry,
+			Source:      config.UserPersonal,
+			RegistryURL: sourceRoot,
+			CatalogKey:  sourceRoot,
+			V4Kind:      config.V4SourceDirectory,
+			Harnesses:   []hcc.Target{hcc.TargetCodex},
+		})
 	}
 	return selection
 }
@@ -747,8 +778,8 @@ func TestRemoveOwnedCodexRawHooks(t *testing.T) {
 		repoRoot, home := devinEnv(t)
 		t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
 		t.Setenv("CODEX_HOME", filepath.Join(home, ".codex"))
-		report, err := Run(context.Background(), repoRoot, cleanupCodexHookSelection("./first", "./second"))
-		if err != nil || report == nil || len(report.Diags) != 0 {
+		report, err := Run(context.Background(), repoRoot, cleanupCodexHookSelection(t, "./first", "./second"))
+		if err != nil || report == nil || len(nonReviewDiags(report)) != 0 {
 			t.Fatalf("seed Run = %#v err=%v", report, err)
 		}
 		preview, err := CodexRepairPreview(context.Background(), repoRoot, nil)
@@ -790,8 +821,8 @@ func TestRemoveOwnedCodexRawHooks(t *testing.T) {
 		repoRoot, home := devinEnv(t)
 		t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
 		t.Setenv("CODEX_HOME", filepath.Join(home, ".codex"))
-		report, err := Run(context.Background(), repoRoot, cleanupCodexHookSelection("./duplicate"))
-		if err != nil || report == nil || len(report.Diags) != 0 {
+		report, err := Run(context.Background(), repoRoot, cleanupCodexHookSelection(t, "./duplicate"))
+		if err != nil || report == nil || len(nonReviewDiags(report)) != 0 {
 			t.Fatalf("seed Run = %#v err=%v", report, err)
 		}
 		root, err := filepath.EvalSymlinks(filepath.Join(home, ".codex"))
@@ -874,8 +905,8 @@ func TestRemoveOwnedCodexRawHooks(t *testing.T) {
 		repoRoot, home := devinEnv(t)
 		t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
 		t.Setenv("CODEX_HOME", filepath.Join(home, ".codex"))
-		report, err := Run(context.Background(), repoRoot, cleanupCodexHookSelection("./duplicate"))
-		if err != nil || report == nil || len(report.Diags) != 0 {
+		report, err := Run(context.Background(), repoRoot, cleanupCodexHookSelection(t, "./duplicate"))
+		if err != nil || report == nil || len(nonReviewDiags(report)) != 0 {
 			t.Fatalf("seed Run = %#v err=%v", report, err)
 		}
 		root, err := filepath.EvalSymlinks(filepath.Join(home, ".codex"))

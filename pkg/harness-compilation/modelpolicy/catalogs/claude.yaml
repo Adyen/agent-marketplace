@@ -1,0 +1,56 @@
+schema: 1
+harness: claude
+evidence:
+  checked: "2026-09-21"
+  refs:
+    - https://code.claude.com/docs/en/sub-agents.md
+    - https://code.claude.com/docs/en/skills.md
+surfaces:
+  subagent:
+    model_field: model
+    effort_field: effort
+    omitted_model: inherit
+    inherit_model: inherit
+    inherited_efforts: [low, medium, high, xhigh, max]
+  skill:
+    model_field: model
+    omitted_model: inherit
+    inherit_model: inherit
+models:
+  anthropic/claude-opus-5:
+    model: claude-opus-5
+    reasoning:
+      low: {effort: low}
+      medium: {effort: medium}
+      high: {effort: high}
+      xhigh: {effort: xhigh}
+      max: {effort: max}
+  anthropic/claude-sonnet-5:
+    model: claude-sonnet-5
+    reasoning:
+      low: {effort: low}
+      medium: {effort: medium}
+      high: {effort: high}
+  anthropic/claude-sonnet-4-5-20250929:
+    model: claude-sonnet-4-5-20250929
+  anthropic/claude-opus-4-20250514:
+    model: claude-opus-4-20250514
+  anthropic/claude-haiku-3-5-20241022:
+    model: claude-haiku-3-5-20241022
+families:
+  anthropic/sonnet:
+    model: sonnet
+    reasoning:
+      low: {effort: low}
+      medium: {effort: medium}
+      high: {effort: high}
+  anthropic/opus:
+    model: opus
+    reasoning:
+      low: {effort: low}
+      medium: {effort: medium}
+      high: {effort: high}
+      xhigh: {effort: xhigh}
+      max: {effort: max}
+  anthropic/haiku:
+    model: haiku

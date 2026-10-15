@@ -231,6 +231,11 @@ func sealAdminPayload(t *testing.T, payload any) string {
 
 func adminOIDCFixture(t *testing.T, issuer *testOIDCIssuer, mutate func(*config.Administration)) (*Server, http.Handler) {
 	t.Helper()
+	return adminOIDCFixtureWithBrowserBase(t, issuer, "", mutate)
+}
+
+func adminOIDCFixtureWithBrowserBase(t *testing.T, issuer *testOIDCIssuer, browserBase string, mutate func(*config.Administration)) (*Server, http.Handler) {
+	t.Helper()
 	t.Setenv("MARKETPLACE_ADMIN_SESSION_SECRET", testAdminSessionSecret)
 	meta := sqlite.New(":memory:")
 	if err := meta.Open(context.Background()); err != nil {
@@ -238,7 +243,7 @@ func adminOIDCFixture(t *testing.T, issuer *testOIDCIssuer, mutate func(*config.
 	}
 	t.Cleanup(func() { _ = meta.Close() })
 	cfg := config.Config{
-		Instance:   config.Instance{ID: "admin-test", Name: "Test", CanonicalURL: "https://marketplace.test"},
+		Instance:   config.Instance{ID: "admin-test", Name: "Test", CanonicalURL: "https://marketplace.test", BrowserBase: browserBase},
 		Management: config.Management{Mode: "database"},
 		Policy:     config.Policy{LicenseAllowlist: []string{"MIT"}, LicenseUndeclared: "reject"},
 		Admin: config.Administration{

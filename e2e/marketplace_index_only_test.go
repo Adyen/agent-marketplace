@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -69,18 +70,20 @@ func TestMarketplaceIndexOnlyRegistryMoveOfflineAndAllKinds(t *testing.T) {
 	if len(revisions) != 5 {
 		t.Fatalf("registry resources = %d, want all five materialized kinds", len(revisions))
 	}
-	currentOrigin := originOne
-	requests := 0
+	var currentOrigin atomic.Value
+	currentOrigin.Store(originOne)
+	var requests atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		requests++
+		requests.Add(1)
+		origin := currentOrigin.Load().(string)
 		w.Header().Set("Content-Type", "application/json")
 		switch {
 		case r.URL.Path == "/.well-known/agent-marketplace.json":
 			_ = json.NewEncoder(w).Encode(mpapi.DefaultWellKnown("marketplace-id", "https://example.invalid"))
 		case strings.Contains(r.URL.Path, "/occurrences/"):
-			_ = json.NewEncoder(w).Encode(mpapi.ExactRegistryOccurrence{RegistryID: "source-id", Ref: "main", Roots: registry.Roots, Commit: commit, RegistryRevisionManifestDigest: built.ManifestDigest, Acquisition: store.AcquisitionIndexOnly, AcquisitionOrigin: currentOrigin, OccurredAt: time.Now().UTC()})
+			_ = json.NewEncoder(w).Encode(mpapi.ExactRegistryOccurrence{RegistryID: "source-id", Ref: "main", Roots: registry.Roots, Commit: commit, RegistryRevisionManifestDigest: built.ManifestDigest, Acquisition: store.AcquisitionIndexOnly, AcquisitionOrigin: origin, OccurredAt: time.Now().UTC()})
 		case strings.Contains(r.URL.Path, "/registries/"):
-			_ = json.NewEncoder(w).Encode(mpapi.PublicRegistry{ID: "source-id", Slug: "source", Origins: []string{currentOrigin}, Ref: "main", Roots: registry.Roots, Acquisition: store.AcquisitionIndexOnly, Listed: true})
+			_ = json.NewEncoder(w).Encode(mpapi.PublicRegistry{ID: "source-id", Slug: "source", Origins: []string{origin}, Ref: "main", Roots: registry.Roots, Acquisition: store.AcquisitionIndexOnly, Listed: true})
 		case strings.Contains(r.URL.Path, "/resources/"):
 			for _, revision := range revisions {
 				if strings.Contains(r.URL.Path, "/"+revision.Coordinate.Kind+"/"+revision.Coordinate.Name) {
@@ -96,23 +99,39 @@ func TestMarketplaceIndexOnlyRegistryMoveOfflineAndAllKinds(t *testing.T) {
 	defer server.Close()
 
 	env := newEnv(t)
-	var resourceYAML strings.Builder
-	for _, revision := range revisions {
-		fmt.Fprintf(&resourceYAML, "      - registry_id: source-id\n        kind: %s\n        name: %s\n        revision: %s\n        digest: %s\n        acquisition: index-only\n        registry_commit: %s\n        registry_manifest_digest: %s\n", revision.Coordinate.Kind, revision.Coordinate.Name, revision.ContentDigest, revision.ContentDigest, commit, built.ManifestDigest)
-	}
-	env.WriteGlobalConfig("apiVersion: agent-marketplace/v2\nharnesses: [factory]\nregistries: []")
-	env.WriteRepoConfig(fmt.Sprintf("apiVersion: agent-marketplace/v2\nmarketplaces:\n  - url: %s\n    instance_id: marketplace-id\n    resources:\n%s", server.URL, resourceYAML.String()))
-
+	// Consumer intent is v4; sync acquires exact index-only provenance into its
+	// owning acquisition lock rather than serializing it into consumer config.
+	env.WriteGlobalConfig("apiVersion: agent-marketplace/v4\nharnesses: [factory]\n")
+	env.WriteRepoConfig(fmt.Sprintf(`apiVersion: agent-marketplace/v4
+sources:
+  hosted: {marketplace: %s}
+resources:
+  hosted:
+    include: [source/skill/skill-one, source/command/command-one, source/subagent/agent-one, source/hook/PreToolUse-command, source/mcp/server-one]
+`, server.URL))
 	if result := env.RunAM("sync"); result.ExitCode != 0 {
 		t.Fatalf("initial online sync failed (exit %d):\n%s", result.ExitCode, result.Combined)
 	}
-	for _, path := range []string{"/workspace/.factory/skills/skill-one/SKILL.md", "/workspace/.factory/commands/command-one.md", "/workspace/.factory/droids/agent-one.md", "/workspace/.factory/hooks/hooks.json", "/workspace/.factory/mcp.json"} {
+	lockBefore := env.ReadFile("/workspace/.agents/lock.yaml")
+	for _, want := range []string{"apiVersion: agent-marketplace-lock/v2", "scope: repo", "url: " + server.URL, "instance_id: marketplace-id", "registry_name: source", "registry_id: source-id", "acquisition: index-only", "registry_commit: " + commit, "registry_manifest_digest: " + string(built.ManifestDigest)} {
+		if !strings.Contains(lockBefore, want) {
+			t.Fatalf("exact index-only lock missing %q:\n%s", want, lockBefore)
+		}
+	}
+	for _, revision := range revisions {
+		if !strings.Contains(lockBefore, "content_digest: "+string(revision.ContentDigest)) {
+			t.Fatalf("lock omitted advertised revision for %s: %s", revision.Coordinate, lockBefore)
+		}
+	}
+	for _, path := range []string{"/workspace/.factory/skills/skill-one/SKILL.md", "/workspace/.factory/commands/command-one.md", "/workspace/.factory/droids/agent-one.md", "/workspace/.factory/mcp.json"} {
 		env.AssertFileExists(path)
 	}
+	assertFactoryNativeHookFile(t, env, "/workspace/.factory/hooks.json", "Read", "echo hook")
+	env.AssertFileAbsent("/workspace/.factory/hooks/hooks.json")
 
 	// Remove the old origin before the next online sync. Success proves the
 	// resolver used only the occurrence's current origin, not origin history.
-	currentOrigin = originTwo
+	currentOrigin.Store(originTwo)
 	if err := os.RemoveAll(sourceRepo); err != nil {
 		t.Fatal(err)
 	}
@@ -122,13 +141,21 @@ func TestMarketplaceIndexOnlyRegistryMoveOfflineAndAllKinds(t *testing.T) {
 	if err := os.RemoveAll(movedRepo); err != nil {
 		t.Fatal(err)
 	}
-	requestsBeforeOffline := requests
+	requestsBeforeOffline := requests.Load()
 	if result := env.RunAM("sync", "--offline"); result.ExitCode != 0 {
 		t.Fatalf("offline sync failed (exit %d):\n%s", result.ExitCode, result.Combined)
 	}
-	if requests != requestsBeforeOffline {
-		t.Fatalf("offline sync contacted Marketplace %d additional time(s)", requests-requestsBeforeOffline)
+	if requests.Load() != requestsBeforeOffline {
+		t.Fatalf("offline sync contacted Marketplace %d additional time(s)", requests.Load()-requestsBeforeOffline)
 	}
+	if env.ReadFile("/workspace/.agents/lock.yaml") != lockBefore {
+		t.Fatal("registry move or offline reuse rewrote the exact acquisition lock")
+	}
+	for _, path := range []string{"/workspace/.factory/skills/skill-one/SKILL.md", "/workspace/.factory/commands/command-one.md", "/workspace/.factory/droids/agent-one.md", "/workspace/.factory/mcp.json"} {
+		env.AssertFileExists(path)
+	}
+	assertFactoryNativeHookFile(t, env, "/workspace/.factory/hooks.json", "Read", "echo hook")
+	env.AssertFileAbsent("/workspace/.factory/hooks/hooks.json")
 }
 
 func writeMarketplaceAllKindsSource(t *testing.T, root string) {

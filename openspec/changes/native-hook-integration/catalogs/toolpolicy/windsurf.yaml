@@ -1,0 +1,20 @@
+# Draft seed for pkg/harness-compilation/toolpolicy/catalogs/windsurf.yaml.
+schema: 1
+harness: windsurf
+evidence:
+  checked: "2026-10-07"
+  refs:
+    - https://docs.devin.ai/desktop/cascade/hooks
+  notes: >-
+    Cascade has no tool-name matchers and no subagents. Tool selection is
+    encoded in the event name instead; see hookpolicy/windsurf.yaml `tools`
+    on each split event. MCP events cover every MCP tool and cannot be scoped
+    to one server.
+
+mcp:
+  all: "*"
+  server_scoped: false
+
+surfaces: []
+
+tools: {}

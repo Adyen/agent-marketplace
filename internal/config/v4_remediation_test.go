@@ -1,17 +1,15 @@
 package config
 
 import (
-	"context"
 	"errors"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 
-	"github.com/Adyen/agent-marketplace/internal/dependencytxn"
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 )
 
-func TestV4OrderedChildExcludeThenRootIncludeSurvivesLegacyAdapter(t *testing.T) {
+func TestV4OrderedChildExcludeThenRootIncludeSurvivesRuntimeAdapter(t *testing.T) {
 	dir := t.TempDir()
 	root := filepath.Join(dir, "config.yaml")
 	fragment := filepath.Join(dir, "fragment.yaml")
@@ -72,7 +70,7 @@ resources: {shared: {required: true}}
 	}
 }
 
-func TestV4AllSelectionSurvivesLegacyAdapter(t *testing.T) {
+func TestV4AllSelectionSurvivesRuntimeAdapter(t *testing.T) {
 	v4, err := ParseV4([]byte(`apiVersion: agent-marketplace/v4
 sources: {shared: {git: https://example.test/agents.git, ref: main}}
 resources:
@@ -176,90 +174,59 @@ sources: {shared: {git: https://example.test/agents.git, ref: main}}
 	}
 }
 
-func TestV4MigrationPublishesAllFilesInOneTransaction(t *testing.T) {
-	t.Setenv("XDG_STATE_HOME", filepath.Join(t.TempDir(), "state"))
-	dir := t.TempDir()
-	user := filepath.Join(dir, "user.yaml")
-	repo := filepath.Join(dir, "repo.yaml")
-	userBefore := "apiVersion: agent-marketplace/v2\nharnesses: [factory]\nregistries: []\n"
-	repoBefore := "apiVersion: agent-marketplace/v2\nregistries: []\n"
-	if err := os.WriteFile(user, []byte(userBefore), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(repo, []byte(repoBefore), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	original := commitV4Migration
-	commitV4Migration = func(context.Context, string, []dependencytxn.DesiredFile, ...dependencytxn.Option) (dependencytxn.Result, error) {
-		return dependencytxn.Result{}, errors.New("injected publication failure")
-	}
-	t.Cleanup(func() { commitV4Migration = original })
-	_, err := MigrateConfigFilesToV4(MigratePaths{User: user, Repo: repo}, V4MigrationAll, false)
-	if err == nil || !strings.Contains(err.Error(), "commit v4 migration transaction") {
-		t.Fatalf("error = %v, want injected publication failure", err)
-	}
-	for path, want := range map[string]string{user: userBefore, repo: repoBefore} {
-		got, readErr := os.ReadFile(path)
-		if readErr != nil || string(got) != want {
-			t.Fatalf("%s after failed transaction = %q, %v", path, got, readErr)
-		}
-		matches, globErr := filepath.Glob(path + ".pre-v4.*.bak")
-		if globErr != nil || len(matches) != 0 {
-			t.Fatalf("%s backups after failed transaction = %v, %v", path, matches, globErr)
-		}
-	}
-}
-
-func TestV4MigrationDoesNotOverwriteConcurrentBackup(t *testing.T) {
-	t.Setenv("XDG_STATE_HOME", filepath.Join(t.TempDir(), "state"))
-	dir := t.TempDir()
-	path := filepath.Join(dir, "config.yaml")
-	before := []byte("apiVersion: agent-marketplace/v2\nregistries: []\n")
-	if err := os.WriteFile(path, before, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	original := commitV4Migration
-	sentinel := []byte("existing backup\n")
-	var backupPath string
-	commitV4Migration = func(ctx context.Context, stateDir string, files []dependencytxn.DesiredFile, opts ...dependencytxn.Option) (dependencytxn.Result, error) {
-		for _, file := range files {
-			if strings.Contains(file.Path, ".pre-v4.") {
-				backupPath = file.Path
-				if err := os.WriteFile(backupPath, sentinel, 0o600); err != nil {
+// spec: consumer-config-format/mutations-refuse-before-new-writes-or-prunes
+func TestLayerEditorRefusesLegacyRootWithoutChangingFiles(t *testing.T) {
+	for _, source := range []Source{UserPersonal, RepoCommitted, RepoPersonal} {
+		for _, version := range []string{"agent-marketplace/v2", "agent-marketplace/v3"} {
+			t.Run(source.String()+"/"+version, func(t *testing.T) {
+				dir := t.TempDir()
+				declaring := filepath.Join(dir, "config.yaml")
+				staged := filepath.Join(dir, "staged.yaml")
+				before := []byte("apiVersion: " + version + "\nregistries: []\n")
+				for _, path := range []string{declaring, staged} {
+					if err := os.WriteFile(path, before, 0o640); err != nil {
+						t.Fatal(err)
+					}
+				}
+				info, err := os.Stat(staged)
+				if err != nil {
 					t.Fatal(err)
 				}
-				break
-			}
+				backup := filepath.Join(dir, "config.yaml.pre-v4.existing.bak")
+				writeIncludeConfig(t, backup, "foreign backup\n")
+				_, err = OpenLayerEditor(LayerTarget{Source: source, StagedPath: staged, DeclaringPath: declaring})
+				var validation *V4ValidationError
+				if !errors.As(err, &validation) || validation.Code != "v4.api-version" || validation.Path != declaring || validation.Line != 1 {
+					t.Fatalf("editor format refusal = %v", err)
+				}
+				for _, path := range []string{declaring, staged} {
+					if got, err := os.ReadFile(path); err != nil || string(got) != string(before) {
+						t.Fatalf("refusal changed %s: %q %v", path, got, err)
+					}
+				}
+				after, err := os.Stat(staged)
+				if err != nil || !os.SameFile(info, after) || info.Mode() != after.Mode() || !info.ModTime().Equal(after.ModTime()) {
+					t.Fatalf("refusal changed metadata: %v", err)
+				}
+				if got := readConfigString(t, backup); got != "foreign backup\n" {
+					t.Fatalf("foreign backup changed: %q", got)
+				}
+				entries, err := os.ReadDir(dir)
+				if err != nil || len(entries) != 3 {
+					t.Fatalf("refusal left residue: %v %v", entries, err)
+				}
+			})
 		}
-		return original(ctx, stateDir, files, opts...)
-	}
-	t.Cleanup(func() { commitV4Migration = original })
-
-	_, err := MigrateConfigFilesToV4(MigratePaths{Repo: path}, V4MigrationRepo, false)
-	if !errors.Is(err, dependencytxn.ErrGenerationConflict) {
-		t.Fatalf("error = %v, want generation conflict", err)
-	}
-	if backupPath == "" || readConfigString(t, backupPath) != string(sentinel) {
-		t.Fatalf("backup %q was overwritten", backupPath)
-	}
-	if got := readConfigString(t, path); got != string(before) {
-		t.Fatalf("config changed after backup collision: %q", got)
 	}
 }
 
-func TestV4MigrationPreservesExplicitEmptyTagsAndHarnesses(t *testing.T) {
+func TestV4ReaderPreservesExplicitEmptyTagsAndHarnesses(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.yaml")
-	writeV2Config(t, path, `apiVersion: agent-marketplace/v2
-registries:
-  - url: https://example.test/agents.git
-    ref: main
-    tags: []
-    harnesses: []
+	writeIncludeConfig(t, path, `apiVersion: agent-marketplace/v4
+sources: {agents: {git: https://example.test/agents.git, ref: main}}
+resources: {agents: {tags: [], harnesses: []}}
 `)
-	if _, err := MigrateConfigFilesToV4(MigratePaths{Repo: path}, V4MigrationRepo, false); err != nil {
-		t.Fatal(err)
-	}
 	v4, err := LoadV4ConfigFromPath(path)
 	if err != nil {
 		t.Fatal(err)
@@ -275,5 +242,48 @@ registries:
 	entry := legacy.Registries[0]
 	if entry.Tags == nil || entry.Harnesses == nil {
 		t.Fatalf("empty overrides became nil: tags=%#v harnesses=%#v", entry.Tags, entry.Harnesses)
+	}
+}
+
+func TestV4EditorRejectsForeignSourceBinding(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	before := "apiVersion: agent-marketplace/v4\nsources: {shared: {git: https://example.test/shared.git, ref: main}}\nresources: {shared: [skill/review]}\n"
+	writeIncludeConfig(t, path, before)
+	first, err := OpenLayerEditor(LayerTarget{Source: RepoCommitted, StagedPath: path, DeclaringPath: path})
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := OpenLayerEditor(LayerTarget{Source: RepoCommitted, StagedPath: path, DeclaringPath: path})
+	if err != nil {
+		t.Fatal(err)
+	}
+	binding, err := first.EnsureRegistry(RegistryEntry{URL: "https://example.test/shared.git", Ref: "main"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	change := SelectionChange{Operation: SelectionExclude, Locators: []ResourceLocator{{Kind: ir.KindSkill, Name: "review"}}}
+	err = second.Apply(binding, change)
+	var validation *V4ValidationError
+	if !errors.As(err, &validation) || validation.Code != "config.edit.invalid-binding" {
+		t.Fatalf("foreign binding accepted: %v", err)
+	}
+	candidate, err := second.Render()
+	if err != nil || candidate.Changed || string(candidate.Bytes) != before {
+		t.Fatalf("foreign binding mutated candidate: %#v %v", candidate, err)
+	}
+	if err := first.Apply(binding, change); err != nil {
+		t.Fatal(err)
+	}
+	candidate, err = first.Render()
+	if err != nil || !candidate.Changed || string(candidate.Bytes) == before {
+		t.Fatalf("own binding positive control failed: %#v %v", candidate, err)
+	}
+	view, err := ParseV4Config(candidate.Bytes, path, true)
+	if err != nil || len(view.Groups["shared"].Include) != 0 || len(view.Groups["shared"].Exclude) != 1 || view.Groups["shared"].Exclude[0] != "skill/review" {
+		t.Fatalf("own binding did not exclude review: view=%#v err=%v", view, err)
+	}
+	if got := readConfigString(t, path); got != before {
+		t.Fatalf("candidate render wrote root: %q", got)
 	}
 }

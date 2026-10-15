@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Adyen/agent-marketplace/internal/cache"
 	"github.com/Adyen/agent-marketplace/internal/marketplace"
 	"github.com/charmbracelet/x/ansi"
 )
@@ -62,7 +63,7 @@ func TestFooterAlwaysShowsPaletteHelpAndQuit(t *testing.T) {
 
 func TestFooterShowsActionHintsWhenWide(t *testing.T) {
 	m := footerFixture(120)
-	assertFooterFits(t, renderFooter(m), 120, "~ drift unavailable", "/ search", "s sync", ": commands")
+	assertFooterFits(t, renderFooter(m), 120, "~ drift unavailable", "/ search", "s sync", ": commands", "v view")
 }
 
 func TestFooterErrorStateKeepsDiagnosticsAndFloor(t *testing.T) {
@@ -70,6 +71,22 @@ func TestFooterErrorStateKeepsDiagnosticsAndFloor(t *testing.T) {
 		m := footerFixture(width)
 		m.errs = []error{errors.New("boom")}
 		assertFooterFits(t, renderFooter(m), width, "! 1 errors", "e errors", "r reload", ": c", "q quit")
+	}
+}
+
+// spec: tui-feedback/sync-recovery-shortcut-remains-visible
+func TestMissingSnapshotFooterPrioritizesSync(t *testing.T) {
+	for _, width := range []int{50, 80, 120} {
+		t.Run(fmt.Sprint(width), func(t *testing.T) {
+			m := footerFixture(width)
+			m.driftAssessment = driftFailed
+			m.replaceSnapshotDiagnostics([]tuiDiagnostic{snapshotDiagnostic(diagnosticWarning, diagnosticCatalog, cache.ErrExactGitSnapshotUnavailable)}, nil, nil)
+			footer := renderFooter(m)
+			assertFooterFits(t, footer, width, "s sync", ": commands", "? help", "q quit")
+			if strings.Count(ansi.Strip(footer), "s sync") != 1 {
+				t.Fatalf("sync hint was duplicated: %q", ansi.Strip(footer))
+			}
+		})
 	}
 }
 

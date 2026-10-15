@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 
 import { expect, test } from "@microsoft/tui-test";
 
-import { declineLegacyMigration, defineFixture, step, waitForExit } from "./helpers.js";
+import { defineFixture, step, waitForExit } from "./helpers.js";
 import { runAM } from "./process-helpers.js";
 
 // The deployed-lock counterpart to the transient-acquisition journey. The TUI
@@ -15,7 +15,6 @@ test.afterAll(journey.cleanup);
 
 test("a published organization lock keeps the marketplace-backed workspace healthy", async ({ terminal }) => {
   const fixture = journey.current();
-  await declineLegacyMigration(terminal);
 
   await step("settled baseline with the organization marketplace", () => {}, async () => {
     await expect(terminal.getByText("beta-skill", { strict: false })).toBeVisible();

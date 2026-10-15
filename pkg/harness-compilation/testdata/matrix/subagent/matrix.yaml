@@ -8,9 +8,7 @@ cells:
       diagnostics:
         - subagent.security-restriction-unsupported
         - subagent.security-restriction-unsupported
-      allowedLosses:
-        - disallowedTools
-        - isolation
+      allowedLosses: [disallowedTools, isolation]
     # This cell still produces no artifact, but NOT because of
     # subagent.devin.tool-unknown, which is a warning since bead
     # agent-marketplace-pu6b. The two security-restriction ERRORS
@@ -29,202 +27,164 @@ cells:
       diagnostics:
         - subagent.factory.disallowed-tools-dropped
         - subagent.factory.isolation-dropped
-      allowedLosses:
-        - disallowedTools
-        - isolation
+      allowedLosses: [disallowedTools, isolation]
     - from: claude
       to: gemini
       class: cross
       diagnostics:
         - subagent.security-restriction-unsupported
         - subagent.security-restriction-unsupported
-      allowedLosses:
-        - disallowedTools
-        - effort
-        - isolation
-        - model
+      allowedLosses: [disallowedTools, effort, isolation, model]
     - from: claude
       to: windsurf
       class: drop
-      diagnostics:
-        - subagent.security-restriction-unsupported
+      diagnostics: [subagent.security-restriction-unsupported]
     - from: cursor
       to: claude
       class: cross
-      allowedLosses:
-        - disallowedTools
-        - isolation
+      expectedModel: claude-opus-5
+      expectedEffort: high
+      # Cursor's Write covers file.write AND file.edit, so exact coverage
+      # emits both Claude tools.
+      expectedTools: [Read, Write, Edit]
+      allowedLosses: [disallowedTools, isolation]
     - from: cursor
       to: cursor
       class: identity
-      allowedLosses:
-        - disallowedTools
-        - isolation
-    # subagent.devin.tool-unknown is a WARNING since bead
-    # agent-marketplace-pu6b, so this cell now PRODUCES a profile with the
-    # allowed-tools key omitted instead of being suppressed. `tools` therefore
-    # joins the expected losses, and subagent.devin.effort-dropped surfaces
-    # because the compiler no longer returns before reaching it.
+      expectedModel: claude-opus-5[effort=high]
+      expectedEffort: ""
+      allowedLosses: [disallowedTools, isolation]
+    # Cursor-native tool names translate cleanly onto Devin's closed
+    # vocabulary through the catalogs, so this cell no longer warns. The
+    # captured Devin catalog resolves the Opus high selection to its
+    # reasoning-encoded variant UID.
     - from: cursor
       to: devin
       class: cross
-      diagnostics:
-        - subagent.devin.effort-dropped
-        - subagent.devin.tool-unknown
-      allowedLosses:
-        - disallowedTools
-        - effort
-        - isolation
-        - tools
+      expectedModel: claude-opus-5-high
+      expectedEffort: ""
+      allowedLosses: [disallowedTools, isolation, tools]
     - from: cursor
       to: factory
       class: cross
-      allowedLosses:
-        - disallowedTools
-        - isolation
+      expectedModel: claude-opus-5
+      expectedEffort: high
+      # file.write+file.edit coverage reaches Create, Edit, and the combined
+      # ApplyPatch tool.
+      expectedTools: [Read, Create, Edit, ApplyPatch]
+      allowedLosses: [disallowedTools, isolation]
     - from: cursor
       to: gemini
       class: cross
-      allowedLosses:
-        - disallowedTools
-        - effort
-        - isolation
-        - model
+      diagnostics: [model.unresolved, model.reasoning-omitted]
+      expectedModel: ""
+      expectedEffort: ""
+      expectedTools: [read_file, read_many_files, write_file, replace]
+      allowedLosses: [disallowedTools, isolation]
     - from: cursor
       to: windsurf
       class: drop
-      diagnostics:
-        - subagent.windsurf.no-primitive
+      diagnostics: [subagent.windsurf.no-primitive]
     - from: devin
       to: claude
       class: cross
-      diagnostics:
-        - ingest.devin.bundle-manifest-synthesized
-      allowedLosses:
-        - disallowedTools
-        - effort
-        - isolation
-        - tools
+      diagnostics: [ingest.devin.bundle-manifest-synthesized]
+      expectedModel: sonnet
+      expectedEffort: ""
+      allowedLosses: [disallowedTools, isolation, tools]
     - from: devin
       to: cursor
       class: cross
-      diagnostics:
-        - ingest.devin.bundle-manifest-synthesized
-      allowedLosses:
-        - disallowedTools
-        - effort
-        - isolation
-        - tools
+      diagnostics: [ingest.devin.bundle-manifest-synthesized, model.selector-pinned, subagent.cursor.tool-unknown]
+      expectedModel: claude-sonnet-4-5-20250929
+      expectedEffort: ""
+      allowedLosses: [disallowedTools, isolation, tools]
     - from: devin
       to: devin
       class: identity
-      diagnostics:
-        - ingest.devin.bundle-manifest-synthesized
-      allowedLosses:
-        - disallowedTools
-        - effort
-        - isolation
-        - tools
+      diagnostics: [ingest.devin.bundle-manifest-synthesized]
+      expectedModel: sonnet
+      expectedEffort: ""
+      allowedLosses: [disallowedTools, isolation, tools]
     - from: devin
       to: factory
       class: cross
-      diagnostics:
-        - ingest.devin.bundle-manifest-synthesized
-      allowedLosses:
-        - disallowedTools
-        - effort
-        - isolation
-        - tools
+      diagnostics: [ingest.devin.bundle-manifest-synthesized, model.selector-pinned]
+      expectedModel: claude-sonnet-5
+      expectedEffort: ""
+      allowedLosses: [disallowedTools, isolation, tools]
     - from: devin
       to: gemini
       class: cross
-      diagnostics:
-        - ingest.devin.bundle-manifest-synthesized
-      allowedLosses:
-        - disallowedTools
-        - effort
-        - isolation
-        - tools
-        - model
+      diagnostics: [ingest.devin.bundle-manifest-synthesized, model.unresolved]
+      expectedModel: ""
+      expectedEffort: ""
+      allowedLosses: [disallowedTools, isolation, tools]
     - from: devin
       to: windsurf
       class: drop
-      diagnostics:
-        - ingest.devin.bundle-manifest-synthesized
-        - subagent.windsurf.no-primitive
+      diagnostics: [ingest.devin.bundle-manifest-synthesized, subagent.windsurf.no-primitive]
     - from: factory
       to: claude
       class: cross
-      diagnostics:
-        - ingest.factory.reasoning-effort-mapped-to-model
-      allowedLosses:
-        - disallowedTools
-        - isolation
+      diagnostics: [model.reasoning-omitted]
+      expectedModel: claude-sonnet-4-5-20250929
+      expectedEffort: ""
+      expectedTools: [Read, Edit, Write]
+      allowedLosses: [disallowedTools, isolation]
     - from: factory
       to: cursor
       class: cross
-      diagnostics:
-        - ingest.factory.reasoning-effort-mapped-to-model
-      allowedLosses:
-        - disallowedTools
-        - isolation
+      diagnostics: [model.reasoning-omitted, subagent.cursor.tool-unknown]
+      expectedModel: claude-sonnet-4-5-20250929
+      expectedEffort: ""
+      allowedLosses: [disallowedTools, isolation]
     # Same reversal as cursor-to-devin (bead agent-marketplace-pu6b): the
     # profile is emitted without allowed-tools instead of being suppressed.
     - from: factory
       to: devin
       class: cross
       diagnostics:
-        - ingest.factory.reasoning-effort-mapped-to-model
+        - subagent.devin.model-unmappable
         - subagent.devin.effort-dropped
         - subagent.devin.tool-unknown
-      allowedLosses:
-        - disallowedTools
-        - effort
-        - isolation
-        - tools
+      expectedModel: ""
+      expectedEffort: ""
+      allowedLosses: [disallowedTools, isolation, tools]
     - from: factory
       to: factory
       class: identity
-      diagnostics:
-        - ingest.factory.reasoning-effort-mapped-to-model
-      allowedLosses:
-        - disallowedTools
-        - isolation
+      expectedModel: claude-sonnet-4-5-20250929
+      expectedEffort: high
+      # Native names are kept verbatim (ToolSource), not merged into Write.
+      expectedTools: [Read, Edit, Create]
+      allowedLosses: [disallowedTools, isolation]
     - from: factory
       to: gemini
       class: cross
-      diagnostics:
-        - ingest.factory.reasoning-effort-mapped-to-model
-      allowedLosses:
-        - disallowedTools
-        - effort
-        - isolation
-        - model
+      diagnostics: [model.unresolved, model.reasoning-omitted]
+      expectedModel: ""
+      expectedEffort: ""
+      expectedTools: [read_file, read_many_files, replace, write_file]
+      allowedLosses: [disallowedTools, isolation]
     - from: factory
       to: windsurf
       class: drop
-      diagnostics:
-        - ingest.factory.reasoning-effort-mapped-to-model
-        - subagent.windsurf.no-primitive
+      diagnostics: [subagent.windsurf.no-primitive]
     - from: gemini
       to: claude
       class: cross
-      diagnostics:
-        - ingest.gemini.bundle-manifest-synthesized
-      allowedLosses:
-        - disallowedTools
-        - effort
-        - isolation
-        - model
+      diagnostics: [ingest.gemini.bundle-manifest-synthesized, model.unresolved, subagent.claude.tool-unknown, subagent.claude.tool-unknown]
+      expectedModel: ""
+      expectedEffort: ""
+      allowedLosses: [disallowedTools, isolation]
     - from: gemini
       to: cursor
       class: cross
-      diagnostics:
-        - ingest.gemini.bundle-manifest-synthesized
-      allowedLosses:
-        - disallowedTools
-        - effort
-        - isolation
+      diagnostics: [ingest.gemini.bundle-manifest-synthesized, model.unresolved, subagent.cursor.tool-unknown]
+      expectedModel: ""
+      expectedEffort: ""
+      allowedLosses: [disallowedTools, isolation]
     # Same reversal as cursor-to-devin (bead agent-marketplace-pu6b). Gemini
     # ingestion already drops effort, so the newly reachable diagnostic here is
     # the model one rather than effort-dropped.
@@ -235,187 +195,119 @@ cells:
         - ingest.gemini.bundle-manifest-synthesized
         - subagent.devin.model-unmappable
         - subagent.devin.tool-unknown
-      allowedLosses:
-        - disallowedTools
-        - effort
-        - isolation
-        - model
-        - tools
+        - subagent.devin.tool-unknown
+      expectedModel: ""
+      expectedEffort: ""
+      allowedLosses: [disallowedTools, isolation, tools]
     - from: gemini
       to: factory
       class: cross
-      diagnostics:
-        - ingest.gemini.bundle-manifest-synthesized
-      allowedLosses:
-        - disallowedTools
-        - effort
-        - isolation
+      diagnostics: [ingest.gemini.bundle-manifest-synthesized, subagent.factory.tool-unknown, subagent.factory.tool-unknown]
+      expectedModel: ""
+      expectedEffort: ""
+      allowedLosses: [disallowedTools, isolation]
     - from: gemini
       to: gemini
       class: identity
-      diagnostics:
-        - ingest.gemini.bundle-manifest-synthesized
-      allowedLosses:
-        - disallowedTools
-        - effort
-        - isolation
-        - model
+      diagnostics: [ingest.gemini.bundle-manifest-synthesized]
+      expectedModel: gemini-3-preview
+      expectedEffort: ""
+      allowedLosses: [disallowedTools, isolation]
     - from: gemini
       to: windsurf
       class: drop
-      diagnostics:
-        - ingest.gemini.bundle-manifest-synthesized
-        - subagent.windsurf.no-primitive
+      diagnostics: [ingest.gemini.bundle-manifest-synthesized, subagent.windsurf.no-primitive]
     - from: windsurf
       to: claude
       class: drop
-      diagnostics:
-        - ingest.windsurf.bundle-manifest-synthesized
-        - ingest.windsurf.subagent-via-agents-md-skipped
+      diagnostics: [ingest.windsurf.bundle-manifest-synthesized, ingest.windsurf.subagent-via-agents-md-skipped]
     - from: windsurf
       to: cursor
       class: drop
-      diagnostics:
-        - ingest.windsurf.bundle-manifest-synthesized
-        - ingest.windsurf.subagent-via-agents-md-skipped
+      diagnostics: [ingest.windsurf.bundle-manifest-synthesized, ingest.windsurf.subagent-via-agents-md-skipped]
     - from: claude
       to: codex
       class: cross
-      diagnostics:
-        - subagent.security-restriction-unsupported
+      diagnostics: [subagent.security-restriction-unsupported]
     - from: cursor
       to: codex
       class: cross
-      diagnostics:
-        - subagent.security-restriction-unsupported
+      diagnostics: [subagent.security-restriction-unsupported]
     - from: devin
       to: codex
       class: cross
-      diagnostics:
-        - ingest.devin.bundle-manifest-synthesized
-        - subagent.security-restriction-unsupported
+      diagnostics: [ingest.devin.bundle-manifest-synthesized, subagent.security-restriction-unsupported]
     - from: factory
       to: codex
       class: cross
-      diagnostics:
-        - ingest.factory.reasoning-effort-mapped-to-model
-        - subagent.security-restriction-unsupported
+      diagnostics: [subagent.security-restriction-unsupported]
     - from: gemini
       to: codex
       class: cross
-      diagnostics:
-        - ingest.gemini.bundle-manifest-synthesized
-        - subagent.security-restriction-unsupported
+      diagnostics: [ingest.gemini.bundle-manifest-synthesized, subagent.security-restriction-unsupported]
     - from: windsurf
       to: codex
       class: drop
-      diagnostics:
-        - ingest.windsurf.bundle-manifest-synthesized
-        - ingest.windsurf.subagent-via-agents-md-skipped
+      diagnostics: [ingest.windsurf.bundle-manifest-synthesized, ingest.windsurf.subagent-via-agents-md-skipped]
     - from: codex
       to: claude
       class: cross
-      diagnostics:
-        - ingest.codex.bundle-manifest-synthesized
-        - ingest.codex.field-dropped
-        - subagent.codex.model-dropped
-      allowedLosses:
-        - disallowedTools
-        - isolation
-        - model
-        - tools
+      diagnostics: [ingest.codex.bundle-manifest-synthesized, subagent.codex.model-dropped]
+      expectedModel: ""
+      expectedEffort: high
+      allowedLosses: [disallowedTools, isolation, tools]
     - from: codex
       to: cursor
       class: cross
-      diagnostics:
-        - ingest.codex.bundle-manifest-synthesized
-        - ingest.codex.field-dropped
-        - subagent.codex.model-dropped
-      allowedLosses:
-        - disallowedTools
-        - isolation
-        - model
-        - tools
+      diagnostics: [ingest.codex.bundle-manifest-synthesized, subagent.codex.model-dropped, subagent.codex.effort-dropped]
+      expectedModel: ""
+      expectedEffort: ""
+      allowedLosses: [disallowedTools, isolation, tools]
     - from: codex
       to: devin
       class: cross
-      diagnostics:
-        - ingest.codex.bundle-manifest-synthesized
-        - ingest.codex.field-dropped
-        - subagent.codex.model-dropped
-        - subagent.devin.effort-dropped
-        - subagent.devin.model-default
-      allowedLosses:
-        - disallowedTools
-        - effort
-        - isolation
-        - model
-        - tools
+      diagnostics: [ingest.codex.bundle-manifest-synthesized, subagent.codex.model-dropped, subagent.codex.effort-dropped]
+      expectedModel: ""
+      expectedEffort: ""
+      allowedLosses: [disallowedTools, isolation, tools]
     - from: codex
       to: factory
       class: cross
-      diagnostics:
-        - ingest.codex.bundle-manifest-synthesized
-        - ingest.codex.field-dropped
-        - subagent.codex.model-dropped
-      allowedLosses:
-        - disallowedTools
-        - isolation
-        - model
-        - tools
+      diagnostics: [ingest.codex.bundle-manifest-synthesized, subagent.codex.model-dropped, subagent.codex.effort-dropped]
+      expectedModel: ""
+      expectedEffort: ""
+      allowedLosses: [disallowedTools, isolation, tools]
     - from: codex
       to: gemini
       class: cross
-      diagnostics:
-        - ingest.codex.bundle-manifest-synthesized
-        - ingest.codex.field-dropped
-        - subagent.codex.model-dropped
-      allowedLosses:
-        - disallowedTools
-        - effort
-        - isolation
-        - model
-        - tools
+      diagnostics: [ingest.codex.bundle-manifest-synthesized, subagent.codex.model-dropped, subagent.codex.effort-dropped]
+      expectedModel: ""
+      expectedEffort: ""
+      allowedLosses: [disallowedTools, isolation, tools]
     - from: codex
       to: windsurf
       class: drop
-      diagnostics:
-        - ingest.codex.bundle-manifest-synthesized
-        - ingest.codex.field-dropped
-        - subagent.codex.model-dropped
-        - subagent.windsurf.no-primitive
+      diagnostics: [ingest.codex.bundle-manifest-synthesized, subagent.windsurf.no-primitive]
     - from: codex
       to: codex
       class: identity
-      diagnostics:
-        - ingest.codex.bundle-manifest-synthesized
-        - ingest.codex.field-dropped
-      allowedLosses:
-        - disallowedTools
-        - isolation
-        - model
-        - tools
+      diagnostics: [ingest.codex.bundle-manifest-synthesized]
+      expectedModel: sonnet
+      expectedEffort: high
+      allowedLosses: [disallowedTools, isolation, tools]
     - from: windsurf
       to: devin
       class: drop
-      diagnostics:
-        - ingest.windsurf.bundle-manifest-synthesized
-        - ingest.windsurf.subagent-via-agents-md-skipped
+      diagnostics: [ingest.windsurf.bundle-manifest-synthesized, ingest.windsurf.subagent-via-agents-md-skipped]
     - from: windsurf
       to: factory
       class: drop
-      diagnostics:
-        - ingest.windsurf.bundle-manifest-synthesized
-        - ingest.windsurf.subagent-via-agents-md-skipped
+      diagnostics: [ingest.windsurf.bundle-manifest-synthesized, ingest.windsurf.subagent-via-agents-md-skipped]
     - from: windsurf
       to: gemini
       class: drop
-      diagnostics:
-        - ingest.windsurf.bundle-manifest-synthesized
-        - ingest.windsurf.subagent-via-agents-md-skipped
+      diagnostics: [ingest.windsurf.bundle-manifest-synthesized, ingest.windsurf.subagent-via-agents-md-skipped]
     - from: windsurf
       to: windsurf
       class: drop
-      diagnostics:
-        - ingest.windsurf.bundle-manifest-synthesized
-        - ingest.windsurf.subagent-via-agents-md-skipped
+      diagnostics: [ingest.windsurf.bundle-manifest-synthesized, ingest.windsurf.subagent-via-agents-md-skipped]

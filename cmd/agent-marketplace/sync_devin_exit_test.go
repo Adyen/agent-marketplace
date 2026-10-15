@@ -57,9 +57,8 @@ func TestSyncExitCodeForSkippedDevinAggregateEntries(t *testing.T) {
   "PreToolUse": [{"hooks": [{"type": "command", "command": "guard.sh"}]}],
   "SubagentStop": [{"hooks": [{"type": "command", "command": "never.sh"}]}]
 }`,
-			selection: `    hooks:
-      - PreToolUse-command
-      - SubagentStop-command
+			selection: `      - hook/PreToolUse-command
+      - hook/SubagentStop-command
 `,
 			wantCode:      "hook.devin.event-unmappable",
 			wantAggregate: filepath.Join(".devin", "hooks.v1.json"),
@@ -74,9 +73,8 @@ func TestSyncExitCodeForSkippedDevinAggregateEntries(t *testing.T) {
     "bad": {"url": "https://example.invalid/mcp", "transport": "websocket"}
   }
 }`,
-			selection: `    mcp:
-      - good
-      - bad
+			selection: `      - mcp/good
+      - mcp/bad
 `,
 			wantCode:      "mcp.devin.transport-unsupported",
 			wantAggregate: filepath.Join(".devin", "mcp_config.json"),
@@ -97,9 +95,8 @@ func TestSyncExitCodeForSkippedDevinAggregateEntries(t *testing.T) {
     "bad": {"command": "${file:/etc/mcp-command}"}
   }
 }`,
-			selection: `    mcp:
-      - good
-      - bad
+			selection: `      - mcp/good
+      - mcp/bad
 `,
 			wantCode:      "mcp.devin.interpolation-unrepresentable",
 			wantAggregate: filepath.Join(".devin", "mcp_config.json"),
@@ -116,9 +113,8 @@ func TestSyncExitCodeForSkippedDevinAggregateEntries(t *testing.T) {
     "bad": {"url": "${file:/etc/mcp-endpoint}"}
   }
 }`,
-			selection: `    mcp:
-      - good
-      - bad
+			selection: `      - mcp/good
+      - mcp/bad
 `,
 			wantCode:      "mcp.devin.interpolation-unrepresentable",
 			wantAggregate: filepath.Join(".devin", "mcp_config.json"),
@@ -137,8 +133,7 @@ func TestSyncExitCodeForSkippedDevinAggregateEntries(t *testing.T) {
     "good": {"command": "npx", "env": {"KEEP": "plain", "DROP": "${file:/etc/mcp-token}"}}
   }
 }`,
-			selection: `    mcp:
-      - good
+			selection: `      - mcp/good
 `,
 			wantSuccess:   true,
 			wantAggregate: filepath.Join(".devin", "mcp_config.json"),
@@ -165,14 +160,17 @@ func TestSyncExitCodeForSkippedDevinAggregateEntries(t *testing.T) {
 
 			repoRoot := filepath.Join(t.TempDir(), "repo")
 			writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
-apiVersion: agent-marketplace/v2
+apiVersion: agent-marketplace/v4
 harnesses:
   - devin
-registries:
-  - url: `+origin+`
+sources:
+  resources:
+    git: file://`+origin+`
     ref: main
-    skills:
-      - keeper
+resources:
+  resources:
+    include:
+      - skill/keeper
 `+tt.selection)
 
 			withWorkingDir(t, repoRoot)

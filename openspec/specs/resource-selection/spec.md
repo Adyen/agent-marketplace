@@ -19,6 +19,14 @@ from the required source itself does not shadow the required resource, and
 whether it remains installed MUST NOT depend on how the shadowing source
 locations sort. Sources competing within one scope SHALL retain deterministic
 precedence and a name-collision warning for different registry sources.
+Within one install scope, a direct selection takes precedence over a
+collection member with the same kind and installed name, except that a
+required selection outranks a non-required one whether either is selected
+directly or through a collection. A required collection member that displaces
+a non-required selection in its install scope SHALL produce a name-collision
+warning that identifies the required source as the winner and each displaced
+source location as a runner-up, unless the displaced selection is from the
+required member's own source location.
 
 #### Scenario: Repository winner does not displace a user-scope selection
 
@@ -64,6 +72,14 @@ precedence and a name-collision warning for different registry sources.
 - **THEN** the repository harness target MUST contain the resource from the required source, whatever the names of the competing source locations
 - **AND** a name-collision warning MUST identify the required source as the winner and only the different source as a runner-up
 
+#### Scenario: Required collection member displaces an optional selection in the same scope
+
+- **WHEN** a required user or organization source selects a collection whose member has the same kind and installed name as a resource that a different, non-required source selects directly in the same install scope
+- **THEN** only the required collection member MUST materialize under that installed name in the machine harness target, whichever source is configured first
+- **AND** a name-collision warning MUST identify the required source as the winner and the non-required source as a runner-up
+- **AND** `sync --check` MUST succeed from both the repository and the user's home after sync
+- **AND** a non-required collection member MUST NOT displace a direct selection in its install scope
+
 ### Requirement: Top-level collection lookup preserves required selection
 
 A top-level collection request MUST NOT disable automatic resource selection from a required registry that has no explicitly authored resource or tag selection. Collection lookup SHALL still find the requested collection in any configured source. An explicitly authored required subset SHALL retain its existing selection semantics.
@@ -81,3 +97,13 @@ A top-level collection request MUST NOT disable automatic resource selection fro
 - **WHEN** repository configuration includes a top-level collection
 - **THEN** the explicitly selected required resources and collection members MUST remain selected
 - **AND** unrelated catalog resources MUST NOT become selected solely because this lookup occurs
+
+### Requirement: Required selection misses stay hard across layers
+
+When several configured entries for the same source location (URL, ref, and path) select a resource that the location does not provide, the miss SHALL be reported once and SHALL be required whenever any of those entries is required, regardless of layer order. A required miss SHALL remain an error rather than a warning in `sync`, `status`, and the TUI.
+
+#### Scenario: Optional entry ordered before a required entry for the same missing resource
+
+- **WHEN** an earlier configuration layer selects a missing resource from a source location without `required`, and a later layer selects the same resource from the same location with `required: true`
+- **THEN** exactly one not-found diagnostic MUST be reported for the resource and it MUST be required
+- **AND** the TUI MUST NOT assess drift as ready, MUST show the row as a hard unavailable row, and a reload of that snapshot MUST fail

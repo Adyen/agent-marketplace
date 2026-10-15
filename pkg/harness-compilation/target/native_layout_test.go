@@ -16,7 +16,7 @@ func TestDevinNativeLayoutIsAvailable(t *testing.T) {
 		{
 			ID:         "default",
 			Prefix:     ".",
-			Components: []string{"skills", "agents"},
+			Components: []string{"skills", "agents", "hook-support"},
 			ResourcePaths: map[ir.ResourceKind]string{
 				ir.KindSkill:    "skills/%s/SKILL.md",
 				ir.KindCommand:  "skills/%s/SKILL.md",
@@ -25,9 +25,11 @@ func TestDevinNativeLayoutIsAvailable(t *testing.T) {
 			SkillDirKinds: map[ir.ResourceKind]bool{ir.KindCommand: true},
 			Aggregates: []NativeAggregate{
 				{
-					Kind:    ir.KindHook,
-					Project: NativeAggregateFile{Path: "hooks.v1.json"},
-					User:    NativeAggregateFile{Path: "config.json", Member: "hooks"},
+					Kind:       ir.KindHook,
+					Shape:      HookShapeMatcherGroups,
+					SupportDir: "hook-support",
+					Project:    NativeAggregateFile{Path: "hooks.v1.json"},
+					User:       NativeAggregateFile{Path: "config.json", Member: "hooks"},
 				},
 				{
 					Kind:    ir.KindMcpServer,
@@ -86,8 +88,8 @@ func TestNativeAggregatePathRefusesScopeVariant(t *testing.T) {
 	if got, ok := NativeAggregatePath(TargetDevin, ir.KindMcpServer); !ok || got != "mcp_config.json" {
 		t.Errorf("NativeAggregatePath(devin, mcpserver) = %q, %v; want mcp_config.json, true", got, ok)
 	}
-	if _, ok := NativeAggregatePath(TargetFactory, ir.KindHook); ok {
-		t.Error("NativeAggregatePath(factory, hook) succeeded for a target with no declared layout")
+	if got, ok := NativeAggregatePath(TargetFactory, ir.KindHook); !ok || got != "hooks.json" {
+		t.Errorf("NativeAggregatePath(factory, hook) = %q, %v; want hooks.json, true", got, ok)
 	}
 }
 
@@ -99,7 +101,7 @@ func TestClaudeNativeLayoutIsAvailable(t *testing.T) {
 		{
 			ID:         "default",
 			Prefix:     ".",
-			Components: []string{"skills", "commands", "agents", "hooks", ".claude-plugin"},
+			Components: []string{"skills", "commands", "agents", "hooks", "hook-support", ".claude-plugin"},
 			ResourcePaths: map[ir.ResourceKind]string{
 				ir.KindSkill:    "skills/%s/SKILL.md",
 				ir.KindCommand:  "commands/%s.md",
@@ -117,9 +119,11 @@ func TestClaudeNativeLayoutIsAvailable(t *testing.T) {
 					User:    NativeAggregateFile{Path: ".claude-plugin/plugin.json", Member: "agents"},
 				},
 				{
-					Kind:    ir.KindHook,
-					Project: NativeAggregateFile{Path: "hooks/hooks.json", Member: "hooks"},
-					User:    NativeAggregateFile{Path: "hooks/hooks.json", Member: "hooks"},
+					Kind:       ir.KindHook,
+					Shape:      HookShapeMatcherGroups,
+					SupportDir: "hook-support",
+					Project:    NativeAggregateFile{Path: "settings.json", Member: "hooks", Legacy: []string{"hooks/hooks.json"}},
+					User:       NativeAggregateFile{Path: "settings.json", Member: "hooks", Legacy: []string{"hooks/hooks.json"}},
 				},
 				{
 					Kind:    ir.KindMcpServer,
@@ -597,9 +601,11 @@ func TestValidateNativeLayoutRejectsInvalidDeclarations(t *testing.T) {
 				Prefix:     ".",
 				Components: []string{"hooks"},
 				Aggregates: []NativeAggregate{{
-					Kind:    ir.KindHook,
-					Project: NativeAggregateFile{Path: "hooks/hooks.json", Member: "hooks"},
-					User:    NativeAggregateFile{Path: "hooks/hooks.json", Member: "hooks"},
+					Kind:       ir.KindHook,
+					Shape:      HookShapeMatcherGroups,
+					SupportDir: "hook-support",
+					Project:    NativeAggregateFile{Path: "hooks/hooks.json", Member: "hooks"},
+					User:       NativeAggregateFile{Path: "hooks/hooks.json", Member: "hooks"},
 				}},
 			}}},
 		},
@@ -610,9 +616,11 @@ func TestValidateNativeLayoutRejectsInvalidDeclarations(t *testing.T) {
 				ID:     "default",
 				Prefix: ".",
 				Aggregates: []NativeAggregate{{
-					Kind:    ir.KindHook,
-					Project: NativeAggregateFile{Path: "hooks.v1.json"},
-					User:    NativeAggregateFile{Path: "config.json", Member: "hooks"},
+					Kind:       ir.KindHook,
+					Shape:      HookShapeMatcherGroups,
+					SupportDir: "hook-support",
+					Project:    NativeAggregateFile{Path: "hooks.v1.json"},
+					User:       NativeAggregateFile{Path: "config.json", Member: "hooks"},
 				}},
 			}}},
 		},
@@ -737,9 +745,11 @@ func TestValidateNativeLayoutRejectsInvalidDeclarations(t *testing.T) {
 				Prefix: ".",
 				Aggregates: []NativeAggregate{
 					{
-						Kind:    ir.KindHook,
-						Project: NativeAggregateFile{Path: "plugin.json", Member: "hooks"},
-						User:    NativeAggregateFile{Path: "plugin.json", Member: "hooks"},
+						Kind:       ir.KindHook,
+						Shape:      HookShapeMatcherGroups,
+						SupportDir: "hook-support",
+						Project:    NativeAggregateFile{Path: "plugin.json", Member: "hooks"},
+						User:       NativeAggregateFile{Path: "plugin.json", Member: "hooks"},
 					},
 					{
 						Kind:    ir.KindMcpServer,
@@ -929,10 +939,115 @@ func TestIsDirShapedPattern(t *testing.T) {
 	}
 }
 
-// TestHookProjectionDeclarations pins the additive hook-only native
-// projection topology: the four tolerance targets and the three targets with
-// existing native hook emission declare it, and the declaration validates at
-// the registration boundary.
+// TestHookAggregateTopologyIsDeclaredForEveryTarget pins the hook aggregate
+// contract for all seven targets: the native file (path and member), the
+// entry shape, the support directory root, the envelope members the file
+// carries beside the hook member, and the legacy locations migration reads.
+func TestHookAggregateTopologyIsDeclaredForEveryTarget(t *testing.T) {
+	tests := []struct {
+		target      Target
+		shape       HookShape
+		projectFile NativeAggregateFile
+		userFile    NativeAggregateFile
+	}{
+		{
+			target:      TargetClaude,
+			shape:       HookShapeMatcherGroups,
+			projectFile: NativeAggregateFile{Path: "settings.json", Member: "hooks", Legacy: []string{"hooks/hooks.json"}},
+			userFile:    NativeAggregateFile{Path: "settings.json", Member: "hooks", Legacy: []string{"hooks/hooks.json"}},
+		},
+		{
+			target:      TargetFactory,
+			shape:       HookShapeMatcherGroups,
+			projectFile: NativeAggregateFile{Path: "hooks.json", Legacy: []string{"hooks/hooks.json"}},
+			userFile:    NativeAggregateFile{Path: "hooks.json", Legacy: []string{"hooks/hooks.json"}},
+		},
+		{
+			target:      TargetCursor,
+			shape:       HookShapeEventHandlers,
+			projectFile: NativeAggregateFile{Path: "hooks.json", Member: "hooks", Envelope: map[string]any{"version": 1}, Legacy: []string{"hooks/hooks.json"}},
+			userFile:    NativeAggregateFile{Path: "hooks.json", Member: "hooks", Envelope: map[string]any{"version": 1}, Legacy: []string{"hooks/hooks.json"}},
+		},
+		{
+			target:      TargetWindsurf,
+			shape:       HookShapeEventHandlers,
+			projectFile: NativeAggregateFile{Path: ".devin/hooks.json", Member: "hooks", Legacy: []string{".windsurf/hooks.json"}, PreserveLegacyHandwritten: true},
+			userFile:    NativeAggregateFile{Path: "hooks.json", Member: "hooks", LegacyMarkedFlatHooks: true},
+		},
+		{
+			target:      TargetGemini,
+			shape:       HookShapeMatcherGroups,
+			projectFile: NativeAggregateFile{Path: "settings.json", Member: "hooks"},
+			userFile:    NativeAggregateFile{Path: "settings.json", Member: "hooks"},
+		},
+		{
+			target:      TargetDevin,
+			shape:       HookShapeMatcherGroups,
+			projectFile: NativeAggregateFile{Path: "hooks.v1.json"},
+			userFile:    NativeAggregateFile{Path: "config.json", Member: "hooks"},
+		},
+		{
+			target:      TargetCodex,
+			shape:       HookShapeMatcherGroups,
+			projectFile: NativeAggregateFile{Path: "hooks.json", Member: "hooks"},
+			userFile:    NativeAggregateFile{Path: "hooks.json", Member: "hooks"},
+		},
+	}
+	for _, tt := range tests {
+		layout, ok := LookupNativeLayout(tt.target)
+		if !ok {
+			t.Fatalf("%s has no registered native layout", tt.target)
+		}
+		var aggregate *NativeAggregate
+		for i := range layout.Partitions {
+			for j := range layout.Partitions[i].Aggregates {
+				if layout.Partitions[i].Aggregates[j].Kind == ir.KindHook {
+					aggregate = &layout.Partitions[i].Aggregates[j]
+				}
+			}
+		}
+		if aggregate == nil {
+			t.Fatalf("%s declares no hook aggregate", tt.target)
+		}
+		if aggregate.LegacyMarkedFlatHooks != (tt.target == TargetGemini) {
+			t.Errorf("%s hook aggregate LegacyMarkedFlatHooks = %v; only Gemini declares the aggregate marked legacy flat transition", tt.target, aggregate.LegacyMarkedFlatHooks)
+		}
+		for i := range layout.Partitions {
+			for j := range layout.Partitions[i].Aggregates {
+				other := layout.Partitions[i].Aggregates[j]
+				if other.Kind != ir.KindHook && other.LegacyMarkedFlatHooks {
+					t.Errorf("%s non-hook aggregate for %s declares LegacyMarkedFlatHooks", tt.target, other.Kind)
+				}
+			}
+		}
+		if aggregate.Shape != tt.shape {
+			t.Errorf("%s hook aggregate shape = %q, want %q", tt.target, aggregate.Shape, tt.shape)
+		}
+		if aggregate.SupportDir != "hook-support" {
+			t.Errorf("%s hook aggregate support dir = %q, want hook-support", tt.target, aggregate.SupportDir)
+		}
+		for scope, want := range map[bool]NativeAggregateFile{false: tt.projectFile, true: tt.userFile} {
+			if _, ok := NativeAggregateFileForScope(tt.target, ir.KindHook, scope); !ok {
+				t.Fatalf("%s hook aggregate file missing for machine_scope=%v", tt.target, scope)
+			}
+			// NativeAggregateFileForScope joins the partition prefix; the
+			// declared file is relative to it, so compare the declared value.
+			declared := aggregate.Project
+			if scope {
+				declared = aggregate.User
+			}
+			if !reflect.DeepEqual(declared, want) {
+				t.Errorf("%s hook aggregate file (machine_scope=%v) = %#v, want %#v", tt.target, scope, declared, want)
+			}
+			if !reflect.DeepEqual(declared.Legacy, want.Legacy) {
+				t.Errorf("%s hook aggregate legacy (machine_scope=%v) = %v, want %v", tt.target, scope, declared.Legacy, want.Legacy)
+			}
+		}
+	}
+}
+
+// TestHookProjectionDeclarations pins the hook-only native projection topology
+// for all seven targets and validates each declaration at the registration boundary.
 func TestHookProjectionDeclarations(t *testing.T) {
 	if err := ValidateHookProjections(); err != nil {
 		t.Fatalf("ValidateHookProjections: %v", err)
@@ -1062,32 +1177,173 @@ func TestValidateHookProjectionRejectsInvalidDeclarations(t *testing.T) {
 	}
 }
 
-func TestHookProjectionLeavesExistingLayoutModelsUnchanged(t *testing.T) {
-	for _, tt := range []struct {
-		target     Target
-		repo, user string
-	}{
-		{TargetClaude, ".claude", ".claude"},
-		{TargetFactory, ".factory", ".factory"},
-		{TargetCursor, ".cursor", ".cursor"},
-		{TargetWindsurf, ".", ".codeium/windsurf"},
-		{TargetGemini, ".gemini", ".gemini"},
-		{TargetDevin, ".devin", ".config/devin"},
-	} {
-		definition, ok := Lookup(string(tt.target))
-		if !ok || definition.RepoRoot != tt.repo || definition.UserRoot != tt.user || definition.PartitionedRoots {
-			t.Fatalf("root model for %s changed: %+v", tt.target, definition)
+// TestValidateNativeLayoutRejectsInvalidHookDeclarations exercises the new
+// hook-topology checks: shape required exactly for hook aggregates, support
+// directory required exactly for hook aggregates, envelope members must not
+// collide with the entry member, and legacy locations must be clean relative
+// file paths distinct from the scope's own file.
+func TestValidateNativeLayoutRejectsInvalidHookDeclarations(t *testing.T) {
+	partition := func(aggregate NativeAggregate) NativeLayout {
+		return NativeLayout{Partitions: []NativePartition{{
+			ID:         "default",
+			Prefix:     ".",
+			Components: []string{"hooks"},
+			Aggregates: []NativeAggregate{aggregate},
+		}}}
+	}
+	hook := func() NativeAggregate {
+		return NativeAggregate{
+			Kind:       ir.KindHook,
+			Shape:      HookShapeMatcherGroups,
+			SupportDir: "hook-support",
+			Project:    NativeAggregateFile{Path: "hooks.json", Member: "hooks"},
+			User:       NativeAggregateFile{Path: "hooks.json", Member: "hooks"},
 		}
 	}
-	if definition, ok := Lookup(string(TargetCodex)); !ok || !definition.PartitionedRoots || definition.RepoRoot != "" {
-		t.Fatalf("codex partitioned root model changed: %+v", definition)
+	tests := []struct {
+		name            string
+		mutate          func(*NativeAggregate)
+		wantErrContains string
+	}{
+		{name: "valid hook aggregate"},
+		{
+			name:            "hook aggregate without shape",
+			mutate:          func(a *NativeAggregate) { a.Shape = "" },
+			wantErrContains: "shape",
+		},
+		{
+			name:            "hook aggregate with unknown shape",
+			mutate:          func(a *NativeAggregate) { a.Shape = HookShape("bogus") },
+			wantErrContains: "shape",
+		},
+		{
+			name:            "hook aggregate without support directory",
+			mutate:          func(a *NativeAggregate) { a.SupportDir = "" },
+			wantErrContains: "support",
+		},
+		{
+			name:            "hook aggregate with invalid support directory",
+			mutate:          func(a *NativeAggregate) { a.SupportDir = "../support" },
+			wantErrContains: "support",
+		},
+		{
+			name: "non-hook aggregate with shape",
+			mutate: func(a *NativeAggregate) {
+				a.Kind, a.Shape, a.SupportDir = ir.KindMcpServer, HookShapeMatcherGroups, ""
+			},
+			wantErrContains: "shape",
+		},
+		{
+			name: "non-hook aggregate with support directory",
+			mutate: func(a *NativeAggregate) {
+				a.Kind, a.Shape, a.SupportDir = ir.KindMcpServer, "", "hook-support"
+			},
+			wantErrContains: "support",
+		},
+		{
+			name: "envelope member collides with entry member",
+			mutate: func(a *NativeAggregate) {
+				a.Project.Envelope = map[string]any{"hooks": 1}
+			},
+			wantErrContains: "envelope",
+		},
+		{
+			name: "envelope member empty name",
+			mutate: func(a *NativeAggregate) {
+				a.User.Envelope = map[string]any{"": 1}
+			},
+			wantErrContains: "envelope",
+		},
+		{
+			name: "legacy location repeats the native file",
+			mutate: func(a *NativeAggregate) {
+				a.Project.Legacy = []string{"hooks.json"}
+			},
+			wantErrContains: "legacy",
+		},
+		{
+			name: "legacy location invalid path",
+			mutate: func(a *NativeAggregate) {
+				a.User.Legacy = []string{"../hooks.json"}
+			},
+			wantErrContains: "legacy",
+		},
+		{
+			name: "valid envelope and legacy",
+			mutate: func(a *NativeAggregate) {
+				a.Project.Envelope = map[string]any{"version": 1}
+				a.User.Envelope = map[string]any{"version": 1}
+				a.Project.Legacy = []string{"hooks/hooks.json"}
+			},
+		},
+		{
+			name:   "legacy marked flat hooks on matcher-groups hook",
+			mutate: func(a *NativeAggregate) { a.LegacyMarkedFlatHooks = true },
+		},
+		{
+			name: "legacy marked flat hooks on event-handlers hook",
+			mutate: func(a *NativeAggregate) {
+				a.Shape = HookShapeEventHandlers
+				a.LegacyMarkedFlatHooks = true
+			},
+		},
+		{
+			name: "legacy marked flat hooks on unknown hook shape",
+			mutate: func(a *NativeAggregate) {
+				a.Shape = HookShape("unknown-shape")
+				a.LegacyMarkedFlatHooks = true
+			},
+			wantErrContains: "legacy marked flat",
+		},
+		{
+			name: "legacy marked flat hooks on non-hook aggregate",
+			mutate: func(a *NativeAggregate) {
+				a.Kind, a.Shape, a.SupportDir = ir.KindMcpServer, "", ""
+				a.LegacyMarkedFlatHooks = true
+			},
+			wantErrContains: "legacy marked flat",
+		},
 	}
-	// Only Claude, Devin and Codex carry a complete NativeLayout at this
-	// revision; the hook projection seam must not have activated one for the
-	// remaining targets.
-	for _, t2 := range []Target{TargetFactory, TargetCursor, TargetWindsurf, TargetGemini} {
-		if _, ok := LookupNativeLayout(t2); ok {
-			t.Fatalf("target %s unexpectedly gained a full native layout", t2)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			aggregate := hook()
+			if tt.mutate != nil {
+				tt.mutate(&aggregate)
+			}
+			err := ValidateNativeLayout(TargetClaude, partition(aggregate))
+			if tt.wantErrContains == "" && err != nil {
+				t.Fatalf("ValidateNativeLayout = %v, want nil", err)
+			}
+			if tt.wantErrContains != "" && (err == nil || !strings.Contains(err.Error(), tt.wantErrContains)) {
+				t.Fatalf("ValidateNativeLayout error = %v, want error containing %q", err, tt.wantErrContains)
+			}
+		})
+	}
+}
+
+func TestHookProjectionLeavesExistingLayoutModelsUnchanged(t *testing.T) {
+	for _, tt := range []struct {
+		target      Target
+		repo, user  string
+		partitioned bool
+	}{
+		{TargetClaude, ".claude", ".claude", false},
+		{TargetFactory, ".factory", ".factory", false},
+		{TargetCursor, ".cursor", ".cursor", false},
+		{TargetWindsurf, ".", ".codeium/windsurf", false},
+		{TargetGemini, ".gemini", ".gemini", false},
+		{TargetDevin, ".devin", ".config/devin", false},
+		{TargetCodex, "", "", true},
+	} {
+		definition, ok := Lookup(string(tt.target))
+		if !ok || definition.RepoRoot != tt.repo || definition.UserRoot != tt.user || definition.PartitionedRoots != tt.partitioned {
+			t.Fatalf("root model for %s changed: %+v", tt.target, definition)
+		}
+		if _, ok := LookupNativeLayout(tt.target); !ok {
+			t.Fatalf("target %s has no native layout", tt.target)
+		}
+		if _, ok := LookupHookProjection(tt.target); !ok {
+			t.Fatalf("target %s has no hook projection", tt.target)
 		}
 	}
 }

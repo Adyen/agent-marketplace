@@ -31,7 +31,6 @@ You should see a list of commands that includes `install`, `search`, `status`, a
 Create a temporary folder, move into it, and make it a Git repository:
 
 ```bash
-mkdir -p /tmp
 cd "$(mktemp -d /tmp/marketplace-tutorial.XXXXXX)"
 git init --quiet
 pwd
@@ -61,7 +60,7 @@ This file chooses the [harness](../glossary.md#harness) that receives resources,
 
 ## 2. Connect the online Marketplace
 
-Register the Marketplace address in this repository. Replace the example address before you run the command:
+Register the Marketplace address in this repository. Replace the example address first:
 
 ```bash
 agent-marketplace install https://marketplace.example.com --scope repo
@@ -81,9 +80,7 @@ sources:
     marketplace: https://marketplace.example.com
 ```
 
-If the same Marketplace is already set up in your personal or organization configuration, the command prints `Marketplace https://marketplace.example.com is already configured in <path>` instead. Either result lets you continue.
-
-Connecting a Marketplace doesn't install anything from its catalog.
+If the Marketplace is already configured, the command says so and changes nothing. Connecting a Marketplace doesn't install anything from its catalog.
 
 ## 3. Find and inspect the skill
 
@@ -149,7 +146,7 @@ resources:
       - shared-agents/skill/review
 ```
 
-This tutorial uses a skill with no security findings, so the command installs it without asking for confirmation. If a resource has findings, the command lists them. Findings that Marketplace policy rejected block the install completely. For the others, a terminal asks you to confirm, and a script stops with `Nothing has been installed.` and asks for `--accept-risk`. Review the findings with your operator instead of adding that flag to get through the tutorial. Capabilities alone don't need confirmation. The [hosted Marketplace how-to](../how-to/install-from-a-marketplace.md#_4-review-findings-and-capabilities) covers giving consent when findings are present.
+This skill has no security findings, so the command installs it without asking. If your resource reports findings instead, stop and review them with your operator; the [hosted Marketplace how-to](../how-to/install-from-a-marketplace.md#_4-review-findings-and-capabilities) covers what consent looks like.
 
 ## 5. Check the installed revision and file
 
@@ -163,12 +160,12 @@ Under `MARKETPLACE PINS`, find the row for your Marketplace and check that:
 
 - `REGISTRY_SLUG` is `shared-agents`;
 - `KIND` is `skill`;
-- `NAME` is `review` (`INSTALLED_NAME` shows `-` unless you chose a different local name with `--as`);
+- `NAME` is `review`;
 - `LAYER` is `REPO`;
 - `STATE` is `current`; and
 - `CONTENT_DIGEST` is the `sha256:` value that the install preview showed.
 
-The table is wide. If your terminal wraps the lines, make the window wider or run `agent-marketplace status | less -S` and scroll sideways with the arrow keys.
+The table is wide. If your terminal wraps the lines, run `agent-marketplace status | less -S` and scroll sideways with the arrow keys.
 
 Check that Claude Code's copy of the skill is readable:
 
@@ -189,7 +186,7 @@ agent-marketplace sync --check
 echo $?
 ```
 
-When everything is in sync, `echo $?` prints `0`. `sync --check` itself may print nothing, or only warnings about resources from your personal or organization configuration. If the check exits with `1` or reports drift, use the [sync drift guide](../how-to/troubleshoot-sync-drift.md) before you continue.
+`echo $?` prints `0`. `sync --check` itself prints nothing apart from any `warning:` lines and the indented `→` lines that follow them, none of which change the exit status. If `echo $?` prints `1` instead, the [sync drift guide](../how-to/troubleshoot-sync-drift.md) shows how to repair the drift.
 
 ## 6. Use the skill in Claude Code
 
@@ -201,6 +198,8 @@ Summarize what it configures and any concerns. Do not modify files.
 ```
 
 You should get a review of the configuration, not file edits. The wording depends on your skill and model. Don't edit the skill inside `.claude/skills/`, because `agent-marketplace` manages that folder.
+
+## What happened
 
 You connected a hosted catalog, found one resource, installed an exact revision, and made its instructions available to Claude Code in a repository.
 

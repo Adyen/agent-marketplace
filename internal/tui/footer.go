@@ -1,11 +1,13 @@
 package tui
 
 import (
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
 	"sync"
 
+	"github.com/Adyen/agent-marketplace/internal/cache"
 	"github.com/charmbracelet/x/ansi"
 )
 
@@ -85,13 +87,21 @@ func (m Model) footerFloor() []footerItem {
 // footerActionHints lists the optional list-pane hints in priority order;
 // they drop individually from the end when the footer runs out of room.
 func (m Model) footerActionHints() []footerItem {
-	actions := [][2]string{{"/", "search"}, {"space", "toggle"}, {"s", "sync"}, {"H", "harnesses"}, {"E", "config"}}
+	actions := [][2]string{{"/", "search"}, {"space", "toggle"}, {"s", "sync"}, {"H", "harnesses"}, {"E", "config"}, {"v", "view"}}
 	if m.failuresOrDrift() || len(m.discoveryErrs) > 0 {
 		actions = append([][2]string{{"e", "errors"}, {"r", "reload"}}, actions...)
 	}
 	hints := make([]footerItem, len(actions))
 	for i, a := range actions {
 		hints[i] = hintItem(a[0], a[1], rankAction+i, false)
+		if a[0] == "s" {
+			for _, warning := range m.warnings {
+				if errors.Is(warning, cache.ErrExactGitSnapshotUnavailable) {
+					hints[i].rank = rankRecovery
+					break
+				}
+			}
+		}
 	}
 	return hints
 }
@@ -306,7 +316,7 @@ func joinFooter(items []footerItem, chosen []string) string {
 
 func rowsHaveUnavailable(rows []row) bool {
 	for _, r := range rows {
-		if r.UnavailableReason != "" {
+		if r.UnavailableReason != "" && !r.UnavailableSoft {
 			return true
 		}
 	}

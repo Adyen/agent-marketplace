@@ -54,10 +54,6 @@ func TestEveryModalRendersOneBoundedFrame(t *testing.T) {
 			return renderInitModal(m)
 		},
 		"edit config": renderEditConfigModal,
-		"migration": func(m Model) string {
-			m.migrationPrompt = migrationPrompt{configs: []migrationConfig{{label: "Project", path: repo + "/.agents/config.yaml"}}}
-			return renderMigrationModal(m)
-		},
 	}
 	for _, size := range [][2]int{{50, 12}, {80, 24}, {120, 34}} {
 		for name, render := range modals {
@@ -77,9 +73,6 @@ func TestEveryModalRendersOneBoundedFrame(t *testing.T) {
 				t.Fatalf("%s: %d focus indicators, want at most one:\n%s", label, n, plain)
 			}
 			cancel := "esc cancel"
-			if name == "migration" {
-				cancel = "l/esc leave unchanged"
-			}
 			if !strings.Contains(plain, cancel) {
 				t.Fatalf("%s: the cancel path %q must stay visible:\n%s", label, cancel, plain)
 			}

@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strconv"
 	"strings"
 	"syscall"
@@ -23,6 +24,7 @@ import (
 	mpconfig "github.com/Adyen/agent-marketplace/pkg/marketplace/config"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/store"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/worker"
+	"gopkg.in/yaml.v3"
 )
 
 func TestMarketplacePublicGate(t *testing.T) {
@@ -73,9 +75,13 @@ resources:
 	assertPublicGateProcess(t, env, cfgPath, listenAddr, operationsAddr, func(endpoint string) {
 		v4Consumer = assertPublicGateV4ConsumerRoundTrip(t, endpoint)
 	})
+	lockBeforeOffline := v4Consumer.ReadFile("/workspace/.agents/lock.yaml")
 	offline := v4Consumer.RunAM("sync", "--offline")
 	if offline.ExitCode != 0 {
 		t.Fatalf("v4 offline sync after Marketplace shutdown failed (exit %d):\n%s", offline.ExitCode, offline.Combined)
+	}
+	if v4Consumer.ReadFile("/workspace/.agents/lock.yaml") != lockBeforeOffline {
+		t.Fatal("offline reuse after Marketplace shutdown rewrote the verified acquisition lock")
 	}
 	v4Consumer.AssertFileContains("/workspace/.factory/skills/skill-one/SKILL.md", "A hostile-safe skill")
 	v4Consumer.AssertFileContains("/workspace/.factory/mcp.json", "server-one")
@@ -347,12 +353,30 @@ func publicGateCollection(t *testing.T, base string) string {
 	return revision.ContentDigest
 }
 
-func assertPublicGateArtifactIntegrity(t *testing.T, base, kind, name string) {
+type publicGateAdvertisedRevision struct {
+	Coordinate struct {
+		Marketplace string `json:"marketplace"`
+		Registry    string `json:"registry"`
+		Kind        string `json:"kind"`
+		Name        string `json:"name"`
+	} `json:"coordinate"`
+	ContentDigest string `json:"content_digest"`
+	ArchiveDigest string `json:"archive_digest"`
+}
+
+func assertPublicGateArtifactIntegrity(t *testing.T, base, kind, name string) publicGateAdvertisedRevision {
 	t.Helper()
-	response := getPublicGateResponse(t, base+"/api/v1/resources/public-registry/"+kind+"/"+name)
-	var revision struct {
-		ArchiveDigest string `json:"archive_digest"`
+	return assertMarketplaceArtifactIntegrity(t, base, "e2e-public-gate", "public-registry", "registry-public", kind, name)
+}
+
+func assertMarketplaceArtifactIntegrity(t *testing.T, base, instance, registryName, registryID, kind, name string) publicGateAdvertisedRevision {
+	t.Helper()
+	response := getPublicGateResponse(t, base+"/api/v1/resources/"+registryName+"/"+kind+"/"+name)
+	if response.StatusCode != http.StatusOK {
+		response.Body.Close()
+		t.Fatalf("advertised %s/%s status = %d", kind, name, response.StatusCode)
 	}
+	var revision publicGateAdvertisedRevision
 	if err := json.NewDecoder(response.Body).Decode(&revision); err != nil {
 		response.Body.Close()
 		t.Fatal(err)
@@ -374,18 +398,125 @@ func assertPublicGateArtifactIntegrity(t *testing.T, base, kind, name string) {
 	if err := artifact.VerifyArchiveDigest(payload); err != nil {
 		t.Fatalf("verify %s/%s artifact integrity: %v", kind, name, err)
 	}
+	if err := artifact.VerifyContentDigest(); err != nil {
+		t.Fatalf("verify %s/%s resource content: %v", kind, name, err)
+	}
+	if artifact.Manifest.Kind != kind || artifact.Manifest.Name != name || revision.Coordinate.Marketplace != instance || revision.Coordinate.Registry != registryID || revision.Coordinate.Kind != kind || revision.Coordinate.Name != name || artifact.Manifest.ContentDigest != revision.ContentDigest || artifact.Manifest.ArchiveDigest != revision.ArchiveDigest {
+		t.Fatalf("advertised %s/%s does not match its independently verified artifact: metadata=%#v manifest=%#v", kind, name, revision, artifact.Manifest)
+	}
+	return revision
+}
+
+// Read the published lock wire format without the production lock decoder or
+// normalizer: wrong scope, identity, duplicate records, or lost collection
+// selector edges must be observable rather than normalized away by the oracle.
+type publicGateLockedResource struct {
+	RegistryName             string                      `yaml:"registry_name"`
+	RegistryID               string                      `yaml:"registry_id"`
+	Kind                     string                      `yaml:"kind"`
+	Name                     string                      `yaml:"name"`
+	Revision                 string                      `yaml:"revision"`
+	ContentDigest            string                      `yaml:"content_digest"`
+	ArchiveDigest            string                      `yaml:"archive_digest"`
+	CollectionManifestDigest string                      `yaml:"collection_manifest_digest"`
+	Acquisition              string                      `yaml:"acquisition"`
+	RegistryCommit           string                      `yaml:"registry_commit"`
+	RegistryManifestDigest   string                      `yaml:"registry_manifest_digest"`
+	SourcePath               string                      `yaml:"source_path"`
+	SelectedBy               []publicGateLockedSelection `yaml:"selected_by"`
+}
+
+type publicGateLockedSelection struct {
+	RegistryID string `yaml:"registry_id"`
+	Name       string `yaml:"name"`
+	Revision   string `yaml:"revision"`
+}
+
+type marketplaceAcquisitionLockWire struct {
+	APIVersion   string `yaml:"apiVersion"`
+	Scope        string `yaml:"scope"`
+	Registries   []any  `yaml:"registries"`
+	Marketplaces []struct {
+		URL              string `yaml:"url"`
+		InstanceID       string `yaml:"instance_id"`
+		RegistryBindings []struct {
+			Name       string `yaml:"name"`
+			RegistryID string `yaml:"registry_id"`
+		} `yaml:"registry_bindings"`
+		Resources []publicGateLockedResource `yaml:"resources"`
+	} `yaml:"marketplaces"`
+}
+
+func assertPublicGateAcquisitionLock(t *testing.T, consumer *Env, endpoint string, collection bool) {
+	t.Helper()
+	var lock marketplaceAcquisitionLockWire
+	raw := consumer.ReadFile("/workspace/.agents/lock.yaml")
+	if err := yaml.Unmarshal([]byte(raw), &lock); err != nil {
+		t.Fatalf("decode installed acquisition lock: %v\n%s", err, raw)
+	}
+	if lock.APIVersion != "agent-marketplace-lock/v2" || lock.Scope != "repo" || len(lock.Registries) != 0 || len(lock.Marketplaces) != 1 {
+		t.Fatalf("unexpected acquisition-lock version/scope/source count: %#v", lock)
+	}
+	marketplace := lock.Marketplaces[0]
+	if marketplace.URL != endpoint || marketplace.InstanceID != "e2e-public-gate" || len(marketplace.RegistryBindings) != 1 {
+		t.Fatalf("acquisition-lock endpoint/instance/bindings = %#v", marketplace)
+	}
+	binding := marketplace.RegistryBindings[0]
+	if binding.Name != "public-registry" || binding.RegistryID != "registry-public" {
+		t.Fatalf("acquisition-lock binding = %#v", binding)
+	}
+	// Identities are literal fixture expectations; only digest evidence comes
+	// from advertised resources whose content/archive were verified separately.
+	expected := map[string]publicGateLockedResource{}
+	for _, identity := range []struct{ kind, name string }{
+		{"skill", "skill-one"}, {"command", "command-one"},
+		{"subagent", "agent-one"}, {"hook", "PreToolUse-command"},
+		{"mcpserver", "server-one"},
+	} {
+		evidence := assertPublicGateArtifactIntegrity(t, endpoint, identity.kind, identity.name)
+		expected[identity.kind+"/"+identity.name] = publicGateLockedResource{
+			RegistryName: "public-registry", RegistryID: "registry-public",
+			Kind: identity.kind, Name: identity.name, Revision: evidence.ContentDigest,
+			ContentDigest: evidence.ContentDigest, ArchiveDigest: evidence.ArchiveDigest,
+			Acquisition: "mirror",
+		}
+	}
+	if collection {
+		digest := publicGateCollection(t, endpoint)
+		expected["collection/public-bundle"] = publicGateLockedResource{
+			RegistryName: "public-registry", RegistryID: "registry-public",
+			Kind: "collection", Name: "public-bundle", Revision: digest,
+			ContentDigest: digest, CollectionManifestDigest: digest, Acquisition: "mirror",
+		}
+		for _, member := range []string{"skill/skill-one", "command/command-one"} {
+			resource := expected[member]
+			resource.SelectedBy = []publicGateLockedSelection{{RegistryID: "registry-public", Name: "public-bundle", Revision: digest}}
+			expected[member] = resource
+		}
+	}
+	if len(marketplace.Resources) != len(expected) {
+		t.Fatalf("lock has %d resource records, want %d: %s", len(marketplace.Resources), len(expected), raw)
+	}
+	for _, got := range marketplace.Resources {
+		key := got.Kind + "/" + got.Name
+		want, exists := expected[key]
+		if !exists || !reflect.DeepEqual(got, want) {
+			t.Fatalf("installed acquisition-lock record %s = %#v, want %#v (expected=%v)", key, got, want, exists)
+		}
+		delete(expected, key)
+	}
+	if len(expected) != 0 {
+		t.Fatalf("installed acquisition lock omitted resources: %#v", expected)
+	}
 }
 
 func assertMarketplaceConsumerRoundTrip(t *testing.T, endpoint string) {
 	t.Helper()
 	consumer := newEnv(t)
 	consumer.InitGitRepo()
-	consumer.WriteGlobalConfig("apiVersion: agent-marketplace/v2\nharnesses: [factory]\nregistries: []")
-	consumer.WriteRepoConfig(fmt.Sprintf(`apiVersion: agent-marketplace/v2
-marketplaces:
-  - url: %s
-    instance_id: e2e-public-gate
-    alias: public
+	consumer.WriteGlobalConfig("apiVersion: agent-marketplace/v4\nharnesses: [factory]\n")
+	consumer.WriteRepoConfig(fmt.Sprintf(`apiVersion: agent-marketplace/v4
+sources: {public: {marketplace: %q}}
 `, endpoint))
 	for _, locator := range []string{
 		"public:public-registry/skill/skill-one",
@@ -403,26 +534,35 @@ marketplaces:
 		"/workspace/.factory/skills/skill-one/SKILL.md",
 		"/workspace/.factory/commands/command-one.md",
 		"/workspace/.factory/droids/agent-one.md",
-		"/workspace/.factory/hooks/hooks.json",
 		"/workspace/.factory/mcp.json",
 	} {
 		consumer.AssertFileExists(path)
 	}
+	assertFactoryNativeHookFile(t, consumer, "/workspace/.factory/hooks.json", "Read", "echo hook")
+	consumer.AssertFileAbsent("/workspace/.factory/hooks/hooks.json")
 	if !strings.Contains(consumer.ReadFile("/workspace/.factory/skills/skill-one/SKILL.md"), "hostile-safe skill") {
 		t.Fatal("Marketplace mirror install produced the wrong skill content")
 	}
 	config := consumer.ReadFile("/workspace/.agents/config.yaml")
-	for _, value := range []string{"kind: skill", "kind: command", "kind: subagent", "kind: hook", "kind: mcpserver", "direct: true", "acquisition: mirror"} {
+	for _, value := range []string{"apiVersion: agent-marketplace/v4", "public-registry/skill/skill-one", "public-registry/command/command-one", "public-registry/subagent/agent-one", "public-registry/hook/PreToolUse-command", "public-registry/mcp/server-one"} {
 		if !strings.Contains(config, value) {
 			t.Fatalf("Marketplace pin config missing %q:\n%s", value, config)
 		}
 	}
+	// These locators did not author @revision constraints. Exact acquired
+	// revisions belong to the owning lock, not synthesized config constraints.
+	assertPublicGateAcquisitionLock(t, consumer, endpoint, false)
+	locked := consumer.ReadFile("/workspace/.agents/lock.yaml")
 	for _, args := range [][]string{{"sync"}, {"sync", "--offline"}, {"sync", "--check"}} {
 		result := consumer.RunAM(args...)
 		if result.ExitCode != 0 {
 			t.Fatalf("Marketplace mirror %s failed (exit %d):\n%s", strings.Join(args, " "), result.ExitCode, result.Combined)
 		}
+		if consumer.ReadFile("/workspace/.agents/config.yaml") != config || consumer.ReadFile("/workspace/.agents/lock.yaml") != locked {
+			t.Fatalf("%v changed direct selection intent or its exact acquisition records", args)
+		}
 	}
+	assertPublicGateAcquisitionLock(t, consumer, endpoint, false)
 }
 
 func assertPublicGateV4ConsumerRoundTrip(t *testing.T, endpoint string) *Env {
@@ -444,7 +584,6 @@ resources:
       - public-registry/collection/public-bundle
 `, endpoint))
 	before := consumer.ReadFile("/workspace/.agents/config.yaml")
-	digest := publicGateResourceDigest(t, endpoint, "skill", "skill-one")
 	synced := consumer.RunAM("sync")
 	if synced.ExitCode != 0 {
 		t.Fatalf("v4 sync through running Marketplace failed (exit %d):\n%s", synced.ExitCode, synced.Combined)
@@ -452,21 +591,22 @@ resources:
 	consumer.AssertFileContains("/workspace/.factory/skills/skill-one/SKILL.md", "A hostile-safe skill")
 	consumer.AssertFileContains("/workspace/.factory/commands/command-one.md", "echo command-one")
 	consumer.AssertFileExists("/workspace/.factory/droids/agent-one.md")
-	consumer.AssertFileContains("/workspace/.factory/hooks/hooks.json", "echo hook")
+	assertFactoryNativeHookFile(t, consumer, "/workspace/.factory/hooks.json", "Read", "echo hook")
+	consumer.AssertFileAbsent("/workspace/.factory/hooks/hooks.json")
 	consumer.AssertFileContains("/workspace/.factory/mcp.json", "server-one")
 	consumer.AssertFileAbsent("/workspace/.factory/skills/public-bundle")
 	if got := consumer.ReadFile("/workspace/.agents/config.yaml"); got != before {
 		t.Fatalf("running Marketplace sync rewrote authored v4 selection: %q", got)
 	}
-	for _, want := range []string{"agent-marketplace-lock/v2", "e2e-public-gate", "registry-public", "public-bundle", "kind: mcpserver", digest} {
-		if !consumer.CheckFileContains("/workspace/.agents/lock.yaml", want) {
-			t.Fatalf("runtime acquisition lock missing %q:\n%s", want, consumer.ReadFile("/workspace/.agents/lock.yaml"))
-		}
-	}
+	assertPublicGateAcquisitionLock(t, consumer, endpoint, true)
+	lockBefore := consumer.ReadFile("/workspace/.agents/lock.yaml")
 	for _, args := range [][]string{{"list"}, {"status"}, {"sync", "--check"}, {"sync", "--locked"}} {
 		result := consumer.RunAM(args...)
 		if result.ExitCode != 0 {
 			t.Fatalf("v4 %s through running Marketplace failed (exit %d):\n%s", strings.Join(args, " "), result.ExitCode, result.Combined)
+		}
+		if consumer.ReadFile("/workspace/.agents/lock.yaml") != lockBefore {
+			t.Fatalf("%v rewrote the verified acquisition lock", args)
 		}
 	}
 	return consumer
@@ -632,6 +772,7 @@ func newGitHTTPServer(t *testing.T, projectRoot string) *httptest.Server {
 	}))
 }
 
+// spec: site-deployment-profiles/legacy-marketplace-links-reach-the-root-mounted-interface
 func TestMarketplaceProxyRoutingContract(t *testing.T) {
 	root, err := filepath.Abs("..")
 	if err != nil {
@@ -649,10 +790,13 @@ func TestMarketplaceProxyRoutingContract(t *testing.T) {
 		for _, fragment := range []string{
 			"location = /.well-known/agent-marketplace.json {\n        proxy_pass http://marketplace_api;",
 			"location /api/ {\n        proxy_pass http://marketplace_api;",
-			"location = /marketplace {\n        return 308 /marketplace/;",
-			"location /marketplace/ {\n        proxy_pass http://marketplace_web;",
-			"location /_fonts/ {\n        proxy_pass http://marketplace_web;",
-			"location / {\n        proxy_pass http://landing_site;",
+			"location = /docs {\n        return 308 /docs/;",
+			"location /docs/ {\n        proxy_pass http://marketplace_docs;",
+			"location = /marketplace {\n        return 308 /$is_args$args;",
+			"location = /marketplace/ {\n        return 308 /$is_args$args;",
+			"location ~ (?s)^/marketplace/(?<legacy_browser_path>[^/].*)$ {",
+			"return 308 /$legacy_browser_path$is_args$args;",
+			"location / {\n        proxy_pass http://marketplace_web;",
 			"absolute_redirect off;",
 			"location = /readyz { return 404; }",
 			"location = /metrics { return 404; }",
@@ -661,8 +805,60 @@ func TestMarketplaceProxyRoutingContract(t *testing.T) {
 				t.Errorf("%s missing routing contract fragment %q", relative, fragment)
 			}
 		}
-		if strings.Contains(config, "location /marketplace/ {\n        proxy_pass http://marketplace_api;") {
-			t.Errorf("%s routes browser pages to the API", relative)
+		for _, fragment := range []string{
+			"location / {\n        proxy_pass http://marketplace_api;",
+			"location / {\n        proxy_pass http://marketplace_docs;",
+			"location /docs/ {\n        proxy_pass http://marketplace_web;",
+		} {
+			if strings.Contains(config, fragment) {
+				t.Errorf("%s contains conflicting routing contract fragment %q", relative, fragment)
+			}
+		}
+	}
+	operatorRelative := "deploy/compose/sqlite-filesystem/nginx-operator.local.conf"
+	operatorData, err := os.ReadFile(filepath.Join(root, operatorRelative))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, fragment := range []string{
+		"location = /marketplace { return 308 /$is_args$args; }",
+		"location = /marketplace/ { return 308 /$is_args$args; }",
+		"location ~ (?s)^/marketplace/(?<legacy_browser_path>[^/].*)$ {",
+		"return 308 /$legacy_browser_path$is_args$args;",
+	} {
+		if !strings.Contains(string(operatorData), fragment) {
+			t.Errorf("%s missing routing contract fragment %q", operatorRelative, fragment)
+		}
+	}
+}
+
+// spec: site-deployment-profiles/legacy-documentation-values-fail-with-migration-guidance
+func TestMarketplaceHelmRejectsLegacySiteValues(t *testing.T) {
+	root, err := filepath.Abs("..")
+	if err != nil {
+		t.Fatal(err)
+	}
+	helper, err := os.ReadFile(filepath.Join(root, "deploy/helm/agent-marketplace/templates/_helpers.tpl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, fragment := range []string{
+		`hasKey .Values "site"`,
+		`values.site was renamed to values.docs`,
+		`hasKey .Values.service "site"`,
+		`values.service.site was renamed to values.service.docs`,
+	} {
+		if !strings.Contains(string(helper), fragment) {
+			t.Errorf("Helm validation missing legacy-value migration contract %q", fragment)
+		}
+	}
+	values, err := os.ReadFile(filepath.Join(root, "deploy/helm/agent-marketplace/values.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, fragment := range []string{"\ndocs:\n", "\n  docs:\n", "repository: agent-marketplace-docs", "basePath: /"} {
+		if !strings.Contains(string(values), fragment) {
+			t.Errorf("current Helm values missing documentation profile contract %q", fragment)
 		}
 	}
 }
@@ -674,17 +870,17 @@ func TestMarketplaceComposeServesBothUIsUnderOneOrigin(t *testing.T) {
 	}
 	for _, tc := range []struct {
 		relative      string
-		siteContext   string
+		docsContext   string
 		designContext string
 	}{
 		{
 			relative:      "compose.yaml",
-			siteContext:   "./site",
+			docsContext:   "./site",
 			designContext: "./design",
 		},
 		{
 			relative:      "deploy/compose/postgres-s3/compose.yaml",
-			siteContext:   "../../../site",
+			docsContext:   "../../../site",
 			designContext: "../../../design",
 		},
 	} {
@@ -694,10 +890,14 @@ func TestMarketplaceComposeServesBothUIsUnderOneOrigin(t *testing.T) {
 		}
 		config := string(data)
 		for _, fragment := range []string{
-			"  site:\n    platform: *marketplace-platform",
-			"context: " + tc.siteContext,
+			"  web:\n    platform: *marketplace-platform",
+			"  docs:\n    platform: *marketplace-platform",
+			"context: " + tc.docsContext,
 			"additional_contexts:\n        design: " + tc.designContext,
-			"NUXT_APP_BASE_URL: /marketplace/",
+			"NUXT_APP_BASE_URL: /",
+			"SITE_PROFILE: docs",
+			"SITE_BASE: /docs/",
+			"MARKETPLACE_BASE: /",
 		} {
 			if !strings.Contains(config, fragment) {
 				t.Errorf("%s missing combined UI fragment %q", tc.relative, fragment)

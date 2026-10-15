@@ -924,9 +924,7 @@ func Resolve(cfg *config.Config, catalogs map[string][]catalog.Entry, localCfg *
 		// collection artifacts themselves. This replaces the pre-resolver
 		// collection.Expand call, giving collections the same collision
 		// detection and disambiguation as skills/commands/etc.
-		var expandErrs []error
-		resolved, expandErrs = expandCollections(resolved, cfg, catalogs, ro.resources, malformedIdx, localExcludes, cfg.Collections.ExcludeAll, excludeAllKinds, targetSet)
-		return resolved, append(errs, expandErrs...)
+		return expandCollections(resolved, errs, cfg, catalogs, ro.resources, malformedIdx, localExcludes, cfg.Collections.ExcludeAll, excludeAllKinds, targetSet)
 	}
 
 	resolved, selectErrs := selectArtifacts(nil)
@@ -1237,20 +1235,25 @@ func propagateTopLevelCollections(cfg *config.Config) {
 // Members, and produce one ResolvedArtifact per member with a Via annotation.
 // Members that reference a different registry than the collection's source
 // are looked up in the catalog for that registry.
-func expandCollections(resolved []ResolvedArtifact, cfg *config.Config, catalogs map[string][]catalog.Entry, resources map[string]map[string]ir.Resource, malformed *malformedIndex, localExcludes resourceSelections, collectionExcludeAll bool, localExcludeAllKinds map[ir.ResourceKind]bool, targetSet []hcc.Target) ([]ResolvedArtifact, []error) {
+func expandCollections(resolved []ResolvedArtifact, errs []error, cfg *config.Config, catalogs map[string][]catalog.Entry, resources map[string]map[string]ir.Resource, malformed *malformedIndex, localExcludes resourceSelections, collectionExcludeAll bool, localExcludeAllKinds map[ir.ResourceKind]bool, targetSet []hcc.Target) ([]ResolvedArtifact, []error) {
 	var out []ResolvedArtifact
-	var errs []error
+	var expandErrs []error
 	expanded := false
 
 	// Build the set of installed names each install scope already selects
 	// directly. A collection member already selected in its own scope is not
 	// duplicated — the direct resolution takes precedence. Machine and
 	// repository scopes install separately, so a selection in one scope never
-	// displaces a member in the other.
-	directResolved := make(map[scopedSelection]struct{})
+	// displaces a member in the other. A required member still displaces a
+	// non-required selection in its own scope.
+	admissions := &scopeAdmissions{
+		required:  make(map[scopedSelection]bool),
+		displaced: make(map[scopedSelection]skillOccurrence),
+	}
 	for _, artifact := range resolved {
 		if artifact.Kind != ir.KindCollection {
-			directResolved[newScopedSelection(artifact.Kind, artifact.Name, artifact.Source)] = struct{}{}
+			key := newScopedSelection(artifact.Kind, artifact.Name, artifact.Source)
+			admissions.required[key] = admissions.required[key] || artifact.Required
 		}
 	}
 
@@ -1333,15 +1336,24 @@ func expandCollections(resolved []ResolvedArtifact, cfg *config.Config, catalogs
 
 		// Expand members recursively (handles Includes via depth-first walk).
 		visited := map[string]struct{}{irCol.Label(): {}}
-		expandMembersRecursive(irCol, viaLabel, artifact, cfg, catalogIndex, resources, malformed, allCollectionsByName, directResolved, excludedResources, localExcludes, collectionExcludeAll, localExcludeAllKinds, visited, &out, &errs, targetSet)
+		expandMembersRecursive(irCol, viaLabel, artifact, cfg, catalogIndex, resources, malformed, allCollectionsByName, admissions, excludedResources, localExcludes, collectionExcludeAll, localExcludeAllKinds, visited, &out, &expandErrs, targetSet)
 	}
 
 	if !expanded {
-		return out, errs
+		return out, append(errs, expandErrs...)
 	}
 	reconciled, reconcileErrs := reconcileExpandedHooks(out)
-	errs = append(errs, reconcileErrs...)
-	return reconciled, suppressResolvedMemberMisses(errs, directResolved)
+	expandErrs = append(expandErrs, reconcileErrs...)
+	errs = append(errs, suppressResolvedMemberMisses(expandErrs, admissions.required)...)
+	return removeDisplacedSelections(reconciled, admissions.displaced, errs)
+}
+
+// scopeAdmissions records, per install scope, which installed names are
+// already selected, whether a required selection holds each one, and the
+// required collection members that displaced a non-required selection there.
+type scopeAdmissions struct {
+	required  map[scopedSelection]bool
+	displaced map[scopedSelection]skillOccurrence
 }
 
 func reconcileExpandedHooks(artifacts []ResolvedArtifact) ([]ResolvedArtifact, []error) {
@@ -1388,7 +1400,7 @@ func reconcileExpandedHooks(artifacts []ResolvedArtifact) ([]ResolvedArtifact, [
 // present. This mirrors the cross-registry suppression already applied to
 // collection lookups themselves in buildOccurrences. A name resolved in either
 // install scope counts as present.
-func suppressResolvedMemberMisses(errs []error, resolvedNames map[scopedSelection]struct{}) []error {
+func suppressResolvedMemberMisses(errs []error, resolvedNames map[scopedSelection]bool) []error {
 	if len(errs) == 0 || len(resolvedNames) == 0 {
 		return errs
 	}
@@ -1567,7 +1579,7 @@ func expandMembersRecursive(
 	resources map[string]map[string]ir.Resource,
 	malformed *malformedIndex,
 	allCollectionsByName map[string][]collectionCandidate,
-	directResolved map[scopedSelection]struct{},
+	admissions *scopeAdmissions,
 	excludedResources map[string]struct{},
 	localExcludes resourceSelections,
 	collectionExcludeAll bool,
@@ -1843,8 +1855,15 @@ func expandMembersRecursive(
 		// duplicates).
 		memberKey := ViaMapKey(member.Kind, memberName)
 		scopedKey := newScopedSelection(member.Kind, memberName, memberSource)
-		if _, direct := directResolved[scopedKey]; direct && !HasAdditiveSources(member.Kind) {
-			continue
+		existingRequired, selected := admissions.required[scopedKey]
+		displacing := false
+		if selected && !HasAdditiveSources(member.Kind) {
+			// A direct selection or an earlier expansion keeps precedence
+			// unless required policy outranks a non-required selection.
+			if !memberRequired || existingRequired {
+				continue
+			}
+			displacing = true
 		}
 
 		if _, excluded := excludedResources[memberKey]; excluded && !memberRequired {
@@ -1855,9 +1874,9 @@ func expandMembersRecursive(
 		}
 
 		// Mark as resolved to prevent duplicates from other collections.
-		directResolved[scopedKey] = struct{}{}
+		admissions.required[scopedKey] = existingRequired || memberRequired
 
-		*out = append(*out, ResolvedArtifact{
+		admitted := ResolvedArtifact{
 			Entry:          attachResource(catEntry, resources, memberCatalogKey),
 			RegistryURL:    memberRegistryURL,
 			RegistryPath:   memberRegistryPath,
@@ -1869,7 +1888,11 @@ func expandMembersRecursive(
 			CatalogKey:     memberCatalogKey,
 			Via:            viaLabel,
 			Harnesses:      memberHarnesses,
-		})
+		}
+		if displacing {
+			admissions.displaced[scopedKey] = artifactOccurrence(admitted)
+		}
+		*out = append(*out, admitted)
 	}
 
 	// Expand includes (nested collections) recursively.
@@ -1922,7 +1945,7 @@ func expandMembersRecursive(
 				includedArtifact.Harnesses = ownerHarnesses
 			}
 		}
-		expandMembersRecursive(irCol, includedViaLabel, includedArtifact, cfg, catalogIndex, resources, malformed, allCollectionsByName, directResolved, excludedResources, localExcludes, collectionExcludeAll, localExcludeAllKinds, branchVisited, out, errs, targetSet)
+		expandMembersRecursive(irCol, includedViaLabel, includedArtifact, cfg, catalogIndex, resources, malformed, allCollectionsByName, admissions, excludedResources, localExcludes, collectionExcludeAll, localExcludeAllKinds, branchVisited, out, errs, targetSet)
 	}
 }
 
@@ -2261,7 +2284,7 @@ func newSkillOccurrence(entry config.RegistryEntry, entryIndex int, candidate ca
 func buildOccurrences(cfg *config.Config, catalogs map[string][]catalog.Entry, resources map[string]map[string]ir.Resource, malformed *malformedIndex, targetSet []hcc.Target) (map[resourceSelection][]skillOccurrence, []error) {
 	var errs []error
 	occurrencesByName := make(map[resourceSelection][]skillOccurrence)
-	reportedNotFound := make(map[missingResource]struct{})
+	reportedNotFound := make(map[missingResource]error)
 	// Track per-registry collection not-found errors separately so they
 	// can be suppressed when the collection is found in another registry.
 	// propagateTopLevelCollections adds collection includes to every entry,
@@ -2304,7 +2327,6 @@ func buildOccurrences(cfg *config.Config, catalogs map[string][]catalog.Entry, r
 			if !found {
 				notFoundKey := missingResource{resourceSelection: selected, url: entry.URL, path: entry.Path, ref: entry.Ref}
 				if _, reported := reportedNotFound[notFoundKey]; !reported {
-					reportedNotFound[notFoundKey] = struct{}{}
 					// Correlate before blaming. The resource may be absent from
 					// the catalog because the ingester could not load it, in
 					// which case the exact validation failure is already known
@@ -2328,6 +2350,7 @@ func buildOccurrences(cfg *config.Config, catalogs map[string][]catalog.Entry, r
 						}
 						selErr = snf
 					}
+					reportedNotFound[notFoundKey] = selErr
 					// Defer collection errors: they may be false positives if
 					// the collection exists in another registry.
 					if selected.kind == ir.KindCollection {
@@ -2335,6 +2358,8 @@ func buildOccurrences(cfg *config.Config, catalogs map[string][]catalog.Entry, r
 					} else {
 						errs = append(errs, selErr)
 					}
+				} else if entry.Required {
+					markSelectionRequired(reportedNotFound[notFoundKey])
 				}
 				continue
 			}
@@ -2707,6 +2732,67 @@ func (s requiredShadows) remove(artifacts []ResolvedArtifact, warnings []error) 
 	return kept, warnings
 }
 
+// removeDisplacedSelections drops the non-required selections that a required
+// collection member displaced in its install scope and reports each displaced
+// source in a name-collision warning won by the member.
+func removeDisplacedSelections(artifacts []ResolvedArtifact, displaced map[scopedSelection]skillOccurrence, errs []error) ([]ResolvedArtifact, []error) {
+	if len(displaced) == 0 {
+		return artifacts, errs
+	}
+	kept := make([]ResolvedArtifact, 0, len(artifacts))
+	var order []scopedSelection
+	removed := make(map[scopedSelection][]skillOccurrence, len(displaced))
+	for _, a := range artifacts {
+		key := newScopedSelection(a.Kind, a.Name, a.Source)
+		if _, ok := displaced[key]; ok && !a.Required && !HasAdditiveSources(a.Kind) {
+			if _, seen := removed[key]; !seen {
+				order = append(order, key)
+			}
+			removed[key] = append(removed[key], artifactOccurrence(a))
+			slog.Debug("resolver displaced non-required selection by required collection member", "kind", a.Kind.String(), "name", a.Name, "registry", a.RegistryURL, "via", a.Via)
+			continue
+		}
+		kept = append(kept, a)
+	}
+	for _, key := range order {
+		winner := displaced[key]
+		warning := newNameCollisionWarning(winner, append([]skillOccurrence{winner}, removed[key]...))
+		errs = retireDisplacedWinnerWarnings(errs, removed[key], warning)
+		if len(warning.RunnersUp) > 0 {
+			errs = addNameCollision(errs, warning)
+		}
+	}
+	return kept, errs
+}
+
+// retireDisplacedWinnerWarnings removes earlier name-collision warnings won by
+// a displaced selection, which would otherwise report a winner that is not
+// installed, and carries their runners-up into the member's warning so every
+// competing source is still named once. Only unwrapped warnings are retired;
+// winner selection reports them unwrapped, and removing a wrapper could drop
+// unrelated errors.
+func retireDisplacedWinnerWarnings(errs []error, displaced []skillOccurrence, into *NameCollisionWarning) []error {
+	kept := make([]error, 0, len(errs))
+	for _, err := range errs {
+		warning, ok := err.(*NameCollisionWarning)
+		if !ok || warning == nil || warning.Kind != into.Kind || warning.Name != into.Name ||
+			!slices.ContainsFunc(displaced, func(occ skillOccurrence) bool {
+				return warning.WinnerURL == strings.TrimSpace(occ.url) &&
+					warning.WinnerPath == strings.TrimSpace(occ.resolved.RegistryPath) &&
+					warning.WinnerRef == strings.TrimSpace(occ.resolved.Ref)
+			}) {
+			kept = append(kept, err)
+			continue
+		}
+		for _, runnerUp := range warning.RunnersUp {
+			if runnerUp != into.Winner && !slices.Contains(into.RunnersUp, runnerUp) {
+				into.RunnersUp = append(into.RunnersUp, runnerUp)
+			}
+		}
+	}
+	return kept
+}
+
 // addNameCollision appends warning, or adds its runners-up to an earlier
 // warning that names the same winner for the same resource, so one resource
 // is reported once.
@@ -2872,11 +2958,23 @@ func newScopedSelection(kind ir.ResourceKind, name string, source config.Source)
 	return scopedSelection{resourceSelection{kind: kind, name: strings.TrimSpace(name)}, source.IsMachineScope()}
 }
 
-func resolvedInEitherScope(resolved map[scopedSelection]struct{}, kind ir.ResourceKind, name string) bool {
+func resolvedInEitherScope(resolved map[scopedSelection]bool, kind ir.ResourceKind, name string) bool {
 	selection := resourceSelection{kind: kind, name: strings.TrimSpace(name)}
 	_, machine := resolved[scopedSelection{selection, true}]
 	_, repo := resolved[scopedSelection{selection, false}]
 	return machine || repo
+}
+
+// markSelectionRequired upgrades a not-found or malformed selection error that
+// a later entry for the same location requires, so the miss stays hard
+// regardless of layer order.
+func markSelectionRequired(err error) {
+	switch e := err.(type) {
+	case *SelectedNotFoundError:
+		e.Required = true
+	case *SelectedMalformedError:
+		e.Required = true
+	}
 }
 
 type missingResource struct {

@@ -40,7 +40,7 @@ func LoadSubagent(src fs.FS, path string) (*ir.Subagent, []diag.Diagnostic, erro
 		if err != nil {
 			return nil, nil, fmt.Errorf("ingest/factory: invalid tools in %s: %w", path, err)
 		}
-		tools = normalizeFactoryTools(parsed)
+		tools = parsed
 	}
 	var disallowedTools []string
 	if value, ok := fm["disallowedTools"]; ok {
@@ -49,23 +49,6 @@ func LoadSubagent(src fs.FS, path string) (*ir.Subagent, []diag.Diagnostic, erro
 			return nil, nil, fmt.Errorf("ingest/factory: invalid disallowedTools in %s: %w", path, err)
 		}
 		disallowedTools = parsed
-	}
-
-	canonicalModel := reverseFactoryModel(model)
-	var diags []diag.Diagnostic
-	if reasoningEffort != "" && canonicalModel != "" && canonicalModel != model {
-		diags = append(diags, diag.Diagnostic{
-			Code:     diag.CodeIngestFactoryReasoningEffortMappedToModel,
-			Severity: diag.SeverityInfo,
-			Target:   "factory",
-			Resource: name,
-			Message:  fmt.Sprintf("mapped Factory model %q to canonical model %q while preserving reasoningEffort=%q", model, canonicalModel, reasoningEffort),
-			Hint:     "Compile back to Factory to restore the concrete Factory model identifier",
-			Source:   diag.SourceRef{File: path, Line: 1},
-		})
-	}
-	if canonicalModel == "" {
-		canonicalModel = model
 	}
 
 	options := []ir.SubagentOption{}
@@ -81,38 +64,10 @@ func LoadSubagent(src fs.FS, path string) (*ir.Subagent, []diag.Diagnostic, erro
 	} else if maxNesting != nil {
 		options = append(options, ir.WithSubagentMaxNestingPtr(maxNesting))
 	}
-	return ir.NewSubagentWithOptions(name, description, body, canonicalModel, tools, reasoningEffort, disallowedTools, isolation, extraFields(fm, subagentKnownKeys), sourceRef(path), options...), diags, nil
-}
-
-func reverseFactoryModel(model string) string {
-	switch model {
-	case "claude-sonnet-4-5-20250929":
-		return "sonnet"
-	case "claude-opus-4-20250514":
-		return "opus"
-	case "claude-haiku-3-5-20241022":
-		return "haiku"
-	default:
-		return model
+	subagent := ir.NewSubagentWithOptions(name, description, body, model, tools, reasoningEffort, disallowedTools, isolation, extraFields(fm, subagentKnownKeys), sourceRef(path), options...)
+	subagent.ModelSource = "factory"
+	if tools != nil {
+		subagent.ToolSource = "factory"
 	}
-}
-
-func normalizeFactoryTools(tools []string) []string {
-	if tools == nil {
-		return nil
-	}
-	result := make([]string, 0, len(tools))
-	for i := 0; i < len(tools); i++ {
-		if i+1 < len(tools) && isEditCreatePair(tools[i], tools[i+1]) {
-			result = append(result, "Write")
-			i++
-			continue
-		}
-		result = append(result, tools[i])
-	}
-	return result
-}
-
-func isEditCreatePair(a, b string) bool {
-	return (a == "Edit" && b == "Create") || (a == "Create" && b == "Edit")
+	return subagent, nil, nil
 }

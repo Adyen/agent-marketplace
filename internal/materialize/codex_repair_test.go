@@ -260,11 +260,7 @@ func TestCodexRepairMalformedMCPIsRedactedAndDoesNotBlockHookAdoption(t *testing
 	repoRoot := t.TempDir()
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
-	selection := []resolver.ResolvedArtifact{codexRepairResolved(
-		"managed-hook",
-		ir.NewHookWithMatcher("managed-hook", "PreToolUse", "Bash", "./managed", "command", nil, ir.SourceRef{}),
-		config.RepoCommitted,
-	)}
+	selection := []resolver.ResolvedArtifact{codexHookResolved(t, "managed-hook", ir.NewHookWithMatcher("managed-hook", "PreToolUse", "Bash", "./managed", "command", nil, ir.SourceRef{}), config.RepoCommitted)}
 	if report, err := Run(context.Background(), repoRoot, selection); err != nil || hasErrorDiagnostics(report.Diags) {
 		t.Fatalf("seed Codex hook: report=%#v err=%v", report, err)
 	}
@@ -384,11 +380,7 @@ func TestCodexRepairNeverOffersReplacementForHooksWithoutStableKeys(t *testing.T
 	if err := os.WriteFile(filepath.Join(root, codexHooksFile), []byte(hooks), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	selection := []resolver.ResolvedArtifact{codexRepairResolved(
-		"managed-hook",
-		ir.NewHookWithMatcher("managed-hook", "PreToolUse", "Bash", "./generated", "command", nil, ir.SourceRef{}),
-		config.RepoCommitted,
-	)}
+	selection := []resolver.ResolvedArtifact{codexHookResolved(t, "managed-hook", ir.NewHookWithMatcher("managed-hook", "PreToolUse", "Bash", "./generated", "command", nil, ir.SourceRef{}), config.RepoCommitted)}
 	canonicalRoot, err := ownership.CanonicalRoot(root)
 	if err != nil {
 		t.Fatal(err)

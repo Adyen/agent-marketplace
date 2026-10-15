@@ -99,11 +99,14 @@ func TestSyncToleratesOwnershipProvenNativeHook(t *testing.T) {
 
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
+apiVersion: agent-marketplace/v4
 harnesses: [factory]
-registries:
-  - url: `+origin+`
+sources:
+  hooks:
+    git: file://`+origin+`
     ref: main
-    default: true
+resources:
+  hooks: {all: true}
 `)
 	withWorkingDir(t, repoRoot)
 
@@ -146,13 +149,18 @@ registries:
 	// The future native writer's Factory output: the top-level event map with
 	// its rewritten support command path — byte-distinct from anything the
 	// legacy fragment compiler emits.
-	nativeRule := `{"hooks":[{"command":".factory/am-hooks/deploy/run.sh","type":"command"}],"matcher":"Bash"}`
+	nativeRule := `{"hooks":[{"command":"./run.sh","type":"command"}],"matcher":"Bash"}`
 	nativeBody := `{"PreToolUse":[` + nativeRule + `]}` + "\n"
 	nativeRoot := filepath.Join(repoRoot, ".factory")
 	seedNativeHookProof(t, nativeRoot, "hooks.json", nativeBody,
 		nativeHookProofEntry(t, "PreToolUse", nativeRule, hookName, fingerprint))
 	nativePath := filepath.Join(nativeRoot, "hooks.json")
 	legacyPath := filepath.Join(nativeRoot, "hooks", "hooks.json")
+	nativeBefore, nativeInfo := statSnapshot(t, nativePath)
+	lockPath := filepath.Join(repoRoot, ".agents", "lock.yaml")
+	lockBefore, lockInfo := statSnapshot(t, lockPath)
+	configPath := filepath.Join(repoRoot, ".agents", "config.yaml")
+	configBefore, configInfo := statSnapshot(t, configPath)
 
 	// sync: no legacy re-creation, native bytes untouched.
 	if output, err := executeCommand("sync"); err != nil {
@@ -162,14 +170,11 @@ registries:
 		t.Fatalf("sync recreated the proven hook's legacy output: %s", data)
 	}
 	if data, err := os.ReadFile(nativePath); err != nil || string(data) != nativeBody {
-		t.Fatalf("sync changed the native file: %v", err)
+		t.Fatalf("sync changed the native file: %v; actual=%s expected=%s", err, data, nativeBody)
 	}
-
-	lockPath := filepath.Join(repoRoot, ".agents", "lock.yaml")
-	lockBefore, err := os.ReadFile(lockPath)
-	if err != nil {
-		t.Fatalf("committed lock missing after sync: %v", err)
-	}
+	assertStatUnchanged(t, "sync native", nativePath, nativeBefore, nativeInfo)
+	assertStatUnchanged(t, "sync lock", lockPath, lockBefore, lockInfo)
+	assertStatUnchanged(t, "sync config", configPath, configBefore, configInfo)
 
 	// sync --locked: same satisfied decision, byte-identical lock.
 	if output, err := executeCommand("sync", "--locked"); err != nil {
@@ -178,10 +183,16 @@ registries:
 	if data, err := os.ReadFile(legacyPath); err == nil {
 		t.Fatalf("sync --locked recreated the legacy output: %s", data)
 	}
+	if data, err := os.ReadFile(nativePath); err != nil || string(data) != nativeBody {
+		t.Fatalf("sync --locked changed the native file: %v; actual=%s expected=%s", err, data, nativeBody)
+	}
+	assertStatUnchanged(t, "sync --locked native", nativePath, nativeBefore, nativeInfo)
+	assertStatUnchanged(t, "sync --locked config", configPath, configBefore, configInfo)
 	lockAfter, err := os.ReadFile(lockPath)
 	if err != nil || !bytes.Equal(lockBefore, lockAfter) {
 		t.Fatalf("sync --locked changed committed lock bytes: %v", err)
 	}
+	assertStatUnchanged(t, "sync --locked lock", lockPath, lockBefore, lockInfo)
 
 	// sync --check: no pending legacy entry reported, nothing written.
 	if output, err := executeCommand("sync", "--check"); err != nil {
@@ -191,8 +202,11 @@ registries:
 		t.Fatalf("sync --check wrote the legacy output: %s", data)
 	}
 	if data, err := os.ReadFile(nativePath); err != nil || string(data) != nativeBody {
-		t.Fatalf("sync --check changed the native file: %v", err)
+		t.Fatalf("sync --check changed the native file: %v; actual=%s expected=%s", err, data, nativeBody)
 	}
+	assertStatUnchanged(t, "sync --check native", nativePath, nativeBefore, nativeInfo)
+	assertStatUnchanged(t, "sync --check lock", lockPath, lockBefore, lockInfo)
+	assertStatUnchanged(t, "sync --check config", configPath, configBefore, configInfo)
 }
 
 // The same tolerance through REAL verified Marketplace mirror resolution:
@@ -231,6 +245,8 @@ func TestSyncToleratesMarketplaceMirrorNativeHook(t *testing.T) {
 		switch {
 		case r.URL.Path == "/.well-known/agent-marketplace.json":
 			_ = json.NewEncoder(w).Encode(mpapi.DefaultWellKnown("mp", "http://"+r.Host))
+		case r.URL.Path == "/api/v1/registries/src":
+			_ = json.NewEncoder(w).Encode(mpapi.PublicRegistry{ID: "src", Slug: "src", Origins: []string{"https://example.com/hooks.git"}, Ref: "main", Roots: []store.RegistryRoot{{Path: ".agents"}}, Acquisition: store.AcquisitionMirror, Listed: true})
 		case strings.Contains(r.URL.Path, "/revisions/"+contentDigest):
 			_ = json.NewEncoder(w).Encode(revision)
 		case strings.HasPrefix(r.URL.Path, "/api/v1/artifacts/"):
@@ -243,21 +259,24 @@ func TestSyncToleratesMarketplaceMirrorNativeHook(t *testing.T) {
 	defer server.Close()
 
 	repoRoot := filepath.Join(t.TempDir(), "repo")
-	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `apiVersion: agent-marketplace/v2
+	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `apiVersion: agent-marketplace/v4
 harnesses:
   - factory
-marketplaces:
-  - url: `+server.URL+`
-    instance_id: mp
-    resources:
-      - registry_id: src
-        kind: hook
-        name: deploy-hook
-        revision: v1
-        digest: `+contentDigest+`
-        acquisition: mirror
+sources:
+  hosted: {marketplace: `+server.URL+`}
+resources:
+  hosted:
+    include:
+      - src/hook/deploy-hook:
+          revision: `+contentDigest+`
 `)
 	withWorkingDir(t, repoRoot)
+	configPath := filepath.Join(repoRoot, ".agents", "config.yaml")
+	configBefore, configInfo := statSnapshot(t, configPath)
+	lockPath := filepath.Join(repoRoot, ".agents", "lock.yaml")
+	if _, err := os.Lstat(lockPath); !os.IsNotExist(err) {
+		t.Fatalf("mirror fixture unexpectedly has a Git lock: %v", err)
+	}
 
 	fingerprint, err := materialize.HookSourceMirrorFingerprint(materialize.HookSourceMirrorFingerprintInput{
 		InstanceID:    "mp",
@@ -273,13 +292,14 @@ marketplaces:
 		t.Fatalf("mirror fingerprint: %v", err)
 	}
 
-	nativeRule := `{"hooks":[{"command":".factory/am-hooks/deploy-hook/run.sh","type":"command"}],"matcher":"Bash"}`
+	nativeRule := `{"hooks":[{"Extra":null,"command":"./run.sh","type":"command"}],"matcher":"Execute"}`
 	nativeBody := `{"PreToolUse":[` + nativeRule + `]}` + "\n"
 	nativeRoot := filepath.Join(repoRoot, ".factory")
 	seedNativeHookProof(t, nativeRoot, "hooks.json", nativeBody,
 		nativeHookProofEntry(t, "PreToolUse", nativeRule, "deploy-hook", fingerprint))
 	nativePath := filepath.Join(nativeRoot, "hooks.json")
 	legacyPath := filepath.Join(nativeRoot, "hooks", "hooks.json")
+	nativeBefore, nativeInfo := statSnapshot(t, nativePath)
 
 	if output, err := executeCommand("sync"); err != nil {
 		t.Fatalf("sync: %v\n%s", err, output)
@@ -288,8 +308,17 @@ marketplaces:
 		t.Fatalf("sync recreated the proven mirror hook's legacy output: %s", data)
 	}
 	if data, err := os.ReadFile(nativePath); err != nil || string(data) != nativeBody {
-		t.Fatalf("sync changed the native file: %v", err)
+		t.Fatalf("sync changed the native file: %v; actual=%s expected=%s", err, data, nativeBody)
 	}
+	assertStatUnchanged(t, "sync native", nativePath, nativeBefore, nativeInfo)
+	assertStatUnchanged(t, "sync config", configPath, configBefore, configInfo)
+	// A v4 Marketplace source keeps exact acquisition evidence in the layer
+	// lock; the mirror fixture gains only that Marketplace record, never Git.
+	lockDoc := readExactManifestLock(t, lockPath)
+	if len(lockDoc.Registries) != 0 || len(lockDoc.Marketplaces) != 1 || lockDoc.Marketplaces[0].InstanceID != "mp" {
+		t.Fatalf("sync lock = %+v, want only the mirror's Marketplace record", lockDoc)
+	}
+	lockBefore, lockInfo := statSnapshot(t, lockPath)
 
 	// sync --check: no pending legacy entry reported, nothing written.
 	if output, err := executeCommand("sync", "--check"); err != nil {
@@ -299,6 +328,9 @@ marketplaces:
 		t.Fatalf("sync --check wrote the legacy output: %s", data)
 	}
 	if data, err := os.ReadFile(nativePath); err != nil || string(data) != nativeBody {
-		t.Fatalf("sync --check changed the native file: %v", err)
+		t.Fatalf("sync --check changed the native file: %v; actual=%s expected=%s", err, data, nativeBody)
 	}
+	assertStatUnchanged(t, "sync --check native", nativePath, nativeBefore, nativeInfo)
+	assertStatUnchanged(t, "sync --check config", configPath, configBefore, configInfo)
+	assertStatUnchanged(t, "sync --check lock", lockPath, lockBefore, lockInfo)
 }

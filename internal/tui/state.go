@@ -42,7 +42,6 @@ const (
 	paneConfirm
 	paneToggleModal
 	paneInitModal
-	paneMigrationModal
 	paneHarnessModal
 	paneEditConfigModal
 	paneMarketplaceConsent
@@ -70,6 +69,7 @@ type row struct {
 	IsMalformed       bool
 	MalformedMsg      string
 	UnavailableReason string
+	UnavailableSoft   bool                   // absent from a loaded registry; a warning that does not block drift
 	DriftItem         *materialize.DriftItem // nil if in sync or available-only
 
 	// Per-scope enablement: which config file(s) enable this skill.
@@ -369,8 +369,6 @@ type Model struct {
 	marketplaceInstallPreview   string
 	harnessModal                harnessModalState
 	initModal                   initModalState
-	migrationPrompt             migrationPrompt
-	migrationDismissed          bool
 	operations                  operationState
 	pendingToggleOperation      operationID
 	pendingToggleReload         requestGeneration
@@ -437,8 +435,6 @@ type Model struct {
 	toggleForm       *huh.Form
 	toggleFormFor    string
 	toggleChoice     *string
-	migrationForm    *huh.Form
-	migrationValue   *bool
 	editConfigForm   *huh.Form
 	editConfigChoice *string
 	syncQuitForm     *huh.Form

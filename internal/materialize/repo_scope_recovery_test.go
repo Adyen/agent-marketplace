@@ -221,7 +221,7 @@ func TestDevinRepoScopeAggregateRecoverableFromOwnershipBackup(t *testing.T) {
 	}
 
 	resolved := []resolver.ResolvedArtifact{
-		devinResolved("mcp", ir.NewMcpServer("mcp", "bin", nil, nil, nil, ir.SourceRef{}), false),
+		devinResolved(t, "mcp", ir.NewMcpServer("mcp", "bin", nil, nil, nil, ir.SourceRef{}), false),
 	}
 	report, err := Run(context.Background(), repoRoot, resolved)
 	if err != nil {

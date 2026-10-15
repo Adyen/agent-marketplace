@@ -125,6 +125,7 @@ func TestReleasedClientLockVerifiesNativeHookSourceLayouts(t *testing.T) {
 	}
 }
 
+// spec: hook-resources/released-hook-output-upgrades-without-duplication
 // Upgrading from the latest release keeps one copy of every hook the release
 // installed, on every target and scope, and a later deselection removes it.
 // The same HOME runs both executables, as when a user replaces the binary.
