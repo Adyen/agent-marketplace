@@ -1,6 +1,6 @@
 # How to test Marketplace administration locally with Docker Compose
 
-Run the real API, worker, SQLite database, frontend, and proxy on your laptop without SSO or local TLS certificates. This guide uses `http://localhost:8080` and a fixed `local-operator` identity that Nginx supplies on every request.
+Run the API, worker, SQLite database, frontend, and proxy on your laptop without SSO or local TLS certificates. Nginx supplies a fixed `local-operator` identity on every request, at `http://localhost:8080`.
 
 ::: danger Local development only
 Everyone who can reach this proxy is an administrator. Bind it only to `127.0.0.1`; never publish it on your LAN, tunnel it, or use this configuration in production. Other local processes can also act as the operator. Use test data and narrowly scoped registry credentials. Keep production HTTPS and SSO enabled for real deployments.

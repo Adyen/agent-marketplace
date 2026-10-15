@@ -13,7 +13,7 @@ The admin panel is a private, authenticated part of the Nuxt frontend at `/admin
 - set the global license allowlist, the handling of undeclared licenses, and per-registry overrides;
 - review who changed what and why, and restore settings from an earlier revision.
 
-A hosted Marketplace runs in one of two authority modes, set by `management.mode`. In `file` mode (the default) the YAML configuration owns registries, lifecycle states, and license policies, and the admin panel is disabled. In `database` mode those settings live in the metadata database and change through the admin panel; switching requires a one-time adoption during maintenance. Infrastructure settings (listeners, storage, proxy trust, and secret mounts) always stay in the YAML file. The [Marketplace architecture](../../explanation/marketplace-architecture.md) page explains the model, and the [`management` and `admin` sections](../../reference/marketplace-operator-configuration.md#management) of the operator configuration reference list every field.
+A hosted Marketplace runs in one of two authority modes, set by `management.mode`. In `file` mode (the default) the YAML configuration owns registries, lifecycle states, and license policies, and the admin panel is disabled. In `database` mode those settings live in the metadata database and change through the admin panel; switching requires a one-time adoption during maintenance. Infrastructure settings (listeners, storage, proxy trust, and secret mounts) always stay in the YAML file. The [Marketplace architecture](../../explanation/marketplace-architecture.md) page explains the model. The [`management` and `admin` sections](../../reference/marketplace-operator-configuration.md#management) of the operator configuration reference list every field.
 
 ## Prerequisites
 
@@ -33,7 +33,7 @@ The modes exclude each other: OIDC mode rejects the trusted-proxy identity field
 
 ## 2. Configure the operator YAML
 
-Update your operator configuration file (`marketplace.yaml`) to turn on database management and configure who may administer the Marketplace. This example uses `trusted_proxy` authentication:
+Update `marketplace.yaml` to turn on database management and name the administrators. This example uses `trusted_proxy` authentication:
 
 ```yaml
 apiVersion: agent-marketplace.io/marketplace/v1
@@ -110,7 +110,7 @@ In OIDC mode the reverse proxy only routes `/api/v1/admin/`, `/admin`, and the `
 
 ## 3. Configure the reverse proxy
 
-This step applies to `trusted_proxy` mode, where the API trusts identity headers from your authenticated reverse proxy or SSO gateway. With `authentication.mode: oidc`, the application authenticates administrators itself and the proxy only routes traffic.
+This step applies to `trusted_proxy` mode, where the API trusts identity headers from your authenticated reverse proxy or SSO gateway.
 
 Your reverse proxy must:
 
