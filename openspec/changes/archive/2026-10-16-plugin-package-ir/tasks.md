@@ -32,4 +32,4 @@
 
 ## 5. Gates
 
-- [ ] 5.1 Run `make catalog-check`, `make spec-check`, and `make validate`
+- [x] 5.1 Run `make catalog-check`, `make spec-check`, and `make validate`
