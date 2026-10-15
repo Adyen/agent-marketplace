@@ -12,4 +12,4 @@
 
 ## 3. Archive
 
-- [ ] 3.1 Run `openspec archive preserve-collection-member-owner --yes` as the final commit of the implementation.
+- [x] 3.1 Run `openspec archive preserve-collection-member-owner --yes` as the final commit of the implementation.
