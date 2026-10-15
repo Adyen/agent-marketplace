@@ -24,7 +24,7 @@ func TestEveryHarnessHasExplicitAuditCoverage(t *testing.T) {
 	}
 	seen := map[string]bool{}
 	for _, s := range sources {
-		if seen[s.Name] || !target.IsValid(s.Harness) || !trustedURL(s.URL) {
+		if seen[s.Name] || (!target.IsValid(s.Harness) && s.Format == "") || !trustedURL(s.URL) {
 			t.Fatalf("invalid source: %#v", s)
 		}
 		seen[s.Name] = true

@@ -177,7 +177,8 @@ export default defineConfig({
             { text: 'Registry layout', link: `${DOCS_PATH}reference/registry-layout` },
             { text: 'Resource metadata', link: `${DOCS_PATH}reference/resource-metadata` },
             { text: 'Resource prerequisites', link: `${DOCS_PATH}reference/resource-prerequisites` },
-            { text: 'Collections', link: `${DOCS_PATH}reference/collections` }
+            { text: 'Collections', link: `${DOCS_PATH}reference/collections` },
+            { text: 'Plugin support', link: `${DOCS_PATH}reference/plugin-support` }
           ]
         },
         {

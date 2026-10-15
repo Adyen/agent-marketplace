@@ -31,11 +31,11 @@ func TestNativeLayoutMatchesCompiledArtifactPaths(t *testing.T) {
 		wantMember string
 	}{
 		{"claude skill", hcc.TargetClaude, false, ir.NewSkill("probe-skill", "probe", "body", nil, nil, ir.SourceRef{}),
-			[]string{".claude-plugin/plugin.json", "skills/probe-skill/SKILL.md"}, "skills"},
+			[]string{"skills/probe-skill/SKILL.md"}, ""},
 		{"claude command", hcc.TargetClaude, false, ir.NewCommand("probe-command", "probe", "body", nil, ir.SourceRef{}),
 			[]string{"commands/probe-command.md"}, ""},
 		{"claude subagent", hcc.TargetClaude, false, ir.NewSubagent("probe-subagent", "probe", "body", "", nil, "", nil, "", nil, ir.SourceRef{}),
-			[]string{".claude-plugin/plugin.json", "agents/probe-subagent.md"}, "agents"},
+			[]string{"agents/probe-subagent.md"}, ""},
 		{"claude hook", hcc.TargetClaude, false, hook,
 			[]string{"hooks/hooks.json"}, "hooks"},
 		{"claude hook user scope is invariant", hcc.TargetClaude, true, hook,

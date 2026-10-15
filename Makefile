@@ -108,7 +108,8 @@ catalog-docs:
 	CGO_ENABLED=0 $(GO) run ./tools/catalog-docs
 
 catalog-check: model-catalog-check
-	CGO_ENABLED=0 $(GO) test ./pkg/harness-compilation/toolpolicy ./pkg/harness-compilation/hookpolicy -count=1
+	CGO_ENABLED=0 $(GO) test ./pkg/harness-compilation/toolpolicy ./pkg/harness-compilation/hookpolicy ./pkg/harness-compilation/pluginpolicy -count=1
+	CGO_ENABLED=0 $(GO) test ./tools/harness-compat -run TestPluginCatalogsValidateAgainstNativeProbes -count=1
 	CGO_ENABLED=0 $(GO) test ./tools/catalog-docs -count=1
 	CGO_ENABLED=0 $(GO) test ./pkg/harness-compilation -run 'TestMatrix' -count=1
 	CGO_ENABLED=0 $(GO) run ./tools/catalog-docs -check

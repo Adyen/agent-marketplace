@@ -25,4 +25,4 @@ var sources = append([]source{
 	{Name: "factory-subagents", Harness: "factory", URL: "https://docs.factory.ai/harness/subagents.md", Kind: "watch", Fields: []string{"model", "reasoningEffort"}},
 	{Name: "gemini-models", Harness: "gemini", URL: "https://raw.githubusercontent.com/google-gemini/gemini-cli/main/packages/core/src/config/models.ts", Kind: "gemini"},
 	{Name: "gemini-subagents", Harness: "gemini", URL: "https://raw.githubusercontent.com/google-gemini/gemini-cli/main/docs/core/subagents.md", Kind: "watch", Fields: []string{"model"}},
-}, hookToolSources...)
+}, append(hookToolSources, pluginSources...)...)

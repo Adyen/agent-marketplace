@@ -17,8 +17,8 @@ func TestNativeAggregateDestinationPaths(t *testing.T) {
 		machine bool
 		want    []string
 	}{
-		{hcc.TargetClaude, false, []string{filepath.Join(repo, ".claude/.claude-plugin/plugin.json"), filepath.Join(repo, ".claude/hooks/hooks.json"), filepath.Join(repo, ".mcp.json")}},
-		{hcc.TargetClaude, true, []string{filepath.Join(home, ".claude/.claude-plugin/plugin.json"), filepath.Join(home, ".claude/hooks/hooks.json"), filepath.Join(home, ".claude.json")}},
+		{hcc.TargetClaude, false, []string{filepath.Join(repo, ".claude/hooks/hooks.json"), filepath.Join(repo, ".mcp.json")}},
+		{hcc.TargetClaude, true, []string{filepath.Join(home, ".claude/hooks/hooks.json"), filepath.Join(home, ".claude.json")}},
 		{hcc.TargetGemini, false, []string{filepath.Join(repo, ".gemini/settings.json")}},
 		{hcc.TargetGemini, true, []string{filepath.Join(home, ".gemini/settings.json")}},
 	}

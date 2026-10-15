@@ -55,6 +55,7 @@ const (
 	// first, in sorted order) and the root duplicate is dropped rather than
 	// published twice; the warning records the loss instead of hiding it.
 	CodeIngestClaudeDuplicateRootSkill      = "ingest.claude.duplicate-root-skill"       // Root SKILL.md duplicated a skills/ entry; the skills/ entry is kept
+	CodeIngestFactoryRootSkillIgnored       = "ingest.factory.root-skill-ignored"        // Factory plugin root SKILL.md is never ingested; skills load only from skills/<name>/
 	CodeSubagentWindsurfNoPrimitive         = "subagent.windsurf.no-primitive"           // Windsurf has no subagent primitive
 	CodeHookClaudeUnsupportedType           = "hook.claude.unsupported-type"             // Claude hook with unsupported type (http/prompt/agent)
 	CodeHookWindsurfEnvTokenExpanded        = "hook.windsurf.env-token-expanded"         // Windsurf expanded env token to literal path
@@ -531,6 +532,7 @@ var codeCatalog = []CodeDoc{
 
 	// Warning
 	{CodeIngestFactoryResourceShadowed, SeverityWarning, "Factory resource was shadowed by an earlier resource of the same kind and name", "Use distinct resource names or remove the lower-priority definition"},
+	{CodeIngestFactoryRootSkillIgnored, SeverityWarning, "A root SKILL.md was found and not ingested; Factory plugins load skills only from skills/<name>/", "Move the skill into skills/<name>/SKILL.md or remove the root file"},
 	{CodeSubagentWindsurfNoPrimitive, SeverityWarning, "Windsurf has no subagent primitive; resource dropped", "Consider expressing the subagent as a Windsurf workflow instead"},
 	{CodeHookClaudeUnsupportedType, SeverityWarning, "Unsupported hook type in Claude format; only command-type is universally supported in v0", "Convert the hook to a command type or remove it"},
 	{CodeHookWindsurfEnvTokenExpanded, SeverityWarning, "Windsurf expanded env token to a literal path", "Verify the expanded path is correct for the target environment"},

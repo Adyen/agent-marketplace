@@ -1,0 +1,13 @@
+# Catalog data for pkg/harness-compilation/pluginpolicy/catalogs/claude.yaml.
+schema: 1
+harness: claude
+evidence:
+  checked: "2026-10-15"
+  refs:
+    - https://code.claude.com/docs/en/plugins/manifest-reference
+    - https://code.claude.com/docs/en/plugin-marketplaces
+accepts: [claude-plugin, agent-plugin]
+delivery:
+  decompose: {status: verified}
+  native: {status: unverified}
+root_token: plugin_root

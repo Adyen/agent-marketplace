@@ -1,0 +1,12 @@
+# Catalog data for pkg/harness-compilation/pluginpolicy/catalogs/factory.yaml.
+schema: 1
+harness: factory
+evidence:
+  checked: "2026-10-15"
+  refs:
+    - https://docs.factory.ai/harness/plugins
+accepts: [factory-plugin, claude-plugin]
+delivery:
+  decompose: {status: verified}
+  native: {status: unverified}
+root_token: plugin_root

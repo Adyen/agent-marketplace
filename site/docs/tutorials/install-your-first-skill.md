@@ -127,11 +127,11 @@ agent-marketplace sync
 You should see:
 
 ```text
-Installed 2  Removed 0  Malformed 0  Errors 0
-  → ~/.claude/.claude-plugin (1 written), ~/.claude/skills (1 written)
+Installed 1  Removed 0  Malformed 0  Errors 0
+  → ~/.claude/skills (1 written)
 ```
 
-"Installed" counts files written: the skill, and a Claude Code manifest that lists installed skills. If `Errors` is not `0`, read the lines below the summary. They usually name the setting or the registry that failed.
+"Installed" counts files written: the skill. If `Errors` is not `0`, read the lines below the summary. They usually name the setting or the registry that failed.
 
 ## 4. Check the installation
 

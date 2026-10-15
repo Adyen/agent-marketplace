@@ -142,6 +142,21 @@ func ValidateCatalogs() error {
 	return err
 }
 
+// PluginEnvConcepts returns the plugin_env concept names declared by the
+// harness's shipped catalog, in sorted order. The plugin catalog's
+// root_token references these concepts.
+func PluginEnvConcepts(h target.Target) []string {
+	r, err := shipped()
+	if err != nil {
+		return nil
+	}
+	c, ok := r.catalogs[h]
+	if !ok {
+		return nil
+	}
+	return slices.Sorted(maps.Keys(c.PluginEnv))
+}
+
 func loadCatalogs(files fs.FS, pattern string) (*registry, error) {
 	names, err := fs.Glob(files, pattern)
 	if err != nil {

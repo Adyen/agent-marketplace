@@ -1,0 +1,12 @@
+# Catalog data for pkg/harness-compilation/pluginpolicy/catalogs/windsurf.yaml.
+schema: 1
+harness: windsurf
+evidence:
+  checked: "2026-10-15"
+  refs:
+    - https://docs.devin.ai/cli/extensibility/plugins
+  notes: "Devin plugins work across Devin cloud sessions, the Devin CLI, and Devin Desktop (Windsurf); Devin falls back through .devin-plugin, .claude-plugin, and root plugin.json manifests."
+accepts: [claude-plugin, agent-plugin]
+delivery:
+  decompose: {status: verified}
+  native: {status: unverified}

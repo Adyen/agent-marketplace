@@ -59,6 +59,15 @@ For a vendor update, change the embedded catalog and prove it with an independen
 5. **Review evidence drift.** When an audit reports `source.evidence-changed`, re-read the first-party source before updating its SHA baseline.
 6. **Review output changes.** Changing an actively tested native spelling may require deliberate compiler-matrix and golden updates. Real changes are not limited to a YAML entry, one fixture line, and the generated reference.
 
+## Update a shipped plugin catalog
+
+Plugin harness knowledge is catalog data, the same as hooks and tools: one YAML file per recognized package format in `pluginpolicy/formats/` and one per harness target in `pluginpolicy/catalogs/`.
+
+1. **Add or correct a fact.** Edit the format or harness catalog with the vendor spelling as the key and a closed-enum outcome as the value. Update `evidence.checked` and keep the first-party refs that prove the fact; add the new ref URL as a `pluginpolicy` source in [`tools/model-catalog-audit/document_sources.go`](../../tools/model-catalog-audit/document_sources.go).
+2. **Topology stays in Go.** Manifest paths, component directories, and catalog roots live in `target/package_layout.go`, validated like `NativeLayout`. A new recognized package format needs a format catalog and a package-layout entry together.
+3. **Native delivery needs a probe.** `delivery.native.status: verified` is rejected unless it names a probe identifier defined in `tools/harness-compat` and a package format the harness `accepts`. Until a native probe exists, keep `unverified`.
+4. **Run local checks.** From the repository root, run `make catalog-docs` (which refreshes `site/docs/reference/plugin-support.md`), then `make catalog-check`. Both run offline; the check validates catalogs, package layouts, probe references, and the freshness of the generated reference.
+
 ## Investigate nightly model drift
 
 The daily **Harness Images** workflow runs a separate, read-only model audit. It fails on inventory differences, changed model-related documentation, or unavailable/unparseable sources. It publishes a job summary and a `model-catalog-audit-<run-id>` JSON/log artifact even when the audit fails. It never edits catalogs, opens PRs, or makes authenticated model calls. Normal PR tests and `make model-catalog-check` remain offline.
