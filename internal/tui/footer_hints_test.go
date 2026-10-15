@@ -63,7 +63,7 @@ func TestFooterAlwaysShowsPaletteHelpAndQuit(t *testing.T) {
 
 func TestFooterShowsActionHintsWhenWide(t *testing.T) {
 	m := footerFixture(120)
-	assertFooterFits(t, renderFooter(m), 120, "~ drift unavailable", "/ search", "s sync", ": commands")
+	assertFooterFits(t, renderFooter(m), 120, "~ drift unavailable", "/ search", "s sync", ": commands", "v view")
 }
 
 func TestFooterErrorStateKeepsDiagnosticsAndFloor(t *testing.T) {
