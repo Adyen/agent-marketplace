@@ -84,7 +84,7 @@ Records that `agent-marketplace` keeps about which entries it wrote into setting
 
 ## Prerequisite
 
-Another resource that a resource needs to work, declared in its front matter under `metadata.requires`. An unmet prerequisite produces an advisory warning with the install command that fixes it; it never blocks the install or changes the exit status. See [Declare resource prerequisites](./how-to/author/declare-resource-prerequisites.md) and the [resource prerequisites reference](./reference/resource-prerequisites.md).
+Another resource that a resource needs to work, declared in its front matter under `metadata.requires`. An unmet prerequisite produces an advisory warning with the install command that fixes it; it never blocks the install. Only `sync --strict` (including `sync --strict --check`) fails on an unmet prerequisite. See [Declare resource prerequisites](./how-to/author/declare-resource-prerequisites.md) and the [resource prerequisites reference](./reference/resource-prerequisites.md).
 
 ## Ref
 

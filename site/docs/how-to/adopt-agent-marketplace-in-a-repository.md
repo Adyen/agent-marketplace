@@ -7,7 +7,7 @@ Add `agent-marketplace` to a repository so everyone on the team gets the same sk
 - `agent-marketplace` is installed and on your `PATH` (see [Install](../install.md)). Everyone who syncs the repository, including CI, needs version v4.0.9 or newer, because older versions cannot read the lockfile this guide creates.
 - You have the URL of a Git [registry](../glossary.md#registry) that contains the resources you want.
 - You know which [harnesses](../glossary.md#harness) the project uses.
-- You are comfortable running commands in a terminal from the repository's root folder. If not, read [Terminal basics](../terminal-basics.md) first.
+- A terminal open at the repository's root folder.
 
 ## 1. Create the repository configuration
 
@@ -16,6 +16,8 @@ Create the `.agents` folder:
 ```bash
 mkdir -p .agents
 ```
+
+`mkdir -p` prints nothing on success.
 
 Create `.agents/config.yaml` with a text editor and add a minimal configuration:
 
@@ -65,7 +67,7 @@ config.yaml  lock.yaml
 `.agents/lock.yaml` records the exact commit that `v1.4.0` resolved to.
 
 ::: tip
-If `~/.agents/config.yaml` does not exist yet, first-run creation uses v4. Existing unsupported roots or fragments refuse before new acquisition or writes; [convert them with an older released migrator before upgrading](./migrate-configuration.md). The repository's `harnesses` list still decides where this repository's output goes.
+If `~/.agents/config.yaml` does not exist yet, the first `sync` also creates it, as a v4 file with the default harness list. Existing unsupported roots or fragments refuse before new acquisition or writes; [convert them with an older released migrator before upgrading](./migrate-configuration.md). The repository's `harnesses` list still decides where this repository's output goes.
 :::
 
 ## 3. Ignore generated harness output
@@ -76,6 +78,8 @@ Sync recreates the harness folders from the configuration and the lock, so most 
 printf '%s\n' '.claude/skills/' '.claude/.claude-plugin/' >> .gitignore
 ```
 
+This appends the two lines to `.gitignore` and prints nothing.
+
 ## 4. Commit the configuration
 
 ```bash
@@ -83,10 +87,12 @@ git add .agents/config.yaml .agents/lock.yaml .gitignore
 git commit -m "Add agent-marketplace configuration"
 ```
 
+`git add` prints nothing; `git commit` prints its usual summary, for example `[main 1a2b3c4] Add agent-marketplace configuration` followed by the file count.
+
 A teammate who clones the repository runs `agent-marketplace sync` and gets the same resources at the same commit. To check the setup in CI, see [how to keep resources reproducible](./keep-resources-reproducible.md).
 
 ## Troubleshooting
 
-- If sync reports that no target harness is configured, add `harnesses` to `.agents/config.yaml` or to `~/.agents/config.yaml`.
+- If sync reports `no machine-wide target harness set configured`, add `harnesses` to `.agents/config.yaml` or to `~/.agents/config.yaml`.
 - If the `ref` does not resolve, check that the tag or branch exists in the registry and that you can clone it. For private registries, see [configure private Git registries](./configure-private-git-registries.md).
-- If a teammate or CI job fails with `lock.invalid-document`, check its version with `agent-marketplace --version`. Versions older than v4.0.9 cannot read the lock; upgrade them.
+- If a teammate or CI job fails with `lock.invalid-document`, check its version with `agent-marketplace --version`, which prints the installed version. Versions older than v4.0.9 cannot read the lock; upgrade them.

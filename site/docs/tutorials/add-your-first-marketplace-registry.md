@@ -102,7 +102,7 @@ EOF
 
 The `registries` list is empty because you add the registry from the admin panel later.
 
-`management.allowed_origins` lets administrators add registries hosted on `https://github.com`. The `github` profile points the worker at the image's CA bundle so it can clone from GitHub. `allow_insecure_localhost: true` permits the plain-HTTP `localhost` origin, which the admin panel otherwise refuses.
+`management.allowed_origins` permits registries hosted on `https://github.com`, and the `github` profile gives the worker the CA bundle it needs to clone from GitHub. `allow_insecure_localhost: true` accepts the plain-HTTP `localhost` origin, which the admin panel otherwise refuses.
 
 ::: danger Local development only
 In this setup, the local proxy treats every request as coming from the administrator `local-operator`, with no sign-in. Never publish this proxy beyond `127.0.0.1` or reuse this configuration in production.
@@ -158,7 +158,7 @@ The image names start with `marketplace-tutorial`, the project name from step 1.
 
 ## 4. Hand registry management to the database
 
-Adoption is a one-time step that moves registry and policy settings from the YAML file into the database, where the admin panel can edit them. With `management.mode: database`, the Marketplace refuses to start until adoption has run. Run it once before the first start:
+Adoption moves registry and policy settings from the YAML file into the database, where the admin panel can edit them. With `management.mode: database`, the Marketplace refuses to start until adoption has run, so run it once before the first start:
 
 ```bash
 docker compose run --rm --no-deps app serve adopt \
@@ -210,7 +210,7 @@ The **Registries** page opens and says there are no registries yet:
 
 ![The Registries admin page showing "No registries are managed yet" and an Add registry button](../images/add-registry/01-empty-registries.png)
 
-In the top right corner, you can see that you're signed in as `local-operator` and that the configuration is at **Revision 1**, which the adoption in step 4 created.
+The top right corner shows you signed in as `local-operator`, with the configuration at **Revision 1**, which the adoption in step 4 created.
 
 ## 7. Describe the new registry
 
@@ -224,7 +224,7 @@ Click **Add registry**. Fill in the form with these values and leave the other f
 | Ref or exact commit | `main` |
 | Acquisition | **Mirror** |
 | Root 1 path | `skills` |
-| Credential / trust profile | `github — https://github.com` |
+| Credential / trust profile | `github` (the option that also lists `https://github.com`) |
 | Publisher name | `obra` |
 | Default license | `MIT` |
 
@@ -232,11 +232,7 @@ Your form now looks like this:
 
 ![The Add registry form filled in with the superpowers registry values](../images/add-registry/02-registry-form.png)
 
-**Acquisition** starts as **Index only** in a new form. **Mirror** makes the Marketplace keep its own copy of every published resource.
-
-**Root 1 path** tells the Marketplace which directory of the repository to scan. In this repository, the skills live under `skills/`.
-
-**Default license** applies to every resource that doesn't declare its own license. None of these skills declares one, and by default the Marketplace rejects resources without a license. Entering `MIT`, the repository's license, lets them through.
+**Acquisition** starts as **Index only** in a new form; **Mirror** makes the Marketplace keep its own copy of every published resource. **Root 1 path** names the repository directory to scan; here the skills live under `skills/`. **Default license** applies to resources that declare none. These resources declare none, and the Marketplace rejects unlicensed resources by default, so the form uses the repository's license, `MIT`.
 
 ## 8. Preview what the Marketplace will find
 
@@ -268,7 +264,7 @@ The Result step confirms that the change was accepted as revision 2 and that ind
 
 ![Result step: Change accepted as revision 2, with a managed-reconcile job](../images/add-registry/05-change-accepted.png)
 
-An accepted change is not yet published. The job status refreshes on its own for about a minute; you can also click **Refresh job status**. When the job shows **Completed**, click **Close**.
+An accepted change is not yet published. The job status refreshes on its own for about a minute. When the job shows **Completed**, click **Close**.
 
 ## 10. Watch the registry get indexed
 

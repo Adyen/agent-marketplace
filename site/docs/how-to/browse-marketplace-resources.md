@@ -6,7 +6,7 @@ Use the hosted [Marketplace](../glossary.md#marketplace) browser to find a resou
 
 Open your Marketplace's resource browser and search by text. You can narrow the results to one resource kind or to one or more registries. To widen the search again, remove a filter chip or clear all filters. The page URL contains your search and filters, so you can bookmark it or share it.
 
-When the operator connects an inventory metrics endpoint, browsing orders resources by current reported adoption, while a text search still puts the most relevant matches first. Rows may show a "reported installations" count: the number of distinct installations whose latest enabled configuration within the last 30 days reports the resource. The count covers only telemetry-reporting installations matched by Git identity or explicit coordinates from this Marketplace, so it can undercount, and a row without a count means no reported data rather than zero use.
+When the operator connects an inventory metrics endpoint, browsing orders resources by current reported adoption, while a text search still puts the most relevant matches first. Rows may show a "reported installations" count. Use it to compare candidates, but treat it as a lower bound: it covers only telemetry-reporting installations, and a row without a count means no count is available, not that use is zero. The [HTTP API reference](../reference/marketplace-http-api.md) documents the exact count semantics.
 
 Scroll down to load more results. If a request fails, retry it; the results already on the page stay visible. Check the registry and the kind as well as the name, because the same name can appear in different kinds and sources.
 
@@ -28,9 +28,9 @@ You can still inspect a revoked or policy-rejected revision, but its install act
 
 ## 3. Choose a revision and copy its command
 
-The command under **Install with the CLI** pins the revision you are viewing. Copy it to install exactly that revision, or share the revision's page URL so someone else can inspect the same content. If you use a resource URL without a revision, the CLI can pick a newer usable revision later.
+The command under **Install** pins the revision you are viewing. Copy it to install exactly that revision, or share the revision's page URL so someone else can inspect the same content. If you use a resource URL without a revision, the CLI can pick a newer usable revision later.
 
-Before you run the command, [install the CLI](../install.md), choose your target [harnesses](../glossary.md#harness), and check that the CLI can edit the configuration file it will write to. You do not need to register the Marketplace endpoint first to install from a browser URL. See the [configuration compatibility note](../explanation/user-journeys.md#before-following-a-journey).
+Before you run the command, [install the CLI](../install.md), choose your target [harnesses](../glossary.md#harness), and check that the CLI can edit the configuration file it will write to. You do not need to register the Marketplace endpoint first to install from a browser URL. See the [configuration compatibility note](../explanation/user-journeys.md#configuration-compatibility).
 
 Run the copied command inside the repository where you want the resource. By default it installs into the repository scope. To choose a different scope, add `--scope`:
 
@@ -39,7 +39,7 @@ agent-marketplace install <copied-revision-url> --scope user
 agent-marketplace install <copied-revision-url> --scope local
 ```
 
-Run only one of these. `user` installs the resource for all your projects on this machine, and `local` keeps it personal to this checkout. To share it with the team through the repository configuration, use `--scope repo`.
+Run only one of these. `user` installs the resource for all your projects on this machine, and `local` keeps it personal to this checkout. To share it with the team through the repository configuration, use `--scope repo`. Each ends with `✓ Installed <name>` on success; [hosted installation](./install-from-a-marketplace.md#_3-install-the-resource) shows the full output and the risk prompt that can appear first.
 
 ## 4. Review the verified CLI result
 
@@ -52,7 +52,7 @@ agent-marketplace status
 agent-marketplace sync --check
 ```
 
-Check that the revision, the configuration layer, and the harness targets are the ones you chose. Then open or reload your harness. If installation fails or the name conflicts with another resource, see [hosted installation troubleshooting](./install-from-a-marketplace.md#troubleshooting).
+`status` prints the `MARKETPLACE PINS` table, where the new pin's `STATE` should read `current`, and `sync --check` prints nothing apart from any warnings and exits `0` when the checkout matches. Check that the revision, the configuration layer, and the harness targets are the ones you chose. Then open or reload your harness. If installation fails or the name conflicts with another resource, see [hosted installation troubleshooting](./install-from-a-marketplace.md#troubleshooting).
 
 ## Continue the journey
 

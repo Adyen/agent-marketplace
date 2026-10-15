@@ -54,11 +54,11 @@ agent-marketplace install \
   --path resources
 ```
 
-The CLI adds the registry as a source in `.agents/config.yaml`, selects all of its resources with `all: true`, and syncs. Add `--scope user` or `--scope local` to write to a different configuration file.
+The CLI adds the registry as a source in `.agents/config.yaml`, selects all of its resources with `all: true`, and syncs. It prints the bare installed names it selected, for example `Installed code-review, release in this repo`. Add `--scope user` or `--scope local` to write to a different configuration file; the scope label in the line changes to `user-wide` or `locally` accordingly.
 
 If the last folder name in `--path` matches a resource name, the CLI installs only that resource.
 
 ## Troubleshooting
 
 - If the CLI reports `resource or collection "platform-onboarding" not found in configured registries`, no configured registry publishes that collection. Check the registry's `path` and `ref`.
-- If you do not want one of the members, remove it with `agent-marketplace remove <member-name>`. The collection stays selected, and the CLI adds an exclusion for that member to the same configuration file.
+- If you do not want one of the members, remove it with `agent-marketplace remove <member-name>`, which prints `Excluded <member-name> (provided by collection:platform-onboarding)`. The collection stays selected, and the CLI adds an exclusion for that member to the same configuration file.

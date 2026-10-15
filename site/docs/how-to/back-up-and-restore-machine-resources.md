@@ -27,7 +27,16 @@ Keep a copy of your machine-wide `agent-marketplace` setup and restore it on the
    agent-marketplace backup list
    ```
 
-   Archives are stored under `~/.agent-marketplace/backups/<harness>/`. Most harnesses get one timestamped `.tar.gz` file per backup. Codex writes to two folders, so it gets one archive per folder plus a `.set.json` file that groups them.
+   Archives are stored under `~/.agent-marketplace/backups/<harness>/`. Most harnesses get one timestamped `.tar.gz` file per backup. Codex writes to two folders, so it gets one archive per folder plus a `.set.json` file that groups them. With one backup for Claude, the output looks like this:
+
+   ```text
+   Backups directory: /home/you/.agent-marketplace/backups
+
+   claude (1):
+     2026-10-12-230443
+   ```
+
+   With no backups it prints `No backups found.`
 
 `sync` also creates one of these backups before it changes anything, unless you pass `--no-backup`. Old archives are deleted automatically: by default `agent-marketplace` keeps at most 10 per day and archives from the 14 most recent days. To change this, add a `backup:` block to `~/.agents/config.yaml` with `enabled`, `max_days`, or `max_per_day`.
 
@@ -37,7 +46,7 @@ Keep a copy of your machine-wide `agent-marketplace` setup and restore it on the
 agent-marketplace backup restore --target claude
 ```
 
-Replace `claude` with the harness you want. Valid values are `claude`, `codex`, `cursor`, `devin`, `factory`, `gemini`, and `windsurf`.
+Replace `claude` with the harness you want. Valid values are `claude`, `codex`, `cursor`, `devin`, `factory`, `gemini`, and `windsurf`. It prints `Overlay-restored claude from backup <timestamp>`.
 
 The command copies the newest archive for that harness back into the machine-wide harness folder. Files in the archive overwrite files at the same paths. Files created after the backup stay in place.
 
@@ -54,6 +63,8 @@ done
 tar -czf agent-marketplace-machine-state.tar.gz "${files[@]}"
 ```
 
+The snippet leaves `agent-marketplace-machine-state.tar.gz` in the current folder. Because the paths are absolute, `tar` may print a `Removing leading '/'` note while it builds the archive; that is expected and the archive is still usable.
+
 If your configuration uses `include`, add those files to the list. To take the harness-folder archives with you as well, add `~/.agent-marketplace/backups`.
 
 ## Restore on a new machine
@@ -61,14 +72,14 @@ If your configuration uses `include`, add those files to the list. To take the h
 `backup restore` only reads archives under `~/.agent-marketplace/backups/` on the machine where you run it. To use them on a new machine, copy that folder across first.
 
 1. [Install `agent-marketplace`](../install.md) on the new machine.
-2. Copy `agent-marketplace-machine-state.tar.gz` to the new machine and extract it. `tar` drops the leading `/` from paths when it creates an archive, so if your home folder has the same path on both machines, extract from the root folder: `tar -xzf agent-marketplace-machine-state.tar.gz -C /`. Otherwise extract it anywhere and move the files to the same places under the new home folder.
+2. Copy `agent-marketplace-machine-state.tar.gz` to the new machine and extract it. `tar` drops the leading `/` from paths when it creates an archive, so if your home folder has the same path on both machines, extract from the root folder: `tar -xzf agent-marketplace-machine-state.tar.gz -C /` (prints nothing on success). Otherwise extract it anywhere and move the files to the same places under the new home folder.
 3. Download the locked snapshots and write the harness output without changing your configuration or lock:
 
    ```bash
    agent-marketplace sync --locked
    ```
 
-   If the restored lock does not match the restored configuration, this stops with `lock.missing` or `lock.stale` and changes nothing. Run `agent-marketplace sync --check` only after this step: on a fresh machine the cache is empty, so a check fails with `lock.snapshot-unavailable`.
+   On success it prints the same `Installed ... Removed ...` summary as a normal `sync`. If the restored lock does not match the restored configuration, this stops with `lock.missing` or `lock.stale` and changes nothing. Run `agent-marketplace sync --check` only after this step: on a fresh machine the cache is empty, so a check fails with `lock.snapshot-unavailable`.
 4. Confirm that everything is in sync:
 
    ```bash

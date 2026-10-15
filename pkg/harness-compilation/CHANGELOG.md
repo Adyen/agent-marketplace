@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Devin converted command skills keep their restrictions
+
+Devin ingestion no longer recovers a skill marked `x-agent-marketplace-kind: command` as a command when the skill declares `permissions`, an `agent` or `subagent` selector, or triggers that do not include `user`. Those controls used to be dropped with `ingest.devin.command-field-dropped`, so a Devin-to-Devin round trip lost a deny policy and made a model-only resource user-invocable. The resource is now refused with the new error `ingest.devin.command-security-unsupported`, which names the fields but never their values; removing the marker ingests it as a skill with its controls intact. `model`, and extra activation next to `user`, are still dropped with the existing warning: a converted command is user-only, so dropping them only narrows it.
+
+Devin command compilation now reserves `agent` and `subagent` alongside `permissions`, so command extension fields cannot select the execution agent of a converted command skill. The selectors are omitted with `compile.canonical-field-overrides-extra` and the mapped `allowed-tools` restriction is kept. Ordinary Devin skills keep their typed `agent` and `subagent` fields.
+
 ### The Claude plugin form no longer drops a root-level SKILL.md
 
 `LoadBundleWithOptions` selects the plugin form for both `.claude-plugin/plugin.json` manifests and bare plugin layouts, and that form only scanned `skills/` subdirectories. A repository that IS a single skill (root `SKILL.md`, no `skills/` tree) therefore ingested zero resources with no diagnostic — the layout Claude Code documents for manifest `"skills": ["./"]` and that `github.com/blader/humanizer` ships. The plugin form now loads a root `SKILL.md` through `bundle.LoadRootSkill` when one exists. A root skill whose frontmatter name duplicates a `skills/` entry is dropped with the new warning `ingest.claude.duplicate-root-skill`; the `skills/` entry wins deterministically because it loads first in sorted order. Skill support files no longer include `.git` directories at any depth: a root skill's directory is the whole checkout, a marketplace clone keeps `.git` on disk, and VCS internals were being published into installable archives and fed to bounded support reads.

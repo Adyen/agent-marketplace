@@ -45,7 +45,7 @@ resources:
 
 The local file is applied on top of the committed one. In this checkout, `my-personal-skill` is added and `some-team-skill` is hidden. Without its own exact `apiVersion: agent-marketplace/v4`, this root fails with `v4.api-version-required` (omitted field) or `v4.api-version` (unsupported or invalid value), identifying the local file and field. The fragment version exception does not apply to this root. Without the repeated source it reports `v4.undefined-source`. The local file cannot contain `harnesses`. Put only resources here that the team does not need.
 
-You can also let the CLI write this file: `agent-marketplace install <name> --scope local` and `agent-marketplace remove <name> --scope local` edit `.agents/config.local.yaml` for you.
+You can also let the CLI write this file: `agent-marketplace install <name> --scope local` prints `Installed <name> locally`, and `agent-marketplace remove <name> --scope local` prints `Removed <name>`; both edit `.agents/config.local.yaml` for you.
 
 ## 2. Sync
 
@@ -53,7 +53,7 @@ You can also let the CLI write this file: `agent-marketplace install <name> --sc
 agent-marketplace sync
 ```
 
-When `.agents/config.local.yaml` exists, the CLI adds `.agents/config.local.yaml` and `.agents/lock.local.yaml` to the repository's `.gitignore` if they are not listed yet. Sync writes `.agents/lock.local.yaml` for the Git registries in your local file.
+It prints the usual `Installed <n>  Removed <n>  Malformed <n>  Errors <n>` summary, followed by a single `→` line listing the output roots it changed, separated by commas; that line appears only when sync writes or removes output. When `.agents/config.local.yaml` exists, the CLI adds `.agents/config.local.yaml` and `.agents/lock.local.yaml` to the repository's `.gitignore` if they are not listed yet. Sync writes `.agents/lock.local.yaml` for the Git registries in your local file.
 
 ## 3. Verify the override
 
@@ -72,4 +72,4 @@ In `SYNCED RESOURCES`, `my-personal-skill` appears with `REPO*` in the `SOURCE` 
 ## Troubleshooting
 
 - If `some-team-skill` still appears, it may be required, or it may come from your user or organization configuration. Check its `SOURCE` column under `SYNCED RESOURCES`.
-- If `.agents/config.local.yaml` is already tracked by Git, remove it from the index with `git rm --cached .agents/config.local.yaml` and make sure `.gitignore` lists it.
+- If `.agents/config.local.yaml` is already tracked by Git, remove it from the index with `git rm --cached .agents/config.local.yaml` (it prints `rm '.agents/config.local.yaml'`) and make sure `.gitignore` lists it.

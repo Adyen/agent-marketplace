@@ -92,6 +92,14 @@ curl -fsS https://marketplace.example.com/.well-known/agent-marketplace.json
 curl -fsS http://<api-host>:9090/readyz
 ```
 
+Exact output for the first and last calls; typical output (truncated) for the well-known document:
+
+```text
+{"status":"ok"}
+{"instance_id":"team-marketplace","version":"...","canonical_url":"https://marketplace.example.com","api_base":"/api/v1",...}
+{"status":"ready"}
+```
+
 `/healthz` shows that the process is running. `/readyz` returns `{"status":"ready"}` only when the database's recorded configuration authority matches `management.mode`, the stored revocations match the process's configuration, the metadata store is readable, and the blob store responds. The [health and metrics reference](../../reference/marketplace-health-and-metrics.md#readyz) describes each check.
 
 The worker queues a refresh for every configured registry when it starts. To run the first ingestion yourself and watch it finish, run this from the worker image:
