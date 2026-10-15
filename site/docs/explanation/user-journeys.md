@@ -1,6 +1,6 @@
 # User journeys
 
-This page describes the lifecycle of a resource for the people who use it: finding, installing, updating, and removing it. It explains what each stage decides, not how to run commands. Each stage links to its guide. Publishing resources and running a Marketplace have their own guides.
+This page covers the lifecycle of a resource for its users: finding, installing, updating, and removing it. Each stage says what it decides and links to its guide. Publishing resources and running a Marketplace have their own guides.
 
 ```text
 Find → Inspect → Choose scope and harnesses → Install → Use
