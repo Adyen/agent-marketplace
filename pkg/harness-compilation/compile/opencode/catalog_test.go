@@ -170,3 +170,42 @@ func TestSupportAndProjectReferencesTranslate(t *testing.T) {
 		}
 	}
 }
+
+// spec: harness-opencode/a-tool-override-applies-consistently
+func TestPermissionOverridesNeverNameARemappedTool(t *testing.T) {
+	compileWith := func(tools, disallow []string, override map[string]string) *compile.Result {
+		t.Helper()
+		agent := ir.NewSubagent("reviewer", "Review", "Body", "", tools, "", nil, "", nil, ir.SourceRef{})
+		agent.DisallowedTools = disallow
+		result, err := compile.Compile(agent, "opencode", compile.WithToolOverride(override))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return result
+	}
+	for _, remapped := range []string{"write", "apply_patch", "list_mcp_resources"} {
+		for _, lists := range [][2][]string{{{"X"}, nil}, {nil, {"X"}}} {
+			result := compileWith(lists[0], lists[1], map[string]string{"X": remapped})
+			if len(result.Artifacts) != 0 || !diag.HasCode(result.Diagnostics, diag.CodeSubagentOpenCodeRestrictionUnsupported) {
+				t.Fatalf("override to %s emitted an unenforced rule: %#v", remapped, result)
+			}
+		}
+	}
+	// A tool OpenCode checks under its own ID, such as an MCP tool, stays a
+	// valid consumer mapping.
+	result := compileWith(nil, []string{"X"}, map[string]string{"X": "docs_search"})
+	if len(result.Artifacts) != 1 || diag.HasErrors(result.Diagnostics) {
+		t.Fatalf("MCP tool override refused: %#v", result)
+	}
+	if permission, _ := frontmatterField(t, result.Artifacts[0].Bytes)["permission"].(map[string]any); permission["docs_search"] != "deny" {
+		t.Fatalf("permission = %v, want docs_search denied", permission)
+	}
+	// Every tool a permission key governs under another name is remapped.
+	for _, permission := range permissionTools {
+		for _, id := range permission.tools {
+			if id != permission.key && !remappedPermissionTools[id] {
+				t.Fatalf("%s is checked under %s but is not refused as an override", id, permission.key)
+			}
+		}
+	}
+}

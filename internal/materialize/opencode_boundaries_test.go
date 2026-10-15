@@ -15,6 +15,7 @@ import (
 
 	"github.com/Adyen/agent-marketplace/internal/catalog"
 	"github.com/Adyen/agent-marketplace/internal/config"
+	"github.com/Adyen/agent-marketplace/internal/harness"
 	"github.com/Adyen/agent-marketplace/internal/ownership"
 	"github.com/Adyen/agent-marketplace/internal/resolver"
 	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
@@ -416,5 +417,34 @@ func TestOpenCodeFileOverrideEmptySyncPrunesSingleScope(t *testing.T) {
 				t.Fatal("removed single-scope MCP remains installed")
 			}
 		})
+	}
+}
+
+// spec: opencode-native-configuration/unsafe-destination-or-payload-preserves-external-state
+func TestOpenCodeConfigFileOverrideKeepsRepositoryBoundary(t *testing.T) {
+	repo := openCodeSandbox(t)
+	configDir, outside := t.TempDir(), t.TempDir()
+	t.Setenv("OPENCODE_CONFIG", filepath.Join(configDir, "opencode.json"))
+	key := outputKey{target: hcc.TargetOpenCode}
+	destinations, err := harness.ResolveDestinations(key.target, false, repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The resource root is swapped for a link after destinations resolved.
+	if err := os.Symlink(outside, filepath.Join(repo, ".opencode")); err != nil {
+		t.Fatal(err)
+	}
+	home, _ := os.UserHomeDir()
+	boundary := destinationBoundary{machineScope: destinationBoundaryMachineScope(key), repoRoot: repo, homeDir: home}
+	configureDestinationBoundary(&boundary, key, destinations[0].Root, repo, destinations)
+	if err := boundary.directory(filepath.Join(repo, ".opencode", "commands"), true); err == nil {
+		t.Fatal("a linked repository .opencode was followed under OPENCODE_CONFIG")
+	}
+	if entries, _ := os.ReadDir(outside); len(entries) != 0 {
+		t.Fatalf("output escaped the repository: %v", entries)
+	}
+	// The relocated configuration file stays writable through its own root.
+	if err := boundary.directory(configDir, true); err != nil {
+		t.Fatalf("external configuration root refused: %v", err)
 	}
 }

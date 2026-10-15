@@ -1836,7 +1836,7 @@ func executeMaterializePlans(ctx context.Context, compileResult compilePhaseResu
 				continue
 			}
 		}
-		boundary := destinationBoundary{machineScope: key.machineScope || (key.target == hcc.TargetOpenCode && (os.Getenv("OPENCODE_CONFIG_DIR") != "" || os.Getenv("OPENCODE_CONFIG") != "")), repoRoot: repoRoot, homeDir: boundaryHome, linkPublicationHook: compileResult.linkPublicationHook, pruneClassificationHook: compileResult.pruneClassificationHook, pruneEnumerationHook: compileResult.pruneEnumerationHook, manifestPublicationHook: compileResult.manifestPublicationHook}
+		boundary := destinationBoundary{machineScope: destinationBoundaryMachineScope(key), repoRoot: repoRoot, homeDir: boundaryHome, linkPublicationHook: compileResult.linkPublicationHook, pruneClassificationHook: compileResult.pruneClassificationHook, pruneEnumerationHook: compileResult.pruneEnumerationHook, manifestPublicationHook: compileResult.manifestPublicationHook}
 		directories := configureDestinationBoundary(&boundary, key, outDir, repoRoot, destinations)
 		if _, hasNativeHookWork := compileResult.nativeHooks[key]; hasNativeHookWork {
 			if hookDestination, _, hookErr := nativeHookJSONLayout(key, repoRoot); hookErr == nil && !slices.Contains(boundary.roots, hookDestination.Root) {

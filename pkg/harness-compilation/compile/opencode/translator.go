@@ -284,19 +284,30 @@ var permissionTools = []struct {
 	{"question", []string{"question"}},
 }
 
+// remappedPermissionTools are native tool IDs OpenCode checks under another
+// permission key: file modifications under edit, and MCP resource readers
+// under read. A rule keyed by one of them is never evaluated, so an override
+// naming one would silently drop its restriction. Every other ID, including
+// MCP and custom tools, is checked under its own name.
+var remappedPermissionTools = map[string]bool{
+	"write": true, "apply_patch": true, "patch": true, "multiedit": true,
+	"list_mcp_resources": true, "list_mcp_resource_templates": true, "read_mcp_resource": true,
+}
+
 // permissionKeys maps a source tool list to the permission keys whose
 // governed tools express exactly the same capabilities. A key is emitted only
 // when everything it governs lies inside the requested set, and the emitted
 // keys must cover the whole set; otherwise the list cannot be represented
 // without widening or narrowing it. An explicit override names the
 // permission key for one source tool and is consumer authority, except that
-// it may not replace the restriction with the catch-all key.
+// it may not replace the restriction with the catch-all key or name a tool
+// OpenCode checks under another key.
 func permissionKeys(source target.Target, tools []string, overrides map[string]string) ([]string, bool) {
 	var keys []string
 	wanted := map[string]bool{}
 	for _, tool := range tools {
 		if override, ok := overrides[tool]; ok {
-			if override == "" || override == "*" {
+			if override == "" || override == "*" || remappedPermissionTools[override] {
 				return nil, false
 			}
 			keys = append(keys, override)

@@ -57,9 +57,10 @@ func nativeHookAggregateForScope(target targetmeta.Target, machineScope bool) (n
 
 // hookUsesResourceFiles reports whether target's native layout installs each
 // hook as its own resource file instead of declaring a shared hook aggregate.
-// Such hooks are ordinary per-resource artifacts: the aggregate ownership,
-// support-directory, and review pipeline does not apply to them, and their
-// compilers receive no installed support directory.
+// Such hooks are ordinary per-resource artifacts outside the aggregate
+// ownership pipeline: their support publishes as owned artifacts under the
+// layout's HookSupportDir, and their declarations are reviewed by
+// resource_hook_review.go.
 func hookUsesResourceFiles(target hcc.Target) bool {
 	layout, ok := targetmeta.LookupNativeLayout(targetmeta.Target(target))
 	if !ok {

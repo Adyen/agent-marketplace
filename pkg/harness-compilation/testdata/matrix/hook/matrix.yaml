@@ -419,9 +419,9 @@ cells:
         - name
       roundTripLosses:
         - command
-    # OpenCode hooks are declarations run by the fixed adapter, which sets no
-    # repository base and receives no installed support directory, so a
-    # plugin-root command cannot be represented and the hook is refused.
+    # OpenCode hooks are declarations run by the fixed adapter, which sets
+    # AGENT_MARKETPLACE_PROJECT_DIR as the repository base, so a plugin-root
+    # command resolves to the installed hook support directory.
     - from: claude
       to: opencode
       class: cross

@@ -14,18 +14,33 @@ import (
 )
 
 type destinationBoundary struct {
-	capturedRoot            *fsboundary.Dir
-	capturedRootPath        string
-	machineScope            bool
-	repoRoot                string
-	homeDir                 string
-	roots                   []string
+	capturedRoot     *fsboundary.Dir
+	capturedRootPath string
+	machineScope     bool
+	repoRoot         string
+	homeDir          string
+	roots            []string
+	// externalRoots are admitted roots outside the repository that a
+	// repository-scope output may still write, such as an OpenCode
+	// configuration file relocated by OPENCODE_CONFIG. They are captured with
+	// machine semantics while every other root keeps the repository boundary.
+	externalRoots           []string
 	legacySkillsDir         string
 	linkPublicationHook     func(string)
 	pruneClassificationHook func(string)
 	pruneEnumerationHook    func(string)
 	pruneMarkerReadHook     func(string)
 	manifestPublicationHook func(string)
+}
+
+// destinationBoundaryMachineScope reports whether key's outputs are captured
+// with machine semantics. Only OPENCODE_CONFIG_DIR relocates OpenCode
+// resources outside the repository. OPENCODE_CONFIG moves just the
+// configuration file, which is admitted as an external root, so repository
+// resources keep the repository boundary and a linked .opencode is refused
+// rather than followed.
+func destinationBoundaryMachineScope(key outputKey) bool {
+	return key.machineScope || (key.target == hcc.TargetOpenCode && os.Getenv("OPENCODE_CONFIG_DIR") != "")
 }
 
 func (b destinationBoundary) directory(dir string, create bool) error {
@@ -101,9 +116,10 @@ func (b destinationBoundary) captureDirectory(dir string, create bool) (*fsbound
 	if err != nil {
 		return nil, err
 	}
+	machine := b.machineScope || b.isExternalRoot(root)
 	if originalDir == b.legacySkillsDir {
 		if text, err := os.Readlink(originalDir); err == nil && text == "../.agents/skills" {
-			if err := harness.ValidateDestinationPath(b.machineScope, b.repoRoot, b.homeDir, root, filepath.Dir(rel)); err != nil {
+			if err := harness.ValidateDestinationPath(machine, b.repoRoot, b.homeDir, root, filepath.Dir(rel)); err != nil {
 				return nil, err
 			}
 			if !create {
@@ -114,12 +130,22 @@ func (b destinationBoundary) captureDirectory(dir string, create bool) (*fsbound
 			}
 		}
 	}
-	return harness.CaptureDestinationPath(b.machineScope, b.repoRoot, b.homeDir, root, rel, create)
+	return harness.CaptureDestinationPath(machine, b.repoRoot, b.homeDir, root, rel, create)
+}
+
+func (b destinationBoundary) isExternalRoot(root string) bool {
+	for _, external := range b.externalRoots {
+		if absolute, err := filepath.Abs(external); err == nil && filepath.Clean(absolute) == root {
+			return true
+		}
+	}
+	return false
 }
 
 func (b destinationBoundary) validateDirectories(dirs []string) (string, error) {
 	for _, root := range b.roots {
-		if err := harness.ValidateDestinationRoot(b.machineScope, b.repoRoot, b.homeDir, root); err != nil {
+		absolute, _ := filepath.Abs(root)
+		if err := harness.ValidateDestinationRoot(b.machineScope || b.isExternalRoot(filepath.Clean(absolute)), b.repoRoot, b.homeDir, root); err != nil {
 			return root, err
 		}
 	}
@@ -147,7 +173,24 @@ func configureDestinationBoundary(boundary *destinationBoundary, key outputKey, 
 		}
 		if len(destination.AggregateRoutes) > 0 {
 			directories = append(directories, filepath.Dir(filepath.Join(destination.Root, destination.AggregateFile)))
+			if key.target == hcc.TargetOpenCode && !boundary.machineScope && outsideRepository(repoRoot, root) {
+				boundary.externalRoots = append(boundary.externalRoots, root)
+			}
 		}
 	}
 	return directories
+}
+
+// outsideRepository reports whether root lies outside repoRoot.
+func outsideRepository(repoRoot, root string) bool {
+	repo, err := filepath.Abs(repoRoot)
+	if err != nil {
+		return false
+	}
+	absolute, err := filepath.Abs(root)
+	if err != nil {
+		return false
+	}
+	rel, err := filepath.Rel(filepath.Clean(repo), filepath.Clean(absolute))
+	return err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel)
 }
