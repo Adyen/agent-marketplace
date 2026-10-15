@@ -5,7 +5,7 @@ import { useCopyText } from '~/composables/useCopyText'
 import { useResourceInspectionPreview } from '~/composables/useResourceInspectionPreview'
 import { isResourceKind } from '~/lib/api'
 import { DOCS_PATH } from '~/lib/site'
-import { installCommand, kindLabel, resourceAvailability, resourceAvailabilityCopy, resourceLatestRoute, resourceRoute, shortDigest } from '~/lib/presentation'
+import { installCommand, kindLabel, resourceAvailability, resourceAvailabilityCopy, resourceLatestRoute, resourceRoute, shortDigest, sourceBrowseUrl, sourceRepositoryLabel } from '~/lib/presentation'
 import type { InspectionFile, InspectionManifest, Marketplace, Registry, ResourceKind, ResourceListItem, ResourceRevision } from '~/types/marketplace'
 
 type Props = {
@@ -115,6 +115,8 @@ const assessmentDecision = computed(() => {
   }
 })
 const assessedAt = computed(() => formatDate(props.resource.assessment.assessed_at))
+const sourceLink = computed(() => sourceBrowseUrl(props.resource.source))
+const sourceLabel = computed(() => sourceRepositoryLabel(props.resource.source?.repository_url ?? ''))
 const technicalEntries = computed<TechnicalEntry[]>(() => {
   const occurrence = props.resource.occurrence as Record<string, unknown>
   const coordinate = props.resource.coordinate
@@ -241,6 +243,16 @@ function formatValue(value: unknown): string {
         <button v-if="descriptionOverflows" type="button" class="mt-1 text-sm font-medium text-primary underline-offset-4 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary" aria-controls="resource-description" :aria-expanded="descriptionExpanded" @click="descriptionExpanded = !descriptionExpanded">{{ descriptionExpanded ? 'Show less' : 'Read more' }}</button>
       </div>
       <div data-testid="revision-row" class="mt-4 flex flex-col items-start gap-3 text-sm sm:flex-row sm:gap-9">
+        <div v-if="sourceLink" data-testid="source-group" class="min-w-0 max-w-full">
+          <span data-testid="source-label" class="text-xs font-medium text-highlighted">Source</span>
+          <div class="mt-1 flex min-h-8 min-w-0 items-center gap-2">
+            <a data-testid="source-link" :href="sourceLink" target="_blank" rel="noopener noreferrer" :aria-label="`View source of ${name} in ${sourceLabel} (opens in a new tab)`" class="inline-flex min-w-0 items-center gap-1 text-sm font-medium text-primary underline-offset-4 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary">
+              <span class="truncate">{{ sourceLabel }}</span>
+              <UIcon name="i-lucide-external-link" class="size-3.5 shrink-0" data-testid="source-external-icon" aria-hidden="true" />
+            </a>
+            <span data-testid="source-path" class="min-w-0 truncate font-mono text-xs text-muted" :title="resource.source?.path">{{ resource.source?.path }}</span>
+          </div>
+        </div>
         <div data-testid="revision-group" class="min-w-0">
           <div class="flex items-center gap-2">
             <span data-testid="revision-label" class="text-xs font-medium text-highlighted">Revision<template v-if="selectedIsCurrent"> (latest)</template></span>
@@ -251,10 +263,6 @@ function formatValue(value: unknown): string {
             <CopyButton :copied="copied === 'revision'" :copy-label="`Copy revision ${compactRevisionLabel(resource)}`" copied-label="Revision copied" icon-only variant="ghost" @click="copy(resource.content_digest, 'revision')" />
             <span v-if="copied === 'revision'" data-testid="revision-copy-status" role="status" class="text-xs font-medium text-muted">Copied</span>
           </div>
-        </div>
-        <div data-testid="scanned-group" class="min-w-0">
-          <span data-testid="scanned-label" class="block text-xs font-medium text-highlighted">Scanned</span>
-          <time data-testid="revision-scanned-at" class="mt-1 flex min-h-8 items-center text-sm text-muted" :datetime="resource.assessment.assessed_at">{{ assessedAt }}</time>
         </div>
       </div>
     </header>
