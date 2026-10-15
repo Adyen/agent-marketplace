@@ -2,6 +2,8 @@
 import { computed, ref, watch } from 'vue'
 import type { SourceDescription, SourceInput } from './api/client'
 import type { WorkspaceController } from './controller'
+import ChoiceList from './ChoiceList.vue'
+import GuiModal from './GuiModal.vue'
 import SourceForm from './SourceForm.vue'
 import SourceList from './SourceList.vue'
 
@@ -12,6 +14,11 @@ const emit = defineEmits<{ cancel: [] }>()
 const step = ref<'targets' | 'consent' | 'sources'>('targets')
 const draft = ref<Set<string>>(new Set())
 const consent = ref<boolean | null>(null)
+const consentOptions = [
+  { value: 'yes', label: 'Share basic telemetry', ariaLabel: 'Yes, enable basic telemetry' },
+  { value: 'no', label: "Don't share", ariaLabel: 'No, do not send telemetry' },
+]
+const consentValue = computed(() => (consent.value === null ? null : consent.value ? 'yes' : 'no'))
 const pendingSources = ref<SourceInput[]>([])
 const formEpoch = ref(0)
 const pending = ref(false)
@@ -121,127 +128,109 @@ async function finish() {
 </script>
 
 <template>
-  <UModal
-    v-model:open="open"
-    title="Set up Agent Marketplace"
-    aria-label="Set up Agent Marketplace"
-    :dismissible="!submitting"
-    :ui="{ content: 'overflow-y-auto' }"
-  >
-    <template #content>
-      <section class="settings" aria-label="Set up Agent Marketplace">
-        <h2 class="settings__heading">Set up Agent Marketplace</h2>
-        <p v-if="actionError" role="alert" class="settings__error">{{ actionError }}</p>
-        <p v-if="!canInitialize" role="status">Initialization is not currently available.</p>
-        <p v-else-if="detectionUnavailable" role="status">Harness detection is unavailable; select targets manually.</p>
+  <GuiModal v-model:open="open" title="Set up Agent Marketplace" icon="sparkle" size="lg" :dismissible="!submitting">
+    <p class="gui-steps">
+      <span :class="{ 'gui-steps__current': step === 'targets' }">1 Targets</span>
+      <span aria-hidden="true">·</span>
+      <span :class="{ 'gui-steps__current': step === 'consent' }">2 Telemetry</span>
+      <span aria-hidden="true">·</span>
+      <span :class="{ 'gui-steps__current': step === 'sources' }">3 Sources</span>
+    </p>
+    <p v-if="actionError" role="alert" class="settings__error">{{ actionError }}</p>
+    <p v-if="!canInitialize" role="status">Initialization is not currently available.</p>
+    <p v-else-if="detectionUnavailable" role="status">Harness detection is unavailable; select targets manually.</p>
 
-        <template v-if="step === 'targets'">
-          <p>Choose the Harness targets this installation manages.</p>
-          <fieldset class="settings__group" :disabled="submitting">
-            <legend>Harness targets</legend>
-            <label v-for="id in options" :key="id" class="settings__option">
-              <UCheckbox
-                :model-value="draft.has(id)"
-                :label="id"
-                :aria-label="`Target ${id}`"
-                @update:model-value="toggle(id, $event)"
-              />
-            </label>
-          </fieldset>
-          <div class="settings__actions">
-            <UButton label="Cancel" color="neutral" variant="outline" aria-label="Cancel" :disabled="submitting" @click="cancel" />
-            <UButton
-              v-if="needsConsent || showSources"
-              label="Next"
-              aria-label="Next"
-              :disabled="!canInitialize || draft.size === 0 || submitting"
-              @click="nextFromTargets"
-            />
-            <UButton
-              v-else
-              label="Finish setup"
-              aria-label="Finish setup"
-              :disabled="!canInitialize || draft.size === 0 || submitting"
-              @click="finish"
-            />
-          </div>
-        </template>
-
-        <template v-else-if="step === 'consent'">
-          <p>Agent Marketplace can send basic telemetry: CLI version, OS, architecture, command name (not arguments), harness types, outcome, and coarse duration.</p>
-          <p>It does not include resource names, URLs, paths, errors, or prompts.</p>
-          <p>Project destination: {{ configuration?.telemetryDestination }}</p>
-          <p>Retention policy: {{ configuration?.retentionPolicyURL }}</p>
-          <fieldset class="settings__group" :disabled="submitting">
-            <legend>Enable basic telemetry?</legend>
-            <label class="settings__option">
-              <input
-                type="radio"
-                name="am-first-run-consent"
-                aria-label="Yes, enable basic telemetry"
-                :checked="consent === true"
-                @change="consent = true"
-              />
-              Yes
-            </label>
-            <label class="settings__option">
-              <input
-                type="radio"
-                name="am-first-run-consent"
-                aria-label="No, do not send telemetry"
-                :checked="consent === false"
-                @change="consent = false"
-              />
-              No
-            </label>
-          </fieldset>
-          <div class="settings__actions">
-            <UButton label="Back" color="neutral" variant="outline" aria-label="Back" :disabled="submitting" @click="step = 'targets'" />
-            <UButton label="Cancel" color="neutral" variant="outline" aria-label="Cancel" :disabled="submitting" @click="cancel" />
-            <UButton
-              v-if="showSources"
-              label="Next"
-              aria-label="Next"
-              :disabled="!canInitialize || consent === null || submitting"
-              @click="step = 'sources'"
-            />
-            <UButton
-              v-else
-              label="Finish setup"
-              aria-label="Finish setup"
-              :disabled="!canInitialize || consent === null || submitting"
-              @click="finish"
-            />
-          </div>
-        </template>
-
-        <template v-else>
-          <p>Sources will be added after initialization when Finish setup is pressed.</p>
-          <SourceForm :key="formEpoch" :disabled="sourceFieldsDisabled" @add="addPending" />
-          <SourceList title="Pending sources" :sources="pendingDescriptions" :organization="false">
-            <template #actions="{ source }">
-              <UButton
-                label="Remove"
-                color="neutral"
-                variant="outline"
-                :aria-label="`Remove source ${source.location}`"
-                :disabled="submitting"
-                @click="removePending(source.id)"
-              />
-            </template>
-          </SourceList>
-          <div class="settings__actions">
-            <UButton label="Back" color="neutral" variant="outline" aria-label="Back" :disabled="submitting" @click="backFromSources" />
-            <UButton label="Cancel" color="neutral" variant="outline" aria-label="Cancel" :disabled="submitting" @click="cancel" />
-            <UButton
-              label="Finish setup"
-              aria-label="Finish setup"
-              :disabled="!canInitialize || submitting"
-              @click="finish"
-            />
-          </div>
-        </template>
-      </section>
+    <template v-if="step === 'targets'">
+      <p>Choose the Harness targets this installation manages.</p>
+      <fieldset class="settings__group" :disabled="submitting">
+        <legend>Harness targets</legend>
+        <label v-for="id in options" :key="id" class="settings__option">
+          <UCheckbox
+            :model-value="draft.has(id)"
+            :label="id"
+            :aria-label="`Target ${id}`"
+            @update:model-value="toggle(id, $event)"
+          />
+        </label>
+      </fieldset>
     </template>
-  </UModal>
+
+    <template v-else-if="step === 'consent'">
+      <p>Agent Marketplace can send basic telemetry: CLI version, OS, architecture, command name (not arguments), harness types, outcome, and coarse duration.</p>
+      <p>It does not include resource names, URLs, paths, errors, or prompts.</p>
+      <p>Project destination: {{ configuration?.telemetryDestination }}</p>
+      <p>Retention policy: {{ configuration?.retentionPolicyURL }}</p>
+      <ChoiceList
+        name="am-first-run-consent"
+        legend="Enable basic telemetry?"
+        :options="consentOptions"
+        :model-value="consentValue"
+        :disabled="submitting"
+        @update:model-value="consent = $event === 'yes'"
+      />
+    </template>
+
+    <template v-else>
+      <p>Sources will be added after initialization when Finish setup is pressed.</p>
+      <SourceForm :key="formEpoch" :disabled="sourceFieldsDisabled" @add="addPending" />
+      <SourceList title="Pending sources" :sources="pendingDescriptions" :organization="false">
+        <template #actions="{ source }">
+          <UButton
+            label="Remove"
+            color="neutral"
+            variant="outline"
+            :aria-label="`Remove source ${source.location}`"
+            :disabled="submitting"
+            @click="removePending(source.id)"
+          />
+        </template>
+      </SourceList>
+    </template>
+
+    <template #footer>
+      <template v-if="step === 'targets'">
+        <UButton
+          v-if="needsConsent || showSources"
+          label="Next"
+          aria-label="Next"
+          :disabled="!canInitialize || draft.size === 0 || submitting"
+          @click="nextFromTargets"
+        />
+        <UButton
+          v-else
+          label="Finish setup"
+          aria-label="Finish setup"
+          :disabled="!canInitialize || draft.size === 0 || submitting"
+          @click="finish"
+        />
+      </template>
+      <template v-else-if="step === 'consent'">
+        <UButton
+          v-if="showSources"
+          label="Next"
+          aria-label="Next"
+          :disabled="!canInitialize || consent === null || submitting"
+          @click="step = 'sources'"
+        />
+        <UButton
+          v-else
+          label="Finish setup"
+          aria-label="Finish setup"
+          :disabled="!canInitialize || consent === null || submitting"
+          @click="finish"
+        />
+        <UButton label="Back" color="neutral" variant="outline" aria-label="Back" :disabled="submitting" @click="step = 'targets'" />
+      </template>
+      <template v-else>
+        <UButton
+          label="Finish setup"
+          aria-label="Finish setup"
+          :disabled="!canInitialize || submitting"
+          @click="finish"
+        />
+        <UButton label="Back" color="neutral" variant="outline" aria-label="Back" :disabled="submitting" @click="backFromSources" />
+      </template>
+      <UButton label="Cancel" color="neutral" variant="outline" aria-label="Cancel" :disabled="submitting" @click="cancel" />
+    </template>
+  </GuiModal>
 </template>

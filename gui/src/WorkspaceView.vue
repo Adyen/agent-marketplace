@@ -6,10 +6,16 @@ import { eligible, WorkspaceController, type Row, type WorkspaceState } from './
 import { compareRows, hasSearchTerms, highlightNameParts, rankRows, type NameSegment, type SearchMatch } from './search'
 import Confirmations from './Confirmations.vue'
 import FirstRun from './FirstRun.vue'
+import GuiIcon from './GuiIcon.vue'
 import HarnessSettings from './HarnessSettings.vue'
+import Inspector from './Inspector.vue'
+import MainToolbar from './MainToolbar.vue'
 import ResourceActions from './ResourceActions.vue'
 import ResourceInspection from './ResourceInspection.vue'
+import ResourceList, { rowElementId, rowKey, sectionElementId, sectionKey } from './ResourceList.vue'
+import Sidebar, { type SidebarGroup, type SidebarSource } from './Sidebar.vue'
 import SourcesSettings from './SourcesSettings.vue'
+import StatusBar from './StatusBar.vue'
 
 type GroupMetadata = WorkspaceState['groups'][number]
 type GroupView = GroupMetadata & { rows: Row[]; collapsed: boolean }
@@ -19,6 +25,7 @@ type VisibleEntry =
 type ViewportAnchor = { key: string; top: number }
 type SearchFoldState = { query: string; groups: Record<string, boolean> }
 type PendingResourceSelection = { rowId: string; selectedKey: string; operationId: number | null; nextKey: string | null; previous: VisibleEntry[] }
+type ElementHost = { $el: HTMLElement } | null
 
 const props = defineProps<{ controller?: WorkspaceController }>()
 
@@ -31,48 +38,78 @@ const activeQuery = ref('')
 const draftQuery = ref('')
 const appliedQuery = ref('')
 const searchEditing = ref(false)
-const searchButton = ref<HTMLButtonElement | null>(null)
-const searchInput = ref<HTMLInputElement | null>(null)
-const listRoot = ref<HTMLElement | null>(null)
 const error = ref<string | null>(null)
 const settingsOpen = ref(false)
-const settingsButton = ref<HTMLButtonElement | null>(null)
 const sourcesOpen = ref(false)
-const sourcesButton = ref<HTMLButtonElement | null>(null)
 const setupOpen = ref(false)
 const setupDismissed = ref(false)
 const setupOpened = ref(false)
-const setupButton = ref<HTMLButtonElement | null>(null)
-const openResourceButton = ref<HTMLButtonElement | null>(null)
-const resourceActionButton = ref<HTMLButtonElement | null>(null)
 const inspectionOpen = ref(false)
 const quitOpen = ref(false)
+const sidebar = ref<InstanceType<typeof Sidebar> | null>(null)
+const toolbar = ref<InstanceType<typeof MainToolbar> | null>(null)
+const inspector = ref<InstanceType<typeof Inspector> | null>(null)
+const resourceList = ref<ElementHost>(null)
+
+const storageKeys = { sidebar: 'am-gui-sidebar', inspector: 'am-gui-inspector' }
+const sidebarOverlayWidth = 720
+const inspectorOverlayWidth = 1000
+const viewportWidth = ref(window.innerWidth)
+
+function readPanelChoice(key: string): boolean | null {
+  try {
+    const value = window.localStorage.getItem(key)
+    return value === 'folded' ? true : value === 'open' ? false : null
+  } catch {
+    return null
+  }
+}
+
+function writePanelChoice(key: string, folded: boolean) {
+  try {
+    window.localStorage.setItem(key, folded ? 'folded' : 'open')
+  } catch {
+    // The panel still folds when browser storage is unavailable.
+  }
+}
+
+const sidebarChoice = ref<boolean | null>(readPanelChoice(storageKeys.sidebar))
+const inspectorChoice = ref<boolean | null>(readPanelChoice(storageKeys.inspector))
+const sidebarOverlay = computed(() => viewportWidth.value < sidebarOverlayWidth)
+const inspectorOverlay = computed(() => viewportWidth.value < inspectorOverlayWidth)
+const sidebarFolded = computed(() => sidebarChoice.value ?? sidebarOverlay.value)
+const inspectorFolded = computed(() => inspectorChoice.value ?? inspectorOverlay.value)
+const sidebarOverlayOpen = computed(() => sidebarOverlay.value && !sidebarFolded.value)
+const inspectorOverlayOpen = computed(() => inspectorOverlay.value && !inspectorFolded.value)
+const shellColumns = computed(() => {
+  const sidebarColumn = sidebarFolded.value || sidebarOverlay.value ? '0px' : 'var(--gui-sidebar-width)'
+  const inspectorColumn = inspectorFolded.value || inspectorOverlay.value ? '0px' : 'var(--gui-inspector-width)'
+  return `${sidebarColumn} minmax(0, 1fr) ${inspectorColumn}`
+})
 
 const configuration = computed(() => state.value?.state.configuration ?? null)
 
 watch(searchEditing, (isEditing, wasEditing) => {
-  if (isEditing) {
-    void nextTick(() => searchInput.value?.focus())
-  } else if (wasEditing) {
-    void nextTick(() => searchButton.value?.focus())
+  if (!isEditing && wasEditing) {
+    void nextTick(() => toolbar.value?.focusSearchButton())
   }
 })
 
 watch(settingsOpen, (isOpen, wasOpen) => {
   if (!isOpen && wasOpen) {
-    void nextTick(() => settingsButton.value?.focus())
+    void nextTick(() => sidebar.value?.focusSettings())
   }
 })
 
 watch(sourcesOpen, (isOpen, wasOpen) => {
   if (!isOpen && wasOpen) {
-    void nextTick(() => sourcesButton.value?.focus())
+    void nextTick(() => sidebar.value?.focusSources())
   }
 })
 
 watch(inspectionOpen, (isOpen, wasOpen) => {
   if (!isOpen && wasOpen) {
-    void nextTick(() => openResourceButton.value?.focus())
+    void nextTick(() => inspector.value?.focusOpenResource())
   }
 })
 
@@ -82,7 +119,11 @@ watch(setupOpen, (isOpen, wasOpen) => {
     return
   }
   if (wasOpen) {
-    void nextTick(() => (setupButton.value ?? settingsButton.value)?.focus())
+    void nextTick(() => {
+      if (!toolbar.value?.focusSetup()) {
+        sidebar.value?.focusSettings()
+      }
+    })
   }
 })
 
@@ -97,7 +138,7 @@ watch(
       setupDismissed.value = false
       if (setupOpened.value) {
         setupOpened.value = false
-        void nextTick(() => settingsButton.value?.focus())
+        void nextTick(() => sidebar.value?.focusSettings())
       }
     }
   },
@@ -120,10 +161,9 @@ function openSearch() {
   searchEditing.value = true
 }
 
-function updateSearch(event: Event) {
+function updateSearch(query: string) {
   selectionTouched.value = true
   pendingResourceSelection = null
-  const query = (event.currentTarget as HTMLInputElement).value
   draftQuery.value = query
   activeQuery.value = query
 }
@@ -153,10 +193,167 @@ function clearSearch() {
   searchEditing.value = false
 }
 
+function listElement(): HTMLElement | null {
+  return resourceList.value?.$el ?? null
+}
+
+function hasFocusWithin(element: unknown): boolean {
+  return element instanceof HTMLElement && element.contains(document.activeElement)
+}
+
+function setSidebarFolded(folded: boolean) {
+  const focusWasInside = hasFocusWithin(sidebar.value?.$el)
+  sidebarChoice.value = folded
+  writePanelChoice(storageKeys.sidebar, folded)
+  if (folded && focusWasInside) {
+    void nextTick(() => toolbar.value?.focusSidebarToggle())
+  }
+}
+
+function setInspectorFolded(folded: boolean) {
+  const focusWasInside = hasFocusWithin(inspector.value?.$el)
+  inspectorChoice.value = folded
+  writePanelChoice(storageKeys.inspector, folded)
+  if (folded && focusWasInside) {
+    void nextTick(() => toolbar.value?.focusInspectorToggle())
+  }
+}
+
+function toggleSidebar() {
+  const unfolding = sidebarFolded.value
+  const focusOnToggle = document.activeElement?.closest('.gui-toolbar__leading') != null
+  setSidebarFolded(!unfolding)
+  if (unfolding && focusOnToggle) {
+    void nextTick(() => sidebar.value?.focusToggle())
+  }
+}
+
+function toggleInspector() {
+  setInspectorFolded(!inspectorFolded.value)
+}
+
+function dismissOverlays() {
+  if (sidebarOverlayOpen.value) {
+    setSidebarFolded(true)
+  }
+  if (inspectorOverlayOpen.value) {
+    setInspectorFolded(true)
+  }
+}
+
+function showAll() {
+  const list = listElement()
+  if (list != null) {
+    list.scrollTop = 0
+  }
+}
+
+function selectGroup(groupID: string) {
+  const group = groups.value.find((candidate) => candidate.id === groupID)
+  if (group == null) {
+    return
+  }
+  if (group.collapsed) {
+    toggleGroup(groupID)
+  } else {
+    selectionTouched.value = true
+    pendingResourceSelection = null
+    selectedKey.value = sectionKey(groupID)
+  }
+  void nextTick(() => {
+    const element = document.getElementById(sectionElementId(groupID))
+    element?.scrollIntoView({ block: 'start' })
+    element?.focus({ preventScroll: true })
+  })
+}
+
+const navGroups = computed<SidebarGroup[]>(() =>
+  groups.value.map((group) => ({ id: group.id, title: group.title, count: group.rows.length })),
+)
+const pendingCount = computed(() => (view.value?.rows ?? []).filter((row) => row.group === 'pending').length)
+const sidebarSources = computed<SidebarSource[]>(() => {
+  const config = configuration.value
+  if (config == null) {
+    return []
+  }
+  return [
+    ...config.userSources.map((source) => ({ source, organization: false })),
+    ...config.organizationSources.map((source) => ({ source, organization: true })),
+  ]
+})
+
+function modalIsOpen(): boolean {
+  return document.querySelector('[role="dialog"]') != null
+}
+
+function isTextEntry(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) {
+    return false
+  }
+  if (target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement || target.isContentEditable) {
+    return true
+  }
+  return target instanceof HTMLInputElement && !['checkbox', 'radio', 'button', 'submit', 'reset'].includes(target.type)
+}
+
+function onKeydown(event: KeyboardEvent) {
+  if (event.defaultPrevented) {
+    return
+  }
+  if (event.key === 'Escape') {
+    if ((sidebarOverlayOpen.value || inspectorOverlayOpen.value) && !modalIsOpen()) {
+      event.preventDefault()
+      dismissOverlays()
+    }
+    return
+  }
+  if (modalIsOpen()) {
+    return
+  }
+  if (event.metaKey) {
+    if (event.code === 'KeyB') {
+      event.preventDefault()
+      if (event.altKey) {
+        toggleInspector()
+      } else {
+        toggleSidebar()
+      }
+    } else if (event.altKey) {
+      return
+    } else if (event.key === 'k') {
+      event.preventDefault()
+      openSearch()
+    } else if (event.key === ',') {
+      event.preventDefault()
+      settingsOpen.value = true
+    } else if (event.code === 'KeyR' && !busy.value) {
+      event.preventDefault()
+      void refresh()
+    }
+    return
+  }
+  if (event.ctrlKey || event.altKey || isTextEntry(event.target)) {
+    return
+  }
+  if (event.key === '/') {
+    event.preventDefault()
+    openSearch()
+  } else if (event.key === 's' && ready.value && listElement()?.contains(document.activeElement) === true) {
+    event.preventDefault()
+    void run('sync')
+  }
+}
+
+function onResize() {
+  viewportWidth.value = window.innerWidth
+}
+
 let detachLaunchRequest: (() => void) | void
 let detachCloseRequest: (() => void) | void
 
 onMounted(async () => {
+  window.addEventListener('keydown', onKeydown)
+  window.addEventListener('resize', onResize)
   window.addEventListener('focus', onFocus)
   detachLaunchRequest = window.runtime?.EventsOn?.(launchRequestEvent, onFocus)
   detachCloseRequest = window.runtime?.EventsOn?.(closeRequestEvent, () => {
@@ -188,6 +385,8 @@ onMounted(async () => {
 })
 
 onBeforeUnmount(() => {
+  window.removeEventListener('keydown', onKeydown)
+  window.removeEventListener('resize', onResize)
   window.removeEventListener('focus', onFocus)
   detachLaunchRequest?.()
   detachLaunchRequest = undefined
@@ -205,22 +404,6 @@ const resourceActionOpen = computed({
     }
   },
 })
-
-function rowKey(id: string): string {
-  return `row:${id}`
-}
-
-function sectionKey(id: string): string {
-  return `section:${id}`
-}
-
-function rowElementId(id: string): string {
-  return `row-${id}`
-}
-
-function sectionElementId(id: string): string {
-  return `section-${id}`
-}
 
 const searchMatches = computed<SearchMatch[]>(() => rankRows(view.value?.rows ?? [], activeQuery.value))
 const searchMatchesByID = computed(() => new Map<string, SearchMatch>(searchMatches.value.map((match) => [match.row.id, match])))
@@ -416,7 +599,7 @@ watch(
     let anchor: ViewportAnchor | null = null
     if (acceptedReplacement && selectionTouched.value && nextKey != null) {
       const previousEntry = previousVisibleEntries.find((entry) => entry.key === nextKey)
-      const root = listRoot.value
+      const root = listElement()
       const element = previousEntry == null ? null : document.getElementById(previousEntry.elementId)
       if (root != null && element != null) {
         anchor = {
@@ -435,7 +618,7 @@ watch(
       if (epoch !== rowReplacementEpoch || selectedKey.value !== capturedKey || (!selectionWasTouched && selectionTouched.value)) {
         return
       }
-      const root = listRoot.value
+      const root = listElement()
       if (root == null) {
         return
       }
@@ -568,10 +751,7 @@ function tryRestoreResourceActionFocus() {
     ) {
       return
     }
-    const actionButton = resourceActionButton.value
-    if (actionButton != null && !actionButton.disabled) {
-      actionButton.focus()
-    } else if (selected.value != null) {
+    if (!inspector.value?.focusResourceAction() && selected.value != null) {
       document.getElementById(rowElementId(selected.value.id))?.focus()
     }
     resourceActionFocusPending = false
@@ -647,192 +827,111 @@ async function run(action: 'sync' | 'update') {
 </script>
 
 <template>
-  <div class="workspace">
-    <header class="workspace__header">
-      <h1>Agent Marketplace</h1>
-      <div class="workspace__actions" role="toolbar" aria-label="Session actions">
-        <button
-          ref="searchButton"
-          type="button"
-          aria-label="Search"
-          :aria-expanded="searchEditing"
-          @click="openSearch"
-        >Search</button>
-        <input
-          v-if="searchEditing"
-          id="workspace-search"
-          ref="searchInput"
-          class="workspace__search-input"
-          type="search"
-          aria-label="Search resources"
-          :value="draftQuery"
-          @input="updateSearch"
-          @keydown.enter.prevent="confirmSearch"
-          @keydown.esc.prevent="cancelSearch"
-        />
-        <span v-if="activeQuery !== ''" class="workspace__search-status" role="status" aria-live="polite">
-          {{ activeQuery }} · {{ localMatchCount }} local {{ localMatchCount === 1 ? 'match' : 'matches' }}
-        </span>
-        <button
-          v-if="activeQuery !== '' || appliedQuery !== '' || draftQuery !== ''"
-          type="button"
-          aria-label="Clear search"
-          @click="clearSearch"
-        >Clear search</button>
-        <button type="button" aria-label="Refresh" :disabled="busy" @click="refresh">Refresh</button>
-        <button type="button" aria-label="Sync" :disabled="!ready" @click="run('sync')">Sync</button>
-        <button type="button" aria-label="Update" :disabled="!ready" @click="run('update')">Update</button>
-        <button
-          v-if="configuration?.firstRun === true || setupOpen"
-          ref="setupButton"
-          type="button"
-          aria-label="Set up"
-          @click="setupOpen = true"
-        >Set up</button>
-        <button
-          ref="sourcesButton"
-          type="button"
-          aria-label="Sources"
-          @click="sourcesOpen = true"
-        >Sources</button>
-        <button
-          ref="settingsButton"
-          type="button"
-          aria-label="Settings"
-          @click="settingsOpen = true"
-        >Settings</button>
-        <button
-          type="button"
-          aria-label="Quit"
-          @click="quitOpen = true"
-        >Quit</button>
-      </div>
-    </header>
+  <div class="workspace gui-shell" :style="{ gridTemplateColumns: shellColumns }">
+    <Sidebar
+      ref="sidebar"
+      :folded="sidebarFolded"
+      :overlay="sidebarOverlay"
+      :inert="sidebarFolded"
+      :groups="navGroups"
+      :pending-count="pendingCount"
+      :sources="sidebarSources"
+      :harnesses="view?.harnesses ?? []"
+      :latest-version="view?.latestVersion ?? ''"
+      @toggle="toggleSidebar"
+      @search="openSearch"
+      @show-all="showAll"
+      @select-group="selectGroup"
+      @open-sources="sourcesOpen = true"
+      @open-settings="settingsOpen = true"
+      @quit="quitOpen = true"
+    />
 
-    <p v-if="error || view?.error" class="workspace__error" role="alert">{{ error ?? view?.error }}</p>
-    <p v-else-if="view && view.stage !== '' && view.harnesses.length === 0" class="workspace__notice" role="status">
-      No supported target harnesses are configured.
-    </p>
-    <p v-else-if="view?.operation" class="workspace__notice" role="status">
-      {{ view.operation.kind }} {{ view.phase ?? 'running' }}
-    </p>
-    <p v-if="view?.latestVersion" class="workspace__notice" role="status">
-      Agent Marketplace {{ view.latestVersion }} is available.
-    </p>
+    <div class="workspace__main gui-main">
+      <MainToolbar
+        ref="toolbar"
+        :sidebar-folded="sidebarFolded"
+        :inspector-folded="inspectorFolded"
+        :search-editing="searchEditing"
+        :draft-query="draftQuery"
+        :active-query="activeQuery"
+        :applied-query="appliedQuery"
+        :local-match-count="localMatchCount"
+        :busy="busy"
+        :ready="ready"
+        :pending-count="pendingCount"
+        :show-setup="configuration?.firstRun === true || setupOpen"
+        @toggle-sidebar="toggleSidebar"
+        @toggle-inspector="toggleInspector"
+        @open-search="openSearch"
+        @search-input="updateSearch"
+        @confirm-search="confirmSearch"
+        @cancel-search="cancelSearch"
+        @clear-search="clearSearch"
+        @refresh="refresh"
+        @sync="run('sync')"
+        @update="run('update')"
+        @setup="setupOpen = true"
+      />
 
-    <div class="workspace__panes">
-      <section ref="listRoot" aria-label="Resources" class="workspace__list">
-        <div
-          v-for="group in groups"
-          :key="group.id"
-          class="workspace__group"
-        >
-          <h2>
-            <button
-              :id="sectionElementId(group.id)"
-              type="button"
-              :class="{ 'workspace__group-toggle--selected': selectedKey === sectionKey(group.id) }"
-              class="workspace__group-toggle"
-              :aria-label="group.title"
-              :aria-expanded="!group.collapsed"
-              :aria-current="selectedKey === sectionKey(group.id) ? 'true' : undefined"
-              @click="toggleGroup(group.id)"
-              @keydown.down.prevent="moveSelection(1)"
-              @keydown.up.prevent="moveSelection(-1)"
-            >
-              <span>{{ group.title }}</span>
-              <span aria-hidden="true">{{ group.collapsed ? '▸' : '▾' }}</span>
-            </button>
-          </h2>
-          <ul v-if="!group.collapsed" role="listbox" :aria-label="'Resources: ' + group.title">
-            <li
-              v-for="row in group.rows"
-              :id="rowElementId(row.id)"
-              :key="row.id"
-              role="option"
-              tabindex="0"
-              :aria-selected="selectedKey === rowKey(row.id)"
-              :class="{ 'workspace__row--selected': selectedKey === rowKey(row.id) }"
-              class="workspace__row"
-              @click="select(row)"
-              @keydown.enter.prevent="activateRow(row)"
-              @keydown.space.prevent="select(row)"
-              @keydown.down.prevent="moveSelection(1)"
-              @keydown.up.prevent="moveSelection(-1)"
-            >
-              <span class="workspace__check" aria-hidden="true">{{ row.checked ? '[x]' : '[ ]' }}</span>
-              <span class="workspace__name">
-                <span>{{ row.registry }}/{{ row.kind }}/</span><template v-for="(part, index) in nameParts(row)" :key="index">
-                  <mark v-if="part.matched" class="workspace__name-match">{{ part.text }}</mark>
-                  <template v-else>{{ part.text }}</template>
-                </template>
-              </span>
-              <span class="workspace__scope">{{ row.scope }}</span>
-              <span v-if="row.harnessOverride" class="workspace__badge" title="Registry-level harness override">harnesses: {{ row.harnesses.join(', ') }}</span>
-            </li>
-          </ul>
-        </div>
-      </section>
+      <p v-if="error || view?.error" class="workspace__error" role="alert">{{ error ?? view?.error }}</p>
+      <p v-else-if="view && view.stage !== '' && view.harnesses.length === 0" class="workspace__notice" role="status">
+        No supported target harnesses are configured.
+      </p>
+      <p v-else-if="view?.operation" class="workspace__notice" role="status">
+        {{ view.operation.kind }} {{ view.phase ?? 'running' }}
+      </p>
+      <p v-if="view?.latestVersion" class="workspace__notice" role="status">
+        Agent Marketplace {{ view.latestVersion }} is available.
+      </p>
 
-      <aside aria-label="Detail" class="workspace__detail">
-        <template v-if="selected">
-          <h2>{{ selected.registry }}/{{ selected.kind }}/{{ selected.displayName }}</h2>
-          <p>{{ selected.description }}</p>
-          <dl>
-            <dt>Registry</dt>
-            <dd class="mono">{{ selected.registry }}</dd>
-            <dt>Scope</dt>
-            <dd>{{ selected.scope }}</dd>
-            <dt>Status</dt>
-            <dd>{{ selected.status }}</dd>
-            <dt>Harnesses</dt>
-            <dd class="mono">{{ selected.harnesses.join(', ') || 'none' }}</dd>
-          </dl>
-          <button
-            v-if="selected.resourceAction !== 'none'"
-            ref="resourceActionButton"
-            type="button"
-            :aria-label="resourceActionLabel(selected.resourceAction)"
-            class="workspace__open-resource"
-            :disabled="!ready || configuration?.editable !== true || busy || resourceActionOpen"
-            @click="openResourceAction(selected)"
-          >{{ resourceActionLabel(selected.resourceAction) }}</button>
-          <button
-            v-if="selected.inspectable || selected.installedFiles"
-            ref="openResourceButton"
-            type="button"
-            aria-label="Open resource"
-            class="workspace__open-resource"
-            @click="openInspection(selected)"
-          >Open resource</button>
-        </template>
-        <p v-else>Select a resource to inspect it.</p>
+      <ResourceList
+        ref="resourceList"
+        :groups="groups"
+        :selected-key="selectedKey"
+        :name-parts="nameParts"
+        @toggle-group="toggleGroup"
+        @select="select"
+        @activate="activateRow"
+        @move="moveSelection"
+      />
 
-        <h2>Session</h2>
-        <p>Drift: {{ view?.drift }}</p>
-        <p>Harnesses: <span class="mono">{{ (view?.harnesses ?? []).join(', ') || 'none' }}</span></p>
-        <section v-if="view?.discoveryEnabled" role="region" aria-label="Marketplace discovery health" class="workspace__discovery-health">
-          <h2>Marketplace discovery</h2>
-          <p v-if="view.discoveryLoading" role="status" aria-live="polite">Marketplace discovery is updating.</p>
-          <p v-if="view.discoveryError" role="status">{{ view.discoveryError }}</p>
-          <button v-if="discoveryFailed" type="button" aria-label="Retry Marketplace search" @click="state?.retryDiscovery()">Retry Marketplace search</button>
-          <ul v-if="view.discoveryHealth.length" aria-label="Marketplace endpoint health">
-            <li v-for="health in view.discoveryHealth" :key="health.id">
-              <p><strong>{{ health.label }}</strong> · {{ health.cacheState }} · {{ health.total }} {{ health.total === 1 ? 'result' : 'results' }}<span v-if="health.truncated"> · truncated</span></p>
-              <p v-if="health.message">{{ health.message }}</p>
-            </li>
-          </ul>
-        </section>
+      <StatusBar :pending-count="view == null ? null : pendingCount" />
 
-        <h2>Diagnostics</h2>
-        <ul v-if="(view?.diagnostics?.length ?? 0) > 0" aria-label="Diagnostics">
-          <li v-for="d in view?.diagnostics" :key="d.code" :class="`diag--${d.severity}`">
-            {{ d.severity }}: {{ d.message }}
-          </li>
-        </ul>
-        <p v-else>None</p>
-      </aside>
+      <ul class="workspace__notifications" aria-live="polite" aria-label="Notifications">
+        <li v-for="n in view?.notifications" :key="n.id" :class="`notification--${n.severity}`">
+          <GuiIcon v-if="n.severity === 'error'" name="error" class="gui-toast__icon" />
+          {{ n.message }}
+        </li>
+      </ul>
     </div>
+
+    <Inspector
+      ref="inspector"
+      :folded="inspectorFolded"
+      :overlay="inspectorOverlay"
+      :inert="inspectorFolded"
+      :selected="selected"
+      :drift="view?.drift ?? ''"
+      :harnesses="view?.harnesses ?? []"
+      :discovery-enabled="view?.discoveryEnabled === true"
+      :discovery-loading="view?.discoveryLoading === true"
+      :discovery-error="view?.discoveryError ?? null"
+      :discovery-health="view?.discoveryHealth ?? []"
+      :discovery-failed="discoveryFailed"
+      :diagnostics="view?.diagnostics ?? []"
+      :action-disabled="!ready || configuration?.editable !== true || busy || resourceActionOpen"
+      @open-resource-action="openResourceAction"
+      @open-inspection="openInspection"
+      @retry-discovery="state?.retryDiscovery()"
+    />
+
+    <div
+      v-if="sidebarOverlayOpen || inspectorOverlayOpen"
+      class="gui-scrim"
+      aria-hidden="true"
+      @click="dismissOverlays"
+    />
 
     <HarnessSettings v-if="state" v-model:open="settingsOpen" :controller="state" />
     <SourcesSettings v-if="state" v-model:open="sourcesOpen" :controller="state" />
@@ -840,11 +939,5 @@ async function run(action: 'sync' | 'update') {
     <Confirmations v-if="state" v-model:quit-open="quitOpen" :controller="state" />
     <ResourceActions v-if="state" v-model:open="resourceActionOpen" :controller="state" />
     <ResourceInspection v-if="state" v-model:open="inspectionOpen" :controller="state" />
-
-    <ul class="workspace__notifications" aria-live="polite" aria-label="Notifications">
-      <li v-for="n in view?.notifications" :key="n.id" :class="`notification--${n.severity}`">
-        {{ n.message }}
-      </li>
-    </ul>
   </div>
 </template>

@@ -2,6 +2,7 @@
 import { computed, ref, watch } from 'vue'
 import type { Configuration, SourceDescription, SourceInput } from './api/client'
 import type { WorkspaceController } from './controller'
+import GuiModal from './GuiModal.vue'
 import SourceForm from './SourceForm.vue'
 import SourceList from './SourceList.vue'
 
@@ -80,70 +81,65 @@ function cancel() {
 </script>
 
 <template>
-  <UModal v-model:open="open" title="Sources" aria-label="Sources" :ui="{ content: 'overflow-y-auto' }">
-    <template #content>
-      <section class="settings" aria-label="Sources">
-        <h2 class="settings__heading">Sources</h2>
-        <p v-if="actionError" role="alert" class="settings__error">{{ actionError }}</p>
-        <p v-for="d in mutationErrors" :key="d.code" role="alert" class="settings__error">{{ d.message }}</p>
-        <p v-if="controller.state.operation" role="status">{{ controller.state.operation.kind }} running</p>
-        <p v-if="configuration == null && !actionError" role="status">Loading sources…</p>
-        <template v-if="configuration != null">
-          <p v-if="!configuration.editable" role="status">The user configuration is not editable.</p>
+  <GuiModal v-model:open="open" title="Sources" icon="folder">
+    <p v-if="actionError" role="alert" class="settings__error">{{ actionError }}</p>
+    <p v-for="d in mutationErrors" :key="d.code" role="alert" class="settings__error">{{ d.message }}</p>
+    <p v-if="controller.state.operation" role="status">{{ controller.state.operation.kind }} running</p>
+    <p v-if="configuration == null && !actionError" role="status">Loading sources…</p>
+    <template v-if="configuration != null">
+      <p v-if="!configuration.editable" role="status">The user configuration is not editable.</p>
 
-          <SourceList title="User sources" :sources="configuration.userSources" :organization="false">
-            <template #actions="{ source }">
-              <UButton
-                v-if="removable(source)"
-                label="Remove"
-                color="neutral"
-                variant="outline"
-                :aria-label="`Remove source ${source.location}`"
-                :disabled="fieldsDisabled"
-                @click="pendingRemove = source"
-              />
-            </template>
-          </SourceList>
-
-          <section v-if="pendingRemove != null" class="settings__group" aria-label="Confirm removal">
-            <p role="status">Remove source {{ pendingRemove.location }}?</p>
-            <UButton
-              label="Confirm remove"
-              aria-label="Confirm remove"
-              :disabled="fieldsDisabled"
-              @click="confirmRemove"
-            />
-            <UButton
-              label="Cancel remove"
-              color="neutral"
-              variant="outline"
-              aria-label="Cancel remove"
-              @click="pendingRemove = null"
-            />
-          </section>
-
-          <SourceList
-            title="Organization sources"
-            :sources="configuration.organizationSources"
-            :organization="true"
+      <SourceList title="User sources" :sources="configuration.userSources" :organization="false">
+        <template #actions="{ source }">
+          <UButton
+            v-if="removable(source)"
+            label="Remove"
+            color="neutral"
+            variant="outline"
+            :aria-label="`Remove source ${source.location}`"
+            :disabled="fieldsDisabled"
+            @click="pendingRemove = source"
           />
-
-          <section v-if="configuration.managedOutsideGUI.length > 0" class="settings__group" aria-label="Managed outside the GUI">
-            <h3>Managed outside the GUI</h3>
-            <ul>
-              <li v-for="label in configuration.managedOutsideGUI" :key="label">{{ label }} — managed outside the GUI</li>
-            </ul>
-          </section>
-
-          <section class="settings__group" aria-label="Add user source">
-            <h3>Add a source</h3>
-            <SourceForm :key="formEpoch" :disabled="fieldsDisabled" @add="add" />
-          </section>
         </template>
-        <div class="settings__actions">
-          <UButton label="Cancel" color="neutral" variant="outline" aria-label="Cancel" @click="cancel" />
-        </div>
+      </SourceList>
+
+      <section v-if="pendingRemove != null" class="settings__group" aria-label="Confirm removal">
+        <p role="status">Remove source {{ pendingRemove.location }}?</p>
+        <UButton
+          label="Confirm remove"
+          aria-label="Confirm remove"
+          :disabled="fieldsDisabled"
+          @click="confirmRemove"
+        />
+        <UButton
+          label="Cancel remove"
+          color="neutral"
+          variant="outline"
+          aria-label="Cancel remove"
+          @click="pendingRemove = null"
+        />
+      </section>
+
+      <SourceList
+        title="Organization sources"
+        :sources="configuration.organizationSources"
+        :organization="true"
+      />
+
+      <section v-if="configuration.managedOutsideGUI.length > 0" class="settings__group settings__card" aria-label="Managed outside the GUI">
+        <h3>Managed outside the GUI</h3>
+        <ul>
+          <li v-for="label in configuration.managedOutsideGUI" :key="label">{{ label }} — managed outside the GUI</li>
+        </ul>
+      </section>
+
+      <section class="settings__group" aria-label="Add user source">
+        <h3>Add a source</h3>
+        <SourceForm :key="formEpoch" :disabled="fieldsDisabled" @add="add" />
       </section>
     </template>
-  </UModal>
+    <template #footer>
+      <UButton label="Cancel" color="neutral" variant="outline" aria-label="Cancel" @click="cancel" />
+    </template>
+  </GuiModal>
 </template>

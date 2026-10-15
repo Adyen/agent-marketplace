@@ -2,6 +2,7 @@
 import { computed, nextTick, ref, watch } from 'vue'
 import type { InspectionFile } from './api/client'
 import type { WorkspaceController } from './controller'
+import GuiModal from './GuiModal.vue'
 
 interface TreeNode {
   id: string
@@ -209,9 +210,8 @@ function close() {
 </script>
 
 <template>
-  <UModal v-model:open="open" title="Resource inspection" aria-label="Resource inspection" :ui="{ content: 'resource-inspection-modal overflow-y-auto' }">
-    <template #content>
-      <section class="resource-inspection" aria-label="Resource inspection">
+  <GuiModal v-model:open="open" title="Resource inspection" icon="file" size="xl">
+    <div class="resource-inspection">
         <div class="resource-inspection__columns">
           <section class="resource-inspection__tree-panel" aria-label="Verified files">
             <ul role="tree" aria-label="Inspection files" class="resource-inspection__tree">
@@ -253,17 +253,16 @@ function close() {
             <p v-else role="status">Select a verified file to preview it.</p>
           </section>
         </div>
-        <div class="resource-inspection__actions">
-          <button
-            v-if="inspection?.error"
-            type="button"
-            aria-label="Retry inspection"
-            @click="retry"
-            @keydown.enter.prevent="retry"
-          >Retry inspection</button>
-          <button ref="closeButton" type="button" aria-label="Close inspection" @click="close">Close inspection</button>
-        </div>
-      </section>
+    </div>
+    <template #footer>
+      <button ref="closeButton" type="button" aria-label="Close inspection" @click="close">Close inspection</button>
+      <button
+        v-if="inspection?.error"
+        type="button"
+        aria-label="Retry inspection"
+        @click="retry"
+        @keydown.enter.prevent="retry"
+      >Retry inspection</button>
     </template>
-  </UModal>
+  </GuiModal>
 </template>
