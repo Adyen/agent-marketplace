@@ -273,7 +273,7 @@ func setupDiagnosticTest(t *testing.T) string {
 	return dir
 }
 
-func newDiagnosticTelemetry(t *testing.T, endpoint string) (*Telemetry, TelemetryState) {
+func newDiagnosticTelemetry(t *testing.T, endpoint string, opts ...NewOption) (*Telemetry, TelemetryState) {
 	t.Helper()
 
 	user := amconfig.Settings{
@@ -290,7 +290,7 @@ func newDiagnosticTelemetry(t *testing.T, endpoint string) (*Telemetry, Telemetr
 	}
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	tel, err := New(context.Background(), state, logger, WithDiagnostic(true))
+	tel, err := New(context.Background(), state, logger, append([]NewOption{WithDiagnostic(true)}, opts...)...)
 	if err != nil {
 		t.Fatalf("new diagnostic telemetry: %v", err)
 	}

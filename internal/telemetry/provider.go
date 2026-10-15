@@ -82,6 +82,7 @@ type Telemetry struct {
 	diagnosticSpanExporter *diagnosticSpanExporter
 	diagnosticEvents       []DiagnosticEvent
 	diagnosticMu           sync.Mutex
+	logCapture             *LogCapture
 }
 
 // NewOption configures Telemetry construction.
@@ -98,6 +99,14 @@ func WithVersion(version string) NewOption {
 func WithDiagnostic(enabled bool) NewOption {
 	return func(t *Telemetry) {
 		t.diagnostic = enabled
+	}
+}
+
+// WithLogCapture hands the invocation's log capture to diagnostic telemetry so
+// its records are reviewed and exported with the diagnostic payload.
+func WithLogCapture(capture *LogCapture) NewOption {
+	return func(t *Telemetry) {
+		t.logCapture = capture
 	}
 }
 

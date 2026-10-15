@@ -27,6 +27,7 @@ const defaultVersion = "dev"
 var version = defaultVersion
 var diagnosticCapture bool
 var diagnosticAcceptSensitive bool
+var diagnosticLogCapture *telemetry.LogCapture
 var rootLogState struct {
 	startedAt time.Time
 	close     func() error
@@ -170,6 +171,11 @@ func initRootLogging(cmd *cobra.Command, debug bool) {
 		Command: cmd.CommandPath(),
 		Version: version,
 	}
+	diagnosticLogCapture = nil
+	if diagnosticCapture {
+		diagnosticLogCapture = telemetry.NewLogCapture()
+		opts.Capture = diagnosticLogCapture
+	}
 	logCfg, cfgErr := config.LoadUserLoggingConfig()
 	applyLoggingConfig(&opts, logCfg)
 
@@ -213,6 +219,7 @@ func initTelemetry(cmd *cobra.Command, start time.Time) {
 	if cmd == nil {
 		return
 	}
+	defer releaseDiagnosticLogCapture(cmd)
 	path := cmd.CommandPath()
 	if shouldSkipTelemetryInit(path) {
 		return
@@ -232,7 +239,7 @@ func initTelemetry(cmd *cobra.Command, start time.Time) {
 		return
 	}
 
-	t, err := telemetry.New(ctx, state, slog.Default(), telemetry.WithVersion(version), telemetry.WithDiagnostic(diagnosticCapture))
+	t, err := telemetry.New(ctx, state, slog.Default(), telemetry.WithVersion(version), telemetry.WithDiagnostic(diagnosticCapture), telemetry.WithLogCapture(diagnosticLogCapture))
 	if err != nil {
 		slog.Warn("telemetry initialization failed; continuing without telemetry", "error", err)
 		return
@@ -254,6 +261,18 @@ func initTelemetry(cmd *cobra.Command, start time.Time) {
 	}
 
 	cmd.SetContext(telemetry.NewContext(ctx, t, path, start, state.HarnessesString(), state.Managed, rootSpan, t.DiagnosticActive()))
+}
+
+// releaseDiagnosticLogCapture discards the invocation's log capture unless
+// telemetry activated diagnostic capture for it.
+func releaseDiagnosticLogCapture(cmd *cobra.Command) {
+	if diagnosticLogCapture == nil {
+		return
+	}
+	if t := telemetry.TelemetryFromContext(cmd.Context()); t != nil && t.DiagnosticActive() {
+		return
+	}
+	diagnosticLogCapture.Discard()
 }
 
 func finishTelemetry(cmd *cobra.Command, execErr error) {

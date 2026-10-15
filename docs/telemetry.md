@@ -21,7 +21,7 @@ authority (who decides), and the route (where it goes). See
 | `off` | None | No telemetry is collected or sent. This is the default. |
 | `basic` | Metrics | Command counts and durations with bounded, non-identifying attributes. |
 | `detailed` | Metrics + traces | Basic metrics, primary-route configuration inventory gauges and omission counter, and lifecycle spans for commands, TUI, and pipeline stages. |
-| `diagnostic` | Metrics + traces + events | A per-invocation `--diagnostic` capture that buffers data locally for review before export. |
+| `diagnostic` | Metrics + traces + events + logs | A per-invocation `--diagnostic` capture that buffers data locally for review before export. |
 
 `diagnostic` is not a level you can store in configuration; the config
 validator rejects it. It is an overlay on `detailed` that only the
@@ -148,12 +148,26 @@ The CLI never attaches any of the following to telemetry:
 
 ### Diagnostic capture
 
-`--diagnostic` buffers metrics, traces, and selected events in memory instead
-of sending them through the normal exporters. At the end of the command the
-CLI writes a JSON review payload to
+`--diagnostic` buffers metrics, traces, selected events, and log records in
+memory instead of sending them through the normal exporters. At the end of the
+command the CLI writes a JSON review payload to
 `$XDG_STATE_HOME/agent-marketplace/telemetry/diagnostic/` and, with consent,
 exports it to the primary endpoint. Before writing or sending, it strips URL
 credentials from every string attribute and event message.
+
+Log capture records every log record of the invocation at debug level and
+above, whatever the configured log level. The log file and stderr keep their
+configured levels. Capture covers the TUI too. The CLI keeps at most 2,000
+records, whose bounded messages, attribute keys, and attribute values total at
+most 4 MiB. It keeps records in emission order and stops at the first record
+that does not fit, so every later record counts in `logs_dropped`. A message is
+truncated to 8 KiB and an attribute value to 2 KiB, and each cut ends in
+`…[truncated]`. Group attributes become dotted keys. Keys must match
+`^[a-z][a-z0-9_.]{0,63}$`, and each record keeps its first 32 attributes. Each
+record carries the invocation's trace ID. Its span ID is the span active in the
+record's context when that span belongs to the invocation, and the root command
+span's ID otherwise. Runs without `--diagnostic`, or with it at level `basic`,
+capture and send no logs.
 
 ## Setup
 
@@ -294,13 +308,22 @@ and prints:
 - trace ID
 - sensitivity warning
 
+The payload's `logs` array lists the captured log records, each with
+`timestamp`, `severity` (`DEBUG`, `INFO`, `WARN`, or `ERROR`), `message`,
+`trace_id`, `span_id`, and `attributes`. `logs_dropped` counts the records
+beyond either bound: the 2,000-record count or the 4 MiB total. The payload's
+`schema_version` stays `1`.
+
 In a terminal, the CLI then asks `Proceed with export? [y/N]`. Without a
 terminal, it exports only when you pass `--diagnostic-accept-sensitive-data`;
 otherwise it keeps the file and prints where it is. Review the JSON file
 before sharing it. A successful export deletes the local file. A failed or
 declined export keeps it for manual inspection. Export needs a primary
-endpoint. Diagnostic export never changes the command's exit status, and the
-CLI never queues the payload for normal delivery.
+endpoint. On consent, the CLI sends the log records as OTLP logs to the
+primary endpoint's `/v1/logs`, next to metrics and traces. The primary endpoint
+must accept `/v1/logs`. If it rejects that request, the export fails and the
+payload is kept. Diagnostic export never changes the command's exit status, and
+the CLI never queues the payload for normal delivery.
 
 ## Retention
 

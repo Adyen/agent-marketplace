@@ -279,13 +279,16 @@ func buildRouteClients(endpoint string, headers map[string]string, caFile string
 }
 
 // buildSignalEndpoint normalizes an endpoint URL with the default path for the
-// given signal (metrics or traces).
+// given signal (metrics, traces, or logs). Logs are only sent by diagnostic
+// export and are never queued.
 func buildSignalEndpoint(endpoint, signal string) (string, error) {
 	switch signal {
 	case queueSubdirMetrics:
 		return endpointWithDefaultPath(endpoint, "/v1/metrics")
 	case queueSubdirTraces:
 		return endpointWithDefaultPath(endpoint, "/v1/traces")
+	case signalLogs:
+		return endpointWithDefaultPath(endpoint, "/v1/logs")
 	default:
 		return "", fmt.Errorf("unsupported queue signal %q", signal)
 	}
