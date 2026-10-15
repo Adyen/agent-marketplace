@@ -211,3 +211,61 @@ func TestSyncCrossScopeCollectionMemberStaysInSync(t *testing.T) {
 		})
 	}
 }
+
+// spec: resource-selection/required-collection-member-displaces-an-optional-selection-in-the-same-scope
+func TestSyncRequiredCollectionMemberDisplacesUserSelection(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	orgOrigin, orgWorking := createBareRepoWithWorkingClone(t, "org-resources.git")
+	writeSkill(t, orgWorking, "shared", "Mandatory collection member", nil)
+	writeCollection(t, orgWorking, "bundle", "name: bundle\nversion: \"1.0\"\nresources:\n  - name: shared\n")
+	commitAndPushAll(t, orgWorking, "Add collection")
+	userOrigin, userWorking := createBareRepoWithWorkingClone(t, "user-resources.git")
+	writeSkill(t, userWorking, "shared", "Optional user selection", nil)
+	commitAndPushAll(t, userWorking, "Add skill")
+
+	organizationPath := filepath.Join(t.TempDir(), "config.yaml")
+	writeFile(t, organizationPath, "apiVersion: agent-marketplace/v4\nsources: {org: {git: 'file://"+orgOrigin+"', ref: main}}\nresources: {org: {include: [collection/bundle], required: true}}\n")
+	config.SetTestOrganizationConfigPath(t, organizationPath)
+	writeConfig(t, filepath.Join(home, ".agents", "config.yaml"), "apiVersion: agent-marketplace/v4\nharnesses: [factory]\nsources: {user: {git: 'file://"+userOrigin+"', ref: main}}\nresources: {user: {include: [skill/shared]}}\n")
+
+	repo := filepath.Join(t.TempDir(), "repo")
+	writeConfig(t, filepath.Join(repo, ".agents", "config.yaml"), "apiVersion: agent-marketplace/v4\nsources: {}\n")
+	withWorkingDir(t, repo)
+
+	run := func(root string, args ...string) {
+		t.Helper()
+		if err := os.Chdir(root); err != nil {
+			t.Fatal(err)
+		}
+		out, err := executeCommand(args...)
+		if err != nil {
+			t.Fatalf("%s in %s: %v\n%s", strings.Join(args, " "), root, err, out)
+		}
+		for _, want := range []string{"multiple registries", "user-resources"} {
+			if !strings.Contains(out, want) {
+				t.Fatalf("%s in %s: output lacks %q\n%s", strings.Join(args, " "), root, want, out)
+			}
+		}
+	}
+	for _, first := range []string{repo, home} {
+		second := home
+		if first == home {
+			second = repo
+		}
+		run(first, "sync")
+		run(second, "sync")
+		content, err := os.ReadFile(filepath.Join(home, ".factory", "skills", "shared", "SKILL.md"))
+		if err != nil || !strings.Contains(string(content), "Mandatory collection member") || strings.Contains(string(content), "Optional user selection") {
+			t.Fatalf("machine skill must come from the required collection member: %v\n%s", err, content)
+		}
+		if _, err := os.Lstat(filepath.Join(repo, ".factory", "skills", "shared")); !os.IsNotExist(err) {
+			t.Fatalf("repository must not install the skill: %v", err)
+		}
+		run(repo, "sync", "--check")
+		run(home, "sync", "--check")
+	}
+}
