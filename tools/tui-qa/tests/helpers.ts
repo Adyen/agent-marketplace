@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 
-import { expect, test } from "@microsoft/tui-test";
+import { test } from "@microsoft/tui-test";
 
 import { createFixture, type Fixture, type FixtureOptions } from "./fixture.js";
 
@@ -43,12 +43,6 @@ export const defineFixture = (
       return fixture;
     }
   };
-};
-
-export const declineLegacyMigration = async (terminal: TestTerminal): Promise<void> => {
-  await expect(terminal.getByText("Configuration migration required", { strict: false })).toBeVisible();
-  await terminal.write("l");
-  await expect(terminal.getByText("Config left unchanged")).toBeVisible();
 };
 
 export const step = async (name: string, action: StepPart, assertion: StepPart): Promise<void> => {

@@ -68,7 +68,7 @@ func writeLocalDetailFixture(t *testing.T, consumerRoot, harness, suffix string)
 		}
 	}
 	inert := map[string]string{
-		".agents/config.yaml": "apiVersion: v4\nregistries: []\n",
+		".agents/config.yaml": "apiVersion: agent-marketplace/v4\nsources: {}\n",
 		".agents/.lock":       "INERT-LOCK-BYTES-" + suffix,
 		".claude/skills/" + fx.skillName + "/SKILL.md": "INSTALLED-SENTINEL-" + suffix + "\n",
 	}

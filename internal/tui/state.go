@@ -41,7 +41,6 @@ const (
 	paneConfirm
 	paneToggleModal
 	paneInitModal
-	paneMigrationModal
 	paneHarnessModal
 	paneEditConfigModal
 	paneMarketplaceConsent
@@ -368,8 +367,6 @@ type Model struct {
 	marketplaceInstallPreview   string
 	harnessModal                harnessModalState
 	initModal                   initModalState
-	migrationPrompt             migrationPrompt
-	migrationDismissed          bool
 	operations                  operationState
 	pendingToggleOperation      operationID
 	pendingToggleReload         requestGeneration
@@ -436,8 +433,6 @@ type Model struct {
 	toggleForm       *huh.Form
 	toggleFormFor    string
 	toggleChoice     *string
-	migrationForm    *huh.Form
-	migrationValue   *bool
 	editConfigForm   *huh.Form
 	editConfigChoice *string
 	syncQuitForm     *huh.Form

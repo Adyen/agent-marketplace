@@ -95,7 +95,7 @@ func (b destinationBoundary) captureDirectory(dir string, create bool) (*fsbound
 		root = dir
 	}
 	if root == "" {
-		return nil, fmt.Errorf("%w: output directory outside admitted harness roots", fsboundary.ErrUnsafePath)
+		return nil, fmt.Errorf("%w: output directory %s outside admitted harness roots", fsboundary.ErrUnsafePath, dir)
 	}
 	rel, err := filepath.Rel(root, dir)
 	if err != nil {

@@ -38,14 +38,15 @@ func TestPreChangeHookLockVerifiesUnchanged(t *testing.T) {
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	configPath := filepath.Join(repoRoot, ".agents", "config.yaml")
 	writeConfig(t, configPath, `
+apiVersion: agent-marketplace/v4
 harnesses: [factory]
-registries:
-  - url: `+origin+`
+sources:
+  hooks:
+    git: file://`+origin+`
     ref: main
     source_harness: factory
-    default: false
-    hooks:
-      - PreToolUse-command
+resources:
+  hooks: {include: [hook/PreToolUse-command]}
 `)
 	withWorkingDir(t, repoRoot)
 

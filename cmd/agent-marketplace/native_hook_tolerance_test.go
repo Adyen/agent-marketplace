@@ -99,11 +99,14 @@ func TestSyncToleratesOwnershipProvenNativeHook(t *testing.T) {
 
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
+apiVersion: agent-marketplace/v4
 harnesses: [factory]
-registries:
-  - url: `+origin+`
+sources:
+  hooks:
+    git: file://`+origin+`
     ref: main
-    default: true
+resources:
+  hooks: {all: true}
 `)
 	withWorkingDir(t, repoRoot)
 
@@ -242,6 +245,8 @@ func TestSyncToleratesMarketplaceMirrorNativeHook(t *testing.T) {
 		switch {
 		case r.URL.Path == "/.well-known/agent-marketplace.json":
 			_ = json.NewEncoder(w).Encode(mpapi.DefaultWellKnown("mp", "http://"+r.Host))
+		case r.URL.Path == "/api/v1/registries/src":
+			_ = json.NewEncoder(w).Encode(mpapi.PublicRegistry{ID: "src", Slug: "src", Origins: []string{"https://example.com/hooks.git"}, Ref: "main", Roots: []store.RegistryRoot{{Path: ".agents"}}, Acquisition: store.AcquisitionMirror, Listed: true})
 		case strings.Contains(r.URL.Path, "/revisions/"+contentDigest):
 			_ = json.NewEncoder(w).Encode(revision)
 		case strings.HasPrefix(r.URL.Path, "/api/v1/artifacts/"):
@@ -254,19 +259,16 @@ func TestSyncToleratesMarketplaceMirrorNativeHook(t *testing.T) {
 	defer server.Close()
 
 	repoRoot := filepath.Join(t.TempDir(), "repo")
-	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `apiVersion: agent-marketplace/v2
+	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `apiVersion: agent-marketplace/v4
 harnesses:
   - factory
-marketplaces:
-  - url: `+server.URL+`
-    instance_id: mp
-    resources:
-      - registry_id: src
-        kind: hook
-        name: deploy-hook
-        revision: v1
-        digest: `+contentDigest+`
-        acquisition: mirror
+sources:
+  hosted: {marketplace: `+server.URL+`}
+resources:
+  hosted:
+    include:
+      - src/hook/deploy-hook:
+          revision: `+contentDigest+`
 `)
 	withWorkingDir(t, repoRoot)
 	configPath := filepath.Join(repoRoot, ".agents", "config.yaml")
@@ -310,9 +312,13 @@ marketplaces:
 	}
 	assertStatUnchanged(t, "sync native", nativePath, nativeBefore, nativeInfo)
 	assertStatUnchanged(t, "sync config", configPath, configBefore, configInfo)
-	if _, err := os.Lstat(lockPath); !os.IsNotExist(err) {
-		t.Fatalf("sync created a Git lock for the mirror config: %v", err)
+	// A v4 Marketplace source keeps exact acquisition evidence in the layer
+	// lock; the mirror fixture gains only that Marketplace record, never Git.
+	lockDoc := readExactManifestLock(t, lockPath)
+	if len(lockDoc.Registries) != 0 || len(lockDoc.Marketplaces) != 1 || lockDoc.Marketplaces[0].InstanceID != "mp" {
+		t.Fatalf("sync lock = %+v, want only the mirror's Marketplace record", lockDoc)
 	}
+	lockBefore, lockInfo := statSnapshot(t, lockPath)
 
 	// sync --check: no pending legacy entry reported, nothing written.
 	if output, err := executeCommand("sync", "--check"); err != nil {
@@ -326,7 +332,5 @@ marketplaces:
 	}
 	assertStatUnchanged(t, "sync --check native", nativePath, nativeBefore, nativeInfo)
 	assertStatUnchanged(t, "sync --check config", configPath, configBefore, configInfo)
-	if _, err := os.Lstat(lockPath); !os.IsNotExist(err) {
-		t.Fatalf("sync --check created a Git lock for the mirror config: %v", err)
-	}
+	assertStatUnchanged(t, "sync --check lock", lockPath, lockBefore, lockInfo)
 }

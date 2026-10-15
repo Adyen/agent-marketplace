@@ -43,7 +43,7 @@ resources:
       - skill/some-team-skill
 ```
 
-The local file is applied on top of the committed one. In this checkout, `my-personal-skill` is added and `some-team-skill` is hidden. Without the `apiVersion` line the CLI rejects `sources` and `resources` in this file, and without the repeated source it reports `v4.undefined-source`. The local file cannot contain `harnesses`. Put only resources here that the team does not need.
+The local file is applied on top of the committed one. In this checkout, `my-personal-skill` is added and `some-team-skill` is hidden. Without its own exact `apiVersion: agent-marketplace/v4`, this root fails with `v4.api-version-required` (omitted field) or `v4.api-version` (unsupported or invalid value), identifying the local file and field. The fragment version exception does not apply to this root. Without the repeated source it reports `v4.undefined-source`. The local file cannot contain `harnesses`. Put only resources here that the team does not need.
 
 You can also let the CLI write this file: `agent-marketplace install <name> --scope local` and `agent-marketplace remove <name> --scope local` edit `.agents/config.local.yaml` for you.
 
@@ -61,7 +61,7 @@ When `.agents/config.local.yaml` exists, the CLI adds `.agents/config.local.yaml
 agent-marketplace status
 ```
 
-In `SYNCED RESOURCES`, `my-personal-skill` appears with `REPO*` in the `SOURCE` column, which marks the personal-local layer, and `some-team-skill` is no longer listed. The `LOCAL REGISTRIES` section lists the registries your local file declares. `status` does not list v4 local exclusions in its `LOCALLY EXCLUDED` section, so check that the resource is missing from `SYNCED RESOURCES` instead.
+In `SYNCED RESOURCES`, `my-personal-skill` appears with `REPO*` in the `SOURCE` column, which marks the personal-local layer, and `some-team-skill` is no longer listed. The `LOCAL REGISTRIES` section lists the registries your local file declares. To verify a local exclusion, check that the resource is missing from `SYNCED RESOURCES` in the repository scope.
 
 ## Boundaries
 

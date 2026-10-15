@@ -7,7 +7,7 @@ Remove a resource you selected, turn off one that was selected for you, or overr
 - A configured `.agents/config.yaml` or `~/.agents/config.yaml`.
 - `agent-marketplace` on your `PATH`.
 
-`remove` edits v4 configuration files as well as the deprecated v2 and v3 formats. Every change to a v2 or v3 file prints a `config.legacy-deprecated` warning. Removing hosted Marketplace resources also involves the lock; see [configuration compatibility](../explanation/user-journeys.md#before-following-a-journey).
+`remove` edits v4 source/resource selections. Every existing consumer root, including organization and personal-local, must declare exact v4; fragments may omit the version or declare exact v4. Unsupported input refuses before new acquisition, config/lock publication, or harness changes. [Convert older configurations before upgrading](./migrate-configuration.md). Removing hosted Marketplace resources also involves the owning layer's lock; see [current limits](../explanation/user-journeys.md#before-following-a-journey).
 
 After each change, `remove` syncs, so the resource's files disappear from the harness folders right away.
 
@@ -41,7 +41,7 @@ For `tags` and `all: true` selections the CLI prints `Removed legacy-review`, ev
 
 A resource from a group with `required: true` ignores every exclusion. `remove` refuses it with an error such as `skill "code-review" is required and cannot be removed`. To stop installing it, change the configuration that declares `required: true`, which is often the organization configuration managed by your administrators.
 
-An organization Marketplace collection without `required: true` is optional. To turn off one of its members on your machine, open the TUI, select the member, and press `e` in the scope modal. The TUI adds a user exclusion to `~/.agents/config.yaml`, which must be a v4 file; if it is still v2 or v3, [migrate it](./migrate-configuration.md) first. The collection stays selected and its other members stay enabled. The CLI cannot remove a pin from the organization file, because that file is managed outside the CLI.
+An organization Marketplace collection without `required: true` is optional. To turn off one of its members on your machine, open the TUI, select the member, and press `e` in the scope modal. The TUI adds a user exclusion to `~/.agents/config.yaml`, which, like every consumer root, must already be v4. [Convert older roots before upgrading](./migrate-configuration.md). The collection stays selected and its other members stay enabled. The CLI cannot remove a pin from the organization file, because that file is managed outside the CLI.
 
 ## 4. Target a specific scope
 

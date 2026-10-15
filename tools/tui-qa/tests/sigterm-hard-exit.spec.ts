@@ -3,7 +3,7 @@ import process from "node:process";
 
 import { expect, test } from "@microsoft/tui-test";
 
-import { declineLegacyMigration, defineFixture, step, waitForExit } from "./helpers.js";
+import { defineFixture, step, waitForExit } from "./helpers.js";
 import { targetPID } from "./process-helpers.js";
 
 const journey = defineFixture("sigterm-hard-exit", ["tui"]);
@@ -13,7 +13,6 @@ test.afterAll(journey.cleanup);
 
 test("SIGTERM stops the published target process", async ({ terminal }) => {
   const fixture = journey.current();
-  await declineLegacyMigration(terminal);
 
   await step("settled fixture baseline", () => {}, async () => {
     await expect(terminal.getByText("beta-skill", { strict: false })).toBeVisible();

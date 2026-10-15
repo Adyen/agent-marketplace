@@ -58,7 +58,6 @@ type snapshotLoadedMsg struct {
 	warnings             []error
 	diagnostics          []tuiDiagnostic
 	refreshAfterLoad     bool
-	pendingMigration     migrationPrompt
 }
 
 type reloadMsg snapshotLoadedMsg
@@ -345,7 +344,6 @@ func readSnapshotStaged(ctx context.Context, ws pipeline.Workspace, homeDir stri
 			projectHarnesses:     configHarnesses(resolvedResult.RepoCfg),
 			targetHarnesses:      resolvedResult.TargetHarnesses,
 			targetHarnessSource:  resolvedResult.TargetHarnessSource,
-			pendingMigration:     pendingMigrationFor(repoRoot, ws.LocalConfigDir(), homeDir),
 			driftAssessment:      driftFailed,
 			refreshAfterLoad:     resolvedResult.CatalogLoad.RefreshAfterLoad,
 		}

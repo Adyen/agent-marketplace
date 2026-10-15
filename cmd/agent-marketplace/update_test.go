@@ -29,12 +29,14 @@ func TestUpdateCommandRefreshesPinnedRefsAndSyncsWithoutChangingConfig(t *testin
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	configPath := filepath.Join(repoRoot, ".agents", "config.yaml")
 	writeConfig(t, configPath, `
-registries:
-  - url: `+origin+`
+apiVersion: agent-marketplace/v4
+sources:
+  infra:
+    git: file://`+origin+`
     ref: main
-    skills:
-      include:
-        - vm-lifecycle
+resources:
+  infra:
+    include: [skill/vm-lifecycle]
 `)
 
 	withWorkingDir(t, repoRoot)
@@ -192,12 +194,14 @@ func TestUpdateCommandWithBumpUpdatesRepoConfigRefAndSyncsNewCache(t *testing.T)
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	configPath := filepath.Join(repoRoot, ".agents", "config.yaml")
 	writeConfig(t, configPath, `
-registries:
-  - url: `+origin+`
+apiVersion: agent-marketplace/v4
+sources:
+  infra:
+    git: file://`+origin+`
     ref: v1.0
-    skills:
-      include:
-        - vm-lifecycle
+resources:
+  infra:
+    include: [skill/vm-lifecycle]
 `)
 
 	withWorkingDir(t, repoRoot)
@@ -269,15 +273,19 @@ func TestTargetedUpdateDoesNotMaterializeUnrelatedMovedBranch(t *testing.T) {
 
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
-registries:
-  - url: `+targetOrigin+`
+apiVersion: agent-marketplace/v4
+sources:
+  target:
+    git: file://`+targetOrigin+`
     ref: main
-    skills:
-      include: [target]
-  - url: `+unrelatedOrigin+`
+  unrelated:
+    git: file://`+unrelatedOrigin+`
     ref: main
-    skills:
-      include: [unrelated]
+resources:
+  target:
+    include: [skill/target]
+  unrelated:
+    include: [skill/unrelated]
 `)
 	withWorkingDir(t, repoRoot)
 	if output, err := executeCommand("sync"); err != nil {
@@ -355,7 +363,7 @@ func TestUpdateBumpHonorsScopeAndDirectTarget(t *testing.T) {
 
 	repo := filepath.Join(t.TempDir(), "repo")
 	repoConfig := filepath.Join(repo, ".agents", "config.yaml")
-	writeConfig(t, repoConfig, "\nharnesses: [claude]\nregistries:\n  - url: "+targetOrigin+"\n    ref: v1.0\n    skills: [target]\n  - url: "+otherOrigin+"\n    ref: v1.0\n    skills: [other]\n")
+	writeConfig(t, repoConfig, "apiVersion: agent-marketplace/v4\nharnesses: [claude]\nsources:\n  target:\n    git: file://"+targetOrigin+"\n    ref: v1.0\n  other:\n    git: file://"+otherOrigin+"\n    ref: v1.0\nresources:\n  target:\n    include: [skill/target]\n  other:\n    include: [skill/other]\n")
 	withWorkingDir(t, repo)
 	if output, err := executeCommand("sync"); err != nil {
 		t.Fatalf("initial sync: %v\n%s", err, output)
@@ -376,10 +384,14 @@ func TestUpdateBumpHonorsScopeAndDirectTarget(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := after.Registries[0].Ref; got != "v1.1" {
+	refs := make(map[string]string)
+	for _, registry := range after.Registries {
+		refs[registry.URL] = registry.Ref
+	}
+	if got := refs["file://"+targetOrigin]; got != "v1.1" {
 		t.Fatalf("target ref = %q, want v1.1", got)
 	}
-	if got := after.Registries[1].Ref; got != "v1.0" {
+	if got := refs["file://"+otherOrigin]; got != "v1.0" {
 		t.Fatalf("unrelated ref mutated by targeted bump: %q", got)
 	}
 }
@@ -400,7 +412,7 @@ func TestUpdateBumpHonorsUserScope(t *testing.T) {
 	commitAndPushAll(t, working, "user v1.1")
 	createAndPushTag(t, working, "v1.1")
 
-	writeConfig(t, filepath.Join(home, ".agents", "config.yaml"), "\nregistries:\n  - url: "+origin+"\n    ref: v1.0\n    skills: [user-target]\n")
+	writeConfig(t, filepath.Join(home, ".agents", "config.yaml"), "apiVersion: agent-marketplace/v4\nsources:\n  user:\n    git: file://"+origin+"\n    ref: v1.0\nresources:\n  user:\n    include: [skill/user-target]\n")
 	repo := filepath.Join(t.TempDir(), "repo")
 	writeConfig(t, filepath.Join(repo, ".agents", "config.yaml"), "\nharnesses: [claude]\n")
 	withWorkingDir(t, repo)
@@ -446,9 +458,9 @@ func TestUpdateBumpHonorsLocalScope(t *testing.T) {
 	createAndPushTag(t, repoWorking, "v1.1")
 
 	repo := filepath.Join(t.TempDir(), "repo")
-	writeConfig(t, filepath.Join(repo, ".agents", "config.yaml"), "\nharnesses: [claude]\nregistries:\n  - url: "+repoOrigin+"\n    ref: v1.0\n    skills: [repo-target]\n")
+	writeConfig(t, filepath.Join(repo, ".agents", "config.yaml"), "apiVersion: agent-marketplace/v4\nharnesses: [claude]\nsources:\n  repo:\n    git: file://"+repoOrigin+"\n    ref: v1.0\nresources:\n  repo:\n    include: [skill/repo-target]\n")
 	localConfig := filepath.Join(repo, ".agents", "config.local.yaml")
-	writeConfig(t, localConfig, "\nregistries:\n  - url: "+localOrigin+"\n    ref: v1.0\n    skills: [local-target]\n")
+	writeConfig(t, localConfig, "apiVersion: agent-marketplace/v4\nsources:\n  local:\n    git: file://"+localOrigin+"\n    ref: v1.0\nresources:\n  local:\n    include: [skill/local-target]\n")
 	withWorkingDir(t, repo)
 	if output, err := executeCommand("sync"); err != nil {
 		t.Fatalf("initial sync: %v\n%s", err, output)
@@ -504,7 +516,7 @@ func TestUpdateBumpSkipsOrganization(t *testing.T) {
 
 			authority := canonicalTempDir(t)
 			orgPath := filepath.Join(authority, "config.yaml")
-			registryConfig := "registries:\n  - url: " + origin + "\n    ref: v1.0\n    skills: [target]\n"
+			registryConfig := "apiVersion: agent-marketplace/v4\nsources:\n  target:\n    git: file://" + origin + "\n    ref: v1.0\nresources:\n  target:\n    include: [skill/target]\n"
 			writeConfig(t, orgPath, registryConfig)
 			orgBefore, err := os.ReadFile(orgPath)
 			if err != nil {
@@ -579,9 +591,9 @@ func TestScopedUpdateReconcilesMissingUnselectedWritableLayer(t *testing.T) {
 	writeSkill(t, repoWorking, "repo-skill", "Repo v1", nil)
 	commitAndPushAll(t, userWorking, "user v1")
 	commitAndPushAll(t, repoWorking, "repo v1")
-	writeConfig(t, filepath.Join(home, ".agents", "config.yaml"), "\nregistries:\n  - url: "+userOrigin+"\n    ref: main\n")
+	writeConfig(t, filepath.Join(home, ".agents", "config.yaml"), "apiVersion: agent-marketplace/v4\nsources:\n  user:\n    git: file://"+userOrigin+"\n    ref: main\n")
 	repo := filepath.Join(t.TempDir(), "repo")
-	writeConfig(t, filepath.Join(repo, ".agents", "config.yaml"), "\nregistries:\n  - url: "+repoOrigin+"\n    ref: main\n")
+	writeConfig(t, filepath.Join(repo, ".agents", "config.yaml"), "apiVersion: agent-marketplace/v4\nsources:\n  repo:\n    git: file://"+repoOrigin+"\n    ref: main\n")
 	withWorkingDir(t, repo)
 	if output, err := executeCommand("sync"); err != nil {
 		t.Fatalf("initial sync: %v\n%s", err, output)
@@ -627,12 +639,14 @@ func TestUpdateBumpWithSimpleTrailingInteger(t *testing.T) {
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	configPath := filepath.Join(repoRoot, ".agents", "config.yaml")
 	writeConfig(t, configPath, `
-registries:
-  - url: `+origin+`
+apiVersion: agent-marketplace/v4
+sources:
+  infra:
+    git: file://`+origin+`
     ref: v1
-    skills:
-      include:
-        - vm-lifecycle
+resources:
+  infra:
+    include: [skill/vm-lifecycle]
 `)
 
 	withWorkingDir(t, repoRoot)
@@ -679,12 +693,14 @@ func TestUpdateBumpWithThreeSegmentSemver(t *testing.T) {
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	configPath := filepath.Join(repoRoot, ".agents", "config.yaml")
 	writeConfig(t, configPath, `
-registries:
-  - url: `+origin+`
+apiVersion: agent-marketplace/v4
+sources:
+  infra:
+    git: file://`+origin+`
     ref: v1.0.0
-    skills:
-      include:
-        - vm-lifecycle
+resources:
+  infra:
+    include: [skill/vm-lifecycle]
 `)
 
 	withWorkingDir(t, repoRoot)
@@ -727,12 +743,14 @@ func TestUpdateBumpDoesNotCrossMajorVersion(t *testing.T) {
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	configPath := filepath.Join(repoRoot, ".agents", "config.yaml")
 	writeConfig(t, configPath, `
-registries:
-  - url: `+origin+`
+apiVersion: agent-marketplace/v4
+sources:
+  infra:
+    git: file://`+origin+`
     ref: v1.0
-    skills:
-      include:
-        - vm-lifecycle
+resources:
+  infra:
+    include: [skill/vm-lifecycle]
 `)
 
 	withWorkingDir(t, repoRoot)
@@ -769,12 +787,14 @@ func TestUpdateBumpWithNonVersionRefDoesNothing(t *testing.T) {
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	configPath := filepath.Join(repoRoot, ".agents", "config.yaml")
 	writeConfig(t, configPath, `
-registries:
-  - url: `+origin+`
+apiVersion: agent-marketplace/v4
+sources:
+  infra:
+    git: file://`+origin+`
     ref: main
-    skills:
-      include:
-        - vm-lifecycle
+resources:
+  infra:
+    include: [skill/vm-lifecycle]
 `)
 
 	withWorkingDir(t, repoRoot)
@@ -806,9 +826,11 @@ func TestUpdateCommandBlockedRegistryReturnsError(t *testing.T) {
 
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
+apiVersion: agent-marketplace/v4
 allowed_registries: []
-registries:
-  - url: https://example.com/blocked.git
+sources:
+  blocked:
+    git: https://example.com/blocked.git
     ref: main
 `)
 

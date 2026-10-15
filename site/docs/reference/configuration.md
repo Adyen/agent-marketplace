@@ -10,9 +10,15 @@ Configuration holds your selection policy. Generated lockfiles record the exact 
 
 ## Schema versions
 
-`apiVersion: agent-marketplace/v4` is the current schema, and every page in this reference describes v4. New configuration files created by `install`, `remove`, `init`, and the TUI use v4.
+`apiVersion: agent-marketplace/v4` is the only supported consumer configuration schema. Every existing organization, user-personal, repository, and personal-local root must declare that exact string. New configuration files created by `install`, `remove`, `init`, and the TUI use v4. A missing file retains its normal first-run behavior; an existing empty or versionless file is not a missing layer.
 
-The CLI still reads `agent-marketplace/v2` files and the `agent-marketplace/v3` alias through a compatibility reader. Both are deprecated: each write to such a file prints a `config.legacy-deprecated` warning with the `migrate` command for that scope. A file with no `apiVersion` at all is not read as v4. See [How to migrate configuration](../how-to/migrate-configuration.md).
+A root without `apiVersion` fails with `v4.api-version-required`. Explicit v1, v2, v3, unknown, empty, null, non-string, or non-exact versions fail with `v4.api-version`. The diagnostic identifies the authored file and the `apiVersion` field, with line context when available. The root cannot inherit its version from another layer or an included fragment.
+
+The CLI has no `migrate` command, startup conversion prompt, TUI migration modal, or compatibility reader. [Convert writable roots with an older released migrator before upgrading](../how-to/migrate-configuration.md); have organization configuration converted externally by its administrator. Conversion can refuse includes, unrepresentable input, or missing verified Marketplace evidence. Changing only the version string does not convert legacy fields.
+
+All roots and include trees needed by an operation validate before new acquisition, config/lock publication, or harness writes/prunes. A format refusal preserves existing config, lock, and harness bytes and metadata and creates no missing writable root or lock. Ordinary logs are allowed. Safe recovery of a pre-existing dependency journal may finish its already-admitted writes before validation; read-only dependency modes instead return `dependency.recovery-required` without replay.
+
+This consumer-format requirement does not change the internal v4 runtime adapter, lock v1 reads/v2 writes, historical source-revision verification, Marketplace operator `agent-marketplace.io/marketplace/v1`, API/artifact versions, or native harness schemas.
 
 ## File location and scope
 
@@ -79,7 +85,7 @@ The parser rejects:
 | Root file without `apiVersion` | `v4.api-version-required` |
 | `apiVersion` other than `agent-marketplace/v4` | `v4.api-version` |
 
-Included fragments may omit `apiVersion` and inherit v4 from the file that includes them. A fragment that declares a different version is rejected.
+Explicitly included fragments under a validated v4 root may omit `apiVersion` or declare exactly `agent-marketplace/v4`. An explicit unsupported or invalid fragment version fails the include tree with `v4.api-version`, naming the fragment and field. This exception does not apply to personal-local roots and does not relax layer field restrictions, source bindings, include precedence, or root-owned edits and locks.
 
 ## Configuration layers
 

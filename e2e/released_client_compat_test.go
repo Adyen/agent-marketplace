@@ -147,7 +147,7 @@ func TestReleasedClientReadsCandidateCommittedState(t *testing.T) {
 
 	must(released, "init", "--harnesses", "factory")
 	must(candidate, "init", "--harnesses", "factory")
-	repoConfig := fmt.Sprintf("apiVersion: agent-marketplace/v2\nregistries:\n  - url: %s\n    ref: main\n    skills:\n      include: [review]\n    hooks:\n      include: [PreToolUse-command]\n", registry.URL)
+	repoConfig := fmt.Sprintf("apiVersion: agent-marketplace/v4\nsources: {shared: {git: %q, ref: main}}\nresources: {shared: {include: [skill/review, hook/PreToolUse-command]}}\n", registry.URL)
 	if err := os.WriteFile(filepath.Join(workspace, ".agents", "config.yaml"), []byte(repoConfig), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -200,7 +200,7 @@ func TestReleasedClientReadsCandidateIsolatedCommittedState(t *testing.T) {
 		t.Skip("released executable and git-capable image are supplied by the dedicated released-client gate")
 	}
 	released, arch := verifiedExecutable(t, "AM_E2E_RELEASED_BINARY", releasedClientArch)
-	for _, version := range []string{"agent-marketplace/v2", "agent-marketplace/v4"} {
+	for _, version := range []string{"agent-marketplace/v4"} {
 		t.Run(version, func(t *testing.T) {
 			world := newHistoricalWorld(t, image)
 			candidate := world.buildCandidate(arch)
@@ -302,10 +302,7 @@ func TestReleasedClientReadsCandidateIsolatedCommittedState(t *testing.T) {
 				}
 			}
 			must(released, "init", "--harnesses", "factory")
-			repoConfig := fmt.Sprintf("apiVersion: %s\nregistries:\n  - url: %s\n    ref: main\n    skills:\n      include: [review]\n", version, registry.URL)
-			if version == "agent-marketplace/v4" {
-				repoConfig = fmt.Sprintf("apiVersion: %s\nsources:\n  tools: {git: '%s', ref: main}\nresources:\n  tools: {include: [skill/review]}\n", version, registry.URL)
-			}
+			repoConfig := fmt.Sprintf("apiVersion: %s\nsources:\n  tools: {git: '%s', ref: main}\nresources:\n  tools: {include: [skill/review]}\n", version, registry.URL)
 			if err := os.WriteFile(filepath.Join(workspace, ".agents", "config.yaml"), []byte(repoConfig), 0o644); err != nil {
 				t.Fatal(err)
 			}

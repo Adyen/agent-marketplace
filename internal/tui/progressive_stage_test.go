@@ -50,11 +50,10 @@ func progressiveFixture(t *testing.T) (repoRoot, homeDir string) {
 	if err := os.MkdirAll(filepath.Join(homeDir, ".agents"), 0o755); err != nil {
 		t.Fatalf("mkdir home agents: %v", err)
 	}
-	globalConfig := v2Header + `registries:
-  - url: ` + registryRoot + `
-    skills:
-      - audit
-      - review
+	globalConfig := v4Header + `sources:
+  local: {directory: ` + registryRoot + `}
+resources:
+  local: [skill/audit, skill/review]
 `
 	if err := os.WriteFile(filepath.Join(homeDir, ".agents", "config.yaml"), []byte(globalConfig), 0o644); err != nil {
 		t.Fatalf("write global config: %v", err)
@@ -62,7 +61,7 @@ func progressiveFixture(t *testing.T) (repoRoot, homeDir string) {
 	if err := os.MkdirAll(filepath.Join(repoRoot, ".agents"), 0o755); err != nil {
 		t.Fatalf("mkdir repo agents: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(repoRoot, ".agents", "config.yaml"), []byte(repoV2Header), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(repoRoot, ".agents", "config.yaml"), []byte(repoV4Header), 0o644); err != nil {
 		t.Fatalf("write project config: %v", err)
 	}
 	t.Cleanup(swapLoadOrgConfig(func() (*config.Config, error) { return nil, nil }))
@@ -323,13 +322,17 @@ func TestReadSnapshotStagesRejectsInvalidWorkspace(t *testing.T) {
 func TestReadSnapshotStagesUsesNestedLocalWorkspace(t *testing.T) {
 	repoRoot, homeDir := progressiveFixture(t)
 	nested := filepath.Join(repoRoot, "nested")
-	if err := os.MkdirAll(filepath.Join(nested, ".agents"), 0o755); err != nil {
+	for _, dir := range []string{filepath.Join(nested, ".agents"), filepath.Join(nested, "unused"), filepath.Join(repoRoot, "unused")} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	writeProvisionalSkill(t, filepath.Join(nested, "unused"), "unused-control")
+	writeProvisionalSkill(t, filepath.Join(repoRoot, "unused"), "unused-control")
+	if err := os.WriteFile(config.LocalConfigPath(nested), []byte("apiVersion: agent-marketplace/v4\nsources:\n  local: {directory: ./unused}\nresources:\n  local: {exclude: [skill/audit]}\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(config.LocalConfigPath(nested), []byte("skills:\n  exclude: [audit]\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(config.LocalConfigPath(repoRoot), []byte("skills:\n  exclude: [review]\n"), 0o600); err != nil {
+	if err := os.WriteFile(config.LocalConfigPath(repoRoot), []byte("apiVersion: agent-marketplace/v4\nsources:\n  local: {directory: ./unused}\nresources:\n  local: {exclude: [skill/review]}\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	ws, err := pipeline.NewWorkspace(repoRoot, nested)
@@ -351,8 +354,12 @@ func TestReadSnapshotStagesUsesNestedLocalWorkspace(t *testing.T) {
 		t.Fatalf("nested workspace stages = %+v", msgs)
 	}
 	final := msgs[len(msgs)-1]
-	if materializeRoot != nested || !slices.Equal(final.localExcludes, []string{"audit"}) || final.inventoryResult == nil || len(final.errs) != 0 {
-		t.Fatalf("nested workspace root=%q excludes=%v errors=%v", materializeRoot, final.localExcludes, final.errs)
+	if materializeRoot != nested || final.inventoryResult == nil || len(final.errs) != 0 {
+		t.Fatalf("nested workspace root=%q inventory=%v errors=%v", materializeRoot, final.inventoryResult, final.errs)
+	}
+	local := final.inventoryResult.LocalCfg
+	if local == nil || len(local.Registries) != 1 || !slices.Equal(local.Registries[0].Skills.Exclude, []string{"audit"}) {
+		t.Fatalf("nested workspace excludes=%+v, want only audit", local)
 	}
 }
 
@@ -1165,7 +1172,7 @@ func provisionalLocalAllTrueFixture(t *testing.T) (repoRoot, homeDir, regA, regB
 	if err := os.WriteFile(filepath.Join(repoRoot, ".agents", "config.yaml"), []byte(repoConfig), 0o644); err != nil {
 		t.Fatalf("write repo config: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(repoRoot, ".agents", "config.local.yaml"), []byte("skills:\n  exclude:\n    - gamma\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(repoRoot, ".agents", "config.local.yaml"), []byte("apiVersion: agent-marketplace/v4\nsources:\n  regb: {directory: "+regB+"}\nresources:\n  regb: {exclude: [skill/gamma]}\n"), 0o644); err != nil {
 		t.Fatalf("write local config: %v", err)
 	}
 	t.Cleanup(swapLoadGlobalConfig(func() (*config.Config, error) {
@@ -1335,7 +1342,7 @@ func TestExcludedOnlyProvisionalStagePublishesNoRows(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(repoRoot, ".agents", "config.yaml"), []byte(repoConfig), 0o644); err != nil {
 		t.Fatalf("write repo config: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(repoRoot, ".agents", "config.local.yaml"), []byte("skills:\n  exclude:\n    - solo\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(repoRoot, ".agents", "config.local.yaml"), []byte("apiVersion: agent-marketplace/v4\nsources:\n  reg: {directory: "+reg+"}\nresources:\n  reg: {exclude: [skill/solo]}\n"), 0o644); err != nil {
 		t.Fatalf("write local config: %v", err)
 	}
 	t.Cleanup(swapLoadOrgConfig(func() (*config.Config, error) { return nil, nil }))
@@ -1379,7 +1386,7 @@ func TestProvisionalRegistryScopedLocalExcludesApply(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(repoRoot, ".agents", "config.yaml"), []byte(repoConfig), 0o644); err != nil {
 		t.Fatalf("write repo config: %v", err)
 	}
-	localConfig := "registries:\n  - url: " + regA + "\n    skills: {exclude: [shared]}\n  - url: " + regB + "\n    skills: {exclude: [shared]}\n"
+	localConfig := "apiVersion: agent-marketplace/v4\nsources:\n  rega: {directory: " + regA + "}\n  regb: {directory: " + regB + "}\nresources:\n  rega: {exclude: [skill/shared]}\n  regb: {exclude: [skill/shared]}\n"
 	if err := os.WriteFile(filepath.Join(repoRoot, ".agents", "config.local.yaml"), []byte(localConfig), 0o644); err != nil {
 		t.Fatalf("write local config: %v", err)
 	}

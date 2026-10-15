@@ -4,7 +4,7 @@ import path from "node:path";
 
 import { expect, test } from "@microsoft/tui-test";
 
-import { declineLegacyMigration, defineFixture, step, waitForExit } from "./helpers.js";
+import { defineFixture, step, waitForExit } from "./helpers.js";
 import { runAM } from "./process-helpers.js";
 
 // Reproduces the reported support case: an organization v4 config declares an
@@ -28,7 +28,6 @@ test("a missing organization marketplace lock is acquired transiently without po
   assert.ok(orgLockPath, "organization fixture must expose its lock path");
   assert.equal(fs.lstatSync(orgLockPath, { throwIfNoEntry: false }), undefined);
 
-  await declineLegacyMigration(terminal);
 
   await step("cold startup resolves the organization marketplace", () => {}, async () => {
     await expect(terminal.getByText("org-review", { strict: false })).toBeVisible({ timeout: 30_000 });

@@ -32,11 +32,11 @@ func TestSyncLockRetainsCommitUntilUpdate(t *testing.T) {
 
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
-registries:
-  - url: `+origin+`
-    ref: main
-    skills:
-      include: [review]
+apiVersion: agent-marketplace/v4
+sources:
+  origin: {git: file://`+origin+`, ref: main}
+resources:
+  origin: [skill/review]
 `)
 	withWorkingDir(t, repoRoot)
 
@@ -93,13 +93,10 @@ func TestSyncRootRemovalProjectsOldCommit(t *testing.T) {
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	configPath := filepath.Join(repoRoot, ".agents", "config.yaml")
 	writeConfig(t, configPath, `
-registries:
-  - url: `+origin+`
-    ref: main
-    path: kept
-  - url: `+origin+`
-    ref: main
-    path: removed
+apiVersion: agent-marketplace/v4
+sources:
+  kept: {git: file://`+origin+`, ref: main, path: kept}
+  removed: {git: file://`+origin+`, ref: main, path: removed}
 `)
 	withWorkingDir(t, repoRoot)
 	if output, err := executeCommand("sync"); err != nil {
@@ -110,10 +107,9 @@ registries:
 	writeSkill(t, filepath.Join(working, "kept"), "keep", "Keep v2", nil)
 	commitAndPushAll(t, working, "move branch")
 	writeConfig(t, configPath, `
-registries:
-  - url: `+origin+`
-    ref: main
-    path: kept
+apiVersion: agent-marketplace/v4
+sources:
+  kept: {git: file://`+origin+`, ref: main, path: kept}
 `)
 	if output, err := executeCommand("sync"); err != nil {
 		t.Fatalf("projecting sync: %v\n%s", err, output)
@@ -141,9 +137,9 @@ func TestSyncEquivalentAutoAndExplicitRootsStayFresh(t *testing.T) {
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	configPath := filepath.Join(repoRoot, ".agents", "config.yaml")
 	writeConfig(t, configPath, `
-registries:
-  - url: `+origin+`
-    ref: main
+apiVersion: agent-marketplace/v4
+sources:
+  origin: {git: file://`+origin+`, ref: main}
 `)
 	withWorkingDir(t, repoRoot)
 	if output, err := executeCommand("lock", "--scope", "repo"); err != nil {
@@ -158,14 +154,14 @@ registries:
 	if len(initial.Registries) != 1 || len(initial.Registries[0].Roots) != 1 {
 		t.Fatalf("unexpected initial roots: %+v", initial.Registries)
 	}
-	auto := "  - url: " + origin + "\n    ref: main\n"
+	auto := "    git: file://" + origin + "\n    ref: main\n"
 	explicit := auto + "    source_harness: " + initial.Registries[0].Roots[0].SourceHarness + "\n"
 	for _, tc := range []struct{ name, entries string }{
-		{"auto-first", auto + explicit},
-		{"explicit-first", explicit + auto},
+		{"auto-first", "  first:\n" + auto + "  second:\n" + explicit},
+		{"explicit-first", "  first:\n" + explicit + "  second:\n" + auto},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			writeConfig(t, configPath, "\nregistries:\n"+tc.entries)
+			writeConfig(t, configPath, "apiVersion: agent-marketplace/v4\nsources:\n"+tc.entries)
 			configBefore, err := os.ReadFile(configPath)
 			if err != nil {
 				t.Fatal(err)
@@ -207,11 +203,11 @@ func TestSyncLockedRefusesMissingLockWithoutMaterializing(t *testing.T) {
 
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
-registries:
-  - url: `+origin+`
-    ref: main
-    skills:
-      include: [review]
+apiVersion: agent-marketplace/v4
+sources:
+  origin: {git: file://`+origin+`, ref: main}
+resources:
+  origin: [skill/review]
 `)
 	withWorkingDir(t, repoRoot)
 

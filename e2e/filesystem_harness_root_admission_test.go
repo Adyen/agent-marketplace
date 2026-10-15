@@ -21,8 +21,8 @@ func TestFilesystemHarnessRootAdmission(t *testing.T) {
 			t.Run(tc.target+"/"+mode, func(t *testing.T) {
 				env := newEnv(t)
 				registry := env.CreateBareRepo("root-boundary", RegistryFilesEx([]Skill{{Name: "root-probe", Description: "Root boundary control"}}, nil, []Subagent{{Name: "root-agent", Description: "Root boundary subagent"}}, nil))
-				env.WriteGlobalConfig(fmt.Sprintf("apiVersion: agent-marketplace/v2\nharnesses: [%s]\nmaterialization: {mode: %s}\n", tc.target, mode))
-				env.WriteRepoConfig(fmt.Sprintf("apiVersion: agent-marketplace/v2\nharnesses: [%s]\nmaterialization: {mode: %s}\nregistries:\n  - url: %s\n    ref: main\n    source_harness: claude\n    skills: {include: [root-probe]}\n    subagents: {include: [root-agent]}\n", tc.target, mode, registry))
+				env.WriteGlobalConfig(fmt.Sprintf("apiVersion: agent-marketplace/v4\nharnesses: [%s]\nmaterialization: {mode: %s}\n", tc.target, mode))
+				env.WriteRepoConfig(fmt.Sprintf("apiVersion: agent-marketplace/v4\nharnesses: [%s]\nmaterialization: {mode: %s}\nsources: {team: {git: %q, ref: main, source_harness: claude}}\nresources: {team: {include: [skill/root-probe, subagent/root-agent]}}\n", tc.target, mode, registry))
 				env.MustRunAM("sync")
 				root := filepath.Join(env.workspace, tc.root)
 				if _, err := os.Stat(filepath.Join(root, tc.artifact)); err != nil {
