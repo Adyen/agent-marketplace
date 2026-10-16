@@ -24,7 +24,7 @@ has the same dependency and returns 500 for foreign-encoded archives.
 - A background backfill derives missing placeholder archives for stored
   revisions; unreproducible ones are reported, not fatal.
 
-No lock format, API route, existing response field, or digest value changes.
+No lock format, existing API route, existing response field, or digest value changes.
 
 ## Impact
 

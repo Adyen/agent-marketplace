@@ -125,7 +125,7 @@ verification.
 - **GIVEN** placeholder-form and final archives recorded by Go 1.26 and by Go 1.27
 - **WHEN** each placeholder-form archive is verified by hashing its bytes against its digest under either toolchain
 - **THEN** verification MUST succeed
-- **AND** a final archive recorded by the other toolchain MUST fail with an encoding mismatch, while tampered final content MUST fail as an integrity error
+- **AND** a final archive recorded by the other toolchain and verified without its placeholder form, as after a 404 from the placeholder route, MUST fail with an encoding mismatch, while tampered final content MUST fail as an integrity error
 
 ### Requirement: Placeholder-form archives are cached apart from legacy artifacts
 
