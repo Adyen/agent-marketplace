@@ -1,6 +1,6 @@
 ## 1. Baseline measurement
 
-- [ ] 1.1 Record the baseline with a test-only `git` wrapper first on PATH that
+- [x] 1.1 Record the baseline with a test-only `git` wrapper first on PATH that
       appends one line per invocation:
       - the Git invocation count for `TestSyncIncompleteSatisfactionKeepsLegacyBehavior`,
         run in-process with `-command-tests-in-process`
@@ -88,9 +88,9 @@
 
 ## 5. Measurement and gates
 
-- [ ] 5.1 Repeat the 1.1 measurement on the final commit and record the before
+- [x] 5.1 Repeat the 1.1 measurement on the final commit and record the before
       and after numbers in the pull request description.
-- [ ] 5.2 Run `make spec-check`, `make validate`, and `make tui-qa`, and verify
+- [x] 5.2 Run `make spec-check`, `make validate`, and `make tui-qa`, and verify
       that all pass.
-- [ ] 5.3 Run `openspec archive verify-exact-git-once-per-command --yes` as the
+- [x] 5.3 Run `openspec archive verify-exact-git-once-per-command --yes` as the
       final commit of the pull request.
