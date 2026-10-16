@@ -44,6 +44,38 @@ const resource = {
 }
 
 describe('ResourceDetailView', () => {
+  // spec: marketplace-web-ui/skill-and-command-detail-titles-use-the-slash-motif
+  // spec: marketplace-web-ui/other-resource-detail-titles-remain-unprefixed
+  it('prefixes only skill and command detail titles with the decorative slash', () => {
+    for (const [kind, prefixed] of [
+      ['skill', true],
+      ['command', true],
+      ['subagent', false],
+      ['hook', false],
+      ['mcpserver', false],
+      ['collection', false],
+    ] as const) {
+      const wrapper = mount(ResourceDetailView, {
+        props: {
+          resource: { ...resource, coordinate: { ...coordinate, kind } },
+          registry: 'team-tools', kind, name: 'review', canonicalUrl: 'https://market.example', browserBase: 'https://market.example',
+        },
+        global: { stubs },
+      })
+
+      expect(wrapper.get('h1').text()).toBe(prefixed ? '/review' : 'review')
+      if (prefixed) {
+        const slash = wrapper.get('[data-testid="resource-title-slash"]')
+        expect(slash.text()).toBe('/')
+        expect(slash.attributes('aria-hidden')).toBe('true')
+        expect(slash.classes()).toContain('am-brand-slash')
+      }
+      else {
+        expect(wrapper.find('[data-testid="resource-title-slash"]').exists()).toBe(false)
+      }
+    }
+  })
+
   // spec: marketplace-web-ui/installable-resource-exposes-compact-actions
   it('prioritizes identity, installation, and default content before tabbed supporting details', async () => {
     const wrapper = mount(ResourceDetailView, {
@@ -60,7 +92,7 @@ describe('ResourceDetailView', () => {
       global: { stubs },
     })
 
-    expect(wrapper.get('h1').text()).toBe('review')
+    expect(wrapper.get('h1').text()).toBe('/review')
     expect(wrapper.find('[data-testid="revision-summary"]').exists()).toBe(false)
     const revisionRow = wrapper.get('[data-testid="revision-row"]')
     expect(revisionRow.get('[data-testid="revision-label"]').text()).toBe('Revision (latest)')
@@ -165,7 +197,7 @@ describe('ResourceDetailView', () => {
       global: { stubs },
     })
 
-    expect(wrapper.get('h1').text()).toBe('review')
+    expect(wrapper.get('h1').text()).toBe('/review')
     expect(wrapper.get('code').text()).toContain(`/revisions/sha256%3A${'c'.repeat(64)}`)
     expect(wrapper.find('button[aria-label^="Copy detail URL"]').exists()).toBe(false)
     expect(wrapper.find('script').exists()).toBe(false)

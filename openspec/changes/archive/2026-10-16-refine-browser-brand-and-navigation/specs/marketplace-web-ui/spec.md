@@ -26,3 +26,15 @@ Landing and Marketplace SHALL reuse a literal weight-800 `/` in the logo green `
 - **AND** Landing eyebrow labels use the primary text color while the hero secondary line has no motif slash
 - **AND** no motif slash appears in the Filters or Resources catalog heading
 - **AND** accessible heading and label names remain unchanged
+
+### Requirement: Selective resource-title slash motif
+Marketplace resource detail titles SHALL show the shared weight-800 `#00D16A` slash immediately before the resource name when the resource kind is skill or command. The slash MUST be decorative and hidden from the accessibility tree, leaving the accessible heading name unchanged. Detail titles for every other resource kind MUST remain unprefixed.
+
+#### Scenario: Skill and command detail titles use the slash motif
+- **WHEN** a user views a skill or command detail page
+- **THEN** the visible title is prefixed directly by the shared green slash
+- **AND** the accessible heading name remains the resource name without the slash
+
+#### Scenario: Other resource detail titles remain unprefixed
+- **WHEN** a user views a detail page for any other resource kind
+- **THEN** its visible and accessible title remains the unprefixed resource name

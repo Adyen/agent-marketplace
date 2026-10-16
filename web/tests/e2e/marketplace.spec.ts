@@ -748,6 +748,9 @@ test.describe('Marketplace browser discovery', () => {
 
     await expect(page).toHaveURL(`${appURL}/r/team-tools/skill/secure-review/revisions/${encodeURIComponent(digest)}`)
     await expect(page.getByRole('heading', { name: 'secure-review', exact: true })).toBeVisible()
+    await expect(page.getByTestId('resource-title-slash')).toHaveText('/')
+    await expect(page.getByTestId('resource-title-slash')).toHaveCSS('color', 'rgb(0, 209, 106)')
+    await expect(page.getByTestId('resource-title-slash')).toHaveCSS('font-weight', '800')
     await expect(page.getByTestId('revision-summary')).toHaveCount(0)
     await expect(page.getByRole('heading', { name: 'Install', exact: true })).toBeVisible()
     const setupCLI = page.getByRole('link', { name: 'Set up CLI (opens in a new tab)', exact: true })

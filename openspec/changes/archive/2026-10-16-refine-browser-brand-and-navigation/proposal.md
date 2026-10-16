@@ -8,6 +8,7 @@ The Landing, Docs, and Marketplace surfaces need a more cohesive brand treatment
 - Remove the redundant `Marketplace` text link from the Nuxt header while retaining the logo home link.
 - Keep Landing Docs navigation local, but send the Marketplace header Docs link to `https://agent-marketplace.io/docs` in an isolated new tab with a visible external-link marker.
 - Reuse a weight-800 `#00D16A` slash before Landing section eyebrows and the Marketplace instance title, and as the meaningful registry/resource delimiter in result rows.
+- Prefix skill and command detail titles with the same decorative slash while leaving other resource kinds unprefixed.
 - Keep Landing eyebrow labels in the primary text color and leave the hero secondary line plus Marketplace Filters and Resources headings unaccented.
 - Replace deployment-tool-specific Landing copy with environment-neutral wording.
 
