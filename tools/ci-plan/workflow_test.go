@@ -491,8 +491,9 @@ func TestMergeQueueTriggers(t *testing.T) {
 				if env["BASE_SHA"] != "${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}" || env["HEAD_SHA"] != "${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha }}" {
 					t.Fatalf("planner does not take merge group commits: %v", env)
 				}
-				if !strings.Contains(m["run"].(string), `"$EVENT_NAME" == merge_group`) {
-					t.Fatalf("planner does not diff merge groups: %s", m["run"])
+				run, ok := m["run"].(string)
+				if !ok || !strings.Contains(run, `"$EVENT_NAME" == merge_group`) {
+					t.Fatalf("planner does not diff merge groups: %v", m["run"])
 				}
 				return
 			}
