@@ -234,6 +234,7 @@ test.describe('Marketplace browser discovery', () => {
     const eyebrowSlash = page.locator('.eyebrow .am-brand-slash').first()
     await expect(eyebrowSlash).toHaveCSS('color', 'rgb(0, 209, 106)')
     await expect(eyebrowSlash).toHaveCSS('font-weight', '800')
+    await expect(eyebrowSlash).toHaveCSS('margin-inline', '2px')
     const eyebrowText = await page.locator('.eyebrow').first().evaluate(element => element.textContent ?? '')
     expect(eyebrowText).toMatch(/^\/\S/)
     const eyebrowColors = await page.locator('.eyebrow').first().evaluate((element) => ({
@@ -263,6 +264,7 @@ test.describe('Marketplace browser discovery', () => {
     await expect(introSlash).toHaveText('/')
     await expect(introSlash).toHaveCSS('color', 'rgb(0, 209, 106)')
     await expect(introSlash).toHaveCSS('font-weight', '800')
+    await expect(introSlash).toHaveCSS('margin-inline', '2px')
     await expect(page.locator('.marketplace-intro h1')).toHaveText('/e2e-marketplace')
     await expect(page.locator('#filters-heading .am-brand-slash')).toHaveCount(0)
     await expect(page.locator('#results-heading .am-brand-slash')).toHaveCount(0)
@@ -272,6 +274,7 @@ test.describe('Marketplace browser discovery', () => {
     await expect(coordinateSlash).toHaveText('/')
     await expect(coordinateSlash).toHaveCSS('color', 'rgb(0, 209, 106)')
     await expect(coordinateSlash).toHaveCSS('font-weight', '800')
+    await expect(coordinateSlash).toHaveCSS('margin-inline', '2px')
     const marketplaceBrand = marketplaceNav.getByRole('link', { name: 'agent-marketplace', exact: true })
     await expect(marketplaceBrand).toHaveAttribute('href', '/')
     await expect(marketplaceBrand.locator('.am-site-nav__brand-logo--light')).toHaveAttribute('src', '/brand/logo-horizontal-black.svg')
