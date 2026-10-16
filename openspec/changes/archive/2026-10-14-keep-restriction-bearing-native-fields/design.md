@@ -5,7 +5,7 @@ Gemini subagent inline MCP servers live only in the typed Gemini sidecar, so the
 ## Decisions
 
 1. **Gemini keeps the whole inline server.** Unmodeled members are preserved as an opaque member map in the sidecar and re-emitted by the Gemini compiler. This is a same-harness round trip, so the server keeps exactly the authority the source granted. Preserved members never override `command`, `args`, `env` or `url`, including case variants.
-2. **Windsurf reads the documented key.** `working_directory` is the documented member. Because a non-empty value changes where a relative command resolves, hook resolution refuses it on every non-Windsurf target; an empty value is Windsurf's default (the workspace root) and is treated as absent, with the existing `hook.windsurf.native-fields-unsupported` code instead of dropping it.
+2. **Windsurf reads the documented key.** `working_directory` is the documented member. Because a non-empty value changes where a relative command resolves, hook resolution refuses it on every non-Windsurf target with the existing `hook.windsurf.native-fields-unsupported` code instead of dropping it. An empty value is Windsurf's default (the workspace root) and is treated as absent.
 3. **Devin treats arguments as required.** Removing one argument changes the command line, so an unrepresentable argument removes the entry with the existing entry-level `mcp.devin.interpolation-unrepresentable` error. Environment and header values keep their existing value-level warning.
 
 ## Non-goals
