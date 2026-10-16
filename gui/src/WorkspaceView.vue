@@ -913,7 +913,6 @@ async function run(action: 'sync' | 'update') {
       :inert="inspectorFolded"
       :selected="selected"
       :drift="view?.drift ?? ''"
-      :harnesses="view?.harnesses ?? []"
       :discovery-enabled="view?.discoveryEnabled === true"
       :discovery-loading="view?.discoveryLoading === true"
       :discovery-error="view?.discoveryError ?? null"

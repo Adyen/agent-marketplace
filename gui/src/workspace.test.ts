@@ -220,6 +220,26 @@ describe('WorkspaceView', () => {
     expect(wrapper.find('.workspace__badge').text()).toContain('claude')
   })
 
+  it('shows the user scope as hidden text and an organization scope as a tag', async () => {
+    const { client, push } = fakeClient()
+    const { wrapper } = mountWorkspace(client)
+    push(
+      event({
+        sequence: 1,
+        payload: snapshot([
+          row('plain', { group: 'enabled' }),
+          row('corp', { group: 'required', required: true, status: 'required (org)', scope: 'organization' }),
+        ]),
+      }),
+    )
+    await tick()
+
+    const scopeOf = (name: string) => wrapper.findAll('.workspace__row').find((r) => r.get('.workspace__name').text() === name)?.get('.workspace__scope')
+    expect(scopeOf('plain')?.classes()).toContain('gui-visually-hidden')
+    expect(scopeOf('plain')?.text()).toBe('user')
+    expect(scopeOf('corp')?.classes()).toContain('workspace__scope--tag')
+  })
+
   it('marks a sidebar group with a tone dot only when it has rows', async () => {
     const { client, push } = fakeClient()
     const { wrapper } = mountWorkspace(client)
@@ -254,6 +274,42 @@ describe('WorkspaceView', () => {
     expect(toggle.attributes('aria-expanded')).toBe('true')
     await toggle.trigger('click')
     expect(toggle.attributes('aria-expanded')).toBe('false')
+  })
+
+  it('collapses diagnostics that share a code into one disclosure row and expands each group on its own', async () => {
+    const { client, push } = fakeClient()
+    const { wrapper } = mountWorkspace(client)
+    const code = 'subagent.devin.model-default'
+    push(
+      event({
+        sequence: 1,
+        payload: snapshot([row('a')], {
+          diagnostics: [
+            { severity: 'warning', category: 'catalog', code, message: 'first subagent' },
+            { severity: 'warning', category: 'catalog', code, message: 'second subagent' },
+            { severity: 'warning', category: 'catalog', code, message: 'third subagent' },
+            { severity: 'warning', category: 'catalog', code: 'other', message: 'other note' },
+          ],
+        }),
+      }),
+    )
+    await tick()
+
+    const list = wrapper.get('ul[aria-label="Diagnostics"]')
+    const toggles = list.findAll('button')
+    expect(toggles).toHaveLength(2)
+    expect(toggles[0].text()).toContain('first subagent')
+    expect(toggles[0].text()).toContain('×3')
+    expect(list.text()).not.toContain('second subagent')
+
+    await toggles[0].trigger('click')
+    expect(toggles[0].attributes('aria-expanded')).toBe('true')
+    expect(toggles[1].attributes('aria-expanded')).toBe('false')
+    expect(list.findAll('.gui-diagnostics__messages li').map((message) => message.text())).toEqual([
+      'first subagent',
+      'second subagent',
+      'third subagent',
+    ])
   })
 
   it('rejects stale generations and retains the accepted list until final', async () => {
