@@ -1545,14 +1545,17 @@ func (s *Server) writeArchiveAvailability(w http.ResponseWriter, r *http.Request
 	return true
 }
 
+func (s *Server) artifactLimit() int64 {
+	if limit := s.cfg.Policy.Limits.ArtifactBytes; limit > 0 {
+		return limit
+	}
+	return config.DefaultArtifactBytes
+}
+
 // archiveWithinLimit reports whether data fits the configured artifact size limit,
 // writing the refusal when it does not.
 func (s *Server) archiveWithinLimit(w http.ResponseWriter, data []byte) bool {
-	artifactLimit := s.cfg.Policy.Limits.ArtifactBytes
-	if artifactLimit <= 0 {
-		artifactLimit = config.DefaultArtifactBytes
-	}
-	if int64(len(data)) > artifactLimit {
+	if int64(len(data)) > s.artifactLimit() {
 		writeError(w, http.StatusRequestEntityTooLarge, "artifact exceeds size limit")
 		return false
 	}
@@ -1629,6 +1632,9 @@ func (s *Server) handlePlaceholderArchives(w http.ResponseWriter, r *http.Reques
 	case errors.Is(err, store.ErrNotFound), errors.Is(err, hccartifact.ErrPlaceholderNotReproducible):
 		writeError(w, http.StatusNotFound, "placeholder archive not available")
 		return
+	case errors.Is(err, errArchiveTooLarge):
+		writeError(w, http.StatusRequestEntityTooLarge, "artifact exceeds size limit")
+		return
 	case err != nil:
 		slog.Error("placeholder archive fetch failed", "digest", logvalue.Safe(digest), "err", logvalue.Safe(err))
 		writeError(w, http.StatusInternalServerError, "failed to fetch placeholder archive")
@@ -1645,9 +1651,12 @@ func (s *Server) handlePlaceholderArchives(w http.ResponseWriter, r *http.Reques
 	writeImmutable(w, artifactMediaType, data)
 }
 
+var errArchiveTooLarge = errors.New("artifact exceeds size limit")
+
 // placeholderArchive returns the stored placeholder-form archive for digest. A
 // missing one is derived from the final archive and stored only when the derived
-// bytes hash to digest; otherwise it returns ErrPlaceholderNotReproducible.
+// bytes hash to digest; otherwise it returns ErrPlaceholderNotReproducible. An
+// oversized final archive is refused before anything is derived or stored.
 func (s *Server) placeholderArchive(ctx context.Context, digest store.ArchiveDigest) ([]byte, error) {
 	data, err := s.blobs.Get(ctx, store.PlaceholderArchiveKey(digest))
 	if err == nil {
@@ -1659,6 +1668,9 @@ func (s *Server) placeholderArchive(ctx context.Context, digest store.ArchiveDig
 	final, err := s.blobs.Get(ctx, digest)
 	if err != nil {
 		return nil, err
+	}
+	if int64(len(final)) > s.artifactLimit() {
+		return nil, errArchiveTooLarge
 	}
 	derived, err := hccartifact.DerivePlaceholderArchive(final, string(digest))
 	if err != nil {

@@ -228,6 +228,25 @@ func TestPlaceholderArchiveRouteServesVerifiedBytes(t *testing.T) {
 					t.Fatalf("placeholder route with failing store status %d, digest match %v", status, archiveDigestOf(body) == archive.digest)
 				}
 			})
+
+			t.Run("oversized final archive is refused before a placeholder is derived", func(t *testing.T) {
+				meta, blobs, cfg := newPlaceholderTestServer(t)
+				cfg.Policy.Limits.ArtifactBytes = int64(len(archive.final)) - 1
+				publishToolchainArchive(t, meta, blobs, cfg, archive, nil)
+				if err := blobs.Put(context.Background(), archive.digest, archive.final); err != nil {
+					t.Fatal(err)
+				}
+				public := httptest.NewServer(NewServer(cfg, meta, blobs).PublicHandler())
+				defer public.Close()
+
+				status, _ := getBytes(t, public.URL+"/api/v1/archives/"+strings.Replace(string(archive.digest), ":", "/", 1))
+				if status != http.StatusRequestEntityTooLarge {
+					t.Fatalf("oversized final archive status %d, want 413", status)
+				}
+				if _, err := blobs.Get(context.Background(), store.PlaceholderArchiveKey(archive.digest)); !errors.Is(err, store.ErrNotFound) {
+					t.Fatalf("oversized final archive stored a placeholder: err %v", err)
+				}
+			})
 		})
 	}
 }

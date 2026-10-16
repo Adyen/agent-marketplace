@@ -176,7 +176,8 @@ last-good installation is preserved when re-acquisition fails.
   manifest `archive_digest` does not match its canonical archive
 - **THEN** it MUST fail with an archive digest mismatch
 - **AND** when raw archive bytes that differ from the canonical archive are
-  supplied, it MUST fail even if the manifest digest is correct
+  supplied without a verified placeholder-form archive, it MUST fail even if
+  the manifest digest is correct
 - **AND** an untampered encoded artifact MUST verify
 
 #### Scenario: Same-content revision carries a repaired archive digest
@@ -479,6 +480,7 @@ archives that have no placeholder form.
 - **WHEN** the placeholder route is requested for its archive digest
 - **THEN** the Marketplace MUST derive the placeholder archive from the final archive and store it when the derived bytes hash to the digest
 - **AND** when the derived bytes do not hash to the digest the response MUST be 404 with a placeholder-archive-unavailable message
+- **AND** when the final archive exceeds the configured artifact size limit the response MUST be 413 and no placeholder archive MUST be derived or stored
 
 #### Scenario: Artifact route serves stored final archives without re-compression
 

@@ -47,3 +47,40 @@ archive and its placeholder are published instead.
 - **WHEN** a publication stages that resource
 - **THEN** the newly built archive digest MUST be used
 - **AND** the existing archive-digest repair scenario MUST apply
+
+## MODIFIED Requirements
+
+### Requirement: Publication repairs archive-digest drift on identical content
+
+A registry publication that stages a resource revision whose content digest
+matches an existing published revision of the same resource but whose archive
+digest differs, and whose stored archive cannot be reused under "Republishing
+identical content reuses the stored archive", SHALL publish successfully. The
+publication MUST upload the newly built resource artifact, update the stored
+archive digest for that revision within the publication transaction, and
+retain the previously published artifact. License and description SHALL remain
+immutable for an unchanged content digest. The publication MUST NOT return a
+publication conflict for this case, and the repaired revision MUST serve the
+new archive digest to consumers.
+
+#### Scenario: Drifted archive digest republishes without conflict
+
+- **GIVEN** a published resource revision with content digest C and archive
+  digest A1
+- **AND** the stored archive cannot be reused because the stored revision has
+  no stored placeholder-form archive or the newly built artifact differs from
+  it ignoring the archive digest
+- **WHEN** a publication stages the same resource with content digest C and
+  archive digest A2
+- **THEN** publication MUST succeed
+- **AND** the revision's stored archive digest MUST be A2
+- **AND** the artifact content-addressed by A1 MUST remain downloadable
+- **AND** the revision's license and description MUST remain unchanged
+
+#### Scenario: Drifted license or description still conflicts
+
+- **GIVEN** a published resource revision with content digest C
+- **WHEN** a publication stages the same resource with content digest C and
+  a different license or description
+- **THEN** publication MUST return a conflict
+- **AND** the stored revision MUST remain unchanged
