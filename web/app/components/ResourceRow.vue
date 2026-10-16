@@ -57,9 +57,9 @@ const installationCountLabel = computed(() =>
           <span class="text-xs text-dimmed" aria-hidden="true">·</span>
           <h2 class="relative z-10 min-w-0 truncate font-mono text-sm font-medium leading-5 tracking-tight">
             <NuxtLink v-if="browserUrl" :to="browserUrl" class="cursor-pointer rounded decoration-primary underline-offset-4 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary">
-              <span class="text-muted">{{ registryLabel(item) }}/</span><span class="font-semibold text-highlighted">{{ item.name }}</span>
+              <span class="text-muted">{{ registryLabel(item) }}</span><span class="resource-coordinate__separator am-brand-slash">/</span><span class="font-semibold text-highlighted">{{ item.name }}</span>
             </NuxtLink>
-            <span v-else><span class="text-muted">{{ registryLabel(item) }}/</span><span class="font-semibold text-highlighted">{{ item.name }}</span></span>
+            <span v-else><span class="text-muted">{{ registryLabel(item) }}</span><span class="resource-coordinate__separator am-brand-slash">/</span><span class="font-semibold text-highlighted">{{ item.name }}</span></span>
           </h2>
         </div>
 

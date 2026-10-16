@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { appAssetPath, DOCS_PATH } from '~/lib/site'
+import { appAssetPath, MARKETPLACE_DOCS_URL } from '~/lib/site'
 
 const route = useRoute()
 const config = useRuntimeConfig()
@@ -40,10 +40,10 @@ function closeMenu(returnFocus = false) {
 
       <div id="site-navigation-actions" class="am-site-nav__actions" :data-open="menuOpen">
         <div class="am-site-nav__links">
-          <NuxtLink to="/" class="am-site-nav__link" @click="closeMenu()">
-            Marketplace
-          </NuxtLink>
-          <NuxtLink :to="DOCS_PATH" external class="am-site-nav__link" @click="closeMenu()">Docs</NuxtLink>
+          <a :href="MARKETPLACE_DOCS_URL" target="_blank" rel="noopener noreferrer" class="am-site-nav__link" @click="closeMenu()">
+            <span>Docs</span>
+            <UIcon name="i-lucide-external-link" class="size-3.5 shrink-0" data-testid="docs-external-icon" aria-hidden="true" />
+          </a>
         </div>
 
         <div class="am-site-nav__utilities">

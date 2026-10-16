@@ -20,7 +20,7 @@ withDefaults(
     <div class="am-wrap">
       <div class="head">
         <div class="head-copy">
-          <span class="eyebrow">{{ eyebrow }}</span>
+          <span class="eyebrow"><span class="am-brand-slash" aria-hidden="true">/</span> {{ eyebrow }}</span>
           <h2><slot name="title">{{ title }}</slot></h2>
           <p v-if="$slots.sub" class="sub"><slot name="sub" /></p>
         </div>
@@ -69,7 +69,7 @@ withDefaults(
   font-size: var(--am-text-supporting);
   letter-spacing: 0.08em;
   text-transform: uppercase;
-  color: var(--vp-c-brand-1);
+  color: var(--vp-c-text-1);
   margin-bottom: 14px;
 }
 

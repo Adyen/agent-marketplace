@@ -163,7 +163,7 @@ useHead({
     <main id="main-content" class="marketplace-main" tabindex="-1">
       <section class="marketplace-intro">
         <div class="marketplace-intro__inner">
-          <h1>{{ metadata?.instance_id ?? 'Agent Marketplace' }}</h1>
+          <h1><span class="am-brand-slash" aria-hidden="true">/</span> {{ metadata?.instance_id ?? 'Agent Marketplace' }}</h1>
           <div class="marketplace-intro__description">
             <p>Browse resources for AI agents, with every revision pinned and analyzed before publication.</p>
             <p>

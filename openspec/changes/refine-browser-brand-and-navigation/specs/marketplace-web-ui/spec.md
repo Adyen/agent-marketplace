@@ -1,0 +1,28 @@
+## MODIFIED Requirements
+
+### Requirement: Shared browser brand identity
+The Landing, Docs, and Marketplace surfaces SHALL present the agent-marketplace logo artwork at one consistent displayed width of 160 CSS pixels and optical vertical alignment in their primary navigation, select a contrasting supplied logo variant for light and dark appearance, and publish the supplied favicon at each surface's configured base path. Route-dependent navigation wrappers MAY retain different widths. The logo link MUST retain the accessible product name and existing home destination.
+
+#### Scenario: Browser surfaces present accessible adaptive branding
+- **WHEN** a user visits Landing, a Docs page with a sidebar, or Marketplace in light or dark appearance
+- **THEN** the primary navigation shows the contrasting agent-marketplace logo artwork at a displayed width of 160 CSS pixels and the same optical vertical alignment on every surface, its home link is named `agent-marketplace`, and the document references the supplied favicon from that surface's configured base path
+
+## ADDED Requirements
+
+### Requirement: Marketplace header navigation
+The Marketplace primary header SHALL use its accessible logo link as the Marketplace home action without also showing a `Marketplace` text link. It SHALL provide a visibly marked external Docs link to `https://agent-marketplace.io/docs` that bypasses Nuxt routing and opens in a separate browser tab with opener isolation.
+
+#### Scenario: Marketplace header offers non-redundant external documentation navigation
+- **WHEN** a user views the Marketplace primary header
+- **THEN** the logo remains a Marketplace home link and no `Marketplace` text link is shown
+- **AND** the Docs link has a visible external-link marker, resolves to `https://agent-marketplace.io/docs`, opens in a new tab, and prevents the opened page from accessing its opener
+
+### Requirement: Shared slash brand motif
+Landing and Marketplace SHALL reuse a literal weight-800 `/` in the logo green `#00D16A` at approved structural brand locations. Landing SHALL show it before every section eyebrow but SHALL NOT show it before the hero secondary line. Landing eyebrow labels SHALL use the primary text color so the green slash remains a distinct accent. Marketplace SHALL show it before the instance title. The functional Filters and Resources catalog headings SHALL NOT show the motif. Decorative slashes MUST be hidden from the accessibility tree so the existing heading and label names remain unchanged. Other content SHALL NOT gain the motif implicitly.
+
+#### Scenario: Browser surfaces carry the approved slash motif
+- **WHEN** a user visits Landing or the Marketplace catalog
+- **THEN** a weight-800 `#00D16A` slash appears at each approved section-label and instance-title location
+- **AND** Landing eyebrow labels use the primary text color while the hero secondary line has no motif slash
+- **AND** no motif slash appears in the Filters or Resources catalog heading
+- **AND** accessible heading and label names remain unchanged

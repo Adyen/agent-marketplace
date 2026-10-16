@@ -19,6 +19,7 @@ const stubs = {
 const hostile = '<img src=x onerror=alert(1)>'
 
 describe('ResourceRow', () => {
+  // spec: marketplace-browser/resource-row-highlights-its-meaningful-coordinate-separator
   it('escapes remote text and disables the install action for an unroutable item', () => {
     const wrapper = mount(ResourceRow, {
       props: {
@@ -37,6 +38,8 @@ describe('ResourceRow', () => {
     })
 
     expect(wrapper.get('h2').text()).toBe(`${hostile}/${hostile}`)
+    expect(wrapper.get('.resource-coordinate__separator').text()).toBe('/')
+    expect(wrapper.get('.resource-coordinate__separator').classes()).toContain('am-brand-slash')
     expect(wrapper.get('h2').html()).toContain('&lt;img')
     expect(wrapper.find('img').exists()).toBe(false)
     expect(wrapper.find('[onerror]').exists()).toBe(false)
