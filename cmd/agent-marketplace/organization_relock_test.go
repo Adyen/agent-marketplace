@@ -3,6 +3,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"os"
 	"os/exec"
@@ -13,6 +14,8 @@ import (
 
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/lockfile"
+	"github.com/Adyen/agent-marketplace/internal/marketplace"
+	"github.com/Adyen/agent-marketplace/internal/marketplacelock"
 	"github.com/Adyen/agent-marketplace/internal/pipeline"
 )
 
@@ -145,6 +148,100 @@ func TestOrganizationRelockChangedRefKeepsUnchangedEntries(t *testing.T) {
 	}
 	if betaAfter := lockRegistryByURL(t, after, "relock-beta"); !reflect.DeepEqual(betaAfter, betaBefore) {
 		t.Fatalf("unchanged beta record moved: before=%#v after=%#v", betaBefore, betaAfter)
+	}
+}
+
+// spec: deployed-acquisition-locks/plain-organization-lock-relocks-a-changed-ref
+func TestOrganizationRelockMixedMarketplaceKeepsMarketplaceRecords(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	f := newOrganizationRelockFixture(t)
+	server := newV4MarketplaceLockServer(t)
+	defer server.Close()
+	writeOrgConfig := func(alphaRef string) {
+		writeConfig(t, f.orgPath, "apiVersion: agent-marketplace/v4\nsources:\n  alpha: {git: file://"+f.alphaBare+", ref: "+alphaRef+"}\n  hosted: {marketplace: "+server.URL+"}\nresources:\n  alpha: {all: true, required: true}\n  hosted: {include: [tools/skill/review]}\n")
+	}
+	writeOrgConfig("main")
+	f.lockOrganization(t)
+	// Administrator-deployed organization locks can carry Marketplace records
+	// the explicit lock write must preserve.
+	missing := filepath.Join(t.TempDir(), "missing.yaml")
+	root := t.TempDir()
+	intent := config.ReadIntent(context.Background(), config.LoadEffectiveOptions{
+		RepoRoot: root, LocalConfigDir: root,
+		OrganizationPath: f.orgPath,
+		GlobalPath:       missing, RepoPath: missing, LocalPath: missing,
+	})
+	if len(intent.Errors) > 0 {
+		t.Fatalf("intent errors = %v", intent.Errors)
+	}
+	mpDoc, err := marketplacelock.Resolve(context.Background(), marketplace.NewResolver(), intent.Layers[config.Organization], []string{"factory"}, nil)
+	if err != nil {
+		t.Fatalf("resolve organization Marketplace lock: %v", err)
+	}
+	beforeDoc, err := lockfile.Decode(f.lockBytes(t))
+	if err != nil {
+		t.Fatalf("decode organization lock: %v", err)
+	}
+	beforeDoc.Marketplaces = mpDoc.Marketplaces
+	if len(beforeDoc.Marketplaces) != 1 || beforeDoc.Marketplaces[0].URL != server.URL {
+		t.Fatalf("resolved Marketplace records = %#v, want the configured Marketplace", beforeDoc.Marketplaces)
+	}
+	deployedData, err := lockfile.Encode(beforeDoc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, f.lockPath, string(deployedData))
+
+	writeSkill(t, f.alphaWork, "alpha-skill", "Alpha skill v2", nil)
+	commitAndPushAll(t, f.alphaWork, "alpha v2")
+	runGit(t, f.alphaWork, "tag", "v2")
+	runGit(t, f.alphaWork, "push", "origin", "v2")
+	writeOrgConfig("v2")
+	alphaCommit := gitCommit(t, f.alphaBare, "v2^{commit}")
+
+	if output, err := executeCommand("lock", "--scope", "organization"); err != nil {
+		t.Fatalf("lock --scope organization after ref change: %v\n%s", err, output)
+	}
+	after := f.lockBytes(t)
+	alphaAfter := lockRegistryByURL(t, after, "relock-alpha")
+	if alphaAfter.Ref != "v2" || alphaAfter.Commit.Hex() != alphaCommit {
+		t.Fatalf("alpha lock record = ref %q commit %s, want ref v2 at %s", alphaAfter.Ref, alphaAfter.Commit, alphaCommit)
+	}
+	afterDoc, err := lockfile.Decode(after)
+	if err != nil {
+		t.Fatalf("decode organization lock: %v", err)
+	}
+	if !reflect.DeepEqual(afterDoc.Marketplaces, beforeDoc.Marketplaces) {
+		t.Fatalf("Marketplace lock records changed: before=%#v after=%#v", beforeDoc.Marketplaces, afterDoc.Marketplaces)
+	}
+}
+
+// spec: deployed-acquisition-locks/plain-organization-lock-relocks-a-changed-ref
+func TestOrganizationRelockDropsUnconfiguredSource(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	f := newOrganizationRelockFixture(t)
+	f.lockOrganization(t)
+	alphaBefore := lockRegistryByURL(t, f.lockBytes(t), "relock-alpha")
+
+	writeConfig(t, f.orgPath, "apiVersion: agent-marketplace/v4\nsources:\n  alpha: {git: file://"+f.alphaBare+", ref: main}\nresources:\n  alpha: {all: true, required: true}\n")
+
+	if output, err := executeCommand("lock", "--scope", "organization"); err != nil {
+		t.Fatalf("lock --scope organization after dropping a source: %v\n%s", err, output)
+	}
+	after := f.lockBytes(t)
+	doc, err := lockfile.Decode(after)
+	if err != nil {
+		t.Fatalf("decode organization lock: %v", err)
+	}
+	if len(doc.Registries) != 1 {
+		t.Fatalf("organization lock registries = %#v, want only alpha", doc.Registries)
+	}
+	if !reflect.DeepEqual(doc.Registries[0], alphaBefore) {
+		t.Fatalf("remaining alpha record changed: before=%#v after=%#v", alphaBefore, doc.Registries[0])
 	}
 }
 

@@ -95,10 +95,7 @@ func readDeployedLocks(ctx context.Context, intent config.Intent, overlays map[s
 			}
 			continue
 		}
-		if source == config.Organization && !readOnlyGitDocumentMatches(*doc, GitRegistryEntries(layer.Sources())) {
-			if relockOrganization {
-				continue
-			}
+		if source == config.Organization && !relockOrganization && !readOnlyGitDocumentMatches(*doc, GitRegistryEntries(layer.Sources())) {
 			return evidence, &LockViewError{Code: "lock.stale", Scope: scope, Path: paths.CanonicalLock, Err: errors.New("lock does not match configuration")}
 		}
 		evidence.RecordDeployedLock(source, doc, config.ConfigRead{

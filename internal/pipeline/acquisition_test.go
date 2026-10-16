@@ -246,8 +246,8 @@ func TestReadDeployedLocksRelockOrganizationSkipsStaleMatch(t *testing.T) {
 	if err != nil {
 		t.Fatalf("readDeployedLocks with relock = %v, want no error for a stale organization lock", err)
 	}
-	if evidence.Locks[config.Organization] != nil {
-		t.Fatalf("organization lock = %#v, want no deployed evidence under relock", evidence.Locks[config.Organization])
+	if evidence.Locks[config.Organization] == nil {
+		t.Fatal("stale organization lock was not recorded as deployed evidence under relock")
 	}
 
 	malformedPath, _ := deployedLockFixture(t,
