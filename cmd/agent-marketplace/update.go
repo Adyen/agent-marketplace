@@ -83,9 +83,9 @@ func runUpdate(ctx context.Context, out io.Writer, bump, verbose bool, selected 
 	if localDir != "" && localDir != repoRoot {
 		opts.LocalConfigDir = localDir
 	}
-	result, err := pipeline.Update(ctx, opts)
-	if err != nil {
-		return err
+	result, updateErr := pipeline.Update(ctx, opts)
+	if updateErr != nil && result == nil {
+		return updateErr
 	}
 	if err := writeGroupedWarnings(out, warnings, false); err != nil {
 		return err
@@ -95,7 +95,10 @@ func runUpdate(ctx context.Context, out io.Writer, bump, verbose bool, selected 
 			return err
 		}
 	}
-	return writeUpdateOutput(out, result, bump, verbose)
+	if err := writeUpdateOutput(out, result, bump, verbose); err != nil {
+		return err
+	}
+	return updateErr
 }
 
 func updateBumpTarget(targets *upgradeTargetSpec) *pipeline.UpdateTarget {
