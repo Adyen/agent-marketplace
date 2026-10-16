@@ -70,11 +70,12 @@ The Marketplace primary header SHALL use its accessible logo link as the Marketp
 - **AND** the Docs link has a visible external-link marker, resolves to `https://agent-marketplace.io/docs`, opens in a new tab, and prevents the opened page from accessing its opener
 
 ### Requirement: Shared slash brand motif
-Landing and Marketplace SHALL reuse a literal weight-800 `/` in the logo green `#00D16A` at approved structural brand locations. Landing SHALL show it before every section eyebrow but SHALL NOT show it before the hero secondary line. Landing eyebrow labels SHALL use the primary text color so the green slash remains a distinct accent. Marketplace SHALL show it before the instance title. The functional Filters and Resources catalog headings SHALL NOT show the motif. Decorative slashes MUST be hidden from the accessibility tree so the existing heading and label names remain unchanged. Other content SHALL NOT gain the motif implicitly.
+Landing and Marketplace SHALL reuse a literal weight-800 `/` in the logo green `#00D16A` at approved structural brand locations. Every approved slash SHALL attach directly to the following text without whitespace. Landing SHALL show it before every section eyebrow but SHALL NOT show it before the hero secondary line. Landing eyebrow labels SHALL use the primary text color so the green slash remains a distinct accent. Marketplace SHALL show it before the instance title. The functional Filters and Resources catalog headings SHALL NOT show the motif. Decorative slashes MUST be hidden from the accessibility tree so the existing heading and label names remain unchanged. Other content SHALL NOT gain the motif implicitly.
 
 #### Scenario: Browser surfaces carry the approved slash motif
 - **WHEN** a user visits Landing or the Marketplace catalog
 - **THEN** a weight-800 `#00D16A` slash appears at each approved section-label and instance-title location
+- **AND** every slash is attached directly to its following text without whitespace
 - **AND** Landing eyebrow labels use the primary text color while the hero secondary line has no motif slash
 - **AND** no motif slash appears in the Filters or Resources catalog heading
 - **AND** accessible heading and label names remain unchanged

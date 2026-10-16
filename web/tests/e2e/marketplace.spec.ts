@@ -234,6 +234,8 @@ test.describe('Marketplace browser discovery', () => {
     const eyebrowSlash = page.locator('.eyebrow .am-brand-slash').first()
     await expect(eyebrowSlash).toHaveCSS('color', 'rgb(0, 209, 106)')
     await expect(eyebrowSlash).toHaveCSS('font-weight', '800')
+    const eyebrowText = await page.locator('.eyebrow').first().evaluate(element => element.textContent ?? '')
+    expect(eyebrowText).toMatch(/^\/\S/)
     const eyebrowColors = await page.locator('.eyebrow').first().evaluate((element) => ({
       label: getComputedStyle(element).color,
       slash: getComputedStyle(element.querySelector('.am-brand-slash')!).color,
@@ -261,6 +263,7 @@ test.describe('Marketplace browser discovery', () => {
     await expect(introSlash).toHaveText('/')
     await expect(introSlash).toHaveCSS('color', 'rgb(0, 209, 106)')
     await expect(introSlash).toHaveCSS('font-weight', '800')
+    await expect(page.locator('.marketplace-intro h1')).toHaveText('/e2e-marketplace')
     await expect(page.locator('#filters-heading .am-brand-slash')).toHaveCount(0)
     await expect(page.locator('#results-heading .am-brand-slash')).toHaveCount(0)
     await expect(page.getByRole('heading', { name: 'Filters', exact: true })).toBeVisible()
