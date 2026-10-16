@@ -18,7 +18,7 @@ func PreApprovalSkillTools(s *ir.Skill, target Target) ([]string, []diag.Diagnos
 		Severity: diag.SeverityWarning,
 		Target:   string(target),
 		Resource: s.Name(),
-		Message:  "allowed-tools from " + s.ToolSource + " omitted; it is never emitted as a pre-approval on this target",
+		Message:  "allowed-tools from another harness omitted; it is never emitted as a pre-approval on this target",
 		Hint:     "Declare pre-approved tools in the target harness's own layout if the skill needs them",
 		Source:   DiagSource(s.Source),
 	}}
