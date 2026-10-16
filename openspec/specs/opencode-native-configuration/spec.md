@@ -76,12 +76,12 @@ Only proven owned `mcp.<name>` entries SHALL be reconciled or pruned. Ownership 
 
 ### Requirement: Publication is private journaled and generation-checked
 
-New sensitive aggregates, staging, and mandatory raw-byte safety backups SHALL have private permissions. Existing shared-file modes SHALL survive compilation, fragment merging, direct conversion, and native publication, and incompatible requested modes SHALL refuse. Aggregate read/derive/recovery/publication SHALL be serialized per canonical destination and generation-checked with journaled recovery. Mandatory backups SHALL remain enabled even when optional backups are disabled. Identical desired output SHALL cause no rewrite or chmod.
+New sensitive aggregates, staging, and mandatory raw-byte safety backups SHALL have private permissions. Library conversion SHALL emit the OpenCode MCP configuration artifact with private permissions and SHALL leave its publication to synchronization's reconciliation. Existing shared-file modes SHALL survive compilation, fragment merging, and native publication, and incompatible requested modes SHALL refuse. Aggregate read/derive/recovery/publication SHALL be serialized per canonical destination and generation-checked with journaled recovery. Mandatory backups SHALL remain enabled even when optional backups are disabled. Identical desired output SHALL cause no rewrite or chmod.
 
 #### Scenario: Creation and conversion retain private modes
 
-- **WHEN** synchronization or direct conversion creates sensitive OpenCode MCP output under a permissive process umask
-- **THEN** output and mandatory safety backups SHALL remain owner-readable only throughout publication
+- **WHEN** synchronization creates sensitive OpenCode MCP output under a permissive process umask, or library conversion emits it
+- **THEN** output, the emitted artifact, and mandatory safety backups SHALL remain owner-readable only throughout publication
 - **AND** updating an existing file SHALL preserve its mode and repeating unchanged output SHALL preserve bytes and modification time
 
 #### Scenario: Concurrent or interrupted updates preserve an authorized generation
