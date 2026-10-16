@@ -20,11 +20,12 @@ import (
 )
 
 type MarketplaceLayerMutation struct {
-	editor    *config.LayerEditor
-	endpoint  config.MarketplaceEntry
-	endpointS bool
-	pins      []config.MarketplaceResourcePin
-	pinsS     bool
+	editor      *config.LayerEditor
+	endpoint    config.MarketplaceEntry
+	endpointS   bool
+	pins        []config.MarketplaceResourcePin
+	pinsS       bool
+	removesPins bool
 }
 
 func (m *MarketplaceLayerMutation) EnsureEndpoint(entry config.MarketplaceEntry) error {
@@ -99,6 +100,7 @@ func (m *MarketplaceLayerMutation) removeMarketplacePin(entry config.Marketplace
 	}
 	m.endpoint = entry
 	m.endpointS = true
+	m.removesPins = true
 	return nil
 }
 
@@ -213,6 +215,11 @@ func mutateV4MarketplaceLayer(ctx context.Context, repoRoot, localConfigDir, con
 	finalEC := LoadEffective(ctx, ConfigLoadOnline, config.LoadEffectiveOptions{RepoRoot: ws.RepoRoot(), LocalConfigDir: ws.LocalConfigDir(), FileOverlays: overlays}, nil)
 	if len(finalEC.Errors) > 0 {
 		return nil, errors.Join(finalEC.Errors...)
+	}
+	if m.removesPins {
+		if err := preflightHookRemoval(ctx, ws, edits, overlays); err != nil {
+			return nil, err
+		}
 	}
 	reads, err := marketplaceLayerReadAssertions(finalEC, configEdit, lockPath, lockData, lockGeneration)
 	if err != nil {
