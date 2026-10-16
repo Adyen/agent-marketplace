@@ -19,7 +19,7 @@ Read the root [CODING_STANDARDS.md](../../CODING_STANDARDS.md) before modifying 
 
 The text below is carried over verbatim from the previous version of this file. It is not authoritative: a spec or the code wins over it. Baseline changes delete the paragraphs they absorb.
 
-A Go library that compiles AI-agent configuration resources written in a single canonical source format (Claude-plugin layout) into vendor-specific harness layouts. Seven conversion targets — **Claude Code**, **Factory Droid**, **Cursor**, **Windsurf**, **Gemini CLI**, **Devin CLI**, and **Codex** — each register both a compiler and an ingester, so each is valid as a conversion source and a conversion destination. `target/target.go` is the authoritative registry and `ValidateTargetRegistrations()` enforces that the declared capabilities and the registered implementations agree in both directions. `target/native_layout.go` is the topology authority for targets that declare a `NativeLayout`: validated, scope-neutral descriptions of partitions, per-kind resource paths, and shared aggregate files, including scope-variant ones like Devin's project `hooks.v1.json` versus user `config.json#hooks`. `ValidateTargetRegistrations()` validates every declared layout at the same boundary.
+A Go library that compiles AI-agent leaf resources written in a canonical Claude-plugin source layout — plugin packages keep their own formats — into vendor-specific harness layouts. A plugin package is also a resource in its own right: `plugindecode` decodes each recognized package format (`claude-plugin`, `factory-plugin`, `codex-plugin`, `agent-plugin`) into `ir.Plugin` — manifest metadata, ordered members keyed `kind/name`, a contained file set, inert extensions, and records of skipped content — and `pluginpolicy.Project` (exposed as `CompilePackage`) projects it onto a target through the shipped format and harness catalogs. The per-resource `Compile` boundary refuses plugins with `plugin.compile.package-required`. Seven conversion targets — **Claude Code**, **Factory Droid**, **Cursor**, **Windsurf**, **Gemini CLI**, **Devin CLI**, and **Codex** — each register both a compiler and an ingester, so each is valid as a conversion source and a conversion destination. `target/target.go` is the authoritative registry and `ValidateTargetRegistrations()` enforces that the declared capabilities and the registered implementations agree in both directions. `target/native_layout.go` is the topology authority for targets that declare a `NativeLayout`: validated, scope-neutral descriptions of partitions, per-kind resource paths, and shared aggregate files, including scope-variant ones like Devin's project `hooks.v1.json` versus user `config.json#hooks`. `ValidateTargetRegistrations()` validates every declared layout at the same boundary.
 
 Whether a target is selected for a given user is consumer policy, not a library restriction.
 
@@ -27,7 +27,7 @@ The primary consumer is [`agent-marketplace`](https://github.com/Adyen/agent-mar
 
 #### Intent
 
-- **Resource-centric.** The atomic unit is one skill, one command, one subagent, one hook, or one MCP server. A "plugin" is just a bundle of such resources.
+- **Resource-centric.** The atomic unit is one skill, one command, one subagent, one hook, or one MCP server. A plugin is a package resource: it carries its own IR, its own format-specific decoders, and its own projection through the plugin catalogs, rather than being silently flattened into a loose bundle.
 - **Pure core, optional I/O.** `Compile` is pure (`Resource` → `[]Artifact` + `[]Diagnostic`); `Materialize` is the only layer that touches disk (atomic staged-then-rename, with dry-run and optional prune).
 - **Honest about loss.** When a target cannot represent a resource, emit a structured `Diagnostic` with a stable code and skip the artifact — never silently drop or fake it.
 - **Business logic concentrated in mapping tables** (models, tools, env tokens, MCP interpolation), each overridable via `Option`s so consumers don't have to wait on the library for new vendor IDs.
@@ -45,7 +45,7 @@ The primary consumer is [`agent-marketplace`](https://github.com/Adyen/agent-mar
 
 - Distribution, registries, sync, or drift reconciliation (owned by `agent-marketplace`).
 - Rendering, TUIs, CLIs beyond an optional local-testing `cmd/hcc`.
-- A neutral bundle manifest. (Reverse-direction conversion is no longer a non-goal: every target has an ingester, so any target can be a conversion source. Ingestion is semantic, not byte-exact, and each irreversible case is a declared entry in the loss matrix.)
+- Plugin manifests are format-owned, not neutral: each package format's manifest is interpreted by its own decoder rules and the shipped format catalog, never through a unified neutral manifest. (Reverse-direction conversion is no longer a non-goal: every target has an ingester, so any target can be a conversion source. Ingestion is semantic, not byte-exact, and each irreversible case is a declared entry in the loss matrix.)
 - Resources outside the Day-1 scope: LSP servers, monitors, channels, `userConfig` prompt flow, plugin `dependencies`.
 - Interactive management, live reloading, or anything beyond file-format translation.
 

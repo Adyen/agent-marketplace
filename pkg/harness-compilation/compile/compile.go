@@ -313,6 +313,13 @@ func translateSafely(c Compiler, resource ir.Resource, options Options) (arts []
 // calls Translate, and wraps the output into a Result.
 // If no compiler is registered for the target, it returns an error.
 func Compile(r ir.Resource, t Target, opts ...Option) (*Result, error) {
+	// A plugin is a package, not a leaf resource: it must be refused before
+	// the generic kind-range rejection so the caller gets the code that
+	// points at the package compile entry point.
+	if _, ok := r.(*ir.Plugin); ok {
+		return nil, diag.NewCodedError(diag.CodePluginCompilePackageRequired, diag.SourceRef{},
+			fmt.Errorf("a plugin must compile through the package compile entry point"))
+	}
 	kind, name, validationErr := ir.ValidateResource(r)
 	if validationErr != nil {
 		return nil, fmt.Errorf("compile: invalid resource: %w", validationErr)

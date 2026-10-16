@@ -320,6 +320,13 @@ const (
 	// only the entry kind, the non-secret identity, the resource name, the
 	// aggregate path, and the two value DIGESTS.
 	CodeDoctorRepairConflictReplaceable = "doctor.repair.conflict-replaceable" // An unmanaged entry has a desired key with a different value; replacing it needs interactive confirmation
+
+	// Plugin decode/projection WARNING codes: the package still loads, but
+	// the reported field, component, or member was skipped or ignored.
+	CodePluginFormatFieldIgnored     = "plugin.format.field-ignored"     // An unknown or invalid optional manifest field was reported and ignored
+	CodePluginFormatComponentInvalid = "plugin.format.component-invalid" // A fixed component location is absent in the expected form; that component type is skipped
+	CodePluginMemberInvalid          = "plugin.member.invalid"           // A member or entry failed validation and was skipped while siblings loaded
+	CodePluginMemberFieldOmitted     = "plugin.member.field-omitted"     // A member field the plugin surface marks omit-field was dropped before lowering
 )
 
 // Error codes.
@@ -385,6 +392,22 @@ const (
 	// closed.
 	CodeSubagentDevinBuiltinNameConflict   = "subagent.devin.builtin-name-conflict"   // Subagent name collides with a Devin built-in subagent
 	CodeSubagentDevinNestedNameUnsupported = "subagent.devin.nested-name-unsupported" // Subagent name expresses nesting the flat Devin layout cannot represent
+
+	// Plugin PACKAGE codes (plugin-package-ir). They name the plugin, the
+	// member or entry, the package format, and the decode or projection
+	// stage — never a command value, an env value, a header value, or a
+	// manifest field value.
+	CodePluginFormatUnsupported            = "plugin.format.unsupported"             // Source is not a recognized package format, or the harness does not accept it
+	CodePluginFormatVersionUnsupported     = "plugin.format.version-unsupported"     // The package declares a format version no decoder supports
+	CodePluginFormatManifestInvalid        = "plugin.format.manifest-invalid"        // Required manifest data is missing or invalid; the package is rejected before discovery
+	CodePluginPackagePathEscape            = "plugin.package.path-escape"            // A package path resolves outside the package root, or a symlink is unresolvable (escape, dangling, or cyclic)
+	CodePluginPackageSymlinkCycle          = "plugin.package.symlink-cycle"          // A package symlinked directory resolves to the root or an ancestor of the link
+	CodePluginPackageSpecialFile           = "plugin.package.special-file"           // A package entry is a device, socket, or FIFO
+	CodePluginPackageCaseCollision         = "plugin.package.case-collision"         // Two package paths differ only by letter case
+	CodePluginPackageOversized             = "plugin.package.oversized"              // A package file exceeds the bounded-read limit
+	CodePluginMemberLiteralUnrepresentable = "plugin.member.literal-unrepresentable" // A literal placeholder has no escape on the destination; member blocked
+	CodePluginMemberRestrictionUnsupported = "plugin.member.restriction-unsupported" // A plugin member field is a restriction the target cannot enforce; member blocked
+	CodePluginCompilePackageRequired       = "plugin.compile.package-required"       // A plugin resource was passed to the per-resource Compile boundary
 
 	// Devin hook and MCP ENTRY-SKIP codes.
 	//
@@ -697,6 +720,23 @@ var codeCatalog = []CodeDoc{
 	{CodeMaterializeDevinSymlinkRequired, SeverityError, "Devin skills and subagents must be symlinks, so file-copy materialization was refused for this target", "Devin has no real-file fallback; set the materialization mode back to symlink for the Devin harness"},
 	{CodeHookNativeToleranceRefused, SeverityError, "A native hook file was malformed, ambiguous, or unsafe to inspect, so the affected target was left exactly as found", "Fix the reported native hook file by hand; no native or legacy hook bytes were changed"},
 	{CodeDoctorRepairFailed, SeverityError, "An authorized repair action failed; the aggregate was left exactly as found", "This is the partial repair failure outcome and exits 1; re-running the repair is safe"},
+
+	{CodePluginFormatFieldIgnored, SeverityWarning, "A manifest field the format does not model was reported and ignored; the package still loads", "Remove the field, or move client-specific data under the extensions namespace"},
+	{CodePluginFormatComponentInvalid, SeverityWarning, "A fixed component location is not present in its expected form; that component type is skipped while other component types load", "Restore the documented component location or remove the stray entry"},
+	{CodePluginMemberInvalid, SeverityWarning, "A plugin member or entry failed validation and was skipped while its siblings loaded", "Fix the reported member; the package keeps the members that are valid"},
+	{CodePluginMemberFieldOmitted, SeverityWarning, "A member field the plugin surface marks omit-field was dropped before lowering; the member still installs", "Remove the field, or deliver to a target that can represent it"},
+
+	{CodePluginFormatUnsupported, SeverityError, "The source is not a recognized plugin package format, or the destination harness does not accept it", "Use a supported package format and a harness whose plugin catalog accepts it"},
+	{CodePluginFormatVersionUnsupported, SeverityError, "The package declares a format version no decoder supports; the package is not installable", "Pin the package to a supported format version"},
+	{CodePluginFormatManifestInvalid, SeverityError, "Required plugin manifest data is missing or invalid; the package was rejected before component discovery", "Fix the manifest's required fields"},
+	{CodePluginPackagePathEscape, SeverityError, "A package path resolves outside the package root or a symlink cannot be resolved inside it (escape, dangling, or cyclic link); the package was rejected", "Remove the escaping or unresolvable path or symlink; package content must stay inside the plugin root"},
+	{CodePluginPackageSymlinkCycle, SeverityError, "A package symlinked directory resolves to the package root or an ancestor directory of the link; the package was rejected", "Remove the cyclic symlink; links resolving elsewhere inside the root are allowed"},
+	{CodePluginPackageSpecialFile, SeverityError, "A package entry is a device, socket, or FIFO rather than a regular file or directory; the package was rejected", "Remove the special file; a plugin package carries regular files and directories only"},
+	{CodePluginPackageCaseCollision, SeverityError, "Two package paths differ only by letter case and cannot coexist on case-insensitive filesystems; the package was rejected", "Rename one of the colliding paths"},
+	{CodePluginPackageOversized, SeverityError, "A package file exceeds the bounded-read limit; the package was rejected", "Reduce the file below the read limit"},
+	{CodePluginMemberLiteralUnrepresentable, SeverityError, "A plugin MCP member carries placeholder-like text the destination harness would reinterpret, and no literal escape exists; the member was blocked", "Rewrite the value without placeholder-like text, or deliver to a target that can carry it literally"},
+	{CodePluginMemberRestrictionUnsupported, SeverityError, "A plugin member field is a restriction the target plugin surface cannot enforce; the member was blocked rather than installed without it", "Remove the restricted field, or deliver to a target that enforces it"},
+	{CodePluginCompilePackageRequired, SeverityError, "A plugin resource reached the per-resource Compile boundary; plugins compile through the package compile entry point", "Call the package compile entry point instead of Compile"},
 }
 
 // DocForCode returns the documentation entry for the given diagnostic code.

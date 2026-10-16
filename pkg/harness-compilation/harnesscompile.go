@@ -25,6 +25,7 @@ import (
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ingest"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/pluginpolicy"
 	targetmeta "github.com/Adyen/agent-marketplace/pkg/harness-compilation/target"
 )
 
@@ -212,6 +213,14 @@ func Compile(r Resource, t Target, opts ...Option) (*Result, error) {
 		Artifacts:   res.Artifacts,
 		Diagnostics: res.Diagnostics,
 	}, nil
+}
+
+// CompilePackage projects a decoded plugin package onto a target through the
+// pluginpolicy catalogs. Delivery selects decomposed or native delivery;
+// roots carries the caller-supplied package generation and plugin data roots
+// that ${PLUGIN_ROOT} and ${PLUGIN_DATA} expand to. It performs no I/O.
+func CompilePackage(p *ir.Plugin, t Target, d pluginpolicy.Delivery, scope Scope, roots pluginpolicy.Roots) (*pluginpolicy.Projection, error) {
+	return pluginpolicy.Project(p, targetmeta.Target(t), d, compile.Scope(scope), roots)
 }
 
 // CompileNativeHookProjection compiles one hook into the target's declared
