@@ -58,10 +58,10 @@ func readLayerLockWithOverlays(paths config.ConfigLockPaths, scope lockfile.Scop
 var deployedLockOrder = []config.Source{config.Organization, config.UserPersonal, config.RepoCommitted, config.RepoPersonal}
 
 func ReadDeployedLocks(ctx context.Context, intent config.Intent) (config.Evidence, error) {
-	return readDeployedLocks(ctx, intent, nil)
+	return readDeployedLocks(ctx, intent, nil, false)
 }
 
-func readDeployedLocks(ctx context.Context, intent config.Intent, overlays map[string][]byte) (config.Evidence, error) {
+func readDeployedLocks(ctx context.Context, intent config.Intent, overlays map[string][]byte, relockOrganization bool) (config.Evidence, error) {
 	evidence := config.Evidence{}
 	var missing error
 	for _, source := range deployedLockOrder {
@@ -96,6 +96,9 @@ func readDeployedLocks(ctx context.Context, intent config.Intent, overlays map[s
 			continue
 		}
 		if source == config.Organization && !readOnlyGitDocumentMatches(*doc, GitRegistryEntries(layer.Sources())) {
+			if relockOrganization {
+				continue
+			}
 			return evidence, &LockViewError{Code: "lock.stale", Scope: scope, Path: paths.CanonicalLock, Err: errors.New("lock does not match configuration")}
 		}
 		evidence.RecordDeployedLock(source, doc, config.ConfigRead{
