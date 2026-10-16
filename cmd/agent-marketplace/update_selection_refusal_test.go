@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/dependencytxn"
+	"github.com/Adyen/agent-marketplace/internal/lockfile"
 )
 
 // treeStateMap captures every entry under root as relative path -> identity:
@@ -102,6 +104,45 @@ func assertTreeStateEqual(t *testing.T, before, after map[string]string) {
 	}
 }
 
+// assertMissFollowedByRemediation checks that the named miss line is directly
+// followed by a remediation line.
+func assertMissFollowedByRemediation(t *testing.T, combined, name string) {
+	t.Helper()
+	lines := strings.Split(combined, "\n")
+	for i, line := range lines {
+		if !strings.Contains(line, name+" was selected but not found in") {
+			continue
+		}
+		if i+1 < len(lines) && strings.HasPrefix(lines[i+1], "  → ") {
+			return
+		}
+		t.Fatalf("miss %s is not followed by a remediation line:\n%s", name, combined)
+	}
+	t.Fatalf("update refusal did not name %s:\n%s", name, combined)
+}
+
+// lockRegistryByURL returns the lock entry for the canonical registry URL.
+func lockRegistryByURL(t *testing.T, doc lockfile.Document, canonicalURL string) lockfile.GitRegistry {
+	t.Helper()
+	for _, registry := range doc.Registries {
+		if registry.URL == canonicalURL {
+			return registry
+		}
+	}
+	t.Fatalf("lock has no registry %s: %+v", canonicalURL, doc.Registries)
+	return lockfile.GitRegistry{}
+}
+
+// gitHeadCommit returns the commit HEAD points to in dir in lock OID form.
+func gitHeadCommit(t *testing.T, dir string) string {
+	t.Helper()
+	commit, err := exec.Command("git", "-C", dir, "rev-parse", "HEAD").Output()
+	if err != nil {
+		t.Fatalf("rev-parse HEAD in %s: %v", dir, err)
+	}
+	return "sha1:" + strings.TrimSpace(string(commit))
+}
+
 func assertUpdateRefusedUnchanged(t *testing.T, before, after map[string]string, output string, updateErr error, names ...string) {
 	t.Helper()
 	if updateErr == nil {
@@ -109,9 +150,7 @@ func assertUpdateRefusedUnchanged(t *testing.T, before, after map[string]string,
 	}
 	combined := output + "\n" + updateErr.Error()
 	for _, name := range names {
-		if !strings.Contains(combined, name+" was selected but not found in") {
-			t.Fatalf("update refusal did not name %s:\n%s", name, combined)
-		}
+		assertMissFollowedByRemediation(t, combined, name)
 	}
 	if !strings.Contains(combined, updateSelectionRefusalHint) {
 		t.Fatalf("update refusal missing hint:\n%s", combined)
@@ -172,6 +211,7 @@ func TestUpdateRefusesRenamedDirectSelectionAtomically(t *testing.T) {
 }
 
 // spec: resource-selection/missing-required-selection-leaves-the-lock-unchanged
+// spec: resource-selection/required-selection-remediation-does-not-suggest-remove
 func TestUpdateRefusesMissingRequiredSelection(t *testing.T) {
 	if isolateCommandTest(t) {
 		return
@@ -205,6 +245,9 @@ func TestUpdateRefusesMissingRequiredSelection(t *testing.T) {
 	}
 	if !strings.Contains(combined, `skill "required-skill" was selected but not found in`) || !strings.Contains(combined, updateSelectionRefusalHint) {
 		t.Fatalf("update refusal missing selection name or hint:\n%s", combined)
+	}
+	if !strings.Contains(combined, updateSelectionRequiredLine) || strings.Contains(combined, "agent-marketplace remove --kind skill required-skill") {
+		t.Fatalf("required refusal must say remove cannot drop it and must not suggest remove:\n%s", combined)
 	}
 	assertTreeStateEqual(t, before, snapshot())
 	assertNoPendingDependencyJournal(t)
@@ -530,4 +573,205 @@ func TestUpdateIgnoresSelectionAlreadyMissingAtPriorRevision(t *testing.T) {
 			t.Fatal("update did not advance the repository lock")
 		}
 	})
+}
+
+// spec: resource-selection/following-the-remediation-completes-a-rename
+func TestUpdateFollowsRenameRemediation(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	_, repoRoot, snapshot := updateRefusalWorkspace(t)
+
+	origin, working := createBareRepoWithWorkingClone(t, "remediated-rename.git")
+	writeSkill(t, working, "alpha", "Alpha v1", nil)
+	writeSkill(t, working, "beta", "Beta v1", nil)
+	commitAndPushAll(t, working, "seed")
+
+	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), "apiVersion: agent-marketplace/v4\nsources:\n  registry:\n    git: file://"+origin+"\n    ref: main\nresources:\n  registry:\n    include: [skill/alpha, skill/beta]\n")
+	withWorkingDir(t, repoRoot)
+	if output, err := executeCommand("sync"); err != nil {
+		t.Fatalf("initial sync: %v\n%s", err, output)
+	}
+	before := snapshot()
+
+	if err := os.RemoveAll(filepath.Join(working, "skills", "alpha")); err != nil {
+		t.Fatal(err)
+	}
+	writeSkill(t, working, "alpha-renamed", "Alpha v2", nil)
+	commitAndPushAll(t, working, "rename alpha")
+
+	output, err := executeCommand("update")
+	assertUpdateRefusedUnchanged(t, before, snapshot(), output, err, `skill "alpha"`)
+	remove := "agent-marketplace remove --kind skill alpha"
+	if !strings.Contains(err.Error(), remove) {
+		t.Fatalf("refusal does not name %q:\n%s", remove, err)
+	}
+
+	if output, err := executeCommand("remove", "--kind", "skill", "alpha"); err != nil {
+		t.Fatalf("remove named by refusal: %v\n%s", err, output)
+	}
+	lockPath := filepath.Join(repoRoot, ".agents", "lock.yaml")
+	if output, err := executeCommand("update"); err != nil {
+		t.Fatalf("update after remove: %v\n%s", err, output)
+	}
+	if got, want := readLockDocument(t, lockPath).Registries[0].Commit.String(), gitHeadCommit(t, origin); got != want {
+		t.Fatalf("lock commit = %s, want upstream HEAD %s", got, want)
+	}
+	if output, err := executeCommand("install", "alpha-renamed"); err != nil {
+		t.Fatalf("install renamed skill: %v\n%s", err, output)
+	}
+	raw, err := os.ReadFile(filepath.Join(repoRoot, ".agents", "config.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), "skill/alpha-renamed") {
+		t.Fatalf("config does not select the renamed skill:\n%s", raw)
+	}
+}
+
+// spec: resource-selection/following-the-remediation-excludes-a-missing-collection-member
+func TestUpdateFollowsCollectionMemberRemediation(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	_, repoRoot, snapshot := updateRefusalWorkspace(t)
+
+	origin, working := createBareRepoWithWorkingClone(t, "remediated-member.git")
+	writeSkill(t, working, "alpha", "Alpha v1", nil)
+	writeSkill(t, working, "beta", "Beta v1", nil)
+	writeCollection(t, working, "bundle", `
+apiVersion: agent-marketplace/v1
+kind: Collection
+name: bundle
+version: 1.0.0
+skills:
+  - name: alpha
+  - name: beta
+`)
+	commitAndPushAll(t, working, "seed")
+
+	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), "apiVersion: agent-marketplace/v4\nsources:\n  registry:\n    git: file://"+origin+"\n    ref: main\nresources:\n  registry:\n    include: [collection/bundle]\n")
+	withWorkingDir(t, repoRoot)
+	if output, err := executeCommand("sync"); err != nil {
+		t.Fatalf("initial sync: %v\n%s", err, output)
+	}
+	before := snapshot()
+
+	if err := os.RemoveAll(filepath.Join(working, "skills", "beta")); err != nil {
+		t.Fatal(err)
+	}
+	writeSkill(t, working, "beta-renamed", "Beta v2", nil)
+	commitAndPushAll(t, working, "rename beta")
+
+	output, err := executeCommand("update")
+	assertUpdateRefusedUnchanged(t, before, snapshot(), output, err, `skill "beta"`)
+	remove := "agent-marketplace remove --kind skill beta"
+	if !strings.Contains(err.Error(), remove) {
+		t.Fatalf("refusal does not name %q:\n%s", remove, err)
+	}
+
+	if output, err := executeCommand("remove", "--kind", "skill", "beta"); err != nil {
+		t.Fatalf("remove named by refusal: %v\n%s", err, output)
+	}
+	if output, err := executeCommand("update"); err != nil {
+		t.Fatalf("update after remove: %v\n%s", err, output)
+	}
+	lockPath := filepath.Join(repoRoot, ".agents", "lock.yaml")
+	if got, want := readLockDocument(t, lockPath).Registries[0].Commit.String(), gitHeadCommit(t, origin); got != want {
+		t.Fatalf("lock commit = %s, want upstream HEAD %s", got, want)
+	}
+}
+
+// spec: resource-selection/unloadable-prior-revision-is-named-in-the-refusal
+func TestUpdateRefusalNamesUnloadablePriorRevision(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	home, repoRoot, snapshot := updateRefusalWorkspace(t)
+
+	origin, working := createBareRepoWithWorkingClone(t, "rewritten-history.git")
+	writeSkill(t, working, "alpha", "Alpha v1", nil)
+	commitAndPushAll(t, working, "seed")
+
+	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), "apiVersion: agent-marketplace/v4\nsources:\n  registry:\n    git: file://"+origin+"\n    ref: main\nresources:\n  registry:\n    include: [skill/alpha, skill/ghost]\n")
+	withWorkingDir(t, repoRoot)
+	// skill/ghost never resolves, so the locked revision already lacks it.
+	if output, err := executeCommand("sync"); err != nil {
+		t.Fatalf("initial sync: %v\n%s", err, output)
+	}
+	before := snapshot()
+
+	runGit(t, working, "checkout", "--orphan", "rewritten")
+	runGit(t, working, "rm", "-rf", "--quiet", ".")
+	writeSkill(t, working, "alpha", "Alpha v2", nil)
+	runGit(t, working, "add", ".")
+	runGit(t, working, "commit", "-m", "rewritten history")
+	runGit(t, working, "push", "--force", "origin", "HEAD:main")
+	runGit(t, "", "-C", origin, "reflog", "expire", "--expire=now", "--all")
+	runGit(t, "", "-C", origin, "gc", "--prune=now")
+	if err := os.RemoveAll(filepath.Join(home, ".cache", "agent-marketplace")); err != nil {
+		t.Fatal(err)
+	}
+
+	output, err := executeCommand("update")
+	assertUpdateRefusedUnchanged(t, before, snapshot(), output, err, `skill "ghost"`)
+	lockNote := "could not load the previously locked revision for " + filepath.Join(repoRoot, ".agents", "lock.yaml") + " ("
+	if !strings.Contains(err.Error(), lockNote) {
+		t.Fatalf("refusal does not name the lock whose previous revision could not be loaded:\n%s", err)
+	}
+}
+
+// spec: resource-selection/targeted-update-of-another-registry-proceeds
+func TestUpdateRegistryTargetProceedsPastRefusal(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	_, repoRoot, snapshot := updateRefusalWorkspace(t)
+
+	originA, workingA := createBareRepoWithWorkingClone(t, "registry-a.git")
+	writeSkill(t, workingA, "alpha", "Alpha v1", nil)
+	commitAndPushAll(t, workingA, "seed a")
+	originB, workingB := createBareRepoWithWorkingClone(t, "registry-b.git")
+	writeSkill(t, workingB, "beta", "Beta v1", nil)
+	commitAndPushAll(t, workingB, "seed b")
+
+	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), "apiVersion: agent-marketplace/v4\nsources:\n  first:\n    git: file://"+originA+"\n    ref: main\n  second:\n    git: file://"+originB+"\n    ref: main\nresources:\n  first:\n    include: [skill/alpha]\n  second:\n    include: [skill/beta]\n")
+	withWorkingDir(t, repoRoot)
+	if output, err := executeCommand("sync"); err != nil {
+		t.Fatalf("initial sync: %v\n%s", err, output)
+	}
+	lockPath := filepath.Join(repoRoot, ".agents", "lock.yaml")
+	canonicalA, err := canonicalRegistryURL("file://" + originA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	canonicalB, err := canonicalRegistryURL("file://" + originB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lockA := lockRegistryByURL(t, readLockDocument(t, lockPath), canonicalA)
+	before := snapshot()
+
+	if err := os.RemoveAll(filepath.Join(workingA, "skills", "alpha")); err != nil {
+		t.Fatal(err)
+	}
+	writeSkill(t, workingA, "alpha-renamed", "Alpha v2", nil)
+	commitAndPushAll(t, workingA, "rename alpha")
+	writeSkill(t, workingB, "beta", "Beta v2", nil)
+	commitAndPushAll(t, workingB, "update beta")
+
+	output, err := executeCommand("update")
+	assertUpdateRefusedUnchanged(t, before, snapshot(), output, err, `skill "alpha"`)
+
+	if output, err := executeCommand("update", "--registry", "file://"+originB); err != nil {
+		t.Fatalf("targeted update of the second registry: %v\n%s", err, output)
+	}
+	lock := readLockDocument(t, lockPath)
+	gotB := lockRegistryByURL(t, lock, canonicalB)
+	if got, want := gotB.Commit.String(), gitHeadCommit(t, originB); got != want {
+		t.Fatalf("second registry lock commit = %s, want upstream HEAD %s", got, want)
+	}
+	if got := lockRegistryByURL(t, lock, canonicalA); got.Commit != lockA.Commit {
+		t.Fatalf("first registry lock changed from %s to %s", lockA.Commit, got.Commit)
+	}
 }

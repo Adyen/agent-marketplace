@@ -115,9 +115,10 @@ type exactLockSet struct {
 }
 
 type snapshotJob struct {
-	source  config.Source
-	entries []config.RegistryEntry
-	doc     lockfile.Document
+	source   config.Source
+	entries  []config.RegistryEntry
+	doc      lockfile.Document
+	lockPath string
 }
 
 type lockedGit struct {
@@ -896,7 +897,7 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 			hasStagedLock = false
 		}
 		if exists && current != nil {
-			priorSnapshots = append(priorSnapshots, snapshotJob{source: layer.Source, entries: remote, doc: *current})
+			priorSnapshots = append(priorSnapshots, snapshotJob{source: layer.Source, entries: remote, doc: *current, lockPath: lockPath})
 		}
 		if len(remote) > 0 || exists || hasStagedLock {
 			lockExpectations[lockPath] = generation

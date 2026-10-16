@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 
 	"github.com/Adyen/agent-marketplace/internal/catalog"
@@ -12,16 +13,36 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/skill"
 )
 
+// updateSelectionRemoveLine is the remediation line for a non-required miss,
+// printed after its SelectedNotFoundError line.
+const updateSelectionRemoveLine = "  → run 'agent-marketplace remove --kind %s %s' before rerunning update; install a renamed resource afterwards with 'agent-marketplace install <new-name>'"
+
+// updateSelectionRequiredLine is the remediation line for a required miss,
+// which remove cannot drop.
+const updateSelectionRequiredLine = "  → required selection: 'agent-marketplace remove' cannot drop it; change the configuration entry that marks it required, or ask that configuration's owner"
+
+// updateSelectionLoadNote reports a prior lock revision that could not be
+// loaded, so its selections were compared as newly missing.
+const updateSelectionLoadNote = "note: could not load the previously locked revision for %s (%v); its selections were compared as newly missing"
+
 // updateSelectionRefusalHint is the fixed trailing line of every update
 // selection refusal.
-const updateSelectionRefusalHint = "update left the lock and harness outputs unchanged; run 'agent-marketplace sync --prune-stale' to drop missing selections, then 'agent-marketplace install <new-name>' for any renamed resource, and rerun 'agent-marketplace update'"
+const updateSelectionRefusalHint = "update left the lock and harness outputs unchanged; rerun 'agent-marketplace update' after resolving the selections above, or update other registries with 'agent-marketplace update --registry <url>'"
+
+// selectionPriorLoadError is a prior lock revision that could not be loaded.
+type selectionPriorLoadError struct {
+	lockPath string
+	err      error
+}
 
 // updateSelectionRefusedError is the typed pre-publication refusal returned
 // when a selection that resolved at the previously locked revision no longer
-// resolves at the new one. Its text is header-free: one line per miss using
-// the existing SelectedNotFoundError wording, then the fixed hint.
+// resolves at the new one. Its text is header-free: for each miss the existing
+// SelectedNotFoundError line and its remediation line, then one note per prior
+// revision that could not be loaded, then the fixed closing line.
 type updateSelectionRefusedError struct {
-	misses []*resolver.SelectedNotFoundError
+	misses     []*resolver.SelectedNotFoundError
+	loadErrors []selectionPriorLoadError
 }
 
 func (e *updateSelectionRefusedError) Error() string {
@@ -29,9 +50,21 @@ func (e *updateSelectionRefusedError) Error() string {
 	for _, miss := range e.misses {
 		b.WriteString(miss.Error())
 		b.WriteByte('\n')
+		b.WriteString(missRemediationLine(miss))
+		b.WriteByte('\n')
+	}
+	for _, loadErr := range e.loadErrors {
+		fmt.Fprintf(&b, updateSelectionLoadNote+"\n", loadErr.lockPath, loadErr.err)
 	}
 	b.WriteString(updateSelectionRefusalHint)
 	return b.String()
+}
+
+func missRemediationLine(miss *resolver.SelectedNotFoundError) string {
+	if miss.Required {
+		return updateSelectionRequiredLine
+	}
+	return fmt.Sprintf(updateSelectionRemoveLine, skill.KindLabel(miss.Kind), terminalSafeText(miss.Name))
 }
 
 // selectionMissIdentity identifies a selected-not-found diagnostic across the
@@ -84,10 +117,13 @@ func selectionMisses(result pipeline.ResolveResult) []*resolver.SelectedNotFound
 // evaluated is conservative: such misses count as newly missing.
 func guardNewlyMissingSelections(ctx context.Context, ws pipeline.Workspace, offline bool, priorJobs []snapshotJob, overlays map[string][]byte, lockDesired map[string][]byte, desiredSet *exactLockSet, lookup func(*exactLockSet, func() error) catalog.ExactSnapshotFunc) error {
 	priorSet := &exactLockSet{bySource: map[string]lockedGit{}, byIdentity: map[string][]lockedGit{}}
+	var loadErrors []selectionPriorLoadError
 	for _, job := range priorJobs {
 		// An unavailable prior snapshot leaves the layer's misses looking new,
 		// which is the conservative direction.
-		_ = addLayerSnapshots(ctx, priorSet, job.source, job.entries, job.doc, offline, false, nil)
+		if err := addLayerSnapshots(ctx, priorSet, job.source, job.entries, job.doc, offline, false, nil); err != nil {
+			loadErrors = append(loadErrors, selectionPriorLoadError{lockPath: job.lockPath, err: err})
+		}
 	}
 	// Unlocked organization sources carry no lock document, so prior jobs never
 	// include them. They resolve identically in both passes; copying the
@@ -135,5 +171,5 @@ func guardNewlyMissingSelections(ctx context.Context, ws pipeline.Workspace, off
 	if len(misses) == 0 {
 		return nil
 	}
-	return &updateSelectionRefusedError{misses: misses}
+	return &updateSelectionRefusedError{misses: misses, loadErrors: loadErrors}
 }
