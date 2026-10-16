@@ -2,6 +2,7 @@ name: Secret Scan
 
 on:
   pull_request:
+  merge_group:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -19,6 +20,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          fetch-depth: ${{ github.event_name == 'merge_group' && '0' || '1' }}
           persist-credentials: false
 
       - name: TruffleHog OSS
@@ -27,6 +29,8 @@ jobs:
         continue-on-error: true
         with:
           path: ./
+          base: ${{ github.event.merge_group.base_sha }}
+          head: ${{ github.event.merge_group.head_sha }}
           extra_args: --only-verified
 
       - name: Scan Results Status
