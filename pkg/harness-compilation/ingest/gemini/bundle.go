@@ -36,8 +36,6 @@ const (
 
 	claudePluginRootToken = "${CLAUDE_PLUGIN_ROOT}"
 	geminiExtensionToken  = "${extensionPath}"
-	geminiProjectDirToken = "${GEMINI_PROJECT_DIR}"
-	legacyProjectDirToken = "${CLAUDE_PROJECT_DIR}"
 )
 
 type geminiIngester struct{}
@@ -1206,12 +1204,7 @@ func extraFields(fm map[string]any, known []string) map[string]any {
 }
 
 func normalizeEnvTokens(value string) string {
-	replacer := strings.NewReplacer(
-		geminiExtensionToken, claudePluginRootToken,
-		geminiProjectDirToken, claudePluginRootToken,
-		legacyProjectDirToken, claudePluginRootToken,
-	)
-	return replacer.Replace(value)
+	return strings.ReplaceAll(value, geminiExtensionToken, claudePluginRootToken)
 }
 
 func normalizeStringSlice(values []string) []string {
