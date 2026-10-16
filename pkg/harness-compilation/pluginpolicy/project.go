@@ -70,16 +70,20 @@ func Project(p *ir.Plugin, t target.Target, d Delivery, scope compile.Scope, roo
 		return nil, fmt.Errorf("pluginpolicy: plugin must not be nil")
 	}
 	if d != DeliveryNative && d != DeliveryDecompose {
-		return nil, diag.NewCodedError(diag.CodePluginFormatUnsupported, diag.SourceRef{},
-			fmt.Errorf("delivery %q is not a recognized plugin delivery", d))
+		return nil, fmt.Errorf("pluginpolicy: delivery %q is not a recognized plugin delivery", d)
 	}
-	accepted, err := Accepts(t, p.Format)
-	if err != nil {
-		return nil, err
-	}
-	if !accepted {
-		return nil, diag.NewCodedError(diag.CodePluginFormatUnsupported, diag.SourceRef{},
-			fmt.Errorf("target %q does not accept plugin format %q", t, p.Format))
+	if d == DeliveryNative {
+		// The catalog's accepts list describes native loading only;
+		// decomposed delivery compiles members to the target like any
+		// other resource and needs no package-format acceptance.
+		accepted, err := Accepts(t, p.Format)
+		if err != nil {
+			return nil, err
+		}
+		if !accepted {
+			return nil, diag.NewCodedError(diag.CodePluginFormatUnsupported, diag.SourceRef{},
+				fmt.Errorf("target %q does not accept plugin format %q", t, p.Format))
+		}
 	}
 	proj := &Projection{Plugin: p.Name(), Target: t, Delivery: d}
 	for _, member := range p.Members {
@@ -102,7 +106,11 @@ func projectMember(p *ir.Plugin, member ir.PluginMember, t target.Target, d Deli
 		return mp, fmt.Errorf("pluginpolicy: member %q carries no resource", mp.Key)
 	}
 	if d == DeliveryNative {
-		res = applyPluginSurface(t, res, &mp)
+		surfaced, err := applyPluginSurface(t, res, &mp)
+		if err != nil {
+			return mp, err
+		}
+		res = surfaced
 	}
 	if !mp.Blocked && p.Format == "agent-plugin" {
 		if server, ok := res.(*ir.McpServer); ok {
@@ -134,11 +142,13 @@ func projectMember(p *ir.Plugin, member ir.PluginMember, t target.Target, d Deli
 // applyPluginSurface applies the catalog's surfaces.plugin.<kind>.<field>
 // outcomes to a member before lowering. block-member suppresses the member
 // with the catalog's code; omit-field drops the field with a warning. It
-// returns the resource to compile, a clone when a field was dropped.
-func applyPluginSurface(t target.Target, res ir.Resource, mp *MemberProjection) ir.Resource {
+// returns the resource to compile, a clone when a field was dropped. A
+// catalog lookup error is propagated — a restriction lookup must not fail
+// open.
+func applyPluginSurface(t target.Target, res ir.Resource, mp *MemberProjection) (ir.Resource, error) {
 	policies, err := PluginFieldPolicies(t, res.Kind().String())
 	if err != nil {
-		return res
+		return nil, err
 	}
 	for _, field := range slices.Sorted(maps.Keys(policies)) {
 		if !memberHasField(res, field) {
@@ -158,7 +168,7 @@ func applyPluginSurface(t target.Target, res ir.Resource, mp *MemberProjection) 
 				fmt.Sprintf("member field %q was omitted by the destination plugin surface", field), memberSource(res)))
 		}
 	}
-	return res
+	return res, nil
 }
 
 // memberHasField reports whether a member carries a plugin-surface field. The
