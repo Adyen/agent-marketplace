@@ -27,6 +27,25 @@ func TestCanonicalHookNullExtraIsNotUnknownMetadata(t *testing.T) {
 	}
 }
 
+// spec: marketplace-api/non-hook-canonical-metadata-compatibility
+func TestCanonicalNonHookNullExtraCompatibility(t *testing.T) {
+	for _, kind := range []string{"skill", "command", "subagent", "mcpserver"} {
+		t.Run(kind, func(t *testing.T) {
+			resource, err := DecodeResource(kind, []byte(`{"name":"resource","Extra":null}`))
+			if err != nil {
+				t.Fatal(err)
+			}
+			extra, err := extractExtra(resource)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if value, retained := extra["Extra"]; !retained || value != nil {
+				t.Fatalf("non-hook canonical metadata changed: %#v", extra)
+			}
+		})
+	}
+}
+
 func TestDecodeResourceRoundTrip(t *testing.T) {
 	skillExtra := map[string]any{"category": "review", "tags": []any{"security", "performance"}}
 	commandExtra := map[string]any{"shell": "bash", "nested": map[string]any{"key": "value"}}
