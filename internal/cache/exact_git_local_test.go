@@ -170,7 +170,7 @@ func TestExactGitLocalStateDifferential(t *testing.T) {
 		{name: "bare-store", algorithm: "sha1", bare: true, mutate: func(t *testing.T, repo, gitDir string) {
 		}},
 		{name: "bare-store-not-bare", algorithm: "sha1", bare: true, mutate: func(t *testing.T, repo, gitDir string) {
-			rewriteLocalConfig(t, gitDir, strings.Replace(canonicalConfigForAlgorithm("sha1"), "bare = false", "bare = false", 1))
+			rewriteLocalConfig(t, gitDir, canonicalConfigForAlgorithm("sha1"))
 		}},
 		{name: "bare-store-with-origin", algorithm: "sha1", bare: true, mutate: func(t *testing.T, repo, gitDir string) {
 			rewriteLocalConfig(t, gitDir, canonicalConfigForAlgorithm("sha1")+"[remote \"origin\"]\n\turl = /somewhere\n")

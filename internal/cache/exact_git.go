@@ -601,15 +601,11 @@ func sanitizeExactGitConfig(ctx context.Context, repo string) error {
 	if info, err := os.Lstat(filepath.Join(repo, ".git")); err == nil && info.IsDir() {
 		bare = false
 	}
-	if _, ok := readExactGitLocalState(repo, bare); ok {
+	if state, ok := readExactGitLocalState(repo, bare); ok {
 		// A canonical repository-local config has no origin and only
 		// allowlisted keys; the only remaining cleanup is FETCH_HEAD at its
 		// known location.
-		gitDir := repo
-		if !bare {
-			gitDir = filepath.Join(repo, ".git")
-		}
-		if err := os.Remove(filepath.Join(gitDir, "FETCH_HEAD")); err != nil && !errors.Is(err, os.ErrNotExist) {
+		if err := os.Remove(filepath.Join(state.gitDir, "FETCH_HEAD")); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return fmt.Errorf("remove repository metadata %s: %w", "FETCH_HEAD", err)
 		}
 		return nil

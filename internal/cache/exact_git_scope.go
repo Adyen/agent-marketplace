@@ -48,26 +48,27 @@ func exactGitVerificationScopeFrom(ctx context.Context) *exactGitVerificationSco
 	return scope
 }
 
+func exactGitSnapshotKey(path string, oid GitOID) string {
+	return path + "\x00" + oid.String()
+}
+
 func (s *exactGitVerificationScope) snapshotVerified(path string, oid GitOID) bool {
-	key := path + "\x00" + oid.String()
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	_, ok := s.snapshots[key]
+	_, ok := s.snapshots[exactGitSnapshotKey(path, oid)]
 	return ok
 }
 
 func (s *exactGitVerificationScope) recordSnapshot(path string, oid GitOID) {
-	key := path + "\x00" + oid.String()
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.snapshots[key] = struct{}{}
+	s.snapshots[exactGitSnapshotKey(path, oid)] = struct{}{}
 }
 
 func (s *exactGitVerificationScope) dropSnapshot(path string, oid GitOID) {
-	key := path + "\x00" + oid.String()
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	delete(s.snapshots, key)
+	delete(s.snapshots, exactGitSnapshotKey(path, oid))
 }
 
 func (s *exactGitVerificationScope) storeVerified(path string) bool {

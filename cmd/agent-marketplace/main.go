@@ -468,20 +468,21 @@ func runRemove(ctx context.Context, out io.Writer, skillName string, scope pipel
 	return err
 }
 
-func commandRunsAsOrUnder(cmd *cobra.Command, name string) bool {
+func commandOrAncestor(cmd *cobra.Command, match func(*cobra.Command) bool) bool {
 	for c := cmd; c != nil; c = c.Parent() {
-		if c.Name() == name {
+		if match(c) {
 			return true
 		}
 	}
 	return false
 }
 
+func commandRunsAsOrUnder(cmd *cobra.Command, name string) bool {
+	return commandOrAncestor(cmd, func(c *cobra.Command) bool { return c.Name() == name })
+}
+
 func shouldSkipTargetValidation(cmd *cobra.Command) bool {
-	for c := cmd; c != nil; c = c.Parent() {
-		if c.Annotations != nil && c.Annotations["skip-target-validation"] == "true" {
-			return true
-		}
-	}
-	return false
+	return commandOrAncestor(cmd, func(c *cobra.Command) bool {
+		return c.Annotations != nil && c.Annotations["skip-target-validation"] == "true"
+	})
 }

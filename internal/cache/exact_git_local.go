@@ -14,7 +14,6 @@ import (
 // read directly from files Git wrote in its canonical form.
 type exactGitLocalState struct {
 	gitDir       string
-	configPath   string
 	objectFormat string
 	head         string
 	worktreeRoot string
@@ -94,7 +93,7 @@ func readExactGitLocalState(repo string, bare bool) (exactGitLocalState, bool) {
 	if !ok || configBare != strconv.FormatBool(bare) {
 		return state, false
 	}
-	state = exactGitLocalState{gitDir: gitDir, configPath: configPath, objectFormat: objectFormat}
+	state = exactGitLocalState{gitDir: gitDir, objectFormat: objectFormat}
 	if bare {
 		return state, true
 	}
