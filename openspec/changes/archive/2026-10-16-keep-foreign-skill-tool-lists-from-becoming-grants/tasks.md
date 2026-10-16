@@ -5,4 +5,4 @@
 - [x] Omit foreign skill tool lists in the Claude, Cursor and Gemini skill compilers.
 - [x] Update affected goldens and tests, the field matrix and the changelog.
 - [x] Run affected packages, `make validate`, `make spec-check` and `make validate-e2e`; review every changed entry adversarially.
-- [ ] `openspec archive keep-foreign-skill-tool-lists-from-becoming-grants --yes`
+- [x] `openspec archive keep-foreign-skill-tool-lists-from-becoming-grants --yes`
