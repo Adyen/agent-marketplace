@@ -202,7 +202,9 @@ web:
   probes:
     liveness:
       enabled: true
-      path: /
+      # Empty path derives from web.basePath (without its trailing slash),
+      # because the Nuxt server only serves routes under the base path.
+      path: ""
       port: http
       initialDelaySeconds: 10
       periodSeconds: 30
@@ -210,7 +212,7 @@ web:
       failureThreshold: 3
     readiness:
       enabled: true
-      path: /
+      path: ""
       port: http
       initialDelaySeconds: 10
       periodSeconds: 10
