@@ -1,7 +1,7 @@
 # harness-compilation Specification
 
 ## Purpose
-Defines faithful native serialization and ingestion of canonical agent resources, keeping scalar metadata and unmodeled fields separate from explicit typed execution authority.
+Defines faithful native serialization and ingestion of canonical agent resources, keeping scalar metadata, unmodeled fields, target sidecars and extension fields from granting authority beyond the explicit typed canonical resource.
 
 ## Requirements
 
@@ -57,3 +57,94 @@ Harness Compilation MUST NOT discard an authority-bearing control while converti
 
 - **WHEN** an unmarked Devin skill declares `agent` and `subagent` execution selectors
 - **THEN** conversion from Devin to Devin MUST report no error and MUST emit both selectors unchanged
+
+### Requirement: Target sidecars cannot widen canonical authority
+
+Harness Compilation MUST NOT let a target sidecar or extension field grant more authority than the canonical resource. A Claude or Cursor subagent tool sidecar MUST only restate or narrow the canonical tool list: every sidecar entry MUST be a canonical entry or a target tool the canonical list covers, otherwise compilation MUST emit no subagent and MUST report the error `subagent.security-restriction-unsupported`. A Claude or Cursor hook-type sidecar MUST equal the canonical hook type, otherwise compilation MUST emit no hook and MUST report the error `hook.claude.unsupported-type` or `hook.cursor.unsupported-type`. Codex compilation MUST emit a native MCP sidecar only when it matches the canonical server, otherwise it MUST emit no server and MUST report the error `mcp.codex.security-unsupported`. Claude, Cursor, Factory and Gemini MCP compilation MUST NOT emit a modeled MCP connection field (`command`, `args`, `env`, `url`, `transport`, `headers`, `oauthClientId`, `oauthClientSecret` or `oauthResource`) from extension fields, including case variants, and MUST report `compile.canonical-field-overrides-extra`.
+
+#### Scenario: Subagent tool sidecar cannot widen the canonical tool list
+
+- **WHEN** a Marketplace resource artifact payload for a subagent restricts its canonical tools to `Read` and carries Claude and Cursor tool sidecars naming `Bash`
+- **THEN** Claude and Cursor compilation MUST emit no subagent and MUST report the error `subagent.security-restriction-unsupported`
+
+#### Scenario: Subagent tool sidecar may narrow the canonical tool list
+
+- **WHEN** a subagent's canonical tools are `Read` and `Grep` and its Claude and Cursor tool sidecars name only `Read`
+- **THEN** Claude and Cursor compilation MUST report no error and MUST emit a subagent restricted to `Read`
+
+#### Scenario: Hook type sidecar cannot activate a command
+
+- **WHEN** a Marketplace resource artifact payload for a canonical prompt hook carries a command payload and Claude and Cursor hook-type sidecars set to `command`
+- **THEN** Claude and Cursor compilation MUST emit no hook and MUST report the error `hook.claude.unsupported-type` or `hook.cursor.unsupported-type`
+
+#### Scenario: Codex MCP sidecar must match the canonical server
+
+- **WHEN** a Marketplace resource artifact payload for an MCP server declares a canonical command and carries a Codex MCP sidecar with a different command and an extra forwarded environment variable
+- **THEN** Codex compilation MUST emit no server and MUST report the error `mcp.codex.security-unsupported`
+
+#### Scenario: Codex-native MCP servers still round-trip
+
+- **WHEN** a Codex source layout declares a stdio MCP server with literal environment values and forwarded environment variables
+- **THEN** conversion from Codex to Codex MCP output MUST report no error and MUST emit the same command, arguments, environment values and forwarded variables
+
+#### Scenario: Modeled MCP fields cannot arrive through extension fields
+
+- **WHEN** an MCP server has no typed command and carries `command`, `args` and a case-variant `URL` as extension fields
+- **THEN** Claude, Cursor, Factory and Gemini compilation MUST emit none of those fields and MUST report `compile.canonical-field-overrides-extra`
+
+### Requirement: Project and plugin roots stay distinct
+
+Harness Compilation MUST NOT turn a project-directory reference into a plugin-root reference, and MUST translate plugin-root tokens between harnesses that name them differently. Gemini ingestion MUST map only `${extensionPath}` to the canonical plugin root `${CLAUDE_PLUGIN_ROOT}`; `${GEMINI_PROJECT_DIR}` and `${CLAUDE_PROJECT_DIR}` in MCP server values, command prompts and subagent bodies MUST be preserved as written. Factory MCP ingestion MUST map `${DROID_PLUGIN_ROOT}` to `${CLAUDE_PLUGIN_ROOT}`, and Factory MCP compilation MUST map `${CLAUDE_PLUGIN_ROOT}` to `${DROID_PLUGIN_ROOT}`.
+
+#### Scenario: Gemini project directory never becomes the plugin root
+
+- **WHEN** a Gemini MCP server's arguments reference `${GEMINI_PROJECT_DIR}` and `${extensionPath}`
+- **THEN** conversion from Gemini to Gemini MUST preserve both tokens, conversion to Claude MUST map only `${extensionPath}` to `${CLAUDE_PLUGIN_ROOT}`, and conversion to Devin with a configured literal plugin root MUST substitute that root only for the extension reference
+
+#### Scenario: Factory plugin root round-trips through MCP servers
+
+- **WHEN** a Factory MCP server's command, arguments and environment reference `${DROID_PLUGIN_ROOT}`
+- **THEN** conversion from Factory to Factory MUST emit `${DROID_PLUGIN_ROOT}` in every value, and conversion to Claude MUST emit `${CLAUDE_PLUGIN_ROOT}` in every value
+
+#### Scenario: Canonical plugin root compiles to the Factory token
+
+- **WHEN** a Claude MCP server's command, arguments and environment reference `${CLAUDE_PLUGIN_ROOT}`
+- **THEN** conversion from Claude to Factory MUST emit `${DROID_PLUGIN_ROOT}` in every value
+
+### Requirement: Ambiguous Windsurf identities and rule metadata are refused
+
+Harness Compilation MUST NOT choose a winner between two resources or two metadata values that claim the same identity. When two Windsurf workflows or two Windsurf rules in the same workspace root resolve to the same name, ingestion MUST ingest none of them, MUST NOT let a user-root resource with that name take their place, and MUST report the error `ingest.windsurf.duplicate-identity`; other resources MUST still be ingested. A rule whose frontmatter declares the same key twice MUST NOT be ingested.
+
+#### Scenario: Windsurf workflows with the same name are refused
+
+- **WHEN** two Windsurf workflow files in one workspace declare the same name next to an unrelated workflow
+- **THEN** conversion MUST report the error `ingest.windsurf.duplicate-identity`, MUST emit no command for that name, and MUST still emit the unrelated workflow
+
+#### Scenario: Rule frontmatter with a repeated key is refused
+
+- **WHEN** a Cursor rule's frontmatter declares `alwaysApply` twice
+- **THEN** conversion MUST emit no rule artifact for it and MUST report an error
+
+### Requirement: Restriction-bearing native fields are preserved or refused
+
+Harness Compilation MUST NOT silently drop a native field that restricts or locates what a resource runs. Gemini ingestion MUST keep every member of a subagent's inline MCP server, and Gemini compilation MUST emit the members it did not model, including `includeTools` and `excludeTools`, unchanged; modeled members MUST NOT be overridden by preserved ones. Windsurf ingestion MUST read a hook's documented `working_directory`; Windsurf compilation MUST emit a non-empty value, and compilation of a hook with a non-empty value to any other target MUST emit no hook and MUST report the error `hook.windsurf.native-fields-unsupported`. Devin MCP compilation MUST NOT drop a single argument it cannot represent; it MUST emit no server and MUST report the error `mcp.devin.interpolation-unrepresentable`.
+
+#### Scenario: Gemini inline MCP server restrictions round-trip
+
+- **WHEN** a Gemini subagent's inline MCP server declares `includeTools`, `excludeTools` and `timeout`
+- **THEN** conversion from Gemini to Gemini MUST report no error and MUST emit all three members unchanged
+
+#### Scenario: Windsurf hook working directory round-trips
+
+- **WHEN** a Windsurf hook declares a non-empty `working_directory`
+- **THEN** conversion from Windsurf to Windsurf MUST report no error and MUST emit the same `working_directory`
+
+#### Scenario: Targets without a hook working directory refuse the hook
+
+- **WHEN** a Windsurf hook declaring a non-empty `working_directory` is converted to Claude
+- **THEN** compilation MUST emit no hook and MUST report the error `hook.windsurf.native-fields-unsupported`
+
+#### Scenario: Devin refuses an MCP server whose argument it cannot represent
+
+- **WHEN** an MCP server argument uses a file interpolation Devin has no syntax for
+- **THEN** Devin compilation MUST emit no server entry and MUST report the error `mcp.devin.interpolation-unrepresentable`

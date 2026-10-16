@@ -145,6 +145,21 @@ sources: {shared: {git: https://example.test/agents.git, ref: main}}
 	}
 }
 
+// spec: upgrade-notice/repository-configuration-cannot-set-the-release-check
+func TestV4RepositoryLayersRejectUpdateCheck(t *testing.T) {
+	v4, err := ParseV4([]byte("apiVersion: agent-marketplace/v4\nupdate_check: {enabled: false}\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, kind := range []layerKind{repoLayer, localLayer} {
+		_, err = v4.ToLegacyConfig(kind)
+		var validation *V4ValidationError
+		if !errors.As(err, &validation) || validation.Code != "v4.layer-field" || validation.Path != "update_check" {
+			t.Fatalf("layer %v: error = %v, want v4.layer-field for update_check", kind, err)
+		}
+	}
+}
+
 func TestV4OrganizationRejectsMaterializationLayerField(t *testing.T) {
 	v4, err := ParseV4([]byte(`apiVersion: agent-marketplace/v4
 materialization: {mode: file}

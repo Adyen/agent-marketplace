@@ -17,7 +17,7 @@ Running `agent-marketplace` with no command starts the terminal UI when standard
 
 Consumer operations require exact `apiVersion: agent-marketplace/v4` in every existing root, including organization and personal-local. Included fragments may omit the field or declare exact v4. Missing root versions fail with `v4.api-version-required`; unsupported or invalid explicit values fail with `v4.api-version`, identifying the authored file and `apiVersion` field. No consumer operation falls back to a legacy reader, and neither CLI startup nor the TUI offers conversion. There is no shipped `migrate` command. [Convert with an older released migrator before upgrading](../how-to/migrate-configuration.md); organization configuration must be converted externally.
 
-All roots and includes needed by an operation validate before new acquisition, config/lock staging or publication, or harness writes/prunes, including ad-hoc `--from` operations. A format refusal preserves existing bytes and metadata and creates no missing writable root or lock. Ordinary logs remain allowed. Pre-existing dependency journals retain command-specific handling: read-only modes report `dependency.recovery-required` without replay; recovery-capable commands may finish already-admitted writes before validation, but start no new work on unsupported input. Schema-independent commands such as harness `convert`, Marketplace `serve`, help, and completion do not require a consumer root.
+Every command checks all the config files and includes it needs, including for ad hoc `--from` operations, before it downloads anything or writes config, locks, or harness files. If an earlier command was interrupted mid-write, read-only commands report `dependency.recovery-required` and do not replay it. Commands that can recover may finish that earlier write first, which changes the files it recorded, but start no new work on unsupported input. Apart from that recovery, a refused command leaves existing files and their metadata untouched and creates no missing config file or lock; it may still write logs. Commands that don't use consumer config, such as `serve`, help, and completion, need no config file.
 
 ## Global flags
 
@@ -29,7 +29,7 @@ Every command accepts these flags.
 | `--diagnostic` | boolean | no | `false` | Captures a diagnostic telemetry payload for this invocation so you can review it before it is sent. Capture needs the effective telemetry level `detailed`; at other levels it is turned off. See the [telemetry reference](telemetry.md#diagnostic-payloads). |
 | `--diagnostic-accept-sensitive-data` | boolean | no | `false` | Acknowledges that a diagnostic payload may contain sensitive data. Without a terminal, diagnostic export and `telemetry preview --level diagnostic` require it. |
 | `-h`, `--help` | boolean | no | `false` | Prints help for the selected command. |
-| `--version` | boolean | no | `false` | Prints the CLI version, for example `v4.0.9`. This flag belongs to the root command only. |
+| `--version` | boolean | no | `false` | Prints the CLI version. This flag belongs to the root command only. |
 
 ## Resource kinds
 
@@ -168,11 +168,11 @@ https://host/r/registry/kind/name[/revisions/sha256:<64 lowercase hex>]
 | `--yes` | boolean | no | `false` | Same as `--accept-risk`, for automation. |
 | `-v`, `--verbose` | boolean | no | `false` | Shows every collection member and the technical Marketplace preview: revisions, digests, acquisition details, and provenance (where the artifact came from). |
 
-`--as`, `--accept-risk`, and `--yes` work only with a single Marketplace resource. With `--marketplace <url>`, pass the full resource URL as the locator. In the current release, a short `registry/kind/name` locator combined with an endpoint URL fails with an `invalid browser locator` error, so use the full URL or an alias. If you pass a GitHub or GitLab web URL that names a branch or tag as the resource name, the command stops and tells you to use `--from` instead.
+`--as`, `--accept-risk`, and `--yes` work only with a single Marketplace resource. With `--marketplace <url>`, pass the full resource URL as the locator. In the current release, a short `registry/kind/name` locator combined with an endpoint URL fails with an `invalid browser locator` error, so the full URL or an alias is required. If you pass a GitHub or GitLab web URL that names a branch or tag as the resource name, the command stops and tells you to use `--from` instead.
 
-Registering a Marketplace endpoint checks the endpoint's well-known identity and canonical URL, then prints `Added Marketplace <url> to <config path>`, or `Marketplace <url> is already configured in <config path>` when the same identity is already present in that scope or a broader one. In a v4 configuration, registering the endpoint adds a named `marketplace` source for it. Installing a resource from that endpoint adds an exact request to the source's `resources` group and records the verified revision in the lock file of the same layer.
+Registering a Marketplace endpoint checks the endpoint's well-known identity and canonical URL, then prints `Added Marketplace <url> to <config path>`, or `Marketplace <url> is already configured in <config path>` when the same identity is already present in that scope or a broader one. In a v4 configuration, registering the endpoint adds a named `marketplace` source for it. Installing a resource from that endpoint adds an exact request to the source's `resources` group and records the verified revision in the lockfile of the same layer.
 
-A Marketplace install resolves and verifies the exact artifact before it changes any config. The default output summarizes the source, security findings, capabilities, and up to ten collection members. Add `--verbose` to see all members, the digest, license, provenance, and acquisition mode. Rejected and revoked resources cannot be installed.
+A Marketplace install resolves and verifies the exact artifact before it changes any config. The default output summarizes the source, security findings, capabilities, and up to ten collection members. `--verbose` shows all members, the digest, license, provenance, and acquisition mode. Rejected and revoked resources cannot be installed.
 
 When the verified artifact has security findings and standard input is a terminal, the command prints the preview and asks `Install despite these risks? [y/N]:`. Accepting installs the exact prepared revision. Without a terminal, pass `--accept-risk` or `--yes` to accept the findings for that one invocation. Capabilities are shown, but on their own they never require consent.
 
@@ -273,13 +273,13 @@ A normal sync prints counts for installed, removed, malformed, and failed resour
 Installed 3  Removed 1  Malformed 0  Errors 0
 ```
 
-The counts are colored on a terminal. Set `NO_COLOR`, `CLICOLOR=0`, or `TERM=dumb` to turn color off.
+The counts are colored on a terminal; `NO_COLOR`, `CLICOLOR=0`, or `TERM=dumb` turns color off.
 
 If `~/.agents/config.yaml` does not exist, a plain `sync` creates it the way `agent-marketplace init --harnesses factory,windsurf` would: a v4 config with only `apiVersion` and `harnesses: [factory, windsurf]`. Creation first validates every required root/include tree and cannot bypass unsupported input. This step does not overwrite an existing user config; sync still validates it. `--check`, `--locked`, and `--offline` skip first-run creation.
 
 With `--check`, an in-sync result prints no verdict and returns exit status 0. Drift prints a summary such as `sync: 2 out of sync (1 missing, 1 orphaned)`, lists the planned changes, and returns exit status 1. Materialization and configuration errors also return exit status 1, including a dry-run materialization failure, which is printed as an `error:` line alongside the run's warnings. Warning-severity materialization diagnostics are printed as `warning:` lines and do not affect the exit status. `--check` writes nothing: not config, locks, transaction state, or harness output. It does not recover pending transactions or fetch a cold exact snapshot, and it reports `lock.snapshot-unavailable` when snapshot files it needs are missing.
 
-If an earlier write was interrupted and left a dependency transaction pending, `sync --locked`, `sync --offline`, `sync --check`, `lock --check`, `list`, and `status` fail with `dependency.recovery-required` before reading configuration or registries. They leave config, locks, recovery records, and permissions unchanged. Run a plain `sync` or `lock` (without those flags) to finish the recovery, then retry. A missing transaction-state directory needs no recovery, and these commands do not create it.
+If an earlier write was interrupted and left a dependency transaction pending, `sync --locked`, `sync --offline`, `sync --check`, `lock --check`, `list`, and `status` fail with `dependency.recovery-required` before reading configuration or registries. They leave config, locks, recovery records, and permissions unchanged. A plain `sync` or `lock` (without those flags) attempts recovery before continuing. The failed command can be retried after recovery succeeds; blocked recovery leaves it incomplete. A missing transaction-state directory needs no recovery, and these commands do not create it.
 
 ## `update`
 
@@ -349,36 +349,7 @@ Each source declares its kind:
 - `directory` sources are read live and never get a Git lock. Relative paths in the repository `.agents/config.yaml` and `.agents/config.local.yaml` roots are resolved from the repository root. User and organization configs and included fragments resolve them from the directory of the file that declares them.
 - `marketplace` sources require a matching verified layer lock for explicit requests.
 
-Use the [configuration reference](configuration.md) to write source declarations and resource groups by hand, or use the v4 CLI and TUI editors for supported selection and harness changes. The CLI rejects unknown fields, mixed source kinds, invalid locators, and Marketplace lock evidence that does not match. Writable-layer locks can be generated online for explicit hosted requests. When the organization lock is intentionally absent, the CLI fetches and verifies organization Marketplace requests online without writing an organization lock. Offline acquisition without a lock, hosted rebind, and dynamic-selector snapshots remain unsupported; v4-only loading does not enable new hosted options.
-
-## `convert`
-
-Reads one harness layout and writes an equivalent layout for another harness. It does not edit Agent Marketplace configuration.
-
-```text
-agent-marketplace convert --from <harness> --to <harness> <path> [flags]
-agent-marketplace convert --autodetect --to <harness> <path> [flags]
-```
-
-| Flag | Type | Required | Default | Description |
-|---|---|:---:|---|---|
-| `--from` | string | unless `--autodetect` | none | Source harness: `claude`, `codex`, `cursor`, `devin`, `factory`, `gemini`, or `windsurf`. |
-| `--autodetect` | boolean | no | `false` | Detects the source harness from layout markers instead of requiring `--from`. |
-| `--to` | string | yes | none | Target harness. Accepts the same seven values as `--from`. |
-| `--out` | path | no | `<path>-<to>` | Output directory. |
-| `--sync` | boolean | no | `false` | Uses sync write mode and deletes stale output files. Without it, conversion overwrites files and deletes nothing. |
-| `--dry-run` | boolean | no | `false` | Reports planned writes without changing output files. |
-
-The output names the source, target, output directory, and operation counts:
-
-```text
-Converted claude -> factory into plugin-factory
-Written 4, Skipped 0, Removed 0, Diagnostics 0
-```
-
-A partial conversion writes the resources that converted completely, prints `skipped <kind> "<name>" (<codes>)` for each skipped resource, skips pruning (`pruning was skipped because the conversion was partial`), and returns exit status 1. The command resolves source and output paths, including existing symlinks, and refuses when they are equal or one contains the other. It checks this before reading or changing either tree, including with `--sync`.
-
-Codex conversion refuses a destination that already contains shared `.codex/hooks.json` or `.codex/config.toml` files. Devin conversion also refuses a destination that already contains `mcp_config.json`, `hooks.v1.json`, or `config.json`, instead of merging into it. For both targets the command stages every file, validates the staged shared files, publishes them, and on failure rolls back only the files that this run published. One-shot conversion creates no [ownership state](../glossary.md#ownership-state) and never takes ownership of existing entries. `sync` does not take ownership of pre-existing entries either. Only an explicit `doctor --repair` can, and only when an entry's bytes exactly match the value sync would generate. Missing or corrupt ownership state makes sync refuse to change shared entries.
+The [configuration reference](configuration.md) documents writing source declarations and resource groups by hand. Named Git and directory selections and harness changes use the v4 CLI and TUI editors. The CLI rejects unknown fields, mixed source kinds, invalid locators, and Marketplace lock evidence that does not match. Writable-layer locks can be generated online for explicit hosted requests. When the organization lock is intentionally absent, the CLI fetches and verifies organization Marketplace requests online without writing an organization lock. Offline acquisition without a lock, hosted rebind, and dynamic-selector snapshots remain unsupported; v4-only loading does not enable new hosted options.
 
 ## `doctor`
 
@@ -452,7 +423,7 @@ What `gc` keeps:
 
 It removes unreferenced object stores and abandoned staging directories.
 
-The cache is shared by all your repositories, but `gc` only looks at the current one. Running it in repository A can delete a source that only repository B uses. B then has to fetch it again, which fails offline or when the remote no longer has the locked commit. Run `--dry-run` first to see what would be deleted.
+The cache is shared by all your repositories, but `gc` only looks at the current one. Running it in repository A can delete a source that only repository B uses. B then has to fetch it again, which fails offline or when the remote no longer has the locked commit. `--dry-run` reports what would be deleted without deleting it.
 
 `gc` first finishes any pending dependency-transaction recovery, holding the shared exact-cache lease while it publishes the recovered config and lock state. It then takes the exclusive exact-cache lease and reloads every applicable configuration layer and lock before deciding what is reachable. Missing required locks, malformed configuration or locks, and untrusted locks block deletion. A present organization lock must also match its configuration.
 
@@ -539,7 +510,7 @@ agent-marketplace serve adopt --config <path> --actor <id> --reason <text> --ide
 | `--idempotency-key` | string | yes | none | Stable key reused when retrying this adoption. |
 | `--reason` | string | yes | none | Reason recorded in the adoption audit. |
 
-Before running adoption, stop every API and worker process and back up the database and blob storage. The command does not check either. The configuration file must set `management.mode: database`. On success it prints `Adopted marketplace configuration at revision <n>.`
+Adoption requires a controlled maintenance window: every API and worker process stopped, the database and blob storage backed up, and controllable shared caches invalidated. The command does not verify external process shutdown or cache invalidation. The configuration file must set `management.mode: database`. On success it prints `Adopted marketplace configuration at revision <n>. Database authority is durable; runtime safety checks still apply.`
 
 ## `deinit`
 

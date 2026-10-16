@@ -4,13 +4,14 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 	extpkg "github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir/ext"
 )
 
 func TestClaudeSubagentExtPrecedence(t *testing.T) {
 	t.Run("uses ext override when present", func(t *testing.T) {
-		sub := ir.NewSubagent("reviewer", "Review code", "Body", "sonnet", []string{"Read"}, "medium", nil, "", nil, ir.SourceRef{})
+		sub := ir.NewSubagent("reviewer", "Review code", "Body", "sonnet", []string{"Read", "Bash"}, "medium", nil, "", nil, ir.SourceRef{})
 		sub.Ext.Claude = &extpkg.Claude{
 			Model:     "claude-opus-4-1-20260101",
 			Tools:     []string{"Bash"},
@@ -38,6 +39,23 @@ func TestClaudeSubagentExtPrecedence(t *testing.T) {
 		}
 		if !strings.Contains(body, "isolation: container") {
 			t.Fatalf("frontmatter missing ext isolation override:\n%s", body)
+		}
+	})
+
+	t.Run("refuses an ext tool list that widens the canonical tools", func(t *testing.T) {
+		sub := ir.NewSubagent("reviewer", "Review code", "Body", "sonnet", []string{"Read"}, "medium", nil, "", nil, ir.SourceRef{})
+		sub.Ext.Claude = &extpkg.Claude{Tools: []string{"Bash"}}
+
+		arts, diags, err := (&claudeCompiler{}).Translate(sub)
+		if err != nil {
+			t.Fatalf("Translate() error: %v", err)
+		}
+		refused := false
+		for _, d := range diags {
+			refused = refused || d.Code == diag.CodeSubagentSecurityRestrictionUnsupported && d.Severity == diag.SeverityError
+		}
+		if len(arts) != 0 || !refused {
+			t.Fatalf("artifacts = %d, diagnostics = %#v, want the widening sidecar refused", len(arts), diags)
 		}
 	})
 

@@ -36,8 +36,6 @@ const (
 
 	claudePluginRootToken = "${CLAUDE_PLUGIN_ROOT}"
 	geminiExtensionToken  = "${extensionPath}"
-	geminiProjectDirToken = "${GEMINI_PROJECT_DIR}"
-	legacyProjectDirToken = "${CLAUDE_PROJECT_DIR}"
 )
 
 type geminiIngester struct{}
@@ -1041,6 +1039,16 @@ func parseInlineMCPServers(value any) (map[string]extpkg.GeminiMCPServer, error)
 				return nil, fmt.Errorf("server %q env: %w", name, err)
 			}
 		}
+		for key, value := range entry {
+			switch key {
+			case "command", "url", "args", "env":
+			default:
+				if server.Extra == nil {
+					server.Extra = make(map[string]any)
+				}
+				server.Extra[key] = value
+			}
+		}
 		server.Command = normalizeEnvTokens(server.Command)
 		server.Args = normalizeStringSlice(server.Args)
 		server.Env = normalizeStringMap(server.Env)
@@ -1206,12 +1214,7 @@ func extraFields(fm map[string]any, known []string) map[string]any {
 }
 
 func normalizeEnvTokens(value string) string {
-	replacer := strings.NewReplacer(
-		geminiExtensionToken, claudePluginRootToken,
-		geminiProjectDirToken, claudePluginRootToken,
-		legacyProjectDirToken, claudePluginRootToken,
-	)
-	return replacer.Replace(value)
+	return strings.ReplaceAll(value, geminiExtensionToken, claudePluginRootToken)
 }
 
 func normalizeStringSlice(values []string) []string {

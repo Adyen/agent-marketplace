@@ -27,7 +27,7 @@ type hookFile struct {
 	Timeout    *int           `json:"timeout,omitempty"`
 	PowerShell string         `json:"powershell,omitempty"`
 	ShowOutput *bool          `json:"show_output,omitempty"`
-	WorkingDir string         `json:"working_dir,omitempty"`
+	WorkingDir string         `json:"working_directory,omitempty"`
 	Extra      map[string]any `json:"-"`
 }
 
@@ -39,7 +39,7 @@ type hookRule struct {
 	Timeout    *int           `json:"timeout,omitempty"`
 	PowerShell string         `json:"powershell,omitempty"`
 	ShowOutput *bool          `json:"show_output,omitempty"`
-	WorkingDir string         `json:"working_dir,omitempty"`
+	WorkingDir string         `json:"working_directory,omitempty"`
 	Extra      map[string]any `json:"-"`
 }
 
@@ -96,7 +96,7 @@ func (h *hookFile) UnmarshalJSON(data []byte) error {
 			if err := json.Unmarshal(value, &h.ShowOutput); err != nil {
 				return err
 			}
-		case "working_dir":
+		case "working_directory":
 			if err := json.Unmarshal(value, &h.WorkingDir); err != nil {
 				return err
 			}

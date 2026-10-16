@@ -467,6 +467,56 @@ func TestPullRequestTrigger(t *testing.T) {
 	}
 }
 
+// TestMergeQueueTriggers keeps every workflow that reports a required check
+// running on merge groups, so a queued pull request is never stuck waiting for
+// a check that cannot report, and plans merge groups from their own commits.
+func TestMergeQueueTriggers(t *testing.T) {
+	for _, file := range []string{"ci.yml", "harness-compatibility.yml", "trufflehog.yml"} {
+		t.Run(file, func(t *testing.T) {
+			on := getMap(t, loadWorkflow(t, file), "on")
+			if _, ok := on["merge_group"]; !ok {
+				t.Fatalf("%s does not run on merge_group, so its required checks never report in the merge queue", file)
+			}
+		})
+	}
+	for _, tc := range []struct{ file, job string }{{"ci.yml", "changes"}, {"harness-compatibility.yml", "plan"}} {
+		t.Run(tc.file+"/planner", func(t *testing.T) {
+			jobs := getMap(t, loadWorkflow(t, tc.file), "jobs")
+			for _, step := range getSlice(t, getMap(t, jobs, tc.job), "steps") {
+				m := stepMap(t, step)
+				if m["name"] != "Detect relevant changes" {
+					continue
+				}
+				env := getMap(t, m, "env")
+				if env["BASE_SHA"] != "${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}" || env["HEAD_SHA"] != "${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha }}" {
+					t.Fatalf("planner does not take merge group commits: %v", env)
+				}
+				run, ok := m["run"].(string)
+				if !ok || !strings.Contains(run, `"$EVENT_NAME" == merge_group`) {
+					t.Fatalf("planner does not diff merge groups: %v", m["run"])
+				}
+				return
+			}
+			t.Fatal("planner step missing")
+		})
+	}
+	t.Run("trufflehog.yml/range", func(t *testing.T) {
+		jobs := getMap(t, loadWorkflow(t, "trufflehog.yml"), "jobs")
+		for _, step := range getSlice(t, getMap(t, jobs, "trufflehog"), "steps") {
+			m := stepMap(t, step)
+			if m["name"] != "TruffleHog OSS" {
+				continue
+			}
+			with := getMap(t, m, "with")
+			if with["base"] != "${{ github.event.merge_group.base_sha }}" || with["head"] != "${{ github.event.merge_group.head_sha }}" {
+				t.Fatalf("TruffleHog does not scan the merge group range: %v", with)
+			}
+			return
+		}
+		t.Fatal("TruffleHog step missing")
+	})
+}
+
 func TestBenchmarkCondition(t *testing.T) {
 	doc := loadCIWorkflow(t)
 

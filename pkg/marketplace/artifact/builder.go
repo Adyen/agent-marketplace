@@ -15,6 +15,9 @@ import (
 type BuildResult struct {
 	Artifact   hccartifact.CanonicalArtifact
 	RawArchive []byte
+	// PlaceholderArchive hashes to ArchiveDigest and lets verifiers check the
+	// archive without re-encoding it. It is nil for collections.
+	PlaceholderArchive []byte
 	// ManifestPayload and ManifestDigest are populated for virtual collection
 	// builds. The standalone manifest is the collection revision identity; the
 	// tar archive remains available for the registry-revision artifact.
@@ -67,7 +70,7 @@ func BuildResourceArtifact(ctx context.Context, r ir.Resource, files analyze.Fil
 	// separately by Marketplace so re-analysis cannot change resource identity.
 	base.Manifest.Capabilities = caps
 
-	raw, digest, err := hccartifact.Encode(base)
+	raw, placeholder, digest, err := hccartifact.EncodeArchives(base)
 	if err != nil {
 		return BuildResult{}, fmt.Errorf("encode artifact: %w", err)
 	}
@@ -89,19 +92,20 @@ func BuildResourceArtifact(ctx context.Context, r ir.Resource, files analyze.Fil
 		rejectReason = "policy rejected one or more findings"
 	}
 	return BuildResult{
-		Artifact:       artifact,
-		Name:           artifact.Manifest.Name,
-		Kind:           artifact.Manifest.Kind,
-		License:        opts.Registry.License,
-		Description:    description,
-		RawArchive:     raw,
-		ContentDigest:  base.Manifest.ContentDigest,
-		ArchiveDigest:  digest,
-		RevisionDigest: revisionDigest,
-		Findings:       report.Findings,
-		Capabilities:   caps,
-		Rejected:       report.Rejected,
-		RejectReason:   rejectReason,
+		Artifact:           artifact,
+		Name:               artifact.Manifest.Name,
+		Kind:               artifact.Manifest.Kind,
+		License:            opts.Registry.License,
+		Description:        description,
+		RawArchive:         raw,
+		PlaceholderArchive: placeholder,
+		ContentDigest:      base.Manifest.ContentDigest,
+		ArchiveDigest:      digest,
+		RevisionDigest:     revisionDigest,
+		Findings:           report.Findings,
+		Capabilities:       caps,
+		Rejected:           report.Rejected,
+		RejectReason:       rejectReason,
 	}, nil
 }
 

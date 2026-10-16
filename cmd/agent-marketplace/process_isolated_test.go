@@ -195,6 +195,7 @@ func commandProcessEnvironment(root, completionPath, selector string) []string {
 		"GIT_CONFIG_KEY_0=maintenance.auto",
 		"GIT_CONFIG_VALUE_0=0",
 		"AGENT_MARKETPLACE_NO_TUI=1",
+		"AGENT_MARKETPLACE_NO_UPDATE_CHECK=1",
 		"AGENT_MARKETPLACE_LOG_ENABLED=false",
 		processIsolatedRootEnv + "=" + root,
 		processIsolatedSelectorEnv + "=" + selector,

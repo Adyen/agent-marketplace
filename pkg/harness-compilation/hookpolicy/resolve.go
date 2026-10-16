@@ -180,6 +180,10 @@ func Resolve(h *ir.Hook, dst target.Target, scope Scope, supportBase string) Res
 		fail(eventUnmappableCode(dst), "Target has no shipped hook catalog; hook suppressed", "")
 		return res
 	}
+	if dst != target.TargetWindsurf && h.Ext.Windsurf != nil && h.Ext.Windsurf.HookWorkingDir != "" {
+		fail(diag.CodeHookWindsurfNativeFieldsUnsupported, "Target cannot preserve the native Windsurf hook working directory; hook suppressed", "Remove working_directory explicitly or keep the hook on Windsurf")
+		return res
+	}
 
 	if h.HookSource != "" && src == dst {
 		// Same-harness output keeps the native spelling subject to the

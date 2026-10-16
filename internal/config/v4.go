@@ -158,6 +158,7 @@ type V4Config struct {
 	AllowedMarketplaces *[]string
 	Backup              *BackupConfig
 	Logging             *LoggingConfig
+	UpdateCheck         *UpdateCheckConfig
 	Telemetry           *telemetryconfig.TelemetryConfig
 	Materialization     *MaterializationConfig
 
@@ -226,7 +227,7 @@ var v4LegacyKeys = map[string]struct{}{
 var v4RootKeys = map[string]struct{}{
 	"apiVersion": {}, "include": {}, "sources": {}, "resources": {},
 	"harnesses": {}, "allowed_registries": {}, "allowed_marketplaces": {},
-	"backup": {}, "logging": {}, "telemetry": {}, "materialization": {},
+	"backup": {}, "logging": {}, "update_check": {}, "telemetry": {}, "materialization": {},
 }
 
 var v4SourceKeys = map[string]struct{}{
@@ -244,7 +245,7 @@ func ParseV4Config(data []byte, declaringPath string, root bool) (*V4Config, err
 	if err != nil {
 		return nil, err
 	}
-	out := &V4Config{APIVersion: APIVersionV4, Sources: doc.sources, Groups: doc.groups, Files: []string{declaringPath}, Harnesses: cloneV4StringList(doc.harnesses), HasHarnesses: doc.hasHarnesses, AllowedRegistries: doc.allowedRegistries, AllowedMarketplaces: doc.allowedMarketplaces, Backup: doc.backup, Logging: doc.logging, Telemetry: doc.telemetry, Materialization: doc.materialization, telemetryFields: doc.telemetryFields}
+	out := &V4Config{APIVersion: APIVersionV4, Sources: doc.sources, Groups: doc.groups, Files: []string{declaringPath}, Harnesses: cloneV4StringList(doc.harnesses), HasHarnesses: doc.hasHarnesses, AllowedRegistries: doc.allowedRegistries, AllowedMarketplaces: doc.allowedMarketplaces, Backup: doc.backup, Logging: doc.logging, UpdateCheck: doc.updateCheck, Telemetry: doc.telemetry, Materialization: doc.materialization, telemetryFields: doc.telemetryFields}
 	if err := normalizeV4Tree(out); err != nil {
 		return nil, err
 	}
@@ -311,6 +312,7 @@ type v4Document struct {
 	allowedMarketplaces *[]string
 	backup              *BackupConfig
 	logging             *LoggingConfig
+	updateCheck         *UpdateCheckConfig
 	telemetry           *telemetryconfig.TelemetryConfig
 	materialization     *MaterializationConfig
 	telemetryFields     v4TelemetryFields
@@ -490,7 +492,7 @@ func validateV4AuxiliaryFields(root *yaml.Node) error {
 			}
 		}
 	}
-	for _, key := range []string{"backup", "logging", "telemetry", "materialization"} {
+	for _, key := range []string{"backup", "logging", "update_check", "telemetry", "materialization"} {
 		n := mappingValue(root, key)
 		if n == nil || (n.Kind == yaml.ScalarNode && n.Tag == "!!null") {
 			continue
@@ -502,6 +504,7 @@ func validateV4AuxiliaryFields(root *yaml.Node) error {
 	auxiliaryKeys := map[string]map[string]bool{
 		"backup":          {"enabled": true, "max_days": true, "max_per_day": true},
 		"logging":         {"enabled": true, "level": true, "file": true, "max_size_mb": true, "max_backups": true, "max_age_days": true, "compress": true},
+		"update_check":    {"enabled": true},
 		"telemetry":       {"level": true, "endpoint": true, "community_reporting": true, "retention_policy": true, "ca_file": true, "allow_insecure": true, "headers": true},
 		"materialization": {"mode": true, "targets": true},
 	}
@@ -582,6 +585,9 @@ func decodeV4AuxiliaryFields(root *yaml.Node, doc *v4Document) error {
 		return err
 	}
 	if err := decode("logging", &doc.logging); err != nil {
+		return err
+	}
+	if err := decode("update_check", &doc.updateCheck); err != nil {
 		return err
 	}
 	if err := decode("telemetry", &doc.telemetry); err != nil {
@@ -1409,6 +1415,7 @@ func mergeV4Config(dst, src *V4Config) error {
 	}
 	dst.Backup = mergeV4Backup(dst.Backup, src.Backup)
 	dst.Logging = mergeV4Logging(dst.Logging, src.Logging)
+	dst.UpdateCheck = mergeV4UpdateCheck(dst.UpdateCheck, src.UpdateCheck)
 	dst.Telemetry = mergeV4Telemetry(dst.Telemetry, src.Telemetry, src.telemetryFields)
 	dst.telemetryFields = mergeV4TelemetryFields(dst.telemetryFields, src.telemetryFields)
 	dst.Materialization = mergeV4Materialization(dst.Materialization, src.Materialization)
@@ -1470,6 +1477,21 @@ func mergeV4Backup(dst, src *BackupConfig) *BackupConfig {
 			value := *src.MaxPerDay
 			out.MaxPerDay = &value
 		}
+	}
+	return out
+}
+
+func mergeV4UpdateCheck(dst, src *UpdateCheckConfig) *UpdateCheckConfig {
+	if dst == nil && src == nil {
+		return nil
+	}
+	out := &UpdateCheckConfig{}
+	if dst != nil {
+		*out = *dst
+	}
+	if src != nil && src.Enabled != nil {
+		value := *src.Enabled
+		out.Enabled = &value
 	}
 	return out
 }
@@ -1591,7 +1613,7 @@ func cloneV4TelemetryHeaders(headers map[string]telemetryconfig.HeaderSource) ma
 }
 
 func mergeV4Document(dst *V4Config, doc *v4Document) error {
-	src := &V4Config{Sources: doc.sources, Groups: doc.groups, Files: []string{doc.path}, Harnesses: doc.harnesses, HasHarnesses: doc.hasHarnesses, AllowedRegistries: doc.allowedRegistries, AllowedMarketplaces: doc.allowedMarketplaces, Backup: doc.backup, Logging: doc.logging, Telemetry: doc.telemetry, Materialization: doc.materialization, telemetryFields: doc.telemetryFields}
+	src := &V4Config{Sources: doc.sources, Groups: doc.groups, Files: []string{doc.path}, Harnesses: doc.harnesses, HasHarnesses: doc.hasHarnesses, AllowedRegistries: doc.allowedRegistries, AllowedMarketplaces: doc.allowedMarketplaces, Backup: doc.backup, Logging: doc.logging, UpdateCheck: doc.updateCheck, Telemetry: doc.telemetry, Materialization: doc.materialization, telemetryFields: doc.telemetryFields}
 	return mergeV4Config(dst, src)
 }
 func mergeV4Group(dst *V4Config, name string, src V4ResourceGroup) {
@@ -1802,6 +1824,9 @@ func (c *V4Config) validateLayerFields(kind layerKind) error {
 	}
 	if kind == repoLayer && (c.Backup != nil || c.Logging != nil || c.Telemetry != nil) {
 		return v4err("v4.layer-field", "auxiliary", 0, "backup, logging, and telemetry are not valid in repository configuration")
+	}
+	if (kind == repoLayer || kind == localLayer) && c.UpdateCheck != nil {
+		return v4err("v4.layer-field", "update_check", 0, "update_check is only valid in organization and user configuration")
 	}
 	if kind == organizationLayer && c.Materialization != nil {
 		return v4err("v4.layer-field", "materialization", 0, "materialization is not valid in organization configuration")
