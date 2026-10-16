@@ -157,6 +157,47 @@ func TestProjectPluginRootExpandsInArgumentsOnly(t *testing.T) {
 	}
 }
 
+func TestProjectDecomposeIgnoresNativeAccepts(t *testing.T) {
+	skill := ir.NewSkill("s", "d", "body", nil, nil, ir.SourceRef{})
+	p := &ir.Plugin{
+		Format:   "claude-plugin",
+		Manifest: ir.Manifest{Name: "demo"},
+		Members:  []ir.PluginMember{{Resource: skill}},
+	}
+	for _, tgt := range []target.Target{target.TargetCursor, target.TargetGemini} {
+		proj, err := pluginpolicy.Project(p, tgt, pluginpolicy.DeliveryDecompose, compile.ScopeProject, pluginpolicy.Roots{})
+		if err != nil {
+			t.Fatalf("decomposed delivery to %s must not apply the native accepts list: %v", tgt, err)
+		}
+		mp := findMember(proj, "skill/s")
+		if mp == nil || mp.Blocked {
+			t.Fatalf("member to %s = %+v", tgt, mp)
+		}
+		if len(mp.Artifacts) == 0 {
+			t.Fatalf("decomposed member to %s must produce artifacts", tgt)
+		}
+	}
+	if _, err := pluginpolicy.Project(p, target.TargetGemini, pluginpolicy.DeliveryNative, compile.ScopeProject, pluginpolicy.Roots{}); err == nil {
+		t.Fatal("native delivery to a target whose accepts list lacks the format must still refuse")
+	}
+}
+
+func TestProjectUnrecognizedDeliveryIsPlainError(t *testing.T) {
+	skill := ir.NewSkill("s", "d", "body", nil, nil, ir.SourceRef{})
+	p := &ir.Plugin{
+		Format:   "claude-plugin",
+		Manifest: ir.Manifest{Name: "demo"},
+		Members:  []ir.PluginMember{{Resource: skill}},
+	}
+	_, err := pluginpolicy.Project(p, target.TargetClaude, pluginpolicy.Delivery("bogus"), compile.ScopeProject, pluginpolicy.Roots{})
+	if err == nil {
+		t.Fatal("an unrecognized delivery must fail")
+	}
+	if strings.Contains(err.Error(), "plugin.format.unsupported") {
+		t.Fatalf("a caller argument error must not carry a package-format code, got %v", err)
+	}
+}
+
 // spec: plugin-portable-format/unrecognized-placeholder-stays-literal
 func TestProjectUnrecognizedPlaceholderLiteralOrBlocked(t *testing.T) {
 	srv := ir.NewMcpServer("srv", "run", []string{"${UNRECOGNIZED}"}, nil, nil, ir.SourceRef{})
