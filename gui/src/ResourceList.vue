@@ -89,10 +89,13 @@ function scopeIsTag(scope: string): boolean {
         >
           <span class="workspace__check" :class="{ 'workspace__check--on': row.checked }" aria-hidden="true">[<span class="workspace__check-mark">{{ row.checked ? '*' : ' ' }}</span>]</span>
           <span class="workspace__kind">{{ row.kind }}</span>
-          <span class="workspace__name"><template v-for="(part, index) in nameParts(row)" :key="index"><mark v-if="part.matched" class="workspace__name-match">{{ part.text }}</mark><template v-else>{{ part.text }}</template></template></span>
+          <span class="workspace__name-cell">
+            <span class="workspace__name"><template v-for="(part, index) in nameParts(row)" :key="index"><mark v-if="part.matched" class="workspace__name-match">{{ part.text }}</mark><template v-else>{{ part.text }}</template></template></span>
+            <span v-if="scopeIsTag(row.scope)" class="workspace__scope workspace__scope--tag">{{ row.scope }}</span>
+            <span v-else class="workspace__scope gui-visually-hidden">{{ row.scope }}</span>
+            <span v-if="row.harnessOverride" class="workspace__badge" title="Registry-level harness override">harnesses: {{ row.harnesses.join(', ') }}</span>
+          </span>
           <span class="workspace__registry" :title="row.registry">{{ row.registry }}</span>
-          <span class="workspace__scope" :class="{ 'workspace__scope--tag': scopeIsTag(row.scope) }">{{ row.scope }}</span>
-          <span v-if="row.harnessOverride" class="workspace__badge" title="Registry-level harness override">harnesses: {{ row.harnesses.join(', ') }}</span>
         </li>
       </ul>
     </div>

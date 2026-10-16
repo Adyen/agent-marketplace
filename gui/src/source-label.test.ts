@@ -18,9 +18,15 @@ describe('sourceLabel', () => {
     expect(sourceLabel(source('directory', '/regs'))).toBe('regs')
   })
 
-  it('shows the host of a Marketplace endpoint, keeping any port', () => {
-    expect(sourceLabel(source('marketplace', 'https://marketplace.example/services/catalog'))).toBe('marketplace.example')
-    expect(sourceLabel(source('marketplace', 'http://localhost:8443/api'))).toBe('localhost:8443')
+  it('shows the first host label of a Marketplace endpoint, then its port and last path segment', () => {
+    expect(sourceLabel(source('marketplace', 'https://agent-marketplace.is.example.com'))).toBe('agent-marketplace')
+    expect(sourceLabel(source('marketplace', 'https://mp.example.com:8443/acme/'))).toBe('mp:8443/acme')
+    expect(sourceLabel(source('marketplace', 'https://marketplace.example/services/catalog'))).toBe('marketplace/catalog')
+    expect(sourceLabel(source('marketplace', 'http://localhost:8443/api'))).toBe('localhost:8443/api')
+  })
+
+  it('keeps an IPv4 host whole', () => {
+    expect(sourceLabel(source('marketplace', 'http://127.0.0.1:9000'))).toBe('127.0.0.1:9000')
   })
 
   it('shows the owner and repository of a Git URL without .git', () => {

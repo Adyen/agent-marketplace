@@ -461,6 +461,88 @@ here conflicts with an earlier section, this section wins.
 - When the selection changes, the resource section fades in and rises 2 px
   over 150 ms. Nothing else animates on selection.
 
+## Refinements from the second review
+
+A second review of the shell (1568×1018, light theme, 83 enabled rows,
+8 sources, 28 diagnostics) found the problems below. Where a rule here
+conflicts with an earlier section, including the first review, this section
+wins.
+
+### Resource rows: exceptions travel with the name
+
+- *Observed*: the kind column clips `mcpserver` to `mcpserve…`. The scope
+  column prints `user` on all 83 rows, which adds a column of noise and no
+  information. The registry column is 16ch, so `agent-marketplace` and longer
+  registry names are cut on most rows. The override badge and the scope tag
+  are `auto` columns, so a row that carries either one shifts its registry
+  out of line with its neighbors.
+- *Rule*: the row grid is
+  `check 3ch · kind 10ch · name 1fr · registry minmax(0, 24ch)`. Registry is
+  the last column on every row, so it lines up down the whole list.
+  - **kind**: 10ch fits every kind ID (`mcpserver` is the longest) without
+    an ellipsis.
+  - **name cell**: the name, then any exceptions as inline tags after an 8 px
+    gap: the scope tag for `organization`, `project`, or `local`, and the
+    harness override badge. The name truncates first; tags never shrink.
+  - **scope**: the default `user` scope shows nothing visible. The
+    `workspace__scope` element is kept with its full text but is visually
+    hidden (`.gui-visually-hidden`), so the row's text and accessible content
+    still include the scope.
+
+### Inspector
+
+- *Observed*: "Remove Resource" is a solid black button. It is the heaviest
+  shape in the inspector and the second solid control in the window, and it
+  is destructive. The eyebrow uppercases the registry, so `.devin` reads as
+  `.DEVIN`, and it repeats the Registry row just below it. The Session
+  section repeats the Harness targets that the sidebar footer already shows,
+  and Marketplace discovery sits inside Session although it is not session
+  state.
+- *Rule — resource actions*: the resource action and "Open resource" both
+  use the secondary button style (`.gui-button--secondary`), side by side.
+  Sync stays the only solid control in the window. Remove and Exclude color
+  their label and icon with `--am-color-status-danger`; Install and Restore
+  keep `--gui-ink`. The visible label is the verb alone ("Install",
+  "Remove", "Exclude", "Restore"). The accessible names stay
+  "Install Resource", "Remove Resource", "Exclude Resource", and
+  "Restore Resource", which start with the visible label.
+- *Rule — eyebrow*: the eyebrow shows only the kind, in caps. The Registry
+  row names the source, in its own case.
+- *Rule — session*: Session holds the drift row only ("Drift: ready" with
+  its status dot). The Harness targets live in the sidebar footer.
+- *Rule — discovery*: Marketplace discovery is its own inspector section,
+  with its own caps label and hairline, between Session and Diagnostics.
+
+### Diagnostics: one row per problem
+
+- *Observed*: 28 diagnostics render as 28 rows. Most share the code
+  `subagent.devin.model-default` and differ only in the subagent named near
+  the end, so the visible text repeats eight times and the list fills the
+  inspector. Rows are keyed by code, so rows that share a code collide:
+  Vue reuses one element for all of them, and expanding one expands all.
+  Every row starts with `warning:`, which repeats what the icon says.
+- *Rule*: diagnostics are grouped by severity and code. Each group is one
+  disclosure row: the severity icon, the first message clamped to two lines,
+  and a `×N` tag when the group has more than one diagnostic. Expanding the
+  row (it stays a `button` with `aria-expanded`) lists every message in the
+  group, one per line, in mono 11.5 px `--gui-ink-2`; a group of one instead
+  unclamps its message in place, so no text appears twice. Groups are ordered
+  errors, then warnings, then info, and by first appearance within a
+  severity. The section's caps count stays the total number of diagnostics.
+- The `warning:` prefix is no longer visible. The severity word stays in the
+  row as visually hidden text, so assistive technology still announces it.
+
+### Sidebar sources
+
+- *Observed*: Marketplace sources show the full host
+  (`agent-marketplace.is.adyen…`), which truncates. Two Marketplace sources
+  on the same domain therefore render as the same cut-off string.
+- *Rule*: a Marketplace source shows the first label of its host
+  (`agent-marketplace`), then `:port` for a non-default port, then the last
+  path segment when the URL has a path (`agent-marketplace/acme`). The full
+  location stays in the tooltip and the accessible name, and the ORG tag
+  still marks organization sources.
+
 ## Implementation plan
 
 1. **Tokens and theme**: add `design-tokens.css`, the before-paint theme
