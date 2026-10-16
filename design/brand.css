@@ -5,7 +5,7 @@
 }
 
 .am-brand-slash {
-  margin-inline: 2px;
+  margin-inline: 0.1em;
   color: var(--am-brand-slash-color);
   font-weight: 800;
 }
