@@ -1,6 +1,6 @@
 # Environment variables reference
 
-This page lists the environment variables that `agent-marketplace` reads and what each one changes. You only need them to override a setting for one run, in CI, or on a machine where you cannot edit the config file. To set one for a single command, put it in front of the command, for example `AGENT_MARKETPLACE_LOG_LEVEL=debug agent-marketplace sync`.
+This page lists the environment variables that `agent-marketplace` reads and what each one changes. You only need them to override a setting for one run, in CI, or on a machine where you cannot edit the config file. Prefixing a command with a variable sets it for that run, for example `AGENT_MARKETPLACE_LOG_LEVEL=debug agent-marketplace sync`.
 
 ## Logging
 
@@ -32,6 +32,7 @@ An invalid value makes telemetry resolution fail; `telemetry` subcommands then e
 | Variable | Effect |
 |---|---|
 | `AGENT_MARKETPLACE_NO_TUI` | Any non-empty value stops a bare `agent-marketplace` from starting the TUI; it prints help instead. |
+| `AGENT_MARKETPLACE_NO_UPDATE_CHECK` | Any non-empty value turns off the daily check for a newer GitHub release and its notice. The check is also off when `CI` is set, when standard error is not a terminal, and for `serve`, shell completion, and `--version`. |
 | `AGENT_MARKETPLACE_OWNERSHIP_LOCK_TIMEOUT` | How long a command waits for another process that is updating the same Devin or Codex shared configuration files. Takes a Go duration such as `60s` or `500ms`; the default is `30s`. `0` fails immediately when another process holds the lock. A negative or unparseable value is an error. |
 | `EDITOR` | Editor the TUI `E` key opens. It may include arguments, for example `code --wait`. Defaults to `vi` when unset. |
 | `NO_COLOR`, `CLICOLOR=0`, `TERM=dumb` | Turn off colored `sync` and `install` output. `NO_COLOR` works when set to any value, even an empty one. |
@@ -41,7 +42,7 @@ An invalid value makes telemetry resolution fail; `telemetry` subcommands then e
 | Variable | Effect |
 |---|---|
 | `HOME` | Base for `~/.agents` (user config and lock), `~/.cache/agent-marketplace` (cache), `~/.agent-marketplace` (logs, backups, and materialization manifest), and every harness machine root. |
-| `XDG_STATE_HOME` | Base for durable state under `$XDG_STATE_HOME/agent-marketplace/`: ownership records and safety backups, dependency-transaction records (`dependencies/`), and telemetry state (`telemetry/`, which holds the installation ID, queue, and diagnostic payloads). Defaults to `~/.local/state/agent-marketplace/`. Set it to an absolute path. Ownership and telemetry state ignore a relative value and use the default, but dependency transactions refuse it with the error `XDG_STATE_HOME must be absolute`. |
+| `XDG_STATE_HOME` | Base for durable state under `$XDG_STATE_HOME/agent-marketplace/`: ownership records and safety backups, dependency-transaction records (`dependencies/`), and telemetry state (`telemetry/`, which holds the installation ID, queue, and diagnostic payloads). Defaults to `~/.local/state/agent-marketplace/`. The value must be an absolute path. Ownership and telemetry state ignore a relative value and use the default, but dependency transactions refuse it with the error `XDG_STATE_HOME must be absolute`. |
 | `CODEX_HOME` | Moves only the Codex `.codex` machine folder (subagents, hooks, and MCP servers). Must be absolute; a relative value is an error. Codex skills stay under `~/.agents`. |
 
 The cache is always `~/.cache/agent-marketplace/`; `XDG_CACHE_HOME` is not used. The user config is always `~/.agents/config.yaml` and the organization config is always `/etc/agent-marketplace/config.yaml`; no variable moves them. See the [filesystem layout reference](./filesystem-layout.md).

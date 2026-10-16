@@ -1,6 +1,6 @@
 # How to install a resource from a hosted Marketplace
 
-This guide shows how to find a resource on a hosted [Marketplace](../glossary.md#marketplace) and install one exact revision of it. The CLI verifies the revision and shows you a preview before it changes any configuration.
+Find a resource on a hosted [Marketplace](../glossary.md#marketplace) and install one exact revision of it. The CLI verifies the revision and shows a preview before it changes any configuration.
 
 ## Prerequisites
 
@@ -10,7 +10,7 @@ You need:
 - At least one target harness selected in your effective configuration.
 - The Marketplace endpoint URL.
 
-Every existing consumer root, including organization and personal-local, must declare exact `apiVersion: agent-marketplace/v4`. Included fragments may omit the field or declare exact v4. If the destination is absent, install creates v4 only after validating every required root/include tree. Unsupported input refuses before Marketplace acquisition or new config/lock/harness changes. [Convert older configurations with an older released migrator before upgrading](./migrate-configuration.md); the new CLI has no migration command or prompt.
+Every existing config root, including organization and personal-local, must declare exact `apiVersion: agent-marketplace/v4`. Included fragments may omit the field or declare exact v4. If the destination file doesn't exist, `install` creates it as v4, but only after every other config file it needs passes this check. Otherwise it refuses before it downloads from the Marketplace or changes config, locks, or harness files. [Convert older configurations with an older released migrator before upgrading](./migrate-configuration.md); the new CLI has no migration command or prompt.
 
 Replace `https://marketplace.example.com`, `shared-agents`, and `review` in the examples with values from your Marketplace.
 
@@ -36,7 +36,14 @@ Search the configured Marketplaces:
 agent-marketplace search review --kind skill --marketplace https://marketplace.example.com
 ```
 
-The results have the columns `MARKETPLACE`, `SOURCE`, `KIND`, `NAME`, and `DESCRIPTION`. The `SOURCE` column holds the registry slug, which you need for the install locator.
+Typical output:
+
+```text
+MARKETPLACE                     SOURCE         KIND   NAME    DESCRIPTION
+marketplace.example.com         shared-agents  skill  review  Reviews pull requests
+```
+
+The `SOURCE` column holds the registry slug, which you need for the install locator.
 
 To search every configured endpoint, leave out `--marketplace`. You can also pass a configured alias instead of the URL. Add `--output json` for machine-readable results, which also list errors from endpoints that failed.
 
@@ -73,6 +80,8 @@ Once the endpoint is registered, you can use its name from the `MARKETPLACE` col
 agent-marketplace install marketplace:shared-agents/skill/review --scope repo
 ```
 
+It prints the same `Installing review · skill` / `✓ Installed review` output as the URL form.
+
 ## 4. Review findings and capabilities
 
 If the verified revision has any security findings, the CLI shows them and asks you to confirm. Capabilities are listed in the same summary, but they do not require confirmation on their own:
@@ -103,7 +112,7 @@ agent-marketplace install \
   --as team-review
 ```
 
-The Marketplace coordinate stays `review`. The generated harness output uses `team-review`.
+The Marketplace coordinate stays `review`. The generated harness output uses `team-review`; the success line reads `✓ Installed review`.
 
 ## 5. Verify the exact pin
 
@@ -122,7 +131,7 @@ In the `MARKETPLACE PINS` table, check that the row for the resource shows:
 - A `sha256:` digest in `CONTENT_DIGEST`.
 - The intended configuration layer in `LAYER`.
 
-Then confirm that the configuration and the generated output match:
+Then confirm the config and output match:
 
 ```bash
 agent-marketplace sync --check
@@ -143,5 +152,5 @@ When everything is in sync, the command prints nothing apart from any warnings a
   agent-marketplace sync --allow-revoked <instance_id>/<registry_id>/<kind>/<name>@sha256:<64 lowercase hex>
   ```
 
-  Take `<instance_id>`, `<registry_id>`, and the digest from the `INSTANCE_ID`, `REGISTRY_ID`, and `CONTENT_DIGEST` columns of `agent-marketplace status`. For MCP servers, `<kind>` is `mcpserver`. The override lasts only for that run. It never makes `sync --check` pass, and you cannot combine it with `--check`.
+  Take `<instance_id>`, `<registry_id>`, and the digest from the `INSTANCE_ID`, `REGISTRY_ID`, and `CONTENT_DIGEST` columns of `agent-marketplace status`. For MCP servers, `<kind>` is `mcpserver`. When the coordinate matches, the sync proceeds and prints the usual `Installed ...` summary. The override lasts only for that run. It never makes `sync --check` pass, and you cannot combine it with `--check`.
 - Offline sync warning: `sync --offline` uses trusted cached Marketplace data, so it cannot see revocations published after the cache was filled.

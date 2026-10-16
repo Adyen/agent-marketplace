@@ -805,6 +805,28 @@ func (s *Store) ListResourceRevisionsByArchiveDigest(ctx context.Context, market
 		ORDER BY rr.registry_id, rr.kind, rr.name, ro.occurred_at DESC NULLS LAST, rr.content_digest DESC`, marketplace, digest, digest)
 }
 
+func (s *Store) ListResourceArchiveDigests(ctx context.Context, marketplace store.MarketplaceID, after store.ArchiveDigest, limit int) ([]store.ArchiveDigest, error) {
+	rows, err := s.q.QueryContext(ctx, `SELECT DISTINCT archive_digest FROM resource_revisions
+		WHERE marketplace_id=$1 AND archive_digest IS NOT NULL AND archive_digest<>'' AND archive_digest>$2
+		ORDER BY archive_digest LIMIT $3`, marketplace, after, limit)
+	if err != nil {
+		return nil, fmt.Errorf("list archive digests: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	digests := make([]store.ArchiveDigest, 0, limit)
+	for rows.Next() {
+		var digest string
+		if err := rows.Scan(&digest); err != nil {
+			return nil, fmt.Errorf("scan archive digest: %w", err)
+		}
+		digests = append(digests, store.ArchiveDigest(digest))
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate archive digests: %w", err)
+	}
+	return digests, nil
+}
+
 func (s *Store) ListResourceRevisionsByContentDigest(ctx context.Context, marketplace store.MarketplaceID, digest store.RevisionDigest) ([]store.AssessedResourceRevision, error) {
 	return s.queryAssessedResourceRevisions(ctx, `SELECT `+assessedResourceColumns+`
 		FROM resource_revisions rr`+assessedResourceJoins+`

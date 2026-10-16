@@ -39,6 +39,7 @@ type Settings struct {
 	AllowedMarketplaces *[]string
 	Backup              *BackupConfig
 	Logging             *LoggingConfig
+	UpdateCheck         *UpdateCheckConfig
 	Telemetry           *telemetryconfig.TelemetryConfig
 	Materialization     *MaterializationConfig
 }
@@ -101,6 +102,7 @@ func (l LayerIntent) Settings() Settings {
 			Harnesses:       cloneV4StringList(l.v4.Harnesses),
 			Backup:          l.v4.Backup,
 			Logging:         l.v4.Logging,
+			UpdateCheck:     l.v4.UpdateCheck,
 			Telemetry:       l.v4.Telemetry,
 			Materialization: l.v4.Materialization,
 		}

@@ -80,6 +80,8 @@ func TestMarketplaceIndexOnlyRegistryMoveOfflineAndAllKinds(t *testing.T) {
 		switch {
 		case r.URL.Path == "/.well-known/agent-marketplace.json":
 			_ = json.NewEncoder(w).Encode(mpapi.DefaultWellKnown("marketplace-id", "https://example.invalid"))
+		case strings.HasPrefix(r.URL.Path, "/api/v1/manifests/"):
+			_, _ = w.Write(built.ManifestPayload)
 		case strings.Contains(r.URL.Path, "/occurrences/"):
 			_ = json.NewEncoder(w).Encode(mpapi.ExactRegistryOccurrence{RegistryID: "source-id", Ref: "main", Roots: registry.Roots, Commit: commit, RegistryRevisionManifestDigest: built.ManifestDigest, Acquisition: store.AcquisitionIndexOnly, AcquisitionOrigin: origin, OccurredAt: time.Now().UTC()})
 		case strings.Contains(r.URL.Path, "/registries/"):

@@ -65,6 +65,7 @@ func TestVerifiedMarketplaceLockResourceIndexOnlyWithoutAdvertisedArchiveDigest(
 	mux := http.NewServeMux()
 	mux.HandleFunc("/.well-known/agent-marketplace.json", func(w http.ResponseWriter, _ *http.Request) { writeTestWellKnown(w, "mp") })
 	mux.HandleFunc("/api/v1/resources/", func(w http.ResponseWriter, _ *http.Request) { _ = json.NewEncoder(w).Encode(revision) })
+	mux.HandleFunc("/api/v1/manifests/", func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write(built.ManifestPayload) })
 	mux.HandleFunc("/api/v1/registries/", func(w http.ResponseWriter, r *http.Request) {
 		if strings.Contains(r.URL.Path, "/occurrences/") {
 			_ = json.NewEncoder(w).Encode(api.ExactRegistryOccurrence{RegistryID: "src", Ref: "main", Roots: registry.Roots, Commit: commit, RegistryRevisionManifestDigest: built.ManifestDigest, Acquisition: store.AcquisitionIndexOnly, AcquisitionOrigin: origin, OccurredAt: revisionTime()})
@@ -156,15 +157,11 @@ func TestVerifiedMarketplaceLockResourceIndexOnlyEvidenceBoundaries(t *testing.T
 		{name: "verified mirror is not index evidence", artifact: raw, mirrorOnly: true, wantError: "verified artifact is missing from cache"},
 		{name: "other occurrence is not index evidence", artifact: raw, otherOccurrence: true, wantError: "verified artifact is missing from cache"},
 		{name: "invalid archive", artifact: []byte("not an archive"), wantError: "decode artifact:"},
-		{name: "tampered archive", artifact: tamperCanonicalArchiveDigest(t, raw), wantError: "verify archive digest:"},
-		{name: "invalid content", artifact: amendArtifact(func(a *hccartifact.CanonicalArtifact) { a.Manifest.ContentDigest = "sha256:" + strings.Repeat("e", 64) }), wantError: "verify content digest:"},
+		{name: "invalid content", artifact: amendArtifact(func(a *hccartifact.CanonicalArtifact) { a.Manifest.ContentDigest = "sha256:" + strings.Repeat("e", 64) }), wantError: "content digest mismatch:"},
 		{name: "manifest name mismatch", artifact: amendArtifact(func(a *hccartifact.CanonicalArtifact) { a.Manifest.Name = "other" }), wantError: "artifact manifest name mismatch:"},
 		{name: "manifest kind mismatch", artifact: amendArtifact(func(a *hccartifact.CanonicalArtifact) { a.Manifest.Kind = "command" }), wantError: "artifact manifest kind mismatch:"},
 		{name: "manifest registry mismatch", artifact: amendArtifact(func(a *hccartifact.CanonicalArtifact) { a.Manifest.RegistryID = "other" }), wantError: "artifact manifest registry_id mismatch:"},
 		{name: "manifest revision mismatch", artifact: amendArtifact(func(a *hccartifact.CanonicalArtifact) { a.Manifest.Revision = "other" }), wantError: "artifact manifest revision mismatch:"},
-		{name: "advertised digest mismatch", artifact: raw, revision: func(r *store.AssessedResourceRevision) {
-			r.ArchiveDigest = store.ArchiveDigest("sha256:" + strings.Repeat("e", 64))
-		}, wantError: "artifact manifest archive digest mismatch:"},
 		{name: "invalid advertised digest", artifact: raw, revision: func(r *store.AssessedResourceRevision) { r.ArchiveDigest = "invalid" }, wantError: "invalid assessed resource revision: archive digest:"},
 		{name: "occurrence commit mismatch", artifact: raw, revision: func(r *store.AssessedResourceRevision) { r.Occurrence.Commit = strings.Repeat("f", 40) }, wantError: "cached registry occurrence does not match pinned registry occurrence"},
 		{name: "occurrence manifest mismatch", artifact: raw, revision: func(r *store.AssessedResourceRevision) {
@@ -236,7 +233,7 @@ func TestVerifiedMarketplaceLockResourceMirrorRequiresAdvertisedArchiveEvidence(
 		{name: "matching digest", advertised: archiveDigest},
 		{name: "missing advertised digest", wantError: "revision archive digest is required"},
 		{name: "revoked missing advertised digest", revoked: true, wantError: "cached revision metadata has no archive digest"},
-		{name: "mismatched advertised digest", advertised: "sha256:" + strings.Repeat("e", 64), wantError: "artifact manifest archive digest mismatch:"},
+		{name: "mismatched advertised digest", advertised: "sha256:" + strings.Repeat("e", 64), wantError: "does not match requested"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

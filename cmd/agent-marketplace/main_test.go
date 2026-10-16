@@ -19,6 +19,25 @@ import (
 
 var testMainHome string
 
+// lookPathOutsideGitExecPath resolves name on PATH, skipping GIT_EXEC_PATH. Git
+// hooks prepend that directory to PATH, and its git cannot find its helpers
+// through the sandbox symlink.
+func lookPathOutsideGitExecPath(name string) (string, error) {
+	execPath := os.Getenv("GIT_EXEC_PATH")
+	if execPath == "" {
+		return exec.LookPath(name)
+	}
+	for _, dir := range filepath.SplitList(os.Getenv("PATH")) {
+		if dir == "" || filepath.Clean(dir) == filepath.Clean(execPath) {
+			continue
+		}
+		if path, err := exec.LookPath(filepath.Join(dir, name)); err == nil {
+			return path, nil
+		}
+	}
+	return "", &exec.Error{Name: name, Err: exec.ErrNotFound}
+}
+
 func TestMain(m *testing.M) {
 	flag.Parse()
 	parallelSet := false
@@ -34,7 +53,7 @@ func TestMain(m *testing.M) {
 		}
 	}
 	commandProcessTempDir = os.TempDir()
-	if git, err := exec.LookPath("git"); err == nil {
+	if git, err := lookPathOutsideGitExecPath("git"); err == nil {
 		commandProcessGit, _ = filepath.Abs(git)
 	}
 	if root := os.Getenv(processIsolatedRootEnv); os.Getenv(processIsolatedSelectorEnv) != "" {

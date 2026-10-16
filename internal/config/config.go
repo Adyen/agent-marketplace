@@ -357,6 +357,11 @@ type LoggingConfig struct {
 	Compress   *bool   `yaml:"compress,omitempty"`
 }
 
+// UpdateCheckConfig controls the release upgrade notice.
+type UpdateCheckConfig struct {
+	Enabled *bool `yaml:"enabled,omitempty"`
+}
+
 type IncludePaths []string
 
 func (p *IncludePaths) UnmarshalYAML(value *yaml.Node) error {
