@@ -12,4 +12,4 @@
 
 - [x] 3.1 Run `pnpm run test:public`, `pnpm run test:docs`, and the dead-link build.
 - [x] 3.2 Run `openspec validate --all --strict`.
-- [ ] 3.3 Archive with `openspec archive day-2-operations-docs --yes`.
+- [x] 3.3 Archive with `openspec archive day-2-operations-docs --yes`.
