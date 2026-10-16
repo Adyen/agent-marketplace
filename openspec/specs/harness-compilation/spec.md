@@ -110,3 +110,41 @@ Harness Compilation MUST NOT turn a project-directory reference into a plugin-ro
 
 - **WHEN** a Claude MCP server's command, arguments and environment reference `${CLAUDE_PLUGIN_ROOT}`
 - **THEN** conversion from Claude to Factory MUST emit `${DROID_PLUGIN_ROOT}` in every value
+
+### Requirement: Ambiguous Windsurf identities and rule metadata are refused
+
+Harness Compilation MUST NOT choose a winner between two resources or two metadata values that claim the same identity. When two Windsurf workflows or two Windsurf rules in the same workspace root resolve to the same name, ingestion MUST ingest none of them, MUST NOT let a user-root resource with that name take their place, and MUST report the error `ingest.windsurf.duplicate-identity`; other resources MUST still be ingested. A rule whose frontmatter declares the same key twice MUST NOT be ingested.
+
+#### Scenario: Windsurf workflows with the same name are refused
+
+- **WHEN** two Windsurf workflow files in one workspace declare the same name next to an unrelated workflow
+- **THEN** conversion MUST report the error `ingest.windsurf.duplicate-identity`, MUST emit no command for that name, and MUST still emit the unrelated workflow
+
+#### Scenario: Rule frontmatter with a repeated key is refused
+
+- **WHEN** a Cursor rule's frontmatter declares `alwaysApply` twice
+- **THEN** conversion MUST emit no rule artifact for it and MUST report an error
+
+### Requirement: Restriction-bearing native fields are preserved or refused
+
+Harness Compilation MUST NOT silently drop a native field that restricts or locates what a resource runs. Gemini ingestion MUST keep every member of a subagent's inline MCP server, and Gemini compilation MUST emit the members it did not model, including `includeTools` and `excludeTools`, unchanged; modeled members MUST NOT be overridden by preserved ones. Windsurf ingestion MUST read a hook's documented `working_directory`; Windsurf compilation MUST emit a non-empty value, and compilation of a hook with a non-empty value to any other target MUST emit no hook and MUST report the error `hook.windsurf.native-fields-unsupported`. Devin MCP compilation MUST NOT drop a single argument it cannot represent; it MUST emit no server and MUST report the error `mcp.devin.interpolation-unrepresentable`.
+
+#### Scenario: Gemini inline MCP server restrictions round-trip
+
+- **WHEN** a Gemini subagent's inline MCP server declares `includeTools`, `excludeTools` and `timeout`
+- **THEN** conversion from Gemini to Gemini MUST report no error and MUST emit all three members unchanged
+
+#### Scenario: Windsurf hook working directory round-trips
+
+- **WHEN** a Windsurf hook declares a non-empty `working_directory`
+- **THEN** conversion from Windsurf to Windsurf MUST report no error and MUST emit the same `working_directory`
+
+#### Scenario: Targets without a hook working directory refuse the hook
+
+- **WHEN** a Windsurf hook declaring a non-empty `working_directory` is converted to Claude
+- **THEN** compilation MUST emit no hook and MUST report the error `hook.windsurf.native-fields-unsupported`
+
+#### Scenario: Devin refuses an MCP server whose argument it cannot represent
+
+- **WHEN** an MCP server argument uses a file interpolation Devin has no syntax for
+- **THEN** Devin compilation MUST emit no server entry and MUST report the error `mcp.devin.interpolation-unrepresentable`

@@ -113,9 +113,13 @@ func parseLenientRuleFrontmatter(data []byte) (map[string]any, string, bool) {
 		key = strings.TrimSpace(key)
 		value = strings.TrimSpace(value)
 		value = strings.Trim(value, `"'`)
-		if key != "" {
-			fm[key] = value
+		if key == "" {
+			continue
 		}
+		if _, repeated := fm[key]; repeated {
+			return nil, "", false
+		}
+		fm[key] = value
 	}
 	if !closed {
 		return nil, "", false

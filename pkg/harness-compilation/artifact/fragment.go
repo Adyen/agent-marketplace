@@ -1,6 +1,7 @@
 package artifact
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -34,7 +35,9 @@ func fragmentMode(fragments []Artifact) (fs.FileMode, error) {
 // merged (later entries override earlier ones for matching keys), and the
 // result is re-serialized.
 //
-// Text fragments: fragments are concatenated with newlines.
+// Text fragments: fragments are concatenated with newlines, unless the group
+// opts into DedupeFragmentEntries, in which case byte-identical fragments
+// coalesce into a single copy and differing bytes are a conflict.
 //
 // Returns an error if fragments with the same path have incompatible merge
 // strategies (mixed JSON and text).
@@ -320,18 +323,37 @@ func allObjects(arr []any) bool {
 }
 
 // mergeText concatenates text fragments with newlines.
+//
+// A group that opts into DedupeFragmentEntries carries one fixed shared
+// payload, contributed identically by every resource that wants it published
+// (for example the reviewed OpenCode command-hook adapter emitted once per
+// accepted hook). Such a group coalesces byte-identical fragments into a
+// single copy; differing bytes are a conflict between the contributing
+// resources and fail closed instead of publishing one arbitrary winner or a
+// concatenation that would corrupt the shared payload.
 func mergeText(path string, fragments []Artifact) (Artifact, error) {
-	var sb strings.Builder
-	for i, f := range fragments {
-		if i > 0 {
-			sb.WriteByte('\n')
+	var merged []byte
+	if anyDedupeFragmentEntries(fragments) {
+		for _, f := range fragments[1:] {
+			if !bytes.Equal(fragments[0].Bytes, f.Bytes) {
+				return Artifact{}, fmt.Errorf("deduplicated text fragments for %q differ", path)
+			}
 		}
-		sb.Write(f.Bytes)
+		merged = fragments[0].Bytes
+	} else {
+		var sb strings.Builder
+		for i, f := range fragments {
+			if i > 0 {
+				sb.WriteByte('\n')
+			}
+			sb.Write(f.Bytes)
+		}
+		merged = []byte(sb.String())
 	}
 
 	return Artifact{
 		Path:                           path,
-		Bytes:                          []byte(sb.String()),
+		Bytes:                          merged,
 		MergeWithExisting:              anyMergeWithExisting(fragments),
 		ExternalReconciliationRequired: anyExternalReconciliationRequired(fragments),
 		ManagedByField:                 firstManagedByField(fragments),

@@ -20,6 +20,7 @@ import (
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/jsonc"
 	targetmeta "github.com/Adyen/agent-marketplace/pkg/harness-compilation/target"
 )
 
@@ -313,6 +314,7 @@ func materializeBindingCatalog() map[string]materializeAdapter {
 	return map[string]materializeAdapter{
 		harness.AdapterDevinOwnedJSON:     {handler: devinOwnedAggregateHandler{}, repairKey: harness.AdapterDevinRepair, repair: DevinRepairPreview},
 		harness.AdapterCodexOwnedJSONTOML: {handler: codexOwnedAggregateHandler{}, repairKey: harness.AdapterCodexRepair, repair: CodexRepairPreview},
+		harness.AdapterOpenCodeOwnedJSON:  {handler: openCodeOwnedAggregateHandler{}, repairKey: harness.AdapterOpenCodeRepair, repair: OpenCodeRepairPreview},
 	}
 }
 
@@ -366,6 +368,7 @@ func ownedAggregateHandlerFor(target hcc.Target) ownedAggregateHandler {
 }
 
 type ownedJSONReconcileOptions struct {
+	parseOptions              jsonc.ParseOptions
 	rootID                    string
 	sessionName               string
 	writeCode                 string

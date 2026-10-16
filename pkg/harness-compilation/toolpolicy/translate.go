@@ -361,6 +361,19 @@ func IsToolOnSurface(h target.Target, surface, name string) bool {
 	return len(t.Surfaces) == 0 || slices.Contains(t.Surfaces, surface)
 }
 
+// ToolConcepts resolves one accepted tool spelling of harness h to the
+// concepts it expresses. Input without provenance (h == "") decodes through
+// the Claude catalog plus the frozen legacy alias table. Unknown spellings
+// return ok=false so callers can refuse rather than guess.
+func ToolConcepts(h target.Target, name string) ([]string, bool) {
+	c, err := sourceCatalog(h)
+	if err != nil {
+		return nil, false
+	}
+	concepts, ok := c.conceptsFor(name, h == "")
+	return slices.Clone(concepts), ok
+}
+
 // TranslateToolList translates a tool allow-list from source spellings to
 // target spellings on the given surface. Coverage is subset-only: target
 // tools are emitted when every concept they express lies within the source

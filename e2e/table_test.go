@@ -3592,10 +3592,10 @@ sources: {team: {git: '{{REG:blocked-reg}}', ref: main}}
 	},
 
 	// ===== collections =====
-	// spec: resource-selection/top-level-collection-keeps-required-auto-selection
+	// spec: resource-selection/collection-keeps-required-all-selection
 	{
-		Name: "collection/required_org_survives_top_level_include",
-		Desc: "Given automatic required organization skills, When repository configuration selects a top-level collection, Then machine outputs survive and the repository collection expands",
+		Name: "collection/required_org_survives_collection_selection",
+		Desc: "Given an organization v4 group with all and required, When a repository v4 group selects a source-bound collection, Then machine outputs survive and the repository collection expands",
 		Registries: []RegistryDef{
 			{Name: "mandatory-collection", Skills: []Skill{{Name: "mandatory-alpha"}, {Name: "mandatory-beta"}}},
 			{Name: "optional-collection", Skills: []Skill{{Name: "optional-member"}}, Files: map[string]string{

@@ -31,7 +31,12 @@ The [user-journey map](./explanation/user-journeys.md) follows a resource from f
 | Install from a curated Marketplace instead of a raw Git URL | [Install from a hosted Marketplace](./how-to/install-from-a-marketplace.md) |
 | Understand what the tool does | [How agent-marketplace works](./explanation/how-agent-marketplace-works.md) |
 
-Other guides for people who use resources: [install bundles](./how-to/install-resource-bundles.md), [regular files instead of symlinks](./how-to/write-regular-files-instead-of-symlinks.md), [local registries](./how-to/use-a-local-registry.md), [private Git registries](./how-to/configure-private-git-registries.md), [convert configuration before upgrading](./how-to/migrate-configuration.md), [repair owned shared configuration](./how-to/repair-owned-shared-configuration.md), [back up machine resources](./how-to/back-up-and-restore-machine-resources.md), [clean the cache](./how-to/clean-the-cache-safely.md), [remove agent-marketplace](./how-to/remove-agent-marketplace-safely.md), [telemetry](./how-to/configure-telemetry.md).
+Other guides for people who use resources:
+
+- Find and install: [install bundles](./how-to/install-resource-bundles.md) · [local registries](./how-to/use-a-local-registry.md) · [private Git registries](./how-to/configure-private-git-registries.md)
+- Set up repositories and harnesses: [regular files instead of symlinks](./how-to/write-regular-files-instead-of-symlinks.md)
+- Troubleshoot and repair: [repair owned shared configuration](./how-to/repair-owned-shared-configuration.md) · [clean the cache](./how-to/clean-the-cache-safely.md)
+- Maintain and uninstall: [back up machine resources](./how-to/back-up-and-restore-machine-resources.md) · [convert configuration before upgrading](./how-to/migrate-configuration.md) · [telemetry](./how-to/configure-telemetry.md) · [remove agent-marketplace](./how-to/remove-agent-marketplace-safely.md)
 
 ## I publish resources for others
 
@@ -70,20 +75,13 @@ Exact descriptions of commands, files, and fields.
 
 - CLI: [command line](./reference/cli.md) · [TUI](./reference/tui.md) · [environment variables](./reference/environment-variables.md) · [diagnostics](./reference/diagnostics.md) · [logging](./reference/logging.md) · [telemetry](./reference/telemetry.md)
 - Consumer files: [repository configuration](./reference/configuration.md) · [configuration layers](./reference/configuration-layers.md) · [lockfiles](./reference/lockfiles.md) · [filesystem layout](./reference/filesystem-layout.md) · [harnesses and output paths](./reference/harnesses-and-output-paths.md)
-- Registry files: [registry layout](./reference/registry-layout.md) · [resource metadata](./reference/resource-metadata.md) · [resource prerequisites](./reference/resource-prerequisites.md) · [collections](./reference/collections.md)
+- Registry files: [registry layout](./reference/registry-layout.md) · [resource metadata](./reference/resource-metadata.md) · [resource prerequisites](./reference/resource-prerequisites.md) · [collections](./reference/collections.md) · [hook and tool names](./reference/hook-and-tool-names.md)
 - Marketplace: [operator configuration](./reference/marketplace-operator-configuration.md) · [HTTP API](./reference/marketplace-http-api.md) · [health and metrics](./reference/marketplace-health-and-metrics.md) · [resource locators](./reference/marketplace-resource-locators.md)
 
 ## Explanation
 
 Why it works this way.
 
-- [How agent-marketplace works](./explanation/how-agent-marketplace-works.md)
-- [Sources and resources](./explanation/sources-and-resources.md)
-- [Scopes, selection, and precedence](./explanation/scopes-selection-and-precedence.md)
-- [Native harness materialization](./explanation/native-harness-materialization.md)
-- [Reproducibility and lockfiles](./explanation/reproducibility-and-lockfiles.md)
-- [Shared configuration ownership](./explanation/shared-configuration-ownership.md)
-- [Git registries and hosted Marketplaces](./explanation/git-registries-and-hosted-marketplaces.md)
-- [Telemetry and privacy](./explanation/telemetry-and-privacy.md)
-- [Marketplace architecture](./explanation/marketplace-architecture.md)
-- [Marketplace trust model](./explanation/marketplace-trust-model.md)
+- Start here: [user journeys](./explanation/user-journeys.md) · [how agent-marketplace works](./explanation/how-agent-marketplace-works.md) · [sources and resources](./explanation/sources-and-resources.md)
+- Core model: [scopes, selection, and precedence](./explanation/scopes-selection-and-precedence.md) · [native harness materialization](./explanation/native-harness-materialization.md) · [reproducibility and lockfiles](./explanation/reproducibility-and-lockfiles.md) · [shared configuration ownership](./explanation/shared-configuration-ownership.md)
+- Marketplace and privacy: [Git registries and hosted Marketplaces](./explanation/git-registries-and-hosted-marketplaces.md) · [Marketplace architecture](./explanation/marketplace-architecture.md) · [Marketplace trust model](./explanation/marketplace-trust-model.md) · [telemetry and privacy](./explanation/telemetry-and-privacy.md)

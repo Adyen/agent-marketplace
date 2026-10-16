@@ -57,11 +57,11 @@ func TestRepairPreviewsEnumeratesEveryValidatedAdapter(t *testing.T) {
 	if err != nil {
 		t.Fatalf("repair previews: %v", err)
 	}
-	if len(previews) != 2 {
+	if len(previews) != 3 {
 		t.Fatalf("repair previews = %d, want one preview per migrated adapter", len(previews))
 	}
-	if previews[0].Target != hcc.TargetCodex || previews[1].Target != hcc.TargetDevin {
-		t.Fatalf("repair targets = %#v, want [codex devin]", []hcc.Target{previews[0].Target, previews[1].Target})
+	if previews[0].Target != hcc.TargetCodex || previews[1].Target != hcc.TargetDevin || previews[2].Target != hcc.TargetOpenCode {
+		t.Fatalf("repair targets = %#v, want [codex devin opencode]", []hcc.Target{previews[0].Target, previews[1].Target, previews[2].Target})
 	}
 }
 

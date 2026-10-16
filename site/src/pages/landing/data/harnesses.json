@@ -115,6 +115,22 @@
         "convert": true,
         "tui": true
       }
+    },
+    {
+      "id": "opencode",
+      "label": "OpenCode",
+      "repoRoots": [
+        ".opencode"
+      ],
+      "machineRoots": [
+        "$XDG_CONFIG_HOME/opencode or ~/.config/opencode"
+      ],
+      "capabilities": {
+        "compile": true,
+        "ingest": true,
+        "convert": true,
+        "tui": true
+      }
     }
   ],
   "kinds": [
@@ -200,6 +216,12 @@
         "paths": [
           ".windsurf/workflows/example.md"
         ]
+      },
+      "opencode": {
+        "status": "native",
+        "paths": [
+          "commands/example.md"
+        ]
       }
     },
     "hook": {
@@ -244,6 +266,13 @@
         "paths": [
           ".windsurf/hooks/pre_user_prompt.json"
         ]
+      },
+      "opencode": {
+        "status": "native",
+        "paths": [
+          "hooks/agent-marketplace/example.json",
+          "plugins/agent-marketplace.js"
+        ]
       }
     },
     "mcp": {
@@ -287,6 +316,12 @@
         "status": "shared",
         "paths": [
           ".windsurf/mcp_config.json"
+        ]
+      },
+      "opencode": {
+        "status": "shared",
+        "paths": [
+          "opencode.json"
         ]
       }
     },
@@ -335,6 +370,12 @@
         "paths": [
           ".windsurf/rules/example.mdc"
         ]
+      },
+      "opencode": {
+        "status": "none",
+        "codes": [
+          "rule.opencode.unsupported"
+        ]
       }
     },
     "skill": {
@@ -379,6 +420,12 @@
         "status": "native",
         "paths": [
           ".windsurf/skills/example/SKILL.md"
+        ]
+      },
+      "opencode": {
+        "status": "native",
+        "paths": [
+          "skills/example/SKILL.md"
         ]
       }
     },
@@ -427,6 +474,12 @@
         "status": "none",
         "codes": [
           "subagent.windsurf.no-primitive"
+        ]
+      },
+      "opencode": {
+        "status": "native",
+        "paths": [
+          "agents/example.md"
         ]
       }
     }

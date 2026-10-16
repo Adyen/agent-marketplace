@@ -49,13 +49,15 @@ func loadWorkspace(src fs.FS, opts LoadOptions, sourceBase string) (*ingest.Bund
 			skills[name] = skill
 		}
 
-		loadedRules, err := loadRules(root)
+		loadedRules, ruleDiags, err := loadRules(root)
 		if err != nil {
 			return nil, err
 		}
+		diags = append(diags, ruleDiags...)
 		for name, rule := range loadedRules {
 			rules[name] = rule
 		}
+		dropDuplicateIdentities(rules, ruleDiags)
 
 		loadedCommands, workflowDiags, err := loadWorkflows(root)
 		if err != nil {
@@ -65,6 +67,7 @@ func loadWorkspace(src fs.FS, opts LoadOptions, sourceBase string) (*ingest.Bund
 		for name, command := range loadedCommands {
 			commands[name] = command
 		}
+		dropDuplicateIdentities(commands, workflowDiags)
 
 		loadedHooks, hookDiags, hookPath, err := loadHooksRoot(root, opts)
 		if err != nil {
@@ -179,20 +182,21 @@ func loadSkills(root workspaceRoot) (map[string]*ir.Skill, error) {
 	return resources, nil
 }
 
-func loadRules(root workspaceRoot) (map[string]*ir.Rule, error) {
+func loadRules(root workspaceRoot) (map[string]*ir.Rule, []diag.Diagnostic, error) {
 	files, err := listRuleFiles(root.fs, path.Join(root.base, "rules"))
 	if err != nil && !isNotExist(err) {
-		return nil, fmt.Errorf("ingest/windsurf: walk rules: %w", err)
+		return nil, nil, fmt.Errorf("ingest/windsurf: walk rules: %w", err)
 	}
 	resources := map[string]*ir.Rule{}
+	duplicates := map[string]bool{}
 	for _, file := range files {
 		rule, err := LoadRule(root.fs, file)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
-		resources[rule.Name()] = rule
+		addUnique(resources, duplicates, rule.Name(), rule)
 	}
-	return resources, nil
+	return resources, duplicateIdentityDiagnostics(resources, duplicates), nil
 }
 
 func loadWorkflows(root workspaceRoot) (map[string]*ir.Command, []diag.Diagnostic, error) {
@@ -201,16 +205,59 @@ func loadWorkflows(root workspaceRoot) (map[string]*ir.Command, []diag.Diagnosti
 		return nil, nil, fmt.Errorf("ingest/windsurf: walk workflows: %w", err)
 	}
 	resources := map[string]*ir.Command{}
+	duplicates := map[string]bool{}
 	var diags []diag.Diagnostic
 	for _, file := range files {
 		command, commandDiags, err := LoadWorkflow(root.fs, file)
 		if err != nil {
 			return nil, nil, err
 		}
-		resources[command.Name()] = command
+		addUnique(resources, duplicates, command.Name(), command)
 		diags = append(diags, commandDiags...)
 	}
-	return resources, diags, nil
+	return resources, append(diags, duplicateIdentityDiagnostics(resources, duplicates)...), nil
+}
+
+// addUnique records a resource under name unless another file in the same
+// root already claimed it; a claimed name is marked so every claimant is
+// dropped rather than letting the later file win.
+func addUnique[T any](resources map[string]T, duplicates map[string]bool, name string, resource T) {
+	if _, claimed := resources[name]; claimed {
+		duplicates[name] = true
+		return
+	}
+	resources[name] = resource
+}
+
+// dropDuplicateIdentities removes a name refused in this root from the merged
+// map too, so an earlier root's resource cannot take the place of the
+// ambiguous override.
+func dropDuplicateIdentities[T any](merged map[string]T, diags []diag.Diagnostic) {
+	for _, d := range diags {
+		if d.Code == diag.CodeIngestWindsurfDuplicateIdentity {
+			delete(merged, d.Resource)
+		}
+	}
+}
+
+func duplicateIdentityDiagnostics[T any](resources map[string]T, duplicates map[string]bool) []diag.Diagnostic {
+	names := make([]string, 0, len(duplicates))
+	for name := range duplicates {
+		delete(resources, name)
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	diags := make([]diag.Diagnostic, 0, len(names))
+	for _, name := range names {
+		diags = append(diags, diag.Diagnostic{
+			Code:     diag.CodeIngestWindsurfDuplicateIdentity,
+			Severity: diag.SeverityError,
+			Resource: name,
+			Message:  "Two Windsurf workflows or rules in one workspace root claim the same name; all of them were suppressed without choosing a winner",
+			Hint:     "Give each workflow and rule a unique name",
+		})
+	}
+	return diags
 }
 
 func loadHooksRoot(root workspaceRoot, opts LoadOptions) ([]*ir.Hook, []diag.Diagnostic, string, error) {

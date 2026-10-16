@@ -55,6 +55,55 @@ func nativeHookAggregateForScope(target targetmeta.Target, machineScope bool) (n
 	return declaration, nil
 }
 
+// hookUsesResourceFiles reports whether target's native layout installs each
+// hook as its own resource file instead of declaring a shared hook aggregate.
+// Such hooks are ordinary per-resource artifacts outside the aggregate
+// ownership pipeline: their support publishes as owned artifacts under the
+// layout's HookSupportDir, and their declarations are reviewed by
+// resource_hook_review.go.
+func hookUsesResourceFiles(target hcc.Target) bool {
+	layout, ok := targetmeta.LookupNativeLayout(targetmeta.Target(target))
+	if !ok {
+		return false
+	}
+	resourcePath := false
+	for _, partition := range layout.Partitions {
+		for _, aggregate := range partition.Aggregates {
+			if aggregate.Kind == ir.KindHook {
+				return false
+			}
+		}
+		if _, ok := partition.ResourcePaths[ir.KindHook]; ok {
+			resourcePath = true
+		}
+	}
+	return resourcePath
+}
+
+// resourceFileHookSupportDir returns the per-hook support root, relative to
+// the target root, of a target whose hooks are resource files, or "" when the
+// target declares none.
+func resourceFileHookSupportDir(target hcc.Target) string {
+	if !hookUsesResourceFiles(target) {
+		return ""
+	}
+	layout, _ := targetmeta.LookupNativeLayout(targetmeta.Target(target))
+	for _, partition := range layout.Partitions {
+		if partition.HookSupportDir != "" {
+			return path.Join(partition.Prefix, partition.HookSupportDir)
+		}
+	}
+	return ""
+}
+
+// resourceFileHookSupportPlan reports whether a materialization plan
+// publishes repository-scope support of resource-file hooks, which is
+// installed as portable regular copies in every materialization mode.
+func resourceFileHookSupportPlan(key outputKey, reportPrefix string) bool {
+	dir := resourceFileHookSupportDir(key.target)
+	return !key.machineScope && dir != "" && reportPrefix == componentName(dir)
+}
+
 func addExistingNativeHookOutputKeys(repoRoot string, outputs map[outputKey]bool) {
 	for _, target := range hcc.Targets() {
 		for _, machineScope := range []bool{false, true} {

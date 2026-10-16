@@ -13,6 +13,7 @@
   "factory-subagents": {"checked": "2026-09-23", "sha256": "d228d52b4a048f8d2087bb6f7f2b58ebde8fe9c8f8169d77712a6f6d4ae3abe0"},
   "gemini-models": {"checked": "2026-09-23", "sha256": "b04bbff424c81aa5ff173df3f92e425931e1c55db9b8cdaea06a97cb70c27d85"},
   "gemini-subagents": {"checked": "2026-09-23", "sha256": "a9c0179604da39e8368bf3d964433a905fe52f3646c824c6b07f593ab5dbfe51"},
+  "opencode-agents": {"checked": "2026-10-14", "sha256": "4791946c8e6f8e8a9b33ac46d4a99b64b744eb9898c6d93cd823dbf80db9c787"},
   "hook-claude": {"checked": "2026-10-07", "sha256": "ee5201a754e3a01016bfbd865209b868b31e8fc0662f14deaac8f9d9c5905cb3"},
   "hook-codex": {"checked": "2026-10-07", "sha256": "7d8763a035d2baabd679de8fa7a57410f27828be8b5d4074a8191d824b92c744"},
   "hook-cursor": {"checked": "2026-10-07", "sha256": "4ab262c5753dd84d12346b5672c6b32dc9a1e2af2cbae9035ad899319bb3b3a0"},
@@ -23,6 +24,8 @@
   "hook-gemini-extensions": {"checked": "2026-10-07", "sha256": "52ffacdaa64d1d9cfb4938e80a045365267fba569aab187b485edad6e48420ea"},
   "hook-gemini-overview": {"checked": "2026-10-07", "sha256": "04d3a8112798fdd6e28d6937957e4fc531b3e4ced6dc24f0db3b6c5b755e2f7a"},
   "hook-gemini-reference": {"checked": "2026-10-07", "sha256": "aa421b7c5617305b4909ec28227edda1e6a2b9a50ef955f012d6d644325dff2a"},
+  "hook-opencode-plugins": {"checked": "2026-10-14", "sha256": "90ac2961c2dc5db7a10f5012ac5a1f8c2f4037fb9c25801aec97bb9ea6727372"},
+  "hook-opencode-tools": {"checked": "2026-10-14", "sha256": "3d2409914a733ef5ecdb21d240a5d211d8c35986cc096106a5b7e0b2c6ab8dba"},
   "hook-windsurf": {"checked": "2026-10-07", "sha256": "bdd31e4a30b52805cd5090c68df9cbd173642df06825d4cf2b95e48259178670"},
   "tool-claude-hooks": {"checked": "2026-10-07", "sha256": "ee5201a754e3a01016bfbd865209b868b31e8fc0662f14deaac8f9d9c5905cb3"},
   "tool-claude-subagents": {"checked": "2026-10-07", "sha256": "1745c292d5b2aab33e5ac8562d1549dd79954f777acfc58f5973fbca75488ce3"},
@@ -40,5 +43,8 @@
   "tool-gemini-hooks": {"checked": "2026-10-07", "sha256": "aa421b7c5617305b4909ec28227edda1e6a2b9a50ef955f012d6d644325dff2a"},
   "tool-gemini-subagents": {"checked": "2026-10-07", "sha256": "63989af29dda9ebc257ff79ce837b7a8169d29ab5e57d5d2e12cc9ac59b675ff"},
   "tool-gemini-tools": {"checked": "2026-10-07", "sha256": "17c4b03528554d9af65363096ff1c0fdc68040357256a8bd3e53b7bc6a6a2d02"},
+  "tool-opencode-permissions": {"checked": "2026-10-14", "sha256": "48495f6a3adfd6e215fe8147ccca78cc69c0b427be70e1975344c7c90503676a"},
+  "tool-opencode-plugins": {"checked": "2026-10-14", "sha256": "90ac2961c2dc5db7a10f5012ac5a1f8c2f4037fb9c25801aec97bb9ea6727372"},
+  "tool-opencode-tools": {"checked": "2026-10-14", "sha256": "3d2409914a733ef5ecdb21d240a5d211d8c35986cc096106a5b7e0b2c6ab8dba"},
   "tool-windsurf": {"checked": "2026-10-07", "sha256": "bdd31e4a30b52805cd5090c68df9cbd173642df06825d4cf2b95e48259178670"}
 }
