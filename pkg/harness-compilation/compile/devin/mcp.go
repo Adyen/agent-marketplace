@@ -201,7 +201,7 @@ func translateMcpServer(m *ir.McpServer, opts compile.Options) ([]artifact.Artif
 		mcpKeyOAuthClientSecret: true,
 		mcpKeyOAuthResource:     true,
 	})
-	extraKeys, extraDiags := compile.ExtraKeys(m.Extra, canonical, mapping.TargetDevin, name, source)
+	extraKeys, extraDiags := compile.McpExtraKeys(m.Extra, canonical, mapping.TargetDevin, name, source)
 	diags = append(diags, extraDiags...)
 	for _, key := range extraKeys {
 		entry[key] = m.Extra[key]

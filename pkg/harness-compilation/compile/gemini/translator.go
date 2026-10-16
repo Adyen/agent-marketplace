@@ -159,7 +159,7 @@ func translateCommand(command *ir.Command) ([]artifact.Artifact, []diag.Diagnost
 
 func translateMCPServer(server *ir.McpServer, opts compile.Options) (artifact.Artifact, []diag.Diagnostic, error) {
 	entry, canonical := compile.McpServerEntry(server, replaceEnvTokens, false)
-	extraKeys, diags := compile.ExtraKeys(server.Extra, canonical, compile.TargetGemini, server.Name(), diag.SourceRef(server.Source))
+	extraKeys, diags := compile.McpExtraKeys(server.Extra, canonical, compile.TargetGemini, server.Name(), diag.SourceRef(server.Source))
 	diags = append(compile.McpCredentialDiagnostics(server, compile.TargetGemini, compile.WithMcpOptions(opts)), diags...)
 	for _, key := range extraKeys {
 		entry[key] = server.Extra[key]

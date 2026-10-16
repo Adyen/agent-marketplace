@@ -103,13 +103,26 @@ func reservedExtraKeys(extra map[string]any, canonical map[string]struct{}, targ
 	return ExtraKeys(extra, reserved, target, resource, source)
 }
 
+const McpPublishingNamespace = "_agent-marketplace"
+
 // ExtraKeys returns preserved extra-field keys in stable order and reports every
 // canonical field that would otherwise be duplicated. Translators must emit
 // canonical fields first and use these keys only for non-conflicting extras.
 func ExtraKeys(extra map[string]any, canonical map[string]struct{}, target Target, resource string, source diag.SourceRef) ([]string, []diag.Diagnostic) {
+	return selectExtraKeys(extra, canonical, target, resource, source, false)
+}
+
+func McpExtraKeys(extra map[string]any, canonical map[string]struct{}, target Target, resource string, source diag.SourceRef) ([]string, []diag.Diagnostic) {
+	return selectExtraKeys(extra, canonical, target, resource, source, true)
+}
+
+func selectExtraKeys(extra map[string]any, canonical map[string]struct{}, target Target, resource string, source diag.SourceRef, excludePublishingNamespace bool) ([]string, []diag.Diagnostic) {
 	keys := make([]string, 0, len(extra))
 	var diags []diag.Diagnostic
 	for key := range extra {
+		if excludePublishingNamespace && strings.EqualFold(key, McpPublishingNamespace) {
+			continue
+		}
 		if _, conflict := canonical[key]; conflict {
 			diags = append(diags, diag.Diagnostic{
 				Code:     diag.CodeCanonicalFieldOverridesExtra,
