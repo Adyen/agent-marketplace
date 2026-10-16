@@ -86,6 +86,13 @@ other plugin directories remain unsupported and MUST have an achievable remedy.
 - **WHEN** a consumer resolves the hook
 - **THEN** it MUST refuse with `marketplace.hook.support-unsupported` and recommend retaining the Git source
 
+#### Scenario: Mirrored hook support catalog aliases
+
+- **GIVEN** a command uses any plugin-root spelling declared by the shipped harness catalogs, braced or bare
+- **WHEN** its mirrored support is validated
+- **THEN** missing and unsupported support references MUST receive the same refusal as the canonical spelling
+- **AND** variables not declared by those catalogs MUST NOT be mistaken for plugin roots
+
 #### Scenario: Mirrored hook support stable offline refusal
 
 - **GIVEN** verified cached evidence produced a deterministic missing or unsupported support refusal online

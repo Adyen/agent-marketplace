@@ -9,10 +9,12 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 
 	"github.com/Adyen/agent-marketplace/internal/harness"
 	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact"
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/hookpolicy"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 )
 
@@ -43,7 +45,10 @@ func ValidateMirroredHookSupport(hook *ir.Hook, support map[string]artifact.Supp
 			return fmt.Errorf("%w: undeclared support file", ErrHookSupportIntegrity)
 		}
 	}
-	missing, unsupported := HookSupportReferenceStatus(hook.Command, hook.SupportFiles)
+	missing, unsupported, err := HookSupportReferenceStatus(hook.Command, hook.SupportFiles)
+	if err != nil {
+		return fmt.Errorf("read hook support policy: %w", err)
+	}
 	if unsupported {
 		return fmt.Errorf("%w: assets fall outside the adjacent-file policy; keep the Git source", ErrHookSupportUnsupported)
 	}
@@ -104,13 +109,32 @@ func HookSupportExclusions(sourcePath, sourceHarness string) map[string]bool {
 	return excluded
 }
 
-var hookAssetReference = regexp.MustCompile(`\$(?:\{(?:CLAUDE|DROID)_PLUGIN_ROOT\}|(?:CLAUDE|DROID)_PLUGIN_ROOT)/hooks/([^\s"';&|<>()$` + "`" + `]+)`)
-var hookPluginReference = regexp.MustCompile(`\$(?:\{(?:CLAUDE|DROID)_PLUGIN_ROOT\}|(?:CLAUDE|DROID)_PLUGIN_ROOT\b)`)
+type hookReferencePatterns struct {
+	asset, root *regexp.Regexp
+}
+
+var hookSupportReferences = sync.OnceValues(func() (hookReferencePatterns, error) {
+	names, err := hookpolicy.PluginRootNames()
+	if err != nil {
+		return hookReferencePatterns{}, err
+	}
+	for i, name := range names {
+		names[i] = regexp.QuoteMeta(name)
+	}
+	alternatives := strings.Join(names, "|")
+	root := `\$(?:\{(?:` + alternatives + `)\}|(?:` + alternatives + `)\b)`
+	asset := root + `/hooks/([^\s"';&|<>()$` + "`" + `]+)`
+	return hookReferencePatterns{asset: regexp.MustCompile(asset), root: regexp.MustCompile(root)}, nil
+})
 
 // HookSupportReferenceStatus distinguishes missing adjacent assets from
 // plugin-root expressions outside the adjacent-file distribution policy.
-func HookSupportReferenceStatus(command string, declared map[string]string) (missing, unsupported bool) {
-	for _, reference := range hookAssetReference.FindAllStringSubmatch(command, -1) {
+func HookSupportReferenceStatus(command string, declared map[string]string) (missing, unsupported bool, err error) {
+	references, err := hookSupportReferences()
+	if err != nil {
+		return false, false, err
+	}
+	for _, reference := range references.asset.FindAllStringSubmatch(command, -1) {
 		if strings.Contains(reference[1], "/") {
 			unsupported = true
 		} else if _, exists := declared["hooks/"+reference[1]]; !exists {
@@ -118,8 +142,8 @@ func HookSupportReferenceStatus(command string, declared map[string]string) (mis
 		}
 		command = strings.ReplaceAll(command, reference[0], "")
 	}
-	unsupported = unsupported || hookPluginReference.MatchString(command)
-	return missing, unsupported
+	unsupported = unsupported || references.root.MatchString(command)
+	return missing, unsupported, nil
 }
 
 // HookMaterializationSupportFiles is shared by publication and installation.

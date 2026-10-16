@@ -228,7 +228,10 @@ func BuildRegistryRevision(ctx context.Context, cfg config.Config, mpID store.Ma
 						hook.SupportFiles[relative] = hccartifact.SupportFileDigest(support)
 					}
 					archiveSupport = bundled
-					missing, unsupported := catalog.HookSupportReferenceStatus(hook.Command, hook.SupportFiles)
+					missing, unsupported, err := catalog.HookSupportReferenceStatus(hook.Command, hook.SupportFiles)
+					if err != nil {
+						return rev, fmt.Errorf("read hook support policy: %w", err)
+					}
 					if missing || unsupported {
 						rev.Diagnostics = append(rev.Diagnostics, RootDiagnostic{Root: root.Path, Code: "marketplace.ingest.hook-support-unavailable", Message: "Hook assets cannot be packaged by the adjacent-file policy; keep the Git source"})
 						slog.Warn("hook assets unavailable for mirrored publication", "code", "marketplace.ingest.hook-support-unavailable", "resource", key)

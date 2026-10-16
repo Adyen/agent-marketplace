@@ -51,6 +51,37 @@ func TestMirrorHookSupportIntegrity(t *testing.T) {
 	}
 }
 
+// spec: marketplace-api/mirrored-hook-support-catalog-aliases
+func TestMirrorHookSupportCatalogAliases(t *testing.T) {
+	file := hccartifact.SupportFile{Data: []byte("echo support\n"), Executable: true}
+	for _, name := range []string{"CLAUDE_PLUGIN_ROOT", "DROID_PLUGIN_ROOT", "PLUGIN_ROOT", "CURSOR_PLUGIN_ROOT", "extensionPath"} {
+		for _, token := range []string{"$" + name, "${" + name + "}"} {
+			t.Run(token, func(t *testing.T) {
+				cache := NewCache(t.TempDir())
+				hook := ir.NewHook("guard", "PreToolUse", token+"/hooks/run.sh", "command", nil, ir.SourceRef{})
+				if _, err := stageMirrorResource(cache, "", hook, hccartifact.CanonicalArtifact{}); !errors.Is(err, ErrHookSupportMissing) {
+					t.Fatalf("catalog-declared root bypassed missing-support refusal: %v", err)
+				}
+				hook.SupportFiles = map[string]string{"hooks/run.sh": hccartifact.SupportFileDigest(file)}
+				canonical := hccartifact.CanonicalArtifact{Support: map[string]hccartifact.SupportFile{"hooks/run.sh": file}}
+				if _, err := stageMirrorResource(cache, "", hook, canonical); err != nil {
+					t.Fatalf("packaged catalog-declared reference refused: %v", err)
+				}
+				hook.Command = token + "/scripts/run.sh"
+				if _, err := stageMirrorResource(cache, "", hook, canonical); !errors.Is(err, ErrHookSupportUnsupported) {
+					t.Fatalf("unsupported catalog-declared reference accepted: %v", err)
+				}
+			})
+		}
+	}
+	for _, token := range []string{"$MY_PLUGIN_ROOT", "${CLAUDE_PLUGIN_ROOT_SUFFIX}", "$extensionPathSuffix"} {
+		hook := ir.NewHook("guard", "PreToolUse", "echo "+token, "command", nil, ir.SourceRef{})
+		if _, err := stageMirrorResource(NewCache(t.TempDir()), "", hook, hccartifact.CanonicalArtifact{}); err != nil {
+			t.Fatalf("unknown variable was mistaken for a catalog-declared plugin root: %v", err)
+		}
+	}
+}
+
 // spec: marketplace-api/legacy-mirrored-script-hook-refusal
 // spec: marketplace-api/mirrored-hook-support-stable-offline-refusal
 // spec: marketplace-api/mirrored-hook-support-unsupported-reference-refusal
