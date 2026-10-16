@@ -1,6 +1,6 @@
 # How upstream changes reach consumers
 
-Registries change after you install from them. Authors add skills, delete old ones, rename them, and edit collections. This page explains when such a change reaches a machine, what it does to your selections, and what happens to the files in your harness folders. With this model you can predict the result of the next `sync` or `update` before you run it.
+Registries change after you install from them. Authors add skills, delete old ones, rename them, and edit collections. This page explains when such a change reaches a machine, what it does to your selections, and what happens to the files in your harness folders.
 
 The answer depends on three things:
 
@@ -64,7 +64,7 @@ A required miss still fails `sync` when the lock moved without the `update` chec
 
 ### Hosted Marketplace pins
 
-A Marketplace pin names an exact, immutable revision. If the registry renames or deletes the resource, the pinned revision still installs, and `status` still shows it as `current`. The trouble starts at `update`, which asks the Marketplace for the newest revision of the old name. The Marketplace no longer knows that name, so `update` keeps that pin at its current revision, updates the other pins, and exits `1` with an error such as:
+A Marketplace pin names an exact, immutable revision. If the registry renames or deletes the resource, the pinned revision still installs, and `status` still shows it as `current`. At `update`, the CLI asks the Marketplace for the newest revision of the old name. The Marketplace no longer knows that name, so `update` keeps that pin at its current revision, updates the other pins, and exits `1` with an error such as:
 
 ```text
 Configured registry entries: 0
@@ -97,7 +97,7 @@ Each choice trades something away:
 - **Locks before freshness.** A team gets the same files on every machine and in CI, and an upstream mistake cannot break anyone until someone moves the lock on purpose. The cost is that fixes and new resources also wait for that step. The lockless organization layer makes the opposite trade: administrators push changes to every machine at once, without review or rollback through Git.
 - **Names as identity.** Any Git folder can serve as a registry, with no metadata service. The cost is that a rename breaks name-based selections and excludes. Registry authors can soften this; see [how to rename or retire a resource](../how-to/author/rename-or-retire-a-resource.md).
 - **Soft failure for ordinary selections, hard failure for required ones.** Ordinary users keep working when a registry drops something, while policy that an organization enforces cannot silently lapse. `update` refuses to move any lock past a selection that disappeared, so one stale entry cannot strand the rest of the update or leave a lock ahead of the files it describes.
-- **Pruning only what it can prove.** The CLI never deletes your work, at the price of leaving edited copies behind for you to clean up.
+- **Pruning only what it can prove.** The CLI never deletes your work, at the cost of leaving edited copies behind for you to clean up.
 
 ## Related documentation
 

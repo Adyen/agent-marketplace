@@ -48,7 +48,7 @@ description: "Deprecated: renamed to review. Install review instead; code-review
 ---
 ```
 
-During this window, consumers who select everything get both copies. That is the price of not breaking consumers who select by name.
+During this window, consumers who select everything get both copies, which is the cost of not breaking consumers who select by name.
 
 ## 3. Update collections in the same commit
 
