@@ -1,7 +1,7 @@
 # harness-compilation Specification
 
 ## Purpose
-Defines faithful native serialization of canonical agent resources, keeping scalar metadata separate from explicit typed execution authority.
+Defines faithful native serialization and ingestion of canonical agent resources, keeping scalar metadata, unmodeled fields, target sidecars and extension fields from granting authority beyond the explicit typed canonical resource.
 
 ## Requirements
 
@@ -28,3 +28,85 @@ Harness ingestion MUST reject integer metadata outside the supported native inte
 - **WHEN** canonical, Factory, or Gemini subagent metadata supplies a nesting limit that is out of range, non-finite, or fractional
 - **THEN** ingestion MUST reject the subagent rather than accepting a wrapped integer
 - **AND** a representable integral nesting limit MUST retain its value
+
+### Requirement: Converted command skills keep their restrictions
+
+Harness Compilation MUST NOT discard an authority-bearing control while converting between a Devin converted command skill and a command. When the Devin source layout marks a skill with `x-agent-marketplace-kind: command` and the skill declares a `permissions` policy, an `agent` or `subagent` execution selector, or triggers that do not include `user`, ingestion MUST refuse the resource with the error diagnostic `ingest.devin.command-security-unsupported`, and the refused resource MUST produce no artifact on any harness target. A marked skill whose activation includes `user` and whose `allowed-tools` restriction is representable MUST still be ingested as a command; activation other than user-only MUST be narrowed to user-only with the warning `ingest.devin.command-field-dropped`. Devin compilation of a command MUST NOT emit `agent` or `subagent` from command extension fields; it MUST report `compile.canonical-field-overrides-extra` and keep the mapped `allowed-tools` restriction. Ordinary Devin skills MUST keep their native execution selectors.
+
+#### Scenario: Marked Devin skill with controls the command cannot hold is refused
+
+- **WHEN** a Devin source layout skill is marked as a converted command skill and declares a permissions deny policy, model-only activation, or an agent or subagent selector, next to an unmarked sibling skill
+- **THEN** conversion to Devin and to Claude MUST report the error `ingest.devin.command-security-unsupported`, MUST emit no artifact for the marked resource, and MUST still emit the sibling skill
+
+#### Scenario: Activation that includes user narrows to a converted command
+
+- **WHEN** a Devin source layout skill is marked as a converted command skill and declares user and model triggers
+- **THEN** conversion from Devin to Devin MUST report the warning `ingest.devin.command-field-dropped` and no error, and MUST emit the converted command skill with user-only triggers
+
+#### Scenario: Plain converted command skill still round-trips
+
+- **WHEN** a Devin converted command skill declares user-only activation and a `read` allowed-tools restriction
+- **THEN** conversion from Devin to Devin MUST report no error and MUST emit the converted command skill with the command marker, user-only triggers and the `read` restriction
+
+#### Scenario: Command extension fields cannot select a Devin execution agent
+
+- **WHEN** a command carries an `allowed-tools` extension field together with `agent` and `subagent` extension fields
+- **THEN** Devin compilation MUST emit the mapped `allowed-tools` restriction without an `agent` or `subagent` field and MUST report `compile.canonical-field-overrides-extra`
+
+#### Scenario: Native Devin skills keep execution selectors
+
+- **WHEN** an unmarked Devin skill declares `agent` and `subagent` execution selectors
+- **THEN** conversion from Devin to Devin MUST report no error and MUST emit both selectors unchanged
+
+### Requirement: Target sidecars cannot widen canonical authority
+
+Harness Compilation MUST NOT let a target sidecar or extension field grant more authority than the canonical resource. A Claude or Cursor subagent tool sidecar MUST only restate or narrow the canonical tool list: every sidecar entry MUST be a canonical entry or a target tool the canonical list covers, otherwise compilation MUST emit no subagent and MUST report the error `subagent.security-restriction-unsupported`. A Claude or Cursor hook-type sidecar MUST equal the canonical hook type, otherwise compilation MUST emit no hook and MUST report the error `hook.claude.unsupported-type` or `hook.cursor.unsupported-type`. Codex compilation MUST emit a native MCP sidecar only when it matches the canonical server, otherwise it MUST emit no server and MUST report the error `mcp.codex.security-unsupported`. Claude, Cursor, Factory and Gemini MCP compilation MUST NOT emit a modeled MCP connection field (`command`, `args`, `env`, `url`, `transport`, `headers`, `oauthClientId`, `oauthClientSecret` or `oauthResource`) from extension fields, including case variants, and MUST report `compile.canonical-field-overrides-extra`.
+
+#### Scenario: Subagent tool sidecar cannot widen the canonical tool list
+
+- **WHEN** a Marketplace resource artifact payload for a subagent restricts its canonical tools to `Read` and carries Claude and Cursor tool sidecars naming `Bash`
+- **THEN** Claude and Cursor compilation MUST emit no subagent and MUST report the error `subagent.security-restriction-unsupported`
+
+#### Scenario: Subagent tool sidecar may narrow the canonical tool list
+
+- **WHEN** a subagent's canonical tools are `Read` and `Grep` and its Claude and Cursor tool sidecars name only `Read`
+- **THEN** Claude and Cursor compilation MUST report no error and MUST emit a subagent restricted to `Read`
+
+#### Scenario: Hook type sidecar cannot activate a command
+
+- **WHEN** a Marketplace resource artifact payload for a canonical prompt hook carries a command payload and Claude and Cursor hook-type sidecars set to `command`
+- **THEN** Claude and Cursor compilation MUST emit no hook and MUST report the error `hook.claude.unsupported-type` or `hook.cursor.unsupported-type`
+
+#### Scenario: Codex MCP sidecar must match the canonical server
+
+- **WHEN** a Marketplace resource artifact payload for an MCP server declares a canonical command and carries a Codex MCP sidecar with a different command and an extra forwarded environment variable
+- **THEN** Codex compilation MUST emit no server and MUST report the error `mcp.codex.security-unsupported`
+
+#### Scenario: Codex-native MCP servers still round-trip
+
+- **WHEN** a Codex source layout declares a stdio MCP server with literal environment values and forwarded environment variables
+- **THEN** conversion from Codex to Codex MCP output MUST report no error and MUST emit the same command, arguments, environment values and forwarded variables
+
+#### Scenario: Modeled MCP fields cannot arrive through extension fields
+
+- **WHEN** an MCP server has no typed command and carries `command`, `args` and a case-variant `URL` as extension fields
+- **THEN** Claude, Cursor, Factory and Gemini compilation MUST emit none of those fields and MUST report `compile.canonical-field-overrides-extra`
+
+### Requirement: Project and plugin roots stay distinct
+
+Harness Compilation MUST NOT turn a project-directory reference into a plugin-root reference, and MUST translate plugin-root tokens between harnesses that name them differently. Gemini ingestion MUST map only `${extensionPath}` to the canonical plugin root `${CLAUDE_PLUGIN_ROOT}`; `${GEMINI_PROJECT_DIR}` and `${CLAUDE_PROJECT_DIR}` in MCP server values, command prompts and subagent bodies MUST be preserved as written. Factory MCP ingestion MUST map `${DROID_PLUGIN_ROOT}` to `${CLAUDE_PLUGIN_ROOT}`, and Factory MCP compilation MUST map `${CLAUDE_PLUGIN_ROOT}` to `${DROID_PLUGIN_ROOT}`.
+
+#### Scenario: Gemini project directory never becomes the plugin root
+
+- **WHEN** a Gemini MCP server's arguments reference `${GEMINI_PROJECT_DIR}` and `${extensionPath}`
+- **THEN** conversion from Gemini to Gemini MUST preserve both tokens, conversion to Claude MUST map only `${extensionPath}` to `${CLAUDE_PLUGIN_ROOT}`, and conversion to Devin with a configured literal plugin root MUST substitute that root only for the extension reference
+
+#### Scenario: Factory plugin root round-trips through MCP servers
+
+- **WHEN** a Factory MCP server's command, arguments and environment reference `${DROID_PLUGIN_ROOT}`
+- **THEN** conversion from Factory to Factory MUST emit `${DROID_PLUGIN_ROOT}` in every value, and conversion to Claude MUST emit `${CLAUDE_PLUGIN_ROOT}` in every value
+
+#### Scenario: Canonical plugin root compiles to the Factory token
+
+- **WHEN** a Claude MCP server's command, arguments and environment reference `${CLAUDE_PLUGIN_ROOT}`
+- **THEN** conversion from Claude to Factory MUST emit `${DROID_PLUGIN_ROOT}` in every value

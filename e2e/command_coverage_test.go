@@ -39,7 +39,6 @@ var schemaIndependentCommands = map[string]string{
 	"completion powershell": "prints a generated shell script",
 	"completion zsh":        "prints a generated shell script",
 	"help":                  "prints command help",
-	"convert":               "converts the plugin directories named by its flags",
 	"serve":                 "runs the Marketplace server from its own --config",
 	"serve adopt":           "maintains the Marketplace server from its own --config",
 	"serve reindex":         "maintains the Marketplace server from its own --config",
@@ -280,11 +279,10 @@ func TestCommandCoverageGuardRejectsNewAndStaleGaps(t *testing.T) {
 
 // spec: regression-gates/schema-independent-surfaces-remain-successfully-exercised
 func TestCommandCoverageSchemaIndependentSuccess(t *testing.T) {
-	tree := commandTree{Commands: []string{"completion bash", "help", "convert", "serve"}, Flags: []string{"convert --to", "serve --config"}}
+	tree := commandTree{Commands: []string{"completion bash", "help", "serve"}, Flags: []string{"serve --config"}}
 	invocations := []commandInvocation{
 		{Command: "completion bash", OK: true},
 		{Command: "help", OK: true},
-		{Command: "convert", Flags: []string{"convert --to"}, OK: true},
 		{Command: "serve", Flags: []string{"serve --config"}, OK: true},
 	}
 	if uncovered, _ := commandCoverageFindings(tree, invocations, nil); len(uncovered) != 0 {
@@ -293,7 +291,7 @@ func TestCommandCoverageSchemaIndependentSuccess(t *testing.T) {
 	for i := range invocations {
 		invocations[i].OK = false
 	}
-	if uncovered, _ := commandCoverageFindings(tree, invocations, nil); len(uncovered) != 6 {
+	if uncovered, _ := commandCoverageFindings(tree, invocations, nil); len(uncovered) != 4 {
 		t.Fatalf("independent refusals counted: %v", uncovered)
 	}
 }

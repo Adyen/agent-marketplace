@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
 )
 
 func assertCompatibilityRules(t *testing.T, e *Env, f compatibilityFixture, binary string, row *compatibilityResult) {
@@ -34,10 +36,12 @@ func assertCompatibilityRules(t *testing.T, e *Env, f compatibilityFixture, bina
 			t.Fatalf("rule compiler returned error diagnostic %s", diagnostic.Code)
 		}
 	}
-	convert := runCompatibilityCommand(e, e.binary, []string{"convert", "--from", "factory", "--to", row.Harness, "--out", output, source}, 20*time.Second)
-	row.Commands = append(row.Commands, convert)
-	if convert.Error != "" {
-		t.Fatal(convert.Error)
+	conversion, err := hcc.Convert(os.DirFS(source), hcc.HarnessFactory, hcc.Harness(row.Harness), hcc.WithPluginRoot(source))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := hcc.Materialize(conversion, output, hcc.WithWriteMode(hcc.WriteModeOverwrite)); err != nil {
+		t.Fatal(err)
 	}
 	unsupported := map[string]string{
 		"claude": "rule.claude.no-primitive",
@@ -70,7 +74,7 @@ func assertCompatibilityRules(t *testing.T, e *Env, f compatibilityFixture, bina
 			t.Fatal(err)
 		}
 		row.Status = "unsupported-as-expected"
-		row.Reason = code + ": typed compiler warning and convert output absence asserted; rules are not Marketplace-selectable"
+		row.Reason = code + ": typed compiler warning and harness-compilation convert output absence asserted; rules are not Marketplace-selectable"
 		return
 	}
 	path := map[string]string{
@@ -82,5 +86,5 @@ func assertCompatibilityRules(t *testing.T, e *Env, f compatibilityFixture, bina
 		t.Fatalf("wrong rule compiler output: %+v", result.Artifacts)
 	}
 	captureCompatibilityFile(t, e, row, filepath.Join(output, filepath.FromSlash(path)), f.name("rule-body"))
-	row.Reason = "scope-neutral compiler and Marketplace convert path/body verified from a rule-only Factory source; not installed through Marketplace, not natively inspected"
+	row.Reason = "scope-neutral compiler and harness-compilation convert path/body verified from a rule-only Factory source; not installed through Marketplace, not natively inspected"
 }

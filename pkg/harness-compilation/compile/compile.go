@@ -361,13 +361,17 @@ func Compile(r ir.Resource, t Target, opts ...Option) (*Result, error) {
 }
 
 // codexNativeLossDiagnostics prevents target-specific Codex sidecars from
-// disappearing or being reinterpreted when a native resource leaves Codex.
+// disappearing or being reinterpreted when a native resource leaves Codex, and
+// from contradicting the canonical MCP server when compiling to Codex.
 func codexNativeLossDiagnostics(resource ir.Resource, target Target) []diag.Diagnostic {
-	if target == TargetCodex {
-		return nil
-	}
 	diagnostic := func(code string, severity diag.Severity, message string, source ir.SourceRef) []diag.Diagnostic {
 		return []diag.Diagnostic{{Code: code, Severity: severity, Target: string(target), Resource: resource.Name(), Message: message, Source: diag.SourceRef(source)}}
+	}
+	if target == TargetCodex {
+		if server, ok := resource.(*ir.McpServer); ok && server.Ext.Codex != nil && !codexMCPMatchesCanonical(server, server.Ext.Codex.MCP) {
+			return diagnostic(diag.CodeMcpCodexSecurityUnsupported, diag.SeverityError, "A native Codex MCP sidecar does not match the canonical server; server suppressed", server.Source)
+		}
+		return nil
 	}
 	switch typed := resource.(type) {
 	case *ir.Subagent:

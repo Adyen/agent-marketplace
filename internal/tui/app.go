@@ -156,7 +156,7 @@ func (m Model) Init() tea.Cmd {
 			return toastMsg{text: text, duration: 5 * time.Second}
 		}
 	}
-	return tea.Batch(loadSnapshotProgressive(ctxOrBackground(m.ctx), m.workspace, m.homeDir, m.requests.active(requestSnapshot)), m.spinner.Tick, warningCmd)
+	return tea.Batch(loadSnapshotProgressive(ctxOrBackground(m.ctx), m.workspace, m.homeDir, m.requests.active(requestSnapshot)), m.spinner.Tick, warningCmd, m.upgradeNotice)
 }
 
 func (m *Model) applySnapshotStatus(msg snapshotLoadedMsg) {

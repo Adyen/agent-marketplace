@@ -285,7 +285,6 @@ agent knows to open them.
 
 ```bash
 agent-marketplace list --from .            # every resource should be `available`
-agent-marketplace convert --from claude --to codex --out /tmp/out skills/vm-lifecycle
 ```
 
 A clean conversion reports `Diagnostics 0`. Look up `ingest.*` codes in the

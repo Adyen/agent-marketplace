@@ -24,7 +24,7 @@ This matrix records all seven targets. The main table includes Devin; Codex mapp
 | MCP remote-only stdio fields | never invent empty command/args/env | same | same | same | same | same, enforced by the disjoint-form split above |
 | MCP output path and entry identity | `.mcp.json` fragment | `mcp.json` fragment | `mcp.json` fragment | `.windsurf/mcp_config.json` fragment | `gemini-extension.json` fragment | `mcp_config.json` under the caller-selected root, in both scopes: `.devin/mcp_config.json` and `~/.config/devin/mcp_config.json` use the same relative path and top-level `mcpServers` envelope, so unlike hooks there is no scope branch. The pre-3000.3 `config.json#mcpServers` layout is never emitted. Entry identity is the server object key, so the compiler does not set `Artifact.DedupeFragmentEntries`: `artifact.mergeMCPServers` already collapses identical keyed duplicates and rejects conflicting ones, and dedup only applies to arrays of objects |
 | Rule `name`, `description`, `body`, `globs`, `alwaysApply` | drop resource, warning `rule.claude.no-primitive` (guidance lives in a single CLAUDE.md) | `rules/<name>.md` plain markdown; description/globs/alwaysApply dropped with warning `rule.factory.metadata-dropped` | `rules/<name>.mdc` (shared `compile/mdc` renderer): description/globs emitted when present, alwaysApply always emitted | `.windsurf/rules/<name>.mdc`, same shared `compile/mdc` frontmatter | drop resource, warning `rule.gemini.no-primitive` (guidance lives in a single GEMINI.md) | drop resource, warning `rule.devin.unsupported`. Rules are out of scope for Devin, so no output is written and the run stays clean |
-| Unknown `Extra` field conflicting with emitted canonical | canonical wins + warning `compile.canonical-field-overrides-extra` | same | same | same | same | same. On skills/commands, `allowed-tools`, `permissions`, and `x-agent-marketplace-kind` are reserved and never passed through verbatim. On subagents, `model`, `max-nesting`, `tools`, `disallowedTools`, `isolation`, and `effort` are reserved unconditionally so an unverified extension value cannot raise a limit or advertise a restriction Devin does not enforce; `allowed-tools` is reserved only when the typed field is set, because otherwise it is consumed and strictly mapped rather than overridden. On hooks, all of `event`, `type`, `matcher`, `command`, `prompt`, and `timeout` are reserved unconditionally: each one is a behavior-tuple member, so an extension copy could inject an unvetted command line, change which payload runs, change when the hook fires, or remove an execution bound. On MCP servers, all ten documented members (`command`, `args`, `env`, `url`, `transport`, `headers`, `disabled`, `oauthClientId`, `oauthClientSecret`, `oauthResource`) are reserved unconditionally: `oauthClientSecret` is typed precisely so it cannot be reintroduced from an untyped extension map, `command`/`args`/`url` decide what runs and what is contacted, `env`/`headers` bypass the literal-credential scan, `transport` bypasses the documented-vocabulary check, and `disabled` could re-enable a server the source disabled. Nothing is ever consumed from `Extra` and re-emitted in mapped form on the MCP path, so the conflict warning is always honest |
+| Unknown `Extra` field conflicting with emitted canonical | canonical wins + warning `compile.canonical-field-overrides-extra` | same | same | same | same | same. On skills/commands, `allowed-tools`, `permissions`, and `x-agent-marketplace-kind` are reserved and never passed through verbatim. On commands, `agent` and `subagent` are also reserved, so an extension field cannot select the execution agent of a converted command skill; Devin ingestion refuses a marked converted command skill that declares `permissions`, `agent`, `subagent`, or triggers without `user` with `ingest.devin.command-security-unsupported`. On subagents, `model`, `max-nesting`, `tools`, `disallowedTools`, `isolation`, and `effort` are reserved unconditionally so an unverified extension value cannot raise a limit or advertise a restriction Devin does not enforce; `allowed-tools` is reserved only when the typed field is set, because otherwise it is consumed and strictly mapped rather than overridden. On hooks, all of `event`, `type`, `matcher`, `command`, `prompt`, and `timeout` are reserved unconditionally: each one is a behavior-tuple member, so an extension copy could inject an unvetted command line, change which payload runs, change when the hook fires, or remove an execution bound. On MCP servers, all ten documented members (`command`, `args`, `env`, `url`, `transport`, `headers`, `disabled`, `oauthClientId`, `oauthClientSecret`, `oauthResource`) are reserved unconditionally: `oauthClientSecret` is typed precisely so it cannot be reintroduced from an untyped extension map, `command`/`args`/`url` decide what runs and what is contacted, `env`/`headers` bypass the literal-credential scan, `transport` bypasses the documented-vocabulary check, and `disabled` could re-enable a server the source disabled. Nothing is ever consumed from `Extra` and re-emitted in mapped form on the MCP path, so the conflict warning is always honest |
 
 Every Devin hook/MCP case marked error above skips that aggregate entry and makes `sync` exit non-zero; warning cases emit their entry and only drop an inert sub-field or leave a plugin-root token unexpanded.
 
@@ -35,6 +35,18 @@ these target-native controls; they are omitted with
 loaded into the typed sidecar, preserving explicit empty strings; non-string
 modes are rejected rather than coerced. Native Gemini inline servers continue
 through typed token normalization and credential diagnostics.
+
+Claude, Factory, Cursor and Gemini MCP output also reserves every modeled MCP
+connection field (`command`, `args`, `env`, `url`, `transport`, `headers`,
+`oauthClientId`, `oauthClientSecret`, `oauthResource`) and any case variant of
+one, whether or not the typed field is set; `disabled` is reserved when typed,
+because an extension `disabled` value can only disable the server. Target sidecars cannot widen the
+canonical resource: a Claude or Cursor subagent tool sidecar may only restate
+or narrow the canonical tool list (`subagent.security-restriction-unsupported`
+otherwise), a Claude or Cursor hook-type sidecar must equal the canonical hook
+type (`hook.claude.unsupported-type` / `hook.cursor.unsupported-type`
+otherwise), and a Codex MCP sidecar compiles to Codex only when it matches the
+canonical server (`mcp.codex.security-unsupported` otherwise).
 
 ## Model and reasoning policy
 
@@ -87,3 +99,11 @@ output. The table states only mappings supported by those sources and fixtures.
 Loaders reject malformed or mixed typed security lists rather than silently filtering them. Explicit empty lists remain empty; permissions maps preserve unknown nested keys and reject non-object/null permission values. MCP and hook map-backed iteration is sorted by resource/event name. Secret values never occur in diagnostics or logs.
 
 Constructors from earlier releases retain their fixed signatures. Rich typed fields use additive `*WithOptions` constructors and documented option functions. Support file bytes and D9 ownership/materialization remain outside this package.
+
+Plugin-root and project-directory tokens in MCP server values, command prompts
+and subagent bodies stay distinct. Gemini ingestion maps only
+`${extensionPath}` to `${CLAUDE_PLUGIN_ROOT}` and preserves
+`${GEMINI_PROJECT_DIR}` and `${CLAUDE_PROJECT_DIR}` as written. Factory MCP
+servers translate `${DROID_PLUGIN_ROOT}` to `${CLAUDE_PLUGIN_ROOT}` on ingestion
+and back on compilation. Hook commands resolve both roots through native hook
+projection instead.

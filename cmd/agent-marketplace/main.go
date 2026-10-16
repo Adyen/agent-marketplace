@@ -40,6 +40,7 @@ func main() {
 	}
 	schemas := e2eConfigSchemas()
 	execCmd, execErr := cmd.ExecuteC()
+	finishUpgradeNotice(os.Stderr)
 	recordE2EInvocation(cmd, execCmd, schemas, execErr)
 	finishTelemetry(execCmd, execErr)
 	if execErr != nil {
@@ -72,6 +73,7 @@ func newRootCmd() *cobra.Command {
 			start := time.Now()
 			initRootLogging(cmd, debug)
 			initTelemetry(cmd, start)
+			startUpgradeNotice(cmd, rootTUI, showVersion)
 			if shouldSkipTargetValidation(cmd) {
 				return nil
 			}
@@ -122,7 +124,6 @@ func newRootCmd() *cobra.Command {
 		newSearchCmd(),
 		newInstallCmd(),
 		newRemoveCmd(),
-		newConvertCmd(),
 		newDoctorCmd(),
 		newGCCmd(),
 		newUpdateCmd(),

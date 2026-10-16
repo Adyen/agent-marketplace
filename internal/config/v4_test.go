@@ -625,6 +625,7 @@ func TestV4IncludeMergesAuxiliaryPolicyByField(t *testing.T) {
 logging: {level: debug, file: child.log, max_size_mb: 4}
 allowed_registries: [child-registry]
 allowed_marketplaces: [child-marketplace]
+update_check: {enabled: true}
 materialization: {mode: file, targets: {devin: file, factory: file}}
 telemetry:
   level: basic
@@ -638,6 +639,7 @@ telemetry:
 include: child.yaml
 backup: {max_per_day: 3}
 logging: {max_age_days: 5}
+update_check: {enabled: false}
 allowed_registries: [root-registry]
 allowed_marketplaces: [root-marketplace]
 materialization: {mode: symlink, targets: {factory: symlink}}
@@ -660,6 +662,9 @@ telemetry:
 	}
 	if cfg.AllowedRegistries == nil || (*cfg.AllowedRegistries)[0] != "child-registry" || cfg.AllowedMarketplaces == nil || (*cfg.AllowedMarketplaces)[0] != "child-marketplace" {
 		t.Fatalf("allowlist authority was not preserved: %#v/%#v", cfg.AllowedRegistries, cfg.AllowedMarketplaces)
+	}
+	if cfg.UpdateCheck == nil || cfg.UpdateCheck.Enabled == nil || *cfg.UpdateCheck.Enabled {
+		t.Fatalf("update_check was not composed with the containing file winning: %#v", cfg.UpdateCheck)
 	}
 	if cfg.Materialization == nil || cfg.Materialization.Mode != "symlink" {
 		t.Fatalf("materialization mode was not overridden: %#v", cfg.Materialization)
@@ -690,5 +695,35 @@ resources: {}
 	_, err = ParseV4([]byte("apiVersion: agent-marketplace/v4\nbackup: {unsupported: true}\n"))
 	if err == nil || !strings.Contains(err.Error(), "unknown field") {
 		t.Fatalf("error = %v, want strict auxiliary diagnostic", err)
+	}
+}
+
+func TestV4UpdateCheckIsAcceptedInUserAndOrganizationLayers(t *testing.T) {
+	cfg, err := ParseV4([]byte("apiVersion: agent-marketplace/v4\nupdate_check: {enabled: false}\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.UpdateCheck == nil || cfg.UpdateCheck.Enabled == nil || *cfg.UpdateCheck.Enabled {
+		t.Fatalf("update_check = %#v, want enabled false", cfg.UpdateCheck)
+	}
+	for _, kind := range []layerKind{userLayer, organizationLayer} {
+		if _, err := cfg.ToLegacyConfig(kind); err != nil {
+			t.Fatalf("layer %v: %v", kind, err)
+		}
+	}
+}
+
+func TestV4UpdateCheckRejectsMalformedFields(t *testing.T) {
+	for _, tc := range []struct{ name, field, code string }{
+		{name: "unknown field", field: "update_check: {foo: 1}", code: "v4.unknown-field"},
+		{name: "not a mapping", field: "update_check: false", code: "v4.type"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := ParseV4([]byte("apiVersion: agent-marketplace/v4\n" + tc.field + "\n"))
+			var validation *V4ValidationError
+			if !errors.As(err, &validation) || validation.Code != tc.code {
+				t.Fatalf("error = %v, want %s", err, tc.code)
+			}
+		})
 	}
 }
