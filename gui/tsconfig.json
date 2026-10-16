@@ -6,6 +6,7 @@
     "lib": ["ES2022", "DOM", "DOM.Iterable"],
     "strict": true,
     "noEmit": true,
+    "allowImportingTsExtensions": true,
     "skipLibCheck": true,
     "types": ["node"],
     "paths": {
@@ -17,10 +18,12 @@
     "src/**/*.ts",
     "src/**/*.vue",
     "tests/**/*.ts",
+    "preview/**/*.ts",
     "auto-imports.d.ts",
     "components.d.ts",
     "playwright.config.ts",
     "vitest.config.ts",
-    "vite.config.ts"
+    "vite.config.ts",
+    "vite.preview.config.ts"
   ]
 }

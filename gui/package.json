@@ -7,6 +7,8 @@
     "api:generate": "node scripts/generate-api.mjs",
     "api:drift": "node scripts/generate-api.mjs --check",
     "build": "vite build",
+    "preview": "vite --config vite.preview.config.ts",
+    "preview:shoot": "node preview/shoot.ts",
     "typecheck": "vue-tsc --noEmit",
     "test": "vitest run",
     "check": "pnpm run api:drift && pnpm run build && pnpm run typecheck && vitest run",
