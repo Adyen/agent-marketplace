@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/admin"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/config"
@@ -16,6 +17,8 @@ import (
 )
 
 type availabilityContextKey struct{}
+
+type authorityChangeContextKey struct{}
 
 type availabilityView struct {
 	revision       int64
@@ -52,13 +55,17 @@ func (s *Server) loadAvailability(ctx context.Context) (*availabilityView, error
 	if s.revocationErr != nil || s.revocations == nil {
 		return nil, errAvailabilityUnavailable
 	}
-	managed, ok := s.meta.(store.ManagedConfigurationStore)
+	change, ok := ctx.Value(authorityChangeContextKey{}).(store.ManagedChange)
 	if !ok {
-		return nil, store.ErrTopology
-	}
-	change, err := managed.CurrentManagedConfiguration(ctx, s.mpID)
-	if err != nil {
-		return nil, err
+		managed, capable := s.meta.(store.ManagedConfigurationStore)
+		if !capable {
+			return nil, store.ErrTopology
+		}
+		var err error
+		change, err = managed.CurrentManagedConfiguration(ctx, s.mpID)
+		if err != nil {
+			return nil, err
+		}
 	}
 	var snapshot admin.Snapshot
 	if change.Marketplace != s.mpID || change.Revision < 1 || json.Unmarshal(change.Snapshot, &snapshot) != nil || snapshot.Version != 1 || snapshot.PolicyRevision < 1 || !validAvailabilityPolicy(snapshot.LicensePolicy, false) || !validAvailabilityRejectedResources(snapshot.DistributionPolicy.RejectedResources) {
@@ -167,7 +174,9 @@ func (s *Server) availabilityHandler(next http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 			return
 		}
+		started := time.Now()
 		view, err := s.loadAvailability(r.Context())
+		s.metrics.observePhase(phaseAvailability, started)
 		if err != nil {
 			slog.WarnContext(r.Context(), "managed availability read failed", "marketplace", s.mpID)
 			w.Header().Set("Cache-Control", "private, no-store")
@@ -190,18 +199,21 @@ func (w *availabilityResponseWriter) Write(data []byte) (int, error) {
 	return w.ResponseWriter.Write(data)
 }
 
-func (s *Server) availabilityResourceDTO(ctx context.Context, rev store.AssessedResourceRevision) any {
+func (s *Server) availabilityResourceDTO(ctx context.Context, rev store.AssessedResourceRevision, resolveSource func(store.AssessedResourceRevision) *CatalogSource) any {
 	effective := s.applyEffectiveRevocation(rev)
+	source := resolveSource(rev)
 	if s.cfg.Management.Mode != "database" {
 		return struct {
 			store.AssessedResourceRevision
 			CurrentAvailability availabilityDecision `json:"current_availability"`
-		}{effective, availabilityDecision{Availability: s.fileResourceAvailability(rev), AssessmentDecision: rev.Assessment.Decision}}
+			Source              *CatalogSource       `json:"source,omitempty"`
+		}{effective, availabilityDecision{Availability: s.fileResourceAvailability(rev), AssessmentDecision: rev.Assessment.Decision}, source}
 	}
 	return struct {
 		store.AssessedResourceRevision
 		CurrentAvailability availabilityDecision `json:"current_availability"`
-	}{effective, s.evaluateAvailability(availabilityFromContext(ctx), rev)}
+		Source              *CatalogSource       `json:"source,omitempty"`
+	}{effective, s.evaluateAvailability(availabilityFromContext(ctx), rev), source}
 }
 
 func (s *Server) fileResourceAvailability(rev store.AssessedResourceRevision) Availability {

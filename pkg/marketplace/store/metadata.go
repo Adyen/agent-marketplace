@@ -100,6 +100,11 @@ func (f ResourceSearchFilter) RegistryValues() []string {
 	return nil
 }
 
+type ConditionalCatalogProjectionStore interface {
+	OwnsCatalogProjectionStore(meta MetadataStore) bool
+	ReadCatalogProjectionPageConditional(ctx context.Context, req CatalogProjectionPageRequest, unchanged func(CatalogVersion) bool) (CatalogProjectionPage, bool, error)
+}
+
 // MaxRegistryHistoryEntries is the maximum number of registry occurrences returned
 // by history queries. API handlers apply the same bound before serialization.
 const MaxRegistryHistoryEntries = 1000
@@ -146,6 +151,10 @@ type MetadataStore interface {
 	// one content digest. It is used for digest-addressed collection manifests,
 	// whose route has no coordinate.
 	ListResourceRevisionsByContentDigest(ctx context.Context, marketplace MarketplaceID, digest RevisionDigest) ([]AssessedResourceRevision, error)
+	// ListResourceArchiveDigests returns up to limit distinct non-empty archive
+	// digests of the Marketplace's resource revisions that sort after the given
+	// digest, in ascending order. Bounded backfills page with it.
+	ListResourceArchiveDigests(ctx context.Context, marketplace MarketplaceID, after ArchiveDigest, limit int) ([]ArchiveDigest, error)
 
 	// GetLatestResourceRevision returns the most recent revision for a coordinate,
 	// including a revoked revision if no non-revoked revision exists.
@@ -164,6 +173,7 @@ type MetadataStore interface {
 	// Registry occurrences.
 	GetRegistryOccurrence(ctx context.Context, registry RegistryID, commit string) (RegistryOccurrence, error)
 	PutRegistryOccurrence(ctx context.Context, occ RegistryOccurrence) error
+	FenceRegistryPublication(ctx context.Context, req RegistryRevisionPublication) (bool, error)
 	SetRegistryHead(ctx context.Context, registry RegistryID, commit, expectedCommit string) error
 	LatestRegistryOccurrence(ctx context.Context, registry RegistryID) (RegistryOccurrence, error)
 

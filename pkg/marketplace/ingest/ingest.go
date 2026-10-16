@@ -121,6 +121,7 @@ func BuildRegistryRevision(ctx context.Context, cfg config.Config, mpID store.Ma
 	var collectionEntries []catalog.Entry
 	collectionPaths := make(map[string]string)
 	seen := make(map[string]string)
+	unavailableHooks := make(map[string]bool)
 	skippedResources := false
 
 	for _, root := range registry.Roots {
@@ -202,23 +203,35 @@ func BuildRegistryRevision(ctx context.Context, cfg config.Config, mpID store.Ma
 				for _, name := range names {
 					clone.SupportFiles[name] = ""
 				}
-				missing, unsupported := catalog.HookSupportReferenceStatus(hook.Command, clone.SupportFiles)
-				if missing || unsupported {
-					rev.Diagnostics = append(rev.Diagnostics, RootDiagnostic{Root: root.Path, Code: "marketplace.ingest.hook-support-unavailable", Message: "Hook assets cannot be packaged by the adjacent-file policy; keep the Git source"})
-					slog.Warn("hook assets unavailable for mirrored publication", "code", "marketplace.ingest.hook-support-unavailable", "resource", key)
-				}
 				entry.Resource = &clone
 			}
 			files, modes, err := fileSetForResource(dir, entry)
 			if err != nil {
+				if _, hook := entry.Resource.(*hccir.Hook); hook && errors.Is(err, ErrHookSupportUnsafe) {
+					skippedResources = true
+					unavailableHooks[key] = true
+					rev.Diagnostics = append(rev.Diagnostics, RootDiagnostic{Root: root.Path, Code: "marketplace.ingest.hook-support-unavailable", Message: "Skipped hook with unsafe or unreadable support; other resources remain publishable"})
+					slog.Warn("skipped hook with unavailable support", "code", "marketplace.ingest.hook-support-unavailable", "resource", key)
+					continue
+				}
 				return rev, fmt.Errorf("support files for %s %q: %w", kind, entry.Name, err)
 			}
 			var archiveSupport map[string]hccartifact.SupportFile
 			if registry.Acquisition == store.AcquisitionMirror {
 				archiveSupport = archiveSupportFiles(files, modes)
 				if hook, ok := entry.Resource.(*hccir.Hook); ok {
+					bundled := make(map[string]hccartifact.SupportFile, len(archiveSupport))
+					hook.SupportFiles = make(map[string]string, len(archiveSupport))
 					for name, support := range archiveSupport {
-						hook.SupportFiles[name] = hccartifact.SupportFileDigest(support)
+						relative := "hooks/" + name
+						bundled[relative] = support
+						hook.SupportFiles[relative] = hccartifact.SupportFileDigest(support)
+					}
+					archiveSupport = bundled
+					missing, unsupported := catalog.HookSupportReferenceStatus(hook.Command, hook.SupportFiles)
+					if missing || unsupported {
+						rev.Diagnostics = append(rev.Diagnostics, RootDiagnostic{Root: root.Path, Code: "marketplace.ingest.hook-support-unavailable", Message: "Hook assets cannot be packaged by the adjacent-file policy; keep the Git source"})
+						slog.Warn("hook assets unavailable for mirrored publication", "code", "marketplace.ingest.hook-support-unavailable", "resource", key)
 					}
 				}
 			}
@@ -346,6 +359,9 @@ func BuildRegistryRevision(ctx context.Context, cfg config.Config, mpID store.Ma
 			key := kind + "/" + m.Name
 			rp, ok := resourceResults[key]
 			if !ok {
+				if unavailableHooks[key] {
+					return artifact.BuildResult{}, nil, fmt.Errorf("%w: collection depends on an unavailable hook", ErrHookSupportUnsafe)
+				}
 				return artifact.BuildResult{}, nil, fmt.Errorf("collection %q member %s %q not found in registry", name, kind, m.Name)
 			}
 			directResults = append(directResults, rp.result)
@@ -415,7 +431,7 @@ func BuildRegistryRevision(ctx context.Context, cfg config.Config, mpID store.Ma
 		}
 		r, _, err := resolveCollection(entry.Name, make(map[string]bool))
 		if err != nil {
-			if strings.Contains(err.Error(), "rejected") {
+			if errors.Is(err, ErrHookSupportUnsafe) || strings.Contains(err.Error(), "rejected") {
 				slog.Warn("skipping collection without publishable leaves", "registry", registry.ID, "collection", entry.Name, "err", err)
 				continue
 			}
@@ -577,6 +593,9 @@ func BuildRegistryRevision(ctx context.Context, cfg config.Config, mpID store.Ma
 
 		if kind != "collection" && registry.Acquisition == store.AcquisitionMirror && p.result.RawArchive != nil {
 			extraBlobs = appendUpload(extraBlobs, store.ArchiveDigest(p.result.ArchiveDigest), p.result.RawArchive)
+			if p.result.PlaceholderArchive != nil {
+				extraBlobs = appendUpload(extraBlobs, store.PlaceholderArchiveKey(store.ArchiveDigest(p.result.ArchiveDigest)), p.result.PlaceholderArchive)
+			}
 		}
 	}
 

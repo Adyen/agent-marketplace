@@ -31,19 +31,17 @@ const (
 	diagnosticMutation        diagnosticCategory = "mutation"
 	diagnosticSync            diagnosticCategory = "sync"
 	diagnosticUpdate          diagnosticCategory = "update"
-	diagnosticMigration       diagnosticCategory = "migration"
 	diagnosticEditor          diagnosticCategory = "editor"
 )
 
 type operationKind string
 
 const (
-	operationMutation  operationKind = "mutation"
-	operationTargets   operationKind = "targets"
-	operationSync      operationKind = "sync"
-	operationUpdate    operationKind = "update"
-	operationMigration operationKind = "migration"
-	operationEditor    operationKind = "editor"
+	operationMutation operationKind = "mutation"
+	operationTargets  operationKind = "targets"
+	operationSync     operationKind = "sync"
+	operationUpdate   operationKind = "update"
+	operationEditor   operationKind = "editor"
 )
 
 type tuiDiagnostic struct {
@@ -169,6 +167,29 @@ func (s *diagnosticStore) recordOperationFailure(operation operationKind, catego
 	slog.Error("tui operation failed", "operation", operation, "category", category, "attempt", attempt, "error_count", len(diagnostics))
 }
 
+func (s *diagnosticStore) recordOperationWarnings(operation operationKind, category diagnosticCategory, errs ...error) {
+	s.nextAttempt++
+	attempt := s.nextAttempt
+	recorded := 0
+	for _, err := range errs {
+		if err == nil {
+			continue
+		}
+		s.operations = append(s.operations, tuiDiagnostic{
+			severity:   diagnosticWarning,
+			provenance: diagnosticOperation,
+			category:   category,
+			operation:  operation,
+			attempt:    attempt,
+			stableKey:  stableDiagnosticKey(err),
+			err:        err,
+		})
+		recorded++
+	}
+	s.operations = deduplicateDiagnostics(s.operations)
+	slog.Warn("tui operation completed with warnings", "operation", operation, "category", category, "attempt", attempt, "warning_count", recorded)
+}
+
 func (s *diagnosticStore) recordOperationSuccess(operation operationKind) {
 	originalLength := len(s.operations)
 	kept := s.operations[:0]
@@ -241,5 +262,11 @@ func (m *Model) recordOperationFailure(operation operationKind, category diagnos
 func (m *Model) recordOperationSuccess(operation operationKind) {
 	m.seedLegacyDiagnostics()
 	m.diagnostics.recordOperationSuccess(operation)
+	m.syncDiagnosticViews()
+}
+
+func (m *Model) recordOperationWarnings(operation operationKind, category diagnosticCategory, errs ...error) {
+	m.seedLegacyDiagnostics()
+	m.diagnostics.recordOperationWarnings(operation, category, errs...)
 	m.syncDiagnosticViews()
 }

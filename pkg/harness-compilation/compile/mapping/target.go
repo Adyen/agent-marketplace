@@ -15,4 +15,5 @@ const (
 	TargetGemini   = targetmeta.TargetGemini
 	TargetDevin    = targetmeta.TargetDevin
 	TargetCodex    = targetmeta.TargetCodex
+	TargetOpenCode = targetmeta.TargetOpenCode
 )

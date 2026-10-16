@@ -4,7 +4,7 @@ import path from "node:path";
 
 import { expect, test } from "@microsoft/tui-test";
 
-import { declineLegacyMigration, defineFixture, step, waitForExit } from "./helpers.js";
+import { defineFixture, step, waitForExit } from "./helpers.js";
 import { runAM } from "./process-helpers.js";
 
 // Reproduces the reported support case: an organization v4 config declares an
@@ -28,7 +28,6 @@ test("a missing organization marketplace lock is acquired transiently without po
   assert.ok(orgLockPath, "organization fixture must expose its lock path");
   assert.equal(fs.lstatSync(orgLockPath, { throwIfNoEntry: false }), undefined);
 
-  await declineLegacyMigration(terminal);
 
   await step("cold startup resolves the organization marketplace", () => {}, async () => {
     await expect(terminal.getByText("org-review", { strict: false })).toBeVisible({ timeout: 30_000 });
@@ -56,13 +55,37 @@ test("a missing organization marketplace lock is acquired transiently without po
   fixture.marketplaceDelayNextAcquisition?.(3_000);
   const toggleStarted = performance.now();
   let acknowledgementMs = Infinity;
+  const localConfigPath = path.join(fixture.repo, ".agents", "config.local.yaml");
   await step("toggle local without reacquiring organization evidence", () => terminal.write("l"), async () => {
-    await expect(terminal.getByText("Enabled alpha-skill", { strict: false })).toBeVisible();
+    const deadline = performance.now() + 5_000;
+    for (;;) {
+      let current = "";
+      let readState = "absent";
+      try {
+        current = fs.readFileSync(localConfigPath, "utf8");
+        readState = "read";
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      }
+      if (current === fixture.expectedLocalConfig) break;
+      if (performance.now() > deadline) {
+        assert.fail(
+          `local toggle did not persist expected config within 5s; state: ${readState}, bytes: ${current.length}; ` +
+            `acquisition requests: ${JSON.stringify(fixture.marketplaceAcquisitionDataRequestPaths?.())}`
+        );
+      }
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
     acknowledgementMs = performance.now() - toggleStarted;
-    await expect(terminal.getByText(/Local\s+\(1\)/g)).toBeVisible();
+    await expect(terminal.getByText(/Pending sync\s+\(1\)/g)).toBeVisible();
     await expect(terminal.getByText(/Status:\s+enabled \(pending sync\)/g)).toBeVisible();
   });
   const toggleMs = performance.now() - toggleStarted;
+  assert.equal(
+    fixture.marketplaceAcquisitionDataRequestCount?.(),
+    beforeToggle,
+    `selection-only edits must not reacquire organization Marketplace evidence: ${JSON.stringify(fixture.marketplaceAcquisitionDataRequestPaths?.())}`
+  );
   assert.ok(navigationMs < navigationCeilingMs, `local navigation took ${navigationMs.toFixed(0)}ms, ceiling ${navigationCeilingMs}ms`);
   assert.ok(acknowledgementMs < acknowledgementCeilingMs, `toggle acknowledgement took ${acknowledgementMs.toFixed(0)}ms, ceiling ${acknowledgementCeilingMs}ms`);
   assert.ok(toggleMs < warmToggleCeilingMs, `settled toggle took ${toggleMs.toFixed(0)}ms, ceiling ${warmToggleCeilingMs}ms`);
@@ -70,11 +93,6 @@ test("a missing organization marketplace lock is acquired transiently without po
     fs.readFileSync(path.join(fixture.repo, ".agents", "config.local.yaml"), "utf8"),
     fixture.expectedLocalConfig,
     "the TUI must persist the selection before reporting the new state"
-  );
-  assert.equal(
-    fixture.marketplaceAcquisitionDataRequestCount?.(),
-    beforeToggle,
-    `selection-only edits must not reacquire organization Marketplace evidence: ${JSON.stringify(fixture.marketplaceAcquisitionDataRequestPaths?.())}`
   );
   assert.equal(fs.lstatSync(orgLockPath, { throwIfNoEntry: false }), undefined, "toggle must not create the organization lock");
   assert.equal(fs.readFileSync(orgConfigPath, "utf8"), fixture.expectedOrgConfig, "toggle must not rewrite organization policy");

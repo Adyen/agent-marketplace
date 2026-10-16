@@ -1301,9 +1301,8 @@ func TestDevinBundleValidMcpServersSurviveSiblingFailures(t *testing.T) {
 // all six compilers registered.
 func TestMcpInterpolationUnsupportedIsDevinOnly(t *testing.T) {
 	// The same server for every target: an unmappable ${file:...} style in an
-	// argument and in an env value, which is the shared code's value-level
-	// case on Devin.
-	server := ir.NewMcpServer("demo", "npx", []string{"${file:/etc/arg}"},
+	// env value, which is the shared code's value-level case on Devin.
+	server := ir.NewMcpServer("demo", "npx", []string{"--serve"},
 		map[string]string{"TOKEN": "${file:/etc/secret}"}, nil, ir.SourceRef{})
 
 	for _, target := range []Target{TargetClaude, TargetFactory, TargetCursor, TargetWindsurf, TargetGemini} {

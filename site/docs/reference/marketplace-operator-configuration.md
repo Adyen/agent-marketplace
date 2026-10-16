@@ -67,6 +67,11 @@ revocations:
   revisions: []
 catalog_projection:
   enabled: false
+installation_metrics:
+  url: https://prometheus.example.com
+  bearer_token_env: MARKETPLACE_METRICS_TOKEN
+  labels:
+    cluster: prod
 management:
   mode: file
   allowed_origins:
@@ -103,6 +108,7 @@ admin:
 | `registries` | list | no | empty | Approved registry repositories. IDs and slugs must each be unique. |
 | `revocations` | mapping | no | empty lists | Registry, coordinate, and exact-revision revocations. |
 | `catalog_projection` | mapping | no | disabled | Turns on the optional `GET /api/v1/catalog` route. |
+| `installation_metrics` | mapping | no | disabled | Optional Prometheus-compatible metrics endpoint used to rank search results by reported installations. |
 | `management` | mapping | no | mode `file` | Where catalog settings live, allowed Git origins, and credential profiles. |
 | `admin` | mapping | no | disabled | Browser administration settings (native OIDC or trusted-proxy identity). |
 
@@ -249,6 +255,29 @@ Valid resource kinds in coordinates are `skill`, `command`, `subagent`, `hook`, 
 |---|---|:---:|---|---|
 | `enabled` | boolean | no | `false` | Registers `GET /api/v1/catalog` and advertises the `catalog-projection-v1alpha1` capability feature. The projection includes source repository URLs, paths, and commits, so enable it only where that information may be exposed. |
 
+## `installation_metrics`
+
+Optional connection to a Prometheus-compatible HTTP API that exposes the inventory telemetry reported by agent-marketplace installations. When configured, `serve` can rank `GET /api/v1/search` results by current reported adoption and return an aggregate `installation_count` per resource. With every field blank the reader is disabled and search ordering is unchanged.
+
+| Field | Type | Required | Default | Description |
+|---|---|:---:|---|---|
+| `url` | HTTP(S) URL | yes, to enable | empty | Base URL of the metrics endpoint. User information, query, and fragment are rejected; the token is never placed in the URL. |
+| `bearer_token_env` | environment variable name | no | empty | Name of an environment variable holding an optional bearer credential, resolved server-side at request time. Requires HTTPS unless the host is a loopback test endpoint. |
+| `labels` | mapping | no | empty | Exact-match selector labels that isolate this deployment's telemetry corpus. Keys are limited to `namespace`, `endpoint`, `service`, `job`, and `cluster`; each value is at most 256 UTF-8 bytes. |
+| `max_age` | duration | no | `5m` | Hard bound on aggregate freshness; a published snapshot also expires at its earlier inventory validity horizon. Must stay strictly above `refresh.interval` + `refresh.jitter` + `timeout`. |
+| `timeout` | duration | no | `2s` | Bound on each refresh attempt and its backend request. |
+| `refresh.interval` | duration | no | `4m` | Delay after a successful evaluation before the next proactive refresh. |
+| `refresh.retry_interval` | duration | no | `30s` | Minimum delay after a failed attempt, measured from its completion; search hints cannot shorten it. |
+| `refresh.jitter` | duration | no | `15s` | Random additional delay between zero and this bound added to each successful schedule; an explicit `0s` disables it. |
+
+Reported counts are derived from each installation's latest enabled configuration within the last 30 days and count only telemetry-reporting installations. Git observations are matched by Git identity; hosted observations are matched by explicit coordinates for this Marketplace instance, using canonical resource names rather than installed-name aliases. Non-reporting installations and older clients can still cause undercount.
+
+Each API process refreshes the aggregate in the background: once at startup, then proactively on the schedule above. Searches never perform or wait for telemetry; a search that finds no usable aggregate may leave a non-blocking hint that requests an early refresh without bypassing failure backoff. A failed refresh keeps serving a still-fresh compatible last-good aggregate until its original expiry; an origin change or the 30-day inventory horizon expires it earlier.
+
+All timing values must be positive, except `refresh.jitter`, which may be an explicit `0s`. The sum `refresh.interval` + `refresh.jitter` + `timeout` must stay strictly below `max_age`, and unknown fields are rejected. Refresh health is exposed on the operations endpoint as `agent_marketplace_installation_metrics_refresh_total` with a bounded `outcome` label (`success`, `unavailable`, `invalid-response`), `agent_marketplace_installation_metrics_refresh_duration_seconds`, and `agent_marketplace_installation_metrics_last_success_timestamp_seconds`; each failed attempt logs one warning without identifiers or credentials.
+
+Queries are bounded: a POST to `<url>/api/v1/query` with the configured timeout, an 8 MiB response cap, and no redirect following, so credentials never leave the configured endpoint. Credentials and per-installation IDs are never exposed through the API. If metrics are disabled or no usable aggregate remains, search keeps the existing relevance ordering and omits counts instead of reporting false zeros.
+
 ## `management`
 
 Controls whether catalog settings (registries, lifecycle states, and license policies) come from this YAML file or from the metadata database.
@@ -297,14 +326,14 @@ The server loads the rest of the configuration even when the `admin` block is in
 | `origin` | URL | if enabled | none | Browser origin allowed to send admin requests, for example `https://marketplace.example.com`. It must be written exactly as a browser serializes it: lowercase scheme; an ASCII DNS host (use the Punycode A-label) or a literal IP address; no explicit default port (`:443` for HTTPS, `:80` for HTTP) and no leading zeros in the port; no trailing dot on the host; no non-canonical IPv4 spelling (decimal, hexadecimal, dotted octal or hex, leading zeros, or IPv4-mapped IPv6 such as `[::ffff:192.0.2.1]`); and no path, query, or fragment. Non-default ports are allowed. HTTP is accepted only with `allow_insecure_localhost`. |
 | `allow_insecure_localhost` | boolean | no | `false` | Accepts HTTP origins for `localhost` or a literal loopback IP only, for local development. It does not relax identity, proxy, or exact-origin checks, and it does not change listener bindings; bind the public proxy to loopback yourself. |
 | `admin_groups` | list of strings | at least one of `admin_groups` or `admin_users` | empty | Group names allowed to use the admin routes. |
-| `admin_users` | list of strings | at least one of `admin_groups` or `admin_users` | empty | Permanent identity-provider subjects allowed to use the admin routes. Use the subject, never an email address or display name. |
+| `admin_users` | list of strings | at least one of `admin_groups` or `admin_users` | empty | Permanent identity-provider subjects allowed to use the admin routes. The value is the subject, never an email address or display name. |
 | `authentication.mode` | string | yes for new configurations | inferred | `oidc` for native sign-in, or `trusted_proxy` for identity asserted by a reverse proxy. |
 | `trusted_proxies` | list of CIDRs | trusted-proxy mode | empty | CIDRs of the reverse proxies that connect directly to the server and may send identity headers. A `/0` prefix or an IPv4-mapped IPv6 prefix is rejected. Forwarded client IP headers cannot bypass this check. |
 | `issuer` | string | trusted-proxy mode | none | Identity provider or SSO issuer, recorded as the audit issuer. |
 | `subject_header` | string | trusted-proxy mode | none | HTTP header that carries the authenticated subject (for example `X-Marketplace-Subject`). |
 | `groups_header` | string | trusted-proxy mode | none | HTTP header that carries a JSON array of group names (for example `X-Marketplace-Groups`). |
 
-The two identity header names must differ (ignoring case) and match `[A-Za-z][A-Za-z0-9-]*`. The server rejects `X-Forwarded-*` names and reserved headers such as `Authorization`, `Cookie`, and `Origin`. Use dedicated headers that the trusted proxy always overwrites with authenticated claims.
+The two identity header names must differ (ignoring case) and match `[A-Za-z][A-Za-z0-9-]*`. The server rejects `X-Forwarded-*` names and reserved headers such as `Authorization`, `Cookie`, and `Origin`. The headers must be dedicated names that the trusted proxy always overwrites with authenticated claims.
 
 ```yaml
 admin:

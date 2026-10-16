@@ -19,6 +19,7 @@ const (
 	TargetGemini   Target = "gemini"
 	TargetDevin    Target = "devin"
 	TargetCodex    Target = "codex"
+	TargetOpenCode Target = "opencode"
 )
 
 // Definition is the metadata every target must declare. Compiler and Ingester
@@ -36,6 +37,12 @@ type Definition struct {
 	Conversion       bool
 	UI               bool
 	UIOrder          int
+	// HookProjection is the optional hook-only topology derived from the
+	// target's NativeLayout. Paths are relative to the scope root the
+	// Definition owns (RepoRoot or UserRoot); partitioned-root targets name
+	// their sub-root explicitly. The projection compiler and native
+	// inspection use no second path switch.
+	HookProjection *NativeHookProjection
 }
 
 // ValidateDefinition rejects target metadata that mixes or omits the legacy
@@ -65,18 +72,32 @@ var definitions = []Definition{
 	// before it.
 	{Target: TargetDevin, Label: "Devin CLI", RepoRoot: ".devin", UserRoot: ".config/devin", Compiler: true, Ingester: true, Conversion: true, UI: true, UIOrder: 5},
 	{Target: TargetCodex, Label: "Codex", PartitionedRoots: true, Compiler: true, Ingester: true, Conversion: true, UI: true, UIOrder: 6},
+	{Target: TargetOpenCode, Label: "OpenCode", RepoRoot: ".opencode", UserRoot: ".config/opencode", Compiler: true, Ingester: true, Conversion: true, UI: true, UIOrder: 7},
 }
 
 // Definitions returns all target declarations in stable display order.
 func Definitions() []Definition {
-	return append([]Definition(nil), definitions...)
+	return derivedDefinitions()
+}
+
+func derivedDefinitions() []Definition {
+	out := make([]Definition, len(definitions))
+	for i, definition := range definitions {
+		out[i] = definitionWithHookProjection(definition)
+	}
+	return out
+}
+
+func definitionWithHookProjection(definition Definition) Definition {
+	definition.HookProjection = nativeHookProjectionForLayout(definition.Target)
+	return definition
 }
 
 // Lookup returns the declaration for name, if it is a known target.
 func Lookup(name string) (Definition, bool) {
 	for _, definition := range definitions {
 		if definition.Target == Target(name) {
-			return definition, true
+			return definitionWithHookProjection(definition), true
 		}
 	}
 	return Definition{}, false

@@ -42,6 +42,8 @@ type matrixCell struct {
 	ExpectedModel   *string  `yaml:"expectedModel"`
 	ExpectedEffort  *string  `yaml:"expectedEffort"`
 	ExpectedTools   []string `yaml:"expectedTools"`
+	ExpectedEvent   *string  `yaml:"expectedEvent"`
+	ExpectedMatcher *string  `yaml:"expectedMatcher"`
 }
 
 type canonicalFixture struct {
@@ -188,6 +190,14 @@ func TestMatrix_CrossHarnessLossProfile(t *testing.T) {
 				if cell.ExpectedTools != nil {
 					expected.Tools = cell.ExpectedTools
 					losses = slices.DeleteFunc(losses, func(field string) bool { return field == "tools" })
+				}
+				if cell.ExpectedEvent != nil {
+					expected.Event = *cell.ExpectedEvent
+					losses = slices.DeleteFunc(losses, func(field string) bool { return field == "event" })
+				}
+				if cell.ExpectedMatcher != nil {
+					expected.Matcher = *cell.ExpectedMatcher
+					losses = slices.DeleteFunc(losses, func(field string) bool { return field == "matcher" })
 				}
 				assertCanonicalEqual(t, expected, normalizeResource(got), losses)
 			})

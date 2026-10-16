@@ -1,9 +1,9 @@
 # Website
 
-This directory contains the VitePress website for `agent-marketplace`. The
-landing page is served at `/` and the public documentation at `/docs/`. The
-separate Nuxt application in `web/` is served at `/marketplace/` by the
-combined Docker proxy.
+This directory contains the VitePress landing page and documentation for
+`agent-marketplace`. The public-site profile serves the landing page at `/` and
+documentation at `/docs/`. The documentation-only profile serves the same
+pages below `/docs/` beside a self-hosted Nuxt Marketplace at `/`.
 
 ## Prerequisites
 
@@ -46,11 +46,27 @@ To build for a project-path deployment, set `SITE_BASE`:
 SITE_BASE=/agent-marketplace/ make site-build
 ```
 
-To preview a completed build:
+Build the documentation-only profile for a self-hosted Marketplace:
+
+```bash
+make site-docs-build
+```
+
+This target writes the generated files to `site/.vitepress/dist-docs/` with
+all owned routes and assets below `/docs/`.
+
+To preview the public-site profile:
 
 ```bash
 cd site
 pnpm run preview
+```
+
+To preview the documentation-only profile:
+
+```bash
+cd site
+SITE_PROFILE=docs pnpm run preview
 ```
 
 ## Structure
@@ -106,8 +122,12 @@ When adding a page:
    (`tutorials`, `how-to`, `reference`, or `explanation`). Registry-author and
    operator how-to guides go in `docs/how-to/author/` and
    `docs/how-to/operator/`.
-2. Add one entry for it to the `sidebar` in `.vitepress/config.mts`. The
-   sidebar is ordered by hand and does not pick up new pages automatically.
+2. Add one entry for it to the `sidebar` in `.vitepress/config.mts`, inside
+   the subgroup that matches its topic (for example, How-to guides →
+   Consumers → Troubleshoot and repair). The sidebar is ordered by hand and
+   does not pick up new pages automatically. Subgroups only affect the
+   sidebar, so keep the file in its quadrant directory. If you add a subgroup,
+   use the same heading in the matching list in `docs/index.md`.
 3. Link other site pages with relative `.md` paths. Link repository files
    outside `site/` by their full GitHub URL, because relative links outside
    `site/` do not resolve on the website and the build fails on dead links.
@@ -119,7 +139,6 @@ When adding a page:
 - If a `pnpm-workspace.yaml` exists in a parent directory (for example your
   home directory), pass `--ignore-workspace` to `pnpm` so the site resolves its
   own lockfile.
-- Keep links to the Nuxt UI rooted at `/marketplace/`, because the shared
-  reverse proxy owns that path in local and production-like deployments. Do not
-  pass those links through VitePress `withBase`, which would nest them below
-  `SITE_BASE`.
+- The public-site profile must not link to a local Marketplace application.
+  The documentation-only profile links to the self-hosted Marketplace at `/`.
+  Keep its documentation links below `/docs/`.

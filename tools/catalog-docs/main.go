@@ -261,6 +261,17 @@ func generate() ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
+// checkFresh reports whether the document at path matches the freshly
+// generated reference. It is the same comparison the -check mode runs, shared
+// so tests exercise the real gate instead of duplicating it.
+func checkFresh(generated []byte, path string) error {
+	current, err := os.ReadFile(path)
+	if err != nil || !bytes.Equal(current, generated) {
+		return fmt.Errorf("stale generated reference %s: run make catalog-docs", path)
+	}
+	return nil
+}
+
 func main() {
 	check := flag.Bool("check", false, "verify the committed document is current instead of writing it")
 	flag.Parse()
@@ -270,9 +281,8 @@ func main() {
 		os.Exit(1)
 	}
 	if *check {
-		current, err := os.ReadFile(docPath)
-		if err != nil || !bytes.Equal(current, doc) {
-			fmt.Fprintf(os.Stderr, "stale generated reference %s: run make catalog-docs\n", docPath)
+		if err := checkFresh(doc, docPath); err != nil {
+			fmt.Fprintln(os.Stderr, "catalog-docs:", err)
 			os.Exit(1)
 		}
 		return

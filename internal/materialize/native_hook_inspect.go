@@ -10,6 +10,7 @@ import (
 	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/jsonc"
+	targetmeta "github.com/Adyen/agent-marketplace/pkg/harness-compilation/target"
 )
 
 // nativeHookLayout is the documented native hook file for one (target, scope)
@@ -23,6 +24,8 @@ type nativeHookLayout struct {
 	rel            string
 	container      string
 	requireVersion bool
+	shape          targetmeta.HookShape
+	envelope       map[string]any
 }
 
 // nativeHookLayoutFor returns the single documented native hook file for a

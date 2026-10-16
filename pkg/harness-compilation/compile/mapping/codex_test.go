@@ -52,50 +52,6 @@ func TestCodexModelMappingsDoNotInventCrossVendorEquivalents(t *testing.T) {
 	}
 }
 
-func TestCodexHookEvent(t *testing.T) {
-	tests := []struct {
-		name   string
-		source string
-		want   string
-		wantOK bool
-	}{
-		{"PreToolUse", "PreToolUse", "PreToolUse", true},
-		{"PostToolUse", "PostToolUse", "PostToolUse", true},
-		{"PermissionRequest has no direct equivalent", "PermissionRequest", "", false},
-		{"UserPromptSubmit", "UserPromptSubmit", "UserPromptSubmit", true},
-		{"Stop", "Stop", "Stop", true},
-		{"SubagentStop has no direct equivalent", "SubagentStop", "", false},
-		{"SubagentStart has no direct equivalent", "SubagentStart", "", false},
-		{"PreCompact has no direct equivalent", "PreCompact", "", false},
-		{"PostCompact has no direct equivalent", "PostCompact", "", false},
-		{"SessionStart", "SessionStart", "SessionStart", true},
-		{"SessionEnd has no direct equivalent", "SessionEnd", "", false},
-		{"Notification is unmappable", "Notification", "", false},
-		{"PostCompaction is not Codex PostCompact", "PostCompaction", "", false},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got, ok := HookEvent(tt.source, "", TargetCodex)
-			if got != tt.want || ok != tt.wantOK {
-				t.Errorf("HookEvent(%q, Codex) = (%q, %v), want (%q, %v)", tt.source, got, ok, tt.want, tt.wantOK)
-			}
-		})
-	}
-}
-
-func TestNativeCodexHookEventDoesNotEquateSameNamedLifecycles(t *testing.T) {
-	for _, event := range []string{"PermissionRequest", "SubagentStart", "SubagentStop", "PreCompact", "PostCompact", "SessionEnd"} {
-		if got, ok := NativeCodexHookEvent(event, "", TargetClaude); ok || got != "" {
-			t.Errorf("NativeCodexHookEvent(%q, Claude) = %q, %v; want unmappable", event, got, ok)
-		}
-	}
-	for _, event := range []string{"PreToolUse", "PostToolUse", "UserPromptSubmit", "Stop"} {
-		if got, ok := NativeCodexHookEvent(event, "", TargetClaude); !ok || got != event {
-			t.Errorf("NativeCodexHookEvent(%q, Claude) = %q, %v; want identity", event, got, ok)
-		}
-	}
-}
-
 func TestCodexEnvTokenRequiresCallerSuppliedPluginRoot(t *testing.T) {
 	value, literal := EnvToken("${CLAUDE_PLUGIN_ROOT}", TargetCodex)
 	if value != "" || !literal {
@@ -121,19 +77,5 @@ func TestCodexMcpInterpolation(t *testing.T) {
 				t.Errorf("McpInterpolationSupported(%q, Codex) = (%q, %v), want (%q, %v)", tt.source, got, ok, tt.want, tt.wantOK)
 			}
 		})
-	}
-}
-
-func TestCodexReverseHookEventsAreClosed(t *testing.T) {
-	for _, entry := range codexReverseTable {
-		got, matcher, ok := ReverseHookEvent(entry.TargetEvent, TargetCodex)
-		if !ok || got != entry.ClaudeEvent || matcher != entry.Matcher {
-			t.Errorf("ReverseHookEvent(%q, Codex) = (%q, %q, %v)", entry.TargetEvent, got, matcher, ok)
-		}
-	}
-	for _, event := range []string{"Notification", "PostCompaction", "MadeUpEvent"} {
-		if _, _, ok := ReverseHookEvent(event, TargetCodex); ok {
-			t.Errorf("ReverseHookEvent(%q, Codex) accepted unsupported event", event)
-		}
 	}
 }

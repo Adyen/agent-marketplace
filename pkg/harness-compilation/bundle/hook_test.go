@@ -2,6 +2,7 @@ package bundle
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 	"testing/fstest"
 
@@ -504,5 +505,110 @@ func TestLoadHooks_CommentStripping(t *testing.T) {
 	}
 	if hooks[0].Command != "lint" {
 		t.Errorf("command: got %q, want %q", hooks[0].Command, "lint")
+	}
+}
+
+func TestLoadHooksDefaultPreservesFactoryGroupCommandRegex(t *testing.T) {
+	src := fstest.MapFS{"hooks.json": {Data: []byte(`{"PreToolUse":[{"matcher":"Execute","commandRegex":"^make.*$","hooks":[{"type":"command","command":"${DROID_PLUGIN_ROOT}/run.sh"}]}]}`)}}
+	hooks, _, err := LoadHooks(src, "hooks.json")
+	if err != nil {
+		t.Fatalf("LoadHooks: %v", err)
+	}
+	if len(hooks) != 1 || hooks[0].Matcher != "Execute" || hooks[0].Command != "${DROID_PLUGIN_ROOT}/run.sh" || hooks[0].HookSource != "" {
+		t.Fatalf("default hook = %#v", hooks)
+	}
+	if hooks[0].Extra["commandRegex"] != "^make.*$" || !hooks[0].GroupExtraKeys["commandRegex"] {
+		t.Fatalf("default bundle loader lost Factory group commandRegex provenance: %#v / %#v", hooks[0].Extra, hooks[0].GroupExtraKeys)
+	}
+}
+
+func TestLoadFactoryHooksForNativeProjectionPreservesGroupCommandRegex(t *testing.T) {
+	src := fstest.MapFS{"hooks.json": {Data: []byte(`{"PreToolUse":[{"matcher":"Execute","commandRegex":"^make.*$","hooks":[{"type":"command","command":"${DROID_PLUGIN_ROOT}/one.sh"},{"type":"command","command":"${DROID_PLUGIN_ROOT}/two.sh"}]}]}`)}}
+	hooks, diags, err := LoadFactoryHooksForNativeProjection(src, "hooks.json")
+	if err != nil {
+		t.Fatalf("LoadFactoryHooksForNativeProjection: %v", err)
+	}
+	if len(diags) != 0 || len(hooks) != 2 {
+		t.Fatalf("hooks/diagnostics = %#v / %#v", hooks, diags)
+	}
+	for _, hook := range hooks {
+		if hook.Event != "PreToolUse" || hook.Matcher != "Execute" || !strings.HasPrefix(hook.Command, "${DROID_PLUGIN_ROOT}/") || hook.HookSource != "" {
+			t.Fatalf("bundle native hook = %#v", hook)
+		}
+		if hook.Extra["commandRegex"] != "^make.*$" {
+			t.Fatalf("hook extra = %#v, want group commandRegex", hook.Extra)
+		}
+	}
+	hooks[0].Extra["commandRegex"] = "mutated"
+	if hooks[1].Extra["commandRegex"] != "^make.*$" {
+		t.Fatalf("per-handler extras alias each other: %#v", hooks)
+	}
+}
+
+func TestLoadFactoryHooksForNativeProjectionFlatFallback(t *testing.T) {
+	src := fstest.MapFS{"hooks.json": {Data: []byte(`{"PreToolUse":[{"matcher":"Execute","type":"command","command":"${DROID_PLUGIN_ROOT}/flat.sh","commandRegex":"^flat$"}]}`)}}
+	hooks, _, err := LoadFactoryHooksForNativeProjection(src, "hooks.json")
+	if err != nil {
+		t.Fatalf("LoadFactoryHooksForNativeProjection: %v", err)
+	}
+	if len(hooks) != 1 || hooks[0].Type != "command" || hooks[0].Matcher != "Execute" || hooks[0].Command != "${DROID_PLUGIN_ROOT}/flat.sh" || hooks[0].Extra["commandRegex"] != "^flat$" {
+		t.Fatalf("flat Factory native hook = %#v", hooks)
+	}
+}
+
+func TestLoadFactoryHooksForNativeProjectionRejectsFlatNonStringCommandRegex(t *testing.T) {
+	data := []byte(`{"PreToolUse":[{"matcher":"Execute","type":"command","command":"${DROID_PLUGIN_ROOT}/flat.sh","commandRegex":7}]}`)
+	src := fstest.MapFS{"hooks.json": {Data: data}}
+	hooks, _, err := LoadFactoryHooksForNativeProjection(src, "hooks.json")
+	if err == nil || len(hooks) != 0 {
+		t.Fatalf("flat native load = %#v, %v; want refusal", hooks, err)
+	}
+	if string(src["hooks.json"].Data) != string(data) {
+		t.Fatal("source snapshot changed during refusal")
+	}
+}
+
+func TestLoadFactoryHooksForNativeProjectionRejectsUnrepresentableGroups(t *testing.T) {
+	handler := `"hooks":[{"type":"command","command":"${DROID_PLUGIN_ROOT}/run.sh"}]`
+	cases := []struct {
+		name  string
+		group string
+	}{
+		{name: "group type present empty", group: `"type":"","matcher":"Execute",` + handler},
+		{name: "group command present empty", group: `"command":"","matcher":"Execute",` + handler},
+		{name: "group prompt present empty", group: `"prompt":"","matcher":"Execute",` + handler},
+		{name: "group timeout present zero", group: `"timeout":0,"matcher":"Execute",` + handler},
+		{name: "empty group string extra", group: `"matcher":"Execute","emptyOption":"",` + handler},
+		{name: "empty group null extra", group: `"matcher":"Execute","emptyOption":null,` + handler},
+		{name: "empty group object extra", group: `"matcher":"Execute","emptyOption":{},` + handler},
+		{name: "empty group array extra", group: `"matcher":"Execute","emptyOption":[],` + handler},
+		{name: "unsupported group extra", group: `"matcher":"Execute","providerOption":{"mode":"strict"},` + handler},
+		{name: "non-string commandRegex", group: `"matcher":"Execute","commandRegex":7,` + handler},
+		{name: "group handler commandRegex conflict", group: `"matcher":"Execute","commandRegex":"^group$","hooks":[{"type":"command","command":"${DROID_PLUGIN_ROOT}/run.sh","commandRegex":"^handler$"}]`},
+		{name: "handler commandRegex without group", group: `"matcher":"Execute","hooks":[{"type":"command","command":"${DROID_PLUGIN_ROOT}/run.sh","commandRegex":"^handler$"}]`},
+		{name: "handler commandRegex alias without group", group: `"matcher":"Execute","hooks":[{"type":"command","command":"${DROID_PLUGIN_ROOT}/run.sh","CommandRegex":"^handler$"}]`},
+		{name: "nested handler matcher present", group: `"matcher":"Execute","hooks":[{"type":"command","command":"${DROID_PLUGIN_ROOT}/run.sh","matcher":"Read"}]`},
+		{name: "nested handler matcher empty present", group: `"matcher":"Execute","hooks":[{"type":"command","command":"${DROID_PLUGIN_ROOT}/run.sh","matcher":""}]`},
+		{name: "commandRegex alias lower first", group: `"matcher":"Execute","commandRegex":"^group$","CommandRegex":"^alias$",` + handler},
+		{name: "commandRegex alias upper first", group: `"matcher":"Execute","CommandRegex":"^alias$","commandRegex":"^group$",` + handler},
+		{name: "typed type alias lower first", group: `"matcher":"Execute","hooks":[{"type":"command","Type":"prompt","command":"${DROID_PLUGIN_ROOT}/run.sh"}]`},
+		{name: "typed type alias upper first", group: `"matcher":"Execute","hooks":[{"Type":"prompt","type":"command","command":"${DROID_PLUGIN_ROOT}/run.sh"}]`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			data := []byte(`{"PreToolUse":[{` + tc.group + `}]}`)
+			src := fstest.MapFS{"hooks.json": {Data: data}}
+			before := string(src["hooks.json"].Data)
+			hooks, _, err := LoadFactoryHooksForNativeProjection(src, "hooks.json")
+			if err == nil {
+				t.Fatalf("LoadFactoryHooksForNativeProjection returned hooks %#v without refusing", hooks)
+			}
+			if len(hooks) != 0 {
+				t.Fatalf("refusal returned hooks %#v", hooks)
+			}
+			if string(src["hooks.json"].Data) != before {
+				t.Fatal("source snapshot changed during refusal")
+			}
+		})
 	}
 }

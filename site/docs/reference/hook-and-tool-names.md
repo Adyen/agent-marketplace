@@ -176,6 +176,26 @@ Surfaces: hook_matcher, subagent_tools. MCP naming: `mcp_{server}_{tool}`; match
 | `write_file` | file.write | - | all |
 | `write_todos` | todo | - | all |
 
+### opencode
+
+Surfaces: hook_matcher. MCP naming: ``; match-all `mcp_.*`; server scoped: false.
+
+| Tool | Concepts | Aliases | Surfaces |
+| --- | --- | --- | --- |
+| `apply_patch` | file.write, file.edit | - | all |
+| `bash` | shell | Bash | all |
+| `edit` | file.edit | Edit | all |
+| `glob` | search.glob | Glob | all |
+| `grep` | search.grep | Grep | all |
+| `question` | ask.user | - | all |
+| `read` | file.read | Read | all |
+| `skill` | skill | Skill | all |
+| `task` | subagent | Task | all |
+| `todowrite` | todo | TodoWrite | all |
+| `webfetch` | web.fetch | WebFetch | all |
+| `websearch` | web.search | WebSearch | all |
+| `write` | file.write | Write | all |
+
 ### windsurf
 
 Surfaces: none. MCP naming: ``; match-all `*`; server scoped: false.
@@ -219,7 +239,7 @@ Timeout unit: `seconds`. Matcher syntax: `exact-or-regex` (exact `|`/`,` lists).
 | `PreToolUse` | PreToolUse | tool | command, http, mcp_tool, prompt, agent | - |
 | `SessionEnd` | SessionEnd | lifecycle | command, http, mcp_tool | - |
 | `SessionStart` | SessionStart | lifecycle | command, mcp_tool | - |
-| `Setup` | (native only) | lifecycle | command, mcp_tool | - |
+| `Setup` | (native only) | lifecycle | command | - |
 | `Stop` | Stop | none | command, http, mcp_tool, prompt, agent | - |
 | `StopFailure` | (native only) | lifecycle | command, http, mcp_tool | - |
 | `SubagentStart` | SubagentStart | lifecycle | command, http, mcp_tool | - |
@@ -249,7 +269,7 @@ Timeout unit: `seconds`. Matcher syntax: `regex` (output anchored). Repository b
 | `PostToolUse` | PostToolUse | tool | command, mcp_tool | - |
 | `PreCompact` | (native only) | lifecycle | command, mcp_tool | - |
 | `PreToolUse` | PreToolUse | tool | command, mcp_tool | - |
-| `SessionEnd` | (native only) | lifecycle | command, mcp_tool | 1-3 |
+| `SessionEnd` | (native only) | lifecycle | command | 1-3 |
 | `SessionStart` | SessionStart | lifecycle | command, mcp_tool | - |
 | `Stop` | Stop | none | command, mcp_tool | - |
 | `SubagentStart` | (native only) | lifecycle | command, mcp_tool | - |
@@ -271,24 +291,24 @@ Timeout unit: `seconds`. Matcher syntax: `regex`. Repository base: env `project_
 
 | Event | Canonical | Matcher | Types | Timeout bounds |
 | --- | --- | --- | --- | --- |
-| `afterAgentResponse` | (native only) | none | command, prompt | - |
-| `afterAgentThought` | (native only) | none | command, prompt | - |
-| `afterFileEdit` | (native only) | none | command, prompt | - |
+| `afterAgentResponse` | (native only) | lifecycle | command, prompt | - |
+| `afterAgentThought` | (native only) | lifecycle | command, prompt | - |
+| `afterFileEdit` | (native only) | tool | command, prompt | - |
 | `afterMCPExecution` | (native only) | none | command, prompt | - |
 | `afterShellExecution` | (native only) | command_text | command, prompt | - |
-| `afterTabFileEdit` | (native only) | none | command, prompt | - |
+| `afterTabFileEdit` | (native only) | lifecycle | command, prompt | - |
 | `beforeMCPExecution` | (native only) | none | command, prompt | - |
-| `beforeReadFile` | (native only) | none | command, prompt | - |
+| `beforeReadFile` | (native only) | tool | command, prompt | - |
 | `beforeShellExecution` | (native only) | command_text | command, prompt | - |
-| `beforeSubmitPrompt` | UserPromptSubmit | none | command, prompt | - |
-| `beforeTabFileRead` | (native only) | none | command, prompt | - |
+| `beforeSubmitPrompt` | UserPromptSubmit | lifecycle | command, prompt | - |
+| `beforeTabFileRead` | (native only) | lifecycle | command, prompt | - |
 | `postToolUse` | PostToolUse | tool | command, prompt | - |
 | `postToolUseFailure` | (native only) | tool | command, prompt | - |
 | `preCompact` | PreCompact | none | command, prompt | - |
 | `preToolUse` | PreToolUse | tool | command, prompt | - |
 | `sessionEnd` | SessionEnd | none | command, prompt | - |
 | `sessionStart` | SessionStart | none | command, prompt | - |
-| `stop` | Stop | none | command, prompt | - |
+| `stop` | Stop | lifecycle | command, prompt | - |
 | `subagentStart` | (native only) | lifecycle | command, prompt | - |
 | `subagentStop` | SubagentStop | lifecycle | command, prompt | - |
 | `workspaceOpen` | (native only) | none | command, prompt | - |
@@ -358,6 +378,18 @@ Timeout unit: `milliseconds`. Matcher syntax: `regex`. Repository base: env `pro
 | `PreCompress` | PreCompact | lifecycle | command | - |
 | `SessionEnd` | SessionEnd | lifecycle | command | - |
 | `SessionStart` | SessionStart | lifecycle | command | - |
+
+### opencode
+
+Timeout unit: `seconds`. Matcher syntax: `exact-or-regex` (exact `|`/`,` lists). Repository base: env `project_dir`.
+
+| Variable concept | Names | Events |
+| --- | --- | --- |
+| `project_dir` | AGENT_MARKETPLACE_PROJECT_DIR | all |
+
+| Event | Canonical | Matcher | Types | Timeout bounds |
+| --- | --- | --- | --- | --- |
+| `PreToolUse` | PreToolUse | tool | command | - |
 
 ### windsurf
 

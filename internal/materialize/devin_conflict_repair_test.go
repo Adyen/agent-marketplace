@@ -40,7 +40,7 @@ func writeHandwrittenConflict(t *testing.T, repoRoot, key string) (mcpPath strin
 		t.Fatal(err)
 	}
 	return mcpPath, []resolver.ResolvedArtifact{
-		devinResolved(key, ir.NewMcpServer(key, "generated-binary", nil, nil, nil, ir.SourceRef{}), false),
+		devinResolved(t, key, ir.NewMcpServer(key, "generated-binary", nil, nil, nil, ir.SourceRef{}), false),
 	}
 }
 

@@ -121,8 +121,22 @@ func validateMarketplaceSelections(selections MarketplaceSelections) error {
 func (s MarketplaceSelections) MarshalYAML() (any, error) { return s.List(), nil }
 
 func (s *MarketplaceSelections) UnmarshalYAML(node *yaml.Node) error {
-	if err := validateMarketplaceSelectedByNode(node, "selected_by"); err != nil {
-		return err
+	if node == nil || node.Kind != yaml.SequenceNode || node.Tag == "!!null" {
+		return fmt.Errorf("selected_by must be a non-null sequence")
+	}
+	for i, selection := range node.Content {
+		if selection.Kind != yaml.MappingNode || len(selection.Content) != 6 {
+			return fmt.Errorf("selected_by[%d] must be an exact mapping with registry_id, name, and revision", i)
+		}
+		if err := validateV4YAMLTree(selection, "selected_by"); err != nil {
+			return err
+		}
+		for _, field := range []string{"registry_id", "name", "revision"} {
+			value := findMappingValue(selection, field)
+			if value == nil || value.Kind != yaml.ScalarNode || value.Tag != "!!str" {
+				return fmt.Errorf("selected_by[%d].%s must be a string value", i, field)
+			}
+		}
 	}
 	var values []MarketplaceSelection
 	if err := node.Decode(&values); err != nil {
@@ -310,10 +324,4 @@ func validateMarketplaceOccurrenceFields(acquisition, registryCommit, registryMa
 		return fmt.Errorf("registry_commit and registry_manifest_digest require acquisition %q", MarketplaceAcquisitionIndexOnly)
 	}
 	return nil
-}
-
-// IsMarketplaceKind reports whether kind is a selectable Marketplace resource kind.
-// Kept in config as a thin wrapper so consumers do not need to import api.
-func IsMarketplaceKind(kind string) bool {
-	return api.IsMarketplaceKind(kind)
 }

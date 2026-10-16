@@ -16,7 +16,7 @@ func TestDevinNativeLayoutIsAvailable(t *testing.T) {
 		{
 			ID:         "default",
 			Prefix:     ".",
-			Components: []string{"skills", "agents"},
+			Components: []string{"skills", "agents", "hook-support"},
 			ResourcePaths: map[ir.ResourceKind]string{
 				ir.KindSkill:    "skills/%s/SKILL.md",
 				ir.KindCommand:  "skills/%s/SKILL.md",
@@ -101,7 +101,7 @@ func TestClaudeNativeLayoutIsAvailable(t *testing.T) {
 		{
 			ID:         "default",
 			Prefix:     ".",
-			Components: []string{"skills", "commands", "agents", "hooks", ".claude-plugin"},
+			Components: []string{"skills", "commands", "agents", "hooks", "hook-support", ".claude-plugin"},
 			ResourcePaths: map[ir.ResourceKind]string{
 				ir.KindSkill:    "skills/%s/SKILL.md",
 				ir.KindCommand:  "commands/%s.md",
@@ -971,8 +971,8 @@ func TestHookAggregateTopologyIsDeclaredForEveryTarget(t *testing.T) {
 		{
 			target:      TargetWindsurf,
 			shape:       HookShapeEventHandlers,
-			projectFile: NativeAggregateFile{Path: ".devin/hooks.json", Member: "hooks", Legacy: []string{".windsurf/hooks.json"}},
-			userFile:    NativeAggregateFile{Path: "hooks.json", Member: "hooks"},
+			projectFile: NativeAggregateFile{Path: ".devin/hooks.json", Member: "hooks", Legacy: []string{".windsurf/hooks.json"}, PreserveLegacyHandwritten: true},
+			userFile:    NativeAggregateFile{Path: "hooks.json", Member: "hooks", LegacyMarkedFlatHooks: true},
 		},
 		{
 			target:      TargetGemini,
@@ -1009,6 +1009,17 @@ func TestHookAggregateTopologyIsDeclaredForEveryTarget(t *testing.T) {
 		if aggregate == nil {
 			t.Fatalf("%s declares no hook aggregate", tt.target)
 		}
+		if aggregate.LegacyMarkedFlatHooks != (tt.target == TargetGemini) {
+			t.Errorf("%s hook aggregate LegacyMarkedFlatHooks = %v; only Gemini declares the aggregate marked legacy flat transition", tt.target, aggregate.LegacyMarkedFlatHooks)
+		}
+		for i := range layout.Partitions {
+			for j := range layout.Partitions[i].Aggregates {
+				other := layout.Partitions[i].Aggregates[j]
+				if other.Kind != ir.KindHook && other.LegacyMarkedFlatHooks {
+					t.Errorf("%s non-hook aggregate for %s declares LegacyMarkedFlatHooks", tt.target, other.Kind)
+				}
+			}
+		}
 		if aggregate.Shape != tt.shape {
 			t.Errorf("%s hook aggregate shape = %q, want %q", tt.target, aggregate.Shape, tt.shape)
 		}
@@ -1031,6 +1042,137 @@ func TestHookAggregateTopologyIsDeclaredForEveryTarget(t *testing.T) {
 			if !reflect.DeepEqual(declared.Legacy, want.Legacy) {
 				t.Errorf("%s hook aggregate legacy (machine_scope=%v) = %v, want %v", tt.target, scope, declared.Legacy, want.Legacy)
 			}
+		}
+	}
+}
+
+// TestHookProjectionDeclarations pins the hook-only native projection topology
+// for all seven targets and validates each declaration at the registration boundary.
+func TestHookProjectionDeclarations(t *testing.T) {
+	if err := ValidateHookProjections(); err != nil {
+		t.Fatalf("ValidateHookProjections: %v", err)
+	}
+	for _, tt := range []struct {
+		target                Target
+		projectPath, userPath string
+		projectMember         string
+		userMember            string
+		shape                 HookShape
+	}{
+		{TargetClaude, "settings.json", "settings.json", "hooks", "hooks", HookShapeMatcherGroups},
+		{TargetFactory, "hooks.json", "hooks.json", "", "", HookShapeMatcherGroups},
+		{TargetCursor, "hooks.json", "hooks.json", "hooks", "hooks", HookShapeEventHandlers},
+		{TargetWindsurf, ".devin/hooks.json", "hooks.json", "hooks", "hooks", HookShapeEventHandlers},
+		{TargetGemini, "settings.json", "settings.json", "hooks", "hooks", HookShapeMatcherGroups},
+		{TargetDevin, "hooks.v1.json", "config.json", "", "hooks", HookShapeMatcherGroups},
+		{TargetCodex, ".codex/hooks.json", ".codex/hooks.json", "hooks", "hooks", HookShapeMatcherGroups},
+	} {
+		projection, ok := LookupHookProjection(tt.target)
+		if !ok {
+			t.Fatalf("target %s declares no hook projection", tt.target)
+		}
+		if projection.Shape != tt.shape {
+			t.Fatalf("target %s shape = %q, want %q", tt.target, projection.Shape, tt.shape)
+		}
+		if projection.Project.Path != tt.projectPath || projection.User.Path != tt.userPath {
+			t.Fatalf("target %s files = %q/%q, want %q/%q", tt.target, projection.Project.Path, projection.User.Path, tt.projectPath, tt.userPath)
+		}
+		if projection.Project.Member != tt.projectMember || projection.User.Member != tt.userMember {
+			t.Fatalf("target %s members = %q/%q, want %q/%q", tt.target, projection.Project.Member, projection.User.Member, tt.projectMember, tt.userMember)
+		}
+		if projection.SupportDir == "" {
+			t.Fatalf("target %s declares no hook support directory", tt.target)
+		}
+	}
+	if got := Definitions()[0].HookProjection; got == nil {
+		t.Fatal("Definitions must expose the hook projection declaration")
+	}
+}
+
+func TestHookProjectionDefensiveClone(t *testing.T) {
+	definition, ok := Lookup(string(TargetCursor))
+	if !ok || definition.HookProjection == nil {
+		t.Fatal("cursor hook projection missing")
+	}
+	definition.HookProjection.Project.Path = "mutated.json"
+	definition.HookProjection.Project.Envelope["version"] = 99
+	fresh, ok := LookupHookProjection(TargetCursor)
+	if !ok {
+		t.Fatal("cursor hook projection missing")
+	}
+	if fresh.Project.Path != "hooks.json" || fresh.Project.Envelope["version"] != 1 {
+		t.Fatalf("registry projection mutated through returned copy: %+v", fresh.Project)
+	}
+	fresh.Project.Envelope["version"] = 99
+	if again, _ := LookupHookProjection(TargetCursor); again.Project.Envelope["version"] != 1 {
+		t.Fatalf("registry projection mutated through lookup copy: %+v", again.Project)
+	}
+	file := fresh.File(false)
+	file.Envelope["version"] = 42
+	if again, _ := LookupHookProjection(TargetCursor); again.Project.Envelope["version"] != 1 {
+		t.Fatalf("registry projection mutated through File() copy: %+v", again.Project)
+	}
+	for _, d := range Definitions() {
+		if d.HookProjection != nil {
+			d.HookProjection.Project.Envelope = map[string]any{"version": -1}
+		}
+	}
+	if again, _ := LookupHookProjection(TargetCursor); again.Project.Envelope["version"] != 1 {
+		t.Fatalf("registry projection mutated through Definitions() copy: %+v", again.Project)
+	}
+}
+
+func TestValidateHookProjectionRejectsInvalidDeclarations(t *testing.T) {
+	valid := NativeHookProjection{
+		Shape:      HookShapeMatcherGroups,
+		SupportDir: "hook-support",
+		Project:    NativeHookProjectionFile{Path: "hooks.json"},
+		User:       NativeHookProjectionFile{Path: "hooks.json"},
+	}
+	if err := ValidateHookProjection(TargetClaude, valid); err != nil {
+		t.Fatalf("valid projection rejected: %v", err)
+	}
+	scalars := valid
+	scalars.Project.Envelope = map[string]any{"version": 1, "label": "x", "flag": true, "ratio": 1.5, "nothing": nil}
+	if err := ValidateHookProjection(TargetClaude, scalars); err != nil {
+		t.Fatalf("scalar envelope values rejected: %v", err)
+	}
+	for _, tt := range []struct {
+		name   string
+		mutate func(*NativeHookProjection)
+	}{
+		{"unknown shape", func(p *NativeHookProjection) { p.Shape = "weird" }},
+		{"empty shape", func(p *NativeHookProjection) { p.Shape = "" }},
+		{"invalid support dir", func(p *NativeHookProjection) { p.SupportDir = "../escape" }},
+		{"root support dir", func(p *NativeHookProjection) { p.SupportDir = "." }},
+		{"empty path", func(p *NativeHookProjection) { p.Project.Path = "" }},
+		{"root path", func(p *NativeHookProjection) { p.Project.Path = "." }},
+		{"traversal path", func(p *NativeHookProjection) { p.User.Path = "../hooks.json" }},
+		{"member with slash", func(p *NativeHookProjection) { p.Project.Member = "a/b" }},
+		{"envelope empty key", func(p *NativeHookProjection) { p.Project.Envelope = map[string]any{"": 1} }},
+		{"envelope collides with member", func(p *NativeHookProjection) {
+			p.Project.Member = "hooks"
+			p.Project.Envelope = map[string]any{"hooks": true}
+		}},
+		{"envelope case-collides with member", func(p *NativeHookProjection) {
+			p.Project.Member = "hooks"
+			p.Project.Envelope = map[string]any{"Hooks": true}
+		}},
+		{"envelope key with slash", func(p *NativeHookProjection) { p.Project.Envelope = map[string]any{"a/b": 1} }},
+		{"envelope nested map", func(p *NativeHookProjection) { p.Project.Envelope = map[string]any{"nested": map[string]any{"x": 1}} }},
+		{"envelope nested slice", func(p *NativeHookProjection) { p.Project.Envelope = map[string]any{"list": []any{1}} }},
+		{"envelope unserializable", func(p *NativeHookProjection) { p.Project.Envelope = map[string]any{"f": func() {}} }},
+		{"file path with backslash", func(p *NativeHookProjection) { p.Project.Path = `a\b.json` }},
+		{"file path with NUL", func(p *NativeHookProjection) { p.Project.Path = "a\x00b.json" }},
+		{"member with NUL", func(p *NativeHookProjection) { p.Project.Member = "a\x00b" }},
+		{"member with backslash", func(p *NativeHookProjection) { p.Project.Member = `a\b` }},
+		{"member traversal", func(p *NativeHookProjection) { p.Project.Member = ".." }},
+		{"support dir with backslash", func(p *NativeHookProjection) { p.SupportDir = `a\b` }},
+	} {
+		projection := valid
+		tt.mutate(&projection)
+		if err := ValidateHookProjection(TargetClaude, projection); err == nil {
+			t.Fatalf("%s: invalid projection accepted", tt.name)
 		}
 	}
 }
@@ -1134,6 +1276,33 @@ func TestValidateNativeLayoutRejectsInvalidHookDeclarations(t *testing.T) {
 				a.Project.Legacy = []string{"hooks/hooks.json"}
 			},
 		},
+		{
+			name:   "legacy marked flat hooks on matcher-groups hook",
+			mutate: func(a *NativeAggregate) { a.LegacyMarkedFlatHooks = true },
+		},
+		{
+			name: "legacy marked flat hooks on event-handlers hook",
+			mutate: func(a *NativeAggregate) {
+				a.Shape = HookShapeEventHandlers
+				a.LegacyMarkedFlatHooks = true
+			},
+		},
+		{
+			name: "legacy marked flat hooks on unknown hook shape",
+			mutate: func(a *NativeAggregate) {
+				a.Shape = HookShape("unknown-shape")
+				a.LegacyMarkedFlatHooks = true
+			},
+			wantErrContains: "legacy marked flat",
+		},
+		{
+			name: "legacy marked flat hooks on non-hook aggregate",
+			mutate: func(a *NativeAggregate) {
+				a.Kind, a.Shape, a.SupportDir = ir.KindMcpServer, "", ""
+				a.LegacyMarkedFlatHooks = true
+			},
+			wantErrContains: "legacy marked flat",
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -1147,6 +1316,69 @@ func TestValidateNativeLayoutRejectsInvalidHookDeclarations(t *testing.T) {
 			}
 			if tt.wantErrContains != "" && (err == nil || !strings.Contains(err.Error(), tt.wantErrContains)) {
 				t.Fatalf("ValidateNativeLayout error = %v, want error containing %q", err, tt.wantErrContains)
+			}
+		})
+	}
+}
+
+func TestHookProjectionLeavesExistingLayoutModelsUnchanged(t *testing.T) {
+	for _, tt := range []struct {
+		target      Target
+		repo, user  string
+		partitioned bool
+	}{
+		{TargetClaude, ".claude", ".claude", false},
+		{TargetFactory, ".factory", ".factory", false},
+		{TargetCursor, ".cursor", ".cursor", false},
+		{TargetWindsurf, ".", ".codeium/windsurf", false},
+		{TargetGemini, ".gemini", ".gemini", false},
+		{TargetDevin, ".devin", ".config/devin", false},
+		{TargetCodex, "", "", true},
+	} {
+		definition, ok := Lookup(string(tt.target))
+		if !ok || definition.RepoRoot != tt.repo || definition.UserRoot != tt.user || definition.PartitionedRoots != tt.partitioned {
+			t.Fatalf("root model for %s changed: %+v", tt.target, definition)
+		}
+		if _, ok := LookupNativeLayout(tt.target); !ok {
+			t.Fatalf("target %s has no native layout", tt.target)
+		}
+		if _, ok := LookupHookProjection(tt.target); !ok {
+			t.Fatalf("target %s has no hook projection", tt.target)
+		}
+	}
+}
+
+func TestHookSupportDirRequiresResourceFileHooks(t *testing.T) {
+	valid := func() NativePartition {
+		return NativePartition{
+			ID: "default", Prefix: ".", Components: []string{"hook-support", "hooks"},
+			ResourcePaths:  map[ir.ResourceKind]string{ir.KindHook: "hooks/managed/%s.json"},
+			HookSupportDir: "hook-support",
+		}
+	}
+	if err := ValidateNativeLayout(TargetOpenCode, NativeLayout{Partitions: []NativePartition{valid()}}); err != nil {
+		t.Fatalf("valid resource-file hook support rejected: %v", err)
+	}
+	for _, tt := range []struct {
+		name   string
+		mutate func(*NativePartition)
+		want   string
+	}{
+		{"no hook resource path", func(p *NativePartition) {
+			p.ResourcePaths = map[ir.ResourceKind]string{ir.KindCommand: "commands/%s.md"}
+		}, "without a hook resource path"},
+		{"beside a hook aggregate", func(p *NativePartition) {
+			p.Aggregates = []NativeAggregate{{Kind: ir.KindHook, Shape: HookShapeMatcherGroups, SupportDir: "hook-support", Project: NativeAggregateFile{Path: "settings.json", Member: "hooks"}, User: NativeAggregateFile{Path: "settings.json", Member: "hooks"}}}
+		}, "beside a hook aggregate"},
+		{"undeclared component", func(p *NativePartition) { p.Components = []string{"hooks"} }, "must be a declared component"},
+		{"shares the hook component", func(p *NativePartition) { p.HookSupportDir = "hooks" }, "shares the hook resource component"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			partition := valid()
+			tt.mutate(&partition)
+			err := ValidateNativeLayout(TargetOpenCode, NativeLayout{Partitions: []NativePartition{partition}})
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("ValidateNativeLayout error = %v, want %q", err, tt.want)
 			}
 		})
 	}

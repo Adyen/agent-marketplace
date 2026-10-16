@@ -1,12 +1,52 @@
 package tui
 
 import (
+	"encoding/base64"
+	"fmt"
 	"sort"
 	"strings"
 
+	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/materialize"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 )
+
+// groupingAxis names one list grouping dimension. The zero/unknown values
+// normalize to status (primary) or none (secondary).
+type groupingAxis string
+
+const (
+	axisStatus groupingAxis = "status"
+	axisSource groupingAxis = "source"
+	axisKind   groupingAxis = "kind"
+	axisNone   groupingAxis = "none"
+)
+
+// viewSettings is the selectable grouping configuration persisted per user.
+// It doubles as the fold-state map key, so it must stay comparable.
+type viewSettings struct {
+	GroupBy groupingAxis `json:"groupBy"`
+	ThenBy  groupingAxis `json:"thenBy"`
+}
+
+// normalized enforces the valid axis set: primary defaults to status, the
+// secondary defaults to none and may never be status or repeat the primary.
+func (s viewSettings) normalized() viewSettings {
+	switch s.GroupBy {
+	case axisStatus, axisSource, axisKind:
+	default:
+		s.GroupBy = axisStatus
+	}
+	switch s.ThenBy {
+	case axisSource, axisKind:
+	default:
+		s.ThenBy = axisNone
+	}
+	if s.ThenBy == s.GroupBy {
+		s.ThenBy = axisNone
+	}
+	return s
+}
 
 // flatItemKind distinguishes section headers from skill rows in the rendered
 // flat list.
@@ -24,7 +64,7 @@ type flatItem struct {
 	Kind flatItemKind
 
 	// For section headers.
-	SectionPath  string // stable key for fold state, e.g. "scope:global:skills:security"
+	SectionPath  string // stable key for fold state, e.g. "status:enabled"
 	SectionTitle string // display label
 	SectionCount int    // number of skill rows under this section (pre-fold)
 	SectionDepth int    // 0 = top-level, 1+ = sub-section
@@ -34,251 +74,6 @@ type flatItem struct {
 	Row   row
 	Depth int // indentation depth; matches SectionDepth+1 of the owning section
 }
-
-// buildTree groups rows into a tree based on the active tab, applies fold
-// state, and returns a flat render-ready list. Top-level ordering of
-// sections is stable (fixed per tab); sub-sections and skills are sorted
-// alphabetically.
-func buildTree(rows []row, activeTab tab, foldState map[string]bool) []flatItem {
-	switch activeTab {
-	case tabRegistry:
-		return buildRegistryTree(rows, foldState)
-	case tabStatus:
-		return buildStatusTree(rows, foldState)
-	default:
-		return buildScopeTree(rows, foldState)
-	}
-}
-
-// ---- Scope tab ----------------------------------------------------------
-
-// scopeBucket is the most-specific scope a skill resolves to for grouping.
-type scopeBucket int
-
-const (
-	bucketGlobal scopeBucket = iota
-	bucketProject
-	bucketLocal
-	bucketAvailable
-	bucketMalformed
-)
-
-func (b scopeBucket) path() string {
-	switch b {
-	case bucketGlobal:
-		return "scope:global"
-	case bucketProject:
-		return "scope:project"
-	case bucketLocal:
-		return "scope:local"
-	case bucketAvailable:
-		return "scope:available"
-	case bucketMalformed:
-		return "scope:malformed"
-	}
-	return "scope:unknown"
-}
-
-func (b scopeBucket) title() string {
-	switch b {
-	case bucketGlobal:
-		return "Global"
-	case bucketProject:
-		return "Project"
-	case bucketLocal:
-		return "Local"
-	case bucketAvailable:
-		return "Available"
-	case bucketMalformed:
-		return "Malformed"
-	}
-	return "?"
-}
-
-// classifyScope picks the most-specific scope for a row.
-// Precedence: Malformed > Local(excluded) > Local(enabled) > Project > Global > Available.
-// Locally-excluded skills go to Local regardless of project enablement — they
-// should not be duplicated under Project.
-func classifyScope(r row) scopeBucket {
-	if r.IsMalformed {
-		return bucketMalformed
-	}
-	if r.ExcludedLocally {
-		return bucketLocal
-	}
-	if r.EnabledLocal {
-		return bucketLocal
-	}
-	if r.EnabledProject {
-		return bucketProject
-	}
-	if r.EnabledGlobal {
-		return bucketGlobal
-	}
-	return bucketAvailable
-}
-
-func buildScopeTree(rows []row, foldState map[string]bool) []flatItem {
-	// Bucket rows by most-specific scope.
-	buckets := map[scopeBucket][]row{}
-	for _, r := range rows {
-		b := classifyScope(r)
-		buckets[b] = append(buckets[b], r)
-	}
-
-	order := []scopeBucket{bucketGlobal, bucketProject, bucketLocal, bucketAvailable, bucketMalformed}
-	var out []flatItem
-
-	for _, b := range order {
-		rowsIn := buckets[b]
-		if len(rowsIn) == 0 {
-			continue
-		}
-		topPath := b.path()
-		topCollapsed := foldState[topPath]
-		out = append(out, flatItem{
-			Kind:         flatSection,
-			SectionPath:  topPath,
-			SectionTitle: b.title(),
-			SectionCount: len(rowsIn),
-			SectionDepth: 0,
-			Collapsed:    topCollapsed,
-		})
-		if topCollapsed {
-			continue
-		}
-
-		// Sub-group by resource kind, then registry, sorted.
-		out = appendKindRegistrySections(out, topPath, rowsIn, foldState, 1)
-	}
-
-	return out
-}
-
-// ---- Registry tab -------------------------------------------------------
-
-func buildRegistryTree(rows []row, foldState map[string]bool) []flatItem {
-	return appendKindRegistrySections(nil, "registry", rows, foldState, 0)
-}
-
-func appendKindRegistrySections(out []flatItem, parentPath string, rows []row, foldState map[string]bool, kindDepth int) []flatItem {
-	byKind := map[ir.ResourceKind][]row{}
-	for _, r := range rows {
-		byKind[r.Artifact.Kind] = append(byKind[r.Artifact.Kind], r)
-	}
-
-	for _, kind := range orderedResourceKinds(byKind) {
-		rowsIn := byKind[kind]
-		topPath := parentPath + ":" + resourceKindSectionPath(kind)
-		topCollapsed := foldState[topPath]
-		out = append(out, flatItem{
-			Kind:         flatSection,
-			SectionPath:  topPath,
-			SectionTitle: resourceKindSectionTitle(kind),
-			SectionCount: len(rowsIn),
-			SectionDepth: kindDepth,
-			Collapsed:    topCollapsed,
-		})
-		if topCollapsed {
-			continue
-		}
-
-		byRegistry := map[string][]row{}
-		for _, r := range rowsIn {
-			byRegistry[registryDisplayLabel(r)] = append(byRegistry[registryDisplayLabel(r)], r)
-		}
-		for _, name := range keysSorted(byRegistry) {
-			subPath := topPath + ":" + name
-			subCollapsed := foldState[subPath]
-			sub := byRegistry[name]
-			sort.SliceStable(sub, func(i, j int) bool {
-				return sub[i].Artifact.Name < sub[j].Artifact.Name
-			})
-			out = append(out, flatItem{
-				Kind:         flatSection,
-				SectionPath:  subPath,
-				SectionTitle: name,
-				SectionCount: len(sub),
-				SectionDepth: kindDepth + 1,
-				Collapsed:    subCollapsed,
-			})
-			if subCollapsed {
-				continue
-			}
-			for _, r := range sub {
-				out = append(out, flatItem{Kind: flatArtifact, Row: r, Depth: kindDepth + 2})
-			}
-		}
-	}
-	return out
-}
-
-func orderedResourceKinds(buckets map[ir.ResourceKind][]row) []ir.ResourceKind {
-	known := []ir.ResourceKind{ir.KindSkill, ir.KindCommand, ir.KindSubagent, ir.KindHook, ir.KindMcpServer, ir.KindCollection, ir.KindRule}
-	out := make([]ir.ResourceKind, 0, len(buckets))
-	seen := make(map[ir.ResourceKind]struct{}, len(known))
-	for _, kind := range known {
-		seen[kind] = struct{}{}
-		if len(buckets[kind]) > 0 {
-			out = append(out, kind)
-		}
-	}
-
-	var unknown []ir.ResourceKind
-	for kind := range buckets {
-		if _, ok := seen[kind]; !ok {
-			unknown = append(unknown, kind)
-		}
-	}
-	sort.Slice(unknown, func(i, j int) bool {
-		return unknown[i].String() < unknown[j].String()
-	})
-	return append(out, unknown...)
-}
-
-func resourceKindSectionPath(kind ir.ResourceKind) string {
-	switch kind {
-	case ir.KindSkill:
-		return "skills"
-	case ir.KindCommand:
-		return "commands"
-	case ir.KindSubagent:
-		return "subagents"
-	case ir.KindHook:
-		return "hooks"
-	case ir.KindMcpServer:
-		return "mcp-servers"
-	case ir.KindCollection:
-		return "collections"
-	case ir.KindRule:
-		return "rules"
-	default:
-		return kind.String()
-	}
-}
-
-func resourceKindSectionTitle(kind ir.ResourceKind) string {
-	switch kind {
-	case ir.KindSkill:
-		return "Skills"
-	case ir.KindCommand:
-		return "Commands"
-	case ir.KindSubagent:
-		return "Subagents"
-	case ir.KindHook:
-		return "Hooks"
-	case ir.KindMcpServer:
-		return "MCP servers"
-	case ir.KindCollection:
-		return "Collections"
-	case ir.KindRule:
-		return "Rules"
-	default:
-		return kind.String()
-	}
-}
-
-// ---- Status tab ---------------------------------------------------------
 
 // statusBucket groups skills by their sync/lifecycle status.
 type statusBucket int
@@ -361,71 +156,326 @@ func classifyStatus(r row) statusBucket {
 	return statusEnabled
 }
 
-func buildStatusTree(rows []row, foldState map[string]bool) []flatItem {
-	buckets := map[statusBucket][]row{}
-	for _, r := range rows {
-		s := classifyStatus(r)
-		buckets[s] = append(buckets[s], r)
+// attentionBuckets is the pinned Needs attention membership: actionable
+// statuses lifted to one top section when the primary axis is not status.
+func attentionBuckets() map[statusBucket]bool {
+	return map[statusBucket]bool{
+		statusPending:   true,
+		statusStale:     true,
+		statusBroken:    true,
+		statusMalformed: true,
 	}
-	order := []statusBucket{statusRequired, statusEnabled, statusPending, statusStale, statusBroken, statusAvailable, statusMalformed}
-
-	var out []flatItem
-	for _, s := range order {
-		rowsIn := buckets[s]
-		if len(rowsIn) == 0 {
-			continue
-		}
-		sort.SliceStable(rowsIn, func(i, j int) bool {
-			return rowsIn[i].Artifact.Name < rowsIn[j].Artifact.Name
-		})
-		path := s.path()
-		collapsed := foldState[path]
-		out = append(out, flatItem{
-			Kind:         flatSection,
-			SectionPath:  path,
-			SectionTitle: s.title(),
-			SectionCount: len(rowsIn),
-			SectionDepth: 0,
-			Collapsed:    collapsed,
-		})
-		if collapsed {
-			continue
-		}
-		for _, r := range rowsIn {
-			out = append(out, flatItem{Kind: flatArtifact, Row: r, Depth: 1})
-		}
-	}
-	return out
 }
 
-// registryDisplayLabel returns the display name used for registry grouping.
-// When the registry entry has a path subdirectory, the path's last segment is
-// appended to the URL-derived name so entries from the same repo but different
-// subdirectories are visually distinct (e.g. "awesome-ai / pm-data-analytics").
-// Falls back to "(local)" for skills without a recorded registry URL so
-// local-only skills still group predictably.
-func registryDisplayLabel(r row) string {
-	base := r.RegistryName
+// sourceIdentity is the unambiguous source key: normalized URL, ref, and
+// normalized configured registry subpath. Empty coordinates still produce a
+// distinct (local) identity.
+func sourceIdentity(r row) string {
+	if strings.TrimSpace(r.RegistryURL) == "" {
+		return "local"
+	}
+	return registryIdentityKey(r.RegistryURL, r.RegistryRef, r.RegistryPath)
+}
+
+// sourceLabel is the display label for a source section: the registry display
+// name (or URL-derived repository name) with the full normalized subpath, or
+// "(local)" without registry metadata.
+func sourceLabel(r row) string {
+	base := strings.TrimSpace(r.RegistryName)
 	if base == "" {
 		base = registryDisplayName(r.RegistryURL)
 	}
 	if base == "" {
 		base = "(local)"
 	}
-	if p := strings.Trim(r.RegistryPath, "/"); p != "" {
-		// Keep full normalized path to avoid collisions in grouping keys
-		// (e.g. foo/skills vs bar/skills would collapse if only the
-		// basename were used).
+	if p := config.NormalizeRegistryPath(r.RegistryPath); p != "" {
 		base = base + " / " + p
 	}
 	return base
 }
 
-func keysSorted(m map[string][]row) []string {
-	out := make([]string, 0, len(m))
-	for k := range m {
-		out = append(out, k)
+// groupedSection is one section produced by grouping rows along one axis.
+type groupedSection struct {
+	path    string // full section path (parent path + this axis segment)
+	title   string
+	members []row
+}
+
+// groupByAxis buckets rows into ordered sections along one axis. prefix is
+// the enclosing section path ("" at the top level).
+func groupByAxis(rows []row, axis groupingAxis, prefix string) []groupedSection {
+	switch axis {
+	case axisStatus:
+		byBucket := map[statusBucket][]row{}
+		for _, r := range rows {
+			b := classifyStatus(r)
+			byBucket[b] = append(byBucket[b], r)
+		}
+		order := []statusBucket{statusRequired, statusEnabled, statusPending, statusStale, statusBroken, statusAvailable, statusMalformed}
+		var out []groupedSection
+		for _, b := range order {
+			members := byBucket[b]
+			if len(members) == 0 {
+				continue
+			}
+			out = append(out, groupedSection{
+				path:    strings.TrimPrefix(b.path(), "status:"),
+				title:   b.title(),
+				members: members,
+			})
+		}
+		for i := range out {
+			out[i].path = joinSectionPath(prefix, "status:"+out[i].path)
+		}
+		return out
+	case axisKind:
+		byKind := map[ir.ResourceKind][]row{}
+		for _, r := range rows {
+			byKind[r.Artifact.Kind] = append(byKind[r.Artifact.Kind], r)
+		}
+		kinds := orderedResourceKinds(byKind)
+		out := make([]groupedSection, 0, len(kinds))
+		for _, k := range kinds {
+			out = append(out, groupedSection{
+				path:    joinSectionPath(prefix, "kind:"+resourceKindSectionPath(k)),
+				title:   resourceKindSectionTitle(k),
+				members: byKind[k],
+			})
+		}
+		return out
+	case axisSource:
+		byID := map[string][]row{}
+		var ids []string
+		for _, r := range rows {
+			id := sourceIdentity(r)
+			if _, ok := byID[id]; !ok {
+				ids = append(ids, id)
+			}
+			byID[id] = append(byID[id], r)
+		}
+		// Equal display labels tie-break on the raw normalized identity, not
+		// its encoded path segment, so order stays deterministic.
+		sort.Strings(ids)
+		out := make([]groupedSection, 0, len(ids))
+		for _, id := range ids {
+			members := byID[id]
+			// Rows sharing one normalized identity can still carry different
+			// display labels; pick the smallest raw label so the section
+			// title never depends on input order.
+			title := sourceLabel(members[0])
+			for _, r := range members[1:] {
+				if l := sourceLabel(r); l < title {
+					title = l
+				}
+			}
+			out = append(out, groupedSection{
+				path:    joinSectionPath(prefix, "src:"+base64.RawURLEncoding.EncodeToString([]byte(id))),
+				title:   title,
+				members: members,
+			})
+		}
+		sort.SliceStable(out, func(i, j int) bool {
+			return out[i].title < out[j].title
+		})
+		return out
 	}
-	sort.Strings(out)
+	return nil
+}
+
+func joinSectionPath(parent, segment string) string {
+	if parent == "" {
+		return segment
+	}
+	return parent + ":" + segment
+}
+
+// orderedResourceKinds lists the section order for resource kinds: the known
+// Day-1 kinds in UI order followed by unknown kinds alphabetically.
+func orderedResourceKinds(buckets map[ir.ResourceKind][]row) []ir.ResourceKind {
+	known := []ir.ResourceKind{ir.KindSkill, ir.KindCommand, ir.KindSubagent, ir.KindHook, ir.KindMcpServer, ir.KindCollection, ir.KindRule}
+	out := make([]ir.ResourceKind, 0, len(buckets))
+	seen := make(map[ir.ResourceKind]struct{}, len(known))
+	for _, kind := range known {
+		seen[kind] = struct{}{}
+		if len(buckets[kind]) > 0 {
+			out = append(out, kind)
+		}
+	}
+	var unknown []ir.ResourceKind
+	for kind := range buckets {
+		if _, ok := seen[kind]; !ok {
+			unknown = append(unknown, kind)
+		}
+	}
+	sort.Slice(unknown, func(i, j int) bool {
+		if unknown[i].String() != unknown[j].String() {
+			return unknown[i].String() < unknown[j].String()
+		}
+		return unknown[i] < unknown[j]
+	})
+	return append(out, unknown...)
+}
+
+func resourceKindSectionPath(kind ir.ResourceKind) string {
+	switch kind {
+	case ir.KindSkill:
+		return "skills"
+	case ir.KindCommand:
+		return "commands"
+	case ir.KindSubagent:
+		return "subagents"
+	case ir.KindHook:
+		return "hooks"
+	case ir.KindMcpServer:
+		return "mcp-servers"
+	case ir.KindCollection:
+		return "collections"
+	case ir.KindRule:
+		return "rules"
+	default:
+		// Unknown kinds can share one String() label; the numeric value keeps
+		// their section paths distinct and deterministic.
+		return fmt.Sprintf("kind-%d", int(kind))
+	}
+}
+
+func resourceKindSectionTitle(kind ir.ResourceKind) string {
+	switch kind {
+	case ir.KindSkill:
+		return "Skills"
+	case ir.KindCommand:
+		return "Commands"
+	case ir.KindSubagent:
+		return "Subagents"
+	case ir.KindHook:
+		return "Hooks"
+	case ir.KindMcpServer:
+		return "MCP servers"
+	case ir.KindCollection:
+		return "Collections"
+	case ir.KindRule:
+		return "Rules"
+	default:
+		return kind.String()
+	}
+}
+
+// emitSection appends a section header and, unless folded, its children —
+// nested sections for a secondary axis or sorted leaf rows.
+func emitSection(out []flatItem, sec groupedSection, depth int, foldState map[string]bool) []flatItem {
+	sortLeafRows(sec.members)
+	collapsed := foldState[sec.path]
+	out = append(out, flatItem{
+		Kind:         flatSection,
+		SectionPath:  sec.path,
+		SectionTitle: sec.title,
+		SectionCount: len(sec.members),
+		SectionDepth: depth,
+		Collapsed:    collapsed,
+	})
+	if collapsed {
+		return out
+	}
+	for _, r := range sec.members {
+		out = append(out, flatItem{Kind: flatArtifact, Row: r, Depth: depth + 1})
+	}
 	return out
+}
+
+func emitAxisSections(out []flatItem, rows []row, settings viewSettings, axis groupingAxis, prefix string, depth int, foldState map[string]bool) []flatItem {
+	for _, sec := range groupByAxis(rows, axis, prefix) {
+		if depth == 0 && settings.ThenBy != axisNone {
+			collapsed := foldState[sec.path]
+			out = append(out, flatItem{
+				Kind:         flatSection,
+				SectionPath:  sec.path,
+				SectionTitle: sec.title,
+				SectionCount: len(sec.members),
+				SectionDepth: depth,
+				Collapsed:    collapsed,
+			})
+			if !collapsed {
+				out = emitAxisSections(out, sec.members, settings, settings.ThenBy, sec.path, depth+1, foldState)
+			}
+			continue
+		}
+		out = emitSection(out, sec, depth, foldState)
+	}
+	return out
+}
+
+// buildGroupedTree builds the flattened list for any valid primary/secondary
+// grouping combination. When the primary axis is not status, attention rows
+// move into one pinned "Needs attention" section at the top.
+func buildGroupedTree(rows []row, settings viewSettings, foldState map[string]bool) []flatItem {
+	settings = settings.normalized()
+	if foldState == nil {
+		foldState = map[string]bool{}
+	}
+	var out []flatItem
+	remaining := rows
+	if settings.GroupBy != axisStatus {
+		var attention []row
+		var rest []row
+		attn := attentionBuckets()
+		for _, r := range rows {
+			if attn[classifyStatus(r)] {
+				attention = append(attention, r)
+			} else {
+				rest = append(rest, r)
+			}
+		}
+		if len(attention) > 0 {
+			// Status-bucket order, then name; emitSection's leaf sort would
+			// destroy the status order, so emit the header and rows directly.
+			sort.SliceStable(attention, func(i, j int) bool {
+				bi, bj := classifyStatus(attention[i]), classifyStatus(attention[j])
+				if bi != bj {
+					return bi < bj
+				}
+				return attention[i].Artifact.Name < attention[j].Artifact.Name
+			})
+			collapsed := foldState["attention"]
+			out = append(out, flatItem{
+				Kind:         flatSection,
+				SectionPath:  "attention",
+				SectionTitle: "Needs attention",
+				SectionCount: len(attention),
+				SectionDepth: 0,
+				Collapsed:    collapsed,
+			})
+			if !collapsed {
+				for _, r := range attention {
+					out = append(out, flatItem{Kind: flatArtifact, Row: r, Depth: 1})
+				}
+			}
+		}
+		remaining = rest
+	}
+	out = emitAxisSections(out, remaining, settings, settings.GroupBy, "", 0, foldState)
+	return out
+}
+
+func buildStatusTree(rows []row, foldState map[string]bool) []flatItem {
+	return buildGroupedTree(rows, viewSettings{GroupBy: axisStatus, ThenBy: axisNone}, foldState)
+}
+
+// sortLeafRows orders rows inside one leaf section: filter matches by
+// search rank (name matches first, then descending score), then name, then
+// stable identity; unfiltered rows stay alphabetical. Section order is
+// untouched.
+func sortLeafRows(rows []row) {
+	sort.SliceStable(rows, func(i, j int) bool {
+		ri, rj := rows[i], rows[j]
+		if ri.searchRanked || rj.searchRanked {
+			if searchRankLess(ri, rj) || searchRankLess(rj, ri) {
+				return searchRankLess(ri, rj)
+			}
+			if ri.Artifact.Name != rj.Artifact.Name {
+				return ri.Artifact.Name < rj.Artifact.Name
+			}
+			return rowKey(ri) < rowKey(rj)
+		}
+		return ri.Artifact.Name < rj.Artifact.Name
+	})
 }

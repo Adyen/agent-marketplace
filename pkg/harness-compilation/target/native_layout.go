@@ -77,6 +77,13 @@ type NativePartition struct {
 	// Aggregates are the shared target files resource kinds contribute
 	// entries to.
 	Aggregates []NativeAggregate
+	// HookSupportDir is the per-hook support root (<dir>/<source>/<hook>/),
+	// relative to the partition root, for a partition that installs each
+	// hook as its own resource file instead of declaring a hook aggregate.
+	// It requires a hook resource path, forbids a hook aggregate (whose
+	// SupportDir already owns the role), and must be one of Components so
+	// materialization plans and prunes it.
+	HookSupportDir string
 }
 
 // HookShape names the entry encoding a hook aggregate file carries: how an
@@ -129,7 +136,9 @@ type NativeAggregateFile struct {
 	// root as Path and must be clean, non-empty, and distinct from Path.
 	// Consumers reconcile owned entries out of them; the declaration never
 	// makes them write targets.
-	Legacy []string
+	Legacy                    []string
+	PreserveLegacyHandwritten bool
+	LegacyMarkedFlatHooks     bool
 }
 
 // NativeAggregate identifies a shared target file produced for one resource
@@ -152,15 +161,24 @@ type NativeAggregate struct {
 	// below which a hook's support files install
 	// (<support dir>/<source>/<hook>/). It is required exactly when Kind is
 	// ir.KindHook.
-	SupportDir string
+	SupportDir            string
+	LegacyMarkedFlatHooks bool
 }
 
 var nativeLayouts = map[Target]NativeLayout{
+	TargetOpenCode: {Partitions: []NativePartition{{
+		// hook-support precedes hooks so support is published before the
+		// declarations that reference it.
+		ID: "default", Prefix: ".", Components: []string{"skills", "commands", "agents", "hook-support", "hooks", "plugins"},
+		ResourcePaths:  map[ir.ResourceKind]string{ir.KindSkill: "skills/%s/SKILL.md", ir.KindCommand: "commands/%s.md", ir.KindSubagent: "agents/%s.md", ir.KindHook: "hooks/agent-marketplace/%s.json"},
+		Aggregates:     []NativeAggregate{{Kind: ir.KindMcpServer, Project: NativeAggregateFile{Path: "opencode.json", Member: "mcp"}, User: NativeAggregateFile{Path: "opencode.json", Member: "mcp"}}},
+		HookSupportDir: "hook-support",
+	}}},
 	TargetClaude: {Partitions: []NativePartition{
 		{
 			ID:         "default",
 			Prefix:     ".",
-			Components: []string{"skills", "commands", "agents", "hooks", ".claude-plugin"},
+			Components: []string{"skills", "commands", "agents", "hooks", "hook-support", ".claude-plugin"},
 			ResourcePaths: map[ir.ResourceKind]string{
 				ir.KindSkill:    "skills/%s/SKILL.md",
 				ir.KindCommand:  "commands/%s.md",
@@ -196,7 +214,7 @@ var nativeLayouts = map[Target]NativeLayout{
 		{
 			ID:         "default",
 			Prefix:     ".",
-			Components: []string{"skills", "commands", "droids", "hooks", ".factory-plugin"},
+			Components: []string{"skills", "commands", "droids", "hooks", "hook-support", ".factory-plugin"},
 			ResourcePaths: map[ir.ResourceKind]string{
 				ir.KindSkill:    "skills/%s/SKILL.md",
 				ir.KindCommand:  "commands/%s.md",
@@ -226,7 +244,7 @@ var nativeLayouts = map[Target]NativeLayout{
 		{
 			ID:         "default",
 			Prefix:     ".",
-			Components: []string{"skills", "commands", "agents", "hooks"},
+			Components: []string{"skills", "commands", "agents", "hooks", "hook-support"},
 			ResourcePaths: map[ir.ResourceKind]string{
 				ir.KindSkill:    "skills/%s/SKILL.md",
 				ir.KindCommand:  "commands/%s.md",
@@ -272,8 +290,8 @@ var nativeLayouts = map[Target]NativeLayout{
 					Kind:       ir.KindHook,
 					Shape:      HookShapeEventHandlers,
 					SupportDir: "hook-support",
-					Project:    NativeAggregateFile{Path: ".devin/hooks.json", Member: "hooks", Legacy: []string{".windsurf/hooks.json"}},
-					User:       NativeAggregateFile{Path: "hooks.json", Member: "hooks"},
+					Project:    NativeAggregateFile{Path: ".devin/hooks.json", Member: "hooks", Legacy: []string{".windsurf/hooks.json"}, PreserveLegacyHandwritten: true},
+					User:       NativeAggregateFile{Path: "hooks.json", Member: "hooks", LegacyMarkedFlatHooks: true},
 				},
 				{
 					Kind:    ir.KindMcpServer,
@@ -287,7 +305,7 @@ var nativeLayouts = map[Target]NativeLayout{
 		{
 			ID:         "default",
 			Prefix:     ".",
-			Components: []string{"skills", "commands"},
+			Components: []string{"skills", "commands", "hook-support"},
 			ResourcePaths: map[ir.ResourceKind]string{
 				ir.KindSkill:   "skills/%s/SKILL.md",
 				ir.KindCommand: "commands/%s.md",
@@ -295,11 +313,12 @@ var nativeLayouts = map[Target]NativeLayout{
 			Aggregates: []NativeAggregate{
 				// Hooks merge into the scope's settings.json under `hooks`.
 				{
-					Kind:       ir.KindHook,
-					Shape:      HookShapeMatcherGroups,
-					SupportDir: "hook-support",
-					Project:    NativeAggregateFile{Path: "settings.json", Member: "hooks"},
-					User:       NativeAggregateFile{Path: "settings.json", Member: "hooks"},
+					Kind:                  ir.KindHook,
+					Shape:                 HookShapeMatcherGroups,
+					SupportDir:            "hook-support",
+					LegacyMarkedFlatHooks: true,
+					Project:               NativeAggregateFile{Path: "settings.json", Member: "hooks"},
+					User:                  NativeAggregateFile{Path: "settings.json", Member: "hooks"},
 				},
 				{
 					Kind:    ir.KindMcpServer,
@@ -315,7 +334,7 @@ var nativeLayouts = map[Target]NativeLayout{
 			Prefix: ".",
 			// Project hooks merge into a root-level file (hooks.v1.json),
 			// never a hooks directory, so hooks is not a component.
-			Components: []string{"skills", "agents"},
+			Components: []string{"skills", "agents", "hook-support"},
 			ResourcePaths: map[ir.ResourceKind]string{
 				ir.KindSkill:    "skills/%s/SKILL.md",
 				ir.KindCommand:  "skills/%s/SKILL.md",
@@ -359,7 +378,7 @@ var nativeLayouts = map[Target]NativeLayout{
 			Prefix:               ".codex",
 			MachineRootEnv:       "CODEX_HOME",
 			InstallationEvidence: true,
-			Components:           []string{"agents"},
+			Components:           []string{"agents", "hook-support"},
 			ResourcePaths:        map[ir.ResourceKind]string{ir.KindSubagent: "agents/%s.toml"},
 			Aggregates: []NativeAggregate{
 				{
@@ -757,6 +776,20 @@ func validatePartitionContent(t Target, partition NativePartition, resourceKinds
 		case aggregate.Kind != ir.KindHook && aggregate.SupportDir != "":
 			errs = append(errs, fmt.Errorf("target %q partition %q aggregate for %s declares support directory %q; support directories belong to hooks", t, partition.ID, aggregate.Kind, aggregate.SupportDir))
 		}
+		if aggregate.LegacyMarkedFlatHooks && (aggregate.Kind != ir.KindHook || (aggregate.Shape != HookShapeMatcherGroups && aggregate.Shape != HookShapeEventHandlers)) {
+			errs = append(errs, fmt.Errorf("target %q partition %q aggregate for %s declares legacy marked flat hooks; the transition applies only to hook matcher-groups or event-handlers aggregates", t, partition.ID, aggregate.Kind))
+		}
+		for _, scope := range []struct {
+			name string
+			file NativeAggregateFile
+		}{{"project", aggregate.Project}, {"user", aggregate.User}} {
+			if scope.file.LegacyMarkedFlatHooks && (aggregate.Kind != ir.KindHook || (aggregate.Shape != HookShapeMatcherGroups && aggregate.Shape != HookShapeEventHandlers)) {
+				errs = append(errs, fmt.Errorf("target %q partition %q %s-scope aggregate for %s declares legacy marked flat hooks on a file; the transition applies only to hook matcher-groups or event-handlers files", t, partition.ID, scope.name, aggregate.Kind))
+			}
+			if scope.file.PreserveLegacyHandwritten && (aggregate.Kind != ir.KindHook || aggregate.Shape != HookShapeEventHandlers || len(scope.file.Legacy) == 0) {
+				errs = append(errs, fmt.Errorf("target %q partition %q %s-scope aggregate for %s preserves legacy handwritten entries; it requires a hook event-handlers aggregate with legacy paths", t, partition.ID, scope.name, aggregate.Kind))
+			}
+		}
 		for _, scope := range []struct {
 			name string
 			file NativeAggregateFile
@@ -815,6 +848,23 @@ func validatePartitionContent(t Target, partition NativePartition, resourceKinds
 					errs = append(errs, fmt.Errorf("target %q partition %q %s-scope aggregate for %s lists legacy location %q identical to its native file", t, partition.ID, scope.name, aggregate.Kind, legacy))
 				}
 			}
+		}
+	}
+	if partition.HookSupportDir != "" {
+		hookPattern, hasHookPath := partition.ResourcePaths[ir.KindHook]
+		hookDir, _, _ := strings.Cut(hookPattern, "/")
+		switch {
+		case !hasHookPath:
+			errs = append(errs, fmt.Errorf("target %q partition %q declares hook support directory %q without a hook resource path", t, partition.ID, partition.HookSupportDir))
+		case slices.ContainsFunc(partition.Aggregates, func(a NativeAggregate) bool { return a.Kind == ir.KindHook }):
+			errs = append(errs, fmt.Errorf("target %q partition %q declares hook support directory %q beside a hook aggregate; the aggregate's SupportDir owns hook support", t, partition.ID, partition.HookSupportDir))
+		case !slices.Contains(partition.Components, partition.HookSupportDir):
+			errs = append(errs, fmt.Errorf("target %q partition %q hook support directory %q must be a declared component", t, partition.ID, partition.HookSupportDir))
+		case partition.HookSupportDir == hookDir:
+			errs = append(errs, fmt.Errorf("target %q partition %q hook support directory %q shares the hook resource component", t, partition.ID, partition.HookSupportDir))
+		}
+		if resourceDirs[partition.HookSupportDir] {
+			errs = append(errs, fmt.Errorf("target %q partition %q hook support directory %q is a resource directory", t, partition.ID, partition.HookSupportDir))
 		}
 	}
 	return errs

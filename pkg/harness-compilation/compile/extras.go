@@ -165,6 +165,13 @@ func McpCredentialDiagnosticsForFields(resource string, source diag.SourceRef, t
 	return mcpCredentialDiagnosticsForFields(resource, source, target, env, headers, oauthClientSecret, nil, fieldPrefix, opts...)
 }
 
+// McpCredentialDiagnosticsWithExtra is McpCredentialDiagnosticsForFields for a
+// server whose unmodeled members are preserved verbatim: it also scans
+// credential-bearing env and header maps and an OAuth client secret in extra.
+func McpCredentialDiagnosticsWithExtra(resource string, source diag.SourceRef, target Target, env map[string]string, extra map[string]any, fieldPrefix string, opts ...Option) []diag.Diagnostic {
+	return mcpCredentialDiagnosticsForFields(resource, source, target, env, nil, "", extra, fieldPrefix, opts...)
+}
+
 func mcpCredentialDiagnosticsForFields(resource string, source diag.SourceRef, target Target, env, headers map[string]string, oauthClientSecret string, extra map[string]any, fieldPrefix string, opts ...Option) []diag.Diagnostic {
 	cfg := Options{}
 	for _, opt := range opts {
@@ -229,6 +236,11 @@ func mcpCredentialExtraFields(extra map[string]any, fieldPrefix string, cfg Opti
 	}
 	if value, ok := extra["oauthClientSecret"].(string); ok && value != "" && !cfg.isInterpolation(value) {
 		fields = append(fields, fieldPrefix+"oauthClientSecret")
+	}
+	if oauth, ok := extra["oauth"].(map[string]any); ok {
+		if value, ok := oauth["clientSecret"].(string); ok && value != "" && !cfg.isInterpolation(value) {
+			fields = append(fields, fieldPrefix+"oauth.clientSecret")
+		}
 	}
 	return fields
 }

@@ -16,7 +16,7 @@
 
 ## 1. Catalogs (pkg/harness-compilation)
 
-- [ ] 1.1 Re-verify every entry in the draft catalogs in
+- [x] 1.1 Re-verify every entry in the draft catalogs in
   `openspec/changes/native-hook-integration/catalogs/` against its evidence
   refs, and update `evidence.checked` where a page changed. Copy them to
   `toolpolicy/concepts.yaml`, `toolpolicy/catalogs/<harness>.yaml`, and
@@ -34,12 +34,12 @@
   name, missing evidence. Annotate
   `hook-resources/invalid-catalog-fails-the-check`. Verify
   `go test ./pkg/harness-compilation/hookpolicy -count=1` passes
-- [ ] 1.4 Copy `catalogs/testdata/conversions.yaml` to
+- [x] 1.4 Copy `catalogs/testdata/conversions.yaml` to
   `hookpolicy/testdata/conversions.yaml`, and add a fixture runner through
   the public `Compile` path. The fixtures must fail on the unchanged
   translators before sections 2–3 land. Verify the red run, then the green
   run after section 3
-- [ ] 1.5 Add `make catalog-check`. It runs `toolpolicy`/`hookpolicy`
+- [x] 1.5 Add `make catalog-check`. It runs `toolpolicy`/`hookpolicy`
   validation, the conversion fixtures, the matrix goldens, PR #276's
   `model-catalog-check` when present, and the generated-docs freshness
   check. Add `make catalog-docs`, generating
@@ -116,7 +116,7 @@ hook matrix goldens deliberately.
   `renamed-tools-are-accepted-through-aliases`
 - [x] 3.6 Cursor. Annotate `cursor-receives-native-event-names`
 - [x] 3.7 Factory Droid. Annotate `factory-hooks-keep-native-tool-names`
-- [ ] 3.8 Add cross-target tests through the public `Compile` path and
+- [x] 3.8 Add cross-target tests through the public `Compile` path and
   annotate them:
   - `unmappable-events-are-errors-on-every-target`
   - `differently-timed-events-are-never-equated`
@@ -130,33 +130,33 @@ hook matrix goldens deliberately.
   - `unknown-variables-are-left-unchanged`
 
   Verify `go test ./pkg/harness-compilation/... -count=1` passes
-- [ ] 3.9 Delete `compile/mapping/hook_events.go` and the hook entries in
+- [x] 3.9 Delete `compile/mapping/hook_events.go` and the hook entries in
   `envvars.go`, keeping MCP env mapping. Verify nothing references
   `mapping.HookEvent`, `ReverseHookEvent`, or `NativeCodexHookEvent`
 
 ## 4. Ingestion and source revisions
 
-- [ ] 4.1 Record `HookSource` in every ingester and stop normalizing native
+- [x] 4.1 Record `HookSource` in every ingester and stop normalizing native
   values early. Add native-location ingestion for `.claude/settings.json`,
   `.factory/hooks.json`, `.cursor/hooks.json`, and Windsurf's
   `.devin/hooks.json`, with the autodetection rule from the design Risks.
   Annotate:
   - `claude-settings-hooks-are-ingested`
-  - `cursor-native-hooks-are-ingested-with-canonical-events`
+  - `cursor-native-hooks-retain-native-events-on-ingestion`
   - `devin-desktop-workspace-hooks-are-ingested-for-windsurf`
 
   Add a two-way autodetection test for `.devin/`. Verify the ingest tests
   pass
-- [ ] 4.2 Add the next source-revision generator version for hook and tool
-  provenance, with frozen vectors for every earlier supported version and
-  hook- and tool-bearing fixtures for each layout. Annotate a CLI lock test
-  with `pre-change-hook-lock-verifies-unchanged`. Verify
-  `go test ./internal/sourcerevision -count=1` and the command lock tests
-  pass
+- [x] 4.2 Preserve the existing source-revision schemas and generator versions
+  for hook and tool provenance. Keep historical digest projections unchanged,
+  with frozen vectors for every supported version and hook- and tool-bearing
+  fixtures for each layout. Do not introduce a new generator version. Annotate
+  a CLI lock test with `pre-change-hook-lock-verifies-unchanged`. Verify
+  `go test ./internal/sourcerevision -count=1` and the command lock tests pass
 
 ## 5. Materialization (internal consumes library declarations only)
 
-- [ ] 5.1 Replace the hook support routing with per-hook
+- [x] 5.1 Replace the hook support routing with per-hook
   `hook-support/<source>/<hook>/` directories supplied as an opaque base.
   Delete the Factory `${DROID_PLUGIN_ROOT}` byte replacement and the
   cache-root `WithPluginRoot` injection for hooks. Annotate:
@@ -170,7 +170,7 @@ hook matrix goldens deliberately.
   - `deselected-hooks-remove-their-support-directory`
 
   Verify `go test ./internal/materialize -count=1` passes
-- [ ] 5.2 Generalize the Devin and Codex ownership-state hook reconciler to
+- [x] 5.2 Generalize the Devin and Codex ownership-state hook reconciler to
   every target, driven by `NativeLayout` shape and member. Stop emitting
   `_managed_by` for hooks. Annotate:
   - `handwritten-claude-hooks-satisfy-identical-entries`
@@ -189,18 +189,18 @@ hook matrix goldens deliberately.
   drift test, and a test that Devin CLI and Windsurf cleanup never touch each
   other's `.devin/` files. Verify
   `go test ./internal/materialize ./internal/ownership -count=1` passes
-- [ ] 5.3 Emit `hook.duplicate-execution-risk` from catalog `loads_hooks_of`
+- [x] 5.3 Emit `hook.duplicate-execution-risk` from catalog `loads_hooks_of`
   data. Annotate `claude-code-and-cursor-selected-together`,
   `claude-code-and-devin-cli-selected-together`, and
   `a-single-target-produces-no-duplicate-warning`. Verify the tests pass
-- [ ] 5.4 Add the architecture guard test (design D14). Verify it fails when a
+- [x] 5.4 Add the architecture guard test (design D14). Verify it fails when a
   hook code path in `internal/materialize` compares against a harness
   constant or embeds a plugin-root or project-directory literal, and passes
   on the finished tree
 
 ## 6. Legacy migration (merge only after 0.2 holds)
 
-- [ ] 6.1 Implement the one-transaction move of `_managed_by` entries from the
+- [x] 6.1 Implement the one-transaction move of `_managed_by` entries from the
   legacy files to native files: Claude Code, Cursor, and Factory Droid
   `hooks/hooks.json` in both scopes, and Windsurf's repository-scope
   `.windsurf/hooks.json`. Delete legacy files that become empty, prune owned
@@ -213,17 +213,20 @@ hook matrix goldens deliberately.
   - `check-reports-a-pending-migration`
 
   Verify the tests pass
-- [ ] 6.2 Add an interrupted-migration test using
+- [x] 6.2 Add an interrupted-migration test using
   `AGENT_MARKETPLACE_E2E_CRASH_AT`. Verify a half-published migration is
   refused by read-only commands and completed by the next mutating command
-- [ ] 6.3 Extend `upgrade-gate` with a v3.1.1 hook fixture for all seven
-  targets, and `released-client-gate` with a hook migration step. Annotate
-  `latest-release-still-verifies-after-migration`. Verify both gates pass,
-  with every scenario witnessed by `tools/witness-check -require`
+- [ ] 6.3 Extend `released-client-gate` with a hook migration step using
+  shared v4 consumer configuration. Annotate
+  `latest-release-still-verifies-after-migration`. Verify the pinned stable
+  v4 client still passes, with every required scenario witnessed by
+  `tools/witness-check -require`. Keep independent legacy native-hook
+  upgrade coverage under v4 consumer fixtures; do not restore the retired
+  pre-v4 consumer success `upgrade-gate` or require a pre-v4 executable.
 
 ## 7. Review report and value-free diagnostics
 
-- [ ] 7.1 Add hook entry changes to the materialization report, and render a
+- [x] 7.1 Add hook entry changes to the materialization report, and render a
   "Hook changes" section for `sync` and `sync --check`. Emit
   `materialize.hook.review` and `materialize.hook.review-pending`, keeping the
   Codex codes. Annotate:
@@ -233,7 +236,7 @@ hook matrix goldens deliberately.
   - `codex-keeps-its-trust-review-codes`
 
   Verify the command tests pass through `isolateCommandTest`
-- [ ] 7.2 Add a cross-target test proving that no hook diagnostic or log
+- [x] 7.2 Add a cross-target test proving that no hook diagnostic or log
   record contains payload values, and that a sync printing a review writes no
   command to the log file or telemetry. Annotate
   `diagnostics-never-quote-payloads-on-any-target` and
@@ -241,30 +244,30 @@ hook matrix goldens deliberately.
 
 ## 8. Maintainer documentation and drift audit
 
-- [ ] 8.1 Add an "Update a shipped hook or tool catalog" recipe to
+- [x] 8.1 Add an "Update a shipped hook or tool catalog" recipe to
   `pkg/harness-compilation/README.md`, next to the model recipe, following
   design D3 step by step. Verify that a dry run of the recipe works: rename
   a tool in a scratch branch, and confirm that only the YAML, one fixture
   line, and the regenerated doc change, and that `make catalog-check`
   passes
-- [ ] 8.2 Add the hook and tool documentation sources from the catalog
+- [x] 8.2 Add the hook and tool documentation sources from the catalog
   `evidence.refs` to PR #276's catalog audit tool, with sha256 baselines.
   Verify `go test` for the audit tool passes offline
-- [ ] 8.3 Update the hook rows in
+- [x] 8.3 Update the hook rows in
   `site/docs/reference/harnesses-and-output-paths.md`, the hook and tool
   sections of `docs/harness-validation/*.md` (including the third-party
   loaders and the Windsurf `.devin/hooks.json` path), the hook and tool rows
   of `pkg/harness-compilation/diag/codes.md`, and the `registry-authoring`
   skill's hook guidance. Verify the site build and `make spec-check` pass
-- [ ] 8.4 Update the harness compatibility fixtures to seed hooks in native
+- [x] 8.4 Update the harness compatibility fixtures to seed hooks in native
   locations. Verify `make validate-e2e` passes
 
 ## 9. Validate and archive
 
-- [ ] 9.1 Run `go run ./tools/specaudit trace`. Verify there are no unbound
+- [x] 9.1 Run `go run ./tools/specaudit trace`. Verify there are no unbound
   `hook-resources` or `harness-tool-catalogs` scenarios and no dangling
   annotations
-- [ ] 9.2 Run `make validate`, `make spec-check`, `make validate-e2e`,
+- [x] 9.2 Run `make validate`, `make spec-check`, `make validate-e2e`,
   `make catalog-check`, and `make tui-qa` if TUI hook views changed. Verify
   all pass
 - [ ] 9.3 Run `openspec archive native-hook-integration --yes` in this pull

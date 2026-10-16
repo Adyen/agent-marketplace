@@ -80,6 +80,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"sort"
@@ -87,6 +88,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Adyen/agent-marketplace/internal/fsboundary"
 	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
 )
 
@@ -101,15 +103,6 @@ type Config struct {
 	Enabled   bool
 	MaxDays   int
 	MaxPerDay int
-}
-
-// DefaultConfig returns the default backup configuration.
-func DefaultConfig() Config {
-	return Config{
-		Enabled:   true,
-		MaxDays:   defaultMaxDays,
-		MaxPerDay: defaultMaxPerDay,
-	}
 }
 
 // Dir returns the backups root directory under the agent-marketplace data dir.
@@ -153,9 +146,6 @@ func Create(managed map[hcc.Target]ManagedPaths) error {
 			continue
 		}
 		targetBackupDir := filepath.Join(dir, string(target))
-		if err := os.MkdirAll(targetBackupDir, 0o755); err != nil {
-			return fmt.Errorf("backup: create target dir %s: %w", targetBackupDir, err)
-		}
 		archivePath, err := nextArchivePath(targetBackupDir, timestamp)
 		if err != nil {
 			return err
@@ -171,7 +161,7 @@ func Create(managed map[hcc.Target]ManagedPaths) error {
 // Rotate enforces the two-axis retention policy:
 //   - within each calendar day keep at most cfg.MaxPerDay archives (oldest removed first)
 //   - keep archives from at most cfg.MaxDays distinct calendar days (oldest days removed first)
-func Rotate(cfg Config) error {
+func Rotate(cfg Config) (err error) {
 	maxDays := cfg.MaxDays
 	if maxDays <= 0 {
 		maxDays = defaultMaxDays
@@ -185,11 +175,29 @@ func Rotate(cfg Config) error {
 	if err != nil {
 		return err
 	}
-	entries, err := os.ReadDir(dir)
+	root, err := fsboundary.OpenDir(dir)
 	if err != nil {
-		if os.IsNotExist(err) {
+		if errors.Is(err, fs.ErrNotExist) {
 			return nil
 		}
+		return err
+	}
+	defer func() {
+		if closeErr := root.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
+	native, err := root.NativeRoot()
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if closeErr := native.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
+	entries, err := fs.ReadDir(native.FS(), ".")
+	if err != nil {
 		return err
 	}
 	for _, entry := range entries {
@@ -197,22 +205,62 @@ func Rotate(cfg Config) error {
 			continue
 		}
 		targetDir := filepath.Join(dir, entry.Name())
-		if entry.Name() == codexTargetName {
-			if err := rotateCodexSets(targetDir, maxDays, maxPerDay); err != nil {
+		observed, _, readErr := readBackupSourceMetadata(root, entry.Name())
+		if readErr != nil {
+			return fmt.Errorf("backup: rotate %s: %w", targetDir, readErr)
+		}
+		if observed == nil || !observed.IsDir() {
+			return fmt.Errorf("backup: rotate %s: %w", targetDir, fsboundary.ErrGenerationConflict)
+		}
+		identity, identityErr := fsboundary.FileInfoIdentity(observed)
+		if identityErr != nil {
+			return fmt.Errorf("backup: rotate %s: %w", targetDir, identityErr)
+		}
+		slog.Debug("Backup retention target directory selected", "path", targetDir, "phase", "backup-retention-target")
+		if rotateErr := func() (err error) {
+			parent, err := root.OpenPath(entry.Name())
+			if err != nil {
+				if errors.Is(err, fs.ErrNotExist) || errors.Is(err, fsboundary.ErrUnsafePath) {
+					return errors.Join(fsboundary.ErrGenerationConflict, err)
+				}
 				return err
 			}
-			continue
-		}
-		if err := rotateTarget(targetDir, maxDays, maxPerDay); err != nil {
-			return err
+			defer func() {
+				if closeErr := parent.Close(); closeErr != nil {
+					err = errors.Join(err, closeErr)
+				}
+			}()
+			if !identity.SameObject(parent.Identity()) {
+				return fsboundary.ErrGenerationConflict
+			}
+			defer func() {
+				if verifyErr := verifyArchiveParent(parent, targetDir); verifyErr != nil {
+					err = errors.Join(err, verifyErr)
+				}
+			}()
+			if entry.Name() == codexTargetName {
+				return rotateCodexSets(parent, targetDir, maxDays, maxPerDay)
+			}
+			return rotateTarget(parent, targetDir, maxDays, maxPerDay)
+		}(); rotateErr != nil {
+			return fmt.Errorf("backup: rotate %s: %w", targetDir, rotateErr)
 		}
 	}
 	return nil
 }
 
 // rotateTarget applies the two-axis retention policy to a single target directory.
-func rotateTarget(targetDir string, maxDays, maxPerDay int) error {
-	archives, err := filepath.Glob(filepath.Join(targetDir, "*.tar.gz"))
+func rotateTarget(parent *fsboundary.Dir, targetDir string, maxDays, maxPerDay int) (err error) {
+	native, err := parent.NativeRoot()
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if closeErr := native.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
+	archives, err := fs.Glob(native.FS(), "*.tar.gz")
 	if err != nil {
 		return fmt.Errorf("backup: list archives in %s: %w", targetDir, err)
 	}
@@ -233,16 +281,13 @@ func rotateTarget(targetDir string, maxDays, maxPerDay int) error {
 		byDay[day] = append(byDay[day], a)
 	}
 
+	var remove []string
 	// Step 1: per-day cap — remove oldest beyond maxPerDay within each day.
 	for _, day := range dayOrder {
 		group := byDay[day]
 		if len(group) > maxPerDay {
 			toRemove := group[:len(group)-maxPerDay]
-			for _, p := range toRemove {
-				if err := os.Remove(p); err != nil {
-					return fmt.Errorf("backup: remove old archive %s: %w", p, err)
-				}
-			}
+			remove = append(remove, toRemove...)
 			byDay[day] = group[len(group)-maxPerDay:]
 		}
 	}
@@ -251,14 +296,10 @@ func rotateTarget(targetDir string, maxDays, maxPerDay int) error {
 	if len(dayOrder) > maxDays {
 		oldDays := dayOrder[:len(dayOrder)-maxDays]
 		for _, day := range oldDays {
-			for _, p := range byDay[day] {
-				if err := os.Remove(p); err != nil {
-					return fmt.Errorf("backup: remove old archive %s: %w", p, err)
-				}
-			}
+			remove = append(remove, byDay[day]...)
 		}
 	}
-	return nil
+	return removeCapturedBackups(parent, targetDir, remove)
 }
 
 // archiveDay extracts the YYYY-MM-DD prefix from an archive base name.
@@ -274,13 +315,42 @@ func archiveDay(name string) string {
 // The destination directory must exist. Files created after the backup are
 // left in place. Returns the timestamp of the restored backup, or an error if
 // no backup exists.
-func Restore(target hcc.Target, dstDir string, mapped ...map[string]string) (string, error) {
+func Restore(target hcc.Target, dstDir string, mapped ...map[string]string) (timestamp string, err error) {
+	var latest string
+	defer func() {
+		if err != nil && latest != "" {
+			slog.Error("Backup restore failed", "target", string(target), "archive", latest, "error", err)
+		}
+	}()
 	dir, err := Dir()
 	if err != nil {
 		return "", err
 	}
 	targetDir := filepath.Join(dir, string(target))
-	archives, err := filepath.Glob(filepath.Join(targetDir, "*.tar.gz"))
+	parent, err := fsboundary.OpenDir(targetDir)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) && !errors.Is(err, fsboundary.ErrUnsafePath) {
+			return "", fmt.Errorf("backup: no backups found for target %q", target)
+		}
+		return "", err
+	}
+	defer func() {
+		if closeErr := parent.Close(); closeErr != nil {
+			timestamp = ""
+			err = errors.Join(err, closeErr)
+		}
+	}()
+	native, err := parent.NativeRoot()
+	if err != nil {
+		return "", err
+	}
+	defer func() {
+		if closeErr := native.Close(); closeErr != nil {
+			timestamp = ""
+			err = errors.Join(err, closeErr)
+		}
+	}()
+	archives, err := fs.Glob(native.FS(), "*.tar.gz")
 	if err != nil {
 		return "", fmt.Errorf("backup: list archives in %s: %w", targetDir, err)
 	}
@@ -288,109 +358,233 @@ func Restore(target hcc.Target, dstDir string, mapped ...map[string]string) (str
 		return "", fmt.Errorf("backup: no backups found for target %q", target)
 	}
 	sortBackupArchives(archives)
-	latest := archives[len(archives)-1]
-	timestamp := strings.TrimSuffix(filepath.Base(latest), ".tar.gz")
-
-	if err := extractArchive(latest, dstDir, mapped...); err != nil {
+	name := archives[len(archives)-1]
+	latest = filepath.Join(targetDir, name)
+	file, err := fsboundary.CaptureDestination(parent, name, fsboundary.LinkPolicyRepository)
+	if err != nil {
+		return "", fmt.Errorf("backup: restore %s: select %s: %w", string(target), latest, err)
+	}
+	defer func() {
+		if closeErr := file.Close(); closeErr != nil {
+			timestamp = ""
+			err = errors.Join(err, closeErr)
+		}
+	}()
+	if file.Link() != nil {
+		return "", fmt.Errorf("%w: backup archive %s is linked", fsboundary.ErrUnsafeFile, latest)
+	}
+	if !file.Exists() {
+		return "", fmt.Errorf("backup: restore %s: selected archive %s vanished: %w", string(target), latest, fsboundary.ErrGenerationConflict)
+	}
+	slog.Debug("Ordinary backup archive selected for restore", "path", latest, "phase", "ordinary-restore-selected")
+	if err := verifyArchiveParent(parent, targetDir); err != nil {
+		return "", fmt.Errorf("backup: restore %s: select %s: %w", string(target), latest, err)
+	}
+	if err := file.ReadTargetWith(func(reader io.Reader) error { return extractArchivePayload(reader, dstDir, nil, mapped...) }); err != nil {
 		return "", fmt.Errorf("backup: restore %s: %w", string(target), err)
 	}
-	return timestamp, nil
+	return strings.TrimSuffix(name, ".tar.gz"), nil
 }
 
 // ListBackups returns available backups grouped by target.
-func ListBackups() (map[hcc.Target][]string, error) {
-	result := make(map[hcc.Target][]string)
+func ListBackups() (result map[hcc.Target][]string, err error) {
+	result = make(map[hcc.Target][]string)
 	dir, err := Dir()
 	if err != nil {
 		return nil, err
 	}
-	entries, err := os.ReadDir(dir)
+	root, err := fsboundary.OpenDir(dir)
 	if err != nil {
-		if os.IsNotExist(err) {
+		if errors.Is(err, fs.ErrNotExist) {
 			return result, nil
 		}
 		return nil, err
+	}
+	defer func() {
+		if closeErr := root.Close(); closeErr != nil {
+			result = nil
+			err = errors.Join(err, closeErr)
+		}
+	}()
+	native, err := root.NativeRoot()
+	if err != nil {
+		return nil, fmt.Errorf("backup: list %s: %w", dir, err)
+	}
+	defer func() {
+		if closeErr := native.Close(); closeErr != nil {
+			result = nil
+			err = errors.Join(err, closeErr)
+		}
+	}()
+	entries, err := fs.ReadDir(native.FS(), ".")
+	if err != nil {
+		return nil, fmt.Errorf("backup: list %s: %w", dir, err)
 	}
 	for _, entry := range entries {
 		if !entry.IsDir() {
 			continue
 		}
-		target := hcc.Target(entry.Name())
 		targetDir := filepath.Join(dir, entry.Name())
-		if entry.Name() == codexTargetName {
-			sets, err := loadCompleteCodexSets(targetDir)
+		observed, _, readErr := readBackupSourceMetadata(root, entry.Name())
+		if readErr != nil {
+			return nil, fmt.Errorf("backup: list %s: %w", targetDir, readErr)
+		}
+		if observed == nil || !observed.IsDir() {
+			return nil, fmt.Errorf("backup: list %s: %w", targetDir, fsboundary.ErrGenerationConflict)
+		}
+		identity, identityErr := fsboundary.FileInfoIdentity(observed)
+		if identityErr != nil {
+			return nil, fmt.Errorf("backup: list %s: %w", targetDir, identityErr)
+		}
+		slog.Debug("Backup listing target directory admitted", "path", targetDir, "phase", "backup-listing-target")
+		timestamps, listErr := func() (timestamps []string, err error) {
+			parent, err := root.OpenPath(entry.Name())
 			if err != nil {
-				return nil, fmt.Errorf("backup: list Codex sets: %w", err)
-			}
-			if len(sets) > 0 {
-				operations := make([]string, 0, len(sets))
-				for _, set := range sets {
-					operations = append(operations, set.Operation)
+				if errors.Is(err, fs.ErrNotExist) || errors.Is(err, fsboundary.ErrUnsafePath) {
+					return nil, errors.Join(fsboundary.ErrGenerationConflict, err)
 				}
-				result[target] = operations
+				return nil, err
 			}
-			continue
+			defer func() {
+				if closeErr := parent.Close(); closeErr != nil {
+					err = errors.Join(err, closeErr)
+				}
+			}()
+			if !identity.SameObject(parent.Identity()) {
+				return nil, fsboundary.ErrGenerationConflict
+			}
+			defer func() {
+				if verifyErr := verifyArchiveParent(parent, targetDir); verifyErr != nil {
+					err = errors.Join(err, verifyErr)
+				}
+			}()
+			if entry.Name() == codexTargetName {
+				sets, err := loadCompleteCodexSetsAt(parent)
+				if err != nil {
+					return nil, err
+				}
+				for _, set := range sets {
+					timestamps = append(timestamps, set.Operation)
+				}
+				return timestamps, nil
+			}
+			native, err := parent.NativeRoot()
+			if err != nil {
+				return nil, err
+			}
+			defer func() {
+				if closeErr := native.Close(); closeErr != nil {
+					err = errors.Join(err, closeErr)
+				}
+			}()
+			archives, err := fs.Glob(native.FS(), "*.tar.gz")
+			if err != nil {
+				return nil, err
+			}
+			sortBackupArchives(archives)
+			timestamps = make([]string, len(archives))
+			for i, archive := range archives {
+				timestamps[i] = strings.TrimSuffix(archive, ".tar.gz")
+			}
+			return timestamps, nil
+		}()
+		if listErr != nil {
+			return nil, fmt.Errorf("backup: list %s: %w", entry.Name(), listErr)
 		}
-		archives, err := filepath.Glob(filepath.Join(targetDir, "*.tar.gz"))
-		if err != nil {
-			return nil, fmt.Errorf("backup: list archives in %s: %w", targetDir, err)
+		if entry.Name() != codexTargetName || len(timestamps) > 0 {
+			result[hcc.Target(entry.Name())] = timestamps
 		}
-		sortBackupArchives(archives)
-		timestamps := make([]string, len(archives))
-		for i, a := range archives {
-			timestamps[i] = strings.TrimSuffix(filepath.Base(a), ".tar.gz")
-		}
-		result[target] = timestamps
 	}
 	return result, nil
 }
 
 // existingPaths filters relPaths to those that exist on disk under root.
-func existingPaths(root string, relPaths []string) ([]string, error) {
-	var out []string
+func existingPaths(root string, relPaths []string) (out []string, err error) {
+	if len(relPaths) == 0 {
+		return nil, nil
+	}
+	absolute, err := filepath.Abs(root)
+	if err != nil {
+		return nil, err
+	}
+	source, err := fsboundary.OpenDir(absolute)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	defer func() {
+		if closeErr := source.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
 	for _, p := range relPaths {
-		if _, err := os.Lstat(filepath.Join(root, p)); err == nil {
+		info, _, readErr := readBackupSourceMetadata(source, p)
+		if readErr != nil {
+			return nil, readErr
+		}
+		if info != nil {
 			out = append(out, p)
-		} else if !os.IsNotExist(err) {
-			return nil, err
 		}
 	}
 	return out, nil
 }
 
-func createArchive(root string, relPaths []string, archivePath string, mapped ...map[string]string) (err error) {
-	f, err := os.OpenFile(archivePath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
-	if err != nil {
-		return err
-	}
+func createArchive(root string, relPaths []string, archivePath string, mapped ...map[string]string) error {
+	return withArchiveOutput(archivePath, func(file *os.File) error { return writeBackupSourceArchive(file, root, relPaths, mapped...) })
+}
 
-	gw := gzip.NewWriter(f)
-
-	tw := tar.NewWriter(gw)
-	defer func() {
-		for _, closeFn := range []func() error{tw.Close, gw.Close, f.Close} {
-			if closeErr := closeFn(); err == nil && closeErr != nil {
-				err = closeErr
-			}
+func writeBackupSourceArchive(writer io.Writer, root string, relPaths []string, mapped ...map[string]string) (err error) {
+	var source *fsboundary.Dir
+	if len(relPaths) > 0 {
+		absolute, resolveErr := filepath.Abs(root)
+		if resolveErr != nil {
+			return resolveErr
 		}
-		if err != nil {
-			_ = os.Remove(archivePath)
-		}
-	}()
-
-	for _, rel := range relPaths {
-		fullPath := filepath.Join(root, rel)
-		info, err := os.Lstat(fullPath)
+		source, err = fsboundary.OpenDir(absolute)
 		if err != nil {
 			return err
 		}
+		defer func() {
+			if closeErr := source.Close(); closeErr != nil {
+				if err != nil {
+					err = errors.Join(err, closeErr)
+				} else {
+					err = closeErr
+				}
+			}
+		}()
+	}
+	return writeArchivePayload(writer, source, relPaths, mapped...)
+}
+
+func writeArchivePayload(writer io.Writer, source *fsboundary.Dir, relPaths []string, mapped ...map[string]string) (err error) {
+	gw := gzip.NewWriter(writer)
+	tw := tar.NewWriter(gw)
+	defer func() {
+		for _, closeFn := range []func() error{tw.Close, gw.Close} {
+			if closeErr := closeFn(); closeErr != nil {
+				err = errors.Join(err, closeErr)
+			}
+		}
+	}()
+	for _, rel := range relPaths {
+		info, link, err := readBackupSourceMetadata(source, rel)
+		if err != nil {
+			return err
+		}
+		if info == nil {
+			return fsboundary.ErrGenerationConflict
+		}
 
 		if info.IsDir() {
-			if err := archiveDir(tw, root, fullPath); err != nil {
+			slog.Debug("Backup source directory admitted for traversal", "path", filepath.Join(source.Path(), filepath.Clean(rel)), "phase", "backup-source-directory")
+			if err := archiveDir(tw, source, rel, filepath.Clean(rel), info); err != nil {
 				return err
 			}
 		} else {
-			if err := archiveFile(tw, root, rel, fullPath, info); err != nil {
+			if err := writeTarEntry(tw, source, rel, rel, info, link); err != nil {
 				return err
 			}
 		}
@@ -410,8 +604,19 @@ func createArchive(root string, relPaths []string, archivePath string, mapped ..
 			if !info.Mode().IsRegular() {
 				return fmt.Errorf("backup: mapped file is not regular")
 			}
-			if err := writeTarEntry(tw, files[key], key, info); err != nil {
+			parent, err := fsboundary.OpenDir(filepath.Dir(files[key]))
+			if err != nil {
 				return err
+			}
+			writeErr := writeTarEntry(tw, parent, filepath.Base(files[key]), key, info, "")
+			closeErr := parent.Close()
+			switch {
+			case writeErr != nil && closeErr != nil:
+				return errors.Join(writeErr, closeErr)
+			case writeErr != nil:
+				return writeErr
+			case closeErr != nil:
+				return closeErr
 			}
 		}
 	}
@@ -465,40 +670,81 @@ func backupArchiveKey(path string) (string, int) {
 	return prefix, seq
 }
 
-func archiveDir(tw *tar.Writer, root, fullPath string) error {
-	return filepath.WalkDir(fullPath, func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
+func archiveDir(tw *tar.Writer, source *fsboundary.Dir, rel, archiveRel string, expected fs.FileInfo) (err error) {
+	identity, err := fsboundary.FileInfoIdentity(expected)
+	if err != nil {
+		return err
+	}
+	directory, err := source.OpenPath(filepath.Clean(rel))
+	if err != nil {
+		return errors.Join(fsboundary.ErrGenerationConflict, err)
+	}
+	defer func() {
+		if closeErr := directory.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
+	if !identity.SameObject(directory.Identity()) {
+		return fsboundary.ErrGenerationConflict
+	}
+	slog.Debug("Backup source directory opened for traversal", "path", directory.Path(), "phase", "backup-source-directory-opened")
+	defer func() {
+		fresh, captureErr := source.OpenPath(filepath.Clean(rel))
+		if captureErr != nil {
+			err = errors.Join(err, fsboundary.ErrGenerationConflict, captureErr)
+			return
+		}
+		if !fresh.Identity().SameObject(directory.Identity()) {
+			err = errors.Join(err, fsboundary.ErrGenerationConflict)
+		}
+		if closeErr := fresh.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
+	native, err := directory.NativeRoot()
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if closeErr := native.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
+	// fs.FS paths must be clean and unrooted; a caller-supplied "./dir" was
+	// admitted after cleaning by the metadata read, so walk the same name.
+	if archiveRel != "." {
+		if err := writeTarEntry(tw, directory, ".", archiveRel, expected, ""); err != nil {
 			return err
-		}
-		info, err := d.Info()
-		if err != nil {
-			return err
-		}
-		entryRel, err := filepath.Rel(root, path)
-		if err != nil {
-			return err
-		}
-		if entryRel == "." {
-			return nil
-		}
-		return writeTarEntry(tw, path, entryRel, info)
-	})
-}
-
-func archiveFile(tw *tar.Writer, root, rel, fullPath string, info fs.FileInfo) error {
-	return writeTarEntry(tw, fullPath, rel, info)
-}
-
-func writeTarEntry(tw *tar.Writer, fullPath, rel string, info fs.FileInfo) error {
-	var link string
-	isSymlink := info.Mode()&fs.ModeSymlink != 0
-	if isSymlink {
-		var err error
-		link, err = os.Readlink(fullPath)
-		if err != nil {
-			return fmt.Errorf("readlink %s: %w", fullPath, err)
 		}
 	}
+	entries, err := fs.ReadDir(native.FS(), ".")
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		name := entry.Name()
+		info, link, readErr := readBackupSourceMetadata(directory, name)
+		if readErr != nil {
+			return readErr
+		}
+		if info == nil {
+			return fsboundary.ErrGenerationConflict
+		}
+		childArchive := filepath.Join(archiveRel, name)
+		if info.IsDir() {
+			slog.Debug("Backup nested source directory admitted for descent", "path", filepath.Join(directory.Path(), name), "phase", "backup-source-directory-descend")
+			if err := archiveDir(tw, directory, name, childArchive, info); err != nil {
+				return err
+			}
+		} else if err := writeTarEntry(tw, directory, name, childArchive, info, link); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func writeTarEntry(tw *tar.Writer, source *fsboundary.Dir, sourceRel, rel string, info fs.FileInfo, link string) error {
+	isSymlink := info.Mode()&fs.ModeSymlink != 0
 
 	hdr, err := tar.FileInfoHeader(info, link)
 	if err != nil {
@@ -514,26 +760,26 @@ func writeTarEntry(tw *tar.Writer, fullPath, rel string, info fs.FileInfo) error
 		return nil
 	}
 
-	src, err := os.Open(fullPath)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = src.Close() }()
-
-	if _, err := io.Copy(tw, src); err != nil {
-		return err
-	}
-	return nil
+	return writeCapturedBackupSource(tw, source, sourceRel, info)
 }
 
-func extractArchive(archivePath, dstDir string, mapped ...map[string]string) error {
-	f, err := os.Open(archivePath)
+func extractArchivePayload(reader io.Reader, dstDir string, root *fsboundary.Dir, mapped ...map[string]string) (err error) {
+	absolute, err := filepath.Abs(dstDir)
 	if err != nil {
 		return err
 	}
-	defer func() { _ = f.Close() }()
-
-	gr, err := gzip.NewReader(f)
+	if root == nil {
+		root, err = fsboundary.OpenDir(absolute)
+		if err != nil {
+			return err
+		}
+		defer func() {
+			if closeErr := root.Close(); closeErr != nil {
+				err = errors.Join(err, closeErr)
+			}
+		}()
+	}
+	gr, err := gzip.NewReader(reader)
 	if err != nil {
 		return err
 	}
@@ -561,12 +807,36 @@ func extractArchive(archivePath, dstDir string, mapped ...map[string]string) err
 			continue
 		}
 
+		if hdr.Typeflag == tar.TypeDir || hdr.Typeflag == tar.TypeSymlink {
+			fresh, captureErr := fsboundary.OpenDir(absolute)
+			if captureErr != nil {
+				return fmt.Errorf("%w: restore root unavailable: %w", fsboundary.ErrGenerationConflict, captureErr)
+			}
+			unchanged := fresh.Identity().SameObject(root.Identity())
+			if closeErr := fresh.Close(); closeErr != nil {
+				return closeErr
+			}
+			if !unchanged {
+				return fsboundary.ErrGenerationConflict
+			}
+		}
 		switch hdr.Typeflag {
 		case tar.TypeDir:
 			if err := rejectSymlinkAncestors(dstDir, target); err != nil {
 				return err
 			}
-			if err := os.MkdirAll(target, 0o755); err != nil {
+			rel, err := filepath.Rel(dstDir, target)
+			if err != nil {
+				return err
+			}
+			if rel == "." {
+				continue
+			}
+			directory, err := root.EnsurePath(rel)
+			if err != nil {
+				return err
+			}
+			if err := directory.Close(); err != nil {
 				return err
 			}
 		case tar.TypeSymlink:
@@ -576,14 +846,23 @@ func extractArchive(archivePath, dstDir string, mapped ...map[string]string) err
 			if err := rejectSymlinkAncestors(dstDir, filepath.Dir(target)); err != nil {
 				return err
 			}
-			if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+			rel, err := filepath.Rel(dstDir, filepath.Dir(target))
+			if err != nil {
 				return err
 			}
-			if err := os.RemoveAll(target); err != nil {
+			parent, err := root.EnsurePath(rel)
+			if err != nil {
 				return err
 			}
-			if err := os.Symlink(hdr.Linkname, target); err != nil {
-				return err
+			publishErr := restoreCapturedSymlink(parent, filepath.Base(target), hdr.Linkname)
+			closeErr := parent.Close()
+			switch {
+			case publishErr != nil && closeErr != nil:
+				return errors.Join(publishErr, closeErr)
+			case publishErr != nil:
+				return publishErr
+			case closeErr != nil:
+				return closeErr
 			}
 		case tar.TypeReg:
 			if err := rejectSymlinkAncestors(dstDir, filepath.Dir(target)); err != nil {
@@ -594,22 +873,23 @@ func extractArchive(archivePath, dstDir string, mapped ...map[string]string) err
 			} else if err != nil && !os.IsNotExist(err) {
 				return err
 			}
-			if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
-				return err
-			}
-			out, err := os.Create(target)
+			rel, err := filepath.Rel(dstDir, filepath.Dir(target))
 			if err != nil {
 				return err
 			}
-			if _, err := io.Copy(out, tr); err != nil {
-				_ = out.Close()
+			parent, err := root.EnsurePath(rel)
+			if err != nil {
 				return err
 			}
-			if err := out.Close(); err != nil {
-				return err
-			}
-			if err := os.Chmod(target, hdr.FileInfo().Mode()); err != nil {
-				return err
+			publishErr := publishRestoredFile(parent, filepath.Base(target), tr, hdr.FileInfo().Mode())
+			closeErr := parent.Close()
+			switch {
+			case publishErr != nil && closeErr != nil:
+				return errors.Join(publishErr, closeErr)
+			case publishErr != nil:
+				return publishErr
+			case closeErr != nil:
+				return closeErr
 			}
 		}
 	}
@@ -645,7 +925,7 @@ func rejectSymlinkAncestors(root, target string) error {
 }
 
 func archiveTarget(dstDir, name string) (string, error) {
-	if filepath.IsAbs(name) {
+	if !filepath.IsLocal(name) {
 		return "", fmt.Errorf("backup: invalid archive entry %q", name)
 	}
 	target := filepath.Join(dstDir, name)

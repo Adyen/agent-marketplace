@@ -32,8 +32,9 @@ var mcpTable = []mcpEntry{
 		// Devin provenance: bundled 3000.3 docs (docs/devin-cli-harness-spec-3000.3.md,
 		// "MCP servers → Schema") show ${env:VAR} interpolation; the 3000.3.27
 		// interpolation probe is still pending.
-		TargetDevin: "${env:VAR}",
-		TargetCodex: "inline",
+		TargetDevin:    "${env:VAR}",
+		TargetCodex:    "inline",
+		TargetOpenCode: "inline",
 	}},
 
 	// Last verified: 2026-04-23 against Windsurf v1.0
@@ -46,8 +47,9 @@ var mcpTable = []mcpEntry{
 		TargetGemini:   "${extensionPath}",
 		// Devin provenance: bundled 3000.3 docs document
 		// "oauthClientSecret": "${env:OAUTH_CLIENT_SECRET}"; 3000.3.27 probe pending.
-		TargetDevin: "${env:VAR}",
-		TargetCodex: "${env:VAR}",
+		TargetDevin:    "${env:VAR}",
+		TargetCodex:    "${env:VAR}",
+		TargetOpenCode: "{env:VAR}",
 	}},
 
 	// Last verified: 2026-04-23 against Windsurf v1.0
@@ -61,8 +63,9 @@ var mcpTable = []mcpEntry{
 		// Devin provenance: none. ${file:PATH} is a Windsurf-only interpolation
 		// style with zero Devin evidence in the 3000.3 snapshot, so it is
 		// explicitly unmappable rather than guessed.
-		TargetDevin: mcpUnmappable,
-		TargetCodex: mcpUnmappable,
+		TargetDevin:    mcpUnmappable,
+		TargetCodex:    mcpUnmappable,
+		TargetOpenCode: "{file:PATH}",
 	}},
 }
 

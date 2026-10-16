@@ -34,13 +34,13 @@ func TestTUIPipelineOptionsPreservesNestedLocalDiscovery(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(repoRoot, ".agents"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(repoRoot, ".agents", "config.yaml"), []byte("apiVersion: agent-marketplace/v2\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(repoRoot, ".agents", "config.yaml"), []byte("apiVersion: agent-marketplace/v4\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.MkdirAll(filepath.Join(nested, ".agents"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(nested, ".agents", "config.local.yaml"), []byte("registries: []\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(nested, ".agents", "config.local.yaml"), []byte("apiVersion: agent-marketplace/v4\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	t.Chdir(nested)
@@ -73,13 +73,13 @@ func TestTUIPipelineOptionsBindsLocalLoaderToWorkspace(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if err := os.WriteFile(config.ProjectConfigPath(repoRoot), []byte("apiVersion: agent-marketplace/v2\n"), 0o644); err != nil {
+	if err := os.WriteFile(config.ProjectConfigPath(repoRoot), []byte("apiVersion: agent-marketplace/v4\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(config.LocalConfigPath(nested), []byte("skills:\n  exclude: [workspace-local]\n"), 0o644); err != nil {
+	if err := os.WriteFile(config.LocalConfigPath(nested), []byte("apiVersion: agent-marketplace/v4\nsources:\n  local: {directory: ./source}\nresources:\n  local: {exclude: [skill/workspace-local]}\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(config.LocalConfigPath(outside), []byte("skills:\n  exclude: [ambient-local]\n"), 0o644); err != nil {
+	if err := os.WriteFile(config.LocalConfigPath(outside), []byte("apiVersion: agent-marketplace/v4\nsources:\n  local: {directory: ./source}\nresources:\n  local: {exclude: [skill/ambient-local]}\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	ws, err := pipeline.NewWorkspace(repoRoot, nested)
@@ -92,10 +92,10 @@ func TestTUIPipelineOptionsBindsLocalLoaderToWorkspace(t *testing.T) {
 	if err != nil {
 		t.Fatalf("workspace local loader: %v", err)
 	}
-	if localCfg == nil || !slices.Contains(localCfg.AllExcludes(), "workspace-local") {
+	if localCfg == nil || len(localCfg.Registries) != 1 || !slices.Contains(localCfg.Registries[0].AllExcludes(), "workspace-local") {
 		t.Fatalf("workspace local excludes = %#v; want workspace-local", localCfg)
 	}
-	if slices.Contains(localCfg.AllExcludes(), "ambient-local") {
+	if slices.Contains(localCfg.Registries[0].AllExcludes(), "ambient-local") {
 		t.Fatal("workspace local loader rediscovered the ambient local root")
 	}
 }
@@ -111,9 +111,10 @@ func TestEditConfigLocalPathUsesWorkspaceRoot(t *testing.T) {
 		t.Fatalf("NewWorkspace: %v", err)
 	}
 	m := NewModel(repoRoot, t.TempDir(), WithWorkspace(ws))
+	m.homeDir = repoRoot
 	m.pane = paneEditConfigModal
-	if got := renderEditConfigModal(m); !strings.Contains(got, config.LocalConfigPath(nested)) {
-		t.Fatalf("edit config modal does not contain workspace local path %q: %s", config.LocalConfigPath(nested), got)
+	if got := renderEditConfigModal(m); !strings.Contains(got, filepath.Join("~", "nested", ".agents", "config.local.yaml")) {
+		t.Fatalf("edit config modal does not identify nested workspace local path: %s", got)
 	}
 }
 
@@ -125,13 +126,13 @@ func TestReadSnapshotDryRunUsesWorkspaceMaterializeRoot(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(repoRoot, ".agents"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(repoRoot, ".agents", "config.yaml"), []byte("apiVersion: agent-marketplace/v2\nregistries: []\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(repoRoot, ".agents", "config.yaml"), []byte("apiVersion: agent-marketplace/v4\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.MkdirAll(filepath.Join(nested, ".agents"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(nested, ".agents", "config.local.yaml"), []byte("registries: []\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(nested, ".agents", "config.local.yaml"), []byte("apiVersion: agent-marketplace/v4\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	t.Chdir(nested)

@@ -1,6 +1,6 @@
+@import "../../../../design/brand.css";
 @import "../../../../design/semantic-colors.css";
 @import "./marketplace-theme.css";
-@import "../../../../design/marketplace-navigation.css";
 
 /**
  * Tailwind and Nuxt UI adapters.
@@ -87,6 +87,9 @@
 :root {
   color-scheme: light;
   --ui-radius: 0.25rem;
+  --am-text-body-sm: 0.875rem;
+  --am-font-medium: 500;
+  --am-font-semibold: 600;
 
   --ui-primary: var(--am-color-action-primary);
   --ui-success: var(--am-color-marketplace-installable);

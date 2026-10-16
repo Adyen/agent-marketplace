@@ -446,6 +446,141 @@ func TestServerRoutes(t *testing.T) {
 	}
 }
 
+// spec: marketplace-api/same-content-revision-carries-a-repaired-archive-digest
+func TestServerServesRepairedArchiveDigestOverHTTP(t *testing.T) {
+	ctx := context.Background()
+	meta := sqlite.New(":memory:")
+	if err := meta.Open(ctx); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = meta.Close() })
+	blobs := fsblob.New(t.TempDir())
+	cfg := config.Config{Instance: config.Instance{ID: "mp-test"}}
+	if err := meta.PutMarketplace(ctx, store.Marketplace{ID: store.MarketplaceID(cfg.Instance.ID), Name: "Test Marketplace"}); err != nil {
+		t.Fatal(err)
+	}
+	src := store.Registry{ID: "src-test", Slug: "test-source", Ref: "main", Acquisition: store.AcquisitionMirror, Listed: true}
+	if err := meta.PutRegistry(ctx, src); err != nil {
+		t.Fatal(err)
+	}
+	coord := store.ResourceCoordinate{Marketplace: store.MarketplaceID(cfg.Instance.ID), Registry: src.ID, Kind: KindSkill, Name: "review"}
+
+	canonical, err := hccartifact.FromIR(ir.NewSkill("review", "Review", "review body", nil, nil, ir.SourceRef{}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstData, firstDigestText, err := hccartifact.Encode(canonical)
+	if err != nil {
+		t.Fatal(err)
+	}
+	repaired := canonical
+	repaired.Assets = map[string][]byte{"SUPPORT.md": []byte("re-encoded by a newer writer")}
+	secondData, secondDigestText, err := hccartifact.Encode(repaired)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if canonical.Manifest.ContentDigest != repaired.Manifest.ContentDigest {
+		t.Fatalf("encoding variation changed the content digest: %q vs %q", canonical.Manifest.ContentDigest, repaired.Manifest.ContentDigest)
+	}
+	if firstDigestText == secondDigestText {
+		t.Fatal("encoding variation did not produce a distinct archive digest")
+	}
+	firstDigest, secondDigest := store.ArchiveDigest(firstDigestText), store.ArchiveDigest(secondDigestText)
+
+	inspectionBody := []byte("# Review\n")
+	projection, err := inspection.Build(coord, canonical.Manifest.ContentDigest, inspectionBody, nil, 10, 1024, 4096)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assessment, err := store.FinalizeResourceAssessment(store.ResourceAssessment{
+		Coordinate: coord, ContentDigest: store.RevisionDigest(canonical.Manifest.ContentDigest), AnalyzerVersion: "1.0.0",
+		PolicyDigest: store.PolicyDigest("sha256:" + strings.Repeat("c", 64)), Decision: store.AssessmentDecisionAllow,
+		InspectionManifestDigest: store.RevisionDigest(projection.Manifest.ManifestDigest), AssessedAt: time.Now().UTC(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	publish := func(commit string, archiveDigest store.ArchiveDigest, archiveData []byte, expectedHead string) {
+		t.Helper()
+		revision := store.ResourceRevision{Coordinate: coord, ContentDigest: store.RevisionDigest(canonical.Manifest.ContentDigest), ArchiveDigest: archiveDigest, License: "MIT"}
+		manifestData, manifestDigest, err := marketplaceartifact.CanonicalRegistryRevisionPayload(marketplaceartifact.RegistryRevisionManifest{
+			SchemaVersion: marketplaceartifact.RegistryRevisionSchemaV1,
+			Generator:     "test source revision",
+			Resources: []marketplaceartifact.RevisionResource{{
+				Kind:          coord.Kind,
+				Name:          coord.Name,
+				ContentDigest: string(revision.ContentDigest),
+				ArchiveDigest: string(archiveDigest),
+			}},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		manifest := store.RevisionDigest(manifestDigest)
+		if err := store.PublishRegistryRevision(ctx, meta, blobs, store.RegistryRevisionPublication{
+			Occurrence: store.RegistryOccurrence{
+				RegistryID: src.ID, Ref: src.Ref, Commit: commit,
+				RegistryRevisionManifestDigest: manifest,
+				Acquisition:                    src.Acquisition,
+				MirroredArtifactDigest:         archiveDigest,
+			},
+			ExpectedHeadCommit:  expectedHead,
+			Resources:           []store.ResourceRevision{revision},
+			ResourceOccurrences: []store.ResourceOccurrence{{Coordinate: coord, ContentDigest: revision.ContentDigest, Commit: commit, ManifestDigest: manifest}},
+			Assessments:         []store.ResourceAssessment{assessment},
+			ManifestPayload:     manifestData,
+			ExtraBlobs:          []store.BlobUpload{{Digest: archiveDigest, Data: archiveData}},
+			InspectionBlobs: []store.BlobUpload{
+				{Digest: store.ArchiveDigest(assessment.InspectionManifestDigest), Data: projection.Payload},
+				{Digest: store.ArchiveDigest(inspection.Digest(inspectionBody)), Data: inspectionBody},
+			},
+		}); err != nil {
+			t.Fatalf("publish %s: %v", commit, err)
+		}
+	}
+	publish(strings.Repeat("a", 40), firstDigest, firstData, "")
+	publish(strings.Repeat("b", 40), secondDigest, secondData, strings.Repeat("a", 40))
+
+	public := httptest.NewServer(NewServer(cfg, meta, blobs).PublicHandler())
+	defer public.Close()
+	artifactURL := func(d store.ArchiveDigest) string {
+		return public.URL + "/api/v1/artifacts/" + strings.Replace(string(d), ":", "/", 1)
+	}
+	for _, tc := range []struct {
+		digest store.ArchiveDigest
+		data   []byte
+	}{{firstDigest, firstData}, {secondDigest, secondData}} {
+		resp := mustGet(t, artifactURL(tc.digest))
+		body := mustRead(t, resp)
+		if resp.StatusCode != http.StatusOK || body != string(tc.data) {
+			t.Fatalf("artifact %s status/body = %d/%d bytes", tc.digest, resp.StatusCode, len(body))
+		}
+	}
+	resp := mustGet(t, public.URL+"/api/v1/resources/test-source/skill/review/revisions/"+canonical.Manifest.ContentDigest)
+	body := mustRead(t, resp)
+	if resp.StatusCode != http.StatusOK || !strings.Contains(body, string(secondDigest)) {
+		t.Fatalf("current revision does not serve repaired digest: %d %s", resp.StatusCode, body)
+	}
+	if strings.Contains(body, string(firstDigest)) {
+		t.Fatalf("current revision still serves the superseded digest: %s", body)
+	}
+
+	revoked := httptest.NewServer(NewServer(config.Config{
+		Instance:    cfg.Instance,
+		Revocations: config.Revocations{Revisions: []string{fmt.Sprintf("%s/%s/skill/review@%s", cfg.Instance.ID, src.ID, canonical.Manifest.ContentDigest)}},
+	}, meta, blobs).PublicHandler())
+	defer revoked.Close()
+	for _, d := range []store.ArchiveDigest{firstDigest, secondDigest} {
+		url := revoked.URL + "/api/v1/artifacts/" + strings.Replace(string(d), ":", "/", 1)
+		resp := mustGet(t, url)
+		body := mustRead(t, resp)
+		if resp.StatusCode != http.StatusGone {
+			t.Fatalf("revoked artifact %s status/body = %d/%s", d, resp.StatusCode, body)
+		}
+	}
+}
+
 type probingBlobStore struct {
 	store.BlobStore
 	probeErr      error
@@ -561,12 +696,24 @@ func TestReadyzFailsWhenBlobProbeFails(t *testing.T) {
 
 type countingBlobStore struct {
 	store.BlobStore
-	gets int
+	gets    int
+	puts    int
+	deletes int
 }
 
 func (s *countingBlobStore) Get(ctx context.Context, digest store.ArchiveDigest) ([]byte, error) {
 	s.gets++
 	return s.BlobStore.Get(ctx, digest)
+}
+
+func (s *countingBlobStore) Put(ctx context.Context, digest store.ArchiveDigest, data []byte) error {
+	s.puts++
+	return s.BlobStore.Put(ctx, digest, data)
+}
+
+func (s *countingBlobStore) Delete(ctx context.Context, digest store.ArchiveDigest) error {
+	s.deletes++
+	return s.BlobStore.Delete(ctx, digest)
 }
 
 func TestPublicManifestRejectsArchiveBlob(t *testing.T) {
@@ -769,6 +916,82 @@ func TestResourceResponsesBindRequestedCoordinateAndDigest(t *testing.T) {
 			body := mustRead(t, resp)
 			if resp.StatusCode != http.StatusInternalServerError {
 				t.Fatalf("status = %d, want %d: %s", resp.StatusCode, http.StatusInternalServerError, body)
+			}
+		})
+	}
+}
+
+type resourceSourceBody struct {
+	Source *CatalogSource `json:"source"`
+}
+
+func sourcedResourceServer(t *testing.T, origin, sourcePath string) *httptest.Server {
+	t.Helper()
+	ctx := context.Background()
+	meta := sqlite.New(":memory:")
+	if err := meta.Open(ctx); err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	t.Cleanup(func() { _ = meta.Close() })
+	if err := meta.PutRegistry(ctx, store.Registry{ID: "source-id", Slug: "source-slug", Origins: []string{"https://example.com/repo"}, Ref: "main", Roots: []store.RegistryRoot{{Path: ".agents"}}, Acquisition: store.AcquisitionMirror}); err != nil {
+		t.Fatalf("put source: %v", err)
+	}
+	revision := store.ResourceRevision{
+		Coordinate:    store.ResourceCoordinate{Marketplace: "marketplace", Registry: "source-id", Kind: KindSkill, Name: "review"},
+		ContentDigest: store.RevisionDigest("sha256:" + strings.Repeat("a", 64)),
+	}
+	publishSourcedAssessedTestRevision(ctx, t, meta, revision, store.AssessmentDecisionAllow, store.RevisionDigest("sha256:"+strings.Repeat("f", 64)), strings.Repeat("e", 40), origin, sourcePath)
+	server := httptest.NewServer(NewServer(config.Config{Instance: config.Instance{ID: "marketplace"}}, meta, fsblob.New(t.TempDir())).PublicHandler())
+	t.Cleanup(server.Close)
+	return server
+}
+
+func resourceSourceRevisionPaths() []string {
+	digest := "sha256:" + strings.Repeat("a", 64)
+	return []string{"/api/v1/resources/source-slug/skill/review", "/api/v1/resources/source-slug/skill/review/revisions/" + digest, "/api/v1/resources/source-slug/skill/review/revisions"}
+}
+
+// spec: marketplace-api/resource-revision-exposes-sanitized-source-provenance
+func TestResourceRevisionExposesSanitizedSourceProvenance(t *testing.T) {
+	server := sourcedResourceServer(t, "https://git.example/internal/resources.git?token=redact", "skills/review/SKILL.md")
+	want := &CatalogSource{RepositoryURL: "https://git.example/internal/resources.git", Path: "skills/review/SKILL.md", Commit: strings.Repeat("e", 40)}
+	paths := resourceSourceRevisionPaths()
+	for _, path := range paths[:2] {
+		var got resourceSourceBody
+		resp := mustGet(t, server.URL+path)
+		body := mustRead(t, resp)
+		if resp.StatusCode != http.StatusOK || json.Unmarshal([]byte(body), &got) != nil || got.Source == nil || *got.Source != *want {
+			t.Fatalf("%s source = %s, want %#v", path, body, want)
+		}
+	}
+	var list []resourceSourceBody
+	resp := mustGet(t, server.URL+paths[2])
+	body := mustRead(t, resp)
+	if resp.StatusCode != http.StatusOK || json.Unmarshal([]byte(body), &list) != nil || len(list) != 1 || list[0].Source == nil || *list[0].Source != *want {
+		t.Fatalf("revisions source = %s, want %#v", body, want)
+	}
+}
+
+// spec: marketplace-api/resource-revision-omits-untrustworthy-source-provenance
+func TestResourceRevisionOmitsUntrustworthySourceProvenance(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		origin     string
+		sourcePath string
+	}{
+		{name: "missing source path", origin: "https://git.example/internal/resources.git"},
+		{name: "missing source origin", sourcePath: "skills/review/SKILL.md"},
+		{name: "ssh origin", origin: "ssh://git@git.example/internal/resources.git", sourcePath: "skills/review/SKILL.md"},
+		{name: "scp-like origin", origin: "git@git.example:internal/resources.git", sourcePath: "skills/review/SKILL.md"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			server := sourcedResourceServer(t, tc.origin, tc.sourcePath)
+			for _, path := range resourceSourceRevisionPaths() {
+				resp := mustGet(t, server.URL+path)
+				body := mustRead(t, resp)
+				if resp.StatusCode != http.StatusOK || strings.Contains(body, `"source"`) {
+					t.Fatalf("%s body = %s, want no source (status %d)", path, body, resp.StatusCode)
+				}
 			}
 		})
 	}

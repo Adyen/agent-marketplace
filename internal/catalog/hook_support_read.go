@@ -3,59 +3,42 @@ package catalog
 import (
 	"errors"
 	"fmt"
-	"io"
-	"os"
-	"strings"
+	"path/filepath"
 
-	"golang.org/x/sys/unix"
-
+	"github.com/Adyen/agent-marketplace/internal/fsboundary"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact"
 )
 
 var ErrHookSupportUnsafe = errors.New("marketplace.ingest.hook-support-unsafe")
 
 // ReadHookSupportFile anchors every path component at the admitted root.
-func ReadHookSupportFile(root, relative string) ([]byte, bool, error) {
-	if err := artifact.ValidateSupportPath(relative); err != nil {
-		return nil, false, fmt.Errorf("%w: invalid support path", ErrHookSupportUnsafe)
-	}
-	fd, err := unix.Open(root, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0)
-	if err != nil {
-		return nil, false, fmt.Errorf("%w: open support root: %w", ErrHookSupportUnsafe, err)
-	}
-	defer func() { _ = unix.Close(fd) }()
-	parts := strings.Split(relative, "/")
-	for _, part := range parts[:len(parts)-1] {
-		next, err := unix.Openat(fd, part, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0)
+func ReadHookSupportFile(root, relative string) (data []byte, executable bool, err error) {
+	defer func() {
 		if err != nil {
-			return nil, false, fmt.Errorf("%w: open support directory: %w", ErrHookSupportUnsafe, err)
+			data, executable = nil, false
+			err = fmt.Errorf("%w: %w", ErrHookSupportUnsafe, err)
 		}
-		_ = unix.Close(fd)
-		fd = next
+	}()
+	if err := artifact.ValidateSupportPath(relative); err != nil {
+		return nil, false, err
 	}
-	fileFD, err := unix.Openat(fd, parts[len(parts)-1], unix.O_RDONLY|unix.O_CLOEXEC|unix.O_NOFOLLOW|unix.O_NONBLOCK, 0)
+	absolute, err := filepath.Abs(root)
 	if err != nil {
-		return nil, false, fmt.Errorf("%w: open support file: %w", ErrHookSupportUnsafe, err)
+		return nil, false, err
 	}
-	file := os.NewFile(uintptr(fileFD), relative)
-	defer func() { _ = file.Close() }()
-	var stat unix.Stat_t
-	if err := unix.Fstat(fileFD, &stat); err != nil {
-		return nil, false, fmt.Errorf("%w: stat support file: %w", ErrHookSupportUnsafe, err)
-	}
-	const limit = 2 * 1024 * 1024
-	if stat.Mode&unix.S_IFMT != unix.S_IFREG || stat.Nlink != 1 || stat.Size > limit {
-		return nil, false, fmt.Errorf("%w: support must be a singly linked regular file within the byte limit", ErrHookSupportUnsafe)
-	}
-	if err := unix.SetNonblock(fileFD, false); err != nil {
-		return nil, false, fmt.Errorf("%w: set blocking support read: %w", ErrHookSupportUnsafe, err)
-	}
-	data, err := io.ReadAll(io.LimitReader(file, limit+1))
+	directory, err := fsboundary.OpenDir(absolute)
 	if err != nil {
-		return nil, false, fmt.Errorf("%w: bounded support read: %w", ErrHookSupportUnsafe, err)
+		return nil, false, err
 	}
-	if len(data) > limit {
-		return nil, false, fmt.Errorf("%w: support exceeds the byte limit", ErrHookSupportUnsafe)
+	defer func() { err = errors.Join(err, directory.Close()) }()
+	source, err := fsboundary.CaptureDestination(directory, filepath.FromSlash(relative), fsboundary.LinkPolicyRepository)
+	if err != nil {
+		return nil, false, err
 	}
-	return data, stat.Mode&0o111 != 0, nil
+	defer func() { err = errors.Join(err, source.Close()) }()
+	if source.Link() != nil {
+		return nil, false, fsboundary.ErrUnsafePath
+	}
+	data, identity, err := source.ReadTarget(2 * 1024 * 1024)
+	return data, identity.Mode.Perm()&0o111 != 0, err
 }

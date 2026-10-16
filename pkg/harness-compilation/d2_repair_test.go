@@ -251,7 +251,6 @@ func TestD2GeminiSubagentEffortIsOmittedWithWarning(t *testing.T) {
 	}
 }
 
-// spec: hook-resources/prompt-hooks-are-suppressed-where-unsupported
 func TestD2UnsupportedTargetsSuppressCommandAndPromptHooks(t *testing.T) {
 	hook := ir.NewHookWithOptions("mixed", "UserPromptSubmit", "echo command", "command", nil, ir.SourceRef{}, ir.WithHookPrompt("also prompt"))
 	for _, target := range []Target{TargetFactory, TargetCursor, TargetWindsurf} {

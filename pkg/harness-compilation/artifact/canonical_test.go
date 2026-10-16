@@ -296,6 +296,24 @@ func TestCanonicalArtifactDecodeRejectsPathTraversal(t *testing.T) {
 	}
 }
 
+// spec: marketplace-api/unsafe-entry-name-is-not-echoed
+func TestCanonicalArtifactDecodeRejectionOmitsEntryName(t *testing.T) {
+	for name, reason := range map[string]string{
+		"/etc/unsafe-entry":          "absolute",
+		"foo/../../etc/unsafe-entry": "traversal",
+	} {
+		raw := writeTarGz(t, func(tw *tar.Writer) {
+			if err := tw.WriteHeader(&tar.Header{Name: name, Typeflag: tar.TypeReg, Mode: 0o644}); err != nil {
+				t.Fatalf("WriteHeader: %v", err)
+			}
+		})
+		_, _, err := Decode(bytes.NewReader(raw))
+		if err == nil || !strings.Contains(err.Error(), reason) || strings.Contains(err.Error(), "unsafe-entry") {
+			t.Fatalf("Decode(%q) error = %v, want %s rejection without the entry name", name, err, reason)
+		}
+	}
+}
+
 // spec: marketplace-api/security-rejection-during-decode
 func TestCanonicalArtifactDecodeRejectsDeviceFiles(t *testing.T) {
 	raw := writeTarGz(t, func(tw *tar.Writer) {

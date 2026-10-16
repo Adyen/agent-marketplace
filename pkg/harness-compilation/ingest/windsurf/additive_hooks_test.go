@@ -7,6 +7,7 @@ import (
 	"testing"
 	"testing/fstest"
 
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/bundle"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 )
 
@@ -123,7 +124,7 @@ func TestDistinctHookNamesAvoidsExistingSuffix(t *testing.T) {
 		ir.NewHook("hooks-2", "pre_run_command", "echo suffix", "command", nil, ir.SourceRef{}),
 		ir.NewHook("hooks", "pre_run_command", "echo second", "command", nil, ir.SourceRef{}),
 	}
-	distinctHookNames(hooks)
+	bundle.DistinctHookNames(hooks)
 	if hooks[0].Name() != "hooks-3" || hooks[1].Name() != "hooks-2" || hooks[2].Name() != "hooks" {
 		t.Fatalf("names = %q, %q, %q", hooks[0].Name(), hooks[1].Name(), hooks[2].Name())
 	}

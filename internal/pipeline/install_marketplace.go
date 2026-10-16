@@ -1,7 +1,6 @@
 package pipeline
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -219,8 +218,15 @@ func (p *PreparedMarketplaceInstall) RequiresRiskAcceptance() bool {
 // without mutating configuration. The returned plan is the only value accepted
 // by CommitPreparedMarketplaceInstall.
 func PrepareMarketplaceInstall(ctx context.Context, opts InstallOptions) (*PreparedMarketplaceInstall, error) {
+	ObservePhase(ctx, PhasePrepare)
 	if !isMarketplaceInstall(opts) || isMarketplaceEndpointRegistration(opts) {
 		return nil, errors.New("marketplace resource install is required")
+	}
+	if err := RecoverDependencyTransactions(ctx); err != nil {
+		return nil, err
+	}
+	if err := ValidateConsumerIntent(ctx, opts.RepoRoot, opts.LocalConfigDir); err != nil {
+		return nil, err
 	}
 	configPath, err := ScopedConfigPath(opts.RepoRoot, opts.Scope)
 	if err != nil {
@@ -250,7 +256,11 @@ func PrepareMarketplaceInstall(ctx context.Context, opts InstallOptions) (*Prepa
 			}
 		}
 	}
-	ec := LoadEffective(ctx, ConfigLoadOnline, config.LoadEffectiveOptions{RepoRoot: opts.RepoRoot, LocalConfigDir: opts.LocalConfigDir}, nil)
+	ws, err := workspaceForRoots(opts.RepoRoot, opts.LocalConfigDir)
+	if err != nil {
+		return nil, err
+	}
+	ec := LoadEffective(ctx, ConfigLoadOnline, config.LoadEffectiveOptions{RepoRoot: ws.RepoRoot(), LocalConfigDir: ws.LocalConfigDir()}, nil)
 	if len(ec.Errors) > 0 {
 		return nil, errors.Join(ec.Errors...)
 	}
@@ -343,12 +353,22 @@ func CommitPreparedMarketplaceInstall(ctx context.Context, prepared *PreparedMar
 	if err := evaluateMarketplaceConsent(prepared.plan, true); err != nil {
 		return nil, err
 	}
+	ws, err := workspaceForRoots(prepared.options.RepoRoot, prepared.options.LocalConfigDir)
+	if err != nil {
+		return nil, err
+	}
+	if err := RecoverDependencyTransactions(ctx); err != nil {
+		return nil, err
+	}
+	if err := ValidateConsumerIntent(ctx, ws.RepoRoot(), ws.LocalConfigDir()); err != nil {
+		return nil, err
+	}
 	pins := marketplaceInstallPins(prepared.plan)
 	lockOverlay, err := preparedMarketplaceLockOverlay(prepared.configPath, installScopeSource(prepared.options.Scope), prepared.plan.Entry, pins)
 	if err != nil {
 		return nil, err
 	}
-	ec := LoadEffective(ctx, ConfigLoadOnline, config.LoadEffectiveOptions{RepoRoot: prepared.options.RepoRoot, LocalConfigDir: prepared.options.LocalConfigDir, FileOverlays: lockOverlay}, nil)
+	ec := LoadEffective(ctx, ConfigLoadOnline, config.LoadEffectiveOptions{RepoRoot: ws.RepoRoot(), LocalConfigDir: ws.LocalConfigDir(), FileOverlays: lockOverlay}, nil)
 	var allowedMarketplaces, allowedRegistries *[]string
 	if ec.Merged != nil {
 		allowedMarketplaces = ec.Merged.AllowedMarketplaces
@@ -534,8 +554,8 @@ func marketplaceInstallPins(plan *marketplace.PreparedInstall) []config.Marketpl
 	if len(plan.CollectionMembers) == 0 {
 		return []config.MarketplaceResourcePin{config.EnsureMarketplaceDirectPin(plan.Pin)}
 	}
-	pins := make([]config.MarketplaceResourcePin, 0, len(plan.CollectionMembers)+1)
-	pins = append(pins, plan.Pin)
+	pins := make([]config.MarketplaceResourcePin, 1, int64(len(plan.CollectionMembers))+1)
+	pins[0] = plan.Pin
 	for _, member := range plan.CollectionMembers {
 		pins = append(pins, member.Pin)
 	}
@@ -551,34 +571,6 @@ func marketplaceInstallIdentities(plan *marketplace.PreparedInstall) []resourceI
 		identities = append(identities, resourceIdentity{kind: member.Resolved.Kind, name: member.Pin.Name})
 	}
 	return identities
-}
-
-func ensureMarketplacePinsAndSync(configPath string, entry config.MarketplaceEntry, pins []config.MarketplaceResourcePin, sync func() ([]error, error)) (warnings []error, retErr error) {
-	snapshot, commit, err := config.EnsureMarketplacePinsInConfigWithSnapshotAndCommit(configPath, entry.URL, entry.InstanceID, entry.Alias, pins)
-	if err != nil {
-		return nil, fmt.Errorf("write Marketplace pin: %w", err)
-	}
-	defer func() {
-		if retErr == nil {
-			return
-		}
-		if rollbackErr := snapshot.RestoreIfCurrent(commit); rollbackErr != nil {
-			retErr = errors.Join(retErr, fmt.Errorf("rollback Marketplace config: %w", rollbackErr))
-		}
-	}()
-
-	warnings, err = sync()
-	if err != nil {
-		return nil, err
-	}
-	current, err := os.ReadFile(configPath)
-	if err != nil {
-		return nil, fmt.Errorf("read Marketplace config after sync: %w", err)
-	}
-	if !bytes.Equal(current, commit.Bytes) {
-		return nil, fmt.Errorf("marketplace config changed concurrently during install")
-	}
-	return warnings, nil
 }
 
 func marketplaceProtocolKind(kind ir.ResourceKind) string {
@@ -651,7 +643,7 @@ func resolveMarketplaceEntry(locator marketplace.MarketplaceLocator, selector st
 	return config.MarketplaceEntry{URL: want}, nil
 }
 
-func preparedMarketplaceLockOverlay(configPath string, source config.Source, entry config.MarketplaceEntry, pins []config.MarketplaceResourcePin) (map[string][]byte, error) {
+func preparedMarketplaceLockOverlay(configPath string, source config.Source, entry config.MarketplaceEntry, pins []config.MarketplaceResourcePin) (_ map[string][]byte, retErr error) {
 	v4Cfg, err := config.LoadV4ConfigIfPresent(configPath, source)
 	if err != nil {
 		return nil, err
@@ -673,14 +665,56 @@ func preparedMarketplaceLockOverlay(configPath string, source config.Source, ent
 	if err != nil {
 		return nil, err
 	}
-	if _, err := os.Lstat(lockPath); err == nil {
-		return nil, nil
-	} else if !errors.Is(err, os.ErrNotExist) {
+	_, lockErr := os.Lstat(lockPath)
+	if lockErr != nil && !errors.Is(lockErr, os.ErrNotExist) {
+		return nil, lockErr
+	}
+	// The prepared evidence belongs to the future selection, not the authored
+	// root. Stage that same selection through the layer editor before binding
+	// either overlay; exact lock validation must never see half of the pair.
+	staging, err := newConfigStagingManager()
+	if err != nil {
 		return nil, err
+	}
+	defer closeConfigStaging(staging, "Marketplace install preflight", &retErr)
+	staged, err := staging.Path(configPath)
+	if err != nil {
+		return nil, err
+	}
+	editor, err := config.OpenLayerEditor(config.LayerTarget{Source: source, StagedPath: staged, DeclaringPath: configPath})
+	if err != nil {
+		return nil, err
+	}
+	// This overlay repairs evidence for an existing source only. Do not let a
+	// future edit recreate an endpoint removed since the consent preview.
+	binding, found, err := editor.LookupMarketplaceSource(entry.URL)
+	if err != nil {
+		return nil, err
+	}
+	if !found {
+		if lockErr != nil {
+			return nil, &config.V4ValidationError{Code: "v4.marketplace-lock-mismatch", Path: configPath, Msg: "prepared Marketplace endpoint has no authored source"}
+		}
+		binding, err = editor.EnsureMarketplaceSource(entry.URL)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if err := editor.IncludeMarketplacePins(binding, pins); err != nil {
+		return nil, err
+	}
+	candidate, err := editor.Render()
+	if err != nil {
+		return nil, err
+	}
+	// A present lock remains the exact pre-existing collision view. Still
+	// validate the future edit before that view can trigger any acquisition.
+	if lockErr == nil {
+		return nil, nil
 	}
 	mergeEntry := entry
 	mergeEntry.Source = source
-	repaired, err := marketplacelock.MergePinsToV4(v4Cfg, lockfile.Document{Scope: lockfile.Scope(source.LockScope())}, mergeEntry, pins, marketplace.DefaultCache())
+	repaired, err := marketplacelock.MergePinsToV4(editor.RenderedV4(), lockfile.Document{Scope: lockfile.Scope(source.LockScope())}, mergeEntry, pins, marketplace.DefaultCache())
 	if err != nil {
 		return nil, err
 	}
@@ -688,7 +722,12 @@ func preparedMarketplaceLockOverlay(configPath string, source config.Source, ent
 	if err != nil {
 		return nil, err
 	}
-	return map[string][]byte{lockPath: data}, nil
+	overlays := map[string][]byte{lockPath: data}
+	for _, staged := range staging.files {
+		overlays[staged.requested] = candidate.Bytes
+		overlays[staged.destination] = candidate.Bytes
+	}
+	return overlays, nil
 }
 
 func checkMarketplaceInstallCollision(ctx context.Context, opts InstallOptions, ec *config.EffectiveConfig, plan *marketplace.PreparedInstall, lockOverlays ...map[string][]byte) error {

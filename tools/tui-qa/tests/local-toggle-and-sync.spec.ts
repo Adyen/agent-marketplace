@@ -4,7 +4,7 @@ import path from "node:path";
 
 import { expect, test } from "@microsoft/tui-test";
 
-import { declineLegacyMigration, defineFixture, step, waitForExit } from "./helpers.js";
+import { defineFixture, step, waitForExit } from "./helpers.js";
 import { runNonTTY } from "./process-helpers.js";
 
 const journey = defineFixture("local-toggle-and-sync", ["tui"]);
@@ -14,7 +14,6 @@ test.afterAll(journey.cleanup);
 
 test("local toggle reaches pending state before sync", async ({ terminal }) => {
   const fixture = journey.current();
-  await declineLegacyMigration(terminal);
   const generatedSkill = path.join(fixture.repo, ".factory", "skills", "alpha-skill");
   const generatedContent = path.join(generatedSkill, "SKILL.md");
   const localConfig = path.join(fixture.repo, ".agents", "config.local.yaml");
@@ -37,7 +36,7 @@ test("local toggle reaches pending state before sync", async ({ terminal }) => {
   });
 
   await step("toggle local", () => terminal.write("l"), async () => {
-    await expect(terminal.getByText(/Local\s+\(1\)/g)).toBeVisible();
+    await expect(terminal.getByText(/Pending sync\s+\(1\)/g)).toBeVisible();
     await expect(terminal.getByText(/Status:\s+enabled \(pending sync\)/g)).toBeVisible();
     await expect(terminal.getByText("~ 1 out of sync")).toBeVisible();
   });

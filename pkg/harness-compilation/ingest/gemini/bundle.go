@@ -36,8 +36,6 @@ const (
 
 	claudePluginRootToken = "${CLAUDE_PLUGIN_ROOT}"
 	geminiExtensionToken  = "${extensionPath}"
-	geminiProjectDirToken = "${GEMINI_PROJECT_DIR}"
-	legacyProjectDirToken = "${CLAUDE_PROJECT_DIR}"
 )
 
 type geminiIngester struct{}
@@ -672,7 +670,15 @@ func LoadHooks(src fs.FS, path string) ([]*ir.Hook, []diag.Diagnostic, error) {
 				extra = nil
 			}
 
-			baseName := strings.ToLower(strings.ReplaceAll(event, " ", "-")) + "-" + hookType
+			// Hook names become catalog resource keys, so they keep the
+			// historical canonical-event spelling (e.g. BeforeTool hooks are
+			// named pretooluse-command) even though the IR event stays
+			// native.
+			nameEvent := event
+			if canonical, _, known := hookpolicy.LegacyEvent(mapping.TargetGemini, event); known {
+				nameEvent = canonical
+			}
+			baseName := strings.ToLower(strings.ReplaceAll(nameEvent, " ", "-")) + "-" + hookType
 			name := baseName
 			for suffix := 2; usedNames[name]; suffix++ {
 				name = fmt.Sprintf("%s-%d", baseName, suffix)
@@ -877,7 +883,7 @@ func validatePath(p string) error {
 }
 
 func listSubdirs(src fs.FS, root string) ([]string, error) {
-	entries, err := fs.ReadDir(src, root)
+	entries, err := ingest.ReadSkillEntries(src, root)
 	if err != nil {
 		return nil, err
 	}
@@ -1033,6 +1039,16 @@ func parseInlineMCPServers(value any) (map[string]extpkg.GeminiMCPServer, error)
 				return nil, fmt.Errorf("server %q env: %w", name, err)
 			}
 		}
+		for key, value := range entry {
+			switch key {
+			case "command", "url", "args", "env":
+			default:
+				if server.Extra == nil {
+					server.Extra = make(map[string]any)
+				}
+				server.Extra[key] = value
+			}
+		}
 		server.Command = normalizeEnvTokens(server.Command)
 		server.Args = normalizeStringSlice(server.Args)
 		server.Env = normalizeStringMap(server.Env)
@@ -1128,10 +1144,10 @@ func toIntPtr(value any) (*int, error) {
 		if math.IsNaN(v) || math.IsInf(v, 0) {
 			return nil, fmt.Errorf("value must be a finite integer")
 		}
-		if v < math.MinInt64 || v > math.MaxInt64 {
+		if v < float64(math.MinInt) || v >= -float64(math.MinInt) {
 			return nil, fmt.Errorf("integer out of range")
 		}
-		if v != float64(int64(v)) {
+		if v != math.Trunc(v) {
 			return nil, fmt.Errorf("value must be an integer")
 		}
 		n = int64(v)
@@ -1144,7 +1160,7 @@ func toIntPtr(value any) (*int, error) {
 	default:
 		return nil, fmt.Errorf("value has unsupported type %T", value)
 	}
-	if int64(int(n)) != n {
+	if n < math.MinInt || n > math.MaxInt {
 		return nil, fmt.Errorf("integer out of range")
 	}
 	return intPtr(int(n)), nil
@@ -1198,12 +1214,7 @@ func extraFields(fm map[string]any, known []string) map[string]any {
 }
 
 func normalizeEnvTokens(value string) string {
-	replacer := strings.NewReplacer(
-		geminiExtensionToken, claudePluginRootToken,
-		geminiProjectDirToken, claudePluginRootToken,
-		legacyProjectDirToken, claudePluginRootToken,
-	)
-	return replacer.Replace(value)
+	return strings.ReplaceAll(value, geminiExtensionToken, claudePluginRootToken)
 }
 
 func normalizeStringSlice(values []string) []string {

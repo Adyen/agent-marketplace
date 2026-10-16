@@ -7,7 +7,7 @@
           "type": "command"
         }
       ],
-      "matcher": "Bash"
+      "matcher": "Execute"
     }
   ]
 }

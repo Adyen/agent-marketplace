@@ -238,7 +238,7 @@ func TestUserPersonalConfigExists(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(cfgPath), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(cfgPath, []byte("apiVersion: agent-marketplace/v2\nharnesses:\n  - factory\n"), 0o644); err != nil {
+	if err := os.WriteFile(cfgPath, []byte("apiVersion: agent-marketplace/v4\nharnesses:\n  - factory\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 

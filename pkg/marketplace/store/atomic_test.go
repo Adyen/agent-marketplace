@@ -49,6 +49,76 @@ func openAtomicStores(t *testing.T) (*sqlite.Store, *fsblob.Store) {
 	return meta, blobs
 }
 
+type inspectionBoundaryMetadata struct {
+	store.MetadataStore
+	calls int
+}
+
+var errInspectionControl = errors.New("inspection reached metadata")
+
+func (s *inspectionBoundaryMetadata) WithTx(context.Context, func(context.Context, store.MetadataStore) error) error {
+	s.calls++
+	return errInspectionControl
+}
+
+type inspectionBoundaryBlobs struct {
+	store.BlobStore
+	writes int
+}
+
+func (s *inspectionBoundaryBlobs) Get(context.Context, store.ArchiveDigest) ([]byte, error) {
+	return nil, store.ErrNotFound
+}
+
+func (s *inspectionBoundaryBlobs) PutImmutable(context.Context, store.ArchiveDigest, []byte) error {
+	s.writes++
+	return nil
+}
+
+// spec: marketplace-api/active-url-schemes-are-metadata-only
+func TestPublishRejectsActiveSchemeTextBeforeWrites(t *testing.T) {
+	for _, body := range []string{"safe notes", "data:text/plain,active", "vbscript:MsgBox(1)", "javascript:alert(1)"} {
+		t.Run(body, func(t *testing.T) {
+			coordinate := store.ResourceCoordinate{Marketplace: "mp", Registry: "registry", Kind: "skill", Name: "review"}
+			revision := store.RevisionDigest("sha256:" + strings.Repeat("a", 64))
+			projection, err := inspection.Build(coordinate, string(revision), []byte("# Review\n"), map[string][]byte{"notes.txt": []byte(body)}, 10, 1024, 4096)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for i := range projection.Manifest.Files {
+				if projection.Manifest.Files[i].Path == "support/notes.txt" {
+					projection.Manifest.Files[i].InspectionClass = inspection.ClassText
+					projection.Manifest.Files[i].MediaType = inspection.MediaPlain
+				}
+			}
+			payload, err := json.Marshal(projection.Manifest)
+			if err != nil {
+				t.Fatal(err)
+			}
+			resource := store.ResourceRevision{Coordinate: coordinate, ContentDigest: revision}
+			digest := sha256Digest(payload)
+			req := store.RegistryRevisionPublication{
+				Resources:   []store.ResourceRevision{resource},
+				Assessments: []store.ResourceAssessment{assessmentFor(t, resource, digest)},
+				InspectionBlobs: []store.BlobUpload{
+					{Digest: store.ArchiveDigest(digest), Data: payload},
+					{Digest: store.ArchiveDigest(sha256Digest([]byte("# Review\n"))), Data: []byte("# Review\n")},
+					{Digest: store.ArchiveDigest(sha256Digest([]byte(body))), Data: []byte(body)},
+				},
+			}
+			meta, blobs := &inspectionBoundaryMetadata{}, &inspectionBoundaryBlobs{}
+			err = store.PublishRegistryRevision(context.Background(), meta, blobs, req)
+			if body == "safe notes" {
+				if !errors.Is(err, errInspectionControl) || meta.calls != 1 || blobs.writes != 3 {
+					t.Fatalf("valid control did not reach publication: %v, calls=%d, writes=%d", err, meta.calls, blobs.writes)
+				}
+			} else if err == nil || errors.Is(err, errInspectionControl) || meta.calls != 0 || blobs.writes != 0 {
+				t.Fatalf("unsafe text reached publication: %v, calls=%d, writes=%d", err, meta.calls, blobs.writes)
+			}
+		})
+	}
+}
+
 func TestPublishRegistryRevisionStrictlyValidatesInspectionBodies(t *testing.T) {
 	coordinate := store.ResourceCoordinate{Marketplace: "mp", Registry: "registry", Kind: "skill", Name: "review"}
 	revision := store.RevisionDigest("sha256:" + strings.Repeat("a", 64))

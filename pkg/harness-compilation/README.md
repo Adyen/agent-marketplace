@@ -1,6 +1,6 @@
 # Harness compilation library
 
-This Go library converts AI-agent configuration resources from a canonical source format (the Claude plugin layout) into the layout each harness expects. It has seven conversion targets: Claude Code, Factory Droid, Cursor, Windsurf, Gemini CLI, Devin CLI, and Codex. Each target registers both a compiler and an ingester, so each one works as a `--from` source and as a `--to` destination. The library never decides which targets a caller uses.
+This Go library converts AI-agent configuration resources from a canonical source format (the Claude plugin layout) into the layout each harness expects. It has eight conversion targets: Claude Code, Factory Droid, Cursor, Windsurf, Gemini CLI, Devin CLI, Codex, and OpenCode. Each target registers both a compiler and an ingester, so each one works as a `--from` source and as a `--to` destination. The library never decides which targets a caller uses.
 
 ## Design
 
@@ -47,6 +47,17 @@ For an ordinary model release, edit data rather than a translator:
 Do not update `compile/mapping/models.go` for new releases: that table is frozen for legacy source-revision digest projection and the legacy mapping interface. Active subagent compilation uses `modelpolicy`. No Marketplace config migration or runtime model-catalog setting is required. A new native field format, unlike a new model ID, still needs serializer/resolver support and acceptance evidence.
 
 Unresolved models produce warnings and omit the model field, never the whole resource. Source-native model strings retain `ModelSource` provenance through ingestion and canonical archives; same-harness preservation does not certify account availability. See the [catalog design reference](../../docs/plans/2026-09-21-harness-model-catalogs-design.md) for the schema and the Devin CLI-inventory evidence policy.
+
+## Update a shipped hook or tool catalog
+
+For a vendor update, change the embedded catalog and prove it with an independently written conversion fixture.
+
+1. **Rename a tool.** In `toolpolicy/catalogs/<harness>.yaml`, move it to the new native spelling, keep the old spelling in `aliases`, and update `evidence.checked`. Verify the first-party refs support the emitted name and concept set. For a new tool, add its concept mapping; if no concept fits, review other harnesses for an equivalent before adding a concept to `toolpolicy/concepts.yaml`.
+2. **Update hook environment names or events.** In `hookpolicy/catalogs/<harness>.yaml`, put the name emitted by the harness first and retain names it still sets. Add events as native-only unless the vendor documents the same timing and blocking role as an existing canonical event.
+3. **Add one independent fixture.** Put a cross-harness case in `hookpolicy/testdata/conversions.yaml` under `matchers`, `events`, `env`, `timeouts`, or `allow_lists`. Write the expected output or diagnostic by hand rather than deriving it from the resolver or catalog.
+4. **Run local checks.** From the repository root, run `make catalog-docs`, then `make catalog-check`. Both run offline. The check validates catalogs, fixtures, compiler matrix goldens, and freshness of `site/docs/reference/hook-and-tool-names.md`.
+5. **Review evidence drift.** When an audit reports `source.evidence-changed`, re-read the first-party source before updating its SHA baseline.
+6. **Review output changes.** Changing an actively tested native spelling may require deliberate compiler-matrix and golden updates. Real changes are not limited to a YAML entry, one fixture line, and the generated reference.
 
 ## Investigate nightly model drift
 
@@ -153,32 +164,6 @@ Bundle artifact-path conflicts are the only error codes that cannot be traced to
 one resource. They suppress both named producers as whole resources. See
 [`diag/codes.md`](diag/codes.md#what-an-error-suppresses).
 
-### CLI
-
-`cmd/hcc` is a small command for local testing. It has two subcommands:
-`compile` reads a Claude plugin directory and writes one target layout, and
-`convert` reads any supported harness layout and writes another.
-
-```bash
-# Install
-go build -o hcc ./cmd/hcc
-
-# Compile a plugin to Claude format
-hcc compile --from ./my-plugin --target claude --out ./output
-
-# Sync mode (overwrite + prune stale files)
-hcc compile --from ./my-plugin --target factory --out ./output --sync
-
-# Dry run
-hcc compile --from ./my-plugin --target cursor --out ./output --dry-run
-
-# Convert a Cursor layout to Codex; --out defaults to <dir>-<target>
-hcc convert --from cursor --to codex ./my-plugin
-
-# Detect the source harness instead of passing --from
-hcc convert --autodetect --to factory ./my-plugin
-```
-
 ### Targets
 
 | Target | Constant | Install root |
@@ -190,6 +175,7 @@ hcc convert --autodetect --to factory ./my-plugin
 | Gemini CLI | `TargetGemini` | Extension directory (`gemini-extension.json` at root) |
 | Devin CLI | `TargetDevin` | Project `.devin/`; user `~/.config/devin/` |
 | Codex | `TargetCodex` | Partitioned: `.agents/` skills plus `.codex/` configuration; the consumer resolves scope and `CODEX_HOME` |
+| OpenCode | `TargetOpenCode` | Project `.opencode/`; machine XDG `opencode/`; native MCP file resolved by the consumer |
 
 [`target/target.go`](target/target.go) is the authoritative declaration of
 every target: its identity, label, both roots, and its compiler, ingester,
@@ -197,7 +183,7 @@ conversion, and UI capabilities. Read targets from it instead of hardcoding a
 list. `ValidateTargetRegistrations()` checks the registry and the actual
 compiler and ingester registrations against each other in both directions.
 
-Codex, Devin, and Claude register a validated topology descriptor in
+OpenCode, Codex, Devin, and Claude register a validated topology descriptor in
 [`target/native_layout.go`](target/native_layout.go). The descriptor does not
 depend on scope. It lists the target's partitions, the resource path pattern for
 each kind, and the shared aggregate file each kind merges into at each scope.
@@ -255,7 +241,7 @@ Codex-specific notes:
   [hooks](https://developers.openai.com/codex/hooks), and
   [MCP](https://developers.openai.com/codex/mcp), plus the
   [config reference](https://developers.openai.com/codex/config-file/config-reference)
-  for `oauth_resource`. The Codex compiler and ingester tests and the 7×7 matrix
+  for `oauth_resource`. The Codex compiler and ingester tests and the 8×8 matrix
   pin the exact fixture outcomes and losses; see
   [`field-matrix.md`](field-matrix.md) and [`diag/codes.md`](diag/codes.md).
 
@@ -289,4 +275,19 @@ UPDATE_GOLDEN=1 go test -run TestGolden ./...
 
 ## Status
 
-v0.x. The 7×7 translation matrix and the core API are implemented. The design document lists the deferred items.
+v0.x. The 8×8 translation matrix and the core API are implemented. The design document lists the deferred items.
+
+OpenCode-specific notes:
+
+- Skills, commands, and agents use native plural directories. Ingestion also accepts
+  singular aliases, with the plural path winning for the same filename. Detection
+  requires `.opencode`; explicit ingestion also accepts a native config directory.
+- MCP fragments use typed external ownership policy. Consumers resolve the actual
+  JSON/JSONC file and reconcile only entries proven owned; OpenCode permits trailing
+  commas without changing the default JSONC parser behavior for other callers.
+- Native sidecars preserve command selections, agent permission order and empty
+  policies, tool controls, MCP reference intent, authentication, and timeout fields.
+  Conversion to another target rejects unrepresentable execution semantics.
+- Hooks emit data declarations plus a fixed dependency-free adapter. Arbitrary
+  executable source plugins are diagnosed without loading them. See the
+  [OpenCode compatibility note](../../docs/harness-validation/opencode.md).

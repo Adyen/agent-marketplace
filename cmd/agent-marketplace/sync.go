@@ -1,7 +1,9 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -10,6 +12,7 @@ import (
 	"path/filepath"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -22,6 +25,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/pipeline"
 	"github.com/Adyen/agent-marketplace/internal/resolver"
 	"github.com/Adyen/agent-marketplace/internal/skill"
+	"github.com/Adyen/agent-marketplace/internal/tui"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 )
@@ -106,6 +110,12 @@ func runSyncWithLocks(ctx context.Context, out io.Writer, noBackup bool, strict 
 	if err != nil {
 		return err
 	}
+	if err := prepareDependencyTransactions(ctx, (lockMode{locked: locked, offline: offline}).readOnlyDependencies()); err != nil {
+		return err
+	}
+	if err := pipeline.ValidateConsumerIntent(ctx, ws.RepoRoot(), ws.LocalConfigDir()); err != nil {
+		return err
+	}
 	if !offline && !locked {
 		if err := ensureGlobalConfigForSync(); err != nil {
 			slog.Warn("failed to create global config skeleton", "error", err)
@@ -133,7 +143,7 @@ func runSyncWithLocks(ctx context.Context, out io.Writer, noBackup bool, strict 
 		}
 		return err
 	}
-	resolveOpts := pipeline.ResolveOptions{Workspace: ws, NoBackup: noBackup, Offline: offline, CatalogOption: []pkgcatalog.LoadOption{exactOption}, ExactLockLease: exactLease, SkipInventory: pruneStale, MarketplaceRevocationPolicy: marketplacePolicy}
+	resolveOpts := pipeline.ResolveOptions{Workspace: ws, NoBackup: noBackup, Offline: offline, CatalogOption: []pkgcatalog.LoadOption{exactOption}, ExactLockLease: exactLease, SkipInventory: pruneStale, MarketplaceRevocationPolicy: marketplacePolicy, MarketplaceLockEvidenceStrict: locked, MarketplaceReportArchiveEvidenceDrift: !locked && !offline}
 	syncResult := pipeline.Sync(ctx, resolveOpts)
 	syncResult.Warnings = append(lockWarnings, syncResult.Warnings...)
 	errs := syncResult.Errors
@@ -141,6 +151,16 @@ func runSyncWithLocks(ctx context.Context, out io.Writer, noBackup bool, strict 
 	mergedCfg := syncResult.MergedCfg
 	resolvedCount := len(syncResult.Resolved)
 	report := syncResult.Report
+
+	var persistedRefreshes map[archiveRefreshKey]bool
+	if !locked && !offline && len(errs) == 0 {
+		var refreshErr error
+		persistedRefreshes, refreshErr = refreshDriftedMarketplaceLocks(ctx, repoRoot, localDir, mergedCfg, syncResult.Warnings)
+		if refreshErr != nil {
+			errs = append(errs, fmt.Errorf("refresh Marketplace lock evidence: %w", refreshErr))
+		}
+	}
+	syncResult.Warnings = stripUnpersistedRefreshWarnings(syncResult.Warnings, persistedRefreshes)
 
 	// Collect stale selections before strict mode reclassifies them.
 	// Only collect direct selections (not collection-sourced) for pruning.
@@ -220,6 +240,10 @@ func runSyncWithLocks(ctx context.Context, out io.Writer, noBackup bool, strict 
 				return err
 			}
 		}
+	}
+
+	if err := writeHookChanges(out, report, false); err != nil {
+		return err
 	}
 
 	// Under verbose, list malformed resources with their path and parse error
@@ -340,8 +364,12 @@ func runSyncWithLocks(ctx context.Context, out io.Writer, noBackup bool, strict 
 }
 
 func configuredSelectionLabels(ctx context.Context, repoRoot, localDir string) []string {
+	ws, err := pipeline.WorkspaceForRoots(repoRoot, localDir)
+	if err != nil {
+		return nil
+	}
 	intent := config.ReadIntent(ctx, config.LoadEffectiveOptions{
-		RepoRoot: repoRoot, LocalConfigDir: localDir,
+		RepoRoot: ws.RepoRoot(), LocalConfigDir: ws.LocalConfigDir(),
 	})
 	seen := make(map[string]struct{})
 	for _, source := range []config.Source{config.Organization, config.UserPersonal, config.RepoCommitted, config.RepoPersonal} {
@@ -452,7 +480,7 @@ func runSyncCheck(ctx context.Context, out io.Writer, strict bool, offline ...bo
 	resolveOpts := pipeline.ResolveOptions{
 		Workspace: ws, CatalogMode: pkgcatalog.LoadModeRefresh, Offline: isOffline,
 		CatalogOption: []pkgcatalog.LoadOption{exactOption}, ExactLockLease: exactLease,
-		ConfigLoadMode: configLoadMode,
+		ConfigLoadMode: configLoadMode, MarketplaceLockEvidenceStrict: true,
 	}
 	resolveOpts.RequireTargetSet = true
 	// Use materialize in dry-run mode to check for drift; the Workspace derives
@@ -467,8 +495,8 @@ func runSyncCheck(ctx context.Context, out io.Writer, strict bool, offline ...bo
 	matErr := inspection.MaterializeErr
 
 	// Surface every warning the run produced, not just the ineffective-subdir
-	// ones. --check used to recompute AncestorMaterializedExcludeWarnings and
-	// print only those, which was both a duplicate (Resolve already puts them
+	// ones. --check used to recompute the ancestor-materialized exclude warnings
+	// and print only those, which was both a duplicate (Resolve already puts them
 	// in Warnings) and a silent drop of everything else: catalog overlaps, soft
 	// selected-not-found, soft malformed selections and materialize warning
 	// diagnostics never reached the user. A drift check that hides why output is
@@ -508,6 +536,10 @@ func runSyncCheck(ctx context.Context, out io.Writer, strict bool, offline ...bo
 		checkErrs = append(checkErrs, matErr)
 	}
 	errorRows := buildErrorRows(checkErrs)
+
+	if err := writeHookChanges(out, report, true); err != nil {
+		return err
+	}
 
 	summaryErr := writeSyncCheckSummary(out, report, errorRows, checkErrs)
 	if strict && len(requirementWarnings) > 0 {
@@ -558,10 +590,10 @@ func writeSyncCheckSummary(out io.Writer, report *materialize.Report, errorRows 
 
 		parts := []string{}
 		if report.TotalWritten() > 0 {
-			parts = append(parts, fmt.Sprintf("%d missing", report.TotalWritten()))
+			parts = append(parts, fmt.Sprintf("%d writes", report.TotalWritten()))
 		}
 		if report.TotalRemoved() > 0 {
-			parts = append(parts, fmt.Sprintf("%d orphaned", report.TotalRemoved()))
+			parts = append(parts, fmt.Sprintf("%d removals", report.TotalRemoved()))
 		}
 
 		if len(parts) > 0 {
@@ -578,6 +610,12 @@ func writeSyncCheckSummary(out io.Writer, report *materialize.Report, errorRows 
 	}
 
 	for _, d := range errorDiags {
+		if strings.HasPrefix(d.Code, "hook.") {
+			if err := writeSyncIssues(out, []error{pipeline.PromoteDiagnostic(d)}, false, "error:"); err != nil {
+				return err
+			}
+			continue
+		}
 		label := d.Code
 		if d.Resource != "" {
 			label = fmt.Sprintf("%s (%s)", d.Code, d.Resource)
@@ -595,7 +633,7 @@ func writeSyncCheckSummary(out io.Writer, report *materialize.Report, errorRows 
 
 	switch {
 	case pendingCount > 0:
-		return fmt.Errorf("%d skills out of sync", pendingCount)
+		return fmt.Errorf("%d outputs out of sync", pendingCount)
 	case len(errorDiags) > 0:
 		return fmt.Errorf("%d materialization error(s)", len(errorDiags))
 	case len(configErrs) > 0:
@@ -603,6 +641,125 @@ func writeSyncCheckSummary(out io.Writer, report *materialize.Report, errorRows 
 	default:
 		return fmt.Errorf("%d configuration error(s)", len(errorRows))
 	}
+}
+
+func writeHookChanges(out io.Writer, report *materialize.Report, pending bool) error {
+	if report == nil || len(report.HookChanges) == 0 {
+		return nil
+	}
+	changes := slices.Clone(report.HookChanges)
+	sort.SliceStable(changes, func(i, j int) bool {
+		if changes[i].Target != changes[j].Target {
+			return changes[i].Target < changes[j].Target
+		}
+		if changes[i].MachineScope != changes[j].MachineScope {
+			return !changes[i].MachineScope
+		}
+		if changes[i].File != changes[j].File {
+			return changes[i].File < changes[j].File
+		}
+		if changes[i].Event != changes[j].Event {
+			return changes[i].Event < changes[j].Event
+		}
+		if changes[i].Matcher != changes[j].Matcher {
+			return changes[i].Matcher < changes[j].Matcher
+		}
+		if !bytes.Equal(changes[i].Before, changes[j].Before) {
+			return bytes.Compare(changes[i].Before, changes[j].Before) < 0
+		}
+		return bytes.Compare(changes[i].After, changes[j].After) < 0
+	})
+	header := "Hook changes:"
+	if pending {
+		header = "Hook changes (pending, not written):"
+	}
+	if _, err := fmt.Fprintln(out, header); err != nil {
+		return err
+	}
+	homeDir, _ := os.UserHomeDir()
+	removed := false
+	for _, change := range changes {
+		scope := "repository"
+		if change.MachineScope {
+			scope = "machine"
+		}
+		action := "replace"
+		switch {
+		case len(change.Before) == 0:
+			action = "add"
+		case len(change.After) == 0:
+			action = "remove"
+			removed = true
+		}
+		if _, err := fmt.Fprintf(out, "  %s (%s) %s %s: %s", change.Target, scope, action, abbreviateHome(change.File, homeDir), change.Event); err != nil {
+			return err
+		}
+		if change.Matcher != "" {
+			if _, err := fmt.Fprintf(out, " matcher %s", strconv.Quote(change.Matcher)); err != nil {
+				return err
+			}
+		}
+		if _, err := fmt.Fprintln(out); err != nil {
+			return err
+		}
+		for _, side := range []struct {
+			label string
+			raw   json.RawMessage
+		}{{"-", change.Before}, {"+", change.After}} {
+			for _, line := range hookChangePayloadLines(side.raw) {
+				if _, err := fmt.Fprintf(out, "    %s %s\n", side.label, line); err != nil {
+					return err
+				}
+			}
+		}
+	}
+	if pending && removed {
+		if _, err := fmt.Fprintln(out, "Deselecting hooks removes their owned entries and owned support files."); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func hookChangePayloadLines(raw json.RawMessage) []string {
+	if len(raw) == 0 {
+		return nil
+	}
+	var entry map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &entry); err != nil {
+		return nil
+	}
+	handlers := []map[string]json.RawMessage{entry}
+	if group, ok := entry["hooks"]; ok {
+		var inner []map[string]json.RawMessage
+		if err := json.Unmarshal(group, &inner); err == nil && len(inner) > 0 {
+			handlers = inner
+		}
+	}
+	var lines []string
+	for _, handler := range handlers {
+		matched := false
+		for _, field := range []string{"command", "prompt"} {
+			value, ok := handler[field]
+			if !ok {
+				continue
+			}
+			var s string
+			if err := json.Unmarshal(value, &s); err != nil {
+				continue
+			}
+			matched = true
+			lines = append(lines, fmt.Sprintf("%s: %s", field, strconv.Quote(s)))
+		}
+		if !matched {
+			compact, err := json.Marshal(handler)
+			if err != nil {
+				continue
+			}
+			lines = append(lines, string(compact))
+		}
+	}
+	return lines
 }
 
 // activeOutputDirs returns a deduplicated, sorted list of output directories
@@ -704,7 +861,7 @@ func printMalformedDetail(out io.Writer, malformed []skill.MalformedSkill) error
 		return err
 	}
 	for _, m := range malformed {
-		if _, err := fmt.Fprintf(out, "  - %s (%s): %v\n", m.DirName, m.Path, m.Error); err != nil {
+		if _, err := fmt.Fprintf(out, "  - %s (%s): %s\n", tui.TerminalSafeLine(m.DirName), tui.TerminalSafeLine(m.Path), tui.TerminalSafeLine(fmt.Sprint(m.Error))); err != nil {
 			return err
 		}
 	}
@@ -763,15 +920,20 @@ type prunedStale struct {
 	Name string
 }
 
-// dedupStaleSelections drops repeats of the same kind+name selection while
-// preserving order. One stale selection can be reported once per registry
-// entry, and both the prune path and the skipped-prune message must count and
-// name it once — so they share this helper rather than each keeping a map.
+// dedupStaleSelections drops repeated warnings for the same source-bound
+// selection while preserving order. Identically named requests at distinct
+// registry URLs, refs, or paths must each reach the editor (and be counted when
+// pruning is skipped). Keep the runtime URL spelling: without a source-kind
+// discriminator, Git normalization could conflate directories named x and x.git.
 func dedupStaleSelections(stale []*resolver.SelectedNotFoundError) []*resolver.SelectedNotFoundError {
+	type selectionKey struct {
+		kind                 ir.ResourceKind
+		name, url, ref, path string
+	}
 	unique := make([]*resolver.SelectedNotFoundError, 0, len(stale))
-	seen := make(map[string]struct{}, len(stale))
+	seen := make(map[selectionKey]struct{}, len(stale))
 	for _, snf := range stale {
-		key := skill.ResourceKey(snf.Kind, snf.Name)
+		key := selectionKey{snf.Kind, snf.Name, strings.TrimSpace(snf.URL), strings.TrimSpace(snf.Ref), config.NormalizeRegistryPath(snf.Path)}
 		if _, dup := seen[key]; dup {
 			continue
 		}
@@ -888,18 +1050,9 @@ func pruneStaleSelections(ctx context.Context, repoRoot string, stale []*resolve
 		for _, snf := range dedupStaleSelections(stale) {
 			label := skill.KindLabel(snf.Kind)
 			locator := config.ResourceLocator{Kind: snf.Kind, Name: snf.Name}
-			topLevel, entry, inEntry, siteErr := selectionSites(configPath, snf)
+			entry, inEntry, siteErr := selectionSites(configPath, snf)
 			if siteErr != nil {
 				errs = append(errs, fmt.Errorf("prune %s %q: %w", label, snf.Name, siteErr))
-				continue
-			}
-			inherited, inhErr := m.UnboundIncludeInherited(locator)
-			if inhErr != nil {
-				errs = append(errs, fmt.Errorf("prune %s %q: %w", label, snf.Name, inhErr))
-				continue
-			}
-			if inherited {
-				errs = append(errs, fmt.Errorf("prune %s %q: config.edit.include-owned: selection is declared in an included fragment", label, snf.Name))
 				continue
 			}
 			removed := false
@@ -917,11 +1070,9 @@ func pruneStaleSelections(ctx context.Context, repoRoot string, stale []*resolve
 					removed = true
 				}
 			} else if strings.TrimSpace(snf.URL) != "" {
-				// The root file does not select this resource under a registry
-				// entry, so there is nothing here to remove: selectionSites
-				// would have reported inEntry. The edit is still attempted so
-				// that a selection owned by an included fragment is refused by
-				// name instead of being reported as undeclared.
+				// Ask the bound editor for an authoritative include-ownership
+				// refusal. A successful no-op is not a prune: the selection may
+				// belong only to the user or personal-local config.
 				binding, found, bindErr := m.LookupRegistry(config.RegistryEntry{URL: snf.URL, Ref: snf.Ref, Path: snf.Path})
 				if bindErr != nil {
 					errs = append(errs, fmt.Errorf("prune %s %q: %w", label, snf.Name, bindErr))
@@ -933,13 +1084,6 @@ func pruneStaleSelections(ctx context.Context, repoRoot string, stale []*resolve
 						continue
 					}
 				}
-			}
-			if topLevel {
-				if err := m.RemoveUnboundInclude(locator); err != nil {
-					errs = append(errs, fmt.Errorf("prune %s %q: %w", label, snf.Name, err))
-					continue
-				}
-				removed = true
 			}
 			if !removed {
 				errs = append(errs, fmt.Errorf("prune %s %q: selection is not declared in %s", label, snf.Name, configPath))
@@ -955,44 +1099,39 @@ func pruneStaleSelections(ctx context.Context, repoRoot string, stale []*resolve
 	return pruned, errs, nil
 }
 
-// selectionSites reports where a direct selection is actually written in the
-// repo config ROOT file: in the TOP-LEVEL per-kind include list, in the
-// include list of a registry entry matching the blamed URL, or both. The
-// registry-scoped editors can only see the second, so the prune has to ask
-// before deciding which edit to make.
-func selectionSites(configPath string, snf *resolver.SelectedNotFoundError) (topLevel bool, entry config.RegistryEntry, inEntry bool, err error) {
+// selectionSites finds a direct selection in the repo config root, preserving
+// its source kind for the bound editor. An empty path identifies the registry
+// root, not any subdirectory; refs likewise match exactly, including emptiness.
+func selectionSites(configPath string, snf *resolver.SelectedNotFoundError) (entry config.RegistryEntry, inEntry bool, err error) {
 	cfg, err := config.LoadRootConfigFromPath(configPath)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return false, config.RegistryEntry{}, false, nil
+			return config.RegistryEntry{}, false, nil
 		}
-		return false, config.RegistryEntry{}, false, err
+		return config.RegistryEntry{}, false, err
 	}
 	if cfg == nil {
-		return false, config.RegistryEntry{}, false, nil
+		return config.RegistryEntry{}, false, nil
 	}
-	for _, candidate := range cfg.SelectorForKind(snf.Kind).Include {
-		if strings.TrimSpace(candidate) == snf.Name {
-			topLevel = true
-			break
-		}
-	}
-	wantURL := config.NormalizeGitURL(strings.TrimSpace(snf.URL))
 	for _, candidate := range cfg.Registries {
-		if config.NormalizeGitURL(strings.TrimSpace(candidate.URL)) != wantURL {
+		if candidate.IsLocal() {
+			if filepath.Clean(candidate.URL) != filepath.Clean(strings.TrimSpace(snf.URL)) {
+				continue
+			}
+		} else if config.NormalizeGitURL(candidate.URL) != config.NormalizeGitURL(snf.URL) {
 			continue
 		}
-		if p := strings.TrimSpace(snf.Path); p != "" && config.NormalizeRegistryPath(candidate.Path) != config.NormalizeRegistryPath(p) {
+		if config.NormalizeRegistryPath(candidate.Path) != config.NormalizeRegistryPath(snf.Path) {
 			continue
 		}
-		if r := strings.TrimSpace(snf.Ref); r != "" && strings.TrimSpace(candidate.Ref) != r {
+		if strings.TrimSpace(candidate.Ref) != strings.TrimSpace(snf.Ref) {
 			continue
 		}
 		for _, selected := range candidate.SelectorForKind(snf.Kind).Include {
 			if strings.TrimSpace(selected) == snf.Name {
-				return topLevel, candidate, true, nil
+				return candidate, true, nil
 			}
 		}
 	}
-	return topLevel, config.RegistryEntry{}, false, nil
+	return config.RegistryEntry{}, false, nil
 }

@@ -1,0 +1,322 @@
+/**
+ * Marketplace navigation presentation.
+ *
+ * The Nuxt application owns this class contract so its header can evolve
+ * independently from the documentation site's native navigation.
+ */
+
+.am-skip-link {
+  position: fixed;
+  top: 16px;
+  left: 16px;
+  z-index: 100;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.am-skip-link:focus {
+  width: auto;
+  height: auto;
+  overflow: visible;
+  clip: auto;
+  clip-path: none;
+  border-radius: 6px;
+  background: var(--am-color-action-primary);
+  padding: 10px 16px;
+  color: var(--am-color-text-on-action);
+  font-size: 13px;
+  font-weight: 650;
+  text-decoration: none;
+}
+
+.am-site-header {
+  position: sticky;
+  top: 0;
+  z-index: 50;
+  border-bottom: 1px solid var(--am-color-border-default);
+  background: var(--am-color-bg-chrome);
+  color: var(--am-color-text-primary);
+}
+
+.am-site-nav {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  max-width: 1440px;
+  height: 64px;
+  margin-inline: auto;
+  padding-inline: 32px;
+  font-family: var(--font-sans);
+}
+
+.am-site-nav a:focus-visible,
+.am-site-nav button:focus-visible {
+  outline: 2px solid var(--am-color-action-focus-ring);
+  outline-offset: 4px;
+}
+
+button[role="switch"] {
+  cursor: pointer;
+}
+
+.am-site-nav__brand {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 1 auto;
+  min-width: 0;
+  text-decoration: none;
+}
+
+.am-site-nav__brand-logo {
+  display: block;
+  width: var(--am-brand-logo-width);
+  height: auto;
+  transform: translateY(var(--am-brand-logo-offset-y));
+}
+
+.am-site-nav__brand-logo--dark,
+.dark .am-site-nav__brand-logo--light {
+  display: none;
+}
+
+.dark .am-site-nav__brand-logo--dark {
+  display: block;
+}
+
+.am-site-nav__actions,
+.am-site-nav__links,
+.am-site-nav__utilities {
+  display: flex;
+  align-items: center;
+}
+
+.am-site-nav__actions {
+  flex: 1 0 auto;
+  justify-content: flex-end;
+}
+
+.am-site-nav__links {
+  gap: 0;
+}
+
+.am-site-nav__utilities {
+  gap: 0;
+}
+
+.am-site-nav__link {
+  padding: 0 12px;
+  color: var(--am-color-text-primary);
+  font-size: var(--am-text-body-sm);
+  font-weight: var(--am-font-medium);
+  line-height: 64px;
+  text-decoration: none;
+  transition: color 250ms;
+}
+
+.am-site-nav__link:hover,
+.am-site-nav__link[aria-current="page"] {
+  color: var(--am-color-action-primary);
+}
+
+.am-site-nav__icon-link,
+.am-site-nav__menu-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border: 0;
+  background: transparent;
+  color: var(--am-color-text-secondary);
+}
+
+.am-site-nav__icon-link:hover,
+.am-site-nav__menu-button:hover {
+  color: var(--am-color-action-primary);
+}
+
+.am-site-nav__icon-link svg {
+  width: 20px;
+  height: 20px;
+  fill: currentcolor;
+}
+
+.am-site-nav__utilities::before,
+.am-site-nav__icon-link::before {
+  width: 1px;
+  height: 24px;
+  background: var(--am-color-border-default);
+  content: "";
+}
+
+.am-site-nav__utilities::before {
+  margin: 0 16px;
+}
+
+.am-site-nav__icon-link {
+  position: relative;
+  margin-left: 32px;
+}
+
+.am-site-nav__icon-link::before {
+  position: absolute;
+  left: -16px;
+}
+
+.am-site-nav__menu-button {
+  display: none;
+  cursor: pointer;
+}
+
+.am-site-nav__menu-icon,
+.am-site-nav__menu-icon::before,
+.am-site-nav__menu-icon::after {
+  display: block;
+  width: 18px;
+  height: 2px;
+  background: currentcolor;
+  content: "";
+  transition: transform 160ms ease;
+}
+
+.am-site-nav__menu-icon {
+  position: relative;
+}
+
+.am-site-nav__menu-icon::before,
+.am-site-nav__menu-icon::after {
+  position: absolute;
+  left: 0;
+}
+
+.am-site-nav__menu-icon::before {
+  top: -6px;
+}
+
+.am-site-nav__menu-icon::after {
+  top: 6px;
+}
+
+.am-site-nav__menu-button[aria-expanded="true"] .am-site-nav__menu-icon {
+  background: transparent;
+}
+
+.am-site-nav__menu-button[aria-expanded="true"] .am-site-nav__menu-icon::before {
+  top: 0;
+  transform: rotate(45deg);
+}
+
+.am-site-nav__menu-button[aria-expanded="true"] .am-site-nav__menu-icon::after {
+  top: 0;
+  transform: rotate(-45deg);
+}
+
+.am-theme-switch {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 36px;
+  height: 36px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--am-color-text-secondary);
+  cursor: pointer;
+  transition: background-color 250ms, color 250ms;
+}
+
+.am-theme-switch:hover {
+  background: var(--am-color-bg-subtle);
+  color: var(--am-color-action-primary);
+}
+
+.am-theme-switch__icon {
+  width: 16px;
+  height: 16px;
+}
+
+@media (max-width: 767px) {
+  .am-site-nav {
+    padding: 0 8px 0 24px;
+  }
+
+  .am-site-nav__brand {
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .am-site-nav__menu-button {
+    display: inline-flex;
+    flex: 0 0 auto;
+  }
+
+  .am-site-nav__actions {
+    position: absolute;
+    top: 64px;
+    right: 0;
+    left: 0;
+    display: none;
+    align-items: stretch;
+    flex-direction: column;
+    gap: 16px;
+    background: var(--am-color-bg-chrome);
+    padding: 0 32px 32px;
+  }
+
+  .am-site-nav__actions[data-open="true"] {
+    display: flex;
+  }
+
+  .am-site-nav__links {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .am-site-nav__link {
+    border-bottom: 1px solid var(--am-color-border-default);
+    padding: 12px 0 11px;
+    line-height: 24px;
+  }
+
+  .am-site-nav__utilities {
+    justify-content: space-between;
+    border-radius: 8px;
+    background: var(--am-color-bg-subtle);
+    padding: 12px 14px 12px 16px;
+  }
+
+  .am-site-nav__utilities::before {
+    width: auto;
+    height: auto;
+    margin: 0;
+    background: transparent;
+    color: var(--am-color-text-secondary);
+    font-size: 12px;
+    font-weight: 500;
+    content: "Appearance";
+  }
+
+  .am-site-nav__icon-link {
+    margin-left: auto;
+  }
+
+  .am-site-nav__icon-link::before {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .am-site-nav__menu-icon,
+  .am-site-nav__menu-icon::before,
+  .am-site-nav__menu-icon::after,
+  .am-theme-switch {
+    transition: none;
+  }
+}

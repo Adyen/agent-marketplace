@@ -48,9 +48,20 @@ func TestToolNamesAreTranslatedPerTarget(t *testing.T) {
 // spec: hook-resources/negative-timeouts-are-refused-on-every-target
 func TestNegativeTimeoutsAreRefusedOnEveryTarget(t *testing.T) {
 	timeout := -1
-	for _, target := range []Target{TargetDevin, TargetCodex, TargetGemini, TargetWindsurf} {
+	for _, target := range []Target{TargetClaude, TargetFactory, TargetCursor, TargetDevin, TargetCodex, TargetGemini, TargetWindsurf} {
 		t.Run(string(target), func(t *testing.T) {
-			hook := ir.NewHookWithMatcherOptions("guard", "Stop", "", "echo check", "command", nil, ir.SourceRef{}, ir.WithHookTimeoutPtr(&timeout))
+			// Control: the same PreToolUse/Bash hook without a timeout is
+			// representable on every target, so each refusal below is
+			// genuinely timeout-driven.
+			control := ir.NewHookWithMatcherOptions("guard", "PreToolUse", "Bash", "echo check", "command", nil, ir.SourceRef{})
+			controlResult, err := Compile(control, target)
+			if err != nil {
+				t.Fatalf("Compile(control, %s): %v", target, err)
+			}
+			if len(controlResult.Artifacts) == 0 {
+				t.Fatalf("control hook is not representable on %s; diagnostics = %+v", target, controlResult.Diagnostics)
+			}
+			hook := ir.NewHookWithMatcherOptions("guard", "PreToolUse", "Bash", "echo check", "command", nil, ir.SourceRef{}, ir.WithHookTimeoutPtr(&timeout))
 			result, err := Compile(hook, target)
 			if err != nil {
 				t.Fatalf("Compile(hook, %s): %v", target, err)

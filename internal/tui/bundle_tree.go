@@ -1,7 +1,6 @@
 package tui
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -65,6 +64,9 @@ type bundleTree struct {
 	// content keyed by slash-separated relative path instead of a
 	// browsable directory.
 	files map[string][]byte
+
+	virtual    map[string][]byte
+	inspection *marketplaceInspection
 }
 
 // marketplaceArtifactName is the canonical archive filename produced by the
@@ -444,7 +446,39 @@ func bundleTreeForRow(r row) (*bundleTree, error) {
 	if err != nil {
 		return nil, err
 	}
-	return newBundleTree(root, only), nil
+	tree := newBundleTree(root, only)
+	if err := tree.addMarketplaceVirtualPrimary(r); err != nil {
+		return nil, err
+	}
+	return tree, nil
+}
+
+func (t *bundleTree) addMarketplaceVirtualPrimary(r row) error {
+	if t == nil || t.rootErr != nil || !r.Artifact.IsMarketplace || r.Artifact.Kind != ir.KindSkill {
+		return nil
+	}
+	for _, child := range t.rootNode.children {
+		if !child.isDir && child.name == "SKILL.md" {
+			return nil
+		}
+	}
+	skill, ok := r.Artifact.Resource.(*ir.Skill)
+	if !ok {
+		return fmt.Errorf("marketplace skill has no verified primary content")
+	}
+	markdown, err := compileSkillMarkdown(skill)
+	if err != nil {
+		return fmt.Errorf("render marketplace skill: %w", err)
+	}
+	if t.virtual == nil {
+		t.virtual = map[string][]byte{}
+	}
+	t.virtual["SKILL.md"] = markdown
+	t.insertArchivePath("SKILL.md")
+	sortBundleChildren(t.rootNode.children)
+	t.selected = "SKILL.md"
+	t.rebuild()
+	return nil
 }
 
 // newMarketplaceArtifactTree opens an installed Marketplace resource whose
@@ -486,11 +520,10 @@ func newMarketplaceArtifactTree(artifactPath string) (*bundleTree, error) {
 	if len(raw) > maxMarketplaceArtifactBytes {
 		return nil, fmt.Errorf("marketplace artifact exceeds %d MiB", maxMarketplaceArtifactBytes>>20)
 	}
-	ca, _, err := hccartifact.Decode(bytes.NewReader(raw))
+	// This tree only renders a cache file that the verified marker already covers,
+	// so content checks suffice; its archive digest is not re-derived here.
+	ca, err := hccartifact.DecodeContentArchive(raw)
 	if err != nil {
-		return nil, fmt.Errorf("decode marketplace artifact: %w", err)
-	}
-	if err := ca.ValidateArchive(nil); err != nil {
 		return nil, fmt.Errorf("validate marketplace artifact: %w", err)
 	}
 	manifest, err := json.MarshalIndent(ca.Manifest, "", "  ")
@@ -543,6 +576,10 @@ func marketplaceSkillMarkdown(payload []byte) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+	return compileSkillMarkdown(resource)
+}
+
+func compileSkillMarkdown(resource ir.Resource) ([]byte, error) {
 	result, err := hcc.Compile(resource, hcc.TargetFactory)
 	if err != nil {
 		return nil, err

@@ -72,6 +72,11 @@ makes each fix risky.
   expression, or a relative path where hooks run from the repository root
   (Windsurf). At machine scope it is an absolute path. Plugin-only
   variables and paths into the registry cache are no longer emitted.
+  Repository-hook support uses portable regular copies in either configured
+  materialization mode. Machine hooks and non-hook resources retain their
+  existing mode policy. Only clean source-proven links to the exact authorized
+  generated cache file may convert through CAS and recovery; unproven links
+  remain untouched and are refused.
 - Every harness target reports hook command changes: sync prints a review
   listing the exact commands added, changed, or removed, and emits a
   review diagnostic. `sync --check` reports the same changes as pending
@@ -81,9 +86,9 @@ makes each fix risky.
 - Every hook aggregate is reconciled through ownership state. The in-file
   `_managed_by` marker is read only as migration evidence.
 - Hooks can be ingested from each harness's native hook location.
-- Existing acquisition locks keep verifying. Hook provenance uses a new
-  source-revision generator version, and supported older versions keep their
-  frozen projection.
+- Existing acquisition locks keep verifying. Hook and tool provenance do not
+  introduce a new source-revision schema or generator version; existing
+  versions keep their historical digest projections.
 
 ## Capabilities
 
@@ -121,8 +126,9 @@ makes each fix risky.
   ownership reconciliation, legacy-entry migration, and the review report are
   added. Nothing under `internal` branches on a harness target name for
   hooks.
-- `internal/sourcerevision`: a new generator version for hook provenance, with
-  frozen compatibility vectors for older versions.
+- `internal/sourcerevision`: preserve historical digest projections despite
+  runtime hook and tool provenance, with frozen compatibility vectors for
+  every existing version.
 - `cmd/agent-marketplace`: review report output for `sync` and `sync --check`.
 - E2E: pre-v4 upgrade and released-client gates gain a hook migration
   scenario. The released-client gate must show that the latest release still

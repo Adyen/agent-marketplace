@@ -2,7 +2,6 @@
 import {
   GITHUB_REPOSITORY_URL,
   INSTALL_COMMAND,
-  MARKETPLACE_PATH,
 } from '../../../shared/site'
 import ActionLink from '../components/ActionLink.vue'
 import CommandBar from '../components/CommandBar.vue'
@@ -28,9 +27,6 @@ import TuiPreview from '../components/TuiPreview.vue'
           <CommandBar :command="INSTALL_COMMAND" class="install" />
 
           <div class="actions">
-            <ActionLink class="hero-action" :href="MARKETPLACE_PATH">
-              Browse Marketplace
-            </ActionLink>
             <ActionLink
               class="hero-action"
               :href="GITHUB_REPOSITORY_URL"

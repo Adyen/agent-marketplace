@@ -60,13 +60,29 @@ byte-identical. On every harness target, a handwritten entry that is
 semantically identical to a desired entry SHALL satisfy it: no duplicate is
 written, and `materialize.hook.satisfied-by-unmanaged` is emitted. Codex and
 Devin CLI keep their existing target-specific codes for this case. New
-entries SHALL NOT carry an in-file `_managed_by` marker.
+entries SHALL NOT carry an in-file `_managed_by` marker. A selected hook that
+is refused SHALL retain its previously owned entries. Refusal SHALL NOT prevent
+pruning an independently deselected hook when durable proof identifies all
+contributors and none remain selected. Unknown contributor or incomplete
+selection identity SHALL retain the entry. When publishing Windsurf
+repository-native hooks would shadow a valid legacy fallback, Agent
+Marketplace SHALL copy unmarked handwritten fallback handlers into the native
+file without acquiring ownership; the fallback SHALL remain unchanged, copied
+handlers SHALL precede generated handlers, and malformed or unsafe fallback
+input SHALL refuse native publication.
 
 #### Scenario: Deselected hook is removed from the merged file
 
 - **WHEN** one of two synced hooks sharing an event is excluded and sync runs
   again
 - **THEN** its entry MUST be removed and the other entry MUST remain
+
+#### Scenario: Refused sibling does not block deselection
+
+- **WHEN** a selected hook is refused on a target and another hook for the same
+  target is deselected and sync runs again
+- **THEN** the deselected hook's owned entry MUST be removed
+- **AND** the refused hook's previously owned entries MUST be retained
 
 #### Scenario: Repeat sync is byte-identical
 
@@ -93,6 +109,97 @@ entries SHALL NOT carry an in-file `_managed_by` marker.
 
 - **WHEN** a hook is synced to any harness target
 - **THEN** the written entry MUST NOT contain a `_managed_by` member
+
+#### Scenario: Repository-local support paths survive teammate checkout
+
+- **WHEN** an in-repository directory registry is relocated to another checkout
+  path with a healthy committed native hook and support tree
+- **THEN** sync on the relocated checkout MUST leave one copy of the valid local
+  command with the tracked bytes unchanged
+- **AND** sync MUST NOT adopt any existing ownership
+
+#### Scenario: Handwritten Windsurf fallback hooks remain active
+
+- **WHEN** a native Windsurf workspace hook is published beside a handwritten `.windsurf/hooks.json` fallback
+- **THEN** the fallback file bytes MUST remain unchanged
+- **AND** the handwritten handler bytes MUST be present in the native file before the generated handler
+- **AND** the copied handlers MUST NOT become owned
+
+#### Scenario: Portable admission retains native hook support boundaries
+
+- **WHEN** a selected captured Windsurf native hook declares support files, and
+  sync, check, retry, or removal runs in file mode
+- **THEN** a portable manifest entry naming a path below
+  `<support root>/<source key>/<hook name>/` MUST remain admissible, so the
+  published support is retained on repeat and removed on deselection
+- **AND** entries naming the support root, a source-key directory, a hook
+  directory, a malformed source key, shared aggregate configuration, or a path
+  outside both `.windsurf/` and the declared support root MUST be refused with
+  the existing unsafe-path diagnostic and their files preserved
+- **AND** admission MUST remain namespace containment; a matching digest inside
+  the admitted support namespace carries the same ownership contract as other
+  targets' support namespaces
+
+### Requirement: Native hook files are reversed into canonical events
+
+Each harness target's source layout SHALL ingest its native hook file while
+preserving native event names and recording `HookSource`. Mapping into a
+target's event vocabulary SHALL occur through the shipped catalogs during
+compilation, not by normalizing events during ingestion. Undocumented events
+SHALL retain their spelling and produce an ingestion diagnostic; unsupported
+handlers SHALL be skipped where they cannot be represented. Historical
+source-revision digest projections and existing acquisition locks SHALL remain
+unchanged. A native-only source root that had no historical resource inventory
+SHALL retain an empty frozen source-revision inventory while exposing its hooks
+through the current runtime catalog. Exact Git commit verification SHALL
+continue to bind every tracked definition, and malformed or unsafe native input
+SHALL fail closed.
+
+#### Scenario: Native-only Git hook sources retain frozen projection
+
+- **WHEN** a Git registry root contains only a native Factory hook file, given
+  either an explicit Factory source harness or autodetection
+- **THEN** the frozen source-revision projection MUST contain no resources
+- **AND** the current runtime catalog MUST expose the hook
+- **AND** a malformed or unsafe native hook file MUST still refuse the revision
+
+#### Scenario: Windsurf native file keeps every handler
+
+- **WHEN** a Windsurf `hooks.json` declares several handlers for one event
+- **THEN** ingestion MUST produce one hook per handler with distinct names, in
+  source order
+
+#### Scenario: Gemini BeforeAgent maps to UserPromptSubmit
+
+- **WHEN** a Gemini `settings.json` declares a `BeforeAgent` hook and that hook
+  is ingested and compiled for Claude Code
+- **THEN** ingestion MUST preserve event `BeforeAgent` and `HookSource` `gemini`
+- **AND** the compiled Claude hook MUST use event `UserPromptSubmit`
+
+#### Scenario: Undocumented Devin event keeps its name with a diagnostic
+
+- **WHEN** a Devin hook file declares an event outside Devin's documented
+  vocabulary
+- **THEN** ingestion MUST keep the original event name and emit
+  `ingest.devin.hook-event-unmappable`
+- **AND** a Devin `PostCompaction` hook MUST NOT become a canonical
+  `PreCompact` hook
+
+#### Scenario: Unsupported Codex handlers are skipped
+
+- **WHEN** a Codex `hooks.json` declares an unsupported non-command handler
+  beside valid command handlers and an undocumented event
+- **THEN** ingestion MUST skip the unsupported handler with
+  `ingest.codex.hook-unsupported`
+- **AND** valid sibling handlers MUST still be ingested
+- **AND** the undocumented event MUST retain its native spelling and emit
+  `ingest.codex.hook-event-unmappable`; compilation MUST refuse it when the
+  target catalog cannot represent it
+
+#### Scenario: Cursor plugin-root token is normalized
+
+- **WHEN** a legacy Cursor hook command references `${CURSOR_PLUGIN_ROOT}`
+- **THEN** ingestion MUST rewrite it to `${CLAUDE_PLUGIN_ROOT}`
 
 ## ADDED Requirements
 
@@ -205,9 +312,9 @@ compiler SHALL NOT choose an approximate or differently timed event.
 
 The compiler SHALL decode a cross-harness tool matcher into the set of tool
 concepts it names, using the source harness's shipped tool catalog, including
-the aliases it declares. The matcher may be `*`, empty, one exact tool name,
-a list of exact tool names, an anchored form of those (`^X$`, `^(X|Y)$`), or
-an MCP tool pattern.
+the aliases it declares. The matcher may be `*`, the equivalent regex `.*`,
+empty, one exact tool name, a list of exact tool names, an anchored form of
+those (`^X$`, `^(X|Y)$`), or an MCP tool pattern.
 
 The emitted matcher SHALL fire for exactly that concept set on the target:
 
@@ -245,6 +352,13 @@ an error on every target.
   Factory Droid, Cursor, Gemini CLI, Devin CLI, and Codex
 - **THEN** the emitted matchers MUST be `Execute`, `^Shell$`,
   `^run_shell_command$`, `^exec$`, and `^Bash$`, respectively
+
+#### Scenario: Match-all regex syncs like star
+
+- **WHEN** a hook with matcher `*` or `.*` on a source hook event that accepts
+  regex matchers is synced
+- **THEN** both spellings MUST select the same target and install exactly one
+  copy wherever `*` is representable
 
 #### Scenario: Write and Edit translate to each target's file-change tools
 
@@ -373,7 +487,15 @@ cache. If a target
 catalog declares no repository base, a repository-scope hook whose command
 contains a plugin-root token SHALL be suppressed with the error
 `hook.support-path-unrepresentable`. Commands without a plugin-root token
-SHALL be emitted unchanged.
+SHALL be emitted unchanged. A plugin-root token inside an authored single-quoted
+shell literal SHALL be refused with `hook.env-unrepresentable` rather than
+changing literal shell semantics or emitting malformed executable output.
+
+#### Scenario: Single-quoted plugin-root literals refuse safely
+
+- **WHEN** a native hook command contains a source plugin-root token inside an authored single-quoted shell literal
+- **THEN** compilation MUST emit `hook.env-unrepresentable` as an error and no hook artifact
+- **AND** ordinary double-quoted and unquoted representable plugin-root references MUST continue to translate, while same-harness ordinary non-plugin variables retain their existing behavior
 
 #### Scenario: Repository-scope commands use the project-directory variable
 
@@ -419,9 +541,12 @@ file, except the hook definition itself and native aggregate siblings, into
 `hook-support/<source>/<hook>/` under the harness target's root for that
 scope. `<source>` is a filesystem-safe identifier derived deterministically
 from the hook's registry source, and `<hook>` is the hook's installed name.
-Relative paths below the source directory SHALL be preserved. The
-materialization mode applies to these files. Every harness target, including
-Devin CLI, Codex, and Gemini CLI, SHALL receive support files. When two
+Relative paths below the source directory SHALL be preserved. Repository-scope
+hook support SHALL be installed as portable regular copies with the verified
+source bytes and permission bits, regardless of the configured materialization
+mode. Machine-scope hook support and non-hook resources SHALL retain their
+existing materialization-mode policy. Every harness target, including Devin
+CLI, Codex, and Gemini CLI, SHALL receive support files. When two
 selected hooks would still write different bytes or permissions to one
 support path, both SHALL be refused with `materialize.hook.support-conflict`
 before any aggregate changes. Previously installed entries and files SHALL be
@@ -448,6 +573,29 @@ kept.
 - **THEN** its support directory MUST be removed
 - **AND** files in the target root that Agent Marketplace does not own MUST
   be kept
+
+#### Scenario: Repository support copies preserve machine and non-hook policy
+
+- **WHEN** repository hooks, machine hooks and non-hook resources are synced with symlink materialization configured
+- **THEN** repository hook support MUST be regular files with the verified source bytes and permission bits
+- **AND** machine hook support and non-hook resources MUST retain their configured materialization-mode behavior
+
+#### Scenario: Proven repository support links convert with recovery
+
+- **WHEN** an installed repository support link has clean current native ownership evidence for its selected source, points to the exact authorized generated cache file, and matches the verified source bytes and permissions
+- **THEN** sync MUST replace the link with a regular copy using compare-and-swap and recoverable publication without changing its referent
+- **AND** an interrupted conversion MUST be refused by read-only commands and completed idempotently by the next mutating recovery
+
+#### Scenario: Unproven or unsafe repository support links are preserved
+
+- **WHEN** an existing support link lacks clean source-bound ownership evidence, has a different target, or crosses an unsafe file boundary
+- **THEN** sync MUST refuse the affected hook without replacing that link or changing its referent, native file or legacy file
+- **AND** corrupt ownership evidence and foreign regular files MUST NOT become overwrite or adoption authority
+
+#### Scenario: Repository support conversion check writes nothing
+
+- **WHEN** a read-only sync check discovers a pending managed-link conversion or changed output generation
+- **THEN** it MUST report the pending change or refusal without creating state, staging files or support copies and without changing native, legacy, support or referent bytes and permissions
 
 ### Requirement: Hook command changes are reported for review on every harness target
 
@@ -703,27 +851,30 @@ SHALL be read.
 - **THEN** ingestion MUST produce one hook per handler from `hooks`
 - **AND** `permissions` MUST NOT produce a resource
 
-#### Scenario: Cursor native hooks are ingested with canonical events
+#### Scenario: Cursor native hooks retain native events on ingestion
 
 - **WHEN** a registry source contains `.cursor/hooks.json` with a
   `beforeSubmitPrompt` handler
-- **THEN** ingestion MUST produce a hook whose canonical event is
-  `UserPromptSubmit`, with Cursor recorded as its source harness
+- **THEN** ingestion MUST produce a hook whose native event is
+  `beforeSubmitPrompt`, with Cursor recorded as its source harness
 
 #### Scenario: Devin Desktop workspace hooks are ingested for Windsurf
 
 - **WHEN** a Windsurf registry source contains `.devin/hooks.json` with a
   `pre_run_command` handler
-- **THEN** ingestion MUST produce a `PreToolUse` hook covering the shell tool,
-  with Windsurf recorded as its source harness
+- **THEN** ingestion MUST produce a hook whose native event is
+  `pre_run_command`, with Windsurf recorded as its source harness
 
 ### Requirement: Existing acquisition locks keep verifying
 
-Hook and tool source provenance SHALL be recorded under a new source-revision
-generator version. Acquisition locks written by earlier supported generator
-versions SHALL keep verifying with their frozen projection through `sync`,
-`sync --locked`, and `sync --check`. Only an explicit `update` SHALL move a
-lock to the new version.
+Hook and tool source provenance SHALL be retained in runtime resources without
+introducing a new source-revision schema or generator version. Existing
+source-revision versions `v1` through `v4` SHALL keep their historical digest
+projections. New hook and tool provenance SHALL NOT change those projections.
+Acquisition locks SHALL keep verifying through `sync`, `sync --locked`, and
+`sync --check` without an implicit lock refresh. An explicit `update` may
+refresh the selected source revision using an already supported generator
+version from `v1` through `v4`.
 
 #### Scenario: Pre-change hook lock verifies unchanged
 
@@ -731,4 +882,54 @@ lock to the new version.
   for a registry that provides hooks
 - **THEN** `sync --locked` and `sync --check` MUST succeed and keep the lock
   bytes
-- **AND** only `update` MUST move the lock to the new source-revision version
+- **AND** an explicit `update` MAY refresh the selected source revision but
+  MUST use an already supported generator version from `v1` through `v4`
+
+### Requirement: Legacy marked Gemini hooks transition in place
+
+When Gemini settings contain flat command hooks written by v3.1.1, Agent Marketplace SHALL transition only entries with exact legacy `_managed_by: agent-marketplace` evidence into currently selected native matcher groups. This applies at repository and machine scope. Legacy evidence authorizes removal of the recognized old entry, not adoption of an unmarked entry. New native entries SHALL contain no ownership marker and SHALL use current captured source proof. Native bytes and ownership state SHALL publish in the existing transaction. Handwritten native groups, comments, relative order, modes and unrelated settings SHALL remain intact. Invalid, ambiguous or unmarked flat shapes SHALL be preserved and refused safely. Incomplete preparation SHALL not remove legacy entries. Read-only commands SHALL report pending changes without writing configuration or state.
+The recognized transition also covers v4.1.3 Gemini matcher groups whose every
+handler command matches a currently selected source-backed hook for the same
+event, and Windsurf command-only handlers carrying Agent Marketplace markers;
+marker-free, unmatched, and foreign-owned entries SHALL remain unowned and
+unchanged.
+
+#### Scenario: Marked Gemini flat hooks transition at both scopes
+
+- **WHEN** v3.1.1 flat marked command hooks exist in Gemini settings alongside valid handwritten native groups and unrelated settings, and a mutating sync runs
+- **THEN** the recognized marked entries MUST be replaced by the selected native matcher groups with no in-file marker
+- **AND** handwritten groups and unrelated settings MUST remain intact
+- **AND** updated native bytes and source-bound ownership evidence MUST publish together
+
+#### Scenario: Unmarked Gemini flat hooks are refused without adoption
+
+- **WHEN** Gemini settings contain an unmarked, other-owner or malformed flat hook entry
+- **THEN** sync MUST refuse that target and scope and preserve its configuration and ownership state
+- **AND** no entry MUST be adopted solely because its payload resembles a desired hook
+
+#### Scenario: Gemini legacy preview and failed preparation preserve bytes
+
+- **WHEN** a marked Gemini transition is pending and check mode runs, or preparation is incomplete or publication fails
+- **THEN** check mode MUST report pending exact hook changes without configuration or state writes
+- **AND** incomplete or unsuccessful publication MUST not report a completed legacy removal
+- **AND** configuration and ownership state MUST remain safe under the existing CAS and recovery rules
+
+#### Scenario: Released hook output upgrades without duplication
+
+- **WHEN** hook output written by the latest released client is synced under
+  the same HOME and then upgraded by the candidate, for every harness target and
+  scope, and a later selection change deselects one of two hooks
+- **THEN** the candidate MUST leave exactly one copy of each selected hook
+- **AND** deselection MUST remove only hooks the candidate owns
+
+### Requirement: Superseded hook resource directories remain preserved
+
+Native hook aggregation SHALL preserve target- and scope-declared superseded per-hook resource directories in every materialization mode. Existing cache-backed symlinks and handwritten files inside those directories SHALL NOT be pruned, adopted, or rewritten by generic artifact reconciliation. This preservation SHALL NOT suppress valid native hook publication or pruning of managed stale artifacts outside the preserved directories.
+
+#### Scenario: Legacy Windsurf cache links remain preserved
+
+- **WHEN** a repository or machine scope contains cache-backed per-event Windsurf hooks in its declared preserved legacy directory and a selected hook is synced in symlink or file mode
+- **THEN** the existing directory's paths, bytes, modes, modification times and link targets MUST remain unchanged
+- **AND** the selected hook MUST appear once in the scope's native hook aggregate without an in-file ownership marker
+- **AND** managed stale artifacts outside the preserved directory MUST still be pruned
+- **AND** check mode, repeat sync and deselection MUST preserve the legacy resources

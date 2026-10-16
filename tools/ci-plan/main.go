@@ -204,6 +204,10 @@ func classifyPath(p string) (map[string]bool, error) {
 		enableBackend(p, c)
 	}
 
+	if strings.HasPrefix(p, "tools/benchmark-report/") {
+		c["benchmark"] = true
+	}
+
 	if strings.HasPrefix(p, "tools/harness-compat/") {
 		c["harness_compatibility"] = true
 	}
@@ -218,6 +222,7 @@ func classifyPath(p string) (map[string]bool, error) {
 		c["container_marketplace"] = true
 	case p == "compose.yaml" ||
 		strings.HasPrefix(p, "deploy/compose/") ||
+		strings.HasPrefix(p, "tools/marketplace-proxy/") ||
 		p == "web/Dockerfile" || p == "site/Dockerfile":
 		c["container_config"] = true
 	}

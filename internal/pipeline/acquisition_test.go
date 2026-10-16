@@ -2,13 +2,16 @@ package pipeline
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/Adyen/agent-marketplace/internal/config"
+	"github.com/Adyen/agent-marketplace/internal/dependencytxn"
 	"github.com/Adyen/agent-marketplace/internal/lockfile"
 	"github.com/Adyen/agent-marketplace/internal/marketplace"
 	"github.com/Adyen/agent-marketplace/internal/marketplacelock"
@@ -77,7 +80,7 @@ func TestReadDeployedLocksAbsentOrganizationIsNil(t *testing.T) {
 }
 
 func TestLoadEffectiveOnlineAllowsMissingWritableGitLock(t *testing.T) {
-	repoPath, _ := deployedLockFixture(t, "apiVersion: agent-marketplace/v2\nregistries:\n  - url: https://example.test/a.git\n    ref: main\n", "")
+	repoPath, _ := deployedLockFixture(t, "apiVersion: agent-marketplace/v4\nsources:\n  registry: {git: https://example.test/a.git, ref: main}\n", "")
 	root := t.TempDir()
 	missing := filepath.Join(t.TempDir(), "missing.yaml")
 	opts := config.LoadEffectiveOptions{
@@ -94,7 +97,7 @@ func TestLoadEffectiveOnlineAllowsMissingWritableGitLock(t *testing.T) {
 		t.Fatalf("ConfigLoadOnline errors = %v, want a bound repo config with no hard errors", online.Errors)
 	}
 	if online.Repo.Config == nil || len(online.Repo.Config.Registries) != 1 {
-		t.Fatalf("repo config = %#v, want the bound v2 registry", online.Repo.Config)
+		t.Fatalf("repo config = %#v, want the bound v4 registry", online.Repo.Config)
 	}
 
 	strict := LoadEffective(context.Background(), ConfigLoadStrict, opts, nil)
@@ -126,7 +129,7 @@ func TestLoadEffectiveUsesOverlayForMissingWritableConfig(t *testing.T) {
 		RepoPath:         missing,
 		LocalPath:        localPath,
 		FileOverlays: map[string][]byte{
-			localPath: []byte("apiVersion: agent-marketplace/v2\nregistries:\n  - url: https://example.test/a.git\n    ref: main\n"),
+			localPath: []byte("apiVersion: agent-marketplace/v4\nsources:\n  registry: {git: https://example.test/a.git, ref: main}\n"),
 		},
 	}
 	online := LoadEffective(context.Background(), ConfigLoadOnline, opts, nil)
@@ -134,7 +137,7 @@ func TestLoadEffectiveUsesOverlayForMissingWritableConfig(t *testing.T) {
 		t.Fatalf("ConfigLoadOnline errors = %v, want a bound local config with no hard errors", online.Errors)
 	}
 	if online.Local == nil || len(online.Local.Registries) != 1 {
-		t.Fatalf("local config = %#v, want the bound v2 registry", online.Local)
+		t.Fatalf("local config = %#v, want the bound v4 registry", online.Local)
 	}
 
 	strict := LoadEffective(context.Background(), ConfigLoadStrict, opts, nil)
@@ -152,11 +155,11 @@ func TestLoadEffectiveUsesOverlayForMissingWritableConfig(t *testing.T) {
 
 func TestLoadEffectiveSkipsLockPathForLayerWithoutRemoteSources(t *testing.T) {
 	orgPath := filepath.Join(t.TempDir(), "org.yaml")
-	if err := os.WriteFile(orgPath, []byte("apiVersion: agent-marketplace/v2\nharnesses:\n  - claude\nregistries: []\n"), 0o644); err != nil {
+	if err := os.WriteFile(orgPath, []byte("apiVersion: agent-marketplace/v4\nharnesses:\n  - claude\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	globalPath := filepath.Join(t.TempDir(), "global.yaml")
-	if err := os.WriteFile(globalPath, []byte("apiVersion: agent-marketplace/v2\nregistries: []\n"), 0o644); err != nil {
+	if err := os.WriteFile(globalPath, []byte("apiVersion: agent-marketplace/v4\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	root := t.TempDir()
@@ -184,7 +187,7 @@ func TestLoadEffectiveSkipsLockPathForLayerWithoutRemoteSources(t *testing.T) {
 
 // spec: deployed-acquisition-locks/missing-writable-acquisition-lock
 func TestReadDeployedLocksMissingWritableGitLockFails(t *testing.T) {
-	repoPath, _ := deployedLockFixture(t, "apiVersion: agent-marketplace/v2\nregistries:\n  - url: https://example.test/a.git\n    ref: main\n", "")
+	repoPath, _ := deployedLockFixture(t, "apiVersion: agent-marketplace/v4\nsources:\n  registry: {git: https://example.test/a.git, ref: main}\n", "")
 	intent := readDeployedLocksIntent(t, config.LoadEffectiveOptions{RepoPath: repoPath})
 	if !intent.Layers[config.RepoCommitted].NeedsLock() {
 		t.Fatal("fixture repo layer does not need a lock")
@@ -234,7 +237,7 @@ func TestReadDeployedLocksStaleOrganizationGitLockFails(t *testing.T) {
 
 // spec: deployed-acquisition-locks/malformed-organization-lock
 func TestReadDeployedLocksMalformedOrganizationFails(t *testing.T) {
-	orgPath, _ := deployedLockFixture(t, "apiVersion: agent-marketplace/v2\nregistries: []\n", "not: [valid\n")
+	orgPath, _ := deployedLockFixture(t, "apiVersion: agent-marketplace/v4\nsources:\n  registry: {git: https://example.test/a.git, ref: main}\n", "not: [valid\n")
 	intent := readDeployedLocksIntent(t, config.LoadEffectiveOptions{OrganizationPath: orgPath})
 
 	_, err := ReadDeployedLocks(context.Background(), intent)
@@ -313,5 +316,66 @@ func TestLoadEffectiveUsesStagedMarketplaceLockOverlay(t *testing.T) {
 	}
 	if loaded.User.Config == nil || len(loaded.User.Config.Marketplaces) != 1 {
 		t.Fatalf("missing repository lock discarded verified user Marketplace evidence: %#v", loaded.User.Config)
+	}
+}
+
+func TestReadLayerLockPreservesManagedAndLegacySymlinkPolicy(t *testing.T) {
+	repo := t.TempDir()
+	agents := filepath.Join(repo, ".agents")
+	lockDir := filepath.Join(repo, "locks")
+	if err := os.MkdirAll(agents, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(lockDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	data, err := lockfile.Encode(lockfile.Document{APIVersion: lockfile.APIVersionV2, Scope: lockfile.ScopeRepo})
+	if err != nil {
+		t.Fatal(err)
+	}
+	containedLock := filepath.Join(lockDir, "lock.yaml")
+	if err := os.WriteFile(containedLock, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	managedLock := filepath.Join(agents, "lock.yaml")
+	if err := os.Symlink(filepath.Join("..", "locks", "lock.yaml"), managedLock); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+
+	doc, generation, exists, err := ReadLayerLock(managedLock, lockfile.ScopeRepo)
+	if err != nil || !exists || doc == nil || doc.Scope != lockfile.ScopeRepo {
+		t.Fatalf("contained managed lock = %#v, %#v, %t, %v", doc, generation, exists, err)
+	}
+	if generation.Digest != fmt.Sprintf("%x", sha256.Sum256(data)) {
+		t.Fatalf("generation digest = %q, want SHA-256 of lock bytes", generation.Digest)
+	}
+
+	externalDir := t.TempDir()
+	externalLock := filepath.Join(externalDir, "lock.yaml")
+	if err := os.WriteFile(externalLock, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(managedLock); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(externalLock, managedLock); err != nil {
+		t.Fatal(err)
+	}
+	doc, _, exists, err = ReadLayerLock(managedLock, lockfile.ScopeRepo)
+	if err == nil || !errors.Is(err, dependencytxn.ErrUnsafePath) || doc != nil || exists {
+		t.Fatalf("escaping managed lock = %#v, %t, %v; want unsafe path without evidence", doc, exists, err)
+	}
+	unchanged, err := os.ReadFile(externalLock)
+	if err != nil || string(unchanged) != string(data) {
+		t.Fatalf("external lock changed: bytes=%q err=%v", unchanged, err)
+	}
+
+	legacyLink := filepath.Join(repo, "legacy-lock.yaml")
+	if err := os.Symlink(externalLock, legacyLink); err != nil {
+		t.Fatal(err)
+	}
+	doc, _, exists, err = ReadLayerLock(legacyLink, lockfile.ScopeRepo)
+	if err == nil || !errors.Is(err, lockfile.ErrUnsafeFile) || doc != nil || exists {
+		t.Fatalf("legacy symlink lock = %#v, %t, %v; want lockfile.ErrUnsafeFile without evidence", doc, exists, err)
 	}
 }

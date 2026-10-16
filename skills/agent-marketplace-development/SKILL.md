@@ -41,12 +41,13 @@ Then skim:
 - `cmd/agent-marketplace/main.go` — Cobra root, subcommand wiring,
   TUI launch on bare TTY invocation.
 - `internal/config/v4.go` — the strict v4 `sources`/`resources` model
-  (`V4Config`) and `ToLegacyConfig`, which adapts it into the internal
-  `Config`/`RegistryEntry` model the resolver consumes.
+  (`V4Config`) and its runtime adapter into the internal
+  `Config`/`RegistryEntry` model the resolver consumes. The adapter is not
+  legacy consumer-format support.
 - `internal/config/effective_config.go` — `LoadEffective` loads the four
   layers (and their includes and locks).
 - `internal/config/merge.go` — `MergeLayers` and `resolveInheritedList`
-  (the "specific wins over default" rule for legacy per-entry lists).
+  (runtime requirement inheritance; not an on-disk consumer schema).
 - `internal/pipeline/pipeline.go` — `Resolve`, `ResolveWithExactLockLease`,
   and `Sync`: the one pipeline both CLI and TUI call.
 - `internal/resolver/resolver.go` — selects which resources are enabled.
@@ -78,7 +79,7 @@ Both the CLI subcommands and the TUI drive `internal/pipeline`:
 
 ```
 pipeline.LoadEffective -> config.EffectiveConfig    [four layers + includes + locks;
-        |                                            v4 adapted via ToLegacyConfig]
+        |                                            v4 adapted into runtime requirements]
         v
   config.MergeLayers(layers) -> *config.Config      [merge.go]
         |
@@ -231,44 +232,65 @@ These are load-bearing. Every PR must preserve them.
 4. `/etc/agent-marketplace/config.yaml` (organization-managed machine config;
    root-owned trust rules; `required: true` groups are org-mandatory).
 
-Each layer owns a lock next to it (`lock.yaml`, `lock.local.yaml`). V4 is the
-only schema new files use; v2/v3 are read through the compatibility reader and
-writes to them warn `config.legacy-deprecated`. Which top-level fields each
-layer may set is enforced with `v4.layer-field`.
+Each layer owns a lock next to it (`lock.yaml`, `lock.local.yaml`). Every
+existing consumer root, including organization and personal-local, must declare
+exact `apiVersion: agent-marketplace/v4`. An omitted root version fails with
+`v4.api-version-required`; an explicit unsupported/invalid value fails with
+`v4.api-version`, identifying the authored file and `apiVersion` field. An
+existing empty/versionless file is not an absent layer. Explicitly included
+fragments under a validated v4 root may omit the version or declare exact v4;
+this does not relax include authority, source binding, or layer restrictions
+(`v4.layer-field`).
 
-### Attribute inheritance: specific wins over default
+Validate all required roots/includes before new acquisition, config/lock staging
+or publication, or harness writes/prunes, including direct editors and ad-hoc
+paths. Refusal preserves bytes/metadata and creates no missing writable root or
+lock. Ordinary logs and established safe replay of a pre-existing dependency
+journal are separate: read-only dependency modes refuse with
+`dependency.recovery-required`, while recovery-capable commands may finish
+already-admitted writes before fresh validation. Do not use recovery as a new
+legacy decoder.
 
-In a legacy v2/v3 file, top-level resource lists (`skills`,
-`commands`, `subagents`, `hooks`, `mcp`), `tags`, and `exclude` are
-**defaults**. A `RegistryEntry` that sets its own resource lists,
-`tags`, or `exclude` **replaces** (does NOT merge with) the top-level
-for that entry. V4 resource groups are already per-source, and
-`ToLegacyConfig` emits per-entry lists. This is encoded in
-`resolveInheritedList`:
+There is no shipped `migrate`, startup conversion prompt, TUI migration modal,
+or consumer legacy reader/editor. Users convert writable roots and include
+trees with an older released migrator before upgrading; administrators convert
+organization configuration externally. Conversion can refuse includes,
+unrepresentable input, or missing verified Marketplace evidence; changing only
+the sentinel is insufficient. Keep lock v1 reads/v2 writes, historical
+source-revision verification, operator `agent-marketplace.io/marketplace/v1`,
+API/artifact/native schemas, ownership state, and journal formats independent.
 
-```go
-func resolveInheritedList(defaults, overrides []string) []string {
-    if overrides != nil {
-        return append([]string(nil), overrides...)
-    }
-    // ... otherwise fall back to defaults
-}
-```
+### Source-bound groups and the runtime adapter
 
-**Consequence for editors**: when writing a resource into a config, if
-the matching registry entry has its own list for that kind, write into
-*that* list, not the top-level. The TUI toggle modal
-(`internal/tui/modal.go` → `runScopedToggle`) runs inside the TUI's
-`MutateConfigWithDependencies` hook (`cmd/agent-marketplace/tui.go`) and
-edits the staged path through `pipeline.EditLayerAtPath` with a
-`pipeline.LayerMutation`, so every kind and both schemas share one editor.
+V4 resource groups belong to named sources declared by the same root/include
+tree. Preserve ordered include/exclude decisions, fragment/root precedence,
+relative-directory bases, source bindings, and layer provenance. The v4 adapter
+emits the runtime requirements used by catalog, resolver, and materialization;
+that internal model is not a legacy on-disk format or a serialization target.
+Do not remove shared runtime inheritance/selection logic just because its
+historical types have registry-entry names.
 
-### Required registries and machine scope ignore local excludes
+**Consequence for editors**: write source-bound selections into the selected
+owning root's `sources`/`resources`, never old top-level lists or an included
+fragment. The TUI toggle modal (`internal/tui/modal.go` → `runScopedToggle`)
+runs inside the TUI's `MutateConfigWithDependencies` hook
+(`cmd/agent-marketplace/tui.go`) and edits the staged path through
+`pipeline.EditLayerAtPath` with a `pipeline.LayerMutation`. Preserve the original
+declaring path for staged reloads; every kind and scope uses the v4 editor.
 
-`required: true` global registries sync all their resources to the
-configured machine-scope harness roots regardless of repo/local config.
-Repo and checkout-local excludes apply only to non-required repo-scoped
-resources; machine-scoped resources are immune. The resolver enforces this;
+### Required selections and machine scope ignore local excludes
+
+`required: true` on a v4 resource group protects its selected resources from
+exclusion and removal; it selects nothing by itself. Selections come from
+`include`, `tags`, or `all` where the source kind supports them. For Git and
+directory sources, `all: true` explicitly selects every resource; adding
+`required: true` makes those selections mandatory. Unsupported hosted dynamic
+selectors remain refused.
+
+Organization/user selections install into their configured machine-scope
+harness roots. Repo and checkout-local excludes apply only to non-required
+repo-scoped resources; they cannot hide machine-scoped resources or modify
+another scope's selections or ownership. The resolver enforces these boundaries;
 never add a bypass.
 
 ### Name collisions resolve deterministically
@@ -298,10 +320,10 @@ than re-marshaling structs, so user comments are preserved:
   are the v4-aware layer editors; callers reach them through
   `pipeline.EditLayerAtPath`. They refuse edits owned by an included
   fragment (`config.edit.include-owned`) and change nothing on refusal.
-- `editor_add.go` / `editor_remove.go` are the legacy node editors, built on
-  `editor_helpers.go`: `parseConfigDocument`, `findMappingValue`,
-  `findTopLevelSequence`, `findEntrySequence`, `removeMappingKey`,
-  `ensureMappingSequence`, `writeConfigDocument`.
+- Keep shared YAML node helpers only where v4 edits use them. Do not restore
+  legacy reader/writer branches or serialize the internal runtime model back
+  into consumer files. Ref edits, including `update --bump`, target eligible
+  v4 sources owned by the root; included-fragment refs stay unchanged.
 - Follow the same shape for new editors: read bytes, parse, ensure the
   mapping, locate nodes, mutate, write. Treat `os.ErrNotExist` as a no-op for
   remove operations.
@@ -321,13 +343,13 @@ The TUI is a standard [Elm-style][elm] Bubble Tea app:
 | `actions.go` | Snapshot loading (`loadSnapshot`/`readSnapshot`), `buildRows`, tea.Cmd factories |
 | `requests.go` | `requestGeneration` bookkeeping for async results |
 | `modal.go` | Per-scope toggle modal (`paneToggleModal`) |
+| `bulk.go` | Section bulk-toggle modal (`space` on a section header): scope → direction → confirmation, one staged layer transaction |
+| `view_settings.go` | `v` View settings modal (primary/secondary grouping with live preview) and the versioned per-user preference file under `$XDG_STATE_HOME` |
 | `harness.go` / `init.go` | `H` harness modal and first-run harness selection |
-| `migration.go` | Startup v4 migration prompt |
 | `edit_config.go` / `editor_process.go` | `E` config picker and `$EDITOR` lifecycle |
 | `discovery.go` | Hosted Marketplace discovery rows |
 | `diagnostics.go` | `e` errors/warnings view |
 | `bundle_tree*.go` | `enter` file browser for cached resource files |
-| `tabs.go` | Scope / Registry / Status tab switching + per-tab state |
 | `tree.go` / `flatitems.go` | Section tree and its flattened rendered list |
 | `list.go` / `detail.go` | Left and right panes |
 | `badges.go` | `G`/`P`/`L`/`R`/`P-` origin badges next to each row |
@@ -337,7 +359,7 @@ The TUI is a standard [Elm-style][elm] Bubble Tea app:
 | `theme.go` | lipgloss styles |
 
 `docs/tui-product-contract.md` describes the intended TUI behavior; the
-`tui-*` capabilities under `openspec/specs/` are normative once they exist.
+`tui-*` capabilities under `openspec/specs/` are normative.
 
 ### Message flow for a config-writing toggle
 
@@ -356,13 +378,6 @@ truth is the config file, and the snapshot reload is what produces new
 rows. Mutating in place hides bugs where the write path didn't land in
 the right config location.
 
-### Tab state isolation
-
-Each tab keeps its own cursor/offset/filter/fold state in
-`tabStates[tab]` (`tabs.go`). `switchTab` saves outgoing state and
-restores incoming state. Any new per-tab concern goes into
-`tabViewState`, not the top-level `Model`.
-
 ### Request generation pattern
 
 Async results (`snapshotLoadedMsg`, `refreshLoadedMsg`, detail and
@@ -376,13 +391,17 @@ overwriting a newer user-triggered reload. New async work gets a
 ### UX for selecting skills across scopes and registries
 
 The toggle modal is the only place in the TUI where the user picks
-*where* a skill is enabled. The modal displays per-scope checks for
+*where* a single skill is enabled; `space` on a section header opens the
+section bulk-toggle modal (`bulk.go`), which applies the same per-row
+eligibility to every matching row in one staged transaction after an
+explicit scope, direction, and confirmation. The single-row modal displays
+per-scope checks for
 Global / Project / Local / LocalExclude and lets the user flip any of
 them independently. When designing new flows:
 
 - A skill can be enabled in multiple scopes simultaneously (e.g. both
-  global and local). The rendered badge on the row (`badges.go`) shows
-  the highest-precedence active scope; don't collapse the modal to a
+  global and local). The letter badge on the row (`badges.go`) shows
+  every active scope (`GPL`, `P-`, ...); don't collapse the modal to a
   single-choice picker.
 - The toggle always targets the specific registry entry that contains
   the skill (`row.RegistryURL`). A skill available from multiple
@@ -425,11 +444,10 @@ tests open with the `isolateCommandTest` guard described in `AGENTS.md`.
 | `remove <name>` | yes, transactionally with its layer lock | yes |
 | `lock [--check\|--upgrade]` | generated locks unless checking | no |
 | `sync` | stale writable locks unless `--locked`/`--check`/`--offline` | yes |
-| `update [--bump]` | locks; config too when bump rewrites a legacy ref | yes (from exact snapshots) |
-| `migrate` | v2/v3 → v4 configs (and lock/v2 for proven Marketplace pins) | no |
+| `update [--bump]` | locks; config too when bump rewrites an eligible v4 source ref | yes (from exact snapshots) |
 | `status` / `doctor` | no (`doctor --repair` adopts ownership state) | no |
 | `gc` | no | no (cleans only entries inactive in validated config and locks) |
-| `backup`, `deinit`, `telemetry`, `convert` | own state only | no |
+| `backup`, `deinit`, `telemetry` | own state only | no |
 | `serve` | Marketplace operator state | no |
 | `tui` (or bare invocation on TTY) | config and its layer lock for mutations | on demand (`s`) |
 
@@ -480,6 +498,28 @@ help path. Anything that might be invoked from CI must honor these
 signals.
 
 ## Testing Playbook
+
+### Consumer launch and interoperability gates
+
+Successful consumer command/flag coverage is v4-only, requiring exact v4 in
+every present root including organization; schema-independent commands retain
+successful configuration-free witnesses. Refusals, relabeled legacy records,
+and help-only runs do not count as operational success. Keep the gaps allowlist
+empty and port functional selection tests rather than deleting their assertions.
+
+The normal Marketplace E2E gate witnesses unsupported/versionless roots in
+every layer and explicit non-v4 fragments, with no-new-work preservation and
+acquisition counters. Pre-existing journal recovery is asserted separately;
+crash tests interrupt supported v4 mutations, not consumer migration. The
+pre-v4 success `upgrade-gate` and CI job are retired; preserve independent lock,
+source-revision, scope, collision, and ownership evidence in v4 fixtures.
+
+Keep `released-client-gate` pinned to checksum-verified stable v4.1.4 and a
+shared v4 repository fixture, with separate actors and healthy lock-byte/native
+hook/owned-entry checks. After successful planning, aggregate `E2E Gates` must
+require both Marketplace/released-client jobs to succeed when selected or both
+to intentionally skip when unselected; missing witnesses, failure, cancellation,
+and unexpected skips fail acceptance. See `AGENTS.md` for commands/isolation.
 
 ### Harness validation and CI (on demand)
 
@@ -545,13 +585,19 @@ and organization-specific infrastructure are not required.
    test name and console output/current terminal screen; the suite produces
    no snapshot or trace files. Report setup failures as blocked, not passed.
 
+   When a journey asserts the outcome of a config write, wait for the
+   authoritative post-reload assessment (for example the `~ N out of sync`
+   drift state) before quitting: a `config written` toast acknowledges the
+   write, not the settled drift verdict.
+
 For journey coverage or an already-built test binary, read the
 [TUI QA package reference](../../tools/tui-qa/README.md).
 
 ### Unit tests
 
-- `internal/config/editor_test.go`, `layer_editor_test.go` — round-trip
-  YAML editing (legacy and v4), comment preservation, idempotency.
+- `internal/config/editor_test.go`, `layer_editor_test.go` — v4 YAML
+  editing, comment preservation, include ownership, and idempotency; retain
+  direct-editor unsupported-format refusals and valid controls.
 - `internal/resolver/resolver_test.go` — selection rules, collisions,
   inheritance, local overrides.
 - `internal/tui/*_test.go` — construct `Model` directly, feed

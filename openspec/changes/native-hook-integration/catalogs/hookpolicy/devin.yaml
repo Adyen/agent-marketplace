@@ -2,7 +2,7 @@
 schema: 1
 harness: devin
 evidence:
-  checked: "2026-09-29"
+  checked: "2026-10-07"
   refs:
     - https://docs.devin.ai/cli/extensibility/hooks/overview
     - https://docs.devin.ai/cli/extensibility/hooks/lifecycle-hooks

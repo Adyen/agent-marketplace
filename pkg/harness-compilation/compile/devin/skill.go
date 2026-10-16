@@ -167,6 +167,8 @@ func translateCommand(c *ir.Command, opts compile.Options) ([]artifact.Artifact,
 		// command has no typed permissions field, so an extension field must
 		// never pass a permissions block through verbatim.
 		"permissions": true,
+		"agent":       true,
+		"subagent":    true,
 		// allowed-tools is deliberately NOT reserved here. A command has no
 		// typed allowed-tools field, so any restriction necessarily comes from
 		// the extension field, is consumed by resolveAllowedTools, and is

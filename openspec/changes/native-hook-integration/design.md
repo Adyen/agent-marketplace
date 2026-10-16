@@ -331,6 +331,29 @@ library lists. The Factory byte replacement and the cache-root
 `WithPluginRoot` injection are deleted. `materialize.hook.support-conflict`
 remains for residual collisions.
 
+For the bounded independent-client correction, repository-hook support is
+always a regular copy of the verified source bytes and permission bits.
+Machine-scope hooks and non-hook resources retain their configured mode.
+The writer and compatibility reader use the same pure native projection;
+its hook-only topology is derived from the writer's existing `NativeLayout`,
+not a second path table. The writer retains its definition-digest and
+index-only semantic binding checks.
+
+Support-first sequencing is retained. Regular support copies and their
+portable manifest publish through one existing recoverable CAS transaction
+before the native/state/legacy transaction. Link conversion requires complete
+current clean owned-source evidence, the exact authorized generated cache
+target, and verified referent bytes and permissions. Missing, corrupt,
+drifted or satisfaction-only evidence grants no conversion authority.
+Descriptor-anchored staging and rename distinguish the old link, exact new
+regular copy and foreign state; checks create no files or state, and mutating
+recovery is idempotent. Native and legacy generation guards remain mandatory.
+
+Quoted-reference rendering must preserve shell semantics. Recognized
+plugin-root tokens inside authored single-quoted literals are refused with
+`hook.env-unrepresentable`; representable double-quoted and unquoted forms
+continue to translate. Support script bytes are never rewritten.
+
 ### D9: Ownership state for every hook aggregate
 
 Every hook aggregate is reconciled through the durable ownership state
@@ -367,6 +390,23 @@ and a test covers this.
 Materialized output is mixed-version state, like a committed format, so the
 rule "ship read support before switching writes" applies. See the Migration
 Plan.
+
+Gemini is a scoped exception inside the same transaction. v3.1.1 wrote flat
+`_managed_by` command entries directly into the native `settings.json` hooks
+container, before native matcher groups existed, so there is no separate
+legacy file to move. Aggregates declare `LegacyMarkedFlatHooks`; only Gemini's
+hook aggregate sets it. When the flag is set and ownership proof is valid or
+missing, the reconciler removes recognized marked flat entries from the parsed
+document in memory before strict native validation and planning, recording
+each removal as a review row. The recognized v3.1.1 shape is fixed:
+exact-case `_managed_by: agent-marketplace`, `type: "command"`, a non-empty
+string `command`, an optional string `matcher`, an optional non-negative
+integer `timeout`, and no other keys. Any other flat shape — unmarked,
+other-owner, case-aliased, malformed — is left in place for strict native
+validation, which refuses the file unchanged. Removal is never adoption: the
+old marker is not written into new entries, no legacy proof is forged, and an
+identical handwritten native group still wins through the non-adopting
+satisfaction path.
 
 ### D11: Duplicate-execution warning
 
@@ -422,11 +462,12 @@ allowlist like `TestCommandIsolationGuard`.
 
 ### D15: Source-revision compatibility
 
-Hook and tool provenance change the IR JSON fallback projection. This change
-adds the next source-revision generator version after PR #276's v4, with
-frozen vectors for every supported earlier version, including hook- and
-tool-bearing fixtures for each layout. Normal source-byte hashing is
-unchanged. No lock is refreshed without `update`.
+Hook and tool provenance are runtime data and must not change the historical
+IR JSON fallback projections used by source-revision generators v1 through
+v4. Keep the existing schemas and generator versions, with frozen vectors
+including hook- and tool-bearing fixtures for each layout. Normal source-byte
+hashing is unchanged. No lock is refreshed without `update`. An explicit
+update uses an already supported generator version; no new version is added.
 
 ## Risks / Trade-offs
 
@@ -459,22 +500,32 @@ unchanged. No lock is refreshed without `update`.
 
 ## Migration Plan
 
-0. **Prerequisite release (a separate change, `hook-native-location-tolerance`).**
-   Clients that still write legacy locations accept a hook's owned entry in
-   the native file as satisfying the legacy output. They neither report
-   drift nor re-create the legacy entry. That change must be the latest
-   release pinned in `released-client-gate` before this change merges.
+0. **Prerequisite reader release.** `hook-native-location-tolerance` accepts
+   proven native satisfaction instead of recreating legacy output. Its private
+   ownership proof alone is insufficient for independent HOME/XDG actors:
+   verified `v4.1.3` still fails this change's unchanged mixed-version gate.
+   The separate `hook-native-independent-satisfaction` reader in PR #616
+   reconstructs exact complete repository-native and regular support
+   equivalence without gaining ownership or prune authority. Human merge and
+   release of that reader precedes writer merge. Pin and checksum-verify its
+   actual release and pass the unchanged independent-teammate gate before
+   merging or archiving this writer; do not invent a future version or share
+   private state. Reviewed conditional PR publication may proceed now.
 1. Ship `toolpolicy` and `hookpolicy`, and switch translators and allow-lists
    per target.
 2. Switch Claude Code, Cursor, Factory Droid, and Windsurf repository scope
    to their native files, together with the legacy migration.
-3. Extend `upgrade-gate` with a v3.1.1 hook fixture for all seven targets,
-   and `released-client-gate` with a hook migration step.
+3. Extend `released-client-gate` with a hook migration step using shared v4
+   consumer configuration and the pinned stable v4 release. Preserve legacy
+   native-hook upgrade coverage with v4 consumer fixtures, without restoring
+   the retired pre-v4 consumer success `upgrade-gate` or requiring a pre-v4
+   executable.
 
-Rollback: a client from before the prerequisite release re-emits its legacy
-files, which duplicates Factory hooks and stops Windsurf hooks from loading
-if `.devin/hooks.json` exists. Clients from the prerequisite release onward
-do not. This is documented in the release notes.
+Rollback: a client that cannot prove native satisfaction may re-emit legacy
+files, duplicating Factory hooks or affecting Windsurf loading when
+`.devin/hooks.json` exists. A merged reader PR or private shared-state
+success does not establish independent-client compatibility. Only the
+unchanged gate against an actual released reader clears this boundary.
 
 ## Open Questions
 

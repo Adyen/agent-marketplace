@@ -70,6 +70,44 @@ func TestTelemetryEnableEndpoint(t *testing.T) {
 	}
 }
 
+// spec: configuration-settings/telemetry-endpoint-credentials-are-not-logged
+func TestTelemetryEnableRedactsEndpointCredentials(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	setupTelemetryHome(t)
+	if _, err := executeCommand("init", "--harnesses", "factory"); err != nil {
+		t.Fatalf("init failed: %v", err)
+	}
+	logPath := filepath.Join(t.TempDir(), "agent-marketplace.log")
+	t.Setenv("AGENT_MARKETPLACE_LOG_ENABLED", "true")
+	t.Setenv("AGENT_MARKETPLACE_LOG_FILE", logPath)
+	leaks := func(value string) bool {
+		return strings.Contains(value, "am-user") || strings.Contains(value, "am-secret") || strings.Contains(value, "am-query-secret") || strings.Contains(value, "am-space-secret")
+	}
+
+	_, err := executeCommand("telemetry", "enable", "--level", "basic", "--endpoint", "http://am-user:am-secret@203.0.113.10/otlp?token=am-query-secret am-space-secret")
+	if err == nil || leaks(err.Error()) || !strings.Contains(err.Error(), "203.0.113.10/otlp") {
+		t.Fatalf("insecure credentialed endpoint error = %v", err)
+	}
+	endpoint := "https://am-user:am-secret@otel.example.com/otlp?token=am-query-secret"
+	if _, err := executeCommand("telemetry", "enable", "--level", "basic", "--endpoint", endpoint); err != nil {
+		t.Fatalf("enable with credentialed endpoint failed: %v", err)
+	}
+	logs, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if leaks(string(logs)) || !strings.Contains(string(logs), "otel.example.com/otlp") {
+		t.Fatalf("log file does not redact the endpoint:\n%s", logs)
+	}
+	cfgPath, _ := config.GlobalConfigPath()
+	cfg, err := os.ReadFile(cfgPath)
+	if err != nil || !strings.Contains(string(cfg), endpoint) {
+		t.Fatalf("configured endpoint was not persisted unchanged: %v\n%s", err, cfg)
+	}
+}
+
 func TestTelemetryEnableRejectsInsecureEndpoint(t *testing.T) {
 	if isolateCommandTest(t) {
 		return
@@ -250,7 +288,7 @@ func TestTelemetryEnableHonorsOrgLock(t *testing.T) {
 
 	orgDir := t.TempDir()
 	orgPath := filepath.Join(orgDir, "org.yaml")
-	writeTelemetryTestFile(t, orgPath, "apiVersion: agent-marketplace/v3\nharnesses:\n  - factory\ntelemetry:\n  level: detailed\n  endpoint: https://org.example.com\n  retention_policy: https://org.example.com/retention\n")
+	writeTelemetryTestFile(t, orgPath, "apiVersion: agent-marketplace/v4\nharnesses:\n  - factory\ntelemetry:\n  level: detailed\n  endpoint: https://org.example.com\n  retention_policy: https://org.example.com/retention\n")
 	config.SetTestV3OrganizationConfigPath(t, orgPath)
 
 	if _, err := executeCommand("init", "--harnesses", "factory"); err != nil {
@@ -283,7 +321,7 @@ func TestTelemetryStatusManaged(t *testing.T) {
 
 	orgDir := t.TempDir()
 	orgPath := filepath.Join(orgDir, "org.yaml")
-	writeTelemetryTestFile(t, orgPath, "apiVersion: agent-marketplace/v3\nharnesses:\n  - factory\ntelemetry:\n  level: basic\n  endpoint: https://org.example.com\n  retention_policy: https://org.example.com/retention\n  community_reporting: true\n")
+	writeTelemetryTestFile(t, orgPath, "apiVersion: agent-marketplace/v4\nharnesses:\n  - factory\ntelemetry:\n  level: basic\n  endpoint: https://org.example.com\n  retention_policy: https://org.example.com/retention\n  community_reporting: true\n")
 	config.SetTestV3OrganizationConfigPath(t, orgPath)
 
 	if _, err := executeCommand("init", "--harnesses", "factory"); err != nil {
@@ -371,7 +409,7 @@ func TestBasicTelemetryEmitsOneCommandMetric(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	writeTelemetryTestFile(t, cfgPath, "apiVersion: agent-marketplace/v3\nharnesses:\n  - factory\ntelemetry:\n  level: basic\n  endpoint: "+srv.URL+"\n")
+	writeTelemetryTestFile(t, cfgPath, "apiVersion: agent-marketplace/v4\nharnesses:\n  - factory\ntelemetry:\n  level: basic\n  endpoint: "+srv.URL+"\n")
 
 	output, err := executeCommand("--version")
 	if err != nil {
@@ -450,7 +488,7 @@ func TestTelemetryErrorOutcome(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	writeTelemetryTestFile(t, cfgPath, "apiVersion: agent-marketplace/v3\nharnesses:\n  - factory\ntelemetry:\n  level: basic\n  endpoint: "+srv.URL+"\n")
+	writeTelemetryTestFile(t, cfgPath, "apiVersion: agent-marketplace/v4\nharnesses:\n  - factory\ntelemetry:\n  level: basic\n  endpoint: "+srv.URL+"\n")
 
 	// doctor --yes without --repair returns an error after PersistentPreRunE.
 	_, err = executeCommand("doctor", "--yes")
@@ -492,42 +530,42 @@ func TestTelemetryCommandsDoNotSelfReport(t *testing.T) {
 			name: "telemetry status",
 			args: []string{"telemetry", "status"},
 			prep: func(t *testing.T, home, srvURL, cfgPath string) {
-				writeTelemetryTestFile(t, cfgPath, "apiVersion: agent-marketplace/v3\nharnesses:\n  - factory\ntelemetry:\n  level: basic\n  endpoint: "+srvURL+"\n")
+				writeTelemetryTestFile(t, cfgPath, "apiVersion: agent-marketplace/v4\nharnesses:\n  - factory\ntelemetry:\n  level: basic\n  endpoint: "+srvURL+"\n")
 			},
 		},
 		{
 			name: "telemetry enable",
 			args: []string{"telemetry", "enable", "--level", "basic"},
 			prep: func(t *testing.T, home, srvURL, cfgPath string) {
-				writeTelemetryTestFile(t, cfgPath, "apiVersion: agent-marketplace/v3\nharnesses:\n  - factory\n")
+				writeTelemetryTestFile(t, cfgPath, "apiVersion: agent-marketplace/v4\nharnesses:\n  - factory\n")
 			},
 		},
 		{
 			name: "telemetry disable",
 			args: []string{"telemetry", "disable"},
 			prep: func(t *testing.T, home, srvURL, cfgPath string) {
-				writeTelemetryTestFile(t, cfgPath, "apiVersion: agent-marketplace/v3\nharnesses:\n  - factory\ntelemetry:\n  level: basic\n  endpoint: "+srvURL+"\n")
+				writeTelemetryTestFile(t, cfgPath, "apiVersion: agent-marketplace/v4\nharnesses:\n  - factory\ntelemetry:\n  level: basic\n  endpoint: "+srvURL+"\n")
 			},
 		},
 		{
 			name: "telemetry preview",
 			args: []string{"telemetry", "preview", "--level", "basic"},
 			prep: func(t *testing.T, home, srvURL, cfgPath string) {
-				writeTelemetryTestFile(t, cfgPath, "apiVersion: agent-marketplace/v3\nharnesses:\n  - factory\n")
+				writeTelemetryTestFile(t, cfgPath, "apiVersion: agent-marketplace/v4\nharnesses:\n  - factory\n")
 			},
 		},
 		{
 			name: "telemetry reset-id",
 			args: []string{"telemetry", "reset-id"},
 			prep: func(t *testing.T, home, srvURL, cfgPath string) {
-				writeTelemetryTestFile(t, cfgPath, "apiVersion: agent-marketplace/v3\nharnesses:\n  - factory\n")
+				writeTelemetryTestFile(t, cfgPath, "apiVersion: agent-marketplace/v4\nharnesses:\n  - factory\n")
 			},
 		},
 		{
 			name: "telemetry purge",
 			args: []string{"telemetry", "purge"},
 			prep: func(t *testing.T, home, srvURL, cfgPath string) {
-				writeTelemetryTestFile(t, cfgPath, "apiVersion: agent-marketplace/v3\nharnesses:\n  - factory\n")
+				writeTelemetryTestFile(t, cfgPath, "apiVersion: agent-marketplace/v4\nharnesses:\n  - factory\n")
 			},
 		},
 	}

@@ -2,13 +2,11 @@ package config
 
 import (
 	"context"
-	"crypto/sha256"
 	"errors"
 	"fmt"
 	"io/fs"
 	"log/slog"
 	"os"
-	"path/filepath"
 	"runtime"
 	"sort"
 
@@ -29,8 +27,8 @@ type LayerIntent struct {
 	Source   Source
 	Path     string
 	Reads    []ConfigRead
-	legacy   *Config
 	v4       *V4Config
+	rootTree *V4Config
 	errors   []error
 	rootRead bool
 }
@@ -41,6 +39,7 @@ type Settings struct {
 	AllowedMarketplaces *[]string
 	Backup              *BackupConfig
 	Logging             *LoggingConfig
+	UpdateCheck         *UpdateCheckConfig
 	Telemetry           *telemetryconfig.TelemetryConfig
 	Materialization     *MaterializationConfig
 }
@@ -90,7 +89,7 @@ func layerForIntentSource(source Source) layerKind {
 }
 
 func (l LayerIntent) Present() bool {
-	return l.legacy != nil || l.v4 != nil
+	return l.v4 != nil
 }
 
 func (l LayerIntent) Err() error {
@@ -103,6 +102,7 @@ func (l LayerIntent) Settings() Settings {
 			Harnesses:       cloneV4StringList(l.v4.Harnesses),
 			Backup:          l.v4.Backup,
 			Logging:         l.v4.Logging,
+			UpdateCheck:     l.v4.UpdateCheck,
 			Telemetry:       l.v4.Telemetry,
 			Materialization: l.v4.Materialization,
 		}
@@ -116,25 +116,7 @@ func (l LayerIntent) Settings() Settings {
 		}
 		return settings
 	}
-	if l.legacy == nil {
-		return Settings{}
-	}
-	settings := Settings{
-		Harnesses:       cloneV4StringList(l.legacy.Harnesses),
-		Backup:          l.legacy.Backup,
-		Logging:         l.legacy.Logging,
-		Telemetry:       l.legacy.Telemetry,
-		Materialization: l.legacy.Materialization,
-	}
-	if l.legacy.AllowedRegistries != nil {
-		values := cloneV4StringList(*l.legacy.AllowedRegistries)
-		settings.AllowedRegistries = &values
-	}
-	if l.legacy.AllowedMarketplaces != nil {
-		values := cloneV4StringList(*l.legacy.AllowedMarketplaces)
-		settings.AllowedMarketplaces = &values
-	}
-	return settings
+	return Settings{}
 }
 
 func (s Settings) config() *Config {
@@ -174,49 +156,35 @@ func (l LayerIntent) Sources() []SourceDecl {
 		}
 		return decls
 	}
-	if l.legacy == nil {
-		return nil
+	return nil
+}
+
+func (l LayerIntent) acquisitionConfig() *V4Config {
+	if l.rootTree != nil {
+		return l.rootTree
 	}
-	decls := make([]SourceDecl, 0, len(l.legacy.Registries)+len(l.legacy.Marketplaces))
-	for _, entry := range l.legacy.Registries {
-		if entry.IsLocal() {
-			decls = append(decls, SourceDecl{Kind: V4SourceDirectory})
-		} else {
-			decls = append(decls, SourceDecl{Kind: V4SourceGit, URL: entry.URL, Ref: entry.Ref, Path: entry.Path, SourceHarness: entry.SourceHarness})
-		}
-	}
-	for _, entry := range l.legacy.Marketplaces {
-		decls = append(decls, SourceDecl{Kind: V4SourceMarketplace, URL: entry.URL})
-	}
-	return decls
+	return l.v4
 }
 
 func (l LayerIntent) NeedsLock() bool {
-	if l.v4 != nil {
-		for name, src := range l.v4.Sources {
-			if src.Kind == V4SourceGit || l.v4.AcquiresMarketplace(name) {
+	if cfg := l.acquisitionConfig(); cfg != nil {
+		for name, src := range cfg.Sources {
+			if src.Kind == V4SourceGit || cfg.AcquiresMarketplace(name) {
 				return true
 			}
 		}
 		return false
 	}
-	if l.legacy == nil {
-		return false
-	}
-	for _, entry := range l.legacy.Registries {
-		if !entry.IsLocal() {
-			return true
-		}
-	}
 	return false
 }
 
 func (l LayerIntent) NeedsMarketplaceLock() bool {
-	if l.v4 == nil {
+	cfg := l.acquisitionConfig()
+	if cfg == nil {
 		return false
 	}
-	for name := range l.v4.Sources {
-		if l.v4.AcquiresMarketplace(name) {
+	for name := range cfg.Sources {
+		if cfg.AcquiresMarketplace(name) {
 			return true
 		}
 	}
@@ -234,15 +202,6 @@ func (l LayerIntent) ValidateDeployedMarketplaceLock(doc *lockfile.Document) err
 	return err
 }
 
-// LegacyMarketplaces returns a legacy (v2/v3) layer's Marketplace entries, or
-// nil for v4 and absent layers.
-func (l LayerIntent) LegacyMarketplaces() []MarketplaceEntry {
-	if l.legacy == nil {
-		return nil
-	}
-	return l.legacy.Marketplaces
-}
-
 func (l LayerIntent) MarketplaceEndpoints() []string {
 	if l.v4 != nil {
 		var urls []string
@@ -251,14 +210,7 @@ func (l LayerIntent) MarketplaceEndpoints() []string {
 		}
 		return urls
 	}
-	if l.legacy == nil {
-		return nil
-	}
-	urls := make([]string, 0, len(l.legacy.Marketplaces))
-	for _, entry := range l.legacy.Marketplaces {
-		urls = append(urls, entry.URL)
-	}
-	return urls
+	return nil
 }
 
 func (l LayerIntent) MarketplaceSources() []MarketplaceSource {
@@ -286,9 +238,6 @@ func (l LayerIntent) MarketplaceSources() []MarketplaceSource {
 }
 
 func (l LayerIntent) probeConfig() *Config {
-	if l.legacy != nil {
-		return l.legacy
-	}
 	if l.v4 != nil {
 		return &Config{APIVersion: APIVersionV4}
 	}
@@ -296,20 +245,24 @@ func (l LayerIntent) probeConfig() *Config {
 }
 
 func (l LayerIntent) bind(doc *lockfile.Document) (*Config, error) {
-	if l.legacy != nil {
-		return l.legacy, nil
-	}
 	if l.v4 == nil {
 		return nil, nil
 	}
-	return l.v4.toLegacyConfig(layerForIntentSource(l.Source), doc)
+	kind := layerForIntentSource(l.Source)
+	if l.rootTree != nil {
+		if _, err := l.rootTree.toLegacyConfig(kind, doc, v4AuthoredBinding); err != nil {
+			return nil, err
+		}
+		return l.v4.toLegacyConfig(kind, doc, v4RootProjectionBinding)
+	}
+	return l.v4.toLegacyConfig(kind, doc, v4AuthoredBinding)
 }
 
 func (l LayerIntent) deployedLock(overlays map[string][]byte) (*lockfile.Document, error) {
 	if !l.NeedsMarketplaceLock() {
 		return nil, nil
 	}
-	doc, _, err := readDeployedLock(l.Path, overlays)
+	doc, _, err := readDeployedLock(l.Path, lockfile.Scope(l.Source.LockScope()), overlays)
 	return doc, err
 }
 
@@ -342,17 +295,6 @@ type ExplicitSelection struct {
 }
 
 func (l LayerIntent) ExplicitSelections() []ExplicitSelection {
-	if l.legacy != nil {
-		var out []ExplicitSelection
-		for _, entry := range l.legacy.Registries {
-			for _, kind := range AllKinds {
-				for _, name := range entry.SelectorForKind(kind).Include {
-					out = append(out, ExplicitSelection{Kind: kind, Name: name})
-				}
-			}
-		}
-		return out
-	}
 	if l.v4 == nil {
 		return nil
 	}
@@ -385,85 +327,50 @@ func (i Intent) AllowedMarketplaces() []string {
 
 func readLayerIntent(path, canonical string, data []byte, kind layerKind, overlays map[string][]byte) (LayerIntent, error) {
 	li := LayerIntent{Source: sourceForLayer(kind), Path: path}
-	if PeekAPIVersion(data) == APIVersionV4 {
-		organizationPath := ""
-		if kind == organizationLayer {
-			organizationPath = path
-		}
-		v4, err := loadV4TreeWithResolvedRoot(path, canonical, true, map[string]bool{}, overlays, data, organizationPath, kind)
-		if err != nil {
-			return li, err
-		}
-		li.v4 = v4
-		li.Reads = append([]ConfigRead(nil), v4.reads...)
-		return li, nil
+	organizationPath := ""
+	if kind == organizationLayer {
+		organizationPath = path
 	}
-	loader := newConfigIncludeLoader(kind)
-	loader.rootPath = canonical
-	loader.rootData = data
-	loader.overlays = overlays
-	loader.readByPath = make(map[string]ConfigRead)
-	cfg, err := loadCollectedConfigTree(path, loader)
-	li.legacy = cfg
-	li.Reads = loader.reads
-	return li, err
-}
-
-func readRootLayerIntent(path string, data []byte, kind layerKind) (LayerIntent, error) {
-	li := LayerIntent{Source: sourceForLayer(kind), Path: path}
-	if PeekAPIVersion(data) == APIVersionV4 {
-		v4, err := ParseV4Config(data, path, true)
-		if err != nil {
-			return li, err
-		}
-		li.v4 = v4
-		return li, nil
+	v4, err := loadV4TreeWithResolvedRoot(path, canonical, true, map[string]bool{}, overlays, data, organizationPath, kind)
+	if err != nil {
+		return li, err
 	}
-	cfg, errs := loadV3ConfigWithAPIVersion(data, kind, false, kind != localLayer)
-	if len(errs) > 0 {
-		return li, fmt.Errorf("validate config %q: %w", path, errors.Join(errs...))
+	if err := v4.validateLayerFields(kind); err != nil {
+		return li, err
 	}
-	if logErrs := validateLogging(cfg.Logging); len(logErrs) > 0 {
-		return li, fmt.Errorf("validate logging config %q: %w", path, errors.Join(logErrs...))
-	}
-	li.legacy = cfg
+	li.v4 = v4
+	li.Reads = append([]ConfigRead(nil), v4.reads...)
 	return li, nil
 }
 
-func readDeployedLock(path string, overlays map[string][]byte) (*lockfile.Document, *ConfigRead, error) {
-	canonical, err := canonicalConfigPathTolerateMissing(path)
+func readRootLayerIntent(path string, data []byte, kind layerKind, resolvedRoot ...string) (LayerIntent, error) {
+	resolved := ""
+	if len(resolvedRoot) > 0 {
+		resolved = resolvedRoot[0]
+	}
+	li, err := readLayerIntent(path, resolved, data, kind, nil)
 	if err != nil {
-		return nil, nil, err
+		return li, err
 	}
-	paths, err := configLockPaths(path, canonical)
+	canonical := li.Reads[len(li.Reads)-1].Path
+	doc, err := parseV4Document(data, canonical, true, kind)
 	if err != nil {
-		return nil, nil, err
+		return li, err
 	}
-	data, overlaid := overlays[paths.CanonicalLock]
-	if !overlaid {
-		data, overlaid = overlays[paths.RequestedLock]
+	projection := &V4Config{APIVersion: APIVersionV4, Sources: map[string]V4Source{}, Groups: map[string]V4ResourceGroup{}}
+	if err := mergeV4Document(projection, doc); err != nil {
+		return li, err
 	}
-	if !overlaid {
-		data, err = lockfile.ReadBytes(paths.CanonicalLock)
-		if err != nil {
-			if errors.Is(err, os.ErrNotExist) {
-				return nil, nil, nil
-			}
-			return nil, nil, fmt.Errorf("read lock %q for config %q: %w", paths.CanonicalLock, path, err)
+	for name := range projection.Groups {
+		if _, declared := projection.Sources[name]; !declared {
+			projection.Sources[name] = li.v4.Sources[name]
 		}
 	}
-	doc, err := lockfile.Decode(data)
-	if err != nil {
-		return nil, nil, fmt.Errorf("decode lock %q for config %q: %w", paths.CanonicalLock, path, err)
+	if err := normalizeV4Tree(projection); err != nil {
+		return li, err
 	}
-	read := &ConfigRead{
-		Path:            paths.CanonicalLock,
-		RequestedPath:   paths.RequestedLock,
-		Digest:          fmt.Sprintf("%x", sha256.Sum256(data)),
-		Overlay:         overlaid,
-		AcquisitionLock: true,
-	}
-	return &doc, read, nil
+	li.rootTree, li.v4 = li.v4, projection
+	return li, nil
 }
 
 func loadLayerIntent(source Source, path string, kind layerKind, overlays map[string][]byte) LayerIntent {
@@ -551,9 +458,6 @@ func readOrganizationIntent(path string) (LayerIntent, ManagedInstallationDiagno
 	if err != nil {
 		li.errors = []error{err}
 	}
-	if len(li.Reads) > 0 {
-		li.Reads[0].RequestedPath, _ = filepath.Abs(path)
-	}
 	probe := li.probeConfig()
 	if len(li.errors) > 0 {
 		probe = nil
@@ -574,7 +478,7 @@ func deployedLayerEvidence(li LayerIntent, source Source, opts LoadEffectiveOpti
 	var read *ConfigRead
 	if li.NeedsMarketplaceLock() {
 		var err error
-		doc, read, err = readDeployedLock(li.Path, overlays)
+		doc, read, err = readDeployedLock(li.Path, lockfile.Scope(li.Source.LockScope()), overlays)
 		if err != nil {
 			return nil, nil, []error{err}
 		}
@@ -595,11 +499,11 @@ func ReadIntent(ctx context.Context, opts LoadEffectiveOptions) Intent {
 
 	repoRoot := opts.RepoRoot
 	if repoRoot == "" {
-		repoRoot = FindRepoRoot()
+		return Intent{Errors: []error{errors.New("repository root is required: pass a validated workspace repository root")}, aborted: true}
 	}
 	localDir := opts.LocalConfigDir
 	if localDir == "" {
-		localDir = FindLocalConfigDir()
+		localDir = repoRoot
 	}
 
 	intent := Intent{}
@@ -767,7 +671,7 @@ func finishBind(intent Intent, ev Evidence, ec EffectiveConfig) EffectiveConfig 
 		slog.Error("marketplace allowlist rejected one or more URLs", "error", err)
 		ec.Errors = append(ec.Errors, err)
 	}
-	if errs := ValidateMarketplaceEntries(merged.Marketplaces); len(errs) > 0 {
+	if errs := validateBoundMarketplaceEntries(merged.Marketplaces); len(errs) > 0 {
 		err := errors.Join(errs...)
 		slog.Error("effective Marketplace entries rejected", "error", err)
 		ec.Errors = append(ec.Errors, err)
@@ -786,6 +690,32 @@ func finishBind(intent Intent, ev Evidence, ec EffectiveConfig) EffectiveConfig 
 	}
 
 	return ec
+}
+
+func validateBoundMarketplaceEntries(entries []MarketplaceEntry) []error {
+	var acquired []MarketplaceEntry
+	var errs []error
+	aliases := make(map[string]int, len(entries))
+	for i, entry := range entries {
+		unacquired := entry.InstanceID == "" && len(entry.Resources) == 0
+		if !unacquired {
+			acquired = append(acquired, entry)
+		}
+		if entry.Alias == "" {
+			continue
+		}
+		if j, exists := aliases[entry.Alias]; exists {
+			other := entries[j]
+			// A parsed registration has no acquired identity yet, but cannot
+			// redirect a configured alias to another endpoint.
+			if (unacquired || other.InstanceID == "" && len(other.Resources) == 0) && (entry.URL != other.URL || entry.Source == SourceUnset || other.Source == SourceUnset) {
+				errs = append(errs, fmt.Errorf("marketplaces[%d].alias %q duplicates marketplaces[%d].alias", i, entry.Alias, j))
+			}
+		} else {
+			aliases[entry.Alias] = i
+		}
+	}
+	return append(errs, ValidateMarketplaceEntries(acquired)...)
 }
 
 func Bind(intent Intent, ev Evidence) EffectiveConfig {

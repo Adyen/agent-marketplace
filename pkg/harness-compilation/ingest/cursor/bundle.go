@@ -26,13 +26,14 @@ func init() {
 type cursorIngester struct{}
 
 type roots struct {
-	skills   string
-	commands string
-	agents   string
-	hooks    string
-	mcp      string
-	rules    string
-	strip    string
+	skills      string
+	commands    string
+	agents      string
+	hooks       string
+	nativeHooks string
+	mcp         string
+	rules       string
+	strip       string
 }
 
 func (c *cursorIngester) Source() ingest.Harness {
@@ -65,13 +66,14 @@ func (c *cursorIngester) LoadBundle(src fs.FS) (*ingest.Bundle, error) {
 		}, false)
 	case hasWorkspaceForm(src):
 		return loadBundle(src, roots{
-			skills:   ".cursor/skills",
-			commands: ".cursor/commands",
-			agents:   ".cursor/agents",
-			hooks:    ".cursor/hooks/hooks.json",
-			mcp:      ".cursor/mcp.json",
-			rules:    ".cursor/rules",
-			strip:    cursorWorkspaceRoot,
+			skills:      ".cursor/skills",
+			commands:    ".cursor/commands",
+			agents:      ".cursor/agents",
+			hooks:       ".cursor/hooks/hooks.json",
+			nativeHooks: ".cursor/hooks.json",
+			mcp:         ".cursor/mcp.json",
+			rules:       ".cursor/rules",
+			strip:       cursorWorkspaceRoot,
 		}, true)
 	default:
 		return nil, fmt.Errorf("ingest/cursor: no recognizable Cursor layout found")
@@ -125,17 +127,41 @@ func LoadSubagent(src fs.FS, path string) (*ir.Subagent, error) {
 	return sub, nil
 }
 
+// cursorNativeHooksFile is the versioned Cursor hook file; the plugin-layout
+// locations under it and at the bundle root carry the canonical vocabulary.
+const cursorNativeHooksFile = ".cursor/hooks.json"
+
 func LoadHooks(src fs.FS, path string) ([]*ir.Hook, []*diag.Diagnostic, error) {
-	hooks, diags, err := bundle.LoadHooks(src, path)
+	// The versioned native file decodes only its modeled "hooks" member, so
+	// unrelated envelope settings shaped like hook groups are never scanned
+	// as event arrays.
+	load := bundle.LoadHooks
+	if path == cursorNativeHooksFile {
+		load = bundle.LoadHooksMember
+	}
+	hooks, diags, err := load(src, path)
 	if err != nil {
 		return nil, nil, err
 	}
+	// The native file keeps its authored Cursor vocabulary verbatim — events,
+	// matchers, and env spellings such as ${CURSOR_PLUGIN_ROOT} are for the
+	// catalog resolver, not the ingester, to translate. Its Source and
+	// diagnostic paths stay the real source-relative .cursor/hooks.json so
+	// entry paths, fingerprints, and consumed-file reporting resolve the
+	// actual file; only the legacy plugin-layout paths are normalized.
+	native := path == cursorNativeHooksFile
 	for _, h := range hooks {
-		h.Source.File = normalizeSourcePath(h.Source.File)
-		h.Command = strings.ReplaceAll(h.Command, "${CURSOR_PLUGIN_ROOT}", "${CLAUDE_PLUGIN_ROOT}")
+		if native {
+			h.HookSource = string(ingest.HarnessCursor)
+		} else {
+			h.Source.File = normalizeSourcePath(h.Source.File)
+			h.Command = strings.ReplaceAll(h.Command, "${CURSOR_PLUGIN_ROOT}", "${CLAUDE_PLUGIN_ROOT}")
+		}
 	}
-	for _, d := range diags {
-		d.Source.File = normalizeSourcePath(d.Source.File)
+	if !native {
+		for _, d := range diags {
+			d.Source.File = normalizeSourcePath(d.Source.File)
+		}
 	}
 	return hooks, diags, nil
 }
@@ -202,7 +228,8 @@ func loadBundle(src fs.FS, paths roots, synthesizedManifest bool) (*ingest.Bundl
 		resources = append(resources, sub)
 	}
 
-	hooks, hookDiags, err := LoadHooks(src, paths.hooks)
+	var hooks []*ir.Hook
+	legacyHooks, hookDiags, err := LoadHooks(src, paths.hooks)
 	if err != nil && !isNotExist(err) {
 		return nil, fmt.Errorf("ingest/cursor: load hooks: %w", err)
 	}
@@ -210,9 +237,23 @@ func loadBundle(src fs.FS, paths roots, synthesizedManifest bool) (*ingest.Bundl
 		for _, d := range hookDiags {
 			diags = append(diags, *d)
 		}
-		for _, h := range hooks {
-			resources = append(resources, h)
+		hooks = append(hooks, legacyHooks...)
+	}
+	if paths.nativeHooks != "" {
+		nativeHooks, nativeDiags, err := LoadHooks(src, paths.nativeHooks)
+		if err != nil && !isNotExist(err) {
+			return nil, fmt.Errorf("ingest/cursor: load %s: %w", paths.nativeHooks, err)
 		}
+		if err == nil {
+			for _, d := range nativeDiags {
+				diags = append(diags, *d)
+			}
+			hooks = append(hooks, nativeHooks...)
+		}
+	}
+	bundle.DistinctHookNames(hooks)
+	for _, h := range hooks {
+		resources = append(resources, h)
 	}
 
 	servers, err := LoadMcpServers(src, paths.mcp)
@@ -254,7 +295,7 @@ func loadBundle(src fs.FS, paths roots, synthesizedManifest bool) (*ingest.Bundl
 	} else if _, err := fs.Stat(src, cursorPluginManifest); err == nil {
 		layout = "cursor plugin"
 	}
-	diags = append(diags, ingest.UnconsumedConfigs(src, diag.CodeIngestCursorUnconsumedConfig, layout, paths.hooks, paths.mcp)...)
+	diags = append(diags, ingest.UnconsumedConfigs(src, diag.CodeIngestCursorUnconsumedConfig, layout, paths.hooks, paths.nativeHooks, paths.mcp)...)
 	return &ingest.Bundle{
 		Manifest:    manifest,
 		Resources:   resources,
@@ -270,6 +311,9 @@ func hasWorkspaceForm(src fs.FS) bool {
 		}
 	}
 	if _, err := fs.ReadFile(src, ".cursor/mcp.json"); err == nil {
+		return true
+	}
+	if _, err := fs.ReadFile(src, cursorNativeHooksFile); err == nil {
 		return true
 	}
 	return false
@@ -320,7 +364,7 @@ func isNotExist(err error) bool {
 }
 
 func listSubdirs(src fs.FS, root string) ([]string, error) {
-	entries, err := fs.ReadDir(src, root)
+	entries, err := ingest.ReadSkillEntries(src, root)
 	if err != nil {
 		return nil, err
 	}

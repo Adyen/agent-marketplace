@@ -1,7 +1,6 @@
 package marketplace
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -109,11 +108,7 @@ func (i Inspection) Resolve(ctx context.Context, _ *config.Config, _ []hcc.Targe
 	}
 
 	var errs []error
-	for _, pin := range i.Pins {
-		if pin.Required && pinStatusUnhealthy(pin) {
-			errs = append(errs, &PinStatusError{Pin: pin})
-		}
-	}
+	errs = append(errs, RequiredPinHealthErrors(i.Pins)...)
 
 	// Inspection artifacts are intentionally metadata-only. Do not let them
 	// enter winner selection, collision reporting, requirement validation, or
@@ -131,6 +126,21 @@ func (i Inspection) Resolve(ctx context.Context, _ *config.Config, _ []hcc.Targe
 
 func pinStatusUnhealthy(pin PinStatus) bool {
 	return pin.Cache == CacheStateError || pin.State == PinStateRevoked || pin.State == PinStateMissing || pin.State == PinStateUnavailable
+}
+
+// RequiredPinHealthErrors returns one error per required pin whose inspected
+// state is unhealthy. Read-only surfaces that also resolve Marketplace
+// artifacts from the verified local cache merge these with resolution
+// failures so one broken pin produces one attributable error rather than two
+// rows for the same pin.
+func RequiredPinHealthErrors(pins []PinStatus) []error {
+	var errs []error
+	for _, pin := range pins {
+		if pin.Required && pinStatusUnhealthy(pin) {
+			errs = append(errs, &PinStatusError{Pin: pin})
+		}
+	}
+	return errs
 }
 
 func (r *Resolver) Inspect(ctx context.Context, cfg *config.Config, targetSet []hcc.Target, mode resolver.MarketplaceResolveMode) Inspection {
@@ -406,7 +416,7 @@ func populateCacheFacts(status *PinStatus, cache *Cache, entry config.Marketplac
 		identity := IndexOnlyIdentity{Marketplace: entry.InstanceID, RegistryID: pin.RegistryID, Commit: pin.RegistryCommit, ManifestDigest: pin.RegistryManifestDigest}
 		raw, verified, err = cache.ReadIndexOnlyArtifact(identity, pin.Digest)
 	} else {
-		raw, verified, err = cache.ReadArtifact(string(rev.ArchiveDigest))
+		raw, verified, _, err = cachedMirrorArchive(cache, string(rev.ArchiveDigest))
 	}
 	if err != nil {
 		status.Cache = CacheStateError
@@ -450,15 +460,11 @@ func validateCachedIndexOnlyRevision(entry config.MarketplaceEntry, pin config.M
 }
 
 func validateCachedIndexOnlyArtifact(raw []byte, pin config.MarketplaceResourcePin) error {
-	artifact, archive, err := hccartifact.Decode(bytes.NewReader(raw))
+	// The local reconstruction's own archive digest is not attested here; the
+	// occurrence's registry manifest binds it, so only content is checked.
+	artifact, err := hccartifact.DecodeContentArchive(raw)
 	if err != nil {
-		return fmt.Errorf("decode artifact: %w", err)
-	}
-	if err := artifact.ValidateArchive(nil); err != nil {
 		return fmt.Errorf("validate artifact: %w", err)
-	}
-	if err := artifact.VerifyArchiveDigest(archive); err != nil {
-		return fmt.Errorf("verify archive: %w", err)
 	}
 	if err := artifact.VerifyContentDigest(); err != nil {
 		return fmt.Errorf("verify content: %w", err)

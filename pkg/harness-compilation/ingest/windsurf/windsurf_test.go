@@ -24,7 +24,7 @@ var testWorkspaceFS = fstest.MapFS{
 		Data: []byte("{\n  \"command\": \"scripts/check-read.sh\",\n  \"event\": \"pre_read_code\",\n  \"type\": \"command\"\n}\n"),
 	},
 	".windsurf/hooks/post_setup_worktree.json": &fstest.MapFile{
-		Data: []byte("{\n  \"command\": \"scripts/setup.sh\",\n  \"event\": \"post_setup_worktree\",\n  \"type\": \"command\",\n  \"powershell\": \"Write-Host setup\",\n  \"show_output\": false,\n  \"working_dir\": \"/tmp/project\"\n}\n"),
+		Data: []byte("{\n  \"command\": \"scripts/setup.sh\",\n  \"event\": \"post_setup_worktree\",\n  \"type\": \"command\",\n  \"powershell\": \"Write-Host setup\",\n  \"show_output\": false,\n  \"working_directory\": \"/tmp/project\"\n}\n"),
 	},
 	".windsurf/mcp_config.json": &fstest.MapFile{
 		Data: []byte("{\n  \"mcpServers\": {\n    \"github\": {\n      \"args\": [\"-y\", \"@modelcontextprotocol/server-github\"],\n      \"command\": \"npx\",\n      \"env\": {\n        \"GITHUB_TOKEN\": \"${env:GITHUB_TOKEN}\",\n        \"SETTINGS\": \"./settings.json\"\n      }\n    }\n  }\n}\n"),
@@ -93,34 +93,39 @@ func TestLoadHooksRejectsDuplicateNestedKeys(t *testing.T) {
 	}
 }
 
-func TestLoadHooks_CanonicalizesEvents(t *testing.T) {
+func TestLoadHooks_PreservesNativeEvents(t *testing.T) {
 	hooks, diags, err := LoadHooks(testWorkspaceFS, ".windsurf/hooks")
 	if err != nil {
 		t.Fatalf("LoadHooks: %v", err)
 	}
+	// Both events are declared in the Windsurf catalog, so ingestion keeps the
+	// authored event names verbatim and emits no diagnostics.
 	if len(hooks) != 2 {
-		t.Fatalf("len(hooks) = %d, want 2 including preserved native hook", len(hooks))
+		t.Fatalf("len(hooks) = %d, want 2 native hooks", len(hooks))
 	}
-	var canonical, native = -1, -1
+	var read, native = -1, -1
 	for i, hook := range hooks {
+		if hook.HookSource != "windsurf" {
+			t.Fatalf("hook %q HookSource = %q, want windsurf", hook.Name(), hook.HookSource)
+		}
 		switch hook.Event {
-		case "PreToolUse":
-			canonical = i
+		case "pre_read_code":
+			read = i
 		case "post_setup_worktree":
 			native = i
 		}
 	}
-	if canonical < 0 || hooks[canonical].Matcher != "Read" {
-		t.Fatalf("canonical hooks = %#v, want PreToolUse/Read", hooks)
+	if read < 0 || native < 0 {
+		t.Fatalf("hooks = %#v, want pre_read_code and post_setup_worktree preserved", hooks)
 	}
-	if native < 0 || hooks[native].Ext.Windsurf == nil || hooks[native].Ext.Windsurf.OriginalHookEvent != "post_setup_worktree" {
-		t.Fatalf("unmappable hook = %#v, want native event sidecar", hooks)
+	if hooks[read].Matcher != "" {
+		t.Fatalf("matcher = %q, want none (Windsurf events carry tool selection)", hooks[read].Matcher)
 	}
-	if hooks[native].Ext.Windsurf.HookPowerShell != "Write-Host setup" || hooks[native].Ext.Windsurf.HookShowOutput == nil || *hooks[native].Ext.Windsurf.HookShowOutput || hooks[native].Ext.Windsurf.HookWorkingDir != "/tmp/project" {
+	if hooks[native].Ext.Windsurf == nil || hooks[native].Ext.Windsurf.HookPowerShell != "Write-Host setup" || hooks[native].Ext.Windsurf.HookShowOutput == nil || *hooks[native].Ext.Windsurf.HookShowOutput || hooks[native].Ext.Windsurf.HookWorkingDir != "/tmp/project" {
 		t.Fatalf("native hook fields = %#v", hooks[native].Ext.Windsurf)
 	}
-	if len(diags) != 1 || diags[0].Code != diag.CodeIngestWindsurfHookEventUnmappable {
-		t.Fatalf("LoadHooks diags = %#v, want ingest.windsurf.hook-event-unmappable", diags)
+	if len(diags) != 0 {
+		t.Fatalf("LoadHooks diags = %#v, want none for declared native events", diags)
 	}
 }
 
@@ -181,7 +186,6 @@ func TestLoadWorkspace_SynthesizesManifestAndLoadsResources(t *testing.T) {
 	sort.Strings(codes)
 	want := []string{
 		diag.CodeIngestWindsurfManifestSynthesized,
-		diag.CodeIngestWindsurfHookEventUnmappable,
 		diag.CodeIngestWindsurfLiteralPathPreserved,
 		diag.CodeIngestWindsurfMcpEnvNormalized,
 		diag.CodeIngestWindsurfSubagentViaAgentsMDSkipped,
@@ -436,5 +440,36 @@ func TestLoadMcpServers_CanonicalEnvNotReNormalized(t *testing.T) {
 		if d.Code == diag.CodeIngestWindsurfMcpEnvNormalized {
 			t.Errorf("unexpected normalization diagnostic for already-canonical value")
 		}
+	}
+}
+
+func TestDuplicateWorkspaceIdentityDoesNotFallBackToUserRoot(t *testing.T) {
+	user := fstest.MapFS{
+		"workflows/deploy.md": {Data: []byte("---\nname: deploy\ndescription: User deployment\n---\nINERT USER BODY\n")},
+		"rules/style.md":      {Data: []byte("INERT USER RULE\n")},
+	}
+	project := fstest.MapFS{
+		".windsurf/workflows/deploy.md": {Data: []byte("---\nname: deploy\ndescription: Approved deployment\n---\nINERT APPROVED BODY\n")},
+		".windsurf/workflows/zzz.md":    {Data: []byte("---\nname: deploy\ndescription: Replacement deployment\n---\nINERT REPLACEMENT BODY\n")},
+		".windsurf/rules/style.md":      {Data: []byte("INERT PROJECT RULE\n")},
+		".windsurf/rules/style.mdc":     {Data: []byte("---\ndescription: Style\nalwaysApply: true\n---\nINERT PROJECT MDC RULE\n")},
+	}
+	bundle, err := LoadWorkspace(project, LoadOptions{User: user})
+	if err != nil {
+		t.Fatalf("LoadWorkspace: %v", err)
+	}
+	for _, resource := range bundle.Resources {
+		if name := resource.Name(); name == "deploy" || name == "style" {
+			t.Fatalf("ambiguous %s %q resolved to a resource: %+v", resource.Kind(), name, resource)
+		}
+	}
+	refused := map[string]bool{}
+	for _, d := range bundle.Diagnostics {
+		if d.Code == diag.CodeIngestWindsurfDuplicateIdentity && d.Severity == diag.SeverityError {
+			refused[d.Resource] = true
+		}
+	}
+	if !refused["deploy"] || !refused["style"] {
+		t.Fatalf("duplicate identities not reported: %+v", bundle.Diagnostics)
 	}
 }

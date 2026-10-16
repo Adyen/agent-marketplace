@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 
 import { expect, test } from "@microsoft/tui-test";
 
-import { declineLegacyMigration, defineFixture, step, waitForExit } from "./helpers.js";
+import { defineFixture, step, waitForExit } from "./helpers.js";
 
 const journey = defineFixture("search-and-select", ["tui"]);
 test.use(journey.options);
@@ -10,7 +10,6 @@ test.beforeAll(journey.setup);
 test.afterAll(journey.cleanup);
 
 test("search keeps only alpha-skill selected", async ({ terminal }) => {
-  await declineLegacyMigration(terminal);
   await step("settled fixture baseline", () => {}, async () => {
     await expect(terminal.getByText("beta-skill", { strict: false })).toBeVisible();
     await expect(terminal.getByText("alpha-skill", { strict: false })).toBeVisible();
@@ -24,14 +23,37 @@ test("search keeps only alpha-skill selected", async ({ terminal }) => {
   await step("filter for alpha", () => terminal.write("alpha"), async () => {
     await expect(terminal.getByText("/ alpha", { strict: false })).toBeVisible();
     await expect(terminal.getByText("alpha-skill", { strict: false })).toBeVisible();
-    await expect(terminal.getByText(/Available\s+\(1\)/g)).toBeVisible();
+  });
+
+  await step("apply search keeps the filter visible", () => terminal.write("\r"), async () => {
+    await expect(terminal.getByText("/ alpha  1 match · esc clear · / edit", { strict: false })).toBeVisible();
+    await expect(terminal.getByText("alpha-skill", { strict: false })).toBeVisible();
     await expect(terminal.getByText("beta-skill", { strict: false })).not.toBeVisible();
   });
 
-  await step("apply search", () => terminal.write("\r"), async () => {
-    await expect(terminal.getByText("/ alpha", { strict: false })).not.toBeVisible();
+  await step("open command palette", () => terminal.write("\x0b"), async () => {
+    await expect(terminal.getByText("Command palette", { strict: false })).toBeVisible();
+    await expect(terminal.getByText("Clear search", { strict: false })).toBeVisible();
+    await expect(terminal.getByText("enter run · esc close", { strict: false })).toBeVisible();
+  });
+
+  await step("palette query is text not quit", () => terminal.write("q"), async () => {
+    await expect(terminal.getByText("Command palette", { strict: false })).toBeVisible();
+    await expect(terminal.getByText("Quit", { strict: false })).toBeVisible();
+  });
+
+  await step("esc closes palette", () => terminal.write("\x1b"), async () => {
+    await expect(terminal.getByText("Command palette", { strict: false })).not.toBeVisible();
+    await expect(terminal.getByText("alpha-skill", { strict: false })).toBeVisible();
+  });
+
+  await step("select alpha-skill", () => terminal.write("G"), async () => {
     await expect(terminal.getByText(/Name:\s+alpha-skill/g)).toBeVisible();
-    await expect(terminal.getByText("beta-skill", { strict: false })).not.toBeVisible();
+  });
+
+  await step("esc in the list clears the filter", () => terminal.write("\x1b"), async () => {
+    await expect(terminal.getByText("esc clear", { strict: false })).not.toBeVisible();
+    await expect(terminal.getByText("beta-skill", { strict: false })).toBeVisible();
   });
 
   await step("quit", () => terminal.write("q"), async () => {

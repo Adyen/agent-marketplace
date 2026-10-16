@@ -1,0 +1,11 @@
+## Context
+
+Public Create receives root-relative managed paths and ordinary/Codex source traversal; old existingPaths/WalkDir/Readlink re-resolve those paths independently. A selected symbolic leaf below an external intermediate alias creates a successful archive of foreign link metadata, bypassing strict regular source snapshots entirely.
+
+## Decisions
+
+One metadata reader validates root-relative shape, captures strict parent traversal, obtains descriptor-relative Lstat and Readlink with state checks. Genuine optional absence is nil metadata before deferred cleanup, so cleanup errors are not swallowed by caller absence classification. Initial empty/absent optional source remains optional, whereas an admitted entry disappearing during archive creation/walk is a generation conflict. Walk through captured os.Root.FS and read every member below strict captured parents; preserve root-dot header omission and final symbolic metadata without target payload access. Regular payload snapshots retain observed metadata from this reader. Mapped parent/regular payload lane unchanged. No new work ceilings or archive transaction; output publication/cleanup/retention/ownership evidence remain separate.
+
+## Verification
+
+Public Create with an intermediate foreign directory alias and symbolic selected leaf formerly succeeds/red. Guarded reader returns typed UnsafePath with foreign link text unchanged and no archive residue/green. Replace alias with a real contained directory: Create succeeds, remove selected link, public Restore restores exact target text. Linux/macOS/full backup/count20 public Create/Restore races, validate/lint/build and strict specs pass. All ten implementation entries reviewed including tests/bench/script/spec exclusions without skips. Review normalized optional absence inside reader before cleanup, removed independent link-text reopening, checked source path containment/root-dot behavior and typed disappearing-entry refusals; original comments retained. Narrow symbolic-metadata/local disk/no network2s×5 arm64 baseline2.287→33.433µs(+1361.87%),584→720B(+23.29%),5→14alloc(+180%),p=.008n5/no95%interval. Root capture/directory-walk/full archive lifecycle excluded; timing32–38µs varied under build/lint load. Not a speedup/full backup measurement.

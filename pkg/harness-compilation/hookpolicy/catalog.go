@@ -127,7 +127,8 @@ type catalog struct {
 }
 
 type registry struct {
-	catalogs map[target.Target]catalog
+	catalogs    map[target.Target]catalog
+	pluginNames map[string]bool
 }
 
 var shipped = sync.OnceValues(func() (*registry, error) {
@@ -146,7 +147,7 @@ func loadCatalogs(files fs.FS, pattern string) (*registry, error) {
 	if err != nil {
 		return nil, err
 	}
-	r := &registry{catalogs: map[target.Target]catalog{}}
+	r := &registry{catalogs: map[target.Target]catalog{}, pluginNames: map[string]bool{}}
 	for _, name := range names {
 		raw, err := fs.ReadFile(files, name)
 		if err != nil {
@@ -166,6 +167,11 @@ func loadCatalogs(files fs.FS, pattern string) (*registry, error) {
 			return nil, fmt.Errorf("hook catalog %s: %w", name, err)
 		}
 		r.catalogs[c.Harness] = c
+		for _, v := range c.PluginEnv {
+			for _, name := range v.Names {
+				r.pluginNames[name] = true
+			}
+		}
 	}
 	if len(r.catalogs) == 0 {
 		return nil, fmt.Errorf("no hook catalogs")

@@ -7,7 +7,7 @@ Defines which deployed acquisition locks can authorize exact remote resources an
 
 ### Requirement: Deployed evidence is validated before use
 
-The CLI MUST reject malformed or stale deployed organization acquisition locks before using their remote resources, while permitting organization deployments without a lock where online acquisition is allowed.
+The CLI MUST reject malformed, wrong-scope, or stale deployed organization acquisition locks before using their remote resources, while permitting organization deployments without a lock where online acquisition is allowed. Single-file configuration reads MUST reject acquisition locks declaring a different layer scope.
 
 #### Scenario: Absent organization lock
 
@@ -23,6 +23,11 @@ The CLI MUST reject malformed or stale deployed organization acquisition locks b
 
 - **WHEN** a deployed organization acquisition lock is malformed
 - **THEN** the CLI MUST reject it rather than use or replace its contents
+
+#### Scenario: Wrong scope in single-file read
+
+- **WHEN** a single-file loader reads an otherwise valid acquisition lock declaring a different layer scope
+- **THEN** it MUST reject the lock without binding its remote evidence
 
 ### Requirement: Writable layers retain exact acquisition boundaries
 
@@ -65,3 +70,34 @@ An online consumer MAY reuse verified in-memory organization Marketplace evidenc
 
 - **WHEN** the effective target harnesses change between two resolutions in the same invocation
 - **THEN** the second resolution MUST reacquire organization Marketplace evidence for the new target harnesses
+
+### Requirement: Organization acquisition errors preserve independent diagnostics
+
+An organization acquisition failure SHALL replace the stale organization missing-evidence diagnostic without discarding errors from independent configuration layers.
+
+#### Scenario: Independent layer errors survive organization acquisition failure
+
+- **WHEN** organization acquisition fails and another configuration layer has an independent error
+- **THEN** both the actual organization acquisition failure and the independent error SHALL remain available to the consumer
+
+### Requirement: Writable locks record resource-free Marketplace registrations
+
+A v4 source that registers a Marketplace endpoint without selecting resources SHALL be readable without acquisition evidence. A writing `lock` or `sync` for a selected user, repository, or personal-local layer SHALL record that endpoint's well-known-verified instance identity in the layer's acquisition lock, creating the lock when absent or appending only the missing identity record to an existing lock while its other Marketplace and Git records remain exact. Read-only dependency modes MUST NOT fetch the identity: a check MUST report the missing record as a required change, and a locked or offline operation MUST refuse it as stale lock evidence naming the layer scope, lock path, and endpoint. Organization locks MUST NOT be written implicitly.
+
+#### Scenario: Writing commands record a registration identity
+
+- **WHEN** `lock` or `sync` runs for a writable layer whose v4 source registers a Marketplace endpoint without resources and no layer lock exists
+- **THEN** the layer lock MUST be created with the endpoint's verified instance identity and no resource records
+- **AND** the authored configuration MUST remain unchanged
+
+#### Scenario: Existing lock gains only the missing registration identity
+
+- **WHEN** a writable layer lock already records one Marketplace endpoint and the configuration adds a resource-free registration for another endpoint
+- **THEN** `lock` MUST append only the new endpoint's identity record while existing records remain unchanged
+- **AND** a repeated `lock` or `sync` MUST NOT rewrite the lock
+
+#### Scenario: Read-only modes refuse an unrecorded registration
+
+- **WHEN** a writable layer lock exists but lacks the identity record for a resource-free registration
+- **THEN** `sync --check` and `lock --check` MUST report a required lock change, and `sync --locked` and `sync --offline` MUST refuse with stale lock evidence naming the scope, lock path, and endpoint
+- **AND** they MUST NOT contact a Marketplace endpoint or write configuration or locks

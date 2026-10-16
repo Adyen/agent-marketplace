@@ -11,6 +11,22 @@ import (
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 )
 
+// spec: marketplace-api/canonical-null-extra-is-not-a-native-extension
+func TestCanonicalHookNullExtraIsNotUnknownMetadata(t *testing.T) {
+	hook := ir.NewHook("guard", "PreToolUse", "echo safe", "command", nil, ir.SourceRef{})
+	canonical, err := FromIR(hook)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resource, err := DecodeResource("hook", canonical.Payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if extra := resource.(*ir.Hook).Extra; len(extra) != 0 {
+		t.Fatalf("canonical scaffolding became an unknown native extension: %#v", extra)
+	}
+}
+
 func TestDecodeResourceRoundTrip(t *testing.T) {
 	skillExtra := map[string]any{"category": "review", "tags": []any{"security", "performance"}}
 	commandExtra := map[string]any{"shell": "bash", "nested": map[string]any{"key": "value"}}

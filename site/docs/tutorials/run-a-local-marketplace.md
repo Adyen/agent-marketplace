@@ -43,7 +43,7 @@ instance:
   id: local
   name: Local Agent Marketplace
   canonical_url: http://localhost:8080
-  browser_base: http://localhost:8080/marketplace
+  browser_base: http://localhost:8080
 listen: 0.0.0.0:8080
 operations_listen: 127.0.0.1:9090
 storage:
@@ -73,12 +73,13 @@ registries:
     slug: skills
     origin: https://github.com/anthropics/skills.git
     ref: main
+    ca_file: /etc/ssl/certs/ca-certificates.crt
     roots:
       - path: skills
 EOF
 ```
 
-The `registries` entry tells the Marketplace to clone `https://github.com/anthropics/skills.git` at `main` and scan its `skills` directory. `acquisition_default: mirror` makes the Marketplace keep its own copy of each published resource. `license_undeclared: allow` accepts resources that declare no license; without it, the Marketplace rejects them.
+The `registries` entry tells the Marketplace to clone `https://github.com/anthropics/skills.git` at `main` and scan its `skills` directory. `ca_file` points git at the CA bundle inside the app image; without it the clone cannot verify the GitHub certificate. `acquisition_default: mirror` makes the Marketplace keep its own copy of each published resource. `license_undeclared: allow` accepts resources that declare no license; without it, the Marketplace rejects them.
 
 ## 3. Configure the consumer
 
@@ -107,7 +108,7 @@ The first build takes a few minutes. Check the services with:
 docker compose ps
 ```
 
-After a short startup, `app`, `web`, and `site` show as running and healthy, and `proxy` shows as running. The proxy has no health check of its own; it starts once the other three are healthy.
+After a short startup, `app`, `web`, and `docs` show as running and healthy, and `proxy` shows as running. The proxy has no health check of its own; it starts after the other three are healthy.
 
 ## 5. Wait for the API
 
@@ -134,25 +135,60 @@ done
 agent-marketplace search frontend-design --marketplace http://localhost:8080
 ```
 
-Representative output (the description comes from the skill and may differ):
+Typical output (the description comes from the skill and changes over time):
 
 ```text
-MARKETPLACE            SOURCE  KIND   NAME             DESCRIPTION
-http://localhost:8080  skills  skill  frontend-design  Frontend design guidance
+MARKETPLACE              SOURCE    KIND     NAME               DESCRIPTION
+"http://localhost:8080"  "skills"  "skill"  "frontend-design"  "Guidance for distinctive, intentional visual design ..."
 ```
 
 The `SOURCE` column shows the registry slug, `skills`, from step 2. If the loop keeps running for several minutes, check the app logs with `docker compose logs app`.
 
 ## 7. Install one exact resource
 
-Register the local Marketplace in the clone's repository configuration, then install the skill by its full resource URL:
+Register the local Marketplace in the clone's repository configuration:
 
 ```bash
 agent-marketplace install http://localhost:8080 --scope repo
+```
+
+Typical output (your temporary path will differ):
+
+```text
+Added Marketplace http://localhost:8080 to /tmp/tmp.k3J9x2Qp/agent-marketplace/.agents/config.yaml
+```
+
+Then install the skill by its full resource URL:
+
+```bash
 agent-marketplace install http://localhost:8080/r/skills/skill/frontend-design
 ```
 
-The first command records the Marketplace endpoint in `.agents/config.yaml`. The second command fetches the latest usable revision of the skill, prints a verified preview, and then pins that exact revision by its digest. The server's `instance.id` (`local`) does not become a Marketplace alias in your configuration.
+The command verifies the exact revision, then reports a security finding it found in the skill and asks for your consent:
+
+```text
+Installing frontend-design · skill
+
+Source: skills
+
+Warning: 1 security finding
+  WARN  [frontend-design] remote reference: http://
+Active capabilities: skill
+
+Install despite these risks? [y/N]:
+```
+
+The finding means the skill's files reference a resource at an `http://` address, which is not encrypted. Outside this tutorial, inspect the flagged reference and consent only if you accept that risk. For this tutorial's public example skill, type `y` and press Enter:
+
+```text
+✓ Installed frontend-design
+```
+
+The [hosted Marketplace how-to](../how-to/install-from-a-marketplace.md#_4-review-findings-and-capabilities) covers findings, consent, and rejected resources.
+
+The first command recorded the Marketplace endpoint in `.agents/config.yaml` as a source named `marketplace`. The install added the skill to `resources` and pinned the verified revision by its digest in `.agents/lock.yaml`. The server's `instance.id` (`local`) does not become a Marketplace alias in your configuration.
+
+If the second command stops with `Error: marketplace install requires risk acceptance`, the preview found a security finding in the skill, such as a remote `http://` reference. Read the finding in the preview, then re-run the same command with `--accept-risk` to confirm you reviewed it.
 
 ## 8. Verify the installation
 
@@ -164,7 +200,7 @@ agent-marketplace sync --check
 ls .claude/skills/frontend-design/SKILL.md
 ```
 
-`status` lists the `http://localhost:8080` endpoint and the installed skill. `sync --check` exits with status `0`, which means the files on disk match the configuration. `ls` prints the path of the skill's `SKILL.md`.
+`status` lists a `MARKETPLACE PINS` row for the `http://localhost:8080` endpoint and the installed skill with `STATE` `current`, and a `DRIFT` section that says `In sync`. `sync --check` exits with status `0` and prints nothing apart from any `warning:` lines and the indented `→` lines that follow them, none of which change the exit status. `ls` prints the path of the skill's `SKILL.md`.
 
 ## 9. Clean up
 
@@ -180,9 +216,10 @@ rm -rf "$TUTORIAL_ROOT"
 
 ## What happened
 
-The repository's `compose.yaml` started four services: the Marketplace API and worker (`app`), the Nuxt Marketplace UI (`web`), the VitePress landing site (`site`), and an Nginx reverse proxy (`proxy`) that is the only service published on port `8080`. You configured a Marketplace on `localhost`, let it mirror a public registry, and installed one skill pinned to an exact revision.
+The repository's `compose.yaml` started four services: the Marketplace API and worker (`app`), the root-mounted Nuxt Marketplace UI (`web`), the documentation-only VitePress service (`docs`), and an Nginx reverse proxy (`proxy`) that is the only service published on port `8080`. You configured a Marketplace on `localhost`, let it mirror a public registry, and installed one skill pinned to an exact revision.
 
 ## Next steps
 
+- [Run a Marketplace on Kubernetes](./run-a-marketplace-on-kubernetes.md)
 - [How to deploy a production Marketplace](../how-to/operator/deploy-a-production-marketplace.md)
 - [Marketplace operator configuration reference](../reference/marketplace-operator-configuration.md)

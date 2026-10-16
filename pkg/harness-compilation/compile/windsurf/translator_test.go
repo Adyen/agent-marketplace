@@ -204,8 +204,8 @@ func TestTranslateHook_PreservesWindsurfSidecar(t *testing.T) {
 }
 
 func TestTranslateHook_SidecarWorkdirConsumesIdenticalExtra(t *testing.T) {
-	hook := ir.NewHookWithMatcher("native", "PreToolUse", "Read", "scripts/setup.sh", "command", map[string]any{"working_directory": "/tmp/project"}, ir.SourceRef{})
-	hook.Ext.Windsurf = &extpkg.Windsurf{OriginalHookEvent: "PreToolUse", HookWorkingDir: "/tmp/project"}
+	hook := ir.NewHookWithMatcher("native", "pre_read_code", "", "scripts/setup.sh", "command", map[string]any{"working_directory": "/tmp/project"}, ir.SourceRef{})
+	hook.Ext.Windsurf = &extpkg.Windsurf{OriginalHookEvent: "pre_read_code", HookWorkingDir: "/tmp/project"}
 	artifacts, diags, err := (Compiler{}).Translate(hook)
 	if err != nil || len(artifacts) != 1 || len(diags) != 0 {
 		t.Fatalf("Translate(hook) = artifacts %d diags %#v err=%v", len(artifacts), diags, err)
@@ -215,28 +215,25 @@ func TestTranslateHook_SidecarWorkdirConsumesIdenticalExtra(t *testing.T) {
 		t.Fatal(err)
 	}
 	hooksDoc := doc["hooks"].(map[string]any)
-	var body map[string]any
-	for _, raw := range hooksDoc {
-		groups, ok := raw.([]any)
-		if ok && len(groups) > 0 {
-			body = groups[0].(map[string]any)
-			break
-		}
-	}
-	if body == nil {
+	groups, ok := hooksDoc["pre_read_code"].([]any)
+	if !ok || len(groups) != 1 {
 		t.Fatalf("hooks document = %#v", doc)
 	}
+	body := groups[0].(map[string]any)
 	if body["working_directory"] != "/tmp/project" || hook.Extra["working_directory"] != "/tmp/project" {
 		t.Fatalf("workdir output/extra = %#v / %#v", body, hook.Extra)
 	}
 }
 
 func TestTranslateHook_SidecarWorkdirMismatchFails(t *testing.T) {
-	hook := ir.NewHookWithMatcher("native", "PreToolUse", "Read", "scripts/setup.sh", "command", map[string]any{"working_directory": "/tmp/other"}, ir.SourceRef{})
-	hook.Ext.Windsurf = &extpkg.Windsurf{OriginalHookEvent: "PreToolUse", HookWorkingDir: "/tmp/project"}
-	_, diags, err := (Compiler{}).Translate(hook)
-	if err != nil || !diag.HasCode(diags, diag.CodeHookWindsurfNativeFieldsUnsupported) {
-		t.Fatalf("mismatch result err=%v diags=%#v", err, diags)
+	hook := ir.NewHookWithMatcher("native", "pre_read_code", "", "scripts/setup.sh", "command", map[string]any{"working_directory": "/tmp/other"}, ir.SourceRef{})
+	hook.Ext.Windsurf = &extpkg.Windsurf{OriginalHookEvent: "pre_read_code", HookWorkingDir: "/tmp/project"}
+	artifacts, diags, err := (Compiler{}).Translate(hook)
+	if err != nil || len(artifacts) != 0 {
+		t.Fatalf("mismatch result err=%v artifacts=%d", err, len(artifacts))
+	}
+	if len(diags) != 1 || diags[0].Code != diag.CodeHookWindsurfNativeFieldsUnsupported || diags[0].Severity != diag.SeverityError {
+		t.Fatalf("mismatch diags=%#v", diags)
 	}
 }
 
@@ -248,7 +245,6 @@ func TestTranslateHook_AbsentSidecarWorkdirRemainsBlocked(t *testing.T) {
 	}
 }
 
-// spec: hook-resources/codex-devin-and-windsurf-receive-the-source-bundle-root
 func TestTranslateHook_WithPluginRoot(t *testing.T) {
 	hook := ir.NewHookWithMatcher(
 		"PreToolUse-Read-command",

@@ -3,7 +3,7 @@
     "PreToolUse": [
       {
         "command": "${DROID_PLUGIN_ROOT}/scripts/check.sh",
-        "matcher": "Bash",
+        "matcher": "Execute",
         "type": "command"
       }
     ]

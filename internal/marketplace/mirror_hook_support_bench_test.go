@@ -16,6 +16,7 @@ func BenchmarkStageMirrorSupportFiles(b *testing.B) {
 	skill := ir.NewSkill("skill", "support", "body", nil, nil, ir.SourceRef{})
 	skill.SupportFiles = []string{"run.sh"}
 	hook := ir.NewHook("hook", "PreToolUse", "${CLAUDE_PLUGIN_ROOT}/hooks/run.sh", "command", nil, ir.SourceRef{})
+	hook.Command = "echo support"
 	hook.SupportFiles = map[string]string{"run.sh": hccartifact.SupportFileDigest(file)}
 	ca := hccartifact.CanonicalArtifact{Support: map[string]hccartifact.SupportFile{"run.sh": file}}
 	for _, resource := range []ir.Resource{skill, hook} {

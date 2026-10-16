@@ -2,8 +2,6 @@ package marketplace
 
 import (
 	"errors"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -22,12 +20,12 @@ func TestMirrorHookSupportIntegrity(t *testing.T) {
 		files    map[string]hccartifact.SupportFile
 		valid    bool
 	}{
-		{"valid", map[string]string{"run.sh": hccartifact.SupportFileDigest(script)}, map[string]hccartifact.SupportFile{"run.sh": script}, true},
-		{"missing", map[string]string{"run.sh": hccartifact.SupportFileDigest(script)}, nil, false},
+		{"valid", map[string]string{"hooks/run.sh": hccartifact.SupportFileDigest(script)}, map[string]hccartifact.SupportFile{"hooks/run.sh": script}, true},
+		{"missing", map[string]string{"hooks/run.sh": hccartifact.SupportFileDigest(script)}, nil, false},
 		{"missing-reference", map[string]string{"helper.sh": hccartifact.SupportFileDigest(script)}, map[string]hccartifact.SupportFile{"helper.sh": script}, false},
-		{"bytes", map[string]string{"run.sh": hccartifact.SupportFileDigest(script)}, map[string]hccartifact.SupportFile{"run.sh": {Data: []byte("changed"), Executable: true}}, false},
-		{"mode", map[string]string{"run.sh": hccartifact.SupportFileDigest(script)}, map[string]hccartifact.SupportFile{"run.sh": {Data: script.Data}}, false},
-		{"undeclared", map[string]string{"run.sh": hccartifact.SupportFileDigest(script)}, map[string]hccartifact.SupportFile{"run.sh": script, "extra.sh": script}, false},
+		{"bytes", map[string]string{"hooks/run.sh": hccartifact.SupportFileDigest(script)}, map[string]hccartifact.SupportFile{"hooks/run.sh": {Data: []byte("changed"), Executable: true}}, false},
+		{"mode", map[string]string{"hooks/run.sh": hccartifact.SupportFileDigest(script)}, map[string]hccartifact.SupportFile{"hooks/run.sh": {Data: script.Data}}, false},
+		{"undeclared", map[string]string{"hooks/run.sh": hccartifact.SupportFileDigest(script)}, map[string]hccartifact.SupportFile{"hooks/run.sh": script, "extra.sh": script}, false},
 		{"traversal", map[string]string{"../outside.sh": hccartifact.SupportFileDigest(script)}, map[string]hccartifact.SupportFile{"../outside.sh": script}, false},
 		{"native-definition", map[string]string{"hooks.json": hccartifact.SupportFileDigest(script)}, map[string]hccartifact.SupportFile{"hooks.json": script}, false},
 	} {
@@ -41,36 +39,12 @@ func TestMirrorHookSupportIntegrity(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				data, err := os.ReadFile(filepath.Join(dir, "run.sh"))
-				if err != nil || string(data) != string(script.Data) {
-					t.Fatalf("staged script: %q %v", data, err)
-				}
-				before, err := os.Stat(filepath.Join(dir, "run.sh"))
-				if err != nil {
-					t.Fatal(err)
-				}
-				if _, err := stageMirrorResource(cache, digest, hook, hccartifact.CanonicalArtifact{Support: test.files}); err != nil {
-					t.Fatal(err)
-				}
-				after, err := os.Stat(filepath.Join(dir, "run.sh"))
-				if err != nil || !os.SameFile(before, after) || !before.ModTime().Equal(after.ModTime()) {
-					t.Fatal("intact executable cache was removed or rewritten")
-				}
-				if err := os.WriteFile(filepath.Join(dir, "run.sh"), []byte("corrupt"), 0o755); err != nil {
-					t.Fatal(err)
-				}
-				if _, err := stageMirrorResource(cache, digest, hook, hccartifact.CanonicalArtifact{Support: test.files}); err != nil {
-					t.Fatal(err)
-				}
-				if repaired, err := os.ReadFile(filepath.Join(dir, "run.sh")); err != nil || string(repaired) != string(script.Data) {
-					t.Fatalf("corrupt support was not repaired: %q %v", repaired, err)
+				if dir != "" {
+					t.Fatalf("mirror hooks must use captured bytes, not a mutable staging tree: %q", dir)
 				}
 			} else {
 				if !errors.Is(err, ErrHookSupportIntegrity) && !errors.Is(err, ErrHookSupportMissing) {
 					t.Fatalf("invalid support error identity: %v", err)
-				}
-				if _, err := os.Stat(cache.MirrorResourceDir(digest)); !os.IsNotExist(err) {
-					t.Fatal("invalid support caused a staging write")
 				}
 			}
 		})

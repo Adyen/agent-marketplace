@@ -26,13 +26,14 @@ func TestMirrorHookNativeTargets(t *testing.T) {
 		projectAggregate, userAggregate string
 		projectScript, userScript       string
 	}{
-		{hcc.TargetClaude, ".claude/hooks/hooks.json", ".claude/hooks/hooks.json", ".claude/hook-support", ".claude/hook-support"},
-		{hcc.TargetFactory, ".factory/hooks/hooks.json", ".factory/hooks/hooks.json", ".factory/hook-support", ".factory/hook-support"},
-		{hcc.TargetCursor, ".cursor/hooks/hooks.json", ".cursor/hooks/hooks.json", ".cursor/hook-support", ".cursor/hook-support"},
-		{hcc.TargetWindsurf, ".windsurf/hooks.json", ".codeium/windsurf/hooks.json", ".windsurf/hook-support", ".codeium/windsurf/hook-support"},
+		{hcc.TargetClaude, ".claude/settings.json", ".claude/settings.json", ".claude/hook-support", ".claude/hook-support"},
+		{hcc.TargetFactory, ".factory/hooks.json", ".factory/hooks.json", ".factory/hook-support", ".factory/hook-support"},
+		{hcc.TargetCursor, ".cursor/hooks.json", ".cursor/hooks.json", ".cursor/hook-support", ".cursor/hook-support"},
+		{hcc.TargetWindsurf, ".devin/hooks.json", ".codeium/windsurf/hooks.json", "hook-support", ".codeium/windsurf/hook-support"},
 		{hcc.TargetGemini, ".gemini/settings.json", ".gemini/settings.json", ".gemini/hook-support", ".gemini/hook-support"},
 		{hcc.TargetDevin, ".devin/hooks.v1.json", ".config/devin/config.json", ".devin/hook-support", ".config/devin/hook-support"},
 		{hcc.TargetCodex, ".codex/hooks.json", ".codex/hooks.json", ".codex/hook-support", ".codex/hook-support"},
+		{hcc.TargetOpenCode, ".opencode/hooks/agent-marketplace/PreToolUse-command.json", ".config/opencode/hooks/agent-marketplace/PreToolUse-command.json", ".opencode/hook-support", ".config/opencode/hook-support"},
 	} {
 		for _, machine := range []bool{false, true} {
 			name := string(target.target) + "/repo"
@@ -81,7 +82,7 @@ func TestMirrorHookNativeTargets(t *testing.T) {
 				if err != nil || len(scripts) != 1 {
 					t.Fatalf("installed support script: %v, %v", scripts, err)
 				}
-				info, err := os.Lstat(scripts[0])
+				info, err := os.Stat(scripts[0])
 				if err != nil || !info.Mode().IsRegular() || info.Mode().Perm()&0o111 == 0 {
 					t.Fatalf("support is not an installed executable: %v, %v", info, err)
 				}
@@ -92,7 +93,7 @@ func TestMirrorHookNativeTargets(t *testing.T) {
 				defer cancel()
 				run := exec.CommandContext(ctx, "/bin/sh", "-c", command)
 				run.Dir = repo
-				run.Env = append(os.Environ(), "CLAUDE_PROJECT_DIR="+repo, "FACTORY_PROJECT_DIR="+repo, "CURSOR_PROJECT_DIR="+repo, "DEVIN_PROJECT_DIR="+repo, "GEMINI_PROJECT_DIR="+repo)
+				run.Env = append(os.Environ(), "CLAUDE_PROJECT_DIR="+repo, "FACTORY_PROJECT_DIR="+repo, "CURSOR_PROJECT_DIR="+repo, "DEVIN_PROJECT_DIR="+repo, "GEMINI_PROJECT_DIR="+repo, "AGENT_MARKETPLACE_PROJECT_DIR="+repo)
 				if output, err := run.CombinedOutput(); err != nil || string(output) != "mirror-hook\n" {
 					t.Fatalf("native hook execution: %q, %v", output, err)
 				}
@@ -153,7 +154,7 @@ func TestMirrorHooksKeepSameNamedScriptsIndependent(t *testing.T) {
 			Command string `json:"command"`
 		} `json:"hooks"`
 	}
-	body, err := os.ReadFile(filepath.Join(repo, ".factory", "hooks", "hooks.json"))
+	body, err := os.ReadFile(filepath.Join(repo, ".factory", "hooks.json"))
 	if err != nil {
 		t.Fatal(err)
 	}

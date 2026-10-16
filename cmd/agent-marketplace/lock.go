@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"slices"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -110,21 +111,6 @@ type exactLockSet struct {
 	bySource   map[string]lockedGit
 	byIdentity map[string][]lockedGit
 	catalogs   map[string]map[string]*catalog.Catalog
-}
-
-func (set *exactLockSet) discover(path, sourceHarness string) (catalog.LoadedCatalog, error) {
-	catalogs := set.catalogs[filepath.Clean(path)]
-	loaded := catalogs[sourceHarness]
-	if loaded == nil && sourceHarness == "" && len(catalogs) == 1 {
-		for _, candidate := range catalogs {
-			loaded = candidate
-		}
-	}
-	if loaded != nil {
-		slog.Debug("reusing verified source catalog", "path", path, "source_harness", loaded.SourceHarness)
-		return loaded.Discover(path, sourceHarness)
-	}
-	return catalog.Discover(path, sourceHarness)
 }
 
 type lockedGit struct {
@@ -527,17 +513,12 @@ func snapshotEffectiveConfigs(ec config.EffectiveConfig, overlays map[string][]b
 			}
 			writablePaths[participantPath] = layer.Source
 		}
-		generation, expectedMode, err := dependencytxn.ReadGenerationAndMode(participantPath)
+		raw, generation, expectedMode, err := dependencytxn.ReadSnapshot(participantPath)
 		if err != nil {
 			return nil, err
 		}
 		mode := os.FileMode(0o644)
-		var raw []byte
 		if generation.Exists {
-			raw, err = os.ReadFile(participantPath)
-			if err != nil {
-				return nil, fmt.Errorf("read configuration transaction participant %s: %w", participantPath, err)
-			}
 			mode = expectedMode
 		} else if _, staged := overlays[participantPath]; !staged {
 			return nil, fmt.Errorf("configuration layer disappeared while loading: %s", layer.Path)
@@ -556,21 +537,39 @@ func snapshotEffectiveConfigs(ec config.EffectiveConfig, overlays map[string][]b
 
 func effectiveReadAssertions(ec config.EffectiveConfig, staged map[string]pipeline.StagedConfigEdit, stagedLocks map[string]pipeline.StagedLockEdit) ([]dependencytxn.ReadAssertion, error) {
 	byAlias := make(map[string]dependencytxn.ReadAssertion)
-	byPath := make(map[string]string)
+	byPath := make(map[string]config.ConfigRead)
 	for _, layer := range ec.PresentLayers() {
 		for _, read := range layer.Reads {
-			if digest, exists := byPath[read.Path]; exists && digest != read.Digest {
-				return nil, fmt.Errorf("%w: inconsistent config read at %s", dependencytxn.ErrGenerationConflict, read.Path)
+			if previous, exists := byPath[read.Path]; exists {
+				if dependencytxn.ClassifyDestination(previous.RequestedPath) != dependencytxn.AuthorityLegacy && dependencytxn.ClassifyDestination(read.RequestedPath) != dependencytxn.AuthorityLegacy {
+					priorPath, priorErr := canonicalConfigDependencyPath(previous.RequestedPath)
+					readPath, readErr := canonicalConfigDependencyPath(read.RequestedPath)
+					if priorErr != nil || readErr != nil {
+						return nil, errors.Join(priorErr, readErr)
+					}
+					if priorPath != readPath {
+						return nil, fmt.Errorf("%w: layer destinations %s and %s resolve to the same object", dependencytxn.ErrUnsafePath, priorPath, readPath)
+					}
+				}
+				if previous.Digest != read.Digest {
+					return nil, fmt.Errorf("%w: inconsistent config read at %s", dependencytxn.ErrGenerationConflict, read.Path)
+				}
 			}
-			byPath[read.Path] = read.Digest
+			byPath[read.Path] = read
 			expected := dependencytxn.Generation{Exists: true, Digest: read.Digest}
 			if read.Overlay {
 				if staged == nil && stagedLocks == nil {
 					continue
 				}
-				if edit, exists := staged[read.Path]; exists && dependencytxn.Digest(edit.Bytes) == read.Digest {
+				path := read.Path
+				if _, exists := staged[path]; !exists {
+					if canonical, err := canonicalConfigDependencyPath(read.RequestedPath); err == nil {
+						path = canonical
+					}
+				}
+				if edit, exists := staged[path]; exists && dependencytxn.Digest(edit.Bytes) == read.Digest {
 					expected = edit.Expected
-				} else if lockEdit, exists := stagedLocks[read.Path]; exists && dependencytxn.Digest(lockEdit.Bytes) == read.Digest {
+				} else if lockEdit, exists := stagedLocks[path]; exists && dependencytxn.Digest(lockEdit.Bytes) == read.Digest {
 					expected = lockEdit.Expected
 				} else {
 					return nil, fmt.Errorf("%w: unmatched config overlay at %s", dependencytxn.ErrGenerationConflict, read.Path)
@@ -638,6 +637,10 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 		slog.Info("lock lifecycle completed", attrs...)
 	}()
 
+	ws, err := pipeline.WorkspaceForRoots(repoRoot, localDir)
+	if err != nil {
+		return nil, 0, nil, err
+	}
 	stateDir, err := dependencyStateDir()
 	if err != nil {
 		return nil, 0, nil, err
@@ -679,7 +682,7 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 		overlays[destination] = edit.Bytes
 	}
 	loadOptions := config.LoadEffectiveOptions{
-		RepoRoot: repoRoot, LocalConfigDir: localDir,
+		RepoRoot: ws.RepoRoot(), LocalConfigDir: ws.LocalConfigDir(),
 		FileOverlays: overlays,
 	}
 	loadMode := pipeline.ConfigLoadStrict
@@ -698,15 +701,26 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 		return nil, 0, nil, err
 	}
 	canBootstrapMarketplace := !mode.readOnlyDependencies() && mode.prepareInstall == nil && mode.reuseInstall == nil && len(mode.stagedConfigEdits) == 0 && len(mode.stagedLockEdits) == 0 && mode.commitScope == nil
-	if canBootstrapMarketplace && pipeline.NeedsLockBootstrap(ec.Errors) {
-		bootstrapChanged, err := bootstrapMissingMarketplaceLocks(ctx, repoRoot, localDir, mode.selects, mode.marketplacePolicy)
+	missingMarketplaceEvidence := pipeline.NeedsLockBootstrap(ec.Errors)
+	// Resource-free registrations bind without lock evidence, so they never
+	// surface as missing-evidence errors. Only a clean read may acquire for
+	// them: invalid config, policy denial, and lock errors refuse first.
+	unacquiredRegistration := false
+	if len(ec.Errors) == 0 {
+		unacquiredRegistration = len(unrecordedWritableMarketplaceRegistrations(ec, mode.selects)) > 0
+	}
+	if canBootstrapMarketplace && (missingMarketplaceEvidence || unacquiredRegistration) {
+		slog.Debug("marketplace lock bootstrap triggered", "missing_evidence", missingMarketplaceEvidence, "unacquired_registration", unacquiredRegistration)
+		bootstrapChanged, err := bootstrapMissingMarketplaceLocks(ctx, ws.RepoRoot(), ws.LocalConfigDir(), mode.selects, mode.marketplacePolicy)
 		if err != nil {
 			return nil, 0, nil, err
 		}
 		changed += bootstrapChanged
-		ec, configSnapshots, err = loadStableEffectiveWith(ctx, loadOptions, loadEffective)
-		if err != nil {
-			return nil, 0, nil, err
+		if missingMarketplaceEvidence || bootstrapChanged > 0 {
+			ec, configSnapshots, err = loadStableEffectiveWith(ctx, loadOptions, loadEffective)
+			if err != nil {
+				return nil, 0, nil, err
+			}
 		}
 	}
 	consumed := make(map[string]int, len(stagedEdits))
@@ -757,6 +771,20 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 			}
 			return false
 		})
+	}
+	// A resource-free registration without an identity record is what lock
+	// would write. Check and locked modes refuse it here, before resolution
+	// could trust the endpoint's identity on first use. Only a clean read
+	// decides: missing locks, binding mismatches, and policy denials keep
+	// their own refusals below.
+	if (mode.check || mode.locked) && len(ec.Errors) == 0 {
+		refusal, err := unrecordedRegistrationRefusal(ec, configSnapshots, mode)
+		if err != nil {
+			return nil, 0, nil, err
+		}
+		if refusal != nil {
+			return nil, 1, nil, refusal
+		}
 	}
 	if mode.check && pipeline.NeedsLockBootstrap(ec.Errors) {
 		changeErr := &lockLifecycleError{Code: "lock.change-required", Err: errors.Join(ec.Errors...)}
@@ -851,22 +879,9 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 		if scope == lockfile.ScopeOrganization && len(remote) > 0 {
 			organizationRequiresLock = true
 		}
-		configPath := layer.Path
-		if snapshot, ok := configSnapshots[layer.Source]; ok {
-			configPath = snapshot.path
-		}
-		lockPath, pathErr := lockfile.PathForConfig(configPath)
+		lockPath, pathErr := layerLockDestination(layer, configSnapshots)
 		if pathErr != nil {
-			name := "lock.yaml"
-			if scope == lockfile.ScopeLocal {
-				name = "lock.local.yaml"
-			}
-			lockPath = filepath.Join(filepath.Dir(configPath), name)
-		}
-		requestedLockPath := lockPath
-		lockPath, pathErr = rejectGeneratedLockSymlink(lockPath)
-		if pathErr != nil {
-			return nil, changed, nil, fmt.Errorf("resolve lock destination %s: %w", requestedLockPath, pathErr)
+			return nil, changed, nil, pathErr
 		}
 		selected := mode.selects == nil || mode.selects[scope]
 		current, generation, exists, loadErr := pipeline.ReadLayerLock(lockPath, scope)
@@ -1045,6 +1060,15 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 			}
 		}
 		for _, file := range desiredFiles {
+			if dependencytxn.ClassifyDestination(file.Path) != dependencytxn.AuthorityLegacy {
+				// Managed layer directories are created below the captured
+				// layer root so a replaced or symlinked .agents cannot
+				// redirect the creation into another tree.
+				if err := dependencytxn.EnsureDestinationDir(file.Path); err != nil {
+					return nil, changed, nil, fmt.Errorf("create dependency destination directory: %w", err)
+				}
+				continue
+			}
 			if err := os.MkdirAll(filepath.Dir(file.Path), 0o755); err != nil {
 				return nil, changed, nil, fmt.Errorf("create dependency destination directory: %w", err)
 			}
@@ -1102,7 +1126,7 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 		return nil
 	}
 
-	option := catalog.WithExactSnapshots(func(entry config.RegistryEntry) (string, string, error) {
+	option := catalog.WithVerifiedExactSnapshots(func(entry config.RegistryEntry) (string, string, error) {
 		if err := validateExactLocks(); err != nil {
 			return "", "", err
 		}
@@ -1124,7 +1148,7 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 		}
 		catalogKey := canonical + "@" + locked.commit.String() + ":" + entry.Path
 		return locked.snapshot, catalogKey, nil
-	}, set.discover)
+	}, set.catalogs)
 	hasExactConsumers := len(set.byIdentity) > 0
 	resultLease = func(ctx context.Context) (func(), error) {
 		if !hasExactConsumers {
@@ -1477,6 +1501,96 @@ func addLayerSnapshots(ctx context.Context, set *exactLockSet, source config.Sou
 		}
 	}
 	return nil
+}
+
+// layerLockDestination returns the validated lock destination of a present
+// layer, derived from the config path captured in its snapshot when there is
+// one.
+func layerLockDestination(layer config.LayerResult, snapshots map[config.Source]configTransactionSnapshot) (string, error) {
+	configPath := layer.Path
+	if snapshot, ok := snapshots[layer.Source]; ok {
+		configPath = snapshot.path
+	}
+	lockPath, err := lockfile.PathForConfig(configPath)
+	if err != nil {
+		name := "lock.yaml"
+		if lockScopeForSource(layer.Source) == lockfile.ScopeLocal {
+			name = "lock.local.yaml"
+		}
+		lockPath = filepath.Join(filepath.Dir(configPath), name)
+	}
+	destination, err := rejectGeneratedLockSymlink(lockPath)
+	if err != nil {
+		return "", fmt.Errorf("resolve lock destination %s: %w", lockPath, err)
+	}
+	return destination, nil
+}
+
+// unrecordedLayerRegistrations is one selected writable layer that binds
+// resource-free Marketplace registrations its deployed lock does not
+// identify yet, with their canonical endpoints in binding order.
+type unrecordedLayerRegistrations struct {
+	layer     config.LayerResult
+	scope     lockfile.Scope
+	endpoints []string
+}
+
+// unrecordedWritableMarketplaceRegistrations lists, in layer order, every
+// selected writable layer with resource-free registrations that lack a lock
+// identity record. The organization layer is never writable here, and the
+// bootstrap producer remains the authority on what each lock records.
+func unrecordedWritableMarketplaceRegistrations(ec config.EffectiveConfig, selected map[lockfile.Scope]bool) []unrecordedLayerRegistrations {
+	var found []unrecordedLayerRegistrations
+	for _, layer := range ec.PresentLayers() {
+		scope := lockScopeForSource(layer.Source)
+		if !layer.Source.IsWritable() || selected != nil && !selected[scope] {
+			continue
+		}
+		var endpoints []string
+		collect := func(entries []config.MarketplaceEntry) {
+			for _, entry := range entries {
+				if entry.InstanceID == "" && len(entry.Resources) == 0 {
+					endpoints = append(endpoints, entry.URL)
+				}
+			}
+		}
+		if layer.Config != nil {
+			collect(layer.Config.Marketplaces)
+		}
+		if layer.Local != nil {
+			collect(layer.Local.Marketplaces)
+		}
+		if len(endpoints) > 0 {
+			found = append(found, unrecordedLayerRegistrations{layer: layer, scope: scope, endpoints: endpoints})
+		}
+	}
+	return found
+}
+
+// unrecordedRegistrationRefusal returns the refusal for the first selected
+// writable layer whose resource-free registrations have no lock identity
+// record. Check modes report the record lock would add as a required change;
+// locked modes refuse the existing lock as stale. A locked mode decides from
+// the evidence the layer was bound against: a layer bound without any
+// deployed lock keeps its missing-lock refusal.
+func unrecordedRegistrationRefusal(ec config.EffectiveConfig, snapshots map[config.Source]configTransactionSnapshot, mode lockMode) (*lockLifecycleError, error) {
+	boundToDeployedLock := func(read config.ConfigRead) bool { return read.AcquisitionLock }
+	for _, unrecorded := range unrecordedWritableMarketplaceRegistrations(ec, mode.selects) {
+		if mode.locked && !slices.ContainsFunc(unrecorded.layer.Reads, boundToDeployedLock) {
+			continue
+		}
+		lockPath, err := layerLockDestination(unrecorded.layer, snapshots)
+		if err != nil {
+			return nil, err
+		}
+		code := "lock.stale"
+		if mode.check {
+			code = "lock.change-required"
+		}
+		slog.Debug("marketplace registration has no lock identity record", "code", code, "scope", unrecorded.scope, "lock", lockPath, "endpoints", unrecorded.endpoints)
+		return &lockLifecycleError{Code: code, Scope: unrecorded.scope, Path: lockPath, Err: fmt.Errorf("no identity record for resource-free Marketplace registration %s; run 'agent-marketplace lock' to record it", strings.Join(unrecorded.endpoints, ", "))}, nil
+	}
+	return nil, nil
 }
 
 func lockScopeForSource(source config.Source) lockfile.Scope {

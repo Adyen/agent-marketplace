@@ -23,22 +23,13 @@ func newInstallAllRegistryEnv(t *testing.T, schema string) (*Env, string) {
 // accept works, and a registry only the user declares still installs into
 // the repository.
 func TestInstallAllRegistryTargetsOnePhysicalSource(t *testing.T) {
-	for _, schema := range []string{"v2", "v4"} {
+	for _, schema := range []string{"v4"} {
 		for _, repoDeclares := range []bool{true, false} {
 			t.Run(fmt.Sprintf("%s/repo-declares=%t", schema, repoDeclares), func(t *testing.T) {
 				env, url := newInstallAllRegistryEnv(t, schema)
-				if schema == "v2" {
-					env.WriteGlobalConfig(fmt.Sprintf("apiVersion: agent-marketplace/v2\nharnesses: [factory]\nregistries:\n  - url: %s\n    ref: main\n", url))
-					repo := "apiVersion: agent-marketplace/v2\nregistries: []\n"
-					if repoDeclares {
-						repo = fmt.Sprintf("apiVersion: agent-marketplace/v2\nregistries:\n  - url: %s\n    ref: main\n    skills: [review]\n", url)
-					}
-					env.WriteRepoConfig(repo)
-				} else {
-					env.WriteGlobalConfig(fmt.Sprintf("apiVersion: agent-marketplace/v4\nharnesses: [factory]\nsources:\n  personal: {git: '%s', ref: main}\n", url))
-					if repoDeclares {
-						env.WriteRepoConfig(fmt.Sprintf("apiVersion: agent-marketplace/v4\nsources:\n  team: {git: '%s', ref: main}\nresources:\n  team: {include: [skill/review]}\n", url))
-					}
+				env.WriteGlobalConfig(fmt.Sprintf("apiVersion: agent-marketplace/v4\nharnesses: [factory]\nsources:\n  personal: {git: '%s', ref: main}\n", url))
+				if repoDeclares {
+					env.WriteRepoConfig(fmt.Sprintf("apiVersion: agent-marketplace/v4\nsources:\n  team: {git: '%s', ref: main}\nresources:\n  team: {include: [skill/review]}\n", url))
 				}
 				user := env.ReadFile("/root/.agents/config.yaml")
 
@@ -66,15 +57,11 @@ func TestInstallAllRegistryTargetsOnePhysicalSource(t *testing.T) {
 // skills directory), install --all --registry refuses and names both
 // candidates instead of pointing at a duplicate that does not exist.
 func TestInstallAllRegistryNamesAmbiguousSources(t *testing.T) {
-	for _, schema := range []string{"v2", "v4"} {
+	for _, schema := range []string{"v4"} {
 		t.Run(schema, func(t *testing.T) {
 			env, url := newInstallAllRegistryEnv(t, schema)
 			env.WriteGlobalConfig("apiVersion: agent-marketplace/" + schema + "\nharnesses: [factory]\n")
-			if schema == "v2" {
-				env.WriteRepoConfig(fmt.Sprintf("apiVersion: agent-marketplace/v2\nregistries:\n  - url: %s\n    ref: main\n    skills: [review]\n  - url: %s\n    ref: main\n    path: skills\n    skills: [deploy]\n", url, url))
-			} else {
-				env.WriteRepoConfig(fmt.Sprintf("apiVersion: agent-marketplace/v4\nsources:\n  root: {git: '%s', ref: main}\n  nested: {git: '%s', ref: main, path: skills}\nresources:\n  root: {include: [skill/review]}\n  nested: {include: [skill/deploy]}\n", url, url))
-			}
+			env.WriteRepoConfig(fmt.Sprintf("apiVersion: agent-marketplace/v4\nsources:\n  root: {git: '%s', ref: main}\n  nested: {git: '%s', ref: main, path: skills}\nresources:\n  root: {include: [skill/review]}\n  nested: {include: [skill/deploy]}\n", url, url))
 			before := env.ReadFile("/workspace/.agents/config.yaml")
 
 			result := env.RunAM("install", "--all", "--registry", url)

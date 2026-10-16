@@ -342,6 +342,15 @@ type Hook struct {
 	Ext          extpkg.Bag        // Optional target-specific sidecars
 	Extra        map[string]any    // Preserved unknown fields
 	Source       SourceRef         // Origin in the source bundle
+
+	// GroupExtraKeys names the Extra keys the ingester promoted from the
+	// enclosing hook group rather than from the handler object itself (for
+	// example Factory's group-level commandRegex). It is metadata for
+	// source-revision digest projections that must replay the historical
+	// handler-level Extra view; it never serializes into lock payloads.
+	GroupExtraKeys map[string]bool `json:"-"`
+
+	sourceDefinitionDigest string
 }
 
 // HookOption customizes the additive hook fields.
@@ -404,6 +413,10 @@ func (h *Hook) Name() string { return h.name }
 
 // SetName sets the hook name.
 func (h *Hook) SetName(name string) { h.name = name }
+
+func (h *Hook) SourceDefinitionDigest() string { return h.sourceDefinitionDigest }
+
+func (h *Hook) SetSourceDefinitionDigest(digest string) { h.sourceDefinitionDigest = digest }
 
 // McpServer represents a compilable MCP server resource.
 type McpServer struct {

@@ -129,6 +129,9 @@ func populateStructFromMap(raw map[string]any, v any) (map[string]any, error) {
 			continue
 		}
 		if isExtraField(f) {
+			if value, key, ok := findValue(raw, f.Name); ok && value == nil {
+				used[key] = struct{}{}
+			}
 			continue
 		}
 

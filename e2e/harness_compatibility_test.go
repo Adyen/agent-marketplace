@@ -13,7 +13,7 @@ import (
 	"time"
 )
 
-var compatibilityTargets = []string{"claude", "factory", "cursor", "windsurf", "gemini", "devin", "codex"}
+var compatibilityTargets = []string{"claude", "factory", "cursor", "windsurf", "gemini", "devin", "codex", "opencode"}
 var compatibilityResources = []string{"skill", "command", "subagent", "hook", "mcp", "collection", "rule", "native-cli"}
 
 func TestHarnessCompatibility(t *testing.T) {
@@ -103,6 +103,7 @@ func runCompatibilityScenario(t *testing.T, results []compatibilityResult, nativ
 		t.Fatal(init.Error)
 	}
 	f := newCompatibilityFixture(e, first.Harness, server)
+	assertCompatibilityHookSource(t, f)
 	paths := compatibilityPaths(e, first.Harness, first.Scope, f)
 	otherScope := "user"
 	if first.Scope == "user" {
@@ -127,12 +128,18 @@ func runCompatibilityScenario(t *testing.T, results []compatibilityResult, nativ
 		rows[results[i].Resource] = &results[i]
 	}
 	native := prepareCompatibilityNative(e, f, rows["native-cli"], nativeMode, reason, expectedVersion)
+	// OpenCode's negative-control startup can create the machine JSONC file.
+	// Assert the documented effective destination, not a competing JSON file.
+	if first.Harness == "opencode" {
+		paths = compatibilityPaths(e, first.Harness, first.Scope, f)
+		otherPaths = compatibilityPaths(e, first.Harness, otherScope, f)
+	}
 	for i := range results {
 		results[i].Version = rows["native-cli"].Version
 	}
 	config := fmt.Sprintf("harnesses: [%s]\nmaterialization:\n  mode: %s\n", first.Harness, first.Mode)
 	e.WriteGlobalConfig(config)
-	config += fmt.Sprintf("registries:\n  - url: %q\n    source_harness: claude\n", f.registry)
+	config += fmt.Sprintf("sources: {fixture: {directory: %q, source_harness: claude}}\n", f.registry)
 	if first.Scope == "user" {
 		e.WriteGlobalConfig(config)
 	} else {
@@ -141,6 +148,9 @@ func runCompatibilityScenario(t *testing.T, results []compatibilityResult, nativ
 	catalog := map[string][]string{
 		"skill": {f.name("skill")}, "command": {f.name("command")}, "subagent": {f.name("subagent")},
 		"hook": {"PreToolUse-command", "UserPromptSubmit-command"}, "mcp": {f.name("mcp-a"), f.name("mcp-b")}, "collection": {f.name("collection")},
+	}
+	if first.Harness == "opencode" {
+		catalog["hook"] = []string{"PreToolUse-command", "PreToolUse-command-2"}
 	}
 	catalogPassed := make(map[string]bool)
 	for _, kind := range compatibilityResources[:6] {
@@ -307,6 +317,10 @@ func compatibilityHookEvents(target string) []string {
 		return []string{"BeforeTool", "BeforeAgent"}
 	case "windsurf":
 		return []string{"pre_run_command", "pre_user_prompt"}
+	case "cursor":
+		return []string{"preToolUse", "beforeSubmitPrompt"}
+	case "opencode":
+		return []string{"PreToolUse"}
 	default:
 		return []string{"PreToolUse", "UserPromptSubmit"}
 	}
@@ -317,6 +331,22 @@ func assertCompatibilityMCP(t *testing.T, text, target string, f compatibilityFi
 	for i, suffix := range []string{"mcp-a", "mcp-b"} {
 		name := f.name(suffix)
 		setting := []string{"alpha", "beta"}[i]
+		if target == "opencode" {
+			var aggregate struct {
+				Servers map[string]struct {
+					Command     []string          `json:"command"`
+					Environment map[string]string `json:"environment"`
+				} `json:"mcp"`
+			}
+			if err := json.Unmarshal([]byte(text), &aggregate); err != nil {
+				t.Fatal(err)
+			}
+			entry, found := aggregate.Servers[name]
+			if !found || !slices.Equal(entry.Command, []string{f.server, "--label=" + name}) || entry.Environment["AMCOMPAT_SETTING"] != setting || len(aggregate.Servers) != 2 {
+				t.Errorf("wrong native MCP entry %s: %+v", name, entry)
+			}
+			continue
+		}
 		if target == "codex" {
 			pattern := `(?ms)^\[mcp_servers\."?` + regexp.QuoteMeta(name) + `"?\]\n(.*?)(?:^\[mcp_servers\.[^.\n]+\]\n|\z)`
 			match := regexp.MustCompile(pattern).FindStringSubmatch(text)
@@ -347,20 +377,74 @@ func assertCompatibilityMCP(t *testing.T, text, target string, f compatibilityFi
 	}
 }
 
-func assertCompatibilityNoNamedFile(t *testing.T, root, name string) {
-	t.Helper()
-	if err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
+func compatibilityNamedFiles(root, name string, ignoredDirs ...string) ([]string, error) {
+	var matches []string
+	err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
 			return err
+		}
+		rel, err := filepath.Rel(root, path)
+		if err != nil {
+			return err
+		}
+		slashed := filepath.ToSlash(rel)
+		for _, ignored := range ignoredDirs {
+			if slashed == ignored || strings.HasPrefix(slashed, ignored+"/") {
+				if d.IsDir() {
+					return filepath.SkipDir
+				}
+				return nil
+			}
 		}
 		if d.IsDir() && (d.Name() == ".cache" || d.Name() == ".local") {
 			return filepath.SkipDir
 		}
 		if strings.Contains(d.Name(), name) {
-			t.Errorf("unsupported resource emitted at %s", path)
+			matches = append(matches, path)
 		}
 		return nil
-	}); err != nil {
+	})
+	return matches, err
+}
+
+func assertCompatibilityNoNamedFile(t *testing.T, root, name string) {
+	t.Helper()
+	matches, err := compatibilityNamedFiles(root, name, "hook-support", ".codeium/windsurf/hook-support")
+	if err != nil {
 		t.Fatal(err)
+	}
+	for _, path := range matches {
+		t.Errorf("unsupported resource emitted at %s", path)
+	}
+}
+
+func TestCompatibilityNamedFileSearch(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	name := "forbidden-subagent"
+	passive := []string{
+		filepath.Join(root, "hook-support", "registry", name+".json"),
+		filepath.Join(root, ".codeium", "windsurf", "hook-support", "registry", name+".json"),
+	}
+	active := []string{
+		filepath.Join(root, "agents", name+".md"),
+		filepath.Join(root, "not-hook-support", name+".md"),
+	}
+	for _, path := range append(append([]string(nil), passive...), active...) {
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte("copy"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got, err := compatibilityNamedFiles(root, name, "hook-support", ".codeium/windsurf/hook-support")
+	if err != nil {
+		t.Fatal(err)
+	}
+	slices.Sort(got)
+	slices.Sort(active)
+	if !slices.Equal(got, active) {
+		t.Fatalf("compatibilityNamedFiles = %v, want exactly the active paths %v", got, active)
 	}
 }

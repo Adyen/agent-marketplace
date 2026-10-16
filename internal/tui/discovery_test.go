@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	tea "charm.land/bubbletea/v2"
 	"github.com/Adyen/agent-marketplace/internal/catalog"
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/marketplace"
@@ -19,7 +20,6 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/resolver"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 	mpapi "github.com/Adyen/agent-marketplace/pkg/marketplace/api"
-	tea "github.com/charmbracelet/bubbletea"
 )
 
 func TestToggleSnapshotReloadPreservesNonEmptyMarketplaceQuery(t *testing.T) {
@@ -311,14 +311,6 @@ func TestSnapshotPolicyFailureClearsDiscoveryAndRejectsLateCompletions(t *testin
 		wantPane pane
 	}{
 		{
-			name: "migration required",
-			snapshot: snapshotLoadedMsg{
-				mergedCfg:        &config.Config{Marketplaces: []config.MarketplaceEntry{{URL: "https://new.example", InstanceID: "new"}}},
-				pendingMigration: migrationPrompt{configs: []migrationConfig{{label: "Project", path: "/repo/.agents/config.yaml"}}},
-			},
-			wantPane: paneMigrationModal,
-		},
-		{
 			name: "config error",
 			snapshot: snapshotLoadedMsg{
 				driftAssessment: driftFailed,
@@ -350,11 +342,7 @@ func TestSnapshotPolicyFailureClearsDiscoveryAndRejectsLateCompletions(t *testin
 			if len(m.discoveryRows) != 0 || len(m.browseDiscoveryRows) != 0 || len(m.discoveryOutcomes) != 0 || len(m.discoveryErrs) != 0 {
 				t.Fatalf("prior discovery state remained: rows=%#v browse=%#v outcomes=%#v errs=%v", m.discoveryRows, m.browseDiscoveryRows, m.discoveryOutcomes, m.discoveryErrs)
 			}
-			if test.name == "migration required" {
-				if len(m.rows) != 0 {
-					t.Fatalf("migration snapshot rows changed: %#v", m.rows)
-				}
-			} else if len(m.rows) != 1 || m.rows[0].Artifact.Name != "installed" {
+			if len(m.rows) != 1 || m.rows[0].Artifact.Name != "installed" {
 				t.Fatalf("authoritative rows changed: %#v", m.rows)
 			}
 			if m.pane != test.wantPane {
@@ -372,11 +360,7 @@ func TestSnapshotPolicyFailureClearsDiscoveryAndRejectsLateCompletions(t *testin
 			if len(m.discoveryRows) != 0 {
 				t.Fatalf("late discovery changed discovery state: %#v", m.discoveryRows)
 			}
-			if test.name == "migration required" {
-				if len(m.rows) != 0 {
-					t.Fatalf("late discovery changed migration rows: %#v", m.rows)
-				}
-			} else if len(m.rows) != 1 || m.rows[0].Artifact.Name != "installed" {
+			if len(m.rows) != 1 || m.rows[0].Artifact.Name != "installed" {
 				t.Fatalf("late discovery changed authoritative state: %#v", m.rows)
 			}
 		})
@@ -486,7 +470,18 @@ func TestLowRiskMarketplaceDiscoveryCommitsPreparedPlanWithoutConsent(t *testing
 	if prepareCmd == nil {
 		t.Fatal("install did not start asynchronous preparation")
 	}
-	updated, commitCmd := m.Update(prepareCmd())
+	// The prepare batch includes the observation pump; drive commands like
+	// the tea runtime until the prepare result arrives.
+	var prepareMsg tea.Msg
+	for _, c := range batchCmds(prepareCmd) {
+		if msg, ok := c().(discoveryInstallMsg); ok {
+			prepareMsg = msg
+		}
+	}
+	if prepareMsg == nil {
+		t.Fatal("prepare batch did not produce an install result")
+	}
+	updated, commitCmd := m.Update(prepareMsg)
 	m = updated.(Model)
 	if m.pane == paneMarketplaceConsent {
 		t.Fatal("no-findings preparation opened a consent prompt")
@@ -628,7 +623,7 @@ func TestHostileMarketplaceDiscoveryRenderingUsesTerminalSanitizer(t *testing.T)
 	m.width, m.height = 80, 20
 	hostile := "remote\x1b]52;c;c2VjcmV0\a\u202e\nname"
 	m.applyDiscovery("", []marketplace.DiscoveryOutcome{{Endpoint: config.MarketplaceEntry{URL: "https://market.example", InstanceID: "market", Alias: hostile}, Items: []mpapi.ResourceListItem{{RegistryID: "registry", RegistrySlug: hostile, Kind: "skill", Name: hostile, Description: hostile, Availability: mpapi.AvailabilityAvailable}}}})
-	output := m.View()
+	output := m.View().Content
 	if strings.Contains(output, "\x1b]52;") || strings.ContainsAny(output, "\a\u202e") || strings.Contains(output, "\nname") {
 		t.Fatalf("hostile discovery data reached terminal output: %q", output)
 	}
@@ -662,7 +657,7 @@ func TestMarketplaceConsentPreviewScrollsAtSupportedMinimum(t *testing.T) {
 	updated, _ := m.Update(discoveryInstallMsg{operation: operation, prepared: prepared, preview: preview, err: consent})
 	m = updated.(Model)
 
-	initial := m.View()
+	initial := m.View().Content
 	assertTerminalBounds(t, initial, 50, 12)
 	if strings.Contains(initial, "security:") || strings.Contains(initial, "provenance:") {
 		t.Fatalf("long preview did not start at the top:\n%s", initial)
@@ -673,26 +668,26 @@ func TestMarketplaceConsentPreviewScrollsAtSupportedMinimum(t *testing.T) {
 		}
 	}
 
-	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyPgDown})
+	updated, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyPgDown})
 	m = updated.(Model)
-	if m.marketplaceConsentViewport.YOffset == 0 {
+	if m.marketplaceConsentViewport.YOffset() == 0 {
 		t.Fatal("page down did not scroll the consent preview")
 	}
 	updated, _ = m.Update(tea.WindowSizeMsg{Width: 60, Height: 14})
 	m = updated.(Model)
-	if m.marketplaceConsentViewport.YOffset == 0 {
+	if m.marketplaceConsentViewport.YOffset() == 0 {
 		t.Fatal("resize reset the consent scroll position")
 	}
 	updated, _ = m.Update(tea.WindowSizeMsg{Width: 50, Height: 12})
 	m = updated.(Model)
-	if m.marketplaceConsentViewport.YOffset == 0 {
+	if m.marketplaceConsentViewport.YOffset() == 0 {
 		t.Fatal("returning to minimum size reset the consent scroll position")
 	}
-	for i := 0; i < 10 && !strings.Contains(m.View(), "provenance:"); i++ {
-		updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyPgDown})
+	for i := 0; i < 10 && !strings.Contains(m.View().Content, "provenance:"); i++ {
+		updated, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyPgDown})
 		m = updated.(Model)
 	}
-	scrolled := m.View()
+	scrolled := m.View().Content
 	assertTerminalBounds(t, scrolled, 50, 12)
 	for _, required := range []string{"security:", "provenance:", "y install", "n/esc cancel"} {
 		if !strings.Contains(scrolled, required) {
@@ -702,10 +697,10 @@ func TestMarketplaceConsentPreviewScrollsAtSupportedMinimum(t *testing.T) {
 	if strings.Contains(scrolled, "\x1b]52;") || strings.ContainsRune(scrolled, '\a') {
 		t.Fatalf("unsanitized preview reached viewport: %q", scrolled)
 	}
-	offset := m.marketplaceConsentViewport.YOffset
-	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyUp})
+	offset := m.marketplaceConsentViewport.YOffset()
+	updated, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyUp})
 	m = updated.(Model)
-	if m.marketplaceConsentViewport.YOffset >= offset {
+	if m.marketplaceConsentViewport.YOffset() >= offset {
 		t.Fatal("up did not preserve and adjust consent scroll position")
 	}
 	updated, cmd := m.Update(keyPress('y'))

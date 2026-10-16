@@ -32,6 +32,7 @@ const assessmentBase = {
   assessed_at: '2026-01-02T03:04:05Z',
 }
 const occurrence = { coordinate, content_digest: digest, commit: 'a'.repeat(40), manifest_digest: 'sha256:' + '4'.repeat(64) }
+const source = { repository_url: 'https://github.com/Adyen/agent-skills.git', path: 'skills/review/SKILL.md', commit: 'b'.repeat(40) }
 const revocation = { kind: 'revision' as const, target_id: digest, reason: 'security', applied_at: '2026-01-03T03:04:05Z' }
 const resource = {
   coordinate,
@@ -43,6 +44,7 @@ const resource = {
 }
 
 describe('ResourceDetailView', () => {
+  // spec: marketplace-web-ui/installable-resource-exposes-compact-actions
   it('prioritizes identity, installation, and default content before tabbed supporting details', async () => {
     const wrapper = mount(ResourceDetailView, {
       props: {
@@ -60,11 +62,22 @@ describe('ResourceDetailView', () => {
 
     expect(wrapper.get('h1').text()).toBe('review')
     expect(wrapper.find('[data-testid="revision-summary"]').exists()).toBe(false)
+    const revisionRow = wrapper.get('[data-testid="revision-row"]')
+    expect(revisionRow.get('[data-testid="revision-label"]').text()).toBe('Revision (latest)')
+    expect(revisionRow.get('[data-testid="revision-id"]').text()).toBe('c'.repeat(12))
+    expect(revisionRow.find('[data-testid="scanned-group"]').exists()).toBe(false)
+    expect(revisionRow.find('[data-testid="source-group"]').exists()).toBe(false)
+    expect(revisionRow.get('button[aria-label^="Copy revision"]').exists()).toBe(true)
     expect(wrapper.get('[data-testid="installation-panel"]').text()).not.toContain('exact version')
-    expect(wrapper.get('button[aria-label^="Copy pinned CLI"]').text()).toBe('Copy command')
+    expect(wrapper.get('#installation-heading').text()).toBe('Install')
+    expect(wrapper.get('button[aria-label^="Copy pinned CLI"]').text()).toBe('Copy')
     expect(wrapper.find('button[aria-label^="Copy detail URL"]').exists()).toBe(false)
     expect(wrapper.get('button[aria-label^="Copy revision"]').exists()).toBe(true)
-    expect(wrapper.get('a[href="/docs/"]').text()).toBe('Set up CLI')
+    const setupLink = wrapper.get('a[href="/docs/"]')
+    expect(setupLink.text()).toBe('Set up CLI')
+    expect(setupLink.attributes('target')).toBe('_blank')
+    expect(setupLink.attributes('rel')).toContain('noopener')
+    expect(setupLink.attributes('aria-label')).toContain('opens in a new tab')
 
     const installPosition = wrapper.html().indexOf('data-testid="installation-panel"')
     const tabsPosition = wrapper.html().indexOf('role="tablist"')
@@ -81,7 +94,52 @@ describe('ResourceDetailView', () => {
 
     await tabs[1]!.trigger('click')
     expect(wrapper.get('[aria-labelledby="security-tab"]').text()).toContain('metadata-check')
+    expect(wrapper.get('[aria-labelledby="security-tab"]').text()).toContain('Scanned Jan 2, 2026')
     expect(wrapper.find('[data-testid="safe-markdown"]').exists()).toBe(false)
+  })
+
+  // spec: marketplace-web-ui/forge-hosted-source-links-to-the-pinned-resource-file
+  it('shows a GitHub source as the first header item linked to the pinned file', () => {
+    const wrapper = mount(ResourceDetailView, {
+      props: { resource: { ...resource, source }, registry: 'team-tools', kind: 'skill', name: 'review', canonicalUrl: 'https://market.example', browserBase: 'https://market.example' },
+      global: { stubs },
+    })
+
+    const revisionRow = wrapper.get('[data-testid="revision-row"]')
+    expect(revisionRow.element.firstElementChild?.getAttribute('data-testid')).toBe('source-group')
+    expect(revisionRow.get('[data-testid="source-label"]').text()).toBe('Source')
+    const link = revisionRow.get('[data-testid="source-link"]')
+    expect(link.attributes('href')).toBe(`https://github.com/Adyen/agent-skills/blob/${source.commit}/skills/review/SKILL.md`)
+    expect(link.attributes('target')).toBe('_blank')
+    expect(link.attributes('rel')).toBe('noopener noreferrer')
+    expect(link.text()).toBe('Adyen/agent-skills')
+    expect(link.attributes('aria-label')).toBe('View source of review in Adyen/agent-skills (opens in a new tab)')
+    expect(revisionRow.get('[data-testid="source-path"]').text()).toBe('skills/review/SKILL.md')
+    expect(revisionRow.get('[data-testid="source-path"]').attributes('title')).toBe('skills/review/SKILL.md')
+  })
+
+  // spec: marketplace-web-ui/other-host-source-links-to-the-repository
+  it('links a source on another host to its repository and still shows the path', () => {
+    const wrapper = mount(ResourceDetailView, {
+      props: { resource: { ...resource, source: { ...source, repository_url: 'https://git.example/internal/resources.git' } }, registry: 'team-tools', kind: 'skill', name: 'review', canonicalUrl: 'https://market.example', browserBase: 'https://market.example' },
+      global: { stubs },
+    })
+
+    const revisionRow = wrapper.get('[data-testid="revision-row"]')
+    expect(revisionRow.get('[data-testid="source-link"]').attributes('href')).toBe('https://git.example/internal/resources')
+    expect(revisionRow.get('[data-testid="source-link"]').text()).toBe('internal/resources')
+    expect(revisionRow.get('[data-testid="source-path"]').text()).toBe('skills/review/SKILL.md')
+  })
+
+  // spec: marketplace-web-ui/resource-without-source-provenance-omits-the-origin
+  it('omits the source item when the revision reports no provenance', () => {
+    const wrapper = mount(ResourceDetailView, {
+      props: { resource, registry: 'team-tools', kind: 'skill', name: 'review', canonicalUrl: 'https://market.example', browserBase: 'https://market.example' },
+      global: { stubs },
+    })
+
+    expect(wrapper.find('[data-testid="source-group"]').exists()).toBe(false)
+    expect(wrapper.get('[data-testid="revision-row"]').element.firstElementChild?.getAttribute('data-testid')).toBe('revision-group')
   })
 
   it('labels an older selected revision and links to the current revision', () => {
@@ -340,7 +398,8 @@ describe('ResourceDetailView', () => {
     }
   })
 
-  it('announces revoked content and keeps copy controls keyboard accessible', () => {
+  // spec: marketplace-web-ui/other-unavailable-reasons-remain-concise
+  it('summarizes revoked content without duplicate installation controls', () => {
     const wrapper = mount(ResourceDetailView, {
       props: {
         resource: { ...resource, revocation },
@@ -349,14 +408,18 @@ describe('ResourceDetailView', () => {
       global: { stubs },
     })
 
-    expect(wrapper.text()).toContain('This revision is revoked')
-    expect(wrapper.get('[role="alert"]').text()).toContain('This revision is revoked')
-    expect(wrapper.get('button[aria-label^="Copy pinned CLI"]').exists()).toBe(true)
-    expect(wrapper.get('button[aria-label^="Copy pinned CLI"]').attributes('disabled')).toBeDefined()
+    const notice = wrapper.get('[data-testid="unavailable-notice"]')
+    expect(notice.text()).toContain('Not available')
+    expect(notice.text()).toContain('This revision has been revoked and can no longer be installed.')
+    expect(wrapper.find('[role="alert"]').exists()).toBe(false)
+    expect(wrapper.find('button[aria-label^="Copy pinned CLI"]').exists()).toBe(false)
+    expect(wrapper.find('a[href="/docs/"]').exists()).toBe(false)
     expect(wrapper.find('button[aria-label^="Copy detail URL"]').exists()).toBe(false)
+    expect(wrapper.findAll('button').filter(button => button.text() === 'View security details')).toHaveLength(0)
   })
 
-  it('calls a policy-rejected revision blocked and withholds the install command', () => {
+  // spec: marketplace-web-ui/policy-blocked-resource-links-to-security-details
+  it('calls a policy-rejected revision blocked and links to security details', async () => {
     const wrapper = mount(ResourceDetailView, {
       props: {
         resource: { ...resource, archive_digest: undefined, assessment: { ...assessmentBase, decision: 'reject', findings: [{ code: 'shell-exec', severity: 'reject', policy: 'reject', message: 'executes a shell' }] } },
@@ -367,13 +430,22 @@ describe('ResourceDetailView', () => {
 
     expect(wrapper.text()).toContain('Blocked by policy')
     expect(wrapper.text()).not.toContain('Available')
-    expect(wrapper.get('[role="alert"]').text()).toContain('The security policy rejected this revision')
+    const notice = wrapper.get('[data-testid="unavailable-notice"]')
+    expect(notice.text()).toContain('Not available')
+    expect(notice.text()).toContain('This revision cannot be installed because it did not pass the Marketplace security policy.')
+    expect(notice.text()).not.toMatch(/assessment|artifact|serving/i)
+    expect(wrapper.find('[role="alert"]').exists()).toBe(false)
     expect(wrapper.find('code').exists()).toBe(false)
-    expect(wrapper.get('[role="status"]').text()).toContain('Installation is disabled because the current assessment rejects this revision')
-    expect(wrapper.get('[role="status"]').text()).toContain('Metadata and inspection remain available.')
-    expect(wrapper.get('button[aria-label^="Copy pinned CLI"]').attributes('disabled')).toBeDefined()
+    expect(wrapper.find('button[aria-label^="Copy pinned CLI"]').exists()).toBe(false)
+    expect(wrapper.find('a[href="/docs/"]').exists()).toBe(false)
     expect(wrapper.find('button[aria-label^="Copy detail URL"]').exists()).toBe(false)
     expect(wrapper.get('[aria-live="polite"]').text()).toContain('Install status for review: Blocked by policy.')
+
+    const securityAction = notice.get('button')
+    expect(securityAction.text()).toBe('View security details')
+    await securityAction.trigger('click')
+    expect(wrapper.get('#security-tab').attributes('aria-selected')).toBe('true')
+    expect(wrapper.get('[aria-labelledby="security-tab"]').text()).toContain('Automated scan')
   })
 
   it('reports a revision with no stored artifact as not installable without claiming a policy block', () => {
@@ -388,8 +460,11 @@ describe('ResourceDetailView', () => {
     expect(wrapper.text()).toContain('No installable artifact')
     expect(wrapper.text()).not.toContain('Blocked by policy')
     expect(wrapper.find('code').exists()).toBe(false)
-    expect(wrapper.get('[role="status"]').text()).toContain('Installation is disabled because this Marketplace stores no artifact for this revision')
-    expect(wrapper.get('button[aria-label^="Copy pinned CLI"]').attributes('disabled')).toBeDefined()
+    const notice = wrapper.get('[data-testid="unavailable-notice"]')
+    expect(notice.text()).toContain('Not available')
+    expect(notice.text()).toContain('This revision is available for inspection only and cannot be installed from this Marketplace.')
+    expect(wrapper.find('button[aria-label^="Copy pinned CLI"]').exists()).toBe(false)
+    expect(wrapper.find('a[href="/docs/"]').exists()).toBe(false)
   })
 
   it('gives each history row the status its own revision record supports', async () => {

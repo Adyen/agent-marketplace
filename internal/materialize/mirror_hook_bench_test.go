@@ -32,11 +32,14 @@ func BenchmarkMirroredHookMaterialization(b *testing.B) {
 		b.Fatal(err)
 	}
 	hook := ir.NewHook("guard", "PreToolUse", "${CLAUDE_PLUGIN_ROOT}/hooks/run.sh", "command", nil, ir.SourceRef{File: "hooks/hooks.json"})
-	hook.SupportFiles = map[string]string{"run.sh": artifact.SupportFileDigest(artifact.SupportFile{Data: data, Executable: true})}
+	hook.SupportFiles = map[string]string{"hooks/run.sh": artifact.SupportFileDigest(artifact.SupportFile{Data: data, Executable: true})}
 	resolved := []resolver.ResolvedArtifact{{
 		Entry:         catalog.Entry{Name: "guard", Kind: ir.KindHook, Path: source, Resource: hook},
 		IsMarketplace: true, MarketplaceAcquisition: config.MarketplaceAcquisitionMirror,
-		Source: config.RepoCommitted, Harnesses: []hcc.Target{hcc.TargetFactory},
+		MarketplaceInstanceID: "test", MarketplaceRegistryID: "registry",
+		MarketplaceDigest:      "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		MarketplaceHookSupport: []artifact.Artifact{{Path: "hooks/run.sh", Bytes: data, Mode: 0o755}},
+		Source:                 config.RepoCommitted, Harnesses: []hcc.Target{hcc.TargetFactory},
 	}}
 	run := func() {
 		report, err := Run(b.Context(), repo, resolved, WithRepoScopeOnly())

@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"errors"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -12,6 +13,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/catalog"
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/devincli"
+	"github.com/Adyen/agent-marketplace/internal/fsboundary"
 	"github.com/Adyen/agent-marketplace/internal/materialize"
 	"github.com/Adyen/agent-marketplace/internal/ownership"
 	"github.com/Adyen/agent-marketplace/internal/resolver"
@@ -259,11 +261,7 @@ func TestDoctorCodexRepairCorruptStateFailsClosedWithNonzeroResult(t *testing.T)
 			Source:    config.RepoCommitted,
 			Harnesses: []hcc.Target{hcc.TargetCodex},
 		},
-		{
-			Entry:     catalog.Entry{Name: "managed-hook", Resource: ir.NewHookWithMatcher("managed-hook", "PreToolUse", "Bash", "./hook-command", "command", nil, ir.SourceRef{})},
-			Source:    config.RepoCommitted,
-			Harnesses: []hcc.Target{hcc.TargetCodex},
-		},
+		sourceBackedDoctorHook(t, "managed-hook", "PreToolUse", "Bash", "./hook-command", hcc.TargetCodex),
 	}
 	if report, err := materialize.Run(context.Background(), repoRoot, selection); err != nil || diagHasErrors(report) {
 		t.Fatalf("seed Codex aggregates: report=%#v err=%v", report, err)
@@ -414,8 +412,8 @@ func TestDoctorCodexRepairUnreadableAggregatePathFailsClosed(t *testing.T) {
 	if err == nil {
 		t.Fatalf("non-directory Codex root returned success:\n%s", out.String())
 	}
-	if !strings.Contains(out.String(), diag.CodeMaterializeCodexAggregateMalformed) {
-		t.Fatalf("output missing %q:\n%s", diag.CodeMaterializeCodexAggregateMalformed, out.String())
+	if !errors.Is(err, fsboundary.ErrUnsafePath) {
+		t.Fatalf("non-directory root lost unsafe-path identity: %v", err)
 	}
 	if !strings.Contains(logs.String(), "code="+diag.CodeDoctorRepairFailed) {
 		t.Fatalf("logs missing %q:\n%s", diag.CodeDoctorRepairFailed, logs.String())

@@ -14,6 +14,8 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/Adyen/agent-marketplace/internal/config"
+	"github.com/Adyen/agent-marketplace/internal/logging/logvalue"
+	"github.com/Adyen/agent-marketplace/internal/redact"
 	"github.com/Adyen/agent-marketplace/internal/telemetry"
 	tmcfg "github.com/Adyen/agent-marketplace/internal/telemetry/config"
 )
@@ -171,7 +173,7 @@ func runTelemetryEnable(out io.Writer, level, endpoint string) error {
 		_, _ = fmt.Fprintf(out, " with endpoint %q", endpoint)
 	}
 	_, _ = fmt.Fprintln(out)
-	slog.Info("telemetry enabled", "level", normalized, "endpoint", endpoint)
+	slog.Info("telemetry enabled", "level", normalized, "endpoint", logvalue.Safe(redact.URLValue(endpoint)))
 	return nil
 }
 

@@ -2,13 +2,18 @@ package sourcerevision
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"maps"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
+	"github.com/Adyen/agent-marketplace/internal/catalog"
+	"github.com/Adyen/agent-marketplace/internal/fsboundary"
 	"github.com/Adyen/agent-marketplace/internal/lockfile"
 )
 
@@ -71,6 +76,178 @@ func TestSourceRevisionCompatibilityVectors(t *testing.T) {
 			})
 		}
 	}
+}
+
+// spec: registry-symlink-containment/source-revision-hashing-refuses-post-ingest-unsafe-payloads
+func TestCursorWorkspaceRevisionCompatibility(t *testing.T) {
+	for _, version := range []string{"v1", "v2", "v3", "v4"} {
+		t.Run(version, func(t *testing.T) {
+			root, files := cursorRevisionFixture(t, ".cursor")
+			cat, err := catalog.Load(root, "cursor")
+			if err != nil || len(cat.Entries) != len(files) || cat.SourceRefusal() != nil {
+				t.Fatalf("Cursor workspace native ingestion control failed: %+v %v", cat, err)
+			}
+			for _, entry := range cat.Entries {
+				rel, err := filepath.Rel(root, entry.Path)
+				if err != nil || entry.Resource == nil || files[filepath.ToSlash(rel)] == "" {
+					t.Fatalf("Cursor authored source spelling changed: %+v %v", entry, err)
+				}
+			}
+			input := Input{SnapshotRoot: root, SourceHarness: "cursor", RevisionSchema: version}
+			built, err := Build(input)
+			if err != nil {
+				t.Fatal(err)
+			}
+			unsigned := fmt.Sprintf(`{"schema_version":%q,"generator":%q,"resources":null}`, version, "agent-marketplace source-revision/"+version)
+			digest := fmt.Sprintf("sha256:%x", sha256.Sum256([]byte(unsigned)))
+			want := fmt.Sprintf(`{"schema_version":%q,"generator":%q,"resources":null,"revision_digest":%q}`, version, "agent-marketplace source-revision/"+version, digest)
+			if string(built.Payload) != want || len(built.Manifest.Resources) != 0 || len(built.Projection().Resources) != 0 {
+				t.Fatalf("Cursor %s changed historical empty inventory/bytes: got %s, want %s", version, built.Payload, want)
+			}
+			wantWarnings := []struct {
+				resource string
+				file     string
+				absent   string
+			}{
+				{"command/review", "commands/review.md", "commands"},
+				{"hook/PreToolUse-command", "hooks/hooks.json", "hooks"},
+				{"mcpserver/probe", "mcp.json", "mcp.json"},
+				{"skill/cursor-probe", "skills/cursor-probe/SKILL.md", "skills"},
+			}
+			if len(built.Warnings) != len(wantWarnings) {
+				t.Fatalf("Cursor historical omission warnings = %+v, want %v", built.Warnings, wantWarnings)
+			}
+			for i, warning := range built.Warnings {
+				_, missingErr := os.Lstat(filepath.Join(root, wantWarnings[i].absent))
+				if !errors.Is(missingErr, os.ErrNotExist) {
+					t.Fatalf("legacy source-path absence control failed: %v", missingErr)
+				}
+				reason := fmt.Sprintf("resource could not be built: resolve %q: %v", filepath.Join(root, filepath.FromSlash(wantWarnings[i].file)), missingErr)
+				if warning.Resource() != wantWarnings[i].resource || warning.Reason != reason {
+					t.Fatalf("Cursor warning[%d] = %+v, want %s: %s", i, warning, wantWarnings[i].resource, reason)
+				}
+			}
+			if _, err := Verify(input, Projection{SourceHarness: "cursor", RevisionSchema: version, RevisionDigest: digest, Resources: []revisionResource{}}); err != nil {
+				t.Fatalf("Cursor independently authored historical projection failed verification: %v", err)
+			}
+		})
+	}
+}
+
+// spec: registry-symlink-containment/contained-primary-file-aliases-retain-authored-content
+func TestCursorWorkspaceContainedPrimaryAliasRetainsLegacyOmission(t *testing.T) {
+	root, files := cursorRevisionFixture(t, ".cursor")
+	primary := filepath.Join(root, ".cursor", "skills", "cursor-probe", "SKILL.md")
+	authored := filepath.Join(root, "authored-cursor-skill.md")
+	if err := os.Rename(primary, authored); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("../../../authored-cursor-skill.md", primary); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.Stat(authored)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cat, err := catalog.Load(root, "cursor")
+	if err != nil || len(cat.Entries) != 4 || cat.SourceRefusal() != nil {
+		t.Fatalf("contained Cursor primary alias native admission control failed: %+v %v", cat, err)
+	}
+	for _, version := range []string{"v1", "v2", "v3", "v4"} {
+		built, err := Build(Input{SnapshotRoot: root, SourceHarness: "cursor", RevisionSchema: version})
+		if err != nil || len(built.Manifest.Resources) != 0 || len(built.Warnings) != 4 {
+			t.Fatalf("contained Cursor alias changed historical %s omission: %+v %v", version, built, err)
+		}
+	}
+	if data, err := os.ReadFile(authored); err != nil || string(data) != files["skills/cursor-probe/SKILL.md"] {
+		t.Fatalf("Cursor alias validation changed authored bytes: %q %v", data, err)
+	}
+	if after, err := os.Stat(authored); err != nil || !os.SameFile(before, after) || before.Mode() != after.Mode() || !before.ModTime().Equal(after.ModTime()) {
+		t.Fatalf("Cursor alias validation changed authored metadata: %v", err)
+	}
+}
+
+// spec: registry-symlink-containment/source-revision-hashing-refuses-post-ingest-unsafe-payloads
+func TestCursorBareRevisionKeepsRawPrimaryHashes(t *testing.T) {
+	for _, version := range []string{"v1", "v2", "v3", "v4"} {
+		t.Run(version, func(t *testing.T) {
+			root, files := cursorRevisionFixture(t, "")
+			built, err := Build(Input{SnapshotRoot: root, SourceHarness: "cursor", RevisionSchema: version})
+			if err != nil || len(built.Manifest.Resources) != 4 || len(built.Warnings) != 0 {
+				t.Fatalf("Cursor bare revision control failed: %+v %v", built, err)
+			}
+			var records []string
+			for _, resource := range []struct{ kind, name, file string }{
+				{"command", "review", "commands/review.md"},
+				{"hook", "PreToolUse-command", "hooks/hooks.json"},
+				{"mcpserver", "probe", "mcp.json"},
+				{"skill", "cursor-probe", "skills/cursor-probe/SKILL.md"},
+			} {
+				digest := fmt.Sprintf("sha256:%x", sha256.Sum256([]byte(files[resource.file])))
+				records = append(records, fmt.Sprintf(`{"kind":%q,"name":%q,"content_digest":%q,"archive_digest":%q}`, resource.kind, resource.name, digest, digest))
+			}
+			unsigned := fmt.Sprintf(`{"schema_version":%q,"generator":%q,"resources":[%s]}`, version, "agent-marketplace source-revision/"+version, strings.Join(records, ","))
+			want := strings.TrimSuffix(unsigned, "}") + fmt.Sprintf(`,"revision_digest":"sha256:%x"}`, sha256.Sum256([]byte(unsigned)))
+			if string(built.Payload) != want {
+				t.Fatalf("Cursor %s changed bare raw-payload revision bytes: got %s, want %s", version, built.Payload, want)
+			}
+			if _, err := Verify(Input{SnapshotRoot: root}, built.Projection()); err != nil {
+				t.Fatalf("Cursor bare projection did not verify: %v", err)
+			}
+		})
+	}
+}
+
+// spec: registry-symlink-containment/source-revision-hashing-refuses-post-ingest-unsafe-payloads
+func TestCursorWorkspaceAdmittedPrimaryDisappearanceRefusesRevision(t *testing.T) {
+	for _, version := range []string{"v1", "v2", "v3", "v4"} {
+		for _, name := range []string{"skills/cursor-probe/SKILL.md", "commands/review.md", "hooks/hooks.json", "mcp.json"} {
+			t.Run(version+"/"+name, func(t *testing.T) {
+				root, _ := cursorRevisionFixture(t, ".cursor")
+				primary := filepath.Join(root, ".cursor", filepath.FromSlash(name))
+				input := Input{SnapshotRoot: root, SourceHarness: "cursor", RevisionSchema: version}
+				control, err := Build(input)
+				if err != nil || control.Catalog == nil || len(control.Catalog.Entries) != 4 {
+					t.Fatalf("actual Cursor admission positive control failed: %+v %v", control, err)
+				}
+				hit := false
+				input.beforeHash = func(string) {
+					hit = true
+					if err := os.Remove(primary); err != nil {
+						t.Fatal(err)
+					}
+				}
+				result, err := Build(input)
+				if !hit || !errors.Is(err, ErrCatalog) || !errors.Is(err, fsboundary.ErrGenerationConflict) {
+					t.Fatalf("actual admitted Cursor primary disappeared without refusal: %+v %v", result, err)
+				}
+				if len(result.Payload) != 0 || len(result.Manifest.Resources) != 0 || len(result.Warnings) != 0 {
+					t.Fatalf("Cursor disappearance published partial revision: %+v", result)
+				}
+				if _, err := os.Stat(primary); !errors.Is(err, os.ErrNotExist) {
+					t.Fatalf("Build recreated actual Cursor primary: %v", err)
+				}
+			})
+		}
+	}
+}
+
+func cursorRevisionFixture(t *testing.T, prefix string) (string, map[string]string) {
+	t.Helper()
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	files := map[string]string{
+		"skills/cursor-probe/SKILL.md": "---\nname: cursor-probe\ndescription: Cursor control\n---\nInert skill\n",
+		"commands/review.md":           "---\nname: review\ndescription: Review control\n---\nInert review\n",
+		"hooks/hooks.json":             `{"hooks":{"PreToolUse":[{"hooks":[{"type":"command","command":"echo inert"}]}]}}`,
+		"mcp.json":                     `{"mcpServers":{"probe":{"command":"inert"}}}`,
+	}
+	for name, data := range files {
+		writeFixture(t, filepath.Join(root, prefix, filepath.FromSlash(name)), data)
+	}
+	return root, files
 }
 
 func TestBareBundleMCPRevisionCompatibility(t *testing.T) {

@@ -9,9 +9,11 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/Adyen/agent-marketplace/internal/config"
+	"github.com/Adyen/agent-marketplace/internal/lockfile"
 	"github.com/Adyen/agent-marketplace/internal/marketplace"
 	hccartifact "github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
@@ -40,21 +42,18 @@ func testMarketplaceUpdateReconcile(_ context.Context, _, _ string, _ []RefBump,
 }
 
 func TestUpdateMarketplacePinMutatesOnlyAfterPreparationAndSyncs(t *testing.T) {
+	home := isolateConsumerPipeline(t)
 	fixture := newMarketplaceUpdateFixture(t, false)
-	home := t.TempDir()
-	t.Setenv("HOME", home)
 	if err := os.MkdirAll(filepath.Join(home, ".agents"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(home, ".agents", "config.yaml"), []byte("apiVersion: agent-marketplace/v2\nharnesses: [factory]\nregistries: []\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(home, ".agents", "config.yaml"), []byte("apiVersion: agent-marketplace/v4\nharnesses: [factory]\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	old := fixture.pin
-	old.InstalledName = "chosen-review"
-	configData := "apiVersion: agent-marketplace/v2\nmarketplaces:\n  - url: " + fixture.server.URL + "\n    instance_id: mp\n    resources:\n      - registry_id: src\n        registry_slug: old-source\n        kind: skill\n        name: review\n        revision: old-revision\n        digest: " + old.Digest + "\n        acquisition: mirror\n        installed_name: chosen-review\n"
-	if err := os.WriteFile(fixture.configPath, []byte(configData), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	fixture.writeV4Selection(t, "old-source/skill/review: {as: chosen-review}")
+	configBefore, configInfo := layerFreezeFile(t, fixture.configPath)
+	lockPath := filepath.Join(filepath.Dir(fixture.configPath), "lock.yaml")
+	lockBefore, _ := layerFreezeFile(t, lockPath)
 	result, err := Update(context.Background(), UpdateOptions{RepoRoot: fixture.repoRoot, DependencyReconcile: testMarketplaceUpdateReconcile})
 	if err != nil {
 		t.Fatalf("update Marketplace pin: %v", err)
@@ -62,13 +61,28 @@ func TestUpdateMarketplacePinMutatesOnlyAfterPreparationAndSyncs(t *testing.T) {
 	if result.UpdatedMarketplacePins != 1 || result.SkippedMarketplacePins != 0 {
 		t.Fatalf("Marketplace result = %#v, want one update", result)
 	}
-	cfg, err := config.LoadConfigFromPath(fixture.configPath)
-	if err != nil {
-		t.Fatal(err)
+	layerAssertFileUnchanged(t, fixture.configPath, configBefore, configInfo)
+	doc := layerMarketplaceLockDoc(t, lockPath)
+	record := marketplaceLockResource(doc, "skill", "review")
+	if record == nil || string(record.ContentDigest) != fixture.latestDigest || record.RegistryID != "src" || string(record.ArchiveDigest) != fixture.archiveDigest {
+		t.Fatalf("updated lock evidence = %#v", record)
 	}
-	got := cfg.Marketplaces[0].Resources[0]
-	if got.Digest != fixture.latestDigest || got.RegistrySlug != "renamed-source" || got.InstalledName != "chosen-review" {
-		t.Fatalf("updated config pin = %#v", got)
+	if after, err := os.ReadFile(lockPath); err != nil || string(after) == string(lockBefore) {
+		t.Fatalf("lock evidence did not change: %v", err)
+	}
+	loaded := LoadEffective(context.Background(), ConfigLoadStrict, config.LoadEffectiveOptions{RepoRoot: fixture.repoRoot}, nil)
+	if len(loaded.Errors) != 0 || len(loaded.Merged.Marketplaces) != 1 || len(loaded.Merged.Marketplaces[0].Resources) != 1 {
+		t.Fatalf("updated runtime projection = %#v, errors = %v", loaded.Merged, loaded.Errors)
+	}
+	got := loaded.Merged.Marketplaces[0].Resources[0]
+	if got.Digest != fixture.latestDigest || got.InstalledName != "chosen-review" {
+		t.Fatalf("updated runtime pin = %#v", got)
+	}
+	if fixture.artifactRequests == 0 {
+		t.Fatal("changed mirror update did not prepare its artifact")
+	}
+	if _, err := os.Stat(filepath.Join(fixture.repoRoot, ".factory", "skills", "chosen-review", "SKILL.md")); err != nil {
+		t.Fatalf("updated installed-name output missing: %v", err)
 	}
 }
 
@@ -99,6 +113,7 @@ func TestPlanMarketplaceUpdateSkipsUnchangedWithoutArtifactFetch(t *testing.T) {
 	fixture := newMarketplaceUpdateFixture(t, false)
 	fixture.latestDigest = fixture.pin.Digest
 	fixture.latest.ContentDigest = store.RevisionDigest(fixture.latestDigest)
+	fixture.latest.ArchiveDigest = store.ArchiveDigest(fixture.priorArchiveDigest)
 	fixture.latest = testAssessedResourceRevision(t, fixture.latest.ResourceRevision, store.AssessmentDecisionAllow, nil)
 	fixture.artifactRequests = 0
 	entry := config.MarketplaceEntry{URL: fixture.server.URL, InstanceID: "mp", Source: config.RepoCommitted, Resources: []config.MarketplaceResourcePin{fixture.pin}}
@@ -197,7 +212,7 @@ func TestPlanMarketplaceUpdatePreparesSameContentForChangedIndexOccurrence(t *te
 
 func TestPlanMarketplaceUpdateFailureDoesNotMutateConfig(t *testing.T) {
 	fixture := newMarketplaceUpdateFixture(t, true)
-	before := []byte("apiVersion: agent-marketplace/v2\nmarketplaces: []\n")
+	before := []byte("apiVersion: agent-marketplace/v4\n")
 	if err := os.WriteFile(fixture.configPath, before, 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -209,6 +224,9 @@ func TestPlanMarketplaceUpdateFailureDoesNotMutateConfig(t *testing.T) {
 	ec := &config.EffectiveConfig{Merged: &config.Config{Marketplaces: []config.MarketplaceEntry{entry}}, TargetHarnesses: []string{"factory"}}
 	if _, err := planMarketplaceUpdates(context.Background(), UpdateOptions{RepoRoot: fixture.repoRoot}, ec); err == nil {
 		t.Fatal("expected preparation failure")
+	}
+	if fixture.artifactRequests == 0 {
+		t.Fatal("preparation failed before the failing artifact endpoint was exercised")
 	}
 	after, err := os.ReadFile(fixture.configPath)
 	if err != nil {
@@ -237,36 +255,39 @@ func TestMarketplaceUpdateRejectsPolicyRejectionWithoutConsent(t *testing.T) {
 }
 
 func TestMarketplaceUpdateRollbackRestoresConfigAfterSyncFailure(t *testing.T) {
-	fixture := newMarketplaceUpdateFixture(t, false)
-	old := fixture.pin
-	configData := "apiVersion: agent-marketplace/v2\nmarketplaces:\n  - url: " + fixture.server.URL + "\n    instance_id: mp\n    resources:\n      - registry_id: src\n        registry_slug: old-source\n        kind: skill\n        name: review\n        revision: old-revision\n        digest: " + old.Digest + "\n        acquisition: mirror\n"
-	if err := os.WriteFile(fixture.configPath, []byte(configData), 0o644); err != nil {
-		t.Fatal(err)
+	home := isolateConsumerPipeline(t)
+	repo := t.TempDir()
+	path := filepath.Join(home, ".agents", "config.yaml")
+	lockPath := filepath.Join(home, ".agents", "lock.yaml")
+	writeFileMode(t, path, "apiVersion: agent-marketplace/v4\nharnesses: [factory]\n", 0o600)
+	fake := newLayerMarketplaceServer(t)
+	registry := fake.addRegistry(t, "source")
+	fake.addSkill(t, registry, "review")
+	entry := config.MarketplaceEntry{URL: fake.URL, InstanceID: fake.instanceID}
+	installV4MarketplaceLayer(t, repo, path, entry, layerPreparePins(t, fake, "skill", "review"))
+	before, beforeInfo := layerFreezeFile(t, path)
+	lockBefore, lockInfo := layerFreezeFile(t, lockPath)
+	fake.setSkill(t, registry, "review", "new review content")
+	wantErr := errors.New("sync reconciliation failed")
+	called := false
+	_, err := Update(context.Background(), UpdateOptions{RepoRoot: repo, DependencyReconcile: func(_ context.Context, _, _ string, _ []RefBump, _ []StagedConfigEdit, edits []StagedLockEdit) (DependencyLockView, error) {
+		called = true
+		if len(edits) != 1 || string(edits[0].Bytes) == string(lockBefore) {
+			t.Fatal("control did not stage updated lock evidence")
+		}
+		return DependencyLockView{}, wantErr
+	}})
+	if !called || !errors.Is(err, wantErr) {
+		t.Fatalf("update error = %v, called=%t", err, called)
 	}
-	before, err := os.ReadFile(fixture.configPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	snapshot, commit, err := config.UpdateMarketplacePinInConfigWithSnapshotAndCommit(fixture.configPath, fixture.server.URL, "mp", old, config.MarketplaceResourcePin{RegistryID: old.RegistryID, RegistrySlug: "renamed-source", Kind: old.Kind, Name: old.Name, Revision: fixture.latestDigest, Digest: fixture.latestDigest, Acquisition: config.MarketplaceAcquisitionMirror})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := snapshot.RestoreIfCurrent(commit); err != nil {
-		t.Fatalf("rollback error = %v", err)
-	}
-	after, err := os.ReadFile(fixture.configPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(after) != string(before) {
-		t.Fatalf("rollback config = %q, want %q", after, before)
-	}
+	layerAssertFileUnchanged(t, path, before, beforeInfo)
+	layerAssertFileUnchanged(t, lockPath, lockBefore, lockInfo)
 }
 
 func TestPlanMarketplaceUpdateRejectsRevokedLatestWithoutMutation(t *testing.T) {
 	fixture := newMarketplaceUpdateFixture(t, false)
 	fixture.latest.Revocation = &store.Revocation{Kind: store.RevocationRegistry, TargetID: fixture.pin.RegistryID, Reason: "withdrawn"}
-	before := []byte("apiVersion: agent-marketplace/v2\nmarketplaces: []\n")
+	before := []byte("apiVersion: agent-marketplace/v4\n")
 	if err := os.WriteFile(fixture.configPath, before, 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -285,18 +306,33 @@ func TestPlanMarketplaceUpdateRejectsRevokedLatestWithoutMutation(t *testing.T) 
 }
 
 func TestUpdateSkipsSyncForOnlyUnsupportedMarketplacePins(t *testing.T) {
-	config.SetTestOrganizationConfigPath(t, filepath.Join(t.TempDir(), "missing-org.yaml"))
-	t.Setenv("HOME", t.TempDir())
+	isolateConsumerPipeline(t)
 
 	repoRoot := t.TempDir()
 	configPath := filepath.Join(repoRoot, ".agents", "config.yaml")
 	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	configData := "apiVersion: agent-marketplace/v2\nmarketplaces:\n  - url: https://market.example\n    instance_id: mp\n    resources:\n      - registry_id: src\n        kind: collection\n        name: bundle\n        revision: v1\n        digest: sha256:" + strings.Repeat("a", 64) + "\n        acquisition: mirror\n      - registry_id: index-src\n        kind: skill\n        name: indexed\n        revision: v1\n        digest: sha256:" + strings.Repeat("b", 64) + "\n        acquisition: index-only\n        registry_commit: " + strings.Repeat("c", 40) + "\n        registry_manifest_digest: sha256:" + strings.Repeat("d", 64) + "\n"
-	if err := os.WriteFile(configPath, []byte(configData), 0o644); err != nil {
+	configData := "apiVersion: agent-marketplace/v4\nsources:\n  public: {marketplace: https://market.example}\nresources:\n  public: [source/collection/bundle, index-source/skill/indexed]\n"
+	writeFile(t, configPath, configData)
+	collectionDigest := lockfile.Digest("sha256:" + strings.Repeat("a", 64))
+	lockData, err := lockfile.Encode(lockfile.Document{
+		APIVersion: lockfile.APIVersionV2, Scope: lockfile.ScopeRepo,
+		Marketplaces: []lockfile.MarketplaceLock{{URL: "https://market.example", InstanceID: "mp",
+			RegistryBindings: []lockfile.MarketplaceRegistryBinding{{Name: "source", RegistryID: "src"}, {Name: "index-source", RegistryID: "index-src"}},
+			Resources: []lockfile.MarketplaceResourceLock{
+				{RegistryName: "source", RegistryID: "src", Kind: "collection", Name: "bundle", Revision: "v1", ContentDigest: collectionDigest, CollectionManifestDigest: collectionDigest, Acquisition: "mirror"},
+				{RegistryName: "index-source", RegistryID: "index-src", Kind: "skill", Name: "indexed", Revision: "v1", ContentDigest: lockfile.Digest("sha256:" + strings.Repeat("b", 64)), ArchiveDigest: lockfile.Digest("sha256:" + strings.Repeat("e", 64)), Acquisition: "index-only", RegistryCommit: strings.Repeat("c", 40), RegistryManifestDigest: lockfile.Digest("sha256:" + strings.Repeat("d", 64)), SourcePath: "skills/indexed"},
+			},
+		}},
+	})
+	if err != nil {
 		t.Fatal(err)
 	}
+	lockPath := filepath.Join(repoRoot, ".agents", "lock.yaml")
+	writeFile(t, lockPath, string(lockData))
+	configBefore, configInfo := layerFreezeFile(t, configPath)
+	lockBefore, lockInfo := layerFreezeFile(t, lockPath)
 
 	result, err := Update(context.Background(), UpdateOptions{RepoRoot: repoRoot})
 	if err != nil {
@@ -314,19 +350,24 @@ func TestUpdateSkipsSyncForOnlyUnsupportedMarketplacePins(t *testing.T) {
 			t.Fatalf("skip reasons = %#v, missing %q", reasons, reason)
 		}
 	}
+	layerAssertFileUnchanged(t, configPath, configBefore, configInfo)
+	layerAssertFileUnchanged(t, lockPath, lockBefore, lockInfo)
+	if _, err := os.Stat(filepath.Join(repoRoot, ".factory")); !os.IsNotExist(err) {
+		t.Fatalf("unsupported-only update created harness output: %v", err)
+	}
 }
 
 func TestUpdateSkipsUnchangedMarketplacePinWithoutTargetSet(t *testing.T) {
-	config.SetTestOrganizationConfigPath(t, filepath.Join(t.TempDir(), "missing-org.yaml"))
-	t.Setenv("HOME", t.TempDir())
+	isolateConsumerPipeline(t)
 	fixture := newMarketplaceUpdateFixture(t, false)
 	fixture.latestDigest = fixture.pin.Digest
 	fixture.latest.ContentDigest = store.RevisionDigest(fixture.latestDigest)
+	fixture.latest.ArchiveDigest = store.ArchiveDigest(fixture.priorArchiveDigest)
 	fixture.latest = testAssessedResourceRevision(t, fixture.latest.ResourceRevision, store.AssessmentDecisionAllow, nil)
-	configData := "apiVersion: agent-marketplace/v2\nmarketplaces:\n  - url: " + fixture.server.URL + "\n    instance_id: mp\n    resources:\n      - registry_id: src\n        kind: skill\n        name: review\n        revision: old-revision\n        digest: " + fixture.pin.Digest + "\n        acquisition: mirror\n"
-	if err := os.WriteFile(fixture.configPath, []byte(configData), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	fixture.writeV4Selection(t, "old-source/skill/review")
+	configBefore, configInfo := layerFreezeFile(t, fixture.configPath)
+	lockPath := filepath.Join(filepath.Dir(fixture.configPath), "lock.yaml")
+	lockBefore, lockInfo := layerFreezeFile(t, lockPath)
 
 	result, err := Update(context.Background(), UpdateOptions{RepoRoot: fixture.repoRoot})
 	if err != nil {
@@ -338,16 +379,20 @@ func TestUpdateSkipsUnchangedMarketplacePinWithoutTargetSet(t *testing.T) {
 	if result.MarketplacePins[0].Reason != "content digest unchanged" {
 		t.Fatalf("skip reason = %q", result.MarketplacePins[0].Reason)
 	}
+	if fixture.artifactRequests != 0 {
+		t.Fatalf("unchanged update fetched %d artifacts", fixture.artifactRequests)
+	}
+	layerAssertFileUnchanged(t, fixture.configPath, configBefore, configInfo)
+	layerAssertFileUnchanged(t, lockPath, lockBefore, lockInfo)
 }
 
 func TestUpdateRequiresTargetBeforePreparingChangedMarketplacePin(t *testing.T) {
-	config.SetTestOrganizationConfigPath(t, filepath.Join(t.TempDir(), "missing-org.yaml"))
-	t.Setenv("HOME", t.TempDir())
+	isolateConsumerPipeline(t)
 	fixture := newMarketplaceUpdateFixture(t, false)
-	configData := "apiVersion: agent-marketplace/v2\nmarketplaces:\n  - url: " + fixture.server.URL + "\n    instance_id: mp\n    resources:\n      - registry_id: src\n        kind: skill\n        name: review\n        revision: old-revision\n        digest: " + fixture.pin.Digest + "\n        acquisition: mirror\n"
-	if err := os.WriteFile(fixture.configPath, []byte(configData), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	fixture.writeV4Selection(t, "old-source/skill/review")
+	configBefore, configInfo := layerFreezeFile(t, fixture.configPath)
+	lockPath := filepath.Join(filepath.Dir(fixture.configPath), "lock.yaml")
+	lockBefore, lockInfo := layerFreezeFile(t, lockPath)
 
 	_, err := Update(context.Background(), UpdateOptions{RepoRoot: fixture.repoRoot})
 	var missing *TargetHarnessSetMissingError
@@ -357,6 +402,8 @@ func TestUpdateRequiresTargetBeforePreparingChangedMarketplacePin(t *testing.T) 
 	if fixture.artifactRequests != 0 {
 		t.Fatalf("artifact requests = %d, want zero before target validation", fixture.artifactRequests)
 	}
+	layerAssertFileUnchanged(t, fixture.configPath, configBefore, configInfo)
+	layerAssertFileUnchanged(t, lockPath, lockBefore, lockInfo)
 }
 
 func TestPlanMarketplaceUpdateSkipsExternallyManagedOrganizationPin(t *testing.T) {
@@ -375,20 +422,62 @@ func TestPlanMarketplaceUpdateSkipsExternallyManagedOrganizationPin(t *testing.T
 }
 
 type marketplaceUpdateFixture struct {
-	server           *httptest.Server
-	repoRoot         string
-	configPath       string
-	pin              config.MarketplaceResourcePin
-	latest           store.AssessedResourceRevision
-	latestDigest     string
-	archiveDigest    string
-	artifact         []byte
-	artifactRequests int
+	server             *httptest.Server
+	repoRoot           string
+	configPath         string
+	pin                config.MarketplaceResourcePin
+	latest             store.AssessedResourceRevision
+	latestDigest       string
+	archiveDigest      string
+	priorArchiveDigest string
+	priorArtifact      []byte
+	artifact           []byte
+	artifactRequests   int
+	latestHook         func()
+}
+
+// writeV4Selection seeds the repository-owned request and its prior exact lock.
+// The request deliberately has no revision constraint, so update can advance it.
+func (f *marketplaceUpdateFixture) writeV4Selection(t *testing.T, request string) {
+	t.Helper()
+	prior := testAssessedResourceRevision(t, store.ResourceRevision{Coordinate: store.ResourceCoordinate{Marketplace: "mp", Registry: "src", Kind: "skill", Name: "review"}, ContentDigest: store.RevisionDigest(f.pin.Digest), ArchiveDigest: store.ArchiveDigest(f.priorArchiveDigest)}, store.AssessmentDecisionAllow, nil)
+	cache := marketplace.DefaultCache()
+	if _, err := cache.WriteResourceRevision(f.server.URL, "src", "skill", "review", f.pin.Digest, prior); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cache.WriteArtifact(f.priorArchiveDigest, f.priorArtifact); err != nil {
+		t.Fatal(err)
+	}
+	if err := cache.MarkArtifactVerified(f.priorArchiveDigest); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, f.configPath, "apiVersion: agent-marketplace/v4\nsources:\n  public: {marketplace: "+f.server.URL+"}\nresources:\n  public:\n    - "+request+"\n")
+	data, err := lockfile.Encode(lockfile.Document{
+		APIVersion: lockfile.APIVersionV2, Scope: lockfile.ScopeRepo,
+		Marketplaces: []lockfile.MarketplaceLock{{URL: f.server.URL, InstanceID: "mp",
+			RegistryBindings: []lockfile.MarketplaceRegistryBinding{{Name: "old-source", RegistryID: "src"}},
+			Resources:        []lockfile.MarketplaceResourceLock{{RegistryName: "old-source", RegistryID: "src", Kind: "skill", Name: "review", Revision: f.pin.Revision, ContentDigest: lockfile.Digest(f.pin.Digest), ArchiveDigest: lockfile.Digest(f.priorArchiveDigest), Acquisition: "mirror"}},
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(filepath.Dir(f.configPath), "lock.yaml"), string(data))
 }
 
 func newMarketplaceUpdateFixture(t *testing.T, failArtifact bool) *marketplaceUpdateFixture {
 	t.Helper()
-	digestOld := "sha256:" + strings.Repeat("a", 64)
+	prior, err := hccartifact.FromIR(ir.NewSkill("review", "Review", "Previously reviewed content", []string{"user"}, nil, ir.SourceRef{}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	prior.Manifest.RegistryID = "src"
+	prior.Manifest.RegistrySlug = "old-source"
+	priorRaw, priorArchiveDigest, err := hccartifact.Encode(prior)
+	if err != nil {
+		t.Fatal(err)
+	}
+	digestOld := prior.Manifest.ContentDigest
 	skill := ir.NewSkill("review", "Review", "Review carefully "+t.TempDir(), []string{"user"}, nil, ir.SourceRef{})
 	canonical, err := hccartifact.FromIR(skill)
 	if err != nil {
@@ -404,7 +493,7 @@ func newMarketplaceUpdateFixture(t *testing.T, failArtifact bool) *marketplaceUp
 	fixture := &marketplaceUpdateFixture{
 		repoRoot:     filepath.Join(t.TempDir(), "repo"),
 		pin:          config.MarketplaceResourcePin{RegistryID: "src", RegistrySlug: "old-source", Kind: "skill", Name: "review", Revision: "old-revision", Digest: digestOld, Acquisition: config.MarketplaceAcquisitionMirror},
-		latestDigest: latestDigest, archiveDigest: archiveDigest, artifact: raw,
+		latestDigest: latestDigest, archiveDigest: archiveDigest, priorArchiveDigest: priorArchiveDigest, priorArtifact: priorRaw, artifact: raw,
 	}
 	fixture.latest = testAssessedResourceRevision(t, store.ResourceRevision{Coordinate: store.ResourceCoordinate{Marketplace: "mp", Registry: "src", Kind: "skill", Name: "review"}, ContentDigest: store.RevisionDigest(latestDigest), ArchiveDigest: store.ArchiveDigest(archiveDigest)}, store.AssessmentDecisionAllow, nil)
 	mux := http.NewServeMux()
@@ -414,8 +503,14 @@ func newMarketplaceUpdateFixture(t *testing.T, failArtifact bool) *marketplaceUp
 	mux.HandleFunc("/api/v1/registries/", func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(mpapi.RegistryDTO{ID: "src", Slug: "renamed-source", Origins: []string{"https://git.example/repo.git"}, Ref: "main", Roots: []store.RegistryRoot{{Path: ".agents"}}, Acquisition: store.AcquisitionMirror, Listed: true})
 	})
-	mux.HandleFunc("/api/v1/resources/renamed-source/skill/review", func(w http.ResponseWriter, r *http.Request) { _ = json.NewEncoder(w).Encode(fixture.latest) })
-	mux.HandleFunc("/api/v1/resources/src/skill/review/revisions/", func(w http.ResponseWriter, r *http.Request) { _ = json.NewEncoder(w).Encode(fixture.latest) })
+	serveLatest := func(w http.ResponseWriter, r *http.Request) {
+		if fixture.latestHook != nil {
+			fixture.latestHook()
+		}
+		_ = json.NewEncoder(w).Encode(fixture.latest)
+	}
+	mux.HandleFunc("/api/v1/resources/renamed-source/skill/review", serveLatest)
+	mux.HandleFunc("/api/v1/resources/src/skill/review/revisions/", serveLatest)
 	mux.HandleFunc("/api/v1/artifacts/", func(w http.ResponseWriter, r *http.Request) {
 		fixture.artifactRequests++
 		if failArtifact {
@@ -431,4 +526,52 @@ func newMarketplaceUpdateFixture(t *testing.T, failArtifact bool) *marketplaceUp
 		t.Fatal(err)
 	}
 	return fixture
+}
+
+// spec: marketplace-api/locked-archive-evidence-refreshes-on-identical-content
+func TestPlanMarketplaceUpdateRefreshesDriftedArchiveEvidence(t *testing.T) {
+	fixture := newMarketplaceUpdateFixture(t, false)
+	fixture.pin.Digest = fixture.latestDigest
+	fixture.pin.LockArchiveDigest = "sha256:" + strings.Repeat("0", 64)
+	fixture.artifactRequests = 0
+	entry := config.MarketplaceEntry{URL: fixture.server.URL, InstanceID: "mp", Source: config.RepoCommitted, Resources: []config.MarketplaceResourcePin{fixture.pin}}
+	ec := &config.EffectiveConfig{Merged: &config.Config{Marketplaces: []config.MarketplaceEntry{entry}}, TargetHarnesses: []string{"factory"}}
+
+	plans, err := planMarketplaceUpdates(context.Background(), UpdateOptions{RepoRoot: fixture.repoRoot}, ec)
+	if err != nil {
+		t.Fatalf("plan Marketplace update: %v", err)
+	}
+	if len(plans) != 1 || plans[0].Skipped || plans[0].ArchiveDigest != fixture.archiveDigest {
+		t.Fatalf("plans = %#v, want evidence-refresh update to %q", plans, fixture.archiveDigest)
+	}
+	if fixture.artifactRequests != 1 {
+		t.Fatalf("artifact requests = %d, want one verification fetch", fixture.artifactRequests)
+	}
+}
+
+// spec: marketplace-api/locked-archive-evidence-refreshes-on-identical-content
+func TestPlanMarketplaceUpdateStagesVerifiedDigestNotAdvertised(t *testing.T) {
+	fixture := newMarketplaceUpdateFixture(t, false)
+	fixture.pin.Digest = fixture.latestDigest
+	fixture.pin.LockArchiveDigest = "sha256:" + strings.Repeat("0", 64)
+	fixture.artifactRequests = 0
+	var metadataReads atomic.Int64
+	stale := fixture.latest
+	stale.ArchiveDigest = store.ArchiveDigest("sha256:" + strings.Repeat("9", 64))
+	fixture.latest = stale
+	fixture.latestHook = func() {
+		if metadataReads.Add(1) > 1 {
+			fixture.latest.ArchiveDigest = store.ArchiveDigest(fixture.archiveDigest)
+		}
+	}
+	entry := config.MarketplaceEntry{URL: fixture.server.URL, InstanceID: "mp", Source: config.RepoCommitted, Resources: []config.MarketplaceResourcePin{fixture.pin}}
+	ec := &config.EffectiveConfig{Merged: &config.Config{Marketplaces: []config.MarketplaceEntry{entry}}, TargetHarnesses: []string{"factory"}}
+
+	plans, err := planMarketplaceUpdates(context.Background(), UpdateOptions{RepoRoot: fixture.repoRoot}, ec)
+	if err != nil {
+		t.Fatalf("plan Marketplace update: %v", err)
+	}
+	if len(plans) != 1 || plans[0].Skipped || plans[0].ArchiveDigest != fixture.archiveDigest {
+		t.Fatalf("plans = %#v, want verified digest %q", plans, fixture.archiveDigest)
+	}
 }

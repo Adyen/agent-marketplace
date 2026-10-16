@@ -34,13 +34,11 @@ var nativeAggregateInstalls = map[hcc.Target][]NativeAggregateInstall{
 	hcc.TargetWindsurf: {{ID: "hooks", ProjectPath: nativeAggregateInstallPath(hcc.TargetWindsurf, false), UserPath: nativeAggregateInstallPath(hcc.TargetWindsurf, true), Routes: []AggregateRoute{{ArtifactPath: ".windsurf/hooks.json", Container: "hooks"}}}},
 }
 
-// nativeAggregateInstallPath resolves the file the target's hook artifacts
-// merge into in one scope. While the native write switch is pending the
-// emitted location is the declared legacy file (Windsurf's repository-scope
-// .windsurf/hooks.json); the declared native path takes over once the
-// compilers emit it. A missing declaration is a programming error in the
-// registry, not a runtime condition, so it panics like
-// mustNativeAggregatePath does.
+// nativeAggregateInstallPath resolves the default hook artifact route in one scope.
+// A declared legacy file takes precedence for default compilation output.
+// Native hook aggregation uses its separate descriptor-driven route. A missing
+// declaration is a programming error in the registry, not a runtime condition,
+// so it panics like mustNativeAggregatePath does.
 func nativeAggregateInstallPath(target hcc.Target, machineScope bool) string {
 	file, ok := targetmeta.NativeAggregateFileForScope(targetmeta.Target(target), ir.KindHook, machineScope)
 	if !ok || file.Path == "" {
@@ -54,7 +52,7 @@ func nativeAggregateInstallPath(target hcc.Target, machineScope bool) string {
 
 func NativeAggregateBackupFiles(target hcc.Target) (map[string]string, error) {
 	files := make(map[string]string)
-	if len(nativeAggregateInstalls[target]) == 0 {
+	if len(nativeAggregateInstalls[target]) == 0 && target != hcc.TargetOpenCode {
 		return files, nil
 	}
 	destinations, err := ResolveDestinations(target, true, ".")

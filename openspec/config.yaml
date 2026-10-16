@@ -3,6 +3,14 @@ schema: spec-driven
 context: |
   Agent Marketplace distributes harness-neutral agent resources and materializes them into layouts understood by agent runtimes.
 
+  ## Consumer configuration scope
+
+  All consumer configuration requirements use the `consumer-config-format` contract: every existing organization, user-personal, repository-committed, and personal-local root declares exact `apiVersion: agent-marketplace/v4`. Included fragments under a validated v4 root may omit the version or declare exact v4. Unsupported input is refused before new acquisition or config/lock/harness writes; established pending dependency transaction recovery remains separate.
+
+  Describe authored selections with v4 `sources` and source-bound `resources`, including `collection/<name>` selectors. `required: true` protects selected resources but selects nothing by itself; selecting an entire Git or directory source requires `all: true`. Do not carry legacy consumer fields, implicit required-catalog selection, compatibility readers/editors, or in-process consumer migration into current specs or baseline harvests.
+
+  Consumer format versions are independent of acquisition-lock v1 reads/v2 writes, historical source-revision generators, Marketplace operator configuration, API/artifact/native harness schemas, ownership state, and transaction journals. Preserve those compatibility contracts. Archived changes are historical records, not additional supported consumer formats.
+
   ## Domain language
 
   Use these terms exactly in every artifact. Never use a term listed under _Avoid_ for the defined concept.

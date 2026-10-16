@@ -1,13 +1,14 @@
 // Package harnesscompile converts AI-agent configuration resources from
 // a canonical source format into vendor-specific layouts.
 //
-// It supports seven conversion targets (Claude Code, Factory Droid, Cursor,
-// Windsurf, Gemini CLI, Devin CLI, and Codex), each with a registered compiler
+// It supports eight conversion targets (Claude Code, Factory Droid, Cursor,
+// Windsurf, Gemini CLI, Devin CLI, Codex, and OpenCode), each with a registered compiler
 // and ingester.
 package harnesscompile
 
 import (
 	"bytes"
+	"crypto/rand"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -16,11 +17,14 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"syscall"
 
+	"github.com/Adyen/agent-marketplace/internal/fsboundary"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/compile"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ingest"
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/internal/opencodehook"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 	targetmeta "github.com/Adyen/agent-marketplace/pkg/harness-compilation/target"
 )
@@ -37,6 +41,7 @@ const (
 	TargetGemini   = targetmeta.TargetGemini
 	TargetDevin    = targetmeta.TargetDevin
 	TargetCodex    = targetmeta.TargetCodex
+	TargetOpenCode = targetmeta.TargetOpenCode
 )
 
 // Harness is a backward-compatible alias for Target. It allows callers to
@@ -52,6 +57,7 @@ const (
 	HarnessGemini   Harness = TargetGemini
 	HarnessDevin    Harness = TargetDevin
 	HarnessCodex    Harness = TargetCodex
+	HarnessOpenCode Harness = TargetOpenCode
 )
 
 // TargetDefinition is the shared metadata declaration for a target.
@@ -117,6 +123,11 @@ func ValidateTargetRegistrations() error {
 	// malformed descriptor fails here instead of surfacing as a mis-routed
 	// artifact at materialization time.
 	if err := targetmeta.ValidateNativeLayouts(); err != nil {
+		errs = append(errs, err)
+	}
+	// Validate declared hook projections at the same boundary so a malformed
+	// topology fails here instead of surfacing inside a native artifact.
+	if err := targetmeta.ValidateHookProjections(); err != nil {
 		errs = append(errs, err)
 	}
 	// Reverse direction: a registration for an undeclared target, or for a
@@ -201,6 +212,18 @@ func Compile(r Resource, t Target, opts ...Option) (*Result, error) {
 	}, nil
 }
 
+// CompileNativeHookProjection compiles one hook into the target's declared
+// native hook file fragment, resolved through the shipped hook/tool catalogs.
+// It is the shared pure projection the compatibility reader and the native
+// writer both consume; it performs no I/O and does not change default Compile.
+func CompileNativeHookProjection(h *ir.Hook, dst Target, scope Scope, supportBase string) (*Result, error) {
+	res, err := compile.NativeHookProjection(h, compile.Target(dst), compile.Scope(scope), supportBase)
+	if err != nil {
+		return nil, err
+	}
+	return &Result{Artifacts: res.Artifacts, Diagnostics: res.Diagnostics}, nil
+}
+
 // Convert compiles an entire harness-specific source directory from one harness
 // format into target-specific artifacts for another harness. It uses the ingest
 // registry to load the source bundle and then compiles each resource to the
@@ -254,7 +277,7 @@ func IngestBundle(srcFS fs.FS, from Harness) (*ingest.Bundle, error) {
 	if !ok {
 		return nil, fmt.Errorf("harnesscompile.IngestBundle: source %q: %w", from, errSourceNotImplemented)
 	}
-	bundle, err := ing.LoadBundle(srcFS)
+	bundle, err := IngestBundleWithLoader(srcFS, ing.LoadBundle)
 	if err != nil {
 		slog.Error("harness ingest failed", "from", from, "error", err)
 		return nil, err
@@ -427,6 +450,67 @@ func resolveArtifactPathConflicts(outputs []resourceOutput, t Target) ([]Artifac
 	return artifacts, diagnostics, skipped
 }
 
+// ValidateOpenCodeHookBudget checks accepted compiler artifacts against the
+// fixed adapter's invocation budget. Callers must collect the complete desired
+// installation after per-resource suppression, restore installation-relative
+// paths, and preserve the existing hook generation when this reports an error.
+// It performs no I/O; the runtime retains its independent fail-closed safeguard.
+func ValidateOpenCodeHookBudget(artifacts []Artifact) *Diagnostic {
+	declarations := 0
+	for _, a := range artifacts {
+		if opencodehook.IsDeclarationPath(a.Path) {
+			declarations++
+		}
+	}
+	if declarations <= opencodehook.MaxDeclarationsPerToolEvent {
+		return nil
+	}
+	return &Diagnostic{
+		Code:     diag.CodeHookOpenCodeUnsupported,
+		Severity: SeverityError,
+		Target:   string(TargetOpenCode),
+		Message:  fmt.Sprintf("accepted OpenCode hook declarations (%d) exceed the supported aggregate invocation budget of %d handlers per tool event; no hook generation was emitted", declarations, opencodehook.MaxDeclarationsPerToolEvent),
+		Hint:     "Reduce the selected hooks or split them across separate installations",
+	}
+}
+
+func enforceOpenCodeHookBudget(t Target, outputs []resourceOutput, artifacts []Artifact) ([]Artifact, []SkippedResource, *Diagnostic) {
+	if t != TargetOpenCode {
+		return artifacts, nil, nil
+	}
+	diagnostic := ValidateOpenCodeHookBudget(artifacts)
+	if diagnostic == nil {
+		return artifacts, nil, nil
+	}
+	kept := make([]Artifact, 0, len(artifacts))
+	for _, a := range artifacts {
+		if opencodehook.IsDeclarationPath(a.Path) || a.Path == opencodehook.AdapterPath {
+			continue
+		}
+		kept = append(kept, a)
+	}
+	var skipped []SkippedResource
+	for _, output := range outputs {
+		if output.kind != ir.KindHook {
+			continue
+		}
+		contributed := false
+		for _, a := range output.artifacts {
+			if opencodehook.IsDeclarationPath(a.Path) {
+				contributed = true
+				break
+			}
+		}
+		if !contributed {
+			continue
+		}
+		skipped = append(skipped, SkippedResource{Kind: output.kind, Name: output.name, Codes: []string{diag.CodeHookOpenCodeUnsupported}})
+		logResourceSkip(t, output.kind, output.name, []string{diag.CodeHookOpenCodeUnsupported}, 2, "aggregate invocation budget exceeded")
+	}
+	slog.Error("bundle exceeded the OpenCode hook invocation budget", "target", t, "budget", opencodehook.MaxDeclarationsPerToolEvent, "suppressed_hooks", len(skipped))
+	return kept, skipped, diagnostic
+}
+
 // compileBundleFromIR compiles all resources in an ingest.Bundle to the
 // target harness. It is the generalized N-to-N compilation path used by
 // Convert for all source harnesses.
@@ -500,6 +584,18 @@ func compileBundleFromIR(b *ingest.Bundle, t Target, opts ...Option) (*Result, e
 	allDiagnostics = append(allDiagnostics, conflictDiagnostics...)
 	skipped = append(skipped, conflictSkips...)
 
+	// OpenCode hooks share one aggregate runtime budget per tool event. When
+	// the accepted declarations of a bundle exceed it, the runtime would
+	// refuse the whole generation, so conversion rejects the generation
+	// before publication instead of installing an unusable one. The runtime
+	// safeguard in the fixed adapter stays in place for every other path.
+	budgetArtifacts, budgetSkips, budgetDiag := enforceOpenCodeHookBudget(t, outputs, allArtifacts)
+	if budgetDiag != nil {
+		allDiagnostics = append(allDiagnostics, *budgetDiag)
+		skipped = append(skipped, budgetSkips...)
+		allArtifacts = budgetArtifacts
+	}
+
 	// Merge fragment artifacts. Only fragments from resources that survived the
 	// rules above take part, so an aggregate is complete with respect to the
 	// resources that actually compiled, and every missing entry has its own
@@ -549,6 +645,11 @@ var ErrPartialResult = errors.New("result contains error diagnostics; only resou
 // asked to write a shared file whose ownership must be reconciled externally.
 var ErrExternalReconciliationRequired = errors.New("artifact requires external ownership reconciliation")
 
+// materializeRootCaptureHook runs immediately before Materialize captures the
+// output root for publication. It is nil in production and set only by serial
+// tests in this package.
+var materializeRootCaptureHook func(outDir string)
+
 // Materialize writes a Result to disk using staged-then-rename for individual
 // artifacts. It merges fragment artifacts before writing, validates paths, detects
 // identical files via sha256, and supports dry-run and prune-stale modes.
@@ -573,7 +674,7 @@ var ErrExternalReconciliationRequired = errors.New("artifact requires external o
 //     scan, so pruning a partial result would delete the still-good output of
 //     the previous clean run. internal/materialize already disables pruning for
 //     the same reason when a resource is blocked.
-func Materialize(r *Result, outDir string, opts ...WriteOption) (*WriteReport, error) {
+func Materialize(r *Result, outDir string, opts ...WriteOption) (report *WriteReport, err error) {
 	if r == nil {
 		return nil, fmt.Errorf("harnesscompile.Materialize: result must not be nil")
 	}
@@ -638,8 +739,9 @@ func Materialize(r *Result, outDir string, opts ...WriteOption) (*WriteReport, e
 		artifactPaths[a.Path] = struct{}{}
 	}
 
-	report := &WriteReport{OutDir: outDir, Partial: partial, SkippedResources: r.Skipped}
-	regularArtifacts, mergeArtifacts, err := prepareMergeArtifacts(artifacts, outDir, report)
+	report = &WriteReport{OutDir: outDir, Partial: partial, SkippedResources: r.Skipped}
+	originalFiles := make(map[string]*fsboundary.Identity, len(artifacts))
+	regularArtifacts, mergeArtifacts, err := prepareMergeArtifacts(artifacts, outDir, report, originalFiles)
 	if err != nil {
 		return nil, err
 	}
@@ -653,18 +755,19 @@ func Materialize(r *Result, outDir string, opts ...WriteOption) (*WriteReport, e
 	for _, a := range artifacts {
 		destPath := filepath.Join(outDir, filepath.FromSlash(a.Path))
 
-		matches, exists, err := fileMatchesBytes(destPath, a.Bytes)
+		var original fsboundary.Identity
+		matches, exists, err := fileMatchesBytes(destPath, a.Bytes, &original)
 		if err != nil {
 			return nil, fmt.Errorf("harnesscompile.Materialize: stat %s: %w", a.Path, err)
 		}
+		if input, merged := originalFiles[a.Path]; merged && (exists != (input != nil) || exists && !original.SameState(*input)) {
+			return nil, fmt.Errorf("%w: merge input changed before comparison: %s", fsboundary.ErrGenerationConflict, a.Path)
+		}
+		if exists {
+			originalFiles[a.Path] = &original
+		}
 		if exists && a.MergeWithExisting {
-			info, err := os.Lstat(destPath)
-			if err != nil {
-				return nil, fmt.Errorf("harnesscompile.Materialize: stat %s: %w", a.Path, err)
-			}
-			if info.Mode().IsRegular() {
-				existingModes[a.Path] = info.Mode().Perm()
-			}
+			existingModes[a.Path] = original.Mode.Perm()
 		}
 
 		if exists && matches {
@@ -696,8 +799,10 @@ func Materialize(r *Result, outDir string, opts ...WriteOption) (*WriteReport, e
 			return nil, fmt.Errorf("harnesscompile.Materialize: find stale: %w", err)
 		}
 		report.StaleCandidates = stale
-		for _, candidate := range stale {
-			report.Removed = append(report.Removed, candidate.Path)
+		if cfg.dryRun {
+			for _, candidate := range stale {
+				report.Removed = append(report.Removed, candidate.Path)
+			}
 		}
 	}
 	rootSnapshot, err := snapshotMaterializeRoot(outDir)
@@ -717,26 +822,149 @@ func Materialize(r *Result, outDir string, opts ...WriteOption) (*WriteReport, e
 		return nil, fmt.Errorf("harnesscompile.Materialize: output root changed before publication: %w", err)
 	}
 	// Ensure outDir exists.
-	if err := os.MkdirAll(outDir, 0o755); err != nil {
+	if materializeRootCaptureHook != nil {
+		materializeRootCaptureHook(outDir)
+	}
+	// Capture and validate the output root before creating the stage, so a
+	// root setup failure never leaves an unregistered staging directory.
+	absolute, err := filepath.Abs(outDir)
+	if err != nil {
+		return nil, fmt.Errorf("harnesscompile.Materialize: resolve outDir: %w", err)
+	}
+	ancestor := absolute
+	base, err := fsboundary.OpenDir(ancestor)
+	for errors.Is(err, fs.ErrNotExist) && !errors.Is(err, fsboundary.ErrUnsafePath) && filepath.Dir(ancestor) != ancestor {
+		ancestor = filepath.Dir(ancestor)
+		base, err = fsboundary.OpenDir(ancestor)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("harnesscompile.Materialize: capture outDir: %w", err)
+	}
+	defer func() {
+		if closeErr := base.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
+	rel, err := filepath.Rel(ancestor, absolute)
+	if err != nil {
+		return nil, err
+	}
+	root, err := base.EnsurePath(rel)
+	if err != nil {
 		return nil, fmt.Errorf("harnesscompile.Materialize: create outDir: %w", err)
 	}
-
-	// Create staging directory.
-	stagingDir, err := os.MkdirTemp(outDir, ".tmp-")
+	defer func() {
+		if closeErr := root.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
+	native, err := root.NativeRoot()
 	if err != nil {
+		return nil, fmt.Errorf("harnesscompile.Materialize: capture outDir: %w", err)
+	}
+	defer func() {
+		if closeErr := native.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
+	rootInfo, err := native.Lstat(".")
+	if err != nil {
+		return nil, fmt.Errorf("harnesscompile.Materialize: inspect outDir: %w", err)
+	}
+	if rootSnapshot.exists && !os.SameFile(rootSnapshot.info, rootInfo) {
+		return nil, fmt.Errorf("%w: harnesscompile.Materialize: outDir replaced since it was checked", fsboundary.ErrGenerationConflict)
+	}
+	rootSnapshot = materializeRootSnapshot{exists: true, info: rootInfo}
+	slog.Debug("SDK root admitted", "out_dir", outDir, "phase", "sdk-root-admitted")
+	if rootErr := revalidateMaterializeRoot(outDir, rootSnapshot); rootErr != nil {
+		return nil, errors.Join(fsboundary.ErrGenerationConflict, rootErr)
+	}
+	// Create staging directory.
+	stageName := ".tmp-" + rand.Text()
+	if err := root.Mkdir(stageName, 0o700); err != nil {
 		return nil, fmt.Errorf("harnesscompile.Materialize: create staging dir: %w", err)
 	}
-	defer func() { _ = os.RemoveAll(stagingDir) }()
+	stagingDir := filepath.Join(outDir, stageName)
+	created, err := native.Lstat(stageName)
+	if err != nil {
+		return nil, err
+	}
+	if !created.IsDir() {
+		return nil, fsboundary.ErrUnsafeFile
+	}
+	stagedFiles := make(map[string]fsboundary.Identity, len(artifacts))
+	cleanupStage := func() error {
+		current, inspectErr := native.Lstat(stageName)
+		if errors.Is(inspectErr, fs.ErrNotExist) {
+			return nil
+		}
+		if inspectErr != nil {
+			return errors.Join(fsboundary.ErrGenerationConflict, inspectErr)
+		}
+		if !os.SameFile(created, current) {
+			return fsboundary.ErrGenerationConflict
+		}
+		for rel, observed := range stagedFiles {
+			info, leafErr := native.Lstat(filepath.Join(stageName, filepath.FromSlash(rel)))
+			if errors.Is(leafErr, fs.ErrNotExist) {
+				continue
+			}
+			if leafErr != nil {
+				return leafErr
+			}
+			identity, idErr := fsboundary.FileInfoIdentity(info)
+			if idErr != nil {
+				return idErr
+			}
+			if !identity.SameState(observed) {
+				return fsboundary.ErrGenerationConflict
+			}
+		}
+		return native.RemoveAll(stageName)
+	}
+	defer func() {
+		if cleanupErr := cleanupStage(); cleanupErr != nil {
+			err = errors.Join(err, cleanupErr)
+		}
+	}()
+	staged, err := root.OpenPath(stageName)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		if closeErr := staged.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
+	createdID, err := fsboundary.FileInfoIdentity(created)
+	if err != nil {
+		return nil, err
+	}
+	if !staged.Identity().SameObject(createdID) {
+		return nil, fsboundary.ErrGenerationConflict
+	}
+	stagedNative, err := staged.NativeRoot()
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		if closeErr := stagedNative.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
+	slog.Debug("SDK stage admitted", "out_dir", stagingDir, "phase", "sdk-stage-admitted")
 
 	// Write artifacts to staging directory.
 	for _, a := range artifacts {
 		if sliceContains(report.Skipped, a.Path) {
 			continue
 		}
-		destPath := filepath.Join(stagingDir, filepath.FromSlash(a.Path))
-		if err := os.MkdirAll(filepath.Dir(destPath), 0o755); err != nil {
-			_ = os.RemoveAll(stagingDir)
-			return nil, fmt.Errorf("harnesscompile.Materialize: mkdir %s: %w", filepath.Dir(a.Path), err)
+		parent, dirErr := staged.EnsurePath(filepath.Dir(filepath.FromSlash(a.Path)))
+		if dirErr != nil {
+			return nil, fmt.Errorf("harnesscompile.Materialize: mkdir %s: %w", filepath.Dir(a.Path), dirErr)
+		}
+		if closeErr := parent.Close(); closeErr != nil {
+			return nil, closeErr
 		}
 		mode, existingMode := existingModes[a.Path]
 		if !existingMode {
@@ -745,35 +973,86 @@ func Materialize(r *Result, outDir string, opts ...WriteOption) (*WriteReport, e
 				mode = 0o644
 			}
 		}
-		if err := os.WriteFile(destPath, a.Bytes, mode); err != nil {
-			_ = os.RemoveAll(stagingDir)
-			return nil, fmt.Errorf("harnesscompile.Materialize: write %s: %w", a.Path, err)
+		stagedFiles[a.Path] = fsboundary.Identity{}
+		file, writeErr := stagedNative.OpenFile(filepath.FromSlash(a.Path), os.O_WRONLY|os.O_CREATE|os.O_EXCL, mode)
+		if writeErr != nil {
+			return nil, fmt.Errorf("harnesscompile.Materialize: write %s: %w", a.Path, writeErr)
 		}
-		if existingMode {
-			if err := os.Chmod(destPath, mode); err != nil {
-				_ = os.RemoveAll(stagingDir)
-				return nil, fmt.Errorf("harnesscompile.Materialize: chmod %s: %w", a.Path, err)
-			}
+		_, writeErr = file.Write(a.Bytes)
+		if writeErr == nil && existingMode {
+			writeErr = file.Chmod(mode)
+		}
+		info, statErr := file.Stat()
+		if statErr == nil {
+			stagedFiles[a.Path], statErr = fsboundary.FileInfoIdentity(info)
+		}
+		if writeErr = errors.Join(writeErr, statErr, file.Close()); writeErr != nil {
+			return nil, fmt.Errorf("harnesscompile.Materialize: write %s: %w", a.Path, writeErr)
 		}
 	}
 
+	slog.Debug("SDK artifacts staged", "out_dir", outDir, "staged", stagingDir, "phase", "sdk-staged")
 	// Move staged files onto outDir.
 	for _, a := range artifacts {
 		if sliceContains(report.Skipped, a.Path) {
 			continue
 		}
-		src := filepath.Join(stagingDir, filepath.FromSlash(a.Path))
+		if rootErr := revalidateMaterializeRoot(outDir, rootSnapshot); rootErr != nil {
+			return nil, errors.Join(fsboundary.ErrGenerationConflict, rootErr)
+		}
+		currentStage, stageErr := native.Lstat(stageName)
+		if stageErr != nil {
+			return nil, errors.Join(fsboundary.ErrGenerationConflict, stageErr)
+		}
+		if !os.SameFile(created, currentStage) {
+			return nil, fsboundary.ErrGenerationConflict
+		}
+		src := filepath.Join(stageName, filepath.FromSlash(a.Path))
+		stagedInfo, stagedErr := native.Lstat(src)
+		if stagedErr != nil {
+			return nil, errors.Join(fsboundary.ErrGenerationConflict, stagedErr)
+		}
+		stagedID, stagedErr := fsboundary.FileInfoIdentity(stagedInfo)
+		if stagedErr != nil {
+			return nil, stagedErr
+		}
+		if !stagedID.SameState(stagedFiles[a.Path]) {
+			return nil, fsboundary.ErrGenerationConflict
+		}
 		dst := filepath.Join(outDir, filepath.FromSlash(a.Path))
 		if err := rejectSymlinkedParentComponents(outDir, dst); err != nil {
-			_ = os.RemoveAll(stagingDir)
 			return nil, fmt.Errorf("harnesscompile.Materialize: artifact %q: %w", a.Path, err)
 		}
-		if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
-			_ = os.RemoveAll(stagingDir)
-			return nil, fmt.Errorf("harnesscompile.Materialize: mkdir %s: %w", filepath.Dir(a.Path), err)
+		parent, dirErr := root.EnsurePath(filepath.Dir(filepath.FromSlash(a.Path)))
+		if dirErr != nil {
+			return nil, fmt.Errorf("harnesscompile.Materialize: mkdir %s: %w", filepath.Dir(a.Path), dirErr)
 		}
-		if err := os.Rename(src, dst); err != nil {
-			_ = os.RemoveAll(stagingDir)
+		if closeErr := parent.Close(); closeErr != nil {
+			return nil, closeErr
+		}
+		currentFile, inspectErr := native.Lstat(filepath.FromSlash(a.Path))
+		original := originalFiles[a.Path]
+		if original == nil {
+			if inspectErr == nil {
+				// A leaf appeared where the admitted generation had none.
+				return nil, fsboundary.ErrGenerationConflict
+			}
+			if !errors.Is(inspectErr, fs.ErrNotExist) {
+				return nil, errors.Join(fsboundary.ErrGenerationConflict, inspectErr)
+			}
+		} else {
+			if inspectErr != nil {
+				return nil, errors.Join(fsboundary.ErrGenerationConflict, inspectErr)
+			}
+			identity, identityErr := fsboundary.FileInfoIdentity(currentFile)
+			if identityErr != nil {
+				return nil, identityErr
+			}
+			if !identity.SameState(*original) {
+				return nil, fsboundary.ErrGenerationConflict
+			}
+		}
+		if err := native.Rename(src, filepath.FromSlash(a.Path)); err != nil {
 			return nil, fmt.Errorf("harnesscompile.Materialize: rename %s: %w", a.Path, err)
 		}
 	}
@@ -784,12 +1063,19 @@ func Materialize(r *Result, outDir string, opts ...WriteOption) (*WriteReport, e
 	if prune {
 		var pruneConflicts []string
 		for _, candidate := range report.StaleCandidates {
+			if rootErr := revalidateMaterializeRoot(outDir, rootSnapshot); rootErr != nil {
+				return report, errors.Join(fsboundary.ErrGenerationConflict, rootErr)
+			}
 			stalePath := filepath.Join(outDir, filepath.FromSlash(candidate.Path))
 			if err := rejectSymlinkedParentComponents(outDir, stalePath); err != nil {
 				report.PruneConflicts = append(report.PruneConflicts, candidate.Path)
 				return report, fmt.Errorf("harnesscompile.Materialize: stale file %q: %w: %v", candidate.Path, ErrStalePruneConflict, err)
 			}
-			if err := RemoveStaleFileCandidate(stalePath, candidate); err != nil {
+			removed, removeErr := removeStaleFileCandidate(stalePath, candidate, nil)
+			if removed {
+				report.Removed = append(report.Removed, candidate.Path)
+			}
+			if err := removeErr; err != nil {
 				if errors.Is(err, ErrStalePruneConflict) {
 					pruneConflicts = append(pruneConflicts, candidate.Path)
 					slog.Warn("materialize stale prune preserved changed output", "out_dir", outDir, "path", candidate.Path)
@@ -798,9 +1084,11 @@ func Materialize(r *Result, outDir string, opts ...WriteOption) (*WriteReport, e
 				if os.IsNotExist(err) {
 					continue
 				}
-				return nil, fmt.Errorf("harnesscompile.Materialize: remove stale file %q: %w", candidate.Path, err)
+				return report, fmt.Errorf("harnesscompile.Materialize: remove stale file %q: %w", candidate.Path, err)
 			}
-			cleanEmptyDirs(outDir, filepath.Dir(filepath.FromSlash(candidate.Path)), candidate.parents)
+			if cleanupErr := cleanEmptyDirs(root, native, outDir, filepath.Dir(filepath.FromSlash(candidate.Path)), candidate.parents); cleanupErr != nil {
+				return report, cleanupErr
+			}
 		}
 		if len(pruneConflicts) > 0 {
 			report.PruneConflicts = pruneConflicts
@@ -809,7 +1097,9 @@ func Materialize(r *Result, outDir string, opts ...WriteOption) (*WriteReport, e
 	}
 
 	// Remove staging directory.
-	_ = os.RemoveAll(stagingDir)
+	if cleanupErr := cleanupStage(); cleanupErr != nil {
+		return report, cleanupErr
+	}
 
 	return report, partialError(report)
 }
@@ -865,7 +1155,7 @@ func sameArtifact(a, b Artifact) bool {
 		a.DedupeFragmentEntries == b.DedupeFragmentEntries
 }
 
-func prepareMergeArtifacts(artifacts []Artifact, outDir string, report *WriteReport) ([]Artifact, []Artifact, error) {
+func prepareMergeArtifacts(artifacts []Artifact, outDir string, report *WriteReport, originalFiles map[string]*fsboundary.Identity) ([]Artifact, []Artifact, error) {
 	var regular []Artifact
 	var merged []Artifact
 	for _, a := range artifacts {
@@ -878,10 +1168,12 @@ func prepareMergeArtifacts(artifacts []Artifact, outDir string, report *WriteRep
 			continue
 		}
 		destPath := filepath.Join(outDir, filepath.FromSlash(a.Path))
-		existing, err := os.ReadFile(destPath)
-		if err != nil && !os.IsNotExist(err) {
+		existing, input, err := readMaterializeFile(destPath)
+		if err != nil {
 			return nil, nil, fmt.Errorf("harnesscompile.Materialize: read %s: %w", a.Path, err)
 		}
+		originalFiles[a.Path] = input
+		slog.Debug("SDK aggregate merge input captured", "path", destPath, "phase", "sdk-merge-input")
 		result, mergeReport, err := artifact.MergeWithExistingJSON(existing, a.Bytes, policy.MarkerField, policy.MarkerValue)
 		if err != nil {
 			// The merge layer only sees bytes, so the destination path is added
@@ -1000,15 +1292,81 @@ func validateArtifactPath(p, outDir string) error {
 
 // fileMatchesBytes reports whether path exists and has identical contents to
 // expected.
-func fileMatchesBytes(path string, expected []byte) (bool, bool, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return false, false, nil
-		}
+func fileMatchesBytes(path string, expected []byte, observed *fsboundary.Identity) (matches, exists bool, err error) {
+	data, identity, err := readMaterializeFile(path)
+	if err != nil || identity == nil {
 		return false, false, err
 	}
+	*observed = *identity
 	return bytes.Equal(data, expected), true, nil
+}
+
+func readMaterializeFile(path string) (data []byte, identity *fsboundary.Identity, err error) {
+	absolute, err := filepath.Abs(path)
+	if err != nil {
+		return nil, nil, err
+	}
+	root, err := fsboundary.OpenDir(filepath.Dir(absolute))
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) && !errors.Is(err, fsboundary.ErrUnsafePath) {
+			return nil, nil, nil
+		}
+		return nil, nil, err
+	}
+	defer func() {
+		if closeErr := root.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
+	native, err := root.NativeRoot()
+	if err != nil {
+		return nil, nil, err
+	}
+	defer func() {
+		if closeErr := native.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
+	name := filepath.Base(absolute)
+	info, err := native.Lstat(name)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, nil, nil
+	}
+	if err != nil {
+		return nil, nil, err
+	}
+	original, err := fsboundary.FileInfoIdentity(info)
+	if err != nil {
+		return nil, nil, err
+	}
+	file, opened, err := root.OpenFile(name)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer func() {
+		if closeErr := file.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
+	if !opened.SameState(original) {
+		return nil, nil, fsboundary.ErrGenerationConflict
+	}
+	data, read, err := fsboundary.ReadFile(file, opened.Size)
+	if err != nil {
+		return nil, nil, err
+	}
+	after, err := native.Lstat(name)
+	if err != nil {
+		return nil, nil, errors.Join(fsboundary.ErrGenerationConflict, err)
+	}
+	named, err := fsboundary.FileInfoIdentity(after)
+	if err != nil {
+		return nil, nil, err
+	}
+	if !read.SameState(original) || !named.SameState(original) {
+		return nil, nil, fsboundary.ErrGenerationConflict
+	}
+	return data, &read, nil
 }
 
 type materializeRootSnapshot struct {
@@ -1063,44 +1421,132 @@ func isMaterializeTransactionFile(name string) bool {
 	return isMaterializeTransactionDir(name) || strings.HasPrefix(name, ".agent-marketplace-stale-")
 }
 
+var staleDigestHook func(rel, phase string)
+
 // findStaleFiles walks outDir and returns no-follow identity snapshots for
 // paths not in the artifactPaths set.
-func findStaleFiles(outDir string, artifactPaths map[string]struct{}) ([]StaleFileCandidate, error) {
-	var stale []StaleFileCandidate
-	err := filepath.WalkDir(outDir, func(path string, d fs.DirEntry, err error) error {
+func findStaleFiles(outDir string, artifactPaths map[string]struct{}) (stale []StaleFileCandidate, err error) {
+	snapshot, err := snapshotMaterializeRoot(outDir)
+	if err != nil || !snapshot.exists {
+		return nil, err
+	}
+	absolute, err := filepath.Abs(outDir)
+	if err != nil {
+		return nil, err
+	}
+	root, err := fsboundary.OpenDir(absolute)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		if closeErr := root.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
+	var walk func(*fsboundary.Dir, string, fs.FileInfo, []staleParentSnapshot) error
+	walk = func(directory *fsboundary.Dir, rel string, expected fs.FileInfo, ancestors []staleParentSnapshot) (err error) {
+		native, err := directory.NativeRoot()
 		if err != nil {
 			return err
 		}
-		if d.IsDir() {
-			if path != outDir && isMaterializeTransactionDir(d.Name()) {
-				return filepath.SkipDir
+		defer func() {
+			if closeErr := native.Close(); closeErr != nil {
+				err = errors.Join(err, closeErr)
 			}
-			return nil
-		}
-		rel, err := filepath.Rel(outDir, path)
+		}()
+		file, err := native.Open(".")
 		if err != nil {
 			return err
 		}
-		if isMaterializeTransactionFile(filepath.Base(rel)) {
-			return nil
+		defer func() {
+			if closeErr := file.Close(); closeErr != nil {
+				err = errors.Join(err, closeErr)
+			}
+		}()
+		info, err := file.Stat()
+		if err != nil {
+			return err
 		}
-		relSlash := filepath.ToSlash(rel)
-		if _, ok := artifactPaths[relSlash]; !ok {
-			candidate, snapshotErr := snapshotStaleFileCandidate(path, relSlash)
-			if snapshotErr != nil {
-				if os.IsNotExist(snapshotErr) {
-					return nil
+		if !os.SameFile(expected, info) {
+			return fsboundary.ErrGenerationConflict
+		}
+		dirPath := filepath.Join(outDir, rel)
+		parents := make([]staleParentSnapshot, len(ancestors)+1)
+		copy(parents, ancestors)
+		parents[len(ancestors)] = staleParentSnapshot{path: dirPath, info: info}
+		slog.Debug("SDK stale directory admitted", "path", dirPath, "phase", "sdk-stale-directory")
+		unchanged, err := staleParentsUnchanged(parents)
+		if err != nil {
+			return err
+		}
+		if !unchanged {
+			return fsboundary.ErrGenerationConflict
+		}
+		entries, err := file.ReadDir(-1)
+		if err != nil {
+			return err
+		}
+		for _, entry := range entries {
+			childRel := filepath.Join(rel, entry.Name())
+			childInfo, statErr := native.Lstat(entry.Name())
+			if errors.Is(statErr, fs.ErrNotExist) {
+				continue
+			}
+			if statErr != nil {
+				return statErr
+			}
+			if childInfo.IsDir() {
+				if isMaterializeTransactionDir(entry.Name()) {
+					continue
 				}
-				return snapshotErr
+				child, openErr := directory.OpenPath(entry.Name())
+				if openErr != nil {
+					return openErr
+				}
+				walkErr := walk(child, childRel, childInfo, parents)
+				if closeErr := child.Close(); closeErr != nil {
+					walkErr = errors.Join(walkErr, closeErr)
+				}
+				if walkErr != nil {
+					return walkErr
+				}
+				continue
+			}
+			if isMaterializeTransactionFile(entry.Name()) {
+				continue
+			}
+			relSlash := filepath.ToSlash(childRel)
+			if _, ok := artifactPaths[relSlash]; ok {
+				continue
+			}
+			candidate := StaleFileCandidate{Path: relSlash, Info: childInfo, parents: parents}
+			if childInfo.Mode().IsRegular() {
+				if staleDigestHook != nil {
+					staleDigestHook(childRel, "before")
+				}
+				candidate.Digest, err = digestCapturedNoFollow(directory, entry.Name(), filepath.Join(outDir, childRel), childInfo)
+				if staleDigestHook != nil {
+					staleDigestHook(childRel, "after")
+				}
+				if errors.Is(err, fs.ErrNotExist) {
+					continue
+				}
+				if err != nil {
+					return err
+				}
 			}
 			stale = append(stale, candidate)
 		}
-		return nil
-	})
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, nil
+		unchanged, err = staleParentsUnchanged(parents)
+		if err != nil {
+			return err
 		}
+		if !unchanged {
+			return fsboundary.ErrGenerationConflict
+		}
+		return nil
+	}
+	if err := walk(root, ".", snapshot.info, nil); err != nil {
 		return nil, err
 	}
 	sort.Slice(stale, func(i, j int) bool { return stale[i].Path < stale[j].Path })
@@ -1111,35 +1557,67 @@ func findStaleFiles(outDir string, artifactPaths map[string]struct{}) ([]StaleFi
 // upward, but only while each directory still has the inode captured during
 // stale discovery. This prevents a root or parent replacement from turning
 // post-prune cleanup into a deletion of a user's replacement tree.
-func cleanEmptyDirs(outDir, relPath string, parents []staleParentSnapshot) {
-	parts := strings.Split(relPath, "/")
-	for i := len(parts); i >= 1; i-- {
-		dirPath := filepath.Join(outDir, filepath.FromSlash(strings.Join(parts[:i], "/")))
-		if dirPath == outDir {
-			break
-		}
-		current, err := os.Lstat(dirPath)
-		if err != nil {
-			break
-		}
-		var expected fs.FileInfo
-		for _, parent := range parents {
+func cleanEmptyDirs(root *fsboundary.Dir, native *os.Root, outDir, relPath string, parents []staleParentSnapshot) error {
+	for rel := filepath.Clean(relPath); rel != "."; rel = filepath.Dir(rel) {
+		dirPath := filepath.Join(outDir, rel)
+		index := -1
+		for i, parent := range parents {
 			if parent.path == dirPath {
-				expected = parent.info
+				index = i
 				break
 			}
 		}
-		if expected == nil || !current.IsDir() || current.Mode()&os.ModeSymlink != 0 || !os.SameFile(expected, current) {
-			break
+		if index < 1 {
+			return fsboundary.ErrGenerationConflict
 		}
-		entries, err := os.ReadDir(dirPath)
-		if err != nil || len(entries) > 0 {
-			break
+		nonempty, err := func() (nonempty bool, err error) {
+			parent, err := root.OpenPath(filepath.Dir(rel))
+			if err != nil {
+				return false, errors.Join(fsboundary.ErrGenerationConflict, err)
+			}
+			defer func() {
+				if closeErr := parent.Close(); closeErr != nil {
+					err = errors.Join(err, closeErr)
+				}
+			}()
+			info, err := parent.Stat()
+			if err != nil {
+				return false, err
+			}
+			if !os.SameFile(parents[index-1].info, info) {
+				return false, fsboundary.ErrGenerationConflict
+			}
+			current, err := native.Lstat(rel)
+			if err != nil {
+				return false, errors.Join(fsboundary.ErrGenerationConflict, err)
+			}
+			if !current.IsDir() || !os.SameFile(parents[index].info, current) {
+				return false, fsboundary.ErrGenerationConflict
+			}
+			slog.Debug("SDK stale empty parent admitted", "path", dirPath, "phase", "sdk-stale-empty-parent")
+			unchanged, err := staleParentsUnchanged(parents[:index+1])
+			if err != nil {
+				return false, errors.Join(fsboundary.ErrGenerationConflict, err)
+			}
+			if !unchanged {
+				return false, fsboundary.ErrGenerationConflict
+			}
+			if removeErr := parent.Rmdir(filepath.Base(rel)); removeErr != nil {
+				if errors.Is(removeErr, syscall.ENOTEMPTY) || errors.Is(removeErr, syscall.EEXIST) {
+					return true, nil
+				}
+				return false, removeErr
+			}
+			return false, nil
+		}()
+		if err != nil {
+			return err
 		}
-		if err := os.Remove(dirPath); err != nil {
-			break
+		if nonempty {
+			return nil
 		}
 	}
+	return nil
 }
 
 // sliceContains reports whether ss contains s.
@@ -1260,7 +1738,7 @@ type MergeFileReport struct {
 // options. Compile and compileBundleFromIR share it so a newly added option can
 // never be wired into one entry point and forgotten in the other.
 func compileOptions(cfg *config) []compile.Option {
-	copts := make([]compile.Option, 0, 5)
+	copts := make([]compile.Option, 0, 6)
 	if cfg.modelOverride != nil {
 		copts = append(copts, compile.WithModelOverride(cfg.modelOverride))
 	}
@@ -1273,6 +1751,9 @@ func compileOptions(cfg *config) []compile.Option {
 	if cfg.managedByField != "" {
 		copts = append(copts, compile.WithManagedBy(cfg.managedByField, cfg.managedByValue))
 	}
+	if cfg.nativeHookOutput {
+		copts = append(copts, compile.WithNativeHookOutput())
+	}
 	if cfg.scope != "" {
 		copts = append(copts, compile.WithScope(cfg.scope))
 	}
@@ -1283,12 +1764,13 @@ func compileOptions(cfg *config) []compile.Option {
 type Option func(*config)
 
 type config struct {
-	modelOverride  map[string]string
-	toolOverride   map[string]string
-	pluginRoot     string
-	managedByField string
-	managedByValue string
-	scope          Scope
+	modelOverride    map[string]string
+	toolOverride     map[string]string
+	pluginRoot       string
+	managedByField   string
+	managedByValue   string
+	nativeHookOutput bool
+	scope            Scope
 }
 
 // Scope is the installation scope a caller compiles for. It is re-exported
@@ -1331,4 +1813,8 @@ func WithManagedBy(field, value string) Option {
 		c.managedByField = field
 		c.managedByValue = value
 	}
+}
+
+func WithNativeHookOutput() Option {
+	return func(c *config) { c.nativeHookOutput = true }
 }

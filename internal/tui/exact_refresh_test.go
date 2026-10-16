@@ -25,7 +25,7 @@ func TestTUISnapshotDiscoversUnlockedOrganizationRegistry(t *testing.T) {
 	repo := t.TempDir()
 	authority := t.TempDir()
 	orgPath := filepath.Join(authority, "config.yaml")
-	if err := os.WriteFile(orgPath, []byte("apiVersion: agent-marketplace/v2\nregistries: []\n"), 0o644); err != nil {
+	if err := os.WriteFile(orgPath, []byte("apiVersion: agent-marketplace/v4\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.Chmod(authority, 0o555); err != nil {
@@ -40,10 +40,10 @@ func TestTUISnapshotDiscoversUnlockedOrganizationRegistry(t *testing.T) {
 	originalRepo, originalLocal := loadRepoConfig, loadLocalConfig
 	originalClone := cloneOrPull
 	loadOrgConfig = func() (*config.Config, error) {
-		return &config.Config{APIVersion: config.APIVersionV2, Registries: []config.RegistryEntry{{URL: "https://example.invalid/unlocked-org.git", Ref: "main", Required: true, SourceHarness: "factory"}}}, nil
+		return &config.Config{APIVersion: config.APIVersionV4, Registries: []config.RegistryEntry{{URL: "https://example.invalid/unlocked-org.git", Ref: "main", Required: true, SourceHarness: "factory"}}}, nil
 	}
 	loadGlobalConfig = func() (*config.Config, error) {
-		return &config.Config{APIVersion: config.APIVersionV2, Harnesses: []string{"factory"}}, nil
+		return &config.Config{APIVersion: config.APIVersionV4, Harnesses: []string{"factory"}}, nil
 	}
 	loadRepoConfig = func() (*config.Config, error) { return nil, nil }
 	loadLocalConfig = func(string) (*config.LocalConfig, error) { return nil, nil }
@@ -84,13 +84,13 @@ func TestTUISnapshotFallsBackToUnlockedRepoRegistry(t *testing.T) {
 	}
 	registry := t.TempDir()
 	writeExactRefreshSkill(t, registry, "unlocked-repo")
-	if err := os.WriteFile(filepath.Join(agentsDir, "config.yaml"), []byte("apiVersion: agent-marketplace/v2\nharnesses: [factory]\nregistries:\n  - url: https://example.invalid/unlocked-repo.git\n    ref: main\n    source_harness: factory\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(agentsDir, "config.yaml"), []byte("apiVersion: agent-marketplace/v4\nharnesses: [factory]\nsources:\n  fixture: {git: https://example.invalid/unlocked-repo.git, ref: main, source_harness: factory}\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.MkdirAll(filepath.Join(home, ".agents"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(home, ".agents", "config.yaml"), []byte("apiVersion: agent-marketplace/v2\nharnesses: [factory]\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(home, ".agents", "config.yaml"), []byte("apiVersion: agent-marketplace/v4\nharnesses: [factory]\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -183,7 +183,7 @@ func TestAutomaticRefreshRemainsPinnedWhenRefMoves(t *testing.T) {
 	if err := os.MkdirAll(agentsDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	configBytes := []byte("apiVersion: agent-marketplace/v2\nharnesses: [factory]\nregistries:\n  - url: " + canonical + "\n    ref: HEAD\n    source_harness: factory\n    skills: [pinned]\n")
+	configBytes := []byte("apiVersion: agent-marketplace/v4\nharnesses: [factory]\nsources:\n  fixture: {git: " + canonical + ", ref: HEAD, source_harness: factory}\nresources:\n  fixture: [skill/pinned]\n")
 	if err := os.WriteFile(filepath.Join(agentsDir, "config.yaml"), configBytes, 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -257,7 +257,7 @@ func TestAutomaticRefreshRemainsPinnedWhenRefMoves(t *testing.T) {
 		t.Fatalf("GC did not remove snapshot after TUI consumption: %v", err)
 	}
 	for _, width := range []int{80, 50} {
-		msg := loadDetailContent(result.rows[0], 1, width, width == 50)().(detailContentMsg)
+		msg := loadDetailContent(newTheme(true), result.rows[0], 1, width, width == 50)().(detailContentMsg)
 		if !strings.Contains(msg.content, "pinned") || strings.Contains(msg.content, "Error reading resource") {
 			t.Fatalf("detail rerender at width %d lost the collected snapshot after GC:\n%s", width, msg.content)
 		}

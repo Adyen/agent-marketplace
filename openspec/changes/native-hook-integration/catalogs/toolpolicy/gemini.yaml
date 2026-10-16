@@ -2,7 +2,7 @@
 schema: 1
 harness: gemini
 evidence:
-  checked: "2026-09-29"
+  checked: "2026-10-07"
   refs:
     - https://github.com/google-gemini/gemini-cli/blob/main/docs/reference/tools.md
     - https://geminicli.com/docs/hooks/reference/

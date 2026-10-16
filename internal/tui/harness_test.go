@@ -7,7 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/Adyen/agent-marketplace/internal/config"
 )
@@ -17,7 +18,7 @@ func TestHarnessKeyOpensGlobalHarnessModal(t *testing.T) {
 	m.projectHarnesses = []string{"factory"}
 	m.globalHarnesses = []string{"cursor"}
 
-	mi, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'H'}})
+	mi, cmd := m.Update(tea.KeyPressMsg{Code: 'H', Text: string('H')})
 	m = mi.(Model)
 	if cmd != nil {
 		t.Fatalf("opening harness modal should not emit command")
@@ -40,8 +41,8 @@ func TestRenderHarnessModalShowsProvenanceAndActions(t *testing.T) {
 	m.globalHarnesses = []string{"cursor"}
 	m.openHarnessModal()
 
-	out := renderHarnessModal(m)
-	for _, want := range []string{"Target harnesses", "Effective:", "Project:", "Global:", "Factory Droid", "Cursor", "[p]", "[g]", "[space]", "[enter]"} {
+	out := ansi.Strip(renderHarnessModal(m))
+	for _, want := range []string{"Target harnesses", "Effective:", "Project:", "Global:", "Factory Droid", "Cursor", "p project", "g global", "space toggle", "enter save"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("modal missing %q in output:\n%s", want, out)
 		}
@@ -69,7 +70,7 @@ func TestHarnessModalOffersCodexAfterDevinAsAnOptInChoice(t *testing.T) {
 	for _, opt := range knownHarnessOptions {
 		ids = append(ids, opt.ID)
 	}
-	want := []string{"factory", "claude", "cursor", "windsurf", "gemini", "devin", "codex"}
+	want := []string{"factory", "claude", "cursor", "windsurf", "gemini", "devin", "codex", "opencode"}
 	if !reflect.DeepEqual(ids, want) {
 		t.Fatalf("harness modal options = %#v, want %#v", ids, want)
 	}
@@ -82,11 +83,17 @@ func TestHarnessModalOffersCodexAfterDevinAsAnOptInChoice(t *testing.T) {
 	if m.harnessModal.selected["devin"] {
 		t.Fatal("Devin must not be pre-selected: it is opt-in")
 	}
+	if m.harnessModal.selected["opencode"] {
+		t.Fatal("OpenCode must remain opt-in")
+	}
 	if m.harnessModal.selected["codex"] {
 		t.Fatal("Codex must not be pre-selected: it is opt-in")
 	}
 
-	out := renderHarnessModal(m)
+	out := ansi.Strip(renderHarnessModal(m))
+	if !strings.Contains(out, "[ ] OpenCode") {
+		t.Fatalf("OpenCode choice missing: %s", out)
+	}
 	if !strings.Contains(out, "Devin CLI") || !strings.Contains(out, "devin") {
 		t.Fatalf("harness modal does not offer Devin:\n%s", out)
 	}
@@ -108,7 +115,7 @@ func TestHarnessModalTogglesDevinIntoTheSavedList(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
-	if err := os.WriteFile(configPath, []byte("apiVersion: agent-marketplace/v2\nharnesses:\n  - factory\nregistries: []\n"), 0o644); err != nil {
+	if err := os.WriteFile(configPath, []byte("apiVersion: agent-marketplace/v4\nharnesses:\n  - factory\nsources: {}\nresources: {}\n"), 0o644); err != nil {
 		t.Fatalf("write config: %v", err)
 	}
 
@@ -117,15 +124,15 @@ func TestHarnessModalTogglesDevinIntoTheSavedList(t *testing.T) {
 	m.openHarnessModal()
 	// Walk to Devin and toggle it on without assuming it remains last.
 	for knownHarnessOptions[m.harnessModal.cursor].ID != "devin" {
-		mi, _ := m.Update(tea.KeyMsg{Type: tea.KeyDown})
+		mi, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyDown})
 		m = mi.(Model)
 	}
 	if got := knownHarnessOptions[m.harnessModal.cursor].ID; got != "devin" {
 		t.Fatalf("cursor landed on %q, want devin", got)
 	}
-	mi, _ := m.Update(tea.KeyMsg{Type: tea.KeySpace})
+	mi, _ := m.Update(tea.KeyPressMsg{Code: tea.KeySpace})
 	m = mi.(Model)
-	mi, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	mi, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = mi.(Model)
 	if cmd == nil {
 		t.Fatal("saving harnesses should emit a command")
@@ -143,13 +150,14 @@ func TestHarnessModalTogglesDevinIntoTheSavedList(t *testing.T) {
 	}
 }
 
+// spec: tui-interactions/save-selected-harnesses
 func TestHarnessModalSwitchScopeToggleAndSaveProject(t *testing.T) {
 	repoRoot := t.TempDir()
 	configPath := filepath.Join(repoRoot, ".agents", "config.yaml")
 	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
-	if err := os.WriteFile(configPath, []byte("apiVersion: agent-marketplace/v2\nregistries: []\n"), 0o644); err != nil {
+	if err := os.WriteFile(configPath, []byte("apiVersion: agent-marketplace/v4\nsources: {}\nresources: {}\n"), 0o644); err != nil {
 		t.Fatalf("write config: %v", err)
 	}
 
@@ -157,22 +165,22 @@ func TestHarnessModalSwitchScopeToggleAndSaveProject(t *testing.T) {
 	m.projectHarnesses = []string{"factory"}
 	m.openHarnessModal()
 
-	mi, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'p'}})
+	mi, cmd := m.Update(tea.KeyPressMsg{Code: 'p', Text: string('p')})
 	m = mi.(Model)
 	if cmd != nil {
 		t.Fatalf("switching scope should not emit command")
 	}
-	mi, cmd = m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	mi, cmd = m.Update(tea.KeyPressMsg{Code: tea.KeyDown})
 	m = mi.(Model)
 	if cmd != nil {
 		t.Fatalf("moving cursor should not emit command")
 	}
-	mi, cmd = m.Update(tea.KeyMsg{Type: tea.KeySpace})
+	mi, cmd = m.Update(tea.KeyPressMsg{Code: tea.KeySpace})
 	m = mi.(Model)
 	if cmd != nil {
 		t.Fatalf("toggling harness should not emit command")
 	}
-	mi, cmd = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	mi, cmd = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = mi.(Model)
 	if cmd == nil {
 		t.Fatalf("saving harnesses should emit command")
@@ -194,12 +202,13 @@ func TestHarnessModalSwitchScopeToggleAndSaveProject(t *testing.T) {
 	}
 }
 
+// spec: tui-interactions/empty-selection
 func TestHarnessModalRejectsEmptySelection(t *testing.T) {
 	m := NewModel("/repo", "/home")
 	m.openHarnessModal()
 	m.harnessModal.selected = map[string]bool{}
 
-	mi, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	mi, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = mi.(Model)
 	if cmd == nil {
 		t.Fatalf("expected toast command for empty harness selection")
@@ -224,7 +233,7 @@ func TestHarnessModalSwitchScopeToggleAndSaveGlobal(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
-	if err := os.WriteFile(configPath, []byte("apiVersion: agent-marketplace/v2\nharnesses:\n  - factory\nregistries: []\n"), 0o644); err != nil {
+	if err := os.WriteFile(configPath, []byte("apiVersion: agent-marketplace/v4\nharnesses:\n  - factory\nsources: {}\nresources: {}\n"), 0o644); err != nil {
 		t.Fatalf("write config: %v", err)
 	}
 
@@ -233,17 +242,17 @@ func TestHarnessModalSwitchScopeToggleAndSaveGlobal(t *testing.T) {
 	m.globalHarnesses = []string{"factory"}
 	m.openHarnessModal()
 
-	mi, cmd := m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	mi, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyDown})
 	m = mi.(Model)
 	if cmd != nil {
 		t.Fatalf("moving cursor should not emit command")
 	}
-	mi, cmd = m.Update(tea.KeyMsg{Type: tea.KeySpace})
+	mi, cmd = m.Update(tea.KeyPressMsg{Code: tea.KeySpace})
 	m = mi.(Model)
 	if cmd != nil {
 		t.Fatalf("toggling harness should not emit command")
 	}
-	mi, cmd = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	mi, cmd = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = mi.(Model)
 	if cmd == nil {
 		t.Fatalf("saving global harnesses should emit command")
@@ -269,11 +278,8 @@ func TestHarnessModalSwitchScopeToggleAndSaveGlobal(t *testing.T) {
 	}
 }
 
-// TestHarnessModalSavesGlobalHarnessesToV4Config pins the v4.writer-opt-in
-// regression in the TUI harness modal: after init or the startup migration
-// prompt converts ~/.agents/config.yaml to v4, saving from the harness
-// modal must edit the v4 root instead of failing with "legacy config
-// writers do not edit v4 files".
+// TestHarnessModalSavesGlobalHarnessesToV4Config pins that the harness modal
+// edits the v4 root without losing its existing source/resource selections.
 func TestHarnessModalSavesGlobalHarnessesToV4Config(t *testing.T) {
 	tmpHome := t.TempDir()
 	t.Setenv("HOME", tmpHome)
@@ -289,17 +295,17 @@ func TestHarnessModalSavesGlobalHarnessesToV4Config(t *testing.T) {
 	m.globalHarnesses = []string{"factory"}
 	m.openHarnessModal()
 
-	mi, cmd := m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	mi, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyDown})
 	m = mi.(Model)
 	if cmd != nil {
 		t.Fatalf("moving cursor should not emit command")
 	}
-	mi, cmd = m.Update(tea.KeyMsg{Type: tea.KeySpace})
+	mi, cmd = m.Update(tea.KeyPressMsg{Code: tea.KeySpace})
 	m = mi.(Model)
 	if cmd != nil {
 		t.Fatalf("toggling harness should not emit command")
 	}
-	mi, cmd = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	mi, cmd = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = mi.(Model)
 	if cmd == nil {
 		t.Fatalf("saving harnesses should emit command")
@@ -326,4 +332,127 @@ func TestHarnessModalSavesGlobalHarnessesToV4Config(t *testing.T) {
 	if len(cfg.Registries) != 1 || len(cfg.Registries[0].Skills.Include) == 0 || cfg.Registries[0].Skills.Include[0] != "review" {
 		t.Fatalf("expected v4 sources preserved after harness save, got %#v", cfg.Registries)
 	}
+}
+
+// spec: tui-interactions/harness-options-return-after-compact-resize
+func TestHarnessDialogsRestoreAllOptionsAfterCompactResize(t *testing.T) {
+	type dialog struct {
+		name     string
+		pane     pane
+		open     func(*Model)
+		ids      func(Model) []string
+		selected func(Model) map[string]bool
+		cursor   func(Model) int
+		hovered  func(Model) string
+	}
+	selectedIDs := []string{"factory", "mystery-00", "mystery-01", "mystery-02", "mystery-03", "mystery-04", "mystery-05", "mystery-06", "mystery-07"}
+	selected := make(map[string]bool, len(selectedIDs))
+	for _, id := range selectedIDs {
+		selected[id] = true
+	}
+	dialogs := []dialog{
+		{
+			name: "targets",
+			pane: paneHarnessModal,
+			open: func(m *Model) {
+				m.globalHarnesses = append([]string(nil), selectedIDs...)
+				m.openHarnessModal()
+			},
+			ids: func(m Model) []string { return m.harnessModal.optionIDs },
+			selected: func(m Model) map[string]bool {
+				return m.harnessModal.selected
+			},
+			cursor: func(m Model) int { return m.harnessModal.cursor },
+			hovered: func(m Model) string {
+				id, _ := m.harnessModal.multi.Hovered()
+				return id
+			},
+		},
+		{
+			name: "initialization",
+			pane: paneInitModal,
+			open: func(m *Model) {
+				m.initModal = initModalState{selected: harnessSelection(selectedIDs), detected: true}
+				m.ensureInitForm()
+			},
+			ids: func(m Model) []string { return m.initModal.optionIDs },
+			selected: func(m Model) map[string]bool {
+				return m.initModal.selected
+			},
+			cursor: func(m Model) int { return m.initModal.cursor },
+			hovered: func(m Model) string {
+				id, _ := m.initModal.multi.Hovered()
+				return id
+			},
+		},
+	}
+
+	for _, dialog := range dialogs {
+		t.Run(dialog.name, func(t *testing.T) {
+			m := NewModel(t.TempDir(), t.TempDir())
+			m.loading = false
+			m.width, m.height = 80, 30
+			m.pane = dialog.pane
+			dialog.open(&m)
+			ids := dialog.ids(m)
+			if len(ids) < 2 {
+				t.Fatalf("option fixture = %v, want multiple choices", ids)
+			}
+			for range len(ids) - 1 {
+				updated, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyDown})
+				m = updated.(Model)
+			}
+			lastSelected := selectedIDs[len(selectedIDs)-1]
+			if got := dialog.cursor(m); got != len(ids)-1 || dialog.hovered(m) != lastSelected {
+				t.Fatalf("initial cursor=%d hovered=%q, want selected unknown option %q at %d", got, dialog.hovered(m), lastSelected, len(ids)-1)
+			}
+			if !reflect.DeepEqual(dialog.selected(m), selected) {
+				t.Fatalf("initial selected IDs = %#v, want %#v", dialog.selected(m), selected)
+			}
+
+			fullView := ansi.Strip(m.viewContent())
+			assertHarnessOptionsVisible(t, fullView, ids)
+			cursorBefore, hoveredBefore := dialog.cursor(m), dialog.hovered(m)
+			updated, _ := m.Update(tea.WindowSizeMsg{Width: 50, Height: 12})
+			m = updated.(Model)
+			compactView := ansi.Strip(m.viewContent())
+			if visible := visibleHarnessOptionCount(compactView, ids); visible >= len(ids) {
+				t.Fatalf("compact layout displayed all %d choices in 50x12", visible)
+			}
+			updated, _ = m.Update(tea.WindowSizeMsg{Width: 80, Height: 30})
+			m = updated.(Model)
+			_ = m.viewContent()
+			updated, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyDown})
+			m = updated.(Model)
+			if cmd != nil {
+				t.Fatalf("no-op navigation at the last choice emitted a command: %v", cmd)
+			}
+			fullView = ansi.Strip(m.viewContent())
+			assertHarnessOptionsVisible(t, fullView, ids)
+			if !reflect.DeepEqual(dialog.selected(m), selected) || dialog.cursor(m) != cursorBefore || dialog.hovered(m) != hoveredBefore {
+				t.Fatalf("resize changed selected IDs=%#v cursor=%d hovered=%q", dialog.selected(m), dialog.cursor(m), dialog.hovered(m))
+			}
+		})
+	}
+}
+
+func assertHarnessOptionsVisible(t *testing.T, view string, ids []string) {
+	t.Helper()
+	if visible := visibleHarnessOptionCount(view, ids); visible != len(ids) {
+		t.Fatalf("visible harness choices = %d, want %d:\n%s", visible, len(ids), view)
+	}
+}
+
+func visibleHarnessOptionCount(view string, ids []string) int {
+	lines := strings.Split(view, "\n")
+	visible := 0
+	for _, id := range ids {
+		for _, line := range lines {
+			if strings.Contains(line, id) && (strings.Contains(line, "[ ]") || strings.Contains(line, "[x]") || strings.Contains(line, "[•]")) {
+				visible++
+				break
+			}
+		}
+	}
+	return visible
 }

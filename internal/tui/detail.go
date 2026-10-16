@@ -1,9 +1,9 @@
 package tui
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"io/fs"
 	"log/slog"
 	"os"
@@ -11,14 +11,15 @@ import (
 	"sort"
 	"strings"
 	"sync"
-	"syscall"
 
+	tea "charm.land/bubbletea/v2"
+	"charm.land/glamour/v2"
+	"charm.land/lipgloss/v2"
+	"charm.land/lipgloss/v2/compat"
+	ltable "charm.land/lipgloss/v2/table"
 	"github.com/Adyen/agent-marketplace/internal/skill"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 	mpapi "github.com/Adyen/agent-marketplace/pkg/marketplace/api"
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/glamour"
-	"github.com/charmbracelet/lipgloss"
 )
 
 // maxCachedRenderers bounds the width-keyed renderer cache. Terminal resize
@@ -35,17 +36,24 @@ const maxCachedRenderers = 8
 // maxCachedRenderers. The mutex guards the map, the recency order, and the
 // Render call itself: goldmark/glamour do not document a renderer as safe
 // for concurrent use, and detail loads run on background tea.Cmd goroutines.
+// rendererKey identifies one cached renderer by the background it renders
+// for and its word-wrap width, so models reporting different backgrounds
+// keep independent entries in the shared cache.
+type rendererKey struct {
+	dark  bool
+	width int
+}
+
 type markdownRendererCache struct {
 	mu          sync.Mutex
-	style       string
 	initialized bool
-	renderers   map[int]*glamour.TermRenderer
-	lru         []int // widths in oldest → most-recently-used order
+	renderers   map[rendererKey]*glamour.TermRenderer
+	lru         []rendererKey // keys in oldest → most-recently-used order
 }
 
 // cachedRenderers is the production renderer cache, initialised at startup
 // (before bubbletea enters alt-screen) by initRenderer.
-var cachedRenderers = &markdownRendererCache{renderers: make(map[int]*glamour.TermRenderer)}
+var cachedRenderers = &markdownRendererCache{renderers: make(map[rendererKey]*glamour.TermRenderer)}
 
 // initRenderer seeds the process-level renderer cache exactly once. Bubble
 // Tea initializes and caches Lip Gloss's terminal detection before acquiring
@@ -63,37 +71,38 @@ func (c *markdownRendererCache) init() {
 		return
 	}
 	c.initialized = true
-	c.style = "light"
-	if lipgloss.HasDarkBackground() {
-		c.style = "dark"
+	style := "light"
+	if compat.HasDarkBackground {
+		style = "dark"
 	}
-	r, err := glamour.NewTermRenderer(glamour.WithStandardStyle(c.style))
+	r, err := glamour.NewTermRenderer(glamour.WithStandardStyle(style))
 	if err != nil {
 		// Fall back to dark style; better than crashing.
 		r, err = glamour.NewTermRenderer(glamour.WithStandardStyle("dark"))
 		if err != nil {
 			return
 		}
-		c.style = "dark"
 	}
 	// Width 0 is the default-wrap renderer (glamour's built-in 80 columns),
 	// kept for ad-hoc callers that render without a viewport width.
-	c.renderers[0] = r
-	c.lru = append(c.lru, 0)
+	key := rendererKey{dark: compat.HasDarkBackground, width: 0}
+	c.renderers[key] = r
+	c.lru = append(c.lru, key)
 }
 
-// render formats content at the given word-wrap width, creating and caching
-// the per-width renderer on first use. The lock is held across Render so a
-// cached renderer is never used concurrently. The width is marked most
-// recently used; creating a renderer past maxCachedRenderers evicts the least
-// recently used width.
-func (c *markdownRendererCache) render(content string, width int) (string, error) {
+// render formats content for the given background at the given word-wrap
+// width, creating and caching the per-(background, width) renderer on first
+// use. The lock is held across Render so a cached renderer is never used
+// concurrently. The key is marked most recently used; creating a renderer
+// past maxCachedRenderers evicts the least recently used one.
+func (c *markdownRendererCache) render(content string, dark bool, width int) (string, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	r, ok := c.renderers[width]
+	key := rendererKey{dark: dark, width: width}
+	r, ok := c.renderers[key]
 	if !ok {
-		style := c.style
-		if style == "" {
+		style := "light"
+		if dark {
 			style = "dark"
 		}
 		options := []glamour.TermRendererOption{glamour.WithStandardStyle(style)}
@@ -105,27 +114,55 @@ func (c *markdownRendererCache) render(content string, width int) (string, error
 		if err != nil {
 			return "", err
 		}
-		c.renderers[width] = r
+		c.renderers[key] = r
 	}
-	c.touch(width)
+	c.touch(key)
 	return r.Render(content)
 }
 
-// touch records width as most recently used, evicting the least recently used
+// touch records key as most recently used, evicting the least recently used
 // renderer when the cache exceeds maxCachedRenderers. Caller holds the lock.
-func (c *markdownRendererCache) touch(width int) {
+func (c *markdownRendererCache) touch(key rendererKey) {
 	kept := c.lru[:0]
-	for _, w := range c.lru {
-		if w != width {
-			kept = append(kept, w)
+	for _, k := range c.lru {
+		if k != key {
+			kept = append(kept, k)
 		}
 	}
-	c.lru = append(kept, width)
+	c.lru = append(kept, key)
 	for len(c.lru) > maxCachedRenderers {
 		evict := c.lru[0]
 		c.lru = c.lru[1:]
 		delete(c.renderers, evict)
 	}
+}
+
+// keyValueTable renders aligned label/value detail fields through the
+// native Lip Gloss table: labels keep the accent style, values the text
+// style, and the table owns column alignment.
+func keyValueTable(t theme, pairs [][2]string) string {
+	rows := make([][]string, 0, len(pairs))
+	for _, pair := range pairs {
+		rows = append(rows, []string{pair[0], pair[1]})
+	}
+	// Cells are single-line sanitized values in an unconstrained table, so
+	// wrapping can never produce extra lines; disabling it skips the
+	// per-cell wrap writer while rendering identical output.
+	valueStyle := textStyle(t)
+	return ltable.New().
+		Border(lipgloss.Border{}).
+		BorderTop(false).BorderBottom(false).BorderLeft(false).BorderRight(false).
+		BorderHeader(false).BorderColumn(false).BorderRow(false).
+		Wrap(false).
+		StyleFunc(func(row, col int) lipgloss.Style {
+			if col == 0 {
+				// The gap keeps the longest label from touching its value.
+				return styleDetailLabel.PaddingRight(1)
+			}
+			return valueStyle
+		}).
+		Rows(rows...).
+		String()
 }
 
 func renderDetail(m Model) string {
@@ -134,9 +171,8 @@ func renderDetail(m Model) string {
 		// Cursor is on a section header (or out of range). The detail
 		// pane has no skill to describe; show a short hint instead of
 		// leaking an unrelated filteredRows entry.
-		hintStyle := lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#666666", Dark: "#888888"})
 		if _, onSection := m.selectedSectionPath(); onSection {
-			return hintStyle.Render("Select a resource to see details")
+			return styleDim.Render("Select a resource to see details")
 		}
 		return ""
 	}
@@ -150,26 +186,28 @@ func renderDetail(m Model) string {
 	var b strings.Builder
 	safe := func(value string) string { return sanitizeTerminalData(value, terminalSingleLine) }
 
-	label := styleDetailLabel.Render
-	value := styleDetailValue.Render
-	lineStyle := lipgloss.NewStyle().Width(contentWidth)
+	value := textStyle(m.currentTheme()).Render
+	// The enclosing detail box already wraps at contentWidth and pads every
+	// line to the pane width, so bare lines here render identically without
+	// a second wrap/pad pass.
 	writeLine := func(line string) {
-		b.WriteString(lineStyle.Render(line))
+		b.WriteString(line)
 		b.WriteString("\n")
 	}
 
-	writeLine(label("Kind:     ") + value(skill.KindLabel(r.Artifact.Kind)))
-	writeLine(label("Name:     ") + value(safe(r.Artifact.Name)))
-
+	fields := [][2]string{
+		{"Kind:", skill.KindLabel(r.Artifact.Kind)},
+		{"Name:", safe(r.Artifact.Name)},
+	}
 	if !r.IsMalformed {
 		if r.Artifact.RegistryURL != "" {
-			writeLine(label("Registry: ") + value(safe(r.Artifact.RegistryURL)))
+			fields = append(fields, [2]string{"Registry:", safe(r.Artifact.RegistryURL)})
 		}
 		if r.Artifact.Ref != "" {
-			writeLine(label("Ref:      ") + value(safe(r.Artifact.Ref)))
+			fields = append(fields, [2]string{"Ref:", safe(r.Artifact.Ref)})
 		}
 		if len(r.Artifact.Tags) > 0 {
-			writeLine(label("Tags:     ") + value(safe(strings.Join(r.Artifact.Tags, ", "))))
+			fields = append(fields, [2]string{"Tags:", safe(strings.Join(r.Artifact.Tags, ", "))})
 		}
 		if len(r.Harnesses) > 0 {
 			harnessLabel := "Targets:"
@@ -180,22 +218,24 @@ func renderDetail(m Model) string {
 			if r.HarnessSource != "" {
 				harnessValue += " (" + r.HarnessSource + ")"
 			}
-			writeLine(label(fmt.Sprintf("%-9s", harnessLabel)) + value(safe(harnessValue)))
+			fields = append(fields, [2]string{harnessLabel, safe(harnessValue)})
 		}
 	}
-
-	writeLine(label("Status:   ") + value(safe(r.StatusText())))
+	fields = append(fields, [2]string{"Status:", safe(r.StatusText())})
 	if discovery := r.MarketplaceDiscovery; discovery != nil {
-		writeLine(label("Marketplace: ") + value(safe(marketplaceEndpointDisplay(discovery.Endpoint))))
-		writeLine(label("Registry:    ") + value(safe(discovery.Item.RegistrySlug+" ("+discovery.Item.RegistryID+")")))
-		writeLine(label("Revision:    ") + value(safe(discovery.Item.Revision)))
-		writeLine(label("Digest:      ") + value(safe(discovery.Item.ContentDigest)))
-		writeLine(label("Metadata:    ") + value("discovery only; verified during install"))
+		fields = append(fields,
+			[2]string{"Marketplace:", safe(marketplaceEndpointDisplay(discovery.Endpoint))},
+			[2]string{"Registry:", safe(discovery.Item.RegistrySlug + " (" + discovery.Item.RegistryID + ")")},
+			[2]string{"Revision:", safe(discovery.Item.Revision)},
+			[2]string{"Digest:", safe(discovery.Item.ContentDigest)},
+			[2]string{"Metadata:", "discovery only; verified during install"},
+		)
 	}
-
 	if r.Artifact.Path != "" {
-		writeLine(label("Source:   ") + value(safe(r.Artifact.Path)))
+		fields = append(fields, [2]string{"Source:", safe(r.Artifact.Path)})
 	}
+	b.WriteString(keyValueTable(m.currentTheme(), fields))
+	b.WriteString("\n")
 
 	if r.Artifact.Description != "" {
 		b.WriteString("\n")
@@ -210,12 +250,11 @@ func renderDetail(m Model) string {
 
 	// Hint line
 	b.WriteString("\n")
-	hintStyle := lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#666666", Dark: "#888888"})
 	hint := "enter = full view"
 	if !r.IsAvailable && !r.IsMalformed {
 		hint = "space = toggle · enter = full view"
 	}
-	b.WriteString(lineStyle.Render(hintStyle.Render(hint)))
+	b.WriteString(styleDim.Render(hint))
 
 	return b.String()
 }
@@ -225,7 +264,7 @@ func renderDetailFull(m Model) string {
 	if !ok {
 		return "No resource selected"
 	}
-	return renderDetailFullContent(r, m.width)
+	return renderDetailFullContent(m.currentTheme(), r, m.width)
 }
 
 // Bounds for the full detail view, all documented in
@@ -266,8 +305,8 @@ type detailCaptureBudget struct {
 	entries int
 }
 
-func captureDetailSource(path string) *detailSourceSnapshot {
-	return captureDetailSourceLimit(path, maxDetailSourceBytes, detailTruncationMarker)
+func captureDetailSource(path string, readTargetWith ...previewTargetRead) *detailSourceSnapshot {
+	return captureDetailSourceLimit(path, maxDetailSourceBytes, detailTruncationMarker, readTargetWith...)
 }
 
 func (b *detailCaptureBudget) capture(path string) *detailSourceSnapshot {
@@ -286,8 +325,8 @@ func (b *detailCaptureBudget) capture(path string) *detailSourceSnapshot {
 	return snapshot
 }
 
-func captureDetailSourceLimit(path string, limit int, marker string) *detailSourceSnapshot {
-	content, truncated, err := readDetailSourceLimit(path, limit)
+func captureDetailSourceLimit(path string, limit int, marker string, readTargetWith ...previewTargetRead) *detailSourceSnapshot {
+	content, truncated, err := readDetailSourceLimit(path, limit, readTargetWith...)
 	if !truncated {
 		marker = ""
 	}
@@ -309,7 +348,7 @@ func attachDetailSources(rows []row, byPath map[string]*detailSourceSnapshot) {
 // For JSON files (hooks, MCP servers), the content is pretty-printed and
 // wrapped in a markdown code block before being rendered through glamour,
 // so it displays with syntax highlighting instead of a raw minified blob.
-func renderDetailFullContent(r row, width int) string {
+func renderDetailFullContent(t theme, r row, width int) string {
 	if r.UnavailableReason != "" {
 		return "Resource unavailable: " + sanitizeTerminalData(r.UnavailableReason, terminalSingleLine) +
 			"\n\nNo verified content is available. Press space to change this selection."
@@ -319,14 +358,14 @@ func renderDetailFullContent(r row, width int) string {
 		// Discovery-only rows render bounded index metadata; installed rows
 		// render their verified canonical artifact archive.
 		if isMarketplaceDetailOnly(r) {
-			return renderMarketplaceDetailContent(r)
+			return renderMarketplaceDetailContent(t, r)
 		}
 		if isMarketplaceArtifactPath(r.Artifact.Path) {
 			tree, err := newMarketplaceArtifactTree(r.Artifact.Path)
 			if err != nil {
 				return "Error reading resource: " + sanitizeTerminalData(err.Error(), terminalSingleLine)
 			}
-			return renderBundleEntry(tree, tree.selectedPath(), width)
+			return renderBundleEntry(context.Background(), t, tree, tree.selectedPath(), width)
 		}
 	}
 	if r.Artifact.Kind == ir.KindSkill && r.Artifact.Path != "" && r.DetailSource == nil {
@@ -366,7 +405,7 @@ func renderDetailFullContent(r row, width int) string {
 		}
 
 		content := bundle.String()
-		rendered, err := renderMarkdownAtWidth(content, width)
+		rendered, err := renderMarkdownAtWidth(content, t.dark, width)
 		if err != nil {
 			if len(sources) == 1 && isJSONPath(sources[0].name) {
 				// If glamour fails on the code block, return the pretty-printed
@@ -396,7 +435,7 @@ func renderDetailFullContent(r row, width int) string {
 	if r.DetailSource.json {
 		formatted, fmtErr := formatJSONContent(content)
 		if fmtErr == nil {
-			rendered, renderErr := renderMarkdownAtWidth(formatted, width)
+			rendered, renderErr := renderMarkdownAtWidth(formatted, t.dark, width)
 			if renderErr == nil {
 				return boundRenderedDetail(rendered)
 			}
@@ -405,7 +444,7 @@ func renderDetailFullContent(r row, width int) string {
 	}
 
 	prepared := prepareDetailSource(filepath.Base(r.Artifact.Path), content)
-	rendered, err := renderMarkdownAtWidth(prepared, width)
+	rendered, err := renderMarkdownAtWidth(prepared, t.dark, width)
 	if err != nil {
 		return boundRenderedDetail(prepared)
 	}
@@ -505,24 +544,12 @@ func readDetailSource(path string) (content string, truncated bool, err error) {
 	return readDetailSourceLimit(path, maxDetailSourceBytes)
 }
 
-func readDetailSourceLimit(path string, limit int) (content string, truncated bool, err error) {
+func readDetailSourceLimit(path string, limit int, readTargetWith ...previewTargetRead) (content string, truncated bool, err error) {
 	target := path
 	if info, statErr := os.Lstat(path); statErr == nil && info.IsDir() {
 		target = filepath.Join(path, "SKILL.md")
 	}
-	f, err := os.OpenFile(target, os.O_RDONLY|syscall.O_NOFOLLOW, 0)
-	if err != nil {
-		return "", false, err
-	}
-	defer func() { _ = f.Close() }()
-	info, err := f.Stat()
-	if err != nil {
-		return "", false, err
-	}
-	if !info.Mode().IsRegular() {
-		return "", false, fmt.Errorf("source is not a regular file")
-	}
-	data, err := io.ReadAll(io.LimitReader(f, int64(limit)+1))
+	data, err := readPreviewSource(filepath.Dir(target), target, limit, readTargetWith...)
 	if err != nil {
 		return "", false, err
 	}
@@ -603,33 +630,35 @@ func isJSONPath(path string) bool {
 // results and installed pins whose verified content is unavailable. It shows
 // index metadata only — never fabricated source content and no network or
 // filesystem lookup — and ends with an actionable next step.
-func renderMarketplaceDetailContent(r row) string {
+func renderMarketplaceDetailContent(t theme, r row) string {
 	safe := func(value string) string { return sanitizeTerminalData(value, terminalSingleLine) }
-	label := styleDetailLabel.Render
-	value := styleDetailValue.Render
+	value := textStyle(t).Render
 	var b strings.Builder
-	writeField := func(l, v string) {
-		b.WriteString(label(l) + value(v) + "\n")
+	fields := [][2]string{
+		{"Kind:", skill.KindLabel(r.Artifact.Kind)},
+		{"Name:", safe(r.Artifact.Name)},
+		{"Status:", safe(r.StatusText())},
 	}
-	writeField("Kind:     ", skill.KindLabel(r.Artifact.Kind))
-	writeField("Name:     ", safe(r.Artifact.Name))
-	writeField("Status:   ", safe(r.StatusText()))
 	if r.Artifact.RegistryURL != "" {
-		writeField("Registry: ", safe(r.Artifact.RegistryURL))
+		fields = append(fields, [2]string{"Registry:", safe(r.Artifact.RegistryURL)})
 	}
 	if r.Artifact.Ref != "" {
-		writeField("Ref:      ", safe(r.Artifact.Ref))
+		fields = append(fields, [2]string{"Ref:", safe(r.Artifact.Ref)})
 	}
 	if d := r.MarketplaceDiscovery; d != nil {
-		writeField("Marketplace: ", safe(marketplaceEndpointDisplay(d.Endpoint)))
-		writeField("Registry:    ", safe(d.Item.RegistrySlug+" ("+d.Item.RegistryID+")"))
+		fields = append(fields,
+			[2]string{"Marketplace:", safe(marketplaceEndpointDisplay(d.Endpoint))},
+			[2]string{"Registry:", safe(d.Item.RegistrySlug + " (" + d.Item.RegistryID + ")")},
+		)
 		if d.Item.Revision != "" {
-			writeField("Revision:    ", safe(d.Item.Revision))
+			fields = append(fields, [2]string{"Revision:", safe(d.Item.Revision)})
 		}
 		if d.Item.ContentDigest != "" {
-			writeField("Digest:      ", safe(d.Item.ContentDigest))
+			fields = append(fields, [2]string{"Digest:", safe(d.Item.ContentDigest)})
 		}
 	}
+	b.WriteString(keyValueTable(t, fields))
+	b.WriteString("\n")
 	if r.Artifact.Description != "" {
 		b.WriteString("\n" + value(safe(r.Artifact.Description)) + "\n")
 	}
@@ -650,51 +679,45 @@ func renderMarketplaceDetailContent(r row) string {
 // renderBundleEntry renders one selected bundle member. Archive-backed trees
 // serve bounded verified in-memory content; filesystem trees keep the
 // descriptor-based no-follow preview path.
-func renderBundleEntry(t *bundleTree, relative string, width int) string {
-	if t == nil {
+func renderBundleEntry(ctx context.Context, t theme, tr *bundleTree, relative string, width int) string {
+	if tr == nil {
 		return "Error reading file: no bundle content available"
 	}
-	if t.files != nil {
-		data, ok := t.files[relative]
+	if tr.files != nil {
+		data, ok := tr.files[relative]
 		if !ok {
+			if tr.inspection != nil {
+				return tr.inspection.renderFile(ctx, t.dark, relative, width)
+			}
 			return "Error reading file: archive member is not available"
 		}
-		return renderBundleContent(relative, data, len(data) > maxDetailSourceBytes, width)
+		return renderBundleContent(t.dark, relative, data, len(data) > maxDetailSourceBytes, width)
 	}
-	return renderBundleFile(t.root, relative, width)
+	if data, ok := tr.virtual[relative]; ok {
+		return renderBundleContent(t.dark, relative, data, len(data) > maxDetailSourceBytes, width)
+	}
+	return renderBundleFile(t.dark, tr.root, relative, width)
 }
 
 // renderBundleFile reads exactly one selected bundle file. The relative path
 // is validated before joining and the final descriptor is opened without
 // following symlinks, keeping an enumeration/read race inside the resource
 // root and the regular-file-only preview contract.
-func renderBundleFile(root, relative string, width int) string {
+func renderBundleFile(dark bool, root, relative string, width int, readTargetWith ...previewTargetRead) string {
 	path, err := safeBundlePath(root, relative)
 	if err != nil {
 		return "Error reading file: " + sanitizeTerminalData(err.Error(), terminalSingleLine)
 	}
-	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW, 0)
+	data, err := readPreviewSource(root, path, maxDetailSourceBytes, readTargetWith...)
 	if err != nil {
 		return "Error reading file: " + sanitizeTerminalData(err.Error(), terminalSingleLine)
 	}
-	defer func() { _ = f.Close() }()
-	info, err := f.Stat()
-	if err != nil {
-		return "Error reading file: " + sanitizeTerminalData(err.Error(), terminalSingleLine)
-	}
-	if !info.Mode().IsRegular() {
-		return "Error reading file: source is not a regular file"
-	}
-	data, err := io.ReadAll(io.LimitReader(f, maxDetailSourceBytes+1))
-	if err != nil {
-		return "Error reading file: " + sanitizeTerminalData(err.Error(), terminalSingleLine)
-	}
-	return renderBundleContent(relative, data, len(data) > maxDetailSourceBytes, width)
+	return renderBundleContent(dark, relative, data, len(data) > maxDetailSourceBytes, width)
 }
 
 // renderBundleContent applies the shared sanitization, per-file truncation
 // marker, and bounded glamour rendering for one bundle member's bytes.
-func renderBundleContent(relative string, data []byte, truncated bool, width int) string {
+func renderBundleContent(dark bool, relative string, data []byte, truncated bool, width int) string {
 	if truncated {
 		data = data[:maxDetailSourceBytes]
 	}
@@ -703,7 +726,7 @@ func renderBundleContent(relative string, data []byte, truncated bool, width int
 		content += "\n\n> " + detailTruncationMarker + "\n"
 		slog.Info("tui bundle preview source truncated", "path", relative, "limit_bytes", maxDetailSourceBytes)
 	}
-	rendered, err := renderMarkdownAtWidth(content, width)
+	rendered, err := renderMarkdownAtWidth(content, dark, width)
 	if err != nil {
 		return boundRenderedDetail(content)
 	}
@@ -746,11 +769,11 @@ func safeBundlePath(root, relative string) (string, error) {
 }
 
 // loadBundleDetailContent is the asynchronous selected-file preview path.
-func loadBundleDetailContent(bundle *bundleTree, relative string, generation requestGeneration, width int, keepScroll bool) tea.Cmd {
+func loadBundleDetailContent(ctx context.Context, t theme, bundle *bundleTree, relative string, generation requestGeneration, width int, keepScroll bool) tea.Cmd {
 	return func() tea.Msg {
 		return detailContentMsg{
 			generation: generation,
-			content:    renderBundleEntry(bundle, relative, width),
+			content:    renderBundleEntry(ctx, t, bundle, relative, width),
 			width:      width,
 			keepScroll: keepScroll,
 			path:       relative,
@@ -777,15 +800,15 @@ func formatJSONContent(raw string) (string, error) {
 // renderMarkdown renders markdown content using the process-level cached
 // glamour renderer at the default wrap width (glamour's built-in 80 columns).
 func renderMarkdown(content string) (string, error) {
-	return renderMarkdownAtWidth(content, 0)
+	return renderMarkdownAtWidth(content, compat.HasDarkBackground, 0)
 }
 
 // renderMarkdownAtWidth renders markdown content word-wrapped at width via
 // the concurrency-safe, width-keyed production renderer cache. Width <= 0
 // selects the default-wrap renderer. The content is sanitized after entity
 // decoding but before the renderer emits trusted ANSI.
-func renderMarkdownAtWidth(content string, width int) (string, error) {
-	return cachedRenderers.render(sanitizeMarkdownForTerminal(content), width)
+func renderMarkdownAtWidth(content string, dark bool, width int) (string, error) {
+	return cachedRenderers.render(sanitizeMarkdownForTerminal(content), dark, width)
 }
 
 // renderMarkdownWithStyle renders markdown with an explicit glamour style.

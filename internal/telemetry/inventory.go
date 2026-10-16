@@ -7,6 +7,7 @@ import (
 	"unicode/utf8"
 
 	tmcfg "github.com/Adyen/agent-marketplace/internal/telemetry/config"
+	"github.com/Adyen/agent-marketplace/pkg/marketplace/nameutil"
 
 	otelmetric "go.opentelemetry.io/otel/metric"
 )
@@ -25,19 +26,23 @@ type InventorySnapshot struct {
 // InventoryRegistry is the telemetry-safe identity and configuration metadata
 // for one registry in an InventorySnapshot.
 type InventoryRegistry struct {
-	ID          string
-	Location    string
-	Path        string
-	Ref         string
-	ConfigScope string
-	Required    bool
-	Default     bool
+	ID            string
+	SourceKind    string `json:",omitempty"`
+	MarketplaceID string `json:",omitempty"`
+	Location      string
+	Path          string
+	Ref           string
+	ConfigScope   string
+	Required      bool
+	Default       bool
 }
 
 // InventoryResource is the telemetry-safe identity and effective source
 // metadata for one enabled resource in an InventorySnapshot.
 type InventoryResource struct {
 	RegistryID       string
+	SourceKind       string `json:",omitempty"`
+	MarketplaceID    string `json:",omitempty"`
 	RegistryLocation string
 	RegistryPath     string
 	RegistryRef      string
@@ -50,6 +55,8 @@ type InventoryResource struct {
 // InventoryOmissionReason is one of the bounded reasons an inventory
 // observation was not exported.
 type InventoryOmissionReason string
+
+const InventorySourceMarketplace = "marketplace"
 
 const (
 	MaxInventoryRegistries     = 1_000
@@ -80,13 +87,53 @@ func InventorySnapshotOmissionReason(snapshot InventorySnapshot) InventoryOmissi
 		return reason
 	}
 	for _, registry := range snapshot.Registries {
-		if reason := inventoryAttributeOmissionReason(registry.ID, registry.Location, registry.Path, registry.Ref, registry.ConfigScope); reason != "" {
+		if reason := inventoryAttributeOmissionReason(registry.ID, registry.Location, registry.Path, registry.Ref, registry.ConfigScope, registry.SourceKind, registry.MarketplaceID); reason != "" {
+			return reason
+		}
+		if reason := validateInventorySourceIdentity(registry.SourceKind, registry.MarketplaceID, registry.ID, "", true); reason != "" {
 			return reason
 		}
 	}
 	for _, resource := range snapshot.Resources {
-		if reason := inventoryAttributeOmissionReason(resource.RegistryID, resource.RegistryLocation, resource.RegistryPath, resource.RegistryRef, resource.Kind, resource.Name, resource.ConfigScope); reason != "" {
+		if reason := inventoryAttributeOmissionReason(resource.RegistryID, resource.RegistryLocation, resource.RegistryPath, resource.RegistryRef, resource.Kind, resource.Name, resource.ConfigScope, resource.SourceKind, resource.MarketplaceID); reason != "" {
 			return reason
+		}
+		if reason := ValidateInventorySourceIdentity(resource.SourceKind, resource.MarketplaceID, resource.RegistryID, resource.Name); reason != "" {
+			return reason
+		}
+	}
+	return ""
+}
+
+func ValidateInventorySourceIdentity(sourceKind, marketplaceID, registryID, resourceName string) InventoryOmissionReason {
+	return validateInventorySourceIdentity(sourceKind, marketplaceID, registryID, resourceName, false)
+}
+
+func validateInventorySourceIdentity(sourceKind, marketplaceID, registryID, resourceName string, registry bool) InventoryOmissionReason {
+	if reason := inventoryAttributeOmissionReason(sourceKind, marketplaceID); reason != "" {
+		return reason
+	}
+	if sourceKind == "" {
+		if marketplaceID != "" {
+			return InventoryOmissionInvalid
+		}
+		return ""
+	}
+	if sourceKind != InventorySourceMarketplace || marketplaceID == "" || registryID == "" || (!registry && resourceName == "") {
+		return InventoryOmissionInvalid
+	}
+	if reason := inventoryAttributeOmissionReason(registryID, resourceName); reason != "" {
+		return reason
+	}
+	if err := nameutil.ValidateSegment(marketplaceID); err != nil {
+		return InventoryOmissionInvalid
+	}
+	if err := nameutil.ValidateSegment(registryID); err != nil {
+		return InventoryOmissionInvalid
+	}
+	if !registry {
+		if err := nameutil.ValidateSegment(resourceName); err != nil {
+			return InventoryOmissionInvalid
 		}
 	}
 	return ""
@@ -296,7 +343,7 @@ func (t *Telemetry) recordInventoryObservation(ctx context.Context, observation 
 	}, inventorySnapshotAllowed)
 
 	for _, registry := range snapshot.Registries {
-		recordGauge(ctx, t.inventoryRegistryGauge, 1, map[string]string{
+		attrs := map[string]string{
 			string(tmcfg.MetricAttrConfigFingerprint): snapshot.Fingerprint,
 			string(tmcfg.MetricAttrRegistryID):        registry.ID,
 			string(tmcfg.MetricAttrRegistryLocation):  registry.Location,
@@ -305,10 +352,15 @@ func (t *Telemetry) recordInventoryObservation(ctx context.Context, observation 
 			string(tmcfg.MetricAttrConfigScope):       registry.ConfigScope,
 			string(tmcfg.MetricAttrRegistryRequired):  strconv.FormatBool(registry.Required),
 			string(tmcfg.MetricAttrRegistryDefault):   strconv.FormatBool(registry.Default),
-		}, inventoryRegistryAllowed)
+		}
+		if registry.SourceKind != "" {
+			attrs[string(tmcfg.MetricAttrSourceKind)] = registry.SourceKind
+			attrs[string(tmcfg.MetricAttrMarketplaceID)] = registry.MarketplaceID
+		}
+		recordGauge(ctx, t.inventoryRegistryGauge, 1, attrs, inventoryRegistryAllowed)
 	}
 	for _, resource := range snapshot.Resources {
-		recordGauge(ctx, t.inventoryResourceGauge, 1, map[string]string{
+		attrs := map[string]string{
 			string(tmcfg.MetricAttrConfigFingerprint): snapshot.Fingerprint,
 			string(tmcfg.MetricAttrRegistryID):        resource.RegistryID,
 			string(tmcfg.MetricAttrRegistryLocation):  resource.RegistryLocation,
@@ -318,7 +370,12 @@ func (t *Telemetry) recordInventoryObservation(ctx context.Context, observation 
 			string(tmcfg.MetricAttrResourceName):      resource.Name,
 			string(tmcfg.MetricAttrConfigScope):       resource.ConfigScope,
 			string(tmcfg.MetricAttrResourceRequired):  strconv.FormatBool(resource.Required),
-		}, inventoryResourceAllowed)
+		}
+		if resource.SourceKind != "" {
+			attrs[string(tmcfg.MetricAttrSourceKind)] = resource.SourceKind
+			attrs[string(tmcfg.MetricAttrMarketplaceID)] = resource.MarketplaceID
+		}
+		recordGauge(ctx, t.inventoryResourceGauge, 1, attrs, inventoryResourceAllowed)
 	}
 }
 

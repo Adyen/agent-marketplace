@@ -118,3 +118,47 @@ func TestHookPublicationWarnsUnavailableAssets(t *testing.T) {
 		})
 	}
 }
+
+// spec: marketplace-api/unsafe-hook-support-does-not-block-valid-resources
+func TestUnsafeHookSupportKeepsValidResourcesPublishable(t *testing.T) {
+	root := createIngestRepo(t)
+	hooks := filepath.Join(root, "hooks")
+	if err := os.MkdirAll(hooks, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(hooks, "hooks.json"), []byte(`{"hooks":{"PreToolUse":[{"hooks":[{"type":"command","command":"echo safe"}]}]}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	external := filepath.Join(t.TempDir(), "external")
+	if err := os.WriteFile(external, []byte("unchanged"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(external, filepath.Join(hooks, "unreferenced")); err != nil {
+		t.Fatal(err)
+	}
+	collection := "name: defaults\nversion: 1.0.0\nresources:\n  - name: review\n    kind: skill\n  - name: PreToolUse-command\n    kind: hook\n"
+	if err := os.WriteFile(filepath.Join(root, ".agents", "collections", "defaults", "COLLECTION.yaml"), []byte(collection), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	registry := store.Registry{ID: "mixed", Slug: "mixed", Origins: []string{"file://" + root}, Acquisition: store.AcquisitionMirror, License: "MIT", Roots: []store.RegistryRoot{{Path: ".", SourceHarness: "claude"}, {Path: ".agents", SourceHarness: "claude"}}}
+	rev, err := BuildRegistryRevision(t.Context(), testConfig(t, root), "test", registry, root, strings.Repeat("a", 40))
+	if err != nil {
+		t.Fatal(err)
+	}
+	foundSkill, foundWarning := false, false
+	for _, resource := range rev.Resources {
+		if resource.Coordinate.Kind == "hook" || resource.Coordinate.Kind == "collection" {
+			t.Fatal("unsafe hook or its dependent collection was published")
+		}
+		foundSkill = foundSkill || resource.Coordinate.Kind == "skill"
+	}
+	for _, diagnostic := range rev.Diagnostics {
+		foundWarning = foundWarning || diagnostic.Code == "marketplace.ingest.hook-support-unavailable"
+	}
+	if !foundSkill || !foundWarning {
+		t.Fatalf("valid sibling or unavailable-support warning missing: %+v", rev)
+	}
+	if data, err := os.ReadFile(external); err != nil || string(data) != "unchanged" {
+		t.Fatalf("external bytes changed: %q, %v", data, err)
+	}
+}

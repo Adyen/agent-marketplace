@@ -49,6 +49,7 @@ var eventUnmappableCodes = map[target.Target]string{
 	target.TargetWindsurf: diag.CodeHookWindsurfEventUnmappable,
 	target.TargetDevin:    diag.CodeHookDevinEventUnmappable,
 	target.TargetCodex:    diag.CodeHookCodexUnsupported,
+	target.TargetOpenCode: diag.CodeHookOpenCodeUnsupported,
 }
 
 var typeUnsupportedCodes = map[target.Target]string{
@@ -58,6 +59,7 @@ var typeUnsupportedCodes = map[target.Target]string{
 	target.TargetWindsurf: diag.CodeHookWindsurfUnsupportedType,
 	target.TargetDevin:    diag.CodeHookDevinUnsupportedType,
 	target.TargetCodex:    diag.CodeHookCodexUnsupported,
+	target.TargetOpenCode: diag.CodeHookOpenCodeUnsupported,
 }
 
 func eventUnmappableCode(dst target.Target) string {
@@ -93,6 +95,23 @@ func timeoutCappedCode(dst target.Target) string {
 
 func matcherSpec(c catalog) toolpolicy.MatcherSpec {
 	return toolpolicy.MatcherSpec{Syntax: c.Matcher.Syntax, Anchor: c.Matcher.Anchor, ExactLists: c.Matcher.ExactLists}
+}
+
+// MatcherSpecFor returns the shipped matcher syntax for harness h. Hooks
+// without source provenance use the Claude catalog, as Resolve does.
+func MatcherSpecFor(h target.Target) (toolpolicy.MatcherSpec, bool) {
+	if h == "" {
+		h = target.TargetClaude
+	}
+	r, err := shipped()
+	if err != nil {
+		return toolpolicy.MatcherSpec{}, false
+	}
+	c, ok := r.catalogs[h]
+	if !ok {
+		return toolpolicy.MatcherSpec{}, false
+	}
+	return matcherSpec(c), true
 }
 
 // IsDeclaredEvent reports whether the shipped hook catalog for h declares the
@@ -180,21 +199,29 @@ func Resolve(h *ir.Hook, dst target.Target, scope Scope, supportBase string) Res
 		fail(eventUnmappableCode(dst), "Target has no shipped hook catalog; hook suppressed", "")
 		return res
 	}
+	if dst != target.TargetWindsurf && h.Ext.Windsurf != nil && h.Ext.Windsurf.HookWorkingDir != "" {
+		fail(diag.CodeHookWindsurfNativeFieldsUnsupported, "Target cannot preserve the native Windsurf hook working directory; hook suppressed", "Remove working_directory explicitly or keep the hook on Windsurf")
+		return res
+	}
 
 	if h.HookSource != "" && src == dst {
 		// Same-harness output keeps the native spelling subject to the
 		// handler-type, plugin-root, and timeout-refusal rules.
 		res.Event = h.Event
 		res.Matcher = h.Matcher
-		dstEvent := dstCat.Events[h.Event]
-		if _, declared := dstCat.Events[h.Event]; declared && !slices.Contains(dstEvent.Types, h.Type) {
+		dstEvent, declared := dstCat.Events[h.Event]
+		if !declared {
+			fail(eventUnmappableCode(dst), "The event has no exact catalog equivalent on the target; hook suppressed", "Use an event the target documents")
+			return res
+		}
+		if !slices.Contains(dstEvent.Types, h.Type) {
 			fail(typeUnsupportedCode(dst, h.Type), "The target catalog does not declare this handler type for the event; hook suppressed", "Use a documented handler type")
 			return res
 		}
 		if !resolveTimeout(h, dst, srcCat.Timeout, dstCat.Timeout, dstEvent, true, &res, warn, fail) {
 			return res
 		}
-		rewriteCommand(h, srcCat, dstCat, res.Event, scope, supportBase, true, &res, fail)
+		rewriteCommand(h, srcCat, dstCat, res.Event, scope, supportBase, true, r.pluginNames, &res, fail)
 		return res
 	}
 
@@ -208,7 +235,11 @@ func Resolve(h *ir.Hook, dst target.Target, scope Scope, supportBase string) Res
 			fail(eventUnmappableCode(dst), "The event has no exact catalog equivalent on the target; hook suppressed", "Use an event the target documents")
 			return res
 		}
-		name, ev, found := selectEvent(dstCat, srcEvent.Canonical, h, srcCat)
+		if h.Matcher != "" && (srcEvent.Matcher == "" || srcEvent.Matcher == MatcherKindNone) {
+			fail(diag.CodeHookMatcherUntranslatable, "The source event has no documented matcher; hook suppressed", "Remove the matcher or use a source event that supports it")
+			return res
+		}
+		name, ev, found := selectEvent(dstCat, srcEvent.Canonical, h, srcCat, srcEvent)
 		if !found {
 			fail(eventUnmappableCode(dst), "The event has no exact catalog equivalent on the target; hook suppressed", "Use an event the target documents")
 			return res
@@ -220,7 +251,7 @@ func Resolve(h *ir.Hook, dst target.Target, scope Scope, supportBase string) Res
 			// The event name encodes the tool selection (Windsurf); the
 			// matcher was consumed by event selection and emits nothing.
 			res.Matcher = ""
-		} else if !resolveMatcher(h, dst, srcCat, dstCat, dstEvent, &res, fail) {
+		} else if !resolveMatcher(h, dst, srcCat, dstCat, srcEvent, dstEvent, &res, fail) {
 			return res
 		}
 		if !slices.Contains(dstEvent.Types, h.Type) {
@@ -232,14 +263,14 @@ func Resolve(h *ir.Hook, dst target.Target, scope Scope, supportBase string) Res
 	if !resolveTimeout(h, dst, srcUnit(srcCat), dstCat.Timeout, dstEvent, false, &res, warn, fail) {
 		return res
 	}
-	rewriteCommand(h, srcCat, dstCat, res.Event, scope, supportBase, false, &res, fail)
+	rewriteCommand(h, srcCat, dstCat, res.Event, scope, supportBase, false, r.pluginNames, &res, fail)
 	return res
 }
 
 // selectEvent picks the target event for a canonical event name. Targets that
 // encode the tool set in the event name (Windsurf) choose the split entry
 // whose declared tool set equals the decoded matcher concept set.
-func selectEvent(dstCat catalog, canonical string, h *ir.Hook, srcCat catalog) (string, event, bool) {
+func selectEvent(dstCat catalog, canonical string, h *ir.Hook, srcCat catalog, srcEvent event) (string, event, bool) {
 	type candidate struct {
 		name string
 		ev   event
@@ -264,7 +295,7 @@ func selectEvent(dstCat catalog, canonical string, h *ir.Hook, srcCat catalog) (
 	if len(splits) == 0 || h.Matcher == "" {
 		return "", event{}, false
 	}
-	decoded, err := decodeSourceMatcher(h, srcCat)
+	decoded, err := decodeSourceMatcher(h, srcCat, srcEvent)
 	if err != nil {
 		return "", event{}, false
 	}
@@ -292,25 +323,35 @@ func conceptSetEqual(tools []string, set map[string]bool) bool {
 }
 
 // decodeSourceMatcher decodes a hook matcher through its source harness's
-// catalog. Ingesters store canonical (Claude-spelled) tool names in IR while
-// keeping the source harness's provenance, so a matcher the source catalog
-// cannot decode is retried through the canonical catalog.
-func decodeSourceMatcher(h *ir.Hook, srcCat catalog) (toolpolicy.DecodedMatcher, error) {
+// catalog. The matcher is the source harness's native spelling, so a matcher
+// the source catalog cannot decode fails rather than being reinterpreted
+// through another harness's vocabulary. A hook whose event itself declares
+// the tool set — the Windsurf split events — carries no matcher member; the
+// decoded set then comes from the source event's declared tools so
+// cross-harness targets still produce an exact matcher.
+func decodeSourceMatcher(h *ir.Hook, srcCat catalog, srcEvent event) (toolpolicy.DecodedMatcher, error) {
 	decoded, err := toolpolicy.DecodeMatcher(target.Target(h.HookSource), h.Matcher, matcherSpec(srcCat))
-	if err == nil {
-		return decoded, nil
-	}
-	reg, rerr := shipped()
-	claudeCat, ok := reg.catalogs[target.TargetClaude]
-	if rerr != nil || !ok {
+	if err != nil {
 		return toolpolicy.DecodedMatcher{}, err
 	}
-	return toolpolicy.DecodeMatcher("", h.Matcher, matcherSpec(claudeCat))
+	if decoded.Empty {
+		switch {
+		case len(srcEvent.Tools) != 0:
+			set := make(map[string]bool, len(srcEvent.Tools))
+			for _, concept := range srcEvent.Tools {
+				set[concept] = true
+			}
+			return toolpolicy.DecodedMatcher{Concepts: set}, nil
+		case srcEvent.MCP:
+			return toolpolicy.DecodedMatcher{MCPAll: true}, nil
+		}
+	}
+	return decoded, nil
 }
 
 // resolveMatcher emits the target-native matcher. Events without a tool
 // matcher reject a non-empty source matcher rather than dropping it.
-func resolveMatcher(h *ir.Hook, dst target.Target, srcCat, dstCat catalog, dstEvent event, res *Resolved, fail func(string, string, string) bool) bool {
+func resolveMatcher(h *ir.Hook, dst target.Target, srcCat, dstCat catalog, srcEvent, dstEvent event, res *Resolved, fail func(string, string, string) bool) bool {
 	switch dstEvent.Matcher {
 	case "", MatcherKindNone:
 		if h.Matcher != "" {
@@ -318,13 +359,13 @@ func resolveMatcher(h *ir.Hook, dst target.Target, srcCat, dstCat catalog, dstEv
 		}
 		res.Matcher = ""
 	case MatcherKindTool:
-		decoded, err := decodeSourceMatcher(h, srcCat)
+		decoded, err := decodeSourceMatcher(h, srcCat, srcEvent)
 		if err != nil {
-			return fail(diag.CodeHookMatcherUntranslatable, "No exact tool coverage on the target for this matcher; hook suppressed", "Use exact tool names the target documents")
+			return fail(diag.CodeHookMatcherUntranslatable, "The source matcher cannot be decoded for cross-harness translation; hook suppressed", "Use exact source tool names or a supported MCP pattern, or author a target-specific hook")
 		}
 		rendered, err := toolpolicy.RenderMatcher(dst, decoded, matcherSpec(dstCat))
 		if err != nil {
-			return fail(diag.CodeHookMatcherUntranslatable, "No exact tool coverage on the target for this matcher; hook suppressed", "Use exact tool names the target documents")
+			return fail(diag.CodeHookMatcherUntranslatable, "The target tool catalog cannot exactly cover the source matcher; hook suppressed", "Author a target-specific hook or explicitly narrow the selected harnesses; preview cleanup with agent-marketplace sync --check")
 		}
 		res.Matcher = rendered
 	default:
@@ -373,14 +414,14 @@ func resolveTimeout(h *ir.Hook, dst target.Target, src, dstUnit timeoutPolicy, d
 	return true
 }
 
-// envReference matches "$NAME", "${NAME}", and either wrapped in double
-// quotes. Group 1 is the braced name, group 2 the bare name.
-var envReference = regexp.MustCompile(`"?\$(?:\{([A-Za-z_][A-Za-z0-9_]*)\}|([A-Za-z_][A-Za-z0-9_]*))"?`)
+// envReference matches bare and braced variable references. Group 1 is the
+// braced name, group 2 the bare name.
+var envReference = regexp.MustCompile(`\$(?:\{([A-Za-z_][A-Za-z0-9_]*)\}|([A-Za-z_][A-Za-z0-9_]*))`)
 
 // rewriteCommand applies design D6: $NAME/${NAME} references are resolved
-// through the source catalog. References no source catalog declares are left
+// through the source catalog. References no shipped catalog recognizes are left
 // unchanged. sameHarness keeps every non-plugin reference as authored.
-func rewriteCommand(h *ir.Hook, srcCat, dstCat catalog, event string, scope Scope, supportBase string, sameHarness bool, res *Resolved, fail func(string, string, string) bool) bool {
+func rewriteCommand(h *ir.Hook, srcCat, dstCat catalog, event string, scope Scope, supportBase string, sameHarness bool, pluginNames map[string]bool, res *Resolved, fail func(string, string, string) bool) bool {
 	command := h.Command
 	matches := envReference.FindAllStringSubmatchIndex(command, -1)
 	if len(matches) == 0 {
@@ -389,7 +430,63 @@ func rewriteCommand(h *ir.Hook, srcCat, dstCat catalog, event string, scope Scop
 	}
 	var out strings.Builder
 	pos := 0
+	scanPos := 0
+	var quote byte
+	type shellFrame struct {
+		quote, end byte
+	}
+	var substitutions []shellFrame
 	for _, m := range matches {
+		for scanPos < m[0] {
+			ch := command[scanPos]
+			if ch == '\\' && quote != '\'' {
+				scanPos++
+				if scanPos < m[0] {
+					scanPos++
+				}
+				continue
+			}
+			// Command substitutions have their own quoting, even inside
+			// double quotes. Restore the enclosing context when they end.
+			if quote != '\'' {
+				if ch == '`' && len(substitutions) > 0 && substitutions[len(substitutions)-1].end == '`' {
+					quote = substitutions[len(substitutions)-1].quote
+					substitutions = substitutions[:len(substitutions)-1]
+					scanPos++
+					continue
+				}
+				if ch == '`' || ch == '$' && scanPos+1 < m[0] && command[scanPos+1] == '(' {
+					end := byte(')')
+					if ch == '`' {
+						end = '`'
+					} else {
+						scanPos++
+					}
+					substitutions = append(substitutions, shellFrame{quote: quote, end: end})
+					quote = 0
+					scanPos++
+					continue
+				}
+				if quote == 0 && ch == '(' {
+					substitutions = append(substitutions, shellFrame{end: ')'})
+				} else if quote == 0 && ch == ')' && len(substitutions) > 0 && substitutions[len(substitutions)-1].end == ')' {
+					quote = substitutions[len(substitutions)-1].quote
+					substitutions = substitutions[:len(substitutions)-1]
+					scanPos++
+					continue
+				}
+			}
+			if ch == '\'' || ch == '"' {
+				switch quote {
+				case 0:
+					quote = ch
+				case ch:
+					quote = 0
+				}
+			}
+			scanPos++
+		}
+		scanPos = m[1]
 		name := ""
 		if m[2] >= 0 {
 			name = command[m[2]:m[3]]
@@ -398,67 +495,86 @@ func rewriteCommand(h *ir.Hook, srcCat, dstCat catalog, event string, scope Scop
 		}
 		concept, plugin, declared := lookupEnv(srcCat, name)
 		if !declared {
+			if pluginNames[name] {
+				return fail(diag.CodeHookEnvUnrepresentable, "A plugin-only variable is not declared by the hook source; hook suppressed", "Use a variable declared by the source harness")
+			}
 			continue
 		}
-		out.WriteString(command[pos:m[0]])
-		pos = m[1]
-		if plugin {
-			if concept != "plugin_root" {
-				// Other plugin-only variables never resolve in a native
-				// hook file.
-				return fail(diag.CodeHookEnvUnrepresentable, "A plugin-only variable has no native equivalent on the target; hook suppressed", "Replace the reference with a documented variable")
+		// Other plugin-only variables never resolve in a native hook file.
+		if plugin && concept != "plugin_root" {
+			return fail(diag.CodeHookEnvUnrepresentable, "A plugin-only variable has no native equivalent on the target; hook suppressed", "Replace the reference with a documented variable")
+		}
+		if plugin && quote == '\'' {
+			return fail(diag.CodeHookEnvUnrepresentable, "A plugin-root reference inside a single-quoted shell literal cannot be translated; hook suppressed", "Move the reference outside the single-quoted literal")
+		}
+		preserveProjectVariable := false
+		repositoryBaseReference := !sameHarness && !plugin && srcCat.RepositoryBase != nil && srcCat.RepositoryBase.Env == concept
+		repositoryBase, repositoryBaseKind, hasRepositoryBase := "", 0, false
+		if repositoryBaseReference {
+			if variable, exists := dstCat.Env[concept]; exists && slices.Contains(variable.Names, name) {
+				// The target accepts the same spelling; keep it (Cursor and
+				// Gemini accept CLAUDE_PROJECT_DIR).
+				preserveProjectVariable = true
+			} else {
+				repositoryBase, repositoryBaseKind, hasRepositoryBase = repositoryBaseReplacement(dstCat)
+				if !hasRepositoryBase {
+					return fail(diag.CodeHookEnvUnrepresentable, "The target declares no repository base for a project-directory reference; hook suppressed", "Use a documented variable")
+				}
 			}
-			context := shellQuoteContext(command[:m[0]])
-			matched := command[m[0]:m[1]]
-			leading := strings.HasPrefix(matched, `"`)
-			trailing := strings.HasSuffix(matched, `"`)
-			plain := context == 0 && leading == trailing && shellLiteralPath(supportBase)
-			ref, refusal, ok := supportReference(dstCat, scope, supportBase, !plain)
+		}
+		isolatedDoubleQuoted := quote == '"' && m[0] > pos && command[m[0]-1] == '"' &&
+			m[1]+1 < len(command) && command[m[1]] == '"' && command[m[1]+1] == '/' &&
+			(plugin || repositoryBaseReference && !preserveProjectVariable && repositoryBaseKind == repoBaseCwd)
+		prefixEnd := m[0]
+		if isolatedDoubleQuoted {
+			prefixEnd--
+		}
+		out.WriteString(command[pos:prefixEnd])
+		pos = m[1]
+		replacementQuote := quote
+		if isolatedDoubleQuoted {
+			pos++
+			replacementQuote = 0
+		}
+		if plugin {
+			ref, refusal, ok := supportReference(dstCat, scope, supportBase, replacementQuote)
 			if !ok {
 				return fail(refusal.Code, refusal.Message, refusal.Hint)
 			}
-			if plain {
-				out.WriteString(ref)
-				continue
-			}
-			if context == '\'' {
-				return fail(diag.CodeHookSupportPathUnrepresentable, "A literal plugin-root reference cannot be safely rewritten; hook suppressed", "Use an unquoted or double-quoted plugin-root reference")
-			}
-			if context != '"' {
-				out.WriteByte('"')
-			}
 			out.WriteString(ref)
-			if context == '"' && trailing || context != '"' && (!leading || trailing) {
-				out.WriteByte('"')
-			}
 			continue
 		}
-		if sameHarness {
+		if sameHarness || preserveProjectVariable {
 			out.WriteString(command[m[0]:m[1]])
 			continue
 		}
-		if srcCat.RepositoryBase != nil && srcCat.RepositoryBase.Env == concept {
-			if v, exists := dstCat.Env[concept]; exists && slices.Contains(v.Names, name) {
-				// The target accepts the same spelling; keep it (Cursor and
-				// Gemini accept CLAUDE_PROJECT_DIR).
-				out.WriteString(command[m[0]:m[1]])
-				continue
-			}
-			repl, kind, ok := repositoryBaseReplacement(dstCat)
-			if !ok {
-				return fail(diag.CodeHookEnvUnrepresentable, "The target declares no repository base for a project-directory reference; hook suppressed", "Use a documented variable")
-			}
-			switch kind {
+		if repositoryBaseReference {
+			switch repositoryBaseKind {
 			case repoBaseCwd:
 				// {cwd: repository}: remove the reference and one following
-				// slash so the path becomes repository-relative.
-				if m[1] < len(command) && command[m[1]] == '/' {
-					pos = m[1] + 1
+				// slash so the path becomes repository-relative. A reference
+				// that is the whole shell word, or whose remaining path would
+				// start at the filesystem root, names the repository itself
+				// as "."; text joined to it has no relative form.
+				slash := pos < len(command) && command[pos] == '/'
+				next := pos
+				if slash {
+					next++
 				}
+				switch {
+				case projectDirectoryWordEnds(command, next, replacementQuote) || slash && next < len(command) && command[next] == '/':
+					out.WriteByte('.')
+				case !slash:
+					return fail(diag.CodeHookEnvUnrepresentable, "A project-directory reference joined to other text has no repository-relative form on the target; hook suppressed", "Separate the reference from following text with / or whitespace")
+				}
+				pos = next
 			case repoBaseLiteral:
-				out.WriteString(repl)
+				if replacementQuote == '"' {
+					repositoryBase = withoutOuterDoubleQuotes(repositoryBase)
+				}
+				out.WriteString(repositoryBase)
 			default:
-				out.WriteString(nameReplacement(command, m, repl))
+				out.WriteString(nameReplacement(m, repositoryBase))
 			}
 			continue
 		}
@@ -471,7 +587,7 @@ func rewriteCommand(h *ir.Hook, srcCat, dstCat catalog, event string, scope Scop
 			out.WriteString(command[m[0]:m[1]])
 			continue
 		}
-		out.WriteString(nameReplacement(command, m, targetVar.Names[0]))
+		out.WriteString(nameReplacement(m, targetVar.Names[0]))
 	}
 	out.WriteString(command[pos:])
 	result := out.String()
@@ -496,6 +612,20 @@ func lookupEnv(c catalog, name string) (concept string, plugin, declared bool) {
 		}
 	}
 	return "", false, false
+}
+
+// projectDirectoryWordEnds reports whether the shell word containing a
+// project-directory reference ends at pos. Inside double quotes only the
+// closing quote ends the reference; the word then ends at an unquoted shell
+// separator or the end of the command.
+func projectDirectoryWordEnds(command string, pos int, quote byte) bool {
+	if quote == '"' {
+		if pos >= len(command) || command[pos] != '"' {
+			return false
+		}
+		pos++
+	}
+	return pos >= len(command) || strings.IndexByte(" \t\n;&|()<>", command[pos]) >= 0
 }
 
 // Repository-base replacement kinds for a project-directory reference.
@@ -526,33 +656,41 @@ func repositoryBaseReplacement(c catalog) (replacement string, kind int, ok bool
 	return "", 0, false
 }
 
-// nameReplacement rebuilds the matched reference with a different variable
-// name, preserving the authored quoting and brace style.
-func nameReplacement(command string, m []int, name string) string {
-	matched := command[m[0]:m[1]]
-	quoted := strings.HasPrefix(matched, `"`)
-	braced := m[2] >= 0
-	var b strings.Builder
-	if quoted {
-		b.WriteByte('"')
+// nameReplacement emits the target variable name with the source brace style.
+func nameReplacement(m []int, name string) string {
+	if m[2] >= 0 {
+		return "${" + name + "}"
 	}
-	b.WriteByte('$')
-	if braced {
-		b.WriteByte('{')
+	return "$" + name
+}
+
+func withoutOuterDoubleQuotes(value string) string {
+	if len(value) >= 2 && value[0] == '"' && value[len(value)-1] == '"' {
+		return value[1 : len(value)-1]
 	}
-	b.WriteString(name)
-	if braced {
-		b.WriteByte('}')
+	return value
+}
+
+// machineSupportBaseLiteral renders an absolute machine-scope support base as
+// a safe shell word: unchanged when every character is already word-safe,
+// otherwise a POSIX single-quoted literal with embedded single quotes escaped.
+// The machine destination root is a real HOME/CODEX_HOME path that can carry
+// spaces or shell metacharacters; the emitted command must still reference
+// that literal directory, never an expansion.
+func machineSupportBaseLiteral(base string) string {
+	for _, r := range base {
+		safe := r == '/' || r == '.' || r == '_' || r == '-' ||
+			('a' <= r && r <= 'z') || ('A' <= r && r <= 'Z') || ('0' <= r && r <= '9')
+		if !safe {
+			return "'" + strings.ReplaceAll(base, "'", `'\''`) + "'"
+		}
 	}
-	if quoted {
-		b.WriteByte('"')
-	}
-	return b.String()
+	return base
 }
 
 // supportReference renders the installed support-directory reference for a
 // plugin-root token.
-func supportReference(c catalog, scope Scope, supportBase string, quoted bool) (string, diag.Diagnostic, bool) {
+func supportReference(c catalog, scope Scope, supportBase string, quote byte) (string, diag.Diagnostic, bool) {
 	refuse := func() (string, diag.Diagnostic, bool) {
 		return "", diag.Diagnostic{Code: diag.CodeHookSupportPathUnrepresentable, Message: "The plugin-root reference has no representable support path on the target; hook suppressed", Hint: "Remove the plugin-root reference"}, false
 	}
@@ -560,65 +698,71 @@ func supportReference(c catalog, scope Scope, supportBase string, quoted bool) (
 		return refuse()
 	}
 	if scope == ScopeMachine {
-		return escapeDoubleQuoted(supportBase), diag.Diagnostic{}, true
+		if quote == '"' {
+			literal := strings.NewReplacer(`\`, `\\`, `"`, `\"`, "$", `\$`, "`", "\\`").Replace(supportBase)
+			return literal, diag.Diagnostic{}, true
+		}
+		return machineSupportBaseLiteral(supportBase), diag.Diagnostic{}, true
 	}
 	rb := c.RepositoryBase
 	if rb == nil {
 		return refuse()
 	}
-	// At repository scope the support base is repository-relative; join
-	// without duplicating slashes.
 	rel := strings.Trim(supportBase, "/")
 	switch {
 	case rb.Cwd != "":
-		return escapeDoubleQuoted(rel), diag.Diagnostic{}, true
+		return rel, diag.Diagnostic{}, true
 	case rb.Shell != "":
-		if !quoted {
-			return rb.Shell + "/" + rel, diag.Diagnostic{}, true
+		base := rb.Shell
+		if quote == '"' {
+			base = withoutOuterDoubleQuotes(base)
 		}
-		return strings.Trim(rb.Shell, `"`) + "/" + escapeDoubleQuoted(rel), diag.Diagnostic{}, true
+		return base + "/" + rel, diag.Diagnostic{}, true
 	case rb.Env != "":
 		v, exists := c.Env[rb.Env]
 		if !exists || len(v.Names) == 0 {
 			return refuse()
 		}
-		if !quoted {
-			return `"$` + v.Names[0] + `"/` + rel, diag.Diagnostic{}, true
+		if quote == '"' {
+			return "$" + v.Names[0] + "/" + rel, diag.Diagnostic{}, true
 		}
-		return `$` + v.Names[0] + `/` + escapeDoubleQuoted(rel), diag.Diagnostic{}, true
+		return `"$` + v.Names[0] + `"/` + rel, diag.Diagnostic{}, true
 	}
 	return refuse()
 }
 
-func shellLiteralPath(value string) bool {
-	return !strings.ContainsFunc(value, func(r rune) bool {
-		allowed := r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || strings.ContainsRune("/._-", r)
-		return !allowed
-	})
-}
-
-func escapeDoubleQuoted(value string) string {
-	return strings.NewReplacer(`\`, `\\`, `"`, `\"`, `$`, `\$`, "`", "\\`").Replace(value)
-}
-
-func shellQuoteContext(prefix string) byte {
-	var quote byte
-	escaped := false
-	for i := 0; i < len(prefix); i++ {
-		c := prefix[i]
-		if escaped {
-			escaped = false
-			continue
-		}
-		if c == '\\' && quote != '\'' {
-			escaped = true
-			continue
-		}
-		if c == quote {
-			quote = 0
-		} else if quote == 0 && (c == '"' || c == '\'') {
-			quote = c
-		}
+// HasEquivalentEvent reports whether the hook's event has a catalog-declared
+// equivalent on dst, sharing Resolve's event-selection logic — including
+// target tool-split events matched against the hook's decoded matcher. It is
+// metadata-only: it inspects the event and matcher, never the command or
+// prompt payload, and does not duplicate resolution work.
+func HasEquivalentEvent(h *ir.Hook, dst target.Target) bool {
+	r, err := shipped()
+	if err != nil {
+		return false
 	}
-	return quote
+	src := target.Target(h.HookSource)
+	if src == "" {
+		src = target.TargetClaude
+	}
+	srcCat, ok := r.catalogs[src]
+	if !ok {
+		return false
+	}
+	dstCat, ok := r.catalogs[dst]
+	if !ok {
+		return false
+	}
+	srcEvent, declared := srcCat.Events[h.Event]
+	if !declared {
+		return false
+	}
+	if src == dst {
+		return true
+	}
+	if srcEvent.Canonical == "" {
+		return false
+	}
+	_, _, found := selectEvent(dstCat, srcEvent.Canonical, h, srcCat, srcEvent)
+	return found
 }

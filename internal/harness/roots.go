@@ -367,12 +367,9 @@ func appendUnique(list []string, rel string) []string {
 // exactly as the descriptor declares it.
 func appendAggregateFiles(set *AggregateFileSet, prefix string, aggregates []targetmeta.NativeAggregate) {
 	for _, aggregate := range aggregates {
-		// AggregateFiles must name the files the compilers merge into
-		// today: while the native write switch is pending, a hook
-		// aggregate's emitted file is its declared legacy location (the
-		// plugin-layout file the compilers still emit), not the declared
-		// native file it will move to. This keeps backup coverage exactly
-		// equal to produced output in both phases.
+		// AggregateFiles covers the default compilation paths. Native hook
+		// output has a separate aggregation route, while default hook
+		// compilation keeps the declared legacy location.
 		project, user := aggregate.Project.Path, aggregate.User.Path
 		if aggregate.Kind == ir.KindHook {
 			if len(aggregate.Project.Legacy) > 0 {
@@ -446,6 +443,15 @@ func targetInfoFromPartition(partition targetmeta.NativePartition) TargetInfo {
 	// whose directories diverge has no single install dir to describe, and
 	// borrowing the project directory would mis-describe user scope.
 	for _, aggregate := range partition.Aggregates {
+		// A hook aggregate owns the per-hook support directory; the
+		// descriptor's SupportDir is the resource install root for hook
+		// support artifacts, relative to the partition root.
+		if aggregate.Kind == ir.KindHook && aggregate.SupportDir != "" {
+			if info.ResourceDirs == nil {
+				info.ResourceDirs = make(map[ir.ResourceKind]string)
+			}
+			info.ResourceDirs[aggregate.Kind] = aggregate.SupportDir
+		}
 		if _, ok := partition.ResourcePaths[aggregate.Kind]; ok {
 			continue
 		}
@@ -488,9 +494,6 @@ func MakeTargetInfo() (map[hcc.Target]TargetInfo, error) {
 	// Claude deliberately leaves SkillPathPattern unset: materialize
 	// activates frontmatter injection when a pattern is declared, and the
 	// Claude compiler already renders it.
-	// Hook resources still install under the hooks component until the
-	// hook-support migration (design D8) moves them.
-	claudeInfo.ResourceDirs[ir.KindHook] = "hooks"
 
 	factoryInfo, err := targetInfoFromLayout(targetmeta.TargetFactory)
 	if err != nil {
@@ -498,7 +501,6 @@ func MakeTargetInfo() (map[hcc.Target]TargetInfo, error) {
 	}
 	factoryInfo.Roots = roots[hcc.TargetFactory]
 	factoryInfo.SkillPathPattern = "skills/%s/SKILL.md"
-	factoryInfo.ResourceDirs[ir.KindHook] = "hooks"
 	// TEMPORARY WORKAROUND: Factory's droid CLI does not follow
 	// symlinked command files, so commands must be materialized as
 	// real files. Remove this once Factory resolves symlink loading.
@@ -512,7 +514,6 @@ func MakeTargetInfo() (map[hcc.Target]TargetInfo, error) {
 	}
 	cursorInfo.Roots = roots[hcc.TargetCursor]
 	cursorInfo.SkillPathPattern = "skills/%s/SKILL.md"
-	cursorInfo.ResourceDirs[ir.KindHook] = "hooks"
 
 	windsurfInfo, err := targetInfoFromLayout(targetmeta.TargetWindsurf)
 	if err != nil {
@@ -535,7 +536,6 @@ func MakeTargetInfo() (map[hcc.Target]TargetInfo, error) {
 		Project: []string{".windsurf/hooks"},
 		User:    []string{"hooks"},
 	}
-	windsurfInfo.ResourceDirs[ir.KindHook] = ".windsurf/hook-support"
 
 	geminiInfo, err := targetInfoFromLayout(targetmeta.TargetGemini)
 	if err != nil {

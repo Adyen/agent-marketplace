@@ -5,6 +5,7 @@ import (
 	"testing"
 	"testing/fstest"
 
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/target"
 )
 
@@ -206,5 +207,22 @@ events:
 				t.Fatalf("error = %v, want mention of %q", err, tc.want)
 			}
 		})
+	}
+}
+
+func TestSupportReferenceRefusesWithoutRepositoryBase(t *testing.T) {
+	ref, refusal, ok := supportReference(catalog{}, ScopeRepository, "hook-support/source/hook", 0)
+	if ok || ref != "" {
+		t.Fatalf("supportReference succeeded without a repository base: %q", ref)
+	}
+	if refusal.Code != diag.CodeHookSupportPathUnrepresentable {
+		t.Fatalf("refusal code = %q, want %q", refusal.Code, diag.CodeHookSupportPathUnrepresentable)
+	}
+}
+
+func TestSupportReferenceUsesDeclaredRepositoryBase(t *testing.T) {
+	ref, _, ok := supportReference(catalog{RepositoryBase: &repositoryBase{Cwd: "repository"}}, ScopeRepository, "hook-support/source/hook", 0)
+	if !ok || ref != "hook-support/source/hook" {
+		t.Fatalf("supportReference = %q, want repository-relative support path", ref)
 	}
 }

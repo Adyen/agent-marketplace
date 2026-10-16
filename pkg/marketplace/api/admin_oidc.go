@@ -165,11 +165,16 @@ type adminOIDCAuthenticator struct {
 	redirectURL string
 	discovery   *lazyOIDCDiscovery
 	client      *http.Client
+	browser     adminBrowserRoutes
 	verifierMu  sync.Mutex
 	idVerifier  *oidc.IDTokenVerifier
 }
 
 func newAdminOIDCAuthenticator(options config.Administration) (*adminOIDCAuthenticator, error) {
+	return newAdminOIDCAuthenticatorWithBrowserBase(options, "")
+}
+
+func newAdminOIDCAuthenticatorWithBrowserBase(options config.Administration, browserBase string) (*adminOIDCAuthenticator, error) {
 	options.Enabled = true
 	if options.Validate() != nil || options.AuthMode() != config.AdminAuthOIDC {
 		return nil, errors.New("invalid OIDC administration configuration")
@@ -194,6 +199,7 @@ func newAdminOIDCAuthenticator(options config.Administration) (*adminOIDCAuthent
 		redirectURL: options.Origin + adminAuthBase + "/callback",
 		discovery:   &lazyOIDCDiscovery{issuer: resolved.Issuer, client: client},
 		client:      client,
+		browser:     resolveAdminBrowserRoutes(browserBase),
 	}, nil
 }
 
@@ -338,9 +344,8 @@ func validAdminIDTokenWindow(issuedAt, expiry, now time.Time) bool {
 		!now.After(expiry.Add(adminClockSkew))
 }
 
-// validAdminNext accepts only /marketplace/admin and descendant paths.
-func validAdminNext(values []string) (string, bool) {
-	const fallback = "/marketplace/admin"
+// validAdminNext accepts only the configured administration root and descendant paths.
+func validAdminNext(values []string, fallback string) (string, bool) {
 	if len(values) == 0 || len(values) == 1 && values[0] == "" {
 		return fallback, true
 	}
@@ -377,22 +382,29 @@ func adminAuthHeaders(w http.ResponseWriter) {
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("X-Robots-Tag", "noindex, nofollow")
+	w.Header().Set("Referrer-Policy", "no-referrer")
 }
 
 func (a *adminOIDCAuthenticator) handleLogin(w http.ResponseWriter, r *http.Request) {
 	adminAuthHeaders(w)
-	if !adminRequestProtections(w, r, a.options) {
+	fail := func(status int, code, message string) {
+		writeAdminOIDCError(w, r, a.browser, status, code, message, "")
+	}
+	if !adminRequestProtectionsWithError(w, r, a.options, fail) {
 		return
 	}
-	next, ok := validAdminNext(r.URL.Query()["next"])
+	next, ok := validAdminNext(r.URL.Query()["next"], a.browser.admin)
 	if !ok {
-		writeAdminError(w, http.StatusBadRequest, "authentication_request_invalid", "The sign-in destination is not an administration path.")
+		fail(http.StatusBadRequest, "authentication_request_invalid", "The sign-in destination is not an administration path.")
 		return
+	}
+	fail = func(status int, code, message string) {
+		writeAdminOIDCError(w, r, a.browser, status, code, message, next)
 	}
 	provider, err := a.discovery.provider(a.providerContext(r.Context()))
 	if err != nil {
 		slog.Warn("admin OIDC discovery unavailable", "outcome", "authentication_unavailable")
-		writeAdminError(w, http.StatusServiceUnavailable, "authentication_unavailable", "The identity provider is unavailable.")
+		fail(http.StatusServiceUnavailable, "authentication_unavailable", "The identity provider is unavailable.")
 		return
 	}
 	now := time.Now()
@@ -408,7 +420,7 @@ func (a *adminOIDCAuthenticator) handleLogin(w http.ResponseWriter, r *http.Requ
 	transaction.Verifier = verifier
 	sealed, err := a.seal(transaction)
 	if err != nil {
-		writeAdminError(w, http.StatusServiceUnavailable, "admin_unavailable", "Administration authentication is unavailable.")
+		fail(http.StatusServiceUnavailable, "admin_unavailable", "Administration authentication is unavailable.")
 		return
 	}
 	http.SetCookie(w, a.cookie(adminLoginCookie, sealed, int(adminLoginTTL.Seconds())))
@@ -421,11 +433,15 @@ func (a *adminOIDCAuthenticator) handleLogin(w http.ResponseWriter, r *http.Requ
 
 func (a *adminOIDCAuthenticator) handleCallback(w http.ResponseWriter, r *http.Request) {
 	adminAuthHeaders(w)
-	if !adminRequestProtections(w, r, a.options) {
+	next := ""
+	fail := func(status int, code, message string) {
+		writeAdminOIDCError(w, r, a.browser, status, code, message, next)
+	}
+	if !adminRequestProtectionsWithError(w, r, a.options, fail) {
 		return
 	}
 	reject := func() {
-		writeAdminError(w, http.StatusUnauthorized, "authentication_rejected", "Sign-in could not be completed.")
+		fail(http.StatusUnauthorized, "authentication_rejected", "Sign-in could not be completed.")
 	}
 	cookie, err := r.Cookie(a.cookieName(adminLoginCookie))
 	var transaction adminLoginTransaction
@@ -436,10 +452,11 @@ func (a *adminOIDCAuthenticator) handleCallback(w http.ResponseWriter, r *http.R
 		reject()
 		return
 	}
-	if _, ok := validAdminNext([]string{transaction.Next}); !ok || transaction.Next == "" {
+	if _, ok := validAdminNext([]string{transaction.Next}, a.browser.admin); !ok || transaction.Next == "" {
 		reject()
 		return
 	}
+	next = transaction.Next
 	// The transaction is single-use: expire it before attempting the exchange.
 	a.expireCookie(w, adminLoginCookie)
 	query := r.URL.Query()
@@ -449,7 +466,7 @@ func (a *adminOIDCAuthenticator) handleCallback(w http.ResponseWriter, r *http.R
 	}
 	states, codes := query["state"], query["code"]
 	if len(states) != 1 || len(codes) != 1 || len(states[0]) > 512 || len(codes[0]) == 0 || len(codes[0]) > 4096 {
-		writeAdminError(w, http.StatusBadRequest, "authentication_request_invalid", "The identity provider response is invalid.")
+		fail(http.StatusBadRequest, "authentication_request_invalid", "The identity provider response is invalid.")
 		return
 	}
 	if subtle.ConstantTimeCompare([]byte(states[0]), []byte(transaction.State)) != 1 {
@@ -459,7 +476,7 @@ func (a *adminOIDCAuthenticator) handleCallback(w http.ResponseWriter, r *http.R
 	ctx := a.providerContext(r.Context())
 	provider, err := a.discovery.provider(ctx)
 	if err != nil {
-		writeAdminError(w, http.StatusServiceUnavailable, "authentication_unavailable", "The identity provider is unavailable.")
+		fail(http.StatusServiceUnavailable, "authentication_unavailable", "The identity provider is unavailable.")
 		return
 	}
 	token, err := a.oauthConfig(provider).Exchange(ctx, codes[0], oauth2.VerifierOption(transaction.Verifier))
@@ -470,7 +487,7 @@ func (a *adminOIDCAuthenticator) handleCallback(w http.ResponseWriter, r *http.R
 			return
 		}
 		slog.Warn("admin OIDC token endpoint unavailable", "outcome", "authentication_unavailable")
-		writeAdminError(w, http.StatusServiceUnavailable, "authentication_unavailable", "The identity provider is unavailable.")
+		fail(http.StatusServiceUnavailable, "authentication_unavailable", "The identity provider is unavailable.")
 		return
 	}
 	rawIDToken, ok := token.Extra("id_token").(string)
@@ -485,14 +502,14 @@ func (a *adminOIDCAuthenticator) handleCallback(w http.ResponseWriter, r *http.R
 	// and fails closed.
 	verifier, err := a.verifier(provider)
 	if err != nil {
-		writeAdminError(w, http.StatusServiceUnavailable, "authentication_unavailable", "The identity provider is unavailable.")
+		fail(http.StatusServiceUnavailable, "authentication_unavailable", "The identity provider is unavailable.")
 		return
 	}
 	verification := &adminOIDCVerification{}
 	idToken, err := verifier.Verify(context.WithValue(ctx, adminOIDCVerificationKey{}, verification), rawIDToken)
 	if err != nil && verification.unavailable {
 		slog.Warn("admin OIDC JWKS unavailable", "outcome", "authentication_unavailable")
-		writeAdminError(w, http.StatusServiceUnavailable, "authentication_unavailable", "The identity provider is unavailable.")
+		fail(http.StatusServiceUnavailable, "authentication_unavailable", "The identity provider is unavailable.")
 		return
 	}
 	if err != nil || idToken == nil {
@@ -530,7 +547,7 @@ func (a *adminOIDCAuthenticator) handleCallback(w http.ResponseWriter, r *http.R
 		display = ""
 	}
 	if !adminAuthorized(a.options, idToken.Subject, groups) {
-		writeAdminError(w, http.StatusForbidden, "forbidden", "Marketplace administration permission is required.")
+		fail(http.StatusForbidden, "forbidden", "Marketplace administration permission is required.")
 		return
 	}
 	now = time.Now()

@@ -48,7 +48,7 @@ func TestTUIDependencyLifecyclePropagatesExactLockLeaseIntoSync(t *testing.T) {
 		return pipeline.SyncResult{}
 	}
 
-	if err := runTUIDependencyLifecycle(context.Background(), mustWorkspace(t, repoRoot), false); err != nil {
+	if _, err := runTUIDependencyLifecycle(context.Background(), mustWorkspace(t, repoRoot), false); err != nil {
 		t.Fatal(err)
 	}
 	if !leaseAcquired || !leaseReleased {
@@ -72,18 +72,16 @@ func TestConfiguredInstallKeepsValidLayerExactWhenAnotherLayerLockIsMissing(t *t
 	commitAndPushAll(t, bootstrapWorking, "seed bootstrap layer")
 
 	writeConfig(t, filepath.Join(homeDir, ".agents", "config.yaml"), `
-apiVersion: agent-marketplace/v2
-registries:
-  - url: `+lockedOrigin+`
-    ref: main
+apiVersion: agent-marketplace/v4
+sources:
+  locked: {git: file://`+lockedOrigin+`, ref: main}
 `)
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
-apiVersion: agent-marketplace/v2
+apiVersion: agent-marketplace/v4
 harnesses: [factory]
-registries:
-  - url: `+bootstrapOrigin+`
-    ref: main
+sources:
+  bootstrap: {git: file://`+bootstrapOrigin+`, ref: main}
 `)
 	withWorkingDir(t, repoRoot)
 
@@ -114,12 +112,12 @@ func TestReadOnlyCommandsPreserveWarmExactCacheBytesAndMetadata(t *testing.T) {
 	commitAndPushAll(t, working, "seed warm check")
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
-apiVersion: agent-marketplace/v2
+apiVersion: agent-marketplace/v4
 harnesses: [factory]
-registries:
-  - url: `+origin+`
-    ref: main
-    skills: [keeper]
+sources:
+  origin: {git: file://`+origin+`, ref: main}
+resources:
+  origin: [skill/keeper]
 `)
 	withWorkingDir(t, repoRoot)
 	if output, err := executeCommand("lock", "--scope", "repo"); err != nil {
@@ -195,12 +193,12 @@ func TestCheckCommandsDoNotPopulateColdExactCacheOrState(t *testing.T) {
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	configPath := filepath.Join(repoRoot, ".agents", "config.yaml")
 	writeConfig(t, configPath, `
-apiVersion: agent-marketplace/v2
+apiVersion: agent-marketplace/v4
 harnesses: [factory]
-registries:
-  - url: `+origin+`
-    ref: main
-    skills: [keeper]
+sources:
+  origin: {git: file://`+origin+`, ref: main}
+resources:
+  origin: [skill/keeper]
 `)
 	withWorkingDir(t, repoRoot)
 	if output, err := executeCommand("lock", "--scope", "repo"); err != nil {

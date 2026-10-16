@@ -40,6 +40,8 @@ cells:
       allowedLosses:
         - command
         - name
+      expectedEvent: pre_run_command
+      expectedMatcher: ""
     - from: cursor
       to: claude
       class: cross
@@ -84,6 +86,8 @@ cells:
       allowedLosses:
         - command
         - name
+      expectedEvent: pre_run_command
+      expectedMatcher: ""
     - from: devin
       to: claude
       class: cross
@@ -135,6 +139,8 @@ cells:
       allowedLosses:
         - command
         - name
+      expectedEvent: pre_run_command
+      expectedMatcher: ""
     - from: factory
       to: claude
       class: cross
@@ -167,6 +173,7 @@ cells:
         - ingest.factory.bundle-manifest-synthesized
       allowedLosses:
         - command
+        - matcher
       roundTripLosses:
         - command
     - from: factory
@@ -187,6 +194,8 @@ cells:
       allowedLosses:
         - command
         - name
+      expectedEvent: pre_run_command
+      expectedMatcher: ""
     - from: gemini
       to: claude
       class: cross
@@ -290,6 +299,8 @@ cells:
       allowedLosses:
         - command
         - name
+      expectedEvent: pre_run_command
+      expectedMatcher: ""
     - from: claude
       to: codex
       class: cross
@@ -396,10 +407,85 @@ cells:
       allowedLosses:
         - command
         - name
+      expectedEvent: pre_run_command
+      expectedMatcher: ""
     - from: codex
       to: codex
       class: identity
       diagnostics:
         - ingest.codex.bundle-manifest-synthesized
       allowedLosses:
+        - command
         - name
+      roundTripLosses:
+        - command
+    # OpenCode hooks are declarations run by the fixed adapter, which sets
+    # AGENT_MARKETPLACE_PROJECT_DIR as the repository base, so a plugin-root
+    # command resolves to the installed hook support directory.
+    - from: claude
+      to: opencode
+      class: cross
+      allowedLosses: [command, matcher]
+    - from: opencode
+      to: claude
+      class: cross
+      allowedLosses: [command]
+    - from: factory
+      to: opencode
+      class: cross
+      diagnostics: [ingest.factory.bundle-manifest-synthesized]
+      allowedLosses: [command, matcher]
+    - from: opencode
+      to: factory
+      class: cross
+      allowedLosses: [command, matcher]
+    - from: cursor
+      to: opencode
+      class: drop
+      diagnostics: [hook.opencode.unsupported]
+    - from: opencode
+      to: cursor
+      class: cross
+      allowedLosses: [command, event, matcher, name]
+    - from: windsurf
+      to: opencode
+      class: cross
+      diagnostics: [ingest.windsurf.bundle-manifest-synthesized]
+      allowedLosses: [command, name]
+    - from: opencode
+      to: windsurf
+      class: cross
+      allowedLosses: [command, name]
+      expectedEvent: pre_run_command
+      expectedMatcher: ""
+    - from: gemini
+      to: opencode
+      class: cross
+      diagnostics: [ingest.gemini.bundle-manifest-synthesized]
+      allowedLosses: [command, matcher, name]
+    - from: opencode
+      to: gemini
+      class: cross
+      allowedLosses: [command, event, matcher, name]
+    - from: devin
+      to: opencode
+      class: cross
+      diagnostics: [ingest.devin.bundle-manifest-synthesized]
+      allowedLosses: [command]
+    - from: opencode
+      to: devin
+      class: cross
+      allowedLosses: [command, matcher]
+    - from: codex
+      to: opencode
+      class: cross
+      diagnostics: [hook.native-literal-unsupported, ingest.codex.bundle-manifest-synthesized]
+      allowedLosses: [command, name]
+    - from: opencode
+      to: codex
+      class: cross
+      allowedLosses: [command, matcher, name]
+    - from: opencode
+      to: opencode
+      class: identity
+      allowedLosses: [command]

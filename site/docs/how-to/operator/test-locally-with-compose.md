@@ -1,6 +1,6 @@
 # How to test Marketplace administration locally with Docker Compose
 
-Run the real API, worker, SQLite database, frontend, and proxy on your laptop without SSO or local TLS certificates. This guide uses `http://localhost:8080` and a fixed `local-operator` identity that Nginx supplies on every request.
+Run the API, worker, SQLite database, frontend, and proxy on your laptop without SSO or local TLS certificates. Nginx supplies a fixed `local-operator` identity on every request, at `http://localhost:8080`.
 
 ::: danger Local development only
 Everyone who can reach this proxy is an administrator. Bind it only to `127.0.0.1`; never publish it on your LAN, tunnel it, or use this configuration in production. Other local processes can also act as the operator. Use test data and narrowly scoped registry credentials. Keep production HTTPS and SSO enabled for real deployments.
@@ -23,7 +23,7 @@ instance:
   id: example-marketplace
   name: Local Marketplace
   canonical_url: http://localhost:8080
-  browser_base: http://localhost:8080/marketplace
+  browser_base: http://localhost:8080
 management:
   mode: database
   allowed_origins:
@@ -129,9 +129,13 @@ docker compose logs --tail=50 app proxy
 curl -fsS http://localhost:8080/api/v1/admin/session
 ```
 
-`app`, `web`, `site`, and `proxy` are running, and `app`, `web`, and `site` report healthy (the proxy has no health check). The proxy's published address is `127.0.0.1:8080`, not `0.0.0.0:8080`. The session response contains the `local-operator` actor and the administration capabilities.
+`app`, `web`, `docs`, and `proxy` are running, and `app`, `web`, and `docs` report healthy (the proxy has no health check). The proxy's published address is `127.0.0.1:8080`, not `0.0.0.0:8080`. Typical session response:
 
-Open `http://localhost:8080/marketplace/admin`. There is no SSO sign-in and no certificate prompt. Use exactly `http://localhost:8080`: `http://127.0.0.1:8080` is a different origin, and the API rejects admin changes from it unless you also change `admin.origin`.
+```json
+{"actor":{"issuer":"local-development-proxy","subject":"local-operator"},"authentication_mode":"trusted_proxy","capabilities":["configuration","lifecycle","activity"]}
+```
+
+Open `http://localhost:8080/admin`. There is no SSO sign-in and no certificate prompt. Use exactly `http://localhost:8080`: `http://127.0.0.1:8080` is a different origin, and the API rejects admin changes from it unless you also change `admin.origin`.
 
 ## 5. Exercise registry discovery and lifecycle
 

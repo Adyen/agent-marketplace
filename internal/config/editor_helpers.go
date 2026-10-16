@@ -10,8 +10,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/Adyen/agent-marketplace/internal/skill"
-	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
+	"github.com/Adyen/agent-marketplace/internal/dependencytxn"
 	"gopkg.in/yaml.v3"
 )
 
@@ -74,48 +73,40 @@ func ProjectConfigPath(repoRoot string) string {
 // returned mode is the existing file's perms, or
 // defaultConfigMode for a new file.
 func readOrInitConfig(configPath string) (*yaml.Node, os.FileMode, error) {
-	return readOrInitConfigWithV4(configPath, false)
-}
-
-func readOrInitConfigWithV4(configPath string, allowV4 bool) (*yaml.Node, os.FileMode, error) {
-	data, err := os.ReadFile(configPath)
+	if dependencytxn.ClassifyDestination(configPath) != dependencytxn.AuthorityLegacy {
+		// Managed layer destinations read through the descriptor boundary:
+		// approved links resolve to their captured target, escapes and
+		// unsafe objects refuse, and the mode comes from the same inspected
+		// state as the bytes.
+		data, generation, mode, err := dependencytxn.ReadSnapshot(configPath)
+		if err != nil {
+			return nil, 0, fmt.Errorf("read config %q: %w", configPath, err)
+		}
+		if !generation.Exists {
+			return initialConfigDocument(configPath)
+		}
+		if _, err := boundedConfigData(data); err != nil {
+			return nil, 0, err
+		}
+		if err := validateConfigDocumentData(configPath, data); err != nil {
+			return nil, 0, err
+		}
+		doc, err := parseConfigDocument(configPath, data)
+		if err != nil {
+			return nil, 0, err
+		}
+		return doc, mode, nil
+	}
+	data, err := readConfigFile(configPath)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			var content []*yaml.Node
-			// Local config files use the LocalConfig schema which does not
-			// have apiVersion or harnesses. Only write apiVersion for
-			// Config-type files (global, repo, org).
-			if !isLocalConfigPath(configPath) {
-				content = append(content,
-					&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: "apiVersion"},
-					&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: APIVersionV2},
-				)
-			}
-			// Include harnesses only for the global config path, where
-			// the default target set is useful. Project/local configs omit harnesses
-			// until the user explicitly selects project targets.
-			if isGlobalConfigPath(configPath) {
-				harnesses := DefaultHarnesses()
-				seqContent := make([]*yaml.Node, 0, len(harnesses))
-				for _, h := range harnesses {
-					seqContent = append(seqContent, &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: h})
-				}
-				content = append(content,
-					&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: "harnesses"},
-					&yaml.Node{Kind: yaml.SequenceNode, Tag: "!!seq", Content: seqContent},
-				)
-			}
-			doc := &yaml.Node{Kind: yaml.DocumentNode, Content: []*yaml.Node{{
-				Kind: yaml.MappingNode, Tag: "!!map",
-				Content: content,
-			}}}
-			return doc, defaultConfigMode, nil
+			return initialConfigDocument(configPath)
 		}
 		return nil, 0, fmt.Errorf("read config %q: %w", configPath, err)
 	}
 
-	if PeekAPIVersion(data) == APIVersionV4 && !allowV4 {
-		return nil, 0, v4err("v4.writer-opt-in", configPath, 0, "legacy config writers do not edit v4 files; use an explicit v4-aware operation")
+	if err := validateConfigDocumentData(configPath, data); err != nil {
+		return nil, 0, err
 	}
 	info, err := os.Stat(configPath)
 	if err != nil {
@@ -128,6 +119,29 @@ func readOrInitConfigWithV4(configPath string, allowV4 bool) (*yaml.Node, os.Fil
 	}
 
 	return doc, info.Mode().Perm(), nil
+}
+
+func initialConfigDocument(configPath string) (*yaml.Node, os.FileMode, error) {
+	content := []*yaml.Node{
+		{Kind: yaml.ScalarNode, Tag: "!!str", Value: "apiVersion"},
+		{Kind: yaml.ScalarNode, Tag: "!!str", Value: APIVersionV4},
+	}
+	if isGlobalConfigPath(configPath) {
+		harnesses := DefaultHarnesses()
+		seqContent := make([]*yaml.Node, 0, len(harnesses))
+		for _, h := range harnesses {
+			seqContent = append(seqContent, &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: h})
+		}
+		content = append(content,
+			&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: "harnesses"},
+			&yaml.Node{Kind: yaml.SequenceNode, Tag: "!!seq", Content: seqContent},
+		)
+	}
+	doc := &yaml.Node{Kind: yaml.DocumentNode, Content: []*yaml.Node{{
+		Kind: yaml.MappingNode, Tag: "!!map",
+		Content: content,
+	}}}
+	return doc, defaultConfigMode, nil
 }
 
 // isGlobalConfigPath reports whether configPath refers to the global
@@ -146,8 +160,7 @@ func isGlobalConfigPath(configPath string) bool {
 }
 
 // isLocalConfigPath reports whether configPath refers to a local/personal
-// config file (config.local.yaml). These files use the LocalConfig schema
-// which does not have apiVersion or harnesses fields.
+// config file (config.local.yaml). These roots cannot declare harnesses.
 func isLocalConfigPath(configPath string) bool {
 	return strings.HasSuffix(filepath.Clean(configPath), "config.local.yaml")
 }
@@ -157,7 +170,7 @@ func isLocalConfigPath(configPath string) bool {
 // harnesses and nothing else. Logging is left out so the file stays clean, and
 // the logging runtime falls back to its code defaults unless the user opts in
 // with an explicit logging block (see docs/logging.md for the override keys).
-// An existing file, even a dangling symlink, is never read or rewritten.
+// An existing root is validated without rewriting it; dangling links stay untouched.
 func EnsureGlobalConfig() error {
 	configPath, err := GlobalConfigPath()
 	if err != nil {
@@ -166,7 +179,8 @@ func EnsureGlobalConfig() error {
 	_, err = os.Lstat(configPath)
 	switch {
 	case err == nil:
-		return nil
+		_, err := loadSettings(configPath, userLayer)
+		return err
 	case !errors.Is(err, os.ErrNotExist):
 		return err
 	}
@@ -302,10 +316,6 @@ func ensureMappingSequence(mapping *yaml.Node, key string) (*yaml.Node, error) {
 	return valueNode, nil
 }
 
-func removeTopLevelKey(mapping *yaml.Node, keyIndex int) {
-	removeMappingKey(mapping, keyIndex)
-}
-
 // removeMappingKey removes a key-value pair at the given index from a
 // mapping node. No-op if the index is out of range.
 func removeMappingKey(mapping *yaml.Node, keyIndex int) {
@@ -329,38 +339,6 @@ func removeMappingKeyByName(mapping *yaml.Node, key string) bool {
 		}
 	}
 	return false
-}
-
-// clearEntryExcludeAll removes exclude_all flags from a registry entry node so
-// that an explicit include is not silently nullified. Because exclude_all
-// always wins in the resolver, "include X" alongside "exclude_all: true" is a
-// contradictory entry; enabling a resource therefore clears both the
-// entry-level exclude_all sugar and the per-kind <kindKey>.exclude_all flag.
-// (Per-kind exclude_all for OTHER kinds is left untouched.)
-func clearEntryExcludeAll(entryNode *yaml.Node, kindKey string) {
-	if entryNode == nil || entryNode.Kind != yaml.MappingNode {
-		return
-	}
-	removeMappingKeyByName(entryNode, "exclude_all")
-	if kindKey != "" {
-		if kindMapping := findMappingValue(entryNode, kindKey); kindMapping != nil {
-			removeMappingKeyByName(kindMapping, "exclude_all")
-		}
-	}
-}
-
-// findEntrySequence finds a key-value pair in a mapping node where the value
-// is a sequence. Returns (keyIndex, valueNode). Returns (-1, nil) if not
-// found.
-func findEntrySequence(mapping *yaml.Node, key string) (int, *yaml.Node) {
-	for i := 0; i+1 < len(mapping.Content); i += 2 {
-		keyNode := mapping.Content[i]
-		if keyNode.Kind != yaml.ScalarNode || keyNode.Value != key {
-			continue
-		}
-		return i, mapping.Content[i+1]
-	}
-	return -1, nil
 }
 
 func findMappingValue(mapping *yaml.Node, key string) *yaml.Node {
@@ -394,77 +372,6 @@ func boolMappingValue(mapping *yaml.Node, key string) bool {
 		return false
 	}
 	return b
-}
-
-// entryNodeAutoSelectsKind reports whether a registry entry node would
-// auto-select resources of the given kind without an explicit include — the
-// same trigger the resolver uses for autoSelectAll (see
-// resolver.resolveSelectedResources / hasExplicitSelection): default:true or
-// required:true, with no tags, no non-empty include on ANY kind, and no
-// exclude_all that would drop this kind.
-//
-// When this holds, a resource is already selected implicitly, so re-enabling
-// it must NOT add an explicit include: doing so flips the entry into
-// explicit-selection mode and silently deselects everything else. Callers only
-// need to drop any stale exclude in that case.
-//
-// exclude_all (entry-level or per-kind) deselects resources, so a non-required
-// entry carrying it does NOT auto-select the affected kind — the reinstall
-// must add an explicit include and clear the stale exclude_all instead of
-// no-oping. required:true entries are immune to excludes in the resolver, so
-// exclude_all does not disqualify them.
-func entryNodeAutoSelectsKind(entryNode *yaml.Node, kind ir.ResourceKind) bool {
-	if entryNode == nil || entryNode.Kind != yaml.MappingNode {
-		return false
-	}
-	required := boolMappingValue(entryNode, "required")
-	if !required && !boolMappingValue(entryNode, "default") {
-		return false
-	}
-	// A tags key (even empty) is an explicit selection signal, mirroring the
-	// resolver's `entry.Tags != nil` check.
-	if findMappingValue(entryNode, "tags") != nil {
-		return false
-	}
-	// An entry-level exclude_all deselects every kind (non-required entries).
-	if !required && boolMappingValue(entryNode, "exclude_all") {
-		return false
-	}
-	targetKey := skill.ConfigKeyForKind(kind)
-	for _, k := range AllKinds {
-		kindKey := skill.ConfigKeyForKind(k)
-		if kindKey == "" {
-			continue
-		}
-		kindMapping := findMappingValue(entryNode, kindKey)
-		if kindMapping == nil {
-			continue
-		}
-		// A non-empty include on ANY kind puts the entry into
-		// explicit-selection mode, disabling auto-select-all.
-		if _, incNode := findEntrySequence(kindMapping, "include"); incNode != nil && len(incNode.Content) > 0 {
-			return false
-		}
-		// A per-kind exclude_all deselects only that kind (non-required).
-		if !required && kindKey == targetKey && boolMappingValue(kindMapping, "exclude_all") {
-			return false
-		}
-	}
-	return true
-}
-
-// findRegistryURLNode returns the YAML node whose value is the registry's
-// location (URL or path). It prefers the "url" key; if absent or empty, it
-// falls back to "path" (which is an alias for "url" when "url" is not
-// specified). The empty-value fallback mirrors RegistryEntry.UnmarshalYAML,
-// which treats `url: ""` as absent and uses "path" as the location alias.
-func findRegistryURLNode(entryNode *yaml.Node) *yaml.Node {
-	if urlNode := findMappingValue(entryNode, "url"); urlNode != nil {
-		if strings.TrimSpace(urlNode.Value) != "" {
-			return urlNode
-		}
-	}
-	return findMappingValue(entryNode, "path")
 }
 
 // setMappingValue sets or replaces the value node for a key in a mapping node.
@@ -585,52 +492,52 @@ func encodeConfigDocument(configPath string, doc *yaml.Node) ([]byte, error) {
 	return encoded.Bytes(), nil
 }
 
-// validateConfigDocumentData applies the root-document validation the normal
-// loaders enforce for a config at configPath to the candidate bytes about to
-// be written: v4 documents go through the same root parse the loader uses
-// (unknown-field, legacy-key, and structural rules) plus the layer-field
-// rules for the destination layer; v2/v3 documents go through the strict
-// legacy decoder with the same api-version, harness-target, and logging
-// policy as LoadRootConfigFromPath. It deliberately resolves neither
-// includes nor Marketplace locks: neither is a property of the document
-// being edited, and the harness edit does not touch them.
 func validateConfigDocumentData(configPath string, data []byte) error {
+	if data == nil {
+		data = []byte{}
+	}
 	kind := repoLayer
-	requireAPIVersion := true
 	if isLocalConfigPath(configPath) {
 		kind = localLayer
-		requireAPIVersion = false
 	} else if isGlobalConfigPath(configPath) {
 		kind = userLayer
 	}
-	if PeekAPIVersion(data) == APIVersionV4 {
-		v4, err := ParseV4Config(data, configPath, true)
-		if err != nil {
-			return err
-		}
-		return v4.validateLayerFields(kind)
+	v4, err := loadV4TreeWithOverlays(configPath, true, map[string]bool{}, nil, data, "", kind)
+	if err != nil {
+		return err
 	}
-	cfg, errs := loadV3ConfigWithAPIVersion(data, kind, false, requireAPIVersion)
-	if len(errs) > 0 {
-		return fmt.Errorf("validate config %q: %w", configPath, errors.Join(errs...))
-	}
-	if logErrs := validateLogging(cfg.Logging); len(logErrs) > 0 {
-		return fmt.Errorf("validate logging config %q: %w", configPath, errors.Join(logErrs...))
-	}
-	return nil
+	return v4.validateLayerFields(kind)
 }
 
 func writeConfigDocument(configPath string, mode os.FileMode, doc *yaml.Node) error {
+	return writeConfigDocumentWithOptions(configPath, mode, doc)
+}
+
+func writeConfigDocumentWithOptions(configPath string, mode os.FileMode, doc *yaml.Node, txnOpts ...dependencytxn.Option) error {
 	data, err := encodeConfigDocument(configPath, doc)
 	if err != nil {
 		return err
 	}
-	return writeConfigDocumentData(configPath, mode, data)
+	return writeConfigDocumentDataWithOptions(configPath, mode, data, txnOpts...)
 }
 
 // writeConfigDocumentData atomically replaces the config file at configPath
 // with data, preserving the existing file's mode.
 func writeConfigDocumentData(configPath string, mode os.FileMode, data []byte) error {
+	return writeConfigDocumentDataWithOptions(configPath, mode, data)
+}
+
+func writeConfigDocumentDataWithOptions(configPath string, mode os.FileMode, data []byte, txnOpts ...dependencytxn.Option) error {
+	if err := validateConfigDocumentData(configPath, data); err != nil {
+		return err
+	}
+	if dependencytxn.ClassifyDestination(configPath) != dependencytxn.AuthorityLegacy {
+		// Managed layer destinations write through the descriptor boundary.
+		// An approved link is preserved as a link and its captured target
+		// receives the edit; escapes, unsafe leaves, and parent or leaf
+		// replacements fail before the destination changes.
+		return dependencytxn.PublishDestination(configPath, dependencytxn.Generation{}, data, mode, txnOpts...)
+	}
 	// Edit through a symlink, not over it. The atomic rename below replaces
 	// whatever `configPath` names, so on the common dotfile setup where
 	// .agents/config.yaml is a symlink into a shared/checked-out file, the
@@ -680,7 +587,7 @@ func ensureTopLevelMapping(root *yaml.Node, key string) *yaml.Node {
 		keyNode := root.Content[i]
 		if keyNode.Kind == yaml.ScalarNode && keyNode.Value == key {
 			valueNode := root.Content[i+1]
-			// If it's a sequence (legacy list form), convert to mapping.
+			// Expand a compact resource group into its mapping form.
 			if valueNode.Kind == yaml.SequenceNode {
 				// Convert [a, b] → {include: [a, b]}
 				newMapping := &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
@@ -708,71 +615,10 @@ func ensureTopLevelMapping(root *yaml.Node, key string) *yaml.Node {
 	return valueNode
 }
 
-// findEntryMapping finds a key-value pair in a mapping node where the value
-// is a mapping. Returns (keyIndex, valueNode). Returns (-1, nil) if not found.
-func findEntryMapping(mapping *yaml.Node, key string) (int, *yaml.Node) {
-	for i := 0; i+1 < len(mapping.Content); i += 2 {
-		keyNode := mapping.Content[i]
-		if keyNode.Kind != yaml.ScalarNode || keyNode.Value != key {
-			continue
-		}
-		valueNode := mapping.Content[i+1]
-		if valueNode.Kind == yaml.MappingNode {
-			return i, valueNode
-		}
-		// Legacy sequence form — treat as mapping with include only.
-		if valueNode.Kind == yaml.SequenceNode {
-			newMapping := &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
-			includeKey := &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: "include"}
-			newMapping.Content = append(newMapping.Content, includeKey, valueNode)
-			mapping.Content[i+1] = newMapping
-			return i, newMapping
-		}
-		return i, nil
-	}
-	return -1, nil
-}
-
-// ensureEntryMapping ensures a key within an entry mapping exists as a
-// mapping node. If the key exists but is a sequence (legacy form), it is
-// converted to a mapping with the sequence as "include".
-func ensureEntryMapping(entryNode *yaml.Node, key string) *yaml.Node {
-	idx, found := findEntryMapping(entryNode, key)
-	if found != nil {
-		return found
-	}
-	if idx >= 0 {
-		// Key exists but value isn't a mapping — shouldn't happen after findEntryMapping conversion.
-		return nil
-	}
-
-	// Create new mapping.
-	keyNode := &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: key}
-	valueNode := &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
-	entryNode.Content = append(entryNode.Content, keyNode, valueNode)
-	return valueNode
-}
-
 func isEmptyConfigDocument(doc *yaml.Node) bool {
 	if doc == nil || doc.Kind != yaml.DocumentNode || len(doc.Content) == 0 {
 		return true
 	}
 	root := doc.Content[0]
 	return root == nil || (root.Kind == yaml.MappingNode && len(root.Content) == 0)
-}
-
-// yamlEntryPath returns the path of a YAML registry entry node, or "" if it
-// has no path (root entry). When "url" is present, the subdirectory is taken
-// from "path" (subdirectory). When "url" is absent, "path" is a URL alias,
-// so there is no subdirectory.
-func yamlEntryPath(entryNode *yaml.Node) string {
-	urlNode := findMappingValue(entryNode, "url")
-	if urlNode == nil || strings.TrimSpace(urlNode.Value) == "" {
-		// No URL: "path" is a URL alias, not a subdirectory.
-		return ""
-	}
-	if pathNode := findMappingValue(entryNode, "path"); pathNode != nil {
-		return strings.TrimSpace(pathNode.Value)
-	}
-	return ""
 }

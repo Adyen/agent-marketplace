@@ -38,15 +38,6 @@ func SetUserTelemetryEndpoint(configPath, endpoint string) error {
 	return updateTelemetryScalar(configPath, "endpoint", scalarNode(endpoint))
 }
 
-// SetUserTelemetryCommunityReporting sets telemetry.community_reporting in the
-// user-personal config.
-func SetUserTelemetryCommunityReporting(configPath string, enabled bool) error {
-	if !isGlobalConfigPath(configPath) {
-		return fmt.Errorf("telemetry can only be configured in the user-personal config")
-	}
-	return updateTelemetryScalar(configPath, "community_reporting", boolNode(enabled))
-}
-
 // DisableTelemetry sets telemetry.level to "off" in the user-personal config.
 // It is a no-op when the config file does not exist.
 func DisableTelemetry(configPath string) error {
@@ -65,7 +56,7 @@ func updateTelemetryScalar(configPath, key string, value *yaml.Node) error {
 		return fmt.Errorf("user config not found at %q; run 'agent-marketplace init' first", configPath)
 	}
 
-	doc, mode, err := readOrInitConfigWithV4(configPath, true)
+	doc, mode, err := readOrInitConfig(configPath)
 	if err != nil {
 		return err
 	}
@@ -86,16 +77,5 @@ func updateTelemetryScalar(configPath, key string, value *yaml.Node) error {
 		setMappingValue(telemetryMapping, key, value)
 	}
 
-	if err := writeConfigDocument(configPath, mode, doc); err != nil {
-		return err
-	}
-
-	cfg, err := LoadConfigFromPath(configPath)
-	if err != nil {
-		return fmt.Errorf("config written to %q is not valid: %w", configPath, err)
-	}
-	if err := cfg.Validate(); err != nil {
-		return fmt.Errorf("config written to %q is not valid: %w", configPath, err)
-	}
-	return nil
+	return writeConfigDocument(configPath, mode, doc)
 }

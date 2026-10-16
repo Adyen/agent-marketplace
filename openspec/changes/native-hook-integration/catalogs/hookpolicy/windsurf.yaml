@@ -2,7 +2,7 @@
 schema: 1
 harness: windsurf
 evidence:
-  checked: "2026-09-29"
+  checked: "2026-10-07"
   refs:
     - https://docs.devin.ai/desktop/cascade/hooks
   notes: >-

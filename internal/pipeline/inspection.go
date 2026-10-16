@@ -40,16 +40,6 @@ type InspectionResult struct {
 	Issues         []InspectionIssue
 }
 
-func (r InspectionResult) IssuesOf(severity IssueSeverity, category IssueCategory) []InspectionIssue {
-	var out []InspectionIssue
-	for _, issue := range r.Issues {
-		if issue.Severity == severity && issue.Category == category {
-			out = append(out, issue)
-		}
-	}
-	return out
-}
-
 func (r InspectionResult) Healthy() bool {
 	for _, issue := range r.Issues {
 		if issue.Severity == IssueError {
@@ -61,12 +51,16 @@ func (r InspectionResult) Healthy() bool {
 
 type InspectOptions struct {
 	Resolve                        ResolveOptions
+	Resolved                       func(InspectionResult)
 	DryRun                         func(ctx context.Context, root string, artifacts []resolver.ResolvedArtifact, opts ...materialize.RunOption) (*materialize.Report, error)
 	SkipMaterializeOnResolveErrors bool
 }
 
 func Inspect(ctx context.Context, opts InspectOptions) (InspectionResult, func()) {
 	resolved, release := resolve(ctx, opts.Resolve)
+	if opts.Resolved != nil && len(resolved.ConfigErrors) == 0 && (len(resolved.Errors) == 0 || len(resolved.CatalogErrors)+len(resolved.ResolveErrors) > 0) {
+		opts.Resolved(buildInspection(resolved, nil, nil))
+	}
 	var report *materialize.Report
 	var matErr error
 	if !skipInspectionDryRun(resolved, opts.SkipMaterializeOnResolveErrors) {
@@ -97,11 +91,12 @@ func isSoftResolveIssue(err error) bool {
 	return resolver.IsSoftSelectedNotFound(err) ||
 		resolver.IsSoftSelectedMalformed(err) ||
 		resolver.IsNameCollision(err) ||
-		resolver.IsWarning(err)
+		resolver.IsWarning(err) ||
+		IsMarketplaceCacheMetadataMissingWarning(err)
 }
 
 func buildInspection(resolved ResolveResult, report *materialize.Report, matErr error) InspectionResult {
-	issues := make([]InspectionIssue, 0, len(resolved.Warnings)+len(resolved.Errors)+len(resolved.ResolveErrors))
+	issues := make([]InspectionIssue, 0, int64(len(resolved.Warnings))+int64(len(resolved.Errors))+int64(len(resolved.ResolveErrors)))
 	add := func(severity IssueSeverity, category IssueCategory, err error) {
 		if err != nil {
 			issues = append(issues, InspectionIssue{Severity: severity, Category: category, Err: err})

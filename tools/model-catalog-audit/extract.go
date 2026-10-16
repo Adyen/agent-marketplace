@@ -21,6 +21,7 @@ var heading = regexp.MustCompile(`^(#{1,6}) (.+)$`)
 type source struct {
 	Name     string
 	Harness  string
+	Domain   string
 	URL      string
 	Kind     string
 	Fields   []string
@@ -97,6 +98,17 @@ func extract(s source, body []byte) (observation, error) {
 			selected = append(selected, section)
 		}
 		result.Text = normalizeText(strings.Join(selected, "\n"))
+	case "document":
+		var err error
+		result.Text, err = documentText(body)
+		if err != nil {
+			return result, err
+		}
+		for _, marker := range s.Sections {
+			if !strings.Contains(result.Text, marker) {
+				return result, fmt.Errorf("%w: missing documentation marker %s", errSourceFormat, marker)
+			}
+		}
 	default:
 		return result, errSourceFormat
 	}

@@ -31,8 +31,14 @@ func benchRepairFixture(b *testing.B, n int) (repoRoot string, selection []resol
 	b.Setenv("HOME", b.TempDir())
 	b.Setenv("XDG_STATE_HOME", filepath.Join(b.TempDir(), "state"))
 	b.Setenv("XDG_CACHE_HOME", filepath.Join(b.TempDir(), "cache"))
+	return repoRoot, syncRepairFixture(b, repoRoot, n)
+}
 
-	selection = make([]resolver.ResolvedArtifact, 0, n)
+// syncRepairFixture materializes n MCP servers below repoRoot and drops the
+// durable ownership record, using whatever HOME/XDG roots are already set.
+func syncRepairFixture(b *testing.B, repoRoot string, n int) []resolver.ResolvedArtifact {
+	b.Helper()
+	selection := make([]resolver.ResolvedArtifact, 0, n)
 	for i := 0; i < n; i++ {
 		name := fmt.Sprintf("bench-mcp-%03d", i)
 		selection = append(selection, resolver.ResolvedArtifact{
@@ -51,7 +57,7 @@ func benchRepairFixture(b *testing.B, n int) (repoRoot string, selection []resol
 	if err := os.Remove(store.StateFile()); err != nil {
 		b.Fatal(err)
 	}
-	return repoRoot, selection
+	return selection
 }
 
 func BenchmarkDevinRepairPreview(b *testing.B) {

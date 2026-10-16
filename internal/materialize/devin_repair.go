@@ -181,6 +181,9 @@ func devinDesiredAggregates(repoRoot string, resolved []resolver.ResolvedArtifac
 			aggregates[key] = work
 		}
 	}
+	for key, hooks := range compiled.nativeHooks {
+		aggregates[key] = mergeOwnedJSONAggregateWork(aggregates[key], hooks)
+	}
 	return aggregates, keys, compiled.allDiags
 }
 
@@ -216,6 +219,11 @@ func compileRepairTarget(repoRoot string, resolved []resolver.ResolvedArtifact, 
 		}
 	}
 
+	if target == hcc.TargetOpenCode {
+		if refusal := normalizeOpenCodeScopes(targetWork, targetOutputs, repoRoot); refusal != nil {
+			return compilePhaseResult{allDiags: []diag.Diagnostic{*refusal}}, nil
+		}
+	}
 	compiled := compileWorkItems(targetWork, nil, targetOutputs, targetBlocked, repoRoot)
 
 	keys := make([]outputKey, 0, len(targetOutputs))

@@ -146,7 +146,7 @@ func DecodeMatcher(source target.Target, matcher string, src MatcherSpec) (Decod
 	if matcher == "" {
 		return DecodedMatcher{Empty: true}, nil
 	}
-	if matcher == "*" {
+	if matcher == "*" || (matcher == ".*" && (src.Syntax == MatcherRegex || src.Syntax == MatcherExactOrRegex)) {
 		return DecodedMatcher{All: true}, nil
 	}
 	c, err := sourceCatalog(source)
@@ -359,6 +359,19 @@ func IsToolOnSurface(h target.Target, surface, name string) bool {
 	}
 	t := c.Tools[canonical]
 	return len(t.Surfaces) == 0 || slices.Contains(t.Surfaces, surface)
+}
+
+// ToolConcepts resolves one accepted tool spelling of harness h to the
+// concepts it expresses. Input without provenance (h == "") decodes through
+// the Claude catalog plus the frozen legacy alias table. Unknown spellings
+// return ok=false so callers can refuse rather than guess.
+func ToolConcepts(h target.Target, name string) ([]string, bool) {
+	c, err := sourceCatalog(h)
+	if err != nil {
+		return nil, false
+	}
+	concepts, ok := c.conceptsFor(name, h == "")
+	return slices.Clone(concepts), ok
 }
 
 // TranslateToolList translates a tool allow-list from source spellings to

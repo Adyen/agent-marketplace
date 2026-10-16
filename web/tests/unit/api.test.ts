@@ -69,7 +69,18 @@ describe('Marketplace API URL handling', () => {
       registry: ['team/tools', 'community'],
       offset: 24,
       limit: 24,
+      sort: 'installations',
     })
+  })
+
+  it('always requests installation ordering for browser searches', () => {
+    for (const p of [
+      { q: '', kind: '', registry: [], offset: 0, limit: 25 },
+      { q: 'review', kind: '', registry: [], offset: 0, limit: 25 },
+      { q: '', kind: '', registry: [], offset: 50, limit: 25 },
+    ] as SearchParams[]) {
+      expect(serializeSearchQuery(p).sort).toBe('installations')
+    }
   })
 
   it.each(['//evil.example', 'ftp://evil.example', 'https://user:pass@evil.example', 'https://market.example?x=1', 'https://market.example#x', '/api/v1?x=1', '/api/\u0000'])('bounds malformed API bases: %s', value => {
@@ -220,6 +231,17 @@ describe('Marketplace API URL handling', () => {
     })).toThrow(/assessment\.findings must be a bounded array of at most 1000 entries/)
   })
 
+  it('preserves optional source provenance on detail and revision-list payloads', () => {
+    const digest = 'sha256:' + 'a'.repeat(64)
+    const source = { repository_url: 'https://github.com/Adyen/agent-skills.git', path: 'skills/review/SKILL.md', commit: 'b'.repeat(40) }
+    expect(normalizeResourceRevision(revisionPayload(digest, { source })).source).toEqual(source)
+    expect(normalizeResourceRevisions([revisionPayload(digest, { source })], { kind: 'skill', name: 'code review' })[0]?.source).toEqual(source)
+    expect(normalizeResourceRevision(revisionPayload(digest)).source).toBeUndefined()
+    expect(() => normalizeResourceRevision(revisionPayload(digest, { source: 'github.com/Adyen/agent-skills' }))).toThrow(ApiValidationError)
+    expect(() => normalizeResourceRevision(revisionPayload(digest, { source: { repository_url: source.repository_url, commit: source.commit } }))).toThrow(ApiValidationError)
+    expect(() => normalizeResourceRevision(revisionPayload(digest, { source: { ...source, commit: 'main' } }))).toThrow(ApiValidationError)
+  })
+
   it('selects text and raster response handling for inspection content', async () => {
     expect(isRasterMediaType('image/png')).toBe(true)
     expect(isRasterMediaType('application/json')).toBe(false)
@@ -305,5 +327,31 @@ describe('search result availability', () => {
 
   it('rejects a malformed non-string availability', () => {
     expect(() => search(7)).toThrow(ApiValidationError)
+  })
+})
+
+// spec: marketplace-browser/browser-displays-counts-while-preserving-filtered-pagination
+describe('search result installation counts', () => {
+  const digest = 'sha256:' + 'a'.repeat(64)
+  const search = (count?: unknown) => normalizeSearchResult({
+    items: [{ registry_id: 'registry', kind: 'skill', name: 'review', revision: digest, content_digest: digest, ...(count === undefined ? {} : { installation_count: count }) }],
+    total: 1,
+    offset: 0,
+    limit: 10,
+  })
+
+  it('preserves absent, zero, and positive counts distinctly', () => {
+    expect(search().items[0]?.installation_count).toBeUndefined()
+    expect(search(0).items[0]?.installation_count).toBe(0)
+    expect(search(7).items[0]?.installation_count).toBe(7)
+  })
+
+  it.each([-1, 1.5, '3', null, {}])('rejects a malformed installation count: %s', value => {
+    expect(() => search(value)).toThrow(ApiValidationError)
+  })
+
+  it('accepts counts above the default integer bound but rejects unsafe integers', () => {
+    expect(search(1_000_000_001).items[0]?.installation_count).toBe(1_000_000_001)
+    expect(() => search(Number.MAX_SAFE_INTEGER + 1)).toThrow(ApiValidationError)
   })
 })

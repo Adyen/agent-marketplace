@@ -4,7 +4,7 @@
       {
         "hooks": [
           {
-            "command": "${CLAUDE_PLUGIN_ROOT}/scripts/check.sh",
+            "command": "\"$(git rev-parse --show-toplevel)\"/plugins/demo/scripts/check.sh",
             "type": "command"
           }
         ],

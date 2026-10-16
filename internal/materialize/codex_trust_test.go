@@ -15,7 +15,6 @@ import (
 	targetmeta "github.com/Adyen/agent-marketplace/pkg/harness-compilation/target"
 )
 
-// spec: hook-resources/codex-repository-hook-change-reports-trust-review
 func TestCodexTrustReviewDiagnosticsFollowRepositoryMutation(t *testing.T) {
 	tests := []struct {
 		name       string
@@ -55,11 +54,18 @@ func TestCodexTrustReviewDiagnosticsFollowRepositoryMutation(t *testing.T) {
 				}
 			}
 
-			selection := []resolver.ResolvedArtifact{{
-				Entry:     catalog.Entry{Name: "managed", Resource: tt.resource("first")},
-				Source:    config.RepoCommitted,
-				Harnesses: []targetmeta.Target{targetmeta.TargetCodex},
-			}}
+			resource := tt.resource("first")
+			var resolved resolver.ResolvedArtifact
+			if hook, ok := resource.(*ir.Hook); ok {
+				resolved = codexHookResolved(t, "managed", hook, config.RepoCommitted)
+			} else {
+				resolved = resolver.ResolvedArtifact{
+					Entry:     catalog.Entry{Name: "managed", Resource: resource},
+					Source:    config.RepoCommitted,
+					Harnesses: []targetmeta.Target{targetmeta.TargetCodex},
+				}
+			}
+			selection := []resolver.ResolvedArtifact{resolved}
 			report, err := Run(context.Background(), repo, selection)
 			if err != nil {
 				t.Fatal(err)
@@ -79,7 +85,26 @@ func TestCodexTrustReviewDiagnosticsFollowRepositoryMutation(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			selection[0].Resource = tt.resource("second")
+			if hook, ok := tt.resource("second").(*ir.Hook); ok {
+				updated := codexHookResolved(t, "managed", hook, config.RepoCommitted)
+				updatedRoot := filepath.Join(updated.RegistryURL, "hooks", "hooks.json")
+				updatedDefinition, err := os.ReadFile(updatedRoot)
+				if err != nil {
+					t.Fatal(err)
+				}
+				originalRoot := selection[0].RegistryURL
+				originalDefinition := filepath.Join(originalRoot, "hooks", "hooks.json")
+				if err := os.WriteFile(originalDefinition, updatedDefinition, 0o644); err != nil {
+					t.Fatal(err)
+				}
+				updated.RegistryURL = originalRoot
+				updated.CatalogKey = selection[0].CatalogKey
+				updated.V4Kind = selection[0].V4Kind
+				updated.Path = originalDefinition
+				selection[0] = updated
+			} else {
+				selection[0].Resource = tt.resource("second")
+			}
 			report, err = Run(context.Background(), repo, selection, WithDryRun())
 			if err != nil {
 				t.Fatal(err)

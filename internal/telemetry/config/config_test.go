@@ -1,13 +1,85 @@
 package telemetryconfig
 
 import (
+	"errors"
+	"io"
+	"log/slog"
 	"net"
+	"net/url"
 	"os"
 	"path/filepath"
 	"reflect"
 	"slices"
+	"strings"
 	"testing"
 )
+
+// spec: configuration-settings/telemetry-endpoint-credentials-are-not-logged
+// spec: configuration-settings/unparseable-telemetry-urls-fail-closed
+func TestTelemetryURLValidationErrorsRedactCredentials(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		check func() error
+		host  string
+		parse bool
+	}{
+		{"syntax parse", func() error {
+			return ValidateEndpointSyntax("https://am-user:am-secret@collector.example/otlp\x7f?token=am-query-secret am-space-secret")
+		}, "[redacted URL]", true},
+		{"syntax scheme", func() error {
+			return ValidateEndpointSyntax("ftp://am-user:am-secret@collector.example/otlp?token=am-query-secret am-space-secret")
+		}, "collector.example/otlp", false},
+		{"transport parse", func() error {
+			return ValidateEndpoint("https://am-user:am-secret@collector.example/otlp\x7f?token=am-query-secret am-space-secret", false)
+		}, "[redacted URL]", true},
+		{"transport HTTPS", func() error {
+			return ValidateEndpoint("http://am-user:am-secret@203.0.113.10/otlp?token=am-query-secret am-space-secret", false)
+		}, "203.0.113.10/otlp", false},
+		{"retention parse", func() error {
+			return ValidateRetentionPolicy("https://am-user:am-secret@policy.example/retention\x7f?token=am-query-secret am-space-secret")
+		}, "[redacted URL]", true},
+		{"retention scheme", func() error {
+			return ValidateRetentionPolicy("ftp://am-user:am-secret@policy.example/retention?token=am-query-secret am-space-secret")
+		}, "policy.example/retention", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := tc.check()
+			if err == nil {
+				t.Fatal("invalid telemetry URL accepted")
+			}
+			message := err.Error()
+			if strings.Contains(message, "am-user") || strings.Contains(message, "am-secret") || strings.Contains(message, "am-query-secret") || strings.Contains(message, "am-space-secret") || !strings.Contains(message, tc.host) {
+				t.Fatalf("error = %q, want credentials removed and %s retained", message, tc.host)
+			}
+			var parseErr *url.Error
+			if errors.As(err, &parseErr) != tc.parse {
+				t.Fatalf("errors.As(*url.Error) = %v, want %v", !tc.parse, tc.parse)
+			}
+		})
+	}
+}
+
+// spec: configuration-settings/untrusted-log-values-cannot-create-records
+func TestEndpointValidationEscapesLogValues(t *testing.T) {
+	oldLookup, oldLogger := LookupIP, slog.Default()
+	t.Cleanup(func() { LookupIP = oldLookup; slog.SetDefault(oldLogger) })
+	LookupIP = func(string) ([]net.IP, error) { return nil, errors.New("lookup failed\r\nforged record") }
+	var logged string
+	slog.SetDefault(slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{
+		ReplaceAttr: func(_ []string, attr slog.Attr) slog.Attr {
+			if attr.Key == "error" {
+				logged = attr.Value.String()
+			}
+			return attr
+		},
+	})))
+	if err := ValidateEndpoint("http://private.example", true); err != nil {
+		t.Fatal(err)
+	}
+	if logged != `lookup failed\r\nforged record` {
+		t.Fatalf("log attribute = %q, want escaped line breaks", logged)
+	}
+}
 
 func TestNormalizeLevel(t *testing.T) {
 	tests := []struct {
@@ -33,25 +105,6 @@ func TestNormalizeLevel(t *testing.T) {
 			}
 			if got != tc.want {
 				t.Fatalf("NormalizeLevel(%q) = %q, want %q", tc.input, got, tc.want)
-			}
-		})
-	}
-}
-
-func TestMaxLevel(t *testing.T) {
-	tests := []struct {
-		a, b, want string
-	}{
-		{LevelOff, LevelOff, LevelOff},
-		{LevelOff, LevelBasic, LevelBasic},
-		{LevelBasic, LevelDetailed, LevelDetailed},
-		{LevelDetailed, LevelBasic, LevelDetailed},
-		{LevelBasic, LevelBasic, LevelBasic},
-	}
-	for _, tc := range tests {
-		t.Run(tc.a+"_"+tc.b, func(t *testing.T) {
-			if got := MaxLevel(tc.a, tc.b); got != tc.want {
-				t.Fatalf("MaxLevel(%q, %q) = %q, want %q", tc.a, tc.b, got, tc.want)
 			}
 		})
 	}
@@ -371,8 +424,8 @@ func TestSchemaVersionAndAllowlist(t *testing.T) {
 	if SchemaVersion != "1" {
 		t.Fatalf("SchemaVersion = %q, want 1", SchemaVersion)
 	}
-	if SchemaMajor != 1 || SchemaMinor != 1 {
-		t.Fatalf("SchemaMajor/Minor = %d/%d, want 1/1", SchemaMajor, SchemaMinor)
+	if SchemaMajor != 1 || SchemaMinor != 2 {
+		t.Fatalf("SchemaMajor/Minor = %d/%d, want 1/2", SchemaMajor, SchemaMinor)
 	}
 	want := []ResourceAttribute{
 		ResourceAttrCommandName,
@@ -403,7 +456,18 @@ func TestSchemaVersionAndAllowlist(t *testing.T) {
 		InventoryOmissionsName != MetricNamespace+".config.inventory_omissions" {
 		t.Fatalf("inventory instrument names = %q, %q, %q, %q", InventorySnapshotName, InventoryRegistryName, InventoryResourceName, InventoryOmissionsName)
 	}
-	if len(InventorySnapshotAttributes) != 5 || len(InventoryRegistryAttributes) != 8 || len(InventoryResourceAttributes) != 9 || len(InventoryOmissionAttributes) != 1 {
+	if len(InventorySnapshotAttributes) != 5 || len(InventoryRegistryAttributes) != 10 || len(InventoryResourceAttributes) != 11 || len(InventoryOmissionAttributes) != 1 {
 		t.Fatalf("inventory allowlist lengths = %d/%d/%d/%d", len(InventorySnapshotAttributes), len(InventoryRegistryAttributes), len(InventoryResourceAttributes), len(InventoryOmissionAttributes))
+	}
+	for _, attr := range []MetricAttribute{MetricAttribute("source.kind"), MetricAttribute("marketplace.id")} {
+		if !slices.Contains(InventoryRegistryAttributes, attr) || !slices.Contains(InventoryResourceAttributes, attr) {
+			t.Fatalf("hosted identity attribute %q missing from registry/resource allowlists", attr)
+		}
+		if slices.Contains(InventorySnapshotAttributes, attr) {
+			t.Fatalf("hosted identity attribute %q was added to snapshot allowlist", attr)
+		}
+		if slices.Contains(MetricSchemaAttributes, ResourceAttribute(attr)) {
+			t.Fatalf("hosted identity attribute %q was added to command metric allowlist", attr)
+		}
 	}
 }

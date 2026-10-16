@@ -178,7 +178,7 @@ func TestSilentSyncCollectRejectsZeroWorkspaceBeforeConfigStaging(t *testing.T) 
 	if err := os.MkdirAll(filepath.Dir(destination), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(destination, []byte("apiVersion: agent-marketplace/v2\n"), 0o644); err != nil {
+	if err := os.WriteFile(destination, []byte("apiVersion: agent-marketplace/v4\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	staging, err := newConfigStagingManager()
@@ -194,7 +194,7 @@ func TestSilentSyncCollectRejectsZeroWorkspaceBeforeConfigStaging(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(shadow, []byte("apiVersion: agent-marketplace/v2\nskills: [staged]\n"), 0o644); err != nil {
+	if err := os.WriteFile(shadow, []byte("apiVersion: agent-marketplace/v4\nsources:\n  staged: {directory: .}\nresources:\n  staged: [skill/staged]\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	reconcilerRan := false
@@ -281,10 +281,13 @@ func TestDiscoverWorkspaceFromNestedDirectory(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	repoRoot := t.TempDir()
 	subdir := filepath.Join(repoRoot, "subdir")
-	writeFile(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `apiVersion: agent-marketplace/v2
-registries: []
+	writeFile(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `apiVersion: agent-marketplace/v4
+sources: {}
+resources: {}
 `)
-	writeFile(t, filepath.Join(subdir, ".agents", "config.local.yaml"), `registries: []
+	writeFile(t, filepath.Join(subdir, ".agents", "config.local.yaml"), `apiVersion: agent-marketplace/v4
+sources: {}
+resources: {}
 `)
 	if err := os.MkdirAll(subdir, 0o755); err != nil {
 		t.Fatalf("mkdir subdir: %v", err)
@@ -320,6 +323,90 @@ registries: []
 	}
 }
 
+func writeInstallRedirectFixture(t *testing.T) (parent, localDir, sibling string) {
+	t.Helper()
+	parent = canonicalTempDir(t)
+	writeFile(t, filepath.Join(parent, ".agents", "config.yaml"), `apiVersion: agent-marketplace/v4
+sources: {}
+resources: {}
+`)
+	localDir = filepath.Join(parent, "sub")
+	writeFile(t, filepath.Join(localDir, ".agents", "config.local.yaml"), `apiVersion: agent-marketplace/v4
+sources: {}
+resources: {}
+`)
+	sibling = filepath.Join(parent, "sibling")
+	if err := os.MkdirAll(sibling, 0o755); err != nil {
+		t.Fatalf("mkdir sibling: %v", err)
+	}
+	return parent, localDir, sibling
+}
+
+// spec: workspace-resolution/escaping-personal-local-root
+func TestInstallRepoScopeRedirectRejectsEscapingLocalRoot(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	parent, localDir, sibling := writeInstallRedirectFixture(t)
+	committedPath := filepath.Join(parent, ".agents", "config.yaml")
+	committedBefore, err := os.ReadFile(committedPath)
+	if err != nil {
+		t.Fatalf("read committed config: %v", err)
+	}
+	t.Chdir(sibling)
+	config.ResetRepoRootCache()
+
+	_, err = Install(context.Background(), InstallOptions{
+		RepoRoot:       parent,
+		LocalConfigDir: localDir,
+		Scope:          ScopeRepo,
+		ScopeSpecified: true,
+		Args:           []string{"some-skill"},
+	})
+	if !errors.Is(err, ErrInvalidWorkspace) {
+		t.Fatalf("Install error = %v; want ErrInvalidWorkspace", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(sibling, ".agents")); !os.IsNotExist(statErr) {
+		t.Fatalf("install seeded a config before rejecting the redirected workspace; stat err = %v", statErr)
+	}
+	if _, statErr := os.Stat(filepath.Join(parent, ".agents", "lock.yaml")); !os.IsNotExist(statErr) {
+		t.Fatalf("install prepared a lock before rejecting the redirected workspace; stat err = %v", statErr)
+	}
+	if _, statErr := os.Stat(filepath.Join(sibling, ".factory")); !os.IsNotExist(statErr) {
+		t.Fatalf("install materialized output before rejecting the redirected workspace; stat err = %v", statErr)
+	}
+	committedAfter, err := os.ReadFile(committedPath)
+	if err != nil {
+		t.Fatalf("re-read committed config: %v", err)
+	}
+	if string(committedAfter) != string(committedBefore) {
+		t.Fatal("install mutated the committed config before rejecting the redirected workspace")
+	}
+}
+
+func TestInstallRepoScopeRedirectSeedsValidSiblingRoot(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	parent, _, sibling := writeInstallRedirectFixture(t)
+	t.Chdir(sibling)
+	config.ResetRepoRootCache()
+
+	_, err := Install(context.Background(), InstallOptions{
+		RepoRoot:       parent,
+		LocalConfigDir: sibling,
+		Scope:          ScopeRepo,
+		ScopeSpecified: true,
+		Args:           []string{"some-skill"},
+	})
+	if errors.Is(err, ErrInvalidWorkspace) {
+		t.Fatalf("valid repo-scope redirect rejected: %v", err)
+	}
+	if err == nil {
+		t.Fatal("install without registries must fail after seeding the sibling config")
+	}
+	seeded, loadErr := config.LoadRootConfigFromPath(filepath.Join(sibling, ".agents", "config.yaml"))
+	if loadErr != nil || seeded == nil || seeded.APIVersion != config.APIVersionV4 {
+		t.Fatalf("valid repo-scope redirect did not seed a supported v4 sibling root: config=%#v err=%v", seeded, loadErr)
+	}
+}
+
 // spec: workspace-resolution/nested-personal-local-synchronization
 func TestSyncNestedLocalLoadsRepoConfigAndMaterializesBelowIt(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
@@ -329,23 +416,25 @@ func TestSyncNestedLocalLoadsRepoConfigAndMaterializesBelowIt(t *testing.T) {
 	registryRoot := filepath.Join(t.TempDir(), "registry")
 	writeSkill(t, registryRoot, "nested-skill", "A nested-local skill", []string{"test"})
 
-	writeFile(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `apiVersion: agent-marketplace/v2
+	writeFile(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `apiVersion: agent-marketplace/v4
 harnesses:
   - factory
-registries:
-  - url: `+registryRoot+`
-    ref: main
-    skills:
-      - nested-skill
+sources:
+  nested: {directory: `+registryRoot+`}
+resources:
+  nested: [skill/nested-skill]
 `)
-	writeFile(t, filepath.Join(subdir, ".agents", "config.local.yaml"), `registries: []
+	writeFile(t, filepath.Join(subdir, ".agents", "config.local.yaml"), `apiVersion: agent-marketplace/v4
+sources: {}
+resources: {}
 `)
 
 	globalPath := filepath.Join(t.TempDir(), "global.yaml")
-	writeFile(t, globalPath, `apiVersion: agent-marketplace/v2
+	writeFile(t, globalPath, `apiVersion: agent-marketplace/v4
 harnesses:
   - factory
-registries: []
+sources: {}
+resources: {}
 `)
 
 	ws := mustNestedWorkspace(t, repoRoot, subdir)
@@ -364,7 +453,13 @@ registries: []
 	if !hasResolvedSkill(result.Resolved, "nested-skill") {
 		t.Fatalf("expected nested-skill resolved from the repository config, got %#v", result.Resolved)
 	}
+	if len(result.Resolved) != 1 || result.Resolved[0].Source != config.RepoCommitted || result.Resolved[0].RegistryURL != registryRoot {
+		t.Fatalf("nested-local sync changed repository selection ownership: %#v", result.Resolved)
+	}
 	if _, err := os.Stat(filepath.Join(subdir, ".factory", "skills", "nested-skill")); err != nil {
 		t.Fatalf("expected materialization below the nested local root: %v", err)
+	}
+	if _, err := os.Lstat(filepath.Join(repoRoot, ".factory", "skills", "nested-skill")); !os.IsNotExist(err) {
+		t.Fatalf("nested-local sync materialized at the repository root: %v", err)
 	}
 }
