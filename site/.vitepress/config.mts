@@ -125,6 +125,7 @@ export default defineConfig({
                     { text: 'Adopt in a repository', link: `${DOCS_PATH}how-to/adopt-agent-marketplace-in-a-repository` },
                     { text: 'Keep resources reproducible', link: `${DOCS_PATH}how-to/keep-resources-reproducible` },
                     { text: 'Use personal repository overrides', link: `${DOCS_PATH}how-to/use-personal-repository-overrides` },
+                    { text: 'Keep a local change to a synced resource', link: `${DOCS_PATH}how-to/keep-local-changes-to-synced-resources` },
                     { text: 'Remove or override resources', link: `${DOCS_PATH}how-to/remove-or-override-resources` },
                     { text: 'Configure multiple harnesses', link: `${DOCS_PATH}how-to/configure-multiple-harnesses` },
                     { text: 'Write regular files instead of symlinks', link: `${DOCS_PATH}how-to/write-regular-files-instead-of-symlinks` }
@@ -135,6 +136,8 @@ export default defineConfig({
                   collapsed: true,
                   items: [
                     { text: 'Troubleshoot sync drift', link: `${DOCS_PATH}how-to/troubleshoot-sync-drift` },
+                    { text: 'Handle a renamed or removed resource', link: `${DOCS_PATH}how-to/handle-renamed-or-removed-resources` },
+                    { text: 'Respond to a revoked resource', link: `${DOCS_PATH}how-to/respond-to-a-revoked-resource` },
                     { text: 'Repair owned shared configuration', link: `${DOCS_PATH}how-to/repair-owned-shared-configuration` },
                     { text: 'Clean the cache safely', link: `${DOCS_PATH}how-to/clean-the-cache-safely` }
                   ]
@@ -144,6 +147,7 @@ export default defineConfig({
                   collapsed: true,
                   items: [
                     { text: 'Back up and restore machine resources', link: `${DOCS_PATH}how-to/back-up-and-restore-machine-resources` },
+                    { text: 'Review and roll back an update', link: `${DOCS_PATH}how-to/review-and-roll-back-updates` },
                     { text: 'Convert configuration before upgrading', link: `${DOCS_PATH}how-to/migrate-configuration` },
                     { text: 'Configure telemetry', link: `${DOCS_PATH}how-to/configure-telemetry` },
                     { text: 'Remove agent-marketplace safely', link: `${DOCS_PATH}how-to/remove-agent-marketplace-safely` }
@@ -159,7 +163,8 @@ export default defineConfig({
                 { text: 'Declare tags and a license', link: `${DOCS_PATH}how-to/author/declare-tags-and-licenses` },
                 { text: 'Declare resource prerequisites', link: `${DOCS_PATH}how-to/author/declare-resource-prerequisites` },
                 { text: 'Validate a registry in CI', link: `${DOCS_PATH}how-to/author/validate-a-registry-in-ci` },
-                { text: 'Version and release a registry', link: `${DOCS_PATH}how-to/author/version-and-release-a-registry` }
+                { text: 'Version and release a registry', link: `${DOCS_PATH}how-to/author/version-and-release-a-registry` },
+                { text: 'Rename or retire a resource', link: `${DOCS_PATH}how-to/author/rename-or-retire-a-resource` }
               ]
             },
             {
@@ -172,7 +177,8 @@ export default defineConfig({
                     { text: 'Deploy a production Marketplace', link: `${DOCS_PATH}how-to/operator/deploy-a-production-marketplace` },
                     { text: 'Test locally with Compose', link: `${DOCS_PATH}how-to/operator/test-locally-with-compose` },
                     { text: 'Configure a reverse proxy', link: `${DOCS_PATH}how-to/operator/configure-a-reverse-proxy` },
-                    { text: 'Enable and use the admin panel', link: `${DOCS_PATH}how-to/operator/enable-and-use-the-admin-panel` }
+                    { text: 'Enable and use the admin panel', link: `${DOCS_PATH}how-to/operator/enable-and-use-the-admin-panel` },
+                    { text: 'Roll out organization configuration', link: `${DOCS_PATH}how-to/operator/roll-out-organization-configuration` }
                   ]
                 },
                 {
@@ -265,6 +271,7 @@ export default defineConfig({
                 { text: 'Scopes, selection, and precedence', link: `${DOCS_PATH}explanation/scopes-selection-and-precedence` },
                 { text: 'Native harness materialization', link: `${DOCS_PATH}explanation/native-harness-materialization` },
                 { text: 'Reproducibility and lockfiles', link: `${DOCS_PATH}explanation/reproducibility-and-lockfiles` },
+                { text: 'How upstream changes reach consumers', link: `${DOCS_PATH}explanation/how-upstream-changes-reach-consumers` },
                 { text: 'Shared configuration ownership', link: `${DOCS_PATH}explanation/shared-configuration-ownership` }
               ]
             },

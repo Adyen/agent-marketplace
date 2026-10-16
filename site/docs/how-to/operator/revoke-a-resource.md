@@ -79,3 +79,4 @@ Avoid `curl ... | head` for this check: without `set -o pipefail`, the pipeline 
 
 - [Marketplace operator configuration reference](../../reference/marketplace-operator-configuration.md)
 - [How to reindex and monitor a Marketplace](./reindex-and-monitor.md)
+- [How to respond to a revoked resource](../respond-to-a-revoked-resource.md)
