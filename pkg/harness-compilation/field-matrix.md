@@ -115,3 +115,9 @@ inline MCP servers keep every member, including `includeTools`,
 other target with `hook.windsurf.native-fields-unsupported`. Devin removes an
 MCP server whose argument it cannot represent with
 `mcp.devin.interpolation-unrepresentable` instead of dropping the argument.
+
+Ambiguous identities are refused rather than resolved by file order. Two
+Windsurf workflows, or two Windsurf rules, in one workspace root that claim the
+same name are all suppressed with `ingest.windsurf.duplicate-identity`; the
+workspace root still overrides the user root. A rule whose frontmatter repeats a
+key fails to load instead of keeping the last value.
