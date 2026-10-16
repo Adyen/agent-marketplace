@@ -13,12 +13,12 @@ Before you change a name, check how the change lands for each consumer:
 
 | Consumer selects the resource | What happens when the old name disappears |
 |---|---|
-| By name | The resource vanishes from their harness. They get a `selected but not found` warning and must install the new name themselves. |
+| By name | Their `update` refuses, names the resource, and keeps the old output and lock. The old output goes away only when their lock moves without the `update` check, with a `selected but not found` warning, and they install the new name themselves. |
 | With `all: true` or `tags` | The new name installs in place of the old one. Their `exclude` of the old name stops working. |
 | Through your collection | Nothing breaks if the collection lists the new name in the same commit. |
-| As a collection that you rename | Every `sync` fails, unless you keep a collection with the old name (step 4). |
-| With `required: true` | Every `sync` fails until they change their configuration. |
-| From a hosted Marketplace | Their pinned revision keeps working, but `agent-marketplace update` fails with `resource not found` until they replace the pin. |
+| As a collection that you rename | Their `update` refuses and names the collection, unless you keep a collection with the old name (step 4). A `sync` with no lock fails. |
+| With `required: true` | Their `update` refuses until they change their configuration; a `sync` whose lock moved without the update check fails. |
+| From a hosted Marketplace | Their pinned revision keeps working, but `agent-marketplace update` exits `1` and names the missing resource until they replace the pin. |
 
 Required and Marketplace consumers break hardest, so give them the most notice.
 
@@ -66,10 +66,12 @@ Collection consumers then switch to the new name on their next update and never 
 
 ## 4. Keep the old name when you rename a collection
 
-Consumers select a collection by its `name` field. If that name disappears, every consumer's `sync` fails, even without `required: true`:
+Consumers select a collection by its `name` field. If that name disappears, `update` refuses and a `sync` without a lock fails, even without `required: true`:
 
 ```text
-Error: dependency-committed sync failure: collection "team" was selected but not found in https://github.com/example-org/agent-resources.git@main
+Error: collection "team" was selected but not found in https://github.com/example-org/agent-resources.git@main
+  → run 'agent-marketplace remove --kind collection team' before rerunning update; install a renamed resource afterwards with 'agent-marketplace install <new-name>'
+update left the lock and harness outputs unchanged; rerun 'agent-marketplace update' after resolving the selections above, or update other registries with 'agent-marketplace update --registry <url>'
 ```
 
 When you rename a collection, keep a collection with the old name that includes the new one and lists no resources of its own:
@@ -109,7 +111,7 @@ git rm -r skills/code-review
 git commit -m "Remove deprecated code-review skill"
 ```
 
-Release this as a major version. Consumers who still select the old name lose it on their next update and get the `selected but not found` warning, which tells them to run `agent-marketplace status` or remove the selection.
+Release this as a major version. Consumers who still select the old name get an `update` refusal that names it. Their harness keeps the old output until their lock moves without the `update` check, when `sync` removes it with a `selected but not found` warning that tells them to run `agent-marketplace status` or remove the selection.
 
 ## Retire a resource without a replacement
 

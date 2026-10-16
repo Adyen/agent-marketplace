@@ -32,12 +32,12 @@ The CLI identifies a resource by its kind and name, for example `skill/code-revi
 
 | How you selected it | Resource added upstream | Resource removed upstream | Resource renamed upstream |
 |---|---|---|---|
-| By name, such as `include: [skill/foo]` | Not installed. | The old output is removed. The selection stays in your configuration and produces a `selected but not found` warning. | The old output is removed and the new name is not installed. You get the same warning for the old name. |
+| By name, such as `include: [skill/foo]` | Not installed. | `update` refuses, names the selection with its remediation line, and leaves the lock and the old output unchanged. The output is removed with a `selected but not found` warning only when the lock moves without the `update` check, such as after `lock --upgrade`, a deployed organization lock, or a source with no lock. | The same refusal. Once the lock moves without the check, `sync` removes the old output with the same warning, and the new name is not installed. |
 | `all: true` or `tags` | Installed, if it matches. | Removed. | The old name is removed and the new name installed. An `exclude` that named the old name no longer matches, so the new name installs even though you excluded the old one. |
-| Through a collection | Installed when the collection lists it. | Removed when the collection stops listing it. A member that the collection still lists produces a warning that names the collection. | Follows the collection. If the author renamed the skill but not the collection entry, you get a warning naming the collection. Your `exclude` of the old name does not carry over to the new name. |
-| `required: true` | As for the matching row above. | The run fails. | The run fails. |
+| Through a collection | Installed when the collection lists it. | Removed when the collection stops listing it. A member that the collection still lists but that no longer exists makes `update` refuse, the same as a by-name selection; after the lock moves without the check, `sync` removes it with a warning that names the collection. | Follows the collection. If the author renamed the skill but not the collection entry, `update` refuses for the old member name. Your `exclude` of the old name does not carry over to the new name. |
+| `required: true` | As for the matching row above. | `update` refuses as above; `sync` fails once the lock moves without the `update` check, or at once when no lock exists. | The same. |
 
-Collections themselves behave like required selections. If the registry renames or deletes a collection that you select with `collection/<name>`, every run fails until you change your configuration, and the members stay installed in the meantime.
+Collections themselves behave like required selections. If the registry renames or deletes a collection that you select with `collection/<name>`, `update` refuses and a `sync` without a lock fails until you change your configuration, and the members stay installed in the meantime.
 
 ### Warnings, not errors, for ordinary selections
 
@@ -48,21 +48,34 @@ warning: skill "foo" was selected but not found in https://github.com/example-or
   → this may be caused by an upstream removal, a stale ref pin, a rename, or a cache issue; run 'agent-marketplace status' to diagnose, or 'agent-marketplace remove "foo"' to drop the selection
 ```
 
-`update` itself prints only its summary. It removes the old output without a message, so read the next `status` or `sync` output after an update. `sync --strict` turns the warning into an error and exits `1`. Use it in CI when a stale selection should fail the build.
+`agent-marketplace update` goes further than the warning. Before it moves any lock it resolves every selection against the new revision, and it refuses to change anything when a selection that resolved at the locked revision no longer resolves. The refusal is part of the `update` command: `sync`, `status`, and a lock the organization deploys do not make this check. `sync --strict` turns the warning into an error and exits `1`. Use it in CI when a stale selection should fail the build.
 
 ### Errors for required selections
 
-`required: true` exists to enforce policy, so a required selection that no longer exists fails the run instead. So does a selected collection that no longer exists. `update` exits `1` with `dependency-committed sync failure`. As that message says, the lock has already moved to the new commit, but the harness files have not changed. Every later `sync` fails in the same way until someone fixes the configuration. Under an organization lock, this happens on every machine as soon as the administrator deploys the upgraded lock.
+`required: true` exists to enforce policy, so a required selection that no longer exists fails `sync` instead of warning, and so does a selected collection that no longer exists. `update` refuses before changing anything: it exits `1`, names each missing selection with a remediation line, and leaves the lock, the configuration, and the harness files unchanged:
+
+```text
+Error: skill "foo" was selected but not found in https://github.com/example-org/agent-resources.git@main
+  → required selection: 'agent-marketplace remove' cannot drop it; change the configuration entry that marks it required, or ask that configuration's owner
+update left the lock and harness outputs unchanged; rerun 'agent-marketplace update' after resolving the selections above, or update other registries with 'agent-marketplace update --registry <url>'
+```
+
+A required miss still fails `sync` when the lock moved without the `update` check. Under an organization lock, that is every machine's next `sync` as soon as the administrator deploys the upgraded lock.
 
 ### Hosted Marketplace pins
 
-A Marketplace pin names an exact, immutable revision. If the registry renames or deletes the resource, the pinned revision still installs, and `status` still shows it as `current`. The trouble starts at `update`, which asks the Marketplace for the newest revision of the old name. The Marketplace no longer knows that name, so `update` stops with an error such as:
+A Marketplace pin names an exact, immutable revision. If the registry renames or deletes the resource, the pinned revision still installs, and `status` still shows it as `current`. The trouble starts at `update`, which asks the Marketplace for the newest revision of the old name. The Marketplace no longer knows that name, so `update` keeps that pin at its current revision, updates the other pins, and exits `1` with an error such as:
 
 ```text
-Error: marketplace https://marketplace.example.com pin shared-agents/skill/foo: resolve latest resource revision: marketplace error 404: "resource not found"
+Configured registry entries: 0
+Marketplace pins updated: 0
+Other Marketplace pins skipped: 1
+Marketplace "https://marketplace.example.com" "shared-agents"/"skill"/"foo": skipped ("resource no longer exists on the Marketplace")
+Error: 1 Marketplace resource(s) no longer exist:
+marketplace https://marketplace.example.com pin shared-agents/skill/foo: resource not found; remove the old pin with `agent-marketplace remove foo` and install the new name
 ```
 
-`update` exits `1` and changes no lock or file. Replace the pin to continue; see [how to handle a renamed or removed resource](../how-to/handle-renamed-or-removed-resources.md#_6-replace-a-hosted-marketplace-pin).
+Replace the pin to move it; see [how to handle a renamed or removed resource](../how-to/handle-renamed-or-removed-resources.md#_6-replace-a-hosted-marketplace-pin).
 
 Revocation is a separate event: an operator marks a revision as unsafe. A revoked pin fails `sync`. The [respond to a revoked resource](../how-to/respond-to-a-revoked-resource.md) guide covers it.
 
@@ -73,7 +86,7 @@ The CLI changes a file in a harness folder only when it can prove that it wrote 
 This rule shapes what happens to your edits:
 
 - In the default symlink mode, a harness file points into the CLI cache. Editing it edits the cache, and the next `sync` silently restores the registry content. `sync --check` does not detect the edit.
-- In file mode, the CLI writes copies. Once you edit a copy, the CLI stops managing it. It keeps your version, prints a `materialize.collision.user-owned` warning on every sync, and no longer applies upstream updates to that file. When you deselect the resource, it keeps the edited copy on disk instead of removing it.
+- In file mode, the CLI writes copies. Once you edit a copy, the CLI keeps your bytes and no longer applies upstream updates to that file. Every sync reports the copy with a `materialize.collision.user-owned` warning that calls it a locally edited managed copy and says how to restore the registry version. When you deselect the resource, the CLI keeps the edited copy on disk instead of removing it.
 
 [How to keep a local change to a synced resource](../how-to/keep-local-changes-to-synced-resources.md) shows how to keep an edit without losing upstream updates for the rest.
 
@@ -83,7 +96,7 @@ Each choice trades something away:
 
 - **Locks before freshness.** A team gets the same files on every machine and in CI, and an upstream mistake cannot break anyone until someone moves the lock on purpose. The cost is that fixes and new resources also wait for that step. The lockless organization layer makes the opposite trade: administrators push changes to every machine at once, without review or rollback through Git.
 - **Names as identity.** Any Git folder can serve as a registry, with no metadata service. The cost is that a rename breaks name-based selections and excludes. Registry authors can soften this; see [how to rename or retire a resource](../how-to/author/rename-or-retire-a-resource.md).
-- **Soft failure for ordinary selections, hard failure for required ones.** Ordinary users keep working when a registry drops something, while policy that an organization enforces cannot silently lapse.
+- **Soft failure for ordinary selections, hard failure for required ones.** Ordinary users keep working when a registry drops something, while policy that an organization enforces cannot silently lapse. `update` refuses to move any lock past a selection that disappeared, so one stale entry cannot strand the rest of the update or leave a lock ahead of the files it describes.
 - **Pruning only what it can prove.** The CLI never deletes your work, at the price of leaving edited copies behind for you to clean up.
 
 ## Related documentation

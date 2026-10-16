@@ -35,21 +35,17 @@ resources:
       - skill/review
 ```
 
-A new selection of a resource that exists at the locked commit needs no new lock. A changed source, `ref`, or `path` makes the existing lock stale. Every command then refuses with `lock.stale`, including `lock --scope organization` itself:
+A new selection of a resource that exists at the locked commit needs no new lock. A changed source, `ref`, or `path` makes the existing lock stale. Every command except `lock --scope organization` then refuses with `lock.stale` until you write the new lock:
 
 ```text
 Error: lock.stale: organization lock "/etc/agent-marketplace/lock.yaml": lock does not match configuration
 ```
 
-On the staging machine, delete the old lock before step 3 so the lock command can write a new one:
+You never delete the lock file. The next step shows how `lock --scope organization` reconciles it.
 
-```bash
-sudo rm /etc/agent-marketplace/lock.yaml
-```
+## 3. Write or reconcile the lock
 
-## 3. Write or upgrade the lock
-
-To write a lock where none exists, or to keep the commits that the existing lock records:
+To write a lock where none exists, or to reconcile a stale lock by resolving only the entries whose source or `ref` changed while every other entry keeps its locked commit:
 
 ```bash
 sudo agent-marketplace lock --scope organization
@@ -61,7 +57,7 @@ To move every organization source to the current commit of its ref, which picks 
 sudo agent-marketplace lock --scope organization --upgrade
 ```
 
-Both print `Locks: 1 changed`, or `Locks: 0 changed` when nothing moved. Without `--upgrade`, the lock keeps its commits, so a resource that the registry added after the lock was written stays unavailable. Neither command checks your selections against the new commit, so a renamed or deleted resource produces no warning here.
+Both print `Locks: 1 changed`, or `Locks: 0 changed` when nothing moved. Without `--upgrade`, only entries whose source or `ref` is not recorded in the lock are resolved; every still-configured entry keeps its locked commit, so a resource that the registry added after the lock was written stays unavailable. Neither command checks your selections against the new commit, so a renamed or deleted resource produces no warning here. A malformed or untrusted lock is still refused rather than replaced.
 
 ## 4. Check what users will get
 
