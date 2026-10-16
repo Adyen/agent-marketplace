@@ -111,25 +111,16 @@ const installationCountLabel = computed(() =>
 </template>
 
 <style scoped>
-.resource-coordinate-link::after {
-  position: absolute;
-  right: 0;
-  bottom: -3px;
-  left: 0;
-  height: 1px;
-  background: var(--am-color-action-primary);
-  content: "";
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity 150ms;
+.resource-coordinate-link {
+  transition: box-shadow 150ms;
 }
 
-.resource-coordinate-link:hover::after {
-  opacity: 1;
+.resource-coordinate-link:hover {
+  box-shadow: inset 0 -1px 0 var(--am-color-action-primary);
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .resource-coordinate-link::after {
+  .resource-coordinate-link {
     transition: none;
   }
 }

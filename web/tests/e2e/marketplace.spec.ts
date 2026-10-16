@@ -493,10 +493,10 @@ test.describe('Marketplace browser discovery', () => {
       await expect(description).toHaveCSS('color', theme.marketplace.secondaryText)
 
       const coordinateLink = row.getByRole('link', { name: 'team-tools/secure-review', exact: true })
-      await expect.poll(() => coordinateLink.evaluate(element => getComputedStyle(element, '::after').opacity)).toBe('0')
+      await expect(coordinateLink).toHaveCSS('box-shadow', 'none')
       await coordinateLink.hover()
-      await expect.poll(() => coordinateLink.evaluate(element => getComputedStyle(element, '::after').opacity)).toBe('1')
-      await expect.poll(() => coordinateLink.evaluate(element => getComputedStyle(element, '::after').backgroundColor)).toBe(theme.marketplace.action)
+      await expect.poll(() => coordinateLink.evaluate(element => getComputedStyle(element).boxShadow)).toContain('inset')
+      await expect.poll(() => coordinateLink.evaluate(element => getComputedStyle(element).boxShadow)).toContain(theme.marketplace.action)
       await expect(row).toHaveCSS('background-color', theme.marketplace.hover)
       expect(contrastRatio(
         await namespace.evaluate(element => getComputedStyle(element).color),
