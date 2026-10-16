@@ -35,15 +35,15 @@ func TestGcCommandDryRunReportsOrphanedCacheDirectoriesWithoutDeleting(t *testin
 
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	writeConfig(t, filepath.Join(homeDir, ".agents", "config.yaml"), `
-registries:
-  - url: ssh://git@example.com/security.git
-    ref: main
+apiVersion: agent-marketplace/v4
+sources:
+  security: {git: ssh://git@example.com/security.git, ref: main}
 `)
 	writeFile(t, filepath.Join(homeDir, ".agents", "lock.yaml"), "apiVersion: agent-marketplace-lock/v1\nscope: user\n")
 	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
-registries:
-  - url: ssh://git@example.com/repo-skills.git
-    ref: main
+apiVersion: agent-marketplace/v4
+sources:
+  hosted: {git: ssh://git@example.com/repo-skills.git, ref: main}
 `)
 	writeFile(t, filepath.Join(repoRoot, ".agents", "lock.yaml"), "apiVersion: agent-marketplace-lock/v1\nscope: repo\n")
 
@@ -137,12 +137,12 @@ func TestGcCommandExactObjectsUseCurrentContext(t *testing.T) {
 	t.Setenv("GIT_CONFIG_SYSTEM", os.DevNull)
 	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
 	orgPath := filepath.Join(canonicalTempDir(t), "config.yaml")
-	writeConfig(t, orgPath, "include: [included.yaml]\nregistries:\n  - url: https://EXAMPLE.com/organization.git\n    ref: main\n")
-	writeConfig(t, filepath.Join(filepath.Dir(orgPath), "included.yaml"), "registries:\n  - url: https://example.com/included\n    ref: main\n")
+	writeConfig(t, orgPath, "apiVersion: agent-marketplace/v4\ninclude: [included.yaml]\nsources:\n  organization: {git: https://EXAMPLE.com/organization.git, ref: main}\n")
+	writeConfig(t, filepath.Join(filepath.Dir(orgPath), "included.yaml"), "sources:\n  included: {git: https://example.com/included, ref: main}\n")
 	config.SetTestOrganizationConfigPath(t, orgPath)
 	repos := []string{filepath.Join(t.TempDir(), "repo-a"), filepath.Join(t.TempDir(), "repo-b")}
 	for i, repo := range repos {
-		writeConfig(t, filepath.Join(repo, ".agents", "config.yaml"), fmt.Sprintf("registries:\n  - url: https://example.com/repo-%d\n    ref: main\n", i))
+		writeConfig(t, filepath.Join(repo, ".agents", "config.yaml"), fmt.Sprintf("apiVersion: agent-marketplace/v4\nsources:\n  repo: {git: https://example.com/repo-%d, ref: main}\n", i))
 		writeFile(t, filepath.Join(repo, ".agents", "lock.yaml"), "apiVersion: agent-marketplace-lock/v1\nscope: repo\n")
 	}
 	objectPath := func(source string) string {
@@ -195,7 +195,7 @@ func TestGcCommandAllowsMissingOrganizationLockWithoutCreatingIt(t *testing.T) {
 
 	authority := canonicalTempDir(t)
 	orgPath := filepath.Join(authority, "config.yaml")
-	writeConfig(t, orgPath, "registries:\n  - url: https://git.example.com/organization.git\n    ref: main\n    required: true\n")
+	writeConfig(t, orgPath, "apiVersion: agent-marketplace/v4\nsources:\n  organization: {git: https://git.example.com/organization.git, ref: main}\nresources:\n  organization: {all: true, required: true}\n")
 	config.SetTestOrganizationConfigPath(t, orgPath)
 	lockPath := filepath.Join(authority, "lock.yaml")
 	orphan := filepath.Join(cache.CacheDir(), cache.HashURL("https://git.example.com/orphan.git"), "main", ".gitkeep")
@@ -280,7 +280,7 @@ func TestGcCommandUsesCachedOrganizationMarketplaceReachabilityWithoutNetwork(t 
 			if requests.Load() != 0 {
 				t.Fatalf("gc made %d Marketplace requests, want no network acquisition", requests.Load())
 			}
-			if _, err := os.Stat(marketplaceCache.ArtifactPath(activeDigest)); err != nil {
+			if _, err := os.Stat(marketplaceCache.PlaceholderArchivePath(activeDigest)); err != nil {
 				t.Fatalf("gc removed active Marketplace archive: %v", err)
 			}
 			if _, err := os.Lstat(filepath.Join(filepath.Dir(orgPath), "lock.yaml")); !os.IsNotExist(err) {
@@ -479,7 +479,7 @@ func testGcCommandRefusesPolicyChangeAfterPreflight(t *testing.T, configChange b
 			t.Fatalf("gc deleted %s after organization lock appeared: %v\n%s", path, readErr, got)
 		}
 	}
-	if _, err := os.Stat(marketplace.DefaultCache().ArtifactPath(activeDigest)); err != nil {
+	if _, err := os.Stat(marketplace.DefaultCache().PlaceholderArchivePath(activeDigest)); err != nil {
 		t.Fatalf("gc lost the active Marketplace archive: %v", err)
 	}
 }
@@ -506,7 +506,7 @@ func TestGcCommandRejectsPresentOrganizationLockWhenMalformedUntrustedOrStale(t 
 
 			authority := canonicalTempDir(t)
 			orgPath := filepath.Join(authority, "config.yaml")
-			writeConfig(t, orgPath, "registries:\n  - url: https://git.example.com/organization.git\n    ref: main\n    required: true\n")
+			writeConfig(t, orgPath, "apiVersion: agent-marketplace/v4\nsources:\n  organization: {git: https://git.example.com/organization.git, ref: main}\nresources:\n  organization: {all: true, required: true}\n")
 			config.SetTestOrganizationConfigPath(t, orgPath)
 			lockPath := filepath.Join(authority, "lock.yaml")
 			if test.symlink {
@@ -546,9 +546,9 @@ func TestGcCommandMissingRequiredLockFailsClosedAndLeavesCacheUntouched(t *testi
 	t.Setenv("HOME", homeDir)
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
-registries:
-  - url: https://git.example.com/required.git
-    ref: main
+apiVersion: agent-marketplace/v4
+sources:
+  hosted: {git: https://git.example.com/required.git, ref: main}
 `)
 	orphan := filepath.Join(cache.CacheDir(), cache.HashURL("https://git.example.com/orphan.git"), "main", ".gitkeep")
 	writeFile(t, orphan, "keep\n")
@@ -571,9 +571,9 @@ func TestGcCommandRejectsOversizedLockAndLeavesCacheUntouched(t *testing.T) {
 	t.Setenv("HOME", homeDir)
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
-registries:
-  - url: https://git.example.com/required.git
-    ref: main
+apiVersion: agent-marketplace/v4
+sources:
+  hosted: {git: https://git.example.com/required.git, ref: main}
 `)
 	lockPath := filepath.Join(repoRoot, ".agents", "lock.yaml")
 	if err := os.MkdirAll(filepath.Dir(lockPath), 0o755); err != nil {
@@ -612,15 +612,15 @@ func TestGcCommandRemovesInactiveHashDirectoriesAndIsIdempotent(t *testing.T) {
 
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	writeConfig(t, filepath.Join(homeDir, ".agents", "config.yaml"), `
-registries:
-  - url: ssh://git@example.com/security.git
-    ref: main
+apiVersion: agent-marketplace/v4
+sources:
+  security: {git: ssh://git@example.com/security.git, ref: main}
 `)
 	writeFile(t, filepath.Join(homeDir, ".agents", "lock.yaml"), "apiVersion: agent-marketplace-lock/v1\nscope: user\n")
 	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
-registries:
-  - url: ssh://git@example.com/repo-skills.git
-    ref: main
+apiVersion: agent-marketplace/v4
+sources:
+  hosted: {git: ssh://git@example.com/repo-skills.git, ref: main}
 `)
 	writeFile(t, filepath.Join(repoRoot, ".agents", "lock.yaml"), "apiVersion: agent-marketplace-lock/v1\nscope: repo\n")
 
@@ -678,15 +678,31 @@ func TestGcCommandRunsRegistryAndMarketplaceGC(t *testing.T) {
 	referencedArchive := "sha256:" + strings.Repeat("2", 64)
 	orphanArchive := "sha256:" + strings.Repeat("3", 64)
 	writeConfig(t, filepath.Join(homeDir, ".agents", "config.yaml"), `
+apiVersion: agent-marketplace/v4
+sources:
+  hosted: {marketplace: https://marketplace.example}
+resources:
+  hosted:
+    include:
+      - src/skill/review
+`)
+	writeFile(t, filepath.Join(homeDir, ".agents", "lock.yaml"), `apiVersion: agent-marketplace-lock/v2
+scope: user
 marketplaces:
   - url: https://marketplace.example
     instance_id: mp
+    registry_bindings:
+      - name: src
+        registry_id: src
     resources:
-      - registry_id: src
+      - registry_name: src
+        registry_id: src
         kind: skill
         name: review
         revision: v1
-        digest: `+contentDigest+`
+        content_digest: `+contentDigest+`
+        archive_digest: `+referencedArchive+`
+        acquisition: mirror
 `)
 	mpCache := marketplace.DefaultCache()
 	revision := testAssessedMarketplaceRevision(t, store.ResourceRevision{
@@ -736,9 +752,9 @@ func TestGcCommandReadsConfigChangedWhileWaitingForLease(t *testing.T) {
 	}
 
 	userConfig := filepath.Join(homeDir, ".agents", "config.yaml")
-	writeConfig(t, userConfig, `registries:
-  - url: ssh://git@example.com/kept.git
-    ref: main
+	writeConfig(t, userConfig, `apiVersion: agent-marketplace/v4
+sources:
+  kept: {git: ssh://git@example.com/kept.git, ref: main}
 `)
 	writeFile(t, filepath.Join(homeDir, ".agents", "lock.yaml"), "apiVersion: agent-marketplace-lock/v1\nscope: user\n")
 
@@ -763,11 +779,10 @@ func TestGcCommandReadsConfigChangedWhileWaitingForLease(t *testing.T) {
 		output, gcErr = executeCommand("gc")
 	}()
 	time.Sleep(200 * time.Millisecond)
-	writeConfig(t, userConfig, `registries:
-  - url: ssh://git@example.com/kept.git
-    ref: main
-  - url: ssh://git@example.com/added-while-waiting.git
-    ref: main
+	writeConfig(t, userConfig, `apiVersion: agent-marketplace/v4
+sources:
+  kept: {git: ssh://git@example.com/kept.git, ref: main}
+  added: {git: ssh://git@example.com/added-while-waiting.git, ref: main}
 `)
 	release()
 	<-gcDone
@@ -795,9 +810,9 @@ func TestGcCommandReadsDeployedLockChangedWhileWaitingForLease(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	writeConfig(t, filepath.Join(homeDir, ".agents", "config.yaml"), `registries:
-  - url: ssh://git@example.com/kept.git
-    ref: main
+	writeConfig(t, filepath.Join(homeDir, ".agents", "config.yaml"), `apiVersion: agent-marketplace/v4
+sources:
+  kept: {git: ssh://git@example.com/kept.git, ref: main}
 `)
 	lockPath := filepath.Join(homeDir, ".agents", "lock.yaml")
 	writeFile(t, lockPath, "apiVersion: agent-marketplace-lock/v1\nscope: user\n")
@@ -1063,32 +1078,79 @@ func TestGcCommandMarketplacePreflightBlocksLegacyDeletion(t *testing.T) {
 	t.Setenv("HOME", homeDir)
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	writeConfig(t, filepath.Join(homeDir, ".agents", "config.yaml"), `
+apiVersion: agent-marketplace/v4
+sources:
+  hosted: {marketplace: https://marketplace.example}
+resources:
+  hosted: [src/skill/review]
+`)
+	writeFile(t, filepath.Join(homeDir, ".agents", "lock.yaml"), `apiVersion: agent-marketplace-lock/v2
+scope: user
 marketplaces:
   - url: https://marketplace.example
     instance_id: mp
+    registry_bindings:
+      - name: src
+        registry_id: src
     resources:
-      - registry_id: src
+      - registry_name: src
+        registry_id: src
         kind: skill
         name: review
         revision: v1
-        digest: sha256:`+strings.Repeat("1", 64)+`
+        content_digest: sha256:`+strings.Repeat("1", 64)+`
+        archive_digest: sha256:`+strings.Repeat("2", 64)+`
+        acquisition: mirror
 `)
 	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
-registries:
-  - url: ssh://git@example.com/active.git
-    ref: main
+apiVersion: agent-marketplace/v4
+sources:
+  active: {git: ssh://git@example.com/active.git, ref: main}
 `)
 	writeFile(t, filepath.Join(repoRoot, ".agents", "lock.yaml"), "apiVersion: agent-marketplace-lock/v1\nscope: repo\n")
 	orphanCache := filepath.Join(cache.CacheDir(), cache.HashURL("https://git.example.com/stale.git"))
 	writeFile(t, filepath.Join(orphanCache, "main", ".gitkeep"), "orphan\n")
+	// V4 locks carry archive reachability directly; missing pin metadata is no
+	// longer a preflight error. An unsafe artifact root must still block both
+	// collectors before the otherwise-removable registry cache is deleted.
+	mpCache := marketplace.DefaultCache()
+	archive, err := mpCache.WriteArtifact("sha256:"+strings.Repeat("3", 64), []byte("orphan"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	artifactsRoot := filepath.Dir(filepath.Dir(archive))
+	if err := os.RemoveAll(artifactsRoot); err != nil {
+		t.Fatal(err)
+	}
+	external := t.TempDir()
+	marker := filepath.Join(external, "must-survive")
+	writeFile(t, marker, "external\n")
+	if err := os.Symlink(external, artifactsRoot); err != nil {
+		t.Fatal(err)
+	}
 	withWorkingDir(t, repoRoot)
 
 	output, err := executeCommand("gc")
-	if err == nil {
-		t.Fatal("expected Marketplace preflight failure")
+	if err == nil || !strings.Contains(err.Error(), "marketplace cache garbage collection preflight") {
+		t.Fatalf("expected Marketplace preflight failure, got %v\n%s", err, output)
 	}
-	if _, statErr := os.Stat(orphanCache); statErr != nil {
-		t.Fatalf("Marketplace preflight failure deleted legacy registry cache: %v\n%s", statErr, output)
+	if raw, err := os.ReadFile(filepath.Join(orphanCache, "main", ".gitkeep")); err != nil || string(raw) != "orphan\n" {
+		t.Fatalf("Marketplace preflight failure changed registry cache: %v\n%s", err, output)
+	}
+	if err := os.Remove(artifactsRoot); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := mpCache.WriteArtifact("sha256:"+strings.Repeat("3", 64), []byte("orphan")); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := executeCommand("gc"); err != nil {
+		t.Fatalf("safe cache control: %v\n%s", err, out)
+	}
+	if _, err := os.Stat(orphanCache); !os.IsNotExist(err) {
+		t.Fatalf("control did not collect the registry orphan: %v", err)
+	}
+	if raw, err := os.ReadFile(marker); err != nil || string(raw) != "external\n" {
+		t.Fatalf("GC touched the external artifact-root target: %v", err)
 	}
 }
 

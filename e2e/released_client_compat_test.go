@@ -2,10 +2,15 @@ package e2e_test
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 )
@@ -142,7 +147,7 @@ func TestReleasedClientReadsCandidateCommittedState(t *testing.T) {
 
 	must(released, "init", "--harnesses", "factory")
 	must(candidate, "init", "--harnesses", "factory")
-	repoConfig := fmt.Sprintf("apiVersion: agent-marketplace/v2\nregistries:\n  - url: %s\n    ref: main\n    skills:\n      include: [review]\n    hooks:\n      include: [PreToolUse-command]\n", registry.URL)
+	repoConfig := fmt.Sprintf("apiVersion: agent-marketplace/v4\nsources: {shared: {git: %q, ref: main}}\nresources: {shared: {include: [skill/review, hook/PreToolUse-command]}}\n", registry.URL)
 	if err := os.WriteFile(filepath.Join(workspace, ".agents", "config.yaml"), []byte(repoConfig), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -195,108 +200,261 @@ func TestReleasedClientReadsCandidateIsolatedCommittedState(t *testing.T) {
 		t.Skip("released executable and git-capable image are supplied by the dedicated released-client gate")
 	}
 	released, arch := verifiedExecutable(t, "AM_E2E_RELEASED_BINARY", releasedClientArch)
-	world := newHistoricalWorld(t, image)
-	candidate := world.buildCandidate(arch)
-	workspace := world.path("workspace-released")
-	candidateWorkspace := world.path("workspace-candidate")
-	for _, dir := range []string{filepath.Join(workspace, ".agents"), world.path("home-released"), world.path("home-candidate")} {
-		if err := os.MkdirAll(dir, 0o700); err != nil {
-			t.Fatal(err)
-		}
-	}
-	registry := world.gitRegistry(map[string]string{"review": "Review body", "second": "Second body"})
-	gitRun(t, "", "init", "-q", "-b", "main", workspace)
-	excludeOutputs := func(checkout string) {
-		t.Helper()
-		if err := os.WriteFile(filepath.Join(checkout, ".git", "info", "exclude"), []byte(".factory/\n"), 0o600); err != nil {
-			t.Fatal(err)
-		}
-	}
-	excludeOutputs(workspace)
-
-	homes := map[string]string{released: world.path("home-released"), candidate: world.path("home-candidate")}
-	workspaces := map[string]string{released: workspace, candidate: candidateWorkspace}
-	run := func(executable string, args ...string) (string, error) {
-		t.Helper()
-		return world.run(homes[executable], workspaces[executable], executable, args...)
-	}
-	must := func(executable string, args ...string) string {
-		t.Helper()
-		return world.must(homes[executable], workspaces[executable], executable, args...)
-	}
-	lockPath := filepath.Join(candidateWorkspace, ".agents", "lock.yaml")
-	readLock := func() []byte {
-		t.Helper()
-		lock, err := os.ReadFile(lockPath)
-		if err != nil {
-			t.Fatal(err)
-		}
-		return lock
-	}
-	releasedReads := func(after string) {
-		t.Helper()
-		gitRun(t, workspace, "fetch", "-q", "origin")
-		gitRun(t, workspace, "merge", "-q", "--ff-only", "origin/main")
-		lockPath := filepath.Join(workspace, ".agents", "lock.yaml")
-		before, err := os.ReadFile(lockPath)
-		if err != nil {
-			t.Fatal(err)
-		}
-		for _, args := range [][]string{{"sync", "--locked"}, {"sync", "--check"}} {
-			if output, err := run(released, args...); err != nil {
-				t.Fatalf("%s %v cannot use state committed after candidate %s: %v\n%s", releasedClientVersion, args, after, err, output)
+	for _, version := range []string{"agent-marketplace/v4"} {
+		t.Run(version, func(t *testing.T) {
+			world := newHistoricalWorld(t, image)
+			candidate := world.buildCandidate(arch)
+			workspace := world.path("workspace-released")
+			candidateWorkspace := world.path("workspace-candidate")
+			for _, dir := range []string{filepath.Join(workspace, ".agents"), world.path("home-released"), world.path("home-candidate")} {
+				if err := os.MkdirAll(dir, 0o700); err != nil {
+					t.Fatal(err)
+				}
 			}
-			if got, err := os.ReadFile(lockPath); err != nil || !bytes.Equal(got, before) {
-				t.Fatalf("%s %v changed committed lock after %s: %v", releasedClientVersion, args, after, err)
+			registry := world.gitRegistry(map[string]string{"review": "Review body", "second": "Second body"})
+			gitRun(t, "", "init", "-q", "-b", "main", workspace)
+			excludeOutputs := func(checkout string) {
+				t.Helper()
+				if err := os.WriteFile(filepath.Join(checkout, ".git", "info", "exclude"), []byte(".factory/\n"), 0o600); err != nil {
+					t.Fatal(err)
+				}
 			}
-		}
-	}
-	must(released, "init", "--harnesses", "factory")
-	repoConfig := fmt.Sprintf("apiVersion: agent-marketplace/v2\nregistries:\n  - url: %s\n    ref: main\n    skills:\n      include: [review]\n", registry.URL)
-	if err := os.WriteFile(filepath.Join(workspace, ".agents", "config.yaml"), []byte(repoConfig), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	must(released, "sync")
-	(&gitRegistry{t: t, source: workspace}).commit("initial released configuration and lock")
-	gitRun(t, "", "clone", "-q", workspace, candidateWorkspace)
-	excludeOutputs(candidateWorkspace)
-	gitRun(t, workspace, "remote", "add", "origin", candidateWorkspace)
-	must(candidate, "init", "--harnesses", "factory")
-	committed := readLock()
-	releasedReads("initial sync")
+			excludeOutputs(workspace)
 
-	commit := func(after string) {
-		t.Helper()
-		(&gitRegistry{t: t, source: candidateWorkspace}).commit("candidate " + after)
-	}
-	must(candidate, "sync")
-	if got := readLock(); !bytes.Equal(got, committed) {
-		t.Fatalf("plain candidate sync changed a healthy committed lock:\nbefore:\n%s\nafter:\n%s", committed, got)
-	}
-	releasedReads("sync")
+			homes := map[string]string{released: world.path("home-released"), candidate: world.path("home-candidate")}
+			workspaces := map[string]string{released: workspace, candidate: candidateWorkspace}
+			run := func(executable string, args ...string) (string, error) {
+				t.Helper()
+				return world.run(homes[executable], workspaces[executable], executable, args...)
+			}
+			must := func(executable string, args ...string) string {
+				t.Helper()
+				return world.must(homes[executable], workspaces[executable], executable, args...)
+			}
+			lockPath := filepath.Join(candidateWorkspace, ".agents", "lock.yaml")
+			readLock := func() []byte {
+				t.Helper()
+				lock, err := os.ReadFile(lockPath)
+				if err != nil {
+					t.Fatal(err)
+				}
+				return lock
+			}
+			protectClientFiles := func(executable string) map[string]string {
+				t.Helper()
+				protected := map[string]string{}
+				for _, name := range []string{"config.yaml", "lock.yaml"} {
+					path := filepath.Join(workspaces[executable], ".agents", name)
+					fingerprint, err := pathFingerprint(path)
+					if err != nil {
+						t.Fatal(err)
+					}
+					protected[path] = fingerprint
+				}
+				return protected
+			}
+			assertClientFilesUnchanged := func(protected map[string]string) {
+				t.Helper()
+				for path, fingerprint := range protected {
+					if got, err := pathFingerprint(path); err != nil || got != fingerprint {
+						t.Fatalf("changed client config/lock bytes, mode or mtime at %s: %v", path, err)
+					}
+				}
+			}
+			reviewBody := "Review body"
+			secondSelected := false
+			assertClientOutputs := func(executable string) {
+				t.Helper()
+				reviewPath := filepath.Join(workspaces[executable], ".factory", "skills", "review", "SKILL.md")
+				if got, err := os.ReadFile(reviewPath); err != nil || string(got) != skillDocument("review", reviewBody) {
+					t.Fatalf("%s has incorrect review output: %v\n%s", filepath.Base(executable), err, got)
+				}
+				second := filepath.Join(workspaces[executable], ".factory", "skills", "second")
+				if secondSelected {
+					if got, err := os.ReadFile(filepath.Join(second, "SKILL.md")); err != nil || string(got) != skillDocument("second", "Second body") {
+						t.Fatalf("%s has incorrect second output: %v\n%s", filepath.Base(executable), err, got)
+					}
+				} else if absent, err := checkPathAbsent(second); err != nil || !absent {
+					t.Fatalf("%s left second installed: absent=%t err=%v", filepath.Base(executable), absent, err)
+				}
+			}
+			// Teammates and CI fetch the committed exact snapshot with --locked; the
+			// check-only mode is deliberately offline and runs afterwards.
+			releasedReads := func(after string) {
+				t.Helper()
+				gitRun(t, workspace, "fetch", "-q", "origin")
+				gitRun(t, workspace, "merge", "-q", "--ff-only", "origin/main")
+				lockPath := filepath.Join(workspace, ".agents", "lock.yaml")
+				before, err := os.ReadFile(lockPath)
+				if err != nil {
+					t.Fatal(err)
+				}
+				protected := protectClientFiles(released)
+				for _, args := range [][]string{{"sync", "--locked"}, {"sync", "--check"}, {"sync", "--check", "--offline"}} {
+					if output, err := run(released, args...); err != nil {
+						t.Fatalf("%s %v cannot use state committed after candidate %s: %v\n%s", releasedClientVersion, args, after, err, output)
+					}
+					if got, err := os.ReadFile(lockPath); err != nil || !bytes.Equal(got, before) {
+						t.Fatalf("%s %v changed committed lock after %s: %v", releasedClientVersion, args, after, err)
+					}
+					assertClientFilesUnchanged(protected)
+					assertClientOutputs(released)
+				}
+			}
+			must(released, "init", "--harnesses", "factory")
+			repoConfig := fmt.Sprintf("apiVersion: %s\nsources:\n  tools: {git: '%s', ref: main}\nresources:\n  tools: {include: [skill/review]}\n", version, registry.URL)
+			if err := os.WriteFile(filepath.Join(workspace, ".agents", "config.yaml"), []byte(repoConfig), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			must(released, "sync")
+			(&gitRegistry{t: t, source: workspace}).commit("initial released configuration and lock")
+			gitRun(t, "", "clone", "-q", workspace, candidateWorkspace)
+			excludeOutputs(candidateWorkspace)
+			gitRun(t, workspace, "remote", "add", "origin", candidateWorkspace)
+			must(candidate, "init", "--harnesses", "factory")
+			committed := readLock()
+			releasedReads("initial sync")
 
-	must(candidate, "install", "second", "--scope", "repo")
-	if _, err := os.Stat(filepath.Join(candidateWorkspace, ".factory", "skills", "second", "SKILL.md")); err != nil {
-		t.Fatalf("candidate did not materialize its committed selection: %v", err)
-	}
-	commit("install")
-	releasedReads("install")
+			commit := func(after string) {
+				t.Helper()
+				(&gitRegistry{t: t, source: candidateWorkspace}).commit("candidate " + after)
+			}
+			candidateProtected := protectClientFiles(candidate)
+			must(candidate, "sync")
+			if got := readLock(); !bytes.Equal(got, committed) {
+				t.Fatalf("plain candidate sync changed a healthy committed lock:\nbefore:\n%s\nafter:\n%s", committed, got)
+			}
+			assertClientFilesUnchanged(candidateProtected)
+			releasedReads("sync")
 
-	registry.publish("review", "Review body, revised")
-	updateOutput := must(candidate, "update", "--scope", "repo")
-	reviewPath := filepath.Join(candidateWorkspace, ".factory", "skills", "review", "SKILL.md")
-	if got, err := os.ReadFile(reviewPath); err != nil || string(got) != skillDocument("review", "Review body, revised") {
-		t.Fatalf("candidate update did not materialize revised review: %v\n%s\nupdate:\n%s", err, got, updateOutput)
-	}
-	commit("update")
-	releasedReads("update")
+			must(candidate, "install", "second", "--scope", "repo")
+			if _, err := os.Stat(filepath.Join(candidateWorkspace, ".factory", "skills", "second", "SKILL.md")); err != nil {
+				t.Fatalf("candidate did not materialize its committed selection: %v", err)
+			}
+			commit("install")
+			secondSelected = true
+			releasedReads("install")
 
-	must(candidate, "remove", "second", "--scope", "repo")
-	if _, err := os.Lstat(filepath.Join(candidateWorkspace, ".factory", "skills", "second")); !os.IsNotExist(err) {
-		t.Fatalf("candidate remove left second installed: %v", err)
+			registry.publish("review", "Review body, revised")
+			updateOutput := must(candidate, "update", "--scope", "repo")
+			reviewPath := filepath.Join(candidateWorkspace, ".factory", "skills", "review", "SKILL.md")
+			if got, err := os.ReadFile(reviewPath); err != nil || string(got) != skillDocument("review", "Review body, revised") {
+				t.Fatalf("candidate update did not materialize revised review: %v\n%s\nupdate:\n%s", err, got, updateOutput)
+			}
+			commit("update")
+			reviewBody = "Review body, revised"
+			releasedReads("update")
+
+			must(candidate, "remove", "second", "--scope", "repo")
+			if _, err := os.Lstat(filepath.Join(candidateWorkspace, ".factory", "skills", "second")); !os.IsNotExist(err) {
+				t.Fatalf("candidate remove left second installed: %v", err)
+			}
+			commit("remove")
+			secondSelected = false
+			releasedReads("remove")
+			must(candidate, "sync", "--locked")
+			must(candidate, "sync", "--check")
+			must(candidate, "sync", "--check", "--offline")
+			checkCacheOnly := func(executable string, missing bool) {
+				t.Helper()
+				protected := protectClientFiles(executable)
+				nativeRoot := filepath.Join(workspaces[executable], ".factory", "skills")
+				nativeBefore, err := pathFingerprint(nativeRoot)
+				if err != nil {
+					t.Fatal(err)
+				}
+				for _, args := range [][]string{{"sync", "--check"}, {"sync", "--check", "--offline"}} {
+					output, err := run(executable, args...)
+					if missing {
+						code := "lock.snapshot-unavailable"
+						if len(args) == 3 {
+							code = "lock.offline-snapshot-missing"
+						}
+						if err == nil || !strings.Contains(output, code) {
+							t.Fatalf("%s %v did not refuse the missing cache despite an accessible origin: %v\n%s", filepath.Base(executable), args, err, output)
+						}
+						cachePath := filepath.Join(homes[executable], ".cache", "agent-marketplace")
+						if absent, err := checkPathAbsent(cachePath); err != nil || !absent {
+							t.Fatalf("read-only %v recreated the missing cache: absent=%t err=%v", args, absent, err)
+						}
+					} else if err != nil {
+						t.Fatalf("%s %v could not use its warm cache: %v\n%s", filepath.Base(executable), args, err, output)
+					} else {
+						assertClientOutputs(executable)
+					}
+					assertClientFilesUnchanged(protected)
+					if got, err := pathFingerprint(nativeRoot); err != nil || got != nativeBefore {
+						t.Fatalf("read-only %v changed native output: %v", args, err)
+					}
+				}
+			}
+			renameFixturePath := func(from, to string) {
+				t.Helper()
+				for _, path := range []string{from, to} {
+					rel, err := filepath.Rel(world.root, path)
+					if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+						t.Fatalf("fixture rename escapes sandbox: %s", path)
+					}
+				}
+				ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+				defer cancel()
+				args := []string{"run", "--rm", "--network", "none", "--read-only", "--cap-drop", "ALL", "--security-opt", "no-new-privileges"}
+				if runtime.GOOS == "linux" {
+					args = append(args, "--user", strconv.Itoa(os.Getuid())+":"+strconv.Itoa(os.Getgid()))
+				}
+				args = append(args, "--mount", "type=bind,src="+world.root+",dst="+world.root, "--entrypoint", "sh", world.image,
+					"-c", `test ! -e "$2" && test ! -L "$2" && mv -- "$1" "$2" && test ! -e "$1" && test ! -L "$1"`, "fixture-rename", from, to)
+				if output, err := exec.CommandContext(ctx, "docker", args...).CombinedOutput(); err != nil {
+					t.Fatalf("rename fixture %s to %s in consumer filesystem: %v\n%s", from, to, err, output)
+				}
+			}
+			bare, hidden := world.path("registry.git"), world.path("registry-hidden.git")
+			renameFixturePath(bare, hidden)
+			for _, executable := range []string{candidate, released} {
+				checkCacheOnly(executable, false)
+				protected := protectClientFiles(executable)
+				nativeRoot := filepath.Join(workspaces[executable], ".factory", "skills")
+				review := filepath.Join(nativeRoot, "review")
+				renameFixturePath(review, world.path("removed-review-"+filepath.Base(executable)))
+				missingBefore, err := pathFingerprint(nativeRoot)
+				if err != nil {
+					t.Fatal(err)
+				}
+				output, err := run(executable, "sync", "--check", "--offline")
+				if err == nil || !strings.Contains(output, "out of sync") || !strings.Contains(output, "review") {
+					t.Fatalf("%s check accepted missing native output: %v\n%s", filepath.Base(executable), err, output)
+				}
+				if absent, err := checkPathAbsent(review); err != nil || !absent {
+					t.Fatalf("read-only check recreated review: absent=%t err=%v", absent, err)
+				}
+				if got, err := pathFingerprint(nativeRoot); err != nil || got != missingBefore {
+					t.Fatalf("read-only check changed the missing-output tree: %v", err)
+				}
+				assertClientFilesUnchanged(protected)
+				must(executable, "sync", "--offline")
+				assertClientFilesUnchanged(protected)
+				assertClientOutputs(executable)
+				checkCacheOnly(executable, false)
+			}
+			renameFixturePath(hidden, bare)
+			for _, executable := range []string{candidate, released} {
+				warmHome := homes[executable]
+				coldHome := warmHome + "-cold"
+				config, err := os.ReadFile(filepath.Join(warmHome, ".agents", "config.yaml"))
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := os.MkdirAll(filepath.Join(coldHome, ".agents"), 0o700); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(filepath.Join(coldHome, ".agents", "config.yaml"), config, 0o600); err != nil {
+					t.Fatal(err)
+				}
+				homes[executable] = coldHome
+				checkCacheOnly(executable, true)
+				homes[executable] = warmHome
+				checkCacheOnly(executable, false)
+			}
+		})
 	}
-	commit("remove")
-	releasedReads("remove")
-	must(candidate, "sync", "--locked")
-	must(candidate, "sync", "--check")
 }

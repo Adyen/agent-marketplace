@@ -68,7 +68,6 @@ func TestInvalidConfigSnapshotDismissesStaleMutationPanes(t *testing.T) {
 		{name: "toggle", pane: paneToggleModal},
 		{name: "harness", pane: paneHarnessModal},
 		{name: "marketplace consent", pane: paneMarketplaceConsent, consent: true},
-		{name: "migration", pane: paneMigrationModal},
 		{name: "init", pane: paneInitModal},
 		{name: "confirm", pane: paneConfirm, confirm: true},
 	}
@@ -108,6 +107,7 @@ func TestInvalidConfigSnapshotDismissesStaleMutationPanes(t *testing.T) {
 	}
 }
 
+// spec: tui-interactions/guarded-submission
 func TestInvalidConfigKeyDismissesStaleMutationPanes(t *testing.T) {
 	cases := []struct {
 		name    string
@@ -119,7 +119,6 @@ func TestInvalidConfigKeyDismissesStaleMutationPanes(t *testing.T) {
 		{name: "toggle", pane: paneToggleModal, key: tea.KeyPressMsg{Code: 'g', Text: string('g')}},
 		{name: "harness", pane: paneHarnessModal, key: tea.KeyPressMsg{Code: tea.KeyEnter}},
 		{name: "marketplace consent", pane: paneMarketplaceConsent, key: tea.KeyPressMsg{Code: 'y', Text: string('y')}, consent: true},
-		{name: "migration", pane: paneMigrationModal, key: tea.KeyPressMsg{Code: 'm', Text: string('m')}},
 		{name: "init", pane: paneInitModal, key: tea.KeyPressMsg{Code: tea.KeyEnter}},
 		{name: "confirm", pane: paneConfirm, key: tea.KeyPressMsg{Code: 'y', Text: string('y')}, confirm: true},
 	}

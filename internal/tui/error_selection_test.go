@@ -59,7 +59,16 @@ func TestErrorSelectionCopiesWrappedUnicode(t *testing.T) {
 		m := selectionErrorsModel(t, 60, 24, errors.New("first-clip-line"), errors.New("second-clip-line"))
 		snap := selSnap(m)
 		_, cmd := selDrag(t, m, snap, 0, 0, 90, 40)
-		want := "Errors (2)\n\n• first-clip-line\n• second-clip-line\n\nPress esc to close"
+		want := "Errors (2)\n\n" +
+			"• first-clip-line\n" +
+			"  → Run `agent-marketplace sync --check` in this workspace\n" +
+			"for details. Fix the reported issue, then press `r` in the\n" +
+			"resource list to reload.\n" +
+			"• second-clip-line\n" +
+			"  → Run `agent-marketplace sync --check` in this workspace\n" +
+			"for details. Fix the reported issue, then press `r` in the\n" +
+			"resource list to reload.\n\n" +
+			"Press esc to close"
 		if got := clipboardText(t, cmd); got != want {
 			t.Fatalf("clipped drag copied %q, want %q", got, want)
 		}

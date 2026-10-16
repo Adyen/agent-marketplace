@@ -16,13 +16,15 @@ func init() {
 						native, legacy = "/root/.gemini/settings.json", "/root/.gemini/gemini-extension.json"
 					}
 				}
-				cfg := fmt.Sprintf("apiVersion: agent-marketplace/v2\nharnesses: [%s]\nmaterialization:\n  mode: %s\nregistries:\n  - url: {{REG:native-mcp}}\n    ref: main\n    mcp: [native-first, native-second]\n", target, mode)
+				cfg := fmt.Sprintf("apiVersion: agent-marketplace/v4\nharnesses: [%s]\nmaterialization:\n  mode: %s\nsources: {team: {git: '{{REG:native-mcp}}', ref: main}}\n", target, mode)
+				selection := "mcp/native-first, mcp/native-second"
 				fixture := RegistryDef{Name: "native-mcp", MCPServers: []MCPServer{{Name: "native-first", Command: "echo", Args: []string{"first"}}, {Name: "native-second", Command: "echo", Args: []string{"second"}}}}
 				if target == "gemini" {
 					fixture.Files = map[string]string{"hooks/hooks.json": `{"hooks":{"PostToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"echo generated-audit"}]}]}}`}
-					cfg += "    hooks: [PostToolUse-command]\n"
+					selection += ", hook/PostToolUse-command"
 				}
-				tc := TestCase{Name: "native_mcp/" + target + "/" + scope + "/" + mode, Desc: "Given native settings and two selected MCP servers, When sync, check, status, and removal run, Then native files preserve handwritten settings and only managed servers are pruned", Registries: []RegistryDef{fixture}, GlobalCfg: "apiVersion: agent-marketplace/v2\nharnesses: [" + target + "]\n"}
+				cfg += "resources: {team: {include: [" + selection + "]}}\n"
+				tc := TestCase{Name: "native_mcp/" + target + "/" + scope + "/" + mode, Desc: "Given native settings and two selected MCP servers, When sync, check, status, and removal run, Then native files preserve handwritten settings and only managed servers are pruned", Registries: []RegistryDef{fixture}, GlobalCfg: "apiVersion: agent-marketplace/v4\nharnesses: [" + target + "]\n"}
 				if scope == "user" {
 					tc.GlobalCfg = cfg
 				} else {

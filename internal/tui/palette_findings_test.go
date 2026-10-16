@@ -1,7 +1,6 @@
 package tui
 
 import (
-	"errors"
 	"strings"
 	"testing"
 
@@ -320,30 +319,20 @@ func TestPaletteEqualScoresOrderByIdentity(t *testing.T) {
 	}
 }
 
-// AC5: an async transition that moves the pane away from the list closes the
+// AC5: a transition that moves the pane away from the list closes the
 // palette so it cannot resurrect or dispatch stale input on return.
-func TestPaletteClosesOnAsyncPaneTransition(t *testing.T) {
+func TestPaletteClosesOnPaneTransition(t *testing.T) {
 	m := readySizedPaletteModel(80, 24)
 	m = openPaletteFor(t, m)
-	generation := m.beginRequest(requestSnapshot)
-	mi, _ := m.Update(snapshotLoadedMsg{
-		generation:       generation,
-		pendingMigration: migrationPrompt{configs: []migrationConfig{{label: "Project", path: "/repo/.agents/config.yaml"}}},
-	})
+	m.pane = paneHarnessModal
+	mi, _ := m.Update(snapshotLoadedMsg{generation: m.requests.active(requestSnapshot), mergedCfg: &config.Config{}})
 	m = mi.(Model)
-	if m.pane != paneMigrationModal {
-		t.Fatalf("expected the migration modal after the async snapshot, got %v", m.pane)
-	}
-	if m.palette.open {
+	if m.pane != paneHarnessModal || m.palette.open {
 		t.Fatal("the palette must close when the pane leaves the list")
 	}
-
-	mi, _ = m.Update(migrationDoneMsg{err: errors.New("declined")})
+	mi, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
 	m = mi.(Model)
-	if m.pane != paneList {
-		t.Fatalf("expected the list pane after the modal resolves, got %v", m.pane)
-	}
-	if m.palette.open {
+	if m.pane != paneList || m.palette.open {
 		t.Fatal("the palette must not resurrect after returning to the list")
 	}
 	if strings.Contains(m.viewContent(), "Command palette") {

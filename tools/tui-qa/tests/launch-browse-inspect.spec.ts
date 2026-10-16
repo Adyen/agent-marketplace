@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 
 import { expect, test } from "@microsoft/tui-test";
 
-import { declineLegacyMigration, defineFixture, step, waitForExit } from "./helpers.js";
+import { defineFixture, step, waitForExit } from "./helpers.js";
 
 const journey = defineFixture("launch-browse-inspect", []);
 test.use(journey.options);
@@ -10,7 +10,6 @@ test.beforeAll(journey.setup);
 test.afterAll(journey.cleanup);
 
 test("bare launch browses the single status view and inspects alpha-skill", async ({ terminal }) => {
-  await declineLegacyMigration(terminal);
   await step("settled fixture baseline", () => {}, async () => {
     await expect(terminal.getByText("beta-skill", { strict: false })).toBeVisible();
     await expect(terminal.getByText("alpha-skill", { strict: false })).toBeVisible();

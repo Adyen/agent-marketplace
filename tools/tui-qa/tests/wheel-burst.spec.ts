@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 
 import { expect, test } from "@microsoft/tui-test";
 
-import { declineLegacyMigration, defineFixture, step, waitForExit } from "./helpers.js";
+import { defineFixture, step, waitForExit } from "./helpers.js";
 
 const journey = defineFixture("wheel-burst", ["tui"], 80, 24, { overflowStatus: true });
 test.use(journey.options);
@@ -20,7 +20,6 @@ test("an encoded wheel burst with reversals reaches the expected resource withou
     await expect(terminal.getByText(new RegExp(`skill fixture/${name}`, "g"))).toBeVisible();
     await expect(terminal.getByText("Status overflow fixture", { strict: false })).toBeVisible();
   };
-  await declineLegacyMigration(terminal);
 
   await step("settled overflowing catalog", () => {}, async () => {
     await expect(terminal.getByText("beta-skill", { strict: false })).toBeVisible();

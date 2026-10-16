@@ -1,12 +1,14 @@
 package main
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
 
+	"github.com/Adyen/agent-marketplace/internal/config"
 	"gopkg.in/yaml.v3"
 )
 
@@ -43,14 +45,15 @@ func TestAttackPruneMissingRegistrySubdirectory(t *testing.T) {
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	configPath := filepath.Join(repoRoot, ".agents", "config.yaml")
 	// The user typo'd the path: "bundel" instead of "bundle".
-	writeConfig(t, configPath, `
-registries:
-  - url: `+origin+`
+	writeConfig(t, configPath, `apiVersion: agent-marketplace/v4
+sources:
+  skills:
+    git: file://`+origin+`
     ref: main
     path: bundel
-    skills:
-      - vm-lifecycle
-      - deploy
+resources:
+  skills:
+    include: [skill/vm-lifecycle, skill/deploy]
 `)
 	withWorkingDir(t, repoRoot)
 
@@ -83,13 +86,14 @@ func TestAttackPruneEmptyRegistry(t *testing.T) {
 
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	configPath := filepath.Join(repoRoot, ".agents", "config.yaml")
-	writeConfig(t, configPath, `
-registries:
-  - url: `+origin+`
+	writeConfig(t, configPath, `apiVersion: agent-marketplace/v4
+sources:
+  skills:
+    git: file://`+origin+`
     ref: main
-    skills:
-      - vm-lifecycle
-      - deploy
+resources:
+  skills:
+    include: [skill/vm-lifecycle, skill/deploy]
 `)
 	withWorkingDir(t, repoRoot)
 
@@ -127,13 +131,14 @@ func TestAttackPruneMalformedResource(t *testing.T) {
 
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	configPath := filepath.Join(repoRoot, ".agents", "config.yaml")
-	writeConfig(t, configPath, `
-registries:
-  - url: `+origin+`
+	writeConfig(t, configPath, `apiVersion: agent-marketplace/v4
+sources:
+  skills:
+    git: file://`+origin+`
     ref: main
-    skills:
-      - vm-lifecycle
-      - deploy
+resources:
+  skills:
+    include: [skill/vm-lifecycle, skill/deploy]
 `)
 	withWorkingDir(t, repoRoot)
 
@@ -166,17 +171,19 @@ func TestAttackSkipMessageCountsAgreeWithPrintedErrors(t *testing.T) {
 
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	configPath := filepath.Join(repoRoot, ".agents", "config.yaml")
-	writeConfig(t, configPath, `
-registries:
-  - url: `+origin+`
+	writeConfig(t, configPath, `apiVersion: agent-marketplace/v4
+sources:
+  healthy:
+    git: file://`+origin+`
     ref: main
-    skills:
-      - vm-lifecycle
-      - deleted-skill
-  - url: `+filepath.Join(t.TempDir(), "gone-a.git")+`
+  unavailable:
+    git: file://`+filepath.Join(t.TempDir(), "gone-a.git")+`
     ref: main
-    skills:
-      - vm-lifecycle
+resources:
+  healthy:
+    include: [skill/vm-lifecycle, skill/deleted-skill]
+  unavailable:
+    include: [skill/vm-lifecycle]
 `)
 	withWorkingDir(t, repoRoot)
 
@@ -263,13 +270,16 @@ func TestSyncPruneStaleStrictCleanReSyncNamesThePromotedErrors(t *testing.T) {
 
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	configPath := filepath.Join(repoRoot, ".agents", "config.yaml")
-	writeConfig(t, configPath, `
-registries:
-  - url: `+origin+`
+	writeConfig(t, configPath, `apiVersion: agent-marketplace/v4
+sources:
+  skills:
+    git: file://`+origin+`
     ref: main
-    skills:
-      - keeper
-      - gone
+resources:
+  skills:
+    include:
+      - skill/keeper
+      - skill/gone
 `)
 	withWorkingDir(t, repoRoot)
 
@@ -306,16 +316,19 @@ func TestAttackPruneLastSelectionKeepsValidYAML(t *testing.T) {
 
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	configPath := filepath.Join(repoRoot, ".agents", "config.yaml")
-	writeConfig(t, configPath, `
+	writeConfig(t, configPath, `apiVersion: agent-marketplace/v4
 # top-of-file comment that must survive
-registries:
+sources:
   # a comment about the registry
-  - url: `+origin+`
+  skills:
+    git: file://`+origin+`
     ref: main
+resources:
+  skills:
     # a comment inside the entry
-    skills:
+    include:
       # a comment about the selection
-      - only-stale   # trailing comment
+      - skill/only-stale   # trailing comment
     # a comment about required
     required: false
 `)
@@ -362,34 +375,49 @@ func TestAttackPruneDuplicateSelectionEntries(t *testing.T) {
 
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	configPath := filepath.Join(repoRoot, ".agents", "config.yaml")
-	writeConfig(t, configPath, `
-registries:
-  - url: `+origin+`
+	writeConfig(t, configPath, `apiVersion: agent-marketplace/v4
+sources:
+  skills:
+    git: file://`+origin+`
     ref: main
-    skills:
-      - keeper
-      - gone
-      - gone
+resources:
+  skills:
+    include:
+      - skill/keeper
+      - skill/gone
+      - skill/gone
 `)
 	withWorkingDir(t, repoRoot)
 
-	output, _ := executeCommand("sync", "--prune-stale")
-	t.Logf("output:\n%s", output)
+	// Duplicate include items are invalid in v4: refuse the authored file
+	// intact rather than silently normalizing or partially pruning the list.
+	before, info := statSnapshot(t, configPath)
+	output, syncErr := executeCommand("sync", "--prune-stale")
+	var validation *config.V4ValidationError
+	if !errors.As(syncErr, &validation) || validation.Code != "v4.duplicate-request" || validation.Path != "resources.skills.include[2]" || validation.Line == 0 {
+		t.Fatalf("expected typed duplicate-request refusal, got %v\n%s", syncErr, output)
+	}
+	assertStatUnchanged(t, "duplicate request refusal", configPath, before, info)
+	if _, err := os.Lstat(filepath.Join(repoRoot, ".agents", "lock.yaml")); !os.IsNotExist(err) {
+		t.Fatalf("duplicate request refusal created a lock: %v", err)
+	}
 
+	// Valid control: after explicitly removing the duplicate, pruning must
+	// delete the stale request and still materialize the healthy sibling.
+	writeFile(t, configPath, strings.Replace(string(before), "      - skill/gone\n", "", 1))
+	output, syncErr = executeCommand("sync", "--prune-stale")
+	if syncErr != nil || !strings.Contains(output, `pruned stale skill "gone"`) {
+		t.Fatalf("valid control did not prune: %v\n%s", syncErr, output)
+	}
 	configData, readErr := os.ReadFile(configPath)
 	if readErr != nil {
 		t.Fatalf("read config: %v", readErr)
 	}
-	t.Logf("config after prune:\n%s", configData)
 	assertValidConfigYAML(t, configData)
-	for _, line := range strings.Split(string(configData), "\n") {
-		if strings.TrimSpace(line) == "- gone" {
-			t.Errorf("ATTACK SUCCEEDED: a duplicated stale selection survived the prune (only one copy removed).\nconfig:\n%s\noutput:\n%s", configData, output)
-		}
+	if strings.Contains(string(configData), "skill/gone") || !strings.Contains(string(configData), "skill/keeper") {
+		t.Fatalf("prune lost the healthy request or kept the stale request:\n%s", configData)
 	}
-	if !strings.Contains(string(configData), "keeper") {
-		t.Errorf("prune removed the healthy selection:\n%s", configData)
-	}
+	assertFactorySkillExists(t, repoRoot, "keeper")
 }
 
 // ATTACK 6c: YAML anchors / aliases in the selection list.
@@ -408,17 +436,17 @@ func TestAttackPruneWithYAMLAnchors(t *testing.T) {
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	configPath := filepath.Join(repoRoot, ".agents", "config.yaml")
 	writeConfig(t, configPath, `
-apiVersion: agent-marketplace/v2
+apiVersion: agent-marketplace/v4
 harnesses:
   - factory
-common: &common
-  ref: main
-registries:
-  - url: `+origin+`
-    <<: *common
-    skills:
-      - keeper
-      - gone
+sources:
+  skills:
+    git: file://`+origin+`
+    ref: main
+resources:
+  skills:
+    harnesses: &common [factory]
+    include: [skill/keeper, skill/gone]
 `)
 	withWorkingDir(t, repoRoot)
 
@@ -431,9 +459,28 @@ registries:
 	}
 	t.Logf("config after prune:\n%s", configData)
 	assertValidConfigYAML(t, configData)
-	if strings.Contains(output, "pruned stale") && !strings.Contains(string(configData), "&common") {
+	if !strings.Contains(output, "pruned stale") {
+		t.Fatalf("anchored valid control did not reach pruning:\n%s", output)
+	}
+	if !strings.Contains(string(configData), "&common") {
 		t.Errorf("ATTACK SUCCEEDED (config corruption): the anchor definition was destroyed.\nconfig:\n%s", configData)
 	}
+	if strings.Contains(string(configData), "skill/gone") {
+		t.Fatalf("anchored valid control kept the stale request:\n%s", configData)
+	}
+
+	// V4 forbids aliases rather than silently flattening them while editing.
+	// Keep an actual alias attack alongside the successful anchored control.
+	aliasConfig := strings.Replace(string(configData), "harnesses:\n", "harnesses: &common\n", 1)
+	aliasConfig = strings.Replace(aliasConfig, "harnesses: &common [factory]", "harnesses: *common", 1)
+	writeFile(t, configPath, aliasConfig)
+	before, info := statSnapshot(t, configPath)
+	output, syncErr := executeCommand("sync", "--prune-stale")
+	var validation *config.V4ValidationError
+	if !errors.As(syncErr, &validation) || validation.Code != "v4.alias-forbidden" || validation.Path != configPath || validation.Line == 0 {
+		t.Fatalf("expected typed, file-specific alias refusal, got %v\n%s", syncErr, output)
+	}
+	assertStatUnchanged(t, "alias refusal", configPath, before, info)
 }
 
 // ATTACK 6d: CRLF line endings.
@@ -451,15 +498,16 @@ func TestAttackPruneCRLFConfig(t *testing.T) {
 
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	configPath := filepath.Join(repoRoot, ".agents", "config.yaml")
-	body := `apiVersion: agent-marketplace/v2
+	body := `apiVersion: agent-marketplace/v4
 harnesses:
   - factory
-registries:
-  - url: ` + origin + `
+sources:
+  skills:
+    git: file://` + origin + `
     ref: main
-    skills:
-      - keeper
-      - gone
+resources:
+  skills:
+    include: [skill/keeper, skill/gone]
 `
 	writeFile(t, configPath, strings.ReplaceAll(body, "\n", "\r\n"))
 	withWorkingDir(t, repoRoot)
@@ -523,13 +571,16 @@ func TestAttackStrictPruneWithUnwritableConfig(t *testing.T) {
 
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	configPath := filepath.Join(repoRoot, ".agents", "config.yaml")
-	writeConfig(t, configPath, `
-registries:
-  - url: `+origin+`
+	writeConfig(t, configPath, `apiVersion: agent-marketplace/v4
+sources:
+  skills:
+    git: file://`+origin+`
     ref: main
-    skills:
-      - keeper
-      - gone
+resources:
+  skills:
+    include:
+      - skill/keeper
+      - skill/gone
 `)
 	before, err := os.ReadFile(configPath)
 	if err != nil {

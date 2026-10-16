@@ -336,7 +336,7 @@ func writeAgentsConfig(t *testing.T, dir string) {
 	if err := os.MkdirAll(agentsDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	body := "apiVersion: agent-marketplace/v2\nharnesses:\n  - factory\n"
+	body := "apiVersion: agent-marketplace/v4\nharnesses:\n  - factory\n"
 	if err := os.WriteFile(filepath.Join(agentsDir, "config.yaml"), []byte(body), 0o644); err != nil {
 		t.Fatal(err)
 	}

@@ -89,22 +89,26 @@ func TestSyncPruneStaleV4MixedBatch(t *testing.T) {
 	}
 }
 
-func TestSyncPruneStaleLegacyIncludeOwnedTopLevelRefuses(t *testing.T) {
+func TestSyncPruneStaleV4IncludeOwnedSelectionRefuses(t *testing.T) {
 	if isolateCommandTest(t) {
 		return
 	}
-	repoRoot, configPath := pruneFixture(t, "legacy-frag-prune.git", func(origin string) string {
-		return "registries:\n  - url: " + origin + "\n    ref: main\ninclude: fragments/skills.yaml\nskills:\n  include:\n    - gone\n"
+	repoRoot, configPath := pruneFixture(t, "v4-frag-prune.git", func(origin string) string {
+		return "apiVersion: agent-marketplace/v4\nsources:\n  main: {git: file://" + origin + ", ref: main}\ninclude: fragments/skills.yaml\nresources:\n  main: [skill/keeper]\n"
 	})
 	fragmentPath := filepath.Join(repoRoot, ".agents", "fragments", "skills.yaml")
-	fragmentData := "skills:\n  include:\n    - gone\n"
+	fragmentData := "resources:\n  main: [skill/gone]\n"
 	writeConfig(t, fragmentPath, fragmentData)
 	rootData, err := os.ReadFile(configPath)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	output, _ := executeCommand("sync", "--prune-stale")
+	output, err := executeCommand("sync", "--prune-stale")
+	if err != nil {
+		t.Fatalf("sync include-owned selection: %v\n%s", err, output)
+	}
+	assertFileExists(t, filepath.Join(repoRoot, ".factory", "skills", "keeper", "SKILL.md"))
 	if strings.Contains(output, `pruned stale skill "gone"`) {
 		t.Fatalf("claimed to prune an include-owned selection:\n%s", output)
 	}

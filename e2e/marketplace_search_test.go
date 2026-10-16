@@ -87,8 +87,8 @@ func marketplaceTestDigest(char byte) string {
 func TestMarketplaceSearchAllKindsAndDeduplicatesLayeredEndpoint(t *testing.T) {
 	fixture := newMarketplaceSearchFixture(t, "marketplace-id", http.StatusOK)
 	env := newEnv(t)
-	env.WriteGlobalConfig(fmt.Sprintf("marketplaces:\n  - url: %s\n    instance_id: marketplace-id\n    alias: public", fixture.server.URL))
-	env.WriteRepoConfig(fmt.Sprintf("marketplaces:\n  - url: %s/\n    instance_id: marketplace-id", fixture.server.URL))
+	env.WriteGlobalConfig(fmt.Sprintf("sources: {public: {marketplace: %q}}\n", fixture.server.URL))
+	env.WriteRepoConfig(fmt.Sprintf("sources: {same: {marketplace: '%s/'}}\n", fixture.server.URL))
 
 	result := env.RunAM("search", "--output", "json")
 	if result.ExitCode != 0 {
@@ -121,7 +121,7 @@ func TestMarketplaceSearchAllKindsAndDeduplicatesLayeredEndpoint(t *testing.T) {
 func TestMarketplaceSearchLimitOffsetAndInvalidBounds(t *testing.T) {
 	fixture := newMarketplaceSearchFixture(t, "marketplace-id", http.StatusOK)
 	env := newEnv(t)
-	env.WriteGlobalConfig(fmt.Sprintf("marketplaces:\n  - url: %s\n    instance_id: marketplace-id\n    alias: public", fixture.server.URL))
+	env.WriteGlobalConfig(fmt.Sprintf("sources: {public: {marketplace: %q}}\n", fixture.server.URL))
 	configBefore := env.ReadFile("/root/.agents/config.yaml")
 	readNames := func(args ...string) []string {
 		t.Helper()
@@ -172,7 +172,7 @@ func TestMarketplaceSearchPartialAndTotalFailure(t *testing.T) {
 	good := newMarketplaceSearchFixture(t, "good-id", http.StatusOK)
 	bad := newMarketplaceSearchFixture(t, "bad-id", http.StatusServiceUnavailable)
 	env := newEnv(t)
-	env.WriteGlobalConfig(fmt.Sprintf("marketplaces:\n  - url: %s\n    instance_id: good-id\n    alias: good\n  - url: %s\n    instance_id: bad-id\n    alias: bad", good.server.URL, bad.server.URL))
+	env.WriteGlobalConfig(fmt.Sprintf("sources:\n  good: {marketplace: %q}\n  bad: {marketplace: %q}\n", good.server.URL, bad.server.URL))
 
 	result := env.RunAM("search", "--output", "json", "skill")
 	if result.ExitCode != 0 || !strings.Contains(result.Stdout, `"name": "skill-one"`) || !strings.Contains(result.Stdout, `"errors"`) || !strings.Contains(result.Stderr, "warning: bad:") {
@@ -185,7 +185,7 @@ func TestMarketplaceSearchPartialAndTotalFailure(t *testing.T) {
 	}
 
 	allBad := newEnv(t)
-	allBad.WriteGlobalConfig(fmt.Sprintf("marketplaces:\n  - url: %s\n    instance_id: bad-id\n    alias: bad", bad.server.URL))
+	allBad.WriteGlobalConfig(fmt.Sprintf("sources: {bad: {marketplace: %q}}\n", bad.server.URL))
 	result = allBad.RunAM("search", "--output", "json", "skill")
 	if result.ExitCode == 0 || !strings.Contains(result.Stdout, `"errors"`) || !strings.Contains(result.Combined, "marketplace error 503") {
 		t.Fatalf("all-failing federated search result = exit %d:\n%s", result.ExitCode, result.Combined)

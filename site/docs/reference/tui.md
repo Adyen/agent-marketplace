@@ -1,47 +1,67 @@
 # Terminal UI reference
 
-This page lists the keys, dialogs, and states of the interactive terminal UI (the [TUI](../glossary.md#tui)). Use it to look up a key or to understand what the TUI saves and when. For a guided first run, see the [quick start](../quick-start.md).
+Keys, dialogs, and states of the [TUI](../glossary.md#tui), and what it saves when. For a guided first run, see the [quick start](../quick-start.md).
 
 ## Launch
 
 - `agent-marketplace` starts the TUI when standard input is a terminal and `AGENT_MARKETPLACE_NO_TUI` is not set.
 - `agent-marketplace tui` always starts it.
 
-If you have no user config yet, the TUI first asks you to choose target harnesses. Harnesses it detects on your machine are pre-selected. Toggle harnesses with `space` and press `enter` to save a v4 user config (`~/.agents/config.yaml`), or `esc` to cancel. An existing file is left unchanged.
+If you have no user config yet, the TUI asks you to choose target harnesses once the config files validate. Harnesses it detects are pre-selected. Toggle them with `space`, then press `enter` to save a v4 user config (`~/.agents/config.yaml`) or `esc` to cancel. An existing file is left unchanged.
 
-If your user config still uses a legacy v2 or v3 schema, the TUI opens a **Configuration migration required** dialog. Press `enter` or `m` to migrate it to v4, or `l` or `esc` to leave it unchanged. v2 and v3 files stay readable if you decline. Migration runs as one transaction and leaves unsupported or lossy input unchanged. The dialog only covers the user config; migrate repository and personal-local configs with [`agent-marketplace migrate`](./cli.md#migrate).
+Every existing config root, including organization and personal-local, must declare exactly `apiVersion: agent-marketplace/v4`. Included fragments may omit the field or declare exact v4. Otherwise the TUI shows a `v4.api-version-required` or `v4.api-version` diagnostic naming the file and blocks actions that need the configuration. It never offers to convert the file and has no legacy reader. [Convert writable roots with an older released migrator before upgrading](../how-to/migrate-configuration.md); organization configuration is converted by its administrator.
 
-Resource toggles can edit v4 configs for configured Git and directory sources, and the harness dialog (`H`) can edit the target harness list. Some other edits, such as some hosted Marketplace changes, may still be refused for a v4 file; a refusal leaves the file unchanged. In that case edit the `sources` and `resources` maps directly. See [configuration compatibility](../explanation/user-journeys.md#before-following-a-journey).
+Resource toggles, Marketplace installs, and the harness dialog (`H`) edit v4 config and then reload it from disk. A finished form does not by itself mean the write succeeded; the reload does. Cancel, sync-and-quit, and quit stay available. A refused operation starts no new work: it downloads nothing and writes no config, lock, or harness files of its own. It may still write logs, and recovery may first finish an interrupted earlier write, which changes the files that write recorded. Hosted runtime options such as dynamic selectors and hosted rebind are refused; see [current limits](../explanation/user-journeys.md#before-following-a-journey).
 
-## Browse, inspect, select, sync
+## Resource list
 
-1. The resource list groups everything by status — **Required**, **Enabled**, **Pending sync**, **Stale**, **Broken**, **Available**, and **Malformed** — with empty groups hidden. Press `v` to open **View settings** and regroup the list by **Source** or **Kind** instead, optionally with a second grouping inside each section; `tab` or `↑`/`↓` move between the two fields, `←`/`→` (or `h`/`l`) change a field, `enter` accepts, and `esc` restores the grouping you started with. Changing the grouping keeps your folds and selected resource. Outside the status grouping, rows that need attention move into a pinned **Needs attention** section at the top; each such row appears exactly once there, not duplicated in its original section. A confirmed grouping is saved per user under `$XDG_STATE_HOME/agent-marketplace/tui.json` (`~/.local/state/agent-marketplace/tui.json` by default) and restored on the next launch; it never touches a config or lock file, a missing file falls back to the status grouping silently, and a malformed, unreadable, or unsupported file falls back with a footer warning and is left untouched until you confirm a change. Each row shows a fixed-width scope letter column (`G` user, `P` project, `L` local, their combinations, `R` required, `P-` a project selection overridden by a local exclusion, blank for available or malformed rows), the resource kind, and `registry/name` (the source's repository name, or `(local)` when it has none). Press `/` to search and `esc` to clear the search; searches also match kind and source labels in every grouping.
-2. Press `enter` on a resource to inspect it. Local resources open a file browser. An installable Marketplace skill loads its exact revision's verified inspection in the background, showing `SKILL.md` first and fetching supporting text files when selected. Browsing does not install anything or change configuration or locks. Binary files show identity details; unavailable, corrupt, or mismatched content shows an error. Other uninstalled Marketplace rows show metadata without downloading content. Installed resources show their verified cached files, including a synthesized `SKILL.md` when supporting files are cached separately from the definition. Sync can restore missing cached files.
-3. Press `space` to open the scope dialog. Check the current selection before you toggle it for user, project, or local scope. Required resources cannot be excluded. On a section header, `space` instead opens a bulk toggle for every eligible row in that section (see [Dialogs](#dialogs)).
-4. Selecting a new Marketplace resource verifies its exact revision before installing it. If the revision has security findings, the TUI shows the verified preview and asks you to confirm. Without findings, it installs the prepared revision with no extra prompt. Capability metadata alone never asks for consent. You can inspect blocked and revoked rows, but you cannot install them.
-5. Press `s` to sync pending changes, then check the **Pending sync** group and the diagnostics view (`e`). Fix any errors before you rely on the generated files.
+The list groups resources by status (**Required**, **Enabled**, **Pending sync**, **Stale**, **Broken**, **Available**, **Malformed**) and hides empty groups. Each row shows a scope letter (`G` user, `P` project, `L` local, their combinations, `R` required, `P-` a project selection overridden by a local exclusion, blank for available or malformed rows), the resource kind, and `registry/name` (the source's repository name, or `(local)`). `/` searches and `esc` clears; search also matches kind and source labels in every grouping.
 
-The TUI saves a selection change to config as soon as you accept it. The change stays saved even if you quit without syncing. "Pending" means the harness folders still need a sync to match your config.
+`v` opens **View settings** to group by **Source** or **Kind** instead, optionally with a second grouping inside each section. `tab` or `↑`/`↓` move between the two fields, `←`/`→` (or `h`/`l`) change a field, `enter` accepts, and `esc` restores the previous grouping. Folds and the selected resource are kept. Outside the status grouping, rows that need attention appear once, in a pinned **Needs attention** section at the top, and not in their own section. A confirmed grouping is saved to `$XDG_STATE_HOME/agent-marketplace/tui.json` (default `~/.local/state/agent-marketplace/tui.json`) and restored on the next launch. It never touches a config or lockfile. A missing file silently falls back to the status grouping; a malformed, unreadable, or unsupported file falls back with a footer warning and is left alone until you confirm a change.
+
+## Inspection
+
+`enter` inspects a resource:
+
+- Local resources open a file browser.
+- An installable Marketplace skill loads the verified inspection of its exact revision in the background, showing `SKILL.md` first and fetching supporting text files when you select them. Browsing installs nothing and changes no config or lock.
+- Binary files show identity details. Unavailable, corrupt, or mismatched content shows an error.
+- Other uninstalled Marketplace rows show metadata without downloading content.
+- Installed resources show their verified cached files, including a synthesized `SKILL.md` when supporting files are cached apart from the definition. Sync restores missing cached files.
+
+## Selection
+
+`space` on a resource opens the scope dialog (user, project, or local; see [Dialogs](#dialogs)). Required resources cannot be excluded. On a section header, `space` opens a bulk toggle for every eligible row in the section.
+
+A new Marketplace resource has its exact revision verified before it is installed. If the revision has security findings, the TUI shows the verified preview and asks for confirmation; without findings it installs with no prompt. Capability metadata alone never triggers a prompt. Blocked and revoked rows can be inspected but not installed.
+
+A selection change is saved to config as soon as you accept it, and stays saved if you quit without syncing. "Pending" means the harness folders still need a sync to match the config.
+
+## Sync state
+
+`s` syncs pending changes into the harness folders. The **Pending sync** group and the diagnostics view (`e`) show that run's materialization errors and warnings.
 
 ## Hosted Marketplace discovery
 
-Configured resources appear first. Results from each Marketplace then arrive in the **Available** group, labeled with their Marketplace and registry. As you type a search, the TUI filters the rows it already has: resource names match fuzzily, and other details such as tags, registry, and description match when each query word starts one of their words. Name matches sort first within each group and the best match is selected. After `enter`, the query and its match count stay above the list; `esc` clears it, and `/` resumes editing it. About 250 milliseconds after you stop typing, it also searches the remote endpoints. Clearing the search brings back the default results.
+Configured resources appear first, then each Marketplace's results arrive in the **Available** group, labeled with Marketplace and registry. Typing a search filters the rows already loaded: names match fuzzily, and tags, registry, and description match when each query word starts one of their words. Name matches sort first in each group, and the best match is selected. After `enter`, the query and match count stay above the list; `esc` clears it and `/` edits it again. About 250 milliseconds after you stop typing, the TUI also queries the remote endpoints. Clearing the search restores the default results.
 
-The TUI shows at most 50 results per endpoint and query, with no pagination. Narrow the query, or use [`agent-marketplace search`](./cli.md#search) for more results. Cached results stay fresh for five minutes. If discovery fails, the TUI can keep showing stale results for up to 24 hours. Discovery errors and sync state are separate: an endpoint error alone does not mean your local files are out of sync.
+The TUI shows at most 50 results per endpoint and query, with no pagination; [`agent-marketplace search`](./cli.md#search) returns more. Cached results stay fresh for five minutes, and after a failed discovery the TUI can show stale results for up to 24 hours. An endpoint error alone does not mean your local files are out of sync.
 
 ## Reload versus update
 
-- `r` reloads config and local state from disk. When a valid lock exists, discovery uses the exact snapshot it records.
-- `s` syncs dependencies and generated output with your selections. A healthy Git lock stays at its recorded commit even if its branch has moved.
-- `u` upgrades Git locks in all writable scopes (user, project, and local) and then syncs. The help label says "update caches", but this key can also change lockfiles and installed resources. To update only the repository, run `agent-marketplace update --scope repo` instead.
+- `r` reloads config and local state from disk. With a valid lock, discovery uses the exact snapshot it records.
+- `s` syncs dependencies and generated output with your selections. A healthy Git lock stays at its recorded commit even if the branch has moved.
+- `u` upgrades Git locks in all writable scopes (user, project, and local), then syncs. Its help label says "update caches", but it can also change lockfiles and installed resources. `agent-marketplace update --scope repo` does the repository-only equivalent.
 
-If a config layer has no lock, the TUI can browse its source's current content and shows a warning. It does not create the lock. An invalid lock that exists blocks that fallback.
+If a config layer has no lock, the TUI browses its source's current content and shows a warning; it does not create the lock. An existing invalid lock blocks that fallback.
 
-A Marketplace can republish a resource's archive without changing its content (an archive-evidence repair). When your lock still pins the old archive digest, `s` and `u` refresh the lock to the digest the Marketplace now serves and re-download the verified artifact. The run stays successful: the toast shows `Sync complete with N warning(s)` (or `Update complete with N warning(s)`) and `e` lists the `marketplace.archive-evidence-refreshed` warning. A sync or update with nothing to repair stays quiet and does not rewrite the lock. If the new artifact cannot be fetched, or the lock belongs to a read-only scope such as a deployed organization lock, the operation fails and leaves your installed files and lock unchanged. See [lockfiles](./lockfiles.md) for the lock fields this refreshes and the `sync --locked`/`sync --check` behavior.
+If a valid lock names an exact Git snapshot that is not cached, for example after you pull an updated repository lock, the TUI warns you to press `s` or run `agent-marketplace sync --locked`. `r` does not fetch the snapshot. The affected selections and drift stay unverified until sync succeeds; the TUI never substitutes an older cache or the current branch. Sync fetches the locked commit without advancing a healthy lock. Corrupt snapshots and failed syncs remain errors, and CLI check and offline commands still fail while required snapshots are missing.
 
-A configuration load error blocks selection changes until you fix the file with `E`. Catalog, resolution, and materialization failures keep the loaded rows visible. Rows that can normally be toggled still open the scope dialog, including selections shown as unavailable, and drift stays marked as failed.
+A Marketplace can republish a resource's archive without changing its content (an archive-evidence repair). If your lock still pins the old archive digest, `s` and `u` update the lock to the digest now served and re-download the verified artifact. The run still succeeds: the toast shows `Sync complete with N warning(s)` (or `Update complete with N warning(s)`), and `e` lists the `marketplace.archive-evidence-refreshed` warning. With nothing to repair, the run stays quiet and does not rewrite the lock. If the new artifact cannot be fetched, or the lock is in a read-only scope such as a deployed organization lock, the operation fails and leaves your files and lock unchanged. See [lockfiles](./lockfiles.md) for the fields involved and `sync --locked`/`sync --check` behavior.
 
-The status bar reports sync drift, Marketplace endpoint health, the active operation, and error or warning counts when space permits. It shows `running` until an operation reports a phase it has entered. Progress alone never reports success; the operation and its on-disk reload must finish. Up to three short result notices appear as toasts and expire after a few seconds. The footer always shows the command palette (`:`), help (`?`), and quit (`q`) keys; other key hints drop one at a time as the terminal narrows. While errors are present, the error, reload, and quit keys come first.
+A configuration load error blocks selection changes until the file is fixed (`E` opens it in an editor). Catalog, resolution, and materialization failures keep the loaded rows visible: toggleable rows, including ones shown as unavailable, still open the scope dialog, and drift stays marked as failed.
+
+The status bar shows sync drift, Marketplace endpoint health, the running operation, and error and warning counts when there is room. It shows `running` until the operation reports its first phase. Progress never means success; the operation and its reload from disk must finish. Up to three short notices appear as toasts and expire after a few seconds. The footer always shows the command palette (`:`), help (`?`), and quit (`q`) keys; other hints drop out one at a time as the terminal narrows. While there are errors, the error, reload, and quit keys come first.
 
 ## Keys
 
@@ -68,39 +88,39 @@ The status bar reports sync drift, Marketplace endpoint health, the active opera
 | Show every binding | `?` |
 | Quit | `q` |
 
-In the file browser that `enter` opens, `j` / `k` and the arrow keys move through entries, `h` / left folds a directory, `l` / right expands it, and `enter` toggles a directory. `esc` or `q` returns to the resource list.
+In the file browser, `j` / `k` and the arrow keys move, `h` / left folds a directory, `l` / right expands it, `enter` toggles it, and `esc` or `q` returns to the list.
 
-The command palette (`ctrl+k` or `:`) lists the resource-list actions — search, clear search (while a filter is applied), details, toggle, reload, sync, update, harnesses, config editor, view settings, help, diagnostics, fold commands, and quit — as a fuzzy-filtered overlay, with each action's key shown beside it. It opens only over the resource list at a supported size: not while a search, dialog, or overlay is active, not while a `z` fold prefix is pending, and not below the minimum terminal size. Type to filter the action labels (`q` and other letters are filter text, not list keys), move with `up` / `down`, run the highlighted action with `enter`, and close the palette with `esc`; `ctrl+c` still exits immediately. Actions that are not currently allowed are hidden, eligibility is checked again when you confirm, and the same guards and confirmations apply as for the key itself.
+The command palette (`ctrl+k` or `:`) is a fuzzy-filtered list of resource-list actions with their keys: search, clear search (while a filter is applied), details, toggle, reload, sync, update, harnesses, config editor, view settings, help, diagnostics, fold commands, and quit. It opens only over the resource list at a supported size, and not while a search, dialog, or overlay is open or a `z` fold prefix is pending. Typed characters filter the labels (`q` and other letters are filter text here). `up` / `down` move, `enter` runs the action, `esc` closes, and `ctrl+c` still exits. Disallowed actions are hidden, eligibility is checked again on confirm, and each action has the same guards and confirmations as its key.
 
 ## Dialogs
 
-- `space` opens the resource's scope dialog. Press `g` for user (global) selection, `p` for project, `l` for local, or `e` for a local exclusion. Press `esc` to cancel. A local exclusion cannot hide a machine-wide or required resource. For an optional organization Marketplace resource, `e` instead edits an exact exclusion in your v4 user config; required resources stay protected.
-- `space` on a section header opens the section bulk-toggle dialog, which counts matching, eligible, and skipped rows (including folded and filter-matched descendants) and explains each skip. Pick a scope with `g`, `p`, `l`, or `e`, a direction with `+` or `-`, then confirm with `enter`; `esc` cancels at any stage. Every eligible row changes in one transaction — a failure leaves the layer untouched. Rows are checked again when you confirm, and a section whose members span different config layers asks you to pick a narrower section.
-- `H` opens harness selection. Choose user (global) with `g` or project with `p`, toggle harnesses with `space`, then save with `enter` or cancel with `esc`. The project list overrides the user list. Local scope has no harness list.
-- `E` opens the config picker: `g` for user (global), `p` for project, or `l` for local; `esc` cancels. The TUI opens the file in the editor named by `$EDITOR`, or `vi` if it is not set, and reloads when the editor exits. While the editor runs, the terminal shows which file is open instead of the shell.
+- **Scope** (`space` on a resource): `g` user (global), `p` project, `l` local, `e` local exclusion, `esc` cancel. A local exclusion cannot hide a machine-wide or required resource. For an optional organization Marketplace resource, `e` edits an exact exclusion in the v4 user config instead; required resources stay protected.
+- **Section bulk toggle** (`space` on a section header): counts matching, eligible, and skipped rows (including folded and filter-matched descendants) and says why each was skipped. `g`, `p`, `l`, or `e` pick a scope, `+` or `-` a direction, `enter` confirms, and `esc` cancels at any stage. All eligible rows change in one transaction, and a failure leaves the layer untouched. Rows are checked again on confirm; a section whose members span several config layers asks you to pick a narrower one.
+- **Harnesses** (`H`): `g` edits the user (global) list, `p` the project list, `space` toggles a harness, `enter` saves, `esc` cancels. The project list overrides the user list. Local scope has no harness list.
+- **Config picker** (`E`): `g` user (global), `p` project, `l` local, `esc` cancel. The file opens in `$EDITOR` (or `vi`), and the TUI reloads when the editor exits. Meanwhile the terminal shows which file is open.
 
-Inside a dialog, these letters have dialog meanings. In the resource list, `g` jumps to the top and `e` opens diagnostics.
+These letters mean something else outside dialogs: in the resource list, `g` jumps to the top and `e` opens diagnostics.
 
 ## Minimum terminal size
 
-The TUI needs at least 50 columns by 12 rows. In a smaller window it shows only a resize message and accepts only `q` and `ctrl+c`. Making the window large enough again restores where you were.
+The TUI needs at least 50 columns by 12 rows. Below that it shows only a resize message and accepts only `q` and `ctrl+c`. Enlarging the window restores where you were.
 
 ## Mouse
 
-The TUI enables cell-motion mouse reporting to receive scroll-wheel input. A vertical wheel event moves the resource-list selection by one entry, the bundle-tree selection by one entry, or scrolls the file preview, help, errors, and Marketplace consent views by one line.
+The TUI enables cell-motion mouse reporting to receive scroll-wheel input. A vertical wheel event moves the resource-list or bundle-tree selection by one entry, or scrolls the file preview, help, errors, and Marketplace consent views by one line.
 
-A left click on a resource-list row selects it, and clicking the already-selected resource opens its file browser, like `enter`. Clicking a section header folds or unfolds it. In the file browser, clicking a file in the tree selects it and shows its preview, and clicking a directory expands or collapses it. A click counts only when you press and release the button without moving to another cell, so a drag that starts in the list or tree does nothing. Clicks with a modifier key, and clicks on the header, search row, footer, an empty row, the right-hand pane, an overlay, a dialog, or the command palette, also do nothing, as do clicks while you are typing a search.
+A left click on a resource-list row selects it; clicking the selected resource opens its file browser, like `enter`. Clicking a section header folds or unfolds it. In the file browser, clicking a file selects and previews it, and clicking a directory expands or collapses it. A click counts only if you press and release on the same cell, so a drag that starts in the list or tree does nothing. Modifier clicks do nothing, as do clicks on the header, search row, footer, an empty row, the right-hand pane, an overlay, a dialog, or the command palette, and clicks while you type a search.
 
-Dragging with the left button inside the right-hand details or file-preview pane, or across the displayed diagnostics on the errors screen, highlights the covered text and copies it on release; on the errors screen the footer and blank padding are not selectable. Copying uses the terminal's OSC52 clipboard mechanism; the terminal or multiplexer must support OSC52 for the text to reach the system clipboard. A click without a drag, or a drag starting anywhere else, selects nothing. Scrolling, resizing, switching resource or file, or a change to the displayed diagnostics clears the highlight, and `esc` dismisses it first. Other clicks, releases, and horizontal wheel events do nothing; Shift+vertical-wheel still scrolls vertically. Resource-list rendering is paced at up to 60 frames per second during wheel bursts, so rapid scrolling always settles on the final selection without extra input. Because mouse events go to the application while the TUI runs, native click-and-drag text selection may require a terminal-specific modifier (often Option or Shift).
+Dragging with the left button in the details or file-preview pane, or across the diagnostics on the errors screen, highlights text and copies it on release. The errors-screen footer and blank padding are not selectable. Copying uses OSC52, which the terminal or multiplexer must support for text to reach the system clipboard. A click without a drag, or a drag that starts elsewhere, selects nothing. Scrolling, resizing, switching resource or file, or a change to the displayed diagnostics clears the highlight; `esc` dismisses it first. Other clicks, releases, and horizontal wheel events do nothing; Shift+vertical-wheel still scrolls vertically. During wheel bursts the list redraws at up to 60 frames per second, so fast scrolling always settles on the final selection. Because the TUI receives mouse events, native text selection may need a terminal-specific modifier (often Option or Shift).
 
 ## Logging while the TUI runs
 
-While the TUI is on screen, logs still go to the log file but are never printed to the terminal, even with `--debug`. See the [logging reference](./logging.md).
+While the TUI is on screen, logs go to the log file and are never printed to the terminal, even with `--debug`. See the [logging reference](./logging.md).
 
 ## Exit
 
-- `q` asks what to do if changes still need a sync. Press `y` to sync and quit, `n` to quit without syncing, or `esc` to stay. None of these choices undoes config edits that were already saved.
-- `ctrl+c`, `SIGINT`, and `SIGTERM` exit immediately. Filesystem work that already finished is not rolled back; the next launch shows the resulting state.
+- `q` asks what to do when changes still need a sync: `y` syncs and quits, `n` quits without syncing, `esc` stays. None of these undoes config edits already saved.
+- `ctrl+c`, `SIGINT`, and `SIGTERM` exit immediately. Finished filesystem work is not rolled back; the next launch shows the result.
 
 ## Related documentation
 

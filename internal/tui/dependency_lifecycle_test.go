@@ -327,13 +327,13 @@ func TestProjectToggleReloadDoesNotExposeStaleLock(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(home, ".agents"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(home, ".agents", "config.yaml"), []byte("apiVersion: agent-marketplace/v2\nharnesses: [factory]\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(home, ".agents", "config.yaml"), []byte("apiVersion: agent-marketplace/v4\nharnesses: [factory]\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.MkdirAll(filepath.Join(repo, ".agents"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	projectConfig := "apiVersion: agent-marketplace/v2\nregistries:\n  - url: https://example.com/one.git\n    ref: main\n"
+	projectConfig := "apiVersion: agent-marketplace/v4\nsources:\n  one: {git: https://example.com/one.git, ref: main}\n"
 	if err := os.WriteFile(config.ProjectConfigPath(repo), []byte(projectConfig), 0o644); err != nil {
 		t.Fatal(err)
 	}

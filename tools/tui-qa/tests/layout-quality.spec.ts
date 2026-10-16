@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 
 import { expect, test } from "@microsoft/tui-test";
 
-import { declineLegacyMigration, defineFixture, step, waitForExit } from "./helpers.js";
+import { defineFixture, step, waitForExit } from "./helpers.js";
 
 const journey = defineFixture("layout-quality", ["tui"]);
 test.use(journey.options);
@@ -15,7 +15,6 @@ const footerFloor = /: (commands|cmds) · \? help · q quit/g;
 
 // spec: tui-rendering/modal-at-common-sizes
 test("footer, palette and modals stay framed and discoverable", async ({ terminal }) => {
-  await declineLegacyMigration(terminal);
   await step("footer keeps the palette, help and quit hints", () => {}, async () => {
     await expect(terminal.getByText("beta-skill", { strict: false })).toBeVisible();
     await expect(terminal.getByText(footerFloor)).toBeVisible();

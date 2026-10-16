@@ -17,9 +17,9 @@ import (
 // The built binary records every E2E invocation (command, flags set, the
 // apiVersion of each configuration layer at start, and success). After a
 // complete run, every public command and flag must have succeeded at least
-// once against a legacy (v2/v3) configuration and at least once against a v4
-// configuration. Commands that never read the layered client configuration
-// only need one successful run.
+// once with every present consumer layer declaring exact v4. First-run
+// commands may create absent roots. Schema-independent commands need one
+// successful behavioral invocation without a consumer configuration dependency.
 //
 // Known gaps live in commandCoverageGapsFile. The guard fails when an
 // uncovered requirement is not listed there, and when a listed gap is covered
@@ -39,7 +39,6 @@ var schemaIndependentCommands = map[string]string{
 	"completion powershell": "prints a generated shell script",
 	"completion zsh":        "prints a generated shell script",
 	"help":                  "prints command help",
-	"convert":               "converts the plugin directories named by its flags",
 	"serve":                 "runs the Marketplace server from its own --config",
 	"serve adopt":           "maintains the Marketplace server from its own --config",
 	"serve reindex":         "maintains the Marketplace server from its own --config",
@@ -58,28 +57,17 @@ type commandInvocation struct {
 	Schemas map[string]string `json:"schemas"`
 }
 
-// schemaClass classifies the writable client layers an invocation started
-// with: all v4, all legacy, both, or none present.
+// schemaClass accepts only complete evidence about all four consumer roots.
+// Absent roots are legitimate first-run inputs, not unreadable/versionless files.
 func schemaClass(schemas map[string]string) string {
-	var legacy, v4 bool
-	for _, layer := range []string{"user", "repo", "local"} {
+	for _, layer := range []string{"org", "user", "repo", "local"} {
 		switch schemas[layer] {
-		case "", "absent", "unreadable":
-		case "v4":
-			v4 = true
+		case "absent", "v4":
 		default:
-			legacy = true
+			return "unsupported"
 		}
 	}
-	switch {
-	case legacy && v4:
-		return "mixed"
-	case v4:
-		return "v4"
-	case legacy:
-		return "legacy"
-	}
-	return "none"
+	return "v4"
 }
 
 // coverageRequirements names each requirement as "<command or flag> [class]".
@@ -90,7 +78,7 @@ func coverageRequirements(tree commandTree) []string {
 			reqs = append(reqs, name+" [any]")
 			return
 		}
-		reqs = append(reqs, name+" [legacy]", name+" [v4]")
+		reqs = append(reqs, name+" [v4]")
 	}
 	for _, command := range tree.Commands {
 		_, independent := schemaIndependentCommands[command]
@@ -99,7 +87,7 @@ func coverageRequirements(tree commandTree) []string {
 	for _, flag := range tree.Flags {
 		command, _, _ := strings.Cut(flag, " --")
 		_, independent := schemaIndependentCommands[command]
-		add(flag, independent || command == "root")
+		add(flag, independent)
 	}
 	slices.Sort(reqs)
 	return reqs
@@ -251,33 +239,60 @@ func checkCommandCoverage(binary string) error {
 	return nil
 }
 
+// spec: regression-gates/consumer-command-coverage-requires-v4-success
 func TestCommandCoverageGuardRejectsNewAndStaleGaps(t *testing.T) {
-	tree := commandTree{Commands: []string{"completion", "sync"}, Flags: []string{"root --debug", "sync --check"}}
-	ok := func(command string, schemas map[string]string, flags ...string) commandInvocation {
-		return commandInvocation{Command: command, Flags: flags, OK: true, Schemas: schemas}
+	tree := commandTree{Commands: []string{"sync"}, Flags: []string{"root --debug", "sync --check"}}
+	v4 := map[string]string{"org": "v4", "user": "v4", "repo": "v4", "local": "v4"}
+	for _, layer := range []string{"org", "user", "repo", "local"} {
+		for _, version := range []string{"v1", "v2", "v3", "v99", "unversioned", "unreadable", ""} {
+			t.Run(layer+"/"+version, func(t *testing.T) {
+				schemas := map[string]string{"org": "v4", "user": "v4", "repo": "v4", "local": "v4"}
+				schemas[layer] = version
+				bad := commandInvocation{Command: "sync", Flags: tree.Flags, OK: true, Schemas: schemas}
+				if uncovered, _ := commandCoverageFindings(tree, []commandInvocation{bad}, nil); len(uncovered) != 3 {
+					t.Fatalf("unsupported %s %q counted as success: %v", layer, version, uncovered)
+				}
+			})
+		}
 	}
-	legacy := map[string]string{"user": "v2", "repo": "absent"}
-	v4 := map[string]string{"user": "v4", "repo": "absent"}
 	invocations := []commandInvocation{
-		ok("completion", nil),
-		ok("sync", legacy, "root --debug", "sync --check"),
-		ok("sync", v4),
+		{Command: "sync", Flags: []string{"root --debug"}, OK: true, Schemas: v4},
 		{Command: "sync", Flags: []string{"sync --check"}, OK: false, Schemas: v4},
-		ok("sync", map[string]string{"user": "v4", "repo": "v2"}, "sync --check"),
 	}
 	uncovered, stale := commandCoverageFindings(tree, invocations, []string{"sync [v4]"})
-	if !slices.Equal(uncovered, []string{"sync --check [v4]"}) {
-		t.Fatalf("uncovered = %v; a failed or mixed-schema run must not cover the v4 requirement", uncovered)
+	if !slices.Equal(uncovered, []string{"sync --check [v4]"}) || !slices.Equal(stale, []string{"sync [v4]"}) {
+		t.Fatalf("uncovered=%v stale=%v; refusals must not cover operational flags", uncovered, stale)
 	}
-	if !slices.Equal(stale, []string{"sync [v4]"}) {
-		t.Fatalf("stale = %v; a covered gap must be reported", stale)
+	absent := map[string]string{"org": "absent", "user": "absent", "repo": "absent", "local": "absent"}
+	invocations = append(invocations, commandInvocation{Command: "sync", Flags: tree.Flags, OK: true, Schemas: absent})
+	if uncovered, _ := commandCoverageFindings(tree, invocations, nil); len(uncovered) != 0 {
+		t.Fatalf("first-run absence did not count: %v", uncovered)
 	}
 	tree.Commands = append(tree.Commands, "untested")
-	if uncovered, _ := commandCoverageFindings(tree, invocations, nil); !slices.Contains(uncovered, "untested [legacy]") || !slices.Contains(uncovered, "untested [v4]") {
-		t.Fatalf("a new command without E2E runs was not reported: %v", uncovered)
+	if uncovered, _ := commandCoverageFindings(tree, invocations, nil); !slices.Equal(uncovered, []string{"untested [v4]"}) {
+		t.Fatalf("missing invocation was not reported: %v", uncovered)
 	}
 	if _, stale := commandCoverageFindings(tree, invocations, []string{"removed [v4]"}); !slices.Contains(stale, "removed [v4]") {
-		t.Fatalf("a gap for a command that no longer exists was not reported: %v", stale)
+		t.Fatalf("removed public surface gap not stale: %v", stale)
+	}
+}
+
+// spec: regression-gates/schema-independent-surfaces-remain-successfully-exercised
+func TestCommandCoverageSchemaIndependentSuccess(t *testing.T) {
+	tree := commandTree{Commands: []string{"completion bash", "help", "serve"}, Flags: []string{"serve --config"}}
+	invocations := []commandInvocation{
+		{Command: "completion bash", OK: true},
+		{Command: "help", OK: true},
+		{Command: "serve", Flags: []string{"serve --config"}, OK: true},
+	}
+	if uncovered, _ := commandCoverageFindings(tree, invocations, nil); len(uncovered) != 0 {
+		t.Fatalf("configuration-free successful surfaces not covered: %v", uncovered)
+	}
+	for i := range invocations {
+		invocations[i].OK = false
+	}
+	if uncovered, _ := commandCoverageFindings(tree, invocations, nil); len(uncovered) != 4 {
+		t.Fatalf("independent refusals counted: %v", uncovered)
 	}
 }
 
