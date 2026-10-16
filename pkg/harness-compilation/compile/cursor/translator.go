@@ -92,8 +92,9 @@ func (c *cursorCompiler) translateSkill(s *ir.Skill) ([]artifact.Artifact, []dia
 			return nil, nil, err
 		}
 	}
-	if s.AllowedTools != nil {
-		if err := writeYAMLKey(&fm, "allowed-tools", s.AllowedTools); err != nil {
+	allowedTools, toolDiags := compile.PreApprovalSkillTools(s, mapping.TargetCursor)
+	if allowedTools != nil {
+		if err := writeYAMLKey(&fm, "allowed-tools", allowedTools); err != nil {
 			return nil, nil, err
 		}
 	}
@@ -114,7 +115,7 @@ func (c *cursorCompiler) translateSkill(s *ir.Skill) ([]artifact.Artifact, []dia
 		}
 	}
 	extraKeys, extraDiags := compile.ExtraKeys(s.Extra, compile.PresentFields(map[string]bool{"name": true, "description": true, "triggers": s.Triggers != nil, "argument-hint": s.ArgumentHint != "", "model": s.Model != "", "allowed-tools": s.AllowedTools != nil, "permissions": permissions != nil, "subagent": s.Subagent != "", "agent": s.Agent != ""}), mapping.TargetCursor, s.Name(), diag.SourceRef(s.Source))
-	extraDiags = append(compile.SupportFileDiagnostics(s, mapping.TargetCursor), extraDiags...)
+	extraDiags = append(append(toolDiags, compile.SupportFileDiagnostics(s, mapping.TargetCursor)...), extraDiags...)
 	for _, key := range extraKeys {
 		if err := writeYAMLKey(&fm, key, s.Extra[key]); err != nil {
 			return nil, nil, err

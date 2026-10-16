@@ -99,8 +99,9 @@ func translateSkill(skill *ir.Skill) ([]artifact.Artifact, []diag.Diagnostic, er
 	if skill.Model != "" {
 		fm.Set("model", skill.Model)
 	}
-	if skill.AllowedTools != nil {
-		fm.Set("allowed-tools", skill.AllowedTools)
+	allowedTools, toolDiags := compile.PreApprovalSkillTools(skill, mapping.TargetGemini)
+	if allowedTools != nil {
+		fm.Set("allowed-tools", allowedTools)
 	}
 	permissions := compile.SkillPermissionsValueWithExtra(skill.Permissions.Allow, skill.Permissions.Ask, skill.Permissions.Deny, skill.Permissions.Extra, skill.PermissionsSet)
 	if permissions != nil {
@@ -113,7 +114,7 @@ func translateSkill(skill *ir.Skill) ([]artifact.Artifact, []diag.Diagnostic, er
 		fm.Set("agent", skill.Agent)
 	}
 	extraKeys, extraDiags := compile.ExtraKeys(skill.Extra, compile.PresentFields(map[string]bool{"name": true, "description": true, "triggers": skill.Triggers != nil, "argument-hint": skill.ArgumentHint != "", "model": skill.Model != "", "allowed-tools": skill.AllowedTools != nil, "permissions": permissions != nil, "subagent": skill.Subagent != "", "agent": skill.Agent != ""}), mapping.TargetGemini, skill.Name(), diag.SourceRef(skill.Source))
-	extraDiags = append(compile.SupportFileDiagnostics(skill, mapping.TargetGemini), extraDiags...)
+	extraDiags = append(append(toolDiags, compile.SupportFileDiagnostics(skill, mapping.TargetGemini)...), extraDiags...)
 	for _, k := range extraKeys {
 		fm.Set(k, skill.Extra[k])
 	}
