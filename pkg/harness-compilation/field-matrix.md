@@ -36,6 +36,18 @@ loaded into the typed sidecar, preserving explicit empty strings; non-string
 modes are rejected rather than coerced. Native Gemini inline servers continue
 through typed token normalization and credential diagnostics.
 
+Claude, Factory, Cursor and Gemini MCP output also reserves every modeled MCP
+connection field (`command`, `args`, `env`, `url`, `transport`, `headers`,
+`oauthClientId`, `oauthClientSecret`, `oauthResource`) and any case variant of
+one, whether or not the typed field is set; `disabled` is reserved when typed,
+because an extension `disabled` value can only disable the server. Target sidecars cannot widen the
+canonical resource: a Claude or Cursor subagent tool sidecar may only restate
+or narrow the canonical tool list (`subagent.security-restriction-unsupported`
+otherwise), a Claude or Cursor hook-type sidecar must equal the canonical hook
+type (`hook.claude.unsupported-type` / `hook.cursor.unsupported-type`
+otherwise), and a Codex MCP sidecar compiles to Codex only when it matches the
+canonical server (`mcp.codex.security-unsupported` otherwise).
+
 ## Model and reasoning policy
 
 Subagent model selection uses the shipped `modelpolicy/catalogs/<harness>.yaml` files. It distinguishes native identifiers, exact provider models, floating family aliases, parent inheritance, and harness-default selection. Unresolved cross-harness models warn and omit the field, never the resource. No automatic cross-provider or nearest-effort substitution is performed. Model/effort/provenance extension keys are reserved even when the resolved field is absent, including case variants.

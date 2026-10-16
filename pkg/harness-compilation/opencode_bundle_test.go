@@ -1,6 +1,7 @@
 package harnesscompile
 
 import (
+	"os"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -120,5 +121,65 @@ func TestOpenCodeBundleRejectsExcessHookDeclarations(t *testing.T) {
 	declarations, adapters = openCodeHookGeneration(t, boundary)
 	if boundary.HasErrors() || declarations != int(opencodehook.MaxDeclarationsPerToolEvent) || adapters != 1 {
 		t.Fatalf("boundary control: declarations=%d adapters=%d diagnostics=%#v", declarations, adapters, boundary.Diagnostics)
+	}
+}
+
+// spec: harness-opencode/opencode-selection-reaches-consumer-workflows
+// spec: opencode-native-configuration/creation-and-conversion-retain-private-modes
+func TestOpenCodeLibraryConversionBothDirections(t *testing.T) {
+	source := fstest.MapFS{
+		".claude-plugin/plugin.json": &fstest.MapFile{Data: []byte(`{"name":"demo"}`)},
+		"skills/demo/SKILL.md":       &fstest.MapFile{Data: []byte("---\nname: demo\ndescription: Demo\n---\nDemo body\n")},
+		"commands/check.md":          &fstest.MapFile{Data: []byte("---\ndescription: Check changes\n---\nCheck $ARGUMENTS and $1.\n")},
+		"agents/reviewer.md":         &fstest.MapFile{Data: []byte("---\nname: reviewer\ndescription: Review changes\nmodel: sonnet\n---\nReview carefully.\n")},
+		"hooks/hooks.json":           &fstest.MapFile{Data: []byte(`{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"printf '{}'"}]}]}`)},
+		".mcp.json":                  &fstest.MapFile{Data: []byte(`{"mcpServers":{"docs":{"command":"docs-server"}}}`)},
+	}
+	result, err := Convert(source, HarnessClaude, HarnessOpenCode)
+	if err != nil || diag.HasErrors(result.Diagnostics) {
+		t.Fatalf("convert to opencode: %v %v", err, result)
+	}
+	byPath := map[string][]byte{}
+	for _, a := range result.Artifacts {
+		byPath[a.Path] = a.Bytes
+		if a.Path == "opencode.json" && a.Mode.Perm() != 0o600 {
+			t.Fatalf("MCP artifact mode = %v, want private", a.Mode.Perm())
+		}
+	}
+	for _, rel := range []string{"skills/demo/SKILL.md", "commands/check.md", "agents/reviewer.md", opencodehook.AdapterPath, "opencode.json"} {
+		if _, ok := byPath[rel]; !ok {
+			t.Fatalf("converted artifacts lack %s: %v", rel, byPath)
+		}
+	}
+	if !strings.Contains(string(byPath["commands/check.md"]), "$ARGUMENTS and $1") {
+		t.Fatal("command placeholders changed")
+	}
+
+	// The shared configuration needs external reconciliation, so Materialize
+	// publishes the per-resource files and leaves opencode.json to sync.
+	out := t.TempDir()
+	if _, err := Materialize(result, out); err == nil {
+		t.Fatal("Materialize published the externally reconciled opencode.json")
+	}
+	resources := &Result{Diagnostics: result.Diagnostics}
+	for _, a := range result.Artifacts {
+		if a.Path != "opencode.json" {
+			resources.Artifacts = append(resources.Artifacts, a)
+		}
+	}
+	if _, err := Materialize(resources, out); err != nil {
+		t.Fatalf("materialize resources: %v", err)
+	}
+
+	back, err := Convert(os.DirFS(out), HarnessOpenCode, HarnessClaude)
+	if err != nil || diag.HasErrors(back.Diagnostics) {
+		t.Fatalf("convert back to claude: %v %v", err, back)
+	}
+	found := false
+	for _, a := range back.Artifacts {
+		found = found || (a.Path == "commands/check.md" && strings.Contains(string(a.Bytes), "$ARGUMENTS and $1"))
+	}
+	if !found {
+		t.Fatal("reverse conversion lost the command")
 	}
 }

@@ -84,7 +84,7 @@ When operating a hosted Marketplace, `roots` declare ingestion paths relative to
 
 ## Conversion direction
 
-Every supported harness can be a conversion source and a conversion destination. See [How to convert a harness layout](../how-to/convert-a-harness-layout.md).
+Every supported harness can be a conversion source and a conversion destination.
 
 ## Related documentation
 
