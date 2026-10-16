@@ -24,7 +24,7 @@ No runtime behavior or persisted format changes. Acquisition-lock v1/v2, histori
 - `make validate` passed the selected config, resolver, and TUI packages, CI lint, and build; this is not a full root-suite claim.
 - `make validate-e2e` passed with all 120 command/flag requirements covered, all three required unsupported-config witnesses executed, and shellcheck passing.
 - `make tui-qa` passed typechecking, four driver checks, and all 24 real-terminal journeys.
-- Post-archive `make spec-check` passed 53 items, 773 scenario identities with 1323 annotations, and the archive audit.
+- Post-archive, post-rebase `make spec-check` at `406f847f` passed 53 items, 778 scenario identities with 1328 annotations, and the archive audit.
 
 ## Adversarial Review
 
