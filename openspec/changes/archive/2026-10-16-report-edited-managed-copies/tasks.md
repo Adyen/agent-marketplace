@@ -9,4 +9,4 @@
 
 ## 3. Archive
 
-- [ ] 3.1 Run `openspec archive report-edited-managed-copies --yes` and verify `openspec validate --all --strict` passes
+- [x] 3.1 Run `openspec archive report-edited-managed-copies --yes` and verify `openspec validate --all --strict` passes
