@@ -1,5 +1,12 @@
 # Adopting agent-marketplace
 
+> **Historical, non-normative lead — pending harvest.** This document retains
+> pre-launch guidance, including obsolete v2/v3 reader/writer and startup
+> migration claims. It is not current launch usage or a normative contract.
+> Use the current [repository adoption guide](../site/docs/how-to/adopt-agent-marketplace-in-a-repository.md),
+> [configuration reference](../site/docs/reference/configuration.md), and
+> [conversion-before-upgrade guide](../site/docs/how-to/migrate-configuration.md) instead.
+
 This guide covers setting up `agent-marketplace` in a repository and on a workstation, and the day-to-day configuration tasks that follow.
 
 V4 (`apiVersion: agent-marketplace/v4`) is the canonical writable schema, built on `sources` and `resources`. Every new config root is v4. The v2 schema (`apiVersion: agent-marketplace/v2`) and its v3 compatibility alias are deprecated but stay fully readable and writable. Every mutation of a v2/v3 layer emits a `config.legacy-deprecated` warning naming the `agent-marketplace migrate` command for that scope.
@@ -62,7 +69,7 @@ Codex uses split native roots:
 
 `CODEX_HOME` does not move `~/.agents/skills`.
 
-Keep generated `.agents/skills/` and `.codex/` out of source control. Codex rules, `AGENTS.md` generation, and legacy prompt output are out of scope. A registry can still use `source_harness: codex`, and `convert --from codex` and `--to codex` are supported. Conversion to Codex requires a destination without an existing `.codex/hooks.json` or `.codex/config.toml`; use a new or empty destination so shared configuration is never overwritten. Sync, check, ingestion, and conversion never install, require, or probe a Codex executable.
+Keep generated `.agents/skills/` and `.codex/` out of source control. Codex rules, `AGENTS.md` generation, and legacy prompt output are out of scope. A registry can still use `source_harness: codex`. Sync, check, and ingestion never install, require, or probe a Codex executable.
 
 Repository `hooks.json` and `config.toml` changes may require Codex project trust review. Agent Marketplace reports when that happens, but it never edits trust state or adds Codex output paths to `.gitignore`. It preserves handwritten entries in these shared files and records its ownership outside the repository under `$XDG_STATE_HOME/agent-marketplace`. If that ownership state is missing or corrupt, sync refuses collisions and skips pruning instead of guessing.
 
@@ -328,7 +335,6 @@ agent-marketplace sync --check
 agent-marketplace status
 agent-marketplace update
 agent-marketplace migrate --dry-run
-agent-marketplace convert --from claude --to factory --out ./factory-plugin ./claude-plugin
 agent-marketplace doctor
 agent-marketplace doctor --repair
 ```

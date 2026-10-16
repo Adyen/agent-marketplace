@@ -42,7 +42,13 @@ func TestCommandErrorsAreTerminalSafe(t *testing.T) {
 				t.Fatalf("%s: error identity lost: %v\n%q", command, err, output)
 			}
 			assertNoTerminalControls(t, command, output)
-			if want := "Error: " + escapedHostileError + "\n" + ordinaryError + "\n"; !strings.Contains(output, want) {
+			if want := "Error: validate config "; !strings.Contains(output, want) {
+				t.Fatalf("%s: command error does not name the authored file, want %q in:\n%q", command, want, output)
+			}
+			if want := `config.yaml": ` + escapedHostileError + "\nvalidate config "; !strings.Contains(output, want) {
+				t.Fatalf("%s: command error not escaped line by line, want %q in:\n%q", command, want, output)
+			}
+			if want := `config.local.yaml": ` + ordinaryError + "\n"; !strings.Contains(output, want) {
 				t.Fatalf("%s: command error not escaped line by line, want %q in:\n%q", command, want, output)
 			}
 		}
@@ -52,8 +58,10 @@ func TestCommandErrorsAreTerminalSafe(t *testing.T) {
 			t.Fatalf("doctor: %v\n%q", err, output)
 		}
 		assertNoTerminalControls(t, "doctor", output)
-		if want := "error: " + escapedHostileError + "\nerror: " + ordinaryError + "\n"; !strings.Contains(output, want) {
-			t.Fatalf("doctor: configuration errors not escaped, want %q in:\n%q", want, output)
+		for _, want := range []string{`config.yaml": ` + escapedHostileError + "\n", `config.local.yaml": ` + ordinaryError + "\n"} {
+			if !strings.Contains(output, want) || !strings.Contains(output, "error: validate config ") {
+				t.Fatalf("doctor: configuration errors not escaped, want %q in:\n%q", want, output)
+			}
 		}
 	})
 
@@ -97,10 +105,10 @@ func TestCommandErrorsAreTerminalSafe(t *testing.T) {
 		withWorkingDir(t, repo)
 
 		output, err := executeCommand("list")
-		if err == nil || err.Error() != ordinaryError {
+		if err == nil || !strings.HasPrefix(err.Error(), "validate config ") || !strings.HasSuffix(err.Error(), `config.yaml": `+ordinaryError) {
 			t.Fatalf("list: unexpected error %v\n%q", err, output)
 		}
-		if !strings.Contains(output, "Error: "+ordinaryError+"\n") {
+		if !strings.Contains(output, "Error: "+err.Error()+"\n") {
 			t.Fatalf("list: ordinary error text changed:\n%q", output)
 		}
 	})

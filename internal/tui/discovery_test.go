@@ -311,14 +311,6 @@ func TestSnapshotPolicyFailureClearsDiscoveryAndRejectsLateCompletions(t *testin
 		wantPane pane
 	}{
 		{
-			name: "migration required",
-			snapshot: snapshotLoadedMsg{
-				mergedCfg:        &config.Config{Marketplaces: []config.MarketplaceEntry{{URL: "https://new.example", InstanceID: "new"}}},
-				pendingMigration: migrationPrompt{configs: []migrationConfig{{label: "Project", path: "/repo/.agents/config.yaml"}}},
-			},
-			wantPane: paneMigrationModal,
-		},
-		{
 			name: "config error",
 			snapshot: snapshotLoadedMsg{
 				driftAssessment: driftFailed,
@@ -350,11 +342,7 @@ func TestSnapshotPolicyFailureClearsDiscoveryAndRejectsLateCompletions(t *testin
 			if len(m.discoveryRows) != 0 || len(m.browseDiscoveryRows) != 0 || len(m.discoveryOutcomes) != 0 || len(m.discoveryErrs) != 0 {
 				t.Fatalf("prior discovery state remained: rows=%#v browse=%#v outcomes=%#v errs=%v", m.discoveryRows, m.browseDiscoveryRows, m.discoveryOutcomes, m.discoveryErrs)
 			}
-			if test.name == "migration required" {
-				if len(m.rows) != 0 {
-					t.Fatalf("migration snapshot rows changed: %#v", m.rows)
-				}
-			} else if len(m.rows) != 1 || m.rows[0].Artifact.Name != "installed" {
+			if len(m.rows) != 1 || m.rows[0].Artifact.Name != "installed" {
 				t.Fatalf("authoritative rows changed: %#v", m.rows)
 			}
 			if m.pane != test.wantPane {
@@ -372,11 +360,7 @@ func TestSnapshotPolicyFailureClearsDiscoveryAndRejectsLateCompletions(t *testin
 			if len(m.discoveryRows) != 0 {
 				t.Fatalf("late discovery changed discovery state: %#v", m.discoveryRows)
 			}
-			if test.name == "migration required" {
-				if len(m.rows) != 0 {
-					t.Fatalf("late discovery changed migration rows: %#v", m.rows)
-				}
-			} else if len(m.rows) != 1 || m.rows[0].Artifact.Name != "installed" {
+			if len(m.rows) != 1 || m.rows[0].Artifact.Name != "installed" {
 				t.Fatalf("late discovery changed authoritative state: %#v", m.rows)
 			}
 		})

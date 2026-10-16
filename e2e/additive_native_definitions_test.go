@@ -21,7 +21,7 @@ func TestE2EAdditiveNativeDefinitions(t *testing.T) {
 	})
 
 	e.WriteGlobalConfig("")
-	e.WriteRepoConfig("harnesses: [windsurf]\nregistries:\n  - url: " + first + "\n    ref: main\n    source_harness: devin\n  - url: " + second + "\n    ref: main\n    source_harness: devin\n")
+	e.WriteRepoConfig("apiVersion: agent-marketplace/v4\nharnesses: [windsurf]\nsources:\n  first: {git: '" + first + "', ref: main, source_harness: devin}\n  second: {git: '" + second + "', ref: main, source_harness: devin}\n")
 
 	native := "/workspace/.devin/hooks.json"
 	supportRoot := e.mustResolvePath("/workspace/hook-support")

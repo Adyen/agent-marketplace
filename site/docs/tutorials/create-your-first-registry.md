@@ -18,7 +18,7 @@ You do not need Claude Code installed. The tutorial only checks that the files a
 cd $(mktemp -d)
 ```
 
-`mktemp -d` creates a new empty folder with a random name, and `cd` moves you into it. Your operating system deletes temporary folders from time to time, which is fine for a tutorial.
+`mktemp -d` creates an empty folder with a random name, and `cd` moves you into it. The operating system may delete temporary folders later, which is fine here.
 
 ## 2. Create the registry repository
 
@@ -56,7 +56,7 @@ When someone asks how to start, greet them warmly and point them to the README.
 EOF
 ```
 
-`cat > file << 'EOF'` writes every line up to the closing `EOF` into the file. You can also create `skills/hello-world/SKILL.md` in a code editor and paste the text between the two `EOF` lines.
+`cat > file << 'EOF'` writes every line up to the closing `EOF` into the file.
 
 The `name` may contain only lowercase letters, digits, and hyphens, and it must start with a letter. `agent-marketplace` rejects a skill whose name breaks that rule.
 
@@ -78,7 +78,7 @@ REGISTRY_PATH=$(pwd)
 echo "$REGISTRY_PATH"
 ```
 
-`pwd` prints the full path of the current folder, and the first line stores it in a variable named `REGISTRY_PATH`. The next step uses the variable. It exists only in this terminal window, so if you open a new window, go back to the `agent-skills` folder and run these commands again.
+`pwd` prints the full path of the folder, and the first line stores it in `REGISTRY_PATH`. The variable exists only in this terminal window. In a new window, go back to the `agent-skills` folder and run these commands again.
 
 ## 6. Create a test project that uses the registry
 
@@ -124,7 +124,7 @@ Installed 2  Removed 0  Malformed 0  Errors 0
 
 `Installed` counts files written: the skill, and a Claude Code manifest that lists installed skills. If your organization's configuration also installs resources on this computer, the numbers are higher and more folders appear.
 
-If you had no user configuration yet, this first sync also creates `~/.agents/config.yaml` with `harnesses: [factory, windsurf]`. The test project's own `harnesses:` list takes precedence, so this sync still writes only for Claude Code.
+If you had no user configuration yet, this first sync also creates `~/.agents/config.yaml` with `harnesses: [factory, windsurf]`; the test project's `harnesses:` list still limits this sync to Claude Code.
 
 If `Malformed` is `1`, the skill's front matter has a problem. Run `agent-marketplace sync --verbose` to see the reason, fix `SKILL.md` in the `agent-skills` folder, and run `agent-marketplace sync` again.
 
@@ -137,7 +137,7 @@ cat .claude/skills/hello-world/SKILL.md
 
 `hello-world` is a [symlink](../glossary.md#symlink), a pointer, into the `agent-marketplace` [cache](../glossary.md#cache) under `~/.cache/agent-marketplace/`. `cat` prints the skill text you wrote in step 3.
 
-You can also ask `agent-marketplace` what it found:
+Ask `agent-marketplace` what it found:
 
 ```bash
 agent-marketplace list
@@ -149,7 +149,7 @@ The `hello-world` row has the status `enabled`.
 
 You created a Git repository with one skill in the layout that `agent-marketplace` recognizes, `skills/<name>/SKILL.md`. The test project's configuration pointed a `directory` source at that folder and selected the skill, and `sync` wrote it into the folders Claude Code reads.
 
-A `directory` source is read straight from disk on every sync and has no [lockfile](../glossary.md#lockfile), which suits your own experiments. To share the registry with other people, push it to a Git host such as GitHub and have them use a `git` source with a `ref` instead, as in [Install your first skill](./install-your-first-skill.md).
+A `directory` source is read straight from disk on every sync and has no [lockfile](../glossary.md#lockfile). To share the registry, push it to a Git host and use a `git` source with a `ref` instead, as in [Install your first skill](./install-your-first-skill.md).
 
 ## Next steps
 

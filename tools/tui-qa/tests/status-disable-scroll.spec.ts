@@ -4,7 +4,7 @@ import path from "node:path";
 
 import { expect, test } from "@microsoft/tui-test";
 
-import { declineLegacyMigration, defineFixture, step, waitForExit } from "./helpers.js";
+import { defineFixture, step, waitForExit } from "./helpers.js";
 
 const journey = defineFixture("status-disable-scroll", ["tui"], 80, 24, { overflowStatus: true });
 test.use(journey.options);
@@ -13,7 +13,6 @@ test.afterAll(journey.cleanup);
 
 test("disabling an overflowing Status row keeps its section visible and selects the next resource", async ({ terminal }) => {
   const fixture = journey.current();
-  await declineLegacyMigration(terminal);
 
   await step("settled overflowing catalog", () => {}, async () => {
     await expect(terminal.getByText("beta-skill", { strict: false })).toBeVisible();
@@ -37,8 +36,8 @@ test("disabling an overflowing Status row keeps its section visible and selects 
     await expect(terminal.getByText(/Enabled\s+\(30\)/g)).toBeVisible();
   });
   const config = fs.readFileSync(path.join(fixture.repo, ".agents", "config.yaml"), "utf8");
-  assert.doesNotMatch(config.split("      exclude:")[0], /        - skill-00\n/);
-  assert.match(config, /      exclude:\n        - skill-00\n/);
+  assert.doesNotMatch(config.split("    exclude:")[0], /      - skill\/skill-00\n/);
+  assert.match(config, /    exclude:\n      - skill\/skill-00\n/);
   await step("offer sync before quitting with pending drift", () => terminal.write("q"), async () => {
     await expect(terminal.getByText("pending changes not synced", { strict: false })).toBeVisible();
   });

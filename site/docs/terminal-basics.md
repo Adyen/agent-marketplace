@@ -1,8 +1,8 @@
 # Terminal basics
 
-`agent-marketplace` runs in a terminal. If you rarely use one, this page covers what you need to follow the rest of the documentation. If you already work in a shell every day, skip ahead to [Install](./install.md).
+`agent-marketplace` runs in a terminal. If you rarely use one, this page covers what the rest of the docs need. If you use a shell every day, skip to [Install](./install.md).
 
-Words that may be new are explained in the [glossary](./glossary.md).
+New words are in the [glossary](./glossary.md).
 
 ## Open a terminal
 
@@ -18,13 +18,13 @@ A terminal is an app where you type commands instead of clicking buttons.
 
 The terminal shows a prompt, often ending in `$` or `%`, followed by a blinking cursor. Type a command and press `Enter` to run it. The command prints its output below, and the prompt comes back when it has finished.
 
-Try this one. It prints the version of `agent-marketplace` once it is installed:
+Try this. It prints the `agent-marketplace` version once the program is installed:
 
 ```bash
 agent-marketplace --version
 ```
 
-Commands in these docs appear in grey boxes like the one above. To run one:
+Commands appear in grey boxes. To run one:
 
 1. Copy the text from the box. Most boxes have a copy button in the top-right corner.
 2. Paste it at the prompt: `Cmd` + `V` on macOS, or `Ctrl` + `Shift` + `V` in most Linux terminals.
@@ -41,7 +41,7 @@ To stop a command that is still running, press `Ctrl` + `C`.
 
 ## Know which folder you are in
 
-A terminal always works inside one folder, called the current directory. Commands such as `agent-marketplace sync` act on the project in that folder, so move into your project before you run them.
+A terminal works in one folder, the current directory. Commands such as `agent-marketplace sync` act on the project in that folder, so move into your project first.
 
 | Command | What it does |
 |---|---|
@@ -66,7 +66,7 @@ Files and folders whose names start with a dot are hidden. `agent-marketplace` u
 
 Configuration files are plain text in a format called [YAML](./glossary.md#yaml). Open them in a code editor such as Cursor, VS Code, or Windsurf. Word processors and rich-text editors can replace straight quotes with curly ones, which breaks the file.
 
-To edit a file without leaving the terminal, use `nano`:
+To edit without leaving the terminal, use `nano`:
 
 ```bash
 nano .agents/config.yaml
@@ -128,7 +128,7 @@ The [TUI reference](./reference/tui.md) lists every key.
 - `command not found` means the program is not on your `PATH`. See [Make a command available everywhere](#make-a-command-available-everywhere).
 - `permission denied` usually means one of two things. The file is not marked as a program yet (run `chmod +x` on it), or you are writing to a system folder, which needs `sudo` in front of the command. `sudo` asks for your computer password. Nothing appears on screen while you type it, which is normal.
 - Some commands report a problem through their exit status without printing much. Run `echo $?` right after a command: `0` means it succeeded, anything else means it did not. For example, `agent-marketplace sync --check` exits with `1` when the files on disk are out of date.
-- Add `--debug` to any `agent-marketplace` command to print detailed logs while it runs. By default, logs are also written to `~/.agent-marketplace/logs/agent-marketplace.log`.
+- Add `--debug` to any `agent-marketplace` command to print detailed logs to the terminal while it runs; while the TUI is on screen they go only to the log file. By default, logs also go to `~/.agent-marketplace/logs/agent-marketplace.log`. The [logging reference](./reference/logging.md) covers log levels and rotation.
 
 ## Next
 

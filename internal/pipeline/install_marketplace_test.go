@@ -17,6 +17,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/cache"
 	"github.com/Adyen/agent-marketplace/internal/catalog"
 	"github.com/Adyen/agent-marketplace/internal/config"
+	"github.com/Adyen/agent-marketplace/internal/lockfile"
 	"github.com/Adyen/agent-marketplace/internal/marketplace"
 	"github.com/Adyen/agent-marketplace/internal/resolver"
 	hccartifact "github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact"
@@ -393,26 +394,34 @@ func TestCommitPreparedMarketplaceInstallRejectsPolicyChangeWithoutMutation(t *t
 		{name: "registry nil to empty", policyYAML: "allowed_registries: []\n", want: "allowed_registries"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			config.SetTestOrganizationConfigPath(t, filepath.Join(t.TempDir(), "missing-org.yaml"))
-			t.Setenv("HOME", t.TempDir())
+			isolateConsumerPipeline(t)
 			repoRoot := t.TempDir()
+			t.Chdir(repoRoot)
+			fake := newLayerMarketplaceServer(t)
+			registry := fake.addRegistry(t, "source")
+			fake.addSkill(t, registry, "review")
 			configPath := config.ProjectConfigPath(repoRoot)
-			if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
+			initial := "apiVersion: agent-marketplace/v4\nharnesses: [factory]\nsources:\n  public: {marketplace: " + fake.URL + "}\n"
+			writeFile(t, configPath, initial)
+			// Endpoint identity moves from the consumer document into its owning lock.
+			lockData, err := lockfile.Encode(lockfile.Document{APIVersion: lockfile.APIVersionV2, Scope: lockfile.ScopeRepo, Marketplaces: []lockfile.MarketplaceLock{{URL: fake.URL, InstanceID: fake.instanceID}}})
+			if err != nil {
 				t.Fatal(err)
 			}
-			before := []byte("apiVersion: agent-marketplace/v2\nharnesses: [factory]\n" + test.policyYAML + "marketplaces:\n  - url: http://127.0.0.1:43210\n    instance_id: marketplace-id\n")
-			if err := os.WriteFile(configPath, before, 0o644); err != nil {
-				t.Fatal(err)
+			lockPath := filepath.Join(repoRoot, ".agents", "lock.yaml")
+			writeFile(t, lockPath, string(lockData))
+			lockBefore, lockInfo := layerFreezeFile(t, lockPath)
+			prepared, err := PrepareMarketplaceInstall(context.Background(), InstallOptions{Args: []string{"public:source/skill/review"}, RepoRoot: repoRoot, Scope: ScopeRepo})
+			if err != nil {
+				t.Fatalf("prepare valid control: %v", err)
 			}
-			prepared := &PreparedMarketplaceInstall{
-				options:            InstallOptions{RepoRoot: repoRoot},
-				configPath:         configPath,
-				plan:               &marketplace.PreparedInstall{Entry: config.MarketplaceEntry{URL: "http://127.0.0.1:43210", InstanceID: "marketplace-id"}},
-				targetHarnesses:    []string{"factory"},
-				endpointConfigured: true,
+			if prepared.plan.Pin.Name != "review" || prepared.plan.ArchiveDigest == "" {
+				t.Fatalf("control was not prepared with verified evidence: %#v", prepared.plan)
 			}
+			before := []byte(initial + test.policyYAML)
+			writeFile(t, configPath, string(before))
 
-			_, err := CommitPreparedMarketplaceInstall(context.Background(), prepared)
+			_, err = CommitPreparedMarketplaceInstall(context.Background(), prepared)
 			if err == nil || !strings.Contains(err.Error(), test.want) || !strings.Contains(err.Error(), "preview again") {
 				t.Fatalf("error = %v, want actionable %s policy change", err, test.want)
 			}
@@ -422,6 +431,10 @@ func TestCommitPreparedMarketplaceInstallRejectsPolicyChangeWithoutMutation(t *t
 			}
 			if !bytes.Equal(after, before) {
 				t.Fatalf("config changed after policy refusal:\n%s", after)
+			}
+			layerAssertFileUnchanged(t, lockPath, lockBefore, lockInfo)
+			if _, err := os.Stat(filepath.Join(repoRoot, ".factory")); !os.IsNotExist(err) {
+				t.Fatalf("policy refusal created harness output: %v", err)
 			}
 		})
 	}
@@ -576,16 +589,16 @@ func TestMarketplaceInstallPreviewFormatsFindingsForHumans(t *testing.T) {
 
 func TestMarketplacePinRollbackRestoresExistingConfigAfterSyncFailure(t *testing.T) {
 	configPath := filepath.Join(t.TempDir(), ".agents", "config.yaml")
-	original := []byte("apiVersion: agent-marketplace/v2\n# preserve this byte\n")
+	original := []byte("apiVersion: agent-marketplace/v4\n# preserve this byte\n")
 	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(configPath, original, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	plan := testMarketplacePreparedInstall()
+	entry, pins := prepareRollbackMarketplace(t)
 	wantErr := errors.New("materialization failed")
-	_, err := ensureMarketplacePinsAndSync(configPath, plan.Entry, []config.MarketplaceResourcePin{plan.Pin}, func() ([]error, error) {
+	_, err := mutateRollbackMarketplace(configPath, entry, pins, func() ([]error, error) {
 		return nil, wantErr
 	})
 	if !errors.Is(err, wantErr) {
@@ -605,8 +618,8 @@ func TestMarketplacePinRollbackRestoresExistingConfigAfterSyncFailure(t *testing
 
 func TestMarketplacePinRollbackRemovesConfigCreatedByFailedSync(t *testing.T) {
 	configPath := filepath.Join(t.TempDir(), ".agents", "config.yaml")
-	plan := testMarketplacePreparedInstall()
-	_, err := ensureMarketplacePinsAndSync(configPath, plan.Entry, []config.MarketplaceResourcePin{plan.Pin}, func() ([]error, error) {
+	entry, pins := prepareRollbackMarketplace(t)
+	_, err := mutateRollbackMarketplace(configPath, entry, pins, func() ([]error, error) {
 		return nil, errors.New("materialization failed")
 	})
 	if err == nil {
@@ -619,17 +632,17 @@ func TestMarketplacePinRollbackRemovesConfigCreatedByFailedSync(t *testing.T) {
 
 func TestMarketplacePinRollbackRefusesConcurrentConfigChange(t *testing.T) {
 	configPath := filepath.Join(t.TempDir(), ".agents", "config.yaml")
-	original := []byte("apiVersion: agent-marketplace/v2\n")
+	original := []byte("apiVersion: agent-marketplace/v4\n")
 	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(configPath, original, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	concurrent := []byte("apiVersion: agent-marketplace/v2\n# another writer\n")
+	concurrent := []byte("apiVersion: agent-marketplace/v4\n# another writer\n")
 	wantErr := errors.New("materialization failed")
-	plan := testMarketplacePreparedInstall()
-	_, err := ensureMarketplacePinsAndSync(configPath, plan.Entry, []config.MarketplaceResourcePin{plan.Pin}, func() ([]error, error) {
+	entry, pins := prepareRollbackMarketplace(t)
+	_, err := mutateRollbackMarketplace(configPath, entry, pins, func() ([]error, error) {
 		if err := os.WriteFile(configPath, concurrent, 0o600); err != nil {
 			t.Fatalf("simulate concurrent writer: %v", err)
 		}
@@ -669,11 +682,11 @@ func TestMarketplaceCollisionUsesExactLockView(t *testing.T) {
 			ec, _ := exactLockViewGCFixture(t)
 			repoRoot := filepath.Dir(filepath.Dir(ec.Repo.Path))
 			entry := ec.Merged.Registries[0]
-			selection := "    skills: {include: [keeper]}\n"
+			selection := "  locked: [skill/keeper]\n"
 			if tc.defaultSelect {
-				selection = "    default: true\n"
+				selection = "  locked: {all: true}\n"
 			}
-			configBytes := []byte("apiVersion: agent-marketplace/v2\nharnesses: [factory]\nregistries:\n  - url: " + entry.URL + "\n    ref: " + entry.Ref + "\n" + selection)
+			configBytes := []byte("apiVersion: agent-marketplace/v4\nharnesses: [factory]\nsources:\n  locked: {git: " + entry.URL + ", ref: " + entry.Ref + "}\nresources:\n" + selection)
 			if err := os.WriteFile(ec.Repo.Path, configBytes, 0o644); err != nil {
 				t.Fatal(err)
 			}
@@ -752,6 +765,8 @@ func TestMarketplaceCollisionRejectsInvalidOrUnavailableExactLock(t *testing.T) 
 			t.Setenv("CODEX_HOME", filepath.Join(home, ".codex"))
 			ec, snapshot := exactLockViewGCFixture(t)
 			repoRoot := filepath.Dir(filepath.Dir(ec.Repo.Path))
+			entry := ec.Merged.Registries[0]
+			writeFile(t, ec.Repo.Path, "apiVersion: agent-marketplace/v4\nharnesses: [factory]\nsources:\n  locked: {git: "+entry.URL+", ref: "+entry.Ref+"}\nresources:\n  locked: [skill/keeper]\n")
 			tc.breakFixture(t, repoRoot, snapshot)
 			loaded := LoadEffective(context.Background(), ConfigLoadStrict, config.LoadEffectiveOptions{RepoRoot: repoRoot}, nil)
 			var clones atomic.Int32
@@ -837,7 +852,7 @@ func marketplaceInstallWarmRegistryFixture(tb testing.TB, fetchDelay time.Durati
 	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
 		tb.Fatal(err)
 	}
-	if err := os.WriteFile(configPath, []byte("apiVersion: agent-marketplace/v2\nharnesses: [factory]\nregistries:\n  - url: "+registryURL+"\n    ref: main\n"), 0o644); err != nil {
+	if err := os.WriteFile(configPath, []byte("apiVersion: agent-marketplace/v4\nharnesses: [factory]\nsources:\n  warm: {git: "+registryURL+", ref: main}\nresources:\n  warm: {all: true}\n"), 0o644); err != nil {
 		tb.Fatal(err)
 	}
 	var fetches atomic.Int32
@@ -854,7 +869,7 @@ func marketplaceInstallWarmRegistryFixture(tb testing.TB, fetchDelay time.Durati
 			catalog.WithDiscoverFunc(func(string, string) (catalog.LoadedCatalog, error) { return catalog.LoadedCatalog{}, nil }),
 		},
 	}
-	cfg := &config.Config{APIVersion: config.APIVersionV2, Harnesses: []string{"factory"}, Registries: []config.RegistryEntry{{URL: registryURL, Ref: "main"}}}
+	cfg := &config.Config{APIVersion: config.APIVersionV4, Harnesses: []string{"factory"}, Registries: []config.RegistryEntry{{URL: registryURL, Ref: "main", V4Kind: config.V4SourceGit, Default: true}}}
 	plan := &marketplace.PreparedInstall{
 		Entry:    config.MarketplaceEntry{URL: "https://market.example", InstanceID: "mp"},
 		Pin:      config.MarketplaceResourcePin{RegistryID: "src", Kind: "skill", Name: "review"},

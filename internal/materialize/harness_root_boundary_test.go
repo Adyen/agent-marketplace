@@ -94,17 +94,18 @@ func rootBoundaryFixture(t *testing.T, tc rootBoundaryCase, machine bool) (strin
 	return repo, root, []resolver.ResolvedArtifact{{Entry: catalog.Entry{Kind: resource.Kind(), Name: "root-probe", Resource: resource}, Source: source, Harnesses: []hcc.Target{tc.target}}}
 }
 
-func requireRootBoundaryRefusal(t *testing.T, report *Report, err error, target hcc.Target) {
+func requireRootBoundaryRefusal(t *testing.T, report *Report, err error, target hcc.Target) string {
 	t.Helper()
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, diagnostic := range report.Diags {
 		if diagnostic.Code == "materialize.destination.error" && diagnostic.Target == string(target) {
-			return
+			return diagnostic.Message
 		}
 	}
 	t.Fatalf("missing harness-boundary refusal: %+v", report.Diags)
+	return ""
 }
 
 // spec: materialization/contained-root-and-scope-aliases-remain-usable
@@ -371,32 +372,55 @@ func TestRunUnsafeRootShapesPreserveState(t *testing.T) {
 }
 
 // spec: materialization/unsafe-output-ancestor-refuses-before-target-writes
+// spec: materialization/unsafe-output-ancestor-refusal-names-the-offending-path
 func TestRunUnsafeOutputAncestorPreservesState(t *testing.T) {
 	tc := rootBoundaryCases[1]
-	for _, mode := range []config.MaterializationMode{config.MaterializationModeSymlink, config.MaterializationModeFile} {
-		t.Run(string(mode), func(t *testing.T) {
-			repo, root, resolved := rootBoundaryFixture(t, tc, false)
-			if err := os.Mkdir(root, 0o755); err != nil {
-				t.Fatal(err)
-			}
-			outside := t.TempDir()
-			ancestor := filepath.Join(root, "skills")
-			if err := os.Symlink(outside, ancestor); err != nil {
-				t.Fatal(err)
-			}
-			before, err := os.Lstat(ancestor)
-			if err != nil {
-				t.Fatal(err)
-			}
-			report, err := Run(context.Background(), repo, resolved, WithMaterializationModes(config.MaterializationModes{Project: mode, Machine: mode}))
-			requireRootBoundaryRefusal(t, report, err, tc.target)
-			if after, err := os.Lstat(ancestor); err != nil || !os.SameFile(before, after) {
-				t.Fatalf("unsafe ancestor replaced: %v", err)
-			}
-			if entries, err := os.ReadDir(outside); err != nil || len(entries) != 0 {
-				t.Fatalf("external output written: %v %v", entries, err)
-			}
-		})
+	for _, kind := range []string{"symlink", "regular-file"} {
+		for _, mode := range []config.MaterializationMode{config.MaterializationModeSymlink, config.MaterializationModeFile} {
+			t.Run(kind+"/"+string(mode), func(t *testing.T) {
+				repo, root, resolved := rootBoundaryFixture(t, tc, false)
+				if err := os.Mkdir(root, 0o755); err != nil {
+					t.Fatal(err)
+				}
+				outside := t.TempDir()
+				ancestor := filepath.Join(root, "skills")
+				wantReason := "is a symbolic link"
+				if kind == "symlink" {
+					if err := os.Symlink(outside, ancestor); err != nil {
+						t.Fatal(err)
+					}
+				} else {
+					if err := os.WriteFile(ancestor, []byte("preserve"), 0o600); err != nil {
+						t.Fatal(err)
+					}
+					wantReason = "is not a directory"
+				}
+				before, err := os.Lstat(ancestor)
+				if err != nil {
+					t.Fatal(err)
+				}
+				canonicalRoot, err := filepath.EvalSymlinks(root)
+				if err != nil {
+					t.Fatal(err)
+				}
+				canonicalAncestor := filepath.Join(canonicalRoot, "skills")
+				report, err := Run(context.Background(), repo, resolved, WithMaterializationModes(config.MaterializationModes{Project: mode, Machine: mode}))
+				message := requireRootBoundaryRefusal(t, report, err, tc.target)
+				if !strings.Contains(message, canonicalAncestor) || !strings.Contains(message, wantReason) {
+					t.Fatalf("refusal %q does not name %s and %q", message, canonicalAncestor, wantReason)
+				}
+				if after, err := os.Lstat(ancestor); err != nil || !os.SameFile(before, after) {
+					t.Fatalf("unsafe ancestor replaced: %v", err)
+				}
+				if kind == "symlink" {
+					if entries, err := os.ReadDir(outside); err != nil || len(entries) != 0 {
+						t.Fatalf("external output written: %v %v", entries, err)
+					}
+				} else if raw, err := os.ReadFile(ancestor); err != nil || string(raw) != "preserve" {
+					t.Fatalf("non-directory ancestor changed: %q %v", raw, err)
+				}
+			})
+		}
 	}
 }
 

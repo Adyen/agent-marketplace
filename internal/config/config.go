@@ -142,67 +142,11 @@ var AllKinds = []ir.ResourceKind{
 	ir.KindCollection,
 }
 
-// CollectionRef is a legacy type kept for backward compatibility with test
-// code. New code should use the Collections KindSelector field instead.
-// Deprecated: use Config.Collections (KindSelector) directly.
-type CollectionRef struct {
-	Name string `yaml:"name"`
-}
-
-// KindSelector holds per-kind include/exclude lists. It supports backward-
-// compatible YAML deserialization: a bare sequence like `skills: [a, b]` is
-// treated as `{include: [a, b], exclude: null}`, while the new map form
-// `skills: {include: [a], exclude: [b]}` is the canonical representation.
-// Marshal always emits the map form.
+// KindSelector holds the runtime per-kind selection policy.
 type KindSelector struct {
 	Include    []string `yaml:"include,omitempty"`
 	Exclude    []string `yaml:"exclude,omitempty"`
 	ExcludeAll bool     `yaml:"exclude_all,omitempty"`
-}
-
-// UnmarshalYAML accepts both the legacy list form and the new map form:
-//
-//	skills: [a, b]                  → {include: [a, b]}
-//	skills: {include: [a], exclude: [b]}  → as-is
-func (ks *KindSelector) UnmarshalYAML(value *yaml.Node) error {
-	// Try list form first: a sequence node maps directly to Include.
-	if value.Kind == yaml.SequenceNode {
-		var items []string
-		if err := value.Decode(&items); err != nil {
-			return err
-		}
-		ks.Include = items
-		return nil
-	}
-
-	// Map form: decode normally.
-	if value.Kind == yaml.MappingNode {
-		// Validate that only allowed keys are present
-		allowedKeys := map[string]bool{"include": true, "exclude": true, "exclude_all": true}
-		for i := 0; i < len(value.Content); i += 2 {
-			keyNode := value.Content[i]
-			if keyNode.Value != "" && !allowedKeys[keyNode.Value] {
-				return fmt.Errorf("unknown key %q in KindSelector; allowed keys are: include, exclude, exclude_all", keyNode.Value)
-			}
-		}
-
-		type raw KindSelector
-		var r raw
-		if err := value.Decode(&r); err != nil {
-			return err
-		}
-		ks.Include = r.Include
-		ks.Exclude = r.Exclude
-		ks.ExcludeAll = r.ExcludeAll
-		return nil
-	}
-
-	// Null/empty node: leave as zero value.
-	if value.Kind == 0 || (value.Kind == yaml.ScalarNode && value.Tag == "!!null") {
-		return nil
-	}
-
-	return fmt.Errorf("expected a sequence or mapping for KindSelector, got %s", value.Tag)
 }
 
 // IsZero reports whether all fields are empty/unset.
@@ -413,6 +357,11 @@ type LoggingConfig struct {
 	Compress   *bool   `yaml:"compress,omitempty"`
 }
 
+// UpdateCheckConfig controls the release upgrade notice.
+type UpdateCheckConfig struct {
+	Enabled *bool `yaml:"enabled,omitempty"`
+}
+
 type IncludePaths []string
 
 func (p *IncludePaths) UnmarshalYAML(value *yaml.Node) error {
@@ -442,16 +391,11 @@ func (p *IncludePaths) UnmarshalYAML(value *yaml.Node) error {
 type Config struct {
 	Include IncludePaths `yaml:"include,omitempty"`
 
-	// APIVersion is the schema version sentinel. The canonical legacy version
-	// is "agent-marketplace/v2"; "agent-marketplace/v3" is retained as a
-	// compatibility alias. V4 values are read-only adapters from the explicit
-	// source/resource loader. v1 configs have no apiVersion field and are
-	// rejected by the loader.
+	// APIVersion identifies the validated v4 input represented by this runtime config.
 	APIVersion string `yaml:"apiVersion,omitempty"`
 
 	// Harnesses lists the target harnesses to materialize into (e.g.
-	// "factory", "cursor", "claude"). Required at v2; the loader errors
-	// hard if absent.
+	// "factory", "cursor", "claude"). Target-dependent operations require them.
 	Harnesses             []string               `yaml:"harnesses,omitempty"`
 	Registries            []RegistryEntry        `yaml:"registries,omitempty"`
 	Marketplaces          []MarketplaceEntry     `yaml:"marketplaces,omitempty"`
@@ -536,13 +480,10 @@ func (c *Config) SelectorForKindOk(kind ir.ResourceKind) (KindSelector, bool) {
 type LocalConfig struct {
 	Include IncludePaths `yaml:"include,omitempty"`
 
-	// APIVersion is an optional schema-version sentinel. Local configs
-	// (config.local.yaml) are generated without it, but users may add
-	// "agent-marketplace/v2", "agent-marketplace/v3", or
-	// "agent-marketplace/v4" by hand (or copy it from a sibling config). It is
-	// accepted but not required; when present it must match one of the supported
-	// API versions. Without this field the strict
-	// (KnownFields) decoder rejects any hand-added apiVersion line.
+	// APIVersion is the runtime schema sentinel copied from the bound
+	// personal-local layer; it only ever carries APIVersionV4. The authored v4
+	// parser owns version validation of config.local.yaml and its includes, so
+	// this field never admits another consumer schema.
 	APIVersion   string             `yaml:"apiVersion,omitempty"`
 	Registries   []RegistryEntry    `yaml:"registries,omitempty"`
 	Marketplaces []MarketplaceEntry `yaml:"marketplaces,omitempty"`
@@ -638,6 +579,9 @@ type RegistryEntry struct {
 	// legacy adapter. It is never serialized and prevents a directory named
 	// ".git" from being reclassified as a Git source at runtime.
 	V4Kind V4SourceKind `yaml:"-"`
+	// AuthoredDirectory retains the declaration before v4 resolves its runtime
+	// URL, so a repo-relative source cannot be promoted to machine scope.
+	AuthoredDirectory string `yaml:"-"`
 	// V4All preserves v4 all:true as an additive selection policy for the
 	// runtime resolver; Default alone cannot distinguish it from legacy policy.
 	V4All       bool                  `yaml:"-"`
@@ -661,72 +605,6 @@ type RegistryEntry struct {
 	// registries it is the resolved absolute path. Set by catalog loading;
 	// not serialized in YAML.
 	CatalogKey string `yaml:"-"`
-}
-
-// UnmarshalYAML implements custom YAML deserialization for RegistryEntry.
-// It supports "path" as an alias for "url" when "url" is not specified,
-// allowing users to write more natural config for local-path registries:
-//
-//	registries:
-//	  - path: /local/skills      # alias for "url"
-//	  - url: git@host:repo.git    # traditional git URL
-//	    ref: main
-//	    path: skills              # subdirectory within repo
-//
-// Rules:
-//   - "url" always maps to the URL field (registry location).
-//   - "path" maps to URL when "url" is absent (alias for local paths).
-//   - "path" maps to Path when "url" is present (subdirectory).
-func (e *RegistryEntry) UnmarshalYAML(value *yaml.Node) error {
-	// Use a raw type that mirrors RegistryEntry but without the custom
-	// unmarshaler, so yaml.Unmarshal handles all standard fields.
-	type rawEntry struct {
-		URL           string       `yaml:"url"`
-		Ref           string       `yaml:"ref"`
-		PathAlias     string       `yaml:"path"`
-		Required      bool         `yaml:"required,omitempty"`
-		Default       bool         `yaml:"default,omitempty"`
-		ExcludeAll    bool         `yaml:"exclude_all,omitempty"`
-		Skills        KindSelector `yaml:"skills,omitempty"`
-		Tags          []string     `yaml:"tags,omitempty"`
-		Commands      KindSelector `yaml:"commands,omitempty"`
-		Subagents     KindSelector `yaml:"subagents,omitempty"`
-		Hooks         KindSelector `yaml:"hooks,omitempty"`
-		MCP           KindSelector `yaml:"mcp,omitempty"`
-		Collections   KindSelector `yaml:"collections,omitempty"`
-		SourceHarness string       `yaml:"source_harness,omitempty"`
-		Harnesses     []string     `yaml:"harnesses,omitempty"`
-	}
-
-	var raw rawEntry
-	if err := value.Decode(&raw); err != nil {
-		return err
-	}
-
-	// Determine URL: "url" takes precedence; "path" is an alias when "url" is absent.
-	e.URL = strings.TrimSpace(raw.URL)
-	if e.URL == "" {
-		e.URL = strings.TrimSpace(raw.PathAlias)
-	} else {
-		// "url" is present, so "path" means the subdirectory.
-		e.Path = strings.TrimSpace(raw.PathAlias)
-	}
-
-	e.Ref = raw.Ref
-	e.Required = raw.Required
-	e.Default = raw.Default
-	e.ExcludeAll = raw.ExcludeAll
-	e.Skills = raw.Skills
-	e.Tags = raw.Tags
-	e.Commands = raw.Commands
-	e.Subagents = raw.Subagents
-	e.Hooks = raw.Hooks
-	e.MCP = raw.MCP
-	e.Collections = raw.Collections
-	e.SourceHarness = raw.SourceHarness
-	e.Harnesses = raw.Harnesses
-
-	return nil
 }
 
 // SelectorForKind returns the KindSelector for the given resource kind.
@@ -809,13 +687,14 @@ func (e RegistryEntry) IsLocal() bool {
 	return u[0] == '/' || strings.HasPrefix(u, "~/")
 }
 
-// IsRepoRelativeLocal reports whether the registry URL is a local filesystem
-// path that is relative to a project root (e.g. "./plugins/foo" or ".").
-// Such URLs are valid in repo and local configs, where they resolve against the
-// current repo root, but they are meaningless in the user-personal (global)
-// config layer because they have no stable meaning outside the repo that
-// contains them.
+// IsRepoRelativeLocal reports a directory declaration that depends on its
+// repository scope and must not be promoted to the user-personal config.
+// V4 resolves runtime URLs, so the authored spelling retains this boundary.
+// Relative directories authored in machine-scoped roots retain their own base.
 func (e RegistryEntry) IsRepoRelativeLocal() bool {
+	if e.V4Kind == V4SourceDirectory && e.AuthoredDirectory != "" && !e.Source.IsMachineScope() {
+		return !filepath.IsAbs(e.AuthoredDirectory)
+	}
 	u := strings.TrimSpace(e.URL)
 	return u == "." || u == ".." || strings.HasPrefix(u, "./") || strings.HasPrefix(u, "../")
 }
@@ -837,7 +716,11 @@ func (e *GlobalRelativeRegistryError) Error() string {
 func ValidateGlobalRegistryWrite(entries ...RegistryEntry) error {
 	for _, entry := range entries {
 		if entry.IsRepoRelativeLocal() {
-			return &GlobalRelativeRegistryError{URL: entry.URL}
+			url := entry.URL
+			if entry.AuthoredDirectory != "" {
+				url = entry.AuthoredDirectory
+			}
+			return &GlobalRelativeRegistryError{URL: url}
 		}
 	}
 	return nil
@@ -991,16 +874,8 @@ func (e *ScopeBoundaryError) Error() string {
 	return fmt.Sprintf("scope boundary violation: cannot act on %s resource from %s scope", e.Source, e.Target)
 }
 
-const (
-	// APIVersionV2 is the canonical apiVersion sentinel.
-	APIVersionV2 = "agent-marketplace/v2"
-	// APIVersionV3 is an alias accepted for reading but not emitted by
-	// generators or documentation.
-	APIVersionV3 = "agent-marketplace/v3"
-	// APIVersionV4 is the explicit source/resource schema. Legacy Config values
-	// carrying v4 are read-only adapters produced by the v4 loader.
-	APIVersionV4 = "agent-marketplace/v4"
-)
+// APIVersionV4 is the only supported consumer source/resource schema.
+const APIVersionV4 = "agent-marketplace/v4"
 
 // Validate performs full structural validation of the config, including
 // requiring that harnesses is non-empty. This should be used for global
@@ -1020,16 +895,12 @@ func (c Config) ValidateWithoutHarnesses() error {
 func (c Config) validate(requireHarnesses, requireAPIVersion bool, layer string) error {
 	var errs []error
 
-	// v2 is canonical for legacy documents; v3 is retained as a compatibility
-	// alias and v4 is accepted by the read-only source/resource adapter.
-	// apiVersion is required on Config-schema files (global/repo/org) but
-	// optional on local configs, which are generated without it.
-	if v := strings.TrimSpace(c.APIVersion); v == "" {
+	if c.APIVersion == "" {
 		if requireAPIVersion {
-			errs = append(errs, fmt.Errorf("missing apiVersion: add %q", APIVersionV2))
+			errs = append(errs, v4err("v4.api-version-required", "apiVersion", 0, "root requires apiVersion: %s", APIVersionV4))
 		}
-	} else if v != APIVersionV2 && v != APIVersionV3 && v != APIVersionV4 {
-		errs = append(errs, fmt.Errorf("unsupported apiVersion %q: expected %q, %q, or %q", v, APIVersionV2, APIVersionV3, APIVersionV4))
+	} else if c.APIVersion != APIVersionV4 {
+		errs = append(errs, v4err("v4.api-version", "apiVersion", 0, "must be exactly %q", APIVersionV4))
 	}
 
 	// harnesses is required on user-personal configs and must not be empty.
@@ -1060,8 +931,8 @@ func (c Config) validate(requireHarnesses, requireAPIVersion bool, layer string)
 }
 
 // ValidateBasic validates only the structural fields of the config (e.g.
-// registry entries) without enforcing v2 schema gating (apiVersion,
-// harnesses). Used for org-level configs that may not declare apiVersion.
+// registry entries) without enforcing root gating (apiVersion, harnesses).
+// Authored root versions are validated by the v4 parser before binding.
 func (c Config) ValidateBasic() error {
 	var errs []error
 
@@ -1198,17 +1069,17 @@ func (c LocalConfig) AllExcludes() []string {
 }
 
 // ValidateBasic validates the structural fields of the LocalConfig without
-// enforcing v2 schema gating (apiVersion, harnesses). At minimum it ensures
-// every registry entry has a non-empty URL and no path-traversal in Path.
-// apiVersion is optional on local configs, but if present it must match a
-// supported schema version so typos and stale versions are caught.
+// enforcing root gating (harnesses). At minimum it ensures every registry
+// entry has a non-empty URL and no path-traversal in Path. The runtime
+// apiVersion sentinel may be empty, but when present it must be exactly
+// APIVersionV4.
 func (c LocalConfig) ValidateBasic() error {
 	var errs []error
 
 	errs = append(errs, validateRegistryHarnessTargets(c.Registries)...)
 
-	if v := strings.TrimSpace(c.APIVersion); v != "" && v != APIVersionV2 && v != APIVersionV3 && v != APIVersionV4 {
-		errs = append(errs, fmt.Errorf("unsupported apiVersion %q: expected %q, %q, or %q", v, APIVersionV2, APIVersionV3, APIVersionV4))
+	if c.APIVersion != "" && c.APIVersion != APIVersionV4 {
+		errs = append(errs, v4err("v4.api-version", "apiVersion", 0, "must be exactly %q", APIVersionV4))
 	}
 
 	errs = append(errs, validateRegistryEntries(c.Registries)...)

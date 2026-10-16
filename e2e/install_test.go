@@ -30,10 +30,8 @@ func TestInstallFromHomeDir(t *testing.T) {
 	env.WriteGlobalConfig(fmt.Sprintf(`
 harnesses:
   - factory
-registries:
-  - url: %s
-    ref: main
-    default: true
+sources: {team: {git: %q, ref: main}}
+resources: {team: {all: true}}
 `, regURL))
 
 	// Read the global config before install — it must contain harnesses.

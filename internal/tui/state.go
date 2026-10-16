@@ -12,6 +12,7 @@ import (
 	"charm.land/bubbles/v2/spinner"
 	"charm.land/bubbles/v2/textinput"
 	"charm.land/bubbles/v2/viewport"
+	tea "charm.land/bubbletea/v2"
 	"charm.land/huh/v2"
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/marketplace"
@@ -41,7 +42,6 @@ const (
 	paneConfirm
 	paneToggleModal
 	paneInitModal
-	paneMigrationModal
 	paneHarnessModal
 	paneEditConfigModal
 	paneMarketplaceConsent
@@ -276,6 +276,7 @@ type Model struct {
 	repoRoot            string
 	workspace           pipeline.Workspace
 	homeDir             string
+	upgradeNotice       tea.Cmd
 	rows                []row
 	authoritativeRows   []row
 	provisionalRows     []row
@@ -368,8 +369,6 @@ type Model struct {
 	marketplaceInstallPreview   string
 	harnessModal                harnessModalState
 	initModal                   initModalState
-	migrationPrompt             migrationPrompt
-	migrationDismissed          bool
 	operations                  operationState
 	pendingToggleOperation      operationID
 	pendingToggleReload         requestGeneration
@@ -436,8 +435,6 @@ type Model struct {
 	toggleForm       *huh.Form
 	toggleFormFor    string
 	toggleChoice     *string
-	migrationForm    *huh.Form
-	migrationValue   *bool
 	editConfigForm   *huh.Form
 	editConfigChoice *string
 	syncQuitForm     *huh.Form

@@ -54,6 +54,11 @@ func testRevisionAssessment(t *testing.T, revision store.ResourceRevision, decis
 
 func publishAssessedTestRevision(ctx context.Context, t *testing.T, meta store.MetadataStore, revision store.ResourceRevision, decision store.AssessmentDecision, manifest store.RevisionDigest, commit string) store.ResourceAssessment {
 	t.Helper()
+	return publishSourcedAssessedTestRevision(ctx, t, meta, revision, decision, manifest, commit, "", "")
+}
+
+func publishSourcedAssessedTestRevision(ctx context.Context, t *testing.T, meta store.MetadataStore, revision store.ResourceRevision, decision store.AssessmentDecision, manifest store.RevisionDigest, commit, sourceOrigin, sourcePath string) store.ResourceAssessment {
+	t.Helper()
 	source, err := meta.GetRegistry(ctx, revision.Coordinate.Registry)
 	if err != nil {
 		t.Fatal(err)
@@ -63,11 +68,11 @@ func publishAssessedTestRevision(ctx context.Context, t *testing.T, meta store.M
 	}
 	if err := meta.PutRegistryOccurrence(ctx, store.RegistryOccurrence{
 		RegistryID: source.ID, Ref: source.Ref, Commit: commit, RegistryRevisionManifestDigest: manifest,
-		Acquisition: source.Acquisition, OccurredAt: time.Now().UTC(),
+		Acquisition: source.Acquisition, SourceOrigin: sourceOrigin, OccurredAt: time.Now().UTC(),
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := meta.PutResourceOccurrence(ctx, store.ResourceOccurrence{Coordinate: revision.Coordinate, ContentDigest: revision.ContentDigest, Commit: commit, ManifestDigest: manifest}); err != nil {
+	if err := meta.PutResourceOccurrence(ctx, store.ResourceOccurrence{Coordinate: revision.Coordinate, ContentDigest: revision.ContentDigest, Commit: commit, ManifestDigest: manifest, SourcePath: sourcePath}); err != nil {
 		t.Fatal(err)
 	}
 	assessment := testRevisionAssessment(t, revision, decision)

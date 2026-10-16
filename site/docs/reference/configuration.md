@@ -10,9 +10,15 @@ Configuration holds your selection policy. Generated lockfiles record the exact 
 
 ## Schema versions
 
-`apiVersion: agent-marketplace/v4` is the current schema, and every page in this reference describes v4. New configuration files created by `install`, `remove`, `init`, and the TUI use v4.
+`apiVersion: agent-marketplace/v4` is the only supported consumer configuration schema. Every existing organization, user-personal, repository, and personal-local root must declare that exact string. New configuration files created by `install`, `remove`, `init`, and the TUI use v4. A missing file retains its normal first-run behavior; an existing empty or versionless file is not a missing layer.
 
-The CLI still reads `agent-marketplace/v2` files and the `agent-marketplace/v3` alias through a compatibility reader. Both are deprecated: each write to such a file prints a `config.legacy-deprecated` warning with the `migrate` command for that scope. A file with no `apiVersion` at all is not read as v4. See [How to migrate configuration](../how-to/migrate-configuration.md).
+A root without `apiVersion` fails with `v4.api-version-required`. Explicit v1, v2, v3, unknown, empty, null, non-string, or non-exact versions fail with `v4.api-version`. The diagnostic identifies the authored file and the `apiVersion` field, with line context when available. The root cannot inherit its version from another layer or an included fragment.
+
+The CLI has no `migrate` command, startup conversion prompt, TUI migration modal, or compatibility reader. [Convert writable roots with an older released migrator before upgrading](../how-to/migrate-configuration.md); have organization configuration converted externally by its administrator. Conversion can refuse includes, unrepresentable input, or missing verified Marketplace evidence. Changing only the version string does not convert legacy fields.
+
+A command checks every config file and include it needs before it downloads anything or writes config, locks, or harness files. If an earlier command was interrupted mid-write, a command that can recover may first finish that write, which changes the files it recorded; read-only commands return `dependency.recovery-required` and do not replay it. Apart from that recovery, a refused command leaves existing config, lock, and harness files and their metadata untouched, creates no missing config file or lock, and may still write logs.
+
+This consumer-format requirement does not change the internal v4 runtime adapter, lock v1 reads/v2 writes, historical source-revision verification, Marketplace operator `agent-marketplace.io/marketplace/v1`, API/artifact versions, or native harness schemas.
 
 ## File location and scope
 
@@ -79,7 +85,7 @@ The parser rejects:
 | Root file without `apiVersion` | `v4.api-version-required` |
 | `apiVersion` other than `agent-marketplace/v4` | `v4.api-version` |
 
-Included fragments may omit `apiVersion` and inherit v4 from the file that includes them. A fragment that declares a different version is rejected.
+Explicitly included fragments under a validated v4 root may omit `apiVersion` or declare exactly `agent-marketplace/v4`. An explicit unsupported or invalid fragment version fails the include tree with `v4.api-version`, naming the fragment and field. This exception does not apply to personal-local roots and does not relax layer field restrictions, source bindings, include precedence, or root-owned edits and locks.
 
 ## Configuration layers
 
@@ -96,7 +102,7 @@ apiVersion: agent-marketplace/v4
 include: profiles/company.yaml
 ```
 
-Use a list when including more than one fragment:
+A list includes more than one fragment:
 
 ```yaml
 include:
@@ -111,7 +117,7 @@ An included fragment has lower precedence than the file that includes it. In a l
 - A source name declared in more than one file must have identical values everywhere. Different values fail with `v4.source-conflict`.
 - Resource groups with the same name are combined. Their `include` and `exclude` lists are concatenated in merge order. `tags`, `all`, `registries`, `required`, and `harnesses` take the value from the last file that sets them.
 - `allowed_registries` and `allowed_marketplaces` take the first declaration in merge order. A fragment that sets an allowlist cannot be relaxed by a later fragment or by the including file.
-- `harnesses` takes the value from the last file that sets it. `backup`, `logging`, `telemetry`, and `materialization` merge field by field, with later files winning.
+- `harnesses` takes the value from the last file that sets it. `backup`, `logging`, `update_check`, `telemetry`, and `materialization` merge field by field, with later files winning.
 
 The loader rejects the whole layer when an include is missing, unreadable, malformed, not allowed in that layer, or part of a cycle. Fragments must use only the fields their layer allows. Organization fragments have extra ownership and permission requirements; see the [configuration layers reference](configuration-layers.md#include).
 
@@ -130,6 +136,7 @@ Unknown top-level fields are rejected.
 | `allowed_registries` | list of regular expressions | no | Restricts remote Git origins. |
 | `backup` | mapping | no | Pre-sync backups of machine-scope harness folders: `enabled` (default `true`), `max_days` (default `14`), `max_per_day` (default `10`). Both limits must be positive. Organization and user files only. |
 | `logging` | mapping | no | Log file settings: `enabled`, `level`, `file`, `max_size_mb`, `max_backups`, `max_age_days`, `compress`. See the [logging reference](logging.md). |
+| `update_check` | mapping | no | Release upgrade notice: `enabled` (default `true`). Organization and user files only; the user value wins. |
 | `telemetry` | mapping | no | Machine telemetry policy: `level`, `endpoint`, `community_reporting`, `retention_policy`, `ca_file`, `allow_insecure`, `headers`. See the [telemetry reference](telemetry.md). Organization and user files only. |
 | `materialization` | mapping | no | Whether generated resources are symlinks or regular files: `mode` and `targets`. See [Materialization](#materialization). |
 
@@ -196,7 +203,7 @@ Validation rules by kind:
 | `source_harness` that is not a supported harness id | `v4.harness` |
 | Empty `git`, `directory`, or `marketplace` value | `v4.source-value` |
 
-Use `directory` for a local folder; point it at the subfolder you want instead of using `path`.
+A `directory` source names the folder to read directly; a subfolder is selected through `directory`, not `path`.
 
 In the repository `.agents/config.yaml` and `.agents/config.local.yaml`, `directory: .` selects the repository root and `directory: ./resources/skills` selects `<repo>/resources/skills`. User and organization files, included fragments, and files outside that layout resolve relative paths from their own directory. Relative paths, including through symlinks, must stay inside that base directory. Absolute paths are used as written. Earlier v4 releases resolved repository-root declarations from `.agents/`; a source stored under `.agents/` needs an explicit `./.agents/` prefix.
 
@@ -361,7 +368,7 @@ materialization:
 | `symlink` | Default. Skills, commands, and subagents are [symlinks](../glossary.md#symlink) into the compiled cache under `~/.cache/agent-marketplace/`. Factory commands are always regular files. |
 | `file` | Writes regular files and folders for every target. The CLI tracks what it wrote in a materialization manifest. |
 
-Use `targets` when one harness needs a different mode:
+`targets` gives one harness a different mode:
 
 ```yaml
 materialization:

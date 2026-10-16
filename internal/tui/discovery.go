@@ -256,27 +256,43 @@ func (m *Model) clearMarketplaceDiscovery(rebuildAuthoritative bool) {
 	}
 }
 
+// discoveryEndpointMatcher never treats a missing pinned identity as a wildcard.
+// Only an exactly empty, resource-free declaration can match a live-acquired ID,
+// and even then the canonical configured transport URL must remain the same.
+func discoveryEndpointMatcher(entries []config.MarketplaceEntry) func(config.MarketplaceEntry) bool {
+	configured := make(map[string]struct{}, len(entries))
+	unacquired := make(map[string]struct{})
+	for _, endpoint := range entries {
+		url, err := marketplace.NormalizeMarketplaceURL(endpoint.URL)
+		if err != nil {
+			continue
+		}
+		if endpoint.InstanceID == "" && len(endpoint.Resources) == 0 {
+			unacquired[url] = struct{}{}
+		} else if strings.TrimSpace(endpoint.InstanceID) != "" {
+			configured[url+"\x00"+endpoint.InstanceID] = struct{}{}
+		}
+	}
+	return func(endpoint config.MarketplaceEntry) bool {
+		url, err := marketplace.NormalizeMarketplaceURL(endpoint.URL)
+		if err != nil || (endpoint.InstanceID != "" && strings.TrimSpace(endpoint.InstanceID) == "") {
+			return false
+		}
+		if _, ok := configured[url+"\x00"+endpoint.InstanceID]; ok {
+			return true
+		}
+		_, ok := unacquired[url]
+		return ok
+	}
+}
+
 func (m *Model) beginMarketplaceDiscovery(query string, debounce bool) tea.Cmd {
 	if m.mergedCfg == nil || len(m.mergedCfg.Marketplaces) == 0 {
 		rebuildAuthoritative := len(m.discoveryRows) > 0 || len(m.browseDiscoveryRows) > 0 || m.authoritativeRows != nil
 		m.clearMarketplaceDiscovery(rebuildAuthoritative)
 		return nil
 	}
-	configured := make(map[string]struct{}, len(m.mergedCfg.Marketplaces))
-	for _, endpoint := range m.mergedCfg.Marketplaces {
-		url, err := marketplace.NormalizeMarketplaceURL(endpoint.URL)
-		if err == nil {
-			configured[url+"\x00"+endpoint.InstanceID] = struct{}{}
-		}
-	}
-	isConfigured := func(endpoint config.MarketplaceEntry) bool {
-		url, err := marketplace.NormalizeMarketplaceURL(endpoint.URL)
-		if err != nil {
-			return false
-		}
-		_, ok := configured[url+"\x00"+endpoint.InstanceID]
-		return ok
-	}
+	isConfigured := discoveryEndpointMatcher(m.mergedCfg.Marketplaces)
 	filterConfigured := func(rows []row) []row {
 		kept := rows[:0]
 		for _, candidate := range rows {
@@ -407,6 +423,15 @@ func (m *Model) rebuildDiscoveryErrors() {
 }
 
 func (m *Model) applyDiscovery(query string, outcomes []marketplace.DiscoveryOutcome) {
+	// The request generation/sequence is checked by Update before applying a
+	// snapshot. Also match the current endpoint declarations: acquiring a new ID
+	// must not attach results from a replaced URL or an existing exact identity.
+	if m.mergedCfg != nil {
+		isConfigured := discoveryEndpointMatcher(m.mergedCfg.Marketplaces)
+		outcomes = slices.DeleteFunc(slices.Clone(outcomes), func(outcome marketplace.DiscoveryOutcome) bool {
+			return !isConfigured(outcome.Endpoint)
+		})
+	}
 	m.discoveryOutcomes = outcomes
 	m.rebuildDiscoveryErrors()
 	var rows []row

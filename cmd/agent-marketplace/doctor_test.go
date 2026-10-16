@@ -227,7 +227,7 @@ func TestDoctorDevinVersionAndRecommendationLines(t *testing.T) {
 		{
 			name:      "already selected is not recommended again",
 			probe:     supported,
-			harnesses: "apiVersion: agent-marketplace/v2\nharnesses:\n  - factory\n  - devin\nregistries: []\n",
+			harnesses: "apiVersion: agent-marketplace/v4\nharnesses:\n  - factory\n  - devin\nsources: {}\n",
 			wantLines: []string{"devin harness: selected (global)"},
 			wantNotContain: []string{
 				"doctor.devin.recommended",
@@ -797,10 +797,10 @@ func TestDoctorReportsManagedInstallationDiagnostics(t *testing.T) {
 	t.Setenv("HOME", homeDir)
 
 	orgPath := filepath.Join(t.TempDir(), "org.yaml")
-	writeFile(t, orgPath, `apiVersion: agent-marketplace/v3
+	writeFile(t, orgPath, `apiVersion: agent-marketplace/v4
 harnesses:
   - factory
-registries: []
+sources: {}
 `)
 	if err := os.Chmod(orgPath, 0o664); err != nil {
 		t.Fatalf("chmod: %v", err)
@@ -809,10 +809,10 @@ registries: []
 
 	repoRoot := t.TempDir()
 	writeClaudePluginSkill(t, repoRoot, "doctor-managed-skill")
-	writeFile(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `apiVersion: agent-marketplace/v3
+	writeFile(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `apiVersion: agent-marketplace/v4
 harnesses:
   - factory
-registries: []
+sources: {}
 `)
 	withWorkingDir(t, repoRoot)
 
@@ -834,4 +834,22 @@ registries: []
 		}
 	}
 
+}
+
+func writeClaudePluginSkill(t *testing.T, root, name string) {
+	t.Helper()
+	writeFile(t, filepath.Join(root, ".claude-plugin", "plugin.json"), `{"name":"test-plugin","version":"1.0.0"}`)
+	writeFile(t, filepath.Join(root, "skills", name, "SKILL.md"), `---
+name: `+name+`
+description: Demo skill
+metadata:
+  tags:
+    - demo
+---
+
+# Demo skill
+`)
+	if _, err := os.Stat(filepath.Join(root, ".claude-plugin", "plugin.json")); err != nil {
+		t.Fatalf("expected Claude plugin marker: %v", err)
+	}
 }
