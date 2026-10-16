@@ -109,7 +109,7 @@ User, repository, and personal-local files and their includes have no ownership 
 Some managed setups never deploy an organization lock. The CLI supports that permanently:
 
 - When `/etc/agent-marketplace/lock.yaml` is absent, the organization layer stays unlocked. Online runs, including `sync --check`, resolve the organization's Marketplace requests into a verified lock held in memory for that run and never write `/etc`.
-- When the lock is present, it is exact. The CLI installs only what it records, and it stops with an error, without touching the lock, when the lock no longer matches the organization file.
+- When the lock is present, it is exact. The CLI installs only what it records, and it stops with an error, without touching the lock, when the lock no longer matches the organization file. The exception is `lock --scope organization` itself: it reconciles a mismatched lock, re-resolving only the entries whose source or ref changed and keeping the others at their locked commits (or moving every entry under `--upgrade`), so the administrator never has to delete the lock to relock it.
 - `lock` and `lock --check` without `--scope` cover the user, repository, and personal-local locks, and `lock --check` also checks the organization lock. Only `lock --scope organization`, run by an administrator who can write `/etc/agent-marketplace`, creates or updates the organization lock.
 
 ## Related documentation
