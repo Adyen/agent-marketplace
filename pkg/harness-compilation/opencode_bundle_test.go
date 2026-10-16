@@ -1,7 +1,9 @@
 package harnesscompile
 
 import (
+	"maps"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -175,11 +177,18 @@ func TestOpenCodeLibraryConversionBothDirections(t *testing.T) {
 	if err != nil || diag.HasErrors(back.Diagnostics) {
 		t.Fatalf("convert back to claude: %v %v", err, back)
 	}
-	found := false
+	reversed := map[string]string{}
 	for _, a := range back.Artifacts {
-		found = found || (a.Path == "commands/check.md" && strings.Contains(string(a.Bytes), "$ARGUMENTS and $1"))
+		reversed[a.Path] = string(a.Bytes)
 	}
-	if !found {
-		t.Fatal("reverse conversion lost the command")
+	for rel, want := range map[string]string{
+		"skills/demo/SKILL.md": "Demo body",
+		"commands/check.md":    "$ARGUMENTS and $1",
+		"agents/reviewer.md":   "Review carefully.",
+		"hooks/hooks.json":     `"matcher": "Bash"`,
+	} {
+		if !strings.Contains(reversed[rel], want) {
+			t.Fatalf("reverse conversion lost %s (want %q): %v", rel, want, slices.Sorted(maps.Keys(reversed)))
+		}
 	}
 }
