@@ -16,7 +16,7 @@ func TestSyncVerboseMalformedDetailCannotControlTerminal(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", filepath.Join(homeDir, "state"))
 
 	repoRoot := filepath.Join(t.TempDir(), "repo")
-	writeFile(t, filepath.Join(repoRoot, "bundle", ".devin", "hooks.v1.json"), "{\"\\u001b[2JFORGED\\nLINE\":}")
+	writeFile(t, filepath.Join(repoRoot, "bundle", ".devin", "hooks.v1.json"), "{\"\\u001b[2JFORG\u00c9D\\nLINE\":}")
 	writeFile(t, filepath.Join(repoRoot, "bundle", ".devin", "skills", "ok", "SKILL.md"), "---\nname: ok\ndescription: Inert skill\n---\nInert body.\n")
 	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
 sources:
@@ -46,7 +46,7 @@ resources:
 	if entry == "" {
 		t.Fatalf("malformed detail entry missing:\n%s", output)
 	}
-	if !strings.Contains(entry, `\x1b[2JFORGED\nLINE`) {
+	if !strings.Contains(entry, `\x1B[2JFORGÉD\x0ALINE`) {
 		t.Fatalf("malformed detail did not keep the forged key on its own line as visible escapes: %q", entry)
 	}
 	for _, line := range strings.Split(output, "\n") {

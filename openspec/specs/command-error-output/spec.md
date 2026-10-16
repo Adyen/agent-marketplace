@@ -21,7 +21,7 @@ Agent Marketplace MUST print every error returned by a CLI command, and every er
 
 ### Requirement: Malformed-resource details cannot control the terminal
 
-Agent Marketplace MUST print the malformed-resource list of `sync --verbose` without raw terminal control data. Each listed resource name, source path and parse error MUST use the same escaping as `status` warnings: C0 and C1 control characters, bidirectional controls, Unicode line and paragraph separators and invalid UTF-8 MUST appear as visible escapes, and each malformed resource MUST stay on its own line. Printable text MUST be printed unchanged.
+Agent Marketplace MUST print the malformed-resource list of `sync --verbose` without raw terminal control data. Each listed resource name, source path and parse error MUST use the single-line policy that applies to command errors: C0 and C1 control characters, including line breaks inside an entry, bidirectional controls, Unicode line and paragraph separators and invalid UTF-8 MUST appear as visible escapes, and each malformed resource MUST stay on its own line. Printable Unicode MUST be printed unchanged.
 
 #### Scenario: Malformed-resource details cannot control the terminal
 
