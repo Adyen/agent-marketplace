@@ -52,14 +52,23 @@ func subagentFrontmatterTools(t *testing.T, data []byte) []any {
 
 // spec: harness-compilation/subagent-tool-sidecar-cannot-widen-the-canonical-tool-list
 func TestSubagentToolSidecarCannotWidenCanonicalTools(t *testing.T) {
-	resource := decodePayload(t, "subagent", `{"name":"reviewer","Description":"Review only","Body":"Inert body.","Tools":["Read"],"Ext":{"claude":{"tools":["Bash"]},"cursor":{"tools":["Bash"]}}}`)
-	for _, target := range []Target{TargetClaude, TargetCursor} {
-		t.Run(string(target), func(t *testing.T) {
-			result, err := Compile(resource, target)
-			if err != nil {
-				t.Fatal(err)
+	for _, policy := range []struct {
+		name, payload string
+	}{
+		{"read-only", `{"name":"reviewer","Description":"Review only","Body":"Inert body.","Tools":["Read"],"Ext":{"claude":{"tools":["Bash"]},"cursor":{"tools":["Bash"]}}}`},
+		{"empty", `{"name":"reviewer","Description":"No tools","Body":"Inert body.","Tools":[],"Ext":{"claude":{"tools":["Read"]},"cursor":{"tools":["Read"]}}}`},
+	} {
+		t.Run(policy.name, func(t *testing.T) {
+			resource := decodePayload(t, "subagent", policy.payload)
+			for _, target := range []Target{TargetClaude, TargetCursor} {
+				t.Run(string(target), func(t *testing.T) {
+					result, err := Compile(resource, target)
+					if err != nil {
+						t.Fatal(err)
+					}
+					requireSuppressed(t, result, diag.CodeSubagentSecurityRestrictionUnsupported)
+				})
 			}
-			requireSuppressed(t, result, diag.CodeSubagentSecurityRestrictionUnsupported)
 		})
 	}
 }
