@@ -4067,6 +4067,23 @@ func collisionRemoveHint(absolutePath, fileName string, meta skillLink) string {
 	)
 }
 
+// editedManagedCopyHint builds the warning message for a manifest-recorded
+// output whose digest no longer matches the bytes on disk: the user edited a
+// managed copy, so sync preserves it and explains how to restore the registry
+// version. absolutePath is the full on-disk path of the edited output.
+func editedManagedCopyHint(absolutePath, fileName string, meta skillLink) string {
+	resName := meta.resourceName
+	if resName == "" {
+		resName = strings.TrimSuffix(fileName, filepath.Ext(fileName))
+	}
+	return fmt.Sprintf(
+		"local edit: preserved locally edited copy %q of resource %q (managed by agent-marketplace; "+
+			"its contents changed since the last sync, so registry updates are not applied); "+
+			"to restore the registry version, delete or move it and run agent-marketplace sync",
+		absolutePath, resName,
+	)
+}
+
 func addSkillLink(groups map[outputKey]map[string]*skillLinkGroup, key outputKey, installDirRel string, link skillLink) {
 	if groups[key] == nil {
 		groups[key] = make(map[string]*skillLinkGroup)
@@ -4800,7 +4817,7 @@ func syncPortableArtifactFiles(outDir string, artifacts []artifact.Artifact, cac
 			managedLink := info.Mode()&os.ModeSymlink != 0 && isManagedSymlink(dst)
 			if !owned && !managedLink {
 				report.Skipped = append(report.Skipped, a.Path)
-				diags = append(diags, portableArtifactCollision(dst, a.Path, collisionMeta))
+				diags = append(diags, portableArtifactCollision(dst, a.Path, collisionMeta, false))
 				continue
 			}
 			if owned && !managedLink {
@@ -4817,7 +4834,7 @@ func syncPortableArtifactFiles(outDir string, artifacts []artifact.Artifact, cac
 					continue
 				case portableOwnershipCollision:
 					report.Skipped = append(report.Skipped, a.Path)
-					diags = append(diags, portableArtifactCollision(dst, a.Path, collisionMeta))
+					diags = append(diags, portableArtifactCollision(dst, a.Path, collisionMeta, entry.Digest != ""))
 					continue
 				case portableOwnershipReplace:
 				}
@@ -4840,10 +4857,14 @@ func syncPortableArtifactFiles(outDir string, artifacts []artifact.Artifact, cac
 	return report, diags, nil
 }
 
-func portableArtifactCollision(dst, path string, collisionMeta map[string]skillLink) diag.Diagnostic {
+func portableArtifactCollision(dst, path string, collisionMeta map[string]skillLink, edited bool) diag.Diagnostic {
 	d := diag.Diagnostic{Code: "materialize.collision.user-owned", Severity: diag.SeverityWarning}
 	if meta, ok := collisionMeta[path]; ok {
-		d.Resource, d.Message = meta.resourceName, collisionRemoveHint(dst, path, meta)
+		d.Resource = meta.resourceName
+		d.Message = collisionRemoveHint(dst, path, meta)
+		if edited {
+			d.Message = editedManagedCopyHint(dst, path, meta)
+		}
 	} else {
 		d.Message = fmt.Sprintf("collision: preserved modified materialized output %q", dst)
 	}
@@ -5032,7 +5053,7 @@ func syncPortableSkillTrees(skillsDir string, links []skillLink, dryRun bool, st
 			managedLink := info.Mode()&os.ModeSymlink != 0 && isManagedSymlink(dst)
 			if !owned && !managedLink {
 				report.Skipped = append(report.Skipped, link.name)
-				report.Diags = append(report.Diags, portableSkillCollision(dst, link))
+				report.Diags = append(report.Diags, portableSkillCollision(dst, link, false))
 				continue
 			}
 			if owned && !managedLink {
@@ -5049,7 +5070,7 @@ func syncPortableSkillTrees(skillsDir string, links []skillLink, dryRun bool, st
 					continue
 				case portableOwnershipCollision:
 					report.Skipped = append(report.Skipped, link.name)
-					report.Diags = append(report.Diags, portableSkillCollision(dst, link))
+					report.Diags = append(report.Diags, portableSkillCollision(dst, link, entry.Digest != ""))
 					continue
 				case portableOwnershipReplace:
 				}
@@ -5090,8 +5111,12 @@ func syncPortableSkillTrees(skillsDir string, links []skillLink, dryRun bool, st
 	return report, nil
 }
 
-func portableSkillCollision(dst string, link skillLink) diag.Diagnostic {
-	return diag.Diagnostic{Code: "materialize.collision.user-owned", Severity: diag.SeverityWarning, Resource: link.resourceName, Message: collisionRemoveHint(dst, link.name, link)}
+func portableSkillCollision(dst string, link skillLink, edited bool) diag.Diagnostic {
+	message := collisionRemoveHint(dst, link.name, link)
+	if edited {
+		message = editedManagedCopyHint(dst, link.name, link)
+	}
+	return diag.Diagnostic{Code: "materialize.collision.user-owned", Severity: diag.SeverityWarning, Resource: link.resourceName, Message: message}
 }
 
 func portablePathIsProtected(protectedPaths map[string]bool, rel string) bool {
@@ -5385,6 +5410,9 @@ func syncArtifactLinks(outDir string, artifacts []artifact.Artifact, cacheDir st
 				}
 				d.Resource = resName
 				d.Message = collisionRemoveHint(linkPath, path, meta)
+				if manifestOwned && entry.Digest != "" && !migrationAllowed {
+					d.Message = editedManagedCopyHint(linkPath, path, meta)
+				}
 			} else {
 				d.Message = fmt.Sprintf(
 					"collision: preserved user-owned %q (not managed by agent-marketplace); "+
@@ -6139,11 +6167,15 @@ func syncSkillLinks(skillsDir string, links []skillLink, dryRun bool, pruneStale
 			if resName == "" {
 				resName = strings.TrimSuffix(name, filepath.Ext(name))
 			}
+			message := collisionRemoveHint(linkPath, name, meta)
+			if manifestOwned && entry.Digest != "" && !migrationAllowed {
+				message = editedManagedCopyHint(linkPath, name, meta)
+			}
 			report.Diags = append(report.Diags, diag.Diagnostic{
 				Code:     "materialize.collision.user-owned",
 				Severity: diag.SeverityWarning,
 				Resource: resName,
-				Message:  collisionRemoveHint(linkPath, name, meta),
+				Message:  message,
 			})
 			continue
 		}
