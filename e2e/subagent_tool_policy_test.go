@@ -45,6 +45,7 @@ func TestNativeSubagentToolPolicyInstallSync(t *testing.T) {
 						dst, otherDst = otherDst, dst
 					}
 					env.AssertFileAbsent(otherDst)
+					assertCompatibilityShape(t, env.mustResolvePath(dst), mode, false)
 					before := env.ReadFile(dst)
 					assertDeliveredToolPolicy(t, before, native.key, native.tools)
 					env.MustRunAM("sync", "--locked")
@@ -52,6 +53,7 @@ func TestNativeSubagentToolPolicyInstallSync(t *testing.T) {
 					if after := env.ReadFile(dst); after != before {
 						t.Fatal("repeat synchronization rewrote the native tool policy")
 					}
+					assertCompatibilityShape(t, env.mustResolvePath(dst), mode, false)
 					env.AssertFileAbsent(otherDst)
 				})
 			}
