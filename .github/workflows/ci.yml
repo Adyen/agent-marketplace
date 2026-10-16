@@ -8,6 +8,7 @@ on:
       - '*'
   pull_request:
     types: [opened, synchronize, reopened, labeled]
+  merge_group:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -52,12 +53,12 @@ jobs:
       - name: Detect relevant changes
         id: changes
         env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
           EVENT_NAME: ${{ github.event_name }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha }}
         run: |
           set -euo pipefail
-          if [[ "$EVENT_NAME" == pull_request ]]; then
+          if [[ "$EVENT_NAME" == pull_request || "$EVENT_NAME" == merge_group ]]; then
             git diff --no-renames --name-only -z "$BASE_SHA" "$HEAD_SHA" | go run ./tools/ci-plan
           else
             go run ./tools/ci-plan --all
