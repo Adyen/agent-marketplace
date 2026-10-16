@@ -1414,7 +1414,6 @@ func TestProvisionalLocalAllTrueRowsRenderOnNormalConfigPath(t *testing.T) {
 	}
 }
 
-// spec: session-startup/excluded-only-configuration-publishes-no-provisional-rows
 func TestExcludedOnlyProvisionalStagePublishesNoRows(t *testing.T) {
 	repoRoot := t.TempDir()
 	homeDir := t.TempDir()

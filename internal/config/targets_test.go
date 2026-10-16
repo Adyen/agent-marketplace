@@ -25,10 +25,13 @@ func TestValidateRejectsUnknownHarnessTargetsAtEveryConfigSurface(t *testing.T) 
 	if err == nil {
 		t.Fatal("expected unknown harness values to fail validation")
 	}
-	for _, want := range []string{"harnesses[1]", "registries[0].harnesses[1]", "registries[0].source_harness", "devni", "curser", "claud"} {
+	for _, want := range []string{"registries[0].harnesses[1]", "registries[0].source_harness", "curser", "claud"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("validation error = %q, want it to mention %q", err, want)
 		}
+	}
+	if strings.Contains(err.Error(), "devni") {
+		t.Errorf("readable validation must not reject authored top-level identifiers, got %q", err)
 	}
 }
 
@@ -48,15 +51,26 @@ func TestValidateAcceptsCodexAtEveryConfigSurface(t *testing.T) {
 	}
 }
 
-func TestLoadConfigRejectsUnknownHarnessTarget(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "config.yaml")
+// spec: config-layering/existing-unsupported-identifier-is-retained-without-materialization-authority
+func TestLoadConfigRetainsUnknownHarnessTarget(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	path, err := GlobalConfigPath()
+	if err != nil {
+		t.Fatalf("GlobalConfigPath: %v", err)
+	}
 	data := []byte("apiVersion: agent-marketplace/v2\nharnesses: [factory, devni]\n")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
 	if err := os.WriteFile(path, data, 0o644); err != nil {
 		t.Fatalf("write config: %v", err)
 	}
-	if _, err := LoadConfigFromPath(path); err == nil || !strings.Contains(err.Error(), "devni") {
-		t.Fatalf("LoadConfigFromPath error = %v, want unknown target diagnostic", err)
+	cfg, err := LoadConfigFromPath(path)
+	if err != nil {
+		t.Fatalf("LoadConfigFromPath rejected an authored identifier: %v", err)
+	}
+	if !equalStrings(cfg.Harnesses, []string{"factory", "devni"}) {
+		t.Fatalf("harnesses = %v, want [factory devni]", cfg.Harnesses)
 	}
 }
 
@@ -78,7 +92,7 @@ func TestValidateWithoutHarnessesRejectsUnknownRegistryHarnessTargets(t *testing
 func TestValidateRejectsWhitespaceAroundKnownHarnessTargets(t *testing.T) {
 	cfg := Config{
 		APIVersion: APIVersionV2,
-		Harnesses:  []string{" cursor "},
+		Harnesses:  []string{"cursor"},
 		Registries: []RegistryEntry{{
 			URL:           "git@example.com:registry.git",
 			Ref:           "main",

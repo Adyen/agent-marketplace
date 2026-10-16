@@ -22,10 +22,12 @@ import (
 
 	"github.com/Adyen/agent-marketplace/internal/catalog"
 	"github.com/Adyen/agent-marketplace/internal/config"
+	"github.com/Adyen/agent-marketplace/internal/materialize"
 	"github.com/Adyen/agent-marketplace/internal/pipeline"
 	"github.com/Adyen/agent-marketplace/internal/resolver"
 	"github.com/Adyen/agent-marketplace/internal/session"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
+	mpapi "github.com/Adyen/agent-marketplace/pkg/marketplace/api"
 )
 
 const fixtureSkillBody = "---\nname: solo\ndescription: Solo skill\n---\n# Solo\n"
@@ -1318,6 +1320,232 @@ func TestRowIDsBoundToRegistryIdentityAndStable(t *testing.T) {
 	scoped.EnabledGlobal = true
 	if other := rowPresentation(scoped); other.ID == first.ID {
 		t.Fatalf("row ID %q ignores scope identity", first.ID)
+	}
+}
+
+func TestSnapshotStatusGroupPresentation(t *testing.T) {
+	api := &API{}
+	rows := []session.Row{
+		{Artifact: resolver.ResolvedArtifact{Entry: catalog.Entry{Kind: ir.KindSkill, Name: "required"}}},
+		{Artifact: resolver.ResolvedArtifact{Entry: catalog.Entry{Kind: ir.KindSkill, Name: "enabled"}}, EnabledProject: true},
+		{Artifact: resolver.ResolvedArtifact{Entry: catalog.Entry{Kind: ir.KindSkill, Name: "pending"}}, DriftItem: &materialize.DriftItem{Reason: materialize.DriftMissing}},
+		{Artifact: resolver.ResolvedArtifact{Entry: catalog.Entry{Kind: ir.KindSkill, Name: "orphaned"}}, DriftItem: &materialize.DriftItem{Reason: materialize.DriftOrphaned}},
+		{Artifact: resolver.ResolvedArtifact{Entry: catalog.Entry{Kind: ir.KindSkill, Name: "broken"}}, UnavailableReason: "catalog unavailable"},
+		{Artifact: resolver.ResolvedArtifact{Entry: catalog.Entry{Kind: ir.KindSkill, Name: "available"}}, IsAvailable: true},
+		{Artifact: resolver.ResolvedArtifact{Entry: catalog.Entry{Kind: ir.KindSkill, Name: "malformed"}}, IsMalformed: true},
+	}
+	rows[0].Artifact.Required = true
+
+	wantGroups := []struct {
+		id    string
+		title string
+	}{
+		{"required", "Required"},
+		{"enabled", "Enabled"},
+		{"pending", "Pending sync"},
+		{"stale", "Stale"},
+		{"broken", "Broken"},
+		{"available", "Available"},
+		{"malformed", "Malformed"},
+	}
+	type rowExpectation struct {
+		name  string
+		group string
+	}
+	wantRows := []rowExpectation{
+		{"required", "required"},
+		{"enabled", "enabled"},
+		{"pending", "pending"},
+		{"orphaned", "broken"},
+		{"broken", "broken"},
+		{"available", "available"},
+		{"malformed", "malformed"},
+	}
+	check := func(snapshot session.Snapshot, expectedRows []rowExpectation) {
+		t.Helper()
+		body, err := json.Marshal(api.snapshotPresentationLocked(snapshot, nil))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var got struct {
+			Groups []struct {
+				ID    string `json:"id"`
+				Title string `json:"title"`
+			} `json:"groups"`
+			Rows []struct {
+				Name  string `json:"name"`
+				Group string `json:"group"`
+			} `json:"rows"`
+		}
+		if err := json.Unmarshal(body, &got); err != nil {
+			t.Fatal(err)
+		}
+		if len(got.Groups) != len(wantGroups) {
+			t.Fatalf("groups = %v, want all %d status groups", got.Groups, len(wantGroups))
+		}
+		for i, want := range wantGroups {
+			if got.Groups[i].ID != want.id || got.Groups[i].Title != want.title {
+				t.Fatalf("groups[%d] = %+v, want id=%q title=%q", i, got.Groups[i], want.id, want.title)
+			}
+		}
+		if len(got.Rows) != len(expectedRows) {
+			t.Fatalf("rows = %v, want %d rows", got.Rows, len(expectedRows))
+		}
+		for i, want := range expectedRows {
+			if got.Rows[i].Name != want.name || got.Rows[i].Group != want.group {
+				t.Fatalf("rows[%d] = %+v, want name=%q group=%q", i, got.Rows[i], want.name, want.group)
+			}
+		}
+	}
+
+	check(session.Snapshot{Stage: session.SnapshotStageFinal, DriftAssessment: session.DriftReady, Rows: rows}, wantRows)
+	check(session.Snapshot{Stage: session.SnapshotStageFinal, DriftAssessment: session.DriftFailed}, nil)
+}
+
+// spec: session-navigation/ranked-search-within-sections
+// spec: session-rendering-safety/hostile-text-is-inert
+func TestSnapshotSearchMetadataPresentation(t *testing.T) {
+	type searchProjection struct {
+		ID          string   `json:"id"`
+		Name        string   `json:"name"`
+		DisplayName string   `json:"displayName"`
+		SearchName  string   `json:"searchName"`
+		SearchWords []string `json:"searchWords"`
+		Registry    string   `json:"registry"`
+		Description string   `json:"description"`
+		Status      string   `json:"status"`
+		Harnesses   []string `json:"harnesses"`
+	}
+	api := &API{}
+	project := func(row session.Row) searchProjection {
+		t.Helper()
+		body, err := json.Marshal(api.snapshotPresentationLocked(session.Snapshot{
+			Stage: session.SnapshotStageFinal, DriftAssessment: session.DriftReady, Rows: []session.Row{row},
+		}, nil))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var got struct {
+			Rows []searchProjection `json:"rows"`
+		}
+		if err := json.Unmarshal(body, &got); err != nil {
+			t.Fatal(err)
+		}
+		if len(got.Rows) != 1 {
+			t.Fatalf("snapshot rows = %d, want 1 positive projection", len(got.Rows))
+		}
+		return got.Rows[0]
+	}
+
+	rawName := "Danger\x1b[31m\u202e"
+	display := project(session.Row{Artifact: resolver.ResolvedArtifact{Entry: catalog.Entry{Kind: ir.KindSkill, Name: rawName}}})
+	if display.Name != rawName {
+		t.Fatalf("raw name = %q, want identity name %q", display.Name, rawName)
+	}
+	if display.DisplayName != "Danger\\x1B[31m\\u202E" {
+		t.Fatalf("display name = %q, want sanitized literal", display.DisplayName)
+	}
+	if display.SearchName != "danger\\x1b[31m\\u202e" {
+		t.Fatalf("search name = %q, want canonical sanitized lowercase name", display.SearchName)
+	}
+
+	iDotted := project(session.Row{Artifact: resolver.ResolvedArtifact{Entry: catalog.Entry{Kind: ir.KindSkill, Name: "İ"}}})
+	if iDotted.DisplayName != "İ" || iDotted.SearchName != "i" {
+		t.Fatalf("dotted I projection = display %q search %q, want display İ search i", iDotted.DisplayName, iDotted.SearchName)
+	}
+
+	metadataRow := func(metadata map[string]string) session.Row {
+		return session.Row{
+			Artifact:             resolver.ResolvedArtifact{Entry: catalog.Entry{Kind: ir.KindSkill, Name: "resource", Description: "description"}},
+			MarketplaceDiscovery: &session.MarketplaceDiscovery{Item: mpapi.ResourceListItem{Metadata: metadata}},
+		}
+	}
+	firstOrder := map[string]string{}
+	firstOrder["zeta"] = "last"
+	firstOrder["alpha"] = "first"
+	secondOrder := map[string]string{}
+	secondOrder["alpha"] = "first"
+	secondOrder["zeta"] = "last"
+	first := project(metadataRow(firstOrder))
+	second := project(metadataRow(secondOrder))
+	wantWords := []string{"alpha", "description", "first", "last", "local", "resource", "skill", "zeta"}
+	if len(first.SearchWords) == 0 {
+		t.Fatal("search words are empty without a positive metadata-index control")
+	}
+	if strings.Join(first.SearchWords, "\x00") != strings.Join(wantWords, "\x00") {
+		t.Fatalf("search words = %q, want %q", first.SearchWords, wantWords)
+	}
+	if strings.Join(first.SearchWords, "\x00") != strings.Join(second.SearchWords, "\x00") {
+		t.Fatalf("metadata insertion order changed search words: %q vs %q", first.SearchWords, second.SearchWords)
+	}
+
+	rawRegistry := "registry <script>\x1b[31m\u202e Å"
+	rawDescription := "description <img src=x>\nprintable Ω\x1b[31m\u202e"
+	rawStatus := "bad <b>frontmatter</b> \x1b[31m\u202e"
+	rawHarness := "custom <img>\x1b[31m\u202e"
+	hostile := project(session.Row{
+		Artifact:     resolver.ResolvedArtifact{Entry: catalog.Entry{Kind: ir.KindSkill, Name: rawName, Description: rawDescription}},
+		RegistryName: rawRegistry,
+		IsMalformed:  true,
+		MalformedMsg: rawStatus,
+		Harnesses:    []string{rawHarness},
+	})
+	if hostile.Registry != "registry <script>\\x1B[31m\\u202E Å" {
+		t.Fatalf("registry = %q, want sanitized literal with printable Unicode", hostile.Registry)
+	}
+	if hostile.Description != "description <img src=x>\nprintable Ω\\x1B[31m\\u202E" {
+		t.Fatalf("description = %q, want sanitized multiline literal with printable Unicode", hostile.Description)
+	}
+	if hostile.Status != "malformed: bad <b>frontmatter</b> \\x1B[31m\\u202E" {
+		t.Fatalf("status = %q, want sanitized malformed literal", hostile.Status)
+	}
+	if len(hostile.Harnesses) != 1 || hostile.Harnesses[0] != "custom <img>\\x1B[31m\\u202E" {
+		t.Fatalf("harnesses = %q, want sanitized literal", hostile.Harnesses)
+	}
+	if !strings.Contains(hostile.Registry, "Å") || !strings.Contains(hostile.Description, "printable Ω") || !strings.Contains(hostile.Description, "<img src=x>") {
+		t.Fatalf("printable Unicode or inert markup was lost: registry=%q description=%q", hostile.Registry, hostile.Description)
+	}
+
+	marketplaceRow := func(endpointURL, instanceID, registryID, revision, digest string) session.Row {
+		return session.Row{
+			Artifact: resolver.ResolvedArtifact{
+				Entry:                   catalog.Entry{Kind: ir.KindSkill, Name: "shared"},
+				IsMarketplace:           true,
+				MarketplaceURL:          endpointURL,
+				MarketplaceInstanceID:   instanceID,
+				MarketplaceRegistryID:   registryID,
+				MarketplaceResourceName: "shared",
+			},
+			IsAvailable: true,
+			RegistryURL: endpointURL,
+			MarketplaceDiscovery: &session.MarketplaceDiscovery{
+				Endpoint: config.MarketplaceEntry{URL: endpointURL, InstanceID: instanceID},
+				Item: mpapi.ResourceListItem{
+					RegistryID: registryID, Kind: "skill", Name: "shared", Revision: revision,
+					ContentDigest: digest, Availability: mpapi.AvailabilityAvailable,
+				},
+			},
+		}
+	}
+	baseID := project(marketplaceRow("https://market.example", "instance-one", "registry-one", "revision-one", "sha256:"+strings.Repeat("a", 64))).ID
+	canonicalID := project(marketplaceRow("HTTPS://MARKET.EXAMPLE/", "instance-one", "registry-one", "revision-one", "sha256:"+strings.Repeat("a", 64))).ID
+	if baseID == "" || canonicalID != baseID {
+		t.Fatalf("canonical discovery endpoint identity = %q, want stable id %q", canonicalID, baseID)
+	}
+	variants := []struct {
+		name string
+		row  session.Row
+	}{
+		{name: "endpoint", row: marketplaceRow("https://other.example", "instance-one", "registry-one", "revision-one", "sha256:"+strings.Repeat("a", 64))},
+		{name: "instance", row: marketplaceRow("https://market.example", "instance-two", "registry-one", "revision-one", "sha256:"+strings.Repeat("a", 64))},
+		{name: "registry", row: marketplaceRow("https://market.example", "instance-one", "registry-two", "revision-one", "sha256:"+strings.Repeat("a", 64))},
+		{name: "revision", row: marketplaceRow("https://market.example", "instance-one", "registry-one", "revision-two", "sha256:"+strings.Repeat("a", 64))},
+		{name: "content digest", row: marketplaceRow("https://market.example", "instance-one", "registry-one", "revision-one", "sha256:"+strings.Repeat("b", 64))},
+	}
+	for _, variant := range variants {
+		if got := project(variant.row).ID; got == baseID {
+			t.Errorf("discovery row id did not distinguish %s", variant.name)
+		}
 	}
 }
 

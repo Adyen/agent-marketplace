@@ -513,6 +513,23 @@ func (e *LayerEditor) Apply(binding SourceBinding, change SelectionChange) error
 	return e.applyV4(binding, op, locators, change.Tag)
 }
 
+func (e *LayerEditor) ApplyRootOwned(binding SourceBinding, change SelectionChange) error {
+	if err := e.checkBinding(binding); err != nil {
+		return err
+	}
+	if !binding.root {
+		return v4err("config.edit.include-owned", e.target.DeclaringPath, 0, "source %q is declared in an included fragment", binding.Name)
+	}
+	if !e.legacy {
+		for _, locator := range change.Locators {
+			if e.v4IncludeOwned(binding.Name, v4Locator(locator)) {
+				return v4err("config.edit.include-owned", e.target.DeclaringPath, 0, "resource %q is requested by an included fragment", v4Locator(locator))
+			}
+		}
+	}
+	return e.Apply(binding, change)
+}
+
 func (e *LayerEditor) validateLocators(binding SourceBinding, input []ResourceLocator) ([]ResourceLocator, error) {
 	seen := map[string]bool{}
 	out := make([]ResourceLocator, 0, len(input))

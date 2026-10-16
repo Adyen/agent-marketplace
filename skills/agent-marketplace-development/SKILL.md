@@ -6,7 +6,8 @@ description: >
   and the config/resolver/materialization invariants that every change
   must preserve. Use when adding features, fixing bugs, or reviewing
   changes to the agent-marketplace Go binary, running local TUI QA,
-  or maintaining harness compatibility validation.
+  working on or screenshotting the desktop GUI, or maintaining harness
+  compatibility validation.
 metadata:
   tags:
     - development
@@ -35,6 +36,10 @@ Before touching anything, read these in order:
 3. `CODING_STANDARDS.md` — design, security-boundary, testing, and logging
    requirements.
 4. The `agent-marketplace` skill next door — the user-facing contract.
+5. For the desktop GUI (`gui/`, `cmd/agent-marketplace-gui/`,
+   `internal/localapi/`): [gui.md](gui.md), before inspecting or changing
+   it. It names the one-command mocked preview and the cheapest loop for
+   each question.
 
 Then skim:
 

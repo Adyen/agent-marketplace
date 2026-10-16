@@ -31,6 +31,7 @@ type LayerIntent struct {
 	legacy   *Config
 	v4       *V4Config
 	errors   []error
+	warnings []error
 	rootRead bool
 }
 
@@ -42,6 +43,7 @@ type Settings struct {
 	Logging             *LoggingConfig
 	Telemetry           *telemetryconfig.TelemetryConfig
 	Materialization     *MaterializationConfig
+	GUI                 *GUIConfig
 }
 
 type SourceKind = V4SourceKind
@@ -52,6 +54,15 @@ type SourceDecl struct {
 	Ref           string
 	Path          string
 	SourceHarness string
+}
+
+type SourceDescription struct {
+	Kind          SourceKind
+	Location      string
+	Ref           string
+	Path          string
+	SourceHarness string
+	InstanceID    string
 }
 
 type MarketplaceSource struct {
@@ -105,6 +116,9 @@ func (l LayerIntent) Settings() Settings {
 			Telemetry:       l.v4.Telemetry,
 			Materialization: l.v4.Materialization,
 		}
+		if l.Source == Organization {
+			settings.GUI = l.v4.GUI
+		}
 		if l.v4.AllowedRegistries != nil {
 			values := cloneV4StringList(*l.v4.AllowedRegistries)
 			settings.AllowedRegistries = &values
@@ -124,6 +138,9 @@ func (l LayerIntent) Settings() Settings {
 		Logging:         l.legacy.Logging,
 		Telemetry:       l.legacy.Telemetry,
 		Materialization: l.legacy.Materialization,
+	}
+	if l.Source == Organization {
+		settings.GUI = l.legacy.GUI
 	}
 	if l.legacy.AllowedRegistries != nil {
 		values := cloneV4StringList(*l.legacy.AllowedRegistries)
@@ -146,46 +163,63 @@ func (s Settings) config() *Config {
 		Logging:             s.Logging,
 		Telemetry:           s.Telemetry,
 		Materialization:     s.Materialization,
+		GUI:                 s.GUI,
 	}
 }
 
-func (l LayerIntent) Sources() []SourceDecl {
+func (l LayerIntent) DescribeSources() []SourceDescription {
 	if l.v4 != nil {
 		names := make([]string, 0, len(l.v4.Sources))
 		for name := range l.v4.Sources {
 			names = append(names, name)
 		}
 		sort.Strings(names)
-		decls := make([]SourceDecl, 0, len(names))
+		descs := make([]SourceDescription, 0, len(names))
 		for _, name := range names {
 			src := l.v4.Sources[name]
-			decl := SourceDecl{Kind: src.Kind}
-			if src.Kind == V4SourceGit {
-				decl.URL = src.URL
-				decl.Ref = src.Ref
-				decl.Path = src.Path
-				decl.SourceHarness = src.SourceHarness
-			}
+			desc := SourceDescription{Kind: src.Kind, Location: src.URL, Ref: src.Ref, Path: src.Path, SourceHarness: src.SourceHarness}
 			if src.Kind == V4SourceMarketplace {
-				decl.URL = src.CanonicalURL
+				desc.Location = src.CanonicalURL
 			}
-			decls = append(decls, decl)
+			descs = append(descs, desc)
 		}
-		return decls
+		return descs
 	}
 	if l.legacy == nil {
 		return nil
 	}
-	decls := make([]SourceDecl, 0, len(l.legacy.Registries)+len(l.legacy.Marketplaces))
+	descs := make([]SourceDescription, 0, len(l.legacy.Registries)+len(l.legacy.Marketplaces))
 	for _, entry := range l.legacy.Registries {
 		if entry.IsLocal() {
-			decls = append(decls, SourceDecl{Kind: V4SourceDirectory})
+			descs = append(descs, SourceDescription{Kind: V4SourceDirectory, Location: entry.URL, Path: entry.Path, SourceHarness: entry.SourceHarness})
 		} else {
-			decls = append(decls, SourceDecl{Kind: V4SourceGit, URL: entry.URL, Ref: entry.Ref, Path: entry.Path, SourceHarness: entry.SourceHarness})
+			descs = append(descs, SourceDescription{Kind: V4SourceGit, Location: entry.URL, Ref: entry.Ref, Path: entry.Path, SourceHarness: entry.SourceHarness})
 		}
 	}
 	for _, entry := range l.legacy.Marketplaces {
-		decls = append(decls, SourceDecl{Kind: V4SourceMarketplace, URL: entry.URL})
+		descs = append(descs, SourceDescription{Kind: V4SourceMarketplace, Location: entry.URL, InstanceID: entry.InstanceID})
+	}
+	return descs
+}
+
+func (l LayerIntent) Sources() []SourceDecl {
+	descs := l.DescribeSources()
+	if descs == nil {
+		return nil
+	}
+	decls := make([]SourceDecl, 0, len(descs))
+	for _, desc := range descs {
+		decl := SourceDecl{Kind: desc.Kind}
+		switch desc.Kind {
+		case V4SourceGit:
+			decl.URL = desc.Location
+			decl.Ref = desc.Ref
+			decl.Path = desc.Path
+			decl.SourceHarness = desc.SourceHarness
+		case V4SourceMarketplace:
+			decl.URL = desc.Location
+		}
+		decls = append(decls, decl)
 	}
 	return decls
 }
@@ -395,6 +429,8 @@ func readLayerIntent(path, canonical string, data []byte, kind layerKind, overla
 		}
 		li.v4 = v4
 		li.Reads = append([]ConfigRead(nil), v4.reads...)
+		li.warnLowerLayerGUI(v4.GUI)
+		li.warnUnsupportedHarnesses(v4.Harnesses)
 		return li, nil
 	}
 	loader := newConfigIncludeLoader(kind)
@@ -405,6 +441,10 @@ func readLayerIntent(path, canonical string, data []byte, kind layerKind, overla
 	cfg, err := loadCollectedConfigTree(path, loader)
 	li.legacy = cfg
 	li.Reads = loader.reads
+	if cfg != nil {
+		li.warnLowerLayerGUI(cfg.GUI)
+		li.warnUnsupportedHarnesses(cfg.Harnesses)
+	}
 	return li, err
 }
 
@@ -416,6 +456,8 @@ func readRootLayerIntent(path string, data []byte, kind layerKind) (LayerIntent,
 			return li, err
 		}
 		li.v4 = v4
+		li.warnLowerLayerGUI(v4.GUI)
+		li.warnUnsupportedHarnesses(v4.Harnesses)
 		return li, nil
 	}
 	cfg, errs := loadV3ConfigWithAPIVersion(data, kind, false, kind != localLayer)
@@ -426,6 +468,8 @@ func readRootLayerIntent(path string, data []byte, kind layerKind) (LayerIntent,
 		return li, fmt.Errorf("validate logging config %q: %w", path, errors.Join(logErrs...))
 	}
 	li.legacy = cfg
+	li.warnLowerLayerGUI(cfg.GUI)
+	li.warnUnsupportedHarnesses(cfg.Harnesses)
 	return li, nil
 }
 
@@ -514,8 +558,11 @@ func readOrganizationIntent(path string) (LayerIntent, ManagedInstallationDiagno
 	if err != nil {
 		li.errors = []error{err}
 	}
-	if len(li.Reads) > 0 {
-		li.Reads[0].RequestedPath, _ = filepath.Abs(path)
+	for i := range li.Reads {
+		if li.Reads[i].Path == canonicalPath {
+			li.Reads[i].RequestedPath, _ = filepath.Abs(path)
+			break
+		}
 	}
 	probe := li.probeConfig()
 	if len(li.errors) > 0 {
@@ -607,6 +654,7 @@ func ReadIntent(ctx context.Context, opts LoadEffectiveOptions) Intent {
 
 	for _, source := range intentLayerOrder {
 		intent.Errors = append(intent.Errors, intent.Layers[source].errors...)
+		intent.Warnings = append(intent.Warnings, intent.Layers[source].warnings...)
 	}
 	return intent
 }

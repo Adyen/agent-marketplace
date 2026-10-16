@@ -55,7 +55,7 @@ paths:
       summary: Subscribe to the ordered session event stream
       description: |
         Opens a text/event-stream delivering ordered snapshot, progress,
-        and notification events. When an accepted snapshot already exists,
+        notification, and discovery events. When an accepted snapshot already exists,
         an atomic current-state snapshot envelope precedes any live event;
         an idle stream before the first read carries no synthetic stage.
         Slow subscribers are disconnected rather than allowed to block
@@ -77,14 +77,21 @@ paths:
           $ref: '#/components/responses/MethodNotAllowed'
         '503':
           $ref: '#/components/responses/Closed'
-  /api/actions:
+  /api/discovery:
     post:
-      operationId: runAction
-      summary: Run a guarded session action (sync or update)
+      operationId: discoverMarketplace
+      summary: Start cached-first Marketplace discovery for the current query
       description: |
-        Mutating actions hold the same guarded operation serializer as the
-        TUI. A request arriving while another guarded operation is active is
-        rejected as busy before any side effect.
+        Available only in user-scope mode after a validated accepted merged
+        configuration enables Marketplace discovery. The browser requestId is
+        a correlation identity, while the server's discovery generation owns
+        cancellation and stale-worker rejection. Cached pages are published
+        immediately; network discovery waits for the shared 250 millisecond
+        debounce only when the SDK reports a miss or stale revalidation. The
+        request stays open until discovery completes, so an aborted request
+        cancels its server context. Results arrive only on the session event
+        stream; a 204 response contains no operation or result state. Query
+        values are not logged or exported to telemetry.
       security:
         - launchToken: []
       requestBody:
@@ -92,16 +99,141 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/ActionRequest'
+              $ref: '#/components/schemas/DiscoveryRequest'
       responses:
-        '202':
-          description: Action accepted; progress and the outcome arrive as events
+        '204':
+          description: Discovery trigger completed; no response body
+        '400':
+          description: Unsupported session mode, malformed request, or discovery configuration not ready; code localapi.not_supported, localapi.invalid_request, or localapi.not_ready
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ActionAccepted'
+                $ref: '#/components/schemas/Error'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/OriginRejected'
+        '405':
+          $ref: '#/components/responses/MethodNotAllowed'
+        '503':
+          $ref: '#/components/responses/Closed'
+  /api/inspection:
+    post:
+      operationId: inspectMarketplaceSkill
+      summary: Read verified files from one exact uninstalled Marketplace skill
+      description: |
+        Available only in user-scope mode. rowId is resolved against the current visible session rows; the browser supplies no endpoint, coordinate, revision, or path. fileId is an opaque member identity bound to that row and the verified manifest. A syntactically valid fileId outside the verified manifest may cause only WellKnown, assessed-revision, and manifest metadata reads; it is rejected before any inspection content request. Successful inspection reads only the selected text member. Unsupported image or metadata members return their verified metadata without fetching their bodies. The request does not install, mutate session state, write configuration or locks, synchronize materialized files, or emit operation, snapshot, discovery, telemetry, or progress events.
+      security:
+        - launchToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/InspectionRequest'
+      responses:
+        '200':
+          description: Bounded sanitized text preview or static unsupported-member metadata
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InspectionPayload'
         '400':
-          description: Unknown action, malformed body, or session state not ready for mutation; code localapi.invalid_request or localapi.not_ready
+          description: Malformed request, stale or unknown row, unsupported row, or fileId outside the verified manifest; code localapi.invalid_request, localapi.not_ready, or localapi.not_supported
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/OriginRejected'
+        '405':
+          $ref: '#/components/responses/MethodNotAllowed'
+        '502':
+          description: Marketplace inspection provenance or selected content could not be verified; code localapi.inspection_unavailable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '503':
+          $ref: '#/components/responses/Closed'
+  /api/installed-skill-files:
+    post:
+      operationId: readInstalledMarketplaceSkillFiles
+      summary: Read primary and declared supporting files from an installed Marketplace skill
+      description: |
+        Available only in user-scope mode. rowId is resolved against the current visible session rows; the browser supplies no root, path, source coordinate, revision, or digest. fileId is an opaque identity bound to the row, current generation, member path, and captured source identity. The route reads only the verified canonical skill primary and its archive members or declared staged support files. Raster image members return metadata without file bytes; text, scripts, JavaScript, and SVG are returned only as inert text. Missing or changed content fails with a static unavailable error. The request does not access the Marketplace SDK, mutate session state, write configuration, acquisition locks, caches, or materialized files, or emit operation, snapshot, discovery, telemetry, or progress events.
+      security:
+        - launchToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/InstalledSkillFilesRequest'
+      responses:
+        '200':
+          description: Bounded sanitized text preview or static unsupported-member metadata
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InstalledSkillFilesPayload'
+        '400':
+          description: Malformed request, stale or unknown row, unsupported row, or fileId outside the current bundle; code localapi.invalid_request, localapi.not_ready, or localapi.not_supported
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/OriginRejected'
+        '405':
+          $ref: '#/components/responses/MethodNotAllowed'
+        '502':
+          description: Verified local resource files are missing or unavailable; code localapi.resource_files_unavailable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '503':
+          $ref: '#/components/responses/Closed'
+  /api/resource-plan:
+    post:
+      operationId: planUserMarketplaceResourceAction
+      summary: Prepare one eligible user-scope Resource action
+      description: |
+        Available only in user-scope mode after the accepted session is ready
+        and the user root is editable. The request supplies only an opaque rowId;
+        source coordinates and scope are derived from the current server row.
+        Eligible rows may come from Git or directory registries, or from a
+        Marketplace. Git and directory plans are static and do not fetch a
+        registry, write configuration or locks, materialize files, or publish
+        an operation or snapshot generation. Marketplace install preparation
+        may read metadata and populate the SDK cache, but does not write user
+        configuration, acquisition locks, or materialized files, and does not
+        publish an operation or snapshot generation. The server keeps one
+        in-memory plan bound to the row and current generation; another valid
+        plan replaces it. The preview is sanitized inert text, not executable
+        HTML, and the planId is an opaque lower-case 32-byte random token.
+      security:
+        - launchToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ResourcePlanRequest'
+      responses:
+        '200':
+          description: Current row-bound action plan and inert preview
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResourceActionPlan'
+        '400':
+          description: Malformed request, unsupported session mode/action, stale row, or unavailable prerequisites; code localapi.invalid_request, localapi.not_ready, or localapi.not_supported
           content:
             application/json:
               schema:
@@ -118,6 +250,281 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
+        '502':
+          description: The exact Marketplace install could not be prepared; code localapi.resource_action_unavailable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '503':
+          $ref: '#/components/responses/Closed'
+  /api/resource-actions:
+    post:
+      operationId: confirmUserMarketplaceResourceAction
+      summary: Confirm one prepared user-scope Resource action
+      description: |
+        Available only in user-scope mode. The server consumes a matching
+        rowId/planId/generation once, rechecks the current raw row and shared
+        eligibility, and begins the existing guarded mutation. Git and directory
+        registry actions update only selectors in the user root; source or
+        resource ownership supplied by an included fragment is refused. These
+        actions do not invoke Marketplace installation or materialization.
+        Marketplace install risk acknowledgement is required even when false;
+        an install plan that requires acknowledgement is not consumed when
+        acceptRisk is false. A 202 response is not a claim that files were
+        written: the existing session event stream and final authoritative
+        snapshot settle the operation. Organization configuration and its lock
+        are read-only; repository and personal-local layers are not accessed.
+      security:
+        - launchToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ResourceActionRequest'
+      responses:
+        '202':
+          description: Guarded action accepted; authoritative completion arrives as a session event
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ActionAccepted'
+        '400':
+          description: Malformed, stale, mismatched, unsupported, or risk-unacknowledged confirmation; code localapi.invalid_request, localapi.not_ready, or localapi.not_supported
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/OriginRejected'
+        '405':
+          $ref: '#/components/responses/MethodNotAllowed'
+        '409':
+          description: Another guarded operation is active; code localapi.busy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '503':
+          $ref: '#/components/responses/Closed'
+  /api/actions:
+    post:
+      operationId: runAction
+      summary: Run a guarded session action (sync, update, or migrate)
+      description: |
+        Mutating actions hold the same guarded operation serializer as the
+        TUI. A request arriving while another guarded operation is active is
+        rejected as busy before any side effect. migrate is available only
+        in user-scope mode and only while a legacy user-personal root is
+        offered for migration; the session recomputes the pending migration
+        itself and migrates exactly that root to v4 through the shared
+        transactional migration.
+      security:
+        - launchToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ActionRequest'
+      responses:
+        '202':
+          description: Action accepted; progress and the outcome arrive as events
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ActionAccepted'
+        '400':
+          description: Unknown action, malformed body, session state not ready for mutation, unsupported session mode, or no pending user migration; code localapi.invalid_request, localapi.not_ready, or localapi.not_supported
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/OriginRejected'
+        '405':
+          $ref: '#/components/responses/MethodNotAllowed'
+        '409':
+          description: Another guarded operation is active; code localapi.busy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '503':
+          $ref: '#/components/responses/Closed'
+  /api/configuration:
+    post:
+      operationId: readConfiguration
+      summary: Read the structured Harness settings projection
+      description: |
+        Returns the typed settings metadata the GUI Harness target form is
+        allowed to show: the declared raw user-personal and organization
+        target identifiers, the canonical supported target list, user-root
+        presence and editability, and the labels of values managed outside
+        the GUI, plus the declared user-personal and organization source
+        descriptions. Available only in user-scope mode; other session modes
+        are rejected. The request carries no body and never exposes
+        credentials, raw YAML, or configuration-root or fragment filesystem
+        paths; declared source locations are returned and directory source
+        locations may be filesystem paths.
+      security:
+        - launchToken: []
+      responses:
+        '200':
+          description: Settings metadata projection
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Configuration'
+        '400':
+          description: Session mode does not support configuration access or the request carried a body; code localapi.not_supported or localapi.invalid_request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/OriginRejected'
+        '405':
+          $ref: '#/components/responses/MethodNotAllowed'
+        '503':
+          $ref: '#/components/responses/Closed'
+  /api/configuration/actions:
+    post:
+      operationId: runConfigurationAction
+      summary: Run a guarded configuration action (save targets, initialize the absent root, or mutate a user source)
+      description: |
+        Configuration mutations hold the same guarded operation serializer
+        as every other session operation. save-targets writes the
+        user-personal Harness target set with the shared configuration
+        writer; unknown identifiers already present in the root may be
+        retained, newly introduced unsupported identifiers are rejected
+        before any write. initialize creates an absent user-personal root
+        through the same initializer as `agent-marketplace init` and records
+        the telemetry consent answer exactly as interactive init does; the
+        consent field is required when the projection reports
+        consentRequired and rejected otherwise. add-source ensures one Git,
+        directory, or Marketplace endpoint registration in the user-personal
+        root. Marketplace endpoints are normalized and checked against the
+        effective allowed_marketplaces policy before network access, then use
+        the existing install registration path without selecting a Resource.
+        remove-source removes one user-personal Git, directory, or Marketplace
+        endpoint registration by its opaque id. Marketplace removal is limited
+        to root-owned registration-only endpoints; legacy resource pins, v4
+        resource groups, and include-owned entries are refused rather than lost.
+        Git/directory and Marketplace removal use the shared staged
+        configuration-layer editor and change nothing else. Available only in
+        user-scope mode.
+      security:
+        - launchToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ConfigurationActionRequest'
+      responses:
+        '202':
+          description: Action accepted; the outcome arrives as events
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ActionAccepted'
+        '400':
+          description: Unknown action, malformed request, blocked or invalid Marketplace endpoint, empty selection, unknown/ambiguous/non-user/stale source id, newly introduced unsupported target, unsupported session mode, or uneditable root; code localapi.invalid_request, localapi.not_ready, or localapi.not_supported
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/OriginRejected'
+        '405':
+          $ref: '#/components/responses/MethodNotAllowed'
+        '409':
+          description: Another guarded operation is active; code localapi.busy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '503':
+          $ref: '#/components/responses/Closed'
+  /api/telemetry:
+    post:
+      operationId: recordTelemetryEvent
+      summary: Record one bounded GUI interaction event
+      description: |
+        Available only in user-scope mode. The closed request union includes
+        browse, sync-and-quit cancellation, and toggle cancellation events.
+        Browse and toggle row IDs are resolved against the current authoritative
+        snapshot; only the server-derived Resource kind is exported, never the
+        opaque row ID, Resource name, path, or client-provided attributes.
+      security:
+        - launchToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GUIEvent'
+      responses:
+        '204':
+          description: Event accepted; no response body
+        '400':
+          description: Malformed, stale, ambiguous, or unsupported event, or unsupported session mode; code localapi.invalid_request or localapi.not_supported
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/OriginRejected'
+        '405':
+          $ref: '#/components/responses/MethodNotAllowed'
+        '503':
+          $ref: '#/components/responses/Closed'
+  /api/release:
+    post:
+      operationId: readReleaseNotice
+      summary: Report the newer stable public release, if any
+      description: |
+        Available only in user-scope mode; the request carries no body and
+        no query. When Consumer organization configuration enables release
+        checking (the default), the session compares the running GUI
+        version with the latest stable public GitHub release at most once
+        per launch and returns the newer stable version. A disabled
+        policy, a policy read failure, any check failure, or a non-newer
+        result silently returns an empty latestVersion without an error;
+        the check never downloads or installs a release.
+      security:
+        - launchToken: []
+      responses:
+        '200':
+          description: Newer stable public release version, or empty
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReleaseNotice'
+        '400':
+          description: Request carried a body or query, or the session mode does not support release checks; code localapi.invalid_request or localapi.not_supported
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/OriginRejected'
+        '405':
+          $ref: '#/components/responses/MethodNotAllowed'
         '503':
           $ref: '#/components/responses/Closed'
 
@@ -166,7 +573,7 @@ components:
       properties:
         code:
           type: string
-          enum: [localapi.unauthorized, localapi.forbidden, localapi.invalid_request, localapi.not_ready, localapi.busy, localapi.closed]
+          enum: [localapi.unauthorized, localapi.forbidden, localapi.invalid_request, localapi.not_ready, localapi.not_supported, localapi.busy, localapi.closed, localapi.inspection_unavailable, localapi.resource_files_unavailable, localapi.resource_action_unavailable]
         message:
           type: string
           description: Static, non-reflective failure description.
@@ -188,14 +595,42 @@ components:
           format: uint64
         kind:
           $ref: '#/components/schemas/OperationKind'
+    StatusGroupID:
+      type: string
+      enum: [required, enabled, pending, stale, broken, available, malformed]
+    ResourceAction:
+      type: string
+      enum: [none, install, remove, exclude, restore]
+    ResourcePlanAction:
+      type: string
+      enum: [install, remove, exclude, restore]
+    StatusGroup:
+      type: object
+      required: [id, title]
+      properties:
+        id:
+          $ref: '#/components/schemas/StatusGroupID'
+        title: { type: string }
     SnapshotRow:
       type: object
-      required: [id, name, kind, description, registry, scope, required, pendingVerification, harnesses, status]
+      required: [id, name, displayName, searchName, searchWords, kind, description, registry, scope, required, pendingVerification, checked, harnessOverride, harnesses, status, group, discovery, inspectable, installedFiles, resourceAction]
       properties:
         id:
           type: string
-          description: Stable identity bound to the source registry identity and scope (kind/name plus a SHA256 digest of the registry-identity/scope tuple), not kind/name alone.
-        name: { type: string }
+          description: Stable opaque resource identity. Local rows include source registry identity and scope; Marketplace discovery rows include normalized endpoint URL, verified instance and registry identity, kind, name, exact revision, and content digest.
+        name:
+          type: string
+          description: Raw resource name retained for identity and deterministic sorting.
+        displayName:
+          type: string
+          description: Sanitized single-line resource name for display.
+        searchName:
+          type: string
+          description: Lowercased sanitized name used for local fuzzy matching.
+        searchWords:
+          type: array
+          items: { type: string }
+          description: Sorted, deduplicated lowercased name and metadata words used for local prefix matching.
         kind: { type: string }
         description: { type: string }
         registry: { type: string }
@@ -204,11 +639,31 @@ components:
           enum: [organization, user, project, local, available]
         required: { type: boolean }
         pendingVerification: { type: boolean }
+        checked:
+          type: boolean
+          description: Whether the resource is enabled by any configuration scope, derived from row enablement metadata.
+        harnessOverride:
+          type: boolean
+          description: Whether the row carries a registry-level harness narrowing that differs from its layer default.
         harnesses:
           type: array
           items: { type: string }
           description: Target harness IDs this row materializes into.
         status: { type: string }
+        group:
+          $ref: '#/components/schemas/StatusGroupID'
+        discovery:
+          type: boolean
+          description: Whether this row is a Marketplace discovery result rather than an accepted local row.
+        inspectable:
+          type: boolean
+          description: Whether this exact uninstalled Marketplace skill has a current verified revision eligible for read-only inspection.
+        installedFiles:
+          type: boolean
+          description: Whether this installed Marketplace skill has the read-only installed-files capability. The capability remains visible if its local cached content is unavailable.
+        resourceAction:
+          $ref: '#/components/schemas/ResourceAction'
+          description: Server-derived user-only Marketplace action; none in other session modes or for ineligible rows.
     Diagnostic:
       type: object
       required: [severity, category, code, message]
@@ -221,9 +676,193 @@ components:
           type: string
           description: Stable deduplication/identity key of the diagnostic.
         message: { type: string }
+    DiscoveryHealth:
+      type: object
+      required: [id, label, total, truncated, cacheState, message]
+      properties:
+        id:
+          type: string
+          description: SHA256 digest of the normalized Marketplace endpoint URL and verified instance identity.
+        label:
+          type: string
+          description: Sanitized endpoint alias or normalized URL.
+        total: { type: integer }
+        truncated: { type: boolean }
+        cacheState:
+          type: string
+          enum: [miss, fresh, stale]
+        message:
+          type: string
+          description: Sanitized static endpoint health message without credentials or query values.
+    DiscoveryRequest:
+      type: object
+      required: [query, requestId]
+      additionalProperties: false
+      properties:
+        query: { type: string }
+        requestId:
+          type: integer
+          format: uint64
+          minimum: 1
+          description: Browser issuance identity echoed for stale-response rejection; the server request generation remains authoritative.
+    InspectionRequest:
+      type: object
+      required: [rowId]
+      additionalProperties: false
+      properties:
+        rowId:
+          type: string
+          minLength: 1
+          description: Opaque identity of a currently visible row from the authoritative session snapshot.
+        fileId:
+          type: string
+          pattern: '^[0-9a-f]{64}$'
+          description: Optional opaque identity of one member in the verified inspection manifest; never a path or coordinate.
+    InstalledSkillFilesRequest:
+      type: object
+      required: [rowId]
+      additionalProperties: false
+      properties:
+        rowId:
+          type: string
+          minLength: 1
+          description: Opaque identity of a currently visible installed Marketplace skill row.
+        fileId:
+          type: string
+          pattern: '^[0-9a-f]{64}$'
+          description: Optional opaque identity of one member in the current installed bundle; never a path or coordinate.
+    ResourcePlanRequest:
+      type: object
+      required: [rowId]
+      additionalProperties: false
+      properties:
+        rowId:
+          type: string
+          minLength: 1
+          description: Opaque identity of one currently visible, eligible Marketplace Resource row.
+    ResourceActionRequest:
+      type: object
+      required: [rowId, planId, acceptRisk]
+      additionalProperties: false
+      properties:
+        rowId:
+          type: string
+          minLength: 1
+          description: Opaque identity of the Resource row used to prepare this action.
+        planId:
+          type: string
+          pattern: '^[0-9a-f]{64}$'
+          description: Opaque plan identity returned by the current user-scope resource-plan request.
+        acceptRisk:
+          type: boolean
+          description: Explicit acknowledgement of an install plan that requires risk acceptance; must be present even when false.
+    ResourceActionPlan:
+      type: object
+      required: [rowId, generation, planId, action, preview, requiresRiskAcceptance]
+      additionalProperties: false
+      properties:
+        rowId:
+          type: string
+          description: Opaque identity of the current Resource row.
+        generation:
+          type: integer
+          format: uint64
+          minimum: 1
+          description: Snapshot generation to which this plan is bound.
+        planId:
+          type: string
+          pattern: '^[0-9a-f]{64}$'
+          description: Opaque one-shot plan identity.
+        action:
+          $ref: '#/components/schemas/ResourcePlanAction'
+        preview:
+          type: string
+          description: Sanitized inert text preview bounded to 256 KiB plus the existing truncation marker.
+        requiresRiskAcceptance:
+          type: boolean
+          description: Whether explicit user acknowledgement is required before an install can be committed.
+    InspectionFile:
+      type: object
+      required: [id, path, mediaType, size, inspectionClass]
+      additionalProperties: false
+      properties:
+        id:
+          type: string
+          pattern: '^[0-9a-f]{64}$'
+        path:
+          type: string
+          description: Sanitized display path of a verified member within its inspected bundle.
+        mediaType: { type: string }
+        size:
+          type: integer
+          format: int64
+          minimum: 0
+        inspectionClass:
+          type: string
+          enum: [text, image, metadata]
+    InspectionPayload:
+      type: object
+      required: [rowId, generation, revision, manifestDigest, files, primaryFileId, selectedFileId, content, truncated, unsupportedMessage]
+      additionalProperties: false
+      properties:
+        rowId: { type: string }
+        generation:
+          type: integer
+          format: uint64
+          minimum: 1
+        revision:
+          type: string
+          pattern: '^sha256:[0-9a-f]{64}$'
+        manifestDigest:
+          type: string
+          pattern: '^sha256:[0-9a-f]{64}$'
+        files:
+          type: array
+          items:
+            $ref: '#/components/schemas/InspectionFile'
+        primaryFileId:
+          type: string
+          pattern: '^[0-9a-f]{64}$'
+        selectedFileId:
+          type: string
+          pattern: '^[0-9a-f]{64}$'
+        content:
+          type: string
+          description: Sanitized inert text preview, bounded to 256 KiB plus the existing truncation marker.
+        truncated: { type: boolean }
+        unsupportedMessage:
+          type: string
+          description: Empty for text; static safe metadata-only message for unsupported members.
+    InstalledSkillFilesPayload:
+      type: object
+      required: [rowId, generation, files, primaryFileId, selectedFileId, content, truncated, unsupportedMessage]
+      additionalProperties: false
+      properties:
+        rowId: { type: string }
+        generation:
+          type: integer
+          format: uint64
+          minimum: 1
+        files:
+          type: array
+          items:
+            $ref: '#/components/schemas/InspectionFile'
+        primaryFileId:
+          type: string
+          pattern: '^[0-9a-f]{64}$'
+        selectedFileId:
+          type: string
+          pattern: '^[0-9a-f]{64}$'
+        content:
+          type: string
+          description: Sanitized inert text preview, bounded to 256 KiB plus the existing truncation marker.
+        truncated: { type: boolean }
+        unsupportedMessage:
+          type: string
+          description: Empty for text; static safe metadata-only message for unsupported members.
     Snapshot:
       type: object
-      required: [stage, drift, rows, diagnostics, harnesses, operation]
+      required: [stage, drift, rows, groups, diagnostics, harnesses, pendingChanges, migrationOffered, discoveryEnabled, discoveryHealth, discoveryQuery, discoveryRequestId, discoverySequence, discoveryLoading, operation]
       properties:
         stage:
           $ref: '#/components/schemas/SnapshotStage'
@@ -233,6 +872,10 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/SnapshotRow'
+        groups:
+          type: array
+          items:
+            $ref: '#/components/schemas/StatusGroup'
         diagnostics:
           type: array
           items:
@@ -241,11 +884,43 @@ components:
           type: array
           items: { type: string }
           description: Effective target harness IDs for the session.
+        pendingChanges:
+          type: integer
+          description: Count of drifted items awaiting materialization, derived from the accepted snapshot's drift assessment.
+        migrationOffered:
+          type: boolean
+          description: Whether the accepted snapshot carries a pending legacy user-personal migration offer; scalar metadata only, never paths or prompt contents.
+        discoveryEnabled:
+          type: boolean
+          description: Whether a validated accepted user-scope configuration enables Marketplace discovery.
+        discoveryHealth:
+          type: array
+          items:
+            $ref: '#/components/schemas/DiscoveryHealth'
+        discoveryQuery:
+          type: string
+          description: Current server discovery query retained for event-stream reconnection.
+        discoveryRequestId:
+          type: integer
+          format: uint64
+          description: Current browser issuance identity, zero for the server-owned initial empty browse.
+        discoverySequence:
+          type: integer
+          format: uint64
+          description: Monotonic API-lifetime discovery state sequence, independent of core snapshots and operations.
+        discoveryLoading:
+          type: boolean
+          description: Whether current endpoint discovery is waiting for debounce or SDK updates.
         operation:
           anyOf:
             - $ref: '#/components/schemas/OperationRef'
             - type: 'null'
           description: Active guarded operation, or null.
+        settledOperation:
+          anyOf:
+            - $ref: '#/components/schemas/OperationRef'
+            - type: 'null'
+          description: Last completed guarded operation, when any has settled; authoritative completion identity independent of the active operation.
     ActionRequest:
       type: object
       required: [action]
@@ -253,13 +928,278 @@ components:
       properties:
         action:
           type: string
-          enum: [sync, update]
+          enum: [sync, update, migrate]
     ActionAccepted:
       type: object
       required: [operation]
       properties:
         operation:
           $ref: '#/components/schemas/OperationRef'
+    SourceDescription:
+      type: object
+      required: [id, kind, location, ref, path, sourceHarness]
+      properties:
+        id:
+          type: string
+          description: Opaque stable identity derived from the typed source descriptor tuple under its scope; usable only with remove-source while the descriptor is unchanged.
+        kind:
+          type: string
+          enum: [git, directory, marketplace]
+          description: How the source is acquired.
+        location:
+          type: string
+          description: Declared Git URL, directory declaration, or normalized Marketplace URL with embedded credentials and URL query/fragment redacted; directory locations are resolved source locations, not raw configuration paths.
+        ref:
+          type: string
+          description: Declared Git ref, or empty.
+        path:
+          type: string
+          description: Declared sub-path within a source, or empty.
+        sourceHarness:
+          type: string
+          description: Declared source layout, or empty.
+    Configuration:
+      type: object
+      required: [userTargets, organizationTargets, userSources, organizationSources, supportedTargets, rootPresent, editable, managedOutsideGUI, firstRun, canInitialize, detectedTargets, detectionUnavailable, consentRequired, telemetryDestination, retentionPolicyURL]
+      properties:
+        userTargets:
+          type: array
+          items: { type: string }
+          description: Declared raw identifiers in the user-personal target set, including identifiers unsupported by this client.
+        organizationTargets:
+          type: array
+          items: { type: string }
+          description: Declared organization target identifiers; always read-only.
+        userSources:
+          type: array
+          items:
+            $ref: '#/components/schemas/SourceDescription'
+          description: Declared user-personal source descriptions in deterministic declaration order.
+        organizationSources:
+          type: array
+          items:
+            $ref: '#/components/schemas/SourceDescription'
+          description: Declared organization source descriptions; always read-only.
+        supportedTargets:
+          type: array
+          items: { type: string }
+          description: Canonical compiler target IDs this client supports.
+        rootPresent:
+          type: boolean
+          description: Whether a user-personal root entry exists (any file type, including a broken or dangling one).
+        editable:
+          type: boolean
+          description: Whether the user-personal root is present and readable without intent errors.
+        managedOutsideGUI:
+          type: array
+          items: { type: string }
+          description: Labels of configuration values managed outside the GUI.
+        firstRun:
+          type: boolean
+          description: Whether the user-personal root is absent, which is the only first-run entry condition.
+        canInitialize:
+          type: boolean
+          description: Whether initialization is currently permitted (absent root, readable home, no configuration errors).
+        detectedTargets:
+          type: array
+          items: { type: string }
+          description: Detected installed Harness targets in canonical supported order; empty when detection is unavailable or the root exists.
+        detectionUnavailable:
+          type: boolean
+          description: Whether installed-Harness detection failed; detectedTargets is then empty and targets must be chosen manually.
+        consentRequired:
+          type: boolean
+          description: Whether first-run setup must ask the init-equivalent telemetry consent question; false only when the organization sets an explicit telemetry level.
+        telemetryDestination:
+          type: string
+          description: Resolved primary telemetry destination hostname for disclosure, or 'not configured'.
+        retentionPolicyURL:
+          type: string
+          description: Resolved telemetry retention policy URL for disclosure, or 'not configured'.
+    GUIEvent:
+      description: Closed GUI telemetry event union; unknown, duplicate, or mistyped keys are rejected.
+      oneOf:
+        - $ref: '#/components/schemas/GUIBrowseEvent'
+        - $ref: '#/components/schemas/GUIModalOutcomeEvent'
+      discriminator:
+        propertyName: action
+        mapping:
+          browse: '#/components/schemas/GUIBrowseEvent'
+          modal_outcome: '#/components/schemas/GUIModalOutcomeEvent'
+    GUIBrowseEvent:
+      type: object
+      required: [action, rowId]
+      additionalProperties: false
+      properties:
+        action:
+          type: string
+          enum: [browse]
+        rowId:
+          type: string
+          description: Opaque row identity from the current snapshot; the server resolves its Resource kind.
+    GUIModalOutcomeEvent:
+      description: Closed modal-outcome union for sync/quit and Resource toggle cancellation.
+      oneOf:
+        - $ref: '#/components/schemas/GUISyncQuitModalOutcomeEvent'
+        - $ref: '#/components/schemas/GUIResourceModalOutcomeEvent'
+    GUISyncQuitModalOutcomeEvent:
+      type: object
+      required: [action, modal, outcome]
+      additionalProperties: false
+      properties:
+        action:
+          type: string
+          enum: [modal_outcome]
+        modal:
+          type: string
+          enum: [sync+quit]
+        outcome:
+          type: string
+          enum: [cancelled]
+    GUIResourceModalOutcomeEvent:
+      type: object
+      required: [action, modal, outcome, rowId]
+      additionalProperties: false
+      properties:
+        action:
+          type: string
+          enum: [modal_outcome]
+        modal:
+          type: string
+          enum: [toggle]
+        outcome:
+          type: string
+          enum: [cancelled]
+        rowId:
+          type: string
+          description: Opaque row identity from the current snapshot; the server resolves its Resource kind.
+    ReleaseNotice:
+      type: object
+      required: [latestVersion]
+      properties:
+        latestVersion:
+          type: string
+          description: Newer stable public release version, or empty when no notice applies.
+    ConfigurationActionRequest:
+      description: Tagged configuration action; the action field selects the strictly closed variant.
+      oneOf:
+        - $ref: '#/components/schemas/SaveTargetsActionRequest'
+        - $ref: '#/components/schemas/InitializeActionRequest'
+        - $ref: '#/components/schemas/AddSourceActionRequest'
+        - $ref: '#/components/schemas/RemoveSourceActionRequest'
+      discriminator:
+        propertyName: action
+        mapping:
+          save-targets: '#/components/schemas/SaveTargetsActionRequest'
+          initialize: '#/components/schemas/InitializeActionRequest'
+          add-source: '#/components/schemas/AddSourceActionRequest'
+          remove-source: '#/components/schemas/RemoveSourceActionRequest'
+    SourceInput:
+      description: Closed typed source form union; unknown, duplicate, or mistyped keys are rejected.
+      oneOf:
+        - $ref: '#/components/schemas/DirectorySourceInput'
+        - $ref: '#/components/schemas/GitSourceInput'
+        - $ref: '#/components/schemas/MarketplaceSourceInput'
+      discriminator:
+        propertyName: kind
+        mapping:
+          directory: '#/components/schemas/DirectorySourceInput'
+          git: '#/components/schemas/GitSourceInput'
+          marketplace: '#/components/schemas/MarketplaceSourceInput'
+    DirectorySourceInput:
+      type: object
+      required: [kind, location]
+      additionalProperties: false
+      properties:
+        kind:
+          type: string
+          enum: [directory]
+        location:
+          type: string
+          description: Absolute filesystem path, ~ or ~/ home-relative path, or an absolute file:// URL.
+    GitSourceInput:
+      type: object
+      required: [kind, location, ref]
+      additionalProperties: false
+      properties:
+        kind:
+          type: string
+          enum: [git]
+        location:
+          type: string
+          description: An https, file, or ssh URL or an SCP-like [user@]host:path origin. Usernames are allowed only for ssh/SCP forms; passwords, userinfo on non-ssh schemes, query, and fragment are rejected.
+        ref:
+          type: string
+          description: Explicit git ref.
+        path:
+          type: string
+          description: Optional sub-path within the Git source.
+    MarketplaceSourceInput:
+      type: object
+      required: [kind, location]
+      additionalProperties: false
+      properties:
+        kind:
+          type: string
+          enum: [marketplace]
+        location:
+          type: string
+          description: HTTP(S) Marketplace endpoint; ref and path are not accepted.
+    AddSourceActionRequest:
+      type: object
+      required: [action, source]
+      additionalProperties: false
+      properties:
+        action:
+          type: string
+          enum: [add-source]
+        source:
+          $ref: '#/components/schemas/SourceInput'
+    RemoveSourceActionRequest:
+      type: object
+      required: [action, id]
+      additionalProperties: false
+      properties:
+        action:
+          type: string
+          enum: [remove-source]
+        id:
+          type: string
+          description: Opaque id of one user-personal Git, directory, or Marketplace endpoint registration from the configuration projection; unknown, ambiguous, non-user, or stale ids are rejected. Marketplace removal only succeeds for a root-owned registration without legacy resource pins or a v4 resource group.
+    SaveTargetsActionRequest:
+      type: object
+      required: [action, targets]
+      additionalProperties: false
+      properties:
+        action:
+          type: string
+          enum: [save-targets]
+        targets:
+          type: array
+          minItems: 1
+          items: { type: string }
+          description: The complete replacement user-personal Harness target selection.
+    InitializeActionRequest:
+      type: object
+      required: [action, targets]
+      additionalProperties: false
+      properties:
+        action:
+          type: string
+          enum: [initialize]
+        targets:
+          type: array
+          minItems: 1
+          items: { type: string }
+          description: The user-personal Harness target selection for the new root; canonical supported IDs only.
+        consent:
+          type: boolean
+          description: The explicit telemetry consent answer; required when the projection reports consentRequired, rejected otherwise.
+        sources:
+          type: array
+          items:
+            $ref: '#/components/schemas/SourceInput'
+          description: Optional source additions validated before initialization and applied serially through the Sources mutation path after Harness and consent initialization. A later source failure keeps the initialized root and earlier successful additions, reports an error, and leaves remaining entries unattempted. Nonempty sources are rejected when organization sources are declared.
     SessionEvent:
       description: |
         One delivered event. sequence is the monotonic stream identity;
@@ -270,12 +1210,14 @@ components:
         - $ref: '#/components/schemas/SnapshotEvent'
         - $ref: '#/components/schemas/ProgressEvent'
         - $ref: '#/components/schemas/NotificationEvent'
+        - $ref: '#/components/schemas/DiscoveryEvent'
       discriminator:
         propertyName: type
         mapping:
           snapshot: '#/components/schemas/SnapshotEvent'
           progress: '#/components/schemas/ProgressEvent'
           notification: '#/components/schemas/NotificationEvent'
+          discovery: '#/components/schemas/DiscoveryEvent'
     EventBase:
       type: object
       required: [type, sequence, generation, operation]
@@ -339,3 +1281,37 @@ components:
                   type: string
                   enum: [info, warning, error]
                 message: { type: string }
+    DiscoveryEvent:
+      description: Discovery-only projection for the applicable snapshot generation; it does not advance stage, drift, diagnostics, operation, or progress state.
+      allOf:
+        - $ref: '#/components/schemas/EventBase'
+        - type: object
+          required: [payload]
+          properties:
+            type:
+              type: string
+              enum: [discovery]
+            operation:
+              type: 'null'
+            payload:
+              type: object
+              required: [requestId, query, discoverySequence, rows, health, loading]
+              properties:
+                requestId:
+                  type: integer
+                  format: uint64
+                query: { type: string }
+                discoverySequence:
+                  type: integer
+                  format: uint64
+                  description: API-lifetime discovery sequence, distinct from the stream sequence and core snapshot generation.
+                rows:
+                  type: array
+                  items:
+                    $ref: '#/components/schemas/SnapshotRow'
+                  description: Full shared-server-merged visible rows; clients do not merge Marketplace coordinates.
+                health:
+                  type: array
+                  items:
+                    $ref: '#/components/schemas/DiscoveryHealth'
+                loading: { type: boolean }

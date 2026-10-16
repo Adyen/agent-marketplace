@@ -351,3 +351,93 @@ func (e *LayerEditor) RemoveMarketplacePins(binding SourceBinding, pins []Market
 	e.changed = true
 	return nil
 }
+
+const marketplaceSourceInUseCode = "config.edit.source-in-use"
+
+func (e *LayerEditor) RemoveMarketplaceRegistration(entry MarketplaceEntry) error {
+	if e.legacy {
+		return e.removeLegacyMarketplaceRegistration(entry)
+	}
+	binding, found, err := e.LookupMarketplaceSource(entry.URL)
+	if err != nil {
+		return err
+	}
+	if !found {
+		return v4err("config.edit.invalid-binding", e.target.DeclaringPath, 0, "Marketplace registration is no longer present")
+	}
+	if !binding.root {
+		return v4err("config.edit.include-owned", e.target.DeclaringPath, 0, "Marketplace source %q is declared in an included fragment", binding.Name)
+	}
+	if _, hasGroup := e.loaded.Groups[binding.Name]; hasGroup {
+		return v4err(marketplaceSourceInUseCode, "resources."+binding.Name, 0, "Marketplace source %q has a resource group", binding.Name)
+	}
+	return e.RemoveSource(binding)
+}
+
+func (e *LayerEditor) removeLegacyMarketplaceRegistration(entry MarketplaceEntry) error {
+	canonicalURL, err := NormalizeMarketplaceURL(entry.URL)
+	if err != nil || validateMarketplaceSegment("marketplace instance_id", entry.InstanceID) != nil {
+		return v4err("config.edit.invalid-binding", e.target.DeclaringPath, 0, "Marketplace registration identity is invalid")
+	}
+	if err := rejectMarketplaceYAMLAliases(e.doc); err != nil {
+		return v4err("config.edit.unsupported-operation", e.target.DeclaringPath, 0, "Marketplace registration uses unsupported YAML aliases")
+	}
+	keyIndex, sequence := findTopLevelSequence(e.root, "marketplaces")
+	var matches []marketplaceEntryNodeInfo
+	if sequence != nil {
+		if sequence.Kind != yaml.SequenceNode {
+			return v4err("config.edit.unsupported-operation", e.target.DeclaringPath, sequence.Line, "Marketplace registrations must be a sequence")
+		}
+		entries, err := decodeMarketplaceEntries(sequence)
+		if err != nil {
+			return v4err("config.edit.unsupported-operation", e.target.DeclaringPath, sequence.Line, "Marketplace registrations cannot be edited safely")
+		}
+		for _, candidate := range entries {
+			if candidate.canonicalURL == canonicalURL && candidate.entry.InstanceID == entry.InstanceID {
+				matches = append(matches, candidate)
+			}
+		}
+	}
+	includedMatches := 0
+	for _, file := range e.includedFiles {
+		for _, candidate := range file.Marketplaces {
+			includedURL, err := NormalizeMarketplaceURL(candidate.URL)
+			if err != nil {
+				return v4err("config.edit.unsupported-operation", e.target.DeclaringPath, 0, "included Marketplace registration cannot be identified safely")
+			}
+			if includedURL == canonicalURL && candidate.InstanceID == entry.InstanceID {
+				includedMatches++
+			}
+		}
+	}
+	if len(matches) > 1 || (len(matches) == 1 && includedMatches > 0) {
+		return v4err("config.edit.ambiguous-source", e.target.DeclaringPath, 0, "Marketplace registration identity is ambiguous")
+	}
+	if len(matches) == 0 {
+		if includedMatches > 0 {
+			return v4err("config.edit.include-owned", e.target.DeclaringPath, 0, "Marketplace registration is declared in an included fragment")
+		}
+		return v4err("config.edit.invalid-binding", e.target.DeclaringPath, 0, "Marketplace registration identity is missing or stale")
+	}
+	match := matches[0]
+	if len(match.entry.Resources) > 0 {
+		return v4err(marketplaceSourceInUseCode, "marketplaces", match.node.Line, "Marketplace registration has resource pins")
+	}
+	removed := false
+	for i, node := range sequence.Content {
+		if node != match.node {
+			continue
+		}
+		sequence.Content = append(sequence.Content[:i], sequence.Content[i+1:]...)
+		removed = true
+		break
+	}
+	if !removed {
+		return v4err("config.edit.invalid-binding", e.target.DeclaringPath, 0, "Marketplace registration identity is missing or stale")
+	}
+	if len(sequence.Content) == 0 && keyIndex >= 0 {
+		removeTopLevelKey(e.root, keyIndex)
+	}
+	e.changed = true
+	return nil
+}

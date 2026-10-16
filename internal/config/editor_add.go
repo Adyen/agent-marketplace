@@ -255,13 +255,6 @@ func SetHarnessesInConfig(configPath string, harnesses []string) error {
 		return fmt.Errorf("harnesses cannot be set in repository personal config %q", configPath)
 	}
 
-	// Normalize, dedupe, and reject unknown or non-compiler targets before any
-	// file is written, so a typo cannot land in the target harness set.
-	harnesses, err := canonicalCompilerHarnesses("harnesses", harnesses)
-	if err != nil {
-		return err
-	}
-
 	// The top-level harnesses field is schema-identical in v2/v3 and v4, and
 	// the user-personal root is routinely v4 (init writes v4 directly and the
 	// TUI offers startup migration), so harness editing is an explicit
@@ -284,7 +277,31 @@ func SetHarnessesInConfig(configPath string, harnesses []string) error {
 		return fmt.Errorf("update config %q: %w", configPath, err)
 	}
 
-	setSequenceValues(sequence, harnesses)
+	existing := make(map[string]bool, len(sequence.Content))
+	for _, node := range sequence.Content {
+		item := resolveAlias(node)
+		if item.Kind == yaml.ScalarNode && item.Tag == "!!str" {
+			existing[strings.TrimSpace(item.Value)] = true
+		}
+	}
+
+	// Normalize, dedupe, and reject unknown or non-compiler targets before any
+	// file is written, so a typo cannot land in the target harness set.
+	canonical, strictErr := canonicalCompilerHarnesses("harnesses", harnesses)
+	if strictErr != nil {
+		normalized := normalizedUniqueValues(harnesses)
+		if len(normalized) == 0 {
+			return strictErr
+		}
+		for _, harness := range normalized {
+			if !IsSupportedHarness(harness) && !existing[harness] {
+				return strictErr
+			}
+		}
+		canonical = normalized
+	}
+
+	setSequenceValues(sequence, canonical)
 
 	// Validate the exact bytes that will be written before the atomic
 	// replace, so a refusal leaves the file untouched. The check is

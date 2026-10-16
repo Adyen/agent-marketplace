@@ -600,3 +600,55 @@ func TestResolveOrganizationPrivateHostnamePublicIP(t *testing.T) {
 		t.Fatal("expected error when private hostname resolves to a public IP")
 	}
 }
+
+// spec: config-layering/existing-unsupported-identifier-is-retained-without-materialization-authority
+func TestResolveHarnessesFiltersUnsupportedTargets(t *testing.T) {
+	setStateRoot(t)
+
+	basicUser := func(harnesses []string) amconfig.Settings {
+		return amconfig.Settings{
+			Harnesses: harnesses,
+			Telemetry: &tmcfg.TelemetryConfig{
+				Level:              tmcfg.LevelBasic,
+				Endpoint:           "https://user.example.com",
+				CommunityReporting: boolPtr(false),
+			},
+		}
+	}
+	user := basicUser([]string{"factory", "future-harness"})
+	state, err := ResolveTelemetryConfig(amconfig.Settings{}, user, "https://project.example.com", "https://project.example.com/retention")
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	if state.EffectiveLevel != tmcfg.LevelBasic {
+		t.Fatalf("effective level = %q, want basic", state.EffectiveLevel)
+	}
+	if state.PrimaryEndpoint != "https://user.example.com" || state.PrimaryEndpointSource != sourceUser {
+		t.Fatalf("primary route = %q/%q", state.PrimaryEndpoint, state.PrimaryEndpointSource)
+	}
+	if got := state.HarnessesString(); got != "factory" {
+		t.Fatalf("harness attribute = %q, want %q", got, "factory")
+	}
+
+	state, err = ResolveTelemetryConfig(amconfig.Settings{Harnesses: []string{"windsurf"}}, user, "https://project.example.com", "https://project.example.com/retention")
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	if state.EffectiveLevel != tmcfg.LevelBasic {
+		t.Fatalf("effective level = %q, want basic", state.EffectiveLevel)
+	}
+	if got := state.HarnessesString(); got != "factory" {
+		t.Fatalf("user set takes precedence: %q, want %q", got, "factory")
+	}
+
+	state, err = ResolveTelemetryConfig(amconfig.Settings{Harnesses: []string{"windsurf"}}, basicUser([]string{"future-harness"}), "https://project.example.com", "https://project.example.com/retention")
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	if state.EffectiveLevel != tmcfg.LevelBasic {
+		t.Fatalf("effective level = %q, want basic", state.EffectiveLevel)
+	}
+	if got := state.HarnessesString(); got != "" {
+		t.Fatalf("unsupported-only user set must not fall back or leak the identifier: %q", got)
+	}
+}

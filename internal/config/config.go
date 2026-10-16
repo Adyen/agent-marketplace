@@ -486,6 +486,7 @@ type Config struct {
 	// Telemetry is the machine-scope telemetry policy. It is only allowed in
 	// the organization and user-personal configuration layers.
 	Telemetry *telemetryconfig.TelemetryConfig `yaml:"telemetry,omitempty"`
+	GUI       *GUIConfig                       `yaml:"gui,omitempty"`
 }
 
 // SelectorForKind returns the top-level KindSelector for the given resource
@@ -555,6 +556,7 @@ type LocalConfig struct {
 	// Materialization is a project-only override. It never changes the
 	// user-wide policy resolved from ~/.agents/config.yaml.
 	Materialization *MaterializationConfig `yaml:"materialization,omitempty"`
+	GUI             *GUIConfig             `yaml:"gui,omitempty"`
 }
 
 // SelectorForKind returns the KindSelector for the given resource kind.
