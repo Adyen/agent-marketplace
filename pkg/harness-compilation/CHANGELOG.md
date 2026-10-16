@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Restriction-bearing native fields are preserved or refused
+
+Gemini ingestion kept only `command`, `args`, `env` and `url` of a subagent's inline MCP server, so a Gemini→Gemini conversion dropped `includeTools` and `excludeTools` and the server exposed every tool. Every member is now preserved and emitted on Gemini output; preserved members never override the modeled ones, and literal credentials in preserved headers or OAuth secrets are reported with `mcp.credentials.literal-secret` through the new `compile.McpCredentialDiagnosticsWithExtra`. Windsurf ingestion read an undocumented `working_dir` key, so the documented `working_directory` was dropped and a hook ran its relative command from the workspace root. It is now read and round-trips on Windsurf; every other target suppresses such a hook with `hook.windsurf.native-fields-unsupported`. Devin MCP compilation no longer drops a single unrepresentable argument such as `--sandbox=${file:…}`: the server is removed with `mcp.devin.interpolation-unrepresentable`, because a shortened argument list runs a different command line.
+
 ### Project and plugin roots stay distinct
 
 Gemini ingestion no longer rewrites `${GEMINI_PROJECT_DIR}` and `${CLAUDE_PROJECT_DIR}` to `${CLAUDE_PLUGIN_ROOT}` in MCP server values, command prompts and subagent bodies. Those project references used to resolve inside the plugin on every target: Gemini emitted `${extensionPath}`, Claude `${CLAUDE_PLUGIN_ROOT}`, and targets with a literal plugin root pointed the server at the installed registry copy. Only `${extensionPath}` maps to the canonical plugin root now; a target that cannot represent a project reference keeps it as an environment reference or refuses the server, as Codex does for interpolated arguments. Factory MCP servers translate `${DROID_PLUGIN_ROOT}` to `${CLAUDE_PLUGIN_ROOT}` on ingestion and back on compilation, so Factory output no longer carries the Claude token and Claude output no longer carries the Factory token.

@@ -24,7 +24,7 @@ var testWorkspaceFS = fstest.MapFS{
 		Data: []byte("{\n  \"command\": \"scripts/check-read.sh\",\n  \"event\": \"pre_read_code\",\n  \"type\": \"command\"\n}\n"),
 	},
 	".windsurf/hooks/post_setup_worktree.json": &fstest.MapFile{
-		Data: []byte("{\n  \"command\": \"scripts/setup.sh\",\n  \"event\": \"post_setup_worktree\",\n  \"type\": \"command\",\n  \"powershell\": \"Write-Host setup\",\n  \"show_output\": false,\n  \"working_dir\": \"/tmp/project\"\n}\n"),
+		Data: []byte("{\n  \"command\": \"scripts/setup.sh\",\n  \"event\": \"post_setup_worktree\",\n  \"type\": \"command\",\n  \"powershell\": \"Write-Host setup\",\n  \"show_output\": false,\n  \"working_directory\": \"/tmp/project\"\n}\n"),
 	},
 	".windsurf/mcp_config.json": &fstest.MapFile{
 		Data: []byte("{\n  \"mcpServers\": {\n    \"github\": {\n      \"args\": [\"-y\", \"@modelcontextprotocol/server-github\"],\n      \"command\": \"npx\",\n      \"env\": {\n        \"GITHUB_TOKEN\": \"${env:GITHUB_TOKEN}\",\n        \"SETTINGS\": \"./settings.json\"\n      }\n    }\n  }\n}\n"),
