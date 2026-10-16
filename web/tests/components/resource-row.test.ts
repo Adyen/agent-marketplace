@@ -62,7 +62,9 @@ describe('ResourceRow', () => {
 
     expect(wrapper.text()).not.toContain(contentDigest)
     expect(wrapper.find('a[href="/registries/registry-id"]').exists()).toBe(false)
-    expect(wrapper.get('a[href^="/r/registry-id/skill/review/revisions/"]').text()).toBe('registry-id/review')
+    const coordinateLink = wrapper.get('a[href^="/r/registry-id/skill/review/revisions/"]')
+    expect(coordinateLink.text()).toBe('registry-id/review')
+    expect(coordinateLink.classes()).toContain('resource-coordinate-link')
   })
 
   const digest = 'sha256:' + 'c'.repeat(64)

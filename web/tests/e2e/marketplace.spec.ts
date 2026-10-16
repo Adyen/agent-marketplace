@@ -492,7 +492,11 @@ test.describe('Marketplace browser discovery', () => {
       await expect(resourceName).toHaveCSS('color', theme.marketplace.primaryText)
       await expect(description).toHaveCSS('color', theme.marketplace.secondaryText)
 
-      await row.getByRole('link', { name: 'team-tools/secure-review', exact: true }).hover()
+      const coordinateLink = row.getByRole('link', { name: 'team-tools/secure-review', exact: true })
+      await expect.poll(() => coordinateLink.evaluate(element => getComputedStyle(element, '::after').opacity)).toBe('0')
+      await coordinateLink.hover()
+      await expect.poll(() => coordinateLink.evaluate(element => getComputedStyle(element, '::after').opacity)).toBe('1')
+      await expect.poll(() => coordinateLink.evaluate(element => getComputedStyle(element, '::after').backgroundColor)).toBe(theme.marketplace.action)
       await expect(row).toHaveCSS('background-color', theme.marketplace.hover)
       expect(contrastRatio(
         await namespace.evaluate(element => getComputedStyle(element).color),

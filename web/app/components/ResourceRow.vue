@@ -56,7 +56,7 @@ const installationCountLabel = computed(() =>
           <span class="shrink-0 font-mono text-xs font-medium text-muted">{{ kindLabel(item.kind) }}</span>
           <span class="text-xs text-dimmed" aria-hidden="true">·</span>
           <h2 class="relative z-10 min-w-0 truncate font-mono text-sm font-medium leading-5 tracking-tight">
-            <NuxtLink v-if="browserUrl" :to="browserUrl" class="cursor-pointer rounded decoration-primary underline-offset-4 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary">
+            <NuxtLink v-if="browserUrl" :to="browserUrl" class="resource-coordinate-link relative cursor-pointer rounded focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary">
               <span class="text-muted">{{ registryLabel(item) }}</span><span class="resource-coordinate__separator am-brand-slash">/</span><span class="font-semibold text-highlighted">{{ item.name }}</span>
             </NuxtLink>
             <span v-else><span class="text-muted">{{ registryLabel(item) }}</span><span class="resource-coordinate__separator am-brand-slash">/</span><span class="font-semibold text-highlighted">{{ item.name }}</span></span>
@@ -109,3 +109,28 @@ const installationCountLabel = computed(() =>
     </div>
   </article>
 </template>
+
+<style scoped>
+.resource-coordinate-link::after {
+  position: absolute;
+  right: 0;
+  bottom: -3px;
+  left: 0;
+  height: 1px;
+  background: var(--am-color-action-primary);
+  content: "";
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 150ms;
+}
+
+.resource-coordinate-link:hover::after {
+  opacity: 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .resource-coordinate-link::after {
+    transition: none;
+  }
+}
+</style>
