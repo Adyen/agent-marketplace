@@ -555,6 +555,9 @@ func BuildRegistryRevision(ctx context.Context, cfg config.Config, mpID store.Ma
 
 		if kind != "collection" && registry.Acquisition == store.AcquisitionMirror && p.result.RawArchive != nil {
 			extraBlobs = appendUpload(extraBlobs, store.ArchiveDigest(p.result.ArchiveDigest), p.result.RawArchive)
+			if p.result.PlaceholderArchive != nil {
+				extraBlobs = appendUpload(extraBlobs, store.PlaceholderArchiveKey(store.ArchiveDigest(p.result.ArchiveDigest)), p.result.PlaceholderArchive)
+			}
 		}
 	}
 

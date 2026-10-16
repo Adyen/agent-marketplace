@@ -65,6 +65,7 @@ func TestOpenAPIYAMLIsValidAndContainsRoutes(t *testing.T) {
 		"/api/v1/resources/{registry}/{kind}/{name}/revisions/{revision}/inspection/content",
 		"/api/v1/resources/{registry}/{kind}/{name}/revisions/{revision}/inspection/content/{digest}",
 		"/api/v1/artifacts/sha256/{digest}",
+		"/api/v1/archives/sha256/{digest}",
 		"/r/{registry}/{kind}/{name}",
 		"/r/{registry}/{kind}/{name}/revisions/{revision}",
 		"/healthz",
@@ -586,5 +587,24 @@ func TestOpenAPIPublicURLSchemasDescribeSanitizedValues(t *testing.T) {
 	publisherURL := publisher["properties"].(map[string]any)["url"].(map[string]any)
 	if publisherURL["format"] != "uri" || publisherURL["description"] == nil {
 		t.Errorf("Publisher.url is not documented as a sanitized URI: %#v", publisherURL)
+	}
+}
+
+// spec: marketplace-api/placeholder-archive-route-is-documented
+func TestOpenAPIPlaceholderArchiveRouteIsDocumented(t *testing.T) {
+	doc := readOpenAPIDocument(t)
+	paths := doc["paths"].(map[string]any)
+	path, ok := paths["/api/v1/archives/sha256/{digest}"].(map[string]any)
+	if !ok {
+		t.Fatal("openapi missing placeholder archive path")
+	}
+	responses := path["get"].(map[string]any)["responses"].(map[string]any)
+	if _, ok := responses["200"].(map[string]any)["content"].(map[string]any)["application/vnd.agent-marketplace.artifact.v1.tar+gzip"]; !ok {
+		t.Fatal("placeholder archive 200 response lacks the artifact media type")
+	}
+	for _, code := range []string{"403", "404", "410", "500"} {
+		if _, ok := responses[code]; !ok {
+			t.Fatalf("placeholder archive route missing %s response", code)
+		}
 	}
 }

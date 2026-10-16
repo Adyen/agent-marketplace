@@ -129,28 +129,36 @@ func isDigestFormat(s string) bool {
 // This breaks the self-referential cycle: the final archive carries the real
 // digest, but verification recomputes the digest over the placeholder form.
 func Encode(a CanonicalArtifact) ([]byte, string, error) {
+	final, _, digest, err := EncodeArchives(a)
+	return final, digest, err
+}
+
+// EncodeArchives returns the final archive, the placeholder-form archive whose
+// bytes hash to digest, and that digest. The placeholder form is the only
+// encoding the digest is computed over, so it can be verified by hashing alone.
+func EncodeArchives(a CanonicalArtifact) (final, placeholder []byte, digest string, err error) {
 	if err := a.Manifest.Validate(); err != nil {
-		return nil, "", fmt.Errorf("invalid manifest: %w", err)
+		return nil, nil, "", fmt.Errorf("invalid manifest: %w", err)
 	}
 
 	// 1. Encode with the placeholder so the digest field length stays constant.
 	canon := a
 	canon.Manifest.ArchiveDigest = archiveDigestPlaceholder
-	canonRaw, err := encodeArtifact(canon)
+	placeholder, err = encodeArtifact(canon)
 	if err != nil {
-		return nil, "", err
+		return nil, nil, "", err
 	}
-	digest := ArchiveDigest(canonRaw)
+	digest = ArchiveDigest(placeholder)
 
 	// 2. Encode the final archive with the real digest in the manifest.
-	final := a
-	final.Manifest.ArchiveDigest = digest
-	raw, err := encodeArtifact(final)
+	finalArtifact := a
+	finalArtifact.Manifest.ArchiveDigest = digest
+	final, err = encodeArtifact(finalArtifact)
 	if err != nil {
-		return nil, "", err
+		return nil, nil, "", err
 	}
 
-	return raw, digest, nil
+	return final, placeholder, digest, nil
 }
 
 type archiveEntry struct {
@@ -512,6 +520,179 @@ func (a CanonicalArtifact) VerifyArchiveDigest(raw []byte) error {
 	return nil
 }
 
+// ErrPlaceholderNotReproducible reports that re-encoding a final archive does
+// not reproduce the digest it is addressed by.
+var ErrPlaceholderNotReproducible = errors.New("placeholder archive is not reproducible from the final archive")
+
+// VerifyPlaceholderArchive verifies a placeholder-form archive by hashing raw
+// against digest, so the bytes are checked as received and no compressor runs.
+// The returned artifact carries digest as its archive digest.
+func VerifyPlaceholderArchive(raw []byte, digest string) (CanonicalArtifact, error) {
+	if !isDigestFormat(digest) {
+		return CanonicalArtifact{}, fmt.Errorf("archive digest has invalid format: %s", digest)
+	}
+	if got := ArchiveDigest(raw); got != digest {
+		return CanonicalArtifact{}, fmt.Errorf("placeholder archive digest mismatch: got %s, want %s", got, digest)
+	}
+	a, _, err := Decode(bytes.NewReader(raw))
+	if err != nil {
+		return CanonicalArtifact{}, err
+	}
+	if a.Manifest.ArchiveDigest != archiveDigestPlaceholder {
+		return CanonicalArtifact{}, errors.New("placeholder archive manifest archive_digest is not the placeholder")
+	}
+	if err := a.validateFields(); err != nil {
+		return CanonicalArtifact{}, err
+	}
+	if err := a.validateLimits(DefaultArchiveLimits()); err != nil {
+		return CanonicalArtifact{}, err
+	}
+	a.Manifest.ArchiveDigest = digest
+	a.rawArchive = nil
+	return a, nil
+}
+
+// VerifyFinalAgainstPlaceholder verifies a final archive against a placeholder
+// artifact already verified by VerifyPlaceholderArchive. The final bytes are
+// accepted when they decode to the same content and carry the same archive
+// digest; their compression is deliberately not reproduced.
+func VerifyFinalAgainstPlaceholder(final []byte, placeholder CanonicalArtifact) (CanonicalArtifact, error) {
+	a, _, err := Decode(bytes.NewReader(final))
+	if err != nil {
+		return CanonicalArtifact{}, err
+	}
+	if a.Manifest.ArchiveDigest != placeholder.Manifest.ArchiveDigest {
+		return CanonicalArtifact{}, fmt.Errorf("final archive digest %q does not match placeholder digest %q", a.Manifest.ArchiveDigest, placeholder.Manifest.ArchiveDigest)
+	}
+	if err := a.validateFields(); err != nil {
+		return CanonicalArtifact{}, err
+	}
+	if err := a.validateLimits(DefaultArchiveLimits()); err != nil {
+		return CanonicalArtifact{}, err
+	}
+	if !EqualIgnoringArchiveDigest(a, placeholder) {
+		return CanonicalArtifact{}, errors.New("final archive content does not match verified placeholder archive")
+	}
+	return a, nil
+}
+
+// EncodingMismatchError reports a final archive whose content verifies but which
+// the running compressor does not reproduce to its archive digest.
+type EncodingMismatchError struct {
+	Want string
+	Got  string
+}
+
+func (e *EncodingMismatchError) Error() string {
+	return fmt.Sprintf("archive digest mismatch: got %s, want %s", e.Got, e.Want)
+}
+
+// VerifyArchiveBytes verifies archive bytes received for digest. Placeholder-form
+// bytes are verified by hash. Final bytes are verified by re-encoding only as the
+// legacy fallback for archives without a placeholder form; a digest the running
+// compressor does not reproduce is reported as *EncodingMismatchError, while
+// content failures stay integrity errors.
+func VerifyArchiveBytes(raw []byte, digest string) (CanonicalArtifact, error) {
+	if ArchiveDigest(raw) == digest {
+		return VerifyPlaceholderArchive(raw, digest)
+	}
+	a, rawArchive, err := Decode(bytes.NewReader(raw))
+	if err != nil {
+		return CanonicalArtifact{}, err
+	}
+	if a.Manifest.ArchiveDigest != digest {
+		return CanonicalArtifact{}, fmt.Errorf("manifest archive digest %q does not match requested %q", a.Manifest.ArchiveDigest, digest)
+	}
+	if err := a.validateFields(); err != nil {
+		return CanonicalArtifact{}, err
+	}
+	if err := a.validateLimits(DefaultArchiveLimits()); err != nil {
+		return CanonicalArtifact{}, err
+	}
+	canon := a
+	canon.Manifest.ArchiveDigest = archiveDigestPlaceholder
+	canon.rawArchive = nil
+	canonRaw, err := encodeArtifact(canon)
+	if err != nil {
+		return CanonicalArtifact{}, fmt.Errorf("re-encode canonical artifact: %w", err)
+	}
+	if got := ArchiveDigest(canonRaw); got != digest {
+		return CanonicalArtifact{}, &EncodingMismatchError{Want: digest, Got: got}
+	}
+	a.rawArchive = rawArchive
+	return a, nil
+}
+
+// DecodeContentArchive decodes an archive and verifies its fields, limits, and
+// content digest without binding it to any archive digest or re-encoding it.
+func DecodeContentArchive(raw []byte) (CanonicalArtifact, error) {
+	a, _, err := Decode(bytes.NewReader(raw))
+	if err != nil {
+		return CanonicalArtifact{}, err
+	}
+	if err := a.validateFields(); err != nil {
+		return CanonicalArtifact{}, err
+	}
+	if err := a.validateLimits(DefaultArchiveLimits()); err != nil {
+		return CanonicalArtifact{}, err
+	}
+	return a, nil
+}
+
+// DerivePlaceholderArchive rebuilds the placeholder-form archive of a final
+// archive with the running compressor. This is the only intentionally
+// compressor-dependent path, so its result is returned only when its hash equals
+// digest; otherwise it returns ErrPlaceholderNotReproducible.
+func DerivePlaceholderArchive(final []byte, digest string) ([]byte, error) {
+	a, _, err := Decode(bytes.NewReader(final))
+	if err != nil {
+		return nil, err
+	}
+	a.Manifest.ArchiveDigest = archiveDigestPlaceholder
+	placeholder, err := encodeArtifact(a)
+	if err != nil {
+		return nil, err
+	}
+	if ArchiveDigest(placeholder) != digest {
+		return nil, ErrPlaceholderNotReproducible
+	}
+	return placeholder, nil
+}
+
+// EqualIgnoringArchiveDigest reports whether a and b have the same manifest, once
+// each archive_digest is normalized to the placeholder, and the same content.
+func EqualIgnoringArchiveDigest(a, b CanonicalArtifact) bool {
+	am, errA := canonicalManifestJSON(a.Manifest)
+	bm, errB := canonicalManifestJSON(b.Manifest)
+	if errA != nil || errB != nil || !bytes.Equal(am, bm) {
+		return false
+	}
+	return bytes.Equal(a.Payload, b.Payload) &&
+		equalMaps(a.Assets, b.Assets, bytes.Equal) &&
+		equalMaps(a.Licenses, b.Licenses, bytes.Equal) &&
+		equalMaps(a.Support, b.Support, func(x, y SupportFile) bool {
+			return x.Executable == y.Executable && bytes.Equal(x.Data, y.Data)
+		})
+}
+
+func canonicalManifestJSON(m CanonicalManifest) ([]byte, error) {
+	m.ArchiveDigest = archiveDigestPlaceholder
+	return json.Marshal(m)
+}
+
+func equalMaps[V any](a, b map[string]V, equal func(x, y V) bool) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for k, v := range a {
+		w, ok := b[k]
+		if !ok || !equal(v, w) {
+			return false
+		}
+	}
+	return true
+}
+
 // Validate checks the manifest fields for well-formedness.
 func (m CanonicalManifest) Validate() error {
 	if m.SchemaVersion != CanonicalArtifactSchemaV1 {
@@ -556,6 +737,19 @@ func (a CanonicalArtifact) ValidateArchive(limits *ArchiveLimits) error {
 	if limits == nil {
 		limits = DefaultArchiveLimits()
 	}
+	if err := a.validateFields(); err != nil {
+		return err
+	}
+	if len(a.rawArchive) > 0 {
+		if err := a.VerifyArchiveDigest(a.rawArchive); err != nil {
+			return err
+		}
+	}
+	return a.validateLimits(limits)
+}
+
+// validateFields checks manifest and payload identity without re-encoding the archive.
+func (a CanonicalArtifact) validateFields() error {
 	if err := a.Manifest.Validate(); err != nil {
 		return err
 	}
@@ -565,14 +759,11 @@ func (a CanonicalArtifact) ValidateArchive(limits *ArchiveLimits) error {
 	if len(a.Payload) == 0 {
 		return errors.New("artifact payload is empty")
 	}
-	if err := a.VerifyContentDigest(); err != nil {
-		return err
-	}
-	if len(a.rawArchive) > 0 {
-		if err := a.VerifyArchiveDigest(a.rawArchive); err != nil {
-			return err
-		}
-	}
+	return a.VerifyContentDigest()
+}
+
+// validateLimits enforces the archive limits on the decoded members.
+func (a CanonicalArtifact) validateLimits(limits *ArchiveLimits) error {
 	if int64(len(a.Payload)) > limits.MaxPayloadBytes {
 		return fmt.Errorf("payload exceeds max bytes %d", limits.MaxPayloadBytes)
 	}

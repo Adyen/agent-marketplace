@@ -151,6 +151,10 @@ type MetadataStore interface {
 	// one content digest. It is used for digest-addressed collection manifests,
 	// whose route has no coordinate.
 	ListResourceRevisionsByContentDigest(ctx context.Context, marketplace MarketplaceID, digest RevisionDigest) ([]AssessedResourceRevision, error)
+	// ListResourceArchiveDigests returns up to limit distinct non-empty archive
+	// digests of the Marketplace's resource revisions that sort after the given
+	// digest, in ascending order. Bounded backfills page with it.
+	ListResourceArchiveDigests(ctx context.Context, marketplace MarketplaceID, after ArchiveDigest, limit int) ([]ArchiveDigest, error)
 
 	// GetLatestResourceRevision returns the most recent revision for a coordinate,
 	// including a revoked revision if no non-revoked revision exists.
