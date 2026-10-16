@@ -3463,6 +3463,23 @@ func preflightHookSupportDestinations(result *compilePhaseResult, key outputKey,
 					addIssue(relative, affected, diag.CodeMaterializeHookSupportConflict)
 					continue
 				}
+				entry, owned := state.entry(key.target, relative)
+				unownedMirror := false
+				if !owned {
+					for _, owner := range affected {
+						if !owner.skill.skill.IsMarketplace || owner.skill.skill.MarketplaceAcquisition != config.MarketplaceAcquisitionMirror {
+							continue
+						}
+						loadSupportProof()
+						if supportProofErr != nil || !cleanSupportSources[hookSupportOwnerID(owner.resourceName, owner.sourceDigest)] {
+							addIssue(relative, []hookSupportOwner{owner}, diag.CodeMaterializeHookSupportConflict)
+							unownedMirror = true
+						}
+					}
+				}
+				if unownedMirror {
+					continue
+				}
 				if info.Mode()&os.ModeSymlink != 0 && isManagedSymlink(destination) {
 					if key.machineScope {
 						continue
@@ -3495,18 +3512,6 @@ func preflightHookSupportDestinations(result *compilePhaseResult, key outputKey,
 				if err != nil {
 					addIssue(relative, affected, diag.CodeMaterializeHookSupportConflict)
 					continue
-				}
-				entry, owned := state.entry(key.target, relative)
-				if !owned {
-					for _, owner := range affected {
-						if !owner.skill.skill.IsMarketplace || owner.skill.skill.MarketplaceAcquisition != config.MarketplaceAcquisitionMirror {
-							continue
-						}
-						loadSupportProof()
-						if supportProofErr != nil || !cleanSupportSources[hookSupportOwnerID(owner.resourceName, owner.sourceDigest)] {
-							addIssue(relative, []hookSupportOwner{owner}, diag.CodeMaterializeHookSupportConflict)
-						}
-					}
 				}
 				if portableOwnershipDecision(entry, currentDigest, portableArtifactDigest(candidate)) == portableOwnershipCollision {
 					addIssue(relative, affected, diag.CodeMaterializeHookSupportConflict)

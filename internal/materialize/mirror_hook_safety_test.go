@@ -96,41 +96,56 @@ func TestMirrorHookSupportRefusesUnavailableOrReservedFiles(t *testing.T) {
 
 // spec: marketplace-api/mirrored-hook-support-unowned-destination-refusal
 func TestMirrorHookSupportMissingOwnershipRefusesAggregate(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, "cache"))
-	t.Setenv("XDG_STATE_HOME", filepath.Join(home, "state"))
-	t.Setenv("CODEX_HOME", filepath.Join(home, ".codex"))
-	repo, source := t.TempDir(), t.TempDir()
-	data := []byte("#!/bin/sh\nexit 0\n")
-	if err := os.WriteFile(filepath.Join(source, "run.sh"), data, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	skill := mirrorHookSafetyFixture(filepath.Join(source, "hooks.json"))
-	hook := skill.Resource.(*ir.Hook)
-	hook.Command = "${CLAUDE_PLUGIN_ROOT}/hooks/run.sh"
-	hook.SupportFiles = map[string]string{"hooks/run.sh": artifact.SupportFileDigest(artifact.SupportFile{Data: data, Executable: true})}
-	skill.MarketplaceHookSupport = []artifact.Artifact{{Path: "hooks/run.sh", Bytes: data, Mode: 0o755}}
-	selected := []resolver.ResolvedArtifact{skill}
-	report, err := Run(t.Context(), repo, selected, WithRepoScopeOnly())
-	if err != nil || diag.HasErrors(report.Diags) {
-		t.Fatalf("valid control: %v, %v", report, err)
-	}
-	native := filepath.Join(repo, ".factory", "hooks.json")
-	before, err := os.ReadFile(native)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Remove(filepath.Join(repo, ".agents", "materialization-manifest.yaml")); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("XDG_STATE_HOME", t.TempDir())
-	report, err = Run(t.Context(), repo, selected, WithRepoScopeOnly())
-	if err != nil || !diag.HasCode(report.Diags, diag.CodeMaterializeHookSupportConflict) {
-		t.Fatalf("unowned support not refused: %v, %v", report, err)
-	}
-	if after, err := os.ReadFile(native); err != nil || string(after) != string(before) {
-		t.Fatalf("aggregate changed on destination refusal: %q, %v", after, err)
+	for _, machine := range []bool{false, true} {
+		t.Run(map[bool]string{false: "repo", true: "machine"}[machine], func(t *testing.T) {
+			home := t.TempDir()
+			t.Setenv("HOME", home)
+			t.Setenv("XDG_CACHE_HOME", filepath.Join(home, "cache"))
+			t.Setenv("XDG_STATE_HOME", filepath.Join(home, "state"))
+			t.Setenv("CODEX_HOME", filepath.Join(home, ".codex"))
+			repo, source := t.TempDir(), t.TempDir()
+			data := []byte("#!/bin/sh\nexit 0\n")
+			if err := os.WriteFile(filepath.Join(source, "run.sh"), data, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			skill := mirrorHookSafetyFixture(filepath.Join(source, "hooks.json"))
+			options := []RunOption{WithRepoScopeOnly()}
+			root := repo
+			if machine {
+				skill.Source = config.UserPersonal
+				options = []RunOption{WithMachineScopeOnly()}
+				root = home
+			}
+			hook := skill.Resource.(*ir.Hook)
+			hook.Command = "${CLAUDE_PLUGIN_ROOT}/hooks/run.sh"
+			hook.SupportFiles = map[string]string{"hooks/run.sh": artifact.SupportFileDigest(artifact.SupportFile{Data: data, Executable: true})}
+			skill.MarketplaceHookSupport = []artifact.Artifact{{Path: "hooks/run.sh", Bytes: data, Mode: 0o755}}
+			selected := []resolver.ResolvedArtifact{skill}
+			report, err := Run(t.Context(), repo, selected, options...)
+			if err != nil || diag.HasErrors(report.Diags) {
+				t.Fatalf("valid control: %v, %v", report, err)
+			}
+			native := filepath.Join(root, ".factory", "hooks.json")
+			before, err := os.ReadFile(native)
+			if err != nil {
+				t.Fatal(err)
+			}
+			manifest, err := portableManifestPath(repo, machine)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Remove(manifest); err != nil && (!machine || !os.IsNotExist(err)) {
+				t.Fatal(err)
+			}
+			t.Setenv("XDG_STATE_HOME", t.TempDir())
+			report, err = Run(t.Context(), repo, selected, options...)
+			if err != nil || !diag.HasCode(report.Diags, diag.CodeMaterializeHookSupportConflict) {
+				t.Fatalf("unowned support not refused: %v, %v", report, err)
+			}
+			if after, err := os.ReadFile(native); err != nil || string(after) != string(before) {
+				t.Fatalf("aggregate changed on destination refusal: %q, %v", after, err)
+			}
+		})
 	}
 }
 
