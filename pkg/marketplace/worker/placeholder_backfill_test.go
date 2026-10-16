@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"testing"
 
 	hccartifact "github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact"
@@ -97,5 +98,24 @@ func TestWorkerBackfillsPlaceholderArchives(t *testing.T) {
 	}
 	if second.Present != 1 || second.Derived != 0 || second.Unreproducible != 1 {
 		t.Fatalf("second pass report = %+v, want the derived archive present and the other unreproducible", second)
+	}
+}
+
+func TestWorkerCountsMissingAndMalformedArchivesAsInvalid(t *testing.T) {
+	ctx := context.Background()
+	missing := store.ArchiveDigest("sha256:" + strings.Repeat("a", 64))
+	malformed := store.ArchiveDigest("sha256:" + strings.Repeat("b", 64))
+	meta := backfillMeta{digests: []store.ArchiveDigest{missing, malformed}}
+	blobs := backfillBlobs{data: map[store.ArchiveDigest][]byte{malformed: []byte("not an archive")}}
+
+	report, err := backfillPlaceholderArchives(ctx, meta, blobs, "mp-test")
+	if err != nil {
+		t.Fatalf("backfill: %v", err)
+	}
+	if report.Examined != 2 || report.Invalid != 2 || report.Unreproducible != 0 || report.Derived != 0 {
+		t.Fatalf("report = %+v, want two invalid archives and nothing unreproducible", report)
+	}
+	if len(report.InvalidSample) != 2 || report.InvalidSample[0] != missing || report.InvalidSample[1] != malformed {
+		t.Fatalf("invalid sample = %v, want both digests", report.InvalidSample)
 	}
 }

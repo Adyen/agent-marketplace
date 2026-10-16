@@ -24,6 +24,9 @@ type PlaceholderBackfillReport struct {
 	Unreproducible int
 	// UnreproducibleSample holds the first few unreproducible archive digests.
 	UnreproducibleSample []store.ArchiveDigest
+	// Invalid counts stored archives whose final blob is missing or cannot be decoded.
+	Invalid       int
+	InvalidSample []store.ArchiveDigest
 }
 
 // StartPlaceholderBackfill runs BackfillPlaceholders in the background so that
@@ -40,6 +43,7 @@ func StartPlaceholderBackfill(ctx context.Context, deps Deps) {
 func BackfillPlaceholders(ctx context.Context, deps Deps) error {
 	if deps.Marketplace.ID == "" {
 		if err := EnsureMarketplace(ctx, &deps); err != nil {
+			logPlaceholderBackfill(PlaceholderBackfillReport{}, err)
 			return err
 		}
 	}
@@ -84,14 +88,18 @@ func backfillPlaceholderArchive(ctx context.Context, blobs store.BlobStore, dige
 	final, err := blobs.Get(ctx, digest)
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
-			recordUnreproducible(report, digest)
+			recordSkipped(&report.Invalid, &report.InvalidSample, digest)
 			return nil
 		}
 		return fmt.Errorf("load archive %s: %w", digest, err)
 	}
 	placeholder, err := hccartifact.DerivePlaceholderArchive(final, string(digest))
+	if errors.Is(err, hccartifact.ErrPlaceholderNotReproducible) {
+		recordSkipped(&report.Unreproducible, &report.UnreproducibleSample, digest)
+		return nil
+	}
 	if err != nil {
-		recordUnreproducible(report, digest)
+		recordSkipped(&report.Invalid, &report.InvalidSample, digest)
 		return nil
 	}
 	if err := store.PutImmutableBlob(ctx, blobs, store.PlaceholderArchiveKey(digest), placeholder); err != nil {
@@ -101,10 +109,10 @@ func backfillPlaceholderArchive(ctx context.Context, blobs store.BlobStore, dige
 	return nil
 }
 
-func recordUnreproducible(report *PlaceholderBackfillReport, digest store.ArchiveDigest) {
-	report.Unreproducible++
-	if len(report.UnreproducibleSample) < placeholderBackfillSamples {
-		report.UnreproducibleSample = append(report.UnreproducibleSample, digest)
+func recordSkipped(count *int, sample *[]store.ArchiveDigest, digest store.ArchiveDigest) {
+	*count++
+	if len(*sample) < placeholderBackfillSamples {
+		*sample = append(*sample, digest)
 	}
 }
 
@@ -117,6 +125,10 @@ func logPlaceholderBackfill(report PlaceholderBackfillReport, err error) {
 		slog.Error("placeholder archives are not reproducible from their stored archives",
 			"count", report.Unreproducible, "digests", logvalue.Safe(report.UnreproducibleSample))
 	}
+	if report.Invalid > 0 {
+		slog.Error("stored archives are missing or invalid",
+			"count", report.Invalid, "digests", logvalue.Safe(report.InvalidSample))
+	}
 	slog.Info("placeholder archive backfill finished", "examined", report.Examined, "present", report.Present,
-		"derived", report.Derived, "unreproducible", report.Unreproducible)
+		"derived", report.Derived, "unreproducible", report.Unreproducible, "invalid", report.Invalid)
 }

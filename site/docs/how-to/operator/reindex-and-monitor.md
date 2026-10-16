@@ -83,8 +83,9 @@ Read the log file or collect it with your container tooling. Alert or investigat
 - `license policy rejected resource` and other records whose `code` attribute starts with `marketplace.policy.`: ingestion policy rejected a resource. See [How to manage ingestion policy](./manage-ingestion-policy.md) for the finding codes.
 - `marketplace.ingest.duplicate-resource` in the `code` attribute: two paths in one registry publish the same kind and name; the first wins.
 - `resource revision archive digest repaired`: a refresh staged unchanged content under a different archive digest. The stored digest was repaired and the previous artifact stays downloadable, but locks that reference the old digest fail `sync --locked` or `sync --check`. [How to reset and reindex a registry](./reset-and-reindex-a-registry.md) explains how consumers recover.
-- `placeholder archive backfill finished`: the startup backfill and `serve reindex` completed. Its `derived`, `present`, and `unreproducible` counts show how many placeholder archives the server now stores.
+- `placeholder archive backfill finished`: the startup backfill and `serve reindex` completed. Its `derived`, `present`, `unreproducible`, and `invalid` counts show how many placeholder archives the server now stores.
 - `placeholder archives are not reproducible from their stored archives`: these digests have no placeholder form. Keep the Go release that published them, or publish a new revision with changed content, as described in [Upgrade the Go toolchain](#upgrade-the-go-toolchain).
+- `stored archives are missing or invalid`: these digests are owned by a revision, but their stored final archive is missing or cannot be decoded. Restore the blob from backup, or [reindex the registry](./reset-and-reindex-a-registry.md).
 - `worker configuration authority rejected`: a process opened stores whose recorded authority mode conflicts with its `management.mode`, for example after adoption or a rollback.
 
 ## Alert on metrics

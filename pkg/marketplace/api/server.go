@@ -1634,12 +1634,12 @@ func (s *Server) handlePlaceholderArchives(w http.ResponseWriter, r *http.Reques
 		writeError(w, http.StatusInternalServerError, "failed to fetch placeholder archive")
 		return
 	}
+	if !s.archiveWithinLimit(w, data) {
+		return
+	}
 	if _, err := hccartifact.VerifyPlaceholderArchive(data, string(digest)); err != nil {
 		slog.Error("placeholder archive digest mismatch", "digest", logvalue.Safe(digest), "error", logvalue.Safe(err))
 		writeError(w, http.StatusInternalServerError, "placeholder archive digest mismatch")
-		return
-	}
-	if !s.archiveWithinLimit(w, data) {
 		return
 	}
 	writeImmutable(w, artifactMediaType, data)

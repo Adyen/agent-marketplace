@@ -885,12 +885,16 @@ paths:
               schema:
                 type: string
                 format: binary
+        "400":
+          description: The digest is not 64 lowercase hexadecimal characters
         "403":
           description: The archive's revision is blocked by assessment
         "404":
           description: The archive is not owned by any revision of this Marketplace
         "410":
           description: The archive's revision is revoked
+        "413":
+          description: The stored archive exceeds policy.limits.artifact_bytes
         "500":
           description: The stored archive failed digest verification
 
@@ -915,12 +919,16 @@ paths:
               schema:
                 type: string
                 format: binary
+        "400":
+          description: The digest is not 64 lowercase hexadecimal characters
         "403":
           description: The archive's revision is blocked by assessment
         "404":
           description: The archive is not owned by any revision of this Marketplace, or its placeholder form is not available
         "410":
           description: The archive's revision is revoked
+        "413":
+          description: The stored archive exceeds policy.limits.artifact_bytes
         "500":
           description: The stored archive failed digest verification
 

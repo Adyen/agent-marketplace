@@ -252,6 +252,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/archives/sha256/{digest}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Download the placeholder-form canonical archive whose bytes hash to the digest
+         * @description The bytes hash to the requested archive digest, so clients verify them by hash without re-compressing. The Marketplace derives and stores the placeholder form on first request when the stored final archive reproduces the digest.
+         */
+        get: operations["getPlaceholderArchive"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/artifacts/sha256/{digest}": {
         parameters: {
             query?: never;
@@ -383,26 +403,6 @@ export interface paths {
         };
         /** Download a content-addressed registry or collection manifest */
         get: operations["getManifest"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/archives/sha256/{digest}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Download the placeholder-form canonical archive whose bytes hash to the digest
-         * @description The bytes hash to the requested archive digest, so clients verify them by hash without re-compressing. The Marketplace derives and stores the placeholder form on first request when the stored final archive reproduces the digest.
-         */
-        get: operations["getPlaceholderArchive"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1660,6 +1660,71 @@ export interface operations {
             default: components["responses"]["AdminError"];
         };
     };
+    getPlaceholderArchive: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Exactly 64 lowercase hexadecimal characters (the sha256 prefix is part of the path). */
+                digest: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Placeholder-form canonical artifact tar.gz */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/vnd.agent-marketplace.artifact.v1.tar+gzip": string;
+                };
+            };
+            /** @description The digest is not 64 lowercase hexadecimal characters */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The archive's revision is blocked by assessment */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The archive is not owned by any revision of this Marketplace, or its placeholder form is not available */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The archive's revision is revoked */
+            410: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The stored archive exceeds policy.limits.artifact_bytes */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The stored archive failed digest verification */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     getArtifact: {
         parameters: {
             query?: never;
@@ -1681,6 +1746,13 @@ export interface operations {
                     "application/vnd.agent-marketplace.artifact.v1.tar+gzip": string;
                 };
             };
+            /** @description The digest is not 64 lowercase hexadecimal characters */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
             /** @description The archive's revision is blocked by assessment */
             403: {
                 headers: {
@@ -1697,6 +1769,13 @@ export interface operations {
             };
             /** @description The archive's revision is revoked */
             410: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The stored archive exceeds policy.limits.artifact_bytes */
+            413: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -1903,57 +1982,6 @@ export interface operations {
                 content: {
                     "application/json": Record<string, never>;
                 };
-            };
-        };
-    };
-    getPlaceholderArchive: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                /** @description Exactly 64 lowercase hexadecimal characters (the sha256 prefix is part of the path). */
-                digest: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Placeholder-form canonical artifact tar.gz */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/vnd.agent-marketplace.artifact.v1.tar+gzip": string;
-                };
-            };
-            /** @description The archive's revision is blocked by assessment */
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            /** @description The archive is not owned by any revision of this Marketplace, or its placeholder form is not available */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            /** @description The archive's revision is revoked */
-            410: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            /** @description The stored archive failed digest verification */
-            500: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
             };
         };
     };

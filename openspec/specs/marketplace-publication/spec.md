@@ -98,14 +98,24 @@ when the newly built artifact is equal to the stored one ignoring its archive
 digest. The reused archive MUST NOT be re-encoded, and the registry revision
 manifest digest, occurrence, and resource occurrences MUST be rebuilt to carry
 the reused archive digest.
+A stored revision without a stored placeholder-form archive SHALL NOT be reused,
+because its final archive cannot be verified without re-encoding; the newly built
+archive and its placeholder are published instead.
 
 #### Scenario: Identical content republished under another toolchain keeps its archive digest
 
-- **GIVEN** a stored resource revision built by one Go toolchain
+- **GIVEN** a stored resource revision built by one Go toolchain with its placeholder-form archive stored
 - **WHEN** a publication from another Go toolchain stages the same content
 - **THEN** publication MUST succeed
 - **AND** the stored archive digest MUST be reused
 - **AND** the registry revision manifest digest MUST be the one derived from the reused archive digest
+
+#### Scenario: Stored archive without a placeholder is not reused
+
+- **GIVEN** a stored resource revision with no stored placeholder-form archive whose archive digest differs from the newly built archive
+- **WHEN** a publication stages the same content
+- **THEN** publication MUST succeed
+- **AND** the revision MUST carry the newly built archive digest and its placeholder-form archive
 
 #### Scenario: Drifted content still publishes a new archive
 
