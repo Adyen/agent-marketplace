@@ -37,7 +37,7 @@ describe('ResourceRow', () => {
       global: { stubs },
     })
 
-    expect(wrapper.get('h2').text()).toBe(`${hostile}/${hostile}`)
+    expect(wrapper.get('h2').text()).toBe(`${hostile} / ${hostile}`)
     expect(wrapper.get('.resource-coordinate__separator').text()).toBe('/')
     expect(wrapper.get('.resource-coordinate__separator').classes()).toContain('am-brand-slash')
     expect(wrapper.get('h2').html()).toContain('&lt;img')
@@ -63,7 +63,8 @@ describe('ResourceRow', () => {
     expect(wrapper.text()).not.toContain(contentDigest)
     expect(wrapper.find('a[href="/registries/registry-id"]').exists()).toBe(false)
     const coordinateLink = wrapper.get('a[href^="/r/registry-id/skill/review/revisions/"]')
-    expect(coordinateLink.text()).toBe('registry-id/review')
+    expect(coordinateLink.text()).toBe('registry-id / review')
+    expect(coordinateLink.attributes('aria-label')).toBe('registry-id/review')
     expect(coordinateLink.classes()).toContain('resource-coordinate-link')
   })
 

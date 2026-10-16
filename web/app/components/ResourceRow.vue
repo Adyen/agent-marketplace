@@ -56,10 +56,10 @@ const installationCountLabel = computed(() =>
           <span class="shrink-0 font-mono text-xs font-medium text-muted">{{ kindLabel(item.kind) }}</span>
           <span class="text-xs text-dimmed" aria-hidden="true">·</span>
           <h2 class="relative z-10 min-w-0 truncate font-mono text-sm font-medium leading-5 tracking-tight">
-            <NuxtLink v-if="browserUrl" :to="browserUrl" class="resource-coordinate-link relative cursor-pointer rounded focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary">
-              <span class="text-muted">{{ registryLabel(item) }}</span><span class="resource-coordinate__separator am-brand-slash">/</span><span class="font-semibold text-highlighted">{{ item.name }}</span>
+            <NuxtLink v-if="browserUrl" :to="browserUrl" :aria-label="`${registryLabel(item)}/${item.name}`" class="resource-coordinate-link relative cursor-pointer rounded focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary">
+              <span class="text-muted">{{ registryLabel(item) }}</span><span class="resource-coordinate__separator am-brand-slash"> / </span><span class="font-semibold text-highlighted">{{ item.name }}</span>
             </NuxtLink>
-            <span v-else><span class="text-muted">{{ registryLabel(item) }}</span><span class="resource-coordinate__separator am-brand-slash">/</span><span class="font-semibold text-highlighted">{{ item.name }}</span></span>
+            <span v-else :aria-label="`${registryLabel(item)}/${item.name}`"><span class="text-muted">{{ registryLabel(item) }}</span><span class="resource-coordinate__separator am-brand-slash"> / </span><span class="font-semibold text-highlighted">{{ item.name }}</span></span>
           </h2>
         </div>
 

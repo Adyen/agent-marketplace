@@ -20,7 +20,7 @@ See `proposal.md` for motivation. VitePress and Nuxt both import `design/brand.c
 - Add a dedicated canonical Marketplace Docs URL rather than changing the local `DOCS_PATH` used elsewhere.
 - Render the Marketplace Docs action as a native isolated new-tab link with the existing Lucide external-link icon.
 - Define one shared weight-800 `#00D16A` slash class. Decorative instances are hidden from assistive technology; the coordinate delimiter remains accessible.
-- Attach every slash directly in text while adding a shared `0.1em` inline CSS margin, giving labels, titles, and coordinates proportional visual breathing room without changing their text values.
+- Author spaces directly around slash characters instead of simulating them with CSS margins; preserve compact accessible coordinate names explicitly with `aria-label`.
 - Limit decorative placements to Landing section eyebrows and the Marketplace instance title. Primary-color eyebrow text increases contrast without making functional headings decorative.
 - Apply the decorative title slash only to skills and commands, where the prefix reinforces their authored tool identity without adding noise to collections or other resource kinds.
 - Draw coordinate hover emphasis with one inset link-level line so font-relative slash margins do not fragment it or place it outside the clipped row title.

@@ -234,13 +234,8 @@ test.describe('Marketplace browser discovery', () => {
     const eyebrowSlash = page.locator('.eyebrow .am-brand-slash').first()
     await expect(eyebrowSlash).toHaveCSS('color', 'rgb(0, 209, 106)')
     await expect(eyebrowSlash).toHaveCSS('font-weight', '800')
-    const slashSpacingRatio = await eyebrowSlash.evaluate((element) => {
-      const style = getComputedStyle(element)
-      return Number.parseFloat(style.marginInlineStart) / Number.parseFloat(style.fontSize)
-    })
-    expect(slashSpacingRatio).toBeCloseTo(0.1, 2)
     const eyebrowText = await page.locator('.eyebrow').first().evaluate(element => element.textContent ?? '')
-    expect(eyebrowText).toMatch(/^\/\S/)
+    expect(eyebrowText).toMatch(/^\/\s\S/)
     const eyebrowColors = await page.locator('.eyebrow').first().evaluate((element) => ({
       label: getComputedStyle(element).color,
       slash: getComputedStyle(element.querySelector('.am-brand-slash')!).color,
@@ -268,7 +263,7 @@ test.describe('Marketplace browser discovery', () => {
     await expect(introSlash).toHaveText('/')
     await expect(introSlash).toHaveCSS('color', 'rgb(0, 209, 106)')
     await expect(introSlash).toHaveCSS('font-weight', '800')
-    await expect(page.locator('.marketplace-intro h1')).toHaveText('/e2e-marketplace')
+    await expect(page.locator('.marketplace-intro h1')).toHaveText('/ e2e-marketplace')
     await expect(page.locator('#filters-heading .am-brand-slash')).toHaveCount(0)
     await expect(page.locator('#results-heading .am-brand-slash')).toHaveCount(0)
     await expect(page.getByRole('heading', { name: 'Filters', exact: true })).toBeVisible()
@@ -493,6 +488,7 @@ test.describe('Marketplace browser discovery', () => {
       await expect(description).toHaveCSS('color', theme.marketplace.secondaryText)
 
       const coordinateLink = row.getByRole('link', { name: 'team-tools/secure-review', exact: true })
+      await expect(coordinateLink).toHaveText('team-tools / secure-review')
       await expect(coordinateLink).toHaveCSS('box-shadow', 'none')
       await coordinateLink.hover()
       await expect.poll(() => coordinateLink.evaluate(element => getComputedStyle(element).boxShadow)).toContain('inset')
