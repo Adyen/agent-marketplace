@@ -1563,3 +1563,124 @@ func TestDiscoverRootSkillWithPluginManifest(t *testing.T) {
 		t.Fatalf("entry path = %q, want %q", entry.Path, filepath.Join(dir, "SKILL.md"))
 	}
 }
+
+// spec: harness-opencode/existing-workspace-layouts-keep-precedence-over-an-opencode-marker
+// spec: harness-opencode/coexisting-layouts-are-reported
+func TestLoadKeepsExistingWorkspaceLayoutBesideOpenCode(t *testing.T) {
+	dir := t.TempDir()
+	for name, content := range map[string]string{
+		".claude/skills/workspace-skill/SKILL.md": "---\nname: workspace-skill\ndescription: Claude workspace skill\n---\nBody\n",
+		".opencode/commands/opencode-only.md":     "OpenCode command\n",
+	} {
+		path := filepath.Join(dir, filepath.FromSlash(name))
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cat, err := Load(dir, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cat.SourceHarness != "claude" || len(cat.Entries) != 1 || cat.Entries[0].Name != "workspace-skill" {
+		t.Fatalf("catalog = %s %#v, want the Claude workspace resources", cat.SourceHarness, cat.Entries)
+	}
+	var warning *diag.Diagnostic
+	for i := range cat.Diagnostics {
+		if cat.Diagnostics[i].Code == diag.CodeIngestAutodetectAmbiguous {
+			warning = &cat.Diagnostics[i]
+		}
+	}
+	if warning == nil || warning.Severity != diag.SeverityWarning || !strings.Contains(warning.Message, "opencode") || !strings.Contains(warning.Hint, "source_harness") {
+		t.Fatalf("coexisting layouts were not reported: %#v", cat.Diagnostics)
+	}
+	// An explicit source harness is the documented way to choose, and it is
+	// not ambiguous.
+	explicit, err := Load(dir, "opencode")
+	if err != nil || explicit.SourceHarness != "opencode" || diag.HasCode(explicit.Diagnostics, diag.CodeIngestAutodetectAmbiguous) {
+		t.Fatalf("explicit opencode = %v %#v", err, explicit)
+	}
+	if len(explicit.Entries) != 1 || explicit.Entries[0].Name != "opencode-only" {
+		t.Fatalf("explicit opencode entries = %#v", explicit.Entries)
+	}
+}
+
+// spec: harness-opencode/container-registries-keep-their-bundles-beside-an-opencode-folder
+func TestDiscoverKeepsContainerBundlesBesideOpenCode(t *testing.T) {
+	dir := t.TempDir()
+	for name, content := range map[string]string{
+		"team/.claude-plugin/plugin.json":  `{"name":"team"}`,
+		"team/skills/review/SKILL.md":      "---\nname: review\ndescription: Review\n---\nBody\n",
+		".opencode/commands/local-tool.md": "Maintainer OpenCode command\n",
+	} {
+		path := filepath.Join(dir, filepath.FromSlash(name))
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	loaded, err := Discover(dir, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(loaded.Entries) != 1 || loaded.Entries[0].Name != "review" || loaded.Entries[0].SourceHarness != "claude" {
+		t.Fatalf("container entries = %#v, want only the team bundle's skill", loaded.Entries)
+	}
+	reported := false
+	for _, m := range loaded.Malformed {
+		reported = reported || (m.DirName == diag.CodeIngestAutodetectAmbiguous && strings.Contains(m.Error.Error(), "opencode"))
+	}
+	if !reported {
+		t.Fatalf("unread OpenCode folder was not reported: %#v", loaded.Malformed)
+	}
+	explicit, err := Discover(dir, "opencode")
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, entry := range explicit.Entries {
+		found = found || (entry.Name == "local-tool" && entry.SourceHarness == "opencode")
+	}
+	if !found {
+		t.Fatalf("explicit opencode did not read the root: %#v", explicit.Entries)
+	}
+}
+
+// spec: harness-opencode/existing-workspace-layouts-keep-precedence-over-an-opencode-marker
+func TestOpenCodeMarkerProbeDoesNotFollowLinks(t *testing.T) {
+	outside := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(outside, "skills"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, variant := range []string{"linked entry", "linked folder"} {
+		t.Run(variant, func(t *testing.T) {
+			dir := t.TempDir()
+			skill := filepath.Join(dir, ".claude", "skills", "ws", "SKILL.md")
+			if err := os.MkdirAll(filepath.Dir(skill), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(skill, []byte("---\nname: ws\ndescription: Claude workspace skill\n---\nBody\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			link, target := filepath.Join(dir, ".opencode"), outside
+			if variant == "linked entry" {
+				if err := os.Mkdir(link, 0o755); err != nil {
+					t.Fatal(err)
+				}
+				link, target = filepath.Join(link, "skills"), filepath.Join(outside, "skills")
+			}
+			if err := os.Symlink(target, link); err != nil {
+				t.Fatal(err)
+			}
+			// The probe must not refuse a source another layout claims.
+			loaded, err := Discover(dir, "")
+			if err != nil || len(loaded.Entries) != 1 || loaded.Entries[0].SourceHarness != "claude" {
+				t.Fatalf("Claude workspace beside a %s = %v %#v", variant, err, loaded.Entries)
+			}
+		})
+	}
+}

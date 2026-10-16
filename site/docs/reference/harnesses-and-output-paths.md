@@ -15,6 +15,7 @@ The roots and per-kind paths come from `pkg/harness-compilation/target` and `int
 | Gemini CLI | `gemini` |
 | Devin CLI | `devin` |
 | Codex | `codex` |
+| OpenCode | `opencode` |
 
 These identifiers appear in `harnesses:` lists and in `source_harness:`. Identifiers are lowercase. An unknown identifier in a v4 configuration fails with `v4.harness`.
 
@@ -31,6 +32,7 @@ Each harness has a repository root and a machine root. Resources selected by the
 | Gemini CLI | `<repo>/.gemini` | `~/.gemini` |
 | Devin CLI | `<repo>/.devin` | `~/.config/devin` |
 | Codex | `<repo>/.agents` (skills, commands) and `<repo>/.codex` (subagents, hooks, mcp) | `~/.agents` (skills, commands) and `~/.codex` or `$CODEX_HOME` (subagents, hooks, mcp) |
+| OpenCode | `<repo>/.opencode` plus native repository configuration | `$XDG_CONFIG_HOME/opencode` or `~/.config/opencode` |
 
 Codex splits its files across two roots. When `CODEX_HOME` is set, it replaces `~/.codex` for machine subagents, hooks, and MCP servers. It never moves skills, which stay in `~/.agents`. `CODEX_HOME` must be an absolute path; a relative value stops the run with an error.
 
@@ -112,6 +114,34 @@ Factory commands are always regular files, even in symlink mode, because the Dro
 
 Hooks and MCP servers share one `settings.json` per scope. The Gemini compiler also produces a `gemini-extension.json` file, but sync does not install it. Its `mcpServers` entries go into `settings.json` instead.
 
+### OpenCode
+
+OpenCode is opt-in. Select `opencode` through the harness modal or configuration.
+
+| Kind | Repository path | Machine path relative to its root |
+|---|---|---|
+| skill | `.opencode/skills/<name>/SKILL.md` | `skills/<name>/SKILL.md` |
+| command | `.opencode/commands/<name>.md` | `commands/<name>.md` |
+| subagent | `.opencode/agents/<name>.md` | `agents/<name>.md` |
+| hook | `.opencode/hooks/agent-marketplace/<name>.json` | `hooks/agent-marketplace/<name>.json` |
+| hook support | `.opencode/hook-support/<source>/<hook>/` | `hook-support/<source>/<hook>/` |
+| hook adapter | `.opencode/plugins/agent-marketplace.js` | `plugins/agent-marketplace.js` |
+| mcp | `opencode.json` or existing `opencode.jsonc`, under `mcp` | `opencode.json` or existing `opencode.jsonc`, under `mcp` |
+
+The machine root follows `XDG_CONFIG_HOME`, falling back to `~/.config/opencode`.
+Absolute `OPENCODE_CONFIG_DIR` and `OPENCODE_CONFIG` override the resource
+folder and configuration file separately. Native configuration already in
+`.opencode` takes precedence over the repository root configuration.
+
+Commands stay commands, and agents use native subagent mode. The fixed hook
+adapter is a regular file in both materialization modes. Supported command
+`PreToolUse` hooks run through native plugins; absent, disabled, or failed
+plugins are inactive. Hook support is installed under `hook-support/`, and the
+adapter gives handlers `AGENT_MARKETPLACE_PROJECT_DIR` so repository commands
+reach it from any working directory. Rules and arbitrary executable plugin
+conversion are unsupported. For protocol details, see the repository's OpenCode compatibility
+note under `docs/harness-validation/opencode.md`.
+
 ### Windsurf
 
 | Kind | Repository path | Machine path |
@@ -139,7 +169,9 @@ In the default `symlink` mode, skills, commands, and subagents are symlinks into
 
 Shared files, such as `hooks.json`, `.mcp.json`, `settings.json`, `.codex/config.toml`, and `.devin/mcp_config.json`, hold entries from several sources as well as entries you wrote yourself. They are always regular files in both modes. Sync edits them in place, adds and removes only the entries it installed, and keeps your own entries, comments, file modes, and unrelated settings.
 
-Hook entries on all seven harnesses carry no `_managed_by` marker. Sync records owned hook entries in state files under `$XDG_STATE_HOME/agent-marketplace` (default `~/.local/state/agent-marketplace`). If that record is missing or damaged, sync treats every existing native hook entry as yours, removes nothing, and refuses to overwrite an entry it cannot prove it owns. A handwritten entry that matches a selected hook satisfies it without being adopted. Deselection removes only entries that ownership state proves sync installed, along with their owned support files. Recognized marked legacy entries are handled separately under the marker authority described above. MCP server ownership is unchanged by hook migration; see the [filesystem layout reference](./filesystem-layout.md) for the ownership state locations.
+Hook entries in the seven native hook files carry no `_managed_by` marker. Sync records owned hook entries in state files under `$XDG_STATE_HOME/agent-marketplace` (default `~/.local/state/agent-marketplace`). If that record is missing or damaged, sync treats every existing native hook entry as yours, removes nothing, and refuses to overwrite an entry it cannot prove it owns. A handwritten entry that matches a selected hook satisfies it without being adopted. Deselection removes only entries that ownership state proves sync installed, along with their owned support files. Recognized marked legacy entries are handled separately under the marker authority described above. MCP server ownership is unchanged by hook migration; see the [filesystem layout reference](./filesystem-layout.md) for the ownership state locations.
+
+OpenCode has no shared hook file: each hook is its own declaration file next to the fixed adapter. OpenCode MCP entries in `opencode.json` or `opencode.jsonc` carry no marker; sync records them in the same ownership state and treats a missing or damaged record the same way.
 
 ## Related documentation
 

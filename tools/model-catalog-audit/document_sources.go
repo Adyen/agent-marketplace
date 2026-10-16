@@ -27,6 +27,11 @@ var hookToolSources = []source{
 	{Name: "tool-gemini-tools", Harness: "gemini", Domain: "toolpolicy", URL: "https://github.com/google-gemini/gemini-cli/blob/main/docs/reference/tools.md", Kind: "document", Sections: []string{"Available tools"}},
 	{Name: "tool-gemini-hooks", Harness: "gemini", Domain: "toolpolicy", URL: "https://geminicli.com/docs/hooks/reference/", Kind: "document", Sections: []string{"Matchers and tool names"}},
 	{Name: "tool-gemini-subagents", Harness: "gemini", Domain: "toolpolicy", URL: "https://github.com/google-gemini/gemini-cli/blob/main/docs/core/subagents.md", Kind: "document", Sections: []string{"Tool wildcards"}},
+	{Name: "hook-opencode-plugins", Harness: "opencode", Domain: "hookpolicy", URL: "https://opencode.ai/docs/plugins.md", Kind: "document", Sections: []string{"tool.execute.before"}},
+	{Name: "hook-opencode-tools", Harness: "opencode", Domain: "hookpolicy", URL: "https://opencode.ai/docs/tools.md", Kind: "document", Sections: []string{"apply_patch"}},
+	{Name: "tool-opencode-tools", Harness: "opencode", Domain: "toolpolicy", URL: "https://opencode.ai/docs/tools.md", Kind: "document", Sections: []string{"apply_patch"}},
+	{Name: "tool-opencode-plugins", Harness: "opencode", Domain: "toolpolicy", URL: "https://opencode.ai/docs/plugins.md", Kind: "document", Sections: []string{"tool.execute.before"}},
+	{Name: "tool-opencode-permissions", Harness: "opencode", Domain: "toolpolicy", URL: "https://opencode.ai/docs/permissions.md", Kind: "document", Sections: []string{"all file modifications"}},
 	{Name: "hook-windsurf", Harness: "windsurf", Domain: "hookpolicy", URL: "https://docs.devin.ai/desktop/cascade/hooks", Kind: "document", Sections: []string{"Workspace-Level"}},
 	{Name: "tool-windsurf", Harness: "windsurf", Domain: "toolpolicy", URL: "https://docs.devin.ai/desktop/cascade/hooks", Kind: "document", Sections: []string{"Hook Events"}},
 }

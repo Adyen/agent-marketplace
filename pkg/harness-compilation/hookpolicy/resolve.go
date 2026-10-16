@@ -49,6 +49,7 @@ var eventUnmappableCodes = map[target.Target]string{
 	target.TargetWindsurf: diag.CodeHookWindsurfEventUnmappable,
 	target.TargetDevin:    diag.CodeHookDevinEventUnmappable,
 	target.TargetCodex:    diag.CodeHookCodexUnsupported,
+	target.TargetOpenCode: diag.CodeHookOpenCodeUnsupported,
 }
 
 var typeUnsupportedCodes = map[target.Target]string{
@@ -58,6 +59,7 @@ var typeUnsupportedCodes = map[target.Target]string{
 	target.TargetWindsurf: diag.CodeHookWindsurfUnsupportedType,
 	target.TargetDevin:    diag.CodeHookDevinUnsupportedType,
 	target.TargetCodex:    diag.CodeHookCodexUnsupported,
+	target.TargetOpenCode: diag.CodeHookOpenCodeUnsupported,
 }
 
 func eventUnmappableCode(dst target.Target) string {
@@ -93,6 +95,23 @@ func timeoutCappedCode(dst target.Target) string {
 
 func matcherSpec(c catalog) toolpolicy.MatcherSpec {
 	return toolpolicy.MatcherSpec{Syntax: c.Matcher.Syntax, Anchor: c.Matcher.Anchor, ExactLists: c.Matcher.ExactLists}
+}
+
+// MatcherSpecFor returns the shipped matcher syntax for harness h. Hooks
+// without source provenance use the Claude catalog, as Resolve does.
+func MatcherSpecFor(h target.Target) (toolpolicy.MatcherSpec, bool) {
+	if h == "" {
+		h = target.TargetClaude
+	}
+	r, err := shipped()
+	if err != nil {
+		return toolpolicy.MatcherSpec{}, false
+	}
+	c, ok := r.catalogs[h]
+	if !ok {
+		return toolpolicy.MatcherSpec{}, false
+	}
+	return matcherSpec(c), true
 }
 
 // IsDeclaredEvent reports whether the shipped hook catalog for h declares the

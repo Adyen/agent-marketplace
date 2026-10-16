@@ -932,3 +932,26 @@ and the 1-based line of the offending key. The message reports the JSON key path
 Any JSON document that is not well-formed (truncated object, trailing data after
 the top-level value, nesting beyond the supported depth). Rejected with the same
 source-aware shape as `json.duplicate-key`.
+
+## OpenCode
+
+| Code | Severity | Outcome |
+|---|---|---|
+| `rule.opencode.unsupported` | warning | Rules and shared instructions are outside this target |
+| `compile.opencode.field-dropped` | warning | Metadata has no native equivalent and was omitted |
+| `skill.opencode.security-restriction-unsupported` | error | Skill execution restrictions cannot be represented; resource omitted |
+| `command.opencode.restriction-unsupported` | error | Command execution restrictions cannot be represented; resource omitted |
+| `compile.opencode.invalid-field` | error | A modeled native field has an invalid type; resource omitted |
+| `subagent.opencode.restriction-unsupported` | error | Agent execution restrictions cannot be represented; resource omitted |
+| `mcp.opencode.unrepresentable` | error | MCP transport, authentication, or reference fields cannot be represented; server omitted |
+| `hook.opencode.unsupported` | error | Hook event, matcher, handler, or deadline is unsupported; hook omitted |
+| `ingest.opencode.invalid-resource` | error | Native resource decoding failed; resource omitted |
+| `ingest.opencode.duplicate-identity` | error | Distinct native files claim the same resource identity; resources omitted |
+| `ingest.opencode.read-refused` | error | Native resource is not an admitted bounded regular file; resource omitted |
+| `ingest.opencode.plugin-unsupported` | error | Arbitrary or altered executable plugin cannot be ingested |
+| `ingest.autodetect.ambiguous` | warning | Source carries two harness layouts; the unselected layout's resources are not ingested |
+| `compile.opencode.native-semantics-unsupported` | error | Native execution or reference semantics cannot be preserved by the destination |
+| `materialize.opencode.aggregate-write` | error | Native MCP configuration could not be published |
+| `materialize.opencode.aggregate-malformed` | error | Native MCP configuration is malformed or ambiguous; existing bytes preserved |
+| `materialize.opencode.aggregate-prune-postponed` | warning | Incomplete MCP input postpones stale-entry removal |
+| `materialize.opencode.aggregate-collision` | error | Selected MCP server conflicts with an unmanaged entry; existing bytes preserved |

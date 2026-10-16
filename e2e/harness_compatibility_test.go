@@ -13,7 +13,7 @@ import (
 	"time"
 )
 
-var compatibilityTargets = []string{"claude", "factory", "cursor", "windsurf", "gemini", "devin", "codex"}
+var compatibilityTargets = []string{"claude", "factory", "cursor", "windsurf", "gemini", "devin", "codex", "opencode"}
 var compatibilityResources = []string{"skill", "command", "subagent", "hook", "mcp", "collection", "rule", "native-cli"}
 
 func TestHarnessCompatibility(t *testing.T) {
@@ -128,6 +128,12 @@ func runCompatibilityScenario(t *testing.T, results []compatibilityResult, nativ
 		rows[results[i].Resource] = &results[i]
 	}
 	native := prepareCompatibilityNative(e, f, rows["native-cli"], nativeMode, reason, expectedVersion)
+	// OpenCode's negative-control startup can create the machine JSONC file.
+	// Assert the documented effective destination, not a competing JSON file.
+	if first.Harness == "opencode" {
+		paths = compatibilityPaths(e, first.Harness, first.Scope, f)
+		otherPaths = compatibilityPaths(e, first.Harness, otherScope, f)
+	}
 	for i := range results {
 		results[i].Version = rows["native-cli"].Version
 	}
@@ -142,6 +148,9 @@ func runCompatibilityScenario(t *testing.T, results []compatibilityResult, nativ
 	catalog := map[string][]string{
 		"skill": {f.name("skill")}, "command": {f.name("command")}, "subagent": {f.name("subagent")},
 		"hook": {"PreToolUse-command", "UserPromptSubmit-command"}, "mcp": {f.name("mcp-a"), f.name("mcp-b")}, "collection": {f.name("collection")},
+	}
+	if first.Harness == "opencode" {
+		catalog["hook"] = []string{"PreToolUse-command", "PreToolUse-command-2"}
 	}
 	catalogPassed := make(map[string]bool)
 	for _, kind := range compatibilityResources[:6] {
@@ -310,6 +319,8 @@ func compatibilityHookEvents(target string) []string {
 		return []string{"pre_run_command", "pre_user_prompt"}
 	case "cursor":
 		return []string{"preToolUse", "beforeSubmitPrompt"}
+	case "opencode":
+		return []string{"PreToolUse"}
 	default:
 		return []string{"PreToolUse", "UserPromptSubmit"}
 	}
@@ -320,6 +331,22 @@ func assertCompatibilityMCP(t *testing.T, text, target string, f compatibilityFi
 	for i, suffix := range []string{"mcp-a", "mcp-b"} {
 		name := f.name(suffix)
 		setting := []string{"alpha", "beta"}[i]
+		if target == "opencode" {
+			var aggregate struct {
+				Servers map[string]struct {
+					Command     []string          `json:"command"`
+					Environment map[string]string `json:"environment"`
+				} `json:"mcp"`
+			}
+			if err := json.Unmarshal([]byte(text), &aggregate); err != nil {
+				t.Fatal(err)
+			}
+			entry, found := aggregate.Servers[name]
+			if !found || !slices.Equal(entry.Command, []string{f.server, "--label=" + name}) || entry.Environment["AMCOMPAT_SETTING"] != setting || len(aggregate.Servers) != 2 {
+				t.Errorf("wrong native MCP entry %s: %+v", name, entry)
+			}
+			continue
+		}
 		if target == "codex" {
 			pattern := `(?ms)^\[mcp_servers\."?` + regexp.QuoteMeta(name) + `"?\]\n(.*?)(?:^\[mcp_servers\.[^.\n]+\]\n|\z)`
 			match := regexp.MustCompile(pattern).FindStringSubmatch(text)

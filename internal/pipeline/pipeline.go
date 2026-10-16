@@ -999,7 +999,7 @@ func CollectManagedPaths(resolved []resolver.ResolvedArtifact) map[hcc.Target]ba
 			slog.Error("resolve native aggregate backup files", "target", t, "error", mappingErr)
 			continue
 		}
-		if len(harness.NativeAggregateInstalls(t)) > 0 {
+		if len(harness.NativeAggregateInstalls(t)) > 0 || t == hcc.TargetOpenCode {
 			destinations, err := harness.ResolveDestinations(t, true, ".")
 			if err != nil {
 				slog.Error("resolve native aggregate backup destinations", "target", t, "error", err)

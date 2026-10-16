@@ -502,8 +502,48 @@ type CodeDoc struct {
 	Hint     string
 }
 
+// OpenCode codes use the same outcome-based severity contract as existing targets.
+const (
+	CodeRuleOpenCodeUnsupported                    = "rule.opencode.unsupported"
+	CodeOpenCodeFieldDropped                       = "compile.opencode.field-dropped"
+	CodeSkillOpenCodeRestrictionUnsupported        = "skill.opencode.security-restriction-unsupported"
+	CodeCommandOpenCodeRestrictionUnsupported      = "command.opencode.restriction-unsupported"
+	CodeOpenCodeInvalidField                       = "compile.opencode.invalid-field"
+	CodeSubagentOpenCodeRestrictionUnsupported     = "subagent.opencode.restriction-unsupported"
+	CodeMcpOpenCodeUnrepresentable                 = "mcp.opencode.unrepresentable"
+	CodeHookOpenCodeUnsupported                    = "hook.opencode.unsupported"
+	CodeIngestOpenCodeInvalidResource              = "ingest.opencode.invalid-resource"
+	CodeIngestOpenCodeDuplicateIdentity            = "ingest.opencode.duplicate-identity"
+	CodeIngestOpenCodeReadRefused                  = "ingest.opencode.read-refused"
+	CodeIngestOpenCodePluginUnsupported            = "ingest.opencode.plugin-unsupported"
+	CodeIngestAutodetectAmbiguous                  = "ingest.autodetect.ambiguous"
+	CodeOpenCodeNativeSemanticsUnsupported         = "compile.opencode.native-semantics-unsupported"
+	CodeMaterializeOpenCodeAggregateWrite          = "materialize.opencode.aggregate-write"
+	CodeMaterializeOpenCodeAggregateMalformed      = "materialize.opencode.aggregate-malformed"
+	CodeMaterializeOpenCodeAggregatePrunePostponed = "materialize.opencode.aggregate-prune-postponed"
+	CodeMaterializeOpenCodeAggregateCollision      = "materialize.opencode.aggregate-collision"
+)
+
 // codeCatalog is the single source of truth for all v0 diagnostic codes.
 var codeCatalog = []CodeDoc{
+	{CodeRuleOpenCodeUnsupported, SeverityWarning, "Rules and shared instructions are outside this target", "See the OpenCode supported-field and hook compatibility documentation"},
+	{CodeOpenCodeFieldDropped, SeverityWarning, "Metadata has no native equivalent and was omitted", "See the OpenCode supported-field and hook compatibility documentation"},
+	{CodeSkillOpenCodeRestrictionUnsupported, SeverityError, "Skill execution restrictions cannot be represented; resource omitted", "See the OpenCode supported-field and hook compatibility documentation"},
+	{CodeCommandOpenCodeRestrictionUnsupported, SeverityError, "Command execution restrictions cannot be represented; resource omitted", "See the OpenCode supported-field and hook compatibility documentation"},
+	{CodeOpenCodeInvalidField, SeverityError, "A modeled native field has an invalid type; resource omitted", "See the OpenCode supported-field and hook compatibility documentation"},
+	{CodeSubagentOpenCodeRestrictionUnsupported, SeverityError, "Agent execution restrictions cannot be represented; resource omitted", "See the OpenCode supported-field and hook compatibility documentation"},
+	{CodeMcpOpenCodeUnrepresentable, SeverityError, "MCP transport, authentication, or reference fields cannot be represented; server omitted", "See the OpenCode supported-field and hook compatibility documentation"},
+	{CodeHookOpenCodeUnsupported, SeverityError, "Hook event, matcher, handler, or deadline is unsupported; hook omitted", "See the OpenCode supported-field and hook compatibility documentation"},
+	{CodeIngestOpenCodeInvalidResource, SeverityError, "Native resource decoding failed; resource omitted", "See the OpenCode supported-field and hook compatibility documentation"},
+	{CodeIngestOpenCodeDuplicateIdentity, SeverityError, "Distinct native files claim the same resource identity; resources omitted", "Choose distinct resource names"},
+	{CodeIngestOpenCodeReadRefused, SeverityError, "Native resource is not an admitted bounded regular file; resource omitted", "See the OpenCode supported-field and hook compatibility documentation"},
+	{CodeIngestOpenCodePluginUnsupported, SeverityError, "Arbitrary or altered executable plugin cannot be ingested", "See the OpenCode supported-field and hook compatibility documentation"},
+	{CodeIngestAutodetectAmbiguous, SeverityWarning, "Source carries two harness layouts; the unselected layout's resources are not ingested", "Set source_harness to choose the layout explicitly"},
+	{CodeOpenCodeNativeSemanticsUnsupported, SeverityError, "Native execution or reference semantics cannot be preserved by the destination", "See the OpenCode supported-field and hook compatibility documentation"},
+	{CodeMaterializeOpenCodeAggregateWrite, SeverityError, "Native MCP configuration could not be published", "See the OpenCode supported-field and hook compatibility documentation"},
+	{CodeMaterializeOpenCodeAggregateMalformed, SeverityError, "Native MCP configuration is malformed or ambiguous; existing bytes preserved", "See the OpenCode supported-field and hook compatibility documentation"},
+	{CodeMaterializeOpenCodeAggregatePrunePostponed, SeverityWarning, "Incomplete MCP input postpones stale-entry removal", "See the OpenCode supported-field and hook compatibility documentation"},
+	{CodeMaterializeOpenCodeAggregateCollision, SeverityError, "Selected MCP server conflicts with an unmanaged entry; existing bytes preserved", "See the OpenCode supported-field and hook compatibility documentation"},
 	{CodeModelUnresolved, SeverityWarning, "Model could not be resolved; field omitted without suppressing the resource", "Update the shipped model catalog or use an explicit model override"},
 	{CodeModelReasoningOmitted, SeverityWarning, "Reasoning preference could not be represented and was omitted", "Choose a supported model and reasoning combination"},
 	{CodeModelInheritanceMismatch, SeverityWarning, "Model inheritance or default selection changed across harnesses", "Choose an explicit model to avoid differing harness defaults"},

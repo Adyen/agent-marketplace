@@ -14,9 +14,10 @@ import (
 const maxDepth = 1000
 
 type parser struct {
-	data []byte
-	pos  int
-	err  error
+	allowTrailingCommas bool
+	data                []byte
+	pos                 int
+	err                 error
 }
 
 // trivia consumes whitespace, // line comments, and /* */ block comments and
@@ -96,10 +97,11 @@ func (p *parser) object(path string, depth int) (*Node, error) {
 			return nil, fmt.Errorf("unexpected end of JSON input in object at %s", path)
 		}
 		if p.data[p.pos] == '}' {
-			if len(node.members) > 0 {
+			if len(node.members) > 0 && !p.allowTrailingCommas {
 				// A '}' right after a comma is a trailing comma.
 				return nil, fmt.Errorf("trailing comma in object at %s", path)
 			}
+			node.trailingComma = len(node.members) > 0 || len(node.elements) > 0
 			node.tail = lead
 			p.pos++
 			return node, nil
@@ -176,9 +178,10 @@ func (p *parser) array(path string, depth int) (*Node, error) {
 			return nil, fmt.Errorf("unexpected end of JSON input in array at %s", path)
 		}
 		if p.data[p.pos] == ']' {
-			if len(node.elements) > 0 {
+			if len(node.elements) > 0 && !p.allowTrailingCommas {
 				return nil, fmt.Errorf("trailing comma in array at %s", path)
 			}
+			node.trailingComma = len(node.members) > 0 || len(node.elements) > 0
 			node.tail = lead
 			p.pos++
 			return node, nil

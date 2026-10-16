@@ -358,9 +358,11 @@ func LoadFSWithOptions(srcFS fs.FS, sourceHarness string, opts IngestOptions) (*
 	}
 	from := ingest.Harness(sourceHarness)
 	var autodetectDiag diag.Diagnostic
+	var layoutDiags []diag.Diagnostic
 
 	if from == "" {
-		detected, ok := ingest.Autodetect(srcFS)
+		detected, ok, diagnostics := ingest.AutodetectWithDiagnostics(srcFS)
+		layoutDiags = diagnostics
 		if ok {
 			from = detected
 		} else {
@@ -418,6 +420,7 @@ func LoadFSWithOptions(srcFS fs.FS, sourceHarness string, opts IngestOptions) (*
 	allDiags := make([]diag.Diagnostic, 0, len(bundle.Diagnostics)+len(requiresDiags)+1)
 	allDiags = append(allDiags, bundle.Diagnostics...)
 	allDiags = append(allDiags, requiresDiags...)
+	allDiags = append(allDiags, layoutDiags...)
 	if autodetectDiag.Code != "" {
 		allDiags = append(allDiags, autodetectDiag)
 	}
