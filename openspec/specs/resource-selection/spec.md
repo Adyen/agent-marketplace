@@ -80,24 +80,6 @@ required member's own source location.
 - **AND** `sync --check` MUST succeed from both the repository and the user's home after sync
 - **AND** a non-required collection member MUST NOT displace a direct selection in its install scope
 
-### Requirement: Top-level collection lookup preserves required selection
-
-A top-level collection request MUST NOT disable automatic resource selection from a required registry that has no explicitly authored resource or tag selection. Collection lookup SHALL still find the requested collection in any configured source. An explicitly authored required subset SHALL retain its existing selection semantics.
-
-#### Scenario: Top-level collection keeps required auto-selection
-
-- **GIVEN** an organization registry is required and automatically selects its catalog
-- **WHEN** repository configuration includes a top-level collection available in an organization or repository source
-- **THEN** all automatically selected organization resources MUST remain selected and materialized in machine scope
-- **AND** the requested collection MUST resolve without a spurious missing-collection diagnostic
-
-#### Scenario: Top-level collection preserves authored required subset
-
-- **GIVEN** a required registry explicitly selects a subset of its catalog
-- **WHEN** repository configuration includes a top-level collection
-- **THEN** the explicitly selected required resources and collection members MUST remain selected
-- **AND** unrelated catalog resources MUST NOT become selected solely because this lookup occurs
-
 ### Requirement: Required selection misses stay hard across layers
 
 When several configured entries for the same source location (URL, ref, and path) select a resource that the location does not provide, the miss SHALL be reported once and SHALL be required whenever any of those entries is required, regardless of layer order. A required miss SHALL remain an error rather than a warning in `sync`, `status`, and the TUI.
@@ -107,3 +89,27 @@ When several configured entries for the same source location (URL, ref, and path
 - **WHEN** an earlier configuration layer selects a missing resource from a source location without `required`, and a later layer selects the same resource from the same location with `required: true`
 - **THEN** exactly one not-found diagnostic MUST be reported for the resource and it MUST be required
 - **AND** the TUI MUST NOT assess drift as ready, MUST show the row as a hard unavailable row, and a reload of that snapshot MUST fail
+
+### Requirement: Source-bound collection requests preserve required selection
+
+Consumer collection selections SHALL be authored as `collection/<name>` selectors in v4 `resources` groups bound to declared sources, not as legacy top-level collection requests. Selecting a collection MUST NOT disable another group's required selections. A required Git or directory group with `all: true` SHALL retain its catalog selection; an explicitly authored required subset SHALL remain a subset. `required: true` alone MUST NOT select any resource or implicitly select the catalog.
+
+#### Scenario: Collection keeps required all selection
+
+- **GIVEN** an organization v4 resource group selects its source catalog with `all: true` and `required: true`
+- **WHEN** a repository v4 resource group selects `collection/shared` from its declared source
+- **THEN** all selected organization resources MUST remain required and materialized in machine scope
+- **AND** the requested collection MUST expand in repository scope without a spurious missing-collection diagnostic
+
+#### Scenario: Collection preserves authored required subset
+
+- **GIVEN** an organization v4 resource group explicitly selects a required subset of its source catalog
+- **WHEN** a repository v4 resource group selects a collection from its declared source
+- **THEN** the explicitly selected required resources and collection members MUST remain selected in their respective scopes
+- **AND** unrelated organization resources MUST NOT become selected solely because the collection is selected
+
+#### Scenario: Required policy alone selects no resources
+
+- **WHEN** a v4 Git or directory resource group declares `required: true` without `include`, `tags`, or `all: true`
+- **THEN** that group MUST select no resources
+- **AND** selecting a collection from another group MUST NOT activate that unselected catalog

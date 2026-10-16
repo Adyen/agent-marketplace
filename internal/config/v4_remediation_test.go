@@ -49,6 +49,7 @@ resources:
 	}
 }
 
+// spec: resource-selection/required-policy-alone-selects-no-resources
 func TestV4RequiredOnlyDoesNotAutoSelectCatalog(t *testing.T) {
 	v4, err := ParseV4([]byte(`apiVersion: agent-marketplace/v4
 sources: {shared: {git: https://example.test/agents.git, ref: main}}

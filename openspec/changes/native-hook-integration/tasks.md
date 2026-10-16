@@ -216,13 +216,13 @@ hook matrix goldens deliberately.
 - [x] 6.2 Add an interrupted-migration test using
   `AGENT_MARKETPLACE_E2E_CRASH_AT`. Verify a half-published migration is
   refused by read-only commands and completed by the next mutating command
-- [ ] 6.3 Note: `launch-v4-only-consumer-config` retired `upgrade-gate`, and
-  its v3.1.1 hook fixture (`TestPreV4HookOwnershipUpgrade`) was removed with
-  it; only the `released-client-gate` half below still applies.
-  Extend `upgrade-gate` with a v3.1.1 hook fixture for all seven
-  targets, and `released-client-gate` with a hook migration step. Annotate
-  `latest-release-still-verifies-after-migration`. Verify both gates pass,
-  with every scenario witnessed by `tools/witness-check -require`
+- [ ] 6.3 Extend `released-client-gate` with a hook migration step using
+  shared v4 consumer configuration. Annotate
+  `latest-release-still-verifies-after-migration`. Verify the pinned stable
+  v4 client still passes, with every required scenario witnessed by
+  `tools/witness-check -require`. Keep independent legacy native-hook
+  upgrade coverage under v4 consumer fixtures; do not restore the retired
+  pre-v4 consumer success `upgrade-gate` or require a pre-v4 executable.
 
 ## 7. Review report and value-free diagnostics
 

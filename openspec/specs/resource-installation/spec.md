@@ -7,7 +7,7 @@ Defines named batch installation from Git and directory sources, including share
 
 ### Requirement: Multiple named resources share one install operation
 
-The install command SHALL accept one or more resource names from configured registries or a single `--from` Git or directory source. Shared scope, resource kind, ref, and path options MUST apply to every requested name. The operation MUST resolve all requested selections before publishing configuration and acquisition lock changes, and MUST synchronize the batch once. Repeated names MUST be selected and reported once, in first-request order.
+The install command SHALL accept one or more resource names from configured registries or a single `--from` Git or directory source. All existing consumer roots and include trees required by the operation MUST satisfy `consumer-config-format` before acquisition or new writes; an absent target root retains its v4 creation behavior under `config-mutation`. Shared scope, resource kind, ref, and path options MUST apply to every requested name. The operation MUST resolve all requested selections before publishing configuration and acquisition lock changes, and MUST synchronize the batch once. Repeated names MUST be selected and reported once, in first-request order.
 
 #### Scenario: Install several names from one explicit source
 

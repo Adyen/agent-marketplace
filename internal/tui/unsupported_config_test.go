@@ -16,6 +16,7 @@ import (
 
 // spec: consumer-config-format/consumers-do-not-offer-in-process-conversion
 // spec: tui-interactions/guarded-submission
+// spec: tui-startup/invalid-configuration-delivers-one-fail-closed-final-stage
 func TestUnsupportedConsumerConfigRefusesWithoutConversion(t *testing.T) {
 	for _, tc := range []struct {
 		name, root, fragment, code string
