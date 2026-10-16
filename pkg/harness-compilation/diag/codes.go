@@ -17,6 +17,7 @@ const (
 	CodeIngestWindsurfLiteralPathPreserved        = "ingest.windsurf.literal-path-preserved"          // Windsurf literal MCP path preserved
 	CodeIngestWindsurfMcpEnvNormalized            = "ingest.windsurf.mcp-env-normalized"              // Windsurf MCP env interpolation normalized to canonical form
 	CodeIngestWindsurfSubagentViaAgentsMDSkipped  = "ingest.windsurf.subagent-via-agents-md-skipped"  // AGENTS.md not synthesized as subagent
+	CodeIngestWindsurfDuplicateIdentity           = "ingest.windsurf.duplicate-identity"              // Duplicate Windsurf workflow or rule name suppressed without choosing a winner
 	CodeIngestDevinManifestSynthesized            = "ingest.devin.bundle-manifest-synthesized"        // Devin has no manifest file; manifest synthesized
 	CodeIngestDevinLocalOverrideIgnored           = "ingest.devin.local-override-ignored"             // A .local.json personal override file was found and not ingested
 	CodeIngestDevinMcpEnvNormalized               = "ingest.devin.mcp-env-normalized"                 // Devin ${env:VAR} interpolation normalized to the canonical ${VAR} form
@@ -522,6 +523,7 @@ var codeCatalog = []CodeDoc{
 	{CodeIngestWindsurfLiteralPathPreserved, SeverityInfo, "Literal Windsurf path preserved during MCP ingestion", "Literal path values remain unchanged because there is no Claude-side canonical token for them"},
 	{CodeIngestWindsurfMcpEnvNormalized, SeverityInfo, "Windsurf MCP env interpolation normalized to canonical form", "Windsurf ${env:VAR} was converted to canonical ${VAR} during ingestion so the IR is harness-neutral"},
 	{CodeIngestWindsurfSubagentViaAgentsMDSkipped, SeverityInfo, "AGENTS.md was not synthesized into a Windsurf subagent", "Windsurf has no subagent primitive; AGENTS.md remains external project guidance"},
+	{CodeIngestWindsurfDuplicateIdentity, SeverityError, "Two Windsurf workflows or rules in one workspace root claim the same name; all of them were suppressed without choosing a winner", "Give each workflow and rule a unique name"},
 	{CodeIngestDevinManifestSynthesized, SeverityInfo, "Devin has no bundle manifest file; manifest synthesized", "Devin roots carry no plugin manifest; bundle metadata is synthesized from the layout during ingestion"},
 	{CodeIngestDevinLocalOverrideIgnored, SeverityInfo, "A Devin project-local personal override file was found and not ingested", "Agent Marketplace neither reads nor writes .devin/config.local.json or .devin/mcp_config.local.json; move shared configuration into the non-local file"},
 	{CodeIngestDevinMcpEnvNormalized, SeverityInfo, "Devin MCP env interpolation normalized to canonical form", "Devin ${env:VAR} was converted to canonical ${VAR} during ingestion so the IR is harness-neutral; compiling back to Devin restores ${env:VAR}"},
