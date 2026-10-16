@@ -683,9 +683,7 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 	}
 	loadOptions := config.LoadEffectiveOptions{
 		RepoRoot: ws.RepoRoot(), LocalConfigDir: ws.LocalConfigDir(),
-		FileOverlays: overlays,
-		// Only an explicit organization lock write may reconcile a stale
-		// organization lock; read-only modes keep the match check.
+		FileOverlays:       overlays,
 		RelockOrganization: mode.explicitOrganization && !mode.check && !mode.locked && !mode.offline,
 	}
 	loadMode := pipeline.ConfigLoadStrict
