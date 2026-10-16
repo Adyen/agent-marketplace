@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Removed the `hcc` command
+
+`cmd/hcc` is gone. It was an unshipped local-testing command whose single `--from` flag served as both the source path and the plugin root, and since native hook projection writes hook commands for an installed layout, its raw output could not be run as an installation (F107 in #433). Library callers use `Convert`, `CompileBundle` and `Materialize` directly; `agent-marketplace sync` with a local directory source installs exactly what users get.
+
 ### Ambiguous Windsurf identities and repeated rule keys are refused
 
 Windsurf ingestion collected workflows and rules into a map keyed by name, so a later file claiming the same name silently replaced an earlier one, for example a `deploy` workflow in `zzz.md` replacing the reviewed `deploy.md`. Every claimant of a repeated name within one workspace root is now suppressed with the new error `ingest.windsurf.duplicate-identity`; unrelated resources still convert, the workspace root still overrides the user root, and a refused workspace name does not fall back to the user root's resource. The tolerant `.mdc` frontmatter parser, used when strict YAML rejects Cursor's unquoted globs, kept the last value of a repeated key, so `alwaysApply: false` followed by `alwaysApply: true` applied the rule everywhere. It now rejects repeated keys, and the rule fails to load with the strict parser's error.

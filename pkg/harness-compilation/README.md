@@ -164,32 +164,6 @@ Bundle artifact-path conflicts are the only error codes that cannot be traced to
 one resource. They suppress both named producers as whole resources. See
 [`diag/codes.md`](diag/codes.md#what-an-error-suppresses).
 
-### CLI
-
-`cmd/hcc` is a small command for local testing. It has two subcommands:
-`compile` reads a Claude plugin directory and writes one target layout, and
-`convert` reads any supported harness layout and writes another.
-
-```bash
-# Install
-go build -o hcc ./cmd/hcc
-
-# Compile a plugin to Claude format
-hcc compile --from ./my-plugin --target claude --out ./output
-
-# Sync mode (overwrite + prune stale files)
-hcc compile --from ./my-plugin --target factory --out ./output --sync
-
-# Dry run
-hcc compile --from ./my-plugin --target cursor --out ./output --dry-run
-
-# Convert a Cursor layout to Codex; --out defaults to <dir>-<target>
-hcc convert --from cursor --to codex ./my-plugin
-
-# Detect the source harness instead of passing --from
-hcc convert --autodetect --to factory ./my-plugin
-```
-
 ### Targets
 
 | Target | Constant | Install root |
