@@ -665,6 +665,7 @@ key or a hook event name), the resource name, and content digests are reported.
 | `materialize.devin.symlink-required` | Retired; older versions refused file mode for Devin | No longer emitted; Devin supports both file and symlink modes through the generic materializer |
 | `doctor.repair.failed` | An authorized `doctor --repair` action failed; the aggregate was left exactly as found | This is the "partial repair failure" half of the repair contract and exits 1; nothing was partially written, so re-running the repair is safe |
 | `hook.native-tolerance-refused` | A native hook file was malformed, ambiguous, or unsafe to inspect, so the affected target was left exactly as found | Fix the reported native hook file by hand; no native or legacy hook bytes were changed |
+| `hook.remove-unowned` | Removal would leave a native hook active without clean ownership proof; configuration and hook files are unchanged | Review the named native file and deliberately remove the hook, or explicitly repair ownership before retrying |
 
 ### Devin doctor and repair codes
 

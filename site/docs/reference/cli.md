@@ -197,6 +197,18 @@ For hosted Marketplace pins, removing a direct resource clears its direct select
 
 Named removals, collection-member exclusions, removals of bulk/tag-selected resources, and ad-hoc removals use the v4 editor and preserve unrelated selections and scopes. Included-fragment ownership and required-resource policy still apply. Hosted sources retain their supported explicit-selection and lock rules; unsupported hosted options still refuse. See [configuration requirements and current limits](../explanation/user-journeys.md#before-following-a-journey).
 
+Removal from a shared native hook aggregate requires ownership proof for an
+active entry that would no longer be selected. A teammate's committed hook, an
+identical handwritten entry, or missing or damaged ownership state can therefore
+cause `hook.remove-unowned`.
+The command refuses before changing configuration, acquisition locks or hook
+files and names the native file where the hook remains active. Review that file
+and deliberately remove the hook, or explicitly repair ownership before retrying.
+Matching commands do not authorize automatic deletion. An entry still selected
+by another hook does not block removing one contributor.
+File-based hook targets, such as OpenCode, retain their ordinary file-ownership
+and removal rules.
+
 ```text
 agent-marketplace remove <resource-name> [flags]
 agent-marketplace remove --from <registry> [<resource-name>] [flags]

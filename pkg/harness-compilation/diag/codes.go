@@ -300,6 +300,7 @@ const (
 	// internal/materialize emits it, but it writes nothing — the refusal is
 	// the whole outcome.
 	CodeHookNativeToleranceRefused         = "hook.native-tolerance-refused"          // A native hook file could not be inspected safely; the affected target fails closed
+	CodeHookRemoveUnowned                  = "hook.remove-unowned"                    // Removal would leave a native hook active without clean ownership proof
 	CodeMaterializeCodexTrustReviewPending = "materialize.codex.trust-review-pending" // A check found a pending repository Codex change without mutating files or trust state
 
 	// Devin DOCTOR warning codes (work package D11). Both are warnings and
@@ -736,6 +737,7 @@ var codeCatalog = []CodeDoc{
 	{CodeMaterializeCodexTrustReviewPending, SeverityWarning, "A check found a pending repository Codex change without mutating files or trust state", "A later sync may require reviewing or re-approving the repository in Codex"},
 	{CodeMaterializeDevinSymlinkRequired, SeverityError, "Devin skills and subagents must be symlinks, so file-copy materialization was refused for this target", "Devin has no real-file fallback; set the materialization mode back to symlink for the Devin harness"},
 	{CodeHookNativeToleranceRefused, SeverityError, "A native hook file was malformed, ambiguous, or unsafe to inspect, so the affected target was left exactly as found", "Fix the reported native hook file by hand; no native or legacy hook bytes were changed"},
+	{CodeHookRemoveUnowned, SeverityError, "Removal would leave a native hook active without clean ownership proof; configuration and hook files are unchanged", "Review the named native file and deliberately remove the hook, or explicitly repair ownership before retrying"},
 	{CodeDoctorRepairFailed, SeverityError, "An authorized repair action failed; the aggregate was left exactly as found", "This is the partial repair failure outcome and exits 1; re-running the repair is safe"},
 }
 
