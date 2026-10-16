@@ -115,3 +115,34 @@ func TestCanonicalPluginRootCompilesToFactoryToken(t *testing.T) {
 		t.Fatalf("server = %#v, want %#v", server, want)
 	}
 }
+
+// spec: harness-compilation/gemini-project-directory-never-becomes-the-plugin-root
+func TestGeminiProjectDirectoryStaysInPromptsAndBodies(t *testing.T) {
+	src := fstest.MapFS{
+		"commands/review.toml":       {Data: []byte("description = \"Review\"\nprompt = \"Read ${GEMINI_PROJECT_DIR}/notes.md and ${extensionPath}/guide.md\"\n")},
+		".gemini/agents/reviewer.md": {Data: []byte("---\nname: reviewer\ndescription: Reviewer\nkind: local\n---\nRead ${GEMINI_PROJECT_DIR}/notes.md and ${extensionPath}/guide.md\n")},
+	}
+	for _, target := range []Target{TargetGemini, TargetClaude} {
+		t.Run(string(target), func(t *testing.T) {
+			result, err := Convert(src, HarnessGemini, target)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var prompt, body bool
+			for _, a := range result.Artifacts {
+				text := string(a.Bytes)
+				if !strings.Contains(text, "/notes.md") {
+					continue
+				}
+				if !strings.Contains(text, "${GEMINI_PROJECT_DIR}/notes.md") {
+					t.Fatalf("%s: project reference rewritten:\n%s", a.Path, text)
+				}
+				prompt = prompt || strings.Contains(a.Path, "review.")
+				body = body || strings.Contains(a.Path, "reviewer.")
+			}
+			if !prompt || !body {
+				t.Fatalf("prompt=%t body=%t artifacts=%+v", prompt, body, result.Artifacts)
+			}
+		})
+	}
+}
