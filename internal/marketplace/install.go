@@ -107,9 +107,8 @@ func canonicalFindingsFromRevision(revision store.AssessedResourceRevision) []hc
 	return findings
 }
 
-// MissingResourceError marks an HTTP 404 from a pin's latest-revision lookup:
-// the resource was renamed or removed upstream. It wraps the original error so
-// errors.As still finds the underlying *APIError.
+// MissingResourceError marks an HTTP 404 from a pin's latest-revision lookup.
+// It wraps the original error so errors.As still finds the underlying *APIError.
 type MissingResourceError struct {
 	Err error
 }

@@ -67,7 +67,6 @@ type marketplaceUpdatePlan struct {
 	ConfigPath       string
 	ReplacementPins  []config.MarketplaceResourcePin
 	CollectionUpdate bool
-	missing          bool
 }
 
 // MissingMarketplaceResourcesError names every Marketplace pin whose
@@ -95,7 +94,7 @@ func (e *MissingMarketplaceResourcesError) Error() string {
 func missingMarketplacePins(plans []marketplaceUpdatePlan) error {
 	var missing *MissingMarketplaceResourcesError
 	for i := range plans {
-		if !plans[i].missing {
+		if plans[i].Reason != marketplaceResourceMissingReason {
 			continue
 		}
 		if missing == nil {
@@ -356,7 +355,7 @@ func planMarketplaceUpdates(ctx context.Context, opts UpdateOptions, ec *config.
 				var missingErr *marketplace.MissingResourceError
 				if errors.As(err, &missingErr) {
 					item := MarketplacePinUpdate{Entry: entry, OldPin: pin, Source: entry.Source, Required: entry.Required, Skipped: true, Reason: marketplaceResourceMissingReason}
-					plans = append(plans, marketplaceUpdatePlan{MarketplacePinUpdate: item, ConfigPath: configPath, missing: true})
+					plans = append(plans, marketplaceUpdatePlan{MarketplacePinUpdate: item, ConfigPath: configPath})
 					continue
 				}
 				return nil, fmt.Errorf("marketplace %s pin %s/%s/%s: %w", entry.URL, pin.RegistryID, pin.Kind, pin.Name, err)
@@ -438,7 +437,7 @@ func planMarketplaceCollectionUpdate(ctx context.Context, resolverMP *marketplac
 		var missingErr *marketplace.MissingResourceError
 		if errors.As(err, &missingErr) {
 			item.Reason = marketplaceResourceMissingReason
-			return marketplaceUpdatePlan{MarketplacePinUpdate: item, ConfigPath: configPath, missing: true}, nil
+			return marketplaceUpdatePlan{MarketplacePinUpdate: item, ConfigPath: configPath}, nil
 		}
 		return marketplaceUpdatePlan{}, fmt.Errorf("marketplace %s pin %s/%s/%s: %w", entry.URL, pin.RegistryID, pin.Kind, pin.Name, err)
 	}
