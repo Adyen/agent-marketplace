@@ -36,6 +36,18 @@ loaded into the typed sidecar, preserving explicit empty strings; non-string
 modes are rejected rather than coerced. Native Gemini inline servers continue
 through typed token normalization and credential diagnostics.
 
+Claude, Factory, Cursor and Gemini MCP output also reserves every modeled MCP
+connection field (`command`, `args`, `env`, `url`, `transport`, `headers`,
+`oauthClientId`, `oauthClientSecret`, `oauthResource`) and any case variant of
+one, whether or not the typed field is set; `disabled` is reserved when typed,
+because an extension `disabled` value can only disable the server. Target sidecars cannot widen the
+canonical resource: a Claude or Cursor subagent tool sidecar may only restate
+or narrow the canonical tool list (`subagent.security-restriction-unsupported`
+otherwise), a Claude or Cursor hook-type sidecar must equal the canonical hook
+type (`hook.claude.unsupported-type` / `hook.cursor.unsupported-type`
+otherwise), and a Codex MCP sidecar compiles to Codex only when it matches the
+canonical server (`mcp.codex.security-unsupported` otherwise).
+
 ## Model and reasoning policy
 
 Subagent model selection uses the shipped `modelpolicy/catalogs/<harness>.yaml` files. It distinguishes native identifiers, exact provider models, floating family aliases, parent inheritance, and harness-default selection. Unresolved cross-harness models warn and omit the field, never the resource. No automatic cross-provider or nearest-effort substitution is performed. Model/effort/provenance extension keys are reserved even when the resolved field is absent, including case variants.
@@ -87,6 +99,14 @@ output. The table states only mappings supported by those sources and fixtures.
 Loaders reject malformed or mixed typed security lists rather than silently filtering them. Explicit empty lists remain empty; permissions maps preserve unknown nested keys and reject non-object/null permission values. MCP and hook map-backed iteration is sorted by resource/event name. Secret values never occur in diagnostics or logs.
 
 Constructors from earlier releases retain their fixed signatures. Rich typed fields use additive `*WithOptions` constructors and documented option functions. Support file bytes and D9 ownership/materialization remain outside this package.
+
+Plugin-root and project-directory tokens in MCP server values, command prompts
+and subagent bodies stay distinct. Gemini ingestion maps only
+`${extensionPath}` to `${CLAUDE_PLUGIN_ROOT}` and preserves
+`${GEMINI_PROJECT_DIR}` and `${CLAUDE_PROJECT_DIR}` as written. Factory MCP
+servers translate `${DROID_PLUGIN_ROOT}` to `${CLAUDE_PLUGIN_ROOT}` on ingestion
+and back on compilation. Hook commands resolve both roots through native hook
+projection instead.
 
 Ambiguous identities are refused rather than resolved by file order. Two
 Windsurf workflows, or two Windsurf rules, in one workspace root that claim the
