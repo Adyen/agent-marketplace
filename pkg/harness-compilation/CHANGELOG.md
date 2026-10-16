@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Foreign skill tool lists never become pre-approvals
+
+Claude, Cursor and Gemini read a skill's `allowed-tools` as a pre-approval, so listed tools run without a permission prompt. A list ingested from another harness was copied verbatim, so a Factory skill's review-only `allowed-tools: [Read, Edit]` became a real Claude pre-approval for edits (#637). These targets now omit a skill `allowed-tools` list that carries another harness's tool provenance (Devin, Factory, or Gemini on a non-Gemini target) and report the warning `skill.allowed-tools-omitted`; the skill is still emitted and its tools go through the target's normal permission prompts. Canonical lists and same-harness lists are unchanged. Migration: declare pre-approved tools in the target harness's own skill if it needs them.
+
 ### Removed the `hcc` command
 
 `cmd/hcc` is gone. It was an unshipped local-testing command whose single `--from` flag served as both the source path and the plugin root, and since native hook projection writes hook commands for an installed layout, its raw output could not be run as an installation (F107 in #433). Library callers use `Convert`, `CompileBundle` and `Materialize` directly; `agent-marketplace sync` with a local directory source installs exactly what users get.

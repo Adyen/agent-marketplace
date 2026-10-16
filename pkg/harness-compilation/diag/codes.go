@@ -102,6 +102,7 @@ const (
 	CodeModelSelectorPinned                 = "model.selector-pinned"
 	CodeModelProvenanceConflict             = "model.provenance-conflict"
 	CodeSkillSupportFilesDeferred           = "skill.support-files-deferred"   // Support file bytes are unavailable to this layer
+	CodeSkillAllowedToolsOmitted            = "skill.allowed-tools-omitted"    // Foreign skill allowed-tools list omitted on a pre-approval target
 	CodeMcpLiteralCredential                = "mcp.credentials.literal-secret" // Literal credential-like value detected
 
 	CodeSkillDevinModelUnmappable    = "skill.devin.model-unmappable"    // Explicit skill model is not a stable Devin alias
@@ -618,6 +619,7 @@ var codeCatalog = []CodeDoc{
 	// Warnings since bead agent-marketplace-pu6b (Devin) and the Factory
 	// unknown-tool policy change; these used to suppress the artifact. See the
 	// rationale on the constants above and the dedicated section in codes.md.
+	{CodeSkillAllowedToolsOmitted, SeverityWarning, "A skill allowed-tools list from another harness was omitted; it is never emitted as a pre-approval on the target", "Declare pre-approved tools in the target harness's own layout if the skill needs them"},
 	{CodeSkillDevinToolUnknown, SeverityWarning, "An explicitly allowed skill or command tool has no Devin equivalent; the allowed-tools key was omitted and the resource was still emitted", "Use one of Devin's allowed tools (read, edit, grep, glob, exec) to keep the restriction, or accept Devin's default tool set for this resource"},
 	{CodeSubagentDevinToolUnknown, SeverityWarning, "An explicitly allowed subagent tool has no Devin equivalent; the allowed-tools key was omitted and the profile was still emitted", "Use one of Devin's allowed tools (read, edit, grep, glob, exec) to keep the restriction, or accept Devin's default tool set for this subagent"},
 	{CodeHookDevinPayloadDropped, SeverityWarning, "The hook carries the payload its type does not select; that payload was dropped", "Split the hook into one command hook and one prompt hook if both payloads are required"},
