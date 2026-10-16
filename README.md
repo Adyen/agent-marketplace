@@ -5,7 +5,7 @@ resources into the AI coding tools you use. A resource is a skill, command,
 subagent, hook, or MCP server. The tool reads resources from registries (Git
 repositories or local folders) and from hosted Marketplaces, then writes each
 one in the native layout of every harness you target: Factory Droid, Claude
-Code, Cursor, Windsurf, Gemini CLI, Devin CLI, and Codex.
+Code, Cursor, Windsurf, Gemini CLI, Devin CLI, Codex, and OpenCode.
 
 It ships as a single Go binary for macOS and Linux with no runtime
 dependencies.

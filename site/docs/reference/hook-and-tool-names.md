@@ -176,6 +176,26 @@ Surfaces: hook_matcher, subagent_tools. MCP naming: `mcp_{server}_{tool}`; match
 | `write_file` | file.write | - | all |
 | `write_todos` | todo | - | all |
 
+### opencode
+
+Surfaces: hook_matcher. MCP naming: ``; match-all `mcp_.*`; server scoped: false.
+
+| Tool | Concepts | Aliases | Surfaces |
+| --- | --- | --- | --- |
+| `apply_patch` | file.write, file.edit | - | all |
+| `bash` | shell | Bash | all |
+| `edit` | file.edit | Edit | all |
+| `glob` | search.glob | Glob | all |
+| `grep` | search.grep | Grep | all |
+| `question` | ask.user | - | all |
+| `read` | file.read | Read | all |
+| `skill` | skill | Skill | all |
+| `task` | subagent | Task | all |
+| `todowrite` | todo | TodoWrite | all |
+| `webfetch` | web.fetch | WebFetch | all |
+| `websearch` | web.search | WebSearch | all |
+| `write` | file.write | Write | all |
+
 ### windsurf
 
 Surfaces: none. MCP naming: ``; match-all `*`; server scoped: false.
@@ -358,6 +378,18 @@ Timeout unit: `milliseconds`. Matcher syntax: `regex`. Repository base: env `pro
 | `PreCompress` | PreCompact | lifecycle | command | - |
 | `SessionEnd` | SessionEnd | lifecycle | command | - |
 | `SessionStart` | SessionStart | lifecycle | command | - |
+
+### opencode
+
+Timeout unit: `seconds`. Matcher syntax: `exact-or-regex` (exact `|`/`,` lists). Repository base: env `project_dir`.
+
+| Variable concept | Names | Events |
+| --- | --- | --- |
+| `project_dir` | AGENT_MARKETPLACE_PROJECT_DIR | all |
+
+| Event | Canonical | Matcher | Types | Timeout bounds |
+| --- | --- | --- | --- | --- |
+| `PreToolUse` | PreToolUse | tool | command | - |
 
 ### windsurf
 

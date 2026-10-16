@@ -1,6 +1,7 @@
 package mapping
 
 import (
+	"slices"
 	"testing"
 
 	targetmeta "github.com/Adyen/agent-marketplace/pkg/harness-compilation/target"
@@ -203,10 +204,12 @@ func TestMappingTables_Coverage(t *testing.T) {
 		}
 	}
 
-	// Each model entry must cover all declared targets.
+	// Each model entry must cover every target that existed when the table
+	// froze. Later targets resolve models only through modelpolicy catalogs.
 	allTargets := targetmeta.Targets()
+	frozenModelTargets := slices.DeleteFunc(slices.Clone(allTargets), func(tgt Target) bool { return tgt == TargetOpenCode })
 	for _, e := range modelTable {
-		for _, tgt := range allTargets {
+		for _, tgt := range frozenModelTargets {
 			if _, ok := e.Targets[tgt]; !ok {
 				t.Errorf("model entry %q missing target %s", e.Claude, tgt)
 			}

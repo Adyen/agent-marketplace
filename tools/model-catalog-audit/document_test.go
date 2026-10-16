@@ -189,8 +189,8 @@ func TestEveryCatalogEvidenceRefHasAnAuditSource(t *testing.T) {
 	for _, s := range hookToolSources {
 		byDomainHarness[s.Domain+"/"+s.Harness] = append(byDomainHarness[s.Domain+"/"+s.Harness], s)
 	}
-	if len(hookToolSources) != 28 {
-		t.Fatalf("hook/tool audit sources = %d, want 28", len(hookToolSources))
+	if len(hookToolSources) != 33 {
+		t.Fatalf("hook/tool audit sources = %d, want 33", len(hookToolSources))
 	}
 	baselineBody, err := os.ReadFile("baselines.json")
 	if err != nil {
@@ -205,8 +205,8 @@ func TestEveryCatalogEvidenceRefHasAnAuditSource(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if len(entries) != 7 {
-			t.Fatalf("%s catalogs = %d, want 7", domain, len(entries))
+		if len(entries) != 8 {
+			t.Fatalf("%s catalogs = %d, want 8", domain, len(entries))
 		}
 		for _, entry := range entries {
 			harness := strings.TrimSuffix(entry.Name(), ".yaml")
@@ -254,6 +254,7 @@ func TestTrustedURLAdmitsDocumentSourcesOnly(t *testing.T) {
 	for _, raw := range []string{
 		"https://docs.factory.com/reference/hooks-reference",
 		"https://geminicli.com/docs/hooks/",
+		"https://opencode.ai/docs/plugins.md",
 		"https://github.com/google-gemini/gemini-cli/blob/main/docs/reference/tools.md",
 		"https://github.com/google-gemini/gemini-cli/blob/main/docs/core/subagents.md",
 		"https://github.com/google-gemini/gemini-cli/blob/main/docs/extensions/reference.md",

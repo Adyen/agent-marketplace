@@ -17,6 +17,7 @@ const (
 	CodeIngestWindsurfLiteralPathPreserved        = "ingest.windsurf.literal-path-preserved"          // Windsurf literal MCP path preserved
 	CodeIngestWindsurfMcpEnvNormalized            = "ingest.windsurf.mcp-env-normalized"              // Windsurf MCP env interpolation normalized to canonical form
 	CodeIngestWindsurfSubagentViaAgentsMDSkipped  = "ingest.windsurf.subagent-via-agents-md-skipped"  // AGENTS.md not synthesized as subagent
+	CodeIngestWindsurfDuplicateIdentity           = "ingest.windsurf.duplicate-identity"              // Duplicate Windsurf workflow or rule name suppressed without choosing a winner
 	CodeIngestDevinManifestSynthesized            = "ingest.devin.bundle-manifest-synthesized"        // Devin has no manifest file; manifest synthesized
 	CodeIngestDevinLocalOverrideIgnored           = "ingest.devin.local-override-ignored"             // A .local.json personal override file was found and not ingested
 	CodeIngestDevinMcpEnvNormalized               = "ingest.devin.mcp-env-normalized"                 // Devin ${env:VAR} interpolation normalized to the canonical ${VAR} form
@@ -431,10 +432,10 @@ const (
 	CodeMcpDevinTransportUnsupported     = "mcp.devin.transport-unsupported"      // Explicit remote transport is outside Devin's documented vocabulary; entry skipped
 	// CodeMcpDevinInterpolationUnrepresentable is the same outcome reached
 	// through interpolation rather than through the form checks: the value in
-	// the one field the selected server form cannot do without — `command` on
-	// a stdio server, `url` on a remote server — uses an interpolation style
-	// Devin has no syntax for, so the value is omitted and the whole entry
-	// disappears with it.
+	// a field the selected server form cannot do without — `command` on a
+	// stdio server, `url` on a remote server, or any stdio argument, since
+	// dropping one changes the command line — uses an interpolation style
+	// Devin has no syntax for, so the whole entry disappears.
 	//
 	// It exists (bead agent-marketplace-5exj.23) because the shared
 	// mcp.interpolation-unsupported code was being used for two different
@@ -443,7 +444,7 @@ const (
 	// so two outcomes need two codes; giving one code two severities would
 	// break the guarantee that a catalogued code means one thing. The shared
 	// code keeps the value-level meaning and its warning severity.
-	CodeMcpDevinInterpolationUnrepresentable = "mcp.devin.interpolation-unrepresentable" // The command or url of the selected server form is unrepresentable; entry skipped
+	CodeMcpDevinInterpolationUnrepresentable = "mcp.devin.interpolation-unrepresentable" // The command, url, or an argument of the selected server form is unrepresentable; entry skipped
 
 	CodeIngestDevinLoadSkillFailed            = "ingest.devin.load-skill-failed"            // Failed to load a skill directory from the source layout
 	CodeIngestDevinLoadSubagentFailed         = "ingest.devin.load-subagent-failed"         // Failed to load a flat subagent profile from the source layout
@@ -501,8 +502,48 @@ type CodeDoc struct {
 	Hint     string
 }
 
+// OpenCode codes use the same outcome-based severity contract as existing targets.
+const (
+	CodeRuleOpenCodeUnsupported                    = "rule.opencode.unsupported"
+	CodeOpenCodeFieldDropped                       = "compile.opencode.field-dropped"
+	CodeSkillOpenCodeRestrictionUnsupported        = "skill.opencode.security-restriction-unsupported"
+	CodeCommandOpenCodeRestrictionUnsupported      = "command.opencode.restriction-unsupported"
+	CodeOpenCodeInvalidField                       = "compile.opencode.invalid-field"
+	CodeSubagentOpenCodeRestrictionUnsupported     = "subagent.opencode.restriction-unsupported"
+	CodeMcpOpenCodeUnrepresentable                 = "mcp.opencode.unrepresentable"
+	CodeHookOpenCodeUnsupported                    = "hook.opencode.unsupported"
+	CodeIngestOpenCodeInvalidResource              = "ingest.opencode.invalid-resource"
+	CodeIngestOpenCodeDuplicateIdentity            = "ingest.opencode.duplicate-identity"
+	CodeIngestOpenCodeReadRefused                  = "ingest.opencode.read-refused"
+	CodeIngestOpenCodePluginUnsupported            = "ingest.opencode.plugin-unsupported"
+	CodeIngestAutodetectAmbiguous                  = "ingest.autodetect.ambiguous"
+	CodeOpenCodeNativeSemanticsUnsupported         = "compile.opencode.native-semantics-unsupported"
+	CodeMaterializeOpenCodeAggregateWrite          = "materialize.opencode.aggregate-write"
+	CodeMaterializeOpenCodeAggregateMalformed      = "materialize.opencode.aggregate-malformed"
+	CodeMaterializeOpenCodeAggregatePrunePostponed = "materialize.opencode.aggregate-prune-postponed"
+	CodeMaterializeOpenCodeAggregateCollision      = "materialize.opencode.aggregate-collision"
+)
+
 // codeCatalog is the single source of truth for all v0 diagnostic codes.
 var codeCatalog = []CodeDoc{
+	{CodeRuleOpenCodeUnsupported, SeverityWarning, "Rules and shared instructions are outside this target", "See the OpenCode supported-field and hook compatibility documentation"},
+	{CodeOpenCodeFieldDropped, SeverityWarning, "Metadata has no native equivalent and was omitted", "See the OpenCode supported-field and hook compatibility documentation"},
+	{CodeSkillOpenCodeRestrictionUnsupported, SeverityError, "Skill execution restrictions cannot be represented; resource omitted", "See the OpenCode supported-field and hook compatibility documentation"},
+	{CodeCommandOpenCodeRestrictionUnsupported, SeverityError, "Command execution restrictions cannot be represented; resource omitted", "See the OpenCode supported-field and hook compatibility documentation"},
+	{CodeOpenCodeInvalidField, SeverityError, "A modeled native field has an invalid type; resource omitted", "See the OpenCode supported-field and hook compatibility documentation"},
+	{CodeSubagentOpenCodeRestrictionUnsupported, SeverityError, "Agent execution restrictions cannot be represented; resource omitted", "See the OpenCode supported-field and hook compatibility documentation"},
+	{CodeMcpOpenCodeUnrepresentable, SeverityError, "MCP transport, authentication, or reference fields cannot be represented; server omitted", "See the OpenCode supported-field and hook compatibility documentation"},
+	{CodeHookOpenCodeUnsupported, SeverityError, "Hook event, matcher, handler, or deadline is unsupported; hook omitted", "See the OpenCode supported-field and hook compatibility documentation"},
+	{CodeIngestOpenCodeInvalidResource, SeverityError, "Native resource decoding failed; resource omitted", "See the OpenCode supported-field and hook compatibility documentation"},
+	{CodeIngestOpenCodeDuplicateIdentity, SeverityError, "Distinct native files claim the same resource identity; resources omitted", "Choose distinct resource names"},
+	{CodeIngestOpenCodeReadRefused, SeverityError, "Native resource is not an admitted bounded regular file; resource omitted", "See the OpenCode supported-field and hook compatibility documentation"},
+	{CodeIngestOpenCodePluginUnsupported, SeverityError, "Arbitrary or altered executable plugin cannot be ingested", "See the OpenCode supported-field and hook compatibility documentation"},
+	{CodeIngestAutodetectAmbiguous, SeverityWarning, "Source carries two harness layouts; the unselected layout's resources are not ingested", "Set source_harness to choose the layout explicitly"},
+	{CodeOpenCodeNativeSemanticsUnsupported, SeverityError, "Native execution or reference semantics cannot be preserved by the destination", "See the OpenCode supported-field and hook compatibility documentation"},
+	{CodeMaterializeOpenCodeAggregateWrite, SeverityError, "Native MCP configuration could not be published", "See the OpenCode supported-field and hook compatibility documentation"},
+	{CodeMaterializeOpenCodeAggregateMalformed, SeverityError, "Native MCP configuration is malformed or ambiguous; existing bytes preserved", "See the OpenCode supported-field and hook compatibility documentation"},
+	{CodeMaterializeOpenCodeAggregatePrunePostponed, SeverityWarning, "Incomplete MCP input postpones stale-entry removal", "See the OpenCode supported-field and hook compatibility documentation"},
+	{CodeMaterializeOpenCodeAggregateCollision, SeverityError, "Selected MCP server conflicts with an unmanaged entry; existing bytes preserved", "See the OpenCode supported-field and hook compatibility documentation"},
 	{CodeModelUnresolved, SeverityWarning, "Model could not be resolved; field omitted without suppressing the resource", "Update the shipped model catalog or use an explicit model override"},
 	{CodeModelReasoningOmitted, SeverityWarning, "Reasoning preference could not be represented and was omitted", "Choose a supported model and reasoning combination"},
 	{CodeModelInheritanceMismatch, SeverityWarning, "Model inheritance or default selection changed across harnesses", "Choose an explicit model to avoid differing harness defaults"},
@@ -522,6 +563,7 @@ var codeCatalog = []CodeDoc{
 	{CodeIngestWindsurfLiteralPathPreserved, SeverityInfo, "Literal Windsurf path preserved during MCP ingestion", "Literal path values remain unchanged because there is no Claude-side canonical token for them"},
 	{CodeIngestWindsurfMcpEnvNormalized, SeverityInfo, "Windsurf MCP env interpolation normalized to canonical form", "Windsurf ${env:VAR} was converted to canonical ${VAR} during ingestion so the IR is harness-neutral"},
 	{CodeIngestWindsurfSubagentViaAgentsMDSkipped, SeverityInfo, "AGENTS.md was not synthesized into a Windsurf subagent", "Windsurf has no subagent primitive; AGENTS.md remains external project guidance"},
+	{CodeIngestWindsurfDuplicateIdentity, SeverityError, "Two Windsurf workflows or rules in one workspace root claim the same name; all of them were suppressed without choosing a winner", "Give each workflow and rule a unique name"},
 	{CodeIngestDevinManifestSynthesized, SeverityInfo, "Devin has no bundle manifest file; manifest synthesized", "Devin roots carry no plugin manifest; bundle metadata is synthesized from the layout during ingestion"},
 	{CodeIngestDevinLocalOverrideIgnored, SeverityInfo, "A Devin project-local personal override file was found and not ingested", "Agent Marketplace neither reads nor writes .devin/config.local.json or .devin/mcp_config.local.json; move shared configuration into the non-local file"},
 	{CodeIngestDevinMcpEnvNormalized, SeverityInfo, "Devin MCP env interpolation normalized to canonical form", "Devin ${env:VAR} was converted to canonical ${VAR} during ingestion so the IR is harness-neutral; compiling back to Devin restores ${env:VAR}"},
@@ -622,7 +664,7 @@ var codeCatalog = []CodeDoc{
 	{CodeHookNativeLiteralUnsupported, SeverityError, "Target would reinterpret a native Codex hook literal; hook suppressed", "Remove the target-specific interpolation token or keep the hook in Codex format"},
 	{CodeHookCodexNativeFieldsUnsupported, SeverityError, "Target cannot preserve native Codex hook execution or context fields; hook suppressed", "Remove async, commandWindows, and additionalContextLimit explicitly or keep the hook in Codex format"},
 	{CodeHookCodexUnsupported, SeverityError, "Codex does not execute this hook event or handler; hook suppressed", "Use a documented Codex command hook event"},
-	{CodeHookWindsurfNativeFieldsUnsupported, SeverityError, "Windsurf cannot preserve conflicting native hook fields; hook suppressed", "Remove the conflicting native fields explicitly or use a target that represents them"},
+	{CodeHookWindsurfNativeFieldsUnsupported, SeverityError, "Native Windsurf hook fields conflict or cannot be preserved on the target; hook suppressed", "Remove the conflicting native fields explicitly or use a target that represents them"},
 	{CodeMcpSecurityRestrictionUnsupported, SeverityError, "Target cannot preserve native MCP authority or literal semantics; server suppressed", "Keep the server in its native format or remove the unsupported security field explicitly"},
 	{CodeMcpCodexSecurityUnsupported, SeverityError, "Codex MCP output cannot preserve the requested authentication or transport semantics; server suppressed", "Use documented Codex MCP fields or remove the unsupported setting explicitly"},
 	{CodeIngestCodexLoadResourceFailed, SeverityError, "One malformed Codex resource or aggregate was skipped", "Fix the reported native file; independent valid resources were retained"},
@@ -666,7 +708,7 @@ var codeCatalog = []CodeDoc{
 	{CodeMcpDevinTransportAmbiguous, SeverityError, "The MCP server declares both a stdio command and a remote url, which Devin's two documented server forms cannot express together; the server entry was skipped", "Split the definition into one stdio server and one remote server"},
 	{CodeMcpDevinTransportIncomplete, SeverityError, "The MCP server declares neither a stdio command nor a remote url; the server entry was skipped", "Set a command for a stdio server or a url for a remote server"},
 	{CodeMcpDevinTransportUnsupported, SeverityError, "The MCP server requests a transport Devin does not document; the server entry was skipped rather than defaulted", "Devin documents the http and sse remote transports"},
-	{CodeMcpDevinInterpolationUnrepresentable, SeverityError, "The command or url the MCP server's documented form cannot do without uses an interpolation style Devin has no syntax for; the server entry was skipped", "Devin documents ${env:VAR} interpolation only; move the value into an environment variable, or use a literal command or url"},
+	{CodeMcpDevinInterpolationUnrepresentable, SeverityError, "The command, url, or an argument the MCP server's documented form cannot do without uses an interpolation style Devin has no syntax for; the server entry was skipped", "Devin documents ${env:VAR} interpolation only; move the value into an environment variable, or use a literal command, argument, or url"},
 	{CodeIngestDevinLoadSkillFailed, SeverityError, "Failed to load a skill directory from the Devin source layout", "Check the skills/<name>/SKILL.md layout and its YAML frontmatter"},
 	{CodeIngestDevinLoadSubagentFailed, SeverityError, "Failed to load a flat subagent profile from the Devin source layout", "Check the agents/<name>.md frontmatter"},
 	{CodeIngestDevinLoadHookFailed, SeverityError, "Failed to load hooks from the Devin source layout", "Check the hooks.v1.json event object or the hooks member of config.json"},

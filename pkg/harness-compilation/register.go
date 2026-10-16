@@ -17,6 +17,7 @@ import (
 	_ "github.com/Adyen/agent-marketplace/pkg/harness-compilation/compile/devin"
 	_ "github.com/Adyen/agent-marketplace/pkg/harness-compilation/compile/factory"
 	_ "github.com/Adyen/agent-marketplace/pkg/harness-compilation/compile/gemini"
+	_ "github.com/Adyen/agent-marketplace/pkg/harness-compilation/compile/opencode"
 	_ "github.com/Adyen/agent-marketplace/pkg/harness-compilation/compile/windsurf"
 
 	_ "github.com/Adyen/agent-marketplace/pkg/harness-compilation/ingest/claude"
@@ -25,5 +26,6 @@ import (
 	_ "github.com/Adyen/agent-marketplace/pkg/harness-compilation/ingest/devin"
 	_ "github.com/Adyen/agent-marketplace/pkg/harness-compilation/ingest/factory"
 	_ "github.com/Adyen/agent-marketplace/pkg/harness-compilation/ingest/gemini"
+	_ "github.com/Adyen/agent-marketplace/pkg/harness-compilation/ingest/opencode"
 	_ "github.com/Adyen/agent-marketplace/pkg/harness-compilation/ingest/windsurf"
 )

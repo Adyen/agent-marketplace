@@ -43,7 +43,8 @@ var envTable = []envEntry{
 		// CLAUDE_PLUGIN_ROOT only to plugin-bundled hooks; plugin packaging is
 		// outside this compiler's output contract, so callers must provide the
 		// literal root for directly materialized hooks and MCP configuration.
-		TargetCodex: {Value: "", Literal: true},
+		TargetCodex:    {Value: "", Literal: true},
+		TargetOpenCode: {Value: "", Literal: true},
 	}},
 }
 

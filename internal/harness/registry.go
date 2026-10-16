@@ -18,6 +18,8 @@ const (
 	AdapterCodexOwnedJSONTOML = "codex-owned-json-toml"
 	AdapterDevinRepair        = "devin-repair"
 	AdapterCodexRepair        = "codex-repair"
+	AdapterOpenCodeOwnedJSON  = "opencode-owned-json"
+	AdapterOpenCodeRepair     = "opencode-repair"
 )
 
 // InstallationAdapter binds a target's validated native layout to
@@ -55,7 +57,7 @@ type InstallationAdapterRegistry struct {
 // here requires a complete adapter below, rather than creating a partial
 // fallback.
 func isInstallationAdapterTarget(target hcc.Target) bool {
-	return target == hcc.TargetDevin || target == hcc.TargetCodex
+	return target == hcc.TargetDevin || target == hcc.TargetCodex || target == hcc.TargetOpenCode
 }
 
 // IsInstallationAdapterTarget reports whether target must be resolved through
@@ -87,7 +89,7 @@ func newInstallationAdapterRegistry(validateLayouts func() error) (InstallationA
 		return InstallationAdapterRegistry{}, fmt.Errorf("validate native installation layouts: %w", err)
 	}
 	roots := make(map[hcc.Target]Roots, 2)
-	for _, target := range []targetmeta.Target{targetmeta.TargetDevin, targetmeta.TargetCodex} {
+	for _, target := range []targetmeta.Target{targetmeta.TargetDevin, targetmeta.TargetCodex, targetmeta.TargetOpenCode} {
 		definition, ok := targetmeta.Lookup(string(target))
 		if !ok {
 			return InstallationAdapterRegistry{}, fmt.Errorf("harness: %s target is not registered", target)
@@ -98,7 +100,7 @@ func newInstallationAdapterRegistry(validateLayouts func() error) (InstallationA
 		roots[hcc.Target(target)] = Roots{Repo: definition.RepoRoot}
 	}
 	adapters := make(map[hcc.Target]InstallationAdapter, 2)
-	for _, target := range []targetmeta.Target{targetmeta.TargetDevin, targetmeta.TargetCodex} {
+	for _, target := range []targetmeta.Target{targetmeta.TargetDevin, targetmeta.TargetCodex, targetmeta.TargetOpenCode} {
 		layout, ok := targetmeta.LookupNativeLayout(target)
 		if !ok {
 			return InstallationAdapterRegistry{}, fmt.Errorf("harness: %s native layout is not registered", target)
@@ -110,7 +112,7 @@ func newInstallationAdapterRegistry(validateLayouts func() error) (InstallationA
 		} else {
 			info, err = targetInfoFromLayout(target)
 			info.OwnershipReconciledAggregates = true
-			info.SkillPathPattern = mustNativeResourcePattern(targetmeta.TargetDevin, ir.KindSkill)
+			info.SkillPathPattern = mustNativeResourcePattern(target, ir.KindSkill)
 		}
 		if err != nil {
 			return InstallationAdapterRegistry{}, err
@@ -123,13 +125,19 @@ func newInstallationAdapterRegistry(validateLayouts func() error) (InstallationA
 		if target == targetmeta.TargetDevin {
 			adapter.aggregateKey = AdapterDevinOwnedJSON
 			adapter.repairKey = AdapterDevinRepair
-		} else {
+		} else if target == targetmeta.TargetCodex {
 			adapter.aggregateKey = AdapterCodexOwnedJSONTOML
 			adapter.repairKey = AdapterCodexRepair
+		} else {
+			adapter.aggregateKey = AdapterOpenCodeOwnedJSON
+			adapter.repairKey = AdapterOpenCodeRepair
 		}
 		adapter.resolve = func(machineScope bool, repoRoot, homeDir string) ([]Destination, error) {
 			if t == hcc.TargetCodex {
 				return resolveCodexDestinations(machineScope, repoRoot, homeDir)
+			}
+			if t == hcc.TargetOpenCode {
+				return resolveOpenCodeDestinations(adapter, machineScope, repoRoot, homeDir)
 			}
 			return resolveSingleRootAdapterDestinations(adapter, machineScope, repoRoot, homeDir)
 		}
@@ -159,6 +167,14 @@ func bindMachineRoots(registry InstallationAdapterRegistry, resolveHome func() (
 	info.Roots.Machine = filepath.Join(home, definition.UserRoot)
 	adapter.info = info
 	bound.adapters[hcc.TargetDevin] = adapter
+	if openCode, ok := bound.adapters[hcc.TargetOpenCode]; ok {
+		info := openCode.info
+		if root, err := openCodeMachineRoot(home); err == nil {
+			info.Roots.Machine = root
+		}
+		openCode.info = info
+		bound.adapters[hcc.TargetOpenCode] = openCode
+	}
 	return bound
 }
 

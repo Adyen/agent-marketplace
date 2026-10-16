@@ -152,11 +152,13 @@ func TestDefinitionsAppendCodexWithoutChangingExistingTargets(t *testing.T) {
 				Project:    NativeHookProjectionFile{Path: ".codex/hooks.json", Member: "hooks"},
 				User:       NativeHookProjectionFile{Path: ".codex/hooks.json", Member: "hooks"},
 			}},
+		{Target: TargetOpenCode, Label: "OpenCode", RepoRoot: ".opencode", UserRoot: ".config/opencode", Compiler: true, Ingester: true, Conversion: true, UI: true, UIOrder: 7},
 	}
 	got := Definitions()
 	for i := range got {
-		if got[i].HookProjection == nil {
-			t.Fatalf("Definitions()[%d] has no derived hook projection", i)
+		_, _, aggregate := nativeAggregate(got[i].Target, ir.KindHook)
+		if aggregate != (got[i].HookProjection != nil) {
+			t.Fatalf("Definitions()[%d] hook projection = %v, want one exactly when a hook aggregate is declared", i, got[i].HookProjection)
 		}
 	}
 	if !reflect.DeepEqual(got, want) {

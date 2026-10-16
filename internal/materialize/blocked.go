@@ -168,6 +168,7 @@ func hookBlockedComponents(target hcc.Target, info harness.TargetInfo, machineSc
 		}
 	}
 	add(info.ResourceInstallDir(ir.KindHook))
+	add(resourceFileHookSupportDir(target))
 	if layout, ok := targetmeta.LookupNativeLayout(targetmeta.Target(target)); ok {
 		for _, partition := range layout.Partitions {
 			for _, aggregate := range partition.Aggregates {

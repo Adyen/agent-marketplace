@@ -30,6 +30,7 @@ const (
 	TargetGemini   = mapping.TargetGemini
 	TargetDevin    = mapping.TargetDevin
 	TargetCodex    = mapping.TargetCodex
+	TargetOpenCode = mapping.TargetOpenCode
 )
 
 // Compiler is the interface that each target compiler must implement.
@@ -182,9 +183,9 @@ func GuardNativeCodexTranslation(resource ir.Resource, target Target, translate 
 		clone.HookSource = string(TargetCodex)
 		resource = &clone
 	}
-	nativeDiagnostics := codexNativeLossDiagnostics(resource, target)
+	nativeDiagnostics := append(openCodeNativeLossDiagnostics(resource, target), codexNativeLossDiagnostics(resource, target)...)
 	if diag.HasErrors(nativeDiagnostics) {
-		slog.Warn("compile suppressed native Codex resource", "target", target, "resource", resource.Name(), "diagnostic", nativeDiagnostics[0].Code)
+		slog.Warn("compile suppressed native resource", "target", target, "resource", resource.Name(), "diagnostic", nativeDiagnostics[0].Code)
 		return nil, nativeDiagnostics, nil
 	}
 	artifacts, diagnostics, err := translate(resource)
@@ -195,7 +196,7 @@ func GuardNativeCodexTranslation(resource ir.Resource, target Target, translate 
 		}
 	}
 	if len(missing) > 0 {
-		slog.Warn("compile omitted native Codex field", "target", target, "resource", resource.Name(), "diagnostic", missing[0].Code)
+		slog.Warn("compile omitted native field", "target", target, "resource", resource.Name(), "diagnostic", missing[0].Code)
 		diagnostics = append(missing, diagnostics...)
 	}
 	return artifacts, diagnostics, err
