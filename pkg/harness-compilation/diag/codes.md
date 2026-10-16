@@ -369,9 +369,9 @@ are two codes and not one code with two severities (bead
 `agent-marketplace-5exj.23`).
 
 `mcp.interpolation-unsupported` is the shared, **value-level** case and stays a
-**warning**. One argument, one env value, one header value, or one OAuth member
+**warning**. One env value, one header value, or one OAuth member
 is omitted — never written as an empty string, because a defined-but-blank
-variable, header, or argument is a *different* input from the one the author
+variable or header is a *different* input from the one the author
 wrote — and the server entry is emitted with everything else the source
 authorized. It sits with `mcp.devin.field-dropped` and the two plugin-root codes
 in the emit-the-entry family: escalating it would suppress a working server over
@@ -380,8 +380,10 @@ one dropped value, which is exactly the trade `.20` rejected for that family.
 `mcp.devin.interpolation-unrepresentable` is the **entry-level** case and is an
 **error**. On Devin the unrepresentable value can be the one field the selected
 server form cannot do without: `command` on a stdio server, `url` on a remote
-server. Omitting it is not a partial loss — there is nothing left to launch or
-contact, so the whole keyed entry disappears from `mcp_config.json`. That is the
+server, or any argument of a stdio server. Omitting it is not a partial loss —
+there is nothing left to launch or contact, or the command line would change
+(for example by losing a sandbox flag) — so the whole keyed entry disappears
+from `mcp_config.json`. That is the
 same outcome as `mcp.devin.transport-ambiguous`, `-incomplete`, and
 `-unsupported`, so it carries the same severity and the same consequence: the
 entry is skipped, siblings are patched atomically, and `sync` exits non-zero.
@@ -593,7 +595,7 @@ key or a hook event name), the resource name, and content digests are reported.
 | `hook.native-literal-unsupported` | Target would reinterpret a native Codex hook literal; hook suppressed | Remove the target-specific interpolation token or keep the hook in Codex format |
 | `hook.codex.native-fields-unsupported` | Target cannot preserve native Codex hook execution or context fields; hook suppressed | Remove async, commandWindows, and additionalContextLimit explicitly or keep the hook in Codex format |
 | `hook.codex.unsupported` | Codex does not execute this hook event or handler; hook suppressed | Use a documented Codex command hook event |
-| `hook.windsurf.native-fields-unsupported` | Windsurf cannot preserve conflicting native hook fields; hook suppressed | Remove the conflicting native fields explicitly or use a target that represents them |
+| `hook.windsurf.native-fields-unsupported` | Native Windsurf hook fields conflict or cannot be preserved on the target; hook suppressed | Remove the conflicting native fields explicitly or use a target that represents them |
 | `hook.windsurf.timeout-unsupported` | Windsurf cannot represent an explicit hook timeout; hook artifact suppressed | Remove the timeout explicitly or use a target that supports it |
 | `materialize.hook.support-conflict` | Conflicting desired support files block affected hooks rather than selecting a winner | Rename the conflicting support files or exclude one hook provider |
 | `materialize.hook.support-refused` | Unsafe or unreadable support sources block affected hooks while installed content is retained | Fix or remove the unsafe support source and re-run sync |
@@ -641,7 +643,7 @@ key or a hook event name), the resource name, and content digests are reported.
 | `mcp.devin.transport-ambiguous` | The MCP server declares both a stdio command and a remote url, which Devin's two documented server forms cannot express together; the server entry was skipped | Split the definition into one stdio server and one remote server |
 | `mcp.devin.transport-incomplete` | The MCP server declares neither a stdio command nor a remote url; the server entry was skipped | Set a command for a stdio server or a url for a remote server |
 | `mcp.devin.transport-unsupported` | The MCP server requests a transport Devin does not document; the server entry was skipped rather than defaulted | Devin documents the http and sse remote transports |
-| `mcp.devin.interpolation-unrepresentable` | The `command` or `url` the server's documented form cannot do without uses an interpolation style Devin has no syntax for; the server entry was skipped | Devin documents `${env:VAR}` interpolation only; move the value into an environment variable, or use a literal command or url |
+| `mcp.devin.interpolation-unrepresentable` | The `command`, `url`, or an argument the server's documented form cannot do without uses an interpolation style Devin has no syntax for; the server entry was skipped | Devin documents `${env:VAR}` interpolation only; move the value into an environment variable, or use a literal command, argument, or url |
 | `ingest.devin.load-skill-failed` | Failed to load a skill directory from the Devin source layout | Check the skills/&lt;name&gt;/SKILL.md layout and its YAML frontmatter |
 | `ingest.devin.load-subagent-failed` | Failed to load a flat subagent profile from the Devin source layout | Check the agents/&lt;name&gt;.md frontmatter |
 | `ingest.devin.load-hook-failed` | Failed to load hooks from the Devin source layout | Check the hooks.v1.json event object or the hooks member of config.json |

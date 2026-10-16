@@ -432,10 +432,10 @@ const (
 	CodeMcpDevinTransportUnsupported     = "mcp.devin.transport-unsupported"      // Explicit remote transport is outside Devin's documented vocabulary; entry skipped
 	// CodeMcpDevinInterpolationUnrepresentable is the same outcome reached
 	// through interpolation rather than through the form checks: the value in
-	// the one field the selected server form cannot do without — `command` on
-	// a stdio server, `url` on a remote server — uses an interpolation style
-	// Devin has no syntax for, so the value is omitted and the whole entry
-	// disappears with it.
+	// a field the selected server form cannot do without — `command` on a
+	// stdio server, `url` on a remote server, or any stdio argument, since
+	// dropping one changes the command line — uses an interpolation style
+	// Devin has no syntax for, so the whole entry disappears.
 	//
 	// It exists (bead agent-marketplace-5exj.23) because the shared
 	// mcp.interpolation-unsupported code was being used for two different
@@ -444,7 +444,7 @@ const (
 	// so two outcomes need two codes; giving one code two severities would
 	// break the guarantee that a catalogued code means one thing. The shared
 	// code keeps the value-level meaning and its warning severity.
-	CodeMcpDevinInterpolationUnrepresentable = "mcp.devin.interpolation-unrepresentable" // The command or url of the selected server form is unrepresentable; entry skipped
+	CodeMcpDevinInterpolationUnrepresentable = "mcp.devin.interpolation-unrepresentable" // The command, url, or an argument of the selected server form is unrepresentable; entry skipped
 
 	CodeIngestDevinLoadSkillFailed            = "ingest.devin.load-skill-failed"            // Failed to load a skill directory from the source layout
 	CodeIngestDevinLoadSubagentFailed         = "ingest.devin.load-subagent-failed"         // Failed to load a flat subagent profile from the source layout
@@ -624,7 +624,7 @@ var codeCatalog = []CodeDoc{
 	{CodeHookNativeLiteralUnsupported, SeverityError, "Target would reinterpret a native Codex hook literal; hook suppressed", "Remove the target-specific interpolation token or keep the hook in Codex format"},
 	{CodeHookCodexNativeFieldsUnsupported, SeverityError, "Target cannot preserve native Codex hook execution or context fields; hook suppressed", "Remove async, commandWindows, and additionalContextLimit explicitly or keep the hook in Codex format"},
 	{CodeHookCodexUnsupported, SeverityError, "Codex does not execute this hook event or handler; hook suppressed", "Use a documented Codex command hook event"},
-	{CodeHookWindsurfNativeFieldsUnsupported, SeverityError, "Windsurf cannot preserve conflicting native hook fields; hook suppressed", "Remove the conflicting native fields explicitly or use a target that represents them"},
+	{CodeHookWindsurfNativeFieldsUnsupported, SeverityError, "Native Windsurf hook fields conflict or cannot be preserved on the target; hook suppressed", "Remove the conflicting native fields explicitly or use a target that represents them"},
 	{CodeMcpSecurityRestrictionUnsupported, SeverityError, "Target cannot preserve native MCP authority or literal semantics; server suppressed", "Keep the server in its native format or remove the unsupported security field explicitly"},
 	{CodeMcpCodexSecurityUnsupported, SeverityError, "Codex MCP output cannot preserve the requested authentication or transport semantics; server suppressed", "Use documented Codex MCP fields or remove the unsupported setting explicitly"},
 	{CodeIngestCodexLoadResourceFailed, SeverityError, "One malformed Codex resource or aggregate was skipped", "Fix the reported native file; independent valid resources were retained"},
@@ -668,7 +668,7 @@ var codeCatalog = []CodeDoc{
 	{CodeMcpDevinTransportAmbiguous, SeverityError, "The MCP server declares both a stdio command and a remote url, which Devin's two documented server forms cannot express together; the server entry was skipped", "Split the definition into one stdio server and one remote server"},
 	{CodeMcpDevinTransportIncomplete, SeverityError, "The MCP server declares neither a stdio command nor a remote url; the server entry was skipped", "Set a command for a stdio server or a url for a remote server"},
 	{CodeMcpDevinTransportUnsupported, SeverityError, "The MCP server requests a transport Devin does not document; the server entry was skipped rather than defaulted", "Devin documents the http and sse remote transports"},
-	{CodeMcpDevinInterpolationUnrepresentable, SeverityError, "The command or url the MCP server's documented form cannot do without uses an interpolation style Devin has no syntax for; the server entry was skipped", "Devin documents ${env:VAR} interpolation only; move the value into an environment variable, or use a literal command or url"},
+	{CodeMcpDevinInterpolationUnrepresentable, SeverityError, "The command, url, or an argument the MCP server's documented form cannot do without uses an interpolation style Devin has no syntax for; the server entry was skipped", "Devin documents ${env:VAR} interpolation only; move the value into an environment variable, or use a literal command, argument, or url"},
 	{CodeIngestDevinLoadSkillFailed, SeverityError, "Failed to load a skill directory from the Devin source layout", "Check the skills/<name>/SKILL.md layout and its YAML frontmatter"},
 	{CodeIngestDevinLoadSubagentFailed, SeverityError, "Failed to load a flat subagent profile from the Devin source layout", "Check the agents/<name>.md frontmatter"},
 	{CodeIngestDevinLoadHookFailed, SeverityError, "Failed to load hooks from the Devin source layout", "Check the hooks.v1.json event object or the hooks member of config.json"},

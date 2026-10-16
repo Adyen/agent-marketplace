@@ -90,6 +90,7 @@ type GeminiMCPServer struct {
 	Args    []string          `json:"args,omitempty"`
 	Env     map[string]string `json:"env,omitempty"`
 	URL     string            `json:"url,omitempty"`
+	Extra   map[string]any    `json:"extra,omitempty"`
 }
 
 // GeminiTOMLCommand preserves Gemini command TOML metadata.
