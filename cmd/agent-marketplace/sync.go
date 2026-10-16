@@ -25,6 +25,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/pipeline"
 	"github.com/Adyen/agent-marketplace/internal/resolver"
 	"github.com/Adyen/agent-marketplace/internal/skill"
+	"github.com/Adyen/agent-marketplace/internal/tui"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 )
@@ -860,7 +861,7 @@ func printMalformedDetail(out io.Writer, malformed []skill.MalformedSkill) error
 		return err
 	}
 	for _, m := range malformed {
-		if _, err := fmt.Fprintf(out, "  - %s (%s): %v\n", m.DirName, m.Path, m.Error); err != nil {
+		if _, err := fmt.Fprintf(out, "  - %s (%s): %s\n", tui.TerminalSafeLine(m.DirName), tui.TerminalSafeLine(m.Path), tui.TerminalSafeLine(fmt.Sprint(m.Error))); err != nil {
 			return err
 		}
 	}
