@@ -447,7 +447,7 @@ tests open with the `isolateCommandTest` guard described in `AGENTS.md`.
 | `update [--bump]` | locks; config too when bump rewrites an eligible v4 source ref | yes (from exact snapshots) |
 | `status` / `doctor` | no (`doctor --repair` adopts ownership state) | no |
 | `gc` | no | no (cleans only entries inactive in validated config and locks) |
-| `backup`, `deinit`, `telemetry`, `convert` | own state only | no |
+| `backup`, `deinit`, `telemetry` | own state only | no |
 | `serve` | Marketplace operator state | no |
 | `tui` (or bare invocation on TTY) | config and its layer lock for mutations | on demand (`s`) |
 

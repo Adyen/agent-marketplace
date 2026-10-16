@@ -390,7 +390,7 @@ func TestMarketplaceInstallArtifactFailureIsTransactional(t *testing.T) {
 	var failArtifact atomic.Bool
 	failArtifact.Store(true)
 	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if strings.HasPrefix(r.URL.Path, "/api/v1/artifacts/") {
+		if strings.HasPrefix(r.URL.Path, "/api/v1/artifacts/") || strings.HasPrefix(r.URL.Path, "/api/v1/archives/") {
 			artifactRequests.Add(1)
 			if failArtifact.Load() {
 				http.Error(w, "artifact unavailable", http.StatusBadGateway)

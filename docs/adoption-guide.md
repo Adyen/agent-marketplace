@@ -69,7 +69,7 @@ Codex uses split native roots:
 
 `CODEX_HOME` does not move `~/.agents/skills`.
 
-Keep generated `.agents/skills/` and `.codex/` out of source control. Codex rules, `AGENTS.md` generation, and legacy prompt output are out of scope. A registry can still use `source_harness: codex`, and `convert --from codex` and `--to codex` are supported. Conversion to Codex requires a destination without an existing `.codex/hooks.json` or `.codex/config.toml`; use a new or empty destination so shared configuration is never overwritten. Sync, check, ingestion, and conversion never install, require, or probe a Codex executable.
+Keep generated `.agents/skills/` and `.codex/` out of source control. Codex rules, `AGENTS.md` generation, and legacy prompt output are out of scope. A registry can still use `source_harness: codex`. Sync, check, and ingestion never install, require, or probe a Codex executable.
 
 Repository `hooks.json` and `config.toml` changes may require Codex project trust review. Agent Marketplace reports when that happens, but it never edits trust state or adds Codex output paths to `.gitignore`. It preserves handwritten entries in these shared files and records its ownership outside the repository under `$XDG_STATE_HOME/agent-marketplace`. If that ownership state is missing or corrupt, sync refuses collisions and skips pruning instead of guessing.
 
@@ -335,7 +335,6 @@ agent-marketplace sync --check
 agent-marketplace status
 agent-marketplace update
 agent-marketplace migrate --dry-run
-agent-marketplace convert --from claude --to factory --out ./factory-plugin ./claude-plugin
 agent-marketplace doctor
 agent-marketplace doctor --repair
 ```

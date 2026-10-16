@@ -92,6 +92,28 @@ func TestCommandProcessSelectors(t *testing.T) {
 	}
 }
 
+func TestLookPathOutsideGitExecPath(t *testing.T) {
+	makeGit := func(dir string) string {
+		t.Helper()
+		path := filepath.Join(dir, "git")
+		if err := os.WriteFile(path, []byte("#!/bin/sh\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		return path
+	}
+	a, b := t.TempDir(), t.TempDir()
+	gitA, gitB := makeGit(a), makeGit(b)
+	t.Setenv("PATH", a+string(os.PathListSeparator)+b)
+	t.Setenv("GIT_EXEC_PATH", a)
+	if got, err := lookPathOutsideGitExecPath("git"); err != nil || got != gitB {
+		t.Fatalf("with GIT_EXEC_PATH: got %q, %v; want %q", got, err, gitB)
+	}
+	t.Setenv("GIT_EXEC_PATH", "")
+	if got, err := lookPathOutsideGitExecPath("git"); err != nil || got != gitA {
+		t.Fatalf("without GIT_EXEC_PATH: got %q, %v; want %q", got, err, gitA)
+	}
+}
+
 func TestCommandProcessCancellationAndDescendants(t *testing.T) {
 	for _, mode := range []string{"cancel", "timeout", "orphan-pipe", "orphan-closed"} {
 		t.Run(mode, func(t *testing.T) {

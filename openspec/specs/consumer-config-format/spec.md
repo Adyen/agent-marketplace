@@ -89,13 +89,12 @@ Format validation MUST NOT disable established safe recovery of a pre-existing d
 
 ### Requirement: No in-process consumer migration surface
 
-The shipped CLI MUST NOT expose `migrate`, its migration target flags, startup conversion prompts, or a TUI migration modal. Consumer operations MUST NOT offer an automatic conversion or fall back to legacy reads/edits. Refusal guidance MAY direct users to convert writable configurations with an older released migrator before upgrading and to have consumer organization configuration converted externally; the shipped CLI MUST NOT invoke or acquire a converter. Harness source-layout conversion remains independent and retains its existing `convert --from`/`--to` surface.
+The shipped CLI MUST NOT expose `migrate`, its migration target flags, startup conversion prompts, or a TUI migration modal. Consumer operations MUST NOT offer an automatic conversion or fall back to legacy reads/edits. Refusal guidance MAY direct users to convert writable configurations with an older released migrator before upgrading and to have consumer organization configuration converted externally; the shipped CLI MUST NOT invoke or acquire a converter.
 
 #### Scenario: Migration command and flags are absent
 
 - **WHEN** a user inspects command help/completion or invokes `migrate`, `migrate --to v2`, or `migrate --to v4`
 - **THEN** help/completion MUST expose no consumer migration command or flags and invocation MUST fail as an unknown command without conversion or configuration changes
-- **AND** harness source-layout `convert --to` MUST remain available and successfully exercisable
 
 #### Scenario: Consumers do not offer in-process conversion
 

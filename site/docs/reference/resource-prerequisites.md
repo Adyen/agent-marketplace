@@ -70,7 +70,7 @@ the warning never quotes the malformed value. An item is skipped when:
 A prerequisite is met when a selected resource in the same resolution has the
 same kind and name, regardless of which registry, path, or configuration
 layer supplies it. The `registry` and `path` hints do not restrict
-satisfaction — they only shape the remediation command. A skill named `docs`
+satisfaction; they only shape the remediation command. A skill named `docs`
 does not satisfy an `mcp:docs` prerequisite.
 
 ## Warning and remediation
@@ -79,13 +79,23 @@ An unmet prerequisite produces:
 
 ```text
 warning: <kind> "<resource>" requires <kind> "<prerequisite>", but it is not selected
-  → agent-marketplace install "<prerequisite>" --kind <kind>
+  → agent-marketplace install <prerequisite> --kind <kind>
 ```
 
-The remediation gains `--from "<registry>"` and `--path "<path>"` when the
-item declares those hints. Kinds print as `skill`, `command`, `subagent`,
-`hook`, or `mcp`. URL credentials inside a `registry` hint are replaced with
-`***`.
+The remediation gains `--from <registry>` and `--path <path>` when the item
+declares those hints. Kinds print as `skill`, `command`, `subagent`, `hook`,
+or `mcp`. URL credentials inside the `registry` and `path` hints are
+replaced with `***` before the argument is formatted.
+
+Each remediation argument is a literal POSIX shell argument. A value made
+only of letters, digits, and `._/:@%+,-=` prints bare; any other value,
+including one containing whitespace, shell substitution, or embedded single
+quotes, is wrapped in single quotes with each embedded quote escaped as
+`'\''`. The quoting is display formatting only; the resource name keeps
+whatever characters the source authored, and the characters shown can always
+be pasted literally into a shell. The warning message itself quotes resource
+names with Go `%q` double-quote formatting, which differs from the
+remediation's shell-literal quoting.
 
 | Command | Behavior |
 |---|---|
@@ -98,8 +108,8 @@ item declares those hints. Kinds print as `skill`, `command`, `subagent`,
 ## Exit status
 
 `install`, `sync`, `sync --check`, `status`, and `doctor` exit with status 0
-when unmet prerequisites are the only findings. `sync --strict` — including
-`sync --strict --check` — still prints the advisory warning and remediation,
+when unmet prerequisites are the only findings. `sync --strict` (including
+`sync --strict --check`) still prints the advisory warning and remediation,
 but exits nonzero so CI can enforce declared prerequisites. Strict mode never
 selects the prerequisite for you.
 
