@@ -860,7 +860,7 @@ func printMalformedDetail(out io.Writer, malformed []skill.MalformedSkill) error
 		return err
 	}
 	for _, m := range malformed {
-		if _, err := fmt.Fprintf(out, "  - %s (%s): %v\n", m.DirName, m.Path, m.Error); err != nil {
+		if _, err := fmt.Fprintf(out, "  - %s (%s): %s\n", terminalSafeText(m.DirName), terminalSafeText(m.Path), terminalSafeText(fmt.Sprint(m.Error))); err != nil {
 			return err
 		}
 	}
