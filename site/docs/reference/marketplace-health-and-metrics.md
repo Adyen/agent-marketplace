@@ -20,7 +20,7 @@ Returns `200` with this body while the process is running:
 {"status": "ok"}
 ```
 
-`/healthz` skips the configuration authority and availability checks that other public routes run, so it answers even when the server cannot serve the catalog. Use it for load balancer checks that only need to know the process is up.
+`/healthz` skips the configuration authority and availability checks that other public routes run, so it answers even when the server cannot serve the catalog. It suits load balancer checks that only need to know the process is up.
 
 ## `/readyz`
 
@@ -37,7 +37,7 @@ The checks run in this order, and the first failure returns `503`:
 3. The instance record exists in the metadata store.
 4. The blob store answers a probe within 2 seconds.
 
-Failures of checks 2 to 4 return `{"error":"not ready"}`. Point container startup and readiness probes at this endpoint on the operations listener.
+Failures of checks 2 to 4 return `{"error":"not ready"}`. Container startup and readiness probes target this endpoint on the operations listener.
 
 ## `/metrics`
 

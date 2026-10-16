@@ -1,7 +1,6 @@
 package tui
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -521,11 +520,10 @@ func newMarketplaceArtifactTree(artifactPath string) (*bundleTree, error) {
 	if len(raw) > maxMarketplaceArtifactBytes {
 		return nil, fmt.Errorf("marketplace artifact exceeds %d MiB", maxMarketplaceArtifactBytes>>20)
 	}
-	ca, _, err := hccartifact.Decode(bytes.NewReader(raw))
+	// This tree only renders a cache file that the verified marker already covers,
+	// so content checks suffice; its archive digest is not re-derived here.
+	ca, err := hccartifact.DecodeContentArchive(raw)
 	if err != nil {
-		return nil, fmt.Errorf("decode marketplace artifact: %w", err)
-	}
-	if err := ca.ValidateArchive(nil); err != nil {
 		return nil, fmt.Errorf("validate marketplace artifact: %w", err)
 	}
 	manifest, err := json.MarshalIndent(ca.Manifest, "", "  ")

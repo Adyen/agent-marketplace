@@ -32,6 +32,7 @@ const assessmentBase = {
   assessed_at: '2026-01-02T03:04:05Z',
 }
 const occurrence = { coordinate, content_digest: digest, commit: 'a'.repeat(40), manifest_digest: 'sha256:' + '4'.repeat(64) }
+const source = { repository_url: 'https://github.com/Adyen/agent-skills.git', path: 'skills/review/SKILL.md', commit: 'b'.repeat(40) }
 const revocation = { kind: 'revision' as const, target_id: digest, reason: 'security', applied_at: '2026-01-03T03:04:05Z' }
 const resource = {
   coordinate,
@@ -64,8 +65,8 @@ describe('ResourceDetailView', () => {
     const revisionRow = wrapper.get('[data-testid="revision-row"]')
     expect(revisionRow.get('[data-testid="revision-label"]').text()).toBe('Revision (latest)')
     expect(revisionRow.get('[data-testid="revision-id"]').text()).toBe('c'.repeat(12))
-    expect(revisionRow.get('[data-testid="scanned-label"]').text()).toBe('Scanned')
-    expect(revisionRow.get('[data-testid="revision-scanned-at"]').text()).toBe('Jan 2, 2026')
+    expect(revisionRow.find('[data-testid="scanned-group"]').exists()).toBe(false)
+    expect(revisionRow.find('[data-testid="source-group"]').exists()).toBe(false)
     expect(revisionRow.get('button[aria-label^="Copy revision"]').exists()).toBe(true)
     expect(wrapper.get('[data-testid="installation-panel"]').text()).not.toContain('exact version')
     expect(wrapper.get('#installation-heading').text()).toBe('Install')
@@ -93,7 +94,52 @@ describe('ResourceDetailView', () => {
 
     await tabs[1]!.trigger('click')
     expect(wrapper.get('[aria-labelledby="security-tab"]').text()).toContain('metadata-check')
+    expect(wrapper.get('[aria-labelledby="security-tab"]').text()).toContain('Scanned Jan 2, 2026')
     expect(wrapper.find('[data-testid="safe-markdown"]').exists()).toBe(false)
+  })
+
+  // spec: marketplace-web-ui/forge-hosted-source-links-to-the-pinned-resource-file
+  it('shows a GitHub source as the first header item linked to the pinned file', () => {
+    const wrapper = mount(ResourceDetailView, {
+      props: { resource: { ...resource, source }, registry: 'team-tools', kind: 'skill', name: 'review', canonicalUrl: 'https://market.example', browserBase: 'https://market.example' },
+      global: { stubs },
+    })
+
+    const revisionRow = wrapper.get('[data-testid="revision-row"]')
+    expect(revisionRow.element.firstElementChild?.getAttribute('data-testid')).toBe('source-group')
+    expect(revisionRow.get('[data-testid="source-label"]').text()).toBe('Source')
+    const link = revisionRow.get('[data-testid="source-link"]')
+    expect(link.attributes('href')).toBe(`https://github.com/Adyen/agent-skills/blob/${source.commit}/skills/review/SKILL.md`)
+    expect(link.attributes('target')).toBe('_blank')
+    expect(link.attributes('rel')).toBe('noopener noreferrer')
+    expect(link.text()).toBe('Adyen/agent-skills')
+    expect(link.attributes('aria-label')).toBe('View source of review in Adyen/agent-skills (opens in a new tab)')
+    expect(revisionRow.get('[data-testid="source-path"]').text()).toBe('skills/review/SKILL.md')
+    expect(revisionRow.get('[data-testid="source-path"]').attributes('title')).toBe('skills/review/SKILL.md')
+  })
+
+  // spec: marketplace-web-ui/other-host-source-links-to-the-repository
+  it('links a source on another host to its repository and still shows the path', () => {
+    const wrapper = mount(ResourceDetailView, {
+      props: { resource: { ...resource, source: { ...source, repository_url: 'https://git.example/internal/resources.git' } }, registry: 'team-tools', kind: 'skill', name: 'review', canonicalUrl: 'https://market.example', browserBase: 'https://market.example' },
+      global: { stubs },
+    })
+
+    const revisionRow = wrapper.get('[data-testid="revision-row"]')
+    expect(revisionRow.get('[data-testid="source-link"]').attributes('href')).toBe('https://git.example/internal/resources')
+    expect(revisionRow.get('[data-testid="source-link"]').text()).toBe('internal/resources')
+    expect(revisionRow.get('[data-testid="source-path"]').text()).toBe('skills/review/SKILL.md')
+  })
+
+  // spec: marketplace-web-ui/resource-without-source-provenance-omits-the-origin
+  it('omits the source item when the revision reports no provenance', () => {
+    const wrapper = mount(ResourceDetailView, {
+      props: { resource, registry: 'team-tools', kind: 'skill', name: 'review', canonicalUrl: 'https://market.example', browserBase: 'https://market.example' },
+      global: { stubs },
+    })
+
+    expect(wrapper.find('[data-testid="source-group"]').exists()).toBe(false)
+    expect(wrapper.get('[data-testid="revision-row"]').element.firstElementChild?.getAttribute('data-testid')).toBe('revision-group')
   })
 
   it('labels an older selected revision and links to the current revision', () => {

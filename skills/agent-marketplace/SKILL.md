@@ -215,7 +215,6 @@ agent-marketplace sync --strict -v     # missing/unloadable selections become er
 agent-marketplace status               # targets, locks, synced resources, drift
 agent-marketplace update [--scope S] [--registry URL]   # advance Git locks, then sync
 agent-marketplace lock [--check|--upgrade] [--scope S]
-agent-marketplace convert --from claude --to codex --out ./out ./plugin
 agent-marketplace doctor [--repair [--yes]]
 agent-marketplace gc --dry-run         # cache cleanup sees only the current repo
 agent-marketplace backup create|list|restore --target <harness>

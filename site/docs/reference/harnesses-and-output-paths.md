@@ -16,7 +16,7 @@ The roots and per-kind paths come from `pkg/harness-compilation/target` and `int
 | Devin CLI | `devin` |
 | Codex | `codex` |
 
-Use these identifiers in `harnesses:` lists, in `source_harness:`, and with `convert --from` and `convert --to`. Identifiers are lowercase. An unknown identifier in a v4 configuration fails with `v4.harness`, and `convert` rejects one with an error that lists the valid names.
+These identifiers appear in `harnesses:` lists and in `source_harness:`. Identifiers are lowercase. An unknown identifier in a v4 configuration fails with `v4.harness`.
 
 ## Roots
 
@@ -127,9 +127,9 @@ Windsurf has no subagents. Sync skips them for this harness and prints `subagent
 
 The Windsurf repository root is the repository itself. Repository hooks therefore use `.devin/hooks.json`, while Devin CLI repository hooks use the separate `.devin/hooks.v1.json`. The machine root is already `~/.codeium/windsurf`, so machine paths have no such prefix, and machine commands go to `global_workflows` because that is where Windsurf looks for machine-wide workflows.
 
-## Sync output, conversion output, and legacy hooks
+## Sync output and legacy hooks
 
-The hook rows above are the files `sync` materializes for each target. A pure `convert` bundle may still contain a bundle-layout `hooks/hooks.json`; that file is conversion output, not a native sync destination.
+The hook rows above are the files `sync` materializes for each target.
 
 During a mutating sync, sync moves only entries marked `_managed_by: agent-marketplace` out of the declared legacy hook files: `hooks/hooks.json` below the Claude, Cursor, and Factory roots in both scopes, and repository-scope `.windsurf/hooks.json` for Windsurf. Handwritten entries stay behind, and a malformed legacy file stops that target's migration with `materialize.hook.legacy-malformed` before either file changes. Gemini has a separate bounded migration for entries a v3.1.1 installation marked in the older flat settings shape; it moves them into the grouped `hooks` shape without adopting unmarked entries.
 

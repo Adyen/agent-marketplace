@@ -595,8 +595,8 @@ func TestBuildRegistryRevisionCollection(t *testing.T) {
 	if collection.ContentDigest == "" || len(rev.CollectionManifests) != 1 {
 		t.Fatalf("collection standalone publication = digest %q/archive %q, manifests %d", collection.ContentDigest, collection.ArchiveDigest, len(rev.CollectionManifests))
 	}
-	if len(rev.ExtraBlobs) != 2 || rev.ExtraBlobs[0].Digest == rev.CollectionManifests[0].Digest {
-		t.Fatalf("collection publication should contain one leaf archive and one standalone manifest: %#v", rev.ExtraBlobs)
+	if len(rev.ExtraBlobs) != 3 || rev.ExtraBlobs[0].Digest == rev.CollectionManifests[0].Digest {
+		t.Fatalf("collection publication should contain one leaf archive, its placeholder archive, and one standalone manifest: %#v", rev.ExtraBlobs)
 	}
 	if len(rev.CollectionManifests[0].Data) == 0 || rev.CollectionManifests[0].Data[0] != '{' || string(rev.CollectionManifests[0].Digest) != string(collection.ContentDigest) {
 		t.Fatalf("collection manifest upload = digest %q/data prefix %q", rev.CollectionManifests[0].Digest, rev.CollectionManifests[0].Data)

@@ -7,9 +7,9 @@ Remove a resource you selected, turn off one that was selected for you, or overr
 - A configured `.agents/config.yaml` or `~/.agents/config.yaml`.
 - `agent-marketplace` on your `PATH`.
 
-`remove` edits v4 source/resource selections. Every existing consumer root, including organization and personal-local, must declare exact v4; fragments may omit the version or declare exact v4. Unsupported input refuses before new acquisition, config/lock publication, or harness changes. [Convert older configurations before upgrading](./migrate-configuration.md). Removing hosted Marketplace resources also involves the owning layer's lock; see [current limits](../explanation/user-journeys.md#before-following-a-journey).
+`remove` edits v4 selections. Every existing config root, including organization and personal-local, must declare exact v4; included fragments may omit the version or declare exact v4. Otherwise `remove` refuses before it downloads anything or changes config, locks, or harness files. [Convert older configurations before upgrading](./migrate-configuration.md). Removing hosted Marketplace resources also involves the owning layer's lock; see [current limits](../explanation/user-journeys.md#before-following-a-journey).
 
-After each change, `remove` syncs, so the resource's files disappear from the harness folders right away.
+After each change, `remove` syncs and reconciles the remaining selection in the harness folders.
 
 ## 1. Remove an explicit selection
 
@@ -19,7 +19,7 @@ Remove a skill that you installed by name:
 agent-marketplace remove code-review --scope repo
 ```
 
-The CLI deletes the entry from the repository configuration and prints `Removed code-review`. Without `--scope`, the CLI picks the [scope](../glossary.md#scope) from the layer that selects the resource. Name the scope when you want to be sure which file changes.
+The CLI deletes the entry from the repository configuration and prints `Removed code-review`. Without `--scope`, it picks the [scope](../glossary.md#scope) from the layer that selects the resource. Name the scope to control which file changes.
 
 ## 2. Exclude an auto-selected resource
 
@@ -39,9 +39,9 @@ For `tags` and `all: true` selections the CLI prints `Removed legacy-review`, ev
 
 ## 3. `remove` refuses required resources
 
-A resource from a group with `required: true` ignores every exclusion. `remove` refuses it with an error such as `skill "code-review" is required and cannot be removed`. To stop installing it, change the configuration that declares `required: true`, which is often the organization configuration managed by your administrators.
+A resource from a group with `required: true` ignores every exclusion. `remove` refuses it with an error such as `skill "code-review" is required and cannot be removed`. To stop installing it, change the configuration that declares `required: true`. That is often the organization configuration, which your administrators manage.
 
-An organization Marketplace collection without `required: true` is optional. To turn off one of its members on your machine, open the TUI, select the member, and press `e` in the scope modal. The TUI adds a user exclusion to `~/.agents/config.yaml`, which, like every consumer root, must already be v4. [Convert older roots before upgrading](./migrate-configuration.md). The collection stays selected and its other members stay enabled. The CLI cannot remove a pin from the organization file, because that file is managed outside the CLI.
+An organization Marketplace collection without `required: true` is optional. To turn off one of its members on your machine, open the TUI, select the member, and press `e` in the scope modal. The TUI adds a user exclusion to `~/.agents/config.yaml`, which must already be v4, like every consumer root. [Convert older roots before upgrading](./migrate-configuration.md). The collection stays selected and its other members stay enabled. The CLI cannot remove a pin from the organization file, which is managed outside the CLI.
 
 ## 4. Target a specific scope
 
@@ -57,7 +57,9 @@ Remove only the repository occurrence:
 agent-marketplace remove code-review --scope repo
 ```
 
-When a resource comes from your user or organization configuration and you omit `--scope`, the CLI writes the change to `~/.agents/config.yaml` and says that it applies across all repositories. You cannot exclude such a resource with `--scope repo` or `--scope local`; the CLI refuses and suggests the scope that works.
+Each prints `Removed code-review` and syncs the remaining selection. Another scope or a hosted collection can keep the resource installed, so verify the harness folders with `agent-marketplace status` rather than assuming every file vanished.
+
+When a resource comes from your user or organization configuration and you omit `--scope`, the CLI writes the change to `~/.agents/config.yaml` and says that it applies across all repositories. You cannot exclude such a resource with `--scope repo` or `--scope local`. The CLI refuses and suggests the scope that works.
 
 ## 5. Remove an entire ad-hoc registry
 
@@ -79,7 +81,7 @@ Under `SYNCED RESOURCES`, check that the resource is gone from the scope you cho
 
 ## Troubleshooting
 
-- If `remove` says the resource `is enabled from multiple config layers`, the same name is selected in more than one scope. The error lists a ready-to-run command for each copy; rerun with the `--scope` (and `--from`, `--path`) of the one you want to remove.
+- If `remove` says the resource `is enabled from multiple config layers`, the same name is selected in more than one scope. The error lists a ready-to-run command for each copy. Rerun with the `--scope` (and `--from`, `--path`) of the one you want to remove.
 - If `remove` says the name `is ambiguous across kinds`, add `--kind`, for example `--kind command`.
 - If `remove` says `resource "<name>" is not currently enabled`, nothing selects that resource right now. Check the name with `agent-marketplace status`.
 - If `remove` refuses a required resource, change the configuration that declares `required: true`. Neither removal nor exclusion overrides it.

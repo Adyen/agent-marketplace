@@ -280,7 +280,7 @@ func TestGcCommandUsesCachedOrganizationMarketplaceReachabilityWithoutNetwork(t 
 			if requests.Load() != 0 {
 				t.Fatalf("gc made %d Marketplace requests, want no network acquisition", requests.Load())
 			}
-			if _, err := os.Stat(marketplaceCache.ArtifactPath(activeDigest)); err != nil {
+			if _, err := os.Stat(marketplaceCache.PlaceholderArchivePath(activeDigest)); err != nil {
 				t.Fatalf("gc removed active Marketplace archive: %v", err)
 			}
 			if _, err := os.Lstat(filepath.Join(filepath.Dir(orgPath), "lock.yaml")); !os.IsNotExist(err) {
@@ -479,7 +479,7 @@ func testGcCommandRefusesPolicyChangeAfterPreflight(t *testing.T, configChange b
 			t.Fatalf("gc deleted %s after organization lock appeared: %v\n%s", path, readErr, got)
 		}
 	}
-	if _, err := os.Stat(marketplace.DefaultCache().ArtifactPath(activeDigest)); err != nil {
+	if _, err := os.Stat(marketplace.DefaultCache().PlaceholderArchivePath(activeDigest)); err != nil {
 		t.Fatalf("gc lost the active Marketplace archive: %v", err)
 	}
 }

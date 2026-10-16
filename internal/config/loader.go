@@ -493,6 +493,26 @@ func LoadUserLoggingConfig() (*LoggingConfig, error) {
 	return settings.Logging, nil
 }
 
+// UpdateCheckEnabled reports whether organization and user configuration allow the release check; a user setting overrides the organization's.
+func UpdateCheckEnabled() (bool, error) {
+	org, err := LoadOrganizationSettings()
+	if err != nil {
+		return false, fmt.Errorf("load organization update check config: %w", err)
+	}
+	user, err := LoadUserSettings()
+	if err != nil {
+		return false, fmt.Errorf("load user update check config: %w", err)
+	}
+	enabled := true
+	if org.UpdateCheck != nil && org.UpdateCheck.Enabled != nil {
+		enabled = *org.UpdateCheck.Enabled
+	}
+	if user.UpdateCheck != nil && user.UpdateCheck.Enabled != nil {
+		enabled = *user.UpdateCheck.Enabled
+	}
+	return enabled, nil
+}
+
 func LoadRootConfigFromPath(path string) (*Config, error) {
 	kind := repoLayer
 	if isLocalConfigPath(path) {

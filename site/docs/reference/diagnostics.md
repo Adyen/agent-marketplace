@@ -55,10 +55,10 @@ Format diagnostics identify the offending file and `apiVersion` field (or legacy
 
 ## Viewing diagnostics
 
-- `agent-marketplace sync` prints errors and warnings. Add `-v` to also see affected files and malformed-resource details.
+- `agent-marketplace sync` prints errors and warnings. `-v` adds affected files and malformed-resource details.
 - `agent-marketplace status` prints warnings and errors in its `WARNINGS` and `ERRORS` sections.
 - `agent-marketplace doctor` prints ownership and compatibility diagnostics.
-- In the TUI, press `e` to open the diagnostics view.
+- In the TUI, `e` opens the diagnostics view.
 
 ## Complete catalog
 
