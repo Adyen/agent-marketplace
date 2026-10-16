@@ -52,16 +52,22 @@ func newOrganizationRelockFixture(t *testing.T) organizationRelockFixture {
 	}
 	f.orgPath = filepath.Join(f.authority, "config.yaml")
 	f.lockPath = filepath.Join(f.authority, "lock.yaml")
-	f.writeOrgConfig(t, "main")
+	f.writeOrgConfig(t, "main", true)
 	config.SetTestOrganizationConfigPath(t, f.orgPath)
 	writeConfig(t, filepath.Join(home, ".agents", "config.yaml"), "harnesses: [factory]\n")
 	withWorkingDir(t, t.TempDir())
 	return f
 }
 
-func (f organizationRelockFixture) writeOrgConfig(t *testing.T, alphaRef string) {
+func (f organizationRelockFixture) writeOrgConfig(t *testing.T, alphaRef string, withBeta bool) {
 	t.Helper()
-	writeConfig(t, f.orgPath, "apiVersion: agent-marketplace/v4\nsources:\n  alpha: {git: file://"+f.alphaBare+", ref: "+alphaRef+"}\n  beta: {git: file://"+f.betaBare+", ref: main}\nresources:\n  alpha: {all: true, required: true}\n  beta: {all: true, required: true}\n")
+	sources := "  alpha: {git: file://" + f.alphaBare + ", ref: " + alphaRef + "}\n"
+	resources := "  alpha: {all: true, required: true}\n"
+	if withBeta {
+		sources += "  beta: {git: file://" + f.betaBare + ", ref: main}\n"
+		resources += "  beta: {all: true, required: true}\n"
+	}
+	writeConfig(t, f.orgPath, "apiVersion: agent-marketplace/v4\nsources:\n"+sources+"resources:\n"+resources)
 }
 
 func (f organizationRelockFixture) lockOrganization(t *testing.T) {
@@ -71,18 +77,25 @@ func (f organizationRelockFixture) lockOrganization(t *testing.T) {
 	}
 }
 
-// moveUpstream advances alpha to a new tagged commit (changing the configured
-// ref) and advances beta's main upstream without changing its configured ref.
-func (f organizationRelockFixture) moveUpstream(t *testing.T, alphaRef string) string {
+// advanceAlpha tags and pushes a new alpha commit and returns its hash.
+func (f organizationRelockFixture) advanceAlpha(t *testing.T, alphaRef string) string {
 	t.Helper()
 	writeSkill(t, f.alphaWork, "alpha-skill", "Alpha skill v2", nil)
 	commitAndPushAll(t, f.alphaWork, "alpha v2")
 	runGit(t, f.alphaWork, "tag", alphaRef)
 	runGit(t, f.alphaWork, "push", "origin", alphaRef)
+	return gitCommit(t, f.alphaBare, alphaRef+"^{commit}")
+}
+
+// moveUpstream advances alpha to a new tagged commit (changing the configured
+// ref) and advances beta's main upstream without changing its configured ref.
+func (f organizationRelockFixture) moveUpstream(t *testing.T, alphaRef string) string {
+	t.Helper()
+	alphaCommit := f.advanceAlpha(t, alphaRef)
 	writeSkill(t, f.betaWork, "beta-skill", "Beta skill v2", nil)
 	commitAndPushAll(t, f.betaWork, "beta v2")
-	f.writeOrgConfig(t, alphaRef)
-	return gitCommit(t, f.alphaBare, alphaRef+"^{commit}")
+	f.writeOrgConfig(t, alphaRef, true)
+	return alphaCommit
 }
 
 func gitCommit(t *testing.T, repo, rev string) string {
@@ -194,12 +207,8 @@ func TestOrganizationRelockMixedMarketplaceKeepsMarketplaceRecords(t *testing.T)
 	}
 	writeFile(t, f.lockPath, string(deployedData))
 
-	writeSkill(t, f.alphaWork, "alpha-skill", "Alpha skill v2", nil)
-	commitAndPushAll(t, f.alphaWork, "alpha v2")
-	runGit(t, f.alphaWork, "tag", "v2")
-	runGit(t, f.alphaWork, "push", "origin", "v2")
+	alphaCommit := f.advanceAlpha(t, "v2")
 	writeOrgConfig("v2")
-	alphaCommit := gitCommit(t, f.alphaBare, "v2^{commit}")
 
 	if output, err := executeCommand("lock", "--scope", "organization"); err != nil {
 		t.Fatalf("lock --scope organization after ref change: %v\n%s", err, output)
@@ -227,7 +236,7 @@ func TestOrganizationRelockDropsUnconfiguredSource(t *testing.T) {
 	f.lockOrganization(t)
 	alphaBefore := lockRegistryByURL(t, f.lockBytes(t), "relock-alpha")
 
-	writeConfig(t, f.orgPath, "apiVersion: agent-marketplace/v4\nsources:\n  alpha: {git: file://"+f.alphaBare+", ref: main}\nresources:\n  alpha: {all: true, required: true}\n")
+	f.writeOrgConfig(t, "main", false)
 
 	if output, err := executeCommand("lock", "--scope", "organization"); err != nil {
 		t.Fatalf("lock --scope organization after dropping a source: %v\n%s", err, output)
@@ -342,7 +351,7 @@ func TestOrganizationRelockFailedReResolutionKeepsLock(t *testing.T) {
 	}
 	f := newOrganizationRelockFixture(t)
 	f.lockOrganization(t)
-	f.writeOrgConfig(t, "nonexistent-ref")
+	f.writeOrgConfig(t, "nonexistent-ref", true)
 	before := f.lockBytes(t)
 	info, err := os.Stat(f.lockPath)
 	if err != nil {
