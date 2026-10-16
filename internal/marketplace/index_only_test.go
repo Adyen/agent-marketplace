@@ -90,6 +90,7 @@ func TestIndexOnlyResolverChecksExactCommitAndReingestedDigests(t *testing.T) {
 		}
 	})
 	mux.HandleFunc("/api/v1/resources/", func(w http.ResponseWriter, _ *http.Request) { _ = json.NewEncoder(w).Encode(revision) })
+	mux.HandleFunc("/api/v1/manifests/", func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write(built.ManifestPayload) })
 	server := httptest.NewServer(mux)
 	defer server.Close()
 	pin := config.MarketplaceResourcePin{RegistryID: "src", Kind: "skill", Name: "review", Revision: string(revision.ContentDigest), Digest: string(revision.ContentDigest), Acquisition: config.MarketplaceAcquisitionIndexOnly, RegistryCommit: commit, RegistryManifestDigest: string(built.ManifestDigest)}
@@ -288,6 +289,7 @@ func TestIndexOnlyResolverStagesNativeHookDefinitionsAndMaterializesOffline(t *t
 		}
 		_ = json.NewEncoder(w).Encode(api.PublicRegistry{ID: "src", Slug: "source", Origins: registry.Origins, Ref: "main", Roots: registry.Roots, Acquisition: store.AcquisitionIndexOnly, Listed: true})
 	})
+	mux.HandleFunc("/api/v1/manifests/", func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write(built.ManifestPayload) })
 	mux.HandleFunc("/api/v1/resources/", func(w http.ResponseWriter, r *http.Request) {
 		requests.Add(1)
 		parts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
@@ -531,6 +533,7 @@ func TestIndexOnlyResolverRejectsPostReingestionManifestMismatch(t *testing.T) {
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/.well-known/agent-marketplace.json", func(w http.ResponseWriter, _ *http.Request) { writeTestWellKnown(w, "mp") })
+	mux.HandleFunc("/api/v1/manifests/", func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write(old.ManifestPayload) })
 	mux.HandleFunc("/api/v1/resources/", func(w http.ResponseWriter, _ *http.Request) {
 		_ = json.NewEncoder(w).Encode(assessedRevisionOccurrence(oldResource.ResourceRevision, secondCommit, string(old.ManifestDigest)))
 	})
@@ -546,7 +549,7 @@ func TestIndexOnlyResolverRejectsPostReingestionManifestMismatch(t *testing.T) {
 	pin := config.MarketplaceResourcePin{RegistryID: "src", Kind: "skill", Name: "review", Revision: string(oldResource.ContentDigest), Digest: string(oldResource.ContentDigest), Acquisition: config.MarketplaceAcquisitionIndexOnly, RegistryCommit: secondCommit, RegistryManifestDigest: string(old.ManifestDigest)}
 	cfg := &config.Config{Marketplaces: []config.MarketplaceEntry{{URL: server.URL, InstanceID: "mp", Resources: []config.MarketplaceResourcePin{pin}}}}
 	_, errs := (&Resolver{Cache: NewCache(t.TempDir())}).Resolve(context.Background(), cfg, []hcc.Target{hcc.TargetFactory}, resolver.MarketplaceResolveModeRefresh)
-	if len(errs) != 1 || !strings.Contains(errs[0].Error(), "after re-ingestion") {
+	if len(errs) != 1 || !strings.Contains(errs[0].Error(), "attested registry revision manifest") {
 		t.Fatalf("post-reingestion mismatch errors = %v", errs)
 	}
 }
@@ -696,8 +699,11 @@ func TestCachedIndexOnlyFailuresInvalidateOccurrenceMarker(t *testing.T) {
 			raw, _, _ := hccartifact.Encode(bad)
 			return raw
 		}},
-		{name: "archive", artifact: func() []byte {
-			return tamperCanonicalArchiveDigest(t, validRaw)
+		{name: "payload", artifact: func() []byte {
+			bad := canonical
+			bad.Payload = []byte(`{"tampered":true}`)
+			raw, _, _ := hccartifact.Encode(bad)
+			return raw
 		}},
 		{name: "staging", artifact: func() []byte { return validRaw }, stageFault: true},
 	}

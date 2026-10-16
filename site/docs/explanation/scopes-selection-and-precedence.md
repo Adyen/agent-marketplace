@@ -13,13 +13,7 @@ The same kind and name can exist in both scopes, for example a `review` skill in
 
 ## How a resource group picks resources
 
-A resource group is one entry under `resources:`, and it selects from the source with the same name. For each group, the CLI works out the selection in this order:
-
-1. It collects candidates: every locator under `include`, every resource whose `metadata.tags` contain one of the group's `tags`, and every resource in the source when `all: true` is set.
-2. It replaces each included collection with its members.
-3. It removes whatever `exclude` matches. `*` matches everything and `kind/*` matches one kind, such as `skill/*`. Resources protected by `required: true` stay.
-
-A group with only `required: true` and no include, tags, or `all` selects nothing. Within one file, excludes apply after includes regardless of the order you write them in. [Sources and resources](./sources-and-resources.md#how-a-group-picks-resources) covers the fields in detail, including how included fragments merge.
+A resource group is one entry under `resources:`, and it selects from the source with the same name. The group's candidates come from its `include` locators, its `tags`, or `all: true`; included collections expand into their members; and `exclude` then removes whatever it matches, except resources protected by `required: true`. Within one file, excludes apply after includes regardless of the order you write them in. [Sources and resources](./sources-and-resources.md#how-a-group-picks-resources) covers the fields, including how included fragments merge.
 
 Every existing consumer root must declare exact v4. There is no legacy reader or implicit select-all interpretation of `required: true`; use explicit selections and, for Git or directory sources, `all: true` when you intend to select everything. [Convert older configurations with an older released migrator before upgrading](../how-to/migrate-configuration.md).
 

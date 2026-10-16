@@ -1,6 +1,6 @@
 # Configuration layers reference
 
-Agent Marketplace reads up to four configuration files on every run and combines them. Each file is a layer. This page lists the layers, where each file lives, which fields each layer may set, and how the CLI decides between layers when they disagree. For the fields themselves, see the [repository configuration reference](./configuration.md).
+The CLI reads up to four configuration files on every run and combines them. Each file is a layer. This page lists the layers, where each file lives, which fields each may set, and how layers that disagree are resolved. For the fields themselves, see the [repository configuration reference](./configuration.md).
 
 ## Layer order
 
@@ -27,6 +27,7 @@ Every layer may declare `sources`, `resources`, and `include`. The other top-lev
 | `allowed_registries`, `allowed_marketplaces` | yes | yes | yes | no |
 | `backup` | yes | yes | no | no |
 | `logging` | accepted, not used | yes | no | no |
+| `update_check` | yes | yes | no | no |
 | `telemetry` | yes | yes | no | no |
 | `materialization` | no | yes | yes | yes |
 | Exclusion-only Marketplace source | no | yes | no | no |
@@ -64,6 +65,7 @@ These fields control machine-wide behavior, so repository files cannot change th
 
 - `backup` merges field by field from the organization file and then the user file. A value set in the user file wins over the organization value for the same field.
 - `logging` comes from the user file only.
+- `update_check` is read from the organization and user files. A value set in the user file wins over the organization value.
 - `telemetry` is read from the organization and user files. See the [telemetry reference](./telemetry.md) for how the two combine.
 
 ### Materialization
@@ -94,11 +96,11 @@ The organization file applies to every user on the machine, so the CLI checks fi
 - `/etc/agent-marketplace/config.yaml` must be a regular file, not a symlink, owned by root, and not writable by group or others.
 - The `/etc/agent-marketplace` directory must be owned by root, not a symlink, and not writable by group or others.
 - Every included file must meet the same file rules. Every directory above an included file, up to the filesystem root, must meet the same directory rules. The CLI checks each path as written, before it resolves symlinks or `..` segments.
-- When the organization file declares Git or Marketplace sources, a deployed `/etc/agent-marketplace/lock.yaml` must meet the same file rules and declare `scope: organization`.
+- The organization lock is optional: an absent `/etc/agent-marketplace/lock.yaml` leaves the layer unlocked (see [Organization lock](#organization-lock)). When a lock is deployed, it must meet the same file rules and declare `scope: organization`; a malformed, wrong-scope, or stale deployed lock is rejected before its remote resources are used.
 
 A file or directory that breaks a rule fails the organization layer with an `organization.trust.*` diagnostic, such as `organization.trust.include.writable` or `organization.trust.ancestor.symlink`.
 
-System symlink aliases do not get an exception. On macOS, `/etc`, `/var`, and `/tmp` are symlinks, so write organization include paths with the physical location, such as `/private/etc/agent-marketplace/profiles/company.yaml`.
+System symlink aliases do not get an exception. On macOS, `/etc`, `/var`, and `/tmp` are symlinks, so organization include paths must use the physical location, such as `/private/etc/agent-marketplace/profiles/company.yaml`.
 
 User, repository, and personal-local files and their includes have no ownership or permission requirements.
 

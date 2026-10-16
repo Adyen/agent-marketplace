@@ -130,7 +130,7 @@ func (c *Cache) VerifiedMarketplaceLockResource(entry config.MarketplaceEntry, p
 		if acquisition == config.MarketplaceAcquisitionIndexOnly {
 			raw, verified, err = c.ReadIndexOnlyArtifact(identity, pin.Digest)
 		} else {
-			raw, verified, err = c.ReadArtifact(string(rev.ArchiveDigest))
+			raw, verified, _, err = cachedMirrorArchive(c, string(rev.ArchiveDigest))
 		}
 		if err != nil {
 			return lockfile.MarketplaceResourceLock{}, fmt.Errorf("read cached artifact: %w", err)
@@ -138,12 +138,19 @@ func (c *Cache) VerifiedMarketplaceLockResource(entry config.MarketplaceEntry, p
 		if raw == nil || !verified {
 			return lockfile.MarketplaceResourceLock{}, fmt.Errorf("verified artifact is missing from cache")
 		}
-		ca, caRaw, err := hccartifact.Decode(bytes.NewReader(raw))
-		if err != nil {
-			return lockfile.MarketplaceResourceLock{}, fmt.Errorf("decode artifact: %w", err)
-		}
-		if err := ca.VerifyArchiveDigest(caRaw); err != nil {
-			return lockfile.MarketplaceResourceLock{}, fmt.Errorf("verify archive digest: %w", err)
+		var ca hccartifact.CanonicalArtifact
+		if acquisition == config.MarketplaceAcquisitionIndexOnly {
+			// Index-only archives are local reconstructions with no attested archive
+			// digest. Their content is verified without re-encoding.
+			ca, err = hccartifact.DecodeContentArchive(raw)
+			if err != nil {
+				return lockfile.MarketplaceResourceLock{}, fmt.Errorf("decode artifact: %w", err)
+			}
+		} else {
+			ca, err = hccartifact.VerifyArchiveBytes(raw, string(rev.ArchiveDigest))
+			if err != nil {
+				return lockfile.MarketplaceResourceLock{}, archiveVerifyError(err, pin.Kind, pin.Name, entry.URL, true)
+			}
 		}
 		if err := ca.VerifyContentDigest(); err != nil {
 			return lockfile.MarketplaceResourceLock{}, fmt.Errorf("verify content digest: %w", err)

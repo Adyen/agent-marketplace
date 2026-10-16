@@ -45,10 +45,6 @@ func TestConsumerMigrationSurfaceIsAbsent(t *testing.T) {
 			t.Fatalf("%v exposes migration: %s", args, &out)
 		}
 	}
-	convert := newConvertCmd()
-	if convert.Flags().Lookup("to") == nil {
-		t.Fatal("harness convert --to was removed")
-	}
 	after, err := os.ReadFile(path)
 	if err != nil || !bytes.Equal(before, after) {
 		t.Fatalf("unsupported root changed: %q, %v", after, err)

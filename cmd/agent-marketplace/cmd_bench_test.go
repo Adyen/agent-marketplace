@@ -382,37 +382,3 @@ func BenchmarkBuildCodexHarnessTargetRows(b *testing.B) {
 		}
 	}
 }
-
-func BenchmarkRunConvertToCodex(b *testing.B) {
-	b.Setenv("CODEX_HOME", "")
-	b.Setenv("XDG_STATE_HOME", b.TempDir())
-	srcDir := b.TempDir()
-	files := map[string]string{
-		".claude-plugin/plugin.json": `{"name":"benchmark","version":"1.0.0"}`,
-		"skills/demo/SKILL.md":       "---\nname: demo\ndescription: Benchmark skill\n---\n\n# Demo\n",
-		"hooks/hooks.json":           `{"hooks":{"PreToolUse":[{"type":"command","command":"lint"}]}}`,
-		".mcp.json":                  `{"mcpServers":{"docs":{"command":"docs-server","args":["--stdio"]}}}`,
-	}
-	for name, content := range files {
-		path := filepath.Join(srcDir, filepath.FromSlash(name))
-		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-			b.Fatal(err)
-		}
-		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
-			b.Fatal(err)
-		}
-	}
-	outRoot := b.TempDir()
-	previousLogger := slog.Default()
-	slog.SetDefault(slog.New(slog.NewTextHandler(io.Discard, nil)))
-	b.Cleanup(func() { slog.SetDefault(previousLogger) })
-
-	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		outDir := filepath.Join(outRoot, fmt.Sprintf("run-%d", i))
-		if err := runConvert(io.Discard, srcDir, "claude", "codex", outDir, false, true, false); err != nil {
-			b.Fatal(err)
-		}
-	}
-}

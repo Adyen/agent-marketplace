@@ -36,7 +36,7 @@ func runProductionTUI(ctx context.Context, repoRoot, homeDir string) error {
 	if err := pipeline.RecoverDependencyTransactions(ctx); err != nil {
 		return err
 	}
-	return tui.Run(ctx, workspace.RepoRoot(), homeDir, tui.WithWorkspace(workspace), tui.WithDependencyLifecycle(tui.DependencyLifecycle{
+	options := []tui.Option{tui.WithWorkspace(workspace), tui.WithDependencyLifecycle(tui.DependencyLifecycle{
 		Sync: func(ctx context.Context, workspace pipeline.Workspace) ([]error, error) {
 			return runTUIDependencyLifecycle(ctx, workspace, false)
 		},
@@ -44,7 +44,11 @@ func runProductionTUI(ctx context.Context, repoRoot, homeDir string) error {
 			return runTUIDependencyLifecycle(ctx, workspace, true)
 		},
 		Mutate: runTUIConfigMutation,
-	}))
+	})}
+	if checker := newUpgradeChecker(); checker != nil {
+		options = append(options, tui.WithUpgradeCheck(checker))
+	}
+	return tui.Run(ctx, workspace.RepoRoot(), homeDir, options...)
 }
 
 var (

@@ -1,4 +1,4 @@
-import type { ResourceKind, ResourceListItem, ResourceRevision } from '~/types/marketplace'
+import type { ResourceKind, ResourceListItem, ResourceRevision, ResourceSource } from '~/types/marketplace'
 import { isSafeRouteToken, isSafeResourceRoute } from '~/lib/routes'
 import { isSha256Digest } from '~/lib/validation'
 
@@ -76,6 +76,36 @@ export function resourceLocator(item: ResourceListItem, browserBase: string): st
 export function installCommand(item: ResourceListItem, browserBase: string): string {
   const locator = resourceLocator(item, browserBase)
   return locator ? `agent-marketplace install "${locator}"` : ''
+}
+
+function parseHTTPURL(value: string): URL | undefined {
+  try {
+    const url = new URL(value)
+    return ['http:', 'https:'].includes(url.protocol) && !url.username && !url.password && url.hostname ? url : undefined
+  } catch {
+    return undefined
+  }
+}
+
+export function sourceRepositoryLabel(repositoryUrl: string): string {
+  const url = parseHTTPURL(repositoryUrl)
+  if (!url) return ''
+  const path = url.pathname.replace(/^\/+|\/+$/g, '').replace(/\.git$/, '')
+  return path || url.hostname
+}
+
+export function sourceBrowseUrl(source: ResourceSource | undefined): string {
+  const url = source && parseHTTPURL(source.repository_url)
+  if (!source || !url || !/^[0-9a-f]{40}$/.test(source.commit)) return ''
+  const base = `${url.origin}${url.pathname.replace(/\/+$/, '').replace(/\.git$/, '')}`
+  const segments = source.path.split('/')
+  if (segments.some(segment => segment === '' || segment === '.' || segment === '..')) return base
+  const path = segments.map(segment => encodeURIComponent(segment)).join('/')
+  const host = url.hostname.toLowerCase()
+  if (host === 'github.com' || host.startsWith('github.')) return `${base}/blob/${source.commit}/${path}`
+  if (host === 'gitlab.com' || host.startsWith('gitlab.')) return `${base}/-/blob/${source.commit}/${path}`
+  if (host === 'bitbucket.org') return `${base}/src/${source.commit}/${path}`
+  return base
 }
 
 /**

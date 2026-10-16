@@ -92,10 +92,6 @@ run_race ./internal/collection \
     -run '^TestDiscoverCollectionSource.*$' \
     -count=20
 
-run_race ./cmd/agent-marketplace \
-    -run '^TestConvertSource.*$' \
-    -count=20
-
 run_race ./internal/skill ./internal/fsboundary \
     -run '^Test(DiscoverLegacySourceMetadata.*|LegacySourceMetadata.*|TargetPrefixRead.*)$' \
     -count=20

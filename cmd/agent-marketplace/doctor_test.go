@@ -835,3 +835,21 @@ sources: {}
 	}
 
 }
+
+func writeClaudePluginSkill(t *testing.T, root, name string) {
+	t.Helper()
+	writeFile(t, filepath.Join(root, ".claude-plugin", "plugin.json"), `{"name":"test-plugin","version":"1.0.0"}`)
+	writeFile(t, filepath.Join(root, "skills", name, "SKILL.md"), `---
+name: `+name+`
+description: Demo skill
+metadata:
+  tags:
+    - demo
+---
+
+# Demo skill
+`)
+	if _, err := os.Stat(filepath.Join(root, ".claude-plugin", "plugin.json")); err != nil {
+		t.Fatalf("expected Claude plugin marker: %v", err)
+	}
+}
