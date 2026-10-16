@@ -13,6 +13,7 @@ import (
 	"github.com/charmbracelet/x/term"
 	"github.com/spf13/cobra"
 
+	"github.com/Adyen/agent-marketplace/internal/cache"
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/harness"
 	"github.com/Adyen/agent-marketplace/internal/logging"
@@ -67,6 +68,9 @@ func newRootCmd() *cobra.Command {
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
 			cmd.SetContext(pipeline.WithTransientOrganizationMarketplaceLockCache(cmd.Context()))
 			rootTUI := cmd == rootCmd && !showVersion && !noTUI && os.Getenv("AGENT_MARKETPLACE_NO_TUI") == "" && term.IsTerminal(os.Stdin.Fd())
+			if !rootTUI && !commandRunsAsOrUnder(cmd, "serve") {
+				cmd.SetContext(cache.WithExactGitVerificationScope(cmd.Context()))
+			}
 			if err := prepareCommandDependencies(cmd, rootTUI); err != nil {
 				return err
 			}
@@ -462,6 +466,15 @@ func runRemove(ctx context.Context, out io.Writer, skillName string, scope pipel
 		_, err = fmt.Fprintf(out, "  (excluded in %s — applies across all repos)\n", globalPath)
 	}
 	return err
+}
+
+func commandRunsAsOrUnder(cmd *cobra.Command, name string) bool {
+	for c := cmd; c != nil; c = c.Parent() {
+		if c.Name() == name {
+			return true
+		}
+	}
+	return false
 }
 
 func shouldSkipTargetValidation(cmd *cobra.Command) bool {

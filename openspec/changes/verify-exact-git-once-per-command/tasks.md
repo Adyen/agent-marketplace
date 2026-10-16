@@ -10,7 +10,7 @@
 
 ## 2. Verification scope (design D1–D4)
 
-- [ ] 2.1 Add the context-carried verification scope to `internal/cache` and
+- [x] 2.1 Add the context-carried verification scope to `internal/cache` and
       consult it in `verifyExactGitSnapshotWithContext` callers and
       `sanitizeExactGitConfigWithContext`. Verify with new `internal/cache`
       tests, which count Git invocations through a PATH wrapper:
@@ -19,18 +19,18 @@
       - a failed open in a scope is fully re-verified on the next open
       - quarantine and republish within one scope re-verifies
       - tampering between two scopes is rejected
-- [ ] 2.2 Invalidate store keys on clone/init and record them after sanitize.
+- [x] 2.2 Invalidate store keys on clone/init and record them after sanitize.
       Verify with an `internal/cache` test in which resolve then acquire within
       one scope sanitizes each store once and re-sanitizes after a fresh clone.
-- [ ] 2.3 Attach a scope in `PersistentPreRunE` for non-TUI commands. Verify
+- [x] 2.3 Attach a scope in `PersistentPreRunE` for non-TUI commands. Verify
       with the command tests in 4.1 and 4.2.
-- [ ] 2.4 Attach a fresh scope per TUI action: inspection load/reload, the
+- [x] 2.4 Attach a fresh scope per TUI action: inspection load/reload, the
       `Sync`/`Update` callbacks, and `prepareTUILocks`. Verify with the TUI test
       in 4.3.
 
 ## 3. Accept-only fast path (design D5)
 
-- [ ] 3.1 Implement the canonical-form local-state reader and use it in
+- [x] 3.1 Implement the canonical-form local-state reader and use it in
       snapshot verification and store sanitize, falling back to the existing
       subprocess functions whenever it is not sure. Verify with a
       differential table test. It runs each fixture through both paths and
@@ -44,10 +44,10 @@
       - `.git` as a file, `.git` as a symlink, a `commondir` file
       - symbolic `HEAD`, a short `HEAD`
       - a missing trailing newline
-- [ ] 3.2 Add `FuzzExactGitLocalState` over config bytes with the same
+- [x] 3.2 Add `FuzzExactGitLocalState` over config bytes with the same
       implication property. Its seed corpus runs in ordinary `go test`. Verify
       that `go test ./internal/cache -run FuzzExactGitLocalState` passes.
-- [ ] 3.3 Confirm against real Git whether `core.worktree` in a temporary
+- [x] 3.3 Confirm against real Git whether `core.worktree` in a temporary
       global config changes `rev-parse --show-toplevel` for a repository with a
       `.git` directory:
       - if it does not, the fast path derives the worktree root
@@ -57,7 +57,7 @@
 
 ## 4. Scenario tests
 
-- [ ] 4.1 Add a command test annotated
+- [x] 4.1 Add a command test annotated
       `// spec: exact-snapshot-verification/snapshot-tampered-between-commands-is-rejected-by-the-next-read-only-command`.
       It runs `sync --locked`, modifies a tracked snapshot file, and runs
       `sync --check`, asserting:
@@ -66,21 +66,21 @@
 
       If the current diagnostic differs, stop and reconcile the spec before
       continuing.
-- [ ] 4.2 Add a command test annotated
+- [x] 4.2 Add a command test annotated
       `// spec: exact-snapshot-verification/snapshot-tampered-between-commands-is-repaired-by-the-next-sync`.
       It asserts that a second `sync --locked` succeeds, that the snapshot's
       tracked tree matches the locked commit afterwards, and that the
       acquisition lock is byte-identical.
-- [ ] 4.3 Add a TUI test annotated
+- [x] 4.3 Add a TUI test annotated
       `// spec: exact-snapshot-verification/snapshot-tampered-between-tui-actions-is-reported-on-reload`.
       It verifies, tampers, and reloads in one TUI session, and asserts an
       error rather than in-sync.
-- [ ] 4.4 Add command tests annotated
+- [x] 4.4 Add command tests annotated
       `// spec: exact-snapshot-verification/equivalent-non-canonical-repository-metadata-is-accepted`
       and
       `// spec: exact-snapshot-verification/disallowed-repository-configuration-is-rejected-however-it-is-written`.
       Each rewrites the exact snapshot's `.git/config` before `sync --check`.
-- [ ] 4.5 Run `go test ./internal/cache ./internal/pipeline ./internal/tui -count=1`,
+- [x] 4.5 Run `go test ./internal/cache ./internal/pipeline ./internal/tui -count=1`,
       the new command tests by name, and the existing
       `registry-symlink-containment/snapshot-tracked-tree-is-altered` and
       `tui-feedback/untrusted-snapshots-remain-errors` tests, and verify that all
