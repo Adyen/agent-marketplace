@@ -234,6 +234,17 @@ func (c *cursorCompiler) translateSubagent(sub *ir.Subagent, opts compile.Option
 
 	effort := selection.Effort
 	if sidecar := sub.Ext.Cursor; sidecar != nil {
+		if !compile.SidecarToolsWithinCanonical(mapping.Target(sub.ToolSource), sub.Tools, sidecar.Tools, mapping.TargetCursor, opts.ToolOverride()) {
+			return nil, append(dgs, diag.Diagnostic{
+				Code:     diag.CodeSubagentSecurityRestrictionUnsupported,
+				Severity: diag.SeverityError,
+				Target:   string(mapping.TargetCursor),
+				Resource: sub.Name(),
+				Message:  "A preserved Cursor tool list grants tools the canonical subagent does not; subagent suppressed",
+				Hint:     "Remove the preserved sidecar or align it with the canonical tool list",
+				Source:   diag.SourceRef(sub.Source),
+			}), nil
+		}
 		if sidecar.Tools != nil {
 			mappedTools = sidecar.Tools
 		}
@@ -310,8 +321,16 @@ func (c *cursorCompiler) translateHook(h *ir.Hook, opts compile.Options) ([]arti
 	}
 
 	hookType := resolved.Type
-	if sidecar := h.Ext.Cursor; sidecar != nil && sidecar.HookType != "" {
-		hookType = sidecar.HookType
+	if sidecar := h.Ext.Cursor; sidecar != nil && sidecar.HookType != "" && sidecar.HookType != resolved.Type {
+		return nil, []diag.Diagnostic{{
+			Code:     diag.CodeHookCursorUnsupportedType,
+			Severity: diag.SeverityError,
+			Target:   string(mapping.TargetCursor),
+			Resource: h.Name(),
+			Message:  "A preserved Cursor hook type contradicts the catalog-resolved type; hook suppressed",
+			Hint:     "Remove the preserved sidecar or align it with the declared hook type",
+			Source:   diag.SourceRef(h.Source),
+		}}, nil
 	}
 
 	hookEntry := map[string]any{
