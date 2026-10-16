@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"strings"
 
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/compile"
@@ -14,6 +15,8 @@ import (
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/target"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/toolpolicy"
 )
+
+const factoryPluginRootSource = "${CLAUDE_PLUGIN_ROOT}"
 
 func init() {
 	compile.Register(&factoryCompiler{})
@@ -366,7 +369,8 @@ func (f *factoryCompiler) translateHook(h *ir.Hook, opts compile.Options) ([]art
 
 // translateMcpServer translates to mcp.json fragment.
 func (f *factoryCompiler) translateMcpServer(m *ir.McpServer, opts compile.Options) ([]artifact.Artifact, []diag.Diagnostic, error) {
-	serverEntry, canonical := compile.McpServerEntry(m, func(s string) string { return s }, true)
+	pluginRoot, _ := mapping.EnvToken(factoryPluginRootSource, mapping.TargetFactory)
+	serverEntry, canonical := compile.McpServerEntry(m, func(s string) string { return strings.ReplaceAll(s, factoryPluginRootSource, pluginRoot) }, true)
 	extraKeys, diags := compile.ExtraKeys(m.Extra, canonical, mapping.TargetFactory, m.Name(), diag.SourceRef(m.Source))
 	diags = append(compile.McpCredentialDiagnostics(m, mapping.TargetFactory, compile.WithMcpOptions(opts)), diags...)
 	for _, k := range extraKeys {
