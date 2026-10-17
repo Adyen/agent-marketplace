@@ -186,6 +186,24 @@ Follow-up checks pass: fresh full API package tests, scoped `make validate`
 (945 scenarios, 1,537 annotations). No production Go file changes in this
 follow-up; the published candidate's E2E and released-client gates pass in CI.
 
+The next CodeRabbit comment requests separate content-read coverage. The
+manifest-refusal regression remains intact and now explicitly asserts that
+only the manifest digest is requested. A separate 16-case matrix uses a
+digest-aware probe with a valid manifest and matching content, exercising
+GET/HEAD on primary and digest content routes with bounded and legacy stores.
+It asserts the exact manifest-then-content request sequence, HTTP 200 at the
+configured boundary, HTTP 413 above it, healthy bytes/media/cache identity,
+no immutable refusal caching, and the bounded ceiling-plus-one read count.
+Two deliberate mutations establish non-vacuity: invalid manifest data fails
+all 16 cases before the content read; bypassing the bounded content reader
+fails all eight bounded-store cases despite the post-read 413 still working.
+Both mutations are removed; production code remains unchanged.
+Fresh API package tests, scoped validation (vet, zero-issue CI lint and build),
+focused API races and strict spec checks pass (945 scenarios, 1,538
+annotations). OCR excludes both changed test/doc files by default; the host
+reviews both manually, zero skipped, with no unresolved actionable
+critical/high/medium findings.
+
 ## Adversarial Review
 
 The host agent uses `open-code-review-delegate` for deterministic selection

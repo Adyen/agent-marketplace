@@ -8,6 +8,7 @@ import (
 	"math"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 
@@ -21,21 +22,32 @@ import (
 type payloadReadProbe struct {
 	store.BlobStore
 	data                 []byte
+	dataByDigest         map[store.ArchiveDigest][]byte
+	requested            []store.ArchiveDigest
 	getErr               error
 	bounded, unbounded   int
 	readBytes, lastLimit int64
 }
 
-func (s *payloadReadProbe) Get(_ context.Context, _ store.ArchiveDigest) ([]byte, error) {
-	s.unbounded++
-	s.readBytes += int64(len(s.data))
-	return bytes.Clone(s.data), s.getErr
+func (s *payloadReadProbe) dataFor(digest store.ArchiveDigest) []byte {
+	s.requested = append(s.requested, digest)
+	if data, ok := s.dataByDigest[digest]; ok {
+		return data
+	}
+	return s.data
 }
 
-func (s *payloadReadProbe) GetBounded(_ context.Context, _ store.ArchiveDigest, limit int64) ([]byte, error) {
+func (s *payloadReadProbe) Get(_ context.Context, digest store.ArchiveDigest) ([]byte, error) {
+	s.unbounded++
+	data := s.dataFor(digest)
+	s.readBytes += int64(len(data))
+	return bytes.Clone(data), s.getErr
+}
+
+func (s *payloadReadProbe) GetBounded(_ context.Context, digest store.ArchiveDigest, limit int64) ([]byte, error) {
 	s.bounded++
 	s.lastLimit = limit
-	return store.ReadBlobBounded(&payloadCountingReader{Reader: bytes.NewReader(s.data), probe: s}, limit)
+	return store.ReadBlobBounded(&payloadCountingReader{Reader: bytes.NewReader(s.dataFor(digest)), probe: s}, limit)
 }
 
 type payloadCountingReader struct {
@@ -188,7 +200,8 @@ func TestLegacyPayloadReadErrorsRetainServerErrorStatus(t *testing.T) {
 	}
 }
 
-func TestResourceInspectionRetainsOversizeManifestStatus(t *testing.T) {
+func resourceInspectionReadServer(t *testing.T, body []byte) (*Server, inspection.Projection) {
+	t.Helper()
 	ctx := context.Background()
 	blobs := fsblob.New(t.TempDir())
 	server := payloadReadServer(t, blobs)
@@ -198,8 +211,7 @@ func TestResourceInspectionRetainsOversizeManifestStatus(t *testing.T) {
 	}
 	coordinate := store.ResourceCoordinate{Marketplace: "mp-test", Registry: source.ID, Kind: KindSkill, Name: "example"}
 	revision := store.RevisionDigest("sha256:" + strings.Repeat("a", 64))
-	body := []byte("# Ordinary inert content\n")
-	projection, err := inspection.Build(coordinate, string(revision), body, nil, 10, 1024, 4096)
+	projection, err := inspection.Build(coordinate, string(revision), body, nil, 10, int64(len(body)), int64(len(body)))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -214,8 +226,14 @@ func TestResourceInspectionRetainsOversizeManifestStatus(t *testing.T) {
 	publishAssessedTestRevision(ctx, t, server.meta,
 		store.ResourceRevision{Coordinate: coordinate, ContentDigest: revision},
 		store.AssessmentDecisionAllow, store.RevisionDigest(projection.Manifest.ManifestDigest), strings.Repeat("b", 40))
+	return server, projection
+}
 
-	base := "/api/v1/resources/source/skill/example/revisions/" + string(revision) + "/inspection"
+func TestResourceInspectionRetainsOversizeManifestStatus(t *testing.T) {
+	body := []byte("# Ordinary inert content\n")
+	server, projection := resourceInspectionReadServer(t, body)
+	blobs := server.blobs
+	base := "/api/v1/resources/source/skill/example/revisions/" + projection.Manifest.RevisionDigest + "/inspection"
 	for _, fixture := range []struct {
 		suffix string
 		body   []byte
@@ -233,6 +251,7 @@ func TestResourceInspectionRetainsOversizeManifestStatus(t *testing.T) {
 					t.Fatalf("healthy inspection status=%d body=%q", response.Code, response.Body.Bytes())
 				}
 				for _, legacy := range []bool{false, true} {
+					// Every route must stop at manifest admission, before any content read.
 					probe := &payloadReadProbe{
 						BlobStore: blobs,
 						data:      bytes.Repeat([]byte("x"), int(inspection.MaxManifestBytes)+1024),
@@ -243,6 +262,9 @@ func TestResourceInspectionRetainsOversizeManifestStatus(t *testing.T) {
 					}
 					response = httptest.NewRecorder()
 					server.PublicHandler().ServeHTTP(response, httptest.NewRequest(method, base+fixture.suffix, nil))
+					if !slices.Equal(probe.requested, []store.ArchiveDigest{store.ArchiveDigest(projection.Manifest.ManifestDigest)}) {
+						t.Fatalf("manifest refusal requested unexpected content: %v", probe.requested)
+					}
 					if response.Code != http.StatusInternalServerError || strings.Contains(response.Header().Get("Cache-Control"), "immutable") {
 						t.Fatalf("legacy=%v status=%d headers=%v", legacy, response.Code, response.Header())
 					}
@@ -255,6 +277,80 @@ func TestResourceInspectionRetainsOversizeManifestStatus(t *testing.T) {
 					}
 				}
 			})
+		}
+	}
+}
+
+// spec: marketplace-api/oversized-payloads-stop-at-the-existing-read-ceiling
+func TestResourceInspectionContentReadsStopAtExistingCeiling(t *testing.T) {
+	body := bytes.Repeat([]byte("x"), (16<<10)+1024)
+	server, projection := resourceInspectionReadServer(t, body)
+	blobs := server.blobs
+	manifestDigest := store.ArchiveDigest(projection.Manifest.ManifestDigest)
+	contentDigest := store.ArchiveDigest(projection.Manifest.Files[0].ContentDigest)
+	base := "/api/v1/resources/source/skill/example/revisions/" + projection.Manifest.RevisionDigest + "/inspection/content"
+
+	for _, suffix := range []string{"", "/" + string(contentDigest)} {
+		for _, method := range []string{http.MethodGet, http.MethodHead} {
+			for _, backend := range []string{"bounded", "legacy"} {
+				for _, fixture := range []struct {
+					name   string
+					limit  int64
+					status int
+				}{
+					{"exact", int64(len(body)), http.StatusOK},
+					{"oversized", 16 << 10, http.StatusRequestEntityTooLarge},
+				} {
+					t.Run(method+suffix+"/"+backend+"/"+fixture.name, func(t *testing.T) {
+						probe := &payloadReadProbe{
+							BlobStore: blobs,
+							dataByDigest: map[store.ArchiveDigest][]byte{
+								manifestDigest: projection.Payload,
+								contentDigest:  body,
+							},
+						}
+						server.blobs = probe
+						if backend == "legacy" {
+							server.blobs = struct{ store.BlobStore }{probe}
+						}
+						server.cfg.Policy.Limits.FileBytes = fixture.limit
+						response := httptest.NewRecorder()
+						server.PublicHandler().ServeHTTP(response, httptest.NewRequest(method, base+suffix, nil))
+						if !slices.Equal(probe.requested, []store.ArchiveDigest{manifestDigest, contentDigest}) {
+							t.Fatalf("requested = %v, want manifest then content", probe.requested)
+						}
+						if response.Code != fixture.status {
+							t.Fatalf("status = %d, want %d", response.Code, fixture.status)
+						}
+						wantBytes := int64(len(projection.Payload) + len(body))
+						if backend == "legacy" {
+							if probe.unbounded != 2 || probe.bounded != 0 {
+								t.Fatalf("legacy reads: unbounded=%d bounded=%d", probe.unbounded, probe.bounded)
+							}
+						} else {
+							if probe.unbounded != 0 || probe.bounded != 2 || probe.lastLimit != fixture.limit {
+								t.Fatalf("bounded reads: unbounded=%d bounded=%d limit=%d", probe.unbounded, probe.bounded, probe.lastLimit)
+							}
+							if fixture.status == http.StatusRequestEntityTooLarge {
+								wantBytes = int64(len(projection.Payload)) + fixture.limit + 1
+							}
+						}
+						if probe.readBytes != wantBytes {
+							t.Fatalf("read bytes = %d, want %d", probe.readBytes, wantBytes)
+						}
+						if fixture.status == http.StatusOK {
+							if method == http.MethodGet && !bytes.Equal(response.Body.Bytes(), body) {
+								t.Fatal("healthy content changed")
+							}
+							if response.Header().Get("Content-Type") != inspection.MediaMarkdown || !strings.Contains(response.Header().Get("Cache-Control"), "immutable") {
+								t.Fatalf("healthy content headers = %v", response.Header())
+							}
+						} else if strings.Contains(response.Header().Get("Cache-Control"), "immutable") {
+							t.Fatal("oversized content refusal has immutable success caching")
+						}
+					})
+				}
+			}
 		}
 	}
 }
