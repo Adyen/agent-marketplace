@@ -3,6 +3,7 @@ package opencode
 import (
 	"bytes"
 	"encoding/json"
+	"reflect"
 	"slices"
 	"testing"
 
@@ -14,13 +15,14 @@ import (
 // spec: marketplace-api/canonical-null-extra-is-not-a-native-extension
 func TestCanonicalHookMetadataAdmission(t *testing.T) {
 	for _, tc := range []struct {
-		name  string
-		extra map[string]any
-		want  bool
+		name    string
+		extra   map[string]any
+		decoded map[string]any
+		want    bool
 	}{
-		{"serializer metadata", nil, true},
-		{"unknown metadata", map[string]any{"priority": 1}, false},
-		{"unknown null metadata", map[string]any{"custom": nil}, false},
+		{"serializer metadata", nil, map[string]any{"Extra": nil}, true},
+		{"unknown metadata", map[string]any{"priority": 1}, map[string]any{"Extra": nil, "priority": float64(1)}, false},
+		{"unknown null metadata", map[string]any{"custom": nil}, map[string]any{"Extra": nil, "custom": nil}, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			hook := ir.NewHookWithMatcher("guard", "PreToolUse", "Bash", "echo safe", "command", tc.extra, ir.SourceRef{})
@@ -31,6 +33,9 @@ func TestCanonicalHookMetadataAdmission(t *testing.T) {
 			resource, err := artifact.DecodeResource("hook", canonical.Payload)
 			if err != nil {
 				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(resource.(*ir.Hook).Extra, tc.decoded) {
+				t.Fatalf("decoded metadata: got %#v, want %#v", resource.(*ir.Hook).Extra, tc.decoded)
 			}
 			a, d, err := (Compiler{}).Translate(resource)
 			if err != nil {
@@ -43,7 +48,7 @@ func TestCanonicalHookMetadataAdmission(t *testing.T) {
 			} else if len(a) != 0 || !diag.HasCode(d, diag.CodeHookOpenCodeUnsupported) {
 				t.Fatalf("unknown metadata accepted: %v %v", a, d)
 			}
-			if value, retained := resource.(*ir.Hook).Extra["Extra"]; !retained || value != nil {
+			if !reflect.DeepEqual(resource.(*ir.Hook).Extra, tc.decoded) {
 				t.Fatalf("compiler changed shared canonical metadata: %#v", resource.(*ir.Hook).Extra)
 			}
 		})
