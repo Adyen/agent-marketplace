@@ -1208,8 +1208,12 @@ func (s *Server) handleResourceInspectionContent(w http.ResponseWriter, r *http.
 		writeError(w, http.StatusNotFound, "inspection content not available")
 		return
 	}
-	data, err := s.blobs.Get(r.Context(), store.ArchiveDigest(file.ContentDigest))
+	data, err := s.readPayloadBlob(r.Context(), store.ArchiveDigest(file.ContentDigest), s.cfg.Policy.Limits.FileBytes)
 	if err != nil {
+		if errors.Is(err, store.ErrBlobTooLarge) {
+			writeError(w, http.StatusRequestEntityTooLarge, "inspection content exceeds size limit")
+			return
+		}
 		if errors.Is(err, store.ErrNotFound) {
 			writeError(w, http.StatusNotFound, "inspection content not found")
 			return
@@ -1262,7 +1266,7 @@ func (s *Server) getResourceInspection(ctx context.Context, registrySlug, kind, 
 		return inspection.Manifest{}, nil, errInspectionUnavailable
 	}
 	manifestDigest := string(rev.Assessment.InspectionManifestDigest)
-	payload, err := s.blobs.Get(ctx, store.ArchiveDigest(manifestDigest))
+	payload, err := s.readPayloadBlob(ctx, store.ArchiveDigest(manifestDigest), inspection.MaxManifestBytes)
 	if err != nil {
 		return inspection.Manifest{}, nil, err
 	}
@@ -1351,8 +1355,12 @@ func (s *Server) handleInspectionDigest(w http.ResponseWriter, r *http.Request) 
 	if !s.managedDigestAllowed(w, r.Context(), "inspection", store.ArchiveDigest(digest)) {
 		return
 	}
-	data, err := s.blobs.Get(r.Context(), store.ArchiveDigest(digest))
+	data, err := s.readPayloadBlob(r.Context(), store.ArchiveDigest(digest), inspection.MaxManifestBytes)
 	if err != nil {
+		if errors.Is(err, store.ErrBlobTooLarge) {
+			writeError(w, http.StatusRequestEntityTooLarge, "inspection manifest exceeds size limit")
+			return
+		}
 		if errors.Is(err, store.ErrNotFound) {
 			writeError(w, http.StatusNotFound, "inspection not found")
 			return
@@ -1382,8 +1390,12 @@ func (s *Server) handleContentDigest(w http.ResponseWriter, r *http.Request) {
 	if !s.managedDigestAllowed(w, r.Context(), "content", store.ArchiveDigest(digest)) {
 		return
 	}
-	data, err := s.blobs.Get(r.Context(), store.ArchiveDigest(digest))
+	data, err := s.readPayloadBlob(r.Context(), store.ArchiveDigest(digest), s.cfg.Policy.Limits.FileBytes)
 	if err != nil {
+		if errors.Is(err, store.ErrBlobTooLarge) {
+			writeError(w, http.StatusRequestEntityTooLarge, "content exceeds size limit")
+			return
+		}
 		if errors.Is(err, store.ErrNotFound) {
 			writeError(w, http.StatusNotFound, "content not found")
 			return
@@ -1461,7 +1473,7 @@ func (s *Server) handleManifests(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	data, err := s.blobs.Get(r.Context(), store.ArchiveDigest(digest))
+	data, err := s.readPayloadBlob(r.Context(), store.ArchiveDigest(digest), manifestPayloadLimit(s.cfg))
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
 			writeError(w, http.StatusNotFound, "manifest not found")

@@ -1,0 +1,153 @@
+package api
+
+import (
+	"bytes"
+	"context"
+	"io"
+	"math"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+
+	"github.com/Adyen/agent-marketplace/pkg/marketplace/config"
+	"github.com/Adyen/agent-marketplace/pkg/marketplace/inspection"
+	"github.com/Adyen/agent-marketplace/pkg/marketplace/store"
+	"github.com/Adyen/agent-marketplace/pkg/marketplace/store/fsblob"
+	"github.com/Adyen/agent-marketplace/pkg/marketplace/store/sqlite"
+)
+
+type payloadReadProbe struct {
+	store.BlobStore
+	data                 []byte
+	bounded, unbounded   int
+	readBytes, lastLimit int64
+}
+
+func (s *payloadReadProbe) Get(_ context.Context, _ store.ArchiveDigest) ([]byte, error) {
+	s.unbounded++
+	s.readBytes += int64(len(s.data))
+	return bytes.Clone(s.data), nil
+}
+
+func (s *payloadReadProbe) GetBounded(_ context.Context, _ store.ArchiveDigest, limit int64) ([]byte, error) {
+	s.bounded++
+	s.lastLimit = limit
+	return store.ReadBlobBounded(&payloadCountingReader{Reader: bytes.NewReader(s.data), probe: s}, limit)
+}
+
+type payloadCountingReader struct {
+	io.Reader
+	probe *payloadReadProbe
+}
+
+func (r *payloadCountingReader) Read(data []byte) (int, error) {
+	n, err := r.Reader.Read(data)
+	r.probe.readBytes += int64(n)
+	return n, err
+}
+
+func payloadReadServer(tb testing.TB, blobs store.BlobStore) *Server {
+	tb.Helper()
+	meta := sqlite.New(":memory:")
+	if err := meta.Open(context.Background()); err != nil {
+		tb.Fatal(err)
+	}
+	tb.Cleanup(func() { _ = meta.Close() })
+	cfg := config.Config{Instance: config.Instance{ID: "mp-test"}}
+	cfg.Policy.Limits.FileBytes = 16 << 10
+	cfg.Policy.Limits.ArtifactBytes = 32 << 10
+	return NewServer(cfg, meta, blobs)
+}
+
+// spec: marketplace-api/oversized-payloads-stop-at-the-existing-read-ceiling
+func TestPublicPayloadReadsStopAtExistingCeilings(t *testing.T) {
+	digest := strings.Repeat("a", 64)
+	for _, fixture := range []struct {
+		path   string
+		limit  int64
+		status int
+	}{
+		{"/api/v1/content/sha256/" + digest, 16 << 10, http.StatusRequestEntityTooLarge},
+		{"/api/v1/inspection/sha256/" + digest, inspection.MaxManifestBytes, http.StatusRequestEntityTooLarge},
+		{"/api/v1/manifests/sha256:" + digest, 32 << 10, http.StatusInternalServerError},
+	} {
+		for _, method := range []string{http.MethodGet, http.MethodHead} {
+			t.Run(method+fixture.path, func(t *testing.T) {
+				probe := &payloadReadProbe{
+					BlobStore: fsblob.New(t.TempDir()),
+					data:      bytes.Repeat([]byte("x"), int(fixture.limit)+1024),
+				}
+				server := payloadReadServer(t, probe)
+				response := httptest.NewRecorder()
+				server.PublicHandler().ServeHTTP(response, httptest.NewRequest(method, fixture.path, nil))
+				if response.Code != fixture.status {
+					t.Fatalf("status = %d, want %d", response.Code, fixture.status)
+				}
+				if probe.unbounded != 0 || probe.bounded != 1 || probe.lastLimit != fixture.limit || probe.readBytes > fixture.limit+1 {
+					t.Fatalf("unbounded=%d bounded=%d limit=%d read=%d", probe.unbounded, probe.bounded, probe.lastLimit, probe.readBytes)
+				}
+				if strings.Contains(response.Header().Get("Cache-Control"), "immutable") {
+					t.Fatal("size refusal has immutable success caching")
+				}
+			})
+		}
+	}
+}
+
+// spec: marketplace-api/healthy-payload-reads-retain-response-identity
+func TestHealthyPayloadReadRetainsIdentity(t *testing.T) {
+	data := []byte("ordinary inert content")
+	probe := &payloadReadProbe{BlobStore: fsblob.New(t.TempDir()), data: data}
+	server := payloadReadServer(t, probe)
+	path := "/api/v1/content/" + strings.Replace(inspection.Digest(data), ":", "/", 1)
+	response := httptest.NewRecorder()
+	server.PublicHandler().ServeHTTP(response, httptest.NewRequest(http.MethodGet, path, nil))
+	if response.Code != http.StatusOK || !bytes.Equal(response.Body.Bytes(), data) {
+		t.Fatalf("healthy content status = %d, body = %q", response.Code, response.Body.String())
+	}
+	if response.Header().Get("Content-Type") != "text/plain" || !strings.Contains(response.Header().Get("Cache-Control"), "immutable") {
+		t.Fatalf("healthy content headers = %v", response.Header())
+	}
+	if probe.bounded != 1 || probe.unbounded != 0 || probe.readBytes != int64(len(data)) {
+		t.Fatalf("healthy read: bounded=%d unbounded=%d bytes=%d", probe.bounded, probe.unbounded, probe.readBytes)
+	}
+}
+
+func TestPayloadReadsRetainLimitAndCustomStoreCompatibility(t *testing.T) {
+	data := []byte("ordinary inert content")
+	for _, fixture := range []struct {
+		name    string
+		limit   int64
+		legacy  bool
+		status  int
+		bounded int
+	}{
+		{"exact", int64(len(data)), false, http.StatusOK, 1},
+		{"oversized", int64(len(data) - 1), false, http.StatusRequestEntityTooLarge, 1},
+		{"unlimited", 0, false, http.StatusOK, 0},
+		{"negative", -1, false, http.StatusOK, 0},
+		{"maximum", math.MaxInt64, false, http.StatusOK, 0},
+		{"legacy", int64(len(data)), true, http.StatusOK, 0},
+		{"legacy-oversized", int64(len(data) - 1), true, http.StatusRequestEntityTooLarge, 0},
+	} {
+		t.Run(fixture.name, func(t *testing.T) {
+			probe := &payloadReadProbe{BlobStore: fsblob.New(t.TempDir()), data: data}
+			var blobs store.BlobStore = probe
+			if fixture.legacy {
+				blobs = struct{ store.BlobStore }{probe}
+			}
+			server := payloadReadServer(t, blobs)
+			server.cfg.Policy.Limits.FileBytes = fixture.limit
+			path := "/api/v1/content/" + strings.Replace(inspection.Digest(data), ":", "/", 1)
+			response := httptest.NewRecorder()
+			server.PublicHandler().ServeHTTP(response, httptest.NewRequest(http.MethodGet, path, nil))
+			if response.Code != fixture.status || probe.bounded != fixture.bounded || probe.unbounded != 1-fixture.bounded {
+				t.Fatalf("status=%d bounded=%d unbounded=%d", response.Code, probe.bounded, probe.unbounded)
+			}
+			if fixture.status == http.StatusOK && !bytes.Equal(response.Body.Bytes(), data) {
+				t.Fatal("healthy content changed")
+			}
+		})
+	}
+}
