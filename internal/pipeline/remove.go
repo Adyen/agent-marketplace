@@ -4,11 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
 
+	"github.com/Adyen/agent-marketplace/internal/catalog"
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/dependencytxn"
 	"github.com/Adyen/agent-marketplace/internal/materialize"
@@ -282,7 +284,7 @@ func Remove(ctx context.Context, opts RemoveOptions) (result *RemoveResult, retE
 	if len(resolvedResult.Errors) > 0 {
 		return nil, errors.Join(resolvedResult.Errors...)
 	}
-	resolved := resolvedResult.Resolved
+	resolved := removalResourceCandidates(resolvedResult, name)
 
 	target, err := resolvedResourceByNameInScope(resolved, name, opts.Kind, opts.HasKind, mergedCfg, opts.Scope, opts.ScopeSpecified)
 	if err != nil {
@@ -940,6 +942,63 @@ func resolvedResourceByName(resolved []resolver.ResolvedArtifact, name string, k
 	return resolveResourceMatches(resourceMatches(resolved, name, kind, hasKind), name, cfg)
 }
 
+// Missing and malformed direct selections are removal targets, not resources
+// that can be materialized. Keep them out of the ordinary resolver result.
+func removalResourceCandidates(result ResolveResult, name string) []resolver.ResolvedArtifact {
+	candidates := slices.Clone(result.Resolved)
+	if result.MergedCfg == nil {
+		return candidates
+	}
+	for _, issue := range result.ResolveErrors {
+		var missing *resolver.SelectedNotFoundError
+		var malformed *resolver.SelectedMalformedError
+		var kind ir.ResourceKind
+		var selected, url, path, ref, via string
+		switch {
+		case errors.As(issue, &missing):
+			kind, selected, url, path, ref, via = missing.Kind, missing.Name, missing.URL, missing.Path, missing.Ref, missing.Via
+		case errors.As(issue, &malformed):
+			kind, selected, url, path, ref, via = malformed.Kind, malformed.Name, malformed.URL, malformed.Path, malformed.Ref, malformed.Via
+		default:
+			continue
+		}
+		if selected != name || via != "" {
+			continue
+		}
+		// Discovery expands parent roots into sub-bundles. Edit the configured
+		// root once, rather than treating each discovered path as a selection.
+		for _, entry := range result.MergedCfg.Registries {
+			if config.NormalizeGitURL(entry.URL) != config.NormalizeGitURL(url) ||
+				!registryPathOwns(entry.Path, path) || entry.Ref != ref {
+				continue
+			}
+			direct, _ := resolver.EffectiveDirectSelectionSources(entry, result.MergedCfg.Registries, result.LocalCfg, kind, name)
+			if !direct {
+				continue
+			}
+			candidate := resolver.ResolvedArtifact{
+				Entry:          catalog.Entry{Kind: kind, Name: name, SourceHarness: entry.SourceHarness},
+				RegistryURL:    entry.URL,
+				RegistryPath:   entry.Path,
+				Ref:            entry.Ref,
+				V4Kind:         entry.V4Kind,
+				Source:         entry.Source,
+				FilePrecedence: entry.FilePrecedence,
+				Required:       entry.Required,
+			}
+			if slices.ContainsFunc(candidates, func(existing resolver.ResolvedArtifact) bool {
+				return existing.Kind == kind && existing.Name == name && existing.Source == candidate.Source &&
+					existing.RegistryURL == candidate.RegistryURL && registryPathOwns(candidate.RegistryPath, existing.RegistryPath) && existing.Ref == candidate.Ref
+			}) {
+				continue
+			}
+			slog.Debug("removal includes undiscoverable explicit selection", "kind", skill.KindLabel(kind), "name", name, "source", entry.Source)
+			candidates = append(candidates, candidate)
+		}
+	}
+	return candidates
+}
+
 // resolvedResourceByNameInScope narrows a same-kind name lookup to the
 // requested installation scope before checking ambiguity. An explicit scope
 // with no occurrence is not allowed to fall through to a different scope. The
@@ -1451,10 +1510,15 @@ func removeFromAdHoc(ctx context.Context, opts RemoveOptions, fromURL string) (*
 		return nil, errors.Join(resolvedResult.Errors...)
 	}
 	var target *resolver.ResolvedArtifact
+	candidates := removalResourceCandidates(resolvedResult, name)
+	lookupURL := mergedEntry.URL
+	if entryInTarget {
+		lookupURL = targetEntry.URL
+	}
 	if strings.TrimSpace(fromRef) != "" {
-		target, err = resolvedResourceInRegistryAtRef(resolvedResult.Resolved, name, opts.Kind, opts.HasKind, fromURL, selectedPath, fromRef)
+		target, err = resolvedResourceInRegistryAtRef(candidates, name, opts.Kind, opts.HasKind, lookupURL, selectedPath, fromRef)
 	} else {
-		target, err = resolvedResourceInRegistry(resolvedResult.Resolved, name, opts.Kind, opts.HasKind, fromURL, selectedPath)
+		target, err = resolvedResourceInRegistry(candidates, name, opts.Kind, opts.HasKind, lookupURL, selectedPath)
 	}
 	if err != nil {
 		return nil, err

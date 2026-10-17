@@ -181,6 +181,36 @@ func TestPathFingerprintDetectsSameByteRewrite(t *testing.T) {
 const handwrittenFactoryHooks = `{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"echo handwritten"}]}]}}`
 
 var testTable = []TestCase{
+	// spec: resource-removal/remove-a-selection-after-its-resource-disappears
+	{
+		Name:       "selection/remove_undiscoverable_git_selection",
+		Desc:       "Given a stale explicit Git selection and a healthy sibling, When running the removal suggested by sync, Then the stale warning disappears and the sibling remains selected",
+		Registries: []RegistryDef{{Name: "missing-selection", Skills: []Skill{{Name: "keep", Description: "Keep selected"}}}},
+		GlobalCfg:  "apiVersion: agent-marketplace/v4\nharnesses: [factory]\n",
+		RepoCfg:    "apiVersion: agent-marketplace/v4\nsources: {team: {git: '{{REG:missing-selection}}', ref: main}}\nresources: {team: [skill/gone, skill/keep]}\n",
+		Steps: []Step{
+			{Args: []string{"sync"}, MustPass: true, OutContains: []string{`skill "gone" was selected but not found`}, FilesExist: []string{"/workspace/.factory/skills/keep/SKILL.md"}},
+			{Args: []string{"remove", "gone"}, MustPass: true, OutContains: []string{"Removed gone"}, FileNotContains: map[string]string{"/workspace/.agents/config.yaml": "skill/gone"}, FileContains: map[string]string{"/workspace/.agents/config.yaml": "skill/keep"}},
+			{Args: []string{"sync"}, MustPass: true, OutNotContains: []string{`"gone"`}, FilesExist: []string{"/workspace/.factory/skills/keep/SKILL.md"}},
+			{Args: []string{"sync", "--check"}, MustPass: true},
+		},
+	},
+	// spec: resource-removal/remove-a-malformed-explicit-selection
+	{
+		Name:      "selection/remove_malformed_command",
+		Desc:      "Given a selected command that becomes malformed, When removing it by source without a kind, Then its command selection is cleared and its source bytes remain untouched",
+		GlobalCfg: "apiVersion: agent-marketplace/v4\nharnesses: [factory]\n",
+		RepoCfg:   "apiVersion: agent-marketplace/v4\nsources: {team: {directory: ./resources, source_harness: factory}}\nresources: {team: [command/gone, skill/keep]}\n",
+		Steps: []Step{
+			{Action: ActionWriteFile, Path: "/workspace/resources/commands/gone.md", Body: (Command{Name: "gone", Description: "Will become malformed"}).CommandFile()},
+			{Action: ActionWriteFile, Path: "/workspace/resources/skills/keep/SKILL.md", Body: (Skill{Name: "keep", Description: "Keep selected"}).SkillFile()},
+			{Args: []string{"sync"}, MustPass: true, FilesExist: []string{"/workspace/.factory/commands/gone.md"}},
+			{Action: ActionWriteFile, Path: "/workspace/resources/commands/gone.md", Body: "---\ndescription: [invalid\n---\n"},
+			{Args: []string{"sync"}, MustPass: true, OutContains: []string{`command "gone" was selected and found`, "failed to load"}},
+			{Args: []string{"remove", "gone", "--from", "./resources"}, MustPass: true, PathsUnchanged: []string{"/workspace/resources"}, FileNotContains: map[string]string{"/workspace/.agents/config.yaml": "command/gone"}},
+			{Args: []string{"sync"}, MustPass: true, OutNotContains: []string{`command "gone" was selected`}, FilesExist: []string{"/workspace/.factory/skills/keep/SKILL.md"}},
+		},
+	},
 	// spec: regression-gates/v4-selection-workflows-remain-usable
 	{
 		Name: "selection/v4_bulk_selection_lifecycle",
