@@ -1,6 +1,7 @@
 package materialize
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 
@@ -38,12 +39,12 @@ func linkedCacheChanged(link skillLink) (bool, error) {
 		return nil
 	})
 	if err != nil {
-		return false, err
+		return false, fmt.Errorf("read desired support for linked cache %q: %w", cacheDir, err)
 	}
 	report, err := hcc.Materialize(&hcc.Result{Artifacts: desired}, cacheDir,
 		hcc.WithWriteMode(hcc.WriteModeOverwrite), hcc.WithDryRun(), hcc.WithPruneStale(link.sourceDir != ""))
 	if err != nil {
-		return false, err
+		return false, fmt.Errorf("compare linked cache %q: %w", cacheDir, err)
 	}
 	if len(report.Written) > 0 || len(report.Removed) > 0 {
 		return true, nil
@@ -51,9 +52,10 @@ func linkedCacheChanged(link skillLink) (bool, error) {
 	// SDK byte comparisons intentionally ignore modes; support copies restore
 	// source permissions, unlike compiled files whose equal bytes are a no-op.
 	for relative, mode := range supportModes {
-		info, err := os.Lstat(filepath.Join(cacheDir, filepath.FromSlash(relative)))
+		supportPath := filepath.Join(cacheDir, relative)
+		info, err := os.Lstat(supportPath)
 		if err != nil {
-			return false, err
+			return false, fmt.Errorf("inspect linked cache support %q: %w", supportPath, err)
 		}
 		if info.Mode().Perm() != mode {
 			return true, nil

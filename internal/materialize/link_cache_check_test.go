@@ -1,11 +1,16 @@
 package materialize
 
 import (
+	"errors"
+	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/Adyen/agent-marketplace/internal/cache"
+	"github.com/Adyen/agent-marketplace/internal/fsboundary"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact"
 )
 
@@ -95,5 +100,77 @@ func TestLinkedCacheCheckPreservesCompiledModeNoOp(t *testing.T) {
 	link.artifacts[0].Bytes = []byte("updated body")
 	if changed, err := linkedCacheChanged(link); err != nil || !changed {
 		t.Fatalf("content control did not detect drift: %v %v", changed, err)
+	}
+}
+
+func TestLinkedCacheCheckErrorsRetainOperationPathAndCause(t *testing.T) {
+	for _, failure := range []string{"support-walk", "cache-compare", "support-stat"} {
+		t.Run(failure, func(t *testing.T) {
+			source, cacheDir := t.TempDir(), filepath.Join(t.TempDir(), "cache")
+			if err := os.WriteFile(filepath.Join(source, "reference.txt"), []byte("support"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			link := skillLink{target: cacheDir, sourceDir: source, artifacts: []artifact.Artifact{{Path: "SKILL.md", Bytes: []byte("body"), Mode: 0o644}}}
+			if err := prepareSkillLinkCache(link); err != nil {
+				t.Fatal(err)
+			}
+			compiled := filepath.Join(cacheDir, "SKILL.md")
+			before, mode, mtime := fileSnapshot(t, compiled)
+			support := filepath.Join(cacheDir, "reference.txt")
+			supportBefore, supportMode, supportMtime := fileSnapshot(t, support)
+			wantOperation, wantPath := "", cacheDir
+			var wantCause error
+			mutated := false
+			switch failure {
+			case "support-walk":
+				link.sourceDir = filepath.Join(t.TempDir(), "not-a-directory")
+				if err := os.WriteFile(link.sourceDir, []byte("not support"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+				wantOperation, wantCause = "read desired support", fsboundary.ErrUnsafePath
+			case "cache-compare":
+				if err := os.Link(compiled, filepath.Join(t.TempDir(), "cache-alias")); err != nil {
+					t.Fatal(err)
+				}
+				wantOperation, wantCause = "compare linked cache", fsboundary.ErrUnsafeFile
+			case "support-stat":
+				wantOperation, wantPath, wantCause = "inspect linked cache support", support, os.ErrNotExist
+				logger := slog.Default()
+				t.Cleanup(func() { slog.SetDefault(logger) })
+				slog.SetDefault(slog.New(sdkStaleReadObserver{
+					Handler: slog.NewTextHandler(io.Discard, &slog.HandlerOptions{Level: slog.LevelDebug}),
+					mutate: func(phase, path string) {
+						if mutated || phase != "sdk-stale-directory" || path != cacheDir {
+							return
+						}
+						mutated = true
+						if err := os.Remove(support); err != nil {
+							t.Fatal(err)
+						}
+					},
+				}))
+			}
+			changed, err := linkedCacheChanged(link)
+			if changed || !errors.Is(err, wantCause) {
+				t.Fatalf("comparison did not retain refusal identity: changed=%t err=%v, want %v", changed, err, wantCause)
+			}
+			if !strings.Contains(err.Error(), wantOperation) || !strings.Contains(err.Error(), wantPath) {
+				t.Fatalf("comparison error lacks operation %q or path %q: %v", wantOperation, wantPath, err)
+			}
+			assertFileUnchanged(t, compiled, before, mode, mtime)
+			if failure == "support-stat" {
+				if !mutated {
+					t.Fatal("support-stat failure point was not exercised")
+				}
+				if _, err := os.Lstat(support); !os.IsNotExist(err) {
+					t.Fatalf("check repaired removed cache support: %v", err)
+				}
+			} else {
+				assertFileUnchanged(t, support, supportBefore, supportMode, supportMtime)
+			}
+			if stages, err := filepath.Glob(filepath.Join(filepath.Dir(cacheDir), ".support-staging-*")); err != nil || len(stages) != 0 {
+				t.Fatalf("read-only failure left staging: %v %v", stages, err)
+			}
+		})
 	}
 }
