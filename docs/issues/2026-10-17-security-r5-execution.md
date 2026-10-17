@@ -274,11 +274,12 @@ optimization, context propagation under an existing contract, and enforcement
 of established limits can proceed within them, as R36's path optimization
 already demonstrates. New budgets and altered failure/output policy cannot.
 
-One next ungated candidate is R48's `ProjectGitRoots` matching. Its current
-selection order prefers the first explicit harness match, then the first
-already-selected match for an implicit requirement, otherwise the last
-matching root. Any indexing optimization needs to preserve those choices,
-the original output order and refusal behavior, with fresh measurements.
+The next independent slice addresses R48's `ProjectGitRoots` matching,
+preserving selection, output order and refusal behavior without a new
+admission limit. Its measurements, memory tradeoff and consumer evidence
+are recorded in [the R48 execution report](2026-10-17-security-r5-lock-roots.md).
+The 25-candidate count above describes this first batch's handoff, not a
+claim that R48 or any other candidate was already closed by that batch.
 
 #434 already tracks this remaining scope. Publication must describe this as
 partial progress, preserve the frozen artifacts, and leave the issue open.

@@ -88,10 +88,21 @@ CGO_ENABLED=0 go test ./cmd/agent-marketplace -run '^$' \
 ## Verification
 
 The baseline controls, final matching controls, bounded differential fuzz
-and mutation check pass as described. Final post-rebase package, consumer,
-race, lint/build, spec and combined E2E checks are pending.
+and mutation check pass as described. Post-rebase scoped `make validate`
+passes selected short-mode lockfile/pipeline package tests, vet, zero-issue
+CI lint and build. Seven focused CLI consumer regressions and focused
+lockfile/pipeline races pass. Strict spec checks pass: 59 items, 991
+scenarios, 1,598 annotations. Both benchmark suites pass a post-rebase
+one-iteration smoke check; these are not replacement performance samples.
+The combined E2E/configuration-compatibility gate passes: 2,883 invocations,
+113/113 command requirements covered, zero listed gaps, and all three
+required witnesses run and pass. This is scoped root validation plus the
+combined E2E gate, not a claim that `make validate-full` ran.
 
 The host uses OCR delegation for deterministic selection and rule
 resolution, and manually reviews default-excluded tests, prose and
-measurement artifacts. Final reviewed revision and coverage are recorded
-after those gates; neither tests nor review proves absence of defects.
+measurement artifacts. Implementation revision `ac6a8bcc` and the
+documentation follow-up are reviewed: one production file and 13
+default-excluded test/doc/data files, 14/14 overall, zero skipped.
+No unresolved actionable critical/high/medium finding remains. Neither
+tests nor review proves absence of defects.
