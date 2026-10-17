@@ -172,6 +172,7 @@ func TestTelemetryResetID(t *testing.T) {
 	}
 }
 
+// spec: telemetry/purge-removes-queued-and-diagnostic-evidence
 func TestTelemetryPurge(t *testing.T) {
 	if isolateCommandTest(t) {
 		return
@@ -377,6 +378,7 @@ func writeTelemetryTestFile(t *testing.T, path, content string) {
 	}
 }
 
+// spec: telemetry/commands-report-basic-metrics-without-argument-data
 func TestBasicTelemetryEmitsOneCommandMetric(t *testing.T) {
 	if isolateCommandTest(t) {
 		return
@@ -461,6 +463,7 @@ func TestBasicTelemetryEmitsOneCommandMetric(t *testing.T) {
 	}
 }
 
+// spec: telemetry/commands-report-basic-metrics-without-argument-data
 func TestTelemetryErrorOutcome(t *testing.T) {
 	if isolateCommandTest(t) {
 		return
@@ -512,6 +515,7 @@ func TestTelemetryErrorOutcome(t *testing.T) {
 	}
 }
 
+// spec: telemetry/telemetry-controls-do-not-self-report
 func TestTelemetryCommandsDoNotSelfReport(t *testing.T) {
 	if isolateCommandTest(t) {
 		return

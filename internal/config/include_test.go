@@ -322,6 +322,7 @@ func TestContainingFileTelemetryOverridesIncludedFragment(t *testing.T) {
 	}
 }
 
+// spec: logging/user-logging-settings-include-fragments
 func TestUserLoggingLoaderResolvesIncludes(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
@@ -337,6 +338,7 @@ func TestUserLoggingLoaderResolvesIncludes(t *testing.T) {
 }
 
 // spec: configuration-settings/settings-with-an-unreadable-acquisition-lock
+// spec: logging/logging-needs-no-acquisition-lock
 func TestLoadUserLoggingConfigIgnoresUnreadableLock(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)

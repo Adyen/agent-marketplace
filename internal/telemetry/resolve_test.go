@@ -24,6 +24,7 @@ func expectedInstallID(dir string) string {
 	return filepath.Join(dir, "agent-marketplace", "telemetry", "installation-id")
 }
 
+// spec: telemetry/unconfigured-telemetry-stays-off
 func TestResolveDefaultOff(t *testing.T) {
 	dir := setStateRoot(t)
 	state, err := ResolveTelemetryConfig(amconfig.Settings{}, amconfig.Settings{}, "", "")
@@ -70,6 +71,7 @@ func TestResolveProjectEndpoint(t *testing.T) {
 	}
 }
 
+// spec: telemetry/user-endpoint-and-community-report-coexist
 func TestResolveUserEndpointAndCommunity(t *testing.T) {
 	setStateRoot(t)
 	user := amconfig.Settings{
@@ -156,6 +158,7 @@ func TestResolveOrganizationMinimum(t *testing.T) {
 	}
 }
 
+// spec: telemetry/organization-level-is-authoritative
 func TestResolveOrganizationLevelPolicy(t *testing.T) {
 	tests := []struct {
 		name       string
@@ -239,6 +242,7 @@ func TestResolveDeduplication(t *testing.T) {
 	}
 }
 
+// spec: telemetry/organization-policy-gates-environment-overrides
 func TestResolveEnvOverrides(t *testing.T) {
 	tests := []struct {
 		name          string
@@ -352,6 +356,7 @@ func TestResolveCommunityDisabledWhenLevelOff(t *testing.T) {
 	}
 }
 
+// spec: telemetry/endpoint-authentication-follows-endpoint-authority
 func TestResolveAuthAndCA(t *testing.T) {
 	setStateRoot(t)
 	dir := t.TempDir()

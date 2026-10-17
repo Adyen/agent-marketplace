@@ -778,12 +778,9 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 	// decides: missing locks, binding mismatches, and policy denials keep
 	// their own refusals below.
 	if (mode.check || mode.locked) && len(ec.Errors) == 0 {
-		refusal, err := unrecordedRegistrationRefusal(ec, configSnapshots, mode)
+		changed, err := unrecordedRegistrationRefusals(ec, configSnapshots, mode)
 		if err != nil {
-			return nil, 0, nil, err
-		}
-		if refusal != nil {
-			return nil, 1, nil, refusal
+			return nil, changed, nil, err
 		}
 	}
 	if mode.check && pipeline.NeedsLockBootstrap(ec.Errors) {
@@ -1567,30 +1564,34 @@ func unrecordedWritableMarketplaceRegistrations(ec config.EffectiveConfig, selec
 	return found
 }
 
-// unrecordedRegistrationRefusal returns the refusal for the first selected
-// writable layer whose resource-free registrations have no lock identity
-// record. Check modes report the record lock would add as a required change;
-// locked modes refuse the existing lock as stale. A locked mode decides from
+// unrecordedRegistrationRefusals reports every selected writable layer whose
+// resource-free registrations have no lock identity record in check mode;
+// locked modes refuse the first existing lock as stale. A locked mode decides from
 // the evidence the layer was bound against: a layer bound without any
 // deployed lock keeps its missing-lock refusal.
-func unrecordedRegistrationRefusal(ec config.EffectiveConfig, snapshots map[config.Source]configTransactionSnapshot, mode lockMode) (*lockLifecycleError, error) {
+func unrecordedRegistrationRefusals(ec config.EffectiveConfig, snapshots map[config.Source]configTransactionSnapshot, mode lockMode) (int, error) {
 	boundToDeployedLock := func(read config.ConfigRead) bool { return read.AcquisitionLock }
+	var refusals []error
 	for _, unrecorded := range unrecordedWritableMarketplaceRegistrations(ec, mode.selects) {
 		if mode.locked && !slices.ContainsFunc(unrecorded.layer.Reads, boundToDeployedLock) {
 			continue
 		}
 		lockPath, err := layerLockDestination(unrecorded.layer, snapshots)
 		if err != nil {
-			return nil, err
+			return 0, err
 		}
 		code := "lock.stale"
 		if mode.check {
 			code = "lock.change-required"
 		}
 		slog.Debug("marketplace registration has no lock identity record", "code", code, "scope", unrecorded.scope, "lock", lockPath, "endpoints", unrecorded.endpoints)
-		return &lockLifecycleError{Code: code, Scope: unrecorded.scope, Path: lockPath, Err: fmt.Errorf("no identity record for resource-free Marketplace registration %s; run 'agent-marketplace lock' to record it", strings.Join(unrecorded.endpoints, ", "))}, nil
+		refusal := &lockLifecycleError{Code: code, Scope: unrecorded.scope, Path: lockPath, Err: fmt.Errorf("no identity record for resource-free Marketplace registration %s; run 'agent-marketplace lock' to record it", strings.Join(unrecorded.endpoints, ", "))}
+		if mode.locked {
+			return 1, refusal
+		}
+		refusals = append(refusals, refusal)
 	}
-	return nil, nil
+	return len(refusals), errors.Join(refusals...)
 }
 
 func lockScopeForSource(source config.Source) lockfile.Scope {
