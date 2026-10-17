@@ -100,10 +100,11 @@ func (c *claudeCompiler) translateSkill(s *ir.Skill, opts compile.Options) ([]ar
 		"allowed-tools": s.AllowedTools != nil, "permissions": permissions != nil,
 		"subagent": s.Subagent != "", "agent": s.Agent != "",
 	})
-	extraKeys, extraDiags := compile.SkillModelExtraKeys(s.Extra, canonical, mapping.TargetClaude, s.Name(), diag.SourceRef(s.Source))
-	extraDiags = append(append(append(modelDiags, toolDiags...), compile.SupportFileDiagnostics(s, mapping.TargetClaude)...), extraDiags...)
+	extra, controlDiags := compile.ClaudeExtraWithNativeControls(ir.KindSkill, s.Extra, s.Ext.Claude, mapping.TargetClaude, s.Name(), s.Source)
+	extraKeys, extraDiags := compile.SkillModelExtraKeys(extra, canonical, mapping.TargetClaude, s.Name(), diag.SourceRef(s.Source))
+	extraDiags = append(append(append(append(modelDiags, toolDiags...), controlDiags...), compile.SupportFileDiagnostics(s, mapping.TargetClaude)...), extraDiags...)
 	for _, k := range extraKeys {
-		fm.Set(k, s.Extra[k])
+		fm.Set(k, extra[k])
 	}
 
 	frontmatter, err := fm.Render()
@@ -128,7 +129,7 @@ func (c *claudeCompiler) translateSkill(s *ir.Skill, opts compile.Options) ([]ar
 	}
 	// Merge in Extra fields
 	for _, k := range extraKeys {
-		skillEntry[k] = s.Extra[k]
+		skillEntry[k] = extra[k]
 	}
 
 	pluginFragment := map[string]any{
@@ -153,8 +154,9 @@ func (c *claudeCompiler) translateSkill(s *ir.Skill, opts compile.Options) ([]ar
 
 func (c *claudeCompiler) translateCommand(cmd *ir.Command) ([]artifact.Artifact, []diag.Diagnostic, error) {
 	extra, toolDiags := compile.PreApprovalCommandExtra(cmd, mapping.TargetClaude)
+	extra, controlDiags := compile.ClaudeExtraWithNativeControls(ir.KindCommand, extra, cmd.Ext.Claude, mapping.TargetClaude, cmd.Name(), cmd.Source)
 	extraKeys, diags := compile.ExtraKeys(extra, compile.PresentFields(map[string]bool{"name": true, "description": cmd.Description != ""}), mapping.TargetClaude, cmd.Name(), diag.SourceRef(cmd.Source))
-	diags = append(toolDiags, diags...)
+	diags = append(append(toolDiags, controlDiags...), diags...)
 	if len(extraKeys) == 0 && cmd.Description == "" {
 		return []artifact.Artifact{{Path: fmt.Sprintf("commands/%s.md", cmd.Name()), Bytes: []byte(cmd.Body)}}, diags, nil
 	}
@@ -251,13 +253,18 @@ func (c *claudeCompiler) translateSubagent(s *ir.Subagent, opts compile.Options)
 	if s.MaxNesting != nil {
 		fm.Set("max-nesting", *s.MaxNesting)
 	}
-	extraKeys, extraDiags := compile.ModelExtraKeys(s.Extra, compile.PresentFields(map[string]bool{
+	extra, controlDiags := compile.ClaudeExtraWithNativeControls(ir.KindSubagent, s.Extra, s.Ext.Claude, mapping.TargetClaude, s.Name(), s.Source)
+	if compile.SubagentReadOnly(s) {
+		extra = compile.WithExtraKey(extra, "permissionMode", "plan")
+	}
+	diags = append(diags, controlDiags...)
+	extraKeys, extraDiags := compile.ModelExtraKeys(extra, compile.PresentFields(map[string]bool{
 		"name": true, "description": true, "model": model != "", "tools": tools != nil,
 		"effort": effort != "", "disallowedTools": len(s.DisallowedTools) > 0,
 		"isolation": isolation != "", "max-nesting": s.MaxNesting != nil, "maxNesting": false,
 	}), mapping.TargetClaude, s.Name(), diag.SourceRef(s.Source))
 	for _, k := range extraKeys {
-		fm.Set(k, s.Extra[k])
+		fm.Set(k, extra[k])
 	}
 
 	frontmatter, err := fm.Render()
@@ -286,7 +293,7 @@ func (c *claudeCompiler) translateSubagent(s *ir.Subagent, opts compile.Options)
 		agentEntry["effort"] = effort
 	}
 	for _, k := range extraKeys {
-		agentEntry[k] = s.Extra[k]
+		agentEntry[k] = extra[k]
 	}
 
 	pluginFragment := map[string]any{

@@ -167,7 +167,7 @@ func agent(a *ir.Subagent, opts compile.Options) ([]artifact.Artifact, []diag.Di
 	fail := func() ([]artifact.Artifact, []diag.Diagnostic, error) {
 		return nil, []diag.Diagnostic{diagnostic(diag.CodeSubagentOpenCodeRestrictionUnsupported, diag.SeverityError, a.Name(), a.Source, "Agent execution restriction has no native equivalent; agent omitted")}, nil
 	}
-	if a.Isolation != "" || a.MaxNesting != nil {
+	if a.Isolation != "" || a.MaxNesting != nil || compile.SubagentReadOnly(a) {
 		return fail()
 	}
 	for _, key := range []string{"tools", "permission", "permissions", "disallowedTools", "disallowed-tools", "isolation", "max-nesting", "maxNesting"} {

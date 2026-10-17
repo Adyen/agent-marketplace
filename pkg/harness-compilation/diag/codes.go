@@ -80,6 +80,7 @@ const (
 	CodeRuleDevinUnsupported                = "rule.devin.unsupported"                  // Rules are out of scope for the Devin target (a scope decision, not a Devin limit)
 	CodeRuleCodexUnsupported                = "rule.codex.unsupported"                  // Codex rules and AGENTS.md generation are out of scope
 	CodeCodexFieldDropped                   = "compile.codex.field-dropped"             // Benign IR field has no documented Codex equivalent
+	CodeCompileClaudeNativeControlOmitted   = "compile.claude.native-control-omitted"   // Claude-native control from a non-Claude source omitted
 	CodeSubagentCodexModelDropped           = "subagent.codex.model-dropped"            // Codex-only model omitted for a non-Codex target
 	CodeSubagentCodexEffortDropped          = "subagent.codex.effort-dropped"           // Codex-only reasoning effort omitted for a non-Codex target
 	CodeHookCodexPluginRootUnresolved       = "hook.codex.plugin-root-unresolved"       // Command carries ${CLAUDE_PLUGIN_ROOT} but no plugin root was configured
@@ -593,6 +594,7 @@ var codeCatalog = []CodeDoc{
 	// (internal/devinprobe.TestProbeRulesDiscoveryUnderDevinRoots).
 	{CodeRuleDevinUnsupported, SeverityWarning, "Rules are out of scope for the Devin target; no rule artifact was emitted", "This is a scope decision, not a Devin limitation: on 3000.3.27 a rule placed at .devin/rules/<name>.md is discovered even though `devin rules paths` does not advertise it. Compile the rule to a target with a supported rules primitive (factory, cursor, windsurf), or place it under .devin/rules by hand"},
 	{CodeRuleCodexUnsupported, SeverityWarning, "Rules are out of scope for the Codex target; no rule or AGENTS.md content was emitted", "Use a supported resource kind or manage AGENTS.md separately"},
+	{CodeCompileClaudeNativeControlOmitted, SeverityWarning, "A Claude-native execution control from a non-Claude source was omitted; Claude output emits these controls only from Claude-authored resources", "Author the control in the Claude layout if the resource needs it on Claude"},
 	{CodeCodexFieldDropped, SeverityWarning, "A benign IR field has no documented Codex equivalent and was omitted", "Remove the field or choose a target that represents it"},
 	{CodeSubagentCodexModelDropped, SeverityWarning, "A Codex-only subagent model was omitted for a non-Codex target", "Compile to Codex to preserve the native-only model, or choose a portable canonical model"},
 	{CodeSubagentCodexEffortDropped, SeverityWarning, "A Codex-only subagent reasoning effort was omitted for a non-Codex target", "Compile to Codex to preserve the native-only effort, or use a portable canonical effort"},

@@ -38,6 +38,9 @@ func translateSubagent(sub *ir.Subagent, opts compile.Options) ([]artifact.Artif
 	if sub.Isolation != "" {
 		diags = append(diags, diag.Diagnostic{Code: diag.CodeSubagentSecurityRestrictionUnsupported, Severity: diag.SeverityError, Target: string(mapping.TargetGemini), Resource: sub.Name(), Message: "Gemini cannot represent isolation; subagent artifact suppressed", Hint: "Use a target that supports isolation or remove the restriction explicitly", Source: diag.SourceRef(sub.Source)})
 	}
+	if compile.SubagentReadOnly(sub) {
+		diags = append(diags, compile.ReadOnlyUnsupported(mapping.TargetGemini, sub))
+	}
 	if len(diags) > 0 {
 		return nil, diags, nil
 	}

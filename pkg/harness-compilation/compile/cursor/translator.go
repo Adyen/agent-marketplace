@@ -282,9 +282,13 @@ func (c *cursorCompiler) translateSubagent(sub *ir.Subagent, opts compile.Option
 			return nil, nil, err
 		}
 	}
-	extraKeys, extraDiags := compile.ModelExtraKeys(sub.Extra, compile.PresentFields(map[string]bool{"name": true, "description": true, "model": mappedModel != "", "tools": mappedTools != nil, "effort": effort != "", "disallowedTools": false, "isolation": false, "max-nesting": sub.MaxNesting != nil, "maxNesting": false}), mapping.TargetCursor, sub.Name(), diag.SourceRef(sub.Source))
+	extra := sub.Extra
+	if compile.SubagentReadOnly(sub) {
+		extra = compile.WithExtraKey(extra, "readonly", true)
+	}
+	extraKeys, extraDiags := compile.ModelExtraKeys(extra, compile.PresentFields(map[string]bool{"name": true, "description": true, "model": mappedModel != "", "tools": mappedTools != nil, "effort": effort != "", "disallowedTools": false, "isolation": false, "max-nesting": sub.MaxNesting != nil, "maxNesting": false}), mapping.TargetCursor, sub.Name(), diag.SourceRef(sub.Source))
 	for _, key := range extraKeys {
-		if err := writeYAMLKey(&fm, key, sub.Extra[key]); err != nil {
+		if err := writeYAMLKey(&fm, key, extra[key]); err != nil {
 			return nil, nil, err
 		}
 	}

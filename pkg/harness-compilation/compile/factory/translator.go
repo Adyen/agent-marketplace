@@ -241,6 +241,24 @@ func (f *factoryCompiler) translateSubagent(s *ir.Subagent, opts compile.Options
 			Source:   compile.DiagSource(s.Source),
 		})
 	}
+	toolsCategory := ""
+	if s.Ext.Factory != nil {
+		toolsCategory = s.Ext.Factory.ToolsCategory
+	}
+	if compile.SubagentReadOnly(s) {
+		toolsCategory = "read-only"
+		if s.Tools != nil {
+			diags = append(diags, diag.Diagnostic{
+				Code:     diag.CodeSubagentSecurityRestrictionUnsupported,
+				Severity: diag.SeverityError,
+				Target:   string(mapping.TargetFactory),
+				Resource: s.Name(),
+				Message:  "Factory cannot combine its read-only tools category with an explicit tool list; subagent artifact suppressed",
+				Hint:     "Remove the explicit tool list or the read-only restriction",
+				Source:   compile.DiagSource(s.Source),
+			})
+		}
+	}
 	if diag.HasErrors(diags) {
 		return nil, diags, nil
 	}
@@ -264,6 +282,8 @@ func (f *factoryCompiler) translateSubagent(s *ir.Subagent, opts compile.Options
 	}
 	if mappedTools != nil {
 		fm.Set("tools", mappedTools)
+	} else if toolsCategory != "" {
+		fm.Set("tools", toolsCategory)
 	}
 	if reasoningEffort != "" {
 		fm.Set("reasoningEffort", reasoningEffort)
@@ -274,7 +294,7 @@ func (f *factoryCompiler) translateSubagent(s *ir.Subagent, opts compile.Options
 	if s.MaxNesting != nil {
 		fm.Set("max-nesting", *s.MaxNesting)
 	}
-	extraKeys, extraDiags := compile.ModelExtraKeys(s.Extra, compile.PresentFields(map[string]bool{"name": true, "description": true, "model": mappedModel != "", "tools": mappedTools != nil, "effort": false, "reasoningEffort": reasoningEffort != "", "disallowedTools": false, "isolation": isolation != "", "max-nesting": s.MaxNesting != nil, "maxNesting": false}), mapping.TargetFactory, s.Name(), diag.SourceRef(s.Source))
+	extraKeys, extraDiags := compile.ModelExtraKeys(s.Extra, compile.PresentFields(map[string]bool{"name": true, "description": true, "model": mappedModel != "", "tools": mappedTools != nil || toolsCategory != "", "effort": false, "reasoningEffort": reasoningEffort != "", "disallowedTools": false, "isolation": isolation != "", "max-nesting": s.MaxNesting != nil, "maxNesting": false}), mapping.TargetFactory, s.Name(), diag.SourceRef(s.Source))
 	for _, k := range extraKeys {
 		fm.Set(k, s.Extra[k])
 	}
