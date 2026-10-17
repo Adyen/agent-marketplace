@@ -80,8 +80,9 @@ func (c *claudeCompiler) translateSkill(s *ir.Skill, opts compile.Options) ([]ar
 	if selection.Model != "" {
 		fm.Set("model", selection.Model)
 	}
-	if s.AllowedTools != nil {
-		fm.Set("allowed-tools", s.AllowedTools)
+	allowedTools, toolDiags := compile.PreApprovalSkillTools(s, mapping.TargetClaude)
+	if allowedTools != nil {
+		fm.Set("allowed-tools", allowedTools)
 	}
 	permissions := compile.SkillPermissionsValueWithExtra(s.Permissions.Allow, s.Permissions.Ask, s.Permissions.Deny, s.Permissions.Extra, s.PermissionsSet)
 	if permissions != nil {
@@ -100,7 +101,7 @@ func (c *claudeCompiler) translateSkill(s *ir.Skill, opts compile.Options) ([]ar
 		"subagent": s.Subagent != "", "agent": s.Agent != "",
 	})
 	extraKeys, extraDiags := compile.SkillModelExtraKeys(s.Extra, canonical, mapping.TargetClaude, s.Name(), diag.SourceRef(s.Source))
-	extraDiags = append(append(modelDiags, compile.SupportFileDiagnostics(s, mapping.TargetClaude)...), extraDiags...)
+	extraDiags = append(append(append(modelDiags, toolDiags...), compile.SupportFileDiagnostics(s, mapping.TargetClaude)...), extraDiags...)
 	for _, k := range extraKeys {
 		fm.Set(k, s.Extra[k])
 	}
@@ -151,7 +152,9 @@ func (c *claudeCompiler) translateSkill(s *ir.Skill, opts compile.Options) ([]ar
 }
 
 func (c *claudeCompiler) translateCommand(cmd *ir.Command) ([]artifact.Artifact, []diag.Diagnostic, error) {
-	extraKeys, diags := compile.ExtraKeys(cmd.Extra, compile.PresentFields(map[string]bool{"name": true, "description": cmd.Description != ""}), mapping.TargetClaude, cmd.Name(), diag.SourceRef(cmd.Source))
+	extra, toolDiags := compile.PreApprovalCommandExtra(cmd, mapping.TargetClaude)
+	extraKeys, diags := compile.ExtraKeys(extra, compile.PresentFields(map[string]bool{"name": true, "description": cmd.Description != ""}), mapping.TargetClaude, cmd.Name(), diag.SourceRef(cmd.Source))
+	diags = append(toolDiags, diags...)
 	if len(extraKeys) == 0 && cmd.Description == "" {
 		return []artifact.Artifact{{Path: fmt.Sprintf("commands/%s.md", cmd.Name()), Bytes: []byte(cmd.Body)}}, diags, nil
 	}
@@ -161,7 +164,7 @@ func (c *claudeCompiler) translateCommand(cmd *ir.Command) ([]artifact.Artifact,
 		fm.Set("description", cmd.Description)
 	}
 	for _, key := range extraKeys {
-		fm.Set(key, cmd.Extra[key])
+		fm.Set(key, extra[key])
 	}
 	frontmatter, err := fm.Render()
 	if err != nil {

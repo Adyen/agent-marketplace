@@ -943,6 +943,9 @@ func resourceJSON(r ir.Resource) ([]byte, error) {
 		if modelBearing && (strings.EqualFold(k, "ModelSource") || strings.EqualFold(k, "ToolSource")) {
 			continue
 		}
+		if r.Kind() == ir.KindCommand && strings.EqualFold(k, "ToolSource") {
+			continue
+		}
 		if r.Kind() == ir.KindHook && strings.EqualFold(k, "HookSource") {
 			continue
 		}

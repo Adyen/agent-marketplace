@@ -36,6 +36,13 @@ func legacyHookToolProjection(resource ir.Resource) ir.Resource {
 		copy.AllowedTools = legacyToolNames(value.ToolSource, value.AllowedTools)
 		copy.ToolSource = ""
 		return &copy
+	case *ir.Command:
+		if value.ToolSource == "" {
+			return resource
+		}
+		copy := *value
+		copy.ToolSource = ""
+		return &copy
 	default:
 		return resource
 	}

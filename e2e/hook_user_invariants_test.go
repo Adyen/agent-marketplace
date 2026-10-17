@@ -635,16 +635,17 @@ func TestHookInvariantProjectDirectoryReferencesKeepRepositoryCWD(t *testing.T) 
 	}
 }
 
-// A teammate with their own HOME must be able to deselect a hook another
-// teammate installed and committed.
-func TestHookInvariantTeammateCanRemoveCommittedHook(t *testing.T) {
-	t.Skip("known defect: https://github.com/Adyen/agent-marketplace/issues/630")
-	for _, target := range []string{"claude", "devin", "codex"} {
+// spec: hook-resources/independent-checkout-refuses-removal-of-a-committed-hook
+func TestHookInvariantTeammateHookRemovalRefusesWithoutOwnership(t *testing.T) {
+	for _, target := range hookInvariantTargets {
 		t.Run(target, func(t *testing.T) {
+			t.Parallel()
 			e := newEnv(t)
 			const token = "am-invariant-team-guard"
-			registry := hookInvariantRegistry(e, "team", fmt.Sprintf(`{"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"echo %s"}]}]}}`, token))
-			e.WriteRepoConfig(hookInvariantV4Config(target, registry, "hook/PreToolUse-command"))
+			registry := e.CreateBareRepo("team", map[string]string{
+				"hooks/hooks.json": fmt.Sprintf(`{"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"echo %s"}]}]}}`, token),
+			})
+			e.WriteRepoConfig(fmt.Sprintf("apiVersion: agent-marketplace/v4\nharnesses: [%s]\nsources:\n  reg: {git: '%s', ref: main}\nresources:\n  reg: {include: [hook/PreToolUse-command]}\n", target, registry))
 			e.InitGitRepo()
 			e.MustRunAM("sync")
 			hookInvariantCommitAll(e, "first teammate syncs hooks")
@@ -657,10 +658,52 @@ func TestHookInvariantTeammateCanRemoveCommittedHook(t *testing.T) {
 			if err := os.MkdirAll(home, 0o755); err != nil {
 				t.Fatal(err)
 			}
-			e.AssertExitCode(hookInvariantRunAs(e, home, e.workspace, "remove", "PreToolUse-command", "--kind", "hook", "--scope", "repo"), 0)
-			e.AssertExitCode(hookInvariantRunAs(e, home, e.workspace, "sync"), 0)
+			checkout := filepath.Join(filepath.Dir(e.workspace), "teammate-checkout")
+			e.MustRun(fmt.Sprintf("git clone --no-hardlinks %q %q", e.workspace, checkout))
+			// Acquire B's own exact snapshot without materializing or adopting hooks.
+			e.AssertExitCode(hookInvariantRunAs(e, home, checkout, "lock"), 0)
+			paths := append([]string{".agents/config.yaml", ".agents/lock.yaml", ".agents/config.local.yaml", ".agents/lock.local.yaml"}, files...)
+			before := make(map[string]string)
+			for _, rel := range paths {
+				fingerprint, err := pathFingerprint(filepath.Join(checkout, filepath.FromSlash(rel)))
+				if errors.Is(err, os.ErrNotExist) {
+					before[rel] = ""
+					continue
+				}
+				if err != nil {
+					t.Fatal(err)
+				}
+				before[rel] = fingerprint
+			}
+			result := hookInvariantRunAs(e, home, checkout, "remove", "PreToolUse-command", "--kind", "hook", "--scope", "repo")
+			e.AssertExitCode(result, 1)
+			for _, want := range []string{"hook.remove-unowned", target, "active", "ownership"} {
+				if !strings.Contains(result.Combined, want) {
+					t.Errorf("refusal does not identify %q: %s", want, result.Combined)
+				}
+			}
+			if strings.Contains(result.Combined, "Removed PreToolUse-command") || strings.Contains(result.Combined, token) {
+				t.Errorf("refusal reports success or quotes a hook payload: %s", result.Combined)
+			}
+			for rel, fingerprint := range before {
+				after, err := pathFingerprint(filepath.Join(checkout, filepath.FromSlash(rel)))
+				if fingerprint == "" && errors.Is(err, os.ErrNotExist) {
+					continue
+				}
+				if err != nil || after != fingerprint {
+					t.Errorf("refused remove changed %s: %v", rel, err)
+				}
+			}
+			if _, err := os.Stat(filepath.Join(home, ".local", "state", "agent-marketplace", "ownership")); !errors.Is(err, os.ErrNotExist) {
+				t.Errorf("refused remove created ownership state: %v", err)
+			}
+			e.AssertExitCode(hookInvariantRunAs(e, home, checkout, "sync", "--check"), 0)
+			if got := hookInvariantCount(t, checkout, files, token); got != 1 {
+				t.Errorf("refused remove left %d copies, want the unchanged active hook", got)
+			}
+			e.MustRunAM("remove", "PreToolUse-command", "--kind", "hook", "--scope", "repo")
 			if got := hookInvariantCount(t, e.workspace, files, token); got != 0 {
-				t.Errorf("teammate's remove left %d copies of the committed hook", got)
+				t.Errorf("same-owner removal left %d copies, want none", got)
 			}
 		})
 	}

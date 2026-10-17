@@ -123,7 +123,7 @@ func TestHarnessConversionSecurity(t *testing.T) {
 		},
 		{
 			name: "security/codex_literal_header",
-			desc: "Given a Codex literal that resembles a bare environment reference and a safe sibling, When converting to Windsurf, Then the unsafe reinterpretation is refused while literal-preserving conversion remains available",
+			desc: "Given a Codex literal that resembles a bare environment reference and a safe sibling, When converting to Windsurf and Gemini, Then Windsurf keeps the literal, Gemini refuses the server it would expand, and the safe sibling converts",
 			steps: []conversionStep{
 				{
 					files: map[string]string{
@@ -131,10 +131,17 @@ func TestHarnessConversionSecurity(t *testing.T) {
 					},
 					from: hcc.HarnessCodex, to: hcc.HarnessWindsurf,
 					source: "source", out: "converted",
+					outcome:     conversionClean,
+					contains:    map[string]string{".windsurf/mcp_config.json": `"$SYNTHETIC_KEY"`},
+					notContains: map[string]string{".windsurf/mcp_config.json": "${env:SYNTHETIC_KEY}"},
+				},
+				{
+					from: hcc.HarnessCodex, to: hcc.HarnessGemini,
+					source: "source", out: "gemini-converted",
 					outcome:     conversionPartial,
-					diagnostic:  "mcp.security-restriction-unsupported",
-					contains:    map[string]string{".windsurf/mcp_config.json": "ordinary"},
-					notContains: map[string]string{".windsurf/mcp_config.json": "SYNTHETIC_KEY"},
+					diagnostic:  "mcp.gemini.interpolation-unrepresentable",
+					contains:    map[string]string{"gemini-extension.json": "ordinary"},
+					notContains: map[string]string{"gemini-extension.json": "SYNTHETIC_KEY"},
 				},
 				{
 					from: hcc.HarnessCodex, to: hcc.HarnessCodex,

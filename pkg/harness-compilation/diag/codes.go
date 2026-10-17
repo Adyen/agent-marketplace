@@ -102,6 +102,7 @@ const (
 	CodeModelSelectorPinned                 = "model.selector-pinned"
 	CodeModelProvenanceConflict             = "model.provenance-conflict"
 	CodeSkillSupportFilesDeferred           = "skill.support-files-deferred"   // Support file bytes are unavailable to this layer
+	CodeSkillAllowedToolsOmitted            = "skill.allowed-tools-omitted"    // Foreign skill allowed-tools list omitted on a pre-approval target
 	CodeMcpLiteralCredential                = "mcp.credentials.literal-secret" // Literal credential-like value detected
 
 	CodeSkillDevinModelUnmappable    = "skill.devin.model-unmappable"    // Explicit skill model is not a stable Devin alias
@@ -300,6 +301,7 @@ const (
 	// internal/materialize emits it, but it writes nothing — the refusal is
 	// the whole outcome.
 	CodeHookNativeToleranceRefused         = "hook.native-tolerance-refused"          // A native hook file could not be inspected safely; the affected target fails closed
+	CodeHookRemoveUnowned                  = "hook.remove-unowned"                    // Removal would leave a native hook active without clean ownership proof
 	CodeMaterializeCodexTrustReviewPending = "materialize.codex.trust-review-pending" // A check found a pending repository Codex change without mutating files or trust state
 
 	// Devin DOCTOR warning codes (work package D11). Both are warnings and
@@ -444,7 +446,8 @@ const (
 	// so two outcomes need two codes; giving one code two severities would
 	// break the guarantee that a catalogued code means one thing. The shared
 	// code keeps the value-level meaning and its warning severity.
-	CodeMcpDevinInterpolationUnrepresentable = "mcp.devin.interpolation-unrepresentable" // The command, url, or an argument of the selected server form is unrepresentable; entry skipped
+	CodeMcpDevinInterpolationUnrepresentable  = "mcp.devin.interpolation-unrepresentable"  // The command, url, or an argument of the selected server form is unrepresentable; entry skipped
+	CodeMcpGeminiInterpolationUnrepresentable = "mcp.gemini.interpolation-unrepresentable" // A value contains a bare $NAME that Gemini would expand; server skipped
 
 	CodeIngestDevinLoadSkillFailed            = "ingest.devin.load-skill-failed"            // Failed to load a skill directory from the source layout
 	CodeIngestDevinLoadSubagentFailed         = "ingest.devin.load-subagent-failed"         // Failed to load a flat subagent profile from the source layout
@@ -617,6 +620,7 @@ var codeCatalog = []CodeDoc{
 	// Warnings since bead agent-marketplace-pu6b (Devin) and the Factory
 	// unknown-tool policy change; these used to suppress the artifact. See the
 	// rationale on the constants above and the dedicated section in codes.md.
+	{CodeSkillAllowedToolsOmitted, SeverityWarning, "A skill allowed-tools list from another harness was omitted; it is never emitted as a pre-approval on the target", "Declare pre-approved tools in the target harness's own layout if the skill needs them"},
 	{CodeSkillDevinToolUnknown, SeverityWarning, "An explicitly allowed skill or command tool has no Devin equivalent; the allowed-tools key was omitted and the resource was still emitted", "Use one of Devin's allowed tools (read, edit, grep, glob, exec) to keep the restriction, or accept Devin's default tool set for this resource"},
 	{CodeSubagentDevinToolUnknown, SeverityWarning, "An explicitly allowed subagent tool has no Devin equivalent; the allowed-tools key was omitted and the profile was still emitted", "Use one of Devin's allowed tools (read, edit, grep, glob, exec) to keep the restriction, or accept Devin's default tool set for this subagent"},
 	{CodeHookDevinPayloadDropped, SeverityWarning, "The hook carries the payload its type does not select; that payload was dropped", "Split the hook into one command hook and one prompt hook if both payloads are required"},
@@ -709,6 +713,7 @@ var codeCatalog = []CodeDoc{
 	{CodeMcpDevinTransportIncomplete, SeverityError, "The MCP server declares neither a stdio command nor a remote url; the server entry was skipped", "Set a command for a stdio server or a url for a remote server"},
 	{CodeMcpDevinTransportUnsupported, SeverityError, "The MCP server requests a transport Devin does not document; the server entry was skipped rather than defaulted", "Devin documents the http and sse remote transports"},
 	{CodeMcpDevinInterpolationUnrepresentable, SeverityError, "The command, url, or an argument the MCP server's documented form cannot do without uses an interpolation style Devin has no syntax for; the server entry was skipped", "Devin documents ${env:VAR} interpolation only; move the value into an environment variable, or use a literal command, argument, or url"},
+	{CodeMcpGeminiInterpolationUnrepresentable, SeverityError, "An MCP server value contains a bare $NAME literal that Gemini would expand into an environment lookup; the server entry was skipped", "Write the value as ${NAME} if it is an environment reference, or remove the dollar sign from the literal"},
 	{CodeIngestDevinLoadSkillFailed, SeverityError, "Failed to load a skill directory from the Devin source layout", "Check the skills/<name>/SKILL.md layout and its YAML frontmatter"},
 	{CodeIngestDevinLoadSubagentFailed, SeverityError, "Failed to load a flat subagent profile from the Devin source layout", "Check the agents/<name>.md frontmatter"},
 	{CodeIngestDevinLoadHookFailed, SeverityError, "Failed to load hooks from the Devin source layout", "Check the hooks.v1.json event object or the hooks member of config.json"},
@@ -736,6 +741,7 @@ var codeCatalog = []CodeDoc{
 	{CodeMaterializeCodexTrustReviewPending, SeverityWarning, "A check found a pending repository Codex change without mutating files or trust state", "A later sync may require reviewing or re-approving the repository in Codex"},
 	{CodeMaterializeDevinSymlinkRequired, SeverityError, "Devin skills and subagents must be symlinks, so file-copy materialization was refused for this target", "Devin has no real-file fallback; set the materialization mode back to symlink for the Devin harness"},
 	{CodeHookNativeToleranceRefused, SeverityError, "A native hook file was malformed, ambiguous, or unsafe to inspect, so the affected target was left exactly as found", "Fix the reported native hook file by hand; no native or legacy hook bytes were changed"},
+	{CodeHookRemoveUnowned, SeverityError, "Removal would leave a native hook active without clean ownership proof; configuration and hook files are unchanged", "Review the named native file and deliberately remove the hook, or explicitly repair ownership before retrying"},
 	{CodeDoctorRepairFailed, SeverityError, "An authorized repair action failed; the aggregate was left exactly as found", "This is the partial repair failure outcome and exits 1; re-running the repair is safe"},
 }
 

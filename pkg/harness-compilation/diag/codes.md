@@ -110,6 +110,7 @@ comparison in non-test code.
 | `subagent.devin.model-unmappable` | Explicit model has no resolved Devin representation; model omitted | Update the shipped Devin model catalog or use an explicit model override |
 | `subagent.devin.model-default` | Parent inheritance becomes Devin's default subagent model | Choose a supported explicit model when inheritance cannot be represented |
 | `subagent.devin.effort-dropped` | Requested reasoning has no supported Devin encoding and was omitted | Use a cataloged model and reasoning combination |
+| `skill.allowed-tools-omitted` | A skill `allowed-tools` list from another harness was omitted; it is never emitted as a pre-approval on the target | Declare pre-approved tools in the target harness's own layout if the skill needs them |
 | `skill.devin.tool-unknown` | An explicitly allowed skill or command tool has no Devin equivalent; the `allowed-tools` key was omitted and the resource was still emitted | Use one of Devin's allowed tools (read, edit, grep, glob, exec) to keep the restriction, or accept Devin's default tool set for this resource |
 | `subagent.devin.tool-unknown` | An explicitly allowed subagent tool has no Devin equivalent; the `allowed-tools` key was omitted and the profile was still emitted | Use one of Devin's allowed tools (read, edit, grep, glob, exec) to keep the restriction, or accept Devin's default tool set for this subagent |
 | `hook.devin.payload-dropped` | The hook carries the payload its type does not select; that payload was dropped | Split the hook into one command hook and one prompt hook if both payloads are required |
@@ -643,6 +644,7 @@ key or a hook event name), the resource name, and content digests are reported.
 | `mcp.devin.transport-ambiguous` | The MCP server declares both a stdio command and a remote url, which Devin's two documented server forms cannot express together; the server entry was skipped | Split the definition into one stdio server and one remote server |
 | `mcp.devin.transport-incomplete` | The MCP server declares neither a stdio command nor a remote url; the server entry was skipped | Set a command for a stdio server or a url for a remote server |
 | `mcp.devin.transport-unsupported` | The MCP server requests a transport Devin does not document; the server entry was skipped rather than defaulted | Devin documents the http and sse remote transports |
+| `mcp.gemini.interpolation-unrepresentable` | An MCP server value contains a bare `$NAME` literal that Gemini would expand into an environment lookup; the server entry was skipped | Write the value as `${NAME}` if it is an environment reference, or remove the dollar sign from the literal |
 | `mcp.devin.interpolation-unrepresentable` | The `command`, `url`, or an argument the server's documented form cannot do without uses an interpolation style Devin has no syntax for; the server entry was skipped | Devin documents `${env:VAR}` interpolation only; move the value into an environment variable, or use a literal command, argument, or url |
 | `ingest.devin.load-skill-failed` | Failed to load a skill directory from the Devin source layout | Check the skills/&lt;name&gt;/SKILL.md layout and its YAML frontmatter |
 | `ingest.devin.load-subagent-failed` | Failed to load a flat subagent profile from the Devin source layout | Check the agents/&lt;name&gt;.md frontmatter |
@@ -665,6 +667,7 @@ key or a hook event name), the resource name, and content digests are reported.
 | `materialize.devin.symlink-required` | Retired; older versions refused file mode for Devin | No longer emitted; Devin supports both file and symlink modes through the generic materializer |
 | `doctor.repair.failed` | An authorized `doctor --repair` action failed; the aggregate was left exactly as found | This is the "partial repair failure" half of the repair contract and exits 1; nothing was partially written, so re-running the repair is safe |
 | `hook.native-tolerance-refused` | A native hook file was malformed, ambiguous, or unsafe to inspect, so the affected target was left exactly as found | Fix the reported native hook file by hand; no native or legacy hook bytes were changed |
+| `hook.remove-unowned` | Removal would leave a native hook active without clean ownership proof; configuration and hook files are unchanged | Review the named native file and deliberately remove the hook, or explicitly repair ownership before retrying |
 
 ### Devin doctor and repair codes
 

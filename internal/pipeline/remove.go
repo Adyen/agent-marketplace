@@ -85,12 +85,19 @@ func removeWorkspace(opts RemoveOptions) (Workspace, error) {
 }
 
 func syncAfterRemove(ctx context.Context, opts RemoveOptions, extra ...silentSyncOpt) error {
-	if opts.DependencyReconcile != nil {
-		extra = append(extra, withDependencyReconciler(opts.DependencyReconcile), withConfigStaging(opts.configStaging))
-	}
 	ws, err := removeWorkspace(opts)
 	if err != nil {
 		return err
+	}
+	if opts.configStaging != nil {
+		edits, err := opts.configStaging.Edits()
+		if err != nil {
+			return err
+		}
+		if err := preflightHookRemoval(ctx, ws, edits, nil); err != nil {
+			return err
+		}
+		extra = append(extra, withDependencyReconciler(opts.DependencyReconcile), withConfigStaging(opts.configStaging))
 	}
 	warnings, err := silentSyncCollect(ctx, ws, extra...)
 	if opts.warningSink != nil {
@@ -118,8 +125,10 @@ func Remove(ctx context.Context, opts RemoveOptions) (result *RemoveResult, retE
 			result.Warnings = warnings
 		}
 	}()
+	if opts.DependencyReconcile == nil && materialize.HasActiveNativeHooks(ws.MaterializeRoot()) {
+		opts.DependencyReconcile = commitRemovalConfig
+	}
 	if opts.DependencyReconcile != nil {
-		var err error
 		opts.configStaging, err = newConfigStagingManager()
 		if err != nil {
 			return nil, err
