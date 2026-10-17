@@ -8,4 +8,4 @@
 
 - [x] 2.1 Run affected tests, validation, specification checks, and telemetry E2E coverage.
 - [x] 2.2 Complete OCR delegation and adversarial review.
-- [ ] 2.3 Run `openspec archive report-telemetry-cleanup-failures --yes`.
+- [x] 2.3 Run `openspec archive report-telemetry-cleanup-failures --yes`.
