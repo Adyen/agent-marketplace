@@ -718,3 +718,16 @@ rules, and SHALL preserve entries it does not recognize.
 - **WHEN** garbage collection runs and a digest is unreferenced
 - **THEN** it MUST remove the placeholder-form and legacy entries for that digest together
 - **AND** it MUST keep both entries for a referenced digest, and MUST preserve malformed or unrecognized placeholder entries and fail closed on symlinked ones
+
+### Requirement: Canonical hook metadata normalization is resource-scoped
+
+Normalization of the canonical hook serializer's null `Extra` scaffolding MUST
+remain hook-specific. Decoding other resource kinds MUST preserve their existing
+unknown metadata and native output.
+
+#### Scenario: Non-hook canonical metadata compatibility
+
+- **GIVEN** a canonical skill, command, subagent or MCP server contains `Extra: null`
+- **WHEN** the resource is decoded for native compilation
+- **THEN** its historical unknown metadata MUST remain preserved
+- **AND** hook-specific metadata normalization MUST NOT change the native output
