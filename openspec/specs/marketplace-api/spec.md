@@ -269,7 +269,8 @@ other plugin directories remain unsupported and MUST have an achievable remedy.
 
 - **GIVEN** a canonical hook contains the serializer's null `Extra` field
 - **WHEN** it is decoded for target compilation
-- **THEN** that null field MUST NOT become unknown native metadata or cause an otherwise supported hook to be refused
+- **THEN** that reserved null field MUST NOT cause an otherwise supported hook to be refused
+- **AND** targets already accepting the canonical hook MUST retain their existing native projection bytes
 - **AND** actual unknown fields MUST retain their existing preservation and target-refusal rules
 
 #### Scenario: Mirrored hook support safe publication
