@@ -5285,12 +5285,14 @@ func syncArtifactLinks(outDir string, artifacts []artifact.Artifact, cacheDir st
 	var diags []diag.Diagnostic
 	desired := make(map[string]string, len(artifacts))
 	desiredDigests := make(map[string]string, len(artifacts))
+	desiredArtifacts := make(map[string]artifact.Artifact, len(artifacts))
 	for _, a := range artifacts {
 		if err := a.Validate(); err != nil {
 			return report, diags, err
 		}
 		desired[a.Path] = filepath.Join(cacheDir, filepath.FromSlash(a.Path))
 		desiredDigests[a.Path] = portableArtifactDigest(a)
+		desiredArtifacts[a.Path] = a
 	}
 
 	if !dryRun {
@@ -5362,6 +5364,16 @@ func syncArtifactLinks(outDir string, artifacts []artifact.Artifact, cacheDir st
 			continue
 		}
 		if result.alreadySynced {
+			if dryRun {
+				changed, err := linkedCacheChanged(skillLink{target: cacheTarget, cacheDir: cacheDir, artifacts: []artifact.Artifact{desiredArtifacts[path]}})
+				if err != nil {
+					return report, diags, err
+				}
+				if changed {
+					report.Written = append(report.Written, path)
+					continue
+				}
+			}
 			report.Skipped = append(report.Skipped, path)
 			if state != nil && !dryRun {
 				state.remove(target, manifestPath)
@@ -6036,9 +6048,8 @@ func syncSkillLinks(skillsDir string, links []skillLink, dryRun bool, pruneStale
 		desired[link.name] = link.target
 		linkMeta[link.name] = link
 		// A real sync revalidates the source support tree while preparing the
-		// link cache. A read-only check skips that and hashes desired content
-		// only for legacy migration, so apply the same support-tree authority
-		// structurally, without reading payload bytes, to every linked source.
+		// link cache. Checks also validate sources whose native link is missing
+		// or user-owned and therefore does not need a cache-content comparison.
 		if state != nil && dryRun && !portableLinkIsSingleArtifact(link) {
 			if err := validatePortableSkillSupportStructure(link); err != nil {
 				return report, err
@@ -6105,6 +6116,16 @@ func syncSkillLinks(skillsDir string, links []skillLink, dryRun bool, pruneStale
 			continue
 		}
 		if result.alreadySynced {
+			if dryRun {
+				changed, err := linkedCacheChanged(linkMeta[name])
+				if err != nil {
+					return report, err
+				}
+				if changed {
+					report.Written = append(report.Written, name)
+					continue
+				}
+			}
 			report.Skipped = append(report.Skipped, name)
 			if state != nil && !dryRun {
 				state.remove(target, manifestPath)
