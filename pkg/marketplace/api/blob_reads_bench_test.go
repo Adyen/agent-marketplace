@@ -24,11 +24,12 @@ func BenchmarkContentDigestRead(b *testing.B) {
 	server := payloadReadServer(b, blobs)
 	handler := server.PublicHandler()
 	path := "/api/v1/content/" + strings.Replace(digest, ":", "/", 1)
+	request := httptest.NewRequest(http.MethodGet, path, nil)
 	b.SetBytes(int64(len(data)))
 	b.ReportAllocs()
 	for b.Loop() {
 		response := httptest.NewRecorder()
-		handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, path, nil))
+		handler.ServeHTTP(response, request)
 		if response.Code != http.StatusOK || response.Body.Len() != len(data) {
 			b.Fatalf("healthy content response = %d/%d", response.Code, response.Body.Len())
 		}

@@ -1,6 +1,6 @@
 # Security R5 Execution: First Processing Batch
 
-Status: in progress, local implementation; not closure of #434.
+Status: in progress, first batch in PR #725; not closure of #434.
 
 The scope remains the [frozen ledger](2026-10-16-security-r5-frozen-ledger.md)
 at `2f55f85f58a3fe3caca4965095bd90f8a1d82518`. Neither that ledger nor its
@@ -78,9 +78,13 @@ distinguish algorithmic complexity.
 Go `go1.27.1`, `darwin/arm64`, Apple M4 Max. Each cell is the median of five
 two-second samples. Fixtures are inert and bounded: counts 128/512/2048 for
 scanner/offset work, depths 32/128/512 for JSON paths, and 7,360 content bytes
-for the healthy API read. All 16 benchmark variants and their allocations
-are retained in [before.txt](security-r5-2026-10-17/before.txt) and
-[after.txt](security-r5-2026-10-17/after.txt).
+for the healthy API read. The original 16 benchmark variants and their
+allocations remain in [before.txt](security-r5-2026-10-17/before.txt) and
+[after.txt](security-r5-2026-10-17/after.txt). Those historical API samples
+included request construction. The API row below instead uses the corrected
+[before](security-r5-2026-10-17/api-before-no-request-setup.txt) and
+[after](security-r5-2026-10-17/api-after-no-request-setup.txt) pair, both
+measured with the same request construction outside the timed loop.
 
 | Benchmark, largest fixture | Before ns/op | After ns/op | Before B/op | After B/op | Before allocs/op | After allocs/op |
 |---|---:|---:|---:|---:|---:|---:|
@@ -89,19 +93,20 @@ are retained in [before.txt](security-r5-2026-10-17/before.txt) and
 | Finding offsets, 2048 columns | 21,272,533 | 115,327 | 245,760 | 346,528 | 2,049 | 2,063 |
 | JSON key validation, depth 512 | 1,517,947 | 152,568 | 18,611,644 | 421,449 | 1,584 | 1,083 |
 | JSONC parsing, depth 512 | 1,648,988 | 223,403 | 18,373,171 | 173,161 | 2,569 | 2,062 |
-| Healthy content digest route | 97,584 | 104,503 | 33,506 | 42,687 | 82 | 91 |
+| Healthy content digest route | 94,524 | 98,742 | 28,193 | 37,363 | 73 | 82 |
 
 The offset ordering buffer increases allocated bytes by approximately 41%
 at 2048 findings. Bounded filesystem reads increase healthy API allocations
-by approximately 27% bytes and nine allocations; its timing difference is
-not significant in these samples (`benchstat`, p=0.222). This is a safety
+by approximately 32.5% bytes and nine allocations; its timing difference is
+not significant in these samples (`benchstat`, p=0.841). This is a safety
 tradeoff, not a claimed API speedup. Five samples do not provide benchstat's
 95% confidence interval; these are measured fixtures, not latency SLOs.
 
 Scanner, converter and parser benchmarks measure in-memory work, not an
 end-to-end refresh. The API benchmark includes local filesystem reads and
 HTTP-handler dispatch, but no network transport, acquisition or owner lookup.
-Setup stays outside the timed loop.
+Request/fixture setup stays outside the timed loop. Per-response capture and
+handler output remain timed.
 
 Reproduce the comparisons from the repository root:
 
@@ -115,6 +120,9 @@ CGO_ENABLED=0 GOPROXY=off go test -p 1 \
   -benchtime 2s -count 5 -benchmem
 benchstat docs/issues/security-r5-2026-10-17/before.txt \
   docs/issues/security-r5-2026-10-17/after.txt
+# Compare the corrected API fixture separately, not against the old API row.
+benchstat docs/issues/security-r5-2026-10-17/api-before-no-request-setup.txt \
+  docs/issues/security-r5-2026-10-17/api-after-no-request-setup.txt
 ```
 
 The before samples use the frozen source plus the same benchmark fixtures;
@@ -122,6 +130,10 @@ the after samples use the candidate implementations. The final scanner,
 JSON and API samples replace intermediate candidate measurements. No
 dependency versions change; `go.work.sum` records three missing checksums
 for versions already selected by the workspace after the approved download.
+The corrected API pair uses source baseline `2f55f85f` plus the updated
+benchmark/fixture for before, and the PR implementation for after. Both use
+five two-second samples with request construction excluded. The temporary
+baseline worktree is a sibling and is removed before final validation.
 
 ## Verification
 
@@ -136,14 +148,43 @@ for versions already selected by the workspace after the approved download.
 - PASS: focused `-race` tests in both JSON readers, analyze, ingest and API,
   including the public ingest and byte-counting HTTP controls.
 - PASS: the config, description and removed-migrator controls listed above.
-- PASS: combined `make validate-e2e`; 2,874 command invocations cover all
-  113 requirements with zero listed gaps, and all three required launch
-  refusal witnesses execute and pass. Shellcheck passes. No duplicate
+- PASS: the distinct combined `make validate-e2e` runs below. Every run covers
+  all 113 requirements with zero listed gaps, executes all three required
+  launch refusal witnesses, and passes shellcheck. No duplicate standalone
   configuration-compatibility run. Vendor-native/container checks are not
   represented as local coverage.
-- PASS: repeated scoped validation, API race tests and the combined E2E
-  gate after the legacy-error correction. The final E2E run takes 721 seconds
-  and again covers all 113 requirements and three required witnesses.
+
+| Run | Duration | Command invocations |
+|---|---:|---:|
+| Initial candidate, before legacy-error correction and rebase | 825 seconds | 2,874 |
+| Legacy-error-corrected candidate, before rebase | 721 seconds | 2,874 |
+| Publication candidate `fabf6176`, after rebase onto `f0171985` | 922 seconds | 2,881 |
+
+The publication candidate also passes fresh scoped validation including
+catalog, Marketplace client, materialization and source-revision consumers;
+full-package races in JSON utilities, JSONC, analyze, ingest and API; and
+strict spec checks with 945 scenarios and 1,537 annotations. The earlier
+911/1,499 counts above describe pre-rebase validation, not this later run.
+
+## PR Review Follow-Up
+
+Gemini posts no actionable inline comments. CodeRabbit identifies request
+construction in the timed benchmark and ambiguous E2E run labels; both are
+corrected without changing production behavior. Original measurement data
+remains available instead of silently comparing unlike benchmark fixtures.
+
+The proposed revision-scoped inspection HTTP 413 mapping is not applied:
+the original `f0171985` consumer returns HTTP 500 for an oversized inspection
+manifest, and the spec requires existing refusal behavior. OpenAPI does not
+establish a conflicting 413 contract for that route. A public-route matrix
+covers GET/HEAD of the inspection, primary-content and digest-content routes,
+healthy payloads, bounded refusal and legacy-store refusal. All preserve 500
+for a manifest failure; built-in reads stop at the ceiling plus one byte.
+Temporarily applying the proposed mapping fails all six bounded-route cases.
+Follow-up checks pass: fresh full API package tests, scoped `make validate`
+(vet, zero-issue CI lint and build), focused API races, and strict spec checks
+(945 scenarios, 1,537 annotations). No production Go file changes in this
+follow-up; the published candidate's E2E and released-client gates pass in CI.
 
 ## Adversarial Review
 
@@ -170,11 +211,16 @@ The supported production/configuration checklist is:
   (added): recognized schema keys and change metadata.
 
 No unresolved actionable medium/high finding remains in these changes after
-the sibling-capacity and legacy-error corrections. The intended delta has
-28 files: all nine OCR-reviewable production/configuration files are reviewed,
+the sibling-capacity and legacy-error corrections. The original implementation
+delta has 28 files: all nine OCR-reviewable production/configuration files are reviewed,
 and the 19 default-excluded tests, spec prose, dependency checksum and
 measurement files receive supplementary manual checks. Zero files are
 skipped; reviewable and overall coverage are 100%.
+The published PR adds the two unchanged frozen artifacts, making 30 files
+at `fabf6176`. The review follow-up changes five default-excluded files,
+including two additional measurement files: all five receive manual review,
+zero skipped, while production code stays unchanged. The full candidate
+therefore contains 32 files, not a newly claimed 28-file PR review.
 Neither this review nor passing tests proves absence of other defects.
 
 ## Remaining Work
@@ -185,6 +231,30 @@ closed by these fixes. In particular, collection/include graph budgets,
 finding-total/reject policy, archive aggregate bounds, discovery/search
 buffering, Git/cache acquisition, and API query work retain their frozen
 obligations. No new exclusion or invented threshold is introduced.
+
+### Work Before D1-D6 Decisions
+
+All 61 rows can be investigated now. Counting the frozen dispositions rather
+than assuming every scanner claim is a defect, 31 rows have no explicit
+decision tag; 30 mention a decision or new-budget caveat. This is a planning
+split, not a count of confirmed vulnerabilities or guaranteed closures.
+
+Of the 31, R03/R45/R54 have narrowly revalidated existing/removed controls,
+and R16/R33/R57 have candidate fixes in this PR. That leaves 25 open/partial
+candidates with no predeclared decision blocker:
+
+| Candidate work | Cases | Safe work before a new policy decision |
+|---|---|---|
+| Repeated-work optimizations (9) | R28, R35, R38, R42, R43, R47, R48, R52, R53 | Measure and remove repeated serialization, parsing, scans or bookkeeping while preserving outputs, names, order, freshness and no-op metadata. |
+| Read/owner-boundary checks (9) | R04, R09, R21, R31, R39, R40, R41, R58, R59 | Prove applicable existing limits and actual callers; enforce an already-established ceiling earlier or record a supported no-change result. |
+| Other runtime/contract checks (7) | R12, R14, R19, R23, R24, R27, R44 | Verify cancellation, intentional operator overrides, existing acquisition limits, query/render costs and healthy controls before choosing a change. |
+
+Missing an explicit tag does not approve a limit: if an investigation finds
+that a new ceiling or behavior is necessary, that part still needs a decision.
+Conversely, the other 30 rows are not entirely blocked. Semantics-preserving
+optimization, context propagation under an existing contract, and enforcement
+of established limits can proceed within them, as R36's path optimization
+already demonstrates. New budgets and altered failure/output policy cannot.
 
 One next ungated candidate is R48's `ProjectGitRoots` matching. Its current
 selection order prefers the first explicit harness match, then the first

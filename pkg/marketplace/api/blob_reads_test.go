@@ -187,3 +187,74 @@ func TestLegacyPayloadReadErrorsRetainServerErrorStatus(t *testing.T) {
 		}
 	}
 }
+
+func TestResourceInspectionRetainsOversizeManifestStatus(t *testing.T) {
+	ctx := context.Background()
+	blobs := fsblob.New(t.TempDir())
+	server := payloadReadServer(t, blobs)
+	source := store.Registry{ID: "source-id", Slug: "source", Ref: "main", Acquisition: store.AcquisitionIndexOnly}
+	if err := server.meta.PutRegistry(ctx, source); err != nil {
+		t.Fatal(err)
+	}
+	coordinate := store.ResourceCoordinate{Marketplace: "mp-test", Registry: source.ID, Kind: KindSkill, Name: "example"}
+	revision := store.RevisionDigest("sha256:" + strings.Repeat("a", 64))
+	body := []byte("# Ordinary inert content\n")
+	projection, err := inspection.Build(coordinate, string(revision), body, nil, 10, 1024, 4096)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for digest, data := range projection.Bodies {
+		if err := blobs.Put(ctx, store.ArchiveDigest(digest), data); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := blobs.Put(ctx, store.ArchiveDigest(projection.Manifest.ManifestDigest), projection.Payload); err != nil {
+		t.Fatal(err)
+	}
+	publishAssessedTestRevision(ctx, t, server.meta,
+		store.ResourceRevision{Coordinate: coordinate, ContentDigest: revision},
+		store.AssessmentDecisionAllow, store.RevisionDigest(projection.Manifest.ManifestDigest), strings.Repeat("b", 40))
+
+	base := "/api/v1/resources/source/skill/example/revisions/" + string(revision) + "/inspection"
+	for _, fixture := range []struct {
+		suffix string
+		body   []byte
+	}{
+		{"", projection.Payload},
+		{"/content", body},
+		{"/content/" + projection.Manifest.Files[0].ContentDigest, body},
+	} {
+		for _, method := range []string{http.MethodGet, http.MethodHead} {
+			t.Run(method+fixture.suffix, func(t *testing.T) {
+				server.blobs = blobs
+				response := httptest.NewRecorder()
+				server.PublicHandler().ServeHTTP(response, httptest.NewRequest(method, base+fixture.suffix, nil))
+				if response.Code != http.StatusOK || method == http.MethodGet && !bytes.Equal(response.Body.Bytes(), fixture.body) {
+					t.Fatalf("healthy inspection status=%d body=%q", response.Code, response.Body.Bytes())
+				}
+				for _, legacy := range []bool{false, true} {
+					probe := &payloadReadProbe{
+						BlobStore: blobs,
+						data:      bytes.Repeat([]byte("x"), int(inspection.MaxManifestBytes)+1024),
+					}
+					server.blobs = probe
+					if legacy {
+						server.blobs = struct{ store.BlobStore }{probe}
+					}
+					response = httptest.NewRecorder()
+					server.PublicHandler().ServeHTTP(response, httptest.NewRequest(method, base+fixture.suffix, nil))
+					if response.Code != http.StatusInternalServerError || strings.Contains(response.Header().Get("Cache-Control"), "immutable") {
+						t.Fatalf("legacy=%v status=%d headers=%v", legacy, response.Code, response.Header())
+					}
+					if legacy {
+						if probe.unbounded != 1 || probe.bounded != 0 || probe.readBytes != int64(len(probe.data)) {
+							t.Fatalf("legacy read: unbounded=%d bounded=%d bytes=%d", probe.unbounded, probe.bounded, probe.readBytes)
+						}
+					} else if probe.unbounded != 0 || probe.bounded != 1 || probe.lastLimit != inspection.MaxManifestBytes || probe.readBytes != inspection.MaxManifestBytes+1 {
+						t.Fatalf("bounded read: unbounded=%d bounded=%d limit=%d bytes=%d", probe.unbounded, probe.bounded, probe.lastLimit, probe.readBytes)
+					}
+				}
+			})
+		}
+	}
+}
