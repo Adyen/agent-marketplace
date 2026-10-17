@@ -172,31 +172,32 @@ func TestSyncCheckRejectsDisallowedSnapshotConfigSpellings(t *testing.T) {
 	}
 }
 
-func TestServeCommandKeepsStrictExactGitVerification(t *testing.T) {
+func TestLongRunningCommandsKeepNoCommandScope(t *testing.T) {
 	if isolateCommandTest(t) {
 		return
 	}
 	root := newRootCmd()
-	var serve, sync *cobra.Command
+	commands := map[string]*cobra.Command{}
 	for _, cmd := range root.Commands() {
-		switch cmd.Name() {
-		case "serve":
-			serve = cmd
-		case "sync":
-			sync = cmd
+		commands[cmd.Name()] = cmd
+	}
+	for _, name := range []string{"serve", "tui", "sync"} {
+		if commands[name] == nil {
+			t.Fatalf("root command is missing %s", name)
 		}
 	}
-	if serve == nil || sync == nil {
-		t.Fatal("root command is missing serve or sync")
+	for _, name := range []string{"serve", "tui"} {
+		cmd := commands[name]
+		cmd.SetContext(context.Background())
+		if err := root.PersistentPreRunE(cmd, nil); err != nil {
+			t.Fatalf("%s pre-run: %v", name, err)
+		}
+		if cache.ExactGitVerificationScopePresent(cmd.Context()) {
+			t.Fatalf("%s context carries an exact-git verification scope; long-running sessions must verify each action in a fresh scope", name)
+		}
 	}
-	serve.SetContext(context.Background())
+	sync := commands["sync"]
 	sync.SetContext(context.Background())
-	if err := root.PersistentPreRunE(serve, nil); err != nil {
-		t.Fatalf("serve pre-run: %v", err)
-	}
-	if cache.ExactGitVerificationScopePresent(serve.Context()) {
-		t.Fatal("serve context carries an exact-git verification scope; it must stay on the strict path")
-	}
 	if err := root.PersistentPreRunE(sync, nil); err != nil {
 		t.Fatalf("sync pre-run: %v", err)
 	}

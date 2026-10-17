@@ -16,6 +16,15 @@ import (
 
 // spec: exact-snapshot-verification/snapshot-tampered-between-tui-actions-is-reported-on-reload
 func TestTamperedSnapshotReportedOnReloadWithinOneSession(t *testing.T) {
+	assertTamperedSnapshotReportedOnReload(t, context.Background())
+}
+
+func TestTamperedSnapshotReportedOnReloadWithOuterScope(t *testing.T) {
+	assertTamperedSnapshotReportedOnReload(t, cache.WithExactGitVerificationScope(context.Background()))
+}
+
+func assertTamperedSnapshotReportedOnReload(t *testing.T, ctx context.Context) {
+	t.Helper()
 	home, repo, origin := t.TempDir(), t.TempDir(), t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("XDG_STATE_HOME", filepath.Join(home, "state"))
@@ -63,7 +72,6 @@ func TestTamperedSnapshotReportedOnReloadWithinOneSession(t *testing.T) {
 	defer swapLoadRepoConfig(func() (*config.Config, error) { return config.LoadConfigFromPath(configPath) })()
 	defer swapLoadLocalConfig(func() (*config.LocalConfig, error) { return nil, nil })()
 
-	ctx := context.Background()
 	verified := readSnapshot(ctx, repo, home, catalogLoadCached)
 	if len(verified.errs) != 0 {
 		t.Fatalf("initial TUI inspection did not verify the snapshot: %v", verified.errs)

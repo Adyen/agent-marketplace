@@ -68,7 +68,7 @@ func newRootCmd() *cobra.Command {
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
 			cmd.SetContext(pipeline.WithTransientOrganizationMarketplaceLockCache(cmd.Context()))
 			rootTUI := cmd == rootCmd && !showVersion && !noTUI && os.Getenv("AGENT_MARKETPLACE_NO_TUI") == "" && term.IsTerminal(os.Stdin.Fd())
-			if !rootTUI && !commandRunsAsOrUnder(cmd, "serve") {
+			if !rootTUI && !commandRunsAsOrUnder(cmd, "serve") && !commandRunsAsOrUnder(cmd, "tui") {
 				cmd.SetContext(cache.WithExactGitVerificationScope(cmd.Context()))
 			}
 			if err := prepareCommandDependencies(cmd, rootTUI); err != nil {

@@ -27,6 +27,16 @@ func WithExactGitVerificationScope(ctx context.Context) context.Context {
 	if ctx.Value(exactGitVerificationScopeContextKey{}) != nil {
 		return ctx
 	}
+	return WithFreshExactGitVerificationScope(ctx)
+}
+
+// WithFreshExactGitVerificationScope attaches a new verification scope to ctx,
+// shadowing any scope already present. Long-running surfaces such as the TUI
+// attach one per action so a tampered snapshot is re-verified on the next read.
+func WithFreshExactGitVerificationScope(ctx context.Context) context.Context {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	return context.WithValue(ctx, exactGitVerificationScopeContextKey{}, &exactGitVerificationScope{
 		snapshots: make(map[string]struct{}),
 		stores:    make(map[string]struct{}),

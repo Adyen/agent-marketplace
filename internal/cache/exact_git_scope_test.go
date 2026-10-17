@@ -248,3 +248,14 @@ func TestWithExactGitVerificationScopeReusesExistingScope(t *testing.T) {
 		t.Fatal("WithExactGitVerificationScope replaced an existing scope")
 	}
 }
+
+func TestWithFreshExactGitVerificationScopeShadowsOuterScope(t *testing.T) {
+	outer := WithExactGitVerificationScope(context.Background())
+	fresh := WithFreshExactGitVerificationScope(outer)
+	if exactGitVerificationScopeFrom(fresh) == nil {
+		t.Fatal("WithFreshExactGitVerificationScope attached no scope")
+	}
+	if exactGitVerificationScopeFrom(fresh) == exactGitVerificationScopeFrom(outer) {
+		t.Fatal("WithFreshExactGitVerificationScope reused the outer scope")
+	}
+}
