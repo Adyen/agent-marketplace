@@ -1253,6 +1253,9 @@ func normalizeMcpValue(value any) any {
 		}
 		return out
 	case []any:
+		if typed == nil {
+			return typed
+		}
 		out := make([]any, len(typed))
 		for i, item := range typed {
 			out[i] = normalizeMcpValue(item)

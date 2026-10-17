@@ -77,4 +77,12 @@ func TestGeminiRefusesLiteralItWouldExpand(t *testing.T) {
 			t.Fatalf("%s: Gemini accepted a literal it would expand: %s %+v", name, out, result.Diagnostics)
 		}
 	}
+	safe := ir.NewMcpServerWithOptions("fixture", "", nil, nil, nil, ir.SourceRef{}, ir.WithMcpURL("https://example.invalid/mcp"), ir.WithMcpHeaders(map[string]string{"X-Reference": "${API_TOKEN}", "X-Literal": "ordinary"}))
+	control, err := Compile(safe, TargetGemini)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out := mcpArtifactBytes(control.Artifacts); control.HasErrors() || !strings.Contains(out, "mcpServers") || !strings.Contains(out, `"${API_TOKEN}"`) {
+		t.Fatalf("Gemini refused a server without a bare dollar name: %s %+v", out, control.Diagnostics)
+	}
 }

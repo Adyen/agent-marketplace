@@ -107,7 +107,11 @@ func McpInterpolation(source string, target Target) string {
 	return pattern
 }
 
-var bareEnvReference = regexp.MustCompile(`\$\w+`)
+// bareEnvReference mirrors the bare form of Gemini CLI's settings resolver,
+// /\$(?:(\w+)|{([^}]+)})/: a dollar sign followed by ASCII word characters,
+// including digits ($1) and the second dollar of $$NAME. Gemini documents no
+// escape, so a backslash before the dollar does not prevent expansion.
+var bareEnvReference = regexp.MustCompile(`\$[A-Za-z0-9_]+`)
 
 // ContainsBareEnvReference reports whether value contains a bare $NAME, which
 // Gemini expands as an environment reference and canonical values treat as

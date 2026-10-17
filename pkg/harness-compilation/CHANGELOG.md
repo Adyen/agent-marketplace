@@ -4,7 +4,7 @@
 
 ### Bare dollar names in MCP values stay literal
 
-Canonical MCP values treat only `${NAME}` and `${NAME:-default}` as environment references, as Claude Code does; a bare `$NAME` is literal (#638 D2). Windsurf compilation no longer rewrites a whole-value `$NAME` to `${env:NAME}`, so a literal header such as `$NOT_A_REF` stays literal, and native Codex literals of that shape now convert to Windsurf instead of being refused. Gemini expands a bare `$NAME` in settings and extension MCP values: Gemini ingestion now canonicalizes it to `${NAME}`, and Gemini compilation refuses an MCP server whose values contain a bare `$NAME` with the new error `mcp.gemini.interpolation-unrepresentable`. Migration: write environment references as `${NAME}`; a literal that must contain `$NAME` cannot be sent to Gemini.
+Canonical MCP values treat only `${NAME}` and `${NAME:-default}` as environment references, as Claude Code does; a bare `$NAME` is literal (#638 D2). Windsurf compilation no longer rewrites a whole-value `$NAME` to `${env:NAME}`, so a literal header such as `$NOT_A_REF` stays literal, and native Codex literals of that shape now convert to Windsurf instead of being refused. Gemini expands a bare `$NAME` in settings and extension MCP values: Gemini ingestion now canonicalizes it to `${NAME}`, and Gemini compilation refuses an MCP server whose values contain a bare `$NAME` with the new error `mcp.gemini.interpolation-unrepresentable`. This is a breaking change for Gemini output and ships in the v5.0.0 major release. Migration: write environment references as `${NAME}`; a literal that must contain `$NAME` cannot be sent to Gemini.
 
 ### Foreign command tool lists never become pre-approvals
 
