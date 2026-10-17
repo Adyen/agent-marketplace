@@ -1,0 +1,33 @@
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/internal/lockfile
+cpu: Apple M4 Max
+                                                 | empty-before.txt | empty-after.txt |
+                                                 |                     sec/op                      |         sec/op           vs base               |
+ProjectGitRootsWithoutRequirements/roots=0-16                                        23.550n +/- inf [1]              2.247n +/- inf [1]  -90.46% (p=0.008 n=5)
+ProjectGitRootsWithoutRequirements/roots=1-16                                       132.600n +/- inf [1]              2.065n +/- inf [1]  -98.44% (p=0.008 n=5)
+ProjectGitRootsWithoutRequirements/roots=2048-16                                   6383.000n +/- inf [1]              2.234n +/- inf [1]  -99.97% (p=0.008 n=5)
+geomean                                                                               271.1n                    2.180n        -99.20%
+[1] need >= 6 samples for confidence interval at level 0.95
+
+                                                 | empty-before.txt | empty-after.txt |
+                                                 |                      B/op                       |        B/op         vs base                    |
+ProjectGitRootsWithoutRequirements/roots=0-16                                          0.000 +/- inf [1]          0.000 +/- inf [1]         ~ (p=1.000 n=5) [2]
+ProjectGitRootsWithoutRequirements/roots=1-16                                          96.00 +/- inf [1]           0.00 +/- inf [1]  -100.00% (p=0.008 n=5)
+ProjectGitRootsWithoutRequirements/roots=2048-16                                     176.0Ki +/- inf [1]          0.0Ki +/- inf [1]  -100.00% (p=0.008 n=5)
+geomean                                                                                          [3]                       ?                      [3] [4]
+[1] need >= 6 samples for confidence interval at level 0.95
+[2] all samples are equal
+[3] summaries must be >0 to compute geomean
+[4] ratios must be >0 to compute geomean
+
+                                                 | empty-before.txt | empty-after.txt |
+                                                 |                    allocs/op                    |     allocs/op       vs base                    |
+ProjectGitRootsWithoutRequirements/roots=0-16                                          0.000 +/- inf [1]          0.000 +/- inf [1]         ~ (p=1.000 n=5) [2]
+ProjectGitRootsWithoutRequirements/roots=1-16                                          1.000 +/- inf [1]          0.000 +/- inf [1]  -100.00% (p=0.008 n=5)
+ProjectGitRootsWithoutRequirements/roots=2048-16                                       1.000 +/- inf [1]          0.000 +/- inf [1]  -100.00% (p=0.008 n=5)
+geomean                                                                                          [3]                       ?                      [3] [4]
+[1] need >= 6 samples for confidence interval at level 0.95
+[2] all samples are equal
+[3] summaries must be >0 to compute geomean
+[4] ratios must be >0 to compute geomean
