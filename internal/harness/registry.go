@@ -122,13 +122,14 @@ func newInstallationAdapterRegistry(validateLayouts func() error) (InstallationA
 		}
 		t := hcc.Target(target)
 		adapter := InstallationAdapter{target: t, layout: layout, info: info}
-		if target == targetmeta.TargetDevin {
+		switch target {
+		case targetmeta.TargetDevin:
 			adapter.aggregateKey = AdapterDevinOwnedJSON
 			adapter.repairKey = AdapterDevinRepair
-		} else if target == targetmeta.TargetCodex {
+		case targetmeta.TargetCodex:
 			adapter.aggregateKey = AdapterCodexOwnedJSONTOML
 			adapter.repairKey = AdapterCodexRepair
-		} else {
+		default:
 			adapter.aggregateKey = AdapterOpenCodeOwnedJSON
 			adapter.repairKey = AdapterOpenCodeRepair
 		}
