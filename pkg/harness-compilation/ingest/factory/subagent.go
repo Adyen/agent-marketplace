@@ -6,6 +6,7 @@ import (
 
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
+	extpkg "github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir/ext"
 )
 
 // LoadSubagent reads a Factory droid markdown file.
@@ -35,7 +36,10 @@ func LoadSubagent(src fs.FS, path string) (*ir.Subagent, []diag.Diagnostic, erro
 		}
 	}
 	var tools []string
-	if value, ok := fm["tools"]; ok {
+	toolsCategory := ""
+	if value, ok := fm["tools"].(string); ok && value == "read-only" {
+		toolsCategory = value
+	} else if value, ok := fm["tools"]; ok {
 		parsed, err := toStringSlice(value)
 		if err != nil {
 			return nil, nil, fmt.Errorf("ingest/factory: invalid tools in %s: %w", path, err)
@@ -68,6 +72,12 @@ func LoadSubagent(src fs.FS, path string) (*ir.Subagent, []diag.Diagnostic, erro
 	subagent.ModelSource = "factory"
 	if tools != nil {
 		subagent.ToolSource = "factory"
+	}
+	if toolsCategory != "" {
+		if subagent.Ext.Factory == nil {
+			subagent.Ext.Factory = &extpkg.Factory{}
+		}
+		subagent.Ext.Factory.ToolsCategory = toolsCategory
 	}
 	return subagent, nil, nil
 }

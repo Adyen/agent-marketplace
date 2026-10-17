@@ -90,6 +90,9 @@ type CodexMCP struct {
 type Factory struct {
 	ReasoningEffort string `json:"reasoningEffort,omitempty"`
 	Isolation       string `json:"isolation,omitempty"`
+	// ToolsCategory records a droid's tools category string, such as
+	// read-only, instead of an explicit tool list.
+	ToolsCategory string `json:"toolsCategory,omitempty"`
 }
 
 // Cursor preserves Cursor-native values when they should be emitted verbatim
@@ -153,4 +156,9 @@ type Claude struct {
 	Effort    string   `json:"effort,omitempty"`
 	Isolation string   `json:"isolation,omitempty"`
 	HookType  string   `json:"hookType,omitempty"`
+	// NativeControls holds Claude execution controls (subagent permissionMode,
+	// mcpServers and hooks; skill and command hooks) recorded by Claude
+	// ingestion, keyed as authored. Claude compilation emits these controls
+	// only from here.
+	NativeControls map[string]any `json:"nativeControls,omitempty"`
 }

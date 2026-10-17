@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### Claude execution controls require Claude provenance
+
+Claude reads subagent `permissionMode`, `mcpServers` and `hooks`, and skill and command `hooks`, as active controls. These keys used to pass through from any source, so a Cursor or Factory subagent declaring `permissionMode: bypassPermissions` or inline MCP servers gained them as live Claude settings (#635). Claude ingestion now records these keys in the Claude sidecar (`ext.claude.nativeControls`), and Claude compilation emits them only from there; the same keys from any other source are omitted with the warning `compile.claude.native-control-omitted`. The extension copy is kept for earlier clients. Claude-authored Marketplace payloads published before this change carry no sidecar, so their grant controls are dropped on Claude until the registry revision is published again. This ships in the v5.0.0 major release.
+
+### Read-only subagent restrictions are mapped or refused
+
+Cursor `readonly: true`, Claude `permissionMode: plan`, Codex `sandbox_mode = "read-only"` and Factory `tools: read-only` are documented read-only restrictions that other targets ignored (#636). A read-only subagent, whether the restriction is typed or an extension field, now becomes Claude `permissionMode: plan`, Cursor `readonly: true`, Codex `sandbox_mode = "read-only"` or Factory `tools: read-only`; Factory with an explicit tool list, Gemini, Devin and Windsurf refuse it with `subagent.security-restriction-unsupported`, and OpenCode with `subagent.opencode.restriction-unsupported`. Factory ingestion records the `read-only` tools category in `ext.factory.toolsCategory` instead of treating it as a tool name. This ships in the v5.0.0 major release.
+
 ### Bare dollar names in MCP values stay literal
 
 Canonical MCP values treat only `${NAME}` and `${NAME:-default}` as environment references, as Claude Code does; a bare `$NAME` is literal (#638 D2). Windsurf compilation no longer rewrites a whole-value `$NAME` to `${env:NAME}`, so a literal header such as `$NOT_A_REF` stays literal, and native Codex literals of that shape now convert to Windsurf instead of being refused. Gemini expands a bare `$NAME` in settings and extension MCP values: Gemini ingestion now canonicalizes it to `${NAME}`, and Gemini compilation refuses an MCP server whose values contain a bare `$NAME` with the new error `mcp.gemini.interpolation-unrepresentable`. This is a breaking change for Gemini output and ships in the v5.0.0 major release. Migration: write environment references as `${NAME}`; a literal that must contain `$NAME` cannot be sent to Gemini.

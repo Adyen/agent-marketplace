@@ -144,9 +144,14 @@ func subagent(s *ir.Subagent, opts compile.Options) ([]artifact.Artifact, []diag
 	writeTOMLString(&b, "model", model)
 	writeTOMLString(&b, "model_reasoning_effort", effort)
 	writeTOMLString(&b, "developer_instructions", s.Body)
+	sandboxMode := ""
 	if s.Ext.Codex != nil {
-		writeTOMLString(&b, "sandbox_mode", s.Ext.Codex.SandboxMode)
+		sandboxMode = s.Ext.Codex.SandboxMode
 	}
+	if compile.SubagentReadOnly(s) {
+		sandboxMode = "read-only"
+	}
+	writeTOMLString(&b, "sandbox_mode", sandboxMode)
 	if len(s.Extra) > 0 {
 		diagnostics = append(diagnostics, diagnostic(diag.CodeCodexFieldDropped, diag.SeverityWarning, s.Name(), s.Source, "Codex subagent output omitted unmodeled extension fields"))
 	}
