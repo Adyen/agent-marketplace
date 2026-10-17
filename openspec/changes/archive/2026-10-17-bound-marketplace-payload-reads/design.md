@@ -10,7 +10,7 @@ The existing blob interface remains unchanged. Custom stores without the bounded
 
 ## Compatibility
 
-Size refusals keep each route's existing status and message. Not-found errors, availability decisions, manifest/content verification, final-versus-placeholder archive identity, and immutable success responses remain unchanged. In particular, an oversized registry manifest retains its existing generic server-error response rather than introducing a new protocol status.
+Size refusals keep each route's existing status and message. Only errors from the selected bounded operation are classified as bounded size refusals; errors from legacy fallback reads retain their previous response classification, with the original cause preserved. Not-found errors, availability decisions, manifest/content verification, final-versus-placeholder archive identity, and immutable success responses remain unchanged. In particular, an oversized registry manifest retains its existing generic server-error response rather than introducing a new protocol status.
 
 ## Verification
 
