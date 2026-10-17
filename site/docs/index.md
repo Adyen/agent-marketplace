@@ -46,6 +46,7 @@ You maintain a Git repository of skills that other people install.
 |---|---|
 | Create a registry from nothing and install from it | [Tutorial: create your first registry](./tutorials/create-your-first-registry.md) |
 | Add a skill or command | [Add a resource to a registry](./how-to/author/add-a-resource-to-a-registry.md) |
+| Ship a hook that runs a script | [Publish a hook with support files](./how-to/author/publish-a-hook-with-support-files.md) |
 | Make resources discoverable by tag and licensed | [Declare tags and a license](./how-to/author/declare-tags-and-licenses.md) |
 | Declare what a resource needs to be installed | [Declare resource prerequisites](./how-to/author/declare-resource-prerequisites.md) |
 | Ship a bundle consumers can install in one step | [Publish resource collections](./how-to/author/publish-resource-collections.md) |

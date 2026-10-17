@@ -156,6 +156,7 @@ export default defineConfig({
               text: 'Registry authors',
               items: [
                 { text: 'Add a resource to a registry', link: `${DOCS_PATH}how-to/author/add-a-resource-to-a-registry` },
+                { text: 'Publish a hook with support files', link: `${DOCS_PATH}how-to/author/publish-a-hook-with-support-files` },
                 { text: 'Publish resource collections', link: `${DOCS_PATH}how-to/author/publish-resource-collections` },
                 { text: 'Declare tags and a license', link: `${DOCS_PATH}how-to/author/declare-tags-and-licenses` },
                 { text: 'Declare resource prerequisites', link: `${DOCS_PATH}how-to/author/declare-resource-prerequisites` },

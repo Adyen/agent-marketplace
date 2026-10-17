@@ -1,6 +1,6 @@
 # How to add a resource to a registry
 
-Add a skill or command to a Git [registry](../../glossary.md#registry), check it locally, and publish it. For subagents, hooks, and MCP servers, the [registry layout reference](../../reference/registry-layout.md) lists each harness's file formats and paths.
+Add a skill or command to a Git [registry](../../glossary.md#registry), check it locally, and publish it. For subagents, hooks, and MCP servers, the [registry layout reference](../../reference/registry-layout.md) lists each harness's file formats and paths. To ship a hook that runs a script, see [How to publish a hook with support files](./publish-a-hook-with-support-files.md).
 
 ## Prerequisites
 
