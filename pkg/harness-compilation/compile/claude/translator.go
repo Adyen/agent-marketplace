@@ -152,7 +152,9 @@ func (c *claudeCompiler) translateSkill(s *ir.Skill, opts compile.Options) ([]ar
 }
 
 func (c *claudeCompiler) translateCommand(cmd *ir.Command) ([]artifact.Artifact, []diag.Diagnostic, error) {
-	extraKeys, diags := compile.ExtraKeys(cmd.Extra, compile.PresentFields(map[string]bool{"name": true, "description": cmd.Description != ""}), mapping.TargetClaude, cmd.Name(), diag.SourceRef(cmd.Source))
+	extra, toolDiags := compile.PreApprovalCommandExtra(cmd, mapping.TargetClaude)
+	extraKeys, diags := compile.ExtraKeys(extra, compile.PresentFields(map[string]bool{"name": true, "description": cmd.Description != ""}), mapping.TargetClaude, cmd.Name(), diag.SourceRef(cmd.Source))
+	diags = append(toolDiags, diags...)
 	if len(extraKeys) == 0 && cmd.Description == "" {
 		return []artifact.Artifact{{Path: fmt.Sprintf("commands/%s.md", cmd.Name()), Bytes: []byte(cmd.Body)}}, diags, nil
 	}
@@ -162,7 +164,7 @@ func (c *claudeCompiler) translateCommand(cmd *ir.Command) ([]artifact.Artifact,
 		fm.Set("description", cmd.Description)
 	}
 	for _, key := range extraKeys {
-		fm.Set(key, cmd.Extra[key])
+		fm.Set(key, extra[key])
 	}
 	frontmatter, err := fm.Render()
 	if err != nil {

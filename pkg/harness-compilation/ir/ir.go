@@ -226,6 +226,7 @@ type Command struct {
 	Ext         extpkg.Bag     // Optional target-specific sidecars
 	Extra       map[string]any // Preserved unknown frontmatter fields
 	Source      SourceRef      // Origin in the source bundle
+	ToolSource  string         `json:"ToolSource,omitempty"` // Harness whose allowed-tools extension list the command carries; empty means canonical
 }
 
 // NewCommand creates a Command with the given name and fields.

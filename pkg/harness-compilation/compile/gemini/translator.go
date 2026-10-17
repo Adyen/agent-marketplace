@@ -141,10 +141,12 @@ func translateCommand(command *ir.Command) ([]artifact.Artifact, []diag.Diagnost
 		"prompt":      true,
 		"triggers":    triggersPresent,
 	})
-	extraKeys, diags := compile.ExtraKeys(command.Extra, present, mapping.TargetGemini, command.Name(), diag.SourceRef(command.Source))
+	commandExtra, toolDiags := compile.PreApprovalCommandExtra(command, mapping.TargetGemini)
+	extraKeys, diags := compile.ExtraKeys(commandExtra, present, mapping.TargetGemini, command.Name(), diag.SourceRef(command.Source))
+	diags = append(toolDiags, diags...)
 	extra := make(map[string]any, len(extraKeys))
 	for _, key := range extraKeys {
-		extra[key] = command.Extra[key]
+		extra[key] = commandExtra[key]
 	}
 
 	out, err := promptArtifact(command.Name(), command.Description, replaceEnvTokens(command.Body), triggers, extra)

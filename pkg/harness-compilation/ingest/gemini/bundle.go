@@ -350,6 +350,9 @@ func LoadCommand(src fs.FS, path string) (*ir.Command, []diag.Diagnostic, error)
 	delete(raw, "triggers")
 
 	command := ir.NewCommand(name, doc.Description, normalizeEnvTokens(doc.Prompt), raw, ir.SourceRef{File: path, Line: 1})
+	if _, ok := raw["allowed-tools"]; ok {
+		command.ToolSource = "gemini"
+	}
 	command.Ext.Gemini = &extpkg.Gemini{TOMLCommand: &extpkg.GeminiTOMLCommand{
 		Name:        doc.Name,
 		Description: doc.Description,
