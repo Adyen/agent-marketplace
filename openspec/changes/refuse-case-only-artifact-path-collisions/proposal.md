@@ -10,6 +10,7 @@ On a case-insensitive filesystem, reproduced on an APFS disk image, these name o
 ## What Changes
 
 - Bundle artifact-path conflict detection compares paths case-insensitively.
+- Installation refuses selected resources of one kind, target and scope whose names differ only in letter case, before any write. This covers the `sync` path, which compiles each resource separately, including collisions across sources.
 - A case-only collision suppresses both producers with the existing conflict error and a message naming both paths. Every other resource still installs.
 - The rule is host-independent, so case-sensitive systems refuse the same pair and shared repositories stay portable (maintainer decision on #431).
 
@@ -21,4 +22,4 @@ On a case-insensitive filesystem, reproduced on an APFS disk image, these name o
 
 ## Impact
 
-`resolveArtifactPathConflicts` only. A bundle with case-only distinct resource names now has both of them suppressed on every host, where case-sensitive hosts previously emitted both. Collisions between resources from different sources are out of scope.
+`resolveArtifactPathConflicts` and the installation work loop. Resources whose names differ only in letter case are now refused on every host, where case-sensitive hosts previously installed both. MCP servers and hooks are unaffected: they are entries keyed by name inside shared files.

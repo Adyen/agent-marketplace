@@ -23,6 +23,7 @@ import (
 	"path/filepath"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -1135,6 +1136,7 @@ func compileWorkItems(work []skillTarget, allDiags []diag.Diagnostic, allOutputs
 		markOwnedAggregateIncomplete(handler, ownedAggregates, key, w)
 	}
 
+	caseCollisions := caseOnlyNameCollisions(work)
 	for index, w := range work {
 		key := outputKey{target: w.target, machineScope: w.machineScope}
 		if w.target == hcc.TargetOpenCode && w.skill.Required && w.skill.Resource.Kind() == ir.KindHook {
@@ -1160,6 +1162,20 @@ func compileWorkItems(work []skillTarget, allDiags []diag.Diagnostic, allOutputs
 		var aggregateHandler ownedAggregateHandler
 		if hasBinding && !isHook {
 			aggregateHandler = binding.handler
+		}
+		if names, collides := caseCollisions[index]; collides {
+			blockResource(key, w)
+			markResourceIncomplete(key, w, aggregateHandler)
+			allDiags = append(allDiags, diag.Diagnostic{
+				Code:     diag.CodeBundleConflictDuplicateArtifactPath,
+				Severity: diag.SeverityError,
+				Target:   string(w.target),
+				Resource: w.skill.Name,
+				Message:  fmt.Sprintf("%s names %s differ only in letter case and name the same file on case-insensitive filesystems; none of them was installed", resourceKind, strings.Join(names, ", ")),
+				Hint:     "Rename the resources so their names differ by more than letter case",
+				Source:   compilepkg.SourceOf(w.skill.Resource),
+			})
+			continue
 		}
 		var plan hookSupportPlan
 		if isHook {
@@ -6678,4 +6694,53 @@ func (r *Report) InSync() bool {
 		}
 	}
 	return true
+}
+
+// caseOnlyNameCollisions maps work indexes to the quoted names of resources of
+// the same kind, target and scope whose names differ only in letter case. Their
+// files would be one file on a case-insensitive filesystem.
+func caseOnlyNameCollisions(work []skillTarget) map[int][]string {
+	type group struct {
+		key    outputKey
+		kind   ir.ResourceKind
+		folded string
+	}
+	members := make(map[group][]int)
+	for i, w := range work {
+		if w.skill.Resource == nil {
+			continue
+		}
+		switch w.skill.Resource.Kind() {
+		case ir.KindSkill, ir.KindCommand, ir.KindSubagent, ir.KindRule:
+		default:
+			continue
+		}
+		name := w.skill.Name
+		if w.skill.InstalledName != "" {
+			name = w.skill.InstalledName
+		}
+		g := group{key: outputKey{target: w.target, machineScope: w.machineScope}, kind: w.skill.Resource.Kind(), folded: strings.ToLower(name)}
+		members[g] = append(members[g], i)
+	}
+	collisions := make(map[int][]string)
+	for _, indexes := range members {
+		var names []string
+		for _, i := range indexes {
+			name := work[i].skill.Name
+			if work[i].skill.InstalledName != "" {
+				name = work[i].skill.InstalledName
+			}
+			if quoted := strconv.Quote(name); !slices.Contains(names, quoted) {
+				names = append(names, quoted)
+			}
+		}
+		if len(names) < 2 {
+			continue
+		}
+		slices.Sort(names)
+		for _, i := range indexes {
+			collisions[i] = names
+		}
+	}
+	return collisions
 }
