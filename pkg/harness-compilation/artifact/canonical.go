@@ -933,6 +933,7 @@ func resourceJSON(r ir.Resource) ([]byte, error) {
 	if err := json.Unmarshal(base, &m); err != nil {
 		return nil, fmt.Errorf("unmarshal resource: %w", err)
 	}
+	delete(m, "Extra")
 
 	extra, err := extractExtra(r)
 	if err != nil {
@@ -940,6 +941,9 @@ func resourceJSON(r ir.Resource) ([]byte, error) {
 	}
 	modelBearing := r.Kind() == ir.KindSkill || r.Kind() == ir.KindSubagent
 	for k, v := range extra {
+		if k == "Extra" && v == nil {
+			continue
+		}
 		if modelBearing && (strings.EqualFold(k, "ModelSource") || strings.EqualFold(k, "ToolSource")) {
 			continue
 		}

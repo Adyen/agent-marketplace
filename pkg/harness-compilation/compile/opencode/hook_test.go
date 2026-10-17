@@ -30,7 +30,16 @@ func TestCanonicalHookMetadataAdmission(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			resource, err := artifact.DecodeResource("hook", canonical.Payload)
+			var fields map[string]any
+			if err := json.Unmarshal(canonical.Payload, &fields); err != nil {
+				t.Fatal(err)
+			}
+			fields["Extra"] = nil
+			earlier, err := json.Marshal(fields)
+			if err != nil {
+				t.Fatal(err)
+			}
+			resource, err := artifact.DecodeResource("hook", earlier)
 			if err != nil {
 				t.Fatal(err)
 			}

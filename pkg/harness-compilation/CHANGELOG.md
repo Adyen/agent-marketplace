@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Newly encoded resource payloads carry no zeroed Extra member
+
+The canonical encoder wrote the IR's zeroed `Extra` field as `"Extra": null`, and decoding kept it as an extension field, so every skill, command, subagent and hook installed from a Marketplace payload compiled with a spurious `Extra: null` field (#724). The encoder now omits that member, and an extension field named exactly `Extra` with a null value; an authored `Extra` extension with a value is still encoded. Decoding is unchanged, so payloads already published keep their bytes, digests and output (the Marketplace API requirement for non-hook canonical metadata), and resources published from now on install without the field on every client version.
+
 ### Claude execution controls require Claude provenance
 
 Claude reads subagent `permissionMode`, `mcpServers` and `hooks`, and skill and command `hooks`, as active controls. These keys used to pass through from any source, so a Cursor or Factory subagent declaring `permissionMode: bypassPermissions` or inline MCP servers gained them as live Claude settings (#635). Claude ingestion now records these keys in the Claude sidecar (`ext.claude.nativeControls`), and Claude compilation emits them only from there; the same keys from any other source are omitted with the warning `compile.claude.native-control-omitted`. The extension copy is kept for earlier clients. Claude-authored Marketplace payloads published before this change carry no sidecar, so their grant controls are dropped on Claude until the registry revision is published again. This ships in the v5.0.0 major release.
