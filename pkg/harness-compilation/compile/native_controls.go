@@ -117,17 +117,12 @@ func HasReadOnlyClaudeMode(fields map[string]any) bool {
 	return false
 }
 
-// HasReadOnlyCursorFlag reports whether fields already declare a true
-// readonly flag, in any letter case.
+// HasReadOnlyCursorFlag reports whether fields already declare a boolean true
+// readonly flag, in any letter case. A string value is not a Cursor flag and
+// is replaced by the boolean.
 func HasReadOnlyCursorFlag(fields map[string]any) bool {
 	for key, value := range fields {
-		if !strings.EqualFold(key, "readonly") {
-			continue
-		}
-		if flag, ok := value.(bool); ok && flag {
-			return true
-		}
-		if flag, ok := value.(string); ok && strings.EqualFold(strings.TrimSpace(flag), "true") {
+		if flag, ok := value.(bool); ok && flag && strings.EqualFold(key, "readonly") {
 			return true
 		}
 	}

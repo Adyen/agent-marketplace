@@ -126,6 +126,14 @@ func readOnlySubagentFrontmatter(t *testing.T, result *Result, name string) stri
 
 // spec: harness-compilation/read-only-subagents-map-to-documented-read-only-modes
 func TestReadOnlySubagentsMapToDocumentedModes(t *testing.T) {
+	stringFlag := ir.NewSubagent("reviewer", "Reviewer", "Review.\n", "", nil, "", nil, "", map[string]any{"readonly": "true"}, ir.SourceRef{})
+	flagged, err := Compile(stringFlag, TargetCursor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out := readOnlySubagentFrontmatter(t, flagged, "reviewer"); !strings.Contains(out, "readonly: true\n") || strings.Contains(out, `"true"`) {
+		t.Fatalf("Cursor read-only flag is not a boolean:\n%s", out)
+	}
 	cursor := fstest.MapFS{".cursor/agents/reviewer.md": {Data: []byte("---\nname: reviewer\ndescription: Reviewer\nreadonly: true\n---\nReview.\n")}}
 	for target, want := range map[Target]string{
 		TargetClaude:  "permissionMode: plan",
@@ -197,6 +205,13 @@ func TestTargetsWithoutReadOnlyModeRefuse(t *testing.T) {
 	}
 	if len(refused.Artifacts) != 0 || !diag.HasCode(refused.Diagnostics, diag.CodeSubagentSecurityRestrictionUnsupported) {
 		t.Fatalf("untyped read-only sandbox mode was not honored: %+v", refused)
+	}
+	unrestricted, err := Compile(ir.NewSubagent("sandboxed", "Sandboxed", "Review.\n", "", nil, "", nil, "", nil, ir.SourceRef{}), TargetGemini)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(unrestricted.Artifacts) == 0 || diag.HasCode(unrestricted.Diagnostics, diag.CodeSubagentSecurityRestrictionUnsupported) {
+		t.Fatalf("Gemini refused a subagent without a read-only restriction: %+v", unrestricted)
 	}
 	cursor := fstest.MapFS{".cursor/agents/reviewer.md": {Data: []byte("---\nname: reviewer\ndescription: Reviewer\nreadonly: true\n---\nReview.\n")}}
 	withTools := fstest.MapFS{".cursor/agents/reviewer.md": {Data: []byte("---\nname: reviewer\ndescription: Reviewer\nreadonly: true\ntools: [Read]\n---\nReview.\n")}}
