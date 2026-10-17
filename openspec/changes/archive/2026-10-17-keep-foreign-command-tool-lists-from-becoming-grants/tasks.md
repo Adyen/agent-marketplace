@@ -5,4 +5,4 @@
 - [x] Omit foreign command tool lists in the Claude, Cursor and Gemini command compilers.
 - [x] Update the field matrix and changelog.
 - [x] Run affected packages, `make validate`, `make spec-check` and `make validate-e2e`; review every changed entry adversarially.
-- [ ] `openspec archive keep-foreign-command-tool-lists-from-becoming-grants --yes`
+- [x] `openspec archive keep-foreign-command-tool-lists-from-becoming-grants --yes`
