@@ -6,6 +6,8 @@ import (
 	"testing/fstest"
 
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ingest"
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 )
 
 // spec: harness-compilation/case-only-name-collisions-are-refused-portably
@@ -38,4 +40,24 @@ func TestCaseOnlyNameCollisionsAreRefusedPortably(t *testing.T) {
 	if conflict == nil || !strings.Contains(conflict.Message, "Foo.toml") || !strings.Contains(conflict.Message, "foo.toml") {
 		t.Fatalf("missing case-only conflict naming both paths: %+v", result.Diagnostics)
 	}
+}
+
+func TestCrossKindCaseOnlyCollisionNamesBothPaths(t *testing.T) {
+	bundle := &ingest.Bundle{Resources: []ir.Resource{
+		ir.NewSkill("Review", "Skill", "Inert.\n", nil, nil, ir.SourceRef{}),
+		ir.NewCommand("review", "Command", "Inert.\n", nil, ir.SourceRef{}),
+	}}
+	result, err := compileBundleFromIR(bundle, TargetCodex)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, d := range result.Diagnostics {
+		if d.Code == diag.CodeBundleConflictCrossKindArtifactPath {
+			if !strings.Contains(d.Message, "/Review/") || !strings.Contains(d.Message, "/review/") {
+				t.Fatalf("cross-kind case-only conflict does not name both paths: %s", d.Message)
+			}
+			return
+		}
+	}
+	t.Fatalf("missing %s: %+v", diag.CodeBundleConflictCrossKindArtifactPath, result.Diagnostics)
 }

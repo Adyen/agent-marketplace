@@ -426,6 +426,10 @@ func resolveArtifactPathConflicts(outputs []resourceOutput, t Target) ([]Artifac
 				code = diag.CodeBundleConflictCrossKindArtifactPath
 				message = fmt.Sprintf("%s %q and %s %q both compile to %q; neither artifact was emitted",
 					previous.kind, previous.name, current.kind, current.name, a.Path)
+				if previous.path != a.Path {
+					message = fmt.Sprintf("%s %q and %s %q compile to %q and %q, which differ only in letter case and name the same file on case-insensitive filesystems; neither artifact was emitted",
+						previous.kind, previous.name, current.kind, current.name, previous.path, a.Path)
+				}
 				hint = "Rename one of the conflicting resources: on this target a skill and a command cannot share a name"
 			}
 			diagnostics = append(diagnostics, Diagnostic{
