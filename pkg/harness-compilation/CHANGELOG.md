@@ -4,7 +4,7 @@
 
 ### Foreign command tool lists never become pre-approvals
 
-Converted commands now carry tool provenance like skills. `ir.Command` gains `ToolSource`; Devin, Factory and Gemini command ingestion set it when the command declares `allowed-tools`, and the Marketplace resource payload carries it (an extension field cannot supply it). Claude, Cursor and Gemini omit a foreign command `allowed-tools` list with the warning `skill.allowed-tools-omitted`, so a Devin command no longer reaches Claude as `allowed-tools: [Read, Bash]` and Factory command metadata no longer becomes a pre-approval (#637). Command payloads without provenance are unchanged; an older client decoding a payload that carries command `ToolSource` keeps it as an unknown extension field.
+Converted commands now carry tool provenance like skills. `ir.Command` gains `ToolSource`; Devin, Factory and Gemini command ingestion set it when the command declares `allowed-tools`, and the Marketplace resource payload carries it (an extension field cannot supply it). Claude, Cursor and Gemini omit a foreign command `allowed-tools` list with the warning `skill.allowed-tools-omitted`, so a Devin command no longer reaches Claude as `allowed-tools: [Read, Bash]` and Factory command metadata no longer becomes a pre-approval (#637). Command payloads without provenance are unchanged; an older client decoding a payload that carries command `ToolSource` keeps it as an unknown extension field. Marketplace artifacts published before this change carry no command provenance, so their lists are still treated as canonical until the registry revision is published again.
 
 ### Foreign skill tool lists never become pre-approvals
 
