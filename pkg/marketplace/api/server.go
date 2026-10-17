@@ -1210,7 +1210,7 @@ func (s *Server) handleResourceInspectionContent(w http.ResponseWriter, r *http.
 	}
 	data, err := s.readPayloadBlob(r.Context(), store.ArchiveDigest(file.ContentDigest), s.cfg.Policy.Limits.FileBytes)
 	if err != nil {
-		if errors.Is(err, store.ErrBlobTooLarge) {
+		if errors.Is(err, errPayloadReadLimit) {
 			writeError(w, http.StatusRequestEntityTooLarge, "inspection content exceeds size limit")
 			return
 		}
@@ -1357,7 +1357,7 @@ func (s *Server) handleInspectionDigest(w http.ResponseWriter, r *http.Request) 
 	}
 	data, err := s.readPayloadBlob(r.Context(), store.ArchiveDigest(digest), inspection.MaxManifestBytes)
 	if err != nil {
-		if errors.Is(err, store.ErrBlobTooLarge) {
+		if errors.Is(err, errPayloadReadLimit) {
 			writeError(w, http.StatusRequestEntityTooLarge, "inspection manifest exceeds size limit")
 			return
 		}
@@ -1392,7 +1392,7 @@ func (s *Server) handleContentDigest(w http.ResponseWriter, r *http.Request) {
 	}
 	data, err := s.readPayloadBlob(r.Context(), store.ArchiveDigest(digest), s.cfg.Policy.Limits.FileBytes)
 	if err != nil {
-		if errors.Is(err, store.ErrBlobTooLarge) {
+		if errors.Is(err, errPayloadReadLimit) {
 			writeError(w, http.StatusRequestEntityTooLarge, "content exceeds size limit")
 			return
 		}

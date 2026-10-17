@@ -3,6 +3,7 @@ package api
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"io"
 	"math"
 	"net/http"
@@ -20,6 +21,7 @@ import (
 type payloadReadProbe struct {
 	store.BlobStore
 	data                 []byte
+	getErr               error
 	bounded, unbounded   int
 	readBytes, lastLimit int64
 }
@@ -27,7 +29,7 @@ type payloadReadProbe struct {
 func (s *payloadReadProbe) Get(_ context.Context, _ store.ArchiveDigest) ([]byte, error) {
 	s.unbounded++
 	s.readBytes += int64(len(s.data))
-	return bytes.Clone(s.data), nil
+	return bytes.Clone(s.data), s.getErr
 }
 
 func (s *payloadReadProbe) GetBounded(_ context.Context, _ store.ArchiveDigest, limit int64) ([]byte, error) {
@@ -149,5 +151,39 @@ func TestPayloadReadsRetainLimitAndCustomStoreCompatibility(t *testing.T) {
 				t.Fatal("healthy content changed")
 			}
 		})
+	}
+}
+
+func TestLegacyPayloadReadErrorsRetainServerErrorStatus(t *testing.T) {
+	digest := strings.Repeat("a", 64)
+	for _, fixture := range []struct {
+		name, path string
+		limit      int64
+		legacy     bool
+	}{
+		{"content", "/api/v1/content/sha256/" + digest, 16 << 10, true},
+		{"inspection", "/api/v1/inspection/sha256/" + digest, 16 << 10, true},
+		{"unlimited", "/api/v1/content/sha256/" + digest, 0, false},
+		{"maximum", "/api/v1/content/sha256/" + digest, math.MaxInt64, false},
+	} {
+		for _, method := range []string{http.MethodGet, http.MethodHead} {
+			t.Run(fixture.name+"/"+method, func(t *testing.T) {
+				probe := &payloadReadProbe{
+					BlobStore: fsblob.New(t.TempDir()),
+					getErr:    fmt.Errorf("legacy backend read: %w", store.ErrBlobTooLarge),
+				}
+				var blobs store.BlobStore = probe
+				if fixture.legacy {
+					blobs = struct{ store.BlobStore }{probe}
+				}
+				server := payloadReadServer(t, blobs)
+				server.cfg.Policy.Limits.FileBytes = fixture.limit
+				response := httptest.NewRecorder()
+				server.PublicHandler().ServeHTTP(response, httptest.NewRequest(method, fixture.path, nil))
+				if response.Code != http.StatusInternalServerError || probe.unbounded != 1 || probe.bounded != 0 {
+					t.Fatalf("status=%d unbounded=%d bounded=%d", response.Code, probe.unbounded, probe.bounded)
+				}
+			})
+		}
 	}
 }
