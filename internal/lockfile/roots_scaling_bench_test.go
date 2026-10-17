@@ -37,3 +37,18 @@ func BenchmarkProjectGitRoots(b *testing.B) {
 		}
 	}
 }
+
+func BenchmarkProjectGitRootsWithoutRequirements(b *testing.B) {
+	for _, count := range []int{0, 1, 2048} {
+		b.Run(fmt.Sprintf("roots=%d", count), func(b *testing.B) {
+			roots := make([]GitRoot, count)
+			b.ReportAllocs()
+			for b.Loop() {
+				projected, match := ProjectGitRoots(roots, nil)
+				if !match || projected == nil || len(projected) != 0 {
+					b.Fatalf("projection = %#v/%v, want non-nil empty/true", projected, match)
+				}
+			}
+		})
+	}
+}

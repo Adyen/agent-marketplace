@@ -2,7 +2,7 @@ package lockfile
 
 func ProjectGitRoots(roots []GitRoot, requirements []GitRootRequirement) ([]GitRoot, bool) {
 	if len(requirements) == 0 {
-		return make([]GitRoot, 0, len(roots)), true
+		return []GitRoot{}, true
 	}
 	type pathMatch struct {
 		last, firstSelected int // firstSelected is one-based; zero means none.

@@ -99,10 +99,51 @@ The combined E2E/configuration-compatibility gate passes: 2,883 invocations,
 required witnesses run and pass. This is scoped root validation plus the
 combined E2E gate, not a claim that `make validate-full` ran.
 
-The host uses OCR delegation for deterministic selection and rule
-resolution, and manually reviews default-excluded tests, prose and
+For the initial candidate, the host uses OCR delegation for deterministic
+selection and rule resolution, and manually reviews default-excluded tests, prose and
 measurement artifacts. Implementation revision `ac6a8bcc` and the
 documentation follow-up are reviewed: one production file and 13
 default-excluded test/doc/data files, 14/14 overall, zero skipped.
 No unresolved actionable critical/high/medium finding remains. Neither
 tests nor review proves absence of defects.
+
+## Gemini Review Follow-Up: Empty Requirements
+
+Gemini correctly identifies unnecessary backing storage when no roots are
+requested. Its suggested `nil, true` result is not used: that changes the
+original non-nil empty-result shape and fails two existing compatibility
+cases plus the empty scan-oracle fuzz seed. Returning `[]GitRoot{}, true`
+removes the backing allocation while preserving that shape. Non-empty
+matching, refusal, inputs and caller decisions are unchanged.
+
+`TestProjectGitRootsEmptyProjectionDoesNotAllocate` covers zero, one and
+2,048 stored roots. It fails before the fix with one allocation for the
+nonzero counts, and passes after it with zero allocations for all counts.
+The permanent empty-requirement benchmark uses identical before/after
+fixtures, excludes setup, and retains five two-second samples per count.
+Baseline is the reviewed `ecdc5ed2`; earlier non-empty samples are unchanged.
+
+| Stored roots, no requirements | Before ns/op | After ns/op | Before B/op | After B/op | Before allocs/op | After allocs/op |
+|---|---:|---:|---:|---:|---:|---:|
+| 0 | 23.550 | 2.247 | 0 | 0 | 0 | 0 |
+| 1 | 132.600 | 2.065 | 96 | 0 | 1 | 0 |
+| 2,048 | 6,383.000 | 2.234 | 180,224 | 0 | 1 | 0 |
+
+These are empty-helper-path medians, not whole-command latency. Allocation
+removal is the primary result; baseline timing variability and benchstat's
+five-sample confidence-interval/geomean limitations remain in the stored
+samples and ASCII tables (`empty-before.txt`, `empty-after.txt` and
+`empty-benchstat.txt` in the existing measurement directory).
+
+Fresh scoped lockfile/pipeline tests, vet, zero-issue CI lint/build, seven
+CLI consumer regressions, focused races and strict specs pass (59 items,
+991 scenarios, 1,598 annotations). The separate follow-up combined E2E run
+passes: 2,883 invocations, 113/113 command requirements, zero listed gaps
+and all three required witnesses run and pass; shellcheck also passes.
+The initial E2E result above is not relabeled as this new follow-up result.
+
+Host OCR-delegation review covers all seven follow-up files: one production
+file and six default-excluded test/doc/data files reviewed manually, zero
+skipped, with no unresolved actionable critical/high/medium finding.
+The three additional raw/table files make 17 files in the complete PR;
+the initial 14-file review remains scoped to the original candidate.

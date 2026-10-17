@@ -76,6 +76,25 @@ func TestProjectGitRootsSelectionCompatibility(t *testing.T) {
 	}
 }
 
+func TestProjectGitRootsEmptyProjectionDoesNotAllocate(t *testing.T) {
+	for _, count := range []int{0, 1, 2048} {
+		t.Run(fmt.Sprintf("roots=%d", count), func(t *testing.T) {
+			roots := make([]GitRoot, count)
+			var projected []GitRoot
+			var match bool
+			allocations := testing.AllocsPerRun(100, func() {
+				projected, match = ProjectGitRoots(roots, nil)
+			})
+			if !match || projected == nil || len(projected) != 0 {
+				t.Fatalf("projection = %#v/%v, want non-nil empty/true", projected, match)
+			}
+			if allocations != 0 {
+				t.Fatalf("allocations = %v, want 0", allocations)
+			}
+		})
+	}
+}
+
 func FuzzProjectGitRootsMatchesScan(f *testing.F) {
 	f.Add([]byte{})
 	f.Add([]byte{1, 1, 17, 1, 33, 17, 1, 1})
