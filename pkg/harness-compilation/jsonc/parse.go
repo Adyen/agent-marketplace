@@ -60,11 +60,11 @@ func (p *parser) trivia() []byte {
 	return p.data[start:p.pos]
 }
 
-func (p *parser) value(path string) (*Node, error) {
+func (p *parser) value(path jsonutil.JSONPath) (*Node, error) {
 	return p.valueAt(path, 0)
 }
 
-func (p *parser) valueAt(path string, depth int) (*Node, error) {
+func (p *parser) valueAt(path jsonutil.JSONPath, depth int) (*Node, error) {
 	if p.err != nil {
 		return nil, p.err
 	}
@@ -84,7 +84,7 @@ func (p *parser) valueAt(path string, depth int) (*Node, error) {
 	}
 }
 
-func (p *parser) object(path string, depth int) (*Node, error) {
+func (p *parser) object(path jsonutil.JSONPath, depth int) (*Node, error) {
 	p.pos++ // '{'
 	node := &Node{kind: KindObject}
 	seen := make(map[string]struct{})
@@ -119,7 +119,7 @@ func (p *parser) object(path string, depth int) (*Node, error) {
 			return nil, fmt.Errorf("%s: invalid object key: %w", path, err)
 		}
 		if _, exists := seen[key]; exists {
-			return nil, &jsonutil.DuplicateKeyError{Key: key, Path: path, Offset: int64(p.pos)}
+			return nil, &jsonutil.DuplicateKeyError{Key: key, Path: path.String(), Offset: int64(p.pos)}
 		}
 		seen[key] = struct{}{}
 
@@ -138,7 +138,7 @@ func (p *parser) object(path string, depth int) (*Node, error) {
 		}
 		sep := p.data[sepStart:p.pos]
 
-		value, err := p.valueAt(path+"."+key, depth+1)
+		value, err := p.valueAt(path.Key(key), depth+1)
 		if err != nil {
 			return nil, err
 		}
@@ -166,7 +166,7 @@ func (p *parser) object(path string, depth int) (*Node, error) {
 	}
 }
 
-func (p *parser) array(path string, depth int) (*Node, error) {
+func (p *parser) array(path jsonutil.JSONPath, depth int) (*Node, error) {
 	p.pos++ // '['
 	node := &Node{kind: KindArray}
 	for index := 0; ; index++ {
@@ -186,7 +186,7 @@ func (p *parser) array(path string, depth int) (*Node, error) {
 			p.pos++
 			return node, nil
 		}
-		value, err := p.valueAt(fmt.Sprintf("%s[%d]", path, index), depth+1)
+		value, err := p.valueAt(path.Index(index), depth+1)
 		if err != nil {
 			return nil, err
 		}
@@ -216,7 +216,7 @@ func (p *parser) array(path string, depth int) (*Node, error) {
 
 // literal consumes a string, number, true, false, or null and validates it with
 // encoding/json so no malformed scalar can be preserved and written back.
-func (p *parser) literal(path string) (*Node, error) {
+func (p *parser) literal(path jsonutil.JSONPath) (*Node, error) {
 	if p.err != nil {
 		return nil, p.err
 	}

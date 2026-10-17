@@ -109,7 +109,7 @@ func ParseWithOptions(file string, data []byte, options ParseOptions) (*Document
 	p := &parser{data: data, allowTrailingCommas: options.AllowTrailingCommas}
 	doc := &Document{file: file}
 	doc.lead = p.trivia()
-	root, err := p.value("$")
+	root, err := p.value(jsonutil.RootPath())
 	if err != nil {
 		return nil, jsonutil.Coded(file, data, err)
 	}
