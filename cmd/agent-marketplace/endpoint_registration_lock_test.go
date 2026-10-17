@@ -362,10 +362,11 @@ func TestEndpointRegistrationLockCheckReportsEverySelectedScope(t *testing.T) {
 				}
 				before := dependencyTreeSnapshot(t, f.root)
 				output, err := executeCommand(args...)
-				var lockErr *pipeline.LockViewError
-				if !errors.As(err, &lockErr) || lockErr.Code != "lock.change-required" {
-					t.Fatalf("lock --check error = %v, want lock.change-required\n%s", err, output)
+				joined, ok := err.(interface{ Unwrap() []error })
+				if !ok {
+					t.Fatalf("lock --check error = %T %v, want joined scope diagnostics\n%s", err, err, output)
 				}
+				diagnostics := joined.Unwrap()
 				count := 0
 				previous := -1
 				for _, layer := range layers {
@@ -376,12 +377,29 @@ func TestEndpointRegistrationLockCheckReportsEverySelectedScope(t *testing.T) {
 						}
 						continue
 					}
+					if count >= len(diagnostics) {
+						t.Fatalf("missing typed diagnostic for %s: %v", layer.scope, err)
+					}
+					var lockErr *pipeline.LockViewError
+					if !errors.As(diagnostics[count], &lockErr) || lockErr.Code != "lock.change-required" || lockErr.Scope != lockfile.Scope(layer.scope) || lockErr.Path != layer.lockPath {
+						t.Fatalf("diagnostic %d = %#v, want lock.change-required for %s at %s", count, diagnostics[count], layer.scope, layer.lockPath)
+					}
 					index := strings.Index(output, want)
-					if index <= previous || !strings.Contains(err.Error(), want) {
+					if index <= previous {
 						t.Fatalf("missing or unordered diagnostic %q: %v\n%s", want, err, output)
+					}
+					line, _, _ := strings.Cut(output[index:], "\n")
+					for _, endpoint := range []string{f.url, recordedURL} {
+						present := endpoint == f.url || !existing
+						if strings.Contains(lockErr.Err.Error(), endpoint) != present || strings.Contains(line, endpoint) != present {
+							t.Fatalf("%s diagnostic must report endpoint %s=%t: %v\n%s", layer.scope, endpoint, present, lockErr, line)
+						}
 					}
 					previous = index
 					count++
+				}
+				if len(diagnostics) != count {
+					t.Fatalf("returned %d typed scope diagnostics, want %d: %v", len(diagnostics), count, err)
 				}
 				if got := strings.Count(output, "lock.change-required:"); got != count {
 					t.Fatalf("reported %d scope diagnostics, want %d:\n%s", got, count, output)

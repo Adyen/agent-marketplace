@@ -54,14 +54,26 @@ func TestLoggingSettingsContract(t *testing.T) {
 			}
 		})
 	}
-	for _, raw := range []string{"1", "TRUE", "Yes", "oN", "0", "FALSE", "No", "oFf", "invalid"} {
-		t.Run("boolean="+raw, func(t *testing.T) {
-			t.Setenv("AGENT_MARKETPLACE_LOG_ENABLED", raw)
-			t.Setenv("AGENT_MARKETPLACE_LOG_COMPRESS", raw)
-			configured := false
-			want := raw == "1" || raw == "TRUE" || raw == "Yes" || raw == "oN"
-			if resolveEnabled(Options{Enabled: &configured}) != want || resolveCompress(Options{Compress: &configured}) != want {
-				t.Fatalf("boolean %q did not resolve to %t", raw, want)
+	for _, tc := range []struct {
+		raw        string
+		configured bool
+		want       bool
+	}{
+		{"1", false, true},
+		{"TRUE", false, true},
+		{"Yes", false, true},
+		{"oN", false, true},
+		{"0", true, false},
+		{"FALSE", true, false},
+		{"No", true, false},
+		{"oFf", true, false},
+		{"invalid", true, true},
+	} {
+		t.Run("boolean="+tc.raw, func(t *testing.T) {
+			t.Setenv("AGENT_MARKETPLACE_LOG_ENABLED", tc.raw)
+			t.Setenv("AGENT_MARKETPLACE_LOG_COMPRESS", tc.raw)
+			if resolveEnabled(Options{Enabled: &tc.configured}) != tc.want || resolveCompress(Options{Compress: &tc.configured}) != tc.want {
+				t.Fatalf("boolean %q did not resolve to %t", tc.raw, tc.want)
 			}
 		})
 	}

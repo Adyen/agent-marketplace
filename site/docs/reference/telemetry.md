@@ -87,6 +87,8 @@ When `AGENT_MARKETPLACE_TELEMETRY_ENDPOINT` points somewhere other than your con
 
 `agent-marketplace init` and the `telemetry` commands themselves never send telemetry.
 
+`telemetry reset-id` reports cleanup errors instead of claiming a completed reset or creating a replacement ID. A failure can occur after deleting the old ID and queued records. Fix the filesystem permissions and retry to finish removing retained diagnostics and create a new ID.
+
 ## What each level sends
 
 Every signal carries these resource attributes: `telemetry.schema.version`, `cli.version`, `os.name`, `arch`, and `installation.id`. The installation ID is a random value created on first use. It is not derived from your machine or account.
@@ -127,9 +129,11 @@ At the `detailed` level, the names of your registries' Git hosts and repositorie
 1. The CLI records the run's metrics, traces, and diagnostic events in memory. URL credentials are removed.
 2. When the command ends, it writes the payload to `payload-<trace-id>.json` under `$XDG_STATE_HOME/agent-marketplace/telemetry/diagnostic/` (default `~/.local/state/agent-marketplace/telemetry/diagnostic/`) and prints the path, destination host, retention policy, installation ID, and trace ID. Only you can read the file.
 3. In a terminal, it asks `Proceed with export? [y/N]`. Outside a terminal it sends nothing unless you also pass `--diagnostic-accept-sensitive-data`.
-4. If you agree, it sends the payload to the primary endpoint and deletes the file. If you decline, or the export fails, the file stays where it is.
+4. If you agree, it sends the payload to the primary endpoint and deletes the file. If delivery succeeds but local deletion fails, it reports the cleanup error and retained path instead of successful completion. If you decline, or delivery fails, the file stays where it is.
 
 The payload can contain sensitive details. Review the file before you agree to send it. Diagnostic payloads are never added to the normal delivery queue. `telemetry purge` or `telemetry reset-id` deletes retained ones.
+
+Diagnostic failures, including cleanup errors, do not change the investigated command's exit status.
 
 ## Local files
 

@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -169,6 +170,81 @@ func TestTelemetryResetID(t *testing.T) {
 	}
 	if !strings.Contains(output, "Installation ID reset") {
 		t.Fatalf("expected reset message, got:\n%s", output)
+	}
+}
+
+// spec: telemetry/installation-id-reset-cleanup-failure-is-reported
+func TestTelemetryResetIDReportsDiagnosticCleanupFailure(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	if os.Geteuid() == 0 {
+		t.Skip("permission refusal requires a non-root user")
+	}
+	home := setupTelemetryHome(t)
+	if _, err := executeCommand("init", "--harnesses", "factory"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := executeCommand("telemetry", "reset-id"); err != nil {
+		t.Fatalf("initial healthy reset: %v", err)
+	}
+	root := filepath.Join(home, ".local", "state", "agent-marketplace", "telemetry")
+	idPath := filepath.Join(root, "installation-id")
+	oldID, err := os.ReadFile(idPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	diagnosticRoot := filepath.Join(root, "diagnostic")
+	payloadPath := filepath.Join(diagnosticRoot, "retained.json")
+	queueRoot := filepath.Join(root, "queue")
+	writeTelemetryTestFile(t, filepath.Join(queueRoot, "metrics", "queued.json"), "{}")
+	writeTelemetryTestFile(t, payloadPath, "retained diagnostic evidence\n")
+	before, err := os.Stat(payloadPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := os.Chmod(diagnosticRoot, 0o700); err != nil && !os.IsNotExist(err) {
+			t.Error(err)
+		}
+	})
+	if err := os.Chmod(diagnosticRoot, 0o500); err != nil {
+		t.Fatal(err)
+	}
+
+	output, err := executeCommand("telemetry", "reset-id")
+	var pathErr *os.PathError
+	if !errors.Is(err, os.ErrPermission) || !errors.As(err, &pathErr) || (pathErr.Path != diagnosticRoot && pathErr.Path != payloadPath) {
+		t.Fatalf("reset error = %v, want diagnostic cleanup permission refusal\n%s", err, output)
+	}
+	if strings.Contains(output, "Installation ID reset.") {
+		t.Fatalf("failed reset reported success:\n%s", output)
+	}
+	data, err := os.ReadFile(payloadPath)
+	if err != nil || string(data) != "retained diagnostic evidence\n" {
+		t.Fatalf("retained evidence changed: %v, %q", err, data)
+	}
+	after, err := os.Stat(payloadPath)
+	if err != nil || after.Mode() != before.Mode() || !after.ModTime().Equal(before.ModTime()) {
+		t.Fatalf("retained evidence metadata changed: %v", err)
+	}
+	for _, path := range []string{idPath, queueRoot} {
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			t.Fatalf("reset should have removed %s before cleanup refusal: %v", path, err)
+		}
+	}
+	if err := os.Chmod(diagnosticRoot, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if output, err := executeCommand("telemetry", "reset-id"); err != nil || !strings.Contains(output, "Installation ID reset.") {
+		t.Fatalf("retry after restoring permissions: %v\n%s", err, output)
+	}
+	newID, err := os.ReadFile(idPath)
+	if err != nil || string(newID) == string(oldID) {
+		t.Fatalf("successful retry did not replace identity: %v", err)
+	}
+	if _, err := os.Stat(diagnosticRoot); !os.IsNotExist(err) {
+		t.Fatalf("successful retry left retained diagnostics: %v", err)
 	}
 }
 

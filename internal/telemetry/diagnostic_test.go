@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -278,6 +279,74 @@ func TestDiagnosticPayloadNotQueued(t *testing.T) {
 	}
 	if len(entries) > 0 {
 		t.Fatalf("diagnostic payload should not be queued, found %d entries", len(entries))
+	}
+}
+
+// spec: telemetry/diagnostic-payload-cleanup-failure-is-reported
+func TestDiagnosticExportCleanupFailure(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("permission refusal requires a non-root user")
+	}
+	dir := setupDiagnosticTest(t)
+	diagnosticRoot := filepath.Join(dir, "agent-marketplace", "telemetry", "diagnostic")
+	t.Cleanup(func() {
+		if err := os.Chmod(diagnosticRoot, 0o700); err != nil {
+			t.Error(err)
+		}
+	})
+	var requests atomic.Int32
+	before := make(chan []byte, 1)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.Copy(io.Discard, r.Body)
+		if requests.Add(1) == 1 {
+			entries, err := os.ReadDir(diagnosticRoot)
+			if err != nil || len(entries) != 1 {
+				t.Errorf("review payload entries = %v, %v", entries, err)
+				w.WriteHeader(http.StatusInternalServerError)
+				return
+			}
+			data, err := os.ReadFile(filepath.Join(diagnosticRoot, entries[0].Name()))
+			if err != nil {
+				t.Error(err)
+				w.WriteHeader(http.StatusInternalServerError)
+				return
+			}
+			before <- data
+			if err := os.Chmod(diagnosticRoot, 0o500); err != nil {
+				t.Error(err)
+			}
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+	tel, state := newDiagnosticTelemetry(t, srv.URL)
+	defer func() { _ = tel.Shutdown(context.Background()) }()
+	_, span := tel.StartSpan(context.Background(), "diagnostic-cleanup", nil)
+	span.End()
+	tel.CommandCounter().Add(context.Background(), 1, nil)
+	path := filepath.Join(state.StateRoot(), "diagnostic", "payload-"+span.TraceID()+".json")
+
+	var out bytes.Buffer
+	err := tel.FinishDiagnostic(context.Background(), &out, strings.NewReader(""), false, true)
+	var pathErr *os.PathError
+	if !errors.Is(err, os.ErrPermission) || !errors.As(err, &pathErr) || pathErr.Op != "remove" || pathErr.Path != path {
+		t.Fatalf("cleanup error = %v, want permission refusal removing %s\n%s", err, path, out.String())
+	}
+	if strings.Contains(out.String(), "Diagnostic export succeeded") || !strings.Contains(out.String(), "cleanup failed") || !strings.Contains(out.String(), "payload retained: "+path) {
+		t.Fatalf("cleanup failure must not report success:\n%s", out.String())
+	}
+	select {
+	case want := <-before:
+		data, err := os.ReadFile(path)
+		if err != nil || !bytes.Equal(data, want) {
+			t.Fatalf("retained review payload changed: %v\n%s", err, data)
+		}
+	default:
+		t.Fatal("endpoint never observed the review payload")
+	}
+	entries, err := os.ReadDir(diagnosticRoot)
+	if err != nil || len(entries) != 1 || entries[0].Name() != filepath.Base(path) {
+		t.Fatalf("unexpected cleanup residue: %v, %v", entries, err)
 	}
 }
 
