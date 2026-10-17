@@ -231,6 +231,17 @@ func TestSyncToleratesMarketplaceMirrorNativeHook(t *testing.T) {
 	if err != nil {
 		t.Fatalf("FromIR: %v", err)
 	}
+	// Serve the payload as encoders before #724 published it, with the null
+	// Extra member, so the installed native output below stays the proven one.
+	var fields map[string]any
+	if err := json.Unmarshal(canonical.Payload, &fields); err != nil {
+		t.Fatalf("payload: %v", err)
+	}
+	fields["Extra"] = nil
+	if canonical.Payload, err = json.Marshal(fields); err != nil {
+		t.Fatalf("payload: %v", err)
+	}
+	canonical.Manifest.ContentDigest = hccartifact.ContentDigest(canonical.Payload)
 	raw, archiveDigest, err := hccartifact.Encode(canonical)
 	if err != nil {
 		t.Fatalf("Encode: %v", err)
