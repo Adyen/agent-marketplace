@@ -229,6 +229,31 @@ var testTable = []TestCase{
 			{Args: []string{"sync"}, MustPass: true, OutNotContains: []string{`command "gone" was selected`}, FilesExist: []string{"/workspace/.factory/skills/keep/SKILL.md"}},
 		},
 	},
+	// spec: deployed-acquisition-locks/check-reports-every-selected-unrecorded-registration-scope
+	{
+		Name:      "lock/check_all_unrecorded_registration_scopes",
+		Desc:      "Given unrecorded Marketplace registrations in every writable scope, When checking locks, Then every selected scope is reported without changing configuration or creating locks",
+		GlobalCfg: "apiVersion: agent-marketplace/v4\nharnesses: [factory]\nsources: {hosted: {marketplace: https://unrecorded.invalid}}\n",
+		RepoCfg:   "apiVersion: agent-marketplace/v4\nsources: {hosted: {marketplace: https://unrecorded.invalid}}\n",
+		LocalCfg:  "apiVersion: agent-marketplace/v4\nsources: {hosted: {marketplace: https://unrecorded.invalid}}\n",
+		Steps: []Step{
+			{
+				Args:           []string{"lock", "--check"},
+				AssertExitCode: intPtr(1),
+				OutContains:    []string{`lock.change-required: user lock "`, `lock.change-required: repo lock "`, `lock.change-required: local lock "`, "https://unrecorded.invalid"},
+				PathsUnchanged: []string{"/root/.agents", "/workspace/.agents"},
+				FilesAbsent:    []string{"/root/.agents/lock.yaml", "/workspace/.agents/lock.yaml", "/workspace/.agents/lock.local.yaml"},
+			},
+			{
+				Args:           []string{"lock", "--check", "--scope", "repo"},
+				AssertExitCode: intPtr(1),
+				OutContains:    []string{`lock.change-required: repo lock "`},
+				OutNotContains: []string{`lock.change-required: user lock "`, `lock.change-required: local lock "`},
+				PathsUnchanged: []string{"/root/.agents", "/workspace/.agents"},
+				FilesAbsent:    []string{"/root/.agents/lock.yaml", "/workspace/.agents/lock.yaml", "/workspace/.agents/lock.local.yaml"},
+			},
+		},
+	},
 	// spec: regression-gates/v4-selection-workflows-remain-usable
 	{
 		Name: "selection/v4_bulk_selection_lifecycle",

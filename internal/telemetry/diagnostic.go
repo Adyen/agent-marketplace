@@ -287,7 +287,12 @@ func (t *Telemetry) FinishDiagnostic(ctx context.Context, out io.Writer, in io.R
 		return err
 	}
 
-	_ = os.Remove(path)
+	if err := os.Remove(path); err != nil {
+		slog.Warn("diagnostic payload cleanup failed", "path", path, "error", err)
+		writeDiagnosticInfo(out, "\nDiagnostic export completed, but local payload cleanup failed: %v\n", err)
+		writeDiagnosticInfo(out, "  payload retained: %s\n", path)
+		return fmt.Errorf("remove exported diagnostic payload: %w", err)
+	}
 	writeDiagnosticLine(out, "\nDiagnostic export succeeded.")
 	writeDiagnosticInfo(out, "  trace id:        %s\n", traceID)
 	writeDiagnosticInfo(out, "  installation id: %s\n", t.id)

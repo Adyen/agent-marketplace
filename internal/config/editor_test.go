@@ -561,6 +561,7 @@ func TestEnsureGlobalConfigLeavesAnExistingConfigAlone(t *testing.T) {
 	}
 }
 
+// spec: logging/new-user-configuration-omits-logging-overrides
 func TestEnsureGlobalConfigCreatesSkeletonWithDefaults(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)

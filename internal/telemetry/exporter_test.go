@@ -135,6 +135,7 @@ func TestRouteClientsDeferDNSUntilDelivery(t *testing.T) {
 	}
 }
 
+// spec: telemetry/equivalent-routes-are-delivered-once
 func TestExporterDeduplication(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("XDG_STATE_HOME", dir)
@@ -429,6 +430,7 @@ func TestInsecureHTTPForLoopback(t *testing.T) {
 	}
 }
 
+// spec: telemetry/standard-opentelemetry-endpoint-variables-are-ignored
 func TestOtelEndpointEnvDoesNotOverride(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("XDG_STATE_HOME", dir)

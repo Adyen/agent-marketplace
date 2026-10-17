@@ -1,17 +1,17 @@
 ## 1. Legacy documents under docs/
 
 - [x] 1.1 Harvest and delete `docs/PRECEDENCE.md` → config-layering, consumer-config-format, resource-selection; verify the file is gone and every carried claim has a `// spec:` test
-- [ ] 1.2 Harvest and delete `docs/adoption-guide.md` → config-layering, materialization; verify the file is gone and every carried claim has a `// spec:` test
+- [x] 1.2 Harvest and delete `docs/adoption-guide.md` → config-layering, materialization; verify the file is gone and every carried claim has a `// spec:` test
 - [ ] 1.3 Harvest and delete `docs/devin-cli-harness-spec-3000.3.md` → harness-devin; verify the file is gone and every carried claim has a `// spec:` test
 - [ ] 1.4 Harvest and delete `docs/devin-verification-2026-08-04.md` → none (dated verification log; delete without harvest); verify the file is gone and every carried claim has a `// spec:` test
 - [ ] 1.5 Harvest and delete `docs/issues/2026-04-22-single-skill-install-multi-registry.md` → resource-selection, config-mutation; verify the file is gone and every carried claim has a `// spec:` test
 - [ ] 1.6 Harvest and delete `docs/kind-scoped-selectors-plan.md` → resource-selection, config-mutation; verify the file is gone and every carried claim has a `// spec:` test
-- [ ] 1.7 Harvest and delete `docs/logging.md` → logging; verify the file is gone and every carried claim has a `// spec:` test
+- [x] 1.7 Harvest and delete `docs/logging.md` → logging; verify the file is gone and every carried claim has a `// spec:` test
 - [ ] 1.8 Harvest and delete `docs/marketplace-backup-restore.md` → marketplace-operations; verify the file is gone and every carried claim has a `// spec:` test
 - [ ] 1.9 Harvest and delete `docs/marketplace-operator.md` → marketplace-operations; verify the file is gone and every carried claim has a `// spec:` test
 - [ ] 1.10 Harvest and delete `docs/marketplace-reverse-proxy.md` → marketplace-operations; verify the file is gone and every carried claim has a `// spec:` test
 - [ ] 1.11 Harvest and delete `docs/marketplace-security.md` → marketplace-operations; verify the file is gone and every carried claim has a `// spec:` test
-- [ ] 1.12 Harvest and delete `docs/telemetry.md` → telemetry; verify the file is gone and every carried claim has a `// spec:` test
+- [x] 1.12 Harvest and delete `docs/telemetry.md` → telemetry; verify the file is gone and every carried claim has a `// spec:` test
 - [ ] 1.13 Harvest and delete `docs/tui-product-contract.md` → tui-*; verify the file is gone and every carried claim has a `// spec:` test
 
 ## 2. Architecture decision records

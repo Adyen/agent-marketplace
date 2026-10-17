@@ -50,7 +50,7 @@
 //     — `.agents/config.local.yaml`, at the repository root
 //     (pipeline.EnsureLocalConfigGitignored). It writes no .gitignore into any
 //     generated harness directory. Whether .claude/, .cursor/, .gemini/ or .devin/
-//     is ignored is the user's own repository policy, which docs/adoption-guide.md
+//     is ignored is the user's own repository policy, which the public adoption guide
 //     recommends but explicitly leaves to them. So there is no product behaviour to
 //     "stop", and committing generated output to make the git story real would put
 //     per-sync churn into every user's history — the opposite of the design.
