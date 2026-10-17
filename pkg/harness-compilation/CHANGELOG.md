@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Foreign command tool lists never become pre-approvals
+
+Converted commands now carry tool provenance like skills. `ir.Command` gains `ToolSource`; Devin, Factory and Gemini command ingestion set it when the command declares `allowed-tools`, and the Marketplace resource payload carries it (an extension field cannot supply it). Claude, Cursor and Gemini omit a foreign command `allowed-tools` list with the warning `skill.allowed-tools-omitted`, so a Devin command no longer reaches Claude as `allowed-tools: [Read, Bash]` and Factory command metadata no longer becomes a pre-approval (#637). Command payloads without provenance are unchanged; an older client decoding a payload that carries command `ToolSource` keeps it as an unknown extension field.
+
 ### Foreign skill tool lists never become pre-approvals
 
 Claude, Cursor and Gemini read a skill's `allowed-tools` as a pre-approval, so listed tools run without a permission prompt. A list ingested from another harness was copied verbatim, so a Factory skill's review-only `allowed-tools: [Read, Edit]` became a real Claude pre-approval for edits (#637). These targets now omit a skill `allowed-tools` list that carries another harness's tool provenance (Devin, Factory, or Gemini on a non-Gemini target) and report the warning `skill.allowed-tools-omitted`; the skill is still emitted and its tools go through the target's normal permission prompts. Canonical lists and same-harness lists are unchanged. Migration: declare pre-approved tools in the target harness's own skill if it needs them.

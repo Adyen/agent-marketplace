@@ -151,10 +151,12 @@ func (c *cursorCompiler) translateCommand(cmd *ir.Command) ([]artifact.Artifact,
 	if err := writeYAMLKey(&fm, "description", cmd.Description); err != nil {
 		return nil, nil, err
 	}
-	extraKeys, diags := compile.ExtraKeys(cmd.Extra, compile.PresentFields(map[string]bool{"name": true, "description": true}), mapping.TargetCursor, cmd.Name(), diag.SourceRef(cmd.Source))
+	extra, toolDiags := compile.PreApprovalCommandExtra(cmd, mapping.TargetCursor)
+	extraKeys, diags := compile.ExtraKeys(extra, compile.PresentFields(map[string]bool{"name": true, "description": true}), mapping.TargetCursor, cmd.Name(), diag.SourceRef(cmd.Source))
+	diags = append(toolDiags, diags...)
 	for _, key := range extraKeys {
 		fm.WriteString("\n")
-		if err := writeYAMLKey(&fm, key, cmd.Extra[key]); err != nil {
+		if err := writeYAMLKey(&fm, key, extra[key]); err != nil {
 			return nil, nil, err
 		}
 	}
