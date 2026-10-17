@@ -1,0 +1,112 @@
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/pkg/marketplace/analyze
+cpu: Apple M4 Max
+BenchmarkUnterminatedOSC/128-16         	   87258	     26662 ns/op	  48.01 MB/s	   51589 B/op	    1032 allocs/op
+BenchmarkUnterminatedOSC/128-16         	   91219	     27070 ns/op	  47.29 MB/s	   51589 B/op	    1032 allocs/op
+BenchmarkUnterminatedOSC/128-16         	   88626	     27469 ns/op	  46.60 MB/s	   51588 B/op	    1032 allocs/op
+BenchmarkUnterminatedOSC/128-16         	   84826	     27247 ns/op	  46.98 MB/s	   51588 B/op	    1032 allocs/op
+BenchmarkUnterminatedOSC/128-16         	   86851	     27970 ns/op	  45.76 MB/s	   51589 B/op	    1032 allocs/op
+BenchmarkUnterminatedOSC/512-16         	   22474	    108297 ns/op	  47.28 MB/s	  208372 B/op	    4106 allocs/op
+BenchmarkUnterminatedOSC/512-16         	   21681	    111734 ns/op	  45.82 MB/s	  208373 B/op	    4106 allocs/op
+BenchmarkUnterminatedOSC/512-16         	   22477	    107109 ns/op	  47.80 MB/s	  208373 B/op	    4106 allocs/op
+BenchmarkUnterminatedOSC/512-16         	   22388	    107395 ns/op	  47.67 MB/s	  208372 B/op	    4106 allocs/op
+BenchmarkUnterminatedOSC/512-16         	   22310	    108045 ns/op	  47.39 MB/s	  208373 B/op	    4106 allocs/op
+BenchmarkUnterminatedOSC/2048-16        	    5282	    435702 ns/op	  47.00 MB/s	  925736 B/op	   16398 allocs/op
+BenchmarkUnterminatedOSC/2048-16        	    5548	    438556 ns/op	  46.70 MB/s	  925734 B/op	   16398 allocs/op
+BenchmarkUnterminatedOSC/2048-16        	    5576	    435347 ns/op	  47.04 MB/s	  925737 B/op	   16398 allocs/op
+BenchmarkUnterminatedOSC/2048-16        	    5611	    455728 ns/op	  44.94 MB/s	  925738 B/op	   16398 allocs/op
+BenchmarkUnterminatedOSC/2048-16        	    5470	    437200 ns/op	  46.84 MB/s	  925737 B/op	   16398 allocs/op
+PASS
+ok  	github.com/Adyen/agent-marketplace/pkg/marketplace/analyze	36.257s
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/pkg/harness-compilation/internal/jsonutil
+cpu: Apple M4 Max
+BenchmarkNestedKeyValidation/32-16 	  246849	      8537 ns/op	 498.99 MB/s	   24648 B/op	     100 allocs/op
+BenchmarkNestedKeyValidation/32-16 	  257986	      8373 ns/op	 508.75 MB/s	   24648 B/op	     100 allocs/op
+BenchmarkNestedKeyValidation/32-16 	  284092	      8473 ns/op	 502.76 MB/s	   24648 B/op	     100 allocs/op
+BenchmarkNestedKeyValidation/32-16 	  256330	      8474 ns/op	 502.69 MB/s	   24648 B/op	     100 allocs/op
+BenchmarkNestedKeyValidation/32-16 	  284372	      8522 ns/op	 499.88 MB/s	   24648 B/op	     100 allocs/op
+BenchmarkNestedKeyValidation/128-16         	   61868	     37107 ns/op	 458.89 MB/s	  103240 B/op	     304 allocs/op
+BenchmarkNestedKeyValidation/128-16         	   67106	     36473 ns/op	 466.86 MB/s	  103240 B/op	     304 allocs/op
+BenchmarkNestedKeyValidation/128-16         	   65883	     37117 ns/op	 458.77 MB/s	  103240 B/op	     304 allocs/op
+BenchmarkNestedKeyValidation/128-16         	   66682	     35847 ns/op	 475.02 MB/s	  103240 B/op	     304 allocs/op
+BenchmarkNestedKeyValidation/128-16         	   62818	     36265 ns/op	 469.55 MB/s	  103240 B/op	     304 allocs/op
+BenchmarkNestedKeyValidation/512-16         	   15872	    150947 ns/op	 451.15 MB/s	  421449 B/op	    1083 allocs/op
+BenchmarkNestedKeyValidation/512-16         	   15391	    157255 ns/op	 433.05 MB/s	  421450 B/op	    1083 allocs/op
+BenchmarkNestedKeyValidation/512-16         	   15522	    154447 ns/op	 440.93 MB/s	  421450 B/op	    1083 allocs/op
+BenchmarkNestedKeyValidation/512-16         	   15524	    152568 ns/op	 446.36 MB/s	  421449 B/op	    1083 allocs/op
+BenchmarkNestedKeyValidation/512-16         	   15972	    151309 ns/op	 450.07 MB/s	  421449 B/op	    1083 allocs/op
+PASS
+ok  	github.com/Adyen/agent-marketplace/pkg/harness-compilation/internal/jsonutil	35.259s
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/pkg/harness-compilation/jsonc
+cpu: Apple M4 Max
+BenchmarkNestedKeyParsing/32-16 	  155557	     13852 ns/op	 307.55 MB/s	   10839 B/op	     138 allocs/op
+BenchmarkNestedKeyParsing/32-16 	  181886	     13645 ns/op	 312.21 MB/s	   10840 B/op	     138 allocs/op
+BenchmarkNestedKeyParsing/32-16 	  169670	     13360 ns/op	 318.85 MB/s	   10841 B/op	     138 allocs/op
+BenchmarkNestedKeyParsing/32-16 	  174076	     13864 ns/op	 307.28 MB/s	   10841 B/op	     138 allocs/op
+BenchmarkNestedKeyParsing/32-16 	  181858	     13566 ns/op	 314.01 MB/s	   10840 B/op	     138 allocs/op
+BenchmarkNestedKeyParsing/128-16         	   44191	     55473 ns/op	 306.96 MB/s	   43403 B/op	     524 allocs/op
+BenchmarkNestedKeyParsing/128-16         	   41763	     55540 ns/op	 306.59 MB/s	   43408 B/op	     524 allocs/op
+BenchmarkNestedKeyParsing/128-16         	   43855	     55446 ns/op	 307.11 MB/s	   43408 B/op	     524 allocs/op
+BenchmarkNestedKeyParsing/128-16         	   43340	     56199 ns/op	 303.00 MB/s	   43405 B/op	     524 allocs/op
+BenchmarkNestedKeyParsing/128-16         	   39633	     56341 ns/op	 302.23 MB/s	   43406 B/op	     524 allocs/op
+BenchmarkNestedKeyParsing/512-16         	   10000	    234200 ns/op	 290.78 MB/s	  173150 B/op	    2062 allocs/op
+BenchmarkNestedKeyParsing/512-16         	   10000	    223403 ns/op	 304.83 MB/s	  173161 B/op	    2062 allocs/op
+BenchmarkNestedKeyParsing/512-16         	   10000	    221280 ns/op	 307.75 MB/s	  173132 B/op	    2062 allocs/op
+BenchmarkNestedKeyParsing/512-16         	    9860	    228176 ns/op	 298.45 MB/s	  173164 B/op	    2062 allocs/op
+BenchmarkNestedKeyParsing/512-16         	   10000	    219912 ns/op	 309.67 MB/s	  173169 B/op	    2062 allocs/op
+PASS
+ok  	github.com/Adyen/agent-marketplace/pkg/harness-compilation/jsonc	35.025s
+
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/pkg/marketplace/ingest
+cpu: Apple M4 Max
+BenchmarkStoreFindingOffsets/lines/128-16         	  254872	      9410 ns/op	 299.25 MB/s	   20128 B/op	     138 allocs/op
+BenchmarkStoreFindingOffsets/lines/128-16         	  256644	      9298 ns/op	 302.87 MB/s	   20128 B/op	     138 allocs/op
+BenchmarkStoreFindingOffsets/lines/128-16         	  261302	      9356 ns/op	 300.98 MB/s	   20128 B/op	     138 allocs/op
+BenchmarkStoreFindingOffsets/lines/128-16         	  257736	      9367 ns/op	 300.62 MB/s	   20128 B/op	     138 allocs/op
+BenchmarkStoreFindingOffsets/lines/128-16         	  258144	      9473 ns/op	 297.26 MB/s	   20128 B/op	     138 allocs/op
+BenchmarkStoreFindingOffsets/lines/512-16         	   63684	     37239 ns/op	 302.48 MB/s	   84384 B/op	     524 allocs/op
+BenchmarkStoreFindingOffsets/lines/512-16         	   64988	     36868 ns/op	 305.52 MB/s	   84384 B/op	     524 allocs/op
+BenchmarkStoreFindingOffsets/lines/512-16         	   64888	     37038 ns/op	 304.12 MB/s	   84384 B/op	     524 allocs/op
+BenchmarkStoreFindingOffsets/lines/512-16         	   65386	     37217 ns/op	 302.66 MB/s	   84384 B/op	     524 allocs/op
+BenchmarkStoreFindingOffsets/lines/512-16         	   64754	     36984 ns/op	 304.57 MB/s	   84384 B/op	     524 allocs/op
+BenchmarkStoreFindingOffsets/lines/2048-16        	   16759	    143272 ns/op	 314.48 MB/s	  346528 B/op	    2063 allocs/op
+BenchmarkStoreFindingOffsets/lines/2048-16        	   16502	    145966 ns/op	 308.68 MB/s	  346528 B/op	    2063 allocs/op
+BenchmarkStoreFindingOffsets/lines/2048-16        	   16621	    142555 ns/op	 316.06 MB/s	  346528 B/op	    2063 allocs/op
+BenchmarkStoreFindingOffsets/lines/2048-16        	   16838	    141536 ns/op	 318.34 MB/s	  346528 B/op	    2063 allocs/op
+BenchmarkStoreFindingOffsets/lines/2048-16        	   17102	    141520 ns/op	 318.37 MB/s	  346528 B/op	    2063 allocs/op
+BenchmarkStoreFindingOffsets/columns/128-16       	  324394	      7472 ns/op	 359.72 MB/s	   20128 B/op	     138 allocs/op
+BenchmarkStoreFindingOffsets/columns/128-16       	  323720	      7287 ns/op	 368.86 MB/s	   20128 B/op	     138 allocs/op
+BenchmarkStoreFindingOffsets/columns/128-16       	  331682	      7526 ns/op	 357.15 MB/s	   20128 B/op	     138 allocs/op
+BenchmarkStoreFindingOffsets/columns/128-16       	  323713	      7547 ns/op	 356.19 MB/s	   20128 B/op	     138 allocs/op
+BenchmarkStoreFindingOffsets/columns/128-16       	  309993	      7542 ns/op	 356.39 MB/s	   20128 B/op	     138 allocs/op
+BenchmarkStoreFindingOffsets/columns/512-16       	   81601	     29455 ns/op	 365.04 MB/s	   84384 B/op	     524 allocs/op
+BenchmarkStoreFindingOffsets/columns/512-16       	   83001	     29670 ns/op	 362.38 MB/s	   84384 B/op	     524 allocs/op
+BenchmarkStoreFindingOffsets/columns/512-16       	   82648	     29262 ns/op	 367.44 MB/s	   84384 B/op	     524 allocs/op
+BenchmarkStoreFindingOffsets/columns/512-16       	   80684	     29578 ns/op	 363.52 MB/s	   84384 B/op	     524 allocs/op
+BenchmarkStoreFindingOffsets/columns/512-16       	   82326	     29370 ns/op	 366.09 MB/s	   84384 B/op	     524 allocs/op
+BenchmarkStoreFindingOffsets/columns/2048-16      	   20202	    118073 ns/op	 364.25 MB/s	  346528 B/op	    2063 allocs/op
+BenchmarkStoreFindingOffsets/columns/2048-16      	   20676	    115327 ns/op	 372.92 MB/s	  346528 B/op	    2063 allocs/op
+BenchmarkStoreFindingOffsets/columns/2048-16      	   21452	    112418 ns/op	 382.57 MB/s	  346528 B/op	    2063 allocs/op
+BenchmarkStoreFindingOffsets/columns/2048-16      	   21061	    114226 ns/op	 376.52 MB/s	  346528 B/op	    2063 allocs/op
+BenchmarkStoreFindingOffsets/columns/2048-16      	   20796	    115963 ns/op	 370.88 MB/s	  346528 B/op	    2063 allocs/op
+PASS
+ok  	github.com/Adyen/agent-marketplace/pkg/marketplace/ingest	72.557s
+
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/pkg/marketplace/api
+cpu: Apple M4 Max
+BenchmarkContentDigestRead-16    	   24452	     97706 ns/op	  75.33 MB/s	   42687 B/op	      91 allocs/op
+BenchmarkContentDigestRead-16    	   23661	    109557 ns/op	  67.18 MB/s	   42687 B/op	      91 allocs/op
+BenchmarkContentDigestRead-16    	   13694	    157902 ns/op	  46.61 MB/s	   42688 B/op	      91 allocs/op
+BenchmarkContentDigestRead-16    	   24363	    100446 ns/op	  73.27 MB/s	   42685 B/op	      91 allocs/op
+BenchmarkContentDigestRead-16    	   23023	    104503 ns/op	  70.43 MB/s	   42686 B/op	      91 allocs/op
+PASS
+ok  	github.com/Adyen/agent-marketplace/pkg/marketplace/api	12.289s

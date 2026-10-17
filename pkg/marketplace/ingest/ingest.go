@@ -3,6 +3,7 @@ package ingest
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -1385,6 +1386,15 @@ func resourcePolicyDigest(policy analyze.Policy, limits config.Limits, license l
 }
 
 func toStoreFindings(findings []analyze.Finding, primaryPath string, body []byte, support analyze.FileSet) []store.Finding {
+	type offsetRequest struct {
+		location   *store.FindingLocation
+		runeOffset int
+	}
+	type sourceOffsets struct {
+		content   []byte
+		locations []offsetRequest
+	}
+	sources := make(map[string]*sourceOffsets)
 	out := make([]store.Finding, 0, len(findings))
 	for _, f := range findings {
 		finding := store.Finding{Code: f.Code, Severity: f.Severity, Policy: f.PolicyOutcome, Message: f.Message}
@@ -1392,47 +1402,72 @@ func toStoreFindings(findings []analyze.Finding, primaryPath string, body []byte
 			location := &store.FindingLocation{Path: primaryPath, Line: f.SourceRange.Line, Column: f.SourceRange.Column}
 			file := strings.ReplaceAll(f.SourceRange.File, "\\", "/")
 			content := body
+			sourceKey := "body"
 			if !strings.HasSuffix(file, "/body") && !strings.HasSuffix(file, "/name") && !strings.Contains(file, "/Description") && !strings.Contains(file, "/command") && !strings.Contains(file, "/prompt") && !strings.Contains(file, "/url") {
 				name := strings.TrimPrefix(file, "support/")
 				if data, ok := support[name]; ok {
 					location.Path, content = filepath.ToSlash(filepath.Join("support", name)), data
+					sourceKey = "support/" + name
 				}
 			}
 			if f.SourceRange.Line > 0 {
-				start, end := lineColumnBytes(content, f.SourceRange.Line, f.SourceRange.Column)
-				location.StartByte, location.EndByte = int64(start), int64(end)
+				source := sources[sourceKey]
+				if source == nil {
+					source = &sourceOffsets{content: content}
+					sources[sourceKey] = source
+				}
+				source.locations = append(source.locations, offsetRequest{location: location})
 			}
 			finding.Location = location
 		}
 		out = append(out, finding)
 	}
+	for _, source := range sources {
+		// Sort only the conversion requests, never the emitted findings.
+		slices.SortFunc(source.locations, func(a, b offsetRequest) int {
+			return cmp.Compare(a.location.Line, b.location.Line)
+		})
+		line, offset, runeOffset := 1, 0, 0
+		for i := range source.locations {
+			location := source.locations[i].location
+			for offset < len(source.content) && line < location.Line {
+				r, size := utf8.DecodeRune(source.content[offset:])
+				offset += size
+				runeOffset++
+				if r == '\n' {
+					line++
+				}
+			}
+			target := len(source.content)
+			if line == location.Line {
+				target = runeOffset
+				if location.Column > 1 {
+					target += min(location.Column-1, len(source.content)-target)
+				}
+			}
+			source.locations[i].runeOffset = target
+		}
+		// Columns may cross line endings. Absolute rune offsets retain that
+		// behavior without rescanning overlapping suffixes for malformed ranges.
+		slices.SortFunc(source.locations, func(a, b offsetRequest) int {
+			return cmp.Compare(a.runeOffset, b.runeOffset)
+		})
+		offset, runeOffset = 0, 0
+		for _, request := range source.locations {
+			for offset < len(source.content) && runeOffset < request.runeOffset {
+				_, size := utf8.DecodeRune(source.content[offset:])
+				offset += size
+				runeOffset++
+			}
+			end := offset
+			if offset < len(source.content) {
+				_, size := utf8.DecodeRune(source.content[offset:])
+				end += size
+			}
+			request.location.StartByte, request.location.EndByte = int64(offset), int64(end)
+		}
+	}
 	return out
-}
-
-func lineColumnBytes(content []byte, line, column int) (int, int) {
-	if line < 1 {
-		return 0, 0
-	}
-	start := 0
-	for current := 1; current < line; current++ {
-		n := bytes.IndexByte(content[start:], '\n')
-		if n < 0 {
-			return len(content), len(content)
-		}
-		start += n + 1
-	}
-	if column > 1 {
-		for i, current := start, 1; i < len(content) && current < column; current++ {
-			_, size := utf8.DecodeRune(content[i:])
-			i += size
-			start = i
-		}
-	}
-	if start >= len(content) {
-		return start, start
-	}
-	_, size := utf8.DecodeRune(content[start:])
-	return start, start + size
 }
 
 func appendUpload(existing []store.BlobUpload, digest store.ArchiveDigest, data []byte) []store.BlobUpload {
