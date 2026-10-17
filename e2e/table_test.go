@@ -181,6 +181,24 @@ func TestPathFingerprintDetectsSameByteRewrite(t *testing.T) {
 const handwrittenFactoryHooks = `{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"echo handwritten"}]}]}}`
 
 var testTable = []TestCase{
+	// spec: resource-removal/disambiguate-collections-before-removal
+	{
+		Name:      "selection/remove_collection_stale_kind_ambiguity",
+		Desc:      "Given a selected collection and a missing skill with the same name, When removing without a kind, Then config and active output stay unchanged until kind disambiguation",
+		GlobalCfg: "apiVersion: agent-marketplace/v4\nharnesses: [factory]\n",
+		RepoCfg:   "apiVersion: agent-marketplace/v4\nsources: {team: {directory: ./resources, source_harness: factory}}\nresources: {team: [collection/team, skill/team, skill/keep]}\n",
+		Steps: []Step{
+			{Action: ActionWriteFile, Path: "/workspace/resources/skills/member/SKILL.md", Body: (Skill{Name: "member", Description: "Collection member"}).SkillFile()},
+			{Action: ActionWriteFile, Path: "/workspace/resources/skills/keep/SKILL.md", Body: (Skill{Name: "keep", Description: "Keep selected"}).SkillFile()},
+			{Action: ActionWriteFile, Path: "/workspace/resources/collections/team/COLLECTION.yaml", Body: "name: team\nresources:\n  - name: member\n    kind: skill\n"},
+			{Args: []string{"sync"}, MustPass: true, FilesExist: []string{"/workspace/.factory/skills/member/SKILL.md", "/workspace/.factory/skills/keep/SKILL.md"}},
+			{Args: []string{"remove", "team"}, AssertExitCode: intPtr(1), OutContains: []string{"ambiguous across kinds", "--kind"}, PathsUnchanged: []string{"/workspace/.agents", "/workspace/.factory"}},
+			{Args: []string{"remove", "team", "--from", "./resources"}, AssertExitCode: intPtr(1), OutContains: []string{"ambiguous across kinds", "--kind"}, PathsUnchanged: []string{"/workspace/.agents", "/workspace/.factory"}},
+			{Args: []string{"remove", "team", "--from", "./resources", "--kind", "skill"}, MustPass: true, FileNotContains: map[string]string{"/workspace/.agents/config.yaml": "skill/team"}, FileContains: map[string]string{"/workspace/.agents/config.yaml": "collection/team"}, PathsUnchanged: []string{"/workspace/.factory/skills/member", "/workspace/.factory/skills/keep"}},
+			{Args: []string{"remove", "team"}, MustPass: true, FilesAbsent: []string{"/workspace/.factory/skills/member"}, PathsUnchanged: []string{"/workspace/.factory/skills/keep"}},
+			{Args: []string{"sync", "--check"}, MustPass: true},
+		},
+	},
 	// spec: resource-removal/remove-a-selection-after-its-resource-disappears
 	{
 		Name:       "selection/remove_undiscoverable_git_selection",

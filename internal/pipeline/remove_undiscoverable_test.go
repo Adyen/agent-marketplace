@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -224,7 +225,7 @@ func TestRemoveUndiscoverableFromParentRegistry(t *testing.T) {
 				t.Fatal(err)
 			}
 			cfg, err := config.LoadRootConfigFromPath(path)
-			if err != nil || cfg == nil || len(cfg.Registries) != 1 || len(cfg.Registries[0].Skills.Include) != 2 {
+			if err != nil || cfg == nil || len(cfg.Registries) != 1 || !slices.Equal(cfg.Registries[0].Skills.Include, []string{"keep", "keep-other"}) {
 				t.Fatalf("parent selection was not edited: %#v / %v", cfg, err)
 			}
 		})

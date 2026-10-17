@@ -165,7 +165,25 @@ func Remove(ctx context.Context, opts RemoveOptions) (result *RemoveResult, retE
 		return nil, err
 	}
 
-	if collection, entry, ok := marketplaceCollectionByName(mergedCfg, name, opts.Kind, opts.HasKind); ok {
+	earlyTarget, err := resolvedResourceByNameInScope(earlyRemovalCandidates(mergedCfg, name), name, opts.Kind, opts.HasKind, mergedCfg, opts.Scope, opts.ScopeSpecified)
+	if err != nil {
+		return nil, err
+	}
+	marketplaceCfg := mergedCfg
+	if earlyTarget != nil {
+		scoped := *mergedCfg
+		scoped.Marketplaces = nil
+		if earlyTarget.IsMarketplace {
+			for _, entry := range mergedCfg.Marketplaces {
+				if entry.Source == earlyTarget.Source && entry.URL == earlyTarget.RegistryURL {
+					scoped.Marketplaces = append(scoped.Marketplaces, entry)
+				}
+			}
+		}
+		marketplaceCfg = &scoped
+	}
+
+	if collection, entry, ok := marketplaceCollectionByName(marketplaceCfg, name, opts.Kind, opts.HasKind); ok {
 		if entry.Source == config.Organization {
 			if entry.Required {
 				return nil, fmt.Errorf("collection %q is required and managed externally", name)
@@ -190,7 +208,7 @@ func Remove(ctx context.Context, opts RemoveOptions) (result *RemoveResult, retE
 		return &RemoveResult{RemovedName: name, IsCollection: true}, nil
 	}
 
-	if pin, entry, matches := marketplaceDirectPinMatches(mergedCfg, name, opts.Kind, opts.HasKind); matches > 1 {
+	if pin, entry, matches := marketplaceDirectPinMatches(marketplaceCfg, name, opts.Kind, opts.HasKind); matches > 1 {
 		return nil, fmt.Errorf("%q matches %d Marketplace pins by local or canonical name; remove by an unambiguous installed name", name, matches)
 	} else if matches == 1 {
 		if entry.Source == config.Organization {
@@ -220,7 +238,7 @@ func Remove(ctx context.Context, opts RemoveOptions) (result *RemoveResult, retE
 		return &RemoveResult{RemovedName: name}, nil
 	}
 
-	if pin, ok := marketplaceCollectionOnlyPinByName(mergedCfg, name, opts.Kind, opts.HasKind); ok {
+	if pin, ok := marketplaceCollectionOnlyPinByName(marketplaceCfg, name, opts.Kind, opts.HasKind); ok {
 		collectionName := "an explicitly selected collection"
 		if selections := pin.SelectedBy.List(); len(selections) > 0 {
 			collectionName = selections[0].Name
@@ -230,7 +248,7 @@ func Remove(ctx context.Context, opts RemoveOptions) (result *RemoveResult, retE
 
 	// Collections disappear during expansion, so locate their owning selection
 	// before resolving ordinary resources.
-	if !opts.HasKind || opts.Kind == ir.KindCollection {
+	if (!opts.HasKind || opts.Kind == ir.KindCollection) && (earlyTarget == nil || !earlyTarget.IsMarketplace && earlyTarget.Kind == ir.KindCollection) {
 		selection, effective, err := findCollectionRemovalSelection(opts.RepoRoot, mergedCfg, orgCfg, name, opts.Scope, opts.ScopeSpecified)
 
 		if err != nil {
@@ -942,6 +960,65 @@ func resolvedResourceByName(resolved []resolver.ResolvedArtifact, name string, k
 	return resolveResourceMatches(resourceMatches(resolved, name, kind, hasKind), name, cfg)
 }
 
+// Early removal must disambiguate authored selections without requiring a
+// discoverable catalog: removing a broken collection must remain possible.
+func earlyRemovalCandidates(cfg *config.Config, name string) []resolver.ResolvedArtifact {
+	if cfg == nil {
+		return nil
+	}
+	var candidates []resolver.ResolvedArtifact
+	var hasResource, hasEarly bool
+	for _, entry := range cfg.Registries {
+		for _, kind := range config.AllKinds {
+			direct, _ := resolver.EffectiveDirectSelectionSources(entry, cfg.Registries, nil, kind, name)
+			if !direct {
+				continue
+			}
+			candidates = append(candidates, removalCandidateForEntry(entry, kind, name))
+			if kind == ir.KindCollection {
+				hasEarly = true
+			} else {
+				hasResource = true
+			}
+		}
+	}
+	for _, entry := range cfg.Marketplaces {
+		for _, pin := range entry.Resources {
+			if !marketplacePinNamed(pin, name) || (!pin.Direct && len(pin.SelectedBy.List()) > 0) {
+				continue
+			}
+			kind, ok := skill.ParseKind(pin.Kind)
+			if !ok {
+				continue
+			}
+			candidates = append(candidates, resolver.ResolvedArtifact{
+				Entry: catalog.Entry{Kind: kind, Name: name}, Source: entry.Source,
+				RegistryURL: entry.URL, RegistryPath: pin.RegistryID, IsMarketplace: true,
+			})
+			hasEarly = true
+		}
+	}
+	// Leave ordinary resolver winner selection and Marketplace-only lookup
+	// unchanged when there is no competing explicit registry resource.
+	if !hasResource || !hasEarly {
+		return nil
+	}
+	return candidates
+}
+
+func removalCandidateForEntry(entry config.RegistryEntry, kind ir.ResourceKind, name string) resolver.ResolvedArtifact {
+	return resolver.ResolvedArtifact{
+		Entry:          catalog.Entry{Kind: kind, Name: name, SourceHarness: entry.SourceHarness},
+		RegistryURL:    entry.URL,
+		RegistryPath:   entry.Path,
+		Ref:            entry.Ref,
+		V4Kind:         entry.V4Kind,
+		Source:         entry.Source,
+		FilePrecedence: entry.FilePrecedence,
+		Required:       entry.Required,
+	}
+}
+
 // Missing and malformed direct selections are removal targets, not resources
 // that can be materialized. Keep them out of the ordinary resolver result.
 func removalResourceCandidates(result ResolveResult, name string) []resolver.ResolvedArtifact {
@@ -976,16 +1053,7 @@ func removalResourceCandidates(result ResolveResult, name string) []resolver.Res
 			if !direct {
 				continue
 			}
-			candidate := resolver.ResolvedArtifact{
-				Entry:          catalog.Entry{Kind: kind, Name: name, SourceHarness: entry.SourceHarness},
-				RegistryURL:    entry.URL,
-				RegistryPath:   entry.Path,
-				Ref:            entry.Ref,
-				V4Kind:         entry.V4Kind,
-				Source:         entry.Source,
-				FilePrecedence: entry.FilePrecedence,
-				Required:       entry.Required,
-			}
+			candidate := removalCandidateForEntry(entry, kind, name)
 			if slices.ContainsFunc(candidates, func(existing resolver.ResolvedArtifact) bool {
 				return existing.Kind == kind && existing.Name == name && existing.Source == candidate.Source &&
 					existing.RegistryURL == candidate.RegistryURL && registryPathOwns(candidate.RegistryPath, existing.RegistryPath) && existing.Ref == candidate.Ref
@@ -1466,7 +1534,16 @@ func removeFromAdHoc(ctx context.Context, opts RemoveOptions, fromURL string) (*
 	// The entry lookup above has already failed closed on ambiguous paths/refs.
 	collectionEntryInTarget := entryInTarget
 	collectionMergedEntry, collectionEntryInMerged := mergedEntry, entryInMerged
-	if collectionEntryInMerged && collectionSelectedInEntry(collectionMergedEntry, name) {
+	if !opts.HasKind {
+		lookupURL := mergedEntry.URL
+		if entryInTarget {
+			lookupURL = targetEntry.URL
+		}
+		if _, err := resolvedResourceInRegistryAtRef(earlyRemovalCandidates(mergedCfg, name), name, opts.Kind, false, lookupURL, selectedPath, shadowRef); err != nil {
+			return nil, err
+		}
+	}
+	if (!opts.HasKind || opts.Kind == ir.KindCollection) && collectionEntryInMerged && collectionSelectedInEntry(collectionMergedEntry, name) {
 		if collectionRequiredInRegistry(mergedCfg, name, collectionMergedEntry) {
 			return nil, fmt.Errorf("collection %q is required and cannot be removed", name)
 		}
