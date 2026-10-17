@@ -4,3 +4,5 @@ export const appAssetPath = (baseURL: string, path: string) => `${baseURL.endsWi
 
 // Documentation lives in the sibling VitePress site at the origin root.
 export const DOCS_PATH = '/docs/'
+
+export const MARKETPLACE_DOCS_URL = 'https://agent-marketplace.io/docs'
