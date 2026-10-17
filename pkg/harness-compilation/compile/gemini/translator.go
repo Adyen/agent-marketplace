@@ -60,11 +60,7 @@ func (compiler) TranslateWithOptions(r ir.Resource, opts compile.Options) ([]art
 	case *ir.Hook:
 		return translateHook(resource, opts)
 	case *ir.McpServer:
-		out, diags, err := translateMCPServer(resource, opts)
-		if err != nil {
-			return nil, nil, err
-		}
-		return []artifact.Artifact{out}, diags, nil
+		return translateMCPServer(resource, opts)
 	case *ir.Rule:
 		return translateRule(resource)
 	default:
@@ -145,10 +141,12 @@ func translateCommand(command *ir.Command) ([]artifact.Artifact, []diag.Diagnost
 		"prompt":      true,
 		"triggers":    triggersPresent,
 	})
-	extraKeys, diags := compile.ExtraKeys(command.Extra, present, mapping.TargetGemini, command.Name(), diag.SourceRef(command.Source))
+	commandExtra, toolDiags := compile.PreApprovalCommandExtra(command, mapping.TargetGemini)
+	extraKeys, diags := compile.ExtraKeys(commandExtra, present, mapping.TargetGemini, command.Name(), diag.SourceRef(command.Source))
+	diags = append(toolDiags, diags...)
 	extra := make(map[string]any, len(extraKeys))
 	for _, key := range extraKeys {
-		extra[key] = command.Extra[key]
+		extra[key] = commandExtra[key]
 	}
 
 	out, err := promptArtifact(command.Name(), command.Description, replaceEnvTokens(command.Body), triggers, extra)
@@ -158,18 +156,29 @@ func translateCommand(command *ir.Command) ([]artifact.Artifact, []diag.Diagnost
 	return []artifact.Artifact{out}, diags, nil
 }
 
-func translateMCPServer(server *ir.McpServer, opts compile.Options) (artifact.Artifact, []diag.Diagnostic, error) {
+func translateMCPServer(server *ir.McpServer, opts compile.Options) ([]artifact.Artifact, []diag.Diagnostic, error) {
 	entry, canonical := compile.McpServerEntry(server, replaceEnvTokens, false)
 	extraKeys, diags := compile.ExtraKeys(server.Extra, canonical, compile.TargetGemini, server.Name(), diag.SourceRef(server.Source))
-	diags = append(compile.McpCredentialDiagnostics(server, compile.TargetGemini, compile.WithMcpOptions(opts)), diags...)
 	for _, key := range extraKeys {
 		entry[key] = server.Extra[key]
 	}
+	if containsBareEnvReference(entry) {
+		return nil, append(diags, diag.Diagnostic{
+			Code:     diag.CodeMcpGeminiInterpolationUnrepresentable,
+			Severity: diag.SeverityError,
+			Target:   string(mapping.TargetGemini),
+			Resource: server.Name(),
+			Message:  "A value contains a bare $NAME that Gemini would expand into an environment lookup; server entry skipped",
+			Hint:     "Write the value as ${NAME} if it is an environment reference, or remove the dollar sign from the literal",
+			Source:   compile.DiagSource(server.Source),
+		}), nil
+	}
+	diags = append(compile.McpCredentialDiagnostics(server, compile.TargetGemini, compile.WithMcpOptions(opts)), diags...)
 	body := map[string]any{"mcpServers": map[string]any{server.Name(): entry}}
 
 	bytes, err := json.MarshalIndent(body, "", "  ")
 	if err != nil {
-		return artifact.Artifact{}, nil, fmt.Errorf("gemini: marshal mcp server %q: %w", server.Name(), err)
+		return nil, nil, fmt.Errorf("gemini: marshal mcp server %q: %w", server.Name(), err)
 	}
 
 	art := artifact.Artifact{
@@ -180,7 +189,39 @@ func translateMCPServer(server *ir.McpServer, opts compile.Options) (artifact.Ar
 	}
 	art.ManagedByField, art.ManagedByValue = opts.ManagedBy()
 	art.MergeWithExisting = art.ManagedByField != ""
-	return art, diags, nil
+	return []artifact.Artifact{art}, diags, nil
+}
+
+func containsBareEnvReference(value any) bool {
+	switch typed := value.(type) {
+	case string:
+		return mapping.ContainsBareEnvReference(typed)
+	case []string:
+		for _, item := range typed {
+			if mapping.ContainsBareEnvReference(item) {
+				return true
+			}
+		}
+	case []any:
+		for _, item := range typed {
+			if containsBareEnvReference(item) {
+				return true
+			}
+		}
+	case map[string]string:
+		for _, item := range typed {
+			if mapping.ContainsBareEnvReference(item) {
+				return true
+			}
+		}
+	case map[string]any:
+		for _, item := range typed {
+			if containsBareEnvReference(item) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func promptArtifact(name, description, prompt string, triggers []string, extras map[string]any) (artifact.Artifact, error) {

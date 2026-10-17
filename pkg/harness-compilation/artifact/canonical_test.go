@@ -77,6 +77,7 @@ func TestCanonicalProvenanceRoundTrip(t *testing.T) {
 		{"hook", ir.NewHookWithOptions("h", "SessionEnd", "x", "command", nil, ir.SourceRef{}, ir.WithHookSource("codex")), "codex", "HookSource"},
 		{"subagent", ir.NewSubagentWithOptions("a", "", "", "", nil, "", nil, "", nil, ir.SourceRef{}, ir.WithSubagentToolSource("devin")), "devin", "ToolSource"},
 		{"skill", ir.NewSkillWithOptions("s", "", "", nil, nil, ir.SourceRef{}, ir.WithSkillToolSource("gemini")), "gemini", "ToolSource"},
+		{"command", commandWithToolSource("devin"), "devin", "ToolSource"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -102,6 +103,8 @@ func TestCanonicalProvenanceRoundTrip(t *testing.T) {
 			case *ir.Subagent:
 				got = r.ToolSource
 			case *ir.Skill:
+				got = r.ToolSource
+			case *ir.Command:
 				got = r.ToolSource
 			}
 			if got != tc.want {
@@ -635,5 +638,28 @@ func TestCanonicalArtifactRoundTripCarriesAssetsLicensesAndSupport(t *testing.T)
 	}
 	if err := got.ValidateArchive(nil); err != nil {
 		t.Fatalf("ValidateArchive: %v", err)
+	}
+}
+
+func commandWithToolSource(source string) *ir.Command {
+	command := ir.NewCommand("c", "", "", nil, ir.SourceRef{})
+	command.ToolSource = source
+	return command
+}
+
+func TestCanonicalCommandToolSourceCannotComeFromExtra(t *testing.T) {
+	command := ir.NewCommand("c", "", "", map[string]any{"ToolSource": "factory", "toolsource": "factory"}, ir.SourceRef{})
+	a, err := FromIR(command)
+	if err != nil {
+		t.Fatalf("FromIR: %v", err)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(a.Payload, &payload); err != nil {
+		t.Fatalf("unmarshal payload: %v", err)
+	}
+	for key := range payload {
+		if strings.EqualFold(key, "ToolSource") {
+			t.Fatalf("extension field supplied command provenance: %s", a.Payload)
+		}
 	}
 }
