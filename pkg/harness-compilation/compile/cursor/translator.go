@@ -283,7 +283,7 @@ func (c *cursorCompiler) translateSubagent(sub *ir.Subagent, opts compile.Option
 		}
 	}
 	extra := sub.Extra
-	if compile.SubagentReadOnly(sub) {
+	if compile.SubagentReadOnly(sub) && !compile.HasReadOnlyCursorFlag(extra) {
 		extra = compile.WithExtraKey(extra, "readonly", true)
 	}
 	extraKeys, extraDiags := compile.ModelExtraKeys(extra, compile.PresentFields(map[string]bool{"name": true, "description": true, "model": mappedModel != "", "tools": mappedTools != nil, "effort": effort != "", "disallowedTools": false, "isolation": false, "max-nesting": sub.MaxNesting != nil, "maxNesting": false}), mapping.TargetCursor, sub.Name(), diag.SourceRef(sub.Source))

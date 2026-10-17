@@ -73,6 +73,25 @@ func SubagentReadOnly(s *ir.Subagent) bool {
 	return s.Ext.Factory != nil && s.Ext.Factory.ToolsCategory == "read-only"
 }
 
+// normalizeFactoryToolsCategory reads a Factory tools list that holds only the
+// read-only category, as Factory ingestion recorded it before the category
+// had a sidecar field, as that category rather than as a tool name.
+func normalizeFactoryToolsCategory(r ir.Resource) ir.Resource {
+	s, ok := r.(*ir.Subagent)
+	if !ok || s.ToolSource != string(targetmeta.TargetFactory) || len(s.Tools) != 1 || s.Tools[0] != "read-only" {
+		return r
+	}
+	normalized := *s
+	normalized.Tools, normalized.ToolSource = nil, ""
+	factory := extpkg.Factory{}
+	if s.Ext.Factory != nil {
+		factory = *s.Ext.Factory
+	}
+	factory.ToolsCategory = "read-only"
+	normalized.Ext.Factory = &factory
+	return &normalized
+}
+
 // ReadOnlyUnsupported is the refusal for a target without a read-only
 // subagent mode.
 func ReadOnlyUnsupported(target Target, s *ir.Subagent) diag.Diagnostic {
@@ -85,6 +104,34 @@ func ReadOnlyUnsupported(target Target, s *ir.Subagent) diag.Diagnostic {
 		Hint:     "Use a target with a read-only mode (Claude, Cursor, Codex, Factory) or remove the restriction explicitly",
 		Source:   DiagSource(s.Source),
 	}
+}
+
+// HasReadOnlyClaudeMode reports whether fields already declare permissionMode
+// plan, in any letter case.
+func HasReadOnlyClaudeMode(fields map[string]any) bool {
+	for key, value := range fields {
+		if readOnlyPermissionMode(key, value) {
+			return true
+		}
+	}
+	return false
+}
+
+// HasReadOnlyCursorFlag reports whether fields already declare a true
+// readonly flag, in any letter case.
+func HasReadOnlyCursorFlag(fields map[string]any) bool {
+	for key, value := range fields {
+		if !strings.EqualFold(key, "readonly") {
+			continue
+		}
+		if flag, ok := value.(bool); ok && flag {
+			return true
+		}
+		if flag, ok := value.(string); ok && strings.EqualFold(strings.TrimSpace(flag), "true") {
+			return true
+		}
+	}
+	return false
 }
 
 // WithExtraKey returns a copy of extra in which key, in any letter case, holds
@@ -103,6 +150,9 @@ func WithExtraKey(extra map[string]any, key string, value any) map[string]any {
 func readOnlyFields(fields map[string]any) bool {
 	for key, value := range fields {
 		if readOnlyPermissionMode(key, value) {
+			return true
+		}
+		if mode, ok := value.(string); ok && (strings.EqualFold(key, "sandbox_mode") || strings.EqualFold(key, "tools")) && strings.EqualFold(strings.TrimSpace(mode), "read-only") {
 			return true
 		}
 		if !strings.EqualFold(key, "readonly") {

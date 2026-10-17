@@ -19,18 +19,37 @@ func TestNativeMetadataSidecarsKeepFrozenFallbackDigest(t *testing.T) {
 	categoryDroid := ir.NewSubagent("auditor", "Auditor", "Audit.\n", "", nil, "", nil, "", nil, ir.SourceRef{File: "droids/auditor.md", Line: 1})
 	categoryDroid.Ext.Factory = &ext.Factory{ToolsCategory: "read-only"}
 
-	for name, pair := range map[string][2]ir.Resource{"claude-controls": {plainSubagent, claudeSubagent}, "factory-category": {legacyDroid, categoryDroid}} {
-		want, err := json.Marshal(legacyHookToolProjection(pair[0]))
-		if err != nil {
-			t.Fatal(err)
-		}
-		got, err := json.Marshal(legacyHookToolProjection(pair[1]))
-		if err != nil {
-			t.Fatal(err)
-		}
-		if !bytes.Equal(got, want) {
-			t.Fatalf("%s changed the fallback digest basis:\n got %s\nwant %s", name, got, want)
-		}
+	for _, tc := range []struct {
+		name          string
+		legacy, typed ir.Resource
+	}{
+		{"claude-controls", plainSubagent, claudeSubagent},
+		{"factory-category", legacyDroid, categoryDroid},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rawLegacy, err := json.Marshal(tc.legacy)
+			if err != nil {
+				t.Fatal(err)
+			}
+			rawTyped, err := json.Marshal(tc.typed)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if bytes.Equal(rawLegacy, rawTyped) {
+				t.Fatalf("fixture does not exercise the sidecar: both serialize to %s", rawTyped)
+			}
+			want, err := json.Marshal(legacyHookToolProjection(tc.legacy))
+			if err != nil {
+				t.Fatal(err)
+			}
+			got, err := json.Marshal(legacyHookToolProjection(tc.typed))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !bytes.Equal(got, want) {
+				t.Fatalf("sidecar changed the fallback digest basis:\n got %s\nwant %s", got, want)
+			}
+		})
 	}
 	if claudeSubagent.Ext.Claude == nil || categoryDroid.Ext.Factory == nil {
 		t.Fatal("projection mutated the ingested resource")

@@ -159,6 +159,25 @@ func TestReadOnlySubagentsMapToDocumentedModes(t *testing.T) {
 			t.Fatalf("Factory read-only category not kept on %s, want %q:\n%s %+v", target, want, out, result.Diagnostics)
 		}
 	}
+	authored := fstest.MapFS{"agents/planner.md": {Data: []byte("---\nname: planner\ndescription: Planner\npermissionMode: PLAN\n---\nPlan.\n")}}
+	result, err = Convert(authored, HarnessClaude, TargetClaude)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out := readOnlySubagentFrontmatter(t, result, "planner"); result.HasErrors() || !strings.Contains(out, "permissionMode: PLAN\n") || strings.Count(out, "permissionMode") != 1 {
+		t.Fatalf("authored Claude plan mode changed on Claude:\n%s %+v", out, result.Diagnostics)
+	}
+	legacyFactory := ir.NewSubagent("auditor", "Auditor", "Audit.\n", "", []string{"read-only"}, "", nil, "", nil, ir.SourceRef{})
+	legacyFactory.ToolSource = "factory"
+	for target, want := range map[Target]string{TargetFactory: "tools: read-only", TargetClaude: "permissionMode: plan"} {
+		compiled, err := Compile(legacyFactory, target)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if out := readOnlySubagentFrontmatter(t, compiled, "auditor"); compiled.HasErrors() || !strings.Contains(out, want) {
+			t.Fatalf("legacy Factory read-only category not kept on %s, want %q:\n%s %+v", target, want, out, compiled.Diagnostics)
+		}
+	}
 	legacy := ir.NewSubagent("legacy", "Legacy", "Plan.\n", "", nil, "", nil, "", map[string]any{"permissionMode": "plan"}, ir.SourceRef{})
 	compiled, err := Compile(legacy, TargetClaude)
 	if err != nil {
@@ -171,12 +190,20 @@ func TestReadOnlySubagentsMapToDocumentedModes(t *testing.T) {
 
 // spec: harness-compilation/targets-without-a-read-only-mode-refuse
 func TestTargetsWithoutReadOnlyModeRefuse(t *testing.T) {
+	sandboxed := ir.NewSubagent("sandboxed", "Sandboxed", "Review.\n", "", nil, "", nil, "", map[string]any{"sandbox_mode": "read-only"}, ir.SourceRef{})
+	refused, err := Compile(sandboxed, TargetGemini)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(refused.Artifacts) != 0 || !diag.HasCode(refused.Diagnostics, diag.CodeSubagentSecurityRestrictionUnsupported) {
+		t.Fatalf("untyped read-only sandbox mode was not honored: %+v", refused)
+	}
 	cursor := fstest.MapFS{".cursor/agents/reviewer.md": {Data: []byte("---\nname: reviewer\ndescription: Reviewer\nreadonly: true\n---\nReview.\n")}}
 	withTools := fstest.MapFS{".cursor/agents/reviewer.md": {Data: []byte("---\nname: reviewer\ndescription: Reviewer\nreadonly: true\ntools: [Read]\n---\nReview.\n")}}
 	cases := []struct {
 		src fstest.MapFS
 		to  Target
-	}{{cursor, TargetGemini}, {cursor, TargetDevin}, {cursor, TargetOpenCode}, {withTools, TargetFactory}}
+	}{{cursor, TargetGemini}, {cursor, TargetDevin}, {cursor, TargetOpenCode}, {cursor, TargetWindsurf}, {withTools, TargetFactory}}
 	for _, tc := range cases {
 		t.Run(string(tc.to), func(t *testing.T) {
 			result, err := Convert(tc.src, HarnessCursor, tc.to)

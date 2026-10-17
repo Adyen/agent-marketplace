@@ -171,7 +171,7 @@ func translateCommand(command *ir.Command) ([]artifact.Artifact, []diag.Diagnost
 }
 
 func translateSubagent(subagent *ir.Subagent) ([]artifact.Artifact, []diag.Diagnostic) {
-	if len(subagent.DisallowedTools) > 0 || subagent.Isolation != "" {
+	if len(subagent.DisallowedTools) > 0 || subagent.Isolation != "" || compilepkg.SubagentReadOnly(subagent) {
 		return nil, []diag.Diagnostic{{
 			Code:     diag.CodeSubagentSecurityRestrictionUnsupported,
 			Severity: diag.SeverityError,

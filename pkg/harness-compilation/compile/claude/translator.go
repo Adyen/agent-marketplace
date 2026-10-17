@@ -254,7 +254,7 @@ func (c *claudeCompiler) translateSubagent(s *ir.Subagent, opts compile.Options)
 		fm.Set("max-nesting", *s.MaxNesting)
 	}
 	extra, controlDiags := compile.ClaudeExtraWithNativeControls(ir.KindSubagent, s.Extra, s.Ext.Claude, mapping.TargetClaude, s.Name(), s.Source)
-	if compile.SubagentReadOnly(s) {
+	if compile.SubagentReadOnly(s) && !compile.HasReadOnlyClaudeMode(extra) {
 		extra = compile.WithExtraKey(extra, "permissionMode", "plan")
 	}
 	diags = append(diags, controlDiags...)

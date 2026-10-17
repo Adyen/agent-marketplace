@@ -342,6 +342,7 @@ func Compile(r ir.Resource, t Target, opts ...Option) (*Result, error) {
 		diags []diag.Diagnostic
 		err   error
 	)
+	r = normalizeFactoryToolsCategory(r)
 	arts, diags, err = GuardNativeCodexTranslation(r, t, func(resource ir.Resource) ([]artifact.Artifact, []diag.Diagnostic, error) {
 		return translateSafely(c, resource, *cfg)
 	})
