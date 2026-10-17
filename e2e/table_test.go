@@ -4838,6 +4838,58 @@ harnesses:
 }
 
 func init() {
+	// spec: resource-installation/bulk-selectors-install-into-each-writable-layer
+	for _, scope := range []string{"user", "local"} {
+		for _, selector := range []string{"tag", "all"} {
+			for _, sourceScope := range []string{"repo", "user"} {
+				globalCfg := "apiVersion: agent-marketplace/v4\nharnesses: [factory]\n"
+				repoCfg := "apiVersion: agent-marketplace/v4\nsources: {team: {git: '{{REG:bulk-scopes}}', ref: main}}\n"
+				unchanged := []string{"/workspace/.agents/config.yaml", "/workspace/.agents/lock.yaml"}
+				if sourceScope == "user" {
+					globalCfg += "sources: {team: {git: '{{REG:bulk-scopes}}', ref: main}}\n"
+					repoCfg, unchanged = "", nil
+					if scope == "local" {
+						unchanged = []string{"/root/.agents/config.yaml", "/root/.agents/lock.yaml"}
+					}
+				}
+				targetConfig, targetLock, outputRoot, otherRoot, label := "/root/.agents/config.yaml", "/root/.agents/lock.yaml", "/root", "/workspace", "user-wide"
+				if scope == "local" {
+					targetConfig, targetLock, outputRoot, otherRoot, label = "/workspace/.agents/config.local.yaml", "/workspace/.agents/lock.local.yaml", "/workspace", "/root", "locally"
+				}
+				args := []string{"install", "--scope", scope}
+				selection := "ops"
+				absent := []string{otherRoot + "/.factory/skills/review"}
+				if sourceScope == "user" {
+					absent = append(absent, "/workspace/.agents/config.yaml", "/workspace/.agents/lock.yaml")
+				}
+				if selector == "tag" {
+					args = append(args, "--tag", "ops")
+					absent = append(absent, outputRoot+"/.factory/skills/unselected")
+				} else {
+					args = append(args, "--all", "--kind", "skill", "--registry", "{{REG:bulk-scopes}}")
+					selection = "skill/review"
+				}
+				testTable = append(testTable, TestCase{
+					Name: "install/bulk_scope_" + scope + "_" + selector + "_from_" + sourceScope,
+					Desc: "Given a v4 " + sourceScope + " source, When bulk installing into " + scope + " scope, Then the requested config, lock and native output change without editing other layers",
+					Registries: []RegistryDef{{Name: "bulk-scopes", Skills: []Skill{
+						{Name: "review", Description: "Scoped review", Tags: []string{"ops"}},
+						{Name: "unselected", Description: "Untagged skill"},
+					}}},
+					GlobalCfg: globalCfg,
+					RepoCfg:   repoCfg,
+					Steps: []Step{
+						{Args: []string{"lock", "--scope", sourceScope}, MustPass: true},
+						{Args: args, MustPass: true, OutContains: []string{label},
+							PathsUnchanged: unchanged,
+							FileContains:   map[string]string{targetConfig: selection, targetLock: "scope: " + scope, outputRoot + "/.factory/skills/review/SKILL.md": "Scoped review"},
+							FilesAbsent:    absent},
+						{Args: []string{"sync", "--check"}, MustPass: true},
+					},
+				})
+			}
+		}
+	}
 	for _, version := range []string{"agent-marketplace/v4"} {
 		for _, prerequisite := range []struct {
 			kind, name, sourcePath, source, output, code string

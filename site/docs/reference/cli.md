@@ -156,8 +156,8 @@ https://host/r/registry/kind/name[/revisions/sha256:<64 lowercase hex>]
 |---|---|:---:|---|---|
 | `--scope` | string | no | endpoint: `user`; resource: `repo` | Configuration layer: `repo`, `user`, or `local`. |
 | `--kind` | string | no | `skill` where a kind is needed | Selects `skill`, `command`, `subagent`, `hook`, or `mcp`, and disambiguates a named registry resource. |
-| `--tag` | string | no | none | Installs registry resources whose metadata contains the tag. Without `--kind`, at least one skill must carry the tag. Works only in `repo` scope (or with no `--scope`). Cannot be combined with a resource name, `--all`, `--from`, or a Marketplace locator. |
-| `--all` | boolean | no | `false` | Installs every discovered registry resource, or only those of `--kind` when you give it. Works only in `repo` scope (or with no `--scope`). |
+| `--tag` | string | no | none | Installs registry resources whose metadata contains the tag. Without `--kind`, at least one skill must carry the tag. Supports `repo` (default), `user`, and `local` scope. Cannot be combined with a resource name, `--all`, `--from`, or a Marketplace locator. |
+| `--all` | boolean | no | `false` | Installs every discovered registry resource, or only those of `--kind` when you give it. Supports `repo` (default), `user`, and `local` scope. |
 | `--registry` | string | no | all configured registries | Limits `--all` to one configured registry. Requires `--all`. Matches the URL the way `update` and `lock` do, so a `.git` suffix or a trailing slash makes no difference, and looks in every config layer. The same source declared in several layers counts as one. If the URL names entries with different refs or paths, the command refuses and lists them. |
 | `--from` | string | no | configured registries | Installs directly from an ad hoc Git URL, GitHub web URL, or GitLab web URL. Without a resource name, installs the whole registry. |
 | `--ref` | string | no | inferred or registry default | Selects a branch, tag, or commit for `--from`. Requires `--from`. |
@@ -167,6 +167,17 @@ https://host/r/registry/kind/name[/revisions/sha256:<64 lowercase hex>]
 | `--accept-risk` | boolean | no | `false` | Accepts security findings for the verified revision. |
 | `--yes` | boolean | no | `false` | Same as `--accept-risk`, for automation. |
 | `-v`, `--verbose` | boolean | no | `false` | Shows every collection member and the technical Marketplace preview: revisions, digests, acquisition details, and provenance (where the artifact came from). |
+
+Bulk installs use the selected scope's configuration, acquisition lock, and
+output roots, just like named installs:
+
+```bash
+agent-marketplace install --tag security --scope user
+agent-marketplace install --all --scope local
+```
+
+User scope cannot copy a repository-relative directory source into the user
+configuration; use an absolute directory path or a Git source instead.
 
 `--as`, `--accept-risk`, and `--yes` work only with a single Marketplace resource. With `--marketplace <url>`, pass the full resource URL as the locator. In the current release, a short `registry/kind/name` locator combined with an endpoint URL fails with an `invalid browser locator` error, so the full URL or an alias is required. If you pass a GitHub or GitLab web URL that names a branch or tag as the resource name, the command stops and tells you to use `--from` instead.
 
