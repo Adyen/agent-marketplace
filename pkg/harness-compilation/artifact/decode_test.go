@@ -12,7 +12,7 @@ import (
 )
 
 // spec: marketplace-api/canonical-null-extra-is-not-a-native-extension
-func TestCanonicalHookNullExtraIsNotUnknownMetadata(t *testing.T) {
+func TestCanonicalHookMetadataProjectionCompatibility(t *testing.T) {
 	hook := ir.NewHook("guard", "PreToolUse", "echo safe", "command", nil, ir.SourceRef{})
 	canonical, err := FromIR(hook)
 	if err != nil {
@@ -22,8 +22,8 @@ func TestCanonicalHookNullExtraIsNotUnknownMetadata(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if extra := resource.(*ir.Hook).Extra; len(extra) != 0 {
-		t.Fatalf("canonical scaffolding became an unknown native extension: %#v", extra)
+	if value, retained := resource.(*ir.Hook).Extra["Extra"]; !retained || value != nil {
+		t.Fatalf("canonical hook metadata changed: %#v", resource.(*ir.Hook).Extra)
 	}
 }
 

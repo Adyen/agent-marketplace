@@ -25,7 +25,12 @@ func hook(h *ir.Hook, opts compile.Options) ([]artifact.Artifact, []diag.Diagnos
 		}
 		return nil, append(prior, diagnostic(diag.CodeHookOpenCodeUnsupported, diag.SeverityError, h.Name(), h.Source, "OpenCode supports command PreToolUse hooks with exact tool matchers and positive timeouts up to 600 seconds; hook omitted")), nil
 	}
-	if (h.Type != "" && h.Type != "command") || h.Command == "" || h.Prompt != "" || len(h.Extra) > 0 {
+	unknownMetadata := len(h.Extra) > 0
+	// Canonical payloads carry this reserved null serializer field.
+	if value, present := h.Extra["Extra"]; present && value == nil && len(h.Extra) == 1 {
+		unknownMetadata = false
+	}
+	if (h.Type != "" && h.Type != "command") || h.Command == "" || h.Prompt != "" || unknownMetadata {
 		return fail()
 	}
 	overridden, matcher, ok := overriddenMatcher(h, opts.ToolOverride())
