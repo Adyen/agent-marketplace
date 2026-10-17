@@ -5,5 +5,5 @@
 - [x] Map read-only subagents on Claude, Cursor, Codex and Factory, refuse them on Gemini, Devin and OpenCode, and record the Factory `read-only` tools category.
 - [x] Keep the frozen source-revision fallback digest basis unchanged.
 - [x] Update the field matrix and changelog.
-- [ ] Run affected packages, `make validate`, `make spec-check` and `make validate-e2e`; review every changed entry adversarially.
-- [ ] `openspec archive keep-claude-controls-native-and-read-only-restrictions --yes`
+- [x] Run affected packages, `make validate`, `make spec-check` and `make validate-e2e`; review every changed entry adversarially.
+- [x] `openspec archive keep-claude-controls-native-and-read-only-restrictions --yes`
