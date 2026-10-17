@@ -446,7 +446,8 @@ const (
 	// so two outcomes need two codes; giving one code two severities would
 	// break the guarantee that a catalogued code means one thing. The shared
 	// code keeps the value-level meaning and its warning severity.
-	CodeMcpDevinInterpolationUnrepresentable = "mcp.devin.interpolation-unrepresentable" // The command, url, or an argument of the selected server form is unrepresentable; entry skipped
+	CodeMcpDevinInterpolationUnrepresentable  = "mcp.devin.interpolation-unrepresentable"  // The command, url, or an argument of the selected server form is unrepresentable; entry skipped
+	CodeMcpGeminiInterpolationUnrepresentable = "mcp.gemini.interpolation-unrepresentable" // A value contains a bare $NAME that Gemini would expand; server skipped
 
 	CodeIngestDevinLoadSkillFailed            = "ingest.devin.load-skill-failed"            // Failed to load a skill directory from the source layout
 	CodeIngestDevinLoadSubagentFailed         = "ingest.devin.load-subagent-failed"         // Failed to load a flat subagent profile from the source layout
@@ -712,6 +713,7 @@ var codeCatalog = []CodeDoc{
 	{CodeMcpDevinTransportIncomplete, SeverityError, "The MCP server declares neither a stdio command nor a remote url; the server entry was skipped", "Set a command for a stdio server or a url for a remote server"},
 	{CodeMcpDevinTransportUnsupported, SeverityError, "The MCP server requests a transport Devin does not document; the server entry was skipped rather than defaulted", "Devin documents the http and sse remote transports"},
 	{CodeMcpDevinInterpolationUnrepresentable, SeverityError, "The command, url, or an argument the MCP server's documented form cannot do without uses an interpolation style Devin has no syntax for; the server entry was skipped", "Devin documents ${env:VAR} interpolation only; move the value into an environment variable, or use a literal command, argument, or url"},
+	{CodeMcpGeminiInterpolationUnrepresentable, SeverityError, "An MCP server value contains a bare $NAME literal that Gemini would expand into an environment lookup; the server entry was skipped", "Write the value as ${NAME} if it is an environment reference, or remove the dollar sign from the literal"},
 	{CodeIngestDevinLoadSkillFailed, SeverityError, "Failed to load a skill directory from the Devin source layout", "Check the skills/<name>/SKILL.md layout and its YAML frontmatter"},
 	{CodeIngestDevinLoadSubagentFailed, SeverityError, "Failed to load a flat subagent profile from the Devin source layout", "Check the agents/<name>.md frontmatter"},
 	{CodeIngestDevinLoadHookFailed, SeverityError, "Failed to load hooks from the Devin source layout", "Check the hooks.v1.json event object or the hooks member of config.json"},

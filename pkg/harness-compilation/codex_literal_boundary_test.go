@@ -21,9 +21,9 @@ func TestCodexMCPLiteralDoesNotBecomeEnvironmentReference(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if target == HarnessWindsurf {
-			if len(result.Artifacts) != 0 || !result.HasErrors() || !diag.HasCode(result.Diagnostics, diag.CodeMcpSecurityRestrictionUnsupported) {
-				t.Fatalf("Codex literal gained interpolation: %+v", result)
+		if target == HarnessGemini {
+			if len(result.Artifacts) != 0 || !result.HasErrors() || !diag.HasCode(result.Diagnostics, diag.CodeMcpGeminiInterpolationUnrepresentable) {
+				t.Fatalf("Codex literal would gain interpolation on Gemini: %+v", result)
 			}
 			continue
 		}
@@ -33,11 +33,11 @@ func TestCodexMCPLiteralDoesNotBecomeEnvironmentReference(t *testing.T) {
 	}
 }
 
-func TestCanonicalMCPBareReferenceKeepsExistingTranslation(t *testing.T) {
+func TestCanonicalMCPBareDollarStaysLiteralOnWindsurf(t *testing.T) {
 	resource := ir.NewMcpServerWithOptions("canonical", "", nil, nil, nil, ir.SourceRef{}, ir.WithMcpURL("https://example.invalid/mcp"), ir.WithMcpHeaders(map[string]string{"X-Variable": "$SYNTHETIC_KEY"}))
 	result, err := Compile(resource, TargetWindsurf)
-	if err != nil || result.HasErrors() || len(result.Artifacts) != 1 || !strings.Contains(string(result.Artifacts[0].Bytes), "${env:SYNTHETIC_KEY}") {
-		t.Fatalf("canonical reference translation changed: %v %+v", err, result)
+	if err != nil || result.HasErrors() || len(result.Artifacts) != 1 || !strings.Contains(string(result.Artifacts[0].Bytes), `"$SYNTHETIC_KEY"`) || strings.Contains(string(result.Artifacts[0].Bytes), "${env:") {
+		t.Fatalf("canonical bare dollar literal changed: %v %+v", err, result)
 	}
 }
 
@@ -54,8 +54,8 @@ func TestCodexMCPSafeLiteralControls(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if len(result.Artifacts) != 0 || !diag.HasCode(result.Diagnostics, diag.CodeMcpSecurityRestrictionUnsupported) || !result.HasErrors() {
-			t.Fatalf("native literal field was reinterpreted: %+v", result)
+		if result.HasErrors() || len(result.Artifacts) != 1 || !strings.Contains(string(result.Artifacts[0].Bytes), `"$SYNTHETIC_KEY"`) || strings.Contains(string(result.Artifacts[0].Bytes), "${env:") {
+			t.Fatalf("native literal field was not kept literal: %+v", result)
 		}
 	}
 }
