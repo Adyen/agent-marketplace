@@ -22,7 +22,7 @@ A [lockfile](../glossary.md#lockfile) records the exact commit or Marketplace re
 | A Marketplace source in the organization file | The organization lock, or one held in memory | The organization changes the pin. `update` reports these pins as not checked and leaves them alone. |
 | A `directory` source | Never locked | Every run reads the folder as it is now. |
 
-Two details are easy to miss. First, editing which resources a group selects usually leaves a Git lock unchanged, because the lock covers every resource at the locked commit. A new selection of a resource that exists at that commit installs straight away. A selection of a resource added upstream after the lock was written is reported as `selected but not found` until the lock moves forward. Second, a plain `lock --scope organization` without `--upgrade` keeps the commit it already records. Only `--upgrade` moves it.
+Two details are easy to miss. First, editing which resources a group selects usually leaves a Git lock unchanged, because the lock covers every resource at the locked commit. A new selection of a resource that exists at that commit installs straight away. A selection of a resource added upstream after the lock was written is reported as `selected but not found` until the lock moves forward. Second, a plain `lock --scope organization` without `--upgrade` keeps the commits it already records for unchanged entries, and relocks only the entries whose source or ref changed. Only `--upgrade` moves an unchanged entry to a newer commit.
 
 The [reproducibility and lockfiles](./reproducibility-and-lockfiles.md) page explains the lock format and why the CLI never moves a lock on its own.
 
@@ -96,7 +96,7 @@ Each choice trades something away:
 
 - **Locks before freshness.** A team gets the same files on every machine and in CI, and an upstream mistake cannot break anyone until someone moves the lock on purpose. The cost is that fixes and new resources also wait for that step. The lockless organization layer makes the opposite trade: administrators push changes to every machine at once, without review or rollback through Git.
 - **Names as identity.** Any Git folder can serve as a registry, with no metadata service. The cost is that a rename breaks name-based selections and excludes. Registry authors can soften this; see [how to rename or retire a resource](../how-to/author/rename-or-retire-a-resource.md).
-- **Soft failure for ordinary selections, hard failure for required ones.** Ordinary users keep working when a registry drops something, while policy that an organization enforces cannot silently lapse. `update` refuses to move any lock past a selection that disappeared, so one stale entry cannot strand the rest of the update or leave a lock ahead of the files it describes.
+- **Soft failure for ordinary selections, hard failure for required ones.** Ordinary users keep working when a registry drops something, while policy that an organization enforces cannot silently lapse. `update` refuses to move any lock past a selection that disappeared, so one stale entry stops that update instead of leaving a lock ahead of the files it describes. `update --registry <url>` still updates the other registries.
 - **Pruning only what it can prove.** The CLI never deletes your work, at the cost of leaving edited copies behind for you to clean up.
 
 ## Related documentation
