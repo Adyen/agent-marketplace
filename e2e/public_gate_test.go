@@ -27,6 +27,7 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// spec: marketplace-api/mirrored-hook-support-installation
 func TestMarketplacePublicGate(t *testing.T) {
 	env := newEnv(t)
 	env.InitGitRepo()
@@ -37,7 +38,8 @@ func TestMarketplacePublicGate(t *testing.T) {
 		[]Subagent{{Name: "agent-one", Description: "An agent", Tools: []string{"Read"}}},
 		[]MCPServer{{Name: "server-one", Command: "echo", Args: []string{"server-one"}}},
 	)
-	files["hooks/hooks.json"] = `{"hooks":{"PreToolUse":[{"type":"command","command":"echo hook","matcher":"Read"}]}}`
+	files["hooks/hooks.json"] = `{"hooks":{"PreToolUse":[{"type":"command","command":"sh ${CLAUDE_PLUGIN_ROOT}/hooks/run.sh","matcher":"Read"}]}}`
+	files["hooks/run.sh"] = "#!/bin/sh\necho hook\n"
 	files["collections/public-bundle/COLLECTION.yaml"] = `name: public-bundle
 version: "1.0"
 description: Public gate collection
@@ -85,6 +87,7 @@ resources:
 	}
 	v4Consumer.AssertFileContains("/workspace/.factory/skills/skill-one/SKILL.md", "A hostile-safe skill")
 	v4Consumer.AssertFileContains("/workspace/.factory/mcp.json", "server-one")
+	assertPublicGateHookScript(t, v4Consumer)
 	cfg, meta, blobs := openPublicGateStores(t, cfgPath)
 	server := httptest.NewServer(mpapi.NewServer(cfg, meta, blobs).PublicHandler())
 	defer server.Close()
@@ -538,7 +541,8 @@ sources: {public: {marketplace: %q}}
 	} {
 		consumer.AssertFileExists(path)
 	}
-	assertFactoryNativeHookFile(t, consumer, "/workspace/.factory/hooks.json", "Read", "echo hook")
+	assertPublicGateHookScript(t, consumer)
+	assertPublicGateHookSupportDrift(t, consumer)
 	consumer.AssertFileAbsent("/workspace/.factory/hooks/hooks.json")
 	if !strings.Contains(consumer.ReadFile("/workspace/.factory/skills/skill-one/SKILL.md"), "hostile-safe skill") {
 		t.Fatal("Marketplace mirror install produced the wrong skill content")
@@ -591,7 +595,8 @@ resources:
 	consumer.AssertFileContains("/workspace/.factory/skills/skill-one/SKILL.md", "A hostile-safe skill")
 	consumer.AssertFileContains("/workspace/.factory/commands/command-one.md", "echo command-one")
 	consumer.AssertFileExists("/workspace/.factory/droids/agent-one.md")
-	assertFactoryNativeHookFile(t, consumer, "/workspace/.factory/hooks.json", "Read", "echo hook")
+	consumer.AssertFileContains("/workspace/.factory/hooks.json", "run.sh")
+	assertPublicGateHookScript(t, consumer)
 	consumer.AssertFileAbsent("/workspace/.factory/hooks/hooks.json")
 	consumer.AssertFileContains("/workspace/.factory/mcp.json", "server-one")
 	consumer.AssertFileAbsent("/workspace/.factory/skills/public-bundle")
@@ -610,6 +615,58 @@ resources:
 		}
 	}
 	return consumer
+}
+
+func assertPublicGateHookScript(t *testing.T, consumer *Env) {
+	t.Helper()
+	var hooks map[string][]struct {
+		Hooks []struct {
+			Command string `json:"command"`
+		} `json:"hooks"`
+	}
+	if err := json.Unmarshal([]byte(consumer.ReadFile("/workspace/.factory/hooks.json")), &hooks); err != nil {
+		t.Fatal(err)
+	}
+	if len(hooks["PreToolUse"]) != 1 || len(hooks["PreToolUse"][0].Hooks) != 1 {
+		t.Fatalf("expected the published hook: %v", hooks)
+	}
+	scripts, err := filepath.Glob(filepath.Join(consumer.workspace, ".factory", "hook-support", "*", "PreToolUse-command", "hooks", "run.sh"))
+	if err != nil || len(scripts) != 1 {
+		t.Fatalf("installed hook script: %v, %v", scripts, err)
+	}
+	if data, err := os.ReadFile(scripts[0]); err != nil || !strings.Contains(string(data), "echo hook") {
+		t.Fatalf("published script: %q, %v", data, err)
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	command := exec.CommandContext(ctx, "/bin/sh", "-c", hooks["PreToolUse"][0].Hooks[0].Command)
+	command.Dir = consumer.workspace
+	command.Env = append(os.Environ(), "FACTORY_PROJECT_DIR="+consumer.workspace)
+	if output, err := command.CombinedOutput(); err != nil || string(output) != "hook\n" {
+		t.Fatalf("published hook command failed: %q, %v", output, err)
+	}
+}
+
+// spec: marketplace-api/mirrored-hook-support-drift
+func assertPublicGateHookSupportDrift(t *testing.T, consumer *Env) {
+	t.Helper()
+	scripts, err := filepath.Glob(filepath.Join(consumer.workspace, ".factory", "hook-support", "*", "PreToolUse-command", "hooks", "run.sh"))
+	if err != nil || len(scripts) != 1 {
+		t.Fatalf("drift control lacks installed support: %v, %v", scripts, err)
+	}
+	if err := os.Remove(scripts[0]); err != nil {
+		t.Fatal(err)
+	}
+	if checked := consumer.RunAM("sync", "--check"); checked.ExitCode != 1 {
+		t.Fatalf("missing hook support passed drift check: %+v", checked)
+	}
+	if _, err := os.Lstat(scripts[0]); !os.IsNotExist(err) {
+		t.Fatalf("read-only drift check recreated support: %v", err)
+	}
+	if synced := consumer.RunAM("sync"); synced.ExitCode != 0 {
+		t.Fatalf("hook support repair failed: %+v", synced)
+	}
+	assertPublicGateHookScript(t, consumer)
 }
 
 func assertPublicGateRoutes(t *testing.T, base string, kinds []string, skillDigest string) {

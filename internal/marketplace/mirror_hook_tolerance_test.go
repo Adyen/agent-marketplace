@@ -203,13 +203,18 @@ func TestMirrorHookResolverCarriesSupportToRun(t *testing.T) {
 	script := []byte{0x00, 0x23, 0xff, 0x0a}
 	payload := []byte{0x7f, 0x00, 0x55}
 	hook := ir.NewHookWithMatcher("deploy-hook", "PreToolUse", "Bash", "${CLAUDE_PLUGIN_ROOT}/scripts/check.sh", "command", nil, ir.SourceRef{File: "hooks/hooks.json"})
+	hook.Command = "echo captured-support"
+	hook.SupportFiles = map[string]string{
+		"check.sh":    hccartifact.SupportFileDigest(hccartifact.SupportFile{Data: script, Executable: true}),
+		"payload.bin": hccartifact.SupportFileDigest(hccartifact.SupportFile{Data: payload}),
+	}
 	canonical, err := hccartifact.FromIR(hook)
 	if err != nil {
 		t.Fatalf("FromIR: %v", err)
 	}
 	canonical.Support = map[string]hccartifact.SupportFile{
-		"scripts/check.sh": {Data: script, Executable: true},
-		"data/payload.bin": {Data: payload},
+		"check.sh":    {Data: script, Executable: true},
+		"payload.bin": {Data: payload},
 	}
 	server, contentDigest := serveCanonicalMirrorHook(t, canonical, "deploy-hook")
 	resolved, errs := (&Resolver{Cache: cache}).Resolve(context.Background(), mirrorHookConfig(server.URL, "deploy-hook", contentDigest), []hcc.Target{hcc.TargetFactory}, resolver.MarketplaceResolveModeRefresh)
@@ -221,7 +226,7 @@ func TestMirrorHookResolverCarriesSupportToRun(t *testing.T) {
 		path string
 		data []byte
 		mode os.FileMode
-	}{{path: "data/payload.bin", data: payload, mode: 0o644}, {path: "scripts/check.sh", data: script, mode: 0o755}}
+	}{{path: "check.sh", data: script, mode: 0o755}, {path: "payload.bin", data: payload, mode: 0o644}}
 	if len(res.MarketplaceHookSupport) != len(wantSupport) {
 		t.Fatalf("MarketplaceHookSupport has %d records, want %d", len(res.MarketplaceHookSupport), len(wantSupport))
 	}
@@ -251,8 +256,8 @@ func TestMirrorHookResolverCarriesSupportToRun(t *testing.T) {
 		bytes []byte
 		mode  os.FileMode
 	}{
-		"scripts/check.sh": {bytes: script, mode: 0o755},
-		"data/payload.bin": {bytes: payload, mode: 0o644},
+		"check.sh":    {bytes: script, mode: 0o755},
+		"payload.bin": {bytes: payload, mode: 0o644},
 	} {
 		matches, err := filepath.Glob(filepath.Join(repoRoot, ".factory", "hook-support", "*", "deploy-hook", filepath.FromSlash(rel)))
 		if err != nil || len(matches) != 1 {
@@ -317,6 +322,10 @@ func TestMirrorHookSupportInventoryCaptured(t *testing.T) {
 	newResolver := func(support map[string]hccartifact.SupportFile) (*httptest.Server, string, resolver.ResolvedArtifact) {
 		t.Helper()
 		hook := ir.NewHookWithMatcher("deploy-hook", "PreToolUse", "Bash", "./run.sh", "command", nil, ir.SourceRef{File: "hooks/hooks.json"})
+		hook.SupportFiles = make(map[string]string, len(support))
+		for name, file := range support {
+			hook.SupportFiles[name] = hccartifact.SupportFileDigest(file)
+		}
 		canonical, err := hccartifact.FromIR(hook)
 		if err != nil {
 			t.Fatalf("FromIR: %v", err)

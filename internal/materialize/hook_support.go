@@ -17,6 +17,7 @@ import (
 	"golang.org/x/sys/unix"
 
 	"github.com/Adyen/agent-marketplace/internal/cache"
+	"github.com/Adyen/agent-marketplace/internal/catalog"
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/dependencytxn"
 	"github.com/Adyen/agent-marketplace/internal/fsboundary"
@@ -78,6 +79,23 @@ func prepareHookSupport(work []skillTarget, repoRoots ...string) (map[int]hookSu
 		}
 		plan := hookSupportPlan{}
 		var files []artifact.Artifact
+		if w.skill.IsMarketplace {
+			hook := w.skill.Resource.(*ir.Hook)
+			support := make(map[string]artifact.SupportFile, len(w.skill.MarketplaceHookSupport))
+			for _, file := range w.skill.MarketplaceHookSupport {
+				support[file.Path] = artifact.SupportFile{Data: file.Bytes, Executable: file.Mode.Perm()&0o111 != 0}
+			}
+			if w.skill.MarketplaceAcquisition == config.MarketplaceAcquisitionMirror {
+				plan.err = catalog.ValidateMirroredHookSupport(hook, support)
+			} else if len(hook.SupportFiles) > 0 || len(support) > 0 {
+				plan.err = fmt.Errorf("%w: index-only hook declares mirrored support", catalog.ErrHookSupportIntegrity)
+			}
+			if plan.err != nil {
+				plan.supportAdmissionRefused = true
+				plans[i] = plan
+				continue
+			}
+		}
 		if w.skill.IsMarketplace && w.skill.MarketplaceAcquisition == config.MarketplaceAcquisitionMirror && w.skill.MarketplaceHookSupport != nil {
 			sourceKey, err := hookSupportSourceKeyForScope(w, repoRoot)
 			if err != nil {

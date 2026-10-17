@@ -11,6 +11,41 @@ import (
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 )
 
+// spec: marketplace-api/canonical-null-extra-is-not-a-native-extension
+func TestCanonicalHookMetadataProjectionCompatibility(t *testing.T) {
+	hook := ir.NewHook("guard", "PreToolUse", "echo safe", "command", nil, ir.SourceRef{})
+	canonical, err := FromIR(hook)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resource, err := DecodeResource("hook", canonical.Payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if value, retained := resource.(*ir.Hook).Extra["Extra"]; !retained || value != nil {
+		t.Fatalf("canonical hook metadata changed: %#v", resource.(*ir.Hook).Extra)
+	}
+}
+
+// spec: marketplace-api/non-hook-canonical-metadata-compatibility
+func TestCanonicalNonHookNullExtraCompatibility(t *testing.T) {
+	for _, kind := range []string{"skill", "command", "subagent", "mcpserver"} {
+		t.Run(kind, func(t *testing.T) {
+			resource, err := DecodeResource(kind, []byte(`{"name":"resource","Extra":null}`))
+			if err != nil {
+				t.Fatal(err)
+			}
+			extra, err := extractExtra(resource)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if value, retained := extra["Extra"]; !retained || value != nil {
+				t.Fatalf("non-hook canonical metadata changed: %#v", extra)
+			}
+		})
+	}
+}
+
 func TestDecodeResourceRoundTrip(t *testing.T) {
 	skillExtra := map[string]any{"category": "review", "tags": []any{"security", "performance"}}
 	commandExtra := map[string]any{"shell": "bash", "nested": map[string]any{"key": "value"}}

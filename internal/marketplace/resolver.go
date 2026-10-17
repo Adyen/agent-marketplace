@@ -32,6 +32,12 @@ import (
 var ErrArtifactIdentityMismatch = errors.New("marketplace artifact identity mismatch")
 var ErrArtifactSourcePath = errors.New("marketplace artifact source path is invalid")
 
+var (
+	ErrHookSupportMissing     = catalog.ErrHookSupportMissing
+	ErrHookSupportIntegrity   = catalog.ErrHookSupportIntegrity
+	ErrHookSupportUnsupported = catalog.ErrHookSupportUnsupported
+)
+
 // PinError reports that one Marketplace pin failed to resolve. It carries the
 // pin's configuration identity — endpoint, registry, kind, and name — so
 // read-only surfaces can attribute the failure to the exact Marketplace pin
@@ -653,7 +659,13 @@ func (r *Resolver) resolvePinWithArtifactPolicy(ctx context.Context, client *Cli
 	}
 	stagedDir, err := stageMirrorResource(cache, archiveDigest, resource, ca)
 	if err != nil {
-		cache.invalidateArchiveVerified(form, archiveDigest)
+		if !errors.Is(err, ErrHookSupportMissing) && !errors.Is(err, ErrHookSupportUnsupported) {
+			cache.invalidateArchiveVerified(form, archiveDigest)
+		} else if !verified {
+			if markErr := cache.markArchiveVerified(form, archiveDigest); markErr != nil {
+				return resolver.ResolvedArtifact{}, hccartifact.CanonicalArtifact{}, markErr
+			}
+		}
 		return resolver.ResolvedArtifact{}, hccartifact.CanonicalArtifact{}, err
 	}
 	artifact.Resource = resource
@@ -693,6 +705,9 @@ func mirrorHookSupportArtifacts(support map[string]hccartifact.SupportFile) []hc
 }
 
 func stageMirrorResource(cache *Cache, digest string, resource ir.Resource, ca hccartifact.CanonicalArtifact) (string, error) {
+	if hook, ok := resource.(*ir.Hook); ok {
+		return "", catalog.ValidateMirroredHookSupport(hook, ca.Support)
+	}
 	skill, ok := resource.(*ir.Skill)
 	if !ok {
 		return "", nil
@@ -925,6 +940,9 @@ func (r *Resolver) resolveIndexOnlyPin(ctx context.Context, client *Client, cach
 		return resolver.ResolvedArtifact{}, hccartifact.CanonicalArtifact{}, err
 	}
 	var supportFiles []string
+	if hook, ok := resource.(*ir.Hook); ok && len(hook.SupportFiles) > 0 {
+		return resolver.ResolvedArtifact{}, hccartifact.CanonicalArtifact{}, fmt.Errorf("%w: index-only hooks cannot declare mirrored support", ErrHookSupportIntegrity)
+	}
 	if skill, ok := resource.(*ir.Skill); ok {
 		supportFiles = skill.SupportFiles
 	}

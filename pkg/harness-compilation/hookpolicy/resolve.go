@@ -432,6 +432,10 @@ func rewriteCommand(h *ir.Hook, srcCat, dstCat catalog, event string, scope Scop
 	pos := 0
 	scanPos := 0
 	var quote byte
+	type shellFrame struct {
+		quote, end byte
+	}
+	var substitutions []shellFrame
 	for _, m := range matches {
 		for scanPos < m[0] {
 			ch := command[scanPos]
@@ -441,6 +445,36 @@ func rewriteCommand(h *ir.Hook, srcCat, dstCat catalog, event string, scope Scop
 					scanPos++
 				}
 				continue
+			}
+			// Command substitutions have their own quoting, even inside
+			// double quotes. Restore the enclosing context when they end.
+			if quote != '\'' {
+				if ch == '`' && len(substitutions) > 0 && substitutions[len(substitutions)-1].end == '`' {
+					quote = substitutions[len(substitutions)-1].quote
+					substitutions = substitutions[:len(substitutions)-1]
+					scanPos++
+					continue
+				}
+				if ch == '`' || ch == '$' && scanPos+1 < m[0] && command[scanPos+1] == '(' {
+					end := byte(')')
+					if ch == '`' {
+						end = '`'
+					} else {
+						scanPos++
+					}
+					substitutions = append(substitutions, shellFrame{quote: quote, end: end})
+					quote = 0
+					scanPos++
+					continue
+				}
+				if quote == 0 && ch == '(' {
+					substitutions = append(substitutions, shellFrame{end: ')'})
+				} else if quote == 0 && ch == ')' && len(substitutions) > 0 && substitutions[len(substitutions)-1].end == ')' {
+					quote = substitutions[len(substitutions)-1].quote
+					substitutions = substitutions[:len(substitutions)-1]
+					scanPos++
+					continue
+				}
 			}
 			if ch == '\'' || ch == '"' {
 				switch quote {

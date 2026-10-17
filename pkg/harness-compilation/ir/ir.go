@@ -329,17 +329,20 @@ func (s *Subagent) SetName(name string) { s.name = name }
 
 // Hook represents a compilable hook resource.
 type Hook struct {
-	name       string         // Unique kebab-case name
-	Event      string         // Triggering event (e.g. "PreToolUse", "UserPromptSubmit")
-	Matcher    string         // Optional tool matcher for tool-specific events
-	Command    string         // Shell command to run
-	Prompt     string         // Prompt payload for prompt hooks
-	Timeout    *int           // Optional timeout in seconds; nil means absent
-	Type       string         // Hook type (e.g. "command" or "prompt")
-	HookSource string         `json:"HookSource,omitempty"` // Harness whose native event/matcher/env values the hook carries; empty means canonical
-	Ext        extpkg.Bag     // Optional target-specific sidecars
-	Extra      map[string]any // Preserved unknown fields
-	Source     SourceRef      // Origin in the source bundle
+	// SupportFiles binds mirrored adjacent files to their bytes and executable
+	// modes. Omit absent declarations to preserve historical canonical payloads.
+	SupportFiles map[string]string `json:",omitempty"`
+	name         string            // Unique kebab-case name
+	Event        string            // Triggering event (e.g. "PreToolUse", "UserPromptSubmit")
+	Matcher      string            // Optional tool matcher for tool-specific events
+	Command      string            // Shell command to run
+	Prompt       string            // Prompt payload for prompt hooks
+	Timeout      *int              // Optional timeout in seconds; nil means absent
+	Type         string            // Hook type (e.g. "command" or "prompt")
+	HookSource   string            `json:"HookSource,omitempty"` // Harness whose native event/matcher/env values the hook carries; empty means canonical
+	Ext          extpkg.Bag        // Optional target-specific sidecars
+	Extra        map[string]any    // Preserved unknown fields
+	Source       SourceRef         // Origin in the source bundle
 
 	// GroupExtraKeys names the Extra keys the ingester promoted from the
 	// enclosing hook group rather than from the handler object itself (for

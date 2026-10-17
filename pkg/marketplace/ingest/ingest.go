@@ -121,6 +121,7 @@ func BuildRegistryRevision(ctx context.Context, cfg config.Config, mpID store.Ma
 	var collectionEntries []catalog.Entry
 	collectionPaths := make(map[string]string)
 	seen := make(map[string]string)
+	unavailableHooks := make(map[string]bool)
 	skippedResources := false
 
 	for _, root := range registry.Roots {
@@ -192,13 +193,50 @@ func BuildRegistryRevision(ctx context.Context, cfg config.Config, mpID store.Ma
 				continue
 			}
 
+			if hook, ok := entry.Resource.(*hccir.Hook); ok && registry.Acquisition == store.AcquisitionMirror {
+				names, err := catalog.HookMaterializationSupportFiles(entry.Path, entry.SourceHarness)
+				if err != nil {
+					return rev, fmt.Errorf("discover hook support: %w", err)
+				}
+				clone := *hook
+				clone.SupportFiles = make(map[string]string, len(names))
+				for _, name := range names {
+					clone.SupportFiles[name] = ""
+				}
+				entry.Resource = &clone
+			}
 			files, modes, err := fileSetForResource(dir, entry)
 			if err != nil {
+				if _, hook := entry.Resource.(*hccir.Hook); hook && errors.Is(err, ErrHookSupportUnsafe) {
+					skippedResources = true
+					unavailableHooks[key] = true
+					rev.Diagnostics = append(rev.Diagnostics, RootDiagnostic{Root: root.Path, Code: "marketplace.ingest.hook-support-unavailable", Message: "Skipped hook with unsafe or unreadable support; other resources remain publishable"})
+					slog.Warn("skipped hook with unavailable support", "code", "marketplace.ingest.hook-support-unavailable", "resource", key)
+					continue
+				}
 				return rev, fmt.Errorf("support files for %s %q: %w", kind, entry.Name, err)
 			}
 			var archiveSupport map[string]hccartifact.SupportFile
 			if registry.Acquisition == store.AcquisitionMirror {
 				archiveSupport = archiveSupportFiles(files, modes)
+				if hook, ok := entry.Resource.(*hccir.Hook); ok {
+					bundled := make(map[string]hccartifact.SupportFile, len(archiveSupport))
+					hook.SupportFiles = make(map[string]string, len(archiveSupport))
+					for name, support := range archiveSupport {
+						relative := "hooks/" + name
+						bundled[relative] = support
+						hook.SupportFiles[relative] = hccartifact.SupportFileDigest(support)
+					}
+					archiveSupport = bundled
+					missing, unsupported, err := catalog.HookSupportReferenceStatus(hook.Command, hook.SupportFiles)
+					if err != nil {
+						return rev, fmt.Errorf("read hook support policy: %w", err)
+					}
+					if missing || unsupported {
+						rev.Diagnostics = append(rev.Diagnostics, RootDiagnostic{Root: root.Path, Code: "marketplace.ingest.hook-support-unavailable", Message: "Hook assets cannot be packaged by the adjacent-file policy; keep the Git source"})
+						slog.Warn("hook assets unavailable for mirrored publication", "code", "marketplace.ingest.hook-support-unavailable", "resource", key)
+					}
+				}
 			}
 			r, err := buildResource(ctx, registry, root, entry, origin, commit, policy, limits, files, archiveSupport, nil)
 			if err != nil {
@@ -324,6 +362,9 @@ func BuildRegistryRevision(ctx context.Context, cfg config.Config, mpID store.Ma
 			key := kind + "/" + m.Name
 			rp, ok := resourceResults[key]
 			if !ok {
+				if unavailableHooks[key] {
+					return artifact.BuildResult{}, nil, fmt.Errorf("%w: collection depends on an unavailable hook", ErrHookSupportUnsafe)
+				}
 				return artifact.BuildResult{}, nil, fmt.Errorf("collection %q member %s %q not found in registry", name, kind, m.Name)
 			}
 			directResults = append(directResults, rp.result)
@@ -393,7 +434,7 @@ func BuildRegistryRevision(ctx context.Context, cfg config.Config, mpID store.Ma
 		}
 		r, _, err := resolveCollection(entry.Name, make(map[string]bool))
 		if err != nil {
-			if strings.Contains(err.Error(), "rejected") {
+			if errors.Is(err, ErrHookSupportUnsafe) || strings.Contains(err.Error(), "rejected") {
 				slog.Warn("skipping collection without publishable leaves", "registry", registry.ID, "collection", entry.Name, "err", err)
 				continue
 			}
@@ -880,6 +921,14 @@ func fileSetForResource(dir string, entry catalog.Entry) (analyze.FileSet, map[s
 		}
 		seen[normalized] = struct{}{}
 		filePath := filepath.Join(resRoot, filepath.FromSlash(normalized))
+		if _, hook := entry.Resource.(*hccir.Hook); hook {
+			data, executable, err := readHookSupportFile(dir, filepath.ToSlash(filepath.Join(relRoot, normalized)))
+			if err != nil {
+				return nil, nil, fmt.Errorf("read hook support file %q: %w", rel, err)
+			}
+			files[normalized], modes[normalized] = data, executable
+			continue
+		}
 		if err := rejectSymlinkPath(resRoot, filePath); err != nil {
 			return nil, nil, fmt.Errorf("support file %q: %w", rel, err)
 		}
@@ -922,7 +971,12 @@ func resourceInfo(r hccir.Resource) (extra map[string]any, supportFiles []string
 	case *hccir.Rule:
 		return v.Extra, nil, nil
 	case *hccir.Hook:
-		return v.Extra, nil, nil
+		names := make([]string, 0, len(v.SupportFiles))
+		for name := range v.SupportFiles {
+			names = append(names, name)
+		}
+		sort.Strings(names)
+		return v.Extra, names, nil
 	case *hccir.McpServer:
 		return v.Extra, nil, nil
 	case *hccir.Collection:
