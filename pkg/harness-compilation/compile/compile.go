@@ -408,7 +408,7 @@ func codexNativeLossDiagnostics(resource ir.Resource, target Target) []diag.Diag
 		if ext.MCP != nil {
 			placement = ext.MCP.ExperimentalEnvironment
 		}
-		if ext.BearerTokenEnvVar != "" || len(ext.EnvHTTPHeaders) > 0 || ext.MCP != nil && len(ext.MCP.RemoteEnvVars) > 0 || placement != "" && placement != "local" || codexMCPLiteralsContainInterpolation(ext.MCP, target) || !codexMCPMatchesCanonical(typed, ext.MCP) {
+		if ext.BearerTokenEnvVar != "" || len(ext.EnvHTTPHeaders) > 0 || ext.MCP != nil && len(ext.MCP.RemoteEnvVars) > 0 || placement != "" && placement != "local" || codexMCPLiteralsContainInterpolation(ext.MCP) || !codexMCPMatchesCanonical(typed, ext.MCP) {
 			return diagnostic(diag.CodeMcpSecurityRestrictionUnsupported, diag.SeverityError, "Target cannot preserve native Codex MCP authority or literal semantics; server suppressed", typed.Source)
 		}
 		if placement == "local" {
@@ -418,19 +418,12 @@ func codexNativeLossDiagnostics(resource ir.Resource, target Target) []diag.Diag
 	return nil
 }
 
-func codexMCPLiteralsContainInterpolation(native *extpkg.CodexMCP, target Target) bool {
+func codexMCPLiteralsContainInterpolation(native *extpkg.CodexMCP) bool {
 	if native == nil {
 		return false
 	}
 	reinterpreted := func(value string) bool {
-		if strings.Contains(value, "${") {
-			return true
-		}
-		if target != TargetWindsurf {
-			return false
-		}
-		_, shellReference := mapping.WindsurfShellEnvName(value)
-		return shellReference
+		return strings.Contains(value, "${")
 	}
 	if reinterpreted(native.Command) || reinterpreted(native.CWD) || reinterpreted(native.URL) {
 		return true

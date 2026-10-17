@@ -1,5 +1,7 @@
 package mapping
 
+import "regexp"
+
 // mcpEntry describes how a source interpolation pattern is transformed for a
 // given target harness.
 type mcpEntry struct {
@@ -105,15 +107,18 @@ func McpInterpolation(source string, target Target) string {
 	return pattern
 }
 
-func WindsurfShellEnvName(value string) (string, bool) {
-	if len(value) < 2 || value[0] != '$' {
-		return "", false
-	}
-	for i := 1; i < len(value); i++ {
-		c := value[i]
-		if c != '_' && (c < 'A' || c > 'Z') && (c < '0' || c > '9') {
-			return "", false
-		}
-	}
-	return value[1:], true
+var bareEnvReference = regexp.MustCompile(`\$\w+`)
+
+// ContainsBareEnvReference reports whether value contains a bare $NAME, which
+// Gemini expands as an environment reference and canonical values treat as
+// literal text.
+func ContainsBareEnvReference(value string) bool {
+	return bareEnvReference.MatchString(value)
+}
+
+// BraceBareEnvReferences rewrites every bare $NAME in value to ${NAME}.
+func BraceBareEnvReferences(value string) string {
+	return bareEnvReference.ReplaceAllStringFunc(value, func(match string) string {
+		return "${" + match[1:] + "}"
+	})
 }

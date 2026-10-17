@@ -799,11 +799,13 @@ func LoadMcpServers(src fs.FS, path string) ([]*ir.McpServer, []diag.Diagnostic,
 		if err := json.Unmarshal(doc.McpServers[name], &entry); err != nil {
 			return nil, nil, fmt.Errorf("ingest/gemini: parse mcp server %q: %w", name, err)
 		}
-		options := []ir.McpServerOption{ir.WithMcpURL(entry.URL), ir.WithMcpTransport(entry.Transport), ir.WithMcpHeaders(normalizeStringMap(entry.Headers)), ir.WithMcpOAuth(entry.OAuthClientID, entry.OAuthClientSecret, entry.OAuthResource)}
+		options := []ir.McpServerOption{ir.WithMcpURL(normalizeMcpString(entry.URL)), ir.WithMcpTransport(entry.Transport), ir.WithMcpHeaders(normalizeMcpStringMap(entry.Headers)), ir.WithMcpOAuth(normalizeMcpString(entry.OAuthClientID), normalizeMcpString(entry.OAuthClientSecret), normalizeMcpString(entry.OAuthResource))}
 		if entry.DisabledSet {
 			options = append(options, ir.WithMcpDisabled(entry.Disabled))
 		}
-		servers = append(servers, ir.NewMcpServerWithOptions(name, normalizeEnvTokens(entry.Command), normalizeStringSlice(entry.Args), normalizeStringMap(entry.Env), entry.Extra, ir.SourceRef{File: path, Line: 0}, options...))
+		extra, _ := normalizeMcpValue(entry.Extra).(map[string]any)
+		args, _ := normalizeMcpValue(normalizeStringSlice(entry.Args)).([]string)
+		servers = append(servers, ir.NewMcpServerWithOptions(name, normalizeMcpString(entry.Command), args, normalizeMcpStringMap(entry.Env), extra, ir.SourceRef{File: path, Line: 0}, options...))
 	}
 
 	return servers, nil, nil
@@ -1215,6 +1217,56 @@ func extraFields(fm map[string]any, known []string) map[string]any {
 
 func normalizeEnvTokens(value string) string {
 	return strings.ReplaceAll(value, geminiExtensionToken, claudePluginRootToken)
+}
+
+// normalizeMcpString canonicalizes a Gemini settings or extension MCP string:
+// Gemini expands a bare $NAME, which canonical values write as ${NAME}.
+func normalizeMcpString(value string) string {
+	return mapping.BraceBareEnvReferences(normalizeEnvTokens(value))
+}
+
+func normalizeMcpStringMap(values map[string]string) map[string]string {
+	if len(values) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(values))
+	for key, value := range values {
+		out[key] = normalizeMcpString(value)
+	}
+	return out
+}
+
+func normalizeMcpValue(value any) any {
+	switch typed := value.(type) {
+	case string:
+		return mapping.BraceBareEnvReferences(typed)
+	case []string:
+		if typed == nil {
+			return typed
+		}
+		out := make([]string, len(typed))
+		for i, item := range typed {
+			out[i] = mapping.BraceBareEnvReferences(item)
+		}
+		return out
+	case []any:
+		out := make([]any, len(typed))
+		for i, item := range typed {
+			out[i] = normalizeMcpValue(item)
+		}
+		return out
+	case map[string]any:
+		if typed == nil {
+			return typed
+		}
+		out := make(map[string]any, len(typed))
+		for key, item := range typed {
+			out[key] = normalizeMcpValue(item)
+		}
+		return out
+	default:
+		return value
+	}
 }
 
 func normalizeStringSlice(values []string) []string {
