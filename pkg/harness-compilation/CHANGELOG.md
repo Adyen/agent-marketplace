@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Artifact paths that differ only in letter case collide
+
+Two resources whose names differ only in letter case, such as Codex agents `Foo` and `foo`, compiled to output paths that name one file on case-insensitive filesystems (F70, #431). There the staged write failed and the whole target was left uninstalled with an opaque `file exists` error. Bundle conflict detection now compares paths case-insensitively: both resources are suppressed with `bundle.conflict.duplicate-artifact-path` naming both paths, and the rest of the target installs. The rule holds on every host, so case-sensitive systems refuse the same pair and shared repositories stay portable.
+
 ### Newly encoded resource payloads carry no zeroed Extra member
 
 The canonical encoder wrote the IR's zeroed `Extra` field as `"Extra": null`, and decoding kept it as an extension field, so every skill, command, subagent and hook installed from a Marketplace payload compiled with a spurious `Extra: null` field (#724). The encoder now omits that member, and an extension field named exactly `Extra` with a null value; an authored `Extra` extension with a value is still encoded. Decoding is unchanged, so payloads already published keep their bytes, digests and output (the Marketplace API requirement for non-hook canonical metadata), and resources published from now on install without the field on every client version.
