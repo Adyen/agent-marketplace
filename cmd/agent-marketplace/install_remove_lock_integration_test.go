@@ -650,6 +650,7 @@ skills:
 	})
 }
 
+// spec: resource-installation/bulk-selectors-install-into-each-writable-layer
 func TestConfiguredInstallV4UsesCanonicalEditor(t *testing.T) {
 	if isolateCommandTest(t) {
 		return
@@ -704,19 +705,21 @@ func TestConfiguredInstallV4UsesCanonicalEditor(t *testing.T) {
 			},
 		},
 	} {
-		t.Run(tc.name, func(t *testing.T) {
-			home := t.TempDir()
-			t.Setenv("HOME", home)
-			t.Setenv("XDG_CACHE_HOME", filepath.Join(home, "cache"))
-			t.Setenv("XDG_STATE_HOME", filepath.Join(home, "state"))
-			tmp := t.TempDir()
-			t.Setenv("TMPDIR", tmp)
+		for _, scope := range []string{"repo", "user", "local"} {
+			t.Run(tc.name+"/"+scope, func(t *testing.T) {
+				home := t.TempDir()
+				t.Setenv("HOME", home)
+				t.Setenv("CODEX_HOME", filepath.Join(home, ".codex"))
+				t.Setenv("XDG_CACHE_HOME", filepath.Join(home, "cache"))
+				t.Setenv("XDG_STATE_HOME", filepath.Join(home, "state"))
+				tmp := t.TempDir()
+				t.Setenv("TMPDIR", tmp)
 
-			originPath, working := createBareRepoWithWorkingClone(t, "configured-v4.git")
-			writeSkill(t, working, "review", "Review", []string{"platform"})
-			writeSubagent(t, working, "gatekeeper", "Gatekeeper", []string{"Read"})
-			writeFile(t, filepath.Join(working, "commands", "audit.md"), "---\nname: audit\ndescription: Audit\ncommand: echo audit\nmetadata:\n  tags:\n    - platform\n---\n\n# audit\n")
-			writeCollection(t, working, "platform-bundle", `
+				originPath, working := createBareRepoWithWorkingClone(t, "configured-v4.git")
+				writeSkill(t, working, "review", "Review", []string{"platform"})
+				writeSubagent(t, working, "gatekeeper", "Gatekeeper", []string{"Read"})
+				writeFile(t, filepath.Join(working, "commands", "audit.md"), "---\nname: audit\ndescription: Audit\ncommand: echo audit\nmetadata:\n  tags:\n    - platform\n---\n\n# audit\n")
+				writeCollection(t, working, "platform-bundle", `
 apiVersion: agent-marketplace/v1
 kind: Collection
 name: platform-bundle
@@ -724,68 +727,117 @@ version: 1.0.0
 skills:
   - name: review
 `)
-			commitAndPushAll(t, working, "seed inventory")
-			origin := "file://" + originPath
+				commitAndPushAll(t, working, "seed inventory")
+				origin := "file://" + originPath
 
-			repoRoot := filepath.Join(t.TempDir(), "repo")
-			configPath := filepath.Join(repoRoot, ".agents", "config.yaml")
-			writeConfig(t, configPath, "apiVersion: agent-marketplace/v4\nharnesses: [factory]\nsources:\n  hosted: {git: "+origin+", ref: main}\n")
-			withWorkingDir(t, repoRoot)
-
-			output, err := executeCommand(tc.args(origin)...)
-			if err != nil {
-				t.Fatalf("install failed: %v\n%s", err, output)
-			}
-			raw, err := os.ReadFile(configPath)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if strings.Contains(string(raw), "registries:") {
-				t.Fatalf("v4 config gained legacy registries:\n%s", raw)
-			}
-			cfg, err := config.LoadV4ConfigFromPath(configPath)
-			if err != nil {
-				t.Fatalf("load v4 config: %v", err)
-			}
-			if len(cfg.Sources) != 1 || cfg.Sources["hosted"].Kind != config.V4SourceGit {
-				t.Fatalf("sources = %#v", cfg.Sources)
-			}
-			if len(cfg.Groups) != 1 {
-				t.Fatalf("expected one resource group: %#v", cfg.Groups)
-			}
-			var group config.V4ResourceGroup
-			for _, g := range cfg.Groups {
-				group = g
-			}
-			var locators []string
-			for _, req := range group.Include {
-				locators = append(locators, req.Locator)
-			}
-			slices.Sort(locators)
-			want := slices.Clone(tc.wantLocators)
-			slices.Sort(want)
-			if !slices.Equal(locators, want) {
-				t.Fatalf("group locators = %v, want %v\n%s", locators, want, raw)
-			}
-			gotTags := slices.Clone(group.Tags)
-			slices.Sort(gotTags)
-			wantTags := slices.Clone(tc.wantTags)
-			slices.Sort(wantTags)
-			if !slices.Equal(gotTags, wantTags) {
-				t.Fatalf("group tags = %v, want %v\n%s", gotTags, wantTags, raw)
-			}
-			if group.All != nil && *group.All {
-				t.Fatalf("configured install wrote all:true:\n%s", raw)
-			}
-			lock := readExactManifestLock(t, filepath.Join(repoRoot, ".agents", "lock.yaml"))
-			if lock.APIVersion != lockfile.APIVersionV2 || lock.Scope != lockfile.ScopeRepo {
-				t.Fatalf("lock = %v %v", lock.APIVersion, lock.Scope)
-			}
-			for _, rel := range tc.materialized {
-				assertFileExists(t, filepath.Join(repoRoot, rel))
-			}
-			assertNoStagingResidue(t, tmp)
-		})
+				repoRoot := filepath.Join(t.TempDir(), "repo")
+				repoConfig := filepath.Join(repoRoot, ".agents", "config.yaml")
+				writeConfig(t, repoConfig, "apiVersion: agent-marketplace/v4\nharnesses: [factory]\nsources:\n  hosted: {git: "+origin+", ref: main}\n")
+				withWorkingDir(t, repoRoot)
+				if out, err := executeCommand("lock", "--scope", "repo"); err != nil {
+					t.Fatalf("seed source lock: %v\n%s", err, out)
+				}
+				repoLock := filepath.Join(repoRoot, ".agents", "lock.yaml")
+				beforeConfig, configInfo := statSnapshot(t, repoConfig)
+				beforeLock, lockInfo := statSnapshot(t, repoLock)
+				configPath, outputRoot, lockPath := repoConfig, repoRoot, repoLock
+				switch scope {
+				case "user":
+					outputRoot = home
+					configPath = filepath.Join(home, ".agents", "config.yaml")
+					lockPath = filepath.Join(home, ".agents", "lock.yaml")
+				case "local":
+					configPath = filepath.Join(repoRoot, ".agents", "config.local.yaml")
+					lockPath = filepath.Join(repoRoot, ".agents", "lock.local.yaml")
+				}
+				if scope != "repo" {
+					if _, err := os.Stat(configPath); !os.IsNotExist(err) {
+						t.Fatalf("target root must start absent: %v", err)
+					}
+				}
+				output, err := executeCommand(append(tc.args(origin), "--scope", scope)...)
+				if err != nil {
+					t.Fatalf("install failed: %v\n%s", err, output)
+				}
+				label := map[string]string{"repo": "in this repo", "user": "user-wide", "local": "locally"}[scope]
+				if !strings.Contains(output, label) {
+					t.Fatalf("output %q does not identify scope %q", output, label)
+				}
+				raw, err := os.ReadFile(configPath)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if strings.Contains(string(raw), "registries:") {
+					t.Fatalf("v4 config gained legacy registries:\n%s", raw)
+				}
+				cfg, err := config.LoadV4ConfigFromPath(configPath)
+				if err != nil {
+					t.Fatalf("load v4 config: %v", err)
+				}
+				if len(cfg.Sources) != 1 {
+					t.Fatalf("sources = %#v", cfg.Sources)
+				}
+				for _, source := range cfg.Sources {
+					if source.Kind != config.V4SourceGit || source.Git != origin || source.Ref != "main" {
+						t.Fatalf("source = %#v; want %s at main", source, origin)
+					}
+				}
+				if scope == "repo" && cfg.Sources["hosted"].Kind != config.V4SourceGit {
+					t.Fatal("install renamed the existing source")
+				}
+				if len(cfg.Groups) != 1 {
+					t.Fatalf("expected one resource group: %#v", cfg.Groups)
+				}
+				var group config.V4ResourceGroup
+				for _, g := range cfg.Groups {
+					group = g
+				}
+				var locators []string
+				for _, req := range group.Include {
+					locators = append(locators, req.Locator)
+				}
+				slices.Sort(locators)
+				want := slices.Clone(tc.wantLocators)
+				slices.Sort(want)
+				if !slices.Equal(locators, want) {
+					t.Fatalf("group locators = %v, want %v\n%s", locators, want, raw)
+				}
+				gotTags := slices.Clone(group.Tags)
+				slices.Sort(gotTags)
+				wantTags := slices.Clone(tc.wantTags)
+				slices.Sort(wantTags)
+				if !slices.Equal(gotTags, wantTags) {
+					t.Fatalf("group tags = %v, want %v\n%s", gotTags, wantTags, raw)
+				}
+				if group.All != nil && *group.All {
+					t.Fatalf("configured install wrote all:true:\n%s", raw)
+				}
+				lock := readExactManifestLock(t, lockPath)
+				if lock.APIVersion != lockfile.APIVersionV2 || lock.Scope != lockfile.Scope(scope) || len(lock.Registries) != 1 {
+					t.Fatalf("lock = %v %v", lock.APIVersion, lock.Scope)
+				}
+				sourceLock := readExactManifestLock(t, repoLock)
+				if lock.Registries[0].Commit != sourceLock.Registries[0].Commit {
+					t.Fatal("target lock lost the source's exact revision")
+				}
+				for _, rel := range tc.materialized {
+					assertFileExists(t, filepath.Join(outputRoot, rel))
+					if scope == "user" {
+						if _, err := os.Lstat(filepath.Join(repoRoot, rel)); !os.IsNotExist(err) {
+							t.Fatalf("user install wrote repository output %s: %v", rel, err)
+						}
+					}
+				}
+				if scope != "repo" {
+					assertStatUnchanged(t, "scoped install", repoConfig, beforeConfig, configInfo)
+					assertStatUnchanged(t, "scoped install", repoLock, beforeLock, lockInfo)
+				}
+				if out, err := executeCommand("sync", "--check"); err != nil {
+					t.Fatalf("check after install: %v\n%s", err, out)
+				}
+				assertNoStagingResidue(t, tmp)
+			})
+		}
 	}
 }
 

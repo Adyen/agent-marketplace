@@ -131,7 +131,7 @@ func TestConfiguredInstallSelectorsAndScopesKeepPreparedPins(t *testing.T) {
 	if isolateCommandTest(t) {
 		return
 	}
-	for _, mode := range []string{"all", "tag", "collection", "repo to user", "user to local", "organization"} {
+	for _, mode := range []string{"all", "tag", "all user", "all local", "tag user", "tag local", "collection", "repo to user", "user to local", "organization"} {
 		t.Run(mode, func(t *testing.T) {
 			f := newInstallBindingFixture(t)
 			opts := f.options()
@@ -139,9 +139,9 @@ func TestConfiguredInstallSelectorsAndScopesKeepPreparedPins(t *testing.T) {
 			sourcePath := config.ProjectConfigPath(f.repo)
 			outputRoot, lockName := f.repo, "lock.yaml"
 			switch mode {
-			case "all":
+			case "all", "all user", "all local":
 				opts.Args, opts.InstallAll = nil, true
-			case "tag":
+			case "tag", "tag user", "tag local":
 				writeSkill(t, f.working, "review", "Content A", []string{"chosen"})
 				commitAndPushAll(t, f.working, "tagged A")
 				opts.Args, opts.Tag = nil, "chosen"
@@ -157,6 +157,12 @@ func TestConfiguredInstallSelectorsAndScopesKeepPreparedPins(t *testing.T) {
 			case "organization":
 				sourcePath = filepath.Join(f.base, "org", "config.yaml")
 				config.SetTestOrganizationConfigPath(t, sourcePath)
+			}
+			switch mode {
+			case "all user", "tag user":
+				opts.Scope, outputRoot = pipeline.ScopeUser, f.home
+			case "all local", "tag local":
+				opts.Scope, lockName = pipeline.ScopeLocal, "lock.local.yaml"
 			}
 			commit, err := exec.Command("git", "-C", f.working, "rev-parse", "HEAD").Output()
 			if err != nil {
