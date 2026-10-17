@@ -236,6 +236,7 @@ func TestBuildInventorySnapshotRepresentsEffectiveResolveResult(t *testing.T) {
 	}
 }
 
+// spec: telemetry/fingerprints-and-observation-order-are-stable
 func TestBuildInventorySnapshotDeterministicAcrossOrdering(t *testing.T) {
 	first := inventoryResolveResult()
 	second := inventoryResolveResult()
@@ -295,6 +296,7 @@ func TestBuildInventorySnapshotFingerprintChangesForRepresentedFields(t *testing
 	}
 }
 
+// spec: telemetry/inventory-sanitizes-registry-identity
 func TestBuildInventorySnapshotRedactsLocationsAndNormalizesGitIdentity(t *testing.T) {
 	result := ResolveResult{
 		MergedCfg: &config.Config{Registries: []config.RegistryEntry{
@@ -434,6 +436,7 @@ func TestBuildInventorySnapshotClassifiesOmissionsWithoutPartialData(t *testing.
 	}
 }
 
+// spec: telemetry/resolution-and-export-failures-do-not-become-inventory-success
 func TestBuildInventorySnapshotSuppressesHardErrors(t *testing.T) {
 	result := inventoryResolveResult()
 	result.Warnings = []error{errors.New("soft warning")}

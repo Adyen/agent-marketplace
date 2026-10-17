@@ -307,7 +307,7 @@ func mergeMaterializationModes(base, override map[string]MaterializationMode) ma
 // Default user-level logging settings. These are the single source of truth
 // for the logging runtime (internal/logging) when no explicit logging config
 // is provided. The generated global skeleton deliberately omits a logging
-// block; users opt in by adding one (see docs/logging.md).
+// block; users opt in by adding one (see site/docs/reference/logging.md).
 const (
 	DefaultLogEnabled    = true
 	DefaultLogLevel      = "info"
