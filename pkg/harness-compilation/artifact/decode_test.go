@@ -14,17 +14,33 @@ import (
 // spec: marketplace-api/canonical-null-extra-is-not-a-native-extension
 func TestCanonicalHookMetadataProjectionCompatibility(t *testing.T) {
 	hook := ir.NewHook("guard", "PreToolUse", "echo safe", "command", nil, ir.SourceRef{})
-	canonical, err := FromIR(hook)
-	if err != nil {
-		t.Fatal(err)
-	}
-	resource, err := DecodeResource("hook", canonical.Payload)
+	resource, err := DecodeResource("hook", earlierNullExtraPayload(t, hook))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if value, retained := resource.(*ir.Hook).Extra["Extra"]; !retained || value != nil {
 		t.Fatalf("canonical hook metadata changed: %#v", resource.(*ir.Hook).Extra)
 	}
+}
+
+// earlierNullExtraPayload returns r's payload as encoders before #724 wrote it,
+// with the serializer's null Extra member.
+func earlierNullExtraPayload(t *testing.T, r ir.Resource) []byte {
+	t.Helper()
+	canonical, err := FromIR(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fields map[string]any
+	if err := json.Unmarshal(canonical.Payload, &fields); err != nil {
+		t.Fatal(err)
+	}
+	fields["Extra"] = nil
+	payload, err := json.Marshal(fields)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return payload
 }
 
 // spec: marketplace-api/non-hook-canonical-metadata-compatibility
