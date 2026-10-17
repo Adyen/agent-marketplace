@@ -47,20 +47,23 @@ func BenchmarkMergeInstallBindingsInMemory(b *testing.B) {
 }
 
 func BenchmarkProjectLockedRoots(b *testing.B) {
-	roots := make([]lockfile.GitRoot, 0, 32)
-	entries := make([]config.RegistryEntry, 0, 64)
-	for i := range 32 {
-		path := fmt.Sprintf("skills/team-%d", i)
-		roots = append(roots, lockfile.GitRoot{Path: path, SourceHarness: "factory"})
-		entries = append(entries, config.RegistryEntry{Path: path}, config.RegistryEntry{Path: path, SourceHarness: "factory"})
-	}
-	b.ReportAllocs()
-	b.ResetTimer()
-	for b.Loop() {
-		projected, ok := projectLockedRoots(roots, entries)
-		if !ok || len(projected) != 32 {
-			b.Fatal("matching roots rejected")
-		}
+	for _, count := range []int{1, 32, 256, 2048} {
+		b.Run(fmt.Sprintf("roots=%d", count), func(b *testing.B) {
+			roots := make([]lockfile.GitRoot, 0, count)
+			entries := make([]config.RegistryEntry, 0, 2*count)
+			for i := range count {
+				path := fmt.Sprintf("skills/team-%d", i)
+				roots = append(roots, lockfile.GitRoot{Path: path, SourceHarness: "factory"})
+				entries = append(entries, config.RegistryEntry{Path: path}, config.RegistryEntry{Path: path, SourceHarness: "factory"})
+			}
+			b.ReportAllocs()
+			for b.Loop() {
+				projected, ok := projectLockedRoots(roots, entries)
+				if !ok || len(projected) != count {
+					b.Fatal("matching roots rejected")
+				}
+			}
+		})
 	}
 }
 

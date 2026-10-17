@@ -1,0 +1,26 @@
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/cmd/agent-marketplace
+cpu: Apple M4 Max
+BenchmarkProjectLockedRoots/roots=1-16         	17650152	       176.9 ns/op	     160 B/op	       2 allocs/op
+BenchmarkProjectLockedRoots/roots=1-16         	15924838	       138.3 ns/op	     160 B/op	       2 allocs/op
+BenchmarkProjectLockedRoots/roots=1-16         	19759624	       148.3 ns/op	     160 B/op	       2 allocs/op
+BenchmarkProjectLockedRoots/roots=1-16         	13804484	       157.6 ns/op	     160 B/op	       2 allocs/op
+BenchmarkProjectLockedRoots/roots=1-16         	17525794	       138.4 ns/op	     160 B/op	       2 allocs/op
+BenchmarkProjectLockedRoots/roots=32-16        	  444445	      6737 ns/op	    5376 B/op	       2 allocs/op
+BenchmarkProjectLockedRoots/roots=32-16        	  417345	      6085 ns/op	    5376 B/op	       2 allocs/op
+BenchmarkProjectLockedRoots/roots=32-16        	  486345	      5648 ns/op	    5376 B/op	       2 allocs/op
+BenchmarkProjectLockedRoots/roots=32-16        	  436497	      5529 ns/op	    5376 B/op	       2 allocs/op
+BenchmarkProjectLockedRoots/roots=32-16        	  481153	      4900 ns/op	    5376 B/op	       2 allocs/op
+BenchmarkProjectLockedRoots/roots=256-16       	   23515	    103247 ns/op	   43264 B/op	       3 allocs/op
+BenchmarkProjectLockedRoots/roots=256-16       	   22598	    104631 ns/op	   43264 B/op	       3 allocs/op
+BenchmarkProjectLockedRoots/roots=256-16       	   23053	    104773 ns/op	   43264 B/op	       3 allocs/op
+BenchmarkProjectLockedRoots/roots=256-16       	   23397	    102167 ns/op	   43264 B/op	       3 allocs/op
+BenchmarkProjectLockedRoots/roots=256-16       	   23890	     99016 ns/op	   43264 B/op	       3 allocs/op
+BenchmarkProjectLockedRoots/roots=2048-16      	     466	   5153812 ns/op	  313344 B/op	       3 allocs/op
+BenchmarkProjectLockedRoots/roots=2048-16      	     465	   5243757 ns/op	  313344 B/op	       3 allocs/op
+BenchmarkProjectLockedRoots/roots=2048-16      	     463	   5203317 ns/op	  313344 B/op	       3 allocs/op
+BenchmarkProjectLockedRoots/roots=2048-16      	     459	   5166568 ns/op	  313344 B/op	       3 allocs/op
+BenchmarkProjectLockedRoots/roots=2048-16      	     446	   5258821 ns/op	  313344 B/op	       3 allocs/op
+PASS
+ok  	github.com/Adyen/agent-marketplace/cmd/agent-marketplace	50.810s

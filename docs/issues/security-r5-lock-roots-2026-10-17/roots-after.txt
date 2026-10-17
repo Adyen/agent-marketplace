@@ -1,0 +1,66 @@
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/internal/lockfile
+cpu: Apple M4 Max
+BenchmarkProjectGitRoots/explicit/1-16         	37214686	        64.35 ns/op	      96 B/op	       1 allocs/op
+BenchmarkProjectGitRoots/explicit/1-16         	37814604	        64.06 ns/op	      96 B/op	       1 allocs/op
+BenchmarkProjectGitRoots/explicit/1-16         	37532425	        63.76 ns/op	      96 B/op	       1 allocs/op
+BenchmarkProjectGitRoots/explicit/1-16         	38745688	        63.71 ns/op	      96 B/op	       1 allocs/op
+BenchmarkProjectGitRoots/explicit/1-16         	38088813	        63.99 ns/op	      96 B/op	       1 allocs/op
+BenchmarkProjectGitRoots/explicit/32-16        	  855969	      2821 ns/op	    3072 B/op	       1 allocs/op
+BenchmarkProjectGitRoots/explicit/32-16        	  847989	      2814 ns/op	    3072 B/op	       1 allocs/op
+BenchmarkProjectGitRoots/explicit/32-16        	  856280	      2861 ns/op	    3072 B/op	       1 allocs/op
+BenchmarkProjectGitRoots/explicit/32-16        	  856966	      2818 ns/op	    3072 B/op	       1 allocs/op
+BenchmarkProjectGitRoots/explicit/32-16        	  873177	      2795 ns/op	    3072 B/op	       1 allocs/op
+BenchmarkProjectGitRoots/explicit/256-16       	   79022	     30044 ns/op	   65200 B/op	      10 allocs/op
+BenchmarkProjectGitRoots/explicit/256-16       	   79635	     30250 ns/op	   65200 B/op	      10 allocs/op
+BenchmarkProjectGitRoots/explicit/256-16       	   78972	     30320 ns/op	   65200 B/op	      10 allocs/op
+BenchmarkProjectGitRoots/explicit/256-16       	   79183	     30103 ns/op	   65200 B/op	      10 allocs/op
+BenchmarkProjectGitRoots/explicit/256-16       	   79042	     30848 ns/op	   65200 B/op	      10 allocs/op
+BenchmarkProjectGitRoots/explicit/2048-16      	    9442	    261206 ns/op	  543136 B/op	      22 allocs/op
+BenchmarkProjectGitRoots/explicit/2048-16      	    9216	    263951 ns/op	  543136 B/op	      22 allocs/op
+BenchmarkProjectGitRoots/explicit/2048-16      	    9164	    262546 ns/op	  543136 B/op	      22 allocs/op
+BenchmarkProjectGitRoots/explicit/2048-16      	    9259	    259260 ns/op	  543136 B/op	      22 allocs/op
+BenchmarkProjectGitRoots/explicit/2048-16      	    9397	    254984 ns/op	  543136 B/op	      22 allocs/op
+BenchmarkProjectGitRoots/implicit/1-16         	39349287	        62.64 ns/op	      96 B/op	       1 allocs/op
+BenchmarkProjectGitRoots/implicit/1-16         	38399180	        61.98 ns/op	      96 B/op	       1 allocs/op
+BenchmarkProjectGitRoots/implicit/1-16         	39377883	        61.70 ns/op	      96 B/op	       1 allocs/op
+BenchmarkProjectGitRoots/implicit/1-16         	38766811	        62.52 ns/op	      96 B/op	       1 allocs/op
+BenchmarkProjectGitRoots/implicit/1-16         	38282548	        61.84 ns/op	      96 B/op	       1 allocs/op
+BenchmarkProjectGitRoots/implicit/32-16        	  642348	      3784 ns/op	    3072 B/op	       1 allocs/op
+BenchmarkProjectGitRoots/implicit/32-16        	  633964	      3742 ns/op	    3072 B/op	       1 allocs/op
+BenchmarkProjectGitRoots/implicit/32-16        	  613989	      3763 ns/op	    3072 B/op	       1 allocs/op
+BenchmarkProjectGitRoots/implicit/32-16        	  646138	      3776 ns/op	    3072 B/op	       1 allocs/op
+BenchmarkProjectGitRoots/implicit/32-16        	  621573	      3778 ns/op	    3072 B/op	       1 allocs/op
+BenchmarkProjectGitRoots/implicit/256-16       	   84835	     27902 ns/op	   65200 B/op	      10 allocs/op
+BenchmarkProjectGitRoots/implicit/256-16       	   86730	     27678 ns/op	   65200 B/op	      10 allocs/op
+BenchmarkProjectGitRoots/implicit/256-16       	   85890	     28582 ns/op	   65200 B/op	      10 allocs/op
+BenchmarkProjectGitRoots/implicit/256-16       	   86586	     27853 ns/op	   65200 B/op	      10 allocs/op
+BenchmarkProjectGitRoots/implicit/256-16       	   86523	     27399 ns/op	   65200 B/op	      10 allocs/op
+BenchmarkProjectGitRoots/implicit/2048-16      	   10000	    224872 ns/op	  543136 B/op	      22 allocs/op
+BenchmarkProjectGitRoots/implicit/2048-16      	   10000	    225509 ns/op	  543136 B/op	      22 allocs/op
+BenchmarkProjectGitRoots/implicit/2048-16      	   10000	    230946 ns/op	  543136 B/op	      22 allocs/op
+BenchmarkProjectGitRoots/implicit/2048-16      	   10000	    228546 ns/op	  543136 B/op	      22 allocs/op
+BenchmarkProjectGitRoots/implicit/2048-16      	   10000	    231517 ns/op	  543136 B/op	      22 allocs/op
+BenchmarkProjectGitRoots/paired/1-16           	15061551	       159.1 ns/op	     176 B/op	       1 allocs/op
+BenchmarkProjectGitRoots/paired/1-16           	15157994	       159.2 ns/op	     176 B/op	       1 allocs/op
+BenchmarkProjectGitRoots/paired/1-16           	15168732	       158.2 ns/op	     176 B/op	       1 allocs/op
+BenchmarkProjectGitRoots/paired/1-16           	15336658	       158.5 ns/op	     176 B/op	       1 allocs/op
+BenchmarkProjectGitRoots/paired/1-16           	14682427	       159.1 ns/op	     176 B/op	       1 allocs/op
+BenchmarkProjectGitRoots/paired/32-16          	  261272	      9379 ns/op	   16624 B/op	      10 allocs/op
+BenchmarkProjectGitRoots/paired/32-16          	  257640	      9350 ns/op	   16624 B/op	      10 allocs/op
+BenchmarkProjectGitRoots/paired/32-16          	  258771	      9369 ns/op	   16624 B/op	      10 allocs/op
+BenchmarkProjectGitRoots/paired/32-16          	  258038	      9317 ns/op	   16624 B/op	      10 allocs/op
+BenchmarkProjectGitRoots/paired/32-16          	  255171	      9385 ns/op	   16624 B/op	      10 allocs/op
+BenchmarkProjectGitRoots/paired/256-16         	   33342	     72778 ns/op	  139952 B/op	      10 allocs/op
+BenchmarkProjectGitRoots/paired/256-16         	   33284	     71883 ns/op	  139952 B/op	      10 allocs/op
+BenchmarkProjectGitRoots/paired/256-16         	   33492	     71582 ns/op	  139952 B/op	      10 allocs/op
+BenchmarkProjectGitRoots/paired/256-16         	   32599	     72931 ns/op	  139952 B/op	      10 allocs/op
+BenchmarkProjectGitRoots/paired/256-16         	   33495	     71518 ns/op	  139952 B/op	      10 allocs/op
+BenchmarkProjectGitRoots/paired/2048-16        	    3933	    595682 ns/op	 1086176 B/op	      38 allocs/op
+BenchmarkProjectGitRoots/paired/2048-16        	    4004	    602600 ns/op	 1086176 B/op	      38 allocs/op
+BenchmarkProjectGitRoots/paired/2048-16        	    3963	    601762 ns/op	 1086176 B/op	      38 allocs/op
+BenchmarkProjectGitRoots/paired/2048-16        	    3978	    603714 ns/op	 1086177 B/op	      38 allocs/op
+BenchmarkProjectGitRoots/paired/2048-16        	    3976	    600404 ns/op	 1086177 B/op	      38 allocs/op
+PASS
+ok  	github.com/Adyen/agent-marketplace/internal/lockfile	143.914s
