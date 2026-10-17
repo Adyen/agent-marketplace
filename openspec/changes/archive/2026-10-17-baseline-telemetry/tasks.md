@@ -7,4 +7,4 @@
 ## 2. Verification
 
 - [x] 2.1 Run affected tests and strict spec validation.
-- [ ] 2.2 Run `openspec archive baseline-telemetry --yes`.
+- [x] 2.2 Run `openspec archive baseline-telemetry --yes`.

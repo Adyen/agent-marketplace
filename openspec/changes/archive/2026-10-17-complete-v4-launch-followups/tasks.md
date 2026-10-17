@@ -9,4 +9,4 @@
 
 - [x] 2.1 Run focused tests, `make validate`, `make spec-check`, and `make validate-e2e`.
 - [x] 2.2 Complete OCR delegation and adversarial review of the final diff.
-- [ ] 2.3 Run `openspec archive complete-v4-launch-followups --yes`.
+- [x] 2.3 Run `openspec archive complete-v4-launch-followups --yes`.
