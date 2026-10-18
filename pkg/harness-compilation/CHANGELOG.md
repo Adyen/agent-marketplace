@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Codex read-only agents map to read-only modes; Unicode case folding in collisions
+
+Follow-ups to review findings on #723 and #732:
+- A Codex agent with `sandbox_mode = "read-only"` was refused on every other target by the Codex sidecar guard, so it never reached the read-only mappings. It now becomes Claude `permissionMode: plan`, Cursor `readonly: true` or Factory `tools: read-only`. Gemini, Devin and Windsurf still refuse it with `subagent.security-restriction-unsupported` and OpenCode with `subagent.opencode.restriction-unsupported`; other Codex sandbox modes are still refused everywhere except Codex.
+- Artifact-path collision detection compares paths with Unicode simple case folding (`ir.CaseFoldKey`), so paths that differ only by, for example, Greek `σ` and final `ς` collide like ASCII case variants. `Materialize` applies the same key to the artifacts it is given and refuses case-folded duplicate paths before writing.
+
 ### Artifact paths that differ only in letter case collide
 
 Two resources whose names differ only in letter case, such as Codex agents `Foo` and `foo`, compiled to output paths that name one file on case-insensitive filesystems (F70, #431). There the staged write failed and the whole target was left uninstalled with an opaque `file exists` error. Bundle conflict detection now compares paths case-insensitively, and `sync` refuses selected skills, commands, subagents or rules of one kind whose names differ only in letter case before any write, including across sources: they are suppressed with `bundle.conflict.duplicate-artifact-path` naming both, and the rest of the target installs. The rule holds on every host, so case-sensitive systems refuse the same pair and shared repositories stay portable. This is a breaking change on case-sensitive hosts, which previously emitted and installed both resources, and ships in the v5.0.0 major release. Migration: rename one of the resources so the names differ by more than letter case.

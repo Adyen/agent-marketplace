@@ -406,7 +406,7 @@ func resolveArtifactPathConflicts(outputs []resourceOutput, t Target) ([]Artifac
 			if a.Fragment {
 				continue
 			}
-			key := strings.ToLower(a.Path)
+			key := ir.CaseFoldKey(a.Path)
 			current := producer{index: i, kind: output.kind, name: output.name, path: a.Path}
 			previous, exists := owners[key]
 			if !exists {
@@ -1138,13 +1138,17 @@ func coalesceDuplicateArtifacts(artifacts []Artifact) ([]Artifact, error) {
 	seen := make(map[string]int, len(artifacts))
 	out := make([]Artifact, 0, len(artifacts))
 	for _, a := range artifacts {
-		if idx, ok := seen[a.Path]; ok {
+		key := ir.CaseFoldKey(a.Path)
+		if idx, ok := seen[key]; ok {
+			if out[idx].Path != a.Path {
+				return nil, fmt.Errorf("artifact paths %q and %q differ only in letter case and name the same file on case-insensitive filesystems", out[idx].Path, a.Path)
+			}
 			if !sameArtifact(out[idx], a) {
 				return nil, fmt.Errorf("duplicate artifact path with different contents: %s", a.Path)
 			}
 			continue
 		}
-		seen[a.Path] = len(out)
+		seen[key] = len(out)
 		out = append(out, a)
 	}
 	return out, nil

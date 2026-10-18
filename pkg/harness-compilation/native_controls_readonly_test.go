@@ -8,6 +8,7 @@ import (
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir/ext"
 )
 
 const nativeControlFrontmatter = "permissionMode: bypassPermissions\nmcpServers:\n  inert:\n    command: inert-server\nhooks:\n  PreToolUse:\n    - matcher: Bash\n      hooks:\n        - type: command\n          command: inert-hook\n"
@@ -157,6 +158,16 @@ func TestReadOnlySubagentsMapToDocumentedModes(t *testing.T) {
 	if out := readOnlySubagentFrontmatter(t, result, "planner"); result.HasErrors() || !strings.Contains(out, "readonly: true") {
 		t.Fatalf("Claude plan mode not kept on Cursor:\n%s %+v", out, result.Diagnostics)
 	}
+	codex := fstest.MapFS{".codex/agents/sandboxed.toml": {Data: []byte("name = \"sandboxed\"\ndescription = \"Sandboxed\"\ndeveloper_instructions = \"Inspect.\"\nsandbox_mode = \"read-only\"\n")}}
+	for target, want := range map[Target]string{TargetClaude: "permissionMode: plan", TargetCursor: "readonly: true", TargetFactory: "tools: read-only"} {
+		result, err := Convert(codex, HarnessCodex, target)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if out := readOnlySubagentFrontmatter(t, result, "sandboxed"); result.HasErrors() || !strings.Contains(out, want) {
+			t.Fatalf("Codex read-only sandbox not kept on %s, want %q:\n%s %+v", target, want, out, result.Diagnostics)
+		}
+	}
 	factory := fstest.MapFS{".factory/droids/auditor.md": {Data: []byte("---\nname: auditor\ndescription: Auditor\ntools: read-only\n---\nAudit.\n")}}
 	for target, want := range map[Target]string{TargetFactory: "tools: read-only", TargetClaude: "permissionMode: plan"} {
 		result, err := Convert(factory, HarnessFactory, target)
@@ -205,6 +216,22 @@ func TestTargetsWithoutReadOnlyModeRefuse(t *testing.T) {
 	}
 	if len(refused.Artifacts) != 0 || !diag.HasCode(refused.Diagnostics, diag.CodeSubagentSecurityRestrictionUnsupported) {
 		t.Fatalf("untyped read-only sandbox mode was not honored: %+v", refused)
+	}
+	codexSandboxed := ir.NewSubagent("codexed", "Codexed", "Review.\n", "", nil, "", nil, "", nil, ir.SourceRef{})
+	codexSandboxed.Ext.Codex = &ext.Codex{SandboxMode: "read-only"}
+	for target, code := range map[Target]string{
+		TargetGemini:   diag.CodeSubagentSecurityRestrictionUnsupported,
+		TargetDevin:    diag.CodeSubagentSecurityRestrictionUnsupported,
+		TargetWindsurf: diag.CodeSubagentSecurityRestrictionUnsupported,
+		TargetOpenCode: diag.CodeSubagentOpenCodeRestrictionUnsupported,
+	} {
+		refusedCodex, err := Compile(codexSandboxed, target)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(refusedCodex.Artifacts) != 0 || !diag.HasCode(refusedCodex.Diagnostics, code) {
+			t.Fatalf("%s accepted a Codex read-only subagent it cannot keep read-only, want %s: %+v", target, code, refusedCodex)
+		}
 	}
 	unrestricted, err := Compile(ir.NewSubagent("sandboxed", "Sandboxed", "Review.\n", "", nil, "", nil, "", nil, ir.SourceRef{}), TargetGemini)
 	if err != nil {

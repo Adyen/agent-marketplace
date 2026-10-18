@@ -362,6 +362,17 @@ func Compile(r ir.Resource, t Target, opts ...Option) (*Result, error) {
 	}, nil
 }
 
+// compilesReadOnlySubagents reports whether target's built-in compiler applies
+// SubagentReadOnly, mapping or refusing a read-only subagent itself.
+func compilesReadOnlySubagents(target Target) bool {
+	switch target {
+	case TargetClaude, TargetCursor, TargetFactory, TargetGemini, TargetDevin, TargetWindsurf, TargetOpenCode:
+		return true
+	default:
+		return false
+	}
+}
+
 // codexNativeLossDiagnostics prevents target-specific Codex sidecars from
 // disappearing or being reinterpreted when a native resource leaves Codex, and
 // from contradicting the canonical MCP server when compiling to Codex.
@@ -380,7 +391,7 @@ func codexNativeLossDiagnostics(resource ir.Resource, target Target) []diag.Diag
 		if typed.Ext.Codex == nil {
 			return nil
 		}
-		if typed.Ext.Codex.SandboxMode != "" {
+		if mode := typed.Ext.Codex.SandboxMode; mode != "" && (mode != "read-only" || !compilesReadOnlySubagents(target)) {
 			return diagnostic(diag.CodeSubagentSecurityRestrictionUnsupported, diag.SeverityError, "Target cannot preserve the native Codex sandbox restriction; subagent suppressed", typed.Source)
 		}
 		return nil
