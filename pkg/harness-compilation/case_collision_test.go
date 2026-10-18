@@ -1,6 +1,7 @@
 package harnesscompile
 
 import (
+	"os"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -93,5 +94,13 @@ func TestUnicodeCaseFoldedPathsCollide(t *testing.T) {
 	}
 	if len(diagnostics) != 1 || diagnostics[0].Code != diag.CodeBundleConflictDuplicateArtifactPath || !strings.Contains(diagnostics[0].Message, "σ") || !strings.Contains(diagnostics[0].Message, "ς") {
 		t.Fatalf("missing conflict naming both paths: %+v", diagnostics)
+	}
+	out := t.TempDir()
+	direct := &Result{Artifacts: []Artifact{{Path: "shared/notes-σ.md", Bytes: []byte("first")}, {Path: "shared/notes-ς.md", Bytes: []byte("first")}}}
+	if _, err := Materialize(direct, out); err == nil || !strings.Contains(err.Error(), "differ only in letter case") {
+		t.Fatalf("Materialize accepted case-folded duplicate paths: %v", err)
+	}
+	if entries, _ := os.ReadDir(out); len(entries) != 0 {
+		t.Fatalf("Materialize wrote output before refusing: %v", entries)
 	}
 }

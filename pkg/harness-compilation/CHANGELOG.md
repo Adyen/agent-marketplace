@@ -6,7 +6,7 @@
 
 Follow-ups to review findings on #723 and #732:
 - A Codex agent with `sandbox_mode = "read-only"` was refused on every other target by the Codex sidecar guard, so it never reached the read-only mappings. It now becomes Claude `permissionMode: plan`, Cursor `readonly: true` or Factory `tools: read-only`. Gemini, Devin and Windsurf still refuse it with `subagent.security-restriction-unsupported` and OpenCode with `subagent.opencode.restriction-unsupported`; other Codex sandbox modes are still refused everywhere except Codex.
-- Artifact-path collision detection compares paths with Unicode simple case folding (`ir.CaseFoldKey`), so paths that differ only by, for example, Greek `σ` and final `ς` collide like ASCII case variants.
+- Artifact-path collision detection compares paths with Unicode simple case folding (`ir.CaseFoldKey`), so paths that differ only by, for example, Greek `σ` and final `ς` collide like ASCII case variants. `Materialize` applies the same key to the artifacts it is given and refuses case-folded duplicate paths before writing.
 
 ### Artifact paths that differ only in letter case collide
 
