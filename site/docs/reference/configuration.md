@@ -89,7 +89,7 @@ Explicitly included fragments under a validated v4 root may omit `apiVersion` or
 
 ## Configuration layers
 
-Layers merge from lowest to highest precedence: organization, user, repository, repository personal. Top-level target harnesses are chosen project first: a non-empty repository `harnesses` list wins, then a non-empty user list, then the organization list. A resource group's `harnesses` list narrows that set and cannot add a harness that is not already selected.
+Layers merge from lowest to highest precedence: organization, user, repository, repository personal. Top-level target harnesses are chosen per selecting layer. Resources the repository selects use a non-empty repository `harnesses` list, then the user list, then the organization list. Resources the user or organization selects use the user list, then the organization list, so a repository cannot narrow what they install in your home directory. A resource group's `harnesses` list narrows its scope's set and cannot add a harness that is not already selected.
 
 Each layer allows only some fields. For example, `telemetry`, `backup`, and `logging` belong to machine-level files, and the personal-local file cannot declare `harnesses` or allowlists. The [configuration layers reference](configuration-layers.md) has the full table.
 
@@ -129,7 +129,7 @@ Unknown top-level fields are rejected.
 |---|---|---:|---|
 | `include` | path or list of paths | no | Local YAML fragments merged into this layer. Relative paths resolve from the declaring file. |
 | `apiVersion` | string | yes for root files | Must equal `agent-marketplace/v4`. |
-| `harnesses` | list of strings | no | Target harnesses. When omitted or empty in the repository file, targets come from the user file, then the organization file. |
+| `harnesses` | list of strings | no | Target harnesses. A repository list applies only to resources the repository selects. When omitted or empty in the repository file, targets come from the user file, then the organization file. |
 | `sources` | mapping | no | Named Git, directory, or Marketplace source declarations. |
 | `resources` | mapping | no | Resource groups, each keyed by a source name. |
 | `allowed_marketplaces` | list of regular expressions | no | Restricts hosted Marketplace endpoint URLs. |
@@ -159,7 +159,7 @@ Supported targets are:
 
 Target names are lowercase. Unknown targets fail with `v4.harness`.
 
-A non-empty repository `harnesses` list takes precedence over the user and organization lists. If the repository file omits the field or sets an empty list, the user list is used; if that is also missing or empty, the organization list is used. Commands that only read the catalog, such as `list`, work without any target list and print a warning. `sync` needs a target list and exits with an error when none is configured.
+For resources the repository selects, a non-empty repository `harnesses` list takes precedence over the user and organization lists. If the repository file omits the field or sets an empty list, the user list is used; if that is also missing or empty, the organization list is used. Resources the user or organization selects use the user list, then the organization list, and fall back to the repository list only when neither declares one. See [target harnesses](./configuration-layers.md#target-harnesses). Commands that only read the catalog, such as `list`, work without any target list and print a warning. `sync` needs a target list and exits with an error when none is configured.
 
 Output paths for each harness are listed in the [harnesses and output paths reference](harnesses-and-output-paths.md).
 

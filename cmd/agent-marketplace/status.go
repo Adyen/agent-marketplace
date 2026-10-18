@@ -88,6 +88,8 @@ type statusView struct {
 	dryRunReport        *materialize.Report
 	targetHarnesses     []string
 	targetSource        config.Source
+	machineTargets      []string
+	machineTargetSource config.Source
 	harnessTargets      []harnessTargetRow
 	lockMetadata        []pipeline.LockMetadata
 	marketplaceStatuses []marketplace.PinStatus
@@ -174,6 +176,7 @@ func runStatus(ctx context.Context, out io.Writer, now time.Time) error {
 				resolver.WithResources(result.CatalogLoad.ResourceCatalogs),
 				resolver.WithMalformed(catalog.MalformedByKey(result.CatalogLoad.Catalogs)),
 				resolver.WithTargetHarnesses(result.TargetHarnesses),
+				resolver.WithMachineTargetHarnesses(result.MachineTargetHarnesses),
 			}
 			// The second resolve keeps the Marketplace view consistent with the
 			// primary one: when the pipeline resolved Marketplace artifacts
@@ -251,12 +254,9 @@ func runStatus(ctx context.Context, out io.Writer, now time.Time) error {
 	}
 	errorRows := buildErrorRows(inspectionErrors, secondResolveRealErrs)
 
-	targetHarnesses := make([]string, len(result.TargetHarnesses))
-	for i, t := range result.TargetHarnesses {
-		targetHarnesses[i] = string(t)
-	}
-	slices.Sort(targetHarnesses)
-	harnessTargets, err := buildHarnessTargetRows(repoRoot, targetHarnesses)
+	targetHarnesses := sortedTargetNames(result.TargetHarnesses)
+	machineTargets := sortedTargetNames(result.MachineTargetHarnesses)
+	harnessTargets, err := buildHarnessTargetRows(repoRoot, append(slices.Clone(targetHarnesses), machineTargets...))
 	if err != nil {
 		return fmt.Errorf("resolve harness target roots: %w", err)
 	}
@@ -281,6 +281,8 @@ func runStatus(ctx context.Context, out io.Writer, now time.Time) error {
 		dryRunReport:        dryRunReport,
 		targetHarnesses:     targetHarnesses,
 		targetSource:        result.TargetHarnessSource,
+		machineTargets:      machineTargets,
+		machineTargetSource: result.MachineTargetHarnessSource,
 		harnessTargets:      harnessTargets,
 		lockMetadata:        result.LockMetadata,
 		marketplaceStatuses: result.MarketplaceStatuses,
@@ -680,6 +682,26 @@ type harnessTargetRow struct {
 	MachineRoot  string
 }
 
+func sortedTargetNames(targets []hcc.Target) []string {
+	names := make([]string, len(targets))
+	for i, t := range targets {
+		names[i] = string(t)
+	}
+	slices.Sort(names)
+	return names
+}
+
+func displayTargetList(targets []string) string {
+	if len(targets) == 0 {
+		return "none configured"
+	}
+	display := make([]string, len(targets))
+	for i, target := range targets {
+		display[i] = targetDisplayName(target)
+	}
+	return strings.Join(display, ", ")
+}
+
 // buildHarnessTargetRows renders the effective harness list from the
 // authoritative target registry. An unknown harness name is shown rather than
 // hidden: status exists to explain misconfiguration.
@@ -799,15 +821,16 @@ func writeStatusSections(out io.Writer, view statusView) error {
 		}
 	}
 
-	displayTargets := make([]string, len(targetHarnesses))
-	for i, target := range targetHarnesses {
-		displayTargets[i] = targetDisplayName(target)
+	targetRows := [][]string{{displayTargetList(targetHarnesses), targetSource.String()}}
+	// Output selected by user and organization layers can use a different set
+	// than the repository's; show both only when they differ.
+	if len(view.machineTargets) > 0 && !slices.Equal(view.machineTargets, targetHarnesses) {
+		targetRows = [][]string{
+			{displayTargetList(targetHarnesses), targetSource.String() + " (repository selections)"},
+			{displayTargetList(view.machineTargets), view.machineTargetSource.String() + " (user and organization selections)"},
+		}
 	}
-	targetHarnessStr := strings.Join(displayTargets, ", ")
-	if targetHarnessStr == "" {
-		targetHarnessStr = "none configured"
-	}
-	if err := writeStatusTable(out, "TARGET HARNESS SET", []string{"TARGET HARNESSES", "SOURCE"}, [][]string{{targetHarnessStr, targetSource.String()}}); err != nil {
+	if err := writeStatusTable(out, "TARGET HARNESS SET", []string{"TARGET HARNESSES", "SOURCE"}, targetRows); err != nil {
 		return err
 	}
 	if len(targetHarnesses) == 0 {

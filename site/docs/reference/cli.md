@@ -349,7 +349,7 @@ The report prints these sections in this order. Sections other than `TARGET HARN
 | Section | Contents |
 |---|---|
 | `MANAGED INSTALLATION` | Present when an organization config manages the installation: its path and validation result. |
-| `TARGET HARNESS SET` | Effective harness list and the configuration layer that supplied it. |
+| `TARGET HARNESS SET` | Effective harness list and the configuration layer that supplied it. When resources selected by the user or organization use a different list than the repository's, a second row shows that list and its layer. |
 | `EXACT REGISTRY LOCKS` | Source layer, canonical Git origin, declared ref, exact commit, and whether the cached snapshot is `available` or `missing`. |
 | `SYNCED RESOURCES` | Resource kind, name, harness, source, collection origin (`VIA`), target path, registry, ref, and cache state. |
 | `MARKETPLACE PINS` | Endpoint identity, registry, resource coordinate, installed name, exact revision and digest, acquisition mode, source layer, revocation and current state, cache state, and update availability. |
