@@ -380,7 +380,7 @@ func resolveOrgOwnedArtifactsMode(ctx context.Context, repoRoot string, mode cat
 		releaseExactLease()
 		return nil, nil, errors.Join(unresolved...)
 	}
-	if len(res.TargetHarnesses) == 0 {
+	if len(res.MachineTargetHarnesses) == 0 {
 		releaseExactLease()
 		slog.Info("deinit: target harness set is empty; no organization-owned artifacts to preserve")
 		return nil, func() {}, nil

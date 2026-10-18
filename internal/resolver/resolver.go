@@ -113,6 +113,7 @@ type resolveOptions struct {
 	resources                   map[string]map[string]ir.Resource
 	malformed                   map[string][]skill.MalformedSkill
 	targetHarnesses             []hcc.Target
+	machineTargetHarnesses      []hcc.Target
 	marketplaceResolver         MarketplaceResolver
 	marketplaceMode             MarketplaceResolveMode
 	marketplaceRevocationPolicy MarketplaceRevocationPolicy
@@ -232,6 +233,17 @@ func WithTargetHarnesses(targets []hcc.Target) ResolveOption {
 		if len(targets) > 0 {
 			opts.targetHarnesses = make([]hcc.Target, len(targets))
 			copy(opts.targetHarnesses, targets)
+		}
+	}
+}
+
+// WithMachineTargetHarnesses sets the target harness set for machine-scope
+// (user and organization) artifacts. When unset, machine-scope artifacts use
+// the WithTargetHarnesses set.
+func WithMachineTargetHarnesses(targets []hcc.Target) ResolveOption {
+	return func(opts *resolveOptions) {
+		if len(targets) > 0 {
+			opts.machineTargetHarnesses = slices.Clone(targets)
 		}
 	}
 }
@@ -873,21 +885,21 @@ func Resolve(cfg *config.Config, catalogs map[string][]catalog.Entry, localCfg *
 	// from repo-level registries.
 	propagateTopLevelCollections(cfg)
 
-	targetSet := ro.targetHarnesses
+	targets := scopeTargets{repository: ro.targetHarnesses, machine: ro.machineTargetHarnesses}
 
 	// Correlation index over the resources that failed ingest validation,
 	// shared by both trigger sites and built lazily per registry.
 	malformedIdx := newMalformedIndex(ro.malformed)
 
 	// Phase 1: Build occurrence map from registry entries.
-	occurrencesByName, errs := buildOccurrences(cfg, catalogs, ro.resources, malformedIdx, targetSet)
+	occurrencesByName, errs := buildOccurrences(cfg, catalogs, ro.resources, malformedIdx, targets)
 	filterShadowedOccurrences(occurrencesByName, cfg.Registries)
 	slog.Debug("resolver occurrences built", "registries", len(cfg.Registries), "resources", len(occurrencesByName), "errors", len(errs))
 
 	// Phase 1b: Add Marketplace pins to the occurrence map.
 	if ro.marketplaceResolver != nil && len(cfg.Marketplaces) > 0 {
 		nextOrder := maxOccurrenceOrder(occurrencesByName)
-		mpOccurrences, mpErrs := buildMarketplaceOccurrences(ro.context, ro.marketplaceResolver, cfg, targetSet, ro.marketplaceMode, ro.marketplaceRevocationPolicy, nextOrder)
+		mpOccurrences, mpErrs := buildMarketplaceOccurrences(ro.context, ro.marketplaceResolver, cfg, targets, ro.marketplaceMode, ro.marketplaceRevocationPolicy, nextOrder)
 		errs = append(errs, mpErrs...)
 		for sel, occs := range mpOccurrences {
 			occurrencesByName[sel] = append(occurrencesByName[sel], occs...)
@@ -911,7 +923,7 @@ func Resolve(cfg *config.Config, catalogs map[string][]catalog.Entry, localCfg *
 		resolved = applyCrossLayerExcludes(resolved, cfg.Registries)
 
 		var localErrs []error
-		resolved, localErrs = applyLocalResources(resolved, localSelections, localExcludes, excludeAllKinds, cfg, catalogs, ro.resources, targetSet)
+		resolved, localErrs = applyLocalResources(resolved, localSelections, localExcludes, excludeAllKinds, cfg, catalogs, ro.resources, targets)
 		errs = append(errs, localErrs...)
 		preExcludeResolved := append([]ResolvedArtifact(nil), resolved...)
 
@@ -924,7 +936,7 @@ func Resolve(cfg *config.Config, catalogs map[string][]catalog.Entry, localCfg *
 		// collection artifacts themselves. This replaces the pre-resolver
 		// collection.Expand call, giving collections the same collision
 		// detection and disambiguation as skills/commands/etc.
-		return expandCollections(resolved, errs, cfg, catalogs, ro.resources, malformedIdx, localExcludes, cfg.Collections.ExcludeAll, excludeAllKinds, targetSet)
+		return expandCollections(resolved, errs, cfg, catalogs, ro.resources, malformedIdx, localExcludes, cfg.Collections.ExcludeAll, excludeAllKinds, targets)
 	}
 
 	resolved, selectErrs := selectArtifacts(nil)
@@ -1049,13 +1061,13 @@ func maxOccurrenceOrder(occurrencesByName map[resourceSelection][]skillOccurrenc
 	return max
 }
 
-func buildMarketplaceOccurrences(ctx context.Context, mpResolver MarketplaceResolver, cfg *config.Config, targetSet []hcc.Target, mode MarketplaceResolveMode, policy MarketplaceRevocationPolicy, startOrder int) (map[resourceSelection][]skillOccurrence, []error) {
+func buildMarketplaceOccurrences(ctx context.Context, mpResolver MarketplaceResolver, cfg *config.Config, targets scopeTargets, mode MarketplaceResolveMode, policy MarketplaceRevocationPolicy, startOrder int) (map[resourceSelection][]skillOccurrence, []error) {
 	var artifacts []ResolvedArtifact
 	var errs []error
 	if resolverWithPolicy, ok := mpResolver.(MarketplaceResolverWithPolicy); ok {
-		artifacts, errs = resolverWithPolicy.ResolveWithPolicy(ctx, cfg, targetSet, mode, policy)
+		artifacts, errs = resolverWithPolicy.ResolveWithPolicy(ctx, cfg, targets.all(), mode, policy)
 	} else {
-		artifacts, errs = mpResolver.Resolve(ctx, cfg, targetSet, mode)
+		artifacts, errs = mpResolver.Resolve(ctx, cfg, targets.all(), mode)
 	}
 	// Resolvers that cannot see exclusions (for example inspection results)
 	// still return excluded pins; drop them per owning layer so an exclusion
@@ -1080,6 +1092,7 @@ func buildMarketplaceOccurrences(ctx context.Context, mpResolver MarketplaceReso
 		if a.IsMarketplace && !a.Required && suppressed[ownedPin{a.Source, a.CatalogKey}] {
 			continue
 		}
+		a.Harnesses = targets.narrow(a.Source, a.Harnesses)
 		sel := resourceSelection{kind: a.Kind, name: a.Name}
 		source := a.MarketplaceURL
 		if a.MarketplaceRegistryID != "" {
@@ -1235,7 +1248,7 @@ func propagateTopLevelCollections(cfg *config.Config) {
 // Members, and produce one ResolvedArtifact per member with a Via annotation.
 // Members that reference a different registry than the collection's source
 // are looked up in the catalog for that registry.
-func expandCollections(resolved []ResolvedArtifact, errs []error, cfg *config.Config, catalogs map[string][]catalog.Entry, resources map[string]map[string]ir.Resource, malformed *malformedIndex, localExcludes resourceSelections, collectionExcludeAll bool, localExcludeAllKinds map[ir.ResourceKind]bool, targetSet []hcc.Target) ([]ResolvedArtifact, []error) {
+func expandCollections(resolved []ResolvedArtifact, errs []error, cfg *config.Config, catalogs map[string][]catalog.Entry, resources map[string]map[string]ir.Resource, malformed *malformedIndex, localExcludes resourceSelections, collectionExcludeAll bool, localExcludeAllKinds map[ir.ResourceKind]bool, targets scopeTargets) ([]ResolvedArtifact, []error) {
 	var out []ResolvedArtifact
 	var expandErrs []error
 	expanded := false
@@ -1336,7 +1349,9 @@ func expandCollections(resolved []ResolvedArtifact, errs []error, cfg *config.Co
 
 		// Expand members recursively (handles Includes via depth-first walk).
 		visited := map[string]struct{}{irCol.Label(): {}}
-		expandMembersRecursive(irCol, viaLabel, artifact, nil, cfg, catalogIndex, resources, malformed, allCollectionsByName, admissions, excludedResources, localExcludes, collectionExcludeAll, localExcludeAllKinds, visited, &out, &expandErrs, targetSet)
+		// Members, including those of nested collections owned by another
+		// layer, use the target set of the layer that selected this collection.
+		expandMembersRecursive(irCol, viaLabel, artifact, nil, cfg, catalogIndex, resources, malformed, allCollectionsByName, admissions, excludedResources, localExcludes, collectionExcludeAll, localExcludeAllKinds, visited, &out, &expandErrs, targets.forSource(artifact.Source))
 	}
 
 	if !expanded {
@@ -2243,7 +2258,7 @@ func newSkillOccurrence(entry config.RegistryEntry, entryIndex int, candidate ca
 
 // buildOccurrences iterates over registry entries and catalogs to build a map
 // of skill occurrences keyed by (kind, name).
-func buildOccurrences(cfg *config.Config, catalogs map[string][]catalog.Entry, resources map[string]map[string]ir.Resource, malformed *malformedIndex, targetSet []hcc.Target) (map[resourceSelection][]skillOccurrence, []error) {
+func buildOccurrences(cfg *config.Config, catalogs map[string][]catalog.Entry, resources map[string]map[string]ir.Resource, malformed *malformedIndex, targets scopeTargets) (map[resourceSelection][]skillOccurrence, []error) {
 	var errs []error
 	occurrencesByName := make(map[resourceSelection][]skillOccurrence)
 	reportedNotFound := make(map[missingResource]error)
@@ -2265,6 +2280,7 @@ func buildOccurrences(cfg *config.Config, catalogs map[string][]catalog.Entry, r
 			continue
 		}
 
+		targetSet := targets.forSource(entry.Source)
 		harnessTargets := resolveEntryHarnesses(entry, targetSet)
 		byName := indexCatalog(catalog)
 		selectedResources := resolveSelectedResources(entry, catalog)
@@ -2790,6 +2806,51 @@ func harnessTargetsFromEntry(entry config.RegistryEntry) []hcc.Target {
 	return targets
 }
 
+// scopeTargets holds the target harness sets for output selected by
+// repository-scope layers and by machine-scope (user and organization)
+// layers. Repository configuration chooses the repository set; it never
+// narrows the machine set, which only falls back to the repository set when no
+// machine layer declares targets.
+type scopeTargets struct {
+	repository, machine []hcc.Target
+}
+
+// forSource returns the target set for output selected by source.
+func (s scopeTargets) forSource(source config.Source) []hcc.Target {
+	if source.IsMachineScope() && len(s.machine) > 0 {
+		return s.machine
+	}
+	return s.repository
+}
+
+// all returns every target of either scope, repository targets first.
+func (s scopeTargets) all() []hcc.Target {
+	return UnionTargetHarnesses(s.repository, s.machine)
+}
+
+// UnionTargetHarnesses returns the repository-scope targets followed by any
+// machine-scope target they do not already contain.
+func UnionTargetHarnesses(repository, machine []hcc.Target) []hcc.Target {
+	out := slices.Clone(repository)
+	for _, target := range machine {
+		if !slices.Contains(out, target) {
+			out = append(out, target)
+		}
+	}
+	return out
+}
+
+// narrow restricts harnesses resolved against every target to the set of the
+// artifact's install scope, in that set's order. A nil list keeps its
+// unrestricted meaning.
+func (s scopeTargets) narrow(source config.Source, harnesses []hcc.Target) []hcc.Target {
+	scoped := s.forSource(source)
+	if harnesses == nil || len(scoped) == 0 {
+		return harnesses
+	}
+	return intersectTargets(scoped, harnesses)
+}
+
 // resolveEntryHarnesses intersects the entry's configured harnesses with the
 // machine-wide target set. When targetSet is nil or empty, it returns the
 // entry's harnesses unchanged (preserving nil-vs-empty semantics). When the
@@ -3079,7 +3140,7 @@ func localCandidateSource(candidate localOwnerCandidate) config.Source {
 	return config.RepoPersonal
 }
 
-func applyLocalResources(resolved []ResolvedArtifact, localSelections, localExcludes resourceSelections, localExcludeAllKinds map[ir.ResourceKind]bool, cfg *config.Config, catalogs map[string][]catalog.Entry, resources map[string]map[string]ir.Resource, targetSet []hcc.Target) ([]ResolvedArtifact, []error) {
+func applyLocalResources(resolved []ResolvedArtifact, localSelections, localExcludes resourceSelections, localExcludeAllKinds map[ir.ResourceKind]bool, cfg *config.Config, catalogs map[string][]catalog.Entry, resources map[string]map[string]ir.Resource, targets scopeTargets) ([]ResolvedArtifact, []error) {
 	if len(localSelections) == 0 {
 		return resolved, nil
 	}
@@ -3123,6 +3184,7 @@ func applyLocalResources(resolved []ResolvedArtifact, localSelections, localExcl
 					continue
 				}
 				matched = true
+				targetSet := targets.forSource(config.RepoPersonal)
 				candidate := localOwnerCandidate{
 					entry:      entry,
 					catalogKey: entry.CatalogKey,

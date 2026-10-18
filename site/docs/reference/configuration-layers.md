@@ -40,13 +40,23 @@ The organization file accepts a `logging` block, but the CLI configures logging 
 
 ### Target harnesses
 
-The CLI picks one top-level target list, project first:
+The CLI picks a top-level target list for each selecting layer.
+
+Resources selected by the repository or personal-local file use:
 
 1. A non-empty `harnesses` list in the repository file.
 2. Otherwise, a non-empty `harnesses` list in the user file.
 3. Otherwise, the organization `harnesses` list.
 
-Lists are not combined across layers. A resource group's `harnesses` list intersects with this target list, so it can narrow the targets for that group but cannot add a target that is not already selected.
+Resources selected by the user or organization file use:
+
+1. A non-empty `harnesses` list in the user file.
+2. Otherwise, the organization `harnesses` list.
+3. Otherwise, the repository list, when neither of those files declares one.
+
+A repository's list therefore never narrows what your user or organization configuration installs: running `sync` or `deinit` inside a repository that targets only `claude` keeps your user and organization resources for every harness your user or organization list names. A collection's members use the list of the layer that selected the collection. When the two lists differ, `status` shows both under `TARGET HARNESS SET`.
+
+Lists are not combined across layers. A resource group's `harnesses` list intersects with its scope's target list, so it can narrow the targets for that group but cannot add a target that is not already selected.
 
 ### Allowlists
 

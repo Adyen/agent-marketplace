@@ -9,6 +9,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"syscall"
@@ -120,8 +121,12 @@ type ResolveResult struct {
 	Warnings                    []error
 	TargetHarnesses             []hcc.Target
 	TargetHarnessSource         config.Source
-	Managed                     bool
-	Diagnostics                 config.ManagedInstallationDiagnostics
+	// MachineTargetHarnesses is the target set for output selected by the user
+	// and organization layers. Repository configuration never narrows it.
+	MachineTargetHarnesses     []hcc.Target
+	MachineTargetHarnessSource config.Source
+	Managed                    bool
+	Diagnostics                config.ManagedInstallationDiagnostics
 }
 
 // TargetHarnessSetMissingError is returned by Resolve/Sync when no effective
@@ -191,6 +196,17 @@ func targetHarnessSetFromEC(ec config.EffectiveConfig) ([]hcc.Target, config.Sou
 		return hccTargetsFromStrings(ec.Organization.Config.Harnesses), ec.Organization.Source
 	}
 	return nil, config.SourceUnset
+}
+
+// machineTargetHarnessSetFromEC returns the target set for output selected by
+// the user and organization layers: the user list, then the organization list.
+// Only when neither declares targets does it fall back to the repository set,
+// so a repository cannot narrow output that machine layers selected.
+func machineTargetHarnessSetFromEC(ec config.EffectiveConfig, repository []hcc.Target, repositorySource config.Source) ([]hcc.Target, config.Source) {
+	if harnesses, source := config.MachineHarnesses(ec.User.Config, ec.Organization.Config); len(harnesses) > 0 {
+		return hccTargetsFromStrings(harnesses), source
+	}
+	return slices.Clone(repository), repositorySource
 }
 
 // CatalogTrusted reports whether this run's view of the registries is reliable
@@ -460,6 +476,7 @@ func resolve(ctx context.Context, opts ResolveOptions) (ResolveResult, func()) {
 	}
 
 	result.TargetHarnesses, result.TargetHarnessSource = targetHarnessSetFromEC(ec)
+	result.MachineTargetHarnesses, result.MachineTargetHarnessSource = machineTargetHarnessSetFromEC(ec, result.TargetHarnesses, result.TargetHarnessSource)
 
 	if opts.RequireTargetSet && len(result.TargetHarnesses) == 0 {
 		result.Errors = []error{&TargetHarnessSetMissingError{}}
@@ -609,7 +626,7 @@ func resolve(ctx context.Context, opts ResolveOptions) (ResolveResult, func()) {
 		mpResolver = transientOrganizationMarketplaceResolver{delegate: marketplaceResolver}
 	}
 	if opts.CatalogMode == catalog.LoadModeInspect && mpMode == resolver.MarketplaceResolveModeInspect && loadedCfg != nil {
-		inspection := marketplaceResolver.Inspect(ctx, loadedCfg, result.TargetHarnesses, mpMode)
+		inspection := marketplaceResolver.Inspect(ctx, loadedCfg, resolver.UnionTargetHarnesses(result.TargetHarnesses, result.MachineTargetHarnesses), mpMode)
 		result.MarketplaceStatuses = inspection.Pins
 		result.MarketplaceInspection = &inspection
 		mpResolver = inspection
@@ -646,6 +663,7 @@ func resolve(ctx context.Context, opts ResolveOptions) (ResolveResult, func()) {
 		resolver.WithMalformed(catalog.MalformedByKey(loadResult.Catalogs)),
 		resolver.WithContext(ctx),
 		resolver.WithTargetHarnesses(result.TargetHarnesses),
+		resolver.WithMachineTargetHarnesses(result.MachineTargetHarnesses),
 		resolver.WithMarketplaceResolver(mpResolver),
 		resolver.WithMarketplaceResolveMode(mpMode),
 		resolver.WithMarketplaceRevocationPolicy(opts.MarketplaceRevocationPolicy),
