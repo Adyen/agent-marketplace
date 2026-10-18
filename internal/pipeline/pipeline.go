@@ -25,6 +25,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/telemetry"
 	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 	targetmeta "github.com/Adyen/agent-marketplace/pkg/harness-compilation/target"
 )
 
@@ -909,7 +910,20 @@ func Sync(ctx context.Context, opts ResolveOptions) SyncResult {
 			"resolved.count": strconv.Itoa(len(resolved.Resolved)),
 		})
 	}
-	report, err := materialize.Run(ctx, matRoot, resolved.Resolved, materialize.WithMaterializationModes(resolved.MaterializationModes))
+	deliverable := make([]resolver.ResolvedArtifact, 0, len(resolved.Resolved))
+	for _, artifact := range resolved.Resolved {
+		if artifact.Kind == ir.KindPlugin {
+			result.Warnings = append(result.Warnings, newDiagIssue(diag.Diagnostic{
+				Code:     diag.CodePluginDeliveryPending,
+				Severity: diag.SeverityWarning,
+				Resource: "plugin/" + artifact.Name,
+				Message:  "plugin is acquired and locked; harness delivery of plugin members is not available yet",
+			}))
+			continue
+		}
+		deliverable = append(deliverable, artifact)
+	}
+	report, err := materialize.Run(ctx, matRoot, deliverable, materialize.WithMaterializationModes(resolved.MaterializationModes))
 	if materializeSpan != (telemetry.Span{}) {
 		materializeSpan.SetAttributes(materializationResultAttrs(report, err))
 		materializeSpan.End()

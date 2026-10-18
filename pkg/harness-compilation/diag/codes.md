@@ -680,6 +680,7 @@ key or a hook event name), the resource name, and content digests are reported.
 | `plugin.member.literal-unrepresentable` | A plugin MCP member carries placeholder-like text the destination harness would reinterpret, and no literal escape exists; the member was blocked | Rewrite the value without placeholder-like text, or deliver to a target that can carry it literally |
 | `plugin.member.restriction-unsupported` | A plugin member field is a restriction the destination plugin surface cannot enforce; the member was blocked rather than installed without it | Remove the restricted field, or deliver to a target that enforces it |
 | `plugin.compile.package-required` | A plugin resource reached the per-resource Compile boundary; plugins compile through the package compile entry point | Call the package compile entry point instead of Compile |
+| `plugin.delivery.pending` (warning) | A selected plugin is acquired and locked, but plugin member delivery to harnesses is not implemented yet | Wait for the plugin-delivery capability; nothing in the install needs attention |
 
 ### Devin doctor and repair codes
 

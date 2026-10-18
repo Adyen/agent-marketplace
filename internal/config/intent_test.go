@@ -73,13 +73,27 @@ resources:
 	}
 	li := LayerIntent{Source: UserPersonal, v4: v4}
 
-	wantSources := []SourceDecl{
-		{Kind: V4SourceGit, URL: "https://example.com/repo.git", Ref: "main"},
-		{Kind: V4SourceMarketplace, URL: "https://market.example"},
-		{Kind: V4SourceDirectory},
+	gotSources := li.Sources()
+	if len(gotSources) != 3 {
+		t.Fatalf("sources = %#v, want 3 decls", gotSources)
 	}
-	if got := li.Sources(); !reflect.DeepEqual(got, wantSources) {
-		t.Fatalf("sources = %#v, want %#v", got, wantSources)
+	wantSources := []SourceDecl{
+		{Kind: V4SourceGit, Name: "agit", URL: "https://example.com/repo.git", Ref: "main", All: true, Decisions: []V4SelectionDecision{}},
+		{Kind: V4SourceMarketplace, Name: "mmp", URL: "https://market.example", CollectionsInclude: []string{"onboarding"}},
+		{Kind: V4SourceDirectory, Name: "zdir", URL: filepath.Join(dir, "regs"), All: true, Decisions: []V4SelectionDecision{}},
+	}
+	for i, want := range wantSources {
+		got := gotSources[i]
+		if got.Kind != want.Kind || got.Name != want.Name || got.URL != want.URL || got.Ref != want.Ref || got.Format != want.Format || got.All != want.All {
+			t.Fatalf("sources[%d] = %#v, want %#v", i, got, want)
+		}
+		if !reflect.DeepEqual(got.CollectionsInclude, want.CollectionsInclude) {
+			t.Fatalf("sources[%d].CollectionsInclude = %#v, want %#v", i, got.CollectionsInclude, want.CollectionsInclude)
+		}
+	}
+	mmpDecisions := gotSources[1].Decisions
+	if len(mmpDecisions) != 1 || mmpDecisions[0].Action != V4SelectionExplicit || mmpDecisions[0].Request == nil || mmpDecisions[0].Request.Kind != "collection" || mmpDecisions[0].Request.Name != "onboarding" {
+		t.Fatalf("mmp decisions = %#v, want one explicit collection/onboarding decision", mmpDecisions)
 	}
 	if !li.NeedsLock() {
 		t.Fatal("v4 layer with git and acquiring marketplace sources must need a lock")

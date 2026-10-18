@@ -309,16 +309,26 @@ func rollbackMarketplaceLayer(ctx context.Context, stateDir string, ws Workspace
 			return fmt.Errorf("%w: cannot validate Marketplace rollback candidate: %w", dependencytxn.ErrGenerationConflict, errors.Join(ec.Errors...))
 		}
 		var entries []config.RegistryEntry
+		var decls []config.SourceDecl
 		for _, layer := range ec.PresentLayers() {
 			if layer.Source == source {
 				entries = readOnlyRemoteEntries(layer)
+				decls = layer.Sources
 			}
 		}
 		doc, err := lockfile.Decode(lockRestore)
 		if err != nil {
 			return err
 		}
-		if !readOnlyGitDocumentMatches(doc, entries) {
+		var expected map[string]bool
+		if len(FormatSourceEntries(decls)) > 0 {
+			contexts, ctxErr := BuildPluginLockContexts(decls, doc, leaseSnapshotReadOnly(ctx))
+			if ctxErr != nil {
+				return fmt.Errorf("%w: resolve plugin lock contexts for Marketplace rollback: %w", dependencytxn.ErrGenerationConflict, ctxErr)
+			}
+			expected = contexts.ExternalIdentities()
+		}
+		if !readOnlyGitDocumentMatches(doc, entries, expected) {
 			return fmt.Errorf("%w: reconciled Git lock no longer matches Marketplace layer", dependencytxn.ErrGenerationConflict)
 		}
 	}

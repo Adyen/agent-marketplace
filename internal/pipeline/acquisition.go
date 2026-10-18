@@ -95,8 +95,18 @@ func readDeployedLocks(ctx context.Context, intent config.Intent, overlays map[s
 			}
 			continue
 		}
-		if source == config.Organization && !readOnlyGitDocumentMatches(*doc, GitRegistryEntries(layer.Sources())) {
-			return evidence, &LockViewError{Code: "lock.stale", Scope: scope, Path: paths.CanonicalLock, Err: errors.New("lock does not match configuration")}
+		if source == config.Organization {
+			var expected map[string]bool
+			if decls := layer.Sources(); len(FormatSourceEntries(decls)) > 0 {
+				contexts, ctxErr := BuildPluginLockContexts(decls, *doc, leaseSnapshotReadOnly(ctx))
+				if ctxErr != nil {
+					return evidence, &LockViewError{Code: "lock.read", Scope: scope, Path: paths.CanonicalLock, Err: ctxErr}
+				}
+				expected = contexts.ExternalIdentities()
+			}
+			if !readOnlyGitDocumentMatches(*doc, GitRegistryEntries(layer.Sources()), expected) {
+				return evidence, &LockViewError{Code: "lock.stale", Scope: scope, Path: paths.CanonicalLock, Err: errors.New("lock does not match configuration")}
+			}
 		}
 		evidence.RecordDeployedLock(source, doc, config.ConfigRead{
 			Path:            paths.CanonicalLock,
@@ -172,9 +182,36 @@ func GitRegistryEntries(decls []config.SourceDecl) []config.RegistryEntry {
 		if decl.Kind != config.V4SourceGit {
 			continue
 		}
-		entries = append(entries, config.RegistryEntry{URL: decl.URL, Ref: decl.Ref, Path: decl.Path, SourceHarness: decl.SourceHarness, V4Kind: decl.Kind})
+		entries = append(entries, registryEntryForDecl(decl))
 	}
 	return entries
+}
+
+// FormatSourceEntries returns registry entries for every source declaration
+// that opts into plugin package interpretation, git and directory alike.
+func FormatSourceEntries(decls []config.SourceDecl) []config.RegistryEntry {
+	var entries []config.RegistryEntry
+	for _, decl := range decls {
+		if decl.Format == "" {
+			continue
+		}
+		entries = append(entries, registryEntryForDecl(decl))
+	}
+	return entries
+}
+
+func registryEntryForDecl(decl config.SourceDecl) config.RegistryEntry {
+	return config.RegistryEntry{
+		URL:           decl.URL,
+		Ref:           decl.Ref,
+		Path:          decl.Path,
+		SourceHarness: decl.SourceHarness,
+		V4Kind:        decl.Kind,
+		Format:        decl.Format,
+		V4All:         decl.All,
+		V4Decisions:   append([]config.V4SelectionDecision(nil), decl.Decisions...),
+		Collections:   config.KindSelector{Include: append([]string(nil), decl.CollectionsInclude...)},
+	}
 }
 
 func intentLayerResults(intent config.Intent) []config.LayerResult {

@@ -33,6 +33,12 @@ type Input struct {
 	RootPath       string
 	SourceHarness  string
 	RevisionSchema string
+	// PluginSpec is the declared plugin selection of a format root, required
+	// when RevisionSchema is plugin-v1 and PluginExternal is nil.
+	PluginSpec *catalog.PluginSelectionSpec
+	// PluginExternal binds an external-entry lock record to its owning
+	// catalog; set instead of PluginSpec for external registry roots.
+	PluginExternal *PluginExternal
 	beforeIngest   func(string)
 	beforeHash     func(string)
 }
@@ -43,6 +49,10 @@ type Result struct {
 	Payload       []byte
 	Warnings      []ResourceWarning
 	Catalog       *catalog.Catalog
+	// PluginManifest is the decoded plugin-v1 manifest; PluginExternals are
+	// the selected catalog entries pointing at external repositories.
+	PluginManifest  *pluginSourceManifest
+	PluginExternals []PluginExternalEntry
 }
 
 type ResourceWarning struct {
@@ -116,6 +126,9 @@ func Build(input Input) (result Result, err error) {
 	contract, err := lockfile.RevisionContract(input.RevisionSchema)
 	if err != nil {
 		return Result{}, err
+	}
+	if input.RevisionSchema == "plugin-v1" {
+		return buildPluginRevision(input, contract)
 	}
 	root, err := secureRoot(input)
 	if err != nil {
@@ -286,6 +299,10 @@ func VerifyLockedGitRoot(snapshot string, root lockfile.GitRoot) ([]ResourceWarn
 }
 
 func VerifyLockedGitRootWithCatalog(snapshot string, root lockfile.GitRoot) (Result, error) {
+	return VerifyLockedGitRootWithPluginContext(snapshot, root, nil)
+}
+
+func VerifyLockedGitRootWithPluginContext(snapshot string, root lockfile.GitRoot, plugin *PluginVerifyContext) (Result, error) {
 	resources := make([]revisionResource, 0, len(root.Resources))
 	for _, resource := range root.Resources {
 		support := make(map[string]string, len(resource.SupportFiles))
@@ -303,7 +320,12 @@ func VerifyLockedGitRootWithCatalog(snapshot string, root lockfile.GitRoot) (Res
 			SupportFiles:  support,
 		})
 	}
-	return verify(Input{SnapshotRoot: snapshot, RootPath: root.Path}, Projection{
+	input := Input{SnapshotRoot: snapshot, RootPath: root.Path}
+	if plugin != nil {
+		input.PluginSpec = plugin.Spec
+		input.PluginExternal = plugin.External
+	}
+	return verify(input, Projection{
 		SourceHarness:  root.SourceHarness,
 		RevisionSchema: root.RevisionSchema,
 		RevisionDigest: root.RevisionDigest.String(),

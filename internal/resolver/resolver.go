@@ -1861,10 +1861,6 @@ func expandMembersRecursive(
 				*errs = append(*errs, &PluginEntryRefusalError{Name: memberName, URL: memberRegistryURL, Diagnostic: catEntry.Plugin.Refusal})
 				continue
 			}
-			if catEntry.Plugin.Source.Kind == "git" {
-				*errs = append(*errs, &PluginExternalEntryError{Name: memberName, EntryURL: catEntry.Plugin.Source.URL, URL: memberRegistryURL})
-				continue
-			}
 		}
 		if !found {
 			// Correlate before blaming: a member that failed ingest validation
@@ -2423,10 +2419,6 @@ func buildOccurrences(cfg *config.Config, catalogs map[string][]catalog.Entry, r
 			if selected.kind == ir.KindPlugin && selectedSkill.Plugin != nil {
 				if selectedSkill.Plugin.Refusal != nil {
 					errs = append(errs, &PluginEntryRefusalError{Name: selected.name, URL: entry.URL, Diagnostic: selectedSkill.Plugin.Refusal})
-					continue
-				}
-				if selectedSkill.Plugin.Source.Kind == "git" {
-					errs = append(errs, &PluginExternalEntryError{Name: selected.name, EntryURL: selectedSkill.Plugin.Source.URL, URL: entry.URL})
 					continue
 				}
 				selection := &PluginSelection{

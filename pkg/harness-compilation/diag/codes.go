@@ -413,6 +413,7 @@ const (
 	CodePluginMemberLiteralUnrepresentable = "plugin.member.literal-unrepresentable" // A literal placeholder has no escape on the destination; member blocked
 	CodePluginMemberRestrictionUnsupported = "plugin.member.restriction-unsupported" // A plugin member field is a restriction the target cannot enforce; member blocked
 	CodePluginCompilePackageRequired       = "plugin.compile.package-required"       // A plugin resource was passed to the per-resource Compile boundary
+	CodePluginDeliveryPending              = "plugin.delivery.pending"               // WARNING: the plugin is acquired and locked but harness delivery is not yet implemented
 
 	// Devin hook and MCP ENTRY-SKIP codes.
 	//

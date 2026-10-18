@@ -82,7 +82,7 @@ func exactLockViewWithContext(ctx context.Context, ec config.EffectiveConfig, al
 			}
 			lockPath = filepath.Join(filepath.Dir(layer.Path), name)
 		}
-		doc, layerErr := readOnlyLayerLock(layer.Path, lockPath, scope, registries)
+		doc, layerErr := readOnlyLayerLock(ctx, layer, lockPath, scope, registries)
 		if layerErr != nil {
 			var lockErr *LockViewError
 			missing := errors.As(layerErr, &lockErr) && lockErr.Code == "lock.missing"
@@ -123,6 +123,11 @@ func exactLockViewWithContext(ctx context.Context, ec config.EffectiveConfig, al
 			}
 			continue
 		}
+		pluginContexts, pluginCtxErr := BuildPluginLockContexts(layer.Sources, doc, leaseSnapshotReadOnly(ctx))
+		if pluginCtxErr != nil {
+			viewErrors = append(viewErrors, &LockViewError{Code: "lock.read", Scope: scope, Path: lockPath, Err: pluginCtxErr})
+			continue
+		}
 		for _, registry := range doc.Registries {
 			oid, parseErr := cache.ParseGitOID(registry.Commit.String())
 			snapshot := ""
@@ -138,7 +143,7 @@ func exactLockViewWithContext(ctx context.Context, ec config.EffectiveConfig, al
 			}
 			if openErr == nil {
 				for _, root := range registry.Roots {
-					verified, verifyErr := sourcerevision.VerifyLockedGitRootWithCatalog(snapshot, root)
+					verified, verifyErr := sourcerevision.VerifyLockedGitRootWithPluginContext(snapshot, root, pluginContexts.PluginContextFor(registry, root))
 					if verifyErr != nil {
 						errorCode = "lock.manifest-mismatch"
 						openErr = fmt.Errorf("verify locked root %q: %w", root.Path, verifyErr)
@@ -197,7 +202,8 @@ func exactLockViewWithContext(ctx context.Context, ec config.EffectiveConfig, al
 	return ctx, readOnlyExactView{catalogOption: catalog.WithVerifiedExactSnapshots(exactSnapshot, verifiedCatalogs), exactSnapshot: exactSnapshot, gitMetadata: metadata, errors: viewErrors, warnings: viewWarnings, release: releaseAll}
 }
 
-func readOnlyLayerLock(configPath, path string, scope lockfile.Scope, registries []config.RegistryEntry) (lockfile.Document, error) {
+func readOnlyLayerLock(ctx context.Context, layer config.LayerResult, path string, scope lockfile.Scope, registries []config.RegistryEntry) (lockfile.Document, error) {
+	configPath := layer.Path
 	if scope == lockfile.ScopeOrganization {
 		if err := config.ValidateOrganizationTrustUnit(configPath, true, true); err != nil {
 			return lockfile.Document{}, &LockViewError{Code: "lock.trust", Scope: scope, Path: path, Err: err}
@@ -236,13 +242,21 @@ func readOnlyLayerLock(configPath, path string, scope lockfile.Scope, registries
 	if err != nil {
 		return lockfile.Document{}, &LockViewError{Code: "lock.invalid", Scope: scope, Path: path, Err: err}
 	}
-	if !readOnlyGitDocumentMatches(doc, registries) {
+	var expected map[string]bool
+	if len(FormatSourceEntries(layer.Sources)) > 0 {
+		contexts, ctxErr := BuildPluginLockContexts(layer.Sources, doc, leaseSnapshotReadOnly(ctx))
+		if ctxErr != nil {
+			return doc, &LockViewError{Code: "lock.read", Scope: scope, Path: path, Err: ctxErr}
+		}
+		expected = contexts.ExternalIdentities()
+	}
+	if !readOnlyGitDocumentMatches(doc, registries, expected) {
 		return doc, &LockViewError{Code: "lock.stale", Scope: scope, Path: path, Err: errors.New("lock does not match configuration")}
 	}
 	return doc, nil
 }
 
-func readOnlyGitDocumentMatches(doc lockfile.Document, entries []config.RegistryEntry) bool {
+func readOnlyGitDocumentMatches(doc lockfile.Document, entries []config.RegistryEntry, expected map[string]bool) bool {
 	wanted := make(map[string][]lockfile.GitRootRequirement)
 	for _, entry := range entries {
 		canonical, err := readOnlyCanonicalURL(entry.URL)
@@ -252,10 +266,21 @@ func readOnlyGitDocumentMatches(doc lockfile.Document, entries []config.Registry
 		identity := readOnlyGitIdentity(canonical, entry.Ref)
 		wanted[identity] = append(wanted[identity], lockfile.GitRootRequirement{Path: entry.Path, SourceHarness: entry.SourceHarness})
 	}
-	if len(doc.Registries) != len(wanted) {
+	registries := make([]lockfile.GitRegistry, 0, len(doc.Registries))
+	for _, registry := range doc.Registries {
+		identity := readOnlyGitIdentity(registry.URL, registry.Ref)
+		if _, ok := wanted[identity]; !ok {
+			if expected[identity] && AllRootsPluginV1(registry) {
+				continue
+			}
+			return false
+		}
+		registries = append(registries, registry)
+	}
+	if len(registries) != len(wanted) {
 		return false
 	}
-	for _, registry := range doc.Registries {
+	for _, registry := range registries {
 		roots, ok := wanted[readOnlyGitIdentity(registry.URL, registry.Ref)]
 		if !ok {
 			return false
