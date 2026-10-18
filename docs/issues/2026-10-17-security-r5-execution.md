@@ -305,5 +305,12 @@ allocation bytes modestly; measured whole-SDK latency is not improved
 significantly, with a small-case slowdown retained. Evidence is recorded in
 [the R35 execution report](2026-10-18-security-r5-materialize-bookkeeping.md).
 
+R35 subsequently merged in PR #745. The next independent slice removes
+R47's duplicate source-revision builds during one exact Git acquisition.
+The requested root/policy identity remains distinct from resolved output
+identity; snapshots, scopes, lock bytes and refusals retain their contracts.
+Measurements and preservation controls are recorded in
+[the R47 execution report](2026-10-18-security-r5-git-requirements.md).
+
 #434 already tracks this remaining scope. Publication must describe this as
 partial progress, preserve the frozen artifacts, and leave the issue open.
