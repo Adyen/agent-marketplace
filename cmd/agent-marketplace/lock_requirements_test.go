@@ -80,8 +80,8 @@ func TestAcquireGitRequirementsBuildsDuplicatesOnce(t *testing.T) {
 		for range 2 {
 			logs.Reset()
 			got, err := acquireLockedRegistry(context.Background(), seeded.URL, seeded.URL, seeded.Ref, entries, nil)
-			if err != nil || !reflect.DeepEqual(got, seeded) {
-				t.Fatalf("duplicate acquisition changed exact inventory: %v, registry=%+v", err, got)
+			if err != nil || !reflect.DeepEqual(got.registry, seeded) {
+				t.Fatalf("duplicate acquisition changed exact inventory: %v, registry=%+v", err, got.registry)
 			}
 			if builds := strings.Count(logs.String(), `msg="built direct-Git source revision"`); builds != 1 {
 				t.Fatalf("duplicate requirements built %d times, want one per invocation", builds)
