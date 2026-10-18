@@ -2,8 +2,10 @@ package marketplace
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"strings"
 
 	"github.com/Adyen/agent-marketplace/internal/config"
@@ -105,6 +107,15 @@ func canonicalFindingsFromRevision(revision store.AssessedResourceRevision) []hc
 	return findings
 }
 
+// MissingResourceError marks an HTTP 404 from a pin's latest-revision lookup.
+// It wraps the original error so errors.As still finds the underlying *APIError.
+type MissingResourceError struct {
+	Err error
+}
+
+func (e *MissingResourceError) Error() string { return e.Err.Error() }
+func (e *MissingResourceError) Unwrap() error { return e.Err }
+
 // LatestRevision verifies the endpoint and registry identity, then fetches the
 // latest metadata for an existing pin. Index-only pins also validate the exact
 // registry occurrence, but this method does not fetch an artifact.
@@ -146,7 +157,12 @@ func (r *Resolver) LatestRevision(ctx context.Context, entry config.MarketplaceE
 	}
 	latest, err := client.GetLatestResourceRevision(ctx, resourceRegistry, pin.Kind, pin.Name)
 	if err != nil {
-		return store.Registry{}, store.AssessedResourceRevision{}, fmt.Errorf("resolve latest resource revision: %w", err)
+		resolveErr := fmt.Errorf("resolve latest resource revision: %w", err)
+		var apiErr *APIError
+		if errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusNotFound {
+			return store.Registry{}, store.AssessedResourceRevision{}, &MissingResourceError{Err: resolveErr}
+		}
+		return store.Registry{}, store.AssessedResourceRevision{}, resolveErr
 	}
 	if err := validateLatestResourceRevision(canonical, pin, latest); err != nil {
 		return store.Registry{}, store.AssessedResourceRevision{}, err

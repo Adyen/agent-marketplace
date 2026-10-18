@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -526,6 +527,180 @@ func newMarketplaceUpdateFixture(t *testing.T, failArtifact bool) *marketplaceUp
 		t.Fatal(err)
 	}
 	return fixture
+}
+
+type missingPinEnv struct {
+	home, repo, configPath, lockPath string
+	fake                             *layerMarketplaceServer
+	registry                         store.Registry
+	entry                            config.MarketplaceEntry
+}
+
+func seedMissingPinEnv(t *testing.T) *missingPinEnv {
+	t.Helper()
+	home := isolateConsumerPipeline(t)
+	env := &missingPinEnv{home: home, repo: t.TempDir(), fake: newLayerMarketplaceServer(t)}
+	env.configPath = filepath.Join(home, ".agents", "config.yaml")
+	env.lockPath = filepath.Join(home, ".agents", "lock.yaml")
+	writeFileMode(t, env.configPath, "apiVersion: agent-marketplace/v4\nharnesses: [devin]\n", 0o600)
+	env.registry = env.fake.addRegistry(t, "source")
+	env.entry = config.MarketplaceEntry{URL: env.fake.URL, InstanceID: env.fake.instanceID}
+	return env
+}
+
+// spec: update-output/missing-resource-is-kept-while-other-pins-update
+func TestUpdateContinuesPastMissingMarketplacePin(t *testing.T) {
+	env := seedMissingPinEnv(t)
+	home, repo, configPath, lockPath := env.home, env.repo, env.configPath, env.lockPath
+	fake, registry, entry := env.fake, env.registry, env.entry
+	fake.addSkill(t, registry, "stay")
+	fake.addSkill(t, registry, "gone")
+	installV4MarketplaceLayer(t, repo, configPath, entry,
+		layerPreparePins(t, fake, "skill", "stay"), layerPreparePins(t, fake, "skill", "gone"))
+
+	goneRecord := *marketplaceLockResource(layerMarketplaceLockDoc(t, lockPath), "skill", "gone")
+	configBytes, configStat := layerFreezeFile(t, configPath)
+	fake.setSkill(t, registry, "stay", "stay body v2")
+	fake.missing["skill/gone"] = true
+
+	result, err := Update(context.Background(), UpdateOptions{RepoRoot: repo, DependencyReconcile: testMarketplaceUpdateReconcile})
+	var missing *MissingMarketplaceResourcesError
+	if result == nil || !errors.As(err, &missing) {
+		t.Fatalf("update = (%#v, %v), want result with MissingMarketplaceResourcesError", result, err)
+	}
+	if result.UpdatedMarketplacePins != 1 || result.SkippedMarketplacePins != 1 {
+		t.Fatalf("Marketplace result = %#v, want one update and one skip", result)
+	}
+	for _, want := range []string{fake.URL, string(registry.ID) + "/skill/gone", "agent-marketplace remove gone"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("missing-resource error %q does not name %q", err.Error(), want)
+		}
+	}
+	layerAssertFileUnchanged(t, configPath, configBytes, configStat)
+	doc := layerMarketplaceLockDoc(t, lockPath)
+	if got := marketplaceLockResource(doc, "skill", "gone"); got == nil || !reflect.DeepEqual(*got, goneRecord) {
+		t.Fatalf("missing pin lock record changed: got %#v, want %#v", got, goneRecord)
+	}
+	stay := marketplaceLockResource(doc, "skill", "stay")
+	latest := fake.resources["source/skill/stay"].revision
+	if stay == nil || string(stay.ContentDigest) != string(latest.ContentDigest) {
+		t.Fatalf("stay lock record = %#v, want latest %s", stay, latest.ContentDigest)
+	}
+	staySkill, err := os.ReadFile(filepath.Join(home, ".config", "devin", "skills", "stay", "SKILL.md"))
+	if err != nil || !strings.Contains(string(staySkill), "stay body v2") {
+		t.Fatalf("updated stay output = %q, %v", staySkill, err)
+	}
+}
+
+// spec: update-output/every-missing-resource-is-named
+// spec: update-output/only-missing-resources-change-nothing
+func TestUpdateWithOnlyMissingMarketplacePinsChangesNothing(t *testing.T) {
+	env := seedMissingPinEnv(t)
+	repo, configPath, lockPath := env.repo, env.configPath, env.lockPath
+	fake, registry, entry := env.fake, env.registry, env.entry
+	fake.addSkill(t, registry, "one")
+	fake.addSkill(t, registry, "two")
+	installV4MarketplaceLayer(t, repo, configPath, entry,
+		layerPreparePins(t, fake, "skill", "one"), layerPreparePins(t, fake, "skill", "two"))
+	configBytes, configStat := layerFreezeFile(t, configPath)
+	lockBytes, lockStat := layerFreezeFile(t, lockPath)
+	fake.missing["skill/one"] = true
+	fake.missing["skill/two"] = true
+
+	reconciled := false
+	result, err := Update(context.Background(), UpdateOptions{RepoRoot: repo, DependencyReconcile: func(ctx context.Context, a, b string, bumps []RefBump, edits []StagedConfigEdit, lockEdits []StagedLockEdit) (DependencyLockView, error) {
+		reconciled = true
+		return testMarketplaceUpdateReconcile(ctx, a, b, bumps, edits, lockEdits)
+	}})
+	var missing *MissingMarketplaceResourcesError
+	if result == nil || !errors.As(err, &missing) || len(missing.Pins) != 2 {
+		t.Fatalf("update = (%#v, %v), want result with MissingMarketplaceResourcesError for two pins", result, err)
+	}
+	for _, want := range []string{"one", "two"} {
+		if !strings.Contains(err.Error(), "/skill/"+want) {
+			t.Fatalf("missing-resource error %q does not name %q", err.Error(), want)
+		}
+	}
+	if reconciled || result.UpdatedMarketplacePins != 0 {
+		t.Fatalf("missing-only update reconciled=%t updated=%d, want no staging or sync", reconciled, result.UpdatedMarketplacePins)
+	}
+	layerAssertFileUnchanged(t, configPath, configBytes, configStat)
+	layerAssertFileUnchanged(t, lockPath, lockBytes, lockStat)
+}
+
+// spec: update-output/missing-collection-is-kept
+func TestUpdateKeepsMissingMarketplaceCollection(t *testing.T) {
+	env := seedMissingPinEnv(t)
+	repo, configPath, lockPath := env.repo, env.configPath, env.lockPath
+	fake, registry, entry := env.fake, env.registry, env.entry
+	fake.addSkill(t, registry, "stay")
+	installV4MarketplaceLayer(t, repo, configPath, entry,
+		layerCollectionPins(t, fake, "review", "bundle"), layerPreparePins(t, fake, "skill", "stay"))
+
+	oldDoc := layerMarketplaceLockDoc(t, lockPath)
+	collectionRecord := *marketplaceLockResource(oldDoc, "collection", "bundle")
+	leafRecord := *marketplaceLockResource(oldDoc, "skill", "review")
+	fake.setSkill(t, registry, "stay", "stay body v2")
+	fake.missing["collection/bundle"] = true
+
+	result, err := Update(context.Background(), UpdateOptions{RepoRoot: repo, DependencyReconcile: testMarketplaceUpdateReconcile})
+	var missing *MissingMarketplaceResourcesError
+	if result == nil || !errors.As(err, &missing) {
+		t.Fatalf("update = (%#v, %v), want result with MissingMarketplaceResourcesError", result, err)
+	}
+	if !strings.Contains(err.Error(), "/collection/bundle") {
+		t.Fatalf("missing-resource error %q does not name the collection", err.Error())
+	}
+	if result.UpdatedMarketplacePins != 1 {
+		t.Fatalf("Marketplace result = %#v, want the stay pin updated", result)
+	}
+	doc := layerMarketplaceLockDoc(t, lockPath)
+	if got := marketplaceLockResource(doc, "collection", "bundle"); got == nil || !reflect.DeepEqual(*got, collectionRecord) {
+		t.Fatalf("collection lock record changed: got %#v, want %#v", got, collectionRecord)
+	}
+	if got := marketplaceLockResource(doc, "skill", "review"); got == nil || !reflect.DeepEqual(*got, leafRecord) {
+		t.Fatalf("collection leaf lock record changed: got %#v, want %#v", got, leafRecord)
+	}
+	stay := marketplaceLockResource(doc, "skill", "stay")
+	latest := fake.resources["source/skill/stay"].revision
+	if stay == nil || string(stay.ContentDigest) != string(latest.ContentDigest) {
+		t.Fatalf("stay lock record = %#v, want latest %s", stay, latest.ContentDigest)
+	}
+}
+
+func TestUpdateAbortsBeforeMutationOnRegistryOrLatestFailure(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		breakServer func(fake *layerMarketplaceServer)
+	}{
+		{name: "registry 404", breakServer: func(fake *layerMarketplaceServer) {
+			delete(fake.registries, "source")
+			delete(fake.registries, "source-id")
+		}},
+		{name: "latest 5xx", breakServer: func(fake *layerMarketplaceServer) {
+			fake.failLatest.Store(true)
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			env := seedMissingPinEnv(t)
+			repo, configPath, lockPath := env.repo, env.configPath, env.lockPath
+			fake, registry, entry := env.fake, env.registry, env.entry
+			fake.addSkill(t, registry, "review")
+			installV4MarketplaceLayer(t, repo, configPath, entry, layerPreparePins(t, fake, "skill", "review"))
+			configBytes, configStat := layerFreezeFile(t, configPath)
+			lockBytes, lockStat := layerFreezeFile(t, lockPath)
+			fake.setSkill(t, registry, "review", "review body v2")
+			tc.breakServer(fake)
+
+			result, err := Update(context.Background(), UpdateOptions{RepoRoot: repo, DependencyReconcile: testMarketplaceUpdateReconcile})
+			var missing *MissingMarketplaceResourcesError
+			if err == nil || result != nil || errors.As(err, &missing) {
+				t.Fatalf("update = (%#v, %v), want fatal non-missing error", result, err)
+			}
+			layerAssertFileUnchanged(t, configPath, configBytes, configStat)
+			layerAssertFileUnchanged(t, lockPath, lockBytes, lockStat)
+		})
+	}
 }
 
 // spec: marketplace-api/locked-archive-evidence-refreshes-on-identical-content

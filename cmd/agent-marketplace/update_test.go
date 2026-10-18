@@ -3,9 +3,14 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/Adyen/agent-marketplace/internal/cache"
@@ -13,6 +18,10 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/dependencytxn"
 	"github.com/Adyen/agent-marketplace/internal/lockfile"
 	"github.com/Adyen/agent-marketplace/internal/pipeline"
+	hccartifact "github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact"
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
+	mpapi "github.com/Adyen/agent-marketplace/pkg/marketplace/api"
+	"github.com/Adyen/agent-marketplace/pkg/marketplace/store"
 )
 
 func TestUpdateCommandRefreshesPinnedRefsAndSyncsWithoutChangingConfig(t *testing.T) {
@@ -889,6 +898,156 @@ func TestUpdateCommandOutputIncludesMarketplaceDecisions(t *testing.T) {
 	if strings.Contains(text, "unsafe\\n") || strings.ContainsAny(text, "\x00\x1b\r\t") {
 		t.Fatalf("output contains unsafe terminal data: %q", text)
 	}
+}
+
+// spec: update-output/missing-resource-is-kept-while-other-pins-update
+// spec: update-output/lock-and-outputs-agree-after-a-partial-update
+func TestUpdateCommandContinuesPastMissingMarketplacePin(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, "cache"))
+	t.Setenv("XDG_STATE_HOME", filepath.Join(home, "state"))
+	server := newV4UpdateServer(t, "stay", "gone")
+	writeConfig(t, filepath.Join(home, ".agents", "config.yaml"), "apiVersion: agent-marketplace/v4\nharnesses: [factory]\nsources:\n  mp: {marketplace: "+server.URL+"}\n")
+	repo := t.TempDir()
+	withWorkingDir(t, repo)
+	for _, name := range []string{"stay", "gone"} {
+		if output, err := executeCommand("install", "tools/skill/"+name, "--marketplace", "mp", "--yes"); err != nil {
+			t.Fatalf("install %s: %v\n%s", name, err, output)
+		}
+	}
+	lockPath := filepath.Join(repo, ".agents", "lock.yaml")
+	goneBefore := commandLockResource(t, lockPath, "gone")
+	if goneBefore == nil {
+		t.Fatal("user lock has no gone record after install")
+	}
+
+	server.setSkill(t, "stay", "stay body v2")
+	server.resources["gone"].missing.Store(true)
+
+	output, err := executeCommand("update")
+	if err == nil {
+		t.Fatalf("update succeeded, want missing-resource error:\n%s", output)
+	}
+	if !strings.Contains(output, "Marketplace pins updated: 1") {
+		t.Fatalf("update report did not print before the error:\n%s", output)
+	}
+	for _, want := range []string{server.URL, "src", "skill", "gone", "agent-marketplace remove gone"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("missing-resource error %q does not name %q", err.Error(), want)
+		}
+	}
+	goneAfter := commandLockResource(t, lockPath, "gone")
+	if goneAfter == nil || !reflect.DeepEqual(*goneAfter, *goneBefore) {
+		t.Fatalf("missing pin lock entry changed: got %#v, want %#v", goneAfter, goneBefore)
+	}
+	stayAfter := commandLockResource(t, lockPath, "stay")
+	latest := server.resources["stay"].revision.ContentDigest
+	if stayAfter == nil || string(stayAfter.ContentDigest) != string(latest) {
+		t.Fatalf("stay lock entry = %#v, want latest %s", stayAfter, latest)
+	}
+
+	checkOutput, checkErr := executeCommand("sync", "--check")
+	if checkErr != nil || strings.Contains(checkOutput, "out of sync") {
+		t.Fatalf("sync --check after partial update = (%v):\n%s", checkErr, checkOutput)
+	}
+}
+
+func commandLockResource(t *testing.T, lockPath, name string) *lockfile.MarketplaceResourceLock {
+	t.Helper()
+	doc := readLockDocument(t, lockPath)
+	for i := range doc.Marketplaces {
+		for j := range doc.Marketplaces[i].Resources {
+			if doc.Marketplaces[i].Resources[j].Name == name {
+				return &doc.Marketplaces[i].Resources[j]
+			}
+		}
+	}
+	return nil
+}
+
+type v4UpdateResource struct {
+	revision store.AssessedResourceRevision
+	raw      []byte
+	archive  string
+	missing  atomic.Bool
+}
+
+type v4UpdateServer struct {
+	*httptest.Server
+	resources map[string]*v4UpdateResource
+}
+
+func (f *v4UpdateServer) setSkill(t *testing.T, name, body string) {
+	t.Helper()
+	canonical, err := hccartifact.FromIR(ir.NewSkill(name, name+" description", body, nil, nil, ir.SourceRef{}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	canonical.Manifest.RegistryID = "src"
+	canonical.Manifest.RegistrySlug = "tools"
+	raw, archiveDigest, err := hccartifact.Encode(canonical)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resource := f.resources[name]
+	if resource == nil {
+		resource = &v4UpdateResource{}
+		f.resources[name] = resource
+	}
+	resource.raw = raw
+	resource.archive = archiveDigest
+	resource.revision = testAssessedMarketplaceRevision(t, store.ResourceRevision{
+		Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Registry: "src", Kind: "skill", Name: name},
+		ContentDigest: store.RevisionDigest(canonical.Manifest.ContentDigest),
+		ArchiveDigest: store.ArchiveDigest(archiveDigest),
+	})
+}
+
+func newV4UpdateServer(t *testing.T, names ...string) *v4UpdateServer {
+	t.Helper()
+	fake := &v4UpdateServer{resources: map[string]*v4UpdateResource{}}
+	fake.Server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/.well-known/agent-marketplace.json":
+			_ = json.NewEncoder(w).Encode(mpapi.DefaultWellKnown("mp", "http://"+r.Host))
+		case strings.HasPrefix(r.URL.Path, "/api/v1/registries/"):
+			_ = json.NewEncoder(w).Encode(mpapi.RegistryDTO{ID: "src", Slug: "tools", Origins: []string{"https://example.com/tools.git"}, Ref: "main", Roots: []store.RegistryRoot{{Path: ".agents"}}, Acquisition: store.AcquisitionMirror, Listed: true})
+		case strings.HasPrefix(r.URL.Path, "/api/v1/resources/"):
+			segments := strings.Split(strings.TrimPrefix(r.URL.Path, "/api/v1/resources/"), "/")
+			if len(segments) < 3 || (segments[0] != "tools" && segments[0] != "src") {
+				http.NotFound(w, r)
+				return
+			}
+			resource, ok := fake.resources[segments[2]]
+			latest := len(segments) == 3
+			exact := len(segments) == 5 && segments[3] == "revisions" && ok && segments[4] == string(resource.revision.ContentDigest)
+			if (latest && (!ok || resource.missing.Load())) || (!latest && !exact) {
+				http.NotFound(w, r)
+				return
+			}
+			_ = json.NewEncoder(w).Encode(resource.revision)
+		case strings.HasPrefix(r.URL.Path, "/api/v1/artifacts/sha256/"):
+			for _, resource := range fake.resources {
+				if strings.TrimPrefix(resource.archive, "sha256:") == strings.TrimPrefix(r.URL.Path, "/api/v1/artifacts/sha256/") {
+					w.Header().Set("Content-Type", "application/vnd.agent-marketplace.artifact.v1.tar+gzip")
+					_, _ = w.Write(resource.raw)
+					return
+				}
+			}
+			http.NotFound(w, r)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(fake.Close)
+	for _, name := range names {
+		fake.setSkill(t, name, name+" body v1")
+	}
+	return fake
 }
 
 func createAndPushTag(t *testing.T, repoDir, tag string) {
