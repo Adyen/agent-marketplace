@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -224,8 +223,7 @@ func TestTUIDependencyLifecycleSyncDoesNotRefuse(t *testing.T) {
 	commitAndPushAll(t, working, "rename alpha")
 
 	_, err := runTUIDependencyLifecycle(context.Background(), mustWorkspace(t, repoRoot), false)
-	var refused *updateSelectionRefusedError
-	if errors.As(err, &refused) {
-		t.Fatalf("TUI sync ran the update selection guard: %v", err)
+	if err != nil {
+		t.Fatalf("TUI sync failed: %v", err)
 	}
 }
