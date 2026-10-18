@@ -5381,10 +5381,10 @@ func syncArtifactLinks(outDir string, artifacts []artifact.Artifact, cacheDir st
 				if digestErr != nil {
 					return report, diags, digestErr
 				}
-				// A legacy entry can migrate only when it matches the desired
-				// file; a digest-bearing entry instead matches its last output.
-				migrationAllowed = (entry.Digest != "" && currentDigest == entry.Digest) ||
-					(entry.Digest == "" && currentDigest == desiredDigests[path])
+				// A copy matching the desired file can always migrate; a
+				// digest-bearing entry can also migrate when it still matches its last output.
+				migrationAllowed = currentDigest == desiredDigests[path] ||
+					(entry.Digest != "" && currentDigest == entry.Digest)
 			} else {
 				migrationAllowed = true
 			}
@@ -6148,6 +6148,13 @@ func syncSkillLinks(skillsDir string, links []skillLink, dryRun bool, pruneStale
 					}
 				}
 				migrationAllowed = currentDigest == ownedDigest
+				if !migrationAllowed && entry.Digest != "" {
+					desiredDigest, err := portableLinkedDesiredDigest(linkMeta[name], dryRun)
+					if err != nil {
+						return report, err
+					}
+					migrationAllowed = currentDigest == desiredDigest
+				}
 			} else {
 				migrationAllowed = true
 			}

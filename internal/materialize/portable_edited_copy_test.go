@@ -72,28 +72,32 @@ func TestEditedPortableSkillTreeReportsLocalEdit(t *testing.T) {
 
 // spec: materialization/edited-file-mode-single-file-copy-is-reported-as-a-local-edit
 func TestEditedPortableArtifactFileReportsLocalEdit(t *testing.T) {
-	outDir := t.TempDir()
-	cacheDir := t.TempDir()
-	compiledArtifact := artifact.Artifact{Path: "command.md", Bytes: []byte("command body")}
-	if err := os.WriteFile(filepath.Join(cacheDir, compiledArtifact.Path), compiledArtifact.Bytes, 0o644); err != nil {
-		t.Fatal(err)
+	for _, dryRun := range []bool{false, true} {
+		t.Run(map[bool]string{false: "sync", true: "check"}[dryRun], func(t *testing.T) {
+			outDir := t.TempDir()
+			cacheDir := t.TempDir()
+			compiledArtifact := artifact.Artifact{Path: "command.md", Bytes: []byte("command body")}
+			if err := os.WriteFile(filepath.Join(cacheDir, compiledArtifact.Path), compiledArtifact.Bytes, 0o644); err != nil {
+				t.Fatal(err)
+			}
+			target := hcc.TargetClaude
+			state := &portableState{entries: make(map[string]portableManifestEntry)}
+			collisionMeta := map[string]skillLink{"command.md": {resourceName: "probe", kind: ir.KindCommand}}
+			if _, _, err := syncPortableArtifactFiles(outDir, []artifact.Artifact{compiledArtifact}, cacheDir, false, false, collisionMeta, state, target, "commands", map[string]bool{}); err != nil {
+				t.Fatal(err)
+			}
+			dst := filepath.Join(outDir, "command.md")
+			if err := os.WriteFile(dst, []byte("local edit"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			_, diags, err := syncPortableArtifactFiles(outDir, []artifact.Artifact{compiledArtifact}, cacheDir, dryRun, false, collisionMeta, state, target, "commands", map[string]bool{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			assertEditedCopyDiag(t, diags, dst, "probe")
+			assertCleanupBytes(t, dst, "local edit")
+		})
 	}
-	target := hcc.TargetClaude
-	state := &portableState{entries: make(map[string]portableManifestEntry)}
-	collisionMeta := map[string]skillLink{"command.md": {resourceName: "probe", kind: ir.KindCommand}}
-	if _, _, err := syncPortableArtifactFiles(outDir, []artifact.Artifact{compiledArtifact}, cacheDir, false, false, collisionMeta, state, target, "commands", map[string]bool{}); err != nil {
-		t.Fatal(err)
-	}
-	dst := filepath.Join(outDir, "command.md")
-	if err := os.WriteFile(dst, []byte("local edit"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	_, diags, err := syncPortableArtifactFiles(outDir, []artifact.Artifact{compiledArtifact}, cacheDir, false, false, collisionMeta, state, target, "commands", map[string]bool{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	assertEditedCopyDiag(t, diags, dst, "probe")
-	assertCleanupBytes(t, dst, "local edit")
 }
 
 // spec: materialization/edited-copy-blocking-a-return-to-symlinks-is-reported-as-a-local-edit
@@ -111,6 +115,105 @@ func TestEditedCopyBlockingSymlinkReturnReportsLocalEdit(t *testing.T) {
 		t.Fatalf("edited copy was replaced by a link: %v %v", info, err)
 	}
 	assertCleanupBytes(t, filepath.Join(destination, "SKILL.md"), "local edit")
+}
+
+// spec: materialization/copy-matching-the-current-output-returns-to-symlinks
+func TestCopyMatchingCurrentOutputReturnsToSymlinks(t *testing.T) {
+	t.Run("skill", func(t *testing.T) {
+		for _, dryRun := range []bool{false, true} {
+			t.Run(map[bool]string{false: "sync", true: "check"}[dryRun], func(t *testing.T) {
+				sourceDir := t.TempDir()
+				if err := os.Chmod(sourceDir, 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(filepath.Join(sourceDir, "SKILL.md"), []byte("source skill"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+				cacheDir := filepath.Join(t.TempDir(), "cache", "probe")
+				skillsDir := filepath.Join(t.TempDir(), "skills")
+				destination := filepath.Join(skillsDir, "probe")
+				linkFor := func(body string) skillLink {
+					return skillLink{
+						name: "probe", target: cacheDir, cacheDir: cacheDir, sourceDir: sourceDir, resourceName: "probe", kind: ir.KindSkill,
+						artifacts: []artifact.Artifact{{Path: "SKILL.md", Bytes: []byte(body)}},
+					}
+				}
+				state := &portableState{entries: make(map[string]portableManifestEntry)}
+				if err := prepareSkillLinkCache(linkFor("original payload")); err != nil {
+					t.Fatal(err)
+				}
+				if _, err := syncPortableSkillTrees(skillsDir, []skillLink{linkFor("original payload")}, false, state, hcc.TargetFactory, "skills", make(map[string]bool)); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(filepath.Join(destination, "SKILL.md"), []byte("new payload"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+				if err := prepareSkillLinkCache(linkFor("new payload")); err != nil {
+					t.Fatal(err)
+				}
+				report, err := syncSkillLinks(skillsDir, []skillLink{linkFor("new payload")}, dryRun, false, portableSyncContext{
+					state: state, target: hcc.TargetFactory, reportPrefix: "skills", desired: make(map[string]bool),
+				})
+				if err != nil {
+					t.Fatal(err)
+				}
+				if len(report.Diags) != 0 {
+					t.Fatalf("copy matching the current output reported diagnostics: %+v", report.Diags)
+				}
+				assertSymlinkUnlessDryRun(t, destination, dryRun)
+				assertCleanupBytes(t, filepath.Join(destination, "SKILL.md"), "new payload")
+			})
+		}
+	})
+	t.Run("artifact", func(t *testing.T) {
+		for _, dryRun := range []bool{false, true} {
+			t.Run(map[bool]string{false: "sync", true: "check"}[dryRun], func(t *testing.T) {
+				outDir := t.TempDir()
+				cacheDir := t.TempDir()
+				target := hcc.TargetClaude
+				state := &portableState{entries: make(map[string]portableManifestEntry)}
+				collisionMeta := map[string]skillLink{"command.md": {resourceName: "probe", kind: ir.KindCommand}}
+				original := artifact.Artifact{Path: "command.md", Bytes: []byte("command body")}
+				if err := os.WriteFile(filepath.Join(cacheDir, original.Path), original.Bytes, 0o644); err != nil {
+					t.Fatal(err)
+				}
+				if _, _, err := syncPortableArtifactFiles(outDir, []artifact.Artifact{original}, cacheDir, false, false, collisionMeta, state, target, "commands", map[string]bool{}); err != nil {
+					t.Fatal(err)
+				}
+				updated := artifact.Artifact{Path: "command.md", Bytes: []byte("new command body")}
+				if err := os.WriteFile(filepath.Join(cacheDir, updated.Path), updated.Bytes, 0o644); err != nil {
+					t.Fatal(err)
+				}
+				dst := filepath.Join(outDir, "command.md")
+				if err := os.WriteFile(dst, updated.Bytes, 0o644); err != nil {
+					t.Fatal(err)
+				}
+				report, diags, err := syncArtifactLinks(outDir, []artifact.Artifact{updated}, cacheDir, dryRun, false, collisionMeta, portableSyncContext{
+					state: state, target: target, reportPrefix: "commands", desired: make(map[string]bool),
+				})
+				if err != nil {
+					t.Fatal(err)
+				}
+				if len(diags) != 0 {
+					t.Fatalf("copy matching the current output reported diagnostics: %+v (report %+v)", diags, report)
+				}
+				assertSymlinkUnlessDryRun(t, dst, dryRun)
+				assertCleanupBytes(t, dst, "new command body")
+			})
+		}
+	})
+}
+
+func assertSymlinkUnlessDryRun(t *testing.T, path string, dryRun bool) {
+	t.Helper()
+	info, err := os.Lstat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	isSymlink := info.Mode()&os.ModeSymlink != 0
+	if isSymlink == dryRun {
+		t.Fatalf("path %s symlink=%v after dryRun=%v; want symlink only for a real sync", path, isSymlink, dryRun)
+	}
 }
 
 // spec: materialization/unrecorded-existing-output-keeps-the-unmanaged-collision-warning

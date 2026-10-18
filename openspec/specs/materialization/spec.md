@@ -603,6 +603,11 @@ When a harness target uses file materialization mode and a selected resource's o
 - **WHEN** a recorded file-mode copy is edited and the harness target's materialization mode changes back to symlinks before sync runs
 - **THEN** sync keeps the edited copy instead of linking it and reports the same locally edited managed copy warning
 
+#### Scenario: Copy matching the current output returns to symlinks
+
+- **WHEN** a recorded file-mode copy no longer matches its recorded digest but matches the output sync would write now, and the harness target's materialization mode changes back to symlinks before sync runs
+- **THEN** sync replaces the copy with the cache-backed symlink and reports no collision warning for it
+
 #### Scenario: Unrecorded existing output keeps the unmanaged collision warning
 
 - **WHEN** a file or directory that the materialization manifest does not record already exists where a selected resource would be written, then sync runs
