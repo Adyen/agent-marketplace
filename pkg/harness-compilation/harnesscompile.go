@@ -388,6 +388,7 @@ func resolveArtifactPathConflicts(outputs []resourceOutput, t Target) ([]Artifac
 		index int
 		kind  ir.ResourceKind
 		name  string
+		path  string
 	}
 	owners := make(map[string]producer)
 	suppressed := make(map[int][]string)
@@ -405,20 +406,30 @@ func resolveArtifactPathConflicts(outputs []resourceOutput, t Target) ([]Artifac
 			if a.Fragment {
 				continue
 			}
-			current := producer{index: i, kind: output.kind, name: output.name}
-			previous, exists := owners[a.Path]
+			key := strings.ToLower(a.Path)
+			current := producer{index: i, kind: output.kind, name: output.name, path: a.Path}
+			previous, exists := owners[key]
 			if !exists {
-				owners[a.Path] = current
+				owners[key] = current
 				continue
 			}
 			code := diag.CodeBundleConflictDuplicateArtifactPath
 			message := fmt.Sprintf("duplicate artifact path %q produced by %s %q and %s %q; neither resource was emitted",
 				a.Path, previous.kind, previous.name, current.kind, current.name)
 			hint := "Rename one of the conflicting resources or adjust the output path"
+			if previous.path != a.Path {
+				message = fmt.Sprintf("artifact paths %q and %q differ only in letter case and name the same file on case-insensitive filesystems; produced by %s %q and %s %q; neither resource was emitted",
+					previous.path, a.Path, previous.kind, previous.name, current.kind, current.name)
+				hint = "Rename one of the conflicting resources so the names differ by more than letter case"
+			}
 			if previous.kind != current.kind {
 				code = diag.CodeBundleConflictCrossKindArtifactPath
 				message = fmt.Sprintf("%s %q and %s %q both compile to %q; neither artifact was emitted",
 					previous.kind, previous.name, current.kind, current.name, a.Path)
+				if previous.path != a.Path {
+					message = fmt.Sprintf("%s %q and %s %q compile to %q and %q, which differ only in letter case and name the same file on case-insensitive filesystems; neither artifact was emitted",
+						previous.kind, previous.name, current.kind, current.name, previous.path, a.Path)
+				}
 				hint = "Rename one of the conflicting resources: on this target a skill and a command cannot share a name"
 			}
 			diagnostics = append(diagnostics, Diagnostic{
