@@ -48,9 +48,6 @@ var entryManifestOnlyFields = []string{"mcpServers", "lspServers", "userConfig",
 // refuses rather than silently ignoring the overlay.
 func DecodeEntry(rootPath, catalogFormat string, entry CatalogEntry) (*ir.Plugin, []*diag.Diagnostic, error) {
 	pluginFormat := CatalogPluginFormat(catalogFormat)
-	if catalogFormat == "" {
-		return Decode(rootPath, pluginFormat)
-	}
 	info, known, err := pluginpolicy.LookupPackageFormat(catalogFormat)
 	if err != nil {
 		return nil, nil, err
@@ -276,9 +273,6 @@ func (d *decoder) applyOverlayHooks(obj map[string]any, manifestPresent bool) {
 		}
 		d.members = kept
 	}
-	data, err := json.Marshal(obj)
-	if err != nil {
-		return
-	}
+	data, _ := json.Marshal(obj)
 	d.loadComponentData(ir.KindHook, "entry-hooks.json", data, d.overlay.Source)
 }
