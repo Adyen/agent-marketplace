@@ -145,3 +145,27 @@ source revision processing or #434. Unique-root ingestion, archives,
 read/parser and graph budgets, remaining repeated-work candidates and
 D1-D6 retain their separate obligations. No global processing or memory
 bound follows from this change.
+
+## CodeRabbit CLI Coverage Follow-Up
+
+CodeRabbit's comment `4307975962` correctly identifies a missing regression
+witness in the real three-alias CLI test. Its `update` path now captures
+debug JSON records in an isolated temporary file and asserts exactly one
+source build before `lock layer reconciled`. It independently requires one
+build in the first snapshot-verification phase. Later selection-guard
+verification of prior inventory is left intact, not mistaken for duplicate
+acquisition. Locked/check cases retain their lock-byte/output assertions.
+
+Disabling only the acquisition deduplication guard makes that actual CLI
+test fail with `reconciled=true, builds=3`; restoring it passes. The mutation
+is removed. Production and benchmark sources are byte-identical to
+`004f03f9`, so no new performance comparison is needed.
+
+Fresh scoped CLI validation (the five acquisition/CLI cases, warm-snapshot
+verification and isolation guard), focused races, vet, zero-issue CI lint,
+build and strict spec/archive checks pass. Host OCR-delegation review covers
+both follow-up files, including default exclusions, with zero skipped and
+no actionable findings. Benchmarks and combined E2E are not rerun for this
+test/document-only follow-up; the initial slice's measurements and E2E
+counts above remain explicitly the initial results. No normalization or
+other production-policy change is folded into this coverage follow-up.

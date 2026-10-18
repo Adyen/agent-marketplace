@@ -150,9 +150,28 @@ func TestSyncRepeatedGitRequirementsKeepsExactLock(t *testing.T) {
 	}
 	body += "resources:\n  first: [skill/review-0]\n  second: [skill/review-0]\n  third: [skill/review-0]\n"
 	writeConfig(t, filepath.Join(repo, ".agents", "config.yaml"), body)
+	logPath := filepath.Join(t.TempDir(), "update.jsonl")
+	t.Setenv("AGENT_MARKETPLACE_LOG_ENABLED", "true")
+	t.Setenv("AGENT_MARKETPLACE_LOG_FILE", logPath)
+	t.Setenv("AGENT_MARKETPLACE_LOG_LEVEL", "debug")
 	for _, args := range [][]string{{"update"}, {"sync", "--locked"}, {"sync", "--check"}} {
 		if output, err := executeCommand(args...); err != nil {
 			t.Fatalf("%v: %v\n%s", args, err, output)
+		}
+		if args[0] == "update" {
+			logs, err := os.ReadFile(logPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			acquisition, verification, reconciled := strings.Cut(string(logs), `"msg":"lock layer reconciled"`)
+			buildRecord := `"msg":"built direct-Git source revision"`
+			if builds := strings.Count(acquisition, buildRecord); !reconciled || builds != 1 {
+				t.Fatalf("update acquisition: reconciled=%t, builds=%d; want one before reconciliation", reconciled, builds)
+			}
+			verification, _, verified := strings.Cut(verification, `"msg":"lock snapshot verification completed"`)
+			if builds := strings.Count(verification, buildRecord); !verified || builds != 1 {
+				t.Fatalf("update verification: completed=%t, builds=%d; want one independent verification", verified, builds)
+			}
 		}
 		after, err := os.ReadFile(lockPath)
 		if err != nil || !bytes.Equal(before, after) {
