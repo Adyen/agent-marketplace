@@ -5,11 +5,28 @@ import (
 	"encoding/json"
 	"testing"
 
+	"github.com/Adyen/agent-marketplace/internal/catalog"
+	"github.com/Adyen/agent-marketplace/internal/fsboundary"
+	"github.com/Adyen/agent-marketplace/internal/lockfile"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir/ext"
 )
 
 func TestNativeMetadataSidecarsKeepFrozenFallbackDigest(t *testing.T) {
+	contract, err := lockfile.RevisionContract(lockfile.CurrentRevisionSchema)
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := t.TempDir()
+	source, err := fsboundary.OpenSourceFS(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := source.Close(); err != nil {
+			t.Fatal(err)
+		}
+	})
 	controls := map[string]any{"permissionMode": "plan"}
 	plainSubagent := ir.NewSubagent("helper", "Helper", "Help.\n", "", nil, "", nil, "", controls, ir.SourceRef{File: "agents/helper.md", Line: 1})
 	claudeSubagent := ir.NewSubagent("helper", "Helper", "Help.\n", "", nil, "", nil, "", controls, ir.SourceRef{File: "agents/helper.md", Line: 1})
@@ -48,6 +65,17 @@ func TestNativeMetadataSidecarsKeepFrozenFallbackDigest(t *testing.T) {
 			}
 			if !bytes.Equal(got, want) {
 				t.Fatalf("sidecar changed the fallback digest basis:\n got %s\nwant %s", got, want)
+			}
+			legacyBytes, err := resourceSourceBytes(root, source, catalog.Entry{Kind: tc.legacy.Kind(), Name: tc.legacy.Name(), Resource: tc.legacy}, contract)
+			if err != nil {
+				t.Fatal(err)
+			}
+			typedBytes, err := resourceSourceBytes(root, source, catalog.Entry{Kind: tc.typed.Kind(), Name: tc.typed.Name(), Resource: tc.typed}, contract)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !bytes.Equal(typedBytes, legacyBytes) {
+				t.Fatalf("sidecar changed the fallback source bytes:\n got %s\nwant %s", typedBytes, legacyBytes)
 			}
 		})
 	}
