@@ -41,15 +41,15 @@ func TestAcquireGitRequirementsPreservesPolicies(t *testing.T) {
 			for _, hint := range tc.policies {
 				entries = append(entries, config.RegistryEntry{URL: seeded.URL, Ref: seeded.Ref, SourceHarness: hint})
 			}
-			got, err := acquireLockedRegistry(context.Background(), seeded.URL, seeded.URL, seeded.Ref, entries)
-			if err != nil || got.URL != seeded.URL || got.Ref != seeded.Ref || got.Commit != seeded.Commit || len(got.Roots) != len(tc.roots) {
+			got, err := acquireLockedRegistry(context.Background(), seeded.URL, seeded.URL, seeded.Ref, entries, nil)
+			if err != nil || got.registry.URL != seeded.URL || got.registry.Ref != seeded.Ref || got.registry.Commit != seeded.Commit || len(got.registry.Roots) != len(tc.roots) {
 				t.Fatalf("policy acquisition: %v, registry=%+v", err, got)
 			}
 			for i, harness := range tc.roots {
 				want := seeded.Roots[0]
 				want.SourceHarness = harness
-				if !reflect.DeepEqual(got.Roots[i], want) {
-					t.Fatalf("changed source inventory: %+v; want %+v", got.Roots[i], want)
+				if !reflect.DeepEqual(got.registry.Roots[i], want) {
+					t.Fatalf("changed source inventory: %+v; want %+v", got.registry.Roots[i], want)
 				}
 			}
 			if builds := strings.Count(logs.String(), `msg="built direct-Git source revision"`); builds != 2 {
@@ -79,7 +79,7 @@ func TestAcquireGitRequirementsBuildsDuplicatesOnce(t *testing.T) {
 		}
 		for range 2 {
 			logs.Reset()
-			got, err := acquireLockedRegistry(context.Background(), seeded.URL, seeded.URL, seeded.Ref, entries)
+			got, err := acquireLockedRegistry(context.Background(), seeded.URL, seeded.URL, seeded.Ref, entries, nil)
 			if err != nil || !reflect.DeepEqual(got, seeded) {
 				t.Fatalf("duplicate acquisition changed exact inventory: %v, registry=%+v", err, got)
 			}
@@ -105,15 +105,15 @@ func TestAcquireGitRequirementsRetainsRefusals(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			entries := []config.RegistryEntry{{SourceHarness: "claude"}, tc.entry}
-			got, err := acquireLockedRegistry(context.Background(), seeded.URL, seeded.URL, seeded.Ref, entries)
-			if !errors.Is(err, tc.want) || len(got.Roots) != 0 || got.Commit.String() != "" {
+			got, err := acquireLockedRegistry(context.Background(), seeded.URL, seeded.URL, seeded.Ref, entries, nil)
+			if !errors.Is(err, tc.want) || len(got.registry.Roots) != 0 || got.registry.Commit.String() != "" {
 				t.Fatalf("changed fail-closed refusal: registry=%+v, %v; want %v", got, err, tc.want)
 			}
 		})
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if _, err := acquireLockedRegistry(ctx, seeded.URL, seeded.URL, seeded.Ref, []config.RegistryEntry{{}}); !errors.Is(err, context.Canceled) {
+	if _, err := acquireLockedRegistry(ctx, seeded.URL, seeded.URL, seeded.Ref, []config.RegistryEntry{{}}, nil); !errors.Is(err, context.Canceled) {
 		t.Fatalf("changed cancellation: %v", err)
 	}
 }
@@ -124,11 +124,11 @@ func TestAcquireGitRequirementsPreservesDifferentRoots(t *testing.T) {
 	}
 	_, seeded := setupGitRequirementsFixture(t)
 	entries := []config.RegistryEntry{{Path: ".", SourceHarness: "claude"}, {Path: "skills", SourceHarness: "claude"}, {Path: "skills", SourceHarness: "claude"}}
-	got, err := acquireLockedRegistry(context.Background(), seeded.URL, seeded.URL, seeded.Ref, entries)
-	if err != nil || got.Commit != seeded.Commit || len(got.Roots) != 2 || !reflect.DeepEqual(got.Roots[0], seeded.Roots[0]) {
+	got, err := acquireLockedRegistry(context.Background(), seeded.URL, seeded.URL, seeded.Ref, entries, nil)
+	if err != nil || got.registry.Commit != seeded.Commit || len(got.registry.Roots) != 2 || !reflect.DeepEqual(got.registry.Roots[0], seeded.Roots[0]) {
 		t.Fatalf("different-root acquisition: %v, registry=%+v", err, got)
 	}
-	second := got.Roots[1]
+	second := got.registry.Roots[1]
 	if second.Path != "skills" || second.SourceHarness != "claude" || second.RevisionSchema != "v4" || len(second.Resources) != 1 || second.Resources[0].Name != "review-0" {
 		t.Fatalf("distinct root was conflated or lost: %+v", second)
 	}

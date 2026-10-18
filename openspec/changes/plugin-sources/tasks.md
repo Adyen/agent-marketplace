@@ -22,14 +22,14 @@
 
 ## 3. Locks and source revisions
 
-- [ ] 3.1 Add the `plugin-v1` source-revision contract and plugin records
+- [x] 3.1 Add the `plugin-v1` source-revision contract and plugin records
   inside v2 locks (design D4); annotate
   `plugin-packages/plugin-free-layers-keep-their-lock-bytes` and
   `plugin-packages/plugin-selecting-layers-keep-the-v2-lock-format`
-- [ ] 3.2 Lock external catalog entries to their own commits, enforce source
+- [x] 3.2 Lock external catalog entries to their own commits, enforce source
   policy per origin before acquisition, and detect stale entries in
   `sync --check` and `sync --locked`; annotate the remaining lock scenarios
-- [ ] 3.3 Skip plugin member delivery in sync with a
+- [x] 3.3 Skip plugin member delivery in sync with a
   `plugin.delivery.pending` warning (design D5)
 - [ ] 3.4 Add `plugin-packages/released-v4-client-refuses-a-plugin-configuration`
   to the released-client gate as a required witness

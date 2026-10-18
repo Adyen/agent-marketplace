@@ -174,7 +174,7 @@ func resolvePriorAndDesired(ctx context.Context, ws pipeline.Workspace, offline 
 	for _, job := range priorJobs {
 		// An unavailable prior snapshot leaves the layer's misses looking new,
 		// which is the conservative direction.
-		if err := addLayerSnapshots(ctx, priorSet, job.source, job.entries, job.doc, offline, false, nil); err != nil {
+		if err := addLayerSnapshots(ctx, priorSet, job.source, job.entries, job.decls, job.doc, offline, false, nil); err != nil {
 			loadErrors = append(loadErrors, selectionPriorLoadError{lockPath: job.lockPath, err: err})
 		}
 	}

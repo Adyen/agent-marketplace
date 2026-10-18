@@ -78,18 +78,18 @@ func TestListShowsPluginEntriesIncludingRefused(t *testing.T) {
 	}
 }
 
-func TestSyncSelectedPluginFailsClosedBeforeDelivery(t *testing.T) {
+func TestSyncSelectedPluginSkipsDeliveryWithPendingWarning(t *testing.T) {
 	if isolateCommandTest(t) {
 		return
 	}
 	repo, run := pluginCommandFixture(t, "    - plugin/review-kit\n")
 
 	output, err := run("sync", "--no-backup")
-	if err == nil {
-		t.Fatalf("sync of a selected plugin must fail closed until plugin delivery lands:\n%s", output)
+	if err != nil {
+		t.Fatalf("sync must deliver everything else while plugin delivery is pending: %v\n%s", err, output)
 	}
-	if !strings.Contains(output, "review-kit") {
-		t.Fatalf("sync failure must name the plugin:\n%s", output)
+	if !strings.Contains(output, "plugin.delivery.pending") || !strings.Contains(output, "review-kit") {
+		t.Fatalf("sync must warn plugin.delivery.pending naming the plugin:\n%s", output)
 	}
 	if _, statErr := os.Lstat(filepath.Join(repo, ".claude", "skills", "review")); !os.IsNotExist(statErr) {
 		var names []string

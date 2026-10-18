@@ -11,6 +11,7 @@ import (
 )
 
 // spec: plugin-packages/plugin-shaped-source-without-format-stays-loose
+// spec: plugin-packages/plugin-free-layers-keep-their-lock-bytes
 func TestPluginShapedSourceWithoutFormatStaysLoose(t *testing.T) {
 	if isolateCommandTest(t) {
 		return
