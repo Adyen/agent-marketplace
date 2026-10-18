@@ -51,6 +51,9 @@ type Entry struct {
 	Path              string      // source file path (from ir.SourceRef)
 	SourceHarness     string      `json:"-"`
 	PrimarySourcePath string      `json:"-"`
+	// Plugin carries package metadata for Kind == ir.KindPlugin entries;
+	// nil for loose resources.
+	Plugin *PluginEntry `json:"-"`
 }
 
 // Requirement identifies another resource that must be selected for a

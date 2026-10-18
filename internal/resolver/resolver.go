@@ -75,6 +75,10 @@ type ResolvedArtifact struct {
 	MarketplaceArchiveDigest string
 	UpdateAvailable          bool // true when a newer revision exists (status/update)
 	Stale                    bool // true when the registry refresh is stale/unavailable
+
+	// Selection carries the resolved plugin selection edges and effective
+	// members when Kind == ir.KindPlugin; nil for other resources.
+	Selection *PluginSelection `json:"-"`
 }
 
 func HasAdditiveSources(kind ir.ResourceKind) bool {
@@ -1247,8 +1251,9 @@ func expandCollections(resolved []ResolvedArtifact, errs []error, cfg *config.Co
 	// displaces a member in the other. A required member still displaces a
 	// non-required selection in its own scope.
 	admissions := &scopeAdmissions{
-		required:  make(map[scopedSelection]bool),
-		displaced: make(map[scopedSelection]skillOccurrence),
+		required:    make(map[scopedSelection]bool),
+		displaced:   make(map[scopedSelection]skillOccurrence),
+		pluginEdges: make(map[scopedSelection][]string),
 	}
 	for _, artifact := range resolved {
 		if artifact.Kind != ir.KindCollection {
@@ -1339,6 +1344,27 @@ func expandCollections(resolved []ResolvedArtifact, errs []error, cfg *config.Co
 		expandMembersRecursive(irCol, viaLabel, artifact, cfg, catalogIndex, resources, malformed, allCollectionsByName, admissions, excludedResources, localExcludes, collectionExcludeAll, localExcludeAllKinds, visited, &out, &expandErrs, targetSet)
 	}
 
+	// A plugin selected both directly and by a collection stays one plugin:
+	// merge the collection edges the member binding recorded onto it.
+	for i := range out {
+		artifact := &out[i]
+		if artifact.Kind != ir.KindPlugin || artifact.Selection == nil {
+			continue
+		}
+		for _, colName := range admissions.pluginEdges[newScopedSelection(artifact.Kind, artifact.Name, artifact.Source)] {
+			seen := false
+			for _, edge := range artifact.Selection.Edges {
+				if edge.Kind == PluginEdgeCollection && edge.Collection == colName {
+					seen = true
+					break
+				}
+			}
+			if !seen {
+				artifact.Selection.Edges = append(artifact.Selection.Edges, PluginEdge{Kind: PluginEdgeCollection, Collection: colName})
+			}
+		}
+	}
+
 	if !expanded {
 		return out, append(errs, expandErrs...)
 	}
@@ -1352,8 +1378,9 @@ func expandCollections(resolved []ResolvedArtifact, errs []error, cfg *config.Co
 // already selected, whether a required selection holds each one, and the
 // required collection members that displaced a non-required selection there.
 type scopeAdmissions struct {
-	required  map[scopedSelection]bool
-	displaced map[scopedSelection]skillOccurrence
+	required    map[scopedSelection]bool
+	displaced   map[scopedSelection]skillOccurrence
+	pluginEdges map[scopedSelection][]string
 }
 
 func reconcileExpandedHooks(artifacts []ResolvedArtifact) ([]ResolvedArtifact, []error) {
@@ -1829,6 +1856,16 @@ func expandMembersRecursive(
 		}
 
 		catEntry, found := idx[sel]
+		if found && member.Kind == ir.KindPlugin && catEntry.Plugin != nil {
+			if catEntry.Plugin.Refusal != nil {
+				*errs = append(*errs, &PluginEntryRefusalError{Name: memberName, URL: memberRegistryURL, Diagnostic: catEntry.Plugin.Refusal})
+				continue
+			}
+			if catEntry.Plugin.Source.Kind == "git" {
+				*errs = append(*errs, &PluginExternalEntryError{Name: memberName, EntryURL: catEntry.Plugin.Source.URL, URL: memberRegistryURL})
+				continue
+			}
+		}
 		if !found {
 			// Correlate before blaming: a member that failed ingest validation
 			// is present upstream, so reporting it as removed would send the
@@ -1861,6 +1898,9 @@ func expandMembersRecursive(
 			// A direct selection or an earlier expansion keeps precedence
 			// unless required policy outranks a non-required selection.
 			if !memberRequired || existingRequired {
+				if member.Kind == ir.KindPlugin {
+					admissions.pluginEdges[scopedKey] = append(admissions.pluginEdges[scopedKey], col.Label())
+				}
 				continue
 			}
 			displacing = true
@@ -1888,6 +1928,12 @@ func expandMembersRecursive(
 			CatalogKey:     memberCatalogKey,
 			Via:            viaLabel,
 			Harnesses:      memberHarnesses,
+		}
+		if member.Kind == ir.KindPlugin && catEntry.Plugin != nil {
+			admitted.Selection = &PluginSelection{
+				Edges:   []PluginEdge{{Kind: PluginEdgeCollection, Collection: col.Label()}},
+				Members: catEntry.Plugin.Members,
+			}
 		}
 		if displacing {
 			admissions.displaced[scopedKey] = artifactOccurrence(admitted)
@@ -2305,6 +2351,10 @@ func buildOccurrences(cfg *config.Config, catalogs map[string][]catalog.Entry, r
 
 		harnessTargets := resolveEntryHarnesses(entry, targetSet)
 		byName := indexCatalog(catalog)
+		var memberIndex map[resourceSelection]string
+		if entry.Format != "" {
+			memberIndex = pluginMemberIndex(catalog)
+		}
 		selectedResources := resolveSelectedResources(entry, catalog)
 		if entry.Required && !hasExplicitSelection(entry) {
 			for _, selected := range appendSelections(nil, ir.KindCollection, cfg.Collections.Include) {
@@ -2325,6 +2375,12 @@ func buildOccurrences(cfg *config.Config, catalogs map[string][]catalog.Entry, r
 
 			selectedSkill, found := byName[selected]
 			if !found {
+				if entry.Format != "" && selected.kind != ir.KindPlugin {
+					if pluginName, isMember := memberIndex[selected]; isMember {
+						errs = append(errs, &PluginMemberDirectSelectionError{Kind: selected.kind, Name: selected.name, PluginName: pluginName, URL: entry.URL})
+						continue
+					}
+				}
 				notFoundKey := missingResource{resourceSelection: selected, url: entry.URL, path: entry.Path, ref: entry.Ref}
 				if _, reported := reportedNotFound[notFoundKey]; !reported {
 					// Correlate before blaming. The resource may be absent from
@@ -2361,6 +2417,30 @@ func buildOccurrences(cfg *config.Config, catalogs map[string][]catalog.Entry, r
 				} else if entry.Required {
 					markSelectionRequired(reportedNotFound[notFoundKey])
 				}
+				continue
+			}
+
+			if selected.kind == ir.KindPlugin && selectedSkill.Plugin != nil {
+				if selectedSkill.Plugin.Refusal != nil {
+					errs = append(errs, &PluginEntryRefusalError{Name: selected.name, URL: entry.URL, Diagnostic: selectedSkill.Plugin.Refusal})
+					continue
+				}
+				if selectedSkill.Plugin.Source.Kind == "git" {
+					errs = append(errs, &PluginExternalEntryError{Name: selected.name, EntryURL: selectedSkill.Plugin.Source.URL, URL: entry.URL})
+					continue
+				}
+				selection := &PluginSelection{
+					Edges:   []PluginEdge{{Kind: PluginEdgeDirect}},
+					Members: selectedSkill.Plugin.Members,
+				}
+				if optErr := applyPluginRequestOptions(selection, selected.name, pluginRequestsFor(entry, selected.name), entry); optErr != nil {
+					errs = append(errs, optErr)
+					continue
+				}
+				occurrence := newSkillOccurrence(entry, entryIndex, selectedSkill, resources, harnessTargets, order)
+				occurrence.resolved.Selection = selection
+				occurrencesByName[selected] = append(occurrencesByName[selected], occurrence)
+				order++
 				continue
 			}
 
@@ -3676,6 +3756,8 @@ func v4DecisionKind(kind string) ir.ResourceKind {
 		return ir.KindMcpServer
 	case "collection":
 		return ir.KindCollection
+	case "plugin":
+		return ir.KindPlugin
 	default:
 		return ir.ResourceKind(-1)
 	}

@@ -315,6 +315,9 @@ func buildListRows(cfg *config.Config, catalogs map[string]loadedCatalog, resolv
 		} else if artifact.Selected {
 			status = "enabled"
 		}
+		if p := artifact.Plugin; p != nil && p.Refusal != nil {
+			status = p.Refusal.Code
+		}
 		rows = append(rows, listRow{
 			Registry: registryDisplayName(artifact.RegistryURL),
 			Kind:     skill.KindLabel(artifact.Kind),

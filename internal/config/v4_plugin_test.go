@@ -220,6 +220,37 @@ func TestV4PluginExcludeLocators(t *testing.T) {
 	}
 }
 
+func TestV4GroupPluginExclusionSurvivesToLegacy(t *testing.T) {
+	cfg := parseRuntimeV4(t, `apiVersion: agent-marketplace/v4
+sources:
+  team-plugins:
+    directory: ./plugins
+    format: claude-marketplace
+resources:
+  team-plugins:
+    all: true
+    exclude: [plugin/npm-kit]
+`)
+	var entry *RegistryEntry
+	for i := range cfg.Registries {
+		if cfg.Registries[i].Format == "claude-marketplace" {
+			entry = &cfg.Registries[i]
+		}
+	}
+	if entry == nil || !entry.V4All {
+		t.Fatalf("format source lost its all:true selection: %#v", cfg.Registries)
+	}
+	var found bool
+	for _, d := range entry.V4Decisions {
+		if d.Action == V4SelectionExclude && d.Exclusion == "plugin/npm-kit" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("group plugin exclusion did not reach the decision stream: %#v", entry.V4Decisions)
+	}
+}
+
 func TestV4StructuredEntryKindMustBePlugin(t *testing.T) {
 	_, err := ParseV4Config(v4PluginConfig(`  team-plugins:
     - {kind: skill, name: review}

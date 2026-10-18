@@ -2076,7 +2076,7 @@ func (c *V4Config) toLegacyConfig(kind layerKind, lockDoc *lockfile.Document, mo
 			out.Marketplaces = append(out.Marketplaces, *entry)
 			continue
 		}
-		entry := RegistryEntry{SourceHarness: src.SourceHarness, Ref: src.Ref, Path: src.Path, URL: src.URL, V4Kind: src.Kind}
+		entry := RegistryEntry{SourceHarness: src.SourceHarness, Format: src.Format, Ref: src.Ref, Path: src.Path, URL: src.URL, V4Kind: src.Kind}
 		if src.Kind == V4SourceDirectory {
 			entry.Ref = ""
 			entry.Path = ""
@@ -2115,6 +2115,11 @@ func (c *V4Config) toLegacyConfig(kind layerKind, lockDoc *lockfile.Document, mo
 				if request.Options.HasAs && request.Options.As != request.Name {
 					return nil, v4err("v4.runtime-option", "resources."+name+".include", 0, "installed aliases are not supported for consumer selections")
 				}
+				if request.Kind == "plugin" {
+					// Plugin selections ride the ordered decision stream; the
+					// legacy per-kind selectors cannot carry request options.
+					continue
+				}
 				selector := entry.SelectorForKindPtr(v4KindToIR(request.Kind))
 				if selector == nil {
 					return nil, v4err("v4.locator", request.Locator, 0, "unsupported resource kind %q", request.Kind)
@@ -2127,6 +2132,9 @@ func (c *V4Config) toLegacyConfig(kind layerKind, lockDoc *lockfile.Document, mo
 					continue
 				}
 				kindName, resourceName := v4ExclusionKindName(exclusion)
+				if v4KindToIR(kindName) == ir.KindPlugin {
+					continue
+				}
 				selector := entry.SelectorForKindPtr(v4KindToIR(kindName))
 				if selector == nil {
 					return nil, v4err("v4.exclusion", "resources."+name+".exclude", 0, "unsupported exclusion %q", exclusion)

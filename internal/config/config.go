@@ -570,6 +570,10 @@ type RegistryEntry struct {
 	// Optional; defaults to hcc.Autodetect at sync time.
 	SourceHarness string `yaml:"source_harness,omitempty"`
 
+	// Format opts the source into plugin package interpretation; set by the
+	// v4 adapter, never serialized. Empty keeps loose ingestion.
+	Format string `yaml:"-"`
+
 	// V4Kind preserves an explicit v4 source discriminator for the read-only
 	// legacy adapter. It is never serialized and prevents a directory named
 	// ".git" from being reclassified as a Git source at runtime.

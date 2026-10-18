@@ -212,6 +212,7 @@ func resolveRegistryEntry(cfg *Config, entry RegistryEntry) RegistryEntry {
 		Required:          entry.Required,
 		Default:           entry.Default,
 		SourceHarness:     entry.SourceHarness,
+		Format:            entry.Format,
 		V4Kind:            entry.V4Kind,
 		V4All:             entry.V4All,
 		V4Decisions:       entry.V4Decisions,

@@ -13,7 +13,7 @@
 - [x] 2.2 Keep plugin-shaped sources without `format` on legacy ingestion;
   annotate `plugin-packages/plugin-shaped-source-without-format-stays-loose`
   with a byte-compare of output and lock against the base
-- [ ] 2.3 Resolve plugins with selection edges (direct, collection,
+- [x] 2.3 Resolve plugins with selection edges (direct, collection,
   plugin-to-member) and collection `plugin` members; refuse direct member
   selection and unknown exclusions; keep same-named members distinct and
   undeduplicated (design D2)
