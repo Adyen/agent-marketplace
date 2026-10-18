@@ -7,6 +7,8 @@ package ir
 import (
 	"fmt"
 	"reflect"
+	"strings"
+	"unicode"
 
 	extpkg "github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir/ext"
 )
@@ -79,6 +81,24 @@ func ValidateName(name string) error {
 		}
 	}
 	return nil
+}
+
+// CaseFoldKey returns a key under which strings that differ only by Unicode
+// simple case folding are equal: each rune is replaced by the smallest rune of
+// its folding orbit, so A/a, Σ/σ/ς and K/k/K (Kelvin) share a key.
+func CaseFoldKey(s string) string {
+	var b strings.Builder
+	b.Grow(len(s))
+	for _, r := range s {
+		smallest := r
+		for folded := unicode.SimpleFold(r); folded != r; folded = unicode.SimpleFold(folded) {
+			if folded < smallest {
+				smallest = folded
+			}
+		}
+		b.WriteRune(smallest)
+	}
+	return b.String()
 }
 
 // ValidateResource checks the public compilation boundary before invoking a

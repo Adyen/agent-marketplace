@@ -406,7 +406,7 @@ func resolveArtifactPathConflicts(outputs []resourceOutput, t Target) ([]Artifac
 			if a.Fragment {
 				continue
 			}
-			key := strings.ToLower(a.Path)
+			key := ir.CaseFoldKey(a.Path)
 			current := producer{index: i, kind: output.kind, name: output.name, path: a.Path}
 			previous, exists := owners[key]
 			if !exists {

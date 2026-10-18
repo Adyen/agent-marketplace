@@ -380,7 +380,7 @@ func codexNativeLossDiagnostics(resource ir.Resource, target Target) []diag.Diag
 		if typed.Ext.Codex == nil {
 			return nil
 		}
-		if typed.Ext.Codex.SandboxMode != "" {
+		if mode := typed.Ext.Codex.SandboxMode; mode != "" && (mode != "read-only" || !hasReadOnlySubagentMode(target)) {
 			return diagnostic(diag.CodeSubagentSecurityRestrictionUnsupported, diag.SeverityError, "Target cannot preserve the native Codex sandbox restriction; subagent suppressed", typed.Source)
 		}
 		return nil

@@ -92,6 +92,17 @@ func normalizeFactoryToolsCategory(r ir.Resource) ir.Resource {
 	return &normalized
 }
 
+// hasReadOnlySubagentMode reports whether target has a documented read-only
+// subagent mode that SubagentReadOnly maps to.
+func hasReadOnlySubagentMode(target Target) bool {
+	switch target {
+	case targetmeta.TargetClaude, targetmeta.TargetCursor, targetmeta.TargetFactory, targetmeta.TargetCodex:
+		return true
+	default:
+		return false
+	}
+}
+
 // ReadOnlyUnsupported is the refusal for a target without a read-only
 // subagent mode.
 func ReadOnlyUnsupported(target Target, s *ir.Subagent) diag.Diagnostic {

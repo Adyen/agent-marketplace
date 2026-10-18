@@ -79,3 +79,19 @@ func TestCrossKindCaseOnlyCollisionNamesBothPaths(t *testing.T) {
 		t.Fatalf("unrelated skill was not emitted: %+v", result.Artifacts)
 	}
 }
+
+// spec: harness-compilation/unicode-case-folded-paths-collide
+func TestUnicodeCaseFoldedPathsCollide(t *testing.T) {
+	outputs := []resourceOutput{
+		{kind: ir.KindSkill, name: "first", artifacts: []Artifact{{Path: "shared/notes-σ.md"}}},
+		{kind: ir.KindSkill, name: "second", artifacts: []Artifact{{Path: "shared/notes-ς.md"}}},
+		{kind: ir.KindSkill, name: "third", artifacts: []Artifact{{Path: "shared/other.md"}}},
+	}
+	artifacts, diagnostics, skipped := resolveArtifactPathConflicts(outputs, TargetClaude)
+	if len(artifacts) != 1 || artifacts[0].Path != "shared/other.md" || len(skipped) != 2 {
+		t.Fatalf("sigma and final sigma paths were not refused: artifacts=%+v skipped=%+v", artifacts, skipped)
+	}
+	if len(diagnostics) != 1 || diagnostics[0].Code != diag.CodeBundleConflictDuplicateArtifactPath || !strings.Contains(diagnostics[0].Message, "σ") || !strings.Contains(diagnostics[0].Message, "ς") {
+		t.Fatalf("missing conflict naming both paths: %+v", diagnostics)
+	}
+}

@@ -159,7 +159,7 @@ func TestCompileSuppressesNativeCodexAuthorityLoss(t *testing.T) {
 			name: "subagent sandbox",
 			resource: func() ir.Resource {
 				r := ir.NewSubagent("restricted", "Restricted", "Review.", "", nil, "", nil, "", nil, ir.SourceRef{})
-				r.Ext.Codex = &ext.Codex{SandboxMode: "read-only"}
+				r.Ext.Codex = &ext.Codex{SandboxMode: "workspace-write"}
 				return r
 			}(),
 			code: diag.CodeSubagentSecurityRestrictionUnsupported,
@@ -283,7 +283,7 @@ func TestLookupCompilerSuppressesNativeCodexAuthorityLoss(t *testing.T) {
 	defer func() { registry = orig }()
 
 	resource := ir.NewSubagent("restricted", "Restricted", "Review.", "", nil, "", nil, "", nil, ir.SourceRef{})
-	resource.Ext.Codex = &ext.Codex{SandboxMode: "read-only"}
+	resource.Ext.Codex = &ext.Codex{SandboxMode: "workspace-write"}
 	compiler, ok := Lookup(TargetClaude)
 	if !ok {
 		t.Fatal("Lookup(TargetClaude) did not find compiler")

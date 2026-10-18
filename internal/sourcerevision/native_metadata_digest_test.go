@@ -38,7 +38,7 @@ func TestNativeMetadataSidecarsKeepFrozenFallbackDigest(t *testing.T) {
 			if bytes.Equal(rawLegacy, rawTyped) {
 				t.Fatalf("fixture does not exercise the sidecar: both serialize to %s", rawTyped)
 			}
-			want, err := json.Marshal(legacyHookToolProjection(tc.legacy))
+			want, err := json.Marshal(tc.legacy)
 			if err != nil {
 				t.Fatal(err)
 			}
