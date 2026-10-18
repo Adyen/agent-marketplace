@@ -43,11 +43,12 @@ privilege boundary for this CLI.
 
 | Section | Cases | Status |
 |---|---:|---|
-| Real threats | 25 | 24 fixed, **1 open** (FS08, low impact) |
+| Real threats | 25 | 24 fixed, **1 open** (FS08, fix in #750) |
 | Not a security boundary | 19 | 8 fixed anyway, 6 no action, 2 removed with their command, 3 ordinary bugs |
 
-**R2 closes when FS08 is fixed.** The three ordinary bugs (FS14, FS25, FS32)
-are worth fixing, but they are not security work and do not gate R2.
+**R2 closes when FS08 is fixed** (#750). The three ordinary bugs, FS32 (#746),
+FS14 (#747) and FS25 (#748), are worth fixing, but they are not security work
+and do not gate R2.
 
 Much of the R2 hardening protects the second table: #500-#531 and #565-#589
 (backup archives, ownership state and journals, safety backups) and
@@ -96,7 +97,7 @@ Untrusted input reaching the user's files, secrets or execution.
 | FS05 | F114 | The same link trick makes lock bootstrap write a lock into another checkout | #453; reproduction R-F114 refuses for `lock` and `sync`, and nothing is written there | Fixed |
 | FS06 | A44 | Repo commits `.gitignore` as a link to a file in HOME; sync appends lines to it | `8fc58a92` (#191); `TestEnsureLocalConfigGitignored` | Fixed |
 | FS07 | F137 | A relative directory in user/org config resolved against whichever repo the user is in, so repo content gained user-level selection | v4 resolves it against the config file's own directory; `TestV4DirectoryPreservesMachineAndFragmentBases`, `TestLayerEditorRejectsNewUserRelativeRegistry` | Fixed |
-| FS08 | F1 | Repo commits `harnesses: [claude]`; `deinit --scope user` run inside it deletes organization-provided output for the other harnesses from HOME | Reproduction R-F1: `deinit` exits 0 and removes the organization's Factory skill; control `TestDeinitUserPreservesOrgOwnedArtifacts` passes | **Open** |
+| FS08 | F1 | Repo commits `harnesses: [claude]`; plain `sync` inside it removes the user's and organization's machine-wide output for every other harness from HOME, and `deinit --scope user` there deletes organization output | Reproduction R-F1: `deinit` exits 0 and removes the organization's Factory skill; a `sync` probe on `main` reports `Removed 2` for the user and organization Factory skills. Control `TestDeinitUserPreservesOrgOwnedArtifacts` passes. Fix: #750 | **Open** |
 | FS09 | A1 / F5 | Repo commits a link below a harness root (for example `.claude/commands` pointing into HOME); the SDK publication step that sync uses writes through it | #463 admission, SDK root/parent refusal, #543, #544; `TestMaterialize_RejectsSymlinkedArtifactParent`, `TestSDKPublicationRefusesReplacedRootAndPreservesForeignStage`, `TestSDKStageCreationRefusesReplacedOutputRoot` | Fixed |
 | FS10 | A33 / F25 | Repo commits `.factory` (or another harness root) as a link to `~/.factory`; sync writes and prunes the user's machine directory | #463, #464; `TestRunUnsafeRootShapesPreserveState` covers all 8 root contexts | Fixed |
 | FS11 | A40 / F29 | Repo commits `.devin` as a link outside the checkout; Devin MCP and hook files are written there. A link to another directory inside the same repo (F29) stays allowed, because the repo author owns both | #463; `TestRunUnsafeRootShapesPreserveState` | Fixed |
@@ -117,12 +118,14 @@ Untrusted input reaching the user's files, secrets or execution.
 | FS38 | A41 | A new `.devin/mcp_config.json` holding secrets is created `0644`, readable by other local accounts | `7afe907b` (#191); `TestPrivateNewAggregateModeAndExistingMode` | Fixed |
 | FS39 | A107 / F74 | The same for SDK MCP output | `7afe907b` (#191); `TestPrivateMCPCompileModes`, `TestMaterializePrivateMCPModes` | Fixed |
 
-FS08 is the one open threat, and its impact is low. The user must run
-`deinit` inside the hostile checkout, and the next ordinary sync restores the
-organization output. Root cause: `resolveOrgOwnedArtifactsMode` takes the target
-harnesses from the repository config. Fix: compute organization preservation
-from machine-layer targets only, matching the existing rule that a repository
-selection cannot displace machine-scope output.
+FS08 is the one open threat, and it is broader than the report. One target
+set applied to a whole run and the repository list won it, so ordinary `sync`,
+not only `deinit`, reconciled machine output against a repository's
+`harnesses:` list. Benign team repositories trigger it too; the output returns
+when the user syncs elsewhere. #750 makes target sets follow the layer that
+selected the output: user and organization selections use the user list, then
+the organization list, and fall back to the repository list only when neither
+declares one.
 
 ## Not a Security Boundary
 
@@ -153,23 +156,24 @@ affect only what they already control.
 
 The three bugs are ordinary defects, not R2 gates:
 
-- **FS32** loses user data and is the most worth fixing. `codexMCPSections`
+- **FS32** (#746) loses user data and is the most worth fixing. `codexMCPSections`
   spans from a server's first table to its last, swallowing tables in between.
   A safety backup keeps the prior bytes.
-- **FS14**: Codex partition checks compare path strings, not files.
-- **FS25**: the mutable cache accepts a cache hit inside another ref's
+- **FS14** (#747): Codex partition checks compare path strings, not files.
+- **FS25** (#748): the mutable cache accepts a cache hit inside another ref's
   checkout.
 
 ## Closure
 
 - [x] Freeze both source hashes, the 211-ID index and FS01-FS44.
 - [x] Classify every case against the threat model with baseline evidence.
-- [ ] Fix FS08 with a failing-first consumer regression (start from R-F1), a
-  valid control, an archived OpenSpec delta, `make validate`, `make spec-check`
-  and an `open-code-review-delegate` review. Rerun R-F1 on `main` after merge.
+- [ ] Merge #750 (FS08): failing-first `sync` and `deinit` regressions, an
+  archived `resource-selection` requirement, `make validate`, `make spec-check`,
+  `make validate-e2e` and an `open-code-review-delegate` review. Rerun R-F1 on
+  `main` after merge.
 - [ ] Close #431 and update #215.
 
-The three bugs go to ordinary issues. The one unresolved review thread on the
+The three bugs are tracked in #746, #747 and #748. The one unresolved review thread on the
 merged R2 PRs (#601, a wording note on a `materialization` scenario) is a spec
 nit, not R2 work.
 
