@@ -8,6 +8,19 @@ Ship a hook whose command runs a script stored in your [registry](../../glossary
 - `agent-marketplace` on your `PATH`.
 - Permission to push to the registry repository.
 
+## Choose how consumers will install the hook
+
+Consumers who add your registry as a Git or `directory` source read `${CLAUDE_PLUGIN_ROOT}` in a different way from consumers who install it from a hosted Marketplace mirror. No hook command works for both yet ([#733](https://github.com/Adyen/agent-marketplace/issues/733)):
+
+| Consumers install from | `${CLAUDE_PLUGIN_ROOT}` means | Script location | Command |
+|---|---|---|---|
+| Git or `directory` source | the folder that holds `hooks.json` | `hooks/scripts/block-force-push.sh`, subfolders allowed | `${CLAUDE_PLUGIN_ROOT}/scripts/block-force-push.sh` |
+| Marketplace mirror | the folder that holds `hooks/` | `hooks/block-force-push.sh`, no subfolders | `${CLAUDE_PLUGIN_ROOT}/hooks/block-force-push.sh` |
+
+A command written for one path breaks on the other. From Git, the Marketplace form installs a command that points at a missing file. From a Marketplace, the Git form is refused with `marketplace.hook.support-unsupported`. If you have both kinds of consumer, write the Git form and ask Marketplace consumers to add your registry as a Git source for this hook, as the Marketplace's own error advises.
+
+Steps 1 to 6 use the Git form. For the Marketplace form, change the hook as shown in [If consumers install from a Marketplace](#if-consumers-install-from-a-marketplace).
+
 ## 1. Put the hook and its files in one folder
 
 In the Claude Code layout, the hook file is `hooks/hooks.json`. Put the files the hook needs in the same folder:
@@ -51,7 +64,7 @@ EOF
 
 Both commands print nothing. Follow these rules for the command:
 
-- Write `${CLAUDE_PLUGIN_ROOT}/scripts/...`, not `${CLAUDE_PLUGIN_ROOT}/hooks/scripts/...`. Sync does not check that the path exists, so the wrong form installs a command that points at a missing file.
+- Write `${CLAUDE_PLUGIN_ROOT}/scripts/...`, not `${CLAUDE_PLUGIN_ROOT}/hooks/scripts/...`. Sync does not check that the path exists, so the wrong form installs a command that points at a missing file ([#733](https://github.com/Adyen/agent-marketplace/issues/733)).
 - Wrap the path in double quotes. Sync refuses a token inside single quotes with `hook.env-unrepresentable`.
 - Use a matcher made of exact tool names, such as `Bash` or `Edit|Write`, if consumers target other harnesses. Sync translates exact names and refuses patterns it cannot map. The [hook and tool names reference](../../reference/hook-and-tool-names.md) lists the names and events each harness accepts.
 
@@ -175,12 +188,41 @@ resources:
 
 Consumers on `ref: v1.6.0` get it on their next `agent-marketplace sync`. For branch refs and older tags, see [How to version and release a registry](./version-and-release-a-registry.md).
 
+## If consumers install from a Marketplace
+
+A Marketplace that mirrors your registry packages only the files that sit directly beside `hooks.json`. It skips subfolders. It stores each file as `hooks/<name>`, with its bytes and executable bit, and binds them to the hook's content revision. Change the hook from steps 1 and 2 as follows:
+
+1. Move the script up one level, out of `scripts/`:
+
+   ```bash
+   git mv hooks/scripts/block-force-push.sh hooks/block-force-push.sh
+   ```
+
+2. Change the `command` line in `hooks/hooks.json` to:
+
+   ```json
+   "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/block-force-push.sh\"",
+   ```
+
+Follow these rules for the command:
+
+- Name each script as `${CLAUDE_PLUGIN_ROOT}/hooks/<file>`, where `<file>` has no `/`. Any other use of the token, such as `${CLAUDE_PLUGIN_ROOT}/scripts/...`, `${CLAUDE_PLUGIN_ROOT}/hooks/lib/...`, or `cd ${CLAUDE_PLUGIN_ROOT}`, falls outside what the Marketplace can package.
+- `${DROID_PLUGIN_ROOT}`, `${CURSOR_PLUGIN_ROOT}`, `${PLUGIN_ROOT}`, and `${extensionPath}` follow the same rule, with or without braces.
+- Every other file directly in `hooks/` is packaged too, so keep notes and fixtures elsewhere.
+
+Do not test this form with the scratch project from step 5: a `directory` source installs a command that points at `<key>/PreToolUse-command/hooks/block-force-push.sh`, while the file lands at `<key>/PreToolUse-command/block-force-push.sh`. To check it end to end, publish the registry to a local Marketplace, as in [Tutorial: run a local Marketplace](../../tutorials/run-a-local-marketplace.md), and install the hook from there.
+
+When the Marketplace operator next refreshes your registry, the changed hook gets a new content revision. Consumers already pinned to the old revision keep it until they install the new one.
+
 ## Troubleshooting
 
-- **The hook runs but reports `No such file or directory`:** the command path does not match a file below the hook folder. Open the `Hook changes` listing or the target's hook file, and check that the path after `PreToolUse-command/` exists under `hook-support/`. The usual cause is an extra `hooks/` after `${CLAUDE_PLUGIN_ROOT}`.
+- **The hook runs but reports `No such file or directory`:** the command path does not match a file below the hook folder. Open the `Hook changes` listing or the target's hook file, and check that the path after `PreToolUse-command/` exists under `hook-support/`. The usual cause is an extra `hooks/` after `${CLAUDE_PLUGIN_ROOT}`, which is the Marketplace form installed from a Git source.
 - **The hook reports `Permission denied`:** the script was committed without the executable bit. Run `chmod +x` on it, commit, and release again.
 - **Sync reports `hook.env-unrepresentable`:** the command puts the token inside single quotes. Use double quotes. For some targets, such as Windsurf, sync also refuses a project-folder variable joined to other text, as in `${CLAUDE_PROJECT_DIR}-backup`; put a `/` after the variable.
 - **The hook installs for one harness but not another:** that harness has no exact match for the event, matcher, handler type, or timeout. Sync names the cause in an error such as `hook.event-unmappable` and still installs the hook for the other targets. Check the [hook and tool names reference](../../reference/hook-and-tool-names.md).
+- **The Marketplace reports `marketplace.ingest.hook-support-unavailable` when it publishes the registry:** the command names a script the mirror cannot package, or a file beside `hooks.json` is unsafe to read, such as a symlink. Use the Marketplace form above, and replace symlinks with regular files.
+- **A Marketplace consumer gets `marketplace.hook.support-unsupported`:** the hook uses the Git form or a subfolder. Either change the hook to the Marketplace form and release it, or have the consumer add your registry as a Git source.
+- **A Marketplace consumer gets `marketplace.hook.support-missing`:** the command names a `hooks/<file>` that the published revision does not contain. Add the file, release, and ask the operator to refresh the registry. Consumers then have to install the new revision.
 - **`list --from .` shows a `malformed:` status:** the status names the diagnostic, such as `json.duplicate-key` for a key that appears twice. See the [diagnostics reference](../../reference/diagnostics.md).
 
 ## Related documentation
