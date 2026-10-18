@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -138,7 +139,7 @@ resources:
 		t.Fatalf("request count differs: %d/%d", len(a.Requests), len(b.Requests))
 	}
 	for i := range a.Requests {
-		if a.Requests[i].Locator != b.Requests[i].Locator || a.Requests[i].Options != b.Requests[i].Options {
+		if a.Requests[i].Locator != b.Requests[i].Locator || !reflect.DeepEqual(a.Requests[i].Options, b.Requests[i].Options) {
 			t.Fatalf("request %d differs: %#v/%#v", i, a.Requests[i], b.Requests[i])
 		}
 	}
