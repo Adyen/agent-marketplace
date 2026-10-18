@@ -1,0 +1,36 @@
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/cmd/agent-marketplace
+cpu: Apple M4 Max
+BenchmarkAcquireRepeatedGitRequirementsLocalDiskNoNetwork/implicit-1-16         	       9	 244175426 ns/op	  950312 B/op	    3639 allocs/op
+BenchmarkAcquireRepeatedGitRequirementsLocalDiskNoNetwork/implicit-1-16         	       9	 239454014 ns/op	  946458 B/op	    3642 allocs/op
+BenchmarkAcquireRepeatedGitRequirementsLocalDiskNoNetwork/implicit-1-16         	       9	 242979963 ns/op	  957551 B/op	    3643 allocs/op
+BenchmarkAcquireRepeatedGitRequirementsLocalDiskNoNetwork/implicit-1-16         	       9	 245907963 ns/op	  952553 B/op	    3643 allocs/op
+BenchmarkAcquireRepeatedGitRequirementsLocalDiskNoNetwork/implicit-1-16         	       9	 232933935 ns/op	  952902 B/op	    3642 allocs/op
+BenchmarkAcquireRepeatedGitRequirementsLocalDiskNoNetwork/implicit-16-16        	       8	 302424573 ns/op	 4879532 B/op	   34585 allocs/op
+BenchmarkAcquireRepeatedGitRequirementsLocalDiskNoNetwork/implicit-16-16        	       8	 299637688 ns/op	 4890269 B/op	   34593 allocs/op
+BenchmarkAcquireRepeatedGitRequirementsLocalDiskNoNetwork/implicit-16-16        	       7	 312887274 ns/op	 4868704 B/op	   34595 allocs/op
+BenchmarkAcquireRepeatedGitRequirementsLocalDiskNoNetwork/implicit-16-16        	       7	 309084083 ns/op	 4874249 B/op	   34584 allocs/op
+BenchmarkAcquireRepeatedGitRequirementsLocalDiskNoNetwork/implicit-16-16        	       8	 311274938 ns/op	 4890496 B/op	   34587 allocs/op
+BenchmarkAcquireRepeatedGitRequirementsLocalDiskNoNetwork/implicit-128-16       	       3	 793109764 ns/op	34095098 B/op	  265612 allocs/op
+BenchmarkAcquireRepeatedGitRequirementsLocalDiskNoNetwork/implicit-128-16       	       3	 785276375 ns/op	34083000 B/op	  265606 allocs/op
+BenchmarkAcquireRepeatedGitRequirementsLocalDiskNoNetwork/implicit-128-16       	       3	 787650250 ns/op	34084464 B/op	  265570 allocs/op
+BenchmarkAcquireRepeatedGitRequirementsLocalDiskNoNetwork/implicit-128-16       	       3	 911563875 ns/op	34094237 B/op	  265627 allocs/op
+BenchmarkAcquireRepeatedGitRequirementsLocalDiskNoNetwork/implicit-128-16       	       3	 804062847 ns/op	34088170 B/op	  265578 allocs/op
+BenchmarkAcquireRepeatedGitRequirementsLocalDiskNoNetwork/implicit-512-16       	       1	2466713333 ns/op	134129312 B/op	 1057656 allocs/op
+BenchmarkAcquireRepeatedGitRequirementsLocalDiskNoNetwork/implicit-512-16       	       1	2981148666 ns/op	134128640 B/op	 1057654 allocs/op
+BenchmarkAcquireRepeatedGitRequirementsLocalDiskNoNetwork/implicit-512-16       	       1	2485674541 ns/op	134136264 B/op	 1057657 allocs/op
+BenchmarkAcquireRepeatedGitRequirementsLocalDiskNoNetwork/implicit-512-16       	       1	2313207791 ns/op	134115656 B/op	 1057609 allocs/op
+BenchmarkAcquireRepeatedGitRequirementsLocalDiskNoNetwork/implicit-512-16       	       1	2408030041 ns/op	134135808 B/op	 1057703 allocs/op
+BenchmarkAcquireRepeatedGitRequirementsLocalDiskNoNetwork/explicit-128-16       	       3	 705623694 ns/op	30259725 B/op	  226697 allocs/op
+BenchmarkAcquireRepeatedGitRequirementsLocalDiskNoNetwork/explicit-128-16       	       3	 689916750 ns/op	30255720 B/op	  226673 allocs/op
+BenchmarkAcquireRepeatedGitRequirementsLocalDiskNoNetwork/explicit-128-16       	       3	 710703750 ns/op	30248906 B/op	  226631 allocs/op
+BenchmarkAcquireRepeatedGitRequirementsLocalDiskNoNetwork/explicit-128-16       	       3	 679536417 ns/op	30182248 B/op	  226658 allocs/op
+BenchmarkAcquireRepeatedGitRequirementsLocalDiskNoNetwork/explicit-128-16       	       3	 714844250 ns/op	30270365 B/op	  226681 allocs/op
+BenchmarkAcquireRepeatedGitRequirementsLocalDiskNoNetwork/distinct-policies-2-16         	       9	 229388528 ns/op	 1215852 B/op	    5059 allocs/op
+BenchmarkAcquireRepeatedGitRequirementsLocalDiskNoNetwork/distinct-policies-2-16         	       9	 251050745 ns/op	 1201344 B/op	    5046 allocs/op
+BenchmarkAcquireRepeatedGitRequirementsLocalDiskNoNetwork/distinct-policies-2-16         	       8	 268201510 ns/op	 1202914 B/op	    5041 allocs/op
+BenchmarkAcquireRepeatedGitRequirementsLocalDiskNoNetwork/distinct-policies-2-16         	       9	 223813750 ns/op	 1224030 B/op	    5051 allocs/op
+BenchmarkAcquireRepeatedGitRequirementsLocalDiskNoNetwork/distinct-policies-2-16         	       8	 253260505 ns/op	 1205622 B/op	    5037 allocs/op
+PASS
+ok  	github.com/Adyen/agent-marketplace/cmd/agent-marketplace	121.370s

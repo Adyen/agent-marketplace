@@ -1350,15 +1350,22 @@ func acquireLockedRegistry(ctx context.Context, canonical, fetchURL, ref string,
 	}
 	registry := lockfile.GitRegistry{URL: canonical, Ref: ref, Commit: commit}
 	seen := map[string]bool{}
+	builtRequirements := map[lockfile.GitRootRequirement]bool{}
 	for _, entry := range entries {
 		rootPath := entry.Path
 		if rootPath == "" {
 			rootPath = "."
 		}
+		// Requested policies stay distinct even when their resolved harness matches.
+		requirement := lockfile.GitRootRequirement{Path: rootPath, SourceHarness: entry.SourceHarness}
+		if builtRequirements[requirement] {
+			continue
+		}
 		built, err := sourcerevision.Build(sourcerevision.Input{SnapshotRoot: snapshot, RootPath: rootPath, SourceHarness: entry.SourceHarness})
 		if err != nil {
 			return lockfile.GitRegistry{}, fmt.Errorf("build source revision for %s/%s: %w", canonical, rootPath, err)
 		}
+		builtRequirements[requirement] = true
 		key := rootPath + "\x00" + built.SourceHarness
 		if seen[key] {
 			continue
