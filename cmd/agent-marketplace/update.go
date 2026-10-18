@@ -86,8 +86,7 @@ func runUpdate(ctx context.Context, out io.Writer, bump, verbose bool, selected 
 	}
 	result, err := pipeline.Update(ctx, opts)
 	if err != nil {
-		var refused *updateSelectionRefusedError
-		if errors.As(err, &refused) {
+		if refused, ok := errors.AsType[*updateSelectionRefusedError](err); ok {
 			return refused
 		}
 		return err

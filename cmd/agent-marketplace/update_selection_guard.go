@@ -101,8 +101,7 @@ func missCollectionName(via string) string {
 func selectionMisses(result pipeline.ResolveResult) []*resolver.SelectedNotFoundError {
 	var misses []*resolver.SelectedNotFoundError
 	for _, err := range result.ResolveErrors {
-		var miss *resolver.SelectedNotFoundError
-		if errors.As(err, &miss) {
+		if miss, ok := errors.AsType[*resolver.SelectedNotFoundError](err); ok {
 			misses = append(misses, miss)
 		}
 	}
