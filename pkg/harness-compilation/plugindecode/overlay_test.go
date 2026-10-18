@@ -12,7 +12,7 @@ import (
 
 // decodeCatalogEntry decodes the catalog rooted in files and decodes the
 // named entry's plugin root through the catalog's entry-overlay policy.
-func decodeCatalogEntry(t *testing.T, files map[string]string, format, entryName string) (*plugindecode.CatalogEntry, *ir.Plugin, []*diag.Diagnostic, error) {
+func decodeCatalogEntry(t *testing.T, files map[string]string, format, entryName string) (*ir.Plugin, []*diag.Diagnostic, error) {
 	t.Helper()
 	root := writePackage(t, files)
 	catalog, _, err := plugindecode.DecodeCatalog(root, format)
@@ -28,11 +28,10 @@ func decodeCatalogEntry(t *testing.T, files map[string]string, format, entryName
 		if entry.Source.Kind == "path" && entry.Source.Path != "." {
 			pluginRoot = filepath.Join(root, filepath.FromSlash(entry.Source.Path))
 		}
-		plugin, diags, err := plugindecode.DecodeEntry(pluginRoot, format, *entry)
-		return entry, plugin, diags, err
+		return plugindecode.DecodeEntry(pluginRoot, format, *entry)
 	}
 	t.Fatalf("catalog entry %q not found", entryName)
-	return nil, nil, nil, nil
+	return nil, nil, nil
 }
 
 func memberKeySet(p *ir.Plugin) map[string]bool {
@@ -53,13 +52,9 @@ func hookCommands(p *ir.Plugin, event string) []string {
 	return commands
 }
 
-func invalidRecords(p *ir.Plugin) []ir.PluginRecord {
-	return p.Invalid
-}
-
 // spec: plugin-packages/relative-entry-resolves-against-the-catalog-root
 func TestDecodeEntryStrictAppendsComponentsAndReplacesHookEvents(t *testing.T) {
-	_, plugin, diags, err := decodeCatalogEntry(t, map[string]string{
+	plugin, diags, err := decodeCatalogEntry(t, map[string]string{
 		".claude-plugin/marketplace.json": `{"name": "team", "plugins": [
 			{"name": "kit", "source": "./kit",
 			 "description": "entry description",
@@ -96,7 +91,7 @@ func TestDecodeEntryStrictAppendsComponentsAndReplacesHookEvents(t *testing.T) {
 		t.Fatalf("PreToolUse hooks = %v, want the manifest hook preserved", got)
 	}
 	var sawStyle bool
-	for _, rec := range invalidRecords(plugin) {
+	for _, rec := range plugin.Invalid {
 		if rec.Path == "outputStyles" {
 			sawStyle = true
 		}
@@ -111,7 +106,7 @@ func TestDecodeEntryStrictAppendsComponentsAndReplacesHookEvents(t *testing.T) {
 
 // spec: plugin-packages/relative-entry-resolves-against-the-catalog-root
 func TestDecodeEntryWithoutManifestEntryIsTheManifest(t *testing.T) {
-	_, plugin, _, err := decodeCatalogEntry(t, map[string]string{
+	plugin, _, err := decodeCatalogEntry(t, map[string]string{
 		".claude-plugin/marketplace.json": `{"name": "team", "plugins": [
 			{"name": "nomani", "source": "./nomani",
 			 "description": "entry description",
@@ -143,7 +138,7 @@ func TestDecodeEntryWithoutManifestEntryIsTheManifest(t *testing.T) {
 
 // spec: plugin-packages/relative-entry-resolves-against-the-catalog-root
 func TestDecodeEntryStrictFalseWithoutComponentsKeepsManifest(t *testing.T) {
-	_, plugin, _, err := decodeCatalogEntry(t, map[string]string{
+	plugin, _, err := decodeCatalogEntry(t, map[string]string{
 		".claude-plugin/marketplace.json": `{"name": "team", "plugins": [
 			{"name": "plain", "source": "./plain", "strict": false, "description": "entry description"}]}`,
 		"plain/.claude-plugin/plugin.json": `{"name": "plain", "description": "manifest description"}`,
@@ -160,14 +155,16 @@ func TestDecodeEntryStrictFalseWithoutComponentsKeepsManifest(t *testing.T) {
 
 // spec: plugin-packages/relative-entry-resolves-against-the-catalog-root
 func TestDecodeEntryStrictFalseWithComponentsConflicts(t *testing.T) {
-	_, plugin, _, err := decodeCatalogEntry(t, map[string]string{
+	files := map[string]string{
 		".claude-plugin/marketplace.json": `{"name": "team", "plugins": [
 			{"name": "conflict", "source": "./conflict", "strict": false, "skills": ["./more/extra"]},
 			{"name": "ok", "source": "./ok"}]}`,
 		"conflict/.claude-plugin/plugin.json": `{"name": "conflict"}`,
 		"conflict/more/extra/SKILL.md":        "---\nname: extra\ndescription: d\n---\nbody\n",
 		"ok/.claude-plugin/plugin.json":       `{"name": "ok"}`,
-	}, "claude-marketplace", "conflict")
+		"ok/skills/a/SKILL.md":                "---\nname: a\ndescription: d\n---\nbody\n",
+	}
+	plugin, _, err := decodeCatalogEntry(t, files, "claude-marketplace", "conflict")
 	if err == nil {
 		t.Fatal("a strict:false entry with component fields must refuse")
 	}
@@ -179,21 +176,14 @@ func TestDecodeEntryStrictFalseWithComponentsConflicts(t *testing.T) {
 		t.Fatalf("error = %v, want plugin.catalog.manifest-conflict", err)
 	}
 	// The sibling entry must stay decodable.
-	_, sibling, _, siblingErr := decodeCatalogEntry(t, map[string]string{
-		".claude-plugin/marketplace.json": `{"name": "team", "plugins": [
-			{"name": "conflict", "source": "./conflict", "strict": false, "skills": ["./more/extra"]},
-			{"name": "ok", "source": "./ok"}]}`,
-		"conflict/.claude-plugin/plugin.json": `{"name": "conflict"}`,
-		"ok/.claude-plugin/plugin.json":       `{"name": "ok"}`,
-		"ok/skills/a/SKILL.md":                "---\nname: a\ndescription: d\n---\nbody\n",
-	}, "claude-marketplace", "ok")
+	sibling, _, siblingErr := decodeCatalogEntry(t, files, "claude-marketplace", "ok")
 	if siblingErr != nil || sibling == nil {
 		t.Fatalf("the non-conflicting sibling must stay installable: plugin=%v err=%v", sibling, siblingErr)
 	}
 }
 
 func TestDecodeEntryComponentPathEscapeRefused(t *testing.T) {
-	_, plugin, diags, err := decodeCatalogEntry(t, map[string]string{
+	plugin, diags, err := decodeCatalogEntry(t, map[string]string{
 		".claude-plugin/marketplace.json": `{"name": "team", "plugins": [
 			{"name": "kit", "source": "./kit", "skills": ["../outside"]}]}`,
 		"kit/.claude-plugin/plugin.json": `{"name": "kit"}`,
@@ -203,11 +193,11 @@ func TestDecodeEntryComponentPathEscapeRefused(t *testing.T) {
 		t.Fatalf("DecodeEntry() error = %v", err)
 	}
 	keys := memberKeySet(plugin)
-	if keys["skill/base"] != true {
+	if !keys["skill/base"] {
 		t.Fatalf("member keys = %v, want the manifest skill to survive", keys)
 	}
 	var sawEscape bool
-	for _, rec := range invalidRecords(plugin) {
+	for _, rec := range plugin.Invalid {
 		if strings.Contains(rec.Path, "..") {
 			sawEscape = true
 		}
@@ -221,7 +211,7 @@ func TestDecodeEntryComponentPathEscapeRefused(t *testing.T) {
 }
 
 func TestDecodeEntryNonObjectHooksRecorded(t *testing.T) {
-	_, plugin, _, err := decodeCatalogEntry(t, map[string]string{
+	plugin, _, err := decodeCatalogEntry(t, map[string]string{
 		".claude-plugin/marketplace.json": `{"name": "team", "plugins": [
 			{"name": "kit", "source": "./kit", "hooks": "./hooks/hooks.json"}]}`,
 		"kit/.claude-plugin/plugin.json": `{"name": "kit"}`,
@@ -231,7 +221,7 @@ func TestDecodeEntryNonObjectHooksRecorded(t *testing.T) {
 		t.Fatalf("DecodeEntry() error = %v", err)
 	}
 	var sawHooks bool
-	for _, rec := range invalidRecords(plugin) {
+	for _, rec := range plugin.Invalid {
 		if rec.Path == "hooks" {
 			sawHooks = true
 		}
@@ -242,7 +232,7 @@ func TestDecodeEntryNonObjectHooksRecorded(t *testing.T) {
 }
 
 func TestDecodeEntryFormatWithoutOverlayPolicyIgnoresEntryFields(t *testing.T) {
-	entry, plugin, _, err := decodeCatalogEntry(t, map[string]string{
+	plugin, _, err := decodeCatalogEntry(t, map[string]string{
 		".factory-plugin/marketplace.json": `{"name": "team", "plugins": [
 			{"name": "kit", "source": "./kit", "strict": false, "skills": ["./more/extra"]}]}`,
 		"kit/.factory-plugin/plugin.json": `{"name": "kit"}`,
@@ -252,7 +242,7 @@ func TestDecodeEntryFormatWithoutOverlayPolicyIgnoresEntryFields(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DecodeEntry() error = %v", err)
 	}
-	if entry == nil || plugin == nil {
+	if plugin == nil {
 		t.Fatal("a format without an overlay policy must decode plainly")
 	}
 	keys := memberKeySet(plugin)
