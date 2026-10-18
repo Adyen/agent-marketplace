@@ -57,6 +57,17 @@ func installCountingGit(t *testing.T) func(contains ...string) int {
 	}
 }
 
+// resolvedPWDMatcher returns the "resolvedPWD|" prefix the counting wrapper
+// logs for commands run inside path, so path substrings cannot false-match.
+func resolvedPWDMatcher(t *testing.T, path string) string {
+	t.Helper()
+	resolved, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return resolved + "|"
+}
+
 func acquireScopedSnapshot(t *testing.T, ctx context.Context, canonical, repo string) (GitOID, string) {
 	t.Helper()
 	oid := resolveExactGitRefForTest(t, canonical, repo, "main")
@@ -74,7 +85,7 @@ func TestExactGitVerificationScopeVerifiesOncePerScope(t *testing.T) {
 	canonical := "https://example.invalid/scoped"
 	ctx := WithExactGitVerificationScope(context.Background())
 	oid, path := acquireScopedSnapshot(t, ctx, canonical, repo)
-	lsTree := func() int { return count(path, "ls-tree") }
+	lsTree := func() int { return count(resolvedPWDMatcher(t, path), "ls-tree") }
 
 	before := lsTree()
 	if _, err := OpenExactGitReadOnlyWithContext(ctx, canonical, oid); err != nil {
@@ -94,7 +105,7 @@ func TestExactGitWithoutVerificationScopeVerifiesEveryOpen(t *testing.T) {
 	repo := newExactGitRepository(t, "sha1")
 	canonical := "https://example.invalid/unscoped"
 	oid, path := acquireScopedSnapshot(t, context.Background(), canonical, repo)
-	lsTree := func() int { return count(path, "ls-tree") }
+	lsTree := func() int { return count(resolvedPWDMatcher(t, path), "ls-tree") }
 
 	before := lsTree()
 	for i := 0; i < 2; i++ {
@@ -114,7 +125,7 @@ func TestExactGitVerificationScopeFailedOpenReverifies(t *testing.T) {
 	canonical := "https://example.invalid/scope-failed"
 	ctx := WithExactGitVerificationScope(context.Background())
 	oid, path := acquireScopedSnapshot(t, context.Background(), canonical, repo)
-	lsTree := func() int { return count(path, "ls-tree") }
+	lsTree := func() int { return count(resolvedPWDMatcher(t, path), "ls-tree") }
 
 	tracked := filepath.Join(path, "resource.txt")
 	original := readExactFile(t, path, "resource.txt")
@@ -154,7 +165,7 @@ func TestExactGitVerificationScopeRepublishReverifies(t *testing.T) {
 	canonical := "https://example.invalid/scope-republish"
 	ctx := WithExactGitVerificationScope(context.Background())
 	oid, path := acquireScopedSnapshot(t, context.Background(), canonical, repo)
-	lsTree := func() int { return count(path, "ls-tree") }
+	lsTree := func() int { return count(resolvedPWDMatcher(t, path), "ls-tree") }
 	stageLsTree := func() int { return count(".snapshot-stage-", "ls-tree") }
 
 	if err := os.WriteFile(filepath.Join(path, "resource.txt"), []byte("tampered\n"), 0o644); err != nil {
@@ -216,11 +227,8 @@ func TestExactGitVerificationScopeSanitizesStoreOnce(t *testing.T) {
 	}
 	// The wrapper logs the resolved working directory before the pipe, so
 	// match the canonical store path, not the symlinked cache path.
-	resolvedStore, err := filepath.EvalSymlinks(store)
-	if err != nil {
-		t.Fatal(err)
-	}
-	storeLists := func() int { return count(resolvedStore+"|", "--name-only") }
+	storeMatcher := resolvedPWDMatcher(t, store)
+	storeLists := func() int { return count(storeMatcher, "--name-only") }
 	// The published store config is canonical, so the sanitize fast path
 	// would hide a missing scope short-circuit. A comment line keeps the
 	// store allowlisted but forces sanitize onto the subprocess path.

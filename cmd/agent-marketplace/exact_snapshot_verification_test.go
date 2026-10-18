@@ -146,6 +146,15 @@ func TestSyncCheckRejectsDisallowedSnapshotConfigSpellings(t *testing.T) {
 	}
 	stateBefore := stateTreeSnapshot(t, repo)
 	base := "[core]\n\trepositoryformatversion = 0\n\tfilemode = true\n\tbare = false\n\tlogallrefupdates = true\n"
+	for _, dir := range exactSnapshotDirs(t) {
+		configPath := filepath.Join(dir, ".git", "config")
+		if err := os.WriteFile(configPath, []byte(base), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if output, err := executeCommand("sync", "--check"); err != nil {
+		t.Fatalf("sync --check rejected the canonical baseline config: %v\n%s", err, output)
+	}
 	variants := []string{
 		base + "\tWORKTREE = \"/elsewhere\" ; trailing comment\n",
 		"[Core]\n\trepositoryformatversion = 0\n\tfilemode = true\n\tbare = false\n\tlogallrefupdates = true\n\tWorkTree = \"/elsewhere\"\n",
