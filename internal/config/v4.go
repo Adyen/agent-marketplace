@@ -2397,7 +2397,7 @@ func (c *V4Config) toLegacyConfig(kind layerKind, lockDoc *lockfile.Document, mo
 			// A required-only group is a valid empty selection in v4. Legacy
 			// Required implies auto-select-all, so only retain Required when the
 			// v4 group has an actual selection policy.
-			if entry.Required && len(group.Include) == 0 && (!group.HasTags || len(group.Tags) == 0) && (!group.HasAll || group.All == nil || !*group.All) {
+			if entry.Required && !v4GroupHasSelection(group) {
 				entry.Required = false
 			}
 			requests := effectiveV4Requests(group)
@@ -2446,6 +2446,12 @@ func firstV4File(c *V4Config) string {
 		return c.Files[len(c.Files)-1]
 	}
 	return ""
+}
+
+// v4GroupHasSelection reports whether the group declares an actual selection
+// policy: includes, tags, or all:true. A group without one selects nothing.
+func v4GroupHasSelection(group V4ResourceGroup) bool {
+	return len(group.Include) > 0 || (group.HasTags && len(group.Tags) > 0) || (group.HasAll && group.All != nil && *group.All)
 }
 
 func effectiveV4GroupPrecedence(group V4ResourceGroup) int {

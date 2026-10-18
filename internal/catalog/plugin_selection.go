@@ -1,11 +1,10 @@
 package catalog
 
 import (
-	"strings"
-
 	"github.com/Adyen/agent-marketplace/internal/collection"
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/lockfile"
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 )
 
 // PluginExplicitSelection is one direct plugin request: its name and the
@@ -23,14 +22,35 @@ type PluginCollectionEdge struct {
 }
 
 // PluginSelectionSpec is the config-declared selection of one format source,
-// independent of the acquired catalog content: direct requests, all-style
-// selection, group-level plugin exclusions, and collection edges. The
+// independent of the acquired catalog content: the entry's declared selection
+// (evaluated exactly like the resolver evaluates it), the authored member
+// exclusions of its direct plugin requests, and its collection edges. The
 // plugin-v1 source-revision manifest commits to exactly this shape.
 type PluginSelectionSpec struct {
+	Entry       config.RegistryEntry
 	Explicit    []PluginExplicitSelection
-	All         bool
-	Excluded    []string
 	Collections []PluginCollectionEdge
+}
+
+// PluginSelectedNames resolves the declared selection against the decoded
+// entries through the shared selection predicate: the plugins the entry
+// itself selects, plus every plugin named by a collection edge.
+func PluginSelectedNames(spec *PluginSelectionSpec, entries []Entry) map[string]bool {
+	selected := map[string]bool{}
+	if spec == nil {
+		return selected
+	}
+	for _, sel := range SelectedResources(spec.Entry, entries) {
+		if sel.Kind == ir.KindPlugin {
+			selected[sel.Name] = true
+		}
+	}
+	for _, edge := range spec.Collections {
+		for _, name := range edge.Entries {
+			selected[name] = true
+		}
+	}
+	return selected
 }
 
 // PluginSelectionSpecFor derives the selection spec of one format source
@@ -38,22 +58,12 @@ type PluginSelectionSpec struct {
 // discovered in the same configuration layer's sources, and selected names
 // the collections the layer selects.
 func PluginSelectionSpecFor(entry config.RegistryEntry, collections []collection.Collection, selected map[string]bool) PluginSelectionSpec {
-	spec := PluginSelectionSpec{All: entry.V4All || entry.Required || entry.Default}
+	spec := PluginSelectionSpec{Entry: entry}
 	for _, decision := range entry.V4Decisions {
-		switch decision.Action {
-		case config.V4SelectionExplicit:
-			if decision.Request == nil || decision.Request.Kind != "plugin" {
-				continue
-			}
-			spec.Explicit = append(spec.Explicit, PluginExplicitSelection{Name: decision.Request.Name, Exclude: append([]string(nil), decision.Request.Options.Exclude...)})
-		case config.V4SelectionAll:
-			spec.All = true
-		case config.V4SelectionExclude:
-			kind, name, ok := strings.Cut(decision.Exclusion, "/")
-			if ok && kind == "plugin" {
-				spec.Excluded = append(spec.Excluded, name)
-			}
+		if decision.Action != config.V4SelectionExplicit || decision.Request == nil || decision.Request.Kind != "plugin" {
+			continue
 		}
+		spec.Explicit = append(spec.Explicit, PluginExplicitSelection{Name: decision.Request.Name, Exclude: append([]string(nil), decision.Request.Options.Exclude...)})
 	}
 	canonical, err := lockfile.CanonicalGitConfigURL(entry.URL)
 	if err != nil {
