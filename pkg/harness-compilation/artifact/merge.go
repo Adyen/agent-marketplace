@@ -275,12 +275,8 @@ func patchObject(doc *jsonc.Document, node *jsonc.Node, merged map[string]any) e
 	}
 	keys := node.Keys()
 	present := make(map[string]struct{}, len(keys))
-	for _, key := range keys {
+	for key, child := range node.Members() {
 		present[key] = struct{}{}
-		child, ok := node.Member(key)
-		if !ok {
-			continue
-		}
 		if err := patchMember(doc, node, child, key, merged[key]); err != nil {
 			return err
 		}

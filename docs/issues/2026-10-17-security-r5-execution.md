@@ -312,5 +312,13 @@ identity; snapshots, scopes, lock bytes and refusals retain their contracts.
 Measurements and preservation controls are recorded in
 [the R47 execution report](2026-10-18-security-r5-git-requirements.md).
 
+R47 subsequently merged in PR #749. The next independent slice removes
+R43's repeated ordered-object key searches during JSONC patching, using
+source-order iteration without a mutable lookup cache. Handwritten bytes,
+ownership, reports and filesystem authority retain their contracts.
+R43 remains partial; the controlled and confounded preliminary timings
+are both retained in
+[the R43 execution report](2026-10-18-security-r5-jsonc-lookups.md).
+
 #434 already tracks this remaining scope. Publication must describe this as
 partial progress, preserve the frozen artifacts, and leave the issue open.
