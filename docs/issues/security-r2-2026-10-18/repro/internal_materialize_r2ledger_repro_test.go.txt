@@ -61,8 +61,8 @@ func r2CheckA31(t *testing.T, change string, report *Report, rewritten string, a
 	}
 	switch change {
 	case "update":
-		if !strings.Contains(text, "inert-b") {
-			t.Fatalf("update was not applied:\n%s", text)
+		if !strings.Contains(text, "inert-b") || strings.Contains(text, "inert-a") {
+			t.Fatalf("update was not applied cleanly:\n%s", text)
 		}
 	case "retire":
 		if strings.Contains(text, "[mcp_servers.foo]") || strings.Contains(text, "[mcp_servers.\"foo\"]") {

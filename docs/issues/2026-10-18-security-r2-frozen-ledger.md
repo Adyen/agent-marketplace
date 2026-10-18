@@ -299,7 +299,9 @@ for identity, aliases in expected.items():
     check(all(by_id[identity][key] == value for key, value in aliases.items()),
           f"aliases of {identity}")
 with r5_index.open(newline="") as stream:
-    r5 = {row["instance_id"]: row["scope"] for row in csv.DictReader(stream)}
+    r5_rows = list(csv.DictReader(stream))
+r5 = {row["instance_id"]: row["scope"] for row in r5_rows}
+check(len(r5_rows) == len(r5), "R5 index has no duplicate IDs")
 check(r5 == {i: row["r5_scope"] for i, row in by_id.items()},
       "r5_scope matches every R5 index row")
 for row in rows:
@@ -321,10 +323,16 @@ for case, aliases, _ in threats + others:
     row = next(row for row in rows if row["scope"] == case)
     check(set(re.findall(r"[AF]\d+", aliases)) ==
           {row[key] for key in ("a_ref", "f_ref") if row[key]}, f"{case} aliases")
-status = lambda part: Counter(s.strip("* ") for _, _, s in part)
-check(status(threats) == Counter({"Fixed": 24, "Open": 1}), f"threat statuses {status(threats)}")
-check(status(others) == Counter({"Fixed anyway": 8, "No action": 6, "Bug": 3, "Removed": 2}),
-      f"non-boundary statuses {status(others)}")
+# Every case has a fixed status; unlisted threats are Fixed, unlisted
+# non-boundary cases are Fixed anyway.
+listed = {"FS08": "Open", "FS02": "Removed", "FS17": "Removed", "FS14": "Bug",
+          "FS25": "Bug", "FS32": "Bug", "FS22": "No action", "FS36": "No action",
+          "FS37": "No action", "FS41": "No action", "FS42": "No action",
+          "FS43": "No action"}
+for part, default in ((threats, "Fixed"), (others, "Fixed anyway")):
+    for case, _, status in part:
+        want = listed.get(case, default)
+        check(status.strip("* ") == want, f"{case} status {status.strip()!r}, want {want!r}")
 print("PASS: 304 occurrences, 211 IDs, 25 threats, 19 non-boundary, 167 routed")
 PY
 ```
