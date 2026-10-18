@@ -41,7 +41,7 @@ func loadEffective(ctx context.Context, mode ConfigLoadMode, opts config.LoadEff
 	if len(intent.Errors) > 0 {
 		return config.Bind(intent, config.Evidence{}), transientOrganizationMarketplaceLockUnused
 	}
-	evidence, err := readDeployedLocks(ctx, intent, opts.FileOverlays)
+	evidence, err := readDeployedLocks(ctx, intent, opts.FileOverlays, opts.RelockOrganization)
 	if err != nil && (mode != ConfigLoadOnline || !isMissingLockError(err)) {
 		return effectiveConfigError(config.Bind(intent, evidence), err), transientOrganizationMarketplaceLockUnused
 	}

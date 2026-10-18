@@ -683,7 +683,8 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 	}
 	loadOptions := config.LoadEffectiveOptions{
 		RepoRoot: ws.RepoRoot(), LocalConfigDir: ws.LocalConfigDir(),
-		FileOverlays: overlays,
+		FileOverlays:       overlays,
+		RelockOrganization: mode.explicitOrganization && !mode.check && !mode.locked && !mode.offline,
 	}
 	loadMode := pipeline.ConfigLoadStrict
 	if mode.allowTransientOrganization && !mode.offline {

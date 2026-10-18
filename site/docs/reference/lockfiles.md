@@ -19,7 +19,7 @@ Directory sources are read live from disk on every run and never appear in a loc
 
 ### Organization lock
 
-Some managed setups never deploy an organization lock, and the CLI supports that permanently. An absent organization lock leaves that layer unlocked. Normal online runs, including `sync --check`, resolve the organization's explicit Marketplace requests into a verified lock that exists only in memory for that run, and never write `/etc`. Offline runs and `lock --check` need a deployed organization lock only to resolve the organization's Marketplace requests. Organization Git sources work without one. A present organization lock is exact: the CLI uses only what it records and stops with an error when it no longer matches the organization file.
+Some managed setups never deploy an organization lock, and the CLI supports that permanently. An absent organization lock leaves that layer unlocked. Normal online runs, including `sync --check`, resolve the organization's explicit Marketplace requests into a verified lock that exists only in memory for that run, and never write `/etc`. Offline runs and `lock --check` need a deployed organization lock only to resolve the organization's Marketplace requests. Organization Git sources work without one. A present organization lock is exact: the CLI uses only what it records and stops with an error when it no longer matches the organization file. The one exception is `lock --scope organization` itself, which reconciles the mismatch instead of refusing.
 
 Only `lock --scope organization`, run by an administrator who can write `/etc/agent-marketplace`, creates or updates the organization lock. The [configuration layers reference](./configuration-layers.md#organization-trust-rules) lists the ownership and permission rules a deployed organization lock must meet.
 
@@ -150,7 +150,7 @@ A Marketplace can repair a `mirror` archive without changing the resource's cont
 | `lock` | Creates missing locks and updates stale ones as little as possible. Applies to the user, repository, and personal-local layers unless `--scope` narrows it. |
 | `lock --check` | Reports changes `lock` would make, without writing. Also checks the organization lock. |
 | `lock --upgrade` | Resolves the selected Git sources again at their current refs. Narrow it with resource names, `--registry`, `--ref`, `--path`, or `--kind`. |
-| `lock --scope organization` | Creates or updates the organization lock. Requires write access to `/etc/agent-marketplace`. |
+| `lock --scope organization` | Creates or updates the organization lock. Requires write access to `/etc/agent-marketplace`. After the organization file changes a Git source's URL or ref, a plain run re-resolves only the changed entries and keeps every unchanged entry at its locked commit; `--upgrade` moves every entry to its current ref. Neither form requires deleting the lock. |
 | `sync` | Installs from the locked commits and updates writable locks that no longer match the configuration. |
 | `sync --locked` | Requires every lock to be current and never writes configuration or locks, including refreshed Marketplace archive evidence. |
 | `sync --check` | Reports lock and output drift without writing, and exits `1` if anything is out of date. |
