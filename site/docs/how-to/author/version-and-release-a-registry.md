@@ -53,7 +53,7 @@ Organization-managed refs are not rewritten by consumer `update`. For a minor or
 
 ## 5. Announce breaking changes
 
-For a release with breaking changes, tell consumers what to change: which resources were renamed or removed, and the configuration snippet they need.
+For a release with breaking changes, tell consumers what to change: which resources were renamed or removed, and the configuration snippet they need. [How to rename or retire a resource](./rename-or-retire-a-resource.md) shows how to keep consumers working through a rename.
 
 ## Troubleshooting
 
