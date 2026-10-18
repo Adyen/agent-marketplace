@@ -5,6 +5,10 @@
 This independent slice starts at main `ced6f887`, separate from open R35
 PR #745. Frozen R47/F116 (`01a0cecf-8433-75bf-a491-ff75b4b100c5`)
 concerns repeated source-revision builds during lock acquisition.
+PR #745 merges before integration gates; the slice is rebased onto
+`32259476`. Lock acquisition, source revision, cache, catalog, lockfile
+and config code are unchanged across the rebase. R35's materialization
+change does not affect this benchmark's timed acquisition path.
 The frozen ledger/source index remain unchanged from `2f55f85f`.
 
 No D1-D6 decision, new ceiling, quota, deadline, truncation, source policy
@@ -115,7 +119,24 @@ CGO_ENABLED=0 go test ./cmd/agent-marketplace -run '^$' \
 - All mutations are removed. Counts are regression assertions only, not
   accepted-input caps; the 512-request fixture is processed fully.
 
-Integrated gates and host OCR-delegation review are pending.
+Fresh integrated short-mode tests pass for source revision, cache, catalog
+and lockfile, plus vet, zero-issue CI lint and build. The five new CLI/
+acquisition cases, eight existing lock-consumer regressions and command
+isolation guard pass. Existing regressions cover exact-ref/path and
+cross-layer upgrades, retained commits, one-time snapshot verification,
+lease lifetime, configured installs, selector-only reuse and tampered
+manifest refusal. Focused new CLI/acquisition races pass.
+Strict spec checks pass: 60 items, 1,035 scenarios and 1,657 annotations;
+archive audit passes. Combined E2E and compatibility shell checks pass:
+2,927 invocations, 113/113 command requirements and all three required
+refusal witnesses.
+
+Host OCR-delegation adversarial review covers all nine intended files,
+including the eight default-excluded tests/documents/raw-data files.
+Zero files are skipped and no actionable findings remain. These are scoped
+local gates, not a full root-suite, vendor-native or released-client
+container validation claim; neither review nor tests prove absence of
+other defects.
 
 ## Remaining Work
 
