@@ -3,6 +3,9 @@
 ## Scope
 
 This slice starts independently at main `ab3ab76c`, while PR #736 is queued.
+PR #736 merges while measurements run; this slice is then rebased onto
+main `299bf2ab`. The loader source and relevant ingest/IR/JSON/policy
+dependencies are unchanged across the rebase.
 Frozen R42/F106 (`01a0cecf-842e-75ee-af73-5b23f99b44d6`) concerns repeated
 Gemini hook-name allocation. The frozen ledger and source index remain
 unchanged from `2f55f85f58a3fe3caca4965095bd90f8a1d82518`.
@@ -78,7 +81,7 @@ CGO_ENABLED=0 go test ./pkg/harness-compilation/ingest/gemini -run '^$' \
 ## Preservation And Negative Controls
 
 - Fourteen authored flat/grouped cases pass on the original and candidate:
-  empty input, defaults, pre-existing numeric suffixes, nested suffixes,
+  empty hook maps, defaults, pre-existing numeric suffixes, nested suffixes,
   canonical aliases, case/space normalization and type-case distinction.
   The public bundle loader retains the same resource keys, and source
   bytes remain unchanged.
@@ -86,6 +89,7 @@ CGO_ENABLED=0 go test ./pkg/harness-compilation/ingest/gemini -run '^$' \
   independently authored historical event spelling. They verify names,
   rule ordering, typed payload/provenance, native group extras and warning
   counts. Both algorithms pass 1,000 cases at seed 42.
+  The candidate also passes 2,000 cases at seed 43.
 - A 512-hook public-loader allocation guard fails before the fix:
   337,940 allocations exceed its generous 65,536 regression budget.
   It passes after the fix. This test budget never limits accepted input;
@@ -94,8 +98,21 @@ CGO_ENABLED=0 go test ./pkg/harness-compilation/ingest/gemini -run '^$' \
   names in both reserved-suffix cases. Those controls fail as intended,
   and the mutation is removed.
 
-Final scoped package/SDK/catalog/materializer, CLI, race, spec, E2E and
-adversarial integration gates are pending.
+Fresh scoped short-mode tests pass for all harness-compilation packages,
+catalog and materializer, plus vet, zero-issue CI lint and build. Six CLI
+consumer regressions preserve independent/shared native hooks, committed
+locks, historical hook evidence, additive selection, ownership and review.
+Focused races pass, including 300 Rapid cases at seed 43. Strict spec
+checks pass: 59 items, 1,026 scenarios and 1,638 annotations.
+Combined E2E passes with 2,907 invocations, 113/113 command requirements,
+all three required refusal witnesses, and compatibility shell checks.
+
+Host OCR-delegation adversarial review covers all nine files: the
+production loader plus eight default-excluded tests/documents/raw-data
+files. Zero files are skipped and no actionable findings remain.
+These are scoped local gates, not a full root-suite, vendor-native or
+released-client container validation claim. Review and passing tests do
+not prove absence of other defects.
 
 ## Remaining Work
 
