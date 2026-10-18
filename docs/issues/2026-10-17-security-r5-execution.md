@@ -284,7 +284,7 @@ claim that R48 or any other candidate was already closed by that batch.
 R48 subsequently merged in PR #730. The following independent slice targets
 R52/R53 repeated adapter work; its partial dispositions, preservation
 controls and measurements are recorded in
-[the v4 adaptation report](2026-10-17-security-r5-v4-adaptation.md).
+[the v4 adaptation report](2026-10-18-security-r5-v4-adaptation.md).
 
 #434 already tracks this remaining scope. Publication must describe this as
 partial progress, preserve the frozen artifacts, and leave the issue open.

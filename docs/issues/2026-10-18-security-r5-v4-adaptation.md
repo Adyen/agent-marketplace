@@ -2,7 +2,9 @@
 
 ## Scope
 
-This independent slice starts at main `06a6fdbd`, after merged PR #730.
+This independent slice starts at main `06a6fdbd`, after merged PR #730,
+and is rebased onto main `27b29c8a`. Production/test sources are byte-identical
+before and after the rebase. Measurements and validation run on October 18.
 It addresses two repeated-work portions of frozen R52/F135 and R53/F136.
 The [frozen ledger](2026-10-16-security-r5-frozen-ledger.md) and source index
 remain unchanged from `2f55f85f58a3fe3caca4965095bd90f8a1d82518`.
@@ -67,7 +69,7 @@ There is no claim that every workload allocates less.
 All timing comparisons have `p=0.008`, `n=5`. Raw samples and ASCII-normalized
 benchstat tables retain the warning that five samples do not establish its
 95% confidence intervals:
-`docs/issues/security-r5-v4-2026-10-17/`.
+`docs/issues/security-r5-v4-2026-10-18/`.
 
 ```sh
 CGO_ENABLED=0 go test ./internal/config -run '^$' \
@@ -92,13 +94,19 @@ CGO_ENABLED=0 go test ./internal/config -run '^$' \
 - Omitting the worklist's parent-revision check fails both strict and
   projected stale-parent cases. Both mutations are removed.
 
-Fresh scoped validation passes for config/lockfile/pipeline short-mode
+Pre-rebase scoped validation passes for config/lockfile/pipeline short-mode
 package tests, vet, zero-issue CI lint and build. Six focused CLI regressions
 cover ordered/read-only exclusions, exact lock preservation, updates and
 stale staged-lock refusal. Focused config races and strict spec checks pass
 (59 items, 994 scenarios, 1,602 annotations). The combined pre-rebase E2E
 gate passes: 2,907 invocations, 113/113 command requirements and all three
-required witnesses. Final integration checks follow the rebase onto main.
+required witnesses.
+
+The post-rebase candidate passes the same fresh scoped validation, six
+CLI regressions and focused races. Strict spec checks pass with 59 items,
+996 scenarios and 1,604 annotations. The combined post-rebase E2E gate
+also passes: 2,907 invocations, 113/113 command requirements, all three
+required witnesses, and compatibility shell checks.
 
 ## Remaining Work
 
@@ -111,4 +119,7 @@ Existing per-file limits do not become a total-work or memory guarantee.
 
 Host OCR-delegation review covers all 10 files: the production file and nine
 default-excluded tests/documents/raw measurement files, with zero skipped.
-Final integration changes receive a follow-up review before publication.
+The post-rebase sources and final documentation receive the same follow-up
+review; no actionable findings remain. These are scoped local gates, not
+a claim to have run the full root suite, vendor-native or released-client
+container probes.
