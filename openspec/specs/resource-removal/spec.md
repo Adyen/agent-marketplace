@@ -72,7 +72,8 @@ updating configuration and the acquisition lock together. Without `--scope`,
 it MUST target repository scope like other `--from` removals; an explicit scope
 MUST edit only that layer. The ambiguity remediation for a Marketplace
 selection MUST name its endpoint with `--from` and MUST NOT include `--ref` or
-`--path`. Git and directory `--from` removal MUST remain unchanged.
+`--path`. Git and directory `--from` removal MUST remain unchanged. Refusals of
+endpoint removal MUST carry a stable diagnostic code.
 
 #### Scenario: Remove a Marketplace pin by its endpoint
 
@@ -86,3 +87,4 @@ selection MUST name its endpoint with `--from` and MUST NOT include `--ref` or
 
 - **WHEN** `--from` names a configured Marketplace endpoint together with `--ref` or `--path`, names no matching direct selection of the requested kind, or also matches a configured Git or directory source
 - **THEN** removal MUST refuse without changing configuration or acquisition locks
+- **AND** the refusal MUST report `marketplace.remove-unsupported-qualifier`, `marketplace.remove-not-selected`, or `marketplace.remove-ambiguous-source` respectively
