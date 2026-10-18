@@ -13,6 +13,19 @@ func TestTUIUpdateRefusesNewlyMissingSelection(t *testing.T) {
 	if isolateCommandTest(t) {
 		return
 	}
+	seedBundle := func(t *testing.T, working string) {
+		writeSkill(t, working, "alpha", "Alpha v1", nil)
+		writeSkill(t, working, "beta", "Beta v1", nil)
+		writeCollection(t, working, "bundle", `
+apiVersion: agent-marketplace/v1
+kind: Collection
+name: bundle
+version: 1.0.0
+skills:
+  - name: alpha
+  - name: beta
+`)
+	}
 	for _, tc := range []struct {
 		name      string
 		seed      func(t *testing.T, working string)
@@ -50,20 +63,19 @@ func TestTUIUpdateRefusesNewlyMissingSelection(t *testing.T) {
 			missing: `skill "required-skill"`,
 		},
 		{
-			name: "listed-member-renamed",
-			seed: func(t *testing.T, working string) {
-				writeSkill(t, working, "alpha", "Alpha v1", nil)
-				writeSkill(t, working, "beta", "Beta v1", nil)
-				writeCollection(t, working, "bundle", `
-apiVersion: agent-marketplace/v1
-kind: Collection
-name: bundle
-version: 1.0.0
-skills:
-  - name: alpha
-  - name: beta
-`)
+			name:      "collection-removed",
+			seed:      seedBundle,
+			resources: "    include: [collection/bundle]\n",
+			mutate: func(t *testing.T, working string) {
+				if err := os.RemoveAll(filepath.Join(working, "collections", "bundle")); err != nil {
+					t.Fatal(err)
+				}
 			},
+			missing: `collection "bundle"`,
+		},
+		{
+			name:      "listed-member-renamed",
+			seed:      seedBundle,
 			resources: "    include: [collection/bundle]\n",
 			mutate: func(t *testing.T, working string) {
 				if err := os.RemoveAll(filepath.Join(working, "skills", "beta")); err != nil {
