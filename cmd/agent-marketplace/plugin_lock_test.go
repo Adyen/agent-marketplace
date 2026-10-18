@@ -212,7 +212,6 @@ func TestSyncChangedCatalogEntryMakesLockStale(t *testing.T) {
 	if output, err := executeCommand("sync", "--no-backup"); err != nil {
 		t.Fatalf("sync of a directory-catalog external plugin must succeed: %v\n%s", err, output)
 	}
-	_, before := readLock(t, lockPath)
 
 	// Change the selected entry's definition in the live directory catalog.
 	writeFile(t, filepath.Join(catalogDir, ".claude-plugin", "marketplace.json"),
@@ -251,7 +250,6 @@ func TestSyncChangedCatalogEntryMakesLockStale(t *testing.T) {
 			t.Fatalf("%v must not remove the lock: %v", args, statErr)
 		}
 	}
-	_ = before
 }
 
 // spec: plugin-packages/catalog-listed-origin-outside-source-policy-is-refused
@@ -300,9 +298,9 @@ func TestSyncCatalogListedOriginOutsideSourcePolicyIsRefused(t *testing.T) {
 	}
 }
 
-// F3(a): removing a package-format git source after locking must report the
-// lock stale — its record is a configured-source record, not an external
-// record exempt from the identity match.
+// Removing a package-format git source after locking must report the lock
+// stale: its record is a configured-source record, not an external record
+// exempt from the identity match.
 func TestSyncRemovedPackageFormatSourceMakesLockStale(t *testing.T) {
 	if isolateCommandTest(t) {
 		return
@@ -341,8 +339,8 @@ func TestSyncRemovedPackageFormatSourceMakesLockStale(t *testing.T) {
 	}
 }
 
-// F3(b): deselecting a plugin whose catalog entry is external must report
-// the lock stale; the next plain sync drops the external record.
+// Deselecting a plugin whose catalog entry is external must report the lock
+// stale; the next plain sync drops the external record.
 func TestSyncDeselectedExternalEntryMakesLockStale(t *testing.T) {
 	if isolateCommandTest(t) {
 		return
@@ -405,7 +403,7 @@ func TestSyncDeselectedExternalEntryMakesLockStale(t *testing.T) {
 	}
 }
 
-// F6: a remote-free layer keeps no lock when its only plugin source is a
+// A remote-free layer keeps no lock when its only plugin source is a
 // directory format source whose selection names no external entry.
 func TestSyncDirectoryCatalogWithoutExternalEntriesWritesNoLock(t *testing.T) {
 	if isolateCommandTest(t) {
@@ -428,8 +426,8 @@ func TestSyncDirectoryCatalogWithoutExternalEntriesWritesNoLock(t *testing.T) {
 	}
 }
 
-// AC-d: interim sync writes plugin lock records, delivers non-plugin
-// resources, and skips plugin member delivery with plugin.delivery.pending.
+// Interim sync writes plugin lock records, delivers non-plugin resources,
+// and skips plugin member delivery with plugin.delivery.pending.
 func TestSyncDeliversOtherResourcesAndWarnsPendingPluginDelivery(t *testing.T) {
 	if isolateCommandTest(t) {
 		return

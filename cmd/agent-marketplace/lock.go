@@ -1494,7 +1494,7 @@ func unselectedLayerIsFresh(ctx context.Context, _ lockfile.Scope, registries []
 
 // expectedExternalIdentities computes the registry identities the current
 // configuration requires as external catalog-entry records, so doc matching
-// can exempt exactly those — and nothing else — from the configured-source
+// can exempt exactly those, and nothing else, from the configured-source
 // identity match.
 func expectedExternalIdentities(ctx context.Context, decls []config.SourceDecl, registries []config.RegistryEntry, doc lockfile.Document, offline, readOnly bool) map[string]bool {
 	if len(pipeline.FormatSourceEntries(decls)) == 0 {
@@ -1508,7 +1508,18 @@ func expectedExternalIdentities(ctx context.Context, decls []config.SourceDecl, 
 		}
 		fetchURLs[gitLockIdentity(canonical, entry.Ref)] = entry.URL
 	}
-	contexts, err := pipeline.BuildPluginLockContexts(decls, doc, func(registry lockfile.GitRegistry, consume func(string) error) error {
+	contexts, err := pipeline.BuildPluginLockContexts(decls, doc, openPluginLockSnapshot(ctx, offline, readOnly, fetchURLs))
+	if err != nil {
+		return map[string]bool{}
+	}
+	return contexts.ExternalIdentities()
+}
+
+// openPluginLockSnapshot opens a locked registry's committed snapshot for
+// plugin-lock context construction: write modes acquire it through the exact
+// Git path, read-only modes lease the recorded commit.
+func openPluginLockSnapshot(ctx context.Context, offline, readOnly bool, fetchURLs map[string]string) func(lockfile.GitRegistry, func(string) error) error {
+	return func(registry lockfile.GitRegistry, consume func(string) error) error {
 		oid, err := cache.ParseGitOID(registry.Commit.String())
 		if err != nil {
 			return err
@@ -1522,11 +1533,7 @@ func expectedExternalIdentities(ctx context.Context, decls []config.SourceDecl, 
 		}
 		defer release()
 		return consume(path)
-	})
-	if err != nil {
-		return map[string]bool{}
 	}
-	return contexts.ExternalIdentities()
 }
 
 func documentMatchesEntries(doc lockfile.Document, entries []config.RegistryEntry, expected map[string]bool) bool {
@@ -1586,21 +1593,7 @@ func addLayerSnapshots(ctx context.Context, set *exactLockSet, source config.Sou
 		}
 		fetchURLs[gitLockIdentity(canonical, entry.Ref)] = entry.URL
 	}
-	pluginContexts, err := pipeline.BuildPluginLockContexts(decls, doc, func(registry lockfile.GitRegistry, consume func(string) error) error {
-		oid, err := cache.ParseGitOID(registry.Commit.String())
-		if err != nil {
-			return err
-		}
-		if !offline && !readOnly {
-			return cache.WithAcquiredExactGit(ctx, registry.URL, fetchURLFor(registry, fetchURLs), oid, consume)
-		}
-		path, release, err := cache.LeaseExactGitReadOnlyWithContext(ctx, registry.URL, oid)
-		if err != nil {
-			return err
-		}
-		defer release()
-		return consume(path)
-	})
+	pluginContexts, err := pipeline.BuildPluginLockContexts(decls, doc, openPluginLockSnapshot(ctx, offline, readOnly, fetchURLs))
 	if err != nil {
 		return err
 	}
