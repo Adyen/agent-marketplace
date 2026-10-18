@@ -810,6 +810,17 @@ func TestSyncRequiredGroupExclusionKeepsPluginAndStaysFresh(t *testing.T) {
 	}
 }
 
+// writeMixedFormatRepo seeds a repository with a loose skill and a
+// claude-marketplace catalog under cat/ carrying one local plugin.
+func writeMixedFormatRepo(t *testing.T) (string, string) {
+	origin, working := createBareRepoWithWorkingClone(t, "mixed.git")
+	writeSkill(t, working, "tooling", "Tooling baseline", nil)
+	writeClaudePluginPackage(t, filepath.Join(working, "cat", "plugins", "local-kit"), "local-kit", "local-skill")
+	writeFile(t, filepath.Join(working, "cat", ".claude-plugin", "marketplace.json"),
+		`{"name":"team","plugins":[{"name":"local-kit","source":"./plugins/local-kit"}]}`)
+	return origin, working
+}
+
 // A collections/ directory inside a plugin-v1 root is not discovered: format
 // sources have no collections, matching verification-side discovery.
 func TestSyncMixedRecordFormatRootCollectionsAreNotDiscovered(t *testing.T) {
@@ -819,11 +830,7 @@ func TestSyncMixedRecordFormatRootCollectionsAreNotDiscovered(t *testing.T) {
 	root := pluginLockFixture(t)
 	repo := filepath.Join(root, "repo")
 
-	origin, working := createBareRepoWithWorkingClone(t, "mixed.git")
-	writeSkill(t, working, "tooling", "Tooling baseline", nil)
-	writeClaudePluginPackage(t, filepath.Join(working, "cat", "plugins", "local-kit"), "local-kit", "local-skill")
-	writeFile(t, filepath.Join(working, "cat", ".claude-plugin", "marketplace.json"),
-		`{"name":"team","plugins":[{"name":"local-kit","source":"./plugins/local-kit"}]}`)
+	origin, working := writeMixedFormatRepo(t)
 	collectionBody := "name: bundle\nresources:\n  - {kind: plugin, name: local-kit}\n"
 	// The loose copy lets resolution select the collection; the copy inside
 	// the plugin-v1 root must not be discovered by the lock path.
@@ -851,11 +858,7 @@ func TestDiscoverLockCollectionsSkipsPluginV1Roots(t *testing.T) {
 	}
 	pluginLockFixture(t)
 
-	origin, working := createBareRepoWithWorkingClone(t, "mixed.git")
-	writeSkill(t, working, "tooling", "Tooling baseline", nil)
-	writeClaudePluginPackage(t, filepath.Join(working, "cat", "plugins", "local-kit"), "local-kit", "local-skill")
-	writeFile(t, filepath.Join(working, "cat", ".claude-plugin", "marketplace.json"),
-		`{"name":"team","plugins":[{"name":"local-kit","source":"./plugins/local-kit"}]}`)
+	origin, working := writeMixedFormatRepo(t)
 	writeCollection(t, working, "loose-bundle", "name: loose-bundle\nresources:\n  - {kind: skill, name: tooling}\n")
 	writeCollection(t, filepath.Join(working, "cat"), "cat-bundle", "name: cat-bundle\nresources:\n  - {kind: plugin, name: local-kit}\n")
 	commitAndPushAll(t, working, "seed mixed record")

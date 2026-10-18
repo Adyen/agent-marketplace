@@ -118,7 +118,7 @@ func pluginMemberExclusionMatch(exclusion string, member ir.PluginMember) bool {
 	if !ok || member.Resource == nil {
 		return false
 	}
-	return v4DecisionKind(kind) == member.Resource.Kind() && name == member.Resource.Name()
+	return catalog.DecisionKind(kind) == member.Resource.Kind() && name == member.Resource.Name()
 }
 
 // applyPluginRequestOptions folds authored request options into the

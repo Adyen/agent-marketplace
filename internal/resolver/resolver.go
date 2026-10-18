@@ -3637,8 +3637,8 @@ func appendSelections(out resourceSelections, kind ir.ResourceKind, names []stri
 	return out
 }
 
-func v4DecisionKind(kind string) ir.ResourceKind {
-	return catalog.DecisionKind(kind)
+func hasExplicitSelection(entry config.RegistryEntry) bool {
+	return catalog.HasExplicitSelection(entry)
 }
 
 func v4OwnerExcluded(entry config.RegistryEntry, kind ir.ResourceKind, name string) bool {
@@ -3647,24 +3647,16 @@ func v4OwnerExcluded(entry config.RegistryEntry, kind ir.ResourceKind, name stri
 	for _, decision := range entry.V4Decisions {
 		switch decision.Action {
 		case config.V4SelectionExplicit:
-			if decision.Request != nil && v4DecisionKind(decision.Request.Kind) == kind && strings.TrimSpace(decision.Request.Name) == name {
+			if decision.Request != nil && catalog.DecisionKind(decision.Request.Kind) == kind && strings.TrimSpace(decision.Request.Name) == name {
 				excluded = false
 			}
 		case config.V4SelectionExclude:
-			if !entry.Required && v4DecisionExclusionMatches(decision.Exclusion, target) {
+			if !entry.Required && catalog.DecisionExclusionMatches(decision.Exclusion, target.kind, target.name) {
 				excluded = true
 			}
 		}
 	}
 	return excluded
-}
-
-func v4DecisionExclusionMatches(exclusion string, selected resourceSelection) bool {
-	return catalog.DecisionExclusionMatches(exclusion, selected.kind, selected.name)
-}
-
-func hasExplicitSelection(entry config.RegistryEntry) bool {
-	return catalog.HasExplicitSelection(entry)
 }
 
 // deduplicateOccurrences merges occurrences from the same logical registry
