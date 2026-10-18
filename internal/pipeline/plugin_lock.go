@@ -297,7 +297,6 @@ func bindExternalEntries(out *PluginLockContexts, spec *catalog.PluginSelectionS
 		if ref == "" {
 			ref = "HEAD"
 		}
-		entry := catalogEntryByName(loaded.Entries, ext.Name)
 		out.Expected[url+"\x00"+ref+"\x00"+rootPath] = true
 		out.Externals[externalRecordKey(url, rootPath)] = &sourcerevision.PluginExternal{
 			CatalogKind:   kind,
@@ -308,20 +307,11 @@ func bindExternalEntries(out *PluginLockContexts, spec *catalog.PluginSelectionS
 			EntryName:     ext.Name,
 			EntryDigest:   ext.DefinitionDigest,
 			CatalogFormat: owner.Format,
-			EntryStrict:   entry.Plugin.Strict,
-			EntryOverlay:  entry.Plugin.Overlay,
+			EntryStrict:   ext.EntryStrict,
+			EntryOverlay:  ext.EntryOverlay,
 		}
 	}
 	return nil
-}
-
-func catalogEntryByName(entries []catalog.Entry, name string) catalog.Entry {
-	for _, entry := range entries {
-		if entry.Name == name {
-			return entry
-		}
-	}
-	return catalog.Entry{}
 }
 
 // catalogIdentityURL renders the owning catalog's lock-manifest identity:
