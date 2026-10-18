@@ -1,0 +1,43 @@
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/internal/config
+cpu: Apple M4 Max
+                                             | adapter-before.txt | adapter-after.txt |
+                                             |                        sec/op                         |            sec/op              vs base               |
+V4LockChainAdaptation/resources=1-16                                                    2.438u +/- inf [1]                    2.333u +/- inf [1]   -4.31% (p=0.008 n=5)
+V4LockChainAdaptation/resources=32-16                                                   59.83u +/- inf [1]                    51.15u +/- inf [1]  -14.50% (p=0.008 n=5)
+V4LockChainAdaptation/resources=128-16                                                  340.4u +/- inf [1]                    200.1u +/- inf [1]  -41.20% (p=0.008 n=5)
+V4LockChainAdaptation/resources=512-16                                                 3217.8u +/- inf [1]                    797.1u +/- inf [1]  -75.23% (p=0.008 n=5)
+V4ExactExclusionAdaptation/exclusions=1-16                                              823.2n +/- inf [1]                    771.7n +/- inf [1]   -6.26% (p=0.008 n=5)
+V4ExactExclusionAdaptation/exclusions=16-16                                             87.99u +/- inf [1]                    12.80u +/- inf [1]  -85.46% (p=0.008 n=5)
+V4ExactExclusionAdaptation/exclusions=64-16                                           2698.70u +/- inf [1]                    93.70u +/- inf [1]  -96.53% (p=0.008 n=5)
+V4ExactExclusionAdaptation/exclusions=128-16                                          18285.4u +/- inf [1]                    308.0u +/- inf [1]  -98.32% (p=0.008 n=5)
+geomean                                                                                 165.8u                          39.07u        -76.44%
+[1] need >= 6 samples for confidence interval at level 0.95
+
+                                             | adapter-before.txt | adapter-after.txt |
+                                             |                         B/op                          |             B/op               vs base               |
+V4LockChainAdaptation/resources=1-16                                                   2.916Ki +/- inf [1]                   2.915Ki +/- inf [1]   -0.03% (p=0.008 n=5)
+V4LockChainAdaptation/resources=32-16                                                  67.08Ki +/- inf [1]                   68.67Ki +/- inf [1]   +2.36% (p=0.008 n=5)
+V4LockChainAdaptation/resources=128-16                                                 260.9Ki +/- inf [1]                   266.9Ki +/- inf [1]   +2.31% (p=0.008 n=5)
+V4LockChainAdaptation/resources=512-16                                                 1.036Mi +/- inf [1]                   1.061Mi +/- inf [1]   +2.36% (p=0.008 n=5)
+V4ExactExclusionAdaptation/exclusions=1-16                                             2.062Ki +/- inf [1]                   2.109Ki +/- inf [1]   +2.27% (p=0.008 n=5)
+V4ExactExclusionAdaptation/exclusions=16-16                                           116.98Ki +/- inf [1]                   23.98Ki +/- inf [1]  -79.50% (p=0.008 n=5)
+V4ExactExclusionAdaptation/exclusions=64-16                                          1812.29Ki +/- inf [1]                   98.54Ki +/- inf [1]  -94.56% (p=0.008 n=5)
+V4ExactExclusionAdaptation/exclusions=128-16                                          7071.5Ki +/- inf [1]                   195.7Ki +/- inf [1]  -97.23% (p=0.008 n=5)
+geomean                                                                                142.2Ki                         52.37Ki        -63.18%
+[1] need >= 6 samples for confidence interval at level 0.95
+
+                                             | adapter-before.txt | adapter-after.txt |
+                                             |                       allocs/op                       |          allocs/op           vs base                 |
+V4LockChainAdaptation/resources=1-16                                                     30.00 +/- inf [1]                   30.00 +/- inf [1]        ~ (p=1.000 n=5) [2]
+V4LockChainAdaptation/resources=32-16                                                    643.0 +/- inf [1]                   680.0 +/- inf [1]   +5.75% (p=0.008 n=5)
+V4LockChainAdaptation/resources=128-16                                                  2.478k +/- inf [1]                  2.613k +/- inf [1]   +5.45% (p=0.008 n=5)
+V4LockChainAdaptation/resources=512-16                                                  12.09k +/- inf [1]                  12.61k +/- inf [1]   +4.31% (p=0.008 n=5)
+V4ExactExclusionAdaptation/exclusions=1-16                                               11.00 +/- inf [1]                   12.00 +/- inf [1]   +9.09% (p=0.008 n=5)
+V4ExactExclusionAdaptation/exclusions=16-16                                              539.0 +/- inf [1]                   135.0 +/- inf [1]  -74.95% (p=0.008 n=5)
+V4ExactExclusionAdaptation/exclusions=64-16                                             5675.0 +/- inf [1]                   447.0 +/- inf [1]  -92.12% (p=0.008 n=5)
+V4ExactExclusionAdaptation/exclusions=128-16                                           20019.0 +/- inf [1]                   843.0 +/- inf [1]  -95.79% (p=0.008 n=5)
+geomean                                                                                  888.7                         377.2        -57.55%
+[1] need >= 6 samples for confidence interval at level 0.95
+[2] all samples are equal
