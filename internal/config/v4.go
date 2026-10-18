@@ -2084,18 +2084,28 @@ func (c *V4Config) marketplaceEntryForLock(name string, src V4Source, group V4Re
 	for i := range direct {
 		reachable[i] = true
 	}
-	for changed := true; changed; {
-		changed = false
+	if len(direct) < len(mp.Resources) {
+		children := make([][]int, len(mp.Resources))
 		for i := range mp.Resources {
 			if reachable[i] {
 				continue
 			}
 			for _, edge := range mp.Resources[i].SelectedBy {
 				parent, ok := collections[edge.RegistryID+"\x00"+edge.Name]
-				if ok && reachable[parent] && mp.Resources[parent].ContentDigest == edge.Revision {
-					reachable[i] = true
-					changed = true
-					break
+				if ok && mp.Resources[parent].ContentDigest == edge.Revision {
+					children[parent] = append(children[parent], i)
+				}
+			}
+		}
+		pending := make([]int, 0, len(direct))
+		for i := range direct {
+			pending = append(pending, i)
+		}
+		for next := 0; next < len(pending); next++ {
+			for _, child := range children[pending[next]] {
+				if !reachable[child] {
+					reachable[child] = true
+					pending = append(pending, child)
 				}
 			}
 		}
@@ -2206,6 +2216,7 @@ func effectiveV4Requests(group V4ResourceGroup) []V4ResourceRequest {
 
 func effectiveV4Exclusions(group V4ResourceGroup) []string {
 	seen := map[string]bool{}
+	var active map[string]bool
 	var out []string
 	for _, decision := range group.Decisions {
 		if decision.Action != V4SelectionExclude || seen[decision.Exclusion] {
@@ -2214,14 +2225,14 @@ func effectiveV4Exclusions(group V4ResourceGroup) []string {
 		// An exact exclusion superseded by a later include is no longer active.
 		_, resourceName := v4ExclusionKindName(decision.Exclusion)
 		if resourceName != "*" {
-			reincluded := false
-			for _, request := range effectiveV4Requests(group) {
-				if request.Locator == decision.Exclusion {
-					reincluded = true
-					break
+			if active == nil {
+				requests := effectiveV4Requests(group)
+				active = make(map[string]bool, len(requests))
+				for _, request := range requests {
+					active[request.Locator] = true
 				}
 			}
-			if reincluded {
+			if active[decision.Exclusion] {
 				seen[decision.Exclusion] = true
 				continue
 			}
