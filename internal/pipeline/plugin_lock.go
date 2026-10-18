@@ -42,14 +42,25 @@ func leaseSnapshotReadOnly(ctx context.Context) func(lockfile.GitRegistry, func(
 	}
 }
 
-// ExternalIdentities returns the registry identities (canonical URL + ref)
-// the configuration's selected catalog entries require as external records;
-// nil when the layer has no format sources.
+// ExternalIdentities returns the external record identities (canonical URL +
+// ref + sole root path, see ExternalRecordIdentity) the configuration's
+// selected catalog entries require in the lock; nil when the layer has no
+// format sources.
 func (c *PluginLockContexts) ExternalIdentities() map[string]bool {
 	if c == nil {
 		return nil
 	}
 	return c.Expected
+}
+
+// ExternalRecordIdentity is the Expected-set key of one locked external
+// record: its canonical URL, ref, and sole root path. Records without
+// exactly one root have no external identity.
+func ExternalRecordIdentity(registry lockfile.GitRegistry) string {
+	if len(registry.Roots) != 1 {
+		return ""
+	}
+	return registry.URL + "\x00" + registry.Ref + "\x00" + registry.Roots[0].Path
 }
 
 // AllRootsPluginV1 reports whether every root of a registry record is a
@@ -275,7 +286,7 @@ func bindExternalEntries(out *PluginLockContexts, spec *catalog.PluginSelectionS
 		if ref == "" {
 			ref = "HEAD"
 		}
-		out.Expected[url+"\x00"+ref] = true
+		out.Expected[url+"\x00"+ref+"\x00"+rootPath] = true
 		out.Externals[externalRecordKey(url, rootPath)] = &sourcerevision.PluginExternal{
 			CatalogKind:   kind,
 			CatalogURL:    catalogIdentityURL(owner, canonical),
