@@ -58,8 +58,9 @@ type PluginExternalEntry struct {
 }
 
 type pluginManifestEntry struct {
-	Name   string `json:"name"`
-	Digest string `json:"digest"`
+	Name          string `json:"name"`
+	Digest        string `json:"digest"`
+	FormatVersion string `json:"format_version,omitempty"`
 }
 
 type pluginManifestEdge struct {
@@ -156,7 +157,6 @@ func buildPluginRevision(input Input, contract lockfile.SourceRevisionContract) 
 			return Result{}, fmt.Errorf("%w: decode plugin source %q: %w", ErrCatalog, input.RootPath, err)
 		}
 		manifest.Format = input.SourceHarness
-		manifest.FormatVersion = pluginFormatVersion(loaded)
 		indexDigest, err := catalogIndexDigest(root, input.SourceHarness)
 		if err != nil {
 			return Result{}, fmt.Errorf("%w: %w", ErrCatalog, err)
@@ -166,25 +166,31 @@ func buildPluginRevision(input Input, contract lockfile.SourceRevisionContract) 
 		byName := catalogEntriesByName(loaded.Entries)
 		for _, name := range pluginSelectedNames(loaded.Entries, spec) {
 			entry, ok := byName[name]
-			if !ok || entry.Plugin == nil {
+			if !ok || entry.Plugin == nil || entry.Plugin.Refusal != nil {
 				continue
 			}
-			manifest.Entries = append(manifest.Entries, pluginManifestEntry{Name: name, Digest: entry.Plugin.DefinitionDigest})
+			manifestEntry := pluginManifestEntry{Name: name, Digest: entry.Plugin.DefinitionDigest}
 			if entry.Plugin.Source.Kind == "git" {
 				externals = append(externals, PluginExternalEntry{Name: name, Source: entry.Plugin.Source, DefinitionDigest: entry.Plugin.DefinitionDigest, EntryStrict: entry.Plugin.Strict, EntryOverlay: entry.Plugin.Overlay})
-				continue
 			}
-			if entry.Plugin.Source.Kind != "path" || entry.Plugin.Refusal != nil {
+			if entry.Plugin.Source.Kind != "path" {
+				manifest.Entries = append(manifest.Entries, manifestEntry)
 				continue
 			}
 			plugin, ok := entry.Resource.(*ir.Plugin)
 			if !ok {
+				manifest.Entries = append(manifest.Entries, manifestEntry)
 				continue
 			}
+			manifestEntry.FormatVersion = plugin.FormatVersion
+			manifest.Entries = append(manifest.Entries, manifestEntry)
 			manifest.Resources = append(manifest.Resources, pluginResource(name, plugin))
 			manifest.Members = append(manifest.Members, pluginManifestMembers{Entry: name, Keys: memberKeysAfterExclusions(plugin, name, spec)})
 		}
-		manifest.Edges = pluginSpecEdges(spec, byName)
+		manifest.Edges = pluginSpecEdges(spec, loaded.Entries)
+		if err := CheckSharedExternalOrigins(externals); err != nil {
+			return Result{}, err
+		}
 	}
 
 	payload, digest, err := encodePluginManifest(manifest)
@@ -235,31 +241,12 @@ func pluginResource(name string, plugin *ir.Plugin) revisionResource {
 }
 
 // pluginSelectedNames resolves the declared selection against the decoded
-// entries: explicit names plus every installable entry when the source is
-// selected wholesale, plus collection edges, minus group exclusions.
+// entries through the shared selection predicate the resolver also uses,
+// plus collection edges.
 func pluginSelectedNames(entries []catalog.Entry, spec *catalog.PluginSelectionSpec) []string {
-	names := map[string]bool{}
-	for _, request := range spec.Explicit {
-		names[request.Name] = true
-	}
-	if spec.All {
-		for _, entry := range entries {
-			if entry.Kind != ir.KindPlugin || entry.Plugin == nil || entry.Plugin.Refusal != nil {
-				continue
-			}
-			names[entry.Name] = true
-		}
-	}
-	for _, edge := range spec.Collections {
-		for _, name := range edge.Entries {
-			names[name] = true
-		}
-	}
-	for _, name := range spec.Excluded {
-		delete(names, name)
-	}
-	out := make([]string, 0, len(names))
-	for name := range names {
+	selected := catalog.PluginSelectedNames(spec, entries)
+	out := make([]string, 0, len(selected))
+	for name := range selected {
 		out = append(out, name)
 	}
 	sort.Strings(out)
@@ -277,37 +264,28 @@ func catalogEntriesByName(entries []catalog.Entry) map[string]catalog.Entry {
 }
 
 // pluginSpecEdges renders the declared selection as manifest edges: one
-// direct edge per explicitly or wholesale selected installable entry, and
+// direct edge per installable entry the entry's own selection admits, and
 // one edge per collection binding.
-func pluginSpecEdges(spec *catalog.PluginSelectionSpec, entries map[string]catalog.Entry) []pluginManifestEdge {
-	direct := map[string]bool{}
-	for _, request := range spec.Explicit {
-		direct[request.Name] = true
-	}
-	if spec.All {
-		for name, entry := range entries {
-			if entry.Plugin != nil && entry.Plugin.Refusal == nil {
-				direct[name] = true
-			}
+func pluginSpecEdges(spec *catalog.PluginSelectionSpec, entries []catalog.Entry) []pluginManifestEdge {
+	installable := map[string]bool{}
+	for _, entry := range entries {
+		if entry.Kind == ir.KindPlugin && entry.Plugin != nil && entry.Plugin.Refusal == nil {
+			installable[entry.Name] = true
 		}
 	}
-	excluded := map[string]bool{}
-	for _, name := range spec.Excluded {
-		excluded[name] = true
-		delete(direct, name)
+	direct := map[string]bool{}
+	for _, sel := range catalog.SelectedResources(spec.Entry, entries) {
+		if sel.Kind == ir.KindPlugin && installable[sel.Name] {
+			direct[sel.Name] = true
+		}
 	}
 	var edges []pluginManifestEdge
 	for name := range direct {
-		if entry, ok := entries[name]; ok && entry.Plugin != nil && entry.Plugin.Refusal == nil {
-			edges = append(edges, pluginManifestEdge{Type: "direct", Entry: name})
-		}
+		edges = append(edges, pluginManifestEdge{Type: "direct", Entry: name})
 	}
 	for _, edge := range spec.Collections {
 		for _, name := range edge.Entries {
-			if excluded[name] {
-				continue
-			}
-			if entry, ok := entries[name]; ok && entry.Plugin != nil && entry.Plugin.Refusal == nil {
+			if installable[name] {
 				edges = append(edges, pluginManifestEdge{Type: "collection", Entry: name, Collection: edge.Collection})
 			}
 		}
@@ -362,13 +340,49 @@ func catalogIndexDigest(root, format string) (string, error) {
 	return contentDigest(data), nil
 }
 
-func pluginFormatVersion(loaded catalog.LoadedCatalog) string {
-	for _, entry := range loaded.Entries {
-		if plugin, ok := entry.Resource.(*ir.Plugin); ok {
-			return plugin.FormatVersion
+// PluginSharedOriginError refuses selecting two catalog entries that resolve
+// to the same external origin, ref, and subdirectory: their lock records
+// would collapse into one.
+type PluginSharedOriginError struct {
+	First  string
+	Second string
+	Origin string
+	Ref    string
+	Root   string
+}
+
+func (e *PluginSharedOriginError) Error() string {
+	return fmt.Sprintf("plugin.catalog.shared-origin: catalog entries %q and %q resolve to the same external origin %s ref %q root %q; select only one", e.First, e.Second, e.Origin, e.Ref, e.Root)
+}
+
+// CheckSharedExternalOrigins refuses selected external entries that collapse
+// to one lock record: two entries resolving to the same canonical origin,
+// ref, and subdirectory cannot both be locked.
+func CheckSharedExternalOrigins(externals []PluginExternalEntry) error {
+	seen := map[string]string{}
+	for _, ext := range externals {
+		if ext.Source.Kind != "git" {
+			continue
 		}
+		url, err := lockfile.CanonicalGitConfigURL(ext.Source.URL)
+		if err != nil {
+			continue
+		}
+		ref := ext.Source.Ref
+		if ref == "" {
+			ref = "HEAD"
+		}
+		root := ext.Source.Subdirectory
+		if root == "" {
+			root = "."
+		}
+		key := url + "\x00" + ref + "\x00" + root
+		if first, dup := seen[key]; dup {
+			return &PluginSharedOriginError{First: first, Second: ext.Name, Origin: url, Ref: ref, Root: root}
+		}
+		seen[key] = ext.Name
 	}
-	return ""
+	return nil
 }
 
 // encodePluginManifest hashes the canonical JSON form of the plugin-v1
