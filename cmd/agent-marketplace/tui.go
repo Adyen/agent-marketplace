@@ -81,6 +81,7 @@ func runTUIDependencyLifecycle(ctx context.Context, workspace pipeline.Workspace
 			return nil, err
 		}
 		mode.selects = selected
+		mode.selectionGuard = true
 	}
 	exactLease, err := prepareTUILocks(ctx, ws.RepoRoot(), ws.LocalConfigDir(), mode)
 	if err != nil {
