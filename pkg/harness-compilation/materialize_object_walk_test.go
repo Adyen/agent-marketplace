@@ -24,6 +24,9 @@ func TestMaterializeWideJSONCObjectWalkPreservesFileAuthority(t *testing.T) {
 	if err := os.WriteFile(path, before, 0o640); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.Chmod(path, 0o640); err != nil {
+		t.Fatal(err)
+	}
 	result := mergeArtifact(".mcp.json", `{"mcpServers":{"generated":{"command":"new"}}}`)
 	if _, err := Materialize(result, root, WithWriteMode(WriteModeOverwrite), WithDryRun()); err != nil {
 		t.Fatal(err)

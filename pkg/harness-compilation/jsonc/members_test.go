@@ -51,6 +51,16 @@ func TestMembersPreservesSourceOrderAndReadOnlyState(t *testing.T) {
 	if doc.Changed() || !bytes.Equal(doc.Bytes(), source) {
 		t.Fatal("member reads changed concrete syntax")
 	}
+	var replaced []string
+	for key, value := range doc.Root().Members() {
+		if key == "z" && !doc.SetMember(doc.Root(), "a", []byte("4")) {
+			t.Fatal("replacement during iteration failed")
+		}
+		replaced = append(replaced, string(value.Raw()))
+	}
+	if !reflect.DeepEqual(replaced, []string{"3", "4", "2"}) {
+		t.Fatalf("iteration did not observe the replaced value: %v", replaced)
+	}
 	if !doc.DeleteMember(doc.Root(), "z") || !doc.SetMember(doc.Root(), "a", []byte("4")) || !doc.SetMember(doc.Root(), "b", []byte("5")) {
 		t.Fatal("mutation control failed")
 	}

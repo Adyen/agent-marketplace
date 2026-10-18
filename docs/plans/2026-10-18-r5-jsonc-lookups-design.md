@@ -33,7 +33,8 @@ Permanent CPU-only benchmarks include parse/decode, merge decisions,
 patching and rendering for 1/32/256/1,024/4,096 keyed MCP entries,
 unchanged and half-updated. Disk/network are excluded, not relabeled as
 whole-SDK/CLI measurements. Capture five two-second samples per fixture
-before and after without concurrent validation; retain raw data,
+before and after without concurrent validation from this task; record
+host contention and retain raw data,
 benchstat and small-case/allocation tradeoffs.
 
 Preservation controls cover wide objects, original source order, escaped
