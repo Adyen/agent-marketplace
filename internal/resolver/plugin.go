@@ -77,20 +77,6 @@ func (e *PluginEntryRefusalError) Error() string {
 	return fmt.Sprintf("plugin/%s at %s is not installable", e.Name, redact.URL(e.URL))
 }
 
-// PluginExternalEntryError is the temporary failure for catalog entries
-// whose origin is an external repository; external plugin acquisition lands
-// with the lock slice.
-type PluginExternalEntryError struct {
-	Name     string
-	EntryURL string
-	URL      string
-}
-
-func (e *PluginExternalEntryError) Error() string {
-	return fmt.Sprintf("plugin.catalog.external-entry: plugin/%s at %s points at external repository %s; external plugin entries cannot be acquired yet",
-		e.Name, redact.URL(e.URL), redact.URL(e.EntryURL))
-}
-
 // pluginMemberIndex maps member kind/name selections to the plugin that
 // carries them, for direct-member refusals.
 func pluginMemberIndex(entries []catalog.Entry) map[resourceSelection]string {

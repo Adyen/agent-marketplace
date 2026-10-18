@@ -341,7 +341,7 @@ func TestResolveRefusedEntryBlocksOnlyThatEntry(t *testing.T) {
 	}
 }
 
-func TestResolveExternalCatalogEntryFailsClosed(t *testing.T) {
+func TestResolveExternalCatalogEntryResolvesToPluginArtifact(t *testing.T) {
 	entry := formatEntry("claude-marketplace", pluginDecisions([2]string{"plugin", "mirror-kit"}))
 	cfg := &config.Config{Registries: []config.RegistryEntry{entry}}
 	setCatalogKeys(cfg)
@@ -350,10 +350,13 @@ func TestResolveExternalCatalogEntryFailsClosed(t *testing.T) {
 			plugindecode.CatalogSource{Kind: "git", URL: "https://git.example.com/mirror.git", Ref: "main"}),
 	}}
 
-	_, errs := Resolve(cfg, catalogs, nil)
-	text := errStrings(errs)
-	if !strings.Contains(text, "mirror-kit") || len(errs) == 0 {
-		t.Fatalf("external entry selection must fail with a clear error, got: %v", errs)
+	resolved, errs := Resolve(cfg, catalogs, nil)
+	if len(errs) != 0 {
+		t.Fatalf("external entry selection must resolve, got: %v", errs)
+	}
+	plugins := pluginArtifacts(resolved)
+	if len(plugins) != 1 || plugins[0].Name != "mirror-kit" {
+		t.Fatalf("the external plugin must resolve to a plugin artifact: %#v", resolved)
 	}
 }
 

@@ -20,7 +20,7 @@ func TestReadOnlyOrganizationLockViewAcceptsMissingLock(t *testing.T) {
 		t.Fatal(err)
 	}
 	registry := config.RegistryEntry{URL: "https://example.invalid/org.git", Ref: "main", Source: config.Organization}
-	doc, err := readOnlyLayerLock(configPath, lockPath, lockfile.ScopeOrganization, []config.RegistryEntry{registry})
+	doc, err := readOnlyLayerLock(context.Background(), config.LayerResult{Path: configPath}, lockPath, lockfile.ScopeOrganization, []config.RegistryEntry{registry})
 	if err != nil || doc.APIVersion != "" {
 		t.Fatalf("missing optional organization lock returned doc=%#v err=%v", doc, err)
 	}
@@ -71,7 +71,7 @@ func TestReadOnlyOrganizationLockViewAcceptsTrustedFixture(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	doc, err := readOnlyLayerLock(configPath, lockPath, lockfile.ScopeOrganization, nil)
+	doc, err := readOnlyLayerLock(context.Background(), config.LayerResult{Path: configPath}, lockPath, lockfile.ScopeOrganization, nil)
 	if err != nil || doc.Scope != lockfile.ScopeOrganization {
 		t.Fatalf("trusted read-only organization view failed: scope=%s err=%v", doc.Scope, err)
 	}
