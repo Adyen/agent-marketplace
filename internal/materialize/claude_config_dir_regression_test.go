@@ -7,10 +7,12 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/Adyen/agent-marketplace/internal/catalog"
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/resolver"
 	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 )
 
 // spec: claude-native-configuration/relocated-cleanup-ignores-unrelated-files
@@ -19,21 +21,24 @@ func TestClaudeConfigurationPrunePreservesUnrelatedFiles(t *testing.T) {
 		t.Run(string(mode), func(t *testing.T) {
 			_, repo, custom := claudeDirectoryFixture(t)
 			options := []RunOption{WithMaterializationModes(config.MaterializationModes{Machine: mode})}
+			hook := resolverHook(t, makeHookSupportSource(t, "echo guard", 0o600), "guard")
+			hook.Source, hook.Harnesses = config.UserPersonal, []hcc.Target{hcc.TargetClaude}
 			resources := []resolver.ResolvedArtifact{
 				claudeDirectorySkill("stale", config.UserPersonal, hcc.TargetClaude),
+				hook,
 			}
 			if report, err := Run(context.Background(), repo, resources, options...); err != nil || diag.HasErrors(report.Diags) {
 				t.Fatalf("seed Claude output: %v, %+v", err, report)
 			}
 			raw := `{"mcpServers":{"other":{"_managed_by":"agent-marketplace","command":"keep"}},"account":"other"}`
-			plugin := filepath.Join(custom, ".claude-plugin/plugin.json")
-			if !bytes.Contains(claudeDirectoryRead(t, plugin), []byte("stale")) {
+			plugin := filepath.Join(custom, "settings.json")
+			if !bytes.Contains(claudeDirectoryRead(t, plugin), []byte("guard")) {
 				t.Fatal("seed did not create a stale Claude aggregate entry")
 			}
 			if err := os.Chmod(plugin, 0o640); err != nil {
 				t.Fatal(err)
 			}
-			files := []string{"other-account/.claude.json", "other-repository/.mcp.json", "unrelated.json", ".claude-plugin/unrelated.json", "hook-support/other-account/.claude.json"}
+			files := []string{"other-account/.claude.json", "other-repository/.mcp.json", "unrelated.json", "agents/unrelated.json", "hook-support/other-account/.claude.json"}
 			before := make(map[string]os.FileInfo, len(files))
 			for _, rel := range files {
 				claudeDirectoryWrite(t, filepath.Join(custom, rel), raw)
@@ -60,7 +65,7 @@ func TestClaudeConfigurationPrunePreservesUnrelatedFiles(t *testing.T) {
 				}
 			}
 			afterPlugin, err := os.ReadFile(plugin)
-			if err != nil && !os.IsNotExist(err) || bytes.Contains(afterPlugin, []byte("stale")) {
+			if err != nil && !os.IsNotExist(err) || bytes.Contains(afterPlugin, []byte("guard")) {
 				t.Fatalf("stale Claude aggregate entry survived: %v, %s", err, afterPlugin)
 			}
 			if info, err := os.Stat(plugin); err != nil || info.Mode().Perm() != 0o640 {
@@ -108,7 +113,7 @@ func TestClaudeConfigurationPrunePreservesAliasedComponent(t *testing.T) {
 	if report, err := Run(context.Background(), repo, resources); err != nil || diag.HasErrors(report.Diags) {
 		t.Fatalf("seed Claude output: %v, %+v", err, report)
 	}
-	component := filepath.Join(custom, ".claude-plugin")
+	component := filepath.Join(custom, "skills")
 	retained := filepath.Join(t.TempDir(), "retained")
 	foreign := t.TempDir()
 	file := filepath.Join(foreign, "plugin.json")
@@ -168,16 +173,18 @@ func TestClaudeConfigurationDefaultAliasPrunesAggregate(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("CLAUDE_CONFIG_DIR", "")
-	resources := []resolver.ResolvedArtifact{claudeDirectorySkill("stale", config.UserPersonal, hcc.TargetClaude)}
+	hook := resolverHook(t, makeHookSupportSource(t, "echo guard", 0o600), "guard")
+	hook.Source, hook.Harnesses = config.UserPersonal, []hcc.Target{hcc.TargetClaude}
+	resources := []resolver.ResolvedArtifact{hook}
 	if report, err := Run(context.Background(), repo, resources); err != nil || diag.HasErrors(report.Diags) {
 		t.Fatalf("seed default alias: %v, %+v", err, report)
 	}
-	file := filepath.Join(custom, ".claude-plugin/plugin.json")
-	if !bytes.Contains(claudeDirectoryRead(t, file), []byte("stale")) {
+	file := filepath.Join(custom, "settings.json")
+	if !bytes.Contains(claudeDirectoryRead(t, file), []byte("guard")) {
 		t.Fatal("seed did not create a stale aggregate entry")
 	}
 	report, err := Run(context.Background(), repo, nil)
-	if err != nil || diag.HasErrors(report.Diags) || bytes.Contains(claudeDirectoryRead(t, file), []byte("stale")) {
+	if err != nil || diag.HasErrors(report.Diags) || bytes.Contains(claudeDirectoryRead(t, file), []byte("guard")) {
 		t.Fatalf("cleanup through the default alias: %v, %+v", err, report)
 	}
 }
@@ -211,11 +218,14 @@ func TestClaudeConfigurationUnusedNondirectoryComponent(t *testing.T) {
 	for _, desired := range []bool{false, true} {
 		t.Run(map[bool]string{false: "cleanup", true: "desired-output"}[desired], func(t *testing.T) {
 			_, repo, root := claudeDirectoryFixture(t)
-			resources := []resolver.ResolvedArtifact{claudeDirectorySkill("stale", config.UserPersonal, hcc.TargetClaude)}
+			resources := []resolver.ResolvedArtifact{
+				claudeDirectorySkill("stale", config.UserPersonal, hcc.TargetClaude),
+				{Entry: catalog.Entry{Name: "greet", Kind: ir.KindCommand, Resource: ir.NewCommand("greet", "greet", "hello", nil, ir.SourceRef{})}, Source: config.UserPersonal, Harnesses: []hcc.Target{hcc.TargetClaude}},
+			}
 			if report, err := Run(context.Background(), repo, resources); err != nil || diag.HasErrors(report.Diags) {
 				t.Fatalf("seed output: %v, %+v", err, report)
 			}
-			component := filepath.Join(root, ".claude-plugin")
+			component := filepath.Join(root, "commands")
 			if err := os.RemoveAll(component); err != nil {
 				t.Fatal(err)
 			}
@@ -245,5 +255,42 @@ func TestClaudeConfigurationUnusedNondirectoryComponent(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// spec: materialization/sync-retires-earlier-managed-manifest-entries
+func TestClaudeConfigurationRetiresLegacyManifestThroughAlias(t *testing.T) {
+	_, repo, custom := claudeDirectoryFixture(t)
+	if err := os.MkdirAll(custom, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	alias := filepath.Join(t.TempDir(), "alias")
+	if err := os.Symlink(custom, alias); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("CLAUDE_CONFIG_DIR", alias)
+	plugin := filepath.Join(custom, ".claude-plugin", "plugin.json")
+	unrelated := filepath.Join(custom, ".claude-plugin", "unrelated.json")
+	raw := `{"skills":[{"name":"stale","_managed_by":"agent-marketplace"}],"account":"other"}`
+	claudeDirectoryWrite(t, plugin, raw)
+	claudeDirectoryWrite(t, unrelated, raw)
+	if err := os.Chmod(plugin, 0o640); err != nil {
+		t.Fatal(err)
+	}
+	report, err := Run(context.Background(), repo, nil)
+	if err != nil || diag.HasErrors(report.Diags) {
+		t.Fatalf("retire legacy manifest through alias: %v, %+v", err, report)
+	}
+	if bytes.Contains(claudeDirectoryRead(t, plugin), []byte("stale")) {
+		t.Fatal("legacy managed manifest entry survived sync")
+	}
+	if !bytes.Contains(claudeDirectoryRead(t, plugin), []byte(`"account":"other"`)) {
+		t.Fatal("legacy manifest retirement dropped unrelated bytes")
+	}
+	if string(claudeDirectoryRead(t, unrelated)) != raw {
+		t.Fatal("legacy manifest retirement changed an unrelated sibling file")
+	}
+	if info, err := os.Stat(plugin); err != nil || info.Mode().Perm() != 0o640 {
+		t.Fatalf("legacy manifest retirement changed shared permissions: %v", err)
 	}
 }

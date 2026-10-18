@@ -207,6 +207,32 @@ func BuildPluginLockContexts(decls []config.SourceDecl, doc lockfile.Document, o
 	return out, nil
 }
 
+// specSelectedNames computes the entry names a selection spec targets:
+// explicit requests and collection edges, plus every entry selectAll accepts
+// when the source is selected wholesale, minus group exclusions.
+func specSelectedNames(spec *catalog.PluginSelectionSpec, entries []catalog.Entry, selectAll func(catalog.Entry) bool) map[string]bool {
+	selected := map[string]bool{}
+	for _, request := range spec.Explicit {
+		selected[request.Name] = true
+	}
+	for _, edge := range spec.Collections {
+		for _, name := range edge.Entries {
+			selected[name] = true
+		}
+	}
+	if spec.All {
+		for _, entry := range entries {
+			if selectAll == nil || selectAll(entry) {
+				selected[entry.Name] = true
+			}
+		}
+	}
+	for _, name := range spec.Excluded {
+		delete(selected, name)
+	}
+	return selected
+}
+
 // findPluginCatalogRegistry locates the lock record for a git format
 // source: the registry matching the configured canonical URL, ref and root
 // path.
@@ -228,23 +254,7 @@ func findPluginCatalogRegistry(doc lockfile.Document, canonical, ref, rootPath s
 // external catalog entry, keyed by the external registry URL and the
 // package root path the lock record uses.
 func bindExternalEntries(out *PluginLockContexts, spec *catalog.PluginSelectionSpec, loaded catalog.LoadedCatalog, owner config.RegistryEntry, canonical, commit string) {
-	selected := map[string]bool{}
-	for _, request := range spec.Explicit {
-		selected[request.Name] = true
-	}
-	for _, edge := range spec.Collections {
-		for _, name := range edge.Entries {
-			selected[name] = true
-		}
-	}
-	if spec.All {
-		for _, entry := range loaded.Entries {
-			selected[entry.Name] = true
-		}
-	}
-	for _, name := range spec.Excluded {
-		delete(selected, name)
-	}
+	selected := specSelectedNames(spec, loaded.Entries, nil)
 	kind := "directory"
 	if !owner.IsLocal() {
 		kind = "git"
@@ -301,25 +311,9 @@ func ExternalEntriesFor(spec *catalog.PluginSelectionSpec, loaded catalog.Loaded
 	if spec == nil {
 		return nil
 	}
-	selected := map[string]bool{}
-	for _, request := range spec.Explicit {
-		selected[request.Name] = true
-	}
-	for _, edge := range spec.Collections {
-		for _, name := range edge.Entries {
-			selected[name] = true
-		}
-	}
-	if spec.All {
-		for _, entry := range loaded.Entries {
-			if entry.Plugin != nil && entry.Plugin.Refusal == nil {
-				selected[entry.Name] = true
-			}
-		}
-	}
-	for _, name := range spec.Excluded {
-		delete(selected, name)
-	}
+	selected := specSelectedNames(spec, loaded.Entries, func(entry catalog.Entry) bool {
+		return entry.Plugin != nil && entry.Plugin.Refusal == nil
+	})
 	var out []sourcerevision.PluginExternalEntry
 	for _, entry := range loaded.Entries {
 		if entry.Plugin == nil || entry.Plugin.Source.Kind != "git" || entry.Plugin.Refusal != nil || !selected[entry.Name] {

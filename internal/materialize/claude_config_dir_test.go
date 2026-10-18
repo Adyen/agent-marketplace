@@ -89,7 +89,7 @@ func TestClaudeConfigurationDirectoryLifecycle(t *testing.T) {
 				if err != nil || diag.HasErrors(report.Diags) {
 					t.Fatalf("sync: %v, %+v", err, report)
 				}
-				for _, rel := range []string{"skills/hello/SKILL.md", "commands/greet.md", "agents/reviewer.md", ".claude-plugin/plugin.json", "settings.json", ".claude.json"} {
+				for _, rel := range []string{"skills/hello/SKILL.md", "commands/greet.md", "agents/reviewer.md", "settings.json", ".claude.json"} {
 					if len(claudeDirectoryRead(t, filepath.Join(custom, rel))) == 0 {
 						t.Fatalf("empty output %s", rel)
 					}

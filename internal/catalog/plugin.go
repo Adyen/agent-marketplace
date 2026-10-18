@@ -20,8 +20,6 @@ type PluginEntry struct {
 	Source           plugindecode.CatalogSource
 	Members          []ir.PluginMember
 	DefinitionDigest string
-	Strict           bool
-	Overlay          map[string]any
 	Refusal          *diag.Diagnostic
 }
 
@@ -72,8 +70,6 @@ func discoverPluginCatalog(dir, format string) (LoadedCatalog, error) {
 				Format:           pluginFormat,
 				Source:           catEntry.Source,
 				DefinitionDigest: catEntry.DefinitionDigest,
-				Strict:           catEntry.Strict,
-				Overlay:          catEntry.Overlay,
 				Refusal:          catEntry.Diagnostic,
 			},
 		}

@@ -32,7 +32,6 @@ type PluginSelection struct {
 	Edges      []PluginEdge
 	Members    []ir.PluginMember
 	Exclusions []string
-	Delivery   string
 }
 
 // PluginMemberDirectSelectionError refuses a leaf locator that names a
@@ -124,14 +123,11 @@ func pluginMemberExclusionMatch(exclusion string, member ir.PluginMember) bool {
 
 // applyPluginRequestOptions folds authored request options into the
 // selection: exclusions are exact kind/name member locators; unknown entries
-// refuse. Delivery is carried; it has no effect until delivery lands.
+// refuse.
 func applyPluginRequestOptions(selection *PluginSelection, name string, options []config.V4ResourceOptions, entry config.RegistryEntry) error {
 	var excluded []string
 	for _, opts := range options {
 		excluded = append(excluded, opts.Exclude...)
-		if opts.Delivery != "" {
-			selection.Delivery = opts.Delivery
-		}
 	}
 	members := selection.Members
 	for _, exclusion := range excluded {
