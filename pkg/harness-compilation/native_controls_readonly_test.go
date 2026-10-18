@@ -219,13 +219,18 @@ func TestTargetsWithoutReadOnlyModeRefuse(t *testing.T) {
 	}
 	codexSandboxed := ir.NewSubagent("codexed", "Codexed", "Review.\n", "", nil, "", nil, "", nil, ir.SourceRef{})
 	codexSandboxed.Ext.Codex = &ext.Codex{SandboxMode: "read-only"}
-	for _, target := range []Target{TargetGemini, TargetDevin, TargetWindsurf} {
+	for target, code := range map[Target]string{
+		TargetGemini:   diag.CodeSubagentSecurityRestrictionUnsupported,
+		TargetDevin:    diag.CodeSubagentSecurityRestrictionUnsupported,
+		TargetWindsurf: diag.CodeSubagentSecurityRestrictionUnsupported,
+		TargetOpenCode: diag.CodeSubagentOpenCodeRestrictionUnsupported,
+	} {
 		refusedCodex, err := Compile(codexSandboxed, target)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if len(refusedCodex.Artifacts) != 0 || !diag.HasCode(refusedCodex.Diagnostics, diag.CodeSubagentSecurityRestrictionUnsupported) {
-			t.Fatalf("%s accepted a Codex read-only subagent it cannot keep read-only: %+v", target, refusedCodex)
+		if len(refusedCodex.Artifacts) != 0 || !diag.HasCode(refusedCodex.Diagnostics, code) {
+			t.Fatalf("%s accepted a Codex read-only subagent it cannot keep read-only, want %s: %+v", target, code, refusedCodex)
 		}
 	}
 	unrestricted, err := Compile(ir.NewSubagent("sandboxed", "Sandboxed", "Review.\n", "", nil, "", nil, "", nil, ir.SourceRef{}), TargetGemini)
