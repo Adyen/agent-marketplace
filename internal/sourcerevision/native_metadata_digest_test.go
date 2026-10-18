@@ -74,8 +74,8 @@ func TestNativeMetadataSidecarsKeepFrozenFallbackDigest(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if !bytes.Equal(typedBytes, legacyBytes) {
-				t.Fatalf("sidecar changed the fallback source bytes:\n got %s\nwant %s", typedBytes, legacyBytes)
+			if !bytes.Equal(legacyBytes, want) || !bytes.Equal(typedBytes, want) {
+				t.Fatalf("fallback source bytes differ from the legacy serialization:\nlegacy %s\n typed %s\n  want %s", legacyBytes, typedBytes, want)
 			}
 		})
 	}
