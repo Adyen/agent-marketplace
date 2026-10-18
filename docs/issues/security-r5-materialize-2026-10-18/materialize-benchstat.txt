@@ -1,0 +1,37 @@
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/pkg/harness-compilation
+cpu: Apple M4 Max
+                                                      | materialize-before.txt | materialize-after.txt |
+                                                      |                    sec/op                    |        sec/op          vs base              |
+MaterializeBookkeepingDiskIONoNetwork/skipped-1-16                                      391.4u +/- inf [1]            396.8u +/- inf [1]       ~ (p=0.690 n=5)
+MaterializeBookkeepingDiskIONoNetwork/skipped-64-16                                     6.242m +/- inf [1]            6.583m +/- inf [1]  +5.47% (p=0.008 n=5)
+MaterializeBookkeepingDiskIONoNetwork/skipped-1024-16                                  101.50m +/- inf [1]            98.44m +/- inf [1]       ~ (p=0.056 n=5)
+MaterializeBookkeepingDiskIONoNetwork/skipped-4096-16                                   416.1m +/- inf [1]            396.2m +/- inf [1]       ~ (p=0.690 n=5)
+MaterializeBookkeepingDiskIONoNetwork/mixed-1024-16                                     101.2m +/- inf [1]            101.3m +/- inf [1]       ~ (p=1.000 n=5)
+MaterializeBookkeepingDiskIONoNetwork/written-16-16                                     6.379m +/- inf [1]            6.451m +/- inf [1]       ~ (p=0.421 n=5)
+geomean                                                                                 20.13m                  20.13m        -0.01%
+[1] need >= 6 samples for confidence interval at level 0.95
+
+                                                      | materialize-before.txt | materialize-after.txt |
+                                                      |                     B/op                     |         B/op           vs base              |
+MaterializeBookkeepingDiskIONoNetwork/skipped-1-16                                     17.58Ki +/- inf [1]           17.58Ki +/- inf [1]       ~ (p=1.000 n=5)
+MaterializeBookkeepingDiskIONoNetwork/skipped-64-16                                    537.9Ki +/- inf [1]           528.6Ki +/- inf [1]  -1.73% (p=0.008 n=5)
+MaterializeBookkeepingDiskIONoNetwork/skipped-1024-16                                  8.731Mi +/- inf [1]           8.575Mi +/- inf [1]  -1.79% (p=0.008 n=5)
+MaterializeBookkeepingDiskIONoNetwork/skipped-4096-16                                  35.72Mi +/- inf [1]           35.09Mi +/- inf [1]  -1.75% (p=0.008 n=5)
+MaterializeBookkeepingDiskIONoNetwork/mixed-1024-16                                    8.692Mi +/- inf [1]           8.535Mi +/- inf [1]  -1.80% (p=0.008 n=5)
+MaterializeBookkeepingDiskIONoNetwork/written-16-16                                    205.2Ki +/- inf [1]           205.2Ki +/- inf [1]       ~ (p=0.730 n=5)
+geomean                                                                                1.303Mi                 1.288Mi        -1.18%
+[1] need >= 6 samples for confidence interval at level 0.95
+
+                                                      | materialize-before.txt | materialize-after.txt |
+                                                      |                  allocs/op                   |      allocs/op       vs base                |
+MaterializeBookkeepingDiskIONoNetwork/skipped-1-16                                       190.0 +/- inf [1]           190.0 +/- inf [1]       ~ (p=1.000 n=5) [2]
+MaterializeBookkeepingDiskIONoNetwork/skipped-64-16                                     4.885k +/- inf [1]          4.882k +/- inf [1]  -0.06% (p=0.008 n=5)
+MaterializeBookkeepingDiskIONoNetwork/skipped-1024-16                                   75.97k +/- inf [1]          75.96k +/- inf [1]  -0.01% (p=0.008 n=5)
+MaterializeBookkeepingDiskIONoNetwork/skipped-4096-16                                   303.4k +/- inf [1]          303.4k +/- inf [1]  -0.01% (p=0.008 n=5)
+MaterializeBookkeepingDiskIONoNetwork/mixed-1024-16                                     76.38k +/- inf [1]          76.37k +/- inf [1]  -0.01% (p=0.008 n=5)
+MaterializeBookkeepingDiskIONoNetwork/written-16-16                                     2.142k +/- inf [1]          2.142k +/- inf [1]       ~ (p=1.000 n=5) [2]
+geomean                                                                                 12.32k                12.32k        -0.01%
+[1] need >= 6 samples for confidence interval at level 0.95
+[2] all samples are equal

@@ -763,6 +763,7 @@ func Materialize(r *Result, outDir string, opts ...WriteOption) (report *WriteRe
 
 	// Determine which artifacts to write vs skip.
 	existingModes := make(map[string]fs.FileMode)
+	writeArtifacts := artifacts[:0]
 	for _, a := range artifacts {
 		destPath := filepath.Join(outDir, filepath.FromSlash(a.Path))
 
@@ -791,7 +792,10 @@ func Materialize(r *Result, outDir string, opts ...WriteOption) (report *WriteRe
 		}
 
 		report.Written = append(report.Written, a.Path)
+		writeArtifacts = append(writeArtifacts, a)
 	}
+	// Compact only the local work list; artifactPaths still protects skipped files.
+	artifacts = writeArtifacts
 
 	// Compute stale files for prune mode. A partial result never prunes: the
 	// output of a skipped resource is indistinguishable from the output of a
@@ -967,9 +971,6 @@ func Materialize(r *Result, outDir string, opts ...WriteOption) (report *WriteRe
 
 	// Write artifacts to staging directory.
 	for _, a := range artifacts {
-		if sliceContains(report.Skipped, a.Path) {
-			continue
-		}
 		parent, dirErr := staged.EnsurePath(filepath.Dir(filepath.FromSlash(a.Path)))
 		if dirErr != nil {
 			return nil, fmt.Errorf("harnesscompile.Materialize: mkdir %s: %w", filepath.Dir(a.Path), dirErr)
@@ -1005,9 +1006,6 @@ func Materialize(r *Result, outDir string, opts ...WriteOption) (report *WriteRe
 	slog.Debug("SDK artifacts staged", "out_dir", outDir, "staged", stagingDir, "phase", "sdk-staged")
 	// Move staged files onto outDir.
 	for _, a := range artifacts {
-		if sliceContains(report.Skipped, a.Path) {
-			continue
-		}
 		if rootErr := revalidateMaterializeRoot(outDir, rootSnapshot); rootErr != nil {
 			return nil, errors.Join(fsboundary.ErrGenerationConflict, rootErr)
 		}
