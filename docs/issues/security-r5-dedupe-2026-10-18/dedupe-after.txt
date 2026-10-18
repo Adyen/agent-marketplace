@@ -1,0 +1,46 @@
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact
+cpu: Apple M4 Max
+BenchmarkFragmentDedupeCompiledHooks/distinct-1-16         	  626130	      3248 ns/op	    3865 B/op	      73 allocs/op
+BenchmarkFragmentDedupeCompiledHooks/distinct-1-16         	  775282	      3280 ns/op	    3864 B/op	      73 allocs/op
+BenchmarkFragmentDedupeCompiledHooks/distinct-1-16         	  693742	      3268 ns/op	    3865 B/op	      73 allocs/op
+BenchmarkFragmentDedupeCompiledHooks/distinct-1-16         	  749653	      3248 ns/op	    3865 B/op	      73 allocs/op
+BenchmarkFragmentDedupeCompiledHooks/distinct-1-16         	  752046	      3244 ns/op	    3866 B/op	      73 allocs/op
+BenchmarkFragmentDedupeCompiledHooks/distinct-16-16        	   45603	     53271 ns/op	   63199 B/op	    1197 allocs/op
+BenchmarkFragmentDedupeCompiledHooks/distinct-16-16        	   45481	     53502 ns/op	   63197 B/op	    1197 allocs/op
+BenchmarkFragmentDedupeCompiledHooks/distinct-16-16        	   45612	     53980 ns/op	   63185 B/op	    1197 allocs/op
+BenchmarkFragmentDedupeCompiledHooks/distinct-16-16        	   43838	     56464 ns/op	   63193 B/op	    1197 allocs/op
+BenchmarkFragmentDedupeCompiledHooks/distinct-16-16        	   44192	     54123 ns/op	   63178 B/op	    1197 allocs/op
+BenchmarkFragmentDedupeCompiledHooks/distinct-128-16       	    5738	    422728 ns/op	  583521 B/op	    9408 allocs/op
+BenchmarkFragmentDedupeCompiledHooks/distinct-128-16       	    5625	    423385 ns/op	  583509 B/op	    9408 allocs/op
+BenchmarkFragmentDedupeCompiledHooks/distinct-128-16       	    5638	    429422 ns/op	  583470 B/op	    9408 allocs/op
+BenchmarkFragmentDedupeCompiledHooks/distinct-128-16       	    5412	    428363 ns/op	  583571 B/op	    9408 allocs/op
+BenchmarkFragmentDedupeCompiledHooks/distinct-128-16       	    5752	    422495 ns/op	  583497 B/op	    9408 allocs/op
+BenchmarkFragmentDedupeCompiledHooks/distinct-512-16       	    1442	   1711243 ns/op	 2376789 B/op	   37480 allocs/op
+BenchmarkFragmentDedupeCompiledHooks/distinct-512-16       	    1402	   1713184 ns/op	 2377125 B/op	   37480 allocs/op
+BenchmarkFragmentDedupeCompiledHooks/distinct-512-16       	    1426	   1681901 ns/op	 2376745 B/op	   37480 allocs/op
+BenchmarkFragmentDedupeCompiledHooks/distinct-512-16       	    1294	   1696528 ns/op	 2376775 B/op	   37480 allocs/op
+BenchmarkFragmentDedupeCompiledHooks/distinct-512-16       	    1383	   1714556 ns/op	 2376991 B/op	   37481 allocs/op
+BenchmarkFragmentDedupeCompiledHooks/duplicate-16-16       	   52832	     46401 ns/op	   55824 B/op	    1157 allocs/op
+BenchmarkFragmentDedupeCompiledHooks/duplicate-16-16       	   51805	     46960 ns/op	   55827 B/op	    1157 allocs/op
+BenchmarkFragmentDedupeCompiledHooks/duplicate-16-16       	   51391	     46133 ns/op	   55830 B/op	    1157 allocs/op
+BenchmarkFragmentDedupeCompiledHooks/duplicate-16-16       	   51829	     46018 ns/op	   55822 B/op	    1157 allocs/op
+BenchmarkFragmentDedupeCompiledHooks/duplicate-16-16       	   51561	     47319 ns/op	   55833 B/op	    1157 allocs/op
+BenchmarkFragmentDedupeCompiledHooks/duplicate-128-16      	    6938	    351342 ns/op	  437467 B/op	    9119 allocs/op
+BenchmarkFragmentDedupeCompiledHooks/duplicate-128-16      	    6961	    352628 ns/op	  437433 B/op	    9119 allocs/op
+BenchmarkFragmentDedupeCompiledHooks/duplicate-128-16      	    6957	    351592 ns/op	  437413 B/op	    9119 allocs/op
+BenchmarkFragmentDedupeCompiledHooks/duplicate-128-16      	    7005	    361598 ns/op	  437508 B/op	    9119 allocs/op
+BenchmarkFragmentDedupeCompiledHooks/duplicate-128-16      	    6956	    354644 ns/op	  437464 B/op	    9119 allocs/op
+BenchmarkFragmentDedupeCompiledHooks/duplicate-512-16      	    1752	   1377408 ns/op	 1744729 B/op	   36407 allocs/op
+BenchmarkFragmentDedupeCompiledHooks/duplicate-512-16      	    1748	   1376773 ns/op	 1744579 B/op	   36406 allocs/op
+BenchmarkFragmentDedupeCompiledHooks/duplicate-512-16      	    1616	   1398164 ns/op	 1744640 B/op	   36407 allocs/op
+BenchmarkFragmentDedupeCompiledHooks/duplicate-512-16      	    1776	   1396194 ns/op	 1744717 B/op	   36407 allocs/op
+BenchmarkFragmentDedupeCompiledHooks/duplicate-512-16      	    1714	   1427431 ns/op	 1745011 B/op	   36408 allocs/op
+BenchmarkFragmentDedupeCompiledHooks/no-dedupe-control-128-16         	    6490	    364653 ns/op	  463647 B/op	    8098 allocs/op
+BenchmarkFragmentDedupeCompiledHooks/no-dedupe-control-128-16         	    6684	    370683 ns/op	  463674 B/op	    8098 allocs/op
+BenchmarkFragmentDedupeCompiledHooks/no-dedupe-control-128-16         	    6765	    348083 ns/op	  463189 B/op	    8098 allocs/op
+BenchmarkFragmentDedupeCompiledHooks/no-dedupe-control-128-16         	    7078	    347991 ns/op	  462763 B/op	    8098 allocs/op
+BenchmarkFragmentDedupeCompiledHooks/no-dedupe-control-128-16         	    7014	    341000 ns/op	  462306 B/op	    8098 allocs/op
+PASS
+ok  	github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact	96.380s

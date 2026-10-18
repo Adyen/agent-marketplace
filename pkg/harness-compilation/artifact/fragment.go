@@ -184,6 +184,10 @@ func mergeJSON(path string, fragments []Artifact) (Artifact, error) {
 	// fragment for a Devin hook file sets it, and honoring it when any does
 	// keeps the merge from depending on which fragment happened to be first.
 	dedupe := anyDedupeFragmentEntries(fragments)
+	var index *fragmentMergeIndex
+	if dedupe {
+		index = &fragmentMergeIndex{}
+	}
 
 	for _, f := range fragments {
 		if len(f.Bytes) == 0 {
@@ -193,7 +197,7 @@ func mergeJSON(path string, fragments []Artifact) (Artifact, error) {
 		if err := json.Unmarshal(f.Bytes, &m); err != nil {
 			return Artifact{}, fmt.Errorf("invalid JSON fragment: %w", err)
 		}
-		if err := deepMerge(merged, m, dedupe, 0); err != nil {
+		if err := deepMerge(merged, m, index, 0); err != nil {
 			return Artifact{}, err
 		}
 	}
@@ -223,9 +227,9 @@ func mergeJSON(path string, fragments []Artifact) (Artifact, error) {
 // "args": ["-y", "server"]), the later fragment's value replaces the earlier
 // one (last-wins). For all other types, src values override dst values.
 //
-// dedupe opts the group into collapsing semantically identical object entries
-// while accumulating (see Artifact.DedupeFragmentEntries).
-func deepMerge(dst, src map[string]any, dedupe bool, depth int) error {
+// A non-nil index opts the group into collapsing semantically identical object
+// entries while accumulating (see Artifact.DedupeFragmentEntries).
+func deepMerge(dst, src map[string]any, index *fragmentMergeIndex, depth int) error {
 	for k, srcVal := range src {
 		dstVal, exists := dst[k]
 		if exists {
@@ -238,7 +242,7 @@ func deepMerge(dst, src map[string]any, dedupe bool, depth int) error {
 					}
 					continue
 				}
-				if err := deepMerge(dstMap, srcMap, dedupe, depth+1); err != nil {
+				if err := deepMerge(dstMap, srcMap, index.child(k), depth+1); err != nil {
 					return err
 				}
 				continue
@@ -251,18 +255,47 @@ func deepMerge(dst, src map[string]any, dedupe bool, depth int) error {
 			// duplication when two fragments define the same resource.
 			dstArr, dstIsArr := dstVal.([]any)
 			srcArr, srcIsArr := srcVal.([]any)
-			if dstIsArr && srcIsArr && allObjects(dstArr) && allObjects(srcArr) {
-				if dedupe {
-					dst[k] = appendUniqueObjects(dstArr, srcArr)
+			var child *fragmentMergeIndex
+			if index != nil {
+				child = index.children[k]
+			}
+			// Indexed entries stay object-only until this key is replaced.
+			indexedObjects := child != nil && child.entries != nil
+			if dstIsArr && srcIsArr && (indexedObjects || allObjects(dstArr)) && allObjects(srcArr) {
+				if index != nil {
+					dst[k] = index.child(k).appendUniqueObjects(dstArr, srcArr)
 					continue
 				}
 				dst[k] = append(dstArr, srcArr...)
 				continue
 			}
 		}
+		if index != nil {
+			delete(index.children, k)
+		}
 		dst[k] = srcVal
 	}
 	return nil
+}
+
+// fragmentMergeIndex belongs to one JSON fragment group. Children follow exact
+// object keys, and replacement drops the affected subtree and its entry index.
+type fragmentMergeIndex struct {
+	children map[string]*fragmentMergeIndex
+	entries  map[string]struct{}
+}
+
+func (index *fragmentMergeIndex) child(key string) *fragmentMergeIndex {
+	if index == nil {
+		return nil
+	}
+	if index.children == nil {
+		index.children = make(map[string]*fragmentMergeIndex)
+	}
+	if index.children[key] == nil {
+		index.children[key] = &fragmentMergeIndex{}
+	}
+	return index.children[key]
 }
 
 // appendUniqueObjects appends the entries of src to dst, skipping any entry
@@ -274,22 +307,25 @@ func deepMerge(dst, src map[string]any, dedupe bool, depth int) error {
 // order in which distinct entries were contributed and the result of collapsing
 // a duplicate never depends on which copy arrived first.
 //
-// The comparison is quadratic in the number of entries per array: each new entry
-// is compared against every existing entry, and equalJSON marshals both
-// operands. Aggregate hook and MCP files hold tens of entries at most, so the
-// simple form is kept.
-func appendUniqueObjects(dst, src []any) []any {
-	for _, entry := range src {
-		duplicate := false
-		for _, existing := range dst {
-			if equalJSON(existing, entry) {
-				duplicate = true
-				break
+// Cache exact encodings across appends, not just within one append: compilers
+// commonly contribute one entry per fragment. Existing dst duplicates remain.
+func (index *fragmentMergeIndex) appendUniqueObjects(dst, src []any) []any {
+	if index.entries == nil {
+		index.entries = make(map[string]struct{}, len(dst))
+		for _, entry := range dst {
+			if encoded, err := json.Marshal(entry); err == nil {
+				index.entries[string(encoded)] = struct{}{}
 			}
 		}
-		if !duplicate {
-			dst = append(dst, entry)
+	}
+	for _, entry := range src {
+		if encoded, err := json.Marshal(entry); err == nil {
+			if _, duplicate := index.entries[string(encoded)]; duplicate {
+				continue
+			}
+			index.entries[string(encoded)] = struct{}{}
 		}
+		dst = append(dst, entry)
 	}
 	return dst
 }

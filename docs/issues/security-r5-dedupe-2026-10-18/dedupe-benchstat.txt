@@ -1,0 +1,43 @@
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact
+cpu: Apple M4 Max
+                                                     | dedupe-before.txt | dedupe-after.txt |
+                                                     |                 sec/op                  |     sec/op       vs base               |
+FragmentDedupeCompiledHooks/distinct-1-16                                         3.191u +/- inf [1]      3.248u +/- inf [1]        ~ (p=0.183 n=5)
+FragmentDedupeCompiledHooks/distinct-16-16                                       159.81u +/- inf [1]      53.98u +/- inf [1]  -66.22% (p=0.008 n=5)
+FragmentDedupeCompiledHooks/distinct-128-16                                      8246.7u +/- inf [1]      423.4u +/- inf [1]  -94.87% (p=0.008 n=5)
+FragmentDedupeCompiledHooks/distinct-512-16                                     138.374m +/- inf [1]      1.711m +/- inf [1]  -98.76% (p=0.008 n=5)
+FragmentDedupeCompiledHooks/duplicate-16-16                                       53.57u +/- inf [1]      46.40u +/- inf [1]  -13.37% (p=0.008 n=5)
+FragmentDedupeCompiledHooks/duplicate-128-16                                      413.9u +/- inf [1]      352.6u +/- inf [1]  -14.80% (p=0.008 n=5)
+FragmentDedupeCompiledHooks/duplicate-512-16                                      1.636m +/- inf [1]      1.396m +/- inf [1]  -14.65% (p=0.008 n=5)
+FragmentDedupeCompiledHooks/no-dedupe-control-128-16                              342.9u +/- inf [1]      348.1u +/- inf [1]        ~ (p=0.222 n=5)
+geomean                                                                           540.1u            178.1u        -67.03%
+[1] need >= 6 samples for confidence interval at level 0.95
+
+                                                     | dedupe-before.txt | dedupe-after.txt |
+                                                     |                  B/op                   |      B/op        vs base               |
+FragmentDedupeCompiledHooks/distinct-1-16                                        3.774Ki +/- inf [1]     3.774Ki +/- inf [1]        ~ (p=1.000 n=5)
+FragmentDedupeCompiledHooks/distinct-16-16                                      100.84Ki +/- inf [1]     61.71Ki +/- inf [1]  -38.80% (p=0.008 n=5)
+FragmentDedupeCompiledHooks/distinct-128-16                                     3591.2Ki +/- inf [1]     569.8Ki +/- inf [1]  -84.13% (p=0.008 n=5)
+FragmentDedupeCompiledHooks/distinct-512-16                                     50.245Mi +/- inf [1]     2.267Mi +/- inf [1]  -95.49% (p=0.008 n=5)
+FragmentDedupeCompiledHooks/duplicate-16-16                                      56.57Ki +/- inf [1]     54.52Ki +/- inf [1]   -3.62% (p=0.008 n=5)
+FragmentDedupeCompiledHooks/duplicate-128-16                                     450.4Ki +/- inf [1]     427.2Ki +/- inf [1]   -5.16% (p=0.008 n=5)
+FragmentDedupeCompiledHooks/duplicate-512-16                                     1.758Mi +/- inf [1]     1.664Mi +/- inf [1]   -5.33% (p=0.008 n=5)
+FragmentDedupeCompiledHooks/no-dedupe-control-128-16                             451.8Ki +/- inf [1]     452.3Ki +/- inf [1]        ~ (p=0.151 n=5)
+geomean                                                                          442.0Ki           220.2Ki        -50.18%
+[1] need >= 6 samples for confidence interval at level 0.95
+
+                                                     | dedupe-before.txt | dedupe-after.txt |
+                                                     |                allocs/op                |   allocs/op    vs base                 |
+FragmentDedupeCompiledHooks/distinct-1-16                                          73.00 +/- inf [1]     73.00 +/- inf [1]        ~ (p=1.000 n=5) [2]
+FragmentDedupeCompiledHooks/distinct-16-16                                        2.964k +/- inf [1]    1.197k +/- inf [1]  -59.62% (p=0.008 n=5)
+FragmentDedupeCompiledHooks/distinct-128-16                                     138.337k +/- inf [1]    9.408k +/- inf [1]  -93.20% (p=0.008 n=5)
+FragmentDedupeCompiledHooks/distinct-512-16                                     2126.52k +/- inf [1]    37.48k +/- inf [1]  -98.24% (p=0.008 n=5)
+FragmentDedupeCompiledHooks/duplicate-16-16                                       1.263k +/- inf [1]    1.157k +/- inf [1]   -8.39% (p=0.008 n=5)
+FragmentDedupeCompiledHooks/duplicate-128-16                                     10.122k +/- inf [1]    9.119k +/- inf [1]   -9.91% (p=0.008 n=5)
+FragmentDedupeCompiledHooks/duplicate-512-16                                      40.48k +/- inf [1]    36.41k +/- inf [1]  -10.07% (p=0.008 n=5)
+FragmentDedupeCompiledHooks/no-dedupe-control-128-16                              8.098k +/- inf [1]    8.098k +/- inf [1]        ~ (p=1.000 n=5) [2]
+geomean                                                                           11.30k          4.195k        -62.90%
+[1] need >= 6 samples for confidence interval at level 0.95
+[2] all samples are equal
