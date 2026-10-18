@@ -624,7 +624,8 @@ func LoadHooks(src fs.FS, path string) ([]*ir.Hook, []diag.Diagnostic, error) {
 		events = append(events, event)
 	}
 	sort.Strings(events)
-	usedNames := make(map[string]bool)
+	// Zero means unused; positive values remember the next suffix for that name.
+	usedNames := make(map[string]int)
 	for _, event := range events {
 		var rules []hookRule
 		for _, entry := range doc.Hooks[event] {
@@ -683,10 +684,13 @@ func LoadHooks(src fs.FS, path string) ([]*ir.Hook, []diag.Diagnostic, error) {
 			}
 			baseName := strings.ToLower(strings.ReplaceAll(nameEvent, " ", "-")) + "-" + hookType
 			name := baseName
-			for suffix := 2; usedNames[name]; suffix++ {
+			suffix := max(2, usedNames[baseName])
+			for usedNames[name] != 0 {
 				name = fmt.Sprintf("%s-%d", baseName, suffix)
+				suffix++
 			}
-			usedNames[name] = true
+			usedNames[baseName] = suffix
+			usedNames[name] = 2
 			options := []ir.HookOption{ir.WithHookPrompt(rule.Prompt), ir.WithHookSource(string(mapping.TargetGemini))}
 			if rule.Timeout != nil {
 				options = append(options, ir.WithHookTimeoutPtr(rule.Timeout))
