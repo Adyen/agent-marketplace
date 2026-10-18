@@ -1349,7 +1349,9 @@ func expandCollections(resolved []ResolvedArtifact, errs []error, cfg *config.Co
 
 		// Expand members recursively (handles Includes via depth-first walk).
 		visited := map[string]struct{}{irCol.Label(): {}}
-		expandMembersRecursive(irCol, viaLabel, artifact, nil, cfg, catalogIndex, resources, malformed, allCollectionsByName, admissions, excludedResources, localExcludes, collectionExcludeAll, localExcludeAllKinds, visited, &out, &expandErrs, targets)
+		// Members, including those of nested collections owned by another
+		// layer, use the target set of the layer that selected this collection.
+		expandMembersRecursive(irCol, viaLabel, artifact, nil, cfg, catalogIndex, resources, malformed, allCollectionsByName, admissions, excludedResources, localExcludes, collectionExcludeAll, localExcludeAllKinds, visited, &out, &expandErrs, targets.forSource(artifact.Source))
 	}
 
 	if !expanded {
@@ -1601,11 +1603,8 @@ func expandMembersRecursive(
 	visited map[string]struct{},
 	out *[]ResolvedArtifact,
 	errs *[]error,
-	targets scopeTargets,
+	targetSet []hcc.Target,
 ) {
-	// Members use the target set of the layer that selected the collection,
-	// even when an explicit registry reference binds them to another layer.
-	targetSet := targets.forSource(artifact.Source)
 	// Expand direct members.
 	for _, member := range col.Members {
 		memberName := strings.TrimSpace(member.Name)
@@ -1954,7 +1953,7 @@ func expandMembersRecursive(
 				includedArtifact.Harnesses = ownerHarnesses
 			}
 		}
-		expandMembersRecursive(irCol, includedViaLabel, includedArtifact, includedOwner, cfg, catalogIndex, resources, malformed, allCollectionsByName, admissions, excludedResources, localExcludes, collectionExcludeAll, localExcludeAllKinds, branchVisited, out, errs, targets)
+		expandMembersRecursive(irCol, includedViaLabel, includedArtifact, includedOwner, cfg, catalogIndex, resources, malformed, allCollectionsByName, admissions, excludedResources, localExcludes, collectionExcludeAll, localExcludeAllKinds, branchVisited, out, errs, targetSet)
 	}
 }
 

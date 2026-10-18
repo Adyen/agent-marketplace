@@ -83,10 +83,13 @@ The v4 runtime adapter remains independent of on-disk consumer syntax.
 | Repository | `<repo>/.agents/config.yaml` | `<repo>/.agents/lock.yaml` |
 | Repository personal | `<repo>/.agents/config.local.yaml` | `<repo>/.agents/lock.local.yaml` |
 
-Layers merge organization → user → repository → personal. Targets come from the
-first non-empty `harnesses:` list in repository, then user, then organization;
-lists are never combined. Repo and personal selections install under repo
-roots; user and organization selections install under machine roots. The
+Layers merge organization → user → repository → personal. Repo and personal
+selections target the first non-empty `harnesses:` list in repository, then
+user, then organization. User and organization selections target the user list,
+then the organization list, and use the repository list only when neither sets
+one, so a repository never narrows machine output. Lists are never combined.
+Repo and personal selections install under repo roots; user and organization
+selections install under machine roots. The
 personal file cannot set `harnesses` or allowlists, and the CLI adds it and its
 lock to `.gitignore`. Every layer supports local-file `include:` (one path or a
 list); fragments merge below the including file, and editors refuse to edit a

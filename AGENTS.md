@@ -130,7 +130,7 @@ The sections below are historical, non-normative leads pending harvest, not curr
 |---|---|
 | CLI sync, not git submodules | No submodule friction; marketplace UX for browsing/installing |
 | Harness-compilation materialization | Native per-harness outputs instead of one-size-fits-all symlinks |
-| Exact-v4 organization config with project target harnesses | `/etc/agent-marketplace/config.yaml` is the externally managed consumer org layer and requires exact v4; project `harnesses` wins, then user, then org; source-bound group `harnesses` narrows the set |
+| Exact-v4 organization config with per-layer target harnesses | `/etc/agent-marketplace/config.yaml` is the externally managed consumer org layer and requires exact v4; repository and personal-local selections use project, then user, then org `harnesses`; user and organization selections use user, then org, falling back to project only when neither declares one; source-bound group `harnesses` narrows the applicable set |
 | Multi-resource kinds (skill/command/subagent/hook/mcp) | Full IR fidelity; same selection/exclude UX across all kinds |
 | Tags in `metadata.tags` | Uses the spec's extension point; no deviation |
 | Attribute inheritance (specific wins) | Per-registry-entry overrides top-level defaults |

@@ -146,6 +146,31 @@ func TestResolveTargetHarnessesPerSelectingScope(t *testing.T) {
 		requireHarnesses(t, harnessesByName(t, resolved), "bound-member", repositoryTargets)
 	})
 
+	t.Run("nested collections keep the selecting layer's set", func(t *testing.T) {
+		// The repository selects outer, which includes inner from a user-layer
+		// registry. inner's owner is the user layer, but the repository
+		// selected it, so its members keep the repository set.
+		cfg := &config.Config{Registries: []config.RegistryEntry{
+			{URL: machineURL, Ref: "main", Source: config.UserPersonal},
+			{URL: repoURL, Ref: "main", Source: config.RepoCommitted, Collections: ks("outer")},
+		}}
+		setCatalogKeys(cfg)
+		outer := ir.NewCollection("outer", "", "", nil, []string{"inner"}, nil, ir.SourceRef{})
+		inner := ir.NewCollection("inner", "", "", []ir.CollectionMember{{Name: "inner-member", Kind: ir.KindSkill}}, nil, nil, ir.SourceRef{})
+		catalogs := map[string][]catalog.Entry{
+			cfg.Registries[0].CatalogKey: {
+				{Kind: ir.KindCollection, Name: "inner", Resource: inner},
+				{Name: "inner-member", Path: "/cache/machine/inner-member"},
+			},
+			cfg.Registries[1].CatalogKey: {{Kind: ir.KindCollection, Name: "outer", Resource: outer}},
+		}
+		resolved, errs := Resolve(cfg, catalogs, nil, WithTargetHarnesses(repositoryTargets), WithMachineTargetHarnesses(machineTargets))
+		if len(errs) != 0 {
+			t.Fatalf("Resolve errors = %v", errs)
+		}
+		requireHarnesses(t, harnessesByName(t, resolved), "inner-member", repositoryTargets)
+	})
+
 	t.Run("marketplace pins are narrowed to their owning layer's set", func(t *testing.T) {
 		var requested []hcc.Target
 		mp := recordingMarketplaceResolver{targets: &requested, artifacts: []ResolvedArtifact{

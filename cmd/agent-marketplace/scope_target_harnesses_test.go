@@ -107,6 +107,7 @@ func TestDeinitUserInsideNarrowedRepositoryPreservesOrganizationOutput(t *testin
 		t.Fatalf("initial sync: %v\n%s", err, output)
 	}
 	assertFactorySkillExists(t, f.home, "org-skill")
+	assertFactorySkillExists(t, f.home, "user-skill")
 
 	writeFile(t, filepath.Join(f.repo, ".agents", "config.yaml"), "apiVersion: agent-marketplace/v4\nharnesses: [claude]\n")
 	config.ResetRepoRootCache()
