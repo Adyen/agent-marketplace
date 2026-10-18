@@ -204,7 +204,7 @@ Removes an explicit selection, or records an exclusion when the resource was sel
 
 `--from` and `--ref` follow the same rule, so an explicit selection in the target config is dropped. If a selected collection also provides the resource, it stays installed through the collection until a second `remove` excludes it from the collection.
 
-For hosted Marketplace pins, removing a direct resource clears its direct selection but keeps it if a collection still includes it. Removing a collection clears that collection and removes the members no longer kept by anything else. You can remove a resource installed with `--as` by either its local name or its canonical Marketplace name. A name that matches more than one direct pin is refused.
+For hosted Marketplace pins, removing a direct resource clears its direct selection but keeps it if a collection still includes it. Removing a collection clears that collection and removes the members no longer kept by anything else. You can remove a resource installed with `--as` by either its local name or its canonical Marketplace name. A name that matches more than one direct pin is refused. If a direct pin and another selection share a resource kind and name, `remove` refuses and suggests `--from <endpoint-url>` for the pin. Removing a named resource from a configured Marketplace endpoint honors `--kind` and `--scope` (default `repo`) and refuses `--ref` and `--path`.
 
 Named removals, collection-member exclusions, removals of bulk/tag-selected resources, and ad-hoc removals use the v4 editor and preserve unrelated selections and scopes. Included-fragment ownership and required-resource policy still apply. Hosted sources retain their supported explicit-selection and lock rules; unsupported hosted options still refuse. See [configuration requirements and current limits](../explanation/user-journeys.md#before-following-a-journey).
 
@@ -229,9 +229,9 @@ agent-marketplace remove --from <registry> [<resource-name>] [flags]
 |---|---|:---:|---|---|
 | `--scope` | string | no | inferred for a name; `repo` with `--from` | Configuration layer: `repo`, `user`, or `local`. Choosing a scope leaves selections in other scopes unchanged. |
 | `--kind` | string | no | inferred | Selects `skill`, `command`, `subagent`, `hook`, `mcp`, or `collection` when a name is ambiguous. |
-| `--from` | string | no | configured registries | Targets an ad hoc registry entry. Without a resource name, removes or excludes the whole entry for the selected scope. |
-| `--ref` | string | no | none | Narrows the registry entry selected by `--from`. Requires `--from`. |
-| `--path` | string | no | none | Narrows the registry entry selected by `--from`. Requires `--from`. |
+| `--from` | string | no | configured registries | Targets an ad hoc registry entry, or a configured Marketplace endpoint URL for a named resource. Without a resource name, removes or excludes the whole registry entry for the selected scope. |
+| `--ref` | string | no | none | Narrows the Git or directory entry selected by `--from`. Requires `--from`. |
+| `--path` | string | no | none | Narrows the Git or directory entry selected by `--from`. Requires `--from`. |
 
 The output says what happened:
 

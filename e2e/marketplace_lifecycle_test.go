@@ -571,6 +571,53 @@ func TestMarketplaceCollectionSelectorLifecycle(t *testing.T) {
 	consumer.AssertFileAbsent("/workspace/.factory/commands/command-one.md")
 }
 
+// spec: resource-removal/remove-a-marketplace-pin-by-its-endpoint
+func TestMarketplaceRemoveSuggestedEndpointKeepsLocalSelection(t *testing.T) {
+	const configPath, lockPath = "/workspace/.agents/config.yaml", "/workspace/.agents/lock.yaml"
+	fixture := newMarketplaceBehaviorFixture(t, marketplaceBehaviorFiles("Hosted skill", false))
+	consumer := fixture.newConsumer(t, fixture.server.URL)
+	consumer.WriteFile("/workspace/resources/skills/keep/SKILL.md", (Skill{Name: "keep", Description: "Keep selected"}).SkillFile())
+	consumer.WriteRepoConfig(fmt.Sprintf("apiVersion: agent-marketplace/v4\nsources: {behavior: {marketplace: %q}, local: {directory: ./resources, source_harness: factory}}\nresources: {local: [skill/skill-one, skill/keep]}\n", fixture.server.URL))
+	result := consumer.RunAM("install", "behavior:behavior-source/skill/skill-one", "--yes")
+	if result.ExitCode != 0 {
+		t.Fatalf("Marketplace install failed (exit %d):\n%s", result.ExitCode, result.Combined)
+	}
+	consumer.AssertFileContains("/workspace/.factory/skills/skill-one/SKILL.md", "Hosted skill")
+
+	configBefore, lockBefore := consumer.ReadFile(configPath), consumer.ReadFile(lockPath)
+	if !strings.Contains(lockBefore, "skill-one") {
+		t.Fatalf("acquisition lock does not record the Marketplace pin:\n%s", lockBefore)
+	}
+	result = consumer.RunAM("remove", "skill-one")
+	suggestion := fmt.Sprintf("--scope repo --from %q   (REPO)", fixture.server.URL)
+	if result.ExitCode == 0 || !strings.Contains(result.Combined, "\n  "+suggestion) {
+		t.Fatalf("ambiguous removal did not suggest %q (exit %d):\n%s", suggestion, result.ExitCode, result.Combined)
+	}
+	if consumer.ReadFile(configPath) != configBefore || consumer.ReadFile(lockPath) != lockBefore {
+		t.Fatal("ambiguity refusal changed configuration or acquisition lock")
+	}
+
+	result = consumer.RunAM("remove", "skill-one", "--scope", "repo", "--from", fixture.server.URL)
+	if result.ExitCode != 0 {
+		t.Fatalf("suggested Marketplace removal failed (exit %d):\n%s", result.ExitCode, result.Combined)
+	}
+	cfg, lock := consumer.ReadFile(configPath), consumer.ReadFile(lockPath)
+	if strings.Contains(cfg, "behavior-source/skill/skill-one") || !strings.Contains(cfg, "skill/skill-one") || !strings.Contains(cfg, "skill/keep") || strings.Contains(lock, "skill-one") {
+		t.Fatalf("endpoint removal did not remove only the Marketplace pin:\nconfig:\n%s\nlock:\n%s", cfg, lock)
+	}
+	consumer.AssertRepoFactorySkillAbsent("skill-one")
+	consumer.AssertRepoFactorySkillExists("keep")
+
+	result = consumer.RunAM("remove", "skill-one")
+	if result.ExitCode != 0 || strings.Contains(consumer.ReadFile(configPath), "skill/skill-one") {
+		t.Fatalf("stale local selection was not removable after the pin (exit %d):\n%s", result.ExitCode, result.Combined)
+	}
+	if result = consumer.RunAM("sync", "--check"); result.ExitCode != 0 {
+		t.Fatalf("sync --check after removals failed (exit %d):\n%s", result.ExitCode, result.Combined)
+	}
+	consumer.AssertRepoFactorySkillExists("keep")
+}
+
 // The organization config declares its Marketplace under an alias and
 // selects a collection without deploying a lock, and init creates a v4 user
 // config. A user installs a hosted MCP server through that alias into the
