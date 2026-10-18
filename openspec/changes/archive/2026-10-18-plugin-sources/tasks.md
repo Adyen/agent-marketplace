@@ -36,4 +36,4 @@
 
 ## 4. Gates
 
-- [ ] 4.1 Run `make validate`, `make spec-check`, and `make validate-e2e`
+- [x] 4.1 Run `make validate`, `make spec-check`, and `make validate-e2e`

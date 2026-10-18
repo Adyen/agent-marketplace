@@ -43,7 +43,7 @@ The top-level fields in `COLLECTION.yaml` are:
 | Field | Type | Required | Description |
 |---|---|---|---|
 | `name` | string | yes | Resource name. Items with an empty name are ignored. |
-| `kind` | string | no | `skill`, `command`, `subagent`, `hook`, or `mcp` (`mcpserver` is also accepted). Matching ignores case. Defaults to `skill` when omitted. Any other value, including `collection`, is an error: `list` and `sync` fail with `unsupported collection member kind`. |
+| `kind` | string | no | `skill`, `command`, `subagent`, `hook`, `mcp` (`mcpserver` is also accepted), or `plugin`. Matching ignores case. Defaults to `skill` when omitted. Any other value, including `collection`, is an error: `list` and `sync` fail with `unsupported collection member kind`. |
 | `registry` | string | no | URL of the registry that provides the resource. Defaults to the registry that contains the collection. |
 | `path` | string | no | Directory inside the providing registry. Defaults to the collection's own source path when `registry` is omitted. |
 | `ref` | string | no | Git ref in the providing registry. See the rules below for the default. |

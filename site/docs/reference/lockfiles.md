@@ -94,8 +94,8 @@ Each root has these fields:
 | Field | Description |
 |---|---|
 | `path` | Source path inside the repository, relative to its root. `.` is the repository root. |
-| `source_harness` | Harness layout the source is written in. |
-| `revision_schema` | Version of the rules used to build the root's inventory, `v1` to `v4`. `v4` is current. A lock with an unknown version fails with `lock.unsupported-version`. |
+| `source_harness` | Harness layout the source is written in. On a source that declares `format`, this records the plugin package or catalog format id instead. |
+| `revision_schema` | Version of the rules used to build the root's inventory, `v1` to `v4`, or `plugin-v1` for a source that declares `format`. `v4` is current. A lock with an unknown version fails with `lock.unsupported-version`. |
 | `revision_digest` | Digest of the root's resource inventory. |
 | `resources` | Every resource found under the root, including resources the configuration does not select. |
 
@@ -103,7 +103,7 @@ Each resource has these fields:
 
 | Field | Description |
 |---|---|
-| `kind` | `skill`, `command`, `subagent`, `hook`, or `mcpserver`. Locks spell MCP servers `mcpserver`. |
+| `kind` | `skill`, `command`, `subagent`, `hook`, `mcpserver`, or `plugin`. Locks spell MCP servers `mcpserver`. |
 | `name` | Resource name. |
 | `content_digest` | Digest of the resource content. |
 | `archive_digest` | Digest of the resource archive. |
