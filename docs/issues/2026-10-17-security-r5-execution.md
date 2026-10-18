@@ -286,5 +286,11 @@ R52/R53 repeated adapter work; its partial dispositions, preservation
 controls and measurements are recorded in
 [the v4 adaptation report](2026-10-18-security-r5-v4-adaptation.md).
 
+Those adapter optimizations subsequently merged in PR #736. The next
+independent slice removes R42's repeated Gemini hook-name suffix scans,
+preserving catalog keys and native hook semantics without new limits.
+Measurements, small-case costs and controls are recorded in
+[the R42 execution report](2026-10-18-security-r5-gemini-hook-names.md).
+
 #434 already tracks this remaining scope. Publication must describe this as
 partial progress, preserve the frozen artifacts, and leave the issue open.
