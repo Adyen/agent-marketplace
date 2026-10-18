@@ -5,4 +5,4 @@
 - [x] Use Unicode simple case folding for artifact-path collision keys.
 - [x] Use independent expectations in the fallback digest test.
 - [x] Run affected packages, `make validate`, `make spec-check` and `make validate-e2e`; review adversarially.
-- [ ] `openspec archive close-read-only-and-case-folding-review-gaps --yes`
+- [x] `openspec archive close-read-only-and-case-folding-review-gaps --yes`
