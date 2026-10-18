@@ -108,6 +108,52 @@ CLI regressions and focused races. Strict spec checks pass with 59 items,
 also passes: 2,907 invocations, 113/113 command requirements, all three
 required witnesses, and compatibility shell checks.
 
+## Gemini Review Follow-Up
+
+[Gemini's capacity-hint suggestion](https://github.com/Adyen/agent-marketplace/pull/736#discussion_r4305988996)
+is applied to the invocation-local active-locator map. The already-computed
+effective-request count sizes the map; request evaluation, laziness and
+selection semantics are unchanged. An empty snapshot still produces a
+non-nil map, so it is not replayed for later exclusions.
+
+The original all-excluded fixture leaves this map empty and cannot measure
+growth. The additional public-adapter fixture retains 1, 64 or 1,024
+requests and excludes one unselected name. Three authored controls verify
+the complete ordered selection, exact exclusion and unchanged config.
+Controls pass before and after the hint, as do 1,000 Rapid replay
+comparisons at seed 53.
+
+Same-fixture measurements compare published `42706507` with the capacity
+hint, using the same host/toolchain and five 2-second samples. Parsing,
+disk and network remain outside timing:
+
+| Active requests | Before ns/op | After ns/op | Before B/op | After B/op | Before allocs/op | After allocs/op |
+|---|---:|---:|---:|---:|---:|---:|
+| 1 | 935.9 | 937.6 | 2,800 | 2,800 | 16 | 16 |
+| 64 | 35,136 | 33,654 | 115,352 | 111,944 | 321 | 314 |
+| 1,024 | 591,314 | 558,503 | 1,837,963 | 1,783,603 | 4,221 | 4,205 |
+
+The 1,024-request fixture uses about 3.0% fewer allocation bytes and is
+about 5.5% faster (`p=0.008`). The one-active-request timing is statistically
+unchanged (`p=0.690`). The zero-active-map control, one exact excluded
+request, retains 2,160 B/op and 12 allocs/op but measures 761.4 to 778.3 ns/op
+(+2.2%, `p=0.016`); no claim is made that every shape gets faster.
+The five-sample confidence-interval warning is retained.
+
+Raw follow-up data is separate from the initial measurements:
+`active-map-before.txt`, `active-map-after.txt` and `active-map-benchstat.txt`
+in the same evidence directory.
+
+Fresh follow-up config/lockfile/pipeline scoped validation, zero-issue CI
+lint/build, six CLI consumer regressions and focused races pass. Strict
+spec checks pass with 59 items, 996 scenarios and 1,604 annotations.
+Combined E2E passes with 2,907 invocations, 113/113 command requirements,
+all three required witnesses, and compatibility shell checks.
+Host OCR-delegation review covers all seven follow-up files, including
+six default-excluded test/doc/data files: zero skipped, no actionable
+findings. The frozen ledger/source index and partial dispositions remain
+unchanged.
+
 ## Remaining Work
 
 R52 loading/normalization costs beyond this measured reachability loop are
@@ -117,8 +163,8 @@ source/group/include-tree scaling beyond the removed replay needs separate
 evidence. This does not close R51 or collection expansion/budget decisions.
 Existing per-file limits do not become a total-work or memory guarantee.
 
-Host OCR-delegation review covers all 10 files: the production file and nine
-default-excluded tests/documents/raw measurement files, with zero skipped.
+Initial host OCR-delegation review covers all 10 files: the production file
+and nine default-excluded tests/documents/raw measurement files, with zero skipped.
 The post-rebase sources and final documentation receive the same follow-up
 review; no actionable findings remain. These are scoped local gates, not
 a claim to have run the full root suite, vendor-native or released-client

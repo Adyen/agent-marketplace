@@ -95,3 +95,37 @@ func BenchmarkV4ExactExclusionAdaptation(b *testing.B) {
 		})
 	}
 }
+
+func v4ActiveExclusionFixture(tb testing.TB, count int) *V4Config {
+	tb.Helper()
+	var data strings.Builder
+	data.WriteString("apiVersion: agent-marketplace/v4\nsources: {g: {git: https://example.test/tools.git, ref: main}}\nresources:\n  g:\n    include:\n")
+	for i := range count {
+		fmt.Fprintf(&data, "      - skill/item-%04d\n", i)
+	}
+	data.WriteString("    exclude: [skill/unselected]\n")
+	if int64(data.Len()) > MaxEffectiveConfigSize {
+		tb.Fatal("configuration fixture exceeds existing file limit")
+	}
+	cfg, err := ParseV4([]byte(data.String()))
+	if err != nil {
+		tb.Fatal(err)
+	}
+	return cfg
+}
+
+// Unlike the all-excluded fixture, every request populates the active map.
+func BenchmarkV4ActiveExclusionAdaptation(b *testing.B) {
+	for _, count := range []int{1, 64, 1024} {
+		b.Run(fmt.Sprintf("active=%d", count), func(b *testing.B) {
+			cfg := v4ActiveExclusionFixture(b, count)
+			b.ReportAllocs()
+			for b.Loop() {
+				out, err := cfg.ToLegacyConfig(repoLayer)
+				if err != nil || len(out.Registries) != 1 || len(out.Registries[0].Skills.Include) != count || len(out.Registries[0].Skills.Exclude) != 1 || out.Registries[0].Skills.Exclude[0] != "unselected" {
+					b.Fatalf("active-request adaptation failed: %v", err)
+				}
+			}
+		})
+	}
+}

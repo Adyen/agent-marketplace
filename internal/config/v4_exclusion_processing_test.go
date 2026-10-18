@@ -3,6 +3,7 @@ package config
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
@@ -73,6 +74,30 @@ func TestV4EffectiveExclusionsAvoidRepeatedSnapshots(t *testing.T) {
 	budget := float64(2 * len(group.Decisions))
 	if allocations > budget {
 		t.Fatalf("allocations = %v, want <=%v without per-exclusion request snapshots", allocations, budget)
+	}
+}
+
+func TestV4ActiveExclusionAdaptationPreservesSelections(t *testing.T) {
+	for _, count := range []int{1, 64, 1024} {
+		t.Run(fmt.Sprintf("active=%d", count), func(t *testing.T) {
+			cfg := v4ActiveExclusionFixture(t, count)
+			before, _ := json.Marshal(cfg)
+			out, err := cfg.ToLegacyConfig(repoLayer)
+			if err != nil || len(out.Registries) != 1 {
+				t.Fatalf("adaptation failed: %v", err)
+			}
+			want := make([]string, count)
+			for i := range count {
+				want[i] = fmt.Sprintf("item-%04d", i)
+			}
+			if !reflect.DeepEqual(out.Registries[0].Skills.Include, want) || !reflect.DeepEqual(out.Registries[0].Skills.Exclude, []string{"unselected"}) {
+				t.Fatal("active selections, order or exact exclusion changed")
+			}
+			after, _ := json.Marshal(cfg)
+			if !bytes.Equal(before, after) {
+				t.Fatal("active-request adaptation mutated configuration")
+			}
+		})
 	}
 }
 

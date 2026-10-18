@@ -2226,8 +2226,9 @@ func effectiveV4Exclusions(group V4ResourceGroup) []string {
 		_, resourceName := v4ExclusionKindName(decision.Exclusion)
 		if resourceName != "*" {
 			if active == nil {
-				active = map[string]bool{}
-				for _, request := range effectiveV4Requests(group) {
+				requests := effectiveV4Requests(group)
+				active = make(map[string]bool, len(requests))
+				for _, request := range requests {
 					active[request.Locator] = true
 				}
 			}
