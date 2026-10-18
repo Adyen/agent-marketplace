@@ -458,3 +458,85 @@ func TestReleasedClientReadsCandidateIsolatedCommittedState(t *testing.T) {
 		})
 	}
 }
+
+// The released client predates format sources and plugin locators, so it
+// must refuse a plugin configuration before touching configuration, lock,
+// or harness state.
+// spec: plugin-packages/released-v4-client-refuses-a-plugin-configuration
+func TestReleasedClientRefusesPluginConfiguration(t *testing.T) {
+	image := os.Getenv("AM_E2E_RELEASED_IMAGE")
+	if os.Getenv("AM_E2E_RELEASED_BINARY") == "" || image == "" {
+		t.Skip("released executable and git-capable image are supplied by the dedicated released-client gate")
+	}
+	released, _ := verifiedExecutable(t, "AM_E2E_RELEASED_BINARY", releasedClientArch)
+	world := newHistoricalWorld(t, image)
+	workspace := world.path("workspace")
+	home := world.path("home-released")
+	for _, dir := range []string{filepath.Join(workspace, ".agents"), home} {
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	registry := world.gitRegistry(map[string]string{"seed": "Seed body"})
+	catalog := filepath.Join(registry.source, ".claude-plugin")
+	plugin := filepath.Join(registry.source, "plugins", "review-kit", ".claude-plugin")
+	for _, dir := range []string{catalog, plugin} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(catalog, "marketplace.json"), []byte(`{"name":"team","owner":{"name":"t"},"plugins":[{"name":"review-kit","source":"./plugins/review-kit"}]}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(plugin, "plugin.json"), []byte(`{"name":"review-kit","version":"1.0.0"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	registry.commit("add catalog")
+	gitRun(t, registry.source, "push", "-q", "origin", "main")
+	gitRun(t, "", "init", "-q", "-b", "main", workspace)
+
+	world.must(home, workspace, released, "init", "--harnesses", "factory")
+	configPath := filepath.Join(workspace, ".agents", "config.yaml")
+	config := fmt.Sprintf("apiVersion: agent-marketplace/v4\nsources:\n  plugins: {git: '%s', ref: main, format: claude-marketplace}\nresources:\n  plugins: [plugin/review-kit]\n", registry.URL)
+	if err := os.WriteFile(configPath, []byte(config), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gitRun(t, workspace, "add", ".agents/config.yaml")
+	gitRun(t, workspace, "-c", "user.name=E2E", "-c", "user.email=e2e@example.com", "commit", "-q", "-m", "plugin configuration")
+	harnessFile := filepath.Join(workspace, ".factory", "skills", "seed", "SKILL.md")
+	if err := os.MkdirAll(filepath.Dir(harnessFile), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(harnessFile, []byte(skillDocument("seed", "Seed body")), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	lockPath := filepath.Join(workspace, ".agents", "lock.yaml")
+	if absent, err := checkPathAbsent(lockPath); err != nil || !absent {
+		t.Fatalf("precondition: lock present before refusal: absent=%t err=%v", absent, err)
+	}
+	configBefore, err := pathFingerprint(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	harnessBefore, err := pathFingerprint(filepath.Join(workspace, ".factory"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	output, err := world.run(home, workspace, released, "sync")
+	if err == nil {
+		t.Fatalf("%s accepted a plugin configuration:\n%s", releasedClientVersion, output)
+	}
+	if !strings.Contains(output, "v4.unknown-field") && !strings.Contains(output, "v4.locator") {
+		t.Fatalf("%s refusal did not carry v4.unknown-field or v4.locator:\n%s", releasedClientVersion, output)
+	}
+	if got, err := pathFingerprint(configPath); err != nil || got != configBefore {
+		t.Fatalf("%s changed configuration bytes: %v", releasedClientVersion, err)
+	}
+	if absent, err := checkPathAbsent(lockPath); err != nil || !absent {
+		t.Fatalf("%s created a lock while refusing: absent=%t err=%v", releasedClientVersion, absent, err)
+	}
+	if got, err := pathFingerprint(filepath.Join(workspace, ".factory")); err != nil || got != harnessBefore {
+		t.Fatalf("%s changed harness files: %v", releasedClientVersion, err)
+	}
+}
