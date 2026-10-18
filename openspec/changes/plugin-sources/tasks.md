@@ -1,23 +1,23 @@
 ## 1. Native plugin catalogs
 
-- [ ] 1.1 Add the `claude-marketplace`, `factory-marketplace`, and
+- [x] 1.1 Add the `claude-marketplace`, `factory-marketplace`, and
   `codex-marketplace` decoders in `plugindecode` (design D3), including
   Claude entry overlay semantics, refused entry source types, and duplicate
   entry names; annotate the catalog-entry scenarios of `plugin-packages`
 
 ## 2. Configuration and selection
 
-- [ ] 2.1 Parse `format`, plugin locators, the structured entry, and the
+- [x] 2.1 Parse `format`, plugin locators, the structured entry, and the
   `delivery`/`exclude` options (design D1). Write red tests for every
   configuration scenario of `plugin-packages`
-- [ ] 2.2 Keep plugin-shaped sources without `format` on legacy ingestion;
+- [x] 2.2 Keep plugin-shaped sources without `format` on legacy ingestion;
   annotate `plugin-packages/plugin-shaped-source-without-format-stays-loose`
   with a byte-compare of output and lock against the base
 - [ ] 2.3 Resolve plugins with selection edges (direct, collection,
   plugin-to-member) and collection `plugin` members; refuse direct member
   selection and unknown exclusions; keep same-named members distinct and
   undeduplicated (design D2)
-- [ ] 2.4 Make the v4 editor round-trip plugin requests, exclusions, and the
+- [x] 2.4 Make the v4 editor round-trip plugin requests, exclusions, and the
   structured entry
 
 ## 3. Locks and source revisions

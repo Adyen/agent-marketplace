@@ -327,6 +327,11 @@ const (
 	CodePluginFormatComponentInvalid = "plugin.format.component-invalid" // A fixed component location is absent in the expected form; that component type is skipped
 	CodePluginMemberInvalid          = "plugin.member.invalid"           // A member or entry failed validation and was skipped while siblings loaded
 	CodePluginMemberFieldOmitted     = "plugin.member.field-omitted"     // A member field the plugin surface marks omit-field was dropped before lowering
+
+	// Plugin CATALOG warning codes: the catalog still loads and sibling
+	// entries stay installable, but the reported entry is not installable.
+	CodePluginCatalogSourceUnsupported = "plugin.catalog.source-unsupported" // A catalog entry's source type is refused by the format catalog; that entry is not installable
+	CodePluginCatalogDuplicateEntry    = "plugin.catalog.duplicate-entry"    // Two catalog entries share a name; no copy is installable
 )
 
 // Error codes.
@@ -725,6 +730,8 @@ var codeCatalog = []CodeDoc{
 	{CodePluginFormatComponentInvalid, SeverityWarning, "A fixed component location is not present in its expected form; that component type is skipped while other component types load", "Restore the documented component location or remove the stray entry"},
 	{CodePluginMemberInvalid, SeverityWarning, "A plugin member or entry failed validation and was skipped while its siblings loaded", "Fix the reported member; the package keeps the members that are valid"},
 	{CodePluginMemberFieldOmitted, SeverityWarning, "A member field the plugin surface marks omit-field was dropped before lowering; the member still installs", "Remove the field, or deliver to a target that can represent it"},
+	{CodePluginCatalogSourceUnsupported, SeverityWarning, "A plugin catalog entry declares a source type its format refuses; the entry is inspectable but not installable", "Acquire the plugin through a source type the format accepts, or install it from a different source"},
+	{CodePluginCatalogDuplicateEntry, SeverityWarning, "Two plugin catalog entries share one name; neither copy is installable", "Rename one entry or remove the duplicate"},
 
 	{CodePluginFormatUnsupported, SeverityError, "The source is not a recognized plugin package format, or the destination harness does not accept it", "Use a supported package format and a harness whose plugin catalog accepts it"},
 	{CodePluginFormatVersionUnsupported, SeverityError, "The package declares a format version no decoder supports; the package is not installable", "Pin the package to a supported format version"},

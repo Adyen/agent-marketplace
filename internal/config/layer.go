@@ -84,6 +84,8 @@ func v4ResourceKindName(kind ir.ResourceKind) string {
 		return "mcp"
 	case ir.KindCollection:
 		return "collection"
+	case ir.KindPlugin:
+		return "plugin"
 	default:
 		return "unknown"
 	}

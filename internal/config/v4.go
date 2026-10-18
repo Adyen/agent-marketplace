@@ -18,6 +18,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/lockfile"
 	telemetryconfig "github.com/Adyen/agent-marketplace/internal/telemetry/config"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/pluginpolicy"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/target"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/api"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/nameutil"
@@ -49,19 +50,25 @@ type V4Source struct {
 	Ref               string
 	Path              string
 	SourceHarness     string
-	File              string
-	Line              int
-	CanonicalURL      string
+	// Format opts a git or directory source into package interpretation;
+	// empty means the source keeps its loose ingestion.
+	Format       string
+	File         string
+	Line         int
+	CanonicalURL string
 	// AlsoDeclaredIn lists the other files of the include tree that declare
 	// this source identically; the winning declaration alone does not own it.
 	AlsoDeclaredIn []string
 }
 
 // V4ResourceOptions are options authored on one explicit resource request.
+// Exclude and Delivery are valid only on plugin requests.
 type V4ResourceOptions struct {
 	As       string
 	Revision string
 	HasAs    bool
+	Exclude  []string
+	Delivery string
 }
 
 // V4ResourceRequest is the normalized form of an explicit v4 include item.
@@ -79,6 +86,9 @@ type V4ResourceRequest struct {
 	HasHarnesses bool
 	Reason       V4SelectionReason
 	Provenance   []V4Provenance
+	// Structured is true when the request was authored as {kind: plugin,
+	// name: ...} because the plugin's name does not fit the locator grammar.
+	Structured bool
 }
 
 func (r V4ResourceRequest) MarketplaceKind() string {
@@ -215,7 +225,7 @@ var (
 )
 
 var v4Kinds = map[string]struct{}{
-	"skill": {}, "command": {}, "subagent": {}, "hook": {}, "mcp": {}, "collection": {},
+	"skill": {}, "command": {}, "subagent": {}, "hook": {}, "mcp": {}, "collection": {}, "plugin": {},
 }
 
 var v4LegacyKeys = map[string]struct{}{
@@ -230,7 +240,7 @@ var v4RootKeys = map[string]struct{}{
 }
 
 var v4SourceKeys = map[string]struct{}{
-	"git": {}, "directory": {}, "marketplace": {}, "ref": {}, "path": {}, "source_harness": {},
+	"git": {}, "directory": {}, "marketplace": {}, "ref": {}, "path": {}, "source_harness": {}, "format": {},
 }
 
 var v4GroupKeys = map[string]struct{}{
@@ -687,7 +697,8 @@ func parseV4Source(name string, n *yaml.Node, file, directoryBase string) (V4Sou
 	if s.Kind == V4SourceMarketplace && name == "all" {
 		return V4Source{}, v4err("v4.source-name", "sources."+name, n.Line, "Marketplace source name %q is reserved for federated search", name)
 	}
-	for _, field := range []string{"git", "directory", "marketplace", "ref", "path", "source_harness"} {
+	formatLine := 0
+	for _, field := range []string{"git", "directory", "marketplace", "ref", "path", "source_harness", "format"} {
 		node := mappingValue(n, field)
 		if node == nil {
 			continue
@@ -705,7 +716,7 @@ func parseV4Source(name string, n *yaml.Node, file, directoryBase string) (V4Sou
 			} else {
 				s.Ref = value
 			}
-		case "directory", "marketplace", "path", "source_harness":
+		case "directory", "marketplace", "path", "source_harness", "format":
 			value = strings.TrimSpace(value)
 			switch field {
 			case "directory", "marketplace":
@@ -714,6 +725,9 @@ func parseV4Source(name string, n *yaml.Node, file, directoryBase string) (V4Sou
 				s.Path = value
 			case "source_harness":
 				s.SourceHarness = value
+			case "format":
+				s.Format = value
+				formatLine = node.Line
 			}
 		}
 	}
@@ -766,6 +780,16 @@ func parseV4Source(name string, n *yaml.Node, file, directoryBase string) (V4Sou
 		s.CanonicalURL = canonical
 		s.URL = canonical
 		s.Marketplace = canonical
+	}
+	if s.Format != "" {
+		if s.Kind == V4SourceMarketplace || s.SourceHarness != "" {
+			return V4Source{}, v4err("v4.option-combination", "sources."+name+".format", formatLine, "format is only valid on plain git and directory sources")
+		}
+		if _, known, err := pluginpolicy.LookupPackageFormat(s.Format); err != nil {
+			return V4Source{}, err
+		} else if !known {
+			return V4Source{}, v4err("plugin.format.unknown", "sources."+name+".format", formatLine, "unknown plugin package or catalog format %q", s.Format)
+		}
 	}
 	return s, nil
 }
@@ -1044,55 +1068,165 @@ func parseV4Includes(source string, n *yaml.Node, file string) ([]V4ResourceRequ
 		p := fmt.Sprintf("resources.%s.include[%d]", source, i)
 		var locator string
 		opts := V4ResourceOptions{}
+		structured := false
 		if item.Kind == yaml.ScalarNode && item.Tag == "!!str" {
 			locator = item.Value
 		} else if item.Kind == yaml.MappingNode {
-			if len(item.Content) != 2 {
-				return nil, v4err("v4.resource-item", p, item.Line, "must contain exactly one locator and options mapping")
-			}
-			locator = item.Content[0].Value
-			optionNode := item.Content[1]
-			if optionNode.Kind != yaml.MappingNode {
-				return nil, v4err("v4.resource-options", p, optionNode.Line, "options must be a mapping")
-			}
-			for j := 0; j+1 < len(optionNode.Content); j += 2 {
-				key, val := optionNode.Content[j].Value, optionNode.Content[j+1]
-				if key != "as" && key != "revision" {
-					return nil, v4err("v4.unknown-field", p+"."+key, optionNode.Content[j].Line, "unknown resource option")
+			if kindNode := mappingValue(item, "kind"); kindNode != nil {
+				pluginName, err := parseV4StructuredPlugin(item, p)
+				if err != nil {
+					return nil, err
 				}
-				if val.Kind != yaml.ScalarNode || val.Tag != "!!str" || strings.TrimSpace(val.Value) == "" {
-					return nil, v4err("v4.resource-options", p+"."+key, val.Line, "must be a non-empty string")
+				locator = "plugin/" + pluginName
+				structured = true
+				if err := parseV4PluginOptionNodes(item, p, &opts, "kind", "name"); err != nil {
+					return nil, err
 				}
-				if key == "as" {
-					opts.As = val.Value
-					opts.HasAs = true
-				} else {
-					opts.Revision = val.Value
+			} else {
+				if len(item.Content) != 2 {
+					return nil, v4err("v4.resource-item", p, item.Line, "must contain exactly one locator and options mapping")
+				}
+				locator = item.Content[0].Value
+				optionNode := item.Content[1]
+				if optionNode.Kind != yaml.MappingNode {
+					return nil, v4err("v4.resource-options", p, optionNode.Line, "options must be a mapping")
+				}
+				if err := parseV4PluginOptionNodes(optionNode, p, &opts); err != nil {
+					return nil, err
 				}
 			}
 		} else {
 			return nil, v4err("v4.resource-item", p, item.Line, "must be a locator string or single-key mapping")
 		}
-		kind, registry, name, err := parseV4Locator(locator, source)
-		if err != nil {
-			return nil, v4err("v4.locator", p, item.Line, "%v", err)
+		var kind, registry, name string
+		if structured {
+			kind, name = "plugin", strings.TrimPrefix(locator, "plugin/")
+		} else {
+			var err error
+			kind, registry, name, err = parseV4Locator(locator, source)
+			if err != nil {
+				return nil, v4err("v4.locator", p, item.Line, "%v", err)
+			}
 		}
 		if seen[locator] {
 			return nil, v4err("v4.duplicate-request", p, item.Line, "duplicate locator %q in one include list", locator)
 		}
 		seen[locator] = true
-		if opts.As == "" {
-			opts.As = name
+		if kind == "plugin" {
+			if opts.HasAs {
+				return nil, v4err("v4.option-combination", p, item.Line, "as is invalid for plugins")
+			}
+		} else {
+			if opts.Delivery != "" || len(opts.Exclude) > 0 {
+				return nil, v4err("v4.option-combination", p, item.Line, "delivery and exclude are only valid for plugins")
+			}
+			if opts.As == "" {
+				opts.As = name
+			}
+			if err := nameutil.ValidateSafeFilename(opts.As); err != nil {
+				return nil, v4err("v4.installed-name", p, item.Line, "as must be a safe resource name: %v", err)
+			}
+			if kind == "collection" && opts.HasAs {
+				return nil, v4err("v4.option-combination", p, item.Line, "as is invalid for collections")
+			}
 		}
-		if err := nameutil.ValidateSafeFilename(opts.As); err != nil {
-			return nil, v4err("v4.installed-name", p, item.Line, "as must be a safe resource name: %v", err)
-		}
-		if kind == "collection" && opts.HasAs {
-			return nil, v4err("v4.option-combination", p, item.Line, "as is invalid for collections")
-		}
-		out = append(out, V4ResourceRequest{SourceName: source, Locator: locator, Registry: registry, Kind: kind, Name: name, Options: opts, Reason: V4SelectionExplicit, Provenance: []V4Provenance{{File: file, Line: item.Line}}})
+		out = append(out, V4ResourceRequest{SourceName: source, Locator: locator, Registry: registry, Kind: kind, Name: name, Options: opts, Reason: V4SelectionExplicit, Provenance: []V4Provenance{{File: file, Line: item.Line}}, Structured: structured})
 	}
 	return out, nil
+}
+
+// parseV4StructuredPlugin decodes a {kind: plugin, name: <name>} include
+// item and returns the authored plugin name.
+func parseV4StructuredPlugin(item *yaml.Node, p string) (string, error) {
+	var name string
+	kindSeen, nameSeen := false, false
+	for j := 0; j+1 < len(item.Content); j += 2 {
+		key, val := item.Content[j].Value, item.Content[j+1]
+		switch key {
+		case "kind":
+			kindSeen = true
+			if val.Kind != yaml.ScalarNode || val.Tag != "!!str" || val.Value != "plugin" {
+				return "", v4err("v4.locator", p+".kind", val.Line, "structured entries select kind plugin only")
+			}
+		case "name":
+			nameSeen = true
+			if val.Kind != yaml.ScalarNode || val.Tag != "!!str" {
+				return "", v4err("v4.resource-item", p+".name", val.Line, "must be a string")
+			}
+			name = val.Value
+		case "exclude", "delivery", "as", "revision":
+		default:
+			return "", v4err("v4.unknown-field", p+"."+key, item.Content[j].Line, "unknown structured entry field")
+		}
+	}
+	if !kindSeen || !nameSeen {
+		return "", v4err("v4.resource-item", p, item.Line, "a structured entry requires kind and name")
+	}
+	if err := validateV4PluginRequestName(name); err != nil {
+		return "", v4err("v4.locator", p+".name", item.Line, "%v", err)
+	}
+	return name, nil
+}
+
+// validateV4PluginRequestName applies the coarse name checks the
+// configuration boundary can prove: non-empty, no control characters, no
+// path traversal. The format's name grammar is validated at resolution.
+func validateV4PluginRequestName(name string) error {
+	if !v4NameRE.MatchString(name) || name == "." || name == ".." || strings.ContainsAny(name, "*? \t") {
+		return errors.New("plugin name must be non-empty without '/', whitespace, control characters, wildcards, or traversal")
+	}
+	return nil
+}
+
+// parseV4PluginOptionNodes decodes resource options (as, revision, exclude,
+// delivery) from a mapping node, skipping the keys named in skip.
+func parseV4PluginOptionNodes(optionNode *yaml.Node, p string, opts *V4ResourceOptions, skip ...string) error {
+	skipped := map[string]bool{}
+	for _, key := range skip {
+		skipped[key] = true
+	}
+	for j := 0; j+1 < len(optionNode.Content); j += 2 {
+		key, val := optionNode.Content[j].Value, optionNode.Content[j+1]
+		if skipped[key] {
+			continue
+		}
+		switch key {
+		case "as", "revision", "delivery":
+			if val.Kind != yaml.ScalarNode || val.Tag != "!!str" || strings.TrimSpace(val.Value) == "" {
+				return v4err("v4.resource-options", p+"."+key, val.Line, "must be a non-empty string")
+			}
+			switch key {
+			case "as":
+				opts.As = val.Value
+				opts.HasAs = true
+			case "revision":
+				opts.Revision = val.Value
+			case "delivery":
+				if val.Value != "auto" && val.Value != "decompose" && val.Value != "native" {
+					return v4err("v4.resource-options", p+".delivery", val.Line, "must be auto, decompose, or native")
+				}
+				opts.Delivery = val.Value
+			}
+		case "exclude":
+			values, err := parseV4StringList(val, p+".exclude")
+			if err != nil {
+				return err
+			}
+			for _, member := range values {
+				memberKind, registry, _, err := parseV4Locator(member, "exclude")
+				if err != nil || memberKind == "plugin" || registry != "" {
+					if err == nil {
+						err = errors.New("must name a member locator kind/name")
+					}
+					return v4err("v4.resource-options", p+".exclude", val.Line, "%v", err)
+				}
+			}
+			opts.Exclude = append(opts.Exclude, values...)
+		default:
+			return v4err("v4.unknown-field", p+"."+key, optionNode.Content[j].Line, "unknown resource option")
+		}
+	}
+	return nil
 }
 
 func parseV4Locator(value, source string) (kind, registry, name string, err error) {
@@ -1109,6 +1243,11 @@ func parseV4Locator(value, source string) (kind, registry, name string, err erro
 	}
 	if _, ok := v4Kinds[kind]; !ok || !v4NameRE.MatchString(name) || name == "." || name == ".." || strings.ContainsAny(name, "*?") {
 		return "", "", "", errors.New("has invalid kind or resource name")
+	}
+	if kind == "plugin" {
+		if err := ir.ValidateName(name); err != nil {
+			return "", "", "", fmt.Errorf("plugin name %q does not fit the locator grammar; use the {kind: plugin, name: ...} entry form", name)
+		}
 	}
 	if err := validateMarketplaceSegment("name", name); err != nil {
 		return "", "", "", err
@@ -1414,7 +1553,7 @@ func mergeV4Config(dst, src *V4Config) error {
 	dst.Materialization = mergeV4Materialization(dst.Materialization, src.Materialization)
 	for name, s := range src.Sources {
 		if old, ok := dst.Sources[name]; ok {
-			if old.Kind != s.Kind || old.CanonicalURL != s.CanonicalURL || old.Ref != s.Ref || old.Path != s.Path || old.SourceHarness != s.SourceHarness {
+			if old.Kind != s.Kind || old.CanonicalURL != s.CanonicalURL || old.Ref != s.Ref || old.Path != s.Path || old.SourceHarness != s.SourceHarness || old.Format != s.Format {
 				return v4err("v4.source-conflict", "sources."+name, s.Line, "source name is declared with conflicting values in %q and %q", old.File, s.File)
 			}
 			s.AlsoDeclaredIn = append(append(append([]string(nil), s.AlsoDeclaredIn...), old.AlsoDeclaredIn...), old.File)
@@ -1656,7 +1795,11 @@ func normalizeV4Tree(c *V4Config) error {
 				}
 			}
 		}
+		formatSource := src.Format != ""
 		for i := range g.Include {
+			if g.Include[i].Kind == "plugin" && !formatSource {
+				return v4err("v4.locator", "resources."+name+".include", 0, "plugin requests are only valid for sources declaring a format")
+			}
 			if g.Required != nil {
 				g.Include[i].Required = *g.Required
 			}
@@ -2221,6 +2364,8 @@ func v4KindToIR(kind string) ir.ResourceKind {
 		return ir.KindMcpServer
 	case "collection":
 		return ir.KindCollection
+	case "plugin":
+		return ir.KindPlugin
 	default:
 		return ir.ResourceKind(-1)
 	}

@@ -144,6 +144,8 @@ comparison in non-test code.
 | `plugin.format.component-invalid` | A fixed plugin component location is not present in its expected form; that component type is skipped while other component types load | Restore the documented component location or remove the stray entry |
 | `plugin.member.invalid` | A plugin member or entry failed validation and was skipped while its siblings loaded | Fix the reported member; the package keeps the members that are valid |
 | `plugin.member.field-omitted` | A plugin member field the harness plugin surface marks omit-field was dropped before lowering; the member still installs | Remove the field, or deliver to a target that can represent it |
+| `plugin.catalog.source-unsupported` | A plugin catalog entry declares a source type its format refuses; the entry is inspectable but not installable | Acquire the plugin through a source type the format accepts, or install it from a different source |
+| `plugin.catalog.duplicate-entry` | Two plugin catalog entries share one name; neither copy is installable | Rename one entry or remove the duplicate |
 
 ### Hook review output
 

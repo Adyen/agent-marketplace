@@ -143,10 +143,10 @@ func (d *decoder) record(path, kind, reason, code string) {
 	d.invalid = append(d.invalid, ir.PluginRecord{Path: path, Kind: kind, Reason: reason, Diagnostic: code})
 }
 
-// readJSON reads path from the package root, bounded, and decodes it into
+// readBoundedJSON reads path from root, bounded, and decodes it into
 // map[string]any through the JSONC parser that rejects duplicate keys.
-func (d *decoder) readJSON(name string) (map[string]any, error) {
-	f, err := d.root.Open(name)
+func readBoundedJSON(root *os.Root, name string) (map[string]any, error) {
+	f, err := root.Open(name)
 	if err != nil {
 		return nil, err
 	}
@@ -166,6 +166,11 @@ func (d *decoder) readJSON(name string) (map[string]any, error) {
 		return nil, codedErr(diag.CodePluginFormatManifestInvalid, name, "top-level value must be a JSON object")
 	}
 	return obj, nil
+}
+
+// readJSON reads path from the package root through readBoundedJSON.
+func (d *decoder) readJSON(name string) (map[string]any, error) {
+	return readBoundedJSON(d.root, name)
 }
 
 // containedFiles walks the package root once, collecting the regular-file
