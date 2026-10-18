@@ -122,7 +122,7 @@ func assertMissFollowedByRemediation(t *testing.T, combined, name string) {
 }
 
 // lockRegistryByURL returns the lock entry for the canonical registry URL.
-func lockRegistryByURL(t *testing.T, doc lockfile.Document, canonicalURL string) lockfile.GitRegistry {
+func lockRegistryWithCanonicalURL(t *testing.T, doc lockfile.Document, canonicalURL string) lockfile.GitRegistry {
 	t.Helper()
 	for _, registry := range doc.Registries {
 		if registry.URL == canonicalURL {
@@ -749,7 +749,7 @@ func TestUpdateRegistryTargetProceedsPastRefusal(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	lockA := lockRegistryByURL(t, readLockDocument(t, lockPath), canonicalA)
+	lockA := lockRegistryWithCanonicalURL(t, readLockDocument(t, lockPath), canonicalA)
 	before := snapshot()
 
 	if err := os.RemoveAll(filepath.Join(workingA, "skills", "alpha")); err != nil {
@@ -767,11 +767,11 @@ func TestUpdateRegistryTargetProceedsPastRefusal(t *testing.T) {
 		t.Fatalf("targeted update of the second registry: %v\n%s", err, output)
 	}
 	lock := readLockDocument(t, lockPath)
-	gotB := lockRegistryByURL(t, lock, canonicalB)
+	gotB := lockRegistryWithCanonicalURL(t, lock, canonicalB)
 	if got, want := gotB.Commit.String(), gitHeadCommit(t, originB); got != want {
 		t.Fatalf("second registry lock commit = %s, want upstream HEAD %s", got, want)
 	}
-	if got := lockRegistryByURL(t, lock, canonicalA); got.Commit != lockA.Commit {
+	if got := lockRegistryWithCanonicalURL(t, lock, canonicalA); got.Commit != lockA.Commit {
 		t.Fatalf("first registry lock changed from %s to %s", lockA.Commit, got.Commit)
 	}
 }
