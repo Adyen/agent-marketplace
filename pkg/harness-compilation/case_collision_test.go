@@ -46,18 +46,36 @@ func TestCrossKindCaseOnlyCollisionNamesBothPaths(t *testing.T) {
 	bundle := &ingest.Bundle{Resources: []ir.Resource{
 		ir.NewSkill("Review", "Skill", "Inert.\n", nil, nil, ir.SourceRef{}),
 		ir.NewCommand("review", "Command", "Inert.\n", nil, ir.SourceRef{}),
+		ir.NewSkill("other", "Other", "Inert.\n", nil, nil, ir.SourceRef{}),
 	}}
 	result, err := compileBundleFromIR(bundle, TargetCodex)
 	if err != nil {
 		t.Fatal(err)
 	}
+	var named bool
 	for _, d := range result.Diagnostics {
 		if d.Code == diag.CodeBundleConflictCrossKindArtifactPath {
-			if !strings.Contains(d.Message, "/Review/") || !strings.Contains(d.Message, "/review/") {
-				t.Fatalf("cross-kind case-only conflict does not name both paths: %s", d.Message)
-			}
-			return
+			named = strings.Contains(d.Message, "/Review/") && strings.Contains(d.Message, "/review/")
 		}
 	}
-	t.Fatalf("missing %s: %+v", diag.CodeBundleConflictCrossKindArtifactPath, result.Diagnostics)
+	if !named {
+		t.Fatalf("missing %s naming both paths: %+v", diag.CodeBundleConflictCrossKindArtifactPath, result.Diagnostics)
+	}
+	skipped := map[string]bool{}
+	for _, s := range result.Skipped {
+		skipped[s.Name] = true
+	}
+	if !skipped["Review"] || !skipped["review"] || skipped["other"] {
+		t.Fatalf("skipped resources = %+v, want Review and review only", result.Skipped)
+	}
+	var other bool
+	for _, a := range result.Artifacts {
+		if strings.Contains(strings.ToLower(a.Path), "/review/") {
+			t.Fatalf("colliding resource still contributed %s", a.Path)
+		}
+		other = other || strings.Contains(a.Path, "/other/")
+	}
+	if !other {
+		t.Fatalf("unrelated skill was not emitted: %+v", result.Artifacts)
+	}
 }
