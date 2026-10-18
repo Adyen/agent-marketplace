@@ -16,7 +16,7 @@ type scopeTargetsFixture struct {
 	home, repo, origin string
 }
 
-func newScopeTargetsFixture(t *testing.T, repositoryConfig string) scopeTargetsFixture {
+func newScopeTargetsFixture(t *testing.T, repositoryConfig, orgHarnesses string) scopeTargetsFixture {
 	t.Helper()
 	home := t.TempDir()
 	t.Setenv("HOME", home)
@@ -26,7 +26,7 @@ func newScopeTargetsFixture(t *testing.T, repositoryConfig string) scopeTargetsF
 	}
 	commitAndPushAll(t, working, "Add skills")
 	orgConfig := filepath.Join(t.TempDir(), "config.yaml")
-	writeFile(t, orgConfig, "apiVersion: agent-marketplace/v4\nharnesses: [factory]\nsources:\n  hosted: {git: file://"+origin+", ref: main}\nresources:\n  hosted: [skill/org-skill]\n")
+	writeFile(t, orgConfig, "apiVersion: agent-marketplace/v4\n"+orgHarnesses+"sources:\n  hosted: {git: file://"+origin+", ref: main}\nresources:\n  hosted: [skill/org-skill]\n")
 	config.SetTestOrganizationConfigPath(t, orgConfig)
 	writeFile(t, filepath.Join(home, ".agents", "config.yaml"), "apiVersion: agent-marketplace/v4\nharnesses: [factory]\nsources:\n  hosted: {git: file://"+origin+", ref: main}\nresources:\n  hosted: [skill/user-skill]\n")
 	repo := filepath.Join(t.TempDir(), "repo")
@@ -59,7 +59,7 @@ func TestSyncRepositoryHarnessesDoNotNarrowMachineOutput(t *testing.T) {
 	if isolateCommandTest(t) {
 		return
 	}
-	f := newScopeTargetsFixture(t, "apiVersion: agent-marketplace/v4")
+	f := newScopeTargetsFixture(t, "apiVersion: agent-marketplace/v4", "harnesses: [factory]\n")
 	if output, err := executeCommand("sync"); err != nil {
 		t.Fatalf("initial sync: %v\n%s", err, output)
 	}
@@ -97,12 +97,31 @@ func TestSyncRepositoryHarnessesDoNotNarrowMachineOutput(t *testing.T) {
 	}
 }
 
+// An organization file without its own harness list inherits the user list,
+// never the repository's, so a narrower repository list cannot drop it.
+func TestSyncOrganizationWithoutHarnessesUsesUserTargets(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	f := newScopeTargetsFixture(t, "apiVersion: agent-marketplace/v4", "")
+	writeFile(t, filepath.Join(f.repo, ".agents", "config.yaml"), f.narrowedRepositoryConfig())
+	config.ResetRepoRootCache()
+	output, err := executeCommand("sync")
+	if err != nil {
+		t.Fatalf("sync: %v\n%s", err, output)
+	}
+	assertFactorySkillExists(t, f.home, "org-skill")
+	assertFactorySkillExists(t, f.home, "user-skill")
+	assertPathAbsent(t, filepath.Join(f.home, ".claude", "skills", "org-skill"))
+	assertPathPresent(t, filepath.Join(f.repo, ".claude", "skills", "repo-skill"))
+}
+
 // spec: resource-selection/machine-scope-teardown-preserves-organization-output-for-machine-targets
 func TestDeinitUserInsideNarrowedRepositoryPreservesOrganizationOutput(t *testing.T) {
 	if isolateCommandTest(t) {
 		return
 	}
-	f := newScopeTargetsFixture(t, "apiVersion: agent-marketplace/v4")
+	f := newScopeTargetsFixture(t, "apiVersion: agent-marketplace/v4", "harnesses: [factory]\n")
 	if output, err := executeCommand("sync"); err != nil {
 		t.Fatalf("initial sync: %v\n%s", err, output)
 	}

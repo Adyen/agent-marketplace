@@ -12,10 +12,17 @@ import (
 // each resulting RegistryEntry.
 func MergeLayers(layers []Layer) *Config {
 	merged := &Config{}
+	var user, organization *Config
 
 	for _, layer := range layers {
 		if layer.Config == nil {
 			continue
+		}
+		switch layer.Source {
+		case UserPersonal:
+			user = layer.Config
+		case Organization:
+			organization = layer.Config
 		}
 
 		for _, entry := range layer.Config.Registries {
@@ -114,14 +121,20 @@ func MergeLayers(layers []Layer) *Config {
 		}
 	}
 
-	// Backfill Harnesses on entries that don't have their own, using the
-	// merged top-level Harnesses. This ensures that org/team entries (which
-	// don't define harnesses) inherit the value from the user/repo layer.
-	if len(merged.Harnesses) > 0 {
-		for i := range merged.Registries {
-			if merged.Registries[i].Harnesses == nil {
-				merged.Registries[i].Harnesses = append([]string(nil), merged.Harnesses...)
-			}
+	// Backfill Harnesses on entries that don't have their own. Entries of the
+	// user and organization layers inherit the machine list, so a repository
+	// list never narrows them; other entries inherit the merged top-level list.
+	machine, _ := MachineHarnesses(user, organization)
+	for i := range merged.Registries {
+		if merged.Registries[i].Harnesses != nil {
+			continue
+		}
+		defaults := merged.Harnesses
+		if merged.Registries[i].Source.IsMachineScope() && len(machine) > 0 {
+			defaults = machine
+		}
+		if len(defaults) > 0 {
+			merged.Registries[i].Harnesses = append([]string(nil), defaults...)
 		}
 	}
 
@@ -201,6 +214,20 @@ func (s Source) CanConfigureBackup() bool {
 
 func (s Source) CanConfigureLogging() bool {
 	return s == Organization || s == UserPersonal
+}
+
+// MachineHarnesses returns the top-level harness list for selections made by
+// the user and organization layers: a non-empty user list, otherwise a
+// non-empty organization list. It returns nil and SourceUnset when neither
+// declares one; callers then fall back to the repository-scope list.
+func MachineHarnesses(user, organization *Config) ([]string, Source) {
+	if user != nil && len(user.Harnesses) > 0 {
+		return append([]string(nil), user.Harnesses...), UserPersonal
+	}
+	if organization != nil && len(organization.Harnesses) > 0 {
+		return append([]string(nil), organization.Harnesses...), Organization
+	}
+	return nil, SourceUnset
 }
 
 func resolveRegistryEntry(cfg *Config, entry RegistryEntry) RegistryEntry {

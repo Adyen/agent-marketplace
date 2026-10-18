@@ -203,11 +203,8 @@ func targetHarnessSetFromEC(ec config.EffectiveConfig) ([]hcc.Target, config.Sou
 // Only when neither declares targets does it fall back to the repository set,
 // so a repository cannot narrow output that machine layers selected.
 func machineTargetHarnessSetFromEC(ec config.EffectiveConfig, repository []hcc.Target, repositorySource config.Source) ([]hcc.Target, config.Source) {
-	if ec.User.Config != nil && len(ec.User.Config.Harnesses) > 0 {
-		return hccTargetsFromStrings(ec.User.Config.Harnesses), config.UserPersonal
-	}
-	if ec.Organization.Config != nil && len(ec.Organization.Config.Harnesses) > 0 {
-		return hccTargetsFromStrings(ec.Organization.Config.Harnesses), ec.Organization.Source
+	if harnesses, source := config.MachineHarnesses(ec.User.Config, ec.Organization.Config); len(harnesses) > 0 {
+		return hccTargetsFromStrings(harnesses), source
 	}
 	return slices.Clone(repository), repositorySource
 }
