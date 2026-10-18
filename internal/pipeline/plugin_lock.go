@@ -284,6 +284,9 @@ func bindExternalEntries(out *PluginLockContexts, spec *catalog.PluginSelectionS
 			CatalogRoot:   ownerRootPath(owner),
 			EntryName:     entry.Name,
 			EntryDigest:   entry.Plugin.DefinitionDigest,
+			CatalogFormat: owner.Format,
+			EntryStrict:   entry.Plugin.Strict,
+			EntryOverlay:  entry.Plugin.Overlay,
 		}
 	}
 }
@@ -319,7 +322,7 @@ func ExternalEntriesFor(spec *catalog.PluginSelectionSpec, loaded catalog.Loaded
 		if entry.Plugin == nil || entry.Plugin.Source.Kind != "git" || entry.Plugin.Refusal != nil || !selected[entry.Name] {
 			continue
 		}
-		out = append(out, sourcerevision.PluginExternalEntry{Name: entry.Name, Source: entry.Plugin.Source, DefinitionDigest: entry.Plugin.DefinitionDigest})
+		out = append(out, sourcerevision.PluginExternalEntry{Name: entry.Name, Source: entry.Plugin.Source, DefinitionDigest: entry.Plugin.DefinitionDigest, EntryStrict: entry.Plugin.Strict, EntryOverlay: entry.Plugin.Overlay})
 	}
 	return out
 }

@@ -29,6 +29,12 @@ type PluginExternal struct {
 	CatalogRoot   string
 	EntryName     string
 	EntryDigest   string
+	// CatalogFormat, EntryStrict and EntryOverlay let the entry's own
+	// decode replay the owning catalog's entry-overlay policy after
+	// acquisition, the same way discovery applies it to relative entries.
+	CatalogFormat string
+	EntryStrict   bool
+	EntryOverlay  map[string]any
 }
 
 // PluginVerifyContext carries the plugin-v1 inputs a locked root's
@@ -41,10 +47,14 @@ type PluginVerifyContext struct {
 
 // PluginExternalEntry is one selected catalog entry whose origin is an
 // external repository; the caller acquires it through the exact Git path.
+// EntryStrict and EntryOverlay carry the entry's overlay input so its own
+// package decode can replay the owning catalog's entry-overlay policy.
 type PluginExternalEntry struct {
 	Name             string
 	Source           plugindecode.CatalogSource
 	DefinitionDigest string
+	EntryStrict      bool
+	EntryOverlay     map[string]any
 }
 
 type pluginManifestEntry struct {
@@ -116,7 +126,11 @@ func buildPluginRevision(input Input, contract lockfile.SourceRevisionContract) 
 
 	if input.PluginExternal != nil {
 		ext := input.PluginExternal
-		plugin, _, err := plugindecode.Decode(root, input.SourceHarness)
+		plugin, _, err := plugindecode.DecodeEntry(root, ext.CatalogFormat, plugindecode.CatalogEntry{
+			Name:    ext.EntryName,
+			Strict:  ext.EntryStrict,
+			Overlay: ext.EntryOverlay,
+		})
 		if err != nil {
 			return Result{}, fmt.Errorf("%w: decode plugin package at %q: %w", ErrCatalog, input.RootPath, err)
 		}
@@ -157,7 +171,7 @@ func buildPluginRevision(input Input, contract lockfile.SourceRevisionContract) 
 			}
 			manifest.Entries = append(manifest.Entries, pluginManifestEntry{Name: name, Digest: entry.Plugin.DefinitionDigest})
 			if entry.Plugin.Source.Kind == "git" {
-				externals = append(externals, PluginExternalEntry{Name: name, Source: entry.Plugin.Source, DefinitionDigest: entry.Plugin.DefinitionDigest})
+				externals = append(externals, PluginExternalEntry{Name: name, Source: entry.Plugin.Source, DefinitionDigest: entry.Plugin.DefinitionDigest, EntryStrict: entry.Plugin.Strict, EntryOverlay: entry.Plugin.Overlay})
 				continue
 			}
 			if entry.Plugin.Source.Kind != "path" || entry.Plugin.Refusal != nil {
