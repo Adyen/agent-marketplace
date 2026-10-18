@@ -8,4 +8,4 @@
 
 ## 3. Verification
 
-- [ ] 3.1 Focused TUI lifecycle tests, `make validate`, `make spec-check`, and `make tui-qa` pass
+- [x] 3.1 Focused TUI lifecycle tests, `make validate`, `make spec-check`, and `make tui-qa` pass

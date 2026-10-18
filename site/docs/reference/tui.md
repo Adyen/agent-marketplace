@@ -51,7 +51,7 @@ The TUI shows at most 50 results per endpoint and query, with no pagination; [`a
 
 - `r` reloads config and local state from disk. With a valid lock, discovery uses the exact snapshot it records.
 - `s` syncs dependencies and generated output with your selections. A healthy Git lock stays at its recorded commit even if the branch has moved.
-- `u` upgrades Git locks in all writable scopes (user, project, and local), then syncs. Its help label says "update caches", but it can also change lockfiles and installed resources. `agent-marketplace update --scope repo` does the repository-only equivalent.
+- `u` upgrades Git locks in all writable scopes (user, project, and local), then syncs. Its help label says "update caches", but it can also change lockfiles and installed resources. `agent-marketplace update --scope repo` does the repository-only equivalent. Before publishing, `u` applies the same selection check as `agent-marketplace update`: when a selection that resolved at the previously locked revision is renamed or removed upstream, the update fails with the same `was selected but not found` refusal and remediation line, and the locks, configuration, and harness outputs stay unchanged.
 
 If a config layer has no lock, the TUI browses its source's current content and shows a warning; it does not create the lock. An existing invalid lock blocks that fallback.
 
