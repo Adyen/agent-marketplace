@@ -270,7 +270,7 @@ func readOnlyGitDocumentMatches(doc lockfile.Document, entries []config.Registry
 	for _, registry := range doc.Registries {
 		identity := readOnlyGitIdentity(registry.URL, registry.Ref)
 		if _, ok := wanted[identity]; !ok {
-			if expected[ExternalRecordIdentity(registry)] && AllRootsPluginV1(registry) {
+			if ExpectedExternalRecord(registry, expected) {
 				continue
 			}
 			return false
@@ -280,20 +280,8 @@ func readOnlyGitDocumentMatches(doc lockfile.Document, entries []config.Registry
 	if len(registries) != len(wanted) {
 		return false
 	}
-	// Every external record the configuration requires must be locked: a
-	// newly selected or re-pointed catalog entry reports stale instead of
-	// being resolved during read-only verification.
-	for key := range expected {
-		found := false
-		for _, registry := range doc.Registries {
-			if ExternalRecordIdentity(registry) == key && AllRootsPluginV1(registry) {
-				found = true
-				break
-			}
-		}
-		if !found {
-			return false
-		}
+	if !ExpectedExternalsLocked(doc.Registries, expected) {
+		return false
 	}
 	for _, registry := range registries {
 		roots, ok := wanted[readOnlyGitIdentity(registry.URL, registry.Ref)]

@@ -1558,7 +1558,7 @@ func documentMatchesEntries(doc lockfile.Document, entries []config.RegistryEntr
 	for _, registry := range doc.Registries {
 		identity := gitLockIdentity(registry.URL, registry.Ref)
 		if _, wanted := groups[identity]; !wanted {
-			if expected[pipeline.ExternalRecordIdentity(registry)] && pipeline.AllRootsPluginV1(registry) {
+			if pipeline.ExpectedExternalRecord(registry, expected) {
 				continue
 			}
 			return false
@@ -1568,17 +1568,8 @@ func documentMatchesEntries(doc lockfile.Document, entries []config.RegistryEntr
 	if len(registries) != len(groups) {
 		return false
 	}
-	for key := range expected {
-		found := false
-		for _, registry := range doc.Registries {
-			if pipeline.ExternalRecordIdentity(registry) == key && pipeline.AllRootsPluginV1(registry) {
-				found = true
-				break
-			}
-		}
-		if !found {
-			return false
-		}
+	if !pipeline.ExpectedExternalsLocked(doc.Registries, expected) {
+		return false
 	}
 	for _, registry := range registries {
 		group, ok := groups[gitLockIdentity(registry.URL, registry.Ref)]

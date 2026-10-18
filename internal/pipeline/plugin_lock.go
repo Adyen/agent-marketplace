@@ -63,6 +63,32 @@ func ExternalRecordIdentity(registry lockfile.GitRegistry) string {
 	return registry.URL + "\x00" + registry.Ref + "\x00" + registry.Roots[0].Path
 }
 
+// ExpectedExternalRecord reports whether registry is a plugin-v1 external
+// record whose identity the expected set names.
+func ExpectedExternalRecord(registry lockfile.GitRegistry, expected map[string]bool) bool {
+	return expected[ExternalRecordIdentity(registry)] && AllRootsPluginV1(registry)
+}
+
+// ExpectedExternalsLocked reports whether registries carry a plugin-v1
+// external record for every identity in expected: a newly selected or
+// re-pointed catalog entry has no locked record and must report stale
+// rather than be resolved during read-only verification.
+func ExpectedExternalsLocked(registries []lockfile.GitRegistry, expected map[string]bool) bool {
+	for key := range expected {
+		found := false
+		for _, registry := range registries {
+			if ExternalRecordIdentity(registry) == key && AllRootsPluginV1(registry) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return false
+		}
+	}
+	return true
+}
+
 // AllRootsPluginV1 reports whether every root of a registry record is a
 // plugin-v1 root.
 func AllRootsPluginV1(registry lockfile.GitRegistry) bool {

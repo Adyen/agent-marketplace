@@ -189,9 +189,9 @@ func directorySelectsExternalPlugin(decls []config.SourceDecl) bool {
 // origin: locked and check modes rebuild it from the recorded commit rather
 // than tracking the entry ref. A writable sync pins the record only while it
 // still names the ref the current entry requests, so an edited ref resolves
-// afresh; read-only modes always rebuild from the recorded commit — the
-// rebuilt manifest still reports the edited entry stale — and never resolve
-// a ref the lock does not record.
+// afresh. Read-only modes always rebuild from the recorded commit, which
+// still reports the edited entry stale, and never resolve a ref the lock
+// does not record.
 func pinnedExternal(old map[string]lockfile.GitRegistry, ext sourcerevision.PluginExternalEntry, upgrade, readOnly bool) *lockfile.GitRegistry {
 	if upgrade {
 		return nil
