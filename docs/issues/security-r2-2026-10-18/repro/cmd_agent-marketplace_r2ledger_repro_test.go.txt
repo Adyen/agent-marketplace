@@ -5,6 +5,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/Adyen/agent-marketplace/internal/config"
@@ -35,11 +36,17 @@ func TestR2LedgerF1DeinitHarnessNarrowing(t *testing.T) {
 		t.Fatalf("sync: %v\n%s", err, output)
 	}
 	assertFactorySkillExists(t, homeDir, "org-skill")
+	assertFactorySkillExists(t, homeDir, "user-skill")
 	// The attacker-controlled commit narrows the repository harness list.
 	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), "apiVersion: agent-marketplace/v4\nharnesses:\n  - claude\n")
 	config.ResetRepoRootCache()
 	output, err := executeCommand("deinit", "--scope", "user")
-	t.Logf("deinit err=%v output:\n%s", err, output)
+	if err != nil {
+		t.Fatalf("deinit --scope user: %v\n%s", err, output)
+	}
+	if _, statErr := os.Lstat(filepath.Join(homeDir, ".factory", "skills", "user-skill")); !os.IsNotExist(statErr) {
+		t.Fatalf("deinit did not remove user-owned output: %v", statErr)
+	}
 	if _, statErr := os.Lstat(filepath.Join(homeDir, ".factory", "skills", "org-skill")); statErr != nil {
 		t.Errorf("REPRODUCED: organization Factory output removed by narrowed repository harnesses: %v", statErr)
 	}
@@ -70,6 +77,9 @@ func TestR2LedgerF114LockBootstrapThroughConfigSymlink(t *testing.T) {
 			before, _ := os.ReadDir(filepath.Join(other, ".agents"))
 			output, err := executeCommand(command)
 			t.Logf("%s err=%v output:\n%s", command, err, output)
+			if err == nil || !strings.Contains(output+err.Error(), "escapes its captured root") {
+				t.Errorf("%s was not refused for the cross-checkout config link", command)
+			}
 			after, _ := os.ReadDir(filepath.Join(other, ".agents"))
 			if _, statErr := os.Lstat(filepath.Join(other, ".agents", "lock.yaml")); statErr == nil {
 				t.Errorf("REPRODUCED: %s created a lock in the other checkout", command)

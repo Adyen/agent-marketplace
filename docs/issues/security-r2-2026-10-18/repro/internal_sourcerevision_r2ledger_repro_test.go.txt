@@ -19,7 +19,9 @@ func TestR2LedgerF131ConfiguredRootAlias(t *testing.T) {
 	if err := os.Symlink(t.TempDir(), filepath.Join(snapshot, "escaping")); err != nil {
 		t.Fatal(err)
 	}
-	for _, root := range []string{"approved", "real", "escaping"} {
+	// A root link inside the snapshot is accepted: the same commit authored
+	// both trees. A root link leaving the snapshot is refused.
+	for root, want := range map[string]string{"approved": "redirected", "real": "plain", "escaping": ""} {
 		rev, err := Build(Input{SnapshotRoot: snapshot, RootPath: root, SourceHarness: "factory"})
 		names := []string{}
 		if err == nil {
@@ -28,5 +30,14 @@ func TestR2LedgerF131ConfiguredRootAlias(t *testing.T) {
 			}
 		}
 		t.Logf("root=%s err=%v resources=%v", root, err, names)
+		if want == "" {
+			if err == nil {
+				t.Errorf("REPRODUCED: escaping root %s accepted with %v", root, names)
+			}
+			continue
+		}
+		if err != nil || len(names) != 1 || names[0] != want {
+			t.Errorf("root %s: err=%v resources=%v, want [%s]", root, err, names, want)
+		}
 	}
 }

@@ -5,7 +5,6 @@ package harnesscompile
 import (
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 )
 
@@ -29,20 +28,18 @@ func TestR2LedgerF167SDKMergeLeafAlias(t *testing.T) {
 		ManagedByValue:    "agent-marketplace",
 	}}}
 	report, err := Materialize(result, outDir, WithWriteMode(WriteModeOverwrite))
-	info, lerr := os.Lstat(leaf)
-	raw, _ := os.ReadFile(payload)
 	var written []string
 	if report != nil {
 		written = report.Written
 	}
-	t.Logf("err=%v written=%v leaf still link=%v external unchanged=%v", err, written, lerr == nil && info.Mode()&os.ModeSymlink != 0, string(raw) == body)
-	if lerr == nil && info.Mode()&os.ModeSymlink == 0 {
-		copied, _ := os.ReadFile(leaf)
-		if strings.Contains(string(copied), "inert-secret") {
-			t.Errorf("REPRODUCED: external JSON copied into SDK output: %s", copied)
-		}
+	t.Logf("err=%v written=%v", err, written)
+	if err == nil {
+		t.Errorf("REPRODUCED: SDK merge accepted the external leaf link")
 	}
-	if string(raw) != body {
-		t.Errorf("REPRODUCED: external JSON modified")
+	if got, lerr := os.Readlink(leaf); lerr != nil || got != payload {
+		t.Errorf("leaf link changed: readlink=%q err=%v", got, lerr)
+	}
+	if raw, rerr := os.ReadFile(payload); rerr != nil || string(raw) != body {
+		t.Errorf("REPRODUCED: external JSON modified (err=%v)", rerr)
 	}
 }

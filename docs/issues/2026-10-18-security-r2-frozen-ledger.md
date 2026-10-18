@@ -5,8 +5,9 @@ Code baseline: [`299bf2aba16e711663718a22057a7b3bfb085af8`][baseline].
 
 ## Threat Model
 
-Everything the CLI touches lives in the user's home directory, so "HOME" is not
-the boundary. The boundary is **content the user did not write**:
+The CLI reads and writes the user's home directory and the repository
+checkouts it runs in. The same OS user owns both, so file location is not the
+boundary. Authorship is: the boundary is **content the user did not write**:
 
 1. **A repository checkout** the user runs the CLI in. Its committed files,
    symlinks, `.agents/` config and harness directories are authored by
@@ -188,8 +189,12 @@ All checks ran on the baseline on 2026-10-18, macOS arm64, `CGO_ENABLED=0`.
 - **Reproductions.** Sources are in
   [`security-r2-2026-10-18/repro/`](security-r2-2026-10-18/repro/). Fixtures are
   inert local directories and repositories; nothing executes a resource payload
-  or contacts a network service. A failing test with a `REPRODUCED` message
-  confirms the claim; a passing test confirms a refusal or the stated behavior.
+  or contacts a network service. Every probe asserts its outcome. A failing
+  test with a `REPRODUCED` message confirms the claim; a passing test confirms
+  the refusal (diagnostic, preserved links and bytes) or the stated behavior.
+  After review, all probes ran again on the baseline with these assertions and
+  gave the results below. R-F146's source is unchanged; its case-insensitive
+  result comes from the first run.
 
 | Reproduction | Package | Result |
 |---|---|---|
@@ -207,10 +212,17 @@ All checks ran on the baseline on 2026-10-18, macOS arm64, `CGO_ENABLED=0`.
 | R-F124 `TestR2LedgerF124RestoreRootLink` | `internal/backup` | Passes: refused |
 | R-F126 `TestR2LedgerF126RestoreOverwritesExisting` | `internal/backup` | Passes: planted archive overwrites, as described |
 
-To rerun one, copy `repro/<package>_r2ledger_repro_test.go.txt` to
-`<package>/zz_r2ledger_repro_test.go` and run
-`CGO_ENABLED=0 go test ./<package> -run '^TestR2Ledger' -count=1 -v`. For
-R-F146 on macOS, mount a case-insensitive APFS image and set `TMPDIR` to a
+To rerun one, copy the source into its package and run it there. A source
+file's name is its package path with `/` replaced by `_`. For example, from a
+checkout of the baseline:
+
+```bash
+cp docs/issues/security-r2-2026-10-18/repro/internal_cache_r2ledger_repro_test.go.txt \
+  internal/cache/zz_r2ledger_repro_test.go
+CGO_ENABLED=0 go test ./internal/cache -run '^TestR2Ledger' -count=1 -v
+```
+
+For R-F146 on macOS, mount a case-insensitive APFS image and set `TMPDIR` to a
 directory on it. Do not commit the copied files.
 
 - **Scoped gate.** `make validate` with the 15 witness packages and the
@@ -219,9 +231,10 @@ directory on it. Do not commit the copied files.
 - **Review threads.** The 95 merged R2 PRs have 296 review threads, and only
   the #601 thread is unresolved. The other cited PRs (#191, #195, #242, #417,
   #438, #451, #665, #713) have 16 threads, none unresolved.
-- **Reconciliation.** The check below passes against both exact exports.
-  Negative controls reject swapped exports, an altered index alias, a missing
-  case row and a moved status.
+- **Reconciliation.** The check below passes against both exact exports, also
+  under `python3 -O`. Negative controls reject swapped exports, an altered index
+  alias, a missing case row, a moved status, tampered index bytes and a
+  missing R5 row.
 
 ## Reproduce the Source Reconciliation
 
@@ -239,16 +252,24 @@ import sys
 from collections import Counter
 from pathlib import Path
 
+
+def check(condition, message):
+    # Explicit checks stay active under python -O, unlike assert.
+    if not condition:
+        sys.exit("FAIL: " + message)
+
+
 docs = Path("docs/issues")
 index = docs / "2026-10-18-security-r2-source-index.csv"
 ledger = docs / "2026-10-18-security-r2-frozen-ledger.md"
 r5_index = docs / "2026-10-16-security-r5-source-index.csv"
-assert hashlib.sha256(index.read_bytes()).hexdigest() == (
-    "8ce78a2598979dc7787c41f6cd8ebf2bbcc62a8eee1c35e3c129e93238d9c931")
+check(hashlib.sha256(index.read_bytes()).hexdigest() ==
+      "8ce78a2598979dc7787c41f6cd8ebf2bbcc62a8eee1c35e3c129e93238d9c931",
+      "source index digest")
 with index.open(newline="") as stream:
     rows = list(csv.DictReader(stream))
 by_id = {row["instance_id"]: row for row in rows}
-assert len(rows) == len(by_id) == 211
+check(len(rows) == len(by_id) == 211, "source index has 211 distinct IDs")
 expected = {}
 sources = [
     ("a_ref", "A", 0, 131, 6921063,
@@ -256,50 +277,54 @@ sources = [
     ("f_ref", "F", 1, 173, 9141312,
      "91906e9899dbc253d659ba8b87b7fdb03b837aa0d1f4a24a160d776594379e98"),
 ]
-assert len(sys.argv) == 3, "supply the A and F export paths, in that order"
+check(len(sys.argv) == 3, "supply the A and F export paths, in that order")
 for filename, (column, prefix, offset, count, size, digest) in zip(sys.argv[1:], sources):
     data = Path(filename).read_bytes()
-    assert len(data) == size and hashlib.sha256(data).hexdigest() == digest
+    check(len(data) == size and hashlib.sha256(data).hexdigest() == digest,
+          f"export {prefix} size and digest")
     sarif = json.loads(data)
-    assert sarif["version"] == "2.1.0" and len(sarif["runs"]) == 1
+    check(sarif["version"] == "2.1.0" and len(sarif["runs"]) == 1, f"export {prefix} shape")
     results = sarif["runs"][0]["results"]
-    assert len(results) == count
+    check(len(results) == count, f"export {prefix} result count")
     seen = set()
     for number, result in enumerate(results, offset):
         identity = result["properties"]["instance_id"]
-        assert identity not in seen
+        check(identity not in seen, f"duplicate ID in export {prefix}")
         seen.add(identity)
-        assert result["partialFingerprints"]["staticFingerprint"] == identity
+        check(result["partialFingerprints"]["staticFingerprint"] == identity,
+              f"{prefix}{number} fingerprint")
         expected.setdefault(identity, {"a_ref": "", "f_ref": ""})[column] = prefix + str(number)
-assert set(expected) == set(by_id)
+check(set(expected) == set(by_id), "index IDs match the exports")
 for identity, aliases in expected.items():
-    assert all(by_id[identity][key] == value for key, value in aliases.items())
+    check(all(by_id[identity][key] == value for key, value in aliases.items()),
+          f"aliases of {identity}")
 with r5_index.open(newline="") as stream:
     r5 = {row["instance_id"]: row["scope"] for row in csv.DictReader(stream)}
-assert all(by_id[i]["r5_scope"] == scope for i, scope in r5.items())
+check(r5 == {i: row["r5_scope"] for i, row in by_id.items()},
+      "r5_scope matches every R5 index row")
 for row in rows:
     if row["r5_scope"].startswith("R") and row["r5_scope"][1:].isdigit():
-        assert row["scope"] in ("r5", "FS28")
+        check(row["scope"] in ("r5", "FS28"), f"R5 case {row['r5_scope']} routed to R5")
 cases = {f"FS{number:02}" for number in range(1, 45)}
 counts = Counter(row["scope"] for row in rows)
-assert counts == Counter({**dict.fromkeys(cases, 1), "r1": 21, "r3": 32,
-                          "r4": 35, "r5": 60, "parent": 19})
+check(counts == Counter({**dict.fromkeys(cases, 1), "r1": 21, "r3": 32,
+                         "r4": 35, "r5": 60, "parent": 19}), "scope counts")
 text = ledger.read_text()
 row_re = re.compile(r"^\| (FS\d{2}) \| ([^|]+) \|(?:[^|]*\|){2} ([^|]+) \|$", re.M)
 def section(title):
     body = text.split("## " + title + "\n", 1)[1].split("\n## ", 1)[0]
     return row_re.findall(body)
 threats, others = section("Real Threats"), section("Not a Security Boundary")
-assert len(threats) == 25 and len(others) == 19
-assert {case for case, _, _ in threats + others} == cases
+check(len(threats) == 25 and len(others) == 19, "section row counts")
+check({case for case, _, _ in threats + others} == cases, "every case listed once")
 for case, aliases, _ in threats + others:
     row = next(row for row in rows if row["scope"] == case)
-    assert set(re.findall(r"[AF]\d+", aliases)) == {
-        row[key] for key in ("a_ref", "f_ref") if row[key]}
+    check(set(re.findall(r"[AF]\d+", aliases)) ==
+          {row[key] for key in ("a_ref", "f_ref") if row[key]}, f"{case} aliases")
 status = lambda part: Counter(s.strip("* ") for _, _, s in part)
-assert status(threats) == Counter({"Fixed": 24, "Open": 1}), status(threats)
-assert status(others) == Counter({"Fixed anyway": 8, "No action": 6,
-                                  "Bug": 3, "Removed": 2}), status(others)
+check(status(threats) == Counter({"Fixed": 24, "Open": 1}), f"threat statuses {status(threats)}")
+check(status(others) == Counter({"Fixed anyway": 8, "No action": 6, "Bug": 3, "Removed": 2}),
+      f"non-boundary statuses {status(others)}")
 print("PASS: 304 occurrences, 211 IDs, 25 threats, 19 non-boundary, 167 routed")
 PY
 ```

@@ -26,6 +26,54 @@ func r2Diags(report *Report) string {
 	return b.String()
 }
 
+func r2HasError(report *Report) bool {
+	for _, d := range report.Diags {
+		if d.IsError() {
+			return true
+		}
+	}
+	return false
+}
+
+// r2RequireLinkUnchanged fails unless leaf is still a symlink to target and
+// target still holds body.
+func r2RequireLinkUnchanged(t *testing.T, leaf, target, body string) {
+	t.Helper()
+	if got, err := os.Readlink(leaf); err != nil || got != target {
+		t.Errorf("link %s changed: readlink=%q err=%v", leaf, got, err)
+	}
+	if raw, err := os.ReadFile(target); err != nil || string(raw) != body {
+		t.Errorf("external file %s changed: err=%v", target, err)
+	}
+}
+
+// r2CheckA31 classifies the second reconciliation. A coded refusal must leave
+// the file unchanged; a success must apply the change and keep the
+// handwritten table, otherwise the deletion is reproduced.
+func r2CheckA31(t *testing.T, change string, report *Report, rewritten string, after []byte) {
+	t.Helper()
+	text := string(after)
+	if r2HasError(report) {
+		if text != rewritten {
+			t.Errorf("refusal changed config.toml:\n%s", text)
+		}
+		return
+	}
+	switch change {
+	case "update":
+		if !strings.Contains(text, "inert-b") {
+			t.Fatalf("update was not applied:\n%s", text)
+		}
+	case "retire":
+		if strings.Contains(text, "[mcp_servers.foo]") || strings.Contains(text, "[mcp_servers.\"foo\"]") {
+			t.Fatalf("retirement was not applied:\n%s", text)
+		}
+	}
+	if !strings.Contains(text, "[profiles.safe]") {
+		t.Errorf("REPRODUCED: handwritten [profiles.safe] table deleted by %s", change)
+	}
+}
+
 // A31/F24: an owned Codex MCP server whose tables are interleaved with an
 // unrelated handwritten table.
 func TestR2LedgerA31CodexInterleavedTable(t *testing.T) {
@@ -66,12 +114,13 @@ func TestR2LedgerA31CodexInterleavedTable(t *testing.T) {
 				}
 			}
 			report = reconcileCodexMCP(context.Background(), &Report{PerTarget: map[targetmeta.Target]TargetReport{}}, key, "", root, desired, false, false)
-			after, _ := os.ReadFile(abs)
+			after, err := os.ReadFile(abs)
+			if err != nil {
+				t.Fatal(err)
+			}
 			t.Logf("diags:\n%s", r2Diags(report))
 			t.Logf("after:\n%s", after)
-			if !strings.Contains(string(after), "[profiles.safe]") {
-				t.Errorf("REPRODUCED: handwritten [profiles.safe] table deleted by %s", change)
-			}
+			r2CheckA31(t, change, report, interleaved, after)
 		})
 	}
 }
@@ -121,12 +170,13 @@ func TestR2LedgerA31CodexInterleavedTableRun(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			after, _ := os.ReadFile(abs)
+			after, err := os.ReadFile(abs)
+			if err != nil {
+				t.Fatal(err)
+			}
 			t.Logf("diags:\n%s", r2Diags(report))
 			t.Logf("after:\n%s", after)
-			if !strings.Contains(string(after), "[profiles.safe]") {
-				t.Errorf("REPRODUCED via Run: handwritten [profiles.safe] deleted by %s", change)
-			}
+			r2CheckA31(t, change, report, rewritten, after)
 		})
 	}
 }
@@ -204,6 +254,9 @@ func TestR2LedgerF141FactoryHooksIntoGitHooks(t *testing.T) {
 			names = append(names, e.Name())
 		}
 		t.Logf("mode=%s .git/hooks entries: %v", mode, names)
+		if !r2HasError(report) {
+			t.Errorf("mode=%s: no refusal diagnostic for the aliased hooks directory", mode)
+		}
 		if len(names) != 0 {
 			t.Errorf("REPRODUCED: output written into .git/hooks: %v", names)
 		}
@@ -240,15 +293,10 @@ func TestR2LedgerF167ClaudeMCPExternalAlias(t *testing.T) {
 				t.Fatal(err)
 			}
 			t.Logf("scope=%s diags:\n%s", scope, r2Diags(report))
-			info, lerr := os.Lstat(leaf)
-			raw, _ := os.ReadFile(payload)
-			t.Logf("leaf still link=%v external unchanged=%v", lerr == nil && info.Mode()&os.ModeSymlink != 0, string(raw) == body)
-			if lerr == nil && info.Mode()&os.ModeSymlink == 0 {
-				copied, _ := os.ReadFile(leaf)
-				if strings.Contains(string(copied), "inert-secret") {
-					t.Errorf("REPRODUCED: external JSON copied into the native file: %s", copied)
-				}
+			if !r2HasError(report) {
+				t.Errorf("REPRODUCED: no refusal for the external %s alias", leaf)
 			}
+			r2RequireLinkUnchanged(t, leaf, payload, body)
 		})
 	}
 }
@@ -281,18 +329,10 @@ func TestR2LedgerA42DevinMCPLeafAlias(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Logf("diags:\n%s", r2Diags(report))
-	info, lerr := os.Lstat(leaf)
-	raw, _ := os.ReadFile(userCfg)
-	t.Logf("leaf still link=%v user config unchanged=%v", lerr == nil && info.Mode()&os.ModeSymlink != 0, string(raw) == body)
-	if lerr == nil && info.Mode()&os.ModeSymlink == 0 {
-		copied, _ := os.ReadFile(leaf)
-		if strings.Contains(string(copied), "inert-secret") {
-			t.Errorf("REPRODUCED: user Devin secrets copied into the checkout: %s", copied)
-		}
+	if !r2HasError(report) {
+		t.Errorf("REPRODUCED: no refusal for the Devin leaf alias")
 	}
-	if string(raw) != body {
-		t.Errorf("REPRODUCED: user Devin config modified")
-	}
+	r2RequireLinkUnchanged(t, leaf, userCfg, body)
 }
 
 // F144: Codex MCP duplicate identity refusal relative to other Codex output.
@@ -310,7 +350,13 @@ func TestR2LedgerF144CodexPartialOutputs(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Logf("diags:\n%s", r2Diags(report))
-	_, agentErr := os.Lstat(filepath.Join(repo, ".codex", "agents", "reviewer.toml"))
-	_, cfgErr := os.Lstat(filepath.Join(repo, ".codex", "config.toml"))
-	t.Logf("independent agent installed=%v config.toml exists=%v", agentErr == nil, cfgErr == nil)
+	if _, ok := findDiag(report.Diags, diag.CodeMaterializeCodexDuplicateIdentity); !ok {
+		t.Errorf("duplicate MCP identity was not refused with %s", diag.CodeMaterializeCodexDuplicateIdentity)
+	}
+	if _, err := os.Lstat(filepath.Join(repo, ".codex", "config.toml")); !os.IsNotExist(err) {
+		t.Errorf("config.toml written despite the duplicate refusal: %v", err)
+	}
+	if _, err := os.Lstat(filepath.Join(repo, ".codex", "agents", "reviewer.toml")); err != nil {
+		t.Errorf("independent agent not installed: %v", err)
+	}
 }

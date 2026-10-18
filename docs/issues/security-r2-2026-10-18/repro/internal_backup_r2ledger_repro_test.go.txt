@@ -69,6 +69,9 @@ func TestR2LedgerF124RestoreRootLink(t *testing.T) {
 			_, sshErr := os.Lstat(filepath.Join(home, ".ssh", "authorized_keys"))
 			_, nestedErr := os.Lstat(filepath.Join(claude, ".ssh", "authorized_keys"))
 			t.Logf("link=%s restore err=%v root-is-real-dir=%v home/.ssh/authorized_keys exists=%v claude/.ssh/authorized_keys exists=%v", link, err, statErr == nil && info.IsDir() && info.Mode()&os.ModeSymlink == 0, sshErr == nil, nestedErr == nil)
+			if err == nil {
+				t.Errorf("restore accepted the root link %s", link)
+			}
 			if sshErr == nil || nestedErr == nil || statErr != nil || info.Mode()&os.ModeSymlink != 0 {
 				t.Errorf("REPRODUCED: restore escaped through a root link")
 			}
@@ -88,7 +91,16 @@ func TestR2LedgerF126RestoreOverwritesExisting(t *testing.T) {
 		t.Fatal(err)
 	}
 	r2PlantArchive(t, home, []r2Member{{name: "settings.json", body: "{\"planted\":true}\n"}})
-	_, err := Restore(hcc.TargetClaude, claude)
-	raw, _ := os.ReadFile(filepath.Join(claude, "settings.json"))
-	t.Logf("restore err=%v settings.json now=%q", err, raw)
+	if _, err := Restore(hcc.TargetClaude, claude); err != nil {
+		t.Fatalf("restore: %v", err)
+	}
+	raw, err := os.ReadFile(filepath.Join(claude, "settings.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The ledger records this overwrite as accepted (FS42): it needs a planted
+	// archive in the user's own backup directory.
+	if string(raw) != "{\"planted\":true}\n" {
+		t.Errorf("settings.json = %q, want the planted archive bytes", raw)
+	}
 }
