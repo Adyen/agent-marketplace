@@ -298,5 +298,12 @@ accumulation, preserving exact equality and replacement semantics without
 new limits. Evidence and remaining scope are recorded in
 [the R28 execution report](2026-10-18-security-r5-fragment-dedupe.md).
 
+R28 subsequently merged in PR #743. The next independent slice removes
+R35's repeated skipped-path scans in SDK materialization while preserving
+prune protection, no-op metadata and filesystem admission. It reduces
+allocation bytes modestly; measured whole-SDK latency is not improved
+significantly, with a small-case slowdown retained. Evidence is recorded in
+[the R35 execution report](2026-10-18-security-r5-materialize-bookkeeping.md).
+
 #434 already tracks this remaining scope. Publication must describe this as
 partial progress, preserve the frozen artifacts, and leave the issue open.

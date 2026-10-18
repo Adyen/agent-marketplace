@@ -3,6 +3,10 @@
 ## Scope
 
 This independent slice starts at main `de87921b` while R28 PR #743 is queued.
+PR #743 merges before integration gates; this slice is rebased onto
+`ced6f887`. The SDK implementation and filesystem boundary dependencies are
+unchanged across the rebase. R28's JSON-array change does not affect the
+unchanged non-fragment path used by these ordinary-file benchmarks.
 Frozen R35/A112/F79 (`01a0a06b-ae6f-765c-abbf-efe4993ebffa`) concerns
 unchanged/skipped artifact bookkeeping in public SDK `Materialize`.
 The frozen ledger/source index remain unchanged from `2f55f85f`.
@@ -107,7 +111,23 @@ CGO_ENABLED=0 go test ./pkg/harness-compilation -run '^$' \
   performance regression witness; no flaky wall-clock unit assertion or
   new runtime input limit is added.
 
-Integrated gates and host OCR-delegation review are pending.
+Fresh integrated short-mode tests pass for all harness-compilation
+packages, catalog and materializer, plus vet, zero-issue CI lint and
+build. Six CLI regressions pass for already-synced output, prune with an
+unrelated failure, committed config/lock retention on materialization
+failure, native support files, additive hook selection and payload-free
+logging. Focused SDK materialization/private-mode/consumer races pass.
+Strict spec checks pass: 60 items, 1,035 scenarios and 1,657 annotations;
+archive audit passes. Combined E2E and compatibility shell checks pass:
+2,927 invocations, 113/113 command requirements and all three required
+refusal witnesses.
+
+Host OCR-delegation adversarial review covers all nine intended files,
+including the eight default-excluded tests/documents/raw-data files.
+Zero files are skipped and no actionable findings remain. These are scoped
+local gates, not a full root-suite, vendor-native or released-client
+container validation claim; neither review nor tests prove absence of
+other defects.
 
 ## Remaining Work
 
