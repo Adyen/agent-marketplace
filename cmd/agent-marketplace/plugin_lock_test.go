@@ -283,7 +283,6 @@ func TestSyncChangedExternalEntryRefResolvesAfresh(t *testing.T) {
 	runGit(t, entryWorking, "commit", "-m", "release commit")
 	releaseCommit := gitHead(t, entryWorking)
 
-	// Edit the selected entry's ref in the live directory catalog.
 	writeFile(t, filepath.Join(catalogDir, ".claude-plugin", "marketplace.json"),
 		`{"name":"team","plugins":[`+
 			`{"name":"local-kit","source":"./plugins/local-kit"},`+
