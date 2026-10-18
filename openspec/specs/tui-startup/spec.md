@@ -347,7 +347,7 @@ The TUI SHALL read view settings once at startup from `$XDG_STATE_HOME/agent-mar
 
 ### Requirement: Missing optional selections are warnings
 
-When a non-required, non-collection selection names a resource that a successfully loaded registry does not provide, the TUI SHALL show the selection as an unavailable row with its not-found reason and a warning diagnostic, and SHALL still assess drift for the remaining resources. Such a selection SHALL NOT fail the snapshot's authoritative assessment, mark rows stale, or turn a sync, update, install, or toggle reload into a failure. Required or collection selections that are not found, and selections whose registry catalog failed to load, SHALL continue to fail the assessment.
+When a non-required, non-collection selection names a resource that a successfully loaded registry does not provide, the TUI SHALL show the selection as an unavailable row with its not-found reason and a warning diagnostic, and SHALL still assess drift for the remaining resources. Such a selection SHALL NOT fail the snapshot's authoritative assessment, mark rows stale, or turn a sync, update, install, or toggle reload into a failure. Required or collection selections that are not found, and selections whose registry catalog failed to load, SHALL continue to fail the assessment. An update refusal for a selection that resolved at the previously locked revision and stops resolving at the new one happens before publication, as `resource-selection` requires, and is not a reload failure under this requirement.
 
 #### Scenario: Optional missing selection keeps the assessment
 
