@@ -209,18 +209,42 @@ func TestExactGitVerificationScopeSanitizesStoreOnce(t *testing.T) {
 	canonical := "https://example.invalid/scope-store"
 	store := exactGitObjectStorePath(canonical)
 	ctx := WithExactGitVerificationScope(context.Background())
-	storeLists := func() int { return count("|"+store, "--name-only") }
 	stageLists := func() int { return count(".objects-stage-", "--name-only") }
 
 	if _, err := ResolveExactGitRefWithContext(ctx, canonical, repo, "main"); err != nil {
 		t.Fatalf("scoped resolve: %v", err)
 	}
-	oid := resolveExactGitRefForTest(t, canonical, repo, "main")
+	// The wrapper logs the resolved working directory before the pipe, so
+	// match the canonical store path, not the symlinked cache path.
+	resolvedStore, err := filepath.EvalSymlinks(store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	storeLists := func() int { return count(resolvedStore+"|", "--name-only") }
+	// The published store config is canonical, so the sanitize fast path
+	// would hide a missing scope short-circuit. A comment line keeps the
+	// store allowlisted but forces sanitize onto the subprocess path.
+	storeConfig := filepath.Join(store, "config")
+	raw, err := os.ReadFile(storeConfig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(storeConfig, append(raw, []byte("; sanitized once\n")...), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	oid, err := ResolveExactGitRefWithContext(ctx, canonical, repo, "main")
+	if err != nil {
+		t.Fatalf("second scoped resolve: %v", err)
+	}
 	if _, err := AcquireExactGitWithContext(ctx, canonical, repo, oid); err != nil {
 		t.Fatalf("scoped acquire: %v", err)
 	}
 	if got := storeLists(); got != 0 {
 		t.Fatalf("sanitized store re-inspected %d times inside one scope, want 0", got)
+	}
+	resolveExactGitRefForTest(t, canonical, repo, "main")
+	if got := storeLists(); got == 0 {
+		t.Fatal("unscoped resolve did not re-inspect the non-canonical store")
 	}
 	// Each cloned store is sanitized once on its staging directory; a
 	// subprocess sanitize lists the local keys before and after cleanup.
@@ -228,6 +252,7 @@ func TestExactGitVerificationScopeSanitizesStoreOnce(t *testing.T) {
 	if stages != 2 {
 		t.Fatalf("fresh clone sanitized %d staging repositories, want 1", stages/2)
 	}
+	inspected := storeLists()
 	if err := os.RemoveAll(store); err != nil {
 		t.Fatal(err)
 	}
@@ -237,8 +262,8 @@ func TestExactGitVerificationScopeSanitizesStoreOnce(t *testing.T) {
 	if got := stageLists(); got != 4 {
 		t.Fatalf("re-cloned store was not re-sanitized: %d staging sanitizations, want 2", got/2)
 	}
-	if got := storeLists(); got != 0 {
-		t.Fatalf("re-cloned store re-inspected %d times inside one scope, want 0", got)
+	if got := storeLists(); got != inspected {
+		t.Fatalf("re-cloned store re-inspected %d times inside one scope, want 0", got-inspected)
 	}
 }
 

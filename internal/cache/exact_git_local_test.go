@@ -88,13 +88,14 @@ func runSubprocessLocalState(ctx context.Context, repo string) (subprocessLocalS
 func TestExactGitLocalStateDifferential(t *testing.T) {
 	canonicalSHA1 := canonicalConfigForAlgorithm("sha1")
 	fixtures := []struct {
-		name      string
-		algorithm string
-		bare      bool
-		mutate    func(t *testing.T, repo, gitDir string)
+		name       string
+		algorithm  string
+		bare       bool
+		wantAccept bool
+		mutate     func(t *testing.T, repo, gitDir string)
 	}{
-		{name: "canonical-sha1", algorithm: "sha1"},
-		{name: "canonical-sha256", algorithm: "sha256"},
+		{name: "canonical-sha1", algorithm: "sha1", wantAccept: true},
+		{name: "canonical-sha256", algorithm: "sha256", wantAccept: true},
 		{name: "crlf", algorithm: "sha1", mutate: func(t *testing.T, repo, gitDir string) {
 			rewriteLocalConfig(t, gitDir, strings.ReplaceAll(canonicalSHA1, "\n", "\r\n"))
 		}},
@@ -167,7 +168,7 @@ func TestExactGitLocalStateDifferential(t *testing.T) {
 		{name: "worktree-bare-true", algorithm: "sha1", mutate: func(t *testing.T, repo, gitDir string) {
 			rewriteLocalConfig(t, gitDir, strings.Replace(canonicalSHA1, "bare = false", "bare = true", 1))
 		}},
-		{name: "bare-store", algorithm: "sha1", bare: true, mutate: func(t *testing.T, repo, gitDir string) {
+		{name: "bare-store", algorithm: "sha1", bare: true, wantAccept: true, mutate: func(t *testing.T, repo, gitDir string) {
 		}},
 		{name: "bare-store-not-bare", algorithm: "sha1", bare: true, mutate: func(t *testing.T, repo, gitDir string) {
 			rewriteLocalConfig(t, gitDir, canonicalConfigForAlgorithm("sha1"))
@@ -190,6 +191,9 @@ func TestExactGitLocalStateDifferential(t *testing.T) {
 				subErr := validateExactGitConfigWithContext(ctx, repo)
 				format, formatErr := exactGitOutputWithContext(ctx, repo, "rev-parse", "--show-object-format")
 				if !ok {
+					if tc.wantAccept {
+						t.Fatalf("fast path declined a fixture that must be accepted; subprocess validation err=%v format=%q/%v", subErr, format, formatErr)
+					}
 					t.Logf("fast path declined; subprocess validation err=%v format=%q/%v", subErr, format, formatErr)
 					return
 				}
@@ -203,6 +207,9 @@ func TestExactGitLocalStateDifferential(t *testing.T) {
 			}
 			subprocess, subErr := runSubprocessLocalState(ctx, repo)
 			if !ok {
+				if tc.wantAccept {
+					t.Fatalf("fast path declined a fixture that must be accepted; subprocess state=%+v err=%v", subprocess, subErr)
+				}
 				t.Logf("fast path declined; subprocess state=%+v err=%v", subprocess, subErr)
 				return
 			}

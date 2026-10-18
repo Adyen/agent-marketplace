@@ -176,6 +176,8 @@ func TestLongRunningCommandsKeepNoCommandScope(t *testing.T) {
 	if isolateCommandTest(t) {
 		return
 	}
+	setupTelemetryHome(t)
+	t.Setenv("AGENT_MARKETPLACE_NO_UPDATE_CHECK", "1")
 	root := newRootCmd()
 	commands := map[string]*cobra.Command{}
 	for _, cmd := range root.Commands() {
@@ -189,7 +191,9 @@ func TestLongRunningCommandsKeepNoCommandScope(t *testing.T) {
 	for _, name := range []string{"serve", "tui"} {
 		cmd := commands[name]
 		cmd.SetContext(context.Background())
-		if err := root.PersistentPreRunE(cmd, nil); err != nil {
+		err := root.PersistentPreRunE(cmd, nil)
+		finishRootLogging(err)
+		if err != nil {
 			t.Fatalf("%s pre-run: %v", name, err)
 		}
 		if cache.ExactGitVerificationScopePresent(cmd.Context()) {
@@ -198,7 +202,9 @@ func TestLongRunningCommandsKeepNoCommandScope(t *testing.T) {
 	}
 	sync := commands["sync"]
 	sync.SetContext(context.Background())
-	if err := root.PersistentPreRunE(sync, nil); err != nil {
+	err := root.PersistentPreRunE(sync, nil)
+	finishRootLogging(err)
+	if err != nil {
 		t.Fatalf("sync pre-run: %v", err)
 	}
 	if !cache.ExactGitVerificationScopePresent(sync.Context()) {
