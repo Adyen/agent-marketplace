@@ -1,0 +1,316 @@
+package materialize
+
+// R2 frozen-ledger reproductions; see docs/issues/2026-10-18-security-r2-frozen-ledger.md.
+
+import (
+	"context"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/Adyen/agent-marketplace/internal/catalog"
+	"github.com/Adyen/agent-marketplace/internal/config"
+	"github.com/Adyen/agent-marketplace/internal/resolver"
+	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
+	targetmeta "github.com/Adyen/agent-marketplace/pkg/harness-compilation/target"
+)
+
+func r2Diags(report *Report) string {
+	var b strings.Builder
+	for _, d := range report.Diags {
+		b.WriteString(d.Severity.String() + " " + d.Code + ": " + d.Message + "\n")
+	}
+	return b.String()
+}
+
+// A31/F24: an owned Codex MCP server whose tables are interleaved with an
+// unrelated handwritten table.
+func TestR2LedgerA31CodexInterleavedTable(t *testing.T) {
+	for _, change := range []string{"update", "retire"} {
+		t.Run(change, func(t *testing.T) {
+			root := t.TempDir()
+			t.Setenv("XDG_STATE_HOME", t.TempDir())
+			key := outputKey{target: targetmeta.TargetCodex}
+			first, err := codexDesiredMCP([]byte("[mcp_servers.foo]\ncommand = 'inert-a'\n\n[mcp_servers.foo.env]\nK = 'v'\n"), "foo")
+			if err != nil {
+				t.Fatal(err)
+			}
+			report := reconcileCodexMCP(context.Background(), &Report{PerTarget: map[targetmeta.Target]TargetReport{}}, key, "", root, first, false, false)
+			requireNoErrorDiags(t, report.Diags)
+			abs := filepath.Join(root, codexMCPFile)
+			installed, err := os.ReadFile(abs)
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Logf("installed:\n%s", installed)
+			text := string(installed)
+			envHeader := strings.Index(text, "[mcp_servers.\"foo\".env]")
+			if envHeader < 0 {
+				envHeader = strings.Index(text, "[mcp_servers.foo.env]")
+			}
+			if envHeader < 0 {
+				t.Fatalf("env table not found")
+			}
+			interleaved := text[:envHeader] + "[profiles.safe]\nhandwritten = true\n\n" + text[envHeader:]
+			if err := os.WriteFile(abs, []byte(interleaved), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			var desired []codexMCPEntry
+			if change == "update" {
+				desired, err = codexDesiredMCP([]byte("[mcp_servers.foo]\ncommand = 'inert-b'\n\n[mcp_servers.foo.env]\nK = 'v'\n"), "foo")
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			report = reconcileCodexMCP(context.Background(), &Report{PerTarget: map[targetmeta.Target]TargetReport{}}, key, "", root, desired, false, false)
+			after, _ := os.ReadFile(abs)
+			t.Logf("diags:\n%s", r2Diags(report))
+			t.Logf("after:\n%s", after)
+			if !strings.Contains(string(after), "[profiles.safe]") {
+				t.Errorf("REPRODUCED: handwritten [profiles.safe] table deleted by %s", change)
+			}
+		})
+	}
+}
+
+// A31/F24 through materialize.Run: value-equivalent owned tables interleaved
+// with a handwritten table, then the source changes or is retired.
+func TestR2LedgerA31CodexInterleavedTableRun(t *testing.T) {
+	for _, change := range []string{"update", "retire"} {
+		t.Run(change, func(t *testing.T) {
+			repo, home := t.TempDir(), t.TempDir()
+			t.Setenv("HOME", home)
+			t.Setenv("CODEX_HOME", filepath.Join(home, ".codex"))
+			t.Setenv("XDG_STATE_HOME", filepath.Join(home, "state"))
+			t.Setenv("XDG_CACHE_HOME", filepath.Join(home, "cache"))
+			server := func(command string) resolver.ResolvedArtifact {
+				return codexResource("foo", ir.NewMcpServer("foo", command, nil, map[string]string{"K": "v"}, nil, ir.SourceRef{}), config.RepoCommitted)
+			}
+			keep := codexResource("keep", ir.NewMcpServer("keep", "inert-keep", nil, nil, nil, ir.SourceRef{}), config.RepoCommitted)
+			report, err := Run(context.Background(), repo, []resolver.ResolvedArtifact{server("inert-a"), keep})
+			if err != nil {
+				t.Fatal(err)
+			}
+			requireNoErrorDiags(t, report.Diags)
+			abs := filepath.Join(repo, ".codex", "config.toml")
+			installed, err := os.ReadFile(abs)
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Logf("installed:\n%s", installed)
+			text := string(installed)
+			envHeader := strings.Index(text, "[mcp_servers.\"foo\".env]")
+			if envHeader < 0 {
+				t.Fatalf("unexpected installed shape")
+			}
+			// A handwritten table placed between the owned server's tables;
+			// the owned value is unchanged.
+			rewritten := text[:envHeader] + "[profiles.safe]\nhandwritten = true\n\n" + text[envHeader:]
+			if err := os.WriteFile(abs, []byte(rewritten), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			t.Logf("rewritten:\n%s", rewritten)
+			next := []resolver.ResolvedArtifact{keep}
+			if change == "update" {
+				next = append(next, server("inert-b"))
+			}
+			report, err = Run(context.Background(), repo, next)
+			if err != nil {
+				t.Fatal(err)
+			}
+			after, _ := os.ReadFile(abs)
+			t.Logf("diags:\n%s", r2Diags(report))
+			t.Logf("after:\n%s", after)
+			if !strings.Contains(string(after), "[profiles.safe]") {
+				t.Errorf("REPRODUCED via Run: handwritten [profiles.safe] deleted by %s", change)
+			}
+		})
+	}
+}
+
+// F146: CODEX_HOME spelled with different letter case than the repository
+// .codex directory on a case-insensitive filesystem.
+func TestR2LedgerF146CaseAliasedCodexHome(t *testing.T) {
+	for _, spelling := range []string{".codex", ".CODEX"} {
+		t.Run(spelling, func(t *testing.T) {
+			repo := t.TempDir()
+			home := t.TempDir()
+			t.Setenv("HOME", home)
+			t.Setenv("XDG_STATE_HOME", filepath.Join(home, "state"))
+			t.Setenv("XDG_CACHE_HOME", filepath.Join(home, "cache"))
+			if err := os.MkdirAll(filepath.Join(repo, ".codex"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			alias := filepath.Join(repo, spelling)
+			if _, err := os.Stat(alias); err != nil {
+				t.Skipf("filesystem is case-sensitive: %v", err)
+			}
+			t.Setenv("CODEX_HOME", alias)
+			selection := []resolver.ResolvedArtifact{
+				codexSubagent("reviewer", "Repository definition.", config.RepoCommitted),
+				codexSubagent("reviewer", "Machine definition.", config.UserPersonal),
+			}
+			report, err := Run(context.Background(), repo, selection)
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Logf("diags:\n%s", r2Diags(report))
+			_, overlap := findDiag(report.Diags, diag.CodeMaterializeDestinationOverlap)
+			raw, readErr := os.ReadFile(filepath.Join(repo, ".codex", "agents", "reviewer.toml"))
+			t.Logf("overlap refusal=%v reviewer.toml err=%v contains-repo=%v contains-machine=%v", overlap, readErr, strings.Contains(string(raw), "Repository definition"), strings.Contains(string(raw), "Machine definition"))
+			if !overlap {
+				t.Errorf("REPRODUCED: no overlap refusal for CODEX_HOME=%s; one scope silently replaced the other", spelling)
+			}
+		})
+	}
+}
+
+// F141: .factory/hooks aliased into the repository's .git/hooks.
+func TestR2LedgerF141FactoryHooksIntoGitHooks(t *testing.T) {
+	home, repo, source := t.TempDir(), t.TempDir(), t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("CODEX_HOME", filepath.Join(home, ".codex"))
+	t.Setenv("XDG_STATE_HOME", filepath.Join(home, "state"))
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, "cache"))
+	if err := os.MkdirAll(filepath.Join(repo, ".git", "hooks"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(repo, ".factory"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join("..", ".git", "hooks"), filepath.Join(repo, ".factory", "hooks")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(source, "hooks.json"), []byte(`{"hooks":{"PostToolUse":[{"matcher":"","hooks":[{"type":"command","command":"inert"}]}]}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(source, "post-checkout"), []byte("inert support bytes\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	hook := ir.NewHook("probe", "PostToolUse", "inert", "command", nil, ir.SourceRef{})
+	resolved := []resolver.ResolvedArtifact{{Entry: catalog.Entry{Name: "probe", Path: source, Resource: hook}, Source: config.RepoCommitted, Harnesses: []hcc.Target{hcc.TargetFactory}}}
+	for _, mode := range []config.MaterializationMode{config.MaterializationModeSymlink, config.MaterializationModeFile} {
+		report, err := Run(context.Background(), repo, resolved, WithMaterializationModes(config.MaterializationModes{Project: mode, Machine: mode}))
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Logf("mode=%s diags:\n%s", mode, r2Diags(report))
+		entries, _ := os.ReadDir(filepath.Join(repo, ".git", "hooks"))
+		var names []string
+		for _, e := range entries {
+			names = append(names, e.Name())
+		}
+		t.Logf("mode=%s .git/hooks entries: %v", mode, names)
+		if len(names) != 0 {
+			t.Errorf("REPRODUCED: output written into .git/hooks: %v", names)
+		}
+		if info, err := os.Lstat(filepath.Join(repo, ".factory", "hooks")); err != nil || info.Mode()&os.ModeSymlink == 0 {
+			t.Errorf("ancestor alias changed: %v", err)
+		}
+	}
+}
+
+// F167: Claude repository .mcp.json is a link to an external JSON file.
+func TestR2LedgerF167ClaudeMCPExternalAlias(t *testing.T) {
+	for _, scope := range []config.Source{config.RepoCommitted, config.UserPersonal} {
+		t.Run(string(scope.LockScope()), func(t *testing.T) {
+			home, repo, external := t.TempDir(), t.TempDir(), t.TempDir()
+			t.Setenv("HOME", home)
+			t.Setenv("CODEX_HOME", filepath.Join(home, ".codex"))
+			t.Setenv("XDG_STATE_HOME", filepath.Join(home, "state"))
+			t.Setenv("XDG_CACHE_HOME", filepath.Join(home, "cache"))
+			payload := filepath.Join(external, "private.json")
+			const body = `{"mcpServers":{"foreign":{"command":"inert-foreign-secret"}},"token":"inert-secret"}`
+			if err := os.WriteFile(payload, []byte(body), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			leaf := filepath.Join(repo, ".mcp.json")
+			if scope == config.UserPersonal {
+				leaf = filepath.Join(home, ".claude.json")
+			}
+			if err := os.Symlink(payload, leaf); err != nil {
+				t.Fatal(err)
+			}
+			resolved := []resolver.ResolvedArtifact{{Entry: catalog.Entry{Name: "safe", Resource: ir.NewMcpServer("safe", "inert", nil, nil, nil, ir.SourceRef{})}, Source: scope, Harnesses: []hcc.Target{hcc.TargetClaude}}}
+			report, err := Run(context.Background(), repo, resolved)
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Logf("scope=%s diags:\n%s", scope, r2Diags(report))
+			info, lerr := os.Lstat(leaf)
+			raw, _ := os.ReadFile(payload)
+			t.Logf("leaf still link=%v external unchanged=%v", lerr == nil && info.Mode()&os.ModeSymlink != 0, string(raw) == body)
+			if lerr == nil && info.Mode()&os.ModeSymlink == 0 {
+				copied, _ := os.ReadFile(leaf)
+				if strings.Contains(string(copied), "inert-secret") {
+					t.Errorf("REPRODUCED: external JSON copied into the native file: %s", copied)
+				}
+			}
+		})
+	}
+}
+
+// A42: repository .devin/mcp_config.json links to the user's Devin config.
+func TestR2LedgerA42DevinMCPLeafAlias(t *testing.T) {
+	home, repo := t.TempDir(), t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("CODEX_HOME", filepath.Join(home, ".codex"))
+	t.Setenv("XDG_STATE_HOME", filepath.Join(home, "state"))
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, "cache"))
+	userCfg := filepath.Join(home, ".config", "devin", "mcp_config.json")
+	if err := os.MkdirAll(filepath.Dir(userCfg), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	const body = `{"mcpServers":{"personal":{"command":"inert","env":{"TOKEN":"inert-secret"}}}}`
+	if err := os.WriteFile(userCfg, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(repo, ".devin"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	leaf := filepath.Join(repo, ".devin", "mcp_config.json")
+	if err := os.Symlink(userCfg, leaf); err != nil {
+		t.Fatal(err)
+	}
+	resolved := []resolver.ResolvedArtifact{{Entry: catalog.Entry{Name: "safe", Resource: ir.NewMcpServer("safe", "inert", nil, nil, nil, ir.SourceRef{})}, Source: config.RepoCommitted, Harnesses: []hcc.Target{hcc.TargetDevin}}}
+	report, err := Run(context.Background(), repo, resolved)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("diags:\n%s", r2Diags(report))
+	info, lerr := os.Lstat(leaf)
+	raw, _ := os.ReadFile(userCfg)
+	t.Logf("leaf still link=%v user config unchanged=%v", lerr == nil && info.Mode()&os.ModeSymlink != 0, string(raw) == body)
+	if lerr == nil && info.Mode()&os.ModeSymlink == 0 {
+		copied, _ := os.ReadFile(leaf)
+		if strings.Contains(string(copied), "inert-secret") {
+			t.Errorf("REPRODUCED: user Devin secrets copied into the checkout: %s", copied)
+		}
+	}
+	if string(raw) != body {
+		t.Errorf("REPRODUCED: user Devin config modified")
+	}
+}
+
+// F144: Codex MCP duplicate identity refusal relative to other Codex output.
+func TestR2LedgerF144CodexPartialOutputs(t *testing.T) {
+	repo, home := t.TempDir(), t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("CODEX_HOME", filepath.Join(home, ".codex"))
+	t.Setenv("XDG_STATE_HOME", filepath.Join(home, "state"))
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, "cache"))
+	a := codexResource("alpha", ir.NewMcpServer("same", "inert-a", nil, nil, nil, ir.SourceRef{}), config.RepoCommitted)
+	b := codexResource("beta", ir.NewMcpServer("same", "inert-b", nil, nil, nil, ir.SourceRef{}), config.RepoCommitted)
+	agent := codexSubagent("reviewer", "Independent selected agent.", config.RepoCommitted)
+	report, err := Run(context.Background(), repo, []resolver.ResolvedArtifact{a, b, agent})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("diags:\n%s", r2Diags(report))
+	_, agentErr := os.Lstat(filepath.Join(repo, ".codex", "agents", "reviewer.toml"))
+	_, cfgErr := os.Lstat(filepath.Join(repo, ".codex", "config.toml"))
+	t.Logf("independent agent installed=%v config.toml exists=%v", agentErr == nil, cfgErr == nil)
+}

@@ -1,0 +1,94 @@
+package backup
+
+// R2 frozen-ledger reproductions; see docs/issues/2026-10-18-security-r2-frozen-ledger.md.
+
+import (
+	"archive/tar"
+	"compress/gzip"
+	"os"
+	"path/filepath"
+	"testing"
+
+	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
+)
+
+type r2Member struct {
+	name, link, body string
+	symlink          bool
+}
+
+func r2PlantArchive(t *testing.T, home string, members []r2Member) {
+	t.Helper()
+	dir := filepath.Join(home, ".agent-marketplace", "backups", "claude")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	f, err := os.OpenFile(filepath.Join(dir, "9999-12-31-235959.tar.gz"), os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gz := gzip.NewWriter(f)
+	tw := tar.NewWriter(gz)
+	for _, m := range members {
+		h := &tar.Header{Name: m.name, Mode: 0o600, Size: int64(len(m.body)), Typeflag: tar.TypeReg}
+		if m.symlink {
+			h = &tar.Header{Name: m.name, Linkname: m.link, Mode: 0o777, Typeflag: tar.TypeSymlink}
+		}
+		if err := tw.WriteHeader(h); err != nil {
+			t.Fatal(err)
+		}
+		if !m.symlink {
+			if _, err := tw.Write([]byte(m.body)); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	for _, c := range []interface{ Close() error }{tw, gz, f} {
+		if err := c.Close(); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+// F124: a planted archive tries to replace the harness root with a link and
+// write through it.
+func TestR2LedgerF124RestoreRootLink(t *testing.T) {
+	for _, link := range []string{".ssh", "../.ssh"} {
+		t.Run(link, func(t *testing.T) {
+			home := t.TempDir()
+			t.Setenv("HOME", home)
+			claude := filepath.Join(home, ".claude")
+			for _, d := range []string{claude, filepath.Join(home, ".ssh"), filepath.Join(claude, ".ssh")} {
+				if err := os.MkdirAll(d, 0o700); err != nil {
+					t.Fatal(err)
+				}
+			}
+			r2PlantArchive(t, home, []r2Member{{name: ".", link: link, symlink: true}, {name: "authorized_keys", body: "inert-key\n"}})
+			_, err := Restore(hcc.TargetClaude, claude)
+			info, statErr := os.Lstat(claude)
+			_, sshErr := os.Lstat(filepath.Join(home, ".ssh", "authorized_keys"))
+			_, nestedErr := os.Lstat(filepath.Join(claude, ".ssh", "authorized_keys"))
+			t.Logf("link=%s restore err=%v root-is-real-dir=%v home/.ssh/authorized_keys exists=%v claude/.ssh/authorized_keys exists=%v", link, err, statErr == nil && info.IsDir() && info.Mode()&os.ModeSymlink == 0, sshErr == nil, nestedErr == nil)
+			if sshErr == nil || nestedErr == nil || statErr != nil || info.Mode()&os.ModeSymlink != 0 {
+				t.Errorf("REPRODUCED: restore escaped through a root link")
+			}
+		})
+	}
+}
+
+// F126: a planted archive overwrites an existing harness configuration file.
+func TestR2LedgerF126RestoreOverwritesExisting(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	claude := filepath.Join(home, ".claude")
+	if err := os.MkdirAll(claude, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(claude, "settings.json"), []byte("{\"user\":true}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	r2PlantArchive(t, home, []r2Member{{name: "settings.json", body: "{\"planted\":true}\n"}})
+	_, err := Restore(hcc.TargetClaude, claude)
+	raw, _ := os.ReadFile(filepath.Join(claude, "settings.json"))
+	t.Logf("restore err=%v settings.json now=%q", err, raw)
+}
