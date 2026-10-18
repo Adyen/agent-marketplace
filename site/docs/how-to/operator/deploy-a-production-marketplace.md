@@ -7,7 +7,7 @@ Run the hosted Marketplace with separate API and worker processes, external stor
 - PostgreSQL and an S3-compatible bucket. SQLite and filesystem storage suit only a single all-in-one replica.
 - A TLS-terminating reverse proxy or ingress that enforces authentication. The application has none.
 - A secret store for the database DSN and any registry credentials.
-- Container images at an immutable tag or digest: the API and worker images built from `Dockerfile.marketplace`, the Nuxt UI image, and the documentation-only VitePress image. Only the worker image contains Git, which acquisition needs.
+- Container images at an immutable tag or digest: the API and worker images built from `Dockerfile.marketplace`, the Nuxt UI image, and the documentation-only VitePress image. Only the worker image contains Git, which acquisition needs. Every release publishes ready-made images to GHCR: `ghcr.io/adyen/agent-marketplace/worker`, `ghcr.io/adyen/agent-marketplace/api`, and `ghcr.io/adyen/agent-marketplace/web`, tagged with the release tag.
 
 ## 1. Pick a packaging
 

@@ -30,6 +30,7 @@ const (
 	TargetGemini   = mapping.TargetGemini
 	TargetDevin    = mapping.TargetDevin
 	TargetCodex    = mapping.TargetCodex
+	TargetOpenCode = mapping.TargetOpenCode
 )
 
 // Compiler is the interface that each target compiler must implement.
@@ -182,9 +183,9 @@ func GuardNativeCodexTranslation(resource ir.Resource, target Target, translate 
 		clone.HookSource = string(TargetCodex)
 		resource = &clone
 	}
-	nativeDiagnostics := codexNativeLossDiagnostics(resource, target)
+	nativeDiagnostics := append(openCodeNativeLossDiagnostics(resource, target), codexNativeLossDiagnostics(resource, target)...)
 	if diag.HasErrors(nativeDiagnostics) {
-		slog.Warn("compile suppressed native Codex resource", "target", target, "resource", resource.Name(), "diagnostic", nativeDiagnostics[0].Code)
+		slog.Warn("compile suppressed native resource", "target", target, "resource", resource.Name(), "diagnostic", nativeDiagnostics[0].Code)
 		return nil, nativeDiagnostics, nil
 	}
 	artifacts, diagnostics, err := translate(resource)
@@ -195,7 +196,7 @@ func GuardNativeCodexTranslation(resource ir.Resource, target Target, translate 
 		}
 	}
 	if len(missing) > 0 {
-		slog.Warn("compile omitted native Codex field", "target", target, "resource", resource.Name(), "diagnostic", missing[0].Code)
+		slog.Warn("compile omitted native field", "target", target, "resource", resource.Name(), "diagnostic", missing[0].Code)
 		diagnostics = append(missing, diagnostics...)
 	}
 	return artifacts, diagnostics, err
@@ -341,6 +342,7 @@ func Compile(r ir.Resource, t Target, opts ...Option) (*Result, error) {
 		diags []diag.Diagnostic
 		err   error
 	)
+	r = normalizeFactoryToolsCategory(r)
 	arts, diags, err = GuardNativeCodexTranslation(r, t, func(resource ir.Resource) ([]artifact.Artifact, []diag.Diagnostic, error) {
 		return translateSafely(c, resource, *cfg)
 	})
@@ -361,13 +363,17 @@ func Compile(r ir.Resource, t Target, opts ...Option) (*Result, error) {
 }
 
 // codexNativeLossDiagnostics prevents target-specific Codex sidecars from
-// disappearing or being reinterpreted when a native resource leaves Codex.
+// disappearing or being reinterpreted when a native resource leaves Codex, and
+// from contradicting the canonical MCP server when compiling to Codex.
 func codexNativeLossDiagnostics(resource ir.Resource, target Target) []diag.Diagnostic {
-	if target == TargetCodex {
-		return nil
-	}
 	diagnostic := func(code string, severity diag.Severity, message string, source ir.SourceRef) []diag.Diagnostic {
 		return []diag.Diagnostic{{Code: code, Severity: severity, Target: string(target), Resource: resource.Name(), Message: message, Source: diag.SourceRef(source)}}
+	}
+	if target == TargetCodex {
+		if server, ok := resource.(*ir.McpServer); ok && server.Ext.Codex != nil && !codexMCPMatchesCanonical(server, server.Ext.Codex.MCP) {
+			return diagnostic(diag.CodeMcpCodexSecurityUnsupported, diag.SeverityError, "A native Codex MCP sidecar does not match the canonical server; server suppressed", server.Source)
+		}
+		return nil
 	}
 	switch typed := resource.(type) {
 	case *ir.Subagent:
@@ -403,7 +409,7 @@ func codexNativeLossDiagnostics(resource ir.Resource, target Target) []diag.Diag
 		if ext.MCP != nil {
 			placement = ext.MCP.ExperimentalEnvironment
 		}
-		if ext.BearerTokenEnvVar != "" || len(ext.EnvHTTPHeaders) > 0 || ext.MCP != nil && len(ext.MCP.RemoteEnvVars) > 0 || placement != "" && placement != "local" || codexMCPLiteralsContainInterpolation(ext.MCP, target) || !codexMCPMatchesCanonical(typed, ext.MCP) {
+		if ext.BearerTokenEnvVar != "" || len(ext.EnvHTTPHeaders) > 0 || ext.MCP != nil && len(ext.MCP.RemoteEnvVars) > 0 || placement != "" && placement != "local" || codexMCPLiteralsContainInterpolation(ext.MCP) || !codexMCPMatchesCanonical(typed, ext.MCP) {
 			return diagnostic(diag.CodeMcpSecurityRestrictionUnsupported, diag.SeverityError, "Target cannot preserve native Codex MCP authority or literal semantics; server suppressed", typed.Source)
 		}
 		if placement == "local" {
@@ -413,19 +419,12 @@ func codexNativeLossDiagnostics(resource ir.Resource, target Target) []diag.Diag
 	return nil
 }
 
-func codexMCPLiteralsContainInterpolation(native *extpkg.CodexMCP, target Target) bool {
+func codexMCPLiteralsContainInterpolation(native *extpkg.CodexMCP) bool {
 	if native == nil {
 		return false
 	}
 	reinterpreted := func(value string) bool {
-		if strings.Contains(value, "${") {
-			return true
-		}
-		if target != TargetWindsurf {
-			return false
-		}
-		_, shellReference := mapping.WindsurfShellEnvName(value)
-		return shellReference
+		return strings.Contains(value, "${")
 	}
 	if reinterpreted(native.Command) || reinterpreted(native.CWD) || reinterpreted(native.URL) {
 		return true

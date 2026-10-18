@@ -68,7 +68,7 @@ const resources = [
         </span>
         <div>
           <h3>Your infrastructure</h3>
-          <p>Deploy with Docker Compose or Helm.</p>
+          <p>Run the Marketplace in the environment your team already operates.</p>
         </div>
       </article>
     </div>

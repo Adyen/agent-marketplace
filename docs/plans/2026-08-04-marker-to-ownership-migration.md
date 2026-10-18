@@ -389,7 +389,7 @@ and outside the cache. `git checkout` does not undo it, `rm -rf ~/.cache/...`
 does not undo it (by design: "Cache deletion has no ownership effect"), and
 reverting the binary does not undo it. There are therefore exactly three
 rollback levers, and the plan requires all three to be documented in
-`docs/adoption-guide.md` **as part of the pilot bead M4**, not afterwards.
+`site/docs/how-to/adopt-agent-marketplace-in-a-repository.md` **as part of the pilot bead M4**, not afterwards.
 
 1. **Restore the file.** Every mutated aggregate has raw pre-mutation bytes
    under the state root, mandatory even when configured backups are disabled,
@@ -642,7 +642,7 @@ through the M1 engine with `McpIdentityDigest` and `HookIdentityDigest` identiti
 protect them from `stripManagedEntriesFromFile`. Because this bead is the first
 real migration, it also owns the user-facing documentation of the whole
 transition: the rollback levers, the `doctor --repair` adoption step, and the
-downgrade caveat, in `docs/adoption-guide.md`, `CHANGELOG.md`, and `AGENTS.md`.
+downgrade caveat, in `site/docs/how-to/adopt-agent-marketplace-in-a-repository.md`, `CHANGELOG.md`, and `AGENTS.md`.
 
 *Acceptance:* the full test bar in section 6 for both Cursor files; a
 pre-migration fixture with marked entries adopts byte-neutrally under

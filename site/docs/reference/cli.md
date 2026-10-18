@@ -156,8 +156,8 @@ https://host/r/registry/kind/name[/revisions/sha256:<64 lowercase hex>]
 |---|---|:---:|---|---|
 | `--scope` | string | no | endpoint: `user`; resource: `repo` | Configuration layer: `repo`, `user`, or `local`. |
 | `--kind` | string | no | `skill` where a kind is needed | Selects `skill`, `command`, `subagent`, `hook`, or `mcp`, and disambiguates a named registry resource. |
-| `--tag` | string | no | none | Installs registry resources whose metadata contains the tag. Without `--kind`, at least one skill must carry the tag. Works only in `repo` scope (or with no `--scope`). Cannot be combined with a resource name, `--all`, `--from`, or a Marketplace locator. |
-| `--all` | boolean | no | `false` | Installs every discovered registry resource, or only those of `--kind` when you give it. Works only in `repo` scope (or with no `--scope`). |
+| `--tag` | string | no | none | Installs registry resources whose metadata contains the tag. Without `--kind`, at least one skill must carry the tag. Supports `repo` (default), `user`, and `local` scope. Cannot be combined with a resource name, `--all`, `--from`, or a Marketplace locator. |
+| `--all` | boolean | no | `false` | Installs every discovered registry resource, or only those of `--kind` when you give it. Supports `repo` (default), `user`, and `local` scope. |
 | `--registry` | string | no | all configured registries | Limits `--all` to one configured registry. Requires `--all`. Matches the URL the way `update` and `lock` do, so a `.git` suffix or a trailing slash makes no difference, and looks in every config layer. The same source declared in several layers counts as one. If the URL names entries with different refs or paths, the command refuses and lists them. |
 | `--from` | string | no | configured registries | Installs directly from an ad hoc Git URL, GitHub web URL, or GitLab web URL. Without a resource name, installs the whole registry. |
 | `--ref` | string | no | inferred or registry default | Selects a branch, tag, or commit for `--from`. Requires `--from`. |
@@ -167,6 +167,17 @@ https://host/r/registry/kind/name[/revisions/sha256:<64 lowercase hex>]
 | `--accept-risk` | boolean | no | `false` | Accepts security findings for the verified revision. |
 | `--yes` | boolean | no | `false` | Same as `--accept-risk`, for automation. |
 | `-v`, `--verbose` | boolean | no | `false` | Shows every collection member and the technical Marketplace preview: revisions, digests, acquisition details, and provenance (where the artifact came from). |
+
+Bulk installs use the selected scope's configuration, acquisition lock, and
+output roots, just like named installs:
+
+```bash
+agent-marketplace install --tag security --scope user
+agent-marketplace install --all --scope local
+```
+
+User scope cannot copy a repository-relative directory source into the user
+configuration; use an absolute directory path or a Git source instead.
 
 `--as`, `--accept-risk`, and `--yes` work only with a single Marketplace resource. With `--marketplace <url>`, pass the full resource URL as the locator. In the current release, a short `registry/kind/name` locator combined with an endpoint URL fails with an `invalid browser locator` error, so the full URL or an alias is required. If you pass a GitHub or GitLab web URL that names a branch or tag as the resource name, the command stops and tells you to use `--from` instead.
 
@@ -196,6 +207,18 @@ Removes an explicit selection, or records an exclusion when the resource was sel
 For hosted Marketplace pins, removing a direct resource clears its direct selection but keeps it if a collection still includes it. Removing a collection clears that collection and removes the members no longer kept by anything else. You can remove a resource installed with `--as` by either its local name or its canonical Marketplace name. A name that matches more than one direct pin is refused.
 
 Named removals, collection-member exclusions, removals of bulk/tag-selected resources, and ad-hoc removals use the v4 editor and preserve unrelated selections and scopes. Included-fragment ownership and required-resource policy still apply. Hosted sources retain their supported explicit-selection and lock rules; unsupported hosted options still refuse. See [configuration requirements and current limits](../explanation/user-journeys.md#before-following-a-journey).
+
+Removal from a shared native hook aggregate requires ownership proof for an
+active entry that would no longer be selected. A teammate's committed hook, an
+identical handwritten entry, or missing or damaged ownership state can therefore
+cause `hook.remove-unowned`.
+The command refuses before changing configuration, acquisition locks or hook
+files and names the native file where the hook remains active. Review that file
+and deliberately remove the hook, or explicitly repair ownership before retrying.
+Matching commands do not authorize automatic deletion. An entry still selected
+by another hook does not block removing one contributor.
+File-based hook targets, such as OpenCode, retain their ordinary file-ownership
+and removal rules.
 
 ```text
 agent-marketplace remove <resource-name> [flags]
@@ -246,7 +269,9 @@ On success the command prints `Locks: <n> changed`.
 
 `lock --check` reads the existing config, lock, and exact snapshot files. It does not recover pending transactions, contact remotes, or fill the cache. A fresh lock whose exact snapshot is missing from a cold cache reports `lock.snapshot-unavailable`. A stale or missing lock reports the needed change without fetching it. A writing run holds the shared exact-cache lease from before its first snapshot fetch or check until the config and lock are published, so `gc` cannot delete a new snapshot before the published lock references it.
 
-The lockfile paths are `/etc/agent-marketplace/lock.yaml`, `~/.agents/lock.yaml`, `.agents/lock.yaml`, and `.agents/lock.local.yaml`. Commit the repository lock and keep the personal-local lock out of Git. Some organizations never deploy an organization lock, and the CLI supports that permanently. In that case online commands may fetch organization Git sources from their current ref, or resolve explicit Marketplace requests into a verified lock held only in memory, but they never create the organization lock. Offline Marketplace resolution needs a deployed lock. A present organization lock is exact: if it is malformed, untrusted, or mismatched, commands refuse to continue and change nothing. Plain directory registries are read live and never appear in these locks.
+When configuration and lock validation succeed, `lock --check` reports every selected writable scope with an unrecorded resource-free Marketplace endpoint registration in one run. Each `lock.change-required` diagnostic names its scope, lock path, and endpoints, in user, repository, then personal-local order. An explicit `--scope` limits these registration diagnostics to that scope; checks still acquire nothing and write nothing.
+
+The lockfile paths are `/etc/agent-marketplace/lock.yaml`, `~/.agents/lock.yaml`, `.agents/lock.yaml`, and `.agents/lock.local.yaml`. Commit the repository lock and keep the personal-local lock out of Git. Some organizations never deploy an organization lock, and the CLI supports that permanently. In that case online commands may fetch organization Git sources from their current ref, or resolve explicit Marketplace requests into a verified lock held only in memory, but they never create the organization lock. Offline Marketplace resolution needs a deployed lock. A present organization lock is exact: if it is malformed, untrusted, or mismatched, commands refuse to continue and change nothing. `lock --scope organization` is the one exception for a mismatch. It reconciles the lock, re-resolving only the Git entries whose source or ref changed while keeping the rest at their locked commits. Plain directory registries are read live and never appear in these locks.
 
 ## `sync`
 

@@ -22,5 +22,9 @@ func LoadCommand(src fs.FS, path string) (*ir.Command, error) {
 	}
 
 	description, _ := fm["description"].(string)
-	return ir.NewCommand(name, description, body, extraFields(fm, commandKnownKeys), sourceRef(path)), nil
+	command := ir.NewCommand(name, description, body, extraFields(fm, commandKnownKeys), sourceRef(path))
+	if _, ok := fm["allowed-tools"]; ok {
+		command.ToolSource = "factory"
+	}
+	return command, nil
 }

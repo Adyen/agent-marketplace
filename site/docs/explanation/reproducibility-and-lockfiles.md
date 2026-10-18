@@ -62,3 +62,5 @@ After either command, review the change to `.agents/lock.yaml` and commit it lik
 
 - [Lockfiles reference](../reference/lockfiles.md)
 - [How to keep resources reproducible](../how-to/keep-resources-reproducible.md)
+- [How upstream changes reach consumers](./how-upstream-changes-reach-consumers.md)
+- [How to review and roll back an update](../how-to/review-and-roll-back-updates.md)

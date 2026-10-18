@@ -68,6 +68,9 @@ func translateSubagent(s *ir.Subagent, opts compile.Options) ([]artifact.Artifac
 	errs = append(errs, nestedNameDiagnostics(name, source)...)
 	errs = append(errs, builtinNameDiagnostics(name, source)...)
 	errs = append(errs, securityRestrictionDiagnostics(s, source)...)
+	if compile.SubagentReadOnly(s) {
+		errs = append(errs, compile.ReadOnlyUnsupported(mapping.TargetDevin, s))
+	}
 
 	// An unrepresentable allowed-tools restriction is NOT one of the fail-closed
 	// checks any more (bead agent-marketplace-pu6b): it omits the key, warns,

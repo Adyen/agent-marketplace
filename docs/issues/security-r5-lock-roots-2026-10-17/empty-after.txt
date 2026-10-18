@@ -1,0 +1,21 @@
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/internal/lockfile
+cpu: Apple M4 Max
+BenchmarkProjectGitRootsWithoutRequirements/roots=0-16         	938563674	         2.550 ns/op	       0 B/op	       0 allocs/op
+BenchmarkProjectGitRootsWithoutRequirements/roots=0-16         	930389122	         2.543 ns/op	       0 B/op	       0 allocs/op
+BenchmarkProjectGitRootsWithoutRequirements/roots=0-16         	1000000000	         2.015 ns/op	       0 B/op	       0 allocs/op
+BenchmarkProjectGitRootsWithoutRequirements/roots=0-16         	1000000000	         2.247 ns/op	       0 B/op	       0 allocs/op
+BenchmarkProjectGitRootsWithoutRequirements/roots=0-16         	1000000000	         2.142 ns/op	       0 B/op	       0 allocs/op
+BenchmarkProjectGitRootsWithoutRequirements/roots=1-16         	947521614	         2.464 ns/op	       0 B/op	       0 allocs/op
+BenchmarkProjectGitRootsWithoutRequirements/roots=1-16         	1000000000	         2.065 ns/op	       0 B/op	       0 allocs/op
+BenchmarkProjectGitRootsWithoutRequirements/roots=1-16         	1000000000	         2.032 ns/op	       0 B/op	       0 allocs/op
+BenchmarkProjectGitRootsWithoutRequirements/roots=1-16         	971583214	         2.128 ns/op	       0 B/op	       0 allocs/op
+BenchmarkProjectGitRootsWithoutRequirements/roots=1-16         	1000000000	         2.023 ns/op	       0 B/op	       0 allocs/op
+BenchmarkProjectGitRootsWithoutRequirements/roots=2048-16      	1000000000	         2.302 ns/op	       0 B/op	       0 allocs/op
+BenchmarkProjectGitRootsWithoutRequirements/roots=2048-16      	1000000000	         2.018 ns/op	       0 B/op	       0 allocs/op
+BenchmarkProjectGitRootsWithoutRequirements/roots=2048-16      	1000000000	         2.234 ns/op	       0 B/op	       0 allocs/op
+BenchmarkProjectGitRootsWithoutRequirements/roots=2048-16      	1000000000	         2.106 ns/op	       0 B/op	       0 allocs/op
+BenchmarkProjectGitRootsWithoutRequirements/roots=2048-16      	1000000000	         2.328 ns/op	       0 B/op	       0 allocs/op
+PASS
+ok  	github.com/Adyen/agent-marketplace/internal/lockfile	32.942s

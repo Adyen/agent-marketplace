@@ -351,9 +351,6 @@ func Install(ctx context.Context, opts InstallOptions) (result *InstallResult, r
 	var installedResources []resourceIdentity
 	var mutateInstall func(*LayerMutation) error
 	if trimmedTag := strings.TrimSpace(opts.Tag); trimmedTag != "" {
-		if opts.Scope != ScopeRepo {
-			return nil, fmt.Errorf("--tag is only supported with --scope repo (or no --scope)")
-		}
 		if hasKind {
 			installed = matchingResourceNamesByTag(catalogs, trimmedTag, kind)
 			if len(installed) == 0 {
@@ -392,16 +389,14 @@ func Install(ctx context.Context, opts InstallOptions) (result *InstallResult, r
 			installedResources = resourceIdentities(ir.KindSkill, installed)
 		}
 	} else if opts.InstallAll {
-		if opts.Scope != ScopeRepo {
-			return nil, fmt.Errorf("--all is only supported with --scope repo (or no --scope)")
-		}
-		selectedEntries, err := installRegistrySelection(discoveryCfg.Registries, opts.Registry, config.RepoCommitted)
+		target := scopeToConfigSource(opts.Scope)
+		selectedEntries, err := installRegistrySelection(discoveryCfg.Registries, opts.Registry, target)
 		if err != nil {
 			return nil, err
 		}
 		if hasKind {
 			// Filter to the specified kind only.
-			installed, err = allDiscoveredResourceNames(discoveryCfg.Registries, catalogs, opts.Registry, config.RepoCommitted, kind)
+			installed, err = allDiscoveredResourceNames(discoveryCfg.Registries, catalogs, opts.Registry, target, kind)
 			if err != nil {
 				return nil, err
 			}
@@ -414,7 +409,7 @@ func Install(ctx context.Context, opts InstallOptions) (result *InstallResult, r
 			var allInstalled []string
 			var steps []func(*LayerMutation) error
 			for _, k := range config.AllKinds {
-				names, err := allDiscoveredResourceNames(discoveryCfg.Registries, catalogs, opts.Registry, config.RepoCommitted, k)
+				names, err := allDiscoveredResourceNames(discoveryCfg.Registries, catalogs, opts.Registry, target, k)
 				if err != nil {
 					// If no resources of this kind exist, skip silently.
 					// Propagate all other errors (e.g. collisions).

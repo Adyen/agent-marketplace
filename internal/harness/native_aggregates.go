@@ -52,7 +52,7 @@ func nativeAggregateInstallPath(target hcc.Target, machineScope bool) string {
 
 func NativeAggregateBackupFiles(target hcc.Target) (map[string]string, error) {
 	files := make(map[string]string)
-	if len(nativeAggregateInstalls[target]) == 0 {
+	if len(nativeAggregateInstalls[target]) == 0 && target != hcc.TargetOpenCode {
 		return files, nil
 	}
 	destinations, err := ResolveDestinations(target, true, ".")

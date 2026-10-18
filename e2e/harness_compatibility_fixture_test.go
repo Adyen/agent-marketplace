@@ -11,6 +11,7 @@ import (
 )
 
 type compatibilityFixture struct {
+	target     string
 	registry   string
 	prefix     string
 	server     string
@@ -32,6 +33,7 @@ func buildCompatibilityHelper(t *testing.T, name string) string {
 
 func newCompatibilityFixture(e *Env, target, server string) compatibilityFixture {
 	f := compatibilityFixture{
+		target:     target,
 		registry:   filepath.Join(e.repos, "canonical"),
 		prefix:     "amcompat-" + target,
 		server:     server,
@@ -78,6 +80,11 @@ resources:
     kind: mcp
 `, f.name("collection"), f.name("skill"), f.name("command"), f.name("subagent"), f.name("mcp-a"), f.name("mcp-b"))
 	files["rule-source/.factory/rules/"+f.name("rule")+".md"] = "Always preserve " + f.name("rule-body") + ".\n"
+	if target == "opencode" {
+		// OpenCode supports only the before-tool command subset.
+		files[".claude/settings.json"] = fmt.Sprintf(`{"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":%q}]},{"matcher":"Read","hooks":[{"type":"command","command":%q}]}]}}`, f.hookCommand("hook-a"), f.hookCommand("hook-b"))
+		files["collections/"+f.name("collection")+"/COLLECTION.yaml"] = strings.ReplaceAll(files["collections/"+f.name("collection")+"/COLLECTION.yaml"], "UserPromptSubmit-command", "PreToolUse-command-2")
+	}
 	for path, content := range files {
 		e.WriteFile(filepath.Join(f.registry, filepath.FromSlash(path)), content)
 	}
@@ -116,17 +123,31 @@ func assertCompatibilityHookSource(t *testing.T, f compatibilityFixture) {
 	if err := json.Unmarshal(data, &settings); err != nil {
 		t.Fatalf("source .claude/settings.json is not grouped hook JSON: %v", err)
 	}
-	for event, command := range map[string]string{"PreToolUse": f.hookCommand("hook-a"), "UserPromptSubmit": f.hookCommand("hook-b")} {
-		groups := settings.Hooks[event]
-		if len(groups) != 1 || len(groups[0].Hooks) != 1 {
-			t.Fatalf("source event %s is not one matcher group with one handler: %s", event, data)
-		}
-		if groups[0].Hooks[0].Type != "command" || groups[0].Hooks[0].Command != command {
-			t.Fatalf("source event %s lost its command handler: %s", event, data)
+	type group struct{ event, matcher, command string }
+	want := []group{{"PreToolUse", "Bash", f.hookCommand("hook-a")}, {"UserPromptSubmit", "", f.hookCommand("hook-b")}}
+	if f.target == "opencode" {
+		// OpenCode supports only the before-tool command subset.
+		want = []group{{"PreToolUse", "Bash", f.hookCommand("hook-a")}, {"PreToolUse", "Read", f.hookCommand("hook-b")}}
+	}
+	counts := map[string]int{}
+	for _, w := range want {
+		counts[w.event]++
+	}
+	for event, count := range counts {
+		if len(settings.Hooks[event]) != count {
+			t.Fatalf("source event %s has %d matcher groups, want %d: %s", event, len(settings.Hooks[event]), count, data)
 		}
 	}
-	if settings.Hooks["PreToolUse"][0].Matcher != "Bash" {
-		t.Fatalf("source PreToolUse group lost matcher Bash: %s", data)
+	if len(settings.Hooks) != len(counts) {
+		t.Fatalf("source hooks declare unexpected events: %s", data)
+	}
+	seen := map[string]int{}
+	for _, w := range want {
+		g := settings.Hooks[w.event][seen[w.event]]
+		seen[w.event]++
+		if g.Matcher != w.matcher || len(g.Hooks) != 1 || g.Hooks[0].Type != "command" || g.Hooks[0].Command != w.command {
+			t.Fatalf("source %s group %q lost its command handler: %s", w.event, w.matcher, data)
+		}
 	}
 }
 
@@ -222,6 +243,21 @@ func compatibilityPaths(e *Env, target, scope string, f compatibilityFixture) ma
 		paths["subagent"] = []string{".codex/agents/" + f.name("subagent") + ".toml"}
 		paths["hook"] = []string{".codex/hooks.json"}
 		paths["mcp"] = []string{".codex/config.toml"}
+	case "opencode":
+		if scope == "user" {
+			root = ".config/opencode"
+		}
+		paths["skill"] = []string{root + "/skills/" + f.name("skill") + "/SKILL.md"}
+		paths["command"] = []string{root + "/commands/" + f.name("command") + ".md"}
+		paths["subagent"] = []string{root + "/agents/" + f.name("subagent") + ".md"}
+		paths["hook"] = []string{root + "/hooks/agent-marketplace/PreToolUse-command.json", root + "/hooks/agent-marketplace/PreToolUse-command-2.json"}
+		paths["mcp"] = []string{"opencode.json"}
+		if scope == "user" {
+			paths["mcp"] = []string{root + "/opencode.json"}
+			if _, err := os.Lstat(filepath.Join(base, root, "opencode.jsonc")); err == nil {
+				paths["mcp"] = []string{root + "/opencode.jsonc"}
+			}
+		}
 	}
 	for kind, entries := range paths {
 		for i, path := range entries {

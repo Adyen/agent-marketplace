@@ -54,7 +54,8 @@ const (
 // stored on the surrounding structure, never inside a value, so replacing a
 // value cannot disturb a neighbour's comments.
 type Node struct {
-	kind Kind
+	kind          Kind
+	trailingComma bool
 
 	// raw holds the exact source bytes for KindLiteral.
 	raw []byte
@@ -97,10 +98,18 @@ type Document struct {
 // *diag.CodedError values carrying json.duplicate-key or json.malformed plus
 // the 1-based line the failure was detected at.
 func Parse(file string, data []byte) (*Document, error) {
-	p := &parser{data: data}
+	return ParseWithOptions(file, data, ParseOptions{})
+}
+
+// ParseOptions enables syntax extensions required by a particular native format.
+type ParseOptions struct{ AllowTrailingCommas bool }
+
+// ParseWithOptions preserves native syntax while retaining duplicate-key checks.
+func ParseWithOptions(file string, data []byte, options ParseOptions) (*Document, error) {
+	p := &parser{data: data, allowTrailingCommas: options.AllowTrailingCommas}
 	doc := &Document{file: file}
 	doc.lead = p.trivia()
-	root, err := p.value("$")
+	root, err := p.value(jsonutil.RootPath())
 	if err != nil {
 		return nil, jsonutil.Coded(file, data, err)
 	}
@@ -434,6 +443,9 @@ func (n *Node) write(buf *bytes.Buffer) {
 			m.value.write(buf)
 			buf.Write(m.trail)
 		}
+		if n.trailingComma && len(n.members) > 0 {
+			buf.WriteByte(',')
+		}
 		buf.Write(n.tail)
 		buf.WriteByte('}')
 	case KindArray:
@@ -445,6 +457,9 @@ func (n *Node) write(buf *bytes.Buffer) {
 			buf.Write(e.lead)
 			e.value.write(buf)
 			buf.Write(e.trail)
+		}
+		if n.trailingComma && len(n.elements) > 0 {
+			buf.WriteByte(',')
 		}
 		buf.Write(n.tail)
 		buf.WriteByte(']')

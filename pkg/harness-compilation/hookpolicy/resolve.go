@@ -49,6 +49,7 @@ var eventUnmappableCodes = map[target.Target]string{
 	target.TargetWindsurf: diag.CodeHookWindsurfEventUnmappable,
 	target.TargetDevin:    diag.CodeHookDevinEventUnmappable,
 	target.TargetCodex:    diag.CodeHookCodexUnsupported,
+	target.TargetOpenCode: diag.CodeHookOpenCodeUnsupported,
 }
 
 var typeUnsupportedCodes = map[target.Target]string{
@@ -58,6 +59,7 @@ var typeUnsupportedCodes = map[target.Target]string{
 	target.TargetWindsurf: diag.CodeHookWindsurfUnsupportedType,
 	target.TargetDevin:    diag.CodeHookDevinUnsupportedType,
 	target.TargetCodex:    diag.CodeHookCodexUnsupported,
+	target.TargetOpenCode: diag.CodeHookOpenCodeUnsupported,
 }
 
 func eventUnmappableCode(dst target.Target) string {
@@ -93,6 +95,23 @@ func timeoutCappedCode(dst target.Target) string {
 
 func matcherSpec(c catalog) toolpolicy.MatcherSpec {
 	return toolpolicy.MatcherSpec{Syntax: c.Matcher.Syntax, Anchor: c.Matcher.Anchor, ExactLists: c.Matcher.ExactLists}
+}
+
+// MatcherSpecFor returns the shipped matcher syntax for harness h. Hooks
+// without source provenance use the Claude catalog, as Resolve does.
+func MatcherSpecFor(h target.Target) (toolpolicy.MatcherSpec, bool) {
+	if h == "" {
+		h = target.TargetClaude
+	}
+	r, err := shipped()
+	if err != nil {
+		return toolpolicy.MatcherSpec{}, false
+	}
+	c, ok := r.catalogs[h]
+	if !ok {
+		return toolpolicy.MatcherSpec{}, false
+	}
+	return matcherSpec(c), true
 }
 
 // IsDeclaredEvent reports whether the shipped hook catalog for h declares the
@@ -178,6 +197,10 @@ func Resolve(h *ir.Hook, dst target.Target, scope Scope, supportBase string) Res
 	dstCat, ok := r.catalogs[dst]
 	if !ok {
 		fail(eventUnmappableCode(dst), "Target has no shipped hook catalog; hook suppressed", "")
+		return res
+	}
+	if dst != target.TargetWindsurf && h.Ext.Windsurf != nil && h.Ext.Windsurf.HookWorkingDir != "" {
+		fail(diag.CodeHookWindsurfNativeFieldsUnsupported, "Target cannot preserve the native Windsurf hook working directory; hook suppressed", "Remove working_directory explicitly or keep the hook on Windsurf")
 		return res
 	}
 
@@ -409,6 +432,10 @@ func rewriteCommand(h *ir.Hook, srcCat, dstCat catalog, event string, scope Scop
 	pos := 0
 	scanPos := 0
 	var quote byte
+	type shellFrame struct {
+		quote, end byte
+	}
+	var substitutions []shellFrame
 	for _, m := range matches {
 		for scanPos < m[0] {
 			ch := command[scanPos]
@@ -418,6 +445,36 @@ func rewriteCommand(h *ir.Hook, srcCat, dstCat catalog, event string, scope Scop
 					scanPos++
 				}
 				continue
+			}
+			// Command substitutions have their own quoting, even inside
+			// double quotes. Restore the enclosing context when they end.
+			if quote != '\'' {
+				if ch == '`' && len(substitutions) > 0 && substitutions[len(substitutions)-1].end == '`' {
+					quote = substitutions[len(substitutions)-1].quote
+					substitutions = substitutions[:len(substitutions)-1]
+					scanPos++
+					continue
+				}
+				if ch == '`' || ch == '$' && scanPos+1 < m[0] && command[scanPos+1] == '(' {
+					end := byte(')')
+					if ch == '`' {
+						end = '`'
+					} else {
+						scanPos++
+					}
+					substitutions = append(substitutions, shellFrame{quote: quote, end: end})
+					quote = 0
+					scanPos++
+					continue
+				}
+				if quote == 0 && ch == '(' {
+					substitutions = append(substitutions, shellFrame{end: ')'})
+				} else if quote == 0 && ch == ')' && len(substitutions) > 0 && substitutions[len(substitutions)-1].end == ')' {
+					quote = substitutions[len(substitutions)-1].quote
+					substitutions = substitutions[:len(substitutions)-1]
+					scanPos++
+					continue
+				}
 			}
 			if ch == '\'' || ch == '"' {
 				switch quote {

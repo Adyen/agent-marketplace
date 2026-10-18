@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"maps"
 	"net/http"
 	"net/http/httptest"
@@ -323,6 +324,104 @@ func TestEndpointRegistrationLockAppendsNewRegistrationToExistingLock(t *testing
 	}
 	if raw, err := os.ReadFile(f.lockPath); err != nil || string(raw) != want {
 		t.Fatalf("final lock bytes = %q, %v; want:\n%s", raw, err, want)
+	}
+}
+
+// spec: deployed-acquisition-locks/check-reports-every-selected-unrecorded-registration-scope
+func TestEndpointRegistrationLockCheckReportsEverySelectedScope(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	for _, existing := range []bool{false, true} {
+		for _, selected := range []string{"all", "user", "repo", "local"} {
+			t.Run(fmt.Sprintf("existing=%t/scope=%s", existing, selected), func(t *testing.T) {
+				f := newEndpointRegistrationFixture(t, lockfile.ScopeRepo)
+				recordedURL, recordedRequests := f.recordedEndpoint(t)
+				layers := []struct {
+					scope      string
+					configPath string
+					lockPath   string
+				}{
+					{"user", filepath.Join(f.home, ".agents", "config.yaml"), filepath.Join(f.home, ".agents", "lock.yaml")},
+					{"repo", f.configPath, f.lockPath},
+					{"local", filepath.Join(f.repo, ".agents", "config.local.yaml"), filepath.Join(f.repo, ".agents", "lock.local.yaml")},
+				}
+				for _, layer := range layers {
+					body := "apiVersion: agent-marketplace/v4\nsources:\n  hosted: {marketplace: " + f.url + "}\n  recorded: {marketplace: " + recordedURL + "}\n"
+					if layer.scope != "local" {
+						body += "harnesses: [factory]\n"
+					}
+					writeFile(t, layer.configPath, body)
+					if existing {
+						writeFile(t, layer.lockPath, "apiVersion: agent-marketplace-lock/v2\nscope: "+layer.scope+"\nmarketplaces:\n  - url: "+recordedURL+"\n    instance_id: endpoint-locked\n")
+					}
+				}
+				args := []string{"lock", "--check"}
+				if selected != "all" {
+					args = append(args, "--scope", selected)
+				}
+				before := dependencyTreeSnapshot(t, f.root)
+				output, err := executeCommand(args...)
+				joined, ok := err.(interface{ Unwrap() []error })
+				if !ok {
+					t.Fatalf("lock --check error = %T %v, want joined scope diagnostics\n%s", err, err, output)
+				}
+				diagnostics := joined.Unwrap()
+				count := 0
+				previous := -1
+				for _, layer := range layers {
+					want := fmt.Sprintf("lock.change-required: %s lock %q:", layer.scope, layer.lockPath)
+					if selected != "all" && selected != layer.scope {
+						if strings.Contains(err.Error(), want) || strings.Contains(output, want) {
+							t.Fatalf("reported unselected scope %s: %v\n%s", layer.scope, err, output)
+						}
+						continue
+					}
+					if count >= len(diagnostics) {
+						t.Fatalf("missing typed diagnostic for %s: %v", layer.scope, err)
+					}
+					var lockErr *pipeline.LockViewError
+					if !errors.As(diagnostics[count], &lockErr) || lockErr.Code != "lock.change-required" || lockErr.Scope != lockfile.Scope(layer.scope) || lockErr.Path != layer.lockPath {
+						t.Fatalf("diagnostic %d = %#v, want lock.change-required for %s at %s", count, diagnostics[count], layer.scope, layer.lockPath)
+					}
+					index := strings.Index(output, want)
+					if index <= previous {
+						t.Fatalf("missing or unordered diagnostic %q: %v\n%s", want, err, output)
+					}
+					line, _, _ := strings.Cut(output[index:], "\n")
+					for _, endpoint := range []string{f.url, recordedURL} {
+						present := endpoint == f.url || !existing
+						if strings.Contains(lockErr.Err.Error(), endpoint) != present || strings.Contains(line, endpoint) != present {
+							t.Fatalf("%s diagnostic must report endpoint %s=%t: %v\n%s", layer.scope, endpoint, present, lockErr, line)
+						}
+					}
+					previous = index
+					count++
+				}
+				if len(diagnostics) != count {
+					t.Fatalf("returned %d typed scope diagnostics, want %d: %v", len(diagnostics), count, err)
+				}
+				if got := strings.Count(output, "lock.change-required:"); got != count {
+					t.Fatalf("reported %d scope diagnostics, want %d:\n%s", got, count, output)
+				}
+				if f.requests.Load() != 0 || recordedRequests.Load() != 0 {
+					t.Fatal("check contacted a Marketplace endpoint")
+				}
+				requireUnchangedEndpointRegistrationTree(t, "lock --check", before, dependencyTreeSnapshot(t, f.root))
+
+				for _, layer := range layers {
+					writeFile(t, layer.lockPath, "apiVersion: agent-marketplace-lock/v2\nscope: "+layer.scope+"\nmarketplaces:\n  - url: "+f.url+"\n    instance_id: endpoint-mp\n  - url: "+recordedURL+"\n    instance_id: endpoint-locked\n")
+				}
+				before = dependencyTreeSnapshot(t, f.root)
+				if output, err := executeCommand(args...); err != nil || !strings.Contains(output, "Locks: 0 changed") {
+					t.Fatalf("healthy check: %v\n%s", err, output)
+				}
+				if f.requests.Load() != 0 || recordedRequests.Load() != 0 {
+					t.Fatal("healthy check contacted a Marketplace endpoint")
+				}
+				requireUnchangedEndpointRegistrationTree(t, "healthy lock --check", before, dependencyTreeSnapshot(t, f.root))
+			})
+		}
 	}
 }
 

@@ -125,8 +125,8 @@ schema v1 containing:
 - optional `assets/<relative-path>` files
 - optional `licenses/<relative-path>` files
 - optional `support/<url-escaped-relative-path>` files carrying the declared
-  support bytes and executable modes of a mirrored skill; declared paths may
-  be flat or nested and are url-escaped into member names
+  support bytes and executable modes of a mirrored skill or hook; declared paths
+  may be flat or nested and are url-escaped into member names
 
 `support/` members remain within artifact schema v1 but change the archive
 digest. The archive digest is encoding evidence, not revision identity: a
@@ -176,7 +176,8 @@ last-good installation is preserved when re-acquisition fails.
   manifest `archive_digest` does not match its canonical archive
 - **THEN** it MUST fail with an archive digest mismatch
 - **AND** when raw archive bytes that differ from the canonical archive are
-  supplied, it MUST fail even if the manifest digest is correct
+  supplied without a verified placeholder-form archive, it MUST fail even if
+  the manifest digest is correct
 - **AND** an untampered encoded artifact MUST verify
 
 #### Scenario: Same-content revision carries a repaired archive digest
@@ -239,6 +240,133 @@ virtual collection revisions. Collection manifests are not tar archives.
 - **THEN** verification MUST recompute the digest with `content_digest`
   cleared
 - **AND** a tampered `content_digest` value MUST fail verification
+
+### Requirement: Mirrored hooks carry integrity-bound support files
+
+Mirror acquisition MUST package flat adjacent support files selected by the
+source-layout hook policy, excluding native aggregate definitions, at their
+plugin-relative `hooks/` paths. Their relative paths, bytes, and executable modes
+MUST be bound into the canonical hook content revision. Consumers MUST verify
+declaration membership and integrity before installation and on the captured
+bytes used for materialization. Support changes MUST produce new content
+revisions, without rewriting existing content. Nested source directories and
+other plugin directories remain unsupported and MUST have an achievable remedy.
+
+#### Scenario: Mirrored hook support installation
+
+- **GIVEN** a mirrored hook references an adjacent plugin-root script
+- **WHEN** a consumer resolves and materializes it at repository or machine scope
+- **THEN** its support bytes and executable mode MUST be installed in the target's per-source, per-hook support directory using the configured native installation mode
+- **AND** the command MUST refer to the installed script, and verified cached resolution MUST work offline
+
+#### Scenario: Mirrored hook support integrity
+
+- **GIVEN** a mirrored hook declares support files
+- **WHEN** a declared file is missing, bytes or executable mode differ, an undeclared file is present, or a declaration names a native definition
+- **THEN** resolution MUST refuse before staging or materializing the hook
+
+#### Scenario: Canonical null extra is not a native extension
+
+- **GIVEN** a canonical hook contains the serializer's null `Extra` field
+- **WHEN** it is decoded for target compilation
+- **THEN** that reserved null field MUST NOT cause an otherwise supported hook to be refused
+- **AND** targets already accepting the canonical hook MUST retain their existing native projection bytes
+- **AND** actual unknown fields MUST retain their existing preservation and target-refusal rules
+
+#### Scenario: Mirrored hook support safe publication
+
+- **GIVEN** adjacent hook support files in a registry repository
+- **WHEN** publication reads those files
+- **THEN** reads MUST remain bounded within the acquisition root and refuse symlinks, multiply linked files, special files, and oversized files without altering external bytes
+
+#### Scenario: Mirrored hook support revision changes
+
+- **GIVEN** a published hook with support files
+- **WHEN** support bytes or executable mode change
+- **THEN** publication MUST produce a new content revision without changing the old artifact
+
+#### Scenario: Legacy mirrored script hook refusal
+
+- **GIVEN** a legacy mirrored hook references an adjacent plugin-root script without packaged support
+- **WHEN** a consumer resolves the hook
+- **THEN** resolution MUST fail with `marketplace.hook.support-missing`
+- **AND** support-free hooks without plugin-root asset references MUST remain usable
+
+#### Scenario: Mirrored hook support materialization refusal
+
+- **GIVEN** declared hook support is unavailable, tampered, names a native definition, or comes from index-only acquisition
+- **WHEN** materialization consumes the resolved resource
+- **THEN** it MUST refuse with `materialize.compile.error` and `materialize.hook.support-refused` before emitting the hook or support output, preserving the previous installation
+
+#### Scenario: Mirrored hook support shell safety
+
+- **GIVEN** an installed support path contains spaces or shell metacharacters
+- **WHEN** its plugin-root reference is translated, including before, after, or inside nested command substitutions
+- **THEN** the installed command MUST execute that literal script without executing path text as shell substitution
+
+#### Scenario: Mirrored hook support unowned destination refusal
+
+- **GIVEN** an installed hook support destination lacks both manifest ownership and durable native support proof
+- **WHEN** the mirrored hook is materialized again
+- **THEN** materialization MUST refuse with `materialize.hook.support-conflict` before updating its aggregate, even when support bytes are identical
+
+#### Scenario: Mirrored hook support acquisition containment
+
+- **GIVEN** a resource directory has a symlinked ancestor below the acquisition root
+- **WHEN** publication reads declared support
+- **THEN** it MUST refuse with `marketplace.ingest.hook-support-unsafe` and leave external bytes unchanged
+
+#### Scenario: Mirrored hook support publication diagnostic
+
+- **GIVEN** a hook references assets outside the flat adjacent-file policy
+- **WHEN** the Marketplace publishes its revision
+- **THEN** publication MUST report `marketplace.ingest.hook-support-unavailable`, while support-free hooks remain publishable without that diagnostic
+
+#### Scenario: Mirrored hook support unsupported reference refusal
+
+- **GIVEN** a mirrored command references a nested source directory, another plugin directory, or a dynamic plugin-root expression
+- **WHEN** a consumer resolves the hook
+- **THEN** it MUST refuse with `marketplace.hook.support-unsupported` and recommend retaining the Git source
+
+#### Scenario: Mirrored hook support catalog aliases
+
+- **GIVEN** a command uses any plugin-root spelling declared by the shipped harness catalogs, braced or bare
+- **WHEN** its mirrored support is validated
+- **THEN** missing and unsupported support references MUST receive the same refusal as the canonical spelling
+- **AND** variables not declared by those catalogs MUST NOT be mistaken for plugin roots
+
+#### Scenario: Mirrored hook support stable offline refusal
+
+- **GIVEN** verified cached evidence produced a deterministic missing or unsupported support refusal online
+- **WHEN** the consumer resolves it offline
+- **THEN** it MUST retain the same refusal code without downloading the artifact again
+
+#### Scenario: Mirrored hook support cache independent installation
+
+- **GIVEN** a mirrored hook is installed with support files
+- **WHEN** the Marketplace acquisition cache is deleted
+- **THEN** its command MUST still execute from installed support on every target and scope
+- **AND** deselection MUST remove its owned support files
+
+#### Scenario: Mirrored hook support independent sources
+
+- **GIVEN** two mirrored sources supply same-named hooks with different same-named scripts
+- **WHEN** both hooks are materialized
+- **THEN** each command MUST execute its own installed script without a collision
+
+#### Scenario: Unsafe hook support does not block valid resources
+
+- **GIVEN** a registry contains a valid skill and a hook with an unsafe adjacent file, even one not directly referenced by its command
+- **WHEN** the Marketplace publishes the registry
+- **THEN** it MUST skip the affected hook with `marketplace.ingest.hook-support-unavailable` and publish the valid skill without reading external bytes
+- **AND** collections requiring the skipped hook MUST be withheld without blocking unrelated resources
+
+#### Scenario: Mirrored hook support drift
+
+- **GIVEN** an installed mirrored hook loses its owned support script
+- **WHEN** `sync --check` runs
+- **THEN** it MUST report drift with a nonzero exit without recreating the script
+- **AND** a subsequent sync MUST restore the script and successful execution
 
 ### Requirement: Current reported installation counts
 
@@ -436,3 +564,186 @@ Resource revision responses for the latest resource, revision lists, and exact r
 #### Scenario: Resource revision omits untrustworthy source provenance
 - **WHEN** a resource revision has no recorded source path or source origin, or its origin is not a safe HTTP(S) URL
 - **THEN** the response omits `source`
+
+### Requirement: Archive digests verify by received bytes
+
+The Marketplace and its clients SHALL verify canonical archive digests by
+hashing bytes they hold, without reproducing a compressor's output. A
+placeholder-form archive is verified by hashing its bytes against the digest.
+A final archive is verified by content equality with the hash-verified
+placeholder form. The re-encoding verifier remains only as a fallback for
+archives that have no placeholder form.
+
+#### Scenario: Placeholder archive verifies regardless of the encoding toolchain
+
+- **GIVEN** placeholder-form archives recorded by Go 1.26 and by Go 1.27 with
+  different digests but identical content
+- **WHEN** each is verified by its digest
+- **THEN** verification MUST succeed under either toolchain
+- **AND** a final archive from the same toolchain MUST verify against its
+  placeholder by content equality
+
+#### Scenario: Final archive with different bytes but identical content verifies
+
+- **GIVEN** a verified placeholder-form archive and a final archive whose
+  bytes differ from the encoder output but decode to the same content
+- **WHEN** the final archive is verified against the placeholder
+- **THEN** verification MUST succeed
+- **AND** a final archive whose payload, asset, license, or support content
+  differs MUST fail verification
+
+#### Scenario: Placeholder archive route serves archive-digest bytes
+
+- **GIVEN** a resource revision owned by the Marketplace with a stored or
+  derivable placeholder-form archive
+- **WHEN** `GET /api/v1/archives/sha256/{hex}` is requested for its archive digest
+- **THEN** the response MUST carry bytes whose SHA-256 equals the requested digest
+- **AND** the response MUST use the artifact media type
+- **AND** an unowned digest MUST return 404, a revoked revision MUST return 410, and a blocked revision MUST return 403
+
+#### Scenario: Missing placeholder archive is derived only when reproducible
+
+- **GIVEN** a stored final archive with no stored placeholder-form archive
+- **WHEN** the placeholder route is requested for its archive digest
+- **THEN** the Marketplace MUST derive the placeholder archive from the final archive and store it when the derived bytes hash to the digest
+- **AND** when the derived bytes do not hash to the digest the response MUST be 404 with a placeholder-archive-unavailable message
+- **AND** when the final archive exceeds the configured artifact size limit the response MUST be 413 and no placeholder archive MUST be derived or stored
+
+#### Scenario: Artifact route serves stored final archives without re-compression
+
+- **GIVEN** a stored final archive recorded by a different Go toolchain whose placeholder-form archive is stored
+- **WHEN** the artifact route is requested for its archive digest
+- **THEN** the response MUST serve the stored final bytes
+- **AND** the response MUST NOT fail with a digest mismatch caused by the server's compressor
+
+#### Scenario: Worker backfills placeholder archives
+
+- **GIVEN** stored resource revisions with archive digests and no placeholder-form archive
+- **WHEN** the worker runs the backfill pass or `serve reindex` completes
+- **THEN** each reproducible placeholder-form archive MUST be stored under its placeholder key
+- **AND** unreproducible archives MUST be counted and reported without failing the pass or readiness
+
+### Requirement: Placeholder archive route is served in the OpenAPI contract
+
+The OpenAPI contract SHALL document `GET /api/v1/archives/sha256/{hex}`
+with the artifact media type and the same availability responses as the artifact route.
+
+#### Scenario: Placeholder archive route is documented
+
+- **WHEN** the OpenAPI contract is loaded
+- **THEN** it MUST define the placeholder-archive route with the artifact media type
+- **AND** it MUST document 403, 404, 410, and 500 responses
+
+### Requirement: Clients verify archives by received bytes
+
+A client SHALL verify a resource archive by hashing the placeholder-form archive
+it receives from `GET /api/v1/archives/sha256/{hex}`, so that locks
+and caches written under any Go toolchain verify under any other. A client SHALL
+fall back to the final artifact route only when the placeholder route answers
+404, and it SHALL treat every other failure from the placeholder route as
+terminal. The single remaining re-encoding check applies only to a final archive
+without a placeholder form, and its failure SHALL be reported as an encoding
+mismatch rather than as tampering, unless the decoded content itself fails
+verification.
+
+#### Scenario: Client verifies placeholder archives by hash
+
+- **WHEN** a client resolves a mirrored resource whose archive was published by a different Go toolchain
+- **THEN** the client MUST fetch the placeholder-form archive and verify it by hashing its bytes against the locked archive digest
+- **AND** the client MUST NOT re-compress the archive to verify it
+
+#### Scenario: Locks written under any toolchain stay valid
+
+- **GIVEN** a lock whose archive digest was recorded by one Go toolchain
+- **WHEN** a client built with another Go toolchain resolves, syncs, or checks that lock
+- **THEN** the lock MUST verify without changing its archive digest
+- **AND** the resource content MUST verify against its content digest
+
+#### Scenario: Fallback to the artifact route only on not found
+
+- **WHEN** the placeholder route answers 404 for an archive digest
+- **THEN** the client MUST request the final artifact route for that digest
+- **AND** when the placeholder route answers 410, 403, a server error, or a network failure, the client MUST fail with that error without requesting the artifact route
+
+#### Scenario: Unreproducible legacy archive reports an encoding mismatch
+
+- **GIVEN** a Marketplace that does not serve the placeholder form for an archive
+- **WHEN** the archive it serves was compressed by an encoder that this build does not reproduce
+- **THEN** the client MUST fail with an encoding-mismatch diagnostic that names the resource, the Marketplace, the expected and re-encoded digests, the agent-marketplace Go version, and the remediation to upgrade the Marketplace and run sync
+- **AND** a served archive whose decoded content fails verification MUST remain an integrity failure rather than an encoding mismatch
+
+#### Scenario: Cached unreproducible archive is refetched online
+
+- **GIVEN** a cached final archive that this build does not reproduce
+- **WHEN** a refresh resolves the resource online
+- **THEN** the client MUST discard the cached copy, fetch the archive once, verify the fetched bytes, and cache them in place of the stale copy
+- **AND** when the resolution is offline the client MUST fail with the cached-copy diagnostic that asks for `agent-marketplace sync` while online
+
+#### Scenario: Index-only resolution verifies the registry revision manifest by hash
+
+- **WHEN** an index-only resource is resolved from an exact registry occurrence
+- **THEN** the client MUST verify that the registry revision manifest payload hashes to the occurrence's manifest digest before using it
+- **AND** the locally rebuilt resources MUST match the manifest's kind, name, content digest, and support-file digests
+- **AND** a manifest whose payload does not hash to the occurrence digest, or whose resource entries differ from the rebuilt resources, MUST fail resolution
+
+#### Scenario: Received archive bytes verify across toolchains
+
+- **GIVEN** placeholder-form and final archives recorded by Go 1.26 and by Go 1.27
+- **WHEN** each placeholder-form archive is verified by hashing its bytes against its digest under either toolchain
+- **THEN** verification MUST succeed
+- **AND** a final archive recorded by the other toolchain and verified without its placeholder form, as after a 404 from the placeholder route, MUST fail with an encoding mismatch, while tampered final content MUST fail as an integrity error
+
+### Requirement: Placeholder-form archives are cached apart from legacy artifacts
+
+A client SHALL cache placeholder-form archives under a location separate from the
+legacy artifact path, so that a client built before this change, which validates
+whatever it finds at the legacy path, never reads placeholder bytes there. Final-form
+archives SHALL be written to the legacy path only when the legacy artifact route was
+used. The garbage collector SHALL treat both locations with the same reachability
+rules, and SHALL preserve entries it does not recognize.
+
+#### Scenario: Placeholder-form archives stay out of the legacy artifact path
+
+- **WHEN** a client fetches a placeholder-form archive for a locked digest
+- **THEN** the client MUST store the placeholder bytes only under the placeholder location
+- **AND** the legacy artifact path MUST NOT receive placeholder bytes, so a client that predates this change finds nothing there to validate or refetches
+
+#### Scenario: Cached placeholder-form archive serves offline resolution
+
+- **GIVEN** a verified placeholder-form archive in the cache
+- **WHEN** a resolution runs in cached or cached-no-fetch mode
+- **THEN** the client MUST resolve the resource from the placeholder location without contacting the Marketplace
+
+#### Scenario: Placeholder-form archive is collected with its archive
+
+- **WHEN** garbage collection runs and a digest is unreferenced
+- **THEN** it MUST remove the placeholder-form and legacy entries for that digest together
+- **AND** it MUST keep both entries for a referenced digest, and MUST preserve malformed or unrecognized placeholder entries and fail closed on symlinked ones
+
+### Requirement: Canonical hook metadata normalization is resource-scoped
+
+Normalization of the canonical hook serializer's null `Extra` scaffolding MUST
+remain hook-specific. Decoding other resource kinds MUST preserve their existing
+unknown metadata and native output.
+
+#### Scenario: Non-hook canonical metadata compatibility
+
+- **GIVEN** a canonical skill, command, subagent or MCP server contains `Extra: null`
+- **WHEN** the resource is decoded for native compilation
+- **THEN** its historical unknown metadata MUST remain preserved
+- **AND** hook-specific metadata normalization MUST NOT change the native output
+
+### Requirement: Stored payload reads enforce existing byte ceilings
+
+Public inspection, content and manifest reads using the built-in filesystem and S3 backends SHALL enforce applicable existing inspection-manifest, configured file and manifest byte ceilings during reading, before fully materializing an oversized stored object. GET and HEAD SHALL retain availability checks, identity verification and their existing success and refusal behavior. This requirement introduces no new ceiling and does not change the existing meaning of an unlimited configured file ceiling or the compatibility interface for custom blob stores.
+
+#### Scenario: Oversized payloads stop at the existing read ceiling
+
+- **WHEN** a public content, inspection-manifest or registry-manifest request encounters a stored object larger than its applicable existing byte ceiling
+- **THEN** a built-in backend read SHALL stop after at most that ceiling plus one probe byte
+- **AND** GET and HEAD SHALL retain their existing refusal status without immutable success caching
+
+#### Scenario: Healthy payload reads retain response identity
+
+- **WHEN** public content fits its applicable existing byte ceiling
+- **THEN** its content bytes, verified digest, media type and immutable success response SHALL remain unchanged

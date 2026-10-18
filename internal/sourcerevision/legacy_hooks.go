@@ -1,6 +1,7 @@
 package sourcerevision
 
 import (
+	"reflect"
 	"strings"
 
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/hookpolicy"
@@ -21,19 +22,27 @@ func legacyHookToolProjection(resource ir.Resource) ir.Resource {
 	case *ir.Hook:
 		return legacyHookProjection(value)
 	case *ir.Subagent:
-		if value.ToolSource == "" {
-			return resource
-		}
 		copy := *value
-		copy.Tools = legacyToolNames(value.ToolSource, value.Tools)
-		copy.ToolSource = ""
+		copy.Ext = legacyExt(value.Ext)
+		if value.Tools == nil && value.Ext.Factory != nil && value.Ext.Factory.ToolsCategory != "" {
+			copy.Tools = []string{value.Ext.Factory.ToolsCategory}
+		}
+		if value.ToolSource != "" {
+			copy.Tools = legacyToolNames(value.ToolSource, value.Tools)
+			copy.ToolSource = ""
+		}
 		return &copy
 	case *ir.Skill:
-		if value.ToolSource == "" {
-			return resource
-		}
 		copy := *value
-		copy.AllowedTools = legacyToolNames(value.ToolSource, value.AllowedTools)
+		copy.Ext = legacyExt(value.Ext)
+		if value.ToolSource != "" {
+			copy.AllowedTools = legacyToolNames(value.ToolSource, value.AllowedTools)
+			copy.ToolSource = ""
+		}
+		return &copy
+	case *ir.Command:
+		copy := *value
+		copy.Ext = legacyExt(value.Ext)
 		copy.ToolSource = ""
 		return &copy
 	default:
@@ -160,4 +169,27 @@ func legacyHookProjection(h *ir.Hook) *ir.Hook {
 		}
 	}
 	return &cp
+}
+
+// legacyExt drops sidecar fields that later ingesters record but the frozen
+// digests never contained: Claude native controls and the Factory tools
+// category.
+func legacyExt(bag ext.Bag) ext.Bag {
+	if bag.Claude != nil && bag.Claude.NativeControls != nil {
+		claude := *bag.Claude
+		claude.NativeControls = nil
+		bag.Claude = &claude
+		if reflect.ValueOf(claude).IsZero() {
+			bag.Claude = nil
+		}
+	}
+	if bag.Factory != nil && bag.Factory.ToolsCategory != "" {
+		factory := *bag.Factory
+		factory.ToolsCategory = ""
+		bag.Factory = &factory
+		if factory == (ext.Factory{}) {
+			bag.Factory = nil
+		}
+	}
+	return bag
 }

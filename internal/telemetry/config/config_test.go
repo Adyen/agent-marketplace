@@ -144,6 +144,7 @@ func TestValidateRejectsRepoAndLocalLayers(t *testing.T) {
 	}
 }
 
+// spec: telemetry/endpoint-transport-follows-organization-permission
 func TestValidateEndpoint(t *testing.T) {
 	old := LookupIP
 	defer func() { LookupIP = old }()
@@ -200,6 +201,7 @@ func TestValidateEndpoint(t *testing.T) {
 	}
 }
 
+// spec: telemetry/endpoint-transport-follows-organization-permission
 func TestValidateEndpointForDeliveryRejectsUnresolvedHostname(t *testing.T) {
 	old := LookupIP
 	defer func() { LookupIP = old }()
@@ -230,6 +232,7 @@ func TestValidateOrganizationAllowsDefaultRetention(t *testing.T) {
 	}
 }
 
+// spec: telemetry/header-and-ca-files-require-private-ownership
 func TestValidateHeaders(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.Chmod(dir, 0o700); err != nil {
@@ -370,6 +373,7 @@ func TestValidateHeaders(t *testing.T) {
 	}
 }
 
+// spec: telemetry/header-and-ca-files-require-private-ownership
 func TestValidateCAFile(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.Chmod(dir, 0o700); err != nil {

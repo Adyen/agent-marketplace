@@ -44,10 +44,11 @@ func assertCompatibilityRules(t *testing.T, e *Env, f compatibilityFixture, bina
 		t.Fatal(err)
 	}
 	unsupported := map[string]string{
-		"claude": "rule.claude.no-primitive",
-		"gemini": "rule.gemini.no-primitive",
-		"devin":  "rule.devin.unsupported",
-		"codex":  "rule.codex.unsupported",
+		"claude":   "rule.claude.no-primitive",
+		"gemini":   "rule.gemini.no-primitive",
+		"devin":    "rule.devin.unsupported",
+		"codex":    "rule.codex.unsupported",
+		"opencode": "rule.opencode.unsupported",
 	}
 	if code := unsupported[row.Harness]; code != "" {
 		found := false

@@ -198,6 +198,10 @@ func serveMirrorProjectionHook(t *testing.T, canonical artifact.CanonicalArtifac
 func resolveMirrorProjectionHook(t *testing.T, support map[string]artifact.SupportFile) (resolver.ResolvedArtifact, string, string) {
 	t.Helper()
 	hook := ir.NewHookWithMatcher("deploy-hook", "PreToolUse", "Bash", "./run.sh", "command", nil, ir.SourceRef{File: "hooks/hooks.json"})
+	hook.SupportFiles = make(map[string]string, len(support))
+	for name, file := range support {
+		hook.SupportFiles[name] = artifact.SupportFileDigest(file)
+	}
 	canonical, err := artifact.FromIR(hook)
 	if err != nil {
 		t.Fatalf("FromIR: %v", err)

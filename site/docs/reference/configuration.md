@@ -155,6 +155,7 @@ Supported targets are:
 | `gemini` | Gemini CLI |
 | `devin` | Devin CLI |
 | `codex` | Codex |
+| `opencode` | OpenCode |
 
 Target names are lowercase. Unknown targets fail with `v4.harness`.
 
@@ -194,7 +195,7 @@ Validation rules by kind:
 |---|---|
 | Git source without `ref` | `v4.git-ref-required` |
 | Invalid `ref` | `v4.git-ref` |
-| `git` value that is a local path (`/`, `./`, `../`) instead of a remote URL, an scp-style origin such as `git@host:org/repo.git`, or a hostless absolute `file:///` URL | `v4.git-origin` |
+| `git` value that is a local path (`/`, `./`, `../`), a `git://` URL, or a `file://` URL with a host or a relative path. Remote URLs, scp-style origins such as `git@host:org/repo.git`, and hostless absolute `file:///` URLs are accepted. | `v4.git-origin` |
 | `path` that is absolute, contains `.` or `..` segments, or leaves the repository | `v4.git-path` |
 | `ref` or `path` on a directory source | `v4.source-field` |
 | `ref`, `path`, or `source_harness` on a Marketplace source | `v4.source-field` |

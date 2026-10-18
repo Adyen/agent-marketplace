@@ -220,7 +220,6 @@ agent-marketplace/
 ├── CODING_STANDARDS.md ← code-change requirements
 ├── go.mod
 ├── docs/              ← internal design notes (not published)
-│   ├── adoption-guide.md         ← historical pre-launch onboarding lead (not current usage)
 │   └── plans/                    ← phased implementation plans
 ├── site/              ← VitePress landing page (/) and public docs (site/docs → /docs/)
 ├── web/               ← Nuxt Marketplace UI (self-hosted at /)

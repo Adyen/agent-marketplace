@@ -9,7 +9,7 @@ import (
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact"
 )
 
-func TestSymlinkCheckOnlyReadsDesiredContentForLegacyMigration(t *testing.T) {
+func TestSymlinkCheckReadsDesiredContentWithoutWriting(t *testing.T) {
 	for _, legacy := range []bool{false, true} {
 		t.Run(map[bool]string{false: "existing_symlink", true: "legacy_file_tree"}[legacy], func(t *testing.T) {
 			source, output := t.TempDir(), t.TempDir()
@@ -43,6 +43,12 @@ func TestSymlinkCheckOnlyReadsDesiredContentForLegacyMigration(t *testing.T) {
 			} else if err := os.Symlink(target, installed); err != nil {
 				t.Fatal(err)
 			}
+			if !legacy {
+				if err := prepareSkillLinkCache(link); err != nil {
+					t.Fatal(err)
+				}
+				payloadReads = nil
+			}
 			report, err := syncSkillLinks(output, []skillLink{link}, true, false, portableSyncContext{state: state, target: hcc.TargetFactory, reportPrefix: "skills"})
 			if err != nil {
 				t.Fatalf("check failed: %v", err)
@@ -56,8 +62,8 @@ func TestSymlinkCheckOnlyReadsDesiredContentForLegacyMigration(t *testing.T) {
 				}
 				return
 			}
-			if len(payloadReads) != 0 || len(report.Skipped) != 1 || len(report.Written) != 0 {
-				t.Fatalf("unchanged symlink must not read unused desired payloads: reads=%v report=%+v", payloadReads, report)
+			if len(payloadReads) == 0 || len(report.Skipped) != 1 || len(report.Written) != 0 {
+				t.Fatalf("unchanged symlink must compare desired payloads without writes: reads=%v report=%+v", payloadReads, report)
 			}
 			if got, err := os.Readlink(installed); err != nil || got != target {
 				t.Fatalf("symlink changed: %q, %v", got, err)

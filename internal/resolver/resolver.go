@@ -1336,7 +1336,7 @@ func expandCollections(resolved []ResolvedArtifact, errs []error, cfg *config.Co
 
 		// Expand members recursively (handles Includes via depth-first walk).
 		visited := map[string]struct{}{irCol.Label(): {}}
-		expandMembersRecursive(irCol, viaLabel, artifact, cfg, catalogIndex, resources, malformed, allCollectionsByName, admissions, excludedResources, localExcludes, collectionExcludeAll, localExcludeAllKinds, visited, &out, &expandErrs, targetSet)
+		expandMembersRecursive(irCol, viaLabel, artifact, nil, cfg, catalogIndex, resources, malformed, allCollectionsByName, admissions, excludedResources, localExcludes, collectionExcludeAll, localExcludeAllKinds, visited, &out, &expandErrs, targetSet)
 	}
 
 	if !expanded {
@@ -1574,6 +1574,7 @@ func expandMembersRecursive(
 	col *ir.Collection,
 	viaLabel string,
 	artifact ResolvedArtifact,
+	owner *config.RegistryEntry,
 	cfg *config.Config,
 	catalogIndex map[string]map[resourceSelection]catalog.Entry,
 	resources map[string]map[string]ir.Resource,
@@ -1596,8 +1597,8 @@ func expandMembersRecursive(
 			continue
 		}
 
-		// Determine the registry and catalog key for this member, and the
-		// registry entry that governs its harnesses.
+		// Unqualified members retain the resolved collection owner. Only an
+		// explicit registry reference selects a different entry and its policy.
 		memberCatalogKey := artifact.CatalogKey
 		memberRegistryURL := artifact.RegistryURL
 		memberRegistryPath := artifact.RegistryPath
@@ -1607,7 +1608,12 @@ func expandMembersRecursive(
 		memberFilePrecedence := artifact.FilePrecedence
 		memberRequired := artifact.Required
 		memberEntry := config.RegistryEntry{}
-		memberEntryFound := false
+		memberEntryFound := owner != nil
+		if owner != nil {
+			// Nested definitions retain the chosen owner's diagnostic policy
+			// even when the parent narrows their effective harnesses to empty.
+			memberEntry = *owner
+		}
 
 		sel := resourceSelection{kind: member.Kind, name: memberName}
 
@@ -1779,21 +1785,6 @@ func expandMembersRecursive(
 			memberRequired = entry.Required
 			memberEntry = entry
 			memberEntryFound = true
-		} else {
-			if entry, _, found := findRegistryEntry(cfg, artifact.RegistryURL, artifact.Ref, artifact.RegistryPath); found {
-				memberEntry = entry
-				memberEntryFound = true
-				// The member inherits the collection's registry location, but
-				// its effective identity must still carry the owning entry's
-				// ref/path so entry exclusions cannot bleed across refs.
-				memberRegistryURL = entry.URL
-				memberRegistryPath = normalizedEntryPath(entry.Path)
-				memberRef = entry.Ref
-				memberV4Kind = entry.V4Kind
-				memberSource = entry.Source
-				memberFilePrecedence = entry.FilePrecedence
-				memberRequired = entry.Required
-			}
 		}
 
 		memberArtifact := ResolvedArtifact{
@@ -1930,7 +1921,9 @@ func expandMembersRecursive(
 
 		includedViaLabel := viaLabel + " > " + "collection:" + irCol.Label()
 		includedArtifact := nestedCollectionArtifact(includedEntry, artifact)
+		var includedOwner *config.RegistryEntry
 		if includedEntry.ownerFound {
+			includedOwner = &includedEntry.owner
 			ownerHarnesses := resolveEntryHarnesses(includedEntry.owner, targetSet)
 			if artifact.Harnesses != nil {
 				// A nested owner can narrow, never widen, the effective harnesses
@@ -1945,7 +1938,7 @@ func expandMembersRecursive(
 				includedArtifact.Harnesses = ownerHarnesses
 			}
 		}
-		expandMembersRecursive(irCol, includedViaLabel, includedArtifact, cfg, catalogIndex, resources, malformed, allCollectionsByName, admissions, excludedResources, localExcludes, collectionExcludeAll, localExcludeAllKinds, branchVisited, out, errs, targetSet)
+		expandMembersRecursive(irCol, includedViaLabel, includedArtifact, includedOwner, cfg, catalogIndex, resources, malformed, allCollectionsByName, admissions, excludedResources, localExcludes, collectionExcludeAll, localExcludeAllKinds, branchVisited, out, errs, targetSet)
 	}
 }
 
@@ -2198,37 +2191,6 @@ func anyLocationRequired(candidates []memberEntryCandidate) bool {
 		}
 	}
 	return false
-}
-
-// findRegistryEntry finds a config registry entry matching the given URL
-// (and optionally ref and path). Returns the entry, its catalog key, and
-// whether it was found.
-func findRegistryEntry(cfg *config.Config, registryURL, ref, path string) (config.RegistryEntry, string, bool) {
-	norm := normalizedRegistryURL(registryURL)
-	wantPath := normalizedEntryPath(path)
-	for _, entry := range cfg.Registries {
-		if normalizedRegistryURL(entry.URL) != norm {
-			continue
-		}
-		if ref != "" && strings.TrimSpace(entry.Ref) != ref {
-			continue
-		}
-		if wantPath != "" && normalizedEntryPath(entry.Path) != wantPath {
-			continue
-		}
-		return entry, entry.CatalogKey, true
-	}
-	// Fallback: try matching by URL only (for local registries where ref is optional).
-	for _, entry := range cfg.Registries {
-		if normalizedRegistryURL(entry.URL) != norm {
-			continue
-		}
-		if wantPath != "" && normalizedEntryPath(entry.Path) != wantPath {
-			continue
-		}
-		return entry, entry.CatalogKey, true
-	}
-	return config.RegistryEntry{}, "", false
 }
 
 // ViaMapKey returns a kind-aware key for Via annotations, formatted as

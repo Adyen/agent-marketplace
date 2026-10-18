@@ -311,3 +311,85 @@ cells:
       to: windsurf
       class: drop
       diagnostics: [ingest.windsurf.bundle-manifest-synthesized, ingest.windsurf.subagent-via-agents-md-skipped]
+    - from: claude
+      to: opencode
+      class: drop
+      diagnostics: [subagent.opencode.restriction-unsupported]
+      allowedLosses: [tools, disallowedTools, effort, isolation]
+    # Isolation and nesting restrictions have no OpenCode field, so the agent
+    # is refused rather than emitted with a weaker policy.
+    - from: opencode
+      to: claude
+      class: drop
+      diagnostics: [compile.opencode.native-semantics-unsupported]
+    - from: factory
+      to: opencode
+      class: cross
+      diagnostics: [model.reasoning-omitted]
+      expectedModel: anthropic/claude-sonnet-4-5-20250929
+      allowedLosses: [disallowedTools, isolation, tools, effort]
+    - from: opencode
+      to: factory
+      class: drop
+      diagnostics: [compile.opencode.native-semantics-unsupported]
+      allowedLosses: [disallowedTools, isolation]
+    - from: cursor
+      to: opencode
+      class: cross
+      diagnostics: [model.reasoning-omitted, model.unresolved]
+      expectedModel: ""
+      expectedEffort: ""
+      allowedLosses: [disallowedTools, isolation, tools]
+    # The OpenCode model catalog has no verified identifier for the Opus 5
+    # selection, so the model is omitted and reported instead of guessed.
+    - from: opencode
+      to: cursor
+      class: drop
+      diagnostics: [compile.opencode.native-semantics-unsupported]
+      allowedLosses: [disallowedTools, isolation]
+    - from: windsurf
+      to: opencode
+      class: drop
+      diagnostics: [ingest.windsurf.bundle-manifest-synthesized, ingest.windsurf.subagent-via-agents-md-skipped]
+      allowedLosses: [tools, disallowedTools, effort, isolation]
+    - from: opencode
+      to: windsurf
+      class: drop
+      diagnostics: [compile.opencode.native-semantics-unsupported]
+    - from: gemini
+      to: opencode
+      class: drop
+      diagnostics: [ingest.gemini.bundle-manifest-synthesized, subagent.opencode.restriction-unsupported]
+    # The Gemini input's tool names are not Gemini catalog tools. OpenCode
+    # restrictions fail closed instead of narrowing to the covered subset.
+    - from: opencode
+      to: gemini
+      class: drop
+      diagnostics: [compile.opencode.native-semantics-unsupported]
+      allowedLosses: [disallowedTools, effort, isolation, model]
+    - from: devin
+      to: opencode
+      class: cross
+      diagnostics: [ingest.devin.bundle-manifest-synthesized, model.selector-pinned]
+      expectedModel: anthropic/claude-sonnet-4-5-20250929
+      allowedLosses: [disallowedTools, effort, isolation, tools]
+    - from: opencode
+      to: devin
+      class: drop
+      diagnostics: [compile.opencode.native-semantics-unsupported]
+    - from: codex
+      to: opencode
+      class: cross
+      diagnostics: [ingest.codex.bundle-manifest-synthesized, subagent.codex.effort-dropped, subagent.codex.model-dropped]
+      allowedLosses: [disallowedTools, isolation, model, tools, effort]
+    - from: opencode
+      to: codex
+      class: drop
+      diagnostics: [compile.opencode.native-semantics-unsupported]
+    - from: opencode
+      to: opencode
+      class: identity
+      expectedModel: anthropic/claude-sonnet-4-5-20250929
+      allowedLosses: [tools, disallowedTools, effort, isolation]
+    # Native OpenCode selections keep their provider-qualified spelling with
+    # source provenance instead of being reverse-mapped to a canonical alias.

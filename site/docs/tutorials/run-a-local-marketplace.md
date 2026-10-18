@@ -188,6 +188,8 @@ The [hosted Marketplace how-to](../how-to/install-from-a-marketplace.md#_4-revie
 
 The first command recorded the Marketplace endpoint in `.agents/config.yaml` as a source named `marketplace`. The install added the skill to `resources` and pinned the verified revision by its digest in `.agents/lock.yaml`. The server's `instance.id` (`local`) does not become a Marketplace alias in your configuration.
 
+If the second command stops with `Error: marketplace install requires risk acceptance`, the preview found a security finding in the skill, such as a remote `http://` reference. Read the finding in the preview, then re-run the same command with `--accept-risk` to confirm you reviewed it.
+
 ## 8. Verify the installation
 
 Check the configuration and the files on disk:
@@ -218,5 +220,6 @@ The repository's `compose.yaml` started four services: the Marketplace API and w
 
 ## Next steps
 
+- [Run a Marketplace on Kubernetes](./run-a-marketplace-on-kubernetes.md)
 - [How to deploy a production Marketplace](../how-to/operator/deploy-a-production-marketplace.md)
 - [Marketplace operator configuration reference](../reference/marketplace-operator-configuration.md)

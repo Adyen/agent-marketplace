@@ -70,7 +70,7 @@ func TestHarnessModalOffersCodexAfterDevinAsAnOptInChoice(t *testing.T) {
 	for _, opt := range knownHarnessOptions {
 		ids = append(ids, opt.ID)
 	}
-	want := []string{"factory", "claude", "cursor", "windsurf", "gemini", "devin", "codex"}
+	want := []string{"factory", "claude", "cursor", "windsurf", "gemini", "devin", "codex", "opencode"}
 	if !reflect.DeepEqual(ids, want) {
 		t.Fatalf("harness modal options = %#v, want %#v", ids, want)
 	}
@@ -83,11 +83,17 @@ func TestHarnessModalOffersCodexAfterDevinAsAnOptInChoice(t *testing.T) {
 	if m.harnessModal.selected["devin"] {
 		t.Fatal("Devin must not be pre-selected: it is opt-in")
 	}
+	if m.harnessModal.selected["opencode"] {
+		t.Fatal("OpenCode must remain opt-in")
+	}
 	if m.harnessModal.selected["codex"] {
 		t.Fatal("Codex must not be pre-selected: it is opt-in")
 	}
 
 	out := ansi.Strip(renderHarnessModal(m))
+	if !strings.Contains(out, "[ ] OpenCode") {
+		t.Fatalf("OpenCode choice missing: %s", out)
+	}
 	if !strings.Contains(out, "Devin CLI") || !strings.Contains(out, "devin") {
 		t.Fatalf("harness modal does not offer Devin:\n%s", out)
 	}

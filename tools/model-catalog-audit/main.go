@@ -27,7 +27,7 @@ func trustedURL(raw string) bool {
 		return false
 	}
 	switch u.Host {
-	case "platform.claude.com", "code.claude.com", "developers.openai.com", "learn.chatgpt.com", "cursor.com", "docs.devin.ai", "docs.factory.ai", "docs.factory.com", "geminicli.com", "raw.githubusercontent.com":
+	case "platform.claude.com", "code.claude.com", "developers.openai.com", "learn.chatgpt.com", "cursor.com", "docs.devin.ai", "docs.factory.ai", "docs.factory.com", "geminicli.com", "opencode.ai", "raw.githubusercontent.com":
 		return true
 	case "github.com":
 		return strings.HasPrefix(u.Path, "/google-gemini/gemini-cli/") && u.Path == path.Clean(u.Path)

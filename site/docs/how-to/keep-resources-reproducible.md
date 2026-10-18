@@ -63,6 +63,8 @@ agent-marketplace lock --upgrade
 
 It prints `Locks: <n> changed`, for example `Locks: 0 changed` or `Locks: 1 changed`. The default scope includes user, repository, and personal-local locks, so the count can exceed one. `lock --upgrade` changes only locks. Run `agent-marketplace sync` afterwards to update the harness files, or use `agent-marketplace update`, which advances the locks and syncs in one step. Then commit the updated `.agents/lock.yaml`.
 
+To review the change before you apply it, see [how to review and roll back an update](./review-and-roll-back-updates.md).
+
 ## 4. Avoid editing locks by hand
 
 The CLI generates the lockfile. Editing it by hand bypasses the checks the CLI makes against the source, and is not supported.

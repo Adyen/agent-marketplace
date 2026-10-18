@@ -885,6 +885,52 @@ paths:
               schema:
                 type: string
                 format: binary
+        "400":
+          description: The digest is not 64 lowercase hexadecimal characters
+        "403":
+          description: The archive's revision is blocked by assessment
+        "404":
+          description: The archive is not owned by any revision of this Marketplace
+        "410":
+          description: The archive's revision is revoked
+        "413":
+          description: The stored archive exceeds policy.limits.artifact_bytes
+        "500":
+          description: The stored archive failed digest verification
+
+  /api/v1/archives/sha256/{digest}:
+    get:
+      operationId: getPlaceholderArchive
+      summary: Download the placeholder-form canonical archive whose bytes hash to the digest
+      description: The bytes hash to the requested archive digest, so clients verify them by hash without re-compressing. The Marketplace derives and stores the placeholder form on first request when the stored final archive reproduces the digest.
+      parameters:
+        - in: path
+          name: digest
+          required: true
+          description: Exactly 64 lowercase hexadecimal characters (the sha256 prefix is part of the path).
+          schema:
+            type: string
+            pattern: "^[0-9a-f]{64}$"
+      responses:
+        "200":
+          description: Placeholder-form canonical artifact tar.gz
+          content:
+            application/vnd.agent-marketplace.artifact.v1.tar+gzip:
+              schema:
+                type: string
+                format: binary
+        "400":
+          description: The digest is not 64 lowercase hexadecimal characters
+        "403":
+          description: The archive's revision is blocked by assessment
+        "404":
+          description: The archive is not owned by any revision of this Marketplace, or its placeholder form is not available
+        "410":
+          description: The archive's revision is revoked
+        "413":
+          description: The stored archive exceeds policy.limits.artifact_bytes
+        "500":
+          description: The stored archive failed digest verification
 
   /r/{registry}/{kind}/{name}:
     get:

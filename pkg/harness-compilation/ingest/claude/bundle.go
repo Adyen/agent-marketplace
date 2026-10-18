@@ -15,6 +15,8 @@ import (
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ingest"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
+	extpkg "github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir/ext"
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/target"
 )
 
 // claudePluginManifest is the Claude-plugin manifest path.
@@ -174,6 +176,47 @@ type LoadOptions struct {
 }
 
 func LoadBundleWithOptions(src fs.FS, opts LoadOptions) (*ingest.Bundle, error) {
+	b, err := loadBundleForm(src, opts)
+	if err != nil {
+		return nil, err
+	}
+	recordNativeControls(b.Resources)
+	return b, nil
+}
+
+// recordNativeControls copies Claude execution controls from each resource's
+// extension fields into its Claude sidecar, which is the only place Claude
+// compilation emits them from. The extension copy stays for earlier clients.
+func recordNativeControls(resources []ir.Resource) {
+	for _, resource := range resources {
+		var extra map[string]any
+		var ext *extpkg.Bag
+		switch typed := resource.(type) {
+		case *ir.Subagent:
+			extra, ext = typed.Extra, &typed.Ext
+		case *ir.Skill:
+			extra, ext = typed.Extra, &typed.Ext
+		case *ir.Command:
+			extra, ext = typed.Extra, &typed.Ext
+		default:
+			continue
+		}
+		for key, value := range extra {
+			if !target.IsClaudeControlKey(resource.Kind(), key) {
+				continue
+			}
+			if ext.Claude == nil {
+				ext.Claude = &extpkg.Claude{}
+			}
+			if ext.Claude.NativeControls == nil {
+				ext.Claude.NativeControls = make(map[string]any)
+			}
+			ext.Claude.NativeControls[key] = value
+		}
+	}
+}
+
+func loadBundleForm(src fs.FS, opts LoadOptions) (*ingest.Bundle, error) {
 	// Try plugin form first (.claude-plugin/plugin.json or bare form).
 	// The explicit plugin manifest is Detect's highest-priority marker, so
 	// honor it here too to keep Detect and LoadBundle in agreement.

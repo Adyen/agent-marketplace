@@ -235,6 +235,30 @@ func TestReadDeployedLocksStaleOrganizationGitLockFails(t *testing.T) {
 	}
 }
 
+// spec: deployed-acquisition-locks/plain-organization-lock-relocks-a-changed-ref
+func TestReadDeployedLocksRelockOrganizationSkipsStaleMatch(t *testing.T) {
+	orgPath, _ := deployedLockFixture(t,
+		"apiVersion: agent-marketplace/v4\nsources: {s: {git: https://example.test/a.git, ref: main}}\n",
+		"apiVersion: agent-marketplace-lock/v1\nscope: organization\n")
+	intent := readDeployedLocksIntent(t, config.LoadEffectiveOptions{OrganizationPath: orgPath})
+
+	evidence, err := readDeployedLocks(context.Background(), intent, nil, true)
+	if err != nil {
+		t.Fatalf("readDeployedLocks with relock = %v, want no error for a stale organization lock", err)
+	}
+	if evidence.Locks[config.Organization] == nil {
+		t.Fatal("stale organization lock was not recorded as deployed evidence under relock")
+	}
+
+	malformedPath, _ := deployedLockFixture(t,
+		"apiVersion: agent-marketplace/v4\nsources: {s: {git: https://example.test/a.git, ref: main}}\n",
+		"not: [valid\n")
+	malformedIntent := readDeployedLocksIntent(t, config.LoadEffectiveOptions{OrganizationPath: malformedPath})
+	if _, err := readDeployedLocks(context.Background(), malformedIntent, nil, true); err == nil {
+		t.Fatal("readDeployedLocks with relock accepted a malformed organization lock")
+	}
+}
+
 // spec: deployed-acquisition-locks/malformed-organization-lock
 func TestReadDeployedLocksMalformedOrganizationFails(t *testing.T) {
 	orgPath, _ := deployedLockFixture(t, "apiVersion: agent-marketplace/v4\nsources:\n  registry: {git: https://example.test/a.git, ref: main}\n", "not: [valid\n")

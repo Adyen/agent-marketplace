@@ -52,6 +52,7 @@ type lockMode struct {
 	reuseInstall         *preparedInstallLocks
 	warningSink          *[]error
 	marketplacePolicy    resolver.MarketplaceRevocationPolicy
+	selectionGuard       bool
 
 	allowTransientOrganization bool
 }
@@ -111,6 +112,13 @@ type exactLockSet struct {
 	bySource   map[string]lockedGit
 	byIdentity map[string][]lockedGit
 	catalogs   map[string]map[string]*catalog.Catalog
+}
+
+type snapshotJob struct {
+	source   config.Source
+	entries  []config.RegistryEntry
+	doc      lockfile.Document
+	lockPath string
 }
 
 type lockedGit struct {
@@ -683,7 +691,8 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 	}
 	loadOptions := config.LoadEffectiveOptions{
 		RepoRoot: ws.RepoRoot(), LocalConfigDir: ws.LocalConfigDir(),
-		FileOverlays: overlays,
+		FileOverlays:       overlays,
+		RelockOrganization: mode.explicitOrganization && !mode.check && !mode.locked && !mode.offline,
 	}
 	loadMode := pipeline.ConfigLoadStrict
 	if mode.allowTransientOrganization && !mode.offline {
@@ -778,12 +787,9 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 	// decides: missing locks, binding mismatches, and policy denials keep
 	// their own refusals below.
 	if (mode.check || mode.locked) && len(ec.Errors) == 0 {
-		refusal, err := unrecordedRegistrationRefusal(ec, configSnapshots, mode)
+		changed, err := unrecordedRegistrationRefusals(ec, configSnapshots, mode)
 		if err != nil {
-			return nil, 0, nil, err
-		}
-		if refusal != nil {
-			return nil, 1, nil, refusal
+			return nil, changed, nil, err
 		}
 	}
 	if mode.check && pipeline.NeedsLockBootstrap(ec.Errors) {
@@ -824,12 +830,8 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 	lockExpectations := map[string]dependencytxn.Generation{}
 	lockModes := map[string]os.FileMode{}
 	lockDesired := map[string][]byte{}
-	type snapshotJob struct {
-		source  config.Source
-		entries []config.RegistryEntry
-		doc     lockfile.Document
-	}
 	var snapshots []snapshotJob
+	var priorSnapshots []snapshotJob
 	var desiredFiles []dependencytxn.DesiredFile
 	configDesired := make(map[config.Source][]byte)
 	for source, snapshot := range configSnapshots {
@@ -894,6 +896,9 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 		stagedLock, hasStagedLock := stagedLocks[lockPath]
 		if hasStagedLock && !layer.Source.IsWritable() {
 			hasStagedLock = false
+		}
+		if exists && current != nil {
+			priorSnapshots = append(priorSnapshots, snapshotJob{source: layer.Source, entries: remote, doc: *current, lockPath: lockPath})
 		}
 		if len(remote) > 0 || exists || hasStagedLock {
 			lockExpectations[lockPath] = generation
@@ -1031,6 +1036,41 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 			return nil, changed, nil, err
 		}
 	}
+	exactSnapshot := func(target *exactLockSet, validate func() error) catalog.ExactSnapshotFunc {
+		return func(entry config.RegistryEntry) (string, string, error) {
+			if validate != nil {
+				if err := validate(); err != nil {
+					return "", "", err
+				}
+			}
+			canonical, err := canonicalRegistryURL(entry.URL)
+			if err != nil {
+				return "", "", err
+			}
+			key := sourceLockKey(entry.Source, canonical, entry.Ref)
+			locked, ok := target.bySource[key]
+			if !ok {
+				candidates := target.byIdentity[gitLockIdentity(canonical, entry.Ref)]
+				if len(candidates) != 1 {
+					return "", "", &lockLifecycleError{Code: "lock.lookup", Err: fmt.Errorf("no unambiguous lock for %s@%s", canonical, entry.Ref)}
+				}
+				locked = candidates[0]
+			}
+			if locked.unlocked {
+				return "", "", nil
+			}
+			catalogKey := canonical + "@" + locked.commit.String() + ":" + entry.Path
+			return locked.snapshot, catalogKey, nil
+		}
+	}
+	if mode.upgrade && mode.selectionGuard && len(lockDesired) > 0 {
+		if err := ensureSnapshotLease(); err != nil {
+			return nil, changed, nil, err
+		}
+		if err := guardNewlyMissingSelections(ctx, ws, mode.offline, priorSnapshots, overlays, lockDesired, &set, exactSnapshot); err != nil {
+			return nil, changed, nil, err
+		}
+	}
 	if !mode.check {
 		for _, layer := range ec.PresentLayers() {
 			snapshot, ok := configSnapshots[layer.Source]
@@ -1126,29 +1166,7 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 		return nil
 	}
 
-	option := catalog.WithVerifiedExactSnapshots(func(entry config.RegistryEntry) (string, string, error) {
-		if err := validateExactLocks(); err != nil {
-			return "", "", err
-		}
-		canonical, err := canonicalRegistryURL(entry.URL)
-		if err != nil {
-			return "", "", err
-		}
-		key := sourceLockKey(entry.Source, canonical, entry.Ref)
-		locked, ok := set.bySource[key]
-		if !ok {
-			candidates := set.byIdentity[gitLockIdentity(canonical, entry.Ref)]
-			if len(candidates) != 1 {
-				return "", "", &lockLifecycleError{Code: "lock.lookup", Err: fmt.Errorf("no unambiguous lock for %s@%s", canonical, entry.Ref)}
-			}
-			locked = candidates[0]
-		}
-		if locked.unlocked {
-			return "", "", nil
-		}
-		catalogKey := canonical + "@" + locked.commit.String() + ":" + entry.Path
-		return locked.snapshot, catalogKey, nil
-	}, set.catalogs)
+	option := catalog.WithVerifiedExactSnapshots(exactSnapshot(&set, validateExactLocks), set.catalogs)
 	hasExactConsumers := len(set.byIdentity) > 0
 	resultLease = func(ctx context.Context) (func(), error) {
 		if !hasExactConsumers {
@@ -1567,30 +1585,34 @@ func unrecordedWritableMarketplaceRegistrations(ec config.EffectiveConfig, selec
 	return found
 }
 
-// unrecordedRegistrationRefusal returns the refusal for the first selected
-// writable layer whose resource-free registrations have no lock identity
-// record. Check modes report the record lock would add as a required change;
-// locked modes refuse the existing lock as stale. A locked mode decides from
+// unrecordedRegistrationRefusals reports every selected writable layer whose
+// resource-free registrations have no lock identity record in check mode;
+// locked modes refuse the first existing lock as stale. A locked mode decides from
 // the evidence the layer was bound against: a layer bound without any
 // deployed lock keeps its missing-lock refusal.
-func unrecordedRegistrationRefusal(ec config.EffectiveConfig, snapshots map[config.Source]configTransactionSnapshot, mode lockMode) (*lockLifecycleError, error) {
+func unrecordedRegistrationRefusals(ec config.EffectiveConfig, snapshots map[config.Source]configTransactionSnapshot, mode lockMode) (int, error) {
 	boundToDeployedLock := func(read config.ConfigRead) bool { return read.AcquisitionLock }
+	var refusals []error
 	for _, unrecorded := range unrecordedWritableMarketplaceRegistrations(ec, mode.selects) {
 		if mode.locked && !slices.ContainsFunc(unrecorded.layer.Reads, boundToDeployedLock) {
 			continue
 		}
 		lockPath, err := layerLockDestination(unrecorded.layer, snapshots)
 		if err != nil {
-			return nil, err
+			return 0, err
 		}
 		code := "lock.stale"
 		if mode.check {
 			code = "lock.change-required"
 		}
 		slog.Debug("marketplace registration has no lock identity record", "code", code, "scope", unrecorded.scope, "lock", lockPath, "endpoints", unrecorded.endpoints)
-		return &lockLifecycleError{Code: code, Scope: unrecorded.scope, Path: lockPath, Err: fmt.Errorf("no identity record for resource-free Marketplace registration %s; run 'agent-marketplace lock' to record it", strings.Join(unrecorded.endpoints, ", "))}, nil
+		refusal := &lockLifecycleError{Code: code, Scope: unrecorded.scope, Path: lockPath, Err: fmt.Errorf("no identity record for resource-free Marketplace registration %s; run 'agent-marketplace lock' to record it", strings.Join(unrecorded.endpoints, ", "))}
+		if mode.locked {
+			return 1, refusal
+		}
+		refusals = append(refusals, refusal)
 	}
-	return nil, nil
+	return len(refusals), errors.Join(refusals...)
 }
 
 func lockScopeForSource(source config.Source) lockfile.Scope {

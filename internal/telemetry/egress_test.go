@@ -18,6 +18,7 @@ import (
 	tmcfg "github.com/Adyen/agent-marketplace/internal/telemetry/config"
 )
 
+// spec: telemetry/endpoint-override-does-not-forward-authentication
 func TestTelemetryEndpointOverrideCredentials(t *testing.T) {
 	for _, mode := range []string{"changed", "same", "organization-locked"} {
 		t.Run(mode, func(t *testing.T) {

@@ -70,6 +70,13 @@ func SubagentModel(s *ir.Subagent, destination Target, opts Options) (modelpolic
 	return resolveModel(s, s.Source, req)
 }
 
+// CommandModel resolves a canonical command model selection. Harness catalogs
+// declare one model vocabulary per harness, so commands use the subagent
+// selection surface.
+func CommandModel(c *ir.Command, model string, destination Target, opts Options) (modelpolicy.Result, []diag.Diagnostic, error) {
+	return resolveModel(c, c.Source, modelpolicy.Request{Target: destination, Surface: "subagent", Model: model, Overrides: opts.ModelOverride()})
+}
+
 func SkillModel(s *ir.Skill, destination Target, opts Options) (modelpolicy.Result, []diag.Diagnostic, error) {
 	return resolveModel(s, s.Source, modelpolicy.Request{Source: target.Target(s.ModelSource), Target: destination, Surface: "skill", Model: s.Model, Overrides: opts.ModelOverride()})
 }

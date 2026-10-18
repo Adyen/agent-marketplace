@@ -515,8 +515,11 @@ update uses an already supported generator version; no new version is added.
    per target.
 2. Switch Claude Code, Cursor, Factory Droid, and Windsurf repository scope
    to their native files, together with the legacy migration.
-3. Extend `upgrade-gate` with a v3.1.1 hook fixture for all seven targets,
-   and `released-client-gate` with a hook migration step.
+3. Extend `released-client-gate` with a hook migration step using shared v4
+   consumer configuration and the pinned stable v4 release. Preserve legacy
+   native-hook upgrade coverage with v4 consumer fixtures, without restoring
+   the retired pre-v4 consumer success `upgrade-gate` or requiring a pre-v4
+   executable.
 
 Rollback: a client that cannot prove native satisfaction may re-emit legacy
 files, duplicating Factory hooks or affecting Windsurf loading when

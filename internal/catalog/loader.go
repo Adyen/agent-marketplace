@@ -248,6 +248,26 @@ func (cat *Catalog) discoverSourceWithOptions(source *fsboundary.SourceFS, dir, 
 		}
 	}
 
+	// A pure container of bundles stays a container when its only root layout
+	// is an autodetected OpenCode folder: registering OpenCode must not hide
+	// the bundles such a root exposed before. The unread folder is reported;
+	// source_harness: opencode reads the root explicitly.
+	if sourceHarness == "" && cat.SourceHarness == string(ingest.HarnessOpenCode) {
+		if _, existing := ingest.AutodetectExcludingOpenCode(source); !existing {
+			if subBundles := scanSourceSubBundles(source, dir, sourceHarness, opts); len(subBundles) > 0 {
+				warning := &Catalog{Diagnostics: []diag.Diagnostic{{
+					Code:     diag.CodeIngestAutodetectAmbiguous,
+					Severity: diag.SeverityWarning,
+					Message:  "source is a container of bundles and also carries an opencode layout; autodetection reads the bundles and does not ingest the opencode resources",
+					Hint:     "Set source_harness to opencode to read the root as OpenCode, or point path at a bundle",
+					Source:   diag.SourceRef{File: ".opencode"},
+				}}}
+				root := subBundle{path: dir, catalog: warning, malformed: normalizeMalformedPaths(source, dir, malformedFromDiagnostics(warning.Diagnostics))}
+				return discoverSubBundles(append([]subBundle{root}, subBundles...))
+			}
+		}
+	}
+
 	malformed := malformedFromDiagnostics(cat.Diagnostics)
 
 	// Make malformed paths absolute so the TUI can read the SKILL.md
@@ -709,6 +729,7 @@ var bundleLayoutDirs = map[string]struct{}{
 	".devin":           {},
 	".windsurf":        {},
 	".gemini":          {},
+	".opencode":        {},
 	"gemini-extension": {},
 	"skills":           {},
 	"commands":         {},

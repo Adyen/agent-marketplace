@@ -11,10 +11,34 @@ import (
 
 // spec: config-layering/v4-root-rejects-legacy-installation-keys
 func TestV4RootRejectsLegacyInstallationKeys(t *testing.T) {
-	_, err := ParseV4([]byte("apiVersion: agent-marketplace/v4\nregistries: []\n"))
-	var validation *V4ValidationError
-	if !errors.As(err, &validation) || validation.Code != "v4.legacy-key" {
-		t.Fatalf("error = %v, want legacy-key diagnostic", err)
+	for _, key := range []string{"registries", "marketplaces", "skills", "commands", "subagents", "hooks", "mcp", "collections", "tags"} {
+		for _, location := range []string{"root", "versionless fragment", "v4 fragment"} {
+			t.Run(key+"/"+location, func(t *testing.T) {
+				root := filepath.Join(t.TempDir(), "config.yaml")
+				body := key + ": []\n"
+				badPath := root
+				if location == "root" {
+					writeIncludeConfig(t, root, "apiVersion: agent-marketplace/v4\n"+body)
+				} else {
+					badPath = filepath.Join(filepath.Dir(root), "fragment.yaml")
+					if location == "v4 fragment" {
+						body = "apiVersion: agent-marketplace/v4\n" + body
+					}
+					writeIncludeConfig(t, badPath, body)
+					writeIncludeConfig(t, root, "apiVersion: agent-marketplace/v4\ninclude: fragment.yaml\n")
+				}
+				_, err := LoadConfigFromPath(root)
+				var validation *V4ValidationError
+				if !errors.As(err, &validation) || validation.Code != "v4.legacy-key" || !strings.Contains(err.Error(), badPath) || !strings.Contains(err.Error(), key) {
+					t.Fatalf("error = %v, want legacy-key diagnostic naming %s and %s", err, badPath, key)
+				}
+				writeIncludeConfig(t, root, "apiVersion: agent-marketplace/v4\nsources: {local: {directory: ./resources}}\nresources: {local: [skill/review]}\n")
+				cfg, err := LoadConfigFromPath(root)
+				if err != nil || len(cfg.Registries) != 1 || !slices.Equal(cfg.Registries[0].Skills.Include, []string{"review"}) {
+					t.Fatalf("v4 sources/resources control = %#v, %v", cfg, err)
+				}
+			})
+		}
 	}
 }
 

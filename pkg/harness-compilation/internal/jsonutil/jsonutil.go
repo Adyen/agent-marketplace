@@ -101,7 +101,7 @@ func Coded(file string, data []byte, err error) error {
 // would lose the duplicate-key information before it can be checked.
 func ValidateUniqueKeys(data []byte) error {
 	decoder := json.NewDecoder(bytes.NewReader(data))
-	if err := validateValue(decoder, "$", 0); err != nil {
+	if err := validateValue(decoder, RootPath(), 0); err != nil {
 		return err
 	}
 	return expectEOF(decoder)
@@ -129,7 +129,7 @@ func ObjectWithUniqueKeys(data []byte) (bool, error) {
 	if token != json.Delim('{') {
 		return false, nil
 	}
-	if err := validateObject(decoder, "$", 1); err != nil {
+	if err := validateObject(decoder, RootPath(), 1); err != nil {
 		if errors.Is(err, ErrDuplicateKey) || errors.Is(err, ErrMaxDepth) {
 			return true, Coded("", data, err)
 		}
@@ -151,7 +151,7 @@ func expectEOF(decoder *json.Decoder) error {
 	return nil
 }
 
-func validateValue(decoder *json.Decoder, path string, depth int) error {
+func validateValue(decoder *json.Decoder, path JSONPath, depth int) error {
 	token, err := decoder.Token()
 	if err != nil {
 		return err
@@ -176,7 +176,7 @@ func validateValue(decoder *json.Decoder, path string, depth int) error {
 
 // validateObject validates an object whose opening brace has already been
 // consumed from decoder.
-func validateObject(decoder *json.Decoder, path string, depth int) error {
+func validateObject(decoder *json.Decoder, path JSONPath, depth int) error {
 	seen := make(map[string]struct{})
 	for decoder.More() {
 		keyToken, err := decoder.Token()
@@ -188,10 +188,10 @@ func validateObject(decoder *json.Decoder, path string, depth int) error {
 			return fmt.Errorf("%s: object key is not a string", path)
 		}
 		if _, exists := seen[key]; exists {
-			return &DuplicateKeyError{Key: key, Path: path, Offset: decoder.InputOffset()}
+			return &DuplicateKeyError{Key: key, Path: path.String(), Offset: decoder.InputOffset()}
 		}
 		seen[key] = struct{}{}
-		if err := validateValue(decoder, path+"."+key, depth); err != nil {
+		if err := validateValue(decoder, path.Key(key), depth); err != nil {
 			return err
 		}
 	}
@@ -207,9 +207,9 @@ func validateObject(decoder *json.Decoder, path string, depth int) error {
 
 // validateArray validates an array whose opening bracket has already been
 // consumed from decoder.
-func validateArray(decoder *json.Decoder, path string, depth int) error {
+func validateArray(decoder *json.Decoder, path JSONPath, depth int) error {
 	for index := 0; decoder.More(); index++ {
-		if err := validateValue(decoder, fmt.Sprintf("%s[%d]", path, index), depth); err != nil {
+		if err := validateValue(decoder, path.Index(index), depth); err != nil {
 			return err
 		}
 	}

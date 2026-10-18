@@ -3,6 +3,7 @@ package gemini
 import (
 	"fmt"
 	"sort"
+	"strings"
 
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/compile"
@@ -37,6 +38,9 @@ func translateSubagent(sub *ir.Subagent, opts compile.Options) ([]artifact.Artif
 	if sub.Isolation != "" {
 		diags = append(diags, diag.Diagnostic{Code: diag.CodeSubagentSecurityRestrictionUnsupported, Severity: diag.SeverityError, Target: string(mapping.TargetGemini), Resource: sub.Name(), Message: "Gemini cannot represent isolation; subagent artifact suppressed", Hint: "Use a target that supports isolation or remove the restriction explicitly", Source: diag.SourceRef(sub.Source)})
 	}
+	if compile.SubagentReadOnly(sub) {
+		diags = append(diags, compile.ReadOnlyUnsupported(mapping.TargetGemini, sub))
+	}
 	if len(diags) > 0 {
 		return nil, diags, nil
 	}
@@ -67,10 +71,11 @@ func translateSubagent(sub *ir.Subagent, opts compile.Options) ([]artifact.Artif
 					Args:    replaceEnvTokenSlice(server.Args),
 					Env:     replaceEnvTokenMap(server.Env),
 					URL:     replaceEnvTokens(server.URL),
+					Extra:   server.Extra,
 				}
-				diags = append(diags, compile.McpCredentialDiagnosticsForFields(
+				diags = append(diags, compile.McpCredentialDiagnosticsWithExtra(
 					sub.Name(), diag.SourceRef(sub.Source), mapping.TargetGemini,
-					server.Env, nil, "", "mcpServers."+name+".", compile.WithMcpOptions(opts),
+					server.Env, server.Extra, "mcpServers."+name+".", compile.WithMcpOptions(opts),
 				)...)
 			}
 		}
@@ -180,6 +185,11 @@ func translateSubagent(sub *ir.Subagent, opts compile.Options) ([]artifact.Artif
 			if server.URL != "" {
 				entry["url"] = server.URL
 			}
+			for key, value := range server.Extra {
+				if !modeledInlineMCPMember(key) {
+					entry[key] = value
+				}
+			}
 			entries[name] = entry
 		}
 		fm.Set("mcpServers", entries)
@@ -204,4 +214,14 @@ type extMCPServer struct {
 	Args    []string
 	Env     map[string]string
 	URL     string
+	Extra   map[string]any
+}
+
+func modeledInlineMCPMember(key string) bool {
+	for _, member := range []string{"command", "args", "env", "url"} {
+		if strings.EqualFold(key, member) {
+			return true
+		}
+	}
+	return false
 }

@@ -553,3 +553,67 @@ Native marker aggregate alias detachment MUST retain the admitted parent identit
 
 - **WHEN** an unchanged admitted native marker aggregate alias points to an empty regular target and synchronization installs a selected MCP server
 - **THEN** synchronization MUST create private regular native output containing the selected server without changing the original target, and repeat synchronization MUST preserve output bytes, identity and modification time
+
+### Requirement: Read-only checks compare cache-backed resource content
+
+In symlink materialization mode, Agent Marketplace MUST compare desired
+resource content with the cache content exposed by an installed managed
+symlink before reporting it synchronized. Changed or missing compiled content,
+added, changed or removed support files, and support-file permission changes
+MUST report the affected native resource path as a pending write even when
+the symlink target is unchanged. Read-only checks MUST NOT populate, repair
+or prune resource caches or replace installed links. Unchanged content MUST
+remain synchronized, user-owned collisions MUST retain their existing
+preservation policy, and real synchronization MUST restore a clean check.
+
+#### Scenario: Check detects changed linked resource content
+
+- **WHEN** compiled content of an installed linked resource changes while its desired cache path remains stable
+- **THEN** read-only materialization MUST report the native resource path as a pending write without changing installed cache bytes, permissions, modification time or symlink identity
+- **AND** real synchronization MUST update the exposed content and a subsequent check MUST report it synchronized
+
+#### Scenario: Check detects linked support file drift
+
+- **WHEN** an installed linked resource has added, edited or removed support files, changed support-file permissions, or missing cache content
+- **THEN** checking MUST report the resource as pending without updating existing cache content or recreating missing cache content
+- **AND** real synchronization MUST reconcile the support content and restore a clean check
+
+#### Scenario: CLI check refuses stale linked content without repairing it
+
+- **WHEN** a directory source changes the content of an already synchronized linked resource
+- **THEN** `sync --check` MUST exit 1 and preserve configuration, acquisition locks, installed links and resource caches
+- **AND** ordinary sync MUST expose the new content and a subsequent `sync --check` MUST exit 0 without changes
+
+### Requirement: Locally edited file-mode output is reported as an edited managed copy
+
+When a harness target uses file materialization mode and a selected resource's output is recorded in the materialization manifest with a digest, and the bytes on disk match neither that digest nor the output sync would write now, sync and `sync --check` SHALL preserve those bytes and the manifest entry and SHALL report one `materialize.collision.user-owned` warning. Its message MUST say the output is a locally edited copy of a resource managed by Agent Marketplace, MUST name the output path and the resource, MUST say that deleting or moving the copy and running sync restores the registry version, and MUST NOT describe the output as not managed by Agent Marketplace. The same message SHALL be used when such a copy prevents the harness target from returning to cache-backed symlinks. Output that the materialization manifest does not record MUST keep the existing unmanaged-collision message with its remove and rename hint. Exit codes are unchanged.
+
+#### Scenario: Edited file-mode skill copy is reported as a local edit
+
+- **WHEN** a skill copied in file materialization mode and recorded in the materialization manifest is edited, then sync or `sync --check` runs
+- **THEN** one `materialize.collision.user-owned` warning names the copy's path and resource as a locally edited managed copy with the restore hint and without saying it is not managed, and the edited bytes and manifest entry are unchanged
+
+#### Scenario: Edited file-mode single-file copy is reported as a local edit
+
+- **WHEN** a single-file resource output copied in file materialization mode and recorded in the materialization manifest is edited, then sync runs
+- **THEN** one `materialize.collision.user-owned` warning names the file's path and resource as a locally edited managed copy with the restore hint, and the edited bytes are unchanged
+
+#### Scenario: Edited copy blocking a return to symlinks is reported as a local edit
+
+- **WHEN** a recorded file-mode copy is edited and the harness target's materialization mode changes back to symlinks before sync runs
+- **THEN** sync keeps the edited copy instead of linking it and reports the same locally edited managed copy warning
+
+#### Scenario: Copy matching the current output returns to symlinks
+
+- **WHEN** a recorded file-mode copy no longer matches its recorded digest but matches the output sync would write now, and the harness target's materialization mode changes back to symlinks before sync runs
+- **THEN** sync replaces the copy with the cache-backed symlink and reports no collision warning for it
+
+#### Scenario: Unrecorded existing output keeps the unmanaged collision warning
+
+- **WHEN** a file or directory that the materialization manifest does not record already exists where a selected resource would be written, then sync runs
+- **THEN** sync preserves it and reports the existing `materialize.collision.user-owned` message that it is not managed by agent-marketplace, with the remove and rename hint
+
+#### Scenario: Removing an edited copy restores the registry version
+
+- **WHEN** a locally edited recorded file-mode copy is deleted and sync runs again
+- **THEN** sync writes the registry version to that path, records it in the materialization manifest, and reports no collision for it

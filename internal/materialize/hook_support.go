@@ -17,6 +17,7 @@ import (
 	"golang.org/x/sys/unix"
 
 	"github.com/Adyen/agent-marketplace/internal/cache"
+	"github.com/Adyen/agent-marketplace/internal/catalog"
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/dependencytxn"
 	"github.com/Adyen/agent-marketplace/internal/fsboundary"
@@ -78,6 +79,23 @@ func prepareHookSupport(work []skillTarget, repoRoots ...string) (map[int]hookSu
 		}
 		plan := hookSupportPlan{}
 		var files []artifact.Artifact
+		if w.skill.IsMarketplace {
+			hook := w.skill.Resource.(*ir.Hook)
+			support := make(map[string]artifact.SupportFile, len(w.skill.MarketplaceHookSupport))
+			for _, file := range w.skill.MarketplaceHookSupport {
+				support[file.Path] = artifact.SupportFile{Data: file.Bytes, Executable: file.Mode.Perm()&0o111 != 0}
+			}
+			if w.skill.MarketplaceAcquisition == config.MarketplaceAcquisitionMirror {
+				plan.err = catalog.ValidateMirroredHookSupport(hook, support)
+			} else if len(hook.SupportFiles) > 0 || len(support) > 0 {
+				plan.err = fmt.Errorf("%w: index-only hook declares mirrored support", catalog.ErrHookSupportIntegrity)
+			}
+			if plan.err != nil {
+				plan.supportAdmissionRefused = true
+				plans[i] = plan
+				continue
+			}
+		}
 		if w.skill.IsMarketplace && w.skill.MarketplaceAcquisition == config.MarketplaceAcquisitionMirror && w.skill.MarketplaceHookSupport != nil {
 			sourceKey, err := hookSupportSourceKeyForScope(w, repoRoot)
 			if err != nil {
@@ -209,6 +227,15 @@ func hookSupportDirFor(w skillTarget) (string, error) {
 }
 
 func hookSupportAggregateLayout(w skillTarget) (dir, aggregatePath string, err error) {
+	if hookUsesResourceFiles(w.target) {
+		// Resource-file hooks have no aggregate; the support root itself
+		// anchors destination routing.
+		dir := resourceFileHookSupportDir(w.target)
+		if dir == "" {
+			return "", "", fmt.Errorf("target %s declares no hook support directory", w.target)
+		}
+		return dir, dir, nil
+	}
 	declaration, err := nativeHookAggregateForScope(targetmeta.Target(w.target), w.machineScope)
 	if err != nil {
 		return "", "", err
@@ -340,13 +367,48 @@ func hookSupportCommandBase(w skillTarget, repoRoot, relBase string) (string, er
 	if relBase == "" {
 		return "", nil
 	}
+	abs, repoRel, inRepo, err := hookSupportLocation(w, repoRoot, relBase)
+	switch {
+	case err != nil:
+		return "", err
+	case w.machineScope:
+		return abs, nil
+	case !inRepo:
+		return "", fmt.Errorf("hook support directory %s is outside the repository root", relBase)
+	}
+	return repoRel, nil
+}
+
+// resourceFileHookSupportBase locates a resource-file hook's support
+// directory for its compiler. A repository installation inside the repository
+// uses a repository-relative base. Machine installations, and a repository
+// selection relocated outside the repository by a native directory override,
+// use the absolute directory, which only exists on this machine anyway.
+func resourceFileHookSupportBase(w skillTarget, repoRoot, relBase string) (base string, absolute bool, err error) {
+	if relBase == "" {
+		return "", false, nil
+	}
+	abs, repoRel, inRepo, err := hookSupportLocation(w, repoRoot, relBase)
+	switch {
+	case err != nil:
+		return "", false, err
+	case w.machineScope || !inRepo:
+		return abs, true, nil
+	}
+	return repoRel, false, nil
+}
+
+// hookSupportLocation resolves relBase through the first destination that
+// routes the target's hook support anchor, returning its absolute path and,
+// when it lies inside the repository, its repository-relative form.
+func hookSupportLocation(w skillTarget, repoRoot, relBase string) (abs, repoRel string, inRepo bool, err error) {
 	_, aggregatePath, err := hookSupportAggregateLayout(w)
 	if err != nil {
-		return "", err
+		return "", "", false, err
 	}
 	destinations, err := harness.ResolveDestinations(w.target, w.machineScope, repoRoot)
 	if err != nil {
-		return "", err
+		return "", "", false, err
 	}
 	for _, destination := range destinations {
 		if len(destination.AggregateRoutes) > 0 {
@@ -359,20 +421,18 @@ func hookSupportCommandBase(w skillTarget, repoRoot, relBase string) (string, er
 		if err != nil {
 			continue
 		}
-		abs := filepath.Join(destination.Root, filepath.FromSlash(rel))
+		abs = filepath.Join(destination.Root, filepath.FromSlash(rel))
 		if w.machineScope {
-			return abs, nil
+			return abs, "", false, nil
 		}
 		repoAbs, err := filepath.Abs(repoRoot)
 		if err != nil {
-			return "", err
+			return "", "", false, err
 		}
 		repoRoots := []string{filepath.Clean(repoAbs)}
 		if canonical, cerr := ownership.CanonicalRoot(repoRoot); cerr == nil && canonical != repoRoots[0] {
 			repoRoots = append(repoRoots, canonical)
 		}
-		matched := false
-		var repoRel string
 		for _, root := range repoRoots {
 			rel, relErr := filepath.Rel(root, abs)
 			if relErr != nil {
@@ -380,16 +440,12 @@ func hookSupportCommandBase(w skillTarget, repoRoot, relBase string) (string, er
 			}
 			repoRel = filepath.ToSlash(rel)
 			if repoRel != ".." && !strings.HasPrefix(repoRel, "../") && !path.IsAbs(repoRel) {
-				matched = true
-				break
+				return abs, repoRel, true, nil
 			}
 		}
-		if !matched {
-			return "", fmt.Errorf("hook support directory %s is outside the repository root", relBase)
-		}
-		return repoRel, nil
+		return abs, "", false, nil
 	}
-	return "", fmt.Errorf("target %s has no hook support destination in this scope", w.target)
+	return "", "", false, fmt.Errorf("target %s has no hook support destination in this scope", w.target)
 }
 
 func localRegistryRoot(res resolver.ResolvedArtifact) (string, error) {
@@ -678,6 +734,10 @@ func hookSupportExclusions(res resolver.ResolvedArtifact, definitionDir string) 
 		return excluded, false
 	}
 	if res.SourceHarness == "windsurf" && (definitionDir == ".windsurf/hooks" || definitionDir == "hooks") {
+		return excluded, true
+	}
+	// Sibling OpenCode declarations are other hooks, not support.
+	if res.SourceHarness == "opencode" && (definitionDir == ".opencode/hooks/agent-marketplace" || definitionDir == "hooks/agent-marketplace") {
 		return excluded, true
 	}
 	lookupDir := definitionDir

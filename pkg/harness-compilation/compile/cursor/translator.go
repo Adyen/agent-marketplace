@@ -92,8 +92,9 @@ func (c *cursorCompiler) translateSkill(s *ir.Skill) ([]artifact.Artifact, []dia
 			return nil, nil, err
 		}
 	}
-	if s.AllowedTools != nil {
-		if err := writeYAMLKey(&fm, "allowed-tools", s.AllowedTools); err != nil {
+	allowedTools, toolDiags := compile.PreApprovalSkillTools(s, mapping.TargetCursor)
+	if allowedTools != nil {
+		if err := writeYAMLKey(&fm, "allowed-tools", allowedTools); err != nil {
 			return nil, nil, err
 		}
 	}
@@ -114,7 +115,7 @@ func (c *cursorCompiler) translateSkill(s *ir.Skill) ([]artifact.Artifact, []dia
 		}
 	}
 	extraKeys, extraDiags := compile.ExtraKeys(s.Extra, compile.PresentFields(map[string]bool{"name": true, "description": true, "triggers": s.Triggers != nil, "argument-hint": s.ArgumentHint != "", "model": s.Model != "", "allowed-tools": s.AllowedTools != nil, "permissions": permissions != nil, "subagent": s.Subagent != "", "agent": s.Agent != ""}), mapping.TargetCursor, s.Name(), diag.SourceRef(s.Source))
-	extraDiags = append(compile.SupportFileDiagnostics(s, mapping.TargetCursor), extraDiags...)
+	extraDiags = append(append(toolDiags, compile.SupportFileDiagnostics(s, mapping.TargetCursor)...), extraDiags...)
 	for _, key := range extraKeys {
 		if err := writeYAMLKey(&fm, key, s.Extra[key]); err != nil {
 			return nil, nil, err
@@ -150,10 +151,12 @@ func (c *cursorCompiler) translateCommand(cmd *ir.Command) ([]artifact.Artifact,
 	if err := writeYAMLKey(&fm, "description", cmd.Description); err != nil {
 		return nil, nil, err
 	}
-	extraKeys, diags := compile.ExtraKeys(cmd.Extra, compile.PresentFields(map[string]bool{"name": true, "description": true}), mapping.TargetCursor, cmd.Name(), diag.SourceRef(cmd.Source))
+	extra, toolDiags := compile.PreApprovalCommandExtra(cmd, mapping.TargetCursor)
+	extraKeys, diags := compile.ExtraKeys(extra, compile.PresentFields(map[string]bool{"name": true, "description": true}), mapping.TargetCursor, cmd.Name(), diag.SourceRef(cmd.Source))
+	diags = append(toolDiags, diags...)
 	for _, key := range extraKeys {
 		fm.WriteString("\n")
-		if err := writeYAMLKey(&fm, key, cmd.Extra[key]); err != nil {
+		if err := writeYAMLKey(&fm, key, extra[key]); err != nil {
 			return nil, nil, err
 		}
 	}
@@ -234,6 +237,17 @@ func (c *cursorCompiler) translateSubagent(sub *ir.Subagent, opts compile.Option
 
 	effort := selection.Effort
 	if sidecar := sub.Ext.Cursor; sidecar != nil {
+		if !compile.SidecarToolsWithinCanonical(mapping.Target(sub.ToolSource), sub.Tools, sidecar.Tools, mapping.TargetCursor, opts.ToolOverride()) {
+			return nil, append(dgs, diag.Diagnostic{
+				Code:     diag.CodeSubagentSecurityRestrictionUnsupported,
+				Severity: diag.SeverityError,
+				Target:   string(mapping.TargetCursor),
+				Resource: sub.Name(),
+				Message:  "A preserved Cursor tool list grants tools the canonical subagent does not; subagent suppressed",
+				Hint:     "Remove the preserved sidecar or align it with the canonical tool list",
+				Source:   diag.SourceRef(sub.Source),
+			}), nil
+		}
 		if sidecar.Tools != nil {
 			mappedTools = sidecar.Tools
 		}
@@ -268,9 +282,13 @@ func (c *cursorCompiler) translateSubagent(sub *ir.Subagent, opts compile.Option
 			return nil, nil, err
 		}
 	}
-	extraKeys, extraDiags := compile.ModelExtraKeys(sub.Extra, compile.PresentFields(map[string]bool{"name": true, "description": true, "model": mappedModel != "", "tools": mappedTools != nil, "effort": effort != "", "disallowedTools": false, "isolation": false, "max-nesting": sub.MaxNesting != nil, "maxNesting": false}), mapping.TargetCursor, sub.Name(), diag.SourceRef(sub.Source))
+	extra := sub.Extra
+	if compile.SubagentReadOnly(sub) && !compile.HasReadOnlyCursorFlag(extra) {
+		extra = compile.WithExtraKey(extra, "readonly", true)
+	}
+	extraKeys, extraDiags := compile.ModelExtraKeys(extra, compile.PresentFields(map[string]bool{"name": true, "description": true, "model": mappedModel != "", "tools": mappedTools != nil, "effort": effort != "", "disallowedTools": false, "isolation": false, "max-nesting": sub.MaxNesting != nil, "maxNesting": false}), mapping.TargetCursor, sub.Name(), diag.SourceRef(sub.Source))
 	for _, key := range extraKeys {
-		if err := writeYAMLKey(&fm, key, sub.Extra[key]); err != nil {
+		if err := writeYAMLKey(&fm, key, extra[key]); err != nil {
 			return nil, nil, err
 		}
 	}
@@ -310,8 +328,16 @@ func (c *cursorCompiler) translateHook(h *ir.Hook, opts compile.Options) ([]arti
 	}
 
 	hookType := resolved.Type
-	if sidecar := h.Ext.Cursor; sidecar != nil && sidecar.HookType != "" {
-		hookType = sidecar.HookType
+	if sidecar := h.Ext.Cursor; sidecar != nil && sidecar.HookType != "" && sidecar.HookType != resolved.Type {
+		return nil, []diag.Diagnostic{{
+			Code:     diag.CodeHookCursorUnsupportedType,
+			Severity: diag.SeverityError,
+			Target:   string(mapping.TargetCursor),
+			Resource: h.Name(),
+			Message:  "A preserved Cursor hook type contradicts the catalog-resolved type; hook suppressed",
+			Hint:     "Remove the preserved sidecar or align it with the declared hook type",
+			Source:   diag.SourceRef(h.Source),
+		}}, nil
 	}
 
 	hookEntry := map[string]any{

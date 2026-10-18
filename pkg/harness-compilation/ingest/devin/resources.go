@@ -231,7 +231,11 @@ func commandFromSkill(skill *ir.Skill, file string) (*ir.Command, []diag.Diagnos
 		dropped(modelKey)
 	}
 
-	return ir.NewCommand(name, skill.Description, skill.Body, extra, ir.SourceRef{File: file, Line: 1}), diags
+	command := ir.NewCommand(name, skill.Description, skill.Body, extra, ir.SourceRef{File: file, Line: 1})
+	if skill.AllowedTools != nil {
+		command.ToolSource = "devin"
+	}
+	return command, diags
 }
 
 func commandControlRefusal(skill *ir.Skill, file string) (diag.Diagnostic, bool) {

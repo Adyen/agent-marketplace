@@ -171,7 +171,7 @@ func translateCommand(command *ir.Command) ([]artifact.Artifact, []diag.Diagnost
 }
 
 func translateSubagent(subagent *ir.Subagent) ([]artifact.Artifact, []diag.Diagnostic) {
-	if len(subagent.DisallowedTools) > 0 || subagent.Isolation != "" {
+	if len(subagent.DisallowedTools) > 0 || subagent.Isolation != "" || compilepkg.SubagentReadOnly(subagent) {
 		return nil, []diag.Diagnostic{{
 			Code:     diag.CodeSubagentSecurityRestrictionUnsupported,
 			Severity: diag.SeverityError,
@@ -372,7 +372,6 @@ func translateMcpServer(server *ir.McpServer, opts compilepkg.Options) ([]artifa
 }
 
 func translateMcpEnvValue(value string) string {
-	name, shellReference := mapping.WindsurfShellEnvName(value)
 	switch {
 	case strings.HasPrefix(value, "${env:") && strings.HasSuffix(value, "}"):
 		return replaceInterpolation(mapping.McpInterpolation("${env:VAR}", compilepkg.TargetWindsurf), "VAR", strings.TrimSuffix(strings.TrimPrefix(value, "${env:"), "}"))
@@ -381,8 +380,6 @@ func translateMcpEnvValue(value string) string {
 	case envInterpolationPattern.MatchString(value):
 		match := envInterpolationPattern.FindStringSubmatch(value)
 		return replaceInterpolation(mapping.McpInterpolation("inline", compilepkg.TargetWindsurf), "VAR", match[1])
-	case shellReference:
-		return replaceInterpolation(mapping.McpInterpolation("inline", compilepkg.TargetWindsurf), "VAR", name)
 	case fileInterpolationPattern.MatchString(value):
 		match := fileInterpolationPattern.FindStringSubmatch(value)
 		return replaceInterpolation(mapping.McpInterpolation("${file:PATH}", compilepkg.TargetWindsurf), "PATH", match[1])

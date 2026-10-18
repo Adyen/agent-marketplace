@@ -169,7 +169,7 @@ func isLocalConfigPath(configPath string) bool {
 // when it does not exist, the same way init does: a v4 root with the default
 // harnesses and nothing else. Logging is left out so the file stays clean, and
 // the logging runtime falls back to its code defaults unless the user opts in
-// with an explicit logging block (see docs/logging.md for the override keys).
+// with an explicit logging block (see site/docs/reference/logging.md for keys).
 // An existing root is validated without rewriting it; dangling links stay untouched.
 func EnsureGlobalConfig() error {
 	configPath, err := GlobalConfigPath()

@@ -112,3 +112,4 @@ Removing a collection member records an `exclude` in the active scope while keep
 - [How to publish resource collections](../how-to/author/publish-resource-collections.md)
 - [How to install resource bundles](../how-to/install-resource-bundles.md)
 - [Registry layout reference](./registry-layout.md)
+- [How upstream changes reach consumers](../explanation/how-upstream-changes-reach-consumers.md)

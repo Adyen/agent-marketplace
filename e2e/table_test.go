@@ -181,6 +181,31 @@ func TestPathFingerprintDetectsSameByteRewrite(t *testing.T) {
 const handwrittenFactoryHooks = `{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"echo handwritten"}]}]}}`
 
 var testTable = []TestCase{
+	// spec: deployed-acquisition-locks/check-reports-every-selected-unrecorded-registration-scope
+	{
+		Name:      "lock/check_all_unrecorded_registration_scopes",
+		Desc:      "Given unrecorded Marketplace registrations in every writable scope, When checking locks, Then every selected scope is reported without changing configuration or creating locks",
+		GlobalCfg: "apiVersion: agent-marketplace/v4\nharnesses: [factory]\nsources: {hosted: {marketplace: https://unrecorded.invalid}}\n",
+		RepoCfg:   "apiVersion: agent-marketplace/v4\nsources: {hosted: {marketplace: https://unrecorded.invalid}}\n",
+		LocalCfg:  "apiVersion: agent-marketplace/v4\nsources: {hosted: {marketplace: https://unrecorded.invalid}}\n",
+		Steps: []Step{
+			{
+				Args:           []string{"lock", "--check"},
+				AssertExitCode: intPtr(1),
+				OutContains:    []string{`lock.change-required: user lock "`, `lock.change-required: repo lock "`, `lock.change-required: local lock "`, "https://unrecorded.invalid"},
+				PathsUnchanged: []string{"/root/.agents", "/workspace/.agents"},
+				FilesAbsent:    []string{"/root/.agents/lock.yaml", "/workspace/.agents/lock.yaml", "/workspace/.agents/lock.local.yaml"},
+			},
+			{
+				Args:           []string{"lock", "--check", "--scope", "repo"},
+				AssertExitCode: intPtr(1),
+				OutContains:    []string{`lock.change-required: repo lock "`},
+				OutNotContains: []string{`lock.change-required: user lock "`, `lock.change-required: local lock "`},
+				PathsUnchanged: []string{"/root/.agents", "/workspace/.agents"},
+				FilesAbsent:    []string{"/root/.agents/lock.yaml", "/workspace/.agents/lock.yaml", "/workspace/.agents/lock.local.yaml"},
+			},
+		},
+	},
 	// spec: regression-gates/v4-selection-workflows-remain-usable
 	{
 		Name: "selection/v4_bulk_selection_lifecycle",
@@ -647,6 +672,61 @@ resources: {team: {include: [hook/SessionStart-command, hook/SessionStart-comman
 			{Args: []string{"sync", "--check"}, MustPass: true, OutNotContains: []string{"multiple registries"}, PathsUnchanged: []string{"/root/.factory/skills/shared", "/workspace/.factory/skills/shared"}},
 		},
 	},
+	// spec: resource-selection/unqualified-member-retains-the-collection-owner
+	{
+		Name: "collection/unqualified_repo_member_keeps_scope",
+		Desc: "Given an unselected user entry and a repository collection at the same registry location, When syncing, Then the member is installed only in the repository",
+		Registries: []RegistryDef{{Name: "shared-bundle", Skills: []Skill{{Name: "shared", Description: "Repository collection member"}},
+			Files: map[string]string{"collections/bundle/COLLECTION.yaml": "name: bundle\nresources:\n  - name: shared\n"}}},
+		GlobalCfg: "apiVersion: agent-marketplace/v4\nharnesses: [factory]\nsources: {user: {git: '{{REG:shared-bundle}}', ref: main}}\n",
+		RepoCfg:   "apiVersion: agent-marketplace/v4\nsources: {repo: {git: '{{REG:shared-bundle}}', ref: main}}\nresources: {repo: {include: [collection/bundle]}}\n",
+		Steps: []Step{
+			{Args: []string{"sync"}, MustPass: true, OutNotContains: []string{"multiple registries"},
+				Symlinks:     []string{"/workspace/.factory/skills/shared"},
+				FilesAbsent:  []string{"/root/.factory/skills/shared"},
+				FileContains: map[string]string{"/workspace/.factory/skills/shared/SKILL.md": "Repository collection member"}},
+			{Args: []string{"sync", "--check"}, MustPass: true, PathsUnchanged: []string{"/workspace/.factory/skills/shared"},
+				FilesAbsent: []string{"/root/.factory/skills/shared"}},
+		},
+	},
+	// spec: resource-selection/same-collection-remains-selected-in-both-install-scopes
+	{
+		Name: "collection/unqualified_members_keep_both_scopes",
+		Desc: "Given the same collection selected in user and repository configuration, When syncing, Then both scopes materialize its member without collisions",
+		Registries: []RegistryDef{{Name: "shared-bundle", Skills: []Skill{{Name: "shared", Description: "Shared collection member"}},
+			Files: map[string]string{"collections/bundle/COLLECTION.yaml": "name: bundle\nresources:\n  - name: shared\n"}}},
+		GlobalCfg: "apiVersion: agent-marketplace/v4\nharnesses: [factory]\nsources: {user: {git: '{{REG:shared-bundle}}', ref: main}}\nresources: {user: {include: [collection/bundle]}}\n",
+		RepoCfg:   "apiVersion: agent-marketplace/v4\nsources: {repo: {git: '{{REG:shared-bundle}}', ref: main}}\nresources: {repo: {include: [collection/bundle]}}\n",
+		Steps: []Step{
+			{Args: []string{"sync"}, MustPass: true, OutNotContains: []string{"multiple registries"},
+				Symlinks: []string{"/root/.factory/skills/shared", "/workspace/.factory/skills/shared"},
+				FileContains: map[string]string{
+					"/root/.factory/skills/shared/SKILL.md":      "Shared collection member",
+					"/workspace/.factory/skills/shared/SKILL.md": "Shared collection member",
+				}},
+			{Args: []string{"sync", "--check"}, MustPass: true, OutNotContains: []string{"multiple registries"},
+				PathsUnchanged: []string{"/root/.factory/skills/shared", "/workspace/.factory/skills/shared"}},
+		},
+	},
+	// spec: resource-selection/unqualified-required-member-retains-required-policy
+	{
+		Name: "collection/unqualified_required_member_keeps_policy",
+		Desc: "Given an optional organization entry and a required user collection at the same location, When syncing with a competing repository resource, Then required policy prevents repository shadowing",
+		Registries: []RegistryDef{{Name: "shared-bundle", Skills: []Skill{{Name: "shared", Description: "Required collection member"}},
+			Files: map[string]string{"collections/bundle/COLLECTION.yaml": "name: bundle\nresources:\n  - name: shared\n"}}},
+		OrgCfg:    "apiVersion: agent-marketplace/v4\nsources: {org: {git: '{{REG:shared-bundle}}', ref: main}}\n",
+		GlobalCfg: "apiVersion: agent-marketplace/v4\nharnesses: [factory]\nsources: {user: {git: '{{REG:shared-bundle}}', ref: main}}\nresources: {user: {include: [collection/bundle], required: true}}\n",
+		RepoCfg:   "apiVersion: agent-marketplace/v4\nsources: {repo: {directory: ./resources}}\nresources: {repo: {include: [skill/shared]}}\n",
+		Steps: []Step{
+			{Action: ActionWriteFile, Path: "/workspace/resources/skills/shared/SKILL.md", Body: (Skill{Name: "shared", Description: "Optional repository selection"}).SkillFile()},
+			{Args: []string{"sync"}, MustPass: true, OutContains: []string{"multiple registries"},
+				Symlinks:     []string{"/root/.factory/skills/shared"},
+				FilesAbsent:  []string{"/workspace/.factory/skills/shared"},
+				FileContains: map[string]string{"/root/.factory/skills/shared/SKILL.md": "Required collection member"}},
+			{Args: []string{"sync", "--check"}, MustPass: true, PathsUnchanged: []string{"/root/.factory/skills/shared"},
+				FilesAbsent: []string{"/workspace/.factory/skills/shared"}},
+		},
+	},
 	// spec: resource-selection/required-selection-through-a-collection-suppresses-a-repository-selection
 	{
 		Name: "collision/required_collection_member_prevents_repo_shadow",
@@ -1077,6 +1157,44 @@ sources: {team: {git: '{{REG:droid-remove-survive}}', ref: main}}
 				FileContains: map[string]string{
 					"/root/.factory/droids/worker.md": "# worker (user-owned)",
 				}},
+		},
+	},
+	{
+		// spec: materialization/cli-check-refuses-stale-linked-content-without-repairing-it
+		Name:      "materialize/sync_check_detects_linked_content_drift",
+		Desc:      "Given linked resources from a live directory source, When their command, skill and support content changes, Then check exits 1 without repairing caches; sync repairs them and check exits 0",
+		GlobalCfg: "apiVersion: agent-marketplace/v4\nharnesses: [claude, opencode]\n",
+		RepoCfg:   "apiVersion: agent-marketplace/v4\nsources: {local: {directory: ./resources, source_harness: claude}}\nresources: {local: {include: [command/check, skill/review]}}\n",
+		Steps: []Step{
+			{Action: ActionWriteFile, Path: "/workspace/resources/commands/check.md", Body: (Command{Name: "check"}).CommandFile() + "\noriginal command\n"},
+			{Action: ActionWriteFile, Path: "/workspace/resources/skills/review/SKILL.md", Body: (Skill{Name: "review", Description: "Original skill"}).SkillFile()},
+			{Action: ActionWriteFile, Path: "/workspace/resources/skills/review/reference.txt", Body: "original support"},
+			{Args: []string{"sync"}, MustPass: true, Symlinks: []string{"/workspace/.claude/commands/check.md", "/workspace/.claude/skills/review", "/workspace/.opencode/commands/check.md", "/workspace/.opencode/skills/review"}},
+			{Args: []string{"sync", "--check"}, MustPass: true, PathsUnchanged: []string{"/workspace/.agents", "/workspace/.claude", "/workspace/.opencode", "/root/.cache/agent-marketplace"}},
+			{Action: ActionWriteFile, Path: "/workspace/resources/commands/check.md", Body: (Command{Name: "check"}).CommandFile() + "\nupdated command\n"},
+			{Action: ActionWriteFile, Path: "/workspace/resources/skills/review/SKILL.md", Body: (Skill{Name: "review", Description: "Updated skill"}).SkillFile()},
+			{Action: ActionWriteFile, Path: "/workspace/resources/skills/review/reference.txt", Body: "updated support"},
+			{Args: []string{"sync", "--check"}, AssertExitCode: intPtr(1),
+				PathsUnchanged: []string{"/workspace/.agents", "/workspace/.claude", "/workspace/.opencode", "/root/.cache/agent-marketplace"},
+				FilesAbsent:    []string{"/workspace/.agents/lock.yaml"},
+				FileContains: map[string]string{
+					"/workspace/.claude/commands/check.md":             "original command",
+					"/workspace/.opencode/commands/check.md":           "original command",
+					"/workspace/.claude/skills/review/SKILL.md":        "Original skill",
+					"/workspace/.opencode/skills/review/SKILL.md":      "Original skill",
+					"/workspace/.claude/skills/review/reference.txt":   "original support",
+					"/workspace/.opencode/skills/review/reference.txt": "original support",
+				}},
+			{Args: []string{"sync"}, MustPass: true,
+				FileContains: map[string]string{
+					"/workspace/.claude/commands/check.md":             "updated command",
+					"/workspace/.opencode/commands/check.md":           "updated command",
+					"/workspace/.claude/skills/review/SKILL.md":        "Updated skill",
+					"/workspace/.opencode/skills/review/SKILL.md":      "Updated skill",
+					"/workspace/.claude/skills/review/reference.txt":   "updated support",
+					"/workspace/.opencode/skills/review/reference.txt": "updated support",
+				}},
+			{Args: []string{"sync", "--check"}, MustPass: true, PathsUnchanged: []string{"/workspace/.agents", "/workspace/.claude", "/workspace/.opencode", "/root/.cache/agent-marketplace"}},
 		},
 	},
 	{
@@ -3592,10 +3710,10 @@ sources: {team: {git: '{{REG:blocked-reg}}', ref: main}}
 	},
 
 	// ===== collections =====
-	// spec: resource-selection/top-level-collection-keeps-required-auto-selection
+	// spec: resource-selection/collection-keeps-required-all-selection
 	{
-		Name: "collection/required_org_survives_top_level_include",
-		Desc: "Given automatic required organization skills, When repository configuration selects a top-level collection, Then machine outputs survive and the repository collection expands",
+		Name: "collection/required_org_survives_collection_selection",
+		Desc: "Given an organization v4 group with all and required, When a repository v4 group selects a source-bound collection, Then machine outputs survive and the repository collection expands",
 		Registries: []RegistryDef{
 			{Name: "mandatory-collection", Skills: []Skill{{Name: "mandatory-alpha"}, {Name: "mandatory-beta"}}},
 			{Name: "optional-collection", Skills: []Skill{{Name: "optional-member"}}, Files: map[string]string{
@@ -4720,6 +4838,58 @@ harnesses:
 }
 
 func init() {
+	// spec: resource-installation/bulk-selectors-install-into-each-writable-layer
+	for _, scope := range []string{"user", "local"} {
+		for _, selector := range []string{"tag", "all"} {
+			for _, sourceScope := range []string{"repo", "user"} {
+				globalCfg := "apiVersion: agent-marketplace/v4\nharnesses: [factory]\n"
+				repoCfg := "apiVersion: agent-marketplace/v4\nsources: {team: {git: '{{REG:bulk-scopes}}', ref: main}}\n"
+				unchanged := []string{"/workspace/.agents/config.yaml", "/workspace/.agents/lock.yaml"}
+				if sourceScope == "user" {
+					globalCfg += "sources: {team: {git: '{{REG:bulk-scopes}}', ref: main}}\n"
+					repoCfg, unchanged = "", nil
+					if scope == "local" {
+						unchanged = []string{"/root/.agents/config.yaml", "/root/.agents/lock.yaml"}
+					}
+				}
+				targetConfig, targetLock, outputRoot, otherRoot, label := "/root/.agents/config.yaml", "/root/.agents/lock.yaml", "/root", "/workspace", "user-wide"
+				if scope == "local" {
+					targetConfig, targetLock, outputRoot, otherRoot, label = "/workspace/.agents/config.local.yaml", "/workspace/.agents/lock.local.yaml", "/workspace", "/root", "locally"
+				}
+				args := []string{"install", "--scope", scope}
+				selection := "ops"
+				absent := []string{otherRoot + "/.factory/skills/review"}
+				if sourceScope == "user" {
+					absent = append(absent, "/workspace/.agents/config.yaml", "/workspace/.agents/lock.yaml")
+				}
+				if selector == "tag" {
+					args = append(args, "--tag", "ops")
+					absent = append(absent, outputRoot+"/.factory/skills/unselected")
+				} else {
+					args = append(args, "--all", "--kind", "skill", "--registry", "{{REG:bulk-scopes}}")
+					selection = "skill/review"
+				}
+				testTable = append(testTable, TestCase{
+					Name: "install/bulk_scope_" + scope + "_" + selector + "_from_" + sourceScope,
+					Desc: "Given a v4 " + sourceScope + " source, When bulk installing into " + scope + " scope, Then the requested config, lock and native output change without editing other layers",
+					Registries: []RegistryDef{{Name: "bulk-scopes", Skills: []Skill{
+						{Name: "review", Description: "Scoped review", Tags: []string{"ops"}},
+						{Name: "unselected", Description: "Untagged skill"},
+					}}},
+					GlobalCfg: globalCfg,
+					RepoCfg:   repoCfg,
+					Steps: []Step{
+						{Args: []string{"lock", "--scope", sourceScope}, MustPass: true},
+						{Args: args, MustPass: true, OutContains: []string{label},
+							PathsUnchanged: unchanged,
+							FileContains:   map[string]string{targetConfig: selection, targetLock: "scope: " + scope, outputRoot + "/.factory/skills/review/SKILL.md": "Scoped review"},
+							FilesAbsent:    absent},
+						{Args: []string{"sync", "--check"}, MustPass: true},
+					},
+				})
+			}
+		}
+	}
 	for _, version := range []string{"agent-marketplace/v4"} {
 		for _, prerequisite := range []struct {
 			kind, name, sourcePath, source, output, code string

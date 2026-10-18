@@ -227,6 +227,7 @@ func TestInitDeduplicatesHarnesses(t *testing.T) {
 	}
 }
 
+// spec: telemetry/initialization-does-not-imply-consent
 func TestInitInteractiveTelemetryConsentNo(t *testing.T) {
 	if isolateCommandTest(t) {
 		return
@@ -367,6 +368,7 @@ func TestInitInteractiveTelemetryManagedSkipsPrompt(t *testing.T) {
 	}
 }
 
+// spec: telemetry/initialization-does-not-imply-consent
 func TestInitNonInteractiveLeavesTelemetryUnset(t *testing.T) {
 	if isolateCommandTest(t) {
 		return
