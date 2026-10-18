@@ -1,0 +1,94 @@
+package main
+
+// R2 frozen-ledger reproductions; see docs/issues/2026-10-18-security-r2-frozen-ledger.md.
+
+import (
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/Adyen/agent-marketplace/internal/config"
+	"github.com/Adyen/agent-marketplace/internal/lockfile"
+)
+
+// F1: a committed repository harness list narrows the organization
+// preservation set used by machine-scope deinit.
+func TestR2LedgerF1DeinitHarnessNarrowing(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+	origin, working := createBareRepoWithWorkingClone(t, "org-user-skills.git")
+	writeSkill(t, working, "user-skill", "User skill", []string{"user"})
+	writeSkill(t, working, "org-skill", "Org skill", []string{"org"})
+	commitAndPushAll(t, working, "Add skills")
+	orgCfgPath := filepath.Join(t.TempDir(), "config.yaml")
+	writeFile(t, orgCfgPath, "apiVersion: agent-marketplace/v4\nharnesses:\n  - factory\nsources:\n  hosted: {git: file://"+origin+", ref: main}\nresources:\n  hosted: [skill/org-skill]\n")
+	config.SetTestOrganizationConfigPath(t, orgCfgPath)
+	repoRoot := filepath.Join(t.TempDir(), "repo")
+	writeConfig(t, filepath.Join(homeDir, ".agents", "config.yaml"), "apiVersion: agent-marketplace/v4\nharnesses:\n  - factory\nsources:\n  hosted: {git: file://"+origin+", ref: main}\nresources:\n  hosted: [skill/user-skill]\n")
+	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), "apiVersion: agent-marketplace/v4")
+	withWorkingDir(t, repoRoot)
+	requireOrganizationLock(t, orgCfgPath)
+	if output, err := executeCommand("sync"); err != nil {
+		t.Fatalf("sync: %v\n%s", err, output)
+	}
+	assertFactorySkillExists(t, homeDir, "org-skill")
+	assertFactorySkillExists(t, homeDir, "user-skill")
+	// The attacker-controlled commit narrows the repository harness list.
+	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), "apiVersion: agent-marketplace/v4\nharnesses:\n  - claude\n")
+	config.ResetRepoRootCache()
+	output, err := executeCommand("deinit", "--scope", "user")
+	if err != nil {
+		t.Fatalf("deinit --scope user: %v\n%s", err, output)
+	}
+	if _, statErr := os.Lstat(filepath.Join(homeDir, ".factory", "skills", "user-skill")); !os.IsNotExist(statErr) {
+		t.Fatalf("deinit did not remove user-owned output: %v", statErr)
+	}
+	if _, statErr := os.Lstat(filepath.Join(homeDir, ".factory", "skills", "org-skill")); statErr != nil {
+		t.Errorf("REPRODUCED: organization Factory output removed by narrowed repository harnesses: %v", statErr)
+	}
+}
+
+// F114: a repository config symlink to another checkout's v4 Marketplace
+// config must not create a lock in that other checkout.
+func TestR2LedgerF114LockBootstrapThroughConfigSymlink(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	for _, command := range []string{"lock", "sync"} {
+		t.Run(command, func(t *testing.T) {
+			f := newEndpointRegistrationFixture(t, lockfile.ScopeRepo)
+			other := filepath.Join(f.root, "other")
+			otherConfig := filepath.Join(other, ".agents", "config.yaml")
+			raw, err := os.ReadFile(f.configPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			writeFile(t, otherConfig, string(raw))
+			if err := os.Remove(f.configPath); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(otherConfig, f.configPath); err != nil {
+				t.Fatal(err)
+			}
+			before, _ := os.ReadDir(filepath.Join(other, ".agents"))
+			output, err := executeCommand(command)
+			t.Logf("%s err=%v output:\n%s", command, err, output)
+			if err == nil || !strings.Contains(output+err.Error(), "escapes its captured root") {
+				t.Errorf("%s was not refused for the cross-checkout config link", command)
+			}
+			after, _ := os.ReadDir(filepath.Join(other, ".agents"))
+			if _, statErr := os.Lstat(filepath.Join(other, ".agents", "lock.yaml")); statErr == nil {
+				t.Errorf("REPRODUCED: %s created a lock in the other checkout", command)
+			}
+			if len(after) != len(before) {
+				t.Errorf("other checkout membership changed: %d -> %d", len(before), len(after))
+			}
+			_, repoLockErr := os.Lstat(f.lockPath)
+			t.Logf("repository logical lock present=%v", repoLockErr == nil)
+		})
+	}
+}

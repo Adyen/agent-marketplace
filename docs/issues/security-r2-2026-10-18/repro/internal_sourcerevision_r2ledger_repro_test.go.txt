@@ -1,0 +1,43 @@
+package sourcerevision
+
+// R2 frozen-ledger reproduction; see docs/issues/2026-10-18-security-r2-frozen-ledger.md.
+
+import (
+	"os"
+	"path/filepath"
+	"testing"
+)
+
+// F131: the configured source root itself is a symlink to a sibling subtree.
+func TestR2LedgerF131ConfiguredRootAlias(t *testing.T) {
+	snapshot := t.TempDir()
+	writeFixture(t, filepath.Join(snapshot, "malicious", ".factory", "skills", "redirected", "SKILL.md"), "---\nname: redirected\n---\ninert\n")
+	writeFixture(t, filepath.Join(snapshot, "real", ".factory", "skills", "plain", "SKILL.md"), "---\nname: plain\n---\ninert\n")
+	if err := os.Symlink("malicious", filepath.Join(snapshot, "approved")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(t.TempDir(), filepath.Join(snapshot, "escaping")); err != nil {
+		t.Fatal(err)
+	}
+	// A root link inside the snapshot is accepted: the same commit authored
+	// both trees. A root link leaving the snapshot is refused.
+	for root, want := range map[string]string{"approved": "redirected", "real": "plain", "escaping": ""} {
+		rev, err := Build(Input{SnapshotRoot: snapshot, RootPath: root, SourceHarness: "factory"})
+		names := []string{}
+		if err == nil {
+			for _, r := range rev.Manifest.Resources {
+				names = append(names, r.Name)
+			}
+		}
+		t.Logf("root=%s err=%v resources=%v", root, err, names)
+		if want == "" {
+			if err == nil {
+				t.Errorf("REPRODUCED: escaping root %s accepted with %v", root, names)
+			}
+			continue
+		}
+		if err != nil || len(names) != 1 || names[0] != want {
+			t.Errorf("root %s: err=%v resources=%v, want [%s]", root, err, names, want)
+		}
+	}
+}
