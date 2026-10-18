@@ -342,3 +342,40 @@ func (e *LayerEditor) RemoveMarketplacePins(binding SourceBinding, pins []Market
 	e.changed = true
 	return nil
 }
+
+// ExcludeMarketplacePin records a per-resource override without changing the
+// external collection or direct selection that supplies the resource.
+func (e *LayerEditor) ExcludeMarketplacePin(binding SourceBinding, pin MarketplaceResourcePin) error {
+	if err := e.checkBinding(binding); err != nil {
+		return err
+	}
+	if e.bindings[binding.id].Entry.V4Kind != V4SourceMarketplace {
+		return v4err("v4.source-kind", "sources."+binding.Name, 0, "Marketplace exclusion requires a Marketplace source")
+	}
+	if err := ValidateMarketplaceResourcePin(pin); err != nil {
+		return err
+	}
+	if pin.RegistrySlug == "" {
+		return v4err("v4.registry-slug", "resources."+binding.Name, 0, "Marketplace exclusion requires a verified registry slug")
+	}
+	if pin.Kind == "collection" {
+		return v4err("v4.marketplace-runtime-unsupported", "resources."+binding.Name+".exclude", 0, "Marketplace collections cannot be excluded; exclude individual members instead")
+	}
+	locator := pin.RegistrySlug + "/" + marketplaceKindName(pin.Kind) + "/" + pin.Name
+	if _, _, _, err := parseV4Locator(locator, binding.Name); err != nil {
+		return v4err("v4.locator", "resources."+binding.Name, 0, "%v", err)
+	}
+	group, err := e.ensureV4Group(binding.Name)
+	if err != nil {
+		return err
+	}
+	excludes, err := e.ensureV4GroupSeq(group, binding.Name, "exclude")
+	if err != nil {
+		return err
+	}
+	if !v4EditSequenceContains(excludes, locator) {
+		v4ScalarAppend(excludes, locator)
+		e.changed = true
+	}
+	return nil
+}

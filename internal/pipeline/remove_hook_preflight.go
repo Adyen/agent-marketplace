@@ -18,6 +18,7 @@ func preflightHookRemoval(ctx context.Context, ws Workspace, edits []StagedConfi
 	if len(edits) == 0 || !materialize.HasActiveNativeHooks(ws.MaterializeRoot()) {
 		return nil
 	}
+	ctx = WithTransientOrganizationMarketplaceLockCache(ctx)
 	ec := LoadEffective(ctx, ConfigLoadOnline, config.LoadEffectiveOptions{RepoRoot: ws.RepoRoot(), LocalConfigDir: ws.LocalConfigDir()}, nil)
 	ctx, view := exactLockViewWithContext(ctx, ec, true)
 	defer view.release()

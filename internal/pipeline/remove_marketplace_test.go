@@ -116,10 +116,10 @@ func TestMarketplaceRemoveRejectsCollectionOnlyLeafAndHonorsKind(t *testing.T) {
 		SelectedBy: config.MarketplaceSelectionsFrom([]config.MarketplaceSelection{{RegistryID: collection.RegistryID, Name: collection.Name, Revision: collection.Revision}}),
 	}
 	cfg := &config.Config{Marketplaces: []config.MarketplaceEntry{{Resources: []config.MarketplaceResourcePin{collection, leaf}}}}
-	if got, ok := marketplaceCollectionOnlyPinByName(cfg, "shared", ir.KindSkill, true); !ok || got.Kind != "skill" {
+	if got, _, ok := marketplaceCollectionOnlyPinByName(cfg, "shared", ir.KindSkill, true); !ok || got.Kind != "skill" {
 		t.Fatalf("collection-only skill lookup = %#v, %v", got, ok)
 	}
-	if _, ok := marketplaceCollectionOnlyPinByName(cfg, "shared", ir.KindCommand, true); ok {
+	if _, _, ok := marketplaceCollectionOnlyPinByName(cfg, "shared", ir.KindCommand, true); ok {
 		t.Fatal("collection-only skill matched --kind command")
 	}
 }
