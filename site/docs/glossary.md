@@ -100,7 +100,7 @@ A project folder tracked by [Git](#git), together with its history. In these doc
 
 ## Resource
 
-Something `agent-marketplace` installs for your [harness](#harness). There are five kinds: [skill](#skill), [command](#command), [subagent](#subagent), [hook](#hook), and [MCP server](#mcp-server). A [collection](#collection) groups several resources together.
+Something `agent-marketplace` installs for your [harness](#harness). There are five loose kinds: [skill](#skill), [command](#command), [subagent](#subagent), [hook](#hook), and [MCP server](#mcp-server); a source that declares a plugin `format` also offers plugin packages as a `plugin` kind. A [collection](#collection) groups several resources together.
 
 ## Resource group
 
