@@ -100,7 +100,11 @@ func TestUnicodeCaseFoldedPathsCollide(t *testing.T) {
 	if _, err := Materialize(direct, out); err == nil || !strings.Contains(err.Error(), "differ only in letter case") {
 		t.Fatalf("Materialize accepted case-folded duplicate paths: %v", err)
 	}
-	if entries, _ := os.ReadDir(out); len(entries) != 0 {
+	entries, err := os.ReadDir(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 0 {
 		t.Fatalf("Materialize wrote output before refusing: %v", entries)
 	}
 }
