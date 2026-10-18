@@ -11,6 +11,10 @@ treated as public behavior in this form.
 
 The ambiguity refusals for kind, source, and scope predate this change, carry no
 code, and expose their remediation text as the contract; they are unchanged.
+Refusals from the shared Marketplace removal path (several matching direct
+pins, organization-managed or collection-only selections, and scope-boundary
+violations) also predate this change and remain uncoded, so the requirement
+names only the three codes above.
 
 ## Verification
 

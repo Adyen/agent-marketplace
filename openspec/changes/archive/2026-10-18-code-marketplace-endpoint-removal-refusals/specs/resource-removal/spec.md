@@ -8,8 +8,10 @@ updating configuration and the acquisition lock together. Without `--scope`,
 it MUST target repository scope like other `--from` removals; an explicit scope
 MUST edit only that layer. The ambiguity remediation for a Marketplace
 selection MUST name its endpoint with `--from` and MUST NOT include `--ref` or
-`--path`. Git and directory `--from` removal MUST remain unchanged. Refusals of
-endpoint removal MUST carry a stable diagnostic code.
+`--path`. Git and directory `--from` removal MUST remain unchanged. Refusals
+for an unsupported qualifier, no matching direct selection, or a URL that also
+identifies a Git or directory source MUST carry the stable diagnostic codes
+named below.
 
 #### Scenario: Remove a Marketplace pin by its endpoint
 

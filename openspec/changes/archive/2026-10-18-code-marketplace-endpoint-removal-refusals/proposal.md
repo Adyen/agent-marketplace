@@ -17,7 +17,7 @@ refusals have no stable diagnostic code. Callers and tests can only match prose.
 
 ### Modified Capabilities
 
-- `resource-removal`: name the diagnostic codes of endpoint removal refusals.
+- `resource-removal`: name the diagnostic codes of these three endpoint removal refusals.
 
 ## Impact
 
