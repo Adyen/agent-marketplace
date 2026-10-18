@@ -380,7 +380,11 @@ func (e *LayerEditor) validateLocators(binding SourceBinding, input []ResourceLo
 	out := make([]ResourceLocator, 0, len(input))
 	for _, l := range input {
 		key := v4ResourceKindName(l.Kind) + "/" + l.Name
-		if _, _, _, err := parseV4Locator(key, binding.Name); err != nil {
+		if l.Kind == ir.KindPlugin {
+			if err := validateV4PluginRequestName(l.Name); err != nil {
+				return nil, v4err("v4.locator", "resources."+binding.Name, 0, "%v", err)
+			}
+		} else if _, _, _, err := parseV4Locator(key, binding.Name); err != nil {
 			return nil, v4err("v4.locator", "resources."+binding.Name, 0, "%v", err)
 		}
 		if seen[key] {
@@ -528,11 +532,12 @@ func (e *LayerEditor) v4ApplyInclude(name string, group *yaml.Node, locators []R
 			return v4err("v4.edit-exclusion", "resources."+name+".exclude", 0, "an inherited exclusion suppresses %q", locator)
 		}
 	}
-	var adds, removals []string
+	var adds []ResourceLocator
+	var removals []string
 	for _, l := range locators {
 		locator := v4Locator(l)
 		if include == nil || !v4EditSequenceContains(include, locator) {
-			adds = append(adds, locator)
+			adds = append(adds, l)
 		}
 		if exclude != nil && v4EditSequenceContains(exclude, locator) {
 			removals = append(removals, locator)
@@ -542,8 +547,8 @@ func (e *LayerEditor) v4ApplyInclude(name string, group *yaml.Node, locators []R
 		return nil
 	}
 	if group != nil && group.Kind == yaml.SequenceNode && len(removals) == 0 {
-		for _, locator := range adds {
-			v4ScalarAppend(group, locator)
+		for _, l := range adds {
+			group.Content = append(group.Content, v4RequestNode(l))
 		}
 		e.changed = true
 		return nil
@@ -567,12 +572,27 @@ func (e *LayerEditor) v4ApplyInclude(name string, group *yaml.Node, locators []R
 		if err != nil {
 			return err
 		}
-		for _, locator := range adds {
-			v4ScalarAppend(inc, locator)
+		for _, l := range adds {
+			inc.Content = append(inc.Content, v4RequestNode(l))
 		}
 	}
 	e.changed = true
 	return nil
+}
+
+// v4RequestNode is the authored form of one include item: the short locator
+// when the name fits its grammar, the structured {kind: plugin, name: ...}
+// entry otherwise.
+func v4RequestNode(l ResourceLocator) *yaml.Node {
+	if l.Kind == ir.KindPlugin && ir.ValidateName(l.Name) != nil {
+		return &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map", Content: []*yaml.Node{
+			{Kind: yaml.ScalarNode, Tag: "!!str", Value: "kind"},
+			{Kind: yaml.ScalarNode, Tag: "!!str", Value: "plugin"},
+			{Kind: yaml.ScalarNode, Tag: "!!str", Value: "name"},
+			{Kind: yaml.ScalarNode, Tag: "!!str", Value: l.Name},
+		}}
+	}
+	return &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: v4Locator(l)}
 }
 
 func (e *LayerEditor) v4ApplyExclude(name string, group *yaml.Node, locators []ResourceLocator) error {

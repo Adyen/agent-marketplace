@@ -243,8 +243,10 @@ func collectionParseKind(s string) (ir.ResourceKind, error) {
 		return ir.KindHook, nil
 	case "mcp", "mcpserver":
 		return ir.KindMcpServer, nil
+	case "plugin":
+		return ir.KindPlugin, nil
 	default:
-		return ir.KindSkill, fmt.Errorf("unsupported collection member kind %q (must be one of skill, command, subagent, hook, mcp)", s)
+		return ir.KindSkill, fmt.Errorf("unsupported collection member kind %q (must be one of skill, command, subagent, hook, mcp, plugin)", s)
 	}
 }
 
