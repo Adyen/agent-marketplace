@@ -84,6 +84,12 @@ var catalogSourceSpellings = map[string]map[string]string{
 
 var githubRepoForm = regexp.MustCompile(`^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$`)
 
+// CatalogPluginFormat returns the package format that catalog entries of
+// catalogFormat decode as ("claude-marketplace" -> "claude-plugin").
+func CatalogPluginFormat(catalogFormat string) string {
+	return strings.TrimSuffix(catalogFormat, "-marketplace") + "-plugin"
+}
+
 // DecodeCatalog reads the native plugin catalog rooted at rootPath as format
 // and returns one outcome per declared entry. A returned error means the
 // catalog itself was rejected; per-entry refusals live on the entries.
@@ -147,7 +153,7 @@ func DecodeCatalog(rootPath, format string) (*Catalog, []*diag.Diagnostic, error
 	}
 	rawPlugins, _ := obj["plugins"].([]any)
 	catalog := &Catalog{Format: format, Name: name}
-	pluginFormat := strings.TrimSuffix(format, "-marketplace") + "-plugin"
+	pluginFormat := CatalogPluginFormat(format)
 	for _, raw := range rawPlugins {
 		entry, entryDiags := decodeCatalogEntry(raw, catalogSourceSpellings[format], info, pluginFormat, name, pluginRoot, layout.ManifestPath)
 		catalog.Entries = append(catalog.Entries, entry)
