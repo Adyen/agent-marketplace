@@ -105,17 +105,27 @@ func TestRemoveUndiscoverableSourceAmbiguity(t *testing.T) {
 			if _, err := Remove(context.Background(), opts); err != nil {
 				t.Fatal(err)
 			}
-			data, err = os.ReadFile(root)
-			if err != nil || strings.Contains(string(data), "skill/gone, skill/keep]") || !strings.Contains(string(data), "skill/keep") {
-				t.Fatalf("wrong source removed: %v\n%s", err, data)
+			cfg, err := config.LoadRootConfigFromPath(root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := map[string][]string{first: {"keep"}}
+			if !crossScope {
+				want[second] = []string{"gone", "keep-other"}
+			}
+			if len(cfg.Registries) != len(want) {
+				t.Fatalf("unexpected root sources: %#v", cfg.Registries)
+			}
+			for _, entry := range cfg.Registries {
+				if expected, ok := want[entry.URL]; !ok || !slices.Equal(entry.Skills.Include, expected) {
+					t.Fatalf("wrong source selection removed: %s = %#v", entry.URL, entry.Skills.Include)
+				}
 			}
 			if crossScope {
 				after, err := os.ReadFile(otherPath)
 				if err != nil || string(after) != string(otherBefore) {
 					t.Fatalf("other scope changed: %v\n%s", err, after)
 				}
-			} else if !strings.Contains(string(data), "skill/gone, skill/keep-other") {
-				t.Fatalf("other source selection changed:\n%s", data)
 			}
 		})
 	}

@@ -182,68 +182,8 @@ func Remove(ctx context.Context, opts RemoveOptions) (result *RemoveResult, retE
 		}
 		marketplaceCfg = &scoped
 	}
-
-	if collection, entry, ok := marketplaceCollectionByName(marketplaceCfg, name, opts.Kind, opts.HasKind); ok {
-		if entry.Source == config.Organization {
-			if entry.Required {
-				return nil, fmt.Errorf("collection %q is required and managed externally", name)
-			}
-			return nil, fmt.Errorf("collection %q is managed externally", name)
-		}
-		effective := opts.Scope
-		if !opts.ScopeSpecified {
-			effective = inferMarketplaceRemoveScope(entry.Source)
-		}
-		configPath, err := scopedConfigPath(opts.RepoRoot, effective)
-		if err != nil {
-			return nil, fmt.Errorf("resolve config path: %w", err)
-		}
-		if _, err := MutateMarketplaceLayer(ctx, opts.RepoRoot, opts.RepoRoot, configPath, scopeToConfigSource(effective), func(m *MarketplaceLayerMutation) error {
-			return m.RemoveCollection(entry, collection)
-		}, func() ([]error, error) {
-			return nil, syncAfterRemove(ctx, opts)
-		}); err != nil {
-			return nil, err
-		}
-		return &RemoveResult{RemovedName: name, IsCollection: true}, nil
-	}
-
-	if pin, entry, matches := marketplaceDirectPinMatches(marketplaceCfg, name, opts.Kind, opts.HasKind); matches > 1 {
-		return nil, fmt.Errorf("%q matches %d Marketplace pins by local or canonical name; remove by an unambiguous installed name", name, matches)
-	} else if matches == 1 {
-		if entry.Source == config.Organization {
-			if entry.Required {
-				return nil, fmt.Errorf("%s %q is required and managed externally", skill.KindLabel(opts.Kind), name)
-			}
-			return nil, fmt.Errorf("%s %q is managed externally", skill.KindLabel(opts.Kind), name)
-		}
-		effective := opts.Scope
-		if !opts.ScopeSpecified {
-			effective = inferMarketplaceRemoveScope(entry.Source)
-		}
-		if err := config.ValidateScopeBoundary(entry.Source, scopeToConfigSource(effective)); err != nil {
-			return nil, err
-		}
-		configPath, err := scopedConfigPath(opts.RepoRoot, effective)
-		if err != nil {
-			return nil, fmt.Errorf("resolve config path: %w", err)
-		}
-		if _, err := MutateMarketplaceLayer(ctx, opts.RepoRoot, opts.RepoRoot, configPath, scopeToConfigSource(effective), func(m *MarketplaceLayerMutation) error {
-			return m.RemoveDirectPin(entry, pin)
-		}, func() ([]error, error) {
-			return nil, syncAfterRemove(ctx, opts)
-		}); err != nil {
-			return nil, err
-		}
-		return &RemoveResult{RemovedName: name}, nil
-	}
-
-	if pin, ok := marketplaceCollectionOnlyPinByName(marketplaceCfg, name, opts.Kind, opts.HasKind); ok {
-		collectionName := "an explicitly selected collection"
-		if selections := pin.SelectedBy.List(); len(selections) > 0 {
-			collectionName = selections[0].Name
-		}
-		return nil, fmt.Errorf("marketplace %s %q is selected only through collection %s; remove that collection instead", pin.Kind, name, collectionName)
+	if result, handled, err := removeMarketplaceSelection(ctx, opts, marketplaceCfg, name); handled {
+		return result, err
 	}
 
 	// Collections disappear during expansion, so locate their owning selection
@@ -1183,6 +1123,11 @@ func ambiguousRegistryError(name string, matches []resolver.ResolvedArtifact, cf
 	seen := make(map[string]struct{}, len(matches))
 	for _, match := range matches {
 		url, path, ref := owningRegistryEntry(cfg, match)
+		if match.IsMarketplace {
+			// A Marketplace endpoint is selected by URL alone; --ref and
+			// --path describe Git and directory sources.
+			url, path, ref = match.RegistryURL, "", ""
+		}
 		var line strings.Builder
 		fmt.Fprintf(&line, "\n  --scope %s --from %q", inferRemoveScope(match), url)
 		if r := strings.TrimSpace(ref); r != "" {
@@ -1397,6 +1342,19 @@ func removeFromAdHoc(ctx context.Context, opts RemoveOptions, fromURL string) (*
 	ec := LoadEffective(ctx, ConfigLoadOnline, config.LoadEffectiveOptions{RepoRoot: ws.RepoRoot(), LocalConfigDir: ws.LocalConfigDir()}, nil)
 	if len(ec.Errors) > 0 && !config.OnlyRegistryURLBlockedErrors(ec.Errors) {
 		return nil, errors.Join(ec.Errors...)
+	}
+	if name := strings.TrimSpace(opts.ResourceName); name != "" {
+		if marketplaceCfg, ok, err := marketplaceRemovalSource(ec.Merged, opts); ok {
+			if err != nil {
+				return nil, err
+			}
+			// Like other --from removals, an omitted scope means repo scope.
+			opts.ScopeSpecified = true
+			if result, handled, err := removeMarketplaceSelection(ctx, opts, marketplaceCfg, name); handled {
+				return result, err
+			}
+			return nil, fmt.Errorf("marketplace endpoint %q has no direct selection named %q", strings.TrimSpace(opts.FromURL), name)
+		}
 	}
 	if err := config.ValidateRegistryURLs([]config.RegistryEntry{syntheticEntry}, ec.Allowed); err != nil && !config.IsRegistryURLBlockedError(err) {
 		return nil, err
@@ -1680,6 +1638,113 @@ func removalEditEntry(entry config.RegistryEntry, url, path, ref string) config.
 		out.Ref = trimmed
 	}
 	return out
+}
+
+// marketplaceRemovalSource narrows named --from removal to a configured
+// Marketplace endpoint, preferring entries in the requested scope. It reports
+// false for Git and directory sources, whose --from handling is unchanged.
+func marketplaceRemovalSource(cfg *config.Config, opts RemoveOptions) (*config.Config, bool, error) {
+	fromURL := strings.TrimSpace(opts.FromURL)
+	want, err := config.NormalizeMarketplaceURL(fromURL)
+	if cfg == nil || err != nil {
+		return nil, false, nil
+	}
+	var matched, scoped []config.MarketplaceEntry
+	for _, entry := range cfg.Marketplaces {
+		if got, err := config.NormalizeMarketplaceURL(entry.URL); err != nil || got != want {
+			continue
+		}
+		matched = append(matched, entry)
+		if sourceMatchesRemoveScope(entry.Source, opts.Scope) {
+			scoped = append(scoped, entry)
+		}
+	}
+	if len(matched) == 0 {
+		return nil, false, nil
+	}
+	if strings.TrimSpace(opts.FromRef) != "" || strings.TrimSpace(opts.FromPath) != "" {
+		return nil, true, fmt.Errorf("--ref and --path do not apply to Marketplace endpoint %q", fromURL)
+	}
+	for _, entry := range cfg.Registries {
+		if config.NormalizeGitURL(entry.URL) == config.NormalizeGitURL(fromURL) {
+			return nil, true, fmt.Errorf("--from %q matches both a Marketplace endpoint and a registry source", fromURL)
+		}
+	}
+	if len(scoped) > 0 {
+		matched = scoped
+	}
+	slog.Debug("named removal targets Marketplace endpoint", "endpoint", want, "entries", len(matched), "scope", opts.Scope)
+	endpoint := *cfg
+	endpoint.Marketplaces = matched
+	return &endpoint, true, nil
+}
+
+// removeMarketplaceSelection removes a direct Marketplace pin or collection
+// from cfg. handled is false when cfg has no Marketplace selection named name.
+func removeMarketplaceSelection(ctx context.Context, opts RemoveOptions, cfg *config.Config, name string) (*RemoveResult, bool, error) {
+	if collection, entry, ok := marketplaceCollectionByName(cfg, name, opts.Kind, opts.HasKind); ok {
+		if entry.Source == config.Organization {
+			if entry.Required {
+				return nil, true, fmt.Errorf("collection %q is required and managed externally", name)
+			}
+			return nil, true, fmt.Errorf("collection %q is managed externally", name)
+		}
+		effective := opts.Scope
+		if !opts.ScopeSpecified {
+			effective = inferMarketplaceRemoveScope(entry.Source)
+		}
+		configPath, err := scopedConfigPath(opts.RepoRoot, effective)
+		if err != nil {
+			return nil, true, fmt.Errorf("resolve config path: %w", err)
+		}
+		if _, err := MutateMarketplaceLayer(ctx, opts.RepoRoot, opts.RepoRoot, configPath, scopeToConfigSource(effective), func(m *MarketplaceLayerMutation) error {
+			return m.RemoveCollection(entry, collection)
+		}, func() ([]error, error) {
+			return nil, syncAfterRemove(ctx, opts)
+		}); err != nil {
+			return nil, true, err
+		}
+		return &RemoveResult{RemovedName: name, IsCollection: true}, true, nil
+	}
+
+	if pin, entry, matches := marketplaceDirectPinMatches(cfg, name, opts.Kind, opts.HasKind); matches > 1 {
+		return nil, true, fmt.Errorf("%q matches %d Marketplace pins by local or canonical name; remove by an unambiguous installed name", name, matches)
+	} else if matches == 1 {
+		if entry.Source == config.Organization {
+			if entry.Required {
+				return nil, true, fmt.Errorf("%s %q is required and managed externally", skill.KindLabel(opts.Kind), name)
+			}
+			return nil, true, fmt.Errorf("%s %q is managed externally", skill.KindLabel(opts.Kind), name)
+		}
+		effective := opts.Scope
+		if !opts.ScopeSpecified {
+			effective = inferMarketplaceRemoveScope(entry.Source)
+		}
+		if err := config.ValidateScopeBoundary(entry.Source, scopeToConfigSource(effective)); err != nil {
+			return nil, true, err
+		}
+		configPath, err := scopedConfigPath(opts.RepoRoot, effective)
+		if err != nil {
+			return nil, true, fmt.Errorf("resolve config path: %w", err)
+		}
+		if _, err := MutateMarketplaceLayer(ctx, opts.RepoRoot, opts.RepoRoot, configPath, scopeToConfigSource(effective), func(m *MarketplaceLayerMutation) error {
+			return m.RemoveDirectPin(entry, pin)
+		}, func() ([]error, error) {
+			return nil, syncAfterRemove(ctx, opts)
+		}); err != nil {
+			return nil, true, err
+		}
+		return &RemoveResult{RemovedName: name}, true, nil
+	}
+
+	if pin, ok := marketplaceCollectionOnlyPinByName(cfg, name, opts.Kind, opts.HasKind); ok {
+		collectionName := "an explicitly selected collection"
+		if selections := pin.SelectedBy.List(); len(selections) > 0 {
+			collectionName = selections[0].Name
+		}
+		return nil, true, fmt.Errorf("marketplace %s %q is selected only through collection %s; remove that collection instead", pin.Kind, name, collectionName)
+	}
+	return nil, false, nil
 }
 
 func marketplaceCollectionByName(cfg *config.Config, name string, kind ir.ResourceKind, hasKind bool) (config.MarketplaceResourcePin, config.MarketplaceEntry, bool) {
