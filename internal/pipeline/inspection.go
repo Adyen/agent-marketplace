@@ -68,7 +68,8 @@ func Inspect(ctx context.Context, opts InspectOptions) (InspectionResult, func()
 		if dryRun == nil {
 			dryRun = materialize.Run
 		}
-		report, matErr = dryRun(ctx, opts.Resolve.Workspace.MaterializeRoot(), resolved.Resolved,
+		deliverable, _ := DeliverableArtifacts(resolved.Resolved)
+		report, matErr = dryRun(ctx, opts.Resolve.Workspace.MaterializeRoot(), deliverable,
 			materialize.WithDryRun(), materialize.WithMaterializationModes(resolved.MaterializationModes))
 	}
 	return buildInspection(resolved, report, matErr), release
@@ -120,6 +121,11 @@ func buildInspection(resolved ResolveResult, report *materialize.Report, matErr 
 		}
 		mark(err)
 		add(IssueError, IssueCatalog, err)
+	}
+	if _, pending := DeliverableArtifacts(resolved.Resolved); len(pending) > 0 {
+		for _, w := range pending {
+			add(IssueWarning, IssueMaterialization, w)
+		}
 	}
 	for _, malformed := range resolved.CatalogLoad.Malformed {
 		add(IssueWarning, IssueCatalog, malformedResourceError(malformed))

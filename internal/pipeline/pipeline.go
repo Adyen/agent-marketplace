@@ -910,19 +910,8 @@ func Sync(ctx context.Context, opts ResolveOptions) SyncResult {
 			"resolved.count": strconv.Itoa(len(resolved.Resolved)),
 		})
 	}
-	deliverable := make([]resolver.ResolvedArtifact, 0, len(resolved.Resolved))
-	for _, artifact := range resolved.Resolved {
-		if artifact.Kind == ir.KindPlugin {
-			result.Warnings = append(result.Warnings, newDiagIssue(diag.Diagnostic{
-				Code:     diag.CodePluginDeliveryPending,
-				Severity: diag.SeverityWarning,
-				Resource: "plugin/" + artifact.Name,
-				Message:  "plugin is acquired and locked; harness delivery of plugin members is not available yet",
-			}))
-			continue
-		}
-		deliverable = append(deliverable, artifact)
-	}
+	deliverable, pending := DeliverableArtifacts(resolved.Resolved)
+	result.Warnings = append(result.Warnings, pending...)
 	report, err := materialize.Run(ctx, matRoot, deliverable, materialize.WithMaterializationModes(resolved.MaterializationModes))
 	if materializeSpan != (telemetry.Span{}) {
 		materializeSpan.SetAttributes(materializationResultAttrs(report, err))
@@ -950,6 +939,29 @@ func Sync(ctx context.Context, opts ResolveOptions) SyncResult {
 		result.addMaterializeError(err)
 	}
 	return result
+}
+
+// DeliverableArtifacts splits resolved artifacts into the set materialize.Run
+// can consume and one plugin.delivery.pending warning per plugin artifact.
+// Plugin members have no harness delivery yet, so every entry point that
+// hands resolved artifacts to materialize.Run — writable sync and the
+// dry-run/inspection paths alike — must apply this same skip.
+func DeliverableArtifacts(resolved []resolver.ResolvedArtifact) ([]resolver.ResolvedArtifact, []error) {
+	deliverable := make([]resolver.ResolvedArtifact, 0, len(resolved))
+	var pending []error
+	for _, artifact := range resolved {
+		if artifact.Kind == ir.KindPlugin {
+			pending = append(pending, newDiagIssue(diag.Diagnostic{
+				Code:     diag.CodePluginDeliveryPending,
+				Severity: diag.SeverityWarning,
+				Resource: "plugin/" + artifact.Name,
+				Message:  "plugin is acquired and locked; harness delivery of plugin members is not available yet",
+			}))
+			continue
+		}
+		deliverable = append(deliverable, artifact)
+	}
+	return deliverable, pending
 }
 
 // CollectManagedPaths returns the managed paths (component subdirectories and

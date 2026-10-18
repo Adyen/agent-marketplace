@@ -151,7 +151,13 @@ func runList(ctx context.Context, out io.Writer, errOut io.Writer, kindFilter st
 	if err != nil {
 		return err
 	}
-	dryRunReport, dryRunErr := runListMaterialize(ctx, ws.MaterializeRoot(), result.Resolved, materialize.WithDryRun(), materialize.WithMaterializationModes(modes))
+	deliverable, deliveryPending := pipeline.DeliverableArtifacts(result.Resolved)
+	for _, w := range deliveryPending {
+		if _, werr := fmt.Fprintf(errOut, "warning: %s\n", terminalSafeText(fmt.Sprint(w))); werr != nil {
+			return werr
+		}
+	}
+	dryRunReport, dryRunErr := runListMaterialize(ctx, ws.MaterializeRoot(), deliverable, materialize.WithDryRun(), materialize.WithMaterializationModes(modes))
 	if dryRunErr != nil {
 		// A failed drift probe must not hide the listing itself, but file mode
 		// returns manifest and containment problems as hard errors that would

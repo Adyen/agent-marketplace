@@ -55,8 +55,11 @@ type SourceDecl struct {
 	// Format opts a git or directory source into plugin package
 	// interpretation; empty keeps loose ingestion.
 	Format string
-	// All is the source's select-all policy (all: true, required, or default).
+	// All is the source's select-all policy (all: true).
 	All bool
+	// Required carries the group's normalized required policy: retained only
+	// when the group has an actual selection policy, like the runtime adapter.
+	Required bool
 	// CollectionsInclude names the collections the source's resource group
 	// selects (collection/<name> requests).
 	CollectionsInclude []string
@@ -170,8 +173,8 @@ func (l LayerIntent) Sources() []SourceDecl {
 				if group.HasAll && group.All != nil && *group.All {
 					decl.All = true
 				}
-				if group.Required != nil && *group.Required {
-					decl.All = true
+				if group.Required != nil {
+					decl.Required = *group.Required && v4GroupHasSelection(group)
 				}
 				for _, request := range group.Include {
 					if request.Kind == "collection" {

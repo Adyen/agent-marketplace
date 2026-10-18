@@ -20,12 +20,7 @@ import (
 // plugin-v1 manifest, and acquires every selected external catalog entry as
 // its own registry record.
 func finalizePluginRoots(ctx context.Context, scan []lockfile.GitRegistry, pending []pendingFormatRoot, decls []config.SourceDecl, entries []config.RegistryEntry, old map[string]lockfile.GitRegistry, upgrade, readOnly bool, allowed *[]string) ([]lockfile.GitRegistry, error) {
-	selected := map[string]bool{}
-	for _, decl := range decls {
-		for _, name := range decl.CollectionsInclude {
-			selected[name] = true
-		}
-	}
+	selected := pipeline.SelectedCollections(decls)
 	collections, err := discoverLockCollections(ctx, scan, decls, entries)
 	if err != nil {
 		return nil, err
@@ -56,7 +51,7 @@ func finalizePluginRoots(ctx context.Context, scan []lockfile.GitRegistry, pendi
 			if err != nil {
 				return nil, err
 			}
-			key := registry.URL + "\x00" + registry.Roots[0].Path
+			key := registry.URL + "\x00" + registry.Ref + "\x00" + registry.Roots[0].Path
 			if !seen[key] {
 				seen[key] = true
 				out = append(out, registry)
@@ -72,7 +67,11 @@ func finalizePluginRoots(ctx context.Context, scan []lockfile.GitRegistry, pendi
 		if err != nil {
 			return nil, fmt.Errorf("decode plugin catalog %q: %w", decl.URL, err)
 		}
-		for _, ext := range pipeline.ExternalEntriesFor(&spec, loaded) {
+		externals, err := pipeline.ExternalEntriesFor(&spec, loaded)
+		if err != nil {
+			return nil, err
+		}
+		for _, ext := range externals {
 			binding := &sourcerevision.PluginExternal{
 				CatalogKind:   "directory",
 				CatalogURL:    decl.URL,
@@ -86,7 +85,7 @@ func finalizePluginRoots(ctx context.Context, scan []lockfile.GitRegistry, pendi
 			if err != nil {
 				return nil, err
 			}
-			key := registry.URL + "\x00" + registry.Roots[0].Path
+			key := registry.URL + "\x00" + registry.Ref + "\x00" + registry.Roots[0].Path
 			if !seen[key] {
 				seen[key] = true
 				out = append(out, registry)
@@ -131,6 +130,11 @@ func discoverLockCollections(ctx context.Context, scan []lockfile.GitRegistry, d
 			return nil, err
 		}
 		for _, root := range registry.Roots {
+			if root.RevisionSchema == "plugin-v1" {
+				// Format sources have no collections; discovery stays off for
+				// them exactly like the verification-side context build.
+				continue
+			}
 			found, err := collection.DiscoverCollections(filepath.Join(snapshot, filepath.FromSlash(root.Path)), "", registry.URL, registry.Ref, root.Path)
 			if err != nil {
 				return nil, fmt.Errorf("discover collections in %s@%s root %q: %w", registry.URL, registry.Ref, root.Path, err)
@@ -156,12 +160,9 @@ func discoverLockCollections(ctx context.Context, scan []lockfile.GitRegistry, d
 // least one external catalog entry produces a registry record; anything less
 // writes nothing.
 func directorySelectsExternalPlugin(decls []config.SourceDecl) bool {
-	selected := map[string]bool{}
+	selected := pipeline.SelectedCollections(decls)
 	var collections []collection.Collection
 	for _, decl := range decls {
-		for _, name := range decl.CollectionsInclude {
-			selected[name] = true
-		}
 		if decl.Kind == config.V4SourceDirectory {
 			found, err := collection.DiscoverCollections(decl.URL, "", decl.URL, "", "")
 			if err == nil {
@@ -178,7 +179,8 @@ func directorySelectsExternalPlugin(decls []config.SourceDecl) bool {
 		if err != nil {
 			return true
 		}
-		if len(pipeline.ExternalEntriesFor(&spec, loaded)) > 0 {
+		externals, err := pipeline.ExternalEntriesFor(&spec, loaded)
+		if err != nil || len(externals) > 0 {
 			return true
 		}
 	}

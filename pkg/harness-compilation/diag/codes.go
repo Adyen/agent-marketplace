@@ -415,6 +415,7 @@ const (
 	CodePluginMemberRestrictionUnsupported = "plugin.member.restriction-unsupported" // A plugin member field is a restriction the target cannot enforce; member blocked
 	CodePluginCompilePackageRequired       = "plugin.compile.package-required"       // A plugin resource was passed to the per-resource Compile boundary
 	CodePluginDeliveryPending              = "plugin.delivery.pending"               // WARNING: the plugin is acquired and locked but harness delivery is not yet implemented
+	CodePluginCatalogSharedOrigin          = "plugin.catalog.shared-origin"          // Two selected catalog entries resolve to the same external origin; the selection is refused
 
 	// Devin hook and MCP ENTRY-SKIP codes.
 	//
@@ -747,6 +748,7 @@ var codeCatalog = []CodeDoc{
 	{CodePluginMemberLiteralUnrepresentable, SeverityError, "A plugin MCP member carries placeholder-like text the destination harness would reinterpret, and no literal escape exists; the member was blocked", "Rewrite the value without placeholder-like text, or deliver to a target that can carry it literally"},
 	{CodePluginMemberRestrictionUnsupported, SeverityError, "A plugin member field is a restriction the target plugin surface cannot enforce; the member was blocked rather than installed without it", "Remove the restricted field, or deliver to a target that enforces it"},
 	{CodePluginCompilePackageRequired, SeverityError, "A plugin resource reached the per-resource Compile boundary; plugins compile through the package compile entry point", "Call the package compile entry point instead of Compile"},
+	{CodePluginCatalogSharedOrigin, SeverityError, "Two selected catalog entries resolve to the same external origin, ref, and subdirectory; their lock records would collapse into one, so the selection is refused", "Select only one of the entries, or split the packages into distinct origins or subdirectories"},
 }
 
 // DocForCode returns the documentation entry for the given diagnostic code.

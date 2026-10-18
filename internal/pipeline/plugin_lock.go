@@ -11,6 +11,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/lockfile"
 	"github.com/Adyen/agent-marketplace/internal/sourcerevision"
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/pluginpolicy"
 )
 
@@ -146,12 +147,7 @@ func BuildPluginLockContexts(decls []config.SourceDecl, doc lockfile.Document, o
 		Externals: map[string]*sourcerevision.PluginExternal{},
 		Expected:  map[string]bool{},
 	}
-	selectedCollections := map[string]bool{}
-	for _, decl := range decls {
-		for _, name := range decl.CollectionsInclude {
-			selectedCollections[name] = true
-		}
-	}
+	selectedCollections := SelectedCollections(decls)
 	// Collections are discovered across the layer's locked snapshots and its
 	// live directory sources, so a collection in any of the layer's sources
 	// contributes its plugin edges identically at write and verify time.
@@ -209,7 +205,9 @@ func BuildPluginLockContexts(decls []config.SourceDecl, doc lockfile.Document, o
 			if err != nil {
 				return nil, fmt.Errorf("decode plugin catalog %q: %w", entry.URL, err)
 			}
-			bindExternalEntries(out, &spec, loaded, entry, "", "")
+			if err := bindExternalEntries(out, &spec, loaded, entry, "", ""); err != nil {
+				return nil, err
+			}
 			continue
 		}
 		canonical, err := lockfile.CanonicalGitConfigURL(entry.URL)
@@ -234,8 +232,7 @@ func BuildPluginLockContexts(decls []config.SourceDecl, doc lockfile.Document, o
 			if err != nil {
 				return fmt.Errorf("decode plugin catalog %s@%s: %w", canonical, registry.Commit.String(), err)
 			}
-			bindExternalEntries(out, &spec, loaded, entry, canonical, registry.Commit.String())
-			return nil
+			return bindExternalEntries(out, &spec, loaded, entry, canonical, registry.Commit.String())
 		})
 		if err != nil {
 			return nil, err
@@ -244,28 +241,16 @@ func BuildPluginLockContexts(decls []config.SourceDecl, doc lockfile.Document, o
 	return out, nil
 }
 
-// specSelectedNames computes the entry names a selection spec targets:
-// explicit requests and collection edges, plus every entry selectAll accepts
-// when the source is selected wholesale, minus group exclusions.
-func specSelectedNames(spec *catalog.PluginSelectionSpec, entries []catalog.Entry, selectAll func(catalog.Entry) bool) map[string]bool {
+// SelectedCollections returns the collection names the declarations' ordered
+// decisions select, matching how the resolver admits collection selections.
+func SelectedCollections(decls []config.SourceDecl) map[string]bool {
 	selected := map[string]bool{}
-	for _, request := range spec.Explicit {
-		selected[request.Name] = true
-	}
-	for _, edge := range spec.Collections {
-		for _, name := range edge.Entries {
-			selected[name] = true
-		}
-	}
-	if spec.All {
-		for _, entry := range entries {
-			if selectAll == nil || selectAll(entry) {
-				selected[entry.Name] = true
+	for _, decl := range decls {
+		for _, sel := range catalog.SelectedResources(registryEntryForDecl(decl), nil) {
+			if sel.Kind == ir.KindCollection {
+				selected[sel.Name] = true
 			}
 		}
-	}
-	for _, name := range spec.Excluded {
-		delete(selected, name)
 	}
 	return selected
 }
@@ -290,28 +275,29 @@ func findPluginCatalogRegistry(doc lockfile.Document, canonical, ref, rootPath s
 // bindExternalEntries records the owning-catalog binding of every selected
 // external catalog entry, keyed by the external registry URL and the
 // package root path the lock record uses.
-func bindExternalEntries(out *PluginLockContexts, spec *catalog.PluginSelectionSpec, loaded catalog.LoadedCatalog, owner config.RegistryEntry, canonical, commit string) {
-	selected := specSelectedNames(spec, loaded.Entries, nil)
+func bindExternalEntries(out *PluginLockContexts, spec *catalog.PluginSelectionSpec, loaded catalog.LoadedCatalog, owner config.RegistryEntry, canonical, commit string) error {
+	externals, err := ExternalEntriesFor(spec, loaded)
+	if err != nil {
+		return err
+	}
 	kind := "directory"
 	if !owner.IsLocal() {
 		kind = "git"
 	}
-	for _, entry := range loaded.Entries {
-		if entry.Plugin == nil || entry.Plugin.Source.Kind != "git" || entry.Plugin.Refusal != nil || !selected[entry.Name] {
-			continue
-		}
-		url, err := lockfile.CanonicalGitConfigURL(entry.Plugin.Source.URL)
+	for _, ext := range externals {
+		url, err := lockfile.CanonicalGitConfigURL(ext.Source.URL)
 		if err != nil {
 			continue
 		}
-		rootPath := entry.Plugin.Source.Subdirectory
+		rootPath := ext.Source.Subdirectory
 		if rootPath == "" {
 			rootPath = "."
 		}
-		ref := entry.Plugin.Source.Ref
+		ref := ext.Source.Ref
 		if ref == "" {
 			ref = "HEAD"
 		}
+		entry := catalogEntryByName(loaded.Entries, ext.Name)
 		out.Expected[url+"\x00"+ref+"\x00"+rootPath] = true
 		out.Externals[externalRecordKey(url, rootPath)] = &sourcerevision.PluginExternal{
 			CatalogKind:   kind,
@@ -319,13 +305,23 @@ func bindExternalEntries(out *PluginLockContexts, spec *catalog.PluginSelectionS
 			CatalogRef:    owner.Ref,
 			CatalogCommit: commit,
 			CatalogRoot:   ownerRootPath(owner),
-			EntryName:     entry.Name,
-			EntryDigest:   entry.Plugin.DefinitionDigest,
+			EntryName:     ext.Name,
+			EntryDigest:   ext.DefinitionDigest,
 			CatalogFormat: owner.Format,
 			EntryStrict:   entry.Plugin.Strict,
 			EntryOverlay:  entry.Plugin.Overlay,
 		}
 	}
+	return nil
+}
+
+func catalogEntryByName(entries []catalog.Entry, name string) catalog.Entry {
+	for _, entry := range entries {
+		if entry.Name == name {
+			return entry
+		}
+	}
+	return catalog.Entry{}
 }
 
 // catalogIdentityURL renders the owning catalog's lock-manifest identity:
@@ -346,14 +342,13 @@ func ownerRootPath(owner config.RegistryEntry) string {
 
 // ExternalEntriesFor enumerates the selected external catalog entries of one
 // decoded plugin source for acquisition: name, exact git requirement, and
-// definition digest.
-func ExternalEntriesFor(spec *catalog.PluginSelectionSpec, loaded catalog.LoadedCatalog) []sourcerevision.PluginExternalEntry {
+// definition digest. Two selected entries resolving to the same external
+// origin are refused.
+func ExternalEntriesFor(spec *catalog.PluginSelectionSpec, loaded catalog.LoadedCatalog) ([]sourcerevision.PluginExternalEntry, error) {
 	if spec == nil {
-		return nil
+		return nil, nil
 	}
-	selected := specSelectedNames(spec, loaded.Entries, func(entry catalog.Entry) bool {
-		return entry.Plugin != nil && entry.Plugin.Refusal == nil
-	})
+	selected := catalog.PluginSelectedNames(spec, loaded.Entries)
 	var out []sourcerevision.PluginExternalEntry
 	for _, entry := range loaded.Entries {
 		if entry.Plugin == nil || entry.Plugin.Source.Kind != "git" || entry.Plugin.Refusal != nil || !selected[entry.Name] {
@@ -361,5 +356,5 @@ func ExternalEntriesFor(spec *catalog.PluginSelectionSpec, loaded catalog.Loaded
 		}
 		out = append(out, sourcerevision.PluginExternalEntry{Name: entry.Name, Source: entry.Plugin.Source, DefinitionDigest: entry.Plugin.DefinitionDigest, EntryStrict: entry.Plugin.Strict, EntryOverlay: entry.Plugin.Overlay})
 	}
-	return out
+	return out, sourcerevision.CheckSharedExternalOrigins(out)
 }

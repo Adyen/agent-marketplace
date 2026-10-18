@@ -1242,6 +1242,7 @@ func reconcileLayerDocument(ctx context.Context, scope lockfile.Scope, entries [
 	sort.Strings(identities)
 	var acquisitions []registryAcquireJob
 	var pending []pendingFormatRoot
+	retainedFormat := false
 	fresh := current != nil
 	for _, identity := range identities {
 		group := grouped[identity]
@@ -1280,6 +1281,7 @@ func reconcileLayerDocument(ctx context.Context, scope lockfile.Scope, entries [
 				locked.Roots = projectedRoots(locked.Roots, rootRequirements)
 				doc.Registries = append(doc.Registries, locked)
 				stats.retained++
+				retainedFormat = true
 				continue
 			}
 			return reconciledDocument{stats: stats, err: &lockLifecycleError{Code: "lock.offline-resolution", Scope: scope, Err: errors.New("offline mode cannot resolve a stale lock")}}, false
@@ -1350,6 +1352,25 @@ func reconcileLayerDocument(ctx context.Context, scope lockfile.Scope, entries [
 		}
 		if !reflect.DeepEqual(oldExternals, newExternals) {
 			fresh = false
+		}
+	}
+	if retainedFormat {
+		// The retained format group's external records are not recomputed
+		// offline; carry them forward unchanged like read-only reconciliation.
+		for identity, registry := range old {
+			if _, configured := grouped[identity]; configured || !pipeline.AllRootsPluginV1(registry) {
+				continue
+			}
+			present := false
+			for _, existing := range doc.Registries {
+				if existing.URL == registry.URL && existing.Ref == registry.Ref && len(existing.Roots) == len(registry.Roots) && existing.Roots[0].Path == registry.Roots[0].Path {
+					present = true
+					break
+				}
+			}
+			if !present {
+				doc.Registries = append(doc.Registries, registry)
+			}
 		}
 	}
 	for _, result := range acquired {

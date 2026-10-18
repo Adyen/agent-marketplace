@@ -208,6 +208,8 @@ func registryEntryForDecl(decl config.SourceDecl) config.RegistryEntry {
 		SourceHarness: decl.SourceHarness,
 		V4Kind:        decl.Kind,
 		Format:        decl.Format,
+		Required:      decl.Required,
+		Default:       decl.All,
 		V4All:         decl.All,
 		V4Decisions:   append([]config.V4SelectionDecision(nil), decl.Decisions...),
 		Collections:   config.KindSelector{Include: append([]string(nil), decl.CollectionsInclude...)},
