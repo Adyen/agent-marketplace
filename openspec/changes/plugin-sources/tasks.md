@@ -31,7 +31,7 @@
   `sync --check` and `sync --locked`; annotate the remaining lock scenarios
 - [x] 3.3 Skip plugin member delivery in sync with a
   `plugin.delivery.pending` warning (design D5)
-- [ ] 3.4 Add `plugin-packages/released-v4-client-refuses-a-plugin-configuration`
+- [x] 3.4 Add `plugin-packages/released-v4-client-refuses-a-plugin-configuration`
   to the released-client gate as a required witness
 
 ## 4. Gates
