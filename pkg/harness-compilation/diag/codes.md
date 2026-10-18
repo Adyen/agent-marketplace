@@ -146,6 +146,7 @@ comparison in non-test code.
 | `plugin.member.field-omitted` | A plugin member field the harness plugin surface marks omit-field was dropped before lowering; the member still installs | Remove the field, or deliver to a target that can represent it |
 | `plugin.catalog.source-unsupported` | A plugin catalog entry declares a source type its format refuses; the entry is inspectable but not installable | Acquire the plugin through a source type the format accepts, or install it from a different source |
 | `plugin.catalog.duplicate-entry` | Two plugin catalog entries share one name; neither copy is installable | Rename one entry or remove the duplicate |
+| `plugin.catalog.manifest-conflict` | A catalog entry opts out of strict overlay while carrying component fields, so the entry and its plugin.json disagree; the entry is inspectable but not installable | Drop the entry's component fields or remove strict: false |
 
 ### Hook review output
 

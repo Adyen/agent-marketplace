@@ -20,7 +20,12 @@ type PluginEntry struct {
 	Source           plugindecode.CatalogSource
 	Members          []ir.PluginMember
 	DefinitionDigest string
-	Refusal          *diag.Diagnostic
+	// Strict and Overlay carry the catalog entry's overlay input for
+	// formats whose catalog declares an entry-overlay policy; they matter
+	// only to decoders that apply that policy.
+	Strict  bool
+	Overlay map[string]any
+	Refusal *diag.Diagnostic
 }
 
 // DiscoverPluginSource enumerates a format source: package formats decode
@@ -70,6 +75,8 @@ func discoverPluginCatalog(dir, format string) (LoadedCatalog, error) {
 				Format:           pluginFormat,
 				Source:           catEntry.Source,
 				DefinitionDigest: catEntry.DefinitionDigest,
+				Strict:           catEntry.Strict,
+				Overlay:          catEntry.Overlay,
 				Refusal:          catEntry.Diagnostic,
 			},
 		}
@@ -77,16 +84,21 @@ func discoverPluginCatalog(dir, format string) (LoadedCatalog, error) {
 			entry.Description = description
 		}
 		if catEntry.Installable && catEntry.Source.Kind == "path" {
-			plugin, pluginDiags, decodeErr := plugindecode.Decode(filepath.Join(dir, filepath.FromSlash(catEntry.Source.Path)), pluginFormat)
+			plugin, pluginDiags, decodeErr := plugindecode.DecodeEntry(filepath.Join(dir, filepath.FromSlash(catEntry.Source.Path)), format, catEntry)
 			loaded.Diagnostics = append(loaded.Diagnostics, flattenDiagnostics(pluginDiags)...)
 			switch {
 			case decodeErr != nil:
-				entry.Plugin.Refusal = &diag.Diagnostic{
-					Code:     diag.CodePluginFormatManifestInvalid,
-					Severity: diag.SeverityWarning,
-					Resource: catEntry.Name,
-					Message:  fmt.Sprintf("catalog entry %q cannot be read as a %s package: %v", catEntry.Name, pluginFormat, decodeErr),
-					Source:   diag.SourceRef{File: catEntry.Source.Path},
+				if coded, isCoded := diag.AsCodedError(decodeErr); isCoded && coded.Code == diag.CodePluginCatalogManifestConflict {
+					refusal := coded.Diagnostic(catEntry.Name)
+					entry.Plugin.Refusal = &refusal
+				} else {
+					entry.Plugin.Refusal = &diag.Diagnostic{
+						Code:     diag.CodePluginFormatManifestInvalid,
+						Severity: diag.SeverityWarning,
+						Resource: catEntry.Name,
+						Message:  fmt.Sprintf("catalog entry %q cannot be read as a %s package: %v", catEntry.Name, pluginFormat, decodeErr),
+						Source:   diag.SourceRef{File: catEntry.Source.Path},
+					}
 				}
 				loaded.Diagnostics = append(loaded.Diagnostics, *entry.Plugin.Refusal)
 			default:

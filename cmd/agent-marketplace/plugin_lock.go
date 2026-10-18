@@ -48,6 +48,9 @@ func finalizePluginRoots(ctx context.Context, scan []lockfile.GitRegistry, pendi
 				CatalogCommit: item.oid.String(),
 				CatalogRoot:   item.rootPath,
 				EntryName:     ext.Name,
+				CatalogFormat: item.entry.Format,
+				EntryStrict:   ext.EntryStrict,
+				EntryOverlay:  ext.EntryOverlay,
 			}
 			registry, err := acquireExternalPluginRegistry(ctx, ext, binding, plugindecode.CatalogPluginFormat(item.entry.Format), pinnedExternal(old, ext, upgrade), allowed)
 			if err != nil {
@@ -71,10 +74,13 @@ func finalizePluginRoots(ctx context.Context, scan []lockfile.GitRegistry, pendi
 		}
 		for _, ext := range pipeline.ExternalEntriesFor(&spec, loaded) {
 			binding := &sourcerevision.PluginExternal{
-				CatalogKind: "directory",
-				CatalogURL:  decl.URL,
-				CatalogRoot: ".",
-				EntryName:   ext.Name,
+				CatalogKind:   "directory",
+				CatalogURL:    decl.URL,
+				CatalogRoot:   ".",
+				EntryName:     ext.Name,
+				CatalogFormat: decl.Format,
+				EntryStrict:   ext.EntryStrict,
+				EntryOverlay:  ext.EntryOverlay,
 			}
 			registry, err := acquireExternalPluginRegistry(ctx, ext, binding, plugindecode.CatalogPluginFormat(decl.Format), pinnedExternal(old, ext, upgrade), allowed)
 			if err != nil {
