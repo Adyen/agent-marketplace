@@ -1,7 +1,11 @@
 # plugin-packages Specification
 
 ## Purpose
-TBD - created by archiving change plugin-sources. Update Purpose after archive.
+Defines how consumers use plugin packages: opting a source into package
+interpretation with `format`, selecting plugins as resources without
+selecting their members independently, resolving native plugin catalog
+entries to exact sources under source policy, and locking plugin
+acquisition exactly in the existing acquisition lock format.
 
 ## Requirements
 
