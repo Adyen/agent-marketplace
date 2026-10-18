@@ -77,6 +77,17 @@ func TestNativeMetadataSidecarsKeepFrozenFallbackDigest(t *testing.T) {
 			if !bytes.Equal(legacyBytes, want) || !bytes.Equal(typedBytes, want) {
 				t.Fatalf("fallback source bytes differ from the legacy serialization:\nlegacy %s\n typed %s\n  want %s", legacyBytes, typedBytes, want)
 			}
+			legacyBuilt, err := buildResource(root, source, catalog.Entry{Kind: tc.legacy.Kind(), Name: tc.legacy.Name(), Resource: tc.legacy}, contract)
+			if err != nil {
+				t.Fatal(err)
+			}
+			typedBuilt, err := buildResource(root, source, catalog.Entry{Kind: tc.typed.Kind(), Name: tc.typed.Name(), Resource: tc.typed}, contract)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if legacyBuilt.ContentDigest != typedBuilt.ContentDigest {
+				t.Fatalf("fallback digests differ: legacy %s typed %s", legacyBuilt.ContentDigest, typedBuilt.ContentDigest)
+			}
 		})
 	}
 	if claudeSubagent.Ext.Claude == nil || categoryDroid.Ext.Factory == nil {
