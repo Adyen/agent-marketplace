@@ -32,6 +32,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"iter"
 	"slices"
 
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/internal/jsonutil"
@@ -202,6 +203,19 @@ func (n *Node) Keys() []string {
 		keys = append(keys, m.key)
 	}
 	return keys
+}
+
+// Members yields decoded keys and values in source order, without copying keys
+// or searching for each value. Values may be replaced during iteration, but
+// members must not be added or removed until iteration finishes.
+func (n *Node) Members() iter.Seq2[string, *Node] {
+	return func(yield func(string, *Node) bool) {
+		for _, m := range n.members {
+			if !yield(m.key, m.value) {
+				return
+			}
+		}
+	}
 }
 
 // Member returns the value stored under key.
