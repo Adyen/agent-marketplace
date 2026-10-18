@@ -3,6 +3,9 @@
 ## Scope
 
 This independent slice starts at main `3c13f497` while R42 PR #742 is queued.
+PR #742 merges before integration gates; the slice is rebased onto
+`ef28e6db`. The merger source, compiler fixtures and relevant compile/IR/
+policy/validation dependencies are unchanged across that rebase.
 Frozen R28/A89/F65 (`01a0a06b-ae6b-751c-ade3-ad5aa601353c`) concerns repeated
 hook-entry serialization/comparison in `artifact.MergeFragments`. The
 frozen ledger/source index remain unchanged from `2f55f85f`.
@@ -112,8 +115,22 @@ CGO_ENABLED=0 go test ./pkg/harness-compilation/artifact -run '^$' \
   not merely faster comparisons inside a helper. Both mutations are
   removed.
 
-Integrated scoped SDK/catalog/materializer, CLI, race, spec, E2E and
-adversarial gates are pending.
+Fresh integrated short-mode tests pass for all harness-compilation
+packages, catalog and materializer, plus vet, zero-issue CI lint and
+build. Six CLI consumer regressions pass for independent/shared native
+hooks, committed lock preservation, additive selection, ownership,
+review output and payload-free logging. Artifact-package races pass,
+including 300 Rapid cases at seed 29. Strict spec checks pass: 60 items,
+1,034 scenarios and 1,656 annotations; archive audit passes.
+Combined E2E passes with 2,927 invocations, 113/113 command requirements
+and all three required refusal witnesses.
+
+Host OCR-delegation adversarial review covers all nine intended files:
+the production merger and eight default-excluded tests/documents/raw-data
+files. Zero files are skipped and no actionable findings remain.
+These are scoped local gates, not a full root-suite, vendor-native or
+released-client container validation claim. Review and tests do not
+prove absence of other defects.
 
 ## Remaining Work
 

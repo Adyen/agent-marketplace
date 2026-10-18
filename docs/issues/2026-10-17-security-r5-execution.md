@@ -292,5 +292,11 @@ preserving catalog keys and native hook semantics without new limits.
 Measurements, small-case costs and controls are recorded in
 [the R42 execution report](2026-10-18-security-r5-gemini-hook-names.md).
 
+R42 subsequently merged in PR #742. The next independent slice removes
+R28's repeated object-array serialization/comparison during fragment
+accumulation, preserving exact equality and replacement semantics without
+new limits. Evidence and remaining scope are recorded in
+[the R28 execution report](2026-10-18-security-r5-fragment-dedupe.md).
+
 #434 already tracks this remaining scope. Publication must describe this as
 partial progress, preserve the frozen artifacts, and leave the issue open.
