@@ -252,6 +252,165 @@ func TestSyncChangedCatalogEntryMakesLockStale(t *testing.T) {
 	}
 }
 
+// spec: plugin-packages/changed-catalog-entry-makes-the-lock-stale
+func TestSyncChangedExternalEntryRefResolvesAfresh(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	root := pluginLockFixture(t)
+	repo := filepath.Join(root, "repo")
+
+	entryOrigin, entryWorking := createBareRepoWithWorkingClone(t, "entry.git")
+	writeClaudePluginPackage(t, entryWorking, "ext-kit", "ext-skill")
+	commitAndPushAll(t, entryWorking, "seed entry")
+
+	catalogDir := filepath.Join(root, "marketplace")
+	writeCatalogRepo(t, catalogDir, entryOrigin)
+
+	writeConfig(t, filepath.Join(repo, ".agents", "config.yaml"), "apiVersion: agent-marketplace/v4\nmaterialization: {mode: file}\nsources:\n  team: {directory: "+filepath.ToSlash(catalogDir)+", format: claude-marketplace}\nresources:\n  team:\n    - plugin/ext-kit\n")
+	withWorkingDir(t, repo)
+	lockPath := filepath.Join(repo, ".agents", "lock.yaml")
+	if output, err := executeCommand("sync", "--no-backup"); err != nil {
+		t.Fatalf("sync of a directory-catalog external plugin must succeed: %v\n%s", err, output)
+	}
+	_, before := readLock(t, lockPath)
+
+	// Commit a second ref locally but keep it unpublished: read-only runs must
+	// report stale from the recorded commit without resolving the new ref.
+	runGit(t, entryWorking, "checkout", "-b", "release")
+	writeFile(t, filepath.Join(entryWorking, "release.txt"), "release")
+	runGit(t, entryWorking, "add", ".")
+	runGit(t, entryWorking, "commit", "-m", "release commit")
+	releaseCommit := gitHead(t, entryWorking)
+
+	// Edit the selected entry's ref in the live directory catalog.
+	writeFile(t, filepath.Join(catalogDir, ".claude-plugin", "marketplace.json"),
+		`{"name":"team","plugins":[`+
+			`{"name":"local-kit","source":"./plugins/local-kit"},`+
+			`{"name":"ext-kit","source":{"source":"url","url":"`+filepath.ToSlash(entryOrigin)+`","ref":"release"}}]}`)
+
+	for _, args := range [][]string{{"sync", "--check"}, {"sync", "--locked"}, {"sync", "--offline"}} {
+		output, err := executeCommand(args...)
+		if err == nil {
+			t.Fatalf("%v must report stale after the entry ref changed:\n%s", args, output)
+		}
+		if !strings.Contains(output, "lock.") {
+			t.Fatalf("%v must report a stale lock diagnostic without resolving the unpublished ref, got:\n%s", args, output)
+		}
+		_, after := readLock(t, lockPath)
+		if string(after) != string(before) {
+			t.Fatalf("%v must write nothing after reporting stale", args)
+		}
+	}
+
+	// Publish the ref; plain sync resolves it afresh.
+	runGit(t, entryWorking, "push", "origin", "release")
+
+	if output, err := executeCommand("sync", "--no-backup"); err != nil {
+		t.Fatalf("plain sync must re-resolve the edited entry ref: %v\n%s", err, output)
+	}
+	doc, data := readLock(t, lockPath)
+	var entryRegistry *lockfile.GitRegistry
+	for i := range doc.Registries {
+		r := &doc.Registries[i]
+		for _, rt := range r.Roots {
+			for _, res := range rt.Resources {
+				if res.Kind == "plugin" && res.Name == "ext-kit" {
+					entryRegistry = r
+				}
+			}
+		}
+	}
+	if entryRegistry == nil {
+		t.Fatalf("external plugin must keep its own registry record:\n%s", data)
+	}
+	if entryRegistry.Ref != "release" || !strings.HasSuffix(entryRegistry.Commit.String(), releaseCommit) {
+		t.Fatalf("external record = ref %q commit %s, want release @ %s", entryRegistry.Ref, entryRegistry.Commit.String(), releaseCommit)
+	}
+	if output, err := executeCommand("sync", "--check"); err != nil {
+		t.Fatalf("sync --check must pass after the resync: %v\n%s", err, output)
+	}
+}
+
+// spec: plugin-packages/changed-catalog-entry-makes-the-lock-stale
+func TestSyncNewlySelectedExternalEntryReadOnlyReportsStale(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	root := pluginLockFixture(t)
+	repo := filepath.Join(root, "repo")
+
+	entryOrigin, entryWorking := createBareRepoWithWorkingClone(t, "entry.git")
+	writeClaudePluginPackage(t, entryWorking, "ext-kit", "ext-skill")
+	commitAndPushAll(t, entryWorking, "seed entry")
+
+	regOrigin, regWorking := createBareRepoWithWorkingClone(t, "reg.git")
+	writeSkill(t, regWorking, "tooling", "Tooling baseline", nil)
+	commitAndPushAll(t, regWorking, "seed reg")
+
+	catalogDir := filepath.Join(root, "marketplace")
+	writeCatalogRepo(t, catalogDir, entryOrigin)
+
+	cfgPath := filepath.Join(repo, ".agents", "config.yaml")
+	configBody := func(withExternal bool) string {
+		selection := "    - plugin/local-kit\n"
+		if withExternal {
+			selection += "    - plugin/ext-kit\n"
+		}
+		return "apiVersion: agent-marketplace/v4\nmaterialization: {mode: file}\nsources:\n  team: {directory: " + filepath.ToSlash(catalogDir) + ", format: claude-marketplace}\n  reg: {git: file://" + filepath.ToSlash(regOrigin) + ", ref: main}\nresources:\n  team:\n" + selection + "  reg:\n    - skill/tooling\n"
+	}
+	writeConfig(t, cfgPath, configBody(false))
+	withWorkingDir(t, repo)
+	lockPath := filepath.Join(repo, ".agents", "lock.yaml")
+	if output, err := executeCommand("sync", "--no-backup"); err != nil {
+		t.Fatalf("sync of the pre-selection layer must succeed: %v\n%s", err, output)
+	}
+	_, before := readLock(t, lockPath)
+
+	// Make the entry origin unreachable, then select the external entry:
+	// read-only modes must report the lock stale without resolving its ref.
+	hidden := entryOrigin + ".hidden"
+	if err := os.Rename(entryOrigin, hidden); err != nil {
+		t.Fatalf("hide entry origin: %v", err)
+	}
+	writeConfig(t, cfgPath, configBody(true))
+
+	for _, args := range [][]string{{"sync", "--check"}, {"sync", "--locked"}, {"sync", "--offline"}} {
+		output, err := executeCommand(args...)
+		if err == nil {
+			t.Fatalf("%v must report stale when a selected external entry has no locked record:\n%s", args, output)
+		}
+		if !strings.Contains(output, "lock.") {
+			t.Fatalf("%v must report a stale lock diagnostic without resolving the entry ref, got:\n%s", args, output)
+		}
+		_, after := readLock(t, lockPath)
+		if string(after) != string(before) {
+			t.Fatalf("%v must write nothing after reporting stale", args)
+		}
+	}
+
+	if err := os.Rename(hidden, entryOrigin); err != nil {
+		t.Fatalf("restore entry origin: %v", err)
+	}
+	if output, err := executeCommand("sync", "--no-backup"); err != nil {
+		t.Fatalf("plain sync must resolve the newly selected external entry: %v\n%s", err, output)
+	}
+	doc, data := readLock(t, lockPath)
+	found := false
+	for _, registry := range doc.Registries {
+		for _, rt := range registry.Roots {
+			for _, res := range rt.Resources {
+				if res.Kind == "plugin" && res.Name == "ext-kit" {
+					found = true
+				}
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("plain sync must record the newly selected external entry:\n%s", data)
+	}
+}
+
 // spec: plugin-packages/catalog-listed-origin-outside-source-policy-is-refused
 func TestSyncCatalogListedOriginOutsideSourcePolicyIsRefused(t *testing.T) {
 	if isolateCommandTest(t) {

@@ -980,7 +980,7 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 		if mode.reuseInstall != nil {
 			gitDesired, gitFresh = reuseInstallDocument(ctx, mode.reuseInstall, lockPath, scope, remote, layer.Sources, current)
 		} else {
-			gitDesired, gitFresh = reconcileLayerDocument(ctx, scope, remote, layer.Sources, current, operation, mode.upgradeSelection, mode.offline, allowedRegistries(ec), ensureSnapshotLease)
+			gitDesired, gitFresh = reconcileLayerDocument(ctx, scope, remote, layer.Sources, current, operation, mode.upgradeSelection, mode.offline, mode.readOnlyDependencies(), allowedRegistries(ec), ensureSnapshotLease)
 		}
 		if gitDesired.err != nil {
 			return nil, changed, nil, gitDesired.err
@@ -1225,7 +1225,7 @@ func gitReconciliationDocument(scope lockfile.Scope, current *lockfile.Document)
 	return doc
 }
 
-func reconcileLayerDocument(ctx context.Context, scope lockfile.Scope, entries []config.RegistryEntry, decls []config.SourceDecl, current *lockfile.Document, operation lockfile.Operation, selection lockfile.UpgradeSelection, offline bool, allowed *[]string, beforeSnapshot func() error) (reconciledDocument, bool) {
+func reconcileLayerDocument(ctx context.Context, scope lockfile.Scope, entries []config.RegistryEntry, decls []config.SourceDecl, current *lockfile.Document, operation lockfile.Operation, selection lockfile.UpgradeSelection, offline, readOnly bool, allowed *[]string, beforeSnapshot func() error) (reconciledDocument, bool) {
 	doc := gitReconciliationDocument(scope, current)
 	stats := lockReconcileStats{}
 	old := map[string]lockfile.GitRegistry{}
@@ -1330,11 +1330,27 @@ func reconcileLayerDocument(ctx context.Context, scope lockfile.Scope, entries [
 		for i := range acquired {
 			scan = append(scan, acquired[i].registry)
 		}
-		externals, err := finalizePluginRoots(ctx, scan, pending, decls, entries, old, operation == lockfile.OperationUpgrade, allowed)
+		externals, err := finalizePluginRoots(ctx, scan, pending, decls, entries, old, operation == lockfile.OperationUpgrade, readOnly, allowed)
 		if err != nil {
 			return reconciledDocument{stats: stats, err: err}, false
 		}
 		doc.Registries = append(doc.Registries, externals...)
+		// External records are produced outside the configured-source groups,
+		// so their addition, removal, or change must mark the document stale
+		// itself.
+		oldExternals := map[string]lockfile.GitRegistry{}
+		for identity, registry := range old {
+			if _, ok := grouped[identity]; !ok && pipeline.AllRootsPluginV1(registry) {
+				oldExternals[registry.URL+"\x00"+registry.Roots[0].Path] = registry
+			}
+		}
+		newExternals := map[string]lockfile.GitRegistry{}
+		for _, registry := range externals {
+			newExternals[registry.URL+"\x00"+registry.Roots[0].Path] = registry
+		}
+		if !reflect.DeepEqual(oldExternals, newExternals) {
+			fresh = false
+		}
 	}
 	for _, result := range acquired {
 		doc.Registries = append(doc.Registries, result.registry)
@@ -1542,7 +1558,7 @@ func documentMatchesEntries(doc lockfile.Document, entries []config.RegistryEntr
 	for _, registry := range doc.Registries {
 		identity := gitLockIdentity(registry.URL, registry.Ref)
 		if _, wanted := groups[identity]; !wanted {
-			if expected[identity] && pipeline.AllRootsPluginV1(registry) {
+			if expected[pipeline.ExternalRecordIdentity(registry)] && pipeline.AllRootsPluginV1(registry) {
 				continue
 			}
 			return false
@@ -1551,6 +1567,18 @@ func documentMatchesEntries(doc lockfile.Document, entries []config.RegistryEntr
 	}
 	if len(registries) != len(groups) {
 		return false
+	}
+	for key := range expected {
+		found := false
+		for _, registry := range doc.Registries {
+			if pipeline.ExternalRecordIdentity(registry) == key && pipeline.AllRootsPluginV1(registry) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return false
+		}
 	}
 	for _, registry := range registries {
 		group, ok := groups[gitLockIdentity(registry.URL, registry.Ref)]

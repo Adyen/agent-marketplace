@@ -19,7 +19,7 @@ import (
 // every git acquisition: it discovers the layer's collections, builds each
 // plugin-v1 manifest, and acquires every selected external catalog entry as
 // its own registry record.
-func finalizePluginRoots(ctx context.Context, scan []lockfile.GitRegistry, pending []pendingFormatRoot, decls []config.SourceDecl, entries []config.RegistryEntry, old map[string]lockfile.GitRegistry, upgrade bool, allowed *[]string) ([]lockfile.GitRegistry, error) {
+func finalizePluginRoots(ctx context.Context, scan []lockfile.GitRegistry, pending []pendingFormatRoot, decls []config.SourceDecl, entries []config.RegistryEntry, old map[string]lockfile.GitRegistry, upgrade, readOnly bool, allowed *[]string) ([]lockfile.GitRegistry, error) {
 	selected := map[string]bool{}
 	for _, decl := range decls {
 		for _, name := range decl.CollectionsInclude {
@@ -52,7 +52,7 @@ func finalizePluginRoots(ctx context.Context, scan []lockfile.GitRegistry, pendi
 				EntryStrict:   ext.EntryStrict,
 				EntryOverlay:  ext.EntryOverlay,
 			}
-			registry, err := acquireExternalPluginRegistry(ctx, ext, binding, plugindecode.CatalogPluginFormat(item.entry.Format), pinnedExternal(old, ext, upgrade), allowed)
+			registry, err := acquireExternalPluginRegistry(ctx, ext, binding, plugindecode.CatalogPluginFormat(item.entry.Format), pinnedExternal(old, ext, upgrade, readOnly), readOnly, allowed)
 			if err != nil {
 				return nil, err
 			}
@@ -82,7 +82,7 @@ func finalizePluginRoots(ctx context.Context, scan []lockfile.GitRegistry, pendi
 				EntryStrict:   ext.EntryStrict,
 				EntryOverlay:  ext.EntryOverlay,
 			}
-			registry, err := acquireExternalPluginRegistry(ctx, ext, binding, plugindecode.CatalogPluginFormat(decl.Format), pinnedExternal(old, ext, upgrade), allowed)
+			registry, err := acquireExternalPluginRegistry(ctx, ext, binding, plugindecode.CatalogPluginFormat(decl.Format), pinnedExternal(old, ext, upgrade, readOnly), readOnly, allowed)
 			if err != nil {
 				return nil, err
 			}
@@ -187,8 +187,12 @@ func directorySelectsExternalPlugin(decls []config.SourceDecl) bool {
 
 // pinnedExternal returns the existing locked record for an external entry
 // origin: locked and check modes rebuild it from the recorded commit rather
-// than tracking the entry ref.
-func pinnedExternal(old map[string]lockfile.GitRegistry, ext sourcerevision.PluginExternalEntry, upgrade bool) *lockfile.GitRegistry {
+// than tracking the entry ref. A writable sync pins the record only while it
+// still names the ref the current entry requests, so an edited ref resolves
+// afresh; read-only modes always rebuild from the recorded commit — the
+// rebuilt manifest still reports the edited entry stale — and never resolve
+// a ref the lock does not record.
+func pinnedExternal(old map[string]lockfile.GitRegistry, ext sourcerevision.PluginExternalEntry, upgrade, readOnly bool) *lockfile.GitRegistry {
 	if upgrade {
 		return nil
 	}
@@ -196,12 +200,19 @@ func pinnedExternal(old map[string]lockfile.GitRegistry, ext sourcerevision.Plug
 	if err != nil {
 		return nil
 	}
+	ref := ext.Source.Ref
+	if ref == "" {
+		ref = "HEAD"
+	}
 	rootPath := ext.Source.Subdirectory
 	if rootPath == "" {
 		rootPath = "."
 	}
 	for _, registry := range old {
 		if registry.URL != canonical || len(registry.Roots) != 1 || registry.Roots[0].Path != rootPath {
+			continue
+		}
+		if !readOnly && registry.Ref != ref {
 			continue
 		}
 		locked := registry
@@ -214,11 +225,14 @@ func pinnedExternal(old map[string]lockfile.GitRegistry, ext sourcerevision.Plug
 // allowlist, acquires it through the exact Git path, and produces its own
 // registry record: the plugin package's root becomes a plugin-v1 root whose
 // manifest names the owning catalog entry and overlay digest.
-func acquireExternalPluginRegistry(ctx context.Context, ext sourcerevision.PluginExternalEntry, binding *sourcerevision.PluginExternal, packageFormat string, pinned *lockfile.GitRegistry, allowed *[]string) (lockfile.GitRegistry, error) {
+func acquireExternalPluginRegistry(ctx context.Context, ext sourcerevision.PluginExternalEntry, binding *sourcerevision.PluginExternal, packageFormat string, pinned *lockfile.GitRegistry, readOnly bool, allowed *[]string) (lockfile.GitRegistry, error) {
 	if allowed != nil {
 		if err := config.ValidateRegistryURLs([]config.RegistryEntry{{URL: ext.Source.URL}}, *allowed); err != nil {
 			return lockfile.GitRegistry{}, fmt.Errorf("plugin catalog entry %q lists origin %s: %w", binding.EntryName, ext.Source.URL, err)
 		}
+	}
+	if readOnly && pinned == nil {
+		return lockfile.GitRegistry{}, &lockLifecycleError{Code: "lock.stale", Err: fmt.Errorf("plugin catalog entry %q has no locked external record", binding.EntryName)}
 	}
 	canonical, err := canonicalRegistryURL(ext.Source.URL)
 	if err != nil {
