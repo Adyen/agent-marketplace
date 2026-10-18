@@ -39,9 +39,10 @@ func TestNativeMetadataSidecarsKeepFrozenFallbackDigest(t *testing.T) {
 	for _, tc := range []struct {
 		name          string
 		legacy, typed ir.Resource
+		digest        string
 	}{
-		{"claude-controls", plainSubagent, claudeSubagent},
-		{"factory-category", legacyDroid, categoryDroid},
+		{"claude-controls", plainSubagent, claudeSubagent, "sha256:dd40ab016f8d3f927bafb4a83031b8b368cda1a0107b99c9f5e4fdf72c54eb2a"},
+		{"factory-category", legacyDroid, categoryDroid, "sha256:40e03dd9ece029e7daef946fed2a0da05fc7a7013fa3be8d99ee93dbe640e9ac"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			rawLegacy, err := json.Marshal(tc.legacy)
@@ -85,8 +86,8 @@ func TestNativeMetadataSidecarsKeepFrozenFallbackDigest(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if legacyBuilt.ContentDigest != typedBuilt.ContentDigest {
-				t.Fatalf("fallback digests differ: legacy %s typed %s", legacyBuilt.ContentDigest, typedBuilt.ContentDigest)
+			if legacyBuilt.ContentDigest != tc.digest || typedBuilt.ContentDigest != tc.digest {
+				t.Fatalf("fallback digests changed: legacy %s typed %s, want frozen %s", legacyBuilt.ContentDigest, typedBuilt.ContentDigest, tc.digest)
 			}
 		})
 	}
