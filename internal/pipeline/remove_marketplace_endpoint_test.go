@@ -3,6 +3,7 @@ package pipeline
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -188,15 +189,15 @@ func TestRemoveMarketplaceEndpointScope(t *testing.T) {
 // spec: resource-removal/refuse-ambiguous-or-unsupported-marketplace-endpoint-removal
 func TestRemoveMarketplaceEndpointRefusals(t *testing.T) {
 	for _, tc := range []struct {
-		name, resource, ref, path, want string
-		kind                            bool
-		alias                           bool
+		name, resource, ref, path string
+		kind, alias               bool
+		code                      error
 	}{
-		{name: "path", resource: "team", path: "source-id", want: "--path"},
-		{name: "ref", resource: "team", ref: "main", want: "--ref"},
-		{name: "missing", resource: "absent", want: "no direct selection"},
-		{name: "kind", resource: "team", kind: true, want: "no direct selection"},
-		{name: "registry-alias", resource: "team", alias: true, want: "both a Marketplace endpoint and a registry source"},
+		{name: "path", resource: "team", path: "source-id", code: ErrMarketplaceRemoveUnsupportedQualifier},
+		{name: "ref", resource: "team", ref: "main", code: ErrMarketplaceRemoveUnsupportedQualifier},
+		{name: "missing", resource: "absent", code: ErrMarketplaceRemoveNotSelected},
+		{name: "kind", resource: "team", kind: true, code: ErrMarketplaceRemoveNotSelected},
+		{name: "registry-alias", resource: "team", alias: true, code: ErrMarketplaceRemoveAmbiguousSource},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newMarketplaceEndpointFixture(t, false)
@@ -210,8 +211,8 @@ func TestRemoveMarketplaceEndpointRefusals(t *testing.T) {
 				opts.Kind, opts.HasKind = ir.KindCommand, true
 			}
 			_, err := Remove(context.Background(), opts)
-			if err == nil || !strings.Contains(err.Error(), tc.want) {
-				t.Fatalf("expected %q refusal, got %v", tc.want, err)
+			if !errors.Is(err, tc.code) || !strings.HasPrefix(err.Error(), tc.code.Error()+": ") {
+				t.Fatalf("expected %v refusal, got %v", tc.code, err)
 			}
 			if !bytes.Equal(f.read(t, f.path), configBefore) || !bytes.Equal(f.read(t, f.lockPath), lockBefore) {
 				t.Fatal("refusal changed configuration or acquisition lock")

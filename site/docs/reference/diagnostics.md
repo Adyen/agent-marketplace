@@ -43,7 +43,7 @@ The first part of a code names the area that reported it.
 | `dependency.*` | Recovery of an interrupted config and lock update, such as `dependency.recovery-required`. |
 | `git.*` | Git acquisition and authentication, such as `git.auth-config-untrusted`. |
 | `catalog.*`, `resolver.*` | Discovering resources in registries and choosing between them, such as `resolver.name-collision`. |
-| `marketplace.*` | Hosted Marketplace security findings, policy, and ingestion. |
+| `marketplace.*` | Hosted Marketplace security findings, policy, and ingestion, plus consumer install and remove refusals such as `marketplace.remove-not-selected`. |
 
 ## Consumer format refusals
 

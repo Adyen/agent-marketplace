@@ -1353,7 +1353,7 @@ func removeFromAdHoc(ctx context.Context, opts RemoveOptions, fromURL string) (*
 			if result, handled, err := removeMarketplaceSelection(ctx, opts, marketplaceCfg, name); handled {
 				return result, err
 			}
-			return nil, fmt.Errorf("marketplace endpoint %q has no direct selection named %q", strings.TrimSpace(opts.FromURL), name)
+			return nil, fmt.Errorf("%w: marketplace endpoint %q has no direct selection named %q", ErrMarketplaceRemoveNotSelected, strings.TrimSpace(opts.FromURL), name)
 		}
 	}
 	if err := config.ValidateRegistryURLs([]config.RegistryEntry{syntheticEntry}, ec.Allowed); err != nil && !config.IsRegistryURLBlockedError(err) {
@@ -1640,6 +1640,13 @@ func removalEditEntry(entry config.RegistryEntry, url, path, ref string) config.
 	return out
 }
 
+// Stable diagnostic codes for named Marketplace endpoint removal refusals.
+var (
+	ErrMarketplaceRemoveUnsupportedQualifier = errors.New("marketplace.remove-unsupported-qualifier")
+	ErrMarketplaceRemoveNotSelected          = errors.New("marketplace.remove-not-selected")
+	ErrMarketplaceRemoveAmbiguousSource      = errors.New("marketplace.remove-ambiguous-source")
+)
+
 // marketplaceRemovalSource narrows named --from removal to a configured
 // Marketplace endpoint, preferring entries in the requested scope. It reports
 // false for Git and directory sources, whose --from handling is unchanged.
@@ -1663,11 +1670,11 @@ func marketplaceRemovalSource(cfg *config.Config, opts RemoveOptions) (*config.C
 		return nil, false, nil
 	}
 	if strings.TrimSpace(opts.FromRef) != "" || strings.TrimSpace(opts.FromPath) != "" {
-		return nil, true, fmt.Errorf("--ref and --path do not apply to Marketplace endpoint %q", fromURL)
+		return nil, true, fmt.Errorf("%w: --ref and --path do not apply to Marketplace endpoint %q", ErrMarketplaceRemoveUnsupportedQualifier, fromURL)
 	}
 	for _, entry := range cfg.Registries {
 		if config.NormalizeGitURL(entry.URL) == config.NormalizeGitURL(fromURL) {
-			return nil, true, fmt.Errorf("--from %q matches both a Marketplace endpoint and a registry source", fromURL)
+			return nil, true, fmt.Errorf("%w: --from %q matches both a Marketplace endpoint and a registry source", ErrMarketplaceRemoveAmbiguousSource, fromURL)
 		}
 	}
 	if len(scoped) > 0 {
