@@ -279,11 +279,13 @@ test.describe('Marketplace browser discovery', () => {
         fontSize: Number.parseFloat(style.fontSize),
         width: bounds.width,
         height: bounds.height,
+        verticalAlign: Number.parseFloat(style.verticalAlign),
         trailingSpace: Number.parseFloat(style.marginRight),
       }
     })
     expect(eyebrowSlashMetrics.width / eyebrowSlashMetrics.fontSize).toBeCloseTo(0.364, 2)
     expect(eyebrowSlashMetrics.height / eyebrowSlashMetrics.fontSize).toBeCloseTo(0.8, 2)
+    expect(eyebrowSlashMetrics.verticalAlign / eyebrowSlashMetrics.fontSize).toBeCloseTo(-0.08, 2)
     expect(eyebrowSlashMetrics.trailingSpace / eyebrowSlashMetrics.fontSize).toBeCloseTo(0.375, 2)
     const eyebrowText = await page.locator('.eyebrow').first().evaluate(element => element.textContent ?? '')
     expect(eyebrowText).toMatch(/^\/\S/)
@@ -328,6 +330,7 @@ test.describe('Marketplace browser discovery', () => {
         fontSize: Number.parseFloat(style.fontSize),
         width: Number.parseFloat(style.width),
         height: Number.parseFloat(style.height),
+        verticalAlign: Number.parseFloat(style.verticalAlign),
         marginLeft: Number.parseFloat(style.marginLeft),
         marginRight: Number.parseFloat(style.marginRight),
         run: Number.parseFloat(style.getPropertyValue('--am-brand-slash-run')),
@@ -337,9 +340,11 @@ test.describe('Marketplace browser discovery', () => {
     })))
     expect(slashMetrics[0].width / slashMetrics[0].fontSize).toBeCloseTo(0.364, 2)
     expect(slashMetrics[0].height / slashMetrics[0].fontSize).toBeCloseTo(0.8, 2)
+    expect(slashMetrics[0].verticalAlign / slashMetrics[0].fontSize).toBeCloseTo(-0.08, 2)
     expect(slashMetrics[0].marginRight / slashMetrics[0].fontSize).toBeCloseTo(0.2, 2)
     expect(slashMetrics[1].width / slashMetrics[1].fontSize).toBeCloseTo(0.339, 2)
     expect(slashMetrics[1].height / slashMetrics[1].fontSize).toBeCloseTo(0.8, 2)
+    expect(slashMetrics[1].verticalAlign / slashMetrics[1].fontSize).toBeCloseTo(-0.08, 2)
     expect(slashMetrics[1].marginLeft / slashMetrics[1].fontSize).toBeCloseTo(0.2, 2)
     expect(slashMetrics[1].marginRight / slashMetrics[1].fontSize).toBeCloseTo(0.2, 2)
     expect(slashMetrics[0].run).toBeCloseTo(slashMetrics[1].run, 3)

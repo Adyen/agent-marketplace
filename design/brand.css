@@ -12,6 +12,7 @@
   display: inline-block;
   width: calc(var(--am-brand-slash-run) + var(--am-brand-slash-stroke));
   height: 0.8em;
+  vertical-align: -0.08em;
   overflow: hidden;
   color: var(--am-brand-slash-color);
   line-height: 1;
