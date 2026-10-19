@@ -61,20 +61,8 @@ func TestRunRefusesCaseAliasedCodexPartitionsBeforeMutation(t *testing.T) {
 	}
 }
 
-func TestRunRefusesNormalizationAliasedCodexHomeBeforeMutation(t *testing.T) {
-	parent := t.TempDir()
-	repo := filepath.Join(parent, "caf\u00e9")
-	if err := os.MkdirAll(filepath.Join(repo, ".codex"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	alias := filepath.Join(parent, "cafe\u0301", ".codex")
-	if _, err := os.Stat(alias); err != nil {
-		t.Skipf("filesystem distinguishes Unicode normalization forms: %v", err)
-	}
-	t.Setenv("HOME", t.TempDir())
-	t.Setenv("XDG_STATE_HOME", t.TempDir())
-	t.Setenv("CODEX_HOME", alias)
-
+func requireCodexOverlapRefusal(t *testing.T, repo string, roots ...string) {
+	t.Helper()
 	report, err := Run(context.Background(), repo, []resolver.ResolvedArtifact{
 		codexSubagent("reviewer", "Repository definition.", config.RepoCommitted),
 		codexSubagent("reviewer", "Machine definition.", config.UserPersonal),
@@ -86,12 +74,68 @@ func TestRunRefusesNormalizationAliasedCodexHomeBeforeMutation(t *testing.T) {
 	if !ok {
 		t.Fatalf("missing %s diagnostic: %+v", diag.CodeMaterializeDestinationOverlap, report.Diags)
 	}
-	if !strings.Contains(d.Message, filepath.Join(repo, ".codex")) || !strings.Contains(d.Message, alias) {
-		t.Fatalf("overlap diagnostic must name both spellings: %+v", d)
+	for _, root := range roots {
+		if !strings.Contains(d.Message, root) {
+			t.Fatalf("overlap diagnostic must name %q: %+v", root, d)
+		}
+		entries, err := os.ReadDir(root)
+		if err != nil && !os.IsNotExist(err) {
+			t.Fatal(err)
+		}
+		if len(entries) != 0 {
+			t.Fatalf("refused preflight mutated %q: %v", root, entries)
+		}
 	}
-	if entries, err := os.ReadDir(filepath.Join(repo, ".codex")); err != nil || len(entries) != 0 {
-		t.Fatalf("refused preflight mutated the aliased root: %v, %v", entries, err)
+}
+
+// spec: materialization/codex-partitions-that-differ-only-in-unicode-normalization-are-refused
+func TestRunRefusesNormalizationAliasedCodexHomeBeforeMutation(t *testing.T) {
+	for _, existing := range []bool{true, false} {
+		name := "first install"
+		if existing {
+			name = "existing root"
+		}
+		t.Run(name, func(t *testing.T) {
+			parent := t.TempDir()
+			repo := filepath.Join(parent, "caf\u00e9")
+			if err := os.MkdirAll(repo, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if existing {
+				if err := os.Mkdir(filepath.Join(repo, ".codex"), 0o755); err != nil {
+					t.Fatal(err)
+				}
+			}
+			alias := filepath.Join(parent, "cafe\u0301", ".codex")
+			t.Setenv("HOME", t.TempDir())
+			t.Setenv("XDG_STATE_HOME", t.TempDir())
+			t.Setenv("CODEX_HOME", alias)
+			requireCodexOverlapRefusal(t, repo, filepath.Join(repo, ".codex"), alias)
+		})
 	}
+}
+
+func TestRunRefusesSameDirectoryCodexHomeSpellingBeforeMutation(t *testing.T) {
+	repo, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(repo, ".codex"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	alias := filepath.Join("/System/Volumes/Data", repo, ".codex")
+	if resolved, err := filepath.EvalSymlinks(alias); err != nil || resolved != alias {
+		t.Skipf("no firmlinked spelling of the repository on this host: %q, %v", resolved, err)
+	}
+	if aliasInfo, err := os.Stat(alias); err != nil {
+		t.Skipf("no firmlinked spelling of the repository on this host: %v", err)
+	} else if repoInfo, err := os.Stat(filepath.Join(repo, ".codex")); err != nil || !os.SameFile(aliasInfo, repoInfo) {
+		t.Skipf("firmlinked spelling names another directory: %v", err)
+	}
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	t.Setenv("CODEX_HOME", alias)
+	requireCodexOverlapRefusal(t, repo, filepath.Join(repo, ".codex"), alias)
 }
 
 // spec: materialization/disjoint-codex-partitions-that-differ-only-in-letter-case-remain-usable

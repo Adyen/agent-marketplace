@@ -15,6 +15,7 @@ import (
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
 	targetmeta "github.com/Adyen/agent-marketplace/pkg/harness-compilation/target"
+	"golang.org/x/text/unicode/norm"
 )
 
 type codexDestinationBinding struct {
@@ -158,7 +159,7 @@ func validateCodexManagedPathIntersections(bindings []codexDestinationBinding) *
 				partition: partition,
 				id:        binding.destination.ID,
 				path:      filepath.Join(binding.destination.Root, filepath.FromSlash(rel)),
-				location:  strings.ToLower(filepath.Join(physicalRoot, filepath.FromSlash(rel))),
+				location:  strings.ToLower(norm.NFC.String(filepath.Join(physicalRoot, filepath.FromSlash(rel)))),
 			})
 		}
 	}

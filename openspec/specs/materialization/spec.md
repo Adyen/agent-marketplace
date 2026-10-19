@@ -620,12 +620,18 @@ When a harness target uses file materialization mode and a selected resource's o
 
 ### Requirement: Codex partitions that alias one location are refused
 
-Codex destination preflight SHALL treat managed paths of different Codex partitions as overlapping when they are spelled differently but name the same location: paths that differ only in letter case, on every host, or paths below the same existing directory reached through another spelling. Materialization MUST then refuse with `materialize.destination.overlap`, naming both spellings, before any destination mutation and whether or not the selected resources conflict. Partitions whose managed paths remain disjoint MUST stay usable even when their roots differ only in letter case, and partitions with identical spellings MUST keep coalescing.
+Codex destination preflight SHALL treat managed paths of different Codex partitions as overlapping when they are spelled differently but name the same location: paths that differ only in letter case or Unicode normalization, on every host and whether or not they exist yet, or paths below the same existing directory reached through another spelling. Materialization MUST then refuse with `materialize.destination.overlap`, naming both spellings, before any destination mutation and whether or not the selected resources conflict. Partitions whose managed paths remain disjoint MUST stay usable even when their roots differ only in letter case, and partitions with identical spellings MUST keep coalescing.
 
 #### Scenario: Codex partitions that differ only in letter case are refused
 
 - **WHEN** CODEX_HOME spells the repository's `.codex` directory with different letter case and both repository and machine scope select Codex output, whether conflicting or disjoint
 - **THEN** materialization MUST refuse with `materialize.destination.overlap` naming both spellings, on case-sensitive and case-insensitive hosts alike
+- **AND** neither spelling MUST receive any write
+
+#### Scenario: Codex partitions that differ only in Unicode normalization are refused
+
+- **WHEN** CODEX_HOME spells the repository's `.codex` path in a different Unicode normalization form, whether or not that directory exists yet, and both repository and machine scope select Codex output
+- **THEN** materialization MUST refuse with `materialize.destination.overlap` naming both spellings, on every host
 - **AND** neither spelling MUST receive any write
 
 #### Scenario: Disjoint Codex partitions that differ only in letter case remain usable
