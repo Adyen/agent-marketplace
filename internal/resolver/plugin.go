@@ -123,13 +123,16 @@ func pluginMemberExclusionMatch(exclusion string, member ir.PluginMember) bool {
 
 // applyPluginRequestOptions folds authored request options into the
 // selection: exclusions are exact kind/name member locators; unknown entries
-// refuse.
-func applyPluginRequestOptions(selection *PluginSelection, name string, options []config.V4ResourceOptions, entry config.RegistryEntry) error {
+// refuse. An external catalog entry's members decode only after its origin
+// is acquired, so its exclusions are recorded for validation at lock time
+// instead of being matched here.
+func applyPluginRequestOptions(selection *PluginSelection, name string, options []config.V4ResourceOptions, entry config.RegistryEntry, plugin *catalog.PluginEntry) error {
 	var excluded []string
 	for _, opts := range options {
 		excluded = append(excluded, opts.Exclude...)
 	}
 	members := selection.Members
+	deferred := plugin != nil && plugin.Source.Kind == "git"
 	for _, exclusion := range excluded {
 		matched := false
 		kept := make([]ir.PluginMember, 0, len(members))
@@ -140,11 +143,13 @@ func applyPluginRequestOptions(selection *PluginSelection, name string, options 
 			}
 			kept = append(kept, member)
 		}
-		if !matched {
+		if !matched && !deferred {
 			return &PluginUnknownExclusionError{PluginName: name, Exclusion: exclusion, URL: entry.URL}
 		}
 		selection.Exclusions = append(selection.Exclusions, exclusion)
-		members = kept
+		if !deferred {
+			members = kept
+		}
 	}
 	selection.Members = members
 	return nil
