@@ -5,4 +5,4 @@
 - [x] Prove the case-folding and identity checks with negative mutations, and run the frozen case-alias reproduction and Codex tests on a case-insensitive volume.
 - [x] Verify scoped materialization tests, lint, build and strict specs.
 - [x] Adversarially review every changed entry.
-- [ ] `openspec archive refuse-case-aliased-codex-partitions --yes`
+- [x] `openspec archive refuse-case-aliased-codex-partitions --yes`
