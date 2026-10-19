@@ -1,0 +1,160 @@
+package main
+
+import (
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/Adyen/agent-marketplace/internal/config"
+)
+
+// R-F149: `update --bump` must not rewrite a full commit pin into a tag whose
+// name is the commit's non-digit prefix plus a larger number.
+func TestLedger215F149UpdateBumpReplacesCommitPin(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	t.Setenv("HOME", t.TempDir())
+	origin, working := createBareRepoWithWorkingClone(t, "pinned.git")
+	writeSkill(t, working, "vm-lifecycle", "Pinned content", nil)
+	runGit(t, working, "add", ".")
+	runGit(t, working, "commit", "-m", "pinned")
+	head := func() string {
+		out, err := exec.Command("git", "-C", working, "rev-parse", "HEAD").Output()
+		if err != nil {
+			t.Fatal(err)
+		}
+		return strings.TrimSpace(string(out))
+	}
+	pinned := head()
+	for i := 0; pinned[len(pinned)-1] < '0' || pinned[len(pinned)-1] > '9'; i++ {
+		if i > 64 {
+			t.Fatal("could not produce a commit ID ending in a digit")
+		}
+		runGit(t, working, "commit", "--allow-empty", "-m", "retry")
+		pinned = head()
+	}
+	runGit(t, working, "push", "origin", "main")
+	prefix := strings.TrimRight(pinned, "0123456789")
+	// One digit longer than the commit's numeric suffix: numerically larger and
+	// 41 characters, so Git cannot read the tag name as an object ID.
+	tag := prefix + strings.Repeat("9", len(pinned)-len(prefix)+1)
+
+	writeSkill(t, working, "vm-lifecycle", "Registry-owner replacement", nil)
+	commitAndPushAll(t, working, "replacement")
+	createAndPushTag(t, working, tag)
+
+	repoRoot := filepath.Join(t.TempDir(), "repo")
+	configPath := filepath.Join(repoRoot, ".agents", "config.yaml")
+	writeConfig(t, configPath, `
+apiVersion: agent-marketplace/v4
+harnesses: [factory]
+sources:
+  infra:
+    git: file://`+origin+`
+    ref: `+pinned+`
+resources:
+  infra:
+    include: [skill/vm-lifecycle]
+`)
+	withWorkingDir(t, repoRoot)
+	if output, err := executeCommand("sync"); err != nil {
+		t.Fatalf("initial sync: %v\n%s", err, output)
+	}
+	skillPath := filepath.Join(repoRoot, ".factory", "skills", "vm-lifecycle", "SKILL.md")
+	if data, err := os.ReadFile(skillPath); err != nil || !strings.Contains(string(data), "Pinned content") {
+		t.Fatalf("control: pinned content not installed: %v\n%s", err, data)
+	}
+	output, err := executeCommand("update", "--bump")
+	t.Logf("update --bump: err=%v\n%s", err, output)
+	after, readErr := os.ReadFile(configPath)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	installed, _ := os.ReadFile(skillPath)
+	if !strings.Contains(string(after), "ref: "+pinned+"\n") || strings.Contains(string(installed), "Registry-owner replacement") {
+		t.Errorf("REPRODUCED: commit pin %s rewritten; config:\n%s\ninstalled:\n%s", pinned, after, installed)
+	}
+}
+
+// R-A51: a user-selected command must not silently replace or remove an
+// organization-required skill of the same name on targets where both use
+// skills/<name>/SKILL.md.
+func TestLedger215A51RequiredSkillVersusSameNameCommand(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	for _, order := range []struct{ name, org, user string }{
+		{"org-sorts-first", "a-org.git", "z-user.git"},
+		{"user-sorts-first", "z-org.git", "a-user.git"},
+	} {
+		for _, mode := range []string{"symlink", "file"} {
+			t.Run(order.name+"/"+mode, func(t *testing.T) {
+				home := t.TempDir()
+				t.Setenv("HOME", home)
+				t.Setenv("CODEX_HOME", filepath.Join(home, ".codex"))
+				orgOrigin, orgWorking := createBareRepoWithWorkingClone(t, order.org)
+				writeSkill(t, orgWorking, "audit", "ORG REQUIRED SKILL", nil)
+				commitAndPushAll(t, orgWorking, "org skill")
+				userOrigin, userWorking := createBareRepoWithWorkingClone(t, order.user)
+				writeCommand(t, userWorking, "audit", "USER SELECTED COMMAND", "echo user")
+				commitAndPushAll(t, userWorking, "user command")
+
+				orgPath := filepath.Join(t.TempDir(), "org.yaml")
+				writeConfig(t, orgPath, `apiVersion: agent-marketplace/v4
+harnesses: [devin, codex]
+sources:
+  org:
+    git: file://`+orgOrigin+`
+    ref: main
+    source_harness: claude
+resources:
+  org:
+    all: true
+    required: true
+`)
+				config.SetTestOrganizationConfigPath(t, orgPath)
+				writeConfig(t, filepath.Join(home, ".agents", "config.yaml"), `apiVersion: agent-marketplace/v4
+harnesses: [devin, codex]
+materialization:
+  mode: `+mode+`
+sources:
+  user:
+    git: file://`+userOrigin+`
+    ref: main
+    source_harness: claude
+resources:
+  user:
+    include: [command/audit]
+`)
+				repoRoot := filepath.Join(t.TempDir(), "repo")
+				if err := os.MkdirAll(repoRoot, 0o755); err != nil {
+					t.Fatal(err)
+				}
+				withWorkingDir(t, repoRoot)
+				if output, err := executeCommand("lock", "--scope", "organization"); err != nil {
+					t.Fatalf("seed organization lock: %v\n%s", err, output)
+				}
+				output, err := executeCommand("sync")
+				t.Logf("sync: err=%v\n%s", err, output)
+				for _, skill := range []string{
+					filepath.Join(home, ".config", "devin", "skills", "audit", "SKILL.md"),
+					filepath.Join(home, ".agents", "skills", "audit", "SKILL.md"),
+				} {
+					data, readErr := os.ReadFile(skill)
+					t.Logf("%s: err=%v\n%s", skill, readErr, data)
+					switch {
+					case readErr == nil && strings.Contains(string(data), "USER SELECTED COMMAND"):
+						t.Errorf("REPRODUCED: user command replaced the required skill at %s (sync err=%v)", skill, err)
+					case readErr != nil && err == nil:
+						t.Errorf("REPRODUCED: required skill missing at %s and sync reported success", skill)
+					case readErr != nil:
+						t.Logf("required skill missing at %s; sync failed visibly", skill)
+					}
+				}
+			})
+		}
+	}
+}
