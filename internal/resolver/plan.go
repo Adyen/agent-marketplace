@@ -35,6 +35,7 @@ func PlanPluginSelection(cfg *config.Config, catalogs map[string][]catalog.Entry
 		}
 		sort.Strings(members)
 		planned.Members = members
+		planned.Exclusions = append(planned.Exclusions, artifact.Selection.Exclusions...)
 		plan.Plugins = append(plan.Plugins, planned)
 	}
 	sort.Slice(plan.Plugins, func(i, j int) bool {

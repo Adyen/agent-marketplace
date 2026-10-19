@@ -226,6 +226,7 @@ func (c *PluginLockContexts) bindPlannedExternals(planned []catalog.PlannedPlugi
 			CatalogFormat: owner.entry.Format,
 			EntryStrict:   plugin.Entry.Plugin.Strict,
 			EntryOverlay:  plugin.Entry.Plugin.Overlay,
+			Exclusions:    append([]string(nil), plugin.Exclusions...),
 		}
 	}
 }
@@ -259,6 +260,7 @@ func PlannedExternalEntry(plugin catalog.PlannedPlugin) (sourcerevision.PluginEx
 		DefinitionDigest: plugin.Entry.Plugin.DefinitionDigest,
 		EntryStrict:      plugin.Entry.Plugin.Strict,
 		EntryOverlay:     plugin.Entry.Plugin.Overlay,
+		Exclusions:       append([]string(nil), plugin.Exclusions...),
 		Owner:            pluginOwnerLabel(plugin.Source),
 	}, true
 }

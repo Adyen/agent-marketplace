@@ -16,13 +16,17 @@ type PluginSelectionEdge struct {
 // PlannedPlugin is the resolver's own selection of one plugin: the format
 // source entry that provides it, its selection edges, its member kind/name
 // keys after request exclusions, and the catalog entry it resolved to (which
-// carries the external source requirement for catalog entries).
+// carries the external source requirement for catalog entries). Exclusions
+// carries authored member exclusions an external entry's decoded package
+// validates at lock time; in-repository entries match them during
+// resolution.
 type PlannedPlugin struct {
-	Source  config.RegistryEntry
-	Name    string
-	Edges   []PluginSelectionEdge
-	Members []string
-	Entry   Entry
+	Source     config.RegistryEntry
+	Name       string
+	Edges      []PluginSelectionEdge
+	Members    []string
+	Exclusions []string
+	Entry      Entry
 }
 
 // PluginSelectionPlan is the resolver's plugin selection for a
