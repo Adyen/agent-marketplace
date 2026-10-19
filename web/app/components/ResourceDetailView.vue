@@ -237,7 +237,7 @@ function formatValue(value: unknown): string {
       <div class="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-2 sm:gap-x-4">
         <!-- The same mark the index row carries, at reading size. -->
         <ResourceFingerprint :digest="resource.content_digest" :size="40" class="hidden shrink-0 sm:block" />
-        <h1 class="min-w-0 max-w-full wrap-break-word text-2xl font-semibold tracking-tight text-highlighted sm:text-3xl"><span v-if="titleHasBrandSlash" class="am-brand-slash" data-testid="resource-title-slash" aria-hidden="true">/ </span>{{ name }}</h1>
+        <h1 class="min-w-0 max-w-full wrap-break-word text-2xl font-semibold tracking-tight text-highlighted sm:text-3xl"><span v-if="titleHasBrandSlash" class="am-brand-slash am-brand-slash--title" data-testid="resource-title-slash" aria-hidden="true">/</span>{{ name }}</h1>
         <span data-testid="resource-kind-badge" class="inline-flex shrink-0 rounded border border-default bg-(--am-color-bg-subtle) px-2 py-0.5 text-xs font-medium text-muted">{{ kindLabel(kind) }}</span>
       </div>
       <div v-if="resource.description" class="mt-2">
