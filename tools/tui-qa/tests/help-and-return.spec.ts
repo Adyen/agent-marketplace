@@ -22,7 +22,7 @@ journey.test("help closes back to the selected alpha-skill", async (terminal) =>
   await step("open keyboard shortcuts", () => terminal.write("?"), async () => {
     await locate(terminal, "agent-marketplace — Keyboard Shortcuts").unique().expect();
     await locate(terminal, "jump to bottom").unique().expect();
-    await locate(terminal, "deliberately missing text").unique().expect();
+    await locate(terminal, "fuzzy search").unique().expect();
     await locate(terminal, "clear search / close").unique().expect();
   });
 
