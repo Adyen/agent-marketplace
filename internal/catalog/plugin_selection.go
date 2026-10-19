@@ -7,10 +7,13 @@ import (
 
 // PluginSelectionEdge is one resolved selection edge of a plugin: a direct
 // request or a collection-to-plugin binding. Type carries the resolver's
-// edge kind ("direct" or "collection").
+// edge kind ("direct" or "collection"). Scope is the configuration layer
+// that authored the edge; SourceUnset behaves like RepoCommitted, matching
+// Source's own convention.
 type PluginSelectionEdge struct {
 	Type       string
 	Collection string
+	Scope      config.Source
 }
 
 // PlannedPlugin is the resolver's own selection of one plugin: the format
@@ -35,17 +38,40 @@ type PluginSelectionPlan struct {
 	Plugins []PlannedPlugin
 }
 
-// ForEntry returns the plan items owned by the given format source entry:
-// plugins whose source resolves to the same canonical URL or directory, ref,
-// and root path.
-func (p PluginSelectionPlan) ForEntry(entry config.RegistryEntry) []PlannedPlugin {
+// ForEntry returns the plan items the given format source entry's layer
+// authored: plugins whose source resolves to the same canonical URL or
+// directory, ref, and root path, and for which that layer authored at least
+// one selection edge. Each returned plugin carries only that layer's edges,
+// so a layer's plugin-v1 manifest commits exactly the selections authored in
+// that layer's own configuration.
+func (p PluginSelectionPlan) ForEntry(entry config.RegistryEntry, scope config.Source) []PlannedPlugin {
 	out := []PlannedPlugin{}
 	for _, plugin := range p.Plugins {
-		if sameSourceLocation(plugin.Source, entry) {
-			out = append(out, plugin)
+		if !sameSourceLocation(plugin.Source, entry) {
+			continue
 		}
+		planned := plugin
+		planned.Edges = nil
+		for _, edge := range plugin.Edges {
+			if edgeScope(edge) == scope {
+				planned.Edges = append(planned.Edges, edge)
+			}
+		}
+		if len(planned.Edges) == 0 {
+			continue
+		}
+		out = append(out, planned)
 	}
 	return out
+}
+
+// edgeScope resolves an edge's authoring layer, applying the SourceUnset
+// convention (unset behaves like RepoCommitted).
+func edgeScope(edge PluginSelectionEdge) config.Source {
+	if edge.Scope == config.SourceUnset {
+		return config.RepoCommitted
+	}
+	return edge.Scope
 }
 
 // ExternalEntries returns the selected catalog entries that resolve to an

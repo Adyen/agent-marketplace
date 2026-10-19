@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"os"
 	"path/filepath"
@@ -16,6 +17,17 @@ import (
 func writeClaudePluginPackage(t *testing.T, dir, name, member string) {
 	t.Helper()
 	writePluginSourceFixture(t, dir, ".claude-plugin", name, member)
+}
+
+// writeTwoPluginCatalogRepo seeds a claude-marketplace working clone with
+// two relative plugin entries, so different layers can select different
+// plugins from one source location.
+func writeTwoPluginCatalogRepo(t *testing.T, working string) {
+	t.Helper()
+	writeClaudePluginPackage(t, filepath.Join(working, "plugins", "kit-a"), "kit-a", "skill-a")
+	writeClaudePluginPackage(t, filepath.Join(working, "plugins", "kit-b"), "kit-b", "skill-b")
+	writeFile(t, filepath.Join(working, ".claude-plugin", "marketplace.json"),
+		`{"name":"team","plugins":[{"name":"kit-a","source":"./plugins/kit-a"},{"name":"kit-b","source":"./plugins/kit-b"}]}`)
 }
 
 // writeCatalogRepo seeds a claude-marketplace working clone with one relative
@@ -111,6 +123,141 @@ func TestSyncPluginSelectingLayerKeepsV2LockFormat(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("format root must use revision_schema plugin-v1 with the format ID as source_harness:\n%+v", doc.Registries)
+	}
+}
+
+// A plugin selection authored in a personal config layer is locked in that
+// layer's own acquisition lock: the committed repository lock must not
+// change, and a teammate world carrying only the repository configuration
+// still verifies against it.
+func TestSyncPersonalPluginSelectionLocksInPersonalLayer(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	for _, mode := range []string{"direct", "collection"} {
+		t.Run(mode, func(t *testing.T) {
+			root := pluginLockFixture(t)
+			home := filepath.Join(root, "home")
+			repo := filepath.Join(root, "repo")
+
+			formatOrigin, formatWorking := createBareRepoWithWorkingClone(t, "cat.git")
+			writeTwoPluginCatalogRepo(t, formatWorking)
+			commitAndPushAll(t, formatWorking, "seed catalog")
+
+			formatURL := filepath.ToSlash(formatOrigin)
+			writeConfig(t, filepath.Join(repo, ".agents", "config.yaml"), "apiVersion: agent-marketplace/v4\nmaterialization: {mode: file}\nsources:\n  cat: {git: file://"+formatURL+", ref: main, format: claude-marketplace}\nresources:\n  cat:\n    - plugin/kit-a\n")
+
+			baselineHome := "apiVersion: agent-marketplace/v4\nharnesses: [claude]\n"
+			personalConfig := baselineHome + "sources:\n  cat: {git: file://" + formatURL + ", ref: main, format: claude-marketplace}\n"
+			if mode == "direct" {
+				personalConfig += "resources:\n  cat:\n    - plugin/kit-b\n"
+			} else {
+				looseOrigin, looseWorking := createBareRepoWithWorkingClone(t, "loose.git")
+				writeSkill(t, looseWorking, "tooling", "Tooling baseline", nil)
+				writeCollection(t, looseWorking, "team", "name: team\nresources:\n  - {kind: plugin, name: kit-b, registry: file://"+formatURL+"}\n")
+				commitAndPushAll(t, looseWorking, "seed loose")
+				personalConfig += "  loose: {git: file://" + filepath.ToSlash(looseOrigin) + ", ref: main}\nresources:\n  loose:\n    - collection/team\n"
+			}
+
+			withWorkingDir(t, repo)
+			repoLock := filepath.Join(repo, ".agents", "lock.yaml")
+			if output, err := executeCommand("sync", "--no-backup"); err != nil {
+				t.Fatalf("baseline sync must succeed: %v\n%s", err, output)
+			}
+			baseline, err := os.ReadFile(repoLock)
+			if err != nil {
+				t.Fatalf("read repository lock: %v", err)
+			}
+
+			writeConfig(t, filepath.Join(home, ".agents", "config.yaml"), personalConfig)
+			if output, err := executeCommand("sync", "--no-backup"); err != nil {
+				t.Fatalf("sync with the personal plugin selection must succeed: %v\n%s", err, output)
+			}
+			after, err := os.ReadFile(repoLock)
+			if err != nil {
+				t.Fatalf("read repository lock: %v", err)
+			}
+			if !bytes.Equal(baseline, after) {
+				t.Fatalf("a personal-layer plugin selection must not change the committed repository lock\n--- before ---\n%s\n--- after ---\n%s", baseline, after)
+			}
+			personalDoc, personalData := readLock(t, filepath.Join(home, ".agents", "lock.yaml"))
+			if !lockHasPluginResource(personalDoc, "kit-b") {
+				t.Fatalf("the selecting layer's own lock must record the plugin it selected:\n%s", personalData)
+			}
+			if lockHasPluginResource(personalDoc, "kit-a") {
+				t.Fatalf("the personal lock must not absorb the repository layer's selection:\n%s", personalData)
+			}
+			if output, err := executeCommand("sync", "--check"); err != nil {
+				t.Fatalf("sync --check must verify both layers: %v\n%s", err, output)
+			}
+
+			// A teammate world whose personal config carries no plugin
+			// selection must still verify against the committed lock; a real
+			// teammate machine has no personal lock, so remove the one this
+			// world's selection wrote.
+			writeConfig(t, filepath.Join(home, ".agents", "config.yaml"), baselineHome)
+			if err := os.Remove(filepath.Join(home, ".agents", "lock.yaml")); err != nil {
+				t.Fatalf("remove personal lock for the teammate world: %v", err)
+			}
+			if output, err := executeCommand("sync", "--check"); err != nil {
+				t.Fatalf("sync --check without the personal selection must stay fresh: %v\n%s", err, output)
+			}
+		})
+	}
+}
+
+// A personal-layer collection whose member pins a plugin from a format
+// source that layer does not declare would leave the plugin recorded in no
+// lock, so the selection is refused before any write: the committed
+// repository lock must stay byte-identical and no personal lock may appear.
+func TestSyncCollectionPluginPinToUndeclaredLayerSourceRefuses(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	root := pluginLockFixture(t)
+	home := filepath.Join(root, "home")
+	repo := filepath.Join(root, "repo")
+
+	formatOrigin, formatWorking := createBareRepoWithWorkingClone(t, "cat.git")
+	writeTwoPluginCatalogRepo(t, formatWorking)
+	commitAndPushAll(t, formatWorking, "seed catalog")
+
+	formatURL := filepath.ToSlash(formatOrigin)
+	looseOrigin, looseWorking := createBareRepoWithWorkingClone(t, "loose.git")
+	writeSkill(t, looseWorking, "tooling", "Tooling baseline", nil)
+	writeCollection(t, looseWorking, "team", "name: team\nresources:\n  - {kind: plugin, name: kit-b, registry: file://"+formatURL+"}\n")
+	commitAndPushAll(t, looseWorking, "seed loose")
+
+	writeConfig(t, filepath.Join(repo, ".agents", "config.yaml"), "apiVersion: agent-marketplace/v4\nmaterialization: {mode: file}\nsources:\n  cat: {git: file://"+formatURL+", ref: main, format: claude-marketplace}\nresources:\n  cat:\n    - plugin/kit-a\n")
+	withWorkingDir(t, repo)
+	repoLock := filepath.Join(repo, ".agents", "lock.yaml")
+	if output, err := executeCommand("sync", "--no-backup"); err != nil {
+		t.Fatalf("baseline sync must succeed: %v\n%s", err, output)
+	}
+	baseline, err := os.ReadFile(repoLock)
+	if err != nil {
+		t.Fatalf("read repository lock: %v", err)
+	}
+
+	writeConfig(t, filepath.Join(home, ".agents", "config.yaml"), "apiVersion: agent-marketplace/v4\nharnesses: [claude]\nsources:\n  loose: {git: file://"+filepath.ToSlash(looseOrigin)+", ref: main}\nresources:\n  loose:\n    - collection/team\n")
+	output, err := executeCommand("sync", "--no-backup")
+	if err == nil {
+		t.Fatalf("a collection edge into an undeclared format source must refuse:\n%s", output)
+	}
+	for _, want := range []string{"plugin.selection.undeclared-source", "kit-b", "team"} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("the refusal must name %q:\n%s", want, output)
+		}
+	}
+	after, err := os.ReadFile(repoLock)
+	if err != nil {
+		t.Fatalf("read repository lock: %v", err)
+	}
+	if !bytes.Equal(baseline, after) {
+		t.Fatalf("a refused selection must leave the committed repository lock byte-identical\n--- before ---\n%s\n--- after ---\n%s", baseline, after)
+	}
+	if _, statErr := os.Stat(filepath.Join(home, ".agents", "lock.yaml")); !os.IsNotExist(statErr) {
+		t.Fatalf("no personal lock may be written when the selection is refused")
 	}
 }
 

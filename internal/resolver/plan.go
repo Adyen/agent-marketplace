@@ -27,7 +27,7 @@ func PlanPluginSelection(cfg *config.Config, catalogs map[string][]catalog.Entry
 		}
 		planned := catalog.PlannedPlugin{Source: owner, Name: artifact.Name, Entry: artifact.Entry}
 		for _, edge := range artifact.Selection.Edges {
-			planned.Edges = append(planned.Edges, catalog.PluginSelectionEdge{Type: edge.Kind, Collection: edge.Collection})
+			planned.Edges = append(planned.Edges, catalog.PluginSelectionEdge{Type: edge.Kind, Collection: edge.Collection, Scope: edge.Source})
 		}
 		members := make([]string, 0, len(artifact.Selection.Members))
 		for _, member := range artifact.Selection.Members {
