@@ -1073,6 +1073,7 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 			planner.built = false
 		}
 		if deferred != nil {
+			planner.built = false
 			deferredPluginWrites = append(deferredPluginWrites, deferredLayerWrite{
 				layer: layer, scope: scope, lockPath: lockPath, remote: remote,
 				stats: gitDesired.stats, current: current, generation: generation,
