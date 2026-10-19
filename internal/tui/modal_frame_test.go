@@ -6,6 +6,8 @@ import (
 	"testing"
 
 	"github.com/charmbracelet/x/ansi"
+
+	"github.com/Adyen/agent-marketplace/internal/materialize"
 )
 
 // assertCompleteFrame checks that a rendered modal is one rounded frame no
@@ -55,7 +57,7 @@ func TestEveryModalRendersOneBoundedFrame(t *testing.T) {
 		},
 		"edit config": renderEditConfigModal,
 		"sync+quit confirm": func(m Model) string {
-			m.confirmMsg = "1 pending changes not synced. Sync+quit? y/n/esc"
+			m.confirmMsg = "1 pending changes not synced. Sync+quit?"
 			return renderConfirm(m)
 		},
 	}
@@ -91,9 +93,12 @@ func TestEveryModalRendersOneBoundedFrame(t *testing.T) {
 func TestConfirmViewShowsEachAcceleratorOnce(t *testing.T) {
 	m := NewModel(t.TempDir(), t.TempDir())
 	m.width, m.height = 80, 24
-	m.pane = paneConfirm
-	m.confirmMsg = "1 pending changes not synced. Sync+quit? y/n/esc"
-	plain := ansi.Strip(m.View().Content)
+	m.driftReport = materialize.DriftReport{Missing: []materialize.DriftItem{{Reason: materialize.DriftMissing}}}
+	next, _ := m.dispatchAction(actionQuit)
+	plain := ansi.Strip(next.(Model).View().Content)
+	if strings.Contains(plain, "y/n/esc") {
+		t.Fatalf("the message repeats the footer accelerators:\n%s", plain)
+	}
 	for _, hint := range []string{"y sync+quit", "n quit", "esc cancel"} {
 		if n := strings.Count(plain, hint); n != 1 {
 			t.Fatalf("hint %q shown %d times, want once:\n%s", hint, n, plain)

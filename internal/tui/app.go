@@ -1218,7 +1218,7 @@ func (m Model) dispatchAction(id paletteActionID) (tea.Model, tea.Cmd) {
 	case actionQuit:
 		if m.driftReport.PendingCount() > 0 {
 			m.pane = paneConfirm
-			m.confirmMsg = fmt.Sprintf("%d pending changes not synced. Sync+quit? y/n/esc", m.driftReport.PendingCount())
+			m.confirmMsg = fmt.Sprintf("%d pending changes not synced. Sync+quit?", m.driftReport.PendingCount())
 			return m, nil
 		}
 		return m, tea.Quit
