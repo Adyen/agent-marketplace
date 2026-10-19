@@ -38,22 +38,28 @@ func TestValidateRefAllowsValidComponentRefs(t *testing.T) {
 }
 
 func TestIsFullObjectID(t *testing.T) {
-	for ref, want := range map[string]bool{
-		"0123456789abcdef0123456789abcdef01234567":                         true,
-		"0123456789ABCDEF0123456789ABCDEF01234567":                         true,
-		"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef": true,
-		"0123456789abcdef0123456789abcdef0123456":                          false,
-		"0123456789abcdef0123456789abcdef012345678":                        false,
-		"0123456789abcdef0123456789abcdef9999999999":                       false,
-		"0123456789abcdef0123456789abcdef0123456g":                         false,
-		"v1.2.3":  false,
-		"abc1234": false,
-		"main":    false,
-		"":        false,
+	for _, tc := range []struct {
+		name, ref string
+		want      bool
+	}{
+		{"sha1 lowercase", "0123456789abcdef0123456789abcdef01234567", true},
+		{"sha1 uppercase", "0123456789ABCDEF0123456789ABCDEF01234567", true},
+		{"sha256", "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef", true},
+		{"sha1 non-hex", "0123456789abcdef0123456789abcdef0123456g", false},
+		{"sha256 non-hex", "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdeg", false},
+		{"39 characters", "0123456789abcdef0123456789abcdef0123456", false},
+		{"41 characters", "0123456789abcdef0123456789abcdef012345678", false},
+		{"42 characters", "0123456789abcdef0123456789abcdef9999999999", false},
+		{"version tag", "v1.2.3", false},
+		{"abbreviated", "abc1234", false},
+		{"branch", "main", false},
+		{"empty", "", false},
 	} {
-		if got := IsFullObjectID(ref); got != want {
-			t.Errorf("IsFullObjectID(%q) = %v, want %v", ref, got, want)
-		}
+		t.Run(tc.name, func(t *testing.T) {
+			if got := IsFullObjectID(tc.ref); got != tc.want {
+				t.Errorf("IsFullObjectID(%q) = %v, want %v", tc.ref, got, tc.want)
+			}
+		})
 	}
 }
 
