@@ -3,6 +3,7 @@ package catalog
 import (
 	"fmt"
 	"path/filepath"
+	"strings"
 
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
@@ -133,6 +134,16 @@ func applyPlugin(entry *Entry, plugin *ir.Plugin) {
 	if entry.Description == "" {
 		entry.Description = plugin.Manifest.Description
 	}
+}
+
+// PluginMemberExclusionMatch reports whether an authored member exclusion
+// names the member exactly, as a kind/name locator.
+func PluginMemberExclusionMatch(exclusion string, member ir.PluginMember) bool {
+	kind, name, ok := strings.Cut(exclusion, "/")
+	if !ok || member.Resource == nil {
+		return false
+	}
+	return DecisionKind(kind) == member.Resource.Kind() && name == member.Resource.Name()
 }
 
 func pluginManifestPath(format string) string {

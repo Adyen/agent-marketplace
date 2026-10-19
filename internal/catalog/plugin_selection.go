@@ -53,7 +53,11 @@ func (p PluginSelectionPlan) ForEntry(entry config.RegistryEntry, scope config.S
 		planned := plugin
 		planned.Edges = nil
 		for _, edge := range plugin.Edges {
-			if edgeScope(edge) == scope {
+			edgeLayer := edge.Scope
+			if edgeLayer == config.SourceUnset {
+				edgeLayer = config.RepoCommitted
+			}
+			if edgeLayer == scope {
 				planned.Edges = append(planned.Edges, edge)
 			}
 		}
@@ -63,15 +67,6 @@ func (p PluginSelectionPlan) ForEntry(entry config.RegistryEntry, scope config.S
 		out = append(out, planned)
 	}
 	return out
-}
-
-// edgeScope resolves an edge's authoring layer, applying the SourceUnset
-// convention (unset behaves like RepoCommitted).
-func edgeScope(edge PluginSelectionEdge) config.Source {
-	if edge.Scope == config.SourceUnset {
-		return config.RepoCommitted
-	}
-	return edge.Scope
 }
 
 // ExternalEntries returns the selected catalog entries that resolve to an

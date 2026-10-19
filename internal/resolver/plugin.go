@@ -2,7 +2,6 @@ package resolver
 
 import (
 	"fmt"
-	"strings"
 
 	"github.com/Adyen/agent-marketplace/internal/catalog"
 	"github.com/Adyen/agent-marketplace/internal/config"
@@ -131,15 +130,6 @@ func pluginRequestsFor(entry config.RegistryEntry, name string) []config.V4Resou
 	return out
 }
 
-// pluginMemberExclusionMatch reports whether exclusion names member exactly.
-func pluginMemberExclusionMatch(exclusion string, member ir.PluginMember) bool {
-	kind, name, ok := strings.Cut(exclusion, "/")
-	if !ok || member.Resource == nil {
-		return false
-	}
-	return catalog.DecisionKind(kind) == member.Resource.Kind() && name == member.Resource.Name()
-}
-
 // applyPluginRequestOptions folds authored request options into the
 // selection: exclusions are exact kind/name member locators; unknown entries
 // refuse. An external catalog entry's members decode only after its origin
@@ -153,22 +143,23 @@ func applyPluginRequestOptions(selection *PluginSelection, name string, options 
 	members := selection.Members
 	deferred := plugin != nil && plugin.Source.Kind == "git"
 	for _, exclusion := range excluded {
+		selection.Exclusions = append(selection.Exclusions, exclusion)
+		if deferred {
+			continue
+		}
 		matched := false
 		kept := make([]ir.PluginMember, 0, len(members))
 		for _, member := range members {
-			if pluginMemberExclusionMatch(exclusion, member) {
+			if catalog.PluginMemberExclusionMatch(exclusion, member) {
 				matched = true
 				continue
 			}
 			kept = append(kept, member)
 		}
-		if !matched && !deferred {
+		if !matched {
 			return &PluginUnknownExclusionError{PluginName: name, Exclusion: exclusion, URL: entry.URL}
 		}
-		selection.Exclusions = append(selection.Exclusions, exclusion)
-		if !deferred {
-			members = kept
-		}
+		members = kept
 	}
 	selection.Members = members
 	return nil
