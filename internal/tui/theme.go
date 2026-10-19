@@ -221,7 +221,8 @@ var (
 
 	styleSearchMatch = lipgloss.NewStyle().
 				Bold(true).
-				Underline(true)
+				Underline(true).
+				Foreground(paletteAccent)
 
 	styleBadgeWarn  = lipgloss.NewStyle().Foreground(paletteWarn)
 	styleBadgeMulti = lipgloss.NewStyle().Bold(true).Foreground(paletteAccent)
