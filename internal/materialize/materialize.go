@@ -813,11 +813,12 @@ func markNilSharedNativeMCPInputs(resolved []resolver.ResolvedArtifact, repoRoot
 // keys (including empty targets that need pruning).
 func buildWorkItems(resolved []resolver.ResolvedArtifact, repoRoot string) ([]skillTarget, map[outputKey]bool, blockedOutputs, []diag.Diagnostic) {
 	var work []skillTarget
-	var allDiags []diag.Diagnostic
 	allOutputs := make(map[outputKey]bool)
 	blocked := make(blockedOutputs)
 
-	for _, s := range resolver.MaterializationWinners(resolved) {
+	winners, displaced := resolver.MaterializationProjection(resolved)
+	allDiags := sharedPathDiagnostics(displaced)
+	for _, s := range winners {
 		if s.Unresolved {
 			// Metadata-only status rows do not materialize and should not
 			// claim output keys.

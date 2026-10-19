@@ -814,6 +814,26 @@ resources: {team: {include: [hook/SessionStart-command, hook/SessionStart-comman
 		},
 	},
 	{
+		Name: "collision/required_skill_keeps_shared_native_path",
+		Desc: "Given an organization-required skill and a user-selected command with the same name, When syncing for Devin CLI and Claude Code, Then Devin's shared skills path keeps the required skill with a shared-path warning, and Claude Code installs both",
+		Registries: []RegistryDef{
+			{Name: "org-skill", Skills: []Skill{{Name: "audit", Description: "Mandatory organization skill"}}},
+			{Name: "user-command", Commands: []Command{{Name: "audit", Description: "User selected command", Command: "echo user"}}},
+		},
+		OrgCfg:    "apiVersion: agent-marketplace/v4\nharnesses: [devin, claude]\nsources: {org: {git: '{{REG:org-skill}}', ref: main}}\nresources: {org: {all: true, required: true}}\n",
+		GlobalCfg: "apiVersion: agent-marketplace/v4\nharnesses: [devin, claude]\nsources: {user: {git: '{{REG:user-command}}', ref: main}}\nresources: {user: {include: [command/audit]}}\n",
+		RepoCfg:   "apiVersion: agent-marketplace/v4\nsources: {}\n",
+		Steps: []Step{
+			{Args: []string{"sync"}, MustPass: true, OutContains: []string{"materialize.collision.shared-path"},
+				FileContains: map[string]string{
+					"/root/.config/devin/skills/audit/SKILL.md": "Mandatory organization skill",
+					"/root/.claude/skills/audit/SKILL.md":       "Mandatory organization skill",
+					"/root/.claude/commands/audit.md":           "User selected command",
+				}},
+			{Args: []string{"sync", "--check"}, MustPass: true, PathsUnchanged: []string{"/root/.config/devin/skills/audit"}},
+		},
+	},
+	{
 		Name: "install/collision_warning_scoped",
 		Desc: "Given two selected registries with skill and command collisions, When installing one skill, Then its collision is reported without unrelated warnings and the existing winner is installed",
 		Registries: []RegistryDef{

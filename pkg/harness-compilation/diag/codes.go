@@ -294,6 +294,7 @@ const (
 	CodeMaterializeCodexAggregateMalformed       = "materialize.codex.aggregate-malformed"         // A Codex aggregate could not be parsed or safely reconciled
 	CodeMaterializeCodexAggregateUnpatchable     = "materialize.codex.aggregate-unpatchable"       // A Codex aggregate entry uses a native form that cannot be safely patched
 	CodeMaterializeDestinationOverlap            = "materialize.destination.overlap"               // Resolved Codex destinations overlap in a way that cannot be safely coalesced
+	CodeMaterializeSharedPathCollision           = "materialize.collision.shared-path"             // Resources of different kinds with one installed name share a native path; only the winner was installed there
 	CodeMaterializeCodexTrustReview              = "materialize.codex.trust-review"                // Repository Codex hooks or MCP configuration changed and may require trust review
 	// CodeHookNativeToleranceRefused is the read-only native-hook inspection
 	// refusal: a documented native hook file was malformed, ambiguous, or
@@ -739,6 +740,7 @@ var codeCatalog = []CodeDoc{
 	{CodeMaterializeCodexAggregateMalformed, SeverityError, "A Codex aggregate could not be parsed or safely reconciled, so that file was left exactly as found", "Fix the reported hooks.json or config.toml error by hand; the malformed file is preserved"},
 	{CodeMaterializeCodexAggregateUnpatchable, SeverityError, "An existing Codex MCP server uses an alternate TOML form that cannot be safely patched, so that entry was preserved", "Rewrite the server as a standard [mcp_servers.<name>] table or edit it by hand before syncing"},
 	{CodeMaterializeDestinationOverlap, SeverityError, "Resolved Codex destinations overlap in a way that cannot be safely coalesced, so materialization was refused", "Use compatible repository and machine modes, resolve conflicting resources, or separate the repository and CODEX_HOME roots"},
+	{CodeMaterializeSharedPathCollision, SeverityWarning, "Resources of different kinds with the same installed name share one native path on this target, so only the winner by selection precedence was installed there", "Rename one of the resources or exclude the one you do not want on this target; targets with separate paths keep both"},
 	{CodeMaterializeCodexTrustReview, SeverityWarning, "Repository Codex hooks or MCP configuration changed and may require project trust review", "Review or re-approve the repository in Codex before using the changed configuration"},
 	{CodeMaterializeCodexTrustReviewPending, SeverityWarning, "A check found a pending repository Codex change without mutating files or trust state", "A later sync may require reviewing or re-approving the repository in Codex"},
 	{CodeMaterializeDevinSymlinkRequired, SeverityError, "Devin skills and subagents must be symlinks, so file-copy materialization was refused for this target", "Devin has no real-file fallback; set the materialization mode back to symlink for the Devin harness"},

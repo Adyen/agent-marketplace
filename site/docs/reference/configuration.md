@@ -397,6 +397,6 @@ When sources with different origins or refs select resources with the same kind 
 
 Hooks are the exception: hooks from independent sources are all installed, even when their names match. Repeated references to the same source are installed once.
 
-Different kinds never collide. A skill and a command may share a name.
+Different kinds collide only on a harness target that installs them at the same path. Devin CLI and Codex install commands as skills, so a skill and a command with the same installed name compete there under the same rules, and sync prints a `materialize.collision.shared-path` warning naming both. On targets with separate skill and command paths, such as Claude Code, both are installed.
 
 The [scopes, selection, and precedence explanation](../explanation/scopes-selection-and-precedence.md) covers collisions, exclusions across layers, and removal in more detail.

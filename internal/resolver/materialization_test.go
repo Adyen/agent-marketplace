@@ -15,6 +15,10 @@ func materializationArtifact(name, body string, kind ir.ResourceKind, source con
 	switch kind {
 	case ir.KindSkill:
 		resource = ir.NewSkill(name, "test", body, nil, nil, ir.SourceRef{})
+	case ir.KindCommand:
+		resource = ir.NewCommand(name, "test", body, nil, ir.SourceRef{})
+	case ir.KindSubagent:
+		resource = ir.NewSubagent(name, "test", body, "", nil, "", nil, "", nil, ir.SourceRef{})
 	case ir.KindHook:
 		resource = ir.NewHook(name, "SessionStart", body, "command", nil, ir.SourceRef{})
 	case ir.KindMcpServer:
@@ -122,5 +126,65 @@ func TestMaterializationWinnersPreservesAdditiveHooks(t *testing.T) {
 	out := MaterializationWinners([]ResolvedArtifact{first, second})
 	if len(out) != 2 {
 		t.Fatalf("additive hooks projected to %d", len(out))
+	}
+}
+
+func TestMaterializationProjectionSharedSkillCommandPath(t *testing.T) {
+	targets := []hcc.Target{hcc.TargetDevin, hcc.TargetCodex, hcc.TargetClaude}
+	required := materializationArtifact("audit", "org", ir.KindSkill, config.Organization, targets)
+	required.Required = true
+	command := materializationArtifact("audit", "user", ir.KindCommand, config.UserPersonal, targets)
+	for name, input := range map[string][]ResolvedArtifact{
+		"skill-first":   {required, command},
+		"command-first": {command, required},
+	} {
+		t.Run(name, func(t *testing.T) {
+			out, displaced := MaterializationProjection(input)
+			byKind := map[ir.ResourceKind][]hcc.Target{}
+			for _, a := range out {
+				byKind[a.Resource.Kind()] = a.Harnesses
+			}
+			if !reflect.DeepEqual(byKind[ir.KindSkill], targets) || !reflect.DeepEqual(byKind[ir.KindCommand], []hcc.Target{hcc.TargetClaude}) {
+				t.Fatalf("projection = %v", byKind)
+			}
+			paths := map[hcc.Target]string{}
+			for _, d := range displaced {
+				winnerSource, displacedSource := d.Sources()
+				if d.Winner.Resource.Kind() != ir.KindSkill || d.Displaced.Resource.Kind() != ir.KindCommand || !d.MachineScope ||
+					winnerSource != "https://example.invalid/org" || displacedSource != "https://example.invalid/user" {
+					t.Fatalf("displacement = %+v (%s, %s)", d, winnerSource, displacedSource)
+				}
+				paths[d.Target] = d.Path()
+			}
+			want := map[hcc.Target]string{hcc.TargetDevin: "skills/audit/SKILL.md", hcc.TargetCodex: ".agents/skills/audit/SKILL.md"}
+			if !reflect.DeepEqual(paths, want) {
+				t.Fatalf("displaced paths = %v, want %v", paths, want)
+			}
+		})
+	}
+}
+
+func TestMaterializationProjectionSharedPathTieIsOrderIndependent(t *testing.T) {
+	targets := []hcc.Target{hcc.TargetDevin}
+	skill := materializationArtifact("review", "b-skill", ir.KindSkill, config.UserPersonal, targets)
+	command := materializationArtifact("review", "a-command", ir.KindCommand, config.UserPersonal, targets)
+	for _, input := range [][]ResolvedArtifact{{skill, command}, {command, skill}} {
+		out, displaced := MaterializationProjection(input)
+		if len(out) != 1 || out[0].Resource.Kind() != ir.KindCommand || len(displaced) != 1 || displaced[0].Displaced.Resource.Kind() != ir.KindSkill {
+			t.Fatalf("equal-precedence winner must follow source order, not input order: out=%v displaced=%v", out, displaced)
+		}
+	}
+}
+
+func TestMaterializationProjectionKeepsSeparatePathsAndSameKindRivals(t *testing.T) {
+	targets := []hcc.Target{hcc.TargetDevin, hcc.TargetClaude}
+	skill := materializationArtifact("shared", "skill", ir.KindSkill, config.UserPersonal, targets)
+	mcp := materializationArtifact("shared", "mcp", ir.KindMcpServer, config.UserPersonal, targets)
+	subagent := materializationArtifact("shared", "subagent", ir.KindSubagent, config.UserPersonal, targets)
+	rival := materializationArtifact("shared", "rival", ir.KindSkill, config.RepoCommitted, targets)
+	rivalLoser := materializationArtifact("shared", "rival-loser", ir.KindSkill, config.RepoCommitted, targets)
+	out, displaced := MaterializationProjection([]ResolvedArtifact{skill, mcp, subagent, rival, rivalLoser})
+	if len(out) != 4 || len(displaced) != 0 {
+		t.Fatalf("separate paths and same-kind rivals: out=%d displaced=%v", len(out), displaced)
 	}
 }
