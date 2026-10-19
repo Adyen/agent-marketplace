@@ -182,8 +182,13 @@ func Remove(ctx context.Context, opts RemoveOptions) (result *RemoveResult, retE
 		}
 		marketplaceCfg = &scoped
 	}
-	if result, handled, err := removeMarketplaceSelection(ctx, opts, marketplaceCfg, name); handled {
-		return result, err
+	// Organization resources must also be disambiguated against catalog-selected
+	// resources, which are absent from the early authored-selection candidates.
+	organizationResource := earlyTarget != nil && earlyTarget.IsMarketplace && earlyTarget.Source == config.Organization && earlyTarget.Kind != ir.KindCollection
+	if !organizationResource {
+		if result, handled, err := removeMarketplaceSelection(ctx, opts, marketplaceCfg, name); handled {
+			return result, err
+		}
 	}
 
 	// Collections disappear during expansion, so locate their owning selection
@@ -255,6 +260,20 @@ func Remove(ctx context.Context, opts RemoveOptions) (result *RemoveResult, retE
 	// required:true skills are immune to remove from any scope.
 	if target.Required {
 		return nil, fmt.Errorf("%s %q is required and cannot be removed", skill.KindLabel(target.Kind), name)
+	}
+
+	if target.IsMarketplace && target.Source == config.Organization {
+		for _, entry := range resolvedResult.MergedCfg.Marketplaces {
+			if entry.Source != target.Source {
+				continue
+			}
+			for _, pin := range entry.Resources {
+				if config.MarketplaceCatalogKey(entry, pin) == target.CatalogKey {
+					return excludeOrganizationMarketplacePin(ctx, opts, entry, pin, name)
+				}
+			}
+		}
+		return nil, fmt.Errorf("%w: organization Marketplace resource %q no longer matches its resolved pin", ErrMarketplaceRemoveNotSelected, name)
 	}
 
 	// Determine the effective scope: caller-specified takes precedence;
@@ -907,7 +926,7 @@ func earlyRemovalCandidates(cfg *config.Config, name string) []resolver.Resolved
 		return nil
 	}
 	var candidates []resolver.ResolvedArtifact
-	var hasResource, hasEarly, hasOrganizationMember bool
+	var hasResource, hasEarly, hasOrganizationResource bool
 	for _, entry := range cfg.Registries {
 		for _, kind := range config.AllKinds {
 			direct, _ := resolver.EffectiveDirectSelectionSources(entry, cfg.Registries, nil, kind, name)
@@ -937,12 +956,12 @@ func earlyRemovalCandidates(cfg *config.Config, name string) []resolver.Resolved
 				RegistryURL: entry.URL, RegistryPath: pin.RegistryID, IsMarketplace: true,
 			})
 			hasEarly = true
-			hasOrganizationMember = hasOrganizationMember || member
+			hasOrganizationResource = hasOrganizationResource || entry.Source == config.Organization && kind != ir.KindCollection
 		}
 	}
-	// Organization members can now be excluded early, so their kind/source
-	// ambiguity must be checked before that edit, just like direct selections.
-	if (!hasResource || !hasEarly) && !hasOrganizationMember {
+	// Identify organization resources so their opt-out can be deferred until
+	// catalog-selected resources also participate in ambiguity resolution.
+	if (!hasResource || !hasEarly) && !hasOrganizationResource {
 		return nil
 	}
 	return candidates
@@ -1052,7 +1071,7 @@ func resolvedResourceByNameInScope(resolved []resolver.ResolvedArtifact, name st
 func resourceMatches(resolved []resolver.ResolvedArtifact, name string, kind ir.ResourceKind, hasKind bool) []resolver.ResolvedArtifact {
 	var matches []resolver.ResolvedArtifact
 	for _, candidate := range resolved {
-		if candidate.Name != name {
+		if candidate.Name != name && (!candidate.IsMarketplace || candidate.MarketplaceResourceName != name) {
 			continue
 		}
 		if hasKind && candidate.Kind != kind {
@@ -1647,11 +1666,12 @@ func removalEditEntry(entry config.RegistryEntry, url, path, ref string) config.
 	return out
 }
 
-// Stable diagnostic codes for named Marketplace endpoint removal refusals.
+// Stable diagnostic codes for Marketplace removal refusals.
 var (
-	ErrMarketplaceRemoveUnsupportedQualifier = errors.New("marketplace.remove-unsupported-qualifier")
-	ErrMarketplaceRemoveNotSelected          = errors.New("marketplace.remove-not-selected")
-	ErrMarketplaceRemoveAmbiguousSource      = errors.New("marketplace.remove-ambiguous-source")
+	ErrMarketplaceRemoveUnsupportedQualifier   = errors.New("marketplace.remove-unsupported-qualifier")
+	ErrMarketplaceRemoveNotSelected            = errors.New("marketplace.remove-not-selected")
+	ErrMarketplaceRemoveAmbiguousSource        = errors.New("marketplace.remove-ambiguous-source")
+	ErrMarketplaceRemoveOrganizationCollection = errors.New("marketplace.remove-organization-collection")
 )
 
 // marketplaceRemovalSource narrows named --from removal to a configured
@@ -1701,7 +1721,7 @@ func removeMarketplaceSelection(ctx context.Context, opts RemoveOptions, cfg *co
 			if entry.Required {
 				return nil, true, fmt.Errorf("collection %q is required and managed externally", name)
 			}
-			return nil, true, fmt.Errorf("collection %q is managed externally; exclude individual optional members with 'agent-marketplace remove <member> --scope user' instead", name)
+			return nil, true, fmt.Errorf("%w: collection %q is managed externally; exclude individual optional members with 'agent-marketplace remove <member> --scope user' instead", ErrMarketplaceRemoveOrganizationCollection, name)
 		}
 		effective := opts.Scope
 		if !opts.ScopeSpecified {

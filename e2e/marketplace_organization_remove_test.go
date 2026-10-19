@@ -140,3 +140,67 @@ func TestOrganizationMarketplaceMemberKindAmbiguity(t *testing.T) {
 		})
 	}
 }
+
+// spec: resource-removal/catalog-selected-repository-resources-require-scope-disambiguation
+func TestOrganizationMarketplaceCatalogSelectionAmbiguity(t *testing.T) {
+	fixture := newMarketplaceBehaviorFixture(t, marketplaceBehaviorFiles("organization member", true))
+	for _, tc := range []struct{ name, selection string }{
+		{"all", "{all: true}"},
+		{"tags", "{tags: [team]}"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			consumer := fixture.newConsumer(t, fixture.server.URL)
+			consumer.WriteFile("/workspace/local-source/skills/skill-one/SKILL.md", (Skill{Name: "skill-one", Description: "Repository peer", Tags: []string{"team"}}).SkillFile())
+			consumer.WriteRepoConfig(fmt.Sprintf("apiVersion: agent-marketplace/v4\nsources:\n  local: {directory: ./local-source, source_harness: factory}\nresources:\n  local: %s\n", tc.selection))
+			consumer.WriteOrgConfig(fmt.Sprintf("apiVersion: agent-marketplace/v4\nsources:\n  org: {marketplace: %s}\nresources:\n  org: [behavior-source/collection/behavior-bundle]\n", fixture.server.URL))
+			if result := consumer.RunAM("sync"); result.ExitCode != 0 {
+				t.Fatalf("initial sync:\n%s", result.Combined)
+			}
+			repoSkill := "/workspace/.factory/skills/skill-one/SKILL.md"
+			orgSkill := "/root/.factory/skills/skill-one/SKILL.md"
+			sibling := "/root/.factory/commands/command-one.md"
+			paths := []string{"/workspace/.agents/config.yaml", "/root/.agents/config.yaml", "/etc/agent-marketplace/config.yaml", repoSkill, orgSkill, sibling}
+			before := make(map[string]string)
+			for _, path := range paths {
+				before[path] = consumer.ReadFile(path)
+			}
+			if result := consumer.RunAM("remove", "skill-one"); result.ExitCode == 0 || !strings.Contains(result.Combined, "--scope") {
+				t.Fatalf("expected scope ambiguity:\n%s", result.Combined)
+			}
+			for path, original := range before {
+				if after := consumer.ReadFile(path); after != original {
+					t.Fatalf("ambiguous removal changed %s", path)
+				}
+			}
+			if result := consumer.RunAM("remove", "skill-one", "--scope", "user"); result.ExitCode != 0 {
+				t.Fatalf("user-scoped opt-out:\n%s", result.Combined)
+			}
+			var user struct {
+				Resources map[string]struct {
+					Exclude []string `yaml:"exclude"`
+				} `yaml:"resources"`
+			}
+			if err := yaml.Unmarshal([]byte(consumer.ReadFile("/root/.agents/config.yaml")), &user); err != nil {
+				t.Fatal(err)
+			}
+			if len(user.Resources) != 1 {
+				t.Fatalf("unexpected user resource groups: %#v", user.Resources)
+			}
+			for _, group := range user.Resources {
+				if len(group.Exclude) != 1 || group.Exclude[0] != "behavior-source/skill/skill-one" {
+					t.Fatalf("exact exclusion missing: %#v", group)
+				}
+			}
+			consumer.AssertFileAbsent("/root/.factory/skills/skill-one")
+			for _, path := range []string{"/workspace/.agents/config.yaml", "/etc/agent-marketplace/config.yaml", repoSkill, sibling} {
+				if after := consumer.ReadFile(path); after != before[path] {
+					t.Fatalf("user opt-out changed %s", path)
+				}
+			}
+			consumer.AssertFileAbsent("/etc/agent-marketplace/lock.yaml")
+			if result := consumer.RunAM("sync", "--check"); result.ExitCode != 0 {
+				t.Fatalf("opt-out did not converge:\n%s", result.Combined)
+			}
+		})
+	}
+}

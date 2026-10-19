@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -113,10 +114,45 @@ func TestRemoveOptionalOrganizationMarketplaceResource(t *testing.T) {
 	}
 }
 
+// spec: resource-removal/remove-an-optional-direct-organization-marketplace-resource
+func TestRemoveOrganizationMarketplaceResourceAlias(t *testing.T) {
+	for _, name := range []string{"review", "review-copy"} {
+		t.Run(name, func(t *testing.T) {
+			f := newOrganizationMarketplaceRemovalFixture(t, true, false)
+			organization := fmt.Sprintf("apiVersion: agent-marketplace/v4\nharnesses: [factory]\nsources:\n  org: {marketplace: %s}\nresources:\n  org:\n    include:\n      - source/skill/review: {as: review-copy}\n      - source/skill/audit\n", f.fake.URL)
+			writeFile(t, f.orgPath, organization)
+			synced := Sync(context.Background(), ResolveOptions{Workspace: mustWorkspace(t, f.repo), NoBackup: true})
+			if len(synced.Errors) != 0 {
+				t.Fatal(synced.Errors)
+			}
+			if _, err := os.Stat(filepath.Join(f.home, ".factory", "skills", "review-copy", "SKILL.md")); err != nil {
+				t.Fatalf("aliased resource not installed: %v", err)
+			}
+			if _, err := Remove(context.Background(), RemoveOptions{RepoRoot: f.repo, ResourceName: name}); err != nil {
+				t.Fatalf("remove aliased resource: %v", err)
+			}
+			cfg, err := config.LoadRootConfigFromPath(f.userPath)
+			if err != nil || len(cfg.MarketplaceExclusions) != 1 || cfg.MarketplaceExclusions[0].Locator != "source/skill/review" {
+				t.Fatalf("canonical exclusion missing: %#v / %v", cfg, err)
+			}
+			if _, err := os.Stat(filepath.Join(f.home, ".factory", "skills", "review-copy")); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("aliased resource remains: %v", err)
+			}
+			if _, err := os.Stat(filepath.Join(f.home, ".factory", "skills", "audit", "SKILL.md")); err != nil {
+				t.Fatalf("sibling removed: %v", err)
+			}
+			if data, err := os.ReadFile(f.orgPath); err != nil || string(data) != organization {
+				t.Fatalf("organization changed: %v", err)
+			}
+		})
+	}
+}
+
 // spec: resource-removal/organization-marketplace-opt-out-preserves-required-and-scope-boundaries
 // spec: resource-removal/organization-collection-removal-explains-per-member-opt-out
+// spec: resource-removal/optional-organization-collection-refusal-is-identifiable
 func TestRemoveOrganizationMarketplaceRefusals(t *testing.T) {
-	for _, choice := range []string{"required-member", "required-direct", "repo", "local", "collection"} {
+	for _, choice := range []string{"required-member", "required-direct", "required-collection", "repo", "local", "collection"} {
 		t.Run(choice, func(t *testing.T) {
 			f := newOrganizationMarketplaceRemovalFixture(t, choice == "required-direct", strings.HasPrefix(choice, "required"))
 			paths := []string{f.orgPath, f.userPath, filepath.Join(f.home, ".factory", "skills", "review", "SKILL.md"), filepath.Join(f.home, ".factory", "skills", "audit", "SKILL.md")}
@@ -134,7 +170,7 @@ func TestRemoveOrganizationMarketplaceRefusals(t *testing.T) {
 				opts.Scope = ScopeRepo
 			case "local":
 				opts.Scope = ScopeLocal
-			case "collection":
+			case "collection", "required-collection":
 				opts.ResourceName, opts.Kind, opts.HasKind = "bundle", ir.KindCollection, true
 			}
 			_, err := Remove(context.Background(), opts)
@@ -147,8 +183,11 @@ func TestRemoveOrganizationMarketplaceRefusals(t *testing.T) {
 					t.Fatalf("expected actionable scope boundary, got %v", err)
 				}
 			}
-			if choice == "collection" && !strings.Contains(err.Error(), "member") {
-				t.Fatalf("collection refusal lacks member opt-out guidance: %v", err)
+			if choice == "collection" && !errors.Is(err, ErrMarketplaceRemoveOrganizationCollection) {
+				t.Fatalf("collection refusal lacks its stable identity: %v", err)
+			}
+			if strings.HasPrefix(choice, "required") && errors.Is(err, ErrMarketplaceRemoveOrganizationCollection) {
+				t.Fatalf("required refusal misclassified as optional collection refusal: %v", err)
 			}
 			for path, original := range before {
 				if data, err := os.ReadFile(path); err != nil || string(data) != original {
@@ -166,29 +205,127 @@ func TestRemoveOrganizationMarketplaceRefusals(t *testing.T) {
 }
 
 // spec: resource-removal/organization-member-opt-out-disambiguates-kind-and-scope
+// spec: resource-removal/catalog-selected-repository-resources-require-scope-disambiguation
 func TestRemoveOrganizationMarketplaceMemberScopeAmbiguity(t *testing.T) {
+	for _, tc := range []struct {
+		name, selection string
+		direct, from    bool
+	}{
+		{name: "explicit", selection: "[skill/review]"},
+		{name: "all", selection: "{all: true}"},
+		{name: "tags", selection: "{tags: [team]}"},
+		{name: "collection", selection: "[collection/team]"},
+		{name: "direct-all", selection: "{all: true}", direct: true},
+		{name: "endpoint-all", selection: "{all: true}", from: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newOrganizationMarketplaceRemovalFixture(t, tc.direct, false)
+			source := t.TempDir()
+			writeSkill(t, source, "review", "Repository review", []string{"team"})
+			if tc.name == "collection" {
+				writeFile(t, filepath.Join(source, "collections", "team", "COLLECTION.yaml"), "name: team\nresources:\n  - name: review\n    kind: skill\n")
+			}
+			repoPath := config.ProjectConfigPath(f.repo)
+			writeFile(t, repoPath, fmt.Sprintf("apiVersion: agent-marketplace/v4\nsources:\n  local: {directory: %q, source_harness: factory}\nresources:\n  local: %s\n", source, tc.selection))
+			synced := Sync(context.Background(), ResolveOptions{Workspace: mustWorkspace(t, f.repo), NoBackup: true})
+			if len(synced.Errors) != 0 {
+				t.Fatal(synced.Errors)
+			}
+			repoSkill := filepath.Join(f.repo, ".factory", "skills", "review", "SKILL.md")
+			orgSkill := filepath.Join(f.home, ".factory", "skills", "review", "SKILL.md")
+			auditSkill := filepath.Join(f.home, ".factory", "skills", "audit", "SKILL.md")
+			locks := []string{filepath.Join(f.repo, ".agents", "lock.yaml"), filepath.Join(f.home, ".agents", "lock.yaml"), filepath.Join(filepath.Dir(f.orgPath), "lock.yaml")}
+			paths := append([]string{repoPath, f.userPath, f.orgPath, repoSkill, orgSkill, auditSkill}, locks...)
+			before := make(map[string][]byte)
+			for _, path := range paths {
+				data, err := os.ReadFile(path)
+				if errors.Is(err, os.ErrNotExist) && slices.Contains(locks, path) {
+					before[path] = nil
+					continue
+				}
+				if err != nil {
+					t.Fatal(err)
+				}
+				before[path] = data
+			}
+			opts := RemoveOptions{RepoRoot: f.repo, ResourceName: "review", Scope: ScopeRepo}
+			if _, err := Remove(context.Background(), opts); err == nil || !strings.Contains(err.Error(), "--scope") {
+				t.Fatalf("expected scope ambiguity, got %v", err)
+			}
+			for path, original := range before {
+				data, err := os.ReadFile(path)
+				if original == nil {
+					if !errors.Is(err, os.ErrNotExist) {
+						t.Fatalf("ambiguous removal created %s: %v", path, err)
+					}
+					continue
+				}
+				if err != nil || string(data) != string(original) {
+					t.Fatalf("ambiguous removal changed %s: %v", path, err)
+				}
+			}
+			opts.Scope, opts.ScopeSpecified = ScopeUser, true
+			if tc.from {
+				opts.FromURL = f.fake.URL
+			}
+			if _, err := Remove(context.Background(), opts); err != nil {
+				t.Fatalf("user-scoped opt-out: %v", err)
+			}
+			cfg, err := config.LoadRootConfigFromPath(f.userPath)
+			if err != nil || len(cfg.MarketplaceExclusions) != 1 || cfg.MarketplaceExclusions[0].Locator != "source/skill/review" || cfg.MarketplaceExclusions[0].URL != f.fake.URL {
+				t.Fatalf("user exclusions = %#v, %v", cfg, err)
+			}
+			if _, err := os.Stat(filepath.Dir(orgSkill)); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("organization member remains: %v", err)
+			}
+			for _, path := range []string{repoPath, f.orgPath, repoSkill, auditSkill} {
+				if data, err := os.ReadFile(path); err != nil || string(data) != string(before[path]) {
+					t.Fatalf("user opt-out changed %s: %v", path, err)
+				}
+			}
+			assertNoStagingResidue(t)
+		})
+	}
+}
+
+// spec: resource-removal/catalog-selected-repository-resources-require-scope-disambiguation
+func TestRemoveOrganizationMarketplaceCollisionRepoScope(t *testing.T) {
 	f := newOrganizationMarketplaceRemovalFixture(t, false, false)
 	source := t.TempDir()
 	writeSkill(t, source, "review", "Repository review", nil)
 	repoPath := config.ProjectConfigPath(f.repo)
-	writeFile(t, repoPath, fmt.Sprintf("apiVersion: agent-marketplace/v4\nsources:\n  local: {directory: %q, source_harness: factory}\nresources:\n  local: [skill/review]\n", source))
-	before, err := os.ReadFile(f.userPath)
-	if err != nil {
-		t.Fatal(err)
+	writeFile(t, repoPath, fmt.Sprintf("apiVersion: agent-marketplace/v4\nsources:\n  local: {directory: %q, source_harness: factory}\nresources:\n  local: {all: true}\n", source))
+	synced := Sync(context.Background(), ResolveOptions{Workspace: mustWorkspace(t, f.repo), NoBackup: true})
+	if len(synced.Errors) != 0 {
+		t.Fatal(synced.Errors)
 	}
-	opts := RemoveOptions{RepoRoot: f.repo, ResourceName: "review", Scope: ScopeRepo}
-	if _, err := Remove(context.Background(), opts); err == nil || !strings.Contains(err.Error(), "--scope") {
-		t.Fatalf("expected scope ambiguity, got %v", err)
+	before := make(map[string][]byte)
+	for _, path := range []string{f.orgPath, f.userPath} {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		before[path] = data
 	}
-	if after, err := os.ReadFile(f.userPath); err != nil || string(after) != string(before) {
-		t.Fatalf("ambiguous removal changed user config: %v", err)
+	if _, err := Remove(context.Background(), RemoveOptions{RepoRoot: f.repo, ResourceName: "review", Scope: ScopeRepo, ScopeSpecified: true}); err != nil {
+		t.Fatalf("repository-scoped removal: %v", err)
 	}
-	opts.Scope, opts.ScopeSpecified = ScopeUser, true
-	if _, err := Remove(context.Background(), opts); err != nil {
-		t.Fatalf("user-scoped opt-out: %v", err)
+	cfg, err := config.LoadRootConfigFromPath(repoPath)
+	if err != nil || len(cfg.Registries) != 1 || !cfg.Registries[0].V4All || !slices.Equal(cfg.Registries[0].Skills.Exclude, []string{"review"}) {
+		t.Fatalf("repository exclusion = %#v / %v", cfg, err)
 	}
-	if _, err := os.Stat(filepath.Join(f.repo, ".factory", "skills", "review", "SKILL.md")); err != nil {
-		t.Fatalf("repository resource removed by user opt-out: %v", err)
+	if _, err := os.Stat(filepath.Join(f.repo, ".factory", "skills", "review")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("repository resource remains: %v", err)
+	}
+	for _, name := range []string{"review", "audit"} {
+		if _, err := os.Stat(filepath.Join(f.home, ".factory", "skills", name, "SKILL.md")); err != nil {
+			t.Fatalf("organization member removed: %v", err)
+		}
+	}
+	for path, original := range before {
+		if data, err := os.ReadFile(path); err != nil || string(data) != string(original) {
+			t.Fatalf("repository removal changed %s: %v", path, err)
+		}
 	}
 }
 
