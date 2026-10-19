@@ -1261,14 +1261,22 @@ func propagateTopLevelCollections(cfg *config.Config) {
 func collectionRoots(resolved []ResolvedArtifact) []ResolvedArtifact {
 	var roots []ResolvedArtifact
 	for _, artifact := range resolved {
-		if artifact.Kind != ir.KindCollection {
-			continue
-		}
-		if irCol, ok := artifact.Resource.(*ir.Collection); ok && irCol != nil {
+		if _, ok := resolvedCollection(artifact); ok {
 			roots = append(roots, artifact)
 		}
 	}
 	return roots
+}
+
+// resolvedCollection returns the collection definition of a resolved
+// collection artifact. It reports false for other kinds and for collections
+// without a usable definition.
+func resolvedCollection(artifact ResolvedArtifact) (*ir.Collection, bool) {
+	if artifact.Kind != ir.KindCollection {
+		return nil, false
+	}
+	irCol, ok := artifact.Resource.(*ir.Collection)
+	return irCol, ok && irCol != nil
 }
 
 // expandCollections replaces each KindCollection artifact with its expanded
@@ -1367,8 +1375,8 @@ func expandCollections(resolved []ResolvedArtifact, errs []error, cfg *config.Co
 		}
 
 		// This is a resolved collection. Extract the ir.Collection resource.
-		irCol, ok := artifact.Resource.(*ir.Collection)
-		if !ok || irCol == nil {
+		irCol, ok := resolvedCollection(artifact)
+		if !ok {
 			// No IR resource — skip silently (malformed collection).
 			continue
 		}

@@ -71,6 +71,12 @@ func TestWithSelectedCollectionsOmitsExcludedRoots(t *testing.T) {
 	}
 	localCfg := &config.LocalConfig{Collections: config.KindSelector{Exclude: []string{"tools"}}}
 
+	var control []ResolvedArtifact
+	Resolve(cfg, catalogs, nil, WithSelectedCollections(&control))
+	if len(control) != 1 || control[0].Kind != ir.KindCollection || control[0].Name != "tools" {
+		t.Fatalf("positive control: expected one selected collection root tools, got %+v", control)
+	}
+
 	var selected []ResolvedArtifact
 	Resolve(cfg, catalogs, localCfg, WithSelectedCollections(&selected))
 	if len(selected) != 0 {

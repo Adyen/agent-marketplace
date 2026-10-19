@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -134,6 +135,59 @@ func TestDisablingInstalledMarketplaceCollectionRemovesSelection(t *testing.T) {
 	}
 	if updated := string(mustReadFile(t, f.projectPath)); strings.Contains(updated, "collections/collection/bundle") {
 		t.Fatalf("collection selection must be removed:\n%s", updated)
+	}
+	assertNoConfigStaging(t)
+}
+
+// spec: tui-startup/disabling-installed-collection-removes-selection
+func TestDisablingInstalledRegistryCollectionRemovesSelection(t *testing.T) {
+	f := newBulkFixture(t)
+	source := t.TempDir()
+	for _, file := range []struct{ path, body string }{
+		{filepath.Join(source, "skills", "alpha", "SKILL.md"), "# alpha\n"},
+		{filepath.Join(source, "collections", "tools", "COLLECTION.yaml"), "name: tools\nresources:\n  - name: alpha\n"},
+	} {
+		if err := os.MkdirAll(filepath.Dir(file.path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(file.path, []byte(file.body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	project := "apiVersion: agent-marketplace/v4\nharnesses: [devin]\nsources:\n  local:\n    directory: " + source + "\n" +
+		"resources:\n  local:\n    include:\n      - collection/tools\n"
+	if err := os.WriteFile(f.projectPath, []byte(project), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	snap := readSnapshot(context.Background(), f.repo, f.home, catalogLoadRefresh)
+	if len(snap.errs) > 0 {
+		t.Fatalf("snapshot errors: %v", snap.errs)
+	}
+	collections := collectionRowsNamed(snap.rows, "tools")
+	if len(collections) != 1 || collections[0].IsAvailable || !collections[0].EnabledProject {
+		t.Fatalf("selected Git collection rows = %#v, want one installed project row", collections)
+	}
+	m := newViewModel(t, snap.rows)
+	m.workspace = f.workspace
+	m.bulkModal = bulkModalState{sectionPath: "status:enabled", scope: scopeProject, scopeSet: true, direction: bulkDirDisable}
+	acts, reasons, err := m.evaluateBulkActions(m.bulkModal)
+	if err != nil {
+		t.Fatalf("evaluateBulkActions: %v", err)
+	}
+	if len(acts) != 1 || acts[0].skillName != "tools" || acts[0].kind != ir.KindCollection {
+		t.Fatalf("installed Git collection must be toggleable to disable, acts=%v reasons=%v", acts, reasons)
+	}
+	msg, ok := runBulkDependencyToggle(context.Background(), f.workspace, acts, f.mutate())().(configWrittenMsg)
+	if !ok || msg.err != nil {
+		t.Fatalf("disable installed registry collection failed: %#v err=%v", msg, msg.err)
+	}
+	reloaded := readSnapshot(context.Background(), f.repo, f.home, catalogLoadRefresh)
+	after := collectionRowsNamed(reloaded.rows, "tools")
+	if len(after) != 1 {
+		t.Fatalf("want exactly one tools collection row after disable, got %d:\n%s", len(after), mustReadFile(t, f.projectPath))
+	}
+	if after[0].EnabledProject || !after[0].IsAvailable {
+		t.Fatalf("disabled collection row = available:%v enabledProject:%v, want available and not enabled:\n%s", after[0].IsAvailable, after[0].EnabledProject, mustReadFile(t, f.projectPath))
 	}
 	assertNoConfigStaging(t)
 }

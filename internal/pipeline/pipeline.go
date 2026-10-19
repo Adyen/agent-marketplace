@@ -27,6 +27,7 @@ import (
 	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
 	targetmeta "github.com/Adyen/agent-marketplace/pkg/harness-compilation/target"
+	mpapi "github.com/Adyen/agent-marketplace/pkg/marketplace/api"
 )
 
 // syncPhaseHookContextKey is an internal deterministic concurrency-test seam.
@@ -136,7 +137,7 @@ type ResolveResult struct {
 // display-only collection roots. Use it only for presentation; materialization
 // and drift must keep reading Resolved.
 func (r ResolveResult) DisplayArtifacts() []resolver.ResolvedArtifact {
-	return append(slices.Clone(r.Resolved), r.SelectedCollections...)
+	return slices.Concat(r.Resolved, r.SelectedCollections)
 }
 
 // TargetHarnessSetMissingError is returned by Resolve/Sync when no effective
@@ -1205,7 +1206,7 @@ func marketplaceSelectedCollections(cfg *config.Config) []resolver.ResolvedArtif
 	var roots []resolver.ResolvedArtifact
 	for _, entry := range cfg.Marketplaces {
 		for _, pin := range entry.Resources {
-			if pin.Kind != "collection" || !pin.Direct || cfg.MarketplacePinExcluded(entry, pin) {
+			if pin.Kind != mpapi.KindCollection || !pin.Direct || cfg.MarketplacePinExcluded(entry, pin) {
 				continue
 			}
 			if artifact, ok := marketplace.PinArtifact(entry, pin); ok {
