@@ -54,6 +54,10 @@ func TestEveryModalRendersOneBoundedFrame(t *testing.T) {
 			return renderInitModal(m)
 		},
 		"edit config": renderEditConfigModal,
+		"sync+quit confirm": func(m Model) string {
+			m.confirmMsg = "1 pending changes not synced. Sync+quit? y/n/esc"
+			return renderConfirm(m)
+		},
 	}
 	for _, size := range [][2]int{{50, 12}, {80, 24}, {120, 34}} {
 		for name, render := range modals {
