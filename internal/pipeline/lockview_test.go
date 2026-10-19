@@ -29,7 +29,7 @@ func TestReadOnlyGitRootMatching(t *testing.T) {
 			for _, want := range tc.wants {
 				entries = append(entries, config.RegistryEntry{URL: "https://example.com/repo.git", Ref: "main", Path: want.Path, SourceHarness: want.SourceHarness})
 			}
-			if got := readOnlyGitDocumentMatches(doc, entries); got != tc.match {
+			if got := readOnlyGitDocumentMatches(doc, entries, nil); got != tc.match {
 				t.Fatalf("match = %v, want %v", got, tc.match)
 			}
 		})

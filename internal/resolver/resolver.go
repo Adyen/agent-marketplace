@@ -75,6 +75,10 @@ type ResolvedArtifact struct {
 	MarketplaceArchiveDigest string
 	UpdateAvailable          bool // true when a newer revision exists (status/update)
 	Stale                    bool // true when the registry refresh is stale/unavailable
+
+	// Selection carries the resolved plugin selection edges and effective
+	// members when Kind == ir.KindPlugin; nil for other resources.
+	Selection *PluginSelection `json:"-"`
 }
 
 func HasAdditiveSources(kind ir.ResourceKind) bool {
@@ -116,6 +120,7 @@ type resolveOptions struct {
 	marketplaceResolver         MarketplaceResolver
 	marketplaceMode             MarketplaceResolveMode
 	marketplaceRevocationPolicy MarketplaceRevocationPolicy
+	pluginSink                  *pluginPlanSink
 }
 
 // ResolveOption configures optional behavior for Resolve.
@@ -220,6 +225,16 @@ func WithResources(resources map[string]map[string]ir.Resource) ResolveOption {
 func WithMalformed(malformed map[string][]skill.MalformedSkill) ResolveOption {
 	return func(opts *resolveOptions) {
 		opts.malformed = malformed
+	}
+}
+
+// withPluginPlanSink collects the per-layer plugin selection records
+// PlanPluginSelection projects into the plugin-v1 manifests. It is internal
+// because the sink captures selections ahead of deduplication, collisions,
+// and displacement, before the delivered artifact stream exists.
+func withPluginPlanSink(sink *pluginPlanSink) ResolveOption {
+	return func(opts *resolveOptions) {
+		opts.pluginSink = sink
 	}
 }
 
@@ -880,7 +895,7 @@ func Resolve(cfg *config.Config, catalogs map[string][]catalog.Entry, localCfg *
 	malformedIdx := newMalformedIndex(ro.malformed)
 
 	// Phase 1: Build occurrence map from registry entries.
-	occurrencesByName, errs := buildOccurrences(cfg, catalogs, ro.resources, malformedIdx, targetSet)
+	occurrencesByName, errs := buildOccurrences(cfg, catalogs, ro.resources, malformedIdx, targetSet, ro.pluginSink)
 	filterShadowedOccurrences(occurrencesByName, cfg.Registries)
 	slog.Debug("resolver occurrences built", "registries", len(cfg.Registries), "resources", len(occurrencesByName), "errors", len(errs))
 
@@ -924,7 +939,7 @@ func Resolve(cfg *config.Config, catalogs map[string][]catalog.Entry, localCfg *
 		// collection artifacts themselves. This replaces the pre-resolver
 		// collection.Expand call, giving collections the same collision
 		// detection and disambiguation as skills/commands/etc.
-		return expandCollections(resolved, errs, cfg, catalogs, ro.resources, malformedIdx, localExcludes, cfg.Collections.ExcludeAll, excludeAllKinds, targetSet)
+		return expandCollections(resolved, errs, cfg, catalogs, ro.resources, malformedIdx, localExcludes, cfg.Collections.ExcludeAll, excludeAllKinds, targetSet, ro.pluginSink)
 	}
 
 	resolved, selectErrs := selectArtifacts(nil)
@@ -1235,7 +1250,7 @@ func propagateTopLevelCollections(cfg *config.Config) {
 // Members, and produce one ResolvedArtifact per member with a Via annotation.
 // Members that reference a different registry than the collection's source
 // are looked up in the catalog for that registry.
-func expandCollections(resolved []ResolvedArtifact, errs []error, cfg *config.Config, catalogs map[string][]catalog.Entry, resources map[string]map[string]ir.Resource, malformed *malformedIndex, localExcludes resourceSelections, collectionExcludeAll bool, localExcludeAllKinds map[ir.ResourceKind]bool, targetSet []hcc.Target) ([]ResolvedArtifact, []error) {
+func expandCollections(resolved []ResolvedArtifact, errs []error, cfg *config.Config, catalogs map[string][]catalog.Entry, resources map[string]map[string]ir.Resource, malformed *malformedIndex, localExcludes resourceSelections, collectionExcludeAll bool, localExcludeAllKinds map[ir.ResourceKind]bool, targetSet []hcc.Target, planSink *pluginPlanSink) ([]ResolvedArtifact, []error) {
 	var out []ResolvedArtifact
 	var expandErrs []error
 	expanded := false
@@ -1247,8 +1262,10 @@ func expandCollections(resolved []ResolvedArtifact, errs []error, cfg *config.Co
 	// displaces a member in the other. A required member still displaces a
 	// non-required selection in its own scope.
 	admissions := &scopeAdmissions{
-		required:  make(map[scopedSelection]bool),
-		displaced: make(map[scopedSelection]skillOccurrence),
+		required:    make(map[scopedSelection]bool),
+		displaced:   make(map[scopedSelection]skillOccurrence),
+		pluginEdges: make(map[scopedSelection][]PluginEdge),
+		plan:        planSink,
 	}
 	for _, artifact := range resolved {
 		if artifact.Kind != ir.KindCollection {
@@ -1336,7 +1353,31 @@ func expandCollections(resolved []ResolvedArtifact, errs []error, cfg *config.Co
 
 		// Expand members recursively (handles Includes via depth-first walk).
 		visited := map[string]struct{}{irCol.Label(): {}}
-		expandMembersRecursive(irCol, viaLabel, artifact, cfg, catalogIndex, resources, malformed, allCollectionsByName, admissions, excludedResources, localExcludes, collectionExcludeAll, localExcludeAllKinds, visited, &out, &expandErrs, targetSet)
+		// edgeSource is the layer that selected this collection: collection
+		// edges bind to it even when a member resolves to another layer's
+		// source, so the selecting layer's own lock commits the edge.
+		expandMembersRecursive(irCol, viaLabel, artifact, artifact.Source, cfg, catalogIndex, resources, malformed, allCollectionsByName, admissions, excludedResources, localExcludes, collectionExcludeAll, localExcludeAllKinds, visited, &out, &expandErrs, targetSet)
+	}
+
+	// A plugin selected both directly and by a collection stays one plugin:
+	// merge the collection edges the member binding recorded onto it.
+	for i := range out {
+		artifact := &out[i]
+		if artifact.Kind != ir.KindPlugin || artifact.Selection == nil {
+			continue
+		}
+		for _, edge := range admissions.pluginEdges[newScopedSelection(artifact.Kind, artifact.Name, artifact.Source)] {
+			seen := false
+			for _, existing := range artifact.Selection.Edges {
+				if existing.Kind == edge.Kind && existing.Collection == edge.Collection && existing.Source == edge.Source {
+					seen = true
+					break
+				}
+			}
+			if !seen {
+				artifact.Selection.Edges = append(artifact.Selection.Edges, edge)
+			}
+		}
 	}
 
 	if !expanded {
@@ -1345,15 +1386,17 @@ func expandCollections(resolved []ResolvedArtifact, errs []error, cfg *config.Co
 	reconciled, reconcileErrs := reconcileExpandedHooks(out)
 	expandErrs = append(expandErrs, reconcileErrs...)
 	errs = append(errs, suppressResolvedMemberMisses(expandErrs, admissions.required)...)
-	return removeDisplacedSelections(reconciled, admissions.displaced, errs)
+	return removeDisplacedSelections(reconciled, admissions.displaced, errs, admissions.plan)
 }
 
 // scopeAdmissions records, per install scope, which installed names are
 // already selected, whether a required selection holds each one, and the
 // required collection members that displaced a non-required selection there.
 type scopeAdmissions struct {
-	required  map[scopedSelection]bool
-	displaced map[scopedSelection]skillOccurrence
+	required    map[scopedSelection]bool
+	displaced   map[scopedSelection]skillOccurrence
+	pluginEdges map[scopedSelection][]PluginEdge
+	plan        *pluginPlanSink
 }
 
 func reconcileExpandedHooks(artifacts []ResolvedArtifact) ([]ResolvedArtifact, []error) {
@@ -1574,6 +1617,7 @@ func expandMembersRecursive(
 	col *ir.Collection,
 	viaLabel string,
 	artifact ResolvedArtifact,
+	edgeSource config.Source,
 	cfg *config.Config,
 	catalogIndex map[string]map[resourceSelection]catalog.Entry,
 	resources map[string]map[string]ir.Resource,
@@ -1829,6 +1873,12 @@ func expandMembersRecursive(
 		}
 
 		catEntry, found := idx[sel]
+		if found && member.Kind == ir.KindPlugin && catEntry.Plugin != nil {
+			if catEntry.Plugin.Refusal != nil {
+				*errs = append(*errs, &PluginEntryRefusalError{Name: memberName, URL: memberRegistryURL, Diagnostic: catEntry.Plugin.Refusal})
+				continue
+			}
+		}
 		if !found {
 			// Correlate before blaming: a member that failed ingest validation
 			// is present upstream, so reporting it as removed would send the
@@ -1850,6 +1900,15 @@ func expandMembersRecursive(
 			continue
 		}
 
+		// A plugin edge authored in one layer for a plugin whose providing
+		// format source that layer does not declare would record in no lock:
+		// the selecting layer's own lock holds no format root the edge could
+		// commit to. Refuse rather than leave the selection unlocked.
+		if member.Kind == ir.KindPlugin && catEntry.Plugin != nil && memberEntryFound && memberSource != edgeSource && !formatSourceDeclaredInLayer(cfg.Registries, memberEntry, edgeSource) {
+			*errs = append(*errs, &PluginUndeclaredSourceError{PluginName: memberName, Collection: col.Label(), Selecting: edgeSource, Declaring: memberSource, URL: memberRegistryURL})
+			continue
+		}
+
 		// Skip if already resolved in the member's install scope (direct
 		// resolution takes precedence over collection expansion; no
 		// duplicates).
@@ -1861,6 +1920,13 @@ func expandMembersRecursive(
 			// A direct selection or an earlier expansion keeps precedence
 			// unless required policy outranks a non-required selection.
 			if !memberRequired || existingRequired {
+				if member.Kind == ir.KindPlugin {
+					edge := PluginEdge{Kind: PluginEdgeCollection, Collection: col.Label(), Source: edgeSource}
+					admissions.pluginEdges[scopedKey] = append(admissions.pluginEdges[scopedKey], edge)
+					if memberEntryFound {
+						admissions.plan.record(memberEntry, memberName, catEntry.Plugin, attachResource(catEntry, resources, memberCatalogKey), &PluginSelection{Edges: []PluginEdge{edge}})
+					}
+				}
 				continue
 			}
 			displacing = true
@@ -1888,6 +1954,15 @@ func expandMembersRecursive(
 			CatalogKey:     memberCatalogKey,
 			Via:            viaLabel,
 			Harnesses:      memberHarnesses,
+		}
+		if member.Kind == ir.KindPlugin && catEntry.Plugin != nil {
+			admitted.Selection = &PluginSelection{
+				Edges:   []PluginEdge{{Kind: PluginEdgeCollection, Collection: col.Label(), Source: edgeSource}},
+				Members: catEntry.Plugin.Members,
+			}
+			if memberEntryFound {
+				admissions.plan.record(memberEntry, memberName, catEntry.Plugin, admitted.Entry, admitted.Selection)
+			}
 		}
 		if displacing {
 			admissions.displaced[scopedKey] = artifactOccurrence(admitted)
@@ -1945,8 +2020,26 @@ func expandMembersRecursive(
 				includedArtifact.Harnesses = ownerHarnesses
 			}
 		}
-		expandMembersRecursive(irCol, includedViaLabel, includedArtifact, cfg, catalogIndex, resources, malformed, allCollectionsByName, admissions, excludedResources, localExcludes, collectionExcludeAll, localExcludeAllKinds, branchVisited, out, errs, targetSet)
+		expandMembersRecursive(irCol, includedViaLabel, includedArtifact, edgeSource, cfg, catalogIndex, resources, malformed, allCollectionsByName, admissions, excludedResources, localExcludes, collectionExcludeAll, localExcludeAllKinds, branchVisited, out, errs, targetSet)
 	}
+}
+
+// formatSourceDeclaredInLayer reports whether the given layer declares a
+// format source at the same location as entry — the condition under which a
+// plugin selection authored in that layer can commit to a plugin-v1
+// manifest in that layer's own lock.
+func formatSourceDeclaredInLayer(registries []config.RegistryEntry, entry config.RegistryEntry, layer config.Source) bool {
+	url := normalizedRegistryURL(entry.URL)
+	path := normalizedEntryPath(entry.Path)
+	for _, candidate := range registries {
+		if candidate.Source != layer || candidate.Format == "" {
+			continue
+		}
+		if normalizedRegistryURL(candidate.URL) == url && normalizedEntryPath(candidate.Path) == path && strings.TrimSpace(candidate.Ref) == strings.TrimSpace(entry.Ref) {
+			return true
+		}
+	}
+	return false
 }
 
 // memberEntryCandidate is a configured registry entry whose URL matches the
@@ -2281,7 +2374,7 @@ func newSkillOccurrence(entry config.RegistryEntry, entryIndex int, candidate ca
 
 // buildOccurrences iterates over registry entries and catalogs to build a map
 // of skill occurrences keyed by (kind, name).
-func buildOccurrences(cfg *config.Config, catalogs map[string][]catalog.Entry, resources map[string]map[string]ir.Resource, malformed *malformedIndex, targetSet []hcc.Target) (map[resourceSelection][]skillOccurrence, []error) {
+func buildOccurrences(cfg *config.Config, catalogs map[string][]catalog.Entry, resources map[string]map[string]ir.Resource, malformed *malformedIndex, targetSet []hcc.Target, sink *pluginPlanSink) (map[resourceSelection][]skillOccurrence, []error) {
 	var errs []error
 	occurrencesByName := make(map[resourceSelection][]skillOccurrence)
 	reportedNotFound := make(map[missingResource]error)
@@ -2305,6 +2398,10 @@ func buildOccurrences(cfg *config.Config, catalogs map[string][]catalog.Entry, r
 
 		harnessTargets := resolveEntryHarnesses(entry, targetSet)
 		byName := indexCatalog(catalog)
+		var memberIndex map[resourceSelection]string
+		if entry.Format != "" {
+			memberIndex = pluginMemberIndex(catalog)
+		}
 		selectedResources := resolveSelectedResources(entry, catalog)
 		if entry.Required && !hasExplicitSelection(entry) {
 			for _, selected := range appendSelections(nil, ir.KindCollection, cfg.Collections.Include) {
@@ -2325,6 +2422,12 @@ func buildOccurrences(cfg *config.Config, catalogs map[string][]catalog.Entry, r
 
 			selectedSkill, found := byName[selected]
 			if !found {
+				if entry.Format != "" && selected.kind != ir.KindPlugin {
+					if pluginName, isMember := memberIndex[selected]; isMember {
+						errs = append(errs, &PluginMemberDirectSelectionError{Kind: selected.kind, Name: selected.name, PluginName: pluginName, URL: entry.URL})
+						continue
+					}
+				}
 				notFoundKey := missingResource{resourceSelection: selected, url: entry.URL, path: entry.Path, ref: entry.Ref}
 				if _, reported := reportedNotFound[notFoundKey]; !reported {
 					// Correlate before blaming. The resource may be absent from
@@ -2361,6 +2464,27 @@ func buildOccurrences(cfg *config.Config, catalogs map[string][]catalog.Entry, r
 				} else if entry.Required {
 					markSelectionRequired(reportedNotFound[notFoundKey])
 				}
+				continue
+			}
+
+			if selected.kind == ir.KindPlugin && selectedSkill.Plugin != nil {
+				if selectedSkill.Plugin.Refusal != nil {
+					errs = append(errs, &PluginEntryRefusalError{Name: selected.name, URL: entry.URL, Diagnostic: selectedSkill.Plugin.Refusal})
+					continue
+				}
+				selection := &PluginSelection{
+					Edges:   []PluginEdge{{Kind: PluginEdgeDirect, Source: entry.Source}},
+					Members: selectedSkill.Plugin.Members,
+				}
+				if optErr := applyPluginRequestOptions(selection, selected.name, pluginRequestsFor(entry, selected.name), entry, selectedSkill.Plugin); optErr != nil {
+					errs = append(errs, optErr)
+					continue
+				}
+				occurrence := newSkillOccurrence(entry, entryIndex, selectedSkill, resources, harnessTargets, order)
+				occurrence.resolved.Selection = selection
+				sink.record(entry, selected.name, selectedSkill.Plugin, occurrence.resolved.Entry, selection)
+				occurrencesByName[selected] = append(occurrencesByName[selected], occurrence)
+				order++
 				continue
 			}
 
@@ -2735,7 +2859,7 @@ func (s requiredShadows) remove(artifacts []ResolvedArtifact, warnings []error) 
 // removeDisplacedSelections drops the non-required selections that a required
 // collection member displaced in its install scope and reports each displaced
 // source in a name-collision warning won by the member.
-func removeDisplacedSelections(artifacts []ResolvedArtifact, displaced map[scopedSelection]skillOccurrence, errs []error) ([]ResolvedArtifact, []error) {
+func removeDisplacedSelections(artifacts []ResolvedArtifact, displaced map[scopedSelection]skillOccurrence, errs []error, plan *pluginPlanSink) ([]ResolvedArtifact, []error) {
 	if len(displaced) == 0 {
 		return artifacts, errs
 	}
@@ -2749,6 +2873,7 @@ func removeDisplacedSelections(artifacts []ResolvedArtifact, displaced map[scope
 				order = append(order, key)
 			}
 			removed[key] = append(removed[key], artifactOccurrence(a))
+			plan.drop(a)
 			slog.Debug("resolver displaced non-required selection by required collection member", "kind", a.Kind.String(), "name", a.Name, "registry", a.RegistryURL, "via", a.Via)
 			continue
 		}
@@ -3048,22 +3173,10 @@ func localExcludeAllKinds(localCfg *config.LocalConfig) map[ir.ResourceKind]bool
 
 func entryResourceExcludes(entry config.RegistryEntry) resourceSelections {
 	var excludes resourceSelections
-	for _, kind := range config.AllKinds {
-		excludes = appendSelections(excludes, kind, entry.SelectorForKind(kind).Exclude)
+	for _, excluded := range catalog.EntryResourceExcludes(entry) {
+		excludes = append(excludes, resourceSelection{kind: excluded.Kind, name: excluded.Name})
 	}
 	return excludes
-}
-
-// entryExcludeAllKinds returns the set of kinds for which the entry has
-// ExcludeAll=true on its per-kind selector.
-func entryExcludeAllKinds(entry config.RegistryEntry) map[ir.ResourceKind]bool {
-	kinds := make(map[ir.ResourceKind]bool)
-	for _, kind := range config.AllKinds {
-		if entry.SelectorForKind(kind).ExcludeAll {
-			kinds[kind] = true
-		}
-	}
-	return kinds
 }
 
 type localOwnerCandidate struct {
@@ -3525,98 +3638,13 @@ func EffectiveDirectSelectionSources(entry config.RegistryEntry, entries []confi
 	return entrySelected, localSelected
 }
 
-func resolveSelectedResources(entry config.RegistryEntry, catalog []catalog.Entry) resourceSelections {
-	selected := make(map[resourceSelection]struct{})
-
-	// v4 all:true is additive, including when the group also has explicit
-	// includes or tags. Legacy required/default selection retains its historical
-	// explicit-selection guard.
-	autoSelectAll := entry.V4All || ((entry.Required || entry.Default) && !hasExplicitSelection(entry))
-	if autoSelectAll {
-		for _, candidate := range catalog {
-			name := strings.TrimSpace(candidate.Name)
-			if name == "" {
-				continue
-			}
-			selected[resourceSelection{kind: candidate.Kind, name: name}] = struct{}{}
-		}
-	}
-
-	// Tag selection participates in the ordered v4 stream: exclusions must be
-	// able to suppress tagged resources just as they suppress explicit includes.
-	for _, candidate := range catalog {
-		name := strings.TrimSpace(candidate.Name)
-		if name == "" {
-			continue
-		}
-		if config.HasMatchingTag(candidate.Tags, entry.Tags) {
-			selected[resourceSelection{kind: candidate.Kind, name: name}] = struct{}{}
-		}
-	}
-
-	// V4 carries an ordered decision stream. Apply it after dynamic tag/all
-	// selection so an exclusion can suppress inherited selections while a later
-	// include can explicitly re-enable the same resource.
-	if entry.V4Decisions != nil {
-		for _, decision := range entry.V4Decisions {
-			switch decision.Action {
-			case config.V4SelectionExplicit:
-				if decision.Request == nil {
-					continue
-				}
-				selected[resourceSelection{kind: v4DecisionKind(decision.Request.Kind), name: decision.Request.Name}] = struct{}{}
-			case config.V4SelectionExclude:
-				if entry.Required {
-					continue
-				}
-				for candidate := range selected {
-					if v4DecisionExclusionMatches(decision.Exclusion, candidate) {
-						delete(selected, candidate)
-					}
-				}
-			}
-		}
-	} else {
-		selections := resourceSelections{}
-		for _, kind := range config.AllKinds {
-			selections = appendSelections(selections, kind, entry.SelectorForKind(kind).Include)
-		}
-		for _, s := range selections {
-			selected[s] = struct{}{}
-		}
-	}
-
-	// required:true is immune to entry-level excludes; default:true and explicit
-	// selections respect them. V4's ordered stream already applied its excludes.
-	if !entry.Required && entry.V4Decisions == nil {
-		excludeAllKinds := entryExcludeAllKinds(entry)
-		for _, excluded := range entryResourceExcludes(entry) {
-			for candidate := range selected {
-				if candidate.kind == excluded.kind && candidate.name == strings.TrimSpace(excluded.name) {
-					delete(selected, candidate)
-				}
-			}
-		}
-		for kind := range excludeAllKinds {
-			for candidate := range selected {
-				if candidate.kind == kind {
-					delete(selected, candidate)
-				}
-			}
-		}
-	}
-
+func resolveSelectedResources(entry config.RegistryEntry, entries []catalog.Entry) resourceSelections {
+	selected := catalog.SelectedResources(entry, entries)
 	resources := make(resourceSelections, 0, len(selected))
-	for selected := range selected {
-		resources = append(resources, selected)
+	for _, s := range selected {
+		resources = append(resources, resourceSelection{kind: s.Kind, name: s.Name})
 	}
-	slices.SortFunc(resources, func(a, b resourceSelection) int {
-		if a.kind != b.kind {
-			return int(a.kind) - int(b.kind)
-		}
-		return strings.Compare(a.name, b.name)
-	})
-	orderWindsurfHookSelections(resources, catalog)
+	orderWindsurfHookSelections(resources, entries)
 	return resources
 }
 
@@ -3662,23 +3690,8 @@ func appendSelections(out resourceSelections, kind ir.ResourceKind, names []stri
 	return out
 }
 
-func v4DecisionKind(kind string) ir.ResourceKind {
-	switch kind {
-	case "skill":
-		return ir.KindSkill
-	case "command":
-		return ir.KindCommand
-	case "subagent":
-		return ir.KindSubagent
-	case "hook":
-		return ir.KindHook
-	case "mcp":
-		return ir.KindMcpServer
-	case "collection":
-		return ir.KindCollection
-	default:
-		return ir.ResourceKind(-1)
-	}
+func hasExplicitSelection(entry config.RegistryEntry) bool {
+	return catalog.HasExplicitSelection(entry)
 }
 
 func v4OwnerExcluded(entry config.RegistryEntry, kind ir.ResourceKind, name string) bool {
@@ -3687,57 +3700,16 @@ func v4OwnerExcluded(entry config.RegistryEntry, kind ir.ResourceKind, name stri
 	for _, decision := range entry.V4Decisions {
 		switch decision.Action {
 		case config.V4SelectionExplicit:
-			if decision.Request != nil && v4DecisionKind(decision.Request.Kind) == kind && strings.TrimSpace(decision.Request.Name) == name {
+			if decision.Request != nil && catalog.DecisionKind(decision.Request.Kind) == kind && strings.TrimSpace(decision.Request.Name) == name {
 				excluded = false
 			}
 		case config.V4SelectionExclude:
-			if !entry.Required && v4DecisionExclusionMatches(decision.Exclusion, target) {
+			if !entry.Required && catalog.DecisionExclusionMatches(decision.Exclusion, target.kind, target.name) {
 				excluded = true
 			}
 		}
 	}
 	return excluded
-}
-
-func v4DecisionExclusionMatches(exclusion string, selected resourceSelection) bool {
-	if exclusion == "*" {
-		return true
-	}
-	parts := strings.Split(strings.TrimSuffix(exclusion, "/*"), "/")
-	if strings.HasSuffix(exclusion, "/*") {
-		if len(parts) == 1 {
-			return v4DecisionKind(parts[0]) == selected.kind
-		}
-		if len(parts) == 2 {
-			return v4DecisionKind(parts[1]) == selected.kind
-		}
-		return false
-	}
-	if len(parts) == 2 {
-		return v4DecisionKind(parts[0]) == selected.kind && parts[1] == selected.name
-	}
-	if len(parts) == 3 {
-		return parts[2] == selected.name && v4DecisionKind(parts[1]) == selected.kind
-	}
-	return false
-}
-
-func hasExplicitSelection(entry config.RegistryEntry) bool {
-	// A v4 decision stream is explicit only when it contains an include; an
-	// exclude-only group must not disable required/default dynamic selection.
-	for _, decision := range entry.V4Decisions {
-		if decision.Action == config.V4SelectionExplicit && decision.Request != nil {
-			return true
-		}
-	}
-	// A selector is explicit only when it has a non-empty Include list,
-	// not merely an Exclude. Exclude-only selectors should not disable autoSelectAll.
-	for _, kind := range config.AllKinds {
-		if len(entry.SelectorForKind(kind).Include) > 0 {
-			return true
-		}
-	}
-	return entry.Tags != nil
 }
 
 // deduplicateOccurrences merges occurrences from the same logical registry

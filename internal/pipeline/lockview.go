@@ -68,6 +68,15 @@ func exactLockViewWithContext(ctx context.Context, ec config.EffectiveConfig, al
 		}
 	}
 
+	type layerLock struct {
+		layer      config.LayerResult
+		scope      lockfile.Scope
+		lockPath   string
+		doc        *lockfile.Document
+		registries []config.RegistryEntry
+	}
+	var layerLocks []layerLock
+	var lockedDocs []lockfile.Document
 	for _, layer := range ec.PresentLayers() {
 		registries := readOnlyRemoteEntries(layer)
 		if len(registries) == 0 {
@@ -82,7 +91,7 @@ func exactLockViewWithContext(ctx context.Context, ec config.EffectiveConfig, al
 			}
 			lockPath = filepath.Join(filepath.Dir(layer.Path), name)
 		}
-		doc, layerErr := readOnlyLayerLock(layer.Path, lockPath, scope, registries)
+		doc, layerErr := readOnlyLayerLock(ctx, layer, lockPath, scope)
 		if layerErr != nil {
 			var lockErr *LockViewError
 			missing := errors.As(layerErr, &lockErr) && lockErr.Code == "lock.missing"
@@ -123,6 +132,67 @@ func exactLockViewWithContext(ctx context.Context, ec config.EffectiveConfig, al
 			}
 			continue
 		}
+		layerLocks = append(layerLocks, layerLock{layer: layer, scope: scope, lockPath: lockPath, doc: &doc, registries: registries})
+		lockedDocs = append(lockedDocs, doc)
+	}
+
+	// The plugin selection plan covers the merged configuration once, so a
+	// collection defined in any layer's locked sources binds the same edges
+	// here that resolution binds at sync time.
+	var plan catalog.PluginSelectionPlan
+	hasFormatSources := false
+	for _, locked := range layerLocks {
+		if len(FormatSourceEntries(locked.layer.Sources)) > 0 {
+			hasFormatSources = true
+			break
+		}
+	}
+	if hasFormatSources {
+		exact, releaseSnapshots := DocExactSnapshots(lockedDocs, func(registry lockfile.GitRegistry) (string, func(), error) {
+			return leaseRegistrySnapshot(ctx, registry)
+		})
+		var planErr error
+		var planErrs []error
+		plan, planErrs, planErr = BuildPluginSelectionPlan(ctx, ec.Merged, ec.Local, "", "", exact)
+		releaseSnapshots()
+		if planErr != nil {
+			viewErrors = append(viewErrors, planErr)
+		} else if hard := PluginPlanErrors(planErrs); len(hard) > 0 {
+			viewErrors = append(viewErrors, errors.Join(hard...))
+		}
+	}
+
+	for _, locked := range layerLocks {
+		layer := locked.layer
+		scope := locked.scope
+		lockPath := locked.lockPath
+		doc := locked.doc
+		registries := locked.registries
+		var expected map[string]bool
+		var pluginContexts *PluginLockContexts
+		if len(FormatSourceEntries(layer.Sources)) > 0 {
+			var ctxErr error
+			pluginContexts, ctxErr = BuildPluginLockContexts(plan, layer.Sources, *doc, layer.Source)
+			if ctxErr != nil {
+				viewErrors = append(viewErrors, &LockViewError{Code: "lock.read", Scope: scope, Path: lockPath, Err: ctxErr})
+				continue
+			}
+			expected = pluginContexts.ExternalIdentities()
+		}
+		if !readOnlyGitDocumentMatches(*doc, registries, expected) {
+			viewErrors = append(viewErrors, &LockViewError{Code: "lock.stale", Scope: scope, Path: lockPath, Err: errors.New("lock does not match configuration")})
+			for _, entry := range registries {
+				canonical, canonicalErr := readOnlyCanonicalURL(entry.URL)
+				if canonicalErr != nil {
+					canonical = entry.URL
+				}
+				lerr := &LockViewError{Code: "lock.stale", Scope: scope, Path: lockPath, Err: errors.New("lock does not match configuration")}
+				bySource[readOnlySourceKey(layer.Source, canonical, entry.Ref)] = readOnlyLockedGit{err: lerr}
+				identity := readOnlyGitIdentity(canonical, entry.Ref)
+				byIdentity[identity] = append(byIdentity[identity], readOnlyLockedGit{err: lerr})
+			}
+			continue
+		}
 		for _, registry := range doc.Registries {
 			oid, parseErr := cache.ParseGitOID(registry.Commit.String())
 			snapshot := ""
@@ -138,7 +208,7 @@ func exactLockViewWithContext(ctx context.Context, ec config.EffectiveConfig, al
 			}
 			if openErr == nil {
 				for _, root := range registry.Roots {
-					verified, verifyErr := sourcerevision.VerifyLockedGitRootWithCatalog(snapshot, root)
+					verified, verifyErr := sourcerevision.VerifyLockedGitRootWithPluginContext(snapshot, root, pluginContexts.PluginContextFor(registry, root))
 					if verifyErr != nil {
 						errorCode = "lock.manifest-mismatch"
 						openErr = fmt.Errorf("verify locked root %q: %w", root.Path, verifyErr)
@@ -197,7 +267,8 @@ func exactLockViewWithContext(ctx context.Context, ec config.EffectiveConfig, al
 	return ctx, readOnlyExactView{catalogOption: catalog.WithVerifiedExactSnapshots(exactSnapshot, verifiedCatalogs), exactSnapshot: exactSnapshot, gitMetadata: metadata, errors: viewErrors, warnings: viewWarnings, release: releaseAll}
 }
 
-func readOnlyLayerLock(configPath, path string, scope lockfile.Scope, registries []config.RegistryEntry) (lockfile.Document, error) {
+func readOnlyLayerLock(ctx context.Context, layer config.LayerResult, path string, scope lockfile.Scope) (lockfile.Document, error) {
+	configPath := layer.Path
 	if scope == lockfile.ScopeOrganization {
 		if err := config.ValidateOrganizationTrustUnit(configPath, true, true); err != nil {
 			return lockfile.Document{}, &LockViewError{Code: "lock.trust", Scope: scope, Path: path, Err: err}
@@ -236,13 +307,10 @@ func readOnlyLayerLock(configPath, path string, scope lockfile.Scope, registries
 	if err != nil {
 		return lockfile.Document{}, &LockViewError{Code: "lock.invalid", Scope: scope, Path: path, Err: err}
 	}
-	if !readOnlyGitDocumentMatches(doc, registries) {
-		return doc, &LockViewError{Code: "lock.stale", Scope: scope, Path: path, Err: errors.New("lock does not match configuration")}
-	}
 	return doc, nil
 }
 
-func readOnlyGitDocumentMatches(doc lockfile.Document, entries []config.RegistryEntry) bool {
+func readOnlyGitDocumentMatches(doc lockfile.Document, entries []config.RegistryEntry, expected map[string]bool) bool {
 	wanted := make(map[string][]lockfile.GitRootRequirement)
 	for _, entry := range entries {
 		canonical, err := readOnlyCanonicalURL(entry.URL)
@@ -252,10 +320,24 @@ func readOnlyGitDocumentMatches(doc lockfile.Document, entries []config.Registry
 		identity := readOnlyGitIdentity(canonical, entry.Ref)
 		wanted[identity] = append(wanted[identity], lockfile.GitRootRequirement{Path: entry.Path, SourceHarness: entry.SourceHarness})
 	}
-	if len(doc.Registries) != len(wanted) {
+	registries := make([]lockfile.GitRegistry, 0, len(doc.Registries))
+	for _, registry := range doc.Registries {
+		identity := readOnlyGitIdentity(registry.URL, registry.Ref)
+		if _, ok := wanted[identity]; !ok {
+			if ExpectedExternalRecord(registry, expected) {
+				continue
+			}
+			return false
+		}
+		registries = append(registries, registry)
+	}
+	if len(registries) != len(wanted) {
 		return false
 	}
-	for _, registry := range doc.Registries {
+	if !ExpectedExternalsLocked(doc.Registries, expected) {
+		return false
+	}
+	for _, registry := range registries {
 		roots, ok := wanted[readOnlyGitIdentity(registry.URL, registry.Ref)]
 		if !ok {
 			return false

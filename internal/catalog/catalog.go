@@ -51,6 +51,9 @@ type Entry struct {
 	Path              string      // source file path (from ir.SourceRef)
 	SourceHarness     string      `json:"-"`
 	PrimarySourcePath string      `json:"-"`
+	// Plugin carries package metadata for Kind == ir.KindPlugin entries;
+	// nil for loose resources.
+	Plugin *PluginEntry `json:"-"`
 }
 
 // Requirement identifies another resource that must be selected for a
@@ -243,8 +246,10 @@ func collectionParseKind(s string) (ir.ResourceKind, error) {
 		return ir.KindHook, nil
 	case "mcp", "mcpserver":
 		return ir.KindMcpServer, nil
+	case "plugin":
+		return ir.KindPlugin, nil
 	default:
-		return ir.KindSkill, fmt.Errorf("unsupported collection member kind %q (must be one of skill, command, subagent, hook, mcp)", s)
+		return ir.KindSkill, fmt.Errorf("unsupported collection member kind %q (must be one of skill, command, subagent, hook, mcp, plugin)", s)
 	}
 }
 

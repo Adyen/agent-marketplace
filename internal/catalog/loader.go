@@ -1399,7 +1399,13 @@ func discoverAll(result *LoadResult, requests []loadRequest, discover DiscoverFu
 		scannedDirKeys[skillDir] = req.catalogKey
 		scannedDirEntries[skillDir] = entry
 
-		discovered, err := discover(skillDir, entry.SourceHarness)
+		var discovered LoadedCatalog
+		var err error
+		if entry.Format != "" {
+			discovered, err = DiscoverPluginSource(skillDir, entry.Format)
+		} else {
+			discovered, err = discover(skillDir, entry.SourceHarness)
+		}
 		if err != nil {
 			result.Config.Registries = append(result.Config.Registries, entry)
 			result.Errors = append(result.Errors, fmt.Errorf("registry %q (ref %q, path %q): %w", entry.URL, entry.Ref, entry.Path, err))
@@ -1433,6 +1439,17 @@ func discoverAll(result *LoadResult, requests []loadRequest, discover DiscoverFu
 
 		// Normal path: add the registry entry.
 		result.Config.Registries = append(result.Config.Registries, entry)
+
+		// Format sources are not loose-ingested; collection discovery is a
+		// loose ingester and stays off for them.
+		if entry.Format != "" {
+			discoveredByKey[req.catalogKey] = discovered
+			result.Catalogs[req.catalogKey] = discovered
+			if len(discovered.Resources) > 0 {
+				result.ResourceCatalogs[req.catalogKey] = discovered.Resources
+			}
+			continue
+		}
 
 		collections, colErr := collection.DiscoverCollections(skillDir, req.catalogKey, entry.URL, entry.Ref, entry.Path)
 		if colErr != nil {

@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"sort"
 	"strings"
@@ -827,6 +828,7 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 	type snapshotJob struct {
 		source  config.Source
 		entries []config.RegistryEntry
+		decls   []config.SourceDecl
 		doc     lockfile.Document
 	}
 	var snapshots []snapshotJob
@@ -873,6 +875,86 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 			releaseSnapshotLease()
 		}
 	}()
+	// The plugin selection plan is built once over the merged configuration
+	// after every layer's acquisition, so plugin-v1 manifests commit exactly
+	// the selection the resolver performs.
+	pluginSnapshots := map[string]acquiredSnap{}
+	pluginFetchURLs := map[string]string{}
+	for _, layer := range ec.PresentLayers() {
+		for _, entry := range pipeline.GitRegistryEntries(layer.Sources) {
+			canonical, err := canonicalRegistryURL(entry.URL)
+			if err != nil {
+				return nil, changed, nil, err
+			}
+			pluginFetchURLs[gitLockIdentity(canonical, entry.Ref)] = entry.URL
+		}
+	}
+	var deferredPluginWrites []deferredLayerWrite
+	planner := &pluginPlanSource{
+		merged:    ec.Merged,
+		localCfg:  ec.Local,
+		repoRoot:  ws.RepoRoot(),
+		localDir:  ws.LocalConfigDir(),
+		offline:   mode.offline,
+		readOnly:  mode.readOnlyDependencies(),
+		snapshots: pluginSnapshots,
+		fetchURLs: pluginFetchURLs,
+		docs: func() []lockfile.Document {
+			var out []lockfile.Document
+			for _, l := range ec.PresentLayers() {
+				if len(pipeline.GitRegistryEntries(l.Sources)) == 0 {
+					continue
+				}
+				path, err := layerLockDestination(l, configSnapshots)
+				if err != nil {
+					continue
+				}
+				if doc, _, exists, err := pipeline.ReadLayerLock(path, lockScopeForSource(l.Source)); err == nil && exists {
+					out = append(out, *doc)
+				}
+			}
+			for _, dw := range deferredPluginWrites {
+				out = append(out, dw.job.doc)
+			}
+			return out
+		},
+	}
+	emitLayer := func(dw deferredLayerWrite) error {
+		gitFresh := dw.gitFresh
+		if dw.exists && dw.current != nil && dw.current.APIVersion == lockfile.APIVersionV1 && writableV1RequiresUpgrade(dw.scope, mode) {
+			gitFresh = false
+		}
+		doc := dw.doc
+		if mode.prepareInstall != nil {
+			mode.prepareInstall.documents[dw.lockPath] = doc
+		}
+		fresh := dw.exists && gitFresh && !dw.hasStagedLock
+		if !fresh {
+			if mode.locked && !dw.implicitOrg || dw.implicitOrg && dw.exists || !dw.selected && !mode.upgrade {
+				return &lockLifecycleError{Code: "lock.stale", Scope: dw.scope, Path: dw.lockPath, Err: errors.New("lock does not match configuration")}
+			}
+			if !dw.implicitOrg {
+				changed++
+				data, err := lockfile.Encode(doc)
+				if err != nil {
+					return err
+				}
+				lockDesired[dw.lockPath] = data
+				fileMode := lockModes[dw.lockPath]
+				if !dw.generation.Exists {
+					fileMode = 0o644
+				}
+				desiredFiles = append(desiredFiles, dependencytxn.DesiredFile{Path: dw.lockPath, Expected: dw.generation, ExpectedMode: lockModes[dw.lockPath], Bytes: data, Mode: fileMode})
+			}
+		}
+		layerChangedCount := 0
+		if !fresh {
+			layerChangedCount = 1
+		}
+		slog.Debug("lock layer reconciled", "scope", dw.scope, "operation", dw.operation, "retained", dw.stats.retained, "acquired", dw.stats.acquired, "changed", layerChangedCount)
+		snapshots = append(snapshots, snapshotJob{source: dw.layer.Source, entries: dw.remote, decls: dw.layer.Sources, doc: doc})
+		return nil
+	}
 	for _, layer := range ec.PresentLayers() {
 		scope := lockScopeForSource(layer.Source)
 		remote := pipeline.GitRegistryEntries(layer.Sources)
@@ -903,7 +985,7 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 			}
 			lockModes[lockPath] = currentMode
 		}
-		if len(remote) == 0 && !exists && !hasStagedLock {
+		if len(remote) == 0 && !exists && !hasStagedLock && !directorySelectsExternalPlugin(ctx, planner, layer.Sources, layer.Source) {
 			continue
 		}
 		implicitOrg := scope == lockfile.ScopeOrganization && !mode.explicitOrganization
@@ -922,20 +1004,20 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 			continue
 		}
 		if mode.upgrade && !selected && !mode.reconcileUnselected {
-			if !exists || current == nil || !unselectedLayerIsFresh(scope, remote, *current) {
+			if !exists || current == nil || !unselectedLayerIsFresh(ctx, planner, remote, layer.Sources, *current, layer.Source) {
 				continue
 			}
 			if err := ensureSnapshotLease(); err != nil {
 				return nil, changed, nil, err
 			}
-			snapshots = append(snapshots, snapshotJob{source: layer.Source, entries: remote, doc: *current})
+			snapshots = append(snapshots, snapshotJob{source: layer.Source, entries: remote, decls: layer.Sources, doc: *current})
 			continue
 		}
 		if !exists && mode.locked && !implicitOrg {
 			return nil, changed, nil, &lockLifecycleError{Code: "lock.missing", Scope: scope, Path: lockPath, Err: os.ErrNotExist}
 		}
 		if mode.check {
-			fresh := exists && current != nil && unselectedLayerIsFresh(scope, remote, *current)
+			fresh := exists && current != nil && unselectedLayerIsFresh(ctx, planner, remote, layer.Sources, *current, layer.Source)
 			if fresh && current.APIVersion == lockfile.APIVersionV1 && !implicitOrg && !mode.locked {
 				if checkUpgradeErr == nil {
 					checkUpgradeErr = &lockLifecycleError{Code: "lock.version-upgrade-required", Scope: scope, Path: lockPath, Err: errors.New("lock schema upgrade to v2 required")}
@@ -954,7 +1036,7 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 			if err := ensureSnapshotLease(); err != nil {
 				return nil, changed, nil, err
 			}
-			snapshots = append(snapshots, snapshotJob{source: layer.Source, entries: remote, doc: *current})
+			snapshots = append(snapshots, snapshotJob{source: layer.Source, entries: remote, decls: layer.Sources, doc: *current})
 			continue
 		}
 
@@ -975,46 +1057,61 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 		}
 		var gitDesired reconciledDocument
 		var gitFresh bool
+		var deferred *pluginDeferred
 		if mode.reuseInstall != nil {
-			gitDesired, gitFresh = reuseInstallDocument(mode.reuseInstall, lockPath, scope, remote, current)
+			gitDesired, gitFresh = reuseInstallDocument(ctx, mode.reuseInstall, lockPath, scope, remote, layer.Sources, current, planner, layer.Source)
 		} else {
-			gitDesired, gitFresh = reconcileLayerDocument(ctx, scope, remote, current, operation, mode.upgradeSelection, mode.offline, ensureSnapshotLease)
+			gitDesired, gitFresh, deferred = reconcileLayerDocument(ctx, scope, remote, layer.Sources, current, operation, mode.upgradeSelection, mode.offline, mode.readOnlyDependencies(), allowedRegistries(ec), ensureSnapshotLease)
 		}
 		if gitDesired.err != nil {
 			return nil, changed, nil, gitDesired.err
 		}
-		if exists && current != nil && current.APIVersion == lockfile.APIVersionV1 && writableV1RequiresUpgrade(scope, mode) {
-			gitFresh = false
+		for _, result := range gitDesired.acquired {
+			pluginSnapshots[gitLockIdentity(result.registry.URL, result.registry.Ref)] = acquiredSnap{path: result.snapshot, commit: result.oid.String()}
 		}
-		doc := gitDesired.doc
-		if mode.prepareInstall != nil {
-			mode.prepareInstall.documents[lockPath] = doc
+		if len(gitDesired.acquired) > 0 {
+			planner.built = false
 		}
-		fresh := exists && gitFresh && !hasStagedLock
-		if !fresh {
-			if mode.locked && !implicitOrg || implicitOrg && exists || !selected && !mode.upgrade {
-				return nil, changed, nil, &lockLifecycleError{Code: "lock.stale", Scope: scope, Path: lockPath, Err: errors.New("lock does not match configuration")}
+		if deferred != nil {
+			planner.built = false
+			deferredPluginWrites = append(deferredPluginWrites, deferredLayerWrite{
+				layer: layer, scope: scope, lockPath: lockPath, remote: remote,
+				stats: gitDesired.stats, current: current, generation: generation,
+				exists: exists, implicitOrg: implicitOrg, selected: selected,
+				hasStagedLock: hasStagedLock, operation: operation, job: deferred,
+			})
+			continue
+		}
+		if err := emitLayer(deferredLayerWrite{
+			layer: layer, scope: scope, lockPath: lockPath, remote: remote,
+			doc: gitDesired.doc, stats: gitDesired.stats, gitFresh: gitFresh,
+			current: current, generation: generation, exists: exists,
+			implicitOrg: implicitOrg, selected: selected, hasStagedLock: hasStagedLock,
+			operation: operation,
+		}); err != nil {
+			return nil, changed, nil, err
+		}
+	}
+	if len(deferredPluginWrites) > 0 {
+		plan, planErrs, planErr := planner.get(ctx)
+		if planErr != nil {
+			return nil, changed, nil, planErr
+		}
+		if hard := pipeline.PluginPlanErrors(planErrs); len(hard) > 0 {
+			return nil, changed, nil, errors.Join(hard...)
+		}
+		for i := range deferredPluginWrites {
+			dw := &deferredPluginWrites[i]
+			doc, gitFresh, err := dw.job.finish(ctx, plan, dw.layer.Source)
+			if err != nil {
+				return nil, changed, nil, err
 			}
-			if !implicitOrg {
-				changed++
-				data, err := lockfile.Encode(doc)
-				if err != nil {
-					return nil, changed, nil, err
-				}
-				lockDesired[lockPath] = data
-				fileMode := lockModes[lockPath]
-				if !generation.Exists {
-					fileMode = 0o644
-				}
-				desiredFiles = append(desiredFiles, dependencytxn.DesiredFile{Path: lockPath, Expected: generation, ExpectedMode: lockModes[lockPath], Bytes: data, Mode: fileMode})
+			dw.doc = doc
+			dw.gitFresh = gitFresh
+			if err := emitLayer(*dw); err != nil {
+				return nil, changed, nil, err
 			}
 		}
-		layerChangedCount := 0
-		if !fresh {
-			layerChangedCount = 1
-		}
-		slog.Debug("lock layer reconciled", "scope", scope, "operation", operation, "retained", gitDesired.stats.retained, "acquired", gitDesired.stats.acquired, "changed", layerChangedCount)
-		snapshots = append(snapshots, snapshotJob{source: layer.Source, entries: remote, doc: doc})
 	}
 	for path := range stagedLocks {
 		if consumedLocks[path] != 1 {
@@ -1027,7 +1124,7 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 				return nil, changed, nil, err
 			}
 		}
-		if err := addLayerSnapshots(ctx, &set, job.source, job.entries, job.doc, mode.offline, mode.check, mode.warningSink); err != nil {
+		if err := addLayerSnapshots(ctx, &set, job.source, job.entries, job.decls, job.doc, mode.offline, mode.check, mode.warningSink, planner); err != nil {
 			return nil, changed, nil, err
 		}
 	}
@@ -1188,9 +1285,30 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 }
 
 type reconciledDocument struct {
-	doc   lockfile.Document
-	stats lockReconcileStats
-	err   error
+	doc      lockfile.Document
+	stats    lockReconcileStats
+	err      error
+	acquired []acquiredRegistry
+}
+
+// deferredLayerWrite captures one layer's post-reconcile write decision so
+// plugin layers can finish after the shared selection plan exists.
+type deferredLayerWrite struct {
+	layer         config.LayerResult
+	scope         lockfile.Scope
+	lockPath      string
+	remote        []config.RegistryEntry
+	doc           lockfile.Document
+	stats         lockReconcileStats
+	gitFresh      bool
+	current       *lockfile.Document
+	generation    dependencytxn.Generation
+	exists        bool
+	implicitOrg   bool
+	selected      bool
+	hasStagedLock bool
+	operation     lockfile.Operation
+	job           *pluginDeferred
 }
 
 func runRegistryJobs(count int, run func(int) error) error {
@@ -1223,9 +1341,88 @@ func gitReconciliationDocument(scope lockfile.Scope, current *lockfile.Document)
 	return doc
 }
 
-func reconcileLayerDocument(ctx context.Context, scope lockfile.Scope, entries []config.RegistryEntry, current *lockfile.Document, operation lockfile.Operation, selection lockfile.UpgradeSelection, offline bool, beforeSnapshot func() error) (reconciledDocument, bool) {
+// pluginDeferred carries one layer's postponed plugin finalization: the
+// partially reconciled document plus the acquisition state the plan-driven
+// finalize step needs once every layer's snapshots are known.
+type pluginDeferred struct {
+	doc            lockfile.Document
+	pending        []pendingFormatRoot
+	acquired       []acquiredRegistry
+	decls          []config.SourceDecl
+	old            map[string]lockfile.GitRegistry
+	grouped        map[string]remoteGroup
+	upgrade        bool
+	readOnly       bool
+	allowed        *[]string
+	retainedFormat bool
+	freshBase      bool
+	current        *lockfile.Document
+}
+
+// finish completes the deferred plugin work after the shared selection plan
+// is known: plugin-v1 manifests render the plan, external records are
+// acquired, and the document is normalized and compared for freshness.
+func (p *pluginDeferred) finish(ctx context.Context, plan catalog.PluginSelectionPlan, layer config.Source) (lockfile.Document, bool, error) {
+	doc := p.doc
+	externals, err := finalizePluginRoots(ctx, p.pending, p.decls, plan, layer, p.old, p.upgrade, p.readOnly, p.allowed)
+	if err != nil {
+		return doc, false, err
+	}
+	doc.Registries = append(doc.Registries, externals...)
+	// External records are produced outside the configured-source groups,
+	// so their addition, removal, or change must mark the document stale
+	// itself.
+	fresh := p.freshBase
+	oldExternals := map[string]lockfile.GitRegistry{}
+	for identity, registry := range p.old {
+		if _, ok := p.grouped[identity]; !ok && pipeline.AllRootsPluginV1(registry) {
+			oldExternals[registry.URL+"\x00"+registry.Roots[0].Path] = registry
+		}
+	}
+	newExternals := map[string]lockfile.GitRegistry{}
+	for _, registry := range externals {
+		newExternals[registry.URL+"\x00"+registry.Roots[0].Path] = registry
+	}
+	if !reflect.DeepEqual(oldExternals, newExternals) {
+		fresh = false
+	}
+	if p.retainedFormat {
+		// The retained format group's external records are not recomputed
+		// offline; carry them forward unchanged like read-only reconciliation.
+		for identity, registry := range p.old {
+			if _, configured := p.grouped[identity]; configured || !pipeline.AllRootsPluginV1(registry) {
+				continue
+			}
+			present := false
+			for _, existing := range doc.Registries {
+				if existing.URL == registry.URL && existing.Ref == registry.Ref && len(existing.Roots) == len(registry.Roots) && existing.Roots[0].Path == registry.Roots[0].Path {
+					present = true
+					break
+				}
+			}
+			if !present {
+				doc.Registries = append(doc.Registries, registry)
+			}
+		}
+	}
+	for _, result := range p.acquired {
+		doc.Registries = append(doc.Registries, result.registry)
+	}
+	normalized, err := lockfile.Normalize(doc)
+	if err == nil && p.current != nil {
+		if currentNormalized, normErr := lockfile.Normalize(*p.current); normErr == nil && reflect.DeepEqual(normalized, currentNormalized) {
+			fresh = true
+		}
+	}
+	return normalized, fresh, err
+}
+
+func reconcileLayerDocument(ctx context.Context, scope lockfile.Scope, entries []config.RegistryEntry, decls []config.SourceDecl, current *lockfile.Document, operation lockfile.Operation, selection lockfile.UpgradeSelection, offline, readOnly bool, allowed *[]string, beforeSnapshot func() error) (reconciledDocument, bool, *pluginDeferred) {
 	doc := gitReconciliationDocument(scope, current)
 	stats := lockReconcileStats{}
+	fail := func(err error) (reconciledDocument, bool, *pluginDeferred) {
+		return reconciledDocument{stats: stats, err: err}, false, nil
+	}
 	old := map[string]lockfile.GitRegistry{}
 	if current != nil {
 		for _, registry := range current.Registries {
@@ -1238,7 +1435,9 @@ func reconcileLayerDocument(ctx context.Context, scope lockfile.Scope, entries [
 		identities = append(identities, identity)
 	}
 	sort.Strings(identities)
-	var acquisitions []remoteGroup
+	var acquisitions []registryAcquireJob
+	var pending []pendingFormatRoot
+	retainedFormat := false
 	fresh := current != nil
 	for _, identity := range identities {
 		group := grouped[identity]
@@ -1252,7 +1451,13 @@ func reconcileLayerDocument(ctx context.Context, scope lockfile.Scope, entries [
 			rootRequirements = append(rootRequirements, lockfile.GitRootRequirement{Path: rootPath, SourceHarness: entry.SourceHarness})
 		}
 		upgrade := operation == lockfile.OperationUpgrade && selection.SelectsGit(lockfile.GitRequirement{URL: group.canonical, Ref: group.ref, Roots: rootRequirements})
-		if ok && !upgrade {
+		hasFormat := false
+		for _, entry := range group.entries {
+			if entry.Format != "" {
+				hasFormat = true
+			}
+		}
+		if ok && !upgrade && !hasFormat {
 			if projected, matches := lockfile.ProjectGitRoots(locked.Roots, rootRequirements); matches {
 				if len(projected) != len(locked.Roots) {
 					fresh = false
@@ -1265,32 +1470,139 @@ func reconcileLayerDocument(ctx context.Context, scope lockfile.Scope, entries [
 		}
 		fresh = false
 		if offline {
-			return reconciledDocument{stats: stats, err: &lockLifecycleError{Code: "lock.offline-resolution", Scope: scope, Err: errors.New("offline mode cannot resolve a stale lock")}}, false
+			if hasFormat && ok && !upgrade {
+				// Offline cannot recompute a plugin manifest; keep the record
+				// and let snapshot verification report any drift.
+				locked.Roots = projectedRoots(locked.Roots, rootRequirements)
+				doc.Registries = append(doc.Registries, locked)
+				stats.retained++
+				retainedFormat = true
+				continue
+			}
+			return fail(&lockLifecycleError{Code: "lock.offline-resolution", Scope: scope, Err: errors.New("offline mode cannot resolve a stale lock")})
 		}
-		acquisitions = append(acquisitions, group)
+		job := registryAcquireJob{group: group}
+		// A plugin manifest commits to the resolved selection, so a format
+		// group is rebuilt each sync from the PINNED commit — the lock stays
+		// exact instead of tracking the ref.
+		if ok && !upgrade && hasFormat {
+			job.pinned = &locked
+		}
+		acquisitions = append(acquisitions, job)
 	}
+	var acquired []acquiredRegistry
 	if len(acquisitions) > 0 {
 		if err := beforeSnapshot(); err != nil {
-			return reconciledDocument{stats: stats, err: err}, false
+			return fail(err)
 		}
-		acquired := make([]lockfile.GitRegistry, len(acquisitions))
+		acquired = make([]acquiredRegistry, len(acquisitions))
 		err := runRegistryJobs(len(acquisitions), func(i int) error {
-			group := acquisitions[i]
-			registry, err := acquireLockedRegistry(ctx, group.canonical, group.fetchURL, group.ref, group.entries)
-			acquired[i] = registry
+			job := acquisitions[i]
+			result, err := acquireLockedRegistry(ctx, job.group.canonical, job.group.fetchURL, job.group.ref, job.group.entries, job.pinned)
+			acquired[i] = result
 			return err
 		})
 		if err != nil {
-			return reconciledDocument{stats: stats, err: err}, false
+			return fail(err)
 		}
-		doc.Registries = append(doc.Registries, acquired...)
+		// Format roots are finalized after every acquisition so collection
+		// edges discovered in any source of the layer bind identically.
+		for i := range acquired {
+			result := &acquired[i]
+			for j := range result.pending {
+				result.pending[j].snapshot = result.snapshot
+				result.pending[j].oid = result.oid
+				result.pending[j].registry = &result.registry
+				result.pending[j].group = acquisitions[i].group
+			}
+			pending = append(pending, result.pending...)
+		}
 		stats.acquired += len(acquired)
 	}
 	if len(old) != len(grouped) {
 		fresh = false
 	}
+	if len(pending) > 0 || hasDirectoryFormatSource(decls) {
+		// The plugin-v1 manifests render the resolver's own selection, which
+		// needs every layer's snapshots; finalization is deferred until the
+		// shared plan is built after all layers reconcile.
+		return reconciledDocument{doc: doc, stats: stats, acquired: acquired}, false, &pluginDeferred{
+			doc: doc, pending: pending, acquired: acquired, decls: decls,
+			old: old, grouped: grouped, upgrade: operation == lockfile.OperationUpgrade,
+			readOnly: readOnly, allowed: allowed, retainedFormat: retainedFormat,
+			freshBase: fresh, current: current,
+		}
+	}
+	if retainedFormat {
+		// The retained format group's external records are not recomputed
+		// offline; carry them forward unchanged like read-only reconciliation.
+		for identity, registry := range old {
+			if _, configured := grouped[identity]; configured || !pipeline.AllRootsPluginV1(registry) {
+				continue
+			}
+			present := false
+			for _, existing := range doc.Registries {
+				if existing.URL == registry.URL && existing.Ref == registry.Ref && len(existing.Roots) == len(registry.Roots) && existing.Roots[0].Path == registry.Roots[0].Path {
+					present = true
+					break
+				}
+			}
+			if !present {
+				doc.Registries = append(doc.Registries, registry)
+			}
+		}
+	}
+	for _, result := range acquired {
+		doc.Registries = append(doc.Registries, result.registry)
+	}
 	normalized, err := lockfile.Normalize(doc)
-	return reconciledDocument{doc: normalized, stats: stats, err: err}, fresh
+	if err == nil && current != nil {
+		if currentNormalized, normErr := lockfile.Normalize(*current); normErr == nil && reflect.DeepEqual(normalized, currentNormalized) {
+			fresh = true
+		}
+	}
+	return reconciledDocument{doc: normalized, stats: stats, err: err, acquired: acquired}, fresh, nil
+}
+
+type registryAcquireJob struct {
+	group  remoteGroup
+	pinned *lockfile.GitRegistry
+}
+
+type acquiredRegistry struct {
+	registry lockfile.GitRegistry
+	snapshot string
+	oid      cache.GitOID
+	pending  []pendingFormatRoot
+}
+
+// pendingFormatRoot defers a format root's manifest build until every
+// acquisition of the layer completed, so collection edges bind identically
+// to the final snapshot set.
+type pendingFormatRoot struct {
+	entry    config.RegistryEntry
+	group    remoteGroup
+	rootPath string
+	snapshot string
+	oid      cache.GitOID
+	registry *lockfile.GitRegistry
+}
+
+func projectedRoots(roots []lockfile.GitRoot, requirements []lockfile.GitRootRequirement) []lockfile.GitRoot {
+	projected, matches := lockfile.ProjectGitRoots(roots, requirements)
+	if !matches {
+		return roots
+	}
+	return projected
+}
+
+func hasDirectoryFormatSource(decls []config.SourceDecl) bool {
+	for _, decl := range decls {
+		if decl.Format != "" && decl.Kind == config.V4SourceDirectory {
+			return true
+		}
+	}
+	return false
 }
 
 type remoteGroup struct {
@@ -1311,25 +1623,37 @@ func groupRemoteEntries(entries []config.RegistryEntry) map[string]remoteGroup {
 	return groups
 }
 
-func acquireLockedRegistry(ctx context.Context, canonical, fetchURL, ref string, entries []config.RegistryEntry) (lockfile.GitRegistry, error) {
+func acquireLockedRegistry(ctx context.Context, canonical, fetchURL, ref string, entries []config.RegistryEntry, pinned *lockfile.GitRegistry) (acquiredRegistry, error) {
 	if err := ctx.Err(); err != nil {
-		return lockfile.GitRegistry{}, err
+		return acquiredRegistry{}, err
 	}
-	oid, err := cache.ResolveExactGitRefWithContext(ctx, canonical, fetchURL, ref)
-	if err != nil {
-		return lockfile.GitRegistry{}, fmt.Errorf("resolve exact Git ref %s@%s: %w", canonical, ref, err)
+	var oid cache.GitOID
+	if pinned != nil {
+		parsed, err := cache.ParseGitOID(pinned.Commit.String())
+		if err != nil {
+			return acquiredRegistry{}, err
+		}
+		oid = parsed
+		ref = pinned.Ref
+	} else {
+		resolved, err := cache.ResolveExactGitRefWithContext(ctx, canonical, fetchURL, ref)
+		if err != nil {
+			return acquiredRegistry{}, fmt.Errorf("resolve exact Git ref %s@%s: %w", canonical, ref, err)
+		}
+		oid = resolved
 	}
 	snapshot, err := cache.AcquireExactGitWithContext(ctx, canonical, fetchURL, oid)
 	if err != nil {
-		return lockfile.GitRegistry{}, fmt.Errorf("acquire exact Git snapshot %s: %w", oid.String(), err)
+		return acquiredRegistry{}, fmt.Errorf("acquire exact Git snapshot %s: %w", oid.String(), err)
 	}
 	if lockSnapshotAcquiredHook != nil {
 		lockSnapshotAcquiredHook()
 	}
 	commit, err := lockfile.ParseGitOID(oid.String())
 	if err != nil {
-		return lockfile.GitRegistry{}, err
+		return acquiredRegistry{}, err
 	}
+	result := acquiredRegistry{snapshot: snapshot, oid: oid}
 	registry := lockfile.GitRegistry{URL: canonical, Ref: ref, Commit: commit}
 	seen := map[string]bool{}
 	for _, entry := range entries {
@@ -1337,9 +1661,13 @@ func acquireLockedRegistry(ctx context.Context, canonical, fetchURL, ref string,
 		if rootPath == "" {
 			rootPath = "."
 		}
+		if entry.Format != "" {
+			result.pending = append(result.pending, pendingFormatRoot{entry: entry, rootPath: rootPath})
+			continue
+		}
 		built, err := sourcerevision.Build(sourcerevision.Input{SnapshotRoot: snapshot, RootPath: rootPath, SourceHarness: entry.SourceHarness})
 		if err != nil {
-			return lockfile.GitRegistry{}, fmt.Errorf("build source revision for %s/%s: %w", canonical, rootPath, err)
+			return acquiredRegistry{}, fmt.Errorf("build source revision for %s/%s: %w", canonical, rootPath, err)
 		}
 		key := rootPath + "\x00" + built.SourceHarness
 		if seen[key] {
@@ -1347,19 +1675,26 @@ func acquireLockedRegistry(ctx context.Context, canonical, fetchURL, ref string,
 		}
 		seen[key] = true
 		root := lockfile.GitRoot{Path: rootPath, SourceHarness: built.SourceHarness, RevisionSchema: built.Manifest.SchemaVersion, RevisionDigest: lockfile.Digest(built.Manifest.RevisionDigest)}
-		for _, resource := range built.Manifest.Resources {
-			if resource.ArchiveDigest == "" {
-				continue
-			}
-			support := make(map[string]lockfile.Digest, len(resource.SupportFiles))
-			for name, digest := range resource.SupportFiles {
-				support[name] = lockfile.Digest(digest)
-			}
-			root.Resources = append(root.Resources, lockfile.GitResource{Kind: resource.Kind, Name: resource.Name, ContentDigest: lockfile.Digest(resource.ContentDigest), ArchiveDigest: lockfile.Digest(resource.ArchiveDigest), SupportFiles: support})
-		}
+		root.Resources = revisionResources(built)
 		registry.Roots = append(registry.Roots, root)
 	}
-	return registry, nil
+	result.registry = registry
+	return result, nil
+}
+
+func revisionResources(built sourcerevision.Result) []lockfile.GitResource {
+	var out []lockfile.GitResource
+	for _, resource := range built.Manifest.Resources {
+		if resource.ArchiveDigest == "" {
+			continue
+		}
+		support := make(map[string]lockfile.Digest, len(resource.SupportFiles))
+		for name, digest := range resource.SupportFiles {
+			support[name] = lockfile.Digest(digest)
+		}
+		out = append(out, lockfile.GitResource{Kind: resource.Kind, Name: resource.Name, ContentDigest: lockfile.Digest(resource.ContentDigest), ArchiveDigest: lockfile.Digest(resource.ArchiveDigest), SupportFiles: support})
+	}
+	return out
 }
 
 func writableV1RequiresUpgrade(scope lockfile.Scope, mode lockMode) bool {
@@ -1369,16 +1704,49 @@ func writableV1RequiresUpgrade(scope lockfile.Scope, mode lockMode) bool {
 	return scope != lockfile.ScopeOrganization || mode.explicitOrganization
 }
 
-func unselectedLayerIsFresh(_ lockfile.Scope, registries []config.RegistryEntry, doc lockfile.Document) bool {
-	return documentMatchesEntries(doc, registries)
+func unselectedLayerIsFresh(ctx context.Context, planner *pluginPlanSource, registries []config.RegistryEntry, decls []config.SourceDecl, doc lockfile.Document, layer config.Source) bool {
+	return documentMatchesEntries(doc, registries, expectedExternalIdentities(ctx, planner, decls, doc, layer))
 }
 
-func documentMatchesEntries(doc lockfile.Document, entries []config.RegistryEntry) bool {
+// expectedExternalIdentities computes the registry identities the current
+// configuration requires as external catalog-entry records, so doc matching
+// can exempt exactly those, and nothing else, from the configured-source
+// identity match.
+func expectedExternalIdentities(ctx context.Context, planner *pluginPlanSource, decls []config.SourceDecl, doc lockfile.Document, layer config.Source) map[string]bool {
+	if len(pipeline.FormatSourceEntries(decls)) == 0 {
+		return nil
+	}
+	plan, errs, err := planner.get(ctx)
+	if err != nil || len(pipeline.PluginPlanErrors(errs)) > 0 {
+		return map[string]bool{}
+	}
+	contexts, err := pipeline.BuildPluginLockContexts(plan, decls, doc, layer)
+	if err != nil {
+		return map[string]bool{}
+	}
+	return contexts.ExternalIdentities()
+}
+
+func documentMatchesEntries(doc lockfile.Document, entries []config.RegistryEntry, expected map[string]bool) bool {
 	groups := groupRemoteEntries(entries)
-	if len(doc.Registries) != len(groups) {
+	registries := make([]lockfile.GitRegistry, 0, len(doc.Registries))
+	for _, registry := range doc.Registries {
+		identity := gitLockIdentity(registry.URL, registry.Ref)
+		if _, wanted := groups[identity]; !wanted {
+			if pipeline.ExpectedExternalRecord(registry, expected) {
+				continue
+			}
+			return false
+		}
+		registries = append(registries, registry)
+	}
+	if len(registries) != len(groups) {
 		return false
 	}
-	for _, registry := range doc.Registries {
+	if !pipeline.ExpectedExternalsLocked(doc.Registries, expected) {
+		return false
+	}
+	for _, registry := range registries {
 		group, ok := groups[gitLockIdentity(registry.URL, registry.Ref)]
 		if !ok {
 			return false
@@ -1399,7 +1767,7 @@ func projectLockedRoots(roots []lockfile.GitRoot, entries []config.RegistryEntry
 	return lockfile.ProjectGitRoots(roots, requirements)
 }
 
-func addLayerSnapshots(ctx context.Context, set *exactLockSet, source config.Source, entries []config.RegistryEntry, doc lockfile.Document, offline, readOnly bool, warningSink *[]error) (resultErr error) {
+func addLayerSnapshots(ctx context.Context, set *exactLockSet, source config.Source, entries []config.RegistryEntry, decls []config.SourceDecl, doc lockfile.Document, offline, readOnly bool, warningSink *[]error, planner *pluginPlanSource) (resultErr error) {
 	started := time.Now()
 	verified := 0
 	defer func() {
@@ -1419,6 +1787,21 @@ func addLayerSnapshots(ctx context.Context, set *exactLockSet, source config.Sou
 		}
 		fetchURLs[gitLockIdentity(canonical, entry.Ref)] = entry.URL
 	}
+	var pluginContexts *pipeline.PluginLockContexts
+	if len(pipeline.FormatSourceEntries(decls)) > 0 {
+		plan, planErrs, planErr := planner.get(ctx)
+		if planErr != nil {
+			return planErr
+		}
+		if hard := pipeline.PluginPlanErrors(planErrs); len(hard) > 0 {
+			return errors.Join(hard...)
+		}
+		contexts, ctxErr := pipeline.BuildPluginLockContexts(plan, decls, doc, source)
+		if ctxErr != nil {
+			return ctxErr
+		}
+		pluginContexts = contexts
+	}
 	results := make([]struct {
 		locked   lockedGit
 		catalogs map[string]map[string]*catalog.Catalog
@@ -1437,7 +1820,7 @@ func addLayerSnapshots(ctx context.Context, set *exactLockSet, source config.Sou
 		consume := func(path string) error {
 			snapshot = path
 			for _, root := range registry.Roots {
-				rootResult, verifyErr := sourcerevision.VerifyLockedGitRootWithCatalog(path, root)
+				rootResult, verifyErr := sourcerevision.VerifyLockedGitRootWithPluginContext(path, root, pluginContexts.PluginContextFor(registry, root))
 				if verifyErr != nil {
 					return &lockLifecycleError{Code: "lock.manifest-mismatch", Err: fmt.Errorf("verify %s@%s root %q: %w", registry.URL, registry.Commit.String(), root.Path, verifyErr)}
 				}
@@ -1456,7 +1839,7 @@ func addLayerSnapshots(ctx context.Context, set *exactLockSet, source config.Sou
 			return nil
 		}
 		if !offline && !readOnly {
-			err = cache.WithAcquiredExactGit(ctx, registry.URL, fetchURLs[gitLockIdentity(registry.URL, registry.Ref)], cacheOID, consume)
+			err = cache.WithAcquiredExactGit(ctx, registry.URL, fetchURLFor(registry, fetchURLs), cacheOID, consume)
 		} else {
 			err = cache.WithExactGitReadOnly(ctx, registry.URL, cacheOID, consume)
 		}
@@ -1471,7 +1854,7 @@ func addLayerSnapshots(ctx context.Context, set *exactLockSet, source config.Sou
 			}
 			return &lockLifecycleError{Code: code, Err: err}
 		}
-		result.locked = lockedGit{canonical: registry.URL, fetchURL: fetchURLs[gitLockIdentity(registry.URL, registry.Ref)], ref: registry.Ref, commit: registry.Commit, snapshot: snapshot}
+		result.locked = lockedGit{canonical: registry.URL, fetchURL: fetchURLFor(registry, fetchURLs), ref: registry.Ref, commit: registry.Commit, snapshot: snapshot}
 		return nil
 	})
 	for _, result := range results {
@@ -1608,6 +1991,25 @@ func lockScopeForSource(source config.Source) lockfile.Scope {
 
 func canonicalRegistryURL(raw string) (string, error) {
 	return lockfile.CanonicalGitConfigURL(raw)
+}
+
+// fetchURLFor resolves the fetch URL of a locked registry: configured
+// sources use their authored URL, while external plugin records fall back to
+// the locked canonical URL (already a reachable origin).
+func fetchURLFor(registry lockfile.GitRegistry, fetchURLs map[string]string) string {
+	if fetch := fetchURLs[gitLockIdentity(registry.URL, registry.Ref)]; fetch != "" {
+		return fetch
+	}
+	return registry.URL
+}
+
+// allowedRegistries exposes the merged allowlist of the effective
+// configuration for external catalog-entry policy checks.
+func allowedRegistries(ec config.EffectiveConfig) *[]string {
+	if ec.Merged == nil {
+		return nil
+	}
+	return ec.Merged.AllowedRegistries
 }
 
 func sourceLockKey(source config.Source, canonical, ref string) string {

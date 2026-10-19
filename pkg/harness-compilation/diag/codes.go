@@ -327,6 +327,12 @@ const (
 	CodePluginFormatComponentInvalid = "plugin.format.component-invalid" // A fixed component location is absent in the expected form; that component type is skipped
 	CodePluginMemberInvalid          = "plugin.member.invalid"           // A member or entry failed validation and was skipped while siblings loaded
 	CodePluginMemberFieldOmitted     = "plugin.member.field-omitted"     // A member field the plugin surface marks omit-field was dropped before lowering
+
+	// Plugin CATALOG warning codes: the catalog still loads and sibling
+	// entries stay installable, but the reported entry is not installable.
+	CodePluginCatalogSourceUnsupported = "plugin.catalog.source-unsupported" // A catalog entry's source type is refused by the format catalog; that entry is not installable
+	CodePluginCatalogDuplicateEntry    = "plugin.catalog.duplicate-entry"    // Two catalog entries share a name; no copy is installable
+	CodePluginCatalogManifestConflict  = "plugin.catalog.manifest-conflict"  // A non-strict catalog entry declares component fields while its plugin.json is the manifest; that entry is not installable
 )
 
 // Error codes.
@@ -408,6 +414,9 @@ const (
 	CodePluginMemberLiteralUnrepresentable = "plugin.member.literal-unrepresentable" // A literal placeholder has no escape on the destination; member blocked
 	CodePluginMemberRestrictionUnsupported = "plugin.member.restriction-unsupported" // A plugin member field is a restriction the target cannot enforce; member blocked
 	CodePluginCompilePackageRequired       = "plugin.compile.package-required"       // A plugin resource was passed to the per-resource Compile boundary
+	CodePluginDeliveryPending              = "plugin.delivery.pending"               // WARNING: the plugin is acquired and locked but harness delivery is not yet implemented
+	CodePluginCatalogSharedOrigin          = "plugin.catalog.shared-origin"          // Two selected catalog entries resolve to the same external origin; the selection is refused
+	CodePluginSelectionUndeclaredSource    = "plugin.selection.undeclared-source"    // A layer's collection selects a plugin from a format source that layer does not declare; the selection is refused
 
 	// Devin hook and MCP ENTRY-SKIP codes.
 	//
@@ -725,6 +734,9 @@ var codeCatalog = []CodeDoc{
 	{CodePluginFormatComponentInvalid, SeverityWarning, "A fixed component location is not present in its expected form; that component type is skipped while other component types load", "Restore the documented component location or remove the stray entry"},
 	{CodePluginMemberInvalid, SeverityWarning, "A plugin member or entry failed validation and was skipped while its siblings loaded", "Fix the reported member; the package keeps the members that are valid"},
 	{CodePluginMemberFieldOmitted, SeverityWarning, "A member field the plugin surface marks omit-field was dropped before lowering; the member still installs", "Remove the field, or deliver to a target that can represent it"},
+	{CodePluginCatalogSourceUnsupported, SeverityWarning, "A plugin catalog entry declares a source type its format refuses; the entry is inspectable but not installable", "Acquire the plugin through a source type the format accepts, or install it from a different source"},
+	{CodePluginCatalogDuplicateEntry, SeverityWarning, "Two plugin catalog entries share one name; neither copy is installable", "Rename one entry or remove the duplicate"},
+	{CodePluginCatalogManifestConflict, SeverityWarning, "A catalog entry opts out of strict overlay while carrying component fields, so the entry and its plugin.json disagree; the entry is inspectable but not installable", "Drop the entry's component fields or remove strict: false"},
 
 	{CodePluginFormatUnsupported, SeverityError, "The source is not a recognized plugin package format, or the destination harness does not accept it", "Use a supported package format and a harness whose plugin catalog accepts it"},
 	{CodePluginFormatVersionUnsupported, SeverityError, "The package declares a format version no decoder supports; the package is not installable", "Pin the package to a supported format version"},
@@ -737,6 +749,7 @@ var codeCatalog = []CodeDoc{
 	{CodePluginMemberLiteralUnrepresentable, SeverityError, "A plugin MCP member carries placeholder-like text the destination harness would reinterpret, and no literal escape exists; the member was blocked", "Rewrite the value without placeholder-like text, or deliver to a target that can carry it literally"},
 	{CodePluginMemberRestrictionUnsupported, SeverityError, "A plugin member field is a restriction the target plugin surface cannot enforce; the member was blocked rather than installed without it", "Remove the restricted field, or deliver to a target that enforces it"},
 	{CodePluginCompilePackageRequired, SeverityError, "A plugin resource reached the per-resource Compile boundary; plugins compile through the package compile entry point", "Call the package compile entry point instead of Compile"},
+	{CodePluginCatalogSharedOrigin, SeverityError, "Two selected catalog entries resolve to the same external origin, ref, and subdirectory; their lock records would collapse into one, so the selection is refused", "Select only one of the entries, or split the packages into distinct origins or subdirectories"},
 }
 
 // DocForCode returns the documentation entry for the given diagnostic code.

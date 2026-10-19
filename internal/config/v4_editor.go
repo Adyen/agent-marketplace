@@ -126,12 +126,45 @@ func ensureV4EditGroup(resources *yaml.Node, source string) (*yaml.Node, bool, e
 	return value, true, nil
 }
 
+// v4StructuredPluginName returns the plugin name of a {kind: plugin, name:
+// ...} include item.
+func v4StructuredPluginName(item *yaml.Node) (string, bool) {
+	if item.Kind != yaml.MappingNode {
+		return "", false
+	}
+	var name string
+	kindIsPlugin, nameSeen := false, false
+	for i := 0; i+1 < len(item.Content); i += 2 {
+		key, val := item.Content[i].Value, item.Content[i+1]
+		if key == "kind" {
+			kindIsPlugin = val.Kind == yaml.ScalarNode && val.Value == "plugin"
+		}
+		if key == "name" && val.Kind == yaml.ScalarNode {
+			name, nameSeen = val.Value, true
+		}
+	}
+	return name, kindIsPlugin && nameSeen
+}
+
+func v4EditItemMatches(item *yaml.Node, locator string) bool {
+	if item.Kind == yaml.ScalarNode {
+		return item.Value == locator
+	}
+	if item.Kind != yaml.MappingNode || len(item.Content) < 2 {
+		return false
+	}
+	if item.Content[0].Value == locator {
+		return true
+	}
+	if name, structured := v4StructuredPluginName(item); structured {
+		return locator == "plugin/"+name
+	}
+	return false
+}
+
 func v4EditSequenceContains(sequence *yaml.Node, locator string) bool {
 	for _, item := range sequence.Content {
-		if item.Kind == yaml.ScalarNode && item.Value == locator {
-			return true
-		}
-		if item.Kind == yaml.MappingNode && len(item.Content) >= 2 && item.Content[0].Value == locator {
+		if v4EditItemMatches(item, locator) {
 			return true
 		}
 	}
@@ -140,11 +173,7 @@ func v4EditSequenceContains(sequence *yaml.Node, locator string) bool {
 
 func v4EditRemoveLocator(sequence *yaml.Node, locator string) bool {
 	for i, item := range sequence.Content {
-		match := item.Kind == yaml.ScalarNode && item.Value == locator
-		if !match && item.Kind == yaml.MappingNode && len(item.Content) >= 2 {
-			match = item.Content[0].Value == locator
-		}
-		if match {
+		if v4EditItemMatches(item, locator) {
 			sequence.Content = append(sequence.Content[:i], sequence.Content[i+1:]...)
 			return true
 		}

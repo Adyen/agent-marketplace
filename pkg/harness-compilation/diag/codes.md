@@ -144,6 +144,9 @@ comparison in non-test code.
 | `plugin.format.component-invalid` | A fixed plugin component location is not present in its expected form; that component type is skipped while other component types load | Restore the documented component location or remove the stray entry |
 | `plugin.member.invalid` | A plugin member or entry failed validation and was skipped while its siblings loaded | Fix the reported member; the package keeps the members that are valid |
 | `plugin.member.field-omitted` | A plugin member field the harness plugin surface marks omit-field was dropped before lowering; the member still installs | Remove the field, or deliver to a target that can represent it |
+| `plugin.catalog.source-unsupported` | A plugin catalog entry declares a source type its format refuses; the entry is inspectable but not installable | Acquire the plugin through a source type the format accepts, or install it from a different source |
+| `plugin.catalog.duplicate-entry` | Two plugin catalog entries share one name; neither copy is installable | Rename one entry or remove the duplicate |
+| `plugin.catalog.manifest-conflict` | A catalog entry opts out of strict overlay while carrying component fields, so the entry and its plugin.json disagree; the entry is inspectable but not installable | Drop the entry's component fields or remove strict: false |
 
 ### Hook review output
 
@@ -678,6 +681,9 @@ key or a hook event name), the resource name, and content digests are reported.
 | `plugin.member.literal-unrepresentable` | A plugin MCP member carries placeholder-like text the destination harness would reinterpret, and no literal escape exists; the member was blocked | Rewrite the value without placeholder-like text, or deliver to a target that can carry it literally |
 | `plugin.member.restriction-unsupported` | A plugin member field is a restriction the destination plugin surface cannot enforce; the member was blocked rather than installed without it | Remove the restricted field, or deliver to a target that enforces it |
 | `plugin.compile.package-required` | A plugin resource reached the per-resource Compile boundary; plugins compile through the package compile entry point | Call the package compile entry point instead of Compile |
+| `plugin.delivery.pending` (warning) | A selected plugin is acquired and locked, but plugin member delivery to harnesses is not implemented yet | Wait for the plugin-delivery capability; nothing in the install needs attention |
+| `plugin.catalog.shared-origin` | Two selected catalog entries resolve to the same external origin, ref, and subdirectory; their lock records would collapse into one, so the selection is refused | Select only one of the entries, or split the packages into distinct origins or subdirectories |
+| `plugin.selection.undeclared-source` | A collection authored in one config layer selects a plugin from a format source that layer does not declare; the selection would record in no acquisition lock, so it is refused | Declare the format source in the selecting layer, or author the selection in the layer that declares it |
 
 ### Devin doctor and repair codes
 
