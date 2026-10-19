@@ -195,7 +195,7 @@ func (e *V4ValidationError) Error() string {
 }
 
 func (e *V4ValidationError) Remediation() string {
-	if e == nil || (e.Code != "v4.api-version-required" && e.Code != "v4.api-version") || !e.layerKnown {
+	if (e.Code != "v4.api-version-required" && e.Code != "v4.api-version") || !e.layerKnown {
 		return ""
 	}
 	const guide = "https://github.com/Adyen/agent-marketplace/blob/main/site/docs/how-to/migrate-configuration.md"
@@ -209,7 +209,8 @@ func (e *V4ValidationError) Remediation() string {
 		scope = "repo"
 	case localLayer:
 		scope = "local"
-	default:
+	}
+	if scope == "" {
 		return ""
 	}
 	return fmt.Sprintf("The older released migrator is agent-marketplace v4.1.4. Run `agent-marketplace migrate --to v4 --scope %s --dry-run` with that older binary to preview conversion. Conversion can refuse include trees or unrepresentable input. Before upgrading, see %s.", scope, guide)

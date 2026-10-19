@@ -81,11 +81,14 @@ func assertV4Remediation(t *testing.T, err error, scope string, admin bool, code
 		required = append(required, "agent-marketplace v4.1.4", "older released migrator", "with that older binary",
 			"agent-marketplace migrate --to v4 --scope "+scope+" --dry-run", "include trees or unrepresentable input")
 	}
-	unsafe := strings.Contains(strings.ToLower(hint), "add apiversion") || strings.Contains(strings.ToLower(hint), "change apiversion")
 	for _, want := range required {
-		if !strings.Contains(hint, want) || unsafe {
+		if !strings.Contains(hint, want) {
 			t.Fatalf("%s remediation lacks %q: %s", code, want, hint)
 		}
+	}
+	lower := strings.ToLower(hint)
+	if strings.Contains(lower, "add apiversion") || strings.Contains(lower, "change apiversion") {
+		t.Fatalf("%s remediation advises merely editing apiVersion: %s", code, hint)
 	}
 	if strings.Contains(hint, "agent-marketplace migrate") == admin {
 		t.Fatalf("remediation has the wrong migration-command guidance: %s", hint)
