@@ -54,7 +54,7 @@ already made is.
 | Not a security boundary | 28 | 4 fixed anyway, 16 no action, 2 removed, 6 ordinary bugs |
 
 All three open threats are reproduced on the baseline. P11 and P19 need no
-policy decision; P09 needs the withdrawal contract in #NEW-A49.
+policy decision; P09 needs the withdrawal contract in #768.
 
 ## Source Provenance
 
@@ -77,7 +77,7 @@ order. The check at the end verifies this.
 | Case | Report Aliases | Route | Untrusted Input and Harm | Evidence on the Baseline | Status |
 |---|---|---|---|---|---|
 | P03 | A15 | r1 | A registry commit whose root is an empty container: its nested hooks and MCP servers were left out of the lock's source-revision inventory, so a reviewed lock change did not show executable resources that sync then installed | `3d8ac4f4` from #242; `TestNestedRevisionInventoryMatchesDiscovery`, `TestLockedNestedHookAndMCPInventory` | Fixed |
-| P09 | A49 / F34 | r1 | The organization blocks a registry during an incident. Every `sync` then refuses and leaves that registry's installed output in place, and removing another registry entry rebuilds the blocked output from cache. The organization cannot withdraw tooling it has blocked | Reproduction R-A49: after the block, `sync` fails with `Installed 0  Removed 0  Malformed 0  Errors 1` and the skill stays; after deleting it, `remove --from <other registry>` restores it (a named `remove <name> --from` does not). No new content is fetched (#216; `TestResolveBlockedRegistryRemovalDoesNotAcquire`, `TestRemoveBlockedRegistryRefusesNewAcquisition`) | **Open** (#NEW-A49) |
+| P09 | A49 / F34 | r1 | The organization blocks a registry during an incident. Every `sync` then refuses and leaves that registry's installed output in place, and removing another registry entry rebuilds the blocked output from cache. The organization cannot withdraw tooling it has blocked | Reproduction R-A49: after the block, `sync` fails with `Installed 0  Removed 0  Malformed 0  Errors 1` and the skill stays; after deleting it, `remove --from <other registry>` restores it (a named `remove <name> --from` does not). No new content is fetched (#216; `TestResolveBlockedRegistryRemovalDoesNotAcquire`, `TestRemoveBlockedRegistryRefusesNewAcquisition`) | **Open** (#768) |
 | P10 | A50 / F35 | r1 | A repository, or another lower-precedence selection, selects a resource named like a member of a required organization collection, and the member is suppressed | #426, #684; `TestResolveRequiredCollectionSelectionSuppressesRepositorySource`, `TestResolveRequiredCollectionMemberDisplacesOptionalSameScopeSelection`, `TestSyncRequiredCollectionMemberDisplacesUserSelection` | Fixed |
 | P11 | A51 / F33 | r1 | A command the user selected from a registry or Marketplace, named like an organization-required skill, takes that skill's `skills/<name>/SKILL.md` on Devin and Codex. Sync reports success | Reproduction R-A51: replaced in 3 of 4 runs (symlink mode when the organization source's cache path sorts first, file mode in both orders), with no warning or error | **Open** (#759) |
 | P12 | A65 | r1 | A repository commits two Marketplace pins whose colon-joined TUI keys collide; enabling the benign row globally writes the other pin into user configuration | NUL-separated keys over validated segments (`config.MarketplaceCatalogKey`); `TestMarketplaceCatalogKeyDimensionsAndAliases`, `TestMarketplaceSelectionIndexKeepsDistinctPins` | Fixed |
@@ -192,7 +192,7 @@ The classifications were challenged before freezing:
   does not rebuild.
 - **Could P09's fix create a new FS08?** Yes, if any layer's allowlist could
   withdraw: a repository may set `allowed_registries` when the organization and
-  user do not. Withdrawal is therefore organization-only (#NEW-A49).
+  user do not. Withdrawal is therefore organization-only (#768).
 - **Do the fixed rows rest on current tests?** All 24 witnesses ran fresh on
   the baseline and passed. P28's witness uses SQLite; the PostgreSQL run is
   #440's.
@@ -247,7 +247,7 @@ evidence.
 - **Decision (45), ambiguous web refs:** not a boundary (P08); tracked as a bug.
 - **New processing budgets:** only D2, for the R5 security graph rows.
 - **R1 blocked-registry carry-over:** withdrawing a blocked registry's output is
-  now security (P09, #NEW-A49). Making `remove` of a blocked registry touch only
+  now security (P09, #768). Making `remove` of a blocked registry touch only
   its own output for every artifact kind protects the user's own edits; that
   part stays robustness in #764.
 - **Hosted-service follow-ups:** secret exposure is P29, redirects P27, stale
@@ -259,7 +259,7 @@ evidence.
 - [x] Freeze both source hashes and P01-P40 against the unchanged R2 index.
 - [x] Classify every case against the threat model with baseline evidence, and
   reproduce all three open threats.
-- [ ] Fix P19 (#758), P11 (#759) and P09 (#NEW-A49): failing-first regressions, an
+- [ ] Fix P19 (#758), P11 (#759) and P09 (#768): failing-first regressions, an
   archived OpenSpec delta, `make validate`, `make spec-check`,
   `make validate-e2e` and an `open-code-review-delegate` review. Rerun R-F149,
   R-A51 and R-A49 on `main` after each merge.
