@@ -18,7 +18,11 @@ func plannedKey(p catalog.PlannedPlugin) string {
 	sort.Strings(members)
 	var edges []string
 	for _, edge := range p.Edges {
-		edges = append(edges, string(edge.Type)+":"+edge.Collection)
+		rendered := string(edge.Type) + ":" + edge.Collection
+		if edge.Scope != config.SourceUnset {
+			rendered += "@" + edge.Scope.String()
+		}
+		edges = append(edges, rendered)
 	}
 	sort.Strings(edges)
 	return p.Name + "|" + strings.Join(members, ",") + "|" + strings.Join(edges, ",")
@@ -226,7 +230,11 @@ func TestPlanPluginSelectionMatchesResolve(t *testing.T) {
 		{name: "duplicate-collection-definition-authority", cfg: func() *config.Config {
 			first := config.RegistryEntry{URL: "git@example.com:collections.git", Ref: "main", Collections: ks("team"), Source: config.Organization}
 			second := config.RegistryEntry{URL: "git@example.com:other.git", Ref: "main", Collections: ks("team"), Source: config.RepoCommitted}
-			return &config.Config{Registries: []config.RegistryEntry{first, second, kitEntry(nil)}}
+			kitOrg := kitEntry(nil)
+			kitOrg.Source = config.Organization
+			kitRepo := kitEntry(nil)
+			kitRepo.Source = config.RepoCommitted
+			return &config.Config{Registries: []config.RegistryEntry{first, second, kitOrg, kitRepo}}
 		}, catalogs: func(cfg *config.Config) map[string][]catalog.Entry {
 			other := collectionEntry("team",
 				[]ir.CollectionMember{{Name: "lint-kit", Kind: ir.KindPlugin, Registry: "git@example.com:kit.git"}}, nil)
@@ -235,7 +243,18 @@ func TestPlanPluginSelectionMatchesResolve(t *testing.T) {
 				cfg.Registries[1].CatalogKey: {other},
 				cfg.Registries[2].CatalogKey: {reviewPlugin, lintPlugin},
 			}
-		}, want: []string{"lint-kit|skill/lint|collection:team", "review-kit|command/legacy-review,skill/review|collection:team"}},
+		}, want: []string{"lint-kit|skill/lint|collection:team@REPO", "review-kit|command/legacy-review,skill/review|collection:team@ORG"}},
+		{name: "collection-member-undeclared-format-source-refused", cfg: func() *config.Config {
+			colEntry := config.RegistryEntry{URL: "git@example.com:collections.git", Ref: "main", Source: config.UserPersonal, Collections: ks("team")}
+			kit := kitEntry(nil)
+			kit.Source = config.RepoCommitted
+			return &config.Config{Registries: []config.RegistryEntry{colEntry, kit}}
+		}, catalogs: func(cfg *config.Config) map[string][]catalog.Entry {
+			return map[string][]catalog.Entry{
+				cfg.Registries[0].CatalogKey: {teamCollection},
+				cfg.Registries[1].CatalogKey: {reviewPlugin},
+			}
+		}, wantErr: "plugin.selection.undeclared-source"},
 		{name: "required-collection-missing-member-errors", cfg: func() *config.Config {
 			colEntry := config.RegistryEntry{URL: "git@example.com:collections.git", Ref: "main", Collections: ks("team"), Required: true}
 			return &config.Config{Registries: []config.RegistryEntry{colEntry, kitEntry(nil)}}
@@ -247,6 +266,28 @@ func TestPlanPluginSelectionMatchesResolve(t *testing.T) {
 				cfg.Registries[1].CatalogKey: {reviewPlugin},
 			}
 		}, wantErr: "ghost-kit"},
+		{name: "cross-layer-edge-provenance", cfg: func() *config.Config {
+			repo := kitEntry(pluginDecisions([2]string{"plugin", "review-kit"}))
+			repo.Source = config.RepoCommitted
+			user := kitEntry(pluginDecisions([2]string{"plugin", "lint-kit"}))
+			user.Source = config.UserPersonal
+			return &config.Config{Registries: []config.RegistryEntry{repo, user}}
+		}, catalogs: func(cfg *config.Config) map[string][]catalog.Entry {
+			return map[string][]catalog.Entry{cfg.Registries[0].CatalogKey: {reviewPlugin, lintPlugin}}
+		}, want: []string{"lint-kit|skill/lint|direct:@USER", "review-kit|command/legacy-review,skill/review|direct:@REPO"}},
+		{name: "collection-edge-keeps-selecting-layer", cfg: func() *config.Config {
+			colEntry := config.RegistryEntry{URL: "git@example.com:collections.git", Ref: "main", Source: config.UserPersonal, Collections: ks("team")}
+			kitRepo := kitEntry(nil)
+			kitRepo.Source = config.RepoCommitted
+			kitUser := kitEntry(nil)
+			kitUser.Source = config.UserPersonal
+			return &config.Config{Registries: []config.RegistryEntry{colEntry, kitRepo, kitUser}}
+		}, catalogs: func(cfg *config.Config) map[string][]catalog.Entry {
+			return map[string][]catalog.Entry{
+				cfg.Registries[0].CatalogKey: {teamCollection},
+				cfg.Registries[1].CatalogKey: {reviewPlugin},
+			}
+		}, want: []string{"review-kit|command/legacy-review,skill/review|collection:team@USER"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -293,11 +334,11 @@ func TestPlanPluginSelectionForEntry(t *testing.T) {
 	if len(errs) != 0 {
 		t.Fatalf("plan errors: %v", errs)
 	}
-	first := plan.ForEntry(cfg.Registries[0])
+	first := plan.ForEntry(cfg.Registries[0], config.RepoCommitted)
 	if len(first) != 1 || first[0].Name != "review-kit" {
 		t.Fatalf("first entry plan = %#v", first)
 	}
-	second := plan.ForEntry(cfg.Registries[1])
+	second := plan.ForEntry(cfg.Registries[1], config.RepoCommitted)
 	if len(second) != 1 || second[0].Name != "lint-kit" {
 		t.Fatalf("second entry plan = %#v", second)
 	}

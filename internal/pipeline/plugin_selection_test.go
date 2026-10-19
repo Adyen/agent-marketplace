@@ -39,7 +39,7 @@ func TestPluginLockContextsProjectPlan(t *testing.T) {
 		Roots: []lockfile.GitRoot{{Path: ".", RevisionSchema: "plugin-v1"}},
 	}}}
 
-	contexts, err := BuildPluginLockContexts(plan, []config.SourceDecl{decl}, doc)
+	contexts, err := BuildPluginLockContexts(plan, []config.SourceDecl{decl}, doc, config.RepoCommitted)
 	if err != nil {
 		t.Fatalf("BuildPluginLockContexts: %v", err)
 	}

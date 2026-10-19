@@ -20,10 +20,12 @@ const (
 
 // PluginEdge is one selection edge: a direct request or a
 // collection-to-plugin binding. The plugin-to-member edge set is
-// PluginSelection.Members.
+// PluginSelection.Members. Source is the configuration layer that authored
+// the edge — the layer whose own acquisition lock commits it.
 type PluginEdge struct {
 	Kind       string
 	Collection string
+	Source     config.Source
 }
 
 // PluginSelection is the resolved selection state of one plugin artifact:
@@ -59,6 +61,23 @@ type PluginUnknownExclusionError struct {
 func (e *PluginUnknownExclusionError) Error() string {
 	return fmt.Sprintf("plugin.member.unknown-exclusion: plugin/%s at %s has no member %q",
 		e.PluginName, redact.URL(e.URL), e.Exclusion)
+}
+
+// PluginUndeclaredSourceError refuses a collection edge authored in one
+// configuration layer for a plugin whose providing format source that layer
+// does not declare: the selecting layer's own lock holds no format root the
+// edge could commit to, so the selection would record in no lock.
+type PluginUndeclaredSourceError struct {
+	PluginName string
+	Collection string
+	Selecting  config.Source
+	Declaring  config.Source
+	URL        string
+}
+
+func (e *PluginUndeclaredSourceError) Error() string {
+	return fmt.Sprintf("plugin.selection.undeclared-source: plugin/%s selected via collection %q in the %s layer is provided by a format source declared only in the %s layer at %s; declare the source in the %s layer to lock the selection",
+		e.PluginName, e.Collection, e.Selecting, e.Declaring, redact.URL(e.URL), e.Selecting)
 }
 
 // PluginEntryRefusalError reports the diagnostic attached to a catalog entry
