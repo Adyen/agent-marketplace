@@ -139,6 +139,87 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
 
+  model-catalog-drift-pr:
+    name: Propose model catalog drift PR
+    needs: model-catalog-audit
+    if: always() && needs.model-catalog-audit.result == 'failure' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+        with:
+          go-version-file: go.mod
+      - name: Download model audit evidence
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: model-catalog-audit-${{ github.run_id }}
+          path: ${{ runner.temp }}/model-catalog-audit
+      - name: Propose model catalog drift updates
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          RUN_ID: ${{ github.run_id }}
+          REPORT_DIR: ${{ runner.temp }}/model-catalog-audit
+        run: |
+          set -euo pipefail
+          report="$REPORT_DIR/report.json"
+          body="$RUNNER_TEMP/pr-body.md"
+          test_log="$RUNNER_TEMP/offline-catalog-tests.log"
+          bot_email='41898282+github-actions[bot]@users.noreply.github.com'
+          branch=automation/model-catalog-drift
+          if [[ ! -s "$report" ]]; then
+            echo '::notice::No model catalog audit report was produced; no drift proposal.'
+            exit 0
+          fi
+          pr_number=$(gh pr list --head "$branch" --state open --json number --jq '.[0].number // empty')
+          remote_sha=""
+          if git fetch --quiet origin "$branch" 2>/dev/null; then
+            remote_sha=$(git rev-parse FETCH_HEAD)
+            if [[ "$(git log -1 --format='%ae' FETCH_HEAD)" != "$bot_email" ]]; then
+              echo "::notice::A person has pushed to $branch; leaving the branch untouched."
+              exit 0
+            fi
+          fi
+          git switch -C "$branch"
+          go run ./tools/model-catalog-audit propose < "$report" > "$body"
+          if [[ -z "$(git status --porcelain)" ]]; then
+            echo '::notice::Audit drift produced no baseline or catalog changes; no proposal.'
+            exit 0
+          fi
+          if go test ./pkg/harness-compilation/modelpolicy ./tools/model-catalog-audit -count=1 > "$test_log" 2>&1; then
+            echo '' >> "$body"
+            echo 'Offline catalog checks: passed' >> "$body"
+          else
+            {
+              echo ''
+              echo 'Offline catalog checks: failed'
+              echo ''
+              echo '<details><summary>Last 40 lines of go test output</summary>'
+              echo ''
+              echo '```text'
+              tail -n 40 "$test_log" | sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g'
+              echo '```'
+              echo ''
+              echo '</details>'
+            } >> "$body"
+          fi
+          git add pkg/harness-compilation/modelpolicy/catalogs tools/model-catalog-audit/baselines.json
+          git -c user.name='github-actions[bot]' -c user.email="$bot_email" commit -m "Propose model catalog drift updates from run $RUN_ID" -m "Spec-Impact: none — automated proposal for human review"
+          if [[ -n "$remote_sha" ]] && git diff --quiet "$remote_sha" HEAD; then
+            echo '::notice::Regenerated changes match the remote branch; refreshing the PR body without pushing.'
+          else
+            git push --force origin "$branch"
+          fi
+          if [[ -n "$pr_number" ]]; then
+            gh pr edit "$pr_number" --body-file "$body"
+          else
+            gh pr create --base "$DEFAULT_BRANCH" --head "$branch" --title "Review upstream model catalog drift" --body-file "$body"
+          fi
+
   verify:
     name: Check refreshed image compatibility
     needs: publish

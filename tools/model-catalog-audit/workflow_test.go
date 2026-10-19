@@ -105,3 +105,50 @@ func TestNightlyAuditFailsAndPreservesReports(t *testing.T) {
 		t.Fatalf("nightly audit coverage: check=%t summary=%t artifacts=%t offline=%t", check, summary, artifacts, offline)
 	}
 }
+
+func TestNightlyDriftProposalOpensReviewablePR(t *testing.T) {
+	body, err := os.ReadFile("../../.github/workflows/harness-images.yml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var workflow struct {
+		Jobs map[string]struct {
+			Needs           any               `yaml:"needs"`
+			If              string            `yaml:"if"`
+			ContinueOnError bool              `yaml:"continue-on-error"`
+			Permissions     map[string]string `yaml:"permissions"`
+			Steps           []struct {
+				Run      string            `yaml:"run"`
+				Uses     string            `yaml:"uses"`
+				With     map[string]string `yaml:"with"`
+				Continue bool              `yaml:"continue-on-error"`
+			} `yaml:"steps"`
+		} `yaml:"jobs"`
+	}
+	if err := yaml.Unmarshal(body, &workflow); err != nil {
+		t.Fatal(err)
+	}
+	job, exists := workflow.Jobs["model-catalog-drift-pr"]
+	if !exists {
+		t.Fatal("drift proposal job missing")
+	}
+	if job.Needs != "model-catalog-audit" || job.If != "always() && needs.model-catalog-audit.result == 'failure' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)" || job.ContinueOnError {
+		t.Fatalf("drift proposal gating: needs=%v if=%q continue-on-error=%t", job.Needs, job.If, job.ContinueOnError)
+	}
+	if len(job.Permissions) != 2 || job.Permissions["contents"] != "write" || job.Permissions["pull-requests"] != "write" {
+		t.Fatalf("drift proposal permissions = %v, want exactly contents and pull-requests write", job.Permissions)
+	}
+	propose, download := false, false
+	for _, step := range job.Steps {
+		if step.Continue {
+			t.Fatal("drift proposal must not ignore step failures")
+		}
+		propose = propose || strings.Contains(step.Run, "./tools/model-catalog-audit propose")
+		if strings.HasPrefix(step.Uses, "actions/download-artifact@") {
+			download = step.With["name"] == "model-catalog-audit-${{ github.run_id }}"
+		}
+	}
+	if !propose || !download {
+		t.Fatalf("drift proposal steps: propose=%t download=%t", propose, download)
+	}
+}
