@@ -346,16 +346,19 @@ func (s codexMCPSection) edits(replacement []byte) []codexMCPEdit {
 }
 
 func applyCodexMCPEdits(raw []byte, edits []codexMCPEdit) []byte {
-	sort.SliceStable(edits, func(i, j int) bool { return edits[i].start > edits[j].start })
-	next := append([]byte(nil), raw...)
+	sort.SliceStable(edits, func(i, j int) bool { return edits[i].start < edits[j].start })
+	size := len(raw)
 	for _, e := range edits {
-		patched := make([]byte, 0, len(next)-(e.end-e.start)+len(e.replacement))
-		patched = append(patched, next[:e.start]...)
-		patched = append(patched, e.replacement...)
-		patched = append(patched, next[e.end:]...)
-		next = patched
+		size += len(e.replacement) - (e.end - e.start)
 	}
-	return next
+	next := make([]byte, 0, size)
+	offset := 0
+	for _, e := range edits {
+		next = append(next, raw[offset:e.start]...)
+		next = append(next, e.replacement...)
+		offset = e.end
+	}
+	return append(next, raw[offset:]...)
 }
 
 func codexMCPSections(raw []byte) (map[string]codexMCPSection, []ownership.EntryValue, error) {

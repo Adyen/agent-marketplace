@@ -6,6 +6,7 @@ An owned Codex MCP server in `config.toml` can span several TOML tables, for exa
 
 - Each owned Codex MCP server is located as the set of its own tables. Consecutive tables of one server still form one range, so files without interleaving are edited byte-for-byte as before.
 - Updating an owned server rewrites its first range and removes its other ranges; pruning, repair removal and owned-entry cleanup remove only its ranges. Interleaved handwritten tables and array tables are preserved byte-for-byte.
+- Several servers added in one run are appended in their configured order instead of in reverse.
 
 ## Capabilities
 
