@@ -187,6 +187,22 @@ models:
   minimax/minimax-m2.7:
     model: minimax-m2.7
     reasoning: {high: {effort: high}}
+  # TODO(model-catalog-drift): stub from https://docs.factory.ai/docs/models.md; verify native resource support and reasoning before merging.
+  anthropic/claude-haiku-5-5:
+    model: claude-haiku-5-5
+    reasoning: {low: {effort: low}, medium: {effort: medium}, high: {effort: high}}
+  # TODO(model-catalog-drift): stub from https://docs.factory.ai/docs/models.md; verify native resource support and reasoning before merging.
+  anthropic/claude-sonnet-5-5:
+    model: claude-sonnet-5-5
+    reasoning: {low: {effort: low}, medium: {effort: medium}, high: {effort: high}}
+  # TODO(model-catalog-drift): stub from https://docs.factory.ai/docs/models.md; verify native resource support and reasoning before merging.
+  mistral/mistral-large-4:
+    model: mistral-large-4
+    reasoning: {high: {effort: high}}
+  # TODO(model-catalog-drift): stub from https://docs.factory.ai/docs/models.md; verify native resource support and reasoning before merging.
+  openai/gpt-6.1-sol:
+    model: gpt-6.1-sol
+    reasoning: {low: {effort: low}, medium: {effort: medium}, high: {effort: high}}
 families:
   anthropic/sonnet:
     pin: anthropic/claude-sonnet-5

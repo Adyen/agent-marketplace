@@ -37,6 +37,18 @@ models:
     model: claude-opus-4-20250514
   anthropic/claude-haiku-3-5-20241022:
     model: claude-haiku-3-5-20241022
+  # TODO(model-catalog-drift): stub from https://platform.claude.com/docs/en/about-claude/models/overview.md; verify native resource support and reasoning before merging.
+  anthropic/claude-fable-5-1:
+    model: claude-fable-5-1
+  # TODO(model-catalog-drift): stub from https://platform.claude.com/docs/en/about-claude/models/overview.md; verify native resource support and reasoning before merging.
+  anthropic/claude-haiku-5-5:
+    model: claude-haiku-5-5
+  # TODO(model-catalog-drift): stub from https://platform.claude.com/docs/en/about-claude/models/overview.md; verify native resource support and reasoning before merging.
+  anthropic/claude-opus-5-5:
+    model: claude-opus-5-5
+  # TODO(model-catalog-drift): stub from https://platform.claude.com/docs/en/about-claude/models/overview.md; verify native resource support and reasoning before merging.
+  anthropic/claude-sonnet-5-5:
+    model: claude-sonnet-5-5
 families:
   anthropic/sonnet:
     model: sonnet
