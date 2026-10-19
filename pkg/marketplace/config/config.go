@@ -163,7 +163,7 @@ const (
 	defaultInstallationMetricsRetry    = 30 * time.Second
 	defaultInstallationMetricsJitter   = 15 * time.Second
 	defaultInstallationMetricsMaxAge   = 5 * time.Minute
-	defaultInstallationMetricsTimeout  = 2 * time.Second
+	defaultInstallationMetricsTimeout  = 3 * time.Second
 )
 
 func ResolveInstallationMetricsTiming(m InstallationMetrics) InstallationMetricsTiming {
