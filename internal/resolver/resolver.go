@@ -1904,8 +1904,12 @@ func expandMembersRecursive(
 		// format source that layer does not declare would record in no lock:
 		// the selecting layer's own lock holds no format root the edge could
 		// commit to. Refuse rather than leave the selection unlocked.
-		if member.Kind == ir.KindPlugin && catEntry.Plugin != nil && memberEntryFound && memberSource != edgeSource && !formatSourceDeclaredInLayer(cfg.Registries, memberEntry, edgeSource) {
-			*errs = append(*errs, &PluginUndeclaredSourceError{PluginName: memberName, Collection: col.Label(), Selecting: edgeSource, Declaring: memberSource, URL: memberRegistryURL})
+		if member.Kind == ir.KindPlugin && catEntry.Plugin != nil && (!memberEntryFound || memberSource != edgeSource && !formatSourceDeclaredInLayer(cfg.Registries, memberEntry, edgeSource)) {
+			declaring := memberSource
+			if !memberEntryFound {
+				declaring = config.SourceUnset
+			}
+			*errs = append(*errs, &PluginUndeclaredSourceError{PluginName: memberName, Collection: col.Label(), Selecting: edgeSource, Declaring: declaring, URL: memberRegistryURL})
 			continue
 		}
 
@@ -1923,9 +1927,7 @@ func expandMembersRecursive(
 				if member.Kind == ir.KindPlugin {
 					edge := PluginEdge{Kind: PluginEdgeCollection, Collection: col.Label(), Source: edgeSource}
 					admissions.pluginEdges[scopedKey] = append(admissions.pluginEdges[scopedKey], edge)
-					if memberEntryFound {
-						admissions.plan.record(memberEntry, memberName, catEntry.Plugin, attachResource(catEntry, resources, memberCatalogKey), &PluginSelection{Edges: []PluginEdge{edge}})
-					}
+					admissions.plan.record(memberEntry, memberName, catEntry.Plugin, attachResource(catEntry, resources, memberCatalogKey), &PluginSelection{Edges: []PluginEdge{edge}})
 				}
 				continue
 			}
@@ -1960,9 +1962,7 @@ func expandMembersRecursive(
 				Edges:   []PluginEdge{{Kind: PluginEdgeCollection, Collection: col.Label(), Source: edgeSource}},
 				Members: catEntry.Plugin.Members,
 			}
-			if memberEntryFound {
-				admissions.plan.record(memberEntry, memberName, catEntry.Plugin, admitted.Entry, admitted.Selection)
-			}
+			admissions.plan.record(memberEntry, memberName, catEntry.Plugin, admitted.Entry, admitted.Selection)
 		}
 		if displacing {
 			admissions.displaced[scopedKey] = artifactOccurrence(admitted)
