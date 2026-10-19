@@ -72,9 +72,8 @@ export default defineConfig({
     sidebar: {
       [DOCS_PATH]: [
         { text: 'Overview', link: DOCS_PATH },
-        { text: 'Terminal basics', link: `${DOCS_PATH}terminal-basics` },
-        { text: 'Install', link: `${DOCS_PATH}install` },
         { text: 'Quick start', link: `${DOCS_PATH}quick-start` },
+        { text: 'More install options', link: `${DOCS_PATH}install` },
         { text: 'Glossary', link: `${DOCS_PATH}glossary` },
         {
           text: 'Tutorials',
