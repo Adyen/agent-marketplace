@@ -397,6 +397,8 @@ When sources with different origins or refs select resources with the same kind 
 
 Hooks are the exception: hooks from independent sources are all installed, even when their names match. Repeated references to the same source are installed once.
 
+Resources of one kind whose names differ only in letter case, such as commands `deploy` and `Deploy`, name one file on case-insensitive filesystems. Sync refuses all of them with `bundle.conflict.duplicate-artifact-path`, on every host. The exception is a resource from a `required: true` group that outranks the others: it is installed, and each of the others is reported with a `materialize.collision.shared-path` warning. Between two required resources, the higher-precedence layer or file wins, and a tie is still refused.
+
 Different kinds collide only on a harness target that installs them at the same path. Devin CLI and Codex install commands as skills, so a skill and a command with the same installed name compete there under the same rules, and sync prints a `materialize.collision.shared-path` warning naming both. Names that differ only in letter case, such as `audit` and `Audit`, count as the same name here on every host, because they are one path on case-insensitive filesystems. `status` lists the losing resource only for the targets where it is still installed. On targets with separate skill and command paths, such as Claude Code, both are installed.
 
 The [scopes, selection, and precedence explanation](../explanation/scopes-selection-and-precedence.md) covers collisions, exclusions across layers, and removal in more detail.

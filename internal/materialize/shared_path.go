@@ -9,16 +9,18 @@ import (
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
 )
 
-// sharedPathDiagnostics reports each resource that lost a native path to a
-// resource of another kind with the same installed name, for example a command
-// and a skill on a target that installs commands as skills.
+// sharedPathDiagnostics reports each resource that lost a native path it
+// shares with another resource: one of another kind with the same installed
+// name, such as a command and a skill on a target that installs commands as
+// skills, or one whose name differs only in letter case.
 func sharedPathDiagnostics(displaced []resolver.SharedPathDisplacement) []diag.Diagnostic {
 	if len(displaced) == 0 {
 		return nil
 	}
 	diags := make([]diag.Diagnostic, 0, len(displaced))
 	for _, d := range displaced {
-		winnerKind, displacedKind := skill.KindLabel(d.Winner.ResourceKind()), skill.KindLabel(d.Displaced.ResourceKind())
+		winner := fmt.Sprintf("%s %q", skill.KindLabel(d.Winner.ResourceKind()), d.Winner.MaterializedName())
+		loser := fmt.Sprintf("%s %q", skill.KindLabel(d.Displaced.ResourceKind()), d.Displaced.MaterializedName())
 		winnerSource, displacedSource := d.Sources()
 		winnerPath, displacedPath := d.Paths()
 		where := "both install to " + winnerPath
@@ -29,13 +31,17 @@ func sharedPathDiagnostics(displaced []resolver.SharedPathDisplacement) []diag.D
 		if d.MachineScope {
 			scope = "machine"
 		}
+		precedence := winner
+		if d.Winner.Required {
+			precedence = "required " + winner
+		}
 		diags = append(diags, diag.Diagnostic{
 			Code:     diag.CodeMaterializeSharedPathCollision,
 			Severity: diag.SeverityWarning,
 			Target:   string(d.Target),
 			Resource: d.Displaced.MaterializedName(),
-			Message: fmt.Sprintf("%s %q from %s and %s %q from %s %s for %s in %s scope; the %s takes precedence and the %s was not installed there",
-				winnerKind, d.Winner.MaterializedName(), redact.URL(winnerSource), displacedKind, d.Displaced.MaterializedName(), redact.URL(displacedSource), where, d.Target, scope, winnerKind, displacedKind),
+			Message: fmt.Sprintf("%s from %s and %s from %s %s for %s in %s scope; %s takes precedence and %s was not installed there",
+				winner, redact.URL(winnerSource), loser, redact.URL(displacedSource), where, d.Target, scope, precedence, loser),
 			Hint: "Rename one of the resources or exclude the one you do not want on this target; targets with separate paths keep both",
 		})
 	}

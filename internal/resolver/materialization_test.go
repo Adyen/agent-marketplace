@@ -272,3 +272,48 @@ func TestMaterializationProjectionKeysSharedPathsByInstalledName(t *testing.T) {
 		t.Fatalf("displaced path = %q", path)
 	}
 }
+
+func TestMaterializationProjectionRequiredKeepsSameKindCaseVariant(t *testing.T) {
+	targets := []hcc.Target{hcc.TargetClaude}
+	organization := func(name string, required bool) ResolvedArtifact {
+		a := materializationArtifact(name, "org-"+name, ir.KindCommand, config.Organization, targets)
+		a.Required = required
+		return a
+	}
+	user := func(name string, required bool) ResolvedArtifact {
+		a := materializationArtifact(name, "user-"+name, ir.KindCommand, config.UserPersonal, targets)
+		a.Required = required
+		return a
+	}
+	for _, tc := range []struct {
+		name          string
+		input         []ResolvedArtifact
+		winner, loser string
+	}{
+		{"required beats an optional variant", []ResolvedArtifact{organization("deploy", true), user("Deploy", false)}, "deploy", "Deploy"},
+		{"optional variant listed first", []ResolvedArtifact{user("Deploy", false), organization("deploy", true)}, "deploy", "Deploy"},
+		{"required user command beats an optional organization variant", []ResolvedArtifact{organization("deploy", false), user("Deploy", true)}, "Deploy", "deploy"},
+		// Between requirements the layer precedence of name collisions decides,
+		// as it does for equal names: the user layer outranks the organization.
+		{"layer precedence decides between requirements", []ResolvedArtifact{organization("deploy", true), user("Deploy", true)}, "Deploy", "deploy"},
+		{"equal requirements are left to the refusal", []ResolvedArtifact{organization("deploy", true), organization("Deploy", true)}, "", ""},
+		{"no requirement is left to the refusal", []ResolvedArtifact{organization("deploy", false), user("Deploy", false)}, "", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			out, displaced := MaterializationProjection(tc.input)
+			if tc.winner == "" {
+				if len(out) != 2 || len(displaced) != 0 {
+					t.Fatalf("both must reach the case-only refusal: out=%d displaced=%v", len(out), displaced)
+				}
+				return
+			}
+			if len(out) != 1 || out[0].Name != tc.winner || len(displaced) != 1 || displaced[0].Displaced.Name != tc.loser || displaced[0].Winner.Name != tc.winner {
+				t.Fatalf("out=%v displaced=%v, want %s over %s", out, displaced, tc.winner, tc.loser)
+			}
+			winnerPath, loserPath := displaced[0].Paths()
+			if winnerPath != "commands/"+tc.winner+".md" || loserPath != "commands/"+tc.loser+".md" {
+				t.Fatalf("paths = %q, %q", winnerPath, loserPath)
+			}
+		})
+	}
+}

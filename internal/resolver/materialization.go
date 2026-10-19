@@ -4,7 +4,9 @@ import (
 	"strings"
 	"sync"
 	"unicode"
+	"unicode/utf8"
 
+	"github.com/Adyen/agent-marketplace/internal/config"
 	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 	targetmeta "github.com/Adyen/agent-marketplace/pkg/harness-compilation/target"
@@ -84,6 +86,39 @@ var sharedPathKinds = sync.OnceValue(func() map[hcc.Target]map[ir.ResourceKind]i
 	return out
 })
 
+// nativePathKinds records, per target, the resource kinds that install at a
+// native path of their own name, such as skills/<name>/SKILL.md. Names of
+// such resources that differ only in letter case name one file on
+// case-insensitive filesystems.
+var nativePathKinds = sync.OnceValue(func() map[hcc.Target]map[ir.ResourceKind]bool {
+	out := make(map[hcc.Target]map[ir.ResourceKind]bool)
+	for _, definition := range targetmeta.Definitions() {
+		for kind := ir.KindSkill; kind <= ir.KindRule; kind++ {
+			if _, ok := targetmeta.NativeResourcePattern(definition.Target, kind); ok {
+				if out[definition.Target] == nil {
+					out[definition.Target] = make(map[ir.ResourceKind]bool)
+				}
+				out[definition.Target][kind] = true
+			}
+		}
+	}
+	return out
+})
+
+// hasUpper reports whether s contains an upper-case letter, with a byte loop
+// for the ASCII names resource validation allows.
+func hasUpper(s string) bool {
+	for i := 0; i < len(s); i++ {
+		switch c := s[i]; {
+		case c >= 'A' && c <= 'Z':
+			return true
+		case c >= utf8.RuneSelf:
+			return strings.IndexFunc(s[i:], unicode.IsUpper) >= 0
+		}
+	}
+	return false
+}
+
 func materializationURL(a ResolvedArtifact) string {
 	if a.IsMarketplace {
 		return a.MarketplaceURL
@@ -102,10 +137,16 @@ func MaterializationWinners(resolved []ResolvedArtifact) []ResolvedArtifact {
 
 // SharedPathDisplacements returns the displacements MaterializationProjection
 // reports, without building the winners. It returns nil at once when no
-// resource targets a harness on which kinds share a path.
+// resource targets a harness on which kinds share a path and no resource name
+// contains an upper-case letter.
 func SharedPathDisplacements(resolved []ResolvedArtifact) []SharedPathDisplacement {
 	shared := sharedPathKinds()
-	for _, a := range resolved {
+	for i := range resolved {
+		a := &resolved[i]
+		if hasUpper(a.MaterializedName()) {
+			_, displaced := materializationProjection(resolved, false)
+			return displaced
+		}
 		targets := a.Harnesses
 		if targets == nil {
 			targets = defaultMaterializationTargets
@@ -124,11 +165,13 @@ func SharedPathDisplacements(resolved []ResolvedArtifact) []SharedPathDisplaceme
 // for each native output path. Resources compete when they share a path: on
 // most targets that means the same kind and installed name, and on targets
 // that install commands as skills also a command and a skill of the same name.
-// Across kinds, names that differ only in letter case share a path too, as
-// they do on case-insensitive filesystems; within one kind such names are left
-// to the case-only collision refusal. It returns the winners and every
-// resource displaced by one of another kind; displacements by the same kind
-// are already reported as name collisions.
+// Names that differ only in letter case share a path too, as they do on
+// case-insensitive filesystems: across kinds the best member's kind keeps it,
+// and within one kind a required member keeps it when it outranks the others
+// by layer; otherwise those names are left to the case-only collision refusal.
+// It returns the winners and every displaced resource, except those displaced
+// by an equal name of the same kind, which are already reported as name
+// collisions.
 func MaterializationProjection(resolved []ResolvedArtifact) ([]ResolvedArtifact, []SharedPathDisplacement) {
 	return materializationProjection(resolved, true)
 }
@@ -145,6 +188,7 @@ func materializationProjection(resolved []ResolvedArtifact, wantWinners bool) ([
 		target hcc.Target
 	}
 	shared := sharedPathKinds()
+	pathKinds := nativePathKinds()
 	targetsOf := func(a *ResolvedArtifact) []hcc.Target {
 		if a.Harnesses == nil {
 			return defaultMaterializationTargets
@@ -176,10 +220,10 @@ func materializationProjection(resolved []ResolvedArtifact, wantWinners bool) ([
 		if !competes(a) {
 			continue
 		}
-		upper := strings.IndexFunc(a.MaterializedName(), unicode.IsUpper) >= 0
+		upper := hasUpper(a.MaterializedName())
 		for _, target := range targetsOf(a) {
-			k, isShared := exactKey(a, target)
-			caseVariants = caseVariants || isShared && upper
+			k, _ := exactKey(a, target)
+			caseVariants = caseVariants || upper && pathKinds[target][a.ResourceKind()]
 			if prior, ok := winners[k]; ok {
 				winners[k] = pickCollisionWinner([]skillOccurrence{occurrence(prior), occurrence(i)}).order
 			} else {
@@ -187,17 +231,20 @@ func materializationProjection(resolved []ResolvedArtifact, wantWinners bool) ([
 			}
 		}
 	}
-	// Exact-name winners on a shared path whose names differ only in letter
-	// case compete across kinds. The kind of the best member keeps the path;
-	// members of other kinds are displaced by it. Such a group needs a name
-	// with an upper-case letter, so the pass is skipped without one.
+	// Exact-name winners on a native path whose names differ only in letter
+	// case compete. Across kinds, the kind of the best member keeps the path
+	// and members of other kinds are displaced by it. Within that kind, a
+	// required best member that outranks every other member by layer keeps the
+	// path; without one, the case-only refusal handles the group. Such a group
+	// needs a name with an upper-case letter, so the pass is skipped without
+	// one.
 	var caseLoser map[placement]int
 	if caseVariants {
-		// foldedKey returns the shared-path key with the name folded, or false
-		// when the resource does not win an exact-name shared path.
+		// foldedKey returns the native-path key with the name folded, or false
+		// when the resource does not win an exact-name native path.
 		foldedKey := func(i int, a *ResolvedArtifact, target hcc.Target, folded string) (key, bool) {
-			k, isShared := exactKey(a, target)
-			if !isShared || winners[k] != i {
+			k, _ := exactKey(a, target)
+			if !pathKinds[target][a.ResourceKind()] || winners[k] != i {
 				return key{}, false
 			}
 			k.name = folded
@@ -208,7 +255,7 @@ func materializationProjection(resolved []ResolvedArtifact, wantWinners bool) ([
 		candidates := make(map[key]bool)
 		for i := range resolved {
 			a := &resolved[i]
-			if !competes(a) || strings.IndexFunc(a.MaterializedName(), unicode.IsUpper) < 0 {
+			if !competes(a) || !hasUpper(a.MaterializedName()) {
 				continue
 			}
 			folded := strings.ToLower(a.MaterializedName())
@@ -226,7 +273,7 @@ func materializationProjection(resolved []ResolvedArtifact, wantWinners bool) ([
 				continue
 			}
 			folded := a.MaterializedName()
-			if strings.IndexFunc(folded, unicode.IsUpper) >= 0 {
+			if hasUpper(folded) {
 				folded = strings.ToLower(folded)
 			}
 			for _, target := range targetsOf(a) {
@@ -251,8 +298,16 @@ func materializationProjection(resolved []ResolvedArtifact, wantWinners bool) ([
 				occurrences = append(occurrences, occurrence(m))
 			}
 			best := pickCollisionWinner(occurrences).order
+			bestKind := resolved[best].ResourceKind()
+			requiredWins := resolved[best].Required
 			for _, m := range members {
-				if resolved[m].ResourceKind() != resolved[best].ResourceKind() {
+				if m != best && resolved[m].ResourceKind() == bestKind && resolved[m].Required &&
+					config.CompareEntryPrecedence(resolved[best].Source, resolved[best].FilePrecedence, resolved[m].Source, resolved[m].FilePrecedence) <= 0 {
+					requiredWins = false
+				}
+			}
+			for _, m := range members {
+				if m != best && (resolved[m].ResourceKind() != bestKind || requiredWins) {
 					caseLoser[placement{m, k.target}] = best
 				}
 			}
@@ -287,10 +342,11 @@ func materializationProjection(resolved []ResolvedArtifact, wantWinners bool) ([
 			}
 			k, _ := exactKey(a, target)
 			winner := winners[k]
-			if best, lost := caseLoser[placement{i, target}]; lost && winner == i {
+			best, caseLost := caseLoser[placement{i, target}]
+			if caseLost && winner == i {
 				winner = best
 			}
-			if resolved[winner].ResourceKind() != kind {
+			if caseLost || resolved[winner].ResourceKind() != kind {
 				displaced = append(displaced, SharedPathDisplacement{Target: target, MachineScope: a.Source.IsMachineScope(), Winner: resolved[winner], Displaced: *a, DisplacedIndex: i})
 			}
 		}

@@ -813,6 +813,27 @@ resources: {team: {include: [hook/SessionStart-command, hook/SessionStart-comman
 			{Args: []string{"sync", "--check"}, MustPass: true, PathsUnchanged: []string{"/root/.factory/skills/shared"}},
 		},
 	},
+	// spec: harness-compilation/required-resource-keeps-a-case-only-collision
+	{
+		Name: "collision/required_command_keeps_case_only_path",
+		Desc: "Given an organization-required command deploy and a user-selected OpenCode command Deploy, When syncing for Claude Code, Then the required command is installed with a shared-path warning, the user command is not, and the output stays in sync",
+		Registries: []RegistryDef{
+			{Name: "org-command", Commands: []Command{{Name: "deploy", Description: "Mandatory organization command", Command: "echo org"}}},
+			{Name: "user-opencode", Files: map[string]string{".opencode/commands/Deploy.md": "---\ndescription: User selected command\n---\nRun the user command.\n"}},
+		},
+		OrgCfg:    "apiVersion: agent-marketplace/v4\nharnesses: [claude]\nsources: {org: {git: '{{REG:org-command}}', ref: main}}\nresources: {org: {all: true, required: true}}\n",
+		GlobalCfg: "apiVersion: agent-marketplace/v4\nharnesses: [claude]\nsources: {user: {git: '{{REG:user-opencode}}', ref: main, source_harness: opencode}}\nresources: {user: {include: [command/Deploy]}}\n",
+		RepoCfg:   "apiVersion: agent-marketplace/v4\nsources: {}\n",
+		Steps: []Step{
+			// Content checks rather than an absent Deploy.md keep the case
+			// portable: on a case-insensitive host both names are one file.
+			{Args: []string{"sync"}, MustPass: true, OutContains: []string{"materialize.collision.shared-path", `command "Deploy"`},
+				OutNotContains:  []string{"bundle.conflict.duplicate-artifact-path"},
+				FileContains:    map[string]string{"/root/.claude/commands/deploy.md": "Mandatory organization command"},
+				FileNotContains: map[string]string{"/root/.claude/commands/deploy.md": "Run the user command."}},
+			{Args: []string{"sync", "--check"}, MustPass: true, PathsUnchanged: []string{"/root/.claude/commands"}},
+		},
+	},
 	{
 		Name: "collision/required_skill_keeps_shared_native_path",
 		Desc: "Given an organization-required skill and a user-selected command with the same name, When syncing for Devin CLI and Claude Code, Then Devin's shared skills path keeps the required skill with a shared-path warning, and Claude Code installs both",
