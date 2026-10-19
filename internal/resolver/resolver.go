@@ -117,6 +117,7 @@ type resolveOptions struct {
 	marketplaceResolver         MarketplaceResolver
 	marketplaceMode             MarketplaceResolveMode
 	marketplaceRevocationPolicy MarketplaceRevocationPolicy
+	selectedCollections         *[]ResolvedArtifact
 }
 
 // ResolveOption configures optional behavior for Resolve.
@@ -198,6 +199,16 @@ func WithMarketplaceResolveMode(m MarketplaceResolveMode) ResolveOption {
 func WithMarketplaceRevocationPolicy(policy MarketplaceRevocationPolicy) ResolveOption {
 	return func(opts *resolveOptions) {
 		opts.marketplaceRevocationPolicy = policy
+	}
+}
+
+// WithSelectedCollections reports the collection roots that Resolve selected
+// before they expand into members. The sink is replaced on every selection
+// pass, so it holds the final selection. Display-only: collection roots never
+// materialize.
+func WithSelectedCollections(sink *[]ResolvedArtifact) ResolveOption {
+	return func(opts *resolveOptions) {
+		opts.selectedCollections = sink
 	}
 }
 
@@ -936,6 +947,9 @@ func Resolve(cfg *config.Config, catalogs map[string][]catalog.Entry, localCfg *
 		// collection artifacts themselves. This replaces the pre-resolver
 		// collection.Expand call, giving collections the same collision
 		// detection and disambiguation as skills/commands/etc.
+		if ro.selectedCollections != nil {
+			*ro.selectedCollections = collectionRoots(resolved)
+		}
 		return expandCollections(resolved, errs, cfg, catalogs, ro.resources, malformedIdx, localExcludes, cfg.Collections.ExcludeAll, excludeAllKinds, targets)
 	}
 
@@ -1240,6 +1254,21 @@ func propagateTopLevelCollections(cfg *config.Config) {
 			}
 		}
 	}
+}
+
+// collectionRoots returns the resolved collection artifacts that
+// expandCollections will expand, so display callers can show them as selected.
+func collectionRoots(resolved []ResolvedArtifact) []ResolvedArtifact {
+	var roots []ResolvedArtifact
+	for _, artifact := range resolved {
+		if artifact.Kind != ir.KindCollection {
+			continue
+		}
+		if irCol, ok := artifact.Resource.(*ir.Collection); ok && irCol != nil {
+			roots = append(roots, artifact)
+		}
+	}
+	return roots
 }
 
 // expandCollections replaces each KindCollection artifact with its expanded

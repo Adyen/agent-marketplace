@@ -412,7 +412,7 @@ func readSnapshotStaged(ctx context.Context, ws pipeline.Workspace, homeDir stri
 			// The verified inventory is published before detail capture and the
 			// materialization dry run: rows are navigable and config-only toggles are
 			// eligible while drift stays explicitly pending.
-			inventoryRows = buildRows(resolved.LoadedCfg, resolved.CatalogLoad.Catalogs, resolved.Resolved, resolved.LocalCfg, materialize.DriftReport{}, harnessDefaultsBySource(resolved.GlobalCfg, resolved.RepoCfg))
+			inventoryRows = buildRows(resolved.LoadedCfg, resolved.CatalogLoad.Catalogs, resolved.DisplayArtifacts(), resolved.LocalCfg, materialize.DriftReport{}, harnessDefaultsBySource(resolved.GlobalCfg, resolved.RepoCfg))
 			inventoryRows = appendUnavailableSelectionRows(inventoryRows, recoveryCfg, resolved.LocalCfg, resolved.ResolveErrors, resolved.CatalogLoad.Catalogs)
 			unavailable = rowsHaveUnavailable(inventoryRows)
 			inventory := makeBase(result)
@@ -1052,20 +1052,14 @@ func forEachUserExcludedOrganizationPin(cfg *config.Config, visit func(config.Ma
 			continue
 		}
 		for _, pin := range entry.Resources {
-			kind, ok := mpapi.ToIR(pin.Kind)
-			if !ok || kind == ir.KindCollection || !slices.ContainsFunc(cfg.MarketplaceExclusions, func(exclusion config.MarketplaceExclusion) bool {
+			artifact, ok := marketplace.PinArtifact(entry, pin)
+			if !ok || artifact.Kind == ir.KindCollection || !slices.ContainsFunc(cfg.MarketplaceExclusions, func(exclusion config.MarketplaceExclusion) bool {
 				return exclusion.Source == config.UserPersonal && exclusion.Matches(entry, pin)
 			}) {
 				continue
 			}
-			name := marketplaceInstalledName(pin)
 			visit(pin, row{
-				Artifact: resolver.ResolvedArtifact{
-					Entry: catalog.Entry{Kind: kind, Name: name}, RegistryURL: entry.URL,
-					RegistryPath: pin.RegistryID, Ref: pin.Revision, Source: entry.Source,
-					CatalogKey: marketplaceCatalogKey(entry, pin), IsMarketplace: true, MarketplaceURL: entry.URL,
-					MarketplaceInstanceID: entry.InstanceID, MarketplaceRegistryID: pin.RegistryID, MarketplaceResourceName: pin.Name,
-				},
+				Artifact:    artifact,
 				IsAvailable: true, IsExcluded: true, ExcludedByUser: true, EnabledGlobal: true,
 				RegistryURL: entry.URL, RegistryName: registryDisplayName(entry.URL),
 			})
@@ -1230,9 +1224,6 @@ func buildProvisionalRows(cfg *config.Config, localCfg *config.LocalConfig, loca
 					Required:     entry.Required,
 					CatalogKey:   entry.CatalogKey,
 				},
-				// Verified inventory expands collections into members and
-				// lists the collection itself as available.
-				IsAvailable:         selected.Kind == ir.KindCollection,
 				PendingVerification: true,
 				RegistryURL:         entry.URL,
 				RegistryName:        registryDisplayName(entry.URL),
@@ -1249,28 +1240,12 @@ func buildProvisionalRows(cfg *config.Config, localCfg *config.LocalConfig, loca
 			if cfg.MarketplacePinExcluded(*entry, pin) {
 				continue
 			}
-			kind, ok := mpapi.ToIR(pin.Kind)
-			if !ok || kind == ir.KindCollection {
+			artifact, ok := marketplace.PinArtifact(*entry, pin)
+			if !ok || (artifact.Kind == ir.KindCollection && !pin.Direct) {
 				continue
 			}
-			name := marketplaceInstalledName(pin)
-			catalogKey := marketplaceCatalogKey(*entry, pin)
-			add(marketplaceSelectionKey(catalogKey, pin.Kind, name), row{
-				Artifact: resolver.ResolvedArtifact{
-					Entry:                   catalog.Entry{Kind: kind, Name: name},
-					RegistryURL:             entry.URL,
-					RegistryPath:            pin.RegistryID,
-					Ref:                     pin.Revision,
-					Source:                  entry.Source,
-					Required:                entry.Required,
-					CatalogKey:              catalogKey,
-					IsMarketplace:           true,
-					MarketplaceURL:          entry.URL,
-					MarketplaceInstanceID:   entry.InstanceID,
-					MarketplaceAlias:        entry.Alias,
-					MarketplaceRegistryID:   pin.RegistryID,
-					MarketplaceResourceName: pin.Name,
-				},
+			add(marketplaceSelectionKey(artifact.CatalogKey, pin.Kind, artifact.Name), row{
+				Artifact:                  artifact,
 				PendingVerification:       true,
 				MarketplaceCollectionOnly: !pin.Direct && pin.SelectedBy != "",
 				RegistryURL:               entry.URL,
