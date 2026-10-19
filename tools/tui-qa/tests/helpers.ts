@@ -21,22 +21,31 @@ interface FixtureLifecycle {
 
 const journeyDirectories = new WeakMap<TestTerminal, string>();
 const closed = new WeakSet<TestTerminal>();
+const cleanupErrors = new WeakMap<TestTerminal, unknown>();
 
 const amend = (error: unknown, message: (original: string) => string): void => {
   if (!(error instanceof Error) || !error.message) return;
   const original = error.message;
+  // V8 formats a stack on first read; read it before the message changes.
+  const stack = error.stack;
   error.message = message(original);
-  if (error.stack?.includes(original)) error.stack = error.stack.replace(original, () => error.message);
+  if (stack?.includes(original)) error.stack = stack.replace(original, () => error.message);
 };
 
 // finish renders the GIF only when it may be kept: stopRecording encodes the
-// whole capture, while closing an unstopped recording discards it.
+// whole capture, while closing an unstopped recording discards it. A failure
+// to render or to close a failed session is recorded so the journey failure can
+// report its missing artifacts; closing a passing session must succeed.
 const finish = async (terminal: TestTerminal, failed: boolean, render = failed): Promise<void> => {
   if (closed.has(terminal)) return;
   closed.add(terminal);
-  if (render) await terminal.stopRecording().catch(() => undefined);
+  const record = (error: unknown): void => {
+    if (!cleanupErrors.has(terminal)) cleanupErrors.set(terminal, error);
+  };
+  if (render) await terminal.stopRecording().catch(record);
   await terminal.close({ failed }).catch((error: unknown) => {
     if (!failed) throw error;
+    record(error);
   });
 };
 
@@ -61,6 +70,7 @@ const runJourney = async (
   });
   journeyDirectories.set(terminal, directory);
   let failed = true;
+  let failure: unknown;
   try {
     // tui-test adds its own environment to the child's; env -i keeps the
     // program to exactly the fixture's sandboxed environment.
@@ -70,11 +80,17 @@ const runJourney = async (
     await body(terminal);
     failed = false;
   } catch (error) {
+    failure = error;
     const screen = closed.has(terminal) ? "(session closed)" : await terminal.text().catch(() => "(unavailable)");
     amend(error, (message) => `${message}\n\nTerminal screen:\n${screen}\n\nRecording and trace: ${directory}`);
     throw error;
   } finally {
     await finish(terminal, failed);
+    if (failed && cleanupErrors.has(terminal)) {
+      const cleanup = cleanupErrors.get(terminal);
+      const detail = cleanup instanceof Error ? cleanup.message : String(cleanup);
+      amend(failure, (message) => `${message}\n\nFailure artifacts are incomplete: ${detail}`);
+    }
     if (!failed) fs.rmSync(directory, { recursive: true, force: true });
   }
 };
