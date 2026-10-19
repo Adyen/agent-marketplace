@@ -124,6 +124,7 @@ type resolveOptions struct {
 	marketplaceMode             MarketplaceResolveMode
 	marketplaceRevocationPolicy MarketplaceRevocationPolicy
 	selectedCollections         *[]ResolvedArtifact
+	pluginSink                  *pluginPlanSink
 }
 
 // ResolveOption configures optional behavior for Resolve.
@@ -238,6 +239,16 @@ func WithResources(resources map[string]map[string]ir.Resource) ResolveOption {
 func WithMalformed(malformed map[string][]skill.MalformedSkill) ResolveOption {
 	return func(opts *resolveOptions) {
 		opts.malformed = malformed
+	}
+}
+
+// withPluginPlanSink collects the per-layer plugin selection records
+// PlanPluginSelection projects into the plugin-v1 manifests. It is internal
+// because the sink captures selections ahead of deduplication, collisions,
+// and displacement — before the delivered artifact stream exists.
+func withPluginPlanSink(sink *pluginPlanSink) ResolveOption {
+	return func(opts *resolveOptions) {
+		opts.pluginSink = sink
 	}
 }
 
@@ -907,7 +918,7 @@ func Resolve(cfg *config.Config, catalogs map[string][]catalog.Entry, localCfg *
 	malformedIdx := newMalformedIndex(ro.malformed)
 
 	// Phase 1: Build occurrence map from registry entries.
-	occurrencesByName, errs := buildOccurrences(cfg, catalogs, ro.resources, malformedIdx, targets)
+	occurrencesByName, errs := buildOccurrences(cfg, catalogs, ro.resources, malformedIdx, targets, ro.pluginSink)
 	filterShadowedOccurrences(occurrencesByName, cfg.Registries)
 	slog.Debug("resolver occurrences built", "registries", len(cfg.Registries), "resources", len(occurrencesByName), "errors", len(errs))
 
@@ -956,7 +967,7 @@ func Resolve(cfg *config.Config, catalogs map[string][]catalog.Entry, localCfg *
 		if ro.selectedCollections != nil {
 			*ro.selectedCollections = collectionRoots(resolved)
 		}
-		return expandCollections(resolved, errs, cfg, catalogs, ro.resources, malformedIdx, localExcludes, cfg.Collections.ExcludeAll, excludeAllKinds, targets, budget)
+		return expandCollections(resolved, errs, cfg, catalogs, ro.resources, malformedIdx, localExcludes, cfg.Collections.ExcludeAll, excludeAllKinds, targets, budget, ro.pluginSink)
 	}
 
 	resolved, selectErrs := selectArtifacts(nil)
@@ -1291,7 +1302,7 @@ func resolvedCollection(artifact ResolvedArtifact) (*ir.Collection, bool) {
 // Members, and produce one ResolvedArtifact per member with a Via annotation.
 // Members that reference a different registry than the collection's source
 // are looked up in the catalog for that registry.
-func expandCollections(resolved []ResolvedArtifact, errs []error, cfg *config.Config, catalogs map[string][]catalog.Entry, resources map[string]map[string]ir.Resource, malformed *malformedIndex, localExcludes resourceSelections, collectionExcludeAll bool, localExcludeAllKinds map[ir.ResourceKind]bool, targets scopeTargets, budget *collectionExpansionBudget) ([]ResolvedArtifact, []error) {
+func expandCollections(resolved []ResolvedArtifact, errs []error, cfg *config.Config, catalogs map[string][]catalog.Entry, resources map[string]map[string]ir.Resource, malformed *malformedIndex, localExcludes resourceSelections, collectionExcludeAll bool, localExcludeAllKinds map[ir.ResourceKind]bool, targets scopeTargets, budget *collectionExpansionBudget, planSink *pluginPlanSink) ([]ResolvedArtifact, []error) {
 	var out []ResolvedArtifact
 	var expandErrs []error
 	expanded := false
@@ -1306,6 +1317,7 @@ func expandCollections(resolved []ResolvedArtifact, errs []error, cfg *config.Co
 		required:    make(map[scopedSelection]bool),
 		displaced:   make(map[scopedSelection]skillOccurrence),
 		pluginEdges: make(map[scopedSelection][]PluginEdge),
+		plan:        planSink,
 	}
 	for _, artifact := range resolved {
 		if artifact.Kind != ir.KindCollection {
@@ -1434,7 +1446,7 @@ func expandCollections(resolved []ResolvedArtifact, errs []error, cfg *config.Co
 	reconciled, reconcileErrs := reconcileExpandedHooks(out)
 	expandErrs = append(expandErrs, reconcileErrs...)
 	errs = append(errs, suppressResolvedMemberMisses(expandErrs, admissions.required)...)
-	return removeDisplacedSelections(reconciled, admissions.displaced, errs)
+	return removeDisplacedSelections(reconciled, admissions.displaced, errs, admissions.plan)
 }
 
 // scopeAdmissions records, per install scope, which installed names are
@@ -1444,6 +1456,7 @@ type scopeAdmissions struct {
 	required    map[scopedSelection]bool
 	displaced   map[scopedSelection]skillOccurrence
 	pluginEdges map[scopedSelection][]PluginEdge
+	plan        *pluginPlanSink
 }
 
 func reconcileExpandedHooks(artifacts []ResolvedArtifact) ([]ResolvedArtifact, []error) {
@@ -1982,7 +1995,11 @@ func expandMembersRecursive(
 			// unless required policy outranks a non-required selection.
 			if !memberRequired || existingRequired {
 				if member.Kind == ir.KindPlugin {
-					admissions.pluginEdges[scopedKey] = append(admissions.pluginEdges[scopedKey], PluginEdge{Kind: PluginEdgeCollection, Collection: col.Label(), Source: edgeSource})
+					edge := PluginEdge{Kind: PluginEdgeCollection, Collection: col.Label(), Source: edgeSource}
+					admissions.pluginEdges[scopedKey] = append(admissions.pluginEdges[scopedKey], edge)
+					if memberEntryFound {
+						admissions.plan.record(memberEntry, memberName, catEntry.Plugin, attachResource(catEntry, resources, memberCatalogKey), &PluginSelection{Edges: []PluginEdge{edge}})
+					}
 				}
 				continue
 			}
@@ -2016,6 +2033,9 @@ func expandMembersRecursive(
 			admitted.Selection = &PluginSelection{
 				Edges:   []PluginEdge{{Kind: PluginEdgeCollection, Collection: col.Label(), Source: edgeSource}},
 				Members: catEntry.Plugin.Members,
+			}
+			if memberEntryFound {
+				admissions.plan.record(memberEntry, memberName, catEntry.Plugin, admitted.Entry, admitted.Selection)
 			}
 		}
 		if displacing {
@@ -2403,7 +2423,7 @@ func newSkillOccurrence(entry config.RegistryEntry, entryIndex int, candidate ca
 
 // buildOccurrences iterates over registry entries and catalogs to build a map
 // of skill occurrences keyed by (kind, name).
-func buildOccurrences(cfg *config.Config, catalogs map[string][]catalog.Entry, resources map[string]map[string]ir.Resource, malformed *malformedIndex, targets scopeTargets) (map[resourceSelection][]skillOccurrence, []error) {
+func buildOccurrences(cfg *config.Config, catalogs map[string][]catalog.Entry, resources map[string]map[string]ir.Resource, malformed *malformedIndex, targets scopeTargets, sink *pluginPlanSink) (map[resourceSelection][]skillOccurrence, []error) {
 	var errs []error
 	occurrencesByName := make(map[resourceSelection][]skillOccurrence)
 	reportedNotFound := make(map[missingResource]error)
@@ -2512,6 +2532,7 @@ func buildOccurrences(cfg *config.Config, catalogs map[string][]catalog.Entry, r
 				}
 				occurrence := newSkillOccurrence(entry, entryIndex, selectedSkill, resources, harnessTargets, order)
 				occurrence.resolved.Selection = selection
+				sink.record(entry, selected.name, selectedSkill.Plugin, occurrence.resolved.Entry, selection)
 				occurrencesByName[selected] = append(occurrencesByName[selected], occurrence)
 				order++
 				continue
@@ -2888,7 +2909,7 @@ func (s requiredShadows) remove(artifacts []ResolvedArtifact, warnings []error) 
 // removeDisplacedSelections drops the non-required selections that a required
 // collection member displaced in its install scope and reports each displaced
 // source in a name-collision warning won by the member.
-func removeDisplacedSelections(artifacts []ResolvedArtifact, displaced map[scopedSelection]skillOccurrence, errs []error) ([]ResolvedArtifact, []error) {
+func removeDisplacedSelections(artifacts []ResolvedArtifact, displaced map[scopedSelection]skillOccurrence, errs []error, plan *pluginPlanSink) ([]ResolvedArtifact, []error) {
 	if len(displaced) == 0 {
 		return artifacts, errs
 	}
@@ -2902,6 +2923,7 @@ func removeDisplacedSelections(artifacts []ResolvedArtifact, displaced map[scope
 				order = append(order, key)
 			}
 			removed[key] = append(removed[key], artifactOccurrence(a))
+			plan.drop(a)
 			slog.Debug("resolver displaced non-required selection by required collection member", "kind", a.Kind.String(), "name", a.Name, "registry", a.RegistryURL, "via", a.Via)
 			continue
 		}

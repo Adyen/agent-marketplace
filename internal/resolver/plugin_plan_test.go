@@ -288,6 +288,76 @@ func TestPlanPluginSelectionMatchesResolve(t *testing.T) {
 				cfg.Registries[1].CatalogKey: {reviewPlugin},
 			}
 		}, want: []string{"review-kit|command/legacy-review,skill/review|collection:team@USER"}},
+		{name: "cross-layer-same-source-both-select", cfg: func() *config.Config {
+			org := kitEntry(pluginDecisions([2]string{"plugin", "review-kit"}))
+			org.Source = config.Organization
+			user := kitEntry(pluginDecisions([2]string{"plugin", "review-kit"}))
+			user.Source = config.UserPersonal
+			return &config.Config{Registries: []config.RegistryEntry{org, user}}
+		}, catalogs: func(cfg *config.Config) map[string][]catalog.Entry {
+			return map[string][]catalog.Entry{cfg.Registries[0].CatalogKey: {reviewPlugin}}
+		}, want: []string{
+			"review-kit|command/legacy-review,skill/review|direct:@ORG",
+			"review-kit|command/legacy-review,skill/review|direct:@USER",
+		}},
+		{name: "per-layer-member-exclusions", cfg: func() *config.Config {
+			org := kitEntry([]config.V4SelectionDecision{pluginRequestDecision("review-kit", config.V4ResourceOptions{Exclude: []string{"command/legacy-review"}})})
+			org.Source = config.Organization
+			user := kitEntry(pluginDecisions([2]string{"plugin", "review-kit"}))
+			user.Source = config.UserPersonal
+			return &config.Config{Registries: []config.RegistryEntry{org, user}}
+		}, catalogs: func(cfg *config.Config) map[string][]catalog.Entry {
+			return map[string][]catalog.Entry{cfg.Registries[0].CatalogKey: {reviewPlugin}}
+		}, want: []string{
+			"review-kit|command/legacy-review,skill/review|direct:@USER",
+			"review-kit|skill/review|direct:@ORG",
+		}},
+		{name: "same-layer-duplicate-entries-differing-excludes", cfg: func() *config.Config {
+			excluding := kitEntry([]config.V4SelectionDecision{pluginRequestDecision("review-kit", config.V4ResourceOptions{Exclude: []string{"command/legacy-review"}})})
+			plain := kitEntry(pluginDecisions([2]string{"plugin", "review-kit"}))
+			return &config.Config{Registries: []config.RegistryEntry{excluding, plain}}
+		}, catalogs: func(cfg *config.Config) map[string][]catalog.Entry {
+			return map[string][]catalog.Entry{cfg.Registries[0].CatalogKey: {reviewPlugin}}
+		}, want: []string{"review-kit|skill/review|direct:"}},
+		{name: "collection-edges-in-two-layers", cfg: func() *config.Config {
+			orgCol := config.RegistryEntry{URL: "git@example.com:collections.git", Ref: "main", Source: config.Organization, Collections: ks("orgteam")}
+			userCol := config.RegistryEntry{URL: "git@example.com:other.git", Ref: "main", Source: config.UserPersonal, Collections: ks("userteam")}
+			kitOrg := kitEntry(nil)
+			kitOrg.Source = config.Organization
+			kitUser := kitEntry(nil)
+			kitUser.Source = config.UserPersonal
+			return &config.Config{Registries: []config.RegistryEntry{orgCol, userCol, kitOrg, kitUser}}
+		}, catalogs: func(cfg *config.Config) map[string][]catalog.Entry {
+			orgTeam := collectionEntry("orgteam",
+				[]ir.CollectionMember{{Name: "review-kit", Kind: ir.KindPlugin, Registry: "git@example.com:kit.git"}}, nil)
+			userTeam := collectionEntry("userteam",
+				[]ir.CollectionMember{{Name: "review-kit", Kind: ir.KindPlugin, Registry: "git@example.com:kit.git"}}, nil)
+			return map[string][]catalog.Entry{
+				cfg.Registries[0].CatalogKey: {orgTeam},
+				cfg.Registries[1].CatalogKey: {userTeam},
+				cfg.Registries[2].CatalogKey: {reviewPlugin},
+			}
+		}, want: []string{
+			"review-kit|command/legacy-review,skill/review|collection:orgteam@ORG",
+			"review-kit|command/legacy-review,skill/review|collection:userteam@USER",
+		}},
+		{name: "collided-plugin-selection-still-planned", cfg: func() *config.Config {
+			rival := kitEntry(pluginDecisions([2]string{"plugin", "dup-kit"}))
+			rival.URL = "git@example.com:rival.git"
+			kit := kitEntry(pluginDecisions([2]string{"plugin", "dup-kit"}))
+			return &config.Config{Registries: []config.RegistryEntry{rival, kit}}
+		}, catalogs: func(cfg *config.Config) map[string][]catalog.Entry {
+			dup := pluginCatalogEntry("dup-kit", "claude-plugin",
+				pluginMembers([2]string{"skill", "dup"}), nil,
+				plugindecode.CatalogSource{Kind: "path", Path: "plugins/dup-kit"})
+			return map[string][]catalog.Entry{
+				cfg.Registries[0].CatalogKey: {dup},
+				cfg.Registries[1].CatalogKey: {dup},
+			}
+		}, want: []string{
+			"dup-kit|skill/dup|direct:",
+			"dup-kit|skill/dup|direct:",
+		}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -345,6 +415,37 @@ func TestPlanPluginSelectionForEntry(t *testing.T) {
 	externals := plan.ExternalEntries()
 	if len(externals) != 0 {
 		t.Fatalf("in-path plugins are not external entries: %#v", externals)
+	}
+}
+
+// Two layers declaring the same format source location and selecting the
+// same plugin each get their own planned record: ForEntry returns exactly
+// the layer's own selection for that entry location.
+func TestPlanPluginSelectionForEntryPerLayer(t *testing.T) {
+	org := formatEntry("claude-marketplace", pluginDecisions([2]string{"plugin", "review-kit"}))
+	org.Source = config.Organization
+	user := formatEntry("claude-marketplace", pluginDecisions([2]string{"plugin", "review-kit"}))
+	user.Source = config.UserPersonal
+	cfg := &config.Config{Registries: []config.RegistryEntry{org, user}}
+	setCatalogKeys(cfg)
+	reviewPlugin := pluginCatalogEntry("review-kit", "claude-plugin",
+		pluginMembers([2]string{"skill", "review"}), nil, plugindecode.CatalogSource{Kind: "path", Path: "plugins/review-kit"})
+	catalogs := map[string][]catalog.Entry{cfg.Registries[0].CatalogKey: {reviewPlugin}}
+
+	plan, errs := PlanPluginSelection(cfg, catalogs, nil)
+	if len(errs) != 0 {
+		t.Fatalf("plan errors: %v", errs)
+	}
+	orgPlan := plan.ForEntry(cfg.Registries[0], config.Organization)
+	if len(orgPlan) != 1 || orgPlan[0].Name != "review-kit" || len(orgPlan[0].Edges) != 1 || orgPlan[0].Edges[0].Type != PluginEdgeDirect {
+		t.Fatalf("organization plan = %#v", orgPlan)
+	}
+	userPlan := plan.ForEntry(cfg.Registries[1], config.UserPersonal)
+	if len(userPlan) != 1 || userPlan[0].Name != "review-kit" || len(userPlan[0].Edges) != 1 || userPlan[0].Edges[0].Type != PluginEdgeDirect {
+		t.Fatalf("user plan = %#v", userPlan)
+	}
+	if repoPlan := plan.ForEntry(cfg.Registries[0], config.RepoCommitted); len(repoPlan) != 0 {
+		t.Fatalf("a layer that authored no selection must get an empty plan: %#v", repoPlan)
 	}
 }
 
