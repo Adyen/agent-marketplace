@@ -90,6 +90,10 @@ func (m *LayerMutation) RemoveMarketplacePins(binding config.SourceBinding, pins
 	return m.editor.RemoveMarketplacePins(binding, pins)
 }
 
+func (m *LayerMutation) ExcludeMarketplacePin(binding config.SourceBinding, pin config.MarketplaceResourcePin) error {
+	return m.editor.ExcludeMarketplacePin(binding, pin)
+}
+
 func MutateLayer(ctx context.Context, target LayerMutationTarget, mutate func(*LayerMutation) error) error {
 	if target.Reconcile == nil {
 		return errors.New("layer mutation reconciler is required")
