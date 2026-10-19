@@ -230,6 +230,41 @@ func TestProposeWithoutChangesPrintsNothing(t *testing.T) {
 	}
 }
 
+func TestProposeListsManualOnlyFindingsWithoutEditing(t *testing.T) {
+	const geminiCatalog = "schema: 1\nharness: gemini\nsurfaces:\n  subagent:\n    model_field: model\nmodels:\n  google/gemini-3-pro:\n    model: gemini-3-pro\n"
+	root := writeProposeTree(t, map[string]string{"gemini": geminiCatalog})
+	baselinesBefore := readProposeFile(t, root, baselinesPath)
+	r := proposeReport(sourceReport{Name: "gemini-models", Harness: "gemini", Status: "drift", Findings: []finding{{Code: "catalog.model-missing", Model: "gemma-4-31b-it"}}})
+	var out bytes.Buffer
+	if err := run([]string{"propose", "--root", root}, strings.NewReader(mustJSON(t, r)), &out, nil, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "### Needs a manual catalog entry") || !strings.Contains(out.String(), "`gemma-4-31b-it`") {
+		t.Fatalf("manual entry missing from body:\n%s", out.String())
+	}
+	if readProposeFile(t, root, baselinesPath) != baselinesBefore || readProposeFile(t, root, catalogPath("gemini")) != geminiCatalog {
+		t.Fatal("manual-only proposal edited files")
+	}
+}
+
+func TestProposeFailedStubInsertionLeavesFilesUnchanged(t *testing.T) {
+	const claudeWithoutModels = "schema: 1\nharness: claude\nsurfaces:\n  subagent:\n    model_field: model\n"
+	const factoryCatalog = "schema: 1\nharness: factory\nsurfaces:\n  subagent:\n    model_field: model\nmodels:\n  anthropic/claude-fable-5:\n    model: claude-fable-5\n"
+	root := writeProposeTree(t, map[string]string{"claude": claudeWithoutModels, "factory": factoryCatalog})
+	baselinesBefore := readProposeFile(t, root, baselinesPath)
+	r := proposeReport(sourceReport{Name: "claude-models", Harness: "claude", URL: proposeSourceURL, Status: "drift", ObservedSHA256: digest([]byte("new-claude")), Findings: []finding{
+		{Code: "source.evidence-changed"},
+		{Code: "catalog.model-missing", Model: "claude-sonnet-5-5"},
+	}})
+	var out bytes.Buffer
+	if err := run([]string{"propose", "--root", root}, strings.NewReader(mustJSON(t, r)), &out, nil, time.Now()); err == nil {
+		t.Fatal("stub insertion without a models block must fail the proposal")
+	}
+	if readProposeFile(t, root, baselinesPath) != baselinesBefore || readProposeFile(t, root, catalogPath("claude")) != claudeWithoutModels || out.Len() != 0 {
+		t.Fatal("failed proposal wrote partial changes")
+	}
+}
+
 func TestInsertStubsBeforeNextTopLevelKeyAndAtEOF(t *testing.T) {
 	stubs := []stub{
 		{harness: "factory", key: "openai/gpt-z", model: "gpt-z", url: "https://x.example/models"},

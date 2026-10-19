@@ -179,7 +179,7 @@ jobs:
           remote_sha=""
           if git fetch --quiet origin "$branch" 2>/dev/null; then
             remote_sha=$(git rev-parse FETCH_HEAD)
-            if [[ "$(git log -1 --format='%ae' FETCH_HEAD)" != "$bot_email" ]]; then
+            if [[ "$(git log -1 --format='%ae %ce' FETCH_HEAD)" != "$bot_email $bot_email" ]]; then
               echo "::notice::A person has pushed to $branch; leaving the branch untouched."
               exit 0
             fi
@@ -187,7 +187,10 @@ jobs:
           git switch -C "$branch"
           go run ./tools/model-catalog-audit propose < "$report" > "$body"
           if [[ -z "$(git status --porcelain)" ]]; then
-            echo '::notice::Audit drift produced no baseline or catalog changes; no proposal.'
+            if [[ -s "$body" ]]; then
+              cat "$body" >> "$GITHUB_STEP_SUMMARY"
+            fi
+            echo '::notice::Audit drift produced no baseline or catalog changes; any manual-entry proposal is in the job summary.'
             exit 0
           fi
           if go test ./pkg/harness-compilation/modelpolicy ./tools/model-catalog-audit -count=1 > "$test_log" 2>&1; then
@@ -212,7 +215,7 @@ jobs:
           if [[ -n "$remote_sha" ]] && git diff --quiet "$remote_sha" HEAD; then
             echo '::notice::Regenerated changes match the remote branch; refreshing the PR body without pushing.'
           else
-            git push --force origin "$branch"
+            git push --force-with-lease="refs/heads/$branch:$remote_sha" origin "HEAD:refs/heads/$branch"
           fi
           if [[ -n "$pr_number" ]]; then
             gh pr edit "$pr_number" --body-file "$body"

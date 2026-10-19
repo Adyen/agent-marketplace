@@ -53,18 +53,28 @@ func proposeChanges(root string, r report, out io.Writer) error {
 		return err
 	}
 	p.planStubs(r, cs)
-	if len(p.baselines) == 0 && len(p.stubs) == 0 {
+	if p.empty() {
 		return nil
 	}
+	planned := map[string][]byte{}
 	if len(updates) > 0 {
-		if err := applyBaselines(root, updates); err != nil {
+		if err := planBaselineFile(root, updates, planned); err != nil {
 			return err
 		}
 	}
-	if err := applyStubs(root, p.stubs); err != nil {
+	if err := planStubFiles(root, p.stubs, planned); err != nil {
 		return err
 	}
+	for _, name := range slices.Sorted(maps.Keys(planned)) {
+		if err := os.WriteFile(filepath.Join(root, name), planned[name], 0o644); err != nil {
+			return err
+		}
+	}
 	return writeProposal(out, r, p)
+}
+
+func (p proposal) empty() bool {
+	return len(p.baselines)+len(p.skipped)+len(p.stubs)+len(p.manual)+len(p.collisions) == 0
 }
 
 func (p *proposal) planBaselines(r report, checked string) map[string]baseline {
@@ -215,7 +225,7 @@ func loadCatalogs(files fs.FS) ([]catalog, error) {
 	return cs, nil
 }
 
-func applyBaselines(root string, updates map[string]baseline) error {
+func planBaselineFile(root string, updates map[string]baseline, planned map[string][]byte) error {
 	body, err := readBounded(os.DirFS(root), baselinesPath)
 	if err != nil {
 		return err
@@ -236,10 +246,11 @@ func applyBaselines(root string, updates map[string]baseline) error {
 	if err := validateBaselines(baselines, sources); err != nil {
 		return err
 	}
-	return os.WriteFile(filepath.Join(root, baselinesPath), []byte(text), 0o644)
+	planned[baselinesPath] = []byte(text)
+	return nil
 }
 
-func applyStubs(root string, stubs []stub) error {
+func planStubFiles(root string, stubs []stub, planned map[string][]byte) error {
 	byHarness := map[string][]stub{}
 	for _, s := range stubs {
 		byHarness[s.harness] = append(byHarness[s.harness], s)
@@ -265,9 +276,7 @@ func applyStubs(root string, stubs []stub) error {
 				return fmt.Errorf("%s: stub %s missing after insertion", name, s.key)
 			}
 		}
-		if err := os.WriteFile(filepath.Join(root, name), updated, 0o644); err != nil {
-			return err
-		}
+		planned[name] = updated
 	}
 	return nil
 }

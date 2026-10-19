@@ -138,17 +138,22 @@ func TestNightlyDriftProposalOpensReviewablePR(t *testing.T) {
 	if len(job.Permissions) != 2 || job.Permissions["contents"] != "write" || job.Permissions["pull-requests"] != "write" {
 		t.Fatalf("drift proposal permissions = %v, want exactly contents and pull-requests write", job.Permissions)
 	}
-	propose, download := false, false
+	propose, download, humanCheck, lease := false, false, false, false
 	for _, step := range job.Steps {
 		if step.Continue {
 			t.Fatal("drift proposal must not ignore step failures")
 		}
 		propose = propose || strings.Contains(step.Run, "./tools/model-catalog-audit propose")
+		humanCheck = humanCheck || strings.Contains(step.Run, `"$(git log -1 --format='%ae %ce' FETCH_HEAD)" != "$bot_email $bot_email"`)
+		lease = lease || strings.Contains(step.Run, `git push --force-with-lease="refs/heads/$branch:$remote_sha" origin "HEAD:refs/heads/$branch"`)
+		if strings.Contains(step.Run, "git push --force origin") {
+			t.Fatal("drift proposal must push with a lease, not an unconditional force")
+		}
 		if strings.HasPrefix(step.Uses, "actions/download-artifact@") {
 			download = step.With["name"] == "model-catalog-audit-${{ github.run_id }}"
 		}
 	}
-	if !propose || !download {
-		t.Fatalf("drift proposal steps: propose=%t download=%t", propose, download)
+	if !propose || !download || !humanCheck || !lease {
+		t.Fatalf("drift proposal steps: propose=%t download=%t author-and-committer-check=%t lease-push=%t", propose, download, humanCheck, lease)
 	}
 }
