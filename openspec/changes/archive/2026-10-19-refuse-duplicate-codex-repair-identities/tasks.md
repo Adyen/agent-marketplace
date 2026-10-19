@@ -5,4 +5,4 @@
 - [x] Name the resource and generated value digest in the replacement confirmation, and update the command tests that pin it.
 - [x] Verify scoped materialize and doctor tests, lint, build and strict specs.
 - [x] Adversarially review every changed entry.
-- [ ] `openspec archive refuse-duplicate-codex-repair-identities --yes`
+- [x] `openspec archive refuse-duplicate-codex-repair-identities --yes`
