@@ -21,69 +21,93 @@ import { targets as harnesses } from '../data/harnesses'
 
 <style scoped>
 .compatibility {
+  --strip-sans: "Adyen", "Inter", system-ui, sans-serif;
+  --strip-mono: "Adyen Mono", "Geist Mono", ui-monospace, SFMono-Regular, monospace;
+
   border-block: 1px solid var(--am-border);
   background: var(--am-surface);
+  font-feature-settings: "ss01", "ss02";
 }
 
 .strip {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-  gap: 48px;
+  display: flex;
+  max-width: 1440px;
+  gap: 24px;
   align-items: center;
-  min-height: 108px;
+  min-height: 72px;
+  padding-inline: 48px;
 }
 
 .message {
   display: flex;
   align-items: center;
-  gap: 10px;
-  color: var(--vp-c-text-2);
-  font-size: var(--am-text-supporting);
-  font-weight: var(--am-font-semibold);
-  letter-spacing: 0.03em;
+  gap: 12px;
+  color: var(--vp-c-text-1);
+  font-family: var(--strip-mono);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.3;
+  letter-spacing: normal;
+  text-transform: uppercase;
   white-space: nowrap;
 }
 
 .signal {
-  width: 7px;
-  height: 7px;
+  width: 8px;
+  height: 8px;
   flex: none;
-  border-radius: 50%;
-  background: var(--vp-c-brand-1);
-  box-shadow: 0 0 18px color-mix(in srgb, var(--am-color-action-primary) 42%, transparent);
+  background: #00d16a;
 }
 
 ul {
   display: flex;
-  justify-content: flex-end;
+  align-items: center;
   flex-wrap: wrap;
-  gap: 10px 24px;
+  gap: 6px 12px;
   margin: 0;
+  margin-left: auto;
   padding: 0;
   list-style: none;
 }
 
 li {
-  color: var(--vp-c-text-2);
-  font-size: var(--am-text-body-sm);
-  font-weight: var(--am-font-semibold);
-  letter-spacing: -0.01em;
+  color: var(--vp-c-text-3);
+  font-family: var(--strip-mono);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.3;
+  letter-spacing: normal;
+  text-transform: uppercase;
   white-space: nowrap;
 }
 
-@media (max-width: 820px) {
+li + li::before {
+  margin-right: 12px;
+  color: var(--vp-c-text-3);
+  content: "·";
+}
+
+@media (max-width: 900px) {
   .strip {
-    grid-template-columns: 1fr;
-    gap: 18px;
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 12px;
+    min-height: 0;
+    padding-inline: 24px;
     padding-block: 24px;
   }
 
   ul {
+    margin-left: 0;
     justify-content: flex-start;
   }
 }
 
-@media (max-width: 420px) {
+@media (max-width: 600px) {
+  .strip {
+    padding-inline: 16px;
+  }
+
   .message {
     white-space: normal;
   }
