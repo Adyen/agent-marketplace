@@ -4,11 +4,7 @@
 
 ## Start here
 
-New to the tool? Follow these steps in order:
-
-1. If you rarely use a terminal, read [Terminal basics](./terminal-basics.md) first.
-2. [Install](./install.md) the binary.
-3. Follow the [quick start](./quick-start.md). In about ten minutes you select a skill from a public registry, look at it in the terminal UI, and commit the configuration so teammates can reproduce the setup.
+New to the tool? Follow the [quick start](./quick-start.md). In about ten minutes you install the tool, select a skill from a public registry, look at it in the terminal UI, and commit the configuration so teammates can reproduce the setup. [More install options](./install.md) covers release downloads and building from source.
 
 Look up unfamiliar words in the [glossary](./glossary.md). Then pick the section that matches your goal.
 

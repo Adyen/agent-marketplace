@@ -233,7 +233,7 @@ func codexDesiredMCP(raw []byte, resource string) ([]codexMCPEntry, error) {
 	}
 	entries := make([]codexMCPEntry, 0, len(sections))
 	for name, section := range sections {
-		fragment := append([]byte(nil), raw[section.start:section.end]...)
+		fragment := section.bytes(raw)
 		fragment, err = canonicalCodexMCPFragment(fragment, name)
 		if err != nil {
 			return nil, err
@@ -310,10 +310,56 @@ func codexMCPValues(raw []byte) (map[string]any, error) {
 	return servers, nil
 }
 
-type codexMCPSection struct {
+type codexMCPSpan struct {
 	start, end int
-	value      ownership.EntryValue
-	alternate  bool
+}
+
+type codexMCPEdit struct {
+	start, end  int
+	replacement []byte
+}
+
+type codexMCPSection struct {
+	spans     []codexMCPSpan
+	value     ownership.EntryValue
+	alternate bool
+}
+
+func (s codexMCPSection) bytes(raw []byte) []byte {
+	var out []byte
+	for _, span := range s.spans {
+		out = append(out, raw[span.start:span.end]...)
+	}
+	return out
+}
+
+func (s codexMCPSection) edits(replacement []byte) []codexMCPEdit {
+	edits := make([]codexMCPEdit, 0, len(s.spans))
+	for i, span := range s.spans {
+		edit := codexMCPEdit{start: span.start, end: span.end}
+		if i == 0 {
+			edit.replacement = replacement
+		}
+		edits = append(edits, edit)
+	}
+	return edits
+}
+
+func applyCodexMCPEdits(raw []byte, edits []codexMCPEdit) []byte {
+	slices.Reverse(edits)
+	sort.SliceStable(edits, func(i, j int) bool { return edits[i].start < edits[j].start })
+	size := len(raw)
+	for _, e := range edits {
+		size += len(e.replacement) - (e.end - e.start)
+	}
+	next := make([]byte, 0, size)
+	offset := 0
+	for _, e := range edits {
+		next = append(next, raw[offset:e.start]...)
+		next = append(next, e.replacement...)
+		offset = e.end
+	}
+	return append(next, raw[offset:]...)
 }
 
 func codexMCPSections(raw []byte) (map[string]codexMCPSection, []ownership.EntryValue, error) {
@@ -325,30 +371,36 @@ func codexMCPSections(raw []byte) (map[string]codexMCPSection, []ownership.Entry
 	var parser unstable.Parser
 	parser.Reset(raw)
 	current := ""
+	previousTable := ""
 	inMCPRoot := false
 	for parser.NextExpression() {
 		node := parser.Expression()
 		switch node.Kind {
-		case unstable.Table:
+		case unstable.Table, unstable.ArrayTable:
 			var keys []string
 			it := node.Key()
 			for it.Next() {
 				keys = append(keys, string(it.Node().Data))
 			}
 			current = ""
-			inMCPRoot = len(keys) == 1 && keys[0] == codexMCPContainer
+			inMCPRoot = node.Kind == unstable.Table && len(keys) == 1 && keys[0] == codexMCPContainer
+			previous := previousTable
+			previousTable = ""
 			if len(keys) < 2 || keys[0] != codexMCPContainer {
 				continue
 			}
 			inMCPRoot = false
 			current = keys[1]
+			previousTable = current
 			first := node.Child().Raw.Offset
 			start := bytes.LastIndexByte(raw[:first], '\n') + 1
+			end := lineEnd(raw, int(first))
 			section := sections[current]
-			if section.end == 0 {
-				section.start = start
+			if n := len(section.spans); n > 0 && previous == current {
+				section.spans[n-1].end = end
+			} else {
+				section.spans = append(section.spans, codexMCPSpan{start: start, end: end})
 			}
-			section.end = lineEnd(raw, int(first))
 			sections[current] = section
 		case unstable.KeyValue:
 			var keys []string
@@ -364,7 +416,7 @@ func codexMCPSections(raw []byte) (map[string]codexMCPSection, []ownership.Entry
 					return nil, nil, fmt.Errorf("duplicate MCP server definition %q", keys[0])
 				}
 				start := bytes.LastIndexByte(raw[:node.Raw.Offset], '\n') + 1
-				sections[keys[0]] = codexMCPSection{start: start, end: lineEnd(raw, int(node.Raw.Offset+node.Raw.Length)), alternate: true}
+				sections[keys[0]] = codexMCPSection{spans: []codexMCPSpan{{start: start, end: lineEnd(raw, int(node.Raw.Offset+node.Raw.Length))}}, alternate: true}
 				continue
 			}
 			if current == "" {
@@ -372,17 +424,20 @@ func codexMCPSections(raw []byte) (map[string]codexMCPSection, []ownership.Entry
 					name := keys[1]
 					section := sections[name]
 					start := bytes.LastIndexByte(raw[:node.Raw.Offset], '\n') + 1
-					if section.end == 0 || start < section.start {
-						section.start = start
+					end := lineEnd(raw, int(node.Raw.Offset+node.Raw.Length))
+					if len(section.spans) == 0 {
+						section.spans = []codexMCPSpan{{start: start, end: end}}
+					} else {
+						section.spans[0].start = min(section.spans[0].start, start)
+						section.spans[0].end = end
 					}
-					section.end = lineEnd(raw, int(node.Raw.Offset+node.Raw.Length))
 					section.alternate = true
 					sections[name] = section
 				}
 				continue
 			}
 			section := sections[current]
-			section.end = lineEnd(raw, int(node.Raw.Offset+node.Raw.Length))
+			section.spans[len(section.spans)-1].end = lineEnd(raw, int(node.Raw.Offset+node.Raw.Length))
 			sections[current] = section
 		}
 	}
@@ -494,11 +549,7 @@ func reconcileCodexMCPWithSession(ctx context.Context, report *Report, key outpu
 			collisions[id.Key] = true
 			report.Diags = append(report.Diags, diag.Diagnostic{Code: diag.CodeOwnershipUnmanagedKey, Severity: diag.SeverityError, Target: string(key.target), Resource: byName[id.Key].resource, Message: fmt.Sprintf("Codex MCP server %q collides with an unmanaged config.toml entry; existing entry preserved", id.Key)})
 		}
-		type edit struct {
-			start, end  int
-			replacement []byte
-		}
-		var edits []edit
+		var edits []codexMCPEdit
 		owned := make([]ownership.Entry, 0, len(desired)+len(drift.Stale))
 		if !incomplete {
 			for _, id := range drift.Stale {
@@ -509,7 +560,7 @@ func reconcileCodexMCPWithSession(ctx context.Context, report *Report, key outpu
 						owned = append(owned, ownership.Entry{Kind: id.Kind, Container: id.Container, Key: id.Key, IdentityDigest: id.IdentityDigest, ValueDigest: section.value.ValueDigest, Resource: resource})
 						continue
 					}
-					edits = append(edits, edit{start: section.start, end: section.end})
+					edits = append(edits, section.edits(nil)...)
 				}
 			}
 		}
@@ -531,7 +582,7 @@ func reconcileCodexMCPWithSession(ctx context.Context, report *Report, key outpu
 					continue
 				}
 				owned = append(owned, entry.owned())
-				edits = append(edits, edit{start: section.start, end: section.end, replacement: entry.raw})
+				edits = append(edits, section.edits(entry.raw)...)
 			} else {
 				owned = append(owned, entry.owned())
 				prefix := []byte(nil)
@@ -541,7 +592,7 @@ func reconcileCodexMCPWithSession(ctx context.Context, report *Report, key outpu
 				if len(raw) > 0 {
 					prefix = append(prefix, '\n')
 				}
-				edits = append(edits, edit{start: len(raw), end: len(raw), replacement: append(prefix, entry.raw...)})
+				edits = append(edits, codexMCPEdit{start: len(raw), end: len(raw), replacement: append(prefix, entry.raw...)})
 			}
 		}
 		if incomplete {
@@ -554,15 +605,7 @@ func reconcileCodexMCPWithSession(ctx context.Context, report *Report, key outpu
 				owned = append(owned, ownership.Entry{Kind: id.Kind, Container: id.Container, Key: id.Key, IdentityDigest: id.IdentityDigest, ValueDigest: section.value.ValueDigest, Resource: resource})
 			}
 		}
-		sort.SliceStable(edits, func(i, j int) bool { return edits[i].start > edits[j].start })
-		next := append([]byte(nil), raw...)
-		for _, e := range edits {
-			patched := make([]byte, 0, len(next)-(e.end-e.start)+len(e.replacement))
-			patched = append(patched, next[:e.start]...)
-			patched = append(patched, e.replacement...)
-			patched = append(patched, next[e.end:]...)
-			next = patched
-		}
+		next := applyCodexMCPEdits(raw, edits)
 		if bytes.Equal(raw, next) {
 			slog.Debug("Codex MCP configuration already in sync", "target", key.target, "machine_scope", key.machineScope, "file", abs, "owned_entries", len(owned))
 			return nil

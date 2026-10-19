@@ -15,6 +15,7 @@ const packageRoot = [
 if (!packageRoot) throw new Error("cannot locate the TUI QA package root");
 const repositoryRoot = path.resolve(process.env.AM_TUI_QA_REPO_ROOT ?? path.join(packageRoot, "..", ".."));
 export const binary = path.resolve(process.env.AM_TUI_QA_BINARY ?? path.join(repositoryRoot, ".local", "agent-marketplace", "bin", "agent-marketplace-tui-qa"));
+export const artifactRoot = path.resolve(process.env.AM_TUI_QA_ARTIFACTS ?? path.join(packageRoot, "test-results"));
 
 export interface ProcessFixture {
   root: string;

@@ -243,10 +243,7 @@ func (s *codexMCPRepairState) remove(id ownership.EntryID, valueDigest string) (
 	if section.alternate {
 		return nil, fmt.Errorf("codex MCP server %q uses an alternate TOML form that cannot be removed safely", id.Key)
 	}
-	next := make([]byte, 0, len(s.raw)-(section.end-section.start))
-	next = append(next, s.raw[:section.start]...)
-	next = append(next, s.raw[section.end:]...)
-	return next, nil
+	return applyCodexMCPEdits(s.raw, section.edits(nil)), nil
 }
 
 func (s *codexMCPRepairState) replace(id ownership.EntryID, replacement []byte) ([]byte, error) {
@@ -257,11 +254,7 @@ func (s *codexMCPRepairState) replace(id ownership.EntryID, replacement []byte) 
 	if section.alternate {
 		return nil, fmt.Errorf("codex MCP server %q uses an alternate TOML form that cannot be replaced safely", id.Key)
 	}
-	next := make([]byte, 0, len(s.raw)-(section.end-section.start)+len(replacement))
-	next = append(next, s.raw[:section.start]...)
-	next = append(next, replacement...)
-	next = append(next, s.raw[section.end:]...)
-	return next, nil
+	return applyCodexMCPEdits(s.raw, section.edits(replacement)), nil
 }
 
 func readCodexMCPRepairState(store *ownership.Store, key outputKey, root string) (*codexMCPRepairState, []diag.Diagnostic) {

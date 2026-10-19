@@ -1,6 +1,6 @@
 # Command-line reference
 
-This page lists every `agent-marketplace` command, its flags, defaults, output, and exit status. Use it when you need the exact behavior of a command. If you are new to the terminal, start with [terminal basics](../terminal-basics.md) and the [quick start](../quick-start.md).
+This page lists every `agent-marketplace` command, its flags, defaults, output, and exit status. Use it when you need the exact behavior of a command. If you are new to the tool, start with the [quick start](../quick-start.md).
 
 The `agent-marketplace` command reads your layered configuration (including local files named by each layer's `include` field), finds the resources in each configured registry, and writes them into the folders each [harness](../glossary.md#harness) reads. The docs call that last step materialization.
 

@@ -57,9 +57,9 @@ const installationCountLabel = computed(() =>
           <span class="text-xs text-dimmed" aria-hidden="true">·</span>
           <h2 class="relative z-10 min-w-0 truncate font-mono text-sm font-medium leading-5 tracking-tight">
             <NuxtLink v-if="browserUrl" :to="browserUrl" :aria-label="`${registryLabel(item)}/${item.name}`" class="resource-coordinate-link relative cursor-pointer rounded focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary">
-              <span class="text-muted">{{ registryLabel(item) }}</span><span class="resource-coordinate__separator am-brand-slash"> / </span><span class="font-semibold text-highlighted">{{ item.name }}</span>
+              <span class="text-muted">{{ registryLabel(item) }}</span><span class="resource-coordinate__separator am-brand-slash am-brand-slash--separator">/</span><span class="font-medium text-highlighted">{{ item.name }}</span>
             </NuxtLink>
-            <span v-else :aria-label="`${registryLabel(item)}/${item.name}`"><span class="text-muted">{{ registryLabel(item) }}</span><span class="resource-coordinate__separator am-brand-slash"> / </span><span class="font-semibold text-highlighted">{{ item.name }}</span></span>
+            <span v-else :aria-label="`${registryLabel(item)}/${item.name}`"><span class="text-muted">{{ registryLabel(item) }}</span><span class="resource-coordinate__separator am-brand-slash am-brand-slash--separator">/</span><span class="font-medium text-highlighted">{{ item.name }}</span></span>
           </h2>
         </div>
 
@@ -111,16 +111,25 @@ const installationCountLabel = computed(() =>
 </template>
 
 <style scoped>
-.resource-coordinate-link {
-  transition: box-shadow 150ms;
+.resource-coordinate-link::after {
+  position: absolute;
+  right: 0;
+  bottom: -2px;
+  left: 0;
+  height: 1px;
+  background: var(--am-color-action-primary);
+  content: "";
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 150ms;
 }
 
-.resource-coordinate-link:hover {
-  box-shadow: inset 0 -1px 0 var(--am-color-action-primary);
+.resource-coordinate-link:hover::after {
+  opacity: 1;
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .resource-coordinate-link {
+  .resource-coordinate-link::after {
     transition: none;
   }
 }

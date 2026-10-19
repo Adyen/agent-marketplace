@@ -82,12 +82,13 @@ describe('ResourceDetailView', () => {
         global: { stubs },
       })
 
-      expect(wrapper.get('h1').text()).toBe(prefixed ? '/ review' : 'review')
+      expect(wrapper.get('h1').text()).toBe(prefixed ? '/review' : 'review')
       if (prefixed) {
         const slash = wrapper.get('[data-testid="resource-title-slash"]')
         expect(slash.text()).toBe('/')
         expect(slash.attributes('aria-hidden')).toBe('true')
         expect(slash.classes()).toContain('am-brand-slash')
+        expect(slash.classes()).toContain('am-brand-slash--title')
       }
       else {
         expect(wrapper.find('[data-testid="resource-title-slash"]').exists()).toBe(false)
@@ -111,7 +112,7 @@ describe('ResourceDetailView', () => {
       global: { stubs },
     })
 
-    expect(wrapper.get('h1').text()).toBe('/ review')
+    expect(wrapper.get('h1').text()).toBe('/review')
     expect(wrapper.find('[data-testid="revision-summary"]').exists()).toBe(false)
     const revisionRow = wrapper.get('[data-testid="revision-row"]')
     expect(revisionRow.get('[data-testid="revision-label"]').text()).toBe('Revision (latest)')
@@ -216,7 +217,7 @@ describe('ResourceDetailView', () => {
       global: { stubs },
     })
 
-    expect(wrapper.get('h1').text()).toBe('/ review')
+    expect(wrapper.get('h1').text()).toBe('/review')
     expect(wrapper.get('code').text()).toContain(`/revisions/sha256%3A${'c'.repeat(64)}`)
     expect(wrapper.find('button[aria-label^="Copy detail URL"]').exists()).toBe(false)
     expect(wrapper.find('script').exists()).toBe(false)
