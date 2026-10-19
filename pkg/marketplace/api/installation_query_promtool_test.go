@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -333,6 +334,7 @@ func TestInstallationMetricsQueryPromtool(t *testing.T) {
 		malformedSnapshotCase("0", false),
 		malformedSnapshotCase("-1", false),
 		malformedSnapshotCase("3455999000000.5", true),
+		malformedSnapshotCase("NaN", false),
 		malformedSnapshotCase("9007199254740994", false),
 		missingIdentityCase(`agent_marketplace_config_snapshot{namespace="ops",config_fingerprint="no-installation"}`, promtoolNow, 2),
 		missingIdentityCase(`agent_marketplace_config_snapshot{namespace="ops",installation_id="no-fingerprint"}`, promtoolNow, 2),
@@ -530,5 +532,29 @@ func TestAggregateInstallationMetricsValidatesSuspiciousRows(t *testing.T) {
 	samples[2].Metric["resource_name"] = "../bad"
 	if _, err := aggregateInstallationMetrics(samples, plan, now); !errors.Is(err, errInvalidInstallationMetrics) {
 		t.Fatalf("invalid suspicious row error = %v, want %v", err, errInvalidInstallationMetrics)
+	}
+}
+
+// spec: marketplace-api/registry-identity-and-inventory-expiry-prevent-unsafe-counts
+func TestInstallationMetricsFetchAcceptsWholeSecondFreshnessCutoff(t *testing.T) {
+	evalTime := adoptionFixedNow.Add(500 * time.Millisecond)
+	evalSecond := time.Unix(evalTime.Unix(), 0)
+	cutoff := evalSecond.Add(-installationInventoryWindow)
+	samples := []inventoryMetricSample{
+		aggregateResponseSample("fresh", 1, nil),
+		aggregateResponseSample("valid_until", float64(cutoff.UnixMicro()), nil),
+	}
+	fixture := newMetricsFixture(t, func() string { return prometheusVector(samples, evalTime) })
+	reader := newTestReader(t, fixture)
+
+	counts, err := reader.fetch(context.Background(), adoptionTestRegistries(), evalTime)
+	if err != nil {
+		t.Fatalf("fetch() at the whole-second freshness cutoff error = %v, want nil", err)
+	}
+	if !counts.ValidUntil.Equal(evalSecond) {
+		t.Fatalf("valid until = %v, want %v", counts.ValidUntil, evalSecond)
+	}
+	if request := <-fixture.requests; request.Form.Get("time") != fmt.Sprintf("%d", evalTime.Unix()) {
+		t.Fatalf("evaluation time = %q, want %d", request.Form.Get("time"), evalTime.Unix())
 	}
 }

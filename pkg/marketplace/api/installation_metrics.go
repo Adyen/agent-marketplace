@@ -192,6 +192,7 @@ func minTime(a, b time.Time) time.Time {
 }
 
 func (r *installationMetricsReader) fetch(ctx context.Context, registries map[store.RegistryID]store.Registry, evalTime time.Time) (installationCounts, error) {
+	evalTime = time.Unix(evalTime.Unix(), 0)
 	plan := newInstallationQueryPlan(registries, r.marketplaceID)
 	form := url.Values{
 		"query": {installationMetricsQuery(r.labels, plan)},

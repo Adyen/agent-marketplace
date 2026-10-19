@@ -175,6 +175,7 @@ func installationMetricsQuery(labels map[string]string, plan installationQueryPl
 	)
 
 	invalidRows := []string{
+		`(` + snapshot + ` != ` + snapshot + `)`,
 		`((clamp(` + latest + `, 1, 9007199254740992) - floor(` + latest + `)) != 0)`,
 	}
 	resourceInvalidMatchers := []string{
