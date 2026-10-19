@@ -166,3 +166,69 @@ func TestSyncSharedNativePathChangesOwnerCleanly(t *testing.T) {
 		})
 	}
 }
+
+// spec: resource-selection/required-skill-keeps-a-native-path-a-case-variant-command-shares
+func TestSyncRequiredSkillKeepsPathACaseVariantCommandShares(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	for _, mode := range []string{"symlink", "file"} {
+		t.Run(mode, func(t *testing.T) {
+			home := t.TempDir()
+			t.Setenv("HOME", home)
+			t.Setenv("CODEX_HOME", filepath.Join(home, ".codex"))
+			orgOrigin, orgWorking := createBareRepoWithWorkingClone(t, "org.git")
+			writeSkill(t, orgWorking, "audit", "Organization required skill", nil)
+			commitAndPushAll(t, orgWorking, "organization skill")
+			// OpenCode names a command after its file, and resource names may
+			// contain upper-case letters.
+			userOrigin, userWorking := createBareRepoWithWorkingClone(t, "user.git")
+			writeFile(t, filepath.Join(userWorking, ".opencode", "commands", "Audit.md"), "---\ndescription: User selected command\n---\nRun the user command.\n")
+			commitAndPushAll(t, userWorking, "user command")
+			orgPath := filepath.Join(t.TempDir(), "org.yaml")
+			writeConfig(t, orgPath, "apiVersion: agent-marketplace/v4\nharnesses: [devin, codex, claude]\nsources:\n  org:\n    git: file://"+orgOrigin+"\n    ref: main\nresources:\n  org:\n    all: true\n    required: true\n")
+			config.SetTestOrganizationConfigPath(t, orgPath)
+			writeConfig(t, filepath.Join(home, ".agents", "config.yaml"), "apiVersion: agent-marketplace/v4\nharnesses: [devin, codex, claude]\nmaterialization:\n  mode: "+mode+"\nsources:\n  user:\n    git: file://"+userOrigin+"\n    ref: main\n    source_harness: opencode\nresources:\n  user:\n    include: [command/Audit]\n")
+			repoRoot := filepath.Join(t.TempDir(), "repo")
+			if err := os.MkdirAll(repoRoot, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			withWorkingDir(t, repoRoot)
+			if output, err := executeCommand("lock", "--scope", "organization"); err != nil {
+				t.Fatalf("seed organization lock: %v\n%s", err, output)
+			}
+
+			output, err := executeCommand("sync")
+			if err != nil {
+				t.Fatalf("sync: %v\n%s", err, output)
+			}
+			for _, root := range []string{filepath.Join(home, ".config", "devin", "skills"), filepath.Join(home, ".agents", "skills")} {
+				data, readErr := os.ReadFile(filepath.Join(root, "audit", "SKILL.md"))
+				if readErr != nil || !strings.Contains(string(data), "Organization required skill") {
+					t.Errorf("%s/audit does not hold the required skill: %v\n%s", root, readErr, data)
+				}
+				// On a case-sensitive host a separate Audit entry would survive
+				// here and replace the skill on case-insensitive ones.
+				entries, readErr := os.ReadDir(root)
+				if readErr != nil {
+					t.Fatal(readErr)
+				}
+				for _, entry := range entries {
+					if entry.Name() == "Audit" {
+						t.Errorf("%s/Audit was installed next to the required skill", root)
+					}
+				}
+			}
+			if !strings.Contains(output, "materialize.collision.shared-path") || !strings.Contains(output, `command "Audit"`) {
+				t.Errorf("sync did not report the displaced command:\n%s", output)
+			}
+			command, readErr := os.ReadFile(filepath.Join(home, ".claude", "commands", "Audit.md"))
+			if readErr != nil || !strings.Contains(string(command), "Run the user command.") {
+				t.Errorf("Claude Code must keep the command: %v\n%s", readErr, command)
+			}
+			if output, err := executeCommand("sync", "--check"); err != nil {
+				t.Errorf("sync --check after sync: %v\n%s", err, output)
+			}
+		})
+	}
+}

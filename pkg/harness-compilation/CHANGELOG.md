@@ -4,7 +4,7 @@
 
 ### `materialize.collision.shared-path` warning
 
-The catalog adds the consumer-side warning `materialize.collision.shared-path`. Agent Marketplace reports it when resources of different kinds with the same installed name share one native path on a target, such as a skill and a converted command skill on Devin or Codex, and only the winner by selection precedence is installed there (#759). Library compilation and its existing `bundle.conflict.cross-kind-artifact-path` refusal are unchanged.
+The catalog adds the consumer-side warning `materialize.collision.shared-path`. Agent Marketplace reports it when resources of different kinds with the same installed name share one native path on a target, such as a skill and a converted command skill on Devin or Codex, including names that differ only in letter case, and only the winner by selection precedence is installed there (#759). Library compilation and its existing `bundle.conflict.cross-kind-artifact-path` refusal are unchanged.
 
 ### Codex read-only agents map to read-only modes; Unicode case folding in collisions
 
