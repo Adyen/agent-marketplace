@@ -7,7 +7,7 @@ The [quick start](./quick-start.md) installs `agent-marketplace` with one `go in
 Pick a method below, then [check that it works](#verify). You also need [Git](./glossary.md#git) to install resources from Git registries. Run `git --version` to check.
 
 ::: tip Upgrading an existing installation
-`agent-marketplace` stops at startup if a configuration file doesn't declare `apiVersion: agent-marketplace/v4`, and names the file. [Convert configuration before upgrading](./how-to/migrate-configuration.md) explains how to fix it.
+`agent-marketplace` refuses to load a configuration file that doesn't declare `apiVersion: agent-marketplace/v4`: commands exit with an error and the TUI shows it, naming the file. [Convert configuration before upgrading](./how-to/migrate-configuration.md) explains how to fix it.
 :::
 
 ## From GitHub Releases
@@ -86,7 +86,7 @@ go install github.com/Adyen/agent-marketplace/cmd/agent-marketplace@latest
 
 This builds the latest commit on `main`, which may be newer than the latest release. Go can't select `v4.x.x` release tags for this module, so `@latest` never means a release. To install a release, build it from source (next section).
 
-Go puts the program in `$(go env GOPATH)/bin`, usually `~/go/bin`. Add that folder to your `PATH` if it isn't there, as in option B. If Go reports a `404` or an authentication error during download, run `export GOPRIVATE=github.com/Adyen/agent-marketplace` and try again. Go then downloads directly from GitHub with your Git credentials.
+Go puts the program in `$(go env GOBIN)` if set, otherwise `$(go env GOPATH)/bin` (usually `~/go/bin`). Add that folder to your `PATH` if it isn't there, as in option B. If Go reports a `404` or an authentication error during download, run `export GOPRIVATE="${GOPRIVATE:+$GOPRIVATE,}github.com/Adyen/agent-marketplace"` and try again. Go then downloads directly from GitHub with your Git credentials.
 
 ## From source
 

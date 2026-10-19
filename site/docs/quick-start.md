@@ -24,10 +24,10 @@ Check that it works:
 agent-marketplace --version
 ```
 
-If Go reports a `404` or an authentication error, run `export GOPRIVATE=github.com/Adyen/agent-marketplace` and try again. If the terminal answers `command not found`, add `~/go/bin` to your `PATH`. To download a release binary instead, or to build from source, see [more install options](./install.md).
+If Go reports a `404` or an authentication error, run `export GOPRIVATE="${GOPRIVATE:+$GOPRIVATE,}github.com/Adyen/agent-marketplace"` and try again. If the terminal answers `command not found`, add Go's install folder to your `PATH`: `$(go env GOBIN)` if set, otherwise `$(go env GOPATH)/bin` (usually `~/go/bin`). To download a release binary instead, or to build from source, see [more install options](./install.md).
 
 ::: tip Coming from an older version?
-`agent-marketplace` stops at startup if a configuration file doesn't declare `apiVersion: agent-marketplace/v4`, and names the file. [Convert configuration before upgrading](./how-to/migrate-configuration.md) explains how to fix it.
+`agent-marketplace` refuses to load a configuration file that doesn't declare `apiVersion: agent-marketplace/v4`: commands exit with an error and the TUI shows it, naming the file. [Convert configuration before upgrading](./how-to/migrate-configuration.md) explains how to fix it.
 :::
 
 ## Open your project
