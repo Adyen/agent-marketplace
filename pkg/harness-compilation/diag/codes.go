@@ -416,6 +416,7 @@ const (
 	CodePluginCompilePackageRequired       = "plugin.compile.package-required"       // A plugin resource was passed to the per-resource Compile boundary
 	CodePluginDeliveryPending              = "plugin.delivery.pending"               // WARNING: the plugin is acquired and locked but harness delivery is not yet implemented
 	CodePluginCatalogSharedOrigin          = "plugin.catalog.shared-origin"          // Two selected catalog entries resolve to the same external origin; the selection is refused
+	CodePluginSelectionUndeclaredSource    = "plugin.selection.undeclared-source"    // A layer's collection selects a plugin from a format source that layer does not declare; the selection is refused
 
 	// Devin hook and MCP ENTRY-SKIP codes.
 	//

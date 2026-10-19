@@ -172,7 +172,7 @@ func exactLockViewWithContext(ctx context.Context, ec config.EffectiveConfig, al
 		var pluginContexts *PluginLockContexts
 		if len(FormatSourceEntries(layer.Sources)) > 0 {
 			var ctxErr error
-			pluginContexts, ctxErr = BuildPluginLockContexts(plan, layer.Sources, *doc)
+			pluginContexts, ctxErr = BuildPluginLockContexts(plan, layer.Sources, *doc, layer.Source)
 			if ctxErr != nil {
 				viewErrors = append(viewErrors, &LockViewError{Code: "lock.read", Scope: scope, Path: lockPath, Err: ctxErr})
 				continue

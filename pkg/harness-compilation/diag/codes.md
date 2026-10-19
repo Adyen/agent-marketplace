@@ -683,6 +683,7 @@ key or a hook event name), the resource name, and content digests are reported.
 | `plugin.compile.package-required` | A plugin resource reached the per-resource Compile boundary; plugins compile through the package compile entry point | Call the package compile entry point instead of Compile |
 | `plugin.delivery.pending` (warning) | A selected plugin is acquired and locked, but plugin member delivery to harnesses is not implemented yet | Wait for the plugin-delivery capability; nothing in the install needs attention |
 | `plugin.catalog.shared-origin` | Two selected catalog entries resolve to the same external origin, ref, and subdirectory; their lock records would collapse into one, so the selection is refused | Select only one of the entries, or split the packages into distinct origins or subdirectories |
+| `plugin.selection.undeclared-source` | A collection authored in one config layer selects a plugin from a format source that layer does not declare; the selection would record in no acquisition lock, so it is refused | Declare the format source in the selecting layer, or author the selection in the layer that declares it |
 
 ### Devin doctor and repair codes
 

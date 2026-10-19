@@ -116,9 +116,11 @@ func (c *PluginLockContexts) PluginContextFor(registry lockfile.GitRegistry, roo
 // BuildPluginLockContexts projects the layer's plugin-v1 verification
 // inputs out of the resolver's own plugin selection plan: the planned
 // plugins of each git format root and the owning-catalog binding of every
-// selected external catalog entry. The layer's locked document supplies each
-// git format root's recorded commit.
-func BuildPluginLockContexts(plan catalog.PluginSelectionPlan, decls []config.SourceDecl, doc lockfile.Document) (*PluginLockContexts, error) {
+// selected external catalog entry. Only selection edges authored in the
+// given layer's own configuration enter its manifests; a selection authored
+// in another layer is locked there instead. The layer's locked document
+// supplies each git format root's recorded commit.
+func BuildPluginLockContexts(plan catalog.PluginSelectionPlan, decls []config.SourceDecl, doc lockfile.Document, layer config.Source) (*PluginLockContexts, error) {
 	format := FormatSourceEntries(decls)
 	if len(format) == 0 {
 		return nil, nil
@@ -137,7 +139,7 @@ func BuildPluginLockContexts(plan catalog.PluginSelectionPlan, decls []config.So
 		if !known {
 			return nil, fmt.Errorf("plugin format %q is not a recognized package or catalog format", entry.Format)
 		}
-		planned := plan.ForEntry(entry)
+		planned := plan.ForEntry(entry, layer)
 		owner := pluginOwner{entry: entry}
 		if entry.IsLocal() {
 			out.bindPlannedExternals(planned, owner)
@@ -340,10 +342,11 @@ func PluginPlanErrors(errs []error) []error {
 		var memberErr *resolver.PluginMemberDirectSelectionError
 		var exclusionErr *resolver.PluginUnknownExclusionError
 		var refusalErr *resolver.PluginEntryRefusalError
+		var undeclaredErr *resolver.PluginUndeclaredSourceError
 		var notFound *resolver.SelectedNotFoundError
 		var malformedErr *resolver.SelectedMalformedError
 		switch {
-		case errors.As(err, &memberErr), errors.As(err, &exclusionErr), errors.As(err, &refusalErr):
+		case errors.As(err, &memberErr), errors.As(err, &exclusionErr), errors.As(err, &refusalErr), errors.As(err, &undeclaredErr):
 			out = append(out, err)
 		case errors.As(err, &notFound) && (notFound.Kind == ir.KindPlugin || notFound.Kind == ir.KindCollection) && !resolver.IsSoftSelectedNotFound(err):
 			out = append(out, err)

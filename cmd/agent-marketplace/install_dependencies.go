@@ -142,7 +142,7 @@ func (p *preparedInstallLocks) bindRegistry(target config.Source, entry config.R
 	return fmt.Errorf("%w: selected registry has no prepared pin", dependencytxn.ErrGenerationConflict)
 }
 
-func reuseInstallDocument(ctx context.Context, plan *preparedInstallLocks, path string, scope lockfile.Scope, entries []config.RegistryEntry, decls []config.SourceDecl, current *lockfile.Document, planner *pluginPlanSource) (reconciledDocument, bool) {
+func reuseInstallDocument(ctx context.Context, plan *preparedInstallLocks, path string, scope lockfile.Scope, entries []config.RegistryEntry, decls []config.SourceDecl, current *lockfile.Document, planner *pluginPlanSource, layer config.Source) (reconciledDocument, bool) {
 	doc, ok := plan.documents[path]
 	if bindings := plan.bindings[path]; len(bindings) > 0 {
 		var err error
@@ -152,7 +152,7 @@ func reuseInstallDocument(ctx context.Context, plan *preparedInstallLocks, path 
 		}
 		ok = true
 	}
-	if !ok || !documentMatchesEntries(doc, entries, expectedExternalIdentities(ctx, planner, decls, doc)) {
+	if !ok || !documentMatchesEntries(doc, entries, expectedExternalIdentities(ctx, planner, decls, doc, layer)) {
 		return reconciledDocument{err: fmt.Errorf("%w: prepared install requirements changed", dependencytxn.ErrGenerationConflict)}, false
 	}
 	if current == nil {

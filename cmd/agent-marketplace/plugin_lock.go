@@ -82,14 +82,15 @@ func (s *pluginPlanSource) get(ctx context.Context) (catalog.PluginSelectionPlan
 
 // finalizePluginRoots completes the deferred format roots of one layer after
 // every git acquisition: each plugin-v1 manifest renders the resolver's
-// planned selection for that root, and every planned external catalog entry
-// is acquired as its own registry record.
-func finalizePluginRoots(ctx context.Context, pending []pendingFormatRoot, decls []config.SourceDecl, plan catalog.PluginSelectionPlan, old map[string]lockfile.GitRegistry, upgrade, readOnly bool, allowed *[]string) ([]lockfile.GitRegistry, error) {
+// planned selection for that root, restricted to edges the layer itself
+// authored, and every planned external catalog entry is acquired as its own
+// registry record.
+func finalizePluginRoots(ctx context.Context, pending []pendingFormatRoot, decls []config.SourceDecl, plan catalog.PluginSelectionPlan, layer config.Source, old map[string]lockfile.GitRegistry, upgrade, readOnly bool, allowed *[]string) ([]lockfile.GitRegistry, error) {
 	seen := map[string]bool{}
 	var out []lockfile.GitRegistry
 	for i := range pending {
 		item := pending[i]
-		built, err := sourcerevision.Build(sourcerevision.Input{SnapshotRoot: item.snapshot, RootPath: item.rootPath, SourceHarness: item.entry.Format, RevisionSchema: "plugin-v1", PluginSelection: plan.ForEntry(item.entry)})
+		built, err := sourcerevision.Build(sourcerevision.Input{SnapshotRoot: item.snapshot, RootPath: item.rootPath, SourceHarness: item.entry.Format, RevisionSchema: "plugin-v1", PluginSelection: plan.ForEntry(item.entry, layer)})
 		if err != nil {
 			return nil, fmt.Errorf("build plugin source revision for %s/%s: %w", item.group.canonical, item.rootPath, err)
 		}
@@ -123,7 +124,7 @@ func finalizePluginRoots(ctx context.Context, pending []pendingFormatRoot, decls
 			continue
 		}
 		entry := pipeline.FormatSourceEntries([]config.SourceDecl{decl})[0]
-		for _, plugin := range plan.ForEntry(entry) {
+		for _, plugin := range plan.ForEntry(entry, layer) {
 			ext, ok := pipeline.PlannedExternalEntry(plugin)
 			if !ok {
 				continue
@@ -156,7 +157,7 @@ func finalizePluginRoots(ctx context.Context, pending []pendingFormatRoot, decls
 // needs a lock: a directory format source whose planned selection names at
 // least one external catalog entry produces a registry record; anything less
 // writes nothing.
-func directorySelectsExternalPlugin(ctx context.Context, planner *pluginPlanSource, decls []config.SourceDecl) bool {
+func directorySelectsExternalPlugin(ctx context.Context, planner *pluginPlanSource, decls []config.SourceDecl, layer config.Source) bool {
 	format := false
 	for _, decl := range decls {
 		if decl.Format != "" && decl.Kind == config.V4SourceDirectory {
@@ -176,7 +177,7 @@ func directorySelectsExternalPlugin(ctx context.Context, planner *pluginPlanSour
 			continue
 		}
 		entry := pipeline.FormatSourceEntries([]config.SourceDecl{decl})[0]
-		for _, plugin := range plan.ForEntry(entry) {
+		for _, plugin := range plan.ForEntry(entry, layer) {
 			if plugin.Entry.Plugin != nil && plugin.Entry.Plugin.Source.Kind == "git" {
 				return true
 			}

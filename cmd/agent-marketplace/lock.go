@@ -985,7 +985,7 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 			}
 			lockModes[lockPath] = currentMode
 		}
-		if len(remote) == 0 && !exists && !hasStagedLock && !directorySelectsExternalPlugin(ctx, planner, layer.Sources) {
+		if len(remote) == 0 && !exists && !hasStagedLock && !directorySelectsExternalPlugin(ctx, planner, layer.Sources, layer.Source) {
 			continue
 		}
 		implicitOrg := scope == lockfile.ScopeOrganization && !mode.explicitOrganization
@@ -1004,7 +1004,7 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 			continue
 		}
 		if mode.upgrade && !selected && !mode.reconcileUnselected {
-			if !exists || current == nil || !unselectedLayerIsFresh(ctx, planner, remote, layer.Sources, *current) {
+			if !exists || current == nil || !unselectedLayerIsFresh(ctx, planner, remote, layer.Sources, *current, layer.Source) {
 				continue
 			}
 			if err := ensureSnapshotLease(); err != nil {
@@ -1017,7 +1017,7 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 			return nil, changed, nil, &lockLifecycleError{Code: "lock.missing", Scope: scope, Path: lockPath, Err: os.ErrNotExist}
 		}
 		if mode.check {
-			fresh := exists && current != nil && unselectedLayerIsFresh(ctx, planner, remote, layer.Sources, *current)
+			fresh := exists && current != nil && unselectedLayerIsFresh(ctx, planner, remote, layer.Sources, *current, layer.Source)
 			if fresh && current.APIVersion == lockfile.APIVersionV1 && !implicitOrg && !mode.locked {
 				if checkUpgradeErr == nil {
 					checkUpgradeErr = &lockLifecycleError{Code: "lock.version-upgrade-required", Scope: scope, Path: lockPath, Err: errors.New("lock schema upgrade to v2 required")}
@@ -1059,7 +1059,7 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 		var gitFresh bool
 		var deferred *pluginDeferred
 		if mode.reuseInstall != nil {
-			gitDesired, gitFresh = reuseInstallDocument(ctx, mode.reuseInstall, lockPath, scope, remote, layer.Sources, current, planner)
+			gitDesired, gitFresh = reuseInstallDocument(ctx, mode.reuseInstall, lockPath, scope, remote, layer.Sources, current, planner, layer.Source)
 		} else {
 			gitDesired, gitFresh, deferred = reconcileLayerDocument(ctx, scope, remote, layer.Sources, current, operation, mode.upgradeSelection, mode.offline, mode.readOnlyDependencies(), allowedRegistries(ec), ensureSnapshotLease)
 		}
@@ -1101,7 +1101,7 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 		}
 		for i := range deferredPluginWrites {
 			dw := &deferredPluginWrites[i]
-			doc, gitFresh, err := dw.job.finish(ctx, plan)
+			doc, gitFresh, err := dw.job.finish(ctx, plan, dw.layer.Source)
 			if err != nil {
 				return nil, changed, nil, err
 			}
@@ -1361,9 +1361,9 @@ type pluginDeferred struct {
 // finish completes the deferred plugin work after the shared selection plan
 // is known: plugin-v1 manifests render the plan, external records are
 // acquired, and the document is normalized and compared for freshness.
-func (p *pluginDeferred) finish(ctx context.Context, plan catalog.PluginSelectionPlan) (lockfile.Document, bool, error) {
+func (p *pluginDeferred) finish(ctx context.Context, plan catalog.PluginSelectionPlan, layer config.Source) (lockfile.Document, bool, error) {
 	doc := p.doc
-	externals, err := finalizePluginRoots(ctx, p.pending, p.decls, plan, p.old, p.upgrade, p.readOnly, p.allowed)
+	externals, err := finalizePluginRoots(ctx, p.pending, p.decls, plan, layer, p.old, p.upgrade, p.readOnly, p.allowed)
 	if err != nil {
 		return doc, false, err
 	}
@@ -1703,15 +1703,15 @@ func writableV1RequiresUpgrade(scope lockfile.Scope, mode lockMode) bool {
 	return scope != lockfile.ScopeOrganization || mode.explicitOrganization
 }
 
-func unselectedLayerIsFresh(ctx context.Context, planner *pluginPlanSource, registries []config.RegistryEntry, decls []config.SourceDecl, doc lockfile.Document) bool {
-	return documentMatchesEntries(doc, registries, expectedExternalIdentities(ctx, planner, decls, doc))
+func unselectedLayerIsFresh(ctx context.Context, planner *pluginPlanSource, registries []config.RegistryEntry, decls []config.SourceDecl, doc lockfile.Document, layer config.Source) bool {
+	return documentMatchesEntries(doc, registries, expectedExternalIdentities(ctx, planner, decls, doc, layer))
 }
 
 // expectedExternalIdentities computes the registry identities the current
 // configuration requires as external catalog-entry records, so doc matching
 // can exempt exactly those, and nothing else, from the configured-source
 // identity match.
-func expectedExternalIdentities(ctx context.Context, planner *pluginPlanSource, decls []config.SourceDecl, doc lockfile.Document) map[string]bool {
+func expectedExternalIdentities(ctx context.Context, planner *pluginPlanSource, decls []config.SourceDecl, doc lockfile.Document, layer config.Source) map[string]bool {
 	if len(pipeline.FormatSourceEntries(decls)) == 0 {
 		return nil
 	}
@@ -1719,7 +1719,7 @@ func expectedExternalIdentities(ctx context.Context, planner *pluginPlanSource, 
 	if err != nil || len(pipeline.PluginPlanErrors(errs)) > 0 {
 		return map[string]bool{}
 	}
-	contexts, err := pipeline.BuildPluginLockContexts(plan, decls, doc)
+	contexts, err := pipeline.BuildPluginLockContexts(plan, decls, doc, layer)
 	if err != nil {
 		return map[string]bool{}
 	}
@@ -1795,7 +1795,7 @@ func addLayerSnapshots(ctx context.Context, set *exactLockSet, source config.Sou
 		if hard := pipeline.PluginPlanErrors(planErrs); len(hard) > 0 {
 			return errors.Join(hard...)
 		}
-		contexts, ctxErr := pipeline.BuildPluginLockContexts(plan, decls, doc)
+		contexts, ctxErr := pipeline.BuildPluginLockContexts(plan, decls, doc, source)
 		if ctxErr != nil {
 			return ctxErr
 		}

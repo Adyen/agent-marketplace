@@ -168,7 +168,7 @@ func intentPluginLockContexts(ctx context.Context, intent config.Intent, docs ma
 	if hard := PluginPlanErrors(errs); len(hard) > 0 {
 		return nil, errors.Join(hard...)
 	}
-	return BuildPluginLockContexts(plan, intent.Layers[config.Organization].Sources(), *docs[config.Organization])
+	return BuildPluginLockContexts(plan, intent.Layers[config.Organization].Sources(), *docs[config.Organization], config.Organization)
 }
 
 // leaseRegistrySnapshot opens a registry record's committed snapshot for

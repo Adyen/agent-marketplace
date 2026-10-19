@@ -333,7 +333,7 @@ func rollbackMarketplaceLayer(ctx context.Context, stateDir string, ws Workspace
 			if hard := PluginPlanErrors(planErrs); len(hard) > 0 {
 				return fmt.Errorf("%w: resolve plugin lock contexts for Marketplace rollback: %w", dependencytxn.ErrGenerationConflict, errors.Join(hard...))
 			}
-			contexts, ctxErr := BuildPluginLockContexts(plan, decls, doc)
+			contexts, ctxErr := BuildPluginLockContexts(plan, decls, doc, source)
 			if ctxErr != nil {
 				return fmt.Errorf("%w: resolve plugin lock contexts for Marketplace rollback: %w", dependencytxn.ErrGenerationConflict, ctxErr)
 			}

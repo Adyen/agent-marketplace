@@ -1253,7 +1253,7 @@ func expandCollections(resolved []ResolvedArtifact, errs []error, cfg *config.Co
 	admissions := &scopeAdmissions{
 		required:    make(map[scopedSelection]bool),
 		displaced:   make(map[scopedSelection]skillOccurrence),
-		pluginEdges: make(map[scopedSelection][]string),
+		pluginEdges: make(map[scopedSelection][]PluginEdge),
 	}
 	for _, artifact := range resolved {
 		if artifact.Kind != ir.KindCollection {
@@ -1341,7 +1341,10 @@ func expandCollections(resolved []ResolvedArtifact, errs []error, cfg *config.Co
 
 		// Expand members recursively (handles Includes via depth-first walk).
 		visited := map[string]struct{}{irCol.Label(): {}}
-		expandMembersRecursive(irCol, viaLabel, artifact, cfg, catalogIndex, resources, malformed, allCollectionsByName, admissions, excludedResources, localExcludes, collectionExcludeAll, localExcludeAllKinds, visited, &out, &expandErrs, targetSet)
+		// edgeSource is the layer that selected this collection: collection
+		// edges bind to it even when a member resolves to another layer's
+		// source, so the selecting layer's own lock commits the edge.
+		expandMembersRecursive(irCol, viaLabel, artifact, artifact.Source, cfg, catalogIndex, resources, malformed, allCollectionsByName, admissions, excludedResources, localExcludes, collectionExcludeAll, localExcludeAllKinds, visited, &out, &expandErrs, targetSet)
 	}
 
 	// A plugin selected both directly and by a collection stays one plugin:
@@ -1351,16 +1354,16 @@ func expandCollections(resolved []ResolvedArtifact, errs []error, cfg *config.Co
 		if artifact.Kind != ir.KindPlugin || artifact.Selection == nil {
 			continue
 		}
-		for _, colName := range admissions.pluginEdges[newScopedSelection(artifact.Kind, artifact.Name, artifact.Source)] {
+		for _, edge := range admissions.pluginEdges[newScopedSelection(artifact.Kind, artifact.Name, artifact.Source)] {
 			seen := false
-			for _, edge := range artifact.Selection.Edges {
-				if edge.Kind == PluginEdgeCollection && edge.Collection == colName {
+			for _, existing := range artifact.Selection.Edges {
+				if existing.Kind == edge.Kind && existing.Collection == edge.Collection && existing.Source == edge.Source {
 					seen = true
 					break
 				}
 			}
 			if !seen {
-				artifact.Selection.Edges = append(artifact.Selection.Edges, PluginEdge{Kind: PluginEdgeCollection, Collection: colName})
+				artifact.Selection.Edges = append(artifact.Selection.Edges, edge)
 			}
 		}
 	}
@@ -1380,7 +1383,7 @@ func expandCollections(resolved []ResolvedArtifact, errs []error, cfg *config.Co
 type scopeAdmissions struct {
 	required    map[scopedSelection]bool
 	displaced   map[scopedSelection]skillOccurrence
-	pluginEdges map[scopedSelection][]string
+	pluginEdges map[scopedSelection][]PluginEdge
 }
 
 func reconcileExpandedHooks(artifacts []ResolvedArtifact) ([]ResolvedArtifact, []error) {
@@ -1601,6 +1604,7 @@ func expandMembersRecursive(
 	col *ir.Collection,
 	viaLabel string,
 	artifact ResolvedArtifact,
+	edgeSource config.Source,
 	cfg *config.Config,
 	catalogIndex map[string]map[resourceSelection]catalog.Entry,
 	resources map[string]map[string]ir.Resource,
@@ -1883,6 +1887,15 @@ func expandMembersRecursive(
 			continue
 		}
 
+		// A plugin edge authored in one layer for a plugin whose providing
+		// format source that layer does not declare would record in no lock:
+		// the selecting layer's own lock holds no format root the edge could
+		// commit to. Refuse rather than leave the selection unlocked.
+		if member.Kind == ir.KindPlugin && catEntry.Plugin != nil && memberEntryFound && memberSource != edgeSource && !formatSourceDeclaredInLayer(cfg.Registries, memberEntry, edgeSource) {
+			*errs = append(*errs, &PluginUndeclaredSourceError{PluginName: memberName, Collection: col.Label(), Selecting: edgeSource, Declaring: memberSource, URL: memberRegistryURL})
+			continue
+		}
+
 		// Skip if already resolved in the member's install scope (direct
 		// resolution takes precedence over collection expansion; no
 		// duplicates).
@@ -1895,7 +1908,7 @@ func expandMembersRecursive(
 			// unless required policy outranks a non-required selection.
 			if !memberRequired || existingRequired {
 				if member.Kind == ir.KindPlugin {
-					admissions.pluginEdges[scopedKey] = append(admissions.pluginEdges[scopedKey], col.Label())
+					admissions.pluginEdges[scopedKey] = append(admissions.pluginEdges[scopedKey], PluginEdge{Kind: PluginEdgeCollection, Collection: col.Label(), Source: edgeSource})
 				}
 				continue
 			}
@@ -1927,7 +1940,7 @@ func expandMembersRecursive(
 		}
 		if member.Kind == ir.KindPlugin && catEntry.Plugin != nil {
 			admitted.Selection = &PluginSelection{
-				Edges:   []PluginEdge{{Kind: PluginEdgeCollection, Collection: col.Label()}},
+				Edges:   []PluginEdge{{Kind: PluginEdgeCollection, Collection: col.Label(), Source: edgeSource}},
 				Members: catEntry.Plugin.Members,
 			}
 		}
@@ -1987,8 +2000,26 @@ func expandMembersRecursive(
 				includedArtifact.Harnesses = ownerHarnesses
 			}
 		}
-		expandMembersRecursive(irCol, includedViaLabel, includedArtifact, cfg, catalogIndex, resources, malformed, allCollectionsByName, admissions, excludedResources, localExcludes, collectionExcludeAll, localExcludeAllKinds, branchVisited, out, errs, targetSet)
+		expandMembersRecursive(irCol, includedViaLabel, includedArtifact, edgeSource, cfg, catalogIndex, resources, malformed, allCollectionsByName, admissions, excludedResources, localExcludes, collectionExcludeAll, localExcludeAllKinds, branchVisited, out, errs, targetSet)
 	}
+}
+
+// formatSourceDeclaredInLayer reports whether the given layer declares a
+// format source at the same location as entry — the condition under which a
+// plugin selection authored in that layer can commit to a plugin-v1
+// manifest in that layer's own lock.
+func formatSourceDeclaredInLayer(registries []config.RegistryEntry, entry config.RegistryEntry, layer config.Source) bool {
+	url := normalizedRegistryURL(entry.URL)
+	path := normalizedEntryPath(entry.Path)
+	for _, candidate := range registries {
+		if candidate.Source != layer || candidate.Format == "" {
+			continue
+		}
+		if normalizedRegistryURL(candidate.URL) == url && normalizedEntryPath(candidate.Path) == path && strings.TrimSpace(candidate.Ref) == strings.TrimSpace(entry.Ref) {
+			return true
+		}
+	}
+	return false
 }
 
 // memberEntryCandidate is a configured registry entry whose URL matches the
@@ -2422,7 +2453,7 @@ func buildOccurrences(cfg *config.Config, catalogs map[string][]catalog.Entry, r
 					continue
 				}
 				selection := &PluginSelection{
-					Edges:   []PluginEdge{{Kind: PluginEdgeDirect}},
+					Edges:   []PluginEdge{{Kind: PluginEdgeDirect, Source: entry.Source}},
 					Members: selectedSkill.Plugin.Members,
 				}
 				if optErr := applyPluginRequestOptions(selection, selected.name, pluginRequestsFor(entry, selected.name), entry, selectedSkill.Plugin); optErr != nil {
