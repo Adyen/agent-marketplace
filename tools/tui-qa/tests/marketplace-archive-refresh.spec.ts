@@ -3,7 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { after, before } from "node:test";
 
-import { assertArchivesVerifiedByReceivedBytes, defineFixture, locate, step, waitForExit } from "./helpers.js";
+import { assertPlaceholderArchivesFetched, defineFixture, locate, step, waitForExit } from "./helpers.js";
 
 // spec: marketplace-api/tui-sync-and-update-report-the-refresh-non-fatally
 // spec: marketplace-api/client-verifies-placeholder-archives-by-hash
@@ -42,7 +42,7 @@ journey.test("update refreshes drifted marketplace archive evidence with a visib
   assert.ok(lockedAfter.includes(fixture.marketplaceDriftedArchiveDigest), `user lock kept the stale archive digest:\n${lockedAfter}`);
   const materialized = path.join(fixture.home, ".factory", "skills", "org-review", "SKILL.md");
   assert.equal(fs.readFileSync(materialized, "utf8"), fixture.expectedOrgSkillContent);
-  assertArchivesVerifiedByReceivedBytes(fixture, fixture.marketplaceArchiveDigest, fixture.marketplaceDriftedArchiveDigest);
+  assertPlaceholderArchivesFetched(fixture, fixture.marketplaceArchiveDigest, fixture.marketplaceDriftedArchiveDigest);
 
   await step("healthy repeat update stays quiet", () => terminal.write("u"), async () => {
     await locate(terminal, "⚠ 1 warnings").expect({ not: true });

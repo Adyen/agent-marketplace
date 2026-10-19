@@ -3,7 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { after, before } from "node:test";
 
-import { assertArchivesVerifiedByReceivedBytes, defineFixture, locate, step, waitForExit } from "./helpers.js";
+import { assertPlaceholderArchivesFetched, defineFixture, locate, step, waitForExit } from "./helpers.js";
 import { runAM } from "./process-helpers.js";
 
 // Reproduces the reported support case: an organization v4 config declares an
@@ -110,7 +110,7 @@ journey.test("a missing organization marketplace lock is acquired transiently wi
     assert.equal((await waitForExit(terminal)).exitCode, 0);
   });
   // The fixture skipped its pre-sync, so the TUI made this acquisition.
-  assertArchivesVerifiedByReceivedBytes(fixture, fixture.marketplaceArchiveDigest);
+  assertPlaceholderArchivesFetched(fixture, fixture.marketplaceArchiveDigest);
 
   const betaSkill = path.join(fixture.repo, ".factory", "skills", "beta-skill");
   const alphaSkill = path.join(fixture.repo, ".factory", "skills", "alpha-skill");
@@ -174,5 +174,5 @@ journey.test("a missing organization marketplace lock is acquired transiently wi
   assert.equal(fs.readFileSync(path.join(betaSkill, "SKILL.md"), "utf8"), fixture.expectedBetaSkillContent);
   assert.equal(fs.lstatSync(orgLockPath, { throwIfNoEntry: false }), undefined, "recovery must not publish the organization lock");
   assert.equal(fs.readFileSync(orgConfigPath, "utf8"), fixture.expectedOrgConfig, "recovery must preserve organization config bytes");
-  assertArchivesVerifiedByReceivedBytes(fixture, fixture.marketplaceArchiveDigest);
+  assertPlaceholderArchivesFetched(fixture, fixture.marketplaceArchiveDigest);
 });

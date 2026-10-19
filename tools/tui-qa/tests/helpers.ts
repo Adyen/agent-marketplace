@@ -175,11 +175,12 @@ export const findTextRun = async (terminal: TestTerminal, text: RegExp): Promise
 export const waitForInverse = (terminal: TestTerminal, text: RegExp, want: number): Promise<void> =>
   locate(terminal, text).getByStyle({ inverse: want !== 0 }).expect();
 
-// assertArchivesVerifiedByReceivedBytes proves that the client fetched each
-// archive from the placeholder route, which it verifies by hashing the bytes it
-// received, and never fell back to the legacy final-artifact route, which it
-// verifies by re-encoding with its own Go compressor.
-export const assertArchivesVerifiedByReceivedBytes = (fixture: Fixture, ...digests: (string | undefined)[]): void => {
+// assertPlaceholderArchivesFetched checks that the client fetched each archive
+// from the placeholder route and never fell back to the legacy final-artifact
+// route, which it verifies by re-encoding with its own Go compressor. That the
+// client hashes the placeholder bytes it receives is proven separately by
+// marketplace-archive-integrity, which serves bytes that do not hash.
+export const assertPlaceholderArchivesFetched = (fixture: Fixture, ...digests: (string | undefined)[]): void => {
   const fetches = fixture.marketplaceArchiveFetches?.();
   assert.ok(fetches, "fixture has no Marketplace stub");
   assert.deepEqual(fetches.final, [], "the client fetched the legacy final-artifact route");

@@ -23,6 +23,8 @@ export interface FixtureOptions {
   //  - "published-lock" publishes the same exact lock alongside the config.
   organization?: OrganizationFixtureMode;
   userMarketplaceDrift?: boolean;
+  // The stub serves placeholder archives that do not hash to their digest.
+  mismatchedPlaceholderArchive?: boolean;
 }
 
 export interface Fixture {
@@ -89,7 +91,7 @@ export const createFixture = async (name: string, options: FixtureOptions = {}):
     let marketplaceDelayNextAcquisition: ((ms: number) => void) | undefined;
     let marketplaceDelayedAcquisitionCount: (() => number) | undefined;
     if (options.organization || options.userMarketplaceDrift) {
-      stub = await createMarketplaceStub();
+      stub = await createMarketplaceStub({ mismatchedPlaceholderArchive: options.mismatchedPlaceholderArchive });
     }
     if (options.organization && stub) {
       const configPath = path.join(root, "etc", "agent-marketplace", "config.yaml");

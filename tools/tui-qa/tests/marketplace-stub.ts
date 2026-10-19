@@ -107,14 +107,22 @@ interface ServedArchive {
   digest: string;
   placeholder: Buffer;
   final: Buffer;
+  // The placeholder form compressed differently: a valid archive with the
+  // same content whose bytes do not hash to the digest.
+  mismatched: Buffer;
+}
+
+export interface MarketplaceStubOptions {
+  // Serve placeholder-form bytes that do not hash to the requested digest.
+  mismatchedPlaceholderArchive?: boolean;
 }
 
 // servedArchive serves a canonical artifact the way a current Marketplace
 // does: the placeholder form, whose manifest carries the zeroed archive digest
 // and whose bytes hash to the archive digest, and the final form, whose
 // manifest carries that digest. Node's zlib compresses both, which no Go
-// toolchain reproduces, so a client passes only by verifying the placeholder
-// bytes it receives; re-encoding them fails under every Go version.
+// toolchain reproduces, so a client that verifies by re-encoding fails under
+// every Go version and only one that hashes the received bytes succeeds.
 const servedArchive = (canonical: Buffer): ServedArchive => {
   const tar = gunzipSync(canonical);
   const field = Buffer.from('"archive_digest":"');
@@ -129,8 +137,10 @@ const servedArchive = (canonical: Buffer): ServedArchive => {
     return copy;
   };
   const placeholder = gzipSync(withDigest(archiveDigestPlaceholder), { level: 9 });
+  const mismatched = gzipSync(withDigest(archiveDigestPlaceholder), { level: 1 });
+  if (mismatched.equals(placeholder)) throw new Error("mismatched placeholder archive must differ from the placeholder");
   const digest = sha256(placeholder);
-  return { digest, placeholder, final: gzipSync(withDigest(digest), { level: 9 }) };
+  return { digest, placeholder, final: gzipSync(withDigest(digest), { level: 9 }), mismatched };
 };
 
 const original = servedArchive(Buffer.from(
@@ -187,7 +197,7 @@ const revision = {
 // assessed skill and both forms of its canonical archive so a missing
 // organization lock exercises acquisition, verification by received bytes,
 // resolution, and materialization.
-export const createMarketplaceStub = async (): Promise<MarketplaceStub> => {
+export const createMarketplaceStub = async (options: MarketplaceStubOptions = {}): Promise<MarketplaceStub> => {
   const instanceID = "tui-qa-marketplace";
   const acquisitionDataRequests: string[] = [];
   let nextAcquisitionDelayMs = 0;
@@ -295,7 +305,8 @@ export const createMarketplaceStub = async (): Promise<MarketplaceStub> => {
     const archive = request.method === "GET" && archiveRoute ? servedArchives.get(`sha256:${archiveRoute[2]}`) : undefined;
     if (archiveRoute && archive) {
       response.writeHead(200, { "content-type": artifactMediaType });
-      response.end(archiveRoute[1] === "archives" ? archive.placeholder : archive.final);
+      const placeholder = options.mismatchedPlaceholderArchive ? archive.mismatched : archive.placeholder;
+      response.end(archiveRoute[1] === "archives" ? placeholder : archive.final);
       return;
     }
     response.writeHead(404, { "content-type": "application/json" });
