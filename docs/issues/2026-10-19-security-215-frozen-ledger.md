@@ -76,12 +76,12 @@ order. The check at the end verifies this.
 | Case | Report Aliases | Route | Untrusted Input and Harm | Evidence on the Baseline | Status |
 |---|---|---|---|---|---|
 | P10 | A50 / F35 | r1 | A repository, or another lower-precedence selection, selects a resource named like a member of a required organization collection, and the member is suppressed | #426, #684; `TestResolveRequiredCollectionSelectionSuppressesRepositorySource`, `TestResolveRequiredCollectionMemberDisplacesOptionalSameScopeSelection`, `TestSyncRequiredCollectionMemberDisplacesUserSelection` | Fixed |
-| P11 | A51 / F33 | r1 | A command the user selected from a registry or Marketplace, named like an organization-required skill, takes that skill's `skills/<name>/SKILL.md` on Devin and Codex. Sync reports success | Reproduction R-A51: replaced in 3 of 4 runs (symlink mode when the organization source's cache path sorts first, file mode in both orders), with no warning or error | **Open** (#TBD-A51) |
+| P11 | A51 / F33 | r1 | A command the user selected from a registry or Marketplace, named like an organization-required skill, takes that skill's `skills/<name>/SKILL.md` on Devin and Codex. Sync reports success | Reproduction R-A51: replaced in 3 of 4 runs (symlink mode when the organization source's cache path sorts first, file mode in both orders), with no warning or error | **Open** (#759) |
 | P12 | A65 | r1 | A repository commits two Marketplace pins whose colon-joined TUI keys collide; enabling the benign row globally writes the other pin into user configuration | NUL-separated keys over validated segments (`config.MarketplaceCatalogKey`); `TestMarketplaceCatalogKeyDimensionsAndAliases`, `TestMarketplaceSelectionIndexKeepsDistinctPins` | Fixed |
 | P13 | A67 | r1 | Enabling one side of a TUI name collision globally copies the repository's rival registry into user configuration | #195 (`competingRowsInScope`), #320 (lookup-only edits); `TestCompetingRegistryCleanupIsScopeBound`, `TestCompetingRegistryCleanupV4`, `TestValidateToggleRegistryWriteScopeBoundary` | Fixed |
 | P14 | A85 | r1 | A mirror Marketplace serves a payload whose resource name differs from the pin, so its output lands under another resource's name | #195 (`validateDecodedArtifactIdentity`); `TestResolverRejectsMirrorPayloadIdentityAndInvalidSource` | Fixed |
 | P16 | F118 | r1 | `doctor --repair` resolved current refs instead of the lock, so a newly pushed MCP command entered an aggregate the lock did not pin | #293; `TestDoctorRepairUsesExactGitLockWithoutRefreshingMutableCache`, `TestDoctorRepairReplacesConflictFromLockedGitRevision` | Fixed |
-| P19 | F149 | r1 | `update --bump` reads an exact commit pin that ends in digits as a version. A tag named `<commit prefix><larger number>` replaces the pin, and the registry owner's new content is synced | Reproduction R-F149: the configured ref is rewritten to the tag and the replacement skill is installed | **Open** (#TBD-F149) |
+| P19 | F149 | r1 | `update --bump` reads an exact commit pin that ends in digits as a version. A tag named `<commit prefix><larger number>` replaces the pin, and the registry owner's new content is synced | Reproduction R-F149: the configured ref is rewritten to the tag and the replacement skill is installed | **Open** (#758) |
 | P20 | F150 | r1 | A repository's top-level collection name disables a required organization registry's automatic selection | #438; `TestRequiredRegistrySurvivesTopLevelCollectionPropagation`, `TestRequiredAutoSelectionStillReportsMissingTopLevelCollection` | Fixed |
 | P27 | A78 | parent | An approved registry origin redirects the worker's fetch; credentials go to the redirect target and its repository is published under the approved identity | #222 (`http.followRedirects=false`, origin-scoped headers); `TestCloneRejectsAuthenticatedHTTPRedirects` | Fixed |
 | P28 | A82 / F60 | parent | A stale worker republishes a rejected executable artifact as allowed | #440; `TestStaleSameCommitPublicationDoesNotReplaceCurrentAssessment` (SQLite here; #440 also ran it against PostgreSQL 17.11) | Fixed |
@@ -137,9 +137,9 @@ P07 #264 (`TestMarketplaceResolvedCollision`). P09's no-acquisition control is #
 (`TestResolveBlockedRegistryRemovalDoesNotAcquire`, `TestRemoveBlockedRegistryRefusesNewAcquisition`).
 
 The six bugs are ordinary defects, not #215 gates. They group into three
-issues: #TBD-DIGEST (P26, P33, P36, P39: digest and inspection routes serve
+issues: #760 (P26, P33, P36, P39: digest and inspection routes serve
 content that no current revision owns and, in file mode, blocked or revoked
-content), #TBD-WEBREF (P08) and #TBD-FINDINGS (P29).
+content), #761 (P08) and #762 (P29).
 
 ### Found During Review, Outside the Reports
 
@@ -148,7 +148,7 @@ installs a revision with security findings. `update` advances writable
 Marketplace pins to newer revisions whose assessment is `warn` without showing
 or confirming anything (`validateMarketplaceUpdateArtifact` in
 `internal/pipeline/update.go`). This is not a boundary, for the reason given in
-P01, but the page and the behavior disagree. Tracked in #TBD-X1 as a product
+P01, but the page and the behavior disagree. Tracked in #763 as a product
 decision: show and confirm new findings on `update`, or correct the page.
 
 ## Adversarial Review
@@ -195,7 +195,7 @@ rerun here.
 ## R5 Split
 
 Direction from the maintainer (2026-10-19): R5 continues, and most of it moves
-to a new **performance track** (#TBD-PERF). The [R5 ledger] and its case IDs
+to a new **performance track** (#765). The [R5 ledger] and its case IDs
 stay unchanged.
 
 A row stays in the **security track** only when content the user did not write
@@ -234,7 +234,7 @@ evidence.
 - **New processing budgets:** only D2, for the R5 security graph rows.
 - **R1 targeted blocked-registry removal carry-over:** it protects the user's
   own edits next to blocked output. That is robustness, not security; moved to
-  #TBD-R1D.
+  #764.
 - **Hosted-service follow-ups:** secret exposure is P29, redirects P27, stale
   assessments P28, images P31, and lease and telemetry authority P25, P23 and
   P24.
@@ -244,15 +244,15 @@ evidence.
 - [x] Freeze both source hashes and P01-P40 against the unchanged R2 index.
 - [x] Classify every case against the threat model with baseline evidence, and
   reproduce both open threats.
-- [ ] Fix P19 (#TBD-F149) and P11 (#TBD-A51): failing-first regressions, an
+- [ ] Fix P19 (#758) and P11 (#759): failing-first regressions, an
   archived OpenSpec delta, `make validate`, `make spec-check`,
   `make validate-e2e` and an `open-code-review-delegate` review. Rerun R-F149
   and R-A51 on `main` after each merge.
 - [ ] Close the R5 security track: R61 and the D2 graph rows in [#434].
 - [ ] Update #215 and close it.
 
-The bugs (#TBD-DIGEST, #TBD-WEBREF, #TBD-FINDINGS), X1 (#TBD-X1), the R1
-carry-over (#TBD-R1D) and the performance track (#TBD-PERF) do not gate #215.
+The bugs (#760, #761, #762), X1 (#763), the R1
+carry-over (#764) and the performance track (#765) do not gate #215.
 
 ## Evidence
 
