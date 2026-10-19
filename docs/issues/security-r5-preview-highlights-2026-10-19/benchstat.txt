@@ -1,0 +1,15 @@
+runtime: Node v24.21.0
+runner: Vitest 4.1.11
+platform: darwin/arm64
+scope: sanitized UTF-8 raw highlight CPU, no DOM or I/O
+                                               | highlight-before.txt | highlight-after.txt |
+                                               |                   sec/op                   |       sec/op        vs base               |
+RawHighlightCPU/ascii_256bytes_0findings                                       34.37u +/- inf [1]         34.84u +/- inf [1]        ~ (p=0.421 n=5)
+RawHighlightCPU/ascii_256bytes_1findings                                       33.71u +/- inf [1]         34.35u +/- inf [1]        ~ (p=0.095 n=5)
+RawHighlightCPU/ascii_65536bytes_0findings                                     9.051m +/- inf [1]         8.953m +/- inf [1]        ~ (p=0.151 n=5)
+RawHighlightCPU/ascii_65536bytes_1findings                                     9.231m +/- inf [1]         8.984m +/- inf [1]        ~ (p=0.095 n=5)
+RawHighlightCPU/ascii_65536bytes_256findings                                  25.722m +/- inf [1]         9.472m +/- inf [1]  -63.18% (p=0.008 n=5)
+RawHighlightCPU/ascii_65536bytes_960findings                                  68.665m +/- inf [1]         9.995m +/- inf [1]  -85.44% (p=0.008 n=5)
+RawHighlightCPU/unicode_40960bytes_512findings                                10.342m +/- inf [1]         2.582m +/- inf [1]  -75.03% (p=0.008 n=5)
+geomean                                                                        2.910m               1.570m        -46.04%
+[1] need >= 6 samples for confidence interval at level 0.95

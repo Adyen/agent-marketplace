@@ -320,5 +320,13 @@ R43 remains partial; the controlled and confounded preliminary timings
 are both retained in
 [the R43 execution report](2026-10-18-security-r5-jsonc-lookups.md).
 
+R43 subsequently merged in PR #751. The next independent slice replaces
+R38's repeated raw-preview boundary scans with exact binary search over
+the existing ordered UTF-8 boundaries. Escaping, range/group/ID semantics
+and API admission retain their contracts. Public-helper CPU measurements
+and the actual digest-pinned browser consumer both exercise the path;
+R38 remains partial. Evidence and limitations are recorded in
+[the R38 execution report](2026-10-19-security-r5-preview-highlights.md).
+
 #434 already tracks this remaining scope. Publication must describe this as
 partial progress, preserve the frozen artifacts, and leave the issue open.
