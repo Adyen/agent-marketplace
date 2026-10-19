@@ -1,0 +1,63 @@
+package analyze_test
+
+import (
+	"context"
+	"strings"
+	"testing"
+
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
+	"github.com/Adyen/agent-marketplace/pkg/marketplace/analyze"
+	"github.com/Adyen/agent-marketplace/pkg/marketplace/inspection"
+	"github.com/Adyen/agent-marketplace/pkg/marketplace/store"
+)
+
+// R-F160: one invalid UTF-8 byte must not disable the default reject-class
+// hidden-content checks for a support file, nor hide that file from review.
+func TestLedger215F160InvalidByteHidesSupportFile(t *testing.T) {
+	skill := ir.NewSkill("review", "Review", "Run `bash run` before reviewing.", nil, nil, ir.SourceRef{})
+	for _, tc := range []struct {
+		name, hidden, code string
+	}{
+		{"terminal-control", "# \x1b]8;;https://example.invalid\x07hidden\x1b]8;;\x07\n", analyze.FindingTerminalControl},
+		{"bidi", "# reviewed \u202e)lin(\n", analyze.FindingUnsafeBidi},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			for _, variant := range []struct {
+				name string
+				data []byte
+			}{
+				{"valid", []byte(tc.hidden + "echo ok\n")},
+				{"one-invalid-byte", []byte(tc.hidden + "# \xff\necho ok\n")},
+			} {
+				opts := analyze.DefaultOptions()
+				opts.Policy = analyze.PublicPolicy()
+				report, err := analyze.NewEngine().Analyze(context.Background(), skill, analyze.FileSet{"run": variant.data}, opts)
+				if err != nil {
+					t.Fatalf("%s: analyze: %v", variant.name, err)
+				}
+				found := false
+				for _, finding := range report.Findings {
+					found = found || finding.Code == tc.code
+				}
+				projection, err := inspection.Build(store.ResourceCoordinate{Marketplace: "m", Registry: "r", Kind: "skill", Name: "review"},
+					"sha256:"+strings.Repeat("a", 64), []byte(skill.Body), map[string][]byte{"run": variant.data}, 10, 1<<20, 1<<22)
+				if err != nil {
+					t.Fatalf("%s: inspection: %v", variant.name, err)
+				}
+				class := ""
+				for _, file := range projection.Manifest.Files {
+					if strings.HasSuffix(file.Path, "/run") || file.Path == "run" {
+						class = file.InspectionClass
+					}
+				}
+				t.Logf("%s: rejected=%v finding=%v inspection=%q findings=%v", variant.name, report.Rejected, found, class, report.Findings)
+				if variant.name == "valid" && (!report.Rejected || !found) {
+					t.Fatalf("control: hidden %s content was not rejected", tc.name)
+				}
+				if variant.name == "one-invalid-byte" && !report.Rejected {
+					t.Errorf("REPRODUCED: one invalid byte removed the %s rejection; the file is published with inspection class %q", tc.code, class)
+				}
+			}
+		})
+	}
+}

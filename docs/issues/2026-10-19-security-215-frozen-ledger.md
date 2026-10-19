@@ -43,18 +43,21 @@ Two consequences decide most cases in this scope:
 For the hosted Marketplace the same rule applies with its parties: registry
 contributors and catalog callers are untrusted; the operator and its
 deployment controls are trusted (see the [trust model]). A detection gap in an
-analyzer is not a boundary; overwriting or ignoring a decision the operator
-already made is.
+analyzer is not a boundary by itself. Overwriting a decision the operator
+already made is, and so is input that switches the default reject checks off
+for a whole file and hides that file from review (P38).
 
 ## Result
 
 | Section | Cases | Status |
 |---|---:|---|
-| Real threats | 12 | 9 fixed, **3 open** (P09, P11, P19) |
-| Not a security boundary | 28 | 4 fixed anyway, 16 no action, 2 removed, 6 ordinary bugs |
+| Real threats | 13 | 9 fixed, **4 open** (P09, P11, P19, P38) |
+| Not a security boundary | 27 | 4 fixed anyway, 14 no action, 2 removed, 7 ordinary bugs |
 
-All three open threats are reproduced on the baseline. P11 and P19 need no
-policy decision; P09 needs the withdrawal contract in #768.
+All four open threats are reproduced on the baseline, P38 at the analyzer and
+inspection level. P11 and P19 need no policy decision; P09 needs the
+withdrawal contract in #768, and P38 one choice of how non-UTF-8 text is
+scanned (#NEW-F160).
 
 ## Source Provenance
 
@@ -88,6 +91,7 @@ order. The check at the end verifies this.
 | P20 | F150 | r1 | A repository's top-level collection name disables a required organization registry's automatic selection | #438; `TestRequiredRegistrySurvivesTopLevelCollectionPropagation`, `TestRequiredAutoSelectionStillReportsMissingTopLevelCollection` | Fixed |
 | P27 | A78 | parent | An approved registry origin redirects the worker's fetch; credentials go to the redirect target and its repository is published under the approved identity | #222 (`http.followRedirects=false`, origin-scoped headers); `TestCloneRejectsAuthenticatedHTTPRedirects` | Fixed |
 | P28 | A82 / F60 | parent | A stale worker republishes a rejected executable artifact as allowed | #440; `TestStaleSameCommitPublicationDoesNotReplaceCurrentAssessment` (SQLite here; #440 also ran it against PostgreSQL 17.11) | Fixed |
+| P38 | F160 | parent | A registry contributor adds one invalid UTF-8 byte, for example in a comment, to a support file. The Marketplace then skips its default reject checks for terminal escapes, bidi reordering and encoded instructions, shows the file as metadata only, and publishes it. The CLI installs it byte for byte | Reproduction R-F160: the valid file is rejected (`terminal-control`, `unsafe-bidi`); with one invalid byte there is no finding, no rejection, and inspection class `metadata`. The skip is `isValidText` in `pkg/marketplace/analyze/analyzer.go` | **Open** (#NEW-F160) |
 
 P11 and P19 have the same shape as other fixed threats: P11 removes
 organization tooling like P10 and FS08, and P19 bypasses an exact pin like
@@ -95,11 +99,12 @@ P16. In P11 the resolver's projection keys collisions by kind and name, so a
 skill and a command never compete, although Devin and Codex write both to the
 same directory. File mode even writes both and counts them (`Installed 4`).
 
-P03 and P09 are maintainer decisions (2026-10-19). P03 counts because hiding
+P03, P09 and P38 are maintainer decisions (2026-10-19). P03 counts because hiding
 executable resources from the lock a team reviews is the behavior the lock
 exists to prevent, even though the registry author already controlled them.
 P09 counts because an organization block is the incident-response control: it
-must withdraw installed output, not only refuse new work. Only **organization**
+must withdraw installed output, not only refuse new work. P38 follows from P03:
+one byte hides a file from both the default reject checks and the reviewer. Only **organization**
 policy may withdraw. A repository or user `allowed_registries` that removed
 machine output would reopen FS08, so those layers keep today's refusal.
 
@@ -116,7 +121,7 @@ machine output would reopen FS08, so those layers keep today's refusal.
 | P08 | A45 / F30 | r1 | A web URL `tree/release/v1/...` resolves ref `release` | The registry owner controls both refs, as in FS25. It still installs the wrong content silently | Bug |
 | P15 | F2 | r1 | Name-based removal edits a decoy entry and leaves the resource enabled | The decoy, the resource and the scope all belong to the repository author | No action |
 | P17 | F138 | r1 | Legacy v2/v3 installs clear `exclude_all` | The v2/v3 editors no longer exist (`consumer-config-format`) | Removed |
-| P18 | F143 | r1 | Codex repair shows one of two duplicate MCP identities and installs the other | The user selected both; ordinary sync refuses the duplicate, and repair asks per entry | No action |
+| P18 | F143 | r1 | Codex repair shows one of two duplicate MCP identities and installs the other | The user selected both, and ordinary sync refuses the duplicate key. Still wrong: the prompt names the last resource while the first one's value is written (`codex_repair.go`, `repairDesiredEntry`) | Bug |
 | P21 | F155 | r1 | A TUI collection collision creates a user shadow entry with inherited selectors | The precondition is a legacy v2/v3 user configuration | Removed |
 | P22 | A0 / F4 | parent | `doctor` runs `devin --version` from `PATH` | The user's own `PATH`. Go's `exec.LookPath` refuses current-directory matches, and every command resolves `git` the same way | No action |
 | P23 | A60 / F41 | parent | User configuration or environment enables community telemetry | The user's own configuration (R3.4). Repository layers cannot set telemetry | No action |
@@ -132,9 +137,8 @@ machine output would reopen FS08, so those layers keep today's refusal.
 | P35 | F112 | parent | Worker egress can reach private addresses through an approved host's DNS | Needs control of an approved registry's DNS; limiting worker egress is an operator responsibility | No action |
 | P36 | F158 | parent | In file mode, inspection routes serve blocked resources | Artifact downloads refuse blocked and revoked revisions in both modes (`writeArchiveAvailability`), so nothing blocked can be installed. It contradicts the documented block and revoke contract | Bug |
 | P37 | F159 | parent | OIDC callback replay repeats token exchanges | Availability only; it grants no access | No action |
-| P38 | F160 | parent | Support files with invalid UTF-8 skip the text scanners | A detection gap: a malicious contributor does not need to evade a heuristic | No action |
 | P39 | F161 | parent | In file mode, inspection routes serve blocked and revoked revisions | Same as P36 | Bug |
-| P40 | F163 | parent | The MCP analyzer scans only the server name | Intentional, to keep credentials out of findings; CLI output escapes controls and bidi characters (`QuoteTerminal`) | No action |
+| P40 | F163 | parent | The MCP analyzer scans only the server name | Intentional, to keep credentials out of findings. The public inspection redacts the same fields (it shows only the executable token and key names), so no displayed text can be spoofed; the web UI marks bidi and control characters, and CLI output escapes them (`QuoteTerminal`) | No action |
 
 Evidence for the fixed rows: P02 #229, #230 (`TestConfiguredInstallFreezesDiscoveryBeforePublication`,
 `TestAdHocInstallPreparationPinsOriginalMutableRef`);
@@ -143,10 +147,10 @@ P04 `v4EditSourcePhysicalMatches` in `internal/config/v4_editor.go` (the witness
 P06 `resolver.MaterializationWinners` (`TestMaterializationWinnersLegacyEmptyPriorityAndOrdering`);
 P07 #264 (`TestMarketplaceResolvedCollision`).
 
-The six bugs are ordinary defects, not #215 gates. They group into three
+The seven bugs are ordinary defects, not #215 gates. They group into four
 issues: #760 (P26, P33, P36, P39: digest and inspection routes serve
 content that no current revision owns and, in file mode, blocked or revoked
-content), #761 (P08) and #762 (P29).
+content), #761 (P08), #762 (P29) and #NEW-F143 (P18).
 
 ### Found During Review, Outside the Reports
 
@@ -172,9 +176,12 @@ The classifications were challenged before freezing:
   promises confirmation, and `update` does not provide it. That is X1. P01 is
   unchanged, because a publisher who can move a revision between two runs can
   also publish it without findings.
-- **Is P28 consistent with P38 and P40?** Yes, by an explicit rule: overwriting
-  a `reject` the operator already decided is a boundary; a scanner that does
-  not fire is detection.
+- **Are P28, P38 and P40 consistent?** P28 overwrites a `reject` the operator
+  already decided. P38 is more than a missed pattern: one byte turns off every
+  default hidden-content check for a file and hides the file from review, the
+  harm the maintainer accepted for P03. P40 stays out: the fields it skips are
+  also withheld from the public inspection, so nothing displayed can be
+  spoofed.
 - **Did a "not a boundary" call hide a broken contract?** For six rows in three
   groups it did: P08, P26/P33/P36/P39 and P29 moved from "no action" to "bug".
   They stay out of the security count.
@@ -197,10 +204,8 @@ The classifications were challenged before freezing:
   the baseline and passed. P28's witness uses SQLite; the PostgreSQL run is
   #440's.
 
-Judgement calls: P03 and P09 are decided above. Still open for the maintainer:
-
-- P38: one invalid byte turns off text scanning for a whole file.
-- P18: the repair prompt names the wrong resource of a duplicate pair.
+Judgement calls, all decided by the maintainer on 2026-10-19: P03, P09 and P38
+are real threats; P18 is an ordinary bug.
 
 Not covered: no audit beyond the 40 IDs; vendor harness trust prompts were not
 probed, so point 1 rests on the CLI writing no trust state; PostgreSQL was not
@@ -259,14 +264,14 @@ evidence.
 - [x] Freeze both source hashes and P01-P40 against the unchanged R2 index.
 - [x] Classify every case against the threat model with baseline evidence, and
   reproduce all three open threats.
-- [ ] Fix P19 (#758), P11 (#759) and P09 (#768): failing-first regressions, an
+- [ ] Fix P19 (#758), P11 (#759), P09 (#768) and P38 (#NEW-F160): failing-first regressions, an
   archived OpenSpec delta, `make validate`, `make spec-check`,
   `make validate-e2e` and an `open-code-review-delegate` review. Rerun R-F149,
-  R-A51 and R-A49 on `main` after each merge.
+  R-A51, R-A49 and R-F160 on `main` after each merge.
 - [ ] Close the R5 security track: R61 and the D2 graph rows in [#434].
 - [ ] Update #215 and close it.
 
-The bugs (#760, #761, #762), X1 (#763), the R1
+The bugs (#760, #761, #762, #NEW-F143), X1 (#763), the R1
 carry-over (#764) and the performance track (#765) do not gate #215.
 
 ## Evidence
@@ -277,10 +282,10 @@ All checks ran on the baseline on 2026-10-19, macOS arm64, `CGO_ENABLED=0`.
   [`witnesses.txt`](security-215-2026-10-19/witnesses.txt) ran with
   `go test -json -count=1` (not short mode). Each reported `pass`, and none
   skipped.
-- **Reproductions.** The source is
+- **Reproductions.** The sources are in
   [`security-215-2026-10-19/repro/`](security-215-2026-10-19/repro/). Fixtures
-  are local bare repositories with inert skills and commands; nothing executes
-  a resource or contacts a network service. A failing test with a `REPRODUCED`
+  are local bare repositories or in-memory files with inert content; nothing
+  executes a resource or contacts a network service. A failing test with a `REPRODUCED`
   message confirms the claim.
 
 | Reproduction | Package | Result |
@@ -288,17 +293,20 @@ All checks ran on the baseline on 2026-10-19, macOS arm64, `CGO_ENABLED=0`.
 | R-F149 `TestLedger215F149UpdateBumpReplacesCommitPin` | `cmd/agent-marketplace` | Fails: P19 confirmed (`refs bumped: 1`, replacement content installed) |
 | R-A51 `TestLedger215A51RequiredSkillVersusSameNameCommand` | `cmd/agent-marketplace` | Fails: P11 confirmed in `org-sorts-first/symlink`, `org-sorts-first/file` and `user-sorts-first/file`; `user-sorts-first/symlink` keeps the required skill |
 | R-A49 `TestLedger215A49OrganizationBlockKeepsInstalledOutput` | `cmd/agent-marketplace` | Fails: P09 confirmed (blocked output stays; whole-entry `remove --from` rebuilds it; named removal does not) |
+| R-F160 `TestLedger215F160InvalidByteHidesSupportFile` | `pkg/marketplace/analyze` | Fails: P38 confirmed for terminal escapes and bidi; the valid controls are rejected. Exercises the analyzer and inspection projection, not a worker refresh |
 
-To rerun them, copy the source into its package from a checkout of the
-baseline:
+To rerun them, copy each source into its package from a checkout of the
+baseline. A source file's name is its package path with `/` replaced by `_`:
 
 ```bash
 cp docs/issues/security-215-2026-10-19/repro/cmd_agent-marketplace_215ledger_repro_test.go.txt \
   cmd/agent-marketplace/zz_215ledger_repro_test.go
-CGO_ENABLED=0 go test ./cmd/agent-marketplace -run '^TestLedger215' -count=1 -v
+cp docs/issues/security-215-2026-10-19/repro/pkg_marketplace_analyze_215ledger_repro_test.go.txt \
+  pkg/marketplace/analyze/zz_215ledger_repro_test.go
+CGO_ENABLED=0 go test ./cmd/agent-marketplace ./pkg/marketplace/analyze -run '^TestLedger215' -count=1 -v
 ```
 
-Do not commit the copied file.
+Do not commit the copied files.
 
 ## Reproduce the Source Reconciliation
 
@@ -385,7 +393,7 @@ def section(title):
 
 
 threats, others = section("Real Threats"), section("Not a Security Boundary")
-check(len(threats) == 12 and len(others) == 28, "section row counts")
+check(len(threats) == 13 and len(others) == 27, "section row counts")
 listed = [case for case, _, _, _ in threats + others]
 check(len(listed) == len(set(listed)) and set(listed) == set(cases), "every case listed once")
 for case, aliases, route, _ in threats + others:
@@ -394,10 +402,10 @@ for case, aliases, route, _ in threats + others:
     check(set(re.findall(r"[AF]\d+", aliases)) ==
           {row[key] for key in ("a_ref", "f_ref") if row[key]}, f"{case} aliases")
 # Unlisted threats are Fixed; unlisted non-boundary cases are No action.
-status = {"P09": "Open", "P11": "Open", "P19": "Open", "P02": "Fixed anyway",
+status = {"P09": "Open", "P11": "Open", "P19": "Open", "P38": "Open", "P02": "Fixed anyway",
           "P04": "Fixed anyway", "P06": "Fixed anyway", "P07": "Fixed anyway",
           "P17": "Removed", "P21": "Removed", "P08": "Bug", "P26": "Bug", "P29": "Bug",
-          "P33": "Bug", "P36": "Bug", "P39": "Bug"}
+          "P33": "Bug", "P36": "Bug", "P39": "Bug", "P18": "Bug"}
 tally = {}
 for title, part, default in (("Real threats", threats, "Fixed"),
                              ("Not a security boundary", others, "No action")):
@@ -432,7 +440,7 @@ check({case for case, _ in detail} == set(security), "every security row has a d
 for case, aliases in detail:
     check(set(re.findall(r"[AF]\d+", aliases)) ==
           {r5[case][key] for key in ("a_ref", "f_ref") if r5[case][key]}, f"{case} aliases")
-print(f"PASS: 304 occurrences, 211 IDs, 12 threats, 28 non-boundary, "
+print(f"PASS: 304 occurrences, 211 IDs, 13 threats, 27 non-boundary, "
       f"R5 split {len(security)}/{len(performance)}")
 PY
 ```
