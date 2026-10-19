@@ -326,7 +326,7 @@ func TestSyncPluginSelectionLocksInEachAuthoringLayer(t *testing.T) {
 
 	// Each layer's manifest commits its own member keys: dropping the
 	// organization exclusion stales the organization lock while the personal
-	// lock — which never excluded — stays fresh.
+	// lock, which never excluded, stays fresh.
 	writeConfig(t, orgCfgPath, orgConfig("plugin/local-kit"))
 	output, err := executeCommand("lock", "--check", "--scope", "organization")
 	if err == nil {
