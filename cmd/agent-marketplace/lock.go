@@ -1481,7 +1481,7 @@ func reconcileLayerDocument(ctx context.Context, scope lockfile.Scope, entries [
 			return fail(&lockLifecycleError{Code: "lock.offline-resolution", Scope: scope, Err: errors.New("offline mode cannot resolve a stale lock")})
 		}
 		job := registryAcquireJob{group: group}
-		// A plugin manifest commits to the declared selection, so a format
+		// A plugin manifest commits to the resolved selection, so a format
 		// group is rebuilt each sync from the PINNED commit — the lock stays
 		// exact instead of tracking the ref.
 		if ok && !upgrade && hasFormat {

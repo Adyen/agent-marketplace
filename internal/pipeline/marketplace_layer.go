@@ -322,7 +322,7 @@ func rollbackMarketplaceLayer(ctx context.Context, stateDir string, ws Workspace
 		}
 		var expected map[string]bool
 		if len(FormatSourceEntries(decls)) > 0 {
-			exact, release := DocExactSnapshots([]lockfile.Document{doc}, nil, func(registry lockfile.GitRegistry) (string, func(), error) {
+			exact, release := DocExactSnapshots([]lockfile.Document{doc}, func(registry lockfile.GitRegistry) (string, func(), error) {
 				return leaseRegistrySnapshot(ctx, registry)
 			})
 			plan, planErrs, planErr := BuildPluginSelectionPlan(ctx, ec.Merged, ec.Local, ws.RepoRoot(), ws.LocalConfigDir(), exact)

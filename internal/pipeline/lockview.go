@@ -148,7 +148,7 @@ func exactLockViewWithContext(ctx context.Context, ec config.EffectiveConfig, al
 		}
 	}
 	if hasFormatSources {
-		exact, releaseSnapshots := DocExactSnapshots(lockedDocs, nil, func(registry lockfile.GitRegistry) (string, func(), error) {
+		exact, releaseSnapshots := DocExactSnapshots(lockedDocs, func(registry lockfile.GitRegistry) (string, func(), error) {
 			return leaseRegistrySnapshot(ctx, registry)
 		})
 		var planErr error

@@ -47,8 +47,8 @@ func PlanPluginSelection(cfg *config.Config, catalogs map[string][]catalog.Entry
 }
 
 // pluginOwnerEntry finds the configured registry entry the resolved plugin
-// artifact was bound to: same normalized URL, ref, and registry path, and —
-// when several layers repeat the location — the same install scope.
+// artifact was bound to: same normalized URL, ref, and registry path, and,
+// when several layers repeat the location, the same install scope.
 func pluginOwnerEntry(cfg *config.Config, artifact ResolvedArtifact) (config.RegistryEntry, bool) {
 	url := normalizedRegistryURL(artifact.RegistryURL)
 	path := normalizedEntryPath(artifact.RegistryPath)
