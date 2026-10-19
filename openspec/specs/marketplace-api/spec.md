@@ -750,7 +750,7 @@ Public inspection, content and manifest reads using the built-in filesystem and 
 
 ### Requirement: Verified archive decoding stops at the archive limits
 
-Verifying a resource archive by digest, verifying a final archive against its verified placeholder, and decoding an archive for its content SHALL enforce the archive limits while the archive is decoded, not only after decoding completes. A member whose declared size exceeds its per-member limit, a member that would raise the asset, support or total file count or the total decoded bytes beyond the limits, more archive entries than the limits' files plus the canonical manifest and directories, and a repeated manifest SHALL be refused before that member's body is read and before any later entry is decoded. Members outside the canonical layout directories SHALL count toward the total decoded bytes. Archives within the limits SHALL verify as before.
+Verifying a resource archive by digest, verifying a final archive against its verified placeholder, and decoding an archive for its content SHALL enforce the archive limits while the archive is decoded, not only after decoding completes. A member whose declared size exceeds its per-member limit, a member that would raise the asset, support or total file count or the total decoded bytes beyond the limits, more archive entries than the limits' files plus the canonical manifest and directories, and a repeated manifest SHALL be refused before that member's body is read and before any later entry is decoded. The manifest and members outside the canonical layout directories SHALL count toward the total decoded bytes. Archives within the limits SHALL verify as before.
 
 #### Scenario: Verified archive decoding stops at the archive limits
 

@@ -4,7 +4,7 @@
 
 ### Archive verification enforces the archive limits while decoding
 
-`VerifyArchiveBytes`, `VerifyPlaceholderArchive`, `VerifyFinalAgainstPlaceholder` and `DecodeContentArchive` checked `DefaultArchiveLimits` only after the whole archive was decoded, so a small, highly compressed archive could expand into many 64 MiB members first (R61, F172). They now check each member's declared size, the asset, support and total file counts, the total decoded bytes (with an overflow-safe comparison) and the entry count while decoding, refuse members outside the layout directories that exceed the total and a repeated manifest, and stop at the first member over a limit. Such refusals wrap the new exported sentinel `ErrArchiveLimitExceeded`. No limit changes value, archives within the limits verify as before, and the unchecked `Decode` is unchanged.
+`VerifyArchiveBytes`, `VerifyPlaceholderArchive`, `VerifyFinalAgainstPlaceholder` and `DecodeContentArchive` checked `DefaultArchiveLimits` only after the whole archive was decoded, so a small, highly compressed archive could expand into many 64 MiB members first (R61, F172). They now check each member's declared size, the asset, support and total file counts, the total decoded bytes (with an overflow-safe comparison) and the entry count while decoding, count the manifest and members outside the layout directories toward the total, refuse a repeated manifest, and stop at the first member over a limit. Such refusals wrap the new exported sentinel `ErrArchiveLimitExceeded`. No limit changes value, archives within the limits verify as before, and the unchecked `Decode` is unchanged.
 
 ### `materialize.collision.shared-path` warning
 

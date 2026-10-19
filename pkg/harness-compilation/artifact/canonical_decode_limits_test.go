@@ -110,6 +110,18 @@ func TestVerifiedArchiveDecodingStopsAtTheArchiveLimits(t *testing.T) {
 			want: "total files exceed",
 		},
 		{
+			name: "manifest bytes toward the total",
+			members: func(t *testing.T, tw *tar.Writer) {
+				writeLimitMemberData(t, tw, CanonicalManifestPath, append([]byte("{}"), bytes.Repeat([]byte{' '}, 4094)...))
+				count := int(limits.MaxTotalBytes / limits.MaxAssetBytes)
+				for i := range count - 1 {
+					writeLimitMember(t, tw, fmt.Sprintf("unknown/m%03d", i), int(limits.MaxAssetBytes))
+				}
+				writeLimitMember(t, tw, "unknown/last", int(limits.MaxAssetBytes)-2048)
+			},
+			want: "total archive size",
+		},
+		{
 			name: "repeated manifest",
 			members: func(t *testing.T, tw *tar.Writer) {
 				writeLimitMemberData(t, tw, CanonicalManifestPath, []byte("{}"))

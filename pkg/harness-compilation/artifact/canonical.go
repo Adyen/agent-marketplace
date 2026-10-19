@@ -425,10 +425,7 @@ func (b *decodeBudget) admit(kind string, size int64) error {
 		if b.manifests++; b.manifests > 1 {
 			return fmt.Errorf("%w: duplicate manifest member", ErrArchiveLimitExceeded)
 		}
-		if size > safeTarReadCeiling {
-			return fmt.Errorf("%w: manifest member exceeds max bytes %d", ErrArchiveLimitExceeded, safeTarReadCeiling)
-		}
-		return nil
+		limit = safeTarReadCeiling
 	case CanonicalPayloadDir:
 		limit = l.MaxPayloadBytes
 		b.files++
