@@ -9,5 +9,5 @@
 
 ## 3. Documentation and archive
 
-- [ ] 3.1 Describe the guidance in `site/docs/how-to/migrate-configuration.md` and `site/docs/reference/diagnostics.md`; verify `make spec-check` passes
-- [ ] 3.2 Run `openspec archive refusal-remediation-hint --yes`
+- [x] 3.1 Describe the guidance in `site/docs/how-to/migrate-configuration.md` and `site/docs/reference/diagnostics.md`; verify `make spec-check` passes
+- [x] 3.2 Run `openspec archive refusal-remediation-hint --yes`
