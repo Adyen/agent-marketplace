@@ -109,6 +109,94 @@ cd gui && ./node_modules/.bin/vite build \
   text, grep `gui/tests/` and `gui/src/*.test.ts` for the old string
   first, then update every match in one pass.
 
+### Walk a flow for debugging
+
+To reproduce a bug or watch a flow against the real core, write a
+throwaway **walk** in `gui/tests/walk/` (gitignored) and run it with its own
+config. `playwright.config.ts` lists spec files explicitly, and the CLI
+path argument only filters that list, so a new file under `gui/tests/` is
+silently skipped:
+
+```sh
+cd gui && ./node_modules/.bin/vite build \
+  && ./node_modules/.bin/playwright test -c playwright.walk.config.ts
+```
+
+Start from this template:
+
+```ts
+import { expect, test } from '@playwright/test'
+import { readFile } from 'node:fs/promises'
+import { join } from 'node:path'
+import { distIndexExists, launchBuiltUserApp } from '../app'
+import { startHarness } from '../harness'
+
+test('walk: open sources', async ({ page }, testInfo) => {
+  expect(distIndexExists(), 'run vite build in gui/ first').toBe(true)
+  const harness = await startHarness('user', { AM_LOCALAPI_USER_FIXTURE: 'sources' })
+  const { bootstrap } = harness
+  const step = async (name: string) => {
+    const path = testInfo.outputPath(`${name}.png`)
+    await page.screenshot({ path, animations: 'disabled' })
+    console.log(name, path)
+  }
+  try {
+    await launchBuiltUserApp(page, bootstrap)
+    await expect(page.getByText('solo', { exact: true }).first()).toBeVisible({ timeout: 60_000 })
+    await step('01-loaded')
+    await page.getByRole('button', { name: 'Sources' }).click()
+    await expect(page.getByRole('dialog', { name: 'Sources' })).toBeVisible()
+    await step('02-sources-open')
+    console.log(await readFile(join(bootstrap.home!, '.agents', 'config.yaml'), 'utf8'))
+  } finally {
+    await harness.stop()
+  }
+})
+```
+
+- **Step discipline**: after every input, assert the visible result before
+  the next input, then capture with `step()`. Print the config, lock, or
+  materialized file the step should have changed. The bootstrap carries
+  `home`, `repo`, the XDG roots, and fixture-specific paths. A failed
+  assertion then names the exact step where the flow diverged, and the
+  printed PNG paths are the evidence.
+- **Time budget**: the harness exits 2 minutes after bootstrap, and the
+  test timeout is 120 s. Keep a walk to one flow, and split longer
+  journeys into separate walks.
+- **Locate by role and name** (`getByRole('button', { name })`). Those are
+  the same accessible names the real specs use, so a walk that works can
+  be promoted unchanged.
+- **Output**: PNGs land under `gui/test-results/walk/<test>/`. `tsconfig.json`
+  includes `tests/**`, so delete a walk when you're done, because a stale
+  one with a type error fails local `vue-tsc`.
+- **Promote** a walk that reproduced a real bug: move it to `gui/tests/`,
+  add it to `testMatch`, and bind its `// spec:` scenario.
+
+Fixtures (`AM_LOCALAPI_USER_FIXTURE`; setups in
+`internal/localapi/harness_test.go`; the spec in parentheses shows how
+each one is driven):
+
+| Fixture | State |
+|---|---|
+| *(unset)* | v4 user root, one directory source with skill `solo`, devin target. The repo's `.agents/config.yaml` and `config.local.yaml` are deliberately malformed (the user-scope GUI must ignore them), and the org config path doesn't exist |
+| `sources` | Root plus an included fragment source, an org directory source, and an extra directory you can add (`addSourceDir`) (`sources.spec.ts`) |
+| `sources-git` | Same, with a local bare Git source to add (`gitSourceURL`) and harness overrides |
+| `marketplace` | `sources` plus a stub Marketplace endpoint (`marketplaceEndpoint`) |
+| `harnesses` | User targets devin plus an unknown future harness, and an org layer targeting claude (`gui.spec.ts`, `refresh.spec.ts`) |
+| `first-run` | No user root; a detected `.factory` harness, an optional directory, and a Marketplace stub whose first call fails (`gui.spec.ts`) |
+| `legacy` | A v2 user root that offers migration (`confirmations.spec.ts`) |
+| `navigation` | 60 skills, for scrolling, search, and keyboard paths (`navigation.spec.ts`) |
+| `held-sync` | Sync blocks until the test creates the `syncRelease` file (`confirmations.spec.ts`) |
+| `release` | Empty org layer; pair it with `AM_LOCALAPI_RELEASE_*` (`releases.spec.ts`) |
+| `work35-discovery` | Marketplace discovery with acquisition and search barriers (`discovery.spec.ts`) |
+| `work36-inspection` | Verified Marketplace inspection with support, image, and unsafe files (`inspection.spec.ts`) |
+| `work37-installed`, `work37-installed-missing` | An installed skill with support files, optionally with one deleted (`installed-skill-files.spec.ts`) |
+| `work39-resource-actions` | Marketplace install/remove; `AM_LOCALAPI_USER_INITIAL_MODE` = `available`, `user-installed`, or `org-optional` (`resource-actions.spec.ts`) |
+| `work40-resource-actions` | Directory-registry install/remove; mode `root-owned`, `source-included`, or `selection-included` (`registry-resource-actions.spec.ts`) |
+
+When you need a state no fixture provides, add a branch to
+`TestLocalAPIUserHarness`, named for the state rather than the work item.
+
 ### 4. Native host (only for window, binding, or lifecycle changes)
 
 ```sh

@@ -24,6 +24,7 @@
     "playwright.config.ts",
     "vitest.config.ts",
     "vite.config.ts",
-    "vite.preview.config.ts"
+    "vite.preview.config.ts",
+    "playwright.walk.config.ts"
   ]
 }
