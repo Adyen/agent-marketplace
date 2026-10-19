@@ -9,7 +9,6 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"strings"
 
 	"github.com/Adyen/agent-marketplace/internal/catalog"
 	"github.com/Adyen/agent-marketplace/internal/fsboundary"
@@ -92,9 +91,7 @@ func pluginMemberKeys(plugin *ir.Plugin, entryName, catalogURL string, exclusion
 		matched := false
 		kept := make([]ir.PluginMember, 0, len(members))
 		for _, member := range members {
-			kind, name, ok := strings.Cut(exclusion, "/")
-			if ok && member.Resource != nil &&
-				catalog.DecisionKind(kind) == member.Resource.Kind() && name == member.Resource.Name() {
+			if catalog.PluginMemberExclusionMatch(exclusion, member) {
 				matched = true
 				continue
 			}
