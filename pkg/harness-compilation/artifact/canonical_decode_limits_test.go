@@ -3,7 +3,10 @@ package artifact
 import (
 	"archive/tar"
 	"bytes"
+	"compress/gzip"
+	"errors"
 	"fmt"
+	"math"
 	"strings"
 	"testing"
 
@@ -29,6 +32,36 @@ func writeLimitMemberData(t *testing.T, tw *tar.Writer, name string, data []byte
 	}
 	if _, err := tw.Write(data); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// requireArchiveLimitRefusals checks every verification path refuses raw with
+// the named limit. A refusal identified as ErrArchiveLimitExceeded proves the
+// tripwire entry after the limit was never decoded.
+func requireArchiveLimitRefusals(t *testing.T, raw []byte, want string) {
+	t.Helper()
+	verify := map[string]func() error{
+		"VerifyArchiveBytes/placeholder": func() error {
+			_, err := VerifyArchiveBytes(raw, ArchiveDigest(raw))
+			return err
+		},
+		"VerifyArchiveBytes/fallback": func() error {
+			_, err := VerifyArchiveBytes(raw, archiveDigestPlaceholder)
+			return err
+		},
+		"VerifyFinalAgainstPlaceholder": func() error {
+			_, err := VerifyFinalAgainstPlaceholder(raw, CanonicalArtifact{})
+			return err
+		},
+		"DecodeContentArchive": func() error {
+			_, err := DecodeContentArchive(raw)
+			return err
+		},
+	}
+	for name, run := range verify {
+		if err := run(); !errors.Is(err, ErrArchiveLimitExceeded) || !strings.Contains(err.Error(), want) {
+			t.Errorf("%s: error = %v, want %v naming %q", name, err, ErrArchiveLimitExceeded, want)
+		}
 	}
 }
 
@@ -117,22 +150,7 @@ func TestVerifiedArchiveDecodingStopsAtTheArchiveLimits(t *testing.T) {
 				tc.members(t, tw)
 				writeLimitTripwire(t, tw)
 			})
-			verify := map[string]func() error{
-				"VerifyArchiveBytes": func() error {
-					_, err := VerifyArchiveBytes(raw, ArchiveDigest(raw))
-					return err
-				},
-				"DecodeContentArchive": func() error {
-					_, err := DecodeContentArchive(raw)
-					return err
-				},
-			}
-			for name, run := range verify {
-				err := run()
-				if err == nil || !strings.Contains(err.Error(), tc.want) || strings.Contains(err.Error(), "link") {
-					t.Errorf("%s: error = %v, want %q before the tripwire entry is decoded", name, err, tc.want)
-				}
-			}
+			requireArchiveLimitRefusals(t, raw, tc.want)
 		})
 	}
 }
@@ -154,10 +172,43 @@ func TestVerifiedArchiveDecodingAcceptsArchivesWithinTheLimits(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := VerifyArchiveBytes(placeholder, digest); err != nil {
+	verifiedPlaceholder, err := VerifyArchiveBytes(placeholder, digest)
+	if err != nil {
 		t.Fatalf("placeholder archive within the limits: %v", err)
+	}
+	if _, err := VerifyArchiveBytes(final, digest); err != nil {
+		t.Fatalf("final archive within the limits through the fallback: %v", err)
+	}
+	if _, err := VerifyFinalAgainstPlaceholder(final, verifiedPlaceholder); err != nil {
+		t.Fatalf("final archive within the limits against its placeholder: %v", err)
 	}
 	if _, err := DecodeContentArchive(final); err != nil {
 		t.Fatalf("final archive within the limits: %v", err)
+	}
+}
+
+// spec: marketplace-api/verified-archive-decoding-stops-at-the-archive-limits
+func TestVerifiedArchiveDecodingRefusesADeclaredSizeThatWouldOverflowTheTotal(t *testing.T) {
+	var archive bytes.Buffer
+	tw := tar.NewWriter(&archive)
+	writeLimitMember(t, tw, "unknown/first", 1024)
+	if err := tw.WriteHeader(&tar.Header{Name: "unknown/huge", Typeflag: tar.TypeReg, Mode: 0o644, Size: math.MaxInt64 - 512}); err != nil {
+		t.Fatal(err)
+	}
+	var raw bytes.Buffer
+	gw := gzip.NewWriter(&raw)
+	if _, err := gw.Write(archive.Bytes()); err != nil {
+		t.Fatal(err)
+	}
+	if err := gw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	requireArchiveLimitRefusals(t, raw.Bytes(), "total archive size")
+}
+
+func TestDecodeBudgetRefusesNegativeMemberSizes(t *testing.T) {
+	budget := &decodeBudget{limits: DefaultArchiveLimits()}
+	if err := budget.admit("", -1); !errors.Is(err, ErrArchiveLimitExceeded) {
+		t.Fatalf("negative member size error = %v, want %v", err, ErrArchiveLimitExceeded)
 	}
 }

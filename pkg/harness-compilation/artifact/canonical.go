@@ -382,6 +382,10 @@ func Decode(r io.Reader) (CanonicalArtifact, []byte, error) {
 // besides its files: the manifest and up to four directories.
 const canonicalLayoutEntries = 5
 
+// ErrArchiveLimitExceeded reports an archive refused while decoding because it
+// exceeds an archive limit.
+var ErrArchiveLimitExceeded = errors.New("archive limit exceeded")
+
 // decodeBudget enforces archive limits while an archive is decoded, so a
 // highly compressed archive is refused before its members are expanded.
 type decodeBudget struct {
@@ -400,7 +404,7 @@ func (b *decodeBudget) entry() error {
 	}
 	b.entries++
 	if max := b.limits.MaxTotalFiles; max > 0 && b.entries > max+canonicalLayoutEntries {
-		return fmt.Errorf("too many archive entries: more than %d", max+canonicalLayoutEntries)
+		return fmt.Errorf("%w: too many archive entries: more than %d", ErrArchiveLimitExceeded, max+canonicalLayoutEntries)
 	}
 	return nil
 }
@@ -411,15 +415,18 @@ func (b *decodeBudget) admit(kind string, size int64) error {
 	if b == nil {
 		return nil
 	}
+	if size < 0 {
+		return fmt.Errorf("%w: negative member size", ErrArchiveLimitExceeded)
+	}
 	l := b.limits
 	limit := l.MaxAssetBytes
 	switch kind {
 	case CanonicalManifestPath:
 		if b.manifests++; b.manifests > 1 {
-			return errors.New("duplicate manifest member")
+			return fmt.Errorf("%w: duplicate manifest member", ErrArchiveLimitExceeded)
 		}
 		if size > safeTarReadCeiling {
-			return fmt.Errorf("manifest member exceeds max bytes %d", safeTarReadCeiling)
+			return fmt.Errorf("%w: manifest member exceeds max bytes %d", ErrArchiveLimitExceeded, safeTarReadCeiling)
 		}
 		return nil
 	case CanonicalPayloadDir:
@@ -427,28 +434,29 @@ func (b *decodeBudget) admit(kind string, size int64) error {
 		b.files++
 	case CanonicalAssetsDir:
 		if b.assets++; b.assets > l.MaxAssetFiles {
-			return fmt.Errorf("too many asset files: more than %d", l.MaxAssetFiles)
+			return fmt.Errorf("%w: too many asset files: more than %d", ErrArchiveLimitExceeded, l.MaxAssetFiles)
 		}
 		b.files++
 	case CanonicalLicensesDir:
 		b.files++
 	case CanonicalSupportDir:
 		if b.support++; b.support > l.MaxAssetFiles {
-			return fmt.Errorf("too many support files: more than %d", l.MaxAssetFiles)
+			return fmt.Errorf("%w: too many support files: more than %d", ErrArchiveLimitExceeded, l.MaxAssetFiles)
 		}
 		b.files++
 	default:
 		limit = -1
 	}
 	if l.MaxTotalFiles > 0 && b.files > l.MaxTotalFiles {
-		return fmt.Errorf("total files exceed max %d", l.MaxTotalFiles)
+		return fmt.Errorf("%w: total files exceed max %d", ErrArchiveLimitExceeded, l.MaxTotalFiles)
 	}
 	if limit >= 0 && size > limit {
-		return fmt.Errorf("%s member exceeds max bytes %d", kind, limit)
+		return fmt.Errorf("%w: %s member exceeds max bytes %d", ErrArchiveLimitExceeded, kind, limit)
 	}
-	if b.bytes += size; l.MaxTotalBytes > 0 && b.bytes > l.MaxTotalBytes {
-		return fmt.Errorf("total archive size exceeds max %d", l.MaxTotalBytes)
+	if l.MaxTotalBytes > 0 && size > l.MaxTotalBytes-b.bytes {
+		return fmt.Errorf("%w: total archive size exceeds max %d", ErrArchiveLimitExceeded, l.MaxTotalBytes)
 	}
+	b.bytes += size
 	return nil
 }
 

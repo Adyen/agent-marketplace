@@ -6,6 +6,7 @@ Archive verification applied the archive limits (8 MiB payload, 2 MiB per asset,
 
 - Verifying an archive by digest, verifying a final archive against its placeholder, and decoding an archive for content enforce the existing archive limits while decoding: per-member sizes are checked against the declared size before the member is read, file counts and decoded bytes are totalled as members arrive, and decoding stops at the first member that exceeds a limit.
 - Entries the canonical layout never writes are bounded too: archive entries beyond the 1024 files plus the manifest and its four directories, members outside the layout directories (counted toward the total bytes), and a repeated manifest are refused.
+- Limit refusals wrap the exported sentinel `ErrArchiveLimitExceeded`, and the total is compared without integer overflow, so a declared size near the maximum integer cannot wrap it.
 - No limit changes value. Archives the encoder produces within the limits verify as before; the unchecked `Decode` keeps its behavior.
 
 ## Capabilities
