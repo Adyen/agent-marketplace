@@ -2,7 +2,9 @@ package materialize
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -209,21 +211,29 @@ func codexPhysicalRoots(bindings []codexDestinationBinding) map[string]string {
 			continue
 		}
 		physical[root] = root
-		info, err := os.Stat(root)
+		existing, suffix := root, ""
+		info, err := os.Stat(existing)
+		for errors.Is(err, fs.ErrNotExist) && filepath.Dir(existing) != existing {
+			suffix = filepath.Join(filepath.Base(existing), suffix)
+			existing = filepath.Dir(existing)
+			info, err = os.Stat(existing)
+		}
 		if err != nil {
 			continue
 		}
+		representative := existing
 		matched := false
 		for _, prior := range seen {
 			if os.SameFile(prior.info, info) {
-				physical[root] = prior.path
+				representative = prior.path
 				matched = true
 				break
 			}
 		}
 		if !matched {
-			seen = append(seen, seenRoot{path: root, info: info})
+			seen = append(seen, seenRoot{path: existing, info: info})
 		}
+		physical[root] = filepath.Join(representative, suffix)
 	}
 	return physical
 }

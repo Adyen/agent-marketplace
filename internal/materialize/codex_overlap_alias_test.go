@@ -116,26 +116,37 @@ func TestRunRefusesNormalizationAliasedCodexHomeBeforeMutation(t *testing.T) {
 }
 
 func TestRunRefusesSameDirectoryCodexHomeSpellingBeforeMutation(t *testing.T) {
-	repo, err := filepath.EvalSymlinks(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
+	for _, existing := range []bool{true, false} {
+		name := "first install"
+		if existing {
+			name = "existing root"
+		}
+		t.Run(name, func(t *testing.T) {
+			repo, err := filepath.EvalSymlinks(t.TempDir())
+			if err != nil {
+				t.Fatal(err)
+			}
+			firmlinked := filepath.Join("/System/Volumes/Data", repo)
+			if resolved, err := filepath.EvalSymlinks(firmlinked); err != nil || resolved != firmlinked {
+				t.Skipf("no firmlinked spelling of the repository on this host: %q, %v", resolved, err)
+			}
+			if aliasInfo, err := os.Stat(firmlinked); err != nil {
+				t.Skipf("no firmlinked spelling of the repository on this host: %v", err)
+			} else if repoInfo, err := os.Stat(repo); err != nil || !os.SameFile(aliasInfo, repoInfo) {
+				t.Skipf("firmlinked spelling names another directory: %v", err)
+			}
+			if existing {
+				if err := os.Mkdir(filepath.Join(repo, ".codex"), 0o755); err != nil {
+					t.Fatal(err)
+				}
+			}
+			alias := filepath.Join(firmlinked, ".codex")
+			t.Setenv("HOME", t.TempDir())
+			t.Setenv("XDG_STATE_HOME", t.TempDir())
+			t.Setenv("CODEX_HOME", alias)
+			requireCodexOverlapRefusal(t, repo, filepath.Join(repo, ".codex"), alias)
+		})
 	}
-	if err := os.Mkdir(filepath.Join(repo, ".codex"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	alias := filepath.Join("/System/Volumes/Data", repo, ".codex")
-	if resolved, err := filepath.EvalSymlinks(alias); err != nil || resolved != alias {
-		t.Skipf("no firmlinked spelling of the repository on this host: %q, %v", resolved, err)
-	}
-	if aliasInfo, err := os.Stat(alias); err != nil {
-		t.Skipf("no firmlinked spelling of the repository on this host: %v", err)
-	} else if repoInfo, err := os.Stat(filepath.Join(repo, ".codex")); err != nil || !os.SameFile(aliasInfo, repoInfo) {
-		t.Skipf("firmlinked spelling names another directory: %v", err)
-	}
-	t.Setenv("HOME", t.TempDir())
-	t.Setenv("XDG_STATE_HOME", t.TempDir())
-	t.Setenv("CODEX_HOME", alias)
-	requireCodexOverlapRefusal(t, repo, filepath.Join(repo, ".codex"), alias)
 }
 
 // spec: materialization/disjoint-codex-partitions-that-differ-only-in-letter-case-remain-usable

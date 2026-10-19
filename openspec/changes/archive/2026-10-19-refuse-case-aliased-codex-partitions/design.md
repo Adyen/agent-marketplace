@@ -4,7 +4,7 @@ Preflight groups Codex destinations by a partition key built from the root and p
 
 ## Decisions
 
-- Compare managed paths of different partitions by a location key: the root replaced by the first spelling of the same existing directory (`os.SameFile`), then NFC-normalized and lower-cased. Equality or nesting of location keys refuses with `materialize.destination.overlap`.
+- Compare managed paths of different partitions by a location key: the root's longest existing directory (the root itself, or its nearest existing parent on first install) replaced by the first spelling of the same directory (`os.SameFile`), the missing suffix re-appended, then NFC-normalized and lower-cased. Equality or nesting of location keys refuses with `materialize.destination.overlap`.
 - Normalization and lower-casing apply on every host and do not depend on the root existing, so a case- or normalization-variant `CODEX_HOME` is refused on first install and on case- or normalization-sensitive systems too. This follows the portable case-only collision rule for artifact paths.
 - The partition key stays the exact spelling, so coalescing behaves as before. Disjoint partitions sharing a case-variant root remain usable because their location keys do not intersect.
 - Refuse rather than coalesce. Coalescing aliased partitions would require canonical keys in plan execution, cached plan directories and ownership records, which all use the exact root spelling.
