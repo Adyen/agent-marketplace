@@ -13,5 +13,5 @@
     "forceConsistentCasingInFileNames": true,
     "types": ["node"]
   },
-  "include": ["tests/**/*.ts", "tui-test.config.ts"]
+  "include": ["tests/**/*.ts"]
 }

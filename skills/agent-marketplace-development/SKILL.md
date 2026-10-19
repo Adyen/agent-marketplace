@@ -560,7 +560,8 @@ and organization-specific infrastructure are not required.
 
    Continue when installation succeeds with the tracked lockfile unchanged.
 
-2. **Preflight.** Typecheck the tests and check that the PTY runner loads:
+2. **Preflight.** Typecheck the tests and check that the native `tui-test`
+   engine loads:
 
    ```sh
    make tui-qa-check
@@ -580,10 +581,11 @@ and organization-specific infrastructure are not required.
    Fixtures supply temporary HOME/XDG roots, workspaces, and local Git
    registries, keeping test mutations separate from personal configuration.
 
-4. **Report.** QA passes when `make tui-qa` exits zero with both runners
-   passing and every listed journey exercised, none skipped. On failure, retain the failing
-   test name and console output/current terminal screen; the suite produces
-   no snapshot or trace files. Report setup failures as blocked, not passed.
+4. **Report.** QA passes when `make tui-qa` exits zero with the process tests
+   and the journeys passing and every listed journey exercised, none skipped. On failure, retain the failing
+   test name and console output/current terminal screen, plus the GIF and
+   `tui-test` trace kept under `tools/tui-qa/test-results/<journey>/`. Report
+   setup failures as blocked, not passed.
 
    When a journey asserts the outcome of a config write, wait for the
    authoritative post-reload assessment (for example the `~ N out of sync`

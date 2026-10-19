@@ -23,6 +23,8 @@ export interface FixtureOptions {
   //  - "published-lock" publishes the same exact lock alongside the config.
   organization?: OrganizationFixtureMode;
   userMarketplaceDrift?: boolean;
+  // The stub serves placeholder archives that do not hash to their digest.
+  mismatchedPlaceholderArchive?: boolean;
 }
 
 export interface Fixture {
@@ -47,6 +49,8 @@ export interface Fixture {
   expectedOrgSkillContent?: string;
   marketplaceAcquisitionDataRequestCount?: () => number;
   marketplaceAcquisitionDataRequestPaths?: () => string[];
+  marketplaceArchiveDigest?: string;
+  marketplaceArchiveFetches?: () => { placeholder: string[]; final: string[] };
   marketplaceDelayNextAcquisition?: (ms: number) => void;
   marketplaceDelayedAcquisitionCount?: () => number;
   resetPersonalState(): void;
@@ -87,7 +91,7 @@ export const createFixture = async (name: string, options: FixtureOptions = {}):
     let marketplaceDelayNextAcquisition: ((ms: number) => void) | undefined;
     let marketplaceDelayedAcquisitionCount: (() => number) | undefined;
     if (options.organization || options.userMarketplaceDrift) {
-      stub = await createMarketplaceStub();
+      stub = await createMarketplaceStub({ mismatchedPlaceholderArchive: options.mismatchedPlaceholderArchive });
     }
     if (options.organization && stub) {
       const configPath = path.join(root, "etc", "agent-marketplace", "config.yaml");
@@ -192,6 +196,8 @@ export const createFixture = async (name: string, options: FixtureOptions = {}):
       expectedLocalConfig: `apiVersion: agent-marketplace/v4\nsources:\n  fixture:\n    git: ${registryURL}\n    ref: main\n    path: skills\n    source_harness: claude\nresources:\n  fixture:\n    include:\n      - skill/alpha-skill\n`,
       userLockPath: options.userMarketplaceDrift ? path.join(home, ".agents", "lock.yaml") : undefined,
       marketplaceDriftedArchiveDigest: stub?.driftedArchiveDigest,
+      marketplaceArchiveDigest: stub?.archiveDigest,
+      marketplaceArchiveFetches: stub?.archiveFetches,
       orgConfigPath,
       orgLockPath,
       expectedOrgConfig,

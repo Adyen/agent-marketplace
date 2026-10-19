@@ -47,6 +47,7 @@ jobs:
 
       - name: Run complete journey suite 20 times
         env:
+          AM_TUI_QA_ARTIFACTS: ${{ runner.temp }}/tui-qa-failures
           AM_TUI_QA_REPO_ROOT: ${{ github.workspace }}
           AM_TUI_QA_BINARY: ${{ runner.temp }}/agent-marketplace-tui-qa
         shell: bash
@@ -57,3 +58,13 @@ jobs:
             pnpm qa:compiled
           done
         working-directory: tools/tui-qa
+
+      - name: Upload failed journey evidence
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: tui-qa-stress-failures
+          path: ${{ runner.temp }}/tui-qa-failures/
+          if-no-files-found: ignore
+          overwrite: true
+          retention-days: 14
