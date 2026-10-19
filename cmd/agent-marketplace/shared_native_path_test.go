@@ -14,11 +14,13 @@ func TestSyncRequiredSkillKeepsSharedNativePath(t *testing.T) {
 	if isolateCommandTest(t) {
 		return
 	}
-	// The cache path of each source decides which shared-path write lands
-	// last, so cover both orders as well as both materialization modes.
+	// Write order follows snapshot paths, which hash each source and commit,
+	// so it varies between runs. The projection must not depend on it: two
+	// source-name pairs per materialization mode sample it, and the resolver
+	// tests cover both input orders.
 	for _, order := range []struct{ name, org, user string }{
-		{"organization-sorts-first", "a-org.git", "z-user.git"},
-		{"user-sorts-first", "z-org.git", "a-user.git"},
+		{"org-a-user-z", "a-org.git", "z-user.git"},
+		{"org-z-user-a", "z-org.git", "a-user.git"},
 	} {
 		for _, mode := range []string{"symlink", "file"} {
 			t.Run(order.name+"/"+mode, func(t *testing.T) {
@@ -95,5 +97,72 @@ resources:
 				}
 			})
 		}
+	}
+}
+
+// A shared path that changes owner in either direction leaves no residue of
+// the previous resource and stays in sync.
+func TestSyncSharedNativePathChangesOwnerCleanly(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	for _, mode := range []string{"symlink", "file"} {
+		t.Run(mode, func(t *testing.T) {
+			home := t.TempDir()
+			t.Setenv("HOME", home)
+			t.Setenv("CODEX_HOME", filepath.Join(home, ".codex"))
+			orgOrigin, orgWorking := createBareRepoWithWorkingClone(t, "org.git")
+			writeSkill(t, orgWorking, "audit", "Organization required skill", nil)
+			writeFile(t, filepath.Join(orgWorking, "skills", "audit", "reference.md"), "org reference\n")
+			commitAndPushAll(t, orgWorking, "org")
+			userOrigin, userWorking := createBareRepoWithWorkingClone(t, "user.git")
+			writeCommand(t, userWorking, "audit", "User selected command", "echo user")
+			commitAndPushAll(t, userWorking, "user")
+			writeConfig(t, filepath.Join(home, ".agents", "config.yaml"), "apiVersion: agent-marketplace/v4\nharnesses: [devin, codex]\nmaterialization:\n  mode: "+mode+"\nsources:\n  user:\n    git: file://"+userOrigin+"\n    ref: main\nresources:\n  user:\n    include: [command/audit]\n")
+			repo := filepath.Join(t.TempDir(), "repo")
+			if err := os.MkdirAll(repo, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			withWorkingDir(t, repo)
+			if out, err := executeCommand("sync"); err != nil {
+				t.Fatalf("command-only sync: %v\n%s", err, out)
+			}
+			devin := filepath.Join(home, ".config", "devin", "skills", "audit")
+			if data, err := os.ReadFile(filepath.Join(devin, "SKILL.md")); err != nil || !strings.Contains(string(data), "User selected command") {
+				t.Fatalf("control: command not installed first: %v\n%s", err, data)
+			}
+			orgPath := filepath.Join(t.TempDir(), "org.yaml")
+			writeConfig(t, orgPath, "apiVersion: agent-marketplace/v4\nharnesses: [devin, codex]\nsources:\n  org:\n    git: file://"+orgOrigin+"\n    ref: main\nresources:\n  org:\n    all: true\n    required: true\n")
+			config.SetTestOrganizationConfigPath(t, orgPath)
+			if out, err := executeCommand("lock", "--scope", "organization"); err != nil {
+				t.Fatalf("lock: %v\n%s", err, out)
+			}
+			out, err := executeCommand("sync")
+			t.Logf("transition sync err=%v\n%s", err, out)
+			for _, dir := range []string{devin, filepath.Join(home, ".agents", "skills", "audit")} {
+				data, readErr := os.ReadFile(filepath.Join(dir, "SKILL.md"))
+				ref, refErr := os.ReadFile(filepath.Join(dir, "reference.md"))
+				if readErr != nil || !strings.Contains(string(data), "Organization required skill") || refErr != nil || string(ref) != "org reference\n" {
+					t.Errorf("%s after transition: %v %v\n%s", dir, readErr, refErr, data)
+				}
+			}
+			if out, err := executeCommand("sync", "--check"); err != nil {
+				t.Errorf("sync --check: %v\n%s", err, out)
+			}
+			// Back again: drop the organization requirement; the command returns.
+			config.SetTestOrganizationConfigPath(t, filepath.Join(t.TempDir(), "absent.yaml"))
+			out, err = executeCommand("sync")
+			t.Logf("reverse sync err=%v\n%s", err, out)
+			data, readErr := os.ReadFile(filepath.Join(devin, "SKILL.md"))
+			if readErr != nil || !strings.Contains(string(data), "User selected command") {
+				t.Errorf("command not restored after the requirement is gone: %v\n%s", readErr, data)
+			}
+			if _, statErr := os.Stat(filepath.Join(devin, "reference.md")); statErr == nil {
+				t.Errorf("skill residue reference.md left in the command's directory")
+			}
+			if out, err := executeCommand("sync", "--check"); err != nil {
+				t.Errorf("sync --check after reverse: %v\n%s", err, out)
+			}
+		})
 	}
 }

@@ -30,8 +30,8 @@ func sharedPathDiagnostics(displaced []resolver.SharedPathDisplacement) []diag.D
 			Severity: diag.SeverityWarning,
 			Target:   string(d.Target),
 			Resource: d.Displaced.Name,
-			Message: fmt.Sprintf("%s %q from %s and %s %q from %s both install to %s for %s in %s scope; only the %s was installed there",
-				winnerKind, d.Winner.Name, redact.URL(winnerSource), displacedKind, d.Displaced.Name, redact.URL(displacedSource), d.Path(), d.Target, scope, winnerKind),
+			Message: fmt.Sprintf("%s %q from %s and %s %q from %s both install to %s for %s in %s scope; the %s takes precedence and the %s was not installed there",
+				winnerKind, d.Winner.Name, redact.URL(winnerSource), displacedKind, d.Displaced.Name, redact.URL(displacedSource), d.Path(), d.Target, scope, winnerKind, displacedKind),
 			Hint: "Rename one of the resources or exclude the one you do not want on this target; targets with separate paths keep both",
 		})
 	}

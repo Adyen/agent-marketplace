@@ -2,7 +2,7 @@
 
 P11 in the #215 frozen ledger, findings A51 and F33 of both reports (#759). Devin CLI and Codex install commands as skills, so a skill and a command with the same installed name write to the same `skills/<name>/SKILL.md`. Collision resolution keys resources by kind and name, so the two never compete: sync writes both, the last write wins, and it reports success with no warning.
 
-When an organization requires a skill and the user selects a command of the same name from a registry or Marketplace, the command can silently replace the required skill. Reproduced on `main` at `f44101fa` in 3 of 4 runs: symlink mode when the organization source's cache path sorts first, and file mode in both orders, where `sync --check` also reports drift right after `sync`.
+When an organization requires a skill and the user selects a command of the same name from a registry or Marketplace, the command can silently replace the required skill. Reproduced on `main` at `f44101fa` over two runs: in every file-mode run, where `sync --check` also reports drift right after `sync`, and in 3 of 4 symlink-mode runs. Write order follows snapshot paths that hash each source and commit, so the symlink outcome varies between runs.
 
 ## What Changes
 

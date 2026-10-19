@@ -6,7 +6,7 @@ On a harness target that installs resources of different kinds at the same nativ
 
 #### Scenario: Required skill keeps a native path a same-name command shares
 
-- **WHEN** an organization source requires skill `audit` and the user's source selects command `audit`, both targeting Devin CLI, Codex and Claude Code, in either source order and either materialization mode
+- **WHEN** an organization source requires skill `audit` and the user's source selects command `audit`, both targeting Devin CLI, Codex and Claude Code, in either materialization mode and whatever order the two are resolved or written in
 - **THEN** `sync` MUST install the required skill at `skills/audit/SKILL.md` for Devin CLI and Codex and report a `materialize.collision.shared-path` warning naming the skill and the command
 - **AND** the command MUST still be installed for Claude Code, next to the skill
 - **AND** `sync --check` MUST succeed afterwards

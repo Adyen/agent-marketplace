@@ -188,3 +188,16 @@ func TestMaterializationProjectionKeepsSeparatePathsAndSameKindRivals(t *testing
 		t.Fatalf("separate paths and same-kind rivals: out=%d displaced=%v", len(out), displaced)
 	}
 }
+
+// The alias table is derived from the target layouts; this independent
+// expectation makes any layout change that lets two kinds share a path, or
+// stop sharing one, a deliberate review decision.
+func TestSharedPathKindsMatchesTargetLayouts(t *testing.T) {
+	want := map[hcc.Target]map[ir.ResourceKind]ir.ResourceKind{
+		hcc.TargetDevin: {ir.KindCommand: ir.KindSkill},
+		hcc.TargetCodex: {ir.KindCommand: ir.KindSkill},
+	}
+	if got := sharedPathKinds(); !reflect.DeepEqual(got, want) {
+		t.Fatalf("sharedPathKinds() = %v, want %v", got, want)
+	}
+}
