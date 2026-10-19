@@ -265,7 +265,7 @@ Optional connection to a Prometheus-compatible HTTP API that exposes the invento
 | `bearer_token_env` | environment variable name | no | empty | Name of an environment variable holding an optional bearer credential, resolved server-side at request time. Requires HTTPS unless the host is a loopback test endpoint. |
 | `labels` | mapping | no | empty | Exact-match selector labels that isolate this deployment's telemetry corpus. Keys are limited to `namespace`, `endpoint`, `service`, `job`, and `cluster`; each value is at most 256 UTF-8 bytes. |
 | `max_age` | duration | no | `5m` | Hard bound on aggregate freshness; a published snapshot also expires at its earlier inventory validity horizon. Must stay strictly above `refresh.interval` + `refresh.jitter` + `timeout`. |
-| `timeout` | duration | no | `2s` | Bound on each refresh attempt and its backend request. |
+| `timeout` | duration | no | `3s` | Bound on each refresh attempt and its backend request. |
 | `refresh.interval` | duration | no | `4m` | Delay after a successful evaluation before the next proactive refresh. |
 | `refresh.retry_interval` | duration | no | `30s` | Minimum delay after a failed attempt, measured from its completion; search hints cannot shorten it. |
 | `refresh.jitter` | duration | no | `15s` | Random additional delay between zero and this bound added to each successful schedule; an explicit `0s` disables it. |

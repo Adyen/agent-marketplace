@@ -5,4 +5,4 @@
 
 ## 2. Completion
 
-- [ ] 2.1 Update the operator configuration and HTTP API reference pages to state the three-second default and run `openspec archive default-installation-metrics-timeout-three-seconds --yes`; verify `make spec-check` passes.
+- [x] 2.1 Update the operator configuration and HTTP API reference pages to state the three-second default and run `openspec archive default-installation-metrics-timeout-three-seconds --yes`; verify `make spec-check` passes.
