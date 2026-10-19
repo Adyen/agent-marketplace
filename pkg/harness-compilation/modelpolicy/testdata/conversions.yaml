@@ -205,3 +205,78 @@
   effort: high
   want_model: gemini-3-preview
   losses: [model.reasoning-omitted]
+
+- name: Factory Fable 5.1 high to Claude
+  source: factory
+  target: claude
+  model: claude-fable-5.1
+  effort: high
+  want_model: claude-fable-5-1
+  want_effort: high
+
+- name: Claude Fable 5.1 xhigh to Devin variant
+  source: claude
+  target: devin
+  model: claude-fable-5-1
+  effort: xhigh
+  want_model: claude-fable-5-1-xhigh
+
+- name: Factory Haiku 5.5 high to Claude
+  source: factory
+  target: claude
+  model: claude-haiku-5-5
+  effort: high
+  want_model: claude-haiku-5-5
+  want_effort: high
+
+- name: Factory Sonnet 5.5 medium to Claude
+  source: factory
+  target: claude
+  model: claude-sonnet-5-5
+  effort: medium
+  want_model: claude-sonnet-5-5
+  want_effort: medium
+
+- name: Devin Opus 5.5 max variant to Claude effort
+  source: devin
+  target: claude
+  model: claude-opus-5-5-max
+  want_model: claude-opus-5-5
+  want_effort: max
+
+- name: Factory GPT-6.1 Sol high to Codex
+  source: factory
+  target: codex
+  model: gpt-6.1-sol
+  effort: high
+  want_model: gpt-6.1-sol
+  want_effort: high
+
+- name: Devin Astra xhigh variant to Codex effort
+  source: devin
+  target: codex
+  model: gpt-6-astra-xhigh
+  want_model: gpt-6-astra
+  want_effort: xhigh
+
+- name: Factory Luna low to Codex
+  source: factory
+  target: codex
+  model: gpt-6-luna
+  effort: low
+  want_model: gpt-6-luna
+  want_effort: low
+
+- name: Codex GPT-6.1 Sol medium to Factory
+  source: codex
+  target: factory
+  model: gpt-6.1-sol
+  effort: medium
+  want_model: gpt-6.1-sol
+  want_effort: medium
+
+- name: Factory Gemini 3.8 Flash to Gemini
+  source: factory
+  target: gemini
+  model: gemini-3.8-flash
+  want_model: gemini-3.8-flash
