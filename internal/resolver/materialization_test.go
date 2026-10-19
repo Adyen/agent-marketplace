@@ -257,3 +257,18 @@ func TestMaterializationProjectionLeavesSameKindCaseVariantsToRefusal(t *testing
 		t.Fatalf("same-kind case variants must both reach the case-only refusal: out=%d displaced=%v", len(out), displaced)
 	}
 }
+
+func TestMaterializationProjectionKeysSharedPathsByInstalledName(t *testing.T) {
+	targets := []hcc.Target{hcc.TargetDevin}
+	required := materializationArtifact("audit", "org", ir.KindSkill, config.Organization, targets)
+	required.Required = true
+	aliased := materializationArtifact("published-name", "user", ir.KindCommand, config.UserPersonal, targets)
+	aliased.InstalledName = "audit"
+	out, displaced := MaterializationProjection([]ResolvedArtifact{aliased, required})
+	if len(out) != 1 || out[0].Resource.Kind() != ir.KindSkill || len(displaced) != 1 {
+		t.Fatalf("installed name must decide the shared path: out=%v displaced=%v", out, displaced)
+	}
+	if _, path := displaced[0].Paths(); path != "skills/audit/SKILL.md" {
+		t.Fatalf("displaced path = %q", path)
+	}
+}

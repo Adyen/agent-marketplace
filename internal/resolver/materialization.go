@@ -26,8 +26,8 @@ type SharedPathDisplacement struct {
 // Paths returns the scope-neutral native paths of the winner and the displaced
 // resource. They differ only in letter case when the names do.
 func (d SharedPathDisplacement) Paths() (winner, displaced string) {
-	winner, _ = targetmeta.NativeResourcePath(d.Target, d.Winner.ResourceKind(), d.Winner.Name)
-	displaced, _ = targetmeta.NativeResourcePath(d.Target, d.Displaced.ResourceKind(), d.Displaced.Name)
+	winner, _ = targetmeta.NativeResourcePath(d.Target, d.Winner.ResourceKind(), d.Winner.MaterializedName())
+	displaced, _ = targetmeta.NativeResourcePath(d.Target, d.Displaced.ResourceKind(), d.Displaced.MaterializedName())
 	return winner, displaced
 }
 
@@ -35,6 +35,15 @@ func (d SharedPathDisplacement) Paths() (winner, displaced string) {
 func (d SharedPathDisplacement) Sources() (winner, displaced string) {
 	return collisionSourceLabel(skillOccurrence{resolved: d.Winner, url: materializationURL(d.Winner)}, false),
 		collisionSourceLabel(skillOccurrence{resolved: d.Displaced, url: materializationURL(d.Displaced)}, false)
+}
+
+// MaterializedName returns the name the resource installs under: the
+// installed name when one is set, otherwise the resource name.
+func (r *ResolvedArtifact) MaterializedName() string {
+	if r.InstalledName != "" {
+		return r.InstalledName
+	}
+	return r.Name
 }
 
 // ResourceKind returns the kind of the loaded resource, or the catalog entry's
@@ -152,7 +161,7 @@ func materializationProjection(resolved []ResolvedArtifact, wantWinners bool) ([
 	}
 	exactKey := func(a *ResolvedArtifact, t hcc.Target) (key, bool) {
 		slot, isShared := slotKind(a.ResourceKind(), t)
-		return key{slot, a.Name, t, a.Source.IsMachineScope()}, isShared
+		return key{slot, a.MaterializedName(), t, a.Source.IsMachineScope()}, isShared
 	}
 	competes := func(a *ResolvedArtifact) bool {
 		return !a.Unresolved && !HasAdditiveSources(a.ResourceKind())
@@ -167,7 +176,7 @@ func materializationProjection(resolved []ResolvedArtifact, wantWinners bool) ([
 		if !competes(a) {
 			continue
 		}
-		upper := strings.IndexFunc(a.Name, unicode.IsUpper) >= 0
+		upper := strings.IndexFunc(a.MaterializedName(), unicode.IsUpper) >= 0
 		for _, target := range targetsOf(a) {
 			k, isShared := exactKey(a, target)
 			caseVariants = caseVariants || isShared && upper
@@ -199,10 +208,10 @@ func materializationProjection(resolved []ResolvedArtifact, wantWinners bool) ([
 		candidates := make(map[key]bool)
 		for i := range resolved {
 			a := &resolved[i]
-			if !competes(a) || strings.IndexFunc(a.Name, unicode.IsUpper) < 0 {
+			if !competes(a) || strings.IndexFunc(a.MaterializedName(), unicode.IsUpper) < 0 {
 				continue
 			}
-			folded := strings.ToLower(a.Name)
+			folded := strings.ToLower(a.MaterializedName())
 			for _, target := range targetsOf(a) {
 				if k, ok := foldedKey(i, a, target, folded); ok {
 					candidates[k] = true
@@ -216,7 +225,7 @@ func materializationProjection(resolved []ResolvedArtifact, wantWinners bool) ([
 			if !competes(a) {
 				continue
 			}
-			folded := a.Name
+			folded := a.MaterializedName()
 			if strings.IndexFunc(folded, unicode.IsUpper) >= 0 {
 				folded = strings.ToLower(folded)
 			}

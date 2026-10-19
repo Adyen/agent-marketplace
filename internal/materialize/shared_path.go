@@ -33,9 +33,9 @@ func sharedPathDiagnostics(displaced []resolver.SharedPathDisplacement) []diag.D
 			Code:     diag.CodeMaterializeSharedPathCollision,
 			Severity: diag.SeverityWarning,
 			Target:   string(d.Target),
-			Resource: d.Displaced.Name,
+			Resource: d.Displaced.MaterializedName(),
 			Message: fmt.Sprintf("%s %q from %s and %s %q from %s %s for %s in %s scope; the %s takes precedence and the %s was not installed there",
-				winnerKind, d.Winner.Name, redact.URL(winnerSource), displacedKind, d.Displaced.Name, redact.URL(displacedSource), where, d.Target, scope, winnerKind, displacedKind),
+				winnerKind, d.Winner.MaterializedName(), redact.URL(winnerSource), displacedKind, d.Displaced.MaterializedName(), redact.URL(displacedSource), where, d.Target, scope, winnerKind, displacedKind),
 			Hint: "Rename one of the resources or exclude the one you do not want on this target; targets with separate paths keep both",
 		})
 	}

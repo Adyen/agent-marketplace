@@ -137,8 +137,9 @@ func TestSyncSharedNativePathChangesOwnerCleanly(t *testing.T) {
 			if out, err := executeCommand("lock", "--scope", "organization"); err != nil {
 				t.Fatalf("lock: %v\n%s", err, out)
 			}
-			out, err := executeCommand("sync")
-			t.Logf("transition sync err=%v\n%s", err, out)
+			if out, err := executeCommand("sync"); err != nil {
+				t.Fatalf("transition sync: %v\n%s", err, out)
+			}
 			for _, dir := range []string{devin, filepath.Join(home, ".agents", "skills", "audit")} {
 				data, readErr := os.ReadFile(filepath.Join(dir, "SKILL.md"))
 				ref, refErr := os.ReadFile(filepath.Join(dir, "reference.md"))
@@ -151,14 +152,15 @@ func TestSyncSharedNativePathChangesOwnerCleanly(t *testing.T) {
 			}
 			// Back again: drop the organization requirement; the command returns.
 			config.SetTestOrganizationConfigPath(t, filepath.Join(t.TempDir(), "absent.yaml"))
-			out, err = executeCommand("sync")
-			t.Logf("reverse sync err=%v\n%s", err, out)
+			if out, err := executeCommand("sync"); err != nil {
+				t.Fatalf("reverse sync: %v\n%s", err, out)
+			}
 			data, readErr := os.ReadFile(filepath.Join(devin, "SKILL.md"))
 			if readErr != nil || !strings.Contains(string(data), "User selected command") {
 				t.Errorf("command not restored after the requirement is gone: %v\n%s", readErr, data)
 			}
-			if _, statErr := os.Stat(filepath.Join(devin, "reference.md")); statErr == nil {
-				t.Errorf("skill residue reference.md left in the command's directory")
+			if _, statErr := os.Lstat(filepath.Join(devin, "reference.md")); !os.IsNotExist(statErr) {
+				t.Errorf("skill residue reference.md left in the command's directory: %v", statErr)
 			}
 			if out, err := executeCommand("sync", "--check"); err != nil {
 				t.Errorf("sync --check after reverse: %v\n%s", err, out)
