@@ -3,11 +3,9 @@ package main
 import (
 	"context"
 	"fmt"
-	"path/filepath"
 
 	"github.com/Adyen/agent-marketplace/internal/cache"
 	"github.com/Adyen/agent-marketplace/internal/catalog"
-	"github.com/Adyen/agent-marketplace/internal/collection"
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/lockfile"
 	"github.com/Adyen/agent-marketplace/internal/pipeline"
@@ -15,22 +13,83 @@ import (
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/plugindecode"
 )
 
-// finalizePluginRoots completes the deferred format roots of one layer after
-// every git acquisition: it discovers the layer's collections, builds each
-// plugin-v1 manifest, and acquires every selected external catalog entry as
-// its own registry record.
-func finalizePluginRoots(ctx context.Context, scan []lockfile.GitRegistry, pending []pendingFormatRoot, decls []config.SourceDecl, entries []config.RegistryEntry, old map[string]lockfile.GitRegistry, upgrade, readOnly bool, allowed *[]string) ([]lockfile.GitRegistry, error) {
-	selected := pipeline.SelectedCollections(decls)
-	collections, err := discoverLockCollections(ctx, scan, decls, entries)
-	if err != nil {
-		return nil, err
+// pluginPlanSource computes the resolver's plugin selection for the merged
+// effective configuration once, on demand: catalogs decode from the exact
+// snapshots this run acquired or the deployed locks recorded, plus live
+// directory sources, through the same catalog loader the pipeline resolution
+// uses. The plugin-v1 manifests therefore commit exactly the selection the
+// resolver performs.
+// acquiredSnap records one freshly acquired registry snapshot the plan's
+// catalog load may consume.
+type acquiredSnap struct {
+	path   string
+	commit string
+}
+
+type pluginPlanSource struct {
+	merged    *config.Config
+	localCfg  *config.LocalConfig
+	repoRoot  string
+	localDir  string
+	offline   bool
+	readOnly  bool
+	snapshots map[string]acquiredSnap // gitLockIdentity → acquired snapshot
+	fetchURLs map[string]string       // gitLockIdentity → authored fetch URL
+	docs      func() []lockfile.Document
+	built     bool
+	plan      catalog.PluginSelectionPlan
+	errs      []error
+	err       error
+}
+
+func (s *pluginPlanSource) get(ctx context.Context) (catalog.PluginSelectionPlan, []error, error) {
+	if s.built {
+		return s.plan, s.errs, s.err
 	}
+	s.built = true
+	openDoc := func(registry lockfile.GitRegistry) (string, func(), error) {
+		if snap, ok := s.snapshots[gitLockIdentity(registry.URL, registry.Ref)]; ok {
+			return snap.path, nil, nil
+		}
+		oid, err := cache.ParseGitOID(registry.Commit.String())
+		if err != nil {
+			return "", nil, err
+		}
+		if s.offline || s.readOnly {
+			path, release, err := cache.LeaseExactGitReadOnlyWithContext(ctx, registry.URL, oid)
+			return path, release, err
+		}
+		path, err := cache.AcquireExactGitWithContext(ctx, registry.URL, fetchURLFor(registry, s.fetchURLs), oid)
+		return path, nil, err
+	}
+	exactDocs, release := pipeline.DocExactSnapshots(s.docs(), s.fetchURLs, openDoc)
+	defer release()
+	// Acquired registries are not yet present in any lock document, so their
+	// snapshots bind ahead of document records.
+	exact := func(entry config.RegistryEntry) (string, string, error) {
+		canonical, err := lockfile.CanonicalGitConfigURL(entry.URL)
+		if err != nil {
+			return "", "", err
+		}
+		if snap, ok := s.snapshots[gitLockIdentity(canonical, entry.Ref)]; ok {
+			return snap.path, canonical + "@" + snap.commit + ":" + entry.Path, nil
+		}
+		return exactDocs(entry)
+	}
+	s.plan, s.errs, s.err = pipeline.BuildPluginSelectionPlan(ctx, s.merged, s.localCfg, s.repoRoot, s.localDir, exact)
+	return s.plan, s.errs, s.err
+}
+
+// finalizePluginRoots completes the deferred format roots of one layer after
+// every git acquisition: each plugin-v1 manifest renders the resolver's
+// planned selection for that root, and every planned external catalog entry
+// is acquired as its own registry record.
+func finalizePluginRoots(ctx context.Context, pending []pendingFormatRoot, decls []config.SourceDecl, plan catalog.PluginSelectionPlan, old map[string]lockfile.GitRegistry, upgrade, readOnly bool, allowed *[]string) ([]lockfile.GitRegistry, error) {
 	seen := map[string]bool{}
 	var out []lockfile.GitRegistry
 	for i := range pending {
 		item := pending[i]
-		spec := catalog.PluginSelectionSpecFor(item.entry, collections, selected)
-		built, err := sourcerevision.Build(sourcerevision.Input{SnapshotRoot: item.snapshot, RootPath: item.rootPath, SourceHarness: item.entry.Format, RevisionSchema: "plugin-v1", PluginSpec: &spec})
+		built, err := sourcerevision.Build(sourcerevision.Input{SnapshotRoot: item.snapshot, RootPath: item.rootPath, SourceHarness: item.entry.Format, RevisionSchema: "plugin-v1", PluginSelection: plan.ForEntry(item.entry)})
 		if err != nil {
 			return nil, fmt.Errorf("build plugin source revision for %s/%s: %w", item.group.canonical, item.rootPath, err)
 		}
@@ -62,16 +121,12 @@ func finalizePluginRoots(ctx context.Context, scan []lockfile.GitRegistry, pendi
 		if decl.Format == "" || decl.Kind != config.V4SourceDirectory {
 			continue
 		}
-		spec := catalog.PluginSelectionSpecFor(pipeline.FormatSourceEntries([]config.SourceDecl{decl})[0], collections, selected)
-		loaded, err := catalog.DiscoverPluginSource(decl.URL, decl.Format)
-		if err != nil {
-			return nil, fmt.Errorf("decode plugin catalog %q: %w", decl.URL, err)
-		}
-		externals, err := pipeline.ExternalEntriesFor(&spec, loaded)
-		if err != nil {
-			return nil, err
-		}
-		for _, ext := range externals {
+		entry := pipeline.FormatSourceEntries([]config.SourceDecl{decl})[0]
+		for _, plugin := range plan.ForEntry(entry) {
+			ext, ok := pipeline.PlannedExternalEntry(plugin)
+			if !ok {
+				continue
+			}
 			binding := &sourcerevision.PluginExternal{
 				CatalogKind:   "directory",
 				CatalogURL:    decl.URL,
@@ -95,93 +150,34 @@ func finalizePluginRoots(ctx context.Context, scan []lockfile.GitRegistry, pendi
 	return out, nil
 }
 
-// discoverLockCollections discovers the collections of every registry in the
-// layer's lock and every directory source: they can name plugin members of a
-// format source, which the plugin-v1 manifest commits as collection edges.
-func discoverLockCollections(ctx context.Context, scan []lockfile.GitRegistry, decls []config.SourceDecl, entries []config.RegistryEntry) ([]collection.Collection, error) {
-	fetchURLs := map[string]string{}
-	for _, entry := range entries {
-		canonical, err := canonicalRegistryURL(entry.URL)
-		if err != nil {
-			return nil, err
-		}
-		fetchURLs[gitLockIdentity(canonical, entry.Ref)] = entry.URL
-	}
-	var out []collection.Collection
-	for _, registry := range scan {
-		allPlugin := len(registry.Roots) > 0
-		for _, root := range registry.Roots {
-			if root.RevisionSchema != "plugin-v1" {
-				allPlugin = false
-			}
-		}
-		if allPlugin {
-			continue
-		}
-		oid, err := cache.ParseGitOID(registry.Commit.String())
-		if err != nil {
-			return nil, err
-		}
-		var snapshot string
-		if err := cache.WithAcquiredExactGit(ctx, registry.URL, fetchURLs[gitLockIdentity(registry.URL, registry.Ref)], oid, func(path string) error {
-			snapshot = path
-			return nil
-		}); err != nil {
-			return nil, err
-		}
-		for _, root := range registry.Roots {
-			if root.RevisionSchema == "plugin-v1" {
-				// Format sources have no collections; discovery stays off for
-				// them exactly like the verification-side context build.
-				continue
-			}
-			found, err := collection.DiscoverCollections(filepath.Join(snapshot, filepath.FromSlash(root.Path)), "", registry.URL, registry.Ref, root.Path)
-			if err != nil {
-				return nil, fmt.Errorf("discover collections in %s@%s root %q: %w", registry.URL, registry.Ref, root.Path, err)
-			}
-			out = append(out, found...)
-		}
-	}
-	for _, decl := range decls {
-		if decl.Kind != config.V4SourceDirectory {
-			continue
-		}
-		found, err := collection.DiscoverCollections(decl.URL, "", decl.URL, "", "")
-		if err != nil {
-			return nil, fmt.Errorf("discover collections in %s: %w", decl.URL, err)
-		}
-		out = append(out, found...)
-	}
-	return out, nil
-}
-
 // directorySelectsExternalPlugin reports whether a remote-free layer still
-// needs a lock: a directory format source whose declared selection names at
+// needs a lock: a directory format source whose planned selection names at
 // least one external catalog entry produces a registry record; anything less
 // writes nothing.
-func directorySelectsExternalPlugin(decls []config.SourceDecl) bool {
-	selected := pipeline.SelectedCollections(decls)
-	var collections []collection.Collection
+func directorySelectsExternalPlugin(ctx context.Context, planner *pluginPlanSource, decls []config.SourceDecl) bool {
+	format := false
 	for _, decl := range decls {
-		if decl.Kind == config.V4SourceDirectory {
-			found, err := collection.DiscoverCollections(decl.URL, "", decl.URL, "", "")
-			if err == nil {
-				collections = append(collections, found...)
-			}
+		if decl.Format != "" && decl.Kind == config.V4SourceDirectory {
+			format = true
+			break
 		}
+	}
+	if !format {
+		return false
+	}
+	plan, errs, err := planner.get(ctx)
+	if err != nil || len(pipeline.PluginPlanErrors(errs)) > 0 {
+		return true
 	}
 	for _, decl := range decls {
 		if decl.Format == "" || decl.Kind != config.V4SourceDirectory {
 			continue
 		}
-		spec := catalog.PluginSelectionSpecFor(pipeline.FormatSourceEntries([]config.SourceDecl{decl})[0], collections, selected)
-		loaded, err := catalog.DiscoverPluginSource(decl.URL, decl.Format)
-		if err != nil {
-			return true
-		}
-		externals, err := pipeline.ExternalEntriesFor(&spec, loaded)
-		if err != nil || len(externals) > 0 {
-			return true
+		entry := pipeline.FormatSourceEntries([]config.SourceDecl{decl})[0]
+		for _, plugin := range plan.ForEntry(entry) {
+			if plugin.Entry.Plugin != nil && plugin.Entry.Plugin.Source.Kind == "git" {
+				return true
+			}
 		}
 	}
 	return false

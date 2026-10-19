@@ -2,45 +2,27 @@ package pipeline
 
 import (
 	"context"
+	"errors"
 	"fmt"
-	"path/filepath"
 
-	"github.com/Adyen/agent-marketplace/internal/cache"
 	"github.com/Adyen/agent-marketplace/internal/catalog"
-	"github.com/Adyen/agent-marketplace/internal/collection"
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/lockfile"
+	"github.com/Adyen/agent-marketplace/internal/resolver"
 	"github.com/Adyen/agent-marketplace/internal/sourcerevision"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/pluginpolicy"
 )
 
 // PluginLockContexts carries the per-root plugin-v1 verification inputs of
-// one layer: the declared selection spec for each format root, the
+// one layer: the resolver's planned selection for each format root, the
 // owning-catalog binding for each external-entry record, and the set of
 // registry identities the current configuration requires as external
 // records.
 type PluginLockContexts struct {
-	Specs     map[string]*catalog.PluginSelectionSpec
+	Plans     map[string][]catalog.PlannedPlugin
 	Externals map[string]*sourcerevision.PluginExternal
 	Expected  map[string]bool
-}
-
-// leaseSnapshotReadOnly opens a registry record's committed snapshot for
-// read-only use during plugin-lock context construction.
-func leaseSnapshotReadOnly(ctx context.Context) func(lockfile.GitRegistry, func(string) error) error {
-	return func(registry lockfile.GitRegistry, consume func(string) error) error {
-		oid, err := cache.ParseGitOID(registry.Commit.String())
-		if err != nil {
-			return err
-		}
-		path, release, err := cache.LeaseExactGitReadOnlyWithContext(ctx, registry.URL, oid)
-		if err != nil {
-			return err
-		}
-		defer release()
-		return consume(path)
-	}
 }
 
 // ExternalIdentities returns the external record identities (canonical URL +
@@ -110,85 +92,41 @@ func registryRootKey(canonical, ref, rootPath string) string {
 }
 
 // externalRecordKey identifies an external-entry registry record by its
-// locked repository and package root.
-func externalRecordKey(canonical, rootPath string) string {
-	return canonical + "\x00" + rootPath
+// locked repository, ref, and package root path.
+func externalRecordKey(canonical, ref, rootPath string) string {
+	return canonical + "\x00" + ref + "\x00" + rootPath
 }
 
 // PluginContextFor returns the verification context for one locked root: the
-// selection spec for a catalog/package format root, or the owning-catalog
-// binding for an external-entry root.
+// planned plugin selection for a catalog/package format root, or the
+// owning-catalog binding for an external-entry root.
 func (c *PluginLockContexts) PluginContextFor(registry lockfile.GitRegistry, root lockfile.GitRoot) *sourcerevision.PluginVerifyContext {
 	if c == nil || root.RevisionSchema != "plugin-v1" {
 		return nil
 	}
-	if spec := c.Specs[registryRootKey(registry.URL, registry.Ref, root.Path)]; spec != nil {
-		return &sourcerevision.PluginVerifyContext{Spec: spec}
+	if plan := c.Plans[registryRootKey(registry.URL, registry.Ref, root.Path)]; plan != nil {
+		return &sourcerevision.PluginVerifyContext{Plan: plan}
 	}
-	if external := c.Externals[externalRecordKey(registry.URL, root.Path)]; external != nil {
+	if external := c.Externals[externalRecordKey(registry.URL, registry.Ref, root.Path)]; external != nil {
 		return &sourcerevision.PluginVerifyContext{External: external}
 	}
 	return nil
 }
 
-// BuildPluginLockContexts computes the layer's plugin-v1 verification
-// inputs: it decodes each format source's catalog (from its locked snapshot
-// for git sources, live for directory sources), applies the declared
-// selections, and binds every selected external entry to its owning catalog.
-// openSnapshot opens a readable snapshot of a registry record for the
-// duration of consume.
-func BuildPluginLockContexts(decls []config.SourceDecl, doc lockfile.Document, openSnapshot func(registry lockfile.GitRegistry, consume func(string) error) error) (*PluginLockContexts, error) {
+// BuildPluginLockContexts projects the layer's plugin-v1 verification
+// inputs out of the resolver's own plugin selection plan: the planned
+// plugins of each git format root and the owning-catalog binding of every
+// selected external catalog entry. The layer's locked document supplies each
+// git format root's recorded commit.
+func BuildPluginLockContexts(plan catalog.PluginSelectionPlan, decls []config.SourceDecl, doc lockfile.Document) (*PluginLockContexts, error) {
 	format := FormatSourceEntries(decls)
 	if len(format) == 0 {
 		return nil, nil
 	}
 	out := &PluginLockContexts{
-		Specs:     map[string]*catalog.PluginSelectionSpec{},
+		Plans:     map[string][]catalog.PlannedPlugin{},
 		Externals: map[string]*sourcerevision.PluginExternal{},
 		Expected:  map[string]bool{},
-	}
-	selectedCollections := SelectedCollections(decls)
-	// Collections are discovered across the layer's locked snapshots and its
-	// live directory sources, so a collection in any of the layer's sources
-	// contributes its plugin edges identically at write and verify time.
-	var collections []collection.Collection
-	for _, registry := range doc.Registries {
-		external := len(registry.Roots) > 0
-		for _, root := range registry.Roots {
-			if root.RevisionSchema != "plugin-v1" {
-				external = false
-			}
-		}
-		if external {
-			continue
-		}
-		reg := registry
-		err := openSnapshot(reg, func(snapshot string) error {
-			for _, root := range reg.Roots {
-				if root.RevisionSchema == "plugin-v1" {
-					continue
-				}
-				rootDir := filepath.Join(snapshot, filepath.FromSlash(root.Path))
-				found, err := collection.DiscoverCollections(rootDir, "", reg.URL, reg.Ref, root.Path)
-				if err != nil {
-					return fmt.Errorf("discover plugin-lock collections in %s: %w", reg.URL, err)
-				}
-				collections = append(collections, found...)
-			}
-			return nil
-		})
-		if err != nil {
-			return nil, err
-		}
-	}
-	for _, entry := range format {
-		if entry.IsLocal() {
-			found, err := collection.DiscoverCollections(entry.URL, "", entry.URL, "", "")
-			if err != nil {
-				return nil, fmt.Errorf("discover plugin-lock collections in %s: %w", entry.URL, err)
-			}
-			collections = append(collections, found...)
-		}
 	}
 	for i := range format {
 		entry := format[i]
@@ -199,15 +137,10 @@ func BuildPluginLockContexts(decls []config.SourceDecl, doc lockfile.Document, o
 		if !known {
 			return nil, fmt.Errorf("plugin format %q is not a recognized package or catalog format", entry.Format)
 		}
-		spec := catalog.PluginSelectionSpecFor(entry, collections, selectedCollections)
+		planned := plan.ForEntry(entry)
+		owner := pluginOwner{entry: entry}
 		if entry.IsLocal() {
-			loaded, err := catalog.DiscoverPluginSource(entry.URL, entry.Format)
-			if err != nil {
-				return nil, fmt.Errorf("decode plugin catalog %q: %w", entry.URL, err)
-			}
-			if err := bindExternalEntries(out, &spec, loaded, entry, "", ""); err != nil {
-				return nil, err
-			}
+			out.bindPlannedExternals(planned, owner)
 			continue
 		}
 		canonical, err := lockfile.CanonicalGitConfigURL(entry.URL)
@@ -218,41 +151,83 @@ func BuildPluginLockContexts(decls []config.SourceDecl, doc lockfile.Document, o
 		if rootPath == "" {
 			rootPath = "."
 		}
-		specKey := registryRootKey(canonical, entry.Ref, rootPath)
-		out.Specs[specKey] = &spec
+		out.Plans[registryRootKey(canonical, entry.Ref, rootPath)] = planned
 		if info.Role != pluginpolicy.RoleCatalog {
 			continue
 		}
-		registry, ok := findPluginCatalogRegistry(doc, canonical, entry.Ref, rootPath)
-		if !ok {
-			continue
+		if registry, ok := findPluginCatalogRegistry(doc, canonical, entry.Ref, rootPath); ok {
+			owner.commit = registry.Commit.String()
 		}
-		err = openSnapshot(registry, func(snapshot string) error {
-			loaded, err := catalog.DiscoverPluginSource(filepath.Join(snapshot, filepath.FromSlash(rootPath)), entry.Format)
-			if err != nil {
-				return fmt.Errorf("decode plugin catalog %s@%s: %w", canonical, registry.Commit.String(), err)
-			}
-			return bindExternalEntries(out, &spec, loaded, entry, canonical, registry.Commit.String())
-		})
-		if err != nil {
-			return nil, err
-		}
+		owner.canonical = canonical
+		out.bindPlannedExternals(planned, owner)
 	}
 	return out, nil
 }
 
-// SelectedCollections returns the collection names the declarations' ordered
-// decisions select, matching how the resolver admits collection selections.
-func SelectedCollections(decls []config.SourceDecl) map[string]bool {
-	selected := map[string]bool{}
-	for _, decl := range decls {
-		for _, sel := range catalog.SelectedResources(registryEntryForDecl(decl), nil) {
-			if sel.Kind == ir.KindCollection {
-				selected[sel.Name] = true
-			}
+// pluginOwner is the owning-catalog identity of one format source for
+// external-entry bindings.
+type pluginOwner struct {
+	entry     config.RegistryEntry
+	canonical string
+	commit    string
+}
+
+func (o pluginOwner) kind() string {
+	if o.entry.IsLocal() {
+		return "directory"
+	}
+	return "git"
+}
+
+func (o pluginOwner) url() string {
+	if o.entry.IsLocal() {
+		return o.entry.URL
+	}
+	return o.canonical
+}
+
+func (o pluginOwner) root() string {
+	if o.entry.Path == "" {
+		return "."
+	}
+	return o.entry.Path
+}
+
+// bindPlannedExternals records the owning-catalog binding of every planned
+// external catalog entry, keyed by the external registry URL, ref, and
+// package root path the lock record uses.
+func (c *PluginLockContexts) bindPlannedExternals(planned []catalog.PlannedPlugin, owner pluginOwner) {
+	for _, plugin := range planned {
+		if plugin.Entry.Plugin == nil || plugin.Entry.Plugin.Source.Kind != "git" {
+			continue
+		}
+		source := plugin.Entry.Plugin.Source
+		url, err := lockfile.CanonicalGitConfigURL(source.URL)
+		if err != nil {
+			continue
+		}
+		rootPath := source.Subdirectory
+		if rootPath == "" {
+			rootPath = "."
+		}
+		ref := source.Ref
+		if ref == "" {
+			ref = "HEAD"
+		}
+		c.Expected[url+"\x00"+ref+"\x00"+rootPath] = true
+		c.Externals[externalRecordKey(url, ref, rootPath)] = &sourcerevision.PluginExternal{
+			CatalogKind:   owner.kind(),
+			CatalogURL:    owner.url(),
+			CatalogRef:    owner.entry.Ref,
+			CatalogCommit: owner.commit,
+			CatalogRoot:   owner.root(),
+			EntryName:     plugin.Name,
+			EntryDigest:   plugin.Entry.Plugin.DefinitionDigest,
+			CatalogFormat: owner.entry.Format,
+			EntryStrict:   plugin.Entry.Plugin.Strict,
+			EntryOverlay:  plugin.Entry.Plugin.Overlay,
 		}
 	}
-	return selected
 }
 
 // findPluginCatalogRegistry locates the lock record for a git format
@@ -272,79 +247,143 @@ func findPluginCatalogRegistry(doc lockfile.Document, canonical, ref, rootPath s
 	return lockfile.GitRegistry{}, false
 }
 
-// bindExternalEntries records the owning-catalog binding of every selected
-// external catalog entry, keyed by the external registry URL and the
-// package root path the lock record uses.
-func bindExternalEntries(out *PluginLockContexts, spec *catalog.PluginSelectionSpec, loaded catalog.LoadedCatalog, owner config.RegistryEntry, canonical, commit string) error {
-	externals, err := ExternalEntriesFor(spec, loaded)
+// PlannedExternalEntry renders one planned external plugin as the external
+// entry an acquirer resolves and a verifier binds.
+func PlannedExternalEntry(plugin catalog.PlannedPlugin) (sourcerevision.PluginExternalEntry, bool) {
+	if plugin.Entry.Plugin == nil || plugin.Entry.Plugin.Source.Kind != "git" {
+		return sourcerevision.PluginExternalEntry{}, false
+	}
+	return sourcerevision.PluginExternalEntry{
+		Name:             plugin.Name,
+		Source:           plugin.Entry.Plugin.Source,
+		DefinitionDigest: plugin.Entry.Plugin.DefinitionDigest,
+		EntryStrict:      plugin.Entry.Plugin.Strict,
+		EntryOverlay:     plugin.Entry.Plugin.Overlay,
+		Owner:            pluginOwnerLabel(plugin.Source),
+	}, true
+}
+
+// pluginOwnerLabel renders a format source entry's identity for
+// shared-origin diagnostics.
+func pluginOwnerLabel(entry config.RegistryEntry) string {
+	if entry.IsLocal() {
+		return entry.URL
+	}
+	canonical, err := lockfile.CanonicalGitConfigURL(entry.URL)
 	if err != nil {
-		return err
+		return entry.URL
 	}
-	kind := "directory"
-	if !owner.IsLocal() {
-		kind = "git"
+	root := entry.Path
+	if root == "" {
+		root = "."
 	}
-	for _, ext := range externals {
-		url, err := lockfile.CanonicalGitConfigURL(ext.Source.URL)
+	return canonical + " path " + root
+}
+
+// CheckPlannedSharedOrigins refuses two selected external entries across the
+// whole configuration that collapse to one lock record.
+func CheckPlannedSharedOrigins(plan catalog.PluginSelectionPlan) error {
+	var externals []sourcerevision.PluginExternalEntry
+	for _, plugin := range plan.ExternalEntries() {
+		ext, ok := PlannedExternalEntry(plugin)
+		if !ok {
+			continue
+		}
+		externals = append(externals, ext)
+	}
+	return sourcerevision.CheckSharedExternalOrigins(externals)
+}
+
+// BuildPluginSelectionPlan computes the resolver's plugin selection over the
+// effective merged configuration: catalogs decode from the exact snapshots
+// the lock commits (or live directories) through the same catalog loader the
+// pipeline resolution uses, and the plan is the projected output of
+// resolver.Resolve, so the plugin-v1 manifests commit exactly the selection
+// the resolver performs.
+func BuildPluginSelectionPlan(ctx context.Context, merged *config.Config, localCfg *config.LocalConfig, repoRoot, localConfigDir string, exact catalog.ExactSnapshotFunc) (catalog.PluginSelectionPlan, []error, error) {
+	if merged == nil {
+		return catalog.PluginSelectionPlan{}, nil, nil
+	}
+	cfg := *merged
+	cfg.Registries = append([]config.RegistryEntry(nil), merged.Registries...)
+	opts := []catalog.LoadOption{catalog.WithExactSnapshots(exact)}
+	if localConfigDir != "" {
+		opts = append(opts, catalog.WithLocalConfigDir(localConfigDir))
+	}
+	loaded := catalog.LoadRegistriesWithContext(ctx, &cfg, repoRoot, catalog.LoadModeCachedNoFetch, opts...)
+	plan, errs := resolver.PlanPluginSelection(loaded.Config, catalog.EntriesByKey(loaded.Catalogs), localCfg, resolver.WithResources(loaded.ResourceCatalogs), resolver.WithMalformed(catalog.MalformedByKey(loaded.Catalogs)), resolver.WithContext(ctx))
+	// A source whose catalog could not be loaded would silently contribute
+	// neither plugins nor collection edges, so it stops the lock lifecycle
+	// rather than committing or verifying a fabricated selection.
+	var fatal error
+	for _, entry := range loaded.Config.Registries {
+		if _, ok := loaded.Catalogs[entry.CatalogKey]; !ok {
+			fatal = errors.Join(fatal, fmt.Errorf("plugin lock selection cannot decode the catalog for %s", entry.URL))
+		}
+	}
+	if err := CheckPlannedSharedOrigins(plan); err != nil {
+		fatal = errors.Join(fatal, err)
+	}
+	return plan, errs, fatal
+}
+
+// PluginPlanErrors returns the plan diagnostics the lock lifecycle must
+// surface: hard plugin and collection selection failures. Anything the
+// resolver reports as a warning or a soft miss stays advisory; a format
+// source whose catalog is absent still fails closed later, at manifest
+// verification.
+func PluginPlanErrors(errs []error) []error {
+	var out []error
+	for _, err := range errs {
+		var memberErr *resolver.PluginMemberDirectSelectionError
+		var exclusionErr *resolver.PluginUnknownExclusionError
+		var refusalErr *resolver.PluginEntryRefusalError
+		var notFound *resolver.SelectedNotFoundError
+		var malformedErr *resolver.SelectedMalformedError
+		switch {
+		case errors.As(err, &memberErr), errors.As(err, &exclusionErr), errors.As(err, &refusalErr):
+			out = append(out, err)
+		case errors.As(err, &notFound) && (notFound.Kind == ir.KindPlugin || notFound.Kind == ir.KindCollection) && !resolver.IsSoftSelectedNotFound(err):
+			out = append(out, err)
+		case errors.As(err, &malformedErr) && (malformedErr.Kind == ir.KindPlugin || malformedErr.Kind == ir.KindCollection) && !resolver.IsSoftSelectedMalformed(err):
+			out = append(out, err)
+		}
+	}
+	return out
+}
+
+// DocExactSnapshots maps configured registry entries to the committed
+// snapshots of the given locked documents. open supplies one snapshot of a
+// record — acquiring it in writable modes or leasing it read-only — and may
+// return a release invoked once loading completes.
+func DocExactSnapshots(docs []lockfile.Document, fetchURLs map[string]string, open func(registry lockfile.GitRegistry) (path string, release func(), err error)) (catalog.ExactSnapshotFunc, func()) {
+	var releases []func()
+	releaseAll := func() {
+		for i := len(releases) - 1; i >= 0; i-- {
+			releases[i]()
+		}
+	}
+	fn := func(entry config.RegistryEntry) (string, string, error) {
+		canonical, err := lockfile.CanonicalGitConfigURL(entry.URL)
 		if err != nil {
-			continue
+			return "", "", err
 		}
-		rootPath := ext.Source.Subdirectory
-		if rootPath == "" {
-			rootPath = "."
+		for _, doc := range docs {
+			for _, registry := range doc.Registries {
+				if registry.URL != canonical || registry.Ref != entry.Ref {
+					continue
+				}
+				path, release, err := open(registry)
+				if err != nil {
+					return "", "", err
+				}
+				if release != nil {
+					releases = append(releases, release)
+				}
+				return path, canonical + "@" + registry.Commit.String() + ":" + entry.Path, nil
+			}
 		}
-		ref := ext.Source.Ref
-		if ref == "" {
-			ref = "HEAD"
-		}
-		out.Expected[url+"\x00"+ref+"\x00"+rootPath] = true
-		out.Externals[externalRecordKey(url, rootPath)] = &sourcerevision.PluginExternal{
-			CatalogKind:   kind,
-			CatalogURL:    catalogIdentityURL(owner, canonical),
-			CatalogRef:    owner.Ref,
-			CatalogCommit: commit,
-			CatalogRoot:   ownerRootPath(owner),
-			EntryName:     ext.Name,
-			EntryDigest:   ext.DefinitionDigest,
-			CatalogFormat: owner.Format,
-			EntryStrict:   ext.EntryStrict,
-			EntryOverlay:  ext.EntryOverlay,
-		}
+		return "", "", nil
 	}
-	return nil
-}
-
-// catalogIdentityURL renders the owning catalog's lock-manifest identity:
-// its canonical git URL, or the resolved directory path.
-func catalogIdentityURL(owner config.RegistryEntry, canonical string) string {
-	if owner.IsLocal() {
-		return owner.URL
-	}
-	return canonical
-}
-
-func ownerRootPath(owner config.RegistryEntry) string {
-	if owner.Path == "" {
-		return "."
-	}
-	return owner.Path
-}
-
-// ExternalEntriesFor enumerates the selected external catalog entries of one
-// decoded plugin source for acquisition: name, exact git requirement, and
-// definition digest. Two selected entries resolving to the same external
-// origin are refused.
-func ExternalEntriesFor(spec *catalog.PluginSelectionSpec, loaded catalog.LoadedCatalog) ([]sourcerevision.PluginExternalEntry, error) {
-	if spec == nil {
-		return nil, nil
-	}
-	selected := catalog.PluginSelectedNames(spec, loaded.Entries)
-	var out []sourcerevision.PluginExternalEntry
-	for _, entry := range loaded.Entries {
-		if entry.Plugin == nil || entry.Plugin.Source.Kind != "git" || entry.Plugin.Refusal != nil || !selected[entry.Name] {
-			continue
-		}
-		out = append(out, sourcerevision.PluginExternalEntry{Name: entry.Name, Source: entry.Plugin.Source, DefinitionDigest: entry.Plugin.DefinitionDigest, EntryStrict: entry.Plugin.Strict, EntryOverlay: entry.Plugin.Overlay})
-	}
-	return out, sourcerevision.CheckSharedExternalOrigins(out)
+	return fn, releaseAll
 }

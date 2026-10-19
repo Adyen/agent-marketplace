@@ -322,7 +322,18 @@ func rollbackMarketplaceLayer(ctx context.Context, stateDir string, ws Workspace
 		}
 		var expected map[string]bool
 		if len(FormatSourceEntries(decls)) > 0 {
-			contexts, ctxErr := BuildPluginLockContexts(decls, doc, leaseSnapshotReadOnly(ctx))
+			exact, release := DocExactSnapshots([]lockfile.Document{doc}, nil, func(registry lockfile.GitRegistry) (string, func(), error) {
+				return leaseRegistrySnapshot(ctx, registry)
+			})
+			plan, planErrs, planErr := BuildPluginSelectionPlan(ctx, ec.Merged, ec.Local, ws.RepoRoot(), ws.LocalConfigDir(), exact)
+			release()
+			if planErr != nil {
+				return fmt.Errorf("%w: resolve plugin lock contexts for Marketplace rollback: %w", dependencytxn.ErrGenerationConflict, planErr)
+			}
+			if hard := PluginPlanErrors(planErrs); len(hard) > 0 {
+				return fmt.Errorf("%w: resolve plugin lock contexts for Marketplace rollback: %w", dependencytxn.ErrGenerationConflict, errors.Join(hard...))
+			}
+			contexts, ctxErr := BuildPluginLockContexts(plan, decls, doc)
 			if ctxErr != nil {
 				return fmt.Errorf("%w: resolve plugin lock contexts for Marketplace rollback: %w", dependencytxn.ErrGenerationConflict, ctxErr)
 			}

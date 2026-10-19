@@ -8,6 +8,7 @@ import (
 	"sort"
 	"sync"
 
+	"github.com/Adyen/agent-marketplace/internal/cache"
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/dependencytxn"
 	"github.com/Adyen/agent-marketplace/internal/lockfile"
@@ -64,6 +65,10 @@ func ReadDeployedLocks(ctx context.Context, intent config.Intent) (config.Eviden
 func readDeployedLocks(ctx context.Context, intent config.Intent, overlays map[string][]byte) (config.Evidence, error) {
 	evidence := config.Evidence{}
 	var missing error
+	docs := map[config.Source]*lockfile.Document{}
+	var orgDoc *lockfile.Document
+	var orgPaths config.ConfigLockPaths
+	var orgRead config.ConfigRead
 	for _, source := range deployedLockOrder {
 		if err := ctx.Err(); err != nil {
 			return evidence, err
@@ -95,18 +100,12 @@ func readDeployedLocks(ctx context.Context, intent config.Intent, overlays map[s
 			}
 			continue
 		}
+		docs[source] = doc
 		if source == config.Organization {
-			var expected map[string]bool
-			if decls := layer.Sources(); len(FormatSourceEntries(decls)) > 0 {
-				contexts, ctxErr := BuildPluginLockContexts(decls, *doc, leaseSnapshotReadOnly(ctx))
-				if ctxErr != nil {
-					return evidence, &LockViewError{Code: "lock.read", Scope: scope, Path: paths.CanonicalLock, Err: ctxErr}
-				}
-				expected = contexts.ExternalIdentities()
-			}
-			if !readOnlyGitDocumentMatches(*doc, GitRegistryEntries(layer.Sources()), expected) {
-				return evidence, &LockViewError{Code: "lock.stale", Scope: scope, Path: paths.CanonicalLock, Err: errors.New("lock does not match configuration")}
-			}
+			orgDoc = doc
+			orgPaths = paths
+			orgRead = config.ConfigRead{Path: paths.CanonicalLock, RequestedPath: paths.RequestedLock, Digest: generation.Digest, Overlay: overlay}
+			continue
 		}
 		evidence.RecordDeployedLock(source, doc, config.ConfigRead{
 			Path:            paths.CanonicalLock,
@@ -116,7 +115,74 @@ func readDeployedLocks(ctx context.Context, intent config.Intent, overlays map[s
 			AcquisitionLock: true,
 		})
 	}
+	if orgDoc != nil {
+		layer := intent.Layers[config.Organization]
+		var expected map[string]bool
+		if decls := layer.Sources(); len(FormatSourceEntries(decls)) > 0 {
+			contexts, ctxErr := intentPluginLockContexts(ctx, intent, docs)
+			if ctxErr != nil {
+				return evidence, &LockViewError{Code: "lock.read", Scope: lockfile.ScopeOrganization, Path: orgPaths.CanonicalLock, Err: ctxErr}
+			}
+			expected = contexts.ExternalIdentities()
+		}
+		if !readOnlyGitDocumentMatches(*orgDoc, GitRegistryEntries(layer.Sources()), expected) {
+			return evidence, &LockViewError{Code: "lock.stale", Scope: lockfile.ScopeOrganization, Path: orgPaths.CanonicalLock, Err: errors.New("lock does not match configuration")}
+		}
+		evidence.RecordDeployedLock(config.Organization, orgDoc, config.ConfigRead{
+			Path:            orgPaths.CanonicalLock,
+			RequestedPath:   orgPaths.RequestedLock,
+			Digest:          orgRead.Digest,
+			Overlay:         orgRead.Overlay,
+			AcquisitionLock: true,
+		})
+	}
 	return evidence, missing
+}
+
+// intentPluginLockContexts projects the organization layer's plugin lock
+// contexts from a plan over the declared sources of every layer, using the
+// deployed lock snapshots as the catalog basis.
+func intentPluginLockContexts(ctx context.Context, intent config.Intent, docs map[config.Source]*lockfile.Document) (*PluginLockContexts, error) {
+	var registries []config.RegistryEntry
+	var locked []lockfile.Document
+	for _, source := range deployedLockOrder {
+		layer := intent.Layers[source]
+		for _, decl := range layer.Sources() {
+			entry := registryEntryForDecl(decl)
+			entry.Source = source
+			registries = append(registries, entry)
+		}
+		if doc := docs[source]; doc != nil {
+			locked = append(locked, *doc)
+		}
+	}
+	cfg := &config.Config{Registries: registries}
+	exact, release := DocExactSnapshots(locked, nil, func(registry lockfile.GitRegistry) (string, func(), error) {
+		return leaseRegistrySnapshot(ctx, registry)
+	})
+	defer release()
+	plan, errs, err := BuildPluginSelectionPlan(ctx, cfg, nil, "", "", exact)
+	if err != nil {
+		return nil, err
+	}
+	if hard := PluginPlanErrors(errs); len(hard) > 0 {
+		return nil, errors.Join(hard...)
+	}
+	return BuildPluginLockContexts(plan, intent.Layers[config.Organization].Sources(), *docs[config.Organization])
+}
+
+// leaseRegistrySnapshot opens a registry record's committed snapshot for
+// read-only use during plugin-lock planning.
+func leaseRegistrySnapshot(ctx context.Context, registry lockfile.GitRegistry) (string, func(), error) {
+	oid, err := cache.ParseGitOID(registry.Commit.String())
+	if err != nil {
+		return "", nil, err
+	}
+	path, release, err := cache.LeaseExactGitReadOnlyWithContext(ctx, registry.URL, oid)
+	if err != nil {
+		return "", nil, err
+	}
+	return path, release, nil
 }
 
 func layerLockPaths(layer config.LayerIntent) (config.ConfigLockPaths, error) {
