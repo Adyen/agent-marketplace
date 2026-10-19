@@ -277,6 +277,43 @@ func TestLoadSkill_SupportFiles(t *testing.T) {
 	}
 }
 
+func TestLoadSkill_SupportFilesExcludeMetadata(t *testing.T) {
+	src := fstest.MapFS{
+		"my-skill/SKILL.md": {
+			Data: []byte("---\nname: my-skill\n---\nBody\n"),
+		},
+		"my-skill/scripts/bootstrap.sh": {
+			Data: []byte("#!/bin/sh\n"),
+		},
+		"my-skill/notes/example.txt": {
+			Data: []byte("hello\n"),
+		},
+		"my-skill/.git/config":          {Data: []byte("[core]")},
+		"my-skill/.svn/entries":         {Data: []byte("12")},
+		"my-skill/.hg/store/data.i":     {Data: []byte("hg")},
+		"my-skill/.DS_Store":            {Data: []byte("ds")},
+		"my-skill/notes/.DS_Store":      {Data: []byte("ds")},
+		"my-skill/notes/.git/HEAD":      {Data: []byte("ref")},
+		"my-skill/notes/.svn/text-base": {Data: []byte("svn")},
+		"my-skill/notes/.hg/dirstate":   {Data: []byte("hg")},
+	}
+
+	skill, err := LoadSkill(src, "my-skill")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	want := []string{"notes/example.txt", "scripts/bootstrap.sh"}
+	if len(skill.SupportFiles) != len(want) {
+		t.Fatalf("support files: got %v, want %v", skill.SupportFiles, want)
+	}
+	for i := range want {
+		if skill.SupportFiles[i] != want[i] {
+			t.Fatalf("support files[%d] = %q, want %q", i, skill.SupportFiles[i], want[i])
+		}
+	}
+}
+
 func containsString(s, sub string) bool {
 	return len(s) >= len(sub) && (s == sub || len(sub) == 0 || anySubstr(s, sub))
 }
