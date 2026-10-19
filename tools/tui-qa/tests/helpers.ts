@@ -139,10 +139,12 @@ export const clipboardWrites = async (terminal: TestTerminal): Promise<string[]>
   await finish(terminal, false, true);
   const directory = journeyDirectories.get(terminal);
   assert.ok(directory, "terminal was not started by a journey");
-  const traces = fs.readdirSync(directory).filter((name) => name.startsWith("trace-"));
-  assert.equal(traces.length, 1, `expected one trace in ${directory}`);
+  const casts = fs
+    .readdirSync(directory, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory() && fs.existsSync(path.join(directory, entry.name, "session.cast")));
+  assert.equal(casts.length, 1, `expected one trace with a session cast in ${directory}`);
   const output = fs
-    .readFileSync(path.join(directory, traces[0], "session.cast"), "utf8")
+    .readFileSync(path.join(directory, casts[0].name, "session.cast"), "utf8")
     .split("\n")
     .slice(1)
     .filter(Boolean)
@@ -163,7 +165,9 @@ export interface TextRun {
 }
 
 export const findTextRun = async (terminal: TestTerminal, text: RegExp): Promise<TextRun> => {
-  const match = await locate(terminal, text).first().location();
+  const locator = locate(terminal, text).first();
+  await locator.expect();
+  const match = await locator.location();
   assert.equal(match.start.row, match.end.row, `expected ${text} on one row`);
   return { x: match.start.column, y: match.start.row, width: match.end.column - match.start.column, text: match.text };
 };

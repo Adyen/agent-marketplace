@@ -66,4 +66,5 @@ jobs:
           name: tui-qa-stress-failures
           path: ${{ runner.temp }}/tui-qa-failures/
           if-no-files-found: ignore
+          overwrite: true
           retention-days: 14
