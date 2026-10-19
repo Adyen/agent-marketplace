@@ -30,6 +30,7 @@ export GO_BUILD_IMAGE RUNTIME_IMAGE NODE_IMAGE POSTGRES_IMAGE NGINX_IMAGE SITE_N
 
 # Platform targets
 PLATFORMS := darwin-arm64 darwin-amd64 linux-amd64 linux-arm64
+RELEASE_ASSETS := $(addprefix $(RELEASE_BINARY)-,$(PLATFORMS))
 DIST_DIR := dist
 
 .PHONY: build test test-full lint ci-lint lint-full lint-common tidy version release clean e2e marketplace-gate marketplace-proxy-check released-client-gate devin-probe tui-qa-check tui-qa tui-qa-contained site-dev site-build site-docs-build secrets-check container container-marketplace container-web container-site container-docs container-check compose-config $(PLATFORMS)
@@ -291,6 +292,15 @@ linux-arm64:
 	CGO_ENABLED=0 GOOS=linux GOARCH=arm64 $(GO) build -trimpath -ldflags "$(RELEASE_LDFLAGS)" -o $(DIST_DIR)/$(RELEASE_BINARY)-linux-arm64 $(CMD)
 
 release: $(PLATFORMS)
+	@cd $(DIST_DIR) && { \
+		if command -v sha256sum >/dev/null 2>&1; then \
+			sha256sum $(RELEASE_ASSETS); \
+		elif command -v shasum >/dev/null 2>&1; then \
+			shasum -a 256 $(RELEASE_ASSETS); \
+		else \
+			echo "sha256sum or shasum is required to create release checksums" >&2; exit 1; \
+		fi; \
+	} > SHA256SUMS
 
 # Release build that injects the community telemetry endpoint and retention
 # policy URL at link time. Set AGENT_MARKETPLACE_RELEASE_TELEMETRY_ENDPOINT

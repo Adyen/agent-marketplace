@@ -2,7 +2,21 @@
 
 `agent-marketplace` is one program file with no other runtime dependencies. It runs on macOS and Linux, on Intel (`amd64`) and ARM (`arm64`) processors. There is no Windows build.
 
-Pick a method below, then [check that it works](#verify). Most people should download a release. If you rarely use a terminal, read [Terminal basics](./terminal-basics.md) first.
+Run the installer to detect your platform, download the latest release, verify its `SHA256SUMS`, and install to `~/.local/bin` without `sudo`:
+
+```bash
+curl -fsSL https://agent-marketplace.io/install.sh | bash
+```
+
+Set `AGENT_MARKETPLACE_VERSION` to pin a release or `AGENT_MARKETPLACE_INSTALL_DIR` to choose another directory. For example, with `vX.Y.Z` replaced by a release tag:
+
+```bash
+curl -fsSL https://agent-marketplace.io/install.sh | AGENT_MARKETPLACE_VERSION=vX.Y.Z AGENT_MARKETPLACE_INSTALL_DIR="$HOME/bin" bash
+```
+
+To inspect the script first, download it with `curl -fsSL https://agent-marketplace.io/install.sh -o install.sh`, read it, then run `bash install.sh`. Releases up to v5.0.0 do not publish `SHA256SUMS`, so the installer refuses them; use the options below for those releases.
+
+Then [check that it works](#verify). If you rarely use a terminal, read [Terminal basics](./terminal-basics.md) first.
 
 You also need [Git](./glossary.md#git) to install resources from Git registries. Run `git --version` to check; [Terminal basics](./terminal-basics.md#install-git) explains how to install it.
 
@@ -10,7 +24,9 @@ You also need [Git](./glossary.md#git) to install resources from Git registries.
 Before you replace your binary with the v4-only CLI, [convert every writable root and its include tree](./how-to/migrate-configuration.md) with an older released migrator. Existing organization, user, repository, and personal-local roots must declare exact `apiVersion: agent-marketplace/v4`. The organization administrator converts organization configuration. Conversion can refuse includes, unrepresentable legacy input, or missing verified Marketplace evidence. Changing the version string alone is not conversion. The new CLI has no `migrate` command and does no automatic conversion at startup or in the TUI.
 :::
 
-## From GitHub Releases
+## More install options
+
+### From GitHub Releases
 
 1. Find out which build your computer needs:
 
@@ -76,7 +92,7 @@ xattr -d com.apple.quarantine /usr/local/bin/agent-marketplace
 
 Use `~/.local/bin/agent-marketplace` instead if you chose option B.
 
-## With Go
+### With Go
 
 If you have Go 1.26.9 or newer, you can build and install the newest code from the main branch in one step:
 
@@ -88,7 +104,7 @@ This builds the latest commit on `main`, which may be newer than the latest rele
 
 Go puts the program in `$(go env GOPATH)/bin`, usually `~/go/bin`. Add that folder to your `PATH` if it isn't there, as in option B. If Go reports a `404` or an authentication error during download, run `export GOPRIVATE=github.com/Adyen/agent-marketplace` and try again. Go then downloads directly from GitHub with your Git credentials.
 
-## From source
+### From source
 
 Clone the release tag and build it with `make`. This also requires Go 1.26.9 or newer:
 

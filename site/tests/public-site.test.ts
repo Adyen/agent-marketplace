@@ -6,6 +6,18 @@ const dist = new URL('../.vitepress/dist/', import.meta.url)
 const base = process.env.SITE_BASE ?? '/'
 const docsPath = `${base.replace(/\/?$/, '/')}docs/`
 
+// spec: install-script/site-build-publishes-the-install-script
+test('public site publishes the install script unchanged and shows its command', async () => {
+  const [source, built, landing] = await Promise.all([
+    readFile(new URL('../public/install.sh', import.meta.url)),
+    readFile(new URL('install.sh', dist)),
+    readFile(new URL('index.html', dist), 'utf8'),
+  ])
+
+  assert.deepEqual(built, source)
+  assert.ok(landing.includes('curl -fsSL https://agent-marketplace.io/install.sh | bash'))
+})
+
 // spec: site-deployment-profiles/public-project-site-exposes-only-landing-and-documentation
 test('public project site exposes landing and documentation without a local Marketplace', async () => {
   const [landing, docs, nestedDocs] = await Promise.all([
