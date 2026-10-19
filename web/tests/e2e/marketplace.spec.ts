@@ -560,14 +560,14 @@ test.describe('Marketplace browser discovery', () => {
 
       await page.getByRole('button', { name: 'Clear', exact: true }).click()
       const row = page.getByTestId('search-results').locator('article').first()
-      const namespace = row.locator('h2 span').first()
-      const resourceName = row.locator('h2 a span.font-semibold')
+      const coordinateLink = row.getByRole('link', { name: 'team-tools/secure-review', exact: true })
+      const namespace = coordinateLink.locator('span').first()
+      const resourceName = coordinateLink.locator('span').last()
       const description = row.locator('p.text-toned')
       await expect(namespace).toHaveCSS('color', theme.marketplace.mutedText)
       await expect(resourceName).toHaveCSS('color', theme.marketplace.primaryText)
       await expect(description).toHaveCSS('color', theme.marketplace.secondaryText)
 
-      const coordinateLink = row.getByRole('link', { name: 'team-tools/secure-review', exact: true })
       await expect(coordinateLink).toHaveText('team-tools/secure-review')
       await expect.poll(() => coordinateLink.evaluate(element => getComputedStyle(element, '::after').opacity)).toBe('0')
       await coordinateLink.hover()
