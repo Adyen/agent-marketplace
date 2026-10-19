@@ -33,11 +33,12 @@ type Input struct {
 	RootPath       string
 	SourceHarness  string
 	RevisionSchema string
-	// PluginSpec is the declared plugin selection of a format root, required
-	// when RevisionSchema is plugin-v1 and PluginExternal is nil.
-	PluginSpec *catalog.PluginSelectionSpec
+	// PluginSelection is the resolver's planned plugin selection for a
+	// format root, required when RevisionSchema is plugin-v1 and
+	// PluginExternal is nil.
+	PluginSelection []catalog.PlannedPlugin
 	// PluginExternal binds an external-entry lock record to its owning
-	// catalog; set instead of PluginSpec for external registry roots.
+	// catalog; set instead of PluginSelection for external registry roots.
 	PluginExternal *PluginExternal
 	beforeIngest   func(string)
 	beforeHash     func(string)
@@ -322,7 +323,7 @@ func VerifyLockedGitRootWithPluginContext(snapshot string, root lockfile.GitRoot
 	}
 	input := Input{SnapshotRoot: snapshot, RootPath: root.Path}
 	if plugin != nil {
-		input.PluginSpec = plugin.Spec
+		input.PluginSelection = plugin.Plan
 		input.PluginExternal = plugin.External
 	}
 	return verify(input, Projection{
