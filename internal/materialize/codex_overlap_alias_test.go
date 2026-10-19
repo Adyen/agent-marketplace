@@ -2,14 +2,18 @@ package materialize
 
 import (
 	"context"
+	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/Adyen/agent-marketplace/internal/config"
+	"github.com/Adyen/agent-marketplace/internal/harness"
 	"github.com/Adyen/agent-marketplace/internal/resolver"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
+	targetmeta "github.com/Adyen/agent-marketplace/pkg/harness-compilation/target"
 )
 
 // spec: materialization/codex-partitions-that-differ-only-in-letter-case-are-refused
@@ -171,5 +175,31 @@ func TestRunAllowsDisjointCaseAliasedCodexPartitions(t *testing.T) {
 		if _, err := os.Lstat(path); err != nil {
 			t.Errorf("disjoint case-aliased output %q missing: %v", path, err)
 		}
+	}
+}
+
+// spec: materialization/a-codex-partition-whose-location-cannot-be-inspected-is-refused
+func TestCodexOverlapPreflightFailsClosedWhenARootCannotBeInspected(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("permission checks do not apply to root")
+	}
+	locked := filepath.Join(t.TempDir(), "locked")
+	if err := os.Mkdir(locked, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(locked, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(locked, 0o700) })
+	root := filepath.Join(locked, ".codex")
+	if _, err := os.Stat(root); err == nil || errors.Is(err, fs.ErrNotExist) {
+		t.Skipf("stat below an unsearchable directory did not fail with an inspection error: %v", err)
+	}
+	d := validateCodexManagedPathIntersections([]codexDestinationBinding{{
+		key:         outputKey{target: targetmeta.TargetCodex, machineScope: true},
+		destination: harness.Destination{ID: "machine-codex", Root: root},
+	}})
+	if d == nil || d.Code != "materialize.destination.error" || d.Severity != diag.SeverityError || !strings.Contains(d.Message, root) {
+		t.Fatalf("uninspectable Codex root was not refused before mutation: %+v", d)
 	}
 }

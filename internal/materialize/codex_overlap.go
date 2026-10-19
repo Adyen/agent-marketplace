@@ -148,7 +148,16 @@ func codexDestinationDiagnostic(message, hint string) diag.Diagnostic {
 
 func validateCodexManagedPathIntersections(bindings []codexDestinationBinding) *diag.Diagnostic {
 	managed := make([]codexManagedPath, 0, len(bindings)*3)
-	physicalRoots := codexPhysicalRoots(bindings)
+	physicalRoots, err := codexPhysicalRoots(bindings)
+	if err != nil {
+		return &diag.Diagnostic{
+			Code:     "materialize.destination.error",
+			Severity: diag.SeverityError,
+			Target:   string(targetmeta.TargetCodex),
+			Message:  fmt.Sprintf("inspect Codex destination locations before materialization: %v", err),
+			Hint:     "fix the repository, HOME, or CODEX_HOME path and retry; no destination was changed",
+		}
+	}
 	for _, binding := range bindings {
 		partition := codexPartitionKey(binding.destination.Root, binding.destination.Prefix)
 		physicalRoot := physicalRoots[filepath.Clean(binding.destination.Root)]
@@ -198,7 +207,7 @@ func validateCodexManagedPathIntersections(bindings []codexDestinationBinding) *
 	return nil
 }
 
-func codexPhysicalRoots(bindings []codexDestinationBinding) map[string]string {
+func codexPhysicalRoots(bindings []codexDestinationBinding) (map[string]string, error) {
 	type seenRoot struct {
 		path string
 		info os.FileInfo
@@ -219,7 +228,7 @@ func codexPhysicalRoots(bindings []codexDestinationBinding) map[string]string {
 			info, err = os.Stat(existing)
 		}
 		if err != nil {
-			continue
+			return nil, err
 		}
 		representative := existing
 		matched := false
@@ -235,7 +244,7 @@ func codexPhysicalRoots(bindings []codexDestinationBinding) map[string]string {
 		}
 		physical[root] = filepath.Join(representative, suffix)
 	}
-	return physical
+	return physical, nil
 }
 
 func pathIsAncestor(parent, child string) bool {
