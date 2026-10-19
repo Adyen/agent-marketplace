@@ -826,6 +826,99 @@ resources:
 	}
 }
 
+// spec: resource-selection/ref-bumping-leaves-a-full-commit-pin-unchanged
+func TestUpdateBumpLeavesFullCommitPinUnchanged(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	t.Setenv("HOME", t.TempDir())
+
+	origin, working := createBareRepoWithWorkingClone(t, "pinned-infra.git")
+	writeSkill(t, working, "vm-lifecycle", "Pinned content", nil)
+	runGit(t, working, "add", ".")
+	runGit(t, working, "commit", "-m", "pinned content")
+	pinned := strings.TrimPrefix(gitHeadCommit(t, working), "sha1:")
+	// The version pattern needs a trailing number; retry until the commit ID
+	// ends in a decimal digit, which most IDs do.
+	for attempt := 0; strings.TrimRight(pinned, "0123456789") == pinned; attempt++ {
+		if attempt == 64 {
+			t.Fatal("could not create a commit ID that ends in a digit")
+		}
+		runGit(t, working, "commit", "--allow-empty", "-m", "retry")
+		pinned = strings.TrimPrefix(gitHeadCommit(t, working), "sha1:")
+	}
+	runGit(t, working, "push", "origin", "main")
+	prefix := strings.TrimRight(pinned, "0123456789")
+	// One digit longer than the commit's numeric suffix: numerically larger,
+	// and too long for Git to read the tag name as an object ID.
+	lookalike := prefix + strings.Repeat("9", len(pinned)-len(prefix)+1)
+
+	writeSkill(t, working, "vm-lifecycle", "Lookalike tag content", nil)
+	commitAndPushAll(t, working, "lookalike tag content")
+	createAndPushTag(t, working, lookalike)
+	// Control: an ordinary version ref of the same registry still bumps.
+	createAndPushTag(t, working, "v0")
+	createAndPushTag(t, working, "v1")
+
+	repoRoot := filepath.Join(t.TempDir(), "repo")
+	configPath := filepath.Join(repoRoot, ".agents", "config.yaml")
+	writeConfig(t, configPath, `
+apiVersion: agent-marketplace/v4
+harnesses: [factory]
+sources:
+  pinned:
+    git: file://`+origin+`
+    ref: `+pinned+`
+  versioned:
+    git: file://`+origin+`
+    ref: v0
+resources:
+  pinned:
+    include: [skill/vm-lifecycle]
+`)
+	withWorkingDir(t, repoRoot)
+	if output, err := executeCommand("sync"); err != nil {
+		t.Fatalf("initial sync: %v\n%s", err, output)
+	}
+	skillPath := filepath.Join(repoRoot, ".factory", "skills", "vm-lifecycle", "SKILL.md")
+	beforeConfig, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	output, err := executeCommand("update", "--bump")
+	if err != nil {
+		t.Fatalf("update --bump: %v\n%s", err, output)
+	}
+	if !strings.Contains(output, "refs bumped: 1\n") {
+		t.Fatalf("control: the version ref was not bumped exactly once:\n%s", output)
+	}
+	afterConfig, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantConfig := strings.Replace(string(beforeConfig), "ref: v0\n", "ref: v1\n", 1)
+	if wantConfig == string(beforeConfig) || string(afterConfig) != wantConfig {
+		t.Fatalf("update --bump must rewrite only the version ref\nbefore:\n%s\nafter:\n%s", beforeConfig, afterConfig)
+	}
+	locked := false
+	for _, registry := range readLockDocument(t, filepath.Join(repoRoot, ".agents", "lock.yaml")).Registries {
+		if registry.Ref == pinned {
+			locked = true
+			if registry.Commit.String() != "sha1:"+pinned {
+				t.Fatalf("lock moved the commit pin to %s", registry.Commit)
+			}
+		}
+	}
+	if !locked {
+		t.Fatalf("lock has no entry for the commit pin %s", pinned)
+	}
+	installed, err := os.ReadFile(skillPath)
+	if err != nil || !strings.Contains(string(installed), "Pinned content") {
+		t.Fatalf("installed skill changed: %v\n%s", err, installed)
+	}
+}
+
 func TestUpdateCommandBlockedRegistryReturnsError(t *testing.T) {
 	if isolateCommandTest(t) {
 		return
