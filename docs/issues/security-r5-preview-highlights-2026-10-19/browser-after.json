@@ -1,0 +1,14 @@
+{
+  "browser": "155.0.8059.80",
+  "sourceBytes": 65627,
+  "findings": 962,
+  "validMarks": 961,
+  "milliseconds": [
+    41.10000002384186,
+    32.59999990463257,
+    32.89999997615814,
+    31.600000023841858,
+    30.100000023841858
+  ],
+  "scope": "Cold Raw click through Vue computed, DOM update and two animation frames; navigation/API setup excluded, no requests during timing. Not an isolated helper or full-page-load benchmark."
+}
