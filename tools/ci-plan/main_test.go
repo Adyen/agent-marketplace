@@ -79,6 +79,7 @@ func TestPlanCategories(t *testing.T) {
 		{"harness script", []string{"tools/harness-compat/install.sh"}, false, want("harness_compatibility")},
 		{"Marketplace proxy regression", []string{"tools/marketplace-proxy/proxy_test.go"}, false, want("go_test", "container_config")},
 		{"Marketplace proxy profile", []string{"deploy/compose/sqlite-filesystem/nginx.conf"}, false, want("container_config")},
+		{"Compose documentation opt-in", []string{"compose.docs.yaml"}, false, want("container_config")},
 		{"TUI QA", []string{"tools/tui-qa/package.json"}, false, want("tui_qa")},
 		{"marketplace Dockerfile", []string{"Dockerfile.marketplace"}, false, want("container_config", "container_marketplace")},
 		{"root dockerignore", []string{".dockerignore"}, false, want("container_config", "container_marketplace")},

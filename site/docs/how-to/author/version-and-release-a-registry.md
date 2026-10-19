@@ -58,4 +58,4 @@ For a release with breaking changes, tell consumers what to change: which resour
 ## Troubleshooting
 
 - Consumers do not see the new tag: check that the tag was pushed to the repository URL the consumer's source uses.
-- `update --bump` leaves the ref unchanged: the ref is declared by an included fragment, does not end in a number (for example `main`), has no tag with the same prefix and a higher final number, or belongs to a local `directory` source. For a Git source, edit the owning root or fragment deliberately if you need a different ref.
+- `update --bump` leaves the ref unchanged: the ref is declared by an included fragment, does not end in a number (for example `main`), is a full commit ID, has no tag with the same prefix and a higher final number, or belongs to a local `directory` source. For a Git source, edit the owning root or fragment deliberately if you need a different ref.

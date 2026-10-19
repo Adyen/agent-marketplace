@@ -123,7 +123,17 @@ function utf8Boundaries(source: string): Array<{ byte: number; index: number }> 
 
 function byteBoundary(boundaries: Array<{ byte: number; index: number }>, byte: number | undefined): number | undefined {
   if (byte === undefined || !Number.isInteger(byte) || byte < 0) return undefined
-  return boundaries.find(boundary => boundary.byte === byte)?.index
+  let lower = 0
+  let upper = boundaries.length - 1
+  while (lower <= upper) {
+    const middle = lower + Math.floor((upper - lower) / 2)
+    const boundary = boundaries[middle]
+    if (!boundary) return undefined
+    if (boundary.byte === byte) return boundary.index
+    if (boundary.byte < byte) lower = middle + 1
+    else upper = middle - 1
+  }
+  return undefined
 }
 
 function stripUnsafeFormattingCharacters(source: string): string {

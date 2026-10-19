@@ -78,8 +78,18 @@ type catalog struct {
 	Surfaces map[string]any           `yaml:"surfaces"`
 }
 
+const (
+	catalogDir    = "pkg/harness-compilation/modelpolicy/catalogs"
+	baselinesPath = "tools/model-catalog-audit/baselines.json"
+)
+
 func catalogPath(harness string) string {
-	return "pkg/harness-compilation/modelpolicy/catalogs/" + harness + ".yaml"
+	return catalogDir + "/" + harness + ".yaml"
+}
+
+func validDigest(value string) bool {
+	decoded, err := hex.DecodeString(value)
+	return err == nil && len(decoded) == sha256.Size && value == strings.ToLower(value)
 }
 
 func digest(body []byte) string {
@@ -237,8 +247,7 @@ func validateBaselines(baselines map[string]baseline, sources []source) error {
 		if _, err := time.Parse("2006-01-02", b.Checked); err != nil {
 			return fmt.Errorf("invalid baseline date for %s", s.Name)
 		}
-		decoded, err := hex.DecodeString(b.SHA256)
-		if err != nil || len(decoded) != sha256.Size || b.SHA256 != strings.ToLower(b.SHA256) {
+		if !validDigest(b.SHA256) {
 			return fmt.Errorf("invalid baseline digest for %s", s.Name)
 		}
 	}

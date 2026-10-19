@@ -129,7 +129,7 @@ docker compose logs --tail=50 app proxy
 curl -fsS http://localhost:8080/api/v1/admin/session
 ```
 
-`app`, `web`, `docs`, and `proxy` are running, and `app`, `web`, and `docs` report healthy (the proxy has no health check). The proxy's published address is `127.0.0.1:8080`, not `0.0.0.0:8080`. Typical session response:
+`app`, `web`, and `proxy` are running, and `app` and `web` report healthy (the proxy has no health check). The proxy's published address is `127.0.0.1:8080`, not `0.0.0.0:8080`. Documentation links use the public site by default. For local docs, explicitly list all three files with `-f compose.yaml -f compose.docs.yaml -f compose.override.yaml`; keep the local override last so the proxy remains loopback-only. Typical session response:
 
 ```json
 {"actor":{"issuer":"local-development-proxy","subject":"local-operator"},"authentication_mode":"trusted_proxy","capabilities":["configuration","lifecycle","activity"]}

@@ -9,15 +9,24 @@ A deployment has a few parts, each with one job:
 - The worker clones each approved registry, reads the resources in it, runs the security analyzers and license and size policy, and stores the results. In `database` management mode it also runs discovery previews that the admin panel requests.
 - The API answers HTTP requests: the well-known identity document, search, resource and revision metadata, assessments, inspection content, artifacts, health, and the optional admin routes.
 - The Nuxt UI serves the Marketplace at the deployment root, including the admin panel.
-- The documentation-only VitePress image serves these docs below `/docs/`.
-- A reverse proxy terminates TLS and routes API paths, `/docs/`, and the remaining UI paths to their owning services.
+- An optional documentation-only VitePress image serves these docs below `/docs/`.
+- A reverse proxy terminates TLS and routes API paths, enabled local documentation, and the remaining UI paths to their owning services.
 
 The public project website is a separate deployment profile. It does not run a Marketplace API, worker, or UI.
 
 | Profile | Root route | Documentation |
 |---|---|---|
 | Public project website | `https://agent-marketplace.io/` serves the landing page | `https://agent-marketplace.io/docs/` |
-| Self-hosted Marketplace | The deployment origin serves the Nuxt UI, for example `https://marketplace.example.com/` | The same origin below `/docs/` |
+| Self-hosted Marketplace (default) | The deployment origin serves the Nuxt UI, for example `https://marketplace.example.com/` | Links to `https://agent-marketplace.io/docs` |
+| Self-hosted Marketplace with local docs | The same Nuxt UI | The same origin below `/docs/` |
+
+Local documentation is disabled by default. Enable Helm `docs.enabled: true`
+or append the supplied `compose.docs.yaml` override to either Compose
+deployment to host documentation without public-site access. These options
+also set the web runtime boolean `NUXT_PUBLIC_DOCS_ENABLED`, keeping all
+documentation links consistent. Local docs stay at origin-root `/docs/`
+even when the UI has a non-root base path. The setting does not disable
+other product networking; required images must already be available.
 
 The worker and the API are the same `agent-marketplace serve` program. The `--role` flag runs one of them or both in one process.
 

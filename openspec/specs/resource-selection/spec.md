@@ -248,6 +248,16 @@ Output selected by the repository or personal-local configuration MUST use the r
 - **WHEN** neither the user nor the organization configuration declares `harnesses`, and a repository declares `harnesses: [claude]`
 - **THEN** `sync` inside that repository MUST install selected user skills for Claude in machine scope
 
+### Requirement: Ref bumping leaves exact commit pins unchanged
+
+`update --bump` SHALL treat a source ref that is a full Git object ID, 40 hexadecimal characters or 64 in a SHA-256 repository in either letter case, as an exact commit pin. It MUST NOT rewrite that ref, MUST NOT count it in `refs bumped`, and MUST keep the acquisition lock on that commit, whatever tags the registry publishes. Every other ref SHALL keep its existing bump behavior.
+
+#### Scenario: Ref bumping leaves a full commit pin unchanged
+
+- **WHEN** a repository configuration pins one Git source to a full commit ID that ends in decimal digits, the registry publishes a tag named after the commit ID's non-numeric prefix followed by a larger number, and another source of the same registry uses ref `v0` while tag `v1` exists
+- **THEN** `update --bump` MUST rewrite `v0` to `v1` and report `refs bumped: 1`
+- **AND** the commit pin's configuration line, its acquisition lock commit and its installed resource MUST be unchanged
+
 ### Requirement: Resources that share a native path compete for it
 
 On a harness target that installs resources of different kinds at the same native path, such as a skill and a converted command skill on Devin CLI and Codex, resources with the same installed name in one install scope SHALL compete for that path under the precedence of same-kind name collisions: a required selection outranks a non-required one, then the higher-precedence layer or file wins, then the alphabetically first normalized origin. Across those kinds, installed names that differ only in letter case SHALL compete in the same way on every host, because they name one path on case-insensitive filesystems; resources of one kind whose names differ only in letter case remain refused as case-only collisions. Only the winner MUST be installed at that path, the path MUST be written once, and `sync` MUST report a `materialize.collision.shared-path` warning that names the target, the path, the winner and the displaced resource. The displaced resource MUST still be installed on targets where its path does not collide, and `status` MUST NOT list the targets where it was displaced. Resources whose kinds have separate paths on a target MUST NOT compete there.

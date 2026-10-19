@@ -216,6 +216,8 @@ spec:
               value: {{ $root.Values.web.basePath | quote }}
             - name: NUXT_PUBLIC_API_BASE
               value: {{ $root.Values.web.publicApiBase | quote }}
+            - name: NUXT_PUBLIC_DOCS_ENABLED
+              value: {{ $root.Values.docs.enabled | quote }}
             - name: NUXT_API_BASE_INTERNAL
               value: {{ printf "http://%s:%v" (include "agent-marketplace.componentName" (dict "root" $root "component" "api")) $root.Values.service.api.port | quote }}
             {{- end }}

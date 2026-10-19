@@ -108,7 +108,12 @@ The first build takes a few minutes. Check the services with:
 docker compose ps
 ```
 
-After a short startup, `app`, `web`, and `docs` show as running and healthy, and `proxy` shows as running. The proxy has no health check of its own; it starts after the other three are healthy.
+After a short startup, `app` and `web` show as running and healthy, and `proxy` shows as running. The proxy has no health check of its own; it starts after the other two are healthy.
+
+By default, the UI links to public documentation. To also serve docs locally
+at `/docs/`, use `docker compose -f compose.yaml -f compose.docs.yaml up --build -d`
+instead, and retain both `-f` arguments for subsequent Compose commands.
+The override starts `docs` and switches all UI documentation links to it.
 
 ## 5. Wait for the API
 
@@ -216,7 +221,7 @@ rm -rf "$TUTORIAL_ROOT"
 
 ## What happened
 
-The repository's `compose.yaml` started four services: the Marketplace API and worker (`app`), the root-mounted Nuxt Marketplace UI (`web`), the documentation-only VitePress service (`docs`), and an Nginx reverse proxy (`proxy`) that is the only service published on port `8080`. You configured a Marketplace on `localhost`, let it mirror a public registry, and installed one skill pinned to an exact revision.
+The repository's `compose.yaml` started three services: the Marketplace API and worker (`app`), the root-mounted Nuxt Marketplace UI (`web`), and an Nginx reverse proxy (`proxy`) that is the only service published on port `8080`. The optional docs override adds the documentation-only VitePress service. You configured a Marketplace on `localhost`, let it mirror a public registry, and installed one skill pinned to an exact revision.
 
 ## Next steps
 

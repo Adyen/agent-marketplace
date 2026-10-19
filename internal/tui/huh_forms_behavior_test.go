@@ -137,7 +137,7 @@ func TestEditConfigFormEnterDispatchesProjectEditor(t *testing.T) {
 func TestSyncQuitFormConfirmAndDecline(t *testing.T) {
 	m := NewModel("/repo", "/home")
 	m.pane = paneConfirm
-	m.confirmMsg = "1 pending changes not synced. Sync+quit? y/n/esc"
+	m.confirmMsg = "1 pending changes not synced. Sync+quit?"
 	m.ensureSyncQuitForm()
 	mi, _ := m.Update(tea.KeyPressMsg{Code: 'n', Text: "n"})
 	m = mi.(Model)
@@ -166,7 +166,7 @@ func TestSyncQuitFormResetsAfterCompletion(t *testing.T) {
 	m.pane = paneConfirm
 	m.syncing = false
 	m.quitAfterSync = false
-	m.confirmMsg = "2 pending changes not synced. Sync+quit? y/n/esc"
+	m.confirmMsg = "2 pending changes not synced. Sync+quit?"
 	mi, cmd := m.Update(keyPress('n'))
 	m = mi.(Model)
 	if m.syncing || m.quitAfterSync {

@@ -1,8 +1,8 @@
 # SQLite/filesystem example
 
-This example is a single-process, all-in-one deployment. The `app` service runs both the API and the refresh worker with `serve --role all`, `docs` serves the documentation-only VitePress artifact, `web` serves the Nuxt Marketplace UI, and `proxy` is the only service that publishes a port. Do not split the API and worker while using SQLite: each process would open its own database connection, and concurrent refresh writes are not a supported production topology. The worker runs with low concurrency (`refresh_concurrency: 1`). Use the PostgreSQL example when you need to scale the API and worker independently.
+This example is a single-process, all-in-one deployment. The `app` service runs both the API and the refresh worker with `serve --role all`, `web` serves the Nuxt Marketplace UI, and `proxy` is the only service that publishes a port. Local documentation is optional and disabled by default. Do not split the API and worker while using SQLite: each process would open its own database connection, and concurrent refresh writes are not a supported production topology. The worker runs with low concurrency (`refresh_concurrency: 1`). Use the PostgreSQL example when you need to scale the API and worker independently.
 
-The proxy routes the API, the well-known metadata document, and `/healthz` to `app`, `/docs/` to VitePress, and the remaining `/` traffic to Nuxt. The operations endpoints (`/readyz` and `/metrics`) stay on the app's private listener, and public requests to them receive an explicit 404. The `app` container's healthcheck runs `/app/marketplace-healthcheck`, which calls `/readyz` on `127.0.0.1:9090` inside the container. The app, docs, web, and proxy services use `restart: unless-stopped`. After a restart, check the app logs and the private readiness endpoint before you treat the deployment as healthy.
+The proxy routes the API, the well-known metadata document, and `/healthz` to `app`, and the remaining UI traffic to Nuxt. Without local docs, `/docs` and `/docs/` descendants return 404 and the UI links to `https://agent-marketplace.io/docs`. The operations endpoints (`/readyz` and `/metrics`) stay on the app's private listener, and public requests to them receive an explicit 404. The `app` container's healthcheck runs `/app/marketplace-healthcheck`, which calls `/readyz` on `127.0.0.1:9090` inside the container. The services use `restart: unless-stopped`. After a restart, check the app logs and the private readiness endpoint before you treat the deployment as healthy.
 
 When upgrading from the combined site profile, the proxy temporarily redirects `/marketplace` and its descendants to the corresponding root routes while preserving query parameters. Keep `instance.browser_base` on the bare external origin, move any gateway protection from `/marketplace/admin/**` to `/admin/**`, and run `docker compose up --build --remove-orphans` so the old `site` container is removed. OIDC transactions started before the route switch may require a fresh sign-in.
 
@@ -16,9 +16,25 @@ The Compose entry point for this example is `compose.yaml` at the repository roo
 docker compose up --build
 ```
 
-Open `http://localhost:8080/` for the Marketplace UI and
-`http://localhost:8080/docs/` for documentation. If
+Open `http://localhost:8080/` for the Marketplace UI. If
 `MARKETPLACE_HTTP_PORT` is set, use that port instead.
+
+For air-gapped environments, opt in to bundled documentation:
+
+```bash
+docker compose -f compose.yaml -f compose.docs.yaml up --build
+```
+
+This adds the `docs` service, routes `http://localhost:8080/docs/` to it,
+and sets `NUXT_PUBLIC_DOCS_ENABLED=true` for every UI documentation link.
+Use the same `-f` arguments for subsequent Compose commands. If you also
+use a local `compose.override.yaml`, list it explicitly after these files;
+Compose does not load it automatically when `-f` is supplied.
+
+Build or transfer all required images before disconnecting the network.
+This docs-only switch does not disable registry acquisition, external
+identity providers, or other outbound connections. To disable local docs
+again, use the base configuration and stop the now-unused docs container.
 
 If your image mirror provides only `linux/amd64` images, set the platform explicitly (Apple Silicon then uses emulation):
 
