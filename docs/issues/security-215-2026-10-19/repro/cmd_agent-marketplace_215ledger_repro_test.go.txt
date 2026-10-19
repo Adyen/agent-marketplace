@@ -68,13 +68,19 @@ resources:
 		t.Fatalf("control: pinned content not installed: %v\n%s", err, data)
 	}
 	output, err := executeCommand("update", "--bump")
-	t.Logf("update --bump: err=%v\n%s", err, output)
+	if err != nil {
+		t.Fatalf("update --bump: %v\n%s", err, output)
+	}
+	t.Logf("update --bump:\n%s", output)
 	after, readErr := os.ReadFile(configPath)
 	if readErr != nil {
 		t.Fatal(readErr)
 	}
-	installed, _ := os.ReadFile(skillPath)
-	if !strings.Contains(string(after), "ref: "+pinned+"\n") || strings.Contains(string(installed), "Registry-owner replacement") {
+	installed, readErr := os.ReadFile(skillPath)
+	if readErr != nil {
+		t.Fatalf("read installed skill: %v", readErr)
+	}
+	if !strings.Contains(string(after), "ref: "+pinned+"\n") || !strings.Contains(string(installed), "Pinned content") || strings.Contains(string(installed), "Registry-owner replacement") {
 		t.Errorf("REPRODUCED: commit pin %s rewritten; config:\n%s\ninstalled:\n%s", pinned, after, installed)
 	}
 }
@@ -86,9 +92,12 @@ func TestLedger215A51RequiredSkillVersusSameNameCommand(t *testing.T) {
 	if isolateCommandTest(t) {
 		return
 	}
+	// Write order follows snapshot paths, which hash each source URL and
+	// commit, so it varies between runs; two source-name pairs per mode
+	// sample it rather than control it.
 	for _, order := range []struct{ name, org, user string }{
-		{"org-sorts-first", "a-org.git", "z-user.git"},
-		{"user-sorts-first", "z-org.git", "a-user.git"},
+		{"org-a-user-z", "a-org.git", "z-user.git"},
+		{"org-z-user-a", "z-org.git", "a-user.git"},
 	} {
 		for _, mode := range []string{"symlink", "file"} {
 			t.Run(order.name+"/"+mode, func(t *testing.T) {
@@ -216,13 +225,19 @@ resources:
 		t.Fatal(err)
 	}
 	output, err = executeCommand("remove", "other-tool", "--from", "file://"+allowedOrigin, "--scope", "user")
-	t.Logf("remove --from allowed registry: err=%v\n%s", err, output)
+	if err != nil {
+		t.Fatalf("remove --from allowed registry: %v\n%s", err, output)
+	}
+	t.Logf("remove --from allowed registry:\n%s", output)
 	if _, statErr := os.Lstat(installed); statErr == nil {
-		t.Errorf("REPRODUCED: removing another registry's resource rebuilt the blocked registry's output (remove err=%v)", err)
+		t.Errorf("REPRODUCED: removing another registry's resource rebuilt the blocked registry's output")
 	}
 	output, err = executeCommand("remove", "--from", "file://"+allowedOrigin, "--scope", "user")
-	t.Logf("remove --from allowed registry (whole entry): err=%v\n%s", err, output)
+	if err != nil {
+		t.Fatalf("remove --from allowed registry (whole entry): %v\n%s", err, output)
+	}
+	t.Logf("remove --from allowed registry (whole entry):\n%s", output)
 	if _, statErr := os.Lstat(installed); statErr == nil {
-		t.Errorf("REPRODUCED: removing another registry entry rebuilt the blocked registry's output (remove err=%v)", err)
+		t.Errorf("REPRODUCED: removing another registry entry rebuilt the blocked registry's output")
 	}
 }

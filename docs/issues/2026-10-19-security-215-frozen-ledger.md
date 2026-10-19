@@ -82,7 +82,7 @@ order. The check at the end verifies this.
 | P03 | A15 | r1 | A registry commit whose root is an empty container: its nested hooks and MCP servers were left out of the lock's source-revision inventory, so a reviewed lock change did not show executable resources that sync then installed | `3d8ac4f4` from #242; `TestNestedRevisionInventoryMatchesDiscovery`, `TestLockedNestedHookAndMCPInventory` | Fixed |
 | P09 | A49 / F34 | r1 | The organization blocks a registry during an incident. Every `sync` then refuses and leaves that registry's installed output in place, and removing another registry entry rebuilds the blocked output from cache. The organization cannot withdraw tooling it has blocked | Reproduction R-A49: after the block, `sync` fails with `Installed 0  Removed 0  Malformed 0  Errors 1` and the skill stays; after deleting it, `remove --from <other registry>` restores it (a named `remove <name> --from` does not). No new content is fetched (#216; `TestResolveBlockedRegistryRemovalDoesNotAcquire`, `TestRemoveBlockedRegistryRefusesNewAcquisition`) | **Open** (#768) |
 | P10 | A50 / F35 | r1 | A repository, or another lower-precedence selection, selects a resource named like a member of a required organization collection, and the member is suppressed | #426, #684; `TestResolveRequiredCollectionSelectionSuppressesRepositorySource`, `TestResolveRequiredCollectionMemberDisplacesOptionalSameScopeSelection`, `TestSyncRequiredCollectionMemberDisplacesUserSelection` | Fixed |
-| P11 | A51 / F33 | r1 | A command the user selected from a registry or Marketplace, named like an organization-required skill, takes that skill's `skills/<name>/SKILL.md` on Devin and Codex. Sync reports success | Reproduction R-A51: replaced in 3 of 4 runs (symlink mode when the organization source's cache path sorts first, file mode in both orders), with no warning or error | **Open** (#759) |
+| P11 | A51 / F33 | r1 | A command the user selected from a registry or Marketplace, named like an organization-required skill, takes that skill's `skills/<name>/SKILL.md` on Devin and Codex. Sync reports success | Reproduction R-A51, run twice: replaced in all 4 file-mode subtests and in 3 of 4 symlink-mode subtests, with no warning or error. In symlink mode the last write wins, and write order follows snapshot paths that hash each source and commit, so it varies between runs | **Open** (#759) |
 | P12 | A65 | r1 | A repository commits two Marketplace pins whose colon-joined TUI keys collide; enabling the benign row globally writes the other pin into user configuration | NUL-separated keys over validated segments (`config.MarketplaceCatalogKey`); `TestMarketplaceCatalogKeyDimensionsAndAliases`, `TestMarketplaceSelectionIndexKeepsDistinctPins` | Fixed |
 | P13 | A67 | r1 | Enabling one side of a TUI name collision globally copies the repository's rival registry into user configuration | #195 (`competingRowsInScope`), #320 (lookup-only edits); `TestCompetingRegistryCleanupIsScopeBound`, `TestCompetingRegistryCleanupV4`, `TestValidateToggleRegistryWriteScopeBoundary` | Fixed |
 | P14 | A85 | r1 | A mirror Marketplace serves a payload whose resource name differs from the pin, so its output lands under another resource's name | #195 (`validateDecodedArtifactIdentity`); `TestResolverRejectsMirrorPayloadIdentityAndInvalidSource` | Fixed |
@@ -291,7 +291,7 @@ All checks ran on the baseline on 2026-10-19, macOS arm64, `CGO_ENABLED=0`.
 | Reproduction | Package | Result |
 |---|---|---|
 | R-F149 `TestLedger215F149UpdateBumpReplacesCommitPin` | `cmd/agent-marketplace` | Fails: P19 confirmed (`refs bumped: 1`, replacement content installed) |
-| R-A51 `TestLedger215A51RequiredSkillVersusSameNameCommand` | `cmd/agent-marketplace` | Fails: P11 confirmed in `org-sorts-first/symlink`, `org-sorts-first/file` and `user-sorts-first/file`; `user-sorts-first/symlink` keeps the required skill |
+| R-A51 `TestLedger215A51RequiredSkillVersusSameNameCommand` | `cmd/agent-marketplace` | Fails: P11 confirmed. Over two runs, both file-mode subtests failed each time and the symlink-mode subtests failed in 3 of 4; symlink results vary with the hashed write order |
 | R-A49 `TestLedger215A49OrganizationBlockKeepsInstalledOutput` | `cmd/agent-marketplace` | Fails: P09 confirmed (blocked output stays; whole-entry `remove --from` rebuilds it; named removal does not) |
 | R-F160 `TestLedger215F160InvalidByteHidesSupportFile` | `pkg/marketplace/analyze` | Fails: P38 confirmed for terminal escapes and bidi; the valid controls are rejected. Exercises the analyzer and inspection projection, not a worker refresh |
 
@@ -312,7 +312,7 @@ Do not commit the copied files.
 
 From the repository root, set `REPORT_A` and `REPORT_F` to the original files,
 then run this read-only check. It needs only Python's standard library, opens
-no network connection and never interprets report payloads.
+no network connection and does not execute report content.
 
 ```bash
 python3 - "$REPORT_A" "$REPORT_F" <<'PY'

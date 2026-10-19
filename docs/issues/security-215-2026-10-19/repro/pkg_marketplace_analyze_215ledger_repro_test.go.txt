@@ -44,18 +44,21 @@ func TestLedger215F160InvalidByteHidesSupportFile(t *testing.T) {
 				if err != nil {
 					t.Fatalf("%s: inspection: %v", variant.name, err)
 				}
-				class := ""
+				class, listed := "", false
 				for _, file := range projection.Manifest.Files {
 					if strings.HasSuffix(file.Path, "/run") || file.Path == "run" {
-						class = file.InspectionClass
+						class, listed = file.InspectionClass, true
 					}
+				}
+				if !listed {
+					t.Fatalf("%s: the inspection manifest does not list the support file", variant.name)
 				}
 				t.Logf("%s: rejected=%v finding=%v inspection=%q findings=%v", variant.name, report.Rejected, found, class, report.Findings)
 				if variant.name == "valid" && (!report.Rejected || !found) {
 					t.Fatalf("control: hidden %s content was not rejected", tc.name)
 				}
-				if variant.name == "one-invalid-byte" && !report.Rejected {
-					t.Errorf("REPRODUCED: one invalid byte removed the %s rejection; the file is published with inspection class %q", tc.code, class)
+				if variant.name == "one-invalid-byte" && (!report.Rejected || !found) {
+					t.Errorf("REPRODUCED: one invalid byte removed the %s finding (rejected=%v); the file is published with inspection class %q", tc.code, report.Rejected, class)
 				}
 			}
 		})
