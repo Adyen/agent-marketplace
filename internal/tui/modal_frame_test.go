@@ -87,6 +87,20 @@ func TestEveryModalRendersOneBoundedFrame(t *testing.T) {
 	}
 }
 
+// spec: tui-rendering/modal-at-common-sizes
+func TestConfirmViewShowsEachAcceleratorOnce(t *testing.T) {
+	m := NewModel(t.TempDir(), t.TempDir())
+	m.width, m.height = 80, 24
+	m.pane = paneConfirm
+	m.confirmMsg = "1 pending changes not synced. Sync+quit? y/n/esc"
+	plain := ansi.Strip(m.View().Content)
+	for _, hint := range []string{"y sync+quit", "n quit", "esc cancel"} {
+		if n := strings.Count(plain, hint); n != 1 {
+			t.Fatalf("hint %q shown %d times, want once:\n%s", hint, n, plain)
+		}
+	}
+}
+
 func TestShortenPathKeepsFileName(t *testing.T) {
 	got := shortenPath("/Users/someone/src/long/nested/path/.agents/config.local.yaml", "/Users/someone", 30)
 	if ansi.StringWidth(got) > 30 || !strings.HasSuffix(got, "config.local.yaml") || !strings.HasPrefix(got, "~/") {
