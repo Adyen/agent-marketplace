@@ -346,6 +346,7 @@ func (s codexMCPSection) edits(replacement []byte) []codexMCPEdit {
 }
 
 func applyCodexMCPEdits(raw []byte, edits []codexMCPEdit) []byte {
+	slices.Reverse(edits)
 	sort.SliceStable(edits, func(i, j int) bool { return edits[i].start < edits[j].start })
 	size := len(raw)
 	for _, e := range edits {

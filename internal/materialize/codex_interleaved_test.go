@@ -1,9 +1,12 @@
 package materialize
 
 import (
+	"bytes"
 	"context"
 	"os"
 	"path/filepath"
+	"slices"
+	"sort"
 	"strings"
 	"testing"
 
@@ -13,7 +16,6 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/resolver"
 	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
-	targetmeta "github.com/Adyen/agent-marketplace/pkg/harness-compilation/target"
 	toml "github.com/pelletier/go-toml/v2"
 )
 
@@ -107,31 +109,30 @@ func TestRunPreservesHandwrittenTablesInterleavedWithOwnedCodexMCP(t *testing.T)
 	}
 }
 
-func TestReconcileCodexMCPAppendsNewServersInConfiguredOrder(t *testing.T) {
-	root := t.TempDir()
-	t.Setenv("XDG_STATE_HOME", t.TempDir())
-	names := []string{"alpha", "beta", "gamma"}
-	var desired []codexMCPEntry
-	for _, name := range names {
-		entries, err := codexDesiredMCP([]byte("[mcp_servers."+name+"]\ncommand = '"+name+"-binary'\n"), name)
-		if err != nil {
-			t.Fatal(err)
+func TestApplyCodexMCPEditsMatchesBackwardApplication(t *testing.T) {
+	backward := func(raw []byte, edits []codexMCPEdit) []byte {
+		ordered := slices.Clone(edits)
+		sort.SliceStable(ordered, func(i, j int) bool { return ordered[i].start > ordered[j].start })
+		next := slices.Clone(raw)
+		for _, e := range ordered {
+			next = slices.Concat(next[:e.start], e.replacement, next[e.end:])
 		}
-		desired = append(desired, entries...)
+		return next
 	}
-	report := reconcileCodexMCP(context.Background(), &Report{PerTarget: map[targetmeta.Target]TargetReport{}}, outputKey{target: targetmeta.TargetCodex}, "", root, desired, false, false)
-	requireNoErrorDiags(t, report.Diags)
-	raw, err := os.ReadFile(filepath.Join(root, codexMCPFile))
-	if err != nil {
-		t.Fatal(err)
-	}
-	previous := -1
-	for _, name := range names {
-		at := strings.Index(string(raw), name+"-binary")
-		if at <= previous {
-			t.Fatalf("new servers are not appended in configured order:\n%s", raw)
+	raw := []byte("0123456789abcdef")
+	for name, edits := range map[string][]codexMCPEdit{
+		"no edits":                   nil,
+		"insertions at one offset":   {{start: 16, end: 16, replacement: []byte("A")}, {start: 16, end: 16, replacement: []byte("B")}, {start: 16, end: 16, replacement: []byte("C")}},
+		"replace, delete and append": {{start: 2, end: 4, replacement: []byte("XY")}, {start: 8, end: 10}, {start: 16, end: 16, replacement: []byte("Z")}, {start: 12, end: 16}},
+		"unsorted with shared start": {{start: 10, end: 12}, {start: 16, end: 16, replacement: []byte("Z1")}, {start: 0, end: 0, replacement: []byte("P")}, {start: 5, end: 5, replacement: []byte("R")}, {start: 16, end: 16, replacement: []byte("Z2")}},
+	} {
+		want := backward(raw, edits)
+		if got := applyCodexMCPEdits(raw, slices.Clone(edits)); !bytes.Equal(got, want) {
+			t.Errorf("%s: single pass = %q, backward application = %q", name, got, want)
 		}
-		previous = at
+	}
+	if string(raw) != "0123456789abcdef" {
+		t.Fatalf("edit application mutated its input: %q", raw)
 	}
 }
 
