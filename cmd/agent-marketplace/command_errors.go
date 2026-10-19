@@ -1,7 +1,6 @@
 package main
 
 import (
-	"errors"
 	"fmt"
 	"strings"
 
@@ -29,13 +28,7 @@ func terminalSafeCommandError(err error) error {
 		return nil
 	}
 	original := fmt.Sprint(err)
-	text := original
-	var validation *config.V4ValidationError
-	if errors.As(err, &validation) {
-		if hint := validation.Remediation(); hint != "" && !strings.Contains(text, hint) {
-			text += "\n  → " + hint
-		}
-	}
+	text := appendV4RemediationHints(err, original)
 	if safe := terminalSafeLines(text); safe != text {
 		text = safe
 	}
@@ -43,6 +36,23 @@ func terminalSafeCommandError(err error) error {
 		return terminalSafeError{err: err, text: text}
 	}
 	return err
+}
+
+func appendV4RemediationHints(err error, text string) string {
+	if validation, ok := err.(*config.V4ValidationError); ok && validation != nil {
+		if hint := validation.Remediation(); hint != "" && !strings.Contains(text, hint) {
+			text += "\n  → " + hint
+		}
+	}
+	switch wrapped := err.(type) {
+	case interface{ Unwrap() []error }:
+		for _, child := range wrapped.Unwrap() {
+			text = appendV4RemediationHints(child, text)
+		}
+	case interface{ Unwrap() error }:
+		text = appendV4RemediationHints(wrapped.Unwrap(), text)
+	}
+	return text
 }
 
 func terminalSafeLines(text string) string {

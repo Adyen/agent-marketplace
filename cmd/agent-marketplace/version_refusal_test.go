@@ -50,6 +50,20 @@ func TestVersionRefusalCommandRemediation(t *testing.T) {
 			t.Fatalf("organization output has a migrate command or repeated hint:\n%s", output)
 		}
 	})
+	t.Run("multiple layers", func(t *testing.T) {
+		home, repo := versionRefusalHome(t), t.TempDir()
+		orgPath := filepath.Join(t.TempDir(), "organization.yaml")
+		writeFile(t, orgPath, "sources: {}\n")
+		config.SetTestOrganizationConfigPath(t, orgPath)
+		writeFile(t, filepath.Join(home, ".agents", "config.yaml"), "sources: {}\n")
+		writeFile(t, filepath.Join(repo, ".agents", "config.yaml"), "sources: {}\n")
+		withWorkingDir(t, repo)
+		output := runVersionRefusal(t, "list")
+		if !strings.Contains(output, "Ask your administrator") || !strings.Contains(output, "--scope user --dry-run") ||
+			!strings.Contains(output, "--scope repo --dry-run") || strings.Count(output, versionRefusalGuide) != 3 {
+			t.Fatalf("list output lacks one guidance hint or repeats one:\n%s", output)
+		}
+	})
 	t.Run("status", func(t *testing.T) {
 		home := versionRefusalHome(t)
 		repo := t.TempDir()
