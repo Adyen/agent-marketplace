@@ -540,7 +540,7 @@ func TestRepairReplacementWritesTheDesiredEntryItsConflictDescribes(t *testing.T
 	if len(conflicts) != 1 || !ok {
 		t.Fatalf("conflicts = %#v, desired entry found = %t", conflicts, ok)
 	}
-	if conflicts[0].DesiredValueDigest() != ownership.Digest(raw) || string(raw) != "last" || resource != "last" {
+	if conflicts[0].DesiredValueDigest() != "sha256:3547cb112ac4489af2310c0626cdba6f3097a2ad5a3b42ddd3b59c76c7a079a3" || string(raw) != "last" || resource != "last" {
 		t.Fatalf("conflict describes digest %s but replacement writes %q from %q", conflicts[0].DesiredValueDigest(), raw, resource)
 	}
 }
