@@ -177,7 +177,7 @@ func TestDoctorRepairYesOnATTYStillPromptsBeforeReplacing(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("--repair --yes on a terminal must exit 0: %v\n%s", err, out.String())
 	}
-	if !strings.Contains(out.String(), "with the generated entry? this deletes the existing value [y/N]") {
+	if !strings.Contains(out.String(), "with the entry generated for resource \"genai-atlassian\" (generated value digest sha256:") || !strings.Contains(out.String(), ")? this deletes the existing value [y/N]") {
 		t.Fatalf("--yes on a terminal skipped the per-entry confirmation:\n%s", out.String())
 	}
 	if !strings.Contains(out.String(), "declined: mcp-server \"genai-atlassian\" in mcp_config.json left unchanged (the existing value is kept)") {
@@ -195,6 +195,7 @@ func TestDoctorRepairYesOnATTYStillPromptsBeforeReplacing(t *testing.T) {
 // TestDoctorRepairConflictPromptsPerEntry pins the interactive contract and the
 // full loop: on a TTY the user is asked per entry; declining leaves the file
 // byte-identical; confirming replaces the entry, and the next sync is clean.
+// spec: owned-entry-reconciliation/replacement-confirmation-names-the-written-resource
 func TestDoctorRepairConflictPromptsPerEntry(t *testing.T) {
 	if isolateCommandTest(t) {
 		return
@@ -210,7 +211,8 @@ func TestDoctorRepairConflictPromptsPerEntry(t *testing.T) {
 			answers:      "n\n",
 			wantReplaced: false,
 			wantOut: []string{
-				"replace mcp-server \"genai-atlassian\" in mcp_config.json with the generated entry? this deletes the existing value [y/N]",
+				"replace mcp-server \"genai-atlassian\" in mcp_config.json with the entry generated for resource \"genai-atlassian\" (generated value digest sha256:",
+				")? this deletes the existing value [y/N]",
 				"declined: mcp-server \"genai-atlassian\" in mcp_config.json left unchanged (the existing value is kept)",
 			},
 		},

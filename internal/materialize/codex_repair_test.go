@@ -12,6 +12,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/ownership"
 	"github.com/Adyen/agent-marketplace/internal/resolver"
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 	targetmeta "github.com/Adyen/agent-marketplace/pkg/harness-compilation/target"
 )
@@ -438,5 +439,53 @@ func TestCodexRepairReReadsAndRefusesStaleConflictInsideWriteSession(t *testing.
 	acquired, reentered, released, maxDepth := counts.snapshot()
 	if acquired != 1 || reentered != 0 || released != 1 || maxDepth != 1 {
 		t.Fatalf("stale repair lock counts = (%d,%d,%d,%d), want (1,0,1,1)", acquired, reentered, released, maxDepth)
+	}
+}
+
+// spec: owned-entry-reconciliation/duplicate-desired-codex-mcp-identity-is-refused-by-repair
+func TestCodexRepairPreviewRefusesDuplicateDesiredMCPIdentity(t *testing.T) {
+	repoRoot := t.TempDir()
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	root := filepath.Join(repoRoot, ".codex")
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	configPath := filepath.Join(root, codexMCPFile)
+	original := "[mcp_servers.shared]\ncommand = 'handwritten'\n\n[mcp_servers.other]\ncommand = 'user-binary'\n"
+	if err := os.WriteFile(configPath, []byte(original), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	selection := []resolver.ResolvedArtifact{
+		codexRepairResolved("alpha", ir.NewMcpServer("shared", "alpha-binary", nil, nil, nil, ir.SourceRef{}), config.RepoCommitted),
+		codexRepairResolved("beta", ir.NewMcpServer("shared", "beta-binary", nil, nil, nil, ir.SourceRef{}), config.RepoCommitted),
+		codexRepairResolved("other", ir.NewMcpServer("other", "other-binary", nil, nil, nil, ir.SourceRef{}), config.RepoCommitted),
+	}
+	canonicalRoot, err := ownership.CanonicalRoot(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	preview, err := CodexRepairPreview(context.Background(), repoRoot, selection)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var duplicate *diag.Diagnostic
+	for i, d := range preview.Diags {
+		if d.Code == diag.CodeMaterializeCodexDuplicateIdentity {
+			duplicate = &preview.Diags[i]
+		}
+	}
+	if duplicate == nil || duplicate.Severity != diag.SeverityError || !strings.Contains(duplicate.Message, `"shared"`) || !strings.Contains(duplicate.Message, `"alpha"`) || !strings.Contains(duplicate.Message, `"beta"`) {
+		t.Fatalf("duplicate desired identity not refused like sync: %+v", preview.Diags)
+	}
+	file := codexRepairFileFor(t, preview, canonicalRoot, codexMCPFile)
+	if len(file.Adoptions) != 0 || len(file.Orphans) != 0 {
+		t.Fatalf("duplicate identity offered adoption or removal: adoptions=%#v orphans=%#v", file.Adoptions, file.Orphans)
+	}
+	if len(file.Conflicts) != 1 || file.Conflicts[0].Identity() != "other" || file.Conflicts[0].Resource != "other" {
+		t.Fatalf("conflicts = %#v, want only the unambiguous other entry", file.Conflicts)
+	}
+	if got, err := os.ReadFile(configPath); err != nil || string(got) != original {
+		t.Fatalf("preview changed config.toml: %s (err=%v)", got, err)
 	}
 }

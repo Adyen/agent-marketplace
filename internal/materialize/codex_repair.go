@@ -122,7 +122,9 @@ func previewCodexRoot(preview *RepairPreview, key outputKey, root string, hooks 
 			hookFile := ownedJSONFileSpec{rel: codexHooksFile, container: codexHooksContainer, rawValueDigest: true}
 			file, fileDiags = previewOwnedJSONAggregateFile(store, key, root, hookFile, codexHookJSONOptions(), true, desiredHooks)
 		case codexMCPFile:
-			file, fileDiags = previewCodexMCPFile(store, key, root, mcps)
+			duplicates, duplicateDiags := codexMCPDuplicateIdentities(key, mcps)
+			preview.Diags = append(preview.Diags, duplicateDiags...)
+			file, fileDiags = previewCodexMCPFile(store, key, root, mcps, duplicates)
 		}
 		preview.Diags = append(preview.Diags, redactCodexRepairDiags(root, fileDiags)...)
 		if file != nil {
@@ -131,7 +133,24 @@ func previewCodexRoot(preview *RepairPreview, key outputKey, root string, hooks 
 	}
 }
 
-func previewCodexMCPFile(store *ownership.Store, key outputKey, root string, desired []codexMCPEntry) (*RepairFile, []diag.Diagnostic) {
+func codexMCPDuplicateIdentities(key outputKey, desired []codexMCPEntry) (map[string]bool, []diag.Diagnostic) {
+	first := make(map[string]string, len(desired))
+	duplicates := make(map[string]bool)
+	var diagnostics []diag.Diagnostic
+	for _, entry := range desired {
+		resource, seen := first[entry.name]
+		if !seen {
+			first[entry.name] = entry.resource
+			continue
+		}
+		duplicates[entry.name] = true
+		slog.Error("Codex repair refused duplicate desired identity", "target", key.target, "machine_scope", key.machineScope, "server", entry.name, "first_resource", resource, "second_resource", entry.resource, "code", diag.CodeMaterializeCodexDuplicateIdentity)
+		diagnostics = append(diagnostics, diag.Diagnostic{Code: diag.CodeMaterializeCodexDuplicateIdentity, Severity: diag.SeverityError, Target: string(key.target), Resource: entry.resource, Message: fmt.Sprintf("Codex MCP server %q is produced by both %q and %q; repair offers no adoption or replacement for it", entry.name, resource, entry.resource)})
+	}
+	return duplicates, diagnostics
+}
+
+func previewCodexMCPFile(store *ownership.Store, key outputKey, root string, desired []codexMCPEntry, duplicates map[string]bool) (*RepairFile, []diag.Diagnostic) {
 	rel := codexMCPFile
 	adapter := codexMCPRepairAdapter{}
 	nativeState, diagnostics := readCodexMCPRepairState(store, key, root)
@@ -143,7 +162,9 @@ func previewCodexMCPFile(store *ownership.Store, key outputKey, root string, des
 	desiredValues := repairDesiredValues(desiredEntries)
 	resourceByID := make(map[string]string, len(desired))
 	for _, entry := range desired {
-		resourceByID[ownedAggregateIDKey(entry.id())] = entry.resource
+		if _, seen := resourceByID[ownedAggregateIDKey(entry.id())]; !seen {
+			resourceByID[ownedAggregateIDKey(entry.id())] = entry.resource
+		}
 	}
 	file := &RepairFile{
 		Target:          key.target,
@@ -157,6 +178,9 @@ func previewCodexMCPFile(store *ownership.Store, key outputKey, root string, des
 		desired:         desiredEntries,
 	}
 	for _, candidate := range ownership.ExactAdoptionCandidates(state.proof, state.existing, desiredValues) {
+		if duplicates[candidate.EntryID().Key] {
+			continue
+		}
 		file.Adoptions = append(file.Adoptions, AdoptionCandidate{Candidate: candidate, Resource: resourceByID[ownedAggregateIDKey(candidate.EntryID())]})
 	}
 	orphans, orphanErr := store.OrphanCandidates(state.proof, rel, state.existing, desiredValues)
@@ -172,7 +196,7 @@ func previewCodexMCPFile(store *ownership.Store, key outputKey, root string, des
 	}
 	for _, candidate := range ownership.ValueConflictCandidates(state.proof, state.existing, desiredValues) {
 		section, ok := nativeState.sections[candidate.EntryID().Key]
-		if !ok || section.alternate {
+		if !ok || section.alternate || duplicates[candidate.EntryID().Key] {
 			continue
 		}
 		file.Conflicts = append(file.Conflicts, ConflictCandidate{

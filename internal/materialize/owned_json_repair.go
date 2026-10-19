@@ -75,7 +75,9 @@ func previewOwnedJSONAggregateFile(store *ownership.Store, key outputKey, outDir
 	desiredValues := repairDesiredValues(desiredEntries)
 	resourceByID := make(map[string]string, len(desired))
 	for _, entry := range desired {
-		resourceByID[ownedAggregateIDKey(entry.id())] = entry.resource
+		if _, seen := resourceByID[ownedAggregateIDKey(entry.id())]; !seen {
+			resourceByID[ownedAggregateIDKey(entry.id())] = entry.resource
+		}
 	}
 
 	file := &RepairFile{

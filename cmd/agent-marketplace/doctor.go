@@ -691,8 +691,8 @@ func applyRepairActions(out io.Writer, opts doctorOptions, preview *materialize.
 				logDoctorRepairDecision(file, "replace", "deferred", candidate.EntryKind(), candidate.Identity(), "non-interactive")
 				continue
 			}
-			prompt := fmt.Sprintf("  replace %s %q in %s with the generated entry? this deletes the existing value [y/N] ",
-				candidate.EntryKind(), candidate.Identity(), file.Rel)
+			prompt := fmt.Sprintf("  replace %s %q in %s with the entry generated for resource %q (generated value digest %s)? this deletes the existing value [y/N] ",
+				candidate.EntryKind(), candidate.Identity(), file.Rel, candidate.Resource, candidate.DesiredValueDigest())
 			confirmed, err := confirmPrompt(out, reader, prompt)
 			if err != nil {
 				slog.Error("doctor repair decision failed", "target", file.Target, "file", file.Rel, "action", "replace", "kind", candidate.EntryKind(), "identity", candidate.Identity(), "code", diag.CodeDoctorRepairFailed)
