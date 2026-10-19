@@ -2425,7 +2425,7 @@ func buildOccurrences(cfg *config.Config, catalogs map[string][]catalog.Entry, r
 					Edges:   []PluginEdge{{Kind: PluginEdgeDirect}},
 					Members: selectedSkill.Plugin.Members,
 				}
-				if optErr := applyPluginRequestOptions(selection, selected.name, pluginRequestsFor(entry, selected.name), entry); optErr != nil {
+				if optErr := applyPluginRequestOptions(selection, selected.name, pluginRequestsFor(entry, selected.name), entry, selectedSkill.Plugin); optErr != nil {
 					errs = append(errs, optErr)
 					continue
 				}

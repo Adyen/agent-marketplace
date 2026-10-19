@@ -1167,3 +1167,58 @@ func TestSyncNestedCollectionIncludeLocksPlugin(t *testing.T) {
 		}
 	}
 }
+
+// Changing the member exclusion of an external catalog entry changes the
+// member keys the owning catalog's plugin-v1 manifest commits: read-only
+// modes must report the lock stale and write nothing, then a plain sync
+// rewrites it.
+func TestSyncExternalEntryMemberExclusionMakesLockStale(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	root := pluginLockFixture(t)
+	repo := filepath.Join(root, "repo")
+
+	entryOrigin, entryWorking := createBareRepoWithWorkingClone(t, "entry.git")
+	writeClaudePluginPackage(t, entryWorking, "ext-kit", "ext-skill")
+	commitAndPushAll(t, entryWorking, "seed entry")
+
+	catalogOrigin, catalogWorking := createBareRepoWithWorkingClone(t, "catalog.git")
+	writeCatalogRepo(t, catalogWorking, entryOrigin)
+	commitAndPushAll(t, catalogWorking, "seed catalog")
+
+	cfgPath := filepath.Join(repo, ".agents", "config.yaml")
+	configBody := func(request string) string {
+		return "apiVersion: agent-marketplace/v4\nmaterialization: {mode: file}\nsources:\n  team: {git: file://" + filepath.ToSlash(catalogOrigin) + ", ref: main, format: claude-marketplace}\nresources:\n  team:\n    - " + request + "\n"
+	}
+	writeConfig(t, cfgPath, configBody("plugin/ext-kit"))
+	withWorkingDir(t, repo)
+	lockPath := filepath.Join(repo, ".agents", "lock.yaml")
+	if output, err := executeCommand("sync", "--no-backup"); err != nil {
+		t.Fatalf("sync of an external plugin selection must succeed: %v\n%s", err, output)
+	}
+	_, before := readLock(t, lockPath)
+
+	writeConfig(t, cfgPath, configBody("plugin/ext-kit: {exclude: [skill/ext-skill]}"))
+
+	for _, args := range [][]string{{"sync", "--check"}, {"sync", "--locked"}} {
+		output, err := executeCommand(args...)
+		if err == nil {
+			t.Fatalf("%v must report stale after the member exclusion changed:\n%s", args, output)
+		}
+		if !strings.Contains(output, "lock.") {
+			t.Fatalf("%v must report a stale lock diagnostic, got:\n%s", args, output)
+		}
+		_, after := readLock(t, lockPath)
+		if string(after) != string(before) {
+			t.Fatalf("%v must write nothing after reporting stale", args)
+		}
+	}
+
+	if output, err := executeCommand("sync", "--no-backup"); err != nil {
+		t.Fatalf("plain sync must rewrite the lock after the exclusion changed: %v\n%s", err, output)
+	}
+	if output, err := executeCommand("sync", "--check"); err != nil {
+		t.Fatalf("sync --check must pass after the resync: %v\n%s", err, output)
+	}
+}

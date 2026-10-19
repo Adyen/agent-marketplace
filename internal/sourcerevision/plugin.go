@@ -9,10 +9,12 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 
 	"github.com/Adyen/agent-marketplace/internal/catalog"
 	"github.com/Adyen/agent-marketplace/internal/fsboundary"
 	"github.com/Adyen/agent-marketplace/internal/lockfile"
+	"github.com/Adyen/agent-marketplace/internal/redact"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/plugindecode"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/target"
@@ -35,6 +37,9 @@ type PluginExternal struct {
 	CatalogFormat string
 	EntryStrict   bool
 	EntryOverlay  map[string]any
+	// Exclusions are the authored member exclusions the decoded package
+	// validates at manifest build; its member keys commit post-exclusion.
+	Exclusions []string
 }
 
 // PluginVerifyContext carries the plugin-v1 inputs a locked root's
@@ -56,9 +61,56 @@ type PluginExternalEntry struct {
 	DefinitionDigest string
 	EntryStrict      bool
 	EntryOverlay     map[string]any
+	// Exclusions are the authored member exclusions validated against the
+	// acquired package; the manifest commits the member keys they leave.
+	Exclusions []string
 	// Owner identifies the catalog that selected the entry, for shared-origin
 	// diagnostics.
 	Owner string
+}
+
+// PluginMemberExclusionError refuses an authored member exclusion that names
+// no member of the decoded external plugin package, the same refusal the
+// resolver raises for in-repository entries whose members are already known.
+type PluginMemberExclusionError struct {
+	PluginName string
+	Exclusion  string
+	URL        string
+}
+
+func (e *PluginMemberExclusionError) Error() string {
+	return fmt.Sprintf("plugin.member.unknown-exclusion: plugin/%s at %s has no member %q",
+		e.PluginName, redact.URL(e.URL), e.Exclusion)
+}
+
+// pluginMemberKeys returns the sorted member kind/name keys of the decoded
+// package after the authored exclusions; an exclusion naming no member
+// refuses exactly as resolution does for in-repository entries.
+func pluginMemberKeys(plugin *ir.Plugin, entryName, catalogURL string, exclusions []string) ([]string, error) {
+	members := plugin.Members
+	for _, exclusion := range exclusions {
+		matched := false
+		kept := make([]ir.PluginMember, 0, len(members))
+		for _, member := range members {
+			kind, name, ok := strings.Cut(exclusion, "/")
+			if ok && member.Resource != nil &&
+				catalog.DecisionKind(kind) == member.Resource.Kind() && name == member.Resource.Name() {
+				matched = true
+				continue
+			}
+			kept = append(kept, member)
+		}
+		if !matched {
+			return nil, &PluginMemberExclusionError{PluginName: entryName, Exclusion: exclusion, URL: catalogURL}
+		}
+		members = kept
+	}
+	keys := make([]string, 0, len(members))
+	for _, member := range members {
+		keys = append(keys, member.Key())
+	}
+	sort.Strings(keys)
+	return keys, nil
 }
 
 type pluginManifestEntry struct {
@@ -150,6 +202,11 @@ func buildPluginRevision(input Input, contract lockfile.SourceRevisionContract) 
 			EntryName:     ext.EntryName,
 			EntryDigest:   ext.EntryDigest,
 		}
+		memberKeys, err := pluginMemberKeys(plugin, ext.EntryName, ext.CatalogURL, ext.Exclusions)
+		if err != nil {
+			return Result{}, err
+		}
+		manifest.Members = append(manifest.Members, pluginManifestMembers{Entry: ext.EntryName, Keys: memberKeys})
 		manifest.Resources = append(manifest.Resources, pluginResource(ext.EntryName, plugin))
 	} else {
 		if input.PluginSelection == nil {
@@ -174,8 +231,9 @@ func buildPluginRevision(input Input, contract lockfile.SourceRevisionContract) 
 				continue
 			}
 			manifestEntry := pluginManifestEntry{Name: name, Digest: entry.Plugin.DefinitionDigest}
+			manifest.Members = append(manifest.Members, pluginManifestMembers{Entry: name, Keys: append([]string(nil), planned.Members...)})
 			if entry.Plugin.Source.Kind == "git" {
-				externals = append(externals, PluginExternalEntry{Name: name, Source: entry.Plugin.Source, DefinitionDigest: entry.Plugin.DefinitionDigest, EntryStrict: entry.Plugin.Strict, EntryOverlay: entry.Plugin.Overlay})
+				externals = append(externals, PluginExternalEntry{Name: name, Source: entry.Plugin.Source, DefinitionDigest: entry.Plugin.DefinitionDigest, EntryStrict: entry.Plugin.Strict, EntryOverlay: entry.Plugin.Overlay, Exclusions: append([]string(nil), planned.Exclusions...)})
 			}
 			if entry.Plugin.Source.Kind != "path" {
 				manifest.Entries = append(manifest.Entries, manifestEntry)
@@ -189,7 +247,6 @@ func buildPluginRevision(input Input, contract lockfile.SourceRevisionContract) 
 			manifestEntry.FormatVersion = plugin.FormatVersion
 			manifest.Entries = append(manifest.Entries, manifestEntry)
 			manifest.Resources = append(manifest.Resources, pluginResource(name, plugin))
-			manifest.Members = append(manifest.Members, pluginManifestMembers{Entry: name, Keys: append([]string(nil), planned.Members...)})
 		}
 		for _, planned := range input.PluginSelection {
 			for _, edge := range planned.Edges {
