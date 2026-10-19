@@ -23,7 +23,7 @@ type PluginSelectionEdge struct {
 // layer's own selection edges, its member kind/name keys after that layer's
 // request exclusions, and the catalog entry it resolved to (which carries
 // the external source requirement for catalog entries). Layer is the
-// configuration layer that authored the selection — the layer whose own
+// configuration layer that authored the selection, the layer whose own
 // acquisition lock commits it. Exclusions carries authored member
 // exclusions an external entry's decoded package validates at lock time;
 // in-repository entries match them during resolution.
