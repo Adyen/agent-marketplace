@@ -16,6 +16,7 @@ import (
 var inProcessTestFiles = map[string]bool{
 	"command_integration_test.go": true,
 	"docs_contract_test.go":       true,
+	"plugin_plan_source_test.go":  true,
 	"process_runner_test.go":      true,
 	"process_suite_test.go":       true,
 	"warnings_test.go":            true,

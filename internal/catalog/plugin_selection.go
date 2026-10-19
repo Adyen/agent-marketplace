@@ -1,6 +1,7 @@
 package catalog
 
 import (
+	"path"
 	"strings"
 
 	"github.com/Adyen/agent-marketplace/internal/config"
@@ -111,9 +112,6 @@ func sameSourceLocation(a, b config.RegistryEntry) bool {
 	return normalizedRootPath(a.Path) == normalizedRootPath(b.Path)
 }
 
-func normalizedRootPath(path string) string {
-	if path == "" {
-		return "."
-	}
-	return path
+func normalizedRootPath(rootPath string) string {
+	return path.Clean(rootPath)
 }
