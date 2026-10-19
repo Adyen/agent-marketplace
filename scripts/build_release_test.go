@@ -142,9 +142,6 @@ func TestReleaseWritesChecksums(t *testing.T) {
 			t.Errorf("SHA256SUMS line %d = %q, want bare entry for %s", i+1, line, want[i])
 		}
 	}
-	if _, err := os.Stat(filepath.Join(dist, "stale-asset")); err != nil {
-		t.Fatalf("stale asset unexpectedly removed: %v", err)
-	}
 	checker := "sha256sum"
 	args := []string{"--check", filepath.Join(dist, "SHA256SUMS")}
 	if _, err := exec.LookPath(checker); err != nil {

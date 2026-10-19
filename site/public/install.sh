@@ -8,18 +8,14 @@ main() {
     exit 1
   }
 
-  if ! system=$(uname -s 2>/dev/null); then
-    fail "could not detect operating system"
-  fi
+  system=$(uname -s)
   case "$system" in
     Darwin) os=darwin ;;
     Linux) os=linux ;;
     *) fail "unsupported operating system: $system" ;;
   esac
 
-  if ! machine=$(uname -m 2>/dev/null); then
-    fail "could not detect processor architecture"
-  fi
+  machine=$(uname -m)
   case "$machine" in
     amd64|x86_64) arch=amd64 ;;
     arm64|aarch64) arch=arm64 ;;
