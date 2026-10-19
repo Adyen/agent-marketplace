@@ -47,6 +47,8 @@ export interface Fixture {
   expectedOrgSkillContent?: string;
   marketplaceAcquisitionDataRequestCount?: () => number;
   marketplaceAcquisitionDataRequestPaths?: () => string[];
+  marketplaceArchiveDigest?: string;
+  marketplaceArchiveFetches?: () => { placeholder: string[]; final: string[] };
   marketplaceDelayNextAcquisition?: (ms: number) => void;
   marketplaceDelayedAcquisitionCount?: () => number;
   resetPersonalState(): void;
@@ -192,6 +194,8 @@ export const createFixture = async (name: string, options: FixtureOptions = {}):
       expectedLocalConfig: `apiVersion: agent-marketplace/v4\nsources:\n  fixture:\n    git: ${registryURL}\n    ref: main\n    path: skills\n    source_harness: claude\nresources:\n  fixture:\n    include:\n      - skill/alpha-skill\n`,
       userLockPath: options.userMarketplaceDrift ? path.join(home, ".agents", "lock.yaml") : undefined,
       marketplaceDriftedArchiveDigest: stub?.driftedArchiveDigest,
+      marketplaceArchiveDigest: stub?.archiveDigest,
+      marketplaceArchiveFetches: stub?.archiveFetches,
       orgConfigPath,
       orgLockPath,
       expectedOrgConfig,

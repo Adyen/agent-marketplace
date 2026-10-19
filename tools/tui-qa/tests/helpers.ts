@@ -175,6 +175,19 @@ export const findTextRun = async (terminal: TestTerminal, text: RegExp): Promise
 export const waitForInverse = (terminal: TestTerminal, text: RegExp, want: number): Promise<void> =>
   locate(terminal, text).getByStyle({ inverse: want !== 0 }).expect();
 
+// assertArchivesVerifiedByReceivedBytes proves that the client fetched each
+// archive from the placeholder route, which it verifies by hashing the bytes it
+// received, and never fell back to the legacy final-artifact route, which it
+// verifies by re-encoding with its own Go compressor.
+export const assertArchivesVerifiedByReceivedBytes = (fixture: Fixture, ...digests: (string | undefined)[]): void => {
+  const fetches = fixture.marketplaceArchiveFetches?.();
+  assert.ok(fetches, "fixture has no Marketplace stub");
+  assert.deepEqual(fetches.final, [], "the client fetched the legacy final-artifact route");
+  for (const digest of digests) {
+    assert.ok(digest && fetches.placeholder.includes(digest), `the client never fetched the placeholder archive ${digest}: ${JSON.stringify(fetches)}`);
+  }
+};
+
 export const waitForExit = async (
   terminal: TestTerminal,
   timeoutMs = 5_000

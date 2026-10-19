@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import http from "node:http";
 import type { AddressInfo } from "node:net";
+import { gunzipSync, gzipSync } from "node:zlib";
 
 export interface MarketplaceStub {
   url: string;
@@ -14,6 +15,7 @@ export interface MarketplaceStub {
   driftedArchiveDigest: string;
   acquisitionDataRequestCount(): number;
   acquisitionDataRequestPaths(): string[];
+  archiveFetches(): { placeholder: string[]; final: string[] };
   delayNextAcquisition(ms: number): void;
   delayedAcquisitionCount(): number;
   driftArchiveDigest(): void;
@@ -26,7 +28,6 @@ const registryID = "tui-qa-registry";
 const registrySlug = "tools";
 const resourceName = "org-review";
 const contentDigest = "sha256:dba586be27c4593b6d6d6a718c01050323490600b2e7084f950e3ee0e5fc3adf";
-const archiveDigest = "sha256:dc95981d712d7bd33732e1fb5b8ac9a3f4a3406c9e27ef2c05e8bf0c6083c4b5";
 const materializedSkillContent =
   "---\nname: org-review\ndescription: Organization review fixture\nExtra: null\n---\nReview organization changes carefully.";
 
@@ -99,15 +100,52 @@ const inspectionSearchItem = {
   description: "Uninstalled inspection fixture",
   availability: "available"
 };
-const artifact = Buffer.from(
+const artifactMediaType = "application/vnd.agent-marketplace.artifact.v1.tar+gzip";
+const archiveDigestPlaceholder = `sha256:${"0".repeat(64)}`;
+
+interface ServedArchive {
+  digest: string;
+  placeholder: Buffer;
+  final: Buffer;
+}
+
+// servedArchive serves a canonical artifact the way a current Marketplace
+// does: the placeholder form, whose manifest carries the zeroed archive digest
+// and whose bytes hash to the archive digest, and the final form, whose
+// manifest carries that digest. Node's zlib compresses both, which no Go
+// toolchain reproduces, so a client passes only by verifying the placeholder
+// bytes it receives; re-encoding them fails under every Go version.
+const servedArchive = (canonical: Buffer): ServedArchive => {
+  const tar = gunzipSync(canonical);
+  const field = Buffer.from('"archive_digest":"');
+  const at = tar.indexOf(field) + field.length;
+  if (at < field.length || tar.indexOf(field, at) >= 0 || !/^sha256:[0-9a-f]{64}$/.test(tar.toString("latin1", at, at + archiveDigestPlaceholder.length))) {
+    throw new Error("canonical artifact must carry exactly one manifest archive_digest");
+  }
+  // Digests share one length, so rewriting the value in place keeps every tar header valid.
+  const withDigest = (digest: string): Buffer => {
+    const copy = Buffer.from(tar);
+    copy.write(digest, at, "latin1");
+    return copy;
+  };
+  const placeholder = gzipSync(withDigest(archiveDigestPlaceholder), { level: 9 });
+  const digest = sha256(placeholder);
+  return { digest, placeholder, final: gzipSync(withDigest(digest), { level: 9 }) };
+};
+
+const original = servedArchive(Buffer.from(
   "H4sIAAAAAAAE/+yVz2/bOgzH86cYPDt98u9Etz68N+ywYcPS2zAEtEw7WhUpk2S3XZD/fZDTDGkD7LJ0w7B8LpIYgqJC88s1atmS81efndGTl4Exxso8H1fG2POVlWV5sAUmLEmqpJxE7GXSeUrvPNoJ++m7QubHj/tD2IITK1rjciDrpNHAYUggBrRetij8c/ut1A1wcLdSKYhB45qAg7Hd1NIg6Q5isNRJ5+3DUgZP38vpF5wejMe/O9V3wMEbo9xoH+RjChCDMNqT9stGduR8uHKFaVHypsZiVtaUViIv5lldNmVTYpXMBEtYwbI0y+esZKxOqWKzvJ0XjDIiRkUrMmxaCG8TKznQaWgxL+azpKmStKnqJsuqLKWkrYt6hmKOWZtjlrNSzCmtqE0FK2hWt0yUbJaJvC4gho01A2nUgoBvoSNNFr2xwAE70n66RntLfqNQUCRQGy0Fqgjt/s+OhgR2Mbh+szHWU7N8WhsH/GOozqfd+T4uS870VtD5Ip4S+qIqinE9bpFweOTpPhndo+I01Pn5y/v/UP9/xo5+mSkQavwj/c+rbPR5ZMKSjBXJRf9/BVu47kgHfYUYrpUyd9TcjILMda9UDNe269ek/Wt58PrXNA/A4cOo95GxHWr5Fb00OhIr1B25SKCltlfq4Qpi+I+csHLj99Pl3bH/fmZErbz3vSWI4f97D3y7GzcWDzm8NQ0p4CHF92TX0oUx4faOR4YFeeAtKkcxLEZVA76FV1KFEQUxvJGagLNdDIu+HvV4H3Ox19vg6A5X3ljZdWS/n08H3RlF+MKFCxd+A98CAAD//5bS3aIADgAA",
   "base64"
-);
-const driftedArchiveDigest = "sha256:2403ab01774eb6afedc20066f8a0f42d72f4099b4793d88b79270b8e9a4f5493";
-const driftedArtifact = Buffer.from(
+));
+// The same content digest with a different archive: an extra asset stands in
+// for a repaired artifact encoding.
+const drifted = servedArchive(Buffer.from(
   "H4sIAAAAAAAE/+yVz27bOBDG/SjCnJVkqL+WblnsLvawRYs6t6IIKGoks5FJg6ScpIbfvaBsp04CBCgauymq34UUMSY/cjzfLLiSDVl3/sVqNTkOiIhZkgwjIj4dMc2z/ZpngozlLJsEeBw5j+mt42aCP32WV354ud+ENVgxpwW/XpGxUisoYcUgBG6cbLhwT9dvpKqhBHsjuw5CUHxBUII27ZmhlaRbCMFPdltBCEIrR8pd17Il6/xP5zxKs7KueDrNKopykaRFXGV1Vmc8Z1OBDFOMozgpMEOsIspxmjRFihQTIaWNiHndgNco5nJFz7aOEox5hSzPE6oy3lAtIsQsa6YcmySq86hJsCiqJC/iejqt8iLKsZpSwZMmTYoYQlgavSLFlSAo19CSIsOdNlACb0m5swU3N+SWHRcUCK60koJ3Ad89WrBisAnB9sulNo7q68dvbKH85F/58+bX/0kMWd0bQcdU4usiT9NhPCwR/7Hj8ZwN4UF6TFF7/vD63+f/Yqjo43QBn+OX/D/J4yFmxwRZjCkb/f8UrOGyJeV9GUK47Dp9S/WV1p2FUvVdF8KlafsFKfef3Ef9pet7KOHj4PeBNi1X8it3UqtAzLlqyQaCG2r6rrs/hxD+JiuMXLptd3l/GO9bBd0GjbxzvSEI4Z87B+V6M0wM32t4p2vqoPQSP5BZSOvbi90GHizMyEHZ8M5SCLPB1bx5/ys736IghP+lIihxE8Ksr/j3a8+2Pu0DH659ZWTbknn4ft7o3oB5vwLcWnL2FTZ6AV/XP+j/SYyj/5+Cbf4vaiMbd8bO3Z17/VN9/l/yf8R8iNkxQRalLB79/xQMiQ/YKY4aGRkZGXlDfAsAAP//bfDWawAUAAA=",
   "base64"
-);
+));
+const archiveDigest = original.digest;
+const driftedArchiveDigest = drifted.digest;
+const servedArchives = new Map([original, drifted].map((archive) => [archive.digest, archive]));
 const revision = {
   coordinate: {
     marketplace: "tui-qa-marketplace",
@@ -146,8 +184,9 @@ const revision = {
 };
 
 // A loopback stand-in for a hosted Marketplace endpoint. It serves one exact,
-// assessed skill and its canonical artifact so a missing organization lock
-// exercises acquisition, verification, resolution, and materialization.
+// assessed skill and both forms of its canonical archive so a missing
+// organization lock exercises acquisition, verification by received bytes,
+// resolution, and materialization.
 export const createMarketplaceStub = async (): Promise<MarketplaceStub> => {
   const instanceID = "tui-qa-marketplace";
   const acquisitionDataRequests: string[] = [];
@@ -156,7 +195,7 @@ export const createMarketplaceStub = async (): Promise<MarketplaceStub> => {
   let servedArchiveDigest = archiveDigest;
   const server = http.createServer(async (request, response) => {
     const url = new URL(request.url ?? "/", "http://127.0.0.1");
-    if (/^\/api\/v1\/(?:registries|resources|artifacts|manifests)\//.test(url.pathname)) {
+    if (/^\/api\/v1\/(?:registries|resources|archives|artifacts|manifests)\//.test(url.pathname)) {
       acquisitionDataRequests.push(url.pathname);
       if (nextAcquisitionDelayMs > 0) {
         const delay = nextAcquisitionDelayMs;
@@ -252,14 +291,12 @@ export const createMarketplaceStub = async (): Promise<MarketplaceStub> => {
       response.end(JSON.stringify({ ...revision, archive_digest: servedArchiveDigest }));
       return;
     }
-    if (request.method === "GET" && url.pathname.startsWith("/api/v1/artifacts/sha256/")) {
-      const requested = `sha256:${url.pathname.slice("/api/v1/artifacts/sha256/".length)}`;
-      const blob = requested === archiveDigest ? artifact : requested === driftedArchiveDigest ? driftedArtifact : undefined;
-      if (blob) {
-        response.writeHead(200, { "content-type": "application/vnd.agent-marketplace.artifact.v1.tar+gzip" });
-        response.end(blob);
-        return;
-      }
+    const archiveRoute = /^\/api\/v1\/(archives|artifacts)\/sha256\/([0-9a-f]{64})$/.exec(url.pathname);
+    const archive = request.method === "GET" && archiveRoute ? servedArchives.get(`sha256:${archiveRoute[2]}`) : undefined;
+    if (archiveRoute && archive) {
+      response.writeHead(200, { "content-type": artifactMediaType });
+      response.end(archiveRoute[1] === "archives" ? archive.placeholder : archive.final);
+      return;
     }
     response.writeHead(404, { "content-type": "application/json" });
     response.end(JSON.stringify({ message: "not found" }));
@@ -292,6 +329,11 @@ export const createMarketplaceStub = async (): Promise<MarketplaceStub> => {
     materializedSkillContent,
     acquisitionDataRequestCount: () => acquisitionDataRequests.length,
     acquisitionDataRequestPaths: () => [...acquisitionDataRequests],
+    archiveFetches: () => {
+      const fetched = (route: string): string[] =>
+        acquisitionDataRequests.filter((requested) => requested.startsWith(route)).map((requested) => `sha256:${requested.slice(route.length)}`);
+      return { placeholder: fetched("/api/v1/archives/sha256/"), final: fetched("/api/v1/artifacts/sha256/") };
+    },
     delayNextAcquisition: (ms: number) => {
       if (!Number.isSafeInteger(ms) || ms < 1) throw new Error("acquisition delay must be a positive integer");
       nextAcquisitionDelayMs = ms;

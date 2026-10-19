@@ -1,12 +1,15 @@
 import assert from "node:assert/strict";
 import { after, before } from "node:test";
 
-import { defineFixture, locate, step, waitForExit } from "./helpers.js";
+import { assertArchivesVerifiedByReceivedBytes, defineFixture, locate, step, waitForExit } from "./helpers.js";
 import { runAM } from "./process-helpers.js";
 
 // The deployed-lock counterpart to the transient-acquisition journey. The TUI
 // must honor the same exact organization resource from the published policy
-// lock and reach its settled baseline without changing behavior.
+// lock and reach its settled baseline without changing behavior. The lock pins
+// an archive digest no Go toolchain reproduces, so it stays valid only through
+// verification of the received and cached placeholder bytes.
+// spec: marketplace-api/locks-written-under-any-toolchain-stay-valid
 const journey = defineFixture("org-marketplace-lock-recovery", ["tui"], 80, 24, { organization: "published-lock" });
 before(journey.setup);
 after(journey.cleanup);
@@ -42,4 +45,5 @@ journey.test("a published organization lock keeps the marketplace-backed workspa
   // event-loop-free runner.
   const check = await runAM(fixture, ["sync", "--check"]);
   assert.equal(check.status, 0, `${check.stdout}\n${check.stderr}`);
+  assertArchivesVerifiedByReceivedBytes(fixture, fixture.marketplaceArchiveDigest);
 });

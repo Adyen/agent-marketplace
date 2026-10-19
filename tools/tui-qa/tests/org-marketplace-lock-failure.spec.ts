@@ -3,14 +3,17 @@ import fs from "node:fs";
 import path from "node:path";
 import { after, before } from "node:test";
 
-import { defineFixture, locate, step, waitForExit } from "./helpers.js";
+import { assertArchivesVerifiedByReceivedBytes, defineFixture, locate, step, waitForExit } from "./helpers.js";
 import { runAM } from "./process-helpers.js";
 
 // Reproduces the reported support case: an organization v4 config declares an
 // exact Marketplace resource but the organization acquisition lock was never
 // shipped. Consumer paths must acquire verified evidence transiently, keep the
 // managed layer untouched, and remain recoverable after personal state is
-// deleted.
+// deleted. The stub's archives verify only by received bytes, so the cold TUI
+// acquisition also proves that verification does not depend on the Go
+// toolchain that built the client.
+// spec: marketplace-api/client-verifies-placeholder-archives-by-hash
 const navigationCeilingMs = 1_000;
 const acknowledgementCeilingMs = 3_500;
 const warmToggleCeilingMs = 4_500;
@@ -106,6 +109,8 @@ journey.test("a missing organization marketplace lock is acquired transiently wi
   await step("quit cleanly", () => terminal.write("q"), async () => {
     assert.equal((await waitForExit(terminal)).exitCode, 0);
   });
+  // The fixture skipped its pre-sync, so the TUI made this acquisition.
+  assertArchivesVerifiedByReceivedBytes(fixture, fixture.marketplaceArchiveDigest);
 
   const betaSkill = path.join(fixture.repo, ".factory", "skills", "beta-skill");
   const alphaSkill = path.join(fixture.repo, ".factory", "skills", "alpha-skill");
@@ -169,4 +174,5 @@ journey.test("a missing organization marketplace lock is acquired transiently wi
   assert.equal(fs.readFileSync(path.join(betaSkill, "SKILL.md"), "utf8"), fixture.expectedBetaSkillContent);
   assert.equal(fs.lstatSync(orgLockPath, { throwIfNoEntry: false }), undefined, "recovery must not publish the organization lock");
   assert.equal(fs.readFileSync(orgConfigPath, "utf8"), fixture.expectedOrgConfig, "recovery must preserve organization config bytes");
+  assertArchivesVerifiedByReceivedBytes(fixture, fixture.marketplaceArchiveDigest);
 });
