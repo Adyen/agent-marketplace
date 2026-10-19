@@ -22,7 +22,7 @@ func BenchmarkLegacyRedirect(b *testing.B) {
 	if profile == "" {
 		profile = "deploy/compose/sqlite-filesystem/nginx.conf"
 	}
-	container := startProxy(b, image, profile)
+	container := startProxy(b, image, profile, true)
 	config := strings.Repeat("url = \"http://127.0.0.1:8080/marketplace/admin?next=%2Fadmin\"\noutput = \"/dev/null\"\n", b.N)
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()

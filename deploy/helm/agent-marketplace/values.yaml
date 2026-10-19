@@ -220,6 +220,7 @@ web:
       failureThreshold: 3
 
 docs:
+  # Also switches all Marketplace documentation links to origin-root /docs/.
   enabled: false
   replicas: 1
   image:

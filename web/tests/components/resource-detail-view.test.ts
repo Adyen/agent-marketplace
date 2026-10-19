@@ -1,6 +1,6 @@
 import { defineComponent, h } from 'vue'
 import { flushPromises, mount } from '@vue/test-utils'
-import { describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import ResourceDetailView from '../../app/components/ResourceDetailView.vue'
 
 import ResourceFingerprint from '../../app/components/ResourceFingerprint.vue'
@@ -44,6 +44,25 @@ const resource = {
 }
 
 describe('ResourceDetailView', () => {
+  beforeEach(() => {
+    vi.stubGlobal('useRuntimeConfig', () => ({ public: { docsEnabled: false } }))
+  })
+  afterEach(() => { vi.unstubAllGlobals() })
+
+  // spec: marketplace-web-ui/marketplace-links-to-locally-hosted-documentation-when-enabled
+  it.each([
+    [false, 'https://agent-marketplace.io/docs'],
+    [true, '/docs/'],
+  ])('uses the configured documentation destination for CLI setup (%s)', (docsEnabled, destination) => {
+    vi.stubGlobal('useRuntimeConfig', () => ({ public: { docsEnabled } }))
+    const wrapper = mount(ResourceDetailView, {
+      props: { resource, registry: 'team-tools', kind: 'skill', name: 'review', canonicalUrl: 'https://market.example', browserBase: 'https://market.example/marketplace/' },
+      global: { stubs },
+    })
+    expect(wrapper.get('a[aria-label="Set up CLI (opens in a new tab)"]').attributes('href')).toBe(destination)
+    wrapper.unmount()
+  })
+
   // spec: marketplace-web-ui/skill-and-command-detail-titles-use-the-slash-motif
   // spec: marketplace-web-ui/other-resource-detail-titles-remain-unprefixed
   it('prefixes only skill and command detail titles with the decorative slash', () => {
@@ -105,7 +124,7 @@ describe('ResourceDetailView', () => {
     expect(wrapper.get('button[aria-label^="Copy pinned CLI"]').text()).toBe('Copy')
     expect(wrapper.find('button[aria-label^="Copy detail URL"]').exists()).toBe(false)
     expect(wrapper.get('button[aria-label^="Copy revision"]').exists()).toBe(true)
-    const setupLink = wrapper.get('a[href="/docs/"]')
+    const setupLink = wrapper.get('a[href="https://agent-marketplace.io/docs"]')
     expect(setupLink.text()).toBe('Set up CLI')
     expect(setupLink.attributes('target')).toBe('_blank')
     expect(setupLink.attributes('rel')).toContain('noopener')

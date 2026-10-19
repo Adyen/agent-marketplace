@@ -2,12 +2,13 @@
 import { RESOURCE_KINDS } from '~/types/marketplace'
 import type { ResourceKind, ResourceListItem, SearchParams } from '~/types/marketplace'
 import { kindLabel, safeCanonicalUrl } from '~/lib/presentation'
-import { DOCS_PATH } from '~/lib/site'
+import { marketplaceDocsUrl } from '~/lib/site'
 import { parseSearchQuery, toLocationQuery } from '~/composables/useSearchQuery'
 
 const route = useRoute()
 const router = useRouter()
 const api = useMarketplaceApi()
+const docsURL = marketplaceDocsUrl(useRuntimeConfig().public.docsEnabled)
 
 const { data: metadata, error: metadataError } = await useAsyncData('marketplace-metadata', () => api.getWellKnown())
 const { data: registries } = await useAsyncData('marketplace-registries', () => api.listRegistries())
@@ -389,7 +390,7 @@ useHead({
 
     <footer class="marketplace-footer">
       <div>
-        <a :href="DOCS_PATH">Docs</a>
+        <a :href="docsURL">Docs</a>
         <p><span v-if="metadata">Version {{ metadata.version }} · </span>built at <span class="marketplace-footer__adyen">Adyen</span></p>
       </div>
     </footer>

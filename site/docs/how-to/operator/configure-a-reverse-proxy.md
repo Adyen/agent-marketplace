@@ -1,10 +1,10 @@
 # How to configure a reverse proxy
 
-Route public traffic to the Go API, the Nuxt Marketplace UI, and the documentation-only VitePress image while keeping operations endpoints private.
+Route public traffic to the Go API, the Nuxt Marketplace UI, and optionally the documentation-only VitePress image while keeping operations endpoints private.
 
 ## Prerequisites
 
-- A running Marketplace API, Nuxt UI, and documentation service.
+- A running Marketplace API and Nuxt UI, plus a documentation service if local docs are enabled.
 - A reverse proxy such as Nginx.
 - TLS and an authentication boundary appropriate for your deployment.
 
@@ -18,7 +18,15 @@ Forward these paths to the Go API without rewriting them. In Nginx, write `proxy
 
 ## 2. Route documentation to VitePress
 
-Redirect the exact `/docs` path to `/docs/`, then forward `/docs/` and its descendants to the documentation service. The documentation image contains no project landing page and owns no route outside `/docs/`.
+Local docs are disabled by default. To enable them, use Helm `docs.enabled: true`
+or the supplied Compose `compose.docs.yaml` override. These also set
+`NUXT_PUBLIC_DOCS_ENABLED=true` for the UI.
+
+When enabled, redirect the exact `/docs` path to `/docs/`, then forward `/docs/`
+and its descendants to the documentation service. The documentation image
+contains no project landing page and owns no route outside `/docs/`.
+When disabled, do not configure a docs upstream: the supplied Compose proxies
+return 404 for local docs and UI links use `https://agent-marketplace.io/docs`.
 
 ## 3. Route the Marketplace UI at the origin root
 
@@ -49,7 +57,7 @@ With `trusted_proxy` mode, protect `/admin` and `/api/v1/admin/` with your singl
 
 ## 7. Configure Nginx
 
-This example follows [`deploy/compose/sqlite-filesystem/nginx.conf`](https://github.com/Adyen/agent-marketplace/blob/main/deploy/compose/sqlite-filesystem/nginx.conf). The included `proxy-headers.conf` sets the headers from step 5:
+This example shows the enabled-docs routing from [`deploy/compose/sqlite-filesystem/nginx.conf`](https://github.com/Adyen/agent-marketplace/blob/main/deploy/compose/sqlite-filesystem/nginx.conf) and its `marketplace-docs.conf` include together. The included `proxy-headers.conf` sets the headers from step 5. Remove the docs upstream and docs locations when documentation is disabled:
 
 ```nginx
 upstream marketplace_api {

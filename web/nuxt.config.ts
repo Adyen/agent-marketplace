@@ -48,6 +48,7 @@ export default defineNuxtConfig({
     apiBaseInternal: '',
     public: {
       apiBase: '/',
+      docsEnabled: false,
     },
   },
   typescript: {

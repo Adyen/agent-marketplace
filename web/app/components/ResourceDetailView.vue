@@ -4,7 +4,7 @@ import CopyButton from '~/components/CopyButton.vue'
 import { useCopyText } from '~/composables/useCopyText'
 import { useResourceInspectionPreview } from '~/composables/useResourceInspectionPreview'
 import { isResourceKind } from '~/lib/api'
-import { DOCS_PATH } from '~/lib/site'
+import { marketplaceDocsUrl } from '~/lib/site'
 import { installCommand, kindLabel, resourceAvailability, resourceAvailabilityCopy, resourceLatestRoute, resourceRoute, shortDigest, sourceBrowseUrl, sourceRepositoryLabel } from '~/lib/presentation'
 import type { InspectionFile, InspectionManifest, Marketplace, Registry, ResourceKind, ResourceListItem, ResourceRevision } from '~/types/marketplace'
 
@@ -37,6 +37,7 @@ type CollectionMember = { kind: ResourceKind, name: string, description?: string
 const DESCRIPTION_PREVIEW_LENGTH = 320
 
 const props = defineProps<Props>()
+const docsURL = marketplaceDocsUrl(useRuntimeConfig().public.docsEnabled)
 const activeTab = ref<Tab>(props.initialTab || 'content')
 const contentMode = ref<ContentMode>('preview')
 const descriptionExpanded = ref(false)
@@ -274,7 +275,7 @@ function formatValue(value: unknown): string {
     <section data-testid="installation-panel" aria-labelledby="installation-heading">
       <div class="mb-2 flex flex-wrap items-center justify-between gap-2">
         <h2 id="installation-heading" class="text-sm font-semibold text-highlighted">Install</h2>
-        <a v-if="commandAvailable" :href="DOCS_PATH" target="_blank" rel="noopener noreferrer" aria-label="Set up CLI (opens in a new tab)" class="inline-flex items-center gap-1 text-sm font-medium text-primary underline-offset-4 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary">Set up CLI<UIcon name="i-lucide-external-link" class="size-3.5" data-testid="setup-external-icon" aria-hidden="true" /></a>
+        <a v-if="commandAvailable" :href="docsURL" target="_blank" rel="noopener noreferrer" aria-label="Set up CLI (opens in a new tab)" class="inline-flex items-center gap-1 text-sm font-medium text-primary underline-offset-4 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary">Set up CLI<UIcon name="i-lucide-external-link" class="size-3.5" data-testid="setup-external-icon" aria-hidden="true" /></a>
       </div>
       <CommandBlock v-if="commandAvailable" :command="command" :label="`pinned CLI install command for ${name}`" />
       <div v-else data-testid="unavailable-notice" role="status" aria-labelledby="unavailable-title" class="flex gap-2.5 rounded border border-default bg-(--am-color-bg-subtle) p-3 text-sm text-toned">

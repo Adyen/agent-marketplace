@@ -847,8 +847,7 @@ func TestMarketplaceProxyRoutingContract(t *testing.T) {
 		for _, fragment := range []string{
 			"location = /.well-known/agent-marketplace.json {\n        proxy_pass http://marketplace_api;",
 			"location /api/ {\n        proxy_pass http://marketplace_api;",
-			"location = /docs {\n        return 308 /docs/;",
-			"location /docs/ {\n        proxy_pass http://marketplace_docs;",
+			"include /etc/nginx/marketplace-docs.conf;",
 			"location = /marketplace {\n        return 308 /$is_args$args;",
 			"location = /marketplace/ {\n        return 308 /$is_args$args;",
 			"location ~ (?s)^/marketplace/(?<legacy_browser_path>[^/].*)$ {",
@@ -863,6 +862,7 @@ func TestMarketplaceProxyRoutingContract(t *testing.T) {
 			}
 		}
 		for _, fragment := range []string{
+			"server docs:8080;",
 			"location / {\n        proxy_pass http://marketplace_api;",
 			"location / {\n        proxy_pass http://marketplace_docs;",
 			"location /docs/ {\n        proxy_pass http://marketplace_web;",
@@ -948,16 +948,35 @@ func TestMarketplaceComposeServesBothUIsUnderOneOrigin(t *testing.T) {
 		config := string(data)
 		for _, fragment := range []string{
 			"  web:\n    platform: *marketplace-platform",
-			"  docs:\n    platform: *marketplace-platform",
-			"context: " + tc.docsContext,
 			"additional_contexts:\n        design: " + tc.designContext,
 			"NUXT_APP_BASE_URL: /",
+			"NUXT_PUBLIC_DOCS_ENABLED: \"false\"",
+			"docs-disabled.conf:/etc/nginx/marketplace-docs.conf:ro",
+		} {
+			if !strings.Contains(config, fragment) {
+				t.Errorf("%s missing base UI fragment %q", tc.relative, fragment)
+			}
+		}
+		if strings.Contains(config, "\n  docs:") {
+			t.Errorf("%s enables documentation by default", tc.relative)
+		}
+		overridePath := filepath.Join(filepath.Dir(tc.relative), "compose.docs.yaml")
+		override, err := os.ReadFile(filepath.Join(root, overridePath))
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, fragment := range []string{
+			"  docs:\n    platform: ${MARKETPLACE_PLATFORM:-}",
+			"context: " + tc.docsContext,
+			"additional_contexts:\n        design: " + tc.designContext,
+			"NUXT_PUBLIC_DOCS_ENABLED: \"true\"",
+			"docs-enabled.conf:/etc/nginx/marketplace-docs.conf:ro",
 			"SITE_PROFILE: docs",
 			"SITE_BASE: /docs/",
 			"MARKETPLACE_BASE: /",
 		} {
-			if !strings.Contains(config, fragment) {
-				t.Errorf("%s missing combined UI fragment %q", tc.relative, fragment)
+			if !strings.Contains(string(override), fragment) {
+				t.Errorf("%s missing local documentation fragment %q", overridePath, fragment)
 			}
 		}
 	}
