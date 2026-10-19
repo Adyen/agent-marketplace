@@ -1,6 +1,7 @@
 package resolver
 
 import (
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -470,5 +471,62 @@ func TestPlanPluginSelectionExternalEntries(t *testing.T) {
 	}
 	if externals[0].Entry.Plugin.Source.URL != "https://git.example.com/mirror.git" {
 		t.Fatalf("external source = %#v", externals[0].Entry.Plugin.Source)
+	}
+}
+
+func TestExpandCollectionsRefusesPluginMemberWithoutOwningEntry(t *testing.T) {
+	cfg := &config.Config{Registries: []config.RegistryEntry{formatEntry("claude-marketplace", nil)}}
+	setCatalogKeys(cfg)
+	entry := cfg.Registries[0]
+	plugin := pluginCatalogEntry("review-kit", "claude-plugin",
+		pluginMembers([2]string{"skill", "review"}), nil,
+		plugindecode.CatalogSource{Kind: "path", Path: "plugins/review-kit"})
+	catalogs := map[string][]catalog.Entry{entry.CatalogKey: {plugin}}
+	collectionArtifact := ResolvedArtifact{Entry: catalog.Entry{
+		Kind: ir.KindCollection, Name: "team",
+		Resource: ir.NewCollection("team", "", "", []ir.CollectionMember{{Name: "review-kit", Kind: ir.KindPlugin}}, nil, nil, ir.SourceRef{}),
+	}, RegistryURL: "git@example.com:unowned.git", RegistryPath: "missing", Ref: "other", Source: config.RepoCommitted, CatalogKey: entry.CatalogKey}
+	direct := ResolvedArtifact{Entry: plugin, RegistryURL: entry.URL, Ref: entry.Ref, Source: config.RepoCommitted, CatalogKey: entry.CatalogKey, Selection: &PluginSelection{Edges: []PluginEdge{{Kind: PluginEdgeDirect, Source: config.RepoCommitted}}}}
+	for _, tc := range []struct {
+		name     string
+		selected bool
+	}{{"already selected", true}, {"not selected", false}} {
+		t.Run(tc.name, func(t *testing.T) {
+			sink := newPluginPlanSink()
+			resolved := []ResolvedArtifact{collectionArtifact}
+			if tc.selected {
+				resolved = append(resolved, direct)
+			}
+			got, errs := expandCollections(resolved, nil, cfg, catalogs, nil, nil, nil, false, nil, nil, sink)
+			var refusal *PluginUndeclaredSourceError
+			for _, err := range errs {
+				if match, ok := err.(*PluginUndeclaredSourceError); ok {
+					refusal = match
+					break
+				}
+			}
+			if refusal == nil || refusal.Declaring != config.SourceUnset || !strings.HasPrefix(refusal.Error(), "plugin.selection.undeclared-source:") {
+				t.Fatalf("expand errors = %v, want PluginUndeclaredSourceError", errs)
+			}
+			plugins := pluginArtifacts(got)
+			if (len(plugins) == 1) != tc.selected {
+				t.Fatalf("review-kit artifacts = %#v, selected = %t", plugins, tc.selected)
+			}
+			if tc.selected && (plugins[0].Selection == nil || slices.ContainsFunc(plugins[0].Selection.Edges, func(edge PluginEdge) bool { return edge.Kind == PluginEdgeCollection })) {
+				t.Fatalf("collection edge was merged onto existing selection: %#v", plugins[0].Selection)
+			}
+			for _, planned := range sink.plan().Plugins {
+				if slices.ContainsFunc(planned.Edges, func(edge catalog.PluginSelectionEdge) bool { return edge.Type == PluginEdgeCollection }) {
+					t.Fatalf("collection edge was planned: %#v", planned)
+				}
+			}
+		})
+	}
+	if message := (&PluginUndeclaredSourceError{PluginName: "review-kit", Collection: "team", Selecting: config.RepoCommitted, URL: "https://example.com/kit.git"}).Error(); !strings.Contains(message, "no configured layer declares") || strings.Contains(message, "the - layer") {
+		t.Fatalf("unset-declaring message = %q", message)
+	}
+	if got, want := (&PluginUndeclaredSourceError{PluginName: "review-kit", Collection: "team", Selecting: config.RepoCommitted, Declaring: config.UserPersonal, URL: "https://example.com/kit.git"}).Error(),
+		"plugin.selection.undeclared-source: plugin/review-kit selected via collection \"team\" in the REPO layer is provided by a format source declared only in the USER layer at https://example.com/kit.git; declare the source in the REPO layer to lock the selection"; got != want {
+		t.Fatalf("set-declaring message = %q, want %q", got, want)
 	}
 }

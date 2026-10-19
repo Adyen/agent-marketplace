@@ -75,6 +75,10 @@ type PluginUndeclaredSourceError struct {
 }
 
 func (e *PluginUndeclaredSourceError) Error() string {
+	if e.Declaring == config.SourceUnset {
+		return fmt.Sprintf("plugin.selection.undeclared-source: plugin/%s selected via collection %q in the %s layer is provided by a format source no configured layer declares at %s; declare the source in the %s layer to lock the selection",
+			e.PluginName, e.Collection, e.Selecting, redact.URL(e.URL), e.Selecting)
+	}
 	return fmt.Sprintf("plugin.selection.undeclared-source: plugin/%s selected via collection %q in the %s layer is provided by a format source declared only in the %s layer at %s; declare the source in the %s layer to lock the selection",
 		e.PluginName, e.Collection, e.Selecting, e.Declaring, redact.URL(e.URL), e.Selecting)
 }
