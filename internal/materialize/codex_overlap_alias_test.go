@@ -82,8 +82,12 @@ func TestRunRefusesNormalizationAliasedCodexHomeBeforeMutation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := findDiag(report.Diags, diag.CodeMaterializeDestinationOverlap); !ok {
+	d, ok := findDiag(report.Diags, diag.CodeMaterializeDestinationOverlap)
+	if !ok {
 		t.Fatalf("missing %s diagnostic: %+v", diag.CodeMaterializeDestinationOverlap, report.Diags)
+	}
+	if !strings.Contains(d.Message, filepath.Join(repo, ".codex")) || !strings.Contains(d.Message, alias) {
+		t.Fatalf("overlap diagnostic must name both spellings: %+v", d)
 	}
 	if entries, err := os.ReadDir(filepath.Join(repo, ".codex")); err != nil || len(entries) != 0 {
 		t.Fatalf("refused preflight mutated the aliased root: %v, %v", entries, err)

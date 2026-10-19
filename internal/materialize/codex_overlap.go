@@ -6,7 +6,6 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
-	"slices"
 	"sort"
 	"strings"
 
@@ -150,7 +149,10 @@ func validateCodexManagedPathIntersections(bindings []codexDestinationBinding) *
 	for _, binding := range bindings {
 		partition := codexPartitionKey(binding.destination.Root, binding.destination.Prefix)
 		physicalRoot := physicalRoots[filepath.Clean(binding.destination.Root)]
-		rels := append(slices.Clone(binding.destination.Info.Components), binding.destination.Info.AggregateFilesForScope(binding.key.machineScope)...)
+		components := binding.destination.Info.Components
+		aggregates := binding.destination.Info.AggregateFilesForScope(binding.key.machineScope)
+		rels := make([]string, 0, len(components)+len(aggregates))
+		rels = append(append(rels, components...), aggregates...)
 		for _, rel := range rels {
 			managed = append(managed, codexManagedPath{
 				partition: partition,
@@ -210,13 +212,17 @@ func codexPhysicalRoots(bindings []codexDestinationBinding) map[string]string {
 		if err != nil {
 			continue
 		}
+		matched := false
 		for _, prior := range seen {
 			if os.SameFile(prior.info, info) {
 				physical[root] = prior.path
+				matched = true
 				break
 			}
 		}
-		seen = append(seen, seenRoot{path: root, info: info})
+		if !matched {
+			seen = append(seen, seenRoot{path: root, info: info})
+		}
 	}
 	return physical
 }
