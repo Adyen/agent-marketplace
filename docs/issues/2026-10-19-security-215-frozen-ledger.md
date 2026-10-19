@@ -57,7 +57,7 @@ for a whole file and hides that file from review (P38).
 All four open threats are reproduced on the baseline, P38 at the analyzer and
 inspection level. P11 and P19 need no policy decision; P09 needs the
 withdrawal contract in #768, and P38 one choice of how non-UTF-8 text is
-scanned (#NEW-F160).
+scanned (#770).
 
 ## Source Provenance
 
@@ -91,7 +91,7 @@ order. The check at the end verifies this.
 | P20 | F150 | r1 | A repository's top-level collection name disables a required organization registry's automatic selection | #438; `TestRequiredRegistrySurvivesTopLevelCollectionPropagation`, `TestRequiredAutoSelectionStillReportsMissingTopLevelCollection` | Fixed |
 | P27 | A78 | parent | An approved registry origin redirects the worker's fetch; credentials go to the redirect target and its repository is published under the approved identity | #222 (`http.followRedirects=false`, origin-scoped headers); `TestCloneRejectsAuthenticatedHTTPRedirects` | Fixed |
 | P28 | A82 / F60 | parent | A stale worker republishes a rejected executable artifact as allowed | #440; `TestStaleSameCommitPublicationDoesNotReplaceCurrentAssessment` (SQLite here; #440 also ran it against PostgreSQL 17.11) | Fixed |
-| P38 | F160 | parent | A registry contributor adds one invalid UTF-8 byte, for example in a comment, to a support file. The Marketplace then skips its default reject checks for terminal escapes, bidi reordering and encoded instructions, shows the file as metadata only, and publishes it. The CLI installs it byte for byte | Reproduction R-F160: the valid file is rejected (`terminal-control`, `unsafe-bidi`); with one invalid byte there is no finding, no rejection, and inspection class `metadata`. The skip is `isValidText` in `pkg/marketplace/analyze/analyzer.go` | **Open** (#NEW-F160) |
+| P38 | F160 | parent | A registry contributor adds one invalid UTF-8 byte, for example in a comment, to a support file. The Marketplace then skips its default reject checks for terminal escapes, bidi reordering and encoded instructions, shows the file as metadata only, and publishes it. The CLI installs it byte for byte | Reproduction R-F160: the valid file is rejected (`terminal-control`, `unsafe-bidi`); with one invalid byte there is no finding, no rejection, and inspection class `metadata`. The skip is `isValidText` in `pkg/marketplace/analyze/analyzer.go` | **Open** (#770) |
 
 P11 and P19 have the same shape as other fixed threats: P11 removes
 organization tooling like P10 and FS08, and P19 bypasses an exact pin like
@@ -150,7 +150,7 @@ P07 #264 (`TestMarketplaceResolvedCollision`).
 The seven bugs are ordinary defects, not #215 gates. They group into four
 issues: #760 (P26, P33, P36, P39: digest and inspection routes serve
 content that no current revision owns and, in file mode, blocked or revoked
-content), #761 (P08), #762 (P29) and #NEW-F143 (P18).
+content), #761 (P08), #762 (P29) and #771 (P18).
 
 ### Found During Review, Outside the Reports
 
@@ -264,14 +264,14 @@ evidence.
 - [x] Freeze both source hashes and P01-P40 against the unchanged R2 index.
 - [x] Classify every case against the threat model with baseline evidence, and
   reproduce all three open threats.
-- [ ] Fix P19 (#758), P11 (#759), P09 (#768) and P38 (#NEW-F160): failing-first regressions, an
+- [ ] Fix P19 (#758), P11 (#759), P09 (#768) and P38 (#770): failing-first regressions, an
   archived OpenSpec delta, `make validate`, `make spec-check`,
   `make validate-e2e` and an `open-code-review-delegate` review. Rerun R-F149,
   R-A51, R-A49 and R-F160 on `main` after each merge.
 - [ ] Close the R5 security track: R61 and the D2 graph rows in [#434].
 - [ ] Update #215 and close it.
 
-The bugs (#760, #761, #762, #NEW-F143), X1 (#763), the R1
+The bugs (#760, #761, #762, #771), X1 (#763), the R1
 carry-over (#764) and the performance track (#765) do not gate #215.
 
 ## Evidence
