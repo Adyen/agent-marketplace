@@ -17,6 +17,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/cache"
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/dependencytxn"
+	"github.com/Adyen/agent-marketplace/internal/giturl"
 	"github.com/Adyen/agent-marketplace/internal/lockfile"
 	"github.com/Adyen/agent-marketplace/internal/marketplace"
 	"github.com/Adyen/agent-marketplace/internal/marketplacelock"
@@ -671,7 +672,9 @@ func bumpRepoRegistryRefs(ctx context.Context, layerTarget config.LayerTarget, v
 	planned := make(map[string]string)
 
 	for _, entry := range repoCfg.Registries {
-		if entry.IsLocal() || !updateTargetMatchesEntry(entry, target, wantedURL) {
+		// A full commit ID is an exact pin, never a version, whatever tags the
+		// registry publishes.
+		if entry.IsLocal() || giturl.IsFullObjectID(strings.TrimSpace(entry.Ref)) || !updateTargetMatchesEntry(entry, target, wantedURL) {
 			continue
 		}
 

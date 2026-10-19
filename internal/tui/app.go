@@ -1218,7 +1218,7 @@ func (m Model) dispatchAction(id paletteActionID) (tea.Model, tea.Cmd) {
 	case actionQuit:
 		if m.driftReport.PendingCount() > 0 {
 			m.pane = paneConfirm
-			m.confirmMsg = fmt.Sprintf("%d pending changes not synced. Sync+quit? y/n/esc", m.driftReport.PendingCount())
+			m.confirmMsg = fmt.Sprintf("%d pending changes not synced. Sync+quit?", m.driftReport.PendingCount())
 			return m, nil
 		}
 		return m, tea.Quit
@@ -1877,7 +1877,7 @@ func (m Model) viewContent() string {
 		m.errorsViewport.SetContent(renderErrors(m))
 		return m.applyPreviewSelection(fitTerminalWithFooter(m.errorsViewport.View(), "↑/↓ or ctrl-d/u scroll · esc/e close · Ctrl+C quit", m.width, m.height))
 	case paneConfirm:
-		return fitTerminalWithFooter(renderConfirm(m), "y sync+quit · n quit · esc cancel", m.width, m.height)
+		return fitTerminal(renderConfirm(m), m.width, m.height)
 	case paneMarketplaceConsent:
 		return fitTerminalWithFooter(renderMarketplaceConsent(m), "↑/↓/page · y install · n/esc cancel · ^C quit", m.width, m.height)
 	case paneDetail:

@@ -6,6 +6,8 @@ import (
 	"testing"
 
 	"github.com/charmbracelet/x/ansi"
+
+	"github.com/Adyen/agent-marketplace/internal/materialize"
 )
 
 // assertCompleteFrame checks that a rendered modal is one rounded frame no
@@ -54,6 +56,10 @@ func TestEveryModalRendersOneBoundedFrame(t *testing.T) {
 			return renderInitModal(m)
 		},
 		"edit config": renderEditConfigModal,
+		"sync+quit confirm": func(m Model) string {
+			m.confirmMsg = "1 pending changes not synced. Sync+quit?"
+			return renderConfirm(m)
+		},
 	}
 	for _, size := range [][2]int{{50, 12}, {80, 24}, {120, 34}} {
 		for name, render := range modals {
@@ -79,6 +85,23 @@ func TestEveryModalRendersOneBoundedFrame(t *testing.T) {
 			if name == "edit config" && size[1] >= 20 && !strings.Contains(plain, "config.local.yaml") {
 				t.Fatalf("%s: a shortened path must keep its file name:\n%s", label, plain)
 			}
+		}
+	}
+}
+
+// spec: tui-rendering/modal-at-common-sizes
+func TestConfirmViewShowsEachAcceleratorOnce(t *testing.T) {
+	m := NewModel(t.TempDir(), t.TempDir())
+	m.width, m.height = 80, 24
+	m.driftReport = materialize.DriftReport{Missing: []materialize.DriftItem{{Reason: materialize.DriftMissing}}}
+	next, _ := m.dispatchAction(actionQuit)
+	plain := ansi.Strip(next.(Model).View().Content)
+	if strings.Contains(plain, "y/n/esc") {
+		t.Fatalf("the message repeats the footer accelerators:\n%s", plain)
+	}
+	for _, hint := range []string{"y sync+quit", "n quit", "esc cancel"} {
+		if n := strings.Count(plain, hint); n != 1 {
+			t.Fatalf("hint %q shown %d times, want once:\n%s", hint, n, plain)
 		}
 	}
 }

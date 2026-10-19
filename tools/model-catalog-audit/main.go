@@ -74,7 +74,7 @@ func fetchPublic(ctx context.Context, client *http.Client, endpoint string) (fet
 
 func run(args []string, in io.Reader, out io.Writer, fetch fetchFunc, now time.Time) error {
 	if len(args) == 0 {
-		return fmt.Errorf("usage: model-catalog-audit check [--root PATH] | summary < report.json")
+		return fmt.Errorf("usage: model-catalog-audit check [--root PATH] | summary < report.json | propose [--root PATH] < report.json")
 	}
 	flags := flag.NewFlagSet(args[0], flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
@@ -85,7 +85,7 @@ func run(args []string, in io.Reader, out io.Writer, fetch fetchFunc, now time.T
 			return fmt.Errorf("invalid check arguments")
 		}
 		files := os.DirFS(*root)
-		body, err := readBounded(files, "tools/model-catalog-audit/baselines.json")
+		body, err := readBounded(files, baselinesPath)
 		if err != nil {
 			return fmt.Errorf("read evidence baselines: %w", err)
 		}
@@ -114,21 +114,39 @@ func run(args []string, in io.Reader, out io.Writer, fetch fetchFunc, now time.T
 		if len(args) != 1 {
 			return fmt.Errorf("summary does not accept arguments")
 		}
-		body, err := readLimited(in)
+		result, err := decodeReport(in)
 		if err != nil {
 			return err
 		}
-		var result report
-		if err := json.Unmarshal(body, &result); err != nil {
-			return fmt.Errorf("decode audit report: %w", err)
-		}
-		if result.Schema != 1 || len(result.Sources) == 0 {
-			return fmt.Errorf("invalid or empty audit report")
-		}
 		return summarize(out, result)
+	case "propose":
+		root := flags.String("root", ".", "Repository root to edit in place")
+		if err := flags.Parse(args[1:]); err != nil || flags.NArg() != 0 {
+			return fmt.Errorf("invalid propose arguments")
+		}
+		result, err := decodeReport(in)
+		if err != nil {
+			return err
+		}
+		return proposeChanges(*root, result, out)
 	default:
-		return fmt.Errorf("unknown command; use check or summary")
+		return fmt.Errorf("unknown command; use check, summary, or propose")
 	}
+}
+
+func decodeReport(in io.Reader) (report, error) {
+	var result report
+	body, err := readLimited(in)
+	if err != nil {
+		return result, err
+	}
+	if err := json.Unmarshal(body, &result); err != nil {
+		return result, fmt.Errorf("decode audit report: %w", err)
+	}
+	if result.Schema != 1 || len(result.Sources) == 0 {
+		return result, fmt.Errorf("invalid or empty audit report")
+	}
+	return result, nil
 }
 
 func summarize(out io.Writer, result report) error {
@@ -138,7 +156,7 @@ func summarize(out io.Writer, result report) error {
 		status = "FAIL (drift or unknown evidence)"
 	}
 	fmt.Fprintf(&text, "## Model catalog audit: %s\n\nChecked: %s\n\n", status, html.EscapeString(result.CheckedAt))
-	text.WriteString("Read-only review findings, not proof of native acceptance or account availability. No catalog edits or PRs are made. An ID absent from an inventory is not automatically retired. The per-harness coverage statements below describe existing model inventory monitoring; sources listing a catalog domain monitor hook or tool documentation drift only.\n\n")
+	text.WriteString("Read-only review findings, not proof of native acceptance or account availability. The audit itself makes no edits; a separate job proposes baseline refreshes and catalog stubs in a pull request for human review. An ID absent from an inventory is not automatically retired. The per-harness coverage statements below describe existing model inventory monitoring; sources listing a catalog domain monitor hook or tool documentation drift only.\n\n")
 	for _, harness := range slices.Sorted(maps.Keys(result.Coverage)) {
 		fmt.Fprintf(&text, "- **%s**: %s\n", harness, html.EscapeString(result.Coverage[harness]))
 	}

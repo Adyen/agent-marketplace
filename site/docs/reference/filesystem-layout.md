@@ -40,6 +40,7 @@ The [cache](../glossary.md#cache) always lives at `~/.cache/agent-marketplace/`.
 
 | Path | Contents |
 |---|---|
+| `~/.cache/agent-marketplace/<registry-hash>/<ref>/` | Working checkouts of Git registry refs, refreshed when a command discovers resources from a ref rather than a locked commit. A ref containing `/` becomes nested folders, so a ref and a ref nested below it from the same registry (for example `foo` and `foo/bar`) cannot both be cached; whichever is fetched second is refused. |
 | `~/.cache/agent-marketplace/compiled/<harness>/` | Resources compiled for each harness. Symlinks in harness folders point here. |
 | `~/.cache/agent-marketplace/exact-git/` | Git objects and exact snapshots of locked commits (`objects/`, `snapshots/`, `locks/`). |
 | `~/.cache/agent-marketplace/marketplace/` | Archives, collection manifests, and endpoint metadata downloaded from hosted Marketplaces. |

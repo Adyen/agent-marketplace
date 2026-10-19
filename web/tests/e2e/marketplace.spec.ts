@@ -272,9 +272,23 @@ test.describe('Marketplace browser discovery', () => {
     await expect(page.locator('.h1-sub .am-brand-slash')).toHaveCount(0)
     const eyebrowSlash = page.locator('.eyebrow .am-brand-slash').first()
     await expect(eyebrowSlash).toHaveCSS('color', 'rgb(0, 209, 106)')
-    await expect(eyebrowSlash).toHaveCSS('font-weight', '800')
+    const eyebrowSlashMetrics = await eyebrowSlash.evaluate((element) => {
+      const bounds = element.getBoundingClientRect()
+      const style = getComputedStyle(element)
+      return {
+        fontSize: Number.parseFloat(style.fontSize),
+        width: bounds.width,
+        height: bounds.height,
+        verticalAlign: Number.parseFloat(style.verticalAlign),
+        trailingSpace: Number.parseFloat(style.marginRight),
+      }
+    })
+    expect(eyebrowSlashMetrics.width / eyebrowSlashMetrics.fontSize).toBeCloseTo(0.364, 2)
+    expect(eyebrowSlashMetrics.height / eyebrowSlashMetrics.fontSize).toBeCloseTo(0.8, 2)
+    expect(eyebrowSlashMetrics.verticalAlign / eyebrowSlashMetrics.fontSize).toBeCloseTo(-0.08, 2)
+    expect(eyebrowSlashMetrics.trailingSpace / eyebrowSlashMetrics.fontSize).toBeCloseTo(0.375, 2)
     const eyebrowText = await page.locator('.eyebrow').first().evaluate(element => element.textContent ?? '')
-    expect(eyebrowText).toMatch(/^\/\s\S/)
+    expect(eyebrowText).toMatch(/^\/\S/)
     const eyebrowColors = await page.locator('.eyebrow').first().evaluate((element) => ({
       label: getComputedStyle(element).color,
       slash: getComputedStyle(element.querySelector('.am-brand-slash')!).color,
@@ -301,8 +315,7 @@ test.describe('Marketplace browser discovery', () => {
     const introSlash = page.locator('.marketplace-intro h1 .am-brand-slash')
     await expect(introSlash).toHaveText('/')
     await expect(introSlash).toHaveCSS('color', 'rgb(0, 209, 106)')
-    await expect(introSlash).toHaveCSS('font-weight', '800')
-    await expect(page.locator('.marketplace-intro h1')).toHaveText('/ e2e-marketplace')
+    await expect(page.locator('.marketplace-intro h1')).toHaveText('/e2e-marketplace')
     await expect(page.locator('#filters-heading .am-brand-slash')).toHaveCount(0)
     await expect(page.locator('#results-heading .am-brand-slash')).toHaveCount(0)
     await expect(page.getByRole('heading', { name: 'Filters', exact: true })).toBeVisible()
@@ -310,7 +323,40 @@ test.describe('Marketplace browser discovery', () => {
     const coordinateSlash = page.locator('.resource-coordinate__separator').first()
     await expect(coordinateSlash).toHaveText('/')
     await expect(coordinateSlash).toHaveCSS('color', 'rgb(0, 209, 106)')
-    await expect(coordinateSlash).toHaveCSS('font-weight', '800')
+    const slashMetrics = await Promise.all([introSlash, coordinateSlash].map(locator => locator.evaluate((element) => {
+      const style = getComputedStyle(element)
+      const before = getComputedStyle(element, '::before')
+      return {
+        fontSize: Number.parseFloat(style.fontSize),
+        width: Number.parseFloat(style.width),
+        height: Number.parseFloat(style.height),
+        verticalAlign: Number.parseFloat(style.verticalAlign),
+        marginLeft: Number.parseFloat(style.marginLeft),
+        marginRight: Number.parseFloat(style.marginRight),
+        run: Number.parseFloat(style.getPropertyValue('--am-brand-slash-run')),
+        stroke: Number.parseFloat(style.getPropertyValue('--am-brand-slash-stroke')),
+        clipPath: before.clipPath,
+      }
+    })))
+    expect(slashMetrics[0].width / slashMetrics[0].fontSize).toBeCloseTo(0.364, 2)
+    expect(slashMetrics[0].height / slashMetrics[0].fontSize).toBeCloseTo(0.8, 2)
+    expect(slashMetrics[0].verticalAlign / slashMetrics[0].fontSize).toBeCloseTo(-0.08, 2)
+    expect(slashMetrics[0].marginRight / slashMetrics[0].fontSize).toBeCloseTo(0.2, 2)
+    expect(slashMetrics[1].width / slashMetrics[1].fontSize).toBeCloseTo(0.339, 2)
+    expect(slashMetrics[1].height / slashMetrics[1].fontSize).toBeCloseTo(0.8, 2)
+    expect(slashMetrics[1].verticalAlign / slashMetrics[1].fontSize).toBeCloseTo(-0.08, 2)
+    expect(slashMetrics[1].marginLeft / slashMetrics[1].fontSize).toBeCloseTo(0.2, 2)
+    expect(slashMetrics[1].marginRight / slashMetrics[1].fontSize).toBeCloseTo(0.2, 2)
+    expect(slashMetrics[0].run).toBeCloseTo(slashMetrics[1].run, 3)
+    expect(slashMetrics[0].stroke).toBeCloseTo(0.145, 3)
+    expect(slashMetrics[1].stroke).toBeCloseTo(0.12, 3)
+    expect(slashMetrics[0].clipPath).not.toBe('none')
+    expect(slashMetrics[1].clipPath).not.toBe('none')
+    const coordinateWeights = await coordinateSlash.evaluate(element => ({
+      registry: getComputedStyle(element.previousElementSibling!).fontWeight,
+      name: getComputedStyle(element.nextElementSibling!).fontWeight,
+    }))
+    expect(coordinateWeights.name).toBe(coordinateWeights.registry)
     const marketplaceBrand = marketplaceNav.getByRole('link', { name: 'agent-marketplace', exact: true })
     await expect(marketplaceBrand).toHaveAttribute('href', '/')
     await expect(marketplaceBrand.locator('.am-site-nav__brand-logo--light')).toHaveAttribute('src', '/brand/logo-horizontal-black.svg')
@@ -519,19 +565,21 @@ test.describe('Marketplace browser discovery', () => {
 
       await page.getByRole('button', { name: 'Clear', exact: true }).click()
       const row = page.getByTestId('search-results').locator('article').first()
-      const namespace = row.locator('h2 span').first()
-      const resourceName = row.locator('h2 a span.font-semibold')
+      const coordinateLink = row.getByRole('link', { name: 'team-tools/secure-review', exact: true })
+      const namespace = coordinateLink.locator('span').first()
+      const resourceName = coordinateLink.locator('span').last()
       const description = row.locator('p.text-toned')
       await expect(namespace).toHaveCSS('color', theme.marketplace.mutedText)
       await expect(resourceName).toHaveCSS('color', theme.marketplace.primaryText)
       await expect(description).toHaveCSS('color', theme.marketplace.secondaryText)
 
-      const coordinateLink = row.getByRole('link', { name: 'team-tools/secure-review', exact: true })
-      await expect(coordinateLink).toHaveText('team-tools / secure-review')
-      await expect(coordinateLink).toHaveCSS('box-shadow', 'none')
+      await expect(coordinateLink).toHaveText('team-tools/secure-review')
+      await expect.poll(() => coordinateLink.evaluate(element => getComputedStyle(element, '::after').opacity)).toBe('0')
       await coordinateLink.hover()
-      await expect.poll(() => coordinateLink.evaluate(element => getComputedStyle(element).boxShadow)).toContain('inset')
-      await expect.poll(() => coordinateLink.evaluate(element => getComputedStyle(element).boxShadow)).toContain(theme.marketplace.action)
+      await expect.poll(() => coordinateLink.evaluate(element => getComputedStyle(element, '::after').opacity)).toBe('1')
+      await expect.poll(() => coordinateLink.evaluate(element => getComputedStyle(element, '::after').backgroundColor)).toBe(theme.marketplace.action)
+      await expect.poll(() => coordinateLink.evaluate(element => getComputedStyle(element, '::after').height)).toBe('1px')
+      await expect(coordinateLink).toHaveCSS('box-shadow', 'none')
       await expect(row).toHaveCSS('background-color', theme.marketplace.hover)
       expect(contrastRatio(
         await namespace.evaluate(element => getComputedStyle(element).color),
@@ -797,7 +845,7 @@ test.describe('Marketplace browser discovery', () => {
     await expect(page.getByRole('heading', { name: 'secure-review', exact: true })).toBeVisible()
     await expect(page.getByTestId('resource-title-slash')).toHaveText('/')
     await expect(page.getByTestId('resource-title-slash')).toHaveCSS('color', 'rgb(0, 209, 106)')
-    await expect(page.getByTestId('resource-title-slash')).toHaveCSS('font-weight', '800')
+    await expect(page.getByTestId('resource-title-slash')).toHaveClass(/am-brand-slash--title/)
     await expect(page.getByTestId('revision-summary')).toHaveCount(0)
     await expect(page.getByRole('heading', { name: 'Install', exact: true })).toBeVisible()
     const setupCLI = page.getByRole('link', { name: 'Set up CLI (opens in a new tab)', exact: true })
