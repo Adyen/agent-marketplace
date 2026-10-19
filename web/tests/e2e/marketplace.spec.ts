@@ -166,13 +166,16 @@ test.describe('Marketplace browser discovery', () => {
     await expect(rootNavigation.getByRole('link', { name: 'Docs', exact: true })).toHaveAttribute('rel', 'noopener noreferrer')
     await expect(rootNavigation.getByTestId('docs-external-icon')).toBeVisible()
     await expect(rootNavigation.getByRole('link', { name: 'Marketplace', exact: true })).toHaveCount(0)
+    await expect(page.locator('footer').getByRole('link', { name: 'Docs', exact: true })).toHaveAttribute('href', 'https://agent-marketplace.io/docs')
+    await page.goto(`${appURL}/r/team-tools/skill/secure-review`)
+    await expect(page.getByRole('link', { name: /Set up CLI/ })).toHaveAttribute('href', 'https://agent-marketplace.io/docs')
 
     const relativePage = await browser.newPage()
     try {
       await relativePage.goto(relativeAppBaseURL)
       const relativeNavigation = relativePage.getByRole('navigation', { name: 'Product navigation' })
       await expect(relativeNavigation.getByRole('link', { name: 'agent-marketplace', exact: true })).toHaveAttribute('href', '/marketplace/')
-      await expect(relativeNavigation.getByRole('link', { name: 'Docs', exact: true })).toHaveAttribute('href', 'https://agent-marketplace.io/docs')
+      await expect(relativeNavigation.getByRole('link', { name: 'Docs', exact: true })).toHaveAttribute('href', '/docs/')
       await expect(relativeNavigation.getByRole('link', { name: 'Docs', exact: true })).toHaveAttribute('target', '_blank')
       await expect(relativeNavigation.getByTestId('docs-external-icon')).toBeVisible()
       await expect(relativeNavigation.getByRole('link', { name: 'Marketplace', exact: true })).toHaveCount(0)
@@ -180,6 +183,42 @@ test.describe('Marketplace browser discovery', () => {
     finally {
       await relativePage.close()
     }
+  })
+
+  // spec: marketplace-web-ui/marketplace-links-to-locally-hosted-documentation-when-enabled
+  test('opens bundled documentation without contacting the public website', async ({ context, page }) => {
+    const externalRequests: string[] = []
+    await context.route('**/*', async (route) => {
+      const url = new URL(route.request().url())
+      if (url.hostname !== '127.0.0.1' && url.hostname !== 'localhost') {
+        externalRequests.push(url.href)
+        await route.abort()
+        return
+      }
+      await route.continue()
+    })
+    await page.goto(sharedOriginURL)
+    const docs = page.getByRole('navigation', { name: 'Product navigation' }).getByRole('link', { name: 'Docs', exact: true })
+    await expect(docs).toHaveAttribute('href', '/docs/')
+    await expect(docs).toHaveAttribute('target', '_blank')
+    await expect(docs).toHaveAttribute('rel', 'noopener noreferrer')
+    await expect(page.locator('footer').getByRole('link', { name: 'Docs', exact: true })).toHaveAttribute('href', '/docs/')
+    const popupPromise = page.waitForEvent('popup')
+    await docs.click()
+    const popup = await popupPromise
+    try {
+      await expect(popup).toHaveURL(`${sharedOriginURL}/docs/`)
+      await expect(popup.getByRole('heading', { level: 1, name: /^Documentation\b/ })).toBeVisible()
+      expect(await popup.evaluate(() => window.opener === null)).toBe(true)
+      await popup.getByRole('link', { name: 'Install', exact: true }).first().click()
+      await expect(popup).toHaveURL(`${sharedOriginURL}/docs/install`)
+    }
+    finally {
+      await popup.close()
+    }
+    await page.goto(`${sharedOriginURL}/r/team-tools/skill/secure-review`)
+    await expect(page.getByRole('link', { name: /Set up CLI/ })).toHaveAttribute('href', '/docs/')
+    expect(externalRequests).toEqual([])
   })
 
   test('keeps the public landing profile and its palette independent', async ({ page }) => {
@@ -282,7 +321,7 @@ test.describe('Marketplace browser discovery', () => {
     await expect(marketplaceBrand.locator('.am-site-nav__brand-logo--dark')).toBeHidden()
     await expect(page.locator('link[rel="icon"][type="image/svg+xml"]')).toHaveAttribute('href', '/brand/favicon.svg')
     await expect(marketplaceNav.getByRole('link', { name: 'Marketplace', exact: true })).toHaveCount(0)
-    await expect(marketplaceNav.getByRole('link', { name: 'Docs', exact: true })).toHaveAttribute('href', 'https://agent-marketplace.io/docs')
+    await expect(marketplaceNav.getByRole('link', { name: 'Docs', exact: true })).toHaveAttribute('href', '/docs/')
     await expect(marketplaceNav.getByRole('link', { name: 'Docs', exact: true })).toHaveAttribute('target', '_blank')
     await expect(marketplaceNav.getByRole('link', { name: 'Docs', exact: true })).toHaveAttribute('rel', 'noopener noreferrer')
     await expect(marketplaceNav.getByTestId('docs-external-icon')).toBeVisible()

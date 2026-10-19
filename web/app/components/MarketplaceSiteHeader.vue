@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { appAssetPath, MARKETPLACE_DOCS_URL } from '~/lib/site'
+import { appAssetPath, marketplaceDocsUrl } from '~/lib/site'
 
 const route = useRoute()
 const config = useRuntimeConfig()
+const docsURL = marketplaceDocsUrl(config.public.docsEnabled)
 const marketplacePath = config.app.baseURL
 const brandAsset = (name: string) => appAssetPath(marketplacePath, `brand/${name}`)
 const menuOpen = ref(false)
@@ -40,7 +41,7 @@ function closeMenu(returnFocus = false) {
 
       <div id="site-navigation-actions" class="am-site-nav__actions" :data-open="menuOpen">
         <div class="am-site-nav__links">
-          <a :href="MARKETPLACE_DOCS_URL" target="_blank" rel="noopener noreferrer" class="am-site-nav__link" @click="closeMenu()">
+          <a :href="docsURL" target="_blank" rel="noopener noreferrer" class="am-site-nav__link" @click="closeMenu()">
             <span>Docs</span>
             <UIcon name="i-lucide-external-link" class="size-3.5 shrink-0" data-testid="docs-external-icon" aria-hidden="true" />
           </a>

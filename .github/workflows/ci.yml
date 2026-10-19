@@ -342,6 +342,18 @@ jobs:
           ingress_doc="$(extract_doc Ingress agent-marketplace "$rendered")"
           monitor_doc="$(extract_doc ServiceMonitor agent-marketplace-api "$rendered")"
 
+          if [[ "$(env_value NUXT_PUBLIC_DOCS_ENABLED "$web_doc")" != "true" ]]; then
+            echo "assertion failed: docs.enabled must enable local web documentation links" >&2
+            exit 1
+          fi
+          helm template marketplace "$CHART_DIR" --set fullnameOverride=agent-marketplace --set web.enabled=true > "$package_dir/public-docs-rendered.yaml"
+          public_web_doc="$(extract_doc Deployment agent-marketplace-web "$package_dir/public-docs-rendered.yaml")"
+          if [[ "$(env_value NUXT_PUBLIC_DOCS_ENABLED "$public_web_doc")" != "false" ]]; then
+            echo "assertion failed: local web documentation must default to false" >&2
+            exit 1
+          fi
+          reject "default chart must not deploy docs" "$(cat "$package_dir/public-docs-rendered.yaml")" "name: agent-marketplace-docs"
+
           require "chart-managed ConfigMap carries the configured key" "$configmap_doc" "marketplace.yaml: |"
           require "API deployment mounts config under the configured key" "$api_doc" "subPath: marketplace.yaml"
 

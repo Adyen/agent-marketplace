@@ -79,7 +79,7 @@ web:
     tag: "v4.2.0"
 
 docs:
-  enabled: true
+  enabled: false
   image:
     # The documentation image is not published to GHCR; build and publish
     # your own from site/Dockerfile and reference it here.
@@ -89,11 +89,25 @@ docs:
 
 The chart sets the web container's internal API base (`NUXT_API_BASE_INTERNAL`) to the API Service. The API Service exists in both modes; in `mode: all` it selects the all-in-one pods. It exposes the public `http` port and a named `operations` port (`service.api.operationsPort`, default 9090). The operations port is for private monitoring and health endpoints only, and the Ingress does not route to it.
 
+Documentation hosting defaults to `docs.enabled: false`: no docs Deployment
+or Service is created and the UI links to `https://agent-marketplace.io/docs`.
+For an air-gapped deployment, set `docs.enabled: true` and add the `/docs/`
+Ingress route shown next. The chart automatically sets
+`NUXT_PUBLIC_DOCS_ENABLED` to match, so the header, footer, and CLI setup
+links use origin-root `/docs/` without rebuilding the web image. Do not
+override that environment variable independently of the deployed service.
+
+Transfer or mirror the documentation image before disconnecting the network.
+This setting controls documentation hosting, not other outbound connections.
+
 ## 3. Configure the ingress boundary
 
-Supply the hostname, TLS secret, ingress class, and authentication annotations for the ingress or gateway your cluster uses. The chart has no defaults for these values:
+Supply the hostname, TLS secret, ingress class, and authentication annotations for the ingress or gateway your cluster uses. The chart has no defaults for these values. This example enables local documentation; omit its `/docs/` path when leaving documentation disabled:
 
 ```yaml
+docs:
+  enabled: true
+
 ingress:
   enabled: true
   className: example-ingress

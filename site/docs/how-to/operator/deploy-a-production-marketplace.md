@@ -72,7 +72,7 @@ docs:
 
 - Mount the DSN file and any registry credential files read-only, readable by the container's non-root user (UID 1000). If a registry sets `ca_file`, mount it in every API and worker container, because every role validates the configuration at startup.
 - Limit worker egress to the registry origins and the object store.
-- Route `/.well-known/agent-marketplace.json`, `/api/`, and `/healthz` to the API; `/docs/` to the documentation image; and the remaining `/` traffic to the UI. See [How to configure a reverse proxy](./configure-a-reverse-proxy.md).
+- Route `/.well-known/agent-marketplace.json`, `/api/`, and `/healthz` to the API, and the remaining UI traffic to Nuxt. Local docs default to disabled. If you enable `docs.enabled: true` for an air-gapped deployment, also route `/docs/` to the documentation image; the chart switches UI links to local docs automatically. See [How to configure a reverse proxy](./configure-a-reverse-proxy.md).
 
 ## 4. Roll out
 

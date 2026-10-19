@@ -207,9 +207,9 @@ container-check: secrets-check
 	@awk '/^ARG NODE_IMAGE=node:24-alpine$$/{nodearg=1} /^ARG NGINX_IMAGE=nginxinc\/nginx-unprivileged:1.29-alpine$$/{nginxarg=1} /FROM .*\$$\{NODE_IMAGE\} AS build/{build=1} /FROM .*\$$\{NGINX_IMAGE\} AS runtime/{runtime=1} /COPY .*package.json pnpm-lock.yaml/{workspace=1} /COPY --from=design .*semantic-colors.css/{colors=1} /USER 1000/{user=1} /ARG SITE_BASE=\//{sitebase++} /ARG SITE_PROFILE=public/{profile=1} /ARG MARKETPLACE_BASE=\//{marketplacebase=1} /docs profile requires SITE_BASE=\/docs\//{docsguard=1} /^[[:space:]]*pnpm run build:docs && output=\.vitepress\/dist-docs [|][|] exit 1;/{docs=1} /^[[:space:]]*pnpm run build && output=\.vitepress\/dist [|][|] exit 1;/{public=1} /COPY --from=build \/site\/\.site-dist\//{output=1} /ENV SITE_BASE=\$$\{SITE_BASE\}/{runtimebase=1} /location = \/ \{ return 404; \}/{rootguard=1} /HEALTHCHECK/{health=1} /http:\/\/127\.0\.0\.1:8080\$$\{SITE_BASE\}/{healthbase=1} /command -v wget/{wget=1} /command -v curl/{curl=1} END {if (!nodearg || !nginxarg || !build || !runtime || !workspace || !colors || !user || sitebase != 2 || !profile || !marketplacebase || !docsguard || !docs || !public || !output || !runtimebase || !rootguard || !health || !healthbase || !wget || !curl) exit 1}' site/Dockerfile
 	@test "$$(grep -Fh -- 'GO_BUILD_IMAGE:' deploy/compose/postgres-s3/compose.yaml compose.yaml | wc -l | tr -d ' ')" -eq 2
 	@test "$$(grep -Fh -- 'RUNTIME_IMAGE:' deploy/compose/postgres-s3/compose.yaml compose.yaml | wc -l | tr -d ' ')" -eq 2
-	@test "$$(grep -Fh -- 'NODE_IMAGE:' deploy/compose/postgres-s3/compose.yaml compose.yaml | wc -l | tr -d ' ')" -eq 4
-	@test "$$(grep -Fh -- 'NGINX_IMAGE' deploy/compose/postgres-s3/compose.yaml compose.yaml | wc -l | tr -d ' ')" -eq 4
-	@test "$$(grep -Fh -- '$${SITE_NGINX_IMAGE:-' deploy/compose/postgres-s3/compose.yaml compose.yaml | wc -l | tr -d ' ')" -eq 2
+	@test "$$(grep -Fh -- 'NODE_IMAGE:' deploy/compose/postgres-s3/compose.yaml deploy/compose/postgres-s3/compose.docs.yaml compose.yaml compose.docs.yaml | wc -l | tr -d ' ')" -eq 4
+	@test "$$(grep -Fh -- 'NGINX_IMAGE' deploy/compose/postgres-s3/compose.yaml deploy/compose/postgres-s3/compose.docs.yaml compose.yaml compose.docs.yaml | wc -l | tr -d ' ')" -eq 4
+	@test "$$(grep -Fh -- '$${SITE_NGINX_IMAGE:-' deploy/compose/postgres-s3/compose.yaml deploy/compose/postgres-s3/compose.docs.yaml compose.yaml compose.docs.yaml | wc -l | tr -d ' ')" -eq 2
 	@test "$$(grep -Fc -- 'POSTGRES_IMAGE' deploy/compose/postgres-s3/compose.yaml)" -eq 1
 	@test "$$(grep -Ec -- '^[[:space:]]*--build-arg GO_BUILD_IMAGE=' Makefile)" -eq 1
 	@test "$$(grep -Ec -- '^[[:space:]]*--build-arg RUNTIME_IMAGE=' Makefile)" -eq 1
@@ -244,9 +244,9 @@ compose-config:
 		printf '%s\n' 'secrets:' '  marketplace_postgres_password:' '    file: '"$$password_file" '  marketplace_postgres_dsn:' '    file: '"$$secret_file" > "$$secret_override"; \
 		docker compose -f compose.yaml config --quiet && \
 		docker compose -f deploy/compose/postgres-s3/compose.yaml -f "$$secret_override" config --quiet && \
-		GO_BUILD_IMAGE=override/go:test RUNTIME_IMAGE=override/runtime:test NODE_IMAGE=override/node:test NGINX_IMAGE=override/nginx:test SITE_NGINX_IMAGE=override/site-nginx:test docker compose -f compose.yaml config > "$$sqlite_config" && \
+		GO_BUILD_IMAGE=override/go:test RUNTIME_IMAGE=override/runtime:test NODE_IMAGE=override/node:test NGINX_IMAGE=override/nginx:test SITE_NGINX_IMAGE=override/site-nginx:test docker compose -f compose.yaml -f compose.docs.yaml config > "$$sqlite_config" && \
 		grep -Fq 'override/go:test' "$$sqlite_config" && grep -Fq 'override/runtime:test' "$$sqlite_config" && grep -Fq 'override/node:test' "$$sqlite_config" && grep -Fq 'override/nginx:test' "$$sqlite_config" && grep -Fq 'override/site-nginx:test' "$$sqlite_config" && \
-		GO_BUILD_IMAGE=override/go:test RUNTIME_IMAGE=override/runtime:test NODE_IMAGE=override/node:test POSTGRES_IMAGE=override/postgres:test NGINX_IMAGE=override/nginx:test SITE_NGINX_IMAGE=override/site-nginx:test docker compose -f deploy/compose/postgres-s3/compose.yaml -f "$$secret_override" config > "$$postgres_config" && \
+		GO_BUILD_IMAGE=override/go:test RUNTIME_IMAGE=override/runtime:test NODE_IMAGE=override/node:test POSTGRES_IMAGE=override/postgres:test NGINX_IMAGE=override/nginx:test SITE_NGINX_IMAGE=override/site-nginx:test docker compose -f deploy/compose/postgres-s3/compose.yaml -f deploy/compose/postgres-s3/compose.docs.yaml -f "$$secret_override" config > "$$postgres_config" && \
 		grep -Fq 'override/go:test' "$$postgres_config" && grep -Fq 'override/runtime:test' "$$postgres_config" && grep -Fq 'override/node:test' "$$postgres_config" && grep -Fq 'override/postgres:test' "$$postgres_config" && grep -Fq 'override/nginx:test' "$$postgres_config" && grep -Fq 'override/site-nginx:test' "$$postgres_config" && \
 		test "$$(grep -Ec -- '^[[:space:]]+target: marketplace-postgres-password$$' "$$postgres_config")" -eq 1 && \
 		test "$$(grep -Ec -- '^[[:space:]]+target: marketplace-postgres-dsn$$' "$$postgres_config")" -eq 2 && \
@@ -259,7 +259,7 @@ marketplace-gate:
 	@E2E_SKIP_DOCKER=1 $(MAKE) e2e
 
 marketplace-proxy-check:
-	AM_MARKETPLACE_PROXY_IMAGE="$(NGINX_IMAGE)" CGO_ENABLED=0 $(GO) test -json -count=1 -timeout 2m -run '^TestMarketplaceNginxRedirects$$' ./tools/marketplace-proxy | CGO_ENABLED=0 $(GO) run ./tools/witness-check -require TestMarketplaceNginxRedirects
+	AM_MARKETPLACE_PROXY_IMAGE="$(NGINX_IMAGE)" CGO_ENABLED=0 $(GO) test -json -count=1 -timeout 2m -run '^TestMarketplace(NginxRedirects|ComposeDocs)$$' ./tools/marketplace-proxy | CGO_ENABLED=0 $(GO) run ./tools/witness-check -require TestMarketplaceNginxRedirects,TestMarketplaceComposeDocs
 
 # Dedicated gates name their scenarios once; witness-check fails the gate when
 # any of them skipped, failed, or never ran (for example after a rename).
